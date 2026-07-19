@@ -897,11 +897,12 @@ describe('Dashboard routes', () => {
         truncated: false,
         events: [{
           id: 71,
-          ruleKey: 'monitored-mcap',
-          kind: 'monitored-mcap',
+          chain: 'robinhood',
+          ruleKey: 'monitored-fdv',
+          kind: 'monitored-fdv',
           address: options.tokenAddress,
           triggeredAt: '2026-07-03T05:47:42.000Z',
-          mcap: 100000,
+          fdv: 100000,
           pct: 25,
           label: 'MCAP',
         }],
@@ -909,15 +910,15 @@ describe('Dashboard routes', () => {
     };
 
     try {
-      const address = 'So11111111111111111111111111111111111111112';
+      const address = '0x1111111111111111111111111111111111111111';
       const res = await request(app)
-        .get(`/api/dashboard/chart-alert-events?address=${address}`)
+        .get(`/api/dashboard/chart-alert-events?chain=robinhood&address=${address}`)
         .set('Authorization', `Bearer ${token}`);
 
       assert.equal(res.status, 200);
-      assert.deepEqual(capturedOptions, { userId, tokenAddress: address });
+      assert.deepEqual(capturedOptions, { userId, chain: 'robinhood', tokenAddress: address });
       assert.equal(res.body.windowHours, 24);
-      assert.equal(res.body.events[0].mcap, 100000);
+      assert.equal(res.body.events[0].fdv, 100000);
     } finally {
       backendAlertFeed.listDashboardChartAlertEvents = originalListDashboardChartAlertEvents;
     }

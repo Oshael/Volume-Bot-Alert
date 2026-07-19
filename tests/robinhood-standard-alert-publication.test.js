@@ -98,7 +98,7 @@ describe('Robinhood standard alert publication', () => {
   });
 
   it('commits event and state once, then publishes only after commit', async () => {
-    const fixture = dependencies();
+    const fixture = dependencies({ now: () => Date.parse('2026-07-19T18:00:30.125Z') });
     const authorization = { opaque: true };
     fixture.deps.issueAuthorization = () => authorization;
     const markTriggered = fixture.deps.userAlertRuleState.markTriggered;
@@ -115,13 +115,18 @@ describe('Robinhood standard alert publication', () => {
       return fixture.calls.events === 1 ? { id: 91, ...intent } : null;
     };
     const publication = createRobinhoodStandardAlertPublication(fixture.deps);
-    const first = await publication.consume({ signals: [signal()], alertsRequested: true, publishable: true });
+    const first = await publication.consume({
+      signals: [signal()], alertsRequested: true, publishable: true,
+      commitCompletedAt: '2026-07-19T18:00:30.000Z',
+    });
     const replay = await publication.consume({ signals: [signal()], alertsRequested: true, publishable: true });
     assert.equal(first.persisted, 1);
     assert.equal(first.stateWrites, 1);
+    assert.equal(first.commitToAlertLatencyMs, 125);
     assert.equal(replay.duplicates, 1);
     assert.equal(fixture.calls.triggered, 1);
     assert.equal(fixture.calls.published, 1);
+    assert.equal(publication.getStatus().averageCommitToAlertLatencyMs, 125);
     assert.deepEqual(fixture.transaction, ['BEGIN', 'COMMIT', 'RELEASE', 'BEGIN', 'COMMIT', 'RELEASE']);
   });
 
@@ -176,5 +181,7 @@ describe('Robinhood standard alert publication', () => {
     );
     assert.deepEqual(fixture.transaction, ['BEGIN', 'ROLLBACK', 'RELEASE']);
     assert.equal(fixture.calls.published, 0);
+    assert.equal(publication.getStatus().errors, 1);
+    assert.equal(publication.getStatus().lastStatus, 'error');
   });
 });

@@ -1431,14 +1431,19 @@ router.get('/alert-events', dashboardLimiter, async (req, res) => {
 });
 
 router.get('/chart-alert-events', dashboardLimiter, async (req, res) => {
-  const tokenAddress = String(req.query?.address || '').trim();
-  if (!isValidAddress(tokenAddress)) {
+  let chain;
+  let tokenAddress;
+  try {
+    chain = normalizeTokenChain(req.query?.chain || 'solana');
+    tokenAddress = normalizeTokenAddress(chain, req.query?.address);
+  } catch (_) {
     return res.status(400).json({ error: 'Valid token address is required' });
   }
 
   try {
     const payload = await backendAlertFeed.listDashboardChartAlertEvents({
       userId: req.user.id,
+      chain,
       tokenAddress,
     });
     res.json(payload);

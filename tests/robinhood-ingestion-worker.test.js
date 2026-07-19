@@ -129,18 +129,20 @@ describe('Robinhood ingestion worker', () => {
     assert.match(status.lastError.message, /alchemy-free is on chain 1; expected 4663/);
   });
 
-  it('injects the post-commit market emitter into persistent ingestion', async () => {
+  it('injects post-commit market and standard alert consumers into persistence', async () => {
     let repositoryOptions = null;
     const emitMarketBucketUpdate = () => true;
+    const standardAlertSignalConsumer = async () => {};
     const { callbacks, worker } = createHarness(
       { pollOnce: async () => snapshot() },
       { repositoryFactory: (options) => { repositoryOptions = options; return {}; } },
     );
 
-    worker.start({ enabled: true, emitMarketBucketUpdate });
+    worker.start({ enabled: true, emitMarketBucketUpdate, standardAlertSignalConsumer });
     await callbacks.shift().callback();
 
     assert.equal(repositoryOptions.emitMarketBucketUpdate, emitMarketBucketUpdate);
+    assert.equal(repositoryOptions.standardAlertSignalConsumer, standardAlertSignalConsumer);
     await worker.stop();
   });
 

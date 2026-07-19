@@ -1038,8 +1038,9 @@ function emitRobinhoodMarketBucketUpdates(rows, cursor, emit) {
 async function emitRobinhoodStandardAlertSignals(rows, cursor, source, consume) {
   if (!source || !consume || !rows.length) return;
   try {
+    const commitCompletedAt = new Date();
     const signals = await source.buildFromCommittedBuckets({ buckets: rows, cursor });
-    if (signals.length) await consume(signals);
+    if (signals.length) await consume(signals, { commitCompletedAt });
   } catch (error) {
     console.warn('[RobinhoodPersistence] Failed to build standard alert signals:', error.message);
   }

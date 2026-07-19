@@ -84,6 +84,34 @@ describe('backend alert feed service', () => {
     }
   });
 
+  it('lists Robinhood FDV chart events through the chain-scoped backend contract', async () => {
+    const originalListChartEvents = userAlertEvent.listChartEvents;
+    let capturedFilters;
+    userAlertEvent.listChartEvents = async (filters) => {
+      capturedFilters = filters;
+      return [{
+        id: 72, userId: 8, chain: 'robinhood', ruleKey: 'monitored-fdv',
+        kind: 'monitored-fdv', tokenAddress: '0x1111111111111111111111111111111111111111',
+        payload: { fdv: 500000, prevFdv: 400000, pct: 25, label: 'FDV' },
+        triggeredAt: '2026-07-03T05:47:42.000Z',
+      }];
+    };
+    try {
+      const payload = await backendAlertFeed.listDashboardChartAlertEvents({
+        userId: 8, chain: 'robinhood', tokenAddress: '0x1111111111111111111111111111111111111111',
+        now: new Date('2026-07-03T06:00:00.000Z'),
+      });
+      assert.equal(capturedFilters.chain, 'robinhood');
+      assert.ok(capturedFilters.ruleKeys.includes('monitored-fdv'));
+      assert.equal(payload.chain, 'robinhood');
+      assert.equal(payload.events[0].mcap, null);
+      assert.equal(payload.events[0].fdv, 500000);
+      assert.equal(payload.events[0].prevFdv, 400000);
+    } finally {
+      userAlertEvent.listChartEvents = originalListChartEvents;
+    }
+  });
+
   it('uses GMGN claim payload metadata when catalog metadata is missing', async () => {
     const originalListDashboardMetadataByAddresses = tokenCatalog.listDashboardMetadataByAddresses;
     const originalListSummaryByAddresses = tokenMeteoraState.listSummaryByAddresses;
@@ -334,6 +362,7 @@ describe('backend alert feed service', () => {
       const payload = await backendAlertFeed.listDashboardAlertEvents({
         userId: 7,
         ruleKey: 'monitored-vol',
+        chains: ['solana'],
         limit: 20,
       });
 
@@ -407,6 +436,7 @@ describe('backend alert feed service', () => {
         'monitored-vol',
         'gmgn-vol-1m',
         'monitored-mcap',
+        'monitored-fdv',
         'hvnc',
         'recent-surge-1h',
         'recent-surge-6h',
@@ -419,7 +449,7 @@ describe('backend alert feed service', () => {
       ]);
       assert.equal(payload.mode, 'unseen');
       assert.equal(payload.count, 1);
-      assert.equal(payload.feeds.length, 13);
+      assert.equal(payload.feeds.length, 14);
     } finally {
       backendAlertFeed.listDashboardAlertEvents = originalListDashboardAlertEvents;
     }
@@ -622,6 +652,7 @@ describe('backend alert feed service', () => {
       const payload = await backendAlertFeed.listDashboardAlertEvents({
         userId: 7,
         ruleKey: 'recent-surge-1h',
+        chains: ['solana'],
         limit: 20,
       });
 
@@ -683,6 +714,7 @@ describe('backend alert feed service', () => {
       const payload = await backendAlertFeed.listDashboardAlertEvents({
         userId: 9,
         ruleKey: 'monitored-vol',
+        chains: ['solana'],
         mode: 'unseen',
         limit: 10,
       });
@@ -736,6 +768,7 @@ describe('backend alert feed service', () => {
       const payload = await backendAlertFeed.listDashboardAlertEvents({
         userId: 9,
         ruleKey: 'monitored-vol',
+        chains: ['solana'],
         mode: 'all',
         limit: 10,
       });
@@ -797,6 +830,7 @@ describe('backend alert feed service', () => {
       const payload = await backendAlertFeed.listDashboardAlertEvents({
         userId: 4,
         ruleKey: 'monitored-vol',
+        chains: ['solana'],
         mode: 'unseen',
         limit: 50,
       });

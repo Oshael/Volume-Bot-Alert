@@ -43,4 +43,17 @@ describe('Robinhood dashboard valuation contract', () => {
     assert.equal(metrics.transactions, 15);
     assert.equal(metrics.volume5m, 2000);
   });
+
+  it('registers monitored FDV as a Robinhood-only feed without relabeling it MCAP', () => {
+    const rule = backendAlertFeed.resolveDashboardFeedRule('monitored-fdv');
+    const metrics = backendAlertFeed.__private.buildDashboardUserAlertMetricPayload({
+      fdv: 500000, prevFdv: 400000,
+    }, {});
+    assert.equal(rule.kind, 'monitored-fdv');
+    assert.equal(rule.chain, 'robinhood');
+    assert.equal(metrics.mcap, null);
+    assert.equal(metrics.fdv, 500000);
+    assert.equal(metrics.prevFdv, 400000);
+    assert.equal(metrics.valuationType, 'fdv');
+  });
 });

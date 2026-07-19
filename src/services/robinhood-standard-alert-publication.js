@@ -168,7 +168,7 @@ function createSummary(status, reason = null) {
   return {
     status, reason, signals: 0, evaluatedProfiles: 0, plans: 0,
     plannedEmits: 0, persisted: 0, duplicates: 0, stateWrites: 0,
-    notified: 0, publishErrors: 0,
+    notified: 0, publishErrors: 0, commitToAlertLatencyMs: null,
   };
 }
 
@@ -182,10 +182,42 @@ function createRobinhoodStandardAlertPublication(options = {}) {
   const publisher = options.backendAlertPublisher || backendAlertPublisher;
   const evaluateSignal = options.evaluateSignal || evaluateRobinhoodStandardSignal;
   const authorize = options.issueAuthorization || issueAutomaticAlertPublicationAuthorization;
+  const now = options.now || Date.now;
+  const status = {
+    runs: 0, signals: 0, persisted: 0, errors: 0,
+    lastStatus: null, lastCompletedAt: null, lastCommitCompletedAt: null, lastError: null,
+    latencySamples: 0, totalCommitToAlertLatencyMs: 0,
+    lastCommitToAlertLatencyMs: null, maxCommitToAlertLatencyMs: null,
+  };
 
-  async function consume(input = {}) {
+  function finalize(summary, input) {
+    const completedAtMs = now();
+    const commitCompletedAtMs = new Date(input.commitCompletedAt).getTime();
+    summary.commitToAlertLatencyMs = summary.persisted > 0
+      && Number.isFinite(commitCompletedAtMs) && completedAtMs >= commitCompletedAtMs
+      ? completedAtMs - commitCompletedAtMs : null;
+    status.runs += 1;
+    status.signals += summary.signals;
+    status.persisted += summary.persisted;
+    status.lastStatus = summary.status;
+    status.lastError = null;
+    status.lastCompletedAt = new Date(completedAtMs).toISOString();
+    status.lastCommitCompletedAt = Number.isFinite(commitCompletedAtMs)
+      ? new Date(commitCompletedAtMs).toISOString() : null;
+    if (summary.commitToAlertLatencyMs != null) {
+      status.latencySamples += 1;
+      status.totalCommitToAlertLatencyMs += summary.commitToAlertLatencyMs;
+      status.lastCommitToAlertLatencyMs = summary.commitToAlertLatencyMs;
+      status.maxCommitToAlertLatencyMs = Math.max(
+        status.maxCommitToAlertLatencyMs || 0, summary.commitToAlertLatencyMs,
+      );
+    }
+    return Object.freeze(summary);
+  }
+
+  async function consumeOnce(input = {}) {
     const signals = Array.isArray(input.signals) ? input.signals : [];
-    if (input.alertsRequested !== true) return Object.freeze(createSummary('disabled', 'alerts_disabled'));
+    if (input.alertsRequested !== true) return finalize(createSummary('disabled', 'alerts_disabled'), input);
     const profiles = await profileCache.listActiveProfiles({ sharedPresence: true });
     const evaluated = [];
     for (const signal of signals) {
@@ -207,7 +239,7 @@ function createRobinhoodStandardAlertPublication(options = {}) {
     summary.plannedEmits = evaluated.reduce((sum, item) => sum
       + item.result.evaluations.flatMap((value) => value.plans)
         .filter((plan) => plan.action === 'emit').length, 0);
-    if (input.publishable !== true) return Object.freeze(summary);
+    if (input.publishable !== true) return finalize(summary, input);
     const authorization = authorize({ chain: CHAIN, alertsRequested: true, publishable: true });
     for (const item of evaluated) {
       const triggeredAt = new Date(item.signal.generatedAt);
@@ -227,10 +259,32 @@ function createRobinhoodStandardAlertPublication(options = {}) {
         }
       }
     }
-    return Object.freeze(summary);
+    return finalize(summary, input);
   }
 
-  return Object.freeze({ consume });
+  async function consume(input = {}) {
+    try {
+      return await consumeOnce(input);
+    } catch (error) {
+      const failedAtMs = now();
+      status.runs += 1;
+      status.errors += 1;
+      status.lastStatus = 'error';
+      status.lastError = String(error?.message || error).slice(0, 500);
+      status.lastCompletedAt = new Date(failedAtMs).toISOString();
+      throw error;
+    }
+  }
+
+  function getStatus() {
+    return Object.freeze({
+      ...status,
+      averageCommitToAlertLatencyMs: status.latencySamples > 0
+        ? status.totalCommitToAlertLatencyMs / status.latencySamples : null,
+    });
+  }
+
+  return Object.freeze({ consume, getStatus });
 }
 
 module.exports = {

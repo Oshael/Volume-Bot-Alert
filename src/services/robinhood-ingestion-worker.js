@@ -115,6 +115,7 @@ function createRobinhoodIngestionWorker(deps = {}) {
   let running = false;
   let onFatal = null;
   let emitMarketBucketUpdate = null;
+  let standardAlertSignalConsumer = null;
   const status = {
     enabled: false,
     running: false,
@@ -134,9 +135,10 @@ function createRobinhoodIngestionWorker(deps = {}) {
     const rpcClient = (deps.clientFactory || createClient)(options);
     status.providerChainIds = await validateProviderChainIds(rpcClient);
     const repositoryFactory = deps.repositoryFactory || createRobinhoodPersistenceRepository;
-    const repository = emitMarketBucketUpdate
-      ? repositoryFactory({ emitMarketBucketUpdate })
-      : repositoryFactory();
+    const repository = repositoryFactory({
+      ...(emitMarketBucketUpdate ? { emitMarketBucketUpdate } : {}),
+      ...(standardAlertSignalConsumer ? { standardAlertSignalConsumer } : {}),
+    });
     const socialMetadataQueue = options.socialMetadataEnabled
       ? (deps.socialMetadataQueueFactory || createRobinhoodSocialMetadataQueue)()
       : null;
@@ -228,6 +230,8 @@ function createRobinhoodIngestionWorker(deps = {}) {
     onFatal = typeof input.onFatal === 'function' ? input.onFatal : null;
     emitMarketBucketUpdate = typeof input.emitMarketBucketUpdate === 'function'
       ? input.emitMarketBucketUpdate : null;
+    standardAlertSignalConsumer = typeof input.standardAlertSignalConsumer === 'function'
+      ? input.standardAlertSignalConsumer : null;
     status.enabled = options.enabled;
     if (!options.enabled) return false;
     running = true;

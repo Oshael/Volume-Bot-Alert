@@ -2,6 +2,7 @@ const GMGN_CLAIM_SIGNAL_RULE_KEY = 'gmgn-claim-signal';
 const MONITORED_VOL_RULE_KEY = 'monitored-vol';
 const GMGN_VOL_1M_RULE_KEY = 'gmgn-vol-1m';
 const MONITORED_MCAP_RULE_KEY = 'monitored-mcap';
+const MONITORED_FDV_RULE_KEY = 'monitored-fdv';
 const HVNC_RULE_KEY = 'hvnc';
 const RECENT_SURGE_1H_RULE_KEY = 'recent-surge-1h';
 const RECENT_SURGE_6H_RULE_KEY = 'recent-surge-6h';
@@ -31,6 +32,7 @@ const BACKEND_ALERT_RULES = Object.freeze({
     kind: 'monitored-vol',
     displayName: 'Monitored Vol 5M',
     scope: 'user-token',
+    chains: Object.freeze(['solana', 'robinhood']),
     dashboardFeedEnabled: true,
     defaults: Object.freeze({}),
   }),
@@ -54,6 +56,15 @@ const BACKEND_ALERT_RULES = Object.freeze({
     dashboardFeedEnabled: true,
     defaults: Object.freeze({}),
   }),
+  [MONITORED_FDV_RULE_KEY]: Object.freeze({
+    ruleKey: MONITORED_FDV_RULE_KEY,
+    kind: 'monitored-fdv',
+    displayName: 'Monitored FDV 5M',
+    scope: 'user-token',
+    chain: 'robinhood',
+    dashboardFeedEnabled: true,
+    defaults: Object.freeze({}),
+  }),
   [HVNC_RULE_KEY]: Object.freeze({
     ruleKey: HVNC_RULE_KEY,
     kind: 'hvnc',
@@ -67,6 +78,7 @@ const BACKEND_ALERT_RULES = Object.freeze({
     kind: 'old-surge',
     displayName: 'Recent Surge 1H',
     scope: 'user-token',
+    chains: Object.freeze(['solana', 'robinhood']),
     dashboardFeedEnabled: true,
     defaults: Object.freeze({}),
   }),
@@ -75,6 +87,7 @@ const BACKEND_ALERT_RULES = Object.freeze({
     kind: 'old-surge',
     displayName: 'Recent Surge 6H',
     scope: 'user-token',
+    chains: Object.freeze(['solana', 'robinhood']),
     dashboardFeedEnabled: true,
     defaults: Object.freeze({}),
   }),
@@ -83,6 +96,7 @@ const BACKEND_ALERT_RULES = Object.freeze({
     kind: 'old-surge',
     displayName: 'Old Week Surge 1H',
     scope: 'user-token',
+    chains: Object.freeze(['solana', 'robinhood']),
     dashboardFeedEnabled: true,
     defaults: Object.freeze({}),
   }),
@@ -91,6 +105,7 @@ const BACKEND_ALERT_RULES = Object.freeze({
     kind: 'old-surge',
     displayName: 'Old Week Surge 6H',
     scope: 'user-token',
+    chains: Object.freeze(['solana', 'robinhood']),
     dashboardFeedEnabled: true,
     defaults: Object.freeze({}),
   }),
@@ -99,6 +114,7 @@ const BACKEND_ALERT_RULES = Object.freeze({
     kind: 'old-surge',
     displayName: 'Surge Continuation 6H',
     scope: 'user-token',
+    chains: Object.freeze(['solana', 'robinhood']),
     dashboardFeedEnabled: true,
     defaults: Object.freeze({}),
   }),
@@ -165,6 +181,7 @@ module.exports = {
   GMGN_VOL_1M_RULE_KEY,
   HVNC_RULE_KEY,
   METEORA_SURGE_RULE_KEY,
+  MONITORED_FDV_RULE_KEY,
   MONITORED_MCAP_RULE_KEY,
   MONITORED_VOL_RULE_KEY,
   OLD_WEEK_SURGE_1H_RULE_KEY,

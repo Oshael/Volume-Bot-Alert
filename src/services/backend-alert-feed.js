@@ -27,6 +27,7 @@ const CHART_ALERT_WINDOW_HOURS = 24;
 const CHART_ALERT_RULE_KEYS = Object.freeze([
   'monitored-vol',
   'monitored-mcap',
+  'monitored-fdv',
   'hvnc',
   'recent-surge-1h',
   'recent-surge-6h',
@@ -450,6 +451,7 @@ function buildDashboardUserAlertMetricPayload(payload, catalogRow) {
     prevVolume1m: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'prevVolume1m')),
     prevVolume5m: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'prevVolume5m')),
     prevMcap: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'prevMcap')),
+    prevFdv: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'prevFdv')),
     mcap,
     fdv,
     valuationType: mcap != null ? 'market-cap' : (fdv != null ? 'fdv' : null),
@@ -756,9 +758,10 @@ async function listDashboardChartAlertEvents(options = {}) {
     throw new Error('Valid chart alert reference time is required');
   }
   const cutoff = new Date(now.getTime() - (CHART_ALERT_WINDOW_HOURS * 60 * 60 * 1000));
+  const chain = normalizeTokenChain(options.chain || USER_ALERT_CHAIN);
   const rows = await userAlertEvent.listChartEvents({
     userId: options.userId,
-    chain: USER_ALERT_CHAIN,
+    chain,
     tokenAddress: options.tokenAddress,
     triggeredAfter: cutoff,
     ruleKeys: CHART_ALERT_RULE_KEYS,
@@ -771,6 +774,7 @@ async function listDashboardChartAlertEvents(options = {}) {
 
   return {
     generatedAt: now.toISOString(),
+    chain,
     windowHours: CHART_ALERT_WINDOW_HOURS,
     address: String(options.tokenAddress || '').trim(),
     count: events.length,

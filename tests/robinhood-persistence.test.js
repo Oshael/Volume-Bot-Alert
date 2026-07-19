@@ -630,6 +630,7 @@ describe('Robinhood persistence repository', () => {
   it('builds targeted standard signals only after the market commit', async () => {
     const fake = createFakeDatabase({ liveBuckets: [liveBucketRow()] });
     const consumed = [];
+    let consumerContext = null;
     const sourceCalls = [];
     const repository = createRobinhoodPersistenceRepository({
       database: fake.database,
@@ -640,7 +641,10 @@ describe('Robinhood persistence repository', () => {
           return [{ id: 'signal-1' }];
         },
       },
-      async standardAlertSignalConsumer(signals) { consumed.push(...signals); },
+      async standardAlertSignalConsumer(signals, context) {
+        consumed.push(...signals);
+        consumerContext = context;
+      },
     });
 
     await repository.commitMarketRange({ entries: [marketEntry()], cursor: cursor() });
@@ -650,6 +654,7 @@ describe('Robinhood persistence repository', () => {
     assert.equal(sourceCalls[0].input.buckets[0].tokenAddress, TOKEN);
     assert.equal(sourceCalls[0].input.cursor.nextBlock, '8069001');
     assert.deepEqual(consumed, [{ id: 'signal-1' }]);
+    assert.ok(consumerContext.commitCompletedAt instanceof Date);
   });
 
   it('does not rewrite an observation when its market log is replayed', async () => {

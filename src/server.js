@@ -42,6 +42,9 @@ const { buildRobinhoodCatalogStagingTelemetry } = robinhoodCatalogStagingWorker;
 const robinhoodCatalogProjectionWorker = require('./services/robinhood-catalog-projection-worker');
 const { buildRobinhoodCatalogProjectionTelemetry } = robinhoodCatalogProjectionWorker;
 const robinhoodRealtimeAlertWorker = require('./services/robinhood-realtime-alert-worker');
+const {
+  createRobinhoodStandardAlertPublication,
+} = require('./services/robinhood-standard-alert-publication');
 const robinhoodLiveCatalogWorker = require('./services/robinhood-live-catalog-worker');
 const robinhoodMarketAggregateWorker = require('./services/robinhood-market-aggregate-worker');
 const {
@@ -75,6 +78,7 @@ let server = null;
 let bootstrapped = false;
 let startupInFlight = false;
 const workerLeaseManager = createWorkerLeaseManager();
+const robinhoodStandardAlertPublication = createRobinhoodStandardAlertPublication();
 const exposedResponseHeaders = [
   'RateLimit',
   'RateLimit-Policy',
@@ -244,6 +248,7 @@ app.get('/api/admin/ws-status', authenticate, requireAdmin, async (req, res) => 
     },
     robinhoodLiveCatalogWorker: robinhoodLiveCatalogWorker.getStatus(),
     robinhoodRealtimeAlertWorker: robinhoodRealtimeAlertWorker.getStatus(),
+    robinhoodStandardAlertPublication: robinhoodStandardAlertPublication.getStatus(),
     robinhoodMarketAggregateWorker: robinhoodMarketAggregateWorker.getStatus(),
     robinhoodRollout: buildRobinhoodRolloutStatus({
       config,
@@ -407,26 +412,32 @@ function startWorkerSet() {
     const ingestionGate = evaluateRobinhoodIngestionGate(config);
     if (ingestionGate.allowed) {
       startLockedWorker('robinhood', ROBINHOOD_INGESTION_LEASE_KEY, 'Robinhood ingestion worker', () => {
+        const getAlertRollout = () => {
+          const rollout = buildRobinhoodRolloutStatus({
+            config,
+            ingestionStatus: robinhoodIngestionWorker.getStatus(),
+          });
+          return {
+            alertsRequested: rollout.axes.alerts.requested,
+            publishable: rollout.publishable,
+          };
+        };
         robinhoodLiveCatalogWorker.start({ enabled: true });
         robinhoodMarketAggregateWorker.start(config.robinhoodMarketAggregateWorker);
         robinhoodRealtimeAlertWorker.start({
           enabled: true,
           signalConfig: config.robinhoodSignalDryRun,
           statementTimeoutMs: 1500,
-          rolloutProvider: () => {
-            const rollout = buildRobinhoodRolloutStatus({
-              config,
-              ingestionStatus: robinhoodIngestionWorker.getStatus(),
-            });
-            return {
-              alertsRequested: rollout.axes.alerts.requested,
-              publishable: rollout.publishable,
-            };
-          },
+          rolloutProvider: getAlertRollout,
         });
         robinhoodIngestionWorker.start({
           ...config.robinhoodIngestionWorker,
           socialMetadataEnabled: false,
+          standardAlertSignalConsumer: config.robinhoodRollout.alerts.requested
+            ? async (signals, context = {}) => robinhoodStandardAlertPublication.consume({
+                ...context, ...getAlertRollout(), signals,
+              })
+            : null,
           emitMarketBucketUpdate: (payload) => {
             const socketEmitted = socketHub.emitMarketBucketUpdate(payload);
             const relayQueued = socketEmitted || marketBucketRealtime.enqueue(payload);
