@@ -4,6 +4,7 @@ process.env.EMAIL_PROVIDER = 'local';
 process.env.EMAIL_FROM = 'tests@trendscope.local';
 process.env.APP_BASE_URL = 'http://localhost:5173';
 process.env.EMAIL_DEV_EXPOSE_DEBUG = 'true';
+process.env.ROBINHOOD_USER_VISIBILITY_ENABLED = 'true';
 
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
@@ -180,7 +181,7 @@ describe('Config routes', () => {
     assert.deepEqual(response.body.tokens, []);
     assert.deepEqual(response.body.blocklist, []);
     assert.deepEqual(response.body.starredTokens, []);
-    assert.deepEqual(response.body.availableChains, ['solana']);
+    assert.deepEqual(response.body.availableChains, ['solana', 'robinhood']);
     assert.equal(response.body.chainReadiness.solana.status, 'ready');
     assert.ok(response.body.uiPrefs);
 
@@ -188,7 +189,7 @@ describe('Config routes', () => {
       .get('/api/config/chain-readiness')
       .set('Authorization', `Bearer ${userToken}`);
     assert.equal(readinessResponse.status, 200);
-    assert.deepEqual(readinessResponse.body.availableChains, ['solana']);
+    assert.deepEqual(readinessResponse.body.availableChains, ['solana', 'robinhood']);
     assert.equal(readinessResponse.body.chainReadiness.solana.workspaceReady, true);
 
     for (const key of Object.keys(CONFIG_SCHEMA)) {
@@ -467,7 +468,7 @@ describe('Config routes', () => {
       response.body.starredTokens.map((item) => item.address).sort(),
       [VALID_ADDR_1, VALID_ADDR_3].sort(),
     );
-    assert.deepEqual(response.body.availableChains, ['solana']);
+    assert.deepEqual(response.body.availableChains, ['solana', 'robinhood']);
   });
 
   it('rejects invalid full sync requests without persisting partial changes', async () => {

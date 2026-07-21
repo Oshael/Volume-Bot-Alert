@@ -1,7 +1,7 @@
 const workerLease = require('../models/worker-lease');
 const robinhoodIngestionWorker = require('./robinhood-ingestion-worker');
 const { buildRobinhoodRolloutStatus } = require('./robinhood-rollout-status');
-const { isRobinhoodTokenChainConfigured } = require('../utils/token-chain-availability');
+const { isRobinhoodUserVisible } = require('../utils/token-chain-availability');
 const config = require('../../config');
 
 const ROBINHOOD_INGESTION_LEASE_KEY = 'robinhood-ingestion-worker';
@@ -104,7 +104,7 @@ function buildWorkspaceChainReadiness(input = {}) {
   const readiness = {
     solana: buildSolanaReadiness(runtimeConfig, checkedAt),
   };
-  if (!isRobinhoodTokenChainConfigured(runtimeConfig)) {
+  if (!isRobinhoodUserVisible(runtimeConfig)) {
     return readiness;
   }
 
@@ -132,7 +132,7 @@ function createWorkspaceChainReadinessProvider(deps = {}) {
   let inFlight = null;
 
   async function load() {
-    if (!isRobinhoodTokenChainConfigured(runtimeConfig)) {
+    if (!isRobinhoodUserVisible(runtimeConfig)) {
       return buildWorkspaceChainReadiness({ config: runtimeConfig, nowMs: now() });
     }
     let sharedLease = null;

@@ -695,6 +695,10 @@ module.exports = {
     ),
   },
 
+  robinhoodUserVisibility: {
+    enabled: parseBoolean(process.env.ROBINHOOD_USER_VISIBILITY_ENABLED, false),
+  },
+
   robinhoodCatalogProjectionWorker: {
     intervalMs: parseIntegerInRange(
       process.env.ROBINHOOD_CATALOG_PROJECTION_INTERVAL_MS,

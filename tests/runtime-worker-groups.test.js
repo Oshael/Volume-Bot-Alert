@@ -83,6 +83,15 @@ describe('runtime worker groups config', () => {
     });
   });
 
+  it('keeps Robinhood user visibility independent and disabled by default', () => {
+    withEnv({ ROBINHOOD_USER_VISIBILITY_ENABLED: undefined }, (config) => {
+      assert.deepEqual(config.robinhoodUserVisibility, { enabled: false });
+    });
+    withEnv({ ROBINHOOD_USER_VISIBILITY_ENABLED: 'true' }, (config) => {
+      assert.deepEqual(config.robinhoodUserVisibility, { enabled: true });
+    });
+  });
+
   it('fails fast when Robinhood is mixed with shared worker groups', () => {
     const result = spawnSync(
       process.execPath,

@@ -9,6 +9,7 @@ const userCustomAlertRule = require('../models/user-custom-alert-rule');
 const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
 const tokenMarketVolumeBucket1m = require('../models/token-market-volume-bucket-1m');
 const backendAlertFeed = require('../services/backend-alert-feed');
+const { listBackendAlertRules } = require('../services/backend-alert-rules');
 const uiMeteoraSummaryCache = require('../services/ui-meteora-summary-cache');
 const alertTickerPeers = require('../services/alert-ticker-peers');
 const dashboardChainReader = require('../services/dashboard-chain-reader');
@@ -36,8 +37,9 @@ const {
 const { normalizeSocialLinkFields } = require('../utils/dex-social-links');
 const {
   getAvailableTokenChains,
-  isRobinhoodTokenChainConfigured,
+  isRobinhoodUserVisible,
 } = require('../utils/token-chain-availability');
+const { rejectHiddenRobinhoodRequests } = require('../middleware/token-chain-visibility');
 const {
   normalizeTokenAddress,
   normalizeTokenChain,
@@ -224,7 +226,7 @@ function parseAvailableChainArray(value, name = 'chains') {
   }
 
   const available = new Set(getAvailableTokenChains({
-    robinhoodConfigured: isRobinhoodTokenChainConfigured(config),
+    robinhoodVisible: isRobinhoodUserVisible(config),
   }));
   const chains = [];
   for (const item of source) {
@@ -244,6 +246,34 @@ function parseAvailableChainArray(value, name = 'chains') {
   return { ok: true, value: chains };
 }
 
+function getVisibleWorkspaceChains(runtimeConfig = config) {
+  return getAvailableTokenChains({
+    robinhoodVisible: isRobinhoodUserVisible(runtimeConfig),
+  });
+}
+
+function getVisibleDashboardAlertRuleKeys(runtimeConfig = config) {
+  const visibleChains = new Set(getVisibleWorkspaceChains(runtimeConfig));
+  return listBackendAlertRules({ dashboardFeedEnabled: true })
+    .filter((rule) => {
+      const chains = Array.isArray(rule.chains) ? rule.chains : [rule.chain || 'solana'];
+      return chains.some((chain) => visibleChains.has(chain));
+    })
+    .map((rule) => rule.ruleKey);
+}
+
+function resolvePublicAlertChains(value, runtimeConfig = config) {
+  return value != null || isRobinhoodUserVisible(runtimeConfig)
+    ? value
+    : getVisibleWorkspaceChains(runtimeConfig);
+}
+
+function resolvePublicAlertRuleKeys(value, runtimeConfig = config) {
+  return value != null || isRobinhoodUserVisible(runtimeConfig)
+    ? value
+    : getVisibleDashboardAlertRuleKeys(runtimeConfig);
+}
+
 function parseWorkspaceChainArray(value, name = 'chains') {
   let source = value == null ? ['solana'] : value;
   if (!Array.isArray(source)) {
@@ -258,7 +288,7 @@ function parseWorkspaceChainArray(value, name = 'chains') {
     return { ok: false, error: `${name} must select at least one chain` };
   }
   const available = new Set(getAvailableTokenChains({
-    robinhoodConfigured: isRobinhoodTokenChainConfigured(config),
+    robinhoodVisible: isRobinhoodUserVisible(config),
   }));
   const chains = [];
   for (const item of source) {
@@ -586,6 +616,7 @@ function buildRadarBucketPayload(page, pinnedRows) {
 }
 
 router.use(authenticate);
+router.use(rejectHiddenRobinhoodRequests);
 
 function computePctChange(currentValue, baselineValue) {
   const current = Number(currentValue);
@@ -1412,8 +1443,9 @@ router.get('/alert-events', dashboardLimiter, async (req, res) => {
       limit: req.query?.limit,
       mode: req.query?.mode,
       afterId: afterId.value,
-      ...((req.query?.chains ?? req.query?.chain) == null
-        ? {} : { chains: req.query?.chains ?? req.query?.chain }),
+      ...(resolvePublicAlertChains(req.query?.chains ?? req.query?.chain) == null
+        ? {}
+        : { chains: resolvePublicAlertChains(req.query?.chains ?? req.query?.chain) }),
     });
     res.json(payload);
   } catch (err) {
@@ -1457,11 +1489,12 @@ router.get('/alert-feeds', dashboardLimiter, async (req, res) => {
   try {
     const payload = await backendAlertFeed.listDashboardAlertFeeds({
       userId: req.user.id,
-      ruleKeys: req.query?.ruleKeys,
       limit: req.query?.limit,
       mode: req.query?.mode,
-      ...((req.query?.chains ?? req.query?.chain) == null
-        ? {} : { chains: req.query?.chains ?? req.query?.chain }),
+      ...(resolvePublicAlertChains(req.query?.chains ?? req.query?.chain) == null
+        ? {}
+        : { chains: resolvePublicAlertChains(req.query?.chains ?? req.query?.chain) }),
+      ruleKeys: resolvePublicAlertRuleKeys(req.query?.ruleKeys),
     });
     res.json(payload);
   } catch (err) {
@@ -1481,9 +1514,10 @@ router.get('/alert-feeds', dashboardLimiter, async (req, res) => {
 router.post('/alert-events/clear', dashboardLimiter, requireTrustedOrigin, async (req, res) => {
   try {
     const payload = await backendAlertFeed.clearDashboardAlertFeeds(req.user.id, {
-      ruleKeys: req.body?.ruleKeys,
-      ...((req.body?.chains ?? req.body?.chain) == null
-        ? {} : { chains: req.body?.chains ?? req.body?.chain }),
+      ruleKeys: resolvePublicAlertRuleKeys(req.body?.ruleKeys),
+      ...(resolvePublicAlertChains(req.body?.chains ?? req.body?.chain) == null
+        ? {}
+        : { chains: resolvePublicAlertChains(req.body?.chains ?? req.body?.chain) }),
     });
     res.json(payload);
   } catch (err) {
@@ -1576,6 +1610,8 @@ router.__private = {
   buildStructuralRiskSummary,
   parseOptionalEventId,
   parsePinnedOrderPayload,
+  resolvePublicAlertChains,
+  resolvePublicAlertRuleKeys,
   getMonitoredCacheKey,
   resetMonitoredCache,
   resetTopPerformersCache,

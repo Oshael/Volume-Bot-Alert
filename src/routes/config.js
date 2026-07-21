@@ -16,14 +16,16 @@ const { normalizeText } = require('../utils/url-safety');
 const { normalizeTokenAddress, normalizeTokenChain } = require('../utils/token-identity');
 const {
   getAvailableTokenChains,
-  isRobinhoodTokenChainConfigured,
+  isRobinhoodUserVisible,
 } = require('../utils/token-chain-availability');
+const { rejectHiddenRobinhoodRequests } = require('../middleware/token-chain-visibility');
 const { getWorkspaceChainReadiness } = require('../services/workspace-chain-readiness');
 const config = require('../../config');
 
 // All config routes require authentication
 router.use(authenticate);
 router.use(requireTrustedOrigin);
+router.use(rejectHiddenRobinhoodRequests);
 
 // ── Limites ────────────────────────────────────────────────────────
 const MAX_TOKENS = 200;      // per user and chain
@@ -162,8 +164,12 @@ function buildRuntimeFlags() {
 
 function buildAvailableTokenChains() {
   return getAvailableTokenChains({
-    robinhoodConfigured: isRobinhoodTokenChainConfigured(config),
+    robinhoodVisible: isRobinhoodUserVisible(config),
   });
+}
+
+function getVisibleCollectionChains() {
+  return buildAvailableTokenChains().filter((chain) => USER_COLLECTION_CHAINS.includes(chain));
 }
 
 async function notifyUserConfigChanged(userId) {
@@ -194,9 +200,9 @@ router.get('/', async (req, res) => {
     const [configs, uiPrefs, tokens, blocklist, starredTokens, chainReadiness] = await Promise.all([
       userConfig.getAll(req.user.id),
       userUiPref.getAll(req.user.id),
-      userToken.getAllForChains(req.user.id, USER_COLLECTION_CHAINS),
-      userBlocklist.getAllForChains(req.user.id, USER_COLLECTION_CHAINS),
-      userStarredToken.getAllForChains(req.user.id, USER_COLLECTION_CHAINS),
+      userToken.getAllForChains(req.user.id, getVisibleCollectionChains()),
+      userBlocklist.getAllForChains(req.user.id, getVisibleCollectionChains()),
+      userStarredToken.getAllForChains(req.user.id, getVisibleCollectionChains()),
       getWorkspaceChainReadiness(),
     ]);
 
@@ -382,9 +388,9 @@ router.put('/', async (req, res) => {
     const result = {
       configs: await userConfig.getAll(req.user.id),
       uiPrefs: await userUiPref.getAll(req.user.id),
-      tokens: await userToken.getAllForChains(req.user.id, USER_COLLECTION_CHAINS),
-      blocklist: await userBlocklist.getAllForChains(req.user.id, USER_COLLECTION_CHAINS),
-      starredTokens: await userStarredToken.getAllForChains(req.user.id, USER_COLLECTION_CHAINS),
+      tokens: await userToken.getAllForChains(req.user.id, getVisibleCollectionChains()),
+      blocklist: await userBlocklist.getAllForChains(req.user.id, getVisibleCollectionChains()),
+      starredTokens: await userStarredToken.getAllForChains(req.user.id, getVisibleCollectionChains()),
       availableChains: buildAvailableTokenChains(),
       chainReadiness: await getWorkspaceChainReadiness(),
       runtimeFlags: buildRuntimeFlags(),
@@ -534,7 +540,11 @@ router.delete('/tokens/:address', async (req, res) => {
 router.get('/token-folders', async (req, res) => {
   try {
     const result = await userTokenFolder.listForUser(req.user.id);
-    res.json(result);
+    const visibleChains = new Set(getVisibleCollectionChains());
+    res.json({
+      ...result,
+      items: result.items.filter((item) => visibleChains.has(item.chain)),
+    });
   } catch (err) {
     console.error('GET /config/token-folders error:', err.message);
     sendRouteError(res, err, 'Failed to load token folders');

@@ -2,7 +2,7 @@ const db = require('./db');
 const { normalizeTokenChain } = require('../utils/token-identity');
 const {
   getAvailableTokenChains,
-  isRobinhoodTokenChainConfigured,
+  isRobinhoodUserVisible,
 } = require('../utils/token-chain-availability');
 const config = require('../../config');
 
@@ -61,7 +61,7 @@ const DEFAULT_CHAIN_FILTERS = Object.freeze({
 
 function getConfiguredAvailableTokenChains() {
   return getAvailableTokenChains({
-    robinhoodConfigured: isRobinhoodTokenChainConfigured(config),
+    robinhoodVisible: isRobinhoodUserVisible(config),
   });
 }
 

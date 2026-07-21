@@ -1,25 +1,36 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
-const { getAvailableTokenChains } = require('../src/utils/token-chain-availability');
+const {
+  getAvailableTokenChains,
+  isRobinhoodUserVisible,
+  isTokenChainUserVisible,
+} = require('../src/utils/token-chain-availability');
 
 describe('token chain availability', () => {
-  it('keeps Robinhood hidden while alert activation is not requested', () => {
+  it('keeps Robinhood hidden unless user visibility is explicitly enabled', () => {
     assert.deepEqual(getAvailableTokenChains(), ['solana']);
     assert.deepEqual(
-      getAvailableTokenChains({ robinhoodAlertsRequested: false }),
+      getAvailableTokenChains({ robinhoodConfigured: true, robinhoodAlertsRequested: true }),
       ['solana'],
     );
   });
 
-  it('exposes Robinhood when the rollout is configured independently from alert readiness', () => {
+  it('exposes Robinhood independently from ingestion and alert activation', () => {
     assert.deepEqual(
-      getAvailableTokenChains({ robinhoodAlertsRequested: true }),
+      getAvailableTokenChains({ robinhoodVisible: true }),
       ['solana', 'robinhood'],
     );
-    assert.deepEqual(
-      getAvailableTokenChains({ robinhoodConfigured: true, robinhoodAlertsRequested: false }),
-      ['solana', 'robinhood'],
-    );
+  });
+
+  it('uses the dedicated runtime flag as the public chain policy', () => {
+    const hidden = { robinhoodUserVisibility: { enabled: false } };
+    const visible = { robinhoodUserVisibility: { enabled: true } };
+
+    assert.equal(isRobinhoodUserVisible(hidden), false);
+    assert.equal(isTokenChainUserVisible('robinhood', hidden), false);
+    assert.equal(isTokenChainUserVisible('solana', hidden), true);
+    assert.equal(isRobinhoodUserVisible(visible), true);
+    assert.equal(isTokenChainUserVisible('robinhood', visible), true);
   });
 });

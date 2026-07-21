@@ -12,6 +12,7 @@ const NOW_MS = Date.parse('2026-07-14T20:00:00.000Z');
 function runtimeConfig(overrides = {}) {
   return {
     mockTrading: { enabled: true },
+    robinhoodUserVisibility: { enabled: true },
     robinhoodIngestionWorker: { enabled: true },
     robinhoodRollout: {
       transport: { enabled: true },
@@ -32,17 +33,18 @@ function runtimeConfig(overrides = {}) {
 }
 
 describe('workspace chain readiness', () => {
-  it('keeps an unconfigured workspace Solana-only', () => {
+  it('keeps an ingesting Robinhood workspace hidden without public visibility', () => {
     const config = {
-      robinhoodIngestionWorker: { enabled: false },
+      robinhoodUserVisibility: { enabled: false },
+      robinhoodIngestionWorker: { enabled: true },
       robinhoodRollout: {
-        transport: { enabled: false },
-        persistence: { enabled: false },
-        alerts: { requested: false },
+        transport: { enabled: true },
+        persistence: { enabled: true },
+        alerts: { requested: true },
       },
     };
 
-    assert.equal(isRobinhoodTokenChainConfigured(config), false);
+    assert.equal(isRobinhoodTokenChainConfigured(config), true);
     assert.deepEqual(Object.keys(buildWorkspaceChainReadiness({ config, nowMs: NOW_MS })), ['solana']);
   });
 

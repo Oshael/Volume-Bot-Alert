@@ -31,6 +31,7 @@ const { getSocketClientIp, isAllowedOrigin } = require('../utils/request-securit
 const { logSecurityEvent } = require('../utils/security-events');
 const { logTrace } = require('../utils/pump-migrate-trace');
 const { createTokenIdentity } = require('../utils/token-identity');
+const { isTokenChainUserVisible } = require('../utils/token-chain-availability');
 
 let io = null;
 let accessSweepTimer = null;
@@ -97,15 +98,17 @@ function getMarketRoom(identity) {
   return identity?.key ? `market:${identity.key}` : null;
 }
 
-function getMarketSubscriptionRoom(payload) {
-  return getMarketRoom(resolveMarketIdentity(payload, { allowLegacySolana: true }));
+function getMarketSubscriptionRoom(payload, options = {}) {
+  const identity = resolveMarketIdentity(payload, { allowLegacySolana: true });
+  const runtimeConfig = options.config || config;
+  return isTokenChainUserVisible(identity?.chain, runtimeConfig) ? getMarketRoom(identity) : null;
 }
 
-function getMarketSubscriptionRooms(payload) {
+function getMarketSubscriptionRooms(payload, options = {}) {
   if (!Array.isArray(payload?.subscriptions)) return null;
   const rooms = new Set();
   for (const subscription of payload.subscriptions) {
-    const room = getMarketSubscriptionRoom(subscription);
+    const room = getMarketSubscriptionRoom(subscription, options);
     if (!room) return null;
     rooms.add(room);
   }
@@ -674,6 +677,9 @@ function emitBackendAlertEvent(payload, options = {}) {
   if (!io || !payload || typeof payload !== 'object') {
     return false;
   }
+  if (!isTokenChainUserVisible(payload.chain, config)) {
+    return false;
+  }
 
   const userRoom = getUserRoom(options.userId);
   if (userRoom) {
@@ -697,7 +703,7 @@ function emitMarketBucketUpdate(payload) {
 
   const event = normalizeMarketBucketUpdate(payload);
   const room = getMarketRoom(resolveMarketIdentity(event));
-  if (!event || !room) {
+  if (!event || !room || !isTokenChainUserVisible(event.chain, config)) {
     return false;
   }
 

@@ -6,6 +6,7 @@ const config = require('../config');
 
 const SOLANA_ADDRESS = 'So11111111111111111111111111111111111111112';
 const EVM_ADDRESS = '0xABCDEF0123456789ABCDEF0123456789ABCDEF01';
+const VISIBLE_CONFIG = { robinhoodUserVisibility: { enabled: true } };
 
 const {
   createMarketSubscriptionProtocolTelemetry,
@@ -59,7 +60,10 @@ describe('chain-aware socket market protocol', () => {
   });
 
   it('isolates the same EVM address in canonical chain rooms', () => {
-    const robinhoodRoom = getMarketSubscriptionRoom({ chain: 'robinhood', address: EVM_ADDRESS });
+    const robinhoodRoom = getMarketSubscriptionRoom(
+      { chain: 'robinhood', address: EVM_ADDRESS },
+      { config: VISIBLE_CONFIG },
+    );
     const baseRoom = getMarketSubscriptionRoom({ chain: 'base', address: EVM_ADDRESS });
 
     assert.equal(robinhoodRoom, `market:robinhood:${EVM_ADDRESS.toLowerCase()}`);
@@ -72,13 +76,20 @@ describe('chain-aware socket market protocol', () => {
       { chain: 'robinhood', address: EVM_ADDRESS },
       { chain: 'base', address: EVM_ADDRESS },
       { chain: 'robinhood', address: EVM_ADDRESS.toLowerCase() },
-    ] })], [
+    ] }, { config: VISIBLE_CONFIG })], [
       `market:robinhood:${EVM_ADDRESS.toLowerCase()}`,
       `market:base:${EVM_ADDRESS.toLowerCase()}`,
     ]);
     assert.deepEqual([...getMarketSubscriptionRooms({ subscriptions: [] })], []);
     assert.equal(getMarketSubscriptionRooms({ subscriptions: [{ chain: 'base', address: 'bad' }] }), null);
     assert.equal(getMarketSubscriptionRooms({}), null);
+  });
+
+  it('rejects Robinhood subscriptions while user visibility is disabled', () => {
+    assert.equal(getMarketSubscriptionRoom(
+      { chain: 'robinhood', address: EVM_ADDRESS },
+      { config: { robinhoodUserVisibility: { enabled: false } } },
+    ), null);
   });
 
   it('rejects invalid or unsupported explicit identities', () => {

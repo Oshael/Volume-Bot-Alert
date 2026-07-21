@@ -4,6 +4,7 @@ process.env.EMAIL_PROVIDER = 'local';
 process.env.EMAIL_FROM = 'tests@trendscope.local';
 process.env.APP_BASE_URL = 'http://localhost:5173';
 process.env.EMAIL_DEV_EXPOSE_DEBUG = 'true';
+process.env.ROBINHOOD_USER_VISIBILITY_ENABLED = 'true';
 
 const { describe, it, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');

@@ -27,6 +27,7 @@ const { logSecurityEvent } = require('../utils/security-events');
 const { normalizeChain, normalizeText, sanitizeHttpUrl, sanitizeAssetUrl } = require('../utils/url-safety');
 const { extractDexSocialLinks, normalizeSocialLinkFields } = require('../utils/dex-social-links');
 const { logTrace } = require('../utils/pump-migrate-trace');
+const { rejectHiddenRobinhoodRequests } = require('../middleware/token-chain-visibility');
 const {
   attachResponsePerfHeaders,
   isEnabled: isPerfMetricsEnabled,
@@ -241,6 +242,7 @@ function parseExpandedSparklineRequest(body = {}) {
 
 router.use(authenticate);
 router.use(requireTrustedOrigin);
+router.use(rejectHiddenRobinhoodRequests);
 
 router.get('/eligible', catalogReadLimiter, async (req, res) => {
   try {

@@ -9,11 +9,18 @@ function isRobinhoodTokenChainConfigured(runtimeConfig = {}) {
   );
 }
 
+function isRobinhoodUserVisible(runtimeConfig = {}) {
+  return runtimeConfig.robinhoodUserVisibility?.enabled === true;
+}
+
+function isTokenChainUserVisible(chain, runtimeConfig = {}) {
+  return chain !== 'robinhood' || isRobinhoodUserVisible(runtimeConfig);
+}
+
 function getAvailableTokenChains(options = {}) {
   const chains = [...DEFAULT_TOKEN_CHAINS];
   if (
-    options.robinhoodConfigured === true
-    || options.robinhoodAlertsRequested === true
+    options.robinhoodVisible === true
   ) {
     chains.push('robinhood');
   }
@@ -23,4 +30,6 @@ function getAvailableTokenChains(options = {}) {
 module.exports = {
   getAvailableTokenChains,
   isRobinhoodTokenChainConfigured,
+  isRobinhoodUserVisible,
+  isTokenChainUserVisible,
 };
