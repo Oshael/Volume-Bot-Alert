@@ -53,6 +53,7 @@
     "robinhood:discovery-bootstrap": "node src/utils/robinhood-discovery-bootstrap.js",
     "robinhood:signal-dry-run": "node src/utils/robinhood-signal-dry-run.js",
     "robinhood:aggregates:backfill": "node src/utils/backfill-robinhood-market-aggregates.js",
+    "robinhood:market-replay-reset": "node src/utils/reset-robinhood-market-replay.js",
     "market-buckets:backfill": "node src/utils/backfill-market-buckets-1m.js",
     "market-buckets-agg:backfill": "node src/utils/backfill-market-buckets-agg.js",
     "market-volume-buckets:backfill": "node src/utils/backfill-market-volume-buckets-1m.js",
