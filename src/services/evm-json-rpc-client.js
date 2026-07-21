@@ -115,7 +115,19 @@ function createAbortContext(signal, timeoutMs) {
   };
 }
 
-function decodeRpcBody(rawBody, requestId) {
+function isLogRangeRpcError(method, rpcCode, message) {
+  if (method !== 'eth_getLogs' || rpcCode !== -32000) return false;
+  const normalized = String(message || '').trim().toLowerCase();
+  return [
+    /log query timed out/,
+    /block range.{0,40}(too (large|wide)|exceed)/,
+    /(too many|more than [0-9]+).{0,30}(logs|results)/,
+    /response size.{0,30}(exceed|too large)/,
+    /limit.{0,30}(block|range).{0,30}query/,
+  ].some((pattern) => pattern.test(normalized));
+}
+
+function decodeRpcBody(rawBody, requestId, method = null) {
   let body;
   try {
     body = JSON.parse(rawBody);
@@ -127,12 +139,13 @@ function decodeRpcBody(rawBody, requestId) {
   }
   if (body.error) {
     const rpcCode = Number(body.error.code);
+    const logRangeError = isLogRangeRpcError(method, rpcCode, body.error.message);
     return {
       error: {
-        code: 'rpc_error',
+        code: logRangeError ? 'log_range_error' : 'rpc_error',
         message: `RPC error ${rpcCode}`,
         rpcCode,
-        retryable: rpcCode === -32005 || rpcCode === -32603,
+        retryable: !logRangeError && (rpcCode === -32005 || rpcCode === -32603),
       },
     };
   }
@@ -160,7 +173,7 @@ function decodeRpcBatchBody(rawBody, requests) {
   for (const request of requests) {
     const entry = byId.get(request.id);
     if (!entry) return { error: { code: 'invalid_response', message: 'omitted a batch response' } };
-    const decoded = decodeRpcBody(JSON.stringify(entry), request.id);
+    const decoded = decodeRpcBody(JSON.stringify(entry), request.id, request.method);
     if (decoded.error) return { error: { ...decoded.error, method: request.method } };
     results.push(decoded.result);
   }
@@ -263,7 +276,7 @@ function createEvmJsonRpcClient(options = {}) {
       throw error;
     }
 
-    const decoded = decodeRpcBody(rawBody, requestId);
+    const decoded = decodeRpcBody(rawBody, requestId, method);
     if (decoded.error) {
       const error = makeError(`${method} ${decoded.error.message}`, { ...common, ...decoded.error });
       recordAttempt(provider.name, method, { ...resultMetrics, error });

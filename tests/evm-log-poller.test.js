@@ -192,6 +192,48 @@ describe('EVM log poller', () => {
     assert.equal(status.metrics.rangeShrinks, 1);
   });
 
+  it('shrinks a JSON-RPC log timeout range without advancing the cursor', async () => {
+    const requestedRanges = [];
+    let rejected = false;
+    const poller = createEvmLogPoller({
+      client: {
+        request: async (method, params) => {
+          if (method === 'eth_blockNumber') return '0x6b';
+          if (method === 'eth_getLogs') {
+            requestedRanges.push([params[0].fromBlock, params[0].toBlock]);
+            if (!rejected) {
+              rejected = true;
+              throw new EvmRpcError('eth_getLogs RPC error -32000', {
+                code: 'log_range_error', rpcCode: -32000, method,
+              });
+            }
+            return [];
+          }
+          if (method === 'eth_getBlockByNumber') return blockFromParams(params);
+          throw new Error(`Unexpected method ${method}`);
+        },
+      },
+      startBlock: 100,
+      confirmations: 0,
+      rangeSize: 8,
+      minRangeSize: 2,
+      maxRangeSize: 8,
+      growAfterSuccesses: 100,
+    });
+
+    const status = await poller.pollOnce();
+
+    assert.deepEqual(requestedRanges, [
+      ['0x64', '0x6b'],
+      ['0x64', '0x67'],
+      ['0x68', '0x6b'],
+    ]);
+    assert.equal(status.nextBlock, '108');
+    assert.equal(status.rangeSize, 4);
+    assert.equal(status.metrics.rangeShrinks, 1);
+    assert.equal(status.metrics.blocksProcessed, 8);
+  });
+
   it('recovers a dense range after adaptive shrink when success recovery is enabled', async () => {
     const requestedRanges = [];
     let shouldRateLimit = true;

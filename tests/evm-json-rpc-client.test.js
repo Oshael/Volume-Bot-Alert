@@ -202,6 +202,41 @@ describe('provider-agnostic EVM JSON-RPC client', () => {
     assert.equal(client.getMetrics()['alchemy-free'].eth_getCode.fallbacks, 1);
   });
 
+  it('classifies only recognized eth_getLogs -32000 range failures for adaptive polling', async () => {
+    const messages = ['log query timed out', 'execution reverted'];
+    let calls = 0;
+    const client = createEvmJsonRpcClient({
+      providers: [{ name: 'public', url: 'https://rpc.example.test' }],
+      maxRetries: 2,
+      fetchImpl: async (_url, init) => {
+        const request = requestFrom(init);
+        const message = messages[calls];
+        calls += 1;
+        return response({
+          jsonrpc: '2.0', id: request.id, error: { code: -32000, message },
+        });
+      },
+    });
+
+    await assert.rejects(client.request('eth_getLogs', [{}]), (error) => {
+      assert.equal(error.code, 'log_range_error');
+      assert.equal(error.rpcCode, -32000);
+      assert.equal(error.retryable, false);
+      return true;
+    });
+    await assert.rejects(client.request('eth_getLogs', [{}]), (error) => {
+      assert.equal(error.code, 'rpc_error');
+      assert.equal(error.rpcCode, -32000);
+      assert.equal(error.retryable, false);
+      return true;
+    });
+    assert.equal(calls, 2);
+    assert.deepEqual(client.getMetrics().public.eth_getLogs.errorCodes, {
+      log_range_error: 1,
+      rpc_error: 1,
+    });
+  });
+
   it('normalizes timeout and transport errors without exposing provider URLs', async () => {
     let abortSignal;
     const client = createEvmJsonRpcClient({

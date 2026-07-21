@@ -35,6 +35,7 @@ function logIdentity(log) {
 function isAdaptiveRangeError(error) {
   return error?.code === 'rate_limited'
     || error?.code === 'timeout'
+    || error?.code === 'log_range_error'
     || (error?.code === 'http_error' && [400, 408, 413, 429].includes(error.httpStatus));
 }
 
