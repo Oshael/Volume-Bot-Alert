@@ -4,6 +4,12 @@ const ROBINHOOD_V3_FACTORY = '0x1f7d7550b1b028f7571e69a784071f0205fd2efa';
 const ROBINHOOD_WETH = '0x0bd7d308f8e1639fab988df18a8011f41eacad73';
 const ROBINHOOD_USDG = '0x5fc5360d0400a0fd4f2af552add042d716f1d168';
 const CANONICAL_FEE = 100;
+const CANONICAL_FEES = Object.freeze([100, 500, 3000, 10000]);
+const CANONICAL_POOL_DEPLOYMENT_BLOCKS = Object.freeze({
+  100: 1_506_281n,
+  500: 169_464n,
+  3000: 50_716n,
+});
 const GET_POOL_SELECTOR = '0x1698ee82';
 const SLOT0_SELECTOR = '0x3850c7bd';
 const LIQUIDITY_SELECTOR = '0x1a686502';
@@ -25,8 +31,8 @@ function uintWord(value) {
   return BigInt(value).toString(16).padStart(64, '0');
 }
 
-function buildGetPoolCall() {
-  return `${GET_POOL_SELECTOR}${addressWord(ROBINHOOD_WETH)}${addressWord(ROBINHOOD_USDG)}${uintWord(CANONICAL_FEE)}`;
+function buildGetPoolCall(fee = CANONICAL_FEE) {
+  return `${GET_POOL_SELECTOR}${addressWord(ROBINHOOD_WETH)}${addressWord(ROBINHOOD_USDG)}${uintWord(fee)}`;
 }
 
 function decodeWord(data, index, label) {
@@ -94,8 +100,8 @@ function createRobinhoodWethUsdQuoteReader(options = {}) {
   const maxCacheEntries = Math.max(1, Math.trunc(Number(options.maxCacheEntries)) || 5000);
   const cache = new Map();
   const pending = new Map();
-  let verifiedPool = null;
-  let eventScan = null;
+  const eventScans = new Map();
+  let verifiedPools = null;
   let eventScanTail = Promise.resolve();
 
   function remember(key, value) {
@@ -104,27 +110,34 @@ function createRobinhoodWethUsdQuoteReader(options = {}) {
     while (cache.size > maxCacheEntries) cache.delete(cache.keys().next().value);
   }
 
-  async function resolvePool(blockTag) {
-    if (verifiedPool) return verifiedPool;
-    const result = await rpcClient.request(
-      'eth_call',
-      [{ to: factoryAddress, data: buildGetPoolCall() }, blockTag],
-      RPC_FALLBACK_OPTIONS
-    );
-    const poolAddress = decodeAddressResult(result);
-    if (poolAddress === '0x0000000000000000000000000000000000000000') {
-      throw new Error('Canonical WETH/USDG pool is not deployed');
+  async function resolvePools() {
+    if (verifiedPools) return verifiedPools;
+    const pools = [];
+    for (const fee of CANONICAL_FEES) {
+      const result = await rpcClient.request(
+        'eth_call',
+        [{ to: factoryAddress, data: buildGetPoolCall(fee) }, 'latest'],
+        RPC_FALLBACK_OPTIONS
+      );
+      const poolAddress = decodeAddressResult(result);
+      if (poolAddress === '0x0000000000000000000000000000000000000000') continue;
+      const code = String(await rpcClient.request(
+        'eth_getCode',
+        [poolAddress, 'latest'],
+        RPC_FALLBACK_OPTIONS
+      ) || '').toLowerCase();
+      if (!/^0x[0-9a-f]+$/.test(code) || code === '0x' || code === '0x00') {
+        throw new Error(`Canonical WETH/USDG fee ${fee} pool has no bytecode`);
+      }
+      pools.push({
+        fee,
+        poolAddress,
+        deploymentBlock: CANONICAL_POOL_DEPLOYMENT_BLOCKS[fee] || 0n,
+      });
     }
-    const code = String(await rpcClient.request(
-      'eth_getCode',
-      [poolAddress, blockTag],
-      RPC_FALLBACK_OPTIONS
-    ) || '').toLowerCase();
-    if (!/^0x[0-9a-f]+$/.test(code) || code === '0x' || code === '0x00') {
-      throw new Error('Canonical WETH/USDG pool has no bytecode');
-    }
-    verifiedPool = poolAddress;
-    return verifiedPool;
+    if (!pools.length) throw new Error('Canonical WETH/USDG pool is not deployed');
+    verifiedPools = pools;
+    return verifiedPools;
   }
 
   function snapshotFromSqrtPrice(sqrtPriceX96, requestOptions, details) {
@@ -138,7 +151,7 @@ function createRobinhoodWethUsdQuoteReader(options = {}) {
       confidence: 'medium',
       poolAddress: details.poolAddress,
       factoryAddress,
-      fee: CANONICAL_FEE,
+      fee: details.fee,
       sqrtPriceX96: String(sqrtPriceX96),
       liquidityRaw: details.liquidityRaw ?? null,
       blockTag: details.blockTag,
@@ -147,29 +160,63 @@ function createRobinhoodWethUsdQuoteReader(options = {}) {
     };
   }
 
-  async function readStateSnapshot(requestOptions, resolvedBlockTag) {
-    const poolAddress = await resolvePool(resolvedBlockTag);
+  function poolsAtBlock(pools, resolvedBlockTag) {
+    if (resolvedBlockTag === 'latest') return pools;
+    const targetBlock = quantity(resolvedBlockTag, 'blockTag');
+    return pools.filter((pool) => targetBlock >= pool.deploymentBlock);
+  }
+
+  function mostLiquidSnapshot(snapshots) {
+    return snapshots.reduce((best, snapshot) => {
+      if (!best) return snapshot;
+      const liquidity = BigInt(snapshot.liquidityRaw || 0);
+      const bestLiquidity = BigInt(best.liquidityRaw || 0);
+      if (liquidity !== bestLiquidity) return liquidity > bestLiquidity ? snapshot : best;
+      return snapshot.fee < best.fee ? snapshot : best;
+    }, null);
+  }
+
+  async function readPoolStateSnapshot(pool, requestOptions, resolvedBlockTag) {
     const [slot0, liquidityResult] = await Promise.all([
       rpcClient.request(
         'eth_call',
-        [{ to: poolAddress, data: SLOT0_SELECTOR }, resolvedBlockTag],
+        [{ to: pool.poolAddress, data: SLOT0_SELECTOR }, resolvedBlockTag],
         RPC_FALLBACK_OPTIONS
       ),
       rpcClient.request(
         'eth_call',
-        [{ to: poolAddress, data: LIQUIDITY_SELECTOR }, resolvedBlockTag],
+        [{ to: pool.poolAddress, data: LIQUIDITY_SELECTOR }, resolvedBlockTag],
         RPC_FALLBACK_OPTIONS
       ),
     ]);
     const sqrtPriceX96 = decodeWord(slot0, 0, 'slot0').toString();
     const liquidityRaw = decodeWord(liquidityResult, 0, 'liquidity').toString();
     return snapshotFromSqrtPrice(sqrtPriceX96, requestOptions, {
-      source: 'canonical-uniswap-v3-weth-usdg-100',
-      poolAddress,
+      source: `canonical-uniswap-v3-weth-usdg-${pool.fee}`,
+      poolAddress: pool.poolAddress,
+      fee: pool.fee,
       liquidityRaw,
       blockTag: resolvedBlockTag,
       sourceBlockTag: resolvedBlockTag,
     });
+  }
+
+  async function readStateSnapshot(requestOptions, resolvedBlockTag) {
+    const pools = poolsAtBlock(await resolvePools(), resolvedBlockTag);
+    if (!pools.length) {
+      throw new Error(`No canonical WETH/USDG pool at ${resolvedBlockTag}`);
+    }
+    const snapshots = [];
+    let lastError = null;
+    for (const pool of pools) {
+      try {
+        snapshots.push(await readPoolStateSnapshot(pool, requestOptions, resolvedBlockTag));
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    if (!snapshots.length) throw lastError || new Error('Canonical WETH/USDG state unavailable');
+    return mostLiquidSnapshot(snapshots);
   }
 
   async function readLogs(filter) {
@@ -200,23 +247,35 @@ function createRobinhoodWethUsdQuoteReader(options = {}) {
     });
   }
 
-  async function findLatestSwap(poolAddress, targetBlock) {
+  async function findLatestSwap(pool, targetBlock) {
+    if (targetBlock < pool.deploymentBlock) return null;
+    const eventScan = eventScans.get(pool.poolAddress);
     if (eventScan && targetBlock >= eventScan.toBlock) {
-      const logs = await logsInRange(poolAddress, eventScan.toBlock + 1n, targetBlock);
+      const logs = await logsInRange(pool.poolAddress, eventScan.toBlock + 1n, targetBlock);
       const latest = logs.length ? logs.sort(compareLogs).at(-1) : eventScan.log;
-      eventScan = { toBlock: targetBlock, log: latest };
+      eventScans.set(pool.poolAddress, { toBlock: targetBlock, log: latest });
       return latest;
     }
     let rangeEnd = targetBlock;
-    while (rangeEnd >= 0n) {
-      const rangeStart = rangeEnd >= eventRangeSize ? rangeEnd - eventRangeSize + 1n : 0n;
-      const logs = await logsInRange(poolAddress, rangeStart, rangeEnd);
+    while (rangeEnd >= pool.deploymentBlock) {
+      const candidateStart = rangeEnd >= eventRangeSize ? rangeEnd - eventRangeSize + 1n : 0n;
+      const rangeStart = candidateStart > pool.deploymentBlock
+        ? candidateStart
+        : pool.deploymentBlock;
+      const logs = await logsInRange(pool.poolAddress, rangeStart, rangeEnd);
       if (logs.length) {
         const latest = logs.sort(compareLogs).at(-1);
-        if (!eventScan || targetBlock > eventScan.toBlock) eventScan = { toBlock: targetBlock, log: latest };
+        if (!eventScan || targetBlock > eventScan.toBlock) {
+          eventScans.set(pool.poolAddress, { toBlock: targetBlock, log: latest });
+        }
         return latest;
       }
-      if (rangeStart === 0n) return null;
+      if (rangeStart === pool.deploymentBlock) {
+        if (!eventScan || targetBlock > eventScan.toBlock) {
+          eventScans.set(pool.poolAddress, { toBlock: targetBlock, log: null });
+        }
+        return null;
+      }
       rangeEnd = rangeStart - 1n;
     }
     return null;
@@ -224,19 +283,31 @@ function createRobinhoodWethUsdQuoteReader(options = {}) {
 
   async function readEventSnapshot(requestOptions, resolvedBlockTag) {
     const targetBlock = quantity(resolvedBlockTag, 'blockTag');
-    const poolAddress = await resolvePool('latest');
     const previous = eventScanTail;
-    const task = previous.catch(() => {}).then(() => findLatestSwap(poolAddress, targetBlock));
-    eventScanTail = task;
-    const log = await task;
-    if (!log) throw new Error(`No canonical WETH/USDG Swap at or before ${resolvedBlockTag}`);
-    const sqrtPriceX96 = sqrtPriceFromSwapLog(log);
-    return snapshotFromSqrtPrice(sqrtPriceX96, requestOptions, {
-      source: 'canonical-uniswap-v3-weth-usdg-100-swap-event',
-      poolAddress,
-      blockTag: resolvedBlockTag,
-      sourceBlockTag: blockTag(quantity(log.blockNumber, 'Swap blockNumber')),
+    const task = previous.catch(() => {}).then(async () => {
+      const snapshots = [];
+      for (const pool of poolsAtBlock(await resolvePools(), resolvedBlockTag)) {
+        const log = await findLatestSwap(pool, targetBlock);
+        if (!log) continue;
+        snapshots.push(snapshotFromSqrtPrice(
+          sqrtPriceFromSwapLog(log),
+          requestOptions,
+          {
+            source: `canonical-uniswap-v3-weth-usdg-${pool.fee}-swap-event`,
+            poolAddress: pool.poolAddress,
+            fee: pool.fee,
+            liquidityRaw: decodeWord(log.data, 3, 'Swap liquidity').toString(),
+            blockTag: resolvedBlockTag,
+            sourceBlockTag: blockTag(quantity(log.blockNumber, 'Swap blockNumber')),
+          }
+        ));
+      }
+      return mostLiquidSnapshot(snapshots);
     });
+    eventScanTail = task;
+    const snapshot = await task;
+    if (!snapshot) throw new Error(`No canonical WETH/USDG Swap at or before ${resolvedBlockTag}`);
+    return snapshot;
   }
 
   async function getSnapshot(requestOptions = {}) {
@@ -261,6 +332,8 @@ function createRobinhoodWethUsdQuoteReader(options = {}) {
 
 module.exports = {
   CANONICAL_FEE,
+  CANONICAL_FEES,
+  CANONICAL_POOL_DEPLOYMENT_BLOCKS,
   GET_POOL_SELECTOR,
   LIQUIDITY_SELECTOR,
   ROBINHOOD_USDG,
