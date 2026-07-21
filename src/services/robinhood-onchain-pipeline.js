@@ -157,7 +157,7 @@ function createRobinhoodOnchainPipeline(options = {}) {
     rpcClient,
     concurrency: options.timestampConcurrency,
   });
-  const observationConcurrency = Math.max(1, Number(options.observationConcurrency) || 4);
+  const observationConcurrency = Math.max(1, Number(options.observationConcurrency) || 1);
   const socialMetadataQueue = options.socialMetadataQueue || null;
   const noxaValidator = options.noxaValidator || createNoxaLaunchValidator({ rpcClient });
   const observations = rollbackEnabled ? new Map() : null;
@@ -348,7 +348,8 @@ function createRobinhoodOnchainPipeline(options = {}) {
     if (swap.quoteAddress === ROBINHOOD_WETH) {
       try {
         quoteOptions = await getWethQuote(swap.blockNumber);
-      } catch (_) {
+      } catch (error) {
+        if (error?.retryable === true) throw error;
         quoteOptions = null;
       }
     }

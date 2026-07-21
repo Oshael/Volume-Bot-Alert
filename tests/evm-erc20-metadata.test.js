@@ -61,9 +61,9 @@ function createRpc(handler) {
   const calls = [];
   return {
     calls,
-    request: async (method, params) => {
-      calls.push({ method, params });
-      return handler(method, params, calls.length);
+    request: async (method, params, requestOptions) => {
+      calls.push({ method, params, requestOptions });
+      return handler(method, params, calls.length, requestOptions);
     },
   };
 }
@@ -226,6 +226,32 @@ describe('EVM ERC-20 metadata reader', () => {
     assert.equal(result.totalSupplyRaw, null);
     assert.equal(result.status, 'unavailable');
     assert.equal(result.blockTag, '0x10');
+  });
+
+  it('requests historical RPC fallback and propagates exhausted transient supply failures', async () => {
+    const error = new Error('rate limited');
+    error.code = 'rate_limited';
+    error.retryable = true;
+    const rpc = createRpc(() => { throw error; });
+    const reader = createErc20MetadataReader({ rpcClient: rpc, useMulticall: false });
+
+    await assert.rejects(reader.getTotalSupply(TOKEN, { blockTag: '0x10' }), error);
+    assert.deepEqual(rpc.calls[0].requestOptions, { fallbackOnRpcError: true });
+  });
+
+  it('does not fan out transient Multicall failures into individual requests', async () => {
+    const error = new Error('rate limited');
+    error.code = 'rate_limited';
+    error.retryable = true;
+    const rpc = createRpc((method) => {
+      if (method === 'eth_getCode') return '0x6000';
+      throw error;
+    });
+
+    await assert.rejects(createErc20MetadataReader({ rpcClient: rpc }).getMetadata(TOKEN), error);
+    const ethCalls = rpc.calls.filter((call) => call.method === 'eth_call');
+    assert.equal(ethCalls.length, 1);
+    assert.deepEqual(ethCalls[0].requestOptions, { fallbackOnRpcError: true });
   });
 
   it('deduplicates Multicall3 code checks and retries them after transient failure', async () => {

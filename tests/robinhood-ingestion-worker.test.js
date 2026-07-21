@@ -151,6 +151,8 @@ describe('Robinhood ingestion worker', () => {
     assert.equal(publicOnly.publicRpcUrl, 'https://rpc.mainnet.chain.robinhood.com');
     assert.equal(publicOnly.useAlchemy, false);
     assert.equal(publicOnly.marketLogFilterMode, 'topics-only');
+    assert.equal(publicOnly.rpcMinIntervalMs, 250);
+    assert.equal(publicOnly.observationConcurrency, 1);
     assert.throws(
       () => __private.createClient({ ...publicOnly, useAlchemy: true }),
       (error) => error.code === 'configuration_error'

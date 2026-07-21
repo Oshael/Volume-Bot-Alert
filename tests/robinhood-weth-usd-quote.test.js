@@ -39,9 +39,9 @@ function createRpc(overrides = {}) {
   const calls = [];
   return {
     calls,
-    request: async (method, params) => {
-      calls.push({ method, params });
-      if (overrides.handler) return overrides.handler(method, params);
+    request: async (method, params, requestOptions) => {
+      calls.push({ method, params, requestOptions });
+      if (overrides.handler) return overrides.handler(method, params, requestOptions);
       if (method === 'eth_getCode') return '0x6000';
       if (params[0].to === ROBINHOOD_V3_FACTORY) return addressResult(POOL);
       if (params[0].data === SLOT0_SELECTOR) return `0x${word(SQRT_PRICE_X96)}${word(0)}`;
@@ -93,6 +93,10 @@ describe('Robinhood canonical WETH/USD quote reader', () => {
     assert.equal(cached.cached, true);
     assert.equal(reader.getCacheSize(), 1);
     assert.ok(rpc.calls.every((call) => call.params.at(-1) === '0x100'));
+    assert.ok(rpc.calls.every((call) => (
+      call.method === 'eth_getLogs'
+      || call.requestOptions?.fallbackOnRpcError === true
+    )));
   });
 
   it('falls back to the latest canonical Swap event when historical state is pruned', async () => {

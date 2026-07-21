@@ -121,6 +121,29 @@ describe('provider-agnostic EVM JSON-RPC client', () => {
     assert.equal(client.getMetrics().public.eth_chainId.retries, 1);
   });
 
+  it('paces concurrent request starts independently per provider', async () => {
+    let currentTime = 0;
+    const starts = [];
+    const client = createEvmJsonRpcClient({
+      providers: [{ name: 'public', url: 'https://rpc.example.test' }],
+      minRequestIntervalMs: 100,
+      now: () => currentTime,
+      sleep: async (delayMs) => { currentTime += delayMs; },
+      fetchImpl: async (_url, init) => {
+        starts.push(currentTime);
+        const request = requestFrom(init);
+        return response({ jsonrpc: '2.0', id: request.id, result: '0x1' });
+      },
+    });
+
+    await Promise.all([
+      client.request('eth_chainId'),
+      client.request('eth_blockNumber'),
+      client.request('eth_getCode', ['0x1']),
+    ]);
+    assert.deepEqual(starts, [0, 100, 200]);
+  });
+
   it('falls back after primary retries are exhausted without changing the request ID', async () => {
     const calls = [];
     const delays = [];

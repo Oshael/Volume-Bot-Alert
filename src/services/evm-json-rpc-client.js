@@ -191,11 +191,30 @@ function createEvmJsonRpcClient(options = {}) {
   const maxRetries = clampInteger(options.maxRetries, DEFAULT_MAX_RETRIES, 0, 5);
   const baseBackoffMs = clampInteger(options.baseBackoffMs, DEFAULT_BACKOFF_MS, 0, 60000);
   const maxBackoffMs = clampInteger(options.maxBackoffMs, DEFAULT_MAX_BACKOFF_MS, 1, 300000);
+  const minRequestIntervalMs = clampInteger(options.minRequestIntervalMs, 0, 0, 60000);
   const sleep = options.sleep || ((delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)));
   const random = options.random || Math.random;
   const now = options.now || Date.now;
   const metrics = new Map();
+  const providerTails = new Map();
+  const providerNextAllowedAt = new Map();
   let nextRequestId = 0;
+
+  async function throttle(providerName) {
+    if (minRequestIntervalMs <= 0) return;
+    const previous = providerTails.get(providerName) || Promise.resolve();
+    const task = previous.catch(() => {}).then(async () => {
+      const delayMs = Math.max(0, (providerNextAllowedAt.get(providerName) || 0) - now());
+      if (delayMs > 0) await sleep(delayMs);
+      providerNextAllowedAt.set(providerName, now() + minRequestIntervalMs);
+    });
+    providerTails.set(providerName, task);
+    try {
+      await task;
+    } finally {
+      if (providerTails.get(providerName) === task) providerTails.delete(providerName);
+    }
+  }
 
   function metricFor(provider, method) {
     const key = `${provider}\u0000${method}`;
@@ -371,6 +390,7 @@ function createEvmJsonRpcClient(options = {}) {
       if (providerIndex > 0) metricFor(provider.name, normalizedMethod).fallbacks += 1;
       for (let attempt = 1; attempt <= maxRetries + 1; attempt += 1) {
         try {
+          await throttle(provider.name);
           return await fetchAttempt(provider, normalizedMethod, params, requestId, attempt, requestOptions.signal);
         } catch (error) {
           lastError = error;
@@ -412,6 +432,7 @@ function createEvmJsonRpcClient(options = {}) {
       if (providerIndex > 0) metricFor(provider.name, metricMethod).fallbacks += 1;
       for (let attempt = 1; attempt <= maxRetries + 1; attempt += 1) {
         try {
+          await throttle(provider.name);
           return await fetchBatchAttempt(
             provider, requests, metricMethod, attempt, requestOptions.signal
           );

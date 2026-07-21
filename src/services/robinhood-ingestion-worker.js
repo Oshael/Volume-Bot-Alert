@@ -23,6 +23,7 @@ function normalizeOptions(options = {}) {
     maxErrorBackoffMs: boundedInteger(options.maxErrorBackoffMs, 30_000, 1000, 300_000),
     rpcTimeoutMs: boundedInteger(options.rpcTimeoutMs, 15_000, 1000, 60_000),
     rpcMaxRetries: boundedInteger(options.rpcMaxRetries, 1, 0, 5),
+    rpcMinIntervalMs: boundedInteger(options.rpcMinIntervalMs, 250, 0, 60_000),
     lookbackBlocks: boundedInteger(options.lookbackBlocks, 250, 1, 100_000),
     startBlock: options.startBlock || null,
     confirmations: boundedInteger(options.confirmations, 2, 0, 1000),
@@ -35,7 +36,7 @@ function normalizeOptions(options = {}) {
       ? 'tracked-addresses'
       : 'topics-only',
     timestampConcurrency: boundedInteger(options.timestampConcurrency, 16, 1, 32),
-    observationConcurrency: boundedInteger(options.observationConcurrency, 4, 1, 16),
+    observationConcurrency: boundedInteger(options.observationConcurrency, 1, 1, 16),
   };
 }
 
@@ -53,6 +54,7 @@ function createClient(options) {
     providers,
     timeoutMs: options.rpcTimeoutMs,
     maxRetries: options.rpcMaxRetries,
+    minRequestIntervalMs: options.rpcMinIntervalMs,
   });
 }
 

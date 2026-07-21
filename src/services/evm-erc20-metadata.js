@@ -7,6 +7,11 @@ const SELECTORS = Object.freeze({
   totalSupply: '0x18160ddd',
 });
 const FIELDS = Object.freeze(Object.keys(SELECTORS));
+const RPC_FALLBACK_OPTIONS = Object.freeze({ fallbackOnRpcError: true });
+
+function isTransientRpcFailure(error) {
+  return error?.retryable === true;
+}
 
 function normalizeAddress(value, label = 'address') {
   const address = String(value || '').toLowerCase();
@@ -152,9 +157,14 @@ function createErc20MetadataReader(options = {}) {
   async function individualCalls(address, blockTag) {
     return Promise.all(FIELDS.map(async (field) => {
       try {
-        const returnData = await rpcClient.request('eth_call', [{ to: address, data: SELECTORS[field] }, blockTag]);
+        const returnData = await rpcClient.request(
+          'eth_call',
+          [{ to: address, data: SELECTORS[field] }, blockTag],
+          RPC_FALLBACK_OPTIONS
+        );
         return { success: true, returnData };
-      } catch (_) {
+      } catch (error) {
+        if (isTransientRpcFailure(error)) throw error;
         return { success: false, returnData: '0x' };
       }
     }));
@@ -182,10 +192,15 @@ function createErc20MetadataReader(options = {}) {
       try {
         const calls = FIELDS.map((field) => ({ target: address, allowFailure: true, callData: SELECTORS[field] }));
         const data = encodeAggregate3(calls);
-        const result = await rpcClient.request('eth_call', [{ to: multicallAddress, data }, blockTag]);
+        const result = await rpcClient.request(
+          'eth_call',
+          [{ to: multicallAddress, data }, blockTag],
+          RPC_FALLBACK_OPTIONS
+        );
         results = decodeAggregate3(result, calls.length);
         transport = 'multicall3';
-      } catch (_) {
+      } catch (error) {
+        if (isTransientRpcFailure(error)) throw error;
         results = null;
       }
     }
@@ -224,20 +239,24 @@ function createErc20MetadataReader(options = {}) {
     if (supplyPending.has(key)) return supplyPending.get(key);
     const task = rpcClient.request(
       'eth_call',
-      [{ to: address, data: SELECTORS.totalSupply }, blockTag]
+      [{ to: address, data: SELECTORS.totalSupply }, blockTag],
+      RPC_FALLBACK_OPTIONS
     ).then((returnData) => ({
       address,
       blockTag,
       totalSupplyRaw: decodeUintResult(returnData, 256, 'totalSupply').toString(),
       usable: true,
       status: 'exact_block',
-    })).catch(() => ({
-      address,
-      blockTag,
-      totalSupplyRaw: null,
-      usable: false,
-      status: 'unavailable',
-    })).then((value) => {
+    })).catch((error) => {
+      if (isTransientRpcFailure(error)) throw error;
+      return {
+        address,
+        blockTag,
+        totalSupplyRaw: null,
+        usable: false,
+        status: 'unavailable',
+      };
+    }).then((value) => {
       rememberCacheEntry(
         supplyCache,
         key,

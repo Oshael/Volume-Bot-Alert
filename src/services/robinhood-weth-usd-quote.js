@@ -7,6 +7,7 @@ const CANONICAL_FEE = 100;
 const GET_POOL_SELECTOR = '0x1698ee82';
 const SLOT0_SELECTOR = '0x3850c7bd';
 const LIQUIDITY_SELECTOR = '0x1a686502';
+const RPC_FALLBACK_OPTIONS = Object.freeze({ fallbackOnRpcError: true });
 const SWAP_TOPIC = '0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67';
 const Q192 = 1n << 192n;
 
@@ -105,12 +106,20 @@ function createRobinhoodWethUsdQuoteReader(options = {}) {
 
   async function resolvePool(blockTag) {
     if (verifiedPool) return verifiedPool;
-    const result = await rpcClient.request('eth_call', [{ to: factoryAddress, data: buildGetPoolCall() }, blockTag]);
+    const result = await rpcClient.request(
+      'eth_call',
+      [{ to: factoryAddress, data: buildGetPoolCall() }, blockTag],
+      RPC_FALLBACK_OPTIONS
+    );
     const poolAddress = decodeAddressResult(result);
     if (poolAddress === '0x0000000000000000000000000000000000000000') {
       throw new Error('Canonical WETH/USDG pool is not deployed');
     }
-    const code = String(await rpcClient.request('eth_getCode', [poolAddress, blockTag]) || '').toLowerCase();
+    const code = String(await rpcClient.request(
+      'eth_getCode',
+      [poolAddress, blockTag],
+      RPC_FALLBACK_OPTIONS
+    ) || '').toLowerCase();
     if (!/^0x[0-9a-f]+$/.test(code) || code === '0x' || code === '0x00') {
       throw new Error('Canonical WETH/USDG pool has no bytecode');
     }
@@ -141,8 +150,16 @@ function createRobinhoodWethUsdQuoteReader(options = {}) {
   async function readStateSnapshot(requestOptions, resolvedBlockTag) {
     const poolAddress = await resolvePool(resolvedBlockTag);
     const [slot0, liquidityResult] = await Promise.all([
-      rpcClient.request('eth_call', [{ to: poolAddress, data: SLOT0_SELECTOR }, resolvedBlockTag]),
-      rpcClient.request('eth_call', [{ to: poolAddress, data: LIQUIDITY_SELECTOR }, resolvedBlockTag]),
+      rpcClient.request(
+        'eth_call',
+        [{ to: poolAddress, data: SLOT0_SELECTOR }, resolvedBlockTag],
+        RPC_FALLBACK_OPTIONS
+      ),
+      rpcClient.request(
+        'eth_call',
+        [{ to: poolAddress, data: LIQUIDITY_SELECTOR }, resolvedBlockTag],
+        RPC_FALLBACK_OPTIONS
+      ),
     ]);
     const sqrtPriceX96 = decodeWord(slot0, 0, 'slot0').toString();
     const liquidityRaw = decodeWord(liquidityResult, 0, 'liquidity').toString();

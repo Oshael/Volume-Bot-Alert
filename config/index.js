@@ -735,6 +735,12 @@ module.exports = {
     ),
     rpcTimeoutMs: parseIntegerInRange(process.env.ROBINHOOD_RPC_TIMEOUT_MS, 15_000, 1000, 60_000),
     rpcMaxRetries: parseIntegerInRange(process.env.ROBINHOOD_RPC_MAX_RETRIES, 1, 0, 5),
+    rpcMinIntervalMs: parseIntegerInRange(
+      process.env.ROBINHOOD_RPC_MIN_INTERVAL_MS,
+      250,
+      0,
+      60_000
+    ),
     lookbackBlocks: parseIntegerInRange(process.env.ROBINHOOD_LOOKBACK_BLOCKS, 250, 1, 100_000),
     startBlock: parseOptionalBlock(process.env.ROBINHOOD_START_BLOCK),
     confirmations: parseIntegerInRange(process.env.ROBINHOOD_CONFIRMATIONS, 2, 0, 1000),
@@ -765,7 +771,7 @@ module.exports = {
     ),
     observationConcurrency: parseIntegerInRange(
       process.env.ROBINHOOD_OBSERVATION_CONCURRENCY,
-      4,
+      1,
       1,
       16
     ),

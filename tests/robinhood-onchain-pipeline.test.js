@@ -430,6 +430,18 @@ describe('Robinhood onchain pipeline', () => {
     assert.equal(denied.snapshot().metrics.swapsRejected, 1);
   });
 
+  it('propagates transient quote failures so the persistent range cannot advance', async () => {
+    const error = new Error('rate limited');
+    error.code = 'rate_limited';
+    error.retryable = true;
+    const pipeline = createPipeline({
+      now: Number(BigInt(v3Fixture.swap.blockTimestamp) * 1000n) + 1000,
+      quoteReader: { getSnapshot: async () => { throw error; } },
+    });
+
+    await assert.rejects(pipeline.processMarketRange([v3Fixture.swap]), error);
+  });
+
   it('processes discoveries in block/log order even when RPC input is shuffled', async () => {
     const pipeline = createPipeline();
     await pipeline.processDiscoveryLogs([v4Fixture.initialize, v3Fixture.poolCreated, v2Fixture.pairCreated]);
