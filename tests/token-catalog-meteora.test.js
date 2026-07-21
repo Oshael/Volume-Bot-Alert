@@ -18,11 +18,15 @@ describe('token catalog Meteora scheduling', () => {
       const count = await tokenCatalog.countDueForMeteoraSnapshots();
       assert.equal(count, 390);
       assert.match(capturedSql, /SELECT COUNT\(\*\)::int AS count/i);
-      assert.match(capturedSql, /LEFT JOIN token_meteora_state ms/i);
-      assert.match(capturedSql, /COALESCE\(tc\.last_mcap, 0\) >= 100000/i);
+      assert.match(capturedSql, /WITH meteora_eligible_ids AS MATERIALIZED/i);
+      assert.match(capturedSql, /UNION ALL/i);
+      assert.match(capturedSql, /INNER JOIN token_catalog pool_candidate/i);
+      assert.doesNotMatch(capturedSql, /LEFT JOIN token_meteora_state/i);
+      assert.match(capturedSql, /COALESCE\(catalog_candidate\.last_mcap, 0\) >= 100000/i);
       assert.match(capturedSql, /ms\.has_pool = TRUE/i);
-      assert.match(capturedSql, /COALESCE\(tc\.source, ''\) <> 'gmgn'/i);
-      assert.match(capturedSql, /tc\.eligibility_state IN \('dex-low', 'dex-normal', 'dex-high'\)/i);
+      assert.match(capturedSql, /COALESCE\(catalog_candidate\.source, ''\) <> 'gmgn'/i);
+      assert.match(capturedSql, /catalog_candidate\.eligibility_state IN \('dex-low', 'dex-normal', 'dex-high'\)/i);
+      assert.match(capturedSql, /COALESCE\(pool_candidate\.last_mcap, 0\)[\s\S]+IS NOT TRUE/i);
     } finally {
       db.query = originalQuery;
     }
@@ -53,8 +57,8 @@ describe('token catalog Meteora scheduling', () => {
           low: 353,
         },
       });
-      assert.match(capturedSql, /CASE\s+WHEN COALESCE\(tc\.last_vol_24h, 0\) >= 100000 THEN 'high'/i);
-      assert.match(capturedSql, /WHEN COALESCE\(tc\.last_vol_24h, 0\) >= 15000 THEN 'normal'/i);
+      assert.match(capturedSql, /CASE\s+WHEN COALESCE\(eligible\.last_vol_24h, 0\) >= 100000 THEN 'high'/i);
+      assert.match(capturedSql, /WHEN COALESCE\(eligible\.last_vol_24h, 0\) >= 15000 THEN 'normal'/i);
       assert.match(capturedSql, /GROUP BY CASE/i);
     } finally {
       db.query = originalQuery;
@@ -75,14 +79,16 @@ describe('token catalog Meteora scheduling', () => {
     try {
       await tokenCatalog.listDueForMeteoraSnapshots(45);
       assert.deepEqual(capturedParams, [45]);
-      assert.match(capturedSql, /LEFT JOIN token_meteora_state ms/i);
-      assert.match(capturedSql, /WHERE tc\.chain = 'solana'\s+AND tc\.is_active_monitor_candidate = TRUE/i);
-      assert.match(capturedSql, /COALESCE\(tc\.last_mcap, 0\) >= 100000/i);
+      assert.match(capturedSql, /WITH meteora_eligible AS MATERIALIZED/i);
+      assert.match(capturedSql, /UNION ALL/i);
+      assert.doesNotMatch(capturedSql, /LEFT JOIN token_meteora_state/i);
+      assert.match(capturedSql, /catalog_candidate\.chain = 'solana'\s+AND catalog_candidate\.is_active_monitor_candidate = TRUE/i);
+      assert.match(capturedSql, /COALESCE\(catalog_candidate\.last_mcap, 0\) >= 100000/i);
       assert.match(capturedSql, /ms\.has_pool = TRUE/i);
-      assert.match(capturedSql, /COALESCE\(tc\.source, ''\) <> 'gmgn'/i);
-      assert.match(capturedSql, /tc\.eligibility_state IN \('dex-low', 'dex-normal', 'dex-high'\)/i);
+      assert.match(capturedSql, /COALESCE\(catalog_candidate\.source, ''\) <> 'gmgn'/i);
+      assert.match(capturedSql, /catalog_candidate\.eligibility_state IN \('dex-low', 'dex-normal', 'dex-high'\)/i);
       assert.match(capturedSql, /AS meteora_priority_tier/i);
-      assert.match(capturedSql, /ORDER BY tc\.last_meteora_checked_at ASC NULLS FIRST/i);
+      assert.match(capturedSql, /ORDER BY eligible\.last_meteora_checked_at ASC NULLS FIRST/i);
       assert.doesNotMatch(capturedSql, /last_evaluated_at DESC/i);
     } finally {
       db.query = originalQuery;
@@ -105,7 +111,7 @@ describe('token catalog Meteora scheduling', () => {
       assert.deepEqual(capturedParams, [80, 'high']);
       assert.match(capturedSql, /AND CASE/i);
       assert.match(capturedSql, /= \$2/i);
-      assert.match(capturedSql, /COALESCE\(tc\.last_vol_24h, 0\) >= 100000/i);
+      assert.match(capturedSql, /COALESCE\(eligible\.last_vol_24h, 0\) >= 100000/i);
     } finally {
       db.query = originalQuery;
     }
@@ -126,7 +132,7 @@ describe('token catalog Meteora scheduling', () => {
       const checkedBefore = new Date('2026-04-05T23:30:00.000Z');
       await tokenCatalog.listDueForMeteoraSnapshots(50, 'normal', checkedBefore);
       assert.deepEqual(capturedParams, [50, 'normal', checkedBefore]);
-      assert.match(capturedSql, /last_meteora_checked_at IS NULL OR tc\.last_meteora_checked_at <= \$3/i);
+      assert.match(capturedSql, /last_meteora_checked_at IS NULL OR eligible\.last_meteora_checked_at <= \$3/i);
     } finally {
       db.query = originalQuery;
     }

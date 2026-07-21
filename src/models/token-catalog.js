@@ -176,19 +176,36 @@ function normalizeMeteoraPriorityTier(value) {
   return METEORA_PRIORITY_TIERS.includes(tier) ? tier : null;
 }
 
-function buildMeteoraEligibilityWhereSql(tokenAlias = 'tc', stateAlias = 'ms') {
+function buildMeteoraCatalogEligibilitySql(tokenAlias) {
   const dexConfirmedStates = DEX_CONFIRMED_ELIGIBILITY_STATES.map((state) => `'${state}'`).join(', ');
-  return `${tokenAlias}.is_active_monitor_candidate = TRUE
+  return `COALESCE(${tokenAlias}.last_mcap, 0) >= 100000
     AND (
-      ${stateAlias}.has_pool = TRUE
-      OR (
-        COALESCE(${tokenAlias}.last_mcap, 0) >= 100000
-        AND (
-          COALESCE(${tokenAlias}.source, '') <> 'gmgn'
-          OR ${tokenAlias}.eligibility_state IN (${dexConfirmedStates})
-        )
-      )
+      COALESCE(${tokenAlias}.source, '') <> 'gmgn'
+      OR ${tokenAlias}.eligibility_state IN (${dexConfirmedStates})
     )`;
+}
+
+function buildMeteoraEligibleSql(projection = '*') {
+  const catalogProjection = projection === '*'
+    ? 'catalog_candidate.*'
+    : `catalog_candidate.${projection}`;
+  const poolProjection = projection === '*'
+    ? 'pool_candidate.*'
+    : `pool_candidate.${projection}`;
+  return `SELECT ${catalogProjection}
+    FROM token_catalog catalog_candidate
+    WHERE catalog_candidate.chain = 'solana'
+      AND catalog_candidate.is_active_monitor_candidate = TRUE
+      AND ${buildMeteoraCatalogEligibilitySql('catalog_candidate')}
+    UNION ALL
+    SELECT ${poolProjection}
+    FROM token_meteora_state ms
+    INNER JOIN token_catalog pool_candidate
+      ON pool_candidate.chain = 'solana'
+     AND pool_candidate.address = ms.token_address
+    WHERE ms.has_pool = TRUE
+      AND pool_candidate.is_active_monitor_candidate = TRUE
+      AND (${buildMeteoraCatalogEligibilitySql('pool_candidate')}) IS NOT TRUE`;
 }
 
 function buildMeteoraPriorityTierSql(tokenAlias = 'tc') {
@@ -582,29 +599,29 @@ async function listDueForMeteoraSnapshots(limit = 25, tier = null, checkedBefore
 
   if (normalizedTier) {
     params.push(normalizedTier);
-    tierFilterSql = `AND ${buildMeteoraPriorityTierSql('tc')} = $${params.length}`;
+    tierFilterSql = `AND ${buildMeteoraPriorityTierSql('eligible')} = $${params.length}`;
   }
 
   const checkedBeforeDate = toDateOrNull(checkedBefore);
   if (checkedBeforeDate) {
     params.push(checkedBeforeDate);
-    checkedBeforeSql = `AND (tc.last_meteora_checked_at IS NULL OR tc.last_meteora_checked_at <= $${params.length})`;
+    checkedBeforeSql = `AND (eligible.last_meteora_checked_at IS NULL OR eligible.last_meteora_checked_at <= $${params.length})`;
   }
 
   const { rows } = await db.query(
-    `SELECT
-       tc.*,
-       ${buildMeteoraPriorityTierSql('tc')} AS meteora_priority_tier
-     FROM token_catalog tc
-     LEFT JOIN token_meteora_state ms
-       ON ms.token_address = tc.address
-     WHERE tc.chain = 'solana'
-       AND ${buildMeteoraEligibilityWhereSql('tc', 'ms')}
+    `WITH meteora_eligible AS MATERIALIZED (
+       ${buildMeteoraEligibleSql()}
+     )
+     SELECT
+       eligible.*,
+       ${buildMeteoraPriorityTierSql('eligible')} AS meteora_priority_tier
+     FROM meteora_eligible eligible
+     WHERE TRUE
        ${tierFilterSql}
        ${checkedBeforeSql}
-     ORDER BY tc.last_meteora_checked_at ASC NULLS FIRST,
-              tc.last_seen_at DESC,
-              tc.address ASC
+     ORDER BY eligible.last_meteora_checked_at ASC NULLS FIRST,
+              eligible.last_seen_at DESC,
+              eligible.address ASC
      LIMIT $1`,
     params
   );
@@ -613,12 +630,11 @@ async function listDueForMeteoraSnapshots(limit = 25, tier = null, checkedBefore
 
 async function countDueForMeteoraSnapshots() {
   const { rows } = await db.query(
-    `SELECT COUNT(*)::int AS count
-     FROM token_catalog tc
-     LEFT JOIN token_meteora_state ms
-       ON ms.token_address = tc.address
-     WHERE tc.chain = 'solana'
-       AND ${buildMeteoraEligibilityWhereSql('tc', 'ms')}`
+    `WITH meteora_eligible_ids AS MATERIALIZED (
+       ${buildMeteoraEligibleSql('id')}
+     )
+     SELECT COUNT(*)::int AS count
+     FROM meteora_eligible_ids`
   );
 
   return Number(rows[0]?.count) || 0;
@@ -626,15 +642,14 @@ async function countDueForMeteoraSnapshots() {
 
 async function countDueForMeteoraSnapshotsByTier() {
   const { rows } = await db.query(
-    `SELECT
-       ${buildMeteoraPriorityTierSql('tc')} AS meteora_priority_tier,
+    `WITH meteora_eligible AS MATERIALIZED (
+       ${buildMeteoraEligibleSql('last_vol_24h')}
+     )
+     SELECT
+       ${buildMeteoraPriorityTierSql('eligible')} AS meteora_priority_tier,
        COUNT(*)::int AS count
-     FROM token_catalog tc
-     LEFT JOIN token_meteora_state ms
-       ON ms.token_address = tc.address
-     WHERE tc.chain = 'solana'
-       AND ${buildMeteoraEligibilityWhereSql('tc', 'ms')}
-     GROUP BY ${buildMeteoraPriorityTierSql('tc')}`
+     FROM meteora_eligible eligible
+     GROUP BY ${buildMeteoraPriorityTierSql('eligible')}`
   );
 
   const byTier = emptyMeteoraPriorityCounts();

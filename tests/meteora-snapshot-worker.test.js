@@ -154,7 +154,9 @@ describe('Meteora snapshot worker scheduling', () => {
     const recordedErrors = [];
     const transactionLog = [];
 
-    tokenCatalog.countDueForMeteoraSnapshots = async () => 390;
+    tokenCatalog.countDueForMeteoraSnapshots = async () => {
+      throw new Error('Meteora universe must not be counted twice');
+    };
     tokenCatalog.countDueForMeteoraSnapshotsByTier = async () => ({
       total: 390,
       byTier: {

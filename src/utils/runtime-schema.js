@@ -1776,6 +1776,30 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage80-meteora-eligibility-indexes',
+    name: 'Stage 80 Meteora eligibility indexes',
+    repair: 'node src/utils/db-init-stage80.js',
+    tables: [
+      {
+        table: 'token_catalog',
+        indexes: [{
+          name: 'idx_token_catalog_meteora_catalog_eligible',
+          includes: [
+            'id', 'chain', 'is_active_monitor_candidate', 'last_mcap',
+            'source', 'eligibility_state',
+          ],
+        }],
+      },
+      {
+        table: 'token_meteora_state',
+        indexes: [{
+          name: 'idx_token_meteora_state_active_pool_address',
+          includes: ['token_address', 'has_pool'],
+        }],
+      },
+    ],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
@@ -1790,6 +1814,7 @@ const PROFILE_GROUP_KEYS = {
     'stage77-chain-scoped-alert-state',
     'stage78-robinhood-market-buckets-agg',
     'stage79-robinhood-supply-provenance',
+    'stage80-meteora-eligibility-indexes',
   ],
   runtime: SCHEMA_GROUPS.map((group) => group.key),
 };

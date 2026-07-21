@@ -318,10 +318,8 @@ async function runOnce() {
   status.lastRunAt = checkedAt.toISOString();
 
   try {
-    const [universeCount, tierSummary] = await Promise.all([
-      tokenCatalog.countDueForMeteoraSnapshots(),
-      tokenCatalog.countDueForMeteoraSnapshotsByTier(),
-    ]);
+    const tierSummary = await tokenCatalog.countDueForMeteoraSnapshotsByTier();
+    const universeCount = Number(tierSummary?.total) || 0;
     const tierBudgetPlan = computeTierBudgetPlan(tierSummary?.byTier || {});
     const batchLimit = computeDynamicBatchLimit(universeCount);
     status.lastUniverseCount = universeCount;
