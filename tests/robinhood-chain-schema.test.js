@@ -26,6 +26,7 @@ const stage71 = require('../src/utils/db-init-stage71');
 const stage72 = require('../src/utils/db-init-stage72');
 const stage74 = require('../src/utils/db-init-stage74');
 const stage78 = require('../src/utils/db-init-stage78');
+const stage79 = require('../src/utils/db-init-stage79');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 
 describe('Robinhood additive chain schema', () => {
@@ -330,6 +331,25 @@ describe('Robinhood additive chain schema', () => {
     assert.deepEqual(group.tables[0].indexes.map((index) => index.name), [
       'idx_robinhood_market_buckets_agg_token_range',
       'idx_robinhood_market_buckets_agg_cleanup',
+    ]);
+  });
+
+  it('records historical supply provenance without relabeling FDV as market cap', () => {
+    const sql = stage79.STATEMENTS.join('\n');
+    const group = SCHEMA_GROUPS.find((entry) => (
+      entry.key === 'stage79-robinhood-supply-provenance'
+    ));
+
+    assert.match(sql, /ADD COLUMN IF NOT EXISTS token_supply_status/);
+    assert.match(sql, /ADD COLUMN IF NOT EXISTS token_supply_anchor_block_number/);
+    assert.match(sql, /reconstructed_mint_burn/);
+    assert.match(sql, /token_supply_anchor_block_number <= block_number/);
+    assert.match(sql, /NOT VALID/);
+    assert.doesNotMatch(sql, /UPDATE robinhood_market_observations/);
+    assert.doesNotMatch(sql, /market_cap_usd\s*=/);
+    assert.equal(group.repair, 'node src/utils/db-init-stage79.js');
+    assert.deepEqual(group.tables[0].columns, [
+      'token_supply_status', 'token_supply_anchor_block_number',
     ]);
   });
 

@@ -128,15 +128,24 @@ function decodeMetadataResults(address, results) {
   return { ...output, usable, status: errors.length ? (usable ? 'partial' : 'unusable') : 'complete', errors };
 }
 
+function rememberCacheEntry(cache, key, entry, maxEntries) {
+  if (cache.has(key)) cache.delete(key);
+  cache.set(key, entry);
+  while (cache.size > maxEntries) cache.delete(cache.keys().next().value);
+}
+
 function createErc20MetadataReader(options = {}) {
   if (typeof options.rpcClient?.request !== 'function') throw new Error('rpcClient.request is required');
   const rpcClient = options.rpcClient;
   const multicallAddress = normalizeAddress(options.multicallAddress || MULTICALL3_ADDRESS);
   const ttlMs = Math.max(0, Number(options.ttlMs ?? 3600000));
   const failureTtlMs = Math.max(0, Number(options.failureTtlMs ?? 30000));
+  const maxCacheEntries = Math.max(1, Math.trunc(Number(options.maxCacheEntries)) || 5000);
   const now = options.now || Date.now;
   const cache = new Map();
   const pending = new Map();
+  const supplyCache = new Map();
+  const supplyPending = new Map();
   let multicallUsable;
   let multicallCheck = null;
 
@@ -192,17 +201,64 @@ function createErc20MetadataReader(options = {}) {
     if (!requestOptions.refresh && cached && cached.expiresAt > now()) return { ...cached.value, cached: true };
     if (pending.has(key)) return pending.get(key);
     const task = readFresh(address, blockTag).then((value) => {
-      cache.set(key, { value, expiresAt: now() + (value.usable ? ttlMs : failureTtlMs) });
+      rememberCacheEntry(
+        cache,
+        key,
+        { value, expiresAt: now() + (value.usable ? ttlMs : failureTtlMs) },
+        maxCacheEntries
+      );
       return { ...value, cached: false };
     }).finally(() => pending.delete(key));
     pending.set(key, task);
     return task;
   }
 
+  async function getTotalSupply(tokenAddress, requestOptions = {}) {
+    const address = normalizeAddress(tokenAddress, 'token address');
+    const blockTag = String(requestOptions.blockTag || 'latest');
+    const key = `${address}:${blockTag}`;
+    const cached = supplyCache.get(key);
+    if (!requestOptions.refresh && cached && cached.expiresAt > now()) {
+      return { ...cached.value, cached: true };
+    }
+    if (supplyPending.has(key)) return supplyPending.get(key);
+    const task = rpcClient.request(
+      'eth_call',
+      [{ to: address, data: SELECTORS.totalSupply }, blockTag]
+    ).then((returnData) => ({
+      address,
+      blockTag,
+      totalSupplyRaw: decodeUintResult(returnData, 256, 'totalSupply').toString(),
+      usable: true,
+      status: 'exact_block',
+    })).catch(() => ({
+      address,
+      blockTag,
+      totalSupplyRaw: null,
+      usable: false,
+      status: 'unavailable',
+    })).then((value) => {
+      rememberCacheEntry(
+        supplyCache,
+        key,
+        { value, expiresAt: now() + (value.usable ? ttlMs : failureTtlMs) },
+        maxCacheEntries
+      );
+      return { ...value, cached: false };
+    }).finally(() => supplyPending.delete(key));
+    supplyPending.set(key, task);
+    return task;
+  }
+
   return Object.freeze({
     getMetadata,
-    clearCache: () => cache.clear(),
+    getTotalSupply,
+    clearCache: () => {
+      cache.clear();
+      supplyCache.clear();
+    },
     getCacheSize: () => cache.size,
+    getSupplyCacheSize: () => supplyCache.size,
   });
 }
 

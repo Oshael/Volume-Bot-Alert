@@ -153,6 +153,8 @@ function marketEntry(overrides = {}) {
       tokenDecimals: 18,
       quoteDecimals: 6,
       tokenTotalSupplyRaw: '1000000000000000000000000000',
+      tokenSupplyStatus: 'exact_block_call',
+      tokenSupplyBlockTag: '8069000',
       tokenAmountRaw: '123456789012345678901234567890',
       quoteAmountRaw: '98765432109876543210',
       tokenAmount: '123456789012.34567890123456789',
@@ -600,6 +602,8 @@ describe('Robinhood persistence repository', () => {
     assert.equal('data' in logPayload[0], false);
     assert.equal(observationPayload[0].status, 'accepted');
     assert.equal(observationPayload[0].tokenAmountRaw, '123456789012345678901234567890');
+    assert.equal(observationPayload[0].tokenSupplyStatus, 'exact_block_call');
+    assert.equal(observationPayload[0].tokenSupplyAnchorBlockNumber, '8069000');
     assert.equal(observationPayload[0].priceUsd, '0.000000000000000000123456789012');
     assert.equal(observationPayload[0].liquidityRaw, '12345678901234567890');
     assert.equal(observationPayload[0].liquidityStatus, 'requires_tick_liquidity_distribution');

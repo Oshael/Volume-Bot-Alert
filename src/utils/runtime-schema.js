@@ -1760,6 +1760,22 @@ const SCHEMA_GROUPS = [
       ],
     }],
   },
+  {
+    key: 'stage79-robinhood-supply-provenance',
+    name: 'Stage 79 Robinhood historical supply provenance',
+    repair: 'node src/utils/db-init-stage79.js',
+    tables: [{
+      table: 'robinhood_market_observations',
+      columns: ['token_supply_status', 'token_supply_anchor_block_number'],
+      constraints: [{
+        name: 'robinhood_market_observations_supply_provenance_check',
+        includes: [
+          'CHECK', 'token_supply_status', 'token_supply_anchor_block_number',
+          'exact_block_call', 'reconstructed_mint_burn', 'unchanged_between_anchors',
+        ],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
@@ -1773,6 +1789,7 @@ const PROFILE_GROUP_KEYS = {
     'stage76-custom-alert-capabilities',
     'stage77-chain-scoped-alert-state',
     'stage78-robinhood-market-buckets-agg',
+    'stage79-robinhood-supply-provenance',
   ],
   runtime: SCHEMA_GROUPS.map((group) => group.key),
 };

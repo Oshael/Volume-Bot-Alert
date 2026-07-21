@@ -7,6 +7,7 @@ const {
   LIQUIDITY_SELECTOR,
   ROBINHOOD_V3_FACTORY,
   SLOT0_SELECTOR,
+  SWAP_TOPIC,
   buildGetPoolCall,
   createRobinhoodWethUsdQuoteReader,
   priceFromSqrtPriceX96,
@@ -23,6 +24,15 @@ function word(value) {
 
 function addressResult(address) {
   return `0x${address.slice(2).padStart(64, '0')}`;
+}
+
+function swapLog(blockNumber, sqrtPriceX96 = SQRT_PRICE_X96, logIndex = 1) {
+  return {
+    blockNumber,
+    logIndex: `0x${logIndex.toString(16)}`,
+    topics: [SWAP_TOPIC],
+    data: `0x${word(0)}${word(0)}${word(sqrtPriceX96)}${word(LIQUIDITY)}${word(0)}`,
+  };
 }
 
 function createRpc(overrides = {}) {
@@ -65,7 +75,67 @@ describe('Robinhood canonical WETH/USD quote reader', () => {
     assert.equal(snapshot.sqrtPriceX96, SQRT_PRICE_X96.toString());
     assert.equal(snapshot.liquidityRaw, LIQUIDITY.toString());
     assert.equal(snapshot.observedAtMs, 123456);
+    assert.equal(snapshot.blockTag, 'latest');
+    assert.equal(snapshot.sourceBlockTag, 'latest');
     assert.equal(rpc.calls.length, 4);
+  });
+
+  it('reads and caches canonical pool state at the requested historical block', async () => {
+    const rpc = createRpc();
+    const reader = createRobinhoodWethUsdQuoteReader({ rpcClient: rpc });
+
+    const first = await reader.getSnapshot({ blockTag: '0x100' });
+    const cached = await reader.getSnapshot({ blockTag: '0x100' });
+
+    assert.equal(first.blockTag, '0x100');
+    assert.equal(first.sourceBlockTag, '0x100');
+    assert.equal(first.cached, false);
+    assert.equal(cached.cached, true);
+    assert.equal(reader.getCacheSize(), 1);
+    assert.ok(rpc.calls.every((call) => call.params.at(-1) === '0x100'));
+  });
+
+  it('falls back to the latest canonical Swap event when historical state is pruned', async () => {
+    const ranges = [];
+    const rpc = createRpc({
+      handler: async (method, params) => {
+        if (method === 'eth_call' && params[1] === '0x200') throw new Error('missing trie node');
+        if (method === 'eth_call' && params[0].to === ROBINHOOD_V3_FACTORY) return addressResult(POOL);
+        if (method === 'eth_getCode') return '0x6000';
+        if (method === 'eth_getLogs') {
+          ranges.push([params[0].fromBlock, params[0].toBlock]);
+          return params[0].toBlock === '0x200' ? [swapLog('0x1f0')] : [];
+        }
+        throw new Error('unexpected request');
+      },
+    });
+    const reader = createRobinhoodWethUsdQuoteReader({ rpcClient: rpc, eventRangeSize: 1000 });
+
+    const first = await reader.getSnapshot({ blockTag: '0x200' });
+    const later = await reader.getSnapshot({ blockTag: '0x210' });
+
+    assert.equal(first.priceUsd, '1804.567604374506');
+    assert.equal(first.source, 'canonical-uniswap-v3-weth-usdg-100-swap-event');
+    assert.equal(first.sourceBlockTag, '0x1f0');
+    assert.equal(later.sourceBlockTag, '0x1f0');
+    assert.deepEqual(ranges, [['0x0', '0x200'], ['0x201', '0x210']]);
+  });
+
+  it('fails closed when neither historical state nor a prior canonical Swap exists', async () => {
+    const rpc = createRpc({
+      handler: async (method, params) => {
+        if (method === 'eth_call' && params[1] === '0x20') throw new Error('missing trie node');
+        if (method === 'eth_call') return addressResult(POOL);
+        if (method === 'eth_getCode') return '0x6000';
+        if (method === 'eth_getLogs') return [];
+        throw new Error('unexpected request');
+      },
+    });
+
+    await assert.rejects(
+      createRobinhoodWethUsdQuoteReader({ rpcClient: rpc }).getSnapshot({ blockTag: '0x20' }),
+      /No canonical WETH\/USDG Swap/
+    );
   });
 
   it('caches only the verified pool identity while refreshing price state', async () => {

@@ -46,6 +46,7 @@ function createPipeline(options = {}) {
     policyOptions: options.policyOptions,
     timestampConcurrency: options.timestampConcurrency,
     observationConcurrency: options.observationConcurrency,
+    supplyDeltaReader: options.supplyDeltaReader,
     retainRollbackState: options.retainRollbackState,
     rollbackStateLimit: options.rollbackStateLimit,
     windowAggregationEnabled: options.windowAggregationEnabled,
@@ -259,17 +260,143 @@ describe('Robinhood onchain pipeline', () => {
     const accepted = await pipeline.processMarketLogs([secondSwap, v4Fixture.swap]);
 
     assert.deepEqual(accepted.map((entry) => entry.logIndex), ['9', '37']);
-    assert.equal(maxActive, 4);
+    assert.equal(maxActive, 3);
     assert.equal(pipeline.snapshot().enrichment.observationConcurrency, 2);
   });
 
-  it('converts WETH swaps with a cached canonical quote', async () => {
+  it('uses exact historical supply and proves an unchanged isolated block failure', async () => {
+    const supplyCalls = [];
+    const reader = metadataReader();
+    reader.getTotalSupply = async (_address, options) => {
+      supplyCalls.push(options.blockTag);
+      if (options.blockTag === v4Fixture.swap.blockNumber || options.blockTag === '0x729cd2') {
+        return { usable: true, totalSupplyRaw: '1230000000000000000000' };
+      }
+      return { usable: false, totalSupplyRaw: null };
+    };
+    const secondSwap = {
+      ...v4Fixture.swap,
+      blockNumber: '0x729cd1',
+      blockHash: `0x${'dd'.repeat(32)}`,
+      blockTimestamp: '0x6a531556',
+      transactionHash: `0x${'cc'.repeat(32)}`,
+      logIndex: '0xa',
+    };
+    const pipeline = createPipeline({
+      metadataReader: reader,
+      supplyDeltaReader: { getDelta: async () => ({ usable: true, deltaRaw: '0' }) },
+      observationConcurrency: 2,
+    });
+
+    const accepted = await pipeline.processMarketLogs([v4Fixture.swap, secondSwap]);
+
+    assert.deepEqual(supplyCalls, ['0x729cd0', '0x729cd1', '0x729cd2']);
+    assert.equal(accepted.length, 2);
+    assert.equal(accepted[0].tokenSupplyStatus, 'exact_block_call');
+    assert.equal(accepted[0].tokenSupplyBlockTag, '0x729cd0');
+    assert.equal(accepted[1].tokenSupplyStatus, 'unchanged_between_anchors');
+    assert.equal(accepted[1].tokenSupplyBlockTag, '0x729cd0');
+    assert.equal(accepted[1].tokenTotalSupplyRaw, accepted[0].tokenTotalSupplyRaw);
+    assert.equal(pipeline.snapshot().enrichment.supplyCheckpoints, 1);
+  });
+
+  it('reconstructs supply from mint and burn deltas after a historical call failure', async () => {
+    const reader = metadataReader();
+    reader.getTotalSupply = async (_address, options) => {
+      if (options.blockTag === '0x729cd0') {
+        return { usable: true, totalSupplyRaw: '1000' };
+      }
+      return options.blockTag === '0x729cd2'
+        ? { usable: true, totalSupplyRaw: '900' }
+        : { usable: false, totalSupplyRaw: null };
+    };
+    const secondSwap = {
+      ...v4Fixture.swap,
+      blockNumber: '0x729cd1',
+      blockHash: `0x${'dd'.repeat(32)}`,
+      blockTimestamp: '0x6a531556',
+      transactionHash: `0x${'cc'.repeat(32)}`,
+      logIndex: '0xa',
+    };
+    const ranges = [];
+    const pipeline = createPipeline({
+      metadataReader: reader,
+      supplyDeltaReader: {
+        getDelta: async (_address, range) => {
+          ranges.push(range);
+          return range.fromBlock === 0x729cd1n
+            && range.toBlock === 0x729cd1n
+            && ranges.length === 1
+            ? { usable: true, deltaRaw: '-100' }
+            : { usable: true, deltaRaw: '0' };
+        },
+      },
+    });
+
+    const accepted = await pipeline.processMarketLogs([v4Fixture.swap, secondSwap]);
+
+    assert.equal(accepted.length, 2);
+    assert.equal(accepted[1].tokenSupplyStatus, 'reconstructed_mint_burn');
+    assert.equal(accepted[1].tokenSupplyBlockTag, '0x729cd0');
+    assert.equal(accepted[1].tokenTotalSupplyRaw, '900');
+    assert.deepEqual(ranges, [
+      { fromBlock: 0x729cd1n, toBlock: 0x729cd1n },
+      { fromBlock: 0x729cd2n, toBlock: 0x729cd2n },
+    ]);
+  });
+
+  it('rejects reconstructed supply when mint and burn events disagree with the next anchor', async () => {
+    const reader = metadataReader();
+    reader.getTotalSupply = async (_address, options) => {
+      if (options.blockTag === '0x729cd0') {
+        return { usable: true, totalSupplyRaw: '1000' };
+      }
+      return options.blockTag === '0x729cd2'
+        ? { usable: true, totalSupplyRaw: '800' }
+        : { usable: false, totalSupplyRaw: null };
+    };
+    const secondSwap = {
+      ...v4Fixture.swap,
+      blockNumber: '0x729cd1',
+      blockHash: `0x${'dd'.repeat(32)}`,
+      blockTimestamp: '0x6a531556',
+      transactionHash: `0x${'cc'.repeat(32)}`,
+      logIndex: '0xa',
+    };
+    const pipeline = createPipeline({
+      metadataReader: reader,
+      supplyDeltaReader: {
+        getDelta: async () => ({ usable: true, deltaRaw: '0' }),
+      },
+    });
+
+    const entries = await pipeline.processMarketRange([v4Fixture.swap, secondSwap]);
+
+    assert.equal(entries[0].observation.accepted, true);
+    assert.equal(entries[1].observation.accepted, false);
+    assert.equal(entries[1].observation.reason, 'token_metadata_unusable');
+  });
+
+  it('does not apply latest supply to history before the first reliable anchor', async () => {
+    const reader = metadataReader();
+    reader.getTotalSupply = async () => ({ usable: false, totalSupplyRaw: null });
+    const pipeline = createPipeline({ metadataReader: reader });
+
+    const [entry] = await pipeline.processMarketRange([v4Fixture.swap]);
+
+    assert.equal(entry.observation.accepted, false);
+    assert.equal(entry.observation.reason, 'token_metadata_unusable');
+  });
+
+  it('converts WETH swaps with a canonical quote cached by historical block', async () => {
     let quoteCalls = 0;
+    const blockTags = [];
     const pipeline = createPipeline({
       now: Number(BigInt(v3Fixture.swap.blockTimestamp) * 1000n) + 1000,
       quoteReader: {
-        getSnapshot: async () => {
+        getSnapshot: async (options) => {
           quoteCalls += 1;
+          blockTags.push(options.blockTag);
           return { priceUsd: '1800', source: 'canonical-test' };
         },
       },
@@ -284,6 +411,8 @@ describe('Robinhood onchain pipeline', () => {
     assert.equal(accepted[0].quoteUsdSource, 'canonical-test');
     assert.equal(accepted[0].quoteUsdStatus, 'observed');
     assert.equal(quoteCalls, 1);
+    assert.deepEqual(blockTags, [v3Fixture.swap.blockNumber]);
+    assert.equal(pipeline.snapshot().enrichment.wethQuoteBlocks, 1);
   });
 
   it('counts quote and eligibility rejections without stalling the batch', async () => {

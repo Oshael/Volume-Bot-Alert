@@ -192,6 +192,42 @@ describe('EVM ERC-20 metadata reader', () => {
     assert.equal(aggregateCalls, 2);
   });
 
+  it('reads totalSupply at an exact block with a bounded independent cache', async () => {
+    const rpc = createRpc((method, params) => {
+      assert.equal(method, 'eth_call');
+      assert.equal(params[0].data, SELECTORS.totalSupply);
+      return uintResult(BigInt(params[1]));
+    });
+    const reader = createErc20MetadataReader({
+      rpcClient: rpc,
+      maxCacheEntries: 2,
+    });
+
+    const first = await reader.getTotalSupply(TOKEN, { blockTag: '0x10' });
+    const cached = await reader.getTotalSupply(TOKEN, { blockTag: '0x10' });
+    await reader.getTotalSupply(TOKEN, { blockTag: '0x11' });
+    await reader.getTotalSupply(TOKEN, { blockTag: '0x12' });
+
+    assert.equal(first.totalSupplyRaw, '16');
+    assert.equal(first.status, 'exact_block');
+    assert.equal(cached.cached, true);
+    assert.equal(rpc.calls.length, 3);
+    assert.equal(reader.getSupplyCacheSize(), 2);
+  });
+
+  it('returns an unavailable supply result instead of throwing historical state failures', async () => {
+    const rpc = createRpc(() => { throw new Error('missing trie node'); });
+    const result = await createErc20MetadataReader({
+      rpcClient: rpc,
+      useMulticall: false,
+    }).getTotalSupply(TOKEN, { blockTag: '0x10' });
+
+    assert.equal(result.usable, false);
+    assert.equal(result.totalSupplyRaw, null);
+    assert.equal(result.status, 'unavailable');
+    assert.equal(result.blockTag, '0x10');
+  });
+
   it('deduplicates Multicall3 code checks and retries them after transient failure', async () => {
     let codeCalls = 0;
     const rpc = createRpc(async (method, params) => {

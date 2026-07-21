@@ -22,6 +22,11 @@ const LIQUIDITY_STATUSES = new Set([
 const MINUTE_MS = 60 * 1000;
 const MAX_SIGNAL_WINDOW_MS = 14 * 24 * 60 * MINUTE_MS;
 const SIGNAL_PROTOCOLS = new Set(['uniswap-v2', 'uniswap-v3', 'uniswap-v4']);
+const SUPPLY_STATUSES = new Set([
+  'exact_block_call',
+  'reconstructed_mint_burn',
+  'unchanged_between_anchors',
+]);
 
 function normalizeSignalProtocols(value) {
   const entries = Array.isArray(value) ? value : [];
@@ -341,6 +346,8 @@ function emptyObservationMetrics() {
     tokenDecimals: null,
     quoteDecimals: null,
     tokenTotalSupplyRaw: null,
+    tokenSupplyStatus: null,
+    tokenSupplyAnchorBlockNumber: null,
     tokenAmount: null,
     quoteAmount: null,
     priceQuote: null,
@@ -421,6 +428,19 @@ function normalizeAcceptedObservation(observation, context) {
     throw new Error('Observation identity does not match its decoded swap');
   }
   assertObservationMatchesSwap(observation, context);
+  const tokenSupplyStatus = String(observation.tokenSupplyStatus || '');
+  const tokenSupplyAnchorBlockNumber = decimalQuantity(
+    observation.tokenSupplyBlockTag,
+    'observation.tokenSupplyBlockTag'
+  );
+  if (!SUPPLY_STATUSES.has(tokenSupplyStatus)) throw new Error('Observation supply status is invalid');
+  if (BigInt(tokenSupplyAnchorBlockNumber) > BigInt(context.blockNumber)) {
+    throw new Error('Observation supply anchor cannot be newer than its swap');
+  }
+  if (tokenSupplyStatus === 'exact_block_call'
+    && tokenSupplyAnchorBlockNumber !== context.blockNumber) {
+    throw new Error('Exact observation supply anchor must match its swap block');
+  }
   return {
     tokenDecimals: uint8(observation.tokenDecimals, 'observation.tokenDecimals'),
     quoteDecimals: uint8(observation.quoteDecimals, 'observation.quoteDecimals'),
@@ -429,6 +449,8 @@ function normalizeAcceptedObservation(observation, context) {
       'observation.tokenTotalSupplyRaw',
       { allowZero: true }
     ),
+    tokenSupplyStatus,
+    tokenSupplyAnchorBlockNumber,
     tokenAmountRaw: decimalValue(observation.tokenAmountRaw, 'observation.tokenAmountRaw'),
     quoteAmountRaw: decimalValue(observation.quoteAmountRaw, 'observation.quoteAmountRaw'),
     tokenAmount: decimalValue(observation.tokenAmount, 'observation.tokenAmount', { allowZero: true }),
@@ -604,6 +626,7 @@ async function insertMarketObservations(client, rows, cursor) {
          "tokenAddress" text, "quoteAddress" text, side text, status text,
          "rejectionReason" text, "observedAt" timestamptz,
          "tokenDecimals" int, "quoteDecimals" int, "tokenTotalSupplyRaw" text,
+         "tokenSupplyStatus" text, "tokenSupplyAnchorBlockNumber" text,
          "tokenAmountRaw" text, "quoteAmountRaw" text, "tokenAmount" text,
          "quoteAmount" text, "priceQuote" text, "quoteUsdPrice" text,
          "priceUsd" text, "volumeUsd" text, "fdvUsd" text, "marketCapUsd" text,
@@ -617,7 +640,8 @@ async function insertMarketObservations(client, rows, cursor) {
          chain, transaction_hash, log_index, block_number, protocol, market_key,
          pool_address, pool_id, token_address, quote_address, side, status,
          rejection_reason, observed_at,
-         token_decimals, quote_decimals, token_total_supply_raw, token_amount_raw,
+         token_decimals, quote_decimals, token_total_supply_raw,
+         token_supply_status, token_supply_anchor_block_number, token_amount_raw,
          quote_amount_raw, token_amount, quote_amount, price_quote, quote_usd_price,
          price_usd, volume_usd, fdv_usd, market_cap_usd, valuation_type,
          quote_usd_source, quote_usd_status, liquidity_usd, liquidity_raw,
@@ -627,7 +651,8 @@ async function insertMarketObservations(client, rows, cursor) {
          'robinhood', "transactionHash", "logIndex"::bigint, "blockNumber"::bigint,
          protocol, "marketKey", "poolAddress", "poolId", "tokenAddress", "quoteAddress",
          side, status, "rejectionReason", "observedAt", "tokenDecimals", "quoteDecimals",
-         "tokenTotalSupplyRaw"::numeric, "tokenAmountRaw"::numeric,
+         "tokenTotalSupplyRaw"::numeric, "tokenSupplyStatus",
+         "tokenSupplyAnchorBlockNumber"::bigint, "tokenAmountRaw"::numeric,
          "quoteAmountRaw"::numeric, "tokenAmount"::numeric, "quoteAmount"::numeric,
          "priceQuote"::numeric, "quoteUsdPrice"::numeric, "priceUsd"::numeric,
          "volumeUsd"::numeric, "fdvUsd"::numeric, "marketCapUsd"::numeric,

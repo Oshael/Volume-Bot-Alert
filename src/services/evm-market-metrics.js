@@ -165,6 +165,8 @@ function buildMarketObservation(input = {}) {
     tokenDecimals: tokenMetadata.decimals,
     quoteDecimals: quoteMetadata.decimals,
     tokenTotalSupplyRaw: String(tokenMetadata.totalSupplyRaw),
+    tokenSupplyStatus: tokenMetadata.tokenSupplyStatus || null,
+    tokenSupplyBlockTag: tokenMetadata.tokenSupplyBlockTag || null,
     tokenAmountRaw: tokenRaw.toString(),
     quoteAmountRaw: quoteRaw.toString(),
     tokenAmount: formatDecimal(tokenAmount),
