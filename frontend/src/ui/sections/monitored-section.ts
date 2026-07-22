@@ -49,7 +49,7 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
   if (view.capabilityNotice) {
     section.innerHTML = `
       <div class="panel-header monitored-panel-header">
-        <span class="monitored-panel-title">MONITORED<br>TOKENS</span>
+        <span class="monitored-panel-title"><span class="monitored-panel-title-icon" aria-hidden="true">📡</span><span class="monitored-panel-title-copy"><span>MONITORED</span><span>TOKENS</span></span></span>
         <span class="count monitored-token-count-pill">0</span>
       </div>
       <div class="chain-readiness-empty" data-chain-readiness-surface="monitored">${escapeHtml(view.capabilityNotice)}</div>
@@ -130,7 +130,7 @@ function resolveMonitoredSortClasses(state: AppState) {
 function renderCollapsedMonitoredHeader(count: number, pinCount: number) {
   return `
     <div class="panel-header monitored-panel-header">
-      <span class="monitored-panel-title">MONITORED<br>TOKENS</span>
+      <span class="monitored-panel-title"><span class="monitored-panel-title-icon" aria-hidden="true">📡</span><span class="monitored-panel-title-copy"><span>MONITORED</span><span>TOKENS</span></span></span>
       <div class="panel-header-controls monitored-header-controls">
         <div class="monitored-header-top">
           <span class="monitored-token-pill-wrap">
@@ -212,7 +212,7 @@ function renderMonitoredFilters(view: MonitoredSectionView) {
 function renderExpandedMonitoredMarkup(state: AppState, view: MonitoredSectionView) {
   return `
     <div class="panel-header monitored-panel-header">
-      <span class="monitored-panel-title">MONITORED<br>TOKENS</span>
+      <span class="monitored-panel-title"><span class="monitored-panel-title-icon" aria-hidden="true">📡</span><span class="monitored-panel-title-copy"><span>MONITORED</span><span>TOKENS</span></span></span>
       <div class="panel-header-controls monitored-header-controls">
         <div class="monitored-header-top">
           ${renderMonitoredFilters(view)}

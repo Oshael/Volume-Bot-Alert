@@ -9994,11 +9994,22 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .monitored-panel-title {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
   max-width: 168px;
-  line-height: 1.55;
   white-space: normal;
   color: #cad7eb;
+}
+
+.monitored-panel-title-icon {
+  flex: 0 0 auto;
+  line-height: 1;
+}
+
+.monitored-panel-title-copy {
+  display: grid;
+  line-height: 1.55;
 }
 
 .monitored-header-controls {
@@ -12938,7 +12949,7 @@ TEMP_LEGACY_BAR_TITLE {
 .monitored-token-row-v68 {
   grid-template-columns: 48px minmax(0, 1fr) 78px;
   gap: 12px !important;
-  padding: 12px 12px !important;
+  padding: 8px 12px !important;
 }
 
 .monitored-token-row .tok-avatar,
@@ -12989,7 +13000,7 @@ TEMP_LEGACY_BAR_TITLE {
 .monitored-token-row-v68 {
   grid-template-columns: 36px minmax(0, 1fr) 78px;
   gap: 12px !important;
-  padding: 12px 12px !important;
+  padding: 8px 12px !important;
 }
 
 .monitored-list .monitored-token-row {
