@@ -725,6 +725,9 @@ module.exports = {
     ).trim(),
     alchemyRpcUrl: String(process.env.ROBINHOOD_ALCHEMY_RPC_URL || '').trim(),
     useAlchemy: parseBoolean(process.env.ROBINHOOD_USE_ALCHEMY, false),
+    drpcRpcUrl: String(process.env.ROBINHOOD_DRPC_RPC_URL || '').trim(),
+    useDrpc: parseBoolean(process.env.ROBINHOOD_USE_DRPC, false),
+    fallbackOrder: String(process.env.ROBINHOOD_FALLBACK_ORDER || 'drpc,alchemy').trim(),
     socialMetadataEnabled: parseBoolean(process.env.ROBINHOOD_SOCIAL_METADATA_ENABLED, false),
     pollIntervalMs: parseIntegerInRange(process.env.ROBINHOOD_POLL_INTERVAL_MS, 2000, 250, 300_000),
     maxErrorBackoffMs: parseIntegerInRange(

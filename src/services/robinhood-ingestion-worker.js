@@ -6,6 +6,11 @@ const { createRobinhoodPersistenceRepository } = require('../models/robinhood-pe
 const PUBLIC_RPC_URL = 'https://rpc.mainnet.chain.robinhood.com';
 const ROBINHOOD_CHAIN_ID = 4663n;
 const FATAL_ERROR_CODES = new Set(['bootstrap_start_required', 'configuration_error', 'persistent_reorg']);
+const DEFAULT_FALLBACK_ORDER = 'drpc,alchemy';
+const FALLBACK_PROVIDERS = Object.freeze({
+  alchemy: Object.freeze({ name: 'alchemy-free', urlKey: 'alchemyRpcUrl', useKey: 'useAlchemy', envHint: 'ROBINHOOD_ALCHEMY_RPC_URL' }),
+  drpc: Object.freeze({ name: 'drpc', urlKey: 'drpcRpcUrl', useKey: 'useDrpc', envHint: 'ROBINHOOD_DRPC_RPC_URL' }),
+});
 
 function boundedInteger(value, fallback, min, max) {
   const parsed = Math.trunc(Number(value));
@@ -18,6 +23,9 @@ function normalizeOptions(options = {}) {
     publicRpcUrl: String(options.publicRpcUrl || PUBLIC_RPC_URL),
     alchemyRpcUrl: String(options.alchemyRpcUrl || ''),
     useAlchemy: options.useAlchemy === true,
+    drpcRpcUrl: String(options.drpcRpcUrl || ''),
+    useDrpc: options.useDrpc === true,
+    fallbackOrder: String(options.fallbackOrder || DEFAULT_FALLBACK_ORDER),
     socialMetadataEnabled: options.socialMetadataEnabled === true,
     pollIntervalMs: boundedInteger(options.pollIntervalMs, 2000, 250, 300_000),
     maxErrorBackoffMs: boundedInteger(options.maxErrorBackoffMs, 30_000, 1000, 300_000),
@@ -40,15 +48,34 @@ function normalizeOptions(options = {}) {
   };
 }
 
+function parseFallbackOrder(value) {
+  const tokens = String(value || DEFAULT_FALLBACK_ORDER)
+    .split(',')
+    .map((token) => token.trim().toLowerCase())
+    .filter(Boolean);
+  const order = [];
+  for (const token of tokens) {
+    if (!FALLBACK_PROVIDERS[token]) {
+      const error = new TypeError(`ROBINHOOD_FALLBACK_ORDER contains an unknown provider: ${token}`);
+      error.code = 'configuration_error';
+      throw error;
+    }
+    if (!order.includes(token)) order.push(token);
+  }
+  return order;
+}
+
 function createClient(options) {
   const providers = [{ name: 'robinhood-public', url: options.publicRpcUrl }];
-  if (options.useAlchemy && !options.alchemyRpcUrl) {
-    const error = new TypeError('ROBINHOOD_ALCHEMY_RPC_URL is required when Alchemy fallback is enabled');
-    error.code = 'configuration_error';
-    throw error;
-  }
-  if (options.useAlchemy) {
-    providers.push({ name: 'alchemy-free', url: options.alchemyRpcUrl });
+  for (const token of parseFallbackOrder(options.fallbackOrder)) {
+    const spec = FALLBACK_PROVIDERS[token];
+    if (options[spec.useKey] !== true) continue;
+    if (!options[spec.urlKey]) {
+      const error = new TypeError(`${spec.envHint} is required when the ${token} fallback is enabled`);
+      error.code = 'configuration_error';
+      throw error;
+    }
+    providers.push({ name: spec.name, url: options[spec.urlKey] });
   }
   return createEvmJsonRpcClient({
     providers,

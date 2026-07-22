@@ -254,6 +254,8 @@ async function createRobinhoodContinuousRunner(options = {}) {
       pipeline: pipeline.snapshot(),
       rpc: summarizeRpcMetrics(rpcClient.getMetrics?.() || {}),
       alchemyEnabled: rpcClient.providers?.includes('alchemy-free') || false,
+      drpcEnabled: rpcClient.providers?.includes('drpc') || false,
+      rpcProviders: Array.isArray(rpcClient.providers) ? [...rpcClient.providers] : null,
       noxaComparison: options.noxaComparison || {
         status: 'not_automated',
         reason: 'no_public_versioned_indexer_api_contract',

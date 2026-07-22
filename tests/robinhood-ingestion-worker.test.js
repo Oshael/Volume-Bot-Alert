@@ -165,4 +165,45 @@ describe('Robinhood ingestion worker', () => {
     });
     assert.deepEqual(client.providers, ['robinhood-public', 'alchemy-free']);
   });
+
+  it('supports dRPC fallback alongside Alchemy with configurable order', () => {
+    const base = __private.normalizeOptions({ enabled: true });
+    assert.equal(base.useDrpc, false);
+    assert.equal(base.fallbackOrder, 'drpc,alchemy');
+
+    const drpcOnly = __private.createClient({
+      ...base,
+      useDrpc: true,
+      drpcRpcUrl: 'https://example.invalid/drpc',
+    });
+    assert.deepEqual(drpcOnly.providers, ['robinhood-public', 'drpc']);
+
+    const both = __private.createClient({
+      ...base,
+      useAlchemy: true,
+      alchemyRpcUrl: 'https://example.invalid/rpc',
+      useDrpc: true,
+      drpcRpcUrl: 'https://example.invalid/drpc',
+    });
+    assert.deepEqual(both.providers, ['robinhood-public', 'drpc', 'alchemy-free']);
+
+    const alchemyFirst = __private.createClient({
+      ...base,
+      fallbackOrder: 'alchemy,drpc',
+      useAlchemy: true,
+      alchemyRpcUrl: 'https://example.invalid/rpc',
+      useDrpc: true,
+      drpcRpcUrl: 'https://example.invalid/drpc',
+    });
+    assert.deepEqual(alchemyFirst.providers, ['robinhood-public', 'alchemy-free', 'drpc']);
+
+    assert.throws(
+      () => __private.createClient({ ...base, useDrpc: true }),
+      (error) => error.code === 'configuration_error'
+    );
+    assert.throws(
+      () => __private.createClient({ ...base, fallbackOrder: 'drpc,helius' }),
+      (error) => error.code === 'configuration_error'
+    );
+  });
 });
