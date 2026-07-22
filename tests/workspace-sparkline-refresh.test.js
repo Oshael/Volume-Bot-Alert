@@ -2,8 +2,8 @@ const { before, describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
 let getWorkspaceSparklineNextRefreshAt;
-let resolveMonitoredQuickSparklineGranularityMinutes;
 let resolveWorkspaceSparklineGranularityMinutes;
+let resolveWorkspaceSparklineRequestShape;
 let runWorkspaceSparklineRequestWithTimeout;
 let selectWorkspaceSparklineRefreshBatches;
 let splitWorkspaceSparklineBatchesByChain;
@@ -11,8 +11,8 @@ let splitWorkspaceSparklineBatchesByChain;
 before(async () => {
   ({
     getWorkspaceSparklineNextRefreshAt,
-    resolveMonitoredQuickSparklineGranularityMinutes,
     resolveWorkspaceSparklineGranularityMinutes,
+    resolveWorkspaceSparklineRequestShape,
     runWorkspaceSparklineRequestWithTimeout,
     selectWorkspaceSparklineRefreshBatches,
     splitWorkspaceSparklineBatchesByChain,
@@ -20,15 +20,6 @@ before(async () => {
 });
 
 describe('workspace sparkline request shape', () => {
-  it('uses the fixed monitored quick-range resolution contract', () => {
-    assert.deepEqual(
-      [1, 4, 12, 24, 72, 168, 336].map((hours) => (
-        resolveMonitoredQuickSparklineGranularityMinutes(hours)
-      )),
-      [1, 1, 1, 1, 5, 15, 30],
-    );
-  });
-
   it('uses the canonical Solana resolution tier for every selectable range', () => {
     const cases = [
       [1, 1],
@@ -70,6 +61,52 @@ describe('workspace sparkline request shape', () => {
       rangeDays: 14,
       referenceTs,
     }), 15);
+  });
+
+  it('keeps a 14-day preset at one-minute resolution for a three-hour token', () => {
+    const referenceTs = Date.UTC(2026, 6, 18, 12);
+    assert.deepEqual(resolveWorkspaceSparklineRequestShape({
+      anchorAt: referenceTs - (3 * 60 * 60 * 1000),
+      requestedHours: 14 * 24,
+      referenceTs,
+    }), {
+      hours: 14 * 24,
+      granularityMinutes: 1,
+      allAvailable: false,
+      queryAllAvailable: false,
+    });
+  });
+
+  it('loads all of a young token with its age-adapted timed resolution', () => {
+    const referenceTs = Date.UTC(2026, 6, 18, 12);
+    assert.deepEqual(resolveWorkspaceSparklineRequestShape({
+      anchorAt: referenceTs - (5 * 24 * 60 * 60 * 1000),
+      requestedHours: 14 * 24,
+      allAvailable: true,
+      referenceTs,
+    }), {
+      hours: 5 * 24,
+      granularityMinutes: 15,
+      allAvailable: true,
+      queryAllAvailable: false,
+    });
+  });
+
+  it('keeps the full-history hourly query for old or unknown token ages', () => {
+    const referenceTs = Date.UTC(2026, 6, 18, 12);
+    for (const anchorAt of [null, referenceTs - (31 * 24 * 60 * 60 * 1000)]) {
+      assert.deepEqual(resolveWorkspaceSparklineRequestShape({
+        anchorAt,
+        requestedHours: 14 * 24,
+        allAvailable: true,
+        referenceTs,
+      }), {
+        hours: 0,
+        granularityMinutes: 60,
+        allAvailable: true,
+        queryAllAvailable: true,
+      });
+    }
   });
 
   it('isolates same-shape batches by chain', () => {
@@ -153,6 +190,29 @@ describe('workspace sparkline refresh selection', () => {
       getWorkspaceSparklineNextRefreshAt(batches, cache, refreshIntervalMs),
       0,
     );
+  });
+
+  it('refreshes when the same timed shape changes between a preset and all', () => {
+    const now = Date.UTC(2026, 6, 8, 20, 30, 0);
+    const batches = [{
+      hours: 120,
+      granularityMinutes: 15,
+      allAvailable: true,
+      addresses: ['young-token'],
+    }];
+    const cache = {
+      'young-token': {
+        hours: 120,
+        granularityMinutes: 15,
+        allAvailable: false,
+        refreshedAt: now - 5_000,
+      },
+    };
+
+    assert.deepEqual(selectWorkspaceSparklineRefreshBatches(batches, cache, {
+      now,
+      refreshIntervalMs: 60_000,
+    }), batches);
   });
 
   it('treats a fresh empty-result cache entry as fetched', () => {

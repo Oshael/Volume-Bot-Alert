@@ -1,6 +1,8 @@
 import type { TokenChain } from '../utils/token-chain';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+const MAX_TIMED_SPARKLINE_HOURS = 30 * 24;
 
 export type WorkspaceSparklineIdentity = {
   chain: TokenChain;
@@ -12,6 +14,7 @@ export type WorkspaceIdentitySparklineBatch = {
   hours: number;
   granularityMinutes: number;
   allAvailable?: boolean;
+  queryAllAvailable?: boolean;
   identities: WorkspaceSparklineIdentity[];
 };
 
@@ -19,6 +22,7 @@ export type LegacyWorkspaceSparklineBatch = {
   hours: number;
   granularityMinutes: number;
   allAvailable?: boolean;
+  queryAllAvailable?: boolean;
   addresses: string[];
 };
 
@@ -28,6 +32,7 @@ export type WorkspaceSparklineCacheValue = {
   generatedAt?: string | null;
   granularityMinutes?: number | null;
   hours?: number;
+  allAvailable?: boolean;
   refreshedAt?: number;
 };
 
@@ -51,12 +56,37 @@ export function resolveWorkspaceSparklineGranularityMinutes(input: {
   return 30;
 }
 
-export function resolveMonitoredQuickSparklineGranularityMinutes(hours: number) {
-  const safeHours = Math.max(1, Number(hours) || 1);
-  if (safeHours <= 24) return 1;
-  if (safeHours <= 72) return 5;
-  if (safeHours <= 168) return 15;
-  return 30;
+export function resolveWorkspaceSparklineRequestShape(input: {
+  anchorAt?: number | null;
+  requestedHours: number;
+  allAvailable?: boolean;
+  referenceTs?: number;
+}) {
+  const referenceTs = Number.isFinite(Number(input.referenceTs))
+    ? Number(input.referenceTs)
+    : Date.now();
+  const anchorAt = Number(input.anchorAt);
+  const hasReliableAge = Number.isFinite(anchorAt) && anchorAt > 0 && anchorAt <= referenceTs;
+  const tokenAgeHours = hasReliableAge
+    ? Math.max(1, Math.ceil((referenceTs - anchorAt) / HOUR_MS))
+    : null;
+  const allAvailable = input.allAvailable === true;
+  const queryAllAvailable = allAvailable
+    && (tokenAgeHours == null || tokenAgeHours > MAX_TIMED_SPARKLINE_HOURS);
+  const requestedHours = Math.max(
+    1,
+    Math.min(Math.ceil(Number(input.requestedHours) || 1), MAX_TIMED_SPARKLINE_HOURS),
+  );
+  const hours = queryAllAvailable ? 0 : (allAvailable ? tokenAgeHours ?? requestedHours : requestedHours);
+  const granularityMinutes = queryAllAvailable
+    ? 60
+    : resolveWorkspaceSparklineGranularityMinutes({
+      anchorAt: hasReliableAge ? anchorAt : null,
+      rangeDays: hours / 24,
+      referenceTs,
+    });
+
+  return { hours, granularityMinutes, allAvailable, queryAllAvailable };
 }
 
 export function splitWorkspaceSparklineBatchesByChain(
@@ -112,7 +142,11 @@ function isWorkspaceSparklineEntryFresh(
   if (!entry) {
     return false;
   }
-  if (Number(entry.hours) !== batch.hours || Number(entry.granularityMinutes) !== batch.granularityMinutes) {
+  if (
+    Number(entry.hours) !== batch.hours
+    || Number(entry.granularityMinutes) !== batch.granularityMinutes
+    || (entry.allAvailable === true) !== (batch.allAvailable === true)
+  ) {
     return false;
   }
 
@@ -178,6 +212,7 @@ export function getWorkspaceSparklineNextRefreshAt(
         !entry
         || Number(entry.hours) !== batch.hours
         || Number(entry.granularityMinutes) !== batch.granularityMinutes
+        || (entry.allAvailable === true) !== (batch.allAvailable === true)
       ) {
         return 0;
       }

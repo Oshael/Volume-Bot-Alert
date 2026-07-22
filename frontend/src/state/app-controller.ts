@@ -125,8 +125,7 @@ import { API_RESPONSE_DEBUG_EVENT } from '../services/api/response-metadata';
 import { trimLoginEmailValue } from '../ui/sections/login-form-utils';
 import {
   getWorkspaceSparklineNextRefreshAt,
-  resolveMonitoredQuickSparklineGranularityMinutes,
-  resolveWorkspaceSparklineGranularityMinutes,
+  resolveWorkspaceSparklineRequestShape as resolveAdaptiveWorkspaceSparklineRequestShape,
   runWorkspaceSparklineRequestWithTimeout,
   selectWorkspaceSparklineRefreshBatches,
   splitWorkspaceSparklineBatchesByChain,
@@ -432,6 +431,7 @@ type SparklineBatchRequest = {
   hours: number;
   granularityMinutes: number;
   allAvailable?: boolean;
+  queryAllAvailable?: boolean;
   identities: TokenIdentity[];
 };
 
@@ -2587,6 +2587,7 @@ export function createAppController(): AppController {
         hours: batch.hours,
         granularityMinutes: batch.granularityMinutes,
         allAvailable: batch.allAvailable === true,
+        queryAllAvailable: batch.queryAllAvailable === true,
         addresses: summarizeSparklineDebugAddresses(batch.identities.map((identity) => identity.key)),
       })),
     };
@@ -7705,17 +7706,13 @@ export function createAppController(): AppController {
     const allAvailable = quickRangeHours === 0 || preset === 'all';
     const rangeDays = getSparklineRangeDays(scope, identity);
     const presetHours = preset ? SPARKLINE_RANGE_HOURS.get(preset) : null;
-    const hours = allAvailable ? 0 : (quickRangeHours ?? presetHours ?? (rangeDays * 24));
-    const granularityMinutes = allAvailable
-      ? 60
-      : quickRangeHours == null && presetHours == null
-        ? resolveWorkspaceSparklineGranularityMinutes({
-          anchorAt: trackedToken?.createdAt ?? null,
-          rangeDays,
-          referenceTs,
-        })
-        : resolveMonitoredQuickSparklineGranularityMinutes(hours);
-    return { hours, granularityMinutes, allAvailable };
+    const requestedHours = quickRangeHours ?? presetHours ?? (rangeDays * 24);
+    return resolveAdaptiveWorkspaceSparklineRequestShape({
+      anchorAt: trackedToken?.createdAt ?? null,
+      requestedHours: requestedHours || (rangeDays * 24),
+      allAvailable,
+      referenceTs,
+    });
   }
 
   function getVisibleWorkspaceSparklineBatches(referenceTs = Date.now()) {
@@ -7723,12 +7720,12 @@ export function createAppController(): AppController {
     const selectedIdentities = getVisibleWorkspaceSparklineIdentityScopes();
 
     for (const { identity, scope } of selectedIdentities) {
-      const { hours, granularityMinutes, allAvailable } = resolveWorkspaceSparklineRequestShape(
+      const { hours, granularityMinutes, allAvailable, queryAllAvailable } = resolveWorkspaceSparklineRequestShape(
         identity,
         scope,
         referenceTs,
       );
-      const key = `${allAvailable ? 'all' : hours}:${granularityMinutes}`;
+      const key = `${allAvailable ? 'all' : 'range'}:${queryAllAvailable ? 'history' : hours}:${granularityMinutes}`;
       const batch = grouped.get(key);
       if (batch?.identities.some((item) => item.key === identity.key)) {
         continue;
@@ -7742,6 +7739,7 @@ export function createAppController(): AppController {
         hours,
         granularityMinutes,
         allAvailable,
+        queryAllAvailable,
         identities: [identity],
       });
     }
@@ -7837,7 +7835,7 @@ export function createAppController(): AppController {
 
   function buildSparklineBatchKey(batches: SparklineBatchRequest[]) {
     return batches
-      .map((item) => `${item.hours}:${item.granularityMinutes}:${item.identities.map((identity) => identity.key).sort().join(',')}`)
+      .map((item) => `${item.allAvailable === true}:${item.queryAllAvailable === true}:${item.hours}:${item.granularityMinutes}:${item.identities.map((identity) => identity.key).sort().join(',')}`)
       .join('|');
   }
 
@@ -8011,13 +8009,14 @@ export function createAppController(): AppController {
     };
   }
 
-  function resolveHistorySparklineRequestMetadata(payload: TokenSparklinesPayload) {
-    if (payload.allAvailable) {
-      return { hours: 0, points: Number(payload.points) || 500 };
-    }
+  function resolveHistorySparklineRequestMetadata(
+    payload: TokenSparklinesPayload,
+    expectedBatch?: SparklineBatchRequest,
+  ) {
     return {
-      hours: Number(payload.hours) || SPARKLINE_WINDOW_HOURS,
-      points: Number(payload.points) || SPARKLINE_POINT_COUNT,
+      hours: expectedBatch?.hours ?? (payload.allAvailable ? 0 : (Number(payload.hours) || SPARKLINE_WINDOW_HOURS)),
+      allAvailable: expectedBatch?.allAvailable === true || payload.allAvailable === true,
+      points: Number(payload.points) || (expectedBatch?.allAvailable ? 500 : SPARKLINE_POINT_COUNT),
     };
   }
 
@@ -8025,13 +8024,14 @@ export function createAppController(): AppController {
     item: TokenSparklinesPayload['items'][number] | null | undefined,
     payload: TokenSparklinesPayload,
     refreshedAt = Date.now(),
+    expectedBatch?: SparklineBatchRequest,
   ) {
     if (!item?.address) {
       return null;
     }
 
     const series = Array.isArray(item.series) ? item.series : [];
-    const request = resolveHistorySparklineRequestMetadata(payload);
+    const request = resolveHistorySparklineRequestMetadata(payload, expectedBatch);
     return {
       ...buildHistorySparklineChainMetadata(item),
       address: item.address,
@@ -8046,7 +8046,7 @@ export function createAppController(): AppController {
       generatedAt: payload.generatedAt ?? null,
       refreshedAt,
       hours: request.hours,
-      allAvailable: payload.allAvailable === true,
+      allAvailable: request.allAvailable,
       points: request.points,
       series,
       candles: Array.isArray(item.candles) ? item.candles : [],
@@ -8060,7 +8060,7 @@ export function createAppController(): AppController {
     const returnedKeys = new Set<string>();
     let changed = false;
     for (const item of payload.items || []) {
-      const entry = buildHistorySparklineCacheEntry(item, payload, refreshedAt);
+      const entry = buildHistorySparklineCacheEntry(item, payload, refreshedAt, expectedBatch);
       if (!entry) {
         continue;
       }
@@ -9059,7 +9059,7 @@ export function createAppController(): AppController {
                 hours: batch.hours,
                 points: batch.allAvailable ? 500 : SPARKLINE_POINT_COUNT,
                 granularityMinutes: batch.granularityMinutes,
-                allAvailable: batch.allAvailable,
+                allAvailable: batch.queryAllAvailable,
                 allowOneMinuteFallback: true,
                 signal,
                 onResponse: (response) => recordSparklineDebug('http.response', {

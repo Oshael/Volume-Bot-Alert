@@ -570,7 +570,7 @@ const ROBINHOOD_RADAR_API_FIXTURES = {
       priceChange24h: 0,
       priceChangeCoverage: { '1h': 'partial', '6h': 'unavailable', '24h': 'complete' },
       activityState: 'stale',
-      createdAt: Date.parse('2026-07-14T16:00:00.000Z'),
+      tokenCreatedAt: Date.now() - (5 * 24 * 60 * 60 * 1000),
     };
     const solanaToken = {
       ...marketToken('solana', 'RADARSOL'),
@@ -580,7 +580,7 @@ const ROBINHOOD_RADAR_API_FIXTURES = {
       },
       coverage: { '1h': 'complete', '6h': 'complete', '24h': 'complete' },
       priceChangeCoverage: { '1h': 'complete', '6h': 'complete', '24h': 'complete' },
-      createdAt: Date.parse('2026-07-14T15:00:00.000Z'),
+      tokenCreatedAt: Date.now() - (5 * 24 * 60 * 60 * 1000),
     };
     const recentTokens = requestPayload.chains?.includes('solana')
       ? [robinhoodToken, solanaToken]
@@ -1198,7 +1198,14 @@ test('renders Radar valuation freshness, coverage and independent chain filters 
   await expect(recentBar.locator('[data-action="set-sparkline-range-preset"]'))
     .toHaveText(['1H', '4H', '12H', '1D', '3D', '7D', '14D', 'ALL']);
   await recentBar.locator('[data-action="set-sparkline-range-preset"][data-sparkline-range-preset="all"]').click();
-  await expect.poll(() => compactChartRequestPayloads.some((payload) => payload.allAvailable === true)).toBe(true);
+  await expect.poll(() => compactChartRequestPayloads.some((payload) => (
+    payload.allAvailable === false
+      && payload.hours >= 120
+      && payload.hours <= 121
+      && payload.points === 500
+      && payload.granularityMinutes === 15
+      && payload.identities?.some((item) => item.address === ROBINHOOD_TOKEN)
+  ))).toBe(true);
   await expect(page.locator('.old-week-bar [data-action="set-sparkline-range-preset"][data-sparkline-range-preset="all"]')).toHaveText('ALL');
   await expect(recentBar.locator('input[name="old-mcap-min"]')).toHaveValue('120000');
   await expect(recentBar.locator('input[name="old-fdv-min"]')).toHaveValue('130000');
