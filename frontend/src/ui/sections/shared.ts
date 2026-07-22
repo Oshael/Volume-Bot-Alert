@@ -173,7 +173,10 @@ function bindUiControlTooltips(section: ParentNode) {
     target.addEventListener('pointermove', (event) => {
       uiControlTooltipPointer = { x: event.clientX, y: event.clientY };
     });
-    target.addEventListener('pointerleave', () => reconcileUiControlTooltipAfterLeave(target));
+    target.addEventListener('pointerleave', (event) => {
+      uiControlTooltipPointer = { x: event.clientX, y: event.clientY };
+      reconcileUiControlTooltipAfterLeave(target);
+    });
     target.addEventListener('focus', () => activateUiControlTooltip(target));
     target.addEventListener('blur', clearUiControlTooltip);
     target.addEventListener('click', clearUiControlTooltip);
