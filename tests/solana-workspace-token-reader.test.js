@@ -128,9 +128,12 @@ describe('Solana workspace token reader', () => {
     assert.match(sql, /tc\.last_price/);
     assert.match(sql, /tc\.last_pair_url/);
     assert.match(sql, /window_coverage/);
+    assert.match(sql, /bucket_ts >= \$1::timestamptz - INTERVAL '15 minutes'/);
+    assert.match(sql, /recent\.close_vol_5m IS NULL/);
+    assert.doesNotMatch(sql, /recent\.close_vol_1h IS NULL/);
     assert.match(sql, /admin_blocked_tokens/);
     assert.match(sql, /junk_permanent/);
-    assert.match(sql, /CASE[\s\S]+close_vol_5m[\s\S]+INTERVAL '1 minute'/);
+    assert.match(sql, /CASE[\s\S]+close_vol_5m[\s\S]+bucket_ts_5m[\s\S]+INTERVAL '1 minute'/);
     assert.match(sql, /close_vol_5m DESC NULLS LAST/);
     assert.match(sql, /tc\.last_mcap ASC NULLS LAST/);
     assert.match(sql, /token_created_at_ms[\s\S]+DESC NULLS LAST/);

@@ -84,6 +84,9 @@ describe('Solana workspace radar reader', () => {
 
     assert.match(sql, /FROM token_catalog tc/);
     assert.match(sql, /token_market_volume_buckets_1m/);
+    assert.match(sql, /bucket_ts >= \$1::timestamptz - INTERVAL '15 minutes'/);
+    assert.match(sql, /recent\.close_vol_1h IS NULL/);
+    assert.doesNotMatch(sql, /recent\.close_vol_24h IS NULL/);
     assert.match(sql, /token_market_buckets_1m/);
     assert.match(sql, /admin_blocked_tokens/);
     assert.match(sql, /junk_permanent/);

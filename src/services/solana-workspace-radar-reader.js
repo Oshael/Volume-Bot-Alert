@@ -2,6 +2,7 @@ const db = require('../models/db');
 const {
   createSolanaWorkspaceWindowReadRepository,
 } = require('../models/solana-workspace-window-read');
+const { buildCanonicalVolumeJoinSql } = require('../models/solana-volume-window-sql');
 const { createTokenIdentity, normalizeTokenAddress } = require('../utils/token-identity');
 const { evaluateWorkspaceVisibility } = require('./workspace-visibility-policy');
 const {
@@ -20,17 +21,11 @@ const VOLUME_COLUMNS = Object.freeze({
   '1h': 'close_vol_1h', '6h': 'close_vol_6h', '24h': 'close_vol_24h',
 });
 
-function volumeCoverageStateSql(window) {
-  return `CASE jsonb_typeof(volume.window_coverage -> '${window}')
-    WHEN 'object' THEN volume.window_coverage -> '${window}' ->> 'state'
-    WHEN 'string' THEN volume.window_coverage ->> '${window}' ELSE NULL END`;
-}
-
 function volumeCoverageRankSql(window) {
   const column = VOLUME_COLUMNS[window];
-  return `CASE WHEN volume.${column} IS NULL OR volume.bucket_ts IS NULL THEN 2
-    WHEN volume.bucket_ts < $1::timestamptz - INTERVAL '1 minute'
-      OR (${volumeCoverageStateSql(window)}) IS DISTINCT FROM 'complete' THEN 1 ELSE 0 END`;
+  return `CASE WHEN volume.${column} IS NULL OR volume.bucket_ts_${window} IS NULL THEN 2
+    WHEN volume.bucket_ts_${window} < $1::timestamptz - INTERVAL '1 minute'
+      OR volume.coverage_state_${window} IS DISTINCT FROM 'complete' THEN 1 ELSE 0 END`;
 }
 
 function priceValueSql(window) {
@@ -69,19 +64,17 @@ function buildOrderSql(sorts) {
 }
 
 function buildCatalogSql(sorts) {
+  const volumeWindows = [...new Set(sorts
+    .filter((sort) => sort.mode === 'vol').map((sort) => sort.window))];
   return `SELECT tc.address, tc.symbol, tc.name, tc.source, tc.first_seen_at,
   tc.last_seen_at, tc.last_evaluated_at, tc.last_token_created_at_ms,
   tc.last_mcap, tc.last_price, tc.last_liquidity_usd, tc.last_pair_address,
   tc.last_pair_url, tc.last_dex_id, tc.last_image_url, tc.last_twitter_url,
   tc.last_community_url, tc.monitor_priority, COUNT(*) OVER() AS total_count
 FROM token_catalog tc
-LEFT JOIN LATERAL (
-  SELECT bucket_ts, close_vol_1h, close_vol_6h, close_vol_24h, window_coverage
-  FROM token_market_volume_buckets_1m bucket
-  WHERE bucket.chain = 'solana' AND bucket.token_address = tc.address
-    AND bucket.bucket_ts < $1::timestamptz
-  ORDER BY bucket.bucket_ts DESC LIMIT 1
-) volume ON TRUE
+${volumeWindows.length ? buildCanonicalVolumeJoinSql({
+    tokenAddressSql: 'tc.address', asOfSql: '$1::timestamptz', windows: volumeWindows,
+  }) : ''}
 LEFT JOIN LATERAL (
   SELECT
     (array_agg(bucket.close_price ORDER BY bucket.bucket_ts DESC)

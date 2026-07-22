@@ -1,4 +1,8 @@
 const db = require('./db');
+const {
+  VOLUME_WINDOWS,
+  buildCanonicalVolumeJoinSql,
+} = require('./solana-volume-window-sql');
 const { createTokenIdentity, normalizeTokenAddress } = require('../utils/token-identity');
 const {
   PRICE_CHANGE_WINDOWS,
@@ -22,26 +26,19 @@ requested AS MATERIALIZED (
   SELECT UNNEST($1::varchar[]) AS token_address
 )
 SELECT requested.token_address,
-  volume.bucket_ts AS volume_observed_at,
-  volume.window_coverage,
-  volume.close_vol_5m, volume.close_vol_1h,
-  volume.close_vol_6h, volume.close_vol_24h,
+  ${VOLUME_WINDOWS.map((window) => `volume.bucket_ts_${window} AS volume_${window}_observed_at,
+  volume.coverage_state_${window} AS volume_${window}_coverage_state,
+  volume.coverage_source_${window} AS volume_${window}_coverage_source,
+  volume.close_vol_${window}`).join(',\n  ')},
   prices.current_price, prices.current_observed_at,
   prices.price_1h, prices.price_1h_observed_at,
   prices.price_6h, prices.price_6h_observed_at,
   prices.price_24h, prices.price_24h_observed_at
 FROM requested
 CROSS JOIN bounds
-LEFT JOIN LATERAL (
-  SELECT bucket_ts, close_vol_5m, close_vol_1h,
-    close_vol_6h, close_vol_24h, window_coverage
-  FROM token_market_volume_buckets_1m bucket
-  WHERE bucket.chain = 'solana'
-    AND bucket.token_address = requested.token_address
-    AND bucket.bucket_ts < bounds.window_end
-  ORDER BY bucket.bucket_ts DESC
-  LIMIT 1
-) volume ON TRUE
+${buildCanonicalVolumeJoinSql({
+    tokenAddressSql: 'requested.token_address', asOfSql: 'bounds.window_end',
+  })}
 LEFT JOIN LATERAL (
   SELECT
     (array_agg(bucket.close_price ORDER BY bucket.bucket_ts DESC)
@@ -124,6 +121,16 @@ function normalizeDeclaredCoverage(value) {
   return { states, sources };
 }
 
+function resolveDeclaredCoverage(row) {
+  const explicit = {};
+  for (const window of WINDOWS) {
+    const state = row[`volume_${window}_coverage_state`];
+    const source = row[`volume_${window}_coverage_source`];
+    if (state != null) explicit[window] = { state, source };
+  }
+  return normalizeDeclaredCoverage(Object.keys(explicit).length ? explicit : row.window_coverage);
+}
+
 function resolveCommonSource(declared) {
   const windows = Object.keys(declared.states);
   if (!windows.length) return null;
@@ -133,19 +140,24 @@ function resolveCommonSource(declared) {
   return unique.size === 1 ? sources[0] : null;
 }
 
+function volumeObservedAtField(row, window) {
+  const field = `volume_${window}_observed_at`;
+  return Object.prototype.hasOwnProperty.call(row, field) ? field : 'volume_observed_at';
+}
+
 function resolveVolumeCoverage(row, window, windowEnd, declared) {
   const coverage = resolveSnapshotCoverage({
     window,
     windowEnd,
     value: row[`close_vol_${window}`],
-    observedAt: row.volume_observed_at,
+    observedAt: row[volumeObservedAtField(row, window)],
   });
   if (coverage !== 'complete') return coverage;
   return declared.states[window] === 'complete' ? 'complete' : 'partial';
 }
 
 function normalizeRow(row, windowEnd) {
-  const declared = normalizeDeclaredCoverage(row.window_coverage);
+  const declared = resolveDeclaredCoverage(row);
   const coverage = Object.fromEntries(WINDOWS.map((window) => [
     window, resolveVolumeCoverage(row, window, windowEnd, declared),
   ]));
@@ -161,7 +173,12 @@ function normalizeRow(row, windowEnd) {
       row.current_price, row[`price_${window}`],
     );
   }
-  const volumeObservedAt = rowTimestamp(row, 'volume_observed_at');
+  const volumeObservedAtByWindow = Object.fromEntries(WINDOWS.map((window) => [
+    window,
+    rowTimestamp(row, volumeObservedAtField(row, window)),
+  ]));
+  const volumeObservedAt = Object.values(volumeObservedAtByWindow)
+    .filter(Boolean).sort().at(-1) || null;
   const metrics = buildNormalizedWindowMetrics({
     windowEnd,
     lastActivityAt: null,
@@ -179,6 +196,7 @@ function normalizeRow(row, windowEnd) {
       source: 'solana-rolling-volume-snapshot',
       upstreamSource: resolveCommonSource(declared),
       observedAt: volumeObservedAt,
+      observedAtByWindow: Object.freeze(volumeObservedAtByWindow),
       historyStartAt: null,
       exactLastActivity: false,
       declaredCoverage: Object.freeze(declared.states),

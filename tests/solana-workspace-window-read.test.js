@@ -39,7 +39,12 @@ function metricRow(overrides = {}) {
 
 describe('Solana workspace window metric reader', () => {
   it('projects stored coverage provenance into the normalization boundary', () => {
-    assert.match(__private.WINDOW_METRICS_SQL, /volume\.window_coverage/);
+    assert.match(__private.WINDOW_METRICS_SQL, /bucket\.window_coverage/);
+    assert.match(__private.WINDOW_METRICS_SQL,
+      /bucket_ts >= bounds\.window_end - INTERVAL '15 minutes'/);
+    assert.match(__private.WINDOW_METRICS_SQL,
+      /array_agg\(bucket\.close_vol_1h ORDER BY CASE WHEN[\s\S]+complete[\s\S]+bucket\.bucket_ts DESC/);
+    assert.match(__private.WINDOW_METRICS_SQL, /recent\.close_vol_1h IS NULL/);
   });
 
   it('accepts a fresh upstream rolling snapshot without inventing swap counts', async () => {
@@ -76,6 +81,12 @@ describe('Solana workspace window metric reader', () => {
       source: 'solana-rolling-volume-snapshot',
       upstreamSource: 'gmgn',
       observedAt: '2026-07-15T17:59:00.000Z',
+      observedAtByWindow: {
+        '5m': '2026-07-15T17:59:00.000Z',
+        '1h': '2026-07-15T17:59:00.000Z',
+        '6h': '2026-07-15T17:59:00.000Z',
+        '24h': '2026-07-15T17:59:00.000Z',
+      },
       historyStartAt: null,
       exactLastActivity: false,
       declaredCoverage: {
@@ -106,6 +117,31 @@ describe('Solana workspace window metric reader', () => {
     assert.equal(row.volume5mUsd, 0);
     assert.equal(row.coverage['1h'], 'partial');
     assert.equal(row.volume1hUsd, 125000);
+  });
+
+  it('normalizes independently selected complete windows with their own timestamps', () => {
+    const row = __private.normalizeRow(metricRow({
+      volume_5m_observed_at: new Date('2026-07-15T17:59:00.000Z'),
+      volume_5m_coverage_state: 'complete',
+      volume_5m_coverage_source: 'gmgn',
+      volume_1h_observed_at: new Date('2026-07-15T17:58:00.000Z'),
+      volume_1h_coverage_state: 'complete',
+      volume_1h_coverage_source: 'dexscreener',
+      volume_6h_observed_at: new Date('2026-07-15T17:58:00.000Z'),
+      volume_6h_coverage_state: 'complete',
+      volume_6h_coverage_source: 'dexscreener',
+      volume_24h_observed_at: new Date('2026-07-15T17:58:00.000Z'),
+      volume_24h_coverage_state: 'complete',
+      volume_24h_coverage_source: 'dexscreener',
+    }), new Date(WINDOW_END));
+
+    assert.equal(row.coverage['5m'], 'complete');
+    assert.equal(row.coverage['1h'], 'partial');
+    assert.equal(row.volume1hUsd, 125000);
+    assert.equal(row.coverageProvenance.upstreamSource, null);
+    assert.equal(row.coverageProvenance.declaredSources['1h'], 'dexscreener');
+    assert.equal(row.coverageProvenance.observedAtByWindow['1h'],
+      '2026-07-15T17:58:00.000Z');
   });
 
   it('does not infer PumpFun continuity or exact activity from bucket history', async () => {
