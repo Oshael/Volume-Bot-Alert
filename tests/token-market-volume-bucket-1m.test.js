@@ -46,10 +46,26 @@ describe('token market volume 1m bucket helpers', () => {
         '1m': { state: 'partial', source: 'gmgn' },
         '5m': { state: 'partial', source: 'gmgn' },
       });
-      assert.match(calls[0].sql, /window_coverage = token_market_volume_buckets_1m\.window_coverage\s+\|\| EXCLUDED\.window_coverage/);
+      assert.match(calls[0].sql,
+        /window_coverage = jsonb_strip_nulls\(jsonb_build_object\(/);
     } finally {
       db.query = originalQuery;
     }
+  });
+
+  it('does not let a partial conflict overwrite a complete stored window', () => {
+    const sql = tokenMarketVolumeBucket1m.__private.UPSERT_SNAPSHOT_SQL;
+    const volumeAssignment = sql.match(/close_vol_6h = CASE[\s\S]*?END,/)[0];
+    const coverageStart = sql.indexOf("'6h', CASE");
+    const coverageEntry = sql.slice(coverageStart, sql.indexOf("'24h', CASE", coverageStart));
+
+    assert.match(volumeAssignment, /WHEN 'complete' THEN 2 WHEN 'partial' THEN 1/);
+    assert.match(volumeAssignment, /> \(CASE/);
+    assert.match(volumeAssignment,
+      /THEN token_market_volume_buckets_1m\.close_vol_6h ELSE EXCLUDED\.close_vol_6h/);
+    assert.match(coverageEntry,
+      /THEN token_market_volume_buckets_1m\.window_coverage -> '6h'/);
+    assert.match(coverageEntry, /ELSE EXCLUDED\.window_coverage -> '6h'/);
   });
 
   it('keeps missing volume null and stores explicit coverage provenance', async () => {

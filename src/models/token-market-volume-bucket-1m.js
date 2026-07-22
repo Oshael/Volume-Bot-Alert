@@ -16,6 +16,63 @@ const VOLUME_COLUMN_BY_WINDOW = Object.freeze({
   '6h': 'close_vol_6h',
   '24h': 'close_vol_24h',
 });
+const VOLUME_TABLE = 'token_market_volume_buckets_1m';
+
+function coverageStateSql(reference, window) {
+  return `CASE jsonb_typeof(${reference}.window_coverage -> '${window}')
+    WHEN 'object' THEN ${reference}.window_coverage -> '${window}' ->> 'state'
+    WHEN 'string' THEN ${reference}.window_coverage ->> '${window}'
+    ELSE NULL END`;
+}
+
+function coverageRankSql(reference, window) {
+  return `CASE (${coverageStateSql(reference, window)})
+    WHEN 'complete' THEN 2 WHEN 'partial' THEN 1 ELSE 0 END`;
+}
+
+function preserveStoredWindowSql(window) {
+  const column = VOLUME_COLUMN_BY_WINDOW[window];
+  return `EXCLUDED.${column} IS NULL OR (
+    ${VOLUME_TABLE}.${column} IS NOT NULL
+    AND (${coverageRankSql(VOLUME_TABLE, window)})
+      > (${coverageRankSql('EXCLUDED', window)})
+  )`;
+}
+
+function preferredVolumeAssignmentSql(window) {
+  const column = VOLUME_COLUMN_BY_WINDOW[window];
+  return `${column} = CASE WHEN (${preserveStoredWindowSql(window)})
+    THEN ${VOLUME_TABLE}.${column} ELSE EXCLUDED.${column} END`;
+}
+
+function preferredCoverageEntrySql(window) {
+  return `'${window}', CASE WHEN (${preserveStoredWindowSql(window)})
+    THEN ${VOLUME_TABLE}.window_coverage -> '${window}'
+    ELSE EXCLUDED.window_coverage -> '${window}' END`;
+}
+
+const UPSERT_SNAPSHOT_SQL = `INSERT INTO token_market_volume_buckets_1m (
+       chain,
+       token_address,
+       bucket_ts,
+       close_vol_1m,
+       close_vol_5m,
+       close_vol_1h,
+       close_vol_6h,
+       close_vol_24h,
+       sample_count,
+       source,
+       window_coverage
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1, $9, $10::jsonb)
+     ON CONFLICT (chain, token_address, bucket_ts) DO UPDATE SET
+       ${Object.keys(VOLUME_COLUMN_BY_WINDOW).map(preferredVolumeAssignmentSql).join(',\n       ')},
+       sample_count = token_market_volume_buckets_1m.sample_count + 1,
+       source = COALESCE(EXCLUDED.source, token_market_volume_buckets_1m.source),
+       window_coverage = jsonb_strip_nulls(jsonb_build_object(
+         ${Object.keys(VOLUME_COLUMN_BY_WINDOW).map(preferredCoverageEntrySql).join(',\n         ')}
+       ))
+     RETURNING *`;
 
 function normalizeWindowCoverage(snapshot, values, source) {
   const supplied = snapshot.volumeCoverage && typeof snapshot.volumeCoverage === 'object'
@@ -64,31 +121,7 @@ async function upsertSnapshotBucket(snapshot) {
   }, source);
 
   const { rows } = await db.query(
-    `INSERT INTO token_market_volume_buckets_1m (
-       chain,
-       token_address,
-       bucket_ts,
-       close_vol_1m,
-       close_vol_5m,
-       close_vol_1h,
-       close_vol_6h,
-       close_vol_24h,
-       sample_count,
-       source,
-       window_coverage
-     )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1, $9, $10::jsonb)
-     ON CONFLICT (chain, token_address, bucket_ts) DO UPDATE SET
-       close_vol_1m = COALESCE(EXCLUDED.close_vol_1m, token_market_volume_buckets_1m.close_vol_1m),
-       close_vol_5m = COALESCE(EXCLUDED.close_vol_5m, token_market_volume_buckets_1m.close_vol_5m),
-       close_vol_1h = COALESCE(EXCLUDED.close_vol_1h, token_market_volume_buckets_1m.close_vol_1h),
-       close_vol_6h = COALESCE(EXCLUDED.close_vol_6h, token_market_volume_buckets_1m.close_vol_6h),
-       close_vol_24h = COALESCE(EXCLUDED.close_vol_24h, token_market_volume_buckets_1m.close_vol_24h),
-       sample_count = token_market_volume_buckets_1m.sample_count + 1,
-       source = COALESCE(EXCLUDED.source, token_market_volume_buckets_1m.source),
-       window_coverage = token_market_volume_buckets_1m.window_coverage
-         || EXCLUDED.window_coverage
-     RETURNING *`,
+    UPSERT_SNAPSHOT_SQL,
     [
       chain, address, bucketTs, vol1m, vol5m, vol1h, vol6h, vol24h,
       source, JSON.stringify(windowCoverage),
@@ -223,6 +256,7 @@ module.exports = {
   deleteByAddresses,
   deleteChunkByAddress,
   __private: {
+    UPSERT_SNAPSHOT_SQL,
     getBucketDate,
     normalizeWindowCoverage,
     normalizeVolumeWindow,
