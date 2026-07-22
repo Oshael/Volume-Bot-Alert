@@ -147,12 +147,18 @@ describe('user alert profile cache', () => {
 
       assert.deepEqual(userAlertProfileCache.listActiveUserIds({ nowMs: baseNowMs + 10_000 }), [5]);
 
-      const firstProfiles = await userAlertProfileCache.listActiveProfiles({ nowMs: baseNowMs + 10_000 });
+      const firstProfiles = await userAlertProfileCache.listActiveProfiles({
+        nowMs: baseNowMs + 10_000,
+        sharedPresence: false,
+      });
       assert.equal(firstProfiles.length, 1);
       assert.equal(firstProfiles[0].userId, 5);
       assert.equal(getAllCalls, 1);
 
-      const secondProfiles = await userAlertProfileCache.listActiveProfiles({ nowMs: baseNowMs + 15_000 });
+      const secondProfiles = await userAlertProfileCache.listActiveProfiles({
+        nowMs: baseNowMs + 15_000,
+        sharedPresence: false,
+      });
       assert.equal(secondProfiles.length, 1);
       assert.equal(getAllCalls, 1);
 
@@ -167,7 +173,10 @@ describe('user alert profile cache', () => {
         hiddenGraceMs: 20 * 60 * 1000,
       }, { nowMs: baseNowMs + 60_000 });
 
-      const hiddenProfiles = await userAlertProfileCache.listActiveProfiles({ nowMs: baseNowMs + 61_000 });
+      const hiddenProfiles = await userAlertProfileCache.listActiveProfiles({
+        nowMs: baseNowMs + 61_000,
+        sharedPresence: false,
+      });
       assert.equal(hiddenProfiles.length, 1);
       assert.equal(hiddenProfiles[0].presenceMode, 'hidden');
       assert.equal(hiddenProfiles[0].hiddenSessionKey, `hidden:${baseNowMs + 60_000}`);
@@ -178,7 +187,10 @@ describe('user alert profile cache', () => {
         hiddenGraceMs: 20 * 60 * 1000,
       }, { nowMs: baseNowMs + 75_000 });
 
-      const hiddenHeartbeatProfiles = await userAlertProfileCache.listActiveProfiles({ nowMs: baseNowMs + 76_000 });
+      const hiddenHeartbeatProfiles = await userAlertProfileCache.listActiveProfiles({
+        nowMs: baseNowMs + 76_000,
+        sharedPresence: false,
+      });
       assert.equal(hiddenHeartbeatProfiles.length, 1);
       assert.equal(hiddenHeartbeatProfiles[0].presenceMode, 'hidden');
       assert.equal(hiddenHeartbeatProfiles[0].hiddenSessionKey, `hidden:${baseNowMs + 60_000}`);
@@ -255,7 +267,7 @@ describe('user alert profile cache', () => {
         workspace: 'live',
         mode: 'foreground',
       });
-      await userAlertProfileCache.listActiveProfiles();
+      await userAlertProfileCache.listActiveProfiles({ sharedPresence: false });
       assert.equal(userAlertProfileCache.getStatus().cachedProfiles >= 1, true);
 
       userAlertProfileCache.clearLivePresence('socket-a');
@@ -397,6 +409,54 @@ describe('user alert profile cache', () => {
     } finally {
       userConfig.getAllWithStoredKeys = originalGetAllWithStoredKeys;
       userAlertProfileCache.invalidateUserProfile(41);
+    }
+  });
+
+  it('keeps the alert session stable while shared config profiles refresh', async () => {
+    const originalGetAllWithStoredKeys = userConfig.getAllWithStoredKeys;
+    const baseNowMs = Date.UTC(2026, 6, 22, 12, 0, 0);
+    let getAllCalls = 0;
+    userConfig.getAllWithStoredKeys = async () => {
+      getAllCalls += 1;
+      return {
+        configs: { threshold: 50 + getAllCalls },
+        storedKeys: new Set(['threshold']),
+      };
+    };
+    const activePresence = (nowMs) => [{
+      userId: 42,
+      sessionKey: 'login-session-42',
+      mode: 'foreground',
+      activeUntilAt: new Date(nowMs + 60_000).toISOString(),
+    }];
+
+    try {
+      const first = await userAlertProfileCache.listActiveProfiles({
+        nowMs: baseNowMs,
+        sharedPresence: true,
+        sharedPresenceRows: activePresence(baseNowMs),
+      });
+      const refreshed = await userAlertProfileCache.listActiveProfiles({
+        nowMs: baseNowMs + userAlertProfileCache.SHARED_PRESENCE_PROFILE_CACHE_TTL_MS + 1,
+        sharedPresence: true,
+        sharedPresenceRows: activePresence(
+          baseNowMs + userAlertProfileCache.SHARED_PRESENCE_PROFILE_CACHE_TTL_MS + 1
+        ),
+      });
+
+      assert.equal(getAllCalls, 2);
+      assert.notEqual(first[0].thresholdPct, refreshed[0].thresholdPct);
+      assert.equal(first[0].loadedAt, new Date(baseNowMs).toISOString());
+      assert.equal(refreshed[0].loadedAt, first[0].loadedAt);
+      assert.equal(refreshed[0].alertSessionKey, 'login-session-42');
+    } finally {
+      await userAlertProfileCache.listActiveProfiles({
+        nowMs: baseNowMs + 60_000,
+        sharedPresence: true,
+        sharedPresenceRows: [],
+      });
+      userConfig.getAllWithStoredKeys = originalGetAllWithStoredKeys;
+      userAlertProfileCache.invalidateUserProfile(42);
     }
   });
 

@@ -9,6 +9,7 @@ const PRESENCE_MODES = new Set(['foreground', 'hidden', 'inactive']);
 
 const profileCacheByUserId = new Map();
 const profileCacheExpiresAtByUserId = new Map();
+const alertSessionStartedAtByUserId = new Map();
 const livePresenceBySocketId = new Map();
 const socketIdsByUserId = new Map();
 
@@ -203,6 +204,7 @@ function untrackSocketForUser(userId, socketId) {
     socketIdsByUserId.delete(userId);
     profileCacheByUserId.delete(userId);
     profileCacheExpiresAtByUserId.delete(userId);
+    alertSessionStartedAtByUserId.delete(userId);
   }
 }
 
@@ -460,9 +462,30 @@ function getProfileCacheExpiresAtMs(context, nowMs) {
   return Math.max(nowMs + 1, Math.min(shortTtlExpiresAtMs, activeUntilMs));
 }
 
+function syncAlertSessionStarts(activeUserIds, nowMs) {
+  const activeSet = new Set(activeUserIds);
+  for (const userId of alertSessionStartedAtByUserId.keys()) {
+    if (!activeSet.has(userId)) alertSessionStartedAtByUserId.delete(userId);
+  }
+  for (const userId of activeSet) {
+    if (!alertSessionStartedAtByUserId.has(userId)) {
+      alertSessionStartedAtByUserId.set(userId, nowMs);
+    }
+  }
+}
+
+function getAlertSessionStartedAt(userId) {
+  const startedAtMs = Number(alertSessionStartedAtByUserId.get(userId));
+  return Number.isFinite(startedAtMs) ? new Date(startedAtMs).toISOString() : null;
+}
+
 function getSharedPresenceUserId(row) {
   const userId = Number.parseInt(String(row?.userId || row?.user_id || '').trim(), 10);
   return Number.isInteger(userId) && userId > 0 ? userId : null;
+}
+
+function getSharedPresenceSessionKey(row) {
+  return String(row?.sessionKey || row?.session_key || '').trim() || null;
 }
 
 function getSharedPresenceHiddenStartedAtMs(row, nowMs) {
@@ -477,7 +500,10 @@ function mergeSharedPresenceContext(current, row, mode, activeUntilMs, nowMs) {
     mode: 'hidden',
     hiddenStartedAtMs: null,
     activeUntilMs,
+    sessionKeys: new Set(),
   };
+  const sessionKey = getSharedPresenceSessionKey(row);
+  if (sessionKey) next.sessionKeys.add(sessionKey);
   next.activeUntilMs = Math.min(Number(next.activeUntilMs) || activeUntilMs, activeUntilMs);
 
   if (mode === 'foreground') {
@@ -494,6 +520,11 @@ function mergeSharedPresenceContext(current, row, mode, activeUntilMs, nowMs) {
   }
 
   return next;
+}
+
+function getAlertSessionKey(context) {
+  const keys = [...(context?.sessionKeys || [])].sort();
+  return keys.length > 0 ? keys.join('|') : null;
 }
 
 function buildSharedPresenceContexts(rows = [], options = {}) {
@@ -558,6 +589,7 @@ async function clearSharedLivePresence(socketId, options = {}) {
 async function listSharedActiveProfiles(options, nowMs) {
   const contextsByUserId = await listSharedPresenceContexts(options, nowMs);
   const activeUserIds = [...contextsByUserId.keys()].sort((a, b) => a - b);
+  syncAlertSessionStarts(activeUserIds, nowMs);
   const missingUserIds = activeUserIds.filter((userId) => !getCachedUserProfile(userId, {
     nowMs,
     requireExpiry: true,
@@ -579,6 +611,8 @@ async function listSharedActiveProfiles(options, nowMs) {
 
       return {
         ...profile,
+        loadedAt: getAlertSessionStartedAt(userId) || profile.loadedAt,
+        alertSessionKey: getAlertSessionKey(presence),
         presenceMode: presence.mode,
         hiddenSessionKey: presence.mode === 'hidden' && presence.hiddenStartedAtMs
           ? `hidden:${presence.hiddenStartedAtMs}`
@@ -593,6 +627,7 @@ async function listSharedActiveProfiles(options, nowMs) {
 
 async function listLocalActiveProfiles(options, nowMs) {
   const activeUserIds = listActiveUserIds(options);
+  syncAlertSessionStarts(activeUserIds, nowMs);
   const missingUserIds = activeUserIds.filter((userId) => !getCachedUserProfile(userId, { nowMs }));
 
   if (missingUserIds.length > 0) {
@@ -609,6 +644,7 @@ async function listLocalActiveProfiles(options, nowMs) {
       const presence = getActivePresenceContextForUser(userId, { nowMs });
       return {
         ...profile,
+        loadedAt: getAlertSessionStartedAt(userId) || profile.loadedAt,
         presenceMode: presence?.mode || null,
         hiddenSessionKey: presence?.hiddenSessionKey || null,
         hiddenStartedAt: presence?.hiddenStartedAtMs
@@ -657,6 +693,7 @@ module.exports = {
   __private: {
     buildSharedPresenceContexts,
     getSharedPresenceHiddenStartedAtMs,
+    getSharedPresenceSessionKey,
     getSharedPresenceUserId,
     getActivePresenceContextForUser,
     getCachedUserProfile,
@@ -676,12 +713,14 @@ module.exports = {
     normalizeSocketId,
     normalizeStoredKeys,
     normalizeUserId,
+    alertSessionStartedAtByUserId,
     profileCacheByUserId,
     profileCacheExpiresAtByUserId,
     livePresenceBySocketId,
     resolveEnabledWithFallback,
     resolveNumberWithFallback,
     socketIdsByUserId,
+    syncAlertSessionStarts,
     trackSocketForUser,
     untrackSocketForUser,
   },

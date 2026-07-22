@@ -3051,7 +3051,8 @@ describe('user alert matcher', () => {
     const context = createDeps({
       profiles: [{
         userId: 81,
-        loadedAt,
+        loadedAt: '2026-04-17T07:38:30.000Z',
+        alertSessionKey: 'login-session-81',
         ruleEnabled: {
           monitoredVol: false,
           monitoredMcap: false,
@@ -3072,6 +3073,7 @@ describe('user alert matcher', () => {
           lastAlertedPct: 50,
           metadata: {
             lastDecision: 'primed-hot',
+            alertSessionKey: 'login-session-81',
             sessionStartedAt: loadedAt,
           },
         },

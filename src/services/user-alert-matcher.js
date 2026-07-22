@@ -136,6 +136,17 @@ function toProfileLoadedAtIso(profile) {
   return toTextOrNull(profile?.loadedAt);
 }
 
+function isSameProfileAlertSession(state, profile) {
+  const profileSessionKey = toTextOrNull(profile?.alertSessionKey);
+  const stateSessionKey = toTextOrNull(state?.metadata?.alertSessionKey);
+  if (profileSessionKey || stateSessionKey) {
+    return Boolean(profileSessionKey && stateSessionKey && profileSessionKey === stateSessionKey);
+  }
+  const profileLoadedAt = toProfileLoadedAtIso(profile);
+  const stateSessionStartedAt = toTextOrNull(state?.metadata?.sessionStartedAt);
+  return Boolean(profileLoadedAt && stateSessionStartedAt && profileLoadedAt === stateSessionStartedAt);
+}
+
 function toProfilePresenceMode(profile) {
   return toTextOrNull(profile?.presenceMode);
 }
@@ -1124,9 +1135,7 @@ function isSameSurgeSessionState(candidate, state, profile) {
     return false;
   }
 
-  const profileLoadedAt = toProfileLoadedAtIso(profile);
-  const stateSessionStartedAt = toTextOrNull(state?.metadata?.sessionStartedAt);
-  return Boolean(profileLoadedAt && stateSessionStartedAt && profileLoadedAt === stateSessionStartedAt);
+  return isSameProfileAlertSession(state, profile);
 }
 
 function isSixHourSurgeCandidate(candidate) {
@@ -1165,9 +1174,7 @@ function isSameSessionMeteoraPrimedState(candidate, state, profile) {
     return false;
   }
 
-  const profileLoadedAt = toProfileLoadedAtIso(profile);
-  const stateSessionStartedAt = toTextOrNull(state?.metadata?.sessionStartedAt);
-  return Boolean(profileLoadedAt && stateSessionStartedAt && profileLoadedAt === stateSessionStartedAt);
+  return isSameProfileAlertSession(state, profile);
 }
 
 function canRepeatMeteoraInSession(candidate, state, profile) {
@@ -1448,6 +1455,7 @@ async function primeCandidate(profile, tokenAfter, candidate, nowMs, deps) {
       lastAlertedMcap: toNumberOrNull(candidate.payload?.mcap),
       lastDecision: 'primed-hot',
       primedAt: new Date(nowMs).toISOString(),
+      alertSessionKey: toTextOrNull(profile?.alertSessionKey),
       sessionStartedAt: toProfileLoadedAtIso(profile),
       surgeWindow: candidate.payload?.surgeWindow || null,
       thresholdPct: toNumberOrNull(candidate.payload?.thresholdPct),
