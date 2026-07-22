@@ -125,12 +125,16 @@ export interface UiPrefsPayload {
   expandedSparklineGranularityMinutes: number;
   expandedSparklineTimeZone: string;
   sparklineRange: {
-    global: boolean;
-    globalDays: number;
+    global?: boolean;
+    globalDays?: number;
     monitoredDays: number;
     recentDays: number;
     oldWeekDays: number;
+    monitoredPreset: '1h' | '4h' | '12h' | '1d' | '3d' | '7d' | '14d' | 'all';
+    recentPreset: '1h' | '4h' | '12h' | '1d' | '3d' | '7d' | '14d' | 'all';
+    oldWeekPreset: '1h' | '4h' | '12h' | '1d' | '3d' | '7d' | '14d' | 'all';
     tokenDaysByAddress: Record<string, number>;
+    tokenPresetByAddress: Record<string, '1h' | '4h' | '12h' | '1d' | '3d' | '7d' | '14d' | 'all'>;
   };
   enabledTradeTerminals: TradeTerminalKey[];
   livePanelLayout: LivePanelLayoutPayload;

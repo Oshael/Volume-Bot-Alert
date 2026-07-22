@@ -222,6 +222,8 @@ describe('Config routes', () => {
     assert.equal(response.body.configs['old-week-fdv-max'], 100000000);
     assert.equal(response.body.configs['monitored-mcap-min'], 30000);
     assert.equal(response.body.configs['monitored-fdv-min'], 30000);
+    assert.equal(response.body.configs['monitored-view-mcap-max'], 0);
+    assert.equal(response.body.configs['monitored-view-fdv-max'], 0);
     assert.equal(response.body.configs['old-week-age-min'], 10080);
     assert.equal(response.body.configs['old-week-age-max'], 0);
     assert.equal(response.body.configs['old-per-page'], 15);
@@ -234,12 +236,14 @@ describe('Config routes', () => {
     assert.deepEqual(response.body.uiPrefs.oldWeekSorts, [{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }]);
     assert.equal(response.body.uiPrefs.expandedSparklineGranularityMinutes, 5);
     assert.deepEqual(response.body.uiPrefs.sparklineRange, {
-      global: true,
-      globalDays: 14,
       monitoredDays: 14,
       recentDays: 14,
       oldWeekDays: 14,
+      monitoredPreset: '14d',
+      recentPreset: '14d',
+      oldWeekPreset: '14d',
       tokenDaysByAddress: {},
+      tokenPresetByAddress: {},
     });
     assert.deepEqual(response.body.uiPrefs.livePanelLayout, {
       order: ['monitored', 'pumpfun', 'alerts'],
@@ -275,6 +279,8 @@ describe('Config routes', () => {
           'old-week-age-max': 43200,
           'monitored-mcap-min': 45000,
           'monitored-fdv-min': 65000,
+          'monitored-view-mcap-max': 950000,
+          'monitored-view-fdv-max': 1250000,
           'old-fdv-min': 140000,
           'old-fdv-max': 90000000,
           'old-week-fdv-min': 160000,
@@ -296,6 +302,8 @@ describe('Config routes', () => {
       'old-week-age-max': 43200,
       'monitored-mcap-min': 45000,
       'monitored-fdv-min': 65000,
+      'monitored-view-mcap-max': 950000,
+      'monitored-view-fdv-max': 1250000,
       'old-fdv-min': 140000,
       'old-fdv-max': 90000000,
       'old-week-fdv-min': 160000,
@@ -319,6 +327,8 @@ describe('Config routes', () => {
     assert.equal(getResponse.body.configs['old-week-age-max'], 43200);
     assert.equal(getResponse.body.configs['monitored-mcap-min'], 45000);
     assert.equal(getResponse.body.configs['monitored-fdv-min'], 65000);
+    assert.equal(getResponse.body.configs['monitored-view-mcap-max'], 950000);
+    assert.equal(getResponse.body.configs['monitored-view-fdv-max'], 1250000);
     assert.equal(getResponse.body.configs['old-fdv-min'], 140000);
     assert.equal(getResponse.body.configs['old-fdv-max'], 90000000);
     assert.equal(getResponse.body.configs['old-week-fdv-min'], 160000);
@@ -808,13 +818,17 @@ describe('Config routes', () => {
           expandedSparklineGranularityMinutes: 60,
           expandedSparklineTimeZone: 'America/Sao_Paulo',
           sparklineRange: {
-            global: false,
-            globalDays: 7,
             monitoredDays: 2,
             recentDays: 3,
             oldWeekDays: 10,
+            monitoredPreset: '12h',
+            recentPreset: 'all',
+            oldWeekPreset: '7d',
             tokenDaysByAddress: {
               TokenRange111111111111111111111111111111111: 1,
+            },
+            tokenPresetByAddress: {
+              TokenPreset11111111111111111111111111111111: 'all',
             },
           },
           livePanelLayout: {
@@ -840,13 +854,17 @@ describe('Config routes', () => {
     assert.equal(response.body.uiPrefs.expandedSparklineGranularityMinutes, 60);
     assert.equal(response.body.uiPrefs.expandedSparklineTimeZone, 'America/Sao_Paulo');
     assert.deepEqual(response.body.uiPrefs.sparklineRange, {
-      global: false,
-      globalDays: 7,
       monitoredDays: 2,
       recentDays: 3,
       oldWeekDays: 10,
+      monitoredPreset: '12h',
+      recentPreset: 'all',
+      oldWeekPreset: '7d',
       tokenDaysByAddress: {
         TokenRange111111111111111111111111111111111: 1,
+      },
+      tokenPresetByAddress: {
+        TokenPreset11111111111111111111111111111111: 'all',
       },
     });
     assert.deepEqual(response.body.uiPrefs.enabledTradeTerminals, ['photon', 'bullx']);

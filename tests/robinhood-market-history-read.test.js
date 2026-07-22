@@ -125,6 +125,36 @@ describe('Robinhood native market history reader', () => {
     assert.equal(histories[1].candles.length, 1);
   });
 
+  it('samples the complete permanent hourly history in all-available mode', async () => {
+    const calls = [];
+    const repository = createRobinhoodMarketHistoryReadRepository({
+      now: () => new Date('2026-07-15T12:30:00.000Z'),
+      database: { async query(sql, params) {
+        calls.push({ sql, params });
+        return { rows: [
+          row({ bucket_ts: '2025-01-01T00:00:00.000Z' }),
+          row({ bucket_ts: '2026-07-15T11:00:00.000Z' }),
+        ] };
+      } },
+    });
+
+    const [history] = await repository.getHistories({
+      addresses: [ADDRESS], endAt: '2026-07-15T12:00:00.000Z',
+      allAvailable: true, limit: 500,
+    });
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].sql, __private.ALL_AVAILABLE_HISTORY_SQL);
+    assert.match(calls[0].sql, /generate_series/);
+    assert.deepEqual(calls[0].params, [
+      [ADDRESS], new Date('2026-07-15T12:00:00.000Z'), 500,
+    ]);
+    assert.equal(history.requestedGranularityMinutes, 60);
+    assert.equal(history.candles.length, 2);
+    assert.equal(history.candles[0].bucketTs, '2025-01-01T00:00:00.000Z');
+    assert.equal(history.candles[1].bucketTs, '2026-07-15T11:00:00.000Z');
+  });
+
   it('uses aggregate rows first and reports their rollout metrics', async () => {
     const calls = [];
     let metrics;

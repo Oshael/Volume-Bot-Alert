@@ -29,6 +29,8 @@ const CONFIG_SCHEMA = {
   'old-week-per-page': { type: 'number', min: 10, max: 500, default: 15 },
   'monitored-mcap-min': { type: 'number', min: 0, max: 1e15, default: 30000 },
   'monitored-fdv-min': { type: 'number', min: 0, max: 1e15, default: 30000 },
+  'monitored-view-mcap-max': { type: 'number', min: 0, max: 1e15, default: 0 },
+  'monitored-view-fdv-max': { type: 'number', min: 0, max: 1e15, default: 0 },
   'monitored-fdv-max': { type: 'number', min: 0, max: 1e15, default: 0 },
   'hvnc-min-vol':    { type: 'number', min: 0, max: 1e15, default: 300000 },
   'old-alert-1h-threshold': { type: 'number', min: 0, max: 10000, default: 50 },

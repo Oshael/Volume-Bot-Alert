@@ -11,12 +11,14 @@ export type WorkspaceSparklineIdentity = {
 export type WorkspaceIdentitySparklineBatch = {
   hours: number;
   granularityMinutes: number;
+  allAvailable?: boolean;
   identities: WorkspaceSparklineIdentity[];
 };
 
 export type LegacyWorkspaceSparklineBatch = {
   hours: number;
   granularityMinutes: number;
+  allAvailable?: boolean;
   addresses: string[];
 };
 
@@ -46,6 +48,14 @@ export function resolveWorkspaceSparklineGranularityMinutes(input: {
   if (effectiveSpanMs <= DAY_MS) return 1;
   if (effectiveSpanMs <= 3 * DAY_MS) return 5;
   if (effectiveSpanMs <= 11 * DAY_MS) return 15;
+  return 30;
+}
+
+export function resolveMonitoredQuickSparklineGranularityMinutes(hours: number) {
+  const safeHours = Math.max(1, Number(hours) || 1);
+  if (safeHours <= 24) return 1;
+  if (safeHours <= 72) return 5;
+  if (safeHours <= 168) return 15;
   return 30;
 }
 

@@ -8,6 +8,8 @@ const adminBlockedToken = require('../models/admin-blocked-token');
 const tokenRiskReview = require('../models/token-risk-review');
 const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
 const {
+  ALL_AVAILABLE_SPARKLINE_GRANULARITY_MINUTES,
+  MAX_COMPACT_SPARKLINE_POINTS,
   MAX_SPARKLINE_GRANULARITY_MINUTES,
   isSparklineGranularityMinutes,
 } = require('../utils/market-bucket-granularities');
@@ -136,6 +138,20 @@ function parseSparklineIdentities(values) {
   return { ok: true, identities };
 }
 
+function parseAllAvailableSparklineFields(body, granularityMinutes) {
+  const allAvailable = parseOptionalBooleanBodyField(
+    body.allAvailable,
+    false,
+    'allAvailable'
+  );
+  if (!allAvailable.ok) return allAvailable;
+  if (allAvailable.value && granularityMinutes != null
+    && granularityMinutes !== ALL_AVAILABLE_SPARKLINE_GRANULARITY_MINUTES) {
+    return { ok: false, error: 'allAvailable sparklines require 60-minute granularity' };
+  }
+  return { ok: true, value: allAvailable.value };
+}
+
 function parseSparklineBatchRequest(body = {}) {
   let identities;
   if (body.identities == null) {
@@ -153,7 +169,9 @@ function parseSparklineBatchRequest(body = {}) {
     return hours;
   }
 
-  const points = parseOptionalIntegerBodyField(body.points, 'points', { min: 10, max: 500 });
+  const points = parseOptionalIntegerBodyField(
+    body.points, 'points', { min: 10, max: MAX_COMPACT_SPARKLINE_POINTS }
+  );
   if (!points.ok) {
     return points;
   }
@@ -178,14 +196,19 @@ function parseSparklineBatchRequest(body = {}) {
   if (!allowOneMinuteFallback.ok) {
     return allowOneMinuteFallback;
   }
+  const allAvailable = parseAllAvailableSparklineFields(body, granularityMinutes.value);
+  if (!allAvailable.ok) return allAvailable;
 
   return {
     ok: true,
     value: {
       identities,
-      hours: hours.value || (14 * 24),
-      points: points.value || 336,
-      granularityMinutes: granularityMinutes.value || 30,
+      allAvailable: allAvailable.value,
+      hours: allAvailable.value ? null : (hours.value || (14 * 24)),
+      points: points.value || (allAvailable.value ? MAX_COMPACT_SPARKLINE_POINTS : 336),
+      granularityMinutes: allAvailable.value
+        ? ALL_AVAILABLE_SPARKLINE_GRANULARITY_MINUTES
+        : (granularityMinutes.value || 30),
       allowOneMinuteFallback: allowOneMinuteFallback.value,
     },
   };

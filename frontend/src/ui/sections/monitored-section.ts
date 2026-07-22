@@ -19,6 +19,28 @@ const MONITORED_PIN_DRAG_THRESHOLD_PX = 10;
 const MONITORED_PIN_DROP_DIRECTION_DEADZONE_PX = 6;
 const MONITORED_PIN_DROP_PREVIEW_BIAS_RATIO = 0.26;
 const MONITORED_PIN_DROP_VISUAL_SETTLE_MS = 80;
+const MONITORED_SPARKLINE_QUICK_RANGES = [
+  { label: '1h', hours: 1 },
+  { label: '4h', hours: 4 },
+  { label: '12h', hours: 12 },
+  { label: '1d', hours: 24 },
+  { label: '3d', hours: 72 },
+  { label: '7d', hours: 168 },
+  { label: '14d', hours: 336 },
+  { label: 'all', hours: 0 },
+] as const;
+let monitoredFiltersOpen = false;
+type MonitoredValuationFilterDraft = {
+  minMcap: number;
+  maxMcap: number;
+  minFdv: number;
+  maxFdv: number;
+};
+
+let monitoredFiltersDraft: MonitoredValuationFilterDraft | null = null;
+let activeMonitoredFilters: HTMLElement | null = null;
+let commitActiveMonitoredFilters: (() => void) | null = null;
+let monitoredFiltersDocumentBound = false;
 
 export function renderMonitoredSection(state: AppState, controller: AppController) {
   const section = document.createElement('section');
@@ -74,14 +96,16 @@ function resolveMonitoredSectionView(state: AppState) {
     sortClasses: resolveMonitoredSortClasses(state),
     miniChartEnabled: state.ui.livePanelLayout.spans.monitored > 1,
     pinCount: state.data.pinnedMonitoredTokenIdentities.length,
-    minMcap: resolveMonitoredFilterValue(state, 'monitored-mcap-min'),
-    minFdv: resolveMonitoredFilterValue(state, 'monitored-fdv-min'),
+    minMcap: resolveMonitoredFilterValue(state, 'monitored-mcap-min', 30000),
+    maxMcap: resolveMonitoredFilterValue(state, 'monitored-view-mcap-max', 0),
+    minFdv: resolveMonitoredFilterValue(state, 'monitored-fdv-min', 30000),
+    maxFdv: resolveMonitoredFilterValue(state, 'monitored-view-fdv-max', 0),
   };
 }
 
-function resolveMonitoredFilterValue(state: AppState, key: string) {
+function resolveMonitoredFilterValue(state: AppState, key: string, fallback: number) {
   const value = Number(state.data.configs[key]);
-  return Number.isFinite(value) ? Math.max(0, value) : 30000;
+  return Number.isFinite(value) ? Math.max(0, value) : fallback;
 }
 
 function resolveMonitoredSortClasses(state: AppState) {
@@ -121,39 +145,77 @@ function renderCollapsedMonitoredHeader(count: number, pinCount: number) {
   `;
 }
 
-function renderExpandedMonitoredMarkup(state: AppState, view: MonitoredSectionView) {
+function renderMonitoredFilters(view: MonitoredSectionView) {
   const sortClasses = view.sortClasses;
+  const draft = monitoredFiltersOpen && monitoredFiltersDraft
+    ? monitoredFiltersDraft
+    : {
+      minMcap: view.minMcap,
+      maxMcap: view.maxMcap,
+      minFdv: view.minFdv,
+      maxFdv: view.maxFdv,
+    };
+  return `
+    <div class="monitored-filters${monitoredFiltersOpen ? ' is-open' : ''}" data-monitored-filters>
+      <button type="button" class="old-filter-btn active monitored-filters-toggle ui-control-tooltip" data-action="monitored-filters-toggle" data-tooltip="Configure sorting and valuation limits for Monitored tokens." aria-haspopup="dialog" aria-expanded="${monitoredFiltersOpen}">FILTERS</button>
+      <div class="monitored-filters-popover" role="dialog" aria-label="Monitored filters" ${monitoredFiltersOpen ? '' : 'hidden'}>
+        <section class="monitored-filter-section" aria-labelledby="monitored-sort-order-label">
+          <span class="monitored-filter-section-title" id="monitored-sort-order-label">SORT ORDER</span>
+          <div class="monitored-filter-row">
+            <span class="monitored-filter-row-label">VOLUME WINDOW</span>
+            <div class="monitored-filter-options">
+              <button type="button" class="monitored-filter-option ${sortClasses.vol5m}" data-monitored-sort-mode="vol" data-monitored-sort-window="5m">5M</button>
+              <button type="button" class="monitored-filter-option ${sortClasses.vol1h}" data-monitored-sort-mode="vol" data-monitored-sort-window="1h">1H</button>
+              <button type="button" class="monitored-filter-option ${sortClasses.vol6h}" data-monitored-sort-mode="vol" data-monitored-sort-window="6h">6H</button>
+              <button type="button" class="monitored-filter-option ${sortClasses.vol24h}" data-monitored-sort-mode="vol" data-monitored-sort-window="24h">24H</button>
+            </div>
+          </div>
+          <div class="monitored-filter-row">
+            <span class="monitored-filter-row-label">MCAP / FDV ORDER</span>
+            <div class="monitored-filter-options">
+              <button type="button" class="monitored-filter-option ${sortClasses.mcapHighest}" data-monitored-sort-mode="mcap" data-monitored-sort-window="highest">HIGHEST</button>
+              <button type="button" class="monitored-filter-option ${sortClasses.mcapLowest}" data-monitored-sort-mode="mcap" data-monitored-sort-window="lowest">LOWEST</button>
+            </div>
+          </div>
+          <div class="monitored-filter-row">
+            <span class="monitored-filter-row-label">AGE ORDER</span>
+            <div class="monitored-filter-options">
+              <button type="button" class="monitored-filter-option ${sortClasses.ageNewest}" data-monitored-sort-mode="age" data-monitored-sort-window="newest">NEWEST</button>
+              <button type="button" class="monitored-filter-option ${sortClasses.ageOldest}" data-monitored-sort-mode="age" data-monitored-sort-window="oldest">OLDEST</button>
+            </div>
+          </div>
+        </section>
+        <section class="monitored-filter-section monitored-filter-limits" aria-labelledby="monitored-valuation-limits-label">
+          <span class="monitored-filter-section-title" id="monitored-valuation-limits-label">VALUATION LIMITS</span>
+          <div class="monitored-filter-limit-row">
+            <span class="monitored-filter-limit-label">MCAP</span>
+            <div class="monitored-filter-limit-fields">
+              <label class="legacy-mini-field">MIN <input type="number" min="0" step="1000" value="${draft.minMcap}" data-action="monitored-mcap-min" aria-label="Minimum market cap" /></label>
+              <label class="legacy-mini-field">MAX <input type="number" min="0" step="1000" value="${draft.maxMcap || ''}" placeholder="NO MAX" data-action="monitored-mcap-max" aria-label="Maximum market cap" /></label>
+            </div>
+          </div>
+          <div class="monitored-filter-limit-row">
+            <span class="monitored-filter-limit-label">FDV</span>
+            <div class="monitored-filter-limit-fields">
+              <label class="legacy-mini-field">MIN <input type="number" min="0" step="1000" value="${draft.minFdv}" data-action="monitored-fdv-min" aria-label="Minimum fully diluted valuation" /></label>
+              <label class="legacy-mini-field">MAX <input type="number" min="0" step="1000" value="${draft.maxFdv || ''}" placeholder="NO MAX" data-action="monitored-fdv-max" aria-label="Maximum fully diluted valuation" /></label>
+            </div>
+          </div>
+          <span class="monitored-filters-error" data-monitored-filters-error role="alert" hidden></span>
+        </section>
+        <span class="monitored-filters-hint">CLICK OUTSIDE OR ENTER TO SAVE · ESC TO CANCEL LIMIT CHANGES</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderExpandedMonitoredMarkup(state: AppState, view: MonitoredSectionView) {
   return `
     <div class="panel-header monitored-panel-header">
       <span class="monitored-panel-title">MONITORED<br>TOKENS</span>
       <div class="panel-header-controls monitored-header-controls">
         <div class="monitored-header-top">
-          <span class="panel-header-label">SORT BY</span>
-          <div class="sort-pill-group monitored-sort-group">
-            <div class="sort-menu-wrap" data-sort-wrap>
-              <button type="button" class="old-filter-btn ${sortClasses.volActive}" data-sort-toggle="monitored-vol">VOL</button>
-              <div class="sort-menu-dropdown">
-                <button type="button" class="sort-menu-item ${sortClasses.vol5m}" data-monitored-sort-mode="vol" data-monitored-sort-window="5m">5M</button>
-                <button type="button" class="sort-menu-item ${sortClasses.vol1h}" data-monitored-sort-mode="vol" data-monitored-sort-window="1h">1H</button>
-                <button type="button" class="sort-menu-item ${sortClasses.vol6h}" data-monitored-sort-mode="vol" data-monitored-sort-window="6h">6H</button>
-                <button type="button" class="sort-menu-item ${sortClasses.vol24h}" data-monitored-sort-mode="vol" data-monitored-sort-window="24h">24H</button>
-              </div>
-            </div>
-            <div class="sort-menu-wrap" data-sort-wrap>
-              <button type="button" class="old-filter-btn ${sortClasses.mcapActive}" data-sort-toggle="monitored-mcap">MCAP / FDV</button>
-              <div class="sort-menu-dropdown">
-                <button type="button" class="sort-menu-item ${sortClasses.mcapHighest}" data-monitored-sort-mode="mcap" data-monitored-sort-window="highest">HIGHEST</button>
-                <button type="button" class="sort-menu-item ${sortClasses.mcapLowest}" data-monitored-sort-mode="mcap" data-monitored-sort-window="lowest">LOWEST</button>
-              </div>
-            </div>
-            <div class="sort-menu-wrap" data-sort-wrap>
-              <button type="button" class="old-filter-btn ${sortClasses.ageActive}" data-sort-toggle="monitored-age">AGE</button>
-              <div class="sort-menu-dropdown">
-                <button type="button" class="sort-menu-item ${sortClasses.ageNewest}" data-monitored-sort-mode="age" data-monitored-sort-window="newest">NEWEST</button>
-                <button type="button" class="sort-menu-item ${sortClasses.ageOldest}" data-monitored-sort-mode="age" data-monitored-sort-window="oldest">OLDEST</button>
-              </div>
-            </div>
-          </div>
+          ${renderMonitoredFilters(view)}
           <span class="monitored-token-pill-wrap monitored-token-pill-wrap-top">
             <span class="panel-header-label">TOKENS</span>
             <span class="count monitored-token-count-pill">${view.filteredTracked.length}</span>
@@ -169,11 +231,6 @@ function renderExpandedMonitoredMarkup(state: AppState, view: MonitoredSectionVi
             </div>
             <div class="monitored-inline-controls">
               ${view.miniChartEnabled ? renderSparklineRangeControl(state, 'monitored') : ''}
-              <div class="monitored-valuation-filters" aria-label="Monitored valuation filters">
-                <label class="legacy-mini-field">MCAP MIN <input type="number" min="0" step="1000" value="${view.minMcap}" data-action="monitored-mcap-min" aria-label="Minimum market cap" /></label>
-                <label class="legacy-mini-field">FDV MIN <input type="number" min="0" step="1000" value="${view.minFdv}" data-action="monitored-fdv-min" aria-label="Minimum fully diluted valuation" /></label>
-                <button type="button" class="action-button small monitored-filter-apply" data-action="monitored-valuation-apply">Apply</button>
-              </div>
               <label class="legacy-mini-field monitored-per-page-field">PER PAGE <input type="number" min="10" step="1" data-action="monitored-per-page" /></label>
               <label class="legacy-mini-field monitored-page-field">
                 PAGE
@@ -235,6 +292,7 @@ function renderMonitoredRows(
       state.ui.enabledTradeTerminals,
       miniChartEnabled ? getTokenSparkline(state, item.address, chain) : null,
       miniChartEnabled,
+      state.ui.monitoredSparklineHoursByAddress,
       isSolana ? getMockTradingPositionView(state, item.address) : null,
       isSolana ? state.data.mockTradingTradesByAddress[item.address] : [],
       mockSolUsdcRate,
@@ -285,44 +343,154 @@ function bindMonitoredSectionControls(
   bindTokenImagePreview(section);
   bindTopEdgePageScrollBridge(section.querySelector<HTMLElement>('.monitored-list'));
   bindSparklineHover(section, state.data.sparklineByAddress, { controller });
+  bindMonitoredSparklineQuickRanges(section, controller);
   bindSparklineRangeControls(section, controller);
   bindMonitoredTickerPeerPanelClose(section);
   bindMonitoredSortControls(section, controller);
   bindPagedMonitoredControls(section, controller);
   bindMonitoredPinControls(section, state, controller);
-  bindMonitoredValuationFilters(section, controller, view);
+  bindMonitoredFilters(section, controller, view);
 }
 
-function bindMonitoredValuationFilters(
+function bindMonitoredSparklineQuickRanges(section: ParentNode, controller: AppController) {
+  section.querySelectorAll<HTMLButtonElement>('[data-action="set-monitored-sparkline-range-hours"]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const address = String(button.dataset.address || '').trim();
+      const chain = normalizeTokenChain(button.dataset.chain) || 'solana';
+      controller.setMonitoredTokenSparklineRangeHours(
+        address,
+        Number(button.dataset.sparklineRangeHours),
+        chain,
+      );
+      button.dispatchEvent(new CustomEvent('monitored-sparkline-range-commit', { bubbles: true }));
+    });
+  });
+}
+
+function ensureMonitoredFiltersDocumentClose() {
+  if (monitoredFiltersDocumentBound) return;
+  monitoredFiltersDocumentBound = true;
+  document.addEventListener('pointerdown', (event) => {
+    if (!monitoredFiltersOpen || !activeMonitoredFilters || !(event.target instanceof Node)) return;
+    if (!activeMonitoredFilters.contains(event.target)) commitActiveMonitoredFilters?.();
+  }, true);
+}
+
+function bindMonitoredFilters(
   section: ParentNode,
   controller: AppController,
   view: MonitoredSectionView,
 ) {
-  const mcapInput = section.querySelector<HTMLInputElement>('[data-action="monitored-mcap-min"]');
-  const fdvInput = section.querySelector<HTMLInputElement>('[data-action="monitored-fdv-min"]');
-  const applyButton = section.querySelector<HTMLButtonElement>('[data-action="monitored-valuation-apply"]');
-  if (!mcapInput || !fdvInput || !applyButton) return;
+  const wrapper = section.querySelector<HTMLElement>('[data-monitored-filters]');
+  const toggle = wrapper?.querySelector<HTMLButtonElement>('[data-action="monitored-filters-toggle"]');
+  const popover = wrapper?.querySelector<HTMLElement>('.monitored-filters-popover');
+  const mcapMinInput = section.querySelector<HTMLInputElement>('[data-action="monitored-mcap-min"]');
+  const mcapMaxInput = section.querySelector<HTMLInputElement>('[data-action="monitored-mcap-max"]');
+  const fdvMinInput = section.querySelector<HTMLInputElement>('[data-action="monitored-fdv-min"]');
+  const fdvMaxInput = section.querySelector<HTMLInputElement>('[data-action="monitored-fdv-max"]');
+  const errorMessage = section.querySelector<HTMLElement>('[data-monitored-filters-error]');
+  if (!wrapper || !toggle || !popover || !mcapMinInput || !mcapMaxInput
+    || !fdvMinInput || !fdvMaxInput || !errorMessage) {
+    monitoredFiltersOpen = false;
+    monitoredFiltersDraft = null;
+    activeMonitoredFilters = null;
+    commitActiveMonitoredFilters = null;
+    return;
+  }
+  ensureMonitoredFiltersDocumentClose();
+  activeMonitoredFilters = wrapper;
+  monitoredFiltersDraft ??= {
+    minMcap: view.minMcap,
+    maxMcap: view.maxMcap,
+    minFdv: view.minFdv,
+    maxFdv: view.maxFdv,
+  };
 
   const readValue = (input: HTMLInputElement, fallback: number) => {
     const value = Number(input.value);
     return Number.isFinite(value) && value >= 0 ? value : fallback;
   };
-  const applyFilters = () => {
-    const minMcap = readValue(mcapInput, view.minMcap);
-    const minFdv = readValue(fdvInput, view.minFdv);
-    mcapInput.value = String(minMcap);
-    fdvInput.value = String(minFdv);
+  const setOpen = (next: boolean, focusToggle = false) => {
+    monitoredFiltersOpen = next;
+    wrapper.classList.toggle('is-open', next);
+    popover.hidden = !next;
+    toggle.setAttribute('aria-expanded', String(next));
+    if (focusToggle) toggle.focus();
+  };
+  const setError = (message = '') => {
+    errorMessage.textContent = message;
+    errorMessage.hidden = !message;
+  };
+  const readDraft = (): MonitoredValuationFilterDraft => ({
+    minMcap: readValue(mcapMinInput, view.minMcap),
+    maxMcap: readValue(mcapMaxInput, 0),
+    minFdv: readValue(fdvMinInput, view.minFdv),
+    maxFdv: readValue(fdvMaxInput, 0),
+  });
+  const cancelFilters = () => {
+    monitoredFiltersDraft = null;
+    mcapMinInput.value = String(view.minMcap);
+    mcapMaxInput.value = view.maxMcap > 0 ? String(view.maxMcap) : '';
+    fdvMinInput.value = String(view.minFdv);
+    fdvMaxInput.value = view.maxFdv > 0 ? String(view.maxFdv) : '';
+    setError();
+    setOpen(false, true);
+  };
+  const applyFilters = (focusToggle = false) => {
+    const draft = readDraft();
+    monitoredFiltersDraft = draft;
+    if (draft.maxMcap > 0 && draft.maxMcap < draft.minMcap) {
+      setError('MCAP MAX MUST BE GREATER THAN OR EQUAL TO MIN');
+      mcapMaxInput.focus();
+      return;
+    }
+    if (draft.maxFdv > 0 && draft.maxFdv < draft.minFdv) {
+      setError('FDV MAX MUST BE GREATER THAN OR EQUAL TO MIN');
+      fdvMaxInput.focus();
+      return;
+    }
+    monitoredFiltersDraft = null;
+    setError();
+    setOpen(false, focusToggle);
     void controller.saveMonitoringConfig({
-      'monitored-mcap-min': minMcap,
-      'monitored-fdv-min': minFdv,
+      'monitored-mcap-min': draft.minMcap,
+      'monitored-view-mcap-max': draft.maxMcap,
+      'monitored-fdv-min': draft.minFdv,
+      'monitored-view-fdv-max': draft.maxFdv,
     });
   };
-  applyButton.addEventListener('click', applyFilters);
-  for (const input of [mcapInput, fdvInput]) {
-    input.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') applyFilters();
-    });
-  }
+  commitActiveMonitoredFilters = () => applyFilters();
+  toggle.addEventListener('click', () => {
+    if (monitoredFiltersOpen) {
+      applyFilters(true);
+      return;
+    }
+    monitoredFiltersDraft = {
+      minMcap: view.minMcap,
+      maxMcap: view.maxMcap,
+      minFdv: view.minFdv,
+      maxFdv: view.maxFdv,
+    };
+    setOpen(true);
+  });
+  const updateDraft = () => {
+    monitoredFiltersDraft = readDraft();
+    setError();
+  };
+  mcapMinInput.addEventListener('input', updateDraft);
+  mcapMaxInput.addEventListener('input', updateDraft);
+  fdvMinInput.addEventListener('input', updateDraft);
+  fdvMaxInput.addEventListener('input', updateDraft);
+  wrapper.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      cancelFilters();
+    } else if (event.key === 'Enter' && event.target instanceof HTMLInputElement) {
+      event.preventDefault();
+      applyFilters(true);
+    }
+  });
 }
 
 type MonitoredPinClickDraft = {
@@ -780,7 +948,7 @@ function resolveMonitoredIdentityPresentation(item: ManualTokenEntry) {
   return { chain, primaryUrl, subtitle, symbol };
 }
 
-function buildMonitoredRow(item: ManualTokenEntry, manualTokenFolders: AppState['data']['manualTokenFolders'], busy: boolean, isStarred: boolean, isAdmin: boolean, enabledTradeTerminals: AppState['ui']['enabledTradeTerminals'], sparkline: AppState['data']['sparklineByAddress'][string] | null, miniChartEnabled: boolean, mockTradingPosition: AppState['data']['mockTradingPositionsByAddress'][string] | null, mockTradingTrades: AppState['data']['mockTradingTradesByAddress'][string] = [], mockSolUsdcRate?: number) {
+function buildMonitoredRow(item: ManualTokenEntry, manualTokenFolders: AppState['data']['manualTokenFolders'], busy: boolean, isStarred: boolean, isAdmin: boolean, enabledTradeTerminals: AppState['ui']['enabledTradeTerminals'], sparkline: AppState['data']['sparklineByAddress'][string] | null, miniChartEnabled: boolean, monitoredSparklineHoursByAddress: AppState['ui']['monitoredSparklineHoursByAddress'], mockTradingPosition: AppState['data']['mockTradingPositionsByAddress'][string] | null, mockTradingTrades: AppState['data']['mockTradingTradesByAddress'][string] = [], mockSolUsdcRate?: number) {
   const { chain, primaryUrl, subtitle, symbol } = resolveMonitoredIdentityPresentation(item);
   const valuation = resolveTokenValuation(item);
   const xSearch = buildXSearchUrl(symbol, item.address);
@@ -888,7 +1056,7 @@ function buildMonitoredRow(item: ManualTokenEntry, manualTokenFolders: AppState[
 
   article.append(main);
   if (miniChartEnabled) {
-    article.append(buildMonitoredMiniChart(item, sparkline));
+    article.append(buildMonitoredMiniChart(item, sparkline, monitoredSparklineHoursByAddress));
   }
   article.append(side);
   return article;
@@ -967,16 +1135,44 @@ function buildMonitoredPinHandle(item: ManualTokenEntry) {
   return button;
 }
 
-function buildMonitoredMiniChart(item: ManualTokenEntry, sparkline: AppState['data']['sparklineByAddress'][string] | null) {
+function buildMonitoredMiniChart(
+  item: ManualTokenEntry,
+  sparkline: AppState['data']['sparklineByAddress'][string] | null,
+  monitoredSparklineHoursByAddress: AppState['ui']['monitoredSparklineHoursByAddress'],
+) {
   const chain = item.chain || 'solana';
+  const identityKey = buildTokenIdentityKey(chain, item.address);
+  const selectedHours = monitoredSparklineHoursByAddress[identityKey]
+    ?? Number(sparkline?.hours);
   const miniChart = document.createElement('div');
   miniChart.className = 'monitored-mini-chart';
-  miniChart.innerHTML = renderSparklineFigure(sparkline, item.address, {
+  const figure = document.createElement('div');
+  figure.className = 'monitored-mini-chart-figure';
+  figure.innerHTML = renderSparklineFigure(sparkline, item.address, {
     areaFill: true,
     expandable: true,
-    lookupKey: buildTokenIdentityKey(chain, item.address),
+    showTokenRangeControl: false,
+    lookupKey: identityKey,
     liveMcap: resolveTokenValuation(item).value,
   });
+  const controls = document.createElement('div');
+  controls.className = 'monitored-sparkline-quick-ranges';
+  controls.setAttribute('role', 'group');
+  controls.setAttribute('aria-label', 'Monitored chart range');
+  for (const option of MONITORED_SPARKLINE_QUICK_RANGES) {
+    const button = document.createElement('button');
+    const active = selectedHours === option.hours;
+    button.type = 'button';
+    button.className = `monitored-sparkline-quick-range${active ? ' is-active' : ''}`;
+    button.dataset.action = 'set-monitored-sparkline-range-hours';
+    button.dataset.address = item.address;
+    button.dataset.chain = chain;
+    button.dataset.sparklineRangeHours = String(option.hours);
+    button.setAttribute('aria-pressed', String(active));
+    button.textContent = option.label;
+    controls.append(button);
+  }
+  miniChart.append(figure, controls);
   return miniChart;
 }
 

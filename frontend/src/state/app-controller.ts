@@ -1,4 +1,4 @@
-import { createAppState, getAlertFeedAlerts, getManualTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, getTrackedToken, isMockTradingEnabled, type AddressItem, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type CustomAlertMetric, type CustomAlertPreviewInput, type CustomAlertRuleEntry, type LinkedIdentityEntry, type ManualTokenEntry, type ManualTokenFolderEntry, type ManualTokenFolderItemEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MockTradingWalletEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type ProfileAuthPanel, type PumpTokenEntry, type TokenSparklineCandleEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
+import { createAppState, getAlertFeedAlerts, getManualTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, getTrackedToken, isMockTradingEnabled, type AddressItem, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type CustomAlertMetric, type CustomAlertPreviewInput, type CustomAlertRuleEntry, type LinkedIdentityEntry, type ManualTokenEntry, type ManualTokenFolderEntry, type ManualTokenFolderItemEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MockTradingWalletEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type ProfileAuthPanel, type PumpTokenEntry, type SparklineRangePreset, type TokenSparklineCandleEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
 import { resolveManualTableRows, resolveMonitoredTableRows } from '../utils/token-table';
 import {
   createLegacyCompatibleTokenIdentity,
@@ -125,6 +125,7 @@ import { API_RESPONSE_DEBUG_EVENT } from '../services/api/response-metadata';
 import { trimLoginEmailValue } from '../ui/sections/login-form-utils';
 import {
   getWorkspaceSparklineNextRefreshAt,
+  resolveMonitoredQuickSparklineGranularityMinutes,
   resolveWorkspaceSparklineGranularityMinutes,
   runWorkspaceSparklineRequestWithTimeout,
   selectWorkspaceSparklineRefreshBatches,
@@ -302,6 +303,15 @@ const SPARKLINE_RANGE_MIN_DAYS = 1;
 const SPARKLINE_RANGE_MAX_DAYS = 14;
 const SPARKLINE_RANGE_DEFAULT_DAYS = 14;
 const SPARKLINE_RANGE_TOKEN_OVERRIDE_MAX = 250;
+const SPARKLINE_RANGE_PRESETS = new Set<SparklineRangePreset>([
+  '1h', '4h', '12h', '1d', '3d', '7d', '14d', 'all',
+]);
+const SPARKLINE_RANGE_TIMED_PRESETS: ReadonlyArray<readonly [SparklineRangePreset, number]> = [
+  ['1h', 1], ['4h', 4], ['12h', 12], ['1d', 24],
+  ['3d', 72], ['7d', 168], ['14d', 336],
+];
+const SPARKLINE_RANGE_HOURS = new Map(SPARKLINE_RANGE_TIMED_PRESETS);
+const MONITORED_QUICK_SPARKLINE_HOURS = new Set([0, 1, 4, 12, 24, 72, 168, 336]);
 const METEORA_ALERT_MIN_TVL = 10000;
 const COLD_FIELD_RECHECK_MS = 10 * 60 * 1000;
 const MANUAL_METADATA_BATCH_CACHE_MS = 12 * 1000;
@@ -421,6 +431,7 @@ type HistoryPeerState = {
 type SparklineBatchRequest = {
   hours: number;
   granularityMinutes: number;
+  allAvailable?: boolean;
   identities: TokenIdentity[];
 };
 
@@ -744,10 +755,10 @@ export interface AppController {
   setMonitoredPerPage(perPage: number): void;
   setRecentPerPage(perPage: number): void;
   setOldWeekPerPage(perPage: number): void;
-  setSparklineRangeDays(scope: SparklineRangeScope, days: number): void;
-  setSparklineRangeGlobal(enabled: boolean, scope: SparklineRangeScope): void;
-  setTokenSparklineRangeDays(address: string, days: number, chain?: TokenChain): void;
+  setSparklineRangePreset(scope: SparklineRangeScope, preset: SparklineRangePreset): void;
+  setTokenSparklineRangePreset(address: string, preset: SparklineRangePreset, chain?: TokenChain): void;
   resetTokenSparklineRangeDays(address: string, chain?: TokenChain): void;
+  setMonitoredTokenSparklineRangeHours(address: string, hours: number, chain?: TokenChain): void;
   setManualSort(mode: BucketSortMode, window?: BucketSortWindow): void;
   setRecentSort(mode: BucketSortMode, window?: BucketSortWindow): void;
   setOldWeekSort(mode: BucketSortMode, window?: BucketSortWindow): void;
@@ -2575,6 +2586,7 @@ export function createAppController(): AppController {
       batches: batches.slice(0, 6).map((batch) => ({
         hours: batch.hours,
         granularityMinutes: batch.granularityMinutes,
+        allAvailable: batch.allAvailable === true,
         addresses: summarizeSparklineDebugAddresses(batch.identities.map((identity) => identity.key)),
       })),
     };
@@ -4186,6 +4198,18 @@ export function createAppController(): AppController {
       : safeFallback;
   }
 
+  function sparklineRangePresetFromDays(days: unknown): SparklineRangePreset {
+    const hours = normalizeSparklineRangeDays(days) * 24;
+    return SPARKLINE_RANGE_TIMED_PRESETS.reduce((best, candidate) => (
+      Math.abs(candidate[1] - hours) < Math.abs(best[1] - hours) ? candidate : best
+    ))[0];
+  }
+
+  function normalizeSparklineRangePreset(value: unknown, fallbackDays: number): SparklineRangePreset {
+    const preset = String(value || '').trim().toLowerCase() as SparklineRangePreset;
+    return SPARKLINE_RANGE_PRESETS.has(preset) ? preset : sparklineRangePresetFromDays(fallbackDays);
+  }
+
   function normalizeSparklineRangeTokenDays(input: unknown) {
     if (!input || typeof input !== 'object' || Array.isArray(input)) {
       return {};
@@ -4202,6 +4226,17 @@ export function createAppController(): AppController {
     return next;
   }
 
+  function normalizeSparklineRangeTokenPresets(input: unknown) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+    const next: Record<string, SparklineRangePreset> = {};
+    for (const [rawAddress, rawPreset] of Object.entries(input).slice(0, SPARKLINE_RANGE_TOKEN_OVERRIDE_MAX)) {
+      const address = String(rawAddress || '').trim();
+      const preset = String(rawPreset || '').trim().toLowerCase() as SparklineRangePreset;
+      if (address && SPARKLINE_RANGE_PRESETS.has(preset)) next[address] = preset;
+    }
+    return next;
+  }
+
   function pruneSparklineRangeTokenDays(input: Record<string, number>) {
     return Object.fromEntries(
       Object.entries(input)
@@ -4211,18 +4246,42 @@ export function createAppController(): AppController {
     );
   }
 
+  function pruneSparklineRangeTokenPresets(input: Record<string, SparklineRangePreset>) {
+    return Object.fromEntries(
+      Object.entries(input)
+        .filter(([address, preset]) => Boolean(String(address || '').trim()) && SPARKLINE_RANGE_PRESETS.has(preset))
+        .slice(-SPARKLINE_RANGE_TOKEN_OVERRIDE_MAX),
+    ) as Record<string, SparklineRangePreset>;
+  }
+
   function normalizeSparklineRange(input: unknown): AppState['ui']['sparklineRange'] {
     const source = input && typeof input === 'object' && !Array.isArray(input)
       ? input as Partial<UiPrefsPayload['sparklineRange']>
       : null;
     const defaults = createAppState().ui.sparklineRange;
+    const legacyGlobalDays = normalizeSparklineRangeDays(source?.globalDays);
+    const legacyGlobal = source?.global === true;
+    const monitoredDays = normalizeSparklineRangeDays(
+      legacyGlobal ? legacyGlobalDays : source?.monitoredDays,
+      defaults.monitoredDays,
+    );
+    const recentDays = normalizeSparklineRangeDays(
+      legacyGlobal ? legacyGlobalDays : source?.recentDays,
+      defaults.recentDays,
+    );
+    const oldWeekDays = normalizeSparklineRangeDays(
+      legacyGlobal ? legacyGlobalDays : source?.oldWeekDays,
+      defaults.oldWeekDays,
+    );
     return {
-      global: source?.global == null ? defaults.global : Boolean(source.global),
-      globalDays: normalizeSparklineRangeDays(source?.globalDays, defaults.globalDays),
-      monitoredDays: normalizeSparklineRangeDays(source?.monitoredDays, defaults.monitoredDays),
-      recentDays: normalizeSparklineRangeDays(source?.recentDays, defaults.recentDays),
-      oldWeekDays: normalizeSparklineRangeDays(source?.oldWeekDays, defaults.oldWeekDays),
+      monitoredDays,
+      recentDays,
+      oldWeekDays,
+      monitoredPreset: normalizeSparklineRangePreset(source?.monitoredPreset, monitoredDays),
+      recentPreset: normalizeSparklineRangePreset(source?.recentPreset, recentDays),
+      oldWeekPreset: normalizeSparklineRangePreset(source?.oldWeekPreset, oldWeekDays),
       tokenDaysByAddress: normalizeSparklineRangeTokenDays(source?.tokenDaysByAddress),
+      tokenPresetByAddress: normalizeSparklineRangeTokenPresets(source?.tokenPresetByAddress),
     };
   }
 
@@ -4251,12 +4310,14 @@ export function createAppController(): AppController {
       expandedSparklineGranularityMinutes: preferredExpandedSparklineGranularityMinutes,
       expandedSparklineTimeZone: normalizeExpandedChartTimeZone(state.ui.expandedSparklineTimeZone),
       sparklineRange: {
-        global: Boolean(state.ui.sparklineRange.global),
-        globalDays: normalizeSparklineRangeDays(state.ui.sparklineRange.globalDays),
         monitoredDays: normalizeSparklineRangeDays(state.ui.sparklineRange.monitoredDays),
         recentDays: normalizeSparklineRangeDays(state.ui.sparklineRange.recentDays),
         oldWeekDays: normalizeSparklineRangeDays(state.ui.sparklineRange.oldWeekDays),
+        monitoredPreset: state.ui.sparklineRange.monitoredPreset,
+        recentPreset: state.ui.sparklineRange.recentPreset,
+        oldWeekPreset: state.ui.sparklineRange.oldWeekPreset,
         tokenDaysByAddress: pruneSparklineRangeTokenDays(state.ui.sparklineRange.tokenDaysByAddress),
+        tokenPresetByAddress: pruneSparklineRangeTokenPresets(state.ui.sparklineRange.tokenPresetByAddress),
       },
       enabledTradeTerminals: [...state.ui.enabledTradeTerminals],
       livePanelLayout: {
@@ -4287,7 +4348,14 @@ export function createAppController(): AppController {
       minFdv: Math.max(0, getConfigNumber(
         'monitored-fdv-min', DEFAULT_MONITORED_MIN_VALUATION_USD,
       )),
+      maxMcap: Math.max(0, getConfigNumber('monitored-view-mcap-max', 0)),
+      maxFdv: Math.max(0, getConfigNumber('monitored-view-fdv-max', 0)),
     };
+  }
+
+  function getMonitoredMinimumValuationFilters() {
+    const { minMcap, minFdv } = getMonitoredValuationFilters();
+    return { minMcap, minFdv };
   }
 
   function isConfigEnabled(key: string, fallback = true) {
@@ -7546,7 +7614,14 @@ export function createAppController(): AppController {
       ?? (identity.chain === 'solana'
         ? state.ui.sparklineRange.tokenDaysByAddress[identity.address]
         : null);
-    return Number.isFinite(Number(days)) ? normalizeSparklineRangeDays(days) : null;
+    return days != null && Number.isFinite(Number(days)) ? normalizeSparklineRangeDays(days) : null;
+  }
+
+  function getTokenSparklineRangePreset(identity: TokenIdentity) {
+    return state.ui.sparklineRange.tokenPresetByAddress[identity.key]
+      ?? (identity.chain === 'solana'
+        ? state.ui.sparklineRange.tokenPresetByAddress[identity.address]
+        : null);
   }
 
   function getSparklineRangeDays(scope: SparklineRangeScope, identity?: TokenIdentity) {
@@ -7556,9 +7631,6 @@ export function createAppController(): AppController {
     }
 
     const range = state.ui.sparklineRange;
-    if (range.global) {
-      return normalizeSparklineRangeDays(range.globalDays);
-    }
     if (scope === 'recent') {
       return normalizeSparklineRangeDays(range.recentDays);
     }
@@ -7566,6 +7638,28 @@ export function createAppController(): AppController {
       return normalizeSparklineRangeDays(range.oldWeekDays);
     }
     return normalizeSparklineRangeDays(range.monitoredDays);
+  }
+
+  function getSparklineRangePreset(scope: SparklineRangeScope) {
+    const range = state.ui.sparklineRange;
+    if (scope === 'recent') return range.recentPreset;
+    if (scope === 'oldWeek') return range.oldWeekPreset;
+    return range.monitoredPreset;
+  }
+
+  function getMonitoredQuickSparklineRangeHours(identity: TokenIdentity) {
+    const hours = Number(state.ui.monitoredSparklineHoursByAddress[identity.key]);
+    return MONITORED_QUICK_SPARKLINE_HOURS.has(hours) ? hours : null;
+  }
+
+  function clearMonitoredQuickSparklineRange(identity: TokenIdentity) {
+    if (state.ui.monitoredSparklineHoursByAddress[identity.key] == null) {
+      return false;
+    }
+    const next = { ...state.ui.monitoredSparklineHoursByAddress };
+    delete next[identity.key];
+    state.ui.monitoredSparklineHoursByAddress = next;
+    return true;
   }
 
   function getVisibleWorkspaceSparklineIdentityScopes() {
@@ -7594,21 +7688,47 @@ export function createAppController(): AppController {
     return [];
   }
 
+  function resolveWorkspaceSparklineRequestShape(
+    identity: TokenIdentity,
+    scope: SparklineRangeScope,
+    referenceTs: number,
+  ) {
+    const trackedToken = getTrackedToken(state, identity.address, identity.chain);
+    const quickRangeHours = scope === 'monitored'
+      ? getMonitoredQuickSparklineRangeHours(identity)
+      : null;
+    const tokenRangeDays = getTokenSparklineRangeDays(identity);
+    const tokenPreset = getTokenSparklineRangePreset(identity);
+    const preset = quickRangeHours == null
+      ? (tokenPreset ?? (tokenRangeDays == null ? getSparklineRangePreset(scope) : null))
+      : null;
+    const allAvailable = quickRangeHours === 0 || preset === 'all';
+    const rangeDays = getSparklineRangeDays(scope, identity);
+    const presetHours = preset ? SPARKLINE_RANGE_HOURS.get(preset) : null;
+    const hours = allAvailable ? 0 : (quickRangeHours ?? presetHours ?? (rangeDays * 24));
+    const granularityMinutes = allAvailable
+      ? 60
+      : quickRangeHours == null && presetHours == null
+        ? resolveWorkspaceSparklineGranularityMinutes({
+          anchorAt: trackedToken?.createdAt ?? null,
+          rangeDays,
+          referenceTs,
+        })
+        : resolveMonitoredQuickSparklineGranularityMinutes(hours);
+    return { hours, granularityMinutes, allAvailable };
+  }
+
   function getVisibleWorkspaceSparklineBatches(referenceTs = Date.now()) {
     const grouped = new Map<string, SparklineBatchRequest>();
     const selectedIdentities = getVisibleWorkspaceSparklineIdentityScopes();
 
     for (const { identity, scope } of selectedIdentities) {
-      const trackedToken = getTrackedToken(state, identity.address, identity.chain);
-      const sparklineAnchorAt = trackedToken?.createdAt ?? null;
-      const rangeDays = getSparklineRangeDays(scope, identity);
-      const hours = rangeDays * 24;
-      const granularityMinutes = resolveWorkspaceSparklineGranularityMinutes({
-        anchorAt: sparklineAnchorAt,
-        rangeDays,
+      const { hours, granularityMinutes, allAvailable } = resolveWorkspaceSparklineRequestShape(
+        identity,
+        scope,
         referenceTs,
-      });
-      const key = `${hours}:${granularityMinutes}`;
+      );
+      const key = `${allAvailable ? 'all' : hours}:${granularityMinutes}`;
       const batch = grouped.get(key);
       if (batch?.identities.some((item) => item.key === identity.key)) {
         continue;
@@ -7621,6 +7741,7 @@ export function createAppController(): AppController {
       grouped.set(key, {
         hours,
         granularityMinutes,
+        allAvailable,
         identities: [identity],
       });
     }
@@ -7890,6 +8011,16 @@ export function createAppController(): AppController {
     };
   }
 
+  function resolveHistorySparklineRequestMetadata(payload: TokenSparklinesPayload) {
+    if (payload.allAvailable) {
+      return { hours: 0, points: Number(payload.points) || 500 };
+    }
+    return {
+      hours: Number(payload.hours) || SPARKLINE_WINDOW_HOURS,
+      points: Number(payload.points) || SPARKLINE_POINT_COUNT,
+    };
+  }
+
   function buildHistorySparklineCacheEntry(
     item: TokenSparklinesPayload['items'][number] | null | undefined,
     payload: TokenSparklinesPayload,
@@ -7900,6 +8031,7 @@ export function createAppController(): AppController {
     }
 
     const series = Array.isArray(item.series) ? item.series : [];
+    const request = resolveHistorySparklineRequestMetadata(payload);
     return {
       ...buildHistorySparklineChainMetadata(item),
       address: item.address,
@@ -7913,8 +8045,9 @@ export function createAppController(): AppController {
       oneMinuteAvailable: item.oneMinuteAvailable === true,
       generatedAt: payload.generatedAt ?? null,
       refreshedAt,
-      hours: Number(payload.hours) || SPARKLINE_WINDOW_HOURS,
-      points: Number(payload.points) || SPARKLINE_POINT_COUNT,
+      hours: request.hours,
+      allAvailable: payload.allAvailable === true,
+      points: request.points,
       series,
       candles: Array.isArray(item.candles) ? item.candles : [],
       loading: false,
@@ -7947,6 +8080,7 @@ export function createAppController(): AppController {
         generatedAt: payload.generatedAt ?? null,
         refreshedAt,
         hours: expectedBatch?.hours,
+        allAvailable: expectedBatch?.allAvailable === true,
         points: Number(payload.points) || SPARKLINE_POINT_COUNT,
         granularityMinutes: expectedBatch?.granularityMinutes,
         series: [],
@@ -8923,8 +9057,9 @@ export function createAppController(): AppController {
               SPARKLINE_REQUEST_TIMEOUT_MS,
               (signal) => fetchTokenSparklines(batch.identities, {
                 hours: batch.hours,
-                points: SPARKLINE_POINT_COUNT,
+                points: batch.allAvailable ? 500 : SPARKLINE_POINT_COUNT,
                 granularityMinutes: batch.granularityMinutes,
+                allAvailable: batch.allAvailable,
                 allowOneMinuteFallback: true,
                 signal,
                 onResponse: (response) => recordSparklineDebug('http.response', {
@@ -9528,7 +9663,7 @@ export function createAppController(): AppController {
         { workspace: state.ui.workspace },
         () => fetchDashboardTopPerformers(token, {
           chains: requestedChains,
-          ...getMonitoredValuationFilters(),
+          ...getMonitoredMinimumValuationFilters(),
         }),
       );
       if (
@@ -13659,91 +13794,103 @@ export function createAppController(): AppController {
         void refreshHistoryWorkspaceBootstrap();
       }
     },
-    setSparklineRangeDays(scope: SparklineRangeScope, days: number) {
-      const safeDays = normalizeSparklineRangeDays(days);
-      if (state.ui.sparklineRange.global) {
-        if (state.ui.sparklineRange.globalDays === safeDays) {
-          return;
-        }
-        state.ui.sparklineRange.globalDays = safeDays;
-      } else if (scope === 'recent') {
-        if (state.ui.sparklineRange.recentDays === safeDays) {
+    setSparklineRangePreset(scope: SparklineRangeScope, preset: SparklineRangePreset) {
+      if (!SPARKLINE_RANGE_PRESETS.has(preset)) {
+        return;
+      }
+      const safeDays = preset === 'all'
+        ? SPARKLINE_RANGE_MAX_DAYS
+        : normalizeSparklineRangeDays(Math.ceil((SPARKLINE_RANGE_HOURS.get(preset) || 24) / 24));
+      if (scope === 'recent') {
+        if (state.ui.sparklineRange.recentDays === safeDays
+          && state.ui.sparklineRange.recentPreset === preset) {
           return;
         }
         state.ui.sparklineRange.recentDays = safeDays;
+        state.ui.sparklineRange.recentPreset = preset;
       } else if (scope === 'oldWeek') {
-        if (state.ui.sparklineRange.oldWeekDays === safeDays) {
+        if (state.ui.sparklineRange.oldWeekDays === safeDays
+          && state.ui.sparklineRange.oldWeekPreset === preset) {
           return;
         }
         state.ui.sparklineRange.oldWeekDays = safeDays;
+        state.ui.sparklineRange.oldWeekPreset = preset;
       } else {
-        if (state.ui.sparklineRange.monitoredDays === safeDays) {
+        if (state.ui.sparklineRange.monitoredDays === safeDays
+          && state.ui.sparklineRange.monitoredPreset === preset) {
           return;
         }
         state.ui.sparklineRange.monitoredDays = safeDays;
+        state.ui.sparklineRange.monitoredPreset = preset;
       }
       queueUiPrefsPersist();
-      refreshWorkspaceSparklinesAfterRangeChange(undefined, `range-days:${scope}`);
+      refreshWorkspaceSparklinesAfterRangeChange(undefined, `range-preset:${scope}`);
     },
-    setSparklineRangeGlobal(enabled: boolean, scope: SparklineRangeScope) {
-      if (state.ui.sparklineRange.global === enabled) {
-        return;
-      }
-      const activeDays = getSparklineRangeDays(scope);
-      if (enabled) {
-        state.ui.sparklineRange.globalDays = activeDays;
-      } else if (scope === 'recent') {
-        state.ui.sparklineRange.recentDays = activeDays;
-      } else if (scope === 'oldWeek') {
-        state.ui.sparklineRange.oldWeekDays = activeDays;
-      } else {
-        state.ui.sparklineRange.monitoredDays = activeDays;
-      }
-      state.ui.sparklineRange.global = enabled;
-      queueUiPrefsPersist();
-      refreshWorkspaceSparklinesAfterRangeChange(undefined, `range-global:${scope}`);
-    },
-    setTokenSparklineRangeDays(address: string, days: number, chain: TokenChain = 'solana') {
+    setTokenSparklineRangePreset(address: string, preset: SparklineRangePreset, chain: TokenChain = 'solana') {
       const identity = getChartCapableIdentity(chain, address);
-      if (!identity) {
+      if (!identity || !SPARKLINE_RANGE_PRESETS.has(preset)) {
         return;
       }
-
-      const safeDays = normalizeSparklineRangeDays(days);
-      if (state.ui.sparklineRange.tokenDaysByAddress[identity.key] === safeDays) {
+      const clearedQuickRange = clearMonitoredQuickSparklineRange(identity);
+      if (state.ui.sparklineRange.tokenPresetByAddress[identity.key] === preset && !clearedQuickRange) {
         return;
       }
-
-      const nextTokenDaysByAddress = {
-        ...state.ui.sparklineRange.tokenDaysByAddress,
-        [identity.key]: safeDays,
+      const nextTokenPresetByAddress = {
+        ...state.ui.sparklineRange.tokenPresetByAddress,
+        [identity.key]: preset,
       };
-      if (identity.chain === 'solana') {
-        delete nextTokenDaysByAddress[identity.address];
-      }
-      state.ui.sparklineRange.tokenDaysByAddress = pruneSparklineRangeTokenDays(nextTokenDaysByAddress);
+      const nextTokenDaysByAddress = { ...state.ui.sparklineRange.tokenDaysByAddress };
+      delete nextTokenDaysByAddress[identity.key];
+      if (identity.chain === 'solana') delete nextTokenDaysByAddress[identity.address];
+      state.ui.sparklineRange.tokenDaysByAddress = nextTokenDaysByAddress;
+      state.ui.sparklineRange.tokenPresetByAddress = pruneSparklineRangeTokenPresets(nextTokenPresetByAddress);
       queueUiPrefsPersist();
-      refreshWorkspaceSparklinesAfterRangeChange([identity.key], 'token-range-days');
+      refreshWorkspaceSparklinesAfterRangeChange([identity.key], 'token-range-preset');
     },
     resetTokenSparklineRangeDays(address: string, chain: TokenChain = 'solana') {
       const identity = getChartCapableIdentity(chain, address);
       const hasLegacyOverride = identity?.chain === 'solana'
         && state.ui.sparklineRange.tokenDaysByAddress[identity.address] != null;
+      const hasLegacyPreset = identity?.chain === 'solana'
+        && state.ui.sparklineRange.tokenPresetByAddress[identity.address] != null;
+      const clearedQuickRange = identity ? clearMonitoredQuickSparklineRange(identity) : false;
       if (!identity || (
         state.ui.sparklineRange.tokenDaysByAddress[identity.key] == null
+        && state.ui.sparklineRange.tokenPresetByAddress[identity.key] == null
         && !hasLegacyOverride
+        && !hasLegacyPreset
+        && !clearedQuickRange
       )) {
         return;
       }
 
       const nextTokenDaysByAddress = { ...state.ui.sparklineRange.tokenDaysByAddress };
+      const nextTokenPresetByAddress = { ...state.ui.sparklineRange.tokenPresetByAddress };
       delete nextTokenDaysByAddress[identity.key];
+      delete nextTokenPresetByAddress[identity.key];
       if (identity.chain === 'solana') {
         delete nextTokenDaysByAddress[identity.address];
+        delete nextTokenPresetByAddress[identity.address];
       }
       state.ui.sparklineRange.tokenDaysByAddress = nextTokenDaysByAddress;
+      state.ui.sparklineRange.tokenPresetByAddress = nextTokenPresetByAddress;
       queueUiPrefsPersist();
       refreshWorkspaceSparklinesAfterRangeChange([identity.key], 'token-range-reset');
+    },
+    setMonitoredTokenSparklineRangeHours(address: string, hours: number, chain: TokenChain = 'solana') {
+      const identity = getChartCapableIdentity(chain, address);
+      const safeHours = Number(hours);
+      if (!identity || !MONITORED_QUICK_SPARKLINE_HOURS.has(safeHours)) {
+        return;
+      }
+      if (state.ui.monitoredSparklineHoursByAddress[identity.key] === safeHours) {
+        return;
+      }
+      state.ui.monitoredSparklineHoursByAddress = {
+        ...state.ui.monitoredSparklineHoursByAddress,
+        [identity.key]: safeHours,
+      };
+      refreshWorkspaceSparklinesAfterRangeChange([identity.key], 'monitored-token-range-hours');
     },
     setManualSort(mode: BucketSortMode, window?: BucketSortWindow) {
       state.ui.manualSorts = toggleSortCriterion(
@@ -14645,6 +14792,8 @@ export function createAppController(): AppController {
       const updatesMonitoredValuationFilters = (
         Object.prototype.hasOwnProperty.call(configs, 'monitored-mcap-min')
         || Object.prototype.hasOwnProperty.call(configs, 'monitored-fdv-min')
+        || Object.prototype.hasOwnProperty.call(configs, 'monitored-view-mcap-max')
+        || Object.prototype.hasOwnProperty.call(configs, 'monitored-view-fdv-max')
       );
       const previousConfigs = { ...state.data.configs };
       state.data.configs = { ...state.data.configs, ...configs };

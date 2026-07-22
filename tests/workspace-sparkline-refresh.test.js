@@ -2,6 +2,7 @@ const { before, describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
 let getWorkspaceSparklineNextRefreshAt;
+let resolveMonitoredQuickSparklineGranularityMinutes;
 let resolveWorkspaceSparklineGranularityMinutes;
 let runWorkspaceSparklineRequestWithTimeout;
 let selectWorkspaceSparklineRefreshBatches;
@@ -10,6 +11,7 @@ let splitWorkspaceSparklineBatchesByChain;
 before(async () => {
   ({
     getWorkspaceSparklineNextRefreshAt,
+    resolveMonitoredQuickSparklineGranularityMinutes,
     resolveWorkspaceSparklineGranularityMinutes,
     runWorkspaceSparklineRequestWithTimeout,
     selectWorkspaceSparklineRefreshBatches,
@@ -18,6 +20,15 @@ before(async () => {
 });
 
 describe('workspace sparkline request shape', () => {
+  it('uses the fixed monitored quick-range resolution contract', () => {
+    assert.deepEqual(
+      [1, 4, 12, 24, 72, 168, 336].map((hours) => (
+        resolveMonitoredQuickSparklineGranularityMinutes(hours)
+      )),
+      [1, 1, 1, 1, 5, 15, 30],
+    );
+  });
+
   it('uses the canonical Solana resolution tier for every selectable range', () => {
     const cases = [
       [1, 1],

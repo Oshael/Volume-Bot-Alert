@@ -691,6 +691,47 @@ describe('Catalog routes', () => {
     }
   });
 
+  it('normalizes all-available sparkline batches to 500 hourly points', async () => {
+    const originalListSparklineByAddresses = tokenMarketBucket1m.listSparklineByAddresses;
+    let capturedOptions = null;
+    tokenMarketBucket1m.listSparklineByAddresses = async (_addresses, options) => {
+      capturedOptions = options;
+      return [];
+    };
+
+    try {
+      const res = await request(app)
+        .post('/api/catalog/sparklines')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ addresses: [VALID_ADDR], allAvailable: true });
+
+      assert.equal(res.status, 200);
+      assert.deepEqual(capturedOptions, {
+        hours: null,
+        points: 500,
+        granularityMinutes: 60,
+        allAvailable: true,
+        allowOneMinuteFallback: false,
+      });
+      assert.equal(res.body.allAvailable, true);
+      assert.equal(res.body.hours, null);
+      assert.equal(res.body.points, 500);
+      assert.equal(res.body.granularityMinutes, 60);
+    } finally {
+      tokenMarketBucket1m.listSparklineByAddresses = originalListSparklineByAddresses;
+    }
+  });
+
+  it('rejects non-hourly granularity for all-available sparklines', async () => {
+    const res = await request(app)
+      .post('/api/catalog/sparklines')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ addresses: [VALID_ADDR], allAvailable: true, granularityMinutes: 30 });
+
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /60-minute granularity/);
+  });
+
   it('routes canonical mixed-chain identities through the batch history service', async () => {
     const originalGetSparklineBatch = catalogMarketHistory.getSparklineBatch;
     let captured = null;

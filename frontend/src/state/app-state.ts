@@ -113,6 +113,8 @@ export interface AlertEntry {
   } | null;
 }
 
+export type SparklineRangePreset = '1h' | '4h' | '12h' | '1d' | '3d' | '7d' | '14d' | 'all';
+
 export interface CustomAlertPreviewInput {
   chain?: TokenChain;
   tokenAddress: string;
@@ -386,6 +388,7 @@ export interface TokenSparklineEntry {
   generatedAt?: string | null;
   refreshedAt?: number;
   hours?: number;
+  allAvailable?: boolean;
   points?: number;
   series: number[];
   candles?: TokenSparklineCandleEntry[];
@@ -891,13 +894,16 @@ export interface AppState {
     expandedSparklineGranularityMinutes: number;
     expandedSparklineTimeZone: string;
     sparklineRange: {
-      global: boolean;
-      globalDays: number;
       monitoredDays: number;
       recentDays: number;
       oldWeekDays: number;
+      monitoredPreset: SparklineRangePreset;
+      recentPreset: SparklineRangePreset;
+      oldWeekPreset: SparklineRangePreset;
       tokenDaysByAddress: Record<string, number>;
+      tokenPresetByAddress: Record<string, SparklineRangePreset>;
     };
+    monitoredSparklineHoursByAddress: Record<string, number>;
     activeMockTradingWalletId: number | null;
     mockTradingTicket: MockTradingTicketState | null;
     floatingQuickBuy: FloatingQuickBuyState;
@@ -1125,13 +1131,16 @@ export function createAppState(): AppState {
       expandedSparklineGranularityMinutes: 5,
       expandedSparklineTimeZone: 'browser',
       sparklineRange: {
-        global: true,
-        globalDays: 14,
         monitoredDays: 14,
         recentDays: 14,
         oldWeekDays: 14,
+        monitoredPreset: '14d',
+        recentPreset: '14d',
+        oldWeekPreset: '14d',
         tokenDaysByAddress: {},
+        tokenPresetByAddress: {},
       },
+      monitoredSparklineHoursByAddress: {},
       activeMockTradingWalletId: null,
       mockTradingTicket: null,
       floatingQuickBuy: {

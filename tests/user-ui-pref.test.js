@@ -16,6 +16,16 @@ describe('user-ui-pref', () => {
       alertFeedChains: ['solana'],
       browserNotificationChains: ['solana'],
     });
+    assert.deepEqual(prefs.sparklineRange, {
+      monitoredDays: 14,
+      recentDays: 14,
+      oldWeekDays: 14,
+      monitoredPreset: '14d',
+      recentPreset: '14d',
+      oldWeekPreset: '14d',
+      tokenDaysByAddress: {},
+      tokenPresetByAddress: {},
+    });
   });
 
   it('defaults new live layouts with monitored spanning two thirds', () => {
@@ -132,24 +142,74 @@ describe('user-ui-pref', () => {
     assert.equal(validation.prefs.expandedSparklineTimeZone, 'America/Fortaleza');
   });
 
-  it('accepts individual token sparkline range preferences', () => {
+  it('accepts scoped and individual token sparkline range preferences', () => {
     const validation = userUiPref.validatePatch({
       sparklineRange: {
-        global: true,
-        globalDays: 14,
         monitoredDays: 14,
         recentDays: 7,
-        oldWeekDays: 14,
+        oldWeekDays: 1,
+        monitoredPreset: 'all',
+        recentPreset: '7d',
+        oldWeekPreset: '12h',
         tokenDaysByAddress: {
           TokenRange111111111111111111111111111111111: 2,
+        },
+        tokenPresetByAddress: {
+          TokenPreset11111111111111111111111111111111: 'all',
         },
       },
     });
 
     assert.equal(validation.valid, true);
-    assert.deepEqual(validation.prefs.sparklineRange.tokenDaysByAddress, {
-      TokenRange111111111111111111111111111111111: 2,
+    assert.deepEqual(validation.prefs.sparklineRange, {
+      monitoredDays: 14,
+      recentDays: 7,
+      oldWeekDays: 1,
+      monitoredPreset: 'all',
+      recentPreset: '7d',
+      oldWeekPreset: '12h',
+      tokenDaysByAddress: {
+        TokenRange111111111111111111111111111111111: 2,
+      },
+      tokenPresetByAddress: {
+        TokenPreset11111111111111111111111111111111: 'all',
+      },
     });
+  });
+
+  it('migrates the legacy global range into each independent scope', () => {
+    const prefs = userUiPref.normalizePrefs({
+      sparklineRange: {
+        global: true,
+        globalDays: 7,
+        monitoredDays: 2,
+        recentDays: 3,
+        oldWeekDays: 10,
+        tokenDaysByAddress: {},
+      },
+    });
+
+    assert.deepEqual(prefs.sparklineRange, {
+      monitoredDays: 7,
+      recentDays: 7,
+      oldWeekDays: 7,
+      monitoredPreset: '7d',
+      recentPreset: '7d',
+      oldWeekPreset: '7d',
+      tokenDaysByAddress: {},
+      tokenPresetByAddress: {},
+    });
+  });
+
+  it('rejects unsupported sparkline range presets', () => {
+    const validation = userUiPref.validatePatch({
+      sparklineRange: {
+        monitoredPreset: '2d',
+      },
+    });
+
+    assert.equal(validation.valid, false);
+    assert.ok(validation.errors.includes('sparklineRange.monitoredPreset must be a supported range preset'));
   });
 
   it('rejects invalid individual token sparkline range preferences', () => {

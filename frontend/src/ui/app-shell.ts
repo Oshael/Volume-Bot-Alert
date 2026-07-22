@@ -1378,6 +1378,7 @@ function getMonitoredRenderKey(state: AppState) {
     perPage: state.ui.monitoredPerPage,
     sorts: state.ui.monitoredSorts,
     sparklineRange: state.ui.sparklineRange,
+    monitoredQuickSparklineRanges: state.ui.monitoredSparklineHoursByAddress,
     starred: state.data.starredTokenIdentities,
     tokens: getMonitoredTokens(state).map(serializeTrackedTokenForView),
     mockTrading: getMonitoredTokens(state).map((token) => serializeMockTradingForView(state, token.address)),

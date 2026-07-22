@@ -740,6 +740,12 @@ root.addEventListener('monitored-pin-commit', () => {
   window.setTimeout(() => flushPendingRender(), 0);
 });
 
+root.addEventListener('monitored-sparkline-range-commit', () => {
+  currentListInteractionZone = null;
+  interactionLockUntil = 0;
+  window.setTimeout(() => flushPendingRender(), 0);
+});
+
 root.addEventListener('focusout', () => {
   if (suppressNextFocusFlush) {
     return;

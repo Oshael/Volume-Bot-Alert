@@ -1,5 +1,8 @@
 const db = require('./db');
 const { normalizeTokenAddress } = require('../utils/token-identity');
+const {
+  ALL_AVAILABLE_SPARKLINE_GRANULARITY_MINUTES,
+} = require('../utils/market-bucket-granularities');
 
 const CHAIN = 'robinhood';
 const MINUTE_MS = 60_000;
@@ -107,6 +110,65 @@ SELECT * FROM ranked
 WHERE recency_rank <= $6::int
 ORDER BY token_address ASC, bucket_ts ASC`;
 
+const ALL_AVAILABLE_HISTORY_SQL = `WITH requested AS MATERIALIZED (
+  SELECT UNNEST($1::varchar[]) AS token_address
+), source_rows AS (
+  SELECT ${SOURCE_COLUMNS}
+  FROM robinhood_market_buckets_1h bucket
+  INNER JOIN requested ON requested.token_address = bucket.token_address
+  WHERE bucket.chain = 'robinhood'
+    AND bucket.protocol IN ('uniswap-v2', 'uniswap-v3', 'uniswap-v4')
+    AND bucket.bucket_ts < $2::timestamptz
+), candles AS (
+  SELECT token_address, bucket_ts,
+    60 AS granularity_minutes, 60 AS source_granularity_minutes,
+    (array_agg(open_fdv_usd ORDER BY first_block_number,
+      first_log_index, protocol, market_key))[1] AS open_fdv_usd,
+    MAX(high_fdv_usd) AS high_fdv_usd,
+    MIN(low_fdv_usd) AS low_fdv_usd,
+    (array_agg(close_fdv_usd ORDER BY last_block_number DESC,
+      last_log_index DESC, protocol, market_key))[1] AS close_fdv_usd,
+    (array_agg(open_price_usd ORDER BY first_block_number,
+      first_log_index, protocol, market_key))[1] AS open_price_usd,
+    MAX(high_price_usd) AS high_price_usd,
+    MIN(low_price_usd) AS low_price_usd,
+    (array_agg(close_price_usd ORDER BY last_block_number DESC,
+      last_log_index DESC, protocol, market_key))[1] AS close_price_usd,
+    SUM(volume_usd) AS volume_usd,
+    SUM(swaps)::bigint AS swaps, SUM(buys)::bigint AS buys,
+    SUM(sells)::bigint AS sells,
+    SUM(transactions)::bigint AS transaction_contributions,
+    COUNT(DISTINCT (protocol, market_key))::int AS market_count,
+    array_agg(DISTINCT protocol ORDER BY protocol) AS protocols
+  FROM source_rows
+  GROUP BY token_address, bucket_ts
+), ranked AS (
+  SELECT candles.*,
+    ROW_NUMBER() OVER (PARTITION BY token_address ORDER BY bucket_ts ASC) AS row_number,
+    COUNT(*) OVER (PARTITION BY token_address) AS total_count
+  FROM candles
+), counts AS (
+  SELECT token_address, MAX(total_count) AS total_count
+  FROM ranked
+  GROUP BY token_address
+), targets AS (
+  SELECT counts.token_address,
+    ROUND(
+      1 + sample_index * (counts.total_count - 1)::numeric
+        / GREATEST(LEAST(counts.total_count, $3::bigint) - 1, 1)
+    )::bigint AS target_row
+  FROM counts
+  CROSS JOIN LATERAL generate_series(
+    0, LEAST(counts.total_count, $3::bigint)::int - 1
+  ) AS samples(sample_index)
+)
+SELECT ranked.*
+FROM ranked
+INNER JOIN targets
+  ON targets.token_address = ranked.token_address
+ AND targets.target_row = ranked.row_number
+ORDER BY ranked.token_address ASC, ranked.bucket_ts ASC`;
+
 function timestamp(value, label) {
   const parsed = value instanceof Date ? value : new Date(value);
   if (!Number.isFinite(parsed.getTime())) throw new Error(`${label} must be a valid timestamp`);
@@ -129,13 +191,18 @@ function normalizeAddresses(input) {
 
 function normalizeQuery(input, now) {
   const addresses = normalizeAddresses(input);
-  const startAt = timestamp(input.startAt, 'startAt');
   const endAt = timestamp(input.endAt, 'endAt');
+  const allAvailable = input.allAvailable === true;
+  const startAt = allAvailable
+    ? new Date(endAt.getTime() - MAX_WINDOW_MS)
+    : timestamp(input.startAt, 'startAt');
   const windowMs = endAt.getTime() - startAt.getTime();
   if (windowMs <= 0 || windowMs > MAX_WINDOW_MS) {
     throw new Error('Robinhood history window must be greater than zero and at most 10 years');
   }
-  const granularityMinutes = Number(input.granularityMinutes ?? 5);
+  const granularityMinutes = allAvailable
+    ? ALL_AVAILABLE_SPARKLINE_GRANULARITY_MINUTES
+    : Number(input.granularityMinutes ?? 5);
   if (!GRANULARITIES.has(granularityMinutes)) {
     throw new Error('Robinhood history granularity must be one of 1, 5, 15, 30, 60, 240, 1440');
   }
@@ -150,6 +217,7 @@ function normalizeQuery(input, now) {
   }
   return {
     addresses, startAt, endAt, granularityMinutes, limit, statementTimeoutMs,
+    allAvailable,
     minuteStartsAt: ceilHour(new Date(now.getTime() - MINUTE_RETENTION_MS)),
     onMetrics: typeof input.onMetrics === 'function' ? input.onMetrics : null,
   };
@@ -245,6 +313,7 @@ function buildCacheKey(query, cacheTtlMs, aggregateReadsEnabled, fallbackEnabled
     Math.floor(query.endAt.getTime() / cacheTtlMs),
     query.granularityMinutes,
     query.limit,
+    query.allAvailable,
     aggregateReadsEnabled,
     fallbackEnabled,
   ]);
@@ -288,6 +357,26 @@ function createRobinhoodMarketHistoryReadRepository(options = {}) {
       )
       : (sql, params) => database.query(sql, params);
     const queryStartedAt = Date.now();
+    if (query.allAvailable) {
+      const result = await execute(ALL_AVAILABLE_HISTORY_SQL, [
+        query.addresses, query.endAt, query.limit,
+      ]);
+      const rowsByAddress = groupRows(query, result.rows);
+      const histories = Object.freeze(query.addresses.map((address) => (
+        buildHistoryResult(query, address, rowsByAddress.get(address) || [])
+      )));
+      const metrics = {
+        source: 'hourly-all-sampled', rows: result.rows.length,
+        aggregateRows: 0, fallbackRows: 0,
+        fallbackAddresses: 0, cacheHit: false,
+        queryDurationMs: Date.now() - queryStartedAt,
+        buildDurationMs: 0,
+        totalDurationMs: Date.now() - startedAt,
+      };
+      writeCache(cacheKey, histories, metrics, now.getTime());
+      query.onMetrics?.(metrics);
+      return histories;
+    }
     const useAggregates = aggregateReadsEnabled && query.granularityMinutes !== 1;
     const aggregateResult = useAggregates
       ? await execute(AGGREGATE_HISTORY_SQL, [
@@ -346,7 +435,7 @@ function createRobinhoodMarketHistoryReadRepository(options = {}) {
 module.exports = {
   createRobinhoodMarketHistoryReadRepository,
   __private: {
-    AGGREGATE_HISTORY_SQL, LEGACY_HISTORY_SQL, buildHistoryResult,
+    AGGREGATE_HISTORY_SQL, ALL_AVAILABLE_HISTORY_SQL, LEGACY_HISTORY_SQL, buildHistoryResult,
     normalizeAddresses, normalizeCandle, normalizeQuery, resolveResolution,
   },
 };

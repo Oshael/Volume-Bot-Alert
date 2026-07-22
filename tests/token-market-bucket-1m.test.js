@@ -619,6 +619,46 @@ describe('token market 1m bucket helpers', () => {
     }
   });
 
+  it('samples all available hourly aggregate history to the requested point budget', async () => {
+    const originalQuery = db.query;
+    let capturedSql = '';
+    let capturedParams = null;
+    db.query = async (sql, params) => {
+      capturedSql = sql;
+      capturedParams = params;
+      return { rows: [
+        {
+          token_address: 'So11111111111111111111111111111111111111112',
+          bucket_ts: '2025-01-01T00:00:00.000Z', pair_address: null,
+          close_mcap: '100', total_count: '1000',
+        },
+        {
+          token_address: 'So11111111111111111111111111111111111111112',
+          bucket_ts: '2026-01-01T00:00:00.000Z', pair_address: null,
+          close_mcap: '200', total_count: '1000',
+        },
+      ] };
+    };
+
+    try {
+      const [result] = await tokenMarketBucket1m.listSparklineByAddresses([
+        'So11111111111111111111111111111111111111112',
+      ], { allAvailable: true, points: 500, granularityMinutes: 60 });
+
+      assert.match(capturedSql, /generate_series/);
+      assert.doesNotMatch(capturedSql, /NOW\(\) -/);
+      assert.deepEqual(capturedParams, [[
+        'So11111111111111111111111111111111111111112',
+      ], 60, 500]);
+      assert.equal(result.bucketCount, 1000);
+      assert.equal(result.series.length, 500);
+      assert.equal(result.firstBucketAt, '2025-01-01T00:00:00.000Z');
+      assert.equal(result.latestBucketAt, '2026-01-01T00:00:00.000Z');
+    } finally {
+      db.query = originalQuery;
+    }
+  });
+
   it('uses aggregate buckets for supported sparkline granularities when coverage is sufficient', async () => {
     const originalQuery = db.query;
     const calls = [];

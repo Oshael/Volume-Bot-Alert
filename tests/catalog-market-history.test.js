@@ -120,6 +120,39 @@ describe('chain-aware catalog market history service', () => {
     assert.deepEqual(result.chains, ['robinhood', 'solana']);
   });
 
+  it('requests sampled hourly history for every chain in all-available mode', async () => {
+    const calls = { solana: null, robinhood: null };
+    const service = createCatalogMarketHistoryService({
+      now: () => NOW,
+      solanaReader: { async listSparklineByAddresses(_addresses, options) {
+        calls.solana = options;
+        return [];
+      } },
+      robinhoodReader: { async getHistories(input) {
+        calls.robinhood = input;
+        return [];
+      } },
+    });
+
+    const result = await service.getSparklineBatch({
+      identities: [
+        { chain: 'solana', address: SOLANA },
+        { chain: 'robinhood', address: ROBINHOOD },
+      ],
+      allAvailable: true,
+    });
+
+    assert.equal(calls.solana.allAvailable, true);
+    assert.equal(calls.solana.hours, null);
+    assert.equal(calls.solana.points, 500);
+    assert.equal(calls.solana.granularityMinutes, 60);
+    assert.equal(calls.robinhood.allAvailable, true);
+    assert.equal(calls.robinhood.startAt, null);
+    assert.equal(calls.robinhood.limit, 500);
+    assert.equal(result.allAvailable, true);
+    assert.equal(result.hours, null);
+  });
+
   it('publishes deterministic per-chain metrics after a mixed batch', async () => {
     const metrics = [];
     const service = createCatalogMarketHistoryService({

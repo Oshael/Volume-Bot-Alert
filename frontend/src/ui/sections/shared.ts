@@ -1,5 +1,5 @@
 import type { AppController } from '../../state/app-controller';
-import type { AppState, BucketSortCriterion, BucketSortMode, BucketSortWindow, ManualTokenEntry, MeteoraEntry, MockTradingPositionEntry, MockTradingTradeEntry, MonitoredSortMode, MonitoredSortWindow, TokenSparklineEntry, TradeTerminalKey } from '../../state/app-state';
+import type { AppState, BucketSortCriterion, BucketSortMode, BucketSortWindow, ManualTokenEntry, MeteoraEntry, MockTradingPositionEntry, MockTradingTradeEntry, MonitoredSortMode, MonitoredSortWindow, SparklineRangePreset, TokenSparklineEntry, TradeTerminalKey } from '../../state/app-state';
 import { getAuthFeedbackKind, getAuthFlashBadge } from './auth-feedback';
 import { escapeHtml, sanitizeAssetUrl, sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 import { sortBucketTokens } from '../../utils/token-table';
@@ -74,7 +74,20 @@ const SPARKLINE_HOVER_TIME_FORMATTER = new Intl.DateTimeFormat('en-US', {
   hour12: true,
 });
 const TOP_EDGE_PAGE_SCROLL_BRIDGE_DELAY_MS = 400;
-const SPARKLINE_RANGE_OPTIONS = Array.from({ length: 14 }, (_, index) => index + 1);
+const UI_CONTROL_TOOLTIP_DELAY_MS = 500;
+const SPARKLINE_RANGE_OPTIONS: Array<{ preset: SparklineRangePreset; label: string; hours: number }> = [
+  { preset: '1h', label: '1H', hours: 1 },
+  { preset: '4h', label: '4H', hours: 4 },
+  { preset: '12h', label: '12H', hours: 12 },
+  { preset: '1d', label: '1D', hours: 24 },
+  { preset: '3d', label: '3D', hours: 72 },
+  { preset: '7d', label: '7D', hours: 168 },
+  { preset: '14d', label: '14D', hours: 336 },
+  { preset: 'all', label: 'ALL', hours: 0 },
+];
+const SPARKLINE_RANGE_PRESET_BY_HOURS = new Map(
+  SPARKLINE_RANGE_OPTIONS.map((option) => [option.hours, option.preset]),
+);
 const sparklineExpandBoundElements = new WeakSet<HTMLElement>();
 const sparklineHoverBoundElements = new WeakSet<HTMLElement>();
 const tokenImagePreviewBoundRoots = new WeakSet<EventTarget>();
@@ -85,8 +98,95 @@ let tokenImagePreviewGlobalBound = false;
 let tokenImagePreviewLastPointerAt = 0;
 let manualQuickAddOpenKey: string | null = null;
 let manualQuickAddDocumentCloseBound = false;
+let uiControlTooltipTarget: HTMLElement | null = null;
+let uiControlTooltipText = '';
+let uiControlTooltipStartedAt = 0;
+let uiControlTooltipTimer = 0;
+let uiControlTooltipVisible = false;
+let uiControlTooltipPointer = { x: -1, y: -1 };
 
 type SparklineRangeControlScope = 'monitored' | 'recent' | 'oldWeek';
+
+function clearUiControlTooltip() {
+  window.clearTimeout(uiControlTooltipTimer);
+  uiControlTooltipTarget?.removeAttribute('data-tooltip-visible');
+  uiControlTooltipTarget = null;
+  uiControlTooltipText = '';
+  uiControlTooltipStartedAt = 0;
+  uiControlTooltipVisible = false;
+}
+
+function showUiControlTooltip() {
+  if (!uiControlTooltipTarget?.isConnected) return;
+  uiControlTooltipVisible = true;
+  uiControlTooltipTarget.setAttribute('data-tooltip-visible', 'true');
+}
+
+function activateUiControlTooltip(target: HTMLElement) {
+  const tooltipText = String(target.dataset.tooltip || '');
+  const continuesExistingHover = tooltipText === uiControlTooltipText && uiControlTooltipStartedAt > 0;
+  uiControlTooltipTarget?.removeAttribute('data-tooltip-visible');
+  uiControlTooltipTarget = target;
+  if (!continuesExistingHover) {
+    window.clearTimeout(uiControlTooltipTimer);
+    uiControlTooltipText = tooltipText;
+    uiControlTooltipStartedAt = performance.now();
+    uiControlTooltipVisible = false;
+  }
+  if (uiControlTooltipVisible) {
+    showUiControlTooltip();
+    return;
+  }
+  const remainingDelay = Math.max(
+    0,
+    UI_CONTROL_TOOLTIP_DELAY_MS - (performance.now() - uiControlTooltipStartedAt),
+  );
+  window.clearTimeout(uiControlTooltipTimer);
+  uiControlTooltipTimer = window.setTimeout(showUiControlTooltip, remainingDelay);
+}
+
+function getPointedUiControlTooltip() {
+  const pointed = document.elementFromPoint(uiControlTooltipPointer.x, uiControlTooltipPointer.y);
+  return pointed?.closest<HTMLElement>('.ui-control-tooltip[data-tooltip]') ?? null;
+}
+
+function reconcileUiControlTooltipAfterLeave(target: HTMLElement) {
+  window.setTimeout(() => {
+    if (uiControlTooltipTarget !== target) return;
+    const replacement = getPointedUiControlTooltip();
+    if (replacement?.dataset.tooltip === uiControlTooltipText) {
+      activateUiControlTooltip(replacement);
+    } else {
+      clearUiControlTooltip();
+    }
+  }, 0);
+}
+
+function bindUiControlTooltips(section: ParentNode) {
+  section.querySelectorAll<HTMLElement>('.ui-control-tooltip[data-tooltip]').forEach((target) => {
+    if (target.dataset.uiTooltipBound === 'true') return;
+    target.dataset.uiTooltipBound = 'true';
+    target.addEventListener('pointerenter', (event) => {
+      uiControlTooltipPointer = { x: event.clientX, y: event.clientY };
+      activateUiControlTooltip(target);
+    });
+    target.addEventListener('pointermove', (event) => {
+      uiControlTooltipPointer = { x: event.clientX, y: event.clientY };
+    });
+    target.addEventListener('pointerleave', () => reconcileUiControlTooltipAfterLeave(target));
+    target.addEventListener('focus', () => activateUiControlTooltip(target));
+    target.addEventListener('blur', clearUiControlTooltip);
+    target.addEventListener('click', clearUiControlTooltip);
+    if (target.matches(':hover') && target.dataset.tooltip === uiControlTooltipText) {
+      activateUiControlTooltip(target);
+    }
+  });
+  const pointedTarget = getPointedUiControlTooltip();
+  if (pointedTarget?.dataset.tooltip === uiControlTooltipText
+    && pointedTarget !== uiControlTooltipTarget) {
+    activateUiControlTooltip(pointedTarget);
+  }
+}
 
 export function resolveTokenLaunchpad(address: string, chainValue: unknown = 'solana'): TokenLaunchpadKey {
   if (normalizeTokenChain(chainValue) === 'robinhood') return 'uniswap';
@@ -104,29 +204,34 @@ export function renderTokenLaunchpadBadge(address: string, chainValue: unknown =
   return `<span class="token-launchpad-badge token-launchpad-${key}" title="${escapeHtml(meta.label)}" aria-label="${escapeHtml(meta.label)}">${escapeHtml(meta.mark)}</span>`;
 }
 
-function getSparklineRangeDaysForScope(state: AppState, scope: SparklineRangeControlScope) {
+function getSparklineRangePresetForScope(state: AppState, scope: SparklineRangeControlScope) {
   const range = state.ui.sparklineRange;
-  if (range.global) return range.globalDays;
-  if (scope === 'recent') return range.recentDays;
-  if (scope === 'oldWeek') return range.oldWeekDays;
-  return range.monitoredDays;
+  if (scope === 'recent') return range.recentPreset;
+  if (scope === 'oldWeek') return range.oldWeekPreset;
+  return range.monitoredPreset;
+}
+
+function getSparklineRangeTooltip(scope: SparklineRangeControlScope) {
+  if (scope === 'monitored') {
+    return 'Select the default range used to load sparklines for Monitored and Manual tokens.';
+  }
+  return `Select the default range used to load sparklines for ${scope === 'recent' ? 'Recent' : 'Old'} tokens.`;
 }
 
 export function renderSparklineRangeControl(state: AppState, scope: SparklineRangeControlScope) {
-  const activeDays = Math.min(14, Math.max(1, Math.round(Number(getSparklineRangeDaysForScope(state, scope))) || 14));
-  const global = state.ui.sparklineRange.global;
+  const activePreset = getSparklineRangePresetForScope(state, scope);
+  const activeLabel = SPARKLINE_RANGE_OPTIONS.find((option) => option.preset === activePreset)?.label || '14D';
   return `
     <div class="sparkline-range-control" data-sparkline-range-scope="${scope}">
       <span class="sparkline-range-label">CHART</span>
       <div class="sort-menu-wrap sparkline-range-menu" data-sort-wrap>
-        <button type="button" class="old-filter-btn active sparkline-range-button" data-sort-toggle="sparkline-range-${scope}" aria-label="Sparkline range">${activeDays}D</button>
+        <button type="button" class="old-filter-btn active sparkline-range-button ui-control-tooltip" data-sort-toggle="sparkline-range-${scope}" data-tooltip="${escapeHtml(getSparklineRangeTooltip(scope))}" aria-label="Sparkline range">${activeLabel}</button>
         <div class="sort-menu-dropdown sparkline-range-dropdown">
-          ${SPARKLINE_RANGE_OPTIONS.map((days) => (
-            `<button type="button" class="sort-menu-item ${days === activeDays ? 'active' : ''}" data-action="set-sparkline-range-days" data-sparkline-range-scope="${scope}" data-sparkline-range-days="${days}">${days}D</button>`
+          ${SPARKLINE_RANGE_OPTIONS.map((option) => (
+            `<button type="button" class="sort-menu-item ${option.preset === activePreset ? 'active' : ''}" data-action="set-sparkline-range-preset" data-sparkline-range-scope="${scope}" data-sparkline-range-preset="${option.preset}">${option.label}</button>`
           )).join('')}
         </div>
       </div>
-      <button type="button" class="sparkline-range-scope-toggle${global ? ' active' : ''}" data-action="toggle-sparkline-range-global" data-sparkline-range-scope="${scope}" data-sparkline-range-global="${global ? 'true' : 'false'}" aria-pressed="${global ? 'true' : 'false'}">${global ? 'GLOBAL' : 'LOCAL'}</button>
     </div>
   `;
 }
@@ -138,26 +243,17 @@ function closeSparklineRangeMenu(button: HTMLButtonElement) {
 }
 
 export function bindSparklineRangeControls(section: ParentNode, controller: AppController) {
-  section.querySelectorAll<HTMLButtonElement>('[data-action="set-sparkline-range-days"]').forEach((button) => {
+  bindUiControlTooltips(section);
+  section.querySelectorAll<HTMLButtonElement>('[data-action="set-sparkline-range-preset"]').forEach((button) => {
     button.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
       closeSparklineRangeMenu(button);
       const scope = button.dataset.sparklineRangeScope as SparklineRangeControlScope;
-      controller.setSparklineRangeDays(scope, Number(button.dataset.sparklineRangeDays));
+      controller.setSparklineRangePreset(scope, button.dataset.sparklineRangePreset as SparklineRangePreset);
     });
   });
 
-  section.querySelectorAll<HTMLButtonElement>('[data-action="toggle-sparkline-range-global"]').forEach((button) => {
-    button.addEventListener('click', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      button.blur();
-      const scope = button.dataset.sparklineRangeScope as SparklineRangeControlScope;
-      const enabled = button.dataset.sparklineRangeGlobal !== 'true';
-      controller.setSparklineRangeGlobal(enabled, scope);
-    });
-  });
 }
 
 type SparklineRenderOptions = {
@@ -171,10 +267,11 @@ type SparklineRenderOptions = {
   liveMcap?: number | null;
   preserveTerminalMove?: boolean;
   preserveTerminalScaleShift?: boolean;
+  showTokenRangeControl?: boolean;
 };
 
 function shouldRenderTokenSparklineRangeControl(address: string, options: SparklineRenderOptions) {
-  return Boolean(address && !options.expanded && options.variant !== 'alert');
+  return Boolean(address && options.showTokenRangeControl !== false && !options.expanded && options.variant !== 'alert');
 }
 
 export function bindTokenActions(section: ParentNode, controller: AppController) {
@@ -964,6 +1061,7 @@ export function bindSparklineHover(
   sparklineByLookupKey: Record<string, TokenSparklineEntry> = {},
   options: { controller?: AppController } = {},
 ) {
+  bindUiControlTooltips(section);
   for (const wrap of section.querySelectorAll<HTMLElement>('.sparkline-wrap')) {
     const lookupKey = String(wrap.dataset.sparklineKey || wrap.dataset.address || '').trim();
     const address = String(wrap.dataset.address || '').trim();
@@ -1047,13 +1145,20 @@ function updateTokenSparklineRangeMenuState(
   controller: AppController,
 ) {
   const identityKey = buildTokenIdentityKey(chain, address);
-  const overrideDays = controller.state.ui.sparklineRange.tokenDaysByAddress[identityKey]
+  const quickRangeHours = controller.state.ui.monitoredSparklineHoursByAddress[identityKey];
+  const tokenPreset = controller.state.ui.sparklineRange.tokenPresetByAddress[identityKey]
+    ?? (chain === 'solana' ? controller.state.ui.sparklineRange.tokenPresetByAddress[address] : null);
+  const legacyDays = controller.state.ui.sparklineRange.tokenDaysByAddress[identityKey]
     ?? (chain === 'solana' ? controller.state.ui.sparklineRange.tokenDaysByAddress[address] : null);
+  const overridePreset = quickRangeHours != null
+    ? SPARKLINE_RANGE_PRESET_BY_HOURS.get(quickRangeHours)
+    : tokenPreset ?? (legacyDays != null ? `${legacyDays}d` as SparklineRangePreset : null);
+  const hasOverride = quickRangeHours != null || tokenPreset != null || legacyDays != null;
   wrap.querySelectorAll<HTMLButtonElement>('[data-action="reset-token-sparkline-range"]').forEach((button) => {
-    button.classList.toggle('active', overrideDays == null);
+    button.classList.toggle('active', !hasOverride);
   });
-  wrap.querySelectorAll<HTMLButtonElement>('[data-action="set-token-sparkline-range-days"]').forEach((button) => {
-    button.classList.toggle('active', Number(button.dataset.sparklineRangeDays) === overrideDays);
+  wrap.querySelectorAll<HTMLButtonElement>('[data-action="set-token-sparkline-range-preset"]').forEach((button) => {
+    button.classList.toggle('active', button.dataset.sparklineRangePreset === overridePreset);
   });
 }
 
@@ -1094,10 +1199,14 @@ function bindTokenSparklineRangeControls(
       return;
     }
 
-    const daysButton = target?.closest<HTMLButtonElement>('[data-action="set-token-sparkline-range-days"]');
-    if (daysButton) {
+    const presetButton = target?.closest<HTMLButtonElement>('[data-action="set-token-sparkline-range-preset"]');
+    if (presetButton) {
       closeTokenSparklineRangeMenu(wrap);
-      controller.setTokenSparklineRangeDays(address, Number(daysButton.dataset.sparklineRangeDays), chain);
+      controller.setTokenSparklineRangePreset(
+        address,
+        presetButton.dataset.sparklineRangePreset as SparklineRangePreset,
+        chain,
+      );
     }
   });
 }
@@ -2174,16 +2283,16 @@ function renderTokenSparklineRangeHoverControl(address: string, entry: TokenSpar
 
   const safeAddress = escapeHtml(address);
   const requestedHours = Number(entry.hours);
-  const activeDays = Number.isFinite(requestedHours) && requestedHours > 0
-    ? Math.min(14, Math.max(1, Math.round(requestedHours / 24)))
-    : 14;
+  const activeLabel = entry.allAvailable || requestedHours === 0
+    ? 'ALL'
+    : SPARKLINE_RANGE_OPTIONS.find((option) => option.hours === requestedHours)?.label || '14D';
   return `
     <span class="sparkline-token-range" data-sparkline-token-range>
-      <button type="button" class="sparkline-token-range-trigger" data-action="toggle-token-sparkline-range" data-address="${safeAddress}" aria-label="Token chart range" title="Token chart range">${activeDays}D</button>
+      <button type="button" class="sparkline-token-range-trigger ui-control-tooltip" data-action="toggle-token-sparkline-range" data-address="${safeAddress}" data-tooltip="Choose a custom range for this token's sparkline." aria-label="Token chart range">${activeLabel}</button>
       <span class="sparkline-token-range-menu" role="menu">
         <button type="button" class="sparkline-token-range-item" data-action="reset-token-sparkline-range" data-address="${safeAddress}" role="menuitem">AUTO</button>
-        ${SPARKLINE_RANGE_OPTIONS.map((days) => (
-          `<button type="button" class="sparkline-token-range-item" data-action="set-token-sparkline-range-days" data-address="${safeAddress}" data-sparkline-range-days="${days}" role="menuitem">${days}D</button>`
+        ${SPARKLINE_RANGE_OPTIONS.map((option) => (
+          `<button type="button" class="sparkline-token-range-item" data-action="set-token-sparkline-range-preset" data-address="${safeAddress}" data-sparkline-range-preset="${option.preset}" role="menuitem">${option.label}</button>`
         )).join('')}
       </span>
     </span>

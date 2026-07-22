@@ -4,6 +4,10 @@ const {
   createRobinhoodMarketHistoryReadRepository,
 } = require('../models/robinhood-market-history-read');
 const { createTokenIdentity } = require('../utils/token-identity');
+const {
+  ALL_AVAILABLE_SPARKLINE_GRANULARITY_MINUTES,
+  MAX_COMPACT_SPARKLINE_POINTS,
+} = require('../utils/market-bucket-granularities');
 
 const SUPPORTED_CHAINS = new Set(['solana', 'robinhood']);
 const MINUTE_MS = 60_000;
@@ -40,11 +44,15 @@ function normalizeBatchRequest(input = {}) {
   if (identities.length > 500 || robinhoodCount > 100) {
     throw new Error('Market history accepts at most 500 identities and 100 Robinhood identities');
   }
+  const allAvailable = input.allAvailable === true;
   return {
     identities,
-    hours: Number(input.hours) || (14 * 24),
-    points: Number(input.points) || 336,
-    granularityMinutes: Number(input.granularityMinutes) || 30,
+    allAvailable,
+    hours: allAvailable ? null : (Number(input.hours) || (14 * 24)),
+    points: Number(input.points) || (allAvailable ? MAX_COMPACT_SPARKLINE_POINTS : 336),
+    granularityMinutes: allAvailable
+      ? ALL_AVAILABLE_SPARKLINE_GRANULARITY_MINUTES
+      : (Number(input.granularityMinutes) || 30),
     allowOneMinuteFallback: input.allowOneMinuteFallback === true,
     onMetrics: typeof input.onMetrics === 'function' ? input.onMetrics : null,
   };
@@ -138,7 +146,9 @@ function createCatalogMarketHistoryService(options = {}) {
   async function getSparklineBatch(input = {}) {
     const request = normalizeBatchRequest(input);
     const endAt = new Date(clock());
-    const startAt = new Date(endAt.getTime() - (request.hours * 60 * MINUTE_MS));
+    const startAt = request.allAvailable
+      ? null
+      : new Date(endAt.getTime() - (request.hours * 60 * MINUTE_MS));
     const solanaAddresses = request.identities
       .filter((identity) => identity.chain === 'solana')
       .map((identity) => identity.address);
@@ -152,6 +162,7 @@ function createCatalogMarketHistoryService(options = {}) {
       granularityMinutes: request.granularityMinutes,
       allowOneMinuteFallback: request.allowOneMinuteFallback,
     };
+    if (request.allAvailable) solanaOptions.allAvailable = true;
     if (request.onMetrics) solanaOptions.onMetrics = (value) => { readerMetrics.solana = value; };
 
     const [solanaItems, robinhoodHistories] = await Promise.all([
@@ -165,6 +176,7 @@ function createCatalogMarketHistoryService(options = {}) {
           endAt,
           granularityMinutes: request.granularityMinutes,
           limit: request.points,
+          ...(request.allAvailable ? { allAvailable: true } : {}),
           onMetrics: request.onMetrics
             ? (value) => { readerMetrics.robinhood = value; } : null,
         })
@@ -185,6 +197,7 @@ function createCatalogMarketHistoryService(options = {}) {
       generatedAt: endAt.toISOString(),
       chains: [...new Set(request.identities.map((identity) => identity.chain))],
       hours: request.hours,
+      allAvailable: request.allAvailable,
       points: request.points,
       granularityMinutes: request.granularityMinutes,
       count: items.length,

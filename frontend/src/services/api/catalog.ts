@@ -537,7 +537,8 @@ export interface TokenSparklineCandleItem {
 export interface TokenSparklinesPayload {
   generatedAt?: string | null;
   chains?: TokenChain[];
-  hours?: number;
+  hours?: number | null;
+  allAvailable?: boolean;
   points?: number;
   granularityMinutes?: number | null;
   count: number;
@@ -757,7 +758,9 @@ export interface DashboardMonitoredRequestOptions {
   perPage?: number;
   sorts?: MonitoredSortCriterion[];
   minMcap?: number;
+  maxMcap?: number;
   minFdv?: number;
+  maxFdv?: number;
   asOf?: string;
   priority?: boolean;
 }
@@ -769,6 +772,21 @@ function setMonitoredSnapshotQuery(
   const asOf = String(options?.asOf || '').trim();
   if (asOf) query.set('asOf', asOf);
   if (options?.priority === true) query.set('priority', 'true');
+}
+
+function setMonitoredValuationQuery(
+  query: URLSearchParams,
+  options?: DashboardMonitoredRequestOptions,
+) {
+  const values: Array<[string, number | undefined]> = [
+    ['minMcap', options?.minMcap],
+    ['maxMcap', options?.maxMcap],
+    ['minFdv', options?.minFdv],
+    ['maxFdv', options?.maxFdv],
+  ];
+  for (const [key, value] of values) {
+    if (value != null) query.set(key, String(Math.max(0, Number(value) || 0)));
+  }
 }
 
 export function fetchDashboardMonitored(
@@ -788,12 +806,7 @@ export function fetchDashboardMonitored(
   if (Array.isArray(options?.sorts) && options.sorts.length > 0) {
     query.set('sorts', JSON.stringify(options.sorts));
   }
-  if (options?.minMcap != null) {
-    query.set('minMcap', String(Math.max(0, Number(options.minMcap) || 0)));
-  }
-  if (options?.minFdv != null) {
-    query.set('minFdv', String(Math.max(0, Number(options.minFdv) || 0)));
-  }
+  setMonitoredValuationQuery(query, options);
   setMonitoredSnapshotQuery(query, options);
   const suffix = query.size > 0 ? `?${query.toString()}` : '';
 
@@ -953,12 +966,34 @@ export function fetchDashboardTopPerformers(
     }));
 }
 
+function buildTokenSparklinesRequestBody(
+  identities: ReturnType<typeof createLegacyCompatibleTokenIdentity>[],
+  options?: {
+    hours?: number;
+    points?: number;
+    granularityMinutes?: number;
+    allAvailable?: boolean;
+    allowOneMinuteFallback?: boolean;
+  },
+) {
+  const allAvailable = options?.allAvailable === true;
+  return {
+    identities: identities.map(({ chain, address }) => ({ chain, address })),
+    hours: allAvailable ? undefined : (options?.hours ?? (14 * 24)),
+    points: options?.points ?? (allAvailable ? 500 : 336),
+    granularityMinutes: allAvailable ? 60 : (options?.granularityMinutes ?? 30),
+    allAvailable,
+    allowOneMinuteFallback: options?.allowOneMinuteFallback ?? false,
+  };
+}
+
 export function fetchTokenSparklines(
   identities: Array<string | { chain?: TokenChain | null; address: string }>,
   options?: {
     hours?: number;
     points?: number;
     granularityMinutes?: number;
+    allAvailable?: boolean;
     allowOneMinuteFallback?: boolean;
     signal?: AbortSignal;
     onResponse?: (metadata: ApiResponseMetadata) => void;
@@ -972,13 +1007,7 @@ export function fetchTokenSparklines(
   ));
   return apiFetch<TokenSparklinesPayload>('/api/catalog/sparklines', {
     method: 'POST',
-    body: JSON.stringify({
-      identities: normalizedIdentities.map(({ chain, address }) => ({ chain, address })),
-      hours: options?.hours ?? (14 * 24),
-      points: options?.points ?? 336,
-      granularityMinutes: options?.granularityMinutes ?? 30,
-      allowOneMinuteFallback: options?.allowOneMinuteFallback ?? false,
-    }),
+    body: JSON.stringify(buildTokenSparklinesRequestBody(normalizedIdentities, options)),
     token,
     signal: options?.signal,
     onResponse: options?.onResponse,
@@ -987,9 +1016,10 @@ export function fetchTokenSparklines(
     chains: Array.isArray(response.chains)
       ? response.chains.map(normalizeTokenChain).filter((chain): chain is TokenChain => Boolean(chain))
       : [],
-    hours: Number(response.hours) || (14 * 24),
-    points: Number(response.points) || 336,
-    granularityMinutes: Number(response.granularityMinutes) || 30,
+    hours: response.allAvailable ? null : (Number(response.hours) || (14 * 24)),
+    allAvailable: response.allAvailable === true,
+    points: Number(response.points) || (response.allAvailable ? 500 : 336),
+    granularityMinutes: Number(response.granularityMinutes) || (response.allAvailable ? 60 : 30),
     count: Number(response.count) || 0,
     items: Array.isArray(response.items)
       ? response.items.map((item) => normalizeTokenSparklineItem(

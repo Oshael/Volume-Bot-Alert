@@ -46,6 +46,9 @@ const SPARKLINE_RANGE_MIN_DAYS = 1;
 const SPARKLINE_RANGE_MAX_DAYS = 14;
 const SPARKLINE_RANGE_DEFAULT_DAYS = 14;
 const SPARKLINE_RANGE_TOKEN_OVERRIDE_MAX = 250;
+const SPARKLINE_RANGE_PRESETS = Object.freeze([
+  '1h', '4h', '12h', '1d', '3d', '7d', '14d', 'all',
+]);
 const CHAIN_FILTER_KEYS = [
   'enabledChains',
   'radarChains',
@@ -89,12 +92,14 @@ const DEFAULT_UI_PREFS = {
   expandedSparklineGranularityMinutes: EXPANDED_SPARKLINE_DEFAULT_GRANULARITY_MINUTES,
   expandedSparklineTimeZone: EXPANDED_CHART_DEFAULT_TIME_ZONE,
   sparklineRange: {
-    global: true,
-    globalDays: SPARKLINE_RANGE_DEFAULT_DAYS,
     monitoredDays: SPARKLINE_RANGE_DEFAULT_DAYS,
     recentDays: SPARKLINE_RANGE_DEFAULT_DAYS,
     oldWeekDays: SPARKLINE_RANGE_DEFAULT_DAYS,
+    monitoredPreset: '14d',
+    recentPreset: '14d',
+    oldWeekPreset: '14d',
     tokenDaysByAddress: {},
+    tokenPresetByAddress: {},
   },
   enabledTradeTerminals: [...TRADE_TERMINAL_KEYS],
   livePanelLayout: {
@@ -171,6 +176,24 @@ function normalizeSparklineRangeDays(value, fallback = SPARKLINE_RANGE_DEFAULT_D
     : safeFallback;
 }
 
+function sparklinePresetFromDays(value) {
+  const hours = normalizeSparklineRangeDays(value) * 24;
+  const timedPresets = [
+    ['1h', 1], ['4h', 4], ['12h', 12], ['1d', 24],
+    ['3d', 72], ['7d', 168], ['14d', 336],
+  ];
+  return timedPresets.reduce((best, candidate) => (
+    Math.abs(candidate[1] - hours) < Math.abs(best[1] - hours) ? candidate : best
+  ))[0];
+}
+
+function normalizeSparklinePreset(value, fallbackDays) {
+  const preset = String(value || '').trim().toLowerCase();
+  return SPARKLINE_RANGE_PRESETS.includes(preset)
+    ? preset
+    : sparklinePresetFromDays(fallbackDays);
+}
+
 function validateSparklineRangeTokenDays(key, value) {
   if (value == null) {
     return { valid: true, value: {} };
@@ -200,6 +223,35 @@ function validateSparklineRangeTokenDays(key, value) {
   return { valid: true, value: tokenDaysByAddress };
 }
 
+function validateSparklineRangeTokenPresets(key, value) {
+  if (value == null) return { valid: true, value: {} };
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    return { valid: false, error: `${key}.tokenPresetByAddress must be an object` };
+  }
+  const entries = Object.entries(value);
+  if (entries.length > SPARKLINE_RANGE_TOKEN_OVERRIDE_MAX) {
+    return { valid: false, error: `${key}.tokenPresetByAddress must contain at most ${SPARKLINE_RANGE_TOKEN_OVERRIDE_MAX} tokens` };
+  }
+  const presets = {};
+  for (const [rawAddress, rawPreset] of entries) {
+    const address = String(rawAddress || '').trim();
+    const preset = String(rawPreset || '').trim().toLowerCase();
+    if (!address || !SPARKLINE_RANGE_PRESETS.includes(preset)) {
+      return { valid: false, error: `${key}.tokenPresetByAddress contains an invalid token or preset` };
+    }
+    presets[address] = preset;
+  }
+  return { valid: true, value: presets };
+}
+
+function validateSparklineRangeTokenOverrides(key, value) {
+  const days = validateSparklineRangeTokenDays(key, value.tokenDaysByAddress);
+  if (!days.valid) return days;
+  const presets = validateSparklineRangeTokenPresets(key, value.tokenPresetByAddress);
+  if (!presets.valid) return presets;
+  return { valid: true, days: days.value, presets: presets.value };
+}
+
 function validateSparklineRange(key, value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return { valid: false, error: `${key} must be an object` };
@@ -207,18 +259,29 @@ function validateSparklineRange(key, value) {
   if (value.global != null && typeof value.global !== 'boolean') {
     return { valid: false, error: `${key}.global must be a boolean` };
   }
-  const tokenDaysByAddress = validateSparklineRangeTokenDays(key, value.tokenDaysByAddress);
-  if (!tokenDaysByAddress.valid) {
-    return tokenDaysByAddress;
-  }
+  const tokenOverrides = validateSparklineRangeTokenOverrides(key, value);
+  if (!tokenOverrides.valid) return tokenOverrides;
 
+  const legacyGlobalDays = normalizeSparklineRangeDays(value.globalDays);
+  const legacyGlobal = value.global === true;
+  const monitoredDays = normalizeSparklineRangeDays(
+    legacyGlobal ? legacyGlobalDays : value.monitoredDays
+  );
+  const recentDays = normalizeSparklineRangeDays(
+    legacyGlobal ? legacyGlobalDays : value.recentDays
+  );
+  const oldWeekDays = normalizeSparklineRangeDays(
+    legacyGlobal ? legacyGlobalDays : value.oldWeekDays
+  );
   const next = {
-    global: value.global == null ? true : Boolean(value.global),
-    globalDays: normalizeSparklineRangeDays(value.globalDays),
-    monitoredDays: normalizeSparklineRangeDays(value.monitoredDays),
-    recentDays: normalizeSparklineRangeDays(value.recentDays),
-    oldWeekDays: normalizeSparklineRangeDays(value.oldWeekDays),
-    tokenDaysByAddress: tokenDaysByAddress.value,
+    monitoredDays,
+    recentDays,
+    oldWeekDays,
+    monitoredPreset: normalizeSparklinePreset(value.monitoredPreset, monitoredDays),
+    recentPreset: normalizeSparklinePreset(value.recentPreset, recentDays),
+    oldWeekPreset: normalizeSparklinePreset(value.oldWeekPreset, oldWeekDays),
+    tokenDaysByAddress: tokenOverrides.days,
+    tokenPresetByAddress: tokenOverrides.presets,
   };
 
   for (const dayKey of ['globalDays', 'monitoredDays', 'recentDays', 'oldWeekDays']) {
@@ -226,6 +289,13 @@ function validateSparklineRange(key, value) {
     const parsed = Math.round(Number(raw));
     if (raw != null && (!Number.isFinite(parsed) || parsed < SPARKLINE_RANGE_MIN_DAYS || parsed > SPARKLINE_RANGE_MAX_DAYS)) {
       return { valid: false, error: `${key}.${dayKey} must be between ${SPARKLINE_RANGE_MIN_DAYS} and ${SPARKLINE_RANGE_MAX_DAYS}` };
+    }
+  }
+
+  for (const presetKey of ['monitoredPreset', 'recentPreset', 'oldWeekPreset']) {
+    if (value[presetKey] != null
+      && !SPARKLINE_RANGE_PRESETS.includes(String(value[presetKey]).toLowerCase())) {
+      return { valid: false, error: `${key}.${presetKey} must be a supported range preset` };
     }
   }
 

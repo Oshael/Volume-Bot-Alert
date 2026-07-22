@@ -3,7 +3,9 @@ const { isValidAddress } = require('./user-token');
 const { normalizeTokenChain } = require('../utils/token-identity');
 const config = require('../../config');
 const {
+  ALL_AVAILABLE_SPARKLINE_GRANULARITY_MINUTES,
   FIVE_MINUTE_AGGREGATE_SOURCE_GRANULARITY,
+  MAX_COMPACT_SPARKLINE_POINTS,
   ON_WRITE_AGGREGATE_GRANULARITY_MINUTES,
   ON_WRITE_ROLLUP_AGGREGATE_GRANULARITY_MINUTES,
   isAggregateGranularityMinutes,
@@ -145,6 +147,7 @@ function getSparklineCacheKey(addresses, options) {
     hours: options.hours,
     points: options.points,
     granularityMinutes: options.granularityMinutes,
+    allAvailable: options.allAvailable === true,
     allowOneMinuteFallback: options.allowOneMinuteFallback === true,
   });
 }
@@ -1454,9 +1457,64 @@ function largestTriangleThreeBuckets(series, targetPoints) {
   return sampled;
 }
 
+function resolveCompactSparklineShape(options = {}) {
+  const allAvailable = options.allAvailable === true;
+  return {
+    allAvailable,
+    hours: allAvailable
+      ? null
+      : Math.max(1, Math.min(Number(options.hours) || DEFAULT_SPARKLINE_HOURS, 24 * 30)),
+    points: Math.max(10, Math.min(
+      Number(options.points)
+        || (allAvailable ? MAX_COMPACT_SPARKLINE_POINTS : DEFAULT_SPARKLINE_POINTS),
+      MAX_COMPACT_SPARKLINE_POINTS
+    )),
+    granularityMinutes: allAvailable
+      ? ALL_AVAILABLE_SPARKLINE_GRANULARITY_MINUTES
+      : normalizeSparklineGranularityMinutes(options.granularityMinutes),
+    allowOneMinuteFallback: options.allowOneMinuteFallback === true,
+  };
+}
+
+async function queryCompactSparklineRows(addresses, shape) {
+  if (shape.allAvailable) {
+    const rows = await queryAllAvailableSampledSparklineRows(
+      addresses, shape.granularityMinutes, shape.points
+    );
+    return {
+      rows, source: 'aggregate-all-sampled', aggregateRows: rows.length,
+      fallbackRows: 0, fallbackAddresses: 0,
+    };
+  }
+  if (shouldUseAggregateSparklines(shape.granularityMinutes)) {
+    return queryAggregateSparklineRows(
+      addresses, shape.hours, shape.granularityMinutes, shape.points,
+      { allowOneMinuteFallback: shape.allowOneMinuteFallback }
+    );
+  }
+  return {
+    rows: await queryOneMinuteSparklineRows(
+      addresses, shape.hours, shape.granularityMinutes
+    ),
+    source: '1m', aggregateRows: 0, fallbackRows: 0, fallbackAddresses: 0,
+  };
+}
+
+function buildCompactSparklineResults(addresses, rows, shape) {
+  if (shape.allAvailable) {
+    return buildAllAvailableSparklineResults(addresses, rows, shape);
+  }
+  return buildSparklineResults(addresses, rows, {
+    hours: shape.hours,
+    points: shape.points,
+    granularityMinutes: shape.granularityMinutes,
+  });
+}
+
 async function listSparklineByAddresses(addresses, options = {}) {
   const chain = requireLegacySolanaChain(options.chain);
   const startedAt = Date.now();
+  const shape = resolveCompactSparklineShape(options);
   const unique = Array.from(
     new Set(
       (Array.isArray(addresses) ? addresses : [])
@@ -1468,15 +1526,9 @@ async function listSparklineByAddresses(addresses, options = {}) {
     return [];
   }
 
-  const safeHours = Math.max(1, Math.min(Number(options.hours) || DEFAULT_SPARKLINE_HOURS, 24 * 30));
-  const safePoints = Math.max(10, Math.min(Number(options.points) || DEFAULT_SPARKLINE_POINTS, 500));
-  const safeGranularityMinutes = normalizeSparklineGranularityMinutes(options.granularityMinutes);
   const cacheOptions = {
     chain,
-    hours: safeHours,
-    points: safePoints,
-    granularityMinutes: safeGranularityMinutes,
-    allowOneMinuteFallback: options.allowOneMinuteFallback === true,
+    ...shape,
   };
   const cacheEnabled = options.disableCache !== true && Number(options.cacheTtlMs ?? DEFAULT_SPARKLINE_CACHE_TTL_MS) > 0;
   const cacheKey = cacheEnabled ? getSparklineCacheKey(unique, cacheOptions) : null;
@@ -1497,25 +1549,11 @@ async function listSparklineByAddresses(addresses, options = {}) {
   }
 
   const queryStartedAt = Date.now();
-  const queryResult = shouldUseAggregateSparklines(safeGranularityMinutes)
-    ? await queryAggregateSparklineRows(unique, safeHours, safeGranularityMinutes, safePoints, {
-      allowOneMinuteFallback: options.allowOneMinuteFallback === true,
-    })
-    : {
-      rows: await queryOneMinuteSparklineRows(unique, safeHours, safeGranularityMinutes),
-      source: '1m',
-      aggregateRows: 0,
-      fallbackRows: 0,
-      fallbackAddresses: 0,
-    };
+  const queryResult = await queryCompactSparklineRows(unique, shape);
   const queryDurationMs = Date.now() - queryStartedAt;
 
   const buildStartedAt = Date.now();
-  const result = buildSparklineResults(unique, queryResult.rows, {
-    hours: safeHours,
-    points: safePoints,
-    granularityMinutes: safeGranularityMinutes,
-  });
+  const result = buildCompactSparklineResults(unique, queryResult.rows, shape);
   const buildDurationMs = Date.now() - buildStartedAt;
   const metrics = {
     addresses: unique.length,
@@ -1523,9 +1561,10 @@ async function listSparklineByAddresses(addresses, options = {}) {
     aggregateRows: queryResult.aggregateRows,
     fallbackRows: queryResult.fallbackRows,
     fallbackAddresses: queryResult.fallbackAddresses,
-    hours: safeHours,
-    points: safePoints,
-    granularityMinutes: safeGranularityMinutes,
+    hours: shape.hours,
+    allAvailable: shape.allAvailable,
+    points: shape.points,
+    granularityMinutes: shape.granularityMinutes,
     source: queryResult.source,
     cacheHit: false,
     queryDurationMs,
@@ -1830,6 +1869,56 @@ async function queryOneMinuteSparklineRows(addresses, hours, granularityMinutes)
   return rows;
 }
 
+async function queryAllAvailableSampledSparklineRows(addresses, granularityMinutes, points) {
+  const { rows } = await db.query(
+    `WITH ranked AS (
+       SELECT
+         token_address,
+         bucket_ts,
+         pair_address,
+         close_mcap,
+         ROW_NUMBER() OVER (
+           PARTITION BY token_address ORDER BY bucket_ts ASC
+         ) AS row_number,
+         COUNT(*) OVER (PARTITION BY token_address) AS total_count
+       FROM token_market_buckets_agg
+       WHERE chain = 'solana'
+         AND token_address = ANY($1::varchar[])
+         AND granularity_minutes = $2::int
+         AND close_mcap IS NOT NULL
+     ), counts AS (
+       SELECT token_address, MAX(total_count) AS total_count
+       FROM ranked
+       GROUP BY token_address
+     ), targets AS (
+       SELECT
+         counts.token_address,
+         ROUND(
+           1 + sample_index * (counts.total_count - 1)::numeric
+             / GREATEST(LEAST(counts.total_count, $3::bigint) - 1, 1)
+         )::bigint AS target_row
+       FROM counts
+       CROSS JOIN LATERAL generate_series(
+         0,
+         LEAST(counts.total_count, $3::bigint)::int - 1
+       ) AS samples(sample_index)
+     )
+     SELECT
+       ranked.token_address,
+       ranked.bucket_ts,
+       ranked.pair_address,
+       ranked.close_mcap,
+       ranked.total_count
+     FROM ranked
+     INNER JOIN targets
+       ON targets.token_address = ranked.token_address
+      AND targets.target_row = ranked.row_number
+     ORDER BY ranked.token_address ASC, ranked.bucket_ts ASC`,
+    [addresses, granularityMinutes, points]
+  );
+  return rows;
+}
+
 async function queryAggregateSparklineRows(addresses, hours, granularityMinutes, points, options = {}) {
   const { rows: aggregateRows } = await db.query(
     `SELECT
@@ -1936,6 +2025,56 @@ function buildSparklineResults(addresses, rows, options) {
       firstBucketAt: sparkline.firstBucketAt,
       latestBucketAt: sparkline.latestBucketAt,
       series: sparkline.series,
+    };
+  });
+}
+
+function buildAllAvailableSparklineResults(addresses, rows, options) {
+  const bucketsByAddress = new Map(addresses.map((address) => [address, []]));
+  for (const row of rows) {
+    if (bucketsByAddress.has(row.token_address)) {
+      bucketsByAddress.get(row.token_address).push(row);
+    }
+  }
+  const points = Math.max(10, Math.min(
+    Number(options.points) || MAX_COMPACT_SPARKLINE_POINTS,
+    MAX_COMPACT_SPARKLINE_POINTS
+  ));
+  const granularityMinutes = normalizeSparklineGranularityMinutes(options.granularityMinutes);
+  return addresses.map((address) => {
+    const buckets = bucketsByAddress.get(address)
+      .map((row) => ({
+        tsMs: toTimestampMs(row.bucket_ts),
+        pairAddress: row.pair_address || null,
+        closeMcap: toNumberOrNull(row.close_mcap),
+        totalCount: Number(row.total_count) || 0,
+      }))
+      .filter((row) => row.tsMs != null && row.closeMcap != null)
+      .sort((a, b) => a.tsMs - b.tsMs);
+    if (!buckets.length) {
+      return {
+        address, pairAddress: null, bucketCount: 0, coverageRatio: 0,
+        effectiveHours: 0, granularityMinutes, firstBucketAt: null,
+        latestBucketAt: null, series: [],
+      };
+    }
+    const first = buckets[0];
+    const latest = buckets[buckets.length - 1];
+    const effectiveHours = Math.max(0, (latest.tsMs - first.tsMs) / 3600000);
+    const expectedCount = Math.max(1, Math.floor(
+      (latest.tsMs - first.tsMs) / (granularityMinutes * 60000)
+    ) + 1);
+    const bucketCount = Math.max(latest.totalCount, buckets.length);
+    return {
+      address,
+      pairAddress: latest.pairAddress,
+      bucketCount,
+      coverageRatio: roundMetric(Math.min(1, bucketCount / expectedCount), 4),
+      effectiveHours: roundMetric(effectiveHours, 4),
+      granularityMinutes,
+      firstBucketAt: new Date(first.tsMs).toISOString(),
+      latestBucketAt: new Date(latest.tsMs).toISOString(),
+      series: downsampleSparklineSeries(buckets.map((bucket) => bucket.closeMcap), points),
     };
   });
 }
