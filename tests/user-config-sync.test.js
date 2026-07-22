@@ -121,4 +121,109 @@ describe('user config sync', () => {
     ]);
     assert.equal(client.released, true);
   });
+
+  it('reconciles cached config versions in bounded batches', async () => {
+    const userIds = Array.from({ length: 1001 }, (_, index) => index + 1);
+    const batches = [];
+    const invalidatedVersions = [];
+    const result = await userConfigSync.reconcileCachedProfiles({
+      profileCache: {
+        listCachedProfileVersions() {
+          return new Map(userIds.map((userId) => [userId, null]));
+        },
+        invalidateProfilesWithDifferentVersions(versions) {
+          invalidatedVersions.push(versions);
+          return versions.size;
+        },
+      },
+      userConfigModel: {
+        async getVersions(batch) {
+          batches.push(batch);
+          return new Map(batch.map((userId) => [userId, '2026-07-22T12:00:00.000Z']));
+        },
+      },
+    });
+
+    assert.deepEqual(batches.map((batch) => batch.length), [1000, 1]);
+    assert.deepEqual(invalidatedVersions.map((versions) => versions.size), [1000, 1]);
+    assert.deepEqual(result, { checked: 1001, invalidated: 1001 });
+  });
+
+  it('reconnects the distributed listener after its connection ends', async () => {
+    class FakeClient extends EventEmitter {
+      constructor() {
+        super();
+        this.queries = [];
+      }
+
+      async query(sql) {
+        this.queries.push(sql);
+        return { rows: [] };
+      }
+
+      release() {}
+    }
+
+    const firstClient = new FakeClient();
+    const secondClient = new FakeClient();
+    const clients = [firstClient, secondClient];
+    let connectCalls = 0;
+    let reconnectCallback = null;
+    await userConfigSync.start({
+      pool: {
+        async connect() {
+          const client = clients[connectCalls];
+          connectCalls += 1;
+          return client;
+        },
+      },
+      setTimeoutFn(callback) {
+        reconnectCallback = callback;
+        return { unref() {} };
+      },
+      clearTimeoutFn() {},
+    });
+
+    firstClient.emit('end');
+    assert.equal(userConfigSync.getStatus().listening, false);
+    assert.equal(typeof reconnectCallback, 'function');
+    reconnectCallback();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(connectCalls, 2);
+    assert.deepEqual(secondClient.queries, [`LISTEN ${userConfigSync.CHANNEL}`]);
+    assert.equal(userConfigSync.getStatus().listening, true);
+  });
+
+  it('schedules recovery when the initial listener connection fails', async () => {
+    const client = new EventEmitter();
+    client.queries = [];
+    client.query = async (sql) => {
+      client.queries.push(sql);
+      return { rows: [] };
+    };
+    client.release = () => {};
+    let connectCalls = 0;
+    let reconnectCallback = null;
+
+    await assert.rejects(userConfigSync.start({
+      pool: {
+        async connect() {
+          connectCalls += 1;
+          if (connectCalls === 1) throw new Error('database unavailable');
+          return client;
+        },
+      },
+      setTimeoutFn(callback) {
+        reconnectCallback = callback;
+        return { unref() {} };
+      },
+      clearTimeoutFn() {},
+    }), /database unavailable/);
+
+    reconnectCallback();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(connectCalls, 2);
+    assert.equal(userConfigSync.getStatus().listening, true);
+  });
 });

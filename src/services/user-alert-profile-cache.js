@@ -4,11 +4,9 @@ const config = require('../../config');
 
 const FOREGROUND_TTL_MS = 2 * 60 * 1000;
 const HIDDEN_GRACE_MAX_MS = 20 * 60 * 1000;
-const SHARED_PRESENCE_PROFILE_CACHE_TTL_MS = 15 * 1000;
 const PRESENCE_MODES = new Set(['foreground', 'hidden', 'inactive']);
 
 const profileCacheByUserId = new Map();
-const profileCacheExpiresAtByUserId = new Map();
 const alertSessionStartedAtByUserId = new Map();
 const livePresenceBySocketId = new Map();
 const socketIdsByUserId = new Map();
@@ -203,7 +201,6 @@ function untrackSocketForUser(userId, socketId) {
   if (socketIds.size === 0) {
     socketIdsByUserId.delete(userId);
     profileCacheByUserId.delete(userId);
-    profileCacheExpiresAtByUserId.delete(userId);
     alertSessionStartedAtByUserId.delete(userId);
   }
 }
@@ -389,30 +386,12 @@ function shouldUseSharedPresence(options = {}) {
   return Boolean(config.runtime?.runBackgroundJobs) && !config.runtime?.runSocketHub;
 }
 
-function getCachedUserProfile(userId, options = {}) {
+function getCachedUserProfile(userId) {
   const normalizedUserId = normalizeUserId(userId);
-  const profile = profileCacheByUserId.get(normalizedUserId) || null;
-  if (!profile) {
-    return null;
-  }
-
-  const nowMs = getNowMs(options);
-  const expiresAtMs = Number(profileCacheExpiresAtByUserId.get(normalizedUserId));
-  if (options.requireExpiry === true && !Number.isFinite(expiresAtMs)) {
-    profileCacheByUserId.delete(normalizedUserId);
-    return null;
-  }
-
-  if (Number.isFinite(expiresAtMs) && expiresAtMs <= nowMs) {
-    profileCacheByUserId.delete(normalizedUserId);
-    profileCacheExpiresAtByUserId.delete(normalizedUserId);
-    return null;
-  }
-
-  return profile;
+  return profileCacheByUserId.get(normalizedUserId) || null;
 }
 
-async function refreshUserProfile(userId, options = {}) {
+async function refreshUserProfile(userId) {
   const normalizedUserId = normalizeUserId(userId);
   const configResult = typeof userConfig.getAllWithStoredKeys === 'function'
     ? await userConfig.getAllWithStoredKeys(normalizedUserId)
@@ -422,12 +401,6 @@ async function refreshUserProfile(userId, options = {}) {
     storedKeys: configResult.storedKeys,
   });
   profileCacheByUserId.set(normalizedUserId, profile);
-  const expiresAtMs = Number(options.cacheExpiresAtMs);
-  if (Number.isFinite(expiresAtMs)) {
-    profileCacheExpiresAtByUserId.set(normalizedUserId, expiresAtMs);
-  } else {
-    profileCacheExpiresAtByUserId.delete(normalizedUserId);
-  }
   return profile;
 }
 
@@ -449,17 +422,30 @@ function invalidateUserProfile(userId, options = {}) {
   }
 
   profileCacheByUserId.delete(normalizedUserId);
-  profileCacheExpiresAtByUserId.delete(normalizedUserId);
   return Boolean(current);
 }
 
-function getProfileCacheExpiresAtMs(context, nowMs) {
-  const activeUntilMs = Number(context?.activeUntilMs);
-  const shortTtlExpiresAtMs = nowMs + SHARED_PRESENCE_PROFILE_CACHE_TTL_MS;
-  if (!Number.isFinite(activeUntilMs) || activeUntilMs <= nowMs) {
-    return shortTtlExpiresAtMs;
+function listCachedProfileVersions() {
+  return new Map([...profileCacheByUserId.entries()]
+    .map(([userId, profile]) => [userId, profile?.configVersion || null]));
+}
+
+function invalidateProfilesWithDifferentVersions(versionsByUserId) {
+  let invalidated = 0;
+  for (const [userId, configVersion] of versionsByUserId || []) {
+    const profile = profileCacheByUserId.get(normalizeUserId(userId));
+    if (!profile || toTimestampMs(profile.configVersion) === toTimestampMs(configVersion)) continue;
+    profileCacheByUserId.delete(normalizeUserId(userId));
+    invalidated += 1;
   }
-  return Math.max(nowMs + 1, Math.min(shortTtlExpiresAtMs, activeUntilMs));
+  return invalidated;
+}
+
+function pruneInactiveProfiles(activeUserIds) {
+  const activeSet = new Set(activeUserIds);
+  for (const userId of profileCacheByUserId.keys()) {
+    if (!activeSet.has(userId)) profileCacheByUserId.delete(userId);
+  }
 }
 
 function syncAlertSessionStarts(activeUserIds, nowMs) {
@@ -590,20 +576,16 @@ async function listSharedActiveProfiles(options, nowMs) {
   const contextsByUserId = await listSharedPresenceContexts(options, nowMs);
   const activeUserIds = [...contextsByUserId.keys()].sort((a, b) => a - b);
   syncAlertSessionStarts(activeUserIds, nowMs);
-  const missingUserIds = activeUserIds.filter((userId) => !getCachedUserProfile(userId, {
-    nowMs,
-    requireExpiry: true,
-  }));
+  pruneInactiveProfiles(activeUserIds);
+  const missingUserIds = activeUserIds.filter((userId) => !getCachedUserProfile(userId));
 
   if (missingUserIds.length > 0) {
-    await Promise.all(missingUserIds.map((userId) => refreshUserProfile(userId, {
-      cacheExpiresAtMs: getProfileCacheExpiresAtMs(contextsByUserId.get(userId), nowMs),
-    })));
+    await Promise.all(missingUserIds.map((userId) => refreshUserProfile(userId)));
   }
 
   return activeUserIds
     .map((userId) => {
-      const profile = getCachedUserProfile(userId, { nowMs, requireExpiry: true });
+      const profile = getCachedUserProfile(userId);
       const presence = contextsByUserId.get(userId);
       if (!profile || !presence) {
         return null;
@@ -666,7 +648,7 @@ function getStatus(options = {}) {
   return {
     foregroundTtlMs: FOREGROUND_TTL_MS,
     hiddenGraceMaxMs: HIDDEN_GRACE_MAX_MS,
-    sharedPresenceProfileCacheTtlMs: SHARED_PRESENCE_PROFILE_CACHE_TTL_MS,
+    profileCacheStrategy: 'event-driven',
     trackedSockets: livePresenceBySocketId.size,
     trackedUsers: socketIdsByUserId.size,
     activeUsers: listActiveUserIds(options).length,
@@ -677,16 +659,17 @@ function getStatus(options = {}) {
 module.exports = {
   FOREGROUND_TTL_MS,
   HIDDEN_GRACE_MAX_MS,
-  SHARED_PRESENCE_PROFILE_CACHE_TTL_MS,
   PRESENCE_MODES,
   buildNormalizedAlertProfile,
   clearSharedLivePresence,
   clearLivePresence,
   getStatus,
   invalidateUserProfile,
+  invalidateProfilesWithDifferentVersions,
   isPresenceEntryActive,
   listActiveProfiles,
   listActiveUserIds,
+  listCachedProfileVersions,
   refreshUserProfile,
   upsertSharedLivePresence,
   upsertLivePresence,
@@ -697,7 +680,6 @@ module.exports = {
     getSharedPresenceUserId,
     getActivePresenceContextForUser,
     getCachedUserProfile,
-    getProfileCacheExpiresAtMs,
     getNowMs,
     getNumber,
     isEnabled,
@@ -715,7 +697,6 @@ module.exports = {
     normalizeUserId,
     alertSessionStartedAtByUserId,
     profileCacheByUserId,
-    profileCacheExpiresAtByUserId,
     livePresenceBySocketId,
     resolveEnabledWithFallback,
     resolveNumberWithFallback,

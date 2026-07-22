@@ -366,7 +366,6 @@ function startLockedWorker(group, key, label, start, options = {}) {
 
 function startWorkerSet() {
   if (hasWorkerGroup('core')) {
-    startLockedWorker('core', 'user-config-sync', 'User config sync', () => userConfigSync.start());
     startLockedWorker('core', 'catalog-worker', 'Catalog worker', () => catalogWorker.start());
     startLockedWorker('core', 'dex-discovery-worker', 'Dex discovery worker', () => dexDiscoveryWorker.start());
     startLockedWorker('core', 'token-risk-enrichment-worker', 'Token risk enrichment worker', () => {
@@ -539,6 +538,12 @@ function bootstrapBackgroundRuntime() {
 
   if (config.nodeEnv !== 'test' && hasWorkerGroup('core')) {
     startBackgroundCleanup();
+  }
+
+  if (config.nodeEnv !== 'test' && ['core', 'market', 'robinhood'].some(hasWorkerGroup)) {
+    userConfigSync.start().catch((err) => {
+      console.error('[UserConfigSync] Failed to start distributed listener:', err.message);
+    });
   }
 
   if (shouldStartWorkerSet()) {

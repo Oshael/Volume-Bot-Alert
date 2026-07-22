@@ -279,6 +279,30 @@ async function getVersion(userId) {
   return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : null;
 }
 
+async function getVersions(userIds) {
+  const normalizedUserIds = [...new Set((userIds || [])
+    .map((userId) => Number.parseInt(String(userId || '').trim(), 10))
+    .filter((userId) => Number.isInteger(userId) && userId > 0))];
+  const versions = new Map(normalizedUserIds.map((userId) => [userId, null]));
+  if (normalizedUserIds.length === 0) return versions;
+
+  const { rows } = await db.query(
+    `SELECT user_id, MAX(updated_at) AS config_version
+     FROM user_configs
+     WHERE user_id = ANY($1::bigint[])
+     GROUP BY user_id`,
+    [normalizedUserIds]
+  );
+  for (const row of rows) {
+    const userId = Number(row.user_id);
+    const parsed = row.config_version instanceof Date
+      ? row.config_version
+      : new Date(row.config_version || 0);
+    versions.set(userId, Number.isFinite(parsed.getTime()) ? parsed.toISOString() : null);
+  }
+  return versions;
+}
+
 module.exports = {
   CONFIG_SCHEMA,
   applyLegacyGmgnClaimConfigFallbacks,
@@ -286,6 +310,7 @@ module.exports = {
   buildDefaultConfigs,
   getAllWithStoredKeys,
   getVersion,
+  getVersions,
   validateConfigEntry,
   validateConfigs,
   getAll,

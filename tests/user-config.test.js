@@ -1,6 +1,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
+const db = require('../src/models/db');
 const userConfig = require('../src/models/user-config');
 
 describe('user config', () => {
@@ -49,5 +50,25 @@ describe('user config', () => {
 
     assert.equal(configs['alert-gmgn-claim-pump-enabled'], 'off');
     assert.equal(configs['alert-gmgn-claim-bags-enabled'], 'off');
+  });
+
+  it('loads config versions for a deduplicated user batch', async () => {
+    const originalQuery = db.query;
+    let params = null;
+    db.query = async (_sql, values) => {
+      params = values;
+      return {
+        rows: [{ user_id: 2, config_version: new Date('2026-07-22T12:00:00.000Z') }],
+      };
+    };
+
+    try {
+      const versions = await userConfig.getVersions([2, 1, 2, 'invalid']);
+      assert.deepEqual(params, [[2, 1]]);
+      assert.equal(versions.get(1), null);
+      assert.equal(versions.get(2), '2026-07-22T12:00:00.000Z');
+    } finally {
+      db.query = originalQuery;
+    }
   });
 });

@@ -359,7 +359,7 @@ describe('user alert profile cache', () => {
     }
   });
 
-  it('bounds shared profile cache by the next presence expiration', async () => {
+  it('evicts a shared profile after the user is observed inactive', async () => {
     const originalGetAllWithStoredKeys = userConfig.getAllWithStoredKeys;
     const baseNowMs = Date.UTC(2026, 6, 8, 13, 0, 0);
     let getAllCalls = 0;
@@ -395,6 +395,12 @@ describe('user alert profile cache', () => {
       const thirdProfiles = await userAlertProfileCache.listActiveProfiles({
         nowMs: baseNowMs + 1_500,
         sharedPresence: true,
+        sharedPresenceRows: [],
+      });
+
+      const fourthProfiles = await userAlertProfileCache.listActiveProfiles({
+        nowMs: baseNowMs + 2_000,
+        sharedPresence: true,
         sharedPresenceRows: [{
           userId: 41,
           mode: 'foreground',
@@ -404,7 +410,8 @@ describe('user alert profile cache', () => {
 
       assert.equal(firstProfiles[0].thresholdPct, 61);
       assert.equal(secondProfiles[0].thresholdPct, 61);
-      assert.equal(thirdProfiles[0].thresholdPct, 62);
+      assert.deepEqual(thirdProfiles, []);
+      assert.equal(fourthProfiles[0].thresholdPct, 62);
       assert.equal(getAllCalls, 2);
     } finally {
       userConfig.getAllWithStoredKeys = originalGetAllWithStoredKeys;
@@ -412,7 +419,7 @@ describe('user alert profile cache', () => {
     }
   });
 
-  it('keeps the alert session stable while shared config profiles refresh', async () => {
+  it('keeps shared config profiles until an explicit invalidation', async () => {
     const originalGetAllWithStoredKeys = userConfig.getAllWithStoredKeys;
     const baseNowMs = Date.UTC(2026, 6, 22, 12, 0, 0);
     let getAllCalls = 0;
@@ -436,12 +443,23 @@ describe('user alert profile cache', () => {
         sharedPresence: true,
         sharedPresenceRows: activePresence(baseNowMs),
       });
-      const refreshed = await userAlertProfileCache.listActiveProfiles({
-        nowMs: baseNowMs + userAlertProfileCache.SHARED_PRESENCE_PROFILE_CACHE_TTL_MS + 1,
+      const cached = await userAlertProfileCache.listActiveProfiles({
+        nowMs: baseNowMs + 60_001,
         sharedPresence: true,
-        sharedPresenceRows: activePresence(
-          baseNowMs + userAlertProfileCache.SHARED_PRESENCE_PROFILE_CACHE_TTL_MS + 1
-        ),
+        sharedPresenceRows: activePresence(baseNowMs + 60_001),
+      });
+
+      assert.equal(getAllCalls, 1);
+      assert.equal(cached[0].thresholdPct, first[0].thresholdPct);
+      assert.equal(cached[0].loadedAt, first[0].loadedAt);
+
+      userAlertProfileCache.invalidateUserProfile(42, {
+        configVersion: '2026-07-22T12:01:30.000Z',
+      });
+      const refreshed = await userAlertProfileCache.listActiveProfiles({
+        nowMs: baseNowMs + 90_000,
+        sharedPresence: true,
+        sharedPresenceRows: activePresence(baseNowMs + 90_000),
       });
 
       assert.equal(getAllCalls, 2);
