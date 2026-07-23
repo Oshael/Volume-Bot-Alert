@@ -212,6 +212,14 @@ when measuring archive use after this rollout.
 through 10,000; increase them only after a public transport probe and a
 persistence soak, because larger market ranges commit atomically.
 
+`ROBINHOOD_DISCOVERY_MAX_RANGES_PER_POLL` and
+`ROBINHOOD_MARKET_MAX_RANGES_PER_POLL` independently bound the work assigned
+to each sequential stream per worker cycle. Both inherit
+`ROBINHOOD_MAX_RANGES_PER_POLL` (default `20`) when absent. Giving Market a
+higher quota lets it reduce an existing gap behind the completed Discovery
+frontier, but redistributes worker time rather than increasing total transport
+throughput.
+
 Persistent ingestion deliberately disables the read-only rollback maps and
 24-hour analytical window aggregator after an extended soak exhausted the
 Node.js heap. Persistence, cursor commits and timestamp batching are unchanged.

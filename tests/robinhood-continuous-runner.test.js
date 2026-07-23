@@ -304,6 +304,37 @@ describe('Robinhood continuous runner', () => {
     assert.equal(commits.every((entry) => entry.entries.length === 0), true);
   });
 
+  it('applies independent discovery and market range quotas in one sequential cycle', async () => {
+    const repository = {
+      loadCursor: async (stream) => ({
+        stream,
+        next_block: stream === 'discovery' ? '10' : '0',
+      }),
+      listActivePools: async () => [],
+      commitDiscoveryRange: async () => {},
+      commitMarketRange: async () => {},
+    };
+    const runner = await createRobinhoodContinuousRunner({
+      rpcClient: createClient({ heads: ['0x64', '0x64'] }),
+      pipeline: createPipeline(),
+      repository,
+      confirmations: 0,
+      rangeSize: 1,
+      minRangeSize: 1,
+      maxRangeSize: 1,
+      maxRangesPerPoll: 20,
+      discoveryMaxRangesPerPoll: 2,
+      marketMaxRangesPerPoll: 3,
+    });
+
+    const snapshot = await runner.pollOnce();
+
+    assert.equal(snapshot.pollers.discovery.nextBlock, '12');
+    assert.equal(snapshot.pollers.discovery.metrics.ranges, 2);
+    assert.equal(snapshot.pollers.market.nextBlock, '3');
+    assert.equal(snapshot.pollers.market.metrics.ranges, 3);
+  });
+
   it('disables rollback retention and analytical windows for its persistent pipeline', async () => {
     const repository = {
       loadCursor: async (stream) => ({ stream, next_block: '101' }),

@@ -161,6 +161,15 @@ describe('Robinhood ingestion worker', () => {
       rpcMinIntervalMs: 500,
     }).archiveRpcMinIntervalMs, 500);
     assert.equal(publicOnly.observationConcurrency, 1);
+    assert.equal(publicOnly.discoveryMaxRangesPerPoll, 20);
+    assert.equal(publicOnly.marketMaxRangesPerPoll, 20);
+    const splitRanges = __private.normalizeOptions({
+      maxRangesPerPoll: 30,
+      discoveryMaxRangesPerPoll: 10,
+      marketMaxRangesPerPoll: 40,
+    });
+    assert.equal(splitRanges.discoveryMaxRangesPerPoll, 10);
+    assert.equal(splitRanges.marketMaxRangesPerPoll, 40);
     assert.equal(__private.normalizeOptions({ rangeSize: 8000 }).rangeSize, 8000);
     assert.throws(
       () => __private.createClient({ ...publicOnly, useAlchemy: true }),

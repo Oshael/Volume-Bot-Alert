@@ -156,6 +156,9 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_ARCHIVE_RPC_MIN_INTERVAL_MS: '200',
       ROBINHOOD_RANGE_SIZE: '99999',
       ROBINHOOD_MAX_RANGE_SIZE: '99999',
+      ROBINHOOD_MAX_RANGES_PER_POLL: '33',
+      ROBINHOOD_DISCOVERY_MAX_RANGES_PER_POLL: '9999',
+      ROBINHOOD_MARKET_MAX_RANGES_PER_POLL: '0',
       ROBINHOOD_LOOKBACK_BLOCKS: '0',
       ROBINHOOD_CONFIRMATIONS: '-1',
       ROBINHOOD_START_BLOCK: 'invalid',
@@ -171,6 +174,9 @@ describe('runtime worker groups config', () => {
       assert.equal(config.robinhoodIngestionWorker.archiveRpcMinIntervalMs, 200);
       assert.equal(config.robinhoodIngestionWorker.rangeSize, 10_000);
       assert.equal(config.robinhoodIngestionWorker.maxRangeSize, 10_000);
+      assert.equal(config.robinhoodIngestionWorker.maxRangesPerPoll, 33);
+      assert.equal(config.robinhoodIngestionWorker.discoveryMaxRangesPerPoll, 1000);
+      assert.equal(config.robinhoodIngestionWorker.marketMaxRangesPerPoll, 1);
       assert.equal(config.robinhoodIngestionWorker.lookbackBlocks, 1);
       assert.equal(config.robinhoodIngestionWorker.confirmations, 0);
       assert.equal(config.robinhoodIngestionWorker.startBlock, null);

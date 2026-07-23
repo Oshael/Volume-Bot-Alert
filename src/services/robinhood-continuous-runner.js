@@ -187,6 +187,7 @@ async function createRobinhoodContinuousRunner(options = {}) {
   const discoveryHandlers = streamHandlers(repository, pipeline, 'discovery');
   const discoveryPoller = createEvmLogPoller({
     ...pollerOptions,
+    maxRangesPerPoll: options.discoveryMaxRangesPerPoll ?? pollerOptions.maxRangesPerPoll,
     startBlock: discoveryStartBlock,
     checkpoint: cursorCheckpoint(discoveryCursor),
     filter: {
@@ -210,6 +211,7 @@ async function createRobinhoodContinuousRunner(options = {}) {
     : 'tracked-addresses';
   const marketPoller = createEvmLogPoller({
     ...pollerOptions,
+    maxRangesPerPoll: options.marketMaxRangesPerPoll ?? pollerOptions.maxRangesPerPoll,
     startBlock: marketStartBlock,
     checkpoint: cursorCheckpoint(marketCursor),
     client: marketClient,

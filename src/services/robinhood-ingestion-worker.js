@@ -20,6 +20,7 @@ function boundedInteger(value, fallback, min, max) {
 
 function normalizeOptions(options = {}) {
   const rpcMinIntervalMs = boundedInteger(options.rpcMinIntervalMs, 250, 0, 60_000);
+  const maxRangesPerPoll = boundedInteger(options.maxRangesPerPoll, 20, 1, 1000);
   return {
     enabled: options.enabled === true,
     publicRpcUrl: String(options.publicRpcUrl || PUBLIC_RPC_URL),
@@ -46,7 +47,19 @@ function normalizeOptions(options = {}) {
     rangeSize: boundedInteger(options.rangeSize, 10, 1, 10_000),
     minRangeSize: boundedInteger(options.minRangeSize, 1, 1, 1000),
     maxRangeSize: boundedInteger(options.maxRangeSize, 100, 1, 10_000),
-    maxRangesPerPoll: boundedInteger(options.maxRangesPerPoll, 20, 1, 1000),
+    maxRangesPerPoll,
+    discoveryMaxRangesPerPoll: boundedInteger(
+      options.discoveryMaxRangesPerPoll,
+      maxRangesPerPoll,
+      1,
+      1000
+    ),
+    marketMaxRangesPerPoll: boundedInteger(
+      options.marketMaxRangesPerPoll,
+      maxRangesPerPoll,
+      1,
+      1000
+    ),
     maxAddressesPerLogRequest: boundedInteger(options.maxAddressesPerLogRequest, 100, 1, 1000),
     marketLogFilterMode: options.marketLogFilterMode === 'tracked-addresses'
       ? 'tracked-addresses'
@@ -247,6 +260,8 @@ function createRobinhoodIngestionWorker(deps = {}) {
       minRangeSize: options.minRangeSize,
       maxRangeSize: options.maxRangeSize,
       maxRangesPerPoll: options.maxRangesPerPoll,
+      discoveryMaxRangesPerPoll: options.discoveryMaxRangesPerPoll,
+      marketMaxRangesPerPoll: options.marketMaxRangesPerPoll,
       maxAddressesPerLogRequest: options.maxAddressesPerLogRequest,
       marketLogFilterMode: options.marketLogFilterMode,
       timestampConcurrency: options.timestampConcurrency,

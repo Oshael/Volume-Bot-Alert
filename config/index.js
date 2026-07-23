@@ -497,6 +497,12 @@ const robinhoodArchiveRpcMinIntervalMs = parseIntegerInRange(
   0,
   60_000
 );
+const robinhoodMaxRangesPerPoll = parseIntegerInRange(
+  process.env.ROBINHOOD_MAX_RANGES_PER_POLL,
+  20,
+  1,
+  1000
+);
 const robinhoodRollout = {
   transport: {
     enabled: parseBoolean(
@@ -758,9 +764,16 @@ module.exports = {
     rangeSize: parseIntegerInRange(process.env.ROBINHOOD_RANGE_SIZE, 10, 1, 10_000),
     minRangeSize: parseIntegerInRange(process.env.ROBINHOOD_MIN_RANGE_SIZE, 1, 1, 1000),
     maxRangeSize: parseIntegerInRange(process.env.ROBINHOOD_MAX_RANGE_SIZE, 100, 1, 10_000),
-    maxRangesPerPoll: parseIntegerInRange(
-      process.env.ROBINHOOD_MAX_RANGES_PER_POLL,
-      20,
+    maxRangesPerPoll: robinhoodMaxRangesPerPoll,
+    discoveryMaxRangesPerPoll: parseIntegerInRange(
+      process.env.ROBINHOOD_DISCOVERY_MAX_RANGES_PER_POLL,
+      robinhoodMaxRangesPerPoll,
+      1,
+      1000
+    ),
+    marketMaxRangesPerPoll: parseIntegerInRange(
+      process.env.ROBINHOOD_MARKET_MAX_RANGES_PER_POLL,
+      robinhoodMaxRangesPerPoll,
       1,
       1000
     ),
