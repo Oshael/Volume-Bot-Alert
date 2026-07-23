@@ -140,6 +140,11 @@ function createCatalogMarketHistoryService(options = {}) {
     || createRobinhoodMarketHistoryReadRepository({
       aggregateReadsEnabled: config.robinhoodMarketAggregateReader.enabled,
       fallbackEnabled: config.robinhoodMarketAggregateReader.fallbackEnabled,
+      shadowCompareEnabled: config.robinhoodMarketAggregateReader.shadowCompareEnabled,
+      verifiedCoverage: {
+        from: config.robinhoodMarketAggregateReader.verifiedFrom,
+        through: config.robinhoodMarketAggregateReader.verifiedThrough,
+      },
     });
   const clock = options.now || (() => new Date());
 

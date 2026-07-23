@@ -4,7 +4,7 @@ const DEFAULT_INTERVAL_MS = 60 * 1000;
 const DEFAULT_BATCH_LIMIT = 2000;
 const DEFAULT_MAX_BATCHES = 5;
 const DEFAULT_STATEMENT_TIMEOUT_MS = 10 * 1000;
-const DEFAULT_HOURLY_RETENTION_DAYS = 14;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 let timer = null;
 let running = false;
@@ -22,6 +22,7 @@ let status = {
   lastDeletedObservations: 0,
   lastDeletedMinuteBuckets: 0,
   lastProtectedMinuteBuckets: 0,
+  lastMinuteDeletionBlockedByCoverage: false,
   lastDeletedHourlyBuckets: 0,
   lastProtectedHourlyBuckets: 0,
   totalDeletedProcessedLogs: 0,
@@ -37,24 +38,35 @@ function boundedInteger(value, fallback, min, max) {
   return Number.isFinite(parsed) ? Math.max(min, Math.min(parsed, max)) : fallback;
 }
 
+function normalizeVerifiedCoverage(input) {
+  if (input?.from == null && input?.through == null) return null;
+  if (input?.from == null || input?.through == null) {
+    throw new Error('Robinhood retention verified coverage requires from and through');
+  }
+  const from = new Date(input.from);
+  const through = new Date(input.through);
+  if (!Number.isFinite(from.getTime()) || !Number.isFinite(through.getTime()) || from >= through) {
+    throw new Error('Robinhood retention verified coverage is invalid');
+  }
+  if (from.getTime() % DAY_MS || through.getTime() % DAY_MS) {
+    throw new Error('Robinhood retention verified coverage must align to UTC days');
+  }
+  return Object.freeze({ from: from.toISOString(), through: through.toISOString() });
+}
+
 function normalizeOptions(options = {}) {
   return {
     enabled: options.enabled !== false,
     intervalMs: boundedInteger(options.intervalMs, DEFAULT_INTERVAL_MS, 10_000, 60 * 60 * 1000),
     batchLimit: boundedInteger(options.batchLimit, DEFAULT_BATCH_LIMIT, 100, 10_000),
     maxBatches: boundedInteger(options.maxBatches, DEFAULT_MAX_BATCHES, 1, 50),
-    hourlyRetentionDays: boundedInteger(
-      options.hourlyRetentionDays,
-      DEFAULT_HOURLY_RETENTION_DAYS,
-      1,
-      3650
-    ),
     statementTimeoutMs: boundedInteger(
       options.statementTimeoutMs,
       DEFAULT_STATEMENT_TIMEOUT_MS,
       1000,
       60 * 1000
     ),
+    verifiedCoverage: normalizeVerifiedCoverage(options.verifiedCoverage),
   };
 }
 
@@ -145,6 +157,10 @@ async function deleteExpiredMinuteBuckets(database, options) {
          minute.first_block_number, minute.last_block_number, minute.updated_at
        FROM robinhood_market_buckets_1m minute
        WHERE minute.expires_at <= NOW()
+         AND minute.bucket_ts >= $2::timestamptz
+         AND minute.bucket_ts < $3::timestamptz
+         AND minute.bucket_ts <
+           date_trunc('hour', NOW() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
        ORDER BY minute.expires_at ASC
        LIMIT $1::int
        FOR UPDATE OF minute SKIP LOCKED
@@ -196,81 +212,15 @@ async function deleteExpiredMinuteBuckets(database, options) {
      SELECT
        (SELECT COUNT(*)::int FROM expired) AS examined_buckets,
        (SELECT COUNT(*)::int FROM deleted) AS minute_buckets`,
-    [options.batchLimit],
+    [
+      options.batchLimit,
+      options.verifiedCoverage.from,
+      options.verifiedCoverage.through,
+    ],
     options.statementTimeoutMs
   );
   const examined = Number(result.rows[0]?.examined_buckets || 0);
   const deleted = Number(result.rows[0]?.minute_buckets || 0);
-  return {
-    deleted,
-    examined,
-    protected: Math.max(0, examined - deleted),
-  };
-}
-
-async function deleteCoveredHourlyBuckets(database, options) {
-  const result = await queryWithTimeout(
-    database,
-    `WITH expired AS MATERIALIZED (
-       SELECT
-         hourly.chain, hourly.protocol, hourly.market_key, hourly.token_address,
-         hourly.bucket_ts, hourly.first_block_number, hourly.last_block_number,
-         hourly.updated_at
-       FROM robinhood_market_buckets_1h hourly
-       WHERE hourly.bucket_ts < NOW() - ($2::int * INTERVAL '1 day')
-       ORDER BY hourly.bucket_ts ASC
-       LIMIT $1::int
-       FOR UPDATE OF hourly SKIP LOCKED
-     ),
-     candidates AS (
-       SELECT expired.chain, expired.protocol, expired.market_key, expired.bucket_ts
-       FROM expired
-       WHERE NOT EXISTS (
-         SELECT 1
-         FROM robinhood_market_buckets_1m minute
-         WHERE minute.chain = expired.chain
-           AND minute.protocol = expired.protocol
-           AND minute.market_key = expired.market_key
-           AND minute.bucket_ts >= expired.bucket_ts
-           AND minute.bucket_ts < expired.bucket_ts + INTERVAL '1 hour'
-       )
-         AND NOT EXISTS (
-           SELECT 1
-           FROM (VALUES (60), (240), (1440)) required(granularity_minutes)
-           WHERE NOT EXISTS (
-             SELECT 1
-             FROM robinhood_market_buckets_agg aggregate
-             WHERE aggregate.chain = expired.chain
-               AND aggregate.token_address = expired.token_address
-               AND aggregate.granularity_minutes = required.granularity_minutes
-               AND aggregate.bucket_ts = to_timestamp(
-                 FLOOR(EXTRACT(EPOCH FROM expired.bucket_ts)
-                   / (required.granularity_minutes * 60))
-                 * (required.granularity_minutes * 60)
-               )
-               AND aggregate.first_block_number <= expired.first_block_number
-               AND aggregate.last_block_number >= expired.last_block_number
-               AND aggregate.updated_at >= expired.updated_at
-           )
-         )
-     ),
-     deleted AS (
-       DELETE FROM robinhood_market_buckets_1h hourly
-       USING candidates
-       WHERE hourly.chain = candidates.chain
-         AND hourly.protocol = candidates.protocol
-         AND hourly.market_key = candidates.market_key
-         AND hourly.bucket_ts = candidates.bucket_ts
-       RETURNING 1
-     )
-     SELECT
-       (SELECT COUNT(*)::int FROM expired) AS examined_buckets,
-       (SELECT COUNT(*)::int FROM deleted) AS hourly_buckets`,
-    [options.batchLimit, options.hourlyRetentionDays],
-    options.statementTimeoutMs
-  );
-  const examined = Number(result.rows[0]?.examined_buckets || 0);
-  const deleted = Number(result.rows[0]?.hourly_buckets || 0);
   return {
     deleted,
     examined,
@@ -287,6 +237,7 @@ function emptySummary() {
     observations: 0,
     minuteBuckets: 0,
     protectedMinuteBuckets: 0,
+    minuteDeletionBlockedByCoverage: false,
     hourlyBuckets: 0,
     protectedHourlyBuckets: 0,
   };
@@ -302,21 +253,17 @@ async function runCleanupBatches(database, options) {
     summary.protectedProcessedLogs += raw.protected;
     summary.observations += raw.observations;
     if (raw.protected > 0) break;
+    if (!options.verifiedCoverage) {
+      summary.minuteDeletionBlockedByCoverage = true;
+      break;
+    }
 
     const minute = await deleteExpiredMinuteBuckets(database, options);
     summary.minuteBuckets += minute.deleted;
     summary.protectedMinuteBuckets += minute.protected;
     if (minute.protected > 0) break;
 
-    const hourly = await deleteCoveredHourlyBuckets(database, options);
-    summary.hourlyBuckets += hourly.deleted;
-    summary.protectedHourlyBuckets += hourly.protected;
-    if (hourly.protected > 0) break;
-    if (
-      raw.examined < options.batchLimit
-      && minute.examined < options.batchLimit
-      && hourly.examined < options.batchLimit
-    ) break;
+    if (raw.examined < options.batchLimit && minute.examined < options.batchLimit) break;
   }
   return summary;
 }
@@ -343,6 +290,7 @@ async function runOnce(options = {}, meta = {}, deps = {}) {
       status.lastDeletedObservations = summary.observations;
       status.lastDeletedMinuteBuckets = summary.minuteBuckets;
       status.lastProtectedMinuteBuckets = summary.protectedMinuteBuckets;
+      status.lastMinuteDeletionBlockedByCoverage = summary.minuteDeletionBlockedByCoverage;
       status.lastDeletedHourlyBuckets = summary.hourlyBuckets;
       status.lastProtectedHourlyBuckets = summary.protectedHourlyBuckets;
       status.totalDeletedProcessedLogs += summary.processedLogs;
@@ -412,16 +360,15 @@ function getStatus() {
 
 module.exports = {
   DEFAULT_BATCH_LIMIT,
-  DEFAULT_HOURLY_RETENTION_DAYS,
   DEFAULT_INTERVAL_MS,
   getStatus,
   runOnce,
   start,
   stop,
   __private: {
-    deleteCoveredHourlyBuckets,
     deleteExpiredMinuteBuckets,
     deleteExpiredProcessedLogs,
+    normalizeVerifiedCoverage,
     normalizeOptions,
   },
 };

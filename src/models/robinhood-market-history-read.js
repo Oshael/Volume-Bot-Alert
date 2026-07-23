@@ -6,6 +6,7 @@ const {
 
 const CHAIN = 'robinhood';
 const MINUTE_MS = 60_000;
+const DAY_MS = 24 * 60 * MINUTE_MS;
 const MINUTE_RETENTION_MS = 14 * 24 * 60 * MINUTE_MS;
 const MAX_WINDOW_MS = 10 * 365 * 24 * 60 * MINUTE_MS;
 const MAX_CANDLES = 5000;
@@ -58,6 +59,7 @@ const LEGACY_HISTORY_SQL = `WITH requested AS MATERIALIZED (
     AND bucket.bucket_ts >= date_trunc('hour', $2::timestamptz)
     AND bucket.bucket_ts < $3::timestamptz
     AND ($4::int >= 60 OR bucket.bucket_ts < $5::timestamptz)
+    AND ($7::timestamptz IS NULL OR bucket.bucket_ts < $7 OR bucket.bucket_ts >= $8)
   UNION ALL
   SELECT ${SOURCE_COLUMNS}, 1 AS source_granularity_minutes
   FROM robinhood_market_buckets_1m bucket
@@ -69,6 +71,7 @@ const LEGACY_HISTORY_SQL = `WITH requested AS MATERIALIZED (
     AND bucket.bucket_ts >= date_bin(
       $4::int * INTERVAL '1 minute', $2::timestamptz, TIMESTAMPTZ '1970-01-01')
     AND bucket.bucket_ts < $3::timestamptz
+    AND ($7::timestamptz IS NULL OR bucket.bucket_ts < $7 OR bucket.bucket_ts >= $8)
 ), normalized AS (
   SELECT source_rows.*,
     GREATEST($4::int, source_granularity_minutes) AS output_granularity_minutes,
@@ -306,7 +309,68 @@ function groupRows(query, rows) {
   return rowsByAddress;
 }
 
-function buildCacheKey(query, cacheTtlMs, aggregateReadsEnabled, fallbackEnabled) {
+function normalizeVerifiedCoverage(input) {
+  if (input?.from == null && input?.through == null) return null;
+  if (input?.from == null || input?.through == null) {
+    throw new Error('Robinhood verified aggregate coverage requires from and through');
+  }
+  const from = timestamp(input.from, 'verified aggregate coverage from');
+  const through = timestamp(input.through, 'verified aggregate coverage through');
+  if (from >= through) throw new Error('Robinhood verified aggregate coverage is empty');
+  if (from.getTime() % DAY_MS || through.getTime() % DAY_MS) {
+    throw new Error('Robinhood verified aggregate coverage must align to UTC days');
+  }
+  return Object.freeze({ from, through });
+}
+
+function intersectCoverage(query, coverage) {
+  if (!coverage) return null;
+  const from = new Date(Math.max(query.startAt.getTime(), coverage.from.getTime()));
+  const through = new Date(Math.min(query.endAt.getTime(), coverage.through.getTime()));
+  return from < through ? Object.freeze({ from, through }) : null;
+}
+
+function coversQuery(query, coverage) {
+  return coverage?.from <= query.startAt && coverage?.through >= query.endAt;
+}
+
+function mergeRows(aggregateRows, fallbackRows) {
+  const byBucket = new Map();
+  for (const row of fallbackRows) byBucket.set(`${row.token_address}:${row.bucket_ts}`, row);
+  for (const row of aggregateRows) byBucket.set(`${row.token_address}:${row.bucket_ts}`, row);
+  return [...byBucket.values()].sort((left, right) => (
+    new Date(left.bucket_ts) - new Date(right.bucket_ts)
+  ));
+}
+
+function candleSignature(row) {
+  const ignored = new Set(['recency_rank', 'row_number', 'total_count']);
+  return JSON.stringify(Object.fromEntries(
+    Object.entries(row)
+      .filter(([key]) => !ignored.has(key))
+      .map(([key, value]) => [key, key === 'protocols' ? [...value].sort() : String(value)])
+  ));
+}
+
+function compareShadowRows(aggregateRows, legacyRows) {
+  const key = (row) => `${row.token_address}:${new Date(row.bucket_ts).toISOString()}`;
+  const aggregate = new Map(aggregateRows.map((row) => [key(row), candleSignature(row)]));
+  const legacy = new Map(legacyRows.map((row) => [key(row), candleSignature(row)]));
+  const keys = new Set([...aggregate.keys(), ...legacy.keys()]);
+  let missingAggregateRows = 0;
+  let missingLegacyRows = 0;
+  let divergentRows = 0;
+  for (const bucket of keys) {
+    if (!aggregate.has(bucket)) missingAggregateRows += 1;
+    else if (!legacy.has(bucket)) missingLegacyRows += 1;
+    else if (aggregate.get(bucket) !== legacy.get(bucket)) divergentRows += 1;
+  }
+  return {
+    comparedRows: keys.size, missingAggregateRows, missingLegacyRows, divergentRows,
+  };
+}
+
+function buildCacheKey(query, cacheTtlMs, rollout) {
   return JSON.stringify([
     query.addresses,
     Math.floor(query.startAt.getTime() / cacheTtlMs),
@@ -314,9 +378,90 @@ function buildCacheKey(query, cacheTtlMs, aggregateReadsEnabled, fallbackEnabled
     query.granularityMinutes,
     query.limit,
     query.allAvailable,
-    aggregateReadsEnabled,
-    fallbackEnabled,
+    rollout.aggregateReadsEnabled,
+    rollout.fallbackEnabled,
+    rollout.shadowCompareEnabled,
+    rollout.verifiedCoverage?.from.toISOString() || null,
+    rollout.verifiedCoverage?.through.toISOString() || null,
   ]);
+}
+
+function resolveReadCoverage(query, rollout) {
+  if (!rollout.aggregateReadsEnabled || query.granularityMinutes === 1) return null;
+  const coverage = intersectCoverage(query, rollout.verifiedCoverage);
+  if (coverage && !rollout.fallbackEnabled && !coversQuery(query, coverage)) return null;
+  return coverage;
+}
+
+async function readShadowComparison(query, execute, coverage, aggregateRows, enabled) {
+  if (!enabled || !coverage) return { value: null, durationMs: 0 };
+  const from = query.granularityMinutes < 60
+    ? new Date(Math.max(coverage.from, query.minuteStartsAt))
+    : coverage.from;
+  if (from >= coverage.through) return { value: null, durationMs: 0 };
+  const startedAt = Date.now();
+  const legacy = await execute(LEGACY_HISTORY_SQL, [
+    query.addresses, from, coverage.through,
+    query.granularityMinutes, query.minuteStartsAt, query.limit + 1, null, null,
+  ]);
+  const comparableAggregates = aggregateRows.filter((row) => new Date(row.bucket_ts) >= from);
+  return {
+    value: compareShadowRows(comparableAggregates, legacy.rows),
+    durationMs: Date.now() - startedAt,
+  };
+}
+
+async function readCoveredHistories(query, execute, rollout, startedAt, queryStartedAt) {
+  const coverage = resolveReadCoverage(query, rollout);
+  const useAggregates = coverage != null;
+  const aggregateResult = useAggregates
+    ? await execute(AGGREGATE_HISTORY_SQL, [
+      query.addresses, coverage.from, coverage.through,
+      query.granularityMinutes, query.limit + 1,
+    ])
+    : { rows: [] };
+  const shouldFallback = !useAggregates || !coversQuery(query, coverage);
+  const fallbackAddresses = shouldFallback ? query.addresses : [];
+  const fallbackResult = shouldFallback
+    ? await execute(LEGACY_HISTORY_SQL, [
+      fallbackAddresses, query.startAt, query.endAt, query.granularityMinutes,
+      query.minuteStartsAt, query.limit + 1,
+      useAggregates ? coverage.from : null,
+      useAggregates ? coverage.through : null,
+    ])
+    : { rows: [] };
+  const shadow = await readShadowComparison(
+    query, execute, coverage, aggregateResult.rows, rollout.shadowCompareEnabled
+  );
+  const queryDurationMs = Date.now() - queryStartedAt;
+  const aggregateByAddress = groupRows(query, aggregateResult.rows);
+  const fallbackByAddress = groupRows(
+    { ...query, addresses: fallbackAddresses }, fallbackResult.rows
+  );
+  const buildStartedAt = Date.now();
+  const histories = Object.freeze(query.addresses.map((address) => (
+    buildHistoryResult(query, address, mergeRows(
+      aggregateByAddress.get(address) || [], fallbackByAddress.get(address) || []
+    ))
+  )));
+  return {
+    histories,
+    metrics: {
+      source: !useAggregates ? 'legacy' : shouldFallback ? 'mixed' : 'aggregate',
+      rows: aggregateResult.rows.length + fallbackResult.rows.length,
+      aggregateRows: aggregateResult.rows.length,
+      fallbackRows: fallbackResult.rows.length,
+      fallbackAddresses: fallbackAddresses.length,
+      aggregateCoverageFrom: coverage?.from.toISOString() || null,
+      aggregateCoverageThrough: coverage?.through.toISOString() || null,
+      shadow: shadow.value,
+      shadowDurationMs: shadow.durationMs,
+      cacheHit: false,
+      queryDurationMs,
+      buildDurationMs: Date.now() - buildStartedAt,
+      totalDurationMs: Date.now() - startedAt,
+    },
+  };
 }
 
 function createRobinhoodMarketHistoryReadRepository(options = {}) {
@@ -324,6 +469,11 @@ function createRobinhoodMarketHistoryReadRepository(options = {}) {
   const clock = options.now || (() => new Date());
   const aggregateReadsEnabled = options.aggregateReadsEnabled === true;
   const fallbackEnabled = options.fallbackEnabled !== false;
+  const shadowCompareEnabled = options.shadowCompareEnabled === true;
+  const verifiedCoverage = normalizeVerifiedCoverage(options.verifiedCoverage);
+  const rollout = {
+    aggregateReadsEnabled, fallbackEnabled, shadowCompareEnabled, verifiedCoverage,
+  };
   const cacheTtlMs = Math.max(1000, Number(options.cacheTtlMs) || DEFAULT_CACHE_TTL_MS);
   const cache = new Map();
 
@@ -346,9 +496,7 @@ function createRobinhoodMarketHistoryReadRepository(options = {}) {
     const startedAt = Date.now();
     const now = timestamp(clock(), 'now');
     const query = normalizeQuery(input, now);
-    const cacheKey = buildCacheKey(
-      query, cacheTtlMs, aggregateReadsEnabled, fallbackEnabled,
-    );
+    const cacheKey = buildCacheKey(query, cacheTtlMs, rollout);
     const cached = readCache(cacheKey, now.getTime(), query.onMetrics);
     if (cached) return cached;
     const execute = typeof database.queryWithStatementTimeout === 'function'
@@ -377,48 +525,9 @@ function createRobinhoodMarketHistoryReadRepository(options = {}) {
       query.onMetrics?.(metrics);
       return histories;
     }
-    const useAggregates = aggregateReadsEnabled && query.granularityMinutes !== 1;
-    const aggregateResult = useAggregates
-      ? await execute(AGGREGATE_HISTORY_SQL, [
-        query.addresses, query.startAt, query.endAt,
-        query.granularityMinutes, query.limit + 1,
-      ])
-      : { rows: [] };
-    const aggregateByAddress = groupRows(query, aggregateResult.rows);
-    const fallbackAddresses = useAggregates
-      ? query.addresses.filter((address) => aggregateByAddress.get(address).length === 0)
-      : query.addresses;
-    const shouldFallback = !useAggregates || (fallbackEnabled && fallbackAddresses.length > 0);
-    const fallbackResult = shouldFallback
-      ? await execute(LEGACY_HISTORY_SQL, [
-        fallbackAddresses, query.startAt, query.endAt, query.granularityMinutes,
-        query.minuteStartsAt, query.limit + 1,
-      ])
-      : { rows: [] };
-    const fallbackQuery = { ...query, addresses: fallbackAddresses };
-    const fallbackByAddress = groupRows(fallbackQuery, fallbackResult.rows);
-    const queryDurationMs = Date.now() - queryStartedAt;
-    const buildStartedAt = Date.now();
-    const histories = Object.freeze(query.addresses.map((address) => {
-      const aggregateRows = aggregateByAddress.get(address);
-      const rows = aggregateRows.length > 0
-        ? aggregateRows : (fallbackByAddress.get(address) || []);
-      return buildHistoryResult(query, address, rows);
-    }));
-    const usedFallbackAddresses = shouldFallback ? fallbackAddresses.length : 0;
-    const metrics = {
-      source: !useAggregates ? 'legacy' : usedFallbackAddresses > 0
-        ? (usedFallbackAddresses === query.addresses.length ? 'fallback' : 'mixed')
-        : 'aggregate',
-      rows: aggregateResult.rows.length + fallbackResult.rows.length,
-      aggregateRows: aggregateResult.rows.length,
-      fallbackRows: fallbackResult.rows.length,
-      fallbackAddresses: usedFallbackAddresses,
-      cacheHit: false,
-      queryDurationMs,
-      buildDurationMs: Date.now() - buildStartedAt,
-      totalDurationMs: Date.now() - startedAt,
-    };
+    const { histories, metrics } = await readCoveredHistories(
+      query, execute, rollout, startedAt, queryStartedAt
+    );
     writeCache(cacheKey, histories, metrics, now.getTime());
     query.onMetrics?.(metrics);
     return histories;
@@ -436,6 +545,7 @@ module.exports = {
   createRobinhoodMarketHistoryReadRepository,
   __private: {
     AGGREGATE_HISTORY_SQL, ALL_AVAILABLE_HISTORY_SQL, LEGACY_HISTORY_SQL, buildHistoryResult,
-    normalizeAddresses, normalizeCandle, normalizeQuery, resolveResolution,
+    compareShadowRows, intersectCoverage, mergeRows, normalizeAddresses, normalizeCandle,
+    normalizeQuery, normalizeVerifiedCoverage, readCoveredHistories, resolveResolution,
   },
 };

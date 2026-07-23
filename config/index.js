@@ -700,6 +700,10 @@ module.exports = {
       1000,
       60 * 1000
     ),
+    verifiedCoverage: {
+      from: process.env.ROBINHOOD_MARKET_AGGREGATE_VERIFIED_FROM || null,
+      through: process.env.ROBINHOOD_MARKET_AGGREGATE_VERIFIED_THROUGH || null,
+    },
   },
   robinhoodMarketAggregateWorker: {
     enabled: parseBoolean(process.env.ROBINHOOD_MARKET_AGGREGATES_ENABLED, true),
@@ -707,10 +711,16 @@ module.exports = {
 
   robinhoodMarketAggregateReader: {
     enabled: parseBoolean(process.env.ROBINHOOD_MARKET_AGGREGATE_READS_ENABLED, false),
+    shadowCompareEnabled: parseBoolean(
+      process.env.ROBINHOOD_MARKET_AGGREGATE_SHADOW_COMPARE_ENABLED,
+      false
+    ),
     fallbackEnabled: parseBoolean(
       process.env.ROBINHOOD_MARKET_AGGREGATE_FALLBACK_ENABLED,
       true
     ),
+    verifiedFrom: process.env.ROBINHOOD_MARKET_AGGREGATE_VERIFIED_FROM || null,
+    verifiedThrough: process.env.ROBINHOOD_MARKET_AGGREGATE_VERIFIED_THROUGH || null,
   },
 
   robinhoodUserVisibility: {

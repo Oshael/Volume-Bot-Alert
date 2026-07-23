@@ -2,8 +2,12 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const worker = require('../src/services/robinhood-retention-worker');
+const VERIFIED_COVERAGE = Object.freeze({
+  from: '2026-07-01T00:00:00.000Z',
+  through: '2026-07-20T00:00:00.000Z',
+});
 
-function createFakeDatabase(rawBatches = [], minuteBatches = [], hourlyBatches = []) {
+function createFakeDatabase(rawBatches = [], minuteBatches = []) {
   const calls = [];
   return {
     calls,
@@ -20,16 +24,6 @@ function createFakeDatabase(rawBatches = [], minuteBatches = [], hourlyBatches =
             examined_logs: row.examined ?? row.processedLogs,
             processed_logs: row.processedLogs,
             observations: row.observations,
-          }],
-        };
-      }
-      if (/DELETE FROM robinhood_market_buckets_1h/.test(sql)) {
-        const next = hourlyBatches.shift() || 0;
-        const row = typeof next === 'number' ? { examined: next, deleted: next } : next;
-        return {
-          rows: [{
-            examined_buckets: row.examined,
-            hourly_buckets: row.deleted,
           }],
         };
       }
@@ -54,16 +48,22 @@ describe('Robinhood retention worker', () => {
       intervalMs: 1,
       batchLimit: 1,
       maxBatches: 999,
-      hourlyRetentionDays: 0,
       statementTimeoutMs: 1,
     }), {
       enabled: true,
       intervalMs: 10_000,
       batchLimit: 100,
       maxBatches: 50,
-      hourlyRetentionDays: 1,
       statementTimeoutMs: 1000,
+      verifiedCoverage: null,
     });
+    assert.throws(
+      () => worker.__private.normalizeVerifiedCoverage({
+        from: '2026-07-01T01:00:00.000Z',
+        through: '2026-07-20T00:00:00.000Z',
+      }),
+      /align to UTC days/
+    );
   });
 
   it('deletes expired raw rows through the cascading ledger in bounded batches', async () => {
@@ -72,7 +72,6 @@ describe('Robinhood retention worker', () => {
         { processedLogs: 100, observations: 80 },
         { processedLogs: 25, observations: 20 },
       ],
-      [100, 4],
       [100, 4]
     );
 
@@ -80,6 +79,7 @@ describe('Robinhood retention worker', () => {
       batchLimit: 100,
       maxBatches: 5,
       statementTimeoutMs: 2500,
+      verifiedCoverage: VERIFIED_COVERAGE,
     }, {}, { database });
 
     assert.deepEqual(summary, {
@@ -90,10 +90,11 @@ describe('Robinhood retention worker', () => {
       observations: 100,
       minuteBuckets: 104,
       protectedMinuteBuckets: 0,
-      hourlyBuckets: 104,
+      minuteDeletionBlockedByCoverage: false,
+      hourlyBuckets: 0,
       protectedHourlyBuckets: 0,
     });
-    assert.equal(database.calls.length, 6);
+    assert.equal(database.calls.length, 4);
     assert.ok(database.calls.every((call) => call.params[0] === 100));
     assert.ok(database.calls.every((call) => call.timeoutMs === 2500));
     assert.match(database.calls[0].sql, /FOR UPDATE OF processed SKIP LOCKED/);
@@ -107,7 +108,9 @@ describe('Robinhood retention worker', () => {
   it('only removes expired minute buckets after current permanent parents exist', async () => {
     const database = createFakeDatabase([], []);
 
-    await worker.runOnce({ batchLimit: 100, maxBatches: 1 }, {}, { database });
+    await worker.runOnce({
+      batchLimit: 100, maxBatches: 1, verifiedCoverage: VERIFIED_COVERAGE,
+    }, {}, { database });
 
     const minuteCall = database.calls.find((call) => (
       /DELETE FROM robinhood_market_buckets_1m/.test(call.sql)
@@ -117,26 +120,28 @@ describe('Robinhood retention worker', () => {
     assert.match(minuteCall.sql, /hourly\.first_block_number <= expired\.first_block_number/);
     assert.match(minuteCall.sql, /VALUES \(5\), \(15\), \(30\)/);
     assert.match(minuteCall.sql, /aggregate\.updated_at >= expired\.updated_at/);
+    assert.match(minuteCall.sql, /minute\.bucket_ts >= \$2::timestamptz/);
+    assert.match(minuteCall.sql, /minute\.bucket_ts < \$3::timestamptz/);
+    assert.match(minuteCall.sql, /date_trunc\('hour', NOW\(\) AT TIME ZONE 'UTC'\)/);
     assert.match(minuteCall.sql, /FOR UPDATE OF minute SKIP LOCKED/);
+    assert.deepEqual(minuteCall.params, [
+      100, VERIFIED_COVERAGE.from, VERIFIED_COVERAGE.through,
+    ]);
     assert.doesNotMatch(minuteCall.sql, /DELETE FROM robinhood_market_buckets_agg/);
     assert.doesNotMatch(minuteCall.sql, /DELETE FROM robinhood_market_buckets_1h/);
   });
 
-  it('only removes old hourly buckets after minute sources and all permanent rollups exist', async () => {
+  it('never removes permanent hourly buckets used by fallback and all-available reads', async () => {
     const database = createFakeDatabase();
 
-    await worker.runOnce({ batchLimit: 100, maxBatches: 1 }, {}, { database });
+    const summary = await worker.runOnce({
+      batchLimit: 100, maxBatches: 1, verifiedCoverage: VERIFIED_COVERAGE,
+    }, {}, { database });
 
-    const hourlyCall = database.calls.find((call) => (
+    assert.equal(summary.hourlyBuckets, 0);
+    assert.equal(database.calls.some((call) => (
       /DELETE FROM robinhood_market_buckets_1h/.test(call.sql)
-    ));
-    assert.deepEqual(hourlyCall.params, [100, 14]);
-    assert.match(hourlyCall.sql, /NOT EXISTS \([\s\S]*robinhood_market_buckets_1m/);
-    assert.match(hourlyCall.sql, /VALUES \(60\), \(240\), \(1440\)/);
-    assert.match(hourlyCall.sql, /aggregate\.updated_at >= expired\.updated_at/);
-    assert.match(hourlyCall.sql, /aggregate\.first_block_number <= expired\.first_block_number/);
-    assert.match(hourlyCall.sql, /FOR UPDATE OF hourly SKIP LOCKED/);
-    assert.doesNotMatch(hourlyCall.sql, /DELETE FROM robinhood_market_buckets_agg/);
+    )), false);
   });
 
   it('does not touch the database when retention is disabled', async () => {
@@ -152,6 +157,7 @@ describe('Robinhood retention worker', () => {
       observations: 0,
       minuteBuckets: 0,
       protectedMinuteBuckets: 0,
+      minuteDeletionBlockedByCoverage: false,
       hourlyBuckets: 0,
       protectedHourlyBuckets: 0,
     });
@@ -167,6 +173,7 @@ describe('Robinhood retention worker', () => {
     const summary = await worker.runOnce({
       batchLimit: 100,
       maxBatches: 5,
+      verifiedCoverage: VERIFIED_COVERAGE,
     }, {}, { database });
 
     assert.deepEqual(summary, {
@@ -177,6 +184,7 @@ describe('Robinhood retention worker', () => {
       observations: 100,
       minuteBuckets: 7,
       protectedMinuteBuckets: 3,
+      minuteDeletionBlockedByCoverage: false,
       hourlyBuckets: 0,
       protectedHourlyBuckets: 0,
     });
@@ -197,17 +205,17 @@ describe('Robinhood retention worker', () => {
     assert.equal(database.calls.length, 1);
   });
 
-  it('reports hourly buckets protected from deletion and stops the batch', async () => {
+  it('blocks minute deletion when no globally verified coverage is configured', async () => {
     const database = createFakeDatabase(
       [{ examined: 100, processedLogs: 100, observations: 0 }],
-      [100],
-      [{ examined: 10, deleted: 8 }]
+      [100]
     );
 
     const summary = await worker.runOnce({ batchLimit: 100 }, {}, { database });
 
-    assert.equal(summary.hourlyBuckets, 8);
-    assert.equal(summary.protectedHourlyBuckets, 2);
-    assert.equal(database.calls.length, 3);
+    assert.equal(summary.minuteBuckets, 0);
+    assert.equal(summary.minuteDeletionBlockedByCoverage, true);
+    assert.equal(summary.hourlyBuckets, 0);
+    assert.equal(database.calls.length, 1);
   });
 });

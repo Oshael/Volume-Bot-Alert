@@ -7,6 +7,10 @@ const {
 
 const ADDRESS = '0xabcdef0123456789abcdef0123456789abcdef01';
 const SECOND_ADDRESS = '0x1234567890abcdef1234567890abcdef12345678';
+const VERIFIED_COVERAGE = Object.freeze({
+  from: '2026-07-14T00:00:00.000Z',
+  through: '2026-07-16T00:00:00.000Z',
+});
 
 function row(overrides = {}) {
   return {
@@ -160,6 +164,7 @@ describe('Robinhood native market history reader', () => {
     let metrics;
     const repository = createRobinhoodMarketHistoryReadRepository({
       aggregateReadsEnabled: true,
+      verifiedCoverage: VERIFIED_COVERAGE,
       database: { async query(sql, params) {
         calls.push({ sql, params });
         return { rows: [row({ granularity_minutes: 5, source_granularity_minutes: 1 })] };
@@ -184,16 +189,27 @@ describe('Robinhood native market history reader', () => {
     assert.equal(metrics.fallbackAddresses, 0);
   });
 
-  it('falls back only for addresses with no aggregate coverage', async () => {
+  it('uses legacy rows outside the globally verified aggregate interval', async () => {
     const calls = [];
     let metrics;
     const repository = createRobinhoodMarketHistoryReadRepository({
       aggregateReadsEnabled: true,
+      verifiedCoverage: {
+        from: '2026-07-15T00:00:00.000Z',
+        through: '2026-07-16T00:00:00.000Z',
+      },
       database: { async query(sql, params) {
         calls.push({ sql, params });
         return calls.length === 1
-          ? { rows: [row({ granularity_minutes: 30, source_granularity_minutes: 1 })] }
-          : { rows: [row({ token_address: SECOND_ADDRESS })] };
+          ? { rows: [row({
+            bucket_ts: '2026-07-15T11:00:00.000Z',
+            granularity_minutes: 30,
+            source_granularity_minutes: 1,
+          })] }
+          : { rows: [row({
+            token_address: SECOND_ADDRESS,
+            bucket_ts: '2026-07-14T11:00:00.000Z',
+          })] };
       } },
     });
 
@@ -206,10 +222,16 @@ describe('Robinhood native market history reader', () => {
     assert.equal(calls.length, 2);
     assert.match(calls[0].sql, /robinhood_market_buckets_agg/);
     assert.match(calls[1].sql, /robinhood_market_buckets_1m/);
-    assert.deepEqual(calls[1].params[0], [SECOND_ADDRESS]);
+    assert.match(calls[1].sql,
+      /\$7::timestamptz IS NULL OR bucket\.bucket_ts < \$7 OR bucket\.bucket_ts >= \$8/);
+    assert.deepEqual(calls[1].params.slice(6), [
+      new Date('2026-07-15T00:00:00.000Z'),
+      new Date('2026-07-16T00:00:00.000Z'),
+    ]);
     assert.deepEqual(histories.map((history) => history.candles.length), [1, 1]);
     assert.equal(metrics.source, 'mixed');
-    assert.equal(metrics.fallbackAddresses, 1);
+    assert.equal(metrics.fallbackAddresses, 2);
+    assert.equal(metrics.aggregateCoverageFrom, '2026-07-15T00:00:00.000Z');
   });
 
   it('caches successful empty aggregate reads but never caches failures', async () => {
@@ -217,6 +239,7 @@ describe('Robinhood native market history reader', () => {
     const repository = createRobinhoodMarketHistoryReadRepository({
       aggregateReadsEnabled: true,
       fallbackEnabled: false,
+      verifiedCoverage: VERIFIED_COVERAGE,
       now: () => new Date('2026-07-15T12:00:00.000Z'),
       database: { async query() {
         calls += 1;
@@ -233,6 +256,85 @@ describe('Robinhood native market history reader', () => {
     assert.equal((await repository.getHistory(input)).candles.length, 0);
     assert.equal((await repository.getHistory(input)).candles.length, 0);
     assert.equal(calls, 2);
+  });
+
+  it('keeps aggregate reads on legacy when no verified interval is configured', async () => {
+    let metrics;
+    const calls = [];
+    const repository = createRobinhoodMarketHistoryReadRepository({
+      aggregateReadsEnabled: true,
+      database: { async query(sql) {
+        calls.push(sql);
+        return { rows: [row()] };
+      } },
+    });
+
+    await repository.getHistory({
+      address: ADDRESS, startAt: '2026-07-14T00:00:00.000Z',
+      endAt: '2026-07-16T00:00:00.000Z', granularityMinutes: 30, limit: 10,
+      onMetrics(value) { metrics = value; },
+    });
+
+    assert.equal(calls.length, 1);
+    assert.match(calls[0], /robinhood_market_buckets_1m/);
+    assert.equal(metrics.source, 'legacy');
+    assert.equal(metrics.aggregateCoverageFrom, null);
+  });
+
+  it('uses only legacy data when fallback is disabled for a partially covered window', async () => {
+    const calls = [];
+    const repository = createRobinhoodMarketHistoryReadRepository({
+      aggregateReadsEnabled: true,
+      fallbackEnabled: false,
+      verifiedCoverage: {
+        from: '2026-07-15T00:00:00.000Z',
+        through: '2026-07-16T00:00:00.000Z',
+      },
+      database: { async query(sql) {
+        calls.push(sql);
+        return { rows: [row()] };
+      } },
+    });
+
+    await repository.getHistory({
+      address: ADDRESS, startAt: '2026-07-14T00:00:00.000Z',
+      endAt: '2026-07-16T00:00:00.000Z', granularityMinutes: 30, limit: 10,
+    });
+
+    assert.equal(calls.length, 1);
+    assert.match(calls[0], /robinhood_market_buckets_1m/);
+    assert.doesNotMatch(calls[0], /robinhood_market_buckets_agg/);
+  });
+
+  it('compares verified aggregate and legacy rows in opt-in shadow mode', async () => {
+    let metrics;
+    const calls = [];
+    const repository = createRobinhoodMarketHistoryReadRepository({
+      aggregateReadsEnabled: true,
+      shadowCompareEnabled: true,
+      verifiedCoverage: VERIFIED_COVERAGE,
+      now: () => new Date('2026-07-15T12:00:00.000Z'),
+      database: { async query(sql) {
+        calls.push(sql);
+        return { rows: [row({
+          granularity_minutes: 60,
+          source_granularity_minutes: 60,
+        })] };
+      } },
+    });
+
+    await repository.getHistory({
+      address: ADDRESS, startAt: VERIFIED_COVERAGE.from,
+      endAt: VERIFIED_COVERAGE.through, granularityMinutes: 60, limit: 10,
+      onMetrics(value) { metrics = value; },
+    });
+
+    assert.equal(calls.length, 2);
+    assert.match(calls[0], /robinhood_market_buckets_agg/);
+    assert.match(calls[1], /robinhood_market_buckets_1h/);
+    assert.deepEqual(metrics.shadow, {
+      comparedRows: 1, missingAggregateRows: 0, missingLegacyRows: 0, divergentRows: 0,
+    });
   });
 
   it('validates identity, range, granularity and bounded result size', async () => {

@@ -117,6 +117,8 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_RETENTION_BATCH_LIMIT: '999999',
       ROBINHOOD_RETENTION_MAX_BATCHES: '0',
       ROBINHOOD_RETENTION_STATEMENT_TIMEOUT_MS: '500',
+      ROBINHOOD_MARKET_AGGREGATE_VERIFIED_FROM: '2026-07-01T00:00:00.000Z',
+      ROBINHOOD_MARKET_AGGREGATE_VERIFIED_THROUGH: '2026-07-20T00:00:00.000Z',
     }, (config) => {
       assert.deepEqual(config.robinhoodRetentionWorker, {
         enabled: true,
@@ -124,6 +126,10 @@ describe('runtime worker groups config', () => {
         batchLimit: 10_000,
         maxBatches: 1,
         statementTimeoutMs: 1000,
+        verifiedCoverage: {
+          from: '2026-07-01T00:00:00.000Z',
+          through: '2026-07-20T00:00:00.000Z',
+        },
       });
     });
   });
