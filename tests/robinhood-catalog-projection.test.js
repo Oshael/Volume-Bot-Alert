@@ -58,6 +58,33 @@ describe('Robinhood dashboard catalog projection', () => {
     }]);
   });
 
+  it('rejects FDV-capped snapshots across every automated catalog write path', async () => {
+    const runner = {
+      async query() {
+        throw new Error('FDV-capped snapshots must not reach PostgreSQL');
+      },
+    };
+    const highFdv = '30000000000';
+
+    assert.equal(await catalog.applyLiveSnapshots([{
+      address: TOKEN,
+      observedAt: '2026-07-18T18:00:00.500Z',
+      priceUsd: 1,
+      fdvUsd: highFdv,
+    }], runner), 0);
+    assert.equal(await catalog.projectDashboardSnapshot(
+      snapshot({ lastFdvUsd: highFdv }), runner
+    ), null);
+    assert.equal(await catalog.stageSnapshot({
+      ...snapshot({ lastFdvUsd: highFdv }),
+      chain: 'robinhood',
+      protocol: 'uniswap-v2',
+      marketKey: `robinhood:uniswap-v2:${MARKET_ADDRESS}`,
+      windowMs: 300000,
+      volumeUsd: '1000',
+    }, runner), null);
+  });
+
   it('creates a durable manual identity without making it monitoring-eligible', async () => {
     const calls = [];
     const row = await catalog.ensureManualToken(TOKEN.toUpperCase(), {

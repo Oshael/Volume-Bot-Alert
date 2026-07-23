@@ -5,6 +5,9 @@ const {
 } = require('./robinhood-standard-alert-contract');
 const standardAlertReset = require('./standard-alert-reset');
 const {
+  isCatalogFdvExcluded,
+} = require('./robinhood-catalog-fdv-policy');
+const {
   canRepeatSurgeInSession,
   getStandardTransition,
 } = require('./standard-alert-transition');
@@ -135,6 +138,7 @@ function surgeCandidate(profile, signal, spec) {
   });
 }
 function buildCandidates(profile, signal) {
+  if (isCatalogFdvExcluded(signal.valuation.current.fdvUsd)) return [];
   return [
     ...RULE_SPECS.map((spec) => surgeCandidate(profile, signal, spec)),
     monitoredCandidate(profile, signal, 'volume'),

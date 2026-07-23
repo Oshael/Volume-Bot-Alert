@@ -5,6 +5,9 @@ const {
 const { createTokenIdentity, normalizeTokenAddress } = require('../utils/token-identity');
 const { evaluateWorkspaceVisibility } = require('./workspace-visibility-policy');
 const {
+  MAX_CATALOG_FDV_USD,
+} = require('./robinhood-catalog-fdv-policy');
+const {
   compareRadarRows,
   isRadarAgeInQuery,
   normalizeRadarQuery,
@@ -247,6 +250,8 @@ LEFT JOIN LATERAL (SELECT bucket.close_fdv_usd AS last_fdv_usd,
 WHERE ((valuation.last_fdv_usd IS NULL AND $2::numeric = 0)
     OR (valuation.last_fdv_usd >= $2::numeric
       AND ($3::numeric IS NULL OR valuation.last_fdv_usd <= $3::numeric)))
+  AND (valuation.last_fdv_usd IS NULL
+    OR valuation.last_fdv_usd < ${MAX_CATALOG_FDV_USD})
 ORDER BY ${buildOrderSql(sorts)}
 LIMIT $10::int`;
 }
@@ -266,6 +271,8 @@ LEFT JOIN LATERAL (SELECT bucket.close_fdv_usd AS last_fdv_usd,
   ORDER BY bucket.last_observed_at DESC, bucket.last_block_number DESC,
     bucket.last_log_index DESC, bucket.protocol ASC, bucket.market_key ASC LIMIT 1) valuation ON TRUE
 WHERE tc.chain = 'robinhood' AND tc.address = ANY($2::varchar[])
+  AND (valuation.last_fdv_usd IS NULL
+    OR valuation.last_fdv_usd < ${MAX_CATALOG_FDV_USD})
   AND NOT EXISTS (SELECT 1 FROM admin_blocked_tokens blocked
     WHERE blocked.chain = 'robinhood' AND blocked.address = tc.address)
 ORDER BY array_position($2::varchar[], tc.address)`;

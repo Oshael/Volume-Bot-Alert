@@ -5,6 +5,9 @@ const {
 const { createTokenIdentity, normalizeTokenAddress } = require('../utils/token-identity');
 const { evaluateWorkspaceVisibility } = require('./workspace-visibility-policy');
 const {
+  MAX_CATALOG_FDV_USD,
+} = require('./robinhood-catalog-fdv-policy');
+const {
   compareNormalizedMonitoredRows,
   normalizeMonitoredQuery,
 } = require('./dashboard-chain-aggregation');
@@ -180,6 +183,8 @@ WHERE tc.chain = 'robinhood'
   AND ((valuation.last_fdv_usd IS NULL AND $2::numeric = 0)
     OR (valuation.last_fdv_usd >= $2::numeric
       AND ($3::numeric IS NULL OR valuation.last_fdv_usd <= $3::numeric)))
+  AND (valuation.last_fdv_usd IS NULL
+    OR valuation.last_fdv_usd < ${MAX_CATALOG_FDV_USD})
 ORDER BY ${buildOrderSql(sorts)}
 LIMIT $5::int`;
 }
@@ -205,6 +210,8 @@ LEFT JOIN LATERAL (
 ) valuation ON TRUE
 WHERE tc.chain = 'robinhood'
   AND tc.address = ANY($2::varchar[])
+  AND (valuation.last_fdv_usd IS NULL
+    OR valuation.last_fdv_usd < ${MAX_CATALOG_FDV_USD})
   AND NOT EXISTS (
     SELECT 1 FROM admin_blocked_tokens blocked
     WHERE blocked.chain = 'robinhood' AND blocked.address = tc.address

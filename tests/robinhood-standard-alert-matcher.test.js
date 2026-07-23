@@ -57,6 +57,22 @@ function evaluate(input = {}) {
   });
 }
 describe('Robinhood standard alert matcher', () => {
+  it('does not build standard alerts at the global FDV cap', () => {
+    const capped = signal({
+      valuation: {
+        ...signal().valuation,
+        current: { fdvUsd: 30_000_000_000, priceUsd: 2 },
+      },
+    });
+    const result = evaluate({
+      signal: capped,
+      profiles: [profile(1, { ruleEnabled: { monitoredVol: true, oldWeekSurge1h: true } })],
+    });
+
+    assert.deepEqual(result.evaluations[0].candidates, []);
+    assert.equal(result.evaluations[0].plans.some((plan) => plan.action === 'emit'), false);
+  });
+
   it('evaluates volume thresholds independently per user', () => {
     const result = evaluate({ profiles: [
       profile(1, { ruleEnabled: { monitoredVol: true }, thresholdPct: 100 }),

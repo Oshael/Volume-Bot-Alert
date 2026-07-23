@@ -1,8 +1,12 @@
 const robinhoodCatalog = require('../models/robinhood-catalog');
 const { normalizeTokenAddress } = require('../utils/token-identity');
+const {
+  isCatalogFdvExcluded,
+} = require('./robinhood-catalog-fdv-policy');
 
 const CHAIN = 'robinhood';
 const MAX_BATCH_SIZE = 100;
+const NUMERIC_VALUE_OUT_OF_RANGE = '22003';
 
 function boundedInteger(value, fallback, minimum, maximum) {
   const parsed = Number(value);
@@ -21,7 +25,8 @@ function createRobinhoodLiveCatalogWorker(deps = {}) {
   let activeRun = null;
   const status = {
     running: false, queued: 0, written: 0, batches: 0,
-    errors: 0, lastDurationMs: 0, lastCompletedAt: null, lastError: null,
+    errors: 0, rejected: 0, fdvRejected: 0, lastDurationMs: 0, lastCompletedAt: null,
+    lastError: null, lastRejectedAddress: null,
   };
 
   function normalizeUpdate(payload) {
@@ -61,6 +66,10 @@ function createRobinhoodLiveCatalogWorker(deps = {}) {
     if (!running) return false;
     const snapshot = normalizeUpdate(payload);
     if (!snapshot) return false;
+    if (isCatalogFdvExcluded(snapshot.fdvUsd)) {
+      status.fdvRejected += 1;
+      return false;
+    }
     const previous = pending.get(snapshot.address);
     if (!previous || snapshot.observedAtMs >= previous.observedAtMs) {
       pending.set(snapshot.address, snapshot);
@@ -79,6 +88,27 @@ function createRobinhoodLiveCatalogWorker(deps = {}) {
     }
   }
 
+  async function applyBatch(batch) {
+    try {
+      return await catalog.applyLiveSnapshots(batch);
+    } catch (error) {
+      if (error?.code !== NUMERIC_VALUE_OUT_OF_RANGE) throw error;
+      if (batch.length === 1) {
+        const [snapshot] = batch;
+        status.rejected += 1;
+        status.lastRejectedAddress = snapshot.address;
+        logger.error(
+          `[RobinhoodLiveCatalogWorker] rejected permanent numeric overflow address=${snapshot.address}`
+        );
+        return 0;
+      }
+      const midpoint = Math.ceil(batch.length / 2);
+      const leftWritten = await applyBatch(batch.slice(0, midpoint));
+      const rightWritten = await applyBatch(batch.slice(midpoint));
+      return leftWritten + rightWritten;
+    }
+  }
+
   async function flush() {
     if (activeRun) return activeRun;
     if (timer) cancelSchedule(timer);
@@ -90,7 +120,7 @@ function createRobinhoodLiveCatalogWorker(deps = {}) {
       .slice(0, MAX_BATCH_SIZE);
     for (const snapshot of batch) pending.delete(snapshot.address);
     let failed = false;
-    activeRun = catalog.applyLiveSnapshots(batch)
+    activeRun = applyBatch(batch)
       .then((written) => {
         status.written += Number(written) || 0;
         status.batches += 1;

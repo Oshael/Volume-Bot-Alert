@@ -12,8 +12,12 @@ const {
 const TOKEN = `0x${'1'.repeat(40)}`;
 const TOKEN_2 = `0x${'2'.repeat(40)}`;
 
-function candidate(tokenAddress = TOKEN) {
-  return { tokenAddress, protocol: 'uniswap-v3', adminBlocked: false };
+function candidate(tokenAddress = TOKEN, overrides = {}) {
+  return {
+    tokenAddress, protocol: 'uniswap-v3', adminBlocked: false,
+    lastFdvUsd: '500000',
+    ...overrides,
+  };
 }
 
 describe('Robinhood catalog projection batch', () => {
@@ -191,6 +195,27 @@ describe('Robinhood catalog projection batch', () => {
     assert.deepEqual(projected, [TOKEN, third]);
     assert.equal(result.candidates, 2);
     assert.equal(result.excludedBlocked, 1);
+  });
+
+  it('excludes FDV-capped identities before projection and metadata work', async () => {
+    const projected = [];
+    const batch = createRobinhoodCatalogProjectionBatch({
+      repository: {
+        async listSignalDryRunCandidates() {
+          return [candidate(), candidate(TOKEN_2, { lastFdvUsd: '30000000000' })];
+        },
+      },
+      catalog: {
+        async projectDashboardSnapshot(value) { projected.push(value.tokenAddress); },
+        async listMetadata() { return []; },
+      },
+    });
+
+    const result = await batch.runOnce();
+
+    assert.deepEqual(projected, [TOKEN]);
+    assert.equal(result.candidates, 1);
+    assert.equal(result.excludedFdvCap, 1);
   });
 
   it('uses persistent social metadata only while it remains fresh', async () => {

@@ -85,6 +85,7 @@ describe('Robinhood workspace radar reader', () => {
     assert.match(sql, /ORDER BY bucket\.bucket_ts DESC, bucket\.last_observed_at DESC/);
     assert.match(sql, /'uniswap-v2', 'uniswap-v3', 'uniswap-v4'/);
     assert.match(sql, /valuation\.last_fdv_usd ASC NULLS LAST/);
+    assert.match(sql, /valuation\.last_fdv_usd < 30000000000/);
     assert.match(sql, /admin_blocked_tokens/);
     assert.match(sql, /last_observed_at < \$1::timestamptz/);
     assert.doesNotMatch(sql, /eligible_for_monitoring|is_active_monitor_candidate/);

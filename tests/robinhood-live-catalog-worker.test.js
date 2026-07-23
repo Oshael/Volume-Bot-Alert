@@ -69,9 +69,12 @@ describe('Robinhood live catalog worker', () => {
       written: 2,
       batches: 1,
       errors: 0,
+      rejected: 0,
+      fdvRejected: 0,
       lastDurationMs: worker.getStatus().lastDurationMs,
       lastCompletedAt: worker.getStatus().lastCompletedAt,
       lastError: null,
+      lastRejectedAddress: null,
       pending: 0,
     });
     await worker.stop();
@@ -102,6 +105,58 @@ describe('Robinhood live catalog worker', () => {
     await worker.flush();
     assert.equal(worker.getStatus().pending, 0);
     assert.equal(worker.getStatus().written, 1);
+    await worker.stop();
+  });
+
+  it('isolates a permanent numeric overflow without blocking valid snapshots', async () => {
+    const scheduler = createSchedule();
+    const writtenAddresses = [];
+    const worker = createRobinhoodLiveCatalogWorker({
+      ...scheduler,
+      logger: { error() {} },
+      catalog: {
+        async applyLiveSnapshots(batch) {
+          if (batch.some((row) => row.address === TOKEN)) {
+            const error = new Error('numeric field overflow');
+            error.code = '22003';
+            throw error;
+          }
+          writtenAddresses.push(...batch.map((row) => row.address));
+          return batch.length;
+        },
+      },
+    });
+    worker.start({ enabled: true, retryMs: 300 });
+    worker.enqueue(update(TOKEN, '2026-07-18T18:00:00.500Z', 1e12, 150000));
+    worker.enqueue(update(TOKEN_TWO, '2026-07-18T18:00:00.500Z', 2, 200000));
+
+    await worker.flush();
+
+    assert.deepEqual(writtenAddresses, [TOKEN_TWO]);
+    assert.equal(worker.getStatus().pending, 0);
+    assert.equal(worker.getStatus().written, 1);
+    assert.equal(worker.getStatus().rejected, 1);
+    assert.equal(worker.getStatus().errors, 0);
+    assert.equal(worker.getStatus().lastRejectedAddress, TOKEN);
+    assert.notEqual(scheduler.callbacks.at(-1)?.delayMs, 300);
+    await worker.stop();
+  });
+
+  it('rejects the 30 billion FDV boundary before scheduling a catalog write', async () => {
+    const scheduler = createSchedule();
+    let writes = 0;
+    const worker = createRobinhoodLiveCatalogWorker({
+      ...scheduler,
+      catalog: { async applyLiveSnapshots() { writes += 1; return 1; } },
+    });
+    worker.start({ enabled: true });
+
+    assert.equal(worker.enqueue(
+      update(TOKEN, '2026-07-18T18:00:00.500Z', 1, 30_000_000_000)
+    ), false);
+    assert.equal(worker.getStatus().fdvRejected, 1);
+    assert.equal(worker.getStatus().pending, 0);
+    assert.equal(writes, 0);
     await worker.stop();
   });
 });

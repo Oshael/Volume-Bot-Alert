@@ -1,5 +1,8 @@
 const robinhoodCatalog = require('../models/robinhood-catalog');
 const { createRobinhoodTokenReadRepository } = require('../models/robinhood-token-read');
+const {
+  isCatalogFdvExcluded,
+} = require('./robinhood-catalog-fdv-policy');
 
 const FRESH_MS = 15 * 60 * 1000;
 
@@ -98,9 +101,16 @@ async function loadCandidates(repository, query) {
     alignToMinute: false,
     statementTimeoutMs: query.statementTimeoutMs,
   });
+  const blocked = rows.filter((row) => row.adminBlocked === true);
+  const fdvCapped = rows.filter((row) => (
+    row.adminBlocked !== true && isCatalogFdvExcluded(row.lastFdvUsd)
+  ));
   return {
-    rows: rows.filter((row) => row.adminBlocked !== true),
-    excludedBlocked: rows.filter((row) => row.adminBlocked === true).length,
+    rows: rows.filter((row) => (
+      row.adminBlocked !== true && !isCatalogFdvExcluded(row.lastFdvUsd)
+    )),
+    excludedBlocked: blocked.length,
+    excludedFdvCap: fdvCapped.length,
     limitReached: rows.length === query.maxTokens,
   };
 }
@@ -224,6 +234,7 @@ function createRobinhoodCatalogProjectionBatch(options = {}) {
       candidates: candidates.rows.length,
       manualMetadataCandidates: manualMetadataCandidates.length,
       excludedBlocked: candidates.excludedBlocked,
+      excludedFdvCap: candidates.excludedFdvCap,
       candidateLimitReached: candidates.limitReached,
       projected,
       projectionErrors,

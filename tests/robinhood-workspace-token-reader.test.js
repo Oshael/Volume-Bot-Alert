@@ -94,6 +94,7 @@ describe('Robinhood workspace token reader', () => {
       freshness: 'stale',
     });
     assert.equal(prefix.rows[0].activityState, 'stale');
+    assert.match(calls[0].sql, /valuation\.last_fdv_usd < 30000000000/);
     assert.deepEqual({
       priceUsd: prefix.rows[0].priceUsd,
       liquidityUsd: prefix.rows[0].liquidityUsd,

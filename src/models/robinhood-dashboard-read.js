@@ -1,5 +1,8 @@
 const db = require('./db');
 const { normalizeTokenAddress } = require('../utils/token-identity');
+const {
+  MAX_CATALOG_FDV_USD,
+} = require('../services/robinhood-catalog-fdv-policy');
 
 const CHAIN = 'robinhood';
 const MINUTE_MS = 60 * 1000;
@@ -73,6 +76,7 @@ FROM recent
 LEFT JOIN token_catalog catalog
   ON catalog.chain = 'robinhood' AND catalog.address = recent.token_address
 WHERE COALESCE(recent.last_fdv_usd, catalog.last_fdv, 0) >= $2
+  AND COALESCE(recent.last_fdv_usd, catalog.last_fdv, 0) < ${MAX_CATALOG_FDV_USD}
   AND NOT EXISTS (
     SELECT 1 FROM admin_blocked_tokens blocked
     WHERE blocked.chain = 'robinhood' AND blocked.address = recent.token_address
@@ -160,6 +164,7 @@ page AS MATERIALIZED (
   SELECT ranked.* FROM ranked CROSS JOIN bounds
   WHERE primary_rank = 1
     AND token_last_observed_at > bounds.freshness_start
+    AND (last_fdv_usd IS NULL OR last_fdv_usd < ${MAX_CATALOG_FDV_USD})
     AND NOT EXISTS (
       SELECT 1 FROM admin_blocked_tokens blocked
       WHERE blocked.chain = 'robinhood' AND blocked.address = ranked.token_address

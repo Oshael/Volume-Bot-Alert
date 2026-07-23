@@ -1,6 +1,9 @@
 const db = require('./db');
 const { normalizeTokenAddress } = require('../utils/token-identity');
 const { evaluateWorkspaceVisibility } = require('../services/workspace-visibility-policy');
+const {
+  isCatalogFdvExcluded,
+} = require('../services/robinhood-catalog-fdv-policy');
 
 const CHAIN = 'robinhood';
 const DEFAULT_LIMIT = 50;
@@ -136,7 +139,11 @@ function normalizeCatalogRow(row, query) {
   );
   const visibility = evaluateWorkspaceVisibility({
     identity: { chain: CHAIN, address },
-    state: { adminBlocked: row.admin_blocked === true, lastActivityAt },
+    state: {
+      adminBlocked: row.admin_blocked === true,
+      chainSafetyBlocked: isCatalogFdvExcluded(row.last_fdv_usd),
+      lastActivityAt,
+    },
     valuation: {
       type: 'fdv',
       usd: row.last_fdv_usd,

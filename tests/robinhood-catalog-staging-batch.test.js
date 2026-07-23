@@ -117,6 +117,27 @@ describe('Robinhood catalog staging batch', () => {
     assert.equal(result.candidateLimitReached, false);
   });
 
+  it('excludes FDV-capped candidates before signal evaluation and publication', async () => {
+    let stages = 0;
+    const batch = createRobinhoodCatalogStagingBatch({
+      projector: { async stage() { stages += 1; return { staged: true }; } },
+      now: () => NOW,
+    });
+
+    const result = await batch.runCandidates([
+      candidate(1, { lastFdvUsd: '30000000000' }),
+    ], {
+      signalConfig: SIGNAL_CONFIG,
+      alertsRequested: true,
+      publishable: true,
+    });
+
+    assert.equal(result.queried, 0);
+    assert.equal(result.excludedFdvCap, 1);
+    assert.equal(result.staged, 0);
+    assert.equal(stages, 0);
+  });
+
   it('fails closed before querying when calibrated gates are incomplete', async () => {
     let reads = 0;
     const batch = createRobinhoodCatalogStagingBatch({

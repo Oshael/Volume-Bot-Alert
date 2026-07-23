@@ -1,6 +1,9 @@
 const db = require('./db');
 const { normalizeTokenAddress } = require('../utils/token-identity');
 const { normalizeText, sanitizeAssetUrl, sanitizeHttpUrl } = require('../utils/url-safety');
+const {
+  isCatalogFdvExcluded,
+} = require('../services/robinhood-catalog-fdv-policy');
 
 const CHAIN = 'robinhood';
 const PROTOCOL = 'uniswap-v2';
@@ -104,7 +107,9 @@ function normalizeLiveSnapshot(input = {}) {
 }
 
 async function applyLiveSnapshots(inputs, runner = db) {
-  const snapshots = (Array.isArray(inputs) ? inputs : []).map(normalizeLiveSnapshot);
+  const snapshots = (Array.isArray(inputs) ? inputs : [])
+    .map(normalizeLiveSnapshot)
+    .filter((snapshot) => !isCatalogFdvExcluded(snapshot.fdvUsd));
   if (!snapshots.length) return 0;
   if (snapshots.length > 100) throw new Error('Robinhood live catalog batch exceeds 100 tokens');
   const result = await runner.query(
@@ -156,6 +161,7 @@ async function applyLiveSnapshots(inputs, runner = db) {
 
 async function stageSnapshot(input, runner = db) {
   const snapshot = normalizeStagedSnapshot(input);
+  if (isCatalogFdvExcluded(snapshot.fdvUsd)) return null;
   const { rows } = await runner.query(
     `INSERT INTO token_catalog (
        chain, address, source, first_seen_at, last_seen_at,
@@ -204,6 +210,7 @@ async function stageSnapshot(input, runner = db) {
 
 async function projectDashboardSnapshot(input, runner = db) {
   const snapshot = normalizeDashboardSnapshot(input);
+  if (isCatalogFdvExcluded(snapshot.fdvUsd)) return null;
   const { rows } = await runner.query(
     `INSERT INTO token_catalog (
        chain, address, source, first_seen_at, last_seen_at,

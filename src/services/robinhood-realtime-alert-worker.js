@@ -1,6 +1,9 @@
 const { createRobinhoodTokenReadRepository } = require('../models/robinhood-token-read');
 const { normalizeTokenAddress } = require('../utils/token-identity');
 const { createRobinhoodAlertPublicationBatch } = require('./robinhood-alert-publication-batch');
+const {
+  isCatalogFdvExcluded,
+} = require('./robinhood-catalog-fdv-policy');
 
 const CHAIN = 'robinhood';
 const MAX_BATCH_SIZE = 100;
@@ -26,12 +29,16 @@ function createRobinhoodRealtimeAlertWorker(deps = {}) {
   const pending = new Map();
   const status = {
     running: false, queued: 0, processed: 0, candidates: 0,
-    skippedStale: 0, skippedRollout: 0, errors: 0,
+    skippedStale: 0, skippedRollout: 0, skippedFdvCap: 0, errors: 0,
     lastDurationMs: 0, lastCompletedAt: null, lastError: null,
   };
 
   function normalizeUpdate(payload) {
     if (payload?.type !== 'market:bucket' || payload?.chain !== CHAIN) return null;
+    if (isCatalogFdvExcluded(payload.valuation?.fdvUsd)) {
+      status.skippedFdvCap += 1;
+      return null;
+    }
     let address;
     try {
       address = normalizeTokenAddress(CHAIN, payload.address);

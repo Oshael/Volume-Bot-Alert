@@ -4,6 +4,9 @@ const {
   createRobinhoodSignalDryRunEvaluator,
   normalizeRobinhoodSignalConfig,
 } = require('./robinhood-signal-policy');
+const {
+  isCatalogFdvExcluded,
+} = require('./robinhood-catalog-fdv-policy');
 
 function boundedInteger(value, fallback, maximum) {
   const parsed = Number(value);
@@ -61,8 +64,14 @@ function createRobinhoodCatalogStagingBatch(options = {}) {
   }
 
   async function evaluateCandidates(candidates, run, candidateLimitReached) {
+    const eligibleCandidates = candidates.filter((candidate) => (
+      !isCatalogFdvExcluded(candidate.lastFdvUsd)
+    ));
+    const excludedFdvCap = candidates.length - eligibleCandidates.length;
     const blockedTokens = new Set(
-      candidates.filter((candidate) => candidate.adminBlocked).map((candidate) => candidate.tokenAddress)
+      eligibleCandidates
+        .filter((candidate) => candidate.adminBlocked)
+        .map((candidate) => candidate.tokenAddress)
     );
     const evaluator = evaluatorFactory({
       config: run.config,
@@ -70,8 +79,10 @@ function createRobinhoodCatalogStagingBatch(options = {}) {
       adminBlocklist: { hasAddress: async (address) => blockedTokens.has(address) },
       policyOptions: options.policyOptions,
     });
-    const decisions = await Promise.all(candidates.map((candidate) => evaluator.evaluate(candidate)));
-    const outcomes = await Promise.all(candidates.map((candidate, index) => (
+    const decisions = await Promise.all(
+      eligibleCandidates.map((candidate) => evaluator.evaluate(candidate))
+    );
+    const outcomes = await Promise.all(eligibleCandidates.map((candidate, index) => (
       candidate.protocol === 'uniswap-v2'
         ? projector.stage(
             candidate,
@@ -86,7 +97,7 @@ function createRobinhoodCatalogStagingBatch(options = {}) {
     )));
     const staged = outcomes.filter((outcome) => outcome.staged === true).length;
     const expectedSignals = decisions.filter((decision) => decision.expectedSignal === true).length;
-    const approved = candidates.flatMap((candidate, index) => (
+    const approved = eligibleCandidates.flatMap((candidate, index) => (
       decisions[index]?.expectedSignal === true
         ? [{ candidate, decision: authorizeForStaging(decisions[index]), outcome: outcomes[index] }]
         : []
@@ -96,17 +107,18 @@ function createRobinhoodCatalogStagingBatch(options = {}) {
           alertsRequested: true,
           publishable: true,
           generatedAt: run.generatedAt,
-        }, { candidates })
+        }, { candidates: eligibleCandidates })
       : null;
 
     return Object.freeze({
       status: 'completed',
       reason: null,
       generatedAt: run.generatedAt,
-      queried: candidates.length,
+      queried: eligibleCandidates.length,
+      excludedFdvCap,
       expectedSignals,
       staged,
-      suppressed: candidates.length - expectedSignals,
+      suppressed: eligibleCandidates.length - expectedSignals,
       candidateLimitReached,
       config: run.config,
       publication,

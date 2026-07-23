@@ -9,13 +9,13 @@ const TOKEN = '0x1111111111111111111111111111111111111111';
 const TOKEN_TWO = '0x2222222222222222222222222222222222222222';
 const NOW = Date.parse('2026-07-18T18:00:01.000Z');
 
-function update(address, observedAt) {
+function update(address, observedAt, fdvUsd = null) {
   return {
     type: 'market:bucket',
     chain: 'robinhood',
     address,
     generatedAt: new Date(NOW).toISOString(),
-    valuation: { observedAt },
+    valuation: { observedAt, fdvUsd },
   };
 }
 
@@ -99,6 +99,21 @@ describe('Robinhood realtime alert worker', () => {
     assert.equal(reads, 0);
     assert.equal(worker.getStatus().skippedStale, 1);
     assert.equal(worker.getStatus().skippedRollout, 1);
+    await worker.stop();
+  });
+
+  it('does not queue a token at the global FDV cap', async () => {
+    const worker = createRobinhoodRealtimeAlertWorker({
+      ...createSchedule(),
+      now: () => NOW,
+    });
+    worker.start({ enabled: true, signalConfig: { windowMs: 300000 } });
+
+    assert.equal(worker.enqueue(
+      update(TOKEN, '2026-07-18T18:00:00.500Z', 30_000_000_000)
+    ), false);
+    assert.equal(worker.getStatus().skippedFdvCap, 1);
+    assert.equal(worker.getStatus().queued, 0);
     await worker.stop();
   });
 });

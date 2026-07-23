@@ -111,6 +111,21 @@ describe('Robinhood persistent workspace catalog reader', () => {
     assert.equal(page.rows[0].riskState, 'blocked');
   });
 
+  it('marks FDV-capped identities as chain-safety excluded', async () => {
+    const repository = createRobinhoodWorkspaceCatalogReadRepository({
+      database: {
+        async query() {
+          return { rows: [catalogRow({ last_fdv_usd: '30000000000' })] };
+        },
+      },
+    });
+
+    const page = await repository.listCatalogPage({ asOf: AS_OF });
+
+    assert.equal(page.rows[0].visible, false);
+    assert.deepEqual(page.rows[0].exclusionReasons, ['chain_safety_excluded']);
+  });
+
   it('uses an address keyset and preserves asOf between pages', async () => {
     const calls = [];
     const responses = [

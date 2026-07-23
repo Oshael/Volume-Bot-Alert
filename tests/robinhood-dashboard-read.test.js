@@ -71,6 +71,7 @@ describe('Robinhood dashboard read repository', () => {
     assert.match(calls[0].sql, /last_fdv_usd, catalog\.last_fdv/);
     assert.match(calls[0].sql, /protocol IN \('uniswap-v2', 'uniswap-v3', 'uniswap-v4'\)/);
     assert.match(calls[0].sql, /MAX\(bucket\.last_observed_at\) > bounds\.freshness_start/);
+    assert.match(calls[0].sql, /last_fdv, 0\) < 30000000000/);
     assert.doesNotMatch(calls[0].sql, /catalog\.eligible_for_monitoring\s*=\s*TRUE/);
     assert.doesNotMatch(calls[0].sql, /last_mcap[^,\n]*>=/);
   });
@@ -112,6 +113,7 @@ describe('Robinhood dashboard read repository', () => {
     assert.equal(calls[0].timeoutMs, 5000);
     assert.match(calls[0].sql, /protocol IN \('uniswap-v2', 'uniswap-v3', 'uniswap-v4'\)/);
     assert.match(calls[0].sql, /SUM\(volume_24h_usd\) OVER token/);
+    assert.match(calls[0].sql, /last_fdv_usd < 30000000000/);
     assert.match(calls[0].sql, /INTERVAL '5 minutes'/);
     assert.match(calls[0].sql, /AS protocol_breakdown/);
     assert.match(calls[0].sql, /date_trunc\('minute', bounds\.freshness_start\)/);
