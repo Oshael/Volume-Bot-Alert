@@ -46,6 +46,32 @@ describe('dexscreener rate-limit helpers', () => {
     assert.equal(dexscreener.resolveOperationalMarketCap({ marketCap: 41200000, fdv: 99800000 }), 41200000);
   });
 
+  it('projects an explicit FDV match from a lower circulating-supply reference', () => {
+    const marketCap = dexscreener.resolveOperationalMarketCap({
+      marketCap: 4503000,
+      fdv: 4503000,
+      priceUsd: 0.004503,
+    }, {
+      marketCap: 2160908,
+      price: 0.004503,
+    });
+
+    assert.equal(Math.round(marketCap), 2160908);
+  });
+
+  it('keeps Dex market cap when it does not match the explicit FDV', () => {
+    const marketCap = dexscreener.resolveOperationalMarketCap({
+      marketCap: 2160908,
+      fdv: 4503000,
+      priceUsd: 0.004503,
+    }, {
+      marketCap: 4503000,
+      price: 0.004503,
+    });
+
+    assert.equal(marketCap, 2160908);
+  });
+
   it('activates global cooldown only after the 10th consecutive 429', () => {
     const response = { headers: { get: () => null } };
 

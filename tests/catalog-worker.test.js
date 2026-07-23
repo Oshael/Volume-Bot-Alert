@@ -279,6 +279,33 @@ describe('catalog worker drift compensation', () => {
     assert.equal(snapshot.suppressedReason, 'mcap_unavailable');
   });
 
+  it('uses a recent lower circulating-supply reference when Dex market cap matches FDV', () => {
+    const snapshot = catalogWorker.__private.derivePrioritySnapshot({
+      marketCap: 4503000,
+      fdv: 4503000,
+      priceUsd: 0.004503,
+      volume: { h24: 250000 },
+      priceChange: {},
+    }, {
+      last_mcap: 2160908,
+      last_price: 0.004503,
+      metadata_updated_at: new Date().toISOString(),
+    });
+
+    assert.equal(Math.round(snapshot.marketCap), 2160908);
+  });
+
+  it('does not use a stale catalog value as a Dex circulating-supply reference', () => {
+    const now = Date.parse('2026-07-23T01:00:00.000Z');
+    const reference = catalogWorker.__private.buildRecentDexMarketCapReference({
+      last_mcap: 2160908,
+      last_price: 0.004503,
+      metadata_updated_at: '2026-07-22T23:59:59.000Z',
+    }, now);
+
+    assert.equal(reference, null);
+  });
+
   it('suppresses auto high-cap tokens below 5k coherent volume24h and slows them to at least 3m', () => {
     const now = Date.now();
     const snapshot = catalogWorker.__private.derivePrioritySnapshot({

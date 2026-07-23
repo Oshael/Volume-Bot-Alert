@@ -14,6 +14,8 @@ const COOLDOWN_BATCH_DELAY_MS = 400;
 const LAUNCH_FLOOR_MIN_MCAP = 29000;
 const LAUNCH_FLOOR_MAX_MCAP = 35000;
 const LAUNCH_FLOOR_MAX_LIQUIDITY_USD = 1000;
+const FDV_MATCH_MAX_DEVIATION = 0.05;
+const FDV_SUPPLY_INFLATION_RATIO = 1.35;
 const RECOVERY_PHASES = [
   { name: 'high-manual', cycles: 5, batchDelayMs: 500 },
   { name: 'normal', cycles: 5, batchDelayMs: 350 },
@@ -463,9 +465,37 @@ function toFiniteNumberOrNull(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function resolveOperationalMarketCap(pair) {
+function computeImpliedSupply(marketCap, price) {
+  const parsedMarketCap = toFiniteNumberOrNull(marketCap);
+  const parsedPrice = toFiniteNumberOrNull(price);
+  return parsedMarketCap > 0 && parsedPrice > 0 ? parsedMarketCap / parsedPrice : null;
+}
+
+function computeRelativeDifference(first, second) {
+  const left = toFiniteNumberOrNull(first);
+  const right = toFiniteNumberOrNull(second);
+  return left > 0 && right > 0 ? Math.abs(left - right) / Math.max(left, right) : null;
+}
+
+function resolveOperationalMarketCap(pair, reference = null) {
   const marketCap = toFiniteNumberOrNull(pair?.marketCap);
-  return marketCap != null && marketCap > 0 ? marketCap : null;
+  if (!(marketCap > 0)) {
+    return null;
+  }
+
+  const fdv = toFiniteNumberOrNull(pair?.fdv);
+  const currentPrice = toFiniteNumberOrNull(pair?.priceUsd);
+  const referenceSupply = computeImpliedSupply(reference?.marketCap, reference?.price);
+  const incomingSupply = computeImpliedSupply(marketCap, currentPrice);
+  const fdvDeviation = computeRelativeDifference(marketCap, fdv);
+  const matchesExplicitFdv = fdvDeviation != null && fdvDeviation <= FDV_MATCH_MAX_DEVIATION;
+  const hasLowerCirculatingReference = incomingSupply > 0
+    && referenceSupply > 0
+    && incomingSupply >= referenceSupply * FDV_SUPPLY_INFLATION_RATIO;
+
+  return matchesExplicitFdv && hasLowerCirculatingReference
+    ? referenceSupply * currentPrice
+    : marketCap;
 }
 
 function getPairTxnCount(pair, window) {

@@ -335,13 +335,16 @@ function isUsableMarketCapReference(reference, now) {
     && isRecentTimestamp(reference.timestampMs, now, RECENT_GMGN_MCAP_REFERENCE_MAX_AGE_MS);
 }
 
-function selectLatestMarketCapReference(references, now) {
+function selectLatestLowerMarketCapReference(references, incomingSupply, now) {
   return references
-    .filter((reference) => isUsableMarketCapReference(reference, now))
+    .filter((reference) => (
+      isUsableMarketCapReference(reference, now)
+      && incomingSupply >= reference.impliedSupply * GMGN_FDV_SUPPLY_INFLATION_RATIO
+    ))
     .sort((a, b) => (b.timestampMs || 0) - (a.timestampMs || 0))[0] || null;
 }
 
-async function loadRecentNonGmgnMarketCapReference(address, options, now) {
+async function loadRecentNonGmgnMarketCapReference(address, options, incomingSupply, now) {
   if (!options.marketBucketModel?.listHistoryByAddress) {
     return null;
   }
@@ -366,7 +369,7 @@ async function loadRecentNonGmgnMarketCapReference(address, options, now) {
       { bucket: true }
     ));
 
-  return selectLatestMarketCapReference(references, now);
+  return selectLatestLowerMarketCapReference(references, incomingSupply, now);
 }
 
 function shouldSuppressGmgnFdvMarketCap(snapshot, reference) {
@@ -382,16 +385,22 @@ function shouldSuppressGmgnFdvMarketCap(snapshot, reference) {
 
 async function suppressGmgnFdvMarketCap(snapshot, tokenBefore, options, now, address) {
   const incomingPrice = toFiniteNumberOrNull(snapshot?.price);
-  if (!(incomingPrice > 0)) {
+  const incomingSupply = computeImpliedSupply(snapshot?.mcap, incomingPrice);
+  if (!(incomingPrice > 0) || !(incomingSupply > 0) || !isGmgnMarketCapMatchingTotalSupply(snapshot)) {
     return snapshot;
   }
 
-  const recentBucketReference = await loadRecentNonGmgnMarketCapReference(address, options, now);
+  const recentBucketReference = await loadRecentNonGmgnMarketCapReference(
+    address,
+    options,
+    incomingSupply,
+    now
+  );
   const catalogReference = buildCatalogMarketCapReference(tokenBefore);
-  const reference = selectLatestMarketCapReference([
+  const reference = selectLatestLowerMarketCapReference([
     recentBucketReference,
     catalogReference,
-  ], now);
+  ], incomingSupply, now);
 
   if (!shouldSuppressGmgnFdvMarketCap(snapshot, reference)) {
     return snapshot;

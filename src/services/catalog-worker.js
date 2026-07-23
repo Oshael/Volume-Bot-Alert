@@ -48,6 +48,7 @@ const RATE_LIMIT_LOW_DUST_RECHECK_MS = 2 * 60 * 1000;
 const RATE_LIMIT_MANUAL_RECHECK_MS = 15 * 1000;
 const DEX_BATCH_DELAY_MS = 100;
 const MANUAL_PRE_MIGRATION_GMGN_RECHECK_MS = 5 * 1000;
+const RECENT_DEX_MCAP_REFERENCE_MAX_AGE_MS = 60 * 60 * 1000;
 const MANUAL_GMGN_TOKEN_INFO_CONCURRENCY = 3;
 const THROTTLE_LIST_LIMIT_MULTIPLIER = 8;
 const THROTTLE_LIST_LIMIT_CAP = 2500;
@@ -1118,9 +1119,25 @@ function buildDexscreenerVolumeCoverage(bestPair, normalized, now = new Date()) 
   }, normalized, { now, tokenCreatedAt });
 }
 
+function buildRecentDexMarketCapReference(token, now = Date.now()) {
+  const timestampMs = toTimestampMs(
+    token?.metadata_updated_at || token?.last_evaluated_at || token?.last_seen_at
+  );
+  if (!timestampMs || timestampMs > now || now - timestampMs > RECENT_DEX_MCAP_REFERENCE_MAX_AGE_MS) {
+    return null;
+  }
+
+  const marketCap = toNumber(token?.last_mcap);
+  const price = toNumber(token?.last_price);
+  return marketCap > 0 && price > 0 ? { marketCap, price } : null;
+}
+
 function derivePrioritySnapshot(bestPair, token = null) {
-  const marketCap = dexscreener.resolveOperationalMarketCap(bestPair) || 0;
   const now = Date.now();
+  const marketCap = dexscreener.resolveOperationalMarketCap(
+    bestPair,
+    buildRecentDexMarketCapReference(token, now)
+  ) || 0;
   const filledVolumes = buildPriorityVolumeWindows(bestPair, token, now);
   const vol5m = filledVolumes.vol5m;
   const vol1h = filledVolumes.vol1h;
@@ -1929,6 +1946,7 @@ module.exports = {
     addPriorityJitter,
     computeNextDelayMs,
     buildDexscreenerVolumeCoverage,
+    buildRecentDexMarketCapReference,
     derivePrioritySnapshot,
     getLowActivityMinimumRecheckMs,
     LOW_ACTIVITY_24H_MAX_VOL,

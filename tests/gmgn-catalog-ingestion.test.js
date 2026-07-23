@@ -359,6 +359,12 @@ describe('gmgn catalog ingestion', () => {
                 closePrice: 0.009836,
                 source: 'dexscreener',
               },
+              {
+                ts: '2026-07-06T07:41:20.000Z',
+                closeMcap: 9833860,
+                closePrice: 0.00983386,
+                source: 'dexscreener',
+              },
             ];
           },
         },
