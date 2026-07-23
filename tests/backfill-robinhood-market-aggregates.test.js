@@ -2,13 +2,16 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const { __private } = require('../src/utils/backfill-robinhood-market-aggregates');
-const { buildTargets, parseCliArgs, runBackfill } = __private;
+const { buildTargets, parseCliArgs, queryRunner, runBackfill } = __private;
 const TOKEN = '0x1111111111111111111111111111111111111111';
+const TOKEN_B = '0x2222222222222222222222222222222222222222';
 function options(overrides = {}) {
   return {
     mode: 'dry-run', from: null, to: new Date('2026-07-18T13:00:00.000Z'),
     checkpointFile: null, tokenLimit: 25, maxChunks: 1, statementTimeoutMs: 5000,
-    sleepMs: 0, fineWindowHours: 1, coarseWindowHours: 24, ...overrides,
+    lockTimeoutMs: 750,
+    sleepMs: 0, fineWindowHours: 1, hourlyWindowHours: 24, coarseWindowHours: 24,
+    ...overrides,
   };
 }
 function fakeDatabase(sourceRows = [], bounds = {}) {
@@ -36,6 +39,8 @@ describe('Robinhood aggregate backfill', () => {
     assert.equal(parsed.maxChunks, 1);
     assert.equal(parsed.tokenLimit, 25);
     assert.equal(parsed.statementTimeoutMs, 10_000);
+    assert.equal(parsed.lockTimeoutMs, 1000);
+    assert.equal(parsed.hourlyWindowHours, 24);
     assert.throws(
       () => parseCliArgs(['--mode', 'write']),
       /write mode requires --checkpoint/
@@ -43,6 +48,34 @@ describe('Robinhood aggregate backfill', () => {
     assert.equal(parseCliArgs([
       '--mode', 'write', '--checkpoint', './progress.json', '--maxChunks', '7',
     ]).maxChunks, 7);
+  });
+  it('applies statement and lock timeouts inside each database transaction', async () => {
+    const calls = [];
+    let released = false;
+    const execute = queryRunner({
+      async getClient() {
+        return {
+          async query(sql, params) {
+            calls.push({ sql, params });
+            return { rows: [{ ok: true }] };
+          },
+          release() { released = true; },
+        };
+      },
+    }, 5000, 750);
+
+    const result = await execute('SELECT $1::int AS ok', [1]);
+
+    assert.deepEqual(result.rows, [{ ok: true }]);
+    assert.deepEqual(calls.map((call) => call.sql), [
+      'BEGIN',
+      "SET LOCAL statement_timeout = '5000ms'",
+      "SET LOCAL lock_timeout = '750ms'",
+      'SELECT $1::int AS ok',
+      'COMMIT',
+    ]);
+    assert.deepEqual(calls[3].params, [1]);
+    assert.equal(released, true);
   });
   it('derives fine and permanent parent buckets without duplicate targets', () => {
     const rows = [
@@ -112,28 +145,152 @@ describe('Robinhood aggregate backfill', () => {
       /checkpoint is incompatible/
     );
   });
-  it('writes a coarse chunk and preserves its resume cursor after success', async () => {
-    const database = fakeDatabase([[
-      { token_address: TOKEN, bucket_ts: '2026-07-18T12:00:00.000Z' },
-    ]]);
+  it('paginates a coarse set-based window and resumes at the next window', async () => {
+    const database = fakeDatabase();
     const written = [];
     let saved;
+    const times = [1000, 1010, 1010, 1025];
+    const checkpoint = {
+      version: 2,
+      asOf: '2026-07-18T13:00:00.000Z',
+      cursor: { phase: 'coarse', windowStart: '2026-07-18T12:00:00.000Z', afterToken: TOKEN },
+    };
+    const summary = await runBackfill(options({
+      mode: 'write',
+      checkpointFile: '/tmp/rh.json',
+      tokenLimit: 1,
+      maxChunks: 2,
+    }), {
+      database,
+      repository: {
+        async refreshAggregateRange(range) {
+          written.push(range);
+          return written.length === 1
+            ? {
+              sourceBuckets: 1,
+              targetBuckets: 3,
+              writtenBuckets: 3,
+              lastToken: TOKEN_B,
+              hasMoreTokens: true,
+            }
+            : {
+              sourceBuckets: 1,
+              targetBuckets: 3,
+              writtenBuckets: 2,
+              lastToken: null,
+              hasMoreTokens: false,
+            };
+        },
+      },
+      now: () => times.shift(),
+      readCheckpoint: async () => structuredClone(checkpoint),
+      writeCheckpoint: async (_file, value) => { saved = structuredClone(value); },
+    });
+
+    assert.equal(summary.scanned, 2);
+    assert.equal(summary.written, 5);
+    assert.equal(summary.aggregateWindows, 2);
+    assert.deepEqual(written, [
+      {
+        from: '2026-07-18T12:00:00.000Z',
+        to: '2026-07-18T13:00:00.000Z',
+        granularities: [60, 240, 1440],
+        afterToken: TOKEN,
+        tokenLimit: 1,
+      },
+      {
+        from: '2026-07-18T12:00:00.000Z',
+        to: '2026-07-18T13:00:00.000Z',
+        granularities: [60, 240, 1440],
+        afterToken: TOKEN_B,
+        tokenLimit: 1,
+      },
+    ]);
+    assert.equal(saved.cursor.phase, 'coarse');
+    assert.equal(saved.cursor.windowStart, '2026-07-18T13:00:00.000Z');
+    assert.equal(saved.cursor.afterToken, null);
+    assert.equal(summary.totalBatchDurationMs, 25);
+    assert.equal(summary.maxBatchDurationMs, 15);
+    assert.deepEqual(summary.lastBatch, {
+      phase: 'coarse',
+      windowStart: '2026-07-18T12:00:00.000Z',
+      afterToken: TOKEN_B,
+      sourceBuckets: 1,
+      writtenBuckets: 2,
+      durationMs: 15,
+    });
+    assert.equal(database.calls.some((call) => /candidate_tokens/.test(call.sql)), false);
+  });
+
+  it('does not advance the checkpoint when a set-based window fails', async () => {
     const checkpoint = {
       version: 2,
       asOf: '2026-07-18T13:00:00.000Z',
       cursor: { phase: 'coarse', windowStart: '2026-07-18T12:00:00.000Z', afterToken: null },
     };
-    const summary = await runBackfill(options({ mode: 'write', checkpointFile: '/tmp/rh.json', tokenLimit: 1 }), {
+    const saved = [];
+    await assert.rejects(
+      runBackfill(options({ mode: 'write', checkpointFile: '/tmp/rh.json' }), {
+        database: fakeDatabase(),
+        repository: {
+          async refreshAggregateRange() { throw new Error('set-based write failed'); },
+        },
+        readCheckpoint: async () => structuredClone(checkpoint),
+        writeCheckpoint: async (_file, value) => saved.push(structuredClone(value)),
+      }),
+      (error) => {
+        assert.equal(error.message, 'set-based write failed');
+        assert.equal(error.summary.failed, 1);
+        return true;
+      }
+    );
+    assert.equal(saved.length, 0);
+  });
+
+  it('rebuilds each closed hourly window with one set-based repository call', async () => {
+    const database = fakeDatabase([], {
+      min: '2026-07-18T12:17:00.000Z',
+      max: '2026-07-18T14:42:00.000Z',
+    });
+    const ranges = [];
+    let saved;
+    const checkpoint = {
+      version: 2,
+      asOf: '2026-07-18T14:30:00.000Z',
+      cursor: { phase: 'hourly', windowStart: null, afterToken: null },
+    };
+    const summary = await runBackfill(options({
+      mode: 'write',
+      checkpointFile: '/tmp/rh.json',
+      hourlyWindowHours: 1,
+    }), {
       database,
-      repository: { async refreshBucket(target) { written.push(target); return { ...target, updated_at: 'now' }; } },
+      repository: {
+        async refreshHourlyRange(range) {
+          ranges.push(range);
+          return {
+            sourceBuckets: 8,
+            writtenBuckets: 6,
+            lastToken: TOKEN,
+            hasMoreTokens: true,
+          };
+        },
+      },
       readCheckpoint: async () => structuredClone(checkpoint),
       writeCheckpoint: async (_file, value) => { saved = structuredClone(value); },
     });
 
-    assert.equal(summary.written, 3);
-    assert.deepEqual(written.map((target) => target.granularityMinutes).sort((a, b) => a - b), [60, 240, 1440]);
-    assert.equal(saved.cursor.phase, 'coarse');
+    assert.deepEqual(ranges, [{
+      from: '2026-07-18T12:00:00.000Z',
+      to: '2026-07-18T13:00:00.000Z',
+      afterToken: null,
+      tokenLimit: 25,
+    }]);
+    assert.equal(summary.hourlyWindows, 1);
+    assert.equal(summary.hourlySourceBuckets, 8);
+    assert.equal(summary.hourlyWrittenBuckets, 6);
+    assert.equal(saved.cursor.phase, 'hourly');
+    assert.equal(saved.cursor.windowStart, '2026-07-18T12:00:00.000Z');
     assert.equal(saved.cursor.afterToken, TOKEN);
-    assert.equal(summary.nextCursor.afterToken, TOKEN);
   });
 });

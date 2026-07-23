@@ -101,4 +101,168 @@ describe('Robinhood market aggregate repository', () => {
     assert.deepEqual(written.map((row) => row.volume_usd), ['0.1', '0.2']);
     assert.deepEqual(written.map((row) => row.source_bucket_count), [1, 1]);
   });
+
+  it('rebuilds complete hourly ranges in one set-based statement', async () => {
+    const calls = [];
+    const repository = createRobinhoodMarketAggregateRepository({
+      async query(sql, params) {
+        calls.push({ sql, params });
+        return {
+          rows: [{
+            source_buckets: 7,
+            identity_conflicts: 0,
+            written_buckets: 5,
+            token_count: 2,
+            last_token: ADDRESS,
+            has_more_tokens: true,
+          }],
+        };
+      },
+    });
+
+    const result = await repository.refreshHourlyRange({
+      from: '2026-07-18T12:00:00.000Z',
+      to: '2026-07-18T14:00:00.000Z',
+      afterToken: null,
+      tokenLimit: 2,
+    });
+
+    assert.deepEqual(result, {
+      sourceBuckets: 7,
+      writtenBuckets: 5,
+      tokenCount: 2,
+      lastToken: ADDRESS,
+      hasMoreTokens: true,
+    });
+    assert.deepEqual(calls[0].params, [
+      '2026-07-18T12:00:00.000Z',
+      '2026-07-18T14:00:00.000Z',
+      null,
+      2,
+    ]);
+    assert.match(calls[0].sql, /candidate_tokens[\s\S]*token_address > \$3/);
+    assert.match(calls[0].sql, /LIMIT \(\$4::int \+ 1\)/);
+    assert.match(calls[0].sql, /INSERT INTO robinhood_market_buckets_1h/);
+    assert.match(calls[0].sql, /FROM robinhood_market_buckets_1m minute/);
+    assert.match(calls[0].sql, /ON CONFLICT[\s\S]*IS DISTINCT FROM EXCLUDED\.volume_usd/);
+    assert.doesNotMatch(calls[0].sql, /jsonb_to_recordset/);
+  });
+
+  it('rejects partial-hour range boundaries before querying PostgreSQL', async () => {
+    let queried = false;
+    const repository = createRobinhoodMarketAggregateRepository({
+      async query() {
+        queried = true;
+        return { rows: [] };
+      },
+    });
+
+    await assert.rejects(
+      repository.refreshHourlyRange({
+        from: '2026-07-18T12:01:00.000Z',
+        to: '2026-07-18T13:00:00.000Z',
+        afterToken: null,
+        tokenLimit: 25,
+      }),
+      /aligned to UTC hours/
+    );
+    assert.equal(queried, false);
+  });
+
+  it('rejects an hourly range with conflicting stored token dimensions', async () => {
+    const repository = createRobinhoodMarketAggregateRepository({
+      async query() {
+        return {
+          rows: [{ source_buckets: 1, identity_conflicts: 1, written_buckets: 0 }],
+        };
+      },
+    });
+
+    await assert.rejects(
+      repository.refreshHourlyRange({
+        from: '2026-07-18T12:00:00.000Z',
+        to: '2026-07-18T13:00:00.000Z',
+        afterToken: null,
+        tokenLimit: 25,
+      }),
+      /conflicting token dimensions/
+    );
+  });
+
+  it('rebuilds all token aggregates in one set-based statement per source range', async () => {
+    const calls = [];
+    const repository = createRobinhoodMarketAggregateRepository({
+      async query(sql, params) {
+        calls.push({ sql, params });
+        return {
+          rows: [{
+            source_buckets: 40,
+            target_buckets: 12,
+            written_buckets: 9,
+            token_count: 3,
+            last_token: ADDRESS,
+            has_more_tokens: false,
+          }],
+        };
+      },
+    });
+
+    const result = await repository.refreshAggregateRange({
+      from: '2026-07-18T12:03:00.000Z',
+      to: '2026-07-18T13:03:00.000Z',
+      granularities: [30, 5, 15, 5],
+      afterToken: ADDRESS,
+      tokenLimit: 3,
+    });
+
+    assert.deepEqual(result, {
+      sourceBuckets: 40,
+      targetBuckets: 12,
+      writtenBuckets: 9,
+      tokenCount: 3,
+      lastToken: ADDRESS,
+      hasMoreTokens: false,
+    });
+    assert.deepEqual(calls[0].params, [
+      '2026-07-18T12:03:00.000Z',
+      '2026-07-18T13:03:00.000Z',
+      [5, 15, 30],
+      ADDRESS,
+      3,
+    ]);
+    assert.match(calls[0].sql, /source_window AS MATERIALIZED/);
+    assert.match(calls[0].sql, /date_bin\(/);
+    assert.match(calls[0].sql, /INNER JOIN robinhood_market_buckets_1m bucket/);
+    assert.match(calls[0].sql,
+      /last_log_index DESC,\s+bucket\.protocol DESC, bucket\.market_key DESC/);
+    assert.match(calls[0].sql, /SUM\(bucket\.volume_usd\)/);
+    assert.match(calls[0].sql, /ON CONFLICT[\s\S]*IS DISTINCT FROM EXCLUDED\.volume_usd/);
+
+    await repository.refreshAggregateRange({
+      from: '2026-07-18T00:00:00.000Z',
+      to: '2026-07-19T00:00:00.000Z',
+      granularities: [60, 240, 1440],
+      afterToken: null,
+      tokenLimit: 25,
+    });
+    assert.match(calls[1].sql, /FROM robinhood_market_buckets_1h/);
+    assert.match(calls[1].sql, /60::smallint AS source_granularity_minutes/);
+  });
+
+  it('does not mix granularities backed by different source tables', async () => {
+    const repository = createRobinhoodMarketAggregateRepository({
+      async query() { throw new Error('query must not run'); },
+    });
+
+    await assert.rejects(
+      repository.refreshAggregateRange({
+        from: '2026-07-18T12:00:00.000Z',
+        to: '2026-07-18T13:00:00.000Z',
+        granularities: [30, 60],
+        afterToken: null,
+        tokenLimit: 25,
+      }),
+      /same source table/
+    );
+  });
 });

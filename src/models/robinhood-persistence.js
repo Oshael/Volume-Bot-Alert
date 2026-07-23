@@ -20,6 +20,7 @@ const LIQUIDITY_STATUSES = new Set([
   'requires_tick_liquidity_distribution',
 ]);
 const MINUTE_MS = 60 * 1000;
+const HOUR_MS = 60 * MINUTE_MS;
 const MAX_SIGNAL_WINDOW_MS = 14 * 24 * 60 * MINUTE_MS;
 const SIGNAL_PROTOCOLS = new Set(['uniswap-v2', 'uniswap-v3', 'uniswap-v4']);
 const SUPPLY_STATUSES = new Set([
@@ -142,6 +143,7 @@ function normalizeCursor(streamValue, cursor = {}) {
   const checkpoint = cursor.checkpoint || null;
   return {
     stream,
+    backfill: cursor.backfill === true,
     nextBlock: decimalQuantity(cursor.nextBlock, 'cursor.nextBlock'),
     safeHead: cursor.safeHead == null ? null : decimalQuantity(cursor.safeHead, 'cursor.safeHead'),
     checkpointBlock: checkpoint?.number == null
@@ -154,6 +156,16 @@ function normalizeCursor(streamValue, cursor = {}) {
       ? null
       : timestampDate(checkpoint.timestampMs, 'cursor.checkpoint.timestampMs'),
   };
+}
+
+function shouldDeferHourlyRefresh(cursor, currentTimeValue) {
+  if (cursor.backfill !== true || !cursor.checkpointTimestamp) return false;
+  const currentTimeMs = Number(currentTimeValue);
+  if (!Number.isFinite(currentTimeMs) || currentTimeMs <= 0) {
+    throw new TypeError('current time is invalid');
+  }
+  const currentHourStartMs = Math.floor(currentTimeMs / HOUR_MS) * HOUR_MS;
+  return cursor.checkpointTimestamp.getTime() < currentHourStartMs;
 }
 
 function normalizeLogEntry(entry, stream) {
@@ -1207,6 +1219,7 @@ async function refreshHourlyBuckets(client, rows) {
 
 function createRobinhoodPersistenceRepository(options = {}) {
   const database = options.database || db;
+  const now = options.now || Date.now;
   const emitMarketBucketUpdate = options.emitMarketBucketUpdate || ((payload) => {
     const socketHub = require('../services/socket-hub');
     return socketHub.emitMarketBucketUpdate(payload);
@@ -1284,7 +1297,9 @@ function createRobinhoodPersistenceRepository(options = {}) {
         .filter((entry) => entry.observation && insertedIdentities.has(rowIdentity(entry.row)))
         .map((entry) => entry.observation);
       const marketWrite = await insertMarketObservations(client, observations, cursor);
-      const touchedHourlyBuckets = await refreshHourlyBuckets(client, observations);
+      const touchedHourlyBuckets = shouldDeferHourlyRefresh(cursor, now())
+        ? 0
+        : await refreshHourlyBuckets(client, observations);
       await upsertCursor(client, cursor);
       await client.query('COMMIT');
       emitRobinhoodMarketBucketUpdates(marketWrite.liveBuckets, cursor, emitMarketBucketUpdate);
@@ -1413,6 +1428,7 @@ module.exports = {
   createRobinhoodPersistenceRepository,
   __private: {
     normalizeCursor,
+    shouldDeferHourlyRefresh,
     normalizeLogEntry,
     normalizeNoxaLaunch,
     normalizeObservation,

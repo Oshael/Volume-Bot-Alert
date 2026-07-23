@@ -609,6 +609,50 @@ describe('Robinhood persistence repository', () => {
     assert.equal(observationPayload[0].liquidityStatus, 'requires_tick_liquidity_distribution');
   });
 
+  it('defers hourly rebuild for a safely closed historical range', async () => {
+    const fake = createFakeDatabase({ liveBuckets: [liveBucketRow()] });
+    const emitted = [];
+    const repository = createRobinhoodPersistenceRepository({
+      database: fake.database,
+      now: () => Date.parse('2026-07-13T02:15:00.000Z'),
+      emitMarketBucketUpdate(payload) { emitted.push(payload); },
+    });
+
+    const result = await repository.commitMarketRange({
+      entries: [marketEntry()],
+      cursor: { ...cursor(), backfill: true },
+    });
+
+    assert.equal(result.insertedLogs, 1);
+    assert.equal(result.insertedObservations, 1);
+    assert.equal(result.touchedBuckets, 1);
+    assert.equal(result.touchedHourlyBuckets, 0);
+    assert.equal(fake.calls.some((call) => (
+      /INSERT INTO robinhood_market_buckets_1h/.test(call.sql)
+    )), false);
+    assert.match(fake.calls.at(-2).sql, /INSERT INTO robinhood_ingestion_cursors/);
+    assert.equal(fake.calls.at(-1).sql, 'COMMIT');
+    assert.equal(emitted.length, 1);
+  });
+
+  it('keeps hourly rebuild in the hot path for backfill inside the current UTC hour', async () => {
+    const fake = createFakeDatabase();
+    const repository = createRobinhoodPersistenceRepository({
+      database: fake.database,
+      now: () => Date.parse('2026-07-13T00:45:00.000Z'),
+    });
+
+    const result = await repository.commitMarketRange({
+      entries: [marketEntry()],
+      cursor: { ...cursor(), backfill: true },
+    });
+
+    assert.equal(result.touchedHourlyBuckets, 1);
+    assert.equal(fake.calls.some((call) => (
+      /INSERT INTO robinhood_market_buckets_1h/.test(call.sql)
+    )), true);
+  });
+
   it('keeps a committed market range successful when socket emission fails', async () => {
     const fake = createFakeDatabase({ liveBuckets: [liveBucketRow()] });
     const originalWarn = console.warn;

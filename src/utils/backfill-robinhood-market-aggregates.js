@@ -4,6 +4,7 @@ const db = require('../models/db');
 const { createRobinhoodMarketAggregateRepository } = require('../models/robinhood-market-aggregate');
 const PHASES = Object.freeze({
   fine: { table: 'robinhood_market_buckets_1m', granularities: [5, 15, 30], sourceMinutes: 1 },
+  hourly: { table: 'robinhood_market_buckets_1m', sourceMinutes: 1 },
   coarse: { table: 'robinhood_market_buckets_1h', granularities: [60, 240, 1440], sourceMinutes: 60 },
 });
 const PHASE_ORDER = Object.freeze(Object.keys(PHASES));
@@ -47,8 +48,10 @@ function parseCliArgs(argv = process.argv.slice(2)) {
     tokenLimit: integer(args.tokenLimit, 'tokenLimit', 25, 1, 100),
     maxChunks: integer(args.maxChunks, 'maxChunks', 1, 1, 100_000),
     statementTimeoutMs: integer(args.statementTimeoutMs, 'statementTimeoutMs', 10_000, 1000, 60_000),
+    lockTimeoutMs: integer(args.lockTimeoutMs, 'lockTimeoutMs', 1000, 100, 60_000),
     sleepMs: integer(args.sleepMs, 'sleepMs', 250, 0, 60_000),
     fineWindowHours: integer(args.fineWindowHours, 'fineWindowHours', 1, 1, 24),
+    hourlyWindowHours: integer(args.hourlyWindowHours, 'hourlyWindowHours', 24, 1, 24 * 31),
     coarseWindowHours: integer(args.coarseWindowHours, 'coarseWindowHours', 24, 1, 24 * 31),
   };
 }
@@ -68,9 +71,31 @@ async function writeCheckpoint(file, checkpoint) {
   await fs.writeFile(temporary, `${JSON.stringify(checkpoint, null, 2)}\n`, 'utf8');
   await fs.rename(temporary, file);
 }
-function queryRunner(database, statementTimeoutMs) {
+function queryRunner(database, statementTimeoutMs, lockTimeoutMs) {
+  const safeStatementTimeoutMs = Math.max(0, Math.trunc(Number(statementTimeoutMs) || 0));
+  const safeLockTimeoutMs = Math.max(0, Math.trunc(Number(lockTimeoutMs) || 0));
+  if (typeof database.getClient === 'function') {
+    return async (sql, params) => {
+      const client = await database.getClient();
+      try {
+        await client.query('BEGIN');
+        await client.query(`SET LOCAL statement_timeout = '${safeStatementTimeoutMs}ms'`);
+        await client.query(`SET LOCAL lock_timeout = '${safeLockTimeoutMs}ms'`);
+        const result = await client.query(sql, params);
+        await client.query('COMMIT');
+        return result;
+      } catch (error) {
+        try { await client.query('ROLLBACK'); } catch (_) {}
+        throw error;
+      } finally {
+        client.release();
+      }
+    };
+  }
   if (typeof database.queryWithStatementTimeout === 'function') {
-    return (sql, params) => database.queryWithStatementTimeout(sql, params, statementTimeoutMs);
+    return (sql, params) => (
+      database.queryWithStatementTimeout(sql, params, safeStatementTimeoutMs)
+    );
   }
   return (sql, params) => database.query(sql, params);
 }
@@ -131,13 +156,25 @@ function buildTargets(rows, phase) {
 }
 
 function phaseWindowHours(options, phase) {
-  return phase === 'fine' ? options.fineWindowHours : options.coarseWindowHours;
+  if (phase === 'fine') return options.fineWindowHours;
+  if (phase === 'hourly') return options.hourlyWindowHours;
+  return options.coarseWindowHours;
 }
 
 function resolvePhaseRange(options, checkpoint, phase, bounds) {
   if (!bounds.min || !bounds.max) return null;
   const asOfMs = new Date(checkpoint.asOf).getTime();
   const configuredStart = options.from?.getTime() ?? bounds.min.getTime();
+  if (phase === 'hourly') {
+    const hourMs = 60 * 60 * 1000;
+    return {
+      startMs: Math.floor(Math.max(bounds.min.getTime(), configuredStart) / hourMs) * hourMs,
+      endMs: Math.min(
+        Math.floor(asOfMs / hourMs) * hourMs,
+        Math.ceil((bounds.max.getTime() + PHASES[phase].sourceMinutes * 60_000) / hourMs) * hourMs
+      ),
+    };
+  }
   return {
     startMs: Math.max(bounds.min.getTime(), configuredStart),
     endMs: Math.min(asOfMs, bounds.max.getTime() + PHASES[phase].sourceMinutes * 60 * 1000),
@@ -147,6 +184,23 @@ function resolvePhaseRange(options, checkpoint, phase, bounds) {
 function nextPhase(phase) {
   return PHASE_ORDER[PHASE_ORDER.indexOf(phase) + 1] || null;
 }
+
+function nextPagedCursor(phase, windowStartMs, windowEndMs, counts) {
+  if (counts.hasMoreTokens) {
+    if (!counts.lastToken) throw new Error('paged aggregate result is missing lastToken');
+    return {
+      phase,
+      windowStart: new Date(windowStartMs).toISOString(),
+      afterToken: counts.lastToken,
+    };
+  }
+  return {
+    phase,
+    windowStart: new Date(windowEndMs).toISOString(),
+    afterToken: null,
+  };
+}
+
 function assertCheckpoint(checkpoint) {
   if (checkpoint.version !== 2 || (checkpoint.cursor?.phase != null && !PHASES[checkpoint.cursor.phase])) {
     throw new Error('checkpoint is incompatible');
@@ -167,21 +221,6 @@ function remainingRanges(options, checkpoint, ranges) {
   return remaining;
 }
 
-async function applyTargets(targets, repository, summary) {
-  for (const target of targets) {
-    try {
-      const row = await repository.refreshBucket(target);
-      if (row?.updated_at) summary.written += 1;
-      else summary.skipped += 1;
-    } catch (error) {
-      summary.failed += 1;
-      const wrapped = new Error(`aggregate target failed: ${error.message}`);
-      wrapped.summary = summary;
-      throw wrapped;
-    }
-  }
-}
-
 async function processNextChunk(context) {
   const { options, checkpoint, phaseBounds, execute, repository, summary, save } = context;
   const phase = checkpoint.cursor.phase;
@@ -198,6 +237,54 @@ async function processNextChunk(context) {
     return false;
   }
   const windowEndMs = Math.min(windowStartMs + windowMs, range.endMs);
+  if (phase === 'hourly') {
+    summary.chunks += 1;
+    summary.hourlyWindows += 1;
+    if (options.mode === 'write') {
+      const counts = await repository.refreshHourlyRange({
+        from: new Date(windowStartMs).toISOString(),
+        to: new Date(windowEndMs).toISOString(),
+        afterToken: checkpoint.cursor.afterToken,
+        tokenLimit: options.tokenLimit,
+      }).catch((error) => {
+        summary.failed += 1;
+        error.summary = summary;
+        throw error;
+      });
+      summary.hourlySourceBuckets += counts.sourceBuckets;
+      summary.hourlyWrittenBuckets += counts.writtenBuckets;
+      checkpoint.cursor = nextPagedCursor(phase, windowStartMs, windowEndMs, counts);
+    } else {
+      checkpoint.cursor = {
+        phase,
+        windowStart: new Date(windowEndMs).toISOString(),
+        afterToken: null,
+      };
+    }
+    await save(options.checkpointFile, checkpoint);
+    return true;
+  }
+  if (options.mode === 'write') {
+    summary.chunks += 1;
+    summary.aggregateWindows += 1;
+    const counts = await repository.refreshAggregateRange({
+      from: new Date(windowStartMs).toISOString(),
+      to: new Date(windowEndMs).toISOString(),
+      granularities: PHASES[phase].granularities,
+      afterToken: checkpoint.cursor.afterToken,
+      tokenLimit: options.tokenLimit,
+    }).catch((error) => {
+      summary.failed += 1;
+      error.summary = summary;
+      throw error;
+    });
+    summary.scanned += counts.sourceBuckets;
+    summary.written += counts.writtenBuckets;
+    summary.skipped += Math.max(0, counts.targetBuckets - counts.writtenBuckets);
+    checkpoint.cursor = nextPagedCursor(phase, windowStartMs, windowEndMs, counts);
+    await save(options.checkpointFile, checkpoint);
+    return true;
+  }
   const rows = await listSourceRows({
     phase,
     windowStart: new Date(windowStartMs).toISOString(),
@@ -213,8 +300,7 @@ async function processNextChunk(context) {
   summary.scanned += rows.length;
   const tokens = [...new Set(rows.map((row) => row.token_address))];
   const targets = buildTargets(rows, phase);
-  if (options.mode === 'write') await applyTargets(targets, repository, summary);
-  else summary.skipped += targets.length;
+  summary.skipped += targets.length;
   checkpoint.cursor = tokens.length >= options.tokenLimit
     ? { phase, windowStart: new Date(windowStartMs).toISOString(), afterToken: tokens.at(-1) }
     : { phase, windowStart: new Date(windowEndMs).toISOString(), afterToken: null };
@@ -224,7 +310,7 @@ async function processNextChunk(context) {
 
 async function runBackfill(options, deps = {}) {
   const database = deps.database || db;
-  const execute = queryRunner(database, options.statementTimeoutMs);
+  const execute = queryRunner(database, options.statementTimeoutMs, options.lockTimeoutMs);
   const repository = deps.repository || createRobinhoodMarketAggregateRepository({ query: execute });
   const load = deps.readCheckpoint || readCheckpoint;
   const save = deps.writeCheckpoint || writeCheckpoint;
@@ -239,14 +325,35 @@ async function runBackfill(options, deps = {}) {
   ))));
   const summary = {
     mode: options.mode, scanned: 0, written: 0, skipped: 0, failed: 0,
-    chunks: 0, remainingRanges: 0, paused: false, nextCursor: null,
+    chunks: 0, aggregateWindows: 0,
+    hourlyWindows: 0, hourlySourceBuckets: 0, hourlyWrittenBuckets: 0,
+    totalBatchDurationMs: 0, maxBatchDurationMs: 0, lastBatch: null,
+    remainingRanges: 0, paused: false, nextCursor: null,
   };
+  const now = deps.now || Date.now;
 
   while (checkpoint.cursor.phase && summary.chunks < options.maxChunks) {
+    const batchPhase = checkpoint.cursor.phase;
+    const batchWindowStart = checkpoint.cursor.windowStart;
+    const batchAfterToken = checkpoint.cursor.afterToken;
+    const sourceBefore = summary.scanned + summary.hourlySourceBuckets;
+    const writtenBefore = summary.written + summary.hourlyWrittenBuckets;
+    const startedAtMs = Number(now());
     const processed = await processNextChunk({
       options, checkpoint, phaseBounds, execute, repository, summary, save,
     });
     if (!processed) continue;
+    const durationMs = Math.max(0, Number(now()) - startedAtMs);
+    summary.totalBatchDurationMs += durationMs;
+    summary.maxBatchDurationMs = Math.max(summary.maxBatchDurationMs, durationMs);
+    summary.lastBatch = {
+      phase: batchPhase,
+      windowStart: batchWindowStart,
+      afterToken: batchAfterToken,
+      sourceBuckets: summary.scanned + summary.hourlySourceBuckets - sourceBefore,
+      writtenBuckets: summary.written + summary.hourlyWrittenBuckets - writtenBefore,
+      durationMs,
+    };
     if (deps.shouldPause?.()) break;
     if (options.sleepMs > 0 && summary.chunks < options.maxChunks) {
       await (deps.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms))))(options.sleepMs);
@@ -283,5 +390,12 @@ if (require.main === module) void run();
 
 module.exports = {
   run,
-  __private: { buildTargets, listSourceRows, parseCliArgs, runBackfill },
+  __private: {
+    buildTargets,
+    listSourceRows,
+    nextPagedCursor,
+    parseCliArgs,
+    queryRunner,
+    runBackfill,
+  },
 };
