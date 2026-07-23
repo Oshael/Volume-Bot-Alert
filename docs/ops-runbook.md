@@ -189,12 +189,28 @@ back once to bounded individual requests. Check
 `batchEnabled` in admin status when diagnosing throughput or 429s.
 
 Continuous ingestion pins `eth_getLogs`, head reads, block reads and timestamp
-batches to the Robinhood public provider. Only state methods with an explicit
-historical block tag (`eth_call`, `eth_getCode`, `eth_getStorageAt`) may use the
-configured archive fallback. This prevents large log ranges from consuming an
-Alchemy Free allowance. `ROBINHOOD_RANGE_SIZE` and `ROBINHOOD_MAX_RANGE_SIZE`
-accept values from 1 through 10,000; increase them only after a public transport
-probe and a persistence soak, because larger market ranges commit atomically.
+batches to the Robinhood public provider. State methods with an explicit
+historical block tag (`eth_call`, `eth_getCode`, `eth_getStorageAt`) go directly
+to the configured archive providers in `ROBINHOOD_FALLBACK_ORDER`; they do not
+first spend a throttled request on the known-pruned public endpoint. If no
+archive provider is enabled, those reads remain public-only and fail closed.
+This prevents large log ranges from consuming an Alchemy Free allowance while
+retaining archive fallback order for historical state.
+
+`ROBINHOOD_RPC_MIN_INTERVAL_MS` controls public transport pacing.
+`ROBINHOOD_ARCHIVE_RPC_MIN_INTERVAL_MS` controls each archive provider and
+inherits the public value when absent. During public-RPC rate limiting, a
+typical controlled split is public `500` ms and archive `200` ms; lowering the
+archive interval increases request rate but does not increase the number of
+historical reads required by a fixed backfill.
+
+Direct archive routing is intentional, so a sole archive provider records these
+calls under `requests` rather than `fallbacks`. Compare provider request deltas
+when measuring archive use after this rollout.
+
+`ROBINHOOD_RANGE_SIZE` and `ROBINHOOD_MAX_RANGE_SIZE` accept values from 1
+through 10,000; increase them only after a public transport probe and a
+persistence soak, because larger market ranges commit atomically.
 
 Persistent ingestion deliberately disables the read-only rollback maps and
 24-hour analytical window aggregator after an extended soak exhausted the

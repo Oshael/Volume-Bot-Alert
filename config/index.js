@@ -485,6 +485,18 @@ runtime.workerGroupsActive = workerGroups.active;
 runtime.workerGroupsSkipped = workerGroups.skipped;
 
 const robinhoodIngestionEnabled = parseBoolean(process.env.ROBINHOOD_INGESTION_ENABLED, false);
+const robinhoodRpcMinIntervalMs = parseIntegerInRange(
+  process.env.ROBINHOOD_RPC_MIN_INTERVAL_MS,
+  250,
+  0,
+  60_000
+);
+const robinhoodArchiveRpcMinIntervalMs = parseIntegerInRange(
+  process.env.ROBINHOOD_ARCHIVE_RPC_MIN_INTERVAL_MS,
+  robinhoodRpcMinIntervalMs,
+  0,
+  60_000
+);
 const robinhoodRollout = {
   transport: {
     enabled: parseBoolean(
@@ -738,12 +750,8 @@ module.exports = {
     ),
     rpcTimeoutMs: parseIntegerInRange(process.env.ROBINHOOD_RPC_TIMEOUT_MS, 15_000, 1000, 60_000),
     rpcMaxRetries: parseIntegerInRange(process.env.ROBINHOOD_RPC_MAX_RETRIES, 1, 0, 5),
-    rpcMinIntervalMs: parseIntegerInRange(
-      process.env.ROBINHOOD_RPC_MIN_INTERVAL_MS,
-      250,
-      0,
-      60_000
-    ),
+    rpcMinIntervalMs: robinhoodRpcMinIntervalMs,
+    archiveRpcMinIntervalMs: robinhoodArchiveRpcMinIntervalMs,
     lookbackBlocks: parseIntegerInRange(process.env.ROBINHOOD_LOOKBACK_BLOCKS, 250, 1, 100_000),
     startBlock: parseOptionalBlock(process.env.ROBINHOOD_START_BLOCK),
     confirmations: parseIntegerInRange(process.env.ROBINHOOD_CONFIRMATIONS, 2, 0, 1000),

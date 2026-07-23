@@ -19,6 +19,7 @@ function boundedInteger(value, fallback, min, max) {
 }
 
 function normalizeOptions(options = {}) {
+  const rpcMinIntervalMs = boundedInteger(options.rpcMinIntervalMs, 250, 0, 60_000);
   return {
     enabled: options.enabled === true,
     publicRpcUrl: String(options.publicRpcUrl || PUBLIC_RPC_URL),
@@ -32,7 +33,13 @@ function normalizeOptions(options = {}) {
     maxErrorBackoffMs: boundedInteger(options.maxErrorBackoffMs, 30_000, 1000, 300_000),
     rpcTimeoutMs: boundedInteger(options.rpcTimeoutMs, 15_000, 1000, 60_000),
     rpcMaxRetries: boundedInteger(options.rpcMaxRetries, 1, 0, 5),
-    rpcMinIntervalMs: boundedInteger(options.rpcMinIntervalMs, 250, 0, 60_000),
+    rpcMinIntervalMs,
+    archiveRpcMinIntervalMs: boundedInteger(
+      options.archiveRpcMinIntervalMs,
+      rpcMinIntervalMs,
+      0,
+      60_000
+    ),
     lookbackBlocks: boundedInteger(options.lookbackBlocks, 250, 1, 100_000),
     startBlock: options.startBlock || null,
     confirmations: boundedInteger(options.confirmations, 2, 0, 1000),
@@ -79,20 +86,33 @@ function requiresArchiveFallback(method, params = []) {
 
 function createRobinhoodRpcRouter(client) {
   if (typeof client?.requestProvider !== 'function'
-    || typeof client?.requestBatchProvider !== 'function') {
+    || typeof client?.requestBatchProvider !== 'function'
+    || typeof client?.requestProviders !== 'function'
+    || typeof client?.requestBatchProviders !== 'function') {
     throw new TypeError('Robinhood RPC routing requires provider-specific request methods');
   }
+  const archiveProviders = client.providers.filter((provider) => provider !== PUBLIC_PROVIDER);
+  const requestHistorical = (method, params, requestOptions) => (
+    archiveProviders.length
+      ? client.requestProviders(archiveProviders, method, params, requestOptions)
+      : client.requestProvider(PUBLIC_PROVIDER, method, params, requestOptions)
+  );
+  const requestHistoricalBatch = (requests, requestOptions) => (
+    archiveProviders.length
+      ? client.requestBatchProviders(archiveProviders, requests, requestOptions)
+      : client.requestBatchProvider(PUBLIC_PROVIDER, requests, requestOptions)
+  );
   return Object.freeze({
     providers: client.providers,
     getMetrics: (...args) => client.getMetrics(...args),
     request: (method, params = [], requestOptions = {}) => (
       requiresArchiveFallback(method, params)
-        ? client.request(method, params, requestOptions)
+        ? requestHistorical(method, params, requestOptions)
         : client.requestProvider(PUBLIC_PROVIDER, method, params, requestOptions)
     ),
     requestBatch: (requests, requestOptions = {}) => (
       requests.some(({ method, params }) => requiresArchiveFallback(method, params))
-        ? client.requestBatch(requests, requestOptions)
+        ? requestHistoricalBatch(requests, requestOptions)
         : client.requestBatchProvider(PUBLIC_PROVIDER, requests, requestOptions)
     ),
     requestProvider: (...args) => client.requestProvider(...args),
@@ -101,7 +121,11 @@ function createRobinhoodRpcRouter(client) {
 }
 
 function createClient(options) {
-  const providers = [{ name: PUBLIC_PROVIDER, url: options.publicRpcUrl }];
+  const providers = [{
+    name: PUBLIC_PROVIDER,
+    url: options.publicRpcUrl,
+    minRequestIntervalMs: options.rpcMinIntervalMs,
+  }];
   for (const token of parseFallbackOrder(options.fallbackOrder)) {
     const spec = FALLBACK_PROVIDERS[token];
     if (options[spec.useKey] !== true) continue;
@@ -110,7 +134,11 @@ function createClient(options) {
       error.code = 'configuration_error';
       throw error;
     }
-    providers.push({ name: spec.name, url: options[spec.urlKey] });
+    providers.push({
+      name: spec.name,
+      url: options[spec.urlKey],
+      minRequestIntervalMs: options.archiveRpcMinIntervalMs,
+    });
   }
   const client = createEvmJsonRpcClient({
     providers,

@@ -144,6 +144,33 @@ describe('provider-agnostic EVM JSON-RPC client', () => {
     assert.deepEqual(starts, [0, 100, 200]);
   });
 
+  it('allows a provider to override the default request interval', async () => {
+    let currentTime = 0;
+    const starts = [];
+    const client = createEvmJsonRpcClient({
+      providers: [{
+        name: 'archive',
+        url: 'https://archive.example.test',
+        minRequestIntervalMs: 25,
+      }],
+      minRequestIntervalMs: 100,
+      now: () => currentTime,
+      sleep: async (delayMs) => { currentTime += delayMs; },
+      fetchImpl: async (_url, init) => {
+        starts.push(currentTime);
+        const request = requestFrom(init);
+        return response({ jsonrpc: '2.0', id: request.id, result: '0x1' });
+      },
+    });
+
+    await Promise.all([
+      client.request('eth_chainId'),
+      client.request('eth_blockNumber'),
+      client.request('eth_getCode', ['0x1']),
+    ]);
+    assert.deepEqual(starts, [0, 25, 50]);
+  });
+
   it('falls back after primary retries are exhausted without changing the request ID', async () => {
     const calls = [];
     const delays = [];
@@ -198,6 +225,37 @@ describe('provider-agnostic EVM JSON-RPC client', () => {
     assert.deepEqual(calls, ['https://public.example.test/', 'https://alchemy.example.test/']);
     assert.equal(client.getMetrics()['alchemy-free'].eth_chainId.fallbacks, 0);
     assert.throws(() => client.requestProvider('missing', 'eth_chainId'), /Unknown EVM RPC provider/);
+  });
+
+  it('falls back only across the selected provider subset', async () => {
+    const calls = [];
+    const client = createEvmJsonRpcClient({
+      providers: [
+        { name: 'public', url: 'https://public.example.test' },
+        { name: 'drpc', url: 'https://drpc.example.test' },
+        { name: 'alchemy', url: 'https://alchemy.example.test' },
+      ],
+      maxRetries: 0,
+      fetchImpl: async (url, init) => {
+        calls.push(url);
+        const request = requestFrom(init);
+        return url.includes('drpc')
+          ? response({ jsonrpc: '2.0', id: request.id, error: { code: -32000, message: 'state unavailable' } })
+          : response({ jsonrpc: '2.0', id: request.id, result: '0x1234' });
+      },
+    });
+
+    assert.equal(
+      await client.requestProviders(
+        ['drpc', 'alchemy'],
+        'eth_call',
+        [{ to: '0x1' }, '0x2'],
+        { fallbackOnRpcError: true }
+      ),
+      '0x1234'
+    );
+    assert.deepEqual(calls, ['https://drpc.example.test/', 'https://alchemy.example.test/']);
+    assert.equal(client.getMetrics().alchemy.eth_call.fallbacks, 1);
   });
 
   it('can send a batch to one named provider without silently falling back', async () => {

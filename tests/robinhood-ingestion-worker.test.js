@@ -152,6 +152,14 @@ describe('Robinhood ingestion worker', () => {
     assert.equal(publicOnly.useAlchemy, false);
     assert.equal(publicOnly.marketLogFilterMode, 'topics-only');
     assert.equal(publicOnly.rpcMinIntervalMs, 250);
+    assert.equal(publicOnly.archiveRpcMinIntervalMs, 250);
+    assert.equal(__private.normalizeOptions({
+      rpcMinIntervalMs: 500,
+      archiveRpcMinIntervalMs: 200,
+    }).archiveRpcMinIntervalMs, 200);
+    assert.equal(__private.normalizeOptions({
+      rpcMinIntervalMs: 500,
+    }).archiveRpcMinIntervalMs, 500);
     assert.equal(publicOnly.observationConcurrency, 1);
     assert.equal(__private.normalizeOptions({ rangeSize: 8000 }).rangeSize, 8000);
     assert.throws(
@@ -174,6 +182,14 @@ describe('Robinhood ingestion worker', () => {
       getMetrics: () => ({ marker: true }),
       request: async (method) => { calls.push(`fallback:${method}`); return method; },
       requestBatch: async () => { calls.push('fallback:batch'); return []; },
+      requestProviders: async (providers, method) => {
+        calls.push(`${providers.join(',')}:${method}`);
+        return method;
+      },
+      requestBatchProviders: async (providers) => {
+        calls.push(`${providers.join(',')}:batch`);
+        return [];
+      },
       requestProvider: async (provider, method) => {
         calls.push(`${provider}:${method}`);
         return method;
@@ -200,11 +216,27 @@ describe('Robinhood ingestion worker', () => {
       'robinhood-public:eth_getLogs',
       'robinhood-public:eth_getBlockByNumber',
       'robinhood-public:eth_call',
-      'fallback:eth_call',
+      'alchemy-free:eth_call',
       'robinhood-public:batch',
-      'fallback:batch',
+      'alchemy-free:batch',
     ]);
     assert.deepEqual(router.getMetrics(), { marker: true });
+
+    const publicOnlyCalls = [];
+    const publicOnlyRouter = __private.createRobinhoodRpcRouter({
+      ...client,
+      providers: ['robinhood-public'],
+      requestProvider: async (provider, method) => {
+        publicOnlyCalls.push(`${provider}:${method}`);
+        return method;
+      },
+    });
+    await publicOnlyRouter.request(
+      'eth_call',
+      [{ to: '0x1' }, '0xaa1a5'],
+      { fallbackOnRpcError: true }
+    );
+    assert.deepEqual(publicOnlyCalls, ['robinhood-public:eth_call']);
   });
 
   it('supports dRPC fallback alongside Alchemy with configurable order', () => {

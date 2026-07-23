@@ -37,7 +37,10 @@ function normalizeProviders(providers) {
     }
     if (names.has(name)) throw new TypeError(`Duplicate EVM RPC provider name: ${name}`);
     names.add(name);
-    return Object.freeze({ name, url: url.toString() });
+    const minRequestIntervalMs = provider?.minRequestIntervalMs == null
+      ? null
+      : clampInteger(provider.minRequestIntervalMs, null, 0, 60000);
+    return Object.freeze({ name, url: url.toString(), minRequestIntervalMs });
   });
 }
 
@@ -200,13 +203,15 @@ function createEvmJsonRpcClient(options = {}) {
   const providerNextAllowedAt = new Map();
   let nextRequestId = 0;
 
-  async function throttle(providerName) {
-    if (minRequestIntervalMs <= 0) return;
+  async function throttle(provider) {
+    const intervalMs = provider.minRequestIntervalMs ?? minRequestIntervalMs;
+    if (intervalMs <= 0) return;
+    const providerName = provider.name;
     const previous = providerTails.get(providerName) || Promise.resolve();
     const task = previous.catch(() => {}).then(async () => {
       const delayMs = Math.max(0, (providerNextAllowedAt.get(providerName) || 0) - now());
       if (delayMs > 0) await sleep(delayMs);
-      providerNextAllowedAt.set(providerName, now() + minRequestIntervalMs);
+      providerNextAllowedAt.set(providerName, now() + intervalMs);
     });
     providerTails.set(providerName, task);
     try {
@@ -390,7 +395,7 @@ function createEvmJsonRpcClient(options = {}) {
       if (providerIndex > 0) metricFor(provider.name, normalizedMethod).fallbacks += 1;
       for (let attempt = 1; attempt <= maxRetries + 1; attempt += 1) {
         try {
-          await throttle(provider.name);
+          await throttle(provider);
           return await fetchAttempt(provider, normalizedMethod, params, requestId, attempt, requestOptions.signal);
         } catch (error) {
           lastError = error;
@@ -432,7 +437,7 @@ function createEvmJsonRpcClient(options = {}) {
       if (providerIndex > 0) metricFor(provider.name, metricMethod).fallbacks += 1;
       for (let attempt = 1; attempt <= maxRetries + 1; attempt += 1) {
         try {
-          await throttle(provider.name);
+          await throttle(provider);
           return await fetchBatchAttempt(
             provider, requests, metricMethod, attempt, requestOptions.signal
           );
@@ -460,10 +465,25 @@ function createEvmJsonRpcClient(options = {}) {
   }
 
   function requestProvider(providerName, method, params = [], requestOptions = {}) {
-    const normalizedName = String(providerName || '').trim();
-    const provider = providers.find(({ name }) => name === normalizedName);
-    if (!provider) throw new TypeError(`Unknown EVM RPC provider: ${normalizedName || '(empty)'}`);
-    return requestAcross([provider], method, params, requestOptions);
+    return requestAcross(resolveProviders([providerName]), method, params, requestOptions);
+  }
+
+  function resolveProviders(providerNames) {
+    if (!Array.isArray(providerNames) || providerNames.length === 0) {
+      throw new TypeError('At least one EVM RPC provider name is required');
+    }
+    return providerNames.map((providerName) => {
+      const normalizedName = String(providerName || '').trim();
+      const provider = providers.find(({ name }) => name === normalizedName);
+      if (!provider) {
+        throw new TypeError(`Unknown EVM RPC provider: ${normalizedName || '(empty)'}`);
+      }
+      return provider;
+    });
+  }
+
+  function requestProviders(providerNames, method, params = [], requestOptions = {}) {
+    return requestAcross(resolveProviders(providerNames), method, params, requestOptions);
   }
 
   function requestBatch(requests, requestOptions = {}) {
@@ -471,10 +491,11 @@ function createEvmJsonRpcClient(options = {}) {
   }
 
   function requestBatchProvider(providerName, requests, requestOptions = {}) {
-    const normalizedName = String(providerName || '').trim();
-    const provider = providers.find(({ name }) => name === normalizedName);
-    if (!provider) throw new TypeError(`Unknown EVM RPC provider: ${normalizedName || '(empty)'}`);
-    return requestBatchAcross([provider], requests, requestOptions);
+    return requestBatchAcross(resolveProviders([providerName]), requests, requestOptions);
+  }
+
+  function requestBatchProviders(providerNames, requests, requestOptions = {}) {
+    return requestBatchAcross(resolveProviders(providerNames), requests, requestOptions);
   }
 
   function getMetrics() {
@@ -491,7 +512,9 @@ function createEvmJsonRpcClient(options = {}) {
     request,
     requestBatch,
     requestBatchProvider,
+    requestBatchProviders,
     requestProvider,
+    requestProviders,
     getMetrics,
     providers: providers.map(({ name }) => name),
   });

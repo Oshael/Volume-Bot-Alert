@@ -152,6 +152,8 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_POLL_INTERVAL_MS: '1',
       ROBINHOOD_MAX_ERROR_BACKOFF_MS: '999999',
       ROBINHOOD_RPC_MAX_RETRIES: '99',
+      ROBINHOOD_RPC_MIN_INTERVAL_MS: '500',
+      ROBINHOOD_ARCHIVE_RPC_MIN_INTERVAL_MS: '200',
       ROBINHOOD_RANGE_SIZE: '99999',
       ROBINHOOD_MAX_RANGE_SIZE: '99999',
       ROBINHOOD_LOOKBACK_BLOCKS: '0',
@@ -165,6 +167,8 @@ describe('runtime worker groups config', () => {
       assert.equal(config.robinhoodIngestionWorker.pollIntervalMs, 250);
       assert.equal(config.robinhoodIngestionWorker.maxErrorBackoffMs, 300_000);
       assert.equal(config.robinhoodIngestionWorker.rpcMaxRetries, 5);
+      assert.equal(config.robinhoodIngestionWorker.rpcMinIntervalMs, 500);
+      assert.equal(config.robinhoodIngestionWorker.archiveRpcMinIntervalMs, 200);
       assert.equal(config.robinhoodIngestionWorker.rangeSize, 10_000);
       assert.equal(config.robinhoodIngestionWorker.maxRangeSize, 10_000);
       assert.equal(config.robinhoodIngestionWorker.lookbackBlocks, 1);
