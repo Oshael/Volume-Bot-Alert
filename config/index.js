@@ -793,6 +793,12 @@ module.exports = {
       1,
       32
     ),
+    timestampBatchSize: parseIntegerInRange(
+      process.env.ROBINHOOD_TIMESTAMP_BATCH_SIZE,
+      10,
+      1,
+      100
+    ),
     observationConcurrency: parseIntegerInRange(
       process.env.ROBINHOOD_OBSERVATION_CONCURRENCY,
       1,

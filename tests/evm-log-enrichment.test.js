@@ -85,6 +85,31 @@ describe('EVM log timestamp enrichment', () => {
     assert.equal(enricher.snapshot().blocksRequested, 25);
   });
 
+  it('retains timestamps for the current range when it exceeds the LRU cache', async () => {
+    const rpcClient = {
+      request: async () => { throw new Error('individual request should not run'); },
+      requestBatch: async (requests) => requests.map(({ params }) => ({
+        timestamp: `0x${(1000 + Number(BigInt(params[0]))).toString(16)}`,
+      })),
+    };
+    const enricher = createBlockTimestampEnricher({
+      rpcClient,
+      batchSize: 2,
+      maxCacheEntries: 2,
+    });
+    const logs = Array.from(
+      { length: 5 },
+      (_, index) => log(`0x${(index + 1).toString(16)}`, `0x${index.toString(16)}`)
+    );
+
+    const enriched = await enricher.enrich(logs);
+
+    assert.deepEqual(
+      enriched.map((entry) => entry.blockTimestamp),
+      ['0x3e9', '0x3ea', '0x3eb', '0x3ec', '0x3ed']
+    );
+  });
+
   it('falls back once to individual requests when JSON-RPC batching is unsupported', async () => {
     let batchCalls = 0;
     const rpcClient = deferredClient();

@@ -165,6 +165,7 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_USE_ALCHEMY: '',
       ROBINHOOD_MAX_ADDRESSES_PER_LOG_REQUEST: '9999',
       ROBINHOOD_MARKET_LOG_FILTER_MODE: 'tracked-addresses',
+      ROBINHOOD_TIMESTAMP_BATCH_SIZE: '999',
     }, (config) => {
       assert.equal(config.robinhoodIngestionWorker.enabled, false);
       assert.equal(config.robinhoodIngestionWorker.pollIntervalMs, 250);
@@ -183,6 +184,7 @@ describe('runtime worker groups config', () => {
       assert.equal(config.robinhoodIngestionWorker.useAlchemy, false);
       assert.equal(config.robinhoodIngestionWorker.maxAddressesPerLogRequest, 1000);
       assert.equal(config.robinhoodIngestionWorker.marketLogFilterMode, 'tracked-addresses');
+      assert.equal(config.robinhoodIngestionWorker.timestampBatchSize, 100);
     });
   });
 

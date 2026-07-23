@@ -156,6 +156,7 @@ function createRobinhoodOnchainPipeline(options = {}) {
   const timestampEnricher = options.timestampEnricher || createBlockTimestampEnricher({
     rpcClient,
     concurrency: options.timestampConcurrency,
+    batchSize: options.timestampBatchSize,
   });
   const observationConcurrency = Math.max(1, Number(options.observationConcurrency) || 1);
   const socialMetadataQueue = options.socialMetadataQueue || null;

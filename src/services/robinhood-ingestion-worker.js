@@ -65,6 +65,7 @@ function normalizeOptions(options = {}) {
       ? 'tracked-addresses'
       : 'topics-only',
     timestampConcurrency: boundedInteger(options.timestampConcurrency, 16, 1, 32),
+    timestampBatchSize: boundedInteger(options.timestampBatchSize, 10, 1, 100),
     observationConcurrency: boundedInteger(options.observationConcurrency, 1, 1, 16),
   };
 }
@@ -265,6 +266,7 @@ function createRobinhoodIngestionWorker(deps = {}) {
       maxAddressesPerLogRequest: options.maxAddressesPerLogRequest,
       marketLogFilterMode: options.marketLogFilterMode,
       timestampConcurrency: options.timestampConcurrency,
+      timestampBatchSize: options.timestampBatchSize,
       observationConcurrency: options.observationConcurrency,
     });
   }

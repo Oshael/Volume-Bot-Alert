@@ -181,12 +181,17 @@ below the persisted 80-decimal boundary are rejected as
 `price_below_persisted_precision`; they must never keep a market range retrying
 indefinitely.
 
-Timestamp enrichment uses JSON-RPC batches of up to 10 block reads. Batch
+Timestamp enrichment uses JSON-RPC batches of 10 block reads by default. Batch
 responses are matched by request ID rather than response order; one failed or
 missing item fails the range atomically. Providers without batch support fall
 back once to bounded individual requests. Check
 `lastSnapshot.enrichment.timestamps.rpcBatchRequests`, `batchFallbacks` and
 `batchEnabled` in admin status when diagnosing throughput or 429s.
+
+`ROBINHOOD_TIMESTAMP_BATCH_SIZE` controls the number of block reads in each
+timestamp JSON-RPC batch (default `10`, accepted range `1..100`). Increase it
+gradually only after a public-provider soak; larger batches reduce request
+count, but any failed item still aborts the current market range atomically.
 
 Continuous ingestion pins `eth_getLogs`, head reads, block reads and timestamp
 batches to the Robinhood public provider. State methods with an explicit

@@ -72,7 +72,7 @@ function createBlockTimestampEnricher(options = {}) {
     return request;
   }
 
-  async function getTimestampBatch(blockNumbers) {
+  async function getTimestampBatch(blockNumbers, resolvedTimestamps) {
     active += 1;
     metrics.blocksRequested += blockNumbers.length;
     metrics.rpcBatchRequests += 1;
@@ -91,6 +91,7 @@ function createBlockTimestampEnricher(options = {}) {
           throw new Error(`Block ${blockNumbers[index]} has no timestamp`);
         }
         cacheTimestamp(blockNumbers[index], timestamp);
+        resolvedTimestamps.set(blockNumbers[index], timestamp);
       }
     } finally {
       active -= 1;
@@ -105,22 +106,31 @@ function createBlockTimestampEnricher(options = {}) {
     return output;
   }
 
-  async function fetchMissingBlocks(missingBlocks) {
+  async function fetchMissingBlocks(missingBlocks, resolvedTimestamps) {
     if (!batchEnabled) {
-      await mapWithConcurrency(missingBlocks, concurrency, getTimestamp);
+      await mapWithConcurrency(missingBlocks, concurrency, async (blockNumber) => {
+        resolvedTimestamps.set(blockNumber, await getTimestamp(blockNumber));
+      });
       return;
     }
     try {
-      await mapWithConcurrency(chunks(missingBlocks, batchSize), batchConcurrency, getTimestampBatch);
+      await mapWithConcurrency(
+        chunks(missingBlocks, batchSize),
+        batchConcurrency,
+        (blockNumbers) => getTimestampBatch(blockNumbers, resolvedTimestamps)
+      );
     } catch (error) {
       if (error?.code !== 'batch_unsupported') throw error;
       batchEnabled = false;
       metrics.batchFallbacks += 1;
-      await mapWithConcurrency(missingBlocks, concurrency, getTimestamp);
+      await mapWithConcurrency(missingBlocks, concurrency, async (blockNumber) => {
+        resolvedTimestamps.set(blockNumber, await getTimestamp(blockNumber));
+      });
     }
   }
 
   async function enrich(logs) {
+    const resolvedTimestamps = new Map();
     const missingBlocks = [...new Set(logs
       .filter((log) => !validTimestamp(log?.blockTimestamp))
       .map((log) => String(log.blockNumber)))]
@@ -128,11 +138,16 @@ function createBlockTimestampEnricher(options = {}) {
     if (missingBlocks.length) {
       metrics.batches += 1;
       metrics.maxBatchBlocks = Math.max(metrics.maxBatchBlocks, missingBlocks.length);
-      await fetchMissingBlocks(missingBlocks);
+      await fetchMissingBlocks(missingBlocks, resolvedTimestamps);
     }
-    return logs.map((log) => validTimestamp(log?.blockTimestamp)
-      ? log
-      : { ...log, blockTimestamp: cache.get(String(log.blockNumber)) });
+    return logs.map((log) => {
+      if (validTimestamp(log?.blockTimestamp)) return log;
+      const blockNumber = String(log.blockNumber);
+      return {
+        ...log,
+        blockTimestamp: cache.get(blockNumber) ?? resolvedTimestamps.get(blockNumber),
+      };
+    });
   }
 
   return Object.freeze({

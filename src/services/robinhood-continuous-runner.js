@@ -180,6 +180,7 @@ async function createRobinhoodContinuousRunner(options = {}) {
     retainRollbackState: !repository,
     windowAggregationEnabled: !repository,
     timestampConcurrency: options.timestampConcurrency,
+    timestampBatchSize: options.timestampBatchSize,
     observationConcurrency: options.observationConcurrency,
     socialMetadataQueue: options.socialMetadataQueue,
   });
