@@ -27,6 +27,7 @@ const stage72 = require('../src/utils/db-init-stage72');
 const stage74 = require('../src/utils/db-init-stage74');
 const stage78 = require('../src/utils/db-init-stage78');
 const stage79 = require('../src/utils/db-init-stage79');
+const stage81 = require('../src/utils/db-init-stage81');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 
 describe('Robinhood additive chain schema', () => {
@@ -351,6 +352,22 @@ describe('Robinhood additive chain schema', () => {
     assert.deepEqual(group.tables[0].columns, [
       'token_supply_status', 'token_supply_anchor_block_number',
     ]);
+  });
+
+  it('aligns shared catalog price precision with unbounded Robinhood buckets', () => {
+    const sql = stage81.STATEMENTS.join('\n');
+    const group = SCHEMA_GROUPS.find((entry) => (
+      entry.key === 'stage81-token-catalog-price-precision'
+    ));
+
+    assert.match(sql, /ALTER COLUMN last_price TYPE NUMERIC/);
+    assert.doesNotMatch(sql, /NUMERIC\s*\(/);
+    assert.equal(group.repair, 'node src/utils/db-init-stage81.js');
+    assert.deepEqual(group.tables[0].columnTypes.last_price, {
+      dataType: 'numeric',
+      numericPrecision: null,
+      numericScale: null,
+    });
   });
 
   it('adds protocol-safe liquidity evidence to exact Robinhood observations', () => {

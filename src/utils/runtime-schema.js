@@ -1800,6 +1800,22 @@ const SCHEMA_GROUPS = [
       },
     ],
   },
+  {
+    key: 'stage81-token-catalog-price-precision',
+    name: 'Stage 81 token catalog unbounded price precision',
+    repair: 'node src/utils/db-init-stage81.js',
+    tables: [{
+      table: 'token_catalog',
+      columns: ['last_price'],
+      columnTypes: {
+        last_price: {
+          dataType: 'numeric',
+          numericPrecision: null,
+          numericScale: null,
+        },
+      },
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
@@ -1815,6 +1831,7 @@ const PROFILE_GROUP_KEYS = {
     'stage78-robinhood-market-buckets-agg',
     'stage79-robinhood-supply-provenance',
     'stage80-meteora-eligibility-indexes',
+    'stage81-token-catalog-price-precision',
   ],
   runtime: SCHEMA_GROUPS.map((group) => group.key),
 };
@@ -1845,6 +1862,29 @@ function collectMismatchedDefaults(requirement, tableColumns, tableDefaults) {
     }
   }
   return mismatchedDefaults;
+}
+
+function collectMismatchedColumnTypes(requirement, tableColumns, tableColumnTypes) {
+  const mismatches = [];
+  for (const [columnName, expected] of Object.entries(requirement.columnTypes || {})) {
+    if (!tableColumns.has(columnName)) continue;
+    const actual = tableColumnTypes.get(columnName);
+    if (!actual) {
+      mismatches.push(`${requirement.table}.${columnName}=unknown`);
+      continue;
+    }
+    const fields = ['dataType', 'numericPrecision', 'numericScale'];
+    const differs = fields.some((field) => (
+      Object.hasOwn(expected, field) && actual[field] !== expected[field]
+    ));
+    if (differs) {
+      const actualType = actual.numericPrecision == null
+        ? actual.dataType
+        : `${actual.dataType}(${actual.numericPrecision},${actual.numericScale})`;
+      mismatches.push(`${requirement.table}.${columnName}=${actualType}`);
+    }
+  }
+  return mismatches;
 }
 
 function collectMissingConstraints(requirement, tableConstraints) {
@@ -1885,6 +1925,8 @@ async function loadSchemaSnapshot(tableNames) {
       columnsByTable: new Map(),
       constraintsByTable: new Map(),
       defaultsByTable: new Map(),
+      columnTypesByTable: new Map(),
+      indexesByTable: new Map(),
     };
   }
 
@@ -1897,7 +1939,8 @@ async function loadSchemaSnapshot(tableNames) {
       [normalized]
     ),
     query(
-      `SELECT table_name, column_name, column_default
+      `SELECT table_name, column_name, column_default,
+              data_type, numeric_precision, numeric_scale
        FROM information_schema.columns
        WHERE table_schema = 'public'
          AND table_name = ANY($1::text[])`,
@@ -1928,6 +1971,7 @@ async function loadSchemaSnapshot(tableNames) {
   const columnsByTable = new Map();
   const constraintsByTable = new Map();
   const defaultsByTable = new Map();
+  const columnTypesByTable = new Map();
   const indexesByTable = new Map();
   for (const row of columnResult.rows) {
     if (!columnsByTable.has(row.table_name)) {
@@ -1939,6 +1983,15 @@ async function loadSchemaSnapshot(tableNames) {
       defaultsByTable.set(row.table_name, new Map());
     }
     defaultsByTable.get(row.table_name).set(row.column_name, row.column_default || null);
+
+    if (!columnTypesByTable.has(row.table_name)) {
+      columnTypesByTable.set(row.table_name, new Map());
+    }
+    columnTypesByTable.get(row.table_name).set(row.column_name, {
+      dataType: row.data_type,
+      numericPrecision: row.numeric_precision == null ? null : Number(row.numeric_precision),
+      numericScale: row.numeric_scale == null ? null : Number(row.numeric_scale),
+    });
   }
 
   for (const row of constraintResult.rows) {
@@ -1953,7 +2006,10 @@ async function loadSchemaSnapshot(tableNames) {
     indexesByTable.get(row.table_name).set(row.index_name, row.index_definition || '');
   }
 
-  return { tables, columnsByTable, constraintsByTable, defaultsByTable, indexesByTable };
+  return {
+    tables, columnsByTable, constraintsByTable, defaultsByTable,
+    columnTypesByTable, indexesByTable,
+  };
 }
 
 function buildSchemaReport(groups, snapshot) {
@@ -1965,6 +2021,7 @@ function buildSchemaReport(groups, snapshot) {
     const missingConstraints = [];
     const missingIndexes = [];
     const mismatchedDefaults = [];
+    const mismatchedColumnTypes = [];
 
     for (const requirement of group.tables) {
       const tableName = requirement.table;
@@ -1982,6 +2039,10 @@ function buildSchemaReport(groups, snapshot) {
 
       const tableDefaults = snapshot.defaultsByTable.get(tableName) || new Map();
       mismatchedDefaults.push(...collectMismatchedDefaults(requirement, tableColumns, tableDefaults));
+      const tableColumnTypes = snapshot.columnTypesByTable.get(tableName) || new Map();
+      mismatchedColumnTypes.push(
+        ...collectMismatchedColumnTypes(requirement, tableColumns, tableColumnTypes)
+      );
 
       const tableConstraints = snapshot.constraintsByTable.get(tableName) || new Map();
       missingConstraints.push(...collectMissingConstraints(requirement, tableConstraints));
@@ -1995,6 +2056,7 @@ function buildSchemaReport(groups, snapshot) {
       || missingConstraints.length > 0
       || missingIndexes.length > 0
       || mismatchedDefaults.length > 0
+      || mismatchedColumnTypes.length > 0
     ) {
       issues.push({
         key: group.key,
@@ -2005,6 +2067,7 @@ function buildSchemaReport(groups, snapshot) {
         missingConstraints,
         missingIndexes,
         mismatchedDefaults,
+        mismatchedColumnTypes,
       });
     }
   }
@@ -2040,6 +2103,9 @@ function createRuntimeSchemaError(report, profile = 'runtime') {
     }
     if (issue.mismatchedDefaults.length > 0) {
       lines.push(`  Mismatched defaults: ${summarizeList(issue.mismatchedDefaults).join(', ')}`);
+    }
+    if (issue.mismatchedColumnTypes.length > 0) {
+      lines.push(`  Mismatched column types: ${summarizeList(issue.mismatchedColumnTypes).join(', ')}`);
     }
   }
 
