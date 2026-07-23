@@ -747,7 +747,7 @@ module.exports = {
     lookbackBlocks: parseIntegerInRange(process.env.ROBINHOOD_LOOKBACK_BLOCKS, 250, 1, 100_000),
     startBlock: parseOptionalBlock(process.env.ROBINHOOD_START_BLOCK),
     confirmations: parseIntegerInRange(process.env.ROBINHOOD_CONFIRMATIONS, 2, 0, 1000),
-    rangeSize: parseIntegerInRange(process.env.ROBINHOOD_RANGE_SIZE, 10, 1, 1000),
+    rangeSize: parseIntegerInRange(process.env.ROBINHOOD_RANGE_SIZE, 10, 1, 10_000),
     minRangeSize: parseIntegerInRange(process.env.ROBINHOOD_MIN_RANGE_SIZE, 1, 1, 1000),
     maxRangeSize: parseIntegerInRange(process.env.ROBINHOOD_MAX_RANGE_SIZE, 100, 1, 10_000),
     maxRangesPerPoll: parseIntegerInRange(

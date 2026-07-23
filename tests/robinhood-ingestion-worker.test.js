@@ -153,6 +153,7 @@ describe('Robinhood ingestion worker', () => {
     assert.equal(publicOnly.marketLogFilterMode, 'topics-only');
     assert.equal(publicOnly.rpcMinIntervalMs, 250);
     assert.equal(publicOnly.observationConcurrency, 1);
+    assert.equal(__private.normalizeOptions({ rangeSize: 8000 }).rangeSize, 8000);
     assert.throws(
       () => __private.createClient({ ...publicOnly, useAlchemy: true }),
       (error) => error.code === 'configuration_error'
@@ -164,6 +165,46 @@ describe('Robinhood ingestion worker', () => {
       alchemyRpcUrl: 'https://example.invalid/rpc',
     });
     assert.deepEqual(client.providers, ['robinhood-public', 'alchemy-free']);
+  });
+
+  it('pins transport and block reads to public while allowing only historical state fallback', async () => {
+    const calls = [];
+    const client = {
+      providers: ['robinhood-public', 'alchemy-free'],
+      getMetrics: () => ({ marker: true }),
+      request: async (method) => { calls.push(`fallback:${method}`); return method; },
+      requestBatch: async () => { calls.push('fallback:batch'); return []; },
+      requestProvider: async (provider, method) => {
+        calls.push(`${provider}:${method}`);
+        return method;
+      },
+      requestBatchProvider: async (provider) => {
+        calls.push(`${provider}:batch`);
+        return [];
+      },
+    };
+    const router = __private.createRobinhoodRpcRouter(client);
+
+    await router.request('eth_getLogs', [{}]);
+    await router.request('eth_getBlockByNumber', ['0x1', false]);
+    await router.request('eth_call', [{ to: '0x1' }, 'latest'], { fallbackOnRpcError: true });
+    await router.request('eth_call', [{ to: '0x1' }, '0xaa1a5'], { fallbackOnRpcError: true });
+    await router.requestBatch([
+      { method: 'eth_getBlockByNumber', params: ['0x1', false] },
+    ]);
+    await router.requestBatch([
+      { method: 'eth_call', params: [{ to: '0x1' }, '0xaa1a5'] },
+    ]);
+
+    assert.deepEqual(calls, [
+      'robinhood-public:eth_getLogs',
+      'robinhood-public:eth_getBlockByNumber',
+      'robinhood-public:eth_call',
+      'fallback:eth_call',
+      'robinhood-public:batch',
+      'fallback:batch',
+    ]);
+    assert.deepEqual(router.getMetrics(), { marker: true });
   });
 
   it('supports dRPC fallback alongside Alchemy with configurable order', () => {

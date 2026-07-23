@@ -5,6 +5,7 @@ const { createRobinhoodPersistenceRepository } = require('../models/robinhood-pe
 
 const PUBLIC_RPC_URL = 'https://rpc.mainnet.chain.robinhood.com';
 const ROBINHOOD_CHAIN_ID = 4663n;
+const PUBLIC_PROVIDER = 'robinhood-public';
 const FATAL_ERROR_CODES = new Set(['bootstrap_start_required', 'configuration_error', 'persistent_reorg']);
 const DEFAULT_FALLBACK_ORDER = 'drpc,alchemy';
 const FALLBACK_PROVIDERS = Object.freeze({
@@ -35,7 +36,7 @@ function normalizeOptions(options = {}) {
     lookbackBlocks: boundedInteger(options.lookbackBlocks, 250, 1, 100_000),
     startBlock: options.startBlock || null,
     confirmations: boundedInteger(options.confirmations, 2, 0, 1000),
-    rangeSize: boundedInteger(options.rangeSize, 10, 1, 1000),
+    rangeSize: boundedInteger(options.rangeSize, 10, 1, 10_000),
     minRangeSize: boundedInteger(options.minRangeSize, 1, 1, 1000),
     maxRangeSize: boundedInteger(options.maxRangeSize, 100, 1, 10_000),
     maxRangesPerPoll: boundedInteger(options.maxRangesPerPoll, 20, 1, 1000),
@@ -65,8 +66,42 @@ function parseFallbackOrder(value) {
   return order;
 }
 
+function isHistoricalBlockTag(value) {
+  if (value && typeof value === 'object') return true;
+  const tag = String(value ?? 'latest').trim().toLowerCase();
+  return !['', 'latest', 'pending', 'safe', 'finalized'].includes(tag);
+}
+
+function requiresArchiveFallback(method, params = []) {
+  return ['eth_call', 'eth_getCode', 'eth_getStorageAt'].includes(method)
+    && isHistoricalBlockTag(params?.[1]);
+}
+
+function createRobinhoodRpcRouter(client) {
+  if (typeof client?.requestProvider !== 'function'
+    || typeof client?.requestBatchProvider !== 'function') {
+    throw new TypeError('Robinhood RPC routing requires provider-specific request methods');
+  }
+  return Object.freeze({
+    providers: client.providers,
+    getMetrics: (...args) => client.getMetrics(...args),
+    request: (method, params = [], requestOptions = {}) => (
+      requiresArchiveFallback(method, params)
+        ? client.request(method, params, requestOptions)
+        : client.requestProvider(PUBLIC_PROVIDER, method, params, requestOptions)
+    ),
+    requestBatch: (requests, requestOptions = {}) => (
+      requests.some(({ method, params }) => requiresArchiveFallback(method, params))
+        ? client.requestBatch(requests, requestOptions)
+        : client.requestBatchProvider(PUBLIC_PROVIDER, requests, requestOptions)
+    ),
+    requestProvider: (...args) => client.requestProvider(...args),
+    requestBatchProvider: (...args) => client.requestBatchProvider(...args),
+  });
+}
+
 function createClient(options) {
-  const providers = [{ name: 'robinhood-public', url: options.publicRpcUrl }];
+  const providers = [{ name: PUBLIC_PROVIDER, url: options.publicRpcUrl }];
   for (const token of parseFallbackOrder(options.fallbackOrder)) {
     const spec = FALLBACK_PROVIDERS[token];
     if (options[spec.useKey] !== true) continue;
@@ -77,12 +112,13 @@ function createClient(options) {
     }
     providers.push({ name: spec.name, url: options[spec.urlKey] });
   }
-  return createEvmJsonRpcClient({
+  const client = createEvmJsonRpcClient({
     providers,
     timeoutMs: options.rpcTimeoutMs,
     maxRetries: options.rpcMaxRetries,
     minRequestIntervalMs: options.rpcMinIntervalMs,
   });
+  return createRobinhoodRpcRouter(client);
 }
 
 function parseChainId(value, providerName) {
@@ -294,5 +330,14 @@ module.exports = {
   start: worker.start,
   stop: worker.stop,
   validateRobinhoodProviderChainIds: validateProviderChainIds,
-  __private: { compactSnapshot, createClient, normalizeOptions, parseChainId, validateProviderChainIds },
+  __private: {
+    compactSnapshot,
+    createClient,
+    createRobinhoodRpcRouter,
+    isHistoricalBlockTag,
+    normalizeOptions,
+    parseChainId,
+    requiresArchiveFallback,
+    validateProviderChainIds,
+  },
 };

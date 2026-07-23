@@ -200,6 +200,36 @@ describe('provider-agnostic EVM JSON-RPC client', () => {
     assert.throws(() => client.requestProvider('missing', 'eth_chainId'), /Unknown EVM RPC provider/);
   });
 
+  it('can send a batch to one named provider without silently falling back', async () => {
+    const calls = [];
+    const client = createEvmJsonRpcClient({
+      providers: [
+        { name: 'robinhood-public', url: 'https://public.example.test' },
+        { name: 'alchemy-free', url: 'https://alchemy.example.test' },
+      ],
+      maxRetries: 0,
+      fetchImpl: async (url, init) => {
+        calls.push(url);
+        const requests = requestFrom(init);
+        return response(requests.map((request) => ({
+          jsonrpc: '2.0', id: request.id, result: request.params[0],
+        })));
+      },
+    });
+
+    const result = await client.requestBatchProvider('robinhood-public', [
+      { method: 'eth_getBlockByNumber', params: ['0x1', false] },
+      { method: 'eth_getBlockByNumber', params: ['0x2', false] },
+    ]);
+
+    assert.deepEqual(result, ['0x1', '0x2']);
+    assert.deepEqual(calls, ['https://public.example.test/']);
+    assert.throws(
+      () => client.requestBatchProvider('missing', []),
+      /Unknown EVM RPC provider/
+    );
+  });
+
   it('allows explicit provider fallback for historical-state RPC errors', async () => {
     const calls = [];
     const client = createEvmJsonRpcClient({

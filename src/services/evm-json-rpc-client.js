@@ -470,6 +470,13 @@ function createEvmJsonRpcClient(options = {}) {
     return requestBatchAcross(providers, requests, requestOptions);
   }
 
+  function requestBatchProvider(providerName, requests, requestOptions = {}) {
+    const normalizedName = String(providerName || '').trim();
+    const provider = providers.find(({ name }) => name === normalizedName);
+    if (!provider) throw new TypeError(`Unknown EVM RPC provider: ${normalizedName || '(empty)'}`);
+    return requestBatchAcross([provider], requests, requestOptions);
+  }
+
   function getMetrics() {
     const output = {};
     for (const [key, entry] of metrics) {
@@ -483,6 +490,7 @@ function createEvmJsonRpcClient(options = {}) {
   return Object.freeze({
     request,
     requestBatch,
+    requestBatchProvider,
     requestProvider,
     getMetrics,
     providers: providers.map(({ name }) => name),

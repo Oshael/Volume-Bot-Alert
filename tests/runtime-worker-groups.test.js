@@ -84,7 +84,7 @@ describe('runtime worker groups config', () => {
   });
 
   it('keeps Robinhood user visibility independent and disabled by default', () => {
-    withEnv({ ROBINHOOD_USER_VISIBILITY_ENABLED: undefined }, (config) => {
+    withEnv({ ROBINHOOD_USER_VISIBILITY_ENABLED: '' }, (config) => {
       assert.deepEqual(config.robinhoodUserVisibility, { enabled: false });
     });
     withEnv({ ROBINHOOD_USER_VISIBILITY_ENABLED: 'true' }, (config) => {
@@ -152,6 +152,8 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_POLL_INTERVAL_MS: '1',
       ROBINHOOD_MAX_ERROR_BACKOFF_MS: '999999',
       ROBINHOOD_RPC_MAX_RETRIES: '99',
+      ROBINHOOD_RANGE_SIZE: '99999',
+      ROBINHOOD_MAX_RANGE_SIZE: '99999',
       ROBINHOOD_LOOKBACK_BLOCKS: '0',
       ROBINHOOD_CONFIRMATIONS: '-1',
       ROBINHOOD_START_BLOCK: 'invalid',
@@ -163,6 +165,8 @@ describe('runtime worker groups config', () => {
       assert.equal(config.robinhoodIngestionWorker.pollIntervalMs, 250);
       assert.equal(config.robinhoodIngestionWorker.maxErrorBackoffMs, 300_000);
       assert.equal(config.robinhoodIngestionWorker.rpcMaxRetries, 5);
+      assert.equal(config.robinhoodIngestionWorker.rangeSize, 10_000);
+      assert.equal(config.robinhoodIngestionWorker.maxRangeSize, 10_000);
       assert.equal(config.robinhoodIngestionWorker.lookbackBlocks, 1);
       assert.equal(config.robinhoodIngestionWorker.confirmations, 0);
       assert.equal(config.robinhoodIngestionWorker.startBlock, null);

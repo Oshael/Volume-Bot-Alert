@@ -188,6 +188,14 @@ back once to bounded individual requests. Check
 `lastSnapshot.enrichment.timestamps.rpcBatchRequests`, `batchFallbacks` and
 `batchEnabled` in admin status when diagnosing throughput or 429s.
 
+Continuous ingestion pins `eth_getLogs`, head reads, block reads and timestamp
+batches to the Robinhood public provider. Only state methods with an explicit
+historical block tag (`eth_call`, `eth_getCode`, `eth_getStorageAt`) may use the
+configured archive fallback. This prevents large log ranges from consuming an
+Alchemy Free allowance. `ROBINHOOD_RANGE_SIZE` and `ROBINHOOD_MAX_RANGE_SIZE`
+accept values from 1 through 10,000; increase them only after a public transport
+probe and a persistence soak, because larger market ranges commit atomically.
+
 Persistent ingestion deliberately disables the read-only rollback maps and
 24-hour analytical window aggregator after an extended soak exhausted the
 Node.js heap. Persistence, cursor commits and timestamp batching are unchanged.
