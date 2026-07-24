@@ -343,7 +343,7 @@ function getAggregateRefreshBucketDates(bucketTs) {
   ];
 }
 
-function buildLiveMarketBucketPayload(row) {
+function buildLiveMarketBucketPayload(row, snapshot = {}) {
   if (!row?.token_address) {
     return null;
   }
@@ -353,6 +353,19 @@ function buildLiveMarketBucketPayload(row) {
     return null;
   }
 
+  const generatedAt = new Date().toISOString();
+  const observedAtDate = new Date(snapshot.ts || generatedAt);
+  const observedAt = Number.isFinite(observedAtDate.getTime())
+    ? observedAtDate.toISOString()
+    : candle.bucketTs;
+  const activity = {
+    volume5mUsd: toNumberOrNull(snapshot.vol5m),
+    volume1hUsd: toNumberOrNull(snapshot.vol1h),
+    volume6hUsd: toNumberOrNull(snapshot.vol6h),
+    volume24hUsd: toNumberOrNull(snapshot.vol24h),
+  };
+  const hasRollingVolume = Object.values(activity).some((value) => value != null);
+
   return {
     type: 'market:bucket',
     chain: 'solana',
@@ -361,13 +374,23 @@ function buildLiveMarketBucketPayload(row) {
     bucketTs: candle.bucketTs,
     sequence: `solana:${candle.bucketTs}:${String(candle.sampleCount).padStart(12, '0')}`,
     granularityMinutes: 1,
-    generatedAt: new Date().toISOString(),
+    generatedAt,
+    activity: hasRollingVolume ? activity : null,
+    valuation: {
+      type: 'mcap',
+      mcapUsd: candle.closeMcap,
+      priceUsd: candle.closePrice,
+      observedAt,
+    },
+    coverage: snapshot.volumeCoverage && typeof snapshot.volumeCoverage === 'object'
+      ? snapshot.volumeCoverage
+      : null,
     candle,
   };
 }
 
-function emitLiveMarketBucketUpdate(row) {
-  const payload = buildLiveMarketBucketPayload(row);
+function emitLiveMarketBucketUpdate(row, snapshot) {
+  const payload = buildLiveMarketBucketPayload(row, snapshot);
   if (!payload) {
     return false;
   }
@@ -825,7 +848,7 @@ async function upsertSnapshotBucket(snapshot) {
     await upsertAggregateBucketsForSourceBucket(address, getAggregateRefreshBucketDates(bucketTs));
   }
   invalidateSparklineCacheForAddresses([address]);
-  emitLiveMarketBucketUpdate(row);
+  emitLiveMarketBucketUpdate(row, snapshot);
 
   return row;
 }

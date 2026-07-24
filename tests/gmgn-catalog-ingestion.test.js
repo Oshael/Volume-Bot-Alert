@@ -301,6 +301,8 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(evaluationPayload.price, 0.2423);
     assert.equal(marketBucketPayload.mcap, 62425152);
     assert.equal(marketBucketPayload.price, 0.2423);
+    assert.equal(marketBucketPayload.vol5m, 3000);
+    assert.equal(marketBucketPayload.vol1h, 50000);
     assert.equal(marketBucketPayload.source, 'gmgn');
     assert.equal(volumeBucketPayload.vol5m, 3000);
     assert.equal(volumeBucketPayload.vol1h, 50000);

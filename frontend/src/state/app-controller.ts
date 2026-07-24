@@ -603,6 +603,25 @@ function buildRealtimeActivityFields(
   return fields;
 }
 
+function buildRealtimeMarketFields(
+  existing: ManualTokenEntry,
+  patch: RealtimeTokenMarketPatch,
+): Partial<ManualTokenEntry> {
+  const fields: Partial<ManualTokenEntry> = {
+    priceUsd: patch.priceUsd ?? existing.priceUsd ?? null,
+    fdv: patch.valuationType === 'fdv' ? patch.fdv : existing.fdv ?? null,
+    mcap: patch.valuationType === 'market-cap' ? patch.mcap : existing.mcap ?? null,
+    valuationType: patch.valuationType ?? existing.valuationType ?? null,
+    valuation: patch.valuation ?? existing.valuation ?? null,
+    ...buildRealtimeActivityFields(existing, patch.activity),
+    ...(patch.rollingVolumes || {}),
+  };
+  if (patch.volumeCoverage) {
+    fields.coverage = { ...(existing.coverage || {}), ...patch.volumeCoverage };
+  }
+  return fields;
+}
+
 function overlayLiveActivityOnDashboardSnapshot(
   fields: Partial<ManualTokenEntry>,
   existing: ManualTokenEntry | undefined,
@@ -1849,6 +1868,11 @@ export function createAppController(): AppController {
 
   function syncWorkspaceMarketSubscriptions() {
     const identities = new Map<string, { chain: TokenChain; address: string }>();
+    for (const token of getVisibleMonitoredPageTokens()) {
+      const identity = createLegacyCompatibleTokenIdentity(token.chain || 'solana', token.address);
+      identities.set(identity.key, { chain: identity.chain, address: identity.address });
+      if (identities.size >= WORKSPACE_REALTIME_SUBSCRIPTION_LIMIT) break;
+    }
     const tokens = [
       ...getMonitoredTokens(state),
       ...getManualTokens(state),
@@ -7559,11 +7583,7 @@ export function createAppController(): AppController {
     return selected;
   }
 
-  function getVisibleMonitoredSparklineIdentities() {
-    if (state.ui.livePanelLayout.spans.monitored <= 1) {
-      return [];
-    }
-
+  function getVisibleMonitoredPageTokens() {
     const safePerPage = Math.max(10, Math.floor(state.ui.monitoredPerPage) || 30);
     const filteredTracked = resolveMonitoredTableRows(getMonitoredTokens(state), {
       searchQuery: state.ui.monitoredSearchQuery,
@@ -7572,8 +7592,15 @@ export function createAppController(): AppController {
     const totalPages = Math.max(1, Math.ceil(filteredTracked.length / safePerPage));
     const safePage = Math.min(Math.max(0, Math.floor(state.ui.monitoredPage) || 0), totalPages - 1);
     const start = safePage * safePerPage;
-    return filteredTracked
-      .slice(start, start + safePerPage)
+    return filteredTracked.slice(start, start + safePerPage);
+  }
+
+  function getVisibleMonitoredSparklineIdentities() {
+    if (state.ui.livePanelLayout.spans.monitored <= 1) {
+      return [];
+    }
+
+    return getVisibleMonitoredPageTokens()
       .map((item) => getChartCapableIdentity(item.chain, item.address))
       .filter((identity): identity is TokenIdentity => Boolean(identity));
   }
@@ -8440,12 +8467,55 @@ export function createAppController(): AppController {
     };
   }
 
-  function applyLiveMarketBucketUpdate(payload: MarketBucketUpdateEvent) {
-    const update = buildLiveExpandedSparklineEntry(payload);
-    if (!update) {
-      return;
+  function buildLiveCompactSparklineEntry(payload: MarketBucketUpdateEvent) {
+    const identity = createLegacyCompatibleTokenIdentity(payload.chain, payload.address);
+    const entry = readWorkspaceSparklineCacheEntry(state.data.sparklineByAddress, identity);
+    const liveCandle = buildLiveTokenChartCandle(payload);
+    if (!entry || entry.loading || !Array.isArray(entry.candles) || !liveCandle) {
+      return null;
     }
 
+    const granularityMinutes = Math.max(1, Number(entry.granularityMinutes) || payload.granularityMinutes);
+    const maxCandles = Math.max(entry.candles.length, Number(entry.points) || SPARKLINE_POINT_COUNT);
+    const candles = mergeLiveCandleList(entry.candles, liveCandle, granularityMinutes, maxCandles);
+    if (!candles) {
+      return null;
+    }
+
+    const valuationType = liveCandle.valuationType ?? entry.valuationType;
+    const series = candles
+      .map((candle) => valuationType === 'fdv' ? candle.closeFdvUsd : candle.closeMcap)
+      .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+    return {
+      identity,
+      entry: {
+        ...entry,
+        chain: identity.chain,
+        address: identity.address,
+        valuationType,
+        pairAddress: payload.pairAddress ?? entry.pairAddress ?? null,
+        granularityMinutes,
+        generatedAt: payload.generatedAt || new Date().toISOString(),
+        latestBucketAt: candles[candles.length - 1]?.bucketTs ?? entry.latestBucketAt ?? null,
+        bucketCount: candles.length,
+        series: series.length ? series : entry.series,
+        candles,
+        loading: false,
+      } satisfies TokenSparklineEntry,
+    };
+  }
+
+  function applyLiveMarketBucketUpdate(payload: MarketBucketUpdateEvent) {
+    const compactUpdate = buildLiveCompactSparklineEntry(payload);
+    if (compactUpdate) {
+      const nextCache = { ...state.data.sparklineByAddress };
+      writeWorkspaceSparklineCacheEntry(nextCache, compactUpdate.identity, compactUpdate.entry);
+      state.data.sparklineByAddress = nextCache;
+      emit('monitored', 'manual', 'recent', 'old-week', 'top-performers');
+    }
+
+    const update = buildLiveExpandedSparklineEntry(payload);
+    if (!update) return;
     state.data.expandedSparklineByAddress = {
       ...state.data.expandedSparklineByAddress,
       [update.cacheKey]: update.entry,
@@ -8477,12 +8547,7 @@ export function createAppController(): AppController {
 
     setTrackedToken({
       ...existing,
-      priceUsd: patch.priceUsd ?? existing.priceUsd ?? null,
-      fdv: patch.valuationType === 'fdv' ? patch.fdv : existing.fdv ?? null,
-      mcap: patch.valuationType === 'market-cap' ? patch.mcap : existing.mcap ?? null,
-      valuationType: patch.valuationType ?? existing.valuationType ?? null,
-      valuation: patch.valuation ?? existing.valuation ?? null,
-      ...buildRealtimeActivityFields(existing, patch.activity),
+      ...buildRealtimeMarketFields(existing, patch),
       lastActivityAt: patch.observedAt,
       lastSeenAt: patch.observedAt,
       activityState: patch.activityState,
@@ -8490,6 +8555,7 @@ export function createAppController(): AppController {
       _liveMarketSequence: payload.sequence,
     });
     state.runtime.monitoredRevision += 1;
+    syncWorkspaceMarketSubscriptions();
     emit('monitored', 'manual', 'recent', 'old-week', 'top-performers');
     return true;
   }
@@ -13602,6 +13668,7 @@ export function createAppController(): AppController {
     setMonitoredSearchQuery(query: string) {
       state.ui.monitoredSearchQuery = String(query || '');
       state.ui.monitoredPage = 0;
+      syncWorkspaceMarketSubscriptions();
       emit('monitored');
       refreshMonitoredSparklinesIfExpanded('monitored-search');
     },
@@ -13738,6 +13805,7 @@ export function createAppController(): AppController {
     },
     setMonitoredPage(page: number) {
       state.ui.monitoredPage = clampPage(page, getVisibleMonitoredTokens().length, state.ui.monitoredPerPage);
+      syncWorkspaceMarketSubscriptions();
       emit('monitored');
       refreshMonitoredSparklinesIfExpanded('monitored-page');
     },
@@ -13770,6 +13838,7 @@ export function createAppController(): AppController {
     setMonitoredPerPage(perPage: number) {
       state.ui.monitoredPerPage = normalizeUiPerPage(perPage, 30);
       state.ui.monitoredPage = clampPage(state.ui.monitoredPage, getVisibleMonitoredTokens().length, state.ui.monitoredPerPage);
+      syncWorkspaceMarketSubscriptions();
       queueUiPrefsPersist();
       emit('monitored');
       refreshMonitoredSparklinesIfExpanded('monitored-per-page');
@@ -13962,6 +14031,7 @@ export function createAppController(): AppController {
         normalizeMonitoredCriterion(mode, window),
       );
       state.ui.monitoredPage = 0;
+      syncWorkspaceMarketSubscriptions();
       queueUiPrefsPersist();
       emit('monitored');
       refreshMonitoredSparklinesIfExpanded('monitored-sort');

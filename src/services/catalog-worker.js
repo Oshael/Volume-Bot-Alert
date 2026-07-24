@@ -741,6 +741,11 @@ async function applyManualGmgnInfoSnapshot(token, gmgnInfo, traceInitialEval, re
     pairAddress: snapshot.pairAddress,
     mcap: snapshot.mcap,
     price: snapshot.price,
+    vol5m: snapshot.vol5m,
+    vol1h: snapshot.vol1h,
+    vol6h: snapshot.vol6h,
+    vol24h: snapshot.vol24h,
+    volumeCoverage: snapshot.volumeCoverage,
     source: 'gmgn',
   });
   await tokenMarketVolumeBucket1m.upsertSnapshotBucket({

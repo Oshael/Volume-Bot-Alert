@@ -193,6 +193,8 @@ async function persistObservation(address, data, state, nowMs, tradeUsd) {
   const solUsd = getSolUsd();
   const mcapUsd = resolveMcapUsd(data, state, solUsd);
   const priceUsd = resolvePriceUsd(data, mcapUsd);
+  appendVolumeEvent(state, tradeUsd, nowMs);
+  const volumeSnapshot = buildVolumeSnapshot(state, nowMs);
 
   if (mcapUsd && mcapUsd > 0) {
     await tokenMarketBucket1m.upsertSnapshotBucket({
@@ -200,18 +202,18 @@ async function persistObservation(address, data, state, nowMs, tradeUsd) {
       ts: new Date(nowMs),
       mcap: mcapUsd,
       price: priceUsd,
+      ...volumeSnapshot,
       source: SOURCE,
     });
     status.totalMarketBuckets += 1;
   }
 
-  appendVolumeEvent(state, tradeUsd, nowMs);
   if (tradeUsd > 0) {
     await tokenMarketVolumeBucket1m.upsertSnapshotBucket({
       chain: 'solana',
       tokenAddress: address,
       ts: new Date(nowMs),
-      ...buildVolumeSnapshot(state, nowMs),
+      ...volumeSnapshot,
       source: SOURCE,
     });
     status.totalVolumeBuckets += 1;

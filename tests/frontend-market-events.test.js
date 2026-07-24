@@ -105,7 +105,15 @@ describe('frontend realtime market events', () => {
   it('builds a fresh FDV patch with monotonic committed activity deltas', () => {
     const patch = marketEvents.buildRealtimeTokenMarketPatch(
       marketEvents.normalizeMarketBucketUpdate(event({
-        activity: { volumeUsd: '450.25', swaps: 3 },
+        activity: {
+          volumeUsd: '450.25',
+          swaps: 3,
+          volume5mUsd: '1250.5',
+          volume1hUsd: 4200,
+          volume6hUsd: 9900,
+          volume24hUsd: 21500,
+        },
+        coverage: { '5m': 'complete', '1h': 'complete', '6h': 'partial', '24h': 'partial' },
         valuation: {
           type: 'fdv',
           fdvUsd: '120000',
@@ -120,6 +128,18 @@ describe('frontend realtime market events', () => {
     assert.equal(patch.priceUsd, 0.12);
     assert.deepEqual(patch.valuation, {
       type: 'fdv', usd: 120000, observedAt: '2026-07-15T12:00:20.000Z', freshness: 'fresh',
+    });
+    assert.deepEqual(patch.rollingVolumes, {
+      volume5m: 1250.5,
+      volume1h: 4200,
+      volume6h: 9900,
+      volume24h: 21500,
+    });
+    assert.deepEqual(patch.volumeCoverage, {
+      '5m': 'complete',
+      '1h': 'complete',
+      '6h': 'partial',
+      '24h': 'partial',
     });
     assert.deepEqual(patch.activity, {
       bucketTs: '2026-07-15T12:00:00.000Z',

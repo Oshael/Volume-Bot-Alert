@@ -74,8 +74,12 @@ describe('PumpFun pre-migration capture', () => {
     const originalMarket = tokenMarketBucket1m.upsertSnapshotBucket;
     const originalVolume = tokenMarketVolumeBucket1m.upsertSnapshotBucket;
     const originalSolPrice = solPrice.getPrice;
+    const marketCalls = [];
     const volumeCalls = [];
-    tokenMarketBucket1m.upsertSnapshotBucket = async (payload) => payload;
+    tokenMarketBucket1m.upsertSnapshotBucket = async (payload) => {
+      marketCalls.push(payload);
+      return payload;
+    };
     tokenMarketVolumeBucket1m.upsertSnapshotBucket = async (payload) => {
       volumeCalls.push(payload);
       return payload;
@@ -91,6 +95,8 @@ describe('PumpFun pre-migration capture', () => {
       });
 
       assert.equal(volumeCalls.length, 1);
+      assert.equal(marketCalls[0].vol5m, 200);
+      assert.equal(marketCalls[0].vol24h, 200);
       assert.equal(volumeCalls[0].tokenAddress, VALID_MINT);
       assert.equal(volumeCalls[0].vol5m, 200);
       assert.equal(volumeCalls[0].vol1h, 200);

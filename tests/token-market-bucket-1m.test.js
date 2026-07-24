@@ -543,6 +543,13 @@ describe('token market 1m bucket helpers', () => {
       low_price: '0.000635',
       close_price: '0.000635',
       sample_count: 35,
+    }, {
+      ts: '2026-06-23T21:09:42.000Z',
+      vol5m: '1250.5',
+      vol1h: 4200,
+      vol6h: 9900,
+      vol24h: 21500,
+      volumeCoverage: { '5m': 'complete', '1h': 'complete', '6h': 'partial', '24h': 'partial' },
     });
 
     assert.equal(payload.type, 'market:bucket');
@@ -552,6 +559,19 @@ describe('token market 1m bucket helpers', () => {
     assert.equal(payload.bucketTs, '2026-06-23T21:09:00.000Z');
     assert.equal(payload.sequence, 'solana:2026-06-23T21:09:00.000Z:000000000035');
     assert.equal(payload.granularityMinutes, 1);
+    assert.deepEqual(payload.activity, {
+      volume5mUsd: 1250.5,
+      volume1hUsd: 4200,
+      volume6hUsd: 9900,
+      volume24hUsd: 21500,
+    });
+    assert.deepEqual(payload.valuation, {
+      type: 'mcap',
+      mcapUsd: 635437,
+      priceUsd: 0.000635,
+      observedAt: '2026-06-23T21:09:42.000Z',
+    });
+    assert.equal(payload.coverage['6h'], 'partial');
     assert.equal(payload.candle.bucketTs, '2026-06-23T21:09:00.000Z');
     assert.equal(payload.candle.granularityMinutes, 1);
     assert.equal(payload.candle.highMcap, 642339);

@@ -36,6 +36,10 @@ export interface MarketBucketUpdateEvent {
   activity?: {
     volumeUsd?: unknown;
     currentVolume5mUsd?: unknown;
+    volume5mUsd?: unknown;
+    volume1hUsd?: unknown;
+    volume6hUsd?: unknown;
+    volume24hUsd?: unknown;
     prevVolume5mCanonical?: unknown;
     volume5mBaselineAt?: unknown;
     volume5mWindowEnd?: unknown;
@@ -69,6 +73,13 @@ export interface RealtimeTokenMarketPatch {
   } | null;
   fdv: number | null;
   mcap: number | null;
+  rollingVolumes: {
+    volume5m?: number;
+    volume1h?: number;
+    volume6h?: number;
+    volume24h?: number;
+  } | null;
+  volumeCoverage: Partial<Record<'5m' | '1h' | '6h' | '24h', 'complete' | 'partial' | 'unavailable'>> | null;
   activity: {
     bucketTs: string;
     volumeUsd: number | null;
@@ -291,6 +302,30 @@ function normalizeRealtimeValuation(value: MarketBucketUpdateEvent['valuation'])
   return { type: null, usd: null };
 }
 
+function buildRealtimeRollingVolumes(event: MarketBucketUpdateEvent) {
+  const mappings = [
+    ['volume5mUsd', 'volume5m'],
+    ['volume1hUsd', 'volume1h'],
+    ['volume6hUsd', 'volume6h'],
+    ['volume24hUsd', 'volume24h'],
+  ] as const;
+  const values: NonNullable<RealtimeTokenMarketPatch['rollingVolumes']> = {};
+  const coverage: NonNullable<RealtimeTokenMarketPatch['volumeCoverage']> = {};
+  for (const [sourceKey, targetKey] of mappings) {
+    const value = nonNegativeMetric(event.activity?.[sourceKey]);
+    if (value != null) values[targetKey] = value;
+    const window = targetKey.slice('volume'.length) as keyof typeof coverage;
+    const coverageValue = String(event.coverage?.[window] || '');
+    if (coverageValue === 'complete' || coverageValue === 'partial' || coverageValue === 'unavailable') {
+      coverage[window] = coverageValue;
+    }
+  }
+  return {
+    values: Object.keys(values).length > 0 ? values : null,
+    coverage: Object.keys(coverage).length > 0 ? coverage : null,
+  };
+}
+
 export function buildRealtimeTokenMarketPatch(
   event: MarketBucketUpdateEvent,
   previousActivity: RealtimeActivityState = {},
@@ -302,6 +337,7 @@ export function buildRealtimeTokenMarketPatch(
   const applicableValuationType = valuationUsd == null ? null : valuationType;
   const observedAt = validTimestamp(valuation?.observedAt) || event.bucketTs;
   const activity = buildRealtimeActivityPatch(event, previousActivity);
+  const rolling = buildRealtimeRollingVolumes(event);
   const patch: RealtimeTokenMarketPatch = {
     observedAt,
     priceUsd: finiteMetric(valuation?.priceUsd),
@@ -312,9 +348,11 @@ export function buildRealtimeTokenMarketPatch(
       : null,
     fdv: applicableValuationType === 'fdv' ? valuationUsd : null,
     mcap: applicableValuationType === 'mcap' ? valuationUsd : null,
+    rollingVolumes: rolling.values,
+    volumeCoverage: rolling.coverage,
     activity,
   };
-  return patch.valuation || patch.priceUsd != null || patch.activity ? patch : null;
+  return patch.valuation || patch.priceUsd != null || patch.activity || patch.rollingVolumes ? patch : null;
 }
 
 export function createMarketEventOrderGate(maxEntries = 4096) {
