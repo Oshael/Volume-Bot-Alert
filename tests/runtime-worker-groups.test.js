@@ -37,7 +37,7 @@ describe('runtime worker groups config', () => {
     withEnv({ BACKGROUND_WORKER_GROUPS: '' }, (config) => {
       assert.deepEqual(config.runtime.workerGroupsRequested, ['all']);
       assert.deepEqual(config.runtime.workerGroupsActive, ['core', 'market', 'maintenance']);
-      assert.deepEqual(config.runtime.workerGroupsSkipped, ['robinhood']);
+      assert.deepEqual(config.runtime.workerGroupsSkipped, ['robinhood', 'robinhood-backfill']);
     });
   });
 
@@ -45,7 +45,10 @@ describe('runtime worker groups config', () => {
     withEnv({ BACKGROUND_WORKER_GROUPS: ' core,market,core ' }, (config) => {
       assert.deepEqual(config.runtime.workerGroupsRequested, ['core', 'market']);
       assert.deepEqual(config.runtime.workerGroupsActive, ['core', 'market']);
-      assert.deepEqual(config.runtime.workerGroupsSkipped, ['maintenance', 'robinhood']);
+      assert.deepEqual(
+        config.runtime.workerGroupsSkipped,
+        ['maintenance', 'robinhood', 'robinhood-backfill']
+      );
     });
   });
 
@@ -53,7 +56,7 @@ describe('runtime worker groups config', () => {
     withEnv({ BACKGROUND_WORKER_GROUPS: 'maintenance,all' }, (config) => {
       assert.deepEqual(config.runtime.workerGroupsRequested, ['maintenance', 'all']);
       assert.deepEqual(config.runtime.workerGroupsActive, ['core', 'market', 'maintenance']);
-      assert.deepEqual(config.runtime.workerGroupsSkipped, ['robinhood']);
+      assert.deepEqual(config.runtime.workerGroupsSkipped, ['robinhood', 'robinhood-backfill']);
     });
   });
 
@@ -79,7 +82,21 @@ describe('runtime worker groups config', () => {
     withEnv({ BACKGROUND_WORKER_GROUPS: 'robinhood' }, (config) => {
       assert.deepEqual(config.runtime.workerGroupsRequested, ['robinhood']);
       assert.deepEqual(config.runtime.workerGroupsActive, ['robinhood']);
-      assert.deepEqual(config.runtime.workerGroupsSkipped, ['core', 'market', 'maintenance']);
+      assert.deepEqual(
+        config.runtime.workerGroupsSkipped,
+        ['core', 'market', 'maintenance', 'robinhood-backfill']
+      );
+    });
+  });
+
+  it('allows the Robinhood backfill only as an isolated worker group', () => {
+    withEnv({ BACKGROUND_WORKER_GROUPS: 'robinhood-backfill' }, (config) => {
+      assert.deepEqual(config.runtime.workerGroupsRequested, ['robinhood-backfill']);
+      assert.deepEqual(config.runtime.workerGroupsActive, ['robinhood-backfill']);
+      assert.deepEqual(
+        config.runtime.workerGroupsSkipped,
+        ['core', 'market', 'maintenance', 'robinhood']
+      );
     });
   });
 
@@ -107,7 +124,7 @@ describe('runtime worker groups config', () => {
     );
 
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /cannot combine isolated group robinhood/);
+    assert.match(result.stderr, /cannot combine isolated worker groups/);
   });
 
   it('bounds the Robinhood retention worker maintenance controls', () => {
@@ -191,6 +208,85 @@ describe('runtime worker groups config', () => {
       assert.equal(config.robinhoodIngestionWorker.maxAddressesPerLogRequest, 1000);
       assert.equal(config.robinhoodIngestionWorker.marketLogFilterMode, 'tracked-addresses');
       assert.equal(config.robinhoodIngestionWorker.timestampBatchSize, 100);
+    });
+  });
+
+  it('keeps backfill shadow disabled and bounds its dedicated RPC controls', () => {
+    withEnv({ ROBINHOOD_BACKFILL_SHADOW_ENABLED: '' }, (config) => {
+      assert.equal(config.robinhoodBackfillMarketScanner.enabled, false);
+    });
+    withEnv({
+      ROBINHOOD_BACKFILL_SHADOW_ENABLED: 'true',
+      ROBINHOOD_BACKFILL_START_BLOCK: '0x64',
+      ROBINHOOD_SCAN_PROVIDER: 'drpc',
+      ROBINHOOD_HEAD_PROVIDER: 'public',
+      ROBINHOOD_SCAN_RANGE_SIZE: '99999',
+      ROBINHOOD_SCAN_MIN_RANGE_SIZE: '0',
+      ROBINHOOD_SCAN_IN_FLIGHT_RANGES: '99',
+      ROBINHOOD_SCAN_MAX_LOGS_PER_RANGE: '0',
+      ROBINHOOD_SCAN_MAX_BUFFERED_LOGS: '9999999',
+      ROBINHOOD_SCAN_MAX_PENDING_LOGS: '99999999',
+      ROBINHOOD_BACKFILL_DISCOVERY_ENABLED: 'true',
+      ROBINHOOD_DISCOVERY_SCAN_PROVIDER: 'alchemy',
+      ROBINHOOD_DISCOVERY_SCAN_RANGE_SIZE: '10',
+      ROBINHOOD_DISCOVERY_SCAN_MAX_RANGES_PER_POLL: '999',
+      ROBINHOOD_BACKFILL_DISCOVERY_DECODER_VERSION: ' discovery-v2 ',
+      ROBINHOOD_SCAN_INTERVAL_MS: '1',
+      ROBINHOOD_SCAN_RPC_TIMEOUT_MS: '999999',
+      ROBINHOOD_SCAN_RPC_MAX_RETRIES: '99',
+      ROBINHOOD_SCAN_RPC_MIN_INTERVAL_MS: '999999',
+      ROBINHOOD_BACKFILL_DECODER_VERSION: ' market-log-v2 ',
+    }, (config) => {
+      const scanner = config.robinhoodBackfillMarketScanner;
+      assert.equal(scanner.enabled, true);
+      assert.equal(scanner.startBlock, '0x64');
+      assert.equal(scanner.rangeSize, 10_000);
+      assert.equal(scanner.minRangeSize, 1);
+      assert.equal(scanner.inFlightRanges, 8);
+      assert.equal(scanner.maxLogsPerRange, 1);
+      assert.equal(scanner.maxBufferedLogs, 1_000_000);
+      assert.equal(scanner.maxPendingLogs, 10_000_000);
+      assert.equal(scanner.intervalMs, 250);
+      assert.equal(scanner.rpcTimeoutMs, 60_000);
+      assert.equal(scanner.rpcMaxRetries, 5);
+      assert.equal(scanner.rpcMinIntervalMs, 60_000);
+      assert.equal(scanner.decoderVersion, 'market-log-v2');
+      assert.deepEqual(config.robinhoodBackfillDiscoveryScanner, {
+        enabled: true, scanProvider: 'alchemy', rangeSize: 10, maxRangesPerPoll: 100,
+        decoderVersion: 'discovery-v2',
+      });
+    });
+  });
+
+  it('keeps backfill processing bounded and disabled unless explicit', () => {
+    withEnv({
+      ROBINHOOD_BACKFILL_ENRICHMENT_ENABLED: 'true',
+      ROBINHOOD_BACKFILL_ALCHEMY_TIMESTAMPS_ENABLED: 'true',
+      ROBINHOOD_ALCHEMY_RPC_URL: 'https://alchemy.test',
+      ROBINHOOD_BACKFILL_ENRICHMENT_INTERVAL_MS: '1',
+      ROBINHOOD_BACKFILL_ENRICHMENT_CLAIM_SIZE: '9999',
+      ROBINHOOD_BACKFILL_ENRICHMENT_LEASE_MS: '1',
+      ROBINHOOD_ENRICHMENT_RPC_MIN_INTERVAL_MS: '999999',
+      ROBINHOOD_RPC_BATCH_SIZE: '999',
+      ROBINHOOD_BACKFILL_FINALIZER_ENABLED: 'true',
+      ROBINHOOD_BACKFILL_FINALIZER_INTERVAL_MS: '1',
+      ROBINHOOD_BACKFILL_FINALIZER_RANGE_LIMIT: '0',
+    }, (config) => {
+      const enrichment = config.robinhoodBackfillEnrichmentWorker;
+      assert.equal(enrichment.enabled, true);
+      assert.equal(enrichment.alchemyTimestampsEnabled, true);
+      assert.equal(enrichment.alchemyRpcUrl, 'https://alchemy.test');
+      assert.equal(enrichment.intervalMs, 250);
+      assert.equal(enrichment.limit, 1000);
+      assert.equal(enrichment.leaseMs, 1000);
+      assert.equal(enrichment.rpcMinIntervalMs, 60_000);
+      assert.equal(enrichment.rpcBatchSize, 100);
+      assert.deepEqual(config.robinhoodBackfillFinalizerWorker, {
+        enabled: true,
+        intervalMs: 250,
+        maxErrorBackoffMs: 30_000,
+        limit: 1,
+      });
     });
   });
 

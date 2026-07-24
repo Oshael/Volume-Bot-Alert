@@ -36,6 +36,9 @@ const socketHub = require('./services/socket-hub');
 const catalogWorker = require('./services/catalog-worker');
 const catalogCleanupWorker = require('./services/catalog-cleanup-worker');
 const robinhoodRetentionWorker = require('./services/robinhood-retention-worker');
+const robinhoodBackfillDiscoveryScanner = require('./services/robinhood-backfill-discovery-scanner');
+const robinhoodBackfillMarketScanner = require('./services/robinhood-backfill-market-scanner');
+const robinhoodBackfillRuntime = require('./services/robinhood-backfill-runtime');
 const robinhoodIngestionWorker = require('./services/robinhood-ingestion-worker');
 const robinhoodCatalogStagingWorker = require('./services/robinhood-catalog-staging-worker');
 const { buildRobinhoodCatalogStagingTelemetry } = robinhoodCatalogStagingWorker;
@@ -71,6 +74,11 @@ const { createWorkerLeaseManager } = require('./services/worker-lease-manager');
 const workerLease = require('./models/worker-lease');
 
 const ROBINHOOD_INGESTION_LEASE_KEY = 'robinhood-ingestion-worker';
+const ROBINHOOD_BACKFILL_DISCOVERY_LEASE_KEY = 'robinhood-backfill-discovery-scanner';
+const ROBINHOOD_BACKFILL_SCANNER_LEASE_KEY = 'robinhood-backfill-market-scanner';
+const ROBINHOOD_BACKFILL_ENRICHMENT_LEASE_KEY = 'robinhood-backfill-enrichment-worker';
+const ROBINHOOD_BACKFILL_FINALIZER_LEASE_KEY = 'robinhood-backfill-finalizer-worker';
+const ROBINHOOD_BACKFILL_AGGREGATION_LEASE_KEY = 'robinhood-backfill-aggregation-worker';
 const ROBINHOOD_CATALOG_STAGING_LEASE_KEY = 'robinhood-catalog-staging-worker';
 const ROBINHOOD_CATALOG_PROJECTION_LEASE_KEY = 'robinhood-catalog-projection-worker';
 const app = express();
@@ -407,6 +415,75 @@ function startWorkerSet() {
     });
   }
 
+  const robinhoodBackfillGroup = hasWorkerGroup('robinhood-backfill')
+    ? 'robinhood-backfill'
+    : hasWorkerGroup('robinhood') ? 'robinhood' : null;
+  if (robinhoodBackfillGroup) {
+    if (config.robinhoodBackfillDiscoveryScanner.enabled) {
+      startLockedWorker(
+        robinhoodBackfillGroup,
+        ROBINHOOD_BACKFILL_DISCOVERY_LEASE_KEY,
+        'Robinhood backfill discovery scanner',
+        () => robinhoodBackfillDiscoveryScanner.start({
+          ...config.robinhoodBackfillMarketScanner,
+          ...config.robinhoodBackfillDiscoveryScanner,
+        }),
+        { metadataProvider: () => ({ telemetry: robinhoodBackfillDiscoveryScanner.getStatus() }) }
+      );
+    }
+    if (config.robinhoodBackfillMarketScanner.enabled) {
+      startLockedWorker(
+        robinhoodBackfillGroup,
+        ROBINHOOD_BACKFILL_SCANNER_LEASE_KEY,
+        'Robinhood backfill market scanner',
+        () => robinhoodBackfillMarketScanner.start(config.robinhoodBackfillMarketScanner),
+        { metadataProvider: () => ({ telemetry: robinhoodBackfillMarketScanner.getStatus() }) }
+      );
+    }
+    if (config.robinhoodBackfillEnrichmentWorker.enabled) {
+      startLockedWorker(
+        robinhoodBackfillGroup,
+        ROBINHOOD_BACKFILL_ENRICHMENT_LEASE_KEY,
+        'Robinhood backfill enrichment worker',
+        () => robinhoodBackfillRuntime.enrichment.start(
+          config.robinhoodBackfillEnrichmentWorker
+        ),
+        {
+          metadataProvider: () => ({
+            telemetry: robinhoodBackfillRuntime.enrichment.getStatus(),
+          }),
+        }
+      );
+    }
+    if (config.robinhoodBackfillFinalizerWorker.enabled) {
+      startLockedWorker(
+        robinhoodBackfillGroup,
+        ROBINHOOD_BACKFILL_FINALIZER_LEASE_KEY,
+        'Robinhood backfill finalizer worker',
+        () => robinhoodBackfillRuntime.finalizer.start(config.robinhoodBackfillFinalizerWorker),
+        {
+          metadataProvider: () => ({
+            telemetry: robinhoodBackfillRuntime.finalizer.getStatus(),
+          }),
+        }
+      );
+    }
+    if (config.robinhoodBackfillAggregationWorker.enabled) {
+      startLockedWorker(
+        robinhoodBackfillGroup,
+        ROBINHOOD_BACKFILL_AGGREGATION_LEASE_KEY,
+        'Robinhood backfill aggregation worker',
+        () => robinhoodBackfillRuntime.aggregation.start(
+          config.robinhoodBackfillAggregationWorker
+        ),
+        {
+          metadataProvider: () => ({
+            telemetry: robinhoodBackfillRuntime.aggregation.getStatus(),
+          }),
+        }
+      );
+    }
+  }
   if (hasWorkerGroup('robinhood')) {
     const ingestionGate = evaluateRobinhoodIngestionGate(config);
     if (ingestionGate.allowed) {
@@ -643,6 +720,11 @@ async function shutdownGracefully(signal = 'SIGTERM') {
   try {
     await Promise.all([
       robinhoodIngestionWorker.stop(),
+      robinhoodBackfillDiscoveryScanner.stop(),
+      robinhoodBackfillMarketScanner.stop(),
+      robinhoodBackfillRuntime.enrichment.stop(),
+      robinhoodBackfillRuntime.finalizer.stop(),
+      robinhoodBackfillRuntime.aggregation.stop(),
       robinhoodCatalogStagingWorker.stop(),
       robinhoodCatalogProjectionWorker.stop(),
       robinhoodLiveCatalogWorker.stop(),

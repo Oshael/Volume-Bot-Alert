@@ -236,7 +236,7 @@ function getRuntimeRole(runSocketHub, runBackgroundJobs) {
 }
 
 const SHARED_WORKER_GROUPS = Object.freeze(['core', 'market', 'maintenance']);
-const ISOLATED_WORKER_GROUPS = Object.freeze(['robinhood']);
+const ISOLATED_WORKER_GROUPS = Object.freeze(['robinhood', 'robinhood-backfill']);
 const WORKER_GROUPS = Object.freeze([...SHARED_WORKER_GROUPS, ...ISOLATED_WORKER_GROUPS]);
 const WORKER_GROUP_SET = new Set(WORKER_GROUPS);
 
@@ -466,7 +466,7 @@ if (workerGroups.invalid.length > 0) {
   missing.push(`BACKGROUND_WORKER_GROUPS invalid values: ${workerGroups.invalid.join(', ')}`);
 }
 if (workerGroups.isolationConflict) {
-  missing.push('BACKGROUND_WORKER_GROUPS cannot combine isolated group robinhood with other groups or all');
+  missing.push('BACKGROUND_WORKER_GROUPS cannot combine isolated worker groups with other groups or all');
 }
 
 if (missing.length > 0) {
@@ -814,6 +814,141 @@ module.exports = {
       1,
       1,
       16
+    ),
+  },
+
+  robinhoodBackfillMarketScanner: {
+    enabled: parseBoolean(process.env.ROBINHOOD_BACKFILL_SHADOW_ENABLED, false),
+    startBlock: parseOptionalBlock(process.env.ROBINHOOD_BACKFILL_START_BLOCK),
+    scanProvider: String(process.env.ROBINHOOD_SCAN_PROVIDER || 'drpc').trim().toLowerCase(),
+    headProvider: String(process.env.ROBINHOOD_HEAD_PROVIDER || 'public').trim().toLowerCase(),
+    publicRpcUrl: String(
+      process.env.ROBINHOOD_RPC_URL || 'https://rpc.mainnet.chain.robinhood.com'
+    ).trim(),
+    drpcRpcUrl: String(process.env.ROBINHOOD_DRPC_RPC_URL || '').trim(),
+    alchemyRpcUrl: String(process.env.ROBINHOOD_ALCHEMY_RPC_URL || '').trim(),
+    rangeSize: parseIntegerInRange(process.env.ROBINHOOD_SCAN_RANGE_SIZE, 10_000, 1, 10_000),
+    minRangeSize: parseIntegerInRange(process.env.ROBINHOOD_SCAN_MIN_RANGE_SIZE, 10, 1, 10_000),
+    inFlightRanges: parseIntegerInRange(process.env.ROBINHOOD_SCAN_IN_FLIGHT_RANGES, 1, 1, 8),
+    maxLogsPerRange: parseIntegerInRange(
+      process.env.ROBINHOOD_SCAN_MAX_LOGS_PER_RANGE, 10_000, 1, 1_000_000
+    ),
+    maxBufferedLogs: parseIntegerInRange(
+      process.env.ROBINHOOD_SCAN_MAX_BUFFERED_LOGS, 50_000, 1, 1_000_000
+    ),
+    maxPendingLogs: parseIntegerInRange(
+      process.env.ROBINHOOD_SCAN_MAX_PENDING_LOGS, 250_000, 1, 10_000_000
+    ),
+    confirmations: parseIntegerInRange(process.env.ROBINHOOD_CONFIRMATIONS, 2, 0, 1000),
+    intervalMs: parseIntegerInRange(process.env.ROBINHOOD_SCAN_INTERVAL_MS, 2000, 250, 300_000),
+    rpcTimeoutMs: parseIntegerInRange(
+      process.env.ROBINHOOD_SCAN_RPC_TIMEOUT_MS, 15_000, 1000, 60_000
+    ),
+    rpcMaxRetries: parseIntegerInRange(process.env.ROBINHOOD_SCAN_RPC_MAX_RETRIES, 1, 0, 5),
+    rpcMinIntervalMs: parseIntegerInRange(
+      process.env.ROBINHOOD_SCAN_RPC_MIN_INTERVAL_MS, 0, 0, 60_000
+    ),
+    decoderVersion: String(
+      process.env.ROBINHOOD_BACKFILL_DECODER_VERSION || 'market-log-v1'
+    ).trim(),
+  },
+
+  robinhoodBackfillDiscoveryScanner: {
+    enabled: parseBoolean(process.env.ROBINHOOD_BACKFILL_DISCOVERY_ENABLED, false),
+    scanProvider: String(
+      process.env.ROBINHOOD_DISCOVERY_SCAN_PROVIDER || process.env.ROBINHOOD_SCAN_PROVIDER || 'drpc'
+    ).trim().toLowerCase(),
+    rangeSize: parseIntegerInRange(
+      process.env.ROBINHOOD_DISCOVERY_SCAN_RANGE_SIZE, 10_000, 1, 10_000
+    ),
+    maxRangesPerPoll: parseIntegerInRange(
+      process.env.ROBINHOOD_DISCOVERY_SCAN_MAX_RANGES_PER_POLL, 4, 1, 100
+    ),
+    decoderVersion: String(
+      process.env.ROBINHOOD_BACKFILL_DISCOVERY_DECODER_VERSION || 'discovery-log-v1'
+    ).trim(),
+  },
+
+  robinhoodBackfillEnrichmentWorker: {
+    enabled: parseBoolean(process.env.ROBINHOOD_BACKFILL_ENRICHMENT_ENABLED, false),
+    drpcRpcUrl: String(process.env.ROBINHOOD_DRPC_RPC_URL || '').trim(),
+    alchemyRpcUrl: String(process.env.ROBINHOOD_ALCHEMY_RPC_URL || '').trim(),
+    alchemyTimestampsEnabled: parseBoolean(
+      process.env.ROBINHOOD_BACKFILL_ALCHEMY_TIMESTAMPS_ENABLED,
+      false
+    ),
+    intervalMs: parseIntegerInRange(
+      process.env.ROBINHOOD_BACKFILL_ENRICHMENT_INTERVAL_MS, 2000, 250, 300_000
+    ),
+    maxErrorBackoffMs: parseIntegerInRange(
+      process.env.ROBINHOOD_BACKFILL_ENRICHMENT_MAX_ERROR_BACKOFF_MS,
+      30_000,
+      1000,
+      300_000
+    ),
+    limit: parseIntegerInRange(
+      process.env.ROBINHOOD_BACKFILL_ENRICHMENT_CLAIM_SIZE, 100, 1, 1000
+    ),
+    leaseMs: parseIntegerInRange(
+      process.env.ROBINHOOD_BACKFILL_ENRICHMENT_LEASE_MS, 60_000, 1000, 86_400_000
+    ),
+    retryDelayMs: parseIntegerInRange(
+      process.env.ROBINHOOD_BACKFILL_ENRICHMENT_RETRY_DELAY_MS, 5000, 0, 604_800_000
+    ),
+    maxAttempts: parseIntegerInRange(
+      process.env.ROBINHOOD_BACKFILL_ENRICHMENT_MAX_ATTEMPTS, 5, 1, 100
+    ),
+    rpcBatchSize: parseIntegerInRange(process.env.ROBINHOOD_RPC_BATCH_SIZE, 100, 1, 100),
+    rpcTimeoutMs: parseIntegerInRange(
+      process.env.ROBINHOOD_SCAN_RPC_TIMEOUT_MS, 15_000, 1000, 60_000
+    ),
+    rpcMaxRetries: parseIntegerInRange(process.env.ROBINHOOD_SCAN_RPC_MAX_RETRIES, 1, 0, 5),
+    rpcMinIntervalMs: parseIntegerInRange(
+      process.env.ROBINHOOD_ENRICHMENT_RPC_MIN_INTERVAL_MS, 0, 0, 60_000
+    ),
+  },
+
+  robinhoodBackfillFinalizerWorker: {
+    enabled: parseBoolean(process.env.ROBINHOOD_BACKFILL_FINALIZER_ENABLED, false),
+    intervalMs: parseIntegerInRange(
+      process.env.ROBINHOOD_BACKFILL_FINALIZER_INTERVAL_MS, 2000, 250, 300_000
+    ),
+    maxErrorBackoffMs: parseIntegerInRange(
+      process.env.ROBINHOOD_BACKFILL_FINALIZER_MAX_ERROR_BACKOFF_MS,
+      30_000,
+      1000,
+      300_000
+    ),
+    limit: parseIntegerInRange(
+      process.env.ROBINHOOD_BACKFILL_FINALIZER_RANGE_LIMIT, 100, 1, 1000
+    ),
+  },
+
+  robinhoodBackfillAggregationWorker: {
+    enabled: parseBoolean(process.env.ROBINHOOD_BACKFILL_AGGREGATION_ENABLED, false),
+    intervalMs: parseIntegerInRange(
+      process.env.ROBINHOOD_BACKFILL_AGGREGATION_INTERVAL_MS, 2000, 250, 300_000
+    ),
+    maxErrorBackoffMs: parseIntegerInRange(
+      process.env.ROBINHOOD_BACKFILL_AGGREGATION_MAX_ERROR_BACKOFF_MS,
+      30_000,
+      1000,
+      300_000
+    ),
+    claimLimit: parseIntegerInRange(
+      process.env.ROBINHOOD_BACKFILL_AGGREGATION_CLAIM_SIZE, 10_000, 1, 100_000
+    ),
+    leaseMs: parseIntegerInRange(
+      process.env.ROBINHOOD_BACKFILL_AGGREGATION_LEASE_MS, 900_000, 10_000, 86_400_000
+    ),
+    retryDelayMs: parseIntegerInRange(
+      process.env.ROBINHOOD_BACKFILL_AGGREGATION_RETRY_DELAY_MS, 5000, 0, 604_800_000
+    ),
+    maxAttempts: parseIntegerInRange(
+      process.env.ROBINHOOD_BACKFILL_AGGREGATION_MAX_ATTEMPTS, 5, 1, 100
+    ),
+    tokenLimit: parseIntegerInRange(
+      process.env.ROBINHOOD_BACKFILL_AGGREGATION_TOKEN_LIMIT, 25, 1, 1000
     ),
   },
 

@@ -597,8 +597,230 @@ async function upsertCursor(client, cursor) {
   );
 }
 
+function normalizeDiscoveryBackfillRange(input, cursor, trackedLogCount) {
+  const capture = input.backfillCapture;
+  if (!capture) return null;
+  const fromBlock = decimalQuantity(cursor.fromBlock, 'cursor.fromBlock');
+  const toBlock = decimalQuantity(cursor.toBlock, 'cursor.toBlock');
+  if (BigInt(cursor.nextBlock) !== BigInt(toBlock) + 1n) {
+    throw new Error('Discovery backfill cursor is not contiguous with its range');
+  }
+  const checkpointBlock = decimalQuantity(
+    cursor.checkpoint?.number,
+    'cursor.checkpoint.number'
+  );
+  if (checkpointBlock !== toBlock) throw new Error('Discovery checkpoint must match range end');
+  const provider = String(capture.provider || '').trim();
+  const decoderVersion = String(capture.decoderVersion || '').trim();
+  const rawLogCount = Number(capture.rawLogCount);
+  if (!provider || provider.length > 64 || !decoderVersion || decoderVersion.length > 64) {
+    throw new Error('Discovery backfill provider and decoder version are required');
+  }
+  if (!Number.isSafeInteger(rawLogCount) || rawLogCount < trackedLogCount) {
+    throw new Error('Discovery backfill raw log count is invalid');
+  }
+  const checkpointHash = hexWord(cursor.checkpoint?.hash, 'cursor.checkpoint.hash');
+  const checkpointTimestamp = cursor.checkpoint?.timestampMs == null
+    ? null
+    : timestampDate(cursor.checkpoint.timestampMs, 'cursor.checkpoint.timestampMs');
+  return {
+    fromBlock, toBlock, provider, rawLogCount, trackedLogCount,
+    checkpointHash, checkpointTimestamp, decoderVersion,
+  };
+}
+
+async function publishDiscoveryBackfillRange(client, input, cursor, trackedLogCount) {
+  const capture = normalizeDiscoveryBackfillRange(input, cursor, trackedLogCount);
+  if (!capture) return null;
+  const {
+    fromBlock, toBlock, provider, rawLogCount, checkpointHash,
+    checkpointTimestamp, decoderVersion,
+  } = capture;
+  const manifest = await client.query(
+    `INSERT INTO robinhood_backfill_ranges (
+       chain, stream, from_block, to_block, provider, status,
+       raw_log_count, tracked_log_count, checkpoint_block, checkpoint_hash,
+       checkpoint_timestamp, decoder_version, attempt_count,
+       fetch_started_at, fetch_finished_at, completed_at
+     ) VALUES (
+       'robinhood', 'discovery', $1, $2, $3, 'captured',
+       $4, $5, $2, $6, $7, $8, 1, NOW(), NOW(), NOW()
+     )
+     ON CONFLICT (chain, stream, from_block, to_block) DO NOTHING
+     RETURNING id`,
+    [
+      fromBlock, toBlock, provider, rawLogCount, capture.trackedLogCount,
+      checkpointHash, checkpointTimestamp, decoderVersion,
+    ]
+  );
+  if (!manifest.rowCount) {
+    const existing = await client.query(
+      `SELECT id, status FROM robinhood_backfill_ranges
+       WHERE chain = 'robinhood' AND stream = 'discovery'
+         AND from_block = $1 AND to_block = $2`,
+      [fromBlock, toBlock]
+    );
+    if (existing.rows[0]?.status !== 'captured') {
+      throw new Error(`Robinhood discovery range is ${existing.rows[0]?.status || 'unavailable'}`);
+    }
+    return { rangeId: String(existing.rows[0].id), duplicate: true };
+  }
+  const rangeId = manifest.rows[0].id;
+  await client.query(
+    `INSERT INTO robinhood_backfill_watermarks (chain, frontier, next_block)
+     VALUES ('robinhood', 'discovery_scan', $1)
+     ON CONFLICT (chain, frontier) DO NOTHING`,
+    [fromBlock]
+  );
+  const advanced = await client.query(
+    `UPDATE robinhood_backfill_watermarks
+     SET next_block = $2::bigint + 1,
+         checkpoint_block = $2,
+         checkpoint_hash = $3,
+         checkpoint_timestamp = $4,
+         last_range_id = $5,
+         version = version + 1,
+         updated_at = NOW()
+     WHERE chain = 'robinhood' AND frontier = 'discovery_scan'
+       AND next_block = $1
+     RETURNING next_block`,
+    [fromBlock, toBlock, checkpointHash, checkpointTimestamp, rangeId]
+  );
+  if (!advanced.rowCount) throw new Error('Robinhood discovery range is not contiguous');
+  return { rangeId: String(rangeId), duplicate: false };
+}
+
 function rowIdentity(row) {
   return `${row.transactionHash}:${row.logIndex}`;
+}
+
+function normalizeBackfillBatch(input = {}) {
+  const owner = String(input.owner || '').trim();
+  if (!owner || owner.length > 128) throw new Error('owner must contain between 1 and 128 characters');
+  const retentionMs = Number(input.retentionMs ?? 7 * 24 * HOUR_MS);
+  if (!Number.isSafeInteger(retentionMs) || retentionMs < 1 || retentionMs > 365 * 24 * HOUR_MS) {
+    throw new Error('retentionMs must be between 1 millisecond and 365 days');
+  }
+  if (!Array.isArray(input.claims) || !input.claims.length) {
+    throw new Error('claims must be a non-empty array');
+  }
+  const claims = input.claims.map((claim) => ({
+    transactionHash: hexWord(claim?.transactionHash, 'claim.transactionHash'),
+    logIndex: decimalQuantity(claim?.logIndex, 'claim.logIndex'),
+  }));
+  const claimIds = new Set(claims.map(rowIdentity));
+  if (claimIds.size !== claims.length) throw new Error('claims must have unique identities');
+  const entries = (Array.isArray(input.entries) ? input.entries : []).map((entry) => {
+    const row = normalizeLogEntry(entry, 'market');
+    const observation = normalizeObservation(entry, row);
+    if (observation?.status === 'pending') {
+      const error = new Error(`Backfill enrichment remains pending: ${observation.rejectionReason}`);
+      error.code = 'backfill_enrichment_incomplete';
+      throw error;
+    }
+    return {
+      row,
+      observation,
+      terminalStatus: observation?.status === 'rejected' ? 'rejected' : 'completed',
+    };
+  });
+  const entryIds = new Set(entries.map(({ row }) => rowIdentity(row)));
+  if (
+    entries.length !== claims.length
+    || entryIds.size !== entries.length
+    || [...entryIds].some((identity) => !claimIds.has(identity))
+  ) {
+    throw new Error('entries must match claimed log identities exactly');
+  }
+  return { owner, retentionMs, claims, entries };
+}
+
+async function lockBackfillClaims(client, batch) {
+  const result = await client.query(
+    `WITH input AS (
+       SELECT * FROM jsonb_to_recordset($1::jsonb) AS claim(
+         "transactionHash" text, "logIndex" bigint
+       )
+     )
+     SELECT staging.transaction_hash
+     FROM robinhood_market_log_staging staging
+     INNER JOIN input
+       ON input."transactionHash" = staging.transaction_hash
+      AND input."logIndex" = staging.log_index
+     WHERE staging.chain = 'robinhood'
+       AND staging.enrichment_status = 'leased'
+       AND staging.lease_owner = $2
+       AND staging.lease_until > NOW()
+     FOR UPDATE OF staging`,
+    [JSON.stringify(batch.claims), batch.owner]
+  );
+  if (result.rowCount !== batch.claims.length) {
+    const error = new Error('Backfill enrichment claim lease was lost');
+    error.code = 'backfill_claim_lost';
+    throw error;
+  }
+}
+
+async function insertBackfillAggregationTargets(client, observations) {
+  const targets = observations
+    .filter((observation) => observation.status === 'accepted')
+    .map((observation) => ({
+      transactionHash: observation.transactionHash,
+      logIndex: observation.logIndex,
+      protocol: observation.protocol,
+      marketKey: observation.marketKey,
+      observedAt: observation.observedAt,
+    }));
+  if (!targets.length) return 0;
+  const result = await client.query(
+    `INSERT INTO robinhood_backfill_aggregation_outbox (
+       chain, transaction_hash, log_index, protocol, market_key, bucket_ts
+     )
+     SELECT 'robinhood', "transactionHash", "logIndex"::bigint,
+            protocol, "marketKey", date_trunc('hour', "observedAt"::timestamptz)
+     FROM jsonb_to_recordset($1::jsonb) AS target(
+       "transactionHash" text, "logIndex" text, protocol text,
+       "marketKey" text, "observedAt" text
+     )
+     ON CONFLICT (chain, transaction_hash, log_index) DO NOTHING
+     RETURNING transaction_hash`,
+    [JSON.stringify(targets)]
+  );
+  return result.rowCount;
+}
+
+async function settleBackfillClaims(client, batch) {
+  const terminal = batch.entries.map(({ row, terminalStatus }) => ({
+    transactionHash: row.transactionHash,
+    logIndex: row.logIndex,
+    status: terminalStatus,
+  }));
+  const result = await client.query(
+    `UPDATE robinhood_market_log_staging staging
+     SET enrichment_status = terminal.status,
+         lease_owner = NULL,
+         lease_until = NULL,
+         terminal_at = NOW(),
+         retention_eligible_at = NOW() + ($3::bigint * INTERVAL '1 millisecond'),
+         last_error = NULL,
+         updated_at = NOW()
+     FROM jsonb_to_recordset($1::jsonb) AS terminal(
+       "transactionHash" text, "logIndex" bigint, status text
+     )
+     WHERE staging.chain = 'robinhood'
+       AND staging.transaction_hash = terminal."transactionHash"
+       AND staging.log_index = terminal."logIndex"
+       AND staging.enrichment_status = 'leased'
+       AND staging.lease_owner = $2
+       AND staging.lease_until > NOW()
+     RETURNING staging.transaction_hash`,
+    [JSON.stringify(terminal), batch.owner, batch.retentionMs]
+  );
+  if (result.rowCount !== batch.claims.length) {
+    const error = new Error('Backfill enrichment claim lease was lost before commit');
+    error.code = 'backfill_claim_lost';
+    throw error;
+  }
 }
 
 async function insertProcessedLogs(client, rows) {
@@ -1265,12 +1487,19 @@ function createRobinhoodPersistenceRepository(options = {}) {
         updatedNoxaLaunches += 1;
       }
       await upsertCursor(client, cursor);
+      const backfill = await publishDiscoveryBackfillRange(
+        client,
+        input,
+        input.cursor,
+        entries.length
+      );
       await client.query('COMMIT');
       return {
         insertedLogs,
         duplicateLogs: entries.length - insertedLogs,
         upsertedPools,
         updatedNoxaLaunches,
+        ...(backfill ? { backfill } : {}),
       };
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch (_) {}
@@ -1312,6 +1541,46 @@ function createRobinhoodPersistenceRepository(options = {}) {
         duplicateLogs: entries.length - insertedIdentities.size,
         ...marketCounts,
         touchedHourlyBuckets,
+      };
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch (_) {}
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async function commitBackfillEnrichmentBatch(input = {}) {
+    const batch = normalizeBackfillBatch(input);
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      await lockBackfillClaims(client, batch);
+      const insertedIdentities = new Set(await insertProcessedLogs(
+        client,
+        batch.entries.map(({ row }) => row)
+      ));
+      const allObservations = batch.entries
+        .filter(({ observation }) => observation)
+        .map(({ observation }) => observation);
+      const observations = batch.entries
+        .filter(({ row, observation }) => (
+          observation && insertedIdentities.has(rowIdentity(row))
+        ))
+        .map(({ observation }) => observation);
+      const marketWrite = await insertMarketObservations(
+        client, observations, { checkpointTimestamp: null }
+      );
+      const aggregationTargets = await insertBackfillAggregationTargets(client, allObservations);
+      await settleBackfillClaims(client, batch);
+      await client.query('COMMIT');
+      return {
+        insertedLogs: insertedIdentities.size,
+        duplicateLogs: batch.entries.length - insertedIdentities.size,
+        insertedObservations: marketWrite.insertedObservations,
+        touchedBuckets: marketWrite.touchedBuckets,
+        aggregationTargets,
+        terminalClaims: batch.claims.length,
       };
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch (_) {}
@@ -1416,6 +1685,7 @@ function createRobinhoodPersistenceRepository(options = {}) {
   }
 
   return Object.freeze({
+    commitBackfillEnrichmentBatch,
     commitDiscoveryRange,
     commitMarketRange,
     listActivePools,

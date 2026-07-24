@@ -12,6 +12,7 @@ const INTEGRATION_TESTS = [
   'dashboard.test.js',
   'mock-trading-routes.test.js',
   'robinhood-alert-publication.integration.test.js',
+  'robinhood-backfill-capture.integration.test.js',
   'user-alert-presence.integration.test.js',
 ];
 

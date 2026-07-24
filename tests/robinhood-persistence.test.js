@@ -214,12 +214,44 @@ function liveBucketRow(overrides = {}) {
   };
 }
 
+function fakeBackfillEnrichmentResult(sql, params, options) {
+  if (/FOR UPDATE OF staging/.test(sql)) {
+    const claims = JSON.parse(params[0]);
+    return options.leaseLost
+      ? { rows: [], rowCount: 0 }
+      : { rows: claims.map(() => ({ transaction_hash: HASH_B })), rowCount: claims.length };
+  }
+  if (/INSERT INTO robinhood_backfill_aggregation_outbox/.test(sql)) {
+    const targets = JSON.parse(params[0]);
+    if (options.targetDuplicate) return { rows: [], rowCount: 0 };
+    return { rows: targets.map(() => ({ transaction_hash: HASH_B })), rowCount: targets.length };
+  }
+  if (/UPDATE robinhood_market_log_staging staging/.test(sql)) {
+    if (options.failBackfillTerminal) throw new Error('terminal write failed');
+    const terminal = JSON.parse(params[0]);
+    return { rows: terminal.map(() => ({ transaction_hash: HASH_B })), rowCount: terminal.length };
+  }
+  return null;
+}
+
+function fakePoolWriteResult(sql, options) {
+  if (/INSERT INTO robinhood_pool_registry/.test(sql) && options.failPool) {
+    throw new Error('pool write failed');
+  }
+  if (/UPDATE robinhood_pool_registry/.test(sql) && /metadata = metadata/.test(sql)) {
+    return options.missingNoxaPool ? { rows: [], rowCount: 0 } : { rows: [{}], rowCount: 1 };
+  }
+  return null;
+}
+
 function createFakeDatabase(options = {}) {
   const calls = [];
   let released = false;
   const client = {
     async query(sql, params) {
       calls.push({ sql, params });
+      const backfillEnrichmentResult = fakeBackfillEnrichmentResult(sql, params, options);
+      if (backfillEnrichmentResult) return backfillEnrichmentResult;
       if (/INSERT INTO robinhood_processed_logs/.test(sql)) {
         if (/jsonb_to_recordset/.test(sql)) {
           const rows = JSON.parse(params[0]);
@@ -237,12 +269,8 @@ function createFakeDatabase(options = {}) {
           ? { rows: [], rowCount: 0 }
           : { rows: [{ transaction_hash: HASH_B }], rowCount: 1 };
       }
-      if (/INSERT INTO robinhood_pool_registry/.test(sql) && options.failPool) {
-        throw new Error('pool write failed');
-      }
-      if (/UPDATE robinhood_pool_registry/.test(sql) && /metadata = metadata/.test(sql)) {
-        return options.missingNoxaPool ? { rows: [], rowCount: 0 } : { rows: [{}], rowCount: 1 };
-      }
+      const poolResult = fakePoolWriteResult(sql, options);
+      if (poolResult) return poolResult;
       if (/INSERT INTO robinhood_market_observations/.test(sql)) {
         if (options.failObservation) throw new Error('observation write failed');
         const rows = JSON.parse(params[0]);
@@ -270,6 +298,8 @@ function createFakeDatabase(options = {}) {
           rowCount: 1,
         };
       }
+      const backfillResult = fakeBackfillResult(sql);
+      if (backfillResult) return backfillResult;
       return { rows: [], rowCount: 1 };
     },
     release() { released = true; },
@@ -285,6 +315,15 @@ function createFakeDatabase(options = {}) {
     calls,
     isReleased: () => released,
   };
+}
+
+function fakeBackfillResult(sql) {
+  if (/INSERT INTO robinhood_backfill_ranges/.test(sql)) {
+    return { rows: [{ id: 91 }], rowCount: 1 };
+  }
+  return /UPDATE robinhood_backfill_watermarks/.test(sql)
+    ? { rows: [{ next_block: '8069001' }], rowCount: 1 }
+    : null;
 }
 
 describe('Robinhood persistence repository', () => {
@@ -342,6 +381,31 @@ describe('Robinhood persistence repository', () => {
     assert.equal(fake.calls.some((call) => /INSERT INTO robinhood_pool_registry/.test(call.sql)), false);
     assert.equal(fake.calls.some((call) => /INSERT INTO robinhood_ingestion_cursors/.test(call.sql)), true);
     assert.equal(fake.calls.at(-1).sql, 'COMMIT');
+  });
+
+  it('publishes discovery_scan atomically after its catalog range', async () => {
+    const fake = createFakeDatabase();
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+    const rangeCursor = {
+      ...cursor(),
+      fromBlock: '8069000',
+      toBlock: '8069000',
+      logs: [discoveryEntry().log],
+    };
+    const result = await repository.commitDiscoveryRange({
+      entries: [discoveryEntry()],
+      cursor: rangeCursor,
+      backfillCapture: {
+        provider: 'drpc', decoderVersion: 'discovery-log-v1', rawLogCount: 1,
+      },
+    });
+
+    assert.deepEqual(result.backfill, { rangeId: '91', duplicate: false });
+    const sql = fake.calls.map((call) => call.sql);
+    assert.ok(sql.findIndex((value) => /pool_registry/.test(value))
+      < sql.findIndex((value) => /backfill_ranges/.test(value)));
+    assert.ok(sql.findIndex((value) => /backfill_watermarks/.test(value))
+      < sql.indexOf('COMMIT'));
   });
 
   it('rolls back and does not advance the cursor when a pool write fails', async () => {
@@ -607,6 +671,103 @@ describe('Robinhood persistence repository', () => {
     assert.equal(observationPayload[0].priceUsd, '0.000000000000000000123456789012');
     assert.equal(observationPayload[0].liquidityRaw, '12345678901234567890');
     assert.equal(observationPayload[0].liquidityStatus, 'requires_tick_liquidity_distribution');
+  });
+
+  it('commits historical enrichment and its aggregation target without live effects', async () => {
+    const fake = createFakeDatabase({ liveBuckets: [liveBucketRow()] });
+    const emitted = [];
+    const repository = createRobinhoodPersistenceRepository({
+      database: fake.database,
+      emitMarketBucketUpdate: (payload) => emitted.push(payload),
+      standardAlertSignalSource: {
+        buildFromCommittedBuckets: async () => [{ id: 'must-not-run' }],
+      },
+      standardAlertSignalConsumer: async (signals) => emitted.push(...signals),
+    });
+
+    const result = await repository.commitBackfillEnrichmentBatch({
+      owner: 'backfill-worker-a',
+      claims: [{ transactionHash: HASH_B, logIndex: '7' }],
+      entries: [marketEntry()],
+    });
+
+    assert.deepEqual(result, {
+      insertedLogs: 1,
+      duplicateLogs: 0,
+      insertedObservations: 1,
+      touchedBuckets: 1,
+      aggregationTargets: 1,
+      terminalClaims: 1,
+    });
+    assert.deepEqual(emitted, []);
+    assert.equal(fake.calls[0].sql, 'BEGIN');
+    assert.match(fake.calls[1].sql, /FOR UPDATE OF staging/);
+    assert.match(fake.calls[4].sql, /INSERT INTO robinhood_backfill_aggregation_outbox/);
+    assert.match(fake.calls[5].sql, /UPDATE robinhood_market_log_staging staging/);
+    assert.equal(fake.calls[6].sql, 'COMMIT');
+    assert.equal(fake.calls.some((call) => (
+      /INSERT INTO robinhood_ingestion_cursors/.test(call.sql)
+    )), false);
+    assert.equal(fake.calls.some((call) => /robinhood_market_buckets_1h/.test(call.sql)), false);
+    assert.equal(JSON.parse(fake.calls[5].params[0])[0].status, 'completed');
+  });
+
+  it('persists a business rejection without publishing an aggregation target', async () => {
+    const fake = createFakeDatabase();
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+
+    const result = await repository.commitBackfillEnrichmentBatch({
+      owner: 'backfill-worker-a',
+      claims: [{ transactionHash: HASH_B, logIndex: '7' }],
+      entries: [marketEntry({ accepted: false, reason: 'token_ineligible' })],
+    });
+
+    assert.equal(result.insertedObservations, 1);
+    assert.equal(result.touchedBuckets, 0);
+    assert.equal(result.aggregationTargets, 0);
+    const terminal = fake.calls.find((call) => (
+      /UPDATE robinhood_market_log_staging staging/.test(call.sql)
+    ));
+    assert.equal(JSON.parse(terminal.params[0])[0].status, 'rejected');
+  });
+
+  it('rolls back terminal-write crashes and accepts an idempotent retry', async () => {
+    const input = {
+      owner: 'backfill-worker-a',
+      claims: [{ transactionHash: HASH_B, logIndex: '7' }],
+      entries: [marketEntry()],
+    };
+    const failing = createFakeDatabase({ failBackfillTerminal: true });
+    await assert.rejects(
+      createRobinhoodPersistenceRepository({ database: failing.database })
+        .commitBackfillEnrichmentBatch(input),
+      /terminal write failed/
+    );
+    assert.equal(failing.calls.at(-1).sql, 'ROLLBACK');
+    assert.equal(failing.calls.some((call) => call.sql === 'COMMIT'), false);
+
+    const replay = createFakeDatabase({ duplicate: true, targetDuplicate: true });
+    const result = await createRobinhoodPersistenceRepository({ database: replay.database })
+      .commitBackfillEnrichmentBatch(input);
+    assert.equal(result.duplicateLogs, 1);
+    assert.equal(result.insertedObservations, 0);
+    assert.equal(result.aggregationTargets, 0);
+    assert.equal(result.terminalClaims, 1);
+    assert.equal(replay.calls.at(-1).sql, 'COMMIT');
+  });
+
+  it('rejects recoverable enrichment before opening a transaction', async () => {
+    const fake = createFakeDatabase();
+    await assert.rejects(
+      createRobinhoodPersistenceRepository({ database: fake.database })
+        .commitBackfillEnrichmentBatch({
+          owner: 'backfill-worker-a',
+          claims: [{ transactionHash: HASH_B, logIndex: '7' }],
+          entries: [marketEntry({ accepted: false, reason: 'quote_usd_unavailable' })],
+        }),
+      { code: 'backfill_enrichment_incomplete' }
+    );
+    assert.equal(fake.calls.length, 0);
   });
 
   it('defers hourly rebuild for a safely closed historical range', async () => {

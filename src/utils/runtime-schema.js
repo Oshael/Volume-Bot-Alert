@@ -1816,6 +1816,161 @@ const SCHEMA_GROUPS = [
       },
     }],
   },
+  {
+    key: 'stage82-robinhood-durable-backfill-capture',
+    name: 'Stage 82 durable Robinhood backfill capture',
+    repair: 'node src/utils/db-init-stage82.js',
+    tables: [
+      {
+        table: 'robinhood_backfill_ranges',
+        columns: [
+          'id', 'chain', 'stream', 'from_block', 'to_block', 'provider', 'status',
+          'raw_log_count', 'tracked_log_count', 'checkpoint_block', 'checkpoint_hash',
+          'checkpoint_timestamp', 'decoder_version', 'attempt_count', 'next_attempt_at',
+          'last_error', 'fetch_started_at', 'fetch_finished_at', 'completed_at',
+          'created_at', 'updated_at',
+        ],
+        constraints: [
+          {
+            name: 'robinhood_backfill_ranges_identity_key',
+            includes: ['UNIQUE', 'chain', 'stream', 'from_block', 'to_block'],
+          },
+          {
+            name: 'robinhood_backfill_ranges_completion_check',
+            includes: ['CHECK', 'status', 'captured', 'completed_at', 'checkpoint_block'],
+          },
+        ],
+        indexes: [
+          {
+            name: 'idx_robinhood_backfill_ranges_commit',
+            includes: ['chain', 'stream', 'from_block', 'to_block', 'captured'],
+          },
+          {
+            name: 'idx_robinhood_backfill_ranges_retry',
+            includes: ['chain', 'stream', 'next_attempt_at', 'from_block', 'pending', 'failed'],
+          },
+        ],
+      },
+      {
+        table: 'robinhood_market_log_staging',
+        columns: [
+          'chain', 'transaction_hash', 'log_index', 'range_id', 'block_number',
+          'block_hash', 'transaction_index', 'address', 'topics', 'data', 'protocol',
+          'market_key', 'enrichment_status', 'lease_owner', 'lease_until',
+          'attempt_count', 'next_attempt_at', 'last_error', 'terminal_at',
+          'retention_eligible_at', 'created_at', 'updated_at',
+        ],
+        constraints: [
+          {
+            name: 'robinhood_market_log_staging_pkey',
+            includes: ['PRIMARY KEY', 'chain', 'transaction_hash', 'log_index'],
+          },
+          {
+            name: 'robinhood_market_log_staging_range_fkey',
+            includes: ['FOREIGN KEY', 'range_id', 'robinhood_backfill_ranges'],
+          },
+          {
+            name: 'robinhood_market_log_staging_lease_check',
+            includes: ['CHECK', 'enrichment_status', 'leased', 'lease_owner', 'lease_until'],
+          },
+          {
+            name: 'robinhood_market_log_staging_terminal_check',
+            includes: ['CHECK', 'enrichment_status', 'completed', 'rejected', 'terminal_at'],
+          },
+          {
+            name: 'robinhood_market_log_staging_retention_check',
+            includes: ['CHECK', 'retention_eligible_at', 'completed', 'rejected', 'terminal_at'],
+          },
+        ],
+        indexes: [
+          {
+            name: 'idx_robinhood_market_log_staging_claim',
+            includes: [
+              'next_attempt_at', 'block_number', 'transaction_index', 'log_index', 'pending',
+            ],
+          },
+          {
+            name: 'idx_robinhood_market_log_staging_lease',
+            includes: ['lease_until', 'leased'],
+          },
+          {
+            name: 'idx_robinhood_market_log_staging_range',
+            includes: ['range_id', 'enrichment_status'],
+          },
+          {
+            name: 'idx_robinhood_market_log_staging_retention',
+            includes: ['retention_eligible_at'],
+          },
+        ],
+      },
+      {
+        table: 'robinhood_backfill_watermarks',
+        columns: [
+          'chain', 'frontier', 'next_block', 'checkpoint_block', 'checkpoint_hash',
+          'checkpoint_timestamp', 'last_range_id', 'version', 'created_at', 'updated_at',
+        ],
+        constraints: [
+          {
+            name: 'robinhood_backfill_watermarks_pkey',
+            includes: ['PRIMARY KEY', 'chain', 'frontier'],
+          },
+          {
+            name: 'robinhood_backfill_watermarks_frontier_check',
+            includes: ['CHECK', 'discovery_scan', 'market_scan', 'market_enriched'],
+          },
+          {
+            name: 'robinhood_backfill_watermarks_checkpoint_pair_check',
+            includes: ['CHECK', 'checkpoint_block', 'checkpoint_hash'],
+          },
+        ],
+      },
+    ],
+  },
+  {
+    key: 'stage83-robinhood-backfill-aggregation-outbox',
+    name: 'Stage 83 Robinhood backfill aggregation outbox',
+    repair: 'node src/utils/db-init-stage83.js',
+    tables: [{
+      table: 'robinhood_backfill_aggregation_outbox',
+      columns: [
+        'chain', 'transaction_hash', 'log_index', 'protocol', 'market_key',
+        'bucket_ts', 'status', 'lease_owner', 'lease_until', 'attempt_count',
+        'next_attempt_at', 'last_error', 'completed_at', 'created_at', 'updated_at',
+      ],
+      constraints: [
+        {
+          name: 'robinhood_backfill_aggregation_outbox_pkey',
+          includes: ['PRIMARY KEY', 'chain', 'transaction_hash', 'log_index'],
+        },
+        {
+          name: 'robinhood_backfill_aggregation_outbox_observation_fkey',
+          includes: ['FOREIGN KEY', 'robinhood_market_observations', 'ON DELETE RESTRICT'],
+        },
+        {
+          name: 'robinhood_backfill_aggregation_outbox_lease_check',
+          includes: ['CHECK', 'status', 'leased', 'lease_owner', 'lease_until'],
+        },
+        {
+          name: 'robinhood_backfill_aggregation_outbox_completion_check',
+          includes: ['CHECK', 'status', 'completed', 'completed_at'],
+        },
+      ],
+      indexes: [
+        {
+          name: 'idx_robinhood_backfill_aggregation_outbox_claim',
+          includes: ['next_attempt_at', 'bucket_ts', 'transaction_hash', 'log_index', 'pending'],
+        },
+        {
+          name: 'idx_robinhood_backfill_aggregation_outbox_bucket',
+          includes: ['chain', 'protocol', 'market_key', 'bucket_ts', 'completed'],
+        },
+        {
+          name: 'idx_robinhood_backfill_aggregation_outbox_lease',
+          includes: ['lease_until', 'leased'],
+        },
+      ],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
@@ -1832,6 +1987,8 @@ const PROFILE_GROUP_KEYS = {
     'stage79-robinhood-supply-provenance',
     'stage80-meteora-eligibility-indexes',
     'stage81-token-catalog-price-precision',
+    'stage82-robinhood-durable-backfill-capture',
+    'stage83-robinhood-backfill-aggregation-outbox',
   ],
   runtime: SCHEMA_GROUPS.map((group) => group.key),
 };
