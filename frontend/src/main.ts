@@ -14,6 +14,7 @@ import {
   readRuntimePerfMemory,
   recordRuntimePerfDebugEntry,
 } from './utils/runtime-perf-debug';
+import { shouldLockListInteraction } from './utils/list-interaction-lock';
 
 const rootElement = document.querySelector<HTMLDivElement>('#app');
 
@@ -63,12 +64,15 @@ let browserNotificationActiveSince = Date.now();
 let lastBrowserNotificationRuntimeActive = false;
 let lastBrowserNotificationsEnabled = false;
 
-const FULL_LIST_INTERACTION_LOCK_SELECTOR = '.monitored-list, .bid-zone-list, .pump-list, .pump-migration-strip, .alerts-list';
-const TABLE_INTERACTION_LOCK_ZONE_SELECTOR = [
+const FULL_LIST_INTERACTION_LOCK_SELECTOR = '.bid-zone-list, .pump-list, .pump-migration-strip, .alerts-list';
+const SCOPED_LIST_INTERACTION_LOCK_SELECTOR = '.token-table-wrap, .monitored-list';
+const SCOPED_LIST_INTERACTION_LOCK_ZONE_SELECTOR = [
   '.token-actions-inline',
   '.action-col',
   '.bucket-footer',
   '.compact-search',
+  '.sparkline-wrap',
+  '.monitored-ticker-peers-panel',
   '[data-sort-wrap]',
   '[data-trade-wrap]',
   'button',
@@ -634,17 +638,21 @@ function refreshForegroundState(options: { force?: boolean } = {}) {
 
 function resolveListInteractionZone(target: HTMLElement | null) {
   const broadList = target?.closest<HTMLElement>(FULL_LIST_INTERACTION_LOCK_SELECTOR);
-  if (broadList) {
+  if (shouldLockListInteraction({
+    insideBroadList: Boolean(broadList),
+    insideScopedList: false,
+    insideInteractiveZone: false,
+  })) {
     return broadList;
   }
 
-  const tableWrap = target?.closest<HTMLElement>('.token-table-wrap');
-  if (!tableWrap) {
-    return null;
-  }
-
-  const interactionZone = target?.closest<HTMLElement>(TABLE_INTERACTION_LOCK_ZONE_SELECTOR);
-  if (!interactionZone || !tableWrap.contains(interactionZone)) {
+  const scopedList = target?.closest<HTMLElement>(SCOPED_LIST_INTERACTION_LOCK_SELECTOR);
+  const interactionZone = target?.closest<HTMLElement>(SCOPED_LIST_INTERACTION_LOCK_ZONE_SELECTOR);
+  if (!shouldLockListInteraction({
+    insideBroadList: false,
+    insideScopedList: Boolean(scopedList),
+    insideInteractiveZone: Boolean(interactionZone && scopedList?.contains(interactionZone)),
+  })) {
     return null;
   }
 
