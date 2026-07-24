@@ -193,19 +193,29 @@ function requestBatch(rpcClient, batch) {
     : rpcClient.requestBatch(requests);
 }
 
+function executionConcurrency(value) {
+  if (value == null) return 1;
+  const parsed = Math.trunc(Number(value));
+  if (!Number.isFinite(parsed) || parsed < 1 || parsed > 8) {
+    throw new TypeError('Execution concurrency must be an integer between 1 and 8');
+  }
+  return parsed;
+}
+
 async function executeRobinhoodBackfillEnrichmentPlan(plan, rpcClient, options = {}) {
   if (!Array.isArray(plan?.items) || !Array.isArray(plan?.batches)) {
     throw new TypeError('A valid enrichment plan is required');
   }
   if (typeof rpcClient?.request !== 'function') throw new TypeError('rpcClient.request is required');
+  const concurrency = executionConcurrency(options.concurrency);
   const results = new Map();
   const metrics = { batches: 0, batchItems: 0, individualRequests: 0, batchFallbacks: 0 };
   const batchDisabledProviders = new Set();
-  for (const batch of plan.batches) {
+  async function executeBatch(batch) {
     const providerKey = batch.provider || '';
     if (!canRequestBatch(rpcClient, batch, options, batchDisabledProviders.has(providerKey))) {
       await requestIndividually(rpcClient, batch.calls, results, metrics);
-      continue;
+      return;
     }
     try {
       const values = await requestBatch(rpcClient, batch);
@@ -222,6 +232,17 @@ async function executeRobinhoodBackfillEnrichmentPlan(plan, rpcClient, options =
       await requestIndividually(rpcClient, batch.calls, results, metrics);
     }
   }
+  let nextBatchIndex = 0;
+  await Promise.all(Array.from(
+    { length: Math.min(concurrency, plan.batches.length) },
+    async () => {
+      while (nextBatchIndex < plan.batches.length) {
+        const batch = plan.batches[nextBatchIndex];
+        nextBatchIndex += 1;
+        await executeBatch(batch);
+      }
+    }
+  ));
   return {
     items: plan.items.map((item) => ({
       id: item.id,

@@ -46,7 +46,10 @@ function normalizeOptions(input = {}) {
       batchSize: input.batchSize,
       providerBatchSizes: input.providerBatchSizes,
     },
-    execution: { useBatch: input.useBatch },
+    execution: {
+      useBatch: input.useBatch,
+      concurrency: input.rpcConcurrency,
+    },
   };
 }
 

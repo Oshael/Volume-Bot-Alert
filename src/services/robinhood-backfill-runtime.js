@@ -154,6 +154,7 @@ function normalizeEnrichmentOptions(input = {}) {
     retryDelayMs: boundedInteger(input.retryDelayMs, 5000, 0, 604_800_000),
     maxAttempts: boundedInteger(input.maxAttempts, 5, 1, 100),
     rpcBatchSize: boundedInteger(input.rpcBatchSize, 100, 1, 100),
+    rpcConcurrency: boundedInteger(input.rpcConcurrency, 1, 1, 8),
     rpcTimeoutMs: boundedInteger(input.rpcTimeoutMs, 15_000, 1000, 60_000),
     rpcMaxRetries: boundedInteger(input.rpcMaxRetries, 1, 0, 5),
     rpcMinIntervalMs: boundedInteger(input.rpcMinIntervalMs, 0, 0, 60_000),
@@ -254,6 +255,7 @@ function createRobinhoodBackfillEnrichmentRuntime(deps = {}) {
           drpc: options.rpcBatchSize,
           'alchemy-free': options.rpcBatchSize,
         },
+        rpcConcurrency: options.rpcConcurrency,
       });
     },
     telemetry: () => ({

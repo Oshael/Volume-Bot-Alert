@@ -151,6 +151,45 @@ describe('Robinhood backfill enrichment planner', () => {
     });
   });
 
+  it('runs batches concurrently up to the limit with identical fan-out', async () => {
+    const requests = Array.from({ length: 8 }, (_, index) => (
+      dependency(`call-${index}`, index.toString(16).padStart(2, '0'))
+    ));
+    const plan = planRobinhoodBackfillEnrichment(
+      [item({ requests })],
+      { providerBatchSizes: { drpc: 2 } }
+    );
+    assert.equal(plan.batches.length, 4);
+
+    let inFlight = 0;
+    let peakInFlight = 0;
+    const client = {
+      async request() { throw new Error('unexpected'); },
+      async requestBatchProvider(provider, batchRequests) {
+        inFlight += 1;
+        peakInFlight = Math.max(peakInFlight, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight -= 1;
+        return batchRequests.map(({ method, params }) => valueFor(method, params));
+      },
+    };
+    const sequentialHarness = createRpcHarness();
+    const sequential = await executeRobinhoodBackfillEnrichmentPlan(
+      plan, sequentialHarness.client
+    );
+    const concurrent = await executeRobinhoodBackfillEnrichmentPlan(
+      plan, client, { concurrency: 3 }
+    );
+
+    assert.equal(peakInFlight, 3);
+    assert.deepEqual(concurrent.items, sequential.items);
+    assert.equal(concurrent.metrics.batches, 4);
+    await assert.rejects(
+      executeRobinhoodBackfillEnrichmentPlan(plan, client, { concurrency: 9 }),
+      /between 1 and 8/
+    );
+  });
+
   it('falls back to individual calls only when the provider rejects JSON-RPC batch', async () => {
     const plan = planRobinhoodBackfillEnrichment([
       item({ requests: [

@@ -899,6 +899,9 @@ module.exports = {
       process.env.ROBINHOOD_BACKFILL_ENRICHMENT_MAX_ATTEMPTS, 5, 1, 100
     ),
     rpcBatchSize: parseIntegerInRange(process.env.ROBINHOOD_RPC_BATCH_SIZE, 100, 1, 100),
+    rpcConcurrency: parseIntegerInRange(
+      process.env.ROBINHOOD_BACKFILL_ENRICHMENT_RPC_CONCURRENCY, 1, 1, 8
+    ),
     rpcTimeoutMs: parseIntegerInRange(
       process.env.ROBINHOOD_SCAN_RPC_TIMEOUT_MS, 15_000, 1000, 60_000
     ),
