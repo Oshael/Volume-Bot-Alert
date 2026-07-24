@@ -115,13 +115,15 @@ async function main(argv = process.argv.slice(2), database = db) {
     result = await skipMarketCursor(database, { targetBlock });
   } else {
     const plan = await inspectMarketSkip(database);
-    assertSkipIsSafe(plan);
     const target = resolveTargetBlock(plan, targetBlock);
     result = { ...plan, skip: { targetBlock: target.toString(), cursor: null } };
   }
   console.log(JSON.stringify({ mode: confirmed ? 'skip' : 'dry-run', ...result }, null, 2));
   if (!confirmed) {
     console.log(`No data changed. Re-run with ${CONFIRM_FLAG} after review.`);
+    if (result.liveWorker) {
+      console.log('The confirmed run will refuse until the live ingestion service is stopped.');
+    }
   }
   return result;
 }

@@ -124,6 +124,18 @@ describe('Robinhood market cursor skip', () => {
     assert.equal(statements.length, 1);
   });
 
+  it('dry-run still reports the plan while the live worker holds its lease', async () => {
+    const database = {
+      query: async () => ({ rows: [safeRow({ live_worker: true })] }),
+      getClient: async () => { throw new Error('dry-run must not open a client'); },
+    };
+    const result = await main([], database);
+
+    assert.equal(result.liveWorker, true);
+    assert.equal(result.skip.targetBlock, '18324464');
+    assert.equal(result.skip.cursor, null);
+  });
+
   it('passes an explicit target through the confirmed path', async () => {
     const client = {
       query: async (sql, params) => {
