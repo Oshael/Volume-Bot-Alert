@@ -1,0 +1,27 @@
+[Unit]
+Description=Volume Bot Alert Robinhood durable backfill worker
+After=network-online.target
+Wants=network-online.target
+
+# If PostgreSQL is local, confirm its real unit name and add it to After/Requires.
+
+[Service]
+Type=simple
+User=REPLACE_APP_USER
+Group=REPLACE_APP_GROUP
+WorkingDirectory=/REPLACE/ABSOLUTE/PATH/Volume-Bot-Alert
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/volume-bot-alert/robinhood-backfill.env
+ExecStart=/REPLACE/ABSOLUTE/PATH/TO/node src/server.js
+Restart=always
+RestartSec=10
+TimeoutStopSec=90
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
