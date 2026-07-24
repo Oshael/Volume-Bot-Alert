@@ -102,6 +102,7 @@ function createRobinhoodWethUsdQuoteReader(options = {}) {
   const pending = new Map();
   const eventScans = new Map();
   let verifiedPools = null;
+  let poolResolution = null;
   let eventScanTail = Promise.resolve();
 
   function remember(key, value) {
@@ -110,34 +111,40 @@ function createRobinhoodWethUsdQuoteReader(options = {}) {
     while (cache.size > maxCacheEntries) cache.delete(cache.keys().next().value);
   }
 
-  async function resolvePools() {
-    if (verifiedPools) return verifiedPools;
-    const pools = [];
-    for (const fee of CANONICAL_FEES) {
-      const result = await rpcClient.request(
-        'eth_call',
-        [{ to: factoryAddress, data: buildGetPoolCall(fee) }, 'latest'],
-        RPC_FALLBACK_OPTIONS
-      );
-      const poolAddress = decodeAddressResult(result);
-      if (poolAddress === '0x0000000000000000000000000000000000000000') continue;
-      const code = String(await rpcClient.request(
-        'eth_getCode',
-        [poolAddress, 'latest'],
-        RPC_FALLBACK_OPTIONS
-      ) || '').toLowerCase();
-      if (!/^0x[0-9a-f]+$/.test(code) || code === '0x' || code === '0x00') {
-        throw new Error(`Canonical WETH/USDG fee ${fee} pool has no bytecode`);
+  function resolvePools() {
+    if (verifiedPools) return Promise.resolve(verifiedPools);
+    if (poolResolution) return poolResolution;
+    poolResolution = (async () => {
+      const pools = [];
+      for (const fee of CANONICAL_FEES) {
+        const result = await rpcClient.request(
+          'eth_call',
+          [{ to: factoryAddress, data: buildGetPoolCall(fee) }, 'latest'],
+          RPC_FALLBACK_OPTIONS
+        );
+        const poolAddress = decodeAddressResult(result);
+        if (poolAddress === '0x0000000000000000000000000000000000000000') continue;
+        const code = String(await rpcClient.request(
+          'eth_getCode',
+          [poolAddress, 'latest'],
+          RPC_FALLBACK_OPTIONS
+        ) || '').toLowerCase();
+        if (!/^0x[0-9a-f]+$/.test(code) || code === '0x' || code === '0x00') {
+          throw new Error(`Canonical WETH/USDG fee ${fee} pool has no bytecode`);
+        }
+        pools.push({
+          fee,
+          poolAddress,
+          deploymentBlock: CANONICAL_POOL_DEPLOYMENT_BLOCKS[fee] || 0n,
+        });
       }
-      pools.push({
-        fee,
-        poolAddress,
-        deploymentBlock: CANONICAL_POOL_DEPLOYMENT_BLOCKS[fee] || 0n,
-      });
-    }
-    if (!pools.length) throw new Error('Canonical WETH/USDG pool is not deployed');
-    verifiedPools = pools;
-    return verifiedPools;
+      if (!pools.length) throw new Error('Canonical WETH/USDG pool is not deployed');
+      verifiedPools = pools;
+      return verifiedPools;
+    })().finally(() => {
+      poolResolution = null;
+    });
+    return poolResolution;
   }
 
   function snapshotFromSqrtPrice(sqrtPriceX96, requestOptions, details) {

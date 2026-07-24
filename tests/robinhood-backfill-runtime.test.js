@@ -45,10 +45,11 @@ describe('Robinhood backfill operational runtime', () => {
     assert.equal(calls[0].tokenLimit, 3);
   });
 
-  it('uses only dRPC and refreshes pools before every enrichment batch', async () => {
+  it('refreshes pools per batch while reusing the WETH quote reader', async () => {
     const clock = scheduler();
     const clientOptions = [];
     const adapters = [];
+    const quoteReaders = [];
     let poolLoads = 0;
     const runtime = createRobinhoodBackfillEnrichmentRuntime({
       ...clock,
@@ -65,6 +66,11 @@ describe('Robinhood backfill operational runtime', () => {
       repositoryFactory: () => ({
         listActivePools: async () => [{ market_key: `pool-${++poolLoads}` }],
       }),
+      quoteReaderFactory: (input) => {
+        const reader = { rpcClient: input.rpcClient };
+        quoteReaders.push(reader);
+        return reader;
+      },
       adapterFactory: (input) => {
         adapters.push(input);
         return { prepareClaim() {}, buildEntry() {} };
@@ -86,6 +92,9 @@ describe('Robinhood backfill operational runtime', () => {
     assert.equal(adapters[0].timestampProvider, 'drpc');
     assert.equal(adapters[0].seedPools[0].market_key, 'pool-1');
     assert.equal(adapters[1].seedPools[0].market_key, 'pool-2');
+    assert.equal(quoteReaders.length, 1);
+    assert.equal(adapters[0].quoteReader, quoteReaders[0]);
+    assert.equal(adapters[1].quoteReader, quoteReaders[0]);
     assert.equal(runtime.getStatus().totals.runs, 2);
     assert.equal(clock.cancelled.length, 1);
   });

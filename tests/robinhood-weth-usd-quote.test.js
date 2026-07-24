@@ -219,6 +219,25 @@ describe('Robinhood canonical WETH/USD quote reader', () => {
     assert.equal(rpc.calls.filter((call) => call.params?.[0]?.data === SLOT0_SELECTOR).length, 2);
   });
 
+  it('shares canonical pool resolution across concurrent historical snapshots', async () => {
+    const rpc = createRpc();
+    const reader = createRobinhoodWethUsdQuoteReader({ rpcClient: rpc });
+    const firstBlock = BigInt(FEE_100_HISTORY_BLOCK);
+
+    await Promise.all(Array.from(
+      { length: 20 },
+      (_, index) => reader.getSnapshot({
+        blockTag: `0x${(firstBlock + BigInt(index)).toString(16)}`,
+      })
+    ));
+
+    assert.equal(
+      rpc.calls.filter((call) => call.params?.[0]?.to === ROBINHOOD_V3_FACTORY).length,
+      CANONICAL_FEES.length
+    );
+    assert.equal(rpc.calls.filter((call) => call.method === 'eth_getCode').length, 1);
+  });
+
   it('rejects an absent pool or a pool without bytecode', async () => {
     const zeroPoolRpc = createRpc({
       handler: async (method) => method === 'eth_getCode'

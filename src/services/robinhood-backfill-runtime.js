@@ -15,6 +15,9 @@ const {
 const {
   createRobinhoodBackfillAggregationWorker,
 } = require('./robinhood-backfill-aggregation-worker');
+const {
+  createRobinhoodWethUsdQuoteReader,
+} = require('./robinhood-weth-usd-quote');
 
 const CHAIN_ID = 4663n;
 
@@ -192,6 +195,7 @@ function createRobinhoodBackfillEnrichmentRuntime(deps = {}) {
   let rawClient = null;
   let rpcClient = null;
   let repository = null;
+  let quoteReader = null;
   let chainValidated = false;
   let timestampProvider = 'drpc';
   return createLoopRuntime({
@@ -210,6 +214,9 @@ function createRobinhoodBackfillEnrichmentRuntime(deps = {}) {
         minRequestIntervalMs: options.rpcMinIntervalMs,
       });
       rpcClient = createEnrichmentRpcRouter(rawClient, options.alchemyTimestampsEnabled);
+      quoteReader = (deps.quoteReaderFactory || createRobinhoodWethUsdQuoteReader)({
+        rpcClient,
+      });
       timestampProvider = options.alchemyTimestampsEnabled ? 'alchemy-free' : 'drpc';
       repository = (deps.repositoryFactory || createRobinhoodPersistenceRepository)();
       chainValidated = false;
@@ -230,6 +237,7 @@ function createRobinhoodBackfillEnrichmentRuntime(deps = {}) {
         rpcClient,
         rpcProvider: 'drpc',
         timestampProvider,
+        quoteReader,
       });
       const worker = (deps.workerFactory || createRobinhoodBackfillEnrichmentWorker)({
         adapter,
