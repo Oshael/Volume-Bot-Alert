@@ -1,6 +1,6 @@
 import type { AppController } from '../../state/app-controller';
 import { getChainCapabilityNotice, getMockTradingPositionView, getMonitoredTokens, getTokenSparkline, isTokenStarred, type AppState, type ManualTokenEntry, type MeteoraEntry } from '../../state/app-state';
-import { bindCompactSearch, bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindSparklineHover, bindSparklineRangeControls, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTickerPeerMcapLabel, buildTradeTerminalMenuElement, fmtAge, fmtAgeFromDurationMs, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderManualQuickAddAction, renderSparklineFigure, renderSparklineRangeControl, renderTokenLaunchpadBadge, renderTotalLiquidityCell } from './shared';
+import { bindCompactSearch, bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindSparklineHover, bindSparklineRangeControls, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTickerPeerMcapLabel, buildTradeTerminalMenuElement, buildXSearchUrl, fmtAge, fmtAgeFromDurationMs, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderManualQuickAddAction, renderSparklineFigure, renderSparklineRangeControl, renderTokenLaunchpadBadge, renderTotalLiquidityCell } from './shared';
 import { escapeHtml, sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 import { fmtMockSol, resolveLiveMockSolUsdcRate, resolveMockTradingPositionPnl } from '../../utils/mock-trading-display';
 import { resolveMonitoredTableRows } from '../../utils/token-table';
@@ -1565,12 +1565,6 @@ function applyFullTickerPeerList(panel: HTMLDetailsElement, payload: TickerPeerL
 
   list.replaceChildren(...buildTickerPeerList(payload, payload.items).childNodes);
   positionMonitoredTickerPeerPanel(panel);
-}
-
-function buildXSearchUrl(symbol: string, address: string) {
-  const queryParts = [String(address || '').trim(), `$${String(symbol || '').trim()}`]
-    .filter(Boolean);
-  return `https://x.com/search?q=${encodeURIComponent(queryParts.join(' OR '))}`;
 }
 
 function isCommunityUrl(url: string | null | undefined) {

@@ -2,7 +2,7 @@ import type { AppController } from '../../state/app-controller';
 import { getAlertFeedAlerts, getManualTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, isChainSelectedForSurface, isTokenStarred, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type CustomAlertCapabilityEntry, type CustomAlertRuleEntry, type ManualTokenEntry, type TokenSparklineEntry } from '../../state/app-state';
 import { getAlertImpactTier, getAlertToneClass, getAlertVisualClasses, isHvncAlert, type AlertImpactTier } from '../../services/alerts/impact-tier';
 import { formatClaimFee } from '../../services/alerts/claim-fee-format';
-import { bindCompactSearch, bindCopyButtons, bindSparklineHover, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTickerPeerMcapLabel, buildTradeTerminalMenuElement, fmtAge, fmtAgeFromDurationMs, fmtMoney, fmtPct, formatPriceUsd, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderSparklineFigure, renderTokenLaunchpadBadge } from './shared';
+import { bindCompactSearch, bindCopyButtons, bindSparklineHover, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTickerPeerMcapLabel, buildTradeTerminalMenuElement, buildXSearchUrl, fmtAge, fmtAgeFromDurationMs, fmtMoney, fmtPct, formatPriceUsd, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderSparklineFigure, renderTokenLaunchpadBadge } from './shared';
 import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 import { buildTokenExplorerUrl, buildTokenMarketUrl, createLegacyCompatibleTokenIdentity, normalizeTokenChain, type TokenChain } from '../../utils/token-chain';
 import { resolveTokenValuation } from '../../utils/token-valuation';
@@ -2649,12 +2649,6 @@ function buildAlertBadgeSub(primary: string, secondary: string) {
   sub.className = 'alert-badge-sub';
   sub.textContent = `${primary} ${secondary}`;
   return sub;
-}
-
-function buildXSearchUrl(symbol: string, address: string) {
-  const queryParts = [String(address || '').trim(), `$${String(symbol || '').trim()}`]
-    .filter(Boolean);
-  return `https://x.com/search?q=${encodeURIComponent(queryParts.join(' OR '))}`;
 }
 
 function appendSpecialAlertFlowLine(container: HTMLElement, alert: AlertEntry) {

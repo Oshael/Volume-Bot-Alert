@@ -2748,10 +2748,21 @@ function renderTokenTableValuation(item: ManualTokenEntry) {
   return `<span class="radar-valuation${freshnessClass}"${title}>${prefix}${fmtMoney(valuation.value)}</span>`;
 }
 
-function buildXSearchUrl(symbol: string, address: string) {
-  const queryParts = [String(address || '').trim(), `$${String(symbol || '').trim()}`]
-    .filter(Boolean);
-  return `https://x.com/search?q=${encodeURIComponent(queryParts.join(' OR '))}`;
+const X_SEARCH_MIN_FAVES = 1;
+
+export function buildXSearchUrl(symbol: string, address: string) {
+  const safeAddress = String(address || '').replace(/"/g, '').trim();
+  const safeSymbol = String(symbol || '').replace(/"/g, '').trim();
+  const terms = [
+    safeAddress ? `"${safeAddress}"` : '',
+    safeSymbol ? `$${safeSymbol}` : '',
+  ].filter(Boolean);
+  if (!terms.length) {
+    return 'https://x.com/search';
+  }
+  const grouped = terms.length > 1 ? `(${terms.join(' OR ')})` : terms[0];
+  const query = `${grouped} min_faves:${X_SEARCH_MIN_FAVES}`;
+  return `https://x.com/search?q=${encodeURIComponent(query)}&f=live`;
 }
 
 const METEORA_TVL_HISTORY_1H = 3600000;

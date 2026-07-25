@@ -1,6 +1,6 @@
 import type { AppController } from '../../state/app-controller';
 import { getTrackedToken, isTokenStarred, type AppState, type BidZoneTokenEntry } from '../../state/app-state';
-import { bindCopyButtons, bindTokenActions, buildTradeTerminalMenuElement, fmtAge, fmtMoney } from './shared';
+import { bindCopyButtons, bindTokenActions, buildTradeTerminalMenuElement, buildXSearchUrl, fmtAge, fmtMoney } from './shared';
 import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 import { buildTokenMarketUrl } from '../../utils/token-chain';
 
@@ -334,12 +334,6 @@ function formatAbsoluteTimestamp(timestamp: string | null) {
     minute: '2-digit',
     second: '2-digit',
   });
-}
-
-function buildXSearchUrl(symbol: string, address: string) {
-  const queryParts = [String(address || '').trim(), `$${String(symbol || '').trim()}`]
-    .filter(Boolean);
-  return `https://x.com/search?q=${encodeURIComponent(queryParts.join(' OR '))}`;
 }
 
 function formatBidZoneAge(ageHours?: number | null, createdAt?: number | null) {
