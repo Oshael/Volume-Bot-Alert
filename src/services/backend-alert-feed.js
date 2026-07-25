@@ -382,6 +382,8 @@ function normalizeTickerPeersSnapshot(value) {
           name: toTextOrNull(item.name),
           imageUrl: toTextOrNull(item.imageUrl),
           mcap: toNumberOrNull(item.mcap),
+          mcapStale: item.mcapStale === true,
+          mcapAgeMs: toNumberOrNull(item.mcapAgeMs),
           tokenCreatedAt: toNumberOrNull(item.tokenCreatedAt),
           ageMsAtAlert: toNumberOrNull(item.ageMsAtAlert),
           matchType: toTextOrNull(item.matchType) === 'subticker' ? 'subticker' : 'exact',

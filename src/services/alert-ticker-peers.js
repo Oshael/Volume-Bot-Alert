@@ -4,6 +4,14 @@ const { createTokenIdentity, normalizeTokenChain } = require('../utils/token-ide
 
 const SUBTICKER_MIN_LENGTH = 3;
 const DEFAULT_LIMIT = 8;
+// Lists embedded in polled responses stay at DEFAULT_LIMIT; only the on-demand
+// panel lookup asks for the full set, so the ceiling exists to bound that call.
+const MAX_LIMIT = 500;
+// `last_mcap` is never cleared when a token dies: the catalog only overwrites it
+// with a non-null reading, so a rugged peer keeps its peak market cap forever.
+// Only a peer whose market data was refreshed inside this window can hold the
+// market-cap leader role; the stale ones stay listed but flagged.
+const MCAP_FRESHNESS_SECONDS = 24 * 60 * 60;
 const SOURCE_PEER_ROLE_OG = 'og';
 const SOURCE_PEER_ROLE_MCAP_LEADER = 'mcap_leader';
 const SOURCE_PEER_ROLE_WARNING = 'peer_warning';
@@ -25,7 +33,7 @@ function normalizeLimit(value) {
   if (!Number.isInteger(parsed)) {
     return DEFAULT_LIMIT;
   }
-  return Math.max(2, Math.min(parsed, 20));
+  return Math.max(2, Math.min(parsed, MAX_LIMIT));
 }
 
 function mapPeerRow(row) {
@@ -35,6 +43,8 @@ function mapPeerRow(row) {
     name: row.name || null,
     imageUrl: row.image_url || null,
     mcap: toNumberOrNull(row.last_mcap),
+    mcapStale: row.has_fresh_mcap !== true,
+    mcapAgeMs: toNumberOrNull(row.mcap_age_ms),
     tokenCreatedAt: toNumberOrNull(row.last_token_created_at_ms),
     ageMsAtAlert: toNumberOrNull(row.age_ms_at_alert),
     matchType: row.match_type === 'subticker' ? 'subticker' : 'exact',
@@ -162,30 +172,26 @@ function sameAddress(left, right) {
 function mapPeerStatsRow(row) {
   const exactCount = Number.parseInt(String(row?.exact_count || '0'), 10);
   const subtickerCount = Number.parseInt(String(row?.subticker_count || '0'), 10);
-  const exactMissingCreatedAtCount = Number.parseInt(String(row?.exact_missing_created_at_count || '0'), 10);
-  const exactMissingMcapCount = Number.parseInt(String(row?.exact_missing_mcap_count || '0'), 10);
   return {
     exactCount: Number.isInteger(exactCount) ? exactCount : 0,
     subtickerCount: Number.isInteger(subtickerCount) ? subtickerCount : 0,
-    exactMissingCreatedAtCount: Number.isInteger(exactMissingCreatedAtCount) ? exactMissingCreatedAtCount : 0,
-    exactMissingMcapCount: Number.isInteger(exactMissingMcapCount) ? exactMissingMcapCount : 0,
     oldestExactAddress: normalizeAddressKey(row?.oldest_exact_address) || null,
     highestMcapExactAddress: normalizeAddressKey(row?.highest_mcap_exact_address) || null,
   };
 }
 
+// The badge on the row and the OG/#1 marks inside the peers panel must agree, so
+// both read the same two addresses. Any extra gate here would show a token marked
+// #1 in the panel while the row above it still warns with `!`.
 function resolveSourcePeerRole(address, stats) {
   if (!stats || stats.exactCount <= 1) {
     return SOURCE_PEER_ROLE_WARNING;
   }
 
-  const isOldestExact = sameAddress(address, stats.oldestExactAddress);
-  const isHighestMcapExact = sameAddress(address, stats.highestMcapExactAddress);
-  const hasCompleteExactMcapData = (Number(stats.exactMissingMcapCount) || 0) === 0;
-  if (isOldestExact) {
+  if (sameAddress(address, stats.oldestExactAddress)) {
     return SOURCE_PEER_ROLE_OG;
   }
-  if (isHighestMcapExact && hasCompleteExactMcapData) {
+  if (sameAddress(address, stats.highestMcapExactAddress)) {
     return SOURCE_PEER_ROLE_MCAP_LEADER;
   }
   return SOURCE_PEER_ROLE_WARNING;
@@ -252,6 +258,13 @@ async function listTickerPeerSummariesForTokens(tokens = [], options = {}, runne
             THEN GREATEST(0, $3::bigint - last_token_created_at_ms)
            ELSE NULL
          END AS age_ms_at_alert,
+         metadata_updated_at IS NOT NULL
+           AND metadata_updated_at > NOW() - make_interval(secs => $5) AS has_fresh_mcap,
+         CASE
+           WHEN metadata_updated_at IS NOT NULL
+            THEN ROUND(EXTRACT(EPOCH FROM (NOW() - metadata_updated_at)) * 1000)
+           ELSE NULL
+         END AS mcap_age_ms,
          regexp_replace(upper(COALESCE(symbol, '')), '[^A-Z0-9]', '', 'g') AS normalized_symbol
        FROM token_catalog
        WHERE chain = $4
@@ -270,15 +283,13 @@ async function listTickerPeerSummariesForTokens(tokens = [], options = {}, runne
          normalized_symbol,
          COUNT(*) AS exact_count,
          0 AS subticker_count,
-         COUNT(*) FILTER (WHERE last_token_created_at_ms IS NULL OR last_token_created_at_ms <= 0) AS exact_missing_created_at_count,
-         COUNT(*) FILTER (WHERE last_mcap IS NULL OR last_mcap <= 0) AS exact_missing_mcap_count,
          (
            ARRAY_AGG(address ORDER BY last_token_created_at_ms ASC, address ASC)
            FILTER (WHERE last_token_created_at_ms IS NOT NULL AND last_token_created_at_ms > 0)
          )[1] AS oldest_exact_address,
          (
            ARRAY_AGG(address ORDER BY last_mcap DESC, COALESCE(last_token_created_at_ms, 9223372036854775807) ASC, address ASC)
-           FILTER (WHERE last_mcap IS NOT NULL AND last_mcap > 0)
+           FILTER (WHERE last_mcap IS NOT NULL AND last_mcap > 0 AND has_fresh_mcap)
          )[1] AS highest_mcap_exact_address
        FROM exact_matches
        GROUP BY normalized_symbol
@@ -288,8 +299,6 @@ async function listTickerPeerSummariesForTokens(tokens = [], options = {}, runne
          exact_matches.*,
          stats.exact_count,
          stats.subticker_count,
-         stats.exact_missing_created_at_count,
-         stats.exact_missing_mcap_count,
          stats.oldest_exact_address,
          stats.highest_mcap_exact_address,
          ROW_NUMBER() OVER (
@@ -305,8 +314,10 @@ async function listTickerPeerSummariesForTokens(tokens = [], options = {}, runne
        *
      FROM ranked
      WHERE peer_rank <= $2
+        OR address = oldest_exact_address
+        OR address = highest_mcap_exact_address
      ORDER BY normalized_symbol ASC, peer_rank ASC`,
-    [normalizedSymbols, limit, snapshotTsMs, chain]
+    [normalizedSymbols, limit, snapshotTsMs, chain, MCAP_FRESHNESS_SECONDS]
   );
 
   const statsBySymbol = new Map();
@@ -358,6 +369,13 @@ async function queryTickerPeerRowsBySymbol(symbol, options = {}, runner = db) {
             THEN GREATEST(0, $4::bigint - last_token_created_at_ms)
            ELSE NULL
          END AS age_ms_at_alert,
+         metadata_updated_at IS NOT NULL
+           AND metadata_updated_at > NOW() - make_interval(secs => $6) AS has_fresh_mcap,
+         CASE
+           WHEN metadata_updated_at IS NOT NULL
+            THEN ROUND(EXTRACT(EPOCH FROM (NOW() - metadata_updated_at)) * 1000)
+           ELSE NULL
+         END AS mcap_age_ms,
          regexp_replace(upper(COALESCE(symbol, '')), '[^A-Z0-9]', '', 'g') AS normalized_symbol
        FROM token_catalog
        WHERE chain = $5
@@ -371,6 +389,8 @@ async function queryTickerPeerRowsBySymbol(symbol, options = {}, runner = db) {
          name,
          image_url,
          last_mcap,
+         has_fresh_mcap,
+         mcap_age_ms,
          last_token_created_at_ms,
          age_ms_at_alert,
          normalized_symbol,
@@ -396,11 +416,6 @@ async function queryTickerPeerRowsBySymbol(symbol, options = {}, runner = db) {
        SELECT
          COUNT(*) FILTER (WHERE normalized_symbol = $1) AS exact_count,
          COUNT(*) FILTER (WHERE normalized_symbol <> $1) AS subticker_count,
-         COUNT(*) FILTER (
-           WHERE normalized_symbol = $1
-             AND (last_token_created_at_ms IS NULL OR last_token_created_at_ms <= 0)
-         ) AS exact_missing_created_at_count,
-         COUNT(*) FILTER (WHERE normalized_symbol = $1 AND (last_mcap IS NULL OR last_mcap <= 0)) AS exact_missing_mcap_count,
          (
            ARRAY_AGG(address ORDER BY last_token_created_at_ms ASC, address ASC)
            FILTER (
@@ -411,27 +426,40 @@ async function queryTickerPeerRowsBySymbol(symbol, options = {}, runner = db) {
          )[1] AS oldest_exact_address,
          (
            ARRAY_AGG(address ORDER BY last_mcap DESC, COALESCE(last_token_created_at_ms, 9223372036854775807) ASC, address ASC)
-           FILTER (WHERE normalized_symbol = $1 AND last_mcap IS NOT NULL AND last_mcap > 0)
+           FILTER (
+             WHERE normalized_symbol = $1
+               AND last_mcap IS NOT NULL
+               AND last_mcap > 0
+               AND has_fresh_mcap
+           )
          )[1] AS highest_mcap_exact_address
        FROM matches
+     ),
+     ranked AS (
+       SELECT
+         matches.*,
+         stats.exact_count,
+         stats.subticker_count,
+         stats.oldest_exact_address,
+         stats.highest_mcap_exact_address,
+         ROW_NUMBER() OVER (
+           ORDER BY
+             CASE WHEN matches.match_type = 'exact' THEN 0 ELSE 1 END ASC,
+             COALESCE(matches.last_mcap, 0) DESC,
+             COALESCE(matches.last_token_created_at_ms, 0) DESC,
+             matches.address ASC
+         ) AS peer_rank
+       FROM matches
+       CROSS JOIN stats
      )
      SELECT
-       matches.*,
-       stats.exact_count,
-       stats.subticker_count,
-       stats.exact_missing_created_at_count,
-       stats.exact_missing_mcap_count,
-       stats.oldest_exact_address,
-       stats.highest_mcap_exact_address
-     FROM matches
-     CROSS JOIN stats
-     ORDER BY
-       CASE WHEN match_type = 'exact' THEN 0 ELSE 1 END ASC,
-       COALESCE(last_mcap, 0) DESC,
-       COALESCE(last_token_created_at_ms, 0) DESC,
-       address ASC
-     LIMIT $3`,
-    [normalizedSymbol, SUBTICKER_MIN_LENGTH, limit, snapshotTsMs, chain]
+       *
+     FROM ranked
+     WHERE peer_rank <= $3
+        OR address = oldest_exact_address
+        OR address = highest_mcap_exact_address
+     ORDER BY peer_rank ASC`,
+    [normalizedSymbol, SUBTICKER_MIN_LENGTH, limit, snapshotTsMs, chain, MCAP_FRESHNESS_SECONDS]
   );
 
   return rows;
@@ -499,11 +527,13 @@ async function buildTickerPeerSnapshotForAlert(input = {}, options = {}, runner 
 }
 
 module.exports = {
+  MAX_PEER_LIST_LIMIT: MAX_LIMIT,
   buildTickerPeerSnapshotForAlert,
   listTickerPeerSummariesForTokens,
   listTickerPeersBySymbol,
   __private: {
     buildTickerPeerSummary,
+    mapPeerRow,
     mapPeerStatsRow,
     filterContextualTickerPeerRows,
     isContextualSubtickerPeer,
