@@ -4,9 +4,10 @@ const { createTokenIdentity, normalizeTokenChain } = require('../utils/token-ide
 
 const SUBTICKER_MIN_LENGTH = 3;
 const DEFAULT_LIMIT = 8;
-// Lists embedded in polled responses stay at DEFAULT_LIMIT; only the on-demand
-// panel lookup asks for the full set, so the ceiling exists to bound that call.
-const MAX_LIMIT = 500;
+// Lists embedded in polled responses stay at DEFAULT_LIMIT; the on-demand panel
+// lookup asks for this ceiling. The OG and the market-cap leader are pinned on
+// top of it, so a low-cap or inactive OG never falls off the list.
+const MAX_LIMIT = 20;
 // `last_mcap` is never cleared when a token dies: the catalog only overwrites it
 // with a non-null reading, so a rugged peer keeps its peak market cap forever.
 // Only a peer whose market data was refreshed inside this window can hold the
@@ -252,6 +253,7 @@ async function listTickerPeerSummariesForTokens(tokens = [], options = {}, runne
          name,
          last_image_url AS image_url,
          last_mcap,
+         last_vol_24h,
          last_token_created_at_ms,
          CASE
            WHEN last_token_created_at_ms IS NOT NULL AND last_token_created_at_ms > 0
@@ -304,7 +306,8 @@ async function listTickerPeerSummariesForTokens(tokens = [], options = {}, runne
          ROW_NUMBER() OVER (
            PARTITION BY exact_matches.normalized_symbol
            ORDER BY COALESCE(exact_matches.last_mcap, 0) DESC,
-                    COALESCE(exact_matches.last_token_created_at_ms, 0) DESC,
+                    COALESCE(exact_matches.last_vol_24h, 0) DESC,
+                    COALESCE(exact_matches.last_token_created_at_ms, 9223372036854775807) ASC,
                     exact_matches.address ASC
          ) AS peer_rank
        FROM exact_matches
@@ -363,6 +366,7 @@ async function queryTickerPeerRowsBySymbol(symbol, options = {}, runner = db) {
          name,
          last_image_url AS image_url,
          last_mcap,
+         last_vol_24h,
          last_token_created_at_ms,
          CASE
            WHEN last_token_created_at_ms IS NOT NULL AND last_token_created_at_ms > 0
@@ -389,6 +393,7 @@ async function queryTickerPeerRowsBySymbol(symbol, options = {}, runner = db) {
          name,
          image_url,
          last_mcap,
+         last_vol_24h,
          has_fresh_mcap,
          mcap_age_ms,
          last_token_created_at_ms,
@@ -446,7 +451,8 @@ async function queryTickerPeerRowsBySymbol(symbol, options = {}, runner = db) {
            ORDER BY
              CASE WHEN matches.match_type = 'exact' THEN 0 ELSE 1 END ASC,
              COALESCE(matches.last_mcap, 0) DESC,
-             COALESCE(matches.last_token_created_at_ms, 0) DESC,
+             COALESCE(matches.last_vol_24h, 0) DESC,
+             COALESCE(matches.last_token_created_at_ms, 9223372036854775807) ASC,
              matches.address ASC
          ) AS peer_rank
        FROM matches
