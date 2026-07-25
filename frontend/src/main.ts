@@ -340,6 +340,16 @@ function isSortMenuOpen() {
   return Boolean(root.querySelector('[data-sort-wrap].open'));
 }
 
+/**
+ * Rows are rebuilt from scratch on every render, which destroys an open ticker
+ * peers panel. Hovering the panel is not enough to protect it: the pointer has to
+ * cross a gap to reach the floating list, and leaving it flushes a pending render.
+ * While a panel is open the list is frozen, the same way an open sort menu is.
+ */
+function isTickerPeersPanelOpen() {
+  return Boolean(root.querySelector('.alert-ticker-peers-panel[open]'));
+}
+
 function getBotSettingsBrowserNotificationsRenderKey(state: AppState) {
   return state.ui.authPanel === 'bot-settings' ? state.ui.browserNotifications : null;
 }
@@ -399,7 +409,7 @@ function mergeDirtyRegions(target: Set<AppRenderRegion> | null, next: ReadonlySe
 }
 
 function flushPendingRender() {
-  if (isDocumentHidden || !pendingState || isEditingInteractiveField() || isInteractionLocked() || isListInteractionLocked() || isPointerOrSelectionLocked() || isSortMenuOpen()) {
+  if (isDocumentHidden || !pendingState || isEditingInteractiveField() || isInteractionLocked() || isListInteractionLocked() || isPointerOrSelectionLocked() || isSortMenuOpen() || isTickerPeersPanelOpen()) {
     return;
   }
 
@@ -797,7 +807,8 @@ function shouldQueueRenderDuringInteraction() {
     || isInteractionLocked()
     || isListInteractionLocked()
     || isPointerOrSelectionLocked()
-    || isSortMenuOpen();
+    || isSortMenuOpen()
+    || isTickerPeersPanelOpen();
 }
 
 function includesOverlayRegion(dirtyRegions: ReadonlySet<AppRenderRegion>) {
