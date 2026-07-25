@@ -67,6 +67,9 @@ const YOUNG_LOW_LIQUIDITY_MAX_AGE_MS = 48 * 60 * 60 * 1000;
 const YOUNG_LOW_LIQUIDITY_MAX_USD = 1000;
 const YOUNG_LOW_LIQUIDITY_BLOCK_YEARS = 10;
 const YOUNG_LOW_LIQUIDITY_EXEMPT_SUFFIXES = ['pump', 'bags', 'bonk'];
+const SPAM_TICKER_DENYLIST = new Set(config.catalogWorker.spamTickerDenylist);
+const SPAM_TICKER_MAX_AGE_MS = config.catalogWorker.spamTickerMaxAgeMs;
+const SPAM_TICKER_MIN_MCAP_USD = config.catalogWorker.spamTickerMinMcapUsd;
 const GMGN_DEX_UNAVAILABLE_ZOMBIE_MIN_ERROR_COUNT = 30;
 const GMGN_DEX_UNAVAILABLE_ZOMBIE_REASON = 'gmgn_dex_unavailable_zombie';
 const GMGN_DEX_UNAVAILABLE_ZOMBIE_LOW_LIQUIDITY_USD = 1000;
@@ -1060,7 +1063,139 @@ async function autoBlockYoungLowLiquidity(token, updatedToken, pair, snapshot) {
   };
 }
 
+function normalizeSpamTicker(value) {
+  return String(value ?? '').trim().toUpperCase();
+}
+
+function resolveSpamTicker(token, updatedToken, pair) {
+  return normalizeSpamTicker(
+    firstPresentValue(updatedToken?.symbol, pair?.baseToken?.symbol, token?.symbol)
+  );
+}
+
+function resolveSpamTickerAgeMs(token, pair, now) {
+  const createdAtMs = toTimestampMs(pair?.pairCreatedAt || token?.last_token_created_at_ms);
+  return createdAtMs ? now - createdAtMs : null;
+}
+
+function resolveSpamTickerMarketCap(token, pair, snapshot) {
+  return toNumber(snapshot?.marketCap ?? pair?.marketCap ?? pair?.fdv ?? token?.last_mcap);
+}
+
+function assessSpamTickerLaunch(token, updatedToken, pair, snapshot, options = {}) {
+  const denylist = options.denylist || SPAM_TICKER_DENYLIST;
+  if (denylist.size === 0) {
+    return { shouldBlock: false, reason: 'denylist-empty' };
+  }
+  if (isManualSource(token)) {
+    return { shouldBlock: false, reason: 'trusted-source' };
+  }
+
+  const ticker = resolveSpamTicker(token, updatedToken, pair);
+  if (!ticker || !denylist.has(ticker)) {
+    return { shouldBlock: false, reason: 'ticker', ticker: ticker || null };
+  }
+
+  const maxAgeMs = options.maxAgeMs ?? SPAM_TICKER_MAX_AGE_MS;
+  const ageMs = resolveSpamTickerAgeMs(token, pair, options.now || Date.now());
+  if (ageMs == null || ageMs < 0 || ageMs >= maxAgeMs) {
+    return { shouldBlock: false, reason: 'age', ticker, ageMs };
+  }
+
+  const minMcapUsd = options.minMcapUsd ?? SPAM_TICKER_MIN_MCAP_USD;
+  const marketCap = resolveSpamTickerMarketCap(token, pair, snapshot);
+  if (marketCap == null || marketCap < minMcapUsd) {
+    return { shouldBlock: false, reason: 'mcap', ticker, ageMs, marketCap };
+  }
+
+  return { shouldBlock: true, reason: 'spam-ticker-launch', ticker, ageMs, marketCap, maxAgeMs, minMcapUsd };
+}
+
+function buildSpamTickerLaunchLabel(assessment = {}) {
+  return buildPrefixedAutoBlockLabel(AUTO_BLOCK_LABEL_PREFIXES.CATALOG_SPAM_TICKER_LAUNCH, [
+    assessment.ticker,
+    Math.round(toNumber(assessment.marketCap) || 0),
+    Math.round((toNumber(assessment.ageMs) || 0) / 1000),
+  ]);
+}
+
+function buildSpamTickerCatalogSnapshot(token, updatedToken, pair) {
+  return {
+    source: firstPresentValue(token?.source),
+    address: firstPresentValue(token?.address),
+    symbol: firstPresentValue(updatedToken?.symbol, pair?.baseToken?.symbol, token?.symbol),
+    name: firstPresentValue(updatedToken?.name, pair?.baseToken?.name, token?.name),
+    eligibilityState: firstPresentValue(token?.eligibility_state),
+    monitorPriority: firstPresentValue(token?.monitor_priority),
+  };
+}
+
+function buildSpamTickerMarketSnapshot(token, pair, snapshot, assessment) {
+  return {
+    mcap: assessment.marketCap,
+    price: toNumber(pair?.priceUsd),
+    pairAddress: pair?.pairAddress || null,
+    pairCreatedAt: pair?.pairCreatedAt || token?.last_token_created_at_ms || null,
+    liquidityUsd: toNumber(snapshot?.liquidityUsd ?? pair?.liquidity?.usd),
+    vol5m: toNumber(snapshot?.vol5m),
+    vol1h: toNumber(snapshot?.vol1h),
+  };
+}
+
+function buildSpamTickerLaunchEvidence(token, updatedToken, pair, snapshot, assessment) {
+  const label = buildSpamTickerLaunchLabel(assessment);
+  return {
+    pipeline: 'catalog-worker:spam-ticker-launch',
+    source: token?.source || null,
+    catalogSnapshot: buildSpamTickerCatalogSnapshot(token, updatedToken, pair),
+    marketSnapshot: buildSpamTickerMarketSnapshot(token, pair, snapshot, assessment),
+    assessment,
+    ruleMatches: [{ label, reason: assessment.reason || 'spam-ticker-launch' }],
+    gmgnSnapshot: {},
+  };
+}
+
+async function autoBlockSpamTickerLaunch(token, updatedToken, pair, snapshot) {
+  const assessment = assessSpamTickerLaunch(token, updatedToken, pair, snapshot);
+  if (!assessment.shouldBlock) {
+    return { blocked: false, assessment };
+  }
+
+  try {
+    await adminBlockedToken.add({
+      address: token.address,
+      label: buildSpamTickerLaunchLabel(assessment),
+      createdBy: null,
+      allowAutoValidOverride: true,
+      evidence: buildSpamTickerLaunchEvidence(token, updatedToken, pair, snapshot, assessment),
+    });
+  } catch (error) {
+    if (error?.code !== 'PROTECTED_RISK_REVIEW_AUTO_BLOCK') {
+      throw error;
+    }
+    console.warn(
+      `[CatalogWorker] Skipped spam-ticker block for ${token.address}: protected by manual risk review`
+    );
+    return { blocked: false, assessment };
+  }
+
+  const blockedToken = await tokenCatalog.applyEvaluationResult(
+    token.address,
+    buildBlockEvaluationPayload(token, updatedToken, pair)
+  );
+
+  return { blocked: true, blockedToken: blockedToken || updatedToken, assessment };
+}
+
 async function handlePostBucketAutoBlocks(token, updatedToken, bestPair, snapshot) {
+  const spamTickerBlock = await autoBlockSpamTickerLaunch(token, updatedToken, bestPair, snapshot);
+  if (spamTickerBlock.blocked) {
+    console.warn(
+      `[CatalogWorker] Auto-blocked ${token.address} for spam ticker: ${buildSpamTickerLaunchLabel(spamTickerBlock.assessment)}`
+    );
+    return spamTickerBlock.blockedToken;
+  }
+
   const youngLowLiquidityBlock = await autoBlockYoungLowLiquidity(token, updatedToken, bestPair, snapshot);
   if (youngLowLiquidityBlock.blocked) {
     console.warn(
@@ -1969,6 +2104,8 @@ module.exports = {
     hasYoungLowLiquidityExemptSuffix,
     shouldCheckManualGmgnBeforeDex,
     isMigrationGraceActive,
+    assessSpamTickerLaunch,
+    buildSpamTickerLaunchLabel,
     assessYoungLowLiquidity,
     buildYoungLowLiquidityLabel,
     assessYoungExtremeChurn,

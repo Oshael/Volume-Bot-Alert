@@ -612,6 +612,12 @@ module.exports = {
     tokenBudgetPerCycle: parseIntegerInRange(process.env.CATALOG_WORKER_TOKEN_BUDGET_PER_CYCLE, 300, 1, 300),
     distributedClaimEnabled: parseBoolean(process.env.CATALOG_WORKER_DISTRIBUTED_CLAIM_ENABLED, false),
     distributedClaimTtlMs: parseIntegerInRange(process.env.CATALOG_WORKER_DISTRIBUTED_CLAIM_TTL_MS, 120000, 1000, 600000),
+    spamTickerDenylist: (process.env.CATALOG_WORKER_SPAM_TICKER_DENYLIST || '')
+      .split(',')
+      .map((item) => item.trim().toUpperCase())
+      .filter(Boolean),
+    spamTickerMaxAgeMs: parseIntegerInRange(process.env.CATALOG_WORKER_SPAM_TICKER_MAX_AGE_MS, 600000, 60000, 21600000),
+    spamTickerMinMcapUsd: parseIntegerInRange(process.env.CATALOG_WORKER_SPAM_TICKER_MIN_MCAP_USD, 500000, 0, 100000000),
   },
 
   marketBuckets: {

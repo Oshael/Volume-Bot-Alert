@@ -1359,3 +1359,63 @@ describe('catalog worker drift compensation', () => {
     assert.equal(assessment.reason, 'trusted-source');
   });
 });
+
+describe('catalog worker spam ticker auto-block', () => {
+  const DENYLIST = new Set(['USOH', 'USWR']);
+  const NOW = 1750000000000;
+
+  function assess(overrides = {}) {
+    const {
+      token = {},
+      symbol = 'USOH',
+      ageMs = 5 * 60 * 1000,
+      marketCap = 750000,
+      pairCreatedAt = NOW - ageMs,
+      options = {},
+    } = overrides;
+
+    return catalogWorker.__private.assessSpamTickerLaunch(
+      { address: TOKEN_A, source: 'dexscreener-discovery', ...token },
+      { symbol },
+      { pairCreatedAt, marketCap },
+      { marketCap },
+      { denylist: DENYLIST, now: NOW, maxAgeMs: 10 * 60 * 1000, minMcapUsd: 500000, ...options }
+    );
+  }
+
+  it('blocks a denylisted ticker inside the age and mcap window', () => {
+    const assessment = assess();
+
+    assert.equal(assessment.shouldBlock, true);
+    assert.equal(assessment.reason, 'spam-ticker-launch');
+    assert.equal(assessment.ticker, 'USOH');
+    assert.equal(assessment.marketCap, 750000);
+  });
+
+  it('normalizes case and whitespace before matching the denylist', () => {
+    assert.equal(assess({ symbol: ' uswr ' }).shouldBlock, true);
+  });
+
+  it('keeps tokens outside the rule when any gate fails', () => {
+    const cases = [
+      { name: 'ticker off denylist', overrides: { symbol: 'BONK' }, reason: 'ticker' },
+      { name: 'older than the age window', overrides: { ageMs: 11 * 60 * 1000 }, reason: 'age' },
+      { name: 'unknown creation time', overrides: { pairCreatedAt: null }, reason: 'age' },
+      { name: 'market cap under the floor', overrides: { marketCap: 499999 }, reason: 'mcap' },
+      { name: 'manual source', overrides: { token: { source: 'user-manual' } }, reason: 'trusted-source' },
+      { name: 'empty denylist', overrides: { options: { denylist: new Set() } }, reason: 'denylist-empty' },
+    ];
+
+    for (const { name, overrides, reason } of cases) {
+      const assessment = assess(overrides);
+      assert.equal(assessment.shouldBlock, false, name);
+      assert.equal(assessment.reason, reason, name);
+    }
+  });
+
+  it('encodes ticker, mcap, and age in the block label', () => {
+    const label = catalogWorker.__private.buildSpamTickerLaunchLabel(assess());
+
+    assert.equal(label, 'catalog-ticker:spam-launch:USOH:750000:300');
+  });
+});
