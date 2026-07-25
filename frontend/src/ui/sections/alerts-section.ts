@@ -2,7 +2,7 @@ import type { AppController } from '../../state/app-controller';
 import { getAlertFeedAlerts, getManualTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, isChainSelectedForSurface, isTokenStarred, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type CustomAlertCapabilityEntry, type CustomAlertRuleEntry, type ManualTokenEntry, type TokenSparklineEntry } from '../../state/app-state';
 import { getAlertImpactTier, getAlertToneClass, getAlertVisualClasses, isHvncAlert, type AlertImpactTier } from '../../services/alerts/impact-tier';
 import { formatClaimFee } from '../../services/alerts/claim-fee-format';
-import { bindCompactSearch, bindCopyButtons, bindSparklineHover, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTickerPeerMcapLabel, buildTradeTerminalMenuElement, buildXSearchUrl, fmtAge, fmtAgeFromDurationMs, fmtMoney, fmtPct, formatPriceUsd, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderSparklineFigure, renderTokenLaunchpadBadge } from './shared';
+import { bindCompactSearch, bindCopyButtons, bindSparklineHover, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTickerPeerMcapLabel, buildTradeTerminalMenuElement, buildXSearchUrl, fmtAge, fmtAgeFromDurationMs, fmtMoney, fmtPct, formatPriceUsd, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderSparklineFigure, renderTokenLaunchpadBadge, resolveTokenAgeMs } from './shared';
 import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 import { buildTokenExplorerUrl, buildTokenMarketUrl, createLegacyCompatibleTokenIdentity, normalizeTokenChain, type TokenChain } from '../../utils/token-chain';
 import { resolveTokenValuation } from '../../utils/token-valuation';
@@ -2163,7 +2163,7 @@ function buildAlertRowContent(
   const symbol = String(alert.symbol || alert.address.slice(0, 8));
   const safeName = String(alert.name || 'Metadata pending');
   const imageUrl = sanitizeOptionalHttpUrl(alert.imageUrl);
-  const xSearch = buildXSearchUrl(symbol, alert.address);
+  const xSearch = buildXSearchUrl(symbol, alert.address, resolveTokenAgeMs(alert.tokenCreatedAt));
   const topClass = getAlertToneClass(alert, renderNow);
   const timeLabel = new Date(alert.createdAt).toLocaleTimeString('en-US');
   if (alert.kind === 'admin-token-review') {
@@ -2334,7 +2334,7 @@ function buildAdminReviewAlertRowContent(
     buildTextSeparator(),
     buildInlineLink('Website', sanitizeHttpUrl(alert.reviewWebsiteUrl || marketLink.url)),
     buildTextSeparator(),
-    buildInlineLink('X Buscar CA / ', sanitizeHttpUrl(buildXSearchUrl(symbol, alert.address))),
+    buildInlineLink('X Buscar CA / ', sanitizeHttpUrl(buildXSearchUrl(symbol, alert.address, resolveTokenAgeMs(alert.tokenCreatedAt)))),
     buildTextSeparator(),
     buildProfileLink(socialLinks.twitterUrl),
     ...(socialLinks.communityUrl ? [buildTextSeparator(), buildCommunityLink(socialLinks.communityUrl)] : []),

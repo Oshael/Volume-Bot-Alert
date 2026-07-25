@@ -1,6 +1,6 @@
 import type { AppController } from '../../state/app-controller';
 import { getTrackedToken, isTokenStarred, type AppState, type BidZoneTokenEntry } from '../../state/app-state';
-import { bindCopyButtons, bindTokenActions, buildTradeTerminalMenuElement, buildXSearchUrl, fmtAge, fmtMoney } from './shared';
+import { bindCopyButtons, bindTokenActions, buildTradeTerminalMenuElement, buildXSearchUrl, fmtAge, fmtMoney, resolveTokenAgeMs } from './shared';
 import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 import { buildTokenMarketUrl } from '../../utils/token-chain';
 
@@ -140,7 +140,7 @@ function buildBidZoneRow(
 function buildBidZoneRowView(state: AppState, item: BidZoneTokenEntry) {
   const tracked = getTrackedToken(state, item.address);
   const symbol = resolveBidZoneSymbol(tracked, item);
-  const links = resolveBidZoneLinks(item.pairUrl || tracked?.pairUrl, item.address, symbol);
+  const links = resolveBidZoneLinks(item.pairUrl || tracked?.pairUrl, item.address, symbol, resolveBidZoneAgeMs(tracked, item));
   const metrics = resolveBidZoneMetrics(tracked, item);
   return {
     tracked,
@@ -186,10 +186,18 @@ function resolveBidZoneSymbol(tracked: ReturnType<typeof getTrackedToken>, item:
   return item.symbol || tracked?.symbol || item.address.slice(0, 6);
 }
 
-function resolveBidZoneLinks(pairUrl: string | null | undefined, address: string, symbol: string) {
+function resolveBidZoneAgeMs(tracked: ReturnType<typeof getTrackedToken>, item: BidZoneTokenEntry) {
+  const ageHours = Number(item.ageHours);
+  if (Number.isFinite(ageHours) && ageHours >= 0) {
+    return ageHours * 3600000;
+  }
+  return resolveTokenAgeMs(tracked?.createdAt);
+}
+
+function resolveBidZoneLinks(pairUrl: string | null | undefined, address: string, symbol: string, ageMs: number | null) {
   return {
     pairUrl: sanitizeHttpUrl(buildTokenMarketUrl('solana', address, pairUrl)),
-    xSearchUrl: sanitizeHttpUrl(buildXSearchUrl(symbol, address)),
+    xSearchUrl: sanitizeHttpUrl(buildXSearchUrl(symbol, address, ageMs)),
   };
 }
 

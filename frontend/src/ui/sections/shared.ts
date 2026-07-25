@@ -1981,7 +1981,7 @@ function renderRadarRowGlyphs(
   symbol: string,
 ) {
   const { item, mode } = options;
-  const xSearch = buildXSearchUrl(symbol, item.address);
+  const xSearch = buildXSearchUrl(symbol, item.address, resolveTokenAgeMs(item.createdAt));
   const twitterUrl = sanitizeOptionalHttpUrl(item.twitterUrl);
   const communityUrl = sanitizeOptionalHttpUrl(item.communityUrl);
   return `
@@ -2749,8 +2749,17 @@ function renderTokenTableValuation(item: ManualTokenEntry) {
 }
 
 const X_SEARCH_MIN_FAVES = 1;
+const X_SEARCH_YOUNG_TOKEN_MS = 12 * 3600000;
 
-export function buildXSearchUrl(symbol: string, address: string) {
+export function resolveTokenAgeMs(createdAt?: number | null) {
+  const created = Number(createdAt);
+  if (!Number.isFinite(created) || created <= 0) {
+    return null;
+  }
+  return Math.max(0, Date.now() - created);
+}
+
+export function buildXSearchUrl(symbol: string, address: string, ageMs?: number | null) {
   const safeAddress = String(address || '').replace(/"/g, '').trim();
   const safeSymbol = String(symbol || '').replace(/"/g, '').trim();
   const terms = [
@@ -2761,7 +2770,9 @@ export function buildXSearchUrl(symbol: string, address: string) {
     return 'https://x.com/search';
   }
   const grouped = terms.length > 1 ? `(${terms.join(' OR ')})` : terms[0];
-  const query = `${grouped} min_faves:${X_SEARCH_MIN_FAVES}`;
+  const age = Number(ageMs);
+  const isYoungToken = !Number.isFinite(age) || age < X_SEARCH_YOUNG_TOKEN_MS;
+  const query = isYoungToken ? grouped : `${grouped} min_faves:${X_SEARCH_MIN_FAVES}`;
   return `https://x.com/search?q=${encodeURIComponent(query)}&f=live`;
 }
 
