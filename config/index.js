@@ -902,6 +902,9 @@ module.exports = {
     rpcConcurrency: parseIntegerInRange(
       process.env.ROBINHOOD_BACKFILL_ENRICHMENT_RPC_CONCURRENCY, 1, 1, 8
     ),
+    prepareConcurrency: parseIntegerInRange(
+      process.env.ROBINHOOD_BACKFILL_ENRICHMENT_PREPARE_CONCURRENCY, 16, 1, 64
+    ),
     rpcTimeoutMs: parseIntegerInRange(
       process.env.ROBINHOOD_SCAN_RPC_TIMEOUT_MS, 15_000, 1000, 60_000
     ),

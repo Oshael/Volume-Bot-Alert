@@ -100,6 +100,50 @@ function createHarness(options = {}) {
 }
 
 describe('Robinhood backfill enrichment worker', () => {
+  it('bounds adapter prepare and build concurrency', async () => {
+    const claims = Array.from({ length: 10 }, (_, index) => (
+      claim({ logIndex: String(index) })
+    ));
+    let inFlight = 0;
+    let peakInFlight = 0;
+    const harness = createHarness({ claims });
+    const slowAdapter = {
+      async prepareClaim(item) {
+        inFlight += 1;
+        peakInFlight = Math.max(peakInFlight, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight -= 1;
+        return {
+          tokenAddress: TOKEN,
+          requests: [{
+            slot: 'accepted',
+            provider: 'drpc',
+            method: 'eth_call',
+            params: [{ to: TOKEN, data: '0x01' }, `0x${item.logIndex}`],
+          }],
+          context: { decoded: true },
+        };
+      },
+      async buildEntry(input) {
+        inFlight += 1;
+        peakInFlight = Math.max(peakInFlight, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight -= 1;
+        return entryFor(input);
+      },
+    };
+    const worker = harness.createWorker({ adapter: slowAdapter });
+    const result = await worker.runOnce({
+      owner: 'worker-a',
+      useBatch: false,
+      prepareConcurrency: 3,
+    });
+
+    assert.equal(result.status, 'completed');
+    assert.equal(result.claimed, 10);
+    assert.equal(peakInFlight, 3);
+  });
+
   it('claims, executes the planner and atomically commits terminal entries', async () => {
     const harness = createHarness();
     const worker = harness.createWorker();

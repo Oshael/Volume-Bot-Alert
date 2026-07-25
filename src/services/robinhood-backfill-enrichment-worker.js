@@ -8,6 +8,7 @@ const {
   executeRobinhoodBackfillEnrichmentPlan,
   planRobinhoodBackfillEnrichment,
 } = require('./robinhood-backfill-enrichment-planner');
+const { mapWithConcurrency } = require('./evm-log-enrichment');
 
 function boundedInteger(value, label, fallback, minimum, maximum) {
   const resolved = value == null ? fallback : Number(value);
@@ -50,6 +51,9 @@ function normalizeOptions(input = {}) {
       useBatch: input.useBatch,
       concurrency: input.rpcConcurrency,
     },
+    prepareConcurrency: boundedInteger(
+      input.prepareConcurrency, 'prepareConcurrency', 16, 1, 64
+    ),
   };
 }
 
@@ -67,8 +71,8 @@ function requireAdapter(adapter) {
   return adapter;
 }
 
-async function prepareClaims(claims, adapter) {
-  return Promise.all(claims.map(async (claim) => {
+async function prepareClaims(claims, adapter, concurrency) {
+  return mapWithConcurrency(claims, concurrency, async (claim) => {
     const prepared = await adapter.prepareClaim(claim);
     if (!prepared || !Array.isArray(prepared.requests)) {
       throw new TypeError(`Adapter did not prepare requests for ${claimIdentity(claim)}`);
@@ -84,12 +88,12 @@ async function prepareClaims(claims, adapter) {
         requests: prepared.requests,
       },
     };
-  }));
+  });
 }
 
-async function buildEntries(prepared, execution, adapter) {
+async function buildEntries(prepared, execution, adapter, concurrency) {
   const resultsById = new Map(execution.items.map((item) => [item.id, item.results]));
-  return Promise.all(prepared.map(async ({ claim, context, item }) => {
+  return mapWithConcurrency(prepared, concurrency, async ({ claim, context, item }) => {
     if (!resultsById.has(item.id)) {
       throw new Error(`Planner omitted enrichment result for ${item.id}`);
     }
@@ -98,7 +102,7 @@ async function buildEntries(prepared, execution, adapter) {
       context,
       results: resultsById.get(item.id),
     });
-  }));
+  });
 }
 
 function createClaimHeartbeat(input) {
@@ -194,10 +198,10 @@ function createRobinhoodBackfillEnrichmentWorker(deps = {}) {
         schedule: scheduleHeartbeat,
         cancel: cancelHeartbeat,
       });
-      const prepared = await prepareClaims(claims, adapter);
+      const prepared = await prepareClaims(claims, adapter, options.prepareConcurrency);
       const plan = createPlan(prepared.map(({ item }) => item), options.planner);
       const execution = await executePlan(plan, rpcClient, options.execution);
-      const entries = await buildEntries(prepared, execution, adapter);
+      const entries = await buildEntries(prepared, execution, adapter, options.prepareConcurrency);
       await heartbeat.stop();
       heartbeat = null;
       const committed = await persistenceRepository.commitBackfillEnrichmentBatch({
