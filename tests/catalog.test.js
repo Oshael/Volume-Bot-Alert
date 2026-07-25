@@ -514,6 +514,26 @@ describe('Catalog routes', () => {
     assert.equal(res.body.error, 'Invalid metadata URI');
   });
 
+  it('rejects a malformed address on the on-demand ticker peer lookup', async () => {
+    const res = await request(app)
+      .get('/api/catalog/ticker-peers/not-an-address')
+      .set('Authorization', `Bearer ${token}`);
+
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error, 'Invalid token address');
+  });
+
+  it('returns an empty ticker peer list for a token without peers', async () => {
+    const res = await request(app)
+      .get(`/api/catalog/ticker-peers/${VALID_ADDR}`)
+      .set('Authorization', `Bearer ${token}`);
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.chain, 'solana');
+    assert.deepEqual(res.body.items, []);
+    assert.equal(res.body.count, 0);
+  });
+
   it('rejects malformed market history query params', async () => {
     const res = await request(app)
       .get(`/api/catalog/history/${VALID_ADDR}`)

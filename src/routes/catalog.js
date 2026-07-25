@@ -1222,6 +1222,48 @@ async function buildValidatedPromotion(user, body = {}) {
   };
 }
 
+function buildTickerPeerListResponse(identity, snapshot) {
+  const items = Array.isArray(snapshot?.items) ? snapshot.items : [];
+  return {
+    chain: identity.chain,
+    address: identity.address,
+    count: items.length,
+    exactCount: snapshot?.exactCount ?? null,
+    oldestExactAddress: snapshot?.oldestExactAddress || null,
+    highestMcapExactAddress: snapshot?.highestMcapExactAddress || null,
+    items,
+  };
+}
+
+// Lists embedded in the polled monitored payload stay capped, because they ride
+// along on every refresh. The full peer set is only worth paying for when the
+// user actually opens the panel, so it lives behind this on-demand lookup.
+router.get('/ticker-peers/:address', catalogReadLimiter, async (req, res) => {
+  try {
+    const address = String(req.params?.address || '').trim();
+    if (!isValidAddress(address)) {
+      return res.status(400).json({ error: 'Invalid token address' });
+    }
+
+    let identity;
+    try {
+      identity = createTokenIdentity(req.query?.chain || 'solana', address);
+    } catch (_) {
+      return res.status(400).json({ error: 'Invalid token chain' });
+    }
+
+    const snapshot = await alertTickerPeers.buildTickerPeerSnapshotForAlert(
+      { chain: identity.chain, address: identity.address },
+      { chain: identity.chain, limit: alertTickerPeers.MAX_PEER_LIST_LIMIT }
+    );
+
+    res.json(buildTickerPeerListResponse(identity, snapshot));
+  } catch (err) {
+    console.error('GET /catalog/ticker-peers/:address error:', err.message);
+    res.status(500).json({ error: 'Failed to load ticker peers' });
+  }
+});
+
 router.get('/history/:address', catalogReadLimiter, async (req, res) => {
   try {
     const address = String(req.params?.address || '').trim();
