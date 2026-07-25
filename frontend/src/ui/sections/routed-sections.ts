@@ -1,6 +1,8 @@
 ﻿import type { AppController } from '../../state/app-controller';
 import { getMockTradingPositionsViewByAddress, getOldWeekTokens, getRecentTokens, isTokenStarred, type AppState } from '../../state/app-state';
 import { bindBucketSortControls, bindCompactSearch, bindCopyButtons, bindPagedBucketControls, bindSparklineHover, bindSparklineRangeControls, bindTokenActions, bindTokenImagePreview, fmtConfig, renderPagedAgeBucketList, renderSparklineRangeControl } from './shared';
+import { bindMonitoredTickerPeerPanelClose } from './monitored-section';
+import { bindRadarIdentityBadges } from './radar-identity-badges';
 import { resolveLiveMockSolUsdcRate } from '../../utils/mock-trading-display';
 
 const RECENT_MAX_AGE_MINUTES = 7 * 24 * 60;
@@ -449,6 +451,8 @@ export function renderRecentSection(state: AppState, controller: AppController) 
   section.querySelector<HTMLButtonElement>('[data-action="toggle-section-collapse"]')?.addEventListener('click', () => {
     controller.toggleSectionCollapsed('recent');
   });
+  bindRadarIdentityBadges(section, filteredRecentTokens);
+  bindMonitoredTickerPeerPanelClose(section);
   bindTokenActions(section, controller);
   bindCopyButtons(section);
   bindSparklineHover(section, state.data.sparklineByAddress, { controller });
@@ -708,6 +712,8 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
   section.querySelector<HTMLButtonElement>('[data-action="toggle-section-collapse"]')?.addEventListener('click', () => {
     controller.toggleSectionCollapsed('oldWeek');
   });
+  bindRadarIdentityBadges(section, filteredOldWeekTokens);
+  bindMonitoredTickerPeerPanelClose(section);
   bindTokenActions(section, controller);
   bindCopyButtons(section);
   bindSparklineHover(section, state.data.sparklineByAddress, { controller });

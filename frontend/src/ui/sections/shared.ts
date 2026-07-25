@@ -1836,7 +1836,7 @@ function renderAgeBucketFooter(mode: 'recent' | 'old-week', totalPages: number, 
   `;
 }
 
-function renderTokenTableShell(options: {
+interface TokenTableShellOptions {
   tone: 'manual' | 'recent' | 'old-week';
   mode: 'manual' | 'recent' | 'old-week';
   rows: ManualTokenEntry[];
@@ -1853,55 +1853,234 @@ function renderTokenTableShell(options: {
   mockTradingPositionsByAddress?: Record<string, MockTradingPositionEntry>;
   mockTradingTradesByAddress?: Record<string, MockTradingTradeEntry[]>;
   mockSolUsdcRate?: number;
-}) {
-  const showSparkline = Boolean(options.showSparkline);
+}
+
+function resolveShellRowSparkline(options: TokenTableShellOptions, item: ManualTokenEntry) {
+  if (!options.showSparkline) {
+    return null;
+  }
+  const identityKey = buildTokenIdentityKey(item.chain || 'solana', item.address);
+  return options.sparklineByAddress?.[identityKey]
+    || ((item.chain || 'solana') === 'solana' ? options.sparklineByAddress?.[item.address] : null)
+    || null;
+}
+
+function renderTokenTableShell(options: TokenTableShellOptions) {
   const hasFdvOnlyRows = options.rows.some((item) => resolveTokenValuation(item).type === 'fdv');
+  return renderRadarTableShell(options, hasFdvOnlyRows);
+}
+
+function renderRadarTableShell(options: TokenTableShellOptions, hasFdvOnlyRows: boolean) {
   return `
-    <div class="token-table-wrap token-table-${options.tone}">
-      <table class="token-table ${options.tone}">
+    <div class="token-table-wrap token-table-${options.tone} radar-table-wrap">
+      <table class="token-table ${options.tone} radar-table">
+        <colgroup>
+          <col class="radar-col-ident" />
+          <col class="radar-col-chart" />
+          <col class="radar-col-size" />
+          <col class="radar-col-trio" />
+          <col class="radar-col-trio" />
+        </colgroup>
         <thead>
           <tr>
-            <th class="rank-col">#</th>
             <th>Token</th>
-            ${showSparkline ? '<th class="sparkline-col">Chart</th>' : ''}
-            <th class="num-col">Age</th>
-            <th class="num-col">${hasFdvOnlyRows ? 'MCAP / FDV' : 'MCAP'}</th>
-            ${options.mode === 'manual' ? '<th class="num-col metric-group-start">Vol 5M</th>' : ''}
-            <th class="num-col ${options.mode === 'manual' ? '' : 'metric-group-start'}">Vol 1H</th>
-            <th class="num-col">Vol 6H</th>
-            <th class="num-col">Vol 24H</th>
-            <th class="num-col metric-group-start">PChg 1H</th>
-            <th class="num-col">PChg 6H</th>
-            <th class="num-col">PChg 24H</th>
-            <th class="num-col metric-group-start">Total Liq</th>
-            <th class="action-col"></th>
+            <th class="radar-chart-col">Chart</th>
+            <th>${hasFdvOnlyRows ? 'MCAP / FDV' : 'MCAP'} / Size</th>
+            <th class="metric-group-start">Volume&nbsp;&nbsp;1H / 6H / 24H</th>
+            <th class="metric-group-start">Change&nbsp;&nbsp;1H / 6H / 24H</th>
           </tr>
         </thead>
         <tbody>
-          ${options.rows.map((item, index) => renderTokenTableRow(
+          ${options.rows.map((item, index) => renderRadarTokenTableRow({
+            busy: options.busy,
+            enabledTradeTerminals: options.enabledTradeTerminals,
+            isAdmin: Boolean(options.isAdmin),
+            isStarred: options.starredSet.has(buildTokenIdentityKey(item.chain || 'solana', item.address)),
             item,
-            options.mode,
-            options.busy,
-            options.starredSet.has(buildTokenIdentityKey(item.chain || 'solana', item.address)),
-            options.meteoraByAddress,
-            options.meteoraMinPool,
-            (options.startRank ?? 1) + index,
-            Boolean(options.isAdmin),
-            options.enabledTradeTerminals,
-            options.manualTokenFolders ?? [],
-            showSparkline
-              ? options.sparklineByAddress?.[buildTokenIdentityKey(item.chain || 'solana', item.address)]
-                || ((item.chain || 'solana') === 'solana' ? options.sparklineByAddress?.[item.address] : null)
-                || null
-              : null,
-            options.mockTradingPositionsByAddress?.[item.address] || null,
-            options.mockTradingTradesByAddress?.[item.address] || [],
-            options.mockSolUsdcRate,
-          )).join('')}
+            mode: options.mode,
+            manualTokenFolders: options.manualTokenFolders ?? [],
+            meteoraByAddress: options.meteoraByAddress,
+            meteoraMinPool: options.meteoraMinPool,
+            mockSolUsdcRate: options.mockSolUsdcRate,
+            mockTradingPosition: options.mockTradingPositionsByAddress?.[item.address] || null,
+            mockTradingTrades: options.mockTradingTradesByAddress?.[item.address] || [],
+            rank: (options.startRank ?? 1) + index,
+            sparkline: resolveShellRowSparkline(options, item),
+          })).join('')}
         </tbody>
       </table>
     </div>
   `;
+}
+
+interface RadarTokenRowOptions {
+  busy: boolean;
+  enabledTradeTerminals: TradeTerminalKey[];
+  isAdmin: boolean;
+  isStarred: boolean;
+  item: ManualTokenEntry;
+  mode: 'manual' | 'recent' | 'old-week';
+  manualTokenFolders: AppState['data']['manualTokenFolders'];
+  meteoraByAddress: Record<string, MeteoraEntry>;
+  meteoraMinPool: number;
+  mockSolUsdcRate?: number;
+  mockTradingPosition: MockTradingPositionEntry | null;
+  mockTradingTrades: MockTradingTradeEntry[];
+  rank: number;
+  sparkline: TokenSparklineEntry | null;
+}
+
+function renderRadarTokenTableRow(options: RadarTokenRowOptions) {
+  const { item, mode } = options;
+  const chain = normalizeTokenChain(item.chain) || 'solana';
+  const isSolana = chain === 'solana';
+  const symbol = item.symbol || item.label || item.address.slice(0, 6);
+  const safeAddress = escapeHtml(item.address);
+  const safeSymbol = escapeHtml(symbol);
+  const safeName = escapeHtml(item.name || item.label || item.address);
+  const safeIdentity = escapeHtml(buildTokenIdentityKey(chain, item.address));
+  const dexUrl = sanitizeHttpUrl(resolveTokenTablePrimaryUrl(item, chain));
+  const meteora = isSolana ? options.meteoraByAddress[item.address] : undefined;
+  const mockTradingLine = isSolana
+    ? renderMockTradingLine(options.mockTradingPosition, options.mockTradingTrades, options.mockSolUsdcRate)
+    : '';
+
+  return `
+    <tr class="radar-row ${buildTokenTableRowClass(mode, item, options.isStarred)}" data-hover-key="${mode}:${safeIdentity}" data-token-identity="${safeIdentity}">
+      <td class="radar-ident-col">
+        <div class="token-cell radar-ident">
+          <span class="radar-rank">#${options.rank}</span>
+          ${renderAvatar(item, symbol)}
+          <div class="token-main radar-ident-main">
+            <div class="token-line radar-name-line">
+              <a class="token-symbol" href="${dexUrl}" target="_blank" rel="noreferrer">${safeSymbol}</a>
+              <span class="token-subline radar-subname">${safeName}</span>
+              <span data-radar-identity-badges data-chain="${chain}" data-address="${safeAddress}"></span>
+              ${renderRadarDataState(mode, item)}
+            </div>
+            <div class="token-actions-inline radar-actions">
+              ${renderRadarRowGlyphs(options, chain, safeAddress, safeSymbol, symbol)}
+            </div>
+            ${mockTradingLine}
+          </div>
+        </div>
+      </td>
+      <td class="sparkline-col radar-chart-col">${renderSparklineCell(options.sparkline, item, isSolana ? options.mockTradingTrades : [], options.mockSolUsdcRate)}</td>
+      <td class="radar-size-col">${renderRadarSizeBlock(item, meteora, options.meteoraMinPool)}</td>
+      <td class="radar-trio-col metric-group-start">${renderRadarVolumeTrio(item, mode)}</td>
+      <td class="radar-trio-col metric-group-start">${renderRadarChangeTrio(item, mode)}</td>
+    </tr>
+  `;
+}
+
+function renderRadarRowGlyphs(
+  options: RadarTokenRowOptions,
+  chain: TokenChain,
+  safeAddress: string,
+  safeSymbol: string,
+  symbol: string,
+) {
+  const { item, mode } = options;
+  const xSearch = buildXSearchUrl(symbol, item.address);
+  const twitterUrl = sanitizeOptionalHttpUrl(item.twitterUrl);
+  const communityUrl = sanitizeOptionalHttpUrl(item.communityUrl);
+  return `
+    <a class="action-glyph x-search" href="${sanitizeHttpUrl(xSearch)}" target="_blank" rel="noreferrer" title="Search contract or ticker on X">X</a>
+    ${renderTokenSocialActions(twitterUrl, communityUrl)}
+    <button type="button" class="action-glyph copy-button" data-action="copy-address" data-address="${safeAddress}" title="Copy contract">&#10697;</button>
+    ${renderTradeTerminalMenu(item.address, item.mintAddress, item.pairAddress, { chain: item.chain, enabledTradeTerminals: options.enabledTradeTerminals })}
+    ${renderTokenTableActions({
+      busy: options.busy,
+      chain,
+      isAdmin: options.isAdmin,
+      isStarred: options.isStarred,
+      manualTokenFolders: options.manualTokenFolders,
+      mockTradingPosition: options.mockTradingPosition,
+      mode,
+      safeAddress,
+      safeSymbol,
+    })}
+    ${renderRadarRemoveManualGlyph(mode, chain, safeAddress, options.busy)}
+  `;
+}
+
+function renderRadarRemoveManualGlyph(
+  mode: 'manual' | 'recent' | 'old-week',
+  chain: TokenChain,
+  safeAddress: string,
+  busy: boolean,
+) {
+  if (mode !== 'manual') {
+    return '';
+  }
+
+  return `<button type="button" class="action-glyph danger-glyph radar-remove-manual" data-action="remove-manual" data-chain="${chain}" data-address="${safeAddress}" ${busy ? 'disabled' : ''} title="Remove from manual tokens">X</button>`;
+}
+
+function renderRadarSizeBlock(item: ManualTokenEntry, meteora: MeteoraEntry | undefined, meteoraMinPool: number) {
+  return `
+    <dl class="radar-size">
+      <div class="radar-size-item"><dt>MC</dt><dd>${renderTokenTableValuation(item)}</dd></div>
+      <div class="radar-size-item"><dt>LQ</dt><dd>${renderTotalLiquidityCell(item, meteora, meteoraMinPool)}</dd></div>
+      <div class="radar-size-item"><dt>AGE</dt><dd class="radar-size-age ${getAgeToneClassFromCreatedAt(item.createdAt)}">${item.createdAt ? fmtAge(item.createdAt) : '-'}</dd></div>
+      <div class="radar-size-item"><dt>HLD</dt><dd class="radar-size-empty" title="Holders data is not tracked yet">-</dd></div>
+    </dl>
+  `;
+}
+
+const RADAR_TRIO_WINDOWS = [
+  { key: '1h', label: '1H' },
+  { key: '6h', label: '6H' },
+  { key: '24h', label: '24H' },
+] as const;
+
+function renderRadarVolumeTrio(item: ManualTokenEntry, mode: 'manual' | 'recent' | 'old-week') {
+  const coverage = { ...item.coverage };
+  const values: Record<string, number | null | undefined> = {
+    '1h': item.volume1h,
+    '6h': item.volume6h,
+    '24h': item.volume24h,
+  };
+  const cells = RADAR_TRIO_WINDOWS.map(({ key, label }) => `
+    <div class="radar-cell">
+      <small>${label}</small>
+      <b>${renderBucketMoneyMetric(mode, values[key], coverage[key])}</b>
+    </div>
+  `).join('');
+  return `<div class="radar-trio">${cells}</div>`;
+}
+
+/**
+ * Manual rows carry no rolling-window coverage, so the tint has to come from the
+ * raw value there; radar rows only tint when coverage reports the value usable.
+ */
+function resolveRadarChangeTone(
+  mode: 'manual' | 'recent' | 'old-week',
+  value: number | null | undefined,
+  coverage: TokenMetricCoverage | undefined,
+) {
+  if (mode === 'manual') {
+    return value != null && Number.isFinite(value) ? (value >= 0 ? ' up' : ' down') : '';
+  }
+
+  const metric = resolveCoveredMetric(value, coverage);
+  return metric.available ? (Number(metric.value) >= 0 ? ' up' : ' down') : '';
+}
+
+function renderRadarChangeTrio(item: ManualTokenEntry, mode: 'manual' | 'recent' | 'old-week') {
+  const coverage = { ...item.priceChangeCoverage };
+  const values: Record<string, number | null | undefined> = {
+    '1h': item.priceChange1h,
+    '6h': item.priceChange6h,
+    '24h': item.priceChange24h,
+  };
+  const cells = RADAR_TRIO_WINDOWS.map(({ key, label }) => `
+    <div class="radar-cell radar-cell-pchg${resolveRadarChangeTone(mode, values[key], coverage[key])}">
+      <small>${label}</small>
+      <b>${renderBucketPriceChangeMetric(mode, values[key], coverage[key])}</b>
+    </div>
+  `).join('');
+  return `<div class="radar-trio">${cells}</div>`;
 }
 
 function normalizeSparklineSeries(series: number[] | null | undefined) {
@@ -2355,20 +2534,6 @@ function renderSparklineCell(entry: TokenSparklineEntry | null, item: ManualToke
   });
 }
 
-function renderBucketDismissButton(
-  mode: 'manual' | 'recent' | 'old-week',
-  safeAddress: string,
-  chain: TokenChain,
-  busy: boolean,
-) {
-  if (mode === 'manual') {
-    return `<button type="button" class="inline-icon danger" data-action="remove-manual" data-chain="${chain}" data-address="${safeAddress}" ${busy ? 'disabled' : ''}>X</button>`;
-  }
-
-  const action = mode === 'recent' ? 'dismiss-recent' : 'dismiss-old-week';
-  return `<button type="button" class="inline-icon danger" data-action="${action}" data-chain="${chain}" data-address="${safeAddress}" ${busy ? 'disabled' : ''}>X</button>`;
-}
-
 function renderTokenSocialActions(twitterUrl: string | null, communityUrl: string | null) {
   const socialLinks = splitTokenSocialUrls(twitterUrl, communityUrl);
   const actions: string[] = [];
@@ -2488,14 +2653,6 @@ function formatMockTradingTakeProfitSummary(orders: MockTradingPositionEntry['ta
   return `TP ${preview}${extra}`;
 }
 
-function renderBucketVolumeCell(mode: 'manual' | 'recent' | 'old-week', item: ManualTokenEntry) {
-  if (mode !== 'manual') {
-    return '';
-  }
-
-  return `<td class="num-col metric-group-start">${renderBucketMoneyMetric(mode, item.volume5m, item.coverage?.['5m'])}</td>`;
-}
-
 function renderBucketMoneyMetric(
   mode: 'manual' | 'recent' | 'old-week',
   value: number | null | undefined,
@@ -2548,15 +2705,6 @@ function buildTokenTableRowClass(
   return `${isStarred ? 'token-starred' : ''}${activityClass}`.trim();
 }
 
-function renderBucketSparklineCell(
-  sparkline: TokenSparklineEntry | null,
-  item: ManualTokenEntry,
-  markers: MockTradingTradeEntry[] = [],
-  mockSolUsdcRate?: number,
-) {
-  return `<td class="sparkline-col">${renderSparklineCell(sparkline, item, markers, mockSolUsdcRate)}</td>`;
-}
-
 function resolveTokenTablePrimaryUrl(item: ManualTokenEntry, chain: TokenChain) {
   return buildTokenMarketUrl(chain, item.address, item.pairUrl)
     || buildTokenExplorerUrl(chain, item.address)
@@ -2590,78 +2738,6 @@ function renderTokenTableActions(options: {
     )}${renderTokenAdminAction(options.isAdmin, options.safeAddress, options.safeSymbol, options.busy)}`
     : '';
   return `${quickAdd}${star}${block}${solanaOnly}`;
-}
-
-function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' | 'old-week', busy: boolean, isStarred: boolean, meteoraByAddress: Record<string, MeteoraEntry>, meteoraMinPool: number, rank: number, isAdmin: boolean, enabledTradeTerminals: TradeTerminalKey[], manualTokenFolders: AppState['data']['manualTokenFolders'] = [], sparkline: TokenSparklineEntry | null = null, mockTradingPosition: MockTradingPositionEntry | null = null, mockTradingTrades: MockTradingTradeEntry[] = [], mockSolUsdcRate?: number) {
-  const chain = normalizeTokenChain(item.chain) || 'solana';
-  const isSolana = chain === 'solana';
-  const symbol = item.symbol || item.label || item.address.slice(0, 6);
-  const safeAddress = escapeHtml(item.address);
-  const safeSymbol = escapeHtml(symbol);
-  const safeName = escapeHtml(item.name || item.label || item.address);
-  const dexUrl = sanitizeHttpUrl(resolveTokenTablePrimaryUrl(item, chain));
-  const xSearch = buildXSearchUrl(symbol, item.address);
-  const twitterUrl = sanitizeOptionalHttpUrl(item.twitterUrl);
-  const communityUrl = sanitizeOptionalHttpUrl(item.communityUrl);
-  const age = item.createdAt ? fmtAge(item.createdAt) : '-';
-  const actionButton = renderBucketDismissButton(mode, safeAddress, chain, busy);
-  const tokenActions = renderTokenTableActions({
-    busy,
-    chain,
-    isAdmin,
-    isStarred,
-    manualTokenFolders,
-    mockTradingPosition,
-    mode,
-    safeAddress,
-    safeSymbol,
-  });
-  const mockTradingLine = isSolana
-    ? renderMockTradingLine(mockTradingPosition, mockTradingTrades, mockSolUsdcRate)
-    : '';
-  const meteora = isSolana ? meteoraByAddress[item.address] : undefined;
-  const safeIdentity = escapeHtml(buildTokenIdentityKey(chain, item.address));
-  const volumeCoverage = { ...item.coverage };
-  const priceChangeCoverage = { ...item.priceChangeCoverage };
-
-  return `
-    <tr class="${buildTokenTableRowClass(mode, item, isStarred)}" data-hover-key="${mode}:${safeIdentity}" data-token-identity="${safeIdentity}">
-      <td class="rank-col">#${rank}</td>
-      <td>
-        <div class="token-cell">
-          ${renderAvatar(item, symbol)}
-          <div class="token-main">
-            <div class="token-line">
-              <a class="token-symbol" href="${dexUrl}" target="_blank" rel="noreferrer">${safeSymbol}</a>
-              <span data-table-chain-badge data-chain="${chain}" data-address="${safeAddress}"></span>
-              ${renderRadarDataState(mode, item)}
-              <div class="token-actions-inline">
-                <a class="action-glyph x-search" href="${sanitizeHttpUrl(xSearch)}" target="_blank" rel="noreferrer" title="Search contract or ticker on X">X</a>
-                ${renderTokenSocialActions(twitterUrl, communityUrl)}
-                <button type="button" class="action-glyph copy-button" data-action="copy-address" data-address="${safeAddress}" title="Copy contract">&#10697;</button>
-                ${renderTradeTerminalMenu(item.address, item.mintAddress, item.pairAddress, { chain: item.chain, enabledTradeTerminals })}
-                ${tokenActions}
-              </div>
-            </div>
-            <div class="token-subline">${safeName}</div>
-            ${mockTradingLine}
-          </div>
-        </div>
-      </td>
-      ${renderBucketSparklineCell(sparkline, item, isSolana ? mockTradingTrades : [], mockSolUsdcRate)}
-      <td class="num-col">${age}</td>
-      <td class="num-col strong">${renderTokenTableValuation(item)}</td>
-      ${renderBucketVolumeCell(mode, item)}
-      <td class="num-col ${mode === 'manual' ? '' : 'metric-group-start'}">${renderBucketMoneyMetric(mode, item.volume1h, volumeCoverage['1h'])}</td>
-      <td class="num-col">${renderBucketMoneyMetric(mode, item.volume6h, volumeCoverage['6h'])}</td>
-      <td class="num-col">${renderBucketMoneyMetric(mode, item.volume24h, volumeCoverage['24h'])}</td>
-      <td class="num-col metric-group-start">${renderBucketPriceChangeMetric(mode, item.priceChange1h, priceChangeCoverage['1h'])}</td>
-      <td class="num-col">${renderBucketPriceChangeMetric(mode, item.priceChange6h, priceChangeCoverage['6h'])}</td>
-      <td class="num-col">${renderBucketPriceChangeMetric(mode, item.priceChange24h, priceChangeCoverage['24h'])}</td>
-      <td class="num-col metric-group-start">${renderTotalLiquidityCell(item, meteora, meteoraMinPool)}</td>
-      <td class="action-col">${actionButton}</td>
-    </tr>
-  `;
 }
 
 function renderTokenTableValuation(item: ManualTokenEntry) {

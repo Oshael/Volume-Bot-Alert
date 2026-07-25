@@ -1,6 +1,8 @@
 ﻿import type { AppController } from '../../state/app-controller';
 import { getChainCapabilityNotice, getManualTokens, getMockTradingPositionsViewByAddress, getVisibleManualTokens, type AppState } from '../../state/app-state';
 import { bindBucketSortControls, bindCompactSearch, bindCopyButtons, bindSparklineHover, bindTokenActions, bindTokenImagePreview, renderManualTokenTable } from './shared';
+import { bindMonitoredTickerPeerPanelClose } from './monitored-section';
+import { bindRadarIdentityBadges } from './radar-identity-badges';
 import { resolveManualTableRows } from '../../utils/token-table';
 import { resolveLiveMockSolUsdcRate } from '../../utils/mock-trading-display';
 import { escapeHtml } from './html-safety';
@@ -125,6 +127,8 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
   section.querySelector<HTMLButtonElement>('[data-action="toggle-section-collapse"]')?.addEventListener('click', () => {
     controller.toggleSectionCollapsed('manual');
   });
+  bindRadarIdentityBadges(section, getVisibleManualTokens(state));
+  bindMonitoredTickerPeerPanelClose(section);
   bindTokenActions(section, controller);
   bindCopyButtons(section);
   bindSparklineHover(section, state.data.sparklineByAddress, { controller });

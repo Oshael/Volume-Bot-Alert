@@ -14813,7 +14813,8 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .alert-row .alert-ticker-peers-list,
-.monitored-token-row .alert-ticker-peers-list {
+.monitored-token-row .alert-ticker-peers-list,
+.radar-row .alert-ticker-peers-list {
   position: fixed;
   top: var(--ticker-peers-top, 0);
   left: var(--ticker-peers-left, 0);
@@ -14823,7 +14824,8 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .alert-row .alert-ticker-peers-panel:not([data-positioned="true"]) .alert-ticker-peers-list,
-.monitored-token-row .monitored-ticker-peers-panel:not([data-positioned="true"]) .alert-ticker-peers-list {
+.monitored-token-row .monitored-ticker-peers-panel:not([data-positioned="true"]) .alert-ticker-peers-list,
+.radar-row .monitored-ticker-peers-panel:not([data-positioned="true"]) .alert-ticker-peers-list {
   visibility: hidden;
   pointer-events: none;
 }
@@ -15918,4 +15920,320 @@ TEMP_LEGACY_BAR_TITLE {
 .monitored-token-row.token-starred,
 .alert-row.token-starred {
   box-shadow: inset 2px 0 0 rgba(255, 213, 74, 0.85), 0 0 24px rgba(255, 204, 0, 0.1);
+}
+
+/* ============================================================
+   RADAR — layout agrupado das linhas de OLD TOKENS.
+   As 14 colunas antigas viram 5: identidade | chart | size |
+   trio de volume | trio de change. Cores herdadas do tema.
+   ============================================================ */
+
+.radar-table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.radar-col-ident {
+  width: 25%;
+}
+
+.radar-col-chart {
+  width: 18%;
+}
+
+.radar-col-size {
+  width: 15%;
+}
+
+.radar-col-trio {
+  width: 21%;
+}
+
+.old-week-bar .radar-table th,
+.old-week-bar .radar-table td,
+.recent-bar .radar-table th,
+.recent-bar .radar-table td,
+.manual-bar .radar-table th,
+.manual-bar .radar-table td {
+  padding: 10px 10px !important;
+  vertical-align: middle;
+  white-space: normal;
+}
+
+.old-week-bar .radar-table td.radar-trio-col,
+.recent-bar .radar-table td.radar-trio-col,
+.manual-bar .radar-table td.radar-trio-col {
+  padding: 10px 8px !important;
+}
+
+.old-week-bar .radar-table thead th,
+.recent-bar .radar-table thead th,
+.manual-bar .radar-table thead th {
+  white-space: nowrap;
+}
+
+/* ---------- coluna 1: identidade ---------- */
+
+.radar-ident {
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.radar-rank {
+  flex: 0 0 auto;
+  padding-top: 10px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.radar-ident-main {
+  flex: 1 1 auto;
+  gap: 5px;
+  min-width: 0;
+}
+
+.radar-name-line {
+  flex-wrap: wrap;
+  row-gap: 3px;
+  min-width: 0;
+}
+
+.radar-row:has(.monitored-ticker-peers-panel[open]) {
+  z-index: 40;
+}
+
+.radar-row:has(.monitored-ticker-peers-panel[open]) .radar-name-line {
+  overflow: visible;
+}
+
+.radar-name-line .token-identity-badges {
+  gap: 4px;
+}
+
+.old-week-bar .radar-subname,
+.recent-bar .radar-subname,
+.manual-bar .radar-subname {
+  flex: 0 1 auto;
+  max-width: 100% !important;
+  font-size: 11px !important;
+  white-space: nowrap;
+}
+
+.radar-actions {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+
+/* Overrides the 38px the bars force on the legacy table avatars. Same
+   specificity as that rule, so it wins by coming later in the sheet. */
+.manual-bar .radar-table .token-avatar,
+.manual-bar .radar-table .token-avatar.placeholder,
+.recent-bar .radar-table .token-avatar,
+.recent-bar .radar-table .token-avatar.placeholder,
+.old-week-bar .radar-table .token-avatar,
+.old-week-bar .radar-table .token-avatar.placeholder {
+  width: 42px !important;
+  height: 42px !important;
+}
+
+/* ---------- coluna 2: chart ---------- */
+
+.radar-table .radar-chart-col {
+  width: auto;
+  min-width: 0;
+  text-align: left;
+}
+
+.radar-table thead th.radar-chart-col {
+  text-align: center;
+}
+
+.radar-table .radar-chart-col .sparkline-wrap {
+  width: 100%;
+  height: 56px;
+}
+
+/* The base .token-sparkline ships a fixed 144px box; without this the SVG
+   floats centred inside the wider radar cell instead of filling it. */
+.radar-table .radar-chart-col .token-sparkline {
+  width: 100%;
+  height: 100%;
+}
+
+.radar-table .radar-chart-col .sparkline-wrap-expanded {
+  height: clamp(350px, 55vh, 590px);
+}
+
+/* ---------- coluna 3: size / holders ---------- */
+
+.radar-size {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 14px;
+  margin: 0;
+  max-width: 250px;
+}
+
+.radar-size-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-start;
+  gap: 7px;
+  min-width: 0;
+}
+
+.radar-size dt {
+  flex: 0 0 auto;
+  min-width: 24px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.radar-size dd {
+  margin: 0;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.radar-size-age {
+  color: var(--muted);
+}
+
+/* Same age tone scale used by the alerts feed and the monitored list:
+   up = up to 1 week, warn = under 1 month, down = older, white = unknown. */
+.radar-size-age.up {
+  color: var(--green);
+}
+
+.radar-size-age.warn {
+  color: #ff8a00;
+}
+
+.radar-size-age.down {
+  color: var(--red);
+}
+
+.radar-size-age.white {
+  color: #fff;
+}
+
+.radar-size-empty {
+  color: var(--muted);
+  opacity: 0.55;
+}
+
+.radar-size .met-tip-wrap {
+  display: inline-flex;
+}
+
+/* The liquidity cell hosts an absolutely positioned hover panel, so it must opt
+   out of the ellipsis clipping the other size cells rely on. */
+.radar-size dd:has(.met-tip-wrap) {
+  overflow: visible;
+}
+
+/* ---------- colunas 4 e 5: trios ---------- */
+
+.radar-trio {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.radar-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px;
+  border: 1px solid rgba(125, 163, 197, 0.16);
+  border-radius: 6px;
+  background: rgba(10, 17, 25, 0.5);
+  min-width: 0;
+}
+
+.radar-cell small {
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+}
+
+.radar-cell b {
+  overflow: hidden;
+  font-weight: 400;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.old-week-bar .radar-cell b .radar-coverage,
+.old-week-bar .radar-cell b .pct-pos,
+.old-week-bar .radar-cell b .pct-neg,
+.old-week-bar .radar-cell b .pct-neutral,
+.recent-bar .radar-cell b .radar-coverage,
+.recent-bar .radar-cell b .pct-pos,
+.recent-bar .radar-cell b .pct-neg,
+.recent-bar .radar-cell b .pct-neutral,
+.manual-bar .radar-cell b .radar-coverage,
+.manual-bar .radar-cell b .pct-pos,
+.manual-bar .radar-cell b .pct-neg,
+.manual-bar .radar-cell b .pct-neutral {
+  font-size: 11px !important;
+}
+
+.radar-cell-pchg b {
+  font-weight: 700;
+}
+
+.radar-cell-pchg.up {
+  border-color: rgba(0, 204, 102, 0.28);
+  background: rgba(0, 204, 102, 0.07);
+}
+
+.radar-cell-pchg.down {
+  border-color: rgba(255, 77, 109, 0.28);
+  background: rgba(255, 77, 109, 0.07);
+}
+
+@media (max-width: 1280px) {
+  .radar-col-ident {
+    width: 28%;
+  }
+
+  .radar-col-chart {
+    width: 14%;
+  }
+
+  .radar-col-size {
+    width: 14%;
+  }
+
+  .radar-col-trio {
+    width: 22%;
+  }
+
+  .old-week-bar .radar-table th,
+  .old-week-bar .radar-table td,
+  .old-week-bar .radar-table td.radar-trio-col,
+  .recent-bar .radar-table th,
+  .recent-bar .radar-table td,
+  .recent-bar .radar-table td.radar-trio-col,
+  .manual-bar .radar-table th,
+  .manual-bar .radar-table td,
+  .manual-bar .radar-table td.radar-trio-col {
+    padding: 8px 6px !important;
+  }
+
+  .radar-cell {
+    padding: 5px 4px;
+  }
+
+  .radar-size {
+    gap: 5px 10px;
+  }
 }

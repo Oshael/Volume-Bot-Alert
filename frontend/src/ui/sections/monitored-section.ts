@@ -811,7 +811,7 @@ function resolveMonitoredAbsoluteDropPosition(
   return previousIndex >= 0 ? previousIndex + 1 : 0;
 }
 
-function bindMonitoredTickerPeerPanelClose(section: ParentNode) {
+export function bindMonitoredTickerPeerPanelClose(section: ParentNode) {
   section.addEventListener('click', (event) => {
     const target = event.target as HTMLElement | null;
     closeOpenMonitoredTickerPeerPanels(section, target?.closest<HTMLDetailsElement>('.monitored-ticker-peers-panel') || null);
@@ -1503,7 +1503,7 @@ function buildTickerPeerRowBadge(label: string, role: 'og' | 'mcap_leader', titl
   return badge;
 }
 
-function buildTickerPeerBadge(tickerPeers: ManualTokenEntry['tickerPeers']) {
+export function buildTickerPeerBadge(tickerPeers: ManualTokenEntry['tickerPeers']) {
   if (!tickerPeers || (Number(tickerPeers.count) || 0) <= 1) {
     return null;
   }

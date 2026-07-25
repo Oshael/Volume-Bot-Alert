@@ -1,6 +1,8 @@
 import type { AppController } from '../../state/app-controller';
-import { getChainCapabilityNotice, getManualTokens, getOldWeekTokens, getRecentTokens, getTrackedToken, type AppState } from '../../state/app-state';
+import { getChainCapabilityNotice, getManualTokens, getOldWeekTokens, getRecentTokens, getTrackedToken, type AppState, type ManualTokenEntry } from '../../state/app-state';
 import { bindCopyButtons, bindTokenActions, renderTokenCard } from './shared';
+import { bindMonitoredTickerPeerPanelClose } from './monitored-section';
+import { bindRadarIdentityBadges } from './radar-identity-badges';
 import { escapeHtml } from './html-safety';
 import { buildTokenIdentityKey, parseTokenIdentityKey, type TokenChain } from '../../utils/token-chain';
 
@@ -35,6 +37,7 @@ export function renderStarredSection(state: AppState, controller: AppController)
     ${visibleIdentities.length === 0 ? '<p class="muted-block">No starred tokens for the selected chains.</p>' : '<div class="token-card-grid"></div>'}
   `;
 
+  const renderedTokens: ManualTokenEntry[] = [];
   const grid = section.querySelector<HTMLElement>('.token-card-grid');
   if (grid) {
     for (const identityKey of visibleIdentities) {
@@ -42,6 +45,7 @@ export function renderStarredSection(state: AppState, controller: AppController)
       const address = identity.address;
       const item = getTrackedToken(state, address, identity.chain);
       if (item) {
+        renderedTokens.push(item);
         const wrapper = document.createElement('div');
         wrapper.innerHTML = renderTokenCard(item, state.ui.busy, {
           mode: manualAddressSet.has(identityKey) || item._userManual ? 'manual' : recentAddressSet.has(identityKey) ? 'recent' : oldWeekAddressSet.has(identityKey) ? 'old-week' : 'monitored',
@@ -60,6 +64,8 @@ export function renderStarredSection(state: AppState, controller: AppController)
     }
   }
 
+  bindRadarIdentityBadges(section, renderedTokens);
+  bindMonitoredTickerPeerPanelClose(section);
   bindTokenActions(section, controller);
   bindCopyButtons(section);
   return section;
