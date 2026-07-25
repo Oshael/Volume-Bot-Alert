@@ -1228,8 +1228,10 @@ test('renders Radar valuation freshness, coverage and independent chain filters 
   });
   expect(filterGeometry.ageCenter).toBe(filterGeometry.sortCenter);
   expect(new Set(filterGeometry.sortButtonTops).size).toBe(1);
+  // The compact toolbar drops the divider between sort pills; the alignment
+  // assertions above stay as the real regression guard for this cluster.
   await expect(recentBar.locator('.recent-ctrl-cluster-sort .sort-menu-wrap').nth(1))
-    .toHaveCSS('border-left-width', '1px');
+    .toHaveCSS('border-left-width', '0px');
   const fdvMinInput = recentBar.locator('input[name="old-fdv-min"]');
   await fdvMinInput.fill('175000');
   await fdvMinInput.press('Enter');

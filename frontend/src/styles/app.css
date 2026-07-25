@@ -16237,3 +16237,163 @@ TEMP_LEGACY_BAR_TITLE {
     gap: 5px 10px;
   }
 }
+
+/* ============================================================
+   OLD TOKENS + RECENT toolbar — compact pass modelled on the 1A mockup.
+   Geometry and typography only: palette, markup and behaviour
+   are untouched, and nothing here leaks into the manual bar.
+   ============================================================ */
+
+:is(.old-week-bar, .recent-bar) .recent-bar-controls {
+  gap: 8px !important;
+}
+
+/* --- icon squares (collapse / search / star) --- */
+
+/* Every outer box in the toolbar shares one fixed height, so none of them is
+   sized by its own content. Inner controls stay shorter and are centred. */
+:is(.old-week-bar, .recent-bar) .recent-ctrl-icons .compact-icon-toggle,
+:is(.old-week-bar, .recent-bar) .compact-search,
+:is(.old-week-bar, .recent-bar) .recent-bar-controls .recent-ctrl-cluster {
+  height: 30px;
+  min-height: 30px;
+  max-height: 30px;
+}
+
+:is(.old-week-bar, .recent-bar) .recent-ctrl-icons .compact-icon-toggle {
+  flex: 0 0 30px;
+  width: 30px;
+  min-width: 30px;
+  max-width: 30px;
+  border-radius: 7px;
+}
+
+:is(.old-week-bar, .recent-bar) .recent-ctrl-icons .compact-icon-glyph {
+  font-size: 14px;
+}
+
+:is(.old-week-bar, .recent-bar) .compact-search {
+  border-radius: 7px;
+}
+
+/* Guarded so the expanded search keeps the width its own states set. */
+:is(.old-week-bar, .recent-bar) .compact-search:not(.open):not(.has-query):not(:focus-within) {
+  width: 30px;
+  min-width: 30px;
+}
+
+:is(.old-week-bar, .recent-bar) .compact-search-toggle {
+  width: 28px;
+  height: 28px;
+}
+
+/* --- field clusters (AGE / PER PAGE / valuation) --- */
+
+:is(.old-week-bar, .recent-bar) .recent-bar-controls .recent-ctrl-cluster {
+  gap: 8px;
+  padding: 0 11px;
+  border-width: 1px;
+  border-radius: 8px;
+}
+
+:is(.old-week-bar, .recent-bar) .recent-bar-controls .recent-ctrl-cluster-label {
+  padding: 0;
+  border-right: 0;
+  font-size: 10px !important;
+  letter-spacing: 0.12em;
+}
+
+/* Targets the visible toolbar inputs only — the valuation popover inputs
+   share .recent-ctrl-cluster and must keep their own sizing. */
+:is(.old-week-bar, .recent-bar) .recent-ctrl-cluster-range input,
+:is(.old-week-bar, .recent-bar) input:is([data-action="old-week-per-page"], [data-action="recent-per-page"]) {
+  height: 22px !important;
+  min-height: 22px !important;
+  padding: 2px 4px !important;
+  font-size: 11px !important;
+}
+
+:is(.old-week-bar, .recent-bar) .recent-bar-controls .recent-ctrl-cluster-range {
+  gap: 6px;
+}
+
+:is(.old-week-bar, .recent-bar) .recent-bar-controls .recent-ctrl-cluster-range input {
+  width: 40px !important;
+}
+
+:is(.old-week-bar, .recent-bar) .recent-bar-controls input:is([data-action="old-week-per-page"], [data-action="recent-per-page"]) {
+  width: 44px !important;
+}
+
+:is(.old-week-bar, .recent-bar) .recent-ctrl-range-sep {
+  padding: 0;
+  font-size: 11px;
+}
+
+/* --- CHART range --- */
+
+:is(.old-week-bar, .recent-bar) .sparkline-range-control {
+  gap: 8px;
+}
+
+:is(.old-week-bar, .recent-bar) .sparkline-range-label {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
+
+:is(.old-week-bar, .recent-bar) .sparkline-range-menu .sparkline-range-button {
+  min-width: 0;
+  height: 22px;
+  min-height: 22px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  font-size: 11px;
+}
+
+/* --- valuation pill --- */
+
+/* The valuation control nests a bordered button inside a bordered cluster,
+   which reads as a box within a box. Strip the wrapper and let the button
+   be the box, sized like every other one in the strip. */
+:is(.old-week-bar, .recent-bar) .recent-bar-controls .recent-ctrl-cluster.history-valuation-filter {
+  padding: 0 !important;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+:is(.old-week-bar, .recent-bar) .history-valuation-toggle {
+  height: 30px !important;
+  min-height: 30px !important;
+  padding: 0 12px !important;
+  border-radius: 8px;
+  font-size: 11px !important;
+  font-weight: 700;
+}
+
+/* --- sort pills --- */
+
+:is(.old-week-bar, .recent-bar) .recent-bar-controls .recent-ctrl-cluster-sort {
+  gap: 6px;
+  padding-left: 11px;
+  padding-right: 6px;
+}
+
+:is(.old-week-bar, .recent-bar) .recent-bar-controls .recent-ctrl-cluster-sort .sort-menu-wrap {
+  align-items: center;
+}
+
+:is(.old-week-bar, .recent-bar) .recent-bar-controls .recent-ctrl-cluster-sort .old-filter-btn {
+  height: 22px !important;
+  min-height: 22px !important;
+  padding: 0 8px !important;
+  border-width: 1px !important;
+  border-radius: 6px;
+  font-size: 11px !important;
+}
+
+:is(.old-week-bar, .recent-bar) .recent-bar-controls .recent-ctrl-cluster-sort .sort-menu-wrap + .sort-menu-wrap {
+  margin-left: 0;
+  padding-left: 0;
+  border-left: 0;
+}
