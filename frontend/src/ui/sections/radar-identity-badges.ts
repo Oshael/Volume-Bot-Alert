@@ -27,7 +27,7 @@ export function bindRadarIdentityBadges(section: ParentNode, tokens: ManualToken
     const chain = normalizeTokenChain(placeholder.dataset.chain) || 'solana';
     const token = tokensByIdentity.get(buildTokenIdentityKey(chain, address));
     placeholder.replaceChildren(
-      buildTokenIdentityBadgeGroup(buildTickerPeerBadge(token?.tickerPeers), chain, address),
+      buildTokenIdentityBadgeGroup(buildTickerPeerBadge(token?.tickerPeers, chain, address), chain, address),
     );
   }
 }

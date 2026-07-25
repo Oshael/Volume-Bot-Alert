@@ -106,6 +106,8 @@ export interface AlertEntry {
       name?: string | null;
       imageUrl?: string | null;
       mcap?: number | null;
+      mcapStale?: boolean;
+      mcapAgeMs?: number | null;
       tokenCreatedAt?: number | null;
       ageMsAtAlert?: number | null;
       matchType?: 'exact' | 'subticker' | null;

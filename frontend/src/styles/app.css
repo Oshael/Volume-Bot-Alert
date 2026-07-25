@@ -14907,6 +14907,24 @@ TEMP_LEGACY_BAR_TITLE {
   color: #fff;
 }
 
+/* Market cap the catalog stopped refreshing: the value is a leftover peak, so it
+   is shown but cannot be read as current — and it never holds the #1 badge. */
+.alert-ticker-peers-mcap[data-mcap-stale="true"] {
+  color: var(--muted);
+  text-decoration: underline dotted currentColor;
+  text-underline-offset: 3px;
+}
+
+.alert-ticker-peers-panel[data-peers-loading="true"] .alert-ticker-peers-list {
+  opacity: 0.55;
+}
+
+.alert-ticker-peers-stale-mark {
+  margin-right: 3px;
+  color: #ff8a00;
+  font-size: 0.85em;
+}
+
 .alert-ticker-peers-age.up {
   color: var(--green);
 }

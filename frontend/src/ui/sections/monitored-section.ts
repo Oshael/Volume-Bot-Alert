@@ -1,17 +1,19 @@
 import type { AppController } from '../../state/app-controller';
 import { getChainCapabilityNotice, getMockTradingPositionView, getMonitoredTokens, getTokenSparkline, isTokenStarred, type AppState, type ManualTokenEntry, type MeteoraEntry } from '../../state/app-state';
-import { bindCompactSearch, bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindSparklineHover, bindSparklineRangeControls, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderManualQuickAddAction, renderSparklineFigure, renderSparklineRangeControl, renderTokenLaunchpadBadge, renderTotalLiquidityCell } from './shared';
+import { bindCompactSearch, bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindSparklineHover, bindSparklineRangeControls, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTickerPeerMcapLabel, buildTradeTerminalMenuElement, fmtAge, fmtAgeFromDurationMs, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderManualQuickAddAction, renderSparklineFigure, renderSparklineRangeControl, renderTokenLaunchpadBadge, renderTotalLiquidityCell } from './shared';
 import { escapeHtml, sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 import { fmtMockSol, resolveLiveMockSolUsdcRate, resolveMockTradingPositionPnl } from '../../utils/mock-trading-display';
 import { resolveMonitoredTableRows } from '../../utils/token-table';
 import { buildTokenExplorerUrl, buildTokenIdentityKey, buildTokenMarketUrl, normalizeTokenChain, type TokenChain } from '../../utils/token-chain';
 import { resolveCoveredMetric, resolveTokenValuation, type ResolvedCoveredMetric, type TokenMetricCoverage } from '../../utils/token-valuation';
 import { buildTokenIdentityBadgeGroup } from '../token-chain-badge';
+import { fetchTickerPeers, type TickerPeerListItem, type TickerPeerListPayload } from '../../services/api/catalog';
 import { resolveMonitoredEmptyStateContent } from '../../utils/monitored-empty-state';
 import { calculateCanonicalVolume5mDelta } from '../../utils/canonical-volume';
 
 const TICKER_PEERS_PANEL_GAP_PX = 8;
 const TICKER_PEERS_VIEWPORT_MARGIN_PX = 12;
+const TICKER_PEERS_CACHE_TTL_MS = 60 * 1000;
 const TICKER_PEERS_MAX_HEIGHT_PX = 360;
 const TICKER_PEERS_MIN_HEIGHT_PX = 120;
 const MONITORED_PIN_CLICK_DELAY_MS = 320;
@@ -829,6 +831,7 @@ export function bindMonitoredTickerPeerPanelClose(section: ParentNode) {
     delete panel.dataset.positioned;
     closeOpenMonitoredTickerPeerPanels(section, panel);
     positionMonitoredTickerPeerPanel(panel);
+    loadFullTickerPeerList(panel);
   }, true);
 
   section.addEventListener('wheel', (event) => {
@@ -986,7 +989,7 @@ function buildMonitoredRow(item: ManualTokenEntry, manualTokenFolders: AppState[
   tokenName.target = '_blank';
   tokenName.rel = 'noreferrer';
   tokenName.textContent = symbol;
-  const tickerPeerBadge = buildTickerPeerBadge(item.tickerPeers);
+  const tickerPeerBadge = buildTickerPeerBadge(item.tickerPeers, item.chain, item.address);
   const identityBadges = buildTokenIdentityBadgeGroup(tickerPeerBadge, chain, item.address);
   const tokenAddr = document.createElement('span');
   tokenAddr.className = 'token-addr';
@@ -1358,39 +1361,6 @@ function getTickerPeerBadgeTitle(tickerPeers: ManualTokenEntry['tickerPeers'], r
   return `${Number(tickerPeers?.count) || 0} exact ticker peers`;
 }
 
-function fmtAgeFromDurationMs(ageMs: number | null | undefined) {
-  if (ageMs == null) {
-    return '-';
-  }
-
-  const duration = Number(ageMs);
-  if (!Number.isFinite(duration) || duration < 0) {
-    return '-';
-  }
-
-  const monthDays = 30;
-  const months = Math.floor(duration / (monthDays * 86400000));
-  if (months >= 12) {
-    return `${Math.floor(months / 12)}y`;
-  }
-  if (months >= 1) {
-    return `${months}mo`;
-  }
-
-  const days = Math.floor(duration / 86400000);
-  if (days >= 1) {
-    return `${days}d`;
-  }
-  const hours = Math.floor(duration / 3600000);
-  if (hours >= 1) {
-    return `${hours}h`;
-  }
-  const minutes = Math.floor(duration / 60000);
-  if (minutes >= 1) {
-    return `${minutes}m`;
-  }
-  return '0m';
-}
 
 function resolveTickerPeerAgeMs(
   item: NonNullable<NonNullable<ManualTokenEntry['tickerPeers']>['items']>[number],
@@ -1425,10 +1395,14 @@ function buildTickerPeerAvatar(symbol: string, imageUrl: string | null) {
   return placeholder;
 }
 
-function buildTickerPeerList(tickerPeers: ManualTokenEntry['tickerPeers']) {
+function buildTickerPeerList(
+  tickerPeers: ManualTokenEntry['tickerPeers'],
+  overrideItems?: TickerPeerListItem[],
+) {
   const list = document.createElement('div');
   list.className = 'alert-ticker-peers-list monitored-ticker-peers-list';
-  const items = Array.isArray(tickerPeers?.items) ? tickerPeers.items : [];
+  const items = overrideItems
+    ?? (Array.isArray(tickerPeers?.items) ? tickerPeers.items : []);
 
   for (const item of items) {
     const row = document.createElement('div');
@@ -1464,9 +1438,7 @@ function buildTickerPeerList(tickerPeers: ManualTokenEntry['tickerPeers']) {
 
     const stats = document.createElement('div');
     stats.className = 'alert-ticker-peers-stats';
-    const mcapLabel = document.createElement('span');
-    mcapLabel.className = 'alert-ticker-peers-mcap';
-    mcapLabel.textContent = fmtMoney(item.mcap);
+    const mcapLabel = buildTickerPeerMcapLabel(item);
     const separator = document.createElement('span');
     separator.textContent = ' • ';
     const ageMs = resolveTickerPeerAgeMs(item);
@@ -1503,7 +1475,11 @@ function buildTickerPeerRowBadge(label: string, role: 'og' | 'mcap_leader', titl
   return badge;
 }
 
-export function buildTickerPeerBadge(tickerPeers: ManualTokenEntry['tickerPeers']) {
+export function buildTickerPeerBadge(
+  tickerPeers: ManualTokenEntry['tickerPeers'],
+  chain?: TokenChain | null,
+  address?: string | null,
+) {
   if (!tickerPeers || (Number(tickerPeers.count) || 0) <= 1) {
     return null;
   }
@@ -1511,6 +1487,13 @@ export function buildTickerPeerBadge(tickerPeers: ManualTokenEntry['tickerPeers'
   const role = resolveTickerPeerRole(tickerPeers);
   const details = document.createElement('details');
   details.className = 'alert-ticker-peers-panel monitored-ticker-peers-panel';
+  const peerChain = normalizeTokenChain(chain) || 'solana';
+  const identity = address ? buildTokenIdentityKey(peerChain, address) : '';
+  if (identity) {
+    // Read back when the panel opens, to swap the embedded excerpt for the full list.
+    details.dataset.peerChain = peerChain;
+    details.dataset.peerAddress = address || '';
+  }
 
   const summary = document.createElement('summary');
   summary.className = 'monitored-ticker-peer-badge';
@@ -1518,8 +1501,70 @@ export function buildTickerPeerBadge(tickerPeers: ManualTokenEntry['tickerPeers'
   summary.title = getTickerPeerBadgeTitle(tickerPeers, role);
   summary.textContent = getTickerPeerBadgeMark(role);
 
-  details.append(summary, buildTickerPeerList(tickerPeers));
+  const cached = readCachedTickerPeers(identity);
+  details.append(summary, buildTickerPeerList(cached ?? tickerPeers, cached?.items));
   return details;
+}
+
+const tickerPeerListCache = new Map<string, { payload: TickerPeerListPayload; fetchedAt: number }>();
+const tickerPeerListPending = new Set<string>();
+
+/**
+ * The market caps in this list are exactly the kind of value that goes stale, so
+ * the cache only spares the user a refetch while reopening the same panel.
+ */
+function readCachedTickerPeers(identity: string) {
+  const entry = identity ? tickerPeerListCache.get(identity) : undefined;
+  if (!entry) {
+    return undefined;
+  }
+  if (Date.now() - entry.fetchedAt > TICKER_PEERS_CACHE_TTL_MS) {
+    tickerPeerListCache.delete(identity);
+    return undefined;
+  }
+  return entry.payload;
+}
+
+/**
+ * The polled payload only carries an excerpt of the peers, so the panel asks for
+ * the full list the first time it is opened and reuses it from then on.
+ */
+function loadFullTickerPeerList(panel: HTMLDetailsElement) {
+  const chain = normalizeTokenChain(panel.dataset.peerChain);
+  const address = panel.dataset.peerAddress;
+  if (!chain || !address) {
+    return;
+  }
+
+  const identity = buildTokenIdentityKey(chain, address);
+  if (readCachedTickerPeers(identity) || tickerPeerListPending.has(identity)) {
+    return;
+  }
+
+  tickerPeerListPending.add(identity);
+  panel.dataset.peersLoading = 'true';
+  void fetchTickerPeers(chain, address)
+    .then((payload) => {
+      tickerPeerListCache.set(identity, { payload, fetchedAt: Date.now() });
+      applyFullTickerPeerList(panel, payload);
+    })
+    .catch(() => {
+      delete panel.dataset.peersLoading;
+    })
+    .finally(() => {
+      tickerPeerListPending.delete(identity);
+    });
+}
+
+function applyFullTickerPeerList(panel: HTMLDetailsElement, payload: TickerPeerListPayload) {
+  delete panel.dataset.peersLoading;
+  const list = panel.querySelector<HTMLElement>('.alert-ticker-peers-list');
+  if (!list || !panel.isConnected || !payload.items?.length) {
+    return;
+  }
+
+  list.replaceChildren(...buildTickerPeerList(payload, payload.items).childNodes);
+  positionMonitoredTickerPeerPanel(panel);
 }
 
 function buildXSearchUrl(symbol: string, address: string) {

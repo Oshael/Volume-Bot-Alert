@@ -2,7 +2,7 @@ import type { AppController } from '../../state/app-controller';
 import { getAlertFeedAlerts, getManualTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, isChainSelectedForSurface, isTokenStarred, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type CustomAlertCapabilityEntry, type CustomAlertRuleEntry, type ManualTokenEntry, type TokenSparklineEntry } from '../../state/app-state';
 import { getAlertImpactTier, getAlertToneClass, getAlertVisualClasses, isHvncAlert, type AlertImpactTier } from '../../services/alerts/impact-tier';
 import { formatClaimFee } from '../../services/alerts/claim-fee-format';
-import { bindCompactSearch, bindCopyButtons, bindSparklineHover, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct, formatPriceUsd, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderSparklineFigure, renderTokenLaunchpadBadge } from './shared';
+import { bindCompactSearch, bindCopyButtons, bindSparklineHover, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTickerPeerMcapLabel, buildTradeTerminalMenuElement, fmtAge, fmtAgeFromDurationMs, fmtMoney, fmtPct, formatPriceUsd, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderSparklineFigure, renderTokenLaunchpadBadge } from './shared';
 import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 import { buildTokenExplorerUrl, buildTokenMarketUrl, createLegacyCompatibleTokenIdentity, normalizeTokenChain, type TokenChain } from '../../utils/token-chain';
 import { resolveTokenValuation } from '../../utils/token-valuation';
@@ -3033,39 +3033,6 @@ function getAlertAgeToneClass(alert: AlertEntry) {
   return getAgeToneClassFromCreatedAt(alert.tokenCreatedAt);
 }
 
-function fmtAgeFromDurationMs(ageMs: number | null | undefined) {
-  if (ageMs == null) {
-    return '-';
-  }
-
-  const duration = Number(ageMs);
-  if (!Number.isFinite(duration) || duration < 0) {
-    return '-';
-  }
-
-  const monthDays = 30;
-  const months = Math.floor(duration / (monthDays * 86400000));
-  if (months >= 12) {
-    return `${Math.floor(months / 12)}y`;
-  }
-  if (months >= 1) {
-    return `${months}mo`;
-  }
-
-  const days = Math.floor(duration / 86400000);
-  if (days >= 1) {
-    return `${days}d`;
-  }
-  const hours = Math.floor(duration / 3600000);
-  if (hours >= 1) {
-    return `${hours}h`;
-  }
-  const minutes = Math.floor(duration / 60000);
-  if (minutes >= 1) {
-    return `${minutes}m`;
-  }
-  return '0m';
-}
 
 function buildTickerPeersControl(alert: AlertEntry) {
   const count = Number(alert.tickerPeers?.count) || 0;
@@ -3126,9 +3093,7 @@ function buildTickerPeersControl(alert: AlertEntry) {
 
     const stats = document.createElement('div');
     stats.className = 'alert-ticker-peers-stats';
-    const mcapLabel = document.createElement('span');
-    mcapLabel.className = 'alert-ticker-peers-mcap';
-    mcapLabel.textContent = fmtMoney(item.mcap);
+    const mcapLabel = buildTickerPeerMcapLabel(item);
     const separator = document.createElement('span');
     separator.textContent = ' • ';
     const ageMs = resolveTickerPeerAgeMs(alert, item);

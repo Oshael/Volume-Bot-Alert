@@ -3009,6 +3009,69 @@ export function fmtMoney(value?: number | null) {
   return `$${value.toFixed(0)}`;
 }
 
+/**
+ * Market cap cell of a ticker peer row, shared by the monitored and alert panels.
+ * A peer the catalog stopped refreshing keeps showing its last known value, so it
+ * is marked instead of hidden: that value is also why the peer cannot hold `#1`.
+ */
+export function buildTickerPeerMcapLabel(peer: { mcap?: number | null; mcapStale?: boolean; mcapAgeMs?: number | null }) {
+  const label = document.createElement('span');
+  label.className = 'alert-ticker-peers-mcap';
+  if (!peer.mcapStale) {
+    label.textContent = fmtMoney(peer.mcap);
+    return label;
+  }
+
+  const ageMs = Number(peer.mcapAgeMs);
+  const staleFor = Number.isFinite(ageMs) && ageMs > 0
+    ? ` for ${fmtAgeFromDurationMs(ageMs)}`
+    : '';
+  label.dataset.mcapStale = 'true';
+  label.title = `Market cap not refreshed${staleFor} — cannot hold the #1 badge`;
+
+  const mark = document.createElement('span');
+  mark.className = 'alert-ticker-peers-stale-mark';
+  mark.textContent = '⧗';
+  const value = document.createElement('span');
+  value.textContent = fmtMoney(peer.mcap);
+  label.append(mark, value);
+  return label;
+}
+
+export function fmtAgeFromDurationMs(ageMs: number | null | undefined) {
+  if (ageMs == null) {
+    return '-';
+  }
+
+  const duration = Number(ageMs);
+  if (!Number.isFinite(duration) || duration < 0) {
+    return '-';
+  }
+
+  const monthDays = 30;
+  const months = Math.floor(duration / (monthDays * 86400000));
+  if (months >= 12) {
+    return `${Math.floor(months / 12)}y`;
+  }
+  if (months >= 1) {
+    return `${months}mo`;
+  }
+
+  const days = Math.floor(duration / 86400000);
+  if (days >= 1) {
+    return `${days}d`;
+  }
+  const hours = Math.floor(duration / 3600000);
+  if (hours >= 1) {
+    return `${hours}h`;
+  }
+  const minutes = Math.floor(duration / 60000);
+  if (minutes >= 1) {
+    return `${minutes}m`;
+  }
+  return '0m';
+}
+
 function fmtCompact(value?: number | null) {
   if (value == null || !Number.isFinite(value)) return '-';
   if (Math.abs(value) >= 1000000) return `${(value / 1000000).toFixed(2)}M`;

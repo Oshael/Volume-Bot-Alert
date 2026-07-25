@@ -147,6 +147,8 @@ export interface DashboardMonitoredToken {
       name?: string | null;
       imageUrl?: string | null;
       mcap?: number | null;
+      mcapStale?: boolean;
+      mcapAgeMs?: number | null;
       tokenCreatedAt?: number | null;
       ageMsAtAlert?: number | null;
       matchType?: 'exact' | 'subticker' | null;
@@ -352,6 +354,8 @@ export interface DashboardAlertEvent {
       name?: string | null;
       imageUrl?: string | null;
       mcap?: number | null;
+      mcapStale?: boolean;
+      mcapAgeMs?: number | null;
       tokenCreatedAt?: number | null;
       ageMsAtAlert?: number | null;
       matchType?: 'exact' | 'subticker' | null;
@@ -824,6 +828,27 @@ export function fetchDashboardMonitored(
       perPage: Number(response.perPage) || 0,
       hasMore: Boolean(response.hasMore),
     }));
+}
+
+export type TickerPeerListItem = NonNullable<NonNullable<DashboardMonitoredToken['tickerPeers']>['items']>[number];
+
+export interface TickerPeerListPayload {
+  chain: TokenChain;
+  address: string;
+  count: number;
+  exactCount?: number | null;
+  oldestExactAddress?: string | null;
+  highestMcapExactAddress?: string | null;
+  items: TickerPeerListItem[];
+}
+
+/** Full peer list for one token, fetched only when the user opens the panel. */
+export function fetchTickerPeers(chain: TokenChain, address: string, token?: string | null) {
+  const query = new URLSearchParams({ chain });
+  return apiFetch<TickerPeerListPayload>(
+    `/api/catalog/ticker-peers/${encodeURIComponent(address)}?${query}`,
+    { token }
+  );
 }
 
 export function fetchMonitoredPins(token?: string | null, chains: TokenChain[] = ['solana']) {
