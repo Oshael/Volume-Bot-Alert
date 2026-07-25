@@ -13369,7 +13369,7 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .monitored-panel-mini-chart-enabled .monitored-token-row-v68 {
-  grid-template-columns: 48px minmax(0, 1fr) minmax(224px, 312px) 88px;
+  grid-template-columns: 48px minmax(0, 1fr) clamp(312px, 32%, 480px) 88px;
   align-items: center;
 }
 
