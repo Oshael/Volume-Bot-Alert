@@ -1599,14 +1599,16 @@ function createRobinhoodPersistenceRepository(options = {}) {
     return result.rows[0] || null;
   }
 
+  // Unordered on purpose: consumers index the rows by key, and ORDER BY made
+  // the planner walk the primary key, turning a sequential heap read into one
+  // random page fetch per pool.
   async function listActivePools() {
     const result = await database.query(
       `SELECT protocol, market_key, pool_address, pool_id, origin_address,
               token_address, quote_address, currency0, currency1,
               fee, tick_spacing, metadata
        FROM robinhood_pool_registry
-       WHERE chain = 'robinhood' AND active = true
-       ORDER BY protocol ASC, market_key ASC`
+       WHERE chain = 'robinhood' AND active = true`
     );
     return result.rows;
   }
