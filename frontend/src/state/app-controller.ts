@@ -4192,7 +4192,7 @@ export function createAppController(): AppController {
     const seen = new Set<string>();
     for (const item of input) {
       const normalized = String(item || '').trim().toLowerCase();
-      if (normalized !== 'axiom' && normalized !== 'photon' && normalized !== 'bullx' && normalized !== 'gmgn' && normalized !== 'padre') {
+      if (normalized !== 'axiom' && normalized !== 'photon' && normalized !== 'bullx' && normalized !== 'gmgn' && normalized !== 'padre' && normalized !== 'fomo') {
         continue;
       }
       if (seen.has(normalized)) {

@@ -10,13 +10,14 @@ import { resolveCoveredMetric, resolveTokenValuation, type TokenMetricCoverage }
 import { buildTokenChainBadge } from '../token-chain-badge';
 import { getTokenChartValuationLabel } from '../../utils/token-chart';
 
-const DEFAULT_TRADE_TERMINALS: TradeTerminalKey[] = ['axiom', 'photon', 'bullx', 'gmgn', 'padre'];
+const DEFAULT_TRADE_TERMINALS: TradeTerminalKey[] = ['axiom', 'photon', 'bullx', 'gmgn', 'padre', 'fomo'];
 const TRADE_TERMINAL_ICON_URLS: Record<TradeTerminalKey, string> = {
   axiom: new URL('../../../terminal-axiom.ico', import.meta.url).href,
   photon: new URL('../../../terminal-photon.svg', import.meta.url).href,
   bullx: new URL('../../../terminal-bullx.png', import.meta.url).href,
   gmgn: new URL('../../../terminal-gmgn.svg', import.meta.url).href,
   padre: new URL('../../../terminal-padre.svg', import.meta.url).href,
+  fomo: new URL('../../../terminal-fomo.png', import.meta.url).href,
 };
 const TRADE_TERMINAL_LABELS: Record<TradeTerminalKey, string> = {
   axiom: 'Axiom',
@@ -24,6 +25,7 @@ const TRADE_TERMINAL_LABELS: Record<TradeTerminalKey, string> = {
   bullx: 'BullX',
   gmgn: 'GMGN',
   padre: 'Pump',
+  fomo: 'FOMO',
 };
 
 type TokenLaunchpadKey = 'pump' | 'bags' | 'bonk' | 'brrr' | 'meteora' | 'uniswap';
@@ -1391,6 +1393,7 @@ function getTradeTerminalLinks(
     { key: 'bullx', label: getTradeTerminalLabel('bullx'), href: `https://neo.bullx.io/terminal?chainId=1399811149&address=${tokenAddress}`, cls: 'bullx', iconHref: TRADE_TERMINAL_ICON_URLS.bullx },
     { key: 'gmgn', label: getTradeTerminalLabel('gmgn'), href: `https://gmgn.ai/sol/token/${tokenAddress}`, cls: 'gmgn', iconHref: TRADE_TERMINAL_ICON_URLS.gmgn },
     { key: 'padre', label: getTradeTerminalLabel('padre'), href: `https://trade.padre.gg/trade/solana/${terminalAddress}`, cls: 'padre', iconHref: TRADE_TERMINAL_ICON_URLS.padre },
+    { key: 'fomo', label: getTradeTerminalLabel('fomo'), href: `https://fomo.family/tokens/solana/${tokenAddress}`, cls: 'fomo', iconHref: TRADE_TERMINAL_ICON_URLS.fomo },
   ];
   return links.filter((link) => enabledTradeTerminals.includes(link.key));
 }
@@ -1482,7 +1485,7 @@ function normalizeEnabledTradeTerminals(input?: TradeTerminalKey[] | null) {
   const next: TradeTerminalKey[] = [];
   const seen = new Set<TradeTerminalKey>();
   for (const item of input) {
-    if (item !== 'axiom' && item !== 'photon' && item !== 'bullx' && item !== 'gmgn' && item !== 'padre') {
+    if (item !== 'axiom' && item !== 'photon' && item !== 'bullx' && item !== 'gmgn' && item !== 'padre' && item !== 'fomo') {
       continue;
     }
     if (seen.has(item)) {

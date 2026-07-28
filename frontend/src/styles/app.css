@@ -12843,6 +12843,11 @@ TEMP_LEGACY_BAR_TITLE {
 .trade-link.bullx { color: #54f09b; }
 .trade-link.gmgn { color: #ffbf47; }
 .trade-link.padre { color: #5cff9b; }
+.trade-link.fomo { color: #dfe2f5; }
+
+.terminal-icon-fomo {
+  border-radius: 3px;
+}
 
 .alert-actions-v68 .trade-wrap,
 .monitored-actions-line .trade-wrap,

@@ -607,7 +607,7 @@ export interface PumpToastEntry {
 
 export type CollapsibleSectionKey = 'manual' | 'recent' | 'oldWeek' | 'monitored' | 'bidZone' | 'pumpfun';
 export type WorkspaceView = 'live' | 'history';
-export type TradeTerminalKey = 'axiom' | 'photon' | 'bullx' | 'gmgn' | 'padre';
+export type TradeTerminalKey = 'axiom' | 'photon' | 'bullx' | 'gmgn' | 'padre' | 'fomo';
 export type ProfileAuthPanel = 'user-settings' | 'bot-settings' | 'blocked-tokens' | 'token-review-alerts' | 'change-password';
 export type AuthPanel =
   | 'none'
@@ -1197,7 +1197,7 @@ export function createAppState(): AppState {
       recentSorts: [{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }],
       oldWeekSorts: [{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }],
       monitoredSorts: [{ mode: 'vol', window: '5m' }],
-      enabledTradeTerminals: ['axiom', 'photon', 'bullx', 'gmgn', 'padre'],
+      enabledTradeTerminals: ['axiom', 'photon', 'bullx', 'gmgn', 'padre', 'fomo'],
       livePanelLayout: {
         order: ['monitored', 'pumpfun', 'alerts'],
         spans: {

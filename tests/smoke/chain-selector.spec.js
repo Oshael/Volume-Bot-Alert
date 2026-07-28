@@ -77,7 +77,7 @@ const SMOKE_CONFIG = {
       alertFeedChains: ['solana'],
       browserNotificationChains: ['solana'],
     },
-    enabledTradeTerminals: ['axiom', 'photon', 'bullx', 'gmgn', 'padre'],
+    enabledTradeTerminals: ['axiom', 'photon', 'bullx', 'gmgn', 'padre', 'fomo'],
   },
   tokens: [],
   blocklist: [],
@@ -896,6 +896,15 @@ test('keeps compact manual controls aligned with routed token sort controls', as
     const sortIndex = children.findIndex((child) => child.matches('.compact-sort-cluster'));
     return starIndex >= 0 && sortIndex >= 0 && starIndex < sortIndex;
   })).toBe(true);
+});
+
+test('renders the FOMO shortcut link for Solana tokens', async ({ page }) => {
+  await openAuthenticatedWorkspace(page, ROBINHOOD_API_FIXTURES);
+  const manualSection = page.locator('#manual-tokens-section');
+  const fomoLink = manualSection.locator('.trade-link.fomo').first();
+  await expect(fomoLink).toHaveAttribute('href', `https://fomo.family/tokens/solana/${SOLANA_MANUAL}`);
+  await expect(fomoLink).toContainText('FOMO');
+  await expect(fomoLink.locator('.terminal-icon-fomo')).toHaveAttribute('src', /terminal-fomo/);
 });
 
 test('filters a combined Solana and Robinhood alert feed through master and surface selectors', async ({ page }) => {

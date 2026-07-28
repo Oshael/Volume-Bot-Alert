@@ -84,7 +84,7 @@ export interface MonitoredSortCriterionPayload {
   window: '5m' | '1h' | '6h' | '24h' | 'newest' | 'oldest' | 'highest' | 'lowest';
 }
 
-export type TradeTerminalKey = 'axiom' | 'photon' | 'bullx' | 'gmgn' | 'padre';
+export type TradeTerminalKey = 'axiom' | 'photon' | 'bullx' | 'gmgn' | 'padre' | 'fomo';
 export type LiveWorkspacePanelKey = 'monitored' | 'pumpfun' | 'alerts';
 export type LiveWorkspacePanelSpan = 1 | 2 | 3;
 

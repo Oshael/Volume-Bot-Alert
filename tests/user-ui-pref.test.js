@@ -6,7 +6,8 @@ const userUiPref = require('../src/models/user-ui-pref');
 describe('user-ui-pref', () => {
   it('defaults enabled trade terminals for legacy prefs', () => {
     const prefs = userUiPref.normalizePrefs({});
-    assert.deepEqual(prefs.enabledTradeTerminals, ['axiom', 'photon', 'bullx', 'gmgn', 'padre']);
+    assert.deepEqual(prefs.enabledTradeTerminals, ['axiom', 'photon', 'bullx', 'gmgn', 'padre', 'fomo']);
+    assert.equal(prefs.tradeTerminalCatalogVersion, 2);
     assert.equal(prefs.manualFolderDeleteWarningDismissed, false);
     assert.equal(prefs.expandedSparklineGranularityMinutes, 5);
     assert.equal(prefs.expandedSparklineTimeZone, 'browser');
@@ -122,6 +123,19 @@ describe('user-ui-pref', () => {
     assert.equal(validation.valid, true);
     assert.deepEqual(validation.prefs.enabledTradeTerminals, ['bullx', 'gmgn']);
     assert.equal(validation.prefs.manualFolderDeleteWarningDismissed, true);
+  });
+
+  it('enables FOMO once for legacy terminal preferences while preserving later opt-outs', () => {
+    const legacyPrefs = userUiPref.normalizePrefs({
+      enabledTradeTerminals: ['axiom', 'photon', 'bullx', 'gmgn', 'padre'],
+    });
+    assert.deepEqual(legacyPrefs.enabledTradeTerminals, ['axiom', 'photon', 'bullx', 'gmgn', 'padre', 'fomo']);
+
+    const currentPrefs = userUiPref.normalizePrefs({
+      enabledTradeTerminals: ['axiom', 'photon', 'bullx', 'gmgn', 'padre'],
+      tradeTerminalCatalogVersion: 2,
+    });
+    assert.deepEqual(currentPrefs.enabledTradeTerminals, ['axiom', 'photon', 'bullx', 'gmgn', 'padre']);
   });
 
   it('accepts valid expanded chart granularity preferences', () => {

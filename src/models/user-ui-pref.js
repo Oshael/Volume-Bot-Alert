@@ -15,7 +15,8 @@ const BOOLEAN_PREF_KEYS = [
   'recentStarredOnly',
   'oldWeekStarredOnly',
 ];
-const TRADE_TERMINAL_KEYS = ['axiom', 'photon', 'bullx', 'gmgn', 'padre'];
+const TRADE_TERMINAL_KEYS = ['axiom', 'photon', 'bullx', 'gmgn', 'padre', 'fomo'];
+const TRADE_TERMINAL_CATALOG_VERSION = 2;
 const LIVE_PANEL_KEYS = ['monitored', 'pumpfun', 'alerts'];
 const LIVE_PANEL_SPANS = {
   monitored: [1, 2, 3],
@@ -102,6 +103,7 @@ const DEFAULT_UI_PREFS = {
     tokenPresetByAddress: {},
   },
   enabledTradeTerminals: [...TRADE_TERMINAL_KEYS],
+  tradeTerminalCatalogVersion: TRADE_TERMINAL_CATALOG_VERSION,
   livePanelLayout: {
     order: [...LIVE_PANEL_KEYS],
     spans: {
@@ -654,10 +656,16 @@ function normalizePrefs(raw) {
     validateSparklineRange('sparklineRange', source.sparklineRange),
     defaults.sparklineRange,
   );
-  defaults.enabledTradeTerminals = normalizedStoredValue(
+  const normalizedTradeTerminals = normalizedStoredValue(
     validateTradeTerminals('enabledTradeTerminals', source.enabledTradeTerminals),
     defaults.enabledTradeTerminals,
   );
+  const storedTerminalCatalogVersion = Number(source.tradeTerminalCatalogVersion) || 1;
+  defaults.enabledTradeTerminals = storedTerminalCatalogVersion < TRADE_TERMINAL_CATALOG_VERSION
+    && !normalizedTradeTerminals.includes('fomo')
+    ? [...normalizedTradeTerminals, 'fomo']
+    : normalizedTradeTerminals;
+  defaults.tradeTerminalCatalogVersion = TRADE_TERMINAL_CATALOG_VERSION;
   defaults.livePanelLayout = normalizedStoredValue(
     validateLivePanelLayout('livePanelLayout', source.livePanelLayout),
     defaults.livePanelLayout,

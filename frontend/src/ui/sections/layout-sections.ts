@@ -6647,6 +6647,7 @@ function renderTradeTerminalPrefsMenu(state: AppState) {
     { key: 'bullx', label: getTradeTerminalLabel('bullx') },
     { key: 'gmgn', label: getTradeTerminalLabel('gmgn') },
     { key: 'padre', label: getTradeTerminalLabel('padre') },
+    { key: 'fomo', label: getTradeTerminalLabel('fomo') },
   ];
   const enabled = new Set(state.ui.enabledTradeTerminals);
 
