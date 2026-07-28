@@ -39,7 +39,7 @@ describe('alert feed chain actions', () => {
     assert.equal(getBackendAlertEventId({ id: 'custom-preview:91' }), null);
   });
 
-  it('clears only the alert-feed chains that are also enabled globally', () => {
+  it('uses the master selection even when a stale alert-feed filter contains more chains', () => {
     const result = partitionVisibleAlertEntries([
       alert('sol', 'solana'),
       alert('rh', 'robinhood'),

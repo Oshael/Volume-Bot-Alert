@@ -8,6 +8,7 @@ import {
   normalizeStoredTokenIdentityKeys,
   normalizeTokenChain,
   parseTokenIdentityKey,
+  resolveChainScopedConfigValue,
   toggleEnabledTokenChain,
   toggleTokenChainForSurface,
   type TokenChain,
@@ -4439,32 +4440,42 @@ export function createAppController(): AppController {
     return { minMcap, minFdv };
   }
 
-  function isConfigEnabled(key: string, fallback = true) {
-    return String(state.data.configs[key] ?? (fallback ? 'on' : 'off')) !== 'off';
+  function isConfigEnabled(key: string, fallback = true, chain: TokenChain = 'solana') {
+    return String(
+      resolveChainScopedConfigValue(state.data.configs, chain, key)
+        ?? (fallback ? 'on' : 'off'),
+    ) !== 'off';
   }
 
-  function isGmgnClaimAlertEnabled(entry: Pick<AlertEntry, 'signalType'>) {
+  function isGmgnClaimAlertEnabled(
+    entry: { chain?: TokenChain; signalType?: number | null },
+  ) {
+    const chain = entry.chain || 'solana';
     if (entry.signalType === 17) {
-      return isConfigEnabled('alert-gmgn-claim-bags-enabled');
+      return isConfigEnabled('alert-gmgn-claim-bags-enabled', true, chain);
     }
     if (entry.signalType === 18) {
-      return isConfigEnabled('alert-gmgn-claim-pump-enabled');
+      return isConfigEnabled('alert-gmgn-claim-pump-enabled', true, chain);
     }
     return true;
   }
 
-  function isAlertKindEnabled(kind: AlertEntry['kind'], entry?: Pick<AlertEntry, 'signalType'>) {
+  function isAlertKindEnabled(
+    kind: AlertEntry['kind'],
+    entry?: Pick<AlertEntry, 'chain' | 'signalType'>,
+  ) {
+    const chain = entry?.chain || 'solana';
     switch (kind) {
       case 'monitored-vol':
-        return isConfigEnabled('alert-vol-enabled');
+        return isConfigEnabled('alert-vol-enabled', true, chain);
       case 'monitored-mcap':
-        return isConfigEnabled('alert-mcap-enabled');
+        return isConfigEnabled('alert-mcap-enabled', true, chain);
       case 'monitored-fdv':
-        return isConfigEnabled('alert-fdv-enabled', false);
+        return isConfigEnabled('alert-fdv-enabled', false, chain);
       case 'hvnc':
-        return isConfigEnabled('alert-hvnc-enabled');
+        return isConfigEnabled('alert-hvnc-enabled', true, chain);
       case 'meteora-surge':
-        return isConfigEnabled('alert-meteora-surge-enabled');
+        return isConfigEnabled('alert-meteora-surge-enabled', true, chain);
       case 'gmgn-claim-signal':
         return isGmgnClaimAlertEnabled(entry || {});
       default:
@@ -4472,26 +4483,33 @@ export function createAppController(): AppController {
     }
   }
 
-  function resolveBackendSurgeAlertEnabled(entry: Pick<AlertEntry, 'ruleKey' | 'surgeWindow' | 'ageBucket'>) {
+  function resolveBackendSurgeAlertEnabled(
+    entry: Pick<AlertEntry, 'chain' | 'ruleKey' | 'surgeWindow' | 'ageBucket'>,
+  ) {
+    const enabled = (key: string) => isConfigEnabled(key, true, entry.chain);
     switch (entry.ruleKey) {
       case 'recent-surge-1h':
-        return isConfigEnabled('alert-recent-surge-1h-enabled');
+        return enabled('alert-recent-surge-1h-enabled');
       case 'recent-surge-6h':
-        return isConfigEnabled('alert-recent-surge-6h-enabled');
+        return enabled('alert-recent-surge-6h-enabled');
       case 'old-week-surge-1h':
-        return isConfigEnabled('alert-old-week-surge-1h-enabled');
+        return enabled('alert-old-week-surge-1h-enabled');
       case 'old-week-surge-6h':
-        return isConfigEnabled('alert-old-week-surge-6h-enabled');
+        return enabled('alert-old-week-surge-6h-enabled');
       case 'surge-continuation-6h':
-        return isConfigEnabled(entry.ageBucket === 'recent'
+        return enabled(entry.ageBucket === 'recent'
           ? 'alert-recent-surge-6h-enabled'
           : 'alert-old-week-surge-6h-enabled');
       default:
-        return isConfigEnabled(entry.surgeWindow === '6H' ? 'alert-old-surge-6h-enabled' : 'alert-old-surge-1h-enabled');
+        return enabled(entry.surgeWindow === '6H'
+          ? 'alert-old-surge-6h-enabled'
+          : 'alert-old-surge-1h-enabled');
     }
   }
 
-  function isAlertEntryEnabled(entry: Pick<AlertEntry, 'kind' | 'ruleKey' | 'surgeWindow' | 'signalType'>) {
+  function isAlertEntryEnabled(
+    entry: Pick<AlertEntry, 'chain' | 'kind' | 'ruleKey' | 'surgeWindow' | 'signalType'>,
+  ) {
     if (entry.kind === 'old-surge') {
       return resolveBackendSurgeAlertEnabled(entry);
     }
@@ -11061,7 +11079,7 @@ export function createAppController(): AppController {
       : [];
 
     return {
-      chains: state.ui.chainFilters.radarChains.filter((chain) => (
+      chains: state.ui.chainFilters.enabledChains.filter((chain) => (
         state.data.chainReadiness[chain]?.capabilities.history === true
       )),
       starredTokenIdentities: state.data.starredTokenIdentities,
@@ -13921,6 +13939,10 @@ export function createAppController(): AppController {
       surface: 'radarChains' | 'alertFeedChains' | 'browserNotificationChains',
       chain: TokenChain,
     ) {
+      if (surface === 'radarChains' || surface === 'alertFeedChains') {
+        this.toggleEnabledChain(chain);
+        return;
+      }
       const currentSelection = state.ui.chainFilters[surface];
       const next = toggleTokenChainForSurface(
         state.ui.chainFilters,
@@ -13936,22 +13958,8 @@ export function createAppController(): AppController {
         return;
       }
       state.ui.chainFilters = next;
-      if (surface === 'radarChains') {
-        state.ui.recentPage = 0;
-        state.ui.oldWeekPage = 0;
-        clearHistoryBucketOrderLocks({ applyPending: false });
-        if (usesHistoryBucketBootstrap()) {
-          void refreshHistoryWorkspaceBootstrap();
-        }
-      } else if (surface === 'alertFeedChains') {
-        state.ui.alertPage = 0;
-      }
       queueUiPrefsPersist();
-      if (surface === 'radarChains') {
-        emit('header', 'recent', 'old-week');
-      } else {
-        emit('alerts');
-      }
+      emit('alerts');
     },
     setMonitoredPage(page: number) {
       state.ui.monitoredPage = clampPage(page, getVisibleMonitoredTokens().length, state.ui.monitoredPerPage);

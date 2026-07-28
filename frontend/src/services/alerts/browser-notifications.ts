@@ -1,5 +1,8 @@
 import type { AlertEntry } from '../../state/app-state';
-import { createLegacyCompatibleTokenIdentity } from '../../utils/token-chain';
+import {
+  createLegacyCompatibleTokenIdentity,
+  resolveChainScopedConfigValue,
+} from '../../utils/token-chain';
 import { formatClaimFee } from './claim-fee-format';
 
 const STORAGE_KEY_PREFIX = 'trendscope_browser_notifications_v1';
@@ -64,8 +67,16 @@ function hasSecureNotificationContext() {
   return window.isSecureContext !== false;
 }
 
-function isConfigEnabled(configs: Record<string, string | number> | undefined, key: string, fallback = true) {
-  return String(configs?.[key] ?? (fallback ? 'on' : 'off')) !== 'off';
+function isConfigEnabled(
+  alert: Pick<AlertEntry, 'chain'>,
+  configs: Record<string, string | number> | undefined,
+  key: string,
+  fallback = true,
+) {
+  return String(
+    resolveChainScopedConfigValue(configs, alert.chain, key)
+      ?? (fallback ? 'on' : 'off'),
+  ) !== 'off';
 }
 
 function resolveOldSurgeConfigKey(alert: Pick<AlertEntry, 'ruleKey' | 'surgeWindow' | 'ageBucket'>) {
@@ -87,12 +98,15 @@ function resolveOldSurgeConfigKey(alert: Pick<AlertEntry, 'ruleKey' | 'surgeWind
   }
 }
 
-function isGmgnClaimAlertEnabled(alert: Pick<AlertEntry, 'signalType'>, configs?: Record<string, string | number>) {
+function isGmgnClaimAlertEnabled(
+  alert: Pick<AlertEntry, 'chain' | 'signalType'>,
+  configs?: Record<string, string | number>,
+) {
   if (alert.signalType === 17) {
-    return isConfigEnabled(configs, 'alert-gmgn-claim-bags-enabled');
+    return isConfigEnabled(alert, configs, 'alert-gmgn-claim-bags-enabled');
   }
   if (alert.signalType === 18) {
-    return isConfigEnabled(configs, 'alert-gmgn-claim-pump-enabled');
+    return isConfigEnabled(alert, configs, 'alert-gmgn-claim-pump-enabled');
   }
   return true;
 }
@@ -110,7 +124,9 @@ function isAlertEnabledByConfig(alert: AlertEntry, configs?: Record<string, stri
     ? resolveOldSurgeConfigKey(alert)
     : ALERT_KIND_CONFIG_KEY[alert.kind];
 
-  return configKey ? isConfigEnabled(configs, configKey, alert.kind !== 'monitored-fdv') : true;
+  return configKey
+    ? isConfigEnabled(alert, configs, configKey, alert.kind !== 'monitored-fdv')
+    : true;
 }
 
 function formatMoney(value?: number | null) {

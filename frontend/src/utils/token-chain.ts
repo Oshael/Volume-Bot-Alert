@@ -103,8 +103,8 @@ export function normalizeChainFilterPreferences(
   const enabled = new Set(enabledChains);
   return {
     enabledChains,
-    radarChains: normalizeChainSelection(source.radarChains, enabled, enabledChains),
-    alertFeedChains: normalizeChainSelection(source.alertFeedChains, enabled, enabledChains),
+    radarChains: [...enabledChains],
+    alertFeedChains: [...enabledChains],
     browserNotificationChains: normalizeChainSelection(
       source.browserNotificationChains,
       enabled,
@@ -145,6 +145,9 @@ export function toggleTokenChainForSurface(
   surface: ChainFilterSurface,
   chainValue: unknown,
 ): ChainFilterPreferences {
+  if (surface === 'radarChains' || surface === 'alertFeedChains') {
+    return toggleEnabledTokenChain(preferencesValue, availableValue, chainValue);
+  }
   const availableChains = normalizeAvailableTokenChains(availableValue);
   const preferences = normalizeChainFilterPreferences(preferencesValue, availableChains);
   const chain = normalizeTokenChain(chainValue);
@@ -172,6 +175,9 @@ export function isTokenChainSelectedForSurface(
   chainValue: unknown,
 ) {
   const chain = normalizeTokenChain(chainValue);
+  if (surface === 'radarChains' || surface === 'alertFeedChains') {
+    return Boolean(chain && preferences.enabledChains.includes(chain));
+  }
   return Boolean(
     chain
     && preferences.enabledChains.includes(chain)
@@ -187,6 +193,20 @@ export function filterItemsByChainSelection<T extends { chain?: unknown }>(
   return items.filter((item) => (
     isTokenChainSelectedForSurface(preferences, surface, item.chain)
   ));
+}
+
+export function resolveChainScopedConfigValue(
+  configs: Record<string, string | number> | undefined,
+  chainValue: unknown,
+  key: string,
+) {
+  const chain = normalizeTokenChain(chainValue);
+  const scopedKey = chain === 'solana' || chain === 'robinhood'
+    ? `${chain}-${key}`
+    : null;
+  return scopedKey && Object.prototype.hasOwnProperty.call(configs || {}, scopedKey)
+    ? configs?.[scopedKey]
+    : configs?.[key];
 }
 
 export function filterItemsByEnabledChains<T extends { chain?: unknown }>(

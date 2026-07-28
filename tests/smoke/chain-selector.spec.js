@@ -907,7 +907,7 @@ test('renders the FOMO shortcut link for Solana tokens', async ({ page }) => {
   await expect(fomoLink.locator('.terminal-icon-fomo')).toHaveAttribute('src', /terminal-fomo/);
 });
 
-test('filters a combined Solana and Robinhood alert feed through master and surface selectors', async ({ page }) => {
+test('filters a combined Solana and Robinhood alert feed through the master selector', async ({ page }) => {
   const diagnostics = await openAuthenticatedWorkspace(page, ROBINHOOD_API_FIXTURES);
   const selector = page.getByRole('group', { name: 'Filter workspace by blockchain' });
   const solanaButton = selector.locator('[data-chain="solana"]');
@@ -945,20 +945,6 @@ test('filters a combined Solana and Robinhood alert feed through master and surf
   await expect(solanaButton).toHaveAttribute('aria-pressed', 'true');
   await expect(robinhoodButton).toHaveAttribute('aria-pressed', 'true');
   await expect.poll(async () => page.evaluate(() => window.trendscopeAlertDebug?.snapshot()?.memory?.count)).toBe(2);
-  await expect(solanaAlert).toBeVisible();
-  await expect(robinhoodAlert).toHaveCount(0);
-
-  await page.getByRole('button', { name: 'Open user menu' }).click();
-  await page.getByRole('button', { name: 'Bot Settings' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Bot Settings' });
-  await dialog.getByRole('tab', { name: 'Alerts & Chains' }).click();
-  const alertFeedMenu = dialog.locator('[data-chain-filter-surface="alertFeedChains"]');
-  await expect(alertFeedMenu.locator('.config-menu-button')).toHaveText('1/2 on');
-  await alertFeedMenu.locator('.config-menu-button').click();
-  await alertFeedMenu.locator('[data-chain-filter-chain="robinhood"]').click();
-  await expect(alertFeedMenu.locator('.config-menu-button')).toHaveText('2/2 on');
-  await dialog.getByRole('button', { name: 'Close dialog' }).click();
-
   await expect(solanaAlert).toBeVisible();
   await expect(robinhoodAlert).toBeVisible();
   await expect(robinhoodAlert).toContainText('5m vol');
@@ -1337,28 +1323,30 @@ test('opens a Robinhood FDV chart and applies only its realtime updates', async 
   expect(diagnostics.pageErrors).toEqual([]);
 });
 
-test('renders Radar valuation freshness, coverage and independent chain filters honestly', async ({ page }) => {
+test('renders Radar valuation freshness and follows the master chain filter', async ({ page }) => {
   radarBootstrapPayloads.length = 0;
   compactChartRequestPayloads.length = 0;
   const diagnostics = await openAuthenticatedWorkspace(page, ROBINHOOD_RADAR_API_FIXTURES);
   await page.goto('/radar');
 
-  const radarChainSelector = page.getByRole('group', { name: 'Filter Radar by blockchain' });
+  const radarChainSelector = page.getByRole('group', { name: 'Filter workspace by blockchain' });
   const solanaChainButton = radarChainSelector.locator('[data-chain="solana"]');
   const robinhoodChainButton = radarChainSelector.locator('[data-chain="robinhood"]');
-  await expect(solanaChainButton).toHaveAttribute('aria-pressed', 'false');
+  await expect(solanaChainButton).toHaveAttribute('aria-pressed', 'true');
   await expect(robinhoodChainButton).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(() => radarBootstrapPayloads.some((payload) => (
+    payload.chains?.length === 2
+      && payload.chains.includes('solana')
+      && payload.chains.includes('robinhood')
+  ))).toBe(true);
+  await solanaChainButton.click();
+  await expect(solanaChainButton).toHaveAttribute('aria-pressed', 'false');
   await expect(robinhoodChainButton).toBeDisabled();
   await expect.poll(() => radarBootstrapPayloads.some((payload) => (
     payload.chains?.length === 1 && payload.chains[0] === 'robinhood'
   ))).toBe(true);
   await solanaChainButton.click();
   await expect(solanaChainButton).toHaveAttribute('aria-pressed', 'true');
-  await expect.poll(() => radarBootstrapPayloads.some((payload) => (
-    payload.chains?.length === 2
-      && payload.chains.includes('solana')
-      && payload.chains.includes('robinhood')
-  ))).toBe(true);
   const solanaIdentity = `solana:${SOLANA_TOP}`;
   const solanaRow = page.locator(`.recent-bar tbody tr[data-token-identity="${solanaIdentity}"]`);
   await expect(solanaRow).toBeVisible();

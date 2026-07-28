@@ -229,4 +229,35 @@ describe('browser notification service', () => {
       notifyWhenVisible: true,
     }), true);
   });
+
+  it('uses chain-scoped alert toggles before the legacy fallback', () => {
+    const Notification = createNotificationMock('granted');
+    const service = loadBrowserNotificationModule({
+      window: {
+        isSecureContext: true,
+        localStorage: createLocalStorage(),
+        Notification,
+      },
+      document: { hidden: true },
+    });
+    const configs = {
+      'alert-vol-enabled': 'off',
+      'solana-alert-vol-enabled': 'on',
+      'robinhood-alert-vol-enabled': 'off',
+    };
+
+    assert.equal(service.maybeNotifyAlert(buildAlert({ id: 'sol-scoped' }), {
+      enabled: true,
+      configs,
+    }), true);
+    assert.equal(service.maybeNotifyAlert(buildAlert({
+      id: 'rh-scoped',
+      chain: 'robinhood',
+      address: '0xabcdef0123456789abcdef0123456789abcdef01',
+    }), {
+      enabled: true,
+      configs,
+    }), false);
+    assert.equal(Notification.instances.length, 1);
+  });
 });

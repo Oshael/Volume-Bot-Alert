@@ -279,6 +279,43 @@ describe('user-ui-pref', () => {
     assert.deepEqual(validation.prefs.chainFilters, chainFilters);
   });
 
+  it('normalizes stale Radar and alert-feed selections to enabled chains', () => {
+    const prefs = userUiPref.normalizePrefs({
+      chainFilters: {
+        enabledChains: ['solana', 'robinhood'],
+        radarChains: ['solana'],
+        alertFeedChains: ['robinhood'],
+        browserNotificationChains: ['robinhood'],
+      },
+    });
+
+    assert.deepEqual(prefs.chainFilters, {
+      enabledChains: ['solana', 'robinhood'],
+      radarChains: ['solana', 'robinhood'],
+      alertFeedChains: ['solana', 'robinhood'],
+      browserNotificationChains: ['robinhood'],
+    });
+  });
+
+  it('accepts stale legacy surface selections but persists the master scope', () => {
+    const validation = userUiPref.validatePatch({
+      chainFilters: {
+        enabledChains: ['solana'],
+        radarChains: ['robinhood'],
+        alertFeedChains: ['robinhood'],
+        browserNotificationChains: ['solana'],
+      },
+    });
+
+    assert.equal(validation.valid, true);
+    assert.deepEqual(validation.prefs.chainFilters, {
+      enabledChains: ['solana'],
+      radarChains: ['solana'],
+      alertFeedChains: ['solana'],
+      browserNotificationChains: ['solana'],
+    });
+  });
+
   it('rejects empty or unavailable chain filters', () => {
     const empty = userUiPref.validatePatch({
       chainFilters: {

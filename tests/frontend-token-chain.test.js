@@ -90,7 +90,7 @@ describe('frontend chain-aware token identity', () => {
     assert.deepEqual(tokenChain.normalizeAvailableTokenChains(null), ['solana']);
   });
 
-  it('normalizes independent chain filters as subsets of the master selection', () => {
+  it('normalizes stale Radar and alert-feed filters to the master selection', () => {
     assert.deepEqual(
       tokenChain.normalizeChainFilterPreferences({
         enabledChains: ['solana', 'robinhood'],
@@ -100,7 +100,7 @@ describe('frontend chain-aware token identity', () => {
       }, ['solana', 'robinhood']),
       {
         enabledChains: ['solana', 'robinhood'],
-        radarChains: ['solana'],
+        radarChains: ['solana', 'robinhood'],
         alertFeedChains: ['solana', 'robinhood'],
         browserNotificationChains: ['robinhood'],
       },
@@ -131,6 +131,8 @@ describe('frontend chain-aware token identity', () => {
     assert.deepEqual(withRobinhood, {
       ...solanaOnly,
       enabledChains: ['solana', 'robinhood'],
+      radarChains: ['solana', 'robinhood'],
+      alertFeedChains: ['solana', 'robinhood'],
     });
     assert.deepEqual(
       tokenChain.toggleEnabledTokenChain(withRobinhood, ['solana', 'robinhood'], 'solana'),
@@ -143,7 +145,7 @@ describe('frontend chain-aware token identity', () => {
     );
   });
 
-  it('toggles surface chains only inside the master filter and keeps every surface non-empty', () => {
+  it('delegates legacy Radar and alert-feed toggles to the master filter', () => {
     const preferences = {
       enabledChains: ['solana', 'robinhood'],
       radarChains: ['solana'],
@@ -152,30 +154,23 @@ describe('frontend chain-aware token identity', () => {
     };
     const availableChains = ['solana', 'robinhood', 'base'];
 
-    const bothFeedChains = tokenChain.toggleTokenChainForSurface(
+    const solanaOnly = tokenChain.toggleTokenChainForSurface(
       preferences,
       availableChains,
       'alertFeedChains',
       'robinhood',
     );
-    assert.deepEqual(bothFeedChains.alertFeedChains, ['solana', 'robinhood']);
-    assert.deepEqual(bothFeedChains.browserNotificationChains, ['robinhood']);
-
-    const robinhoodOnlyFeed = tokenChain.toggleTokenChainForSurface(
-      bothFeedChains,
-      availableChains,
-      'alertFeedChains',
-      'solana',
-    );
-    assert.deepEqual(robinhoodOnlyFeed.alertFeedChains, ['robinhood']);
+    assert.deepEqual(solanaOnly.enabledChains, ['solana']);
+    assert.deepEqual(solanaOnly.radarChains, ['solana']);
+    assert.deepEqual(solanaOnly.alertFeedChains, ['solana']);
     assert.deepEqual(
       tokenChain.toggleTokenChainForSurface(
-        robinhoodOnlyFeed,
+        solanaOnly,
         availableChains,
-        'alertFeedChains',
-        'robinhood',
-      ).alertFeedChains,
-      ['robinhood'],
+        'radarChains',
+        'solana',
+      ),
+      solanaOnly,
     );
     assert.deepEqual(
       tokenChain.toggleTokenChainForSurface(
@@ -184,11 +179,15 @@ describe('frontend chain-aware token identity', () => {
         'browserNotificationChains',
         'base',
       ),
-      preferences,
+      {
+        ...preferences,
+        radarChains: ['solana', 'robinhood'],
+        alertFeedChains: ['solana', 'robinhood'],
+      },
     );
   });
 
-  it('filters surfaces independently without mutating the cached collection', () => {
+  it('uses the master selection for Radar/feed while keeping browser notifications independent', () => {
     const preferences = {
       enabledChains: ['solana', 'robinhood'],
       radarChains: ['solana'],
@@ -199,15 +198,31 @@ describe('frontend chain-aware token identity', () => {
 
     assert.deepEqual(
       tokenChain.filterItemsByChainSelection(cached, preferences, 'alertFeedChains'),
-      [{ id: 'sol', chain: 'solana' }],
+      cached,
     );
     assert.deepEqual(
       tokenChain.filterItemsByChainSelection(cached, preferences, 'radarChains'),
-      [{ id: 'sol', chain: 'solana' }],
+      cached,
     );
     assert.equal(tokenChain.isTokenChainSelectedForSurface(preferences, 'browserNotificationChains', 'robinhood'), true);
-    assert.equal(tokenChain.isTokenChainSelectedForSurface(preferences, 'alertFeedChains', 'robinhood'), false);
+    assert.equal(tokenChain.isTokenChainSelectedForSurface(preferences, 'alertFeedChains', 'robinhood'), true);
     assert.equal(cached.length, 2);
+  });
+
+  it('resolves chain-scoped config values with a legacy fallback', () => {
+    const configs = {
+      'alert-vol-enabled': 'off',
+      'solana-alert-vol-enabled': 'on',
+    };
+
+    assert.equal(
+      tokenChain.resolveChainScopedConfigValue(configs, 'solana', 'alert-vol-enabled'),
+      'on',
+    );
+    assert.equal(
+      tokenChain.resolveChainScopedConfigValue(configs, 'robinhood', 'alert-vol-enabled'),
+      'off',
+    );
   });
 
   it('requires the master filter even when a surface contains the chain', () => {

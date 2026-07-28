@@ -1137,18 +1137,12 @@ function buildWorkspaceChainSelector(state: AppState, controller: AppController)
   const selector = document.createElement('div');
   selector.className = 'workspace-chain-selector';
   selector.setAttribute('role', 'group');
-  const controlsRadar = state.ui.workspace === 'history';
-  const selectedChains = controlsRadar
-    ? state.ui.chainFilters.radarChains
-    : state.ui.chainFilters.enabledChains;
-  selector.setAttribute('aria-label', controlsRadar
-    ? 'Filter Radar by blockchain'
-    : 'Filter workspace by blockchain');
+  const selectedChains = state.ui.chainFilters.enabledChains;
+  selector.setAttribute('aria-label', 'Filter workspace by blockchain');
 
   for (const chain of state.data.availableChains) {
     const title = getTokenChainTitle(chain);
     const readiness = state.data.chainReadiness[chain];
-    const isMasterEnabled = state.ui.chainFilters.enabledChains.includes(chain);
     const isEnabled = selectedChains.includes(chain);
     const isLastEnabled = isEnabled && selectedChains.length === 1;
     const button = document.createElement('button');
@@ -1165,15 +1159,14 @@ function buildWorkspaceChainSelector(state: AppState, controller: AppController)
     button.title = readiness?.message
       ? `${selectionTitle} · ${readiness.message}`
       : selectionTitle;
-    button.disabled = isLastEnabled || (controlsRadar && !isMasterEnabled);
+    button.disabled = isLastEnabled;
     button.append(buildTokenChainIcon(chain));
     const readinessDot = document.createElement('span');
     readinessDot.className = 'workspace-chain-readiness-dot';
     readinessDot.setAttribute('aria-hidden', 'true');
     button.append(readinessDot);
     button.addEventListener('click', () => {
-      if (controlsRadar) controller.toggleSurfaceChain('radarChains', chain);
-      else controller.toggleEnabledChain(chain);
+      controller.toggleEnabledChain(chain);
     });
     selector.append(button);
   }
@@ -6519,8 +6512,9 @@ function renderBotSettingsThresholds(state: AppState) {
 
 function renderBotSettingsChainCard(state: AppState, surface: ConfigurableChainFilterSurface) {
   const meta = CHAIN_FILTER_MENU_META[surface];
-  const chains = state.ui.chainFilters.enabledChains;
-  const selected = state.ui.chainFilters[surface];
+  const controlsMaster = surface !== 'browserNotificationChains';
+  const chains = controlsMaster ? state.data.availableChains : state.ui.chainFilters.enabledChains;
+  const selected = controlsMaster ? state.ui.chainFilters.enabledChains : state.ui.chainFilters[surface];
   return `
     <div class="config-item config-item-menu bot-settings-chain-menu">
       <label>${escapeHtml(meta.label)}</label>
@@ -7298,7 +7292,7 @@ function bindChainFilterPrefsMenus(
   state: AppState,
 ) {
   section.querySelectorAll<HTMLElement>('[data-chain-filter-icon]').forEach((placeholder) => {
-    const chain = state.ui.chainFilters.enabledChains.find((item) => (
+    const chain = state.data.availableChains.find((item) => (
       item === placeholder.dataset.chainFilterIcon
     ));
     if (chain) {
@@ -7338,7 +7332,10 @@ function bindChainFilterPrefsMenus(
       button.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
-        const chain = state.ui.chainFilters.enabledChains.find((item) => (
+        const selectableChains = surface === 'browserNotificationChains'
+          ? state.ui.chainFilters.enabledChains
+          : state.data.availableChains;
+        const chain = selectableChains.find((item) => (
           item === button.dataset.chainFilterChain
         ));
         if (!chain || (button.classList.contains('active') && button.disabled)) {

@@ -456,8 +456,8 @@ function normalizeChainFilters(value) {
   const enabled = new Set(enabledChains);
   return {
     enabledChains,
-    radarChains: normalizeStoredChainSelection(source.radarChains, enabled, enabledChains),
-    alertFeedChains: normalizeStoredChainSelection(source.alertFeedChains, enabled, enabledChains),
+    radarChains: [...enabledChains],
+    alertFeedChains: [...enabledChains],
     browserNotificationChains: normalizeStoredChainSelection(
       source.browserNotificationChains,
       enabled,
@@ -502,12 +502,22 @@ function validateChainFilters(key, value) {
   if (!enabledResult.valid) return enabledResult;
 
   const enabled = new Set(enabledResult.value);
-  const next = { enabledChains: enabledResult.value };
-  for (const filterKey of CHAIN_FILTER_KEYS.slice(1)) {
-    const result = validateChainSelection(`${key}.${filterKey}`, value[filterKey], enabled);
+  const next = {
+    enabledChains: enabledResult.value,
+    radarChains: [...enabledResult.value],
+    alertFeedChains: [...enabledResult.value],
+  };
+  for (const filterKey of ['radarChains', 'alertFeedChains']) {
+    const result = validateChainSelection(`${key}.${filterKey}`, value[filterKey], available);
     if (!result.valid) return result;
-    next[filterKey] = result.value;
   }
+  const browserResult = validateChainSelection(
+    `${key}.browserNotificationChains`,
+    value.browserNotificationChains,
+    enabled,
+  );
+  if (!browserResult.valid) return browserResult;
+  next.browserNotificationChains = browserResult.value;
   return { valid: true, value: next };
 }
 

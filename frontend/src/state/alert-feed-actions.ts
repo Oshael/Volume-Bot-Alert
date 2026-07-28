@@ -2,7 +2,7 @@ import type { AlertEntry } from './app-state';
 import type { ChainFilterPreferences, TokenChain } from '../utils/token-chain';
 
 export function getVisibleAlertFeedChains(filters: ChainFilterPreferences): TokenChain[] {
-  return filters.alertFeedChains.filter((chain) => filters.enabledChains.includes(chain));
+  return [...filters.enabledChains];
 }
 
 export function getBackendAlertEventId(alert: AlertEntry): number | null {
