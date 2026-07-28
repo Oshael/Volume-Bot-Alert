@@ -113,7 +113,7 @@ function getOrCreateAlertsSectionView(controller: AppController) {
           <input class="compact-search-input" type="text" placeholder="ticker / ca" data-action="alerts-search" data-search-input="alerts">
         </div>
         <button type="button" class="action-button small custom-alert-open-button" data-action="open-custom-alert-prototype">Custom</button>
-        <button type="button" class="action-button small" data-action="alerts-clear-all">Clean Visible</button>
+        <button type="button" class="action-button small" data-action="alerts-clear-all">Clean Alerts</button>
         <div class="alerts-page-controls" aria-label="Alerts pages">
           <button type="button" class="action-button small" data-action="alerts-prev">Prev</button>
           <label class="legacy-mini-field alerts-page-field">

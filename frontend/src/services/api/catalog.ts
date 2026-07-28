@@ -991,6 +991,27 @@ export function fetchDashboardTopPerformers(
     }));
 }
 
+export function fetchMarketTicker(token?: string | null) {
+  return apiFetch<{
+    generatedAt?: string | null;
+    stale?: boolean;
+    items?: Array<{ symbol?: string; priceUsd?: number; change24hPct?: number }>;
+  }>('/api/dashboard/market-ticker', {
+    token,
+    rateLimitScope: 'market-ticker',
+  }).then((response) => ({
+    generatedAt: response.generatedAt ?? null,
+    stale: Boolean(response.stale),
+    items: (response.items || []).flatMap((item) => {
+      const priceUsd = Number(item.priceUsd);
+      const change24hPct = Number(item.change24hPct);
+      return item.symbol && Number.isFinite(priceUsd) && Number.isFinite(change24hPct)
+        ? [{ symbol: item.symbol, priceUsd, change24hPct }]
+        : [];
+    }),
+  }));
+}
+
 function buildTokenSparklinesRequestBody(
   identities: ReturnType<typeof createLegacyCompatibleTokenIdentity>[],
   options?: {

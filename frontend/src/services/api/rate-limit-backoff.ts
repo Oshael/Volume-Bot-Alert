@@ -1,6 +1,6 @@
 import type { ApiResponseMetadata } from './response-metadata';
 
-export type ApiRateLimitScope = 'dashboard';
+export type ApiRateLimitScope = 'dashboard' | 'market-ticker';
 
 const API_RATE_LIMIT_BACKOFF_MIN_MS = 1000;
 const API_RATE_LIMIT_BACKOFF_MAX_MS = 15 * 60 * 1000;
@@ -40,7 +40,8 @@ export class ApiRateLimitBackoffError extends Error {
 
   constructor(scope: ApiRateLimitScope, retryAfterMs: number, message?: string) {
     const retryAfterSeconds = Math.ceil(Math.max(0, retryAfterMs) / 1000);
-    super(message || `Dashboard requests are paused by rate limit backoff for ${retryAfterSeconds}s.`);
+    const scopeLabel = scope === 'market-ticker' ? 'Market ticker' : 'Dashboard';
+    super(message || `${scopeLabel} requests are paused by rate limit backoff for ${retryAfterSeconds}s.`);
     this.name = 'ApiRateLimitBackoffError';
     this.scope = scope;
     this.retryAfterMs = Math.max(0, retryAfterMs);

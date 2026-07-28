@@ -87,6 +87,69 @@ a {
   padding: 0 0 32px;
 }
 
+.workspace-account-area,
+.workspace-social-links {
+  display: flex;
+  align-items: center;
+}
+
+.workspace-account-area {
+  flex: 0 0 auto;
+  gap: 14px;
+  margin-left: auto;
+}
+
+.workspace-social-links {
+  gap: 8px;
+}
+
+.workspace-social-label {
+  margin-right: 2px;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
+
+.workspace-social-link {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #8ee2ff;
+  filter: drop-shadow(0 0 3px rgba(0, 212, 255, 0.28));
+  transition: color 150ms ease, filter 150ms ease, transform 150ms ease;
+}
+
+.workspace-social-link svg {
+  display: block;
+  width: 15px;
+  height: 15px;
+}
+
+.workspace-social-link path {
+  fill: currentColor;
+}
+
+.workspace-social-link-discord svg {
+  width: 17px;
+}
+
+.workspace-social-link:hover,
+.workspace-social-link:focus-visible {
+  color: #ffffff;
+  filter: drop-shadow(0 0 5px rgba(0, 212, 255, 0.68));
+  transform: translateY(-2px);
+}
+
+.workspace-social-link:focus-visible {
+  outline: 1px solid rgba(142, 226, 255, 0.72);
+  outline-offset: 2px;
+}
+
 body:has(.workspace-topbar),
 body:has(.workspace-topbar) [data-app-render-frame],
 body:has(.workspace-topbar) .app-shell,
@@ -103,6 +166,165 @@ body:has(.workspace-topbar) .legacy-shell {
 body:has(.workspace-topbar)::before {
   background: none;
   opacity: 0;
+}
+
+body:has(.workspace-market-ticker) .app-shell {
+  padding-bottom: 42px;
+}
+
+.workspace-market-ticker {
+  position: fixed;
+  z-index: 980;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 34px;
+  border-top: 1px solid rgba(104, 125, 159, 0.26);
+  background: #020305;
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.34);
+  color: #f0f4fa;
+  display: flex;
+  align-items: center;
+}
+
+.workspace-market-ticker-inner {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  height: 100%;
+  align-items: center;
+  justify-content: flex-start;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.workspace-market-ticker-meta {
+  display: inline-flex;
+  height: 100%;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px 0 8px;
+  border-left: 1px solid rgba(104, 125, 159, 0.16);
+  background: #020305;
+}
+
+.workspace-footer-connection {
+  width: auto;
+  height: 24px;
+  flex: 0 0 auto;
+  gap: 5px;
+  margin: 0;
+  border-right: 1px solid rgba(104, 125, 159, 0.16);
+  padding-right: 10px;
+}
+
+.workspace-market-ticker .workspace-social-links {
+  gap: 6px;
+}
+
+.workspace-market-ticker .workspace-social-label {
+  margin-right: 0;
+  font-size: 8px;
+}
+
+.workspace-market-ticker .workspace-social-link {
+  width: 24px;
+  height: 24px;
+}
+
+.workspace-market-ticker .workspace-social-link svg {
+  width: 15px;
+  height: 15px;
+}
+
+.workspace-market-ticker .workspace-social-link-discord svg {
+  width: 17px;
+}
+
+.workspace-market-ticker-inner::-webkit-scrollbar {
+  display: none;
+}
+
+.market-ticker-item {
+  display: inline-flex;
+  min-width: max-content;
+  align-items: center;
+  gap: 5px;
+  padding: 0 12px;
+  border-right: 1px solid rgba(104, 125, 159, 0.13);
+  font-family: "Space Mono", monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.market-ticker-item:last-child {
+  border-right: 0;
+}
+
+.market-ticker-icon {
+  display: inline-flex;
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
+  align-items: center;
+  justify-content: center;
+}
+
+.market-ticker-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.market-ticker-icon img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.market-ticker-item[data-market-symbol="PUMP"] .market-ticker-icon img {
+  width: 16px;
+  height: 16px;
+}
+
+.market-ticker-price {
+  color: #f0f4fa;
+  font-weight: 700;
+}
+
+.market-ticker-delta {
+  font-weight: 700;
+}
+
+.market-ticker-delta--up {
+  color: #72f5c5;
+}
+
+.market-ticker-delta--down {
+  color: #ff623f;
+}
+
+.market-ticker-delta--flat {
+  color: var(--muted);
+}
+
+.workspace-market-ticker[data-stale="true"] {
+  border-top-color: rgba(255, 204, 0, 0.34);
+}
+
+@media (max-width: 760px) {
+  .workspace-market-ticker-inner {
+    justify-content: flex-start;
+  }
+
+  .market-ticker-item {
+    padding: 0 8px;
+    font-size: 10px;
+  }
 }
 
 .hero,
@@ -2049,7 +2271,7 @@ body:has(.workspace-topbar)::before {
 }
 
 .workspace-userbar {
-  margin-left: auto;
+  margin-left: 0;
   display: inline-flex;
   align-items: center;
 }
@@ -2789,6 +3011,11 @@ body:has(.workspace-topbar)::before {
   min-width: 0;
 }
 
+.expanded-sparkline-identity-badges {
+  justify-self: start;
+  margin-top: 1px;
+}
+
 .expanded-sparkline-identity strong {
   color: #f3fbff;
   font-size: 17px;
@@ -2856,6 +3083,22 @@ body:has(.workspace-topbar)::before {
   line-height: 1;
 }
 
+.expanded-sparkline-popover-subhead .expanded-sparkline-stat-age > strong.up {
+  color: var(--green);
+}
+
+.expanded-sparkline-popover-subhead .expanded-sparkline-stat-age > strong.warn {
+  color: #ff8a00;
+}
+
+.expanded-sparkline-popover-subhead .expanded-sparkline-stat-age > strong.down {
+  color: var(--red);
+}
+
+.expanded-sparkline-popover-subhead .expanded-sparkline-stat-age > strong.white {
+  color: #fff;
+}
+
 .expanded-sparkline-popover-subhead .expanded-sparkline-stat-rich-value {
   color: #fff;
   font: inherit;
@@ -2877,12 +3120,14 @@ body:has(.workspace-topbar)::before {
 .expanded-sparkline-time-zone-control {
   position: relative;
   align-self: center;
-  flex: 0 0 auto;
+  flex: 0 1 160px;
   margin-left: auto;
   display: block;
-  width: 98px;
+  width: 160px;
+  min-width: 134px;
   height: 24px;
   padding: 0;
+  box-sizing: border-box;
   border: 1px solid rgba(63, 113, 176, 0.32);
   border-radius: 6px;
   background: rgba(5, 12, 22, 0.38);
@@ -2916,14 +3161,18 @@ body:has(.workspace-topbar)::before {
 .expanded-sparkline-time-zone-control > span {
   position: absolute;
   inset: 0;
-  display: grid;
-  place-items: center;
-  padding: 0 22px;
+  display: flex;
+  align-items: center;
+  padding: 0 28px 0 10px;
+  overflow: hidden;
   color: #d6ecff;
   font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
   font-size: 9px;
   font-weight: 800;
   letter-spacing: 0;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   pointer-events: none;
 }
 
@@ -7981,6 +8230,9 @@ button,
 }
 
 .legacy-login-support-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   margin-top: 12px;
   min-height: 30px;
   padding: 0;
@@ -7991,6 +8243,22 @@ button,
   letter-spacing: 0.16em;
   text-transform: uppercase;
   text-align: left;
+  text-decoration: none;
+}
+
+.legacy-login-discord-support-icon {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.legacy-login-discord-support-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .legacy-login-support-action:hover,
@@ -9701,6 +9969,12 @@ TEMP_LEGACY_BAR_TITLE {
     justify-content: flex-end;
   }
 
+  .workspace-account-area {
+    width: 100%;
+    margin-left: 0;
+    justify-content: flex-end;
+  }
+
   .workspace-user-trigger {
     justify-content: flex-end;
   }
@@ -9951,10 +10225,12 @@ TEMP_LEGACY_BAR_TITLE {
   width: 100%;
   max-width: 100%;
   min-width: 0;
+  background: #000;
   border-color: rgba(142, 226, 255, 0.38);
 }
 
 .alerts-panel {
+  background: #000;
   border-color: rgba(255, 213, 74, 0.38);
 }
 
@@ -9999,12 +10275,28 @@ TEMP_LEGACY_BAR_TITLE {
   gap: 10px;
   max-width: 168px;
   white-space: normal;
-  color: #cad7eb;
+  color: #8ee2ff;
 }
 
 .monitored-panel-title-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
   line-height: 1;
+}
+
+.monitored-panel-title-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .monitored-panel-title-copy {
@@ -13600,22 +13892,6 @@ TEMP_LEGACY_BAR_TITLE {
   color: #fff !important;
   font-size: 12px;
   font-weight: 700;
-}
-
-.monitored-data-state {
-  flex: 0 0 auto;
-  padding: 2px 5px;
-  border: 1px solid rgba(255, 138, 0, 0.42);
-  border-radius: 999px;
-  color: #ffb25c;
-  font-size: 8px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-}
-
-.monitored-activity-state {
-  border-color: rgba(142, 226, 255, 0.32);
-  color: var(--muted);
 }
 
 .monitored-activity-stale {

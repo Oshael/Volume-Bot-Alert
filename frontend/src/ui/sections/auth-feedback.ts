@@ -93,7 +93,7 @@ export function getAuthSupportCopy(kind: AuthFeedbackKind) {
     case 'validation':
       return 'Check the highlighted field above, then try signing in again.';
     default:
-      return 'Need access help? Contact an administrator for account or invite support.';
+      return 'Need help? Contact an administrator for general support.';
   }
 }
 

@@ -1,6 +1,6 @@
 import type { CandlestickData, IPriceScaleApi, Logical, TickMarkType, Time, UTCTimestamp, WhitespaceData } from 'lightweight-charts';
 import type { AppController } from '../../state/app-controller';
-import { getChainCapabilityNotice, getExpandedTokenSparkline, getMockTradingPositionView, getMockTradingSummaryView, getTokenSparkline, getTrackedToken, isMockTradingEnabled, isProfileAuthPanel, type AdminTokenReviewAlertEntry, type AppState, type LinkedIdentityEntry, type ProfileAuthPanel, type TokenSparklineCandleEntry, type TokenSparklineEntry } from '../../state/app-state';
+import { getChainCapabilityNotice, getExpandedTokenSparkline, getMockTradingPositionView, getMockTradingSummaryView, getTokenSparkline, getTrackedToken, isMockTradingEnabled, isProfileAuthPanel, type AdminTokenReviewAlertEntry, type AppState, type LinkedIdentityEntry, type ManualTokenEntry, type ProfileAuthPanel, type TokenSparklineCandleEntry, type TokenSparklineEntry } from '../../state/app-state';
 import { fetchDashboardChartAlertEvents, type ChartAlertEvent } from '../../services/api/catalog';
 import { EXPANDED_CHART_ALERT_EVENT, mergeChartAlertHistory, readChartAlertHistory } from '../../services/charts/chart-alert-history';
 import { clusterChartAlertMarkers, prepareChartAlertCandlePoints, projectChartAlertMarkers, type ChartAlertCandlePoint, type ChartAlertMarkerCluster } from '../../services/charts/chart-alert-markers';
@@ -21,14 +21,17 @@ import {
   sanitizeLoginEmailValue,
 } from './login-form-utils';
 import { escapeHtml, sanitizeOptionalHttpUrl } from './html-safety';
-import { bindCopyButtons, bindSparklineHover, fmtMoney, fmtPct, getTradeTerminalLabel, renderFlash, renderSparklineFigure, renderTokenLaunchpadBadge, renderTotalLiquidityCell, renderTradeTerminalIconForKey } from './shared';
+import { bindCopyButtons, bindSparklineHover, fmtMoney, fmtPct, getAgeToneClassFromCreatedAt, getTradeTerminalLabel, renderFlash, renderSparklineFigure, renderTokenLaunchpadBadge, renderTotalLiquidityCell, renderTradeTerminalIconForKey } from './shared';
 import { fmtMockSol, fmtMockSolAmount, resolveLiveMockSolUsdcRate, resolveMockTradeSolUsdcRate, resolveMockTradingPositionPnl } from '../../utils/mock-trading-display';
 import { buildTokenExplorerUrl, buildTokenIdentityKey, buildTokenMarketUrl, type TokenChain } from '../../utils/token-chain';
 import { getTokenChartValuationLabel, normalizeTokenChartCandle, normalizeTokenChartCandles, resolveTokenChartValuationType } from '../../utils/token-chart';
 import { resolveTokenValuation } from '../../utils/token-valuation';
-import { buildTokenChainBadge, buildTokenChainIcon, getTokenChainTitle } from '../token-chain-badge';
+import { buildTokenChainIcon, buildTokenIdentityBadgeGroup, getTokenChainTitle } from '../token-chain-badge';
+import { bindMonitoredTickerPeerPanelClose, buildTickerPeerBadge } from './monitored-section';
 
 const SITE_LOGO_URL = new URL('../../../logofinal1.png', import.meta.url).href;
+const DISCORD_COMMUNITY_URL = 'https://discord.gg/2pjQ5BVgNP';
+const X_PROFILE_URL = 'https://x.com/trendscope_pro';
 type ConfigurableChainFilterSurface = 'radarChains' | 'alertFeedChains' | 'browserNotificationChains';
 
 const CHAIN_FILTER_MENU_META: Record<ConfigurableChainFilterSurface, {
@@ -932,7 +935,7 @@ function renderAccountSecurityOrdersCard(state: AppState) {
   `;
 }
 
-function getWorkspaceConnectionState(state: AppState) {
+export function getWorkspaceConnectionState(state: AppState) {
   if (state.session.status !== 'authenticated' || state.runtime.mode === 'stopped') {
     return { tone: 'disconnected', label: 'Disconnected' };
   }
@@ -1194,7 +1197,6 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
   section.className = 'legacy-topbar workspace-topbar';
   const isLiveWorkspace = state.ui.workspace === 'live';
   const isHistoryWorkspace = state.ui.workspace === 'history';
-  const connectionState = getWorkspaceConnectionState(state);
   const quickBuyMenuItem = renderQuickBuyMenuItem(state);
   const tokenReviewMenuItem = renderTokenReviewMenuItem(state);
   section.innerHTML = `
@@ -1204,10 +1206,6 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
         <div class="workspace-brand-copy">
           <strong class="workspace-brand-title">TrendScope</strong>
           <span class="workspace-brand-sub">Volume Bot Tracker</span>
-          <div class="workspace-connection-status" data-state="${connectionState.tone}">
-            <span class="workspace-connection-dot" aria-hidden="true"></span>
-            <span class="workspace-connection-label">${connectionState.label}</span>
-          </div>
         </div>
       </div>
       <div class="workspace-route-group">
@@ -1225,22 +1223,24 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
         </div>
         ${renderMockTradingHeaderSummary(state)}
       </div>
-      <div class="workspace-userbar">
-        <div class="legacy-user-menu workspace-user-menu" data-user-menu>
-          <button type="button" class="workspace-user-trigger" data-action="toggle-user-menu" aria-label="Open user menu">
-            <span class="workspace-user-avatar" data-role="user-avatar"></span>
-            <span class="workspace-user-meta">
-              <span class="workspace-user-name" data-role="user-menu-label"></span>
-              <span class="workspace-user-caption">Workspace</span>
-            </span>
-          </button>
-          <div class="legacy-user-dropdown workspace-user-dropdown">
-            <button type="button" class="legacy-user-dd-item" data-action="open-user-settings"><span class="workspace-menu-icon">👤</span><span>User Settings</span></button>
-            ${quickBuyMenuItem}
-            <button type="button" class="legacy-user-dd-item" data-action="open-bot-settings"><span class="workspace-menu-icon workspace-menu-icon-gear">⚙</span><span>Bot Settings</span></button>
-            <button type="button" class="legacy-user-dd-item" data-action="open-blocked-tokens"><span class="workspace-menu-icon workspace-menu-icon-danger">✖</span><span class="workspace-menu-label">Blocked Tokens</span></button>
-            ${tokenReviewMenuItem}
-            <button type="button" class="legacy-user-dd-item workspace-user-dd-item-danger" data-action="logout"><span class="workspace-menu-icon workspace-menu-icon-danger">⏻</span><span>Logout</span></button>
+      <div class="workspace-account-area">
+        <div class="workspace-userbar">
+          <div class="legacy-user-menu workspace-user-menu" data-user-menu>
+            <button type="button" class="workspace-user-trigger" data-action="toggle-user-menu" aria-label="Open user menu">
+              <span class="workspace-user-avatar" data-role="user-avatar"></span>
+              <span class="workspace-user-meta">
+                <span class="workspace-user-name" data-role="user-menu-label"></span>
+                <span class="workspace-user-caption">Workspace</span>
+              </span>
+            </button>
+            <div class="legacy-user-dropdown workspace-user-dropdown">
+              <button type="button" class="legacy-user-dd-item" data-action="open-user-settings"><span class="workspace-menu-icon">👤</span><span>User Settings</span></button>
+              ${quickBuyMenuItem}
+              <button type="button" class="legacy-user-dd-item" data-action="open-bot-settings"><span class="workspace-menu-icon workspace-menu-icon-gear">⚙</span><span>Bot Settings</span></button>
+              <button type="button" class="legacy-user-dd-item" data-action="open-blocked-tokens"><span class="workspace-menu-icon workspace-menu-icon-danger">✖</span><span class="workspace-menu-label">Blocked Tokens</span></button>
+              ${tokenReviewMenuItem}
+              <button type="button" class="legacy-user-dd-item workspace-user-dd-item-danger" data-action="logout"><span class="workspace-menu-icon workspace-menu-icon-danger">⏻</span><span>Logout</span></button>
+            </div>
           </div>
         </div>
       </div>
@@ -1330,6 +1330,20 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
   });
 
   return section;
+}
+
+export function renderWorkspaceSocialLinks() {
+  return `
+    <nav class="workspace-social-links" aria-label="TrendScope social links">
+    <span class="workspace-social-label">Official Links</span>
+    <a class="workspace-social-link workspace-social-link-discord" href="${DISCORD_COMMUNITY_URL}" target="_blank" rel="noopener noreferrer" aria-label="Join the TrendScope Discord" title="Discord">
+      ${renderIdentityProviderMark('discord')}
+    </a>
+    <a class="workspace-social-link workspace-social-link-x" href="${X_PROFILE_URL}" target="_blank" rel="noopener noreferrer" aria-label="Follow TrendScope on X" title="X">
+      ${renderXMark()}
+    </a>
+    </nav>
+  `;
 }
 
 function renderQuickBuyMenuItem(state: AppState) {
@@ -4112,7 +4126,7 @@ function renderExpandedSparklineModal(state: AppState, address: string) {
       <div class="legacy-auth-modal-backdrop" data-action="close-expanded-sparkline"></div>
       <div class="legacy-auth-panel legacy-auth-panel-expanded-sparkline" data-auth-panel="expanded-sparkline" role="dialog" aria-modal="true" aria-labelledby="expanded-sparkline-title">
         <div class="expanded-sparkline-toolbar">
-          ${renderExpandedSparklineIdentity(symbol, name, imageUrl, address, chain)}
+          ${renderExpandedSparklineIdentity(symbol, name, imageUrl, address, chain, token?.tickerPeers)}
           ${renderExpandedSparklineStatsRow(
             token,
             chain === 'solana' ? state.data.meteoraByAddress[address] : undefined,
@@ -4141,16 +4155,24 @@ function renderExpandedSparklineIdentity(
   imageUrl: string | null,
   address: string,
   chain: TokenChain,
+  tickerPeers: ManualTokenEntry['tickerPeers'],
 ) {
   const avatar = imageUrl
     ? `<img src="${escapeHtml(imageUrl)}" alt="" class="expanded-sparkline-avatar" />`
     : `<span class="expanded-sparkline-avatar expanded-sparkline-avatar-placeholder">${escapeHtml(symbol.slice(0, 2).toUpperCase())}</span>`;
+  const identityBadges = buildTokenIdentityBadgeGroup(
+    buildTickerPeerBadge(tickerPeers, chain, address),
+    chain,
+    address,
+  );
+  identityBadges.classList.add('expanded-sparkline-identity-badges');
   return `
     <div class="expanded-sparkline-identity">
       <span class="token-avatar-wrap expanded-sparkline-avatar-wrap">${avatar}${renderTokenLaunchpadBadge(address, chain)}</span>
       <span class="expanded-sparkline-identity-copy">
-        <strong id="expanded-sparkline-title">${escapeHtml(symbol)} ${buildTokenChainBadge(chain, address).outerHTML}</strong>
+        <strong id="expanded-sparkline-title">${escapeHtml(symbol)}</strong>
         <small>${escapeHtml(name)}</small>
+        ${identityBadges.outerHTML}
       </span>
     </div>
   `;
@@ -4168,7 +4190,7 @@ function renderExpandedSparklineStatsRow(
   return `
     <div class="expanded-sparkline-popover-subhead">
       ${renderExpandedSparklineStat('mcap', valuationLabel, fmtMoney(latestValue))}
-      ${renderExpandedSparklineStat('age', 'AGE', ageLabel)}
+      ${renderExpandedSparklineStat('age', 'AGE', ageLabel, getAgeToneClassFromCreatedAt(token?.createdAt))}
       ${renderExpandedSparklineStat('vol-1h', 'VOL 1H', fmtMoney(token?.volume1h))}
       ${renderExpandedSparklineStat('vol-6h', 'VOL 6H', fmtMoney(token?.volume6h))}
       ${renderExpandedSparklineStat('vol-24h', 'VOL 24H', fmtMoney(token?.volume24h))}
@@ -4179,8 +4201,9 @@ function renderExpandedSparklineStatsRow(
   `;
 }
 
-function renderExpandedSparklineStat(variant: string, label: string, value: string) {
-  return `<span class="expanded-sparkline-stat expanded-sparkline-stat-${escapeHtml(variant)}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></span>`;
+function renderExpandedSparklineStat(variant: string, label: string, value: string, valueClassName = '') {
+  const valueClassAttribute = valueClassName ? ` class="${escapeHtml(valueClassName)}"` : '';
+  return `<span class="expanded-sparkline-stat expanded-sparkline-stat-${escapeHtml(variant)}"><span>${escapeHtml(label)}</span><strong${valueClassAttribute}>${escapeHtml(value)}</strong></span>`;
 }
 
 function renderExpandedTotalLiquidityStat(
@@ -4260,6 +4283,7 @@ function bindExpandedSparklineModal(
     return;
   }
 
+  bindMonitoredTickerPeerPanelClose(section);
   section.querySelectorAll<HTMLElement>('[data-action="close-expanded-sparkline"]').forEach((element) => {
     element.addEventListener('click', (event) => {
       event.preventDefault();
@@ -4959,7 +4983,7 @@ function renderLoginSupport(authFeedbackKind: ReturnType<typeof getAuthFeedbackK
         <div class="legacy-login-recovery-tag">${supportHeading}</div>
         <div class="legacy-login-recovery-copy">${supportCopy}</div>
         <div class="legacy-login-support-actions">
-          <button type="button" class="legacy-login-support-action" data-action="open-invite-assistance-panel">Access help</button>
+          ${renderDiscordSupportLink()}
         </div>
       </div>
     `;
@@ -4969,9 +4993,18 @@ function renderLoginSupport(authFeedbackKind: ReturnType<typeof getAuthFeedbackK
       <div class="legacy-login-recovery-tag">${supportHeading}</div>
       <div class="legacy-login-recovery-copy">${supportCopy}</div>
       <div class="legacy-login-support-actions">
-        <button type="button" class="legacy-login-support-action" data-action="open-invite-assistance-panel">Access help</button>
+        ${renderDiscordSupportLink()}
       </div>
     </div>
+  `;
+}
+
+function renderDiscordSupportLink() {
+  return `
+    <a class="legacy-login-support-action legacy-login-discord-support" href="${DISCORD_COMMUNITY_URL}" target="_blank" rel="noopener noreferrer">
+      <span class="legacy-login-discord-support-icon" aria-hidden="true">${renderIdentityProviderMark('discord')}</span>
+      <span>Join our Discord</span>
+    </a>
   `;
 }
 
@@ -5898,6 +5931,14 @@ function renderIdentityProviderMark(provider: 'google' | 'discord') {
       <path fill="#34A853" d="M12 22c2.7 0 4.96-.9 6.61-2.45l-3.24-2.52c-.9.6-2.05.95-3.37.95-2.59 0-4.79-1.75-5.57-4.1H3.08v2.6A10 10 0 0 0 12 22Z"/>
       <path fill="#FBBC05" d="M6.43 13.88A5.99 5.99 0 0 1 6.12 12c0-.65.11-1.28.31-1.88V7.52H3.08A10 10 0 0 0 2 12c0 1.61.38 3.14 1.08 4.48l3.35-2.6Z"/>
       <path fill="#EA4335" d="M12 6.02c1.47 0 2.79.5 3.83 1.49l2.87-2.87C16.95 2.96 14.7 2 12 2a10 10 0 0 0-8.92 5.52l3.35 2.6c.78-2.35 2.98-4.1 5.57-4.1Z"/>
+    </svg>
+  `;
+}
+
+function renderXMark() {
+  return `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path fill="currentColor" d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24h-6.657l-5.214-6.817-5.967 6.817H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231 5.45-6.231Zm-1.161 17.52h1.833L7.084 4.126H5.117L17.083 19.77Z"/>
     </svg>
   `;
 }

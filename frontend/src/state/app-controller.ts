@@ -77,7 +77,7 @@ import {
 } from '../services/api/account';
 import { createBillingOrder, fetchBillingState, fetchPublicBillingPlans, type BillingStatePayload, type PublicBillingPlansPayload } from '../services/api/billing';
 import { completePreAccessSession, createPreAccessOrder, fetchPreAccessBillingState, fetchPreAccessMe, logoutPreAccessSession, syncPreAccessOrder, type PreAccessBillingStatePayload } from '../services/api/pre-access';
-import { adminBlockToken as adminBlockTokenRequest, adminUnblockToken as adminUnblockTokenRequest, clearDashboardAlertEvents, createCustomAlertRule as createCustomAlertRuleRequest, disableCustomAlertRule as disableCustomAlertRuleRequest, dismissDashboardAlertEvent, fetchCustomAlertRules as fetchCustomAlertRulesRequest, updateCustomAlertRule as updateCustomAlertRuleRequest, type CreateCustomAlertRulePayload, type CustomAlertRule, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchDashboardTopPerformers, fetchExpandedTokenSparkline, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, resetMonitoredPins as resetMonitoredPinsRequest, saveMonitoredPins as saveMonitoredPinsRequest, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardHistoryBucketRequest, type DashboardHistoryDebugProbeEntry, type DashboardMonitoredPin, type DashboardMonitoredToken, type DashboardTopPerformersPayload, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
+import { adminBlockToken as adminBlockTokenRequest, adminUnblockToken as adminUnblockTokenRequest, clearDashboardAlertEvents, createCustomAlertRule as createCustomAlertRuleRequest, disableCustomAlertRule as disableCustomAlertRuleRequest, dismissDashboardAlertEvent, fetchCustomAlertRules as fetchCustomAlertRulesRequest, updateCustomAlertRule as updateCustomAlertRuleRequest, type CreateCustomAlertRulePayload, type CustomAlertRule, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchDashboardTopPerformers, fetchExpandedTokenSparkline, fetchMarketTicker, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, resetMonitoredPins as resetMonitoredPinsRequest, saveMonitoredPins as saveMonitoredPinsRequest, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardHistoryBucketRequest, type DashboardHistoryDebugProbeEntry, type DashboardMonitoredPin, type DashboardMonitoredToken, type DashboardTopPerformersPayload, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
 import { addMockTradingCash, archiveMockTradingWallet as archiveMockTradingWalletRequest, buyMockTradingToken, cancelMockTradingTakeProfitOrder as cancelMockTradingTakeProfitOrderRequest, createMockTradingTakeProfitOrder, createMockTradingWallet as createMockTradingWalletRequest, fetchMockTradingPositions, fetchMockTradingSummary, fetchMockTradingTrades, fetchMockTradingWallets, resetMockTradingPortfolio as resetMockTradingPortfolioRequest, sellMockTradingToken, setDefaultMockTradingWallet as setDefaultMockTradingWalletRequest, updateMockTradingWallet as updateMockTradingWalletRequest } from '../services/api/mock-trading';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { getBackendAlertEventId, partitionVisibleAlertEntries } from './alert-feed-actions';
@@ -256,6 +256,7 @@ const CROSS_ALERT_BLOCK_MS = 5 * 60 * 1000;
 const PUMP_IMAGE_TIMEOUT_MS = 5000;
 const MONITORED_REFRESH_INTERVAL_MS = 3 * 1000;
 const MONITORED_DASHBOARD_POLL_INTERVAL_MS = 15 * 1000;
+const MARKET_TICKER_REFRESH_INTERVAL_MS = 5 * 1000;
 const MONITORED_FULL_HYDRATION_INTERVAL_MS = 60 * 1000;
 const WORKSPACE_REALTIME_SUBSCRIPTION_LIMIT = 300;
 const MONITORED_DASHBOARD_HYDRATION_PAGE_SIZE = 100;
@@ -348,6 +349,7 @@ type HistorySyncPresenceMessage = {
   workspace: WorkspaceView;
   authenticated: boolean;
   monitoringActive: boolean;
+  visible: boolean;
   ts: number;
 };
 
@@ -377,6 +379,7 @@ type HistoryBootstrapRequestPayload = {
 };
 
 type HistoryBootstrapPayload = Awaited<ReturnType<typeof fetchDashboardHistoryBootstrap>>;
+type MarketTickerPayload = Awaited<ReturnType<typeof fetchMarketTicker>>;
 
 type HistorySyncBootstrapSnapshotMessage = {
   type: 'history-bootstrap-snapshot';
@@ -411,6 +414,13 @@ type HistorySyncSparklineSnapshotMessage = {
   ts: number;
 };
 
+type HistorySyncMarketTickerSnapshotMessage = {
+  type: 'market-ticker-snapshot';
+  tabId: string;
+  payload: MarketTickerPayload;
+  ts: number;
+};
+
 type HistorySyncMessage =
   | HistorySyncPresenceMessage
   | HistorySyncClosingMessage
@@ -418,12 +428,14 @@ type HistorySyncMessage =
   | HistorySyncBootstrapSnapshotMessage
   | HistorySyncBidZoneSnapshotMessage
   | HistorySyncTopPerformersSnapshotMessage
-  | HistorySyncSparklineSnapshotMessage;
+  | HistorySyncSparklineSnapshotMessage
+  | HistorySyncMarketTickerSnapshotMessage;
 
 type HistoryPeerState = {
   workspace: WorkspaceView;
   authenticated: boolean;
   monitoringActive: boolean;
+  visible: boolean;
   seenAt: number;
 };
 
@@ -821,6 +833,7 @@ export type AppRenderRegion =
   | 'bid-zone'
   | 'pumpfun'
   | 'alerts'
+  | 'market-ticker'
   | 'overlay';
 
 function normalizeRoutePath(pathname: string | null | undefined) {
@@ -1326,6 +1339,7 @@ export function createAppController(): AppController {
   let authSubmitInFlight = false;
   let monitoringInterval: ReturnType<typeof setInterval> | null = null;
   let uptimeInterval: ReturnType<typeof setInterval> | null = null;
+  let marketTickerInterval: ReturnType<typeof setInterval> | null = null;
   let pumpGcInterval: ReturnType<typeof setInterval> | null = null;
   let adminTokenReviewAlertRefreshInterval: ReturnType<typeof setInterval> | null = null;
   let pumpfunEmitTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1341,6 +1355,7 @@ export function createAppController(): AppController {
   let chainReadinessRefreshInFlight = false;
   let mockTradingRefreshInFlight = false;
   let adminTokenReviewAlertRefreshInFlight = false;
+  let marketTickerRefreshInFlight = false;
   let nextMockTradingMarketRefreshAt = 0;
   let floatingQuickBuyExecutionInFlight = false;
   let floatingQuickBuyDashboardRefreshInFlight = false;
@@ -1415,6 +1430,7 @@ export function createAppController(): AppController {
   let historySyncHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
   let historySyncLifecycleBound = false;
   let historySyncLeaderTabId: string | null = null;
+  let marketTickerLeaderTabId: string | null = null;
   const historySyncPeers = new Map<string, HistoryPeerState>();
   const recentAlertFingerprints = new Map<string, { ts: number; fingerprint: string }>();
   const pendingAlertSparklineRequests = new Map<string, string>();
@@ -1787,6 +1803,20 @@ export function createAppController(): AppController {
       return true;
     }
     return historySyncLeaderTabId === null || historySyncLeaderTabId === historySyncTabId;
+  }
+
+  function isActiveMarketTickerCandidate() {
+    return isAuthenticatedSession()
+      && isWorkspacePollingSyncWorkspace()
+      && !documentHiddenForUi
+      && state.runtime.mode === 'active';
+  }
+
+  function isMarketTickerLeader() {
+    if (!shouldUseHistorySyncChannel()) {
+      return true;
+    }
+    return marketTickerLeaderTabId === null || marketTickerLeaderTabId === historySyncTabId;
   }
 
   function isHistorySyncLeader() {
@@ -2344,6 +2374,29 @@ export function createAppController(): AppController {
     }
   }
 
+  function recomputeMarketTickerLeader(options?: { runImmediatelyOnGain?: boolean }) {
+    const previousLeader = marketTickerLeaderTabId;
+    pruneHistorySyncPeers();
+
+    const candidates = [historySyncTabId].filter(() => isActiveMarketTickerCandidate());
+    for (const [tabId, peer] of historySyncPeers) {
+      if (peer.authenticated && peer.monitoringActive && peer.visible) {
+        candidates.push(tabId);
+      }
+    }
+
+    marketTickerLeaderTabId = candidates.length > 0
+      ? candidates.sort((a, b) => a.localeCompare(b))[0] || null
+      : null;
+
+    if (state.runtime.mode === 'active' && previousLeader !== marketTickerLeaderTabId) {
+      syncMarketTickerPolling({
+        runImmediately: Boolean(options?.runImmediatelyOnGain)
+          && marketTickerLeaderTabId === historySyncTabId,
+      });
+    }
+  }
+
   function broadcastHistoryPresence() {
     if (!shouldUseHistorySyncChannel()) {
       return;
@@ -2355,6 +2408,7 @@ export function createAppController(): AppController {
       workspace: state.ui.workspace,
       authenticated: isAuthenticatedSession(),
       monitoringActive: isActiveWorkspacePollingSyncCandidate(),
+      visible: !documentHiddenForUi,
       ts: Date.now(),
     });
   }
@@ -2368,6 +2422,7 @@ export function createAppController(): AppController {
     historySyncHeartbeatTimer = setInterval(() => {
       broadcastHistoryPresence();
       recomputeHistorySyncLeader();
+      recomputeMarketTickerLeader();
     }, HISTORY_SYNC_HEARTBEAT_MS);
   }
 
@@ -2380,6 +2435,7 @@ export function createAppController(): AppController {
     startHistorySyncHeartbeat();
     broadcastHistoryPresence();
     recomputeHistorySyncLeader(options);
+    recomputeMarketTickerLeader(options);
   }
 
   function flushEmit() {
@@ -8244,12 +8300,29 @@ export function createAppController(): AppController {
       return false;
     }
 
-    const entry = getExpandedSparklineCacheEntry(
+    const activeEntry = getExpandedSparklineCacheEntry(
+      address,
+      getActiveExpandedSparklineGranularity(),
+      chain,
+    );
+    if (activeEntry?.oneMinuteAvailable === true) {
+      return true;
+    }
+
+    const defaultEntry = getExpandedSparklineCacheEntry(
       address,
       EXPANDED_SPARKLINE_DEFAULT_GRANULARITY_MINUTES,
       chain,
     );
-    return entry?.oneMinuteAvailable === true;
+    if (defaultEntry?.oneMinuteAvailable === true) {
+      return true;
+    }
+
+    const identity = createLegacyCompatibleTokenIdentity(chain, address);
+    return readWorkspaceSparklineCacheEntry(
+      state.data.sparklineByAddress,
+      identity,
+    )?.oneMinuteAvailable === true;
   }
 
   function isExpandedOneMinutePrefetchEligible(
@@ -9461,6 +9534,18 @@ export function createAppController(): AppController {
     });
   }
 
+  function broadcastMarketTickerSnapshot(payload: MarketTickerPayload) {
+    if (!isMarketTickerLeader()) {
+      return;
+    }
+    postHistorySyncMessage({
+      type: 'market-ticker-snapshot',
+      tabId: historySyncTabId,
+      payload,
+      ts: Date.now(),
+    });
+  }
+
   function handleWorkspacePollingSnapshotMessage(message: HistorySyncMessage) {
     switch (message.type) {
       case 'monitored-snapshot':
@@ -9505,15 +9590,26 @@ export function createAppController(): AppController {
         workspace: normalizeWorkspace(message.workspace),
         authenticated: Boolean(message.authenticated),
         monitoringActive: Boolean(message.monitoringActive),
+        visible: Boolean(message.visible),
         seenAt: Number(message.ts) || Date.now(),
       });
       recomputeHistorySyncLeader({ runImmediatelyOnGain: true });
+      recomputeMarketTickerLeader({ runImmediatelyOnGain: true });
       return;
     }
 
     if (message.type === 'closing') {
       historySyncPeers.delete(message.tabId);
       recomputeHistorySyncLeader({ runImmediatelyOnGain: true });
+      recomputeMarketTickerLeader({ runImmediatelyOnGain: true });
+      return;
+    }
+
+    if (message.type === 'market-ticker-snapshot') {
+      if (isAuthenticatedSession() && state.runtime.mode === 'active' && !isMarketTickerLeader()) {
+        state.data.marketTicker = message.payload;
+        emit('market-ticker');
+      }
       return;
     }
 
@@ -9889,6 +9985,27 @@ export function createAppController(): AppController {
     }
   }
 
+  function syncMarketTickerPolling(options?: { runImmediately?: boolean }) {
+    const shouldRun = isActiveMarketTickerCandidate() && isMarketTickerLeader();
+    if (!shouldRun) {
+      if (marketTickerInterval) {
+        clearInterval(marketTickerInterval);
+        marketTickerInterval = null;
+      }
+      return;
+    }
+
+    if (options?.runImmediately) {
+      void refreshMarketTicker();
+    }
+    if (!marketTickerInterval) {
+      marketTickerInterval = setInterval(
+        () => void refreshMarketTicker(),
+        MARKET_TICKER_REFRESH_INTERVAL_MS,
+      );
+    }
+  }
+
   function startMonitoringTimers() {
     if (state.runtime.mode === 'active') return;
     state.runtime.mode = 'active';
@@ -9897,6 +10014,7 @@ export function createAppController(): AppController {
     syncHistorySyncState({ runImmediatelyOnGain: true });
     syncMonitoringPolling({ runImmediately: true });
     syncAdminTokenReviewAlertPolling({ runImmediately: true });
+    syncMarketTickerPolling({ runImmediately: true });
     uptimeInterval = setInterval(() => {
       computeUptimeLabel();
       void refreshWorkspaceChainReadiness();
@@ -9904,14 +10022,45 @@ export function createAppController(): AppController {
     }, UPTIME_REFRESH_INTERVAL_MS);
   }
 
+  async function refreshMarketTicker() {
+    const token = state.session.token;
+    if (
+      !token
+      || marketTickerRefreshInFlight
+      || !isActiveMarketTickerCandidate()
+      || !isMarketTickerLeader()
+      || getApiRateLimitBackoffRemainingMs('market-ticker') > 0
+    ) {
+      return;
+    }
+    marketTickerRefreshInFlight = true;
+    try {
+      const payload = await fetchMarketTicker(token);
+      if (state.session.token !== token || !isAuthenticatedSession()) {
+        return;
+      }
+      state.data.marketTicker = payload;
+      broadcastMarketTickerSnapshot(payload);
+      emit('market-ticker');
+    } catch (error) {
+      if (!isApiRateLimitBackoffError(error)) {
+        console.warn('[AppController] Failed to refresh market ticker:', error instanceof Error ? error.message : error);
+      }
+    } finally {
+      marketTickerRefreshInFlight = false;
+    }
+  }
+
   function stopMonitoringTimers() {
     if (monitoringInterval) clearInterval(monitoringInterval);
     if (uptimeInterval) clearInterval(uptimeInterval);
+    if (marketTickerInterval) clearInterval(marketTickerInterval);
     if (adminTokenReviewAlertRefreshInterval) clearInterval(adminTokenReviewAlertRefreshInterval);
     flushPumpfunEmit();
     stopPumpGcTimer();
     monitoringInterval = null;
     uptimeInterval = null;
+    marketTickerInterval = null;
     adminTokenReviewAlertRefreshInterval = null;
     startedAt = null;
     state.runtime.mode = 'stopped';
@@ -10372,6 +10521,7 @@ export function createAppController(): AppController {
       topPerformerIdentities: [],
       topPerformersGeneratedAt: null,
       topPerformersRanking: null,
+      marketTicker: { generatedAt: null, stale: false, items: [] },
       dismissedRecentIdentities: [],
       dismissedOldWeekIdentities: [],
       dismissedPump: [],
@@ -14289,6 +14439,7 @@ export function createAppController(): AppController {
       if (hidden) {
         syncHistorySyncState({ runImmediatelyOnGain: true });
         syncMonitoringPolling();
+        syncMarketTickerPolling();
         if (isLiveWorkspace()) {
           stopPumpGcTimer();
         }
@@ -14297,6 +14448,7 @@ export function createAppController(): AppController {
 
       syncHistorySyncState({ runImmediatelyOnGain: true });
       syncMonitoringPolling();
+      syncMarketTickerPolling({ runImmediately: true });
       if (isLiveWorkspace()) {
         startPumpGcTimer();
         window.setTimeout(() => {

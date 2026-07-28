@@ -31,6 +31,19 @@ const MONITORED_SPARKLINE_QUICK_RANGES = [
   { label: '14d', hours: 336 },
   { label: 'all', hours: 0 },
 ] as const;
+const MONITORED_PANEL_TITLE_MARKUP = `
+  <span class="monitored-panel-title">
+    <span class="monitored-panel-title-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" focusable="false">
+        <path d="M4 10a7.31 7.31 0 0 0 10 10Z"></path>
+        <path d="m9 15 3-3"></path>
+        <path d="M17 13a6 6 0 0 0-6-6"></path>
+        <path d="M21 13A10 10 0 0 0 11 3"></path>
+      </svg>
+    </span>
+    <span class="monitored-panel-title-copy"><span>MONITORED</span><span>TOKENS</span></span>
+  </span>
+`;
 let monitoredFiltersOpen = false;
 type MonitoredValuationFilterDraft = {
   minMcap: number;
@@ -51,7 +64,7 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
   if (view.capabilityNotice) {
     section.innerHTML = `
       <div class="panel-header monitored-panel-header">
-        <span class="monitored-panel-title"><span class="monitored-panel-title-icon" aria-hidden="true">📡</span><span class="monitored-panel-title-copy"><span>MONITORED</span><span>TOKENS</span></span></span>
+        ${MONITORED_PANEL_TITLE_MARKUP}
         <span class="count monitored-token-count-pill">0</span>
       </div>
       <div class="chain-readiness-empty" data-chain-readiness-surface="monitored">${escapeHtml(view.capabilityNotice)}</div>
@@ -132,7 +145,7 @@ function resolveMonitoredSortClasses(state: AppState) {
 function renderCollapsedMonitoredHeader(count: number, pinCount: number) {
   return `
     <div class="panel-header monitored-panel-header">
-      <span class="monitored-panel-title"><span class="monitored-panel-title-icon" aria-hidden="true">📡</span><span class="monitored-panel-title-copy"><span>MONITORED</span><span>TOKENS</span></span></span>
+      ${MONITORED_PANEL_TITLE_MARKUP}
       <div class="panel-header-controls monitored-header-controls">
         <div class="monitored-header-top">
           <span class="monitored-token-pill-wrap">
@@ -214,7 +227,7 @@ function renderMonitoredFilters(view: MonitoredSectionView) {
 function renderExpandedMonitoredMarkup(state: AppState, view: MonitoredSectionView) {
   return `
     <div class="panel-header monitored-panel-header">
-      <span class="monitored-panel-title"><span class="monitored-panel-title-icon" aria-hidden="true">📡</span><span class="monitored-panel-title-copy"><span>MONITORED</span><span>TOKENS</span></span></span>
+      ${MONITORED_PANEL_TITLE_MARKUP}
       <div class="panel-header-controls monitored-header-controls">
         <div class="monitored-header-top">
           ${renderMonitoredFilters(view)}
@@ -995,7 +1008,6 @@ function buildMonitoredRow(item: ManualTokenEntry, manualTokenFolders: AppState[
   tokenAddr.className = 'token-addr';
   tokenAddr.textContent = subtitle;
   titleLine.append(tokenName, tokenAddr, identityBadges);
-  appendMonitoredFreshnessBadges(titleLine, item, valuation);
 
   const metaLine = document.createElement('div');
   metaLine.className = 'panel-row-meta monitored-meta-line';
@@ -1063,27 +1075,6 @@ function buildMonitoredRow(item: ManualTokenEntry, manualTokenFolders: AppState[
   }
   article.append(side);
   return article;
-}
-
-function appendMonitoredFreshnessBadges(
-  titleLine: HTMLElement,
-  item: ManualTokenEntry,
-  valuation: ReturnType<typeof resolveTokenValuation>,
-) {
-  if (valuation.freshness === 'stale') {
-    const badge = document.createElement('span');
-    badge.className = 'monitored-data-state monitored-data-state-stale';
-    badge.textContent = 'STALE VALUATION';
-    badge.title = valuation.observedAt ? `Valuation observed at ${valuation.observedAt}` : 'Valuation is stale';
-    titleLine.append(badge);
-  }
-  if (item.activityState === 'stale') {
-    const badge = document.createElement('span');
-    badge.className = 'monitored-data-state monitored-activity-state';
-    badge.textContent = 'NO RECENT ACTIVITY';
-    badge.title = 'Token remains monitored; no recent accepted activity was observed';
-    titleLine.append(badge);
-  }
 }
 
 function buildValuationMetric(valuation: ReturnType<typeof resolveTokenValuation>) {

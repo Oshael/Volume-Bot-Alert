@@ -755,6 +755,12 @@ export interface LinkedIdentityEntry {
   unlinkBlockedReason: string | null;
 }
 
+export interface MarketTickerEntry {
+  symbol: string;
+  priceUsd: number;
+  change24hPct: number;
+}
+
 export interface ConfigSummary {
   loaded: boolean;
   configCount: number;
@@ -845,6 +851,11 @@ export interface AppState {
     topPerformerIdentities: string[];
     topPerformersGeneratedAt: string | null;
     topPerformersRanking: string | null;
+    marketTicker: {
+      generatedAt: string | null;
+      stale: boolean;
+      items: MarketTickerEntry[];
+    };
     dismissedRecentIdentities: string[];
     dismissedOldWeekIdentities: string[];
     dismissedPump: string[];
@@ -1082,6 +1093,7 @@ export function createAppState(): AppState {
       topPerformerIdentities: [],
       topPerformersGeneratedAt: null,
       topPerformersRanking: null,
+      marketTicker: { generatedAt: null, stale: false, items: [] },
       dismissedRecentIdentities: [],
       dismissedOldWeekIdentities: [],
       dismissedPump: [],

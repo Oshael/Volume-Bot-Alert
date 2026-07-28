@@ -120,6 +120,17 @@ const API_FIXTURES = {
     chainReadiness: { solana: SOLANA_READINESS },
   },
   'GET /api/config/token-folders': { folders: [], items: [] },
+  'GET /api/dashboard/market-ticker': {
+    generatedAt: '2026-07-28T12:00:00.000Z',
+    stale: false,
+    items: [
+      { symbol: 'BTC', priceUsd: 64000, change24hPct: 2.4 },
+      { symbol: 'ETH', priceUsd: 3200, change24hPct: -3.03 },
+      { symbol: 'SOL', priceUsd: 180, change24hPct: 20 },
+      { symbol: 'HYPE', priceUsd: 40, change24hPct: 25 },
+      { symbol: 'PUMP', priceUsd: 0.006, change24hPct: 20 },
+    ],
+  },
   'GET /api/account/identities': { providers: [], hasPasswordLogin: true },
   'GET /api/billing/state': {
     enabled: false,
@@ -511,6 +522,50 @@ const ROBINHOOD_MARKET_API_FIXTURES = {
   },
 };
 
+const ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES = {
+  ...ROBINHOOD_MARKET_API_FIXTURES,
+  'GET /api/config': {
+    ...ROBINHOOD_MARKET_CONFIG,
+    uiPrefs: {
+      ...ROBINHOOD_MARKET_CONFIG.uiPrefs,
+      expandedSparklineGranularityMinutes: 15,
+    },
+  },
+  'POST /api/catalog/sparklines/expanded': (request) => {
+    const fixture = ROBINHOOD_MARKET_API_FIXTURES['POST /api/catalog/sparklines/expanded'](request);
+    return {
+      ...fixture,
+      item: {
+        ...fixture.item,
+        oneMinuteAvailable: true,
+      },
+    };
+  },
+};
+
+const ROBINHOOD_IDENTITY_BADGE_API_FIXTURES = {
+  ...ROBINHOOD_MARKET_API_FIXTURES,
+  'GET /api/dashboard/monitored': async (request) => {
+    const fixture = await buildMarketPanelFixture(request, 'monitored');
+    return {
+      ...fixture,
+      tokens: fixture.tokens.map((token) => (
+        token.address === ROBINHOOD_TOKEN
+          ? {
+              ...token,
+              tokenCreatedAt: Date.now() - (14 * 24 * 60 * 60 * 1000),
+              tickerPeers: {
+                count: 2,
+                sourcePeerRole: 'og',
+                items: [],
+              },
+            }
+          : token
+      )),
+    };
+  },
+};
+
 const ROBINHOOD_RADAR_READINESS = {
   ...ROBINHOOD_MARKET_READINESS,
   capabilities: {
@@ -700,6 +755,66 @@ async function openAuthenticatedWorkspace(
   return { apiRequests, pageErrors, unexpectedRequests };
 }
 
+test('links login support directly to the official Discord', async ({ page }) => {
+  await page.route('**/api/auth/me', (route) => route.fulfill({
+    status: 401,
+    json: { error: 'Authentication required.' },
+  }));
+  await page.goto('/login');
+
+  await expect(page.getByText('Need help? Contact an administrator for general support.')).toBeVisible();
+  const supportLink = page.getByRole('link', { name: 'Join our Discord' });
+  await expect(supportLink).toBeVisible();
+  await expect(supportLink).toHaveAttribute('href', 'https://discord.gg/2pjQ5BVgNP');
+  await expect(page.getByRole('button', { name: /access help/i })).toHaveCount(0);
+});
+
+test('shows shared workspace chrome in Alerts and Radar', async ({ page }) => {
+  const diagnostics = await openAuthenticatedWorkspace(page, ROBINHOOD_RADAR_API_FIXTURES);
+  const accountArea = page.locator('.workspace-account-area');
+  const socialLinks = page.getByRole('navigation', { name: 'TrendScope social links' });
+  const marketTicker = page.getByRole('contentinfo', { name: 'Market prices' });
+  const discordLink = socialLinks.getByRole('link', { name: 'Join the TrendScope Discord' });
+  const xLink = socialLinks.getByRole('link', { name: 'Follow TrendScope on X' });
+
+  await expect(accountArea.locator(':scope > *')).toHaveCount(1);
+  await expect(accountArea.locator(':scope > *')).toHaveClass(/workspace-userbar/);
+  await expect(socialLinks.getByText('Official Links')).toBeVisible();
+  await expect(discordLink).toHaveCSS('width', '24px');
+  await expect(socialLinks.locator('.workspace-social-link svg')).toHaveCount(2);
+  await expect(discordLink).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  await expect(discordLink).toHaveCSS('border-top-style', 'none');
+  await expect(discordLink).toHaveCSS('color', 'rgb(142, 226, 255)');
+  await expect(discordLink).toHaveAttribute('href', 'https://discord.gg/2pjQ5BVgNP');
+  await expect(xLink).toHaveAttribute('href', 'https://x.com/trendscope_pro');
+  await expect(marketTicker.locator('.market-ticker-item')).toHaveCount(5);
+  await expect(marketTicker.locator('[data-market-symbol="BTC"]')).toHaveCSS('font-size', '11px');
+  await expect(marketTicker.locator('[data-market-symbol="BTC"] .market-ticker-icon')).toHaveCSS('width', '17px');
+  await expect(marketTicker.locator('[data-market-symbol="PUMP"]')).toContainText('$0.006000');
+  await expect(marketTicker.locator('[data-market-symbol="PUMP"] img')).toHaveAttribute('src', '/launchpad-pump.png');
+  await expect(marketTicker.locator('[data-market-symbol="PUMP"] img')).toHaveCSS('width', '16px');
+  await expect(marketTicker).toHaveCSS('position', 'fixed');
+  await expect(marketTicker).toHaveCSS('bottom', '0px');
+  await expect(marketTicker).toHaveCSS('height', '34px');
+  await expect(marketTicker.locator('.workspace-market-ticker-inner')).toHaveCSS('justify-content', 'flex-start');
+  const footerMeta = marketTicker.locator('.workspace-market-ticker-meta');
+  await expect(footerMeta.locator(':scope > *')).toHaveCount(2);
+  await expect(footerMeta.locator(':scope > *').nth(0)).toHaveAttribute('data-footer-connection-status', '');
+  await expect(footerMeta.locator('.workspace-connection-label')).toHaveText('Unstable');
+  await expect(footerMeta.locator(':scope > *').nth(1)).toHaveClass(/workspace-social-links/);
+  await expect(page.locator('.app-shell')).toHaveCSS('padding-bottom', '42px');
+  await expect.poll(
+    () => diagnostics.apiRequests.filter((url) => new URL(url).pathname === '/api/dashboard/market-ticker').length,
+    { timeout: 8_000 },
+  ).toBeGreaterThanOrEqual(2);
+  await page.goto('/radar');
+  await expect(socialLinks).toBeVisible();
+  await expect(marketTicker).toBeVisible();
+
+  expect(diagnostics.unexpectedRequests).toEqual([]);
+  expect(diagnostics.pageErrors).toEqual([]);
+});
+
 test('keeps the publishable chain selector SOL-only and exposes matching settings', async ({ page }) => {
   const diagnostics = await openAuthenticatedWorkspace(page);
   const topbar = page.locator('.workspace-topbar-inner');
@@ -716,7 +831,7 @@ test('keeps the publishable chain selector SOL-only and exposes matching setting
   await expect(topbar.locator(':scope > *').nth(0)).toHaveClass(/workspace-brand/);
   await expect(topbar.locator(':scope > *').nth(1)).toHaveClass(/workspace-chain-selector/);
   await expect(topbar.locator(':scope > *').nth(2)).toHaveClass(/workspace-route-group/);
-  await expect(topbar.locator(':scope > *').nth(3)).toHaveClass(/workspace-userbar/);
+  await expect(topbar.locator(':scope > *').nth(3)).toHaveClass(/workspace-account-area/);
 
   await page.getByRole('button', { name: 'Open user menu' }).click();
   await page.getByRole('button', { name: 'Bot Settings' }).click();
@@ -877,8 +992,10 @@ test('refetches market panels by chain and rejects a stale combined response', a
   await expect(robinhoodRow).toContainText('RHFRESH');
   await expect(robinhoodRow).toContainText('FDV');
   await expect(robinhoodRow).toHaveAttribute('data-identity', `robinhood:${ROBINHOOD_TOKEN}`);
-  await expect(robinhoodRow).toContainText('STALE VALUATION');
-  await expect(robinhoodRow).toContainText('NO RECENT ACTIVITY');
+  await expect(robinhoodRow).not.toContainText('STALE VALUATION');
+  await expect(robinhoodRow).not.toContainText('NO RECENT ACTIVITY');
+  await expect(robinhoodRow).toHaveClass(/monitored-activity-stale/);
+  await expect(robinhoodRow.locator('.monitored-valuation-stale')).toHaveCSS('color', 'rgb(255, 178, 92)');
   await expect(robinhoodRow.locator('.monitored-main-metric')).toHaveText('$0');
   await expect(robinhoodRow.locator('.monitored-coverage-partial')).toContainText('~');
   await expect(robinhoodRow.locator('.monitored-coverage-unavailable')).toHaveText('-');
@@ -1084,12 +1201,47 @@ test('sends Robinhood identity through manual, star and block actions', async ({
   expect(diagnostics.pageErrors).toEqual([]);
 });
 
+test('places expanded token identity badges below the subtitle', async ({ page }) => {
+  const diagnostics = await openAuthenticatedWorkspace(page, ROBINHOOD_IDENTITY_BADGE_API_FIXTURES);
+  const selector = page.getByRole('group', { name: 'Filter workspace by blockchain' });
+  await selector.locator('[data-chain="robinhood"]').click();
+  await selector.locator('[data-chain="solana"]').click();
+
+  const row = page.locator(
+    `.monitored-panel article.monitored-token-row[data-address="${ROBINHOOD_TOKEN}"]`,
+  );
+  await expect(row).toBeVisible();
+  await row.locator('.monitored-mini-chart .sparkline-wrap').click();
+
+  const dialog = page.locator('[data-auth-modal="expanded-sparkline"]');
+  await expect(dialog).toBeVisible();
+  const identityCopy = dialog.locator('.expanded-sparkline-identity-copy');
+  const identityBadges = identityCopy.locator(':scope > .expanded-sparkline-identity-badges');
+  await expect(identityCopy.locator(':scope > strong .token-chain-badge')).toHaveCount(0);
+  await expect(identityBadges.locator('.monitored-ticker-peer-badge')).toHaveText('OG');
+  await expect(identityBadges.locator('.token-chain-badge')).toHaveAttribute('data-chain', 'robinhood');
+  const expandedAge = dialog.locator('.expanded-sparkline-stat-age > strong');
+  await expect(expandedAge).toHaveClass('warn');
+  await expect(expandedAge).toHaveCSS('color', 'rgb(255, 138, 0)');
+  const identityRows = await identityCopy.evaluate((copy) => {
+    const subtitle = copy.querySelector(':scope > small')?.getBoundingClientRect();
+    const badges = copy.querySelector(':scope > .expanded-sparkline-identity-badges')?.getBoundingClientRect();
+    return {
+      subtitleBottom: subtitle?.bottom ?? 0,
+      badgesTop: badges?.top ?? 0,
+    };
+  });
+  expect(identityRows.badgesTop).toBeGreaterThanOrEqual(identityRows.subtitleBottom);
+  expect(diagnostics.unexpectedRequests).toEqual([]);
+  expect(diagnostics.pageErrors).toEqual([]);
+});
+
 test('opens a Robinhood FDV chart and applies only its realtime updates', async ({ page }) => {
   chartRequestPayloads.length = 0;
   const socketScenario = { socket: null, clientFrames: [] };
   const diagnostics = await openAuthenticatedWorkspace(
     page,
-    ROBINHOOD_MARKET_API_FIXTURES,
+    ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES,
     `/alerts/robinhood/${ROBINHOOD_TOKEN}`,
     socketScenario,
   );
@@ -1098,14 +1250,27 @@ test('opens a Robinhood FDV chart and applies only its realtime updates', async 
   await expect(dialog).toBeVisible();
   await expect(dialog.locator('.expanded-sparkline-stat-mcap')).toContainText('FDV');
   await expect(dialog.locator('.expanded-sparkline-footnote')).toContainText('Minute and hourly history');
+  const timeZoneControl = dialog.locator('.expanded-sparkline-time-zone-control');
+  const timeZoneLabel = timeZoneControl.locator('[data-expanded-sparkline-time-zone-label]');
+  await expect(timeZoneControl).toHaveCSS('width', '160px');
+  await expect(timeZoneLabel).toHaveCSS('white-space', 'nowrap');
+  await expect(timeZoneLabel).toHaveCSS('overflow', 'hidden');
   await expect(dialog.locator('[data-expanded-candlestick-chart]')).toHaveAttribute(
     'aria-label',
     'Interactive FDV candlestick chart',
   );
+  const granularityControls = dialog.getByRole('group', { name: 'Chart resolution' });
+  const oneMinuteButton = granularityControls.getByRole('button', { name: '1m', exact: true });
+  await expect(granularityControls.getByRole('button', { name: '15m', exact: true }))
+    .toHaveAttribute('aria-pressed', 'true');
+  await expect(oneMinuteButton).toBeVisible();
+  await oneMinuteButton.click();
+  await expect(oneMinuteButton).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(() => chartRequestPayloads.some((payload) => payload.granularityMinutes === 1)).toBe(true);
   await expect(dialog.locator('.expanded-chart-alert-marker')).toHaveCount(1);
-  await expect.poll(() => chartRequestPayloads.length).toBe(1);
+  await expect.poll(() => chartRequestPayloads.some((payload) => payload.granularityMinutes === 15)).toBe(true);
   expect(chartRequestPayloads[0]).toMatchObject({
-    chain: 'robinhood', address: ROBINHOOD_TOKEN, granularityMinutes: 5,
+    chain: 'robinhood', address: ROBINHOOD_TOKEN, granularityMinutes: 15,
   });
   await expect.poll(() => socketScenario.clientFrames.some((frame) => (
     frame.includes('"market:sync"') && frame.includes(`"address":"${ROBINHOOD_TOKEN}"`)

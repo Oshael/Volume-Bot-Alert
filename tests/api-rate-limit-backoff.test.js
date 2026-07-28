@@ -60,6 +60,18 @@ describe('API rate-limit backoff', () => {
     }), now), 15_000);
   });
 
+  it('keeps market ticker backoff isolated from the shared dashboard budget', () => {
+    const now = 1_000;
+    noteApiRateLimitResponse('market-ticker', metadata({
+      status: 429,
+      ok: false,
+      retryAfter: '5',
+    }), now);
+
+    assert.equal(getApiRateLimitBackoffRemainingMs('market-ticker', now), 5_000);
+    assert.equal(getApiRateLimitBackoffRemainingMs('dashboard', now), 0);
+  });
+
   it('does not back off while remaining budget is still positive', () => {
     assert.equal(getApiRateLimitResponseBackoffMs(metadata({
       status: 200,

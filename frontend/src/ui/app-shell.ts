@@ -4,6 +4,7 @@ import { renderAlertsSection } from './sections/alerts-section';
 import { renderLegacyShell, renderWorkspaceHeader, renderWorkspaceProfileOverlay } from './sections/layout-sections';
 import { renderManualTokensSection } from './sections/manual-section';
 import { renderMonitoredSection } from './sections/monitored-section';
+import { renderMarketTickerSection } from './sections/market-ticker-section';
 import { patchOldWeekSection, patchRecentSection, renderOldWeekSection, renderRecentSection } from './sections/routed-sections';
 import { logTopPerformersDebug, renderTopPerformersSection } from './sections/top-performers-section';
 import { resolveManualTableRows, resolveMonitoredTableRows } from '../utils/token-table';
@@ -174,6 +175,7 @@ type AppRenderFrame = {
   alertsSlot: HTMLElement;
   overlaySlot: HTMLElement;
   floatingQuickBuySlot: HTMLElement;
+  marketTickerSlot: HTMLElement;
 };
 
 const APP_RENDER_FRAME_SELECTOR = '[data-app-render-frame]';
@@ -197,6 +199,7 @@ const APP_PUMPFUN_SLOT_SELECTOR = '[data-app-render-slot="pumpfun"]';
 const APP_ALERTS_SLOT_SELECTOR = '[data-app-render-slot="alerts"]';
 const APP_OVERLAY_SLOT_SELECTOR = '[data-app-render-slot="overlay"]';
 const APP_FLOATING_QUICK_BUY_SLOT_SELECTOR = '[data-app-render-slot="floating-quick-buy"]';
+const APP_MARKET_TICKER_SLOT_SELECTOR = '[data-app-render-slot="market-ticker"]';
 const LIVE_PANEL_REORDER_ACTIVATION_DISTANCE = 14;
 const LIVE_PANEL_RESIZE_ACTIVATION_DISTANCE = 16;
 const LIVE_PANEL_HEIGHT_SNAP_DISTANCE_PX = 6;
@@ -327,6 +330,15 @@ export function renderAppShell(
     const widget = renderFloatingQuickBuyWidget(state, controller, isAccountSecurityRoute);
     return widget ? [widget] : [];
   });
+  renderFrame.marketTickerSlot.hidden = state.session.status !== 'authenticated' || isAccountSecurityRoute;
+  const marketTickerDirtyRegions = dirtyRegions.has('header')
+    ? new Set<AppRenderRegion>([...dirtyRegions, 'market-ticker'])
+    : dirtyRegions;
+  updateRegionSlot(renderFrame.marketTickerSlot, 'market-ticker', marketTickerDirtyRegions, getMarketTickerRenderKey(state, isAccountSecurityRoute), () => (
+    state.session.status === 'authenticated' && !isAccountSecurityRoute
+      ? [renderMarketTickerSection(state)]
+      : []
+  ));
   syncProfileModalScrollLock(state);
   applyLoginDraft(root, loginDraft, state);
   applyLoginFocus(root, state);
@@ -362,24 +374,26 @@ export function renderAppShell(
 
 function tryGetExistingAppRenderFrame(root: HTMLElement): AppRenderFrame | null {
   const existingFrame = root.querySelector<HTMLElement>(APP_RENDER_FRAME_SELECTOR);
+  if (!existingFrame) return null;
   const existingRenderFrame = {
     frame: existingFrame,
-    headerSlot: existingFrame?.querySelector<HTMLElement>(APP_HEADER_SLOT_SELECTOR),
-    shell: existingFrame?.querySelector<HTMLElement>(APP_SHELL_SELECTOR),
-    toastsSlot: existingFrame?.querySelector<HTMLElement>(APP_TOASTS_SLOT_SELECTOR),
-    legacySlot: existingFrame?.querySelector<HTMLElement>(APP_LEGACY_SLOT_SELECTOR),
-    topPerformersSlot: existingFrame?.querySelector<HTMLElement>(APP_TOP_PERFORMERS_SLOT_SELECTOR),
-    oldWeekSlot: existingFrame?.querySelector<HTMLElement>(APP_OLD_WEEK_SLOT_SELECTOR),
-    recentSlot: existingFrame?.querySelector<HTMLElement>(APP_RECENT_SLOT_SELECTOR),
-    manualSlot: existingFrame?.querySelector<HTMLElement>(APP_MANUAL_SLOT_SELECTOR),
-    panels: existingFrame?.querySelector<HTMLElement>(APP_PANELS_SELECTOR),
-    monitoredStack: existingFrame?.querySelector<HTMLElement>(APP_MONITORED_STACK_SELECTOR),
-    monitoredSlot: existingFrame?.querySelector<HTMLElement>(APP_MONITORED_SLOT_SELECTOR),
-    bidZoneSlot: existingFrame?.querySelector<HTMLElement>(APP_BID_ZONE_SLOT_SELECTOR),
-    pumpfunSlot: existingFrame?.querySelector<HTMLElement>(APP_PUMPFUN_SLOT_SELECTOR),
-    alertsSlot: existingFrame?.querySelector<HTMLElement>(APP_ALERTS_SLOT_SELECTOR),
-    overlaySlot: existingFrame?.querySelector<HTMLElement>(APP_OVERLAY_SLOT_SELECTOR),
-    floatingQuickBuySlot: existingFrame?.querySelector<HTMLElement>(APP_FLOATING_QUICK_BUY_SLOT_SELECTOR),
+    headerSlot: existingFrame.querySelector<HTMLElement>(APP_HEADER_SLOT_SELECTOR),
+    shell: existingFrame.querySelector<HTMLElement>(APP_SHELL_SELECTOR),
+    toastsSlot: existingFrame.querySelector<HTMLElement>(APP_TOASTS_SLOT_SELECTOR),
+    legacySlot: existingFrame.querySelector<HTMLElement>(APP_LEGACY_SLOT_SELECTOR),
+    topPerformersSlot: existingFrame.querySelector<HTMLElement>(APP_TOP_PERFORMERS_SLOT_SELECTOR),
+    oldWeekSlot: existingFrame.querySelector<HTMLElement>(APP_OLD_WEEK_SLOT_SELECTOR),
+    recentSlot: existingFrame.querySelector<HTMLElement>(APP_RECENT_SLOT_SELECTOR),
+    manualSlot: existingFrame.querySelector<HTMLElement>(APP_MANUAL_SLOT_SELECTOR),
+    panels: existingFrame.querySelector<HTMLElement>(APP_PANELS_SELECTOR),
+    monitoredStack: existingFrame.querySelector<HTMLElement>(APP_MONITORED_STACK_SELECTOR),
+    monitoredSlot: existingFrame.querySelector<HTMLElement>(APP_MONITORED_SLOT_SELECTOR),
+    bidZoneSlot: existingFrame.querySelector<HTMLElement>(APP_BID_ZONE_SLOT_SELECTOR),
+    pumpfunSlot: existingFrame.querySelector<HTMLElement>(APP_PUMPFUN_SLOT_SELECTOR),
+    alertsSlot: existingFrame.querySelector<HTMLElement>(APP_ALERTS_SLOT_SELECTOR),
+    overlaySlot: existingFrame.querySelector<HTMLElement>(APP_OVERLAY_SLOT_SELECTOR),
+    floatingQuickBuySlot: existingFrame.querySelector<HTMLElement>(APP_FLOATING_QUICK_BUY_SLOT_SELECTOR),
+    marketTickerSlot: existingFrame.querySelector<HTMLElement>(APP_MARKET_TICKER_SLOT_SELECTOR),
   };
 
   if (Object.values(existingRenderFrame).every(Boolean)) {
@@ -427,8 +441,9 @@ function createAppRenderFrame(root: HTMLElement): AppRenderFrame {
 
   const overlaySlot = createRenderSlot('overlay');
   const floatingQuickBuySlot = createRenderSlot('floating-quick-buy');
+  const marketTickerSlot = createRenderSlot('market-ticker');
 
-  frame.append(headerSlot, shell, overlaySlot, floatingQuickBuySlot);
+  frame.append(headerSlot, shell, overlaySlot, floatingQuickBuySlot, marketTickerSlot);
   root.replaceChildren(frame);
 
   return {
@@ -449,6 +464,7 @@ function createAppRenderFrame(root: HTMLElement): AppRenderFrame {
     alertsSlot,
     overlaySlot,
     floatingQuickBuySlot,
+    marketTickerSlot,
   };
 }
 
@@ -1133,6 +1149,18 @@ function getHeaderRenderKey(state: AppState) {
     state.ui.activeMockTradingWalletId,
     serializeMockTradingWalletsForView(state),
     serializeMockTradingHeaderPositionsForView(state),
+  ]);
+}
+
+function getMarketTickerRenderKey(state: AppState, hidden: boolean) {
+  return JSON.stringify([
+    hidden,
+    state.session.status,
+    state.runtime.mode,
+    state.runtime.monitoredUpdatedAt,
+    state.data.marketTicker.generatedAt,
+    state.data.marketTicker.stale,
+    state.data.marketTicker.items,
   ]);
 }
 
