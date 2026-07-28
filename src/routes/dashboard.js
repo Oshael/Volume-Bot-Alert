@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { authenticate, requireTrustedOrigin } = require('../middleware/auth');
-const { dashboardLimiter } = require('../middleware/rate-limit');
+const { dashboardLimiter, marketTickerLimiter } = require('../middleware/rate-limit');
 const tokenCatalog = require('../models/token-catalog');
 const userBlocklist = require('../models/user-blocklist');
 const userPinnedMonitoredToken = require('../models/user-pinned-monitored-token');
@@ -14,6 +14,7 @@ const uiMeteoraSummaryCache = require('../services/ui-meteora-summary-cache');
 const alertTickerPeers = require('../services/alert-ticker-peers');
 const dashboardChainReader = require('../services/dashboard-chain-reader');
 const dashboardRadarReader = require('../services/dashboard-radar-reader');
+const marketTickerService = require('../services/market-ticker-service');
 const {
   buildDashboardMonitoredPayload,
   buildDashboardMonitoredToken,
@@ -617,6 +618,15 @@ function buildRadarBucketPayload(page, pinnedRows) {
 
 router.use(authenticate);
 router.use(rejectHiddenRobinhoodRequests);
+
+router.get('/market-ticker', marketTickerLimiter, async (_req, res) => {
+  try {
+    res.json(await marketTickerService.getMarketTicker());
+  } catch (err) {
+    console.error('GET /dashboard/market-ticker error:', err.message);
+    res.status(503).json({ error: 'Market ticker is temporarily unavailable' });
+  }
+});
 
 function computePctChange(currentValue, baselineValue) {
   const current = Number(currentValue);

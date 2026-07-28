@@ -601,6 +601,11 @@ module.exports = {
     max: parseInt(process.env.DASHBOARD_RATE_LIMIT_MAX_REQUESTS || '360', 10),
   },
 
+  marketTickerRateLimit: {
+    windowMs: parseInt(process.env.MARKET_TICKER_RATE_LIMIT_WINDOW_MS || '900000', 10),
+    max: parseInt(process.env.MARKET_TICKER_RATE_LIMIT_MAX_REQUESTS || '240', 10),
+  },
+
   pumpfunMetaRateLimit: {
     windowMs: parseInt(process.env.PUMPFUN_META_RATE_LIMIT_WINDOW_MS || '900000', 10),
     max: parseInt(process.env.PUMPFUN_META_RATE_LIMIT_MAX_REQUESTS || '300', 10),

@@ -129,6 +129,12 @@ const dashboardLimiter = buildLimiter({
   keyGenerator: userScopedKeyGenerator,
 });
 
+const marketTickerLimiter = buildLimiter({
+  ...config.marketTickerRateLimit,
+  name: 'market-ticker',
+  keyGenerator: userScopedKeyGenerator,
+});
+
 const pumpfunMetaLimiter = buildLimiter({
   ...config.pumpfunMetaRateLimit,
   name: 'pumpfun-meta',
@@ -182,6 +188,7 @@ module.exports = {
   defaultApiLimiter,
   healthLimiter,
   dashboardLimiter,
+  marketTickerLimiter,
   pumpfunMetaLimiter,
   catalogWriteLimiter,
   catalogReadLimiter,
