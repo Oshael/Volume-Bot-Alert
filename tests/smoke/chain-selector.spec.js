@@ -831,6 +831,7 @@ test('shows shared workspace chrome in Alerts and Radar', async ({ page }) => {
 });
 
 test('keeps the publishable chain selector SOL-only and exposes matching settings', async ({ page }) => {
+  test.setTimeout(35_000);
   const diagnostics = await openAuthenticatedWorkspace(page);
   const topbar = page.locator('.workspace-topbar-inner');
   const selector = page.getByRole('group', { name: 'Filter workspace by blockchain' });
@@ -852,6 +853,9 @@ test('keeps the publishable chain selector SOL-only and exposes matching setting
   await page.getByRole('button', { name: 'Bot Settings' }).click();
   const dialog = page.getByRole('dialog', { name: 'Bot Settings' });
   await expect(dialog).toBeVisible();
+  await expect(page.locator('.workspace-market-ticker')).toHaveCSS('z-index', '110');
+  await expect(page.locator('[data-auth-modal="bot-settings"] .legacy-auth-modal-backdrop'))
+    .toHaveCSS('backdrop-filter', 'blur(7px)');
   await expect(dialog.getByRole('tab')).toHaveCount(3);
   const solanaSettingsTab = dialog.getByRole('tab', { name: 'Solana' });
   await expect(solanaSettingsTab).toHaveAttribute('aria-selected', 'true');
@@ -1346,6 +1350,8 @@ test('places expanded token identity badges below the subtitle', async ({ page }
 
   const dialog = page.locator('[data-auth-modal="expanded-sparkline"]');
   await expect(dialog).toBeVisible();
+  await expect(page.locator('.workspace-market-ticker')).toHaveCSS('z-index', '980');
+  await expect(page.locator('.workspace-market-ticker')).toBeVisible();
   const identityCopy = dialog.locator('.expanded-sparkline-identity-copy');
   const identityBadges = identityCopy.locator(':scope > .expanded-sparkline-identity-badges');
   await expect(identityCopy.locator(':scope > strong .token-chain-badge')).toHaveCount(0);

@@ -187,6 +187,10 @@ body:has(.workspace-market-ticker) .app-shell {
   align-items: center;
 }
 
+body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-ticker {
+  z-index: 110;
+}
+
 .workspace-market-ticker-inner {
   display: flex;
   min-width: 0;
