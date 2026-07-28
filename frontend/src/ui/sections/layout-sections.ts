@@ -6393,7 +6393,14 @@ function renderBotSettingsModal(state: AppState) {
                 role="tab"
                 aria-selected="${category.key === activeCategory}"
                 aria-controls="bot-settings-section-${category.key}"
-              ><span aria-hidden="true"></span>${escapeHtml(category.label)}</button>
+              >
+                <span
+                  class="${category.key === 'solana' || category.key === 'robinhood' ? 'bot-settings-nav-icon' : 'bot-settings-nav-dot'}"
+                  ${category.key === 'solana' || category.key === 'robinhood' ? `data-bot-settings-chain-icon="${category.key}"` : ''}
+                  aria-hidden="true"
+                ></span>
+                ${escapeHtml(category.label)}
+              </button>
             `).join('')}
           </div>
           <div class="bot-settings-sidebar-foot">
@@ -6548,11 +6555,15 @@ function renderStandaloneAlertToggle(
   chain: AlertSettingsChain,
   key: string,
   label: string,
+  launchpad: 'pump' | 'bags',
 ) {
   return `
     <div class="config-item bot-settings-field-group bot-settings-claim-toggle">
       <div class="bot-settings-field-label">
-        <label>${escapeHtml(label)}</label>
+        <label>
+          <img class="bot-settings-claim-icon" src="/launchpad-${launchpad}.png" alt="" aria-hidden="true" />
+          <span>${escapeHtml(label)}</span>
+        </label>
         ${renderInlineAlertToggle(state, chain, key, label)}
       </div>
     </div>
@@ -6589,11 +6600,19 @@ function renderChainAlertSettings(state: AppState, chain: AlertSettingsChain) {
       ${renderBotSettingsSurgePair(state, chain, 'recent')}
       ${renderBotSettingsSurgePair(state, chain, 'old-week')}
       ${isSolana ? `
-        <div class="bot-settings-subhead"><span></span><strong>Claim alerts</strong><i></i></div>
-        ${renderStandaloneAlertToggle(state, chain, 'alert-gmgn-claim-pump-enabled', 'Pump claim alerts')}
-        ${renderStandaloneAlertToggle(state, chain, 'alert-gmgn-claim-bags-enabled', 'Bags claim alerts')}
-        <div class="bot-settings-subhead"><span></span><strong>Shortcut links</strong><i></i></div>
-        ${renderTradeTerminalPrefsMenu(state)}
+        <div class="bot-settings-footer-grid">
+          <div class="bot-settings-footer-section">
+            <div class="bot-settings-subhead"><span></span><strong>Claim alerts</strong><i></i></div>
+            <div class="bot-settings-claim-grid">
+              ${renderStandaloneAlertToggle(state, chain, 'alert-gmgn-claim-pump-enabled', 'Pump claim alerts', 'pump')}
+              ${renderStandaloneAlertToggle(state, chain, 'alert-gmgn-claim-bags-enabled', 'Bags claim alerts', 'bags')}
+            </div>
+          </div>
+          <div class="bot-settings-footer-section">
+            <div class="bot-settings-subhead"><span></span><strong>Trading terminal</strong><i></i></div>
+            ${renderTradeTerminalPrefsMenu(state)}
+          </div>
+        </div>
       ` : ''}
     </div>
   `;
@@ -6718,10 +6737,9 @@ function renderTradeTerminalPrefsMenu(state: AppState) {
   const enabled = new Set(state.ui.enabledTradeTerminals);
 
   return `
-    <div class="config-item config-item-menu">
-      <label>Trading terminals</label>
+    <div class="config-item config-item-menu bot-settings-terminal-menu">
       <div class="sort-menu-wrap config-menu-wrap trade-terminal-menu-wrap" data-sort-wrap>
-        <button type="button" class="old-filter-btn config-menu-button active" data-sort-toggle="trade-terminals">${state.ui.enabledTradeTerminals.length}/${terminalFields.length} on</button>
+        <button type="button" class="old-filter-btn config-menu-button active" data-sort-toggle="trade-terminals" aria-label="Open trading terminal preferences">${state.ui.enabledTradeTerminals.length}/${terminalFields.length} on</button>
         <div class="sort-menu-dropdown config-menu-dropdown">
           <div class="config-menu-summary">Choose which terminal destinations appear in redirect buttons. If only one stays enabled, the terminal button opens it directly.</div>
           <div class="config-toggle-list">
@@ -7147,6 +7165,7 @@ function bindBotSettingsPanel(section: ParentNode, controller: AppController, st
 
   bindFocusTrap(panel);
   hydrateLegacyConfigValues(configSection, state);
+  hydrateBotSettingsChainIcons(panel);
   bindBotSettingsCategoryNavigation(panel, state);
 
   const commitInputIfNeeded = async (input: HTMLInputElement) => {
@@ -7280,6 +7299,15 @@ function bindBotSettingsPanel(section: ParentNode, controller: AppController, st
       event.stopPropagation();
       list.scrollTop += event.deltaY;
     }, { passive: false });
+  });
+}
+
+function hydrateBotSettingsChainIcons(panel: ParentNode) {
+  panel.querySelectorAll<HTMLElement>('[data-bot-settings-chain-icon]').forEach((placeholder) => {
+    const chain = placeholder.dataset.botSettingsChainIcon;
+    if (chain === 'solana' || chain === 'robinhood') {
+      placeholder.replaceChildren(buildTokenChainIcon(chain));
+    }
   });
 }
 

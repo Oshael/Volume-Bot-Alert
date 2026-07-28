@@ -853,13 +853,53 @@ test('keeps the publishable chain selector SOL-only and exposes matching setting
   const dialog = page.getByRole('dialog', { name: 'Bot Settings' });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole('tab')).toHaveCount(3);
-  await expect(dialog.getByRole('tab', { name: 'Solana' })).toHaveAttribute('aria-selected', 'true');
+  const solanaSettingsTab = dialog.getByRole('tab', { name: 'Solana' });
+  await expect(solanaSettingsTab).toHaveAttribute('aria-selected', 'true');
+  await expect(solanaSettingsTab.locator('.token-chain-icon')).toBeVisible();
   await expect(dialog.getByRole('tab', { name: 'Robinhood' })).toHaveCount(0);
   await expect(dialog.getByRole('tab', { name: 'Alerts & Chains' })).toHaveCount(0);
   await expect(dialog.locator('input[name="solana-threshold"]')).toBeVisible();
   await expect(dialog.locator('input[name="solana-mcap-threshold"]')).toBeVisible();
   await expect(dialog.locator('input[name="solana-fdv-threshold"]')).toHaveCount(0);
   await expect(dialog.locator('[data-config-toggle-key="solana-alert-vol-enabled"]')).toHaveAttribute('aria-pressed', 'true');
+  const pumpClaim = dialog.locator(
+    '.bot-settings-claim-toggle:has([data-config-toggle-key="solana-alert-gmgn-claim-pump-enabled"])',
+  );
+  const bagsClaim = dialog.locator(
+    '.bot-settings-claim-toggle:has([data-config-toggle-key="solana-alert-gmgn-claim-bags-enabled"])',
+  );
+  await expect(pumpClaim.locator('img')).toHaveAttribute('src', '/launchpad-pump.png');
+  await expect(bagsClaim.locator('img')).toHaveAttribute('src', '/launchpad-bags.png');
+  await expect(pumpClaim).toHaveCSS('height', '36px');
+  await expect(pumpClaim).toHaveCSS('align-content', 'center');
+  await expect(bagsClaim).toHaveCSS('height', '36px');
+  await expect(dialog.locator('.bot-settings-surge-cell').first()).toHaveCSS('min-height', '44px');
+  await expect(dialog.locator('.bot-settings-surge-cell > label').first()).toHaveCSS('min-height', '18px');
+  await expect(dialog.locator('.bot-settings-footer-grid')).toHaveCSS('grid-template-columns', /\d+px \d+px/);
+  await expect(dialog.locator('.bot-settings-claim-grid')).toHaveCSS('grid-template-columns', /\d+px \d+px/);
+  await expect(dialog.getByText('Trading terminal', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('Shortcut links', { exact: true })).toHaveCount(0);
+  const terminalMenuButton = dialog.getByRole('button', { name: 'Open trading terminal preferences' });
+  await expect(terminalMenuButton).toHaveCSS('height', '36px');
+
+  const recentSurgeToggle = dialog.locator(
+    '[data-config-toggle-key="solana-alert-recent-surge-1h-enabled"]',
+  );
+  const recentSurgeCell = recentSurgeToggle.locator('xpath=ancestor::div[contains(@class, "bot-settings-surge-cell")][1]');
+  for (const [toggle, option] of [
+    [recentSurgeToggle, recentSurgeCell],
+    [pumpClaim.locator('.bot-settings-inline-toggle'), pumpClaim],
+  ]) {
+    const configResponse = page.waitForResponse((response) => (
+      response.request().method() === 'PATCH'
+      && new URL(response.url()).pathname === '/api/config'
+    ));
+    await toggle.click();
+    await configResponse;
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    await expect(option).toHaveCSS('filter', 'grayscale(0.85)');
+    await expect(option).toHaveCSS('opacity', '0.58');
+  }
 
   await dialog.getByRole('tab', { name: 'Notifications' }).click();
   await expect(dialog.locator('[data-chain-filter-surface="browserNotificationChains"]')).toBeVisible();
@@ -934,6 +974,7 @@ test('chain-scoped bot settings persist independent supported controls and roll 
   const dialog = page.getByRole('dialog', { name: 'Bot Settings' });
 
   await expect(dialog.getByRole('tab', { name: 'Robinhood' })).toBeVisible();
+  await expect(dialog.getByRole('tab', { name: 'Robinhood' }).locator('.token-chain-icon')).toBeVisible();
   await dialog.getByRole('tab', { name: 'Robinhood' }).click();
   const robinhoodThreshold = dialog.locator('input[name="robinhood-threshold"]');
   await expect(robinhoodThreshold).toHaveValue('75');
@@ -962,6 +1003,9 @@ test('chain-scoped bot settings persist independent supported controls and roll 
     configs: { 'robinhood-alert-fdv-enabled': 'off' },
   });
   await expect(fdvToggle).toHaveAttribute('aria-pressed', 'false');
+  const fdvOption = fdvToggle.locator('xpath=ancestor::div[contains(@class, "bot-settings-field-group")][1]');
+  await expect(fdvOption).toHaveCSS('filter', 'grayscale(0.85)');
+  await expect(fdvOption).toHaveCSS('opacity', '0.58');
   await expect(dialog.getByRole('tab', { name: 'Robinhood' })).toHaveAttribute('aria-selected', 'true');
 
   await dialog.getByRole('tab', { name: 'Solana' }).click();

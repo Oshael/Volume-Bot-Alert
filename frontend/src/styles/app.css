@@ -4143,12 +4143,34 @@ body:has(.workspace-market-ticker) .app-shell {
   cursor: pointer;
 }
 
-.bot-settings-nav-item > span {
+.bot-settings-nav-dot {
   width: 6px;
   height: 6px;
   flex: 0 0 6px;
   border-radius: 50%;
   background: currentColor;
+}
+
+.bot-settings-nav-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+}
+
+.bot-settings-nav-icon .token-chain-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.bot-settings-nav-icon[data-bot-settings-chain-icon="solana"] {
+  color: #c89cff;
+}
+
+.bot-settings-nav-icon[data-bot-settings-chain-icon="robinhood"] {
+  color: #42e6a4;
 }
 
 .bot-settings-nav-item:hover,
@@ -4348,9 +4370,10 @@ body:has(.workspace-market-ticker) .app-shell {
 
 .bot-settings-surge-cell {
   display: grid;
-  gap: 5px;
-  min-height: 52px;
-  padding: 7px 10px;
+  gap: 1px;
+  min-height: 44px;
+  align-content: start;
+  padding: 4px 8px;
   border: 1px solid var(--bot-settings-accent-border);
   border-radius: 8px;
   background: var(--bot-settings-accent-field);
@@ -4369,30 +4392,32 @@ body:has(.workspace-market-ticker) .app-shell {
   text-transform: uppercase;
 }
 
-.bot-settings-surge-cell > label {
+.bot-settings-modal .bot-settings-surge-cell > label {
   min-width: 0;
+  min-height: 18px;
   display: flex;
   align-items: center;
   gap: 4px;
+  line-height: 1;
 }
 
 .bot-settings-surge-cell input {
   width: 100%;
   min-width: 0;
-  min-height: 22px;
+  min-height: 18px;
   padding: 0;
   border: 0;
   background: transparent;
   color: var(--bot-settings-accent);
   font-family: "Space Mono", monospace;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
 }
 
 .bot-settings-surge-cell b {
   color: var(--bot-settings-accent);
   font-family: "Space Mono", monospace;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
   line-height: 1;
 }
@@ -4504,6 +4529,19 @@ body:has(.workspace-market-ticker) .app-shell {
   color: #56d8ff;
 }
 
+.bot-settings-field-group,
+.bot-settings-surge-cell,
+.bot-settings-modal .trade-terminal-menu-wrap .config-toggle-item {
+  transition: filter 140ms ease, opacity 140ms ease;
+}
+
+.bot-settings-field-group:has(> .bot-settings-field-label > .bot-settings-inline-toggle:not(.active)),
+.bot-settings-surge-cell:has(.bot-settings-inline-toggle:not(.active)),
+.bot-settings-modal .trade-terminal-menu-wrap .config-toggle-item:not(.active) {
+  filter: grayscale(0.85);
+  opacity: 0.58;
+}
+
 .bot-settings-surge-cell .bot-settings-inline-toggle {
   width: 36px;
   min-width: 36px;
@@ -4513,17 +4551,62 @@ body:has(.workspace-market-ticker) .app-shell {
   font-size: 7px;
 }
 
-.bot-settings-claim-toggle {
-  min-height: 48px;
+.bot-settings-modal .bot-settings-claim-toggle {
+  height: 36px;
+  min-height: 36px;
+  grid-template-rows: auto;
+  gap: 0;
   align-content: center;
-  padding: 10px 12px;
+  padding: 2px 9px;
   border: 1px solid var(--bot-settings-accent-border);
   border-radius: 8px;
   background: linear-gradient(135deg, rgba(63, 208, 255, 0.07), rgba(12, 27, 38, 0.72));
 }
 
 .bot-settings-claim-toggle .bot-settings-field-label {
-  min-height: 26px;
+  min-height: 22px;
+}
+
+.bot-settings-claim-toggle .bot-settings-field-label > label {
+  align-items: center;
+  line-height: 1.1;
+}
+
+.bot-settings-claim-icon {
+  display: block;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  border-radius: 50%;
+  object-fit: contain;
+}
+
+.bot-settings-footer-grid {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 16px;
+}
+
+.bot-settings-footer-section,
+.bot-settings-claim-grid {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.bot-settings-claim-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.bot-settings-footer-section .bot-settings-subhead {
+  margin-top: 4px;
+}
+
+.bot-settings-terminal-menu {
+  grid-template-rows: auto;
+  gap: 0;
 }
 
 .bot-settings-trade-terminal-label {
@@ -4711,8 +4794,13 @@ body:has(.workspace-market-ticker) .app-shell {
   }
 
   .bot-settings-subhead,
-  .bot-settings-volume {
+  .bot-settings-volume,
+  .bot-settings-footer-grid {
     grid-column: 1;
+  }
+
+  .bot-settings-footer-grid {
+    grid-template-columns: 1fr;
   }
 
   .bot-settings-sound-row .legacy-sound-item {
@@ -4727,7 +4815,8 @@ body:has(.workspace-market-ticker) .app-shell {
 
 @media (max-width: 460px) {
   .bot-settings-field-pair,
-  .bot-settings-surge-pair {
+  .bot-settings-surge-pair,
+  .bot-settings-claim-grid {
     grid-template-columns: 1fr;
   }
 
