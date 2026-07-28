@@ -67,9 +67,9 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
           <button type="button" class="compact-search-toggle" data-action="manual-search-focus" aria-label="Search manual tokens">&#128269;</button>
           <input class="compact-search-input" type="text" placeholder="ticker / ca" data-action="manual-search" data-search-input="manual">
         </div>
-        <div class="sort-pill-group">
+        <button type="button" class="compact-icon-toggle ${state.ui.manualStarredOnly ? 'active' : ''}" data-action="manual-starred-only" aria-label="Show only starred manual tokens"><span class="compact-icon-glyph">&#9733;</span></button>
+        <div class="sort-pill-group compact-sort-cluster">
           <span class="filter-label">SORT</span>
-          <button type="button" class="compact-icon-toggle ${state.ui.manualStarredOnly ? 'active' : ''}" data-action="manual-starred-only" aria-label="Show only starred manual tokens"><span class="compact-icon-glyph">&#9733;</span></button>
           <div class="sort-menu-wrap" data-sort-wrap>
             <button type="button" class="old-filter-btn ${sortClasses.manualVolActive}" data-sort-toggle="vol">VOL</button>
             <div class="sort-menu-dropdown">
@@ -79,7 +79,7 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
             </div>
           </div>
           <div class="sort-menu-wrap" data-sort-wrap>
-            <button type="button" class="old-filter-btn ${sortClasses.manualMcapActive}" data-sort-toggle="mcap">MCAP</button>
+            <button type="button" class="old-filter-btn ${sortClasses.manualMcapActive}" data-sort-toggle="mcap">MCAP / FDV</button>
             <div class="sort-menu-dropdown">
               <button type="button" class="sort-menu-item ${sortClasses.manualMcapHighest}" data-sort-mode="mcap" data-sort-window="highest">HIGHEST</button>
               <button type="button" class="sort-menu-item ${sortClasses.manualMcapLowest}" data-sort-mode="mcap" data-sort-window="lowest">LOWEST</button>
@@ -101,7 +101,6 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
             </div>
           </div>
         </div>
-        <span class="legacy-bar-note">Pinned &middot; always monitored</span>
       </div>
     </div>
     ${renderManualFolderControls(state)}

@@ -881,6 +881,23 @@ test('uses the confirmed full-width scrollable selector below 980px', async ({ p
   expect(diagnostics.pageErrors).toEqual([]);
 });
 
+test('keeps compact manual controls aligned with routed token sort controls', async ({ page }) => {
+  await openAuthenticatedWorkspace(page, ROBINHOOD_API_FIXTURES);
+  const manualSection = page.locator('#manual-tokens-section');
+  await expect(manualSection).not.toContainText('Pinned · always monitored');
+
+  const manualSortCluster = manualSection.locator('.compact-sort-cluster');
+  await expect(manualSortCluster).toContainText('SORT');
+  await expect(manualSortCluster.getByRole('button', { name: 'MCAP / FDV', exact: true })).toBeVisible();
+  await expect(manualSortCluster).toHaveCSS('flex-wrap', 'nowrap');
+  expect(await manualSection.locator('.legacy-bar-controls').evaluate((controls) => {
+    const children = [...controls.children];
+    const starIndex = children.findIndex((child) => child.matches('[data-action="manual-starred-only"]'));
+    const sortIndex = children.findIndex((child) => child.matches('.compact-sort-cluster'));
+    return starIndex >= 0 && sortIndex >= 0 && starIndex < sortIndex;
+  })).toBe(true);
+});
+
 test('filters a combined Solana and Robinhood alert feed through master and surface selectors', async ({ page }) => {
   const diagnostics = await openAuthenticatedWorkspace(page, ROBINHOOD_API_FIXTURES);
   const selector = page.getByRole('group', { name: 'Filter workspace by blockchain' });

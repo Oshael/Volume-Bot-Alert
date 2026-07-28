@@ -358,7 +358,7 @@ export function renderRecentSection(state: AppState, controller: AppController) 
           <span class="recent-ctrl-cluster-label">PER PAGE</span>
           <input type="number" min="10" step="1" data-action="recent-per-page" aria-label="Per page">
         </div>
-        <div class="sort-pill-group recent-ctrl-cluster recent-ctrl-cluster-sort">
+        <div class="sort-pill-group recent-ctrl-cluster recent-ctrl-cluster-sort compact-sort-cluster">
           <span class="filter-label recent-ctrl-cluster-label">SORT</span>
           <div class="sort-menu-wrap" data-sort-wrap>
             <button type="button" class="old-filter-btn ${recentVolActive}" data-sort-toggle="vol">VOL</button>
@@ -619,7 +619,7 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
             <span class="recent-ctrl-cluster-label">PER PAGE</span>
             <input type="number" min="10" step="1" data-action="old-week-per-page" aria-label="Per page">
           </div>
-          <div class="sort-pill-group recent-ctrl-cluster recent-ctrl-cluster-sort">
+          <div class="sort-pill-group recent-ctrl-cluster recent-ctrl-cluster-sort compact-sort-cluster">
             <span class="filter-label recent-ctrl-cluster-label">SORT</span>
             <div class="sort-menu-wrap" data-sort-wrap>
               <button type="button" class="old-filter-btn ${oldWeekVolActive}" data-sort-toggle="vol">VOL</button>
