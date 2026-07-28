@@ -38,12 +38,14 @@ function normalizeVersion(value) {
   return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : null;
 }
 
-function buildPayload(userId, version = null) {
-  return {
+function buildPayload(userId, version = null, options = {}) {
+  const payload = {
     type: 'user_config_invalidated',
     userId: normalizeUserId(userId),
     version: normalizeVersion(version),
   };
+  if (options.force === true) payload.force = true;
+  return payload;
 }
 
 function parsePayload(rawPayload) {
@@ -59,7 +61,7 @@ function parsePayload(rawPayload) {
   }
 
   try {
-    return buildPayload(parsed.userId, parsed.version);
+    return buildPayload(parsed.userId, parsed.version, { force: parsed.force === true });
   } catch (_) {
     return null;
   }
@@ -79,7 +81,7 @@ async function resolveVersion(userId, options = {}) {
 async function publishUserConfigInvalidated(userId, options = {}) {
   const normalizedUserId = normalizeUserId(userId);
   const version = await resolveVersion(normalizedUserId, options);
-  const payload = buildPayload(normalizedUserId, version);
+  const payload = buildPayload(normalizedUserId, version, options);
   const runner = options.db && typeof options.db.query === 'function' ? options.db : db;
 
   await runner.query('SELECT pg_notify($1, $2)', [CHANNEL, JSON.stringify(payload)]);
@@ -97,7 +99,10 @@ function handleNotification(message, options = {}) {
   }
 
   const cache = options.profileCache || userAlertProfileCache;
-  cache.invalidateUserProfile(payload.userId, { configVersion: payload.version });
+  cache.invalidateUserProfile(payload.userId, {
+    configVersion: payload.version,
+    force: payload.force === true,
+  });
   receivedNotifications += 1;
   return payload;
 }

@@ -70,7 +70,39 @@ describe('user config sync', () => {
     });
     assert.deepEqual(invalidations, [{
       userId: 7,
-      options: { configVersion: '2026-07-09T13:00:00.000Z' },
+      options: { configVersion: '2026-07-09T13:00:00.000Z', force: false },
+    }]);
+  });
+
+  it('publishes and applies forced invalidation for chain-filter changes', async () => {
+    const queries = [];
+    const invalidations = [];
+    const payload = await userConfigSync.publishUserConfigInvalidated(8, {
+      force: true,
+      version: '2026-07-09T13:00:00.000Z',
+      db: {
+        async query(sql, params) {
+          queries.push({ sql, params });
+          return { rows: [] };
+        },
+      },
+    });
+
+    userConfigSync.handleNotification({
+      channel: userConfigSync.CHANNEL,
+      payload: queries[0].params[1],
+    }, {
+      profileCache: {
+        invalidateUserProfile(userId, options) {
+          invalidations.push({ userId, options });
+        },
+      },
+    });
+
+    assert.equal(payload.force, true);
+    assert.deepEqual(invalidations, [{
+      userId: 8,
+      options: { configVersion: payload.version, force: true },
     }]);
   });
 

@@ -172,9 +172,9 @@ function getVisibleCollectionChains() {
   return buildAvailableTokenChains().filter((chain) => USER_COLLECTION_CHAINS.includes(chain));
 }
 
-async function notifyUserConfigChanged(userId) {
+async function notifyUserConfigChanged(userId, options = {}) {
   try {
-    await userConfigSync.publishUserConfigInvalidated(userId);
+    await userConfigSync.publishUserConfigInvalidated(userId, options);
   } catch (err) {
     console.error('[UserConfigSync] Failed to publish config invalidation:', err.message);
   }
@@ -457,7 +457,20 @@ router.patch('/ui-prefs', async (req, res) => {
       });
     }
 
+    const changesChainSelection = Boolean(validation.prefs.chainFilters);
+    const previousUiPrefs = changesChainSelection
+      ? await userUiPref.getAll(req.user.id)
+      : null;
     const nextUiPrefs = await userUiPref.patch(req.user.id, validation.prefs);
+    const previousEnabledChains = previousUiPrefs?.chainFilters?.enabledChains || [];
+    const nextEnabledChains = nextUiPrefs?.chainFilters?.enabledChains || [];
+    const enabledChainsChanged = changesChainSelection
+      && (previousEnabledChains.length !== nextEnabledChains.length
+        || previousEnabledChains.some((chain, index) => chain !== nextEnabledChains[index]));
+    if (enabledChainsChanged) {
+      userAlertProfileCache.invalidateUserProfile(req.user.id, { force: true });
+      await notifyUserConfigChanged(req.user.id, { force: true });
+    }
     res.json({ message: 'UI preferences updated', uiPrefs: nextUiPrefs });
   } catch (err) {
     console.error('PATCH /config/ui-prefs error:', err.message);

@@ -1,7 +1,10 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { selectAlertProfileForChain } = require('../src/services/chain-alert-profile');
+const {
+  selectAlertProfileForChain,
+  selectEnabledAlertProfilesForChain,
+} = require('../src/services/chain-alert-profile');
 
 describe('chain alert profile', () => {
   it('selects scoped settings while preserving alert-session metadata', () => {
@@ -42,5 +45,30 @@ describe('chain alert profile', () => {
     assert.equal(selectAlertProfileForChain(profile, 'solana'), profile);
     assert.equal(selectAlertProfileForChain(profile, 'unsupported'), profile);
     assert.equal(selectAlertProfileForChain(null, 'solana'), null);
+  });
+
+  it('filters disabled chains before selecting scoped settings', () => {
+    const profiles = [
+      {
+        userId: 1,
+        enabledChains: ['solana'],
+        alertConfigByChain: { solana: { thresholdPct: 61 } },
+      },
+      {
+        userId: 2,
+        enabledChains: ['robinhood'],
+        alertConfigByChain: { robinhood: { thresholdPct: 92 } },
+      },
+    ];
+
+    assert.deepEqual(
+      selectEnabledAlertProfilesForChain(profiles, 'robinhood')
+        .map((profile) => [profile.userId, profile.thresholdPct]),
+      [[2, 92]],
+    );
+    assert.deepEqual(
+      selectEnabledAlertProfilesForChain([{ userId: 3, enabledChains: 'robinhood' }], 'robinhood'),
+      [],
+    );
   });
 });

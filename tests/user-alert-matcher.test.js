@@ -396,6 +396,48 @@ describe('user alert matcher', () => {
     assert.deepEqual(context.transactionLog, ['BEGIN', 'COMMIT', 'RELEASE']);
   });
 
+  it('filters disabled chains and applies the Solana-scoped alert threshold', async () => {
+    const context = createDeps({
+      profiles: [{
+        userId: 15,
+        enabledChains: ['solana'],
+        ruleEnabled: { monitoredVol: false },
+        thresholdPct: 500,
+        alertConfigByChain: {
+          solana: {
+            ruleEnabled: { monitoredVol: true },
+            thresholdPct: 50,
+            minVol: 8000,
+            minMcap: 30000,
+            maxMcap: 0,
+          },
+        },
+      }, {
+        userId: 16,
+        enabledChains: ['robinhood'],
+        ruleEnabled: { monitoredVol: true },
+        thresholdPct: 50,
+      }],
+      volumeRows: [{
+        token_address: TOKEN_ADDRESS,
+        baseline_vol_5m: 10000,
+      }],
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: { address: TOKEN_ADDRESS, last_mcap: 250000, last_vol_5m: 12000 },
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        last_vol_5m: 18000,
+        last_mcap: 300000,
+      },
+    }, { now: '2026-04-16T12:00:00.000Z', deps: context.deps });
+
+    assert.equal(result.evaluatedProfiles, 1);
+    assert.equal(result.emitted, 1);
+    assert.equal(context.eventWrites[0].userId, 15);
+  });
+
   it('persists ticker peer snapshots with emitted backend alerts', async () => {
     const profile = {
       userId: 17,

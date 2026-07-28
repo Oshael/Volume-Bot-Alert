@@ -1,5 +1,12 @@
 const SUPPORTED_CHAINS = new Set(['solana', 'robinhood']);
 
+function isAlertProfileEnabledForChain(profile, chain) {
+  if (!profile || !SUPPORTED_CHAINS.has(chain)) return false;
+  if (!Object.prototype.hasOwnProperty.call(profile, 'enabledChains')) return true;
+  if (!Array.isArray(profile.enabledChains)) return false;
+  return profile.enabledChains.includes(chain);
+}
+
 function selectAlertProfileForChain(profile, chain) {
   if (!profile || !SUPPORTED_CHAINS.has(chain)) {
     return profile;
@@ -17,4 +24,14 @@ function selectAlertProfileForChain(profile, chain) {
   };
 }
 
-module.exports = { selectAlertProfileForChain };
+function selectEnabledAlertProfilesForChain(profiles, chain) {
+  return (Array.isArray(profiles) ? profiles : [])
+    .filter((profile) => isAlertProfileEnabledForChain(profile, chain))
+    .map((profile) => selectAlertProfileForChain(profile, chain));
+}
+
+module.exports = {
+  isAlertProfileEnabledForChain,
+  selectAlertProfileForChain,
+  selectEnabledAlertProfilesForChain,
+};

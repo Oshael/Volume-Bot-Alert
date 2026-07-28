@@ -1,8 +1,21 @@
-const { describe, it } = require('node:test');
+const { afterEach, beforeEach, describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
 const userConfig = require('../src/models/user-config');
+const userUiPref = require('../src/models/user-ui-pref');
 const userAlertProfileCache = require('../src/services/user-alert-profile-cache');
+
+const originalGetAllUiPrefs = userUiPref.getAll;
+
+beforeEach(() => {
+  userUiPref.getAll = async () => ({
+    chainFilters: { enabledChains: ['solana', 'robinhood'] },
+  });
+});
+
+afterEach(() => {
+  userUiPref.getAll = originalGetAllUiPrefs;
+});
 
 describe('user alert profile cache', () => {
   it('normalizes effective alert preferences from user config defaults and legacy surge fallbacks', () => {
@@ -29,6 +42,7 @@ describe('user alert profile cache', () => {
     });
 
     assert.equal(profile.userId, 9);
+    assert.deepEqual(profile.enabledChains, ['solana']);
     assert.deepEqual(profile.ruleEnabled, {
       monitoredVol: true,
       monitoredMcap: false,
@@ -88,6 +102,14 @@ describe('user alert profile cache', () => {
     assert.equal(robinhood.ruleEnabled.monitoredFdv, true);
     assert.equal(robinhood.ruleEnabled.monitoredMcap, false);
     assert.equal(robinhood.ruleEnabled.meteoraSurge, false);
+  });
+
+  it('normalizes enabled chains without duplicates or unsupported values', () => {
+    const profile = userAlertProfileCache.buildNormalizedAlertProfile(15, {}, {
+      enabledChains: ['robinhood', 'solana', 'robinhood', 'base'],
+    });
+
+    assert.deepEqual(profile.enabledChains, ['robinhood', 'solana']);
   });
 
   it('keeps legacy values as fallback for both chain profiles', () => {
@@ -591,6 +613,28 @@ describe('user alert profile cache', () => {
     } finally {
       userConfig.getAllWithStoredKeys = originalGetAllWithStoredKeys;
       userAlertProfileCache.invalidateUserProfile(61);
+    }
+  });
+
+  it('force-invalidates a cached profile when UI preferences change', async () => {
+    const originalGetAllWithStoredKeys = userConfig.getAllWithStoredKeys;
+    userConfig.getAllWithStoredKeys = async () => ({
+      configs: { threshold: 77 },
+      storedKeys: new Set(['threshold']),
+      configVersion: '2026-07-09T14:00:00.000Z',
+    });
+
+    try {
+      const profile = await userAlertProfileCache.refreshUserProfile(62);
+      assert.deepEqual(profile.enabledChains, ['solana', 'robinhood']);
+      assert.equal(userAlertProfileCache.invalidateUserProfile(62, {
+        configVersion: profile.configVersion,
+        force: true,
+      }), true);
+      assert.equal(userAlertProfileCache.__private.getCachedUserProfile(62), null);
+    } finally {
+      userConfig.getAllWithStoredKeys = originalGetAllWithStoredKeys;
+      userAlertProfileCache.invalidateUserProfile(62);
     }
   });
 });

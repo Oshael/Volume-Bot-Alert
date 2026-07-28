@@ -1,5 +1,6 @@
 const { normalizeTokenAddress } = require('../utils/token-identity');
 const { parseDecimal } = require('./evm-market-metrics');
+const { selectEnabledAlertProfilesForChain } = require('./chain-alert-profile');
 
 const CHAIN = 'robinhood';
 const PROTOCOLS = new Set(['uniswap-v2', 'uniswap-v3', 'uniswap-v4']);
@@ -142,7 +143,7 @@ function createRobinhoodAlertMatcher() {
     if (input.decision?.expectedSignal !== true) return inactive('suppressed', 'signal_suppressed');
 
     const tokenAddress = validatePublicationInput(input.candidate, input.decision);
-    const profiles = Array.isArray(input.profiles) ? input.profiles : [];
+    const profiles = selectEnabledAlertProfilesForChain(input.profiles, CHAIN);
     const eligibleProfiles = profiles.filter(
       (profile) => isProfileEligible(profile, input.candidate)
     );

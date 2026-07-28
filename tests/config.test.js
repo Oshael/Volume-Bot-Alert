@@ -22,6 +22,7 @@ const stage53 = require('../src/utils/db-init-stage53');
 const stage54 = require('../src/utils/db-init-stage54');
 const stage55 = require('../src/utils/db-init-stage55');
 const { CONFIG_SCHEMA } = require('../src/models/user-config');
+const userAlertProfileCache = require('../src/services/user-alert-profile-cache');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const VALID_ADDR_1 = 'So11111111111111111111111111111111111111112';
@@ -889,6 +890,46 @@ describe('Config routes', () => {
         alerts: 980,
       },
     });
+  });
+
+  it('invalidates the alert profile only when enabled chains change', async () => {
+    const { rows } = await db.query(
+      "SELECT id FROM users WHERE role = 'user' ORDER BY id LIMIT 1",
+    );
+    const userId = rows[0].id;
+    const initialProfile = await userAlertProfileCache.refreshUserProfile(userId);
+    assert.deepEqual(initialProfile.enabledChains, ['solana']);
+
+    const chainResponse = await request(app)
+      .patch('/api/config/ui-prefs')
+      .set('Authorization', `Bearer ${userToken}`)
+      .send({
+        uiPrefs: {
+          chainFilters: {
+            enabledChains: ['solana', 'robinhood'],
+            radarChains: ['solana', 'robinhood'],
+            alertFeedChains: ['solana', 'robinhood'],
+            browserNotificationChains: ['solana'],
+          },
+        },
+      });
+
+    assert.equal(chainResponse.status, 200);
+    assert.equal(userAlertProfileCache.__private.getCachedUserProfile(userId), null);
+    const refreshed = await userAlertProfileCache.refreshUserProfile(userId);
+    assert.deepEqual(refreshed.enabledChains, ['solana', 'robinhood']);
+
+    const unrelatedResponse = await request(app)
+      .patch('/api/config/ui-prefs')
+      .set('Authorization', `Bearer ${userToken}`)
+      .send({ uiPrefs: { manualStarredOnly: false } });
+
+    assert.equal(unrelatedResponse.status, 200);
+    assert.equal(
+      userAlertProfileCache.__private.getCachedUserProfile(userId),
+      refreshed,
+    );
+    userAlertProfileCache.invalidateUserProfile(userId);
   });
 
   it('keeps config data isolated per user', async () => {

@@ -88,6 +88,33 @@ describe('Robinhood standard alert matcher', () => {
     assert.equal(result.evaluations[1].plans.length, 0);
   });
 
+  it('filters disabled chains and applies Robinhood-scoped standard settings', () => {
+    const result = evaluate({ profiles: [
+      profile(1, {
+        enabledChains: ['solana'],
+        ruleEnabled: { monitoredVol: true },
+        thresholdPct: 100,
+      }),
+      profile(2, {
+        enabledChains: ['robinhood'],
+        ruleEnabled: { monitoredVol: false },
+        thresholdPct: 500,
+        alertConfigByChain: {
+          robinhood: {
+            ruleEnabled: { monitoredVol: true },
+            thresholdPct: 100,
+            minVol: 100,
+            minFdv: 30_000,
+            maxFdv: 0,
+          },
+        },
+      }),
+    ] });
+
+    assert.deepEqual(result.evaluations.map((evaluation) => evaluation.userId), [2]);
+    assert.equal(result.evaluations[0].plans[0].ruleKey, 'monitored-vol');
+  });
+
   it('uses the 5m FDV baseline and suppresses a replay against the persisted anchor', () => {
     const configured = profile(1, {
       ruleEnabled: { monitoredFdv: true }, fdvThresholdPct: 50,

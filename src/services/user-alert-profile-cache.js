@@ -1,5 +1,6 @@
 const userConfig = require('../models/user-config');
 const userAlertPresence = require('../models/user-alert-presence');
+const userUiPref = require('../models/user-ui-pref');
 const config = require('../../config');
 
 const FOREGROUND_TTL_MS = 2 * 60 * 1000;
@@ -209,11 +210,15 @@ function buildChainAlertSettings(chain, configs, storedKeys) {
 function buildNormalizedAlertProfile(userId, configs = {}, options = {}) {
   const storedKeys = normalizeStoredKeys(options.storedKeys || configs);
   const settings = buildAlertRuleSettings(configs, storedKeys);
+  const enabledChains = Array.isArray(options.enabledChains)
+    ? options.enabledChains.filter((chain) => chain === 'solana' || chain === 'robinhood')
+    : ['solana'];
 
   return {
     userId,
     source: 'user_config',
     configVersion: options.configVersion || null,
+    enabledChains: [...new Set(enabledChains)],
     ...settings,
     alertConfigByChain: {
       solana: buildChainAlertSettings('solana', configs, storedKeys),
@@ -435,11 +440,16 @@ function getCachedUserProfile(userId) {
 
 async function refreshUserProfile(userId) {
   const normalizedUserId = normalizeUserId(userId);
-  const configResult = typeof userConfig.getAllWithStoredKeys === 'function'
-    ? await userConfig.getAllWithStoredKeys(normalizedUserId)
-    : { configs: await userConfig.getAll(normalizedUserId), storedKeys: [] };
+  const [configResult, uiPrefs] = await Promise.all([
+    typeof userConfig.getAllWithStoredKeys === 'function'
+      ? userConfig.getAllWithStoredKeys(normalizedUserId)
+      : userConfig.getAll(normalizedUserId)
+        .then((configs) => ({ configs, storedKeys: [] })),
+    userUiPref.getAll(normalizedUserId),
+  ]);
   const profile = buildNormalizedAlertProfile(normalizedUserId, configResult.configs, {
     configVersion: configResult.configVersion,
+    enabledChains: uiPrefs?.chainFilters?.enabledChains,
     storedKeys: configResult.storedKeys,
   });
   profileCacheByUserId.set(normalizedUserId, profile);
@@ -447,6 +457,7 @@ async function refreshUserProfile(userId) {
 }
 
 function shouldInvalidateProfile(profile, options = {}) {
+  if (options.force === true) return true;
   const incomingVersionMs = toTimestampMs(options.configVersion);
   if (!incomingVersionMs || !profile?.configVersion) {
     return true;

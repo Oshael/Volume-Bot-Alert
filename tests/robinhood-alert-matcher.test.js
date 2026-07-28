@@ -110,6 +110,36 @@ describe('Robinhood alert matcher', () => {
     assert.deepEqual(result.intents.map((intent) => intent.userId), [8]);
   });
 
+  it('filters disabled chains and applies the Robinhood-scoped HVNC threshold', () => {
+    const value = candidate({ volumeUsd: '2000' });
+    const result = createRobinhoodAlertMatcher().match({
+      alertsRequested: true,
+      publishable: true,
+      candidate: value,
+      decision: decision(value),
+      profiles: [
+        {
+          userId: 7,
+          enabledChains: ['solana'],
+          ruleEnabled: { hvnc: true },
+          hvncMinVol: 1000,
+        },
+        {
+          userId: 8,
+          enabledChains: ['robinhood'],
+          ruleEnabled: { hvnc: false },
+          hvncMinVol: 900000,
+          alertConfigByChain: {
+            robinhood: { ruleEnabled: { hvnc: true }, hvncMinVol: 1500 },
+          },
+        },
+      ],
+    });
+
+    assert.equal(result.evaluatedProfiles, 1);
+    assert.deepEqual(result.intents.map((intent) => intent.userId), [8]);
+  });
+
   it('accepts V3 primary markets and rejects protocol or identity mismatches', () => {
     const value = candidate();
     const matcher = createRobinhoodAlertMatcher();

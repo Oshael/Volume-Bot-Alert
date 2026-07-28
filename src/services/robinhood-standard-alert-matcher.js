@@ -11,6 +11,7 @@ const {
   canRepeatSurgeInSession,
   getStandardTransition,
 } = require('./standard-alert-transition');
+const { selectEnabledAlertProfilesForChain } = require('./chain-alert-profile');
 const STANDARD_ALERT_COOLDOWN_MS = 60 * 1000;
 const SURGE_STARTUP_SUPPRESS_MS = 60 * 1000;
 const SURGE_RULE_KEYS = Object.freeze([
@@ -335,7 +336,8 @@ function evaluateRobinhoodStandardSignal(input = {}) {
   if (!Number.isFinite(nowMs)) throw new Error('Robinhood standard matcher time is invalid');
   const indexedStates = stateIndex(input.states);
   const evaluations = [];
-  for (const profile of Array.isArray(input.profiles) ? input.profiles : []) {
+  const profiles = selectEnabledAlertProfilesForChain(input.profiles, CHAIN);
+  for (const profile of profiles) {
     const candidates = buildCandidates(profile, signal);
     const qualified = new Set(candidates.map((candidate) => candidate.ruleKey));
     const primary = candidates[0] || null;

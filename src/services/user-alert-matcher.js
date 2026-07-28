@@ -10,6 +10,7 @@ const alertTickerPeers = require('./alert-ticker-peers');
 const { evaluateCustomAlertRule } = require('./custom-alert-rule-evaluator');
 const tokenAlertSignalBuilder = require('./token-alert-signal-builder');
 const userAlertProfileCache = require('./user-alert-profile-cache');
+const { selectEnabledAlertProfilesForChain } = require('./chain-alert-profile');
 const { normalizeSocialLinkFields } = require('../utils/dex-social-links');
 const { normalizeTokenChain } = require('../utils/token-identity');
 const standardAlertReset = require('./standard-alert-reset');
@@ -1894,7 +1895,8 @@ async function evaluateUpdatedToken(input = {}, options = {}) {
     console.error(`[UserAlertMatcher] Failed to evaluate custom alert rules for token ${tokenAfter.address}:`, error.message);
   }
 
-  const profiles = await deps.userAlertProfileCache.listActiveProfiles({ nowMs });
+  const activeProfiles = await deps.userAlertProfileCache.listActiveProfiles({ nowMs });
+  const profiles = selectEnabledAlertProfilesForChain(activeProfiles, ALERT_CHAIN);
   summary.evaluatedProfiles = profiles.length;
   if (!profiles.length) {
     return summary;
