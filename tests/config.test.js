@@ -285,6 +285,9 @@ describe('Config routes', () => {
           'old-fdv-max': 90000000,
           'old-week-fdv-min': 160000,
           'old-week-fdv-max': 80000000,
+          'solana-threshold': 67,
+          'robinhood-threshold': 91,
+          'robinhood-alert-fdv-enabled': 'on',
         },
       });
 
@@ -308,6 +311,9 @@ describe('Config routes', () => {
       'old-fdv-max': 90000000,
       'old-week-fdv-min': 160000,
       'old-week-fdv-max': 80000000,
+      'solana-threshold': 67,
+      'robinhood-threshold': 91,
+      'robinhood-alert-fdv-enabled': 'on',
     });
 
     const getResponse = await request(app)
@@ -333,6 +339,9 @@ describe('Config routes', () => {
     assert.equal(getResponse.body.configs['old-fdv-max'], 90000000);
     assert.equal(getResponse.body.configs['old-week-fdv-min'], 160000);
     assert.equal(getResponse.body.configs['old-week-fdv-max'], 80000000);
+    assert.equal(getResponse.body.configs['solana-threshold'], 67);
+    assert.equal(getResponse.body.configs['robinhood-threshold'], 91);
+    assert.equal(getResponse.body.configs['robinhood-alert-fdv-enabled'], 'on');
   });
 
   it('mirrors legacy surge config values into the new recent and old-week keys on read when the new keys were never stored', async () => {

@@ -101,13 +101,8 @@ function resolveNumberWithFallback(configs, storedKeys, primaryKey, legacyKey, f
   return getNumber(configs, legacyKey, fallback);
 }
 
-function buildNormalizedAlertProfile(userId, configs = {}, options = {}) {
-  const storedKeys = normalizeStoredKeys(options.storedKeys || configs);
-
+function buildAlertRuleSettings(configs, storedKeys) {
   return {
-    userId,
-    source: 'user_config',
-    configVersion: options.configVersion || null,
     ruleEnabled: {
       monitoredVol: isEnabled(configs, 'alert-vol-enabled'),
       monitoredMcap: isEnabled(configs, 'alert-mcap-enabled'),
@@ -177,6 +172,53 @@ function buildNormalizedAlertProfile(userId, configs = {}, options = {}) {
       100,
     ),
     meteoraAlert1hThreshold: getNumber(configs, 'meteora-alert-1h-threshold', 50),
+  };
+}
+
+function buildChainAlertSettings(chain, configs, storedKeys) {
+  const scopedConfigs = { ...configs };
+  const scopedStoredKeys = new Set(storedKeys);
+  for (const key of userConfig.CHAIN_ALERT_CONFIG_FIELDS[chain] || []) {
+    const scopedKey = userConfig.getChainAlertConfigKey(chain, key);
+    if (scopedKey && Object.prototype.hasOwnProperty.call(configs, scopedKey)) {
+      scopedConfigs[key] = configs[scopedKey];
+      if (storedKeys.has(scopedKey)) scopedStoredKeys.add(key);
+    }
+  }
+
+  const settings = buildAlertRuleSettings(scopedConfigs, scopedStoredKeys);
+  if (chain === 'solana') {
+    settings.ruleEnabled.monitoredFdv = false;
+    settings.ruleEnabled.gmgnClaimPump = isEnabled(
+      scopedConfigs,
+      'alert-gmgn-claim-pump-enabled',
+    );
+    settings.ruleEnabled.gmgnClaimBags = isEnabled(
+      scopedConfigs,
+      'alert-gmgn-claim-bags-enabled',
+    );
+  } else {
+    settings.ruleEnabled.monitoredMcap = false;
+    settings.ruleEnabled.meteoraSurge = false;
+    settings.ruleEnabled.gmgnClaimPump = false;
+    settings.ruleEnabled.gmgnClaimBags = false;
+  }
+  return { chain, ...settings };
+}
+
+function buildNormalizedAlertProfile(userId, configs = {}, options = {}) {
+  const storedKeys = normalizeStoredKeys(options.storedKeys || configs);
+  const settings = buildAlertRuleSettings(configs, storedKeys);
+
+  return {
+    userId,
+    source: 'user_config',
+    configVersion: options.configVersion || null,
+    ...settings,
+    alertConfigByChain: {
+      solana: buildChainAlertSettings('solana', configs, storedKeys),
+      robinhood: buildChainAlertSettings('robinhood', configs, storedKeys),
+    },
     loadedAt: new Date().toISOString(),
   };
 }
@@ -674,6 +716,8 @@ module.exports = {
   upsertSharedLivePresence,
   upsertLivePresence,
   __private: {
+    buildAlertRuleSettings,
+    buildChainAlertSettings,
     buildSharedPresenceContexts,
     getSharedPresenceHiddenStartedAtMs,
     getSharedPresenceSessionKey,

@@ -69,6 +69,63 @@ const CONFIG_SCHEMA = {
   'mock-sol-usdc-rate': { type: 'number', min: 0.01, max: 1000000, default: 88 },
 };
 
+const CHAIN_ALERT_CONFIG_FIELDS = Object.freeze({
+  solana: Object.freeze([
+    'threshold',
+    'mcap-threshold',
+    'min-vol',
+    'min-mcap',
+    'max-mcap',
+    'hvnc-min-vol',
+    'recent-surge-1h-threshold',
+    'recent-surge-6h-threshold',
+    'old-week-surge-1h-threshold',
+    'old-week-surge-6h-threshold',
+    'meteora-alert-1h-threshold',
+    'alert-vol-enabled',
+    'alert-mcap-enabled',
+    'alert-hvnc-enabled',
+    'alert-recent-surge-1h-enabled',
+    'alert-recent-surge-6h-enabled',
+    'alert-old-week-surge-1h-enabled',
+    'alert-old-week-surge-6h-enabled',
+    'alert-meteora-surge-enabled',
+    'alert-gmgn-claim-pump-enabled',
+    'alert-gmgn-claim-bags-enabled',
+  ]),
+  robinhood: Object.freeze([
+    'threshold',
+    'fdv-threshold',
+    'min-vol',
+    'monitored-fdv-min',
+    'monitored-fdv-max',
+    'hvnc-min-vol',
+    'recent-surge-1h-threshold',
+    'recent-surge-6h-threshold',
+    'old-week-surge-1h-threshold',
+    'old-week-surge-6h-threshold',
+    'alert-vol-enabled',
+    'alert-fdv-enabled',
+    'alert-hvnc-enabled',
+    'alert-recent-surge-1h-enabled',
+    'alert-recent-surge-6h-enabled',
+    'alert-old-week-surge-1h-enabled',
+    'alert-old-week-surge-6h-enabled',
+  ]),
+});
+
+function getChainAlertConfigKey(chain, key) {
+  return CHAIN_ALERT_CONFIG_FIELDS[chain]?.includes(key)
+    ? `${chain}-${key}`
+    : null;
+}
+
+for (const [chain, fields] of Object.entries(CHAIN_ALERT_CONFIG_FIELDS)) {
+  for (const key of fields) {
+    CONFIG_SCHEMA[getChainAlertConfigKey(chain, key)] = { ...CONFIG_SCHEMA[key] };
+  }
+}
+
 function validateConfigEntry(key, value) {
   const schema = CONFIG_SCHEMA[key];
   if (!schema) {
@@ -176,6 +233,19 @@ function applyLegacyGmgnClaimConfigFallbacks(configs, storedKeys = new Set()) {
   return configs;
 }
 
+function applyLegacyChainAlertConfigFallbacks(configs, storedKeys = new Set()) {
+  const safeStoredKeys = storedKeys instanceof Set ? storedKeys : new Set();
+  for (const [chain, fields] of Object.entries(CHAIN_ALERT_CONFIG_FIELDS)) {
+    for (const key of fields) {
+      const scopedKey = getChainAlertConfigKey(chain, key);
+      if (!safeStoredKeys.has(scopedKey)) {
+        configs[scopedKey] = configs[key];
+      }
+    }
+  }
+  return configs;
+}
+
 async function getAllWithStoredKeys(userId) {
   const { rows } = await db.query(
     'SELECT config_key, config_value, updated_at FROM user_configs WHERE user_id = $1',
@@ -205,6 +275,7 @@ async function getAllWithStoredKeys(userId) {
 
   applyLegacySurgeConfigFallbacks(configs, storedKeys);
   applyLegacyGmgnClaimConfigFallbacks(configs, storedKeys);
+  applyLegacyChainAlertConfigFallbacks(configs, storedKeys);
   return {
     configs,
     storedKeys,
@@ -304,10 +375,13 @@ async function getVersions(userIds) {
 }
 
 module.exports = {
+  CHAIN_ALERT_CONFIG_FIELDS,
   CONFIG_SCHEMA,
+  applyLegacyChainAlertConfigFallbacks,
   applyLegacyGmgnClaimConfigFallbacks,
   applyLegacySurgeConfigFallbacks,
   buildDefaultConfigs,
+  getChainAlertConfigKey,
   getAllWithStoredKeys,
   getVersion,
   getVersions,

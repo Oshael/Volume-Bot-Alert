@@ -61,6 +61,49 @@ describe('user alert profile cache', () => {
     assert.equal(profile.ruleEnabled.monitoredFdv, false);
   });
 
+  it('normalizes independent Solana and Robinhood alert settings', () => {
+    const profile = userAlertProfileCache.buildNormalizedAlertProfile(13, {
+      threshold: 50,
+      'alert-vol-enabled': 'on',
+      'solana-threshold': 65,
+      'solana-alert-vol-enabled': 'on',
+      'solana-alert-mcap-enabled': 'off',
+      'solana-alert-gmgn-claim-pump-enabled': 'off',
+      'robinhood-threshold': 92,
+      'robinhood-fdv-threshold': 78,
+      'robinhood-alert-vol-enabled': 'off',
+      'robinhood-alert-fdv-enabled': 'on',
+    });
+
+    const solana = profile.alertConfigByChain.solana;
+    const robinhood = profile.alertConfigByChain.robinhood;
+    assert.equal(solana.thresholdPct, 65);
+    assert.equal(solana.ruleEnabled.monitoredVol, true);
+    assert.equal(solana.ruleEnabled.monitoredMcap, false);
+    assert.equal(solana.ruleEnabled.monitoredFdv, false);
+    assert.equal(solana.ruleEnabled.gmgnClaimPump, false);
+    assert.equal(robinhood.thresholdPct, 92);
+    assert.equal(robinhood.fdvThresholdPct, 78);
+    assert.equal(robinhood.ruleEnabled.monitoredVol, false);
+    assert.equal(robinhood.ruleEnabled.monitoredFdv, true);
+    assert.equal(robinhood.ruleEnabled.monitoredMcap, false);
+    assert.equal(robinhood.ruleEnabled.meteoraSurge, false);
+  });
+
+  it('keeps legacy values as fallback for both chain profiles', () => {
+    const profile = userAlertProfileCache.buildNormalizedAlertProfile(14, {
+      threshold: 83,
+      'alert-vol-enabled': 'off',
+      'hvnc-min-vol': 510000,
+    });
+
+    for (const chain of ['solana', 'robinhood']) {
+      assert.equal(profile.alertConfigByChain[chain].thresholdPct, 83);
+      assert.equal(profile.alertConfigByChain[chain].ruleEnabled.monitoredVol, false);
+      assert.equal(profile.alertConfigByChain[chain].hvncMinVol, 510000);
+    }
+  });
+
   it('prefers explicit recent and old-week surge config keys over legacy surge values', () => {
     const profile = userAlertProfileCache.buildNormalizedAlertProfile(11, {
       'old-alert-1h-threshold': 50,
