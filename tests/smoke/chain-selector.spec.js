@@ -837,16 +837,18 @@ test('keeps the publishable chain selector SOL-only and exposes matching setting
   await page.getByRole('button', { name: 'Bot Settings' }).click();
   const dialog = page.getByRole('dialog', { name: 'Bot Settings' });
   await expect(dialog).toBeVisible();
-  await dialog.getByRole('tab', { name: 'Alerts & Chains' }).click();
+  await expect(dialog.getByRole('tab')).toHaveCount(3);
+  await expect(dialog.getByRole('tab', { name: 'Solana' })).toHaveAttribute('aria-selected', 'true');
+  await expect(dialog.getByRole('tab', { name: 'Robinhood' })).toHaveCount(0);
+  await expect(dialog.getByRole('tab', { name: 'Alerts & Chains' })).toHaveCount(0);
+  await expect(dialog.locator('input[name="solana-threshold"]')).toBeVisible();
+  await expect(dialog.locator('input[name="solana-mcap-threshold"]')).toBeVisible();
+  await expect(dialog.locator('input[name="solana-fdv-threshold"]')).toHaveCount(0);
+  await expect(dialog.locator('[data-config-toggle-key="solana-alert-vol-enabled"]')).toHaveAttribute('aria-pressed', 'true');
 
-  const alertFeedMenu = dialog.locator('[data-chain-filter-surface="alertFeedChains"]');
-  const alertFeedToggle = alertFeedMenu.locator('.config-menu-button');
-  await expect(alertFeedToggle).toHaveText('1/1 on');
-  await alertFeedToggle.click();
-  await expect(alertFeedMenu.locator('[data-chain-filter-chain="solana"]')).toBeVisible();
-  await expect(alertFeedMenu.locator('[data-chain-filter-chain="solana"]')).toBeDisabled();
-  await alertFeedToggle.click();
-  await expect(alertFeedMenu.locator('.config-menu-dropdown')).toBeHidden();
+  await dialog.getByRole('tab', { name: 'Notifications' }).click();
+  await expect(dialog.locator('[data-chain-filter-surface="browserNotificationChains"]')).toBeVisible();
+  await expect(dialog.getByText('Card effects', { exact: true })).toBeVisible();
 
   expect(diagnostics.unexpectedRequests).toEqual([]);
   expect(diagnostics.pageErrors).toEqual([]);
@@ -896,6 +898,32 @@ test('keeps compact manual controls aligned with routed token sort controls', as
     const sortIndex = children.findIndex((child) => child.matches('.compact-sort-cluster'));
     return starIndex >= 0 && sortIndex >= 0 && starIndex < sortIndex;
   })).toBe(true);
+});
+
+test('shows only supported alert controls in each available chain profile', async ({ page }) => {
+  await openAuthenticatedWorkspace(page, ROBINHOOD_API_FIXTURES);
+  await page.getByRole('button', { name: 'Open user menu' }).click();
+  await page.getByRole('button', { name: 'Bot Settings' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Bot Settings' });
+
+  await expect(dialog.getByRole('tab', { name: 'Robinhood' })).toBeVisible();
+  await dialog.getByRole('tab', { name: 'Robinhood' }).click();
+  await expect(dialog.locator('input[name="robinhood-threshold"]')).toBeVisible();
+  await expect(dialog.locator('input[name="robinhood-fdv-threshold"]')).toBeVisible();
+  const fdvToggle = dialog.locator('[data-config-toggle-key="robinhood-alert-fdv-enabled"]');
+  await expect(fdvToggle).toHaveAttribute('aria-pressed', 'true');
+  await expect(dialog.locator('input[name="robinhood-mcap-threshold"]')).toHaveCount(0);
+  await expect(dialog.locator('input[name="robinhood-meteora-alert-1h-threshold"]')).toHaveCount(0);
+  await expect(dialog.locator('[data-config-toggle-key="robinhood-alert-gmgn-claim-pump-enabled"]')).toHaveCount(0);
+
+  const configPatch = page.waitForRequest((request) => (
+    request.method() === 'PATCH' && new URL(request.url()).pathname === '/api/config'
+  ));
+  await fdvToggle.click();
+  expect((await configPatch).postDataJSON()).toEqual({
+    configs: { 'robinhood-alert-fdv-enabled': 'off' },
+  });
+  await expect(fdvToggle).toHaveAttribute('aria-pressed', 'false');
 });
 
 test('renders the FOMO shortcut link for Solana tokens', async ({ page }) => {

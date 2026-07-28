@@ -23,7 +23,7 @@ import {
 import { escapeHtml, sanitizeOptionalHttpUrl } from './html-safety';
 import { bindCopyButtons, bindSparklineHover, fmtMoney, fmtPct, getAgeToneClassFromCreatedAt, getTradeTerminalLabel, renderFlash, renderSparklineFigure, renderTokenLaunchpadBadge, renderTotalLiquidityCell, renderTradeTerminalIconForKey } from './shared';
 import { fmtMockSol, fmtMockSolAmount, resolveLiveMockSolUsdcRate, resolveMockTradeSolUsdcRate, resolveMockTradingPositionPnl } from '../../utils/mock-trading-display';
-import { buildTokenExplorerUrl, buildTokenIdentityKey, buildTokenMarketUrl, type TokenChain } from '../../utils/token-chain';
+import { buildTokenExplorerUrl, buildTokenIdentityKey, buildTokenMarketUrl, resolveChainScopedConfigValue, type TokenChain } from '../../utils/token-chain';
 import { getTokenChartValuationLabel, normalizeTokenChartCandle, normalizeTokenChartCandles, resolveTokenChartValuationType } from '../../utils/token-chart';
 import { resolveTokenValuation } from '../../utils/token-valuation';
 import { buildTokenChainIcon, buildTokenIdentityBadgeGroup, getTokenChainTitle } from '../token-chain-badge';
@@ -384,31 +384,20 @@ function bindFocusTrap(panel: HTMLElement | null) {
   });
 }
 
-type ConfigField = { key: string; label: string; type?: 'number' | 'text'; min?: number; step?: number; placeholder?: string; adminOnly?: boolean };
+type ConfigField = { key: string; label: string; type?: 'number' | 'text'; min?: number; step?: number; placeholder?: string };
 
 const CONFIG_FIELDS: ConfigField[] = [
   { key: 'threshold', label: 'Alert when 5m volume rises (%)', min: 1 },
   { key: 'mcap-threshold', label: 'Alert when MKT CAP rises (%) in 5m', min: 0, placeholder: '0 = disabled' },
+  { key: 'fdv-threshold', label: 'Alert when FDV rises (%) in 5m', min: 0, placeholder: '0 = disabled' },
   { key: 'min-vol', label: 'Min 5m volume to alert ($)', min: 0 },
   { key: 'min-mcap', label: 'Min market cap to alert ($)', min: 30000 },
   { key: 'max-mcap', label: 'Max market cap to alert ($)', min: 0, placeholder: '0 = no limit' },
+  { key: 'monitored-fdv-min', label: 'Min FDV to alert ($)', min: 30000 },
+  { key: 'monitored-fdv-max', label: 'Max FDV to alert ($)', min: 0, placeholder: '0 = no limit' },
   { key: 'meteora-alert-1h-threshold', label: 'Meteora pool alert 1h (%)', min: 0, placeholder: '0 = disabled' },
   { key: 'hvnc-min-vol', label: 'High Vol New Coin min total vol ($)', min: 0 },
 ];
-
-const ALERT_TOGGLE_FIELDS = [
-  { key: 'alert-vol-enabled', label: 'VOL' },
-  { key: 'alert-mcap-enabled', label: 'MCAP' },
-  { key: 'alert-fdv-enabled', label: 'FDV (ROBINHOOD)' },
-  { key: 'alert-hvnc-enabled', label: 'HIGH VOLUME NEW COIN' },
-  { key: 'alert-recent-surge-1h-enabled', label: 'RECENT SURGE 1H' },
-  { key: 'alert-recent-surge-6h-enabled', label: 'RECENT SURGE 6H' },
-  { key: 'alert-old-week-surge-1h-enabled', label: 'OLD SURGE 1H' },
-  { key: 'alert-old-week-surge-6h-enabled', label: 'OLD SURGE 6H' },
-  { key: 'alert-meteora-surge-enabled', label: 'METEORA 1H' },
-  { key: 'alert-gmgn-claim-pump-enabled', label: 'PUMP CLAIM' },
-  { key: 'alert-gmgn-claim-bags-enabled', label: 'BAGS CLAIM' },
-] as const;
 
 const SOUND_TOGGLE_FIELDS = [
   { key: 'sound-vol-enabled', label: 'VOL' },
@@ -424,14 +413,28 @@ const SAFETY_TOGGLE_FIELDS = [
   { key: 'block-warning-enabled', label: 'BLOCK TOKEN WARNING' },
 ] as const;
 
-const BOT_SETTINGS_CATEGORIES = [
-  { key: 'thresholds', label: 'Thresholds', title: 'Alert thresholds' },
-  { key: 'alerts', label: 'Alerts & Chains', title: 'Alerts & chains' },
+const BOT_SETTINGS_BASE_CATEGORIES = [
+  { key: 'solana', label: 'Solana', title: 'Solana alert settings' },
   { key: 'notifications', label: 'Notifications', title: 'Notifications' },
   { key: 'sound', label: 'Sound', title: 'Sound' },
 ] as const;
 
-type BotSettingsCategory = typeof BOT_SETTINGS_CATEGORIES[number]['key'];
+type AlertSettingsChain = 'solana' | 'robinhood';
+type BotSettingsCategory = AlertSettingsChain | 'notifications' | 'sound';
+
+function getBotSettingsCategories(state: AppState) {
+  const categories: Array<{ key: BotSettingsCategory; label: string; title: string }> = [
+    ...BOT_SETTINGS_BASE_CATEGORIES,
+  ];
+  if (state.data.availableChains.includes('robinhood')) {
+    categories.splice(1, 0, {
+      key: 'robinhood',
+      label: 'Robinhood',
+      title: 'Robinhood alert settings',
+    });
+  }
+  return categories;
+}
 
 export function renderLegacyShell(state: AppState, controller: AppController) {
   const wrapper = document.createElement('section');
@@ -6361,7 +6364,7 @@ function renderUserSettingsModal(state: AppState) {
 }
 
 function renderBotSettingsModal(state: AppState) {
-  const enabledAlerts = ALERT_TOGGLE_FIELDS.filter((field) => isConfigEnabled(state, field.key)).length;
+  const categories = getBotSettingsCategories(state);
   const availableChainNames = state.data.availableChains.map(getTokenChainTitle).join(', ');
   return `
     <div class="legacy-auth-modal" data-auth-modal="bot-settings" data-auth-modal-scope="profile">
@@ -6373,7 +6376,7 @@ function renderBotSettingsModal(state: AppState) {
             <span>Operator preferences</span>
           </div>
           <div class="bot-settings-nav" role="tablist" aria-label="Bot settings categories">
-            ${BOT_SETTINGS_CATEGORIES.map((category, index) => `
+            ${categories.map((category, index) => `
               <button
                 type="button"
                 id="bot-settings-tab-${category.key}"
@@ -6386,13 +6389,13 @@ function renderBotSettingsModal(state: AppState) {
             `).join('')}
           </div>
           <div class="bot-settings-sidebar-foot">
-            <span>Chain: ${escapeHtml(availableChainNames || 'Solana')}</span>
-            <span>${enabledAlerts}/${ALERT_TOGGLE_FIELDS.length} alerts on</span>
+            <span>Available: ${escapeHtml(availableChainNames || 'Solana')}</span>
+            <span>Alert profiles are saved per chain</span>
           </div>
         </aside>
         <main class="legacy-config-grid-modal bot-settings-content">
           <header class="bot-settings-content-head">
-            <span class="bot-settings-content-title" data-bot-settings-title>${escapeHtml(BOT_SETTINGS_CATEGORIES[0].title)}</span>
+            <span class="bot-settings-content-title" data-bot-settings-title>${escapeHtml(categories[0].title)}</span>
             <button type="button" class="legacy-profile-modal-close bot-settings-close" data-action="close-profile-modal" aria-label="Close dialog">&times;</button>
           </header>
           ${renderBotSettingsFields(state)}
@@ -6403,9 +6406,10 @@ function renderBotSettingsModal(state: AppState) {
 }
 
 function renderBotSettingsFields(state: AppState) {
+  const hasRobinhood = state.data.availableChains.includes('robinhood');
   return `
-    ${renderBotSettingsSection('thresholds', renderBotSettingsThresholds(state), true)}
-    ${renderBotSettingsSection('alerts', renderBotSettingsAlerts(state))}
+    ${renderBotSettingsSection('solana', renderChainAlertSettings(state, 'solana'), true)}
+    ${hasRobinhood ? renderBotSettingsSection('robinhood', renderChainAlertSettings(state, 'robinhood')) : ''}
     ${renderBotSettingsSection('notifications', renderBotSettingsNotifications(state))}
     ${renderBotSettingsSection('sound', renderBotSettingsSound(state))}
   `;
@@ -6425,15 +6429,23 @@ function renderBotSettingsSection(category: BotSettingsCategory, content: string
 }
 
 function renderBotSettingsNumberField(
+  state: AppState,
+  chain: AlertSettingsChain,
   field: ConfigField,
   unit: '%' | '$',
-  help?: { label: string; text: string },
+  options?: {
+    help?: { label: string; text: string };
+    toggle?: { key: string; label: string };
+  },
 ) {
   const type = field.type ?? 'number';
   const label = field.label.replace(/\s*\([%$]\)\s*/g, ' ').trim();
+  const inputName = `${chain}-${field.key}`;
+  const help = options?.help;
   return `
     <div class="config-item bot-settings-field-group">
-      <label for="bot-settings-${escapeHtml(field.key)}">
+      <div class="bot-settings-field-label">
+        <label for="bot-settings-${escapeHtml(inputName)}">
         <span>${escapeHtml(label)}</span>
         ${help ? `
           <span class="config-help-hover" tabindex="0" aria-label="${escapeHtml(help.label)}">
@@ -6441,36 +6453,69 @@ function renderBotSettingsNumberField(
             <span class="config-help-panel">${escapeHtml(help.text)}</span>
           </span>
         ` : ''}
-      </label>
+        </label>
+        ${options?.toggle ? renderInlineAlertToggle(state, chain, options.toggle.key, options.toggle.label) : ''}
+      </div>
       <div class="bot-settings-field">
-        <input id="bot-settings-${escapeHtml(field.key)}" type="${escapeHtml(type)}" name="${escapeHtml(field.key)}" ${field.min != null ? `min="${field.min}"` : ''} ${field.step != null ? `step="${field.step}"` : ''} ${field.placeholder ? `placeholder="${escapeHtml(field.placeholder)}"` : ''} />
+        <input id="bot-settings-${escapeHtml(inputName)}" type="${escapeHtml(type)}" name="${escapeHtml(inputName)}" data-config-legacy-key="${escapeHtml(field.key)}" ${field.min != null ? `min="${field.min}"` : ''} ${field.step != null ? `step="${field.step}"` : ''} ${field.placeholder ? `placeholder="${escapeHtml(field.placeholder)}"` : ''} />
         <span>${unit}</span>
       </div>
     </div>
   `;
 }
 
-function renderBotSettingsMarketCapRange(fields: Map<string, ConfigField>) {
-  const minField = fields.get('min-mcap')!;
-  const maxField = fields.get('max-mcap')!;
+function renderInlineAlertToggle(
+  state: AppState,
+  chain: AlertSettingsChain,
+  key: string,
+  label: string,
+) {
+  const configKey = `${chain}-${key}`;
+  const enabled = String(resolveChainScopedConfigValue(state.data.configs, chain, key) ?? 'on') !== 'off';
+  const chainTitle = getTokenChainTitle(chain);
+  return `
+    <button
+      type="button"
+      class="config-toggle-item bot-settings-inline-toggle${enabled ? ' active' : ''}"
+      data-config-toggle-key="${escapeHtml(configKey)}"
+      data-config-toggle-next="${enabled ? 'off' : 'on'}"
+      aria-label="${enabled ? 'Disable' : 'Enable'} ${escapeHtml(label)} for ${escapeHtml(chainTitle)}"
+      aria-pressed="${enabled}"
+    ><span class="config-toggle-state">${enabled ? 'ON' : 'OFF'}</span></button>
+  `;
+}
+
+function renderBotSettingsValuationRange(
+  chain: AlertSettingsChain,
+  fields: Map<string, ConfigField>,
+  valuation: 'market cap' | 'FDV',
+) {
+  const minKey = valuation === 'FDV' ? 'monitored-fdv-min' : 'min-mcap';
+  const maxKey = valuation === 'FDV' ? 'monitored-fdv-max' : 'max-mcap';
+  const minField = fields.get(minKey)!;
+  const maxField = fields.get(maxKey)!;
   const renderInput = (field: ConfigField, label: string) => `
     <div class="bot-settings-field">
-      <input type="number" name="${field.key}" min="${field.min ?? 0}" placeholder="${escapeHtml(field.placeholder || '')}" aria-label="${label}" />
+      <input type="number" name="${chain}-${field.key}" data-config-legacy-key="${field.key}" min="${field.min ?? 0}" placeholder="${escapeHtml(field.placeholder || '')}" aria-label="${label}" />
       <span>$</span>
     </div>
   `;
   return `
     <div class="config-item bot-settings-field-group">
-      <label>Min / max market cap to alert</label>
+      <label>Min / max ${valuation} to alert</label>
       <div class="bot-settings-field-pair">
-        ${renderInput(minField, 'Minimum market cap to alert')}
-        ${renderInput(maxField, 'Maximum market cap to alert')}
+        ${renderInput(minField, `Minimum ${valuation} to alert`)}
+        ${renderInput(maxField, `Maximum ${valuation} to alert`)}
       </div>
     </div>
   `;
 }
 
-function renderBotSettingsSurgePair(bucket: 'recent' | 'old-week') {
+function renderBotSettingsSurgePair(
+  state: AppState,
+  chain: AlertSettingsChain,
+  bucket: 'recent' | 'old-week',
+) {
   const isRecent = bucket === 'recent';
   const prefix = isRecent ? 'recent-surge' : 'old-week-surge';
   const label = isRecent ? 'Recent tokens' : 'Old tokens';
@@ -6479,33 +6524,67 @@ function renderBotSettingsSurgePair(bucket: 'recent' | 'old-week') {
       <label>Surge threshold · ${label}</label>
       <div class="bot-settings-surge-pair">
         ${[1, 6].map((hours) => `
-          <label class="bot-settings-surge-cell">
-            <span>${hours}H price change</span>
-            <span><input type="number" min="0" name="${prefix}-${hours}h-threshold" aria-label="${label} ${hours} hour price change" /><b>%</b></span>
-          </label>
+          <div class="bot-settings-surge-cell">
+            <span>${hours}H price change ${renderInlineAlertToggle(state, chain, `alert-${prefix}-${hours}h-enabled`, `${label} ${hours} hour surge`)}</span>
+            <label><input type="number" min="0" name="${chain}-${prefix}-${hours}h-threshold" data-config-legacy-key="${prefix}-${hours}h-threshold" aria-label="${label} ${hours} hour price change" /><b>%</b></label>
+          </div>
         `).join('')}
       </div>
     </div>
   `;
 }
 
-function renderBotSettingsThresholds(state: AppState) {
-  const fields = new Map(getVisibleConfigFields(state).map((field) => [field.key, field]));
+function renderStandaloneAlertToggle(
+  state: AppState,
+  chain: AlertSettingsChain,
+  key: string,
+  label: string,
+) {
+  return `
+    <div class="config-item bot-settings-field-group">
+      <div class="bot-settings-field-label">
+        <label>${escapeHtml(label)}</label>
+        ${renderInlineAlertToggle(state, chain, key, label)}
+      </div>
+    </div>
+  `;
+}
+
+function renderChainAlertSettings(state: AppState, chain: AlertSettingsChain) {
+  const fields = new Map(CONFIG_FIELDS.map((field) => [field.key, field]));
+  const isSolana = chain === 'solana';
   return `
     <div class="bot-settings-grid">
-      ${renderBotSettingsNumberField(fields.get('threshold')!, '%')}
-      ${renderBotSettingsNumberField(fields.get('mcap-threshold')!, '%')}
-      ${renderBotSettingsNumberField(fields.get('min-vol')!, '$')}
-      ${renderBotSettingsMarketCapRange(fields)}
-      ${renderBotSettingsNumberField(fields.get('meteora-alert-1h-threshold')!, '%')}
-      ${renderBotSettingsNumberField(fields.get('hvnc-min-vol')!, '$', {
-        label: 'What is High Volume New Coin?',
-        text: 'High Volume New Coin (HVNC) alerts when a token reaches at least this reported 24-hour volume within its first 5 minutes. For migrated Pump.fun tokens, the 5-minute window starts at migration instead of token creation. It normally fires once per qualifying lifecycle.',
+      ${renderBotSettingsNumberField(state, chain, fields.get('threshold')!, '%', {
+        toggle: { key: 'alert-vol-enabled', label: 'Volume alerts' },
       })}
-      ${renderBotSettingsSurgePair('recent')}
-      ${renderBotSettingsSurgePair('old-week')}
-      <div class="bot-settings-subhead"><span></span><strong>Shortcut links</strong><i></i></div>
-      ${renderTradeTerminalPrefsMenu(state)}
+      ${renderBotSettingsNumberField(
+        state,
+        chain,
+        fields.get(isSolana ? 'mcap-threshold' : 'fdv-threshold')!,
+        '%',
+        { toggle: { key: isSolana ? 'alert-mcap-enabled' : 'alert-fdv-enabled', label: isSolana ? 'Market cap alerts' : 'FDV alerts' } },
+      )}
+      ${renderBotSettingsNumberField(state, chain, fields.get('min-vol')!, '$')}
+      ${renderBotSettingsValuationRange(chain, fields, isSolana ? 'market cap' : 'FDV')}
+      ${renderBotSettingsNumberField(state, chain, fields.get('hvnc-min-vol')!, '$', {
+        help: {
+          label: 'What is High Volume New Coin?',
+          text: 'High Volume New Coin (HVNC) alerts when a token reaches at least this reported 24-hour volume within its first 5 minutes. It normally fires once per qualifying lifecycle.',
+        },
+        toggle: { key: 'alert-hvnc-enabled', label: 'High Volume New Coin alerts' },
+      })}
+      ${isSolana ? renderBotSettingsNumberField(state, chain, fields.get('meteora-alert-1h-threshold')!, '%', {
+        toggle: { key: 'alert-meteora-surge-enabled', label: 'Meteora alerts' },
+      }) : ''}
+      ${renderBotSettingsSurgePair(state, chain, 'recent')}
+      ${renderBotSettingsSurgePair(state, chain, 'old-week')}
+      ${isSolana ? `
+        ${renderStandaloneAlertToggle(state, chain, 'alert-gmgn-claim-pump-enabled', 'Pump claim alerts')}
+        ${renderStandaloneAlertToggle(state, chain, 'alert-gmgn-claim-bags-enabled', 'Bags claim alerts')}
+        <div class="bot-settings-subhead"><span></span><strong>Shortcut links</strong><i></i></div>
+        ${renderTradeTerminalPrefsMenu(state)}
+      ` : ''}
     </div>
   `;
 }
@@ -6551,28 +6630,15 @@ function renderBotSettingsChainCard(state: AppState, surface: ConfigurableChainF
   `;
 }
 
-function renderBotSettingsAlerts(state: AppState) {
-  return `
-    <div class="bot-settings-stack">
-      ${renderConfigToggleMenu(state, 'Alert toggles', 'Choose which alert types can fire', ALERT_TOGGLE_FIELDS)}
-      <div class="bot-settings-grid bot-settings-chain-grid">
-        ${renderBotSettingsChainCard(state, 'alertFeedChains')}
-        ${renderBotSettingsChainCard(state, 'radarChains')}
-        ${state.session.role === 'admin' ? renderAdminChainField(state) : ''}
-        <div class="config-item config-item-sound bot-settings-field-group">
-          <label>Card effects</label>
-          <select name="card-effects-mode"><option value="on">Enabled</option><option value="off">Disabled</option></select>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
 function renderBotSettingsNotifications(state: AppState) {
   return `
     <div class="bot-settings-grid">
       ${renderBrowserNotificationControl(state)}
       ${renderBotSettingsChainCard(state, 'browserNotificationChains')}
+      <div class="config-item config-item-sound bot-settings-field-group">
+        <label>Card effects</label>
+        <select name="card-effects-mode"><option value="on">Enabled</option><option value="off">Disabled</option></select>
+      </div>
       ${renderConfigToggleMenu(state, 'Safety prompts', 'Choose which destructive-action confirmations appear.', SAFETY_TOGGLE_FIELDS, { hideSummary: true })}
     </div>
   `;
@@ -6628,10 +6694,6 @@ function renderBrowserNotificationControl(state: AppState) {
       </div>
     </div>
   `;
-}
-
-function getVisibleConfigFields(state: AppState) {
-  return CONFIG_FIELDS.filter((field) => !field.adminOnly || state.session.role === 'admin');
 }
 
 function renderTradeTerminalPrefsMenu(state: AppState) {
@@ -7075,7 +7137,7 @@ function bindBotSettingsPanel(section: ParentNode, controller: AppController, st
 
   bindFocusTrap(panel);
   hydrateLegacyConfigValues(configSection, state);
-  bindBotSettingsCategoryNavigation(panel);
+  bindBotSettingsCategoryNavigation(panel, state);
 
   const commitInputIfNeeded = async (input: HTMLInputElement) => {
     if (input.dataset.pendingCommit !== 'true' || input.dataset.submitInFlight === 'true') {
@@ -7210,13 +7272,14 @@ function bindBotSettingsPanel(section: ParentNode, controller: AppController, st
   });
 }
 
-function bindBotSettingsCategoryNavigation(panel: HTMLElement) {
+function bindBotSettingsCategoryNavigation(panel: HTMLElement, state: AppState) {
   const buttons = [...panel.querySelectorAll<HTMLButtonElement>('[data-bot-settings-nav]')];
   const sections = [...panel.querySelectorAll<HTMLElement>('[data-bot-settings-section]')];
   const title = panel.querySelector<HTMLElement>('[data-bot-settings-title]');
+  const categories = getBotSettingsCategories(state);
 
   const activate = (category: BotSettingsCategory, focus = false) => {
-    const meta = BOT_SETTINGS_CATEGORIES.find((item) => item.key === category);
+    const meta = categories.find((item) => item.key === category);
     if (!meta) {
       return;
     }
@@ -8091,19 +8154,29 @@ function bindConfigToggleMenus(section: HTMLElement, controller: AppController) 
       event.preventDefault();
       event.stopPropagation();
       const wrap = button.closest<HTMLElement>('.config-menu-wrap');
-      if (!wrap) {
+      const key = button.dataset.configToggleKey;
+      if (!key) {
         return;
       }
 
       const isActive = button.classList.contains('active');
       button.classList.toggle('active', !isActive);
       button.dataset.configToggleNext = isActive ? 'on' : 'off';
+      button.setAttribute('aria-pressed', String(!isActive));
+      const label = button.getAttribute('aria-label');
+      if (label) {
+        button.setAttribute('aria-label', label.replace(isActive ? /^Disable / : /^Enable /, isActive ? 'Enable ' : 'Disable '));
+      }
       const stateLabel = button.querySelector<HTMLElement>('.config-toggle-state');
       if (stateLabel) {
         stateLabel.textContent = isActive ? 'OFF' : 'ON';
       }
-      wrap.dataset.configDirty = 'true';
-      updateWrapSummary(wrap);
+      if (wrap) {
+        wrap.dataset.configDirty = 'true';
+        updateWrapSummary(wrap);
+      } else {
+        void controller.saveMonitoringConfig({ [key]: isActive ? 'off' : 'on' });
+      }
     });
   });
 }
@@ -8140,34 +8213,13 @@ function renderLegacyActions(state: AppState, controller: AppController) {
   return section;
 }
 
-function renderAdminChainField(_state: AppState) {
-  return `
-    <div class="config-item">
-      <label>Chain</label>
-      <select name="chain">
-        ${['solana', 'ethereum', 'bsc', 'base'].map((chain) => `<option value="${escapeHtml(chain)}">${escapeHtml(capitalize(chain))}</option>`).join('')}
-      </select>
-    </div>
-  `;
-}
-
-function resolveConfigInputValue(state: AppState, field: ConfigField) {
-  const type = field.type ?? 'number';
-  const value = state.data.configs[field.key];
-  if (value == null || value === '') {
-    return String(defaultConfigValue(field.key, type));
-  }
-  return String(value);
-}
-
 function hydrateLegacyConfigValues(section: HTMLElement, state: AppState) {
-  for (const field of getVisibleConfigFields(state)) {
-    const input = section.querySelector<HTMLInputElement>(`input[name="${CSS.escape(field.key)}"]`);
-    if (!input) {
-      continue;
-    }
-    input.value = resolveConfigInputValue(state, field);
-  }
+  section.querySelectorAll<HTMLInputElement>('input[type="number"][name][data-config-legacy-key]').forEach((input) => {
+    const legacyKey = input.dataset.configLegacyKey;
+    if (!legacyKey) return;
+    const value = state.data.configs[input.name] ?? state.data.configs[legacyKey];
+    input.value = String(value == null || value === '' ? defaultConfigValue(legacyKey, 'number') : value);
+  });
 
   const soundMode = section.querySelector<HTMLSelectElement>('select[name="sound-mode"]');
   if (soundMode) {
@@ -8184,24 +8236,6 @@ function hydrateLegacyConfigValues(section: HTMLElement, state: AppState) {
     soundVolume.value = String(Math.round(state.ui.soundVolume * 100));
   }
 
-  const surgeThresholdFields = [
-    ['recent-surge-1h-threshold', 50],
-    ['recent-surge-6h-threshold', 100],
-    ['old-week-surge-1h-threshold', 50],
-    ['old-week-surge-6h-threshold', 100],
-  ] as const;
-  for (const [fieldName, fallback] of surgeThresholdFields) {
-    const input = section.querySelector<HTMLInputElement>(`input[name="${fieldName}"]`);
-    if (!input) {
-      continue;
-    }
-    input.value = String(Math.round(Number(state.data.configs[fieldName] ?? fallback)));
-  }
-
-  const chainSelect = section.querySelector<HTMLSelectElement>('select[name="chain"]');
-  if (chainSelect) {
-    chainSelect.value = String(state.data.configs.chain || 'solana').trim().toLowerCase() || 'solana';
-  }
 }
 
 function defaultConfigValue(key: string, type: 'number' | 'text') {
@@ -8212,9 +8246,12 @@ function defaultConfigValue(key: string, type: 'number' | 'text') {
   const defaults: Record<string, number> = {
     threshold: 50,
     'mcap-threshold': 50,
+    'fdv-threshold': 50,
     'min-vol': 10000,
     'min-mcap': 30000,
     'max-mcap': 0,
+    'monitored-fdv-min': 30000,
+    'monitored-fdv-max': 0,
     'hvnc-min-vol': 300000,
     'old-alert-1h-threshold': 50,
     'old-alert-6h-threshold': 100,
@@ -8227,8 +8264,4 @@ function defaultConfigValue(key: string, type: 'number' | 'text') {
     'old-week-mcap-max': 100000000,
   };
   return String(defaults[key] ?? 0);
-}
-
-function capitalize(value: string) {
-  return value.charAt(0).toUpperCase() + value.slice(1);
 }
