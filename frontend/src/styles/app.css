@@ -4195,6 +4195,18 @@ body:has(.workspace-market-ticker) .app-shell {
   margin-bottom: 18px;
 }
 
+.bot-settings-error {
+  margin: -4px 0 16px;
+  padding: 9px 11px;
+  border: 1px solid rgba(255, 92, 115, 0.4);
+  border-radius: 8px;
+  background: rgba(95, 20, 35, 0.22);
+  color: #ff91a3;
+  font-family: "Space Mono", monospace;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
 .bot-settings-content-title {
   color: #9fb8cc;
   font-family: "Space Mono", monospace;
@@ -4249,7 +4261,8 @@ body:has(.workspace-market-ticker) .app-shell {
 }
 
 .bot-settings-modal .config-item > label,
-.bot-settings-modal .bot-settings-field-group > label {
+.bot-settings-modal .bot-settings-field-group > label,
+.bot-settings-modal .bot-settings-field-label > label {
   min-height: 0;
   color: #7893aa;
   font-family: "Space Mono", monospace;
@@ -4257,6 +4270,22 @@ body:has(.workspace-market-ticker) .app-shell {
   font-weight: 700;
   letter-spacing: 0.1em;
   line-height: 1.35;
+}
+
+.bot-settings-field-label {
+  min-width: 0;
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.bot-settings-field-label > label {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .bot-settings-field,
@@ -4328,6 +4357,11 @@ body:has(.workspace-market-ticker) .app-shell {
 }
 
 .bot-settings-surge-cell > span:first-child {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
   color: #7893aa;
   font-family: "Space Mono", monospace;
   font-size: 8px;
@@ -4335,7 +4369,8 @@ body:has(.workspace-market-ticker) .app-shell {
   text-transform: uppercase;
 }
 
-.bot-settings-surge-cell > span:last-child {
+.bot-settings-surge-cell > label {
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -4441,6 +4476,54 @@ body:has(.workspace-market-ticker) .app-shell {
   border-color: var(--bot-settings-accent-border);
   background: var(--bot-settings-accent-field);
   color: var(--bot-settings-accent);
+}
+
+.bot-settings-modal .bot-settings-inline-toggle {
+  width: 42px;
+  min-width: 42px;
+  min-height: 22px;
+  flex: 0 0 42px;
+  justify-content: center;
+  padding: 3px 7px;
+  border-radius: 999px;
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  line-height: 1;
+}
+
+.bot-settings-modal .bot-settings-inline-toggle:hover,
+.bot-settings-modal .bot-settings-inline-toggle:focus-visible {
+  border-color: #2f6a87;
+  color: #c8dce8;
+  outline: none;
+}
+
+.bot-settings-modal .bot-settings-inline-toggle.active {
+  border-color: rgba(63, 208, 255, 0.55);
+  background: rgba(63, 208, 255, 0.12);
+  color: #56d8ff;
+}
+
+.bot-settings-surge-cell .bot-settings-inline-toggle {
+  width: 36px;
+  min-width: 36px;
+  min-height: 18px;
+  flex-basis: 36px;
+  padding: 2px 5px;
+  font-size: 7px;
+}
+
+.bot-settings-claim-toggle {
+  min-height: 48px;
+  align-content: center;
+  padding: 10px 12px;
+  border: 1px solid var(--bot-settings-accent-border);
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(63, 208, 255, 0.07), rgba(12, 27, 38, 0.72));
+}
+
+.bot-settings-claim-toggle .bot-settings-field-label {
+  min-height: 26px;
 }
 
 .bot-settings-trade-terminal-label {

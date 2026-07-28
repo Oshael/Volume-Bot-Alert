@@ -421,6 +421,8 @@ const BOT_SETTINGS_BASE_CATEGORIES = [
 
 type AlertSettingsChain = 'solana' | 'robinhood';
 type BotSettingsCategory = AlertSettingsChain | 'notifications' | 'sound';
+let activeBotSettingsCategory: BotSettingsCategory = 'solana';
+let botSettingsSaveError: string | null = null;
 
 function getBotSettingsCategories(state: AppState) {
   const categories: Array<{ key: BotSettingsCategory; label: string; title: string }> = [
@@ -1309,6 +1311,8 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
   section.querySelector<HTMLButtonElement>('[data-action="open-bot-settings"]')?.addEventListener('pointerdown', (event) => {
     event.preventDefault();
     event.stopPropagation();
+    activeBotSettingsCategory = 'solana';
+    botSettingsSaveError = null;
     controller.openAuthPanel('bot-settings');
     section.querySelector<HTMLElement>('[data-user-menu]')?.classList.remove('open');
   });
@@ -6365,6 +6369,10 @@ function renderUserSettingsModal(state: AppState) {
 
 function renderBotSettingsModal(state: AppState) {
   const categories = getBotSettingsCategories(state);
+  const activeCategory = categories.some((category) => category.key === activeBotSettingsCategory)
+    ? activeBotSettingsCategory
+    : 'solana';
+  activeBotSettingsCategory = activeCategory;
   const availableChainNames = state.data.availableChains.map(getTokenChainTitle).join(', ');
   return `
     <div class="legacy-auth-modal" data-auth-modal="bot-settings" data-auth-modal-scope="profile">
@@ -6376,14 +6384,14 @@ function renderBotSettingsModal(state: AppState) {
             <span>Operator preferences</span>
           </div>
           <div class="bot-settings-nav" role="tablist" aria-label="Bot settings categories">
-            ${categories.map((category, index) => `
+            ${categories.map((category) => `
               <button
                 type="button"
                 id="bot-settings-tab-${category.key}"
-                class="bot-settings-nav-item${index === 0 ? ' active' : ''}"
+                class="bot-settings-nav-item${category.key === activeCategory ? ' active' : ''}"
                 data-bot-settings-nav="${category.key}"
                 role="tab"
-                aria-selected="${index === 0}"
+                aria-selected="${category.key === activeCategory}"
                 aria-controls="bot-settings-section-${category.key}"
               ><span aria-hidden="true"></span>${escapeHtml(category.label)}</button>
             `).join('')}
@@ -6395,23 +6403,24 @@ function renderBotSettingsModal(state: AppState) {
         </aside>
         <main class="legacy-config-grid-modal bot-settings-content">
           <header class="bot-settings-content-head">
-            <span class="bot-settings-content-title" data-bot-settings-title>${escapeHtml(categories[0].title)}</span>
+            <span class="bot-settings-content-title" data-bot-settings-title>${escapeHtml(categories.find((category) => category.key === activeCategory)?.title || categories[0].title)}</span>
             <button type="button" class="legacy-profile-modal-close bot-settings-close" data-action="close-profile-modal" aria-label="Close dialog">&times;</button>
           </header>
-          ${renderBotSettingsFields(state)}
+          ${botSettingsSaveError ? `<div class="bot-settings-error" data-bot-settings-error role="alert">${escapeHtml(botSettingsSaveError)}</div>` : ''}
+          ${renderBotSettingsFields(state, activeCategory)}
         </main>
       </div>
     </div>
   `;
 }
 
-function renderBotSettingsFields(state: AppState) {
+function renderBotSettingsFields(state: AppState, activeCategory: BotSettingsCategory) {
   const hasRobinhood = state.data.availableChains.includes('robinhood');
   return `
-    ${renderBotSettingsSection('solana', renderChainAlertSettings(state, 'solana'), true)}
-    ${hasRobinhood ? renderBotSettingsSection('robinhood', renderChainAlertSettings(state, 'robinhood')) : ''}
-    ${renderBotSettingsSection('notifications', renderBotSettingsNotifications(state))}
-    ${renderBotSettingsSection('sound', renderBotSettingsSound(state))}
+    ${renderBotSettingsSection('solana', renderChainAlertSettings(state, 'solana'), activeCategory === 'solana')}
+    ${hasRobinhood ? renderBotSettingsSection('robinhood', renderChainAlertSettings(state, 'robinhood'), activeCategory === 'robinhood') : ''}
+    ${renderBotSettingsSection('notifications', renderBotSettingsNotifications(state), activeCategory === 'notifications')}
+    ${renderBotSettingsSection('sound', renderBotSettingsSound(state), activeCategory === 'sound')}
   `;
 }
 
@@ -6541,7 +6550,7 @@ function renderStandaloneAlertToggle(
   label: string,
 ) {
   return `
-    <div class="config-item bot-settings-field-group">
+    <div class="config-item bot-settings-field-group bot-settings-claim-toggle">
       <div class="bot-settings-field-label">
         <label>${escapeHtml(label)}</label>
         ${renderInlineAlertToggle(state, chain, key, label)}
@@ -6580,6 +6589,7 @@ function renderChainAlertSettings(state: AppState, chain: AlertSettingsChain) {
       ${renderBotSettingsSurgePair(state, chain, 'recent')}
       ${renderBotSettingsSurgePair(state, chain, 'old-week')}
       ${isSolana ? `
+        <div class="bot-settings-subhead"><span></span><strong>Claim alerts</strong><i></i></div>
         ${renderStandaloneAlertToggle(state, chain, 'alert-gmgn-claim-pump-enabled', 'Pump claim alerts')}
         ${renderStandaloneAlertToggle(state, chain, 'alert-gmgn-claim-bags-enabled', 'Bags claim alerts')}
         <div class="bot-settings-subhead"><span></span><strong>Shortcut links</strong><i></i></div>
@@ -7146,7 +7156,7 @@ function bindBotSettingsPanel(section: ParentNode, controller: AppController, st
 
     input.dataset.submitInFlight = 'true';
     try {
-      await submitLegacyConfig(configSection, controller);
+      await submitLegacyConfig(input, controller, state);
       input.dataset.pendingCommit = 'false';
     } finally {
       input.dataset.submitInFlight = 'false';
@@ -7171,8 +7181,9 @@ function bindBotSettingsPanel(section: ParentNode, controller: AppController, st
 
     if (input instanceof HTMLSelectElement) {
       input.addEventListener('change', (event) => {
-        void submitLegacyConfig(configSection, controller);
-        (event.currentTarget as HTMLSelectElement).blur();
+        const select = event.currentTarget as HTMLSelectElement;
+        void submitLegacyConfig(select, controller, state);
+        select.blur();
       });
       return;
     }
@@ -7254,7 +7265,7 @@ function bindBotSettingsPanel(section: ParentNode, controller: AppController, st
     controller.setSoundVolume(value / 100);
   });
 
-  bindConfigToggleMenus(configSection, controller);
+  bindConfigToggleMenus(configSection, controller, state);
   bindTradeTerminalPrefsMenu(configSection, controller);
   bindChainFilterPrefsMenus(configSection, controller, state);
   bindSoundUploadStrip(configSection, state);
@@ -7306,10 +7317,11 @@ function bindBotSettingsCategoryNavigation(panel: HTMLElement, state: AppState) 
     if (title) {
       title.textContent = meta.title;
     }
+    activeBotSettingsCategory = category;
   };
 
   for (const [index, button] of buttons.entries()) {
-    button.tabIndex = index === 0 ? 0 : -1;
+    button.tabIndex = button.getAttribute('aria-selected') === 'true' ? 0 : -1;
     button.addEventListener('click', () => {
       const category = button.dataset.botSettingsNav as BotSettingsCategory | undefined;
       if (category) {
@@ -8109,7 +8121,7 @@ function bindSoundUploadStrip(section: HTMLElement, state: AppState) {
   });
 }
 
-function bindConfigToggleMenus(section: HTMLElement, controller: AppController) {
+function bindConfigToggleMenus(section: HTMLElement, controller: AppController, state: AppState) {
   const persistWrapDraft = (wrap: HTMLElement) => {
     if (wrap.dataset.configDirty !== 'true') {
       return;
@@ -8126,7 +8138,7 @@ function bindConfigToggleMenus(section: HTMLElement, controller: AppController) 
 
     wrap.dataset.configDirty = 'false';
     if (Object.keys(payload).length > 0) {
-      void controller.saveMonitoringConfig(payload);
+      void saveBotSettingsConfig(controller, state, payload);
     }
   };
 
@@ -8175,31 +8187,33 @@ function bindConfigToggleMenus(section: HTMLElement, controller: AppController) 
         wrap.dataset.configDirty = 'true';
         updateWrapSummary(wrap);
       } else {
-        void controller.saveMonitoringConfig({ [key]: isActive ? 'off' : 'on' });
+        void saveBotSettingsConfig(controller, state, { [key]: isActive ? 'off' : 'on' });
       }
     });
   });
 }
 
-async function submitLegacyConfig(section: HTMLElement, controller: AppController) {
-  const inputs = section.querySelectorAll<HTMLInputElement | HTMLSelectElement>('input[name], select[name]');
-  const payload: Record<string, number | string> = {};
+async function submitLegacyConfig(
+  input: HTMLInputElement | HTMLSelectElement,
+  controller: AppController,
+  state: AppState,
+) {
+  const key = input.name;
+  if (!key) return;
+  const value = input instanceof HTMLInputElement && (input.type === 'range' || input.type === 'number')
+    ? Number(input.value || '0')
+    : input.value;
+  await saveBotSettingsConfig(controller, state, { [key]: value });
+}
 
-  for (const input of inputs) {
-    const key = input.name;
-    if (!key) continue;
-    if (input instanceof HTMLSelectElement) {
-      payload[key] = input.value;
-      continue;
-    }
-    if (input.type === 'range' || input.type === 'number') {
-      payload[key] = Number(input.value || '0');
-      continue;
-    }
-    payload[key] = input.value;
-  }
-
-  await controller.saveMonitoringConfig(payload);
+async function saveBotSettingsConfig(
+  controller: AppController,
+  state: AppState,
+  configs: Record<string, number | string>,
+) {
+  botSettingsSaveError = null;
+  await controller.saveMonitoringConfig(configs);
+  botSettingsSaveError = state.ui.error;
 }
 
 function renderLegacyActions(state: AppState, controller: AppController) {

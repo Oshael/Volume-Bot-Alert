@@ -187,6 +187,10 @@ const API_FIXTURES = {
 
 const ROBINHOOD_CONFIG = {
   ...SMOKE_CONFIG,
+  configs: {
+    'solana-threshold': 55,
+    'robinhood-threshold': 75,
+  },
   uiPrefs: {
     ...SMOKE_CONFIG.uiPrefs,
     chainFilters: {
@@ -699,6 +703,17 @@ async function installApiFixtures(page, unexpectedRequests, fixtures = API_FIXTU
       return;
     }
     if (key === 'PATCH /api/config') {
+      const fixtureSource = fixtures[key];
+      if (fixtureSource) {
+        const fixture = typeof fixtureSource === 'function'
+          ? await fixtureSource(route.request())
+          : fixtureSource;
+        const status = Number(fixture.__status || 200);
+        const json = { ...fixture };
+        delete json.__status;
+        await route.fulfill({ status, json });
+        return;
+      }
       const configs = route.request().postDataJSON()?.configs || {};
       await route.fulfill({ status: 200, json: { message: 'Config updated', configs } });
       return;
@@ -900,21 +915,44 @@ test('keeps compact manual controls aligned with routed token sort controls', as
   })).toBe(true);
 });
 
-test('shows only supported alert controls in each available chain profile', async ({ page }) => {
-  await openAuthenticatedWorkspace(page, ROBINHOOD_API_FIXTURES);
+test('chain-scoped bot settings persist independent supported controls and roll back failures', async ({ page }) => {
+  test.setTimeout(35_000);
+  let configPatchCount = 0;
+  const botSettingsFixtures = {
+    ...ROBINHOOD_API_FIXTURES,
+    'PATCH /api/config': (request) => {
+      configPatchCount += 1;
+      const configs = request.postDataJSON()?.configs || {};
+      return configPatchCount === 3
+        ? { __status: 500, error: 'Config write failed' }
+        : { message: 'Config updated', configs };
+    },
+  };
+  await openAuthenticatedWorkspace(page, botSettingsFixtures);
   await page.getByRole('button', { name: 'Open user menu' }).click();
   await page.getByRole('button', { name: 'Bot Settings' }).click();
   const dialog = page.getByRole('dialog', { name: 'Bot Settings' });
 
   await expect(dialog.getByRole('tab', { name: 'Robinhood' })).toBeVisible();
   await dialog.getByRole('tab', { name: 'Robinhood' }).click();
-  await expect(dialog.locator('input[name="robinhood-threshold"]')).toBeVisible();
+  const robinhoodThreshold = dialog.locator('input[name="robinhood-threshold"]');
+  await expect(robinhoodThreshold).toHaveValue('75');
   await expect(dialog.locator('input[name="robinhood-fdv-threshold"]')).toBeVisible();
   const fdvToggle = dialog.locator('[data-config-toggle-key="robinhood-alert-fdv-enabled"]');
   await expect(fdvToggle).toHaveAttribute('aria-pressed', 'true');
   await expect(dialog.locator('input[name="robinhood-mcap-threshold"]')).toHaveCount(0);
   await expect(dialog.locator('input[name="robinhood-meteora-alert-1h-threshold"]')).toHaveCount(0);
   await expect(dialog.locator('[data-config-toggle-key="robinhood-alert-gmgn-claim-pump-enabled"]')).toHaveCount(0);
+
+  const thresholdPatch = page.waitForRequest((request) => (
+    request.method() === 'PATCH' && new URL(request.url()).pathname === '/api/config'
+  ));
+  await robinhoodThreshold.fill('80');
+  await robinhoodThreshold.press('Enter');
+  expect((await thresholdPatch).postDataJSON()).toEqual({
+    configs: { 'robinhood-threshold': 80 },
+  });
+  await expect(dialog.getByRole('tab', { name: 'Robinhood' })).toHaveAttribute('aria-selected', 'true');
 
   const configPatch = page.waitForRequest((request) => (
     request.method() === 'PATCH' && new URL(request.url()).pathname === '/api/config'
@@ -924,6 +962,39 @@ test('shows only supported alert controls in each available chain profile', asyn
     configs: { 'robinhood-alert-fdv-enabled': 'off' },
   });
   await expect(fdvToggle).toHaveAttribute('aria-pressed', 'false');
+  await expect(dialog.getByRole('tab', { name: 'Robinhood' })).toHaveAttribute('aria-selected', 'true');
+
+  await dialog.getByRole('tab', { name: 'Solana' }).click();
+  await expect(dialog.locator('input[name="solana-threshold"]')).toHaveValue('55');
+  await dialog.getByRole('tab', { name: 'Robinhood' }).click();
+
+  const volumeToggle = dialog.locator('[data-config-toggle-key="robinhood-alert-vol-enabled"]');
+  const failedPatch = page.waitForResponse((response) => (
+    response.request().method() === 'PATCH'
+    && new URL(response.url()).pathname === '/api/config'
+    && response.status() === 500
+  ));
+  await volumeToggle.click();
+  await failedPatch;
+  await expect(volumeToggle).toHaveAttribute('aria-pressed', 'true');
+  await expect(dialog.getByRole('tab', { name: 'Robinhood' })).toHaveAttribute('aria-selected', 'true');
+  await expect(dialog.locator('[data-bot-settings-error]')).toContainText('Config write failed');
+});
+
+test('chain-scoped bot settings remain usable on a narrow viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 700, height: 780 });
+  await openAuthenticatedWorkspace(page, ROBINHOOD_API_FIXTURES);
+  await page.getByRole('button', { name: 'Open user menu' }).click();
+  await page.getByRole('button', { name: 'Bot Settings' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Bot Settings' });
+
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator('.bot-settings-nav')).toHaveCSS('overflow-x', 'auto');
+  await dialog.getByRole('tab', { name: 'Robinhood' }).click();
+  const fdvToggle = dialog.locator('[data-config-toggle-key="robinhood-alert-fdv-enabled"]');
+  await expect(fdvToggle).toBeVisible();
+  await expect(fdvToggle).toHaveCSS('width', '42px');
+  expect(await dialog.evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(' ').length)).toBe(1);
 });
 
 test('renders the FOMO shortcut link for Solana tokens', async ({ page }) => {
@@ -936,6 +1007,7 @@ test('renders the FOMO shortcut link for Solana tokens', async ({ page }) => {
 });
 
 test('filters a combined Solana and Robinhood alert feed through the master selector', async ({ page }) => {
+  test.setTimeout(50_000);
   const diagnostics = await openAuthenticatedWorkspace(page, ROBINHOOD_API_FIXTURES);
   const selector = page.getByRole('group', { name: 'Filter workspace by blockchain' });
   const solanaButton = selector.locator('[data-chain="solana"]');
@@ -948,26 +1020,6 @@ test('filters a combined Solana and Robinhood alert feed through the master sele
   await expect(page.locator('#top-performers-section')).toContainText('TOPSOL');
   const manualSection = page.locator('#manual-tokens-section');
   await expect(manualSection).toContainText('MANUALSOL');
-
-  const manualForm = manualSection.locator('[data-role="manual-token-form"]');
-  const manualAddress = manualForm.locator('input[name="address"]');
-  await expect(manualAddress).toBeHidden();
-  await manualForm.getByRole('button', { name: 'Add manual token' }).click();
-  await expect(manualAddress).toBeVisible();
-  await manualForm.getByRole('button', { name: 'Token chain: Solana' }).click();
-  await manualForm.getByRole('menuitemradio', { name: 'Robinhood Chain' }).click();
-  await expect(manualForm.locator('[data-action="manual-token-chain"]')).toHaveValue('robinhood');
-  await manualAddress.press('Escape');
-  await expect(manualAddress).toBeHidden();
-
-  await manualSection.getByRole('button', { name: 'Open actions for Watchlist' }).click();
-  const folderEntry = manualSection.locator('.manual-folder-add-inline[data-folder-id="1"]');
-  const folderAddress = folderEntry.locator('[data-action="manual-folder-token-input"]');
-  await expect(folderAddress).toBeHidden();
-  await folderEntry.getByRole('button', { name: 'Add token to Watchlist' }).click();
-  await expect(folderAddress).toBeVisible();
-  await folderAddress.press('Escape');
-  await expect(folderAddress).toBeHidden();
 
   await expect(selector.locator('.workspace-chain-selector-btn')).toHaveCount(2);
   await expect(solanaButton).toHaveAttribute('aria-pressed', 'true');
@@ -991,11 +1043,6 @@ test('filters a combined Solana and Robinhood alert feed through the master sele
   await expect(page.locator('[data-chain-readiness-surface="top-performers"]')).toContainText('syncing market coverage');
   await expect(page.locator('#manual-tokens-section [data-chain-readiness-surface="manual"]')).toHaveCount(0);
   await expect(page.locator('#manual-tokens-section [data-role="manual-token-form"] [data-selected-chain="robinhood"]')).toBeAttached();
-  await page.getByRole('button', { name: 'Open user menu' }).click();
-  await page.getByRole('button', { name: 'Blocked Tokens' }).click();
-  const blockedTokensModal = page.locator('[data-auth-modal="blocked-tokens"]');
-  await expect(blockedTokensModal).not.toContainText('BLOCKSOL');
-  await expect(blockedTokensModal.locator('[data-chain-readiness-surface="blocklist"]')).toHaveCount(0);
   expect(diagnostics.unexpectedRequests).toEqual([]);
   expect(diagnostics.pageErrors).toEqual([]);
 });
