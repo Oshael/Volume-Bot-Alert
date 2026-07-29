@@ -187,6 +187,17 @@ describe('Robinhood backfill finalizer', () => {
     assert.equal(result.status, 'caught_up');
     assert.equal(result.advancedBlocks, '100');
     assert.equal(result.frontiers.marketEnriched.nextBlock, '200');
+    const candidateQuery = queries.find(({ sql }) => (
+      String(sql).includes('COUNT(staging.transaction_hash)')
+    ));
+    assert.ok(candidateQuery);
+    assert.match(candidateQuery.sql, /WITH candidate_ranges AS MATERIALIZED/);
+    assert.match(candidateQuery.sql, /LIMIT \$3/);
+    assert.match(candidateQuery.sql, /CROSS JOIN LATERAL/);
+    assert.ok(
+      candidateQuery.sql.indexOf('LIMIT $3')
+        < candidateQuery.sql.indexOf('CROSS JOIN LATERAL')
+    );
     assert.deepEqual(
       queries.filter(({ sql }) => sql.startsWith('SET LOCAL '))
         .map(({ sql }) => sql),

@@ -228,22 +228,33 @@ function createRobinhoodBackfillFinalizer(options = {}) {
       const market = frontiers.get('market_scan');
       if (!market) throw new Error('market_scan watermark is missing');
       const candidates = await client.query(
-        `SELECT ranges.*,
-                COUNT(staging.transaction_hash)::int AS staging_count,
-                COUNT(staging.transaction_hash) FILTER (
-                  WHERE staging.enrichment_status IN ('completed', 'rejected')
-                )::int AS terminal_count,
-                COUNT(staging.transaction_hash) FILTER (
-                  WHERE staging.enrichment_status = 'blocked'
-                )::int AS blocked_count
-         FROM robinhood_backfill_ranges ranges
-         LEFT JOIN robinhood_market_log_staging staging
-           ON staging.chain = ranges.chain AND staging.range_id = ranges.id
-         WHERE ranges.chain = $1 AND ranges.stream = 'market'
-           AND ranges.to_block >= $2
-         GROUP BY ranges.id
+        `WITH candidate_ranges AS MATERIALIZED (
+           SELECT *
+           FROM robinhood_backfill_ranges
+           WHERE chain = $1 AND stream = 'market'
+             AND to_block >= $2
+           ORDER BY from_block, to_block
+           LIMIT $3
+         )
+         SELECT ranges.*,
+                counts.staging_count,
+                counts.terminal_count,
+                counts.blocked_count
+         FROM candidate_ranges ranges
+         CROSS JOIN LATERAL (
+           SELECT COUNT(staging.transaction_hash)::int AS staging_count,
+                  COUNT(staging.transaction_hash) FILTER (
+                    WHERE staging.enrichment_status IN ('completed', 'rejected')
+                  )::int AS terminal_count,
+                  COUNT(staging.transaction_hash) FILTER (
+                    WHERE staging.enrichment_status = 'blocked'
+                  )::int AS blocked_count
+           FROM robinhood_market_log_staging staging
+           WHERE staging.chain = ranges.chain
+             AND staging.range_id = ranges.id
+         ) counts
          ORDER BY ranges.from_block, ranges.to_block
-         LIMIT $3`,
+        `,
         [CHAIN, enriched.nextBlock, limit]
       );
       const plan = planAdvancement({
