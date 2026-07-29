@@ -1076,6 +1076,19 @@ module.exports = {
     max: parseInt(process.env.CATALOG_READ_RATE_LIMIT_MAX_REQUESTS || '120', 10),
   },
 
+  xProfileRateLimit: {
+    windowMs: parseInt(process.env.X_PROFILE_RATE_LIMIT_WINDOW_MS || '900000', 10),
+    max: parseInt(process.env.X_PROFILE_RATE_LIMIT_MAX_REQUESTS || '120', 10),
+  },
+
+  xProfileCard: {
+    baseUrl: process.env.X_PROFILE_BASE_URL || 'https://api.fxtwitter.com',
+    ttlMs: parseIntegerInRange(process.env.X_PROFILE_CACHE_TTL_MS, 3600000, 60000, 86400000),
+    negativeTtlMs: parseIntegerInRange(process.env.X_PROFILE_NEGATIVE_CACHE_TTL_MS, 21600000, 60000, 86400000),
+    timeoutMs: parseIntegerInRange(process.env.X_PROFILE_TIMEOUT_MS, 6000, 1000, 30000),
+    maxEntries: parseIntegerInRange(process.env.X_PROFILE_CACHE_MAX_ENTRIES, 2000, 50, 20000),
+  },
+
   authRateLimit: {
     windowMs: parseInt(process.env.AUTH_RATE_LIMIT_WINDOW_MS || '900000', 10),
     max: parseInt(process.env.AUTH_RATE_LIMIT_MAX_REQUESTS || '10', 10),

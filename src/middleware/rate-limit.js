@@ -153,6 +153,12 @@ const catalogReadLimiter = buildLimiter({
   keyGenerator: userScopedKeyGenerator,
 });
 
+const xProfileLimiter = buildLimiter({
+  ...config.xProfileRateLimit,
+  name: 'x-profile',
+  keyGenerator: userScopedKeyGenerator,
+});
+
 /**
  * Strict rate limiter for auth endpoints (login, register).
  * Much tighter limits to prevent brute force.
@@ -192,4 +198,5 @@ module.exports = {
   pumpfunMetaLimiter,
   catalogWriteLimiter,
   catalogReadLimiter,
+  xProfileLimiter,
 };

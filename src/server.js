@@ -4,7 +4,7 @@ const helmet = require('helmet');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const config = require('../config');
-const { defaultApiLimiter, healthLimiter } = require('./middleware/rate-limit');
+const { defaultApiLimiter, healthLimiter, xProfileLimiter } = require('./middleware/rate-limit');
 const { isAllowedOrigin, trustProxySetting } = require('./utils/request-security');
 const { getSecurityEventStats } = require('./utils/security-events');
 const { assertRuntimeSchema } = require('./utils/runtime-schema');
@@ -30,6 +30,7 @@ const bootstrapRoutes = require('./routes/bootstrap');
 const catalogRoutes = require('./routes/catalog');
 const dashboardRoutes = require('./routes/dashboard');
 const tokenGateRoutes = require('./routes/token-gate');
+const xProfileRoutes = require('./routes/x-profile');
 
 // Services
 const socketHub = require('./services/socket-hub');
@@ -206,6 +207,7 @@ app.use('/api/config', defaultApiLimiter, require('./routes/config'));
 app.use('/api/bootstrap', defaultApiLimiter, bootstrapRoutes);
 app.use('/api/catalog', catalogRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/x-profile', xProfileLimiter, xProfileRoutes);
 
 // ---- WebSocket Hub Status (admin only) ----
 const { authenticate, requireAdmin } = require('./middleware/auth');
