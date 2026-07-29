@@ -4,6 +4,7 @@ const {
   createRobinhoodBackfillAggregationRuntime,
   createRobinhoodBackfillEnrichmentRuntime,
   createRobinhoodBackfillFinalizerRuntime,
+  createRobinhoodBackfillWatchdogRuntime,
 } = require('../src/services/robinhood-backfill-runtime');
 
 function scheduler() {
@@ -182,5 +183,34 @@ describe('Robinhood backfill operational runtime', () => {
     assert.equal(runtime.getStatus().running, false);
     assert.equal(runtime.getStatus().inFlight, false);
     assert.equal(clock.pending.length, 0);
+  });
+
+  it('runs the watchdog independently with a bounded stale-query threshold', async () => {
+    const clock = scheduler();
+    const calls = [];
+    const runtime = createRobinhoodBackfillWatchdogRuntime({
+      ...clock,
+      logger: { error() {} },
+      watchdogFactory: () => ({
+        async runOnce(options) {
+          calls.push(options);
+          return { status: 'healthy' };
+        },
+      }),
+    });
+
+    assert.equal(runtime.start({
+      enabled: true,
+      intervalMs: 5000,
+      staleQueryThresholdMs: 25_000,
+    }), true);
+    await clock.pending.shift().callback();
+
+    assert.deepEqual(calls, [{ staleQueryThresholdMs: 25_000 }]);
+    assert.equal(runtime.getStatus().lastResult.status, 'healthy');
+    assert.equal(clock.pending.length, 1);
+
+    await runtime.stop();
+    assert.equal(runtime.getStatus().running, false);
   });
 });

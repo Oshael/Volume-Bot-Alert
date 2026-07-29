@@ -79,6 +79,7 @@ const ROBINHOOD_BACKFILL_DISCOVERY_LEASE_KEY = 'robinhood-backfill-discovery-sca
 const ROBINHOOD_BACKFILL_SCANNER_LEASE_KEY = 'robinhood-backfill-market-scanner';
 const ROBINHOOD_BACKFILL_ENRICHMENT_LEASE_KEY = 'robinhood-backfill-enrichment-worker';
 const ROBINHOOD_BACKFILL_FINALIZER_LEASE_KEY = 'robinhood-backfill-finalizer-worker';
+const ROBINHOOD_BACKFILL_WATCHDOG_LEASE_KEY = 'robinhood-backfill-watchdog-worker';
 const ROBINHOOD_BACKFILL_AGGREGATION_LEASE_KEY = 'robinhood-backfill-aggregation-worker';
 const ROBINHOOD_CATALOG_STAGING_LEASE_KEY = 'robinhood-catalog-staging-worker';
 const ROBINHOOD_CATALOG_PROJECTION_LEASE_KEY = 'robinhood-catalog-projection-worker';
@@ -470,6 +471,21 @@ function startWorkerSet() {
         }
       );
     }
+    if (config.robinhoodBackfillWatchdogWorker.enabled) {
+      startLockedWorker(
+        robinhoodBackfillGroup,
+        ROBINHOOD_BACKFILL_WATCHDOG_LEASE_KEY,
+        'Robinhood backfill watchdog worker',
+        () => robinhoodBackfillRuntime.watchdog.start(
+          config.robinhoodBackfillWatchdogWorker
+        ),
+        {
+          metadataProvider: () => ({
+            telemetry: robinhoodBackfillRuntime.watchdog.getStatus(),
+          }),
+        }
+      );
+    }
     if (config.robinhoodBackfillAggregationWorker.enabled) {
       startLockedWorker(
         robinhoodBackfillGroup,
@@ -726,6 +742,7 @@ async function shutdownGracefully(signal = 'SIGTERM') {
       robinhoodBackfillMarketScanner.stop(),
       robinhoodBackfillRuntime.enrichment.stop(),
       robinhoodBackfillRuntime.finalizer.stop(),
+      robinhoodBackfillRuntime.watchdog.stop(),
       robinhoodBackfillRuntime.aggregation.stop(),
       robinhoodCatalogStagingWorker.stop(),
       robinhoodCatalogProjectionWorker.stop(),

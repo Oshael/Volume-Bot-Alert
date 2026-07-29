@@ -181,9 +181,15 @@ function createRobinhoodBackfillFinalizer(options = {}) {
 
   async function runOnce(input = {}) {
     const limit = boundedInteger(input.limit, 'limit', 100, 1, 1000);
+    const statementTimeoutMs = boundedInteger(
+      input.statementTimeoutMs, 'statementTimeoutMs', 15_000, 1000, 300_000
+    );
+    const lockTimeoutMs = boundedInteger(input.lockTimeoutMs, 'lockTimeoutMs', 5000, 100, 60_000);
     const client = await database.getClient();
     try {
       await client.query('BEGIN');
+      await client.query(`SET LOCAL statement_timeout = '${statementTimeoutMs}ms'`);
+      await client.query(`SET LOCAL lock_timeout = '${lockTimeoutMs}ms'`);
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [LOCK_KEY]);
       const loaded = await client.query(
         `SELECT * FROM robinhood_backfill_watermarks

@@ -146,6 +146,7 @@ describe('Robinhood backfill finalizer', () => {
       async query(sql, params) {
         queries.push({ sql: String(sql), params });
         if (sql === 'BEGIN' || sql === 'COMMIT') return { rows: [], rowCount: 0 };
+        if (String(sql).startsWith('SET LOCAL ')) return { rows: [], rowCount: 0 };
         if (String(sql).includes('pg_advisory_xact_lock')) return { rows: [{}], rowCount: 1 };
         if (String(sql).includes('FOR UPDATE')) return { rows, rowCount: rows.length };
         if (String(sql).includes('MIN(from_block)')) {
@@ -178,11 +179,22 @@ describe('Robinhood backfill finalizer', () => {
       database: { getClient: async () => client },
       now: () => Date.parse('2026-07-24T12:00:00Z'),
     });
-    const result = await finalizer.runOnce();
+    const result = await finalizer.runOnce({
+      statementTimeoutMs: 12_345,
+      lockTimeoutMs: 2345,
+    });
 
     assert.equal(result.status, 'caught_up');
     assert.equal(result.advancedBlocks, '100');
     assert.equal(result.frontiers.marketEnriched.nextBlock, '200');
+    assert.deepEqual(
+      queries.filter(({ sql }) => sql.startsWith('SET LOCAL '))
+        .map(({ sql }) => sql),
+      [
+        "SET LOCAL statement_timeout = '12345ms'",
+        "SET LOCAL lock_timeout = '2345ms'",
+      ]
+    );
     assert.deepEqual(
       queries.filter(({ sql }) => ['BEGIN', 'COMMIT', 'RELEASE'].includes(sql))
         .map(({ sql }) => sql),

@@ -286,6 +286,14 @@ describe('runtime worker groups config', () => {
         intervalMs: 250,
         maxErrorBackoffMs: 30_000,
         limit: 1,
+        statementTimeoutMs: 15_000,
+        lockTimeoutMs: 5000,
+      });
+      assert.deepEqual(config.robinhoodBackfillWatchdogWorker, {
+        enabled: true,
+        intervalMs: 5000,
+        maxErrorBackoffMs: 30_000,
+        staleQueryThresholdMs: 20_000,
       });
     });
   });

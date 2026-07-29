@@ -13,6 +13,9 @@ const {
   createRobinhoodBackfillFinalizer,
 } = require('./robinhood-backfill-finalizer');
 const {
+  createRobinhoodBackfillWatchdog,
+} = require('./robinhood-backfill-watchdog');
+const {
   createRobinhoodBackfillAggregationWorker,
 } = require('./robinhood-backfill-aggregation-worker');
 const {
@@ -275,11 +278,37 @@ function createRobinhoodBackfillFinalizerRuntime(deps = {}) {
     normalize: (input) => ({
       ...normalizeLoopOptions(input),
       limit: boundedInteger(input.limit, 100, 1, 1000),
+      statementTimeoutMs: boundedInteger(input.statementTimeoutMs, 15_000, 1000, 300_000),
+      lockTimeoutMs: boundedInteger(input.lockTimeoutMs, 5000, 100, 60_000),
     }),
     prepare: () => {
       finalizer = (deps.finalizerFactory || createRobinhoodBackfillFinalizer)();
     },
-    execute: (options) => finalizer.runOnce({ limit: options.limit }),
+    execute: (options) => finalizer.runOnce({
+      limit: options.limit,
+      statementTimeoutMs: options.statementTimeoutMs,
+      lockTimeoutMs: options.lockTimeoutMs,
+    }),
+  });
+}
+
+function createRobinhoodBackfillWatchdogRuntime(deps = {}) {
+  let watchdog = null;
+  return createLoopRuntime({
+    ...deps,
+    label: 'RobinhoodBackfillWatchdog',
+    normalize: (input) => ({
+      ...normalizeLoopOptions(input),
+      staleQueryThresholdMs: boundedInteger(
+        input.staleQueryThresholdMs, 20_000, 5000, 300_000
+      ),
+    }),
+    prepare: () => {
+      watchdog = (deps.watchdogFactory || createRobinhoodBackfillWatchdog)();
+    },
+    execute: (options) => watchdog.runOnce({
+      staleQueryThresholdMs: options.staleQueryThresholdMs,
+    }),
   });
 }
 
@@ -306,15 +335,18 @@ function createRobinhoodBackfillAggregationRuntime(deps = {}) {
 
 const enrichment = createRobinhoodBackfillEnrichmentRuntime();
 const finalizer = createRobinhoodBackfillFinalizerRuntime();
+const watchdog = createRobinhoodBackfillWatchdogRuntime();
 const aggregation = createRobinhoodBackfillAggregationRuntime();
 
 module.exports = {
   aggregation,
   enrichment,
   finalizer,
+  watchdog,
   createRobinhoodBackfillAggregationRuntime,
   createRobinhoodBackfillEnrichmentRuntime,
   createRobinhoodBackfillFinalizerRuntime,
+  createRobinhoodBackfillWatchdogRuntime,
   __private: {
     createEnrichmentRpcRouter,
     normalizeEnrichmentOptions,

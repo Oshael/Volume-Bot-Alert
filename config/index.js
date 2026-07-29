@@ -939,6 +939,34 @@ module.exports = {
     limit: parseIntegerInRange(
       process.env.ROBINHOOD_BACKFILL_FINALIZER_RANGE_LIMIT, 100, 1, 1000
     ),
+    statementTimeoutMs: parseIntegerInRange(
+      process.env.ROBINHOOD_BACKFILL_FINALIZER_STATEMENT_TIMEOUT_MS,
+      15_000,
+      1000,
+      300_000
+    ),
+    lockTimeoutMs: parseIntegerInRange(
+      process.env.ROBINHOOD_BACKFILL_FINALIZER_LOCK_TIMEOUT_MS, 5000, 100, 60_000
+    ),
+  },
+
+  robinhoodBackfillWatchdogWorker: {
+    enabled: parseBoolean(
+      process.env.ROBINHOOD_BACKFILL_WATCHDOG_ENABLED,
+      parseBoolean(process.env.ROBINHOOD_BACKFILL_FINALIZER_ENABLED, false)
+    ),
+    intervalMs: parseIntegerInRange(
+      process.env.ROBINHOOD_BACKFILL_WATCHDOG_INTERVAL_MS, 5000, 1000, 60_000
+    ),
+    maxErrorBackoffMs: parseIntegerInRange(
+      process.env.ROBINHOOD_BACKFILL_WATCHDOG_MAX_ERROR_BACKOFF_MS,
+      30_000,
+      1000,
+      300_000
+    ),
+    staleQueryThresholdMs: parseIntegerInRange(
+      process.env.ROBINHOOD_BACKFILL_WATCHDOG_STALE_QUERY_MS, 20_000, 5000, 300_000
+    ),
   },
 
   robinhoodBackfillAggregationWorker: {
