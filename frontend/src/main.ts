@@ -6,6 +6,7 @@ import { updateLivePresence } from './services/socket/client';
 import { isChainSelectedForSurface, isProfileAuthPanel, type AppState } from './state/app-state';
 import { createAppController, type AppRenderRegion } from './state/app-controller';
 import { renderAppShell } from './ui/app-shell';
+import { bindXProfileCards } from './ui/x-profile-card';
 import {
   installRuntimePerfDebugConsole,
   isRuntimePerfDebugEnabled,
@@ -875,6 +876,8 @@ function handleAuthPanelRender(
   clearPendingRenderState();
   return true;
 }
+
+bindXProfileCards();
 
 controller.subscribe((state, dirtyRegions) => {
   const currentRouteKey = getCurrentRouteKey();
