@@ -107,7 +107,44 @@ describe('CoinGecko selective chart writes', () => {
     assert.equal(impact.candidateCandles, 2);
     assert.equal(impact.matchingExistingRows, 1);
     assert.equal(impact.wouldWrite, 1);
+    assert.deepEqual(impact.runs, [{
+      from: candles[1].bucketTs,
+      to: candles[1].bucketTs,
+      buckets: 1,
+    }]);
     assert.equal(fake.calls.some((call) => /INSERT|DELETE/.test(call.sql)), false);
+  });
+
+  it('allows protected recent 1m ranges only for insert-only missing fills', () => {
+    const plan = {
+      token: { address: TOKEN_ADDRESS },
+      request: { granularityMinutes: 1 },
+      replaceImpact: {
+        range: {
+          firstBucketAt: '2026-07-30T12:00:00.000Z',
+          latestBucketAt: '2026-07-30T12:01:00.000Z',
+        },
+      },
+      readiness: {
+        canReplace: false,
+        blockers: ['protected_recent_1m_range'],
+      },
+    };
+    const input = {
+      db: { getClient: async () => ({}) },
+      plan,
+      buckets: [{ bucketTs: '2026-07-30T12:00:00.000Z' }],
+      now: new Date('2026-07-30T13:00:00.000Z'),
+    };
+
+    assert.doesNotThrow(() => safeWrite.__private.validateOptions({
+      ...input,
+      mode: 'fill-missing',
+    }));
+    assert.throws(
+      () => safeWrite.__private.validateOptions({ ...input, mode: 'replace-bad-buckets' }),
+      /protected_recent_1m_range/
+    );
   });
 
   it('fills only missing 5m rows and rebuilds aggregates without touching 1m', async () => {

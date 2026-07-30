@@ -569,6 +569,27 @@ central reduz a fragmentação, mas não recompõe automaticamente períodos que
 nenhum worker coletou. Backfill de lacunas deve ser uma ação explícita e
 validada por fonte.
 
+### 12.1 Recovery recente de candles via CoinGecko
+
+`npm run market-buckets:recover-coingecko` audita as últimas 12 horas completas
+de candles de 1 minuto dos tokens Solana elegíveis e ativos, excluindo
+prioridade `dormant` e tokens bloqueados. O relatório segue market cap
+decrescente e mostra exatamente os intervalos ausentes por token.
+
+O comando é dry-run por padrão. `--confirm-fill` imprime primeiro o relatório
+completo e depois insere somente timestamps ausentes, com backup transacional e
+reconstrução dos agregados dependentes. Buckets de 1 minuto já existentes nunca
+são substituídos. A conversão de preço para market cap usa o par
+`last_mcap / last_price` do mesmo snapshot de catálogo.
+
+Esse recovery deve rodar na VPS2, onde está o PostgreSQL de produção, com a
+chave CoinGecko disponível apenas no backend:
+
+```bash
+npm run market-buckets:recover-coingecko
+npm run market-buckets:recover-coingecko -- --confirm-fill
+```
+
 ## 13. Robinhood Chain
 
 ### 13.1 Objetivo

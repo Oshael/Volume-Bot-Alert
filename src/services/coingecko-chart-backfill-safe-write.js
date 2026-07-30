@@ -16,25 +16,31 @@ function normalizeString(value) {
 function validateOptions(options) {
   if (!options.db?.getClient) throw new Error('db.getClient is required');
   const plan = options.plan;
+  const mode = normalizeString(options.mode);
   const tokenAddress = normalizeString(plan?.token?.address);
   const buckets = Array.isArray(options.buckets) ? options.buckets : [];
   if (!tokenAddress) throw new Error('Plan token address is required');
-  if (!plan?.readiness?.canReplace) {
-    throw new Error(`Plan is not ready: ${(plan?.readiness?.blockers || []).join(', ')}`);
+  const blockers = (plan?.readiness?.blockers || []).filter((blocker) => (
+    mode !== 'fill-missing' || blocker !== 'protected_recent_1m_range'
+  ));
+  if (blockers.length) {
+    throw new Error(`Plan is not ready: ${blockers.join(', ')}`);
   }
   if (!buckets.length) throw new Error('No CoinGecko buckets available');
   const granularityMinutes = writer.__private.getTargetGranularityMinutes(plan);
   const range = writer.__private.getReplaceRange(plan);
-  writer.__private.assertOneMinuteRangeIsNotProtected(
-    range,
-    granularityMinutes,
-    options.now || new Date()
-  );
+  if (mode !== 'fill-missing') {
+    writer.__private.assertOneMinuteRangeIsNotProtected(
+      range,
+      granularityMinutes,
+      options.now || new Date()
+    );
+  }
   return { plan, tokenAddress, buckets, granularityMinutes, range };
 }
 
 async function executeFillMissing(options = {}) {
-  const context = validateOptions(options);
+  const context = validateOptions({ ...options, mode: 'fill-missing' });
   const client = await options.db.getClient();
   try {
     await client.query('BEGIN');
@@ -161,11 +167,35 @@ async function inspectSelectiveWrite(options = {}) {
       candidateCandles: context.buckets.length,
       matchingExistingRows: existingTimestamps.length,
       wouldWrite: matched.length,
+      runs: summarizeTimestampRuns(matched, context.granularityMinutes),
       criteria: options.mode === 'replace-bad-buckets' ? BAD_BUCKET_CRITERIA : ['bucket_missing'],
     };
   } finally {
     client.release();
   }
+}
+
+function summarizeTimestampRuns(buckets, granularityMinutes) {
+  const intervalMs = granularityMinutes * 60 * 1000;
+  const timestamps = [...new Set((buckets || [])
+    .map((bucket) => Date.parse(bucket.bucketTs))
+    .filter(Number.isFinite))]
+    .sort((left, right) => left - right);
+  const runs = [];
+  for (const timestamp of timestamps) {
+    const previous = runs.at(-1);
+    if (previous && timestamp === previous.toMs + intervalMs) {
+      previous.toMs = timestamp;
+      previous.buckets += 1;
+    } else {
+      runs.push({ fromMs: timestamp, toMs: timestamp, buckets: 1 });
+    }
+  }
+  return runs.map((run) => ({
+    from: new Date(run.fromMs).toISOString(),
+    to: new Date(run.toMs).toISOString(),
+    buckets: run.buckets,
+  }));
 }
 
 async function createSelectiveBackup(client, context, options, operationMode) {
@@ -255,6 +285,7 @@ module.exports = {
     buildBadBucketWhereSql,
     listBadBucketTimestamps,
     listExistingBucketTimestamps,
+    summarizeTimestampRuns,
     validateOptions,
   },
 };

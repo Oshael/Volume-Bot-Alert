@@ -61,6 +61,7 @@
     "robinhood:aggregates:explain": "node src/utils/explain-robinhood-market-queries.js",
     "robinhood:market-replay-reset": "node src/utils/reset-robinhood-market-replay.js",
     "market-buckets:backfill": "node src/utils/backfill-market-buckets-1m.js",
+    "market-buckets:recover-coingecko": "node src/utils/recover-coingecko-active-gaps.js",
     "market-buckets-agg:backfill": "node src/utils/backfill-market-buckets-agg.js",
     "market-volume-buckets:backfill": "node src/utils/backfill-market-volume-buckets-1m.js",
     "market-snapshots:drop": "node src/utils/drop-market-snapshots.js --confirm-drop",
