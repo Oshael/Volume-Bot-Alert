@@ -41,11 +41,12 @@ describe('CoinGecko active-token gap recovery', () => {
     assert.deepEqual(rows, [TOKEN_A]);
     assert.match(calls[0].sql, /tc\.chain = 'solana'/);
     assert.match(calls[0].sql, /tc\.eligible_for_monitoring = TRUE/);
+    assert.match(calls[0].sql, /COALESCE\(tc\.last_mcap, 0\) >= \$1::numeric/);
     assert.match(calls[0].sql, /tc\.is_active_monitor_candidate = TRUE/);
     assert.match(calls[0].sql, /tc\.monitor_priority IN \('high', 'normal', 'low'\)/);
     assert.match(calls[0].sql, /NOT EXISTS[\s\S]*admin_blocked_tokens/);
     assert.match(calls[0].sql, /ORDER BY tc\.last_mcap DESC NULLS LAST/);
-    assert.deepEqual(calls[0].params, [10]);
+    assert.deepEqual(calls[0].params, [recovery.MIN_MARKET_CAP, 10]);
   });
 
   it('anchors market-cap conversion to the matching catalog price', () => {
@@ -53,7 +54,7 @@ describe('CoinGecko active-token gap recovery', () => {
     assert.equal(recovery.resolveMcapMultiplier({ last_mcap: 100, last_price: null }), null);
   });
 
-  it('prints the complete audit before filling only tokens with missing buckets', async () => {
+  it('fills each token right after auditing it, before touching the next token', async () => {
     const events = [];
     const preparedByAddress = new Map([
       [TOKEN_A.address, {
@@ -83,10 +84,13 @@ describe('CoinGecko active-token gap recovery', () => {
         db: {},
         now: () => new Date('2026-07-30T21:51:35.000Z'),
         listActiveTokens: async () => [TOKEN_A, TOKEN_B],
-        prepareToken: async (token) => preparedByAddress.get(token.address),
+        prepareToken: async (token) => {
+          events.push(`fetch:${token.symbol}`);
+          return preparedByAddress.get(token.address);
+        },
         safeWrite: {
           executeFillMissing: async ({ plan }) => {
-            events.push(`write:${plan.token.address}`);
+            events.push(`write:${plan.token.address === TOKEN_A.address ? 'BIG' : 'SMALL'}`);
             return { inserted: 1 };
           },
         },
@@ -94,16 +98,82 @@ describe('CoinGecko active-token gap recovery', () => {
         logger: {
           log: (message) => {
             const payload = JSON.parse(message);
-            events.push(payload.report ? 'report' : 'restitution');
+            if (payload.token) events.push(`log:${payload.token.status}`);
+            else events.push(payload.report ? 'report' : 'restitution');
           },
         },
       }
     );
 
-    assert.deepEqual(events, ['report', `write:${TOKEN_A.address}`, 'restitution']);
+    assert.deepEqual(events, [
+      'fetch:BIG',
+      'write:BIG',
+      'log:filled',
+      'fetch:SMALL',
+      'log:complete',
+      'report',
+      'restitution',
+    ]);
     assert.equal(result.report.tokenCount, 2);
     assert.equal(result.report.missingBuckets, 1);
     assert.equal(result.restitution.insertedBuckets, 1);
     assert.equal(result.restitution.filledTokens, 1);
+  });
+
+  it('never writes without --confirm-fill', async () => {
+    const result = await recovery.runRecovery(
+      { confirmFill: false, delayMs: 0 },
+      {
+        db: {},
+        now: () => new Date('2026-07-30T21:51:35.000Z'),
+        listActiveTokens: async () => [TOKEN_A],
+        prepareToken: async () => ({
+          plan: { token: { address: TOKEN_A.address } },
+          buckets: [{ bucketTs: '2026-07-30T20:00:00.000Z' }],
+          report: { address: TOKEN_A.address, missingBuckets: 1, status: 'ready' },
+        }),
+        safeWrite: {
+          executeFillMissing: async () => {
+            throw new Error('dry-run must not write');
+          },
+        },
+        sleep: async () => {},
+        logger: { log: () => {} },
+      }
+    );
+
+    assert.equal(result.restitution, null);
+    assert.equal(result.report.missingBuckets, 1);
+  });
+
+  it('keeps recovering later tokens after one token fails to write', async () => {
+    const written = [];
+    const result = await recovery.runRecovery(
+      { confirmFill: true, delayMs: 0 },
+      {
+        db: {},
+        now: () => new Date('2026-07-30T21:51:35.000Z'),
+        listActiveTokens: async () => [TOKEN_A, TOKEN_B],
+        prepareToken: async (token) => ({
+          plan: { token: { address: token.address } },
+          buckets: [{ bucketTs: '2026-07-30T20:00:00.000Z' }],
+          report: { address: token.address, missingBuckets: 1, status: 'ready' },
+        }),
+        safeWrite: {
+          executeFillMissing: async ({ plan }) => {
+            if (plan.token.address === TOKEN_A.address) throw new Error('deadlock');
+            written.push(plan.token.address);
+            return { inserted: 3 };
+          },
+        },
+        sleep: async () => {},
+        logger: { log: () => {} },
+      }
+    );
+
+    assert.deepEqual(written, [TOKEN_B.address]);
+    assert.equal(result.restitution.failedTokens, 1);
+    assert.equal(result.restitution.filledTokens, 1);
+    assert.equal(result.restitution.insertedBuckets, 3);
   });
 });

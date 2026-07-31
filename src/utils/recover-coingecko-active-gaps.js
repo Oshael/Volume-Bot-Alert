@@ -11,6 +11,8 @@ const safeWrite = require('../services/coingecko-chart-backfill-safe-write');
 const LOOKBACK_HOURS = 12;
 const MINUTE_MS = 60 * 1000;
 const DEFAULT_TOKEN_DELAY_MS = 800;
+// Same floor the dashboard uses to decide which tokens count as monitored.
+const MIN_MARKET_CAP = 30000;
 
 function parseArgs(argv = process.argv.slice(2)) {
   const options = {
@@ -42,12 +44,13 @@ function usage() {
     'Usage:',
     '  node src/utils/recover-coingecko-active-gaps.js [--confirm-fill] [options]',
     '',
-    'Audits the last 12 completed hours of 1m CoinGecko candles for every active,',
-    'eligible, non-dormant Solana token in descending market-cap order.',
+    'Audits the last 12 completed hours of 1m CoinGecko candles for every monitored',
+    'Solana token in descending market-cap order. Monitored means eligible for',
+    `monitoring with market cap >= ${MIN_MARKET_CAP}, excluding dormant and blocked.`,
     'Without --confirm-fill it only prints the report.',
     '',
     'Options:',
-    '  --confirm-fill   Print the full report, then insert only missing 1m buckets',
+    '  --confirm-fill   Insert missing 1m buckets token by token while auditing',
     '  --delay-ms 800   Delay between CoinGecko token requests',
     '  --limit <count>  Optional highest-market-cap token limit',
   ].join('\n');
@@ -69,7 +72,7 @@ function resolveMcapMultiplier(token) {
 }
 
 async function listActiveTokens(options = {}, database = db) {
-  const params = [];
+  const params = [MIN_MARKET_CAP];
   const limitSql = options.limit == null ? '' : `\n     LIMIT $${params.push(options.limit)}::int`;
   const result = await database.query(
     `SELECT
@@ -83,6 +86,7 @@ async function listActiveTokens(options = {}, database = db) {
      FROM token_catalog tc
      WHERE tc.chain = 'solana'
        AND tc.eligible_for_monitoring = TRUE
+       AND COALESCE(tc.last_mcap, 0) >= $1::numeric
        AND tc.is_active_monitor_candidate = TRUE
        AND tc.monitor_priority IN ('high', 'normal', 'low')
        AND NOT EXISTS (
@@ -146,44 +150,43 @@ function sleep(ms) {
   return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
 }
 
-async function auditTokens(tokens, window, options, dependencies, prepare = prepareToken) {
-  const prepared = [];
-  const tokenReports = [];
-  for (const [index, token] of tokens.entries()) {
-    try {
-      const item = await prepare(token, window, options, dependencies);
-      prepared.push(item);
-      tokenReports.push(item.report);
-    } catch (error) {
-      tokenReports.push({
+async function recoverToken(token, window, options, dependencies, prepare = prepareToken) {
+  let item;
+  try {
+    item = await prepare(token, window, options, dependencies);
+  } catch (error) {
+    return {
+      report: {
         address: token.address,
         symbol: token.symbol || null,
         marketCap: Number(token.last_mcap) || null,
         status: 'blocked',
         error: error.message,
-      });
-    }
-    if (index < tokens.length - 1) await dependencies.sleep(options.delayMs);
+      },
+      restitution: null,
+    };
   }
-  return { prepared, tokenReports };
-}
 
-async function restorePrepared(prepared, dependencies) {
-  const results = [];
-  for (const item of prepared) {
-    if (item.report.missingBuckets <= 0) continue;
-    try {
-      const result = await dependencies.safeWrite.executeFillMissing({
-        db: dependencies.db,
-        plan: item.plan,
-        buckets: item.buckets,
-      });
-      results.push({ address: item.report.address, status: 'filled', ...result });
-    } catch (error) {
-      results.push({ address: item.report.address, status: 'failed', error: error.message });
-    }
+  if (!options.confirmFill || item.report.missingBuckets <= 0) {
+    return { report: item.report, restitution: null };
   }
-  return results;
+
+  try {
+    const result = await dependencies.safeWrite.executeFillMissing({
+      db: dependencies.db,
+      plan: item.plan,
+      buckets: item.buckets,
+    });
+    return {
+      report: { ...item.report, status: 'filled' },
+      restitution: { address: item.report.address, status: 'filled', ...result },
+    };
+  } catch (error) {
+    return {
+      report: { ...item.report, status: 'write-failed', error: error.message },
+      restitution: { address: item.report.address, status: 'failed', error: error.message },
+    };
+  }
 }
 
 async function runRecovery(options = {}, injected = {}) {
@@ -197,26 +200,31 @@ async function runRecovery(options = {}, injected = {}) {
   };
   const window = resolveWindow(dependencies.now());
   const tokens = await (injected.listActiveTokens || listActiveTokens)(options, dependencies.db);
-  const { prepared, tokenReports } = await auditTokens(
-    tokens,
-    window,
-    options,
-    dependencies,
-    injected.prepareToken || prepareToken
-  );
+  const prepare = injected.prepareToken || prepareToken;
+
+  const tokenReports = [];
+  const results = [];
+  for (const [index, token] of tokens.entries()) {
+    const outcome = await recoverToken(token, window, options, dependencies, prepare);
+    tokenReports.push(outcome.report);
+    if (outcome.restitution) results.push(outcome.restitution);
+    // Progress must be visible while running; the consolidated report only lands at the end.
+    dependencies.logger.log(JSON.stringify({ token: outcome.report }));
+    if (index < tokens.length - 1) await dependencies.sleep(options.delayMs);
+  }
+
   const report = {
     generatedAt: dependencies.now().toISOString(),
-    writes: false,
+    writes: Boolean(options.confirmFill),
     window: { ...window, hours: LOOKBACK_HOURS, granularityMinutes: 1 },
     tokenCount: tokens.length,
-    recoverableTokens: prepared.filter((item) => item.report.missingBuckets > 0).length,
-    missingBuckets: prepared.reduce((sum, item) => sum + item.report.missingBuckets, 0),
+    recoverableTokens: tokenReports.filter((item) => Number(item.missingBuckets) > 0).length,
+    missingBuckets: tokenReports.reduce((sum, item) => sum + (Number(item.missingBuckets) || 0), 0),
     tokens: tokenReports,
   };
   dependencies.logger.log(JSON.stringify({ report }, null, 2));
   if (!options.confirmFill) return { report, restitution: null };
 
-  const results = await restorePrepared(prepared, dependencies);
   const restitution = {
     writes: true,
     filledTokens: results.filter((item) => item.status === 'filled').length,
@@ -252,9 +260,11 @@ if (require.main === module) {
 
 module.exports = {
   LOOKBACK_HOURS,
+  MIN_MARKET_CAP,
   listActiveTokens,
   parseArgs,
   prepareToken,
+  recoverToken,
   resolveMcapMultiplier,
   resolveWindow,
   runRecovery,
