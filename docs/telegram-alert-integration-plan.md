@@ -17,6 +17,47 @@ Data inicial: 2026-07-29.
   fonte cacheada com gate de acesso, wiring desabilitado por default e
   lifecycle de claim/retry/settlement da outbox implementados ate o subcorte
   8G.
+- Corte 9 iniciado: o subcorte 9A adiciona cutoff interno deterministico no
+  ultimo bucket completo anterior a `triggeredAt`, sem expor `endAt` na rota
+  publica.
+- Subcorte 9B1 seleciona `sharp` 0.35.3 como dependencia de producao para
+  rasterizacao; renderer e integracao permanecem pendentes para 9B2+.
+- Subcorte 9B2 implementa renderer SVG/PNG 960x420 isolado, normalizacao de
+  serie e fallback explicito para historico insuficiente; ainda sem worker.
+- Subcorte 9C compoe historico, renderer e Bot API atras de portas testadas;
+  fallback textual ocorre antes do primeiro envio, sem mascarar timeout de foto.
+- Subcorte 9D adiciona formatter HTML por regra, links validados para o produto
+  e explorer, sem incluir campos internos ou blobs do payload.
+- Subcorte 9E1 adiciona um ciclo de worker concorrente atras de portas para
+  contexto, access gate, envio e settlement; adaptadores runtime seguem pendentes.
+- Subcorte 9E2 mantem o ownership com heartbeat durante o envio e bloqueia
+  settlement quando outra instancia recupera o lease.
+- Subcorte 9E3 carrega contexto relacional apenas para o claim ainda pertencente
+  ao worker e produz entrada do sender sem decidir autorizacao.
+- Subcorte 9E4A revalida acesso no envio, persiste suspensao e cancela backlog
+  ainda nao reivindicado; reativacao sem replay permanece pendente.
+- Subcorte 9E4B1 persiste o pedido de reativacao sem liberar a conexao; o novo
+  baseline continua obrigatorio antes de voltar ao estado ativo.
+- Subcorte 9E4B2A adiciona o epoch duravel e a transicao atomica de ativacao,
+  ainda sem conecta-la ao runtime antes do contrato de baseline.
+- Subcorte 9E4B2B descobre perfis pendentes e transforma a primeira observacao
+  de cada token antigo em estado de baseline sem criar intent.
+- Subcorte 9E4B2C ativa a conexao somente depois do commit do primeiro baseline
+  Solana e mantem conclusao idempotente para avaliacoes concorrentes.
+- Subcorte 9E4B2D adiciona reconciliacao isolada para reativar conexoes sem
+  perfil Solana habilitado, com a ausencia do perfil revalidada atomicamente.
+- Subcorte 9E5A compoe entrega e reconciliacao em runtime isolado, drenando a
+  outbox antes da reativacao e mantendo lifecycle serial com backoff.
+- Subcorte 9E5B liga esse runtime ao grupo `core` sob lease distribuido, com
+  configuracao operacional limitada e shutdown gracioso.
+- Subcorte 10A1 adiciona agregados operacionais sanitizados e contador runtime
+  de fallback; exposicao no admin e health permanece para 10A2.
+- Subcorte 10A2 conecta o diagnostico completo sanitizado ao admin e um resumo
+  publico limitado ao health, sem tornar falha de metricas fatal para a API.
+- Subcorte 10B registra o runbook manual de webhook, staging, observabilidade e
+  rollback, incluindo a ausencia atual de registro automatico e modo shadow.
+- Subcorte 10C adiciona o smoke visivel do fluxo de conexao e separa no
+  checklist as evidencias locais das validacoes externas de staging.
 - Vinculo, webhook, configuracoes independentes e avaliacao shadow possuem
   contratos implementados; entrega runtime continua desativada.
 - Nenhum bot foi criado no BotFather.
@@ -637,8 +678,9 @@ Exemplos:
 - flood control com `retry_after`;
 - falha temporaria de renderizacao.
 
-Sparkline pode cair para texto no mesmo ciclo. Falha de foto nao precisa
-reagendar o alerta inteiro quando o texto pode ser entregue.
+Falha de historico ou renderizacao pode cair para texto antes da chamada ao Bot
+API. Falha ambigua de `sendPhoto` deve ser reagendada sem um segundo envio em
+texto, evitando duplicidade.
 
 ## Sparkline no alerta
 
@@ -756,7 +798,8 @@ Ambientes:
 - webhook de staging nao pode consumir updates de producao;
 - `TELEGRAM_BOT_TOKEN` apenas em secret manager/env;
 - `TELEGRAM_WEBHOOK_SECRET` separado do token;
-- health check usa `getMe` de forma controlada, sem expor resposta sensivel.
+- preflight operacional usa `getMe` de forma controlada; o health publico nao
+  chama a Bot API nem expoe resposta sensivel.
 
 ## Configuracao de runtime
 
@@ -995,6 +1038,32 @@ Entrega:
 
 ### Corte 9 — Sparkline PNG
 
+Subcortes:
+
+- 9A: cutoff interno no ultimo bucket completo anterior a `triggeredAt` para
+  Solana e Robinhood;
+- 9B1: dependencia `sharp` 0.35.3 registrada, exigindo Node >= 20.9 e binario
+  compativel com a arquitetura/libc do host;
+- 9B2: renderer SVG/PNG deterministico atras de porta testada;
+- 9C: sender isolado com `sendPhoto`, fallback `sendMessage` e IDs de settlement;
+- 9D: formatter HTML por regra e links seguros do token;
+- 9E1: ciclo do worker com claim, access gate e settlement atras de portas;
+- 9E2: heartbeat serializado durante o sender e deteccao de lease perdido;
+- 9E3: adapter SQL de contexto e politica explicita da sparkline;
+- 9E4A: access gate persistente, suspensao e cancelamento de pending/retry;
+- 9E4B1: marcador duravel de acesso recuperado, ainda sob suspensao;
+- 9E4B2A: epoch de reativacao e transicao atomica, ainda sem wiring;
+- 9E4B2B: baseline state-only por token antigo, ainda sem ativacao;
+- 9E4B2C: ativacao Solana pos-commit e invalidacao do cache de perfis;
+- 9E4B2D: fallback reconciliado quando nao existe perfil Solana habilitado;
+- 9E5A: runtime isolado de entrega e reconciliacao, ainda sem wiring no servidor;
+- 9E5B: configuracao, lease distribuido e wiring no grupo `core`;
+- 10A1: contrato sanitizado de metricas e telemetria;
+- 10A2: wiring no status administrativo e resumo publico de health;
+- 10B: runbook de webhook e operacao controlada;
+- 10C: smoke essencial e checklist final de rollout;
+- implementacao local encerrada; staging e rollout permanecem externos.
+
 Entrega:
 
 - `endAt` interno no market history;
@@ -1021,9 +1090,9 @@ Entrega:
 3. Criar bot de staging e validar webhook.
 4. Vincular apenas conta admin.
 5. Testar menus, thresholds e isolamento do painel.
-6. Rodar alertas em modo shadow, persistindo intents sem enviar.
-7. Comparar intents Telegram com configuracoes esperadas.
-8. Habilitar entrega para admin.
+6. Nao assumir modo shadow: ele ainda nao possui flag Telegram dedicada.
+7. Validar intents em teste automatizado e staging isolado.
+8. Habilitar entrega somente para o admin de staging.
 9. Validar sparkline, retry, bloqueio e reativacao.
 10. Liberar para pequeno grupo.
 11. Observar fila, flood control e spam.

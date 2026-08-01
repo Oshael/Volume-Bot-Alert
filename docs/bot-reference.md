@@ -517,19 +517,47 @@ Há uma implementação ampla registrada em checkpoints locais:
 
 - vínculo por token;
 - webhook;
-- menus;
+- menus e alertas localizados automaticamente pelo `language_code` do Telegram,
+  com português para tags `pt-*`, inglês como fallback e estados binários
+  padronizados em `✅` ativo e `❌` inativo;
 - perfis e regras;
 - state independente;
 - outbox de entrega;
 - coordenação de destino Solana.
+- cutoff interno no último bucket completo anterior ao alerta, sem parâmetro público.
+- `sharp` 0.35.3 selecionado para rasterização; requer Node >= 20.9 nas VPS.
+- renderer Telegram gera PNG 960x420 e sinaliza fallback quando faltam pontos.
+- sender Telegram compõe histórico e imagem, com fallback textual pré-envio.
+- formatter Telegram produz HTML seguro e links validados por rede.
+- worker Telegram possui claim, access gate, heartbeat e settlement isolados.
+- contexto de entrega revalida lease e identidade antes de montar o sender.
+- access gate de entrega suspende a conexao e cancela backlog ainda nao claimed.
+- acesso recuperado grava pedido de reativacao, mas nao libera envio sem baseline.
+- epoch de reativacao possui transicao atomica pronta, ainda sem wiring runtime.
+- planner converte observacoes de reativacao em baseline sem criar delivery.
+- destino Solana ativa a conexao apenas depois do commit seguro do baseline.
+- reconciliador pode reativar sem baseline quando Solana esta desabilitado,
+  revalidando essa condicao no mesmo `UPDATE` que libera a conexao.
+- runtime Telegram drena a outbox antes de reconciliar reativacoes e executa
+  ciclos serializados com backoff.
+- quando habilitado, o grupo `core` inicia esse runtime sob lease distribuido e
+  o encerra antes de liberar os leases no shutdown.
+- telemetria Telegram agrega fila, latencia, erros, perfis, conexoes, updates e
+  fallbacks sem expor secrets, chats ou payloads; o admin recebe o diagnostico
+  completo sanitizado e `/api/health` recebe apenas o resumo publico.
+- registro e remocao do webhook ainda sao operacoes manuais documentadas em
+  `docs/telegram-alert-operations-runbook.md`; nao existe shadow Telegram
+  separado, portanto a primeira ativacao deve ficar isolada no admin de staging.
+- smoke Playwright protege a transicao visivel entre integracao desabilitada e
+  criacao controlada do deep link, sem chamar a Bot API real.
 
 Stages locais relacionados:
 
 ```text
-84 a 89
+84 a 89, 93, 94 e 95
 ```
 
-Até commit, deploy, migrations e validação em produção, Telegram deve ser
+Até push, deploy, migrations e validação em produção, Telegram deve ser
 tratado como **em desenvolvimento**, não como capacidade ativa do bot.
 
 ### 11.5 Fontes de mercado Solana
