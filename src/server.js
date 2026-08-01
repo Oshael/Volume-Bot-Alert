@@ -43,6 +43,7 @@ const robinhoodBackfillDiscoveryScanner = require('./services/robinhood-backfill
 const robinhoodBackfillMarketScanner = require('./services/robinhood-backfill-market-scanner');
 const robinhoodBackfillRuntime = require('./services/robinhood-backfill-runtime');
 const robinhoodIngestionWorker = require('./services/robinhood-ingestion-worker');
+const robinhoodWalletSwapLiveWorker = require('./services/robinhood-wallet-swap-live-worker');
 const robinhoodCatalogStagingWorker = require('./services/robinhood-catalog-staging-worker');
 const { buildRobinhoodCatalogStagingTelemetry } = robinhoodCatalogStagingWorker;
 const robinhoodCatalogProjectionWorker = require('./services/robinhood-catalog-projection-worker');
@@ -81,6 +82,7 @@ const { createWorkerLeaseManager } = require('./services/worker-lease-manager');
 const workerLease = require('./models/worker-lease');
 
 const ROBINHOOD_INGESTION_LEASE_KEY = 'robinhood-ingestion-worker';
+const ROBINHOOD_WALLET_SWAP_LIVE_LEASE_KEY = 'robinhood-wallet-swap-live-worker';
 const ROBINHOOD_BACKFILL_DISCOVERY_LEASE_KEY = 'robinhood-backfill-discovery-scanner';
 const ROBINHOOD_BACKFILL_SCANNER_LEASE_KEY = 'robinhood-backfill-market-scanner';
 const ROBINHOOD_BACKFILL_ENRICHMENT_LEASE_KEY = 'robinhood-backfill-enrichment-worker';
@@ -406,6 +408,21 @@ function startTelegramAlertRuntime() {
   );
 }
 
+function startRobinhoodWalletSwapLiveRuntime() {
+  if (!config.robinhoodWalletSwapLiveWorker.enabled) return;
+  startLockedWorker(
+    'robinhood',
+    ROBINHOOD_WALLET_SWAP_LIVE_LEASE_KEY,
+    'Robinhood wallet-swap LIVE worker',
+    () => robinhoodWalletSwapLiveWorker.start({
+      ...config.robinhoodWalletSwapLiveWorker,
+      rpcOptions: config.robinhoodIngestionWorker,
+      onFatal: (error) => workerLeaseManager.halt(ROBINHOOD_WALLET_SWAP_LIVE_LEASE_KEY, error),
+    }),
+    { metadataProvider: () => ({ telemetry: robinhoodWalletSwapLiveWorker.getStatus() }) }
+  );
+}
+
 function startWorkerSet() {
   if (hasWorkerGroup('core')) {
     startTelegramAlertRuntime();
@@ -535,6 +552,7 @@ function startWorkerSet() {
     }
   }
   if (hasWorkerGroup('robinhood')) {
+    startRobinhoodWalletSwapLiveRuntime();
     const ingestionGate = evaluateRobinhoodIngestionGate(config);
     if (ingestionGate.allowed) {
       startLockedWorker('robinhood', ROBINHOOD_INGESTION_LEASE_KEY, 'Robinhood ingestion worker', () => {
@@ -770,6 +788,7 @@ async function shutdownGracefully(signal = 'SIGTERM') {
   try {
     await Promise.all([
       robinhoodIngestionWorker.stop(),
+      robinhoodWalletSwapLiveWorker.stop(),
       robinhoodBackfillDiscoveryScanner.stop(),
       robinhoodBackfillMarketScanner.stop(),
       robinhoodBackfillRuntime.enrichment.stop(),

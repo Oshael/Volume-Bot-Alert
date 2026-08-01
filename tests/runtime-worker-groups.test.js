@@ -211,6 +211,25 @@ describe('runtime worker groups config', () => {
     });
   });
 
+  it('keeps wallet-swap LIVE disabled and bounds its independent controls', () => {
+    withEnv({
+      ROBINHOOD_WALLET_SWAP_LIVE_ENABLED: '',
+      ROBINHOOD_WALLET_SWAP_LIVE_INTERVAL_MS: '1',
+      ROBINHOOD_WALLET_SWAP_LIVE_MAX_BLOCKS_PER_TICK: '9999',
+      ROBINHOOD_WALLET_SWAP_LIVE_REORG_DEPTH: '0',
+      ROBINHOOD_WALLET_SWAP_LIVE_MAX_CONSECUTIVE_FAILURES: '999',
+    }, (config) => {
+      assert.deepEqual(config.robinhoodWalletSwapLiveWorker, {
+        enabled: false,
+        intervalMs: 250,
+        maxErrorBackoffMs: 30_000,
+        maxBlocks: 2000,
+        reorgDepth: 1,
+        maxConsecutiveFailures: 100,
+      });
+    });
+  });
+
   it('keeps backfill shadow disabled and bounds its dedicated RPC controls', () => {
     withEnv({ ROBINHOOD_BACKFILL_SHADOW_ENABLED: '' }, (config) => {
       assert.equal(config.robinhoodBackfillMarketScanner.enabled, false);

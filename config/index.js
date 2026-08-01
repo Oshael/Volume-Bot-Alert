@@ -885,6 +885,25 @@ module.exports = {
     ),
   },
 
+  robinhoodWalletSwapLiveWorker: {
+    enabled: parseBoolean(process.env.ROBINHOOD_WALLET_SWAP_LIVE_ENABLED, false),
+    intervalMs: parseIntegerInRange(
+      process.env.ROBINHOOD_WALLET_SWAP_LIVE_INTERVAL_MS, 2000, 250, 300_000
+    ),
+    maxErrorBackoffMs: parseIntegerInRange(
+      process.env.ROBINHOOD_WALLET_SWAP_LIVE_MAX_ERROR_BACKOFF_MS, 30_000, 1000, 300_000
+    ),
+    maxBlocks: parseIntegerInRange(
+      process.env.ROBINHOOD_WALLET_SWAP_LIVE_MAX_BLOCKS_PER_TICK, 200, 1, 2000
+    ),
+    reorgDepth: parseIntegerInRange(
+      process.env.ROBINHOOD_WALLET_SWAP_LIVE_REORG_DEPTH, 12, 1, 1000
+    ),
+    maxConsecutiveFailures: parseIntegerInRange(
+      process.env.ROBINHOOD_WALLET_SWAP_LIVE_MAX_CONSECUTIVE_FAILURES, 5, 1, 100
+    ),
+  },
+
   robinhoodBackfillMarketScanner: {
     enabled: parseBoolean(process.env.ROBINHOOD_BACKFILL_SHADOW_ENABLED, false),
     startBlock: parseOptionalBlock(process.env.ROBINHOOD_BACKFILL_START_BLOCK),
