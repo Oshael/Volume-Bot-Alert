@@ -32,6 +32,11 @@ function createCandidate(row) {
       access_source: row.access_source,
       access_updated_at: row.access_updated_at,
     },
+    reactivation: {
+      status: row.connection_status,
+      requested_at: row.access_reactivation_requested_at,
+      reactivated_at: row.access_reactivated_at,
+    },
     rules: [],
   };
 }
@@ -73,6 +78,9 @@ async function listByChain(chain, db) {
        profiles.sparkline_enabled,
        profiles.version AS profile_version,
        profiles.updated_at AS profile_updated_at,
+       connections.status AS connection_status,
+       connections.access_reactivation_requested_at,
+       connections.access_reactivated_at,
        users.role AS user_role,
        users.is_active AS user_is_active,
        users.access_status,
@@ -96,7 +104,13 @@ async function listByChain(chain, db) {
       AND rules.chain = profiles.chain
      WHERE profiles.chain = $1
        AND profiles.enabled = TRUE
-       AND connections.status = 'active'
+       AND (
+         connections.status = 'active'
+         OR (
+           connections.status = 'access_suspended'
+           AND connections.access_reactivation_requested_at IS NOT NULL
+         )
+       )
        AND users.is_active = TRUE
      ORDER BY profiles.id, rules.rule_key`,
     [requireChain(chain)]

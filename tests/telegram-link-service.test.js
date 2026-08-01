@@ -37,13 +37,23 @@ function fixture(options = {}) {
       return options.telegramConnection || null;
     },
     async create(input) {
-      calls.push(`link:${input.userId}:${input.telegramUserId}:${input.chatId}`);
+      calls.push(
+        `link:${input.userId}:${input.telegramUserId}:${input.chatId}:${input.languageCode}`
+      );
       return {
         id: 20,
         user_id: input.userId,
         telegram_user_id: input.telegramUserId,
         chat_id: input.chatId,
         status: 'active',
+        language_code: input.languageCode,
+      };
+    },
+    async updateLanguageCode(input) {
+      calls.push(`language:${input.id}:${input.languageCode}`);
+      return options.languageUpdateConflict ? null : {
+        ...options.telegramConnection,
+        language_code: input.languageCode,
       };
     },
   };
@@ -208,6 +218,7 @@ describe('Telegram link service', () => {
       chatId: 123,
       username: 'alice',
       firstName: 'Alice',
+      languageCode: 'pt_br',
     });
 
     assert.equal(result.connection.user_id, 7);
@@ -218,7 +229,7 @@ describe('Telegram link service', () => {
       'access:7',
       'find:7',
       'findTelegram:123',
-      'link:7:123:123',
+      'link:7:123:123:pt-BR',
       'profiles:7:20',
       'defaults:10,11',
       'COMMIT',
@@ -299,5 +310,27 @@ describe('Telegram link service', () => {
       }),
       { code: 'access_denied', status: 403 }
     );
+  });
+
+  it('refreshes a changed language code after access is revalidated', async () => {
+    const { calls, service } = fixture({
+      telegramConnection: {
+        id: 20,
+        user_id: 7,
+        telegram_user_id: '123',
+        chat_id: '123',
+        status: 'active',
+        language_code: 'en',
+      },
+    });
+
+    const result = await service.findAuthorizedConnection({
+      telegramUserId: 123,
+      chatId: 123,
+      languageCode: 'pt_br',
+    });
+
+    assert.equal(result.connection.language_code, 'pt-BR');
+    assert.ok(calls.includes('language:20:pt-BR'));
   });
 });

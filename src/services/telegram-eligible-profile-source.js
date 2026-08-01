@@ -82,6 +82,7 @@ function createTelegramEligibleProfileSource(options = {}) {
         if (access?.hasProductAccess) {
           eligible.push(Object.freeze({
             profile: candidate.profile,
+            reactivation: candidate.reactivation,
             rules: candidate.rules,
           }));
         }

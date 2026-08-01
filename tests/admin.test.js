@@ -324,6 +324,10 @@ describe('Admin panel auth and management', () => {
       assert.equal(res.body.robinhoodRollout.publishable, false);
       assert.equal(res.body.robinhoodRollout.axes.alerts.effective, false);
       assert.ok(Object.hasOwn(res.body.robinhoodRollout, 'telemetry'));
+      assert.ok(res.body.telegramAlerts);
+      assert.equal(res.body.telegramAlerts.health, 'disabled');
+      assert.equal(typeof res.body.telegramAlerts.metricsAvailable, 'boolean');
+      assert.equal(Object.hasOwn(res.body.telegramAlerts.configured, 'bot'), true);
       assert.equal(res.body.robinhoodRollout.alertPublicationReady, true);
       assert.ok(res.body.robinhoodRollout.blockers.includes('alerts_disabled'));
       assert.ok(res.body.tokenRiskEnrichmentWorker);

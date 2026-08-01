@@ -149,6 +149,7 @@ function getSparklineCacheKey(addresses, options) {
     granularityMinutes: options.granularityMinutes,
     allAvailable: options.allAvailable === true,
     allowOneMinuteFallback: options.allowOneMinuteFallback === true,
+    endAt: options.endAt ? new Date(options.endAt).toISOString() : null,
   });
 }
 
@@ -1482,8 +1483,13 @@ function largestTriangleThreeBuckets(series, targetPoints) {
 
 function resolveCompactSparklineShape(options = {}) {
   const allAvailable = options.allAvailable === true;
+  const endAt = options.endAt == null ? null : new Date(options.endAt);
+  if (endAt && !Number.isFinite(endAt.getTime())) {
+    throw new Error('Sparkline endAt must be a valid timestamp');
+  }
   return {
     allAvailable,
+    endAt,
     hours: allAvailable
       ? null
       : Math.max(1, Math.min(Number(options.hours) || DEFAULT_SPARKLINE_HOURS, 24 * 30)),
@@ -1502,7 +1508,7 @@ function resolveCompactSparklineShape(options = {}) {
 async function queryCompactSparklineRows(addresses, shape) {
   if (shape.allAvailable) {
     const rows = await queryAllAvailableSampledSparklineRows(
-      addresses, shape.granularityMinutes, shape.points
+      addresses, shape.granularityMinutes, shape.points, shape.endAt
     );
     return {
       rows, source: 'aggregate-all-sampled', aggregateRows: rows.length,
@@ -1512,12 +1518,12 @@ async function queryCompactSparklineRows(addresses, shape) {
   if (shouldUseAggregateSparklines(shape.granularityMinutes)) {
     return queryAggregateSparklineRows(
       addresses, shape.hours, shape.granularityMinutes, shape.points,
-      { allowOneMinuteFallback: shape.allowOneMinuteFallback }
+      { allowOneMinuteFallback: shape.allowOneMinuteFallback, endAt: shape.endAt }
     );
   }
   return {
     rows: await queryOneMinuteSparklineRows(
-      addresses, shape.hours, shape.granularityMinutes
+      addresses, shape.hours, shape.granularityMinutes, shape.endAt
     ),
     source: '1m', aggregateRows: 0, fallbackRows: 0, fallbackAddresses: 0,
   };
@@ -1849,7 +1855,11 @@ async function queryAllAvailableAggregateSparklineRows(address, granularityMinut
   return rows;
 }
 
-async function queryOneMinuteSparklineRows(addresses, hours, granularityMinutes) {
+async function queryOneMinuteSparklineRows(addresses, hours, granularityMinutes, endAt = null) {
+  const endAtWhere = endAt
+    ? `AND bucket_ts >= $4::timestamptz - ($2::int * INTERVAL '1 hour')
+         AND bucket_ts < $4::timestamptz`
+    : `AND bucket_ts >= NOW() - ($2::int * INTERVAL '1 hour')`;
   const { rows } = await db.query(
     `WITH raw AS (
        SELECT
@@ -1863,7 +1873,7 @@ async function queryOneMinuteSparklineRows(addresses, hours, granularityMinutes)
        FROM token_market_buckets_1m
        WHERE chain = 'solana'
          AND token_address = ANY($1::varchar[])
-         AND bucket_ts >= NOW() - ($2::int * INTERVAL '1 hour')
+         ${endAtWhere}
          AND close_mcap IS NOT NULL
      ),
      ranked AS (
@@ -1886,13 +1896,18 @@ async function queryOneMinuteSparklineRows(addresses, hours, granularityMinutes)
      FROM ranked
      WHERE rn_close = 1
      ORDER BY token_address ASC, bucket_ts ASC`,
-    [addresses, hours, granularityMinutes]
+    endAt
+      ? [addresses, hours, granularityMinutes, endAt]
+      : [addresses, hours, granularityMinutes]
   );
 
   return rows;
 }
 
-async function queryAllAvailableSampledSparklineRows(addresses, granularityMinutes, points) {
+async function queryAllAvailableSampledSparklineRows(
+  addresses, granularityMinutes, points, endAt = null
+) {
+  const endAtWhere = endAt ? 'AND bucket_ts < $4::timestamptz' : '';
   const { rows } = await db.query(
     `WITH ranked AS (
        SELECT
@@ -1908,6 +1923,7 @@ async function queryAllAvailableSampledSparklineRows(addresses, granularityMinut
        WHERE chain = 'solana'
          AND token_address = ANY($1::varchar[])
          AND granularity_minutes = $2::int
+         ${endAtWhere}
          AND close_mcap IS NOT NULL
      ), counts AS (
        SELECT token_address, MAX(total_count) AS total_count
@@ -1937,12 +1953,18 @@ async function queryAllAvailableSampledSparklineRows(addresses, granularityMinut
        ON targets.token_address = ranked.token_address
       AND targets.target_row = ranked.row_number
      ORDER BY ranked.token_address ASC, ranked.bucket_ts ASC`,
-    [addresses, granularityMinutes, points]
+    endAt
+      ? [addresses, granularityMinutes, points, endAt]
+      : [addresses, granularityMinutes, points]
   );
   return rows;
 }
 
 async function queryAggregateSparklineRows(addresses, hours, granularityMinutes, points, options = {}) {
+  const endAtWhere = options.endAt
+    ? `AND bucket_ts >= $4::timestamptz - ($2::int * INTERVAL '1 hour')
+       AND bucket_ts < $4::timestamptz`
+    : `AND bucket_ts >= NOW() - ($2::int * INTERVAL '1 hour')`;
   const { rows: aggregateRows } = await db.query(
     `SELECT
        token_address,
@@ -1953,10 +1975,12 @@ async function queryAggregateSparklineRows(addresses, hours, granularityMinutes,
      WHERE chain = 'solana'
        AND token_address = ANY($1::varchar[])
        AND granularity_minutes = $3::int
-       AND bucket_ts >= NOW() - ($2::int * INTERVAL '1 hour')
+       ${endAtWhere}
        AND close_mcap IS NOT NULL
      ORDER BY token_address ASC, bucket_ts ASC`,
-    [addresses, hours, granularityMinutes]
+    options.endAt
+      ? [addresses, hours, granularityMinutes, options.endAt]
+      : [addresses, hours, granularityMinutes]
   );
 
   const aggregateResults = buildSparklineResults(addresses, aggregateRows, {
@@ -1988,7 +2012,9 @@ async function queryAggregateSparklineRows(addresses, hours, granularityMinutes,
     };
   }
 
-  const fallbackRows = await queryOneMinuteSparklineRows(fallbackAddresses, hours, granularityMinutes);
+  const fallbackRows = await queryOneMinuteSparklineRows(
+    fallbackAddresses, hours, granularityMinutes, options.endAt || null
+  );
   const fallbackSet = new Set(fallbackAddresses);
   return {
     rows: [

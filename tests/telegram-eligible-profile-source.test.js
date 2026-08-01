@@ -16,6 +16,9 @@ function row(ruleKey, overrides = {}) {
     sparkline_enabled: true,
     profile_version: 2,
     profile_updated_at: '2026-07-29T15:00:00.000Z',
+    connection_status: 'active',
+    access_reactivation_requested_at: null,
+    access_reactivated_at: null,
     user_role: 'user',
     user_is_active: true,
     access_status: 'active',
@@ -47,6 +50,7 @@ function candidate(overrides = {}) {
       is_active: true,
       access_status: 'active',
     },
+    reactivation: { status: 'active', requested_at: null, reactivated_at: null },
     rules: [{ profile_id: '10', rule_key: 'monitored-vol' }],
     ...overrides,
   };
@@ -77,10 +81,15 @@ describe('Telegram alert evaluation candidate model', () => {
     assert.deepEqual(calls[0].params, ['solana']);
     assert.match(calls[0].sql, /profiles\.enabled = TRUE/);
     assert.match(calls[0].sql, /connections\.status = 'active'/);
+    assert.match(calls[0].sql, /connections\.status = 'access_suspended'/);
+    assert.match(calls[0].sql, /access_reactivation_requested_at IS NOT NULL/);
     assert.match(calls[0].sql, /users\.is_active = TRUE/);
     assert.equal(result.length, 2);
     assert.equal(result[0].profile.id, '10');
     assert.equal(result[0].user.access_status, 'active');
+    assert.deepEqual(result[0].reactivation, {
+      status: 'active', requested_at: null, reactivated_at: null,
+    });
     assert.deepEqual(
       result[0].rules.map((rule) => rule.rule_key),
       ['monitored-mcap', 'monitored-vol']
@@ -128,7 +137,7 @@ describe('Telegram eligible profile source', () => {
     const second = await source.listEligible({ chain: 'solana' });
 
     assert.equal(first.length, 1);
-    assert.deepEqual(Object.keys(first[0]).sort(), ['profile', 'rules']);
+    assert.deepEqual(Object.keys(first[0]).sort(), ['profile', 'reactivation', 'rules']);
     assert.equal(second.length, 0);
     assert.equal(repositoryCalls, 1);
     assert.equal(accessCalls, 2);

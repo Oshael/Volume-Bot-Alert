@@ -17,7 +17,7 @@ const {
 const TOKEN_ADDRESS = '11111111111111111111111111111111';
 const NOW_MS = Date.UTC(2026, 6, 29, 15, 0, 0);
 
-function profileFixture() {
+function profileFixture(reactivation) {
   const profile = {
     id: '9007199254740993',
     connection_id: '9007199254740995',
@@ -39,7 +39,7 @@ function profileFixture() {
     version: index + 2,
     updated_at: `2026-07-29T14:0${index}:00.000Z`,
   }));
-  return adaptTelegramAlertEvaluationProfile({ profile, rules });
+  return adaptTelegramAlertEvaluationProfile({ profile, reactivation, rules });
 }
 
 function signals() {
@@ -141,6 +141,78 @@ describe('Telegram Solana alert planner', () => {
     assert.equal(reset.intents.length, 1);
     assert.equal(reset.stateTransitions[0].expectedVersion, 5);
     assert.equal(reset.stateTransitions[0].ruleVersion, ruleVersion);
+  });
+
+  it('turns a pending reactivation observation into state-only baseline', async () => {
+    const requestedAt = '2026-07-29T14:30:00.000Z';
+    const profile = profileFixture({
+      status: 'access_suspended', requested_at: requestedAt, reactivated_at: null,
+    });
+    const result = await createPlanner().plan({
+      profile,
+      states: [],
+      tokenAfter: { address: TOKEN_ADDRESS, symbol: 'PLAN' },
+      signals: signals(),
+      nowMs: NOW_MS,
+    });
+
+    assert.equal(result.intents.length, 0);
+    assert.equal(result.stateTransitions.length, 1);
+    assert.equal(result.stateTransitions[0].state.status, 'triggered');
+    assert.equal(
+      result.stateTransitions[0].state.metadata.lastDecision,
+      'reactivation_baseline',
+    );
+    assert.deepEqual(result.stateTransitions[0].eventReferences, []);
+    assert.deepEqual(result.reactivationBaseline, {
+      epoch: requestedAt, pending: true, requestedAt,
+    });
+    assert.equal(result.summary.emitted, 0);
+  });
+
+  it('lazily baselines old tokens but allows tokens created after reactivation', async () => {
+    const reactivatedAt = '2026-07-29T14:30:00.000Z';
+    const profile = profileFixture({
+      status: 'active', requested_at: null, reactivated_at: reactivatedAt,
+    });
+    const planner = createPlanner();
+    const oldToken = await planner.plan({
+      profile,
+      states: [],
+      tokenAfter: { address: TOKEN_ADDRESS, last_token_created_at_ms: NOW_MS - 60 * 60 * 1000 },
+      signals: signals(),
+      nowMs: NOW_MS,
+    });
+    const newToken = await planner.plan({
+      profile,
+      states: [],
+      tokenAfter: { address: TOKEN_ADDRESS, last_token_created_at_ms: NOW_MS - 10 * 60 * 1000 },
+      signals: signals(),
+      nowMs: NOW_MS,
+    });
+    const baselineTransition = oldToken.stateTransitions[0];
+    const afterBaseline = await planner.plan({
+      profile,
+      states: [{
+        profileId: profile.profileId,
+        chain: profile.chain,
+        ruleKey: baselineTransition.ruleKey,
+        tokenAddress: TOKEN_ADDRESS,
+        ruleVersion: baselineTransition.ruleVersion,
+        state: baselineTransition.state,
+        version: 1,
+        updatedAt: reactivatedAt,
+      }],
+      tokenAfter: { address: TOKEN_ADDRESS, last_token_created_at_ms: NOW_MS - 60 * 60 * 1000 },
+      signals: signals(),
+      nowMs: NOW_MS,
+    });
+
+    assert.equal(oldToken.intents.length, 0);
+    assert.equal(oldToken.reactivationBaseline.pending, false);
+    assert.equal(newToken.intents.length, 1);
+    assert.equal(newToken.reactivationBaseline, undefined);
+    assert.equal(afterBaseline.reactivationBaseline, undefined);
   });
 
   it('does not evaluate a disabled destination profile', async () => {

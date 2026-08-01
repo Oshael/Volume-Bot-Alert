@@ -120,6 +120,49 @@ describe('chain-aware catalog market history service', () => {
     assert.deepEqual(result.chains, ['robinhood', 'solana']);
   });
 
+  it('cuts internal mixed-chain history at the alert timestamp', async () => {
+    const calls = { solana: null, robinhood: null };
+    const endAt = '2026-07-15T10:32:45.000Z';
+    const service = createCatalogMarketHistoryService({
+      now: () => NOW,
+      solanaReader: { async listSparklineByAddresses(_addresses, options) {
+        calls.solana = options;
+        return [];
+      } },
+      robinhoodReader: { async getHistories(input) {
+        calls.robinhood = input;
+        return [];
+      } },
+    });
+
+    const result = await service.getSparklineBatch({
+      identities: [
+        { chain: 'solana', address: SOLANA },
+        { chain: 'robinhood', address: ROBINHOOD },
+      ],
+      hours: 2,
+      points: 24,
+      granularityMinutes: 5,
+      endAt,
+    });
+
+    assert.equal(calls.solana.endAt.toISOString(), '2026-07-15T10:30:00.000Z');
+    assert.equal(calls.robinhood.startAt.toISOString(), '2026-07-15T08:30:00.000Z');
+    assert.equal(calls.robinhood.endAt.toISOString(), '2026-07-15T10:30:00.000Z');
+    assert.equal(result.generatedAt, endAt);
+  });
+
+  it('rejects an invalid internal history cutoff', async () => {
+    const service = createCatalogMarketHistoryService();
+    await assert.rejects(
+      service.getSparklineBatch({
+        identities: [{ chain: 'solana', address: SOLANA }],
+        endAt: 'not-a-timestamp',
+      }),
+      /endAt must be a valid timestamp/,
+    );
+  });
+
   it('requests sampled hourly history for every chain in all-available mode', async () => {
     const calls = { solana: null, robinhood: null };
     const service = createCatalogMarketHistoryService({

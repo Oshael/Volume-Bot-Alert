@@ -174,6 +174,7 @@ describe('token market 1m bucket helpers', () => {
       hours: 1,
       points: 60,
       granularityMinutes: 5,
+      endAt: '2026-07-15T10:30:00.000Z',
     }));
     const expanded = JSON.parse(tokenMarketBucket1m.__private.getExpandedSparklineCacheKey(address, {
       chain: 'solana',
@@ -182,7 +183,36 @@ describe('token market 1m bucket helpers', () => {
     }));
 
     assert.equal(compact.chain, 'solana');
+    assert.equal(compact.endAt, '2026-07-15T10:30:00.000Z');
     assert.equal(expanded.chain, 'solana');
+  });
+
+  it('applies an explicit upper bound to historical Solana sparklines', async () => {
+    const originalQuery = db.query;
+    let captured = null;
+    db.query = async (sql, params) => {
+      captured = { sql, params };
+      return { rows: [] };
+    };
+
+    try {
+      await tokenMarketBucket1m.listSparklineByAddresses(
+        ['So11111111111111111111111111111111111111112'],
+        {
+          hours: 2,
+          points: 20,
+          granularityMinutes: 1,
+          endAt: '2026-07-15T10:30:00.000Z',
+          disableCache: true,
+        }
+      );
+
+      assert.match(captured.sql, /bucket_ts >= \$4::timestamptz/);
+      assert.match(captured.sql, /bucket_ts < \$4::timestamptz/);
+      assert.equal(captured.params[3].toISOString(), '2026-07-15T10:30:00.000Z');
+    } finally {
+      db.query = originalQuery;
+    }
   });
 
   it('does not recompute aggregate buckets for repeated writes inside the same 1m bucket', async () => {

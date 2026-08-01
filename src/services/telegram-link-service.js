@@ -7,6 +7,10 @@ const profileModel = require('../models/telegram-alert-profile');
 const ruleSettingModel = require('../models/telegram-alert-rule-setting');
 const User = require('../models/user');
 const userAccess = require('../models/user-access');
+const {
+  DEFAULT_LANGUAGE_CODE,
+  normalizeTelegramLanguageCode,
+} = require('../utils/telegram-locale');
 
 const LINK_TTL_MS = 10 * 60 * 1000;
 const MAX_TELEGRAM_ID = 9223372036854775807n;
@@ -57,7 +61,11 @@ function createTelegramLinkService(options = {}) {
     if (!telegramUserId || !chatId || telegramUserId !== chatId) {
       throw new TelegramLinkError('Telegram private chat is required', 400, 'private_chat_required');
     }
-    return { telegramUserId, chatId };
+    return {
+      telegramUserId,
+      chatId,
+      languageCode: normalizeTelegramLanguageCode(input.languageCode),
+    };
   }
 
   function botUrl() {
@@ -151,6 +159,7 @@ function createTelegramLinkService(options = {}) {
         ...identity,
         username: input.username,
         firstName: input.firstName,
+        languageCode: identity.languageCode || DEFAULT_LANGUAGE_CODE,
       }, client);
       const boundProfiles = await profiles.bindConnection({
         userId: consumed.user_id,
@@ -172,10 +181,17 @@ function createTelegramLinkService(options = {}) {
 
   async function findAuthorizedConnection(input) {
     const identity = requirePrivateIdentity(input);
-    const connection = await connections.findActiveByTelegramUserId(identity.telegramUserId);
+    let connection = await connections.findActiveByTelegramUserId(identity.telegramUserId);
     if (!connection || String(connection.chat_id) !== identity.chatId) return null;
     const user = await users.findById(connection.user_id);
     const access = await requireAccess(user);
+    if (identity.languageCode && connection.language_code !== identity.languageCode) {
+      connection = await connections.updateLanguageCode({
+        id: connection.id,
+        languageCode: identity.languageCode,
+      });
+      if (!connection) return null;
+    }
     return { access, connection };
   }
 

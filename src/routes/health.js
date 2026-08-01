@@ -2,8 +2,15 @@ const express = require('express');
 const { pool } = require('../models/db');
 const config = require('../../config');
 const { logSecurityEvent } = require('../utils/security-events');
+const workerLease = require('../models/worker-lease');
+const {
+  buildTelegramAlertHealthSummary,
+  createTelegramAlertOperationalStatus,
+} = require('../services/telegram-alert-operational-status');
 
 const router = express.Router();
+const TELEGRAM_ALERT_RUNTIME_LEASE_KEY = 'telegram-alert-runtime';
+const telegramAlertOperationalStatus = createTelegramAlertOperationalStatus();
 let cachedHealthPayload = null;
 let cachedHealthStatusCode = 200;
 let cachedAt = 0;
@@ -19,6 +26,13 @@ async function computeHealthPayload() {
     const dbStart = Date.now();
     await pool.query('SELECT 1');
     const dbMs = Date.now() - dbStart;
+    const workerLeases = await workerLease.list();
+    const sharedLease = workerLeases.find(
+      (lease) => lease.key === TELEGRAM_ALERT_RUNTIME_LEASE_KEY,
+    ) || null;
+    const telegramAlerts = buildTelegramAlertHealthSummary(
+      await telegramAlertOperationalStatus.load({ sharedLease }),
+    );
 
     return {
       statusCode: 200,
@@ -34,6 +48,7 @@ async function computeHealthPayload() {
           workerGroupsSkipped: config.runtime.workerGroupsSkipped || [],
         },
         db: { connected: true, latencyMs: dbMs },
+        telegramAlerts,
         timestamp: new Date().toISOString(),
         cached: false,
       },

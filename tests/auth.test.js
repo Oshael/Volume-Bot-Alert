@@ -362,6 +362,10 @@ describe('Volume Alert Server auth flow', () => {
         res.body.runtime.workerGroupsSkipped,
         ['robinhood', 'robinhood-backfill']
       );
+      assert.equal(res.body.telegramAlerts.status, 'disabled');
+      assert.equal(typeof res.body.telegramAlerts.metricsAvailable, 'boolean');
+      assert.equal(Object.hasOwn(res.body.telegramAlerts, 'lease'), false);
+      assert.equal(Object.hasOwn(res.body.telegramAlerts.runtime, 'lastError'), false);
     });
 
     it('GET /api/health sanitizes DB failures', async () => {

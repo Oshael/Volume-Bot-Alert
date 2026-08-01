@@ -48,7 +48,7 @@ function buildMatcherProfile(profile) {
   };
 }
 
-function buildMemoryRuntime(profile, stateRows, tokenAddress) {
+function buildMemoryRuntime(profile, stateRows, tokenAddress, resetState = false) {
   const rules = new Map(profile.rules.map((rule) => [rule.ruleKey, rule]));
   const source = new Map();
   const states = new Map();
@@ -58,7 +58,7 @@ function buildMemoryRuntime(profile, stateRows, tokenAddress) {
       || row.tokenAddress !== tokenAddress
       || !rules.has(row.ruleKey)) continue;
     source.set(row.ruleKey, row);
-    if (row.ruleVersion === rules.get(row.ruleKey).version) {
+    if (!resetState && row.ruleVersion === rules.get(row.ruleKey).version) {
       states.set(row.ruleKey, row.state);
     }
   }
@@ -162,6 +162,96 @@ function buildMemoryRuntime(profile, stateRows, tokenAddress) {
   return { deps, intents, transitions };
 }
 
+function reactivationEpoch(profile) {
+  const value = profile.reactivation?.pending
+    ? profile.reactivation.requestedAt
+    : profile.reactivation?.reactivatedAt;
+  const parsed = value ? new Date(value).getTime() : NaN;
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function tokenCreatedAfter(token, epochMs) {
+  const createdAt = Number(token?.last_token_created_at_ms);
+  return Number.isFinite(createdAt) && createdAt > epochMs;
+}
+
+function hasFreshStates(profile, stateRows, epochMs) {
+  const indexed = new Map(stateRows.map((row) => [row.ruleKey, row]));
+  return profile.rules.filter(({ enabled }) => enabled).every((rule) => {
+    const row = indexed.get(rule.ruleKey);
+    const updatedAt = row?.updatedAt ? new Date(row.updatedAt).getTime() : NaN;
+    return row?.ruleVersion === rule.version
+      && Number.isFinite(updatedAt)
+      && updatedAt >= epochMs;
+  });
+}
+
+function baselineContext(profile, stateRows, token) {
+  const epochMs = reactivationEpoch(profile);
+  if (epochMs == null) return null;
+  if (!profile.reactivation.pending
+    && (tokenCreatedAfter(token, epochMs) || hasFreshStates(profile, stateRows, epochMs))) {
+    return null;
+  }
+  return Object.freeze({
+    epoch: new Date(epochMs).toISOString(),
+    pending: profile.reactivation.pending,
+    requestedAt: profile.reactivation.requestedAt,
+  });
+}
+
+function emptyBaselineState(epoch) {
+  return {
+    status: 'rearmed',
+    lastAlertedAt: null,
+    lastAlertedValue: null,
+    lastAlertedPct: null,
+    cooldownUntil: null,
+    rearmRequired: false,
+    lastFingerprint: null,
+    metadata: { lastDecision: 'reactivation_baseline', reactivatedAt: epoch },
+  };
+}
+
+function baselineState(state, epoch) {
+  const value = state || emptyBaselineState(epoch);
+  const metadata = {
+    ...(value.metadata || {}),
+    lastDecision: 'reactivation_baseline',
+    reactivatedAt: epoch,
+  };
+  for (const field of EVENT_ID_FIELDS) metadata[field] = null;
+  return Object.freeze({ ...value, metadata: Object.freeze(metadata) });
+}
+
+function baselineTransitions(profile, stateRows, transitions, tokenAddress, baseline) {
+  const rows = new Map(stateRows.map((row) => [row.ruleKey, row]));
+  const planned = new Map(transitions.map((transition) => [transition.ruleKey, transition]));
+  return Object.freeze(profile.rules.filter(({ enabled }) => enabled).map((rule) => {
+    const existing = rows.get(rule.ruleKey);
+    const transition = planned.get(rule.ruleKey);
+    return Object.freeze({
+      profileId: profile.profileId,
+      chain: profile.chain,
+      ruleKey: rule.ruleKey,
+      tokenAddress,
+      ruleVersion: rule.version,
+      expectedVersion: existing?.version ?? null,
+      state: baselineState(transition?.state, baseline.epoch),
+      eventReferences: Object.freeze([]),
+    });
+  }));
+}
+
+function baselineSummary(summary, intentCount) {
+  return Object.freeze({
+    ...summary,
+    emitted: 0,
+    suppressed: Number(summary.suppressed || 0) + intentCount,
+    events: Object.freeze([]),
+  });
+}
+
 function emptyPlan(profile) {
   return Object.freeze({
     profileId: profile.profileId,
@@ -188,7 +278,8 @@ function createTelegramSolanaAlertPlanner(options = {}) {
     }
     const tokenAfter = input.tokenAfter;
     const tokenAddress = normalizeTokenAddress('solana', tokenAfter?.address);
-    const runtime = buildMemoryRuntime(profile, input.states, tokenAddress);
+    const baseline = baselineContext(profile, input.states, tokenAfter);
+    const runtime = buildMemoryRuntime(profile, input.states, tokenAddress, Boolean(baseline));
     const summary = {
       evaluatedProfiles: 1,
       emitted: 0,
@@ -205,11 +296,24 @@ function createTelegramSolanaAlertPlanner(options = {}) {
       deps: runtime.deps,
       summary,
     });
+    const transitions = runtime.transitions();
+    if (baseline) {
+      return Object.freeze({
+        profileId: profile.profileId,
+        connectionId: profile.connectionId,
+        intents: Object.freeze([]),
+        stateTransitions: baselineTransitions(
+          profile, input.states, transitions, tokenAddress, baseline,
+        ),
+        summary: baselineSummary(summary, runtime.intents.length),
+        reactivationBaseline: baseline,
+      });
+    }
     return Object.freeze({
       profileId: profile.profileId,
       connectionId: profile.connectionId,
       intents: Object.freeze([...runtime.intents]),
-      stateTransitions: Object.freeze(runtime.transitions()),
+      stateTransitions: Object.freeze(transitions),
       summary: Object.freeze({ ...summary, events: Object.freeze([...summary.events]) }),
     });
   }

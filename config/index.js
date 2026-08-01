@@ -449,14 +449,38 @@ function validateTestDbTarget(dbConfig) {
 
 const db = getDbConfig(nodeEnv);
 const workerGroups = normalizeWorkerGroups(process.env.BACKGROUND_WORKER_GROUPS);
+const telegramDeliveryIntervalMs = parseIntegerInRange(
+  process.env.TELEGRAM_DELIVERY_INTERVAL_MS, 1_000, 250, 60_000
+);
+const telegramDeliveryLeaseMs = parseIntegerInRange(
+  process.env.TELEGRAM_DELIVERY_LEASE_MS, 60_000, 1_000, 10 * 60_000
+);
+const telegramSparklineGranularity = parseIntegerInRange(
+  process.env.TELEGRAM_SPARKLINE_GRANULARITY_MINUTES, 5, 1, 1440
+);
 const telegram = {
   enabled: parseBoolean(process.env.TELEGRAM_ALERTS_ENABLED, false),
   botToken: String(process.env.TELEGRAM_BOT_TOKEN || '').trim(),
   botUsername: String(process.env.TELEGRAM_BOT_USERNAME || '').trim().replace(/^@/, ''),
   webhookSecret: String(process.env.TELEGRAM_WEBHOOK_SECRET || '').trim(),
   webhookPublicUrl: String(process.env.TELEGRAM_WEBHOOK_PUBLIC_URL || '').trim(),
+  appBaseUrl: String(process.env.APP_BASE_URL || '').trim(),
   deliveryBatchSize: parseIntegerInRange(process.env.TELEGRAM_DELIVERY_BATCH_SIZE, 25, 1, 100),
   deliveryConcurrency: parseIntegerInRange(process.env.TELEGRAM_DELIVERY_CONCURRENCY, 4, 1, 20),
+  deliveryIntervalMs: telegramDeliveryIntervalMs,
+  deliveryMaxErrorBackoffMs: parseIntegerInRange(
+    process.env.TELEGRAM_DELIVERY_MAX_BACKOFF_MS,
+    Math.max(30_000, telegramDeliveryIntervalMs),
+    telegramDeliveryIntervalMs,
+    10 * 60_000
+  ),
+  deliveryLeaseMs: telegramDeliveryLeaseMs,
+  deliveryRenewalIntervalMs: parseIntegerInRange(
+    process.env.TELEGRAM_DELIVERY_RENEWAL_INTERVAL_MS,
+    Math.floor(telegramDeliveryLeaseMs / 2),
+    100,
+    telegramDeliveryLeaseMs - 1
+  ),
   deliveryTimeoutMs: parseIntegerInRange(
     process.env.TELEGRAM_DELIVERY_TIMEOUT_MS,
     10_000,
@@ -464,6 +488,12 @@ const telegram = {
     60_000
   ),
   maxAttempts: parseIntegerInRange(process.env.TELEGRAM_MAX_ATTEMPTS, 5, 1, 20),
+  reactivationBatchSize: parseIntegerInRange(
+    process.env.TELEGRAM_REACTIVATION_BATCH_SIZE, 100, 1, 500
+  ),
+  sparklineHours: parseIntegerInRange(process.env.TELEGRAM_SPARKLINE_HOURS, 24, 1, 720),
+  sparklineGranularityMinutes: [1, 5, 15, 30, 60, 240, 1440]
+    .includes(telegramSparklineGranularity) ? telegramSparklineGranularity : 5,
 };
 
 const missing = [];
@@ -490,6 +520,7 @@ if (telegram.enabled) {
     ['TELEGRAM_BOT_USERNAME', telegram.botUsername],
     ['TELEGRAM_WEBHOOK_SECRET', telegram.webhookSecret],
     ['TELEGRAM_WEBHOOK_PUBLIC_URL', telegram.webhookPublicUrl],
+    ['APP_BASE_URL', telegram.appBaseUrl],
   ];
   missing.push(...telegramRequired.filter(([, value]) => !value).map(([name]) => name));
 }

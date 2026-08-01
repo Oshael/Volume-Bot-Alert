@@ -70,6 +70,10 @@ const gmgnClaimSignalWorker = require('./services/gmgn-claim-signal-worker');
 const backendAlertRealtime = require('./services/backend-alert-realtime');
 const marketBucketRealtime = require('./services/market-bucket-realtime');
 const userConfigSync = require('./services/user-config-sync');
+const telegramAlertRuntime = require('./services/telegram-alert-runtime');
+const {
+  createTelegramAlertOperationalStatus,
+} = require('./services/telegram-alert-operational-status');
 const gmgnClient = require('./services/gmgn-client');
 const dexscreener = require('./services/dexscreener');
 const solUsdPrice = require('./services/sol-usd-price-service');
@@ -85,12 +89,14 @@ const ROBINHOOD_BACKFILL_WATCHDOG_LEASE_KEY = 'robinhood-backfill-watchdog-worke
 const ROBINHOOD_BACKFILL_AGGREGATION_LEASE_KEY = 'robinhood-backfill-aggregation-worker';
 const ROBINHOOD_CATALOG_STAGING_LEASE_KEY = 'robinhood-catalog-staging-worker';
 const ROBINHOOD_CATALOG_PROJECTION_LEASE_KEY = 'robinhood-catalog-projection-worker';
+const TELEGRAM_ALERT_RUNTIME_LEASE_KEY = 'telegram-alert-runtime';
 const app = express();
 let server = null;
 let bootstrapped = false;
 let startupInFlight = false;
 const workerLeaseManager = createWorkerLeaseManager();
 const robinhoodStandardAlertPublication = createRobinhoodStandardAlertPublication();
+const telegramAlertOperationalStatus = createTelegramAlertOperationalStatus();
 const exposedResponseHeaders = [
   'RateLimit',
   'RateLimit-Policy',
@@ -236,7 +242,13 @@ app.get('/api/admin/ws-status', authenticate, requireAdmin, async (req, res) => 
   const robinhoodCatalogProjectionLease = workerLeases.find(
     (lease) => lease.key === ROBINHOOD_CATALOG_PROJECTION_LEASE_KEY
   ) || null;
+  const telegramAlertRuntimeLease = workerLeases.find(
+    (lease) => lease.key === TELEGRAM_ALERT_RUNTIME_LEASE_KEY
+  ) || null;
   const robinhoodIngestionStatus = robinhoodIngestionWorker.getStatus();
+  const telegramAlerts = await telegramAlertOperationalStatus.load({
+    sharedLease: telegramAlertRuntimeLease,
+  });
 
   res.json({
     runtime: {
@@ -273,6 +285,7 @@ app.get('/api/admin/ws-status', authenticate, requireAdmin, async (req, res) => 
       ingestionStatus: robinhoodIngestionStatus,
       sharedLease: robinhoodIngestionLease,
     }),
+    telegramAlerts,
     meteoraSnapshotWorker: meteoraSnapshotWorker.getStatus(),
     dexDiscoveryWorker: dexDiscoveryWorker.getStatus(),
     bidZoneWorker: bidZoneWorker.getStatus(),
@@ -382,8 +395,20 @@ function startLockedWorker(group, key, label, start, options = {}) {
   });
 }
 
+function startTelegramAlertRuntime() {
+  if (!config.telegram.enabled) return;
+  startLockedWorker(
+    'core',
+    TELEGRAM_ALERT_RUNTIME_LEASE_KEY,
+    'Telegram alert runtime',
+    () => telegramAlertRuntime.start(),
+    { metadataProvider: () => ({ telemetry: telegramAlertRuntime.getStatus() }) }
+  );
+}
+
 function startWorkerSet() {
   if (hasWorkerGroup('core')) {
+    startTelegramAlertRuntime();
     startLockedWorker('core', 'catalog-worker', 'Catalog worker', () => catalogWorker.start());
     startLockedWorker('core', 'dex-discovery-worker', 'Dex discovery worker', () => dexDiscoveryWorker.start());
     startLockedWorker('core', 'token-risk-enrichment-worker', 'Token risk enrichment worker', () => {
@@ -756,6 +781,7 @@ async function shutdownGracefully(signal = 'SIGTERM') {
       robinhoodLiveCatalogWorker.stop(),
       robinhoodRealtimeAlertWorker.stop(),
       robinhoodMarketAggregateWorker.stop(),
+      telegramAlertRuntime.stop(),
     ]);
     const releaseResult = await workerLeaseManager.stop({ releaseLeases: true });
     console.log(`[Shutdown] Worker leases released=${releaseResult.released} missed=${releaseResult.missed} errors=${releaseResult.errors}`);

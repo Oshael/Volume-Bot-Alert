@@ -53,6 +53,29 @@ function timestamp(value, field) {
   return parsed.toISOString();
 }
 
+function optionalTimestamp(value, field) {
+  return value == null ? null : timestamp(value, field);
+}
+
+function adaptReactivation(value) {
+  if (value == null) {
+    return Object.freeze({ pending: false, requestedAt: null, reactivatedAt: null });
+  }
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new TypeError('Telegram alert reactivation context must be an object');
+  }
+  const status = String(value.status || '').trim();
+  const requestedAt = optionalTimestamp(value.requested_at, 'reactivation requested_at');
+  const reactivatedAt = optionalTimestamp(value.reactivated_at, 'reactivated_at');
+  const pending = status === 'access_suspended';
+  if (!['active', 'access_suspended'].includes(status)
+    || (pending && !requestedAt)
+    || (!pending && requestedAt)) {
+    throw new TypeError('Telegram alert reactivation context is inconsistent');
+  }
+  return Object.freeze({ pending, requestedAt, reactivatedAt });
+}
+
 function adaptRule(profile, row, ruleKey) {
   if (!row) {
     throw new TypeError(`Missing Telegram alert rule: ${profile.chain}/${ruleKey}`);
@@ -127,6 +150,7 @@ function adaptTelegramAlertEvaluationProfile(input = {}) {
   const ruleKeys = Object.keys(contracts);
   const indexed = indexRules(input.rules, ruleKeys);
   const rules = ruleKeys.map((ruleKey) => adaptRule(profile, indexed.get(ruleKey), ruleKey));
+  const reactivation = adaptReactivation(input.reactivation);
 
   return Object.freeze({
     destination: 'telegram',
@@ -135,6 +159,7 @@ function adaptTelegramAlertEvaluationProfile(input = {}) {
     sparklineEnabled: requiredBoolean(row.sparkline_enabled, 'profile sparkline_enabled'),
     version: positiveVersion(row.version, 'profile version'),
     updatedAt: timestamp(row.updated_at, 'profile updated_at'),
+    reactivation,
     ruleEnabled: buildRuleEnabled(rules),
     rules: Object.freeze(rules),
   });

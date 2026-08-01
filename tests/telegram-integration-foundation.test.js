@@ -114,7 +114,9 @@ describe('Telegram integration foundation', () => {
       telegramUserId: 9007199254740991n,
       chatId: 9007199254740990n,
       username: ' user ',
+      languageCode: 'pt_br',
     }, db);
+    await connection.updateLanguageCode({ id: 12, languageCode: 'en_us' }, db);
     await connection.disconnect(12, db);
     await connection.setDeliveryStatus({
       userId: 7,
@@ -124,14 +126,17 @@ describe('Telegram integration foundation', () => {
 
     assert.equal(db.calls[0].params[1], '9007199254740991');
     assert.equal(db.calls[0].params[2], '9007199254740990');
-    assert.match(db.calls[1].sql, /status = 'disconnected'/);
-    assert.match(db.calls[1].sql, /access_suspended_at = NULL/);
-    assert.match(db.calls[1].sql, /version = version \+ 1/);
-    assert.match(db.calls[1].sql, /\$2::integer IS NULL OR version = \$2/);
-    assert.deepEqual(db.calls[1].params, [12, null]);
-    assert.match(db.calls[2].sql, /status IN \('active', 'paused'\)/);
-    assert.match(db.calls[2].sql, /version = \$3/);
-    assert.deepEqual(db.calls[2].params, [7, 'paused', 4]);
+    assert.equal(db.calls[0].params[5], 'pt-BR');
+    assert.match(db.calls[1].sql, /language_code IS DISTINCT FROM \$2/);
+    assert.deepEqual(db.calls[1].params, [12, 'en-US']);
+    assert.match(db.calls[2].sql, /status = 'disconnected'/);
+    assert.match(db.calls[2].sql, /access_suspended_at = NULL/);
+    assert.match(db.calls[2].sql, /version = version \+ 1/);
+    assert.match(db.calls[2].sql, /\$2::integer IS NULL OR version = \$2/);
+    assert.deepEqual(db.calls[2].params, [12, null]);
+    assert.match(db.calls[3].sql, /status IN \('active', 'paused'\)/);
+    assert.match(db.calls[3].sql, /version = \$3/);
+    assert.deepEqual(db.calls[3].params, [7, 'paused', 4]);
     await assert.rejects(
       () => connection.setDeliveryStatus({
         userId: 7, status: 'access_suspended', expectedVersion: 4,

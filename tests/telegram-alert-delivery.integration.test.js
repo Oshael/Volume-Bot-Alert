@@ -8,9 +8,14 @@ const deliveryModel = require('../src/models/telegram-alert-delivery');
 const profileModel = require('../src/models/telegram-alert-profile');
 const ruleSettingModel = require('../src/models/telegram-alert-rule-setting');
 const connectionModel = require('../src/models/telegram-connection');
+const {
+  createTelegramAlertAccessStateRepository,
+} = require('../src/models/telegram-alert-access-state');
 const stage84 = require('../src/utils/db-init-stage84');
 const stage85 = require('../src/utils/db-init-stage85');
 const stage89 = require('../src/utils/db-init-stage89');
+const stage93 = require('../src/utils/db-init-stage93');
+const stage94 = require('../src/utils/db-init-stage94');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const TOKEN = '11111111111111111111111111111111';
@@ -60,6 +65,8 @@ describe('Telegram alert delivery claim integration', () => {
     await stage84.init({ closePool: false });
     await stage85.init({ closePool: false });
     await stage89.init({ closePool: false });
+    await stage93.init({ closePool: false });
+    await stage94.init({ closePool: false });
     userId = await createTestUser();
     const numericSeed = BigInt(Date.now()) * 10_000n + BigInt(process.pid);
     const connection = await connectionModel.create({
@@ -194,5 +201,139 @@ describe('Telegram alert delivery claim integration', () => {
     assert.ok(sent.deliveredAt);
     assert.equal(failed.status, 'failed');
     assert.equal(cancelled.status, 'cancelled');
+  });
+
+  it('suspends the connection and cancels backlog without stealing a current claim', async () => {
+    const [claimed] = await deliveryModel.claimReadyBatch({
+      owner: 'access-worker-a',
+      limit: 1,
+      leaseMs: 60_000,
+    });
+    const repository = createTelegramAlertAccessStateRepository({ database: db });
+
+    const result = await repository.suspend({
+      connectionId: profile.connection_id,
+      userId,
+      errorCode: 'access_expired',
+      error: 'Access expired',
+    });
+    const connection = await db.query(
+      'SELECT status, access_suspended_at FROM telegram_connections WHERE id = $1',
+      [profile.connection_id]
+    );
+    const deliveries = await db.query(
+      `SELECT status, last_error_code
+       FROM telegram_alert_deliveries
+       WHERE profile_id = $1
+       ORDER BY id`,
+      [profile.id]
+    );
+
+    assert.deepEqual(result, { status: 'active', suspended: true, cancelled: 3 });
+    assert.equal(connection.rows[0].status, 'access_suspended');
+    assert.ok(connection.rows[0].access_suspended_at);
+    assert.equal(
+      deliveries.rows.filter(({ status }) => status === 'cancelled').length,
+      3
+    );
+    assert.equal(
+      deliveries.rows.find(({ status }) => status === 'claimed').last_error_code,
+      null
+    );
+    assert.equal(claimed.status, 'claimed');
+
+    const pending = await repository.requestReactivation({
+      connectionId: profile.connection_id,
+      userId,
+    });
+    const marked = await db.query(
+      `SELECT status, access_reactivation_requested_at
+       FROM telegram_connections WHERE id = $1`,
+      [profile.connection_id]
+    );
+    assert.equal(pending.connectionId, String(profile.connection_id));
+    assert.equal(marked.rows[0].status, 'access_suspended');
+    assert.ok(marked.rows[0].access_reactivation_requested_at);
+
+    const stale = await repository.completeReactivation({
+      connectionId: profile.connection_id,
+      userId,
+      requestedAt: new Date(0),
+    });
+    const completed = await repository.completeReactivation({
+      connectionId: profile.connection_id,
+      userId,
+      requestedAt: pending.requestedAt,
+    });
+    const repeated = await repository.completeReactivation({
+      connectionId: profile.connection_id,
+      userId,
+      requestedAt: pending.requestedAt,
+    });
+    const active = await db.query(
+      `SELECT status, access_suspended_at, access_reactivation_requested_at,
+              access_reactivated_at
+       FROM telegram_connections WHERE id = $1`,
+      [profile.connection_id]
+    );
+    assert.equal(stale, null);
+    assert.equal(completed.status, 'active');
+    assert.equal(repeated.status, 'active');
+    assert.equal(active.rows[0].status, 'active');
+    assert.equal(active.rows[0].access_suspended_at, null);
+    assert.equal(active.rows[0].access_reactivation_requested_at, null);
+    assert.equal(
+      new Date(active.rows[0].access_reactivated_at).toISOString(),
+      new Date(pending.requestedAt).toISOString()
+    );
+  });
+
+  it('reactivates without baseline only while the Solana profile is disabled', async (t) => {
+    const repository = createTelegramAlertAccessStateRepository({ database: db });
+    t.after(async () => {
+      await db.query(
+        `UPDATE telegram_alert_profiles SET enabled = TRUE WHERE id = $1`,
+        [profile.id]
+      );
+      await db.query(
+        `UPDATE telegram_connections
+         SET status = 'active', access_suspended_at = NULL,
+             access_reactivation_requested_at = NULL
+         WHERE id = $1`,
+        [profile.connection_id]
+      );
+    });
+    await repository.suspend({
+      connectionId: profile.connection_id,
+      userId,
+      errorCode: 'access_expired',
+      error: 'Access expired',
+    });
+    const pending = await repository.requestReactivation({
+      connectionId: profile.connection_id,
+      userId,
+    });
+
+    assert.equal(await repository.completeReactivationWithoutEnabledSolana({
+      connectionId: profile.connection_id,
+      userId,
+      requestedAt: pending.requestedAt,
+    }), null);
+
+    await db.query(
+      `UPDATE telegram_alert_profiles SET enabled = FALSE WHERE id = $1`,
+      [profile.id]
+    );
+    const completed = await repository.completeReactivationWithoutEnabledSolana({
+      connectionId: profile.connection_id,
+      userId,
+      requestedAt: pending.requestedAt,
+    });
+
+    assert.equal(completed.status, 'active');
+    assert.equal(
+      new Date(completed.reactivatedAt).toISOString(),
+      new Date(pending.requestedAt).toISOString()
+    );
   });
 });

@@ -15,7 +15,7 @@ const UNUSED_PLANNER = Object.freeze({
   },
 });
 
-function candidate() {
+function candidate(reactivation) {
   const profile = {
     id: '10',
     connection_id: '20',
@@ -28,6 +28,7 @@ function candidate() {
   };
   return {
     profile,
+    reactivation,
     rules: buildDefaultRules('solana').map((rule, index) => ({
       profile_id: profile.id,
       chain: 'solana',
@@ -144,5 +145,92 @@ describe('Telegram Solana alert destination', () => {
     assert.equal(planned.signals, signals);
     assert.equal(planned.states[0].profileId, '10');
     assert.equal(calls.filter(([name]) => name === 'commit').length, 1);
+  });
+
+  it('activates and invalidates only after a pending baseline commits', async () => {
+    const requestedAt = '2026-07-29T14:30:00.000Z';
+    const calls = [];
+    const profileSource = {
+      async listEligible() {
+        return [candidate({
+          status: 'access_suspended', requested_at: requestedAt, reactivated_at: null,
+        })];
+      },
+      invalidate(chain) { calls.push(['invalidate', chain]); },
+    };
+    const destination = createTelegramSolanaAlertDestination({
+      enabled: true,
+      profileSource,
+      stateModel: { async listByProfileAndToken() { return []; } },
+      planner: {
+        async plan() {
+          return {
+            profileId: '10', connectionId: '20', intents: [], stateTransitions: [],
+            reactivationBaseline: { pending: true, requestedAt },
+          };
+        },
+      },
+      committer: {
+        async commit() {
+          calls.push(['commit']);
+          return { deliveries: [], duplicate: false };
+        },
+      },
+      reactivationState: {
+        async completeReactivation(input) {
+          calls.push(['reactivate', input]);
+          return { connectionId: input.connectionId, status: 'active' };
+        },
+      },
+    });
+    const [profile] = await destination.listSignalProfiles();
+
+    const result = await destination.evaluate({
+      profiles: [profile], tokenAfter: { address: TOKEN }, signals: {}, nowMs: 1,
+    });
+
+    assert.equal(result.committed, 1);
+    assert.deepEqual(calls, [
+      ['commit'],
+      ['reactivate', { connectionId: '20', userId: 7, requestedAt }],
+      ['invalidate', 'solana'],
+    ]);
+  });
+
+  it('keeps reactivation suspended when the baseline commit fails', async () => {
+    let reactivations = 0;
+    const errors = [];
+    const destination = createTelegramSolanaAlertDestination({
+      enabled: true,
+      profileSource: { async listEligible() { return []; } },
+      stateModel: { async listByProfileAndToken() { return []; } },
+      planner: {
+        async plan() {
+          return {
+            profileId: '10', connectionId: '20', intents: [], stateTransitions: [],
+            reactivationBaseline: {
+              pending: true, requestedAt: '2026-07-29T14:30:00.000Z',
+            },
+          };
+        },
+      },
+      committer: { async commit() { throw new Error('baseline commit failed'); } },
+      reactivationState: {
+        async completeReactivation() { reactivations += 1; return null; },
+      },
+      async onProfileError(input) { errors.push(input); },
+    });
+    const profile = {
+      profileId: '10', connectionId: '20', userId: 7, chain: 'solana', rules: [],
+    };
+
+    const result = await destination.evaluate({
+      profiles: [profile], tokenAfter: { address: TOKEN }, signals: {}, nowMs: 1,
+    });
+
+    assert.equal(result.committed, 0);
+    assert.equal(result.errors, 1);
+    assert.equal(reactivations, 0);
+    assert.match(errors[0].error.message, /baseline commit failed/);
   });
 });

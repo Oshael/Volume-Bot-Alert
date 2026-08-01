@@ -1,5 +1,8 @@
 const stateModel = require('../models/telegram-alert-rule-state');
 const {
+  createTelegramAlertAccessStateRepository,
+} = require('../models/telegram-alert-access-state');
+const {
   adaptTelegramAlertEvaluationProfile,
 } = require('./telegram-alert-evaluation-profile');
 const {
@@ -29,6 +32,11 @@ function createTelegramSolanaAlertDestination(options = {}) {
     throw new TypeError('Telegram Solana alert planner is required');
   }
   const committer = options.committer || createTelegramAlertPlanCommitter();
+  const reactivation = options.reactivationState
+    || createTelegramAlertAccessStateRepository(options.reactivationOptions);
+  if (typeof reactivation?.completeReactivation !== 'function') {
+    throw new TypeError('Telegram access reactivation state port is required');
+  }
 
   async function report(error, phase, profile) {
     if (typeof options.onProfileError !== 'function') return;
@@ -58,6 +66,22 @@ function createTelegramSolanaAlertDestination(options = {}) {
     return result;
   }
 
+  async function completeBaselineReactivation(profile, plan) {
+    const baseline = plan.reactivationBaseline;
+    if (!baseline?.pending) return;
+    const completed = await reactivation.completeReactivation({
+      connectionId: profile.connectionId,
+      userId: profile.userId,
+      requestedAt: baseline.requestedAt,
+    });
+    if (!completed) {
+      const error = new Error('Telegram access reactivation marker changed');
+      error.code = 'telegram_reactivation_conflict';
+      throw error;
+    }
+    profiles.invalidate?.('solana');
+  }
+
   async function evaluate(input = {}) {
     const summary = emptySummary();
     if (!enabled) return Object.freeze(summary);
@@ -84,6 +108,7 @@ function createTelegramSolanaAlertDestination(options = {}) {
         summary.committed += 1;
         summary.deliveries += committed.deliveries.length;
         if (committed.duplicate) summary.duplicate += 1;
+        await completeBaselineReactivation(profile, plan);
       } catch (error) {
         summary.errors += 1;
         await report(error, 'profile-evaluation', profile);

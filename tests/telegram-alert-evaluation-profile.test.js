@@ -92,6 +92,36 @@ describe('Telegram alert evaluation profile adapter', () => {
     assert.equal(result.rules.some((item) => item.ruleKey.includes('claim')), false);
   });
 
+  it('adapts a consistent pending or completed reactivation boundary', () => {
+    const pendingInput = fixture('solana');
+    pendingInput.reactivation = {
+      status: 'access_suspended',
+      requested_at: '2026-07-29T13:00:00.000Z',
+      reactivated_at: null,
+    };
+    const activeInput = fixture('solana');
+    activeInput.reactivation = {
+      status: 'active',
+      requested_at: null,
+      reactivated_at: '2026-07-29T13:00:00.000Z',
+    };
+
+    assert.deepEqual(adaptTelegramAlertEvaluationProfile(pendingInput).reactivation, {
+      pending: true,
+      requestedAt: '2026-07-29T13:00:00.000Z',
+      reactivatedAt: null,
+    });
+    assert.equal(
+      adaptTelegramAlertEvaluationProfile(activeInput).reactivation.reactivatedAt,
+      '2026-07-29T13:00:00.000Z',
+    );
+    activeInput.reactivation.requested_at = '2026-07-29T13:00:00.000Z';
+    assert.throws(
+      () => adaptTelegramAlertEvaluationProfile(activeInput),
+      /reactivation context is inconsistent/,
+    );
+  });
+
   it('fails closed for incomplete, duplicate or cross-profile rule sets', () => {
     const cases = [
       {

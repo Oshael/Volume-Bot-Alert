@@ -4,10 +4,18 @@ Object.assign(process.env, {
   TELEGRAM_BOT_USERNAME: '@trend_bot',
   TELEGRAM_WEBHOOK_SECRET: 'hook-secret',
   TELEGRAM_WEBHOOK_PUBLIC_URL: 'https://example.test/telegram',
+  APP_BASE_URL: 'https://app.example.test',
   TELEGRAM_DELIVERY_BATCH_SIZE: '999',
   TELEGRAM_DELIVERY_CONCURRENCY: '0',
+  TELEGRAM_DELIVERY_INTERVAL_MS: '999999',
+  TELEGRAM_DELIVERY_MAX_BACKOFF_MS: '',
+  TELEGRAM_DELIVERY_LEASE_MS: '999',
+  TELEGRAM_DELIVERY_RENEWAL_INTERVAL_MS: '999999',
   TELEGRAM_DELIVERY_TIMEOUT_MS: '1',
   TELEGRAM_MAX_ATTEMPTS: '99',
+  TELEGRAM_REACTIVATION_BATCH_SIZE: '999',
+  TELEGRAM_SPARKLINE_HOURS: '0',
+  TELEGRAM_SPARKLINE_GRANULARITY_MINUTES: '2',
 });
 
 const assert = require('node:assert/strict');
@@ -48,10 +56,18 @@ describe('Telegram Bot API client', () => {
       botUsername: 'trend_bot',
       webhookSecret: 'hook-secret',
       webhookPublicUrl: 'https://example.test/telegram',
+      appBaseUrl: 'https://app.example.test',
       deliveryBatchSize: 100,
       deliveryConcurrency: 1,
+      deliveryIntervalMs: 60_000,
+      deliveryMaxErrorBackoffMs: 60_000,
+      deliveryLeaseMs: 1_000,
+      deliveryRenewalIntervalMs: 999,
       deliveryTimeoutMs: 1_000,
       maxAttempts: 20,
+      reactivationBatchSize: 500,
+      sparklineHours: 1,
+      sparklineGranularityMinutes: 5,
     });
   });
 
@@ -66,6 +82,7 @@ describe('Telegram Bot API client', () => {
         TELEGRAM_BOT_USERNAME: '',
         TELEGRAM_WEBHOOK_SECRET: '',
         TELEGRAM_WEBHOOK_PUBLIC_URL: '',
+        APP_BASE_URL: '',
       },
     });
 
@@ -75,6 +92,7 @@ describe('Telegram Bot API client', () => {
       'TELEGRAM_BOT_USERNAME',
       'TELEGRAM_WEBHOOK_SECRET',
       'TELEGRAM_WEBHOOK_PUBLIC_URL',
+      'APP_BASE_URL',
     ]) {
       assert.match(child.stderr, new RegExp(name));
     }

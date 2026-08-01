@@ -2271,6 +2271,49 @@ const SCHEMA_GROUPS = [
       },
     ],
   },
+  {
+    key: 'stage93-telegram-access-reactivation-marker',
+    name: 'Stage 93 durable Telegram access reactivation marker',
+    repair: 'node src/utils/db-init-stage93.js',
+    tables: [
+      {
+        table: 'telegram_connections',
+        columns: ['access_reactivation_requested_at'],
+        constraints: [{
+          name: 'telegram_connections_reactivation_check',
+          includes: ['CHECK', 'access_reactivation_requested_at', 'access_suspended'],
+        }],
+      },
+    ],
+  },
+  {
+    key: 'stage94-telegram-access-reactivation-epoch',
+    name: 'Stage 94 durable Telegram access reactivation epoch',
+    repair: 'node src/utils/db-init-stage94.js',
+    tables: [
+      {
+        table: 'telegram_connections',
+        columns: ['access_reactivated_at'],
+        constraints: [{
+          name: 'telegram_connections_reactivated_check',
+          includes: ['CHECK', 'access_reactivated_at', 'disconnected'],
+        }],
+      },
+    ],
+  },
+  {
+    key: 'stage95-telegram-language-preference',
+    name: 'Stage 95 durable Telegram language preference',
+    repair: 'node src/utils/db-init-stage95.js',
+    tables: [{
+      table: 'telegram_connections',
+      columns: ['language_code'],
+      constraints: [{
+        name: 'telegram_connections_language_code_check',
+        includes: ['CHECK', 'language_code', 'char_length'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
@@ -2295,6 +2338,9 @@ const PROFILE_GROUP_KEYS = {
     'stage87-telegram-input-sessions',
     'stage88-telegram-alert-rule-state',
     'stage89-telegram-alert-delivery-outbox',
+    'stage93-telegram-access-reactivation-marker',
+    'stage94-telegram-access-reactivation-epoch',
+    'stage95-telegram-language-preference',
   ],
   runtime: SCHEMA_GROUPS.map((group) => group.key),
 };
