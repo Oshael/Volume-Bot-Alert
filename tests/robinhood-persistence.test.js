@@ -997,3 +997,44 @@ describe('Robinhood persistence repository', () => {
     assert.equal(fake.calls.at(-1).sql, 'ROLLBACK');
   });
 });
+
+describe('Robinhood supply provenance normalization', () => {
+  const swapLogRow = {
+    transactionHash: HASH_B,
+    logIndex: '7',
+    blockNumber: '8069000',
+    protocol: 'uniswap-v3',
+    marketKey: `robinhood:uniswap-v3:${POOL}`,
+  };
+
+  it('accepts a live latest_call supply anchored at the swap block', () => {
+    const normalized = __private.normalizeObservation(
+      marketEntry({ tokenSupplyStatus: 'latest_call', tokenSupplyBlockTag: '8069000' }),
+      swapLogRow
+    );
+
+    assert.equal(normalized.status, 'accepted');
+    assert.equal(normalized.tokenSupplyStatus, 'latest_call');
+    assert.equal(normalized.tokenSupplyAnchorBlockNumber, '8069000');
+  });
+
+  it('rejects a supply anchor newer than the swap regardless of status', () => {
+    assert.throws(
+      () => __private.normalizeObservation(
+        marketEntry({ tokenSupplyStatus: 'latest_call', tokenSupplyBlockTag: '8069001' }),
+        swapLogRow
+      ),
+      /supply anchor cannot be newer than its swap/
+    );
+  });
+
+  it('rejects an unknown supply status', () => {
+    assert.throws(
+      () => __private.normalizeObservation(
+        marketEntry({ tokenSupplyStatus: 'guessed', tokenSupplyBlockTag: '8069000' }),
+        swapLogRow
+      ),
+      /supply status is invalid/
+    );
+  });
+});

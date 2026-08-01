@@ -27,6 +27,7 @@ const SUPPLY_STATUSES = new Set([
   'exact_block_call',
   'reconstructed_mint_burn',
   'unchanged_between_anchors',
+  'latest_call',
 ]);
 
 function normalizeSignalProtocols(value) {

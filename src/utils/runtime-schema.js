@@ -2314,6 +2314,18 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage96-robinhood-live-supply-provenance',
+    name: 'Stage 96 Robinhood live supply provenance',
+    repair: 'node src/utils/db-init-stage96.js',
+    tables: [{
+      table: 'robinhood_market_observations',
+      constraints: [{
+        name: 'robinhood_market_observations_supply_provenance_check',
+        includes: ['CHECK', 'token_supply_status', 'latest_call'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
@@ -2341,6 +2353,7 @@ const PROFILE_GROUP_KEYS = {
     'stage93-telegram-access-reactivation-marker',
     'stage94-telegram-access-reactivation-epoch',
     'stage95-telegram-language-preference',
+    'stage96-robinhood-live-supply-provenance',
   ],
   runtime: SCHEMA_GROUPS.map((group) => group.key),
 };
