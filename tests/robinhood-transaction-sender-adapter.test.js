@@ -25,12 +25,13 @@ function fullBlock(transactions, overrides = {}) {
 
 describe('robinhood transaction sender adapter', () => {
   it('indexes signers by hash and derives onchain block time', () => {
-    const { blockNumber, blockTime, senders } = indexBlockSenders(fullBlock([
+    const { blockNumber, blockHash, blockTime, senders } = indexBlockSenders(fullBlock([
       { hash: TX_1, from: SIGNER_A },
       { hash: TX_2, from: SIGNER_B },
     ]));
 
     assert.equal(blockNumber, 100n);
+    assert.equal(blockHash, `0x${'f'.repeat(64)}`);
     assert.equal(blockTime, new Date(0x60000000 * 1000).toISOString());
     assert.equal(senders.get(TX_1), SIGNER_A);
     assert.equal(senders.get(TX_2), SIGNER_B);
@@ -63,6 +64,13 @@ describe('robinhood transaction sender adapter', () => {
     assert.throws(
       () => indexBlockSenders(fullBlock(undefined)),
       /block\.transactions must be an array/
+    );
+  });
+
+  it('rejects a malformed canonical block hash', () => {
+    assert.throws(
+      () => indexBlockSenders(fullBlock([], { hash: '0x1234' })),
+      /block\.hash must be a 32-byte hex hash/
     );
   });
 

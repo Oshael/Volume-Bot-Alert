@@ -35,6 +35,12 @@ async function runSeedBatch(deps = {}) {
 
   const totals = await attributor.attributeGroups(groups);
   const lastBlock = blockNumbers[blockNumbers.length - 1];
+  if (totals.missing > 0 || totals.unresolved > 0) {
+    return {
+      done: true, blocked: 'unresolved', processedBlocks: groups.length,
+      fromBlock, lastBlock, totals,
+    };
+  }
   const nextBlock = nextBlockAfter(lastBlock);
   const advanced = await cursor.advanceCursor(stream, { nextBlock, expectedVersion: state.version });
   if (!advanced) {
@@ -76,6 +82,11 @@ async function runSeed(deps = {}) {
     if (result.conflict) {
       summary.stopped = 'conflict';
       logger.warn?.('[seed] cursor version conflict; another owner is advancing. stopping.');
+      break;
+    }
+    if (result.blocked) {
+      summary.stopped = result.blocked;
+      logger.warn?.('[seed] unresolved transactions; cursor was not advanced. stopping.');
       break;
     }
     if (result.done) {

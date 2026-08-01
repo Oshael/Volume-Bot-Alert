@@ -75,6 +75,30 @@ describe('robinhood wallet swap seed runner', () => {
     assert.equal(result.done, true);
   });
 
+  it('does not advance past unresolved transactions', async () => {
+    const reader = fakeReader([{
+      groups: [['100', [{}]]], blockNumbers: ['100'],
+    }]);
+    const cursor = fakeCursor({ stream: 'seed', nextBlock: '100', safeHead: '200', version: 0 });
+    const result = await runSeedBatch({
+      reader,
+      attributor: fakeAttributor({ attributed: 0, inserted: 0, unresolved: 1, missing: 1 }),
+      cursor,
+    });
+
+    assert.equal(result.blocked, 'unresolved');
+    assert.equal(result.done, true);
+    assert.equal(cursor.advances.length, 0);
+
+    const summary = await runSeed({
+      reader: fakeReader([{ groups: [['100', [{}]]], blockNumbers: ['100'] }]),
+      attributor: fakeAttributor({ attributed: 0, inserted: 0, unresolved: 1, missing: 1 }),
+      cursor: fakeCursor({ stream: 'seed', nextBlock: '100', safeHead: '200', version: 0 }),
+      logger: { log() {}, warn() {} },
+    });
+    assert.equal(summary.stopped, 'unresolved');
+  });
+
   it('throws when the cursor is not initialized', async () => {
     const cursor = fakeCursor(null);
     await assert.rejects(

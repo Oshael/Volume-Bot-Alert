@@ -3,7 +3,7 @@ const { describe, it } = require('node:test');
 
 const {
   createRobinhoodWalletSwapCursorRepository,
-  __private: { normalizeCursor, checkpointPair },
+  __private: { normalizeCursor, checkpointPair, liveCheckpoint },
 } = require('../src/models/robinhood-wallet-swap-cursor');
 
 function fakeDb(rows = []) {
@@ -80,5 +80,40 @@ describe('robinhood wallet swap cursor repository', () => {
     assert.throws(() => checkpointPair({ checkpointBlock: '10' }), /set together/);
     assert.throws(() => checkpointPair({ checkpointHash: `0x${'a'.repeat(64)}` }), /set together/);
     assert.deepEqual(checkpointPair({}), { checkpointBlock: null, checkpointHash: null });
+  });
+
+  it('advances the live cursor monotonically and preserves an omitted checkpoint', async () => {
+    const liveRow = {
+      ...SEED_ROW, stream: 'live', next_block: '102', safe_head: '120', version: '4',
+    };
+    const database = fakeDb([liveRow]);
+    const repo = createRobinhoodWalletSwapCursorRepository({ database });
+
+    const advanced = await repo.advanceLiveCursor({
+      nextBlock: '102', safeHead: '120', expectedVersion: 3,
+    });
+
+    assert.equal(advanced.stream, 'live');
+    assert.match(database.calls[0].sql, /GREATEST\(COALESCE\(safe_head/);
+    assert.match(database.calls[0].sql, /checkpoint_block = COALESCE/);
+    assert.match(database.calls[0].sql, /next_block <= \$3::bigint/);
+    assert.deepEqual(database.calls[0].params, [
+      'robinhood', 'live', '102', '120', null, null, null, 3,
+    ]);
+  });
+
+  it('requires a complete live checkpoint below nextBlock', () => {
+    const hash = `0x${'a'.repeat(64)}`;
+    assert.throws(
+      () => liveCheckpoint({ checkpointBlock: '10', checkpointHash: hash }, '11'),
+      /block, hash and timestamp must be set together/
+    );
+    assert.throws(
+      () => liveCheckpoint({
+        checkpointBlock: '11', checkpointHash: hash,
+        checkpointTimestamp: '2026-08-01T00:00:00.000Z',
+      }, '11'),
+      /must be lower than nextBlock/
+    );
   });
 });

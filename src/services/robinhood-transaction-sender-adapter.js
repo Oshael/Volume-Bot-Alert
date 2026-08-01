@@ -47,7 +47,7 @@ function blockTimeIso(timestamp) {
 }
 
 /**
- * Index a full block into { blockNumber, blockTime, senders } where `senders`
+ * Index a full block into { blockNumber, blockHash, blockTime, senders } where `senders`
  * maps normalized transaction hash -> normalized signer (`from`).
  *
  * Throws when the block was fetched without full transactions (an array of
@@ -56,6 +56,7 @@ function blockTimeIso(timestamp) {
  */
 function indexBlockSenders(block, options = {}) {
   const blockNumber = parseQuantity(block?.number, 'block.number');
+  const blockHash = normalizeTxHash(block?.hash, 'block.hash');
   if (options.expectedBlockNumber != null) {
     const expected = parseQuantity(options.expectedBlockNumber, 'expectedBlockNumber');
     if (blockNumber !== expected) {
@@ -85,17 +86,17 @@ function indexBlockSenders(block, options = {}) {
     }
     senders.set(hash, from);
   }
-  return { blockNumber, blockTime, senders };
+  return { blockNumber, blockHash, blockTime, senders };
 }
 
 /**
  * Resolve the signer for a specific set of transaction hashes present in the
- * block. Returns { blockNumber, blockTime, resolved, missing } where `resolved`
+ * block. Returns { blockNumber, blockHash, blockTime, resolved, missing } where `resolved`
  * maps hash -> signer and `missing` lists hashes not found in the block (which
  * signals a wrong block or reorg to the caller, not a silent drop).
  */
 function resolveSenders(block, transactionHashes, options = {}) {
-  const { blockNumber, blockTime, senders } = indexBlockSenders(block, options);
+  const { blockNumber, blockHash, blockTime, senders } = indexBlockSenders(block, options);
   const resolved = new Map();
   const missing = [];
   for (const raw of transactionHashes || []) {
@@ -103,7 +104,7 @@ function resolveSenders(block, transactionHashes, options = {}) {
     if (senders.has(hash)) resolved.set(hash, senders.get(hash));
     else if (!resolved.has(hash)) missing.push(hash);
   }
-  return { blockNumber, blockTime, resolved, missing };
+  return { blockNumber, blockHash, blockTime, resolved, missing };
 }
 
 module.exports = {

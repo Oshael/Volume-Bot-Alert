@@ -66,7 +66,10 @@ describe('robinhood wallet swap attributor', () => {
     ]);
 
     assert.deepEqual(result, {
-      blockNumber: '100', attributed: 2, inserted: 2, unresolved: 0, missing: 0,
+      blockNumber: '100',
+      blockHash: `0x${'f'.repeat(64)}`,
+      blockTime: new Date(0x60000000 * 1000).toISOString(),
+      attributed: 2, inserted: 2, unresolved: 0, missing: 0,
     });
     const rows = repository.inserted[0];
     assert.equal(rows[0].walletAddress, SIGNER_A);
@@ -76,7 +79,7 @@ describe('robinhood wallet swap attributor', () => {
     assert.equal(rows[1].walletAddress, SIGNER_B);
   });
 
-  it('leaves swaps whose transaction is absent from the block unresolved', async () => {
+  it('writes nothing when any transaction is absent from the block', async () => {
     const repository = fakeRepository();
     const fetchBlock = async () => blockWith([{ hash: TX_1, from: SIGNER_A }]);
     const attributor = createRobinhoodWalletSwapAttributor({ repository, fetchBlock });
@@ -86,11 +89,10 @@ describe('robinhood wallet swap attributor', () => {
       observation(TX_2, 9), // not in the block
     ]);
 
-    assert.equal(result.attributed, 1);
+    assert.equal(result.attributed, 0);
     assert.equal(result.unresolved, 1);
     assert.equal(result.missing, 1);
-    assert.equal(repository.inserted[0].length, 1);
-    assert.equal(repository.inserted[0][0].walletAddress, SIGNER_A);
+    assert.equal(repository.inserted.length, 0);
   });
 
   it('propagates the reorg guard when the fetched block number is wrong', async () => {
@@ -115,7 +117,8 @@ describe('robinhood wallet swap attributor', () => {
     assert.equal(fetched, 0);
     assert.equal(repository.inserted.length, 0);
     assert.deepEqual(result, {
-      blockNumber: '100', attributed: 0, inserted: 0, unresolved: 0, missing: 0,
+      blockNumber: '100', blockHash: null, blockTime: null,
+      attributed: 0, inserted: 0, unresolved: 0, missing: 0,
     });
   });
 

@@ -60,6 +60,23 @@ function checkpointPair(input) {
   return { checkpointBlock, checkpointHash };
 }
 
+function liveCheckpoint(input, nextBlock) {
+  const checkpoint = checkpointPair(input);
+  const checkpointTimestamp = input.checkpointTimestamp == null
+    ? null
+    : new Date(input.checkpointTimestamp).toISOString();
+  if ((checkpoint.checkpointBlock === null) !== (checkpointTimestamp === null)) {
+    throw new Error('live checkpoint block, hash and timestamp must be set together');
+  }
+  if (
+    checkpoint.checkpointBlock !== null
+    && BigInt(checkpoint.checkpointBlock) >= BigInt(nextBlock)
+  ) {
+    throw new Error('live checkpointBlock must be lower than nextBlock');
+  }
+  return { ...checkpoint, checkpointTimestamp };
+}
+
 function createRobinhoodWalletSwapCursorRepository(options = {}) {
   const database = options.database || db;
 
@@ -112,11 +129,50 @@ function createRobinhoodWalletSwapCursorRepository(options = {}) {
     return normalizeCursor(result.rows[0]);
   }
 
-  return { loadCursor, initCursor, advanceCursor };
+  // LIVE-only monotonic advance. Omitting checkpoint fields preserves the
+  // current checkpoint, which allows a frontier-only update without erasing
+  // the reorg guard. A stale version or any attempted regression returns null.
+  async function advanceLiveCursor(input = {}) {
+    const nextBlock = nonNegativeInteger(input.nextBlock, 'nextBlock');
+    const safeHead = optionalNonNegativeInteger(input.safeHead, 'safeHead');
+    const { checkpointBlock, checkpointHash, checkpointTimestamp } = liveCheckpoint(
+      input,
+      nextBlock
+    );
+    const result = await database.query(
+      `UPDATE robinhood_wallet_swap_cursors
+       SET next_block = $3::bigint,
+           safe_head = CASE
+             WHEN $4::bigint IS NULL THEN safe_head
+             ELSE GREATEST(COALESCE(safe_head, $4::bigint), $4::bigint)
+           END,
+           checkpoint_block = COALESCE($5::bigint, checkpoint_block),
+           checkpoint_hash = COALESCE($6, checkpoint_hash),
+           checkpoint_timestamp = COALESCE($7::timestamptz, checkpoint_timestamp),
+           version = version + 1,
+           updated_at = NOW()
+       WHERE chain = $1 AND stream = $2 AND version = $8
+         AND next_block <= $3::bigint
+         AND (safe_head IS NULL OR $4::bigint IS NULL OR safe_head <= $4::bigint)
+         AND (
+           checkpoint_block IS NULL
+           OR $5::bigint IS NULL
+           OR checkpoint_block <= $5::bigint
+         )
+       RETURNING *`,
+      [
+        CHAIN, 'live', nextBlock, safeHead, checkpointBlock, checkpointHash,
+        checkpointTimestamp, Number(input.expectedVersion),
+      ]
+    );
+    return normalizeCursor(result.rows[0]);
+  }
+
+  return { loadCursor, initCursor, advanceCursor, advanceLiveCursor };
 }
 
 module.exports = {
   createRobinhoodWalletSwapCursorRepository,
   STREAMS,
-  __private: { normalizeCursor, checkpointPair },
+  __private: { normalizeCursor, checkpointPair, liveCheckpoint },
 };

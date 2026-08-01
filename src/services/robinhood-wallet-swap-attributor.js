@@ -56,32 +56,38 @@ function createRobinhoodWalletSwapAttributor(deps = {}) {
 
   async function attributeBlock(blockNumber, observations = []) {
     if (!Array.isArray(observations) || observations.length === 0) {
-      return { blockNumber: String(blockNumber), attributed: 0, inserted: 0, unresolved: 0, missing: 0 };
+      return {
+        blockNumber: String(blockNumber), blockHash: null, blockTime: null,
+        attributed: 0, inserted: 0, unresolved: 0, missing: 0,
+      };
     }
     const hashes = observations.map((observation) => observation.transaction_hash);
     const block = await fetchBlock(blockNumber);
-    const { blockTime, resolved, missing } = adapter.resolveSenders(block, hashes, {
+    const { blockHash, blockTime, resolved, missing } = adapter.resolveSenders(block, hashes, {
       expectedBlockNumber: blockNumber,
     });
 
-    const rows = [];
-    let unresolved = 0;
-    for (const observation of observations) {
-      const from = resolved.get(String(observation.transaction_hash ?? '').toLowerCase());
-      if (!from) {
-        unresolved += 1;
-        continue;
-      }
-      rows.push(buildRow(observation, from, blockTime, parserVersion));
+    if (missing.length > 0) {
+      return {
+        blockNumber: String(blockNumber), blockHash, blockTime,
+        attributed: 0, inserted: 0, unresolved: missing.length, missing: missing.length,
+      };
     }
+
+    const rows = observations.map((observation) => buildRow(
+      observation,
+      resolved.get(String(observation.transaction_hash ?? '').toLowerCase()),
+      blockTime,
+      parserVersion
+    ));
 
     const { inserted } = await repository.insertWalletSwaps(rows);
     return {
-      blockNumber: String(blockNumber),
+      blockNumber: String(blockNumber), blockHash, blockTime,
       attributed: rows.length,
       inserted,
-      unresolved,
-      missing: missing.length,
+      unresolved: 0,
+      missing: 0,
     };
   }
 
