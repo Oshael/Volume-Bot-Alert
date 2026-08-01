@@ -1,4 +1,5 @@
 const { RULE_CONTRACTS } = require('./telegram-alert-rule-contracts');
+const { createTelegramTranslator } = require('./telegram-i18n');
 
 const CHAIN_CODES = Object.freeze({ solana: 's', robinhood: 'r' });
 const CHAIN_BY_CODE = Object.freeze({ s: 'solana', r: 'robinhood' });
@@ -52,14 +53,14 @@ const RULE_ORDER = Object.freeze({
   ]),
 });
 const FIELD_LABELS = Object.freeze({
-  thresholdPct: ['Threshold', '%'],
-  cooldownMinutes: ['Cooldown', ' min'],
-  minVolumeUsd: ['Volume mínimo', '$'],
-  minHvncVolumeUsd: ['Volume mínimo HVNC', '$'],
-  minMarketCapUsd: ['Market cap mínimo', '$'],
-  maxMarketCapUsd: ['Market cap máximo', '$'],
-  minFdvUsd: ['FDV mínimo', '$'],
-  maxFdvUsd: ['FDV máximo', '$'],
+  thresholdPct: ['field.thresholdPct', '%'],
+  cooldownMinutes: ['field.cooldownMinutes', ' min'],
+  minVolumeUsd: ['field.minVolumeUsd', '$'],
+  minHvncVolumeUsd: ['field.minHvncVolumeUsd', '$'],
+  minMarketCapUsd: ['field.minMarketCapUsd', '$'],
+  maxMarketCapUsd: ['field.maxMarketCapUsd', '$'],
+  minFdvUsd: ['field.minFdvUsd', '$'],
+  maxFdvUsd: ['field.maxFdvUsd', '$'],
 });
 
 function catalogCallbackData(route) {
@@ -262,122 +263,122 @@ function chainLabel(chain) {
   return chain === 'solana' ? 'Solana' : 'Robinhood';
 }
 
-function renderMain(context) {
+function renderMain(context, t) {
   const profiles = context.profiles || [];
   const activeChains = profiles.filter((profile) => profile.enabled).map(
     (profile) => chainLabel(profile.chain)
   );
   const paused = context.connection?.status === 'paused';
   const statusLabel = {
-    active: 'Ativo',
-    paused: 'Pausado',
-    access_suspended: 'Acesso suspenso',
-    disconnected: 'Desconectado',
-  }[context.connection?.status] || 'Indisponível';
-  const rows = [[button('Alertas', { kind: 'alerts' })]];
+    active: t('state.active'),
+    paused: t('state.paused'),
+    access_suspended: t('state.accessSuspended'),
+    disconnected: t('state.disconnected'),
+  }[context.connection?.status] || t('state.unavailable');
+  const rows = [[button(t('button.alerts'), { kind: 'alerts' })]];
   const connectionVersion = context.connection?.version;
   if (
     ['active', 'paused'].includes(context.connection?.status)
     && Number.isSafeInteger(connectionVersion)
     && connectionVersion > 0
   ) {
-    rows.push([button(paused ? 'Retomar entregas' : 'Pausar entregas', {
+    rows.push([button(paused ? t('button.resume') : t('button.pause'), {
       kind: 'toggle-connection', version: connectionVersion,
     })]);
   }
   rows.push([
-    button('Status da conta', { kind: 'status' }),
-    button('Ajuda', { kind: 'help' }),
+    button(t('button.accountStatus'), { kind: 'status' }),
+    button(t('button.help'), { kind: 'help' }),
   ]);
   const disconnectRoute = disconnectConfirmationRoute(context.connection);
-  if (disconnectRoute) rows.push([button('Desconectar', disconnectRoute)]);
+  if (disconnectRoute) rows.push([button(t('button.disconnect'), disconnectRoute)]);
   return {
     text: [
-      'TrendScope Alerts',
+      t('main.title'),
       '',
-      `Status: ${statusLabel}`,
-      `Redes: ${activeChains.join(', ') || 'Nenhuma'}`,
-      `Sparkline: ${profiles.some((profile) => profile.sparkline_enabled) ? 'Ativa' : 'Desativada'}`,
+      `${t('main.status')}: ${statusLabel}`,
+      `${t('main.networks')}: ${activeChains.join(', ') || `${t('common.none')} ❌`}`,
+      `${t('main.sparkline')}: ${profiles.some((profile) => profile.sparkline_enabled) ? t('state.activeFeminine') : t('state.disabledFeminine')}`,
     ].join('\n'),
     reply_markup: { inline_keyboard: rows },
   };
 }
 
-function formatTimestamp(value) {
-  if (!value) return 'Nenhuma';
+function formatTimestamp(value, t) {
+  if (!value) return t('common.none');
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? 'Indisponível' : date.toISOString();
+  return Number.isNaN(date.getTime()) ? t('common.unavailable') : date.toISOString();
 }
 
-function renderStatus(context) {
+function renderStatus(context, t) {
   const connection = context.connection || {};
   const delivery = {
-    active: 'Ativas',
-    paused: 'Pausadas',
-    access_suspended: 'Suspensas por acesso',
-    disconnected: 'Desconectadas',
-  }[connection.status] || 'Indisponíveis';
+    active: t('state.deliveriesActive'),
+    paused: t('state.deliveriesPaused'),
+    access_suspended: t('state.deliveriesSuspended'),
+    disconnected: t('state.deliveriesDisconnected'),
+  }[connection.status] || t('state.deliveriesUnavailable');
   return {
     text: [
-      'Status da conta',
+      t('status.title'),
       '',
-      `Acesso: ${context.access?.hasProductAccess ? 'Ativo' : 'Indisponível'}`,
-      `Entregas: ${delivery}`,
-      `Última entrega: ${formatTimestamp(connection.last_delivery_at)}`,
-      `Último erro: ${connection.last_error_code || 'Nenhum'}`,
+      `${t('status.access')}: ${context.access?.hasProductAccess ? t('state.active') : `${t('common.unavailable')} ❌`}`,
+      `${t('status.deliveries')}: ${delivery}`,
+      `${t('status.lastDelivery')}: ${formatTimestamp(connection.last_delivery_at, t)}`,
+      `${t('status.lastError')}: ${connection.last_error_code || t('common.none')}`,
     ].join('\n'),
-    reply_markup: { inline_keyboard: [[button('Voltar', { kind: 'main' })]] },
+    reply_markup: { inline_keyboard: [[button(t('button.back'), { kind: 'main' })]] },
   };
 }
 
-function renderHelp() {
+function renderHelp(t) {
   return {
     text: [
-      'Ajuda',
+      t('help.title'),
       '',
-      'Use Alertas para configurar cada rede e regra.',
-      'Ao alterar um valor, responda apenas com o número solicitado.',
-      '/pause pausa entregas; /resume retoma.',
-      '/status mostra acesso e estado atual; /cancel encerra uma edição.',
-      '/disconnect inicia uma confirmação antes de remover o vínculo.',
-      'As configurações do Telegram são independentes do painel.',
+      t('help.configure'),
+      t('help.edit'),
+      t('help.pause'),
+      t('help.status'),
+      t('help.disconnect'),
+      t('help.independent'),
     ].join('\n'),
-    reply_markup: { inline_keyboard: [[button('Voltar', { kind: 'main' })]] },
+    reply_markup: { inline_keyboard: [[button(t('button.back'), { kind: 'main' })]] },
   };
 }
 
-function renderDisconnectConfirmation(route) {
+function renderDisconnectConfirmation(route, t) {
   return {
     text: [
-      'Desconectar Telegram?',
+      t('disconnect.title'),
       '',
-      'O bot deixará de enviar alertas para esta conversa.',
-      'As configurações das regras serão preservadas para uma futura reconexão.',
+      t('disconnect.delivery'),
+      t('disconnect.preserved'),
     ].join('\n'),
     reply_markup: { inline_keyboard: [
-      [button('Confirmar desconexão', { ...route, kind: 'disconnect' })],
-      [button('Cancelar', { kind: 'main' })],
+      [button(t('button.confirmDisconnect'), { ...route, kind: 'disconnect' })],
+      [button(t('button.cancel'), { kind: 'main' })],
     ] },
   };
 }
 
-function renderAlerts() {
+function renderAlerts(t) {
   return {
-    text: 'Alertas\n\nEscolha uma rede:',
+    text: `${t('alerts.title')}\n\n${t('alerts.chooseNetwork')}`,
     reply_markup: { inline_keyboard: [
       [
-        button('Solana', { kind: 'chain', chain: 'solana' }),
-        button('Robinhood', { kind: 'chain', chain: 'robinhood' }),
+        button(t('button.solana'), { kind: 'chain', chain: 'solana' }),
+        button(t('button.robinhood'), { kind: 'chain', chain: 'robinhood' }),
       ],
-      [button('Voltar', { kind: 'main' })],
+      [button(t('button.back'), { kind: 'main' })],
     ] },
   };
 }
 
-function renderChain(route, context) {
+function renderChain(route, context, t) {
   const enabled = new Map((context.rules || []).map((rule) => [rule.rule_key, rule.enabled]));
   const rows = RULE_ORDER[route.chain].map((ruleKey) => {
-    const marker = !enabled.has(ruleKey) ? '⚠️' : enabled.get(ruleKey) ? '✅' : '⏸';
+    const marker = !enabled.has(ruleKey) ? '⚠️' : enabled.get(ruleKey) ? '✅' : '❌';
     return [button(
       `${marker} ${RULE_LABELS[ruleKey]}`,
       { kind: 'rule', chain: route.chain, ruleKey }
@@ -386,54 +387,57 @@ function renderChain(route, context) {
   const profile = context.profile;
   if (Number.isSafeInteger(profile?.version) && profile.version > 0) {
     rows.push([
-      button(profile.enabled ? 'Desativar rede' : 'Ativar rede', {
+      button(profile.enabled ? t('button.deactivateNetwork') : t('button.activateNetwork'), {
         kind: 'toggle-profile', chain: route.chain, version: profile.version,
       }),
-      button(profile.sparkline_enabled ? 'Desativar sparkline' : 'Ativar sparkline', {
+      button(profile.sparkline_enabled
+        ? t('button.deactivateSparkline') : t('button.activateSparkline'), {
         kind: 'toggle-sparkline', chain: route.chain, version: profile.version,
       }),
     ]);
   }
-  rows.push([button('Voltar', { kind: 'alerts' })]);
+  rows.push([button(t('button.back'), { kind: 'alerts' })]);
   return {
     text: [
-      `Alertas / ${chainLabel(route.chain)}`,
+      t('chain.title', { chain: chainLabel(route.chain) }),
       '',
-      `Rede: ${!profile ? 'Indisponível' : profile.enabled ? 'Ativa' : 'Desativada'}`,
-      `Sparkline: ${profile?.sparkline_enabled ? 'Ativa' : 'Desativada'}`,
+      `${t('chain.network')}: ${!profile ? t('state.unavailable') : profile.enabled ? t('state.activeFeminine') : t('state.disabledFeminine')}`,
+      `${t('chain.sparkline')}: ${profile?.sparkline_enabled ? t('state.activeFeminine') : t('state.disabledFeminine')}`,
       '',
-      'Escolha uma regra:',
+      t('chain.chooseRule'),
     ].join('\n'),
     reply_markup: { inline_keyboard: rows },
   };
 }
 
-function formatSetting(key, value) {
-  const [label, unit] = FIELD_LABELS[key] || [key, ''];
+function formatSetting(key, value, t) {
+  const [labelKey, unit] = FIELD_LABELS[key] || [null, ''];
+  const label = labelKey ? t(labelKey) : key;
   if (unit === '$') {
     return `${label}: $${Number(value).toLocaleString('en-US')}`;
   }
   return `${label}: ${value}${unit}`;
 }
 
-function renderRule(route, context) {
+function renderRule(route, context, t) {
   const rule = context.rule;
   const settings = rule?.settings_json || {};
   const lines = Object.entries(settings)
     .filter(([key]) => key !== 'defaultsVersion')
-    .map(([key, value]) => formatSetting(key, value));
+    .map(([key, value]) => formatSetting(key, value, t));
   const rows = [];
   if (Number.isSafeInteger(rule?.version) && rule.version > 0) {
-    rows.push([button(rule.enabled ? 'Desativar' : 'Ativar', {
+    rows.push([button(rule.enabled ? t('button.deactivate') : t('button.activate'), {
       kind: 'toggle-rule', chain: route.chain,
       ruleKey: route.ruleKey, version: rule.version,
     })]);
-    rows.push([button('Restaurar defaults', {
+    rows.push([button(t('button.restoreDefaults'), {
       kind: 'confirm-reset-rule', chain: route.chain,
       ruleKey: route.ruleKey, version: rule.version,
     })]);
     for (const field of Object.keys(settings).filter((key) => key !== 'defaultsVersion')) {
-      rows.push([button(`Alterar ${FIELD_LABELS[field]?.[0] || field}`, {
+      const labelKey = FIELD_LABELS[field]?.[0];
+      rows.push([button(t('button.change', { field: labelKey ? t(labelKey) : field }), {
         kind: 'edit-rule-field',
         chain: route.chain,
         ruleKey: route.ruleKey,
@@ -442,31 +446,35 @@ function renderRule(route, context) {
       })]);
     }
   }
-  rows.push([button('Voltar', { kind: 'chain', chain: route.chain })]);
+  rows.push([button(t('button.back'), { kind: 'chain', chain: route.chain })]);
   return {
     text: [
-      `${chainLabel(route.chain)} / ${RULE_LABELS[route.ruleKey]}`,
+      t('rule.title', {
+        chain: chainLabel(route.chain), rule: RULE_LABELS[route.ruleKey],
+      }),
       '',
-      `Estado: ${!rule ? 'Indisponível' : rule.enabled ? 'Ativo' : 'Desativado'}`,
+      `${t('rule.state')}: ${!rule ? t('state.unavailable') : rule.enabled ? t('state.active') : t('state.disabled')}`,
       ...lines,
     ].join('\n'),
     reply_markup: { inline_keyboard: rows },
   };
 }
 
-function renderResetConfirmation(route) {
+function renderResetConfirmation(route, t) {
   return {
     text: [
-      `${chainLabel(route.chain)} / ${RULE_LABELS[route.ruleKey]}`,
+      t('rule.title', {
+        chain: chainLabel(route.chain), rule: RULE_LABELS[route.ruleKey],
+      }),
       '',
-      'Restaurar o estado e todos os valores padrão desta regra?',
+      t('reset.question'),
     ].join('\n'),
     reply_markup: { inline_keyboard: [
-      [button('Confirmar restauração', {
+      [button(t('button.confirmRestore'), {
         kind: 'reset-rule', chain: route.chain,
         ruleKey: route.ruleKey, version: route.version,
       })],
-      [button('Cancelar', {
+      [button(t('button.cancel'), {
         kind: 'rule', chain: route.chain, ruleKey: route.ruleKey,
       })],
     ] },
@@ -474,14 +482,17 @@ function renderResetConfirmation(route) {
 }
 
 function renderMenu(route, context = {}) {
-  if (route.kind === 'main') return renderMain(context);
-  if (route.kind === 'alerts') return renderAlerts();
-  if (route.kind === 'status') return renderStatus(context);
-  if (route.kind === 'help') return renderHelp();
-  if (route.kind === 'confirm-disconnect') return renderDisconnectConfirmation(route);
-  if (route.kind === 'chain') return renderChain(route, context);
-  if (route.kind === 'rule') return renderRule(route, context);
-  if (route.kind === 'confirm-reset-rule') return renderResetConfirmation(route);
+  const { t } = createTelegramTranslator(
+    context.languageCode || context.connection?.language_code
+  );
+  if (route.kind === 'main') return renderMain(context, t);
+  if (route.kind === 'alerts') return renderAlerts(t);
+  if (route.kind === 'status') return renderStatus(context, t);
+  if (route.kind === 'help') return renderHelp(t);
+  if (route.kind === 'confirm-disconnect') return renderDisconnectConfirmation(route, t);
+  if (route.kind === 'chain') return renderChain(route, context, t);
+  if (route.kind === 'rule') return renderRule(route, context, t);
+  if (route.kind === 'confirm-reset-rule') return renderResetConfirmation(route, t);
   throw new TypeError('Unsupported Telegram menu route');
 }
 

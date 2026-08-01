@@ -10,18 +10,23 @@ const {
   TelegramSettingsConflictError,
   createTelegramSettingsService,
 } = require('./telegram-settings-service');
+const {
+  DEFAULT_LANGUAGE_CODE,
+  normalizeTelegramLanguageCode,
+} = require('../utils/telegram-locale');
+const { createTelegramTranslator } = require('./telegram-i18n');
 
 const INPUT_SESSION_TTL_MS = 10 * 60 * 1000;
 const EDIT_RULE_SETTING = 'edit_rule_setting';
 const FIELD_LABELS = Object.freeze({
-  thresholdPct: ['threshold', '%'],
-  cooldownMinutes: ['cooldown', 'min'],
-  minVolumeUsd: ['volume mínimo', 'USD'],
-  minHvncVolumeUsd: ['volume mínimo HVNC', 'USD'],
-  minMarketCapUsd: ['market cap mínimo', 'USD'],
-  maxMarketCapUsd: ['market cap máximo', 'USD'],
-  minFdvUsd: ['FDV mínimo', 'USD'],
-  maxFdvUsd: ['FDV máximo', 'USD'],
+  thresholdPct: ['field.thresholdPct', '%'],
+  cooldownMinutes: ['field.cooldownMinutes', 'min'],
+  minVolumeUsd: ['field.minVolumeUsd', 'USD'],
+  minHvncVolumeUsd: ['field.minHvncVolumeUsd', 'USD'],
+  minMarketCapUsd: ['field.minMarketCapUsd', 'USD'],
+  maxMarketCapUsd: ['field.maxMarketCapUsd', 'USD'],
+  minFdvUsd: ['field.minFdvUsd', 'USD'],
+  maxFdvUsd: ['field.maxFdvUsd', 'USD'],
 });
 
 class TelegramInputValueError extends Error {
@@ -60,17 +65,24 @@ function requireEditPayload(input) {
     ruleKey: input.ruleKey,
     field: input.field,
     expectedVersion: input.expectedVersion,
+    languageCode: normalizeTelegramLanguageCode(input.languageCode)
+      || DEFAULT_LANGUAGE_CODE,
   };
 }
 
 function inputInstructions(payload, currentValue, invalid = false) {
   const spec = settingFieldSpec(payload.chain, payload.ruleKey, payload.field);
-  const [label, unit] = FIELD_LABELS[payload.field];
-  const integer = spec.integer ? ' inteiro' : '';
-  const prefix = invalid ? 'Valor inválido. ' : '';
-  return `${prefix}Envie o novo ${label}${integer} entre ${spec.min} e ${spec.max}`
-    + ` ${unit}. Atual: ${currentValue} ${unit}. `
-    + 'Use somente números, sem separador de milhar. /cancel para sair.';
+  const { t } = createTelegramTranslator(payload.languageCode);
+  const [labelKey, unit] = FIELD_LABELS[payload.field];
+  return t('input.instructions', {
+    prefix: invalid ? t('input.invalidPrefix') : '',
+    label: t(labelKey),
+    integer: spec.integer ? t('input.integer') : '',
+    min: spec.min,
+    max: spec.max,
+    unit,
+    current: currentValue,
+  });
 }
 
 function parseInputValue(text, payload, currentValue) {

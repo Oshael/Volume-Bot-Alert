@@ -27,6 +27,7 @@ function message(text, options = {}) {
         id: options.userId ?? 123,
         username: 'alice',
         first_name: 'Alice',
+        ...(options.languageCode ? { language_code: options.languageCode } : {}),
       },
     },
   };
@@ -60,7 +61,7 @@ function fixture(linkService, options = {}) {
     inputSessionService: {
       async start(input) {
         inputCalls.push(['start', input]);
-        return options.inputStart || { text: 'Envie o novo valor.' };
+        return options.inputStart || { text: 'Send the new value.' };
       },
       async submit(input) {
         inputCalls.push(['submit', input]);
@@ -157,9 +158,32 @@ describe('Telegram basic command handler', () => {
     assert.equal(calls[0].telegramUserId, '123');
     assert.equal(calls[0].chatId, '123');
     assert.equal(calls[0].username, 'alice');
+    assert.equal(calls[0].languageCode, undefined);
     assert.equal(sent[0].chat_id, '123');
-    assert.match(sent[0].text, /Status: Ativo/);
-    assert.equal(sent[0].reply_markup.inline_keyboard[0][0].text, 'Alertas');
+    assert.match(sent[0].text, /Status: Active/);
+    assert.equal(sent[0].reply_markup.inline_keyboard[0][0].text, '🔔 Alerts');
+  });
+
+  it('forwards a canonical Telegram language code during linking', async () => {
+    const calls = [];
+    const { handler, sent } = fixture({
+      async completeLink(input) {
+        calls.push(input);
+        return {
+          access: { hasProductAccess: true },
+          connection: {
+            chat_id: '123', status: 'active', user_id: 7, language_code: 'pt-BR',
+          },
+        };
+      },
+    });
+
+    await handler.handleUpdate(message(`/start ${'l'.repeat(43)}`, {
+      languageCode: 'pt_br',
+    }));
+
+    assert.equal(calls[0].languageCode, 'pt-BR');
+    assert.match(sent[0].text, /Status: Ativo ✅/);
   });
 
   it('recovers the menu from an existing authorized link after token replay', async () => {
@@ -229,7 +253,7 @@ describe('Telegram basic command handler', () => {
     assert.equal(calls[0][0], 'access');
     assert.deepEqual(answered, [{ callback_query_id: 'callback-1' }]);
     assert.equal(edited[0].message_id, 44);
-    assert.match(edited[0].text, /Alertas \/ Solana/);
+    assert.match(edited[0].text, /Alerts \/ Solana/);
   });
 
   it('does not answer malformed or unauthorized callbacks', async () => {
@@ -278,7 +302,7 @@ describe('Telegram basic command handler', () => {
     assert.deepEqual(result, { handled: true });
     assert.equal(mutations[0][0], 7);
     assert.equal(mutations[0][1].version, 5);
-    assert.equal(answered[0].text, 'Configuração atualizada.');
+    assert.equal(answered[0].text, 'Settings updated.');
     assert.match(edited[0].text, /Solana \/ Volume 5M/);
   });
 
@@ -340,7 +364,7 @@ describe('Telegram basic command handler', () => {
     assert.equal(inputCalls[0][1].text, '75');
     assert.equal(inputCalls[1][0], 'cancel');
     assert.match(sent[0].text, /Threshold: 75%/);
-    assert.equal(sent[1].text, 'Edição cancelada.');
+    assert.equal(sent[1].text, 'Edit canceled.');
   });
 
   it('opens help and account status through commands using fresh access', async () => {
@@ -361,9 +385,9 @@ describe('Telegram basic command handler', () => {
     await handler.handleUpdate(message('/help'));
     await handler.handleUpdate(message('/status'));
 
-    assert.match(sent[0].text, /configurações do Telegram são independentes/);
-    assert.match(sent[1].text, /Acesso: Ativo/);
-    assert.match(sent[1].text, /Última entrega: 2026-07-29/);
+    assert.match(sent[0].text, /Telegram settings are independent/);
+    assert.match(sent[1].text, /Access: Active/);
+    assert.match(sent[1].text, /Last delivery: 2026-07-29/);
   });
 
   it('makes /pause and /resume explicit and idempotent', async () => {
@@ -397,7 +421,9 @@ describe('Telegram basic command handler', () => {
         assert.equal(mutations[0][1].kind, 'set-connection-status');
         assert.equal(mutations[0][1].status, expected);
       }
-      assert.match(sent[0].text, new RegExp(`Status: ${expected === 'paused' ? 'Pausado' : 'Ativo'}`));
+      assert.match(sent[0].text, new RegExp(
+        `Status: ${expected === 'paused' ? 'Paused' : 'Active'}`
+      ));
     }
   });
 
@@ -420,7 +446,7 @@ describe('Telegram basic command handler', () => {
 
     await handler.handleUpdate(message('/disconnect'));
     assert.equal(disconnects.length, 0);
-    assert.match(sent[0].text, /Desconectar Telegram/);
+    assert.match(sent[0].text, /Disconnect Telegram/);
 
     await handler.handleUpdate({
       callback_query: {
@@ -436,7 +462,7 @@ describe('Telegram basic command handler', () => {
       expectedVersion: 4,
     }]]);
     assert.deepEqual(answered, [{ callback_query_id: 'disconnect-1' }]);
-    assert.match(edited[0].text, /Telegram desconectado/);
+    assert.match(edited[0].text, /Telegram disconnected/);
     assert.deepEqual(edited[0].reply_markup.inline_keyboard, []);
   });
 
@@ -465,10 +491,10 @@ describe('Telegram basic command handler', () => {
       },
     });
 
-    assert.match(edited[0].text, /Status: Pausado/);
+    assert.match(edited[0].text, /Status: Paused/);
     assert.equal(
       edited[0].reply_markup.inline_keyboard[1][0].text,
-      'Retomar entregas'
+      '▶️ Resume deliveries'
     );
   });
 
@@ -492,7 +518,7 @@ describe('Telegram basic command handler', () => {
     });
 
     assert.equal(answered[0].show_alert, true);
-    assert.match(answered[0].text, /menu estava desatualizado/);
-    assert.match(edited[0].text, /Alertas \/ Solana/);
+    assert.match(answered[0].text, /menu was outdated/);
+    assert.match(edited[0].text, /Alerts \/ Solana/);
   });
 });

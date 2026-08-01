@@ -84,11 +84,13 @@ describe('Telegram menu contracts', () => {
       }
     );
 
-    assert.match(main.text, /Redes: Solana/);
-    assert.equal(main.reply_markup.inline_keyboard[1][0].text, 'Pausar entregas');
-    assert.equal(main.reply_markup.inline_keyboard[2][0].text, 'Status da conta');
-    assert.equal(main.reply_markup.inline_keyboard[2][1].text, 'Ajuda');
-    assert.equal(main.reply_markup.inline_keyboard[3][0].text, 'Desconectar');
+    assert.match(main.text, /Status: Active ✅/);
+    assert.match(main.text, /Networks: Solana/);
+    assert.match(main.text, /Sparkline: Active ✅/);
+    assert.equal(main.reply_markup.inline_keyboard[1][0].text, '⏸️ Pause deliveries');
+    assert.equal(main.reply_markup.inline_keyboard[2][0].text, '👤 Account status');
+    assert.equal(main.reply_markup.inline_keyboard[2][1].text, '❓ Help');
+    assert.equal(main.reply_markup.inline_keyboard[3][0].text, '🔌 Disconnect');
     const disconnectPrompt = parseCallbackData(
       main.reply_markup.inline_keyboard[3][0].callback_data
     );
@@ -105,15 +107,17 @@ describe('Telegram menu contracts', () => {
     );
     assert.equal(isMutationRoute(connectionMutation), true);
     assert.deepEqual(targetRoute(connectionMutation), { kind: 'main' });
-    assert.match(chain.text, /Alertas \/ Solana/);
-    assert.match(chain.reply_markup.inline_keyboard[0][0].text, /⏸ Volume 5M/);
+    assert.match(chain.text, /Alerts \/ Solana/);
+    assert.match(chain.text, /Network: Active ✅/);
+    assert.match(chain.reply_markup.inline_keyboard[0][0].text, /❌ Volume 5M/);
     assert.match(chain.reply_markup.inline_keyboard[1][0].text, /Market Cap 5M/);
-    assert.equal(chain.reply_markup.inline_keyboard.at(-2)[0].text, 'Desativar rede');
+    assert.equal(chain.reply_markup.inline_keyboard.at(-2)[0].text, '❌ Deactivate network');
     assert.match(rule.text, /Threshold: 50%/);
-    assert.match(rule.text, /Volume mínimo: \$10,000/);
-    assert.equal(rule.reply_markup.inline_keyboard[0][0].text, 'Desativar');
+    assert.match(rule.text, /State: Active ✅/);
+    assert.match(rule.text, /Minimum volume: \$10,000/);
+    assert.equal(rule.reply_markup.inline_keyboard[0][0].text, '❌ Deactivate');
     const editButton = rule.reply_markup.inline_keyboard.flat().find(
-      ({ text }) => text === 'Alterar Threshold'
+      ({ text }) => text === '✏️ Change Threshold'
     );
     assert.deepEqual(parseCallbackData(editButton.callback_data), {
       kind: 'edit-rule-field',
@@ -145,11 +149,19 @@ describe('Telegram menu contracts', () => {
     assert.match(renderMenu({ kind: 'status' }, {
       access: { hasProductAccess: true },
       connection: { status: 'paused', last_error_code: 'blocked' },
-    }).text, /Entregas: Pausadas/);
+    }).text, /Deliveries: Paused/);
     assert.match(renderMenu({ kind: 'main' }, {
       connection: { status: 'access_suspended' },
-    }).text, /Status: Acesso suspenso/);
-    assert.match(renderMenu({ kind: 'help' }).text, /\/cancel encerra uma edição/);
+    }).text, /Status: Access suspended/);
+    assert.match(renderMenu({ kind: 'help' }).text, /\/cancel ends an edit/);
+
+    const portuguese = renderMenu({ kind: 'main' }, {
+      connection: { status: 'active', language_code: 'pt-BR' },
+      profiles: [{ chain: 'solana', enabled: true, sparkline_enabled: false }],
+    });
+    assert.match(portuguese.text, /Status: Ativo ✅/);
+    assert.match(portuguese.text, /Sparkline: Desativada ❌/);
+    assert.equal(portuguese.reply_markup.inline_keyboard[0][0].text, '🔔 Alertas');
   });
 
   it('reads profiles and rules behind one navigation interface', async () => {

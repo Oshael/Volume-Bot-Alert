@@ -22,6 +22,8 @@ const {
   TelegramSettingsConflictError,
   createTelegramSettingsService,
 } = require('./telegram-settings-service');
+const { normalizeTelegramLanguageCode } = require('../utils/telegram-locale');
+const { createTelegramTranslator } = require('./telegram-i18n');
 
 const TERMINAL_LINK_CODES = new Set([
   'access_denied',
@@ -71,11 +73,20 @@ function getPrivateMessageIdentity(message) {
   const telegramUserId = normalizeTelegramId(message?.from?.id);
   const chatId = normalizeTelegramId(message?.chat?.id);
   if (!telegramUserId || telegramUserId !== chatId) return null;
-  return { telegramUserId, chatId };
+  const languageCode = normalizeTelegramLanguageCode(message?.from?.language_code);
+  return {
+    telegramUserId,
+    chatId,
+    ...(languageCode ? { languageCode } : {}),
+  };
 }
 
 function buildMainMenu(connection) {
   return renderMenu({ kind: 'main' }, { connection }).text;
+}
+
+function translatorFor(resolved) {
+  return createTelegramTranslator(resolved?.connection?.language_code);
 }
 
 function createTelegramCommandHandler(options = {}) {
@@ -117,12 +128,14 @@ function createTelegramCommandHandler(options = {}) {
   }
 
   async function handleInputCallback(resolved, identity, callback, route) {
+    const { t } = translatorFor(resolved);
     try {
       const prompt = await inputs.start({
         userId: resolved.connection.user_id,
         telegramUserId: identity.telegramUserId,
         ...route,
         expectedVersion: route.version,
+        languageCode: resolved.connection.language_code,
       });
       await bot.answerCallbackQuery({ callback_query_id: callback.id });
       await bot.sendMessage({
@@ -134,7 +147,7 @@ function createTelegramCommandHandler(options = {}) {
       if (!(error instanceof TelegramSettingsConflictError)) throw error;
       await bot.answerCallbackQuery({
         callback_query_id: callback.id,
-        text: 'Este menu estava desatualizado. Confira os valores atuais.',
+        text: t('command.menuOutdated'),
         show_alert: true,
       });
       const menu = await renderFor(resolved, targetRoute(route));
@@ -149,13 +162,14 @@ function createTelegramCommandHandler(options = {}) {
   }
 
   async function handleDisconnectCallback(resolved, callback, route) {
+    const { t } = translatorFor(resolved);
     const current = disconnectConfirmationRoute(resolved.connection);
     if (!current
       || current.connectionId !== route.connectionId
       || current.version !== route.version) {
       await bot.answerCallbackQuery({
         callback_query_id: callback.id,
-        text: 'Esta confirmação está desatualizada.',
+        text: t('command.confirmationOutdated'),
         show_alert: true,
       });
       return { handled: true };
@@ -171,7 +185,7 @@ function createTelegramCommandHandler(options = {}) {
       }
       await bot.answerCallbackQuery({
         callback_query_id: callback.id,
-        text: 'A conexão mudou. Abra o menu novamente.',
+        text: t('command.connectionChanged'),
         show_alert: true,
       });
       return { handled: true };
@@ -180,7 +194,7 @@ function createTelegramCommandHandler(options = {}) {
     await bot.editMessageText({
       chat_id: resolved.connection.chat_id,
       message_id: callback.message.message_id,
-      text: 'Telegram desconectado. As configurações foram preservadas.',
+      text: t('command.disconnected'),
       reply_markup: { inline_keyboard: [] },
     });
     return { handled: true };
@@ -202,6 +216,7 @@ function createTelegramCommandHandler(options = {}) {
     if (isInputRoute(route)) return handleInputCallback(resolved, identity, callback, route);
     let renderRoute = route;
     let answer = { callback_query_id: callback.id };
+    const { t } = translatorFor(resolved);
     if (isMutationRoute(route)) {
       renderRoute = targetRoute(route);
       try {
@@ -209,12 +224,12 @@ function createTelegramCommandHandler(options = {}) {
         if (route.kind === 'toggle-connection') {
           resolved = { ...resolved, connection: updated };
         }
-        answer.text = 'Configuração atualizada.';
+        answer.text = t('command.settingsUpdated');
       } catch (error) {
         if (!(error instanceof TelegramSettingsConflictError)) throw error;
         answer = {
           ...answer,
-          text: 'Este menu estava desatualizado. Confira os valores atuais.',
+          text: t('command.menuOutdated'),
           show_alert: true,
         };
       }
@@ -234,6 +249,7 @@ function createTelegramCommandHandler(options = {}) {
   async function handleInputMessage(message, identity) {
     const resolved = await links.findAuthorizedConnection(identity);
     if (!resolved) return { ignored: true };
+    const { t } = translatorFor(resolved);
     const input = {
       userId: resolved.connection.user_id,
       telegramUserId: identity.telegramUserId,
@@ -242,7 +258,7 @@ function createTelegramCommandHandler(options = {}) {
       const canceled = await inputs.cancel(input);
       await bot.sendMessage({
         chat_id: resolved.connection.chat_id,
-        text: canceled ? 'Edição cancelada.' : 'Nenhuma edição ativa.',
+        text: canceled ? t('command.editCanceled') : t('command.noActiveEdit'),
       });
       return { handled: true };
     }
@@ -266,7 +282,7 @@ function createTelegramCommandHandler(options = {}) {
         const menu = await renderFor(resolved, error.route);
         await bot.sendMessage({
           chat_id: resolved.connection.chat_id,
-          text: `A configuração mudou antes da resposta.\n\n${menu.text}`,
+          text: `${t('command.settingsChangedBeforeReply')}\n\n${menu.text}`,
           reply_markup: menu.reply_markup,
         });
       } else {

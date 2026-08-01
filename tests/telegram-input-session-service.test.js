@@ -59,7 +59,7 @@ function fixture(options = {}) {
 describe('Telegram input session service', () => {
   it('starts a ten-minute edit session with a closed, versioned payload', async () => {
     const { calls, service } = fixture();
-    await service.start({
+    const result = await service.start({
       userId: 7,
       telegramUserId: 123n,
       chain: 'solana',
@@ -77,10 +77,24 @@ describe('Telegram input session service', () => {
         ruleKey: 'monitored-vol',
         field: 'thresholdPct',
         expectedVersion: 5,
+        languageCode: 'en',
       },
       expiresAt: new Date('2026-07-29T15:10:00.000Z'),
     }]);
     assert.equal(INPUT_SESSION_TTL_MS, 10 * 60 * 1000);
+    assert.match(result.text, /Send the new Threshold/);
+
+    const portuguese = fixture();
+    const localized = await portuguese.service.start({
+      userId: 7,
+      telegramUserId: 123n,
+      chain: 'solana',
+      ruleKey: 'monitored-vol',
+      field: 'thresholdPct',
+      expectedVersion: 5,
+      languageCode: 'pt-BR',
+    });
+    assert.match(localized.text, /Envie o novo Threshold/);
   });
 
   it('rejects unsupported fields, rules, identities, and stale version shapes', async () => {
@@ -120,7 +134,7 @@ describe('Telegram input session service', () => {
     const found = await service.find({ userId: 9, telegramUserId: '456' });
     await service.cancel({ userId: 9, telegramUserId: '456' });
 
-    assert.deepEqual(found.payload, payload);
+    assert.deepEqual(found.payload, { ...payload, languageCode: 'en' });
     assert.deepEqual(calls[0], ['find', { userId: 9, telegramUserId: '456' }]);
     assert.deepEqual(calls[1], ['clear', { userId: 9, telegramUserId: '456' }]);
   });
