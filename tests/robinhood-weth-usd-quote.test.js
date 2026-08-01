@@ -258,6 +258,56 @@ describe('Robinhood canonical WETH/USD quote reader', () => {
     );
   });
 
+  it('getCurrent reads WETH/USD only at latest, never at a historical block', async () => {
+    const rpc = createRpc();
+    const snapshot = await createRobinhoodWethUsdQuoteReader({ rpcClient: rpc }).getCurrent();
+
+    assert.equal(snapshot.blockTag, 'latest');
+    assert.equal(snapshot.sourceBlockTag, 'latest');
+    assert.equal(snapshot.cached, false);
+    const stateCalls = rpc.calls.filter((call) => (
+      call.params?.[0]?.data === SLOT0_SELECTOR || call.params?.[0]?.data === LIQUIDITY_SELECTOR
+    ));
+    assert.ok(stateCalls.length > 0);
+    assert.ok(stateCalls.every((call) => call.params.at(-1) === 'latest'));
+  });
+
+  it('getCurrent serves from the TTL cache and refetches only after expiry', async () => {
+    let clock = 1000;
+    const rpc = createRpc();
+    const reader = createRobinhoodWethUsdQuoteReader({
+      rpcClient: rpc,
+      now: () => clock,
+      currentTtlMs: 1000,
+    });
+    const slot0Count = () => rpc.calls
+      .filter((call) => call.params?.[0]?.data === SLOT0_SELECTOR).length;
+
+    assert.equal((await reader.getCurrent()).cached, false);
+    assert.equal(slot0Count(), 1);
+
+    clock = 1500; // within TTL (expiresAt = 2000)
+    assert.equal((await reader.getCurrent()).cached, true);
+    assert.equal(slot0Count(), 1);
+
+    clock = 2500; // past TTL
+    assert.equal((await reader.getCurrent()).cached, false);
+    assert.equal(slot0Count(), 2);
+  });
+
+  it('getCurrent collapses concurrent callers into a single latest read', async () => {
+    const rpc = createRpc();
+    const reader = createRobinhoodWethUsdQuoteReader({ rpcClient: rpc });
+
+    const results = await Promise.all(Array.from({ length: 10 }, () => reader.getCurrent()));
+
+    assert.equal(results.length, 10);
+    assert.equal(
+      rpc.calls.filter((call) => call.params?.[0]?.data === SLOT0_SELECTOR).length,
+      1
+    );
+  });
+
   it('fails closed for malformed state and invalid sqrt prices', async () => {
     const rpc = createRpc({
       handler: async (method, params) => {

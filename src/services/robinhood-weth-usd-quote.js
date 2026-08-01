@@ -104,6 +104,9 @@ function createRobinhoodWethUsdQuoteReader(options = {}) {
   let verifiedPools = null;
   let poolResolution = null;
   let eventScanTail = Promise.resolve();
+  const currentTtlMs = Math.max(0, Number(options.currentTtlMs ?? 1000));
+  let currentEntry = null;
+  let currentPending = null;
 
   function remember(key, value) {
     if (cache.has(key)) cache.delete(key);
@@ -334,7 +337,32 @@ function createRobinhoodWethUsdQuoteReader(options = {}) {
     return task;
   }
 
-  return Object.freeze({ getSnapshot, getCacheSize: () => cache.size });
+  async function getCurrent(requestOptions = {}) {
+    const decimalPlaces = requestOptions.decimalPlaces ?? 12;
+    if (
+      !requestOptions.refresh
+      && currentEntry
+      && currentEntry.decimalPlaces === decimalPlaces
+      && currentEntry.expiresAt > now()
+    ) {
+      return { ...currentEntry.snapshot, cached: true };
+    }
+    if (currentPending && currentPending.decimalPlaces === decimalPlaces) {
+      return currentPending.task;
+    }
+    const task = readStateSnapshot({ decimalPlaces }, 'latest')
+      .then((snapshot) => {
+        currentEntry = { snapshot, decimalPlaces, expiresAt: now() + currentTtlMs };
+        return { ...snapshot, cached: false };
+      })
+      .finally(() => {
+        if (currentPending && currentPending.task === task) currentPending = null;
+      });
+    currentPending = { decimalPlaces, task };
+    return task;
+  }
+
+  return Object.freeze({ getSnapshot, getCurrent, getCacheSize: () => cache.size });
 }
 
 module.exports = {
