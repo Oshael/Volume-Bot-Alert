@@ -1,6 +1,6 @@
 # TrendScope — Referência Técnica Atual
 
-> Estado revisado em `2026-07-30`.
+> Estado revisado em `2026-08-01`.
 >
 > Esta referência descreve o que foi confirmado no código, no banco e na
 > infraestrutura durante a migração para os servidores Netcup. Planos futuros
@@ -57,6 +57,10 @@ Baseline observado na migração:
 
 - branch implantada nas duas VPS: `Robinhood-Implementation`;
 - commit implantado: `350c45d`;
+- a base local auditada antes das fatias wallet LIVE era `954ae548`, com o
+  enrichment preparado para leituras de supply/quote no head, mas esse commit
+  não deve ser
+  presumido nas VPS sem conferir `git rev-parse --short HEAD`;
 - o histórico local possui checkpoints posteriores, além de mudanças ainda não commitadas;
 - os checkpoints locais, incluindo Telegram, não devem ser presumidos nas VPS até
   push, deploy e schema check correspondentes.
@@ -648,6 +652,10 @@ Stages confirmados:
 | 79 | proveniência de supply |
 | 82 | captura durável do backfill |
 | 83 | outbox de agregação do backfill |
+| 90 | swaps Robinhood atribuídos à wallet (`tx.from`) |
+| 91 | cursores independentes `seed`/`live` de wallet-swaps |
+| 92 | índice de leitura das observações para atribuição |
+| 96 | proveniência `latest_call` usada pelo enrichment LIVE no node podado |
 
 ### 13.3 Pipeline de backfill
 
@@ -669,6 +677,18 @@ Reiniciar um worker corretamente configurado deve retomar claims pendentes,
 leases expiradas e watermarks persistidos. Não resete cursores ou ranges para
 "começar de novo" sem auditoria.
 
+Snapshot informado em `2026-08-01`:
+
+```text
+discovery_scan.next_block  = 25346067
+market_scan.next_block     = 25345966
+market_enriched.next_block = 25345966
+```
+
+Nesse instante, market scan e enrichment estavam alinhados; discovery estava
+101 blocos à frente. Esses valores são móveis e servem como evidência de saúde,
+não como bloco fixo para um cutover posterior.
+
 ### 13.4 Live depois do backfill
 
 O backfill histórico e o acompanhamento do head são responsabilidades
@@ -686,6 +706,18 @@ Depois do catch-up:
 O node atual no WSL foi iniciado com archive durante o backfill. A troca para
 uma configuração pruned/live deve ser feita somente depois de confirmar head,
 cursores e cobertura.
+
+Na base local auditada `954ae548`, o enrichment LIVE normal de swaps já usa WETH/USD e
+metadata/supply em `latest`, com `token_supply_status='latest_call'`. Esse caminho
+depende da stage 96 antes de ser ligado. A validação de lançamentos NOXA ainda faz
+`eth_call`/`eth_getCode` no bloco do evento; portanto steady state perto do head
+é compatível com o node podado, mas catch-up após uma parada maior que a janela
+de estado ainda precisa de política própria ou recuperação operacional.
+
+O cutover aprovado é por sobreposição: manter o backfill ativo, ligar o LIVE na
+VPS2 a partir de um `market_enriched.next_block` fresco, comprovar cursores e
+buckets avançando, parar scanners, drenar os consumidores do backfill e só então
+desabilitar as units antigas. O archive do PC é o último componente a ser desligado.
 
 ## 14. Buckets, swaps e retenção
 
@@ -712,7 +744,31 @@ Estado atual:
 
 ## 15. Wallet tracking multichain
 
-Wallet tracking de produto ainda é roadmap.
+Wallet tracking de produto ainda é roadmap, mas a fundação de captura Robinhood
+já existe localmente: tabela particionada, persistência, adapter `tx.from`,
+attributor, cursores `seed`/`live` e seed standalone. A captura contínua do stream
+`live` também está implementada no checkout local, mas permanece desabilitada e
+sem cursor até executar o bootstrap explícito; não confundir código pronto com
+cobertura LIVE já ativa de `robinhood_wallet_swaps`.
+
+Os contratos locais de atribuição já são fail-closed: o bloco cheio fornece hash,
+número e timestamp para checkpoint; qualquer transação ausente impede escrita
+parcial e avanço do seed. O repository também possui avanço monotônico específico
+para o futuro cursor `live`, preservando checkpoint em atualizações de frontier.
+
+O runner e o worker de wallet-swaps LIVE existem localmente. Eles limitam o trabalho
+ao menor valor entre `nodeHead - 12` e o último bloco commitado pelo cursor market,
+revalidam checkpoint, avançam ranges comprovadamente vazios e ficam em
+`awaiting-bootstrap` enquanto o cursor `live` não foi criado. O worker reutiliza o
+RPC Robinhood com preflight de chain ID `4663`, lease própria, telemetria, backoff e
+wiring no grupo `robinhood`; execução do bootstrap, deploy e canary continuam pendentes.
+
+O bootstrap também existe localmente como
+`npm run robinhood:wallet-live-bootstrap`: dry-run por padrão, audita observações
+aceitas sem wallet até `seed.safe_head`, valida o RPC/chain e prova o bloco cheio
+mais antigo com observação aceita no gap. A confirmação longa cria o cursor uma
+única vez; sua existência no código não significa que o comando já foi executado
+na VPS2.
 
 Ele deve nascer multichain:
 
@@ -962,6 +1018,11 @@ Backfill:
 - rollback atômico do frontend ainda não está montado;
 - inventário permanente das unidades worker da VPS2 precisa ser mantido;
 - monitoração de disco, WAL, conexões e leases deve ganhar alertas.
+- no diagnóstico de `2026-08-01`, o runtime schema check da VPS2 ainda reportava
+  stages Telegram 84-89 e 93-95 ausentes; o servidor do HEAD local valida o profile
+  runtime antes de iniciar workers, portanto essa divergência precisa ser resolvida
+  antes do canary LIVE. A stage 96 deve ser confirmada e aplicada somente se o
+  schema check completo ainda a reportar como pendente.
 
 ### Documentação
 
@@ -977,8 +1038,14 @@ esta referência.
 
 ### Produto
 
-- backfill Robinhood ainda precisa concluir e ser auditado;
-- live Robinhood precisa ser estabilizado no head;
+- o backfill Robinhood foi reportado como alcançado no snapshot de `2026-08-01`,
+  mas ainda precisa da auditoria final de staging/outbox antes de ser desligado;
+- o LIVE Robinhood preparado no código precisa de migrations, deploy, canary com
+  overlap e estabilização no head da VPS2;
+- o worker LIVE de wallet-swaps, seu runner fail-closed, configuração, lease e
+  bootstrap auditável já existem no checkout local, desabilitados por padrão.
+  Ainda faltam executar o bootstrap na VPS2, deploy e canary antes de considerar
+  o desligamento do seed/archive como handoff completo de wallet tracking;
 - retenção de swaps por 30 dias precisa virar implementação verificável;
 - wallet tracking multichain ainda é roadmap;
 - SHYFT/Yellowstone ainda é roadmap;
