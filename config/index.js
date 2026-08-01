@@ -449,6 +449,22 @@ function validateTestDbTarget(dbConfig) {
 
 const db = getDbConfig(nodeEnv);
 const workerGroups = normalizeWorkerGroups(process.env.BACKGROUND_WORKER_GROUPS);
+const telegram = {
+  enabled: parseBoolean(process.env.TELEGRAM_ALERTS_ENABLED, false),
+  botToken: String(process.env.TELEGRAM_BOT_TOKEN || '').trim(),
+  botUsername: String(process.env.TELEGRAM_BOT_USERNAME || '').trim().replace(/^@/, ''),
+  webhookSecret: String(process.env.TELEGRAM_WEBHOOK_SECRET || '').trim(),
+  webhookPublicUrl: String(process.env.TELEGRAM_WEBHOOK_PUBLIC_URL || '').trim(),
+  deliveryBatchSize: parseIntegerInRange(process.env.TELEGRAM_DELIVERY_BATCH_SIZE, 25, 1, 100),
+  deliveryConcurrency: parseIntegerInRange(process.env.TELEGRAM_DELIVERY_CONCURRENCY, 4, 1, 20),
+  deliveryTimeoutMs: parseIntegerInRange(
+    process.env.TELEGRAM_DELIVERY_TIMEOUT_MS,
+    10_000,
+    1_000,
+    60_000
+  ),
+  maxAttempts: parseIntegerInRange(process.env.TELEGRAM_MAX_ATTEMPTS, 5, 1, 20),
+};
 
 const missing = [];
 if (!process.env.JWT_SECRET || process.env.JWT_SECRET.startsWith('CHANGE_ME')) {
@@ -467,6 +483,15 @@ if (workerGroups.invalid.length > 0) {
 }
 if (workerGroups.isolationConflict) {
   missing.push('BACKGROUND_WORKER_GROUPS cannot combine isolated worker groups with other groups or all');
+}
+if (telegram.enabled) {
+  const telegramRequired = [
+    ['TELEGRAM_BOT_TOKEN', telegram.botToken],
+    ['TELEGRAM_BOT_USERNAME', telegram.botUsername],
+    ['TELEGRAM_WEBHOOK_SECRET', telegram.webhookSecret],
+    ['TELEGRAM_WEBHOOK_PUBLIC_URL', telegram.webhookPublicUrl],
+  ];
+  missing.push(...telegramRequired.filter(([, value]) => !value).map(([name]) => name));
 }
 
 if (missing.length > 0) {
@@ -535,6 +560,7 @@ module.exports = {
       (process.env.NODE_ENV || 'development') === 'development'
     ),
   },
+  telegram,
 
   db: {
     ...db,

@@ -16,6 +16,15 @@ const { normalizeTokenChain } = require('../utils/token-identity');
 const standardAlertReset = require('./standard-alert-reset');
 const standardTransition = require('./standard-alert-transition');
 const {
+  createSolanaAlertProfileEvaluator,
+} = require('./solana-alert-profile-evaluator');
+const {
+  createSolanaAlertDestinationCoordinator,
+} = require('./solana-alert-destination-coordinator');
+const {
+  createTelegramSolanaAlertRuntime,
+} = require('./telegram-solana-alert-runtime');
+const {
   MONITORED_VOL_COLD_RESET_DURATION_MS,
   MONITORED_VOL_COLD_HOT_BLIP_GRACE_MS,
   MONITORED_VOL_COLD_RESET_MAX_VOLUME_5M,
@@ -298,18 +307,32 @@ function readEnvBoolean(name, fallback) {
   return raw === 'true' || raw === '1';
 }
 
-function passesCommonAlertFilters(profile, signals) {
+function getRuleSettings(profile, ruleKey) {
+  const settings = profile?.ruleSettingsByKey?.[ruleKey];
+  return settings && typeof settings === 'object' && !Array.isArray(settings)
+    ? settings
+    : {};
+}
+
+function getRuleCooldownMs(profile, ruleKey, fallback) {
+  const configured = Number(profile?.cooldownMsByRule?.[ruleKey]);
+  return Number.isFinite(configured) && configured >= 0 ? configured : fallback;
+}
+
+function passesCommonAlertFilters(profile, signals, ruleKey) {
+  const settings = getRuleSettings(profile, ruleKey);
   const currentVolume5m = toNumberOrNull(signals.currentVolume5m) || 0;
   const currentMcap = toNumberOrNull(signals.currentMcap) || 0;
+  const minVol = toNumberOrNull(settings.minVolumeUsd) ?? toNumberOrNull(profile?.minVol) ?? 0;
+  const minMcap = toNumberOrNull(settings.minMarketCapUsd) ?? toNumberOrNull(profile?.minMcap) ?? 0;
+  const maxMcap = toNumberOrNull(settings.maxMarketCapUsd) ?? toNumberOrNull(profile?.maxMcap) ?? 0;
 
-  if (currentVolume5m < (toNumberOrNull(profile?.minVol) || 0)) {
+  if (currentVolume5m < minVol) {
     return false;
   }
-  if (currentMcap > 0 && currentMcap < (toNumberOrNull(profile?.minMcap) || 0)) {
+  if (currentMcap > 0 && currentMcap < minMcap) {
     return false;
   }
-
-  const maxMcap = toNumberOrNull(profile?.maxMcap) || 0;
   if (maxMcap > 0 && currentMcap > maxMcap) {
     return false;
   }
@@ -318,9 +341,14 @@ function passesCommonAlertFilters(profile, signals) {
 }
 
 function buildHvncCandidate(profile, shared, signals) {
+  const settings = getRuleSettings(profile, 'hvnc');
   const qualifies = signals.passesHvncPrereqs
     && signals.volume24h != null
-    && signals.volume24h >= (toNumberOrNull(profile.hvncMinVol) || 0);
+    && signals.volume24h >= (
+      toNumberOrNull(settings.minHvncVolumeUsd)
+      ?? toNumberOrNull(profile.hvncMinVol)
+      ?? 0
+    );
   if (!qualifies) {
     return null;
   }
@@ -331,7 +359,7 @@ function buildHvncCandidate(profile, shared, signals) {
     label: 'HVNC',
     pct: 0,
     lastAlertedValue: signals.volume24h,
-    cooldownMs: 0,
+    cooldownMs: getRuleCooldownMs(profile, 'hvnc', 0),
     repeatStepPct: null,
     fingerprint: buildFingerprint(['hvnc', signals.volume24h, signals.tokenCreatedAt]),
     payload: {
@@ -355,7 +383,7 @@ function buildMeteoraCandidate(profile, shared, signals) {
     label: 'METEORA 1H',
     pct: signals.meteoraChange1h,
     lastAlertedValue: signals.meteoraCurrentTvl,
-    cooldownMs: METEORA_ALERT_COOLDOWN_MS,
+    cooldownMs: getRuleCooldownMs(profile, 'meteora-surge', METEORA_ALERT_COOLDOWN_MS),
     repeatStepPct: null,
     fingerprint: buildFingerprint([
       'meteora-surge',
@@ -516,7 +544,11 @@ function buildSurgeCandidate(input) {
     label: `PCHANGE ${surgeWindow}`,
     pct: currentPct,
     lastAlertedValue: currentPct,
-    cooldownMs: surgeWindow === '6H' ? SURGE_6H_REPEAT_COOLDOWN_MS : 0,
+    cooldownMs: getRuleCooldownMs(
+      profile,
+      ruleKey,
+      surgeWindow === '6H' ? SURGE_6H_REPEAT_COOLDOWN_MS : 0
+    ),
     repeatStepPct: null,
     fingerprint: buildFingerprint([ruleKey, previousPct, currentPct, signals.currentMcap, signals.volume24h]),
     crossedThreshold,
@@ -541,7 +573,7 @@ function buildMonitoredVolCandidate(profile, shared, signals) {
   const qualifies = signals.hasVol5mBaseline
     && signals.vol5mChangePct != null
     && signals.vol5mChangePct >= (toNumberOrNull(profile.thresholdPct) || 0)
-    && passesCommonAlertFilters(profile, signals)
+    && passesCommonAlertFilters(profile, signals, 'monitored-vol')
     && !signals.isMcapDeclining;
   if (!qualifies) {
     return null;
@@ -553,7 +585,7 @@ function buildMonitoredVolCandidate(profile, shared, signals) {
     label: 'VOL',
     pct: signals.vol5mChangePct,
     lastAlertedValue: signals.currentVolume5m,
-    cooldownMs: STANDARD_ALERT_COOLDOWN_MS,
+    cooldownMs: getRuleCooldownMs(profile, 'monitored-vol', STANDARD_ALERT_COOLDOWN_MS),
     repeatStepPct: toNumberOrNull(profile?.thresholdPct) || 0,
     fingerprint: buildFingerprint([signals.vol5mChangePct, signals.prevVolume5m, signals.currentVolume5m]),
     payload: shared,
@@ -570,7 +602,7 @@ function buildGmgnVol1mCandidate(profile, shared, signals) {
     && signals.hasVol1mBaseline
     && signals.vol1mChangePct != null
     && signals.vol1mChangePct >= thresholdPct
-    && passesCommonAlertFilters(profile, signals)
+    && passesCommonAlertFilters(profile, signals, 'monitored-vol')
     && !signals.isMcapDeclining;
   if (!qualifies) {
     return null;
@@ -602,7 +634,7 @@ function buildMonitoredMcapCandidate(profile, shared, signals) {
     && signals.mcapAlertTokenAgeGatePassed
     && signals.mcapChangePct != null
     && signals.mcapChangePct >= (toNumberOrNull(profile.mcapThresholdPct) || 0)
-    && passesCommonAlertFilters(profile, signals);
+    && passesCommonAlertFilters(profile, signals, 'monitored-mcap');
   if (!qualifies) {
     return null;
   }
@@ -613,7 +645,7 @@ function buildMonitoredMcapCandidate(profile, shared, signals) {
     label: 'MCAP',
     pct: signals.mcapChangePct,
     lastAlertedValue: signals.currentMcap,
-    cooldownMs: STANDARD_ALERT_COOLDOWN_MS,
+    cooldownMs: getRuleCooldownMs(profile, 'monitored-mcap', STANDARD_ALERT_COOLDOWN_MS),
     repeatStepPct: toNumberOrNull(profile?.mcapThresholdPct) || 0,
     fingerprint: buildFingerprint([signals.mcapChangePct, signals.prevMcap, signals.currentMcap]),
     payload: shared,
@@ -1863,6 +1895,50 @@ function isSupportedAlertToken(token) {
   }
 }
 
+const solanaAlertProfileEvaluator = createSolanaAlertProfileEvaluator({
+  buildRuleDecision: ({ profile, tokenAfter, signals }) => (
+    buildRuleCandidate(profile, tokenAfter, signals)
+  ),
+  buildRearmRuleKeys: ({ profile, qualifiedRuleKeys }) => (
+    buildRearmRuleKeys(profile, qualifiedRuleKeys)
+  ),
+  evaluateLifecycle: ({
+    profile, tokenAfter, candidates, rearmRuleKeys, nowMs, deps, summary,
+  }) => handleRuleLifecycle(
+    profile, tokenAfter, candidates, rearmRuleKeys, nowMs, deps, summary
+  ),
+  evaluateContinuation: ({ profile, tokenAfter, signals, nowMs, deps, summary }) => (
+    evaluateSurgeContinuation6h(profile, tokenAfter, signals, nowMs, deps, summary)
+  ),
+});
+
+const telegramSolanaAlertRuntime = createTelegramSolanaAlertRuntime({
+  evaluateProfile: solanaAlertProfileEvaluator.evaluate,
+});
+
+const solanaAlertDestinationCoordinator = createSolanaAlertDestinationCoordinator({
+  loadSignals: ({
+    tokenBefore, tokenAfter, profiles, nowMs, deps, alertSource,
+  }) => loadSignals(
+    tokenBefore, tokenAfter, profiles, nowMs, deps, { alertSource }
+  ),
+  evaluateDashboardProfile: (input) => solanaAlertProfileEvaluator.evaluate(input),
+  onDashboardError: ({ error, profile, tokenAfter, summary }) => {
+    summary.errors += 1;
+    console.error(
+      `[UserAlertMatcher] Failed to evaluate token ${tokenAfter.address} `
+      + `for user ${profile?.userId || 'unknown'}:`,
+      error.message
+    );
+  },
+  onDestinationError: ({ error, phase, tokenAfter }) => {
+    console.error(
+      `[UserAlertMatcher] Telegram ${phase} failed for token ${tokenAfter?.address || 'unknown'}:`,
+      error.message
+    );
+  },
+});
+
 async function evaluateUpdatedToken(input = {}, options = {}) {
   const deps = {
     db,
@@ -1875,6 +1951,7 @@ async function evaluateUpdatedToken(input = {}, options = {}) {
     backendAlertPublisher,
     tokenAlertSignalBuilder,
     userAlertProfileCache,
+    telegramAlertDestination: telegramSolanaAlertRuntime.destination,
     ...(options.deps || {}),
   };
   deps.tokenAlertSignalBuilder = deps.tokenAlertSignalBuilder || tokenAlertSignalBuilder;
@@ -1898,23 +1975,16 @@ async function evaluateUpdatedToken(input = {}, options = {}) {
   const activeProfiles = await deps.userAlertProfileCache.listActiveProfiles({ nowMs });
   const profiles = selectEnabledAlertProfilesForChain(activeProfiles, ALERT_CHAIN);
   summary.evaluatedProfiles = profiles.length;
-  if (!profiles.length) {
-    return summary;
-  }
-
-  const signals = await loadSignals(tokenBefore, tokenAfter, profiles, nowMs, deps, { alertSource });
-
-  for (const profile of profiles) {
-    try {
-      const ruleDecision = buildRuleCandidate(profile, tokenAfter, signals);
-      const rearmRuleKeys = buildRearmRuleKeys(profile, ruleDecision.qualifiedRuleKeys);
-      await handleRuleLifecycle(profile, tokenAfter, ruleDecision.candidates, rearmRuleKeys, nowMs, deps, summary);
-      await evaluateSurgeContinuation6h(profile, tokenAfter, signals, nowMs, deps, summary);
-    } catch (error) {
-      summary.errors += 1;
-      console.error(`[UserAlertMatcher] Failed to evaluate token ${tokenAfter.address} for user ${profile?.userId || 'unknown'}:`, error.message);
-    }
-  }
+  await solanaAlertDestinationCoordinator.evaluate({
+    dashboardProfiles: profiles,
+    destination: deps.telegramAlertDestination || null,
+    tokenBefore,
+    tokenAfter,
+    nowMs,
+    alertSource,
+    deps,
+    summary,
+  });
 
   return summary;
 }
@@ -1950,6 +2020,7 @@ module.exports = {
   GMGN_VOL_1M_ALERT_THRESHOLD_PCT,
   GMGN_VOL_1M_ALERT_COOLDOWN_MS,
   GMGN_VOL_1M_REPEAT_STEP_PCT,
+  evaluateSolanaAlertProfile: solanaAlertProfileEvaluator.evaluate,
   evaluateUpdatedToken,
   __private: {
     bucketMetric,

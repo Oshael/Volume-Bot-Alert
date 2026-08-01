@@ -50,16 +50,16 @@ O TrendScope é uma aplicação web multichain em evolução, com:
 - acesso token-gated;
 - billing implementado no código, mas não necessário para o lançamento
   token-gated atual;
-- integração Telegram em desenvolvimento local, ainda não tratada como produção;
+- integração Telegram registrada em checkpoints locais, ainda não tratada como produção;
 - wallet tracking multichain planejado, ainda não implementado como produto.
 
 Baseline observado na migração:
 
 - branch implantada nas duas VPS: `Robinhood-Implementation`;
 - commit implantado: `350c45d`;
-- o worktree local parte desse commit, mas possui mudanças ainda não commitadas;
-- mudanças locais, incluindo Telegram, não devem ser presumidas nas VPS até
-  commit, push, deploy e schema check correspondentes.
+- o histórico local possui checkpoints posteriores, além de mudanças ainda não commitadas;
+- os checkpoints locais, incluindo Telegram, não devem ser presumidos nas VPS até
+  push, deploy e schema check correspondentes.
 
 ## 3. Topologia de produção atual
 
@@ -382,7 +382,7 @@ Mount points confirmados em `src/server.js`:
 | `/api/catalog` | catálogo |
 | `/api/dashboard` | painéis, históricos e charts |
 | `/api/x-profile` | perfil X |
-| `/api/telegram` | integração Telegram presente apenas no worktree em desenvolvimento |
+| `/api/telegram` | integração Telegram presente apenas nos checkpoints locais em desenvolvimento |
 
 Rotas sensíveis usam autenticação, rate limit e/ou checagem de origem. Não
 publique o Node diretamente; o tráfego deve entrar pelo Nginx.
@@ -513,7 +513,7 @@ validados juntos.
 
 ### 11.4 Telegram
 
-Há uma implementação ampla em andamento no worktree local:
+Há uma implementação ampla registrada em checkpoints locais:
 
 - vínculo por token;
 - webhook;

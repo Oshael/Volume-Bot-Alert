@@ -31,6 +31,8 @@ const catalogRoutes = require('./routes/catalog');
 const dashboardRoutes = require('./routes/dashboard');
 const tokenGateRoutes = require('./routes/token-gate');
 const xProfileRoutes = require('./routes/x-profile');
+const telegramRoutes = require('./routes/telegram');
+const telegramWebhookRoutes = require('./routes/telegram-webhook');
 
 // Services
 const socketHub = require('./services/socket-hub');
@@ -153,6 +155,9 @@ app.options('*', cors({
 const defaultJsonParser = express.json({ limit: '1mb' });
 const largeJsonParser = express.json({ limit: '8mb' });
 app.use((req, res, next) => {
+  if (req.path === '/api/telegram/webhook') {
+    return next();
+  }
   if (req.method === 'POST' && req.path === '/api/dashboard/custom-alert-rules') {
     return largeJsonParser(req, res, next);
   }
@@ -186,6 +191,7 @@ if (config.nodeEnv === 'development') {
 }
 
 // ---- Routes ----
+app.use('/api/telegram/webhook', telegramWebhookRoutes);
 app.use('/api/health', healthLimiter, healthRoutes);
 app.use('/api/auth/social', socialAuthRoutes);
 app.use('/api/auth', authRoutes);
@@ -209,6 +215,7 @@ app.use('/api/bootstrap', defaultApiLimiter, bootstrapRoutes);
 app.use('/api/catalog', catalogRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/x-profile', xProfileLimiter, xProfileRoutes);
+app.use('/api/telegram', defaultApiLimiter, telegramRoutes);
 
 // ---- WebSocket Hub Status (admin only) ----
 const { authenticate, requireAdmin } = require('./middleware/auth');

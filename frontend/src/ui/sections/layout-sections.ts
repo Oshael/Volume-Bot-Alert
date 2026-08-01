@@ -28,6 +28,7 @@ import { getTokenChartValuationLabel, normalizeTokenChartCandle, normalizeTokenC
 import { resolveTokenValuation } from '../../utils/token-valuation';
 import { buildTokenChainIcon, buildTokenIdentityBadgeGroup, getTokenChainTitle } from '../token-chain-badge';
 import { bindMonitoredTickerPeerPanelClose, buildTickerPeerBadge } from './monitored-section';
+import { bindTelegramSettings, renderTelegramSettings } from './telegram-settings';
 
 const SITE_LOGO_URL = new URL('../../../logofinal1.png', import.meta.url).href;
 const DISCORD_COMMUNITY_URL = 'https://discord.gg/2pjQ5BVgNP';
@@ -415,12 +416,13 @@ const SAFETY_TOGGLE_FIELDS = [
 
 const BOT_SETTINGS_BASE_CATEGORIES = [
   { key: 'solana', label: 'Solana', title: 'Solana alert settings' },
+  { key: 'telegram', label: 'Telegram', title: 'Telegram connection' },
   { key: 'notifications', label: 'Notifications', title: 'Notifications' },
   { key: 'sound', label: 'Sound', title: 'Sound' },
 ] as const;
 
 type AlertSettingsChain = 'solana' | 'robinhood';
-type BotSettingsCategory = AlertSettingsChain | 'notifications' | 'sound';
+type BotSettingsCategory = AlertSettingsChain | 'telegram' | 'notifications' | 'sound';
 let activeBotSettingsCategory: BotSettingsCategory = 'solana';
 let botSettingsSaveError: string | null = null;
 
@@ -6426,6 +6428,7 @@ function renderBotSettingsFields(state: AppState, activeCategory: BotSettingsCat
   return `
     ${renderBotSettingsSection('solana', renderChainAlertSettings(state, 'solana'), activeCategory === 'solana')}
     ${hasRobinhood ? renderBotSettingsSection('robinhood', renderChainAlertSettings(state, 'robinhood'), activeCategory === 'robinhood') : ''}
+    ${renderBotSettingsSection('telegram', renderTelegramSettings(state), activeCategory === 'telegram')}
     ${renderBotSettingsSection('notifications', renderBotSettingsNotifications(state), activeCategory === 'notifications')}
     ${renderBotSettingsSection('sound', renderBotSettingsSound(state), activeCategory === 'sound')}
   `;
@@ -7167,6 +7170,7 @@ function bindBotSettingsPanel(section: ParentNode, controller: AppController, st
   hydrateLegacyConfigValues(configSection, state);
   hydrateBotSettingsChainIcons(panel);
   bindBotSettingsCategoryNavigation(panel, state);
+  bindTelegramSettings(panel, controller);
 
   const commitInputIfNeeded = async (input: HTMLInputElement) => {
     if (input.dataset.pendingCommit !== 'true' || input.dataset.submitInFlight === 'true') {

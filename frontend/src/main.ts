@@ -355,6 +355,10 @@ function getBotSettingsBrowserNotificationsRenderKey(state: AppState) {
   return state.ui.authPanel === 'bot-settings' ? state.ui.browserNotifications : null;
 }
 
+function getBotSettingsTelegramRenderKey(state: AppState) {
+  return state.ui.authPanel === 'bot-settings' ? state.telegram : null;
+}
+
 function getAuthModalRenderKey(state: AppState) {
   if (state.ui.authPanel === 'none') {
     return null;
@@ -389,6 +393,7 @@ function getAuthModalRenderKey(state: AppState) {
     billingPendingPlanKey: state.ui.authPanel === 'user-settings' ? state.billing.pendingPlanKey : null,
     billingError: state.ui.authPanel === 'user-settings' ? state.billing.error : null,
     browserNotifications: getBotSettingsBrowserNotificationsRenderKey(state),
+    telegram: getBotSettingsTelegramRenderKey(state),
   });
 }
 

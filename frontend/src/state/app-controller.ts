@@ -153,6 +153,7 @@ import {
   requestBrowserNotificationPermission,
   saveBrowserNotificationSettings,
 } from '../services/alerts/browser-notifications';
+import { createTelegramConnectionController } from './telegram-connection-controller';
 import {
   connectSolanaWallet,
   getSolanaNetworkLabel,
@@ -694,6 +695,9 @@ export interface AppController {
   goToAccountSecurity(): void;
   goToPreAccess(): void;
   refreshBilling(): Promise<void>;
+  refreshTelegram(): Promise<void>;
+  createTelegramLink(): Promise<void>;
+  disconnectTelegram(): Promise<void>;
   updateAccountProfile(username: string, email: string, password: string, confirmPassword: string): Promise<void>;
   startSocialLink(provider: 'google' | 'discord'): void;
   startSocialLogin(provider: 'google' | 'discord'): void;
@@ -3245,6 +3249,14 @@ export function createAppController(): AppController {
     emitTimer = window.setTimeout(() => flushEmit(), 0);
   }
 
+  const telegramConnection = createTelegramConnectionController({
+    state: state.telegram,
+    isAuthenticated: () => state.session.status === 'authenticated',
+    notify: () => emit('overlay'),
+    createInitialState: () => createAppState().telegram,
+    sessionToken: COOKIE_SESSION_MARKER,
+  });
+
   function flushPumpfunEmit() {
     if (pumpfunEmitTimer) {
       clearTimeout(pumpfunEmitTimer);
@@ -3937,6 +3949,7 @@ export function createAppController(): AppController {
     state.ui.authPanel = panel;
     if (panel === 'bot-settings') {
       hydrateBrowserNotificationSettings();
+      void telegramConnection.refresh();
     }
     if (panel === 'token-review-alerts') {
       void loadAdminTokenReviewAlertsInternal()
@@ -10468,6 +10481,7 @@ export function createAppController(): AppController {
     state.session.accessHasProductAccess = false;
     state.session.accessDaysRemaining = null;
     state.session.accessReason = null;
+    telegramConnection.reset();
     state.session.tokenTier = null;
     state.session.tokenDiscountPercent = 0;
     state.session.tokenBalanceRaw = null;
@@ -13113,6 +13127,15 @@ export function createAppController(): AppController {
         emit('bid-zone');
       }
     },
+    async refreshTelegram() {
+      await telegramConnection.refresh();
+    },
+    async createTelegramLink() {
+      await telegramConnection.createLink();
+    },
+    async disconnectTelegram() {
+      await telegramConnection.disconnect();
+    },
     openAuthPanel(panel: Exclude<AuthPanel, 'none'>) {
       state.ui.pendingIdentityUnlinkProvider = null;
       if (panel === 'change-password') {
@@ -13122,6 +13145,7 @@ export function createAppController(): AppController {
       }
       if (panel === 'bot-settings') {
         hydrateBrowserNotificationSettings();
+        void telegramConnection.refresh();
       }
       if (panel === 'token-review-alerts') {
         void loadAdminTokenReviewAlertsInternal()

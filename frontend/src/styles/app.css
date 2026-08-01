@@ -4233,6 +4233,77 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   line-height: 1.45;
 }
 
+.telegram-settings-card {
+  display: grid;
+  gap: 18px;
+  padding: 22px;
+  border: 1px solid var(--bot-settings-border);
+  border-radius: 12px;
+  background: var(--bot-settings-field);
+}
+
+.telegram-settings-head,
+.telegram-settings-actions,
+.telegram-settings-details > div {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.telegram-settings-head {
+  justify-content: space-between;
+}
+
+.telegram-settings-head > div {
+  display: grid;
+  gap: 5px;
+}
+
+.telegram-settings-head strong,
+.telegram-settings-details dd {
+  color: #eaf4fb;
+}
+
+.telegram-settings-head span,
+.telegram-settings-note,
+.telegram-settings-details dt {
+  color: #718ba3;
+  font-size: 12px;
+}
+
+.telegram-settings-status {
+  padding: 6px 9px;
+  border: 1px solid var(--bot-settings-accent-border);
+  border-radius: 999px;
+  color: var(--bot-settings-accent);
+  white-space: nowrap;
+}
+
+.telegram-settings-status[data-status="access_suspended"],
+.telegram-settings-error {
+  color: #ff91a3;
+}
+
+.telegram-settings-details {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.telegram-settings-details > div {
+  justify-content: space-between;
+  border-bottom: 1px solid var(--bot-settings-border-soft);
+  padding-bottom: 8px;
+}
+
+.telegram-settings-details dd {
+  margin: 0;
+}
+
+.telegram-settings-actions {
+  flex-wrap: wrap;
+}
+
 .bot-settings-content-title {
   color: #9fb8cc;
   font-family: "Space Mono", monospace;

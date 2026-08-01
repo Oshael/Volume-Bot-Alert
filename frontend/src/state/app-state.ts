@@ -772,6 +772,21 @@ export interface ConfigSummary {
 
 export interface AppState {
   session: SessionState;
+  telegram: {
+    loaded: boolean;
+    loading: boolean;
+    mutating: boolean;
+    available: boolean;
+    status: 'disconnected' | 'active' | 'paused' | 'access_suspended';
+    identity: { username: string | null; firstName: string | null } | null;
+    botUrl: string | null;
+    linkedAt: string | null;
+    lastDeliveryAt: string | null;
+    lastError: { code: string; at: string | null } | null;
+    pendingDeepLink: string | null;
+    pendingDeepLinkExpiresAt: string | null;
+    error: string | null;
+  };
   billing: {
     loaded: boolean;
     enabled: boolean;
@@ -979,6 +994,21 @@ export function createAppState(): AppState {
       tokenBalanceUi: null,
       tokenSnapshotCheckedAt: null,
       tokenSnapshotExpiresAt: null,
+    },
+    telegram: {
+      loaded: false,
+      loading: false,
+      mutating: false,
+      available: false,
+      status: 'disconnected',
+      identity: null,
+      botUrl: null,
+      linkedAt: null,
+      lastDeliveryAt: null,
+      lastError: null,
+      pendingDeepLink: null,
+      pendingDeepLinkExpiresAt: null,
+      error: null,
     },
     billing: {
       loaded: false,

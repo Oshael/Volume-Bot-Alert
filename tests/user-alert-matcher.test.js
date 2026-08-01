@@ -161,6 +161,34 @@ async function withGmgnVol1mAlertsEnabled(callback) {
 }
 
 describe('user alert matcher', () => {
+  it('loads a volume baseline for a Telegram-only signal profile', async () => {
+    const context = createDeps();
+    let volumeReads = 0;
+    let destinationSignals;
+    context.deps.tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses = async () => {
+      volumeReads += 1;
+      return [{
+        token_address: TOKEN_ADDRESS,
+        baseline_vol_5m: 10_000,
+      }];
+    };
+    context.deps.telegramAlertDestination = {
+      async listSignalProfiles() {
+        return [{ ruleEnabled: { monitoredVol: true } }];
+      },
+      async evaluate(input) {
+        destinationSignals = input.signals;
+      },
+    };
+
+    await userAlertMatcher.evaluateUpdatedToken({
+      tokenAfter: { address: TOKEN_ADDRESS, last_mcap: 100_000, last_vol_5m: 20_000 },
+    }, { now: '2026-07-29T15:00:00.000Z', deps: context.deps });
+
+    assert.equal(volumeReads, 1);
+    assert.equal(destinationSignals.currentVolume5m, 20_000);
+  });
+
   it('emits and marks a custom mcap cross alert without active presence', async () => {
     const context = createDeps({
       customRules: [{

@@ -11,6 +11,8 @@ const INTEGRATION_TESTS = [
   'config.test.js',
   'dashboard.test.js',
   'mock-trading-routes.test.js',
+  'telegram-routes.test.js',
+  'telegram-alert-delivery.integration.test.js',
   'robinhood-alert-publication.integration.test.js',
   'robinhood-backfill-capture.integration.test.js',
   'user-alert-presence.integration.test.js',

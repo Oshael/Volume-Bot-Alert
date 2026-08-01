@@ -1558,6 +1558,7 @@ function getOverlayRenderKey(state: AppState) {
     userSettings: getUserSettingsOverlaySnapshot(state),
     botSettingsConfigs: state.ui.authPanel === 'bot-settings' ? state.data.configs : null,
     browserNotifications: state.ui.authPanel === 'bot-settings' ? state.ui.browserNotifications : null,
+    telegram: state.ui.authPanel === 'bot-settings' ? state.telegram : null,
     blockedTokens: state.ui.authPanel === 'blocked-tokens' ? state.data.blocklist : null,
     tokenReviewAlerts: state.ui.authPanel === 'token-review-alerts' ? state.data.adminTokenReviewAlerts : null,
   });

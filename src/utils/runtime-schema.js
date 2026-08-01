@@ -1971,6 +1971,306 @@ const SCHEMA_GROUPS = [
       ],
     }],
   },
+  {
+    key: 'stage84-telegram-integration-foundation',
+    name: 'Stage 84 Telegram connection and update intake foundation',
+    repair: 'node src/utils/db-init-stage84.js',
+    tables: [
+      {
+        table: 'telegram_connections',
+        columns: [
+          'id', 'user_id', 'telegram_user_id', 'chat_id', 'username', 'first_name',
+          'status', 'linked_at', 'disconnected_at', 'access_suspended_at',
+          'last_update_id', 'last_delivery_at', 'last_error_code', 'last_error_at',
+          'created_at', 'updated_at',
+        ],
+        constraints: [
+          { name: 'telegram_connections_identity_check', includes: ['CHECK', 'telegram_user_id', 'chat_id'] },
+          { name: 'telegram_connections_status_check', includes: ['CHECK', 'active', 'paused', 'access_suspended', 'disconnected'] },
+          { name: 'telegram_connections_disconnected_check', includes: ['CHECK', 'status', 'disconnected_at'] },
+          { name: 'telegram_connections_access_suspended_check', includes: ['CHECK', 'status', 'access_suspended_at'] },
+        ],
+        indexes: [
+          { name: 'idx_telegram_connections_active_user', includes: ['user_id', 'disconnected'] },
+          { name: 'idx_telegram_connections_active_telegram_user', includes: ['telegram_user_id', 'disconnected'] },
+          { name: 'idx_telegram_connections_active_chat', includes: ['chat_id', 'disconnected'] },
+        ],
+      },
+      {
+        table: 'telegram_link_tokens',
+        columns: ['id', 'user_id', 'token_hash', 'expires_at', 'consumed_at', 'created_at'],
+        constraints: [
+          { name: 'telegram_link_tokens_token_hash_key', includes: ['UNIQUE', 'token_hash'] },
+          { name: 'telegram_link_tokens_hash_check', includes: ['CHECK', 'token_hash'] },
+          { name: 'telegram_link_tokens_expiry_check', includes: ['CHECK', 'expires_at', 'created_at'] },
+        ],
+        indexes: [{
+          name: 'idx_telegram_link_tokens_user_expiry',
+          includes: ['user_id', 'expires_at DESC'],
+        }],
+      },
+      {
+        table: 'telegram_updates',
+        columns: ['update_id', 'received_at', 'processed_at', 'status', 'last_error'],
+        constraints: [
+          { name: 'telegram_updates_pkey', includes: ['PRIMARY KEY', 'update_id'] },
+          { name: 'telegram_updates_status_check', includes: ['CHECK', 'received', 'processed', 'failed'] },
+          { name: 'telegram_updates_processed_check', includes: ['CHECK', 'status', 'processed_at'] },
+        ],
+        indexes: [{
+          name: 'idx_telegram_updates_status_received',
+          includes: ['status', 'received_at', 'processed'],
+        }],
+      },
+    ],
+  },
+  {
+    key: 'stage85-telegram-alert-profiles',
+    name: 'Stage 85 Telegram alert profiles and rule settings',
+    repair: 'node src/utils/db-init-stage85.js',
+    tables: [
+      {
+        table: 'telegram_connections',
+        columns: ['id', 'user_id'],
+        indexes: [{
+          name: 'idx_telegram_connections_id_user',
+          includes: ['id', 'user_id', 'UNIQUE'],
+        }],
+      },
+      {
+        table: 'telegram_alert_profiles',
+        columns: [
+          'id', 'user_id', 'connection_id', 'chain', 'enabled',
+          'sparkline_enabled', 'version', 'created_at', 'updated_at',
+        ],
+        constraints: [
+          {
+            name: 'telegram_alert_profiles_connection_user_fkey',
+            includes: ['FOREIGN KEY', 'connection_id', 'user_id', 'telegram_connections'],
+          },
+          {
+            name: 'telegram_alert_profiles_user_chain_key',
+            includes: ['UNIQUE', 'user_id', 'chain'],
+          },
+          {
+            name: 'telegram_alert_profiles_chain_check',
+            includes: ['CHECK', 'solana', 'robinhood'],
+          },
+          {
+            name: 'telegram_alert_profiles_version_check',
+            includes: ['CHECK', 'version'],
+          },
+        ],
+        indexes: [{
+          name: 'idx_telegram_alert_profiles_connection_enabled',
+          includes: ['connection_id', 'enabled', 'chain'],
+        }],
+      },
+      {
+        table: 'telegram_alert_rule_settings',
+        columns: [
+          'id', 'profile_id', 'chain', 'rule_key', 'enabled',
+          'settings_json', 'version', 'created_at', 'updated_at',
+        ],
+        constraints: [
+          {
+            name: 'telegram_alert_rule_settings_profile_chain_fkey',
+            includes: ['FOREIGN KEY', 'profile_id', 'chain', 'telegram_alert_profiles'],
+          },
+          {
+            name: 'telegram_alert_rule_settings_profile_rule_key',
+            includes: ['UNIQUE', 'profile_id', 'rule_key'],
+          },
+          {
+            name: 'telegram_alert_rule_settings_chain_rule_check',
+            includes: ['CHECK', 'monitored-mcap', 'monitored-fdv', 'robinhood-hvnc-v2'],
+          },
+          {
+            name: 'telegram_alert_rule_settings_json_check',
+            includes: ['CHECK', 'jsonb_typeof', 'settings_json'],
+          },
+          {
+            name: 'telegram_alert_rule_settings_version_check',
+            includes: ['CHECK', 'version'],
+          },
+        ],
+        indexes: [{
+          name: 'idx_telegram_alert_rule_settings_profile_enabled',
+          includes: ['profile_id', 'enabled', 'rule_key'],
+        }],
+      },
+    ],
+  },
+  {
+    key: 'stage86-telegram-connection-versioning',
+    name: 'Stage 86 Telegram connection optimistic versioning',
+    repair: 'node src/utils/db-init-stage86.js',
+    tables: [{
+      table: 'telegram_connections',
+      columns: ['version'],
+      constraints: [{
+        name: 'telegram_connections_version_check',
+        includes: ['CHECK', 'version'],
+      }],
+    }],
+  },
+  {
+    key: 'stage87-telegram-input-sessions',
+    name: 'Stage 87 Telegram durable input sessions',
+    repair: 'node src/utils/db-init-stage87.js',
+    tables: [{
+      table: 'telegram_input_sessions',
+      columns: [
+        'telegram_user_id', 'user_id', 'action', 'payload_json',
+        'expires_at', 'created_at', 'updated_at',
+      ],
+      constraints: [
+        { name: 'telegram_input_sessions_pkey', includes: ['PRIMARY KEY', 'telegram_user_id'] },
+        { name: 'telegram_input_sessions_identity_check', includes: ['CHECK', 'telegram_user_id'] },
+        { name: 'telegram_input_sessions_action_check', includes: ['CHECK', 'edit_rule_setting'] },
+        { name: 'telegram_input_sessions_payload_check', includes: ['CHECK', 'jsonb_typeof'] },
+        { name: 'telegram_input_sessions_expiry_check', includes: ['CHECK', 'expires_at', 'created_at'] },
+      ],
+      indexes: [{
+        name: 'idx_telegram_input_sessions_expiry',
+        includes: ['expires_at'],
+      }],
+    }],
+  },
+  {
+    key: 'stage88-telegram-alert-rule-state',
+    name: 'Stage 88 Telegram destination-specific alert rule state',
+    repair: 'node src/utils/db-init-stage88.js',
+    tables: [{
+      table: 'telegram_alert_rule_states',
+      columns: [
+        'profile_id', 'chain', 'rule_key', 'token_address', 'rule_version',
+        'state_json', 'version', 'created_at', 'updated_at',
+      ],
+      constraints: [
+        {
+          name: 'telegram_alert_rule_states_pkey',
+          includes: ['PRIMARY KEY', 'profile_id', 'rule_key', 'token_address'],
+        },
+        {
+          name: 'telegram_alert_rule_states_profile_chain_fkey',
+          includes: ['FOREIGN KEY', 'profile_id', 'chain', 'telegram_alert_profiles'],
+        },
+        {
+          name: 'telegram_alert_rule_states_profile_rule_fkey',
+          includes: ['FOREIGN KEY', 'profile_id', 'rule_key', 'telegram_alert_rule_settings'],
+        },
+        {
+          name: 'telegram_alert_rule_states_json_check',
+          includes: ['CHECK', 'jsonb_typeof', 'state_json'],
+        },
+        {
+          name: 'telegram_alert_rule_states_rule_version_check',
+          includes: ['CHECK', 'rule_version'],
+        },
+        {
+          name: 'telegram_alert_rule_states_version_check',
+          includes: ['CHECK', 'version'],
+        },
+      ],
+      indexes: [{
+        name: 'idx_telegram_alert_rule_states_profile_token',
+        includes: ['profile_id', 'token_address'],
+      }],
+    }],
+  },
+  {
+    key: 'stage89-telegram-alert-delivery-outbox',
+    name: 'Stage 89 durable Telegram alert delivery outbox',
+    repair: 'node src/utils/db-init-stage89.js',
+    tables: [
+      {
+        table: 'telegram_alert_profiles',
+        columns: ['id', 'connection_id', 'chain'],
+        indexes: [{
+          name: 'idx_telegram_alert_profiles_delivery_identity',
+          includes: ['id', 'connection_id', 'chain', 'UNIQUE'],
+        }],
+      },
+      {
+        table: 'telegram_alert_deliveries',
+        columns: [
+          'id', 'connection_id', 'profile_id', 'rule_key', 'chain', 'token_address',
+          'dedupe_key', 'event_payload', 'triggered_at', 'status', 'attempts',
+          'next_attempt_at', 'lease_owner', 'lease_until', 'telegram_message_id',
+          'telegram_file_id', 'last_error_code', 'last_error', 'delivered_at',
+          'created_at', 'updated_at',
+        ],
+        constraints: [
+          {
+            name: 'telegram_alert_deliveries_profile_fkey',
+            includes: [
+              'FOREIGN KEY', 'profile_id', 'connection_id', 'chain',
+              'telegram_alert_profiles',
+            ],
+          },
+          {
+            name: 'telegram_alert_deliveries_rule_fkey',
+            includes: ['FOREIGN KEY', 'profile_id', 'rule_key', 'telegram_alert_rule_settings'],
+          },
+          {
+            name: 'telegram_alert_deliveries_dedupe_key',
+            includes: ['UNIQUE', 'connection_id', 'dedupe_key'],
+          },
+          {
+            name: 'telegram_alert_deliveries_chain_check',
+            includes: ['CHECK', 'solana', 'robinhood'],
+          },
+          {
+            name: 'telegram_alert_deliveries_address_check',
+            includes: ['CHECK', 'token_address', 'btrim'],
+          },
+          {
+            name: 'telegram_alert_deliveries_dedupe_check',
+            includes: ['CHECK', 'dedupe_key', 'btrim'],
+          },
+          {
+            name: 'telegram_alert_deliveries_payload_check',
+            includes: ['CHECK', 'jsonb_typeof', 'event_payload'],
+          },
+          {
+            name: 'telegram_alert_deliveries_status_check',
+            includes: ['CHECK', 'pending', 'claimed', 'retry', 'sent', 'cancelled', 'failed'],
+          },
+          {
+            name: 'telegram_alert_deliveries_attempts_check',
+            includes: ['CHECK', 'attempts'],
+          },
+          {
+            name: 'telegram_alert_deliveries_lease_check',
+            includes: ['CHECK', 'claimed', 'lease_owner', 'lease_until'],
+          },
+          {
+            name: 'telegram_alert_deliveries_sent_check',
+            includes: ['CHECK', 'sent', 'delivered_at'],
+          },
+          {
+            name: 'telegram_alert_deliveries_message_check',
+            includes: ['CHECK', 'telegram_message_id'],
+          },
+        ],
+        indexes: [
+          {
+            name: 'idx_telegram_alert_deliveries_ready',
+            includes: ['next_attempt_at', 'id', 'pending', 'retry'],
+          },
+          {
+            name: 'idx_telegram_alert_deliveries_claimed_lease',
+            includes: ['lease_until', 'id', 'claimed'],
+          },
+          {
+            name: 'idx_telegram_alert_deliveries_profile_history',
+            includes: ['profile_id', 'triggered_at DESC'],
+          },
+        ],
+      },
+    ],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
@@ -1989,6 +2289,12 @@ const PROFILE_GROUP_KEYS = {
     'stage81-token-catalog-price-precision',
     'stage82-robinhood-durable-backfill-capture',
     'stage83-robinhood-backfill-aggregation-outbox',
+    'stage84-telegram-integration-foundation',
+    'stage85-telegram-alert-profiles',
+    'stage86-telegram-connection-versioning',
+    'stage87-telegram-input-sessions',
+    'stage88-telegram-alert-rule-state',
+    'stage89-telegram-alert-delivery-outbox',
   ],
   runtime: SCHEMA_GROUPS.map((group) => group.key),
 };
