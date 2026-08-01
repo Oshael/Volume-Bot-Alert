@@ -1,5 +1,4 @@
 const { createErc20MetadataReader } = require('./evm-erc20-metadata');
-const { createErc20SupplyDeltaReader } = require('./evm-erc20-supply-delta');
 const { createBlockTimestampEnricher, mapWithConcurrency } = require('./evm-log-enrichment');
 const { createEvmMarketWindowAggregator, eventIdentity } = require('./evm-market-window-aggregator');
 const { buildMarketObservation, ROBINHOOD_WETH } = require('./evm-market-metrics');
@@ -95,15 +94,6 @@ function rememberRollbackEntry(store, key, value, limit) {
   while (store.size > limit) store.delete(store.keys().next().value);
 }
 
-function supplyDeltaReaderFor(options, rpcClient) {
-  return options.supplyDeltaReader || createErc20SupplyDeltaReader({ rpcClient });
-}
-
-function cacheEntryLimit(value, fallback = 5000) {
-  const parsed = Math.trunc(Number(value));
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
 function persistedPoolSeeds(rows = []) {
   const seeds = { v2: [], v3: [], v4: [] };
   for (const row of rows) {
@@ -141,7 +131,6 @@ function createRobinhoodOnchainPipeline(options = {}) {
   const rpcClient = options.rpcClient;
   const now = options.now || Date.now;
   const metadataReader = options.metadataReader || createErc20MetadataReader({ rpcClient });
-  const supplyDeltaReader = supplyDeltaReaderFor(options, rpcClient);
   const quoteReader = options.quoteReader || createRobinhoodWethUsdQuoteReader({ rpcClient });
   const windowAggregationEnabled = options.windowAggregationEnabled !== false;
   const aggregator = windowAggregationEnabled
@@ -164,11 +153,6 @@ function createRobinhoodOnchainPipeline(options = {}) {
   const observations = rollbackEnabled ? new Map() : null;
   const discoveries = rollbackEnabled ? new Map() : null;
   const metrics = createMetrics();
-  const wethQuoteCache = new Map();
-  const wethQuotePending = new Map();
-  const wethQuoteCacheLimit = cacheEntryLimit(options.wethQuoteCacheEntries);
-  const supplyCheckpoints = new Map();
-  const supplyResolutionPending = new Map();
 
   function seed(seedLogs = {}) {
     for (const log of seedLogs.v2 || []) enqueueSocialMetadata(v2Tracker.processLog(log));
@@ -218,21 +202,6 @@ function createRobinhoodOnchainPipeline(options = {}) {
       || Boolean(v3Tracker.getPool(emitter));
   }
 
-  async function getWethQuote(blockNumber) {
-    const resolvedBlockTag = blockTag(blockNumber);
-    if (wethQuoteCache.has(resolvedBlockTag)) return wethQuoteCache.get(resolvedBlockTag);
-    if (wethQuotePending.has(resolvedBlockTag)) return wethQuotePending.get(resolvedBlockTag);
-    const task = quoteReader.getSnapshot({ blockTag: resolvedBlockTag }).then((quote) => {
-      wethQuoteCache.set(resolvedBlockTag, quote);
-      while (wethQuoteCache.size > wethQuoteCacheLimit) {
-        wethQuoteCache.delete(wethQuoteCache.keys().next().value);
-      }
-      return quote;
-    }).finally(() => wethQuotePending.delete(resolvedBlockTag));
-    wethQuotePending.set(resolvedBlockTag, task);
-    return task;
-  }
-
   function rejectionMetric(reason) {
     if (reason === 'quote_usd_unavailable') metrics.missingQuote += 1;
     if (String(reason).includes('metadata')) metrics.metadataRejected += 1;
@@ -240,115 +209,25 @@ function createRobinhoodOnchainPipeline(options = {}) {
     if (reason === 'v2_token_reserve_depleted') metrics.v2ReserveDepleted += 1;
   }
 
-  function rememberSupplyCheckpoint(address, resolvedBlockTag, totalSupplyRaw) {
-    const key = String(address).toLowerCase();
-    const blockNumber = numericQuantity(resolvedBlockTag);
-    const current = supplyCheckpoints.get(key);
-    if (!current || blockNumber >= current.blockNumber) {
-      supplyCheckpoints.set(key, {
-        blockNumber,
-        blockTag: resolvedBlockTag,
-        totalSupplyRaw: String(totalSupplyRaw),
-      });
-    }
-  }
-
-  async function reconstructSupplyBetweenAnchors(address, checkpoint, targetBlock) {
-    if (typeof metadataReader.getTotalSupply !== 'function') return null;
-    const nextBlock = targetBlock + 1n;
-    const [toTarget, afterTarget, nextAnchor] = await Promise.all([
-      supplyDeltaReader.getDelta(address, {
-        fromBlock: checkpoint.blockNumber + 1n,
-        toBlock: targetBlock,
-      }),
-      supplyDeltaReader.getDelta(address, { fromBlock: nextBlock, toBlock: nextBlock }),
-      metadataReader.getTotalSupply(address, { blockTag: blockTag(nextBlock) }),
-    ]);
-    if (!toTarget?.usable || !afterTarget?.usable || !nextAnchor?.usable) return null;
-    const reconstructed = BigInt(checkpoint.totalSupplyRaw) + BigInt(toTarget.deltaRaw);
-    const expectedNext = reconstructed + BigInt(afterTarget.deltaRaw);
-    if (reconstructed < 0n || expectedNext !== BigInt(nextAnchor.totalSupplyRaw)) return null;
-    return {
-      totalSupplyRaw: reconstructed,
-      status: BigInt(toTarget.deltaRaw) === 0n
-        ? 'unchanged_between_anchors'
-        : 'reconstructed_mint_burn',
-    };
-  }
-
   async function resolveTokenMetadata(address, blockNumber) {
     const resolvedBlockTag = blockTag(blockNumber);
-    let identity;
-    let historical;
-    if (typeof metadataReader.getTotalSupply === 'function') {
-      [identity, historical] = await Promise.all([
-        metadataReader.getMetadata(address),
-        metadataReader.getTotalSupply(address, { blockTag: resolvedBlockTag }),
-      ]);
-      if (historical?.usable) {
-        rememberSupplyCheckpoint(address, resolvedBlockTag, historical.totalSupplyRaw);
-        return metadataWithSupply(
-          identity,
-          historical.totalSupplyRaw,
-          'exact_block_call',
-          resolvedBlockTag
-        );
-      }
-    } else {
-      historical = await metadataReader.getMetadata(address, { blockTag: resolvedBlockTag });
-      if (historical?.usable) {
-        rememberSupplyCheckpoint(address, resolvedBlockTag, historical.totalSupplyRaw);
-        return metadataWithSupply(
-          historical,
-          historical.totalSupplyRaw,
-          'exact_block_call',
-          resolvedBlockTag
-        );
-      }
-      identity = await metadataReader.getMetadata(address);
+    const metadata = await metadataReader.getMetadata(address);
+    if (metadata?.usable) {
+      return metadataWithSupply(metadata, metadata.totalSupplyRaw, 'latest_call', resolvedBlockTag);
     }
-    const checkpoint = supplyCheckpoints.get(String(address).toLowerCase());
-    const targetBlock = numericQuantity(resolvedBlockTag);
-    if (checkpoint && checkpoint.blockNumber <= targetBlock) {
-      const reconstructed = await reconstructSupplyBetweenAnchors(address, checkpoint, targetBlock);
-      if (reconstructed) {
-        rememberSupplyCheckpoint(address, resolvedBlockTag, reconstructed.totalSupplyRaw);
-        return metadataWithSupply(
-          identity || historical,
-          reconstructed.totalSupplyRaw,
-          reconstructed.status,
-          checkpoint.blockTag
-        );
-      }
-    }
-    return metadataWithSupply(
-      identity || historical,
-      null,
-      'unavailable',
-      null
-    );
-  }
-
-  function resolveTokenMetadataInOrder(address, blockNumber) {
-    const key = String(address).toLowerCase();
-    const previous = supplyResolutionPending.get(key) || Promise.resolve();
-    const task = previous.catch(() => {}).then(() => resolveTokenMetadata(address, blockNumber));
-    supplyResolutionPending.set(key, task);
-    return task.finally(() => {
-      if (supplyResolutionPending.get(key) === task) supplyResolutionPending.delete(key);
-    });
+    return metadataWithSupply(metadata, null, 'unavailable', null);
   }
 
   async function buildObservation(swap) {
     const eligibility = classifyTokenEligibility(swap.tokenAddress, options.policyOptions);
     const [tokenMetadata, quoteMetadata] = await Promise.all([
-      resolveTokenMetadataInOrder(swap.tokenAddress, swap.blockNumber),
+      resolveTokenMetadata(swap.tokenAddress, swap.blockNumber),
       metadataReader.getMetadata(swap.quoteAddress),
     ]);
     let quoteOptions = null;
     if (swap.quoteAddress === ROBINHOOD_WETH) {
       try {
-        quoteOptions = await getWethQuote(swap.blockNumber);
+        quoteOptions = await quoteReader.getCurrent();
       } catch (error) {
         if (error?.retryable === true) throw error;
         quoteOptions = null;
@@ -600,8 +479,6 @@ function createRobinhoodOnchainPipeline(options = {}) {
       enrichment: {
         timestamps: timestampEnricher.snapshot(),
         observationConcurrency,
-        supplyCheckpoints: supplyCheckpoints.size,
-        wethQuoteBlocks: wethQuoteCache.size,
       },
       socialMetadata: socialMetadataQueue?.snapshot?.() || { enabled: false },
       inMemoryState: {
