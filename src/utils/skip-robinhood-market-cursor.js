@@ -22,6 +22,8 @@ const SKIP_SQL = `UPDATE robinhood_ingestion_cursors
       checkpoint_block = NULL,
       checkpoint_hash = NULL,
       checkpoint_timestamp = NULL,
+      coverage_start_block = NULL,
+      coverage_start_timestamp = NULL,
       version = version + 1,
       updated_at = NOW()
   WHERE chain = 'robinhood' AND stream = 'market'

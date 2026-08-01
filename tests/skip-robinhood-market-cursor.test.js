@@ -63,7 +63,7 @@ describe('Robinhood market cursor skip', () => {
     assert.doesNotThrow(() => assertSkipIsSafe({ liveWorker: false, pools: 10 }));
   });
 
-  it('skips only after transactional preflight and clears the checkpoint', async () => {
+  it('skips only after transactional preflight and clears checkpoint and coverage', async () => {
     const statements = [];
     const client = {
       query: async (sql, params) => {
@@ -89,6 +89,8 @@ describe('Robinhood market cursor skip', () => {
     );
     assert.equal(update.sql.includes('checkpoint_hash = NULL'), true);
     assert.equal(update.sql.includes('safe_head = NULL'), true);
+    assert.equal(update.sql.includes('coverage_start_block = NULL'), true);
+    assert.equal(update.sql.includes('coverage_start_timestamp = NULL'), true);
     assert.deepEqual(sqls.slice(-2), ['COMMIT', 'RELEASE']);
   });
 
