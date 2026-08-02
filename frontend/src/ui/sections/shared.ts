@@ -247,7 +247,7 @@ export function renderTokenLaunchpadBadge(
   const mark = meta.svgPath
     ? `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${meta.svgPath}"></path></svg>`
     : escapeHtml(meta.mark);
-  return `<span class="token-launchpad-badge token-launchpad-${key}" title="${escapeHtml(title)}" aria-label="${escapeHtml(meta.label)}">${mark}</span>`;
+  return `<span class="token-launchpad-badge token-launchpad-${key} ui-control-tooltip" data-tooltip="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">${mark}</span>`;
 }
 
 function getSparklineRangePresetForScope(state: AppState, scope: SparklineRangeControlScope) {

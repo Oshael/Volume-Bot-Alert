@@ -786,6 +786,9 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   letter-spacing: 0;
   line-height: 1;
   pointer-events: auto;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .token-launchpad-pump {
@@ -9284,6 +9287,16 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .ui-control-tooltip[data-tooltip-visible="true"]::after {
+  transform: translate(-50%, 0);
+  opacity: 1;
+  visibility: visible;
+}
+
+.token-launchpad-badge.ui-control-tooltip {
+  overflow: visible;
+}
+
+.token-launchpad-badge.ui-control-tooltip:hover::after {
   transform: translate(-50%, 0);
   opacity: 1;
   visibility: visible;
