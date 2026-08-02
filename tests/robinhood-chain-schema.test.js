@@ -32,6 +32,7 @@ const stage90 = require('../src/utils/db-init-stage90');
 const stage91 = require('../src/utils/db-init-stage91');
 const stage92 = require('../src/utils/db-init-stage92');
 const stage98 = require('../src/utils/db-init-stage98');
+const stage99 = require('../src/utils/db-init-stage99');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 
 describe('Robinhood additive chain schema', () => {
@@ -424,8 +425,23 @@ describe('Robinhood additive chain schema', () => {
     assert.match(sql, /spot_tvl_from_pool_balances/);
     assert.match(sql, /protocol = 'uniswap-v4'/);
     assert.match(sql, /requires_tick_liquidity_distribution/);
-    assert.equal(group.repair, 'node src\/utils\/db-init-stage98.js');
+    assert.equal(group.repair, 'node src/utils/db-init-stage98.js');
     assert.equal(group.tables.length, 3);
+  });
+
+  it('creates the immutable V4 tick-range liquidity ledger', () => {
+    const sql = stage99.STATEMENTS.join('\n');
+    const group = SCHEMA_GROUPS.find((entry) => (
+      entry.key === 'stage99-robinhood-v4-liquidity-ledger'
+    ));
+
+    assert.match(sql, /CREATE TABLE IF NOT EXISTS robinhood_v4_liquidity_deltas/);
+    assert.match(sql, /liquidity_delta NUMERIC\(78, 0\) NOT NULL/);
+    assert.doesNotMatch(sql, /REFERENCES robinhood_processed_logs/);
+    assert.match(sql, /DROP CONSTRAINT IF EXISTS robinhood_v4_liquidity_deltas_log_fkey/);
+    assert.match(sql, /tick_lower < tick_upper/);
+    assert.match(sql, /pool_id, tick_lower, tick_upper, block_number, log_index/);
+    assert.equal(group.repair, 'node src/utils/db-init-stage99.js');
   });
 
   it('stores FDV separately from market cap in the shared catalog', () => {

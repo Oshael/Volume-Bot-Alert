@@ -211,7 +211,7 @@ describe('Robinhood backfill market scanner', () => {
     assert.equal(caughtUp.caughtUp, true);
     const tracked = __private.selectTrackedLogs([{
       address: v4.ROBINHOOD_V4_POOL_MANAGER,
-      topics: [v4.TOPICS.swap, HASH],
+      topics: [v4.TOPICS.modifyLiquidity, HASH],
     }], [{ protocol: 'uniswap-v4', market_key: 'rh:v4:test', pool_id: HASH }]);
     assert.equal(tracked[0].marketKey, 'rh:v4:test');
     await scanner.stop();

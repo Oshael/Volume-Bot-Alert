@@ -7,6 +7,7 @@ const Q192 = 1n << 192n;
 
 const TOPICS = Object.freeze({
   initialize: '0xdd466e674ea557f56295e2d0218a125ea4b4f0f6f3307b95f85e6110838d6438',
+  modifyLiquidity: '0xf208f4912782fd25c7f114ca3723a2d5dd6f3bcc3ac8db5af63baa85f711d5ec',
   swap: '0x40e9cecb9f5f1f1c5b9c97dec2917b7ee92e57ba5563708daca94dd84ad7112f',
 });
 
@@ -199,6 +200,41 @@ function decodeSwap(log, pool, options = {}) {
   };
 }
 
+function decodeModifyLiquidity(log, pool, options = {}) {
+  if (!pool?.tracked) throw new Error('Tracked pool context is required');
+  assertEvent(
+    log,
+    options.poolManagerAddress || pool.poolManagerAddress,
+    TOPICS.modifyLiquidity,
+    3
+  );
+  const poolId = normalizeWord(log.topics[1], 'ModifyLiquidity poolId');
+  if (poolId !== pool.poolId) throw new Error('ModifyLiquidity poolId does not match pool context');
+  const [lowerWord, upperWord, deltaWord, saltWord] = decodeWords(
+    log.data, 4, 'ModifyLiquidity data'
+  );
+  const tickLower = Number(decodeInt(lowerWord, 24, 'ModifyLiquidity tickLower'));
+  const tickUpper = Number(decodeInt(upperWord, 24, 'ModifyLiquidity tickUpper'));
+  if (tickLower >= tickUpper) throw new Error('ModifyLiquidity tick range must be increasing');
+  if (tickLower % pool.tickSpacing !== 0 || tickUpper % pool.tickSpacing !== 0) {
+    throw new Error('ModifyLiquidity ticks must align with pool tickSpacing');
+  }
+  return {
+    kind: 'modify-liquidity',
+    ...eventContext(log),
+    poolAddress: null,
+    poolId,
+    marketKey: pool.marketKey,
+    tokenAddress: pool.tokenAddress,
+    quoteAddress: pool.quoteAddress,
+    sender: decodeAddressWord(log.topics[2], 'ModifyLiquidity sender'),
+    tickLower,
+    tickUpper,
+    liquidityDelta: decodeInt(deltaWord, 128, 'ModifyLiquidity liquidityDelta').toString(),
+    salt: normalizeWord(saltWord, 'ModifyLiquidity salt'),
+  };
+}
+
 function createUniswapV4Tracker(options = {}) {
   const poolManagerAddress = normalizeAddress(options.poolManagerAddress || ROBINHOOD_V4_POOL_MANAGER);
   const pools = new Map();
@@ -220,6 +256,13 @@ function createUniswapV4Tracker(options = {}) {
       const poolId = normalizeWord(log?.topics?.[1], 'Swap poolId');
       const pool = pools.get(poolId);
       return pool ? decodeSwap(log, pool, { poolManagerAddress }) : { kind: 'ignored', reason: 'unknown_pool' };
+    }
+    if (topic0 === TOPICS.modifyLiquidity) {
+      const poolId = normalizeWord(log?.topics?.[1], 'ModifyLiquidity poolId');
+      const pool = pools.get(poolId);
+      return pool
+        ? decodeModifyLiquidity(log, pool, { poolManagerAddress })
+        : { kind: 'ignored', reason: 'unknown_pool' };
     }
     return { kind: 'ignored', reason: 'unsupported_pool_manager_event' };
   }
@@ -244,6 +287,7 @@ module.exports = {
   createUniswapV4Tracker,
   decodeInitialize,
   decodeInt,
+  decodeModifyLiquidity,
   decodeSwap,
   exactPriceRatio,
   selectQuote,

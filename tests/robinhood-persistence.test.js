@@ -178,6 +178,24 @@ function marketEntry(overrides = {}) {
   };
 }
 
+function liquidityDeltaEntry(overrides = {}) {
+  const marketKey = `robinhood:uniswap-v4:${POOL_ID}`;
+  return {
+    log: {
+      blockNumber: '8069000', blockHash: HASH_A, transactionHash: HASH_B,
+      logIndex: '7', topics: [TOPIC], data: `0x${'e'.repeat(256)}`,
+    },
+    event: {
+      kind: 'modify-liquidity', chain: 'robinhood', protocol: 'uniswap-v4',
+      blockNumber: '8069000', blockHash: HASH_A, transactionHash: HASH_B,
+      logIndex: '7', timestampMs: 1783900800000, marketKey, poolId: POOL_ID,
+      tokenAddress: TOKEN, quoteAddress: QUOTE, sender: ADDRESS,
+      tickLower: -120, tickUpper: 120, liquidityDelta: '-250', salt: HASH_A,
+      ...overrides,
+    },
+  };
+}
+
 function liveBucketRow(overrides = {}) {
   return {
     chain: 'robinhood',
@@ -613,6 +631,7 @@ describe('Robinhood persistence repository', () => {
       duplicateLogs: 0,
       insertedObservations: 1,
       touchedBuckets: 1,
+      insertedLiquidityDeltas: 0,
       touchedHourlyBuckets: 1,
     });
     assert.equal(fake.calls[0].sql, 'BEGIN');
@@ -695,6 +714,7 @@ describe('Robinhood persistence repository', () => {
       insertedLogs: 1,
       duplicateLogs: 0,
       insertedObservations: 1,
+      insertedLiquidityDeltas: 0,
       touchedBuckets: 1,
       aggregationTargets: 1,
       terminalClaims: 1,
@@ -729,6 +749,41 @@ describe('Robinhood persistence repository', () => {
       /UPDATE robinhood_market_log_staging staging/.test(call.sql)
     ));
     assert.equal(JSON.parse(terminal.params[0])[0].status, 'rejected');
+  });
+
+  it('persists a V4 liquidity delta atomically and ignores its replay', async () => {
+    const first = createFakeDatabase();
+    const inserted = await createRobinhoodPersistenceRepository({ database: first.database })
+      .commitMarketRange({ entries: [liquidityDeltaEntry()], cursor: cursor() });
+    const write = first.calls.find((call) => /INSERT INTO robinhood_v4_liquidity_deltas/.test(call.sql));
+
+    assert.equal(inserted.insertedLiquidityDeltas, 1);
+    assert.equal(inserted.insertedObservations, 0);
+    assert.equal(JSON.parse(write.params[0])[0].liquidityDelta, '-250');
+    assert.equal(first.calls.at(-1).sql, 'COMMIT');
+
+    const replay = createFakeDatabase({ duplicate: true });
+    const duplicate = await createRobinhoodPersistenceRepository({ database: replay.database })
+      .commitMarketRange({ entries: [liquidityDeltaEntry()], cursor: cursor() });
+    assert.equal(duplicate.insertedLiquidityDeltas, 0);
+    assert.equal(replay.calls.some((call) => /v4_liquidity_deltas/.test(call.sql)), false);
+  });
+
+  it('persists a historical V4 delta before settling its backfill claim', async () => {
+    const fake = createFakeDatabase();
+    const result = await createRobinhoodPersistenceRepository({ database: fake.database })
+      .commitBackfillEnrichmentBatch({
+        owner: 'backfill-worker-a',
+        claims: [{ transactionHash: HASH_B, logIndex: '7' }],
+        entries: [liquidityDeltaEntry()],
+      });
+    const deltaIndex = fake.calls.findIndex((call) => /v4_liquidity_deltas/.test(call.sql));
+    const settleIndex = fake.calls.findIndex((call) => /UPDATE robinhood_market_log_staging/.test(call.sql));
+
+    assert.equal(result.insertedLiquidityDeltas, 1);
+    assert.equal(result.insertedObservations, 0);
+    assert.equal(deltaIndex < settleIndex, true);
+    assert.equal(fake.calls.at(-1).sql, 'COMMIT');
   });
 
   it('rolls back terminal-write crashes and accepts an idempotent retry', async () => {
@@ -880,6 +935,7 @@ describe('Robinhood persistence repository', () => {
       duplicateLogs: 1,
       insertedObservations: 0,
       touchedBuckets: 0,
+      insertedLiquidityDeltas: 0,
       touchedHourlyBuckets: 0,
     });
     assert.equal(fake.calls.some((call) => /INSERT INTO robinhood_market_observations/.test(call.sql)), false);

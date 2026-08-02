@@ -16,6 +16,7 @@ const MARKET_TOPICS = Object.freeze([
   v2.TOPICS.sync,
   v3.TOPICS.initialize,
   v3.TOPICS.swap,
+  v4.TOPICS.modifyLiquidity,
   v4.TOPICS.swap,
 ]);
 function boundedInteger(value, fallback, minimum, maximum) {

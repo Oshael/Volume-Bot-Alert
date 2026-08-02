@@ -2443,6 +2443,33 @@ const SCHEMA_GROUPS = [
       constraints: [{ name, includes: ['CHECK', 'spot_tvl_from_pool_balances'] }],
     })),
   },
+  {
+    key: 'stage99-robinhood-v4-liquidity-ledger',
+    name: 'Stage 99 Robinhood V4 liquidity delta ledger',
+    repair: 'node src/utils/db-init-stage99.js',
+    tables: [{
+      table: 'robinhood_v4_liquidity_deltas',
+      columns: [
+        'chain', 'transaction_hash', 'log_index', 'block_number', 'block_hash',
+        'pool_id', 'market_key', 'sender', 'tick_lower', 'tick_upper',
+        'liquidity_delta', 'salt', 'observed_at', 'created_at',
+      ],
+      constraints: [
+        {
+          name: 'robinhood_v4_liquidity_deltas_pkey',
+          includes: ['PRIMARY KEY', 'chain', 'transaction_hash', 'log_index'],
+        },
+        {
+          name: 'robinhood_v4_liquidity_deltas_tick_check',
+          includes: ['CHECK', 'tick_lower', 'tick_upper'],
+        },
+      ],
+      indexes: [{
+        name: 'idx_robinhood_v4_liquidity_deltas_pool_range',
+        includes: ['chain', 'pool_id', 'tick_lower', 'tick_upper', 'block_number', 'log_index'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
@@ -2473,6 +2500,7 @@ const PROFILE_GROUP_KEYS = {
     'stage96-robinhood-live-supply-provenance',
     'stage97-catalog-launchpad-attribution',
     'stage98-robinhood-v3-pool-balance-tvl',
+    'stage99-robinhood-v4-liquidity-ledger',
   ],
   runtime: SCHEMA_GROUPS.map((group) => group.key),
 };

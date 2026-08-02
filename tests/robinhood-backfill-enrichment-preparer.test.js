@@ -10,6 +10,7 @@ const {
 const {
   createRobinhoodBackfillEnrichmentPreparer,
 } = require('../src/services/robinhood-backfill-enrichment-preparer');
+const v4 = require('../src/services/uniswap-v4-decoder');
 
 const DETAILS = {
   v2: {
@@ -34,6 +35,11 @@ const DETAILS = {
 
 function decimal(value) {
   return BigInt(value).toString();
+}
+
+function intWord(value) {
+  const number = BigInt(value);
+  return (number < 0n ? (1n << 256n) + number : number).toString(16).padStart(64, '0');
 }
 
 function claim(log, protocol, marketKey) {
@@ -152,6 +158,20 @@ describe('Robinhood backfill enrichment preparer', () => {
       assert.equal(prepared.context.event.marketKey, details.marketKey);
       assert.equal(prepared.requests.length, protocol === 'uniswap-v3' ? 5 : 3);
     }
+  });
+
+  it('prepares V4 liquidity deltas with only block timestamp enrichment', () => {
+    const preparer = createRobinhoodBackfillEnrichmentPreparer({ seedPools: seedPools() });
+    const log = {
+      ...v4Fixture.swap,
+      topics: [v4.TOPICS.modifyLiquidity, v4Fixture.expected.poolId, v4Fixture.swap.topics[2]],
+      data: `0x${intWord(-10000)}${intWord(10000)}${intWord(-250)}${intWord(9)}`,
+    };
+    const prepared = preparer.prepareClaim(claim(log, 'uniswap-v4', DETAILS.v4.marketKey));
+
+    assert.deepEqual(prepared.requests.map(({ slot }) => slot), ['block']);
+    assert.equal(prepared.context.event.kind, 'modify-liquidity');
+    assert.equal(prepared.context.event.liquidityDelta, '-250');
   });
 
   it('routes only timestamps to Alchemy when explicitly configured', () => {

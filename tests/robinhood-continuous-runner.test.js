@@ -146,6 +146,7 @@ describe('Robinhood continuous runner', () => {
     assert.deepEqual(client.filters[0].address, DISCOVERY_ADDRESSES);
     assert.equal(DISCOVERY_ADDRESSES.includes(noxa.NOXA_FACTORY), true);
     assert.deepEqual(client.filters[1].topics, [MARKET_TOPICS]);
+    assert.equal(MARKET_TOPICS.includes(v4.TOPICS.modifyLiquidity), true);
     assert.equal(client.filters[1].address.includes(NEW_POOL), true);
     assert.equal(snapshot.coverage.status, 'complete_within_declared_range');
     assert.equal(snapshot.coverage.unexplainedGaps, 0);

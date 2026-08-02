@@ -511,6 +511,39 @@ function normalizeObservation(entry, logRow) {
   };
 }
 
+function normalizeV4LiquidityDelta(entry, logRow) {
+  const event = entry?.event;
+  if (event?.kind !== 'modify-liquidity') return null;
+  if (event.protocol !== 'uniswap-v4') {
+    throw new Error('ModifyLiquidity event must use uniswap-v4');
+  }
+  const marketKey = String(event.marketKey || '').trim().toLowerCase();
+  if (!marketKey.startsWith(`${CHAIN}:uniswap-v4:`) || marketKey.length > 160) {
+    throw new Error('Invalid ModifyLiquidity market key');
+  }
+  const tickLower = Number(event.tickLower);
+  const tickUpper = Number(event.tickUpper);
+  if (!Number.isSafeInteger(tickLower) || !Number.isSafeInteger(tickUpper) || tickLower >= tickUpper) {
+    throw new Error('Invalid ModifyLiquidity tick range');
+  }
+  const liquidityDelta = String(event.liquidityDelta ?? '').trim();
+  if (!/^-?\d+$/.test(liquidityDelta)) throw new Error('Invalid ModifyLiquidity delta');
+  return {
+    transactionHash: logRow.transactionHash,
+    logIndex: logRow.logIndex,
+    blockNumber: logRow.blockNumber,
+    blockHash: logRow.blockHash,
+    poolId: hexWord(event.poolId, 'event.poolId'),
+    marketKey,
+    sender: normalizeTokenAddress(CHAIN, event.sender),
+    tickLower,
+    tickUpper,
+    liquidityDelta: BigInt(liquidityDelta).toString(),
+    salt: hexWord(event.salt, 'event.salt'),
+    observedAt: timestampDate(event.timestampMs, 'event.timestampMs'),
+  };
+}
+
 async function insertProcessedLog(client, row) {
   return client.query(
     `INSERT INTO robinhood_processed_logs (
@@ -733,6 +766,7 @@ function normalizeBackfillBatch(input = {}) {
     return {
       row,
       observation,
+      liquidityDelta: normalizeV4LiquidityDelta(entry, row),
       terminalStatus: observation?.status === 'rejected' ? 'rejected' : 'completed',
     };
   });
@@ -858,6 +892,34 @@ async function insertProcessedLogs(client, rows) {
     [JSON.stringify(rows)]
   );
   return result.rows.map((row) => `${row.transaction_hash}:${row.log_index}`);
+}
+
+async function insertV4LiquidityDeltas(client, rows) {
+  if (!rows.length) return 0;
+  const result = await client.query(
+    `INSERT INTO robinhood_v4_liquidity_deltas (
+       chain, transaction_hash, log_index, block_number, block_hash,
+       pool_id, market_key, sender, tick_lower, tick_upper,
+       liquidity_delta, salt, observed_at
+     )
+     SELECT 'robinhood', "transactionHash", "logIndex"::bigint,
+            "blockNumber"::bigint, "blockHash", "poolId", "marketKey",
+            sender, "tickLower", "tickUpper", "liquidityDelta"::numeric,
+            salt, "observedAt"
+     FROM jsonb_to_recordset($1::jsonb) AS delta(
+       "transactionHash" text, "logIndex" text, "blockNumber" text,
+       "blockHash" text, "poolId" text, "marketKey" text, sender text,
+       "tickLower" int, "tickUpper" int, "liquidityDelta" text,
+       salt text, "observedAt" timestamptz
+     )
+     ON CONFLICT (chain, transaction_hash, log_index) DO NOTHING
+     RETURNING transaction_hash`,
+    [JSON.stringify(rows)]
+  );
+  if (result.rowCount !== rows.length) {
+    throw new Error('New ModifyLiquidity logs were not persisted exactly once');
+  }
+  return result.rowCount;
 }
 
 async function insertMarketObservations(client, rows, cursor) {
@@ -1525,7 +1587,11 @@ function createRobinhoodPersistenceRepository(options = {}) {
     const cursor = normalizeCursor('market', input.cursor);
     const entries = (Array.isArray(input.entries) ? input.entries : []).map((entry) => {
       const row = normalizeLogEntry(entry, 'market');
-      return { row, observation: normalizeObservation(entry, row) };
+      return {
+        row,
+        observation: normalizeObservation(entry, row),
+        liquidityDelta: normalizeV4LiquidityDelta(entry, row),
+      };
     });
     const client = await database.getClient();
     try {
@@ -1537,6 +1603,10 @@ function createRobinhoodPersistenceRepository(options = {}) {
       const observations = entries
         .filter((entry) => entry.observation && insertedIdentities.has(rowIdentity(entry.row)))
         .map((entry) => entry.observation);
+      const liquidityDeltas = entries
+        .filter((entry) => entry.liquidityDelta && insertedIdentities.has(rowIdentity(entry.row)))
+        .map((entry) => entry.liquidityDelta);
+      const insertedLiquidityDeltas = await insertV4LiquidityDeltas(client, liquidityDeltas);
       const marketWrite = await insertMarketObservations(client, observations, cursor);
       const touchedHourlyBuckets = shouldDeferHourlyRefresh(cursor, now())
         ? 0
@@ -1552,6 +1622,7 @@ function createRobinhoodPersistenceRepository(options = {}) {
         insertedLogs: insertedIdentities.size,
         duplicateLogs: entries.length - insertedIdentities.size,
         ...marketCounts,
+        insertedLiquidityDeltas,
         touchedHourlyBuckets,
       };
     } catch (error) {
@@ -1580,6 +1651,12 @@ function createRobinhoodPersistenceRepository(options = {}) {
           observation && insertedIdentities.has(rowIdentity(row))
         ))
         .map(({ observation }) => observation);
+      const liquidityDeltas = batch.entries
+        .filter(({ row, liquidityDelta }) => (
+          liquidityDelta && insertedIdentities.has(rowIdentity(row))
+        ))
+        .map(({ liquidityDelta }) => liquidityDelta);
+      const insertedLiquidityDeltas = await insertV4LiquidityDeltas(client, liquidityDeltas);
       const marketWrite = await insertMarketObservations(
         client, observations, { checkpointTimestamp: null }
       );
@@ -1590,6 +1667,7 @@ function createRobinhoodPersistenceRepository(options = {}) {
         insertedLogs: insertedIdentities.size,
         duplicateLogs: batch.entries.length - insertedIdentities.size,
         insertedObservations: marketWrite.insertedObservations,
+        insertedLiquidityDeltas,
         touchedBuckets: marketWrite.touchedBuckets,
         aggregationTargets,
         terminalClaims: batch.claims.length,
@@ -1716,6 +1794,7 @@ module.exports = {
     normalizeLogEntry,
     normalizeNoxaLaunch,
     normalizeObservation,
+    normalizeV4LiquidityDelta,
     normalizePool,
     buildRobinhoodMarketBucketUpdate,
     emitRobinhoodStandardAlertSignals,

@@ -12,6 +12,7 @@ const {
   TOPICS,
   createUniswapV4Tracker,
   decodeInitialize,
+  decodeModifyLiquidity,
   decodeSwap,
   selectQuote,
 } = require('../src/services/uniswap-v4-decoder');
@@ -84,6 +85,18 @@ function swapLog(values = {}) {
   });
 }
 
+function modifyLiquidityLog(values = {}) {
+  return baseLog({
+    topics: [TOPICS.modifyLiquidity, values.poolId || POOL_ID, addressWord(values.sender || SENDER)],
+    data: dataWords(
+      intWord(values.tickLower ?? -120),
+      intWord(values.tickUpper ?? 120),
+      intWord(values.liquidityDelta ?? 500),
+      values.salt || uintWord(9)
+    ),
+  });
+}
+
 describe('Robinhood Uniswap v4 decoder', () => {
   it('decodes a real Initialize into a poolId keyed USDG market', () => {
     const pool = decodeInitialize(fixture.initialize);
@@ -137,6 +150,25 @@ describe('Robinhood Uniswap v4 decoder', () => {
     assert.equal(swap.side, 'buy');
     assert.equal(swap.quoteAmountRaw, '3');
     assert.equal(swap.tokenAmountRaw, '12');
+  });
+
+  it('decodes signed ModifyLiquidity deltas for an exact tick range', () => {
+    const tracker = createUniswapV4Tracker();
+    const pool = tracker.processLog(initializeLog(MEME_LOW, ROBINHOOD_WETH));
+    const added = tracker.processLog(modifyLiquidityLog());
+    const removed = decodeModifyLiquidity(modifyLiquidityLog({
+      liquidityDelta: -125,
+      salt: uintWord(10),
+    }), pool);
+
+    assert.equal(added.kind, 'modify-liquidity');
+    assert.equal(added.poolId, POOL_ID);
+    assert.equal(added.sender, SENDER);
+    assert.equal(added.tickLower, -120);
+    assert.equal(added.tickUpper, 120);
+    assert.equal(added.liquidityDelta, '500');
+    assert.equal(removed.liquidityDelta, '-125');
+    assert.equal(removed.salt, uintWord(10));
   });
 
   it('treats native ETH explicitly while using WETH as its canonical quote asset', () => {
@@ -203,6 +235,14 @@ describe('Robinhood Uniswap v4 decoder', () => {
       tickSpacing: 0,
     })), /must be positive/);
     assert.throws(() => decodeSwap(swapLog({ amount0: 1n << 127n }), pool), /exceeds int128/);
+    assert.throws(
+      () => decodeModifyLiquidity(modifyLiquidityLog({ tickLower: -119 }), pool),
+      /align with pool tickSpacing/
+    );
+    assert.throws(
+      () => decodeModifyLiquidity(modifyLiquidityLog({ tickLower: 120, tickUpper: 60 }), pool),
+      /range must be increasing/
+    );
     assert.throws(() => decodeInitialize(initializeLog(MEME_LOW, ROBINHOOD_WETH, {
       fee: 1n << 24n,
     })), /exceeds uint24/);
