@@ -14,6 +14,9 @@ const { createRobinhoodSocialMetadataQueue } = require('./robinhood-social-metad
 const {
   createRobinhoodBlockscoutMetadataClient,
 } = require('./robinhood-blockscout-metadata');
+const {
+  createRobinhoodImageMetadataResolver,
+} = require('./robinhood-image-metadata');
 
 const DEFAULT_INTERVAL_MS = 60_000;
 
@@ -89,9 +92,12 @@ async function createDefaultBatch(options, deps) {
   const rpcClient = (deps.rpcClientFactory || createRobinhoodRpcClient)(options.rpcOptions);
   await (deps.validateProviderChainIds || validateRobinhoodProviderChainIds)(rpcClient);
   const metadataReader = (deps.metadataReaderFactory || createErc20MetadataReader)({ rpcClient });
-  const blockscoutReader = (
+  const blockscoutClient = (
     deps.blockscoutReaderFactory || createRobinhoodBlockscoutMetadataClient
   )();
+  const blockscoutReader = (
+    deps.imageMetadataReaderFactory || createRobinhoodImageMetadataResolver
+  )({ rpcClient, blockscoutClient, dexClient: deps.dexClient });
   let socialQueue = null;
   if (options.socialMetadataEnabled) {
     const store = (deps.metadataStoreFactory || createRobinhoodCatalogMetadataStore)({

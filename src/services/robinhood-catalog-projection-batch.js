@@ -60,6 +60,9 @@ async function enrichFromBlockscout(input) {
     input.metadataByAddress.get(candidate.tokenAddress)?.robinhood_blockscout_checked_at,
     input.asOfMs,
     input.ttlMs
+  ) && (
+    !input.metadataByAddress.get(candidate.tokenAddress)?.last_image_url
+    || needsOnchainMetadata(input.metadataByAddress.get(candidate.tokenAddress))
   )).slice(0, input.limit);
   const results = await mapWithConcurrency(candidates, input.concurrency, async (candidate) => {
     const metadata = await input.reader.getTokenMetadata(candidate.tokenAddress);

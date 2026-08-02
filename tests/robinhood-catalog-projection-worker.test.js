@@ -115,6 +115,13 @@ describe('Robinhood catalog projection worker', () => {
         order.push('erc20');
         return { getMetadata: async () => null };
       },
+      blockscoutReaderFactory: () => { order.push('blockscout'); return {}; },
+      imageMetadataReaderFactory: ({ rpcClient: value, blockscoutClient }) => {
+        assert.equal(value, rpcClient);
+        assert.deepEqual(blockscoutClient, {});
+        order.push('images');
+        return { getTokenMetadata: async () => null };
+      },
       metadataStoreFactory: () => { order.push('store'); return {}; },
       socialQueueFactory: ({ store }) => {
         assert.deepEqual(store, {});
@@ -124,8 +131,31 @@ describe('Robinhood catalog projection worker', () => {
       batchFactory: (options) => { order.push('batch'); return options; },
     });
 
-    assert.deepEqual(order, ['rpc', 'validate', 'erc20', 'store', 'social', 'batch']);
+    assert.deepEqual(order, [
+      'rpc', 'validate', 'erc20', 'blockscout', 'images', 'store', 'social', 'batch',
+    ]);
     assert.ok(batch.metadataReader);
     assert.ok(batch.socialQueue);
+  });
+
+  it('constructs the image resolver when optional social enrichment is disabled', async () => {
+    let imageResolverCreated = false;
+    const batch = await __private.createDefaultBatch({
+      socialMetadataEnabled: false,
+    }, {
+      rpcClientFactory: () => ({ providers: [], request: async () => '0x' }),
+      validateProviderChainIds: async () => {},
+      metadataReaderFactory: () => ({}),
+      blockscoutReaderFactory: () => ({}),
+      imageMetadataReaderFactory: () => {
+        imageResolverCreated = true;
+        return {};
+      },
+      batchFactory: (options) => options,
+    });
+
+    assert.equal(imageResolverCreated, true);
+    assert.equal(batch.socialQueue, null);
+    assert.ok(batch.blockscoutReader);
   });
 });

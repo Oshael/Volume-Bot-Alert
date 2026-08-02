@@ -325,7 +325,7 @@ async function recordBlockscoutMetadata(input = {}, runner = db) {
     `UPDATE token_catalog
      SET symbol = COALESCE($2, symbol),
          name = COALESCE($3, name),
-         last_image_url = COALESCE($4, last_image_url),
+         last_image_url = COALESCE(last_image_url, $4),
          robinhood_blockscout_checked_at = NOW(),
          metadata_updated_at = CASE WHEN $2 IS NOT NULL OR $3 IS NOT NULL OR $4 IS NOT NULL
            THEN NOW() ELSE metadata_updated_at END
@@ -344,7 +344,7 @@ async function recordDexscreenerMetadata(input = {}, runner = db) {
   const communityUrl = sanitizeHttpUrl(input.communityUrl || input.telegramUrl);
   const { rows } = await runner.query(
     `UPDATE token_catalog
-     SET last_image_url = COALESCE($2, last_image_url),
+     SET last_image_url = COALESCE(last_image_url, $2),
          last_website_url = COALESCE($3, last_website_url),
          last_twitter_url = COALESCE($4, last_twitter_url),
          last_community_url = COALESCE($5, last_community_url),

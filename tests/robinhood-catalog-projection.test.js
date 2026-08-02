@@ -217,7 +217,7 @@ describe('Robinhood dashboard catalog projection', () => {
     });
 
     assert.match(calls[0].sql, /robinhood_blockscout_checked_at = NOW\(\)/);
-    assert.match(calls[0].sql, /last_image_url = COALESCE/);
+    assert.match(calls[0].sql, /last_image_url = COALESCE\(last_image_url, \$4\)/);
     assert.deepEqual(calls[0].params, [TOKEN, null, null, null]);
   });
 
@@ -228,7 +228,7 @@ describe('Robinhood dashboard catalog projection', () => {
     });
 
     assert.match(calls[0].sql, /robinhood_dexscreener_checked_at = NOW\(\)/);
-    assert.match(calls[0].sql, /last_image_url = COALESCE/);
+    assert.match(calls[0].sql, /last_image_url = COALESCE\(last_image_url, \$2\)/);
     assert.deepEqual(calls[0].params, [TOKEN, null, null, null, null]);
   });
 

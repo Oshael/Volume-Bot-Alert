@@ -183,7 +183,14 @@ describe('Robinhood catalog projection batch', () => {
       },
       catalog: {
         async projectDashboardSnapshot() {},
-        async listMetadata() { return []; },
+        async listMetadata() {
+          return [{
+            address: TOKEN_2,
+            symbol: 'READY',
+            name: 'Ready Token',
+            last_image_url: 'https://cdn.example/ready.png',
+          }];
+        },
         async recordBlockscoutMetadata(value) { recorded.push(value); },
       },
       blockscoutReader: {
@@ -195,7 +202,7 @@ describe('Robinhood catalog projection batch', () => {
       now: () => Date.parse('2026-07-14T18:00:00Z'),
     });
 
-    const result = await batch.runOnce({ blockscoutBatchSize: 1 });
+    const result = await batch.runOnce({ blockscoutBatchSize: 2 });
 
     assert.deepEqual(checked, [TOKEN]);
     assert.equal(result.blockscoutChecked, 1);
