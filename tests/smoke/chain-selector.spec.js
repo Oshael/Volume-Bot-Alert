@@ -481,7 +481,8 @@ const ROBINHOOD_MARKET_API_FIXTURES = {
       valuationType: 'fdv',
       resolution: 'mixed',
       minuteStartsAt: '2026-07-01T13:00:00.000Z',
-      points: 720,
+      allAvailable: payload.allAvailable === true,
+      points: payload.points,
       granularityMinutes: payload.granularityMinutes || 5,
       count: 1,
       item: {
@@ -1408,6 +1409,10 @@ test('opens a Robinhood FDV chart and applies only its realtime updates', async 
   await expect.poll(() => chartRequestPayloads.some((payload) => payload.granularityMinutes === 15)).toBe(true);
   expect(chartRequestPayloads[0]).toMatchObject({
     chain: 'robinhood', address: ROBINHOOD_TOKEN, granularityMinutes: 15,
+    allAvailable: true, points: 10_000,
+  });
+  expect(chartRequestPayloads.find((payload) => payload.granularityMinutes === 1)).toMatchObject({
+    allAvailable: false, points: 720,
   });
   await expect.poll(() => socketScenario.clientFrames.some((frame) => (
     frame.includes('"market:sync"') && frame.includes(`"address":"${ROBINHOOD_TOKEN}"`)

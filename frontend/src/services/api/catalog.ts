@@ -555,6 +555,7 @@ export interface ExpandedTokenSparklinePayload {
   valuationType?: TokenValuationType | null;
   resolution?: string | null;
   minuteStartsAt?: string | null;
+  allAvailable?: boolean;
   points?: number;
   granularityMinutes?: number | null;
   count: number;
@@ -1083,6 +1084,7 @@ export function fetchExpandedTokenSparkline(
     points?: number;
     granularityMinutes?: number;
     allowOneMinuteFallback?: boolean;
+    allAvailable?: boolean;
   },
   token?: string | null,
 ) {
@@ -1093,6 +1095,7 @@ export function fetchExpandedTokenSparkline(
     points: number;
     granularityMinutes?: number;
     allowOneMinuteFallback?: boolean;
+    allAvailable?: boolean;
   } = {
     chain: identity.chain,
     address: identity.address,
@@ -1103,6 +1106,9 @@ export function fetchExpandedTokenSparkline(
   }
   if (options?.allowOneMinuteFallback != null) {
     body.allowOneMinuteFallback = options.allowOneMinuteFallback;
+  }
+  if (options?.allAvailable != null) {
+    body.allAvailable = options.allAvailable;
   }
 
   return apiFetch<ExpandedTokenSparklinePayload>('/api/catalog/sparklines/expanded', {
@@ -1115,6 +1121,7 @@ export function fetchExpandedTokenSparkline(
     valuationType: response.valuationType ?? null,
     resolution: response.resolution ?? null,
     minuteStartsAt: response.minuteStartsAt ?? null,
+    allAvailable: response.allAvailable === true,
     points: Number(response.points) || 720,
     granularityMinutes: Number(response.granularityMinutes) || null,
     count: Number(response.count) || 0,

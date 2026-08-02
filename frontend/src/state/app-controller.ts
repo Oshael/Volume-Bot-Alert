@@ -20,6 +20,10 @@ import {
   selectWorkspaceSnapshotValue,
 } from '../utils/token-valuation';
 import {
+  DEFAULT_EXPANDED_SPARKLINE_POINTS,
+  resolveExpandedSparklineRequestShape,
+} from './expanded-sparkline-request';
+import {
   changePassword as changePasswordRequest,
   confirmEmailVerification as confirmEmailVerificationRequest,
   resendLoginOtp as resendLoginOtpRequest,
@@ -273,7 +277,7 @@ const SPARKLINE_REFRESH_INTERVAL_MS = 60 * 1000;
 const SPARKLINE_REQUEST_TIMEOUT_MS = 12 * 1000;
 const SPARKLINE_WINDOW_HOURS = 14 * 24;
 const SPARKLINE_POINT_COUNT = 336;
-const EXPANDED_SPARKLINE_POINT_COUNT = 720;
+const EXPANDED_SPARKLINE_POINT_COUNT = DEFAULT_EXPANDED_SPARKLINE_POINTS;
 const EXPANDED_SPARKLINE_FRONTEND_CACHE_MS = 30 * 1000;
 const EXPANDED_SPARKLINE_GRANULARITIES = [1, 5, 15, 30, 60, 240, 1440] as const;
 const EXPANDED_SPARKLINE_DEFAULT_GRANULARITY_MINUTES = 5;
@@ -8222,6 +8226,7 @@ export function createAppController(): AppController {
     item: TokenSparklinesPayload['items'][number] | null | undefined,
     generatedAt?: string | null,
     points?: number | null,
+    allAvailable = false,
   ) {
     if (!item) {
       return null;
@@ -8248,6 +8253,7 @@ export function createAppController(): AppController {
       latestBucketAt: toOptionalSparklineString(item.latestBucketAt),
       oneMinuteAvailable: item.oneMinuteAvailable === true,
       generatedAt: toOptionalSparklineString(generatedAt),
+      allAvailable,
       points: resolveSparklineCount(points, EXPANDED_SPARKLINE_POINT_COUNT),
       series,
       candles: Array.isArray(item.candles) ? item.candles : [],
@@ -8669,7 +8675,12 @@ export function createAppController(): AppController {
       return false;
     }
 
-    if ((Number(entry.points) || 0) < EXPANDED_SPARKLINE_POINT_COUNT) {
+    const request = resolveExpandedSparklineRequestShape(
+      entry.chain || 'solana',
+      Number(entry.granularityMinutes) || EXPANDED_SPARKLINE_DEFAULT_GRANULARITY_MINUTES,
+    );
+    if ((Number(entry.points) || 0) < request.points
+      || (request.allAvailable && entry.allAvailable !== true)) {
       return false;
     }
 
@@ -8819,10 +8830,12 @@ export function createAppController(): AppController {
 
     expandedSparklineRequests.add(cacheKey);
     try {
+      const request = resolveExpandedSparklineRequestShape(identity.chain, safeGranularity);
       const payload = await fetchExpandedTokenSparkline(normalized, {
         chain: identity.chain,
-        points: EXPANDED_SPARKLINE_POINT_COUNT,
+        points: request.points,
         granularityMinutes: safeGranularity,
+        allAvailable: request.allAvailable,
       }, requestToken);
       if (!isCurrentExpandedSparklineRequest(
         normalized,
@@ -8834,7 +8847,12 @@ export function createAppController(): AppController {
         return;
       }
 
-      const entry = buildExpandedSparklineCacheEntry(payload.item, payload.generatedAt, payload.points);
+      const entry = buildExpandedSparklineCacheEntry(
+        payload.item,
+        payload.generatedAt,
+        payload.points,
+        payload.allAvailable,
+      );
       if (!entry || !hasRenderableSparklineSeries(entry)) {
         if (
           safeGranularity === 1
