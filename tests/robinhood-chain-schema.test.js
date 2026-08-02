@@ -28,6 +28,9 @@ const stage74 = require('../src/utils/db-init-stage74');
 const stage78 = require('../src/utils/db-init-stage78');
 const stage79 = require('../src/utils/db-init-stage79');
 const stage81 = require('../src/utils/db-init-stage81');
+const stage90 = require('../src/utils/db-init-stage90');
+const stage91 = require('../src/utils/db-init-stage91');
+const stage92 = require('../src/utils/db-init-stage92');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 
 describe('Robinhood additive chain schema', () => {
@@ -473,5 +476,72 @@ describe('Robinhood additive chain schema', () => {
     assert.deepEqual(group.tables[0].columns, [
       'coverage_start_block', 'coverage_start_timestamp',
     ]);
+  });
+
+  it('creates a partitioned wallet-attributed swap table keyed by the signing EOA', () => {
+    const sql = stage90.STATEMENTS.join('\n');
+    const group = SCHEMA_GROUPS.find((entry) => entry.key === 'stage90-robinhood-wallet-swaps');
+
+    assert.match(sql, /CREATE TABLE IF NOT EXISTS robinhood_wallet_swaps/);
+    // Daily partitioning by onchain time, per the 30-day retention plan.
+    assert.match(sql, /PARTITION BY RANGE \(block_time\)/);
+    // Partition key must be inside the identity; wallet stays a NOT NULL column.
+    assert.match(sql, /PRIMARY KEY \(chain, transaction_hash, action_index, block_time\)/);
+    assert.match(sql, /wallet_address VARCHAR\(42\) NOT NULL/);
+    assert.match(sql, /wallet_address ~ '\^0x\[0-9a-f\]\{40\}\$'/);
+    assert.match(sql, /token_amount_raw NUMERIC\(78, 0\) NOT NULL/);
+    assert.doesNotMatch(sql, /price_usd NUMERIC\([^)]/);
+    assert.match(sql, /side IN \('buy', 'sell'\)/);
+    // Foundation only: no partitions, no writer, no destructive statements.
+    assert.doesNotMatch(sql, /PARTITION OF|CREATE PARTITION|DROP\s+(?:TABLE|COLUMN|CONSTRAINT|INDEX)/i);
+    assert.equal(group.repair, 'node src/utils/db-init-stage90.js');
+    assert.deepEqual(group.tables[0].indexes.map((index) => index.name), [
+      'idx_robinhood_wallet_swaps_wallet_time',
+      'idx_robinhood_wallet_swaps_token_time',
+      'idx_robinhood_wallet_swaps_chain_time',
+    ]);
+  });
+
+  it('creates independent seed/live cursors for wallet attribution', () => {
+    const sql = stage91.STATEMENTS.join('\n');
+    const group = SCHEMA_GROUPS.find((entry) => entry.key === 'stage91-robinhood-wallet-swap-cursors');
+
+    assert.match(sql, /CREATE TABLE IF NOT EXISTS robinhood_wallet_swap_cursors/);
+    assert.match(sql, /PRIMARY KEY \(chain, stream\)/);
+    assert.match(sql, /stream IN \('seed', 'live'\)/);
+    assert.match(sql, /\(checkpoint_block IS NULL\) = \(checkpoint_hash IS NULL\)/);
+    assert.doesNotMatch(sql, /DROP\s+(?:TABLE|COLUMN|CONSTRAINT|INDEX)/i);
+    assert.equal(group.repair, 'node src/utils/db-init-stage91.js');
+    assert.equal(group.tables.length, 1);
+  });
+
+  it('adds a concurrent by-block attribution index over accepted observations', () => {
+    const sql = stage92.STATEMENTS.join('\n');
+    const group = SCHEMA_GROUPS.find((entry) => entry.key === 'stage92-robinhood-observation-attribution-index');
+
+    assert.match(sql, /CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_robinhood_market_observations_attribution/);
+    assert.match(sql, /robinhood_market_observations \(chain, status, block_number, log_index\)/);
+    assert.equal(group.repair, 'node src/utils/db-init-stage92.js');
+    assert.deepEqual(group.tables[0].indexes.map((index) => index.name), [
+      'idx_robinhood_market_observations_attribution',
+    ]);
+  });
+
+  it('drops an interrupted invalid attribution index before rebuilding', async () => {
+    const originalQuery = db.query;
+    const calls = [];
+    db.query = async (sql, params) => {
+      calls.push({ sql, params });
+      if (/FROM pg_index/.test(sql)) return { rows: [{ indisvalid: false }], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    };
+    try {
+      const removed = await stage92.removeInvalidIndex();
+      assert.equal(removed, true);
+      assert.deepEqual(calls[0].params, ['idx_robinhood_market_observations_attribution']);
+      assert.match(calls[1].sql, /DROP INDEX CONCURRENTLY IF EXISTS idx_robinhood_market_observations_attribution/);
+    } finally {
+      db.query = originalQuery;
+    }
   });
 });

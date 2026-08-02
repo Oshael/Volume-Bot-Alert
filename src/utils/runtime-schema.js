@@ -2272,6 +2272,101 @@ const SCHEMA_GROUPS = [
     ],
   },
   {
+    key: 'stage90-robinhood-wallet-swaps',
+    name: 'Stage 90 durable Robinhood wallet-attributed swaps',
+    repair: 'node src/utils/db-init-stage90.js',
+    tables: [
+      {
+        table: 'robinhood_wallet_swaps',
+        columns: [
+          'chain', 'wallet_address', 'transaction_hash', 'action_index',
+          'block_number', 'block_time', 'protocol', 'market_key',
+          'token_address', 'quote_address', 'side', 'token_amount_raw',
+          'quote_amount_raw', 'token_decimals', 'quote_decimals', 'token_amount',
+          'quote_amount', 'price_usd', 'volume_usd', 'router_address',
+          'recipient_address', 'parser_version', 'created_at',
+        ],
+        constraints: [
+          {
+            name: 'robinhood_wallet_swaps_pkey',
+            includes: ['PRIMARY KEY', 'chain', 'transaction_hash', 'action_index', 'block_time'],
+          },
+          {
+            name: 'robinhood_wallet_swaps_side_check',
+            includes: ['CHECK', 'side', 'buy', 'sell'],
+          },
+          {
+            name: 'robinhood_wallet_swaps_wallet_check',
+            includes: ['CHECK', 'wallet_address'],
+          },
+          {
+            name: 'robinhood_wallet_swaps_amounts_check',
+            includes: ['CHECK', 'token_amount_raw', 'quote_amount_raw'],
+          },
+        ],
+        indexes: [
+          {
+            name: 'idx_robinhood_wallet_swaps_wallet_time',
+            includes: ['chain', 'wallet_address', 'block_time DESC'],
+          },
+          {
+            name: 'idx_robinhood_wallet_swaps_token_time',
+            includes: ['chain', 'token_address', 'block_time DESC'],
+          },
+          {
+            name: 'idx_robinhood_wallet_swaps_chain_time',
+            includes: ['chain', 'block_time DESC'],
+          },
+        ],
+      },
+    ],
+  },
+  {
+    key: 'stage91-robinhood-wallet-swap-cursors',
+    name: 'Stage 91 Robinhood wallet-swap attribution cursors',
+    repair: 'node src/utils/db-init-stage91.js',
+    tables: [
+      {
+        table: 'robinhood_wallet_swap_cursors',
+        columns: [
+          'chain', 'stream', 'next_block', 'safe_head', 'checkpoint_block',
+          'checkpoint_hash', 'checkpoint_timestamp', 'version', 'created_at',
+          'updated_at',
+        ],
+        constraints: [
+          {
+            name: 'robinhood_wallet_swap_cursors_pkey',
+            includes: ['PRIMARY KEY', 'chain', 'stream'],
+          },
+          {
+            name: 'robinhood_wallet_swap_cursors_stream_check',
+            includes: ['CHECK', 'seed', 'live'],
+          },
+          {
+            name: 'robinhood_wallet_swap_cursors_checkpoint_pair_check',
+            includes: ['CHECK', 'checkpoint_block', 'checkpoint_hash'],
+          },
+        ],
+      },
+    ],
+  },
+  {
+    key: 'stage92-robinhood-observation-attribution-index',
+    name: 'Stage 92 Robinhood observation attribution index',
+    repair: 'node src/utils/db-init-stage92.js',
+    tables: [
+      {
+        table: 'robinhood_market_observations',
+        indexes: [
+          {
+            name: 'idx_robinhood_market_observations_attribution',
+            includes: ['chain', 'status', 'block_number', 'log_index'],
+          },
+        ],
+      },
+    ],
+  },
+  {
     key: 'stage93-telegram-access-reactivation-marker',
     name: 'Stage 93 durable Telegram access reactivation marker',
     repair: 'node src/utils/db-init-stage93.js',
