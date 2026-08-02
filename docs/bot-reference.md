@@ -699,6 +699,16 @@ Depois do catch-up:
 - um node pruned pode acompanhar o head;
 - workers transformam eventos novos em observações/buckets;
 - histórico consolidado permanece no PostgreSQL;
+- os listeners PostgreSQL de buckets e alertas reconectam automaticamente após
+  queda de rede, reinício do banco ou encerramento administrativo da conexão;
+  como `LISTEN/NOTIFY` não retém mensagens, a reconexão recupera o transporte,
+  mas não reemite sozinha a janela perdida; gráficos podem recarregar pela API
+  e alertas de usuário permanecem persistidos para replay quando o cliente
+  reconecta;
+- o backend expõe histórico expandido completo em 5m, 15m e 30m diretamente de
+  `robinhood_market_buckets_agg`, limitado a 10.000 candles e com `truncated`
+  explícito quando o token ultrapassa esse teto; o frontend solicita esse modo
+  somente nesses três períodos e mantém 1m/1h/4h/24h nos limites usuais;
 - archive completo do node não é necessário apenas para processar blocos novos;
 - qualquer consulta histórica fora da janela do node precisa do PostgreSQL,
   de um provedor archive ou de um snapshot próprio.
