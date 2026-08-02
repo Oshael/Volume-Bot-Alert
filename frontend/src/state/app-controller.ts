@@ -130,6 +130,8 @@ import { API_RESPONSE_DEBUG_EVENT } from '../services/api/response-metadata';
 import { trimLoginEmailValue } from '../ui/sections/login-form-utils';
 import {
   getWorkspaceSparklineNextRefreshAt,
+  mergeWorkspaceSparklineRefreshEntry,
+  mergeWorkspaceSparklineSnapshotEntry,
   resolveWorkspaceSparklineRequestShape as resolveAdaptiveWorkspaceSparklineRequestShape,
   runWorkspaceSparklineRequestWithTimeout,
   selectWorkspaceSparklineRefreshBatches,
@@ -8188,7 +8190,14 @@ export function createAppController(): AppController {
         continue;
       }
       const identity = createLegacyCompatibleTokenIdentity(entry.chain, entry.address);
-      writeWorkspaceSparklineCacheEntry(nextCache, identity, entry);
+      writeWorkspaceSparklineCacheEntry(
+        nextCache,
+        identity,
+        mergeWorkspaceSparklineSnapshotEntry(
+          readWorkspaceSparklineCacheEntry(nextCache, identity),
+          entry,
+        ),
+      );
       returnedKeys.add(identity.key);
       changed = true;
     }
@@ -8197,7 +8206,7 @@ export function createAppController(): AppController {
       if (returnedKeys.has(identity.key)) {
         continue;
       }
-      writeWorkspaceSparklineCacheEntry(nextCache, identity, {
+      const emptyEntry = {
         chain: identity.chain,
         address: identity.address,
         generatedAt: payload.generatedAt ?? null,
@@ -8208,7 +8217,15 @@ export function createAppController(): AppController {
         granularityMinutes: expectedBatch?.granularityMinutes,
         series: [],
         loading: false,
-      });
+      } satisfies TokenSparklineEntry;
+      writeWorkspaceSparklineCacheEntry(
+        nextCache,
+        identity,
+        mergeWorkspaceSparklineSnapshotEntry(
+          readWorkspaceSparklineCacheEntry(nextCache, identity),
+          emptyEntry,
+        ),
+      );
       changed = true;
     }
 
@@ -9343,16 +9360,25 @@ export function createAppController(): AppController {
     const nextCache = { ...state.data.sparklineByAddress };
     const refreshedAt = Date.now();
     for (const identity of batch.identities) {
-      writeWorkspaceSparklineCacheEntry(nextCache, identity, {
+      const failedEntry = {
         chain: identity.chain,
         address: identity.address,
         refreshedAt,
         hours: batch.hours,
-        points: SPARKLINE_POINT_COUNT,
+        allAvailable: batch.allAvailable === true,
+        points: batch.allAvailable ? 500 : SPARKLINE_POINT_COUNT,
         granularityMinutes: batch.granularityMinutes,
         series: [],
         loading: false,
-      });
+      } satisfies TokenSparklineEntry;
+      writeWorkspaceSparklineCacheEntry(
+        nextCache,
+        identity,
+        mergeWorkspaceSparklineRefreshEntry(
+          readWorkspaceSparklineCacheEntry(nextCache, identity),
+          failedEntry,
+        ),
+      );
     }
     state.data.sparklineByAddress = nextCache;
     emit('top-performers', 'manual', 'monitored', 'recent', 'old-week');

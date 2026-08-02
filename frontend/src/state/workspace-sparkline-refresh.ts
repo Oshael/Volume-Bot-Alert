@@ -36,6 +36,126 @@ export type WorkspaceSparklineCacheValue = {
   refreshedAt?: number;
 };
 
+export type WorkspaceSparklineMergeValue = WorkspaceSparklineCacheValue & {
+  valuationType?: 'market-cap' | 'fdv' | null;
+  bucketCount?: number;
+  latestBucketAt?: string | null;
+  points?: number;
+  series?: unknown[];
+  candles?: Array<{
+    bucketTs: string;
+    liveSequence?: string | null;
+    closeMcap?: number | null;
+    closeFdvUsd?: number | null;
+  }>;
+  loading?: boolean;
+};
+
+function hasRenderableSeries(entry?: WorkspaceSparklineMergeValue | null) {
+  return Array.isArray(entry?.series) && entry.series.length >= 2;
+}
+
+function hasSameRequestShape(
+  previous: WorkspaceSparklineMergeValue,
+  incoming: WorkspaceSparklineMergeValue,
+) {
+  return Number(previous.hours) === Number(incoming.hours)
+    && Number(previous.granularityMinutes) === Number(incoming.granularityMinutes)
+    && (previous.allAvailable === true) === (incoming.allAvailable === true);
+}
+
+export function mergeWorkspaceSparklineRefreshEntry<T extends WorkspaceSparklineMergeValue>(
+  previous: T | null | undefined,
+  incoming: T,
+): T {
+  if (
+    !previous
+    || !hasRenderableSeries(previous)
+    || hasRenderableSeries(incoming)
+    || !hasSameRequestShape(previous, incoming)
+  ) {
+    return incoming;
+  }
+
+  return {
+    ...previous,
+    refreshedAt: incoming.refreshedAt,
+    loading: false,
+  } as T;
+}
+
+function parseTimestamp(value: unknown) {
+  const parsed = Date.parse(String(value || ''));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getSnapshotBoundaryMs(entry: WorkspaceSparklineMergeValue) {
+  const generatedAt = parseTimestamp(entry.generatedAt);
+  if (generatedAt == null) return null;
+  const granularityMs = Math.max(1, Number(entry.granularityMinutes) || 1) * 60 * 1000;
+  return Math.floor(generatedAt / granularityMs) * granularityMs;
+}
+
+function getCandleSeriesValue(
+  candle: NonNullable<WorkspaceSparklineMergeValue['candles']>[number],
+  valuationType: WorkspaceSparklineMergeValue['valuationType'],
+) {
+  const value = valuationType === 'fdv' ? candle.closeFdvUsd : candle.closeMcap;
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+export function mergeWorkspaceSparklineSnapshotEntry<T extends WorkspaceSparklineMergeValue>(
+  previous: T | null | undefined,
+  incoming: T,
+): T {
+  const emptySafeEntry = mergeWorkspaceSparklineRefreshEntry(previous, incoming);
+  if (emptySafeEntry !== incoming || !previous || !hasSameRequestShape(previous, incoming)) {
+    return emptySafeEntry;
+  }
+
+  const previousGeneratedAt = parseTimestamp(previous.generatedAt);
+  const incomingGeneratedAt = parseTimestamp(incoming.generatedAt);
+  const boundaryMs = getSnapshotBoundaryMs(incoming);
+  if (
+    previousGeneratedAt == null
+    || incomingGeneratedAt == null
+    || previousGeneratedAt <= incomingGeneratedAt
+    || boundaryMs == null
+    || !Array.isArray(previous.candles)
+    || !Array.isArray(incoming.candles)
+  ) {
+    return incoming;
+  }
+
+  const liveCandles = previous.candles.filter((candle) => (
+    Boolean(String(candle.liveSequence || '').trim())
+    && (parseTimestamp(candle.bucketTs) ?? -1) >= boundaryMs
+  ));
+  if (liveCandles.length === 0) return incoming;
+
+  const candlesByTimestamp = new Map(incoming.candles.map((candle) => [candle.bucketTs, candle]));
+  for (const candle of liveCandles) candlesByTimestamp.set(candle.bucketTs, candle);
+  const maxCandles = Math.max(1, Number(incoming.points) || incoming.candles.length);
+  const candles = [...candlesByTimestamp.values()]
+    .sort((left, right) => (parseTimestamp(left.bucketTs) ?? 0) - (parseTimestamp(right.bucketTs) ?? 0))
+    .slice(-maxCandles);
+  const valuationType = incoming.valuationType ?? previous.valuationType;
+  const series = candles
+    .map((candle) => getCandleSeriesValue(candle, valuationType))
+    .filter((value): value is number => value != null);
+
+  return {
+    ...incoming,
+    valuationType,
+    generatedAt: previous.generatedAt,
+    latestBucketAt: candles.at(-1)?.bucketTs ?? incoming.latestBucketAt,
+    bucketCount: candles.length,
+    series: series.length >= 2 ? series : incoming.series,
+    candles,
+    loading: false,
+  } as T;
+}
+
 export function resolveWorkspaceSparklineGranularityMinutes(input: {
   anchorAt?: number | null;
   rangeDays: number;

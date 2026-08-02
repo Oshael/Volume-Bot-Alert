@@ -392,6 +392,15 @@ Chains visíveis:
 Por isso a VPS1 mantém flags de rollout/readiness Robinhood mesmo com
 `RUN_BACKGROUND_JOBS=false`.
 
+As sparklines do workspace preservam a última série renderizável quando um
+refresh do mesmo range/resolução falha ou retorna temporariamente vazio. A
+entrada preservada recebe apenas o novo instante de refresh, evitando apagar o
+gráfico ou iniciar retries agressivos; mudanças reais de range/resolução não
+reutilizam a série anterior. Eventos `market:bucket` atualizam métricas e candles
+em realtime; se um snapshot HTTP iniciado antes terminar depois, os candles
+realtime posteriores ao corte do snapshot são mesclados novamente para impedir
+rollback visual.
+
 ## 8. API pública
 
 Mount points confirmados em `src/server.js`:

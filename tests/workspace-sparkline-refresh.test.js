@@ -2,6 +2,8 @@ const { before, describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
 let getWorkspaceSparklineNextRefreshAt;
+let mergeWorkspaceSparklineRefreshEntry;
+let mergeWorkspaceSparklineSnapshotEntry;
 let resolveWorkspaceSparklineGranularityMinutes;
 let resolveWorkspaceSparklineRequestShape;
 let runWorkspaceSparklineRequestWithTimeout;
@@ -11,6 +13,8 @@ let splitWorkspaceSparklineBatchesByChain;
 before(async () => {
   ({
     getWorkspaceSparklineNextRefreshAt,
+    mergeWorkspaceSparklineRefreshEntry,
+    mergeWorkspaceSparklineSnapshotEntry,
     resolveWorkspaceSparklineGranularityMinutes,
     resolveWorkspaceSparklineRequestShape,
     runWorkspaceSparklineRequestWithTimeout,
@@ -137,6 +141,123 @@ describe('workspace sparkline request shape', () => {
 });
 
 describe('workspace sparkline refresh selection', () => {
+  it('preserves a renderable series when a same-shape refresh is temporarily empty', () => {
+    const previous = {
+      address: '0x1',
+      hours: 24,
+      granularityMinutes: 1,
+      refreshedAt: 100,
+      generatedAt: '2026-08-02T12:00:00.000Z',
+      series: [10, 12, 11],
+      candles: [{ bucketTs: '2026-08-02T12:00:00.000Z' }],
+    };
+    const incoming = {
+      address: '0x1',
+      hours: 24,
+      granularityMinutes: 1,
+      refreshedAt: 200,
+      series: [],
+      loading: false,
+    };
+
+    assert.deepEqual(mergeWorkspaceSparklineRefreshEntry(previous, incoming), {
+      ...previous,
+      refreshedAt: 200,
+      loading: false,
+    });
+  });
+
+  it('does not preserve an incompatible series after the request shape changes', () => {
+    const incoming = {
+      address: '0x1',
+      hours: 1,
+      granularityMinutes: 1,
+      refreshedAt: 200,
+      series: [],
+      loading: false,
+    };
+
+    assert.equal(mergeWorkspaceSparklineRefreshEntry({
+      address: '0x1',
+      hours: 24,
+      granularityMinutes: 1,
+      refreshedAt: 100,
+      series: [10, 12],
+    }, incoming), incoming);
+  });
+
+  it('keeps a newer realtime candle when an older HTTP snapshot finishes later', () => {
+    const previous = {
+      address: '0x1',
+      valuationType: 'fdv',
+      hours: 24,
+      granularityMinutes: 1,
+      points: 3,
+      generatedAt: '2026-08-02T12:01:10.000Z',
+      refreshedAt: 100,
+      series: [100, 120],
+      candles: [
+        { bucketTs: '2026-08-02T12:00:00.000Z', closeFdvUsd: 100 },
+        {
+          bucketTs: '2026-08-02T12:01:00.000Z',
+          closeFdvUsd: 120,
+          liveSequence: 'robinhood:2:1:1',
+        },
+      ],
+    };
+    const incoming = {
+      address: '0x1',
+      valuationType: 'fdv',
+      hours: 24,
+      granularityMinutes: 1,
+      points: 3,
+      generatedAt: '2026-08-02T12:01:00.000Z',
+      refreshedAt: 200,
+      series: [90, 105],
+      candles: [
+        { bucketTs: '2026-08-02T11:59:00.000Z', closeFdvUsd: 90 },
+        { bucketTs: '2026-08-02T12:00:00.000Z', closeFdvUsd: 105 },
+      ],
+      loading: false,
+    };
+
+    assert.deepEqual(mergeWorkspaceSparklineSnapshotEntry(previous, incoming), {
+      ...incoming,
+      generatedAt: previous.generatedAt,
+      latestBucketAt: '2026-08-02T12:01:00.000Z',
+      bucketCount: 3,
+      series: [90, 105, 120],
+      candles: [incoming.candles[0], incoming.candles[1], previous.candles[1]],
+      loading: false,
+    });
+  });
+
+  it('accepts a newer HTTP snapshot without retaining an older realtime candle', () => {
+    const incoming = {
+      address: '0x1',
+      valuationType: 'fdv',
+      hours: 24,
+      granularityMinutes: 1,
+      generatedAt: '2026-08-02T12:02:00.000Z',
+      series: [100, 130],
+      candles: [
+        { bucketTs: '2026-08-02T12:00:00.000Z', closeFdvUsd: 100 },
+        { bucketTs: '2026-08-02T12:01:00.000Z', closeFdvUsd: 130 },
+      ],
+    };
+
+    assert.equal(mergeWorkspaceSparklineSnapshotEntry({
+      ...incoming,
+      generatedAt: '2026-08-02T12:01:10.000Z',
+      series: [100, 120],
+      candles: [{
+        bucketTs: '2026-08-02T12:01:00.000Z',
+        closeFdvUsd: 120,
+        liveSequence: 'robinhood:2:1:1',
+      }],
+    }, incoming), incoming);
+  });
+
   it('refreshes only the new address when the visible list changes inside the cache window', () => {
     const now = Date.UTC(2026, 6, 8, 20, 29, 13);
     const refreshIntervalMs = 60_000;
