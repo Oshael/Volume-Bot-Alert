@@ -4,6 +4,7 @@ const { normalizeText, sanitizeAssetUrl, sanitizeHttpUrl } = require('../utils/u
 const {
   isCatalogFdvExcluded,
 } = require('../services/robinhood-catalog-fdv-policy');
+const { normalizeLaunchpadId } = require('../services/robinhood-launchpad-attribution');
 
 const CHAIN = 'robinhood';
 const PROTOCOL = 'uniswap-v2';
@@ -306,7 +307,8 @@ async function listMetadata(addresses, runner = db) {
     .map((address) => normalizeTokenAddress(CHAIN, address)))].slice(0, 5000);
   if (!normalized.length) return [];
   const { rows } = await runner.query(
-    `SELECT address, symbol, name, last_image_url, last_website_url,
+    `SELECT address, symbol, name, launchpad_id, launchpad_checked_at,
+       last_image_url, last_website_url,
        last_twitter_url, last_community_url, metadata_updated_at,
        robinhood_blockscout_checked_at, robinhood_dexscreener_checked_at
      FROM token_catalog
@@ -314,6 +316,25 @@ async function listMetadata(addresses, runner = db) {
     [normalized]
   );
   return rows;
+}
+
+async function recordLaunchpadAttribution(input = {}, runner = db) {
+  const address = normalizeTokenAddress(CHAIN, input.address);
+  const launchpadId = normalizeLaunchpadId(input.launchpadId);
+  if (!launchpadId) throw new Error('Robinhood launchpad attribution is unsupported');
+  const { rows } = await runner.query(
+    `UPDATE token_catalog
+     SET launchpad_id = CASE
+           WHEN $2 = 'robinhood' AND launchpad_id IS NOT NULL THEN launchpad_id
+           ELSE $2
+         END,
+         launchpad_checked_at = NOW(),
+         metadata_updated_at = NOW()
+     WHERE chain = 'robinhood' AND address = $1
+     RETURNING *`,
+    [address, launchpadId]
+  );
+  return rows[0] || null;
 }
 
 async function recordBlockscoutMetadata(input = {}, runner = db) {
@@ -485,6 +506,7 @@ module.exports = {
   projectDashboardSnapshot,
   recordBlockscoutMetadata,
   recordDexscreenerMetadata,
+  recordLaunchpadAttribution,
   stageSnapshot,
   __private: { normalizeDashboardSnapshot, normalizeLiveSnapshot, normalizeStagedSnapshot },
 };

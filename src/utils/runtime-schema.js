@@ -2421,6 +2421,15 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage97-catalog-launchpad-attribution',
+    name: 'Stage 97 durable catalog launchpad attribution',
+    repair: 'node src/utils/db-init-stage97.js',
+    tables: [{
+      table: 'token_catalog',
+      columns: ['launchpad_id', 'launchpad_checked_at'],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
@@ -2449,6 +2458,7 @@ const PROFILE_GROUP_KEYS = {
     'stage94-telegram-access-reactivation-epoch',
     'stage95-telegram-language-preference',
     'stage96-robinhood-live-supply-provenance',
+    'stage97-catalog-launchpad-attribution',
   ],
   runtime: SCHEMA_GROUPS.map((group) => group.key),
 };

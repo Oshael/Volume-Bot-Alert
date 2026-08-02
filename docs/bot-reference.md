@@ -347,6 +347,11 @@ fallback de imagem fica sempre ativo. `ROBINHOOD_SOCIAL_METADATA_ENABLED=true`
 controla somente o reparo adicional de website, X e comunidade via DexScreener;
 `symbol/name` continuam vindo do ERC-20 on-chain e do Blockscout.
 
+O catálogo também possui atribuição persistente de launchpad. O vocabulário
+Robinhood diferencia pons, Bankr/Doppler, LaunchHood, RobinPad, Stock Tokens e o
+fallback explícito `robinhood` para contratos diretos ou ainda desconhecidos.
+Factories conhecidas prevalecem sobre inferências genéricas de metadata.
+
 Worker leases no PostgreSQL evitam dois donos ativos para loops protegidos. Eles
 não autorizam iniciar processos arbitrários: sempre verifique as leases e os
 logs antes de escalar.
