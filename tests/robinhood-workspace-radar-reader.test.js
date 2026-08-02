@@ -17,7 +17,8 @@ function catalogRow(overrides = {}) {
     last_token_created_at_ms: null, last_fdv_usd: '50000',
     valuation_observed_at: '2026-07-14T13:00:00.000Z', last_price: '0.25',
     last_pair_address: `0x${'2'.repeat(40)}`, last_pair_url: 'https://dex.example/rh',
-    last_dex_id: 'uniswap-v3', last_image_url: null, last_twitter_url: null,
+    last_dex_id: 'uniswap-v3', last_image_url: null, launchpad_id: 'launchhood',
+    last_twitter_url: null,
     last_community_url: null, monitor_priority: 'dormant', total_count: '1',
     ...overrides,
   };
@@ -61,6 +62,7 @@ describe('Robinhood workspace radar reader', () => {
     assert.equal(result.rows[0].valuation.usd, 50_000);
     assert.equal(result.rows[0].valuation.freshness, 'stale');
     assert.equal(result.rows[0].liquidityUsd, null);
+    assert.equal(result.rows[0].launchpadId, 'launchhood');
     assert.equal(result.rows[0].volume1hUsd, 0);
     assert.deepEqual(calls[0].params.slice(1), [
       30_000, 80_000, 0, 10_080, '%persistent%', [DISMISSED], false, [], 30,

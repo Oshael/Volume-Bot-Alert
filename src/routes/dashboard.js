@@ -750,6 +750,7 @@ function buildMonitoredTokenPayload(item, meteoraByAddress, marketMcapBaselineBy
     pairUrl: item.last_pair_url || null,
     pairDexId: toTextOrNull(item.last_dex_id),
     imageUrl: item.last_image_url || null,
+    launchpadId: toTextOrNull(item.launchpad_id),
     twitterUrl: socialLinks.twitterUrl,
     communityUrl: socialLinks.communityUrl,
     eligibleForMonitoring: Boolean(item.eligible_for_monitoring),

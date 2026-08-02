@@ -229,6 +229,7 @@ SELECT tc.address, tc.symbol, tc.name, tc.source, tc.first_seen_at,
   tc.last_seen_at, tc.last_evaluated_at, tc.last_token_created_at_ms,
   valuation.last_fdv_usd, valuation.valuation_observed_at, tc.last_price,
   tc.last_pair_address, tc.last_pair_url, tc.last_dex_id, tc.last_image_url,
+  tc.launchpad_id,
   tc.last_twitter_url, tc.last_community_url, tc.monitor_priority,
   COUNT(*) OVER() AS total_count
 FROM catalog_candidates tc
@@ -260,6 +261,7 @@ const PINNED_SQL = `SELECT tc.address, tc.symbol, tc.name, tc.source, tc.first_s
   tc.last_seen_at, tc.last_evaluated_at, tc.last_token_created_at_ms,
   valuation.last_fdv_usd, valuation.valuation_observed_at, tc.last_price,
   tc.last_pair_address, tc.last_pair_url, tc.last_dex_id, tc.last_image_url,
+  tc.launchpad_id,
   tc.last_twitter_url, tc.last_community_url, tc.monitor_priority
 FROM token_catalog tc
 LEFT JOIN LATERAL (SELECT bucket.close_fdv_usd AS last_fdv_usd,
@@ -324,7 +326,8 @@ function normalizeRow(row, metrics, query, options = {}) {
     valuation: visibility.valuation, priceUsd: optionalNumber(row.last_price, 'priceUsd'),
     liquidityUsd: null, pairAddress: row.last_pair_address || null,
     pairUrl: row.last_pair_url || null, pairDexId: row.last_dex_id || null,
-    imageUrl: row.last_image_url || null, twitterUrl: row.last_twitter_url || null,
+    imageUrl: row.last_image_url || null, launchpadId: row.launchpad_id || null,
+    twitterUrl: row.last_twitter_url || null,
     communityUrl: row.last_community_url || null, monitorPriority: row.monitor_priority || null,
     activityState: visibility.activityState, dataQuality: visibility.dataQuality,
     ...windowMetrics,

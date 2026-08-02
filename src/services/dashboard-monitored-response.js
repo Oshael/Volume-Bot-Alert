@@ -49,6 +49,7 @@ function buildDashboardMonitoredToken(row, options = {}) {
     pairUrl: optionalValue(row.pairUrl),
     pairDexId: optionalValue(row.pairDexId),
     imageUrl: optionalValue(row.imageUrl),
+    launchpadId: optionalValue(row.launchpadId),
     twitterUrl: social.twitterUrl,
     communityUrl: social.communityUrl,
     monitorPriority: optionalValue(row.monitorPriority),

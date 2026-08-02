@@ -821,11 +821,46 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   color: transparent;
 }
 
-.token-launchpad-uniswap {
+.token-launchpad-pons,
+.token-launchpad-bankr-doppler,
+.token-launchpad-launchhood,
+.token-launchpad-robinpad {
   overflow: hidden;
-  background: rgba(5, 24, 20, 0.96);
-  box-shadow: none;
-  font-size: 13px;
+  color: transparent;
+}
+
+.token-launchpad-pons {
+  background: #0a0a0a url("/launchpad-pons.png") center / cover no-repeat;
+}
+
+.token-launchpad-bankr-doppler {
+  background: #a78bfa url("/launchpad-bankr.svg") center / cover no-repeat;
+}
+
+.token-launchpad-launchhood {
+  background: #f4f4f0 url("/launchpad-launchhood.png") center / 88% 88% no-repeat;
+}
+
+.token-launchpad-robinpad {
+  background: #163c26 url("/launchpad-robinpad.png") center / cover no-repeat;
+}
+
+.token-launchpad-robinhood,
+.token-launchpad-robinhood-stock {
+  background: #071b12;
+  color: #42e6a4;
+}
+
+.token-launchpad-robinhood-stock {
+  background: #42e6a4;
+  color: #071b12;
+}
+
+.token-launchpad-robinhood svg,
+.token-launchpad-robinhood-stock svg {
+  width: 10px;
+  height: 10px;
+  fill: currentColor;
 }
 
 .token-avatar.placeholder {

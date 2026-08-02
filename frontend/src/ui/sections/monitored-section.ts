@@ -989,7 +989,7 @@ function buildMonitoredRow(item: ManualTokenEntry, manualTokenFolders: AppState[
   article.dataset.address = item.address;
 
   article.append(buildMonitoredPinHandle(item));
-  article.append(buildMonitoredAvatar(symbol, imageUrl, item.address, chain));
+  article.append(buildMonitoredAvatar(symbol, imageUrl, item.address, chain, item.launchpadId));
 
   const main = document.createElement('div');
   main.className = 'panel-row-main monitored-row-main';
@@ -1227,7 +1227,13 @@ function formatMockTradingTakeProfitSummary(orders: NonNullable<AppState['data']
   return `TP ${preview}${extra}`;
 }
 
-function buildMonitoredAvatar(symbol: string, imageUrl: string | null, address: string, chain: unknown) {
+function buildMonitoredAvatar(
+  symbol: string,
+  imageUrl: string | null,
+  address: string,
+  chain: unknown,
+  launchpadId: string | null | undefined,
+) {
   const wrapper = document.createElement('span');
   wrapper.className = 'token-avatar-wrap monitored-avatar-wrap';
   wrapper.dataset.tokenAddress = address;
@@ -1252,7 +1258,7 @@ function buildMonitoredAvatar(symbol: string, imageUrl: string | null, address: 
     wrapper.append(placeholder);
   }
 
-  wrapper.insertAdjacentHTML('beforeend', renderTokenLaunchpadBadge(address, chain));
+  wrapper.insertAdjacentHTML('beforeend', renderTokenLaunchpadBadge(address, chain, launchpadId));
   return wrapper;
 }
 

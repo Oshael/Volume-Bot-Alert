@@ -175,6 +175,7 @@ export interface ManualTokenEntry {
   name?: string | null;
   pairUrl?: string | null;
   imageUrl?: string | null;
+  launchpadId?: string | null;
   twitterUrl?: string | null;
   communityUrl?: string | null;
   manual?: boolean;

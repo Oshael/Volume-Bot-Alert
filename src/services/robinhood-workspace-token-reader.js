@@ -172,7 +172,7 @@ SELECT
   tc.address, tc.symbol, tc.name, tc.source, tc.first_seen_at,
   tc.last_token_created_at_ms, valuation.last_fdv_usd,
   valuation.valuation_observed_at, tc.last_price, tc.last_pair_address,
-  tc.last_pair_url, tc.last_dex_id, tc.last_image_url,
+  tc.last_pair_url, tc.last_dex_id, tc.last_image_url, tc.launchpad_id,
   tc.last_twitter_url, tc.last_community_url, tc.monitor_priority,
   tc.last_seen_at, tc.last_evaluated_at${activitySelect ? `,
   ${activitySelect}` : ''}, COUNT(*) OVER() AS total_count
@@ -193,7 +193,7 @@ const PINNED_SQL = `SELECT
   tc.address, tc.symbol, tc.name, tc.source, tc.first_seen_at,
   tc.last_token_created_at_ms, valuation.last_fdv_usd,
   valuation.valuation_observed_at, tc.last_price, tc.last_pair_address,
-  tc.last_pair_url, tc.last_dex_id, tc.last_image_url,
+  tc.last_pair_url, tc.last_dex_id, tc.last_image_url, tc.launchpad_id,
   tc.last_twitter_url, tc.last_community_url, tc.monitor_priority,
   tc.last_seen_at, tc.last_evaluated_at
 FROM token_catalog tc
@@ -342,6 +342,7 @@ function normalizeCatalogRow(row, metrics, query, filters) {
     pairUrl: optionalText(row.last_pair_url),
     pairDexId: optionalText(row.last_dex_id),
     imageUrl: optionalText(row.last_image_url),
+    launchpadId: optionalText(row.launchpad_id),
     twitterUrl: optionalText(row.last_twitter_url),
     communityUrl: optionalText(row.last_community_url),
     monitorPriority: optionalText(row.monitor_priority),

@@ -4128,7 +4128,9 @@ function renderExpandedSparklineModal(state: AppState, address: string) {
       <div class="legacy-auth-modal-backdrop" data-action="close-expanded-sparkline"></div>
       <div class="legacy-auth-panel legacy-auth-panel-expanded-sparkline" data-auth-panel="expanded-sparkline" role="dialog" aria-modal="true" aria-labelledby="expanded-sparkline-title">
         <div class="expanded-sparkline-toolbar">
-          ${renderExpandedSparklineIdentity(symbol, name, imageUrl, address, chain, token?.tickerPeers)}
+          ${renderExpandedSparklineIdentity(
+            symbol, name, imageUrl, address, chain, token?.tickerPeers, token?.launchpadId,
+          )}
           ${renderExpandedSparklineStatsRow(
             token,
             chain === 'solana' ? state.data.meteoraByAddress[address] : undefined,
@@ -4158,6 +4160,7 @@ function renderExpandedSparklineIdentity(
   address: string,
   chain: TokenChain,
   tickerPeers: ManualTokenEntry['tickerPeers'],
+  launchpadId: ManualTokenEntry['launchpadId'],
 ) {
   const avatar = imageUrl
     ? `<img src="${escapeHtml(imageUrl)}" alt="" class="expanded-sparkline-avatar" />`
@@ -4170,7 +4173,7 @@ function renderExpandedSparklineIdentity(
   identityBadges.classList.add('expanded-sparkline-identity-badges');
   return `
     <div class="expanded-sparkline-identity">
-      <span class="token-avatar-wrap expanded-sparkline-avatar-wrap">${avatar}${renderTokenLaunchpadBadge(address, chain)}</span>
+      <span class="token-avatar-wrap expanded-sparkline-avatar-wrap">${avatar}${renderTokenLaunchpadBadge(address, chain, launchpadId)}</span>
       <span class="expanded-sparkline-identity-copy">
         <strong id="expanded-sparkline-title">${escapeHtml(symbol)}</strong>
         <small>${escapeHtml(name)}</small>

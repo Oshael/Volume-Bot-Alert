@@ -25,6 +25,7 @@ function catalogRow(address, overrides = {}) {
     last_pair_url: 'https://dex.example/robinhood',
     last_dex_id: 'uniswap-v3',
     last_image_url: 'https://cdn.example/rhd.png',
+    launchpad_id: 'pons',
     last_twitter_url: 'https://x.com/robinhood',
     last_community_url: 'https://t.me/robinhood',
     monitor_priority: 'dormant',
@@ -99,12 +100,14 @@ describe('Robinhood workspace token reader', () => {
       priceUsd: prefix.rows[0].priceUsd,
       liquidityUsd: prefix.rows[0].liquidityUsd,
       pairDexId: prefix.rows[0].pairDexId,
+      launchpadId: prefix.rows[0].launchpadId,
       monitorPriority: prefix.rows[0].monitorPriority,
       lastSeenAt: prefix.rows[0].lastSeenAt,
     }, {
       priceUsd: 0.25,
       liquidityUsd: null,
       pairDexId: 'uniswap-v3',
+      launchpadId: 'pons',
       monitorPriority: 'dormant',
       lastSeenAt: '2026-07-15T17:20:00.000Z',
     });

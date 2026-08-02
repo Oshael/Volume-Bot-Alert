@@ -28,16 +28,33 @@ const TRADE_TERMINAL_LABELS: Record<TradeTerminalKey, string> = {
   fomo: 'FOMO',
 };
 
-type TokenLaunchpadKey = 'pump' | 'bags' | 'bonk' | 'brrr' | 'meteora' | 'uniswap';
+type TokenLaunchpadKey = 'pump' | 'bags' | 'bonk' | 'brrr' | 'meteora'
+  | 'pons' | 'bankr-doppler' | 'launchhood' | 'robinpad'
+  | 'robinhood-stock' | 'robinhood';
 
-const TOKEN_LAUNCHPAD_META: Record<TokenLaunchpadKey, { label: string; mark: string }> = {
+const ROBINHOOD_MARK_PATH = 'M2.84 24h.53c.096 0 .192-.048.224-.128C7.591 13.696 11.94 8.656 14.67 5.638c.112-.128.064-.225-.096-.225h-4.88a.55.55 0 0 0-.45.225L5.746 9.972c-.514.642-.642 1.236-.642 2.086v4.43c-1.14 3.194-1.862 5.361-2.392 7.32-.032.125.016.192.129.192M20.447.646c-.754-.802-4.157-.834-5.73-.224a3 3 0 0 0-.786.465 41 41 0 0 0-3.323 3.178c-.112.113-.064.225.097.225h5.409c.497 0 .786.289.786.786v6.1c0 .16.128.208.225.064l3.258-4.254c.53-.69.69-.898.835-1.861.192-1.413.08-3.58-.77-4.479m-6.982 16.18 2.231-3.676a.7.7 0 0 0 .064-.29V6.73c0-.16-.112-.225-.224-.097-3.355 3.74-5.971 7.672-8.395 12.407-.06.12.016.225.16.177l5.009-1.54c.565-.174.882-.402 1.155-.852';
+
+const TOKEN_LAUNCHPAD_META: Record<TokenLaunchpadKey, {
+  label: string; mark: string; svgPath?: string;
+}> = {
   pump: { label: 'Pump.fun', mark: 'P' },
   bags: { label: 'Bags', mark: '$' },
   bonk: { label: 'LetsBonk', mark: 'B' },
   brrr: { label: 'Brrr', mark: 'BR' },
   meteora: { label: 'Meteora', mark: 'M' },
-  uniswap: { label: 'Uniswap', mark: '🦄' },
+  pons: { label: 'pons', mark: 'P' },
+  'bankr-doppler': { label: 'Bankr / Doppler', mark: 'B' },
+  launchhood: { label: 'LaunchHood', mark: 'LH' },
+  robinpad: { label: 'RobinPad', mark: 'RP' },
+  'robinhood-stock': {
+    label: 'Robinhood Stock Token', mark: 'RH', svgPath: ROBINHOOD_MARK_PATH,
+  },
+  robinhood: { label: 'Robinhood Chain', mark: 'RH', svgPath: ROBINHOOD_MARK_PATH },
 };
+
+const ROBINHOOD_LAUNCHPAD_KEYS = new Set<TokenLaunchpadKey>([
+  'pons', 'bankr-doppler', 'launchhood', 'robinpad', 'robinhood-stock', 'robinhood',
+]);
 
 type TradeTerminalLink = {
   key: TradeTerminalKey;
@@ -193,8 +210,15 @@ function bindUiControlTooltips(section: ParentNode) {
   }
 }
 
-export function resolveTokenLaunchpad(address: string, chainValue: unknown = 'solana'): TokenLaunchpadKey {
-  if (normalizeTokenChain(chainValue) === 'robinhood') return 'uniswap';
+export function resolveTokenLaunchpad(
+  address: string,
+  chainValue: unknown = 'solana',
+  launchpadValue: unknown = null,
+): TokenLaunchpadKey {
+  if (normalizeTokenChain(chainValue) === 'robinhood') {
+    const launchpad = String(launchpadValue || '').trim().toLowerCase() as TokenLaunchpadKey;
+    return ROBINHOOD_LAUNCHPAD_KEYS.has(launchpad) ? launchpad : 'robinhood';
+  }
   const normalized = String(address || '').trim().toLowerCase();
   if (normalized.endsWith('pump')) return 'pump';
   if (normalized.endsWith('bags')) return 'bags';
@@ -203,10 +227,17 @@ export function resolveTokenLaunchpad(address: string, chainValue: unknown = 'so
   return 'meteora';
 }
 
-export function renderTokenLaunchpadBadge(address: string, chainValue: unknown = 'solana') {
-  const key = resolveTokenLaunchpad(address, chainValue);
+export function renderTokenLaunchpadBadge(
+  address: string,
+  chainValue: unknown = 'solana',
+  launchpadValue: unknown = null,
+) {
+  const key = resolveTokenLaunchpad(address, chainValue, launchpadValue);
   const meta = TOKEN_LAUNCHPAD_META[key];
-  return `<span class="token-launchpad-badge token-launchpad-${key}" title="${escapeHtml(meta.label)}" aria-label="${escapeHtml(meta.label)}">${escapeHtml(meta.mark)}</span>`;
+  const mark = meta.svgPath
+    ? `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${meta.svgPath}"></path></svg>`
+    : escapeHtml(meta.mark);
+  return `<span class="token-launchpad-badge token-launchpad-${key}" title="${escapeHtml(meta.label)}" aria-label="${escapeHtml(meta.label)}">${mark}</span>`;
 }
 
 function getSparklineRangePresetForScope(state: AppState, scope: SparklineRangeControlScope) {
@@ -3018,7 +3049,7 @@ function renderAvatar(item: ManualTokenEntry, symbol: string) {
   const avatar = imageUrl
     ? `<img src="${safeImageUrl}" alt="" aria-label="${safeSymbol}" class="token-avatar" data-token-image-preview="true" data-token-image-preview-src="${safeImageUrl}" data-token-address="${safeAddress}" />`
     : `<div class="token-avatar placeholder" data-token-address="${safeAddress}">${fallback}</div>`;
-  return `<span class="token-avatar-wrap" data-token-address="${safeAddress}" data-token-fallback="${fallback}"${imageUrl ? ' data-token-image-state="pending"' : ''}>${avatar}${renderTokenLaunchpadBadge(item.address, item.chain)}</span>`;
+  return `<span class="token-avatar-wrap" data-token-address="${safeAddress}" data-token-fallback="${fallback}"${imageUrl ? ' data-token-image-state="pending"' : ''}>${avatar}${renderTokenLaunchpadBadge(item.address, item.chain, item.launchpadId)}</span>`;
 }
 
 function renderPctSpan(value?: number | null) {

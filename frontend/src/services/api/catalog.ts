@@ -85,6 +85,7 @@ export interface DashboardMonitoredToken {
   pairUrl?: string | null;
   pairDexId?: string | null;
   imageUrl?: string | null;
+  launchpadId?: string | null;
   twitterUrl?: string | null;
   communityUrl?: string | null;
   eligibleForMonitoring?: boolean;

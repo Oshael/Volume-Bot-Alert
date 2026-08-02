@@ -2079,6 +2079,9 @@ export function createAppController(): AppController {
       pairUrl: selectTrackedColdField(shouldApplyColdFields, dashboard.pairUrl, existing.pairUrl, base.pairUrl),
       pairDexId: selectTrackedColdField(shouldApplyColdFields, dashboard.pairDexId, existing.pairDexId, base.pairDexId),
       imageUrl: selectTrackedColdField(shouldApplyColdFields, dashboard.imageUrl, existing.imageUrl, base.imageUrl),
+      launchpadId: selectTrackedColdField(
+        shouldApplyColdFields, dashboard.launchpadId, existing.launchpadId, base.launchpadId,
+      ),
       twitterUrl: selectTrackedColdField(shouldApplyColdFields, dashboard.twitterUrl, existing.twitterUrl, base.twitterUrl),
       communityUrl: selectTrackedColdField(shouldApplyColdFields, dashboard.communityUrl, existing.communityUrl, base.communityUrl),
       symbol: selectTrackedColdField(shouldApplyColdFields, dashboard.symbol, existing.symbol, base.symbol),
@@ -10922,6 +10925,7 @@ export function createAppController(): AppController {
       pairUrl: toNullableTrackedValue(item.pairUrl),
       pairDexId: toNullableTrackedValue(item.pairDexId),
       imageUrl: toNullableTrackedValue(item.imageUrl),
+      launchpadId: toNullableTrackedValue(item.launchpadId),
       twitterUrl: toNullableTrackedValue(item.twitterUrl),
       communityUrl: toNullableTrackedValue(item.communityUrl),
       mcap: toNullableTrackedValue(item.mcap),

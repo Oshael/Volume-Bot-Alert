@@ -27,6 +27,7 @@ function normalizedRow(chain, overrides = {}) {
     pairUrl: 'https://dex.example/pair',
     pairDexId: 'dex',
     imageUrl: 'https://cdn.example/token.png',
+    launchpadId: chain === 'robinhood' ? 'pons' : null,
     twitterUrl: 'https://x.com/token',
     communityUrl: null,
     monitorPriority: 'normal',
@@ -80,6 +81,7 @@ describe('dashboard monitored response', () => {
     assert.equal(robinhood.prevVolume5mCanonical, 80);
     assert.equal(robinhood.volume5mBaselineAt, '2026-07-15T17:55:00.000Z');
     assert.equal(robinhood.volume5mDeltaCoverage, 'complete');
+    assert.equal(robinhood.launchpadId, 'pons');
     assert.equal(solana.volume1h, null);
     assert.equal(solana.coverage['1h'], 'unavailable');
     assert.equal(solana.catalogFirstSeenAt, Date.parse('2026-07-14T12:00:00.000Z'));
