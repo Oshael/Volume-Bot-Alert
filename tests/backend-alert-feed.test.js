@@ -498,7 +498,10 @@ describe('backend alert feed service', () => {
     };
     tokenCatalog.listDashboardMetadataByAddresses = async (_addresses, options) => {
       capturedCatalogOptions = options;
-      return [{ chain: 'robinhood', address, last_fdv: '500000' }];
+      return [{
+        chain: 'robinhood', address, last_fdv: '500000',
+        last_dex_id: 'uniswap-v3', launchpad_id: 'pons',
+      }];
     };
     tokenMeteoraState.listSummaryByAddresses = async () => {
       throw new Error('Robinhood feed must not load Solana Meteora state');
@@ -530,6 +533,8 @@ describe('backend alert feed service', () => {
       assert.equal(payload.events[0].liquidityUsd, 5000);
       assert.equal(payload.events[0].transactions, 15);
       assert.equal(payload.events[0].volume5m, 2000);
+      assert.equal(payload.events[0].pairDexId, 'uniswap-v3');
+      assert.equal(payload.events[0].launchpadId, 'pons');
       assert.equal(payload.events[0].junkAssessment, null);
     } finally {
       alertDeliveryCursor.getCursor = originalGetCursor;

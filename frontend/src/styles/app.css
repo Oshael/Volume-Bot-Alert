@@ -785,7 +785,8 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   font-weight: 900;
   letter-spacing: 0;
   line-height: 1;
-  pointer-events: none;
+  pointer-events: auto;
+  cursor: help;
 }
 
 .token-launchpad-pump {
@@ -845,7 +846,6 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   background: #163c26 url("/launchpad-robinpad.png") center / cover no-repeat;
 }
 
-.token-launchpad-robinhood,
 .token-launchpad-robinhood-stock {
   background: #071b12;
   color: #42e6a4;
@@ -856,7 +856,6 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   color: #071b12;
 }
 
-.token-launchpad-robinhood svg,
 .token-launchpad-robinhood-stock svg {
   width: 10px;
   height: 10px;

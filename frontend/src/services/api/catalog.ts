@@ -285,8 +285,10 @@ export interface DashboardAlertEvent {
   symbol?: string | null;
   name?: string | null;
   pairAddress?: string | null;
+  pairDexId?: string | null;
   pairUrl?: string | null;
   imageUrl?: string | null;
+  launchpadId?: string | null;
   twitterUrl?: string | null;
   communityUrl?: string | null;
   tokenCreatedAt?: number | null;

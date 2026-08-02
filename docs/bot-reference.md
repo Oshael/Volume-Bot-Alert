@@ -358,9 +358,11 @@ fallback explícito `robinhood` para contratos diretos ou ainda desconhecidos.
 Factories conhecidas vêm do creator retornado pelo Blockscout. Bankr/Doppler só
 é atribuído quando o registro público da Bankr confirma o contrato; `tokenURI()`
 genérico não é evidência suficiente. Factories prevalecem sobre metadata genérica.
-As respostas do workspace expõem `launchpadId`; no avatar, o frontend mostra o
-logo local da launchpad atribuída. Contratos diretos, desconhecidos ou respostas
-antigas sem atribuição usam o símbolo da Robinhood Chain, nunca o da Uniswap.
+As respostas do workspace e do feed de alertas expõem `launchpadId` e o protocolo
+do mercado; no avatar, o frontend mostra o logo local da launchpad atribuída.
+Contratos diretos, desconhecidos ou respostas antigas sem atribuição usam o
+unicórnio da Uniswap. O tooltip do badge identifica a pool como Uniswap V2, V3
+ou V4 quando `pairDexId` está disponível.
 
 Worker leases no PostgreSQL evitam dois donos ativos para loops protegidos. Eles
 não autorizam iniciar processos arbitrários: sempre verifique as leases e os

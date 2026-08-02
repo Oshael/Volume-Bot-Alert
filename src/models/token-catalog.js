@@ -1640,6 +1640,7 @@ async function listDashboardMetadataByAddresses(addresses, options = {}) {
        tc.last_pair_address,
        tc.last_pair_url,
        tc.last_dex_id,
+       tc.launchpad_id,
        tc.last_image_url,
        tc.last_twitter_url,
        tc.last_community_url,

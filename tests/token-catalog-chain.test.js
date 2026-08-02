@@ -84,6 +84,7 @@ describe('token catalog chain identity', () => {
     ));
 
     assert.deepEqual(captured.params, ['robinhood', [EVM_LOWER]]);
+    assert.match(captured.sql, /tc\.launchpad_id/);
     assert.match(captured.sql, /WHERE tc\.chain = \$1/);
     assert.match(captured.sql, /tc\.address = ANY\(\$2::varchar\[\]\)/);
   });

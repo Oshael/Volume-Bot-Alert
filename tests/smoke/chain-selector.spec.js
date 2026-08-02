@@ -316,6 +316,8 @@ const ROBINHOOD_API_FIXTURES = {
           liquidityUsd: 5000,
           transactions: 15,
           volume5m: 2000,
+          pairDexId: 'uniswap-v2',
+          launchpadId: 'robinhood',
           isHvnc: true,
           label: 'HVNC',
           triggeredAt: '2026-07-14T18:00:00.000Z',
@@ -363,6 +365,7 @@ function marketToken(chain, symbol) {
         symbol,
         name: `${symbol} Robinhood`,
         launchpadId: 'pons',
+        pairDexId: 'uniswap-v3',
         fdv: 350000,
         valuationType: 'fdv',
         valuation: {
@@ -1077,8 +1080,10 @@ test('filters a combined Solana and Robinhood alert feed through the master sele
   await expect.poll(async () => page.evaluate(() => window.trendscopeAlertDebug?.snapshot()?.memory?.count)).toBe(2);
   await expect(solanaAlert).toBeVisible();
   await expect(robinhoodAlert).toBeVisible();
-  await expect(robinhoodAlert.locator('.token-launchpad-robinhood'))
-    .toHaveAttribute('aria-label', 'Robinhood Chain');
+  await expect(robinhoodAlert.locator('.token-launchpad-uniswap'))
+    .toHaveAttribute('title', 'Uniswap · Pool: Uniswap V2');
+  await expect(robinhoodAlert.locator('.token-launchpad-uniswap'))
+    .toHaveCSS('pointer-events', 'auto');
   await expect(robinhoodAlert).toContainText('5m vol');
   await expect(robinhoodAlert).toContainText('FDV');
 
@@ -1489,6 +1494,8 @@ test('renders Radar valuation freshness and follows the master chain filter', as
   const row = page.locator(`.recent-bar tbody tr[data-token-identity="${identity}"]`);
   await expect(row).toBeVisible();
   await expect(row.locator('.token-launchpad-pons')).toHaveAttribute('aria-label', 'pons');
+  await expect(row.locator('.token-launchpad-pons'))
+    .toHaveAttribute('title', 'pons · Pool: Uniswap V3');
   await expect(row).toContainText('RADARST');
   await expect(row).toContainText('FDV $350K');
   await expect(row).toContainText('STALE VALUATION');

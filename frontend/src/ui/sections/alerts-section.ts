@@ -2180,7 +2180,9 @@ function buildAlertRowContent(
 
   const main = document.createElement('div');
   main.className = 'alert-main-v68';
-  main.append(buildAlertAvatar(symbol, imageUrl, alert.address, alert.chain));
+  main.append(buildAlertAvatar(
+    symbol, imageUrl, alert.address, alert.chain, alert.launchpadId, alert.pairDexId,
+  ));
 
   const copyBlock = document.createElement('div');
   copyBlock.className = 'alert-copy-block';
@@ -2291,7 +2293,9 @@ function buildAdminReviewAlertRowContent(
 
   const main = document.createElement('div');
   main.className = 'alert-main-v68';
-  main.append(buildAlertAvatar(symbol, imageUrl, alert.address, alert.chain));
+  main.append(buildAlertAvatar(
+    symbol, imageUrl, alert.address, alert.chain, alert.launchpadId, alert.pairDexId,
+  ));
 
   const copyBlock = document.createElement('div');
   copyBlock.className = 'alert-copy-block';
@@ -2462,7 +2466,14 @@ function getAlertAccentColor(toneClass: string) {
   }
 }
 
-function buildAlertAvatar(symbol: string, imageUrl: string | null, address: string, chain: unknown) {
+function buildAlertAvatar(
+  symbol: string,
+  imageUrl: string | null,
+  address: string,
+  chain: unknown,
+  launchpadId?: string | null,
+  pairDexId?: string | null,
+) {
   const wrapper = document.createElement('span');
   wrapper.className = 'token-avatar-wrap alert-avatar-wrap';
   wrapper.dataset.tokenAddress = address;
@@ -2487,7 +2498,9 @@ function buildAlertAvatar(symbol: string, imageUrl: string | null, address: stri
     wrapper.append(placeholder);
   }
 
-  wrapper.insertAdjacentHTML('beforeend', renderTokenLaunchpadBadge(address, chain));
+  wrapper.insertAdjacentHTML(
+    'beforeend', renderTokenLaunchpadBadge(address, chain, launchpadId, pairDexId),
+  );
   return wrapper;
 }
 
