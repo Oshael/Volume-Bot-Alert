@@ -52,6 +52,7 @@
     "robinhood:v3-dry-run": "node src/utils/robinhood-v3-fixture-dry-run.js",
     "robinhood:noxa-dry-run": "node src/utils/robinhood-noxa-fixture-dry-run.js",
     "robinhood:v4-dry-run": "node src/utils/robinhood-v4-fixture-dry-run.js",
+    "robinhood:v4-liquidity-replay": "node src/utils/replay-robinhood-v4-liquidity.js",
     "robinhood:metrics-dry-run": "node src/utils/robinhood-market-metrics-dry-run.js",
     "robinhood:continuous-dry-run": "node src/utils/robinhood-continuous-dry-run.js",
     "robinhood:discovery-bootstrap": "node src/utils/robinhood-discovery-bootstrap.js",

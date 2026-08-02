@@ -2470,6 +2470,32 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage100-robinhood-v4-liquidity-replay',
+    name: 'Stage 100 Robinhood V4 liquidity replay cursor',
+    repair: 'node src/utils/db-init-stage100.js',
+    tables: [{
+      table: 'robinhood_v4_liquidity_replay_state',
+      columns: [
+        'chain', 'start_block', 'next_block', 'target_block', 'checkpoint_block',
+        'checkpoint_hash', 'status', 'version', 'created_at', 'updated_at',
+      ],
+      constraints: [
+        {
+          name: 'robinhood_v4_liquidity_replay_state_pkey',
+          includes: ['PRIMARY KEY', 'chain'],
+        },
+        {
+          name: 'robinhood_v4_liquidity_replay_state_bounds_check',
+          includes: ['CHECK', 'start_block', 'next_block', 'target_block'],
+        },
+        {
+          name: 'robinhood_v4_liquidity_replay_state_completion_check',
+          includes: ['CHECK', 'completed', 'next_block', 'target_block'],
+        },
+      ],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
@@ -2501,6 +2527,7 @@ const PROFILE_GROUP_KEYS = {
     'stage97-catalog-launchpad-attribution',
     'stage98-robinhood-v3-pool-balance-tvl',
     'stage99-robinhood-v4-liquidity-ledger',
+    'stage100-robinhood-v4-liquidity-replay',
   ],
   runtime: SCHEMA_GROUPS.map((group) => group.key),
 };
