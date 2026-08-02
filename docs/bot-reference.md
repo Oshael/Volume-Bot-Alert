@@ -336,6 +336,14 @@ Grupos existentes:
 `robinhood` e `robinhood-backfill` são grupos isolados. O config rejeita
 combinar um grupo isolado com grupos compartilhados.
 
+A projeção Robinhood mantém um reparo persistente de metadata separado da página
+de mercado ativa. Identidades `robinhood-onchain` com Blockscout/DexScreener
+pendente são priorizadas por ausência de `symbol/name` e depois por atividade
+recente; assim o enriquecimento não depende de o token continuar no recorte de
+mercado de 15 minutos. `ROBINHOOD_SOCIAL_METADATA_ENABLED=true` habilita apenas
+imagem e links sociais via DexScreener; `symbol/name` continuam vindo do ERC-20
+on-chain e do Blockscout.
+
 Worker leases no PostgreSQL evitam dois donos ativos para loops protegidos. Eles
 não autorizam iniciar processos arbitrários: sempre verifique as leases e os
 logs antes de escalar.

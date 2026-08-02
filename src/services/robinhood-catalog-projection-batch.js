@@ -115,6 +115,18 @@ async function loadCandidates(repository, query) {
   };
 }
 
+async function loadDurableMetadataCandidates(catalog, query, ttlMs) {
+  const [automatic, manual] = await Promise.all([
+    catalog.listAutomaticMetadataCandidates
+      ? catalog.listAutomaticMetadataCandidates({ limit: query.maxTokens, asOf: query.asOf, ttlMs })
+      : [],
+    catalog.listManualMetadataCandidates
+      ? catalog.listManualMetadataCandidates({ limit: query.maxTokens })
+      : [],
+  ]);
+  return { automatic, manual };
+}
+
 function projectionSnapshot(candidate) {
   // The post-commit live worker owns freshness; this remains a cold repair path
   // for missed events, market identity and asynchronous metadata enrichment.
@@ -161,10 +173,12 @@ function createRobinhoodCatalogProjectionBatch(options = {}) {
     );
     const projected = projections.filter((result) => result.status === 'fulfilled').length;
     const projectionErrors = projections.length - projected;
-    const manualMetadataCandidates = catalog.listManualMetadataCandidates
-      ? await catalog.listManualMetadataCandidates({ limit: query.maxTokens }) : [];
+    const {
+      automatic: automaticMetadataCandidates,
+      manual: manualMetadataCandidates,
+    } = await loadDurableMetadataCandidates(catalog, query, blockscoutTtlMs);
     const metadataCandidates = [...new Map(
-      [...candidates.rows, ...manualMetadataCandidates]
+      [...candidates.rows, ...automaticMetadataCandidates, ...manualMetadataCandidates]
         .map((candidate) => [candidate.tokenAddress, candidate])
     ).values()];
     const metadataRows = await catalog.listMetadata(
@@ -232,7 +246,9 @@ function createRobinhoodCatalogProjectionBatch(options = {}) {
         ? 'completed-with-errors' : 'completed',
       generatedAt: asOf.toISOString(),
       candidates: candidates.rows.length,
+      automaticMetadataCandidates: automaticMetadataCandidates.length,
       manualMetadataCandidates: manualMetadataCandidates.length,
+      metadataCandidates: metadataCandidates.length,
       excludedBlocked: candidates.excludedBlocked,
       excludedFdvCap: candidates.excludedFdvCap,
       candidateLimitReached: candidates.limitReached,

@@ -103,6 +103,34 @@ describe('Robinhood catalog projection batch', () => {
     assert.deepEqual(applied, [{ address: TOKEN, name: 'Manual Token', symbol: 'MAN' }]);
   });
 
+  it('enriches durable on-chain metadata candidates outside the active market page', async () => {
+    const applied = [];
+    const catalog = {
+      async listAutomaticMetadataCandidates() {
+        return [{ tokenAddress: TOKEN, volumeUsd: '0' }];
+      },
+      async listMetadata() { return []; },
+      async applyMetadata(value) { applied.push(value); },
+    };
+    const batch = createRobinhoodCatalogProjectionBatch({
+      repository: { async listColdRepairCandidates() { return []; } },
+      catalog,
+      metadataReader: {
+        async getMetadata(address) {
+          return { address, name: 'Catalog Token', symbol: 'CAT', usable: true };
+        },
+      },
+    });
+
+    const result = await batch.runOnce();
+
+    assert.equal(result.candidates, 0);
+    assert.equal(result.automaticMetadataCandidates, 1);
+    assert.equal(result.metadataCandidates, 1);
+    assert.equal(result.onchainResolved, 1);
+    assert.deepEqual(applied, [{ address: TOKEN, name: 'Catalog Token', symbol: 'CAT' }]);
+  });
+
   it('contains per-token projection errors and reports a bounded candidate page', async () => {
     const batch = createRobinhoodCatalogProjectionBatch({
       repository: {

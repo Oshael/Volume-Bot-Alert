@@ -432,10 +432,54 @@ async function listManualMetadataCandidates(input = {}, runner = db) {
   return rows;
 }
 
+async function listAutomaticMetadataCandidates(input = {}, runner = db) {
+  const limit = Math.max(1, Math.min(Number(input.limit) || 25, 100));
+  const asOf = new Date(input.asOf ?? Date.now());
+  if (!Number.isFinite(asOf.getTime())) {
+    throw new TypeError('Robinhood metadata candidate asOf must be valid');
+  }
+  const ttlMs = Math.max(
+    60_000,
+    Math.min(Number(input.ttlMs) || 24 * 60 * 60 * 1000, 30 * 24 * 60 * 60 * 1000),
+  );
+  const { rows } = await runner.query(
+    `WITH candidates AS (
+       SELECT catalog.address,
+         catalog.symbol IS NULL OR catalog.name IS NULL AS identity_missing,
+         catalog.robinhood_blockscout_checked_at IS NULL
+           OR catalog.robinhood_blockscout_checked_at <=
+             $2::timestamptz - ($3::bigint * INTERVAL '1 millisecond') AS blockscout_due,
+         catalog.robinhood_dexscreener_checked_at IS NULL
+           OR catalog.robinhood_dexscreener_checked_at <=
+             $2::timestamptz - ($3::bigint * INTERVAL '1 millisecond') AS dexscreener_due,
+         catalog.last_seen_at
+       FROM token_catalog catalog
+       WHERE catalog.chain = 'robinhood'
+         AND catalog.source = 'robinhood-onchain'
+         AND catalog.last_seen_at IS NOT NULL
+     )
+     SELECT address AS "tokenAddress", 0::numeric AS "volumeUsd"
+     FROM candidates
+     WHERE blockscout_due OR (NOT blockscout_due AND dexscreener_due)
+     ORDER BY
+       CASE
+         WHEN identity_missing AND blockscout_due THEN 0
+         WHEN blockscout_due THEN 1
+         ELSE 2
+       END,
+       last_seen_at DESC,
+       address DESC
+     LIMIT $1`,
+    [limit, asOf, ttlMs]
+  );
+  return rows;
+}
+
 module.exports = {
   applyLiveSnapshots,
   applyMetadata,
   ensureManualToken,
+  listAutomaticMetadataCandidates,
   listMetadata,
   listManualMetadataCandidates,
   projectDashboardSnapshot,

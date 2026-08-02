@@ -116,6 +116,27 @@ describe('Robinhood dashboard catalog projection', () => {
     assert.deepEqual(calls[0].params, [75]);
   });
 
+  it('prioritizes durable on-chain identities with due metadata independently of market activity', async () => {
+    const calls = [];
+    const asOf = new Date('2026-08-02T06:00:00.000Z');
+    const rows = await catalog.listAutomaticMetadataCandidates({
+      limit: 25,
+      asOf,
+      ttlMs: 86_400_000,
+    }, {
+      async query(sql, params) {
+        calls.push({ sql, params });
+        return { rows: [{ tokenAddress: TOKEN, volumeUsd: '0' }] };
+      },
+    });
+
+    assert.equal(rows[0].tokenAddress, TOKEN);
+    assert.match(calls[0].sql, /catalog\.source = 'robinhood-onchain'/);
+    assert.match(calls[0].sql, /identity_missing AND blockscout_due/);
+    assert.match(calls[0].sql, /robinhood_dexscreener_checked_at/);
+    assert.deepEqual(calls[0].params, [25, asOf, 86_400_000]);
+  });
+
   it('projects a V3 aggregate snapshot without enabling Solana monitoring', async () => {
     const calls = [];
     const row = await catalog.projectDashboardSnapshot(snapshot(), {

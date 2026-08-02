@@ -66,6 +66,8 @@ function buildRobinhoodCatalogProjectionTelemetry(workerStatus = {}, now = Date.
     lastSummary: summary ? {
       status: summary.status ?? null,
       candidates: numericCount(summary.candidates),
+      automaticMetadataCandidates: numericCount(summary.automaticMetadataCandidates),
+      metadataCandidates: numericCount(summary.metadataCandidates),
       projected: numericCount(summary.projected),
       projectionErrors: numericCount(summary.projectionErrors),
       onchainResolved: numericCount(summary.onchainResolved),
