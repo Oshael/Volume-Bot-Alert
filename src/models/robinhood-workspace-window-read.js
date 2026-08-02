@@ -210,6 +210,41 @@ primary_prices AS (
     MAX(last_observed_at) FILTER (WHERE price_window = '24h') AS price_24h_observed_at
   FROM price_points
   GROUP BY token_address
+),
+latest_pool_liquidity AS MATERIALIZED (
+  SELECT requested.token_address, registry.protocol, registry.market_key,
+    latest.close_liquidity_usd
+  FROM requested
+  CROSS JOIN bounds
+  INNER JOIN robinhood_pool_registry registry
+    ON registry.chain = 'robinhood'
+   AND registry.token_address = requested.token_address
+   AND registry.active = TRUE
+  LEFT JOIN LATERAL (
+    SELECT bucket.close_liquidity_usd
+    FROM robinhood_market_buckets_1h bucket
+    WHERE bucket.chain = registry.chain
+      AND bucket.protocol = registry.protocol
+      AND bucket.market_key = registry.market_key
+      AND bucket.bucket_ts >= date_trunc(
+        'hour', bounds.window_end - INTERVAL '15 minutes'
+      )
+      AND bucket.bucket_ts <= date_trunc('hour', bounds.window_end)
+      AND bucket.last_observed_at > bounds.window_end - INTERVAL '15 minutes'
+      AND bucket.last_observed_at <= bounds.window_end
+    ORDER BY bucket.last_observed_at DESC, bucket.last_block_number DESC,
+      bucket.last_log_index DESC
+    LIMIT 1
+  ) latest ON TRUE
+),
+token_liquidity AS (
+  SELECT token_address,
+    SUM(close_liquidity_usd) FILTER (WHERE close_liquidity_usd IS NOT NULL)
+      AS liquidity_usd,
+    COUNT(*)::bigint AS liquidity_market_count,
+    COUNT(close_liquidity_usd)::bigint AS valued_liquidity_market_count
+  FROM latest_pool_liquidity
+  GROUP BY token_address
 )
 SELECT requested.token_address,
   market_cursor.coverage_start_at, market_cursor.coverage_end_at,
@@ -227,6 +262,10 @@ SELECT requested.token_address,
   COALESCE(token_activity.last_activity_at, latest_hour.last_activity_at) AS last_activity_at,
   primary_market.protocol AS primary_protocol,
   primary_market.market_key AS primary_market_key,
+  token_liquidity.liquidity_usd,
+  COALESCE(token_liquidity.liquidity_market_count, 0) AS liquidity_market_count,
+  COALESCE(token_liquidity.valued_liquidity_market_count, 0)
+    AS valued_liquidity_market_count,
   primary_prices.current_price_usd, primary_prices.current_observed_at,
   primary_prices.price_1h_usd, primary_prices.price_1h_observed_at,
   primary_prices.price_6h_usd, primary_prices.price_6h_observed_at,
@@ -239,6 +278,7 @@ LEFT JOIN canonical_volume_5m
 LEFT JOIN token_activity ON token_activity.token_address = requested.token_address
 LEFT JOIN primary_market ON primary_market.token_address = requested.token_address
 LEFT JOIN primary_prices ON primary_prices.token_address = requested.token_address
+LEFT JOIN token_liquidity ON token_liquidity.token_address = requested.token_address
 LEFT JOIN LATERAL (
   SELECT bucket.last_observed_at AS last_activity_at
   FROM robinhood_market_buckets_1h bucket
@@ -296,6 +336,28 @@ function normalizeCanonicalVolume5m(row) {
   };
 }
 
+function normalizeLiquidity(row) {
+  const marketCount = Number(row.liquidity_market_count);
+  const valuedMarketCount = Number(row.valued_liquidity_market_count);
+  if (!Number.isSafeInteger(marketCount) || marketCount < 0
+    || !Number.isSafeInteger(valuedMarketCount) || valuedMarketCount < 0
+    || valuedMarketCount > marketCount) {
+    throw new Error('Robinhood liquidity market coverage is invalid');
+  }
+  const liquidityUsd = row.liquidity_usd == null ? null : Number(row.liquidity_usd);
+  if (liquidityUsd != null && (!Number.isFinite(liquidityUsd) || liquidityUsd < 0)) {
+    throw new Error('Robinhood known liquidity is invalid');
+  }
+  return {
+    liquidityUsd,
+    liquidityCoverage: valuedMarketCount === 0
+      ? 'unavailable'
+      : (valuedMarketCount < marketCount ? 'partial' : 'complete'),
+    liquidityMarketCount: marketCount,
+    valuedLiquidityMarketCount: valuedMarketCount,
+  };
+}
+
 function normalizeRow(row, windowEnd) {
   const coverage = Object.fromEntries(WINDOWS.map((window) => [window,
     resolveContinuousCoverage({
@@ -330,6 +392,7 @@ function normalizeRow(row, windowEnd) {
     ...identity,
     ...metrics,
     ...normalizeCanonicalVolume5m(row),
+    ...normalizeLiquidity(row),
     primaryMarket: row.primary_protocol && row.primary_market_key
       ? Object.freeze({ protocol: row.primary_protocol, marketKey: row.primary_market_key })
       : null,
@@ -361,6 +424,7 @@ function createRobinhoodWorkspaceWindowReadRepository(options = {}) {
 module.exports = {
   createRobinhoodWorkspaceWindowReadRepository,
   __private: {
-    WINDOW_METRICS_SQL, normalizeAddresses, normalizeCanonicalVolume5m, normalizeRow,
+    WINDOW_METRICS_SQL, normalizeAddresses, normalizeCanonicalVolume5m,
+    normalizeLiquidity, normalizeRow,
   },
 };

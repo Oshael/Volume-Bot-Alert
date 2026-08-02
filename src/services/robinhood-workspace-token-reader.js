@@ -325,7 +325,11 @@ function normalizeCatalogRow(row, metrics, query, filters) {
   if (!visibility.visible) throw new Error(`${identity.key} violates its SQL visibility filter`);
 
   const age = normalizeTokenAge(row);
-  const { chain: _chain, address: _address, key: _key, ...windowMetrics } = metrics;
+  const {
+    chain: _chain, address: _address, key: _key,
+    liquidityUsd, liquidityCoverage, liquidityMarketCount,
+    valuedLiquidityMarketCount, ...windowMetrics
+  } = metrics;
   return Object.freeze({
     identity,
     symbol: optionalText(row.symbol),
@@ -337,7 +341,10 @@ function normalizeCatalogRow(row, metrics, query, filters) {
     tokenCreatedAt: age.value,
     tokenAgeProvenance: age.source,
     priceUsd: optionalNumber(row.last_price, 'priceUsd'),
-    liquidityUsd: optionalNumber(row.last_liquidity_usd, 'liquidityUsd'),
+    liquidityUsd: optionalNumber(liquidityUsd, 'liquidityUsd'),
+    liquidityCoverage,
+    liquidityMarketCount,
+    valuedLiquidityMarketCount,
     pairAddress: optionalText(row.last_pair_address),
     pairUrl: optionalText(row.last_pair_url),
     pairDexId: optionalText(row.last_dex_id),

@@ -3017,8 +3017,11 @@ function renderTotalLiquidityTooltip(
   meteoraTvl?: number | null,
 ) {
   const tvlClass = meteoraTvl != null ? 'meteora-liq-tip-value' : '';
+  const coverageLabel = item.liquidityIsLowerBound
+    ? `${Number(item.valuedLiquidityMarketCount) || 0}/${Number(item.liquidityMarketCount) || 0} pools valued`
+    : getMeteoraPoolLabel(entry, hasMeteora);
   return `
-    <div class="meteora-tip-head"><span>Total Liq</span><span>${escapeHtml(getMeteoraPoolLabel(entry, hasMeteora))}</span></div>
+    <div class="meteora-tip-head"><span>${item.liquidityIsLowerBound ? 'Known Liq Min' : 'Total Liq'}</span><span>${escapeHtml(coverageLabel)}</span></div>
     ${renderMoneyTipLine(formatPairDexSource(item.pairDexId), dexLiquidity)}
     ${renderMoneyTipLine('Meteora TVL', meteoraTvl, tvlClass)}
     ${renderMeteoraMetricHeader()}
@@ -3042,7 +3045,7 @@ export function renderTotalLiquidityCell(item: ManualTokenEntry, entry: MeteoraE
 
   return `
     <div class="met-tip-wrap total-liq-tip-wrap">
-      <span class="${valueClass}">${escapeHtml(fmtMoney(totalLiquidity))}</span>
+      <span class="${valueClass}">${escapeHtml(`${fmtMoney(totalLiquidity)}${item.liquidityIsLowerBound ? '+' : ''}`)}</span>
       <div class="met-tip-dd total-liq-tip-dd">
         ${renderTotalLiquidityTooltip(item, entry, hasMeteora, dexLiquidity, meteoraTvl)}
       </div>

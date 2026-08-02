@@ -710,6 +710,10 @@ não negativos, cria as faixas e ativa sua manutenção atômica pelo worker liv
 Com a Stage 102, swaps V4 valoram o principal das faixas no preço corrente; o
 backfill consulta o ledger no bloco/log do swap, sem usar posições futuras.
 Deltas live negativos atualizam faixas existentes sem tentar inserir saldo negativo.
+Nos cards monitorados, volume continua vindo das janelas exatas de observações/buckets.
+A liquidez Robinhood é agregada na leitura exata a partir do snapshot recente mais
+novo de cada pool ativa; pools ainda não valoradas não anulam a soma conhecida, que
+é exposta como limite inferior com cobertura parcial e marcador `+`.
 
 ### 13.3 Pipeline de backfill
 

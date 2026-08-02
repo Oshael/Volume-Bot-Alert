@@ -23,6 +23,9 @@ function normalizedRow(chain, overrides = {}) {
     tokenAgeProvenance: 'chain-native',
     priceUsd: 2.5,
     liquidityUsd: chain === 'solana' ? 9_000 : null,
+    liquidityCoverage: chain === 'robinhood' ? 'unavailable' : null,
+    liquidityMarketCount: chain === 'robinhood' ? 0 : null,
+    valuedLiquidityMarketCount: chain === 'robinhood' ? 0 : null,
     pairAddress: 'pair',
     pairUrl: 'https://dex.example/pair',
     pairDexId: 'dex',
@@ -86,6 +89,17 @@ describe('dashboard monitored response', () => {
     assert.equal(solana.coverage['1h'], 'unavailable');
     assert.equal(solana.catalogFirstSeenAt, Date.parse('2026-07-14T12:00:00.000Z'));
     assert.equal(Object.hasOwn(solana, 'eligibleForMonitoring'), false);
+
+    const partial = buildDashboardMonitoredToken(normalizedRow('robinhood', {
+      liquidityUsd: 12_000,
+      liquidityCoverage: 'partial',
+      liquidityMarketCount: 3,
+      valuedLiquidityMarketCount: 2,
+    }));
+    assert.equal(partial.liquidityUsd, 12_000);
+    assert.equal(partial.liquidityIsLowerBound, true);
+    assert.equal(partial.liquidityMarketCount, 3);
+    assert.equal(partial.valuedLiquidityMarketCount, 2);
 
     const unknown = buildDashboardMonitoredToken(normalizedRow('robinhood', {
       valuation: { type: 'fdv', usd: null, observedAt: null, freshness: 'unknown' },

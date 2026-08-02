@@ -96,6 +96,10 @@ export interface DashboardMonitoredToken {
   valuation?: TokenValuationSnapshot | null;
   priceUsd?: number | null;
   liquidityUsd?: number | null;
+  liquidityCoverage?: 'complete' | 'partial' | 'unavailable' | null;
+  liquidityMarketCount?: number | null;
+  valuedLiquidityMarketCount?: number | null;
+  liquidityIsLowerBound?: boolean;
   volume5m?: number | null;
   volume1h?: number | null;
   volume6h?: number | null;

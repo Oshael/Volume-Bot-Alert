@@ -30,6 +30,9 @@ function metricRow(overrides = {}) {
     last_activity_at: new Date('2026-07-15T17:20:00.000Z'),
     primary_protocol: 'uniswap-v3',
     primary_market_key: `robinhood:uniswap-v3:0x${'2'.repeat(40)}`,
+    liquidity_usd: '12000',
+    liquidity_market_count: '3',
+    valued_liquidity_market_count: '2',
     current_price_usd: '2',
     current_observed_at: new Date('2026-07-15T17:59:00.000Z'),
     price_1h_usd: '1.6',
@@ -68,6 +71,10 @@ describe('Robinhood workspace window metric reader', () => {
     assert.equal(row.volume1hUsd, 125000);
     assert.equal(row.swaps5m, 0);
     assert.equal(row.swaps1h, 18);
+    assert.equal(row.liquidityUsd, 12000);
+    assert.equal(row.liquidityCoverage, 'partial');
+    assert.equal(row.liquidityMarketCount, 3);
+    assert.equal(row.valuedLiquidityMarketCount, 2);
     assert.deepEqual(row.coverage, {
       '5m': 'complete', '1h': 'complete', '6h': 'complete', '24h': 'complete',
     });
@@ -154,6 +161,11 @@ describe('Robinhood workspace window metric reader', () => {
     assert.match(sql, /CROSS JOIN LATERAL/);
     assert.match(sql, /bucket\.protocol = primary_market\.protocol/);
     assert.match(sql, /primary_prices AS/);
+    assert.match(sql, /latest_pool_liquidity AS MATERIALIZED/);
+    assert.match(sql, /INNER JOIN robinhood_pool_registry registry/);
+    assert.match(sql, /SUM\(close_liquidity_usd\) FILTER/);
+    assert.match(sql, /bucket\.bucket_ts >= date_trunc/);
+    assert.match(sql, /bucket\.last_observed_at > bounds\.window_end - INTERVAL '15 minutes'/);
     assert.match(sql, /robinhood_ingestion_cursors/);
     assert.match(sql, /FROM robinhood_market_observations observation/);
     assert.match(sql, /observed_at > canonical_volume_bounds\.volume_window_end - INTERVAL '10 minutes'/);
@@ -161,7 +173,7 @@ describe('Robinhood workspace window metric reader', () => {
     assert.match(sql, /coverage_start_timestamp AS coverage_start_at/);
     assert.doesNotMatch(sql, /created_at AS coverage_start_at/);
     assert.equal((sql.match(/FROM robinhood_market_buckets_1m bucket/g) || []).length, 3);
-    assert.equal((sql.match(/FROM robinhood_market_buckets_1h bucket/g) || []).length, 2);
+    assert.equal((sql.match(/FROM robinhood_market_buckets_1h bucket/g) || []).length, 3);
     assert.match(sql, /FROM market_activity\s+GROUP BY token_address/);
     assert.match(sql, /MAX\(market_last_observed_at\) AS last_activity_at/);
     assert.match(sql, /COALESCE\(token_activity\.last_activity_at, latest_hour\.last_activity_at\)/);
@@ -169,7 +181,6 @@ describe('Robinhood workspace window metric reader', () => {
     assert.match(sql, /\) latest_hour ON TRUE/);
     assert.match(sql, /robinhood_market_buckets_1h/);
     assert.doesNotMatch(sql, /\) prices ON TRUE/);
-    assert.doesNotMatch(sql, /robinhood_pool_registry/);
     assert.doesNotMatch(sql, /eligible_for_monitoring/);
     assert.doesNotMatch(sql, /\b(?:INSERT|UPDATE|DELETE)\b/);
   });
