@@ -3,6 +3,7 @@ const { describe, it } = require('node:test');
 
 const {
   AGGREGATE3_SELECTOR,
+  BALANCE_OF_SELECTOR,
   MULTICALL3_ADDRESS,
   SELECTORS,
   createErc20MetadataReader,
@@ -213,6 +214,24 @@ describe('EVM ERC-20 metadata reader', () => {
     assert.equal(cached.cached, true);
     assert.equal(rpc.calls.length, 3);
     assert.equal(reader.getSupplyCacheSize(), 2);
+  });
+
+  it('reads an ERC-20 balance for an exact holder and block', async () => {
+    const holder = '0x2222222222222222222222222222222222222222';
+    const rpc = createRpc((_method, params) => {
+      assert.equal(params[0].data, `${BALANCE_OF_SELECTOR}${holder.slice(2).padStart(64, '0')}`);
+      assert.equal(params[1], '0x10');
+      return uintResult(123n);
+    });
+    const reader = createErc20MetadataReader({ rpcClient: rpc });
+    const result = await reader.getBalanceOf(TOKEN, holder, { blockTag: '0x10' });
+    const cached = await reader.getBalanceOf(TOKEN, holder, { blockTag: '0x10' });
+
+    assert.equal(result.balanceRaw, '123');
+    assert.equal(result.usable, true);
+    assert.equal(cached.balanceRaw, '123');
+    assert.equal(cached.cached, true);
+    assert.equal(rpc.calls.length, 1);
   });
 
   it('returns an unavailable supply result instead of throwing historical state failures', async () => {

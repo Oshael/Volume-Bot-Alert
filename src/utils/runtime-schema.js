@@ -2430,6 +2430,19 @@ const SCHEMA_GROUPS = [
       columns: ['launchpad_id', 'launchpad_checked_at'],
     }],
   },
+  {
+    key: 'stage98-robinhood-v3-pool-balance-tvl',
+    name: 'Stage 98 Robinhood V3 pool-balance TVL',
+    repair: 'node src/utils/db-init-stage98.js',
+    tables: [
+      ['robinhood_market_observations', 'robinhood_market_observations_liquidity_protocol_check'],
+      ['robinhood_market_buckets_1m', 'robinhood_market_buckets_1m_liquidity_check'],
+      ['robinhood_market_buckets_1h', 'robinhood_market_buckets_1h_liquidity_check'],
+    ].map(([table, name]) => ({
+      table,
+      constraints: [{ name, includes: ['CHECK', 'spot_tvl_from_pool_balances'] }],
+    })),
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
@@ -2459,6 +2472,7 @@ const PROFILE_GROUP_KEYS = {
     'stage95-telegram-language-preference',
     'stage96-robinhood-live-supply-provenance',
     'stage97-catalog-launchpad-attribution',
+    'stage98-robinhood-v3-pool-balance-tvl',
   ],
   runtime: SCHEMA_GROUPS.map((group) => group.key),
 };

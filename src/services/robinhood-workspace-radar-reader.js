@@ -227,7 +227,7 @@ function buildCatalogSql(sorts) {
 ${buildActivityCteSql(sorts)}
 SELECT tc.address, tc.symbol, tc.name, tc.source, tc.first_seen_at,
   tc.last_seen_at, tc.last_evaluated_at, tc.last_token_created_at_ms,
-  valuation.last_fdv_usd, valuation.valuation_observed_at, tc.last_price,
+  valuation.last_fdv_usd, valuation.valuation_observed_at, tc.last_price, tc.last_liquidity_usd,
   tc.last_pair_address, tc.last_pair_url, tc.last_dex_id, tc.last_image_url,
   tc.launchpad_id,
   tc.last_twitter_url, tc.last_community_url, tc.monitor_priority,
@@ -259,7 +259,7 @@ LIMIT $10::int`;
 
 const PINNED_SQL = `SELECT tc.address, tc.symbol, tc.name, tc.source, tc.first_seen_at,
   tc.last_seen_at, tc.last_evaluated_at, tc.last_token_created_at_ms,
-  valuation.last_fdv_usd, valuation.valuation_observed_at, tc.last_price,
+  valuation.last_fdv_usd, valuation.valuation_observed_at, tc.last_price, tc.last_liquidity_usd,
   tc.last_pair_address, tc.last_pair_url, tc.last_dex_id, tc.last_image_url,
   tc.launchpad_id,
   tc.last_twitter_url, tc.last_community_url, tc.monitor_priority
@@ -324,7 +324,7 @@ function normalizeRow(row, metrics, query, options = {}) {
     lastSeenAt: optionalIso(row.last_seen_at, 'lastSeenAt'),
     lastEvaluatedAt: optionalIso(row.last_evaluated_at, 'lastEvaluatedAt'),
     valuation: visibility.valuation, priceUsd: optionalNumber(row.last_price, 'priceUsd'),
-    liquidityUsd: null, pairAddress: row.last_pair_address || null,
+    liquidityUsd: optionalNumber(row.last_liquidity_usd, 'liquidityUsd'),
     pairUrl: row.last_pair_url || null, pairDexId: row.last_dex_id || null,
     imageUrl: row.last_image_url || null, launchpadId: row.launchpad_id || null,
     twitterUrl: row.last_twitter_url || null,

@@ -99,9 +99,48 @@ function v2Liquidity(input) {
   };
 }
 
+function v3Liquidity(input) {
+  const required = [
+    input.liquidityRaw, input.tokenBalanceRaw, input.quoteBalanceRaw, input.tokenDecimals,
+    input.quoteDecimals, input.tokenUsdPrice, input.quoteUsdPrice,
+  ];
+  if (required.some((value) => value == null)) return null;
+  const tokenBalance = BigInt(input.tokenBalanceRaw);
+  const quoteBalance = BigInt(input.quoteBalanceRaw);
+  const tokenDecimals = Number(input.tokenDecimals);
+  const quoteDecimals = Number(input.quoteDecimals);
+  if (tokenBalance < 0n || quoteBalance < 0n
+    || !Number.isInteger(tokenDecimals) || tokenDecimals < 0 || tokenDecimals > 255
+    || !Number.isInteger(quoteDecimals) || quoteDecimals < 0 || quoteDecimals > 255) {
+    throw new Error('Invalid v3 pool balance or decimals');
+  }
+  const tokenValue = multiply(
+    rational(tokenBalance, 10n ** BigInt(tokenDecimals)), parseDecimal(input.tokenUsdPrice)
+  );
+  const quoteValue = multiply(
+    rational(quoteBalance, 10n ** BigInt(quoteDecimals)), parseDecimal(input.quoteUsdPrice)
+  );
+  const liquidity = {
+    numerator: (tokenValue.numerator * quoteValue.denominator)
+      + (quoteValue.numerator * tokenValue.denominator),
+    denominator: tokenValue.denominator * quoteValue.denominator,
+  };
+  return {
+    liquidityUsd: formatDecimal(liquidity, input.usdDecimalPlaces ?? 12),
+    exact: exactOutput(liquidity),
+    status: 'spot_tvl_from_pool_balances',
+    confidence: 'medium',
+    warning: 'spot_price_and_pool_balances_are_manipulable',
+  };
+}
+
 function buildLiquidityAssessment(input = {}) {
   const protocol = String(input.protocol || '');
   if (protocol === 'uniswap-v2') return { protocol, ...v2Liquidity(input) };
+  if (protocol === 'uniswap-v3') {
+    const assessed = v3Liquidity(input);
+    if (assessed) return { protocol, liquidityRaw: String(input.liquidityRaw), ...assessed };
+  }
   if (protocol === 'uniswap-v3' || protocol === 'uniswap-v4') {
     return {
       protocol,

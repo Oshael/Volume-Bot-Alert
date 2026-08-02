@@ -171,7 +171,7 @@ ${buildActivityCteSql(sorts)}
 SELECT
   tc.address, tc.symbol, tc.name, tc.source, tc.first_seen_at,
   tc.last_token_created_at_ms, valuation.last_fdv_usd,
-  valuation.valuation_observed_at, tc.last_price, tc.last_pair_address,
+  valuation.valuation_observed_at, tc.last_price, tc.last_liquidity_usd, tc.last_pair_address,
   tc.last_pair_url, tc.last_dex_id, tc.last_image_url, tc.launchpad_id,
   tc.last_twitter_url, tc.last_community_url, tc.monitor_priority,
   tc.last_seen_at, tc.last_evaluated_at${activitySelect ? `,
@@ -192,7 +192,7 @@ LIMIT $5::int`;
 const PINNED_SQL = `SELECT
   tc.address, tc.symbol, tc.name, tc.source, tc.first_seen_at,
   tc.last_token_created_at_ms, valuation.last_fdv_usd,
-  valuation.valuation_observed_at, tc.last_price, tc.last_pair_address,
+  valuation.valuation_observed_at, tc.last_price, tc.last_liquidity_usd, tc.last_pair_address,
   tc.last_pair_url, tc.last_dex_id, tc.last_image_url, tc.launchpad_id,
   tc.last_twitter_url, tc.last_community_url, tc.monitor_priority,
   tc.last_seen_at, tc.last_evaluated_at
@@ -337,7 +337,7 @@ function normalizeCatalogRow(row, metrics, query, filters) {
     tokenCreatedAt: age.value,
     tokenAgeProvenance: age.source,
     priceUsd: optionalNumber(row.last_price, 'priceUsd'),
-    liquidityUsd: null,
+    liquidityUsd: optionalNumber(row.last_liquidity_usd, 'liquidityUsd'),
     pairAddress: optionalText(row.last_pair_address),
     pairUrl: optionalText(row.last_pair_url),
     pairDexId: optionalText(row.last_dex_id),

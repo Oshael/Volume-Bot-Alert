@@ -710,7 +710,6 @@ function buildValuationPayload(item) {
 }
 
 function getDashboardLiquidityUsd(item) {
-  if (item.chain === 'robinhood') return null;
   return toNumberOrNull(item.last_liquidity_usd);
 }
 

@@ -1496,6 +1496,7 @@ test('renders Radar valuation freshness and follows the master chain filter', as
   await expect(row.locator('.token-launchpad-pons')).toHaveAttribute('aria-label', 'pons');
   await expect(row.locator('.token-launchpad-pons'))
     .toHaveAttribute('title', 'pons · Pool: Uniswap V3');
+  await expect(row.locator('.token-launchpad-pons')).not.toHaveCSS('cursor', 'help');
   await expect(row).toContainText('RADARST');
   await expect(row).toContainText('FDV $350K');
   await expect(row).toContainText('STALE VALUATION');

@@ -113,6 +113,8 @@ function resultsFor(prepared, overrides = {}) {
       decimals: 6,
       supply: 10n ** 15n,
     }),
+    tokenBalance: overrides.tokenBalance || `0x${word(10n * 10n ** 18n)}`,
+    quoteBalance: overrides.quoteBalance || `0x${word(2n * 10n ** 18n)}`,
   };
 }
 
@@ -172,6 +174,7 @@ describe('Robinhood backfill enrichment adapter', () => {
       entry.observation.quoteUsdSource,
       'canonical-uniswap-v3-weth-usdg-100'
     );
+    assert.equal(entry.observation.liquidityStatus, 'spot_tvl_from_pool_balances');
   });
 
   it('keeps policy rejection terminal without decoding absent metadata', async () => {

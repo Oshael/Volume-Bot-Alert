@@ -786,7 +786,6 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   letter-spacing: 0;
   line-height: 1;
   pointer-events: auto;
-  cursor: help;
 }
 
 .token-launchpad-pump {

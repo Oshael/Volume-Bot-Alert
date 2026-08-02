@@ -17,6 +17,7 @@ const PENDING_ENRICHMENT_REASONS = new Set([
 const LIQUIDITY_STATUSES = new Set([
   'spot_estimate_from_double_quote_reserve',
   'missing_v2_reserve_or_quote',
+  'spot_tvl_from_pool_balances',
   'requires_tick_liquidity_distribution',
 ]);
 const MINUTE_MS = 60 * 1000;
@@ -403,6 +404,16 @@ function normalizeLiquidityMetrics(observation, protocol) {
       || confidence !== (available ? 'medium' : 'none')
     ) {
       throw new Error('V2 observation liquidity evidence is inconsistent');
+    }
+  } else if (protocol === 'uniswap-v3') {
+    const available = status === 'spot_tvl_from_pool_balances';
+    if (
+      liquidityRaw == null
+      || available !== (liquidityUsd != null)
+      || confidence !== (available ? 'medium' : 'none')
+      || (!available && status !== 'requires_tick_liquidity_distribution')
+    ) {
+      throw new Error('V3 observation liquidity evidence is inconsistent');
     }
   } else if (
     status !== 'requires_tick_liquidity_distribution'

@@ -73,7 +73,20 @@ describe('Robinhood market policy', () => {
     assert.equal(assessment.confidence, 'medium');
   });
 
-  it('does not invent v3/v4 USD liquidity from the scalar liquidity field', () => {
+  it('values v3 TVL from pool balances without treating scalar liquidity as USD', () => {
+    const assessment = buildLiquidityAssessment({
+      protocol: 'uniswap-v3', liquidityRaw: '999999999999999999',
+      tokenBalanceRaw: 10n * 10n ** 18n, quoteBalanceRaw: 30_000n * 10n ** 6n,
+      tokenDecimals: 18, quoteDecimals: 6, tokenUsdPrice: '2', quoteUsdPrice: '1',
+    });
+
+    assert.equal(assessment.liquidityUsd, '30020');
+    assert.equal(assessment.status, 'spot_tvl_from_pool_balances');
+    assert.equal(assessment.confidence, 'medium');
+    assert.equal(assessment.liquidityRaw, '999999999999999999');
+  });
+
+  it('keeps concentrated liquidity unknown when pool balances are absent', () => {
     for (const protocol of ['uniswap-v3', 'uniswap-v4']) {
       const assessment = buildLiquidityAssessment({ protocol, liquidityRaw: '999999999999999999' });
       assert.equal(assessment.liquidityUsd, null, protocol);

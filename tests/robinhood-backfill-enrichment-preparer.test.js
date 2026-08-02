@@ -150,7 +150,7 @@ describe('Robinhood backfill enrichment preparer', () => {
       assert.equal(prepared.context.event.kind, 'swap');
       assert.equal(prepared.context.event.protocol, protocol);
       assert.equal(prepared.context.event.marketKey, details.marketKey);
-      assert.equal(prepared.requests.length, 3);
+      assert.equal(prepared.requests.length, protocol === 'uniswap-v3' ? 5 : 3);
     }
   });
 
@@ -168,6 +168,8 @@ describe('Robinhood backfill enrichment preparer', () => {
     assert.equal(prepared.requests[0].provider, 'alchemy-free');
     assert.equal(prepared.requests[1].provider, null);
     assert.equal(prepared.requests[2].provider, null);
+    assert.equal(prepared.requests[3].provider, null);
+    assert.equal(prepared.requests[4].provider, null);
   });
 
   it('skips metadata RPC for a denied token but preserves terminal context', () => {

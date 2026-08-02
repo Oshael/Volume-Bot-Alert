@@ -21,6 +21,7 @@ function catalogRow(address, overrides = {}) {
     last_fdv_usd: '50000',
     valuation_observed_at: new Date('2026-07-15T17:20:00.000Z'),
     last_price: '0.25',
+    last_liquidity_usd: '12000',
     last_pair_address: `0x${'3'.repeat(40)}`,
     last_pair_url: 'https://dex.example/robinhood',
     last_dex_id: 'uniswap-v3',
@@ -105,7 +106,7 @@ describe('Robinhood workspace token reader', () => {
       lastSeenAt: prefix.rows[0].lastSeenAt,
     }, {
       priceUsd: 0.25,
-      liquidityUsd: null,
+      liquidityUsd: 12000,
       pairDexId: 'uniswap-v3',
       launchpadId: 'pons',
       monitorPriority: 'dormant',

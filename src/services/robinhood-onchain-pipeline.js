@@ -244,12 +244,27 @@ function createRobinhoodOnchainPipeline(options = {}) {
       } : {}),
     });
     if (!observation.accepted) return observation;
+    let poolBalances = {};
+    if (swap.protocol === 'uniswap-v3' && metadataReader.getBalanceOf) {
+      const tag = blockTag(swap.blockNumber);
+      const [tokenBalance, quoteBalance] = await Promise.all([
+        metadataReader.getBalanceOf(swap.tokenAddress, swap.poolAddress, { blockTag: tag }),
+        metadataReader.getBalanceOf(swap.quoteAddress, swap.poolAddress, { blockTag: tag }),
+      ]);
+      poolBalances = {
+        tokenBalanceRaw: tokenBalance.balanceRaw,
+        quoteBalanceRaw: quoteBalance.balanceRaw,
+      };
+    }
     const liquidity = buildLiquidityAssessment({
       protocol: swap.protocol,
       quoteReserveRaw: swap.quoteReserveRaw,
       quoteDecimals: quoteMetadata.decimals,
       quoteUsdPrice: observation.quoteUsdPrice,
+      tokenDecimals: tokenMetadata.decimals,
+      tokenUsdPrice: observation.priceUsd,
       liquidityRaw: swap.liquidityRaw,
+      ...poolBalances,
     });
     return {
       ...observation,

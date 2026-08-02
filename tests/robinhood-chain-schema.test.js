@@ -31,6 +31,7 @@ const stage81 = require('../src/utils/db-init-stage81');
 const stage90 = require('../src/utils/db-init-stage90');
 const stage91 = require('../src/utils/db-init-stage91');
 const stage92 = require('../src/utils/db-init-stage92');
+const stage98 = require('../src/utils/db-init-stage98');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 
 describe('Robinhood additive chain schema', () => {
@@ -411,6 +412,20 @@ describe('Robinhood additive chain schema', () => {
     assert.doesNotMatch(sql, /NOT NULL|DROP\s+(?:COLUMN|TABLE)/i);
     assert.equal(group.repair, 'node src/utils/db-init-stage68.js');
     assert.equal(group.tables.length, 2);
+  });
+
+  it('allows V3 pool-balance TVL while keeping V4 fail-closed', () => {
+    const sql = stage98.STATEMENTS.join('\n');
+    const group = SCHEMA_GROUPS.find((entry) => (
+      entry.key === 'stage98-robinhood-v3-pool-balance-tvl'
+    ));
+
+    assert.equal(stage98.TABLES.length, 3);
+    assert.match(sql, /spot_tvl_from_pool_balances/);
+    assert.match(sql, /protocol = 'uniswap-v4'/);
+    assert.match(sql, /requires_tick_liquidity_distribution/);
+    assert.equal(group.repair, 'node src\/utils\/db-init-stage98.js');
+    assert.equal(group.tables.length, 3);
   });
 
   it('stores FDV separately from market cap in the shared catalog', () => {

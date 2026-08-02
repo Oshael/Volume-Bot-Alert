@@ -684,6 +684,11 @@ Stages confirmados:
 | 91 | cursores independentes `seed`/`live` de wallet-swaps |
 | 92 | índice de leitura das observações para atribuição |
 | 96 | proveniência `latest_call` usada pelo enrichment LIVE no node podado |
+| 98 | TVL Uniswap V3 pelos saldos ERC-20 da pool e constraints correspondentes |
+
+A liquidez V3 usa os saldos reais de token e quote mantidos pelo contrato da
+pool, valorados ao preço spot do mesmo snapshot. V4 continua fail-closed até a
+reconstrução específica de posições/ticks no `PoolManager` compartilhado.
 
 ### 13.3 Pipeline de backfill
 

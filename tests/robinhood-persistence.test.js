@@ -924,9 +924,26 @@ describe('Robinhood persistence repository', () => {
         })],
         cursor: cursor(),
       }),
-      /Concentrated-liquidity observation evidence is inconsistent/
+      /V3 observation liquidity evidence is inconsistent/
     );
     assert.equal(fake.calls.length, 0);
+  });
+
+  it('accepts V3 pool-balance TVL with its concentrated-liquidity scalar', async () => {
+    const fake = createFakeDatabase();
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+
+    await repository.commitMarketRange({
+      entries: [marketEntry({
+        liquidityUsd: '30020',
+        liquidityStatus: 'spot_tvl_from_pool_balances',
+        liquidityConfidence: 'medium',
+        liquidityWarning: 'spot_price_and_pool_balances_are_manipulable',
+      })],
+      cursor: cursor(),
+    });
+    const insert = fake.calls.find((call) => /INSERT INTO robinhood_market_observations/.test(call.sql));
+    assert.equal(JSON.parse(insert.params[0])[0].liquidityUsd, '30020');
   });
 
   it('rejects an enrichment result paired with different decoded swap amounts', async () => {

@@ -76,6 +76,10 @@ function addLiquidity(observation, event, quoteMetadata) {
     quoteReserveRaw: event.quoteReserveRaw,
     quoteDecimals: quoteMetadata.decimals,
     quoteUsdPrice: observation.quoteUsdPrice,
+    tokenBalanceRaw: event.protocol === 'uniswap-v3' ? quantity(event.tokenBalanceRaw, 'tokenBalanceRaw') : null,
+    quoteBalanceRaw: event.protocol === 'uniswap-v3' ? quantity(event.quoteBalanceRaw, 'quoteBalanceRaw') : null,
+    tokenDecimals: observation.tokenDecimals,
+    tokenUsdPrice: observation.priceUsd,
     liquidityRaw: event.liquidityRaw,
   });
   return {
@@ -126,6 +130,10 @@ function createRobinhoodBackfillEnrichmentAdapter(options = {}) {
         wethUsdSource: wethQuote.source,
       } : {}),
     });
+    if (event.protocol === 'uniswap-v3') {
+      event.tokenBalanceRaw = quantity(results.tokenBalance, 'tokenBalance').toString();
+      event.quoteBalanceRaw = quantity(results.quoteBalance, 'quoteBalance').toString();
+    }
     return {
       log: enriched.log,
       event,

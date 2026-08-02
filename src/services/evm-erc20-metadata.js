@@ -1,5 +1,6 @@
 const MULTICALL3_ADDRESS = '0xca11bde05977b3631167028862be2a173976ca11';
 const AGGREGATE3_SELECTOR = '0x82ad56cb';
+const BALANCE_OF_SELECTOR = '0x70a08231';
 const SELECTORS = Object.freeze({
   name: '0x06fdde03',
   symbol: '0x95d89b41',
@@ -27,6 +28,10 @@ function normalizeHex(value, label = 'hex data') {
 
 function word(value) {
   return BigInt(value).toString(16).padStart(64, '0');
+}
+
+function encodeBalanceOf(holder) {
+  return `${BALANCE_OF_SELECTOR}${normalizeAddress(holder, 'balance holder').slice(2).padStart(64, '0')}`;
 }
 
 function paddedBytes(hex) {
@@ -151,6 +156,7 @@ function createErc20MetadataReader(options = {}) {
   const pending = new Map();
   const supplyCache = new Map();
   const supplyPending = new Map();
+  const balanceCache = new Map();
   let multicallUsable;
   let multicallCheck = null;
 
@@ -269,12 +275,40 @@ function createErc20MetadataReader(options = {}) {
     return task;
   }
 
+  async function getBalanceOf(tokenAddress, holder, requestOptions = {}) {
+    const address = normalizeAddress(tokenAddress, 'token address');
+    const normalizedHolder = normalizeAddress(holder, 'balance holder');
+    const blockTag = String(requestOptions.blockTag || 'latest');
+    const key = `${address}:${normalizedHolder}:${blockTag}`;
+    if (blockTag !== 'latest' && balanceCache.has(key)) {
+      return { ...balanceCache.get(key), cached: true };
+    }
+    try {
+      const returnData = await rpcClient.request(
+        'eth_call',
+        [{ to: address, data: encodeBalanceOf(normalizedHolder) }, blockTag],
+        RPC_FALLBACK_OPTIONS
+      );
+      const value = {
+        address, holder: normalizedHolder, blockTag,
+        balanceRaw: decodeUintResult(returnData, 256, 'balanceOf').toString(), usable: true,
+      };
+      if (blockTag !== 'latest') rememberCacheEntry(balanceCache, key, value, maxCacheEntries);
+      return { ...value, cached: false };
+    } catch (error) {
+      if (isTransientRpcFailure(error)) throw error;
+      return { address, holder: normalizedHolder, blockTag, balanceRaw: null, usable: false };
+    }
+  }
+
   return Object.freeze({
     getMetadata,
+    getBalanceOf,
     getTotalSupply,
     clearCache: () => {
       cache.clear();
       supplyCache.clear();
+      balanceCache.clear();
     },
     getCacheSize: () => cache.size,
     getSupplyCacheSize: () => supplyCache.size,
@@ -283,6 +317,7 @@ function createErc20MetadataReader(options = {}) {
 
 module.exports = {
   AGGREGATE3_SELECTOR,
+  BALANCE_OF_SELECTOR,
   FIELDS,
   MULTICALL3_ADDRESS,
   SELECTORS,
@@ -290,5 +325,6 @@ module.exports = {
   decodeAggregate3,
   decodeMetadataResults,
   decodeTextResult,
+  encodeBalanceOf,
   encodeAggregate3,
 };

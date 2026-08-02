@@ -112,6 +112,25 @@ describe('Robinhood onchain pipeline', () => {
     assert.equal(accepted[0].liquidityWarning, 'spot_price_and_reserves_are_manipulable');
   });
 
+  it('values v3 TVL from exact pool token balances', async () => {
+    const reader = metadataReader();
+    reader.getBalanceOf = async (address, holder, options) => ({
+      address, holder, blockTag: options.blockTag, usable: true,
+      balanceRaw: address === v3Fixture.expected.token0
+        ? (2n * 10n ** 18n).toString()
+        : (10n * 10n ** 18n).toString(),
+    });
+    const pipeline = createPipeline({
+      metadataReader: reader,
+      now: Number(BigInt(v3Fixture.swap.blockTimestamp) * 1000n) + 1000,
+    });
+
+    const [observation] = await pipeline.processMarketLogs([v3Fixture.swap]);
+    assert.equal(observation.liquidityStatus, 'spot_tvl_from_pool_balances');
+    assert.equal(observation.liquidityConfidence, 'medium');
+    assert.ok(Number(observation.liquidityUsd) > 0);
+  });
+
   it('returns persistence entries for discoveries and rejected market enrichment', async () => {
     const pipeline = createPipeline({
       policyOptions: { extraDenied: { TEST: v4Fixture.expected.currency0 } },

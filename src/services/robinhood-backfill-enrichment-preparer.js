@@ -2,6 +2,7 @@ const {
   FIELDS,
   MULTICALL3_ADDRESS,
   SELECTORS,
+  encodeBalanceOf,
   encodeAggregate3,
 } = require('./evm-erc20-metadata');
 const {
@@ -161,6 +162,16 @@ function createRobinhoodBackfillEnrichmentPreparer(options = {}) {
           rpcProvider
         )
       );
+      if (event.protocol === 'uniswap-v3') {
+        requests.push(
+          request('tokenBalance', 'eth_call', [{
+            to: event.tokenAddress, data: encodeBalanceOf(event.poolAddress),
+          }, resolvedBlockTag], rpcProvider),
+          request('quoteBalance', 'eth_call', [{
+            to: event.quoteAddress, data: encodeBalanceOf(event.poolAddress),
+          }, resolvedBlockTag], rpcProvider)
+        );
+      }
     }
     return {
       tokenAddress: event.tokenAddress,
