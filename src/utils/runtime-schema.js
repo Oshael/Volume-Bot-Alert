@@ -2535,6 +2535,19 @@ const SCHEMA_GROUPS = [
       },
     ],
   },
+  {
+    key: 'stage102-robinhood-v4-tick-range-tvl',
+    name: 'Stage 102 Robinhood V4 tick-range TVL',
+    repair: 'node src/utils/db-init-stage102.js',
+    tables: [
+      ['robinhood_market_observations', 'robinhood_market_observations_liquidity_protocol_check'],
+      ['robinhood_market_buckets_1m', 'robinhood_market_buckets_1m_liquidity_check'],
+      ['robinhood_market_buckets_1h', 'robinhood_market_buckets_1h_liquidity_check'],
+    ].map(([table, name]) => ({
+      table,
+      constraints: [{ name, includes: ['CHECK', 'spot_tvl_from_v4_tick_ranges'] }],
+    })),
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
@@ -2568,6 +2581,7 @@ const PROFILE_GROUP_KEYS = {
     'stage99-robinhood-v4-liquidity-ledger',
     'stage100-robinhood-v4-liquidity-replay',
     'stage101-robinhood-v4-liquidity-ranges',
+    'stage102-robinhood-v4-tick-range-tvl',
   ],
   runtime: SCHEMA_GROUPS.map((group) => group.key),
 };

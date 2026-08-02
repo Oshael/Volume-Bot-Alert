@@ -108,7 +108,7 @@ function cursor() {
   };
 }
 
-function marketEntry(overrides = {}) {
+function marketEntry(overrides = {}, eventOverrides = {}) {
   const marketKey = `robinhood:uniswap-v3:${POOL}`;
   return {
     log: {
@@ -135,6 +135,7 @@ function marketEntry(overrides = {}) {
       side: 'buy',
       tokenAmountRaw: '123456789012345678901234567890',
       quoteAmountRaw: '98765432109876543210',
+      ...eventOverrides,
     },
     observation: {
       accepted: true,
@@ -528,6 +529,18 @@ describe('Robinhood persistence repository', () => {
     const poolRead = fake.calls.find((call) => /FROM robinhood_pool_registry/.test(call.sql));
     assert.doesNotMatch(poolRead.sql, /SELECT \*/);
     assert.match(poolRead.sql, /protocol, market_key, pool_address/);
+  });
+
+  it('reads V4 ranges at the exact swap boundary', async () => {
+    const row = { tick_lower: -60, tick_upper: 60, liquidity_gross: '100' };
+    const fake = createFakeDatabase({ readRows: [row] });
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+
+    assert.deepEqual(await repository.listHistoricalV4LiquidityRanges(POOL_ID, '10', '7'), [row]);
+    const call = fake.calls[0];
+    assert.deepEqual(call.params, [POOL_ID, '10', '7']);
+    assert.match(call.sql, /block_number < \$2/);
+    assert.match(call.sql, /block_number = \$2 AND log_index < \$3/);
   });
 
   it('reads signal candidates per active market from closed minute buckets only', async () => {
@@ -1028,6 +1041,28 @@ describe('Robinhood persistence repository', () => {
     });
     const insert = fake.calls.find((call) => /INSERT INTO robinhood_market_observations/.test(call.sql));
     assert.equal(JSON.parse(insert.params[0])[0].liquidityUsd, '30020');
+  });
+
+  it('accepts V4 point-in-time tick-range TVL with its active-liquidity scalar', async () => {
+    const fake = createFakeDatabase();
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+    const identity = {
+      protocol: 'uniswap-v4', marketKey: `robinhood:uniswap-v4:${POOL_ID}`,
+      poolAddress: null, poolId: POOL_ID,
+    };
+
+    await repository.commitMarketRange({
+      entries: [marketEntry({
+        ...identity,
+        liquidityUsd: '123.45',
+        liquidityStatus: 'spot_tvl_from_v4_tick_ranges',
+        liquidityConfidence: 'medium',
+        liquidityWarning: 'spot_price_and_tick_liquidity_are_manipulable',
+      }, identity)],
+      cursor: cursor(),
+    });
+    const insert = fake.calls.find((call) => /INSERT INTO robinhood_market_observations/.test(call.sql));
+    assert.equal(JSON.parse(insert.params[0])[0].liquidityUsd, '123.45');
   });
 
   it('rejects an enrichment result paired with different decoded swap amounts', async () => {

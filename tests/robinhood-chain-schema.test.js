@@ -33,6 +33,7 @@ const stage91 = require('../src/utils/db-init-stage91');
 const stage92 = require('../src/utils/db-init-stage92');
 const stage98 = require('../src/utils/db-init-stage98');
 const stage99 = require('../src/utils/db-init-stage99');
+const stage102 = require('../src/utils/db-init-stage102');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 
 describe('Robinhood additive chain schema', () => {
@@ -442,6 +443,16 @@ describe('Robinhood additive chain schema', () => {
     assert.match(sql, /tick_lower < tick_upper/);
     assert.match(sql, /pool_id, tick_lower, tick_upper, block_number, log_index/);
     assert.equal(group.repair, 'node src/utils/db-init-stage99.js');
+  });
+
+  it('allows V4 point-in-time tick-range TVL', () => {
+    const sql = stage102.STATEMENTS.join('\n');
+    const group = SCHEMA_GROUPS.find((entry) => entry.key === 'stage102-robinhood-v4-tick-range-tvl');
+
+    assert.match(sql, /spot_tvl_from_v4_tick_ranges/);
+    assert.match(sql, /protocol = 'uniswap-v4'/);
+    assert.equal(group.repair, 'node src/utils/db-init-stage102.js');
+    assert.equal(group.tables.length, 3);
   });
 
   it('stores FDV separately from market cap in the shared catalog', () => {

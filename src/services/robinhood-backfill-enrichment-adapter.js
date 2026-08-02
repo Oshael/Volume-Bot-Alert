@@ -69,8 +69,13 @@ function tokenMetadata(context, results) {
   };
 }
 
-function addLiquidity(observation, event, quoteMetadata) {
+async function addLiquidity(observation, event, quoteMetadata, v4LiquidityReader) {
   if (!observation.accepted) return observation;
+  const v4Ranges = event.protocol === 'uniswap-v4' && v4LiquidityReader
+    ? await v4LiquidityReader.listHistoricalV4LiquidityRanges(
+      event.poolId, event.blockNumber, event.logIndex
+    )
+    : null;
   const liquidity = buildLiquidityAssessment({
     protocol: event.protocol,
     quoteReserveRaw: event.quoteReserveRaw,
@@ -81,6 +86,9 @@ function addLiquidity(observation, event, quoteMetadata) {
     tokenDecimals: observation.tokenDecimals,
     tokenUsdPrice: observation.priceUsd,
     liquidityRaw: event.liquidityRaw,
+    sqrtPriceX96: event.sqrtPriceX96,
+    quoteIndex: event.quoteIndex,
+    v4Ranges,
   });
   return {
     ...observation,
@@ -99,6 +107,7 @@ function createRobinhoodBackfillEnrichmentAdapter(options = {}) {
     || (options.rpcClient
       ? createRobinhoodWethUsdQuoteReader({ rpcClient: options.rpcClient })
       : null);
+  const v4LiquidityReader = options.v4LiquidityReader || null;
 
   async function buildEntry({ context, results }) {
     const enriched = enrichBlockContext(context, results.block);
@@ -137,7 +146,7 @@ function createRobinhoodBackfillEnrichmentAdapter(options = {}) {
     return {
       log: enriched.log,
       event,
-      observation: addLiquidity(observation, event, quoteMetadata),
+      observation: await addLiquidity(observation, event, quoteMetadata, v4LiquidityReader),
     };
   }
 

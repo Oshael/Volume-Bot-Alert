@@ -184,6 +184,7 @@ function decodeSwap(log, pool, options = {}) {
     quoteAddress: pool.quoteAddress,
     quoteCurrencyAddress: pool.quoteCurrencyAddress,
     quoteKind: pool.quoteKind,
+    quoteIndex: pool.quoteIndex,
     sender: decodeAddressWord(log.topics[2], 'Swap sender'),
     amount0: amount0.toString(),
     amount1: amount1.toString(),

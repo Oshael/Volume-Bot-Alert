@@ -12,6 +12,7 @@ const noxa = require('./noxa-launch-decoder');
 const v2 = require('./uniswap-v2-decoder');
 const v3 = require('./uniswap-v3-decoder');
 const v4 = require('./uniswap-v4-decoder');
+const { mergeRangeDeltas } = require('./uniswap-v4-liquidity');
 
 const DEFAULT_ROLLBACK_STATE_LIMIT = 10000;
 
@@ -94,6 +95,17 @@ function rememberRollbackEntry(store, key, value, limit) {
   while (store.size > limit) store.delete(store.keys().next().value);
 }
 
+async function readCurrentV4Ranges(reader, swap, pendingDeltas) {
+  if (swap.protocol !== 'uniswap-v4' || !reader?.listCurrentV4LiquidityRanges) return null;
+  const persisted = await reader.listCurrentV4LiquidityRanges(swap.poolId);
+  const samePool = pendingDeltas.filter((delta) => delta.poolId === swap.poolId);
+  return persisted == null ? null : mergeRangeDeltas(persisted, samePool);
+}
+
+function rememberV4LiquidityDelta(deltas, event) {
+  if (event.kind === 'modify-liquidity') deltas.push(event);
+}
+
 function persistedPoolSeeds(rows = []) {
   const seeds = { v2: [], v3: [], v4: [] };
   for (const row of rows) {
@@ -149,6 +161,7 @@ function createRobinhoodOnchainPipeline(options = {}) {
   });
   const observationConcurrency = Math.max(1, Number(options.observationConcurrency) || 1);
   const socialMetadataQueue = options.socialMetadataQueue || null;
+  const v4LiquidityReader = options.v4LiquidityReader;
   const noxaValidator = options.noxaValidator || createNoxaLaunchValidator({ rpcClient });
   const observations = rollbackEnabled ? new Map() : null;
   const discoveries = rollbackEnabled ? new Map() : null;
@@ -218,7 +231,7 @@ function createRobinhoodOnchainPipeline(options = {}) {
     return metadataWithSupply(metadata, null, 'unavailable', null);
   }
 
-  async function buildObservation(swap) {
+  async function buildObservation(swap, pendingV4Deltas = []) {
     const eligibility = classifyTokenEligibility(swap.tokenAddress, options.policyOptions);
     const [tokenMetadata, quoteMetadata] = await Promise.all([
       resolveTokenMetadata(swap.tokenAddress, swap.blockNumber),
@@ -256,6 +269,7 @@ function createRobinhoodOnchainPipeline(options = {}) {
         quoteBalanceRaw: quoteBalance.balanceRaw,
       };
     }
+    const v4Ranges = await readCurrentV4Ranges(v4LiquidityReader, swap, pendingV4Deltas);
     const liquidity = buildLiquidityAssessment({
       protocol: swap.protocol,
       quoteReserveRaw: swap.quoteReserveRaw,
@@ -264,6 +278,9 @@ function createRobinhoodOnchainPipeline(options = {}) {
       tokenDecimals: tokenMetadata.decimals,
       tokenUsdPrice: observation.priceUsd,
       liquidityRaw: swap.liquidityRaw,
+      sqrtPriceX96: swap.sqrtPriceX96,
+      quoteIndex: swap.quoteIndex,
+      v4Ranges,
       ...poolBalances,
     });
     return {
@@ -374,6 +391,7 @@ function createRobinhoodOnchainPipeline(options = {}) {
       throw error;
     }
     const swaps = [];
+    const pendingV4Deltas = [];
     for (const rawLog of enrichedLogs) {
       try {
         const event = decodeMarket(rawLog);
@@ -384,12 +402,13 @@ function createRobinhoodOnchainPipeline(options = {}) {
           }
           entries.push({ log: rawLog, event });
           recordEvent(event);
+          rememberV4LiquidityDelta(pendingV4Deltas, event);
           continue;
         }
         recordEvent(event);
         metrics.swapsDecoded += 1;
         metrics.protocols[event.protocol].swapsDecoded += 1;
-        swaps.push({ event, log: rawLog });
+        swaps.push({ event, log: rawLog, pendingV4Deltas: [...pendingV4Deltas] });
       } catch (error) {
         metrics.errors += 1;
         throw error;
@@ -400,7 +419,7 @@ function createRobinhoodOnchainPipeline(options = {}) {
       observationsForBatch = await mapWithConcurrency(
         swaps,
         observationConcurrency,
-        ({ event }) => buildObservation(event)
+        ({ event, pendingV4Deltas: deltas }) => buildObservation(event, deltas)
       );
     } catch (error) {
       metrics.errors += 1;

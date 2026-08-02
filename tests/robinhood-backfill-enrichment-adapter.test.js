@@ -120,8 +120,15 @@ function resultsFor(prepared, overrides = {}) {
 
 describe('Robinhood backfill enrichment adapter', () => {
   it('materializes an exact historical USDG observation and liquidity contract', async () => {
+    const reads = [];
     const adapter = createRobinhoodBackfillEnrichmentAdapter({
       seedPools: [seed(v4Fixture, 'uniswap-v4')],
+      v4LiquidityReader: {
+        async listHistoricalV4LiquidityRanges(...args) {
+          reads.push(args);
+          return [{ tick_lower: -887000, tick_upper: 887000, liquidity_gross: '1000000000000000000' }];
+        },
+      },
     });
     const prepared = adapter.prepareClaim(claim(v4Fixture, 'uniswap-v4'));
     const entry = await adapter.buildEntry({
@@ -136,8 +143,14 @@ describe('Robinhood backfill enrichment adapter', () => {
     assert.equal(entry.observation.tokenSupplyBlockTag, prepared.context.blockTag);
     assert.equal(entry.observation.quoteUsdPrice, '1');
     assert.equal(entry.observation.quoteUsdSource, 'usdg-peg-assumption');
-    assert.equal(entry.observation.liquidityStatus, 'requires_tick_liquidity_distribution');
+    assert.equal(entry.observation.liquidityStatus, 'spot_tvl_from_v4_tick_ranges');
+    assert.ok(Number(entry.observation.liquidityUsd) > 0);
     assert.equal(entry.observation.liquidityRaw, v4Fixture.expected.liquidity);
+    assert.deepEqual(reads, [[
+      v4Fixture.expected.poolId,
+      BigInt(v4Fixture.swap.blockNumber).toString(),
+      BigInt(v4Fixture.swap.logIndex).toString(),
+    ]]);
   });
 
   it('uses the canonical historical WETH quote reader without routing it to Alchemy', async () => {

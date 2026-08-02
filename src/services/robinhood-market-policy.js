@@ -1,4 +1,5 @@
 const { formatDecimal, multiply, parseDecimal, rational } = require('./evm-market-metrics');
+const { poolAmounts } = require('./uniswap-v4-liquidity');
 
 const CANONICAL_CONTRACTS = Object.freeze({
   WETH: '0x0bd7d308f8e1639fab988df18a8011f41eacad73',
@@ -134,11 +135,41 @@ function v3Liquidity(input) {
   };
 }
 
+function v4Liquidity(input) {
+  if (input.v4Ranges == null || input.sqrtPriceX96 == null) return null;
+  const quoteIndex = Number(input.quoteIndex);
+  if (![0, 1].includes(quoteIndex)) throw new Error('Invalid V4 quote index');
+  const amounts = poolAmounts(input.sqrtPriceX96, input.v4Ranges);
+  const tokenRaw = quoteIndex === 0 ? amounts.amount1 : amounts.amount0;
+  const quoteRaw = quoteIndex === 0 ? amounts.amount0 : amounts.amount1;
+  const tokenValue = multiply(
+    rational(tokenRaw, 10n ** BigInt(input.tokenDecimals)), parseDecimal(input.tokenUsdPrice)
+  );
+  const quoteValue = multiply(
+    rational(quoteRaw, 10n ** BigInt(input.quoteDecimals)), parseDecimal(input.quoteUsdPrice)
+  );
+  const liquidity = rational(
+    tokenValue.numerator * quoteValue.denominator + quoteValue.numerator * tokenValue.denominator,
+    tokenValue.denominator * quoteValue.denominator
+  );
+  return {
+    liquidityUsd: formatDecimal(liquidity, input.usdDecimalPlaces ?? 12),
+    exact: exactOutput(liquidity),
+    status: 'spot_tvl_from_v4_tick_ranges',
+    confidence: 'medium',
+    warning: 'spot_price_and_tick_liquidity_are_manipulable',
+  };
+}
+
 function buildLiquidityAssessment(input = {}) {
   const protocol = String(input.protocol || '');
   if (protocol === 'uniswap-v2') return { protocol, ...v2Liquidity(input) };
   if (protocol === 'uniswap-v3') {
     const assessed = v3Liquidity(input);
+    if (assessed) return { protocol, liquidityRaw: String(input.liquidityRaw), ...assessed };
+  }
+  if (protocol === 'uniswap-v4') {
+    const assessed = v4Liquidity(input);
     if (assessed) return { protocol, liquidityRaw: String(input.liquidityRaw), ...assessed };
   }
   if (protocol === 'uniswap-v3' || protocol === 'uniswap-v4') {

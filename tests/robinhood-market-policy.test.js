@@ -96,6 +96,19 @@ describe('Robinhood market policy', () => {
     }
   });
 
+  it('values V4 principal from its materialized tick ranges', () => {
+    const assessment = buildLiquidityAssessment({
+      protocol: 'uniswap-v4', liquidityRaw: '1000000000000000000',
+      sqrtPriceX96: 1n << 96n, quoteIndex: 1,
+      v4Ranges: [{ tickLower: -60, tickUpper: 60, liquidityGross: 10n ** 18n }],
+      tokenDecimals: 18, quoteDecimals: 18, tokenUsdPrice: '2', quoteUsdPrice: '1',
+    });
+
+    assert.ok(Number(assessment.liquidityUsd) > 0);
+    assert.equal(assessment.status, 'spot_tvl_from_v4_tick_ranges');
+    assert.equal(assessment.confidence, 'medium');
+  });
+
   it('reports unavailable inputs and unsupported protocols explicitly', () => {
     assert.equal(buildLiquidityAssessment({ protocol: 'uniswap-v2' }).status,
       'missing_v2_reserve_or_quote');

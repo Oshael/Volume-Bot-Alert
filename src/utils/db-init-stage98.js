@@ -4,7 +4,7 @@
  */
 const db = require('../models/db');
 
-function liquidityCheck(prefix = '') {
+function liquidityCheck(prefix = '', options = {}) {
   const field = (name) => `${prefix}${name}`;
   return `(
     (${field('liquidity_usd')} IS NULL
@@ -31,11 +31,16 @@ function liquidityCheck(prefix = '') {
         AND ${field('liquidity_usd')} IS NULL
         AND ${field('liquidity_confidence')} = 'none'
       )))
-    OR (protocol = 'uniswap-v4'
-      AND ${field('liquidity_usd')} IS NULL
-      AND ${field('liquidity_raw')} >= 0
-      AND ${field('liquidity_status')} = 'requires_tick_liquidity_distribution'
-      AND ${field('liquidity_confidence')} = 'none')
+    OR (protocol = 'uniswap-v4' AND ${field('liquidity_raw')} >= 0
+      AND ((${options.v4TickTvl ? `
+        ${field('liquidity_status')} = 'spot_tvl_from_v4_tick_ranges'
+        AND ${field('liquidity_usd')} >= 0
+        AND ${field('liquidity_confidence')} = 'medium'
+      ) OR (` : ''}
+        ${field('liquidity_status')} = 'requires_tick_liquidity_distribution'
+        AND ${field('liquidity_usd')} IS NULL
+        AND ${field('liquidity_confidence')} = 'none'
+      )))
   )`;
 }
 

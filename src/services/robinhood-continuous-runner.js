@@ -184,6 +184,7 @@ async function createRobinhoodContinuousRunner(options = {}) {
     timestampBatchSize: options.timestampBatchSize,
     observationConcurrency: options.observationConcurrency,
     socialMetadataQueue: options.socialMetadataQueue,
+    v4LiquidityReader: repository,
   });
   const pollerOptions = commonPollerOptions(options, rpcClient, confirmations);
   const discoveryHandlers = streamHandlers(repository, pipeline, 'discovery');

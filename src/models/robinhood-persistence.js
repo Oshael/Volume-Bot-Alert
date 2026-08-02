@@ -18,6 +18,7 @@ const LIQUIDITY_STATUSES = new Set([
   'spot_estimate_from_double_quote_reserve',
   'missing_v2_reserve_or_quote',
   'spot_tvl_from_pool_balances',
+  'spot_tvl_from_v4_tick_ranges',
   'requires_tick_liquidity_distribution',
 ]);
 const MINUTE_MS = 60 * 1000;
@@ -382,6 +383,39 @@ function emptyObservationMetrics() {
   };
 }
 
+function assertV4LiquidityMetrics(status, confidence, liquidityUsd, liquidityRaw) {
+  const available = status === 'spot_tvl_from_v4_tick_ranges';
+  if (
+    liquidityRaw == null
+    || available !== (liquidityUsd != null)
+    || confidence !== (available ? 'medium' : 'none')
+    || (!available && status !== 'requires_tick_liquidity_distribution')
+  ) throw new Error('V4 observation liquidity evidence is inconsistent');
+}
+
+function assertLiquidityProtocolMetrics(protocol, status, confidence, liquidityUsd, liquidityRaw) {
+  if (protocol === 'uniswap-v2') {
+    const available = status === 'spot_estimate_from_double_quote_reserve';
+    if (
+      liquidityRaw != null
+      || available !== (liquidityUsd != null)
+      || confidence !== (available ? 'medium' : 'none')
+    ) throw new Error('V2 observation liquidity evidence is inconsistent');
+    return;
+  }
+  if (protocol === 'uniswap-v3') {
+    const available = status === 'spot_tvl_from_pool_balances';
+    if (
+      liquidityRaw == null
+      || available !== (liquidityUsd != null)
+      || confidence !== (available ? 'medium' : 'none')
+      || (!available && status !== 'requires_tick_liquidity_distribution')
+    ) throw new Error('V3 observation liquidity evidence is inconsistent');
+    return;
+  }
+  assertV4LiquidityMetrics(status, confidence, liquidityUsd, liquidityRaw);
+}
+
 function normalizeLiquidityMetrics(observation, protocol) {
   const status = String(observation.liquidityStatus || '');
   const confidence = String(observation.liquidityConfidence || '');
@@ -397,33 +431,7 @@ function normalizeLiquidityMetrics(observation, protocol) {
   if (!LIQUIDITY_STATUSES.has(status) || !['none', 'medium'].includes(confidence)) {
     throw new Error('Observation liquidity status or confidence is invalid');
   }
-  if (protocol === 'uniswap-v2') {
-    const available = status === 'spot_estimate_from_double_quote_reserve';
-    if (
-      liquidityRaw != null
-      || available !== (liquidityUsd != null)
-      || confidence !== (available ? 'medium' : 'none')
-    ) {
-      throw new Error('V2 observation liquidity evidence is inconsistent');
-    }
-  } else if (protocol === 'uniswap-v3') {
-    const available = status === 'spot_tvl_from_pool_balances';
-    if (
-      liquidityRaw == null
-      || available !== (liquidityUsd != null)
-      || confidence !== (available ? 'medium' : 'none')
-      || (!available && status !== 'requires_tick_liquidity_distribution')
-    ) {
-      throw new Error('V3 observation liquidity evidence is inconsistent');
-    }
-  } else if (
-    status !== 'requires_tick_liquidity_distribution'
-    || liquidityUsd != null
-    || liquidityRaw == null
-    || confidence !== 'none'
-  ) {
-    throw new Error('Concentrated-liquidity observation evidence is inconsistent');
-  }
+  assertLiquidityProtocolMetrics(protocol, status, confidence, liquidityUsd, liquidityRaw);
   return {
     liquidityUsd,
     liquidityRaw,
@@ -1742,6 +1750,38 @@ function createRobinhoodPersistenceRepository(options = {}) {
     return result.rows;
   }
 
+  async function listCurrentV4LiquidityRanges(poolId) {
+    const result = await database.query(
+      `SELECT ranges.tick_lower, ranges.tick_upper, ranges.liquidity_gross
+       FROM robinhood_v4_liquidity_materialization_state state
+       LEFT JOIN robinhood_v4_liquidity_ranges ranges
+         ON ranges.chain = state.chain AND ranges.pool_id = $1
+       WHERE state.chain = 'robinhood'`,
+      [poolId]
+    );
+    if (!result.rowCount) return null;
+    return result.rows.filter((row) => row.tick_lower != null);
+  }
+
+  async function listHistoricalV4LiquidityRanges(poolId, blockNumber, logIndex) {
+    const result = await database.query(
+      `SELECT ranges.tick_lower, ranges.tick_upper, ranges.liquidity_gross
+       FROM robinhood_v4_liquidity_replay_state state
+       LEFT JOIN LATERAL (
+         SELECT tick_lower, tick_upper, SUM(liquidity_delta) AS liquidity_gross
+         FROM robinhood_v4_liquidity_deltas
+         WHERE chain = state.chain AND pool_id = $1
+           AND (block_number < $2 OR (block_number = $2 AND log_index < $3))
+         GROUP BY tick_lower, tick_upper
+         HAVING SUM(liquidity_delta) > 0
+       ) ranges ON true
+       WHERE state.chain = 'robinhood' AND state.status = 'completed'`,
+      [poolId, decimalQuantity(blockNumber, 'blockNumber'), decimalQuantity(logIndex, 'logIndex')]
+    );
+    if (!result.rowCount) return null;
+    return result.rows.filter((row) => row.tick_lower != null);
+  }
+
   async function listSignalDryRunCandidates(input = {}) {
     const query = normalizeSignalCandidateQuery(input);
     const execute = typeof database.queryWithStatementTimeout === 'function'
@@ -1820,6 +1860,8 @@ function createRobinhoodPersistenceRepository(options = {}) {
     commitDiscoveryRange,
     commitMarketRange,
     listActivePools,
+    listCurrentV4LiquidityRanges,
+    listHistoricalV4LiquidityRanges,
     listSignalDryRunCandidates,
     loadCursor,
   });

@@ -51,6 +51,7 @@ function createPipeline(options = {}) {
     rollbackStateLimit: options.rollbackStateLimit,
     windowAggregationEnabled: options.windowAggregationEnabled,
     socialMetadataQueue: options.socialMetadataQueue,
+    v4LiquidityReader: options.v4LiquidityReader,
     noxaValidator: options.noxaValidator,
     now: () => options.now ?? NOW,
     seedLogs: {
@@ -96,6 +97,30 @@ describe('Robinhood onchain pipeline', () => {
     assert.equal(snapshot.metrics.protocols['uniswap-v4'].swapsAccepted, 1);
     assert.equal(snapshot.metrics.protocols['uniswap-v4'].logs, 1);
     assert.equal(snapshot.metrics.withoutQuoteRate, 0);
+  });
+
+  it('values live V4 liquidity after applying a preceding in-batch range delta', async () => {
+    const pipeline = createPipeline({
+      v4LiquidityReader: {
+        listCurrentV4LiquidityRanges: async () => [],
+      },
+    });
+    const word = (value) => BigInt.asUintN(256, BigInt(value)).toString(16).padStart(64, '0');
+    const modify = {
+      ...v4Fixture.swap,
+      topics: [
+        '0xf208f4912782fd25c7f114ca3723a2d5dd6f3bcc3ac8db5af63baa85f711d5ec',
+        v4Fixture.expected.poolId,
+        `0x${'0'.repeat(24)}${'1'.repeat(40)}`,
+      ],
+      data: `0x${word(-450000)}${word(-430000)}${word(10n ** 18n)}${'0'.repeat(64)}`,
+      logIndex: `0x${(BigInt(v4Fixture.swap.logIndex) - 1n).toString(16)}`,
+    };
+
+    const [observation] = await pipeline.processMarketLogs([modify, v4Fixture.swap]);
+    assert.ok(Number(observation.liquidityUsd) > 0);
+    assert.equal(observation.liquidityStatus, 'spot_tvl_from_v4_tick_ranges');
+    assert.equal(observation.liquidityConfidence, 'medium');
   });
 
   it('attaches a manipulable spot liquidity estimate only to v2 observations', async () => {

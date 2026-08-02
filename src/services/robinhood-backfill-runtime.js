@@ -243,6 +243,7 @@ function createRobinhoodBackfillEnrichmentRuntime(deps = {}) {
         rpcProvider: 'drpc',
         timestampProvider,
         quoteReader,
+        v4LiquidityReader: repository,
       });
       const worker = (deps.workerFactory || createRobinhoodBackfillEnrichmentWorker)({
         adapter,
