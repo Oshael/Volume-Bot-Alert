@@ -116,6 +116,8 @@ describe('Robinhood dashboard read repository', () => {
     assert.match(calls[0].sql, /last_fdv_usd < 30000000000/);
     assert.match(calls[0].sql, /INTERVAL '5 minutes'/);
     assert.match(calls[0].sql, /AS protocol_breakdown/);
+    assert.match(calls[0].sql, /FILTER \(WHERE last_liquidity_usd IS NULL\)/);
+    assert.doesNotMatch(calls[0].sql, /protocol <> 'uniswap-v2'/);
     assert.match(calls[0].sql, /date_trunc\('minute', bounds\.freshness_start\)/);
     assert.doesNotMatch(calls[0].sql, /token_market_(?:buckets|snapshots)/);
     assert.doesNotMatch(calls[0].sql, /\b(?:INSERT|UPDATE|DELETE)\b/);

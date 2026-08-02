@@ -93,8 +93,8 @@ ranked AS (
     MIN(activity.first_observed_at) OVER token AS token_first_observed_at,
     MAX(activity.last_observed_at) OVER token AS token_last_observed_at,
     COUNT(*) OVER token AS token_market_count,
-    COUNT(*) FILTER (WHERE activity.protocol <> 'uniswap-v2'
-      OR activity.last_liquidity_usd IS NULL) OVER token AS incomplete_liquidity_markets,
+    COUNT(*) FILTER (WHERE activity.last_liquidity_usd IS NULL)
+      OVER token AS incomplete_liquidity_markets,
     ROW_NUMBER() OVER (
       PARTITION BY activity.token_address
       ORDER BY activity.volume_usd DESC, activity.last_observed_at DESC,

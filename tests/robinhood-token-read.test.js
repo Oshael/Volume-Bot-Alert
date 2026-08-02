@@ -94,6 +94,8 @@ describe('Robinhood aggregate token read repository', () => {
     assert.match(calls[0].sql, /ORDER BY activity\.volume_usd DESC/);
     assert.match(calls[0].sql, /AS protocol_breakdown/);
     assert.match(calls[0].sql, /AS market_breakdown/);
+    assert.match(calls[0].sql, /FILTER \(WHERE activity\.last_liquidity_usd IS NULL\)/);
+    assert.doesNotMatch(calls[0].sql, /activity\.protocol <> 'uniswap-v2'/);
     assert.doesNotMatch(calls[0].sql, /\b(?:INSERT|UPDATE|DELETE)\b/);
   });
 

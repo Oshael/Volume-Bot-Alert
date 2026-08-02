@@ -149,8 +149,8 @@ ranked AS (
     SUM(transactions_24h) OVER token AS token_transactions_24h,
     SUM(last_liquidity_usd) OVER token AS token_liquidity_usd,
     COUNT(*) OVER token AS token_market_count,
-    COUNT(*) FILTER (WHERE protocol <> 'uniswap-v2'
-      OR last_liquidity_usd IS NULL) OVER token AS incomplete_liquidity_markets,
+    COUNT(*) FILTER (WHERE last_liquidity_usd IS NULL)
+      OVER token AS incomplete_liquidity_markets,
     MIN(discovered_at) OVER token AS token_discovered_at,
     MIN(first_observed_at) OVER token AS token_first_observed_at,
     MAX(recent_last_observed_at) OVER token AS token_last_observed_at,
