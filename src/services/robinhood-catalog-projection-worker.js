@@ -34,10 +34,10 @@ function normalizeOptions(options = {}) {
     maxErrorBackoffMs: boundedInteger(
       options.maxErrorBackoffMs, 5 * 60_000, 60_000, 60 * 60_000,
     ),
-    maxTokens: boundedInteger(options.maxTokens, 25, 1, 25),
-    concurrency: boundedInteger(options.concurrency, 4, 1, 10),
+    maxTokens: boundedInteger(options.maxTokens, 50, 1, 50),
+    concurrency: boundedInteger(options.concurrency, 8, 1, 10),
     statementTimeoutMs: boundedInteger(options.statementTimeoutMs, 10_000, 1000, 60_000),
-    blockscoutBatchSize: boundedInteger(options.blockscoutBatchSize, 10, 1, 50),
+    blockscoutBatchSize: boundedInteger(options.blockscoutBatchSize, 50, 1, 50),
     socialMetadataEnabled: options.socialMetadataEnabled === true,
     socialBatchSize: boundedInteger(options.socialBatchSize, 5, 1, 5),
     socialDrainIntervalMs: boundedInteger(
@@ -77,6 +77,7 @@ function buildRobinhoodCatalogProjectionTelemetry(workerStatus = {}, now = Date.
       onchainErrors: numericCount(summary.onchainErrors),
       blockscoutChecked: numericCount(summary.blockscoutChecked),
       blockscoutImagesResolved: numericCount(summary.blockscoutImagesResolved),
+      launchpadsResolved: numericCount(summary.launchpadsResolved),
       blockscoutErrors: numericCount(summary.blockscoutErrors),
       excludedBlocked: numericCount(summary.excludedBlocked),
       socialEnqueued: numericCount(summary.socialEnqueued),

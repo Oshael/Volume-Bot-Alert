@@ -337,20 +337,27 @@ Grupos existentes:
 combinar um grupo isolado com grupos compartilhados.
 
 A projeção Robinhood mantém um reparo persistente de metadata separado da página
-de mercado ativa. Identidades `robinhood-onchain` com imagem ou metadata pendente
-são priorizadas por ausência de `symbol/name` e depois por atividade recente;
+de mercado ativa. Identidades `robinhood-onchain` com imagem ou launchpad pendente
+são priorizadas, e a atividade recente desempata dentro da mesma classe;
 assim o enriquecimento não depende de o token continuar no recorte de mercado de
 15 minutos. Para preencher apenas imagens ausentes, a ordem é `logo()` pons
 on-chain, `logoUrl` de `/rhj/assets` para Stock Tokens, `tokenURI()` IPFS para
-Bankr/Doppler, `icon_url` do Blockscout e `info.imageUrl` do DexScreener. Esse
+metadata de contratos, `icon_url` do Blockscout e `info.imageUrl` do DexScreener. Esse
 fallback de imagem fica sempre ativo. `ROBINHOOD_SOCIAL_METADATA_ENABLED=true`
 controla somente o reparo adicional de website, X e comunidade via DexScreener;
 `symbol/name` continuam vindo do ERC-20 on-chain e do Blockscout.
 
+O worker processa por padrão até 50 identidades por minuto, com concorrência 8.
+Os limites podem ser ajustados por `ROBINHOOD_CATALOG_PROJECTION_MAX_TOKENS`,
+`ROBINHOOD_CATALOG_PROJECTION_CONCURRENCY` e
+`ROBINHOOD_BLOCKSCOUT_METADATA_BATCH_SIZE` (máximo 50).
+
 O catálogo também possui atribuição persistente de launchpad. O vocabulário
 Robinhood diferencia pons, Bankr/Doppler, LaunchHood, RobinPad, Stock Tokens e o
 fallback explícito `robinhood` para contratos diretos ou ainda desconhecidos.
-Factories conhecidas prevalecem sobre inferências genéricas de metadata.
+Factories conhecidas vêm do creator retornado pelo Blockscout. Bankr/Doppler só
+é atribuído quando o registro público da Bankr confirma o contrato; `tokenURI()`
+genérico não é evidência suficiente. Factories prevalecem sobre metadata genérica.
 
 Worker leases no PostgreSQL evitam dois donos ativos para loops protegidos. Eles
 não autorizam iniciar processos arbitrários: sempre verifique as leases e os

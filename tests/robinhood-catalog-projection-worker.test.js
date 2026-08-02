@@ -54,10 +54,10 @@ describe('Robinhood catalog projection worker', () => {
     await clock.scheduled[0].callback();
 
     assert.deepEqual(calls[0], {
-      maxTokens: 25,
+      maxTokens: 50,
       concurrency: 10,
       statementTimeoutMs: 1000,
-      blockscoutBatchSize: 10,
+      blockscoutBatchSize: 50,
       socialDrainLimit: 1,
     });
     assert.equal(clock.scheduled[1].delayMs, 90000);

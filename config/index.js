@@ -802,8 +802,14 @@ module.exports = {
       60_000,
       60 * 60 * 1000
     ),
+    maxTokens: parseIntegerInRange(
+      process.env.ROBINHOOD_CATALOG_PROJECTION_MAX_TOKENS, 50, 1, 50
+    ),
+    concurrency: parseIntegerInRange(
+      process.env.ROBINHOOD_CATALOG_PROJECTION_CONCURRENCY, 8, 1, 10
+    ),
     blockscoutBatchSize: parseIntegerInRange(
-      process.env.ROBINHOOD_BLOCKSCOUT_METADATA_BATCH_SIZE, 10, 1, 50
+      process.env.ROBINHOOD_BLOCKSCOUT_METADATA_BATCH_SIZE, 50, 1, 50
     ),
     socialMetadataEnabled: parseBoolean(process.env.ROBINHOOD_SOCIAL_METADATA_ENABLED, true),
     socialBatchSize: parseIntegerInRange(

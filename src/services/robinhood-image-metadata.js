@@ -1,6 +1,7 @@
 const dexscreener = require('./dexscreener');
 const { createRobinhoodBlockscoutMetadataClient } = require('./robinhood-blockscout-metadata');
 const { decodeTextResult } = require('./evm-erc20-metadata');
+const { classifyRobinhoodLaunchpad } = require('./robinhood-launchpad-attribution');
 const { normalizeTokenAddress } = require('../utils/token-identity');
 const { sanitizeAssetUrl } = require('../utils/url-safety');
 
@@ -8,6 +9,7 @@ const PONS_LOGO_SELECTOR = '0xfb7f21eb';
 const TOKEN_URI_SELECTOR = '0x3c130d90';
 const ROBINHOOD_CHAIN_ID = 4663;
 const STOCK_ASSETS_URL = 'https://api.robinhood.com/rhj/assets';
+const BANKR_TOKEN_FEES_URL = 'https://api.bankr.bot/public/doppler/token-fees/';
 const DEFAULT_TIMEOUT_MS = 5000;
 const STOCK_CACHE_TTL_MS = 60 * 60 * 1000;
 const STOCK_FAILURE_RETRY_MS = 30 * 1000;
@@ -52,6 +54,18 @@ function metadataImage(payload) {
   if (!value) return null;
   const raw = String(value).trim();
   return sanitizeAssetUrl(/^[A-Za-z0-9]+$/.test(raw) ? `ipfs://${raw}` : raw);
+}
+
+function isBankrDopplerToken(payload, address) {
+  if (String(payload?.chain || '').trim().toLowerCase() !== 'robinhood') return false;
+  return Array.isArray(payload.tokens) && payload.tokens.some((token) => {
+    try {
+      return String(token?.source || '').trim().toLowerCase() === 'doppler'
+        && normalizeTokenAddress('robinhood', token.tokenAddress) === address;
+    } catch (_) {
+      return false;
+    }
+  });
 }
 
 function createRobinhoodImageMetadataResolver(options = {}) {
@@ -115,19 +129,63 @@ function createRobinhoodImageMetadataResolver(options = {}) {
     }
   }
 
+  async function resolveLaunchpad(address, metadataSource) {
+    if (metadataSource === 'pons-onchain' || metadataSource === 'robinhood-stock-api') {
+      return classifyRobinhoodLaunchpad({ metadataSource }).id;
+    }
+    let bankrDopplerVerified = false;
+    if (metadataSource === 'bankr-ipfs') {
+      const payload = await fetchJson(
+        fetchImpl, `${BANKR_TOKEN_FEES_URL}${address}?days=1`, requestTimeoutMs
+      );
+      bankrDopplerVerified = isBankrDopplerToken(payload, address);
+      if (bankrDopplerVerified) {
+        return classifyRobinhoodLaunchpad({ bankrDopplerVerified }).id;
+      }
+    }
+    let creatorAddress = null;
+    try {
+      creatorAddress = await blockscout.getContractCreator?.(address) || null;
+    } catch (_) {
+      // Attribution failures must not block image enrichment.
+    }
+    return classifyRobinhoodLaunchpad({
+      metadataSource, creatorAddress,
+    }).id;
+  }
+
+  async function attributed(address, metadata) {
+    return {
+      ...metadata,
+      launchpadId: await resolveLaunchpad(address, metadata.source),
+    };
+  }
+
   async function getTokenMetadata(tokenAddress) {
     const address = normalizeTokenAddress('robinhood', tokenAddress);
     const ponsImage = sanitizeAssetUrl(await readOnchainText(address, PONS_LOGO_SELECTOR));
-    if (ponsImage) return { address, available: true, imageUrl: ponsImage, source: 'pons-onchain' };
+    if (ponsImage) {
+      return attributed(address, {
+        address, available: true, imageUrl: ponsImage, source: 'pons-onchain',
+      });
+    }
 
     const stockImage = (await loadStockAssets()).get(address) || null;
-    if (stockImage) return { address, available: true, imageUrl: stockImage, source: 'robinhood-stock-api' };
+    if (stockImage) {
+      return attributed(address, {
+        address, available: true, imageUrl: stockImage, source: 'robinhood-stock-api',
+      });
+    }
 
     const metadataUrl = ipfsGatewayUrl(await readOnchainText(address, TOKEN_URI_SELECTOR));
     const bankrImage = metadataImage(metadataUrl
       ? await fetchJson(fetchImpl, metadataUrl, requestTimeoutMs)
       : null);
-    if (bankrImage) return { address, available: true, imageUrl: bankrImage, source: 'bankr-ipfs' };
+    if (bankrImage) {
+      return attributed(address, {
+        address, available: true, imageUrl: bankrImage, source: 'bankr-ipfs',
+      });
+    }
 
     let blockscoutMetadata;
     let blockscoutError = null;
@@ -140,15 +198,17 @@ function createRobinhoodImageMetadataResolver(options = {}) {
       };
     }
     if (blockscoutMetadata.imageUrl) {
-      return { ...blockscoutMetadata, source: 'blockscout' };
+      return attributed(address, { ...blockscoutMetadata, source: 'blockscout' });
     }
 
     const dexImage = await resolveDexImage(address);
     if (dexImage) {
-      return { ...blockscoutMetadata, available: true, imageUrl: dexImage, source: 'dexscreener' };
+      return attributed(address, {
+        ...blockscoutMetadata, available: true, imageUrl: dexImage, source: 'dexscreener',
+      });
     }
     if (blockscoutError) throw blockscoutError;
-    return { ...blockscoutMetadata, imageUrl: null, source: null };
+    return attributed(address, { ...blockscoutMetadata, imageUrl: null, source: null });
   }
 
   return Object.freeze({ getTokenMetadata });
@@ -156,9 +216,10 @@ function createRobinhoodImageMetadataResolver(options = {}) {
 
 module.exports = {
   PONS_LOGO_SELECTOR,
+  BANKR_TOKEN_FEES_URL,
   ROBINHOOD_CHAIN_ID,
   STOCK_ASSETS_URL,
   TOKEN_URI_SELECTOR,
   createRobinhoodImageMetadataResolver,
-  __private: { ipfsGatewayUrl, metadataImage, timeoutMs },
+  __private: { ipfsGatewayUrl, isBankrDopplerToken, metadataImage, timeoutMs },
 };

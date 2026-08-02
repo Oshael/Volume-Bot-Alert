@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const {
+  BANKR_TOKEN_FEES_URL,
   PONS_LOGO_SELECTOR,
   STOCK_ASSETS_URL,
   TOKEN_URI_SELECTOR,
@@ -48,6 +49,13 @@ function harness(input = {}) {
         }] : [],
       });
     }
+    if (href.startsWith(BANKR_TOKEN_FEES_URL)) {
+      calls.push('bankr');
+      return jsonResponse({
+        chain: 'robinhood',
+        tokens: input.bankrVerified ? [{ tokenAddress: TOKEN, source: 'doppler' }] : [],
+      });
+    }
     calls.push('ipfs');
     return jsonResponse(input.ipfsMetadata || {});
   };
@@ -59,6 +67,10 @@ function harness(input = {}) {
         address, available: true, symbol: 'TKN', name: 'Token',
         imageUrl: input.blockscout || null,
       };
+    },
+    async getContractCreator() {
+      calls.push('creator');
+      return input.creator || null;
     },
   };
   const dexClient = {
@@ -84,30 +96,48 @@ describe('Robinhood image metadata resolver', () => {
       input: { pons: 'ipfs://bafypons' },
       expectedUrl: 'https://ipfs.io/ipfs/bafypons',
       source: 'pons-onchain',
+      launchpadId: 'pons',
       calls: ['pons'],
     }, {
       input: { stock: 'https://cdn.example/stock.png' },
       expectedUrl: 'https://cdn.example/stock.png',
       source: 'robinhood-stock-api',
+      launchpadId: 'robinhood-stock',
       calls: ['pons', 'stock'],
     }, {
       input: {
         tokenUri: 'ipfs://bafymetadata',
         ipfsMetadata: { image: 'ipfs://bafybankr' },
+        bankrVerified: true,
       },
       expectedUrl: 'https://ipfs.io/ipfs/bafybankr',
       source: 'bankr-ipfs',
-      calls: ['pons', 'stock', 'tokenURI', 'ipfs'],
+      launchpadId: 'bankr-doppler',
+      calls: ['pons', 'stock', 'tokenURI', 'ipfs', 'bankr'],
     }, {
-      input: { blockscout: 'https://cdn.example/blockscout.png' },
+      input: {
+        tokenUri: 'ipfs://generic-metadata',
+        ipfsMetadata: { image: 'ipfs://generic-image' },
+      },
+      expectedUrl: 'https://ipfs.io/ipfs/generic-image',
+      source: 'bankr-ipfs',
+      launchpadId: 'robinhood',
+      calls: ['pons', 'stock', 'tokenURI', 'ipfs', 'bankr', 'creator'],
+    }, {
+      input: {
+        blockscout: 'https://cdn.example/blockscout.png',
+        creator: '0x62B33A039D289CBDa50EbeB72Fe4261449E61Bcf',
+      },
       expectedUrl: 'https://cdn.example/blockscout.png',
       source: 'blockscout',
-      calls: ['pons', 'stock', 'tokenURI', 'blockscout'],
+      launchpadId: 'launchhood',
+      calls: ['pons', 'stock', 'tokenURI', 'blockscout', 'creator'],
     }, {
       input: { dex: 'https://cdn.example/dex.png' },
       expectedUrl: 'https://cdn.example/dex.png',
       source: 'dexscreener',
-      calls: ['pons', 'stock', 'tokenURI', 'blockscout', 'dexscreener'],
+      launchpadId: 'robinhood',
+      calls: ['pons', 'stock', 'tokenURI', 'blockscout', 'dexscreener', 'creator'],
     }];
 
     for (const scenario of scenarios) {
@@ -115,6 +145,7 @@ describe('Robinhood image metadata resolver', () => {
       const result = await resolver.getTokenMetadata(TOKEN);
       assert.equal(result.imageUrl, scenario.expectedUrl);
       assert.equal(result.source, scenario.source);
+      assert.equal(result.launchpadId, scenario.launchpadId);
       assert.deepEqual(calls, scenario.calls);
     }
   });
@@ -129,6 +160,9 @@ describe('Robinhood image metadata resolver', () => {
 
     assert.equal(result.imageUrl, 'https://cdn.example/dex-after-error.png');
     assert.equal(result.source, 'dexscreener');
-    assert.deepEqual(calls, ['pons', 'stock', 'tokenURI', 'blockscout', 'dexscreener']);
+    assert.equal(result.launchpadId, 'robinhood');
+    assert.deepEqual(calls, [
+      'pons', 'stock', 'tokenURI', 'blockscout', 'dexscreener', 'creator',
+    ]);
   });
 });

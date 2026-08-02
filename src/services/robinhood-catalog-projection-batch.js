@@ -54,16 +54,18 @@ function checkedAtExpired(value, nowMs, ttlMs) {
 
 async function enrichFromBlockscout(input) {
   if (!input.reader?.getTokenMetadata) {
-    return { checked: 0, imagesResolved: 0, unavailable: 0, errors: 0 };
+    return { checked: 0, imagesResolved: 0, launchpadsResolved: 0, unavailable: 0, errors: 0 };
   }
-  const candidates = input.candidates.filter((candidate) => checkedAtExpired(
-    input.metadataByAddress.get(candidate.tokenAddress)?.robinhood_blockscout_checked_at,
-    input.asOfMs,
-    input.ttlMs
-  ) && (
-    !input.metadataByAddress.get(candidate.tokenAddress)?.last_image_url
-    || needsOnchainMetadata(input.metadataByAddress.get(candidate.tokenAddress))
-  )).slice(0, input.limit);
+  const candidates = input.candidates.filter((candidate) => {
+    const row = input.metadataByAddress.get(candidate.tokenAddress);
+    const metadataDue = checkedAtExpired(
+      row?.robinhood_blockscout_checked_at, input.asOfMs, input.ttlMs
+    );
+    const launchpadDue = checkedAtExpired(
+      row?.launchpad_checked_at, input.asOfMs, input.ttlMs
+    );
+    return launchpadDue || (metadataDue && (!row?.last_image_url || needsOnchainMetadata(row)));
+  }).slice(0, input.limit);
   const results = await mapWithConcurrency(candidates, input.concurrency, async (candidate) => {
     const metadata = await input.reader.getTokenMetadata(candidate.tokenAddress);
     await input.catalog.recordBlockscoutMetadata({
@@ -72,6 +74,12 @@ async function enrichFromBlockscout(input) {
       name: metadata.name,
       imageUrl: metadata.imageUrl,
     });
+    if (metadata.launchpadId && input.catalog.recordLaunchpadAttribution) {
+      await input.catalog.recordLaunchpadAttribution({
+        address: candidate.tokenAddress,
+        launchpadId: metadata.launchpadId,
+      });
+    }
     const current = input.metadataByAddress.get(candidate.tokenAddress) || {};
     input.metadataByAddress.set(candidate.tokenAddress, {
       ...current,
@@ -80,14 +88,21 @@ async function enrichFromBlockscout(input) {
       name: metadata.name || current.name,
       last_image_url: metadata.imageUrl || current.last_image_url,
       robinhood_blockscout_checked_at: new Date(input.asOfMs),
+      launchpad_id: metadata.launchpadId || current.launchpad_id,
+      launchpad_checked_at: metadata.launchpadId
+        ? new Date(input.asOfMs) : current.launchpad_checked_at,
     });
-    return metadata.available === true && Boolean(metadata.imageUrl);
+    return {
+      imageResolved: metadata.available === true && Boolean(metadata.imageUrl),
+      launchpadResolved: Boolean(metadata.launchpadId && metadata.launchpadId !== 'robinhood'),
+    };
   });
   return {
     checked: results.filter((result) => result.status === 'fulfilled').length,
-    imagesResolved: results.filter((result) => result.value === true).length,
+    imagesResolved: results.filter((result) => result.value?.imageResolved === true).length,
+    launchpadsResolved: results.filter((result) => result.value?.launchpadResolved === true).length,
     unavailable: results.filter((result) => (
-      result.status === 'fulfilled' && result.value !== true
+      result.status === 'fulfilled' && result.value?.imageResolved !== true
     )).length,
     errors: results.filter((result) => result.status === 'rejected').length,
   };
@@ -262,6 +277,7 @@ function createRobinhoodCatalogProjectionBatch(options = {}) {
       onchainErrors,
       blockscoutChecked: blockscout.checked,
       blockscoutImagesResolved: blockscout.imagesResolved,
+      launchpadsResolved: blockscout.launchpadsResolved,
       blockscoutUnavailable: blockscout.unavailable,
       blockscoutErrors: blockscout.errors,
       socialEnqueued,

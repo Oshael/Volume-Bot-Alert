@@ -54,6 +54,18 @@ describe('Robinhood Blockscout metadata client', () => {
     assert.equal(metadata.imageUrl, null);
   });
 
+  it('reads and validates the contract creator from the address endpoint', async () => {
+    const creator = `0x${'2'.repeat(40)}`;
+    const client = createRobinhoodBlockscoutMetadataClient({
+      fetchImpl: async () => response(200, {
+        hash: TOKEN,
+        creator_address_hash: creator.toUpperCase(),
+      }),
+    });
+
+    assert.equal(await client.getContractCreator(TOKEN), creator);
+  });
+
   it('rejects HTTP failures and mismatched token identities', async () => {
     const failed = createRobinhoodBlockscoutMetadataClient({
       fetchImpl: async () => response(503, null),

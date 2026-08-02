@@ -132,7 +132,8 @@ describe('Robinhood dashboard catalog projection', () => {
 
     assert.equal(rows[0].tokenAddress, TOKEN);
     assert.match(calls[0].sql, /catalog\.source = 'robinhood-onchain'/);
-    assert.match(calls[0].sql, /identity_missing AND blockscout_due/);
+    assert.match(calls[0].sql, /image_missing AND blockscout_due/);
+    assert.match(calls[0].sql, /launchpad_due/);
     assert.match(calls[0].sql, /robinhood_dexscreener_checked_at/);
     assert.deepEqual(calls[0].params, [25, asOf, 86_400_000]);
   });

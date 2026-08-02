@@ -154,16 +154,25 @@ describe('runtime worker groups config', () => {
   it('runs Robinhood catalog reconciliation on a bounded one-minute default', () => {
     withEnv({ ROBINHOOD_CATALOG_PROJECTION_INTERVAL_MS: undefined }, (config) => {
       assert.equal(config.robinhoodCatalogProjectionWorker.intervalMs, 60_000);
+      assert.equal(config.robinhoodCatalogProjectionWorker.maxTokens, 50);
+      assert.equal(config.robinhoodCatalogProjectionWorker.concurrency, 8);
+      assert.equal(config.robinhoodCatalogProjectionWorker.blockscoutBatchSize, 50);
       assert.equal(config.robinhoodCatalogProjectionWorker.socialMetadataEnabled, true);
       assert.equal(config.robinhoodCatalogProjectionWorker.socialBatchSize, 5);
       assert.equal(config.robinhoodCatalogProjectionWorker.socialDrainIntervalMs, 60_000);
     });
     withEnv({
       ROBINHOOD_CATALOG_PROJECTION_INTERVAL_MS: '1',
+      ROBINHOOD_CATALOG_PROJECTION_MAX_TOKENS: '999',
+      ROBINHOOD_CATALOG_PROJECTION_CONCURRENCY: '999',
+      ROBINHOOD_BLOCKSCOUT_METADATA_BATCH_SIZE: '999',
       ROBINHOOD_SOCIAL_METADATA_BATCH_SIZE: '50',
       ROBINHOOD_SOCIAL_METADATA_INTERVAL_MS: '1',
     }, (config) => {
       assert.equal(config.robinhoodCatalogProjectionWorker.intervalMs, 60_000);
+      assert.equal(config.robinhoodCatalogProjectionWorker.maxTokens, 50);
+      assert.equal(config.robinhoodCatalogProjectionWorker.concurrency, 10);
+      assert.equal(config.robinhoodCatalogProjectionWorker.blockscoutBatchSize, 50);
       assert.equal(config.robinhoodCatalogProjectionWorker.socialBatchSize, 5);
       assert.equal(config.robinhoodCatalogProjectionWorker.socialDrainIntervalMs, 60_000);
     });

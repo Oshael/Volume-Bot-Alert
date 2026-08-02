@@ -174,9 +174,10 @@ describe('Robinhood catalog projection batch', () => {
     assert.equal(result.onchainErrors, 1);
   });
 
-  it('bounds Blockscout enrichment and persists image-missing checks', async () => {
+  it('bounds enrichment and attributes launchpads even when an image is cached', async () => {
     const checked = [];
     const recorded = [];
+    const attributed = [];
     const batch = createRobinhoodCatalogProjectionBatch({
       repository: {
         async listActiveTokenCandidates() { return [candidate(), candidate(TOKEN_2)]; },
@@ -192,11 +193,15 @@ describe('Robinhood catalog projection batch', () => {
           }];
         },
         async recordBlockscoutMetadata(value) { recorded.push(value); },
+        async recordLaunchpadAttribution(value) { attributed.push(value); },
       },
       blockscoutReader: {
         async getTokenMetadata(address) {
           checked.push(address);
-          return { available: true, symbol: 'TKN', name: 'Token', imageUrl: null };
+          return {
+            available: true, symbol: 'TKN', name: 'Token', imageUrl: null,
+            launchpadId: 'pons',
+          };
         },
       },
       now: () => Date.parse('2026-07-14T18:00:00Z'),
@@ -204,11 +209,16 @@ describe('Robinhood catalog projection batch', () => {
 
     const result = await batch.runOnce({ blockscoutBatchSize: 2 });
 
-    assert.deepEqual(checked, [TOKEN]);
-    assert.equal(result.blockscoutChecked, 1);
+    assert.deepEqual(checked, [TOKEN, TOKEN_2]);
+    assert.equal(result.blockscoutChecked, 2);
     assert.equal(result.blockscoutImagesResolved, 0);
-    assert.equal(result.blockscoutUnavailable, 1);
+    assert.equal(result.launchpadsResolved, 2);
+    assert.equal(result.blockscoutUnavailable, 2);
     assert.equal(recorded[0].address, TOKEN);
+    assert.deepEqual(attributed, [
+      { address: TOKEN, launchpadId: 'pons' },
+      { address: TOKEN_2, launchpadId: 'pons' },
+    ]);
   });
 
   it('excludes admin-blocked identities before catalog writes', async () => {

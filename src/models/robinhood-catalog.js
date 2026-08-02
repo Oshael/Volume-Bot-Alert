@@ -467,9 +467,13 @@ async function listAutomaticMetadataCandidates(input = {}, runner = db) {
     `WITH candidates AS (
        SELECT catalog.address,
          catalog.symbol IS NULL OR catalog.name IS NULL AS identity_missing,
+         catalog.last_image_url IS NULL AS image_missing,
          catalog.robinhood_blockscout_checked_at IS NULL
            OR catalog.robinhood_blockscout_checked_at <=
              $2::timestamptz - ($3::bigint * INTERVAL '1 millisecond') AS blockscout_due,
+         catalog.launchpad_checked_at IS NULL
+           OR catalog.launchpad_checked_at <=
+             $2::timestamptz - ($3::bigint * INTERVAL '1 millisecond') AS launchpad_due,
          catalog.robinhood_dexscreener_checked_at IS NULL
            OR catalog.robinhood_dexscreener_checked_at <=
              $2::timestamptz - ($3::bigint * INTERVAL '1 millisecond') AS dexscreener_due,
@@ -481,12 +485,13 @@ async function listAutomaticMetadataCandidates(input = {}, runner = db) {
      )
      SELECT address AS "tokenAddress", 0::numeric AS "volumeUsd"
      FROM candidates
-     WHERE blockscout_due OR (NOT blockscout_due AND dexscreener_due)
+     WHERE blockscout_due OR launchpad_due OR (NOT blockscout_due AND dexscreener_due)
      ORDER BY
        CASE
-         WHEN identity_missing AND blockscout_due THEN 0
-         WHEN blockscout_due THEN 1
-         ELSE 2
+         WHEN (image_missing AND blockscout_due) OR launchpad_due THEN 0
+         WHEN identity_missing AND blockscout_due THEN 1
+         WHEN blockscout_due THEN 2
+         ELSE 3
        END,
        last_seen_at DESC,
        address DESC
