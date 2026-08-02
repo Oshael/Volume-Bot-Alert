@@ -5,6 +5,14 @@
 const db = require('../models/db');
 
 const STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS admin_blocked_tokens (
+     chain VARCHAR(16) NOT NULL DEFAULT 'solana',
+     address VARCHAR(64) NOT NULL,
+     label VARCHAR(128),
+     created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+     CONSTRAINT admin_blocked_tokens_chain_pkey PRIMARY KEY (chain, address)
+   )`,
   `ALTER TABLE user_blocklist
      ADD COLUMN IF NOT EXISTS chain VARCHAR(16) NOT NULL DEFAULT 'solana'`,
   `ALTER TABLE admin_blocked_tokens

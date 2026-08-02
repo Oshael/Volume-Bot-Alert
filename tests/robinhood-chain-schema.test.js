@@ -119,6 +119,7 @@ describe('Robinhood additive chain schema', () => {
     const sql = stage55.STATEMENTS.join('\n');
     const group = SCHEMA_GROUPS.find((entry) => entry.key === 'stage55-chain-aware-blocklists-evidence');
 
+    assert.match(sql, /CREATE TABLE IF NOT EXISTS admin_blocked_tokens/);
     assert.match(sql, /user_blocklist_user_chain_address_key/);
     assert.match(sql, /admin_blocked_tokens_chain_pkey/);
     assert.match(sql, /DROP CONSTRAINT IF EXISTS admin_blocked_tokens_pkey/);
