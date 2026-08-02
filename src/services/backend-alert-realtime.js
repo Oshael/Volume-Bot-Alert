@@ -4,13 +4,12 @@ const userAlertEvent = require('../models/user-alert-event');
 const { GMGN_CLAIM_SIGNAL_RULE_KEY } = require('./backend-alert-rules');
 const backendAlertFeed = require('./backend-alert-feed');
 const socketHub = require('./socket-hub');
+const { createPostgresRealtimeListener } = require('./postgres-realtime-listener');
 
 const CHANNEL = 'backend_alert_event_created';
 const USER_ALERT_PAYLOAD_TYPE = 'user_alert_event_created';
 const GLOBAL_ALERT_PAYLOAD_TYPE = 'global_alert_event_created';
 
-let listenerClient = null;
-let listening = false;
 let lastError = null;
 const stats = {
   published: 0,
@@ -146,64 +145,35 @@ async function handleNotification(message, options = {}) {
   }
 }
 
-async function start(options = {}) {
-  if (listenerClient) {
-    return getStatus();
-  }
-
-  const pool = options.pool || db.pool;
-  const client = await pool.connect();
-  const onNotification = (message) => {
+const listenerTransport = createPostgresRealtimeListener({
+  channel: CHANNEL,
+  label: 'BackendAlertRealtime',
+  pool: db.pool,
+  onNotification(message, options) {
     void handleNotification(message, options);
-  };
-  const onError = (error) => {
+  },
+  onConnectionError(error) {
     lastError = error?.message || String(error || 'Unknown listener error');
-    listening = false;
-    console.error('[BackendAlertRealtime] listener error:', lastError);
-  };
-  const onEnd = () => {
-    listening = false;
-    listenerClient = null;
-  };
+  },
+  onConnected() {
+    lastError = null;
+  },
+});
 
-  client.on('notification', onNotification);
-  client.on('error', onError);
-  client.on('end', onEnd);
-  await client.query(`LISTEN ${CHANNEL}`);
-  listenerClient = {
-    client,
-    onNotification,
-    onError,
-    onEnd,
-  };
-  listening = true;
-  lastError = null;
-  console.log(`[BackendAlertRealtime] Listening on ${CHANNEL}`);
+async function start(options = {}) {
+  await listenerTransport.start(options);
   return getStatus();
 }
 
 async function stop() {
-  const current = listenerClient;
-  if (!current) {
-    return;
-  }
-
-  listenerClient = null;
-  listening = false;
-  current.client.off?.('notification', current.onNotification);
-  current.client.off?.('error', current.onError);
-  current.client.off?.('end', current.onEnd);
-  try {
-    await current.client.query(`UNLISTEN ${CHANNEL}`);
-  } catch (_) {}
-  current.client.release?.();
+  await listenerTransport.stop();
 }
 
 function getStatus() {
+  const listenerStatus = listenerTransport.getStatus();
   return {
-    channel: CHANNEL,
-    listening,
-    lastError,
+    ...listenerStatus,
+    lastError: lastError || listenerStatus.lastError,
     ...stats,
   };
 }

@@ -801,6 +801,9 @@ async function shutdownGracefully(signal = 'SIGTERM') {
       robinhoodRealtimeAlertWorker.stop(),
       robinhoodMarketAggregateWorker.stop(),
       telegramAlertRuntime.stop(),
+      backendAlertRealtime.stop(),
+      marketBucketRealtime.stop(),
+      userConfigSync.stop(),
     ]);
     const releaseResult = await workerLeaseManager.stop({ releaseLeases: true });
     console.log(`[Shutdown] Worker leases released=${releaseResult.released} missed=${releaseResult.missed} errors=${releaseResult.errors}`);

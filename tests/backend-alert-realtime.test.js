@@ -230,4 +230,39 @@ describe('backend alert realtime transport', () => {
     ]);
     assert.equal(client.released, true);
   });
+
+  it('recovers when the initial LISTEN connection cannot be opened', async () => {
+    const client = new EventEmitter();
+    client.queries = [];
+    client.query = async (sql) => {
+      client.queries.push(sql);
+    };
+    client.release = () => {};
+    let connectCalls = 0;
+    let reconnectCallback = null;
+
+    await assert.rejects(backendAlertRealtime.start({
+      pool: {
+        async connect() {
+          connectCalls += 1;
+          if (connectCalls === 1) throw new Error('database unavailable');
+          return client;
+        },
+      },
+      setTimeoutFn(callback) {
+        reconnectCallback = callback;
+        return { unref() {} };
+      },
+      clearTimeoutFn() {},
+    }), /database unavailable/);
+
+    assert.equal(backendAlertRealtime.getStatus().reconnectScheduled, true);
+    reconnectCallback();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(connectCalls, 2);
+    assert.deepEqual(client.queries, [`LISTEN ${backendAlertRealtime.CHANNEL}`]);
+    assert.equal(backendAlertRealtime.getStatus().listening, true);
+    assert.equal(backendAlertRealtime.getStatus().successfulReconnects, 1);
+  });
 });

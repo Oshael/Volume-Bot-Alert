@@ -1,5 +1,6 @@
 const db = require('../models/db');
 const socketHub = require('./socket-hub');
+const { createPostgresRealtimeListener } = require('./postgres-realtime-listener');
 
 const CHANNEL = 'market_bucket_updated';
 const MAX_BATCH_SIZE = 100;
@@ -16,8 +17,6 @@ function createMarketBucketRealtime(deps = {}) {
   const pending = new Map();
   let flushTimer = null;
   let flushing = false;
-  let listener = null;
-  let listening = false;
   const stats = { queued: 0, coalesced: 0, published: 0, publishFailures: 0, received: 0 };
 
   function prepare(payload) {
@@ -91,54 +90,27 @@ function createMarketBucketRealtime(deps = {}) {
     return event;
   }
 
+  const listenerTransport = createPostgresRealtimeListener({
+    channel: CHANNEL,
+    label: 'MarketBucketRealtime',
+    logger,
+    pool: deps.pool || db.pool,
+    onNotification: handleNotification,
+  });
+
   async function start(options = {}) {
-    if (listener) return getStatus();
-    const client = await (options.pool || db.pool).connect();
-    const onNotification = (message) => handleNotification(message);
-    const onError = (error) => {
-      listening = false;
-      logger.error('[MarketBucketRealtime] listener error:', error.message);
-    };
-    const onEnd = () => {
-      listening = false;
-      listener = null;
-    };
-    client.on('notification', onNotification);
-    client.on('error', onError);
-    client.on('end', onEnd);
-    try {
-      await client.query(`LISTEN ${CHANNEL}`);
-    } catch (error) {
-      client.off?.('notification', onNotification);
-      client.off?.('error', onError);
-      client.off?.('end', onEnd);
-      client.release?.();
-      throw error;
-    }
-    listener = { client, onNotification, onError, onEnd };
-    listening = true;
-    logger.log(`[MarketBucketRealtime] Listening on ${CHANNEL}`);
+    await listenerTransport.start(options);
     return getStatus();
   }
 
   async function stop() {
-    const current = listener;
-    listener = null;
-    listening = false;
     if (flushTimer) cancel(flushTimer);
     flushTimer = null;
-    if (!current) return;
-    current.client.off?.('notification', current.onNotification);
-    current.client.off?.('error', current.onError);
-    current.client.off?.('end', current.onEnd);
-    try {
-      await current.client.query(`UNLISTEN ${CHANNEL}`);
-    } catch (_) {}
-    current.client.release?.();
+    await listenerTransport.stop();
   }
 
   function getStatus() {
-    return { channel: CHANNEL, listening, pending: pending.size, ...stats };
+    return { ...listenerTransport.getStatus(), pending: pending.size, ...stats };
   }
 
   return { enqueue, flush, getStatus, handleNotification, start, stop };

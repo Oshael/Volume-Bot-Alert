@@ -71,3 +71,79 @@ test('LISTEN forwards a valid notification to the local socket hub', async () =>
   await relay.stop();
   assert.match(queries[1], new RegExp(`UNLISTEN ${CHANNEL}`));
 });
+
+test('reconnects LISTEN after connection loss and cancels recovery on stop', async () => {
+  class FakeClient extends EventEmitter {
+    constructor() {
+      super();
+      this.queries = [];
+      this.released = false;
+    }
+
+    async query(sql) {
+      this.queries.push(sql);
+    }
+
+    release() {
+      this.released = true;
+    }
+  }
+
+  const clients = [new FakeClient(), new FakeClient()];
+  const reconnectCallbacks = [];
+  let connectCalls = 0;
+  let cancelledTimers = 0;
+  const relay = createMarketBucketRealtime({ logger: { error: () => {}, log: () => {} } });
+  await relay.start({
+    pool: { connect: async () => clients[connectCalls++] },
+    reconnectDelayMs: 10,
+    setTimeoutFn(callback) {
+      reconnectCallbacks.push(callback);
+      return { unref() {} };
+    },
+    clearTimeoutFn() {
+      cancelledTimers += 1;
+    },
+  });
+
+  clients[0].emit('error', new Error('connection terminated'));
+  assert.equal(relay.getStatus().listening, false);
+  assert.equal(relay.getStatus().reconnectScheduled, true);
+  reconnectCallbacks.shift()();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(connectCalls, 2);
+  assert.deepEqual(clients[1].queries, [`LISTEN ${CHANNEL}`]);
+  assert.equal(relay.getStatus().listening, true);
+  assert.equal(relay.getStatus().successfulReconnects, 1);
+
+  clients[1].emit('end');
+  await relay.stop();
+  assert.equal(cancelledTimers, 1);
+  assert.equal(relay.getStatus().running, false);
+  assert.equal(relay.getStatus().reconnectScheduled, false);
+});
+
+test('does not return to listening when stop overlaps the initial LISTEN query', async () => {
+  const client = new EventEmitter();
+  const queries = [];
+  let resolveListen = null;
+  client.query = async (sql) => {
+    queries.push(sql);
+    if (sql === `LISTEN ${CHANNEL}`) {
+      await new Promise((resolve) => { resolveListen = resolve; });
+    }
+  };
+  client.release = () => {};
+  const relay = createMarketBucketRealtime({ logger: { error: () => {}, log: () => {} } });
+
+  const startPromise = relay.start({ pool: { connect: async () => client } });
+  await new Promise((resolve) => setImmediate(resolve));
+  const stopPromise = relay.stop();
+  resolveListen();
+  await Promise.all([startPromise, stopPromise]);
+
+  assert.deepEqual(queries, [`LISTEN ${CHANNEL}`, `UNLISTEN ${CHANNEL}`]);
+  assert.equal(relay.getStatus().running, false);
+  assert.equal(relay.getStatus().listening, false);
+});
