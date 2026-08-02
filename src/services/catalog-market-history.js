@@ -7,6 +7,8 @@ const { createTokenIdentity } = require('../utils/token-identity');
 const {
   ALL_AVAILABLE_SPARKLINE_GRANULARITY_MINUTES,
   MAX_COMPACT_SPARKLINE_POINTS,
+  MAX_EXPANDED_SPARKLINE_POINTS,
+  isRobinhoodFullHistoryGranularityMinutes,
 } = require('../utils/market-bucket-granularities');
 
 const SUPPORTED_CHAINS = new Set(['solana', 'robinhood']);
@@ -31,12 +33,19 @@ function normalizeRequest(input = {}) {
   if (!SUPPORTED_CHAINS.has(identity.chain)) {
     throw new Error(`Expanded market history is unavailable for ${identity.chain}`);
   }
+  const allAvailable = input.allAvailable === true;
+  const granularityMinutes = input.granularityMinutes == null
+    ? null
+    : Number(input.granularityMinutes);
+  if (allAvailable && (identity.chain !== 'robinhood'
+    || !isRobinhoodFullHistoryGranularityMinutes(granularityMinutes))) {
+    throw new Error('Expanded full history requires Robinhood 5, 15, or 30-minute granularity');
+  }
   return {
     ...identity,
-    points: Number(input.points) || 720,
-    granularityMinutes: input.granularityMinutes == null
-      ? null
-      : Number(input.granularityMinutes),
+    allAvailable,
+    points: Number(input.points) || (allAvailable ? MAX_EXPANDED_SPARKLINE_POINTS : 720),
+    granularityMinutes,
     allowOneMinuteFallback: input.allowOneMinuteFallback === true,
   };
 }
@@ -243,12 +252,11 @@ function createCatalogMarketHistoryService(options = {}) {
     }
 
     const granularityMinutes = request.granularityMinutes || 5;
-    const startAt = new Date(
-      endAt.getTime() - (request.points * granularityMinutes * MINUTE_MS),
-    );
     const history = await robinhoodReader.getHistory({
       address: request.address,
-      startAt,
+      ...(request.allAvailable ? { allAvailable: true } : {
+        startAt: new Date(endAt.getTime() - (request.points * granularityMinutes * MINUTE_MS)),
+      }),
       endAt,
       granularityMinutes,
       limit: request.points,
@@ -260,6 +268,7 @@ function createCatalogMarketHistoryService(options = {}) {
       valuationType: 'fdv',
       resolution: history.resolution,
       minuteStartsAt: history.minuteStartsAt,
+      allAvailable: request.allAvailable,
       points: request.points,
       granularityMinutes,
       count: item ? 1 : 0,

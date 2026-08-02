@@ -84,6 +84,33 @@ describe('chain-aware catalog market history service', () => {
     assert.equal('closeMcap' in result.item.candles[0], false);
   });
 
+  it('requests exact full Robinhood aggregates without manufacturing a start window', async () => {
+    let captured = null;
+    const service = createCatalogMarketHistoryService({
+      now: () => NOW,
+      robinhoodReader: { async getHistory(input) {
+        captured = input;
+        return {
+          chain: 'robinhood', address: ROBINHOOD, resolution: 'minute',
+          minuteStartsAt: '2026-07-01T12:00:00.000Z', truncated: false,
+          firstBucketAt: null, latestBucketAt: null, candles: [],
+        };
+      } },
+    });
+
+    const result = await service.getExpandedSparkline({
+      chain: 'robinhood', address: ROBINHOOD,
+      allAvailable: true, granularityMinutes: 15,
+    });
+
+    assert.equal(captured.allAvailable, true);
+    assert.equal('startAt' in captured, false);
+    assert.equal(captured.limit, 10_000);
+    assert.equal(captured.granularityMinutes, 15);
+    assert.equal(result.allAvailable, true);
+    assert.equal(result.points, 10_000);
+  });
+
   it('batches each chain once and restores the requested identity order', async () => {
     const calls = { solana: [], robinhood: [] };
     const history = {

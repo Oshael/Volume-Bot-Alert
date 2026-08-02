@@ -10,7 +10,9 @@ const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
 const {
   ALL_AVAILABLE_SPARKLINE_GRANULARITY_MINUTES,
   MAX_COMPACT_SPARKLINE_POINTS,
+  MAX_EXPANDED_SPARKLINE_POINTS,
   MAX_SPARKLINE_GRANULARITY_MINUTES,
+  isRobinhoodFullHistoryGranularityMinutes,
   isSparklineGranularityMinutes,
 } = require('../utils/market-bucket-granularities');
 const tokenMarketVolumeBucket1m = require('../models/token-market-volume-bucket-1m');
@@ -214,6 +216,18 @@ function parseSparklineBatchRequest(body = {}) {
   };
 }
 
+function parseExpandedFullHistory(body, identity, granularityMinutes) {
+  const allAvailable = parseOptionalBooleanBodyField(body.allAvailable, false, 'allAvailable');
+  if (!allAvailable.ok || !allAvailable.value) return allAvailable;
+  if (identity.chain !== 'robinhood') {
+    return { ok: false, error: 'Expanded full history is available only for Robinhood' };
+  }
+  if (!isRobinhoodFullHistoryGranularityMinutes(granularityMinutes)) {
+    return { ok: false, error: 'Robinhood full history requires 5, 15, or 30-minute granularity' };
+  }
+  return allAvailable;
+}
+
 function parseExpandedSparklineRequest(body = {}) {
   let identity;
   try {
@@ -223,11 +237,6 @@ function parseExpandedSparklineRequest(body = {}) {
   }
   if (identity.chain !== 'solana' && identity.chain !== 'robinhood') {
     return { ok: false, error: `Expanded market history is unavailable for ${identity.chain}` };
-  }
-
-  const points = parseOptionalIntegerBodyField(body.points, 'points', { min: 120, max: 1000 });
-  if (!points.ok) {
-    return points;
   }
 
   const granularityMinutes = parseOptionalIntegerBodyField(
@@ -241,6 +250,15 @@ function parseExpandedSparklineRequest(body = {}) {
   if (granularityMinutes.value != null && !isSparklineGranularityMinutes(granularityMinutes.value)) {
     return { ok: false, error: 'granularityMinutes must be one of 1, 5, 15, 30, 60, 240, 1440' };
   }
+
+  const allAvailable = parseExpandedFullHistory(body, identity, granularityMinutes.value);
+  if (!allAvailable.ok) return allAvailable;
+
+  const points = parseOptionalIntegerBodyField(body.points, 'points', {
+    min: 120,
+    max: allAvailable.value ? MAX_EXPANDED_SPARKLINE_POINTS : 1000,
+  });
+  if (!points.ok) return points;
 
   const allowOneMinuteFallback = parseOptionalBooleanBodyField(
     body.allowOneMinuteFallback,
@@ -256,7 +274,8 @@ function parseExpandedSparklineRequest(body = {}) {
     value: {
       chain: identity.chain,
       address: identity.address,
-      points: points.value || 720,
+      allAvailable: allAvailable.value,
+      points: points.value || (allAvailable.value ? MAX_EXPANDED_SPARKLINE_POINTS : 720),
       granularityMinutes: granularityMinutes.value,
       allowOneMinuteFallback: allowOneMinuteFallback.value,
     },

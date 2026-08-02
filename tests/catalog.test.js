@@ -950,6 +950,49 @@ describe('Catalog routes', () => {
     }
   });
 
+  it('accepts bounded full aggregate history only for Robinhood 5m, 15m, and 30m', async () => {
+    const originalGetExpandedSparkline = catalogMarketHistory.getExpandedSparkline;
+    let captured = null;
+    catalogMarketHistory.getExpandedSparkline = async (input) => {
+      captured = input;
+      return { ...input, count: 1, item: { chain: input.chain, address: input.address } };
+    };
+
+    try {
+      const accepted = await request(app)
+        .post('/api/catalog/sparklines/expanded')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          chain: 'robinhood', address: ROBINHOOD_ADDR,
+          allAvailable: true, granularityMinutes: 5,
+        });
+      const rejectedGranularity = await request(app)
+        .post('/api/catalog/sparklines/expanded')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          chain: 'robinhood', address: ROBINHOOD_ADDR,
+          allAvailable: true, granularityMinutes: 60,
+        });
+      const rejectedChain = await request(app)
+        .post('/api/catalog/sparklines/expanded')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          chain: 'solana', address: VALID_ADDR,
+          allAvailable: true, granularityMinutes: 5,
+        });
+
+      assert.equal(accepted.status, 200);
+      assert.equal(captured.allAvailable, true);
+      assert.equal(captured.points, 10_000);
+      assert.equal(rejectedGranularity.status, 400);
+      assert.match(rejectedGranularity.body.error, /5, 15, or 30-minute/);
+      assert.equal(rejectedChain.status, 400);
+      assert.match(rejectedChain.body.error, /only for Robinhood/);
+    } finally {
+      catalogMarketHistory.getExpandedSparkline = originalGetExpandedSparkline;
+    }
+  });
+
   it('rejects unsupported chart chains before dispatch', async () => {
     const res = await request(app)
       .post('/api/catalog/sparklines/expanded')

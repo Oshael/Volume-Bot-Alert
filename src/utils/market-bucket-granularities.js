@@ -7,6 +7,8 @@ const MAX_SPARKLINE_GRANULARITY_MINUTES = Math.max(...SPARKLINE_GRANULARITY_MINU
 const DEFAULT_SPARKLINE_GRANULARITY_MINUTES = 30;
 const ALL_AVAILABLE_SPARKLINE_GRANULARITY_MINUTES = 60;
 const MAX_COMPACT_SPARKLINE_POINTS = 500;
+const MAX_EXPANDED_SPARKLINE_POINTS = 10_000;
+const ROBINHOOD_FULL_HISTORY_GRANULARITY_MINUTES = Object.freeze([5, 15, 30]);
 
 function normalizeInteger(value) {
   const parsed = Number(value);
@@ -23,6 +25,11 @@ function isSparklineGranularityMinutes(value) {
   return parsed != null && SPARKLINE_GRANULARITY_MINUTES.includes(parsed);
 }
 
+function isRobinhoodFullHistoryGranularityMinutes(value) {
+  const parsed = normalizeInteger(value);
+  return parsed != null && ROBINHOOD_FULL_HISTORY_GRANULARITY_MINUTES.includes(parsed);
+}
+
 function normalizeSparklineGranularityMinutes(value) {
   const parsed = normalizeInteger(value);
   return isSparklineGranularityMinutes(parsed)
@@ -37,10 +44,13 @@ module.exports = {
   FIVE_MINUTE_AGGREGATE_SOURCE_GRANULARITY,
   MAX_SPARKLINE_GRANULARITY_MINUTES,
   MAX_COMPACT_SPARKLINE_POINTS,
+  MAX_EXPANDED_SPARKLINE_POINTS,
   ON_WRITE_AGGREGATE_GRANULARITY_MINUTES,
   ON_WRITE_ROLLUP_AGGREGATE_GRANULARITY_MINUTES,
+  ROBINHOOD_FULL_HISTORY_GRANULARITY_MINUTES,
   SPARKLINE_GRANULARITY_MINUTES,
   isAggregateGranularityMinutes,
+  isRobinhoodFullHistoryGranularityMinutes,
   isSparklineGranularityMinutes,
   normalizeSparklineGranularityMinutes,
 };

@@ -159,6 +159,38 @@ describe('Robinhood native market history reader', () => {
     assert.equal(history.candles[1].bucketTs, '2026-07-15T11:00:00.000Z');
   });
 
+  it('reads exact stored 5m aggregates across the full bounded history window', async () => {
+    const calls = [];
+    let metrics;
+    const repository = createRobinhoodMarketHistoryReadRepository({
+      now: () => new Date('2026-07-15T12:30:00.000Z'),
+      database: { async query(sql, params) {
+        calls.push({ sql, params });
+        return { rows: [row({
+          bucket_ts: '2026-06-01T00:00:00.000Z',
+          granularity_minutes: 5,
+          source_granularity_minutes: 1,
+        })] };
+      } },
+    });
+
+    const history = await repository.getHistory({
+      address: ADDRESS, endAt: '2026-07-15T12:00:00.000Z',
+      allAvailable: true, granularityMinutes: 5, limit: 10_000,
+      onMetrics(value) { metrics = value; },
+    });
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].sql, __private.AGGREGATE_HISTORY_SQL);
+    assert.deepEqual(calls[0].params.slice(2), [
+      new Date('2026-07-15T12:00:00.000Z'), 5, 10_001,
+    ]);
+    assert.equal(history.requestedGranularityMinutes, 5);
+    assert.equal(history.candles.length, 1);
+    assert.equal(metrics.source, 'aggregate-all-exact');
+    assert.equal(metrics.aggregateRows, 1);
+  });
+
   it('uses aggregate rows first and reports their rollout metrics', async () => {
     const calls = [];
     let metrics;
@@ -348,7 +380,10 @@ describe('Robinhood native market history reader', () => {
     };
     await assert.rejects(repository.getHistory({ ...base, address: 'bad' }), /address/i);
     await assert.rejects(repository.getHistory({ ...base, granularityMinutes: 2 }), /granularity/);
-    await assert.rejects(repository.getHistory({ ...base, limit: 5001 }), /limit/);
+    await assert.rejects(repository.getHistory({ ...base, limit: 10_001 }), /limit/);
+    await assert.rejects(repository.getHistory({
+      ...base, allAvailable: true, granularityMinutes: 240,
+    }), /all-available/);
     await assert.rejects(repository.getHistory({ ...base, startAt: base.endAt }), /window/);
   });
 });

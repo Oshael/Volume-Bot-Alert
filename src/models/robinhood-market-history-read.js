@@ -2,6 +2,8 @@ const db = require('./db');
 const { normalizeTokenAddress } = require('../utils/token-identity');
 const {
   ALL_AVAILABLE_SPARKLINE_GRANULARITY_MINUTES,
+  MAX_EXPANDED_SPARKLINE_POINTS,
+  isRobinhoodFullHistoryGranularityMinutes,
 } = require('../utils/market-bucket-granularities');
 
 const CHAIN = 'robinhood';
@@ -9,7 +11,7 @@ const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
 const MINUTE_RETENTION_MS = 14 * 24 * 60 * MINUTE_MS;
 const MAX_WINDOW_MS = 10 * 365 * 24 * 60 * MINUTE_MS;
-const MAX_CANDLES = 5000;
+const MAX_CANDLES = MAX_EXPANDED_SPARKLINE_POINTS;
 const MAX_ADDRESSES = 100;
 const DEFAULT_CACHE_TTL_MS = 5000;
 const MAX_CACHE_ENTRIES = 250;
@@ -192,6 +194,17 @@ function normalizeAddresses(input) {
   return addresses;
 }
 
+function validateHistoryGranularity(granularityMinutes, allAvailable) {
+  if (!GRANULARITIES.has(granularityMinutes)) {
+    throw new Error('Robinhood history granularity must be one of 1, 5, 15, 30, 60, 240, 1440');
+  }
+  const allAvailableSupported = granularityMinutes === ALL_AVAILABLE_SPARKLINE_GRANULARITY_MINUTES
+    || isRobinhoodFullHistoryGranularityMinutes(granularityMinutes);
+  if (allAvailable && !allAvailableSupported) {
+    throw new Error('Robinhood all-available history supports only 5, 15, 30, or 60 minutes');
+  }
+}
+
 function normalizeQuery(input, now) {
   const addresses = normalizeAddresses(input);
   const endAt = timestamp(input.endAt, 'endAt');
@@ -203,12 +216,9 @@ function normalizeQuery(input, now) {
   if (windowMs <= 0 || windowMs > MAX_WINDOW_MS) {
     throw new Error('Robinhood history window must be greater than zero and at most 10 years');
   }
-  const granularityMinutes = allAvailable
-    ? ALL_AVAILABLE_SPARKLINE_GRANULARITY_MINUTES
-    : Number(input.granularityMinutes ?? 5);
-  if (!GRANULARITIES.has(granularityMinutes)) {
-    throw new Error('Robinhood history granularity must be one of 1, 5, 15, 30, 60, 240, 1440');
-  }
+  const granularityMinutes = Number(input.granularityMinutes
+    ?? (allAvailable ? ALL_AVAILABLE_SPARKLINE_GRANULARITY_MINUTES : 5));
+  validateHistoryGranularity(granularityMinutes, allAvailable);
   const limit = Number(input.limit ?? 1000);
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_CANDLES) {
     throw new Error(`Robinhood history limit must be between 1 and ${MAX_CANDLES}`);
@@ -506,16 +516,25 @@ function createRobinhoodMarketHistoryReadRepository(options = {}) {
       : (sql, params) => database.query(sql, params);
     const queryStartedAt = Date.now();
     if (query.allAvailable) {
-      const result = await execute(ALL_AVAILABLE_HISTORY_SQL, [
-        query.addresses, query.endAt, query.limit,
-      ]);
+      const exactAggregates = isRobinhoodFullHistoryGranularityMinutes(
+        query.granularityMinutes,
+      );
+      const result = exactAggregates
+        ? await execute(AGGREGATE_HISTORY_SQL, [
+          query.addresses, query.startAt, query.endAt,
+          query.granularityMinutes, query.limit + 1,
+        ])
+        : await execute(ALL_AVAILABLE_HISTORY_SQL, [
+          query.addresses, query.endAt, query.limit,
+        ]);
       const rowsByAddress = groupRows(query, result.rows);
       const histories = Object.freeze(query.addresses.map((address) => (
         buildHistoryResult(query, address, rowsByAddress.get(address) || [])
       )));
       const metrics = {
-        source: 'hourly-all-sampled', rows: result.rows.length,
-        aggregateRows: 0, fallbackRows: 0,
+        source: exactAggregates ? 'aggregate-all-exact' : 'hourly-all-sampled',
+        rows: result.rows.length,
+        aggregateRows: exactAggregates ? result.rows.length : 0, fallbackRows: 0,
         fallbackAddresses: 0, cacheHit: false,
         queryDurationMs: Date.now() - queryStartedAt,
         buildDurationMs: 0,
