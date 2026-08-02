@@ -30,6 +30,7 @@ const SUPPLY_STATUSES = new Set([
   'unchanged_between_anchors',
   'latest_call',
 ]);
+const V4_LIQUIDITY_LOCK_KEY = 'robinhood-v4-liquidity-materialization';
 
 function normalizeSignalProtocols(value) {
   const entries = Array.isArray(value) ? value : [];
@@ -896,6 +897,7 @@ async function insertProcessedLogs(client, rows) {
 
 async function insertV4LiquidityDeltas(client, rows) {
   if (!rows.length) return 0;
+  await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [V4_LIQUIDITY_LOCK_KEY]);
   const result = await client.query(
     `INSERT INTO robinhood_v4_liquidity_deltas (
        chain, transaction_hash, log_index, block_number, block_hash,
@@ -918,6 +920,43 @@ async function insertV4LiquidityDeltas(client, rows) {
   );
   if (result.rowCount !== rows.length) {
     throw new Error('New ModifyLiquidity logs were not persisted exactly once');
+  }
+  const ready = await client.query(
+    `SELECT 1 FROM robinhood_v4_liquidity_materialization_state
+     WHERE chain = 'robinhood'`
+  );
+  if (ready.rowCount) {
+    const ranges = await client.query(
+      `WITH input AS (
+         SELECT * FROM jsonb_to_recordset($1::jsonb) AS delta(
+           "poolId" text, "marketKey" text, "tickLower" int,
+           "tickUpper" int, "liquidityDelta" text
+         )
+       ), grouped AS (
+         SELECT "poolId", MIN("marketKey") AS "marketKey", "tickLower", "tickUpper",
+                SUM("liquidityDelta"::numeric) AS liquidity_delta
+         FROM input GROUP BY "poolId", "tickLower", "tickUpper"
+       )
+       INSERT INTO robinhood_v4_liquidity_ranges (
+         chain, pool_id, market_key, tick_lower, tick_upper, liquidity_gross
+       )
+       SELECT 'robinhood', "poolId", "marketKey", "tickLower", "tickUpper", liquidity_delta
+       FROM grouped
+       ON CONFLICT (chain, pool_id, tick_lower, tick_upper) DO UPDATE SET
+         liquidity_gross = robinhood_v4_liquidity_ranges.liquidity_gross
+           + EXCLUDED.liquidity_gross,
+         updated_at = NOW()
+       WHERE robinhood_v4_liquidity_ranges.market_key = EXCLUDED.market_key
+         AND robinhood_v4_liquidity_ranges.liquidity_gross + EXCLUDED.liquidity_gross >= 0
+       RETURNING 1`,
+      [JSON.stringify(rows)]
+    );
+    const expectedRanges = new Set(rows.map((row) => (
+      `${row.poolId}:${row.tickLower}:${row.tickUpper}`
+    ))).size;
+    if (ranges.rowCount !== expectedRanges) {
+      throw new Error('V4 liquidity range update conflicted or became negative');
+    }
   }
   return result.rowCount;
 }

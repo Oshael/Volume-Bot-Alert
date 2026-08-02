@@ -2496,6 +2496,45 @@ const SCHEMA_GROUPS = [
       ],
     }],
   },
+  {
+    key: 'stage101-robinhood-v4-liquidity-ranges',
+    name: 'Stage 101 Robinhood V4 materialized liquidity ranges',
+    repair: 'node src/utils/db-init-stage101.js',
+    tables: [
+      {
+        table: 'robinhood_v4_liquidity_ranges',
+        columns: [
+          'chain', 'pool_id', 'market_key', 'tick_lower', 'tick_upper',
+          'liquidity_gross', 'updated_at',
+        ],
+        constraints: [
+          {
+            name: 'robinhood_v4_liquidity_ranges_pkey',
+            includes: ['PRIMARY KEY', 'chain', 'pool_id', 'tick_lower', 'tick_upper'],
+          },
+          {
+            name: 'robinhood_v4_liquidity_ranges_liquidity_check',
+            includes: ['CHECK', 'liquidity_gross'],
+          },
+        ],
+        indexes: [{
+          name: 'idx_robinhood_v4_liquidity_ranges_market',
+          includes: ['chain', 'market_key', 'liquidity_gross'],
+        }],
+      },
+      {
+        table: 'robinhood_v4_liquidity_materialization_state',
+        columns: [
+          'chain', 'replay_start_block', 'replay_target_block',
+          'replay_checkpoint_hash', 'materialized_at', 'version',
+        ],
+        constraints: [{
+          name: 'robinhood_v4_liquidity_materialization_state_pkey',
+          includes: ['PRIMARY KEY', 'chain'],
+        }],
+      },
+    ],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
@@ -2528,6 +2567,7 @@ const PROFILE_GROUP_KEYS = {
     'stage98-robinhood-v3-pool-balance-tvl',
     'stage99-robinhood-v4-liquidity-ledger',
     'stage100-robinhood-v4-liquidity-replay',
+    'stage101-robinhood-v4-liquidity-ranges',
   ],
   runtime: SCHEMA_GROUPS.map((group) => group.key),
 };

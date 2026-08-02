@@ -687,6 +687,7 @@ Stages confirmados:
 | 98 | TVL Uniswap V3 pelos saldos ERC-20 da pool e constraints correspondentes |
 | 99 | ledger idempotente dos deltas `ModifyLiquidity` V4 por pool/faixa de ticks |
 | 100 | cursor independente do replay histórico de liquidez V4 pelo RPC local |
+| 101 | faixas V4 materializadas e mantidas incrementalmente após o replay |
 
 A liquidez V3 usa os saldos reais de token e quote mantidos pelo contrato da
 pool, valorados ao preço spot do mesmo snapshot. V4 captura os deltas assinados
@@ -694,6 +695,8 @@ de liquidez de forma atômica com o processed log, mas continua fail-closed até
 backfill histórico e a materialização das posições/ticks do `PoolManager`.
 O replay V4 usa `eth_getLogs` em `127.0.0.1:8547`, não altera os watermarks do
 backfill geral e pode ser retomado com `npm run robinhood:v4-liquidity-replay`.
+Depois de `completed`, `npm run robinhood:v4-liquidity-materialize` valida saldos
+não negativos, cria as faixas e ativa sua manutenção atômica pelo worker live.
 
 ### 13.3 Pipeline de backfill
 

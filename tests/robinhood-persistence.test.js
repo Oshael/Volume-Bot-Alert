@@ -287,6 +287,12 @@ function createFakeDatabase(options = {}) {
           ? { rows: [], rowCount: 0 }
           : { rows: [{ transaction_hash: HASH_B }], rowCount: 1 };
       }
+      if (/SELECT 1 FROM robinhood_v4_liquidity_materialization_state/.test(sql)) {
+        return options.v4Materialized ? { rows: [{}], rowCount: 1 } : { rows: [], rowCount: 0 };
+      }
+      if (/INSERT INTO robinhood_v4_liquidity_ranges/.test(sql)) {
+        return options.failV4Range ? { rows: [], rowCount: 0 } : { rows: [{}], rowCount: 1 };
+      }
       const poolResult = fakePoolWriteResult(sql, options);
       if (poolResult) return poolResult;
       if (/INSERT INTO robinhood_market_observations/.test(sql)) {
@@ -767,6 +773,28 @@ describe('Robinhood persistence repository', () => {
       .commitMarketRange({ entries: [liquidityDeltaEntry()], cursor: cursor() });
     assert.equal(duplicate.insertedLiquidityDeltas, 0);
     assert.equal(replay.calls.some((call) => /v4_liquidity_deltas/.test(call.sql)), false);
+  });
+
+  it('updates materialized V4 ranges in the same live transaction', async () => {
+    const fake = createFakeDatabase({ v4Materialized: true });
+    const result = await createRobinhoodPersistenceRepository({ database: fake.database })
+      .commitMarketRange({ entries: [liquidityDeltaEntry()], cursor: cursor() });
+    const range = fake.calls.find((call) => /INSERT INTO robinhood_v4_liquidity_ranges/.test(call.sql));
+
+    assert.equal(result.insertedLiquidityDeltas, 1);
+    assert.match(range.sql, /liquidity_gross \+ EXCLUDED\.liquidity_gross >= 0/);
+    assert.equal(fake.calls.at(-1).sql, 'COMMIT');
+  });
+
+  it('rolls back a live V4 delta when its materialized range would conflict', async () => {
+    const fake = createFakeDatabase({ v4Materialized: true, failV4Range: true });
+    await assert.rejects(
+      createRobinhoodPersistenceRepository({ database: fake.database })
+        .commitMarketRange({ entries: [liquidityDeltaEntry()], cursor: cursor() }),
+      /range update conflicted or became negative/
+    );
+    assert.equal(fake.calls.some((call) => /INSERT INTO robinhood_ingestion_cursors/.test(call.sql)), false);
+    assert.equal(fake.calls.at(-1).sql, 'ROLLBACK');
   });
 
   it('persists a historical V4 delta before settling its backfill claim', async () => {
