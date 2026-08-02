@@ -944,19 +944,38 @@ async function insertV4LiquidityDeltas(client, rows) {
          SELECT "poolId", MIN("marketKey") AS "marketKey", "tickLower", "tickUpper",
                 SUM("liquidityDelta"::numeric) AS liquidity_delta
          FROM input GROUP BY "poolId", "tickLower", "tickUpper"
+       ), updated AS (
+         UPDATE robinhood_v4_liquidity_ranges existing
+         SET liquidity_gross = existing.liquidity_gross + grouped.liquidity_delta,
+             updated_at = NOW()
+         FROM grouped
+         WHERE existing.chain = 'robinhood'
+           AND existing.pool_id = grouped."poolId"
+           AND existing.tick_lower = grouped."tickLower"
+           AND existing.tick_upper = grouped."tickUpper"
+           AND existing.market_key = grouped."marketKey"
+           AND existing.liquidity_gross + grouped.liquidity_delta >= 0
+           AND grouped.liquidity_delta <> 0
+         RETURNING existing.pool_id, existing.tick_lower, existing.tick_upper
+       ), inserted AS (
+         INSERT INTO robinhood_v4_liquidity_ranges (
+           chain, pool_id, market_key, tick_lower, tick_upper, liquidity_gross
+         )
+         SELECT 'robinhood', "poolId", "marketKey", "tickLower", "tickUpper", liquidity_delta
+         FROM grouped
+         WHERE liquidity_delta > 0
+           AND NOT EXISTS (
+             SELECT 1 FROM updated
+             WHERE updated.pool_id = grouped."poolId"
+               AND updated.tick_lower = grouped."tickLower"
+               AND updated.tick_upper = grouped."tickUpper"
+           )
+         ON CONFLICT (chain, pool_id, tick_lower, tick_upper) DO NOTHING
+         RETURNING pool_id, tick_lower, tick_upper
        )
-       INSERT INTO robinhood_v4_liquidity_ranges (
-         chain, pool_id, market_key, tick_lower, tick_upper, liquidity_gross
-       )
-       SELECT 'robinhood', "poolId", "marketKey", "tickLower", "tickUpper", liquidity_delta
-       FROM grouped
-       ON CONFLICT (chain, pool_id, tick_lower, tick_upper) DO UPDATE SET
-         liquidity_gross = robinhood_v4_liquidity_ranges.liquidity_gross
-           + EXCLUDED.liquidity_gross,
-         updated_at = NOW()
-       WHERE robinhood_v4_liquidity_ranges.market_key = EXCLUDED.market_key
-         AND robinhood_v4_liquidity_ranges.liquidity_gross + EXCLUDED.liquidity_gross >= 0
-       RETURNING 1`,
+       SELECT 1 FROM updated
+       UNION ALL SELECT 1 FROM inserted
+       UNION ALL SELECT 1 FROM grouped WHERE liquidity_delta = 0`,
       [JSON.stringify(rows)]
     );
     const expectedRanges = new Set(rows.map((row) => (

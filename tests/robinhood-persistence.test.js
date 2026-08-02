@@ -788,14 +788,16 @@ describe('Robinhood persistence repository', () => {
     assert.equal(replay.calls.some((call) => /v4_liquidity_deltas/.test(call.sql)), false);
   });
 
-  it('updates materialized V4 ranges in the same live transaction', async () => {
+  it('updates materialized V4 ranges without inserting a negative constrained row', async () => {
     const fake = createFakeDatabase({ v4Materialized: true });
     const result = await createRobinhoodPersistenceRepository({ database: fake.database })
       .commitMarketRange({ entries: [liquidityDeltaEntry()], cursor: cursor() });
     const range = fake.calls.find((call) => /INSERT INTO robinhood_v4_liquidity_ranges/.test(call.sql));
 
     assert.equal(result.insertedLiquidityDeltas, 1);
-    assert.match(range.sql, /liquidity_gross \+ EXCLUDED\.liquidity_gross >= 0/);
+    assert.match(range.sql, /UPDATE robinhood_v4_liquidity_ranges existing/);
+    assert.match(range.sql, /existing\.liquidity_gross \+ grouped\.liquidity_delta >= 0/);
+    assert.match(range.sql, /WHERE liquidity_delta > 0/);
     assert.equal(fake.calls.at(-1).sql, 'COMMIT');
   });
 

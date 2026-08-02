@@ -709,6 +709,7 @@ Depois de `completed`, `npm run robinhood:v4-liquidity-materialize` valida saldo
 não negativos, cria as faixas e ativa sua manutenção atômica pelo worker live.
 Com a Stage 102, swaps V4 valoram o principal das faixas no preço corrente; o
 backfill consulta o ledger no bloco/log do swap, sem usar posições futuras.
+Deltas live negativos atualizam faixas existentes sem tentar inserir saldo negativo.
 
 ### 13.3 Pipeline de backfill
 
