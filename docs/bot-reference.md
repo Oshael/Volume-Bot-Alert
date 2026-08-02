@@ -713,7 +713,8 @@ Deltas live negativos atualizam faixas existentes sem tentar inserir saldo negat
 Nos cards monitorados, volume continua vindo das janelas exatas de observações/buckets.
 A liquidez Robinhood é agregada na leitura exata a partir do snapshot recente mais
 novo de cada pool ativa; pools ainda não valoradas não anulam a soma conhecida, que
-é exposta como limite inferior com cobertura parcial e marcador `+`.
+é exposta como limite inferior. O card mantém o valor limpo e o hover detalha a
+liquidez conhecida por protocolo/pool e a cobertura valorada.
 
 ### 13.3 Pipeline de backfill
 

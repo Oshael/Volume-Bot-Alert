@@ -55,6 +55,12 @@ function metrics(address, overrides = {}) {
     liquidityCoverage: 'partial',
     liquidityMarketCount: 3,
     valuedLiquidityMarketCount: 2,
+    liquidityPools: [
+      { protocol: 'uniswap-v3', marketKey: 'market',
+        poolAddress: `0x${'3'.repeat(40)}`, poolId: null, liquidityUsd: 9_000 },
+      { protocol: 'uniswap-v4', marketKey: 'market-v4',
+        poolAddress: null, poolId: `0x${'4'.repeat(64)}`, liquidityUsd: 0 },
+    ],
     coverage: {
       '5m': 'complete', '1h': 'complete', '6h': 'complete', '24h': 'complete',
     },
@@ -119,6 +125,7 @@ describe('Robinhood workspace token reader', () => {
     assert.equal(prefix.rows[0].liquidityCoverage, 'partial');
     assert.equal(prefix.rows[0].liquidityMarketCount, 3);
     assert.equal(prefix.rows[0].valuedLiquidityMarketCount, 2);
+    assert.equal(prefix.rows[0].liquidityPools[0].liquidityUsd, 9000);
     assert.equal(prefix.rows[1].volume1hUsd, 0);
     assert.deepEqual(calls[0].params, [
       new Date(AS_OF), 30_000, 100_000, [EXCLUDED], 500,

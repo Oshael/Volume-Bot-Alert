@@ -328,7 +328,7 @@ function normalizeCatalogRow(row, metrics, query, filters) {
   const {
     chain: _chain, address: _address, key: _key,
     liquidityUsd, liquidityCoverage, liquidityMarketCount,
-    valuedLiquidityMarketCount, ...windowMetrics
+    valuedLiquidityMarketCount, liquidityPools, ...windowMetrics
   } = metrics;
   return Object.freeze({
     identity,
@@ -345,6 +345,7 @@ function normalizeCatalogRow(row, metrics, query, filters) {
     liquidityCoverage,
     liquidityMarketCount,
     valuedLiquidityMarketCount,
+    liquidityPools,
     pairAddress: optionalText(row.last_pair_address),
     pairUrl: optionalText(row.last_pair_url),
     pairDexId: optionalText(row.last_dex_id),

@@ -62,6 +62,7 @@ function buildDashboardMonitoredToken(row, options = {}) {
     valuedLiquidityMarketCount: optionalNumber(
       row.valuedLiquidityMarketCount, 'valuedLiquidityMarketCount',
     ),
+    liquidityPools: Array.isArray(row.liquidityPools) ? row.liquidityPools : [],
     liquidityIsLowerBound: row.liquidityUsd != null && row.liquidityCoverage === 'partial',
     volume5m: row.volume5mUsd,
     prevVolume5mCanonical: optionalNumber(

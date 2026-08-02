@@ -213,7 +213,7 @@ primary_prices AS (
 ),
 latest_pool_liquidity AS MATERIALIZED (
   SELECT requested.token_address, registry.protocol, registry.market_key,
-    latest.close_liquidity_usd
+    registry.pool_address, registry.pool_id, latest.close_liquidity_usd
   FROM requested
   CROSS JOIN bounds
   INNER JOIN robinhood_pool_registry registry
@@ -242,7 +242,15 @@ token_liquidity AS (
     SUM(close_liquidity_usd) FILTER (WHERE close_liquidity_usd IS NOT NULL)
       AS liquidity_usd,
     COUNT(*)::bigint AS liquidity_market_count,
-    COUNT(close_liquidity_usd)::bigint AS valued_liquidity_market_count
+    COUNT(close_liquidity_usd)::bigint AS valued_liquidity_market_count,
+    COALESCE(jsonb_agg(jsonb_build_object(
+      'protocol', protocol,
+      'marketKey', market_key,
+      'poolAddress', pool_address,
+      'poolId', pool_id,
+      'liquidityUsd', close_liquidity_usd::text
+    ) ORDER BY close_liquidity_usd DESC, protocol, market_key)
+      FILTER (WHERE close_liquidity_usd IS NOT NULL), '[]'::jsonb) AS liquidity_pools
   FROM latest_pool_liquidity
   GROUP BY token_address
 )
@@ -266,6 +274,7 @@ SELECT requested.token_address,
   COALESCE(token_liquidity.liquidity_market_count, 0) AS liquidity_market_count,
   COALESCE(token_liquidity.valued_liquidity_market_count, 0)
     AS valued_liquidity_market_count,
+  COALESCE(token_liquidity.liquidity_pools, '[]'::jsonb) AS liquidity_pools,
   primary_prices.current_price_usd, primary_prices.current_observed_at,
   primary_prices.price_1h_usd, primary_prices.price_1h_observed_at,
   primary_prices.price_6h_usd, primary_prices.price_6h_observed_at,
@@ -348,6 +357,26 @@ function normalizeLiquidity(row) {
   if (liquidityUsd != null && (!Number.isFinite(liquidityUsd) || liquidityUsd < 0)) {
     throw new Error('Robinhood known liquidity is invalid');
   }
+  const liquidityPools = (Array.isArray(row.liquidity_pools) ? row.liquidity_pools : [])
+    .map((pool) => {
+      const protocol = String(pool?.protocol || '');
+      const marketKey = String(pool?.marketKey || '');
+      const poolLiquidityUsd = Number(pool?.liquidityUsd);
+      if (!['uniswap-v2', 'uniswap-v3', 'uniswap-v4'].includes(protocol)
+        || !marketKey || !Number.isFinite(poolLiquidityUsd) || poolLiquidityUsd < 0) {
+        throw new Error('Robinhood liquidity pool breakdown is invalid');
+      }
+      return Object.freeze({
+        protocol,
+        marketKey,
+        poolAddress: pool?.poolAddress == null ? null : String(pool.poolAddress),
+        poolId: pool?.poolId == null ? null : String(pool.poolId),
+        liquidityUsd: poolLiquidityUsd,
+      });
+    });
+  if (liquidityPools.length !== valuedMarketCount) {
+    throw new Error('Robinhood liquidity pool coverage is inconsistent');
+  }
   return {
     liquidityUsd,
     liquidityCoverage: valuedMarketCount === 0
@@ -355,6 +384,7 @@ function normalizeLiquidity(row) {
       : (valuedMarketCount < marketCount ? 'partial' : 'complete'),
     liquidityMarketCount: marketCount,
     valuedLiquidityMarketCount: valuedMarketCount,
+    liquidityPools: Object.freeze(liquidityPools),
   };
 }
 

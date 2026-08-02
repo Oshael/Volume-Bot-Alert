@@ -33,6 +33,12 @@ function metricRow(overrides = {}) {
     liquidity_usd: '12000',
     liquidity_market_count: '3',
     valued_liquidity_market_count: '2',
+    liquidity_pools: [
+      { protocol: 'uniswap-v3', marketKey: 'v3-market',
+        poolAddress: `0x${'3'.repeat(40)}`, poolId: null, liquidityUsd: '8000' },
+      { protocol: 'uniswap-v4', marketKey: 'v4-market',
+        poolAddress: null, poolId: `0x${'4'.repeat(64)}`, liquidityUsd: '4000' },
+    ],
     current_price_usd: '2',
     current_observed_at: new Date('2026-07-15T17:59:00.000Z'),
     price_1h_usd: '1.6',
@@ -75,6 +81,12 @@ describe('Robinhood workspace window metric reader', () => {
     assert.equal(row.liquidityCoverage, 'partial');
     assert.equal(row.liquidityMarketCount, 3);
     assert.equal(row.valuedLiquidityMarketCount, 2);
+    assert.deepEqual(row.liquidityPools.map((pool) => ({
+      protocol: pool.protocol, liquidityUsd: pool.liquidityUsd,
+    })), [
+      { protocol: 'uniswap-v3', liquidityUsd: 8000 },
+      { protocol: 'uniswap-v4', liquidityUsd: 4000 },
+    ]);
     assert.deepEqual(row.coverage, {
       '5m': 'complete', '1h': 'complete', '6h': 'complete', '24h': 'complete',
     });
@@ -164,6 +176,7 @@ describe('Robinhood workspace window metric reader', () => {
     assert.match(sql, /latest_pool_liquidity AS MATERIALIZED/);
     assert.match(sql, /INNER JOIN robinhood_pool_registry registry/);
     assert.match(sql, /SUM\(close_liquidity_usd\) FILTER/);
+    assert.match(sql, /jsonb_agg\(jsonb_build_object/);
     assert.match(sql, /bucket\.bucket_ts >= date_trunc/);
     assert.match(sql, /bucket\.last_observed_at > bounds\.window_end - INTERVAL '15 minutes'/);
     assert.match(sql, /robinhood_ingestion_cursors/);

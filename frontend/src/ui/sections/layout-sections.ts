@@ -4203,8 +4203,7 @@ function renderExpandedSparklineStatsRow(
       ${renderExpandedSparklineStat('vol-24h', 'VOL 24H', fmtMoney(token?.volume24h))}
       ${chain === 'solana'
         ? renderExpandedTotalLiquidityStat(token, meteoraEntry, meteoraMinPool)
-        : renderExpandedSparklineStat('total-liq', 'LIQUIDITY',
-          `${fmtMoney(token?.liquidityUsd)}${token?.liquidityIsLowerBound ? '+' : ''}`)}
+        : renderExpandedSparklineStat('total-liq', 'LIQUIDITY', fmtMoney(token?.liquidityUsd))}
     </div>
   `;
 }

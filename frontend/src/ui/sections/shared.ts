@@ -3016,12 +3016,24 @@ function renderTotalLiquidityTooltip(
   dexLiquidity?: number | null,
   meteoraTvl?: number | null,
 ) {
+  if (item.chain === 'robinhood' && item.liquidityPools?.length) {
+    const coverage = `${Number(item.valuedLiquidityMarketCount) || 0}/${Number(item.liquidityMarketCount) || 0} pools valued`;
+    const lines = item.liquidityPools.map((pool) => {
+      const protocol = pool.protocol.replace('uniswap-', '').toUpperCase();
+      const rawIdentity = pool.poolAddress || pool.poolId || pool.marketKey.split(':').at(-1) || 'pool';
+      const identity = rawIdentity.length > 14
+        ? `${rawIdentity.slice(0, 6)}…${rawIdentity.slice(-4)}`
+        : rawIdentity;
+      return renderMoneyTipLine(`${protocol} ${identity}`, pool.liquidityUsd);
+    }).join('');
+    return `
+      <div class="meteora-tip-head"><span>Total Liq</span><span>${escapeHtml(coverage)}</span></div>
+      ${lines}
+    `;
+  }
   const tvlClass = meteoraTvl != null ? 'meteora-liq-tip-value' : '';
-  const coverageLabel = item.liquidityIsLowerBound
-    ? `${Number(item.valuedLiquidityMarketCount) || 0}/${Number(item.liquidityMarketCount) || 0} pools valued`
-    : getMeteoraPoolLabel(entry, hasMeteora);
   return `
-    <div class="meteora-tip-head"><span>${item.liquidityIsLowerBound ? 'Known Liq Min' : 'Total Liq'}</span><span>${escapeHtml(coverageLabel)}</span></div>
+    <div class="meteora-tip-head"><span>Total Liq</span><span>${escapeHtml(getMeteoraPoolLabel(entry, hasMeteora))}</span></div>
     ${renderMoneyTipLine(formatPairDexSource(item.pairDexId), dexLiquidity)}
     ${renderMoneyTipLine('Meteora TVL', meteoraTvl, tvlClass)}
     ${renderMeteoraMetricHeader()}
@@ -3045,7 +3057,7 @@ export function renderTotalLiquidityCell(item: ManualTokenEntry, entry: MeteoraE
 
   return `
     <div class="met-tip-wrap total-liq-tip-wrap">
-      <span class="${valueClass}">${escapeHtml(`${fmtMoney(totalLiquidity)}${item.liquidityIsLowerBound ? '+' : ''}`)}</span>
+      <span class="${valueClass}">${escapeHtml(fmtMoney(totalLiquidity))}</span>
       <div class="met-tip-dd total-liq-tip-dd">
         ${renderTotalLiquidityTooltip(item, entry, hasMeteora, dexLiquidity, meteoraTvl)}
       </div>

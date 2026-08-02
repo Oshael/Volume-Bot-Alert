@@ -100,6 +100,13 @@ export interface DashboardMonitoredToken {
   liquidityMarketCount?: number | null;
   valuedLiquidityMarketCount?: number | null;
   liquidityIsLowerBound?: boolean;
+  liquidityPools?: Array<{
+    protocol: string;
+    marketKey: string;
+    poolAddress?: string | null;
+    poolId?: string | null;
+    liquidityUsd: number;
+  }>;
   volume5m?: number | null;
   volume1h?: number | null;
   volume6h?: number | null;

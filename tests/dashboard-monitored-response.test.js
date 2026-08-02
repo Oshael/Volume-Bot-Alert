@@ -95,11 +95,19 @@ describe('dashboard monitored response', () => {
       liquidityCoverage: 'partial',
       liquidityMarketCount: 3,
       valuedLiquidityMarketCount: 2,
+      liquidityPools: [{
+        protocol: 'uniswap-v3', marketKey: 'market',
+        poolAddress: `0x${'2'.repeat(40)}`, poolId: null, liquidityUsd: 12_000,
+      }, {
+        protocol: 'uniswap-v4', marketKey: 'market-v4',
+        poolAddress: null, poolId: `0x${'3'.repeat(64)}`, liquidityUsd: 0,
+      }],
     }));
     assert.equal(partial.liquidityUsd, 12_000);
     assert.equal(partial.liquidityIsLowerBound, true);
     assert.equal(partial.liquidityMarketCount, 3);
     assert.equal(partial.valuedLiquidityMarketCount, 2);
+    assert.equal(partial.liquidityPools[0].liquidityUsd, 12_000);
 
     const unknown = buildDashboardMonitoredToken(normalizedRow('robinhood', {
       valuation: { type: 'fdv', usd: null, observedAt: null, freshness: 'unknown' },
