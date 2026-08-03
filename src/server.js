@@ -43,6 +43,12 @@ const robinhoodBackfillDiscoveryScanner = require('./services/robinhood-backfill
 const robinhoodBackfillMarketScanner = require('./services/robinhood-backfill-market-scanner');
 const robinhoodBackfillRuntime = require('./services/robinhood-backfill-runtime');
 const robinhoodIngestionWorker = require('./services/robinhood-ingestion-worker');
+const {
+  createRobinhoodHeadCaptureAdapter,
+} = require('./services/robinhood-head-capture-adapter');
+const robinhoodHeadCaptureWorker = robinhoodIngestionWorker.createRobinhoodIngestionWorker({
+  repositoryFactory: () => createRobinhoodHeadCaptureAdapter(),
+});
 const robinhoodWalletSwapLiveWorker = require('./services/robinhood-wallet-swap-live-worker');
 const robinhoodCatalogStagingWorker = require('./services/robinhood-catalog-staging-worker');
 const { buildRobinhoodCatalogStagingTelemetry } = robinhoodCatalogStagingWorker;
@@ -82,6 +88,7 @@ const { createWorkerLeaseManager } = require('./services/worker-lease-manager');
 const workerLease = require('./models/worker-lease');
 
 const ROBINHOOD_INGESTION_LEASE_KEY = 'robinhood-ingestion-worker';
+const ROBINHOOD_HEAD_CAPTURE_LEASE_KEY = 'robinhood-head-capture-worker';
 const ROBINHOOD_WALLET_SWAP_LIVE_LEASE_KEY = 'robinhood-wallet-swap-live-worker';
 const ROBINHOOD_BACKFILL_DISCOVERY_LEASE_KEY = 'robinhood-backfill-discovery-scanner';
 const ROBINHOOD_BACKFILL_SCANNER_LEASE_KEY = 'robinhood-backfill-market-scanner';
@@ -408,6 +415,36 @@ function startTelegramAlertRuntime() {
   );
 }
 
+function startRobinhoodHeadCaptureWorkerGroup() {
+  if (!hasWorkerGroup('robinhood-head')) return;
+  const gate = evaluateRobinhoodIngestionGate(config);
+  if (!gate.allowed) {
+    console.warn(
+      `[RobinhoodHeadCaptureWorker] Group selected but rollout gate is closed: ${gate.blockers.join(', ')}.`
+    );
+    return;
+  }
+  startLockedWorker(
+    'robinhood-head',
+    ROBINHOOD_HEAD_CAPTURE_LEASE_KEY,
+    'Robinhood head capture worker',
+    () => robinhoodHeadCaptureWorker.start({
+      ...config.robinhoodIngestionWorker,
+      captureMode: true,
+      socialMetadataEnabled: false,
+      onFatal: (error) => workerLeaseManager.halt(ROBINHOOD_HEAD_CAPTURE_LEASE_KEY, error),
+    }),
+    {
+      metadataProvider: () => ({
+        telemetry: buildRobinhoodLeaseTelemetry({
+          ingestionStatus: robinhoodHeadCaptureWorker.getStatus(),
+          confirmations: config.robinhoodIngestionWorker.confirmations,
+        }),
+      }),
+    }
+  );
+}
+
 function startRobinhoodWalletSwapLiveRuntime() {
   if (!config.robinhoodWalletSwapLiveWorker.enabled) return;
   startLockedWorker(
@@ -660,6 +697,7 @@ function startWorkerSet() {
       );
     }
   }
+  startRobinhoodHeadCaptureWorkerGroup();
 }
 
 function bootstrapWebRuntime(httpServer) {
