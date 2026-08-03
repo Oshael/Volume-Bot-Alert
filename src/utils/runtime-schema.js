@@ -2548,6 +2548,92 @@ const SCHEMA_GROUPS = [
       constraints: [{ name, includes: ['CHECK', 'spot_tvl_from_v4_tick_ranges'] }],
     })),
   },
+  {
+    key: 'stage103-robinhood-head-capture-queue',
+    name: 'Stage 103 Robinhood head capture queue',
+    repair: 'node src/utils/db-init-stage103.js',
+    tables: [
+      {
+        table: 'robinhood_head_captures',
+        columns: [
+          'chain', 'stream', 'transaction_hash', 'log_index', 'block_number',
+          'block_hash', 'transaction_index', 'address', 'topics', 'data', 'protocol',
+          'market_key', 'evidence_version', 'evidence', 'processing_status',
+          'lease_owner', 'lease_until', 'attempt_count', 'next_attempt_at',
+          'last_error', 'terminal_at', 'retention_eligible_at', 'created_at', 'updated_at',
+        ],
+        constraints: [
+          {
+            name: 'robinhood_head_captures_pkey',
+            includes: ['PRIMARY KEY', 'chain', 'transaction_hash', 'log_index'],
+          },
+          {
+            name: 'robinhood_head_captures_status_check',
+            includes: ['CHECK', 'processing_status', 'pending', 'leased', 'processed', 'rejected', 'blocked'],
+          },
+          {
+            name: 'robinhood_head_captures_evidence_check',
+            includes: ['CHECK', 'evidence', 'object'],
+          },
+          {
+            name: 'robinhood_head_captures_evidence_version_check',
+            includes: ['CHECK', 'evidence_version'],
+          },
+          {
+            name: 'robinhood_head_captures_lease_check',
+            includes: ['CHECK', 'processing_status', 'leased', 'lease_owner', 'lease_until'],
+          },
+          {
+            name: 'robinhood_head_captures_terminal_check',
+            includes: ['CHECK', 'processing_status', 'processed', 'rejected', 'terminal_at'],
+          },
+          {
+            name: 'robinhood_head_captures_retention_check',
+            includes: ['CHECK', 'retention_eligible_at', 'processed', 'rejected', 'terminal_at'],
+          },
+        ],
+        indexes: [
+          {
+            name: 'idx_robinhood_head_captures_claim',
+            includes: ['next_attempt_at', 'block_number', 'transaction_index', 'log_index', 'pending'],
+          },
+          {
+            name: 'idx_robinhood_head_captures_lease',
+            includes: ['lease_until', 'leased'],
+          },
+          {
+            name: 'idx_robinhood_head_captures_reorg',
+            includes: ['block_number', 'block_hash'],
+          },
+          {
+            name: 'idx_robinhood_head_captures_retention',
+            includes: ['retention_eligible_at'],
+          },
+        ],
+      },
+      {
+        table: 'robinhood_head_capture_cursors',
+        columns: [
+          'chain', 'stream', 'next_block', 'safe_head', 'checkpoint_block',
+          'checkpoint_hash', 'checkpoint_timestamp', 'version', 'created_at', 'updated_at',
+        ],
+        constraints: [
+          {
+            name: 'robinhood_head_capture_cursors_pkey',
+            includes: ['PRIMARY KEY', 'chain', 'stream'],
+          },
+          {
+            name: 'robinhood_head_capture_cursors_stream_check',
+            includes: ['CHECK', 'discovery', 'market'],
+          },
+          {
+            name: 'robinhood_head_capture_cursors_checkpoint_pair_check',
+            includes: ['CHECK', 'checkpoint_block', 'checkpoint_hash'],
+          },
+        ],
+      },
+    ],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
@@ -2582,6 +2668,7 @@ const PROFILE_GROUP_KEYS = {
     'stage100-robinhood-v4-liquidity-replay',
     'stage101-robinhood-v4-liquidity-ranges',
     'stage102-robinhood-v4-tick-range-tvl',
+    'stage103-robinhood-head-capture-queue',
   ],
   runtime: SCHEMA_GROUPS.map((group) => group.key),
 };
