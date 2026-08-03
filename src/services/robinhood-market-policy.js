@@ -69,7 +69,7 @@ function classifyTokenEligibility(tokenAddress, options = {}) {
   if (TOKENIZED_BY_ADDRESS.has(address)) {
     return { eligible: false, reason: 'robinhood_tokenized_asset', label: TOKENIZED_BY_ADDRESS.get(address), address };
   }
-  const extraDenied = reverseIndex(options.extraDenied || {});
+  const extraDenied = reverseIndex(options?.extraDenied || {});
   if (extraDenied.has(address)) {
     return { eligible: false, reason: 'configured_denylist', label: extraDenied.get(address), address };
   }

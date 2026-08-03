@@ -38,6 +38,13 @@ describe('Robinhood market policy', () => {
     assert.equal(result.label, null);
   });
 
+  it('treats null policy options like absent options instead of crashing', () => {
+    const result = classifyTokenEligibility(MEME, null);
+
+    assert.equal(result.eligible, true);
+    assert.equal(result.reason, null);
+  });
+
   it('supports an explicit supplemental address denylist', () => {
     const result = classifyTokenEligibility(MEME, { extraDenied: { MANUAL: MEME } });
 
