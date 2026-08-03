@@ -330,11 +330,25 @@ Grupos existentes:
 | `core` | catálogo, descoberta DEX, risco/enrichment e review sync |
 | `market` | Meteora, bid zone, GMGN discovery e claim signals |
 | `maintenance` | limpeza, retenção Robinhood e mock-trading take-profit |
-| `robinhood` | ingestão live, projeção, staging e agregação Robinhood |
+| `robinhood` | ingestão live monolítica: captura + valuation + projeção + staging + agregação + alertas |
+| `robinhood-head` | captura isolada do head: só grava evidência durável na fila e avança o cursor de captura |
 | `robinhood-backfill` | discovery, scan, enrichment, finalizer e aggregation do replay |
 
-`robinhood` e `robinhood-backfill` são grupos isolados. O config rejeita
-combinar um grupo isolado com grupos compartilhados.
+`robinhood`, `robinhood-head` e `robinhood-backfill` são grupos isolados. O config
+rejeita combinar um grupo isolado com grupos compartilhados ou entre si.
+
+O grupo `robinhood-head` roda um processo separado (systemd
+`trendscope-worker@robinhood-head.service`) que instancia o runner de ingestão com o
+adapter de captura (`robinhood_head_captures` + cursor próprio) e o pipeline em
+`captureMode`. Ele **não** inicia catalog/alert/aggregate/staging: falha em qualquer
+derivado não pode travar o cursor de captura — que é a fronteira que o incidente de
+`2026-08-02` violou. É a implementação do isolamento descrito no plano urgente e no
+contrato de evidência. Sobe apenas por deploy de uma unit própria com
+`BACKGROUND_WORKER_GROUPS=robinhood-head`, `ROBINHOOD_INGESTION_ENABLED=true` e um
+`ROBINHOOD_START_BLOCK` fresco; roda em shadow ao lado do `robinhood` com cursor
+independente, sem substituir o monólito (a remoção do monólito é etapa posterior do
+plano). Nenhum `.env` atual seleciona esse grupo, então produção não muda até a unit
+existir. Lease: `robinhood-head-capture-worker`.
 
 A projeção Robinhood mantém um reparo persistente de metadata separado da página
 de mercado ativa. Identidades `robinhood-onchain` com imagem ou launchpad pendente
@@ -1149,9 +1163,11 @@ Referências úteis:
   captura live, processamento e derivados sem perder a janela de estado podado;
 - `docs/robinhood-head-capture-evidence-contract.md`: contrato de evidência
   (gate §14/§16.6 do plano acima) que define o payload state-dependent por
-  protocolo. Corte 1 já existe em código (schema `robinhood_head_captures`/
-  `robinhood_head_capture_cursors` + repositório `appendCaptures`), mas nenhum
-  worker escreve na fila ainda e nada foi deployado;
+  protocolo. Cortes 1–3 já existem em código: schema `robinhood_head_captures`/
+  `robinhood_head_capture_cursors` + `appendCaptures`, evidence builder, adapter,
+  `captureMode` no pipeline e o grupo/worker isolado `robinhood-head` no `server.js`.
+  Falta o deploy da unit em shadow e os cortes de processing/derived/cutover; nada
+  foi deployado;
 
 Os planos locais de retenção, wallet tracking, SHYFT/Yellowstone, Telegram,
 configuração por chain e alertas derivados do X ainda precisam de commits

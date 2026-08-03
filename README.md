@@ -32,10 +32,26 @@ Current deployment contract (with the worker rollout still being completed):
   - Nitro runs locally in WSL;
   - SSH tunnels connect the local RPC and backfill processes to VPS2;
   - this is a temporary backfill topology, not the final live-chain contract.
-- Robinhood live ingestion and backfill use isolated worker groups:
-  - `BACKGROUND_WORKER_GROUPS=robinhood`;
+- Robinhood live ingestion, head capture and backfill use isolated worker groups:
+  - `BACKGROUND_WORKER_GROUPS=robinhood` (monolithic live: capture + valuation + catalog + alerts);
+  - `BACKGROUND_WORKER_GROUPS=robinhood-head` (isolated head capture only: writes durable
+    evidence to the capture queue and advances its own cursor, no valuation/catalog/alerts);
   - `BACKGROUND_WORKER_GROUPS=robinhood-backfill`;
-  - isolated groups cannot be combined with shared worker groups.
+  - isolated groups cannot be combined with shared worker groups or with each other.
+
+The `robinhood-head` group runs a separate process (systemd
+`trendscope-worker@robinhood-head.service`) that captures live evidence during the
+migration away from the monolithic `robinhood` path. It runs in shadow alongside
+`robinhood` with an independent cursor; it is enabled only by deploying its own unit
+with `ROBINHOOD_INGESTION_ENABLED=true` and a fresh `ROBINHOOD_START_BLOCK`. No current
+`.env` selects it, so production is unaffected until that unit exists. Run it directly with:
+
+```bash
+RUN_SOCKET_HUB=false RUN_BACKGROUND_JOBS=true \
+  BACKGROUND_WORKER_GROUPS=robinhood-head \
+  ROBINHOOD_INGESTION_ENABLED=true ROBINHOOD_START_BLOCK=<fresh_block> \
+  node src/server.js
+```
 - The old single-process/combined runtime is a local fallback or emergency
   rollback shape, not the preferred production topology.
 - `railway.json` remains legacy deployment context rather than the production
