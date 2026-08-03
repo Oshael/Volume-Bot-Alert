@@ -13,8 +13,18 @@ const v2 = require('./uniswap-v2-decoder');
 const v3 = require('./uniswap-v3-decoder');
 const v4 = require('./uniswap-v4-decoder');
 const { mergeRangeDeltas } = require('./uniswap-v4-liquidity');
+const { createRobinhoodHeadCaptureBuilder } = require('./robinhood-head-capture-builder');
 
 const DEFAULT_ROLLBACK_STATE_LIMIT = 10000;
+
+function resolveCaptureBuilder(options, metadataReader, quoteReader) {
+  if (options.captureMode !== true) return null;
+  return options.captureBuilder || createRobinhoodHeadCaptureBuilder({
+    metadataReader,
+    quoteReader,
+    policyOptions: options.policyOptions,
+  });
+}
 
 function createProtocolStats() {
   return { logs: 0, discoveries: 0, swapsDecoded: 0, swapsAccepted: 0, swapsRejected: 0 };
@@ -163,6 +173,8 @@ function createRobinhoodOnchainPipeline(options = {}) {
   const socialMetadataQueue = options.socialMetadataQueue || null;
   const v4LiquidityReader = options.v4LiquidityReader;
   const noxaValidator = options.noxaValidator || createNoxaLaunchValidator({ rpcClient });
+  const captureMode = options.captureMode === true;
+  const captureBuilder = resolveCaptureBuilder(options, metadataReader, quoteReader);
   const observations = rollbackEnabled ? new Map() : null;
   const discoveries = rollbackEnabled ? new Map() : null;
   const metrics = createMetrics();
@@ -319,7 +331,9 @@ function createRobinhoodOnchainPipeline(options = {}) {
       }
       try {
         const event = decodeDiscovery(rawLog);
-        entries[index] = { log: rawLog, event };
+        entries[index] = captureMode
+          ? { log: rawLog, event, capture: captureBuilder.buildDiscoveryCapture(event) }
+          : { log: rawLog, event };
         if (event.kind === 'ignored') metrics.logsIgnored += 1;
         else {
           recordEvent(event);
@@ -349,7 +363,9 @@ function createRobinhoodOnchainPipeline(options = {}) {
           protocol: 'uniswap-v3',
           marketKey: validation.marketDiscoveryKey,
         } : validation;
-        entries[index] = { log: rawLog, event };
+        entries[index] = captureMode
+          ? { log: rawLog, event, capture: captureBuilder.buildDiscoveryCapture(event, validation) }
+          : { log: rawLog, event };
         if (event.accepted) {
           metrics.noxa.accepted += 1;
           enqueueSocialMetadata(event);
@@ -400,7 +416,9 @@ function createRobinhoodOnchainPipeline(options = {}) {
             metrics.logsIgnored += 1;
             continue;
           }
-          entries.push({ log: rawLog, event });
+          entries.push(captureMode
+            ? { log: rawLog, event, capture: captureBuilder.buildEventCapture(event) }
+            : { log: rawLog, event });
           recordEvent(event);
           rememberV4LiquidityDelta(pendingV4Deltas, event);
           continue;
@@ -413,6 +431,25 @@ function createRobinhoodOnchainPipeline(options = {}) {
         metrics.errors += 1;
         throw error;
       }
+    }
+    if (captureMode) {
+      let captures;
+      try {
+        captures = await mapWithConcurrency(
+          swaps,
+          observationConcurrency,
+          ({ event }) => captureBuilder.buildMarketCapture(event)
+        );
+      } catch (error) {
+        metrics.errors += 1;
+        throw error;
+      }
+      for (let index = 0; index < swaps.length; index += 1) {
+        const { event, log } = swaps[index];
+        entries.push({ log, event, capture: captures[index] });
+        recordDelay({ timestampMs: event.timestampMs });
+      }
+      return { accepted, entries };
     }
     let observationsForBatch;
     try {
