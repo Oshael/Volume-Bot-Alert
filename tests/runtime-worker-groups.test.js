@@ -37,7 +37,7 @@ describe('runtime worker groups config', () => {
     withEnv({ BACKGROUND_WORKER_GROUPS: '' }, (config) => {
       assert.deepEqual(config.runtime.workerGroupsRequested, ['all']);
       assert.deepEqual(config.runtime.workerGroupsActive, ['core', 'market', 'maintenance']);
-      assert.deepEqual(config.runtime.workerGroupsSkipped, ['robinhood', 'robinhood-backfill']);
+      assert.deepEqual(config.runtime.workerGroupsSkipped, ['robinhood', 'robinhood-head', 'robinhood-backfill']);
     });
   });
 
@@ -47,7 +47,7 @@ describe('runtime worker groups config', () => {
       assert.deepEqual(config.runtime.workerGroupsActive, ['core', 'market']);
       assert.deepEqual(
         config.runtime.workerGroupsSkipped,
-        ['maintenance', 'robinhood', 'robinhood-backfill']
+        ['maintenance', 'robinhood', 'robinhood-head', 'robinhood-backfill']
       );
     });
   });
@@ -56,7 +56,7 @@ describe('runtime worker groups config', () => {
     withEnv({ BACKGROUND_WORKER_GROUPS: 'maintenance,all' }, (config) => {
       assert.deepEqual(config.runtime.workerGroupsRequested, ['maintenance', 'all']);
       assert.deepEqual(config.runtime.workerGroupsActive, ['core', 'market', 'maintenance']);
-      assert.deepEqual(config.runtime.workerGroupsSkipped, ['robinhood', 'robinhood-backfill']);
+      assert.deepEqual(config.runtime.workerGroupsSkipped, ['robinhood', 'robinhood-head', 'robinhood-backfill']);
     });
   });
 
@@ -84,7 +84,7 @@ describe('runtime worker groups config', () => {
       assert.deepEqual(config.runtime.workerGroupsActive, ['robinhood']);
       assert.deepEqual(
         config.runtime.workerGroupsSkipped,
-        ['core', 'market', 'maintenance', 'robinhood-backfill']
+        ['core', 'market', 'maintenance', 'robinhood-head', 'robinhood-backfill']
       );
     });
   });
@@ -95,9 +95,35 @@ describe('runtime worker groups config', () => {
       assert.deepEqual(config.runtime.workerGroupsActive, ['robinhood-backfill']);
       assert.deepEqual(
         config.runtime.workerGroupsSkipped,
-        ['core', 'market', 'maintenance', 'robinhood']
+        ['core', 'market', 'maintenance', 'robinhood', 'robinhood-head']
       );
     });
+  });
+
+  it('allows the Robinhood head only as an isolated worker group', () => {
+    withEnv({ BACKGROUND_WORKER_GROUPS: 'robinhood-head' }, (config) => {
+      assert.deepEqual(config.runtime.workerGroupsRequested, ['robinhood-head']);
+      assert.deepEqual(config.runtime.workerGroupsActive, ['robinhood-head']);
+      assert.deepEqual(
+        config.runtime.workerGroupsSkipped,
+        ['core', 'market', 'maintenance', 'robinhood', 'robinhood-backfill']
+      );
+    });
+  });
+
+  it('fails fast when the Robinhood head is mixed with another group', () => {
+    const result = spawnSync(
+      process.execPath,
+      ['-e', "require('./config')"],
+      {
+        cwd: ROOT_DIR,
+        env: { ...process.env, BACKGROUND_WORKER_GROUPS: 'robinhood-head,market' },
+        encoding: 'utf8',
+      }
+    );
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /cannot combine isolated worker groups/);
   });
 
   it('keeps Robinhood user visibility independent and disabled by default', () => {

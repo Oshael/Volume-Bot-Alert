@@ -67,6 +67,8 @@ function normalizeOptions(options = {}) {
     timestampConcurrency: boundedInteger(options.timestampConcurrency, 16, 1, 32),
     timestampBatchSize: boundedInteger(options.timestampBatchSize, 10, 1, 100),
     observationConcurrency: boundedInteger(options.observationConcurrency, 1, 1, 16),
+    captureMode: options.captureMode === true,
+    policyOptions: options.policyOptions || null,
   };
 }
 
@@ -268,6 +270,8 @@ function createRobinhoodIngestionWorker(deps = {}) {
       timestampConcurrency: options.timestampConcurrency,
       timestampBatchSize: options.timestampBatchSize,
       observationConcurrency: options.observationConcurrency,
+      captureMode: options.captureMode,
+      policyOptions: options.policyOptions,
     });
   }
 

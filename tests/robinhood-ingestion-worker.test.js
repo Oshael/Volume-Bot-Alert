@@ -161,6 +161,10 @@ describe('Robinhood ingestion worker', () => {
       rpcMinIntervalMs: 500,
     }).archiveRpcMinIntervalMs, 500);
     assert.equal(publicOnly.observationConcurrency, 1);
+    assert.equal(publicOnly.captureMode, false);
+    assert.equal(publicOnly.policyOptions, null);
+    assert.equal(__private.normalizeOptions({ captureMode: true }).captureMode, true);
+    assert.deepEqual(__private.normalizeOptions({ policyOptions: { a: 1 } }).policyOptions, { a: 1 });
     assert.equal(publicOnly.timestampBatchSize, 10);
     assert.equal(__private.normalizeOptions({ timestampBatchSize: 50 }).timestampBatchSize, 50);
     assert.equal(__private.normalizeOptions({ timestampBatchSize: 999 }).timestampBatchSize, 100);
