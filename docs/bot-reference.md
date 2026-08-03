@@ -1147,6 +1147,11 @@ Referências úteis:
 - `docs/robinhood-vps-history-rollout-plan.md`: desenho do replay Robinhood;
 - `docs/robinhood-live-head-isolation-urgent-plan.md`: plano urgente para separar
   captura live, processamento e derivados sem perder a janela de estado podado;
+- `docs/robinhood-head-capture-evidence-contract.md`: contrato de evidência
+  (gate §14/§16.6 do plano acima) que define o payload state-dependent por
+  protocolo. Corte 1 já existe em código (schema `robinhood_head_captures`/
+  `robinhood_head_capture_cursors` + repositório `appendCaptures`), mas nenhum
+  worker escreve na fila ainda e nada foi deployado;
 
 Os planos locais de retenção, wallet tracking, SHYFT/Yellowstone, Telegram,
 configuração por chain e alertas derivados do X ainda precisam de commits
