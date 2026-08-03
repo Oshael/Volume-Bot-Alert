@@ -1746,6 +1746,52 @@ function createRobinhoodPersistenceRepository(options = {}) {
     }
   }
 
+  // Persists observations, buckets and the V4 delta ledger from captures that
+  // robinhood-processing already decoded from frozen evidence. Unlike
+  // commitMarketRange it commits no cursor and emits no socket/alert signal
+  // (those are derived, Corte 5); unlike commitBackfillEnrichmentBatch it owns
+  // no lease. A failure here rolls back the batch and never touches the capture
+  // cursor, so processing errors can only isolate their own claim.
+  async function commitHeadProcessingBatch(input = {}) {
+    const entries = (Array.isArray(input.entries) ? input.entries : []).map((entry) => {
+      const row = normalizeLogEntry(entry, 'market');
+      return {
+        row,
+        observation: normalizeObservation(entry, row),
+        liquidityDelta: normalizeV4LiquidityDelta(entry, row),
+      };
+    });
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      const insertedIdentities = new Set(await insertProcessedLogs(
+        client,
+        entries.map((entry) => entry.row)
+      ));
+      const observations = entries
+        .filter((entry) => entry.observation && insertedIdentities.has(rowIdentity(entry.row)))
+        .map((entry) => entry.observation);
+      const liquidityDeltas = entries
+        .filter((entry) => entry.liquidityDelta && insertedIdentities.has(rowIdentity(entry.row)))
+        .map((entry) => entry.liquidityDelta);
+      const insertedLiquidityDeltas = await insertV4LiquidityDeltas(client, liquidityDeltas);
+      const marketWrite = await insertMarketObservations(client, observations, { checkpointTimestamp: null });
+      await client.query('COMMIT');
+      const { liveBuckets: _ignored, ...marketCounts } = marketWrite;
+      return {
+        insertedLogs: insertedIdentities.size,
+        duplicateLogs: entries.length - insertedIdentities.size,
+        ...marketCounts,
+        insertedLiquidityDeltas,
+      };
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch (_) {}
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async function loadCursor(streamValue) {
     const stream = normalizeStream(streamValue);
     const result = await database.query(
@@ -1877,6 +1923,7 @@ function createRobinhoodPersistenceRepository(options = {}) {
   return Object.freeze({
     commitBackfillEnrichmentBatch,
     commitDiscoveryRange,
+    commitHeadProcessingBatch,
     commitMarketRange,
     listActivePools,
     listCurrentV4LiquidityRanges,
