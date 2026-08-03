@@ -159,6 +159,7 @@ function decodeSwap(log, pair) {
     marketKey: pair.marketKey,
     tokenAddress: pair.tokenAddress,
     quoteAddress: pair.quoteAddress,
+    quoteIndex: pair.quoteIndex,
     sender: amounts.sender,
     to: amounts.to,
     amounts: Object.fromEntries(Object.entries(amounts)

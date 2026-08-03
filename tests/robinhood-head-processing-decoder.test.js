@@ -11,7 +11,9 @@ const v2 = require('../src/services/uniswap-v2-decoder');
 const v3 = require('../src/services/uniswap-v3-decoder');
 const v4 = require('../src/services/uniswap-v4-decoder');
 
-const TOKEN = `0x${'11'.repeat(20)}`;
+// Address-realistic: TOKEN sorts below WETH (0x0bd7…), so WETH is token1 and the
+// tracked quote slot is index 1 — exactly what `selectQuote` derives on-chain.
+const TOKEN = `0x${'01'.repeat(20)}`;
 const POOL = `0x${'22'.repeat(20)}`;
 const POOL_ID = `0x${'33'.repeat(32)}`;
 const BLOCK_HASH = `0x${'ab'.repeat(32)}`;
@@ -99,6 +101,19 @@ describe('head processing decoder — market observation from evidence (no RPC)'
     assert.equal(result.observation.quoteUsdStatus, 'observed');
     assert.equal(result.observation.quoteUsdSource, 'canonical-weth-usdg-3000');
     assert.equal(result.observation.tokenSupplyStatus, 'latest_call');
+  });
+
+  it('derives the quote slot from the addresses, ignoring a stale frozen quoteIndex', () => {
+    // Reproduces the pre-fix backlog: v2/v3 captures froze quoteIndex=0 by default.
+    // The addresses (quote=WETH is token1) say 1; a stale 0 would transpose token/quote
+    // and blow priceUsd/fdvUsd up by ~1e24. The derived slot keeps the valuation honest.
+    const result = decodeCapture(v3Row({ quoteIndex: 0 }));
+    assert.equal(result.observation.accepted, true);
+    assert.equal(result.observation.side, 'buy');
+    assert.equal(result.observation.tokenAmountRaw, (10n * ONE).toString());
+    assert.equal(result.observation.quoteAmountRaw, ONE.toString());
+    assert.equal(result.observation.priceUsd, '200');
+    assert.equal(result.observation.fdvUsd, '200000');
   });
 
   it('values V3 liquidity from the frozen pool balances', () => {

@@ -182,6 +182,7 @@ function decodeSwap(log, pool) {
     marketKey: pool.marketKey,
     tokenAddress: pool.tokenAddress,
     quoteAddress: pool.quoteAddress,
+    quoteIndex: pool.quoteIndex,
     fee: pool.fee,
     sender: decodeAddressWord(log.topics[1], 'Swap sender'),
     recipient: decodeAddressWord(log.topics[2], 'Swap recipient'),
