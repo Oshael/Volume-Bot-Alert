@@ -352,6 +352,24 @@ Os limites podem ser ajustados por `ROBINHOOD_CATALOG_PROJECTION_MAX_TOKENS`,
 `ROBINHOOD_CATALOG_PROJECTION_CONCURRENCY` e
 `ROBINHOOD_BLOCKSCOUT_METADATA_BATCH_SIZE` (máximo 50).
 
+Dentro do mesmo worker, um fast path consome `GET /token-profiles/latest/v1` do
+DexScreener e trata o Token Profile como fonte de verdade da imagem de tokens
+Robinhood (`chainId=robinhood`). Ele roda depois do batch principal e é
+best-effort: throttle, timeout, 429 ou falha de persistência não derrubam o ciclo
+de projeção. A imagem é gravada — inclusive **sobrescrevendo** uma imagem existente
+de outra fonte — quando o token já existe no catálogo e `robinhood_blockscout_checked_at`
+já foi tentado; um `icon` idêntico ao atual é ignorado para não reescrever a linha a
+cada ciclo. Profiles sem `icon` seguro não chamam `recordDexscreenerMetadata` (não
+marcam o timestamp DexScreener nem apagam a imagem atual, preservando o fallback por
+endereço). A sobrescrita é exclusiva desse fast path (`overwriteImage`); o fallback
+DexScreener por endereço continua só preenchendo imagem ausente. Uma fila em memória
+curta e limitada cobre só a corrida profile-versus-descoberta, não histórico. É
+desligado por padrão (`ROBINHOOD_DEXSCREENER_PROFILE_ENABLED=false`) e ajustado por
+`ROBINHOOD_DEXSCREENER_PROFILE_INTERVAL_MS`,
+`ROBINHOOD_DEXSCREENER_PROFILE_PENDING_TTL_MS` e
+`ROBINHOOD_DEXSCREENER_PROFILE_PENDING_MAX`. Website/X/comunidade do profile só são
+persistidos com `ROBINHOOD_SOCIAL_METADATA_ENABLED=true`.
+
 O catálogo também possui atribuição persistente de launchpad. O vocabulário
 Robinhood diferencia pons, Bankr/Doppler, LaunchHood, RobinPad, Stock Tokens e o
 fallback explícito `robinhood` para contratos diretos ou ainda desconhecidos.
@@ -1127,6 +1145,8 @@ Referências úteis:
 
 - `README.md`: entrada do projeto, parcialmente desatualizada na topologia;
 - `docs/robinhood-vps-history-rollout-plan.md`: desenho do replay Robinhood;
+- `docs/robinhood-live-head-isolation-urgent-plan.md`: plano urgente para separar
+  captura live, processamento e derivados sem perder a janela de estado podado;
 
 Os planos locais de retenção, wallet tracking, SHYFT/Yellowstone, Telegram,
 configuração por chain e alertas derivados do X ainda precisam de commits
