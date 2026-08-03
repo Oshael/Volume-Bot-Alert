@@ -66,7 +66,10 @@ function mergeRangeDeltas(ranges, deltas = []) {
     const key = `${delta.tickLower}:${delta.tickUpper}`;
     const row = merged.get(key) || { tickLower: delta.tickLower, tickUpper: delta.tickUpper, liquidityGross: 0n };
     row.liquidityGross += BigInt(delta.liquidityDelta);
-    if (row.liquidityGross < 0n) throw new Error('Pending V4 liquidity became negative');
+    // An over-removal (a remove whose matching add predates our coverage or was
+    // pruned) would drive gross negative. Isolate that range at zero — the filter
+    // below drops it — instead of halting the whole batch/cursor.
+    if (row.liquidityGross < 0n) row.liquidityGross = 0n;
     merged.set(key, row);
   }
   return [...merged.values()].filter((row) => row.liquidityGross > 0n);

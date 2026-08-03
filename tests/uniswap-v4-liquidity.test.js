@@ -36,8 +36,10 @@ describe('Uniswap V4 liquidity math', () => {
       [{ tickLower: -60, tickUpper: 60, liquidityDelta: '-40' }]
     );
     assert.equal(merged[0].liquidityGross, 60n);
-    assert.throws(() => mergeRangeDeltas(merged, [{
+    // An over-removal isolates that range at zero and drops it, rather than
+    // halting the whole batch (which previously froze the market cursor).
+    assert.deepEqual(mergeRangeDeltas(merged, [{
       tickLower: -60, tickUpper: 60, liquidityDelta: '-61',
-    }]), /became negative/);
+    }]), []);
   });
 });
