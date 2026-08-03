@@ -36,6 +36,9 @@ Current deployment contract (with the worker rollout still being completed):
   - `BACKGROUND_WORKER_GROUPS=robinhood` (monolithic live: capture + valuation + catalog + alerts);
   - `BACKGROUND_WORKER_GROUPS=robinhood-head` (isolated head capture only: writes durable
     evidence to the capture queue and advances its own cursor, no valuation/catalog/alerts);
+  - `BACKGROUND_WORKER_GROUPS=robinhood-processing` (isolated consumer: leases captures from
+    the queue, decodes the frozen evidence with no RPC, computes price/FDV/liquidity, persists
+    observations/buckets and prunes the queue after its retention window);
   - `BACKGROUND_WORKER_GROUPS=robinhood-backfill`;
   - isolated groups cannot be combined with shared worker groups or with each other.
 
@@ -50,6 +53,18 @@ with `ROBINHOOD_INGESTION_ENABLED=true` and a fresh `ROBINHOOD_START_BLOCK`. No 
 RUN_SOCKET_HUB=false RUN_BACKGROUND_JOBS=true \
   BACKGROUND_WORKER_GROUPS=robinhood-head \
   ROBINHOOD_INGESTION_ENABLED=true ROBINHOOD_START_BLOCK=<fresh_block> \
+  node src/server.js
+```
+The `robinhood-processing` group runs a separate process (systemd
+`trendscope-worker@robinhood-processing.service`, lease `robinhood-processing-worker`) that
+consumes the capture queue independently of the head. It reprocesses purely from the frozen
+evidence — no historical `eth_call` — so a failure in valuation only retries its own claim and
+can never stall the capture cursor. Enabled only by deploying its own unit; no current `.env`
+selects it. Run it directly with:
+
+```bash
+RUN_SOCKET_HUB=false RUN_BACKGROUND_JOBS=true \
+  BACKGROUND_WORKER_GROUPS=robinhood-processing \
   node src/server.js
 ```
 - The old single-process/combined runtime is a local fallback or emergency

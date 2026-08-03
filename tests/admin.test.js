@@ -309,7 +309,7 @@ describe('Admin panel auth and management', () => {
       assert.deepEqual(res.body.runtime.workerGroupsActive, ['core', 'market', 'maintenance']);
       assert.deepEqual(
         res.body.runtime.workerGroupsSkipped,
-        ['robinhood', 'robinhood-backfill']
+        ['robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-backfill']
       );
       assert.ok(res.body.catalogWorker);
       assert.ok(res.body.robinhoodIngestionWorker);

@@ -178,4 +178,26 @@ describe('Robinhood head processing repository integration', () => {
     assert.equal(watermark.leased, 0);
     assert.equal(watermark.blocked, 0);
   });
+
+  it('prunes only terminal captures whose retention window has elapsed', async () => {
+    const expired = await seedPending({ block: 100 });
+    const fresh = await seedPending({ block: 101, logIndex: 1 });
+    const pending = await seedPending({ block: 102 });
+    await repository.claimCaptures({ owner: 'worker-a', limit: 2, leaseMs: LEASE_MS }); // leases 100, 101
+    await repository.settleClaims({ owner: 'worker-a', retentionMs: RETENTION_MS, processed: [expired, fresh] });
+    await db.query(
+      `UPDATE robinhood_head_captures
+         SET terminal_at = NOW() - INTERVAL '2 minutes',
+             retention_eligible_at = NOW() - INTERVAL '1 minute'
+         WHERE transaction_hash = $1 AND log_index = $2`,
+      [expired.transactionHash, expired.logIndex]
+    );
+
+    const pruned = await repository.pruneExpiredCaptures({ limit: 100 });
+
+    assert.equal(pruned, 1);
+    assert.equal(await statusOf(expired), undefined);
+    assert.equal((await statusOf(fresh)).processing_status, 'processed'); // retention still in the future
+    assert.equal((await statusOf(pending)).processing_status, 'pending'); // never terminal
+  });
 });

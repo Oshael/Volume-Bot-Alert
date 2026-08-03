@@ -234,11 +234,36 @@ function createRobinhoodHeadProcessingRepository(options = {}) {
     };
   }
 
+  // Prunes captures whose retention window has elapsed (Q3: 1 day after
+  // terminal). The queue is a passage corridor; permanent observations/buckets
+  // live in their own tables, so a processed/rejected capture is disposable.
+  async function pruneExpiredCaptures(input = {}) {
+    const limit = requirePositiveInt(input.limit ?? 5000, 'limit');
+    const result = await database.query(
+      `DELETE FROM robinhood_head_captures
+       WHERE (chain, transaction_hash, log_index) IN (
+         SELECT chain, transaction_hash, log_index
+         FROM robinhood_head_captures
+         WHERE chain = $1
+           AND processing_status IN ('processed', 'rejected')
+           AND retention_eligible_at IS NOT NULL
+           AND retention_eligible_at <= NOW()
+         ORDER BY retention_eligible_at
+         LIMIT $2
+         FOR UPDATE SKIP LOCKED
+       )
+       RETURNING transaction_hash`,
+      [CHAIN, limit]
+    );
+    return result.rowCount;
+  }
+
   return Object.freeze({
     claimCaptures,
     settleClaims,
     reclaimExpiredLeases,
     getProcessingWatermark,
+    pruneExpiredCaptures,
   });
 }
 

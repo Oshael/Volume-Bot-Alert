@@ -332,10 +332,11 @@ Grupos existentes:
 | `maintenance` | limpeza, retenção Robinhood e mock-trading take-profit |
 | `robinhood` | ingestão live monolítica: captura + valuation + projeção + staging + agregação + alertas |
 | `robinhood-head` | captura isolada do head: só grava evidência durável na fila e avança o cursor de captura |
+| `robinhood-processing` | consumidor isolado: reclama capturas por lease, decodifica a evidência congelada sem RPC, calcula preço/FDV/liquidez, persiste observações/buckets e poda a fila |
 | `robinhood-backfill` | discovery, scan, enrichment, finalizer e aggregation do replay |
 
-`robinhood`, `robinhood-head` e `robinhood-backfill` são grupos isolados. O config
-rejeita combinar um grupo isolado com grupos compartilhados ou entre si.
+`robinhood`, `robinhood-head`, `robinhood-processing` e `robinhood-backfill` são grupos
+isolados. O config rejeita combinar um grupo isolado com grupos compartilhados ou entre si.
 
 O grupo `robinhood-head` roda um processo separado (systemd
 `trendscope-worker@robinhood-head.service`) que instancia o runner de ingestão com o
@@ -349,6 +350,17 @@ contrato de evidência. Sobe apenas por deploy de uma unit própria com
 independente, sem substituir o monólito (a remoção do monólito é etapa posterior do
 plano). Nenhum `.env` atual seleciona esse grupo, então produção não muda até a unit
 existir. Lease: `robinhood-head-capture-worker`.
+
+O grupo `robinhood-processing` roda um processo separado (systemd
+`trendscope-worker@robinhood-processing.service`, lease `robinhood-processing-worker`,
+`start:worker:robinhood-processing` na porta 3007). O worker reclama capturas por lease
+(`FOR UPDATE SKIP LOCKED`, ordem on-chain), re-decodifica o log congelado contra um contexto
+de pool sintetizado da evidência e lê metadata/quote/saldos da própria evidência — **nenhum
+`eth_call` histórico**. Persiste logs, deltas V4, observações e buckets numa transação
+(`commitHeadProcessingBatch`) que **não** commita cursor nem emite socket/alert (derivados são
+etapa posterior); erro isola a claim (retry com backoff ou dead-letter `blocked`) sem tocar o
+cursor de captura. Poda a fila 1 dia após o terminal (`retention_eligible_at`). Watermark de
+processamento independente do cursor de captura. Nenhum `.env` atual seleciona o grupo.
 
 A projeção Robinhood mantém um reparo persistente de metadata separado da página
 de mercado ativa. Identidades `robinhood-onchain` com imagem ou launchpad pendente
@@ -1163,11 +1175,13 @@ Referências úteis:
   captura live, processamento e derivados sem perder a janela de estado podado;
 - `docs/robinhood-head-capture-evidence-contract.md`: contrato de evidência
   (gate §14/§16.6 do plano acima) que define o payload state-dependent por
-  protocolo. Cortes 1–3 já existem em código: schema `robinhood_head_captures`/
+  protocolo. Cortes 1–4 já existem em código: schema `robinhood_head_captures`/
   `robinhood_head_capture_cursors` + `appendCaptures`, evidence builder, adapter,
-  `captureMode` no pipeline e o grupo/worker isolado `robinhood-head` no `server.js`.
-  Falta o deploy da unit em shadow e os cortes de processing/derived/cutover; nada
-  foi deployado;
+  `captureMode` no pipeline e o grupo `robinhood-head` (captura); e o consumidor
+  `robinhood-processing` (Corte 4): decoder-a-partir-de-evidência sem RPC, fila por
+  lease (claim/settle/reclaim/poda + watermark), `commitHeadProcessingBatch` e o
+  runner/worker isolados no `server.js`. Head validado em shadow; falta o deploy da
+  unit de processing e os cortes de derived (5)/cutover (6)/remoção do monólito (7);
 
 Os planos locais de retenção, wallet tracking, SHYFT/Yellowstone, Telegram,
 configuração por chain e alertas derivados do X ainda precisam de commits

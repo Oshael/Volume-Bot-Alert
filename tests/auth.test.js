@@ -360,7 +360,7 @@ describe('Volume Alert Server auth flow', () => {
       assert.deepEqual(res.body.runtime.workerGroupsActive, ['core', 'market', 'maintenance']);
       assert.deepEqual(
         res.body.runtime.workerGroupsSkipped,
-        ['robinhood', 'robinhood-backfill']
+        ['robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-backfill']
       );
       assert.equal(res.body.telegramAlerts.status, 'disabled');
       assert.equal(typeof res.body.telegramAlerts.metricsAvailable, 'boolean');

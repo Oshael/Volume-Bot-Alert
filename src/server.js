@@ -39,6 +39,7 @@ const socketHub = require('./services/socket-hub');
 const catalogWorker = require('./services/catalog-worker');
 const catalogCleanupWorker = require('./services/catalog-cleanup-worker');
 const robinhoodRetentionWorker = require('./services/robinhood-retention-worker');
+const robinhoodProcessingWorker = require('./services/robinhood-processing-worker');
 const robinhoodBackfillDiscoveryScanner = require('./services/robinhood-backfill-discovery-scanner');
 const robinhoodBackfillMarketScanner = require('./services/robinhood-backfill-market-scanner');
 const robinhoodBackfillRuntime = require('./services/robinhood-backfill-runtime');
@@ -89,6 +90,7 @@ const workerLease = require('./models/worker-lease');
 
 const ROBINHOOD_INGESTION_LEASE_KEY = 'robinhood-ingestion-worker';
 const ROBINHOOD_HEAD_CAPTURE_LEASE_KEY = 'robinhood-head-capture-worker';
+const ROBINHOOD_PROCESSING_LEASE_KEY = 'robinhood-processing-worker';
 const ROBINHOOD_WALLET_SWAP_LIVE_LEASE_KEY = 'robinhood-wallet-swap-live-worker';
 const ROBINHOOD_BACKFILL_DISCOVERY_LEASE_KEY = 'robinhood-backfill-discovery-scanner';
 const ROBINHOOD_BACKFILL_SCANNER_LEASE_KEY = 'robinhood-backfill-market-scanner';
@@ -273,6 +275,7 @@ app.get('/api/admin/ws-status', authenticate, requireAdmin, async (req, res) => 
     catalogWorker: catalogWorker.getStatus(),
     catalogCleanupWorker: catalogCleanupWorker.getStatus(),
     robinhoodRetentionWorker: robinhoodRetentionWorker.getStatus(),
+    robinhoodProcessingWorker: robinhoodProcessingWorker.getStatus(),
     robinhoodIngestionWorker: {
       ...robinhoodIngestionStatus,
       sharedLease: robinhoodIngestionLease,
@@ -442,6 +445,17 @@ function startRobinhoodHeadCaptureWorkerGroup() {
         }),
       }),
     }
+  );
+}
+
+function startRobinhoodProcessingWorkerGroup() {
+  if (!hasWorkerGroup('robinhood-processing')) return;
+  startLockedWorker(
+    'robinhood-processing',
+    ROBINHOOD_PROCESSING_LEASE_KEY,
+    'Robinhood processing worker',
+    () => robinhoodProcessingWorker.start(config.robinhoodProcessingWorker),
+    { metadataProvider: () => ({ telemetry: robinhoodProcessingWorker.getStatus() }) }
   );
 }
 
@@ -698,6 +712,7 @@ function startWorkerSet() {
     }
   }
   startRobinhoodHeadCaptureWorkerGroup();
+  startRobinhoodProcessingWorkerGroup();
 }
 
 function bootstrapWebRuntime(httpServer) {
