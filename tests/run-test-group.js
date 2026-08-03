@@ -15,6 +15,9 @@ const INTEGRATION_TESTS = [
   'telegram-alert-delivery.integration.test.js',
   'robinhood-alert-publication.integration.test.js',
   'robinhood-backfill-capture.integration.test.js',
+  'robinhood-head-capture.integration.test.js',
+  'robinhood-head-capture-adapter.integration.test.js',
+  'robinhood-head-processing.integration.test.js',
   'user-alert-presence.integration.test.js',
 ];
 
