@@ -53,53 +53,69 @@ function createRobinhoodHeadCaptureBuilder(deps = {}) {
   }
 
   async function resolveV3Balances(swap) {
-    if (swap.protocol !== 'uniswap-v3' || typeof metadataReader.getBalanceOf !== 'function') return undefined;
+    if (swap.protocol !== 'uniswap-v3' || typeof metadataReader.getBalanceOf !== 'function') return null;
     const tag = blockTag(swap.blockNumber);
+    // Transient RPC failures throw from getBalanceOf and propagate so the cursor
+    // holds and retries. A non-transient null (pruned state at the swap block)
+    // cannot be recovered from this node, so it is a terminal miss for this swap.
     const [tokenBalance, quoteBalance] = await Promise.all([
       metadataReader.getBalanceOf(swap.tokenAddress, swap.poolAddress, { blockTag: tag }),
       metadataReader.getBalanceOf(swap.quoteAddress, swap.poolAddress, { blockTag: tag }),
     ]);
+    if (tokenBalance.balanceRaw == null || quoteBalance.balanceRaw == null) {
+      return { unavailable: true };
+    }
     return {
-      poolAddress: swap.poolAddress,
-      blockTag: tag,
-      tokenBalanceRaw: tokenBalance.balanceRaw,
-      quoteBalanceRaw: quoteBalance.balanceRaw,
-      sqrtPriceX96: swap.sqrtPriceX96 ?? null,
+      v3: {
+        poolAddress: swap.poolAddress,
+        blockTag: tag,
+        tokenBalanceRaw: tokenBalance.balanceRaw,
+        quoteBalanceRaw: quoteBalance.balanceRaw,
+        sqrtPriceX96: swap.sqrtPriceX96 ?? null,
+      },
     };
   }
 
-  async function buildMarketCapture(swap) {
+  async function resolveMarketInputs(swap) {
     const eligibility = classifyEligibility(swap.tokenAddress, policyOptions);
-    if (!eligibility.eligible) return rejectionCapture(swap, eligibility.reason || 'token_ineligible');
+    if (!eligibility.eligible) return { reject: eligibility.reason || 'token_ineligible' };
     const [tokenMetadata, quoteMetadata] = await Promise.all([
       resolveTokenMetadata(swap.tokenAddress, swap.blockNumber),
       metadataReader.getMetadata(swap.quoteAddress),
     ]);
-    if (!tokenMetadata.usable) return rejectionCapture(swap, 'token_metadata_unusable');
-    if (!quoteMetadata?.usable) return rejectionCapture(swap, 'quote_metadata_unusable');
+    if (!tokenMetadata.usable) return { reject: 'token_metadata_unusable' };
+    if (!quoteMetadata?.usable) return { reject: 'quote_metadata_unusable' };
     const quoteOptions = swap.quoteAddress === ROBINHOOD_WETH ? await quoteReader.getCurrent() : null;
     const quoteUsd = resolveQuoteUsd(swap.quoteAddress, {
       wethUsdPrice: quoteOptions?.priceUsd,
       wethUsdSource: quoteOptions?.source,
     });
-    if (!quoteUsd || quoteUsd.price.numerator <= 0n) return rejectionCapture(swap, 'quote_usd_unavailable');
+    if (!quoteUsd || quoteUsd.price.numerator <= 0n) return { reject: 'quote_usd_unavailable' };
+    const v3Balances = await resolveV3Balances(swap);
+    if (v3Balances?.unavailable) return { reject: 'v3_pool_balance_unavailable' };
+    return { eligibility, tokenMetadata, quoteMetadata, quoteUsd, quoteOptions, v3: v3Balances?.v3 };
+  }
+
+  async function buildMarketCapture(swap) {
+    const inputs = await resolveMarketInputs(swap);
+    if (inputs.reject) return rejectionCapture(swap, inputs.reject);
     const built = buildMarketEvidence({
       protocol: swap.protocol,
       timestampMs: swap.timestampMs,
       tokenAddress: swap.tokenAddress,
       quoteAddress: swap.quoteAddress,
       quoteIndex: swap.quoteIndex,
-      eligibility,
-      tokenMetadata,
-      quoteMetadata: { decimals: quoteMetadata.decimals },
+      eligibility: inputs.eligibility,
+      tokenMetadata: inputs.tokenMetadata,
+      quoteMetadata: { decimals: inputs.quoteMetadata.decimals },
       quoteUsd: {
-        priceUsd: formatDecimal(quoteUsd.price, 12),
-        source: quoteUsd.source,
-        status: quoteUsd.status,
-        blockTag: quoteOptions?.blockTag ?? 'latest',
+        priceUsd: formatDecimal(inputs.quoteUsd.price, 12),
+        source: inputs.quoteUsd.source,
+        status: inputs.quoteUsd.status,
+        blockTag: inputs.quoteOptions?.blockTag ?? 'latest',
       },
       v2: swap.protocol === 'uniswap-v2' ? { quoteReserveRaw: swap.quoteReserveRaw } : undefined,
-      v3: await resolveV3Balances(swap),
+      v3: inputs.v3,
       v4: swap.protocol === 'uniswap-v4'
         ? { poolId: swap.poolId, sqrtPriceX96: swap.sqrtPriceX96, liquidityRaw: swap.liquidityRaw, modifyLiquidity: [] }
         : undefined,

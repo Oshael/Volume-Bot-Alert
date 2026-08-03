@@ -82,6 +82,12 @@ describe('head capture builder — market', () => {
     assert.equal(capture.evidence.rejected, 'quote_usd_unavailable');
   });
 
+  it('emits a terminal rejection capture when V3 pool state is pruned (null balance)', async () => {
+    const b = builder({ metadataReader: { getBalanceOf: async () => ({ balanceRaw: null }) } });
+    const capture = await b.buildMarketCapture(v3Swap());
+    assert.equal(capture.evidence.rejected, 'v3_pool_balance_unavailable');
+  });
+
   it('propagates a transient balance RPC failure instead of zeroing', async () => {
     const b = builder({ metadataReader: { getBalanceOf: async () => { const e = new Error('rpc'); e.retryable = true; throw e; } } });
     await assert.rejects(() => b.buildMarketCapture(v3Swap()), /rpc/);
