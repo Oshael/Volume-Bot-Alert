@@ -158,4 +158,64 @@ describe('Robinhood catalog projection worker', () => {
     assert.equal(batch.socialQueue, null);
     assert.ok(batch.blockscoutReader);
   });
+
+  it('runs the profile sync after the batch and attaches its result to telemetry', async () => {
+    const clock = scheduler();
+    const order = [];
+    const worker = createRobinhoodCatalogProjectionWorker({
+      ...clock,
+      batch: {
+        async runOnce() {
+          order.push('batch');
+          return { status: 'completed', candidates: 1, projected: 1 };
+        },
+      },
+      profileSync: {
+        async runOnce() {
+          order.push('profiles');
+          return { status: 'ok', resolvedImages: 2, pending: 3 };
+        },
+      },
+    });
+
+    worker.start({ enabled: true, dexProfileEnabled: true });
+    await clock.scheduled[0].callback();
+
+    assert.deepEqual(order, ['batch', 'profiles']);
+    const telemetry = buildRobinhoodCatalogProjectionTelemetry(
+      worker.getStatus(), () => Date.parse('2026-08-02T00:00:00Z')
+    );
+    assert.equal(telemetry.lastSummary.projected, 1);
+    assert.equal(telemetry.tokenProfiles.resolvedImages, 2);
+    assert.equal(telemetry.tokenProfiles.pending, 3);
+    await worker.stop();
+  });
+
+  it('keeps a successful batch valid when the profile sync throws', async () => {
+    const clock = scheduler();
+    const worker = createRobinhoodCatalogProjectionWorker({
+      ...clock,
+      logger: { error() {} },
+      batch: {
+        async runOnce() {
+          return { status: 'completed', candidates: 0, projected: 0 };
+        },
+      },
+      profileSync: {
+        async runOnce() {
+          throw new Error('feed exploded');
+        },
+      },
+    });
+
+    worker.start({ enabled: true, dexProfileEnabled: true });
+    await clock.scheduled[0].callback();
+
+    const status = worker.getStatus();
+    assert.equal(status.consecutiveErrors, 0);
+    assert.equal(status.lastError, null);
+    assert.equal(status.lastSummary.status, 'completed');
+    assert.equal(status.lastSummary.tokenProfiles.status, 'error');
+    await worker.stop();
+  });
 });

@@ -104,6 +104,38 @@ function extractDexSocialLinks(pair) {
   };
 }
 
+// DexScreener Token Profiles expose links as a flat `[{ type, label, url }]`
+// array, unlike the pair `info.socials`/`info.websites` split above. This reuses
+// the same classification predicates so both feeds agree on how a URL is typed.
+function extractTokenProfileSocialLinks(links) {
+  const entries = Array.isArray(links) ? links : [];
+  const twitterUrl = firstMatchingUrl(
+    entries,
+    (url, entry) => String(entry?.type || '').toLowerCase() === 'twitter' && isTwitterProfileUrl(url),
+  );
+  const telegramUrl = firstMatchingUrl(
+    entries,
+    (url, entry) => String(entry?.type || '').toLowerCase() === 'telegram' && isTelegramUrl(url),
+  );
+  const communityUrl = firstMatchingUrl(entries, isCommunityUrl);
+  const websiteUrl = firstMatchingUrl(
+    entries,
+    (url, entry) => {
+      const type = String(entry?.type || '').trim().toLowerCase();
+      const label = String(entry?.label || '').trim().toLowerCase();
+      return (type === 'website' || label === 'website' || (!type && !label))
+        && isGenericWebsiteUrl(url);
+    },
+  ) || firstMatchingUrl(entries, isGenericWebsiteUrl);
+
+  return {
+    twitterUrl,
+    telegramUrl,
+    communityUrl,
+    websiteUrl,
+  };
+}
+
 function normalizeSocialLinkFields(fields = {}) {
   const twitterUrl = sanitizeHttpUrl(fields.twitterUrl);
   const communityUrl = sanitizeHttpUrl(fields.communityUrl);
@@ -124,6 +156,7 @@ function normalizeSocialLinkFields(fields = {}) {
 
 module.exports = {
   extractDexSocialLinks,
+  extractTokenProfileSocialLinks,
   isGenericWebsiteUrl,
   isCoinCommunitiesUrl,
   isCommunityUrl,

@@ -17,6 +17,9 @@ const {
 const {
   createRobinhoodImageMetadataResolver,
 } = require('./robinhood-image-metadata');
+const {
+  createRobinhoodDexscreenerProfileSync,
+} = require('./robinhood-dexscreener-profile-sync');
 
 const DEFAULT_INTERVAL_MS = 60_000;
 
@@ -44,6 +47,14 @@ function normalizeOptions(options = {}) {
       options.socialDrainIntervalMs, 60_000, 60_000, 60 * 60_000,
     ),
     socialDrainLimit: boundedInteger(options.socialDrainLimit, 1, 1, 10),
+    dexProfileEnabled: options.dexProfileEnabled === true,
+    dexProfileIntervalMs: boundedInteger(
+      options.dexProfileIntervalMs, 60_000, 60_000, 60 * 60_000,
+    ),
+    dexProfilePendingTtlMs: boundedInteger(
+      options.dexProfilePendingTtlMs, 30 * 60_000, 60_000, 24 * 60 * 60_000,
+    ),
+    dexProfilePendingMax: boundedInteger(options.dexProfilePendingMax, 500, 1, 5000),
     rpcOptions: options.rpcOptions || options,
   };
 }
@@ -51,6 +62,24 @@ function normalizeOptions(options = {}) {
 function numericCount(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function buildTokenProfilesTelemetry(profiles) {
+  if (!profiles) return null;
+  return {
+    status: profiles.status ?? null,
+    received: numericCount(profiles.received),
+    robinhood: numericCount(profiles.robinhood),
+    valid: numericCount(profiles.valid),
+    resolvedImages: numericCount(profiles.resolvedImages),
+    existingImages: numericCount(profiles.existingImages),
+    pending: numericCount(profiles.pending),
+    skippedMissingCatalog: numericCount(profiles.skippedMissingCatalog),
+    skippedPriorityPending: numericCount(profiles.skippedPriorityPending),
+    invalid: numericCount(profiles.invalid),
+    errors: numericCount(profiles.errors),
+    lastSuccessAt: profiles.lastSuccessAt ?? null,
+  };
 }
 
 function buildRobinhoodCatalogProjectionTelemetry(workerStatus = {}, now = Date.now) {
@@ -86,6 +115,7 @@ function buildRobinhoodCatalogProjectionTelemetry(workerStatus = {}, now = Date.
       demoted: numericCount(summary.demoted),
       candidateLimitReached: summary.candidateLimitReached === true,
     } : null,
+    tokenProfiles: summary ? buildTokenProfilesTelemetry(summary.tokenProfiles) : null,
   });
 }
 
@@ -118,12 +148,26 @@ async function createDefaultBatch(options, deps) {
   });
 }
 
+// Built independently from the projection batch so an RPC provider failure never
+// prevents the best-effort DexScreener profile fast path from running.
+function createDefaultProfileSync(options, deps) {
+  return (deps.profileSyncFactory || createRobinhoodDexscreenerProfileSync)({
+    catalog: deps.catalog || robinhoodCatalog,
+    dexClient: deps.dexClient,
+    socialMetadataEnabled: options.socialMetadataEnabled,
+    intervalMs: options.dexProfileIntervalMs,
+    pendingTtlMs: options.dexProfilePendingTtlMs,
+    pendingMax: options.dexProfilePendingMax,
+  });
+}
+
 function createRobinhoodCatalogProjectionWorker(deps = {}) {
   const schedule = deps.schedule || setTimeout;
   const cancelSchedule = deps.cancelSchedule || clearTimeout;
   const logger = deps.logger || console;
   let options = normalizeOptions();
   let batch = deps.batch || null;
+  let profileSync = deps.profileSync || null;
   let timer = null;
   let running = false;
   let activeRunPromise = null;
@@ -132,6 +176,21 @@ function createRobinhoodCatalogProjectionWorker(deps = {}) {
     lastRunAt: null, lastCompletedAt: null, lastSummary: null,
     lastError: null, consecutiveErrors: 0, totalErrors: 0, totalRuns: 0,
   };
+
+  // The profile sync is a best-effort fast path: its failure must never turn a
+  // successful projection batch into a failed cycle. The batch summary stays the
+  // source of truth for run status; profiles are attached as telemetry only.
+  async function withProfileSync(summary) {
+    if (!options.dexProfileEnabled) return summary;
+    try {
+      profileSync ||= createDefaultProfileSync(options, deps);
+      const tokenProfiles = await profileSync.runOnce();
+      return { ...summary, tokenProfiles };
+    } catch (error) {
+      logger.error(`[RobinhoodCatalogProjectionWorker] profile sync failed: ${error.message}`);
+      return { ...summary, tokenProfiles: { status: 'error', errors: 1 } };
+    }
+  }
 
   async function runOnce() {
     if (activeRunPromise) return activeRunPromise;
@@ -148,7 +207,7 @@ function createRobinhoodCatalogProjectionWorker(deps = {}) {
           blockscoutBatchSize: options.blockscoutBatchSize,
           socialDrainLimit: options.socialDrainLimit,
         });
-        status.lastSummary = summary;
+        status.lastSummary = await withProfileSync(summary);
         status.lastError = null;
         status.consecutiveErrors = 0;
         status.lastCompletedAt = new Date().toISOString();

@@ -363,9 +363,16 @@ async function recordDexscreenerMetadata(input = {}, runner = db) {
   const websiteUrl = sanitizeHttpUrl(input.websiteUrl);
   const twitterUrl = sanitizeHttpUrl(input.twitterUrl);
   const communityUrl = sanitizeHttpUrl(input.communityUrl || input.telegramUrl);
+  // The shared by-address fallback fills only a missing image (COALESCE keeps the
+  // existing value). The Token Profile fast path opts into overwrite so a
+  // published DexScreener icon can become the source of truth. The fragment is a
+  // fixed literal, never user input.
+  const imageAssignment = input.overwriteImage === true
+    ? 'COALESCE($2, last_image_url)'
+    : 'COALESCE(last_image_url, $2)';
   const { rows } = await runner.query(
     `UPDATE token_catalog
-     SET last_image_url = COALESCE(last_image_url, $2),
+     SET last_image_url = ${imageAssignment},
          last_website_url = COALESCE($3, last_website_url),
          last_twitter_url = COALESCE($4, last_twitter_url),
          last_community_url = COALESCE($5, last_community_url),

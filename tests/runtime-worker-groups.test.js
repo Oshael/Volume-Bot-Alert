@@ -178,6 +178,31 @@ describe('runtime worker groups config', () => {
     });
   });
 
+  it('keeps the DexScreener profile fast path disabled and bounded by default', () => {
+    withEnv({
+      ROBINHOOD_DEXSCREENER_PROFILE_ENABLED: undefined,
+      ROBINHOOD_DEXSCREENER_PROFILE_INTERVAL_MS: undefined,
+      ROBINHOOD_DEXSCREENER_PROFILE_PENDING_TTL_MS: undefined,
+      ROBINHOOD_DEXSCREENER_PROFILE_PENDING_MAX: undefined,
+    }, (config) => {
+      assert.equal(config.robinhoodCatalogProjectionWorker.dexProfileEnabled, false);
+      assert.equal(config.robinhoodCatalogProjectionWorker.dexProfileIntervalMs, 60_000);
+      assert.equal(config.robinhoodCatalogProjectionWorker.dexProfilePendingTtlMs, 30 * 60_000);
+      assert.equal(config.robinhoodCatalogProjectionWorker.dexProfilePendingMax, 500);
+    });
+    withEnv({
+      ROBINHOOD_DEXSCREENER_PROFILE_ENABLED: 'true',
+      ROBINHOOD_DEXSCREENER_PROFILE_INTERVAL_MS: '1',
+      ROBINHOOD_DEXSCREENER_PROFILE_PENDING_TTL_MS: '1',
+      ROBINHOOD_DEXSCREENER_PROFILE_PENDING_MAX: '999999',
+    }, (config) => {
+      assert.equal(config.robinhoodCatalogProjectionWorker.dexProfileEnabled, true);
+      assert.equal(config.robinhoodCatalogProjectionWorker.dexProfileIntervalMs, 60_000);
+      assert.equal(config.robinhoodCatalogProjectionWorker.dexProfilePendingTtlMs, 60_000);
+      assert.equal(config.robinhoodCatalogProjectionWorker.dexProfilePendingMax, 5000);
+    });
+  });
+
   it('keeps Robinhood ingestion disabled by default and bounds its runtime controls', () => {
     withEnv({
       ROBINHOOD_INGESTION_ENABLED: '',

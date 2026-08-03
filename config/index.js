@@ -818,6 +818,17 @@ module.exports = {
     socialDrainIntervalMs: parseIntegerInRange(
       process.env.ROBINHOOD_SOCIAL_METADATA_INTERVAL_MS, 60_000, 60_000, 60 * 60 * 1000
     ),
+    dexProfileEnabled: parseBoolean(process.env.ROBINHOOD_DEXSCREENER_PROFILE_ENABLED, false),
+    dexProfileIntervalMs: parseIntegerInRange(
+      process.env.ROBINHOOD_DEXSCREENER_PROFILE_INTERVAL_MS, 60_000, 60_000, 60 * 60 * 1000
+    ),
+    dexProfilePendingTtlMs: parseIntegerInRange(
+      process.env.ROBINHOOD_DEXSCREENER_PROFILE_PENDING_TTL_MS,
+      30 * 60_000, 60_000, 24 * 60 * 60 * 1000
+    ),
+    dexProfilePendingMax: parseIntegerInRange(
+      process.env.ROBINHOOD_DEXSCREENER_PROFILE_PENDING_MAX, 500, 1, 5000
+    ),
   },
 
   robinhoodIngestionWorker: {

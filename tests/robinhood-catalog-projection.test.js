@@ -233,4 +233,15 @@ describe('Robinhood dashboard catalog projection', () => {
     assert.deepEqual(calls[0].params, [TOKEN, null, null, null, null]);
   });
 
+  it('overwrites the image when the Token Profile fast path opts in', async () => {
+    const calls = [];
+    await catalog.recordDexscreenerMetadata(
+      { address: TOKEN, imageUrl: 'https://cdn.example.com/a.png', overwriteImage: true },
+      { async query(sql, params) { calls.push({ sql, params }); return { rows: [] }; } }
+    );
+
+    assert.match(calls[0].sql, /last_image_url = COALESCE\(\$2, last_image_url\)/);
+    assert.equal(calls[0].params[1], 'https://cdn.example.com/a.png');
+  });
+
 });
