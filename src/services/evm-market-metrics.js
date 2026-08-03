@@ -199,4 +199,5 @@ module.exports = {
   multiply,
   parseDecimal,
   rational,
+  resolveQuoteUsd,
 };
