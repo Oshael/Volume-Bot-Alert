@@ -94,18 +94,21 @@ describe('EVM market metrics', () => {
   });
 
   it('keeps integers above Number.MAX_SAFE_INTEGER exact', () => {
-    const supply = (2n ** 200n) + 123n;
+    // The huge value rides on volume (unguarded) rather than FDV, whose supply
+    // is now bounded by the human ceiling: this still proves the rational
+    // pipeline never truncates a >2^53 integer through Number.
+    const bigQuote = (2n ** 200n) + 123n;
     const observation = buildMarketObservation({
-      swap: swap({ tokenAmountRaw: '3', quoteAmountRaw: '7' }),
-      tokenMetadata: metadata(TOKEN, 0, supply),
+      swap: swap({ tokenAmountRaw: '3', quoteAmountRaw: bigQuote.toString() }),
+      tokenMetadata: metadata(TOKEN, 0, 1_000n),
       quoteMetadata: metadata(ROBINHOOD_USDG, 0, 1n),
       eligibility: ELIGIBLE,
     });
 
-    assert.equal(observation.exact.priceUsd.numerator, '7');
+    assert.equal(observation.exact.priceUsd.numerator, bigQuote.toString());
     assert.equal(observation.exact.priceUsd.denominator, '3');
-    assert.equal(observation.exact.fdvUsd.numerator, (7n * supply).toString());
-    assert.equal(observation.exact.fdvUsd.denominator, '3');
+    assert.equal(observation.exact.volumeUsd.numerator, bigQuote.toString());
+    assert.equal(observation.exact.volumeUsd.denominator, '1');
   });
 
   it('suppresses FDV for an uncapped (uint256-max) totalSupply, keeping price and volume', () => {
@@ -121,6 +124,26 @@ describe('EVM market metrics', () => {
     assert.equal(observation.volumeUsd, '5');
     assert.equal(observation.fdvUsd, null);
     assert.equal(observation.exact.fdvUsd, null);
+  });
+
+  it('applies the 1e15 whole-token supply ceiling to FDV (keep <=, suppress >)', () => {
+    const scale = 10n ** 18n;
+    const cases = [
+      { humanSupply: 10n ** 15n, fdvNull: false },       // SHIB-scale boundary: kept
+      { humanSupply: 10n ** 15n + 1n, fdvNull: true },   // one whole token over: suppressed
+    ];
+    for (const { humanSupply, fdvNull } of cases) {
+      const observation = buildMarketObservation({
+        swap: swap(),
+        tokenMetadata: metadata(TOKEN, 18, humanSupply * scale),
+        quoteMetadata: metadata(ROBINHOOD_USDG, 6, 1n),
+        eligibility: ELIGIBLE,
+      });
+      assert.equal(observation.accepted, true);
+      assert.equal(observation.priceUsd, '2.5');
+      assert.equal(observation.volumeUsd, '5');
+      assert.equal(observation.fdvUsd === null, fdvNull);
+    }
   });
 
   it('preserves sub-1e-30 prices instead of rounding them to a fatal zero', () => {

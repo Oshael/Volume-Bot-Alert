@@ -1,12 +1,14 @@
 const ROBINHOOD_WETH = '0x0bd7d308f8e1639fab988df18a8011f41eacad73';
 const ROBINHOOD_USDG = '0x5fc5360d0400a0fd4f2af552add042d716f1d168';
 
-// A token whose reported totalSupply sits in the top half of uint256 is an
-// uncapped/sentinel supply (e.g. 2^256-1 for "infinite"/rebasing tokens); FDV =
-// price * supply is meaningless and, left unguarded, poisons the 1m bucket
-// high_fdv. No real finite supply comes near this (a 1e15-token, 18-decimal
-// supply is ~1e33), so we suppress FDV while keeping the valid price/volume.
-const UNCAPPED_TOTAL_SUPPLY_RAW = 1n << 255n;
+// FDV = price * supply is only meaningful for finite, realistically-sized
+// supplies. Genuine meme supplies top out around 1e15 whole tokens (e.g. SHIB =
+// 1e15); anything above that is a rebasing / sentinel ("infinite", 2^256-1) /
+// broken-decimals token whose price * supply is noise and, left unguarded,
+// poisons the 1m bucket high_fdv. We suppress FDV above the human ceiling while
+// keeping the valid price/volume. Comparing whole tokens (raw / 10^decimals)
+// subsumes the old raw uint256-top-half sentinel guard (2^255 raw >> 1e15).
+const MAX_FINITE_HUMAN_SUPPLY = 10n ** 15n;
 
 function normalizeAddress(value, label = 'address') {
   const address = String(value || '').toLowerCase();
@@ -149,7 +151,9 @@ function buildMarketObservation(input = {}) {
   const volumeUsd = multiply(quoteAmount, quoteUsd.price);
   const totalSupplyRaw = BigInt(tokenMetadata.totalSupplyRaw);
   const supply = rational(totalSupplyRaw, tokenScale);
-  const fdvUsd = totalSupplyRaw < UNCAPPED_TOTAL_SUPPLY_RAW ? multiply(priceUsd, supply) : null;
+  const fdvUsd = totalSupplyRaw <= MAX_FINITE_HUMAN_SUPPLY * tokenScale
+    ? multiply(priceUsd, supply)
+    : null;
   const priceDecimalPlaces = input.priceDecimalPlaces ?? 80;
   const persistedPriceQuote = formatDecimal(priceQuote, priceDecimalPlaces);
   const persistedPriceUsd = formatDecimal(priceUsd, priceDecimalPlaces);
