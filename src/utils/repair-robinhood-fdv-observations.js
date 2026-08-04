@@ -72,8 +72,9 @@ const SELECT_TRANSPOSED = `
   SELECT chain, transaction_hash, log_index, block_number, side,
          token_decimals, quote_decimals, token_total_supply_raw,
          token_amount_raw, quote_amount_raw, quote_usd_price
-    FROM robinhood_market_observations
+   FROM robinhood_market_observations
    WHERE chain = 'robinhood' AND status = 'accepted'
+     AND protocol IN ('uniswap-v2', 'uniswap-v3')
      AND fdv_usd::numeric > $1::numeric
      AND token_total_supply_raw::numeric
        <= $2::numeric * power(10::numeric, token_decimals)
@@ -99,6 +100,7 @@ const UPDATE_UNCAPPED = `
 const COUNT_TRANSPOSED = `
   SELECT COUNT(*)::int AS n FROM robinhood_market_observations
    WHERE chain = 'robinhood' AND status = 'accepted'
+     AND protocol IN ('uniswap-v2', 'uniswap-v3')
      AND fdv_usd::numeric > $1::numeric
      AND token_total_supply_raw::numeric
        <= $2::numeric * power(10::numeric, token_decimals)`;
@@ -239,7 +241,9 @@ function parseArgs(argv = process.argv.slice(2)) {
   const batchSize = Number.parseInt(args['batch-size'] || '500', 10);
   if (!Number.isInteger(batchSize) || batchSize <= 0) throw new Error('batch-size must be a positive integer');
   const target = String(args.target || 'all').toLowerCase();
-  if (!['all', 'v4'].includes(target)) throw new Error('target must be all or v4');
+  if (!['all', 'v4', 'supply'].includes(target)) {
+    throw new Error('target must be all, v4 or supply');
+  }
   return { mode, batchSize, target };
 }
 
@@ -249,6 +253,9 @@ async function runRepair(options, deps = {}) {
   // untouched; the default keeps the original v2/v3 transposed + uncapped passes.
   if (options.target === 'v4') {
     return { mode: options.mode, target: 'v4', v4Transposed: await repairV4Transposed(database, options) };
+  }
+  if (options.target === 'supply') {
+    return { mode: options.mode, target: 'supply', supply: await repairUncapped(database, options) };
   }
   const transposed = await repairTransposed(database, options);
   const uncapped = await repairUncapped(database, options);

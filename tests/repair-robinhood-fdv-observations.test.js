@@ -2,8 +2,9 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const {
+  runRepair,
   recomputeTransposed,
-  __private: { repairUncapped, repairV4Transposed },
+  __private: { parseArgs, repairTransposed, repairUncapped, repairV4Transposed },
 } = require('../src/utils/repair-robinhood-fdv-observations');
 
 const ONE = 10n ** 18n;
@@ -125,5 +126,47 @@ describe('invalid-supply FDV pass', () => {
     assert.equal(summary.candidates, 2);
     assert.match(calls[0].sql, /power\(10::numeric, token_decimals\)/);
     assert.deepEqual(calls[0].params, ['1000000000000000']);
+  });
+
+  it('runs supply cleanup alone without walking transposition candidates', async () => {
+    const calls = [];
+    const database = {
+      async query(sql) {
+        calls.push(sql);
+        if (/COUNT/.test(sql)) return { rows: [{ n: 2 }] };
+        return { rowCount: 2 };
+      },
+    };
+
+    const summary = await runRepair({
+      mode: 'write', target: 'supply', batchSize: 500,
+    }, { database });
+
+    assert.deepEqual(summary, {
+      mode: 'write', target: 'supply', supply: { candidates: 2, cleared: 2 },
+    });
+    assert.equal(calls.length, 2);
+    assert.ok(calls.every((sql) => !/fdv_usd::numeric > \$1/.test(sql)));
+    assert.equal(parseArgs(['--target', 'supply']).target, 'supply');
+  });
+});
+
+describe('v2/v3 transposition pass', () => {
+  it('cannot select v4 observations through the general repair target', async () => {
+    const calls = [];
+    const database = {
+      async query(sql) {
+        calls.push(sql);
+        if (/COUNT/.test(sql)) return { rows: [{ n: 0 }] };
+        return { rows: [] };
+      },
+    };
+
+    await repairTransposed(database, { mode: 'dry-run', batchSize: 500 });
+
+    assert.equal(calls.length, 2);
+    assert.ok(calls.every((sql) => (
+      /protocol IN \('uniswap-v2', 'uniswap-v3'\)/.test(sql)
+    )));
   });
 });

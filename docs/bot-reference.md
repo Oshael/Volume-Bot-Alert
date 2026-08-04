@@ -793,6 +793,8 @@ com cutoff fixo. Maintenance/retention permanece parado durante a cadeia complet
 Produtores sobrepostos também precisam executar a mesma versão antes do recovery.
 Observations são inseridas com `ON CONFLICT ... DO NOTHING`; portanto um monólito antigo
 pode ganhar a corrida contra `robinhood-processing` e preservar métricas obsoletas.
+FDV com supply acima de `1e15` tokens humanos é limpo pelo alvo isolado
+`repair-robinhood-fdv-observations.js --target supply`, sem executar heurísticas de transposição.
 O procedimento operacional detalhado fica em
 `docs/robinhood-bucket-corruption-remaining-work.md`.
 

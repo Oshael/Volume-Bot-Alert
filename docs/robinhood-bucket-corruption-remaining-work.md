@@ -62,6 +62,14 @@ fixes committed; historical cleanup still pending.
    use `ON CONFLICT ... DO NOTHING`, an old producer can win the race and preserve
    stale metrics. Restart or stop every stale producer, clear confirmed invalid-supply
    FDVs, and re-run the observation dry-runs before rebuilding buckets.
+   Invalid-supply cleanup has an isolated target so it never walks or mutates
+   transposition candidates:
+   ```bash
+   node src/utils/repair-robinhood-fdv-observations.js --target supply --mode dry-run
+   node src/utils/repair-robinhood-fdv-observations.js --target supply --mode write
+   ```
+   The general transposition pass is restricted to v2/v3; v4 remains exclusively
+   behind `--target v4` and its independent sanity guard.
 
    **3a — `_1m` from observations** — `backfill-robinhood-market-buckets-1m.js`.
    Block-windowed; each window is one DELETE+INSERT transaction, so it **must be sliced**.
