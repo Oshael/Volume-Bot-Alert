@@ -165,6 +165,35 @@ describe('head processing decoder — market observation from evidence (no RPC)'
     });
     assert.equal(assessment.status, 'spot_tvl_from_v4_tick_ranges');
   });
+
+  it('honors the frozen native-ETH quote slot for V4 instead of the WETH-address ordering', () => {
+    // Native-ETH v4 pool: the quote currency is ETH (0x0 -> currency0, slot 0), but the
+    // evidence records the WETH substitute address, whose ordering vs the token would
+    // (wrongly) put the quote at slot 1 and transpose token<->quote — the live bug that
+    // reported ~$46M/token and ~$39M volume for a real ~$1.6k swap. The frozen quoteIndex
+    // from selectQuote (0) is the source of truth.
+    const row = baseRow({
+      protocol: 'uniswap-v4',
+      market_key: `robinhood:uniswap-v4:${POOL_ID}`,
+      address: v4.ROBINHOOD_V4_POOL_MANAGER,
+      topics: [v4.TOPICS.swap, POOL_ID, addressWord(POOL)],
+      // amount0 (quote / native ETH in) = +1, amount1 (token out) = -10
+      data: data([ONE, -10n * ONE, 1n << 96n, 5n * ONE, 0n, 0n]),
+      evidence: marketEvidence('uniswap-v4', {
+        quoteIndex: 0,
+        v4: {
+          poolId: POOL_ID, sqrtPriceX96: (1n << 96n).toString(),
+          liquidityRaw: (5n * ONE).toString(), modifyLiquidity: [],
+        },
+      }),
+    });
+    const result = decodeCapture(row);
+    assert.equal(result.observation.accepted, true);
+    assert.equal(result.observation.side, 'buy');
+    assert.equal(result.observation.tokenAmountRaw, (10n * ONE).toString());
+    assert.equal(result.observation.quoteAmountRaw, ONE.toString());
+    assert.equal(result.observation.priceUsd, '200');
+  });
 });
 
 describe('head processing decoder — non-valuation and guard paths', () => {

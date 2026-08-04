@@ -60,12 +60,20 @@ function reconstructLog(row) {
 // The tracked pool/pair context the low-level decoders need is fully derivable
 // from the frozen evidence plus the row's emitter address; no discovery replay
 // and no RPC are involved.
-// The Uniswap factories sort token0/token1 by address, so the tracked pool's quote
+// The V2/V3 factories sort token0/token1 by address, so the tracked pool's quote
 // slot is fully determined by the two frozen addresses — the same rule `selectQuote`
 // applies live. We derive it here instead of trusting `evidence.quoteIndex`: v2/v3
 // captures before this fix never surfaced the swap's quoteIndex and froze the default
 // 0, which transposed token/quote for every pool whose quote is token1.
-function resolveQuoteIndex(evidence) {
+//
+// V4 is the exception: it quotes native ETH, whose currency address is 0x0 and thus
+// always sorts to currency0 (slot 0). The evidence records the WETH *substitute*
+// address for that quote, so the sorted-address rule would put the quote at the wrong
+// slot and transpose token<->quote (blowing price/volume up by ~1e9). `selectQuote`
+// already froze the correct slot at pool Initialize, so for v4 we trust that frozen
+// quoteIndex rather than re-deriving from the substitute address.
+function resolveQuoteIndex(protocol, evidence) {
+  if (protocol === 'uniswap-v4') return Number(evidence.quoteIndex ?? 0);
   return BigInt(evidence.quoteAddress) < BigInt(evidence.tokenAddress) ? 0 : 1;
 }
 
@@ -75,7 +83,7 @@ function syntheticPool(protocol, row, evidence) {
     marketKey: row.market_key,
     tokenAddress: evidence.tokenAddress,
     quoteAddress: evidence.quoteAddress,
-    quoteIndex: resolveQuoteIndex(evidence),
+    quoteIndex: resolveQuoteIndex(protocol, evidence),
   };
   if (protocol === 'uniswap-v2') return { ...base, pairAddress: row.address };
   if (protocol === 'uniswap-v3') return { ...base, poolAddress: row.address, fee: null };
