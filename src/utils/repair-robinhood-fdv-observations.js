@@ -100,21 +100,52 @@ const COUNT_UNCAPPED = `
      AND token_total_supply_raw::numeric >= $1::numeric
      AND fdv_usd IS NOT NULL`;
 
-async function repairTransposed(database, { mode, batchSize }) {
+// V4 native-ETH transposition (live decode bug fixed in b04e0790): the head decoder
+// derived the v4 quote slot from the WETH substitute address instead of native ETH's
+// 0x0 (currency0), so it stored the ETH quote amount in token_amount_raw and the token
+// amount in quote_amount_raw — inflating price/volume by ~1e9. Corrupt rows report
+// price in the millions; real v4 prices are sub-cent, so price_usd > 1e6 isolates them.
+// recomputeTransposed reverses it exactly (same swap+revalue as v2/v3).
+const V4_TRANSPOSED_SYMPTOM_PRICE = '1e6';
+
+const SELECT_V4_TRANSPOSED = `
+  SELECT chain, transaction_hash, log_index, block_number, side,
+         token_decimals, quote_decimals, token_total_supply_raw,
+         token_amount_raw, quote_amount_raw, quote_usd_price
+    FROM robinhood_market_observations
+   WHERE chain = 'robinhood' AND status = 'accepted'
+     AND market_key LIKE 'robinhood:uniswap-v4:%'
+     AND price_usd::numeric > $1::numeric
+     AND (block_number, log_index) > ($3::bigint, $4::bigint)
+   ORDER BY block_number, log_index
+   LIMIT $2`;
+
+const COUNT_V4_TRANSPOSED = `
+  SELECT COUNT(*)::int AS n FROM robinhood_market_observations
+   WHERE chain = 'robinhood' AND status = 'accepted'
+     AND market_key LIKE 'robinhood:uniswap-v4:%'
+     AND price_usd::numeric > $1::numeric`;
+
+// Transposition repair is identical across variants — swap the two raw amounts back
+// and revalue with recomputeTransposed. Only the candidate query differs (v2/v3 keys
+// off the absurd FDV, v4 off the inflated price), so both share this keyset walk.
+// `pass.filterParams` fill the query's leading placeholders; the batch size and the
+// (block, log) cursor always follow them.
+async function runTransposedPass(database, { mode, batchSize }, pass) {
   const write = mode === 'write';
   const summary = { candidates: 0, repaired: 0, wouldRepair: 0, skipped: {}, sample: [] };
-  const counted = await database.query(COUNT_TRANSPOSED, [ABSURD_FDV, UNCAPPED_SUPPLY_RAW]);
+  const counted = await database.query(pass.countSql, pass.filterParams);
   summary.candidates = counted.rows[0].n;
 
   // Keyset cursor over (block_number, log_index): skipped rows still match the
-  // absurd-FDV filter, so we must advance past them rather than re-select them.
+  // symptom filter, so we must advance past them rather than re-select them.
   // Dry-run walks every candidate the same way but only tallies outcomes, so the
   // preview reports the true repair/skip split before anything is written.
   let cursorBlock = '-1';
   let cursorLog = '0';
   for (;;) {
     const batch = await database.query(
-      SELECT_TRANSPOSED, [ABSURD_FDV, UNCAPPED_SUPPLY_RAW, batchSize, cursorBlock, cursorLog]
+      pass.selectSql, [...pass.filterParams, batchSize, cursorBlock, cursorLog]
     );
     if (batch.rows.length === 0) break;
     const client = write ? await database.getClient() : null;
@@ -160,6 +191,18 @@ async function repairTransposed(database, { mode, batchSize }) {
   return summary;
 }
 
+const V2_V3_TRANSPOSED_PASS = {
+  countSql: COUNT_TRANSPOSED, selectSql: SELECT_TRANSPOSED,
+  filterParams: [ABSURD_FDV, UNCAPPED_SUPPLY_RAW],
+};
+const V4_TRANSPOSED_PASS = {
+  countSql: COUNT_V4_TRANSPOSED, selectSql: SELECT_V4_TRANSPOSED,
+  filterParams: [V4_TRANSPOSED_SYMPTOM_PRICE],
+};
+
+const repairTransposed = (database, options) => runTransposedPass(database, options, V2_V3_TRANSPOSED_PASS);
+const repairV4Transposed = (database, options) => runTransposedPass(database, options, V4_TRANSPOSED_PASS);
+
 async function repairUncapped(database, { mode }) {
   const counted = await database.query(COUNT_UNCAPPED, [UNCAPPED_SUPPLY_RAW]);
   const summary = { candidates: counted.rows[0].n, cleared: 0 };
@@ -181,11 +224,18 @@ function parseArgs(argv = process.argv.slice(2)) {
   if (!['dry-run', 'write'].includes(mode)) throw new Error('mode must be dry-run or write');
   const batchSize = Number.parseInt(args['batch-size'] || '500', 10);
   if (!Number.isInteger(batchSize) || batchSize <= 0) throw new Error('batch-size must be a positive integer');
-  return { mode, batchSize };
+  const target = String(args.target || 'all').toLowerCase();
+  if (!['all', 'v4'].includes(target)) throw new Error('target must be all or v4');
+  return { mode, batchSize, target };
 }
 
 async function runRepair(options, deps = {}) {
   const database = deps.database || db;
+  // target=v4 repairs only the v4 native-ETH transposition, leaving every other row
+  // untouched; the default keeps the original v2/v3 transposed + uncapped passes.
+  if (options.target === 'v4') {
+    return { mode: options.mode, target: 'v4', v4Transposed: await repairV4Transposed(database, options) };
+  }
   const transposed = await repairTransposed(database, options);
   const uncapped = await repairUncapped(database, options);
   return { mode: options.mode, transposed, uncapped };
@@ -210,5 +260,5 @@ module.exports = {
   runRepair,
   recomputeTransposed,
   UNCAPPED_SUPPLY_RAW,
-  __private: { parseArgs, repairTransposed, repairUncapped },
+  __private: { parseArgs, repairTransposed, repairV4Transposed, repairUncapped },
 };
