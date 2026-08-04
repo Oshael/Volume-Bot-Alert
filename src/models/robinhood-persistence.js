@@ -492,7 +492,9 @@ function normalizeAcceptedObservation(observation, context) {
     quoteUsdPrice: decimalValue(observation.quoteUsdPrice, 'observation.quoteUsdPrice'),
     priceUsd: decimalValue(observation.priceUsd, 'observation.priceUsd'),
     volumeUsd: decimalValue(observation.volumeUsd, 'observation.volumeUsd', { allowZero: true }),
-    fdvUsd: decimalValue(observation.fdvUsd, 'observation.fdvUsd', { allowZero: true }),
+    fdvUsd: observation.fdvUsd == null
+      ? null
+      : decimalValue(observation.fdvUsd, 'observation.fdvUsd', { allowZero: true }),
     marketCapUsd: observation.marketCapUsd == null
       ? null
       : decimalValue(observation.marketCapUsd, 'observation.marketCapUsd', { allowZero: true }),

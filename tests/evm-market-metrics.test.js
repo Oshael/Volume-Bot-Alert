@@ -108,6 +108,21 @@ describe('EVM market metrics', () => {
     assert.equal(observation.exact.fdvUsd.denominator, '3');
   });
 
+  it('suppresses FDV for an uncapped (uint256-max) totalSupply, keeping price and volume', () => {
+    const observation = buildMarketObservation({
+      swap: swap(),
+      tokenMetadata: metadata(TOKEN, 18, (2n ** 256n) - 1n),
+      quoteMetadata: metadata(ROBINHOOD_USDG, 6, 1n),
+      eligibility: ELIGIBLE,
+    });
+
+    assert.equal(observation.accepted, true);
+    assert.equal(observation.priceUsd, '2.5');
+    assert.equal(observation.volumeUsd, '5');
+    assert.equal(observation.fdvUsd, null);
+    assert.equal(observation.exact.fdvUsd, null);
+  });
+
   it('preserves sub-1e-30 prices instead of rounding them to a fatal zero', () => {
     const observation = buildMarketObservation({
       swap: swap({
