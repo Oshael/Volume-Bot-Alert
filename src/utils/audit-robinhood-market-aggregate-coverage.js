@@ -181,34 +181,34 @@ function buildAggregateAuditSql(granularityMinutes) {
     bucket.aggregate_bucket_ts AS bucket_ts,
     (array_agg(bucket.open_price_usd ORDER BY bucket.first_block_number,
       bucket.first_log_index, bucket.protocol, bucket.market_key) FILTER (WHERE
-        bucket.protocol = primary.valuation_protocol
-        AND bucket.market_key = primary.valuation_market_key))[1] AS open_price_usd,
+        bucket.protocol = valuation_market.valuation_protocol
+        AND bucket.market_key = valuation_market.valuation_market_key))[1] AS open_price_usd,
     MAX(bucket.high_price_usd) FILTER (WHERE
-      bucket.protocol = primary.valuation_protocol
-      AND bucket.market_key = primary.valuation_market_key) AS high_price_usd,
+      bucket.protocol = valuation_market.valuation_protocol
+      AND bucket.market_key = valuation_market.valuation_market_key) AS high_price_usd,
     MIN(bucket.low_price_usd) FILTER (WHERE
-      bucket.protocol = primary.valuation_protocol
-      AND bucket.market_key = primary.valuation_market_key) AS low_price_usd,
+      bucket.protocol = valuation_market.valuation_protocol
+      AND bucket.market_key = valuation_market.valuation_market_key) AS low_price_usd,
     (array_agg(bucket.close_price_usd ORDER BY bucket.last_block_number DESC,
       bucket.last_log_index DESC, bucket.protocol DESC, bucket.market_key DESC) FILTER (WHERE
-        bucket.protocol = primary.valuation_protocol
-        AND bucket.market_key = primary.valuation_market_key))[1] AS close_price_usd,
+        bucket.protocol = valuation_market.valuation_protocol
+        AND bucket.market_key = valuation_market.valuation_market_key))[1] AS close_price_usd,
     (array_agg(bucket.open_fdv_usd ORDER BY bucket.first_block_number,
       bucket.first_log_index, bucket.protocol, bucket.market_key) FILTER (WHERE
-        bucket.protocol = primary.valuation_protocol
-        AND bucket.market_key = primary.valuation_market_key))[1] AS open_fdv_usd,
+        bucket.protocol = valuation_market.valuation_protocol
+        AND bucket.market_key = valuation_market.valuation_market_key))[1] AS open_fdv_usd,
     MAX(bucket.high_fdv_usd) FILTER (WHERE
-      bucket.protocol = primary.valuation_protocol
-      AND bucket.market_key = primary.valuation_market_key) AS high_fdv_usd,
+      bucket.protocol = valuation_market.valuation_protocol
+      AND bucket.market_key = valuation_market.valuation_market_key) AS high_fdv_usd,
     MIN(bucket.low_fdv_usd) FILTER (WHERE
-      bucket.protocol = primary.valuation_protocol
-      AND bucket.market_key = primary.valuation_market_key) AS low_fdv_usd,
+      bucket.protocol = valuation_market.valuation_protocol
+      AND bucket.market_key = valuation_market.valuation_market_key) AS low_fdv_usd,
     (array_agg(bucket.close_fdv_usd ORDER BY bucket.last_block_number DESC,
       bucket.last_log_index DESC, bucket.protocol DESC, bucket.market_key DESC) FILTER (WHERE
-        bucket.protocol = primary.valuation_protocol
-        AND bucket.market_key = primary.valuation_market_key))[1] AS close_fdv_usd,
-    primary.valuation_protocol, primary.valuation_market_key,
-    primary.valuation_volume_24h_usd,
+        bucket.protocol = valuation_market.valuation_protocol
+        AND bucket.market_key = valuation_market.valuation_market_key))[1] AS close_fdv_usd,
+    valuation_market.valuation_protocol, valuation_market.valuation_market_key,
+    valuation_market.valuation_volume_24h_usd,
     SUM(bucket.volume_usd) AS volume_usd, SUM(bucket.swaps)::bigint AS swaps,
     SUM(bucket.buys)::bigint AS buys, SUM(bucket.sells)::bigint AS sells,
     SUM(bucket.transactions)::bigint AS transactions,
@@ -229,12 +229,12 @@ function buildAggregateAuditSql(granularityMinutes) {
       bucket.last_log_index DESC, bucket.protocol DESC, bucket.market_key DESC))[1]
       AS last_log_index
   FROM source_buckets bucket
-  INNER JOIN primary_markets primary
-    ON primary.token_address = bucket.token_address
-   AND primary.aggregate_bucket_ts = bucket.aggregate_bucket_ts
+  INNER JOIN primary_markets valuation_market
+    ON valuation_market.token_address = bucket.token_address
+   AND valuation_market.aggregate_bucket_ts = bucket.aggregate_bucket_ts
   GROUP BY bucket.token_address, bucket.aggregate_bucket_ts,
-    primary.valuation_protocol, primary.valuation_market_key,
-    primary.valuation_volume_24h_usd`;
+    valuation_market.valuation_protocol, valuation_market.valuation_market_key,
+    valuation_market.valuation_volume_24h_usd`;
   const actual = `SELECT ${AGGREGATE_FIELDS.join(', ')}
   FROM robinhood_market_buckets_agg
   WHERE chain = 'robinhood' AND token_address = ANY($1)

@@ -246,37 +246,37 @@ function buildAggregateRangeSql(source) {
         (array_agg(bucket.open_price_usd ORDER BY
           bucket.first_block_number, bucket.first_log_index,
           bucket.protocol, bucket.market_key) FILTER (WHERE
-            bucket.protocol = primary.valuation_protocol
-            AND bucket.market_key = primary.valuation_market_key))[1] AS open_price_usd,
+            bucket.protocol = valuation_market.valuation_protocol
+            AND bucket.market_key = valuation_market.valuation_market_key))[1] AS open_price_usd,
         MAX(bucket.high_price_usd) FILTER (WHERE
-          bucket.protocol = primary.valuation_protocol
-          AND bucket.market_key = primary.valuation_market_key) AS high_price_usd,
+          bucket.protocol = valuation_market.valuation_protocol
+          AND bucket.market_key = valuation_market.valuation_market_key) AS high_price_usd,
         MIN(bucket.low_price_usd) FILTER (WHERE
-          bucket.protocol = primary.valuation_protocol
-          AND bucket.market_key = primary.valuation_market_key) AS low_price_usd,
+          bucket.protocol = valuation_market.valuation_protocol
+          AND bucket.market_key = valuation_market.valuation_market_key) AS low_price_usd,
         (array_agg(bucket.close_price_usd ORDER BY
           bucket.last_block_number DESC, bucket.last_log_index DESC,
           bucket.protocol DESC, bucket.market_key DESC) FILTER (WHERE
-            bucket.protocol = primary.valuation_protocol
-            AND bucket.market_key = primary.valuation_market_key))[1] AS close_price_usd,
+            bucket.protocol = valuation_market.valuation_protocol
+            AND bucket.market_key = valuation_market.valuation_market_key))[1] AS close_price_usd,
         (array_agg(bucket.open_fdv_usd ORDER BY
           bucket.first_block_number, bucket.first_log_index,
           bucket.protocol, bucket.market_key) FILTER (WHERE
-            bucket.protocol = primary.valuation_protocol
-            AND bucket.market_key = primary.valuation_market_key))[1] AS open_fdv_usd,
+            bucket.protocol = valuation_market.valuation_protocol
+            AND bucket.market_key = valuation_market.valuation_market_key))[1] AS open_fdv_usd,
         MAX(bucket.high_fdv_usd) FILTER (WHERE
-          bucket.protocol = primary.valuation_protocol
-          AND bucket.market_key = primary.valuation_market_key) AS high_fdv_usd,
+          bucket.protocol = valuation_market.valuation_protocol
+          AND bucket.market_key = valuation_market.valuation_market_key) AS high_fdv_usd,
         MIN(bucket.low_fdv_usd) FILTER (WHERE
-          bucket.protocol = primary.valuation_protocol
-          AND bucket.market_key = primary.valuation_market_key) AS low_fdv_usd,
+          bucket.protocol = valuation_market.valuation_protocol
+          AND bucket.market_key = valuation_market.valuation_market_key) AS low_fdv_usd,
         (array_agg(bucket.close_fdv_usd ORDER BY
           bucket.last_block_number DESC, bucket.last_log_index DESC,
           bucket.protocol DESC, bucket.market_key DESC) FILTER (WHERE
-            bucket.protocol = primary.valuation_protocol
-            AND bucket.market_key = primary.valuation_market_key))[1] AS close_fdv_usd,
-        primary.valuation_protocol, primary.valuation_market_key,
-        primary.valuation_volume_24h_usd,
+            bucket.protocol = valuation_market.valuation_protocol
+            AND bucket.market_key = valuation_market.valuation_market_key))[1] AS close_fdv_usd,
+        valuation_market.valuation_protocol, valuation_market.valuation_market_key,
+        valuation_market.valuation_volume_24h_usd,
         SUM(bucket.volume_usd) AS volume_usd,
         SUM(bucket.swaps)::bigint AS swaps,
         SUM(bucket.buys)::bigint AS buys,
@@ -301,11 +301,11 @@ function buildAggregateRangeSql(source) {
           bucket.last_block_number DESC, bucket.last_log_index DESC,
           bucket.protocol DESC, bucket.market_key DESC))[1] AS last_log_index
       FROM targets target
-      INNER JOIN primary_markets primary
-        ON primary.chain = target.chain
-       AND primary.token_address = target.token_address
-       AND primary.granularity_minutes = target.granularity_minutes
-       AND primary.bucket_ts = target.bucket_ts
+      INNER JOIN primary_markets valuation_market
+        ON valuation_market.chain = target.chain
+       AND valuation_market.token_address = target.token_address
+       AND valuation_market.granularity_minutes = target.granularity_minutes
+       AND valuation_market.bucket_ts = target.bucket_ts
       INNER JOIN ${source.table} bucket
         ON bucket.chain = target.chain
        AND bucket.token_address = target.token_address
@@ -314,8 +314,8 @@ function buildAggregateRangeSql(source) {
          + (target.granularity_minutes * INTERVAL '1 minute')
       GROUP BY target.chain, target.token_address,
         target.granularity_minutes, target.bucket_ts,
-        primary.valuation_protocol, primary.valuation_market_key,
-        primary.valuation_volume_24h_usd
+        valuation_market.valuation_protocol, valuation_market.valuation_market_key,
+        valuation_market.valuation_volume_24h_usd
     ),
     upserted AS (
       INSERT INTO robinhood_market_buckets_agg (${AGGREGATE_COLUMNS.join(', ')})
@@ -548,10 +548,10 @@ function createRobinhoodMarketAggregateRepository(database = db) {
            protocol, market_key
          LIMIT 1
        )
-       SELECT source.*, primary.protocol AS valuation_protocol,
-         primary.market_key AS valuation_market_key,
-         primary.volume_24h_usd AS valuation_volume_24h_usd
-       FROM source_rows source CROSS JOIN primary_market primary`,
+       SELECT source.*, valuation_market.protocol AS valuation_protocol,
+         valuation_market.market_key AS valuation_market_key,
+         valuation_market.volume_24h_usd AS valuation_volume_24h_usd
+       FROM source_rows source CROSS JOIN primary_market valuation_market`,
       [input.tokenAddress, input.bucketTs, input.granularityMinutes]
     );
     const aggregate = foldMarketRows(sourceResult.rows, input);

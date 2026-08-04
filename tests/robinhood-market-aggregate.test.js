@@ -122,6 +122,7 @@ describe('Robinhood market aggregate repository', () => {
     assert.equal(sourceQueries.length, 2);
     assert.match(sourceQueries[0], /INTERVAL '24 hours'/);
     assert.match(sourceQueries[0], /ORDER BY volume_24h_usd DESC/);
+    assert.doesNotMatch(sourceQueries[0], /\bprimary\b/);
   });
 
   it('rebuilds complete hourly ranges in one set-based statement', async () => {
@@ -261,7 +262,8 @@ describe('Robinhood market aggregate repository', () => {
     assert.match(calls[0].sql,
       /last_log_index DESC,\s+bucket\.protocol DESC, bucket\.market_key DESC/);
     assert.match(calls[0].sql, /SUM\(bucket\.volume_usd\)/);
-    assert.match(calls[0].sql, /FILTER \(WHERE[\s\S]*primary\.valuation_market_key/);
+    assert.match(calls[0].sql, /FILTER \(WHERE[\s\S]*valuation_market\.valuation_market_key/);
+    assert.doesNotMatch(calls[0].sql, /\bprimary\b/);
     assert.match(calls[0].sql, /ON CONFLICT[\s\S]*IS DISTINCT FROM EXCLUDED\.volume_usd/);
 
     await repository.refreshAggregateRange({
