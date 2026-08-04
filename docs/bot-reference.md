@@ -836,6 +836,9 @@ Depois do catch-up:
   `valuation_protocol`, `valuation_market_key` e `valuation_volume_24h_usd`
   preservam a proveniência e os desempates são atividade mais recente, protocolo
   e `market_key`;
+- o backfill relê os limites da tabela fonte em cada mudança de fase; assim a
+  fase coarse inclui buckets `1h` antigos que acabaram de ser regenerados pela
+  fase hourly da mesma execução;
 - archive completo do node não é necessário apenas para processar blocos novos;
 - qualquer consulta histórica fora da janela do node precisa do PostgreSQL,
   de um provedor archive ou de um snapshot próprio.

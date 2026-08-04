@@ -308,6 +308,18 @@ async function processNextChunk(context) {
   return true;
 }
 
+async function refreshBoundsAfterPhaseChange(input) {
+  const { batchPhase, checkpoint, execute, options, phaseBounds } = input;
+  const nextPhaseName = checkpoint.cursor.phase;
+  if (!nextPhaseName || nextPhaseName === batchPhase) return;
+  phaseBounds[nextPhaseName] = resolvePhaseRange(
+    options,
+    checkpoint,
+    nextPhaseName,
+    await sourceBounds(nextPhaseName, execute)
+  );
+}
+
 async function runBackfill(options, deps = {}) {
   const database = deps.database || db;
   const execute = queryRunner(database, options.statementTimeoutMs, options.lockTimeoutMs);
@@ -341,6 +353,9 @@ async function runBackfill(options, deps = {}) {
     const startedAtMs = Number(now());
     const processed = await processNextChunk({
       options, checkpoint, phaseBounds, execute, repository, summary, save,
+    });
+    await refreshBoundsAfterPhaseChange({
+      batchPhase, checkpoint, execute, options, phaseBounds,
     });
     if (!processed) continue;
     const durationMs = Math.max(0, Number(now()) - startedAtMs);

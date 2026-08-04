@@ -293,4 +293,53 @@ describe('Robinhood aggregate backfill', () => {
     assert.equal(saved.cursor.windowStart, '2026-07-18T12:00:00.000Z');
     assert.equal(saved.cursor.afterToken, TOKEN);
   });
+
+  it('refreshes coarse source bounds after rebuilding older hourly buckets', async () => {
+    let hourlyBoundsReads = 0;
+    const database = {
+      async queryWithStatementTimeout(sql) {
+        if (!/MIN\(bucket_ts\)/.test(sql)) return { rows: [] };
+        if (/robinhood_market_buckets_1h/.test(sql)) {
+          hourlyBoundsReads += 1;
+          return { rows: [{
+            min_ts: hourlyBoundsReads === 1
+              ? '2026-07-10T00:00:00.000Z'
+              : '2026-07-01T00:00:00.000Z',
+            max_ts: '2026-07-18T12:00:00.000Z',
+          }] };
+        }
+        return { rows: [{
+          min_ts: '2026-07-18T12:00:00.000Z',
+          max_ts: '2026-07-18T12:59:00.000Z',
+        }] };
+      },
+    };
+    const ranges = [];
+    const checkpoint = {
+      version: 2,
+      asOf: '2026-07-18T13:00:00.000Z',
+      cursor: { phase: 'hourly', windowStart: '2026-07-18T13:00:00.000Z', afterToken: null },
+    };
+
+    await runBackfill(options({
+      mode: 'write', checkpointFile: '/tmp/rh.json', maxChunks: 1,
+    }), {
+      database,
+      repository: {
+        async refreshAggregateRange(range) {
+          ranges.push(range);
+          return {
+            sourceBuckets: 1, targetBuckets: 3, writtenBuckets: 3,
+            lastToken: TOKEN, hasMoreTokens: false,
+          };
+        },
+      },
+      readCheckpoint: async () => structuredClone(checkpoint),
+      writeCheckpoint: async () => {},
+    });
+
+    assert.equal(hourlyBoundsReads, 2);
+    assert.equal(ranges.length, 1);
+    assert.equal(ranges[0].from, '2026-07-01T00:00:00.000Z');
+  });
 });
