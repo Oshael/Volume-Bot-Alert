@@ -101,20 +101,15 @@ const COUNT_UNCAPPED = `
      AND fdv_usd IS NOT NULL`;
 
 async function repairTransposed(database, { mode, batchSize }) {
-  const summary = { candidates: 0, repaired: 0, skipped: {} };
+  const write = mode === 'write';
+  const summary = { candidates: 0, repaired: 0, wouldRepair: 0, skipped: {}, sample: [] };
   const counted = await database.query(COUNT_TRANSPOSED, [ABSURD_FDV, UNCAPPED_SUPPLY_RAW]);
   summary.candidates = counted.rows[0].n;
-  if (mode !== 'write') {
-    const sample = await database.query(SELECT_TRANSPOSED, [ABSURD_FDV, UNCAPPED_SUPPLY_RAW, 3, '-1', '0']);
-    summary.sample = sample.rows.map((row) => ({
-      tx: `${row.transaction_hash}:${row.log_index}`,
-      before: { tokenRaw: row.token_amount_raw, quoteRaw: row.quote_amount_raw, side: row.side },
-      after: recomputeTransposed(row),
-    }));
-    return summary;
-  }
+
   // Keyset cursor over (block_number, log_index): skipped rows still match the
   // absurd-FDV filter, so we must advance past them rather than re-select them.
+  // Dry-run walks every candidate the same way but only tallies outcomes, so the
+  // preview reports the true repair/skip split before anything is written.
   let cursorBlock = '-1';
   let cursorLog = '0';
   for (;;) {
@@ -122,29 +117,42 @@ async function repairTransposed(database, { mode, batchSize }) {
       SELECT_TRANSPOSED, [ABSURD_FDV, UNCAPPED_SUPPLY_RAW, batchSize, cursorBlock, cursorLog]
     );
     if (batch.rows.length === 0) break;
-    const client = await database.getClient();
+    const client = write ? await database.getClient() : null;
     try {
-      await client.query('BEGIN');
+      if (write) await client.query('BEGIN');
       for (const row of batch.rows) {
         const fixed = recomputeTransposed(row);
+        if (summary.sample.length < 3) {
+          summary.sample.push({
+            tx: `${row.transaction_hash}:${row.log_index}`,
+            before: { tokenRaw: row.token_amount_raw, quoteRaw: row.quote_amount_raw, side: row.side },
+            after: fixed,
+          });
+        }
         if (fixed.skip) {
           summary.skipped[fixed.skip] = (summary.skipped[fixed.skip] || 0) + 1;
           continue;
         }
-        await client.query(UPDATE_TRANSPOSED, [
-          row.chain, row.transaction_hash, row.log_index,
-          fixed.tokenAmountRaw, fixed.quoteAmountRaw, fixed.tokenAmount, fixed.quoteAmount,
-          fixed.priceQuote, fixed.priceUsd, fixed.volumeUsd, fixed.fdvUsd, fixed.side,
-        ]);
-        summary.repaired += 1;
+        if (write) {
+          await client.query(UPDATE_TRANSPOSED, [
+            row.chain, row.transaction_hash, row.log_index,
+            fixed.tokenAmountRaw, fixed.quoteAmountRaw, fixed.tokenAmount, fixed.quoteAmount,
+            fixed.priceQuote, fixed.priceUsd, fixed.volumeUsd, fixed.fdvUsd, fixed.side,
+          ]);
+          summary.repaired += 1;
+        } else {
+          summary.wouldRepair += 1;
+        }
       }
-      await client.query('COMMIT');
+      if (write) await client.query('COMMIT');
     } catch (error) {
-      try { await client.query('ROLLBACK'); } catch (_) {}
+      if (write) { try { await client.query('ROLLBACK'); } catch (_) {} }
       throw error;
     } finally {
-      client.release();
+      if (client) client.release();
     }
+    // In write mode, repaired rows drop out of the filter; the cursor still moves
+    // forward so skipped rows are passed exactly once.
     const last = batch.rows[batch.rows.length - 1];
     cursorBlock = String(last.block_number);
     cursorLog = String(last.log_index);
