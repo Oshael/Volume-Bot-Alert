@@ -14,6 +14,8 @@ const AGGREGATE_COLUMN_TYPES = Object.freeze({
   bucket_ts: 'timestamptz', open_price_usd: 'numeric', high_price_usd: 'numeric',
   low_price_usd: 'numeric', close_price_usd: 'numeric', open_fdv_usd: 'numeric',
   high_fdv_usd: 'numeric', low_fdv_usd: 'numeric', close_fdv_usd: 'numeric',
+  valuation_protocol: 'text', valuation_market_key: 'text',
+  valuation_volume_24h_usd: 'numeric',
   volume_usd: 'numeric', swaps: 'bigint', buys: 'bigint', sells: 'bigint',
   transactions: 'bigint', market_count: 'integer', protocols: 'text[]',
   source_granularity_minutes: 'smallint', source_bucket_count: 'integer',
@@ -192,25 +194,89 @@ function buildAggregateRangeSql(source) {
       FROM source_window source
       CROSS JOIN granularities granularity
     ),
+    target_markets AS MATERIALIZED (
+      SELECT DISTINCT
+        target.chain, target.token_address, target.granularity_minutes,
+        target.bucket_ts, bucket.protocol, bucket.market_key
+      FROM targets target
+      INNER JOIN ${source.table} bucket
+        ON bucket.chain = target.chain
+       AND bucket.token_address = target.token_address
+       AND bucket.bucket_ts >= target.bucket_ts
+       AND bucket.bucket_ts < target.bucket_ts
+         + (target.granularity_minutes * INTERVAL '1 minute')
+    ),
+    market_activity AS MATERIALIZED (
+      SELECT
+        target.chain, target.token_address, target.granularity_minutes,
+        target.bucket_ts, target.protocol, target.market_key,
+        COALESCE(SUM(history.volume_usd), 0) AS volume_24h_usd,
+        MAX(history.last_observed_at) AS last_observed_at
+      FROM target_markets target
+      LEFT JOIN ${source.table} history
+        ON history.chain = target.chain
+       AND history.token_address = target.token_address
+       AND history.protocol = target.protocol
+       AND history.market_key = target.market_key
+       AND history.bucket_ts >= target.bucket_ts
+         + (target.granularity_minutes * INTERVAL '1 minute') - INTERVAL '24 hours'
+       AND history.bucket_ts < target.bucket_ts
+         + (target.granularity_minutes * INTERVAL '1 minute')
+      GROUP BY target.chain, target.token_address, target.granularity_minutes,
+        target.bucket_ts, target.protocol, target.market_key
+    ),
+    primary_markets AS MATERIALIZED (
+      SELECT DISTINCT ON (
+        activity.chain, activity.token_address,
+        activity.granularity_minutes, activity.bucket_ts
+      )
+        activity.chain, activity.token_address, activity.granularity_minutes,
+        activity.bucket_ts, activity.protocol AS valuation_protocol,
+        activity.market_key AS valuation_market_key,
+        activity.volume_24h_usd AS valuation_volume_24h_usd
+      FROM market_activity activity
+      ORDER BY activity.chain, activity.token_address,
+        activity.granularity_minutes, activity.bucket_ts,
+        activity.volume_24h_usd DESC, activity.last_observed_at DESC NULLS LAST,
+        activity.protocol, activity.market_key
+    ),
     aggregated AS MATERIALIZED (
       SELECT
         target.chain, target.token_address, target.granularity_minutes, target.bucket_ts,
         (array_agg(bucket.open_price_usd ORDER BY
           bucket.first_block_number, bucket.first_log_index,
-          bucket.protocol, bucket.market_key))[1] AS open_price_usd,
-        MAX(bucket.high_price_usd) AS high_price_usd,
-        MIN(bucket.low_price_usd) AS low_price_usd,
+          bucket.protocol, bucket.market_key) FILTER (WHERE
+            bucket.protocol = primary.valuation_protocol
+            AND bucket.market_key = primary.valuation_market_key))[1] AS open_price_usd,
+        MAX(bucket.high_price_usd) FILTER (WHERE
+          bucket.protocol = primary.valuation_protocol
+          AND bucket.market_key = primary.valuation_market_key) AS high_price_usd,
+        MIN(bucket.low_price_usd) FILTER (WHERE
+          bucket.protocol = primary.valuation_protocol
+          AND bucket.market_key = primary.valuation_market_key) AS low_price_usd,
         (array_agg(bucket.close_price_usd ORDER BY
           bucket.last_block_number DESC, bucket.last_log_index DESC,
-          bucket.protocol DESC, bucket.market_key DESC))[1] AS close_price_usd,
+          bucket.protocol DESC, bucket.market_key DESC) FILTER (WHERE
+            bucket.protocol = primary.valuation_protocol
+            AND bucket.market_key = primary.valuation_market_key))[1] AS close_price_usd,
         (array_agg(bucket.open_fdv_usd ORDER BY
           bucket.first_block_number, bucket.first_log_index,
-          bucket.protocol, bucket.market_key))[1] AS open_fdv_usd,
-        MAX(bucket.high_fdv_usd) AS high_fdv_usd,
-        MIN(bucket.low_fdv_usd) AS low_fdv_usd,
+          bucket.protocol, bucket.market_key) FILTER (WHERE
+            bucket.protocol = primary.valuation_protocol
+            AND bucket.market_key = primary.valuation_market_key))[1] AS open_fdv_usd,
+        MAX(bucket.high_fdv_usd) FILTER (WHERE
+          bucket.protocol = primary.valuation_protocol
+          AND bucket.market_key = primary.valuation_market_key) AS high_fdv_usd,
+        MIN(bucket.low_fdv_usd) FILTER (WHERE
+          bucket.protocol = primary.valuation_protocol
+          AND bucket.market_key = primary.valuation_market_key) AS low_fdv_usd,
         (array_agg(bucket.close_fdv_usd ORDER BY
           bucket.last_block_number DESC, bucket.last_log_index DESC,
-          bucket.protocol DESC, bucket.market_key DESC))[1] AS close_fdv_usd,
+          bucket.protocol DESC, bucket.market_key DESC) FILTER (WHERE
+            bucket.protocol = primary.valuation_protocol
+            AND bucket.market_key = primary.valuation_market_key))[1] AS close_fdv_usd,
+        primary.valuation_protocol, primary.valuation_market_key,
+        primary.valuation_volume_24h_usd,
         SUM(bucket.volume_usd) AS volume_usd,
         SUM(bucket.swaps)::bigint AS swaps,
         SUM(bucket.buys)::bigint AS buys,
@@ -235,6 +301,11 @@ function buildAggregateRangeSql(source) {
           bucket.last_block_number DESC, bucket.last_log_index DESC,
           bucket.protocol DESC, bucket.market_key DESC))[1] AS last_log_index
       FROM targets target
+      INNER JOIN primary_markets primary
+        ON primary.chain = target.chain
+       AND primary.token_address = target.token_address
+       AND primary.granularity_minutes = target.granularity_minutes
+       AND primary.bucket_ts = target.bucket_ts
       INNER JOIN ${source.table} bucket
         ON bucket.chain = target.chain
        AND bucket.token_address = target.token_address
@@ -242,7 +313,9 @@ function buildAggregateRangeSql(source) {
        AND bucket.bucket_ts < target.bucket_ts
          + (target.granularity_minutes * INTERVAL '1 minute')
       GROUP BY target.chain, target.token_address,
-        target.granularity_minutes, target.bucket_ts
+        target.granularity_minutes, target.bucket_ts,
+        primary.valuation_protocol, primary.valuation_market_key,
+        primary.valuation_volume_24h_usd
     ),
     upserted AS (
       INSERT INTO robinhood_market_buckets_agg (${AGGREGATE_COLUMNS.join(', ')})
@@ -378,9 +451,17 @@ function sumInteger(rows, field) {
 
 function foldMarketRows(rows, input) {
   if (!Array.isArray(rows) || rows.length === 0) return null;
-  const first = selectBoundary(rows, 'first');
-  const last = selectBoundary(rows, 'last', true);
-  const numericValues = (field) => rows.map((row) => Number(row[field]));
+  const valuationProtocol = rows[0].valuation_protocol;
+  const valuationMarketKey = rows[0].valuation_market_key;
+  const valuationRows = rows.filter((row) => (
+    row.protocol === valuationProtocol && row.market_key === valuationMarketKey
+  ));
+  if (valuationRows.length === 0) throw new Error('Valuation market is absent from source rows');
+  const first = selectBoundary(valuationRows, 'first');
+  const last = selectBoundary(valuationRows, 'last', true);
+  const activityFirst = selectBoundary(rows, 'first');
+  const activityLast = selectBoundary(rows, 'last', true);
+  const numericValues = (field) => valuationRows.map((row) => Number(row[field]));
   return {
     chain: 'robinhood',
     token_address: input.tokenAddress,
@@ -394,6 +475,9 @@ function foldMarketRows(rows, input) {
     high_fdv_usd: Math.max(...numericValues('high_fdv_usd')),
     low_fdv_usd: Math.min(...numericValues('low_fdv_usd')),
     close_fdv_usd: Number(last.close_fdv_usd),
+    valuation_protocol: valuationProtocol,
+    valuation_market_key: valuationMarketKey,
+    valuation_volume_24h_usd: String(rows[0].valuation_volume_24h_usd),
     volume_usd: sumDecimal(rows, 'volume_usd'),
     swaps: sumInteger(rows, 'swaps'),
     buys: sumInteger(rows, 'buys'),
@@ -403,12 +487,12 @@ function foldMarketRows(rows, input) {
     protocols: [...new Set(rows.map((row) => row.protocol))].sort(),
     source_granularity_minutes: input.source.minutes,
     source_bucket_count: rows.length,
-    first_observed_at: first.first_observed_at,
-    first_block_number: String(first.first_block_number),
-    first_log_index: String(first.first_log_index),
-    last_observed_at: last.last_observed_at,
-    last_block_number: String(last.last_block_number),
-    last_log_index: String(last.last_log_index),
+    first_observed_at: activityFirst.first_observed_at,
+    first_block_number: String(activityFirst.first_block_number),
+    first_log_index: String(activityFirst.first_log_index),
+    last_observed_at: activityLast.last_observed_at,
+    last_block_number: String(activityLast.last_block_number),
+    last_log_index: String(activityLast.last_log_index),
   };
 }
 
@@ -432,15 +516,42 @@ function createRobinhoodMarketAggregateRepository(database = db) {
   async function refreshBucket(rawInput) {
     const input = normalizeRefreshInput(rawInput);
     const sourceResult = await database.query(
-      `SELECT protocol, market_key, open_price_usd, high_price_usd, low_price_usd,
-              close_price_usd, open_fdv_usd, high_fdv_usd, low_fdv_usd,
-              close_fdv_usd, volume_usd, swaps, buys, sells, transactions,
-              first_observed_at, first_block_number, first_log_index,
-              last_observed_at, last_block_number, last_log_index
-       FROM ${input.source.table}
-       WHERE chain = 'robinhood' AND token_address = $1
-         AND bucket_ts >= $2::timestamptz
-         AND bucket_ts < $2::timestamptz + ($3::int * INTERVAL '1 minute')`,
+      `WITH source_rows AS MATERIALIZED (
+         SELECT protocol, market_key, open_price_usd, high_price_usd, low_price_usd,
+                close_price_usd, open_fdv_usd, high_fdv_usd, low_fdv_usd,
+                close_fdv_usd, volume_usd, swaps, buys, sells, transactions,
+                first_observed_at, first_block_number, first_log_index,
+                last_observed_at, last_block_number, last_log_index
+         FROM ${input.source.table}
+         WHERE chain = 'robinhood' AND token_address = $1
+           AND bucket_ts >= $2::timestamptz
+           AND bucket_ts < $2::timestamptz + ($3::int * INTERVAL '1 minute')
+       ), active_markets AS (
+         SELECT DISTINCT protocol, market_key FROM source_rows
+       ), market_activity AS (
+         SELECT active.protocol, active.market_key,
+           COALESCE(SUM(history.volume_usd), 0) AS volume_24h_usd,
+           MAX(history.last_observed_at) AS last_observed_at
+         FROM active_markets active
+         LEFT JOIN ${input.source.table} history
+           ON history.chain = 'robinhood' AND history.token_address = $1
+          AND history.protocol = active.protocol AND history.market_key = active.market_key
+          AND history.bucket_ts >= $2::timestamptz
+            + ($3::int * INTERVAL '1 minute') - INTERVAL '24 hours'
+          AND history.bucket_ts < $2::timestamptz
+            + ($3::int * INTERVAL '1 minute')
+         GROUP BY active.protocol, active.market_key
+       ), primary_market AS (
+         SELECT protocol, market_key, volume_24h_usd
+         FROM market_activity
+         ORDER BY volume_24h_usd DESC, last_observed_at DESC NULLS LAST,
+           protocol, market_key
+         LIMIT 1
+       )
+       SELECT source.*, primary.protocol AS valuation_protocol,
+         primary.market_key AS valuation_market_key,
+         primary.volume_24h_usd AS valuation_volume_24h_usd
+       FROM source_rows source CROSS JOIN primary_market primary`,
       [input.tokenAddress, input.bucketTs, input.granularityMinutes]
     );
     const aggregate = foldMarketRows(sourceResult.rows, input);

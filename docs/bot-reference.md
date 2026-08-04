@@ -830,6 +830,12 @@ Depois do catch-up:
   `robinhood_market_buckets_agg`, limitado a 10.000 candles e com `truncated`
   explícito quando o token ultrapassa esse teto; o frontend solicita esse modo
   somente nesses três períodos e mantém 1m/1h/4h/24h nos limites usuais;
+- agregados por token separam atividade de valoração: volume, swaps e contadores
+  continuam somando todas as pools, enquanto preço/FDV OHLC usam, entre as pools
+  ativas no candle, a de maior volume acumulado nas 24h encerradas no candle;
+  `valuation_protocol`, `valuation_market_key` e `valuation_volume_24h_usd`
+  preservam a proveniência e os desempates são atividade mais recente, protocolo
+  e `market_key`;
 - archive completo do node não é necessário apenas para processar blocos novos;
 - qualquer consulta histórica fora da janela do node precisa do PostgreSQL,
   de um provedor archive ou de um snapshot próprio.

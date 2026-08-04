@@ -46,6 +46,7 @@ const AGGREGATE_FIELDS = Object.freeze([
   'token_address', 'granularity_minutes', 'bucket_ts',
   'open_price_usd', 'high_price_usd', 'low_price_usd', 'close_price_usd',
   'open_fdv_usd', 'high_fdv_usd', 'low_fdv_usd', 'close_fdv_usd',
+  'valuation_protocol', 'valuation_market_key', 'valuation_volume_24h_usd',
   'volume_usd', 'swaps', 'buys', 'sells', 'transactions', 'market_count',
   'protocols', 'source_granularity_minutes', 'source_bucket_count',
   'first_observed_at', 'first_block_number', 'first_log_index',
@@ -138,23 +139,76 @@ function buildHourlyAuditSql() {
 function buildAggregateAuditSql(granularityMinutes) {
   const source = SOURCE_BY_GRANULARITY.get(granularityMinutes);
   if (!source) throw new TypeError('granularityMinutes is unsupported');
-  const expected = `SELECT bucket.token_address, ${granularityMinutes}::smallint
-      AS granularity_minutes,
-    date_bin(INTERVAL '${granularityMinutes} minutes', bucket.bucket_ts,
-      TIMESTAMPTZ '1970-01-01 00:00:00+00') AS bucket_ts,
+  const expected = `WITH source_buckets AS MATERIALIZED (
+    SELECT bucket.*,
+      date_bin(INTERVAL '${granularityMinutes} minutes', bucket.bucket_ts,
+        TIMESTAMPTZ '1970-01-01 00:00:00+00') AS aggregate_bucket_ts
+    FROM ${source.table} bucket
+    WHERE bucket.chain = 'robinhood' AND bucket.token_address = ANY($1)
+      AND bucket.bucket_ts >= $2 AND bucket.bucket_ts < $3
+  ), target_markets AS MATERIALIZED (
+    SELECT DISTINCT token_address, aggregate_bucket_ts, protocol, market_key
+    FROM source_buckets
+  ), market_activity AS MATERIALIZED (
+    SELECT target.token_address, target.aggregate_bucket_ts,
+      target.protocol, target.market_key,
+      COALESCE(SUM(history.volume_usd), 0) AS volume_24h_usd,
+      MAX(history.last_observed_at) AS last_observed_at
+    FROM target_markets target
+    LEFT JOIN ${source.table} history
+      ON history.chain = 'robinhood'
+     AND history.token_address = target.token_address
+     AND history.protocol = target.protocol
+     AND history.market_key = target.market_key
+     AND history.bucket_ts >= target.aggregate_bucket_ts
+       + INTERVAL '${granularityMinutes} minutes' - INTERVAL '24 hours'
+     AND history.bucket_ts < target.aggregate_bucket_ts
+       + INTERVAL '${granularityMinutes} minutes'
+    GROUP BY target.token_address, target.aggregate_bucket_ts,
+      target.protocol, target.market_key
+  ), primary_markets AS MATERIALIZED (
+    SELECT DISTINCT ON (activity.token_address, activity.aggregate_bucket_ts)
+      activity.token_address, activity.aggregate_bucket_ts,
+      activity.protocol AS valuation_protocol,
+      activity.market_key AS valuation_market_key,
+      activity.volume_24h_usd AS valuation_volume_24h_usd
+    FROM market_activity activity
+    ORDER BY activity.token_address, activity.aggregate_bucket_ts,
+      activity.volume_24h_usd DESC, activity.last_observed_at DESC NULLS LAST,
+      activity.protocol, activity.market_key
+  )
+  SELECT bucket.token_address, ${granularityMinutes}::smallint AS granularity_minutes,
+    bucket.aggregate_bucket_ts AS bucket_ts,
     (array_agg(bucket.open_price_usd ORDER BY bucket.first_block_number,
-      bucket.first_log_index, bucket.protocol, bucket.market_key))[1] AS open_price_usd,
-    MAX(bucket.high_price_usd) AS high_price_usd,
-    MIN(bucket.low_price_usd) AS low_price_usd,
+      bucket.first_log_index, bucket.protocol, bucket.market_key) FILTER (WHERE
+        bucket.protocol = primary.valuation_protocol
+        AND bucket.market_key = primary.valuation_market_key))[1] AS open_price_usd,
+    MAX(bucket.high_price_usd) FILTER (WHERE
+      bucket.protocol = primary.valuation_protocol
+      AND bucket.market_key = primary.valuation_market_key) AS high_price_usd,
+    MIN(bucket.low_price_usd) FILTER (WHERE
+      bucket.protocol = primary.valuation_protocol
+      AND bucket.market_key = primary.valuation_market_key) AS low_price_usd,
     (array_agg(bucket.close_price_usd ORDER BY bucket.last_block_number DESC,
-      bucket.last_log_index DESC, bucket.protocol DESC, bucket.market_key DESC))[1]
-      AS close_price_usd,
+      bucket.last_log_index DESC, bucket.protocol DESC, bucket.market_key DESC) FILTER (WHERE
+        bucket.protocol = primary.valuation_protocol
+        AND bucket.market_key = primary.valuation_market_key))[1] AS close_price_usd,
     (array_agg(bucket.open_fdv_usd ORDER BY bucket.first_block_number,
-      bucket.first_log_index, bucket.protocol, bucket.market_key))[1] AS open_fdv_usd,
-    MAX(bucket.high_fdv_usd) AS high_fdv_usd, MIN(bucket.low_fdv_usd) AS low_fdv_usd,
+      bucket.first_log_index, bucket.protocol, bucket.market_key) FILTER (WHERE
+        bucket.protocol = primary.valuation_protocol
+        AND bucket.market_key = primary.valuation_market_key))[1] AS open_fdv_usd,
+    MAX(bucket.high_fdv_usd) FILTER (WHERE
+      bucket.protocol = primary.valuation_protocol
+      AND bucket.market_key = primary.valuation_market_key) AS high_fdv_usd,
+    MIN(bucket.low_fdv_usd) FILTER (WHERE
+      bucket.protocol = primary.valuation_protocol
+      AND bucket.market_key = primary.valuation_market_key) AS low_fdv_usd,
     (array_agg(bucket.close_fdv_usd ORDER BY bucket.last_block_number DESC,
-      bucket.last_log_index DESC, bucket.protocol DESC, bucket.market_key DESC))[1]
-      AS close_fdv_usd,
+      bucket.last_log_index DESC, bucket.protocol DESC, bucket.market_key DESC) FILTER (WHERE
+        bucket.protocol = primary.valuation_protocol
+        AND bucket.market_key = primary.valuation_market_key))[1] AS close_fdv_usd,
+    primary.valuation_protocol, primary.valuation_market_key,
+    primary.valuation_volume_24h_usd,
     SUM(bucket.volume_usd) AS volume_usd, SUM(bucket.swaps)::bigint AS swaps,
     SUM(bucket.buys)::bigint AS buys, SUM(bucket.sells)::bigint AS sells,
     SUM(bucket.transactions)::bigint AS transactions,
@@ -174,11 +228,13 @@ function buildAggregateAuditSql(granularityMinutes) {
     (array_agg(bucket.last_log_index ORDER BY bucket.last_block_number DESC,
       bucket.last_log_index DESC, bucket.protocol DESC, bucket.market_key DESC))[1]
       AS last_log_index
-  FROM ${source.table} bucket
-  WHERE bucket.chain = 'robinhood' AND bucket.token_address = ANY($1)
-    AND bucket.bucket_ts >= $2 AND bucket.bucket_ts < $3
-  GROUP BY bucket.token_address, date_bin(INTERVAL '${granularityMinutes} minutes',
-    bucket.bucket_ts, TIMESTAMPTZ '1970-01-01 00:00:00+00')`;
+  FROM source_buckets bucket
+  INNER JOIN primary_markets primary
+    ON primary.token_address = bucket.token_address
+   AND primary.aggregate_bucket_ts = bucket.aggregate_bucket_ts
+  GROUP BY bucket.token_address, bucket.aggregate_bucket_ts,
+    primary.valuation_protocol, primary.valuation_market_key,
+    primary.valuation_volume_24h_usd`;
   const actual = `SELECT ${AGGREGATE_FIELDS.join(', ')}
   FROM robinhood_market_buckets_agg
   WHERE chain = 'robinhood' AND token_address = ANY($1)

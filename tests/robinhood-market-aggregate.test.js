@@ -40,6 +40,15 @@ function marketRow(protocol, marketKey, order, values = {}) {
   };
 }
 
+function withValuation(rows, protocol, marketKey, volume24h = '1000') {
+  return rows.map((row) => ({
+    ...row,
+    valuation_protocol: protocol,
+    valuation_market_key: marketKey,
+    valuation_volume_24h_usd: volume24h,
+  }));
+}
+
 describe('Robinhood market aggregate repository', () => {
   it('loads only a bounded recent source range for restart recovery', async () => {
     const calls = [];
@@ -60,19 +69,23 @@ describe('Robinhood market aggregate repository', () => {
     assert.deepEqual(calls[0].params, ['2026-07-18T11:30:00.000Z', 25]);
   });
 
-  it('folds V2, V3 and V4 market rows once with deterministic chain-wide ordering', () => {
-    const rows = [
-      marketRow('uniswap-v3', 'market-b', 2),
-      marketRow('uniswap-v4', 'market-c', 3),
-      marketRow('uniswap-v2', 'market-a', 1),
-    ];
+  it('uses primary-market OHLC while preserving activity from every market', () => {
+    const rows = withValuation([
+      marketRow('uniswap-v3', 'market-b', 2, { volume: '20' }),
+      marketRow('uniswap-v4', 'market-c', 3, { high: 1_000_000, volume: '30' }),
+      marketRow('uniswap-v2', 'market-a', 1, { volume: '10' }),
+    ], 'uniswap-v3', 'market-b', '5000');
     const aggregate = foldMarketRows(rows, INPUT);
 
     assert.deepEqual(foldMarketRows([...rows].reverse(), INPUT), aggregate);
-    assert.equal(aggregate.open_price_usd, 1);
-    assert.equal(aggregate.close_price_usd, 4);
+    assert.equal(aggregate.open_price_usd, 2);
+    assert.equal(aggregate.high_price_usd, 4);
+    assert.equal(aggregate.close_price_usd, 3);
     assert.equal(aggregate.volume_usd, '60');
     assert.equal(aggregate.swaps, '6');
+    assert.equal(aggregate.valuation_protocol, 'uniswap-v3');
+    assert.equal(aggregate.valuation_market_key, 'market-b');
+    assert.equal(aggregate.valuation_volume_24h_usd, '5000');
     assert.equal(aggregate.market_count, 3);
     assert.equal(aggregate.source_bucket_count, 3);
     assert.deepEqual(aggregate.protocols, ['uniswap-v2', 'uniswap-v3', 'uniswap-v4']);
@@ -80,13 +93,19 @@ describe('Robinhood market aggregate repository', () => {
 
   it('replaces an active aggregate after a late source update instead of adding twice', async () => {
     const sourceVersions = [
-      [marketRow('uniswap-v2', 'market-a', 1, { volume: '0.1' })],
-      [marketRow('uniswap-v2', 'market-a', 1, { volume: '0.2' })],
+      withValuation([marketRow('uniswap-v2', 'market-a', 1, { volume: '0.1' })],
+        'uniswap-v2', 'market-a'),
+      withValuation([marketRow('uniswap-v2', 'market-a', 1, { volume: '0.2' })],
+        'uniswap-v2', 'market-a'),
     ];
     const written = [];
+    const sourceQueries = [];
     const database = {
       async query(sql, params) {
-        if (/^\s*SELECT protocol/.test(sql)) return { rows: sourceVersions.shift() };
+        if (/source_rows AS MATERIALIZED/.test(sql)) {
+          sourceQueries.push(sql);
+          return { rows: sourceVersions.shift() };
+        }
         assert.match(sql, /ON CONFLICT[\s\S]*volume_usd = EXCLUDED\.volume_usd[\s\S]*IS DISTINCT FROM/);
         const payload = JSON.parse(params[0]);
         written.push(payload);
@@ -100,6 +119,9 @@ describe('Robinhood market aggregate repository', () => {
 
     assert.deepEqual(written.map((row) => row.volume_usd), ['0.1', '0.2']);
     assert.deepEqual(written.map((row) => row.source_bucket_count), [1, 1]);
+    assert.equal(sourceQueries.length, 2);
+    assert.match(sourceQueries[0], /INTERVAL '24 hours'/);
+    assert.match(sourceQueries[0], /ORDER BY volume_24h_usd DESC/);
   });
 
   it('rebuilds complete hourly ranges in one set-based statement', async () => {
@@ -231,11 +253,15 @@ describe('Robinhood market aggregate repository', () => {
       3,
     ]);
     assert.match(calls[0].sql, /source_window AS MATERIALIZED/);
+    assert.match(calls[0].sql, /primary_markets AS MATERIALIZED/);
+    assert.match(calls[0].sql, /INTERVAL '24 hours'/);
+    assert.match(calls[0].sql, /activity\.volume_24h_usd DESC/);
     assert.match(calls[0].sql, /date_bin\(/);
     assert.match(calls[0].sql, /INNER JOIN robinhood_market_buckets_1m bucket/);
     assert.match(calls[0].sql,
       /last_log_index DESC,\s+bucket\.protocol DESC, bucket\.market_key DESC/);
     assert.match(calls[0].sql, /SUM\(bucket\.volume_usd\)/);
+    assert.match(calls[0].sql, /FILTER \(WHERE[\s\S]*primary\.valuation_market_key/);
     assert.match(calls[0].sql, /ON CONFLICT[\s\S]*IS DISTINCT FROM EXCLUDED\.volume_usd/);
 
     await repository.refreshAggregateRange({
