@@ -1,5 +1,11 @@
 const db = require('../models/db');
-const { formatDecimal, multiply, parseDecimal, rational } = require('../services/evm-market-metrics');
+const {
+  MAX_FINITE_HUMAN_SUPPLY,
+  formatDecimal,
+  multiply,
+  parseDecimal,
+  rational,
+} = require('../services/evm-market-metrics');
 
 // Data repair for the two FDV defects (see fixes f9bd2b15 + 2d3a35af):
 //   Pass 1 - transposition: robinhood-processing reprocessed captures with the
@@ -7,15 +13,15 @@ const { formatDecimal, multiply, parseDecimal, rational } = require('../services
 //     whose quote is token1. price/fdv/volume/side are inverted. The decimals,
 //     supply and quote USD price were never swapped, so the true values are
 //     recoverable by swapping the two raw amounts back and revaluing in place.
-//   Pass 2 - uncapped supply: a uint256-max totalSupply produced FDV = price *
-//     ~1e77. price/volume are correct (these rows were correctly oriented), only
-//     the FDV is meaningless -> set it null (matches the new valuation guard).
+//   Pass 2 - invalid supply: more than 1e15 whole tokens makes FDV meaningless
+//     under the runtime valuation guard. Price/volume remain correct; set only
+//     FDV to null.
 // Run rebuilds of the 1m/1h/agg buckets AFTER this (they re-aggregate from the
 // corrected observations). Dry-run by default; nothing is written without --mode write.
 
-const UNCAPPED_SUPPLY_RAW = (1n << 255n).toString();
 const ABSURD_FDV = '1e12';   // symptom that isolates a transposed (capped-supply) row
 const SANE_FDV_MAX = 1e11;   // a repaired row must fall back into a sane FDV
+const MAX_FINITE_HUMAN_SUPPLY_TEXT = MAX_FINITE_HUMAN_SUPPLY.toString();
 
 const PRICE_PLACES = 80;
 const USD_PLACES = 12;
@@ -40,7 +46,7 @@ function recomputeTransposed(row) {
   const quoteUsd = parseDecimal(row.quote_usd_price);
   const priceUsd = multiply(priceQuote, quoteUsd);
   const volumeUsd = multiply(quoteAmount, quoteUsd);
-  const fdvUsd = supplyRaw < BigInt(UNCAPPED_SUPPLY_RAW)
+  const fdvUsd = supplyRaw <= MAX_FINITE_HUMAN_SUPPLY * tokenScale
     ? multiply(priceUsd, rational(supplyRaw, tokenScale))
     : null;
 
@@ -69,7 +75,8 @@ const SELECT_TRANSPOSED = `
     FROM robinhood_market_observations
    WHERE chain = 'robinhood' AND status = 'accepted'
      AND fdv_usd::numeric > $1::numeric
-     AND token_total_supply_raw::numeric < $2::numeric
+     AND token_total_supply_raw::numeric
+       <= $2::numeric * power(10::numeric, token_decimals)
      AND (block_number, log_index) > ($4::bigint, $5::bigint)
    ORDER BY block_number, log_index
    LIMIT $3`;
@@ -85,19 +92,22 @@ const UPDATE_TRANSPOSED = `
 const UPDATE_UNCAPPED = `
   UPDATE robinhood_market_observations SET fdv_usd = NULL
    WHERE chain = 'robinhood' AND status = 'accepted'
-     AND token_total_supply_raw::numeric >= $1::numeric
+     AND token_total_supply_raw::numeric
+       > $1::numeric * power(10::numeric, token_decimals)
      AND fdv_usd IS NOT NULL`;
 
 const COUNT_TRANSPOSED = `
   SELECT COUNT(*)::int AS n FROM robinhood_market_observations
    WHERE chain = 'robinhood' AND status = 'accepted'
      AND fdv_usd::numeric > $1::numeric
-     AND token_total_supply_raw::numeric < $2::numeric`;
+     AND token_total_supply_raw::numeric
+       <= $2::numeric * power(10::numeric, token_decimals)`;
 
 const COUNT_UNCAPPED = `
   SELECT COUNT(*)::int AS n FROM robinhood_market_observations
    WHERE chain = 'robinhood' AND status = 'accepted'
-     AND token_total_supply_raw::numeric >= $1::numeric
+     AND token_total_supply_raw::numeric
+       > $1::numeric * power(10::numeric, token_decimals)
      AND fdv_usd IS NOT NULL`;
 
 // V4 native-ETH transposition (live decode bug fixed in b04e0790): the head decoder
@@ -116,15 +126,19 @@ const SELECT_V4_TRANSPOSED = `
    WHERE chain = 'robinhood' AND status = 'accepted'
      AND market_key LIKE 'robinhood:uniswap-v4:%'
      AND price_usd::numeric > $1::numeric
-     AND (block_number, log_index) > ($3::bigint, $4::bigint)
+     AND token_total_supply_raw::numeric
+       <= $2::numeric * power(10::numeric, token_decimals)
+     AND (block_number, log_index) > ($4::bigint, $5::bigint)
    ORDER BY block_number, log_index
-   LIMIT $2`;
+   LIMIT $3`;
 
 const COUNT_V4_TRANSPOSED = `
   SELECT COUNT(*)::int AS n FROM robinhood_market_observations
    WHERE chain = 'robinhood' AND status = 'accepted'
      AND market_key LIKE 'robinhood:uniswap-v4:%'
-     AND price_usd::numeric > $1::numeric`;
+     AND price_usd::numeric > $1::numeric
+     AND token_total_supply_raw::numeric
+       <= $2::numeric * power(10::numeric, token_decimals)`;
 
 // Transposition repair is identical across variants — swap the two raw amounts back
 // and revalue with recomputeTransposed. Only the candidate query differs (v2/v3 keys
@@ -193,21 +207,21 @@ async function runTransposedPass(database, { mode, batchSize }, pass) {
 
 const V2_V3_TRANSPOSED_PASS = {
   countSql: COUNT_TRANSPOSED, selectSql: SELECT_TRANSPOSED,
-  filterParams: [ABSURD_FDV, UNCAPPED_SUPPLY_RAW],
+  filterParams: [ABSURD_FDV, MAX_FINITE_HUMAN_SUPPLY_TEXT],
 };
 const V4_TRANSPOSED_PASS = {
   countSql: COUNT_V4_TRANSPOSED, selectSql: SELECT_V4_TRANSPOSED,
-  filterParams: [V4_TRANSPOSED_SYMPTOM_PRICE],
+  filterParams: [V4_TRANSPOSED_SYMPTOM_PRICE, MAX_FINITE_HUMAN_SUPPLY_TEXT],
 };
 
 const repairTransposed = (database, options) => runTransposedPass(database, options, V2_V3_TRANSPOSED_PASS);
 const repairV4Transposed = (database, options) => runTransposedPass(database, options, V4_TRANSPOSED_PASS);
 
 async function repairUncapped(database, { mode }) {
-  const counted = await database.query(COUNT_UNCAPPED, [UNCAPPED_SUPPLY_RAW]);
+  const counted = await database.query(COUNT_UNCAPPED, [MAX_FINITE_HUMAN_SUPPLY_TEXT]);
   const summary = { candidates: counted.rows[0].n, cleared: 0 };
   if (mode === 'write') {
-    const result = await database.query(UPDATE_UNCAPPED, [UNCAPPED_SUPPLY_RAW]);
+    const result = await database.query(UPDATE_UNCAPPED, [MAX_FINITE_HUMAN_SUPPLY_TEXT]);
     summary.cleared = result.rowCount || 0;
   }
   return summary;
@@ -259,6 +273,5 @@ module.exports = {
   run,
   runRepair,
   recomputeTransposed,
-  UNCAPPED_SUPPLY_RAW,
   __private: { parseArgs, repairTransposed, repairV4Transposed, repairUncapped },
 };

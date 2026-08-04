@@ -55,6 +55,14 @@ fixes committed; historical cleanup still pending.
 
    **Order:** finish all of 3a before 3b (3b reads from `_1m`).
 
+   **Preflight:** every producer that can win the idempotent observation insert must
+   run the repaired code. During the 2026-08-04 audit, both the monolithic
+   `robinhood` worker and isolated `robinhood-processing` worker were active, while
+   the monolith had not restarted after the FDV guard deploy. Because observations
+   use `ON CONFLICT ... DO NOTHING`, an old producer can win the race and preserve
+   stale metrics. Restart or stop every stale producer, clear confirmed invalid-supply
+   FDVs, and re-run the observation dry-runs before rebuilding buckets.
+
    **3a — `_1m` from observations** — `backfill-robinhood-market-buckets-1m.js`.
    Block-windowed; each window is one DELETE+INSERT transaction, so it **must be sliced**.
    - Block span:
@@ -62,32 +70,43 @@ fixes committed; historical cleanup still pending.
      SELECT MIN(block_number), MAX(block_number)
        FROM robinhood_market_observations WHERE chain='robinhood' AND status='accepted';
      ```
-   - Slice with `--from-block`/`--to-block`, oldest→newest (`~875k blocks ≈ 1 day` here).
+   - `--from-block` is an **exclusive last-committed cursor**; `--to-block` is
+     inclusive. Start at `MIN(block_number) - 1`, then use each completed `to-block`
+     as the next slice's `from-block`.
+   - Slice oldest→newest (`~875k blocks ≈ 1 day` here).
      Dry-run the first slice to size it (aim for a comfortable transaction, ≲ ~1M buckets),
      then write each:
      ```bash
      node src/utils/backfill-robinhood-market-buckets-1m.js --mode dry-run --from-block <X> --to-block <Y>
      node src/utils/backfill-robinhood-market-buckets-1m.js --mode write   --from-block <X> --to-block <Y>
      ```
-   - Idempotent (re-run a slice freely); excludes the current live minute (won't race
-     ingestion). **Never** run `--from-block 0` without `--to-block` in write — that is the
-     single ~11.2M-bucket transaction to avoid.
+   - Idempotent while its source observations remain available; excludes the current
+     live minute (won't race ingestion). Write mode now requires `--to-block`, so the
+     accidental single ~11.2M-bucket transaction is rejected.
+   - Historical `_1m` rows are a temporary rebuild layer. Keep maintenance/retention
+     paused through 3b; after the permanent parents are verified, normal expiry may
+     remove old `_1m` again.
 
    **3b — `_1h`/`_agg` from the corrected `_1m`** —
    `backfill-robinhood-market-aggregates.js`. Timestamp-windowed, `--mode write` needs
    `--checkpoint <file>` (phases fine/hourly/coarse, resumable from the checkpoint):
    ```bash
    node src/utils/backfill-robinhood-market-aggregates.js --mode dry-run --from '2026-06-10T00:00:00Z' --to '<now>'
-   node src/utils/backfill-robinhood-market-aggregates.js --mode write   --from '2026-06-10T00:00:00Z' --to '<now>' --checkpoint /tmp/rh-agg-rebuild.json
+   node src/utils/backfill-robinhood-market-aggregates.js --mode write   --from '2026-06-10T00:00:00Z' --to '<fixed-cutoff>' --checkpoint /tmp/rh-agg-rebuild.json --maxChunks 50
    ```
-   If heavy, split `--from`/`--to` into day/week windows; the checkpoint resumes.
+   Re-run the same write command with the same fixed bounds and checkpoint until
+   `paused=false`. If heavy, split into day/week windows and use a **different checkpoint
+   file per window**; a checkpoint freezes its original `asOf` cutoff.
 
    **Verify (a few known-bad tokens):**
    ```sql
    SELECT b.bucket_ts, b.high_price_usd,
           (SELECT MAX(o.price_usd) FROM robinhood_market_observations o
             WHERE o.chain='robinhood' AND o.status='accepted'
+              AND o.protocol=b.protocol
+              AND o.market_key=b.market_key
               AND o.token_address=b.token_address
+              AND o.quote_address=b.quote_address
               AND date_trunc('hour', o.observed_at)=b.bucket_ts) AS obs_max
      FROM robinhood_market_buckets_1h b
     WHERE b.chain='robinhood' AND b.token_address='<TOKEN>'

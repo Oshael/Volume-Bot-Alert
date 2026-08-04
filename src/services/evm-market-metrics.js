@@ -204,6 +204,7 @@ function buildMarketObservation(input = {}) {
 }
 
 module.exports = {
+  MAX_FINITE_HUMAN_SUPPLY,
   ROBINHOOD_USDG,
   ROBINHOOD_WETH,
   buildMarketObservation,

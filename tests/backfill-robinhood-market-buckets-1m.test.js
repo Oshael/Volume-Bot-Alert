@@ -50,6 +50,16 @@ describe('backfill-robinhood-market-buckets-1m CLI parsing', () => {
     );
     assert.throws(() => parseCliArgs(['--from-block', '1', '--mode', 'delete']), /mode must be/);
   });
+
+  it('requires an explicit upper block bound for writes', () => {
+    assert.throws(
+      () => parseCliArgs(['--from-block', '1', '--mode', 'write']),
+      /write mode requires --to-block/
+    );
+    assert.equal(parseCliArgs([
+      '--from-block', '1', '--to-block', '100', '--mode', 'write',
+    ]).toBlock, 100);
+  });
 });
 
 describe('backfill-robinhood-market-buckets-1m execution', () => {

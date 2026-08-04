@@ -126,6 +126,9 @@ function parseCliArgs(argv = process.argv.slice(2)) {
   if (toBlock != null && toBlock <= fromBlock) {
     throw new Error('--to-block must be greater than --from-block');
   }
+  if (mode === 'write' && toBlock == null) {
+    throw new Error('write mode requires --to-block to keep the transaction bounded');
+  }
   return { mode, fromBlock, toBlock };
 }
 

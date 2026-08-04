@@ -780,6 +780,22 @@ Reiniciar um worker corretamente configurado deve retomar claims pendentes,
 leases expiradas e watermarks persistidos. Não resete cursores ou ranges para
 "começar de novo" sem auditoria.
 
+#### Recovery de buckets Robinhood
+
+Quando observations corrigidas precisam substituir buckets históricos, o recovery
+segue a dependência `_observations -> _1m -> _agg 5/15/30m -> _1h -> _agg 1h/4h/1d`.
+O `_1m` antigo pode já ter expirado; durante o recovery ele é recriado temporariamente
+em janelas de blocos e volta a ser elegível para retenção somente depois de os pais
+permanentes serem validados. `--from-block` representa o último bloco já comprometido
+(limite exclusivo), write exige `--to-block`, e o backfill de agregados usa checkpoint
+com cutoff fixo. Maintenance/retention permanece parado durante a cadeia completa.
+
+Produtores sobrepostos também precisam executar a mesma versão antes do recovery.
+Observations são inseridas com `ON CONFLICT ... DO NOTHING`; portanto um monólito antigo
+pode ganhar a corrida contra `robinhood-processing` e preservar métricas obsoletas.
+O procedimento operacional detalhado fica em
+`docs/robinhood-bucket-corruption-remaining-work.md`.
+
 Snapshot informado em `2026-08-01`:
 
 ```text

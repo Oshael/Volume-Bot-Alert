@@ -3,7 +3,7 @@ const { describe, it } = require('node:test');
 
 const {
   recomputeTransposed,
-  __private: { repairV4Transposed },
+  __private: { repairUncapped, repairV4Transposed },
 } = require('../src/utils/repair-robinhood-fdv-observations');
 
 const ONE = 10n ** 18n;
@@ -81,6 +81,15 @@ describe('recomputeTransposed', () => {
     assert.equal(fixed.fdvUsd, '1000000000');
     assert.equal(fixed.side, 'buy');
   });
+
+  it('suppresses repaired FDV above the runtime 1e15 human-supply ceiling', () => {
+    const fixed = recomputeTransposed(transposedRow({
+      token_total_supply_raw: (1_000_000_000_000_001n * ONE).toString(),
+    }));
+    assert.equal(fixed.priceUsd, '2.5');
+    assert.equal(fixed.volumeUsd, '5');
+    assert.equal(fixed.fdvUsd, null);
+  });
 });
 
 describe('repairV4Transposed pass', () => {
@@ -98,5 +107,23 @@ describe('repairV4Transposed pass', () => {
     assert.equal(summary.wouldRepair, 1);
     assert.equal(summary.repaired, 0);
     assert.equal(summary.sample[0].after.priceUsd, '1');
+  });
+});
+
+describe('invalid-supply FDV pass', () => {
+  it('uses the runtime human-supply ceiling in the cleanup predicate', async () => {
+    const calls = [];
+    const database = {
+      async query(sql, params) {
+        calls.push({ sql, params });
+        return { rows: [{ n: 2 }] };
+      },
+    };
+
+    const summary = await repairUncapped(database, { mode: 'dry-run' });
+
+    assert.equal(summary.candidates, 2);
+    assert.match(calls[0].sql, /power\(10::numeric, token_decimals\)/);
+    assert.deepEqual(calls[0].params, ['1000000000000000']);
   });
 });
