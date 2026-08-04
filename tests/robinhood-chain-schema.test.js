@@ -34,6 +34,7 @@ const stage92 = require('../src/utils/db-init-stage92');
 const stage98 = require('../src/utils/db-init-stage98');
 const stage99 = require('../src/utils/db-init-stage99');
 const stage102 = require('../src/utils/db-init-stage102');
+const stage106 = require('../src/utils/db-init-stage106');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 
 describe('Robinhood additive chain schema', () => {
@@ -339,6 +340,25 @@ describe('Robinhood additive chain schema', () => {
     assert.deepEqual(group.tables[0].indexes.map((index) => index.name), [
       'idx_robinhood_market_buckets_agg_token_range',
       'idx_robinhood_market_buckets_agg_cleanup',
+    ]);
+  });
+
+  it('adds nullable valuation-market provenance for a staged aggregate rebuild', () => {
+    const sql = stage106.STATEMENTS.join('\n');
+    const group = SCHEMA_GROUPS.find((entry) => (
+      entry.key === 'stage106-robinhood-aggregate-valuation-market'
+    ));
+
+    assert.match(sql, /ADD COLUMN IF NOT EXISTS valuation_protocol VARCHAR\(16\)/);
+    assert.match(sql, /ADD COLUMN IF NOT EXISTS valuation_market_key VARCHAR\(160\)/);
+    assert.match(sql, /ADD COLUMN IF NOT EXISTS valuation_volume_24h_usd NUMERIC/);
+    assert.match(sql, /valuation_protocol IN \('uniswap-v2', 'uniswap-v3', 'uniswap-v4'\)/);
+    assert.match(sql, /valuation_volume_24h_usd >= 0/);
+    assert.match(sql, /NOT VALID/);
+    assert.doesNotMatch(sql, /UPDATE robinhood_market_buckets_agg/);
+    assert.equal(group.repair, 'node src/utils/db-init-stage106.js');
+    assert.deepEqual(group.tables[0].columns, [
+      'valuation_protocol', 'valuation_market_key', 'valuation_volume_24h_usd',
     ]);
   });
 

@@ -1761,6 +1761,24 @@ const SCHEMA_GROUPS = [
     }],
   },
   {
+    key: 'stage106-robinhood-aggregate-valuation-market',
+    name: 'Stage 106 Robinhood aggregate valuation-market provenance',
+    repair: 'node src/utils/db-init-stage106.js',
+    tables: [{
+      table: 'robinhood_market_buckets_agg',
+      columns: [
+        'valuation_protocol', 'valuation_market_key', 'valuation_volume_24h_usd',
+      ],
+      constraints: [{
+        name: 'robinhood_market_buckets_agg_valuation_market_check',
+        includes: [
+          'CHECK', 'valuation_protocol', 'valuation_market_key',
+          'valuation_volume_24h_usd', 'uniswap-v2', 'uniswap-v3', 'uniswap-v4',
+        ],
+      }],
+    }],
+  },
+  {
     key: 'stage79-robinhood-supply-provenance',
     name: 'Stage 79 Robinhood historical supply provenance',
     repair: 'node src/utils/db-init-stage79.js',
@@ -2647,6 +2665,7 @@ const PROFILE_GROUP_KEYS = {
     'stage76-custom-alert-capabilities',
     'stage77-chain-scoped-alert-state',
     'stage78-robinhood-market-buckets-agg',
+    'stage106-robinhood-aggregate-valuation-market',
     'stage79-robinhood-supply-provenance',
     'stage80-meteora-eligibility-indexes',
     'stage81-token-catalog-price-precision',
