@@ -839,6 +839,9 @@ Depois do catch-up:
 - o backfill relê os limites da tabela fonte em cada mudança de fase; assim a
   fase coarse inclui buckets `1h` antigos que acabaram de ser regenerados pela
   fase hourly da mesma execução;
+- o modo “Tudo” de 1h troca para agregados corrigidos apenas com reads habilitados
+  e cobertura verificada; fora desse intervalo preserva o histórico `1h` legado
+  como fallback e mantém a amostragem limitada;
 - archive completo do node não é necessário apenas para processar blocos novos;
 - qualquer consulta histórica fora da janela do node precisa do PostgreSQL,
   de um provedor archive ou de um snapshot próprio.

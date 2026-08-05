@@ -132,6 +132,7 @@ describe('Robinhood native market history reader', () => {
   it('samples the complete permanent hourly history in all-available mode', async () => {
     const calls = [];
     const repository = createRobinhoodMarketHistoryReadRepository({
+      aggregateReadsEnabled: true,
       now: () => new Date('2026-07-15T12:30:00.000Z'),
       database: { async query(sql, params) {
         calls.push({ sql, params });
@@ -157,6 +158,47 @@ describe('Robinhood native market history reader', () => {
     assert.equal(history.candles.length, 2);
     assert.equal(history.candles[0].bucketTs, '2025-01-01T00:00:00.000Z');
     assert.equal(history.candles[1].bucketTs, '2026-07-15T11:00:00.000Z');
+  });
+
+  it('samples verified hourly aggregates with legacy fallback outside coverage', async () => {
+    const calls = [];
+    let metrics;
+    const repository = createRobinhoodMarketHistoryReadRepository({
+      aggregateReadsEnabled: true,
+      verifiedCoverage: VERIFIED_COVERAGE,
+      now: () => new Date('2026-07-17T12:30:00.000Z'),
+      database: { async query(sql, params) {
+        calls.push({ sql, params });
+        return { rows: [
+          row({ bucket_ts: '2026-07-13T11:00:00.000Z', history_source: 'legacy' }),
+          row({ bucket_ts: '2026-07-15T11:00:00.000Z', history_source: 'aggregate' }),
+        ] };
+      } },
+    });
+
+    const history = await repository.getHistory({
+      address: ADDRESS, endAt: '2026-07-17T12:00:00.000Z',
+      allAvailable: true, limit: 500,
+      onMetrics(value) { metrics = value; },
+    });
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].sql, __private.VERIFIED_ALL_AVAILABLE_HISTORY_SQL);
+    assert.match(calls[0].sql, /FROM robinhood_market_buckets_agg bucket/);
+    assert.match(calls[0].sql, /FROM robinhood_market_buckets_1h bucket/);
+    assert.match(calls[0].sql, /bucket\.valuation_market_key IS NOT NULL/);
+    assert.match(calls[0].sql, /generate_series/);
+    assert.doesNotMatch(calls[0].sql, /SELECT \* FROM (legacy|aggregate)_candles/);
+    assert.deepEqual(calls[0].params, [
+      [ADDRESS], new Date('2026-07-17T12:00:00.000Z'), 500,
+      new Date(VERIFIED_COVERAGE.from), new Date(VERIFIED_COVERAGE.through),
+    ]);
+    assert.deepEqual(history.candles.map((candle) => candle.bucketTs), [
+      '2026-07-13T11:00:00.000Z', '2026-07-15T11:00:00.000Z',
+    ]);
+    assert.equal(metrics.source, 'verified-hourly-all-sampled');
+    assert.equal(metrics.aggregateRows, 1);
+    assert.equal(metrics.fallbackRows, 1);
   });
 
   it('reads exact stored 5m aggregates across the full bounded history window', async () => {

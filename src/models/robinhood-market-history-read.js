@@ -23,6 +23,10 @@ const SOURCE_COLUMNS = `bucket.token_address, bucket.protocol, bucket.market_key
   bucket.swaps, bucket.buys, bucket.sells, bucket.transactions,
   bucket.first_block_number, bucket.first_log_index,
   bucket.last_block_number, bucket.last_log_index`;
+const ALL_AVAILABLE_CANDLE_COLUMNS = `token_address, bucket_ts, granularity_minutes,
+  source_granularity_minutes, open_fdv_usd, high_fdv_usd, low_fdv_usd, close_fdv_usd,
+  open_price_usd, high_price_usd, low_price_usd, close_price_usd, volume_usd,
+  swaps, buys, sells, transaction_contributions, market_count, protocols, history_source`;
 
 const AGGREGATE_HISTORY_SQL = `WITH requested AS MATERIALIZED (
   SELECT UNNEST($1::varchar[]) AS token_address
@@ -147,6 +151,87 @@ const ALL_AVAILABLE_HISTORY_SQL = `WITH requested AS MATERIALIZED (
     array_agg(DISTINCT protocol ORDER BY protocol) AS protocols
   FROM source_rows
   GROUP BY token_address, bucket_ts
+), ranked AS (
+  SELECT candles.*,
+    ROW_NUMBER() OVER (PARTITION BY token_address ORDER BY bucket_ts ASC) AS row_number,
+    COUNT(*) OVER (PARTITION BY token_address) AS total_count
+  FROM candles
+), counts AS (
+  SELECT token_address, MAX(total_count) AS total_count
+  FROM ranked
+  GROUP BY token_address
+), targets AS (
+  SELECT counts.token_address,
+    ROUND(
+      1 + sample_index * (counts.total_count - 1)::numeric
+        / GREATEST(LEAST(counts.total_count, $3::bigint) - 1, 1)
+    )::bigint AS target_row
+  FROM counts
+  CROSS JOIN LATERAL generate_series(
+    0, LEAST(counts.total_count, $3::bigint)::int - 1
+  ) AS samples(sample_index)
+)
+SELECT ranked.*
+FROM ranked
+INNER JOIN targets
+  ON targets.token_address = ranked.token_address
+ AND targets.target_row = ranked.row_number
+ORDER BY ranked.token_address ASC, ranked.bucket_ts ASC`;
+
+const VERIFIED_ALL_AVAILABLE_HISTORY_SQL = `WITH requested AS MATERIALIZED (
+  SELECT UNNEST($1::varchar[]) AS token_address
+), legacy_source_rows AS MATERIALIZED (
+  SELECT ${SOURCE_COLUMNS}
+  FROM robinhood_market_buckets_1h bucket
+  INNER JOIN requested ON requested.token_address = bucket.token_address
+  WHERE bucket.chain = 'robinhood'
+    AND bucket.protocol IN ('uniswap-v2', 'uniswap-v3', 'uniswap-v4')
+    AND bucket.bucket_ts < $2::timestamptz
+    AND (bucket.bucket_ts < $4::timestamptz OR bucket.bucket_ts >= $5::timestamptz)
+), legacy_candles AS (
+  SELECT token_address, bucket_ts,
+    60 AS granularity_minutes, 60 AS source_granularity_minutes,
+    (array_agg(open_fdv_usd ORDER BY first_block_number,
+      first_log_index, protocol, market_key))[1] AS open_fdv_usd,
+    MAX(high_fdv_usd) AS high_fdv_usd,
+    MIN(low_fdv_usd) AS low_fdv_usd,
+    (array_agg(close_fdv_usd ORDER BY last_block_number DESC,
+      last_log_index DESC, protocol, market_key))[1] AS close_fdv_usd,
+    (array_agg(open_price_usd ORDER BY first_block_number,
+      first_log_index, protocol, market_key))[1] AS open_price_usd,
+    MAX(high_price_usd) AS high_price_usd,
+    MIN(low_price_usd) AS low_price_usd,
+    (array_agg(close_price_usd ORDER BY last_block_number DESC,
+      last_log_index DESC, protocol, market_key))[1] AS close_price_usd,
+    SUM(volume_usd) AS volume_usd,
+    SUM(swaps)::bigint AS swaps, SUM(buys)::bigint AS buys,
+    SUM(sells)::bigint AS sells,
+    SUM(transactions)::bigint AS transaction_contributions,
+    COUNT(DISTINCT (protocol, market_key))::int AS market_count,
+    array_agg(DISTINCT protocol ORDER BY protocol) AS protocols,
+    'legacy'::text AS history_source
+  FROM legacy_source_rows
+  GROUP BY token_address, bucket_ts
+), aggregate_candles AS (
+  SELECT bucket.token_address, bucket.bucket_ts, bucket.granularity_minutes,
+    bucket.source_granularity_minutes,
+    bucket.open_fdv_usd, bucket.high_fdv_usd, bucket.low_fdv_usd,
+    bucket.close_fdv_usd, bucket.open_price_usd, bucket.high_price_usd,
+    bucket.low_price_usd, bucket.close_price_usd, bucket.volume_usd,
+    bucket.swaps, bucket.buys, bucket.sells,
+    bucket.transactions AS transaction_contributions,
+    bucket.market_count, bucket.protocols, 'aggregate'::text AS history_source
+  FROM robinhood_market_buckets_agg bucket
+  INNER JOIN requested ON requested.token_address = bucket.token_address
+  WHERE bucket.chain = 'robinhood'
+    AND bucket.granularity_minutes = 60
+    AND bucket.bucket_ts >= $4::timestamptz
+    AND bucket.bucket_ts < LEAST($2::timestamptz, $5::timestamptz)
+    AND bucket.valuation_market_key IS NOT NULL
+), candles AS MATERIALIZED (
+  SELECT ${ALL_AVAILABLE_CANDLE_COLUMNS} FROM legacy_candles
+  UNION ALL
+  SELECT ${ALL_AVAILABLE_CANDLE_COLUMNS} FROM aggregate_candles
 ), ranked AS (
   SELECT candles.*,
     ROW_NUMBER() OVER (PARTITION BY token_address ORDER BY bucket_ts ASC) AS row_number,
@@ -519,22 +604,42 @@ function createRobinhoodMarketHistoryReadRepository(options = {}) {
       const exactAggregates = isRobinhoodFullHistoryGranularityMinutes(
         query.granularityMinutes,
       );
+      const verifiedHourlyAggregates = !exactAggregates
+        && rollout.aggregateReadsEnabled
+        && rollout.verifiedCoverage != null;
       const result = exactAggregates
         ? await execute(AGGREGATE_HISTORY_SQL, [
           query.addresses, query.startAt, query.endAt,
           query.granularityMinutes, query.limit + 1,
         ])
-        : await execute(ALL_AVAILABLE_HISTORY_SQL, [
-          query.addresses, query.endAt, query.limit,
-        ]);
+        : await execute(
+          verifiedHourlyAggregates
+            ? VERIFIED_ALL_AVAILABLE_HISTORY_SQL
+            : ALL_AVAILABLE_HISTORY_SQL,
+          verifiedHourlyAggregates
+            ? [
+              query.addresses, query.endAt, query.limit,
+              rollout.verifiedCoverage.from, rollout.verifiedCoverage.through,
+            ]
+            : [query.addresses, query.endAt, query.limit]
+        );
       const rowsByAddress = groupRows(query, result.rows);
       const histories = Object.freeze(query.addresses.map((address) => (
         buildHistoryResult(query, address, rowsByAddress.get(address) || [])
       )));
+      const sampledAggregateRows = verifiedHourlyAggregates
+        ? result.rows.filter((row) => row.history_source === 'aggregate').length
+        : 0;
+      const sampledFallbackRows = verifiedHourlyAggregates
+        ? result.rows.length - sampledAggregateRows
+        : 0;
       const metrics = {
-        source: exactAggregates ? 'aggregate-all-exact' : 'hourly-all-sampled',
+        source: exactAggregates
+          ? 'aggregate-all-exact'
+          : verifiedHourlyAggregates ? 'verified-hourly-all-sampled' : 'hourly-all-sampled',
         rows: result.rows.length,
-        aggregateRows: exactAggregates ? result.rows.length : 0, fallbackRows: 0,
+        aggregateRows: exactAggregates ? result.rows.length : sampledAggregateRows,
+        fallbackRows: sampledFallbackRows,
         fallbackAddresses: 0, cacheHit: false,
         queryDurationMs: Date.now() - queryStartedAt,
         buildDurationMs: 0,
@@ -563,8 +668,10 @@ function createRobinhoodMarketHistoryReadRepository(options = {}) {
 module.exports = {
   createRobinhoodMarketHistoryReadRepository,
   __private: {
-    AGGREGATE_HISTORY_SQL, ALL_AVAILABLE_HISTORY_SQL, LEGACY_HISTORY_SQL, buildHistoryResult,
-    compareShadowRows, intersectCoverage, mergeRows, normalizeAddresses, normalizeCandle,
-    normalizeQuery, normalizeVerifiedCoverage, readCoveredHistories, resolveResolution,
+    AGGREGATE_HISTORY_SQL, ALL_AVAILABLE_CANDLE_COLUMNS, ALL_AVAILABLE_HISTORY_SQL,
+    LEGACY_HISTORY_SQL,
+    VERIFIED_ALL_AVAILABLE_HISTORY_SQL, buildHistoryResult, compareShadowRows,
+    intersectCoverage, mergeRows, normalizeAddresses, normalizeCandle, normalizeQuery,
+    normalizeVerifiedCoverage, readCoveredHistories, resolveResolution,
   },
 };
