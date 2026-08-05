@@ -848,6 +848,8 @@ Depois do catch-up:
   respeita um teto de 25.000 candles; o viewport também é isolado por timeframe;
 - o leitor expandido Robinhood pede até 10.000 pontos no timeframe de 1m (cerca
   de 6,9 dias), enquanto os demais leitores não agregados mantêm o teto de 720;
+  com aggregate reads habilitados, o OHLC 1m usa a pool escolhida pela proveniência
+  do bucket 5m correspondente e preserva volume/atividade somados de todas as pools;
 - archive completo do node não é necessário apenas para processar blocos novos;
 - qualquer consulta histórica fora da janela do node precisa do PostgreSQL,
   de um provedor archive ou de um snapshot próprio.

@@ -57,6 +57,59 @@ describe('Robinhood native market history reader', () => {
     assert.doesNotMatch(__private.AGGREGATE_HISTORY_SQL, /GROUP BY/);
   });
 
+  it('uses 5m valuation provenance for 1m OHLC and keeps token-wide activity', () => {
+    assert.match(__private.PRIMARY_ONE_MINUTE_HISTORY_SQL,
+      /valuation\.valuation_market_key = source\.market_key/);
+    assert.match(__private.PRIMARY_ONE_MINUTE_HISTORY_SQL,
+      /valuation\.valuation_protocol = source\.protocol/);
+    assert.match(__private.PRIMARY_ONE_MINUTE_HISTORY_SQL,
+      /SUM\(source\.volume_usd\)/);
+    assert.match(__private.PRIMARY_ONE_MINUTE_HISTORY_SQL,
+      /COUNT\(DISTINCT \(source\.protocol, source\.market_key\)\)/);
+    assert.doesNotMatch(__private.PRIMARY_ONE_MINUTE_HISTORY_SQL,
+      /MAX\(source\.high_fdv_usd\)/);
+  });
+
+  it('routes enabled 1m reads through the primary valuation market', async () => {
+    const calls = [];
+    let metrics;
+    const repository = createRobinhoodMarketHistoryReadRepository({
+      aggregateReadsEnabled: true,
+      now: () => new Date('2026-08-05T08:00:00.000Z'),
+      database: { async query(sql, params) {
+        calls.push({ sql, params });
+        return { rows: [row({
+          bucket_ts: '2026-08-05T07:30:00.000Z',
+          granularity_minutes: 1,
+          source_granularity_minutes: 1,
+        })] };
+      } },
+    });
+
+    const history = await repository.getHistory({
+      address: ADDRESS,
+      startAt: '2026-08-04T00:00:00.000Z',
+      endAt: '2026-08-05T08:00:00.000Z',
+      granularityMinutes: 1,
+      limit: 10_000,
+      onMetrics(value) { metrics = value; },
+    });
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].sql, __private.PRIMARY_ONE_MINUTE_HISTORY_SQL);
+    assert.deepEqual(calls[0].params.slice(0, 3), [
+      [ADDRESS],
+      new Date('2026-08-04T00:00:00.000Z'),
+      new Date('2026-08-05T08:00:00.000Z'),
+    ]);
+    assert.equal(calls[0].params[4], 10_001);
+    assert.equal(history.candles.length, 1);
+    assert.equal(history.candles[0].sourceGranularityMinutes, 1);
+    assert.equal(metrics.source, 'primary-minute');
+    assert.equal(metrics.primaryMinuteRows, 1);
+    assert.equal(metrics.fallbackRows, 0);
+  });
+
   it('returns FDV candles as sparse observations without fabricated zeros', async () => {
     const calls = [];
     const repository = createRobinhoodMarketHistoryReadRepository({

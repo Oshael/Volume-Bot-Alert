@@ -54,6 +54,80 @@ SELECT * FROM ranked
 WHERE recency_rank <= $5::int
 ORDER BY token_address ASC, bucket_ts ASC`;
 
+const PRIMARY_ONE_MINUTE_HISTORY_SQL = `WITH requested AS MATERIALIZED (
+  SELECT UNNEST($1::varchar[]) AS token_address
+), source_rows AS MATERIALIZED (
+  SELECT ${SOURCE_COLUMNS}
+  FROM robinhood_market_buckets_1m bucket
+  INNER JOIN requested ON requested.token_address = bucket.token_address
+  WHERE bucket.chain = 'robinhood'
+    AND bucket.protocol IN ('uniswap-v2', 'uniswap-v3', 'uniswap-v4')
+    AND bucket.bucket_ts >= GREATEST($2::timestamptz, $4::timestamptz)
+    AND bucket.bucket_ts < $3::timestamptz
+), activity AS MATERIALIZED (
+  SELECT source.token_address, source.bucket_ts,
+    SUM(source.volume_usd) AS volume_usd,
+    SUM(source.swaps)::bigint AS swaps,
+    SUM(source.buys)::bigint AS buys,
+    SUM(source.sells)::bigint AS sells,
+    SUM(source.transactions)::bigint AS transaction_contributions,
+    COUNT(DISTINCT (source.protocol, source.market_key))::int AS market_count,
+    array_agg(DISTINCT source.protocol ORDER BY source.protocol) AS protocols
+  FROM source_rows source
+  GROUP BY source.token_address, source.bucket_ts
+), valuation_rows AS MATERIALIZED (
+  SELECT source.*
+  FROM source_rows source
+  INNER JOIN robinhood_market_buckets_agg valuation
+    ON valuation.chain = 'robinhood'
+   AND valuation.token_address = source.token_address
+   AND valuation.granularity_minutes = 5
+   AND valuation.bucket_ts = date_bin(
+     INTERVAL '5 minutes', source.bucket_ts, TIMESTAMPTZ '1970-01-01')
+   AND valuation.valuation_protocol = source.protocol
+   AND valuation.valuation_market_key = source.market_key
+  WHERE valuation.valuation_market_key IS NOT NULL
+), valuation_ohlc AS (
+  SELECT valuation.token_address, valuation.bucket_ts,
+    (array_agg(valuation.open_fdv_usd ORDER BY valuation.first_block_number,
+      valuation.first_log_index, valuation.protocol, valuation.market_key))[1] AS open_fdv_usd,
+    MAX(valuation.high_fdv_usd) AS high_fdv_usd,
+    MIN(valuation.low_fdv_usd) AS low_fdv_usd,
+    (array_agg(valuation.close_fdv_usd ORDER BY valuation.last_block_number DESC,
+      valuation.last_log_index DESC, valuation.protocol DESC,
+      valuation.market_key DESC))[1] AS close_fdv_usd,
+    (array_agg(valuation.open_price_usd ORDER BY valuation.first_block_number,
+      valuation.first_log_index, valuation.protocol, valuation.market_key))[1] AS open_price_usd,
+    MAX(valuation.high_price_usd) AS high_price_usd,
+    MIN(valuation.low_price_usd) AS low_price_usd,
+    (array_agg(valuation.close_price_usd ORDER BY valuation.last_block_number DESC,
+      valuation.last_log_index DESC, valuation.protocol DESC,
+      valuation.market_key DESC))[1] AS close_price_usd
+  FROM valuation_rows valuation
+  GROUP BY valuation.token_address, valuation.bucket_ts
+), candles AS (
+  SELECT valuation.token_address, valuation.bucket_ts,
+    1::smallint AS granularity_minutes,
+    1::smallint AS source_granularity_minutes,
+    valuation.open_fdv_usd, valuation.high_fdv_usd,
+    valuation.low_fdv_usd, valuation.close_fdv_usd,
+    valuation.open_price_usd, valuation.high_price_usd,
+    valuation.low_price_usd, valuation.close_price_usd,
+    activity.volume_usd, activity.swaps, activity.buys, activity.sells,
+    activity.transaction_contributions, activity.market_count, activity.protocols
+  FROM valuation_ohlc valuation
+  INNER JOIN activity
+    ON activity.token_address = valuation.token_address
+   AND activity.bucket_ts = valuation.bucket_ts
+), ranked AS (
+  SELECT candles.*,
+    ROW_NUMBER() OVER (PARTITION BY token_address ORDER BY bucket_ts DESC) AS recency_rank
+  FROM candles
+)
+SELECT * FROM ranked
+WHERE recency_rank <= $5::int
+ORDER BY token_address ASC, bucket_ts ASC`;
+
 const LEGACY_HISTORY_SQL = `WITH requested AS MATERIALIZED (
   SELECT UNNEST($1::varchar[]) AS token_address
 ), source_rows AS (
@@ -559,6 +633,44 @@ async function readCoveredHistories(query, execute, rollout, startedAt, querySta
   };
 }
 
+async function readPrimaryOneMinuteHistories(query, execute, startedAt, queryStartedAt) {
+  const result = await execute(PRIMARY_ONE_MINUTE_HISTORY_SQL, [
+    query.addresses, query.startAt, query.endAt, query.minuteStartsAt, query.limit + 1,
+  ]);
+  const queryDurationMs = Date.now() - queryStartedAt;
+  const rowsByAddress = groupRows(query, result.rows);
+  const buildStartedAt = Date.now();
+  const histories = Object.freeze(query.addresses.map((address) => (
+    buildHistoryResult(query, address, rowsByAddress.get(address) || [])
+  )));
+  return {
+    histories,
+    metrics: {
+      source: 'primary-minute',
+      rows: result.rows.length,
+      primaryMinuteRows: result.rows.length,
+      aggregateRows: 0,
+      fallbackRows: 0,
+      fallbackAddresses: 0,
+      aggregateCoverageFrom: null,
+      aggregateCoverageThrough: null,
+      shadow: null,
+      shadowDurationMs: 0,
+      cacheHit: false,
+      queryDurationMs,
+      buildDurationMs: Date.now() - buildStartedAt,
+      totalDurationMs: Date.now() - startedAt,
+    },
+  };
+}
+
+function readBoundedHistories(query, execute, rollout, startedAt, queryStartedAt) {
+  if (query.granularityMinutes === 1 && rollout.aggregateReadsEnabled) {
+    return readPrimaryOneMinuteHistories(query, execute, startedAt, queryStartedAt);
+  }
+  return readCoveredHistories(query, execute, rollout, startedAt, queryStartedAt);
+}
+
 function createRobinhoodMarketHistoryReadRepository(options = {}) {
   const database = options.database || db;
   const clock = options.now || (() => new Date());
@@ -649,7 +761,7 @@ function createRobinhoodMarketHistoryReadRepository(options = {}) {
       query.onMetrics?.(metrics);
       return histories;
     }
-    const { histories, metrics } = await readCoveredHistories(
+    const { histories, metrics } = await readBoundedHistories(
       query, execute, rollout, startedAt, queryStartedAt
     );
     writeCache(cacheKey, histories, metrics, now.getTime());
@@ -670,6 +782,7 @@ module.exports = {
   __private: {
     AGGREGATE_HISTORY_SQL, ALL_AVAILABLE_CANDLE_COLUMNS, ALL_AVAILABLE_HISTORY_SQL,
     LEGACY_HISTORY_SQL,
+    PRIMARY_ONE_MINUTE_HISTORY_SQL,
     VERIFIED_ALL_AVAILABLE_HISTORY_SQL, buildHistoryResult, compareShadowRows,
     intersectCoverage, mergeRows, normalizeAddresses, normalizeCandle, normalizeQuery,
     normalizeVerifiedCoverage, readCoveredHistories, resolveResolution,
