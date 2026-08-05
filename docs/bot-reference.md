@@ -842,6 +842,9 @@ Depois do catch-up:
 - o modo “Tudo” de 1h troca para agregados corrigidos apenas com reads habilitados
   e cobertura verificada; fora desse intervalo preserva o histórico `1h` legado
   como fallback e mantém a amostragem limitada;
+- o gráfico expandido densifica somente para apresentação os intervalos internos
+  sem candle entre 1m e 1h: cada ponto sintético repete o último fechamento como
+  OHLC flat, nunca grava bucket, swap ou volume e respeita um teto de 25.000 candles;
 - archive completo do node não é necessário apenas para processar blocos novos;
 - qualquer consulta histórica fora da janela do node precisa do PostgreSQL,
   de um provedor archive ou de um snapshot próprio.

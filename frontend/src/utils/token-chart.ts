@@ -12,6 +12,9 @@ export type NormalizedTokenChartCandle = {
   close: number;
 };
 
+const GAP_FILL_GRANULARITIES = new Set([1, 5, 15, 30, 60]);
+const MAX_GAP_FILLED_CANDLES = 25_000;
+
 function toFiniteChartNumber(value: unknown) {
   if (value == null || (typeof value === 'string' && value.trim() === '')) {
     return null;
@@ -65,6 +68,48 @@ export function normalizeTokenChartCandles(sparkline: TokenSparklineEntry) {
       resolveTokenChartValuationType(sparkline, candle),
     ))
     .filter((candle): candle is NormalizedTokenChartCandle => Boolean(candle));
+}
+
+export function fillTokenChartCandleGaps(
+  candles: NormalizedTokenChartCandle[],
+  granularityMinutes: unknown,
+) {
+  const safeGranularity = Math.round(Number(granularityMinutes));
+  const sorted = [...candles].sort(
+    (left, right) => Date.parse(left.bucketTs) - Date.parse(right.bucketTs),
+  );
+  if (!GAP_FILL_GRANULARITIES.has(safeGranularity) || sorted.length < 2) {
+    return sorted;
+  }
+
+  const bucketMs = safeGranularity * 60_000;
+  const firstMs = Date.parse(sorted[0].bucketTs);
+  const lastMs = Date.parse(sorted[sorted.length - 1].bucketTs);
+  const denseLength = Math.floor((lastMs - firstMs) / bucketMs) + 1;
+  if (!Number.isFinite(denseLength) || denseLength > MAX_GAP_FILLED_CANDLES) {
+    return sorted;
+  }
+
+  const filled: NormalizedTokenChartCandle[] = [sorted[0]];
+  for (const candle of sorted.slice(1)) {
+    const previous = filled[filled.length - 1];
+    const previousMs = Date.parse(previous.bucketTs);
+    const currentMs = Date.parse(candle.bucketTs);
+    const gapMs = currentMs - previousMs;
+    if (gapMs > bucketMs && gapMs % bucketMs === 0) {
+      for (let timestamp = previousMs + bucketMs; timestamp < currentMs; timestamp += bucketMs) {
+        filled.push({
+          bucketTs: new Date(timestamp).toISOString(),
+          open: previous.close,
+          high: previous.close,
+          low: previous.close,
+          close: previous.close,
+        });
+      }
+    }
+    filled.push(candle);
+  }
+  return filled;
 }
 
 export function getTokenChartValuationLabel(sparkline: Pick<TokenSparklineEntry, 'valuationType'>) {

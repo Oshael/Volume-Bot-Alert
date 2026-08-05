@@ -24,7 +24,7 @@ import { escapeHtml, sanitizeOptionalHttpUrl } from './html-safety';
 import { bindCopyButtons, bindSparklineHover, fmtMoney, fmtPct, getAgeToneClassFromCreatedAt, getTradeTerminalLabel, renderFlash, renderSparklineFigure, renderTokenLaunchpadBadge, renderTotalLiquidityCell, renderTradeTerminalIconForKey } from './shared';
 import { fmtMockSol, fmtMockSolAmount, resolveLiveMockSolUsdcRate, resolveMockTradeSolUsdcRate, resolveMockTradingPositionPnl } from '../../utils/mock-trading-display';
 import { buildTokenExplorerUrl, buildTokenIdentityKey, buildTokenMarketUrl, resolveChainScopedConfigValue, type TokenChain } from '../../utils/token-chain';
-import { getTokenChartValuationLabel, normalizeTokenChartCandle, normalizeTokenChartCandles, resolveTokenChartValuationType } from '../../utils/token-chart';
+import { fillTokenChartCandleGaps, getTokenChartValuationLabel, normalizeTokenChartCandle, normalizeTokenChartCandles, resolveTokenChartValuationType } from '../../utils/token-chart';
 import { resolveTokenValuation } from '../../utils/token-valuation';
 import { buildTokenChainIcon, buildTokenIdentityBadgeGroup, getTokenChainTitle } from '../token-chain-badge';
 import { bindMonitoredTickerPeerPanelClose, buildTickerPeerBadge } from './monitored-section';
@@ -2401,7 +2401,10 @@ function getExpandedCandleLatestValue(sparkline: TokenSparklineEntry) {
 }
 
 function getRenderableExpandedCandles(sparkline: TokenSparklineEntry) {
-  return normalizeTokenChartCandles(sparkline);
+  return fillTokenChartCandleGaps(
+    normalizeTokenChartCandles(sparkline),
+    sparkline.granularityMinutes,
+  );
 }
 
 function toLightweightCandles(sparkline: TokenSparklineEntry): CandlestickData<UTCTimestamp>[] {

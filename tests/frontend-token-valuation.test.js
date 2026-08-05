@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const { before, describe, it } = require('node:test');
 
 let resolveCoveredMetric;
+let fillTokenChartCandleGaps;
 let normalizeTokenChartCandle;
 let resolveTokenValuation;
 let resolveWorkspaceMarketSnapshotMs;
@@ -14,7 +15,10 @@ before(async () => {
     resolveWorkspaceMarketSnapshotMs,
     selectWorkspaceSnapshotValue,
   } = await import('../frontend/src/utils/token-valuation.ts'));
-  ({ normalizeTokenChartCandle } = await import('../frontend/src/utils/token-chart.ts'));
+  ({
+    fillTokenChartCandleGaps,
+    normalizeTokenChartCandle,
+  } = await import('../frontend/src/utils/token-chart.ts'));
 });
 
 describe('frontend token valuation presentation', () => {
@@ -64,6 +68,38 @@ describe('frontend token valuation presentation', () => {
       valuationType: 'fdv',
       closeFdvUsd: null,
     }, 'fdv'), null);
+  });
+
+  it('fills internal chart gaps from 1m through 1h with the previous close', () => {
+    for (const granularityMinutes of [1, 5, 15, 30, 60]) {
+      const bucketMs = granularityMinutes * 60_000;
+      const result = fillTokenChartCandleGaps([
+        {
+          bucketTs: '2026-08-05T00:00:00.000Z',
+          open: 90, high: 110, low: 80, close: 100,
+        },
+        {
+          bucketTs: new Date(Date.parse('2026-08-05T00:00:00.000Z') + 2 * bucketMs).toISOString(),
+          open: 120, high: 130, low: 115, close: 125,
+        },
+      ], granularityMinutes);
+
+      assert.equal(result.length, 3);
+      assert.deepEqual(result[1], {
+        bucketTs: new Date(Date.parse('2026-08-05T00:00:00.000Z') + bucketMs).toISOString(),
+        open: 100, high: 100, low: 100, close: 100,
+      });
+    }
+  });
+
+  it('does not fill gaps in 4h and 24h charts', () => {
+    const candles = [
+      { bucketTs: '2026-08-05T00:00:00.000Z', open: 90, high: 110, low: 80, close: 100 },
+      { bucketTs: '2026-08-05T08:00:00.000Z', open: 120, high: 130, low: 115, close: 125 },
+    ];
+
+    assert.deepEqual(fillTokenChartCandleGaps(candles, 240), candles);
+    assert.deepEqual(fillTokenChartCandleGaps(candles, 1440), candles);
   });
 
   it('does not attach freshness from a mismatched valuation type', () => {
