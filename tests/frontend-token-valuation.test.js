@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const { before, describe, it } = require('node:test');
 
 let resolveCoveredMetric;
+let buildTokenChartViewportKey;
 let fillTokenChartCandleGaps;
 let normalizeTokenChartCandle;
 let resolveTokenValuation;
@@ -16,6 +17,7 @@ before(async () => {
     selectWorkspaceSnapshotValue,
   } = await import('../frontend/src/utils/token-valuation.ts'));
   ({
+    buildTokenChartViewportKey,
     fillTokenChartCandleGaps,
     normalizeTokenChartCandle,
   } = await import('../frontend/src/utils/token-chart.ts'));
@@ -70,7 +72,7 @@ describe('frontend token valuation presentation', () => {
     }, 'fdv'), null);
   });
 
-  it('fills internal chart gaps from 1m through 1h with the previous close', () => {
+  it('fills internal chart gaps from 1m through 1h with visible candles and no drift', () => {
     for (const granularityMinutes of [1, 5, 15, 30, 60]) {
       const bucketMs = granularityMinutes * 60_000;
       const result = fillTokenChartCandleGaps([
@@ -79,17 +81,30 @@ describe('frontend token valuation presentation', () => {
           open: 90, high: 110, low: 80, close: 100,
         },
         {
-          bucketTs: new Date(Date.parse('2026-08-05T00:00:00.000Z') + 2 * bucketMs).toISOString(),
+          bucketTs: new Date(Date.parse('2026-08-05T00:00:00.000Z') + 3 * bucketMs).toISOString(),
           open: 120, high: 130, low: 115, close: 125,
         },
       ], granularityMinutes);
 
-      assert.equal(result.length, 3);
+      assert.equal(result.length, 4);
       assert.deepEqual(result[1], {
         bucketTs: new Date(Date.parse('2026-08-05T00:00:00.000Z') + bucketMs).toISOString(),
-        open: 100, high: 100, low: 100, close: 100,
+        open: 99.9, high: 100, low: 99.9, close: 100,
       });
+      assert.equal(result[2].open, 99.9);
+      assert.equal(result[2].close, 100);
     }
+  });
+
+  it('preserves an independent expanded-chart viewport for each timeframe', () => {
+    const identityKey = 'robinhood:0xabc';
+
+    assert.equal(buildTokenChartViewportKey(identityKey, 1), 'robinhood:0xabc::1');
+    assert.equal(buildTokenChartViewportKey(identityKey, 5), 'robinhood:0xabc::5');
+    assert.notEqual(
+      buildTokenChartViewportKey(identityKey, 1),
+      buildTokenChartViewportKey(identityKey, 5),
+    );
   });
 
   it('does not fill gaps in 4h and 24h charts', () => {

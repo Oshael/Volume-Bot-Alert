@@ -24,7 +24,7 @@ import { escapeHtml, sanitizeOptionalHttpUrl } from './html-safety';
 import { bindCopyButtons, bindSparklineHover, fmtMoney, fmtPct, getAgeToneClassFromCreatedAt, getTradeTerminalLabel, renderFlash, renderSparklineFigure, renderTokenLaunchpadBadge, renderTotalLiquidityCell, renderTradeTerminalIconForKey } from './shared';
 import { fmtMockSol, fmtMockSolAmount, resolveLiveMockSolUsdcRate, resolveMockTradeSolUsdcRate, resolveMockTradingPositionPnl } from '../../utils/mock-trading-display';
 import { buildTokenExplorerUrl, buildTokenIdentityKey, buildTokenMarketUrl, resolveChainScopedConfigValue, type TokenChain } from '../../utils/token-chain';
-import { fillTokenChartCandleGaps, getTokenChartValuationLabel, normalizeTokenChartCandle, normalizeTokenChartCandles, resolveTokenChartValuationType } from '../../utils/token-chart';
+import { buildTokenChartViewportKey, fillTokenChartCandleGaps, getTokenChartValuationLabel, normalizeTokenChartCandle, normalizeTokenChartCandles, resolveTokenChartValuationType } from '../../utils/token-chart';
 import { resolveTokenValuation } from '../../utils/token-valuation';
 import { buildTokenChainIcon, buildTokenIdentityBadgeGroup, getTokenChainTitle } from '../token-chain-badge';
 import { bindMonitoredTickerPeerPanelClose, buildTickerPeerBadge } from './monitored-section';
@@ -3797,7 +3797,10 @@ async function mountExpandedCandlestickChart(
   const data = toLightweightCandles(sparkline);
   const granularityMinutes = sparkline.granularityMinutes ?? 5;
   const valuationLabel = getTokenChartValuationLabel(sparkline);
-  const chartIdentityKey = buildTokenIdentityKey(chain, address);
+  const chartIdentityKey = buildTokenChartViewportKey(
+    buildTokenIdentityKey(chain, address),
+    granularityMinutes,
+  );
   const useMacTrackpadDrag = isMacPlatform();
   const chartData = withExpandedChartFutureTimePoints(data, granularityMinutes);
   const debug = createExpandedChartDebugSession({

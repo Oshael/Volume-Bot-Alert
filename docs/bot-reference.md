@@ -843,8 +843,9 @@ Depois do catch-up:
   e cobertura verificada; fora desse intervalo preserva o histórico `1h` legado
   como fallback e mantém a amostragem limitada;
 - o gráfico expandido densifica somente para apresentação os intervalos internos
-  sem candle entre 1m e 1h: cada ponto sintético repete o último fechamento como
-  OHLC flat, nunca grava bucket, swap ou volume e respeita um teto de 25.000 candles;
+  sem candle entre 1m e 1h: cada ponto sintético mantém o último fechamento e usa
+  corpo visual de 0,1% ancorado, sem drift; nunca grava bucket, swap ou volume e
+  respeita um teto de 25.000 candles; o viewport também é isolado por timeframe;
 - archive completo do node não é necessário apenas para processar blocos novos;
 - qualquer consulta histórica fora da janela do node precisa do PostgreSQL,
   de um provedor archive ou de um snapshot próprio.
