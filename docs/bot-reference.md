@@ -843,9 +843,10 @@ Depois do catch-up:
   e cobertura verificada; fora desse intervalo preserva o histórico `1h` legado
   como fallback e mantém a amostragem limitada;
 - o gráfico expandido densifica somente para apresentação os intervalos internos
-  sem candle entre 1m e 1h: cada ponto sintético mantém o último fechamento e usa
-  corpo visual de 1% ancorado, sem drift; nunca grava bucket, swap ou volume e
-  respeita um teto de 25.000 candles; o viewport também é isolado por timeframe;
+  sem candle entre 1m e 1h: os pontos sintéticos interpolam do último fechamento
+  real até a abertura do próximo candle, com `open` conectado ao `close` anterior;
+  nunca gravam bucket, swap ou volume e respeitam um teto de 25.000 candles; o
+  viewport também é isolado por timeframe;
 - o leitor expandido Robinhood pede até 10.000 pontos no timeframe de 1m (cerca
   de 6,9 dias), enquanto os demais leitores não agregados mantêm o teto de 720;
   com aggregate reads habilitados, o OHLC 1m usa a pool escolhida pela proveniência

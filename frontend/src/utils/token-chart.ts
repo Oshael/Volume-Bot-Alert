@@ -14,7 +14,6 @@ export type NormalizedTokenChartCandle = {
 
 const GAP_FILL_GRANULARITIES = new Set([1, 5, 15, 30, 60]);
 const MAX_GAP_FILLED_CANDLES = 25_000;
-const SYNTHETIC_CANDLE_BODY_RATIO = 0.01;
 
 function toFiniteChartNumber(value: unknown) {
   if (value == null || (typeof value === 'string' && value.trim() === '')) {
@@ -98,22 +97,19 @@ export function fillTokenChartCandleGaps(
     const currentMs = Date.parse(candle.bucketTs);
     const gapMs = currentMs - previousMs;
     if (gapMs > bucketMs && gapMs % bucketMs === 0) {
-      const syntheticClose = previous.close;
-      const syntheticBody = Math.max(
-        Math.abs(syntheticClose) * SYNTHETIC_CANDLE_BODY_RATIO,
-        Number.EPSILON,
-      );
-      const syntheticOpen = previous.close >= previous.open
-        ? syntheticClose - syntheticBody
-        : syntheticClose + syntheticBody;
-      for (let timestamp = previousMs + bucketMs; timestamp < currentMs; timestamp += bucketMs) {
+      const missingCandles = (gapMs / bucketMs) - 1;
+      const priceDistance = candle.open - previous.close;
+      let syntheticOpen = previous.close;
+      for (let index = 1; index <= missingCandles; index += 1) {
+        const syntheticClose = previous.close + ((priceDistance * index) / missingCandles);
         filled.push({
-          bucketTs: new Date(timestamp).toISOString(),
+          bucketTs: new Date(previousMs + (index * bucketMs)).toISOString(),
           open: syntheticOpen,
           high: Math.max(syntheticOpen, syntheticClose),
           low: Math.min(syntheticOpen, syntheticClose),
           close: syntheticClose,
         });
+        syntheticOpen = syntheticClose;
       }
     }
     filled.push(candle);

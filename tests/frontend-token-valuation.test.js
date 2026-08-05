@@ -72,7 +72,7 @@ describe('frontend token valuation presentation', () => {
     }, 'fdv'), null);
   });
 
-  it('fills internal chart gaps from 1m through 1h with visible candles and no drift', () => {
+  it('interpolates connected internal chart gaps from 1m through 1h', () => {
     for (const granularityMinutes of [1, 5, 15, 30, 60]) {
       const bucketMs = granularityMinutes * 60_000;
       const result = fillTokenChartCandleGaps([
@@ -89,11 +89,23 @@ describe('frontend token valuation presentation', () => {
       assert.equal(result.length, 4);
       assert.deepEqual(result[1], {
         bucketTs: new Date(Date.parse('2026-08-05T00:00:00.000Z') + bucketMs).toISOString(),
-        open: 99, high: 100, low: 99, close: 100,
+        open: 100, high: 110, low: 100, close: 110,
       });
-      assert.equal(result[2].open, 99);
-      assert.equal(result[2].close, 100);
+      assert.deepEqual(result[2], {
+        bucketTs: new Date(Date.parse('2026-08-05T00:00:00.000Z') + (2 * bucketMs)).toISOString(),
+        open: 110, high: 120, low: 110, close: 120,
+      });
+      assert.equal(result[2].close, result[3].open);
     }
+
+    const falling = fillTokenChartCandleGaps([
+      { bucketTs: '2026-08-05T00:00:00.000Z', open: 110, high: 115, low: 95, close: 100 },
+      { bucketTs: '2026-08-05T00:02:00.000Z', open: 80, high: 85, low: 75, close: 82 },
+    ], 1);
+    assert.deepEqual(falling[1], {
+      bucketTs: '2026-08-05T00:01:00.000Z',
+      open: 100, high: 100, low: 80, close: 80,
+    });
   });
 
   it('preserves an independent expanded-chart viewport for each timeframe', () => {
