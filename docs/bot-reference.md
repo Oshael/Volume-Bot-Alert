@@ -364,7 +364,12 @@ etapa posterior); erro isola a claim (retry com backoff ou dead-letter `blocked`
 cursor de captura. Poda a fila 1 dia após o terminal (`retention_eligible_at`). Watermark de
 processamento independente do cursor de captura. A unit foi implantada em shadow, mas
 ficou pausada em `2026-08-05` até a correção online do índice de claim market: o plano
-vigente lia milhões de entradas do índice de reorg para reclamar lotes de 200.
+vigente lia milhões de entradas do índice de reorg para reclamar lotes de 200. A Stage 107
+adiciona `idx_robinhood_head_captures_market_claim` com `CREATE INDEX CONCURRENTLY`, na
+ordem `(block_number, transaction_index, log_index, next_attempt_at)` e predicate parcial
+`pending + market`; o índice antigo permanece para discovery. O processing só deve ser
+retomado depois que `pg_index` confirmar `indisvalid/indisready` e `EXPLAIN (ANALYZE,
+BUFFERS)` provar que a claim usa esse índice sem sort/scan massivo.
 
 O grupo `robinhood-derived` (Corte 5, systemd `trendscope-worker@robinhood-derived.service`,
 lease `robinhood-derived-worker`, `start:worker:robinhood-derived` na porta 3008) é o consumidor

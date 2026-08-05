@@ -2700,6 +2700,21 @@ const SCHEMA_GROUPS = [
       },
     ],
   },
+  {
+    key: 'stage107-robinhood-market-claim-index',
+    name: 'Stage 107 Robinhood market claim index',
+    repair: 'node src/utils/db-init-stage107.js',
+    tables: [{
+      table: 'robinhood_head_captures',
+      indexes: [{
+        name: 'idx_robinhood_head_captures_market_claim',
+        includes: [
+          'block_number', 'transaction_index', 'log_index', 'next_attempt_at',
+          'pending', 'market',
+        ],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
@@ -2737,6 +2752,7 @@ const PROFILE_GROUP_KEYS = {
     'stage102-robinhood-v4-tick-range-tvl',
     'stage103-robinhood-head-capture-queue',
     'stage104-robinhood-derived-outbox',
+    'stage107-robinhood-market-claim-index',
   ],
   runtime: SCHEMA_GROUPS.map((group) => group.key),
 };
