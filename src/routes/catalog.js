@@ -253,10 +253,13 @@ function parseExpandedSparklineRequest(body = {}) {
 
   const allAvailable = parseExpandedFullHistory(body, identity, granularityMinutes.value);
   if (!allAvailable.ok) return allAvailable;
+  const extendedOneMinuteHistory = identity.chain === 'robinhood'
+    && granularityMinutes.value === 1;
+  const extendedPoints = allAvailable.value || extendedOneMinuteHistory;
 
   const points = parseOptionalIntegerBodyField(body.points, 'points', {
     min: 120,
-    max: allAvailable.value ? MAX_EXPANDED_SPARKLINE_POINTS : 1000,
+    max: extendedPoints ? MAX_EXPANDED_SPARKLINE_POINTS : 1000,
   });
   if (!points.ok) return points;
 
@@ -275,7 +278,7 @@ function parseExpandedSparklineRequest(body = {}) {
       chain: identity.chain,
       address: identity.address,
       allAvailable: allAvailable.value,
-      points: points.value || (allAvailable.value ? MAX_EXPANDED_SPARKLINE_POINTS : 720),
+      points: points.value || (extendedPoints ? MAX_EXPANDED_SPARKLINE_POINTS : 720),
       granularityMinutes: granularityMinutes.value,
       allowOneMinuteFallback: allowOneMinuteFallback.value,
     },

@@ -844,8 +844,10 @@ Depois do catch-up:
   como fallback e mantém a amostragem limitada;
 - o gráfico expandido densifica somente para apresentação os intervalos internos
   sem candle entre 1m e 1h: cada ponto sintético mantém o último fechamento e usa
-  corpo visual de 0,1% ancorado, sem drift; nunca grava bucket, swap ou volume e
+  corpo visual de 1% ancorado, sem drift; nunca grava bucket, swap ou volume e
   respeita um teto de 25.000 candles; o viewport também é isolado por timeframe;
+- o leitor expandido Robinhood pede até 10.000 pontos no timeframe de 1m (cerca
+  de 6,9 dias), enquanto os demais leitores não agregados mantêm o teto de 720;
 - archive completo do node não é necessário apenas para processar blocos novos;
 - qualquer consulta histórica fora da janela do node precisa do PostgreSQL,
   de um provedor archive ou de um snapshot próprio.

@@ -14,7 +14,7 @@ export type NormalizedTokenChartCandle = {
 
 const GAP_FILL_GRANULARITIES = new Set([1, 5, 15, 30, 60]);
 const MAX_GAP_FILLED_CANDLES = 25_000;
-const SYNTHETIC_CANDLE_BODY_RATIO = 0.001;
+const SYNTHETIC_CANDLE_BODY_RATIO = 0.01;
 
 function toFiniteChartNumber(value: unknown) {
   if (value == null || (typeof value === 'string' && value.trim() === '')) {

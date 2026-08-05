@@ -10,7 +10,7 @@ describe('expanded sparkline request policy', () => {
       ['robinhood', 5, true, 10_000],
       ['robinhood', 15, true, 10_000],
       ['robinhood', 30, true, 10_000],
-      ['robinhood', 1, false, 720],
+      ['robinhood', 1, false, 10_000],
       ['robinhood', 60, false, 720],
       ['solana', 5, false, 720],
     ];

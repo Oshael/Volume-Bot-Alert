@@ -89,9 +89,9 @@ describe('frontend token valuation presentation', () => {
       assert.equal(result.length, 4);
       assert.deepEqual(result[1], {
         bucketTs: new Date(Date.parse('2026-08-05T00:00:00.000Z') + bucketMs).toISOString(),
-        open: 99.9, high: 100, low: 99.9, close: 100,
+        open: 99, high: 100, low: 99, close: 100,
       });
-      assert.equal(result[2].open, 99.9);
+      assert.equal(result[2].open, 99);
       assert.equal(result[2].close, 100);
     }
   });

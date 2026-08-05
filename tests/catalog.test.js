@@ -993,6 +993,41 @@ describe('Catalog routes', () => {
     }
   });
 
+  it('accepts an extended point window only for Robinhood 1m history', async () => {
+    const originalGetExpandedSparkline = catalogMarketHistory.getExpandedSparkline;
+    let captured = null;
+    catalogMarketHistory.getExpandedSparkline = async (input) => {
+      captured = input;
+      return { ...input, count: 1, item: { chain: input.chain, address: input.address } };
+    };
+
+    try {
+      const accepted = await request(app)
+        .post('/api/catalog/sparklines/expanded')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          chain: 'robinhood', address: ROBINHOOD_ADDR,
+          points: 10_000, granularityMinutes: 1,
+        });
+      const rejectedOtherTimeframe = await request(app)
+        .post('/api/catalog/sparklines/expanded')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          chain: 'robinhood', address: ROBINHOOD_ADDR,
+          points: 10_000, granularityMinutes: 60,
+        });
+
+      assert.equal(accepted.status, 200);
+      assert.equal(captured.points, 10_000);
+      assert.equal(captured.granularityMinutes, 1);
+      assert.equal(captured.allAvailable, false);
+      assert.equal(rejectedOtherTimeframe.status, 400);
+      assert.match(rejectedOtherTimeframe.body.error, /points must be between 120 and 1000/);
+    } finally {
+      catalogMarketHistory.getExpandedSparkline = originalGetExpandedSparkline;
+    }
+  });
+
   it('rejects unsupported chart chains before dispatch', async () => {
     const res = await request(app)
       .post('/api/catalog/sparklines/expanded')
