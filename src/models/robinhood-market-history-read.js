@@ -75,18 +75,25 @@ const PRIMARY_ONE_MINUTE_HISTORY_SQL = `WITH requested AS MATERIALIZED (
     array_agg(DISTINCT source.protocol ORDER BY source.protocol) AS protocols
   FROM source_rows source
   GROUP BY source.token_address, source.bucket_ts
+), valuation_market AS MATERIALIZED (
+  SELECT DISTINCT ON (valuation.token_address)
+    valuation.token_address, valuation.valuation_protocol,
+    valuation.valuation_market_key
+  FROM robinhood_market_buckets_agg valuation
+  INNER JOIN requested ON requested.token_address = valuation.token_address
+  WHERE valuation.chain = 'robinhood'
+    AND valuation.granularity_minutes = 5
+    AND valuation.bucket_ts >= GREATEST($2::timestamptz, $4::timestamptz)
+    AND valuation.bucket_ts < $3::timestamptz
+    AND valuation.valuation_market_key IS NOT NULL
+  ORDER BY valuation.token_address, valuation.bucket_ts DESC
 ), valuation_rows AS MATERIALIZED (
   SELECT source.*
   FROM source_rows source
-  INNER JOIN robinhood_market_buckets_agg valuation
-    ON valuation.chain = 'robinhood'
-   AND valuation.token_address = source.token_address
-   AND valuation.granularity_minutes = 5
-   AND valuation.bucket_ts = date_bin(
-     INTERVAL '5 minutes', source.bucket_ts, TIMESTAMPTZ '1970-01-01')
+  INNER JOIN valuation_market valuation
+    ON valuation.token_address = source.token_address
    AND valuation.valuation_protocol = source.protocol
    AND valuation.valuation_market_key = source.market_key
-  WHERE valuation.valuation_market_key IS NOT NULL
 ), valuation_ohlc AS (
   SELECT valuation.token_address, valuation.bucket_ts,
     (array_agg(valuation.open_fdv_usd ORDER BY valuation.first_block_number,

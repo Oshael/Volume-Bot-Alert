@@ -57,7 +57,11 @@ describe('Robinhood native market history reader', () => {
     assert.doesNotMatch(__private.AGGREGATE_HISTORY_SQL, /GROUP BY/);
   });
 
-  it('uses 5m valuation provenance for 1m OHLC and keeps token-wide activity', () => {
+  it('fixes 1m OHLC to the latest 5m valuation market and keeps token-wide activity', () => {
+    assert.match(__private.PRIMARY_ONE_MINUTE_HISTORY_SQL,
+      /SELECT DISTINCT ON \(valuation\.token_address\)/);
+    assert.match(__private.PRIMARY_ONE_MINUTE_HISTORY_SQL,
+      /ORDER BY valuation\.token_address, valuation\.bucket_ts DESC/);
     assert.match(__private.PRIMARY_ONE_MINUTE_HISTORY_SQL,
       /valuation\.valuation_market_key = source\.market_key/);
     assert.match(__private.PRIMARY_ONE_MINUTE_HISTORY_SQL,
@@ -66,6 +70,8 @@ describe('Robinhood native market history reader', () => {
       /SUM\(source\.volume_usd\)/);
     assert.match(__private.PRIMARY_ONE_MINUTE_HISTORY_SQL,
       /COUNT\(DISTINCT \(source\.protocol, source\.market_key\)\)/);
+    assert.doesNotMatch(__private.PRIMARY_ONE_MINUTE_HISTORY_SQL,
+      /valuation\.bucket_ts = date_bin/);
     assert.doesNotMatch(__private.PRIMARY_ONE_MINUTE_HISTORY_SQL,
       /MAX\(source\.high_fdv_usd\)/);
   });
