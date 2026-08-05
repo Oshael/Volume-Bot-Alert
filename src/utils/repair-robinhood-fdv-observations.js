@@ -1,3 +1,4 @@
+const fs = require('node:fs');
 const db = require('../models/db');
 const {
   MAX_FINITE_HUMAN_SUPPLY,
@@ -25,6 +26,7 @@ const MAX_FINITE_HUMAN_SUPPLY_TEXT = MAX_FINITE_HUMAN_SUPPLY.toString();
 
 const PRICE_PLACES = 80;
 const USD_PLACES = 12;
+const Q192 = 1n << 192n;
 
 // Pure recompute of one transposed observation. Returns the corrected fields, or
 // { skip: reason } when the swap does not resolve into a valid, sane valuation.
@@ -219,6 +221,204 @@ const V4_TRANSPOSED_PASS = {
 const repairTransposed = (database, options) => runTransposedPass(database, options, V2_V3_TRANSPOSED_PASS);
 const repairV4Transposed = (database, options) => runTransposedPass(database, options, V4_TRANSPOSED_PASS);
 
+const SELECT_SPOT_ROWS = `
+  SELECT observation.chain, observation.transaction_hash, observation.log_index,
+         observation.block_number, observation.protocol, observation.token_address,
+         observation.quote_address, observation.token_decimals, observation.quote_decimals,
+         observation.token_total_supply_raw, observation.quote_usd_price,
+         observation.price_quote, observation.price_usd, observation.fdv_usd,
+         COALESCE(staging.data, capture.data) AS log_data,
+         COALESCE(registry.metadata ->> 'quoteIndex', capture.evidence ->> 'quoteIndex')
+           AS quote_index,
+         CASE WHEN staging.data IS NOT NULL THEN 'backfill-staging'
+              WHEN capture.data IS NOT NULL THEN 'head-capture' END AS evidence_source
+    FROM robinhood_market_observations observation
+    LEFT JOIN robinhood_market_log_staging staging
+      ON staging.chain = observation.chain
+     AND staging.transaction_hash = observation.transaction_hash
+     AND staging.log_index = observation.log_index
+    LEFT JOIN robinhood_head_captures capture
+      ON capture.chain = observation.chain
+     AND capture.transaction_hash = observation.transaction_hash
+     AND capture.log_index = observation.log_index
+    LEFT JOIN robinhood_pool_registry registry
+      ON registry.chain = observation.chain
+     AND registry.protocol = observation.protocol
+     AND registry.market_key = observation.market_key
+   WHERE observation.chain = 'robinhood' AND observation.status = 'accepted'
+     AND observation.protocol IN ('uniswap-v3', 'uniswap-v4')
+     AND observation.block_number BETWEEN $1::bigint AND $2::bigint
+     AND (observation.block_number, observation.log_index, observation.transaction_hash)
+       > ($3::bigint, $4::bigint, $5::text)
+   ORDER BY observation.block_number, observation.log_index, observation.transaction_hash
+   LIMIT $6`;
+
+const UPDATE_SPOT_ROWS = `
+  UPDATE robinhood_market_observations observation SET
+    price_quote = item.price_quote::numeric,
+    price_usd = item.price_usd::numeric,
+    fdv_usd = item.fdv_usd::numeric
+  FROM jsonb_to_recordset($1::jsonb) AS item(
+    transaction_hash text, log_index bigint, price_quote text, price_usd text, fdv_usd text
+  )
+  WHERE observation.chain = 'robinhood'
+    AND observation.transaction_hash = item.transaction_hash
+    AND observation.log_index = item.log_index
+    AND observation.status = 'accepted'
+    AND observation.protocol IN ('uniswap-v3', 'uniswap-v4')
+    AND (observation.price_quote, observation.price_usd, observation.fdv_usd)
+      IS DISTINCT FROM (item.price_quote::numeric, item.price_usd::numeric, item.fdv_usd::numeric)`;
+
+function decimalText(value) {
+  return value == null ? null : String(value).replace(/\.0+$/, '');
+}
+
+function spotSqrtPrice(data, protocol) {
+  const words = protocol === 'uniswap-v3' ? 5 : 6;
+  const raw = String(data || '').toLowerCase();
+  if (!new RegExp(`^0x[0-9a-f]{${words * 64}}$`).test(raw)) {
+    throw new Error(`${protocol} swap data has an invalid ABI length`);
+  }
+  const sqrt = BigInt(`0x${raw.slice(2 + (2 * 64), 2 + (3 * 64))}`);
+  if (sqrt <= 0n || sqrt >= 1n << 160n) throw new Error('sqrtPriceX96 is outside uint160');
+  return sqrt;
+}
+
+function recomputeSpot(row) {
+  const tokenDecimals = Number(row.token_decimals);
+  const quoteDecimals = Number(row.quote_decimals);
+  if (!Number.isInteger(tokenDecimals) || !Number.isInteger(quoteDecimals)) {
+    return { skip: 'bad_decimals' };
+  }
+  if (row.log_data == null) return { skip: 'missing_raw_log' };
+  const quoteIndex = row.protocol === 'uniswap-v3'
+    ? (BigInt(row.quote_address) < BigInt(row.token_address) ? 0 : 1)
+    : (row.quote_index == null || row.quote_index === '' ? Number.NaN : Number(row.quote_index));
+  if (![0, 1].includes(quoteIndex)) return { skip: 'missing_quote_index' };
+
+  try {
+    const sqrt = spotSqrtPrice(row.log_data, row.protocol);
+    const squared = sqrt ** 2n;
+    const rawPrice = quoteIndex === 0 ? rational(Q192, squared) : rational(squared, Q192);
+    const priceQuote = multiply(
+      rawPrice,
+      rational(10n ** BigInt(tokenDecimals), 10n ** BigInt(quoteDecimals)),
+    );
+    const priceUsd = multiply(priceQuote, parseDecimal(row.quote_usd_price));
+    const supplyRaw = BigInt(row.token_total_supply_raw);
+    const supplyScale = 10n ** BigInt(tokenDecimals);
+    const fdvUsd = supplyRaw <= MAX_FINITE_HUMAN_SUPPLY * supplyScale
+      ? multiply(priceUsd, rational(supplyRaw, supplyScale))
+      : null;
+    const result = {
+      priceQuote: formatDecimal(priceQuote, PRICE_PLACES),
+      priceUsd: formatDecimal(priceUsd, PRICE_PLACES),
+      fdvUsd: fdvUsd ? formatDecimal(fdvUsd, USD_PLACES) : null,
+    };
+    if (result.priceQuote === '0' || result.priceUsd === '0') return { skip: 'price_below_precision' };
+    return result;
+  } catch (_) {
+    return { skip: 'invalid_evidence' };
+  }
+}
+
+function readSpotCheckpoint(options) {
+  const initial = {
+    fromBlock: options.fromBlock, toBlock: options.toBlock,
+    afterBlock: options.fromBlock, afterLogIndex: '-1', afterTransactionHash: '',
+  };
+  if (!options.checkpoint || !fs.existsSync(options.checkpoint)) return initial;
+  const stored = JSON.parse(fs.readFileSync(options.checkpoint, 'utf8'));
+  if (stored.fromBlock !== options.fromBlock || stored.toBlock !== options.toBlock) {
+    throw new Error('checkpoint bounds do not match --from-block/--to-block');
+  }
+  return stored;
+}
+
+function writeSpotCheckpoint(file, value) {
+  if (!file) return;
+  const temporary = `${file}.tmp`;
+  fs.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+  fs.renameSync(temporary, file);
+}
+
+function spotFieldsChanged(row, fixed) {
+  return decimalText(row.price_quote) !== decimalText(fixed.priceQuote)
+    || decimalText(row.price_usd) !== decimalText(fixed.priceUsd)
+    || decimalText(row.fdv_usd) !== decimalText(fixed.fdvUsd);
+}
+
+function collectSpotUpdates(rows, summary) {
+  const updates = [];
+  for (const row of rows) {
+    summary.scanned += 1;
+    const source = row.evidence_source || 'missing';
+    summary.sources[source] = (summary.sources[source] || 0) + 1;
+    const fixed = recomputeSpot(row);
+    if (fixed.skip) {
+      summary.skipped[fixed.skip] = (summary.skipped[fixed.skip] || 0) + 1;
+    } else if (!spotFieldsChanged(row, fixed)) {
+      summary.unchanged += 1;
+    } else {
+      updates.push({
+        transaction_hash: row.transaction_hash, log_index: row.log_index,
+        price_quote: fixed.priceQuote, price_usd: fixed.priceUsd, fdv_usd: fixed.fdvUsd,
+      });
+    }
+  }
+  return updates;
+}
+
+async function persistSpotUpdates(database, updates, summary, write) {
+  if (!write) {
+    summary.wouldRepair += updates.length;
+    return;
+  }
+  if (Object.keys(summary.skipped).length) {
+    throw new Error(`spot repair stopped on incomplete evidence: ${JSON.stringify(summary.skipped)}`);
+  }
+  if (!updates.length) return;
+  const updated = await database.query(UPDATE_SPOT_ROWS, [JSON.stringify(updates)]);
+  summary.repaired += updated.rowCount || 0;
+}
+
+function advanceSpotCursor(cursor, rows, summary, options, write) {
+  const last = rows[rows.length - 1];
+  Object.assign(cursor, {
+    afterBlock: String(last.block_number),
+    afterLogIndex: String(last.log_index),
+    afterTransactionHash: last.transaction_hash,
+  });
+  summary.batches += 1;
+  summary.nextCursor = { ...cursor };
+  if (write) writeSpotCheckpoint(options.checkpoint, cursor);
+}
+
+async function repairSpot(database, options) {
+  const write = options.mode === 'write';
+  const cursor = readSpotCheckpoint(options);
+  const summary = {
+    scanned: 0, repaired: 0, wouldRepair: 0, unchanged: 0,
+    batches: 0, sources: {}, skipped: {}, nextCursor: null, complete: false,
+  };
+  for (;;) {
+    const result = await database.query(SELECT_SPOT_ROWS, [
+      options.fromBlock, options.toBlock, cursor.afterBlock,
+      cursor.afterLogIndex, cursor.afterTransactionHash, options.batchSize,
+    ]);
+    if (!result.rows.length) {
+      summary.complete = true;
+      summary.nextCursor = null;
+      break;
+    }
+    const updates = collectSpotUpdates(result.rows, summary);
+    await persistSpotUpdates(database, updates, summary, write);
+    advanceSpotCursor(cursor, result.rows, summary, options, write);
+    if (options.maxBatches && summary.batches >= options.maxBatches) break;
+  }
+  return summary;
+}
+
 async function repairUncapped(database, { mode }) {
   const counted = await database.query(COUNT_UNCAPPED, [MAX_FINITE_HUMAN_SUPPLY_TEXT]);
   const summary = { candidates: counted.rows[0].n, cleared: 0 };
@@ -229,22 +429,49 @@ async function repairUncapped(database, { mode }) {
   return summary;
 }
 
-function parseArgs(argv = process.argv.slice(2)) {
+function parseNamedArgs(argv) {
   const args = {};
   for (let i = 0; i < argv.length; i += 1) {
     if (!argv[i].startsWith('--')) continue;
     const next = argv[i + 1];
     args[argv[i].slice(2)] = !next || next.startsWith('--') ? true : (i += 1, next);
   }
+  return args;
+}
+
+function parseBaseOptions(args) {
   const mode = String(args.mode || 'dry-run').toLowerCase();
   if (!['dry-run', 'write'].includes(mode)) throw new Error('mode must be dry-run or write');
   const batchSize = Number.parseInt(args['batch-size'] || '500', 10);
   if (!Number.isInteger(batchSize) || batchSize <= 0) throw new Error('batch-size must be a positive integer');
   const target = String(args.target || 'all').toLowerCase();
-  if (!['all', 'v4', 'supply'].includes(target)) {
-    throw new Error('target must be all, v4 or supply');
+  if (!['all', 'v4', 'supply', 'spot'].includes(target)) {
+    throw new Error('target must be all, v4, supply or spot');
   }
   return { mode, batchSize, target };
+}
+
+function parseSpotOptions(args, mode) {
+  const fromBlock = String(args['from-block'] ?? '0');
+  const toBlock = String(args['to-block'] ?? '');
+  if (!/^\d+$/.test(fromBlock) || !/^\d+$/.test(toBlock) || BigInt(toBlock) < BigInt(fromBlock)) {
+    throw new Error('spot target requires valid --from-block and --to-block bounds');
+  }
+  const checkpoint = args.checkpoint == null ? null : String(args.checkpoint);
+  if (mode === 'write' && !checkpoint) throw new Error('spot write requires --checkpoint');
+  const maxBatches = Number.parseInt(args['max-batches'] ?? (mode === 'dry-run' ? '1' : '0'), 10);
+  if (!Number.isInteger(maxBatches) || maxBatches < 0) {
+    throw new Error('max-batches must be a non-negative integer');
+  }
+  return { fromBlock, toBlock, checkpoint, maxBatches };
+}
+
+function parseArgs(argv = process.argv.slice(2)) {
+  const args = parseNamedArgs(argv);
+  const options = parseBaseOptions(args);
+  return options.target === 'spot'
+    ? { ...options, ...parseSpotOptions(args, options.mode) }
+    : options;
 }
 
 async function runRepair(options, deps = {}) {
@@ -256,6 +483,9 @@ async function runRepair(options, deps = {}) {
   }
   if (options.target === 'supply') {
     return { mode: options.mode, target: 'supply', supply: await repairUncapped(database, options) };
+  }
+  if (options.target === 'spot') {
+    return { mode: options.mode, target: 'spot', spot: await repairSpot(database, options) };
   }
   const transposed = await repairTransposed(database, options);
   const uncapped = await repairUncapped(database, options);
@@ -279,6 +509,10 @@ if (require.main === module) void run();
 module.exports = {
   run,
   runRepair,
+  recomputeSpot,
   recomputeTransposed,
-  __private: { parseArgs, repairTransposed, repairV4Transposed, repairUncapped },
+  __private: {
+    parseArgs, repairSpot, repairTransposed, repairV4Transposed, repairUncapped,
+    spotSqrtPrice,
+  },
 };

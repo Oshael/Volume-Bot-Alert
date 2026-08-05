@@ -748,6 +748,12 @@ preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.
 V2 mantém o preço médio executado enquanto não houver spot de reservas no contrato
 de evidência.
 
+O histórico anterior a essa correção é reparado in-place com
+`repair-robinhood-fdv-observations.js --target spot`: o utilitário lê o log bruto
+durável do staging (com fallback para head captures), recalcula apenas preço/FDV,
+exige janela fixa e checkpoint no modo write e falha fechado se faltar evidência.
+Buckets devem ser reconstruídos somente depois desse reparo terminar.
+
 A liquidez V3 usa os saldos reais de token e quote mantidos pelo contrato da
 pool, valorados ao preço spot do mesmo snapshot. V4 captura os deltas assinados
 de liquidez de forma atômica com o processed log, mas continua fail-closed até o

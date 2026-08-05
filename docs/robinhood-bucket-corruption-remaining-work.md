@@ -42,6 +42,23 @@ fixes committed; historical cleanup still pending.
    # verify candidates ≈ 423, sample.after.priceUsd sane (~0.07), volume real; then:
    node src/utils/repair-robinhood-fdv-observations.js --target v4 --mode write
    ```
+2b. **Revalue historical V3/V4 observations at post-swap spot.** Fixes history
+   written before `2a09af1a`, when concentrated-liquidity swaps used average execution
+   price instead of `sqrtPriceX96`. The repair reads raw logs from durable backfill
+   staging, falls back to retained head captures, preserves amounts/side/volume and
+   updates only `price_quote`, `price_usd` and `fdv_usd`. Write mode is resumable and
+   aborts before advancing its checkpoint if any source evidence is missing:
+   ```bash
+   node src/utils/repair-robinhood-fdv-observations.js --target spot --mode dry-run \
+     --from-block <MIN_BLOCK> --to-block <FIXED_CUTOFF_BLOCK>
+
+   node src/utils/repair-robinhood-fdv-observations.js --target spot --mode write \
+     --from-block <MIN_BLOCK> --to-block <FIXED_CUTOFF_BLOCK> --batch-size 1000 \
+     --checkpoint /opt/trendscope/checkpoints/robinhood-spot-repair.json
+   ```
+   A completed run reports `complete=true` and `nextCursor=null`. Do not start the
+   bucket rebuild until then. Historical V3 liquidity is intentionally unchanged:
+   its point-in-time token balances are not present in the observation/raw swap log.
 3. **Rebuild the buckets (chunked).** THE step that makes the charts look fixed —
    nothing before this touches a bucket. Rebuilds per-pool bucket data from the now-clean
    observations; the read-time pool merge is fine once the per-pool buckets are correct

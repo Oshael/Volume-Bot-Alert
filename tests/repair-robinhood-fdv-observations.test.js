@@ -3,11 +3,13 @@ const { describe, it } = require('node:test');
 
 const {
   runRepair,
+  recomputeSpot,
   recomputeTransposed,
-  __private: { parseArgs, repairTransposed, repairUncapped, repairV4Transposed },
+  __private: { parseArgs, repairSpot, repairTransposed, repairUncapped, repairV4Transposed },
 } = require('../src/utils/repair-robinhood-fdv-observations');
 
 const ONE = 10n ** 18n;
+const Q96 = 1n << 96n;
 
 // Fake DB serving one candidate batch then draining, for dry-run pass coverage.
 function fakeDb(rows) {
@@ -37,6 +39,112 @@ function transposedRow(overrides = {}) {
     ...overrides,
   };
 }
+
+function concentratedSwapData(protocol, sqrtPriceX96 = Q96) {
+  const word = (value) => BigInt(value).toString(16).padStart(64, '0');
+  const values = protocol === 'uniswap-v3'
+    ? [1, 2, sqrtPriceX96, 3, 4]
+    : [1, 2, sqrtPriceX96, 3, 4, 5];
+  return `0x${values.map(word).join('')}`;
+}
+
+function spotRow(protocol, overrides = {}) {
+  return {
+    protocol,
+    token_address: '0x2222222222222222222222222222222222222222',
+    quote_address: '0x3333333333333333333333333333333333333333',
+    quote_index: protocol === 'uniswap-v4' ? '1' : null,
+    token_decimals: 18,
+    quote_decimals: 18,
+    token_total_supply_raw: (1_000_000n * ONE).toString(),
+    quote_usd_price: '2',
+    log_data: concentratedSwapData(protocol),
+    ...overrides,
+  };
+}
+
+describe('concentrated-liquidity spot repair', () => {
+  it('recomputes V3/V4 price and FDV from sqrtPriceX96 without changing volume fields', () => {
+    for (const protocol of ['uniswap-v3', 'uniswap-v4']) {
+      const fixed = recomputeSpot(spotRow(protocol));
+      assert.deepEqual(fixed, {
+        priceQuote: '1',
+        priceUsd: '2',
+        fdvUsd: '2000000',
+      });
+    }
+  });
+
+  it('inverts the V4 sqrt ratio when the frozen quote is currency0', () => {
+    const fixed = recomputeSpot(spotRow('uniswap-v4', {
+      quote_index: '0',
+      log_data: concentratedSwapData('uniswap-v4', 2n * Q96),
+    }));
+    assert.equal(fixed.priceQuote, '0.25');
+    assert.equal(fixed.priceUsd, '0.5');
+    assert.equal(fixed.fdvUsd, '500000');
+  });
+
+  it('fails closed when raw evidence or the frozen V4 quote slot is unavailable', () => {
+    assert.deepEqual(recomputeSpot(spotRow('uniswap-v3', { log_data: null })), {
+      skip: 'missing_raw_log',
+    });
+    assert.deepEqual(recomputeSpot(spotRow('uniswap-v4', { quote_index: null })), {
+      skip: 'missing_quote_index',
+    });
+  });
+
+  it('dry-runs one bounded batch and reports its durable evidence source', async () => {
+    let served = false;
+    const row = {
+      ...spotRow('uniswap-v3'),
+      chain: 'robinhood', transaction_hash: '0xabc', log_index: '7', block_number: '10',
+      price_quote: '0.5', price_usd: '1', fdv_usd: '1000000',
+      evidence_source: 'backfill-staging',
+    };
+    const database = {
+      async query() {
+        if (served) return { rows: [] };
+        served = true;
+        return { rows: [row] };
+      },
+    };
+    const summary = await repairSpot(database, {
+      mode: 'dry-run', batchSize: 500, fromBlock: '0', toBlock: '20',
+      checkpoint: null, maxBatches: 0,
+    });
+    assert.equal(summary.scanned, 1);
+    assert.equal(summary.wouldRepair, 1);
+    assert.equal(summary.sources['backfill-staging'], 1);
+    assert.equal(summary.complete, true);
+  });
+
+  it('aborts a write batch before updating when any evidence is incomplete', async () => {
+    const row = {
+      ...spotRow('uniswap-v4', { quote_index: null }),
+      transaction_hash: '0xabc', log_index: '7', block_number: '10',
+      evidence_source: 'head-capture',
+    };
+    const database = { query: async () => ({ rows: [row] }) };
+    await assert.rejects(() => repairSpot(database, {
+      mode: 'write', batchSize: 500, fromBlock: '0', toBlock: '20',
+      checkpoint: `/tmp/unused-spot-repair-checkpoint-${process.pid}.json`, maxBatches: 1,
+    }), /stopped on incomplete evidence/);
+  });
+
+  it('requires fixed bounds and a checkpoint before spot writes', () => {
+    assert.throws(() => parseArgs(['--target', 'spot']), /requires valid --from-block/);
+    assert.throws(() => parseArgs([
+      '--target', 'spot', '--mode', 'write', '--from-block', '1', '--to-block', '2',
+    ]), /requires --checkpoint/);
+    assert.deepEqual(parseArgs([
+      '--target', 'spot', '--from-block', '1', '--to-block', '2',
+    ]), {
+      mode: 'dry-run', batchSize: 500, target: 'spot', fromBlock: '1', toBlock: '2',
+      checkpoint: null, maxBatches: 1,
+    });
+  });
+});
 
 describe('recomputeTransposed', () => {
   it('swaps the amounts back and revalues price, volume, fdv and side', () => {
