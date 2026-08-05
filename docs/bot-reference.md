@@ -743,6 +743,11 @@ Stages confirmados:
 | 101 | faixas V4 materializadas e mantidas incrementalmente após o replay |
 | 102 | TVL V4 point-in-time pelas faixas de ticks e constraints correspondentes |
 
+Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
+preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.
+V2 mantém o preço médio executado enquanto não houver spot de reservas no contrato
+de evidência.
+
 A liquidez V3 usa os saldos reais de token e quote mantidos pelo contrato da
 pool, valorados ao preço spot do mesmo snapshot. V4 captura os deltas assinados
 de liquidez de forma atômica com o processed log, mas continua fail-closed até o

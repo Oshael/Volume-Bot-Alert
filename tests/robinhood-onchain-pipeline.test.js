@@ -84,7 +84,7 @@ describe('Robinhood onchain pipeline', () => {
     const oneMinute = snapshot.windows.find((window) => window.window === '1m');
 
     assert.equal(accepted.length, 1);
-    assert.match(accepted[0].priceUsd, /^0\.0000006757149384724817921743/);
+    assert.match(accepted[0].priceUsd, /^0\.0000001060868669421458282176/);
     assert.equal(accepted[0].liquidityUsd, null);
     assert.equal(accepted[0].liquidityStatus, 'requires_tick_liquidity_distribution');
     assert.equal(accepted[0].liquidityConfidence, 'none');

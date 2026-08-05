@@ -34,7 +34,8 @@ function data(values) {
   return `0x${values.map(word).join('')}`;
 }
 
-// Buy: 1 WETH in, 10 TOKEN out => priceQuote 0.1, priceUsd 0.1 * 2000 = 200.
+// Buy: 1 WETH in, 10 TOKEN out => volume $2,000. The V3/V4 fixtures freeze
+// sqrtPriceX96=Q96, so their post-swap spot is 1 WETH/TOKEN => priceUsd $2,000.
 function marketEvidence(protocol, extra = {}) {
   return {
     evidenceVersion: 1,
@@ -95,8 +96,8 @@ describe('head processing decoder — market observation from evidence (no RPC)'
     assert.equal(result.observation.side, 'buy');
     assert.equal(result.observation.tokenAmountRaw, (10n * ONE).toString());
     assert.equal(result.observation.quoteAmountRaw, ONE.toString());
-    assert.equal(result.observation.priceUsd, '200');
-    assert.equal(result.observation.fdvUsd, '200000');
+    assert.equal(result.observation.priceUsd, '2000');
+    assert.equal(result.observation.fdvUsd, '2000000');
     assert.equal(result.observation.volumeUsd, '2000');
     assert.equal(result.observation.quoteUsdStatus, 'observed');
     assert.equal(result.observation.quoteUsdSource, 'canonical-weth-usdg-3000');
@@ -112,8 +113,8 @@ describe('head processing decoder — market observation from evidence (no RPC)'
     assert.equal(result.observation.side, 'buy');
     assert.equal(result.observation.tokenAmountRaw, (10n * ONE).toString());
     assert.equal(result.observation.quoteAmountRaw, ONE.toString());
-    assert.equal(result.observation.priceUsd, '200');
-    assert.equal(result.observation.fdvUsd, '200000');
+    assert.equal(result.observation.priceUsd, '2000');
+    assert.equal(result.observation.fdvUsd, '2000000');
   });
 
   it('values V3 liquidity from the frozen pool balances', () => {
@@ -158,7 +159,7 @@ describe('head processing decoder — market observation from evidence (no RPC)'
       }),
     });
     const result = decodeCapture(row);
-    assert.equal(result.observation.priceUsd, '200');
+    assert.equal(result.observation.priceUsd, '2000');
     assert.equal(result.liquidityInputs.requiresRanges, true);
     const assessment = assessLiquidity(result.liquidityInputs, {
       v4Ranges: [{ tickLower: -60, tickUpper: 60, liquidityGross: ONE }],
@@ -192,7 +193,7 @@ describe('head processing decoder — market observation from evidence (no RPC)'
     assert.equal(result.observation.side, 'buy');
     assert.equal(result.observation.tokenAmountRaw, (10n * ONE).toString());
     assert.equal(result.observation.quoteAmountRaw, ONE.toString());
-    assert.equal(result.observation.priceUsd, '200');
+    assert.equal(result.observation.priceUsd, '2000');
   });
 });
 

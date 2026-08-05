@@ -70,6 +70,29 @@ describe('EVM market metrics', () => {
     assert.deepEqual(observation.exact.priceUsd, { numerator: '5', denominator: '2' });
   });
 
+  it('uses the post-swap spot price for V3/V4 valuation while preserving executed volume', () => {
+    for (const protocol of ['uniswap-v3', 'uniswap-v4']) {
+      const observation = buildMarketObservation({
+        swap: swap({
+          protocol,
+          priceQuotePerTokenRaw: {
+            numerator: '3',
+            denominator: (10n ** 12n).toString(),
+          },
+        }),
+        tokenMetadata: metadata(TOKEN, 18, 1_000_000_000n * 10n ** 18n),
+        quoteMetadata: metadata(ROBINHOOD_USDG, 6, 1n),
+        eligibility: ELIGIBLE,
+      });
+
+      assert.equal(observation.priceQuote, '3');
+      assert.equal(observation.priceUsd, '3');
+      assert.equal(observation.fdvUsd, '3000000000');
+      assert.equal(observation.volumeUsd, '5');
+      assert.deepEqual(observation.exact.priceQuote, { numerator: '3', denominator: '1' });
+    }
+  });
+
   it('converts WETH quotes through an observed canonical WETH/USD snapshot', () => {
     const observation = buildMarketObservation({
       swap: swap({

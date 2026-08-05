@@ -103,6 +103,25 @@ function resolveQuoteUsd(quoteAddress, options) {
   return null;
 }
 
+function resolvePriceQuote(swap, tokenScale, quoteScale, tokenRaw, quoteRaw) {
+  const spot = swap.protocol === 'uniswap-v3' || swap.protocol === 'uniswap-v4'
+    ? swap.priceQuotePerTokenRaw
+    : null;
+  if (spot == null) {
+    return rational(quoteRaw * tokenScale, tokenRaw * quoteScale);
+  }
+  const numerator = String(spot.numerator ?? '').trim();
+  const denominator = String(spot.denominator ?? '').trim();
+  if (!/^\d+$/.test(numerator) || !/^\d+$/.test(denominator)
+    || BigInt(numerator) <= 0n || BigInt(denominator) <= 0n) {
+    throw new Error('swap spot price must be a positive rational');
+  }
+  return multiply(
+    rational(BigInt(numerator), BigInt(denominator)),
+    rational(tokenScale, quoteScale),
+  );
+}
+
 function prepareObservation(input) {
   const swap = input.swap;
   if (!swap?.accepted) return { error: reject('swap_not_accepted', swap) };
@@ -146,7 +165,7 @@ function buildMarketObservation(input = {}) {
   } = prepared;
   const tokenAmount = rational(tokenRaw, tokenScale);
   const quoteAmount = rational(quoteRaw, quoteScale);
-  const priceQuote = rational(quoteRaw * tokenScale, tokenRaw * quoteScale);
+  const priceQuote = resolvePriceQuote(swap, tokenScale, quoteScale, tokenRaw, quoteRaw);
   const priceUsd = multiply(priceQuote, quoteUsd.price);
   const volumeUsd = multiply(quoteAmount, quoteUsd.price);
   const totalSupplyRaw = BigInt(tokenMetadata.totalSupplyRaw);
