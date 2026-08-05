@@ -237,7 +237,8 @@ function getRuntimeRole(runSocketHub, runBackgroundJobs) {
 
 const SHARED_WORKER_GROUPS = Object.freeze(['core', 'market', 'maintenance']);
 const ISOLATED_WORKER_GROUPS = Object.freeze([
-  'robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-backfill',
+  'robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-derived',
+  'robinhood-backfill',
 ]);
 const WORKER_GROUPS = Object.freeze([...SHARED_WORKER_GROUPS, ...ISOLATED_WORKER_GROUPS]);
 const WORKER_GROUP_SET = new Set(WORKER_GROUPS);
@@ -784,6 +785,17 @@ module.exports = {
     retentionMs: parseIntegerInRange(process.env.ROBINHOOD_PROCESSING_RETENTION_MS, 86_400_000, 60_000, 604_800_000),
     maxAttempts: parseIntegerInRange(process.env.ROBINHOOD_PROCESSING_MAX_ATTEMPTS, 5, 1, 50),
     pruneIntervalMs: parseIntegerInRange(process.env.ROBINHOOD_PROCESSING_PRUNE_INTERVAL_MS, 5 * 60 * 1000, 30_000, 3_600_000),
+    emitOutbox: parseBoolean(process.env.ROBINHOOD_DERIVED_OUTBOX_ENABLED, false),
+  },
+  robinhoodDerivedWorker: {
+    enabled: parseBoolean(process.env.ROBINHOOD_DERIVED_ENABLED, true),
+    intervalMs: parseIntegerInRange(process.env.ROBINHOOD_DERIVED_INTERVAL_MS, 250, 50, 60_000),
+    idleIntervalMs: parseIntegerInRange(process.env.ROBINHOOD_DERIVED_IDLE_INTERVAL_MS, 2000, 100, 300_000),
+    batchSize: parseIntegerInRange(process.env.ROBINHOOD_DERIVED_BATCH_SIZE, 200, 1, 2000),
+    leaseMs: parseIntegerInRange(process.env.ROBINHOOD_DERIVED_LEASE_MS, 60_000, 5000, 600_000),
+    maxAttempts: parseIntegerInRange(process.env.ROBINHOOD_DERIVED_MAX_ATTEMPTS, 5, 1, 50),
+    pruneIntervalMs: parseIntegerInRange(process.env.ROBINHOOD_DERIVED_PRUNE_INTERVAL_MS, 5 * 60 * 1000, 30_000, 3_600_000),
+    pruneOlderThanMs: parseIntegerInRange(process.env.ROBINHOOD_DERIVED_PRUNE_OLDER_THAN_MS, 86_400_000, 60_000, 604_800_000),
   },
   robinhoodMarketAggregateWorker: {
     enabled: parseBoolean(process.env.ROBINHOOD_MARKET_AGGREGATES_ENABLED, true),

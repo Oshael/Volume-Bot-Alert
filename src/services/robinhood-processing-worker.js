@@ -60,6 +60,7 @@ function normalizeOptions(options = {}) {
       maxAttempts: options.maxAttempts,
       baseBackoffMs: options.baseBackoffMs,
       maxBackoffMs: options.maxBackoffMs,
+      emitOutbox: options.emitOutbox,
     },
     pruneLimit: boundedInteger(options.pruneLimit, 5000, 100, 50_000),
   };

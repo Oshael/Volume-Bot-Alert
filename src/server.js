@@ -40,6 +40,7 @@ const catalogWorker = require('./services/catalog-worker');
 const catalogCleanupWorker = require('./services/catalog-cleanup-worker');
 const robinhoodRetentionWorker = require('./services/robinhood-retention-worker');
 const robinhoodProcessingWorker = require('./services/robinhood-processing-worker');
+const robinhoodDerivedWorker = require('./services/robinhood-derived-worker');
 const robinhoodBackfillDiscoveryScanner = require('./services/robinhood-backfill-discovery-scanner');
 const robinhoodBackfillMarketScanner = require('./services/robinhood-backfill-market-scanner');
 const robinhoodBackfillRuntime = require('./services/robinhood-backfill-runtime');
@@ -77,6 +78,9 @@ const gmgnDiscoveryWorker = require('./services/gmgn-discovery-worker');
 const gmgnClaimSignalWorker = require('./services/gmgn-claim-signal-worker');
 const backendAlertRealtime = require('./services/backend-alert-realtime');
 const marketBucketRealtime = require('./services/market-bucket-realtime');
+const {
+  createRobinhoodMarketBucketFanout,
+} = require('./services/robinhood-market-bucket-fanout');
 const userConfigSync = require('./services/user-config-sync');
 const telegramAlertRuntime = require('./services/telegram-alert-runtime');
 const {
@@ -91,6 +95,7 @@ const workerLease = require('./models/worker-lease');
 const ROBINHOOD_INGESTION_LEASE_KEY = 'robinhood-ingestion-worker';
 const ROBINHOOD_HEAD_CAPTURE_LEASE_KEY = 'robinhood-head-capture-worker';
 const ROBINHOOD_PROCESSING_LEASE_KEY = 'robinhood-processing-worker';
+const ROBINHOOD_DERIVED_LEASE_KEY = 'robinhood-derived-worker';
 const ROBINHOOD_WALLET_SWAP_LIVE_LEASE_KEY = 'robinhood-wallet-swap-live-worker';
 const ROBINHOOD_BACKFILL_DISCOVERY_LEASE_KEY = 'robinhood-backfill-discovery-scanner';
 const ROBINHOOD_BACKFILL_SCANNER_LEASE_KEY = 'robinhood-backfill-market-scanner';
@@ -459,6 +464,22 @@ function startRobinhoodProcessingWorkerGroup() {
   );
 }
 
+// The derived worker drains robinhood_derived_outbox and replays the shared
+// market:bucket fan-out via its default hub. Its socket relay (pg_notify)
+// re-lives the board without the monolith; the in-memory catalog/alert/aggregate
+// sinks stay unstarted here so an overlap run never double-processes their side
+// effects — that co-start is the Corte 6 cutover, not this dormant activation.
+function startRobinhoodDerivedWorkerGroup() {
+  if (!hasWorkerGroup('robinhood-derived')) return;
+  startLockedWorker(
+    'robinhood-derived',
+    ROBINHOOD_DERIVED_LEASE_KEY,
+    'Robinhood derived worker',
+    () => robinhoodDerivedWorker.start(config.robinhoodDerivedWorker),
+    { metadataProvider: () => ({ telemetry: robinhoodDerivedWorker.getStatus() }) }
+  );
+}
+
 function startRobinhoodWalletSwapLiveRuntime() {
   if (!config.robinhoodWalletSwapLiveWorker.enabled) return;
   startLockedWorker(
@@ -633,14 +654,13 @@ function startWorkerSet() {
                 ...context, ...getAlertRollout(), signals,
               })
             : null,
-          emitMarketBucketUpdate: (payload) => {
-            const socketEmitted = socketHub.emitMarketBucketUpdate(payload);
-            const relayQueued = socketEmitted || marketBucketRealtime.enqueue(payload);
-            const catalogQueued = robinhoodLiveCatalogWorker.enqueue(payload);
-            const alertQueued = robinhoodRealtimeAlertWorker.enqueue(payload);
-            const aggregateQueued = robinhoodMarketAggregateWorker.enqueue(payload);
-            return socketEmitted || relayQueued || catalogQueued || alertQueued || aggregateQueued;
-          },
+          emitMarketBucketUpdate: createRobinhoodMarketBucketFanout({
+            socketHub,
+            marketBucketRealtime,
+            liveCatalogWorker: robinhoodLiveCatalogWorker,
+            realtimeAlertWorker: robinhoodRealtimeAlertWorker,
+            marketAggregateWorker: robinhoodMarketAggregateWorker,
+          }),
           onFatal: (error) => workerLeaseManager.halt(ROBINHOOD_INGESTION_LEASE_KEY, error),
         });
       }, {
@@ -713,6 +733,7 @@ function startWorkerSet() {
   }
   startRobinhoodHeadCaptureWorkerGroup();
   startRobinhoodProcessingWorkerGroup();
+  startRobinhoodDerivedWorkerGroup();
 }
 
 function bootstrapWebRuntime(httpServer) {
@@ -853,6 +874,7 @@ async function shutdownGracefully(signal = 'SIGTERM') {
       robinhoodLiveCatalogWorker.stop(),
       robinhoodRealtimeAlertWorker.stop(),
       robinhoodMarketAggregateWorker.stop(),
+      robinhoodDerivedWorker.stop(),
       telegramAlertRuntime.stop(),
       backendAlertRealtime.stop(),
       marketBucketRealtime.stop(),

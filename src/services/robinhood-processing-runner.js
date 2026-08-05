@@ -44,7 +44,16 @@ function createRobinhoodProcessingRunner(deps = {}) {
   const maxAttempts = Number(options.maxAttempts) || DEFAULT_MAX_ATTEMPTS;
   const baseBackoffMs = Number(options.baseBackoffMs) || DEFAULT_BASE_BACKOFF_MS;
   const maxBackoffMs = Number(options.maxBackoffMs) || DEFAULT_MAX_BACKOFF_MS;
+  const emitOutbox = options.emitOutbox === true;
   const logger = deps.logger || console;
+
+  // Coverage window end for the derived emit (Corte 5, option A): the processing
+  // frontier just below the queue's pending block. Returns null until there is a
+  // fully-processed observation to anchor coverage on.
+  async function resolveDerivedEmit() {
+    const watermark = await repository.getProcessingWatermark('market');
+    return persistence.resolveMarketFrontier(watermark.pendingBlock);
+  }
 
   async function valueObservationEntry(decoded) {
     const observation = decoded.observation;
@@ -106,7 +115,10 @@ function createRobinhoodProcessingRunner(deps = {}) {
     let retry = [];
     if (buckets.persist.length) {
       try {
-        await persistence.commitHeadProcessingBatch({ entries: buckets.persist.map((item) => item.entry) });
+        const emit = emitOutbox ? await resolveDerivedEmit() : null;
+        await persistence.commitHeadProcessingBatch({
+          entries: buckets.persist.map((item) => item.entry), emit,
+        });
         processed = buckets.persist.map((item) => identityOf(item.row));
       } catch (error) {
         logger.error?.('[robinhood-processing] batch commit failed, retrying claims', error?.message || error);

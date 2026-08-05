@@ -1176,3 +1176,110 @@ describe('Robinhood supply provenance normalization', () => {
     );
   });
 });
+
+describe('commitHeadProcessingBatch derived outbox', () => {
+  const WINDOW_END = new Date('2026-07-13T00:00:00.000Z');
+  const findCall = (calls, re) => calls.find((entry) => re.test(String(entry.sql)));
+
+  it('appends a built market:bucket payload per live bucket in the same transaction', async () => {
+    const fake = createFakeDatabase({ liveBuckets: [liveBucketRow()] });
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+
+    const result = await repository.commitHeadProcessingBatch({
+      entries: [marketEntry()],
+      emit: { nextBlock: '8069001', checkpointTimestamp: WINDOW_END },
+    });
+
+    const outboxCall = findCall(fake.calls, /INSERT INTO robinhood_derived_outbox/);
+    assert.ok(outboxCall, 'derived outbox insert must run');
+    const rows = JSON.parse(outboxCall.params[0]);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].protocol, 'uniswap-v3');
+    assert.equal(rows[0].marketKey, `robinhood:uniswap-v3:${POOL}`);
+    assert.equal(rows[0].tokenAddress, TOKEN);
+    // The stored payload is the fan-out event itself — the consumer never re-values.
+    assert.equal(rows[0].payload.type, 'market:bucket');
+    assert.equal(rows[0].payload.address, TOKEN);
+    assert.equal(result.insertedOutboxRows, 1);
+  });
+
+  it('threads the coverage window end into the observation write', async () => {
+    const fake = createFakeDatabase({ liveBuckets: [liveBucketRow()] });
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+
+    await repository.commitHeadProcessingBatch({
+      entries: [marketEntry()],
+      emit: { nextBlock: '8069001', checkpointTimestamp: WINDOW_END },
+    });
+
+    const obsCall = findCall(fake.calls, /INSERT INTO robinhood_market_observations/);
+    // Without a real window end the 5m volume/coverage would be 'unavailable';
+    // the derived path must value it against the processing frontier.
+    assert.equal(obsCall.params[1] instanceof Date, true);
+    assert.equal(obsCall.params[1].toISOString(), WINDOW_END.toISOString());
+  });
+
+  it('preserves legacy behaviour (no outbox, null window) when no emit context is given', async () => {
+    const fake = createFakeDatabase({ liveBuckets: [liveBucketRow()] });
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+
+    const result = await repository.commitHeadProcessingBatch({ entries: [marketEntry()] });
+
+    assert.equal(findCall(fake.calls, /INSERT INTO robinhood_derived_outbox/), undefined);
+    const obsCall = findCall(fake.calls, /INSERT INTO robinhood_market_observations/);
+    assert.equal(obsCall.params[1], null);
+    assert.equal(result.insertedOutboxRows, 0);
+  });
+
+  it('notifies the derived worker in the same transaction after appending rows', async () => {
+    const fake = createFakeDatabase({ liveBuckets: [liveBucketRow()] });
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+
+    await repository.commitHeadProcessingBatch({
+      entries: [marketEntry()],
+      emit: { nextBlock: '8069001', checkpointTimestamp: WINDOW_END },
+    });
+
+    const notify = findCall(fake.calls, /pg_notify/);
+    assert.ok(notify, 'a NOTIFY must be issued');
+    assert.equal(notify.params[0], 'robinhood_derived_outbox');
+  });
+});
+
+describe('resolveMarketFrontier', () => {
+  const findCall = (calls, re) => calls.find((entry) => re.test(String(entry.sql)));
+
+  it('anchors coverage on the newest accepted observation below the pending block', async () => {
+    const fake = createFakeDatabase({
+      readRows: [{ block_number: '99', observed_at: new Date('2026-07-13T00:00:00.000Z') }],
+    });
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+
+    const frontier = await repository.resolveMarketFrontier('100');
+
+    assert.equal(frontier.nextBlock, '100');
+    assert.equal(frontier.checkpointTimestamp.toISOString(), '2026-07-13T00:00:00.000Z');
+    const call = findCall(fake.calls, /block_number < \$1/);
+    assert.equal(call.params[0], '100'); // bounded strictly below the pending block
+  });
+
+  it('returns no frontier when nothing is processed below the pending block', async () => {
+    const fake = createFakeDatabase({ readRows: [] });
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+
+    assert.equal(await repository.resolveMarketFrontier('100'), null);
+  });
+
+  it('spans the whole history when the queue is drained (null pending block)', async () => {
+    const fake = createFakeDatabase({
+      readRows: [{ block_number: '250', observed_at: new Date('2026-07-13T01:00:00.000Z') }],
+    });
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+
+    const frontier = await repository.resolveMarketFrontier(null);
+
+    assert.equal(frontier.nextBlock, '251'); // block + 1
+    const call = findCall(fake.calls, /block_number < \$1/);
+    assert.equal(call.params[0], '9223372036854775807'); // unbounded sentinel
+  });
+});

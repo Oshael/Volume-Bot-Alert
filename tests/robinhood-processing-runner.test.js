@@ -7,7 +7,8 @@ const v2 = require('../src/services/uniswap-v2-decoder');
 const v3 = require('../src/services/uniswap-v3-decoder');
 const v4 = require('../src/services/uniswap-v4-decoder');
 
-const TOKEN = `0x${'11'.repeat(20)}`;
+// TOKEN sorts below WETH, matching the frozen quoteIndex=1 evidence fixture.
+const TOKEN = `0x${'01'.repeat(20)}`;
 const POOL = `0x${'22'.repeat(20)}`;
 const POOL_ID = `0x${'33'.repeat(32)}`;
 const ONE = 10n ** 18n;
@@ -73,11 +74,12 @@ function v4Row(extra) {
 }
 
 function fakeRepo(rows) {
-  const calls = { reclaimed: 0, settle: null, claims: 0 };
+  const calls = { reclaimed: 0, settle: null, claims: 0, watermark: 0 };
   return {
     _calls: calls,
     reclaimExpiredLeases: async () => { calls.reclaimed += 1; return 0; },
     claimCaptures: async () => { calls.claims += 1; return calls.claims === 1 ? rows : []; },
+    getProcessingWatermark: async () => { calls.watermark += 1; return { pendingBlock: '100' }; },
     settleClaims: async (args) => {
       calls.settle = args;
       return { processed: args.processed.length, rejected: args.rejected.length, retried: args.retry.length, blocked: 0 };
@@ -86,13 +88,17 @@ function fakeRepo(rows) {
 }
 
 function fakePersistence({ ranges = null, failCommit = false } = {}) {
-  const calls = { commit: [], rangesFor: [] };
+  const calls = { commit: [], rangesFor: [], frontierFor: [] };
   return {
     _calls: calls,
     commitHeadProcessingBatch: async (input) => {
       if (failCommit) throw new Error('v4 materialization constraint');
       calls.commit.push(input);
       return { insertedLogs: input.entries.length, insertedObservations: 0, touchedBuckets: 0, insertedLiquidityDeltas: 0 };
+    },
+    resolveMarketFrontier: async (pendingBlock) => {
+      calls.frontierFor.push(pendingBlock);
+      return { nextBlock: pendingBlock, checkpointTimestamp: new Date('2026-07-13T00:00:00.000Z') };
     },
     listCurrentV4LiquidityRanges: async (poolId) => { calls.rangesFor.push(poolId); return ranges; },
   };
@@ -112,7 +118,7 @@ describe('robinhood processing runner', () => {
 
     assert.equal(persistence._calls.commit.length, 1);
     const observations = persistence._calls.commit[0].entries.map((entry) => entry.observation);
-    assert.deepEqual(observations.map((obs) => obs.priceUsd), ['200', '200']);
+    assert.deepEqual(observations.map((obs) => obs.priceUsd), ['200', '2000']);
     assert.deepEqual(persistence._calls.rangesFor, []); // V2/V3 never touch the ledger, let alone RPC
     assert.deepEqual([result.processed, result.rejected, result.retried], [2, 0, 0]);
   });
@@ -162,6 +168,24 @@ describe('robinhood processing runner', () => {
     assert.equal(result.reclaimed, 0);
     assert.equal(result.claimed, 0);
     assert.equal(persistence._calls.commit.length, 0);
+  });
+
+  it('resolves and passes the derived-emit frontier to the commit when outbox emission is on', async () => {
+    const persistence = fakePersistence();
+    await runner([v3Row()], persistence, { emitOutbox: true }).runOnce();
+
+    assert.deepEqual(persistence._calls.frontierFor, ['100']); // the queue's pending block
+    const { emit } = persistence._calls.commit[0];
+    assert.equal(emit.nextBlock, '100');
+    assert.equal(emit.checkpointTimestamp.toISOString(), '2026-07-13T00:00:00.000Z');
+  });
+
+  it('never resolves or passes a frontier when outbox emission is off (default)', async () => {
+    const persistence = fakePersistence();
+    await runner([v3Row()], persistence).runOnce();
+
+    assert.deepEqual(persistence._calls.frontierFor, []);
+    assert.equal(persistence._calls.commit[0].emit ?? null, null);
   });
 
   it('grows the retry backoff exponentially with a ceiling', () => {

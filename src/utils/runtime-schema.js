@@ -2652,6 +2652,54 @@ const SCHEMA_GROUPS = [
       },
     ],
   },
+  {
+    key: 'stage104-robinhood-derived-outbox',
+    name: 'Stage 104 Robinhood derived live-emit outbox',
+    repair: 'node src/utils/db-init-stage104.js',
+    tables: [
+      {
+        table: 'robinhood_derived_outbox',
+        columns: [
+          'id', 'chain', 'protocol', 'market_key', 'token_address', 'bucket_ts',
+          'last_block_number', 'last_log_index', 'payload', 'status', 'lease_owner',
+          'lease_until', 'attempt_count', 'next_attempt_at', 'last_error',
+          'created_at', 'updated_at',
+        ],
+        constraints: [
+          {
+            name: 'robinhood_derived_outbox_pkey',
+            includes: ['PRIMARY KEY', 'id'],
+          },
+          {
+            name: 'robinhood_derived_outbox_protocol_check',
+            includes: ['CHECK', 'protocol', 'uniswap-v2', 'uniswap-v3', 'uniswap-v4'],
+          },
+          {
+            name: 'robinhood_derived_outbox_status_check',
+            includes: ['CHECK', 'status', 'pending', 'leased', 'blocked'],
+          },
+          {
+            name: 'robinhood_derived_outbox_lease_check',
+            includes: ['CHECK', 'status', 'leased', 'lease_owner', 'lease_until'],
+          },
+          {
+            name: 'robinhood_derived_outbox_payload_check',
+            includes: ['CHECK', 'payload', 'object'],
+          },
+        ],
+        indexes: [
+          {
+            name: 'idx_robinhood_derived_outbox_claim',
+            includes: ['next_attempt_at', 'id', 'pending'],
+          },
+          {
+            name: 'idx_robinhood_derived_outbox_lease',
+            includes: ['lease_until', 'leased'],
+          },
+        ],
+      },
+    ],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
@@ -2688,6 +2736,7 @@ const PROFILE_GROUP_KEYS = {
     'stage101-robinhood-v4-liquidity-ranges',
     'stage102-robinhood-v4-tick-range-tvl',
     'stage103-robinhood-head-capture-queue',
+    'stage104-robinhood-derived-outbox',
   ],
   runtime: SCHEMA_GROUPS.map((group) => group.key),
 };

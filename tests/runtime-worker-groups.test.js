@@ -37,7 +37,7 @@ describe('runtime worker groups config', () => {
     withEnv({ BACKGROUND_WORKER_GROUPS: '' }, (config) => {
       assert.deepEqual(config.runtime.workerGroupsRequested, ['all']);
       assert.deepEqual(config.runtime.workerGroupsActive, ['core', 'market', 'maintenance']);
-      assert.deepEqual(config.runtime.workerGroupsSkipped, ['robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-backfill']);
+      assert.deepEqual(config.runtime.workerGroupsSkipped, ['robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-derived', 'robinhood-backfill']);
     });
   });
 
@@ -47,7 +47,7 @@ describe('runtime worker groups config', () => {
       assert.deepEqual(config.runtime.workerGroupsActive, ['core', 'market']);
       assert.deepEqual(
         config.runtime.workerGroupsSkipped,
-        ['maintenance', 'robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-backfill']
+        ['maintenance', 'robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-derived', 'robinhood-backfill']
       );
     });
   });
@@ -56,7 +56,7 @@ describe('runtime worker groups config', () => {
     withEnv({ BACKGROUND_WORKER_GROUPS: 'maintenance,all' }, (config) => {
       assert.deepEqual(config.runtime.workerGroupsRequested, ['maintenance', 'all']);
       assert.deepEqual(config.runtime.workerGroupsActive, ['core', 'market', 'maintenance']);
-      assert.deepEqual(config.runtime.workerGroupsSkipped, ['robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-backfill']);
+      assert.deepEqual(config.runtime.workerGroupsSkipped, ['robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-derived', 'robinhood-backfill']);
     });
   });
 
@@ -84,7 +84,7 @@ describe('runtime worker groups config', () => {
       assert.deepEqual(config.runtime.workerGroupsActive, ['robinhood']);
       assert.deepEqual(
         config.runtime.workerGroupsSkipped,
-        ['core', 'market', 'maintenance', 'robinhood-head', 'robinhood-processing', 'robinhood-backfill']
+        ['core', 'market', 'maintenance', 'robinhood-head', 'robinhood-processing', 'robinhood-derived', 'robinhood-backfill']
       );
     });
   });
@@ -95,7 +95,7 @@ describe('runtime worker groups config', () => {
       assert.deepEqual(config.runtime.workerGroupsActive, ['robinhood-backfill']);
       assert.deepEqual(
         config.runtime.workerGroupsSkipped,
-        ['core', 'market', 'maintenance', 'robinhood', 'robinhood-head', 'robinhood-processing']
+        ['core', 'market', 'maintenance', 'robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-derived']
       );
     });
   });
@@ -106,7 +106,7 @@ describe('runtime worker groups config', () => {
       assert.deepEqual(config.runtime.workerGroupsActive, ['robinhood-head']);
       assert.deepEqual(
         config.runtime.workerGroupsSkipped,
-        ['core', 'market', 'maintenance', 'robinhood', 'robinhood-processing', 'robinhood-backfill']
+        ['core', 'market', 'maintenance', 'robinhood', 'robinhood-processing', 'robinhood-derived', 'robinhood-backfill']
       );
     });
   });
@@ -117,7 +117,18 @@ describe('runtime worker groups config', () => {
       assert.deepEqual(config.runtime.workerGroupsActive, ['robinhood-processing']);
       assert.deepEqual(
         config.runtime.workerGroupsSkipped,
-        ['core', 'market', 'maintenance', 'robinhood', 'robinhood-head', 'robinhood-backfill']
+        ['core', 'market', 'maintenance', 'robinhood', 'robinhood-head', 'robinhood-derived', 'robinhood-backfill']
+      );
+    });
+  });
+
+  it('allows the Robinhood derived only as an isolated worker group', () => {
+    withEnv({ BACKGROUND_WORKER_GROUPS: 'robinhood-derived' }, (config) => {
+      assert.deepEqual(config.runtime.workerGroupsRequested, ['robinhood-derived']);
+      assert.deepEqual(config.runtime.workerGroupsActive, ['robinhood-derived']);
+      assert.deepEqual(
+        config.runtime.workerGroupsSkipped,
+        ['core', 'market', 'maintenance', 'robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-backfill']
       );
     });
   });

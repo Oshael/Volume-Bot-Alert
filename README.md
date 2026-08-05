@@ -46,8 +46,8 @@ The `robinhood-head` group runs a separate process (systemd
 `trendscope-worker@robinhood-head.service`) that captures live evidence during the
 migration away from the monolithic `robinhood` path. It runs in shadow alongside
 `robinhood` with an independent cursor; it is enabled only by deploying its own unit
-with `ROBINHOOD_INGESTION_ENABLED=true` and a fresh `ROBINHOOD_START_BLOCK`. No current
-`.env` selects it, so production is unaffected until that unit exists. Run it directly with:
+with `ROBINHOOD_INGESTION_ENABLED=true` and a fresh `ROBINHOOD_START_BLOCK`. The VPS2
+unit is active in shadow and was measured at zero capture lag on 2026-08-05. Run it directly with:
 
 ```bash
 RUN_SOCKET_HUB=false RUN_BACKGROUND_JOBS=true \
@@ -60,7 +60,8 @@ The `robinhood-processing` group runs a separate process (systemd
 consumes the capture queue independently of the head. It reprocesses purely from the frozen
 evidence — no historical `eth_call` — so a failure in valuation only retries its own claim and
 can never stall the capture cursor. Enabled only by deploying its own unit; no current `.env`
-selects it. Run it directly with:
+selects it. The VPS2 shadow unit was paused on 2026-08-05 pending an online repair of its
+market-claim index; the head remains active and preserves the queue. Run it directly with:
 
 ```bash
 RUN_SOCKET_HUB=false RUN_BACKGROUND_JOBS=true \

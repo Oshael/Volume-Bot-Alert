@@ -333,10 +333,12 @@ Grupos existentes:
 | `robinhood` | ingestão live monolítica: captura + valuation + projeção + staging + agregação + alertas |
 | `robinhood-head` | captura isolada do head: só grava evidência durável na fila e avança o cursor de captura |
 | `robinhood-processing` | consumidor isolado: reclama capturas por lease, decodifica a evidência congelada sem RPC, calcula preço/FDV/liquidez, persiste observações/buckets e poda a fila |
+| `robinhood-derived` | consumidor isolado: drena a outbox de emit ao vivo e replica o fan-out `market:bucket` (socket/relay) sem o monólito |
 | `robinhood-backfill` | discovery, scan, enrichment, finalizer e aggregation do replay |
 
-`robinhood`, `robinhood-head`, `robinhood-processing` e `robinhood-backfill` são grupos
-isolados. O config rejeita combinar um grupo isolado com grupos compartilhados ou entre si.
+`robinhood`, `robinhood-head`, `robinhood-processing`, `robinhood-derived` e
+`robinhood-backfill` são grupos isolados. O config rejeita combinar um grupo isolado com
+grupos compartilhados ou entre si.
 
 O grupo `robinhood-head` roda um processo separado (systemd
 `trendscope-worker@robinhood-head.service`) que instancia o runner de ingestão com o
@@ -348,8 +350,8 @@ contrato de evidência. Sobe apenas por deploy de uma unit própria com
 `BACKGROUND_WORKER_GROUPS=robinhood-head`, `ROBINHOOD_INGESTION_ENABLED=true` e um
 `ROBINHOOD_START_BLOCK` fresco; roda em shadow ao lado do `robinhood` com cursor
 independente, sem substituir o monólito (a remoção do monólito é etapa posterior do
-plano). Nenhum `.env` atual seleciona esse grupo, então produção não muda até a unit
-existir. Lease: `robinhood-head-capture-worker`.
+plano). A unit existe na VPS2 e, no diagnóstico de `2026-08-05`, mantinha discovery e
+market no head com lag zero. Lease: `robinhood-head-capture-worker`.
 
 O grupo `robinhood-processing` roda um processo separado (systemd
 `trendscope-worker@robinhood-processing.service`, lease `robinhood-processing-worker`,
@@ -360,7 +362,25 @@ de pool sintetizado da evidência e lê metadata/quote/saldos da própria evidê
 (`commitHeadProcessingBatch`) que **não** commita cursor nem emite socket/alert (derivados são
 etapa posterior); erro isola a claim (retry com backoff ou dead-letter `blocked`) sem tocar o
 cursor de captura. Poda a fila 1 dia após o terminal (`retention_eligible_at`). Watermark de
-processamento independente do cursor de captura. Nenhum `.env` atual seleciona o grupo.
+processamento independente do cursor de captura. A unit foi implantada em shadow, mas
+ficou pausada em `2026-08-05` até a correção online do índice de claim market: o plano
+vigente lia milhões de entradas do índice de reorg para reclamar lotes de 200.
+
+O grupo `robinhood-derived` (Corte 5, systemd `trendscope-worker@robinhood-derived.service`,
+lease `robinhood-derived-worker`, `start:worker:robinhood-derived` na porta 3008) é o consumidor
+que devolve o **board ao vivo** sem o monólito. O `commitHeadProcessingBatch` do processing, quando
+`ROBINHOOD_DERIVED_OUTBOX_ENABLED=true` (default off), deixa de descartar os `liveBuckets`: valoriza
+o volume/coverage 5m contra a **fronteira estrita de processamento** (timestamp do bloco logo abaixo
+do `pendingBlock` da fila — `resolveMarketFrontier`), grava um payload `market:bucket` pronto por
+bucket na `robinhood_derived_outbox` **na mesma transação** e dispara `pg_notify`. O worker derived
+reclama a outbox por lease (`FOR UPDATE SKIP LOCKED`), acorda por `LISTEN robinhood_derived_outbox`
+(cai no poll se a conexão cair, sem perder linha) e replica o **mesmo hub de fan-out** do monólito
+(`createRobinhoodMarketBucketFanout`): o relay `market_bucket_updated` publica pro web tier via
+`pg_notify`, deixando o board tickando. Entrega apaga a linha (self-pruning, at-least-once); falha
+isola a linha (retry/backoff, dead-letter `blocked`). Os sinks in-memory (catalog/alert/aggregate)
+**não** sobem nesse processo ainda — evita double-processing no overlap; o co-start e o cutover do
+monólito são a etapa seguinte (Corte 6/7). Nenhum `.env` atual seleciona o grupo nem liga a flag.
+Contrato: `docs/robinhood-derived-outbox-contract.md`.
 
 A projeção Robinhood mantém um reparo persistente de metadata separado da página
 de mercado ativa. Identidades `robinhood-onchain` com imagem ou launchpad pendente
@@ -1230,8 +1250,10 @@ Referências úteis:
   `captureMode` no pipeline e o grupo `robinhood-head` (captura); e o consumidor
   `robinhood-processing` (Corte 4): decoder-a-partir-de-evidência sem RPC, fila por
   lease (claim/settle/reclaim/poda + watermark), `commitHeadProcessingBatch` e o
-  runner/worker isolados no `server.js`. Head validado em shadow; falta o deploy da
-  unit de processing e os cortes de derived (5)/cutover (6)/remoção do monólito (7);
+  runner/worker isolados no `server.js`. Head validado e ativo em shadow; a unit de
+  processing foi implantada e pausada até o reparo do índice de claim. O Corte 5
+  implementa outbox/derived atrás de flags; ainda faltam seu deploy, o cutover (6) e a
+  remoção do monólito (7);
 
 Os planos locais de retenção, wallet tracking, SHYFT/Yellowstone, Telegram,
 configuração por chain e alertas derivados do X ainda precisam de commits

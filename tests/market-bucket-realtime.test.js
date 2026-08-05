@@ -50,6 +50,25 @@ test('requeues a batch after a transient publish failure', async () => {
   assert.equal(delays.at(-1), 250);
 });
 
+test('direct publish resolves only after pg_notify succeeds and propagates failures', async () => {
+  const calls = [];
+  const relay = createMarketBucketRealtime({
+    database: { query: async (...args) => calls.push(args) },
+    logger: { error: () => {}, log: () => {} },
+  });
+
+  assert.equal(await relay.publish(marketEvent('1')), true);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0][1].slice(0, 1), [CHANNEL]);
+
+  const failing = createMarketBucketRealtime({
+    database: { query: async () => { throw new Error('offline'); } },
+    logger: { error: () => {}, log: () => {} },
+  });
+  await assert.rejects(failing.publish(marketEvent('2')), /offline/);
+  assert.equal(failing.getStatus().publishFailures, 1);
+});
+
 test('LISTEN forwards a valid notification to the local socket hub', async () => {
   const client = new EventEmitter();
   const queries = [];

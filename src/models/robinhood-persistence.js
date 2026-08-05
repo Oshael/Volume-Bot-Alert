@@ -1,5 +1,6 @@
 const db = require('./db');
 const { normalizeTokenAddress } = require('../utils/token-identity');
+const { OUTBOX_NOTIFY_CHANNEL } = require('./robinhood-derived-outbox');
 
 const CHAIN = 'robinhood';
 const PROTOCOL_BY_DISCOVERY_KIND = Object.freeze({
@@ -1426,6 +1427,54 @@ function buildRobinhoodMarketBucketUpdate(row, cursor) {
   };
 }
 
+// Derived-emit context supplied by robinhood-processing: the frontier block and
+// the 5m coverage window end (the analog of the market cursor's checkpoint).
+// Absent context keeps commitHeadProcessingBatch's legacy behaviour (no outbox).
+function normalizeDerivedEmit(emit) {
+  if (!emit) return null;
+  const checkpointTimestamp = emit.checkpointTimestamp == null
+    ? null
+    : (emit.checkpointTimestamp instanceof Date
+      ? emit.checkpointTimestamp
+      : new Date(emit.checkpointTimestamp));
+  return { nextBlock: emit.nextBlock ?? null, checkpointTimestamp };
+}
+
+// Appends one derived-outbox row per changed live bucket, in the caller's
+// transaction, carrying the fully built market:bucket payload so the
+// robinhood-derived consumer only fans out (never re-values).
+async function insertDerivedOutboxRows(client, liveBuckets, emitCursor) {
+  if (!Array.isArray(liveBuckets) || !liveBuckets.length) return 0;
+  const rows = liveBuckets.map((bucket) => ({
+    protocol: bucket.valuationProtocol,
+    marketKey: bucket.valuationMarketKey,
+    tokenAddress: bucket.tokenAddress,
+    bucketTs: bucket.bucketTs,
+    lastBlockNumber: String(bucket.lastBlockNumber),
+    lastLogIndex: String(bucket.lastLogIndex),
+    payload: buildRobinhoodMarketBucketUpdate(bucket, emitCursor),
+  }));
+  const result = await client.query(
+    `INSERT INTO robinhood_derived_outbox (
+       chain, protocol, market_key, token_address, bucket_ts,
+       last_block_number, last_log_index, payload
+     )
+     SELECT 'robinhood', entry."protocol", entry."marketKey", entry."tokenAddress",
+       entry."bucketTs"::timestamptz, entry."lastBlockNumber"::bigint,
+       entry."lastLogIndex"::bigint, entry."payload"
+     FROM jsonb_to_recordset($1::jsonb) AS entry(
+       "protocol" text, "marketKey" text, "tokenAddress" text,
+       "bucketTs" timestamptz, "lastBlockNumber" text, "lastLogIndex" text,
+       "payload" jsonb
+     )`,
+    [JSON.stringify(rows)]
+  );
+  // In-transaction NOTIFY: delivered to the derived worker on COMMIT, so the wake
+  // fires exactly when the appended rows become visible.
+  await client.query('SELECT pg_notify($1, $2)', [OUTBOX_NOTIFY_CHANNEL, '']);
+  return result.rowCount || 0;
+}
+
 function emitRobinhoodMarketBucketUpdates(rows, cursor, emit) {
   for (const row of rows) {
     try {
@@ -1750,11 +1799,15 @@ function createRobinhoodPersistenceRepository(options = {}) {
 
   // Persists observations, buckets and the V4 delta ledger from captures that
   // robinhood-processing already decoded from frozen evidence. Unlike
-  // commitMarketRange it commits no cursor and emits no socket/alert signal
-  // (those are derived, Corte 5); unlike commitBackfillEnrichmentBatch it owns
-  // no lease. A failure here rolls back the batch and never touches the capture
-  // cursor, so processing errors can only isolate their own claim.
+  // commitMarketRange it commits no cursor and performs no in-process emit;
+  // instead, when given a derived-emit context it appends the resulting live
+  // buckets to robinhood_derived_outbox in the same transaction, so the
+  // robinhood-derived consumer (Corte 5) replays the fan-out durably. Unlike
+  // commitBackfillEnrichmentBatch it owns no lease. A failure here rolls back
+  // the batch and never touches the capture cursor, so processing errors can
+  // only isolate their own claim.
   async function commitHeadProcessingBatch(input = {}) {
+    const emit = normalizeDerivedEmit(input.emit);
     const entries = (Array.isArray(input.entries) ? input.entries : []).map((entry) => {
       const row = normalizeLogEntry(entry, 'market');
       return {
@@ -1777,7 +1830,12 @@ function createRobinhoodPersistenceRepository(options = {}) {
         .filter((entry) => entry.liquidityDelta && insertedIdentities.has(rowIdentity(entry.row)))
         .map((entry) => entry.liquidityDelta);
       const insertedLiquidityDeltas = await insertV4LiquidityDeltas(client, liquidityDeltas);
-      const marketWrite = await insertMarketObservations(client, observations, { checkpointTimestamp: null });
+      const marketWrite = await insertMarketObservations(
+        client, observations, { checkpointTimestamp: emit?.checkpointTimestamp ?? null }
+      );
+      const insertedOutboxRows = emit
+        ? await insertDerivedOutboxRows(client, marketWrite.liveBuckets, emit)
+        : 0;
       await client.query('COMMIT');
       const { liveBuckets: _ignored, ...marketCounts } = marketWrite;
       return {
@@ -1785,6 +1843,7 @@ function createRobinhoodPersistenceRepository(options = {}) {
         duplicateLogs: entries.length - insertedIdentities.size,
         ...marketCounts,
         insertedLiquidityDeltas,
+        insertedOutboxRows,
       };
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch (_) {}
@@ -1815,6 +1874,31 @@ function createRobinhoodPersistenceRepository(options = {}) {
        WHERE chain = 'robinhood' AND active = true`
     );
     return result.rows;
+  }
+
+  // Strict processing frontier for derived-outbox coverage (Corte 5, option A):
+  // every block below the queue's pending block is fully processed, so the newest
+  // accepted observation there marks the point up to which market data is
+  // complete. That timestamp is the 5m coverage window end the derived emit uses,
+  // the honest analog of the monolith's market-cursor checkpoint. A null pending
+  // block (queue drained) spans the whole history.
+  async function resolveMarketFrontier(pendingBlock) {
+    const bound = pendingBlock == null ? '9223372036854775807' : String(pendingBlock);
+    const result = await database.query(
+      `SELECT block_number, observed_at
+         FROM robinhood_market_observations
+         WHERE chain = 'robinhood' AND status = 'accepted'
+           AND block_number < $1::bigint
+         ORDER BY block_number DESC, log_index DESC
+         LIMIT 1`,
+      [bound]
+    );
+    const row = result.rows[0];
+    if (!row || row.observed_at == null) return null;
+    return {
+      nextBlock: pendingBlock == null ? String(BigInt(row.block_number) + 1n) : String(pendingBlock),
+      checkpointTimestamp: row.observed_at,
+    };
   }
 
   async function listCurrentV4LiquidityRanges(poolId) {
@@ -1932,6 +2016,7 @@ function createRobinhoodPersistenceRepository(options = {}) {
     listHistoricalV4LiquidityRanges,
     listSignalDryRunCandidates,
     loadCursor,
+    resolveMarketFrontier,
   });
 }
 

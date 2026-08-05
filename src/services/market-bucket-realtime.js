@@ -45,6 +45,24 @@ function createMarketBucketRealtime(deps = {}) {
     return true;
   }
 
+  // Durable-consumer boundary: unlike enqueue()+flush(), this resolves only
+  // after PostgreSQL accepts the NOTIFY. The derived outbox uses it before
+  // deleting a delivered row, so a publish failure can retry that row instead
+  // of losing it from the in-memory relay queue on process exit.
+  async function publish(payload) {
+    const prepared = prepare(payload);
+    if (!prepared) return false;
+    try {
+      await database.query('SELECT pg_notify($1, $2)', [CHANNEL, prepared.serialized]);
+      stats.published += 1;
+      return true;
+    } catch (error) {
+      stats.publishFailures += 1;
+      logger.error('[MarketBucketRealtime] direct publish failed:', error.message);
+      throw error;
+    }
+  }
+
   async function flush() {
     if (flushing || pending.size === 0) return false;
     if (flushTimer) {
@@ -113,7 +131,7 @@ function createMarketBucketRealtime(deps = {}) {
     return { ...listenerTransport.getStatus(), pending: pending.size, ...stats };
   }
 
-  return { enqueue, flush, getStatus, handleNotification, start, stop };
+  return { enqueue, publish, flush, getStatus, handleNotification, start, stop };
 }
 
 const realtime = createMarketBucketRealtime();
