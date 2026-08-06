@@ -183,24 +183,27 @@ describe('Robinhood head processing repository integration', () => {
     assert.equal(watermark.blocked, 0);
   });
 
-  it('reports the oldest pending, leased or blocked evidence without scanning terminal history', async () => {
+  it('anchors the frontier on non-terminal work and skips older dead-letters', async () => {
     const oldestAt = Date.parse('2026-08-06T01:00:00.000Z');
     await seedPending({ block: 101, timestampMs: oldestAt + 1000 });
     await seedPending({ block: 100, timestampMs: oldestAt });
-    await repository.claimCaptures({ owner: 'worker-a', limit: 1, leaseMs: LEASE_MS });
+    await repository.claimCaptures({ owner: 'worker-a', limit: 1, leaseMs: LEASE_MS }); // leases 100
     const blocked = await seedPending({
       block: 99, logIndex: 1, attemptCount: 4, timestampMs: oldestAt - 1000,
     });
-    await repository.claimCaptures({ owner: 'worker-b', limit: 1, leaseMs: LEASE_MS });
+    await repository.claimCaptures({ owner: 'worker-b', limit: 1, leaseMs: LEASE_MS }); // leases 99
     await repository.settleClaims({
       owner: 'worker-b', retentionMs: RETENTION_MS, maxAttempts: 5,
       retry: [{ ...blocked, error: 'permanent failure', backoffMs: 1000 }],
     });
+    assert.equal((await statusOf(blocked)).processing_status, 'blocked');
 
     const oldest = await repository.getOldestActiveCapture('market');
 
+    // Block 99 is an older dead-letter; the frontier must not regress onto it,
+    // otherwise coverage_end freezes in the past and blacks out recent windows.
     assert.deepEqual(oldest, {
-      blockNumber: '99', observedAt: new Date(oldestAt - 1000).toISOString(),
+      blockNumber: '100', observedAt: new Date(oldestAt).toISOString(),
     });
   });
 

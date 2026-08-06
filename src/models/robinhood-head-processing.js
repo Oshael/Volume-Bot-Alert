@@ -234,9 +234,12 @@ function createRobinhoodHeadProcessingRepository(options = {}) {
     };
   }
 
-  // Oldest in-flight market evidence for publication health. The bounded
-  // branches use the pending, leased and blocked partial indexes respectively;
-  // terminal history is never scanned by this hot health read.
+  // Oldest in-flight market evidence, anchoring the processing/derived coverage
+  // frontier. Only non-terminal work (pending, leased) counts: a `blocked`
+  // dead-letter is never processed into an observation, so pinning coverage to
+  // it would freeze the frontier in the past forever. Its evidence is retained
+  // and recoverable on replay, and dead-letter depth stays visible via
+  // getProcessingWatermark. Terminal history is never scanned by this hot read.
   async function getOldestActiveCapture(streamValue) {
     const stream = optionalStream(streamValue);
     const result = await database.query(
@@ -255,13 +258,6 @@ function createRobinhoodHeadProcessingRepository(options = {}) {
          UNION ALL
          (SELECT block_number, timestamp_ms, transaction_index, log_index
           FROM leased
-          ORDER BY block_number, transaction_index, log_index
-          LIMIT 1)
-         UNION ALL
-         (SELECT block_number, evidence->>'timestampMs' AS timestamp_ms,
-                 transaction_index, log_index
-          FROM robinhood_head_captures
-          WHERE chain = $1 AND stream = $2 AND processing_status = 'blocked'
           ORDER BY block_number, transaction_index, log_index
           LIMIT 1)
        )
