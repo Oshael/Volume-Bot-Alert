@@ -156,6 +156,51 @@ describe('Robinhood native market history reader', () => {
     assert.equal(calls[0].params[5], 11);
   });
 
+  it('carries each candle open from the previous candle close for a continuous series', async () => {
+    const repository = createRobinhoodMarketHistoryReadRepository({
+      now: () => new Date('2026-07-15T12:30:00.000Z'),
+      database: {
+        async query() {
+          return { rows: [
+            row({
+              bucket_ts: '2026-07-15T09:00:00.000Z',
+              open_fdv_usd: '100', high_fdv_usd: '150', low_fdv_usd: '90', close_fdv_usd: '130',
+              open_price_usd: '1', high_price_usd: '1.5', low_price_usd: '0.9', close_price_usd: '1.3',
+            }),
+            row({
+              bucket_ts: '2026-07-15T10:00:00.000Z',
+              open_fdv_usd: '200', high_fdv_usd: '210', low_fdv_usd: '195', close_fdv_usd: '205',
+              open_price_usd: '2', high_price_usd: '2.1', low_price_usd: '1.95', close_price_usd: '2.05',
+            }),
+          ] };
+        },
+      },
+    });
+
+    const result = await repository.getHistory({
+      address: ADDRESS,
+      startAt: '2026-07-14T00:00:00.000Z',
+      endAt: '2026-07-15T12:00:00.000Z',
+      granularityMinutes: 60,
+      limit: 10,
+    });
+
+    const [first, second] = result.candles;
+    // First candle has no prior close, so it keeps its own raw open.
+    assert.equal(first.openFdvUsd, 100);
+    assert.equal(first.openPriceUsd, 1);
+    // Second candle opens exactly at the previous close: no gap.
+    assert.equal(second.openFdvUsd, first.closeFdvUsd);
+    assert.equal(second.openPriceUsd, first.closePriceUsd);
+    // The carried open (130 / 1.3) sits below the raw low; low widens to include it.
+    assert.equal(second.lowFdvUsd, 130);
+    assert.equal(second.lowPriceUsd, 1.3);
+    // High is unaffected because the carried open is below it.
+    assert.equal(second.highFdvUsd, 210);
+    // No fabricated candles: still exactly the two observed buckets.
+    assert.equal(result.candles.length, 2);
+  });
+
   it('loads multiple tokens in one query and limits each token independently', async () => {
     const calls = [];
     const repository = createRobinhoodMarketHistoryReadRepository({

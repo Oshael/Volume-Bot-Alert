@@ -965,6 +965,14 @@ Depois do catch-up:
   de 6,9 dias), enquanto os demais leitores não agregados mantêm o teto de 720;
   com aggregate reads habilitados, o OHLC 1m fixa em todo o intervalo a pool da
   proveniência 5m mais recente e preserva volume/atividade somados de todas as pools;
+- o leitor de histórico Robinhood aplica carry-forward de abertura na montagem da
+  série (`buildHistoryResult`): a abertura de cada candle passa a ser o fechamento
+  do candle anterior, e high/low são alargados para conter essa abertura. Numa AMM
+  o spot só se move em swap, então a abertura gravada (pós-swap do primeiro trade
+  do bucket) já saltava do fechamento anterior e deixava vãos entre candles. É
+  apresentação apenas: buckets gravados, alertas (que leem as tabelas de bucket
+  direto) e Solana ficam intactos; minutos sem swap seguem esparsos e nenhum candle
+  é fabricado; o primeiro candle da série mantém a abertura crua;
 - archive completo do node não é necessário apenas para processar blocos novos;
 - qualquer consulta histórica fora da janela do node precisa do PostgreSQL,
   de um provedor archive ou de um snapshot próprio.

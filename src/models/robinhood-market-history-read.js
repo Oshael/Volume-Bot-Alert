@@ -449,6 +449,40 @@ function normalizeCandle(row, address) {
   });
 }
 
+// Carry each candle's open from the previous candle's close so the OHLC series
+// renders continuously. On an AMM the spot price only moves on a swap, so a
+// bucket's stored open (the post-swap price of its first swap) already jumped
+// away from the prior close, leaving visible gaps between candles. This is
+// presentation-only: the stored buckets and the alert reads (which query the
+// bucket tables directly) are untouched, and empty minutes stay sparse because
+// we only adjust the open of candles that already exist. High/low are widened
+// to include the carried open so the body never escapes the wick. The first
+// candle in the series keeps its own open (no prior close to carry).
+function carryForwardOpens(candles) {
+  let prevClosePriceUsd = null;
+  let prevCloseFdvUsd = null;
+  return candles.map((candle) => {
+    if (prevClosePriceUsd == null) {
+      prevClosePriceUsd = candle.closePriceUsd;
+      prevCloseFdvUsd = candle.closeFdvUsd;
+      return candle;
+    }
+    const openPriceUsd = prevClosePriceUsd;
+    const openFdvUsd = prevCloseFdvUsd;
+    prevClosePriceUsd = candle.closePriceUsd;
+    prevCloseFdvUsd = candle.closeFdvUsd;
+    return Object.freeze({
+      ...candle,
+      openPriceUsd,
+      openFdvUsd,
+      highPriceUsd: Math.max(candle.highPriceUsd, openPriceUsd),
+      lowPriceUsd: Math.min(candle.lowPriceUsd, openPriceUsd),
+      highFdvUsd: Math.max(candle.highFdvUsd, openFdvUsd),
+      lowFdvUsd: Math.min(candle.lowFdvUsd, openFdvUsd),
+    });
+  });
+}
+
 function resolveResolution(candles) {
   const sources = new Set(candles.map((candle) => candle.sourceGranularityMinutes));
   if (!sources.size) return 'none';
@@ -457,7 +491,7 @@ function resolveResolution(candles) {
 }
 
 function buildHistoryResult(query, address, rows) {
-  const normalized = rows.map((row) => normalizeCandle(row, address));
+  const normalized = carryForwardOpens(rows.map((row) => normalizeCandle(row, address)));
   const truncated = normalized.length > query.limit;
   const candles = Object.freeze(normalized.slice(truncated ? -query.limit : 0));
   return Object.freeze({
@@ -790,7 +824,7 @@ module.exports = {
     AGGREGATE_HISTORY_SQL, ALL_AVAILABLE_CANDLE_COLUMNS, ALL_AVAILABLE_HISTORY_SQL,
     LEGACY_HISTORY_SQL,
     PRIMARY_ONE_MINUTE_HISTORY_SQL,
-    VERIFIED_ALL_AVAILABLE_HISTORY_SQL, buildHistoryResult, compareShadowRows,
+    VERIFIED_ALL_AVAILABLE_HISTORY_SQL, buildHistoryResult, carryForwardOpens, compareShadowRows,
     intersectCoverage, mergeRows, normalizeAddresses, normalizeCandle, normalizeQuery,
     normalizeVerifiedCoverage, readCoveredHistories, resolveResolution,
   },
