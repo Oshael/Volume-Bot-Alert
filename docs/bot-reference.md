@@ -381,6 +381,10 @@ divergências. Ausência, mismatch ou falha da query **nunca** falham a claim ne
 persistência; a leitura possui `statement_timeout` dedicado (default 1s). Este gate é
 estritamente read-only/fail-open e não liga outbox ou derived.
 
+No processing, leituras do ledger materializado V4 são reutilizadas por `poolId` dentro do mesmo
+batch. Todos os swaps dessa fase já enxergam o mesmo estado anterior ao commit; o cache elimina
+queries idênticas sem mudar ordem, valuation ou a aplicação posterior dos deltas de liquidez.
+
 O grupo `robinhood-derived` (Corte 5, systemd `trendscope-worker@robinhood-derived.service`,
 lease `robinhood-derived-worker`, `start:worker:robinhood-derived` na porta 3008) é o consumidor
 que devolve o **board ao vivo** sem o monólito. O `commitHeadProcessingBatch` do processing, quando

@@ -137,6 +137,20 @@ describe('robinhood processing runner', () => {
     assert.equal(result.processed, 1);
   });
 
+  it('reads V4 materialized ranges once per pool within a processing batch', async () => {
+    const persistence = fakePersistence({
+      ranges: [{ tick_lower: -60, tick_upper: 60, liquidity_gross: ONE.toString() }],
+    });
+
+    const result = await runner([
+      v4Row({ n: '1', log_index: '1' }),
+      v4Row({ n: '2', log_index: '2' }),
+    ], persistence).runOnce();
+
+    assert.deepEqual(persistence._calls.rangesFor, [POOL_ID]);
+    assert.equal(result.processed, 2);
+  });
+
   it('retries the batch with backoff and never marks it processed when persistence fails', async () => {
     const persistence = fakePersistence({ failCommit: true });
     const repository = fakeRepo([v3Row({ attempt_count: 2 })]);

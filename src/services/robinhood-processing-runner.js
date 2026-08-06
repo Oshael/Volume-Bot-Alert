@@ -56,14 +56,21 @@ function createRobinhoodProcessingRunner(deps = {}) {
     return persistence.resolveMarketFrontier(watermark.pendingBlock);
   }
 
-  async function valueObservationEntry(decoded) {
+  async function valueObservationEntry(decoded, batchState) {
     const observation = decoded.observation;
     if (!observation?.accepted) {
       return { log: decoded.log, event: decoded.swap, observation };
     }
     let v4Ranges = null;
     if (decoded.liquidityInputs?.requiresRanges) {
-      v4Ranges = await persistence.listCurrentV4LiquidityRanges(decoded.swap.poolId);
+      const poolId = decoded.swap.poolId;
+      if (!batchState.v4RangesByPool.has(poolId)) {
+        batchState.v4RangesByPool.set(
+          poolId,
+          Promise.resolve(persistence.listCurrentV4LiquidityRanges(poolId))
+        );
+      }
+      v4Ranges = await batchState.v4RangesByPool.get(poolId);
     }
     const assessment = decoder.assessLiquidity(decoded.liquidityInputs, { v4Ranges });
     return { log: decoded.log, event: decoded.swap, observation: decoder.attachLiquidity(observation, assessment) };
@@ -73,7 +80,7 @@ function createRobinhoodProcessingRunner(deps = {}) {
   // terminal rejection. A terminal decode error (unknown version, bad protocol)
   // is auditable and non-retryable; anything else propagates so the whole batch
   // retries and the capture cursor stays untouched.
-  async function classify(row, buckets) {
+  async function classify(row, buckets, batchState) {
     let decoded;
     try {
       decoded = decoder.decodeCapture(row);
@@ -93,7 +100,7 @@ function createRobinhoodProcessingRunner(deps = {}) {
       return;
     }
     if (decoded.kind === 'observation') {
-      buckets.persist.push({ row, entry: await valueObservationEntry(decoded) });
+      buckets.persist.push({ row, entry: await valueObservationEntry(decoded, batchState) });
       return;
     }
     // Discovery captures are not claimed on the market stream; ignore defensively.
@@ -122,8 +129,11 @@ function createRobinhoodProcessingRunner(deps = {}) {
     }
 
     const buckets = { persist: [], rejected: [] };
+    // Every V4 swap in this phase reads the same pre-commit materialized ledger.
+    // Reuse that snapshot per pool instead of repeating an identical DB query.
+    const batchState = { v4RangesByPool: new Map() };
     for (const row of rows) {
-      await classify(row, buckets);
+      await classify(row, buckets, batchState);
     }
     const shadowAudit = await runShadowAudit(buckets.persist);
 
