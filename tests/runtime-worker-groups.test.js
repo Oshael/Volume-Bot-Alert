@@ -148,6 +148,21 @@ describe('runtime worker groups config', () => {
     });
   });
 
+  it('keeps the derived bucket shadow audit opt-in and bounds its query controls', () => {
+    withEnv({
+      ROBINHOOD_DERIVED_SHADOW_AUDIT_ONLY: 'true',
+      ROBINHOOD_DERIVED_SHADOW_AUDIT_SAMPLE_LIMIT: '999',
+      ROBINHOOD_DERIVED_SHADOW_AUDIT_STATEMENT_TIMEOUT_MS: '1',
+    }, (config) => {
+      assert.equal(config.robinhoodDerivedWorker.shadowAuditOnly, true);
+      assert.equal(config.robinhoodDerivedWorker.shadowAuditSampleLimit, 20);
+      assert.equal(config.robinhoodDerivedWorker.shadowAuditStatementTimeoutMs, 100);
+    });
+    withEnv({ ROBINHOOD_DERIVED_SHADOW_AUDIT_ONLY: undefined }, (config) => {
+      assert.equal(config.robinhoodDerivedWorker.shadowAuditOnly, false);
+    });
+  });
+
   it('fails fast when the Robinhood head is mixed with another group', () => {
     const result = spawnSync(
       process.execPath,

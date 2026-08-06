@@ -14,6 +14,7 @@ const {
   OUTBOX_NOTIFY_CHANNEL,
 } = require('../models/robinhood-derived-outbox');
 const { createRobinhoodDerivedRunner } = require('./robinhood-derived-runner');
+const { createRobinhoodDerivedShadowAuditor } = require('./robinhood-derived-shadow-auditor');
 const { createRobinhoodMarketBucketFanout } = require('./robinhood-market-bucket-fanout');
 const marketBucketRealtime = require('./market-bucket-realtime');
 const { createPostgresRealtimeListener } = require('./postgres-realtime-listener');
@@ -30,6 +31,7 @@ let wakePending = false;
 let runner = null;
 let repository = null;
 let listener = null;
+let shadowAuditor = null;
 let activeOptions = null;
 let lastPruneAt = 0;
 let status = {
@@ -50,6 +52,7 @@ let status = {
   lastPrunedAt: null,
   lastPrunedRows: 0,
   lastError: null,
+  mode: 'delivery',
 };
 
 function boundedInteger(value, fallback, min, max) {
@@ -60,6 +63,11 @@ function boundedInteger(value, fallback, min, max) {
 function normalizeOptions(options = {}) {
   return {
     enabled: options.enabled !== false,
+    shadowAuditOnly: options.shadowAuditOnly === true,
+    shadowAuditSampleLimit: boundedInteger(options.shadowAuditSampleLimit, 5, 1, 20),
+    shadowAuditStatementTimeoutMs: boundedInteger(
+      options.shadowAuditStatementTimeoutMs, 1000, 100, 10_000
+    ),
     intervalMs: boundedInteger(options.intervalMs, DEFAULT_INTERVAL_MS, 50, 60_000),
     idleIntervalMs: boundedInteger(options.idleIntervalMs, DEFAULT_IDLE_INTERVAL_MS, 100, 300_000),
     pruneIntervalMs: boundedInteger(options.pruneIntervalMs, DEFAULT_PRUNE_INTERVAL_MS, 30_000, 3_600_000),
@@ -79,12 +87,23 @@ function normalizeOptions(options = {}) {
 function build(normalized, deps = {}) {
   const database = deps.database || db;
   repository = deps.repository || createRobinhoodDerivedOutboxRepository({ database });
+  shadowAuditor = normalized.shadowAuditOnly
+    ? (deps.shadowAuditor || createRobinhoodDerivedShadowAuditor({
+      database,
+      sampleLimit: normalized.shadowAuditSampleLimit,
+      statementTimeoutMs: normalized.shadowAuditStatementTimeoutMs,
+    }))
+    : null;
   const relay = deps.marketBucketRealtime || marketBucketRealtime;
-  const fanout = deps.fanout || createRobinhoodMarketBucketFanout({
+  const deliveryFanout = deps.fanout || createRobinhoodMarketBucketFanout({
     // The generic monolith path remains enqueue/coalesce. Derived delivery must
     // await the actual pg_notify before its durable outbox row is deleted.
     marketBucketRealtime: { enqueue: (payload) => relay.publish(payload) },
   });
+  const fanout = shadowAuditor
+    ? (payload) => shadowAuditor.consume(payload)
+    : deliveryFanout;
+  status.mode = shadowAuditor ? 'shadow-audit-only' : 'delivery';
   runner = deps.runner || createRobinhoodDerivedRunner({
     repository, fanout, options: normalized.runner,
   });
@@ -190,7 +209,7 @@ async function stop() {
 }
 
 function getStatus() {
-  return { ...status };
+  return { ...status, shadowAudit: shadowAuditor?.getStatus?.() || null };
 }
 
 module.exports = {

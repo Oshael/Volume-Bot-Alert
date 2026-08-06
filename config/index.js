@@ -796,6 +796,13 @@ module.exports = {
   },
   robinhoodDerivedWorker: {
     enabled: parseBoolean(process.env.ROBINHOOD_DERIVED_ENABLED, true),
+    shadowAuditOnly: parseBoolean(process.env.ROBINHOOD_DERIVED_SHADOW_AUDIT_ONLY, false),
+    shadowAuditSampleLimit: parseIntegerInRange(
+      process.env.ROBINHOOD_DERIVED_SHADOW_AUDIT_SAMPLE_LIMIT, 5, 1, 20
+    ),
+    shadowAuditStatementTimeoutMs: parseIntegerInRange(
+      process.env.ROBINHOOD_DERIVED_SHADOW_AUDIT_STATEMENT_TIMEOUT_MS, 1000, 100, 10_000
+    ),
     intervalMs: parseIntegerInRange(process.env.ROBINHOOD_DERIVED_INTERVAL_MS, 250, 50, 60_000),
     idleIntervalMs: parseIntegerInRange(process.env.ROBINHOOD_DERIVED_IDLE_INTERVAL_MS, 2000, 100, 300_000),
     batchSize: parseIntegerInRange(process.env.ROBINHOOD_DERIVED_BATCH_SIZE, 200, 1, 2000),

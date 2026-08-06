@@ -991,7 +991,7 @@ async function insertV4LiquidityDeltas(client, rows) {
   return result.rowCount;
 }
 
-async function insertMarketObservations(client, rows, cursor) {
+async function insertMarketObservations(client, rows, cursor, options = {}) {
   if (!rows.length) {
     return { insertedObservations: 0, touchedBuckets: 0, liveBuckets: [] };
   }
@@ -1183,6 +1183,10 @@ async function insertMarketObservations(client, rows, cursor) {
      ),
      touched_token_buckets AS (
        SELECT DISTINCT chain, token_address, bucket_ts FROM upserted_buckets
+       UNION
+       SELECT 'robinhood', "tokenAddress", date_trunc('minute', "observedAt")
+       FROM input
+       WHERE $3::boolean AND status = 'accepted'
      ),
      market_coverage AS (
        SELECT COALESCE((
@@ -1348,7 +1352,7 @@ async function insertMarketObservations(client, rows, cursor) {
          'lastLogIndex', last_log_index::text,
          'protocols', protocols
        ) ORDER BY token_address, bucket_ts) FROM live_bucket_payloads), '[]'::jsonb) AS live_buckets`,
-    [JSON.stringify(rows), cursor.checkpointTimestamp]
+    [JSON.stringify(rows), cursor.checkpointTimestamp, options.includeExistingTargets === true]
   );
   const counts = result.rows[0] || {};
   const expectedBuckets = Number(counts.expected_buckets || 0);
@@ -1823,15 +1827,25 @@ function createRobinhoodPersistenceRepository(options = {}) {
         client,
         entries.map((entry) => entry.row)
       ));
-      const observations = entries
+      const insertedObservations = entries
         .filter((entry) => entry.observation && insertedIdentities.has(rowIdentity(entry.row)))
         .map((entry) => entry.observation);
+      // During monolith overlap, processing commonly loses the shared log
+      // identity race. Outbox shadow still needs the canonical bucket payload,
+      // but insertMarketObservations keeps ON CONFLICT idempotency so it never
+      // counts that observation twice.
+      const observations = emit
+        ? entries.filter((entry) => entry.observation).map((entry) => entry.observation)
+        : insertedObservations;
       const liquidityDeltas = entries
         .filter((entry) => entry.liquidityDelta && insertedIdentities.has(rowIdentity(entry.row)))
         .map((entry) => entry.liquidityDelta);
       const insertedLiquidityDeltas = await insertV4LiquidityDeltas(client, liquidityDeltas);
       const marketWrite = await insertMarketObservations(
-        client, observations, { checkpointTimestamp: emit?.checkpointTimestamp ?? null }
+        client,
+        observations,
+        { checkpointTimestamp: emit?.checkpointTimestamp ?? null },
+        { includeExistingTargets: Boolean(emit) }
       );
       const insertedOutboxRows = emit
         ? await insertDerivedOutboxRows(client, marketWrite.liveBuckets, emit)

@@ -397,6 +397,17 @@ isola a linha (retry/backoff, dead-letter `blocked`). Os sinks in-memory (catalo
 monólito são a etapa seguinte (Corte 6/7). Nenhum `.env` atual seleciona o grupo nem liga a flag.
 Contrato: `docs/robinhood-derived-outbox-contract.md`.
 
+O Corte 6B adiciona um modo seguro de shadow ao mesmo consumidor:
+`ROBINHOOD_DERIVED_SHADOW_AUDIT_ONLY=true` (default `false`). Nesse modo, cada payload da outbox é
+comparado com o bucket canônico atual em `robinhood_market_buckets_1m`; igualdade, divergência,
+ausência e payload já superseded por ordem on-chain ficam na telemetria. O sink de delivery é
+substituído pelo auditor, portanto **nenhum** socket, relay, alerta, catálogo ou aggregate é
+executado. Falha da leitura retenta a linha; comparação concluída a remove normalmente. Durante o
+overlap, o processing também passa a reconstruir a outbox a partir do bucket canônico quando o
+monólito venceu a identidade idempotente do log, sem reinserir observação nem somar volume/swaps.
+Os campos dinâmicos de janela 5m e diagnósticos por protocolo não fazem parte deste primeiro gate;
+o núcleo 1m, valuation, candle, atividade e ordem são comparados.
+
 A projeção Robinhood mantém um reparo persistente de metadata separado da página
 de mercado ativa. Identidades `robinhood-onchain` com imagem ou launchpad pendente
 são priorizadas, e a atividade recente desempata dentro da mesma classe;

@@ -299,13 +299,15 @@ function createFakeDatabase(options = {}) {
       if (/INSERT INTO robinhood_market_observations/.test(sql)) {
         if (options.failObservation) throw new Error('observation write failed');
         const rows = JSON.parse(params[0]);
-        const expectedBuckets = rows.filter((row) => row.status === 'accepted').length;
+        const insertedObservations = options.duplicate ? 0 : rows.length;
+        const expectedBuckets = options.duplicate
+          ? 0 : rows.filter((row) => row.status === 'accepted').length;
         return {
           rows: [{
-            inserted_observations: rows.length,
+            inserted_observations: insertedObservations,
             expected_buckets: expectedBuckets,
             touched_buckets: options.bucketIdentityConflict ? 0 : expectedBuckets,
-            live_buckets: options.liveBuckets || [],
+            live_buckets: options.duplicate && params[2] !== true ? [] : (options.liveBuckets || []),
           }],
           rowCount: 1,
         };
@@ -1217,6 +1219,25 @@ describe('commitHeadProcessingBatch derived outbox', () => {
     // the derived path must value it against the processing frontier.
     assert.equal(obsCall.params[1] instanceof Date, true);
     assert.equal(obsCall.params[1].toISOString(), WINDOW_END.toISOString());
+    assert.equal(obsCall.params[2], true);
+  });
+
+  it('builds outbox from the canonical bucket when the monolith won the log identity race', async () => {
+    const fake = createFakeDatabase({ duplicate: true, liveBuckets: [liveBucketRow()] });
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+
+    const result = await repository.commitHeadProcessingBatch({
+      entries: [marketEntry()],
+      emit: { nextBlock: '8069001', checkpointTimestamp: WINDOW_END },
+    });
+
+    const obsCall = findCall(fake.calls, /INSERT INTO robinhood_market_observations/);
+    assert.equal(JSON.parse(obsCall.params[0]).length, 1);
+    assert.equal(obsCall.params[2], true); // target existing bucket without re-counting it
+    assert.equal(result.insertedLogs, 0);
+    assert.equal(result.insertedObservations, 0);
+    assert.equal(result.touchedBuckets, 0);
+    assert.equal(result.insertedOutboxRows, 1);
   });
 
   it('preserves legacy behaviour (no outbox, null window) when no emit context is given', async () => {
@@ -1228,6 +1249,7 @@ describe('commitHeadProcessingBatch derived outbox', () => {
     assert.equal(findCall(fake.calls, /INSERT INTO robinhood_derived_outbox/), undefined);
     const obsCall = findCall(fake.calls, /INSERT INTO robinhood_market_observations/);
     assert.equal(obsCall.params[1], null);
+    assert.equal(obsCall.params[2], false);
     assert.equal(result.insertedOutboxRows, 0);
   });
 

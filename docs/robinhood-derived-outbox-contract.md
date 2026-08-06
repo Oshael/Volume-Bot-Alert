@@ -96,5 +96,15 @@ exactly as it does for the monolith today.
    (NOTIFY wake + prune) + isolated group/port 3008/config; producer gated by
    `ROBINHOOD_DERIVED_OUTBOX_ENABLED` (off); `server.js` wires the dormant group.
 
+### Corte 6B shadow gate
+
+With `ROBINHOOD_DERIVED_SHADOW_AUDIT_ONLY=true`, the derived worker replaces the fan-out sink with
+a PostgreSQL comparator. It drains rows after classifying their canonical 1m bucket as matched,
+mismatched, missing, or superseded; it does not invoke socket, relay, alert, catalog, or aggregate
+sinks. Query failures keep the row retryable. During monolith overlap, a processing log that loses
+the shared idempotency race still targets the already committed canonical bucket for outbox
+construction; the observation insert remains `ON CONFLICT DO NOTHING`, so metrics are not counted
+twice.
+
 Then Corte 6 (shadow/compare/cutover — co-start the in-memory sinks, re-point the alert rollout
 gate at capture/processing health) and Corte 7 (remove the monolith).
