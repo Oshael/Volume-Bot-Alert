@@ -2,6 +2,9 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const { createRobinhoodProcessingRunner, backoffFor } = require('../src/services/robinhood-processing-runner');
+const {
+  createRobinhoodProcessingShadowAuditor,
+} = require('../src/services/robinhood-processing-shadow-auditor');
 const { ROBINHOOD_WETH } = require('../src/services/evm-market-metrics');
 const v2 = require('../src/services/uniswap-v2-decoder');
 const v3 = require('../src/services/uniswap-v3-decoder');
@@ -104,9 +107,10 @@ function fakePersistence({ ranges = null, failCommit = false } = {}) {
   };
 }
 
-function runner(rows, persistence, options = {}) {
+function runner(rows, persistence, options = {}, deps = {}) {
   return createRobinhoodProcessingRunner({
     repository: fakeRepo(rows), persistence, logger: { error: () => {} },
+    ...deps,
     options: { owner: 'test-worker', ...options },
   });
 }
@@ -186,6 +190,50 @@ describe('robinhood processing runner', () => {
 
     assert.deepEqual(persistence._calls.frontierFor, []);
     assert.equal(persistence._calls.commit[0].emit ?? null, null);
+  });
+
+  it('reports shadow comparison without changing processing settlement', async () => {
+    const persistence = fakePersistence();
+    const calls = [];
+    const shadowAuditor = {
+      compare: async (entries) => {
+        calls.push(entries);
+        return { attempted: 1, compared: 1, matched: 1, mismatched: 0, missing: 0, samples: [] };
+      },
+    };
+
+    const result = await runner([v3Row()], persistence, {}, { shadowAuditor }).runOnce();
+
+    assert.equal(calls[0].length, 1);
+    assert.equal(result.shadowAudit.matched, 1);
+    assert.equal(result.processed, 1);
+  });
+
+  it('feeds the auditor the persistence-normalizable decoded observation contract', async () => {
+    const persistence = fakePersistence();
+    const shadowAuditor = createRobinhoodProcessingShadowAuditor({
+      database: { query: async () => ({ rows: [] }) },
+      logger: { warn() {} },
+    });
+
+    const result = await runner([v3Row()], persistence, {}, { shadowAuditor }).runOnce();
+
+    assert.equal(result.shadowAudit.attempted, 1);
+    assert.equal(result.shadowAudit.missing, 1);
+    assert.equal(result.shadowAudit.errors, 0);
+    assert.equal(result.processed, 1);
+  });
+
+  it('fails shadow audit open and still commits and settles the batch', async () => {
+    const persistence = fakePersistence();
+    const shadowAuditor = { compare: async () => { throw new Error('audit unavailable'); } };
+
+    const result = await runner([v3Row()], persistence, {}, { shadowAuditor }).runOnce();
+
+    assert.equal(result.shadowAudit.errors, 1);
+    assert.equal(result.shadowAudit.lastError, 'audit unavailable');
+    assert.equal(persistence._calls.commit.length, 1);
+    assert.equal(result.processed, 1);
   });
 
   it('grows the retry backoff exponentially with a ceiling', () => {

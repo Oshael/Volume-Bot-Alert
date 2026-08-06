@@ -11,6 +11,9 @@ const db = require('../models/db');
 const { createRobinhoodPersistenceRepository } = require('../models/robinhood-persistence');
 const { createRobinhoodHeadProcessingRepository } = require('../models/robinhood-head-processing');
 const { createRobinhoodProcessingRunner } = require('./robinhood-processing-runner');
+const {
+  createRobinhoodProcessingShadowAuditor,
+} = require('./robinhood-processing-shadow-auditor');
 
 const DEFAULT_INTERVAL_MS = 1000;
 const DEFAULT_IDLE_INTERVAL_MS = 5000;
@@ -36,6 +39,12 @@ let status = {
   totalBlocked: 0,
   totalPrunedCaptures: 0,
   totalErrors: 0,
+  lastShadowAudit: null,
+  totalShadowCompared: 0,
+  totalShadowMatched: 0,
+  totalShadowMismatched: 0,
+  totalShadowMissing: 0,
+  totalShadowErrors: 0,
   lastPrunedAt: null,
   lastPrunedCaptures: 0,
   lastError: null,
@@ -63,6 +72,11 @@ function normalizeOptions(options = {}) {
       emitOutbox: options.emitOutbox,
     },
     pruneLimit: boundedInteger(options.pruneLimit, 5000, 100, 50_000),
+    shadowAuditEnabled: options.shadowAuditEnabled === true,
+    shadowAuditSampleLimit: boundedInteger(options.shadowAuditSampleLimit, 5, 1, 20),
+    shadowAuditStatementTimeoutMs: boundedInteger(
+      options.shadowAuditStatementTimeoutMs, 1000, 100, 10_000
+    ),
   };
 }
 
@@ -70,8 +84,15 @@ function build(normalized, deps = {}) {
   const database = deps.database || db;
   repository = deps.repository || createRobinhoodHeadProcessingRepository({ database });
   const persistence = deps.persistence || createRobinhoodPersistenceRepository({ database });
+  const shadowAuditor = deps.shadowAuditor || (normalized.shadowAuditEnabled
+    ? createRobinhoodProcessingShadowAuditor({
+      database,
+      sampleLimit: normalized.shadowAuditSampleLimit,
+      statementTimeoutMs: normalized.shadowAuditStatementTimeoutMs,
+    })
+    : null);
   runner = deps.runner || createRobinhoodProcessingRunner({
-    repository, persistence, options: normalized.runner,
+    repository, persistence, shadowAuditor, options: normalized.runner,
   });
 }
 
@@ -96,6 +117,14 @@ async function runOnce(normalized) {
   status.totalProcessed += result.processed;
   status.totalRejected += result.rejected;
   status.totalBlocked += result.blocked;
+  if (result.shadowAudit) {
+    status.lastShadowAudit = result.shadowAudit;
+    status.totalShadowCompared += result.shadowAudit.compared || 0;
+    status.totalShadowMatched += result.shadowAudit.matched || 0;
+    status.totalShadowMismatched += result.shadowAudit.mismatched || 0;
+    status.totalShadowMissing += result.shadowAudit.missing || 0;
+    status.totalShadowErrors += result.shadowAudit.errors || 0;
+  }
   await maybePrune(normalized, Date.now());
   return result;
 }

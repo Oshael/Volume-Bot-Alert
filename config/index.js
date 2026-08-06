@@ -786,6 +786,13 @@ module.exports = {
     maxAttempts: parseIntegerInRange(process.env.ROBINHOOD_PROCESSING_MAX_ATTEMPTS, 5, 1, 50),
     pruneIntervalMs: parseIntegerInRange(process.env.ROBINHOOD_PROCESSING_PRUNE_INTERVAL_MS, 5 * 60 * 1000, 30_000, 3_600_000),
     emitOutbox: parseBoolean(process.env.ROBINHOOD_DERIVED_OUTBOX_ENABLED, false),
+    shadowAuditEnabled: parseBoolean(process.env.ROBINHOOD_PROCESSING_SHADOW_AUDIT_ENABLED, false),
+    shadowAuditSampleLimit: parseIntegerInRange(
+      process.env.ROBINHOOD_PROCESSING_SHADOW_AUDIT_SAMPLE_LIMIT, 5, 1, 20
+    ),
+    shadowAuditStatementTimeoutMs: parseIntegerInRange(
+      process.env.ROBINHOOD_PROCESSING_SHADOW_AUDIT_STATEMENT_TIMEOUT_MS, 1000, 100, 10_000
+    ),
   },
   robinhoodDerivedWorker: {
     enabled: parseBoolean(process.env.ROBINHOOD_DERIVED_ENABLED, true),

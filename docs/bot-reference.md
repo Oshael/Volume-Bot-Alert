@@ -371,6 +371,16 @@ ordem `(block_number, transaction_index, log_index, next_attempt_at)` e predicat
 retomado depois que `pg_index` confirmar `indisvalid/indisready` e `EXPLAIN (ANALYZE,
 BUFFERS)` provar que a claim usa esse índice sem sort/scan massivo.
 
+O primeiro gate do Corte 6 é o auditor opt-in do processing
+(`ROBINHOOD_PROCESSING_SHADOW_AUDIT_ENABLED`, default `false`). Antes de o batch do novo
+caminho tentar persistir, ele lê em lote as observações canônicas que o monólito já
+commitou para as mesmas identidades `(transaction_hash, log_index)` e compara ordem,
+mercado, amounts, supply/quote provenance, preço, volume, FDV e liquidez. A telemetria da
+lease expõe totais `compared/matched/mismatched/missing/errors` e amostras limitadas das
+divergências. Ausência, mismatch ou falha da query **nunca** falham a claim nem mudam a
+persistência; a leitura possui `statement_timeout` dedicado (default 1s). Este gate é
+estritamente read-only/fail-open e não liga outbox ou derived.
+
 O grupo `robinhood-derived` (Corte 5, systemd `trendscope-worker@robinhood-derived.service`,
 lease `robinhood-derived-worker`, `start:worker:robinhood-derived` na porta 3008) é o consumidor
 que devolve o **board ao vivo** sem o monólito. O `commitHeadProcessingBatch` do processing, quando

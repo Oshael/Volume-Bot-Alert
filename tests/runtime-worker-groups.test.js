@@ -122,6 +122,21 @@ describe('runtime worker groups config', () => {
     });
   });
 
+  it('keeps the processing shadow auditor opt-in and bounds its sample limit', () => {
+    withEnv({
+      ROBINHOOD_PROCESSING_SHADOW_AUDIT_ENABLED: 'true',
+      ROBINHOOD_PROCESSING_SHADOW_AUDIT_SAMPLE_LIMIT: '999',
+      ROBINHOOD_PROCESSING_SHADOW_AUDIT_STATEMENT_TIMEOUT_MS: '1',
+    }, (config) => {
+      assert.equal(config.robinhoodProcessingWorker.shadowAuditEnabled, true);
+      assert.equal(config.robinhoodProcessingWorker.shadowAuditSampleLimit, 20);
+      assert.equal(config.robinhoodProcessingWorker.shadowAuditStatementTimeoutMs, 100);
+    });
+    withEnv({ ROBINHOOD_PROCESSING_SHADOW_AUDIT_ENABLED: undefined }, (config) => {
+      assert.equal(config.robinhoodProcessingWorker.shadowAuditEnabled, false);
+    });
+  });
+
   it('allows the Robinhood derived only as an isolated worker group', () => {
     withEnv({ BACKGROUND_WORKER_GROUPS: 'robinhood-derived' }, (config) => {
       assert.deepEqual(config.runtime.workerGroupsRequested, ['robinhood-derived']);

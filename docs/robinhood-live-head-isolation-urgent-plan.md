@@ -362,10 +362,10 @@ independente.
 - consumo por outbox;
 - falhas derivadas sem impacto no processamento.
 
-### Corte 6 — shadow, comparação e cutover
+### Corte 6 — shadow, comparação e cutover (6A implementado atrás de flag)
 
-- auditoria bloco/log entre caminhos;
-- comparação de observações e buckets;
+- auditoria bloco/log e comparação de observações entre caminhos (6A);
+- comparação de buckets/outbox sem a disputa idempotente (6B pendente);
 - canary em produção;
 - handoff sem parar captura;
 - rollback mantendo o novo head ativo.

@@ -33,6 +33,7 @@ function createRobinhoodProcessingRunner(deps = {}) {
   const repository = deps.repository;
   const persistence = deps.persistence;
   const decoder = deps.decoder || defaultDecoder;
+  const shadowAuditor = deps.shadowAuditor;
   if (typeof repository?.claimCaptures !== 'function') throw new Error('processing repository is required');
   if (typeof persistence?.commitHeadProcessingBatch !== 'function') throw new Error('persistence is required');
 
@@ -99,6 +100,20 @@ function createRobinhoodProcessingRunner(deps = {}) {
     buckets.rejected.push({ ...identityOf(row), reason: `unexpected_capture_kind:${decoded.kind}` });
   }
 
+  async function runShadowAudit(items) {
+    if (typeof shadowAuditor?.compare !== 'function') return null;
+    try {
+      return await shadowAuditor.compare(items.map((item) => item.entry));
+    } catch (error) {
+      const lastError = String(error?.message || error).slice(0, 200);
+      logger.error?.('[robinhood-processing] shadow audit failed open', lastError);
+      return {
+        attempted: items.length, compared: 0, matched: 0,
+        mismatched: 0, missing: 0, errors: 1, lastError, samples: [],
+      };
+    }
+  }
+
   async function runOnce() {
     const reclaimed = await repository.reclaimExpiredLeases();
     const rows = await repository.claimCaptures({ owner, limit: batchSize, leaseMs, stream: 'market' });
@@ -110,6 +125,7 @@ function createRobinhoodProcessingRunner(deps = {}) {
     for (const row of rows) {
       await classify(row, buckets);
     }
+    const shadowAudit = await runShadowAudit(buckets.persist);
 
     let processed = [];
     let retry = [];
@@ -134,7 +150,7 @@ function createRobinhoodProcessingRunner(deps = {}) {
       owner, retentionMs, maxAttempts,
       processed, rejected: buckets.rejected, retry,
     });
-    return { reclaimed, claimed: rows.length, ...settlement };
+    return { reclaimed, claimed: rows.length, ...settlement, shadowAudit };
   }
 
   return Object.freeze({ runOnce, owner });

@@ -3,7 +3,10 @@ const { describe, it } = require('node:test');
 
 const worker = require('../src/services/robinhood-processing-worker');
 
-const RESULT = { reclaimed: 1, claimed: 4, processed: 3, rejected: 1, retried: 0, blocked: 0 };
+const RESULT = {
+  reclaimed: 1, claimed: 4, processed: 3, rejected: 1, retried: 0, blocked: 0,
+  shadowAudit: { compared: 3, matched: 2, mismatched: 1, missing: 0, errors: 0 },
+};
 
 function fakeRunner() {
   const calls = { count: 0 };
@@ -36,6 +39,9 @@ describe('robinhood processing worker', () => {
     const status = worker.getStatus();
     assert.equal(status.lastProcessed, 3);
     assert.equal(status.totalProcessed, 3);
+    assert.equal(status.totalShadowCompared, 3);
+    assert.equal(status.totalShadowMatched, 2);
+    assert.equal(status.totalShadowMismatched, 1);
     assert.equal(repository._calls.prune, 1);
     assert.equal(status.lastPrunedCaptures, 3);
   });
