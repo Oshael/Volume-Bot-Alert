@@ -9293,6 +9293,13 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .token-launchpad-badge.ui-control-tooltip {
+  /* .ui-control-tooltip sets position: relative later in the file with equal
+     specificity, which would knock the badge out of its absolute corner and
+     into the avatar-wrap grid flow. Re-assert the corner placement here where
+     specificity (0,2,0) wins. */
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
   overflow: visible;
 }
 
