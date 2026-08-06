@@ -481,6 +481,30 @@ function startRobinhoodDerivedWorkerGroup() {
     }),
     { metadataProvider: () => ({ telemetry: robinhoodDerivedWorker.getStatus() }) }
   );
+  // Cold catalog metadata enrichment (name/symbol/logo/social via RPC) lived only
+  // in the monolith 'robinhood' group; after the cutover it stopped, so pools
+  // discovered post-cutover render without metadata. It is a self-contained
+  // polling + RPC worker whose candidates come from the active pool_registry and
+  // market activity the split already writes, so it belongs beside the derived
+  // live sinks. Toggle with ROBINHOOD_CATALOG_PROJECTION_ENABLED.
+  if (config.robinhoodCatalogProjectionWorker.enabled) {
+    startLockedWorker(
+      'robinhood-derived',
+      ROBINHOOD_CATALOG_PROJECTION_LEASE_KEY,
+      'Robinhood catalog projection worker',
+      () => robinhoodCatalogProjectionWorker.start({
+        ...config.robinhoodCatalogProjectionWorker,
+        rpcOptions: config.robinhoodIngestionWorker,
+      }),
+      {
+        metadataProvider: () => ({
+          telemetry: buildRobinhoodCatalogProjectionTelemetry(
+            robinhoodCatalogProjectionWorker.getStatus()
+          ),
+        }),
+      }
+    );
+  }
 }
 
 function startRobinhoodWalletSwapLiveRuntime() {

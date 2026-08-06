@@ -857,6 +857,7 @@ module.exports = {
   },
 
   robinhoodCatalogProjectionWorker: {
+    enabled: parseBoolean(process.env.ROBINHOOD_CATALOG_PROJECTION_ENABLED, true),
     intervalMs: parseIntegerInRange(
       process.env.ROBINHOOD_CATALOG_PROJECTION_INTERVAL_MS,
       60_000,
