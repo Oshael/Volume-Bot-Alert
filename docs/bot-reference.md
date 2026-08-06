@@ -430,7 +430,9 @@ pré-condição explícita. O alerta realtime possui gates separados de cálculo
 (`ROBINHOOD_DERIVED_REALTIME_ALERTS_ENABLED` e
 `ROBINHOOD_DERIVED_REALTIME_ALERTS_PUBLISHABLE`). Tanto ele quanto a publicação dos alertas padrão
 falham fechados se as leases do head/processing estiverem inativas, sem telemetria recente, fora do
-head, com gaps, bloqueios ou erro. A leitura de saúde é cacheada por 5s. O corte não desliga o
+head, com gaps, bloqueios ou erro. O gate também lê, pelos índices parciais da fila, a evidência
+`pending/leased` mais antiga e bloqueia publicação quando sua idade excede o limite de saúde; fila
+vazia ou um lote recente em voo continuam saudáveis. A leitura completa é cacheada por 5s. O corte não desliga o
 monólito automaticamente: overlap, observação e parada continuam sendo ações operacionais.
 
 A projeção Robinhood mantém um reparo persistente de metadata separado da página

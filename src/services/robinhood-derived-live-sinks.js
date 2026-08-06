@@ -1,4 +1,7 @@
 const workerLease = require('../models/worker-lease');
+const {
+  createRobinhoodHeadProcessingRepository,
+} = require('../models/robinhood-head-processing');
 const robinhoodLiveCatalogWorker = require('./robinhood-live-catalog-worker');
 const robinhoodRealtimeAlertWorker = require('./robinhood-realtime-alert-worker');
 const robinhoodMarketAggregateWorker = require('./robinhood-market-aggregate-worker');
@@ -56,6 +59,13 @@ function appendProcessingBlockers(blockers, lease, nowMs, maxAgeMs) {
   if (Number(telemetry?.lastBlocked || 0) > 0) blockers.push('processing_blocked');
 }
 
+function appendBacklogBlockers(blockers, backlog, nowMs, maxAgeMs) {
+  if (!backlog) return;
+  if (!freshTimestamp(backlog.observedAt, nowMs, maxAgeMs)) {
+    blockers.push('processing_backlog_stale');
+  }
+}
+
 function evaluateDerivedPipelineHealth(leases = [], options = {}) {
   const nowMs = Number(options.nowMs ?? Date.now());
   const maxAgeMs = Math.max(
@@ -69,12 +79,18 @@ function evaluateDerivedPipelineHealth(leases = [], options = {}) {
 
   appendHeadBlockers(blockers, head, nowMs, maxAgeMs);
   appendProcessingBlockers(blockers, processing, nowMs, maxAgeMs);
+  appendBacklogBlockers(blockers, options.processingBacklog, nowMs, maxAgeMs);
 
-  return Object.freeze({ ready: blockers.length === 0, blockers: Object.freeze(blockers) });
+  return Object.freeze({
+    ready: blockers.length === 0,
+    blockers: Object.freeze(blockers),
+    ...(options.processingBacklog ? { processingBacklog: options.processingBacklog } : {}),
+  });
 }
 
 function createRobinhoodDerivedLiveSinks(options = {}) {
   const leases = options.workerLease || workerLease;
+  const processing = options.processingRepository || createRobinhoodHeadProcessingRepository();
   const catalog = options.liveCatalogWorker || robinhoodLiveCatalogWorker;
   const alerts = options.realtimeAlertWorker || robinhoodRealtimeAlertWorker;
   const aggregates = options.marketAggregateWorker || robinhoodMarketAggregateWorker;
@@ -93,8 +109,10 @@ function createRobinhoodDerivedLiveSinks(options = {}) {
     const nowMs = now();
     if (lastHealthAt && nowMs - lastHealthAt < HEALTH_CACHE_MS) return lastHealth;
     if (healthQuery) return healthQuery;
-    healthQuery = leases.list()
-      .then((rows) => evaluateDerivedPipelineHealth(rows, { nowMs, maxAgeMs: healthMaxAgeMs }))
+    healthQuery = Promise.all([leases.list(), processing.getOldestActiveCapture('market')])
+      .then(([rows, processingBacklog]) => evaluateDerivedPipelineHealth(rows, {
+        nowMs, maxAgeMs: healthMaxAgeMs, processingBacklog,
+      }))
       .catch(() => ({ ready: false, blockers: ['health_query_failed'] }))
       .then((health) => {
         lastHealth = health;

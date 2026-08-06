@@ -93,6 +93,9 @@ function createRobinhoodDerivedStandardAlertSink(options = {}) {
     status.eligible += 1;
     try {
       const input = toCommittedInput(payload);
+      // Refresh fail-closed pipeline health even when the event itself is stale,
+      // so lease telemetry cannot claim readiness while processing is behind.
+      const health = await healthProvider();
       const observedAtMs = new Date(input.buckets[0].lastObservedAt).getTime();
       const ageMs = now() - observedAtMs;
       if (!Number.isFinite(observedAtMs) || ageMs < -5000 || ageMs > maxEventLagMs) {
@@ -100,7 +103,6 @@ function createRobinhoodDerivedStandardAlertSink(options = {}) {
         return { status: 'skipped', reason: 'stale_event' };
       }
       const signals = await source.buildFromCommittedBuckets(input);
-      const health = await healthProvider();
       const publishable = publishableRequested && health?.ready === true;
       const summary = await publication.consume({
         signals,

@@ -100,8 +100,10 @@ describe('robinhood derived standard alert sink', () => {
 
   it('skips old/out-of-batch payloads before querying signal baselines', async () => {
     let sourceCalls = 0;
+    let healthCalls = 0;
     const sink = createRobinhoodDerivedStandardAlertSink({
       now: () => NOW,
+      healthProvider: async () => { healthCalls += 1; return { ready: false }; },
       source: { buildFromCommittedBuckets: async () => { sourceCalls += 1; return []; } },
       publication: { consume: async () => ({}) },
     });
@@ -114,6 +116,7 @@ describe('robinhood derived standard alert sink', () => {
     assert.equal(ineligible.reason, 'not_latest_bucket_in_commit');
     assert.equal(stale.reason, 'stale_event');
     assert.equal(sourceCalls, 0);
+    assert.equal(healthCalls, 1);
   });
 
   it('throws signal/publication failures so the outbox row remains retryable', async () => {

@@ -51,8 +51,13 @@ describe('robinhood derived live sinks', () => {
     unhealthy[0].metadata.telemetry.capturedAt = new Date(NOW - 120_000).toISOString();
     unhealthy[1].metadata.telemetry.lastBlocked = 2;
     assert.deepEqual(
-      evaluateDerivedPipelineHealth(unhealthy, { nowMs: NOW }).blockers,
-      ['head_telemetry_stale', 'processing_blocked']
+      evaluateDerivedPipelineHealth(unhealthy, {
+        nowMs: NOW,
+        processingBacklog: {
+          blockNumber: '100', observedAt: new Date(NOW - 120_000).toISOString(),
+        },
+      }).blockers,
+      ['head_telemetry_stale', 'processing_blocked', 'processing_backlog_stale']
     );
   });
 
@@ -65,6 +70,7 @@ describe('robinhood derived live sinks', () => {
       alertsRequested: true,
       now: () => NOW,
       workerLease: { list: async () => healthyLeases() },
+      processingRepository: { getOldestActiveCapture: async () => null },
       liveCatalogWorker: fakeWorker('catalog', calls),
       realtimeAlertWorker: fakeWorker('alerts', calls),
       marketAggregateWorker: fakeWorker('aggregates', calls),
@@ -88,6 +94,7 @@ describe('robinhood derived live sinks', () => {
       realtimeAlertsPublishable: true,
       alertsRequested: true,
       workerLease: { list: async () => { throw new Error('database unavailable'); } },
+      processingRepository: { getOldestActiveCapture: async () => null },
       liveCatalogWorker: fakeWorker('catalog', calls),
       realtimeAlertWorker: fakeWorker('alerts', calls),
       marketAggregateWorker: fakeWorker('aggregates', calls),

@@ -22,7 +22,10 @@ function hashFor(block, logIndex) {
   return `0x${(BigInt(block) * 1000n + BigInt(logIndex)).toString(16).padStart(64, '0')}`;
 }
 
-async function seedPending({ block, logIndex = 0, stream = 'market', attemptCount = 0, dueInMs = 0 }) {
+async function seedPending({
+  block, logIndex = 0, stream = 'market', attemptCount = 0, dueInMs = 0,
+  timestampMs = Date.now(),
+}) {
   await db.query(
     `INSERT INTO robinhood_head_captures (
        stream, transaction_hash, log_index, block_number, block_hash,
@@ -30,10 +33,11 @@ async function seedPending({ block, logIndex = 0, stream = 'market', attemptCoun
        evidence_version, evidence, attempt_count, next_attempt_at
      ) VALUES (
        $1, $2, $3, $4, $5, 0, $6, $7::jsonb, '0x', 'uniswap-v3', 'robinhood:uniswap-v3:test',
-       1, '{}'::jsonb, $8, NOW() + ($9::bigint * INTERVAL '1 millisecond')
+       1, $8::jsonb, $9, NOW() + ($10::bigint * INTERVAL '1 millisecond')
      )`,
     [stream, hashFor(block, logIndex), logIndex, block, BLOCK_HASH, ADDRESS,
-      JSON.stringify([TOPIC]), attemptCount, dueInMs]
+      JSON.stringify([TOPIC]), JSON.stringify({ timestampMs: String(timestampMs) }),
+      attemptCount, dueInMs]
   );
   return { transactionHash: hashFor(block, logIndex), logIndex };
 }
@@ -177,6 +181,19 @@ describe('Robinhood head processing repository integration', () => {
     assert.equal(watermark.pending, 2);
     assert.equal(watermark.leased, 0);
     assert.equal(watermark.blocked, 0);
+  });
+
+  it('reports the oldest pending or leased evidence without scanning terminal history', async () => {
+    const oldestAt = Date.parse('2026-08-06T01:00:00.000Z');
+    await seedPending({ block: 101, timestampMs: oldestAt + 1000 });
+    await seedPending({ block: 100, timestampMs: oldestAt });
+    await repository.claimCaptures({ owner: 'worker-a', limit: 1, leaseMs: LEASE_MS });
+
+    const oldest = await repository.getOldestActiveCapture('market');
+
+    assert.deepEqual(oldest, {
+      blockNumber: '100', observedAt: new Date(oldestAt).toISOString(),
+    });
   });
 
   it('prunes only terminal captures whose retention window has elapsed', async () => {

@@ -234,6 +234,46 @@ function createRobinhoodHeadProcessingRepository(options = {}) {
     };
   }
 
+  // Oldest in-flight market evidence for publication health. The two bounded
+  // branches use the pending-claim and leased partial indexes respectively;
+  // terminal history is never scanned by this hot health read.
+  async function getOldestActiveCapture(streamValue) {
+    const stream = optionalStream(streamValue);
+    const result = await database.query(
+      `WITH leased AS MATERIALIZED (
+         SELECT block_number, evidence->>'timestampMs' AS timestamp_ms,
+                transaction_index, log_index
+         FROM robinhood_head_captures
+         WHERE chain = $1 AND stream = $2 AND processing_status = 'leased'
+       ), active AS (
+         (SELECT block_number, evidence->>'timestampMs' AS timestamp_ms,
+                 transaction_index, log_index
+          FROM robinhood_head_captures
+          WHERE chain = $1 AND stream = $2 AND processing_status = 'pending'
+          ORDER BY block_number, transaction_index, log_index
+          LIMIT 1)
+         UNION ALL
+         (SELECT block_number, timestamp_ms, transaction_index, log_index
+          FROM leased
+          ORDER BY block_number, transaction_index, log_index
+          LIMIT 1)
+       )
+       SELECT block_number, timestamp_ms
+       FROM active
+       ORDER BY block_number, transaction_index, log_index
+       LIMIT 1`,
+      [CHAIN, stream]
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    const rawTimestamp = String(row.timestamp_ms || '');
+    const timestamp = /^\d+$/.test(rawTimestamp) ? Number(rawTimestamp) : NaN;
+    return {
+      blockNumber: String(row.block_number),
+      observedAt: Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null,
+    };
+  }
+
   // Prunes captures whose retention window has elapsed (Q3: 1 day after
   // terminal). The queue is a passage corridor; permanent observations/buckets
   // live in their own tables, so a processed/rejected capture is disposable.
@@ -262,6 +302,7 @@ function createRobinhoodHeadProcessingRepository(options = {}) {
     claimCaptures,
     settleClaims,
     reclaimExpiredLeases,
+    getOldestActiveCapture,
     getProcessingWatermark,
     pruneExpiredCaptures,
   });
