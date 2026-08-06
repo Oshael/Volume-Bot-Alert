@@ -334,11 +334,12 @@ Grupos existentes:
 | `robinhood-head` | captura isolada do head: só grava evidência durável na fila e avança o cursor de captura |
 | `robinhood-processing` | consumidor isolado: reclama capturas por lease, decodifica a evidência congelada sem RPC, calcula preço/FDV/liquidez, persiste observações/buckets e poda a fila; no mesmo processo, um 2º runner drena `stream='discovery'` para o `robinhood_pool_registry` |
 | `robinhood-derived` | consumidor isolado: drena a outbox de emit ao vivo e replica o fan-out `market:bucket` (socket/relay) sem o monólito; hospeda o catalog projection worker (metadata de token) |
+| `robinhood-wallet` | consumidor isolado: re-lê observações aceitas e atribui `tx.from` via `eth_getBlockByNumber` (full-tx) por bloco, com cursor `live` próprio; alimenta `robinhood_wallet_swaps` |
 | `robinhood-backfill` | discovery, scan, enrichment, finalizer e aggregation do replay |
 
-`robinhood`, `robinhood-head`, `robinhood-processing`, `robinhood-derived` e
-`robinhood-backfill` são grupos isolados. O config rejeita combinar um grupo isolado com
-grupos compartilhados ou entre si.
+`robinhood`, `robinhood-head`, `robinhood-processing`, `robinhood-derived`,
+`robinhood-wallet` e `robinhood-backfill` são grupos isolados. O config rejeita combinar
+um grupo isolado com grupos compartilhados ou entre si.
 
 O grupo `robinhood-head` roda um processo separado (systemd
 `trendscope-worker@robinhood-head.service`) que instancia o runner de ingestão com o
@@ -1059,7 +1060,9 @@ ao menor valor entre `nodeHead - 12` e o último bloco commitado pelo cursor mar
 revalidam checkpoint, avançam ranges comprovadamente vazios e ficam em
 `awaiting-bootstrap` enquanto o cursor `live` não foi criado. O worker reutiliza o
 RPC Robinhood com preflight de chain ID `4663`, lease própria, telemetria, backoff e
-wiring no grupo `robinhood`; execução do bootstrap, deploy e canary continuam pendentes.
+wiring no grupo isolado `robinhood-wallet` (systemd `trendscope-worker@robinhood-wallet`,
+`BACKGROUND_WORKER_GROUPS=robinhood-wallet` + `ROBINHOOD_WALLET_SWAP_LIVE_ENABLED=true`);
+execução do bootstrap, deploy e canary continuam pendentes.
 
 O bootstrap também existe localmente como
 `npm run robinhood:wallet-live-bootstrap`: dry-run por padrão, audita observações
