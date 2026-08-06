@@ -8,9 +8,18 @@ const RESULT = {
   shadowAudit: { compared: 3, matched: 2, mismatched: 1, missing: 0, errors: 0 },
 };
 
+const DISCOVERY_RESULT = {
+  reclaimed: 0, claimed: 2, processed: 2, rejected: 0, retried: 0, blocked: 0,
+};
+
 function fakeRunner() {
   const calls = { count: 0 };
   return { _calls: calls, runOnce: async () => { calls.count += 1; return RESULT; } };
+}
+
+function fakeDiscoveryRunner() {
+  const calls = { count: 0 };
+  return { _calls: calls, runOnce: async () => { calls.count += 1; return DISCOVERY_RESULT; } };
 }
 
 function fakeRepo() {
@@ -28,20 +37,23 @@ describe('robinhood processing worker', () => {
   });
 
   // Runs first so the module-level prune clock is still at its initial zero.
-  it('runs a tick, aggregates counts into status, and prunes when the window is due', async () => {
+  it('ticks both stream runners, aggregates counts into status, and prunes when due', async () => {
     const repository = fakeRepo();
+    const discoveryRunner = fakeDiscoveryRunner();
     const normalized = worker.__private.normalizeOptions({});
-    worker.__private.build(normalized, { runner: fakeRunner(), repository });
+    worker.__private.build(normalized, { runner: fakeRunner(), discoveryRunner, repository });
 
     const result = await worker.runOnce(normalized);
 
-    assert.deepEqual(result, RESULT);
+    // The loop stays hot on the combined claim count of both streams.
+    assert.deepEqual(result, { ...RESULT, claimed: RESULT.claimed + DISCOVERY_RESULT.claimed });
+    assert.equal(discoveryRunner._calls.count, 1);
     const status = worker.getStatus();
     assert.equal(status.lastProcessed, 3);
     assert.equal(status.totalProcessed, 3);
     assert.equal(status.totalShadowCompared, 3);
-    assert.equal(status.totalShadowMatched, 2);
-    assert.equal(status.totalShadowMismatched, 1);
+    assert.equal(status.discovery.lastClaimed, 2);
+    assert.equal(status.discovery.totalProcessed, 2);
     assert.equal(repository._calls.prune, 1);
     assert.equal(status.lastPrunedCaptures, 3);
   });
@@ -49,7 +61,9 @@ describe('robinhood processing worker', () => {
   it('does not prune again while still inside the retention window', async () => {
     const repository = fakeRepo();
     const normalized = worker.__private.normalizeOptions({ pruneIntervalMs: 3_600_000 });
-    worker.__private.build(normalized, { runner: fakeRunner(), repository });
+    worker.__private.build(normalized, {
+      runner: fakeRunner(), discoveryRunner: fakeDiscoveryRunner(), repository,
+    });
 
     await worker.runOnce(normalized);
 

@@ -12,6 +12,9 @@ const { createRobinhoodPersistenceRepository } = require('../models/robinhood-pe
 const { createRobinhoodHeadProcessingRepository } = require('../models/robinhood-head-processing');
 const { createRobinhoodProcessingRunner } = require('./robinhood-processing-runner');
 const {
+  createRobinhoodDiscoveryProcessingRunner,
+} = require('./robinhood-discovery-processing-runner');
+const {
   createRobinhoodProcessingShadowAuditor,
 } = require('./robinhood-processing-shadow-auditor');
 
@@ -22,6 +25,7 @@ const DEFAULT_PRUNE_INTERVAL_MS = 5 * 60 * 1000;
 let timer = null;
 let running = false;
 let runner = null;
+let discoveryRunner = null;
 let repository = null;
 let lastPruneAt = 0;
 let status = {
@@ -94,6 +98,20 @@ function build(normalized, deps = {}) {
   runner = deps.runner || createRobinhoodProcessingRunner({
     repository, persistence, shadowAuditor, options: normalized.runner,
   });
+  // Co-located discovery consumer (same process/lease group). It shares the head
+  // processing repository and drains stream='discovery' into the pool registry.
+  // A distinct lease owner keeps its settlements from matching the market runner's
+  // rows; reclaim stays off because the market runner's chain-wide reclaim covers
+  // abandoned discovery leases too.
+  discoveryRunner = deps.discoveryRunner || createRobinhoodDiscoveryProcessingRunner({
+    repository,
+    persistence,
+    options: {
+      ...normalized.runner,
+      owner: normalized.runner.owner ? `${normalized.runner.owner}:discovery` : undefined,
+      emitOutbox: undefined,
+    },
+  });
 }
 
 async function maybePrune(normalized, nowMs) {
@@ -125,8 +143,22 @@ async function runOnce(normalized) {
     status.totalShadowMissing += result.shadowAudit.missing || 0;
     status.totalShadowErrors += result.shadowAudit.errors || 0;
   }
+  const discovery = await discoveryRunner.runOnce();
+  const prev = status.discovery || {};
+  status.discovery = {
+    lastTickAt: new Date().toISOString(),
+    lastClaimed: discovery.claimed,
+    lastProcessed: discovery.processed,
+    lastRejected: discovery.rejected,
+    lastRetried: discovery.retried,
+    lastBlocked: discovery.blocked,
+    totalProcessed: (prev.totalProcessed || 0) + discovery.processed,
+    totalRejected: (prev.totalRejected || 0) + discovery.rejected,
+    totalBlocked: (prev.totalBlocked || 0) + discovery.blocked,
+  };
   await maybePrune(normalized, Date.now());
-  return result;
+  // Keep the tick loop hot while either stream still has claimable work.
+  return { ...result, claimed: result.claimed + discovery.claimed };
 }
 
 function schedule(normalized, delayMs) {
