@@ -332,7 +332,7 @@ Grupos existentes:
 | `maintenance` | limpeza, retenção Robinhood e mock-trading take-profit |
 | `robinhood` | ingestão live monolítica: captura + valuation + projeção + staging + agregação + alertas |
 | `robinhood-head` | captura isolada do head: só grava evidência durável na fila e avança o cursor de captura |
-| `robinhood-processing` | consumidor isolado: reclama capturas por lease, decodifica a evidência congelada sem RPC, calcula preço/FDV/liquidez, persiste observações/buckets e poda a fila |
+| `robinhood-processing` | consumidor isolado: reclama capturas por lease, decodifica a evidência congelada sem RPC, calcula preço/FDV/liquidez, persiste observações/buckets e poda a fila; no mesmo processo, um 2º runner drena `stream='discovery'` para o `robinhood_pool_registry` |
 | `robinhood-derived` | consumidor isolado: drena a outbox de emit ao vivo e replica o fan-out `market:bucket` (socket/relay) sem o monólito |
 | `robinhood-backfill` | discovery, scan, enrichment, finalizer e aggregation do replay |
 
@@ -370,6 +370,20 @@ ordem `(block_number, transaction_index, log_index, next_attempt_at)` e predicat
 `pending + market`; o índice antigo permanece para discovery. O processing só deve ser
 retomado depois que `pg_index` confirmar `indisvalid/indisready` e `EXPLAIN (ANALYZE,
 BUFFERS)` provar que a claim usa esse índice sem sort/scan massivo.
+
+No mesmo processo do `robinhood-processing`, o `robinhood-discovery-processing-runner`
+consome `stream='discovery'`. O cutover do isolamento do head tinha deixado o stream de
+discovery **sem consumidor**: o head só enfileira o evento (`commitDiscoveryRange` do
+adapter = `appendCaptures`), e o `upsertPool` vivia apenas no `commitDiscoveryRange` do
+monólito, agora desligado — então pools lançados após o cutover paravam de entrar no
+`robinhood_pool_registry` e sumiam do board (o market faz `INNER JOIN` no registry ativo).
+O runner reclama por lease, decodifica o `event` congelado (sem RPC) e chama
+`commitDiscoveryProcessingBatch`, que espelha os writes de pool/noxa do monólito **sem**
+avançar `robinhood_ingestion_cursors` nem o cursor de captura e **sem** publicar backfill.
+Reprocessar é idempotente (`insertProcessedLog` dedup + `upsertPool ON CONFLICT`), então o
+drain do backlog acumulado registra só os lançamentos pós-cutover. Lease owner distinto
+(`…:discovery`); o reclaim fica com o runner de market, cujo `reclaimExpiredLeases` é
+chain-wide e já cobre os leases de discovery.
 
 A Stage 108 remove o segundo scan quente descoberto no Corte 6D. O frontier derived não executa
 mais `MIN/COUNT FILTER` sobre todo o histórico a cada batch: consulta somente a evidência ativa
