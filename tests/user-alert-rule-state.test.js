@@ -66,6 +66,37 @@ describe('user alert rule state model', () => {
     }
   });
 
+  it('clamps astronomical value/pct to the NUMERIC column bounds before persisting', async () => {
+    const originalQuery = db.query;
+    let capturedParams = null;
+
+    db.query = async (_sql, params) => {
+      capturedParams = params;
+      return { rows: [{ user_id: 42, rule_key: 'monitored-fdv', chain: 'solana' }] };
+    };
+
+    try {
+      const { MAX_LAST_ALERTED_VALUE, MAX_LAST_ALERTED_PCT } = userAlertRuleState.__private;
+      await userAlertRuleState.upsertState({
+        userId: 42,
+        ruleKey: 'monitored-fdv',
+        tokenAddress: 'So11111111111111111111111111111111111111112',
+        status: 'triggered',
+        // Corrupted upstream FDV/mcap and micro-cap % move that overflow NUMERIC.
+        lastAlertedValue: 3.4e53,
+        lastAlertedPct: -9.9e40,
+      });
+
+      // params[6] = last_alerted_value, params[7] = last_alerted_pct
+      assert.equal(capturedParams[6], MAX_LAST_ALERTED_VALUE);
+      assert.equal(capturedParams[7], -MAX_LAST_ALERTED_PCT);
+      assert.ok(capturedParams[6] < 1e16, 'value stays within NUMERIC(20,4)');
+      assert.ok(Math.abs(capturedParams[7]) < 1e8, 'pct stays within NUMERIC(10,2)');
+    } finally {
+      db.query = originalQuery;
+    }
+  });
+
   it('loads persisted state for a user rule and token', async () => {
     const originalQuery = db.query;
     let capturedParams = null;

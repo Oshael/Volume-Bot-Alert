@@ -429,6 +429,13 @@ eventos acima do limite de idade são descartados antes da query. Ativação de 
 Audit-only prevalece e nunca instancia esse sink. O Corte 6C não inicia os workers in-memory de
 catálogo live ou aggregates no processo derived; esse co-start continua pendente antes do cutover.
 
+A persistência de estado de alerta (`user_alert_rule_state`) clampa `last_alerted_value`
+(`NUMERIC(20,4)`) e `last_alerted_pct` (`NUMERIC(10,2)`) aos limites das colunas no único ponto de
+escrita (`upsertState`, chain-agnóstico). Tokens micro-cap ou FDV/mcap corrompido geravam
+valores/variações astronômicos que estouravam o INSERT (`numeric_field_overflow`), dead-letterando a
+outbox do derived e quebrando todos os alertas. Ampliar a coluna não bastava (valores chegavam a
+~1e53); o clamp na origem garante que a escrita nunca estoura.
+
 O Corte 6D entrega esse co-start, ainda **desligado por padrão**. Com
 `ROBINHOOD_DERIVED_LIVE_SINKS_ENABLED=true`, e somente fora do audit-only, o processo derived passa
 a possuir o catálogo live e o worker de aggregates; `ROBINHOOD_MARKET_AGGREGATES_ENABLED=true` é

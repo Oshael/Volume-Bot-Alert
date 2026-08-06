@@ -6,6 +6,17 @@ const {
 
 const VALID_STATUSES = new Set(['idle', 'triggered', 'rearmed']);
 
+// Column-safe clamp bounds. A micro-cap token (price ~3e-7) or corrupted upstream
+// FDV/mcap produces astronomical values/percent moves; without a bound the INSERT
+// throws numeric_field_overflow, which dead-letters the derived alert outbox and
+// breaks every alert. Widening the columns alone is not enough (corrupted values
+// reached ~1e53, past NUMERIC(20,4) too), so we clamp at the single write boundary.
+//   last_alerted_value NUMERIC(20, 4) -> integer part <= 16 digits
+//   last_alerted_pct   NUMERIC(10, 2) -> integer part <= 8 digits
+// Bounds stay under 2^53 so they are exactly representable as doubles.
+const MAX_LAST_ALERTED_VALUE = 9e15; // < 10^16, fits NUMERIC(20, 4)
+const MAX_LAST_ALERTED_PCT = 99_999_999; // < 10^8, fits NUMERIC(10, 2)
+
 function normalizeUserId(value) {
   const userId = Number.parseInt(String(value || '').trim(), 10);
   if (!Number.isInteger(userId) || userId <= 0) {
@@ -43,6 +54,14 @@ function normalizeStatus(value) {
 function toNumberOrNull(value) {
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
+}
+
+function clampNumericOrNull(value, maxMagnitude) {
+  const num = toNumberOrNull(value);
+  if (num == null) return null;
+  if (num > maxMagnitude) return maxMagnitude;
+  if (num < -maxMagnitude) return -maxMagnitude;
+  return num;
 }
 
 function toTimestampOrNull(value) {
@@ -128,8 +147,8 @@ async function upsertState(payload = {}, runner = db) {
   assertAutomaticAlertsEnabled(identity.chain, payload.authorization);
   const status = normalizeStatus(payload.status);
   const lastAlertedAt = toTimestampOrNull(payload.lastAlertedAt);
-  const lastAlertedValue = toNumberOrNull(payload.lastAlertedValue);
-  const lastAlertedPct = toNumberOrNull(payload.lastAlertedPct);
+  const lastAlertedValue = clampNumericOrNull(payload.lastAlertedValue, MAX_LAST_ALERTED_VALUE);
+  const lastAlertedPct = clampNumericOrNull(payload.lastAlertedPct, MAX_LAST_ALERTED_PCT);
   const cooldownUntil = toTimestampOrNull(payload.cooldownUntil);
   const rearmRequired = Boolean(payload.rearmRequired);
   const lastFingerprint = normalizeFingerprint(payload.lastFingerprint);
@@ -230,6 +249,9 @@ module.exports = {
   markTriggered,
   upsertState,
   __private: {
+    clampNumericOrNull,
+    MAX_LAST_ALERTED_PCT,
+    MAX_LAST_ALERTED_VALUE,
     mapStateRow,
     normalizeIdentity,
     normalizeFingerprint,
