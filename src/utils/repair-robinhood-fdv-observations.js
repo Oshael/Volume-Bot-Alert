@@ -1,4 +1,5 @@
 const fs = require('node:fs');
+const { setTimeout: delay } = require('node:timers/promises');
 const db = require('../models/db');
 const {
   MAX_FINITE_HUMAN_SUPPLY,
@@ -369,12 +370,16 @@ function collectSpotUpdates(rows, summary) {
   return updates;
 }
 
-async function persistSpotUpdates(database, updates, summary, write) {
+async function persistSpotUpdates(database, updates, summary, write, onMissing) {
   if (!write) {
     summary.wouldRepair += updates.length;
     return;
   }
-  if (Object.keys(summary.skipped).length) {
+  // Default (stop) preserves the strict contract: any incomplete evidence aborts the
+  // run rather than writing a partial repair. Bulk history runs use skip, which repairs
+  // every recomputable row and leaves the skipped ones tallied in summary.skipped for a
+  // separate follow-up (e.g. archive re-staging), instead of aborting on scattered gaps.
+  if (onMissing !== 'skip' && Object.keys(summary.skipped).length) {
     throw new Error(`spot repair stopped on incomplete evidence: ${JSON.stringify(summary.skipped)}`);
   }
   if (!updates.length) return;
@@ -412,9 +417,12 @@ async function repairSpot(database, options) {
       break;
     }
     const updates = collectSpotUpdates(result.rows, summary);
-    await persistSpotUpdates(database, updates, summary, write);
+    await persistSpotUpdates(database, updates, summary, write, options.onMissing);
     advanceSpotCursor(cursor, result.rows, summary, options, write);
     if (options.maxBatches && summary.batches >= options.maxBatches) break;
+    // Throttle between batches so the DB write I/O (WAL/autovacuum) shares the box with
+    // live head ingestion instead of saturating it. 0 keeps the original tight loop.
+    if (options.sleepMs) await delay(options.sleepMs);
   }
   return summary;
 }
@@ -463,7 +471,11 @@ function parseSpotOptions(args, mode) {
   if (!Number.isInteger(maxBatches) || maxBatches < 0) {
     throw new Error('max-batches must be a non-negative integer');
   }
-  return { fromBlock, toBlock, checkpoint, maxBatches };
+  const onMissing = String(args['on-missing'] ?? 'stop').toLowerCase();
+  if (!['stop', 'skip'].includes(onMissing)) throw new Error('on-missing must be stop or skip');
+  const sleepMs = Number.parseInt(args['sleep-ms'] ?? '0', 10);
+  if (!Number.isInteger(sleepMs) || sleepMs < 0) throw new Error('sleep-ms must be a non-negative integer');
+  return { fromBlock, toBlock, checkpoint, maxBatches, onMissing, sleepMs };
 }
 
 function parseArgs(argv = process.argv.slice(2)) {

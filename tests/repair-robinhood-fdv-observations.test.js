@@ -141,8 +141,48 @@ describe('concentrated-liquidity spot repair', () => {
       '--target', 'spot', '--from-block', '1', '--to-block', '2',
     ]), {
       mode: 'dry-run', batchSize: 500, target: 'spot', fromBlock: '1', toBlock: '2',
-      checkpoint: null, maxBatches: 1,
+      checkpoint: null, maxBatches: 1, onMissing: 'stop', sleepMs: 0,
     });
+    assert.throws(() => parseArgs([
+      '--target', 'spot', '--from-block', '1', '--to-block', '2', '--on-missing', 'bogus',
+    ]), /on-missing must be stop or skip/);
+  });
+
+  it('repairs the recomputable rows and tallies the rest when on-missing is skip', async () => {
+    let served = false;
+    const good = {
+      ...spotRow('uniswap-v3'),
+      chain: 'robinhood', transaction_hash: '0xgood', log_index: '1', block_number: '10',
+      price_quote: '0.5', price_usd: '1', fdv_usd: '1000000', evidence_source: 'backfill-staging',
+    };
+    const missing = {
+      ...spotRow('uniswap-v3', { log_data: null }),
+      chain: 'robinhood', transaction_hash: '0xmissing', log_index: '2', block_number: '11',
+      price_quote: '0.5', price_usd: '1', fdv_usd: '1000000', evidence_source: null,
+    };
+    const updates = [];
+    const database = {
+      async query(sql, params) {
+        if (/UPDATE robinhood_market_observations/.test(sql)) {
+          updates.push(JSON.parse(params[0]));
+          return { rowCount: JSON.parse(params[0]).length };
+        }
+        if (served) return { rows: [] };
+        served = true;
+        return { rows: [good, missing] };
+      },
+    };
+
+    const summary = await repairSpot(database, {
+      mode: 'write', batchSize: 500, fromBlock: '0', toBlock: '20',
+      checkpoint: null, maxBatches: 0, onMissing: 'skip', sleepMs: 0,
+    });
+
+    assert.equal(summary.repaired, 1);
+    assert.equal(summary.skipped.missing_raw_log, 1);
+    assert.equal(summary.complete, true);
+    assert.equal(updates.length, 1);
+    assert.equal(updates[0][0].transaction_hash, '0xgood');
   });
 });
 
