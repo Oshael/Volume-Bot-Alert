@@ -97,11 +97,31 @@ describe('Robinhood standard alert signal source', () => {
       token_address: TOKEN, protocol: 'uniswap-v3', market_key: MARKET,
     }]);
     assert.equal(calls[0].params[1].toISOString(), AS_OF);
+    assert.equal(calls[0].params[2], null);
+    assert.equal(calls[0].params[3], null);
     assert.equal(calls[0].timeout, 10_000);
     assert.match(calls[0].sql, /bucket\.market_key = context\.market_key/);
     assert.match(calls[0].sql, /robinhood_market_buckets_1m/);
     assert.match(calls[0].sql, /robinhood_market_buckets_1h/);
     assert.doesNotMatch(calls[0].sql, /https?:\/\//);
+  });
+
+  it('uses a strict derived processing frontier instead of the monolith coverage end', async () => {
+    const calls = [];
+    const source = createRobinhoodStandardAlertSignalSource({
+      database: { async query(sql, params) { calls.push({ sql, params }); return { rows: [context()] }; } },
+    });
+
+    await source.buildFromCommittedBuckets({
+      buckets: [bucket()],
+      cursor: {
+        ...cursor(), coverageEndAt: new Date(AS_OF), coverageCaughtUp: true,
+      },
+    });
+
+    assert.equal(calls[0].params[2].toISOString(), AS_OF);
+    assert.equal(calls[0].params[3], true);
+    assert.match(calls[0].sql, /COALESCE\(\$3::timestamptz, checkpoint_timestamp\)/);
   });
 
   it('fails closed when cursor or baseline coverage is incomplete', () => {

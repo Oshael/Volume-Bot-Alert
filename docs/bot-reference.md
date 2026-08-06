@@ -408,6 +408,17 @@ monólito venceu a identidade idempotente do log, sem reinserir observação nem
 Os campos dinâmicos de janela 5m e diagnósticos por protocolo não fazem parte deste primeiro gate;
 o núcleo 1m, valuation, candle, atividade e ordem são comparados.
 
+O Corte 6C fecha o fluxo de **alertas padrão** pelo derived, ainda opt-in. O payload da outbox
+carrega identidade do mercado e frontier estrita de processamento; somente o bucket on-chain mais
+novo de cada token no commit recebe `standardAlertEligible`. O sink
+`robinhood-derived-standard-alert-sink` reconstrói o contrato canônico, consulta baselines com o
+frontier derived e reutiliza a publicação idempotente existente. Linhas antigas/sem elegibilidade e
+eventos acima do limite de idade são descartados antes da query. Ativação de cálculo:
+`ROBINHOOD_DERIVED_STANDARD_ALERTS_ENABLED=true`; envio real exige também
+`ROBINHOOD_DERIVED_STANDARD_ALERTS_PUBLISHABLE=true` **e** `ROBINHOOD_ALERTS_ENABLED=true`.
+Audit-only prevalece e nunca instancia esse sink. O Corte 6C não inicia os workers in-memory de
+catálogo live ou aggregates no processo derived; esse co-start continua pendente antes do cutover.
+
 A projeção Robinhood mantém um reparo persistente de metadata separado da página
 de mercado ativa. Identidades `robinhood-onchain` com imagem ou launchpad pendente
 são priorizadas, e a atividade recente desempata dentro da mesma classe;

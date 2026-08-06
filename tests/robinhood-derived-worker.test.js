@@ -105,12 +105,19 @@ describe('robinhood derived worker', () => {
       }),
       pruneBlocked: async () => 0,
     };
-    const normalized = worker.__private.normalizeOptions({ shadowAuditOnly: true });
+    let standardAlerts = 0;
+    const normalized = worker.__private.normalizeOptions({
+      shadowAuditOnly: true, standardAlertsEnabled: true,
+    });
     worker.__private.build(normalized, {
       repository,
       shadowAuditor: {
         consume: async () => { audits += 1; },
         getStatus: () => ({ matched: audits }),
+      },
+      standardAlertSink: {
+        consume: async () => { standardAlerts += 1; },
+        getStatus: () => ({ attempted: standardAlerts }),
       },
       fanout: async () => { deliveries += 1; },
     });
@@ -120,8 +127,42 @@ describe('robinhood derived worker', () => {
     assert.equal(result.delivered, 1);
     assert.equal(audits, 1);
     assert.equal(deliveries, 0);
+    assert.equal(standardAlerts, 0);
     assert.equal(worker.getStatus().mode, 'shadow-audit-only');
     assert.equal(worker.getStatus().shadowAudit.matched, 1);
+    assert.equal(worker.getStatus().standardAlerts, null);
+  });
+
+  it('awaits standard alerts after normal derived delivery when enabled', async () => {
+    const calls = [];
+    let claimed = false;
+    const repository = {
+      reclaimExpiredLeases: async () => 0,
+      claimOutbox: async () => {
+        if (claimed) return [];
+        claimed = true;
+        return [{ id: 2, attemptCount: 1, payload: bucketPayload() }];
+      },
+      settleOutbox: async ({ delivered, retry }) => ({
+        delivered: delivered.length, retried: retry.length, blocked: 0,
+      }),
+      pruneBlocked: async () => 0,
+    };
+    const normalized = worker.__private.normalizeOptions({ standardAlertsEnabled: true });
+    worker.__private.build(normalized, {
+      repository,
+      fanout: async () => { calls.push('delivery'); return true; },
+      standardAlertSink: {
+        consume: async () => { calls.push('alerts'); return {}; },
+        getStatus: () => ({ attempted: 1 }),
+      },
+    });
+
+    const result = await worker.runOnce(normalized);
+
+    assert.deepEqual(calls, ['delivery', 'alerts']);
+    assert.equal(result.delivered, 1);
+    assert.equal(worker.getStatus().mode, 'delivery-with-standard-alerts');
   });
 });
 

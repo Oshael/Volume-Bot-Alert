@@ -796,6 +796,19 @@ module.exports = {
   },
   robinhoodDerivedWorker: {
     enabled: parseBoolean(process.env.ROBINHOOD_DERIVED_ENABLED, true),
+    standardAlertsEnabled: parseBoolean(
+      process.env.ROBINHOOD_DERIVED_STANDARD_ALERTS_ENABLED, false
+    ),
+    standardAlertsPublishable: parseBoolean(
+      process.env.ROBINHOOD_DERIVED_STANDARD_ALERTS_PUBLISHABLE, false
+    ),
+    standardAlertsRequested: robinhoodRollout.alerts.requested,
+    standardAlertMaxEventLagMs: parseIntegerInRange(
+      process.env.ROBINHOOD_DERIVED_STANDARD_ALERT_MAX_EVENT_LAG_MS, 30_000, 1000, 300_000
+    ),
+    standardAlertStatementTimeoutMs: parseIntegerInRange(
+      process.env.ROBINHOOD_DERIVED_STANDARD_ALERT_STATEMENT_TIMEOUT_MS, 10_000, 1000, 60_000
+    ),
     shadowAuditOnly: parseBoolean(process.env.ROBINHOOD_DERIVED_SHADOW_AUDIT_ONLY, false),
     shadowAuditSampleLimit: parseIntegerInRange(
       process.env.ROBINHOOD_DERIVED_SHADOW_AUDIT_SAMPLE_LIMIT, 5, 1, 20

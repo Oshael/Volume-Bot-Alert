@@ -106,5 +106,16 @@ the shared idempotency race still targets the already committed canonical bucket
 construction; the observation insert remains `ON CONFLICT DO NOTHING`, so metrics are not counted
 twice.
 
+### Corte 6C standard-alert handoff
+
+New outbox payloads carry the valuation market identity, strict processing frontier and a
+`standardAlertEligible` marker for only the newest bucket per token/producer commit. With
+`ROBINHOOD_DERIVED_STANDARD_ALERTS_ENABLED=true`, the derived consumer rebuilds the existing
+standard signal contract and reuses its idempotent publication. Real sends additionally require
+`ROBINHOOD_DERIVED_STANDARD_ALERTS_PUBLISHABLE=true` and the global
+`ROBINHOOD_ALERTS_ENABLED=true`; stale or pre-6C rows fail closed. Audit-only always disables this
+sink. Live catalog and aggregate workers are still not started in the derived process and remain a
+separate pre-cutover slice.
+
 Then Corte 6 (shadow/compare/cutover — co-start the in-memory sinks, re-point the alert rollout
 gate at capture/processing health) and Corte 7 (remove the monolith).

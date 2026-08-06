@@ -1384,10 +1384,20 @@ function buildRobinhoodMarketBucketUpdate(row, cursor) {
     chain: CHAIN,
     address: normalizeTokenAddress(CHAIN, row.tokenAddress),
     bucketTs,
+    market: {
+      protocol: String(row.valuationProtocol),
+      key: String(row.valuationMarketKey),
+    },
     sequence: [CHAIN, cursor.nextBlock, lastBlockNumber, lastLogIndex]
       .map((part, index) => index === 0 ? part : String(part).padStart(24, '0'))
       .join(':'),
-    ordering: { cursorNextBlock: cursor.nextBlock, lastBlockNumber, lastLogIndex },
+    ordering: {
+      cursorNextBlock: cursor.nextBlock,
+      frontierTimestamp: cursor.checkpointTimestamp == null
+        ? null : timestampIso(cursor.checkpointTimestamp, 'live bucket frontier timestamp'),
+      lastBlockNumber,
+      lastLogIndex,
+    },
     granularityMinutes: 1,
     generatedAt: new Date().toISOString(),
     activity: {
@@ -1449,6 +1459,16 @@ function normalizeDerivedEmit(emit) {
 // robinhood-derived consumer only fans out (never re-values).
 async function insertDerivedOutboxRows(client, liveBuckets, emitCursor) {
   if (!Array.isArray(liveBuckets) || !liveBuckets.length) return 0;
+  const latestByToken = new Map();
+  for (const bucket of liveBuckets) {
+    const current = latestByToken.get(bucket.tokenAddress);
+    const order = [BigInt(bucket.lastBlockNumber), BigInt(bucket.lastLogIndex)];
+    const previous = current?.order;
+    if (!previous || order[0] > previous[0]
+      || (order[0] === previous[0] && order[1] > previous[1])) {
+      latestByToken.set(bucket.tokenAddress, { bucket, order });
+    }
+  }
   const rows = liveBuckets.map((bucket) => ({
     protocol: bucket.valuationProtocol,
     marketKey: bucket.valuationMarketKey,
@@ -1456,7 +1476,10 @@ async function insertDerivedOutboxRows(client, liveBuckets, emitCursor) {
     bucketTs: bucket.bucketTs,
     lastBlockNumber: String(bucket.lastBlockNumber),
     lastLogIndex: String(bucket.lastLogIndex),
-    payload: buildRobinhoodMarketBucketUpdate(bucket, emitCursor),
+    payload: {
+      ...buildRobinhoodMarketBucketUpdate(bucket, emitCursor),
+      derived: { standardAlertEligible: latestByToken.get(bucket.tokenAddress)?.bucket === bucket },
+    },
   }));
   const result = await client.query(
     `INSERT INTO robinhood_derived_outbox (

@@ -1202,7 +1202,29 @@ describe('commitHeadProcessingBatch derived outbox', () => {
     // The stored payload is the fan-out event itself — the consumer never re-values.
     assert.equal(rows[0].payload.type, 'market:bucket');
     assert.equal(rows[0].payload.address, TOKEN);
+    assert.deepEqual(rows[0].payload.market, {
+      protocol: 'uniswap-v3', key: `robinhood:uniswap-v3:${POOL}`,
+    });
+    assert.equal(rows[0].payload.ordering.frontierTimestamp, WINDOW_END.toISOString());
+    assert.equal(rows[0].payload.derived.standardAlertEligible, true);
     assert.equal(result.insertedOutboxRows, 1);
+  });
+
+  it('marks only the newest bucket per token/commit as eligible for standard alerts', async () => {
+    const fake = createFakeDatabase({ liveBuckets: [
+      liveBucketRow({ lastBlockNumber: '8068999', lastLogIndex: '9' }),
+      liveBucketRow({ bucketTs: '2026-07-13T00:01:00.000Z' }),
+    ] });
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+
+    await repository.commitHeadProcessingBatch({
+      entries: [marketEntry()],
+      emit: { nextBlock: '8069001', checkpointTimestamp: WINDOW_END },
+    });
+
+    const outboxCall = findCall(fake.calls, /INSERT INTO robinhood_derived_outbox/);
+    const rows = JSON.parse(outboxCall.params[0]);
+    assert.deepEqual(rows.map((row) => row.payload.derived.standardAlertEligible), [false, true]);
   });
 
   it('threads the coverage window end into the observation write', async () => {

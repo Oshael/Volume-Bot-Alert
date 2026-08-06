@@ -153,10 +153,20 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_DERIVED_SHADOW_AUDIT_ONLY: 'true',
       ROBINHOOD_DERIVED_SHADOW_AUDIT_SAMPLE_LIMIT: '999',
       ROBINHOOD_DERIVED_SHADOW_AUDIT_STATEMENT_TIMEOUT_MS: '1',
+      ROBINHOOD_DERIVED_STANDARD_ALERTS_ENABLED: 'true',
+      ROBINHOOD_DERIVED_STANDARD_ALERTS_PUBLISHABLE: 'true',
+      ROBINHOOD_DERIVED_STANDARD_ALERT_MAX_EVENT_LAG_MS: '1',
+      ROBINHOOD_DERIVED_STANDARD_ALERT_STATEMENT_TIMEOUT_MS: '999999',
+      ROBINHOOD_ALERTS_ENABLED: 'true',
     }, (config) => {
       assert.equal(config.robinhoodDerivedWorker.shadowAuditOnly, true);
       assert.equal(config.robinhoodDerivedWorker.shadowAuditSampleLimit, 20);
       assert.equal(config.robinhoodDerivedWorker.shadowAuditStatementTimeoutMs, 100);
+      assert.equal(config.robinhoodDerivedWorker.standardAlertsEnabled, true);
+      assert.equal(config.robinhoodDerivedWorker.standardAlertsPublishable, true);
+      assert.equal(config.robinhoodDerivedWorker.standardAlertsRequested, true);
+      assert.equal(config.robinhoodDerivedWorker.standardAlertMaxEventLagMs, 1000);
+      assert.equal(config.robinhoodDerivedWorker.standardAlertStatementTimeoutMs, 60_000);
     });
     withEnv({ ROBINHOOD_DERIVED_SHADOW_AUDIT_ONLY: undefined }, (config) => {
       assert.equal(config.robinhoodDerivedWorker.shadowAuditOnly, false);

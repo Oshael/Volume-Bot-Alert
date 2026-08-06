@@ -15,6 +15,9 @@ const {
 } = require('../models/robinhood-derived-outbox');
 const { createRobinhoodDerivedRunner } = require('./robinhood-derived-runner');
 const { createRobinhoodDerivedShadowAuditor } = require('./robinhood-derived-shadow-auditor');
+const {
+  createRobinhoodDerivedStandardAlertSink,
+} = require('./robinhood-derived-standard-alert-sink');
 const { createRobinhoodMarketBucketFanout } = require('./robinhood-market-bucket-fanout');
 const marketBucketRealtime = require('./market-bucket-realtime');
 const { createPostgresRealtimeListener } = require('./postgres-realtime-listener');
@@ -32,6 +35,7 @@ let runner = null;
 let repository = null;
 let listener = null;
 let shadowAuditor = null;
+let standardAlertSink = null;
 let activeOptions = null;
 let lastPruneAt = 0;
 let status = {
@@ -64,6 +68,15 @@ function normalizeOptions(options = {}) {
   return {
     enabled: options.enabled !== false,
     shadowAuditOnly: options.shadowAuditOnly === true,
+    standardAlertsEnabled: options.standardAlertsEnabled === true,
+    standardAlertsPublishable: options.standardAlertsPublishable === true,
+    standardAlertsRequested: options.standardAlertsRequested === true,
+    standardAlertMaxEventLagMs: boundedInteger(
+      options.standardAlertMaxEventLagMs, 30_000, 1000, 300_000
+    ),
+    standardAlertStatementTimeoutMs: boundedInteger(
+      options.standardAlertStatementTimeoutMs, 10_000, 1000, 60_000
+    ),
     shadowAuditSampleLimit: boundedInteger(options.shadowAuditSampleLimit, 5, 1, 20),
     shadowAuditStatementTimeoutMs: boundedInteger(
       options.shadowAuditStatementTimeoutMs, 1000, 100, 10_000
@@ -94,16 +107,34 @@ function build(normalized, deps = {}) {
       statementTimeoutMs: normalized.shadowAuditStatementTimeoutMs,
     }))
     : null;
+  standardAlertSink = !shadowAuditor && normalized.standardAlertsEnabled
+    ? (deps.standardAlertSink || createRobinhoodDerivedStandardAlertSink({
+      database,
+      alertsRequested: normalized.standardAlertsRequested,
+      publishable: normalized.standardAlertsPublishable,
+      maxEventLagMs: normalized.standardAlertMaxEventLagMs,
+      statementTimeoutMs: normalized.standardAlertStatementTimeoutMs,
+    }))
+    : null;
   const relay = deps.marketBucketRealtime || marketBucketRealtime;
   const deliveryFanout = deps.fanout || createRobinhoodMarketBucketFanout({
     // The generic monolith path remains enqueue/coalesce. Derived delivery must
     // await the actual pg_notify before its durable outbox row is deleted.
     marketBucketRealtime: { enqueue: (payload) => relay.publish(payload) },
   });
+  const deliveryWithAlerts = standardAlertSink
+    ? async (payload) => {
+      const delivered = await deliveryFanout(payload);
+      const alertResult = await standardAlertSink.consume(payload);
+      return delivered || Boolean(alertResult);
+    }
+    : deliveryFanout;
   const fanout = shadowAuditor
     ? (payload) => shadowAuditor.consume(payload)
-    : deliveryFanout;
-  status.mode = shadowAuditor ? 'shadow-audit-only' : 'delivery';
+    : deliveryWithAlerts;
+  status.mode = shadowAuditor
+    ? 'shadow-audit-only'
+    : (standardAlertSink ? 'delivery-with-standard-alerts' : 'delivery');
   runner = deps.runner || createRobinhoodDerivedRunner({
     repository, fanout, options: normalized.runner,
   });
@@ -209,7 +240,11 @@ async function stop() {
 }
 
 function getStatus() {
-  return { ...status, shadowAudit: shadowAuditor?.getStatus?.() || null };
+  return {
+    ...status,
+    shadowAudit: shadowAuditor?.getStatus?.() || null,
+    standardAlerts: standardAlertSink?.getStatus?.() || null,
+  };
 }
 
 module.exports = {

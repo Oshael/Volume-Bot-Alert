@@ -21,8 +21,9 @@ const BASELINE_SQL = `WITH input AS MATERIALIZED (
 ),
 market_cursor AS (
   SELECT coverage_start_timestamp AS coverage_start_at,
-    checkpoint_timestamp AS coverage_end_at,
-    next_block > safe_head AS caught_up
+    COALESCE($3::timestamptz, checkpoint_timestamp) AS coverage_end_at,
+    CASE WHEN $3::timestamptz IS NULL THEN next_block > safe_head
+      ELSE COALESCE($4::boolean, false) END AS caught_up
   FROM robinhood_ingestion_cursors
   WHERE chain = 'robinhood' AND stream = 'market'
 ),
@@ -324,7 +325,10 @@ function createRobinhoodStandardAlertSignalSource(options = {}) {
       const execute = typeof database.queryWithStatementTimeout === 'function'
         ? database.queryWithStatementTimeout.bind(database)
         : database.query.bind(database);
-      const result = await execute(BASELINE_SQL, [JSON.stringify(targets), asOf], timeoutMs);
+      const result = await execute(BASELINE_SQL, [
+        JSON.stringify(targets), asOf,
+        cursor.coverageEndAt ?? null, cursor.coverageCaughtUp ?? null,
+      ], timeoutMs);
       const contexts = new Map(result.rows.map((row) => [row.token_address, row]));
       for (const bucket of chunk) {
         const address = normalizeTokenAddress(CHAIN, bucket.tokenAddress);
