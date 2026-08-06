@@ -36,6 +36,7 @@ const stage99 = require('../src/utils/db-init-stage99');
 const stage102 = require('../src/utils/db-init-stage102');
 const stage106 = require('../src/utils/db-init-stage106');
 const stage107 = require('../src/utils/db-init-stage107');
+const stage108 = require('../src/utils/db-init-stage108');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 
 describe('Robinhood additive chain schema', () => {
@@ -380,6 +381,22 @@ describe('Robinhood additive chain schema', () => {
     assert.deepEqual(group.tables[0].indexes[0].includes, [
       'block_number', 'transaction_index', 'log_index', 'next_attempt_at',
       'pending', 'market',
+    ]);
+  });
+
+  it('adds the Robinhood blocked frontier index online in chain order', () => {
+    const sql = stage108.STATEMENTS.join('\n');
+    const group = SCHEMA_GROUPS.find((entry) => (
+      entry.key === 'stage108-robinhood-blocked-frontier-index'
+    ));
+
+    assert.match(sql, /CREATE INDEX CONCURRENTLY IF NOT EXISTS/);
+    assert.match(sql, /block_number, transaction_index, log_index/);
+    assert.match(sql, /processing_status = 'blocked' AND stream = 'market'/);
+    assert.doesNotMatch(sql, /DROP INDEX/);
+    assert.equal(group.repair, 'node src/utils/db-init-stage108.js');
+    assert.deepEqual(group.tables[0].indexes[0].includes, [
+      'block_number', 'transaction_index', 'log_index', 'blocked', 'market',
     ]);
   });
 

@@ -183,16 +183,24 @@ describe('Robinhood head processing repository integration', () => {
     assert.equal(watermark.blocked, 0);
   });
 
-  it('reports the oldest pending or leased evidence without scanning terminal history', async () => {
+  it('reports the oldest pending, leased or blocked evidence without scanning terminal history', async () => {
     const oldestAt = Date.parse('2026-08-06T01:00:00.000Z');
     await seedPending({ block: 101, timestampMs: oldestAt + 1000 });
     await seedPending({ block: 100, timestampMs: oldestAt });
     await repository.claimCaptures({ owner: 'worker-a', limit: 1, leaseMs: LEASE_MS });
+    const blocked = await seedPending({
+      block: 99, logIndex: 1, attemptCount: 4, timestampMs: oldestAt - 1000,
+    });
+    await repository.claimCaptures({ owner: 'worker-b', limit: 1, leaseMs: LEASE_MS });
+    await repository.settleClaims({
+      owner: 'worker-b', retentionMs: RETENTION_MS, maxAttempts: 5,
+      retry: [{ ...blocked, error: 'permanent failure', backoffMs: 1000 }],
+    });
 
     const oldest = await repository.getOldestActiveCapture('market');
 
     assert.deepEqual(oldest, {
-      blockNumber: '100', observedAt: new Date(oldestAt).toISOString(),
+      blockNumber: '99', observedAt: new Date(oldestAt - 1000).toISOString(),
     });
   });
 

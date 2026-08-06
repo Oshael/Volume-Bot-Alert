@@ -234,8 +234,8 @@ function createRobinhoodHeadProcessingRepository(options = {}) {
     };
   }
 
-  // Oldest in-flight market evidence for publication health. The two bounded
-  // branches use the pending-claim and leased partial indexes respectively;
+  // Oldest in-flight market evidence for publication health. The bounded
+  // branches use the pending, leased and blocked partial indexes respectively;
   // terminal history is never scanned by this hot health read.
   async function getOldestActiveCapture(streamValue) {
     const stream = optionalStream(streamValue);
@@ -255,6 +255,13 @@ function createRobinhoodHeadProcessingRepository(options = {}) {
          UNION ALL
          (SELECT block_number, timestamp_ms, transaction_index, log_index
           FROM leased
+          ORDER BY block_number, transaction_index, log_index
+          LIMIT 1)
+         UNION ALL
+         (SELECT block_number, evidence->>'timestampMs' AS timestamp_ms,
+                 transaction_index, log_index
+          FROM robinhood_head_captures
+          WHERE chain = $1 AND stream = $2 AND processing_status = 'blocked'
           ORDER BY block_number, transaction_index, log_index
           LIMIT 1)
        )

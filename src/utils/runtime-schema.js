@@ -2715,6 +2715,20 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage108-robinhood-blocked-frontier-index',
+    name: 'Stage 108 Robinhood blocked frontier index',
+    repair: 'node src/utils/db-init-stage108.js',
+    tables: [{
+      table: 'robinhood_head_captures',
+      indexes: [{
+        name: 'idx_robinhood_head_captures_blocked_frontier',
+        includes: [
+          'block_number', 'transaction_index', 'log_index', 'blocked', 'market',
+        ],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
@@ -2753,6 +2767,7 @@ const PROFILE_GROUP_KEYS = {
     'stage103-robinhood-head-capture-queue',
     'stage104-robinhood-derived-outbox',
     'stage107-robinhood-market-claim-index',
+    'stage108-robinhood-blocked-frontier-index',
   ],
   runtime: SCHEMA_GROUPS.map((group) => group.key),
 };

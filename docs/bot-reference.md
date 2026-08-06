@@ -371,6 +371,12 @@ ordem `(block_number, transaction_index, log_index, next_attempt_at)` e predicat
 retomado depois que `pg_index` confirmar `indisvalid/indisready` e `EXPLAIN (ANALYZE,
 BUFFERS)` provar que a claim usa esse índice sem sort/scan massivo.
 
+A Stage 108 remove o segundo scan quente descoberto no Corte 6D. O frontier derived não executa
+mais `MIN/COUNT FILTER` sobre todo o histórico a cada batch: consulta somente a evidência ativa
+mais antiga por índices parciais. `pending` usa a Stage 107, `leased` materializa apenas o lote em
+voo e `blocked` usa `idx_robinhood_head_captures_blocked_frontier`, criado com
+`CREATE INDEX CONCURRENTLY`. O watermark com contagens permanece disponível só para diagnóstico.
+
 O primeiro gate do Corte 6 é o auditor opt-in do processing
 (`ROBINHOOD_PROCESSING_SHADOW_AUDIT_ENABLED`, default `false`). Antes de o batch do novo
 caminho tentar persistir, ele lê em lote as observações canônicas que o monólito já

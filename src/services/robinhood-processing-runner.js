@@ -52,8 +52,8 @@ function createRobinhoodProcessingRunner(deps = {}) {
   // frontier just below the queue's pending block. Returns null until there is a
   // fully-processed observation to anchor coverage on.
   async function resolveDerivedEmit() {
-    const watermark = await repository.getProcessingWatermark('market');
-    return persistence.resolveMarketFrontier(watermark.pendingBlock);
+    const active = await repository.getOldestActiveCapture('market');
+    return persistence.resolveMarketFrontier(active?.blockNumber ?? null);
   }
 
   async function valueObservationEntry(decoded, batchState) {

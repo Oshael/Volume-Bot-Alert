@@ -77,12 +77,15 @@ function v4Row(extra) {
 }
 
 function fakeRepo(rows) {
-  const calls = { reclaimed: 0, settle: null, claims: 0, watermark: 0 };
+  const calls = { reclaimed: 0, settle: null, claims: 0, frontier: 0 };
   return {
     _calls: calls,
     reclaimExpiredLeases: async () => { calls.reclaimed += 1; return 0; },
     claimCaptures: async () => { calls.claims += 1; return calls.claims === 1 ? rows : []; },
-    getProcessingWatermark: async () => { calls.watermark += 1; return { pendingBlock: '100' }; },
+    getOldestActiveCapture: async () => {
+      calls.frontier += 1;
+      return { blockNumber: '100', observedAt: '2026-07-13T00:00:00.000Z' };
+    },
     settleClaims: async (args) => {
       calls.settle = args;
       return { processed: args.processed.length, rejected: args.rejected.length, retried: args.retry.length, blocked: 0 };
