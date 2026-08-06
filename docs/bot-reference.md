@@ -451,9 +451,12 @@ de mercado de forma fail-closed.
 As janelas do workspace também deixam de usar o `checkpoint_timestamp` congelado do cursor do
 monólito como fim de cobertura. O início histórico continua vindo de
 `robinhood_ingestion_cursors`, mas o fim passa a ser a evidência ativa mais antiga da fila do
-processing (`pending/leased/blocked`); com a fila vazia, usa o checkpoint do head. Desse modo,
-`5m/1h/6h/24h` não degradam artificialmente após o Corte 7 e nunca avançam além dos dados
-efetivamente processados.
+processing — apenas trabalho não-terminal (`pending/leased`); com a fila vazia, usa o checkpoint
+do head. Dead-letters (`blocked`) ficam de fora do frontier de propósito: como nunca viram
+observação, incluí-los congelaria `coverage_end` no passado e apagaria `5m/1h` e liquidez de todos
+os tokens. A evidência do dead-letter é retida e reprocessável; sua profundidade permanece visível
+no health read da fila. Desse modo, `5m/1h/6h/24h` não degradam artificialmente após o Corte 7 e
+nunca avançam além dos dados efetivamente processados.
 
 A projeção Robinhood mantém um reparo persistente de metadata separado da página
 de mercado ativa. Identidades `robinhood-onchain` com imagem ou launchpad pendente

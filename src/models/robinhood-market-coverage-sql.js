@@ -4,6 +4,16 @@
  * The legacy ingestion cursor remains the immutable start of historical
  * coverage. The end is the oldest non-terminal capture (strict processing
  * frontier), or the head checkpoint when the processing queue is empty.
+ *
+ * `blocked` (dead-letter) captures are not part of the live frontier: their
+ * frozen evidence is retained (pruneExpiredCaptures only drops processed/
+ * rejected) and can be reprocessed once the failure cause is fixed, but until
+ * then they have no observation. Pinning coverage_end to a blocked capture's
+ * old timestamp would freeze the frontier in the past forever, silently
+ * blacking out every recent-window (5m/1h) volume and liquidity for all tokens.
+ * We advance past them instead — the gap is a bounded set of not-yet-valued
+ * swaps, recoverable on replay — while dead-letter depth stays visible via the
+ * queue status health read.
  */
 const MARKET_COVERAGE_CTES = `legacy_market_coverage AS (
   SELECT coverage_start_timestamp AS coverage_start_at
@@ -33,14 +43,6 @@ active_market_frontier AS (
   UNION ALL
   (SELECT block_number, transaction_index, log_index, timestamp_ms
    FROM leased_market_frontier
-   ORDER BY block_number, transaction_index, log_index
-   LIMIT 1)
-  UNION ALL
-  (SELECT block_number, transaction_index, log_index,
-      evidence->>'timestampMs' AS timestamp_ms
-   FROM robinhood_head_captures
-   WHERE chain = 'robinhood' AND stream = 'market'
-     AND processing_status = 'blocked'
    ORDER BY block_number, transaction_index, log_index
    LIMIT 1)
 ),
