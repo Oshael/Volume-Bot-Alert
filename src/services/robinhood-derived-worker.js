@@ -1,5 +1,5 @@
 /**
- * robinhood-derived worker (Corte 5, slice 4c).
+ * robinhood-derived worker (Corte 5 through Corte 6D).
  *
  * Wraps the derived runner in the singleton start/stop/getStatus lifecycle the
  * other Robinhood workers use, draining the derived outbox and replaying the
@@ -19,6 +19,7 @@ const {
   createRobinhoodDerivedStandardAlertSink,
 } = require('./robinhood-derived-standard-alert-sink');
 const { createRobinhoodMarketBucketFanout } = require('./robinhood-market-bucket-fanout');
+const { createRobinhoodDerivedLiveSinks } = require('./robinhood-derived-live-sinks');
 const marketBucketRealtime = require('./market-bucket-realtime');
 const { createPostgresRealtimeListener } = require('./postgres-realtime-listener');
 
@@ -36,6 +37,7 @@ let repository = null;
 let listener = null;
 let shadowAuditor = null;
 let standardAlertSink = null;
+let liveSinks = null;
 let activeOptions = null;
 let lastPruneAt = 0;
 let status = {
@@ -71,6 +73,18 @@ function normalizeOptions(options = {}) {
     standardAlertsEnabled: options.standardAlertsEnabled === true,
     standardAlertsPublishable: options.standardAlertsPublishable === true,
     standardAlertsRequested: options.standardAlertsRequested === true,
+    liveSinksEnabled: options.liveSinksEnabled === true,
+    realtimeAlertsEnabled: options.realtimeAlertsEnabled === true,
+    realtimeAlertsPublishable: options.realtimeAlertsPublishable === true,
+    alertHealthMaxAgeMs: boundedInteger(options.alertHealthMaxAgeMs, 90_000, 10_000, 300_000),
+    alertStatementTimeoutMs: boundedInteger(
+      options.alertStatementTimeoutMs ?? options.signalConfig?.statementTimeoutMs,
+      1500,
+      1000,
+      60_000
+    ),
+    signalConfig: options.signalConfig || {},
+    marketAggregateOptions: options.marketAggregateOptions || {},
     standardAlertMaxEventLagMs: boundedInteger(
       options.standardAlertMaxEventLagMs, 30_000, 1000, 300_000
     ),
@@ -100,6 +114,17 @@ function normalizeOptions(options = {}) {
 function build(normalized, deps = {}) {
   const database = deps.database || db;
   repository = deps.repository || createRobinhoodDerivedOutboxRepository({ database });
+  liveSinks = deps.liveSinks || createRobinhoodDerivedLiveSinks({
+    enabled: normalized.liveSinksEnabled,
+    shadowAuditOnly: normalized.shadowAuditOnly,
+    realtimeAlertsEnabled: normalized.realtimeAlertsEnabled,
+    realtimeAlertsPublishable: normalized.realtimeAlertsPublishable,
+    alertsRequested: normalized.standardAlertsRequested,
+    healthMaxAgeMs: normalized.alertHealthMaxAgeMs,
+    alertStatementTimeoutMs: normalized.alertStatementTimeoutMs,
+    signalConfig: normalized.signalConfig,
+    marketAggregateOptions: normalized.marketAggregateOptions,
+  });
   shadowAuditor = normalized.shadowAuditOnly
     ? (deps.shadowAuditor || createRobinhoodDerivedShadowAuditor({
       database,
@@ -112,6 +137,7 @@ function build(normalized, deps = {}) {
       database,
       alertsRequested: normalized.standardAlertsRequested,
       publishable: normalized.standardAlertsPublishable,
+      healthProvider: () => liveSinks.getPipelineHealth(),
       maxEventLagMs: normalized.standardAlertMaxEventLagMs,
       statementTimeoutMs: normalized.standardAlertStatementTimeoutMs,
     }))
@@ -211,6 +237,7 @@ function start(options = {}, deps = {}) {
   const normalized = normalizeOptions(options);
   if (!normalized.enabled) return;
   build(normalized, deps);
+  liveSinks.start();
   activeOptions = normalized;
   running = true;
   status.running = true;
@@ -237,6 +264,7 @@ async function stop() {
   const current = listener;
   listener = null;
   if (current) await Promise.resolve(current.stop()).catch(() => {});
+  if (liveSinks) await liveSinks.stop();
 }
 
 function getStatus() {
@@ -244,6 +272,7 @@ function getStatus() {
     ...status,
     shadowAudit: shadowAuditor?.getStatus?.() || null,
     standardAlerts: standardAlertSink?.getStatus?.() || null,
+    liveSinks: liveSinks?.getStatus?.() || null,
   };
 }
 

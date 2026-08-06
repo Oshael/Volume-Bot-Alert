@@ -466,16 +466,19 @@ function startRobinhoodProcessingWorkerGroup() {
 
 // The derived worker drains robinhood_derived_outbox and replays the shared
 // market:bucket fan-out via its default hub. Its socket relay (pg_notify)
-// re-lives the board without the monolith; the in-memory catalog/alert/aggregate
-// sinks stay unstarted here so an overlap run never double-processes their side
-// effects — that co-start is the Corte 6 cutover, not this dormant activation.
+// re-lives the board without the monolith. Corte 6D lets this process own the
+// in-memory catalog/alert/aggregate sinks behind fail-closed derived flags.
 function startRobinhoodDerivedWorkerGroup() {
   if (!hasWorkerGroup('robinhood-derived')) return;
   startLockedWorker(
     'robinhood-derived',
     ROBINHOOD_DERIVED_LEASE_KEY,
     'Robinhood derived worker',
-    () => robinhoodDerivedWorker.start(config.robinhoodDerivedWorker),
+    () => robinhoodDerivedWorker.start({
+      ...config.robinhoodDerivedWorker,
+      signalConfig: config.robinhoodSignalDryRun,
+      marketAggregateOptions: config.robinhoodMarketAggregateWorker,
+    }),
     { metadataProvider: () => ({ telemetry: robinhoodDerivedWorker.getStatus() }) }
   );
 }

@@ -80,6 +80,24 @@ describe('robinhood derived standard alert sink', () => {
     assert.equal(sink.getStatus().disabledRuns, 1);
   });
 
+  it('runs in shadow when upstream worker health is not ready', async () => {
+    const publicationCalls = [];
+    const sink = createRobinhoodDerivedStandardAlertSink({
+      now: () => NOW,
+      alertsRequested: true,
+      publishable: true,
+      healthProvider: async () => ({ ready: false, blockers: ['processing_tick_stale'] }),
+      source: { buildFromCommittedBuckets: async () => [{ id: 'signal-1' }] },
+      publication: { consume: async (input) => { publicationCalls.push(input); return {}; } },
+    });
+
+    await sink.consume(payload());
+
+    assert.equal(publicationCalls[0].publishable, false);
+    assert.equal(sink.getStatus().shadowRuns, 1);
+    assert.deepEqual(sink.getStatus().lastSummary.healthBlockers, ['processing_tick_stale']);
+  });
+
   it('skips old/out-of-batch payloads before querying signal baselines', async () => {
     let sourceCalls = 0;
     const sink = createRobinhoodDerivedStandardAlertSink({

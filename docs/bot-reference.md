@@ -419,6 +419,16 @@ eventos acima do limite de idade são descartados antes da query. Ativação de 
 Audit-only prevalece e nunca instancia esse sink. O Corte 6C não inicia os workers in-memory de
 catálogo live ou aggregates no processo derived; esse co-start continua pendente antes do cutover.
 
+O Corte 6D entrega esse co-start, ainda **desligado por padrão**. Com
+`ROBINHOOD_DERIVED_LIVE_SINKS_ENABLED=true`, e somente fora do audit-only, o processo derived passa
+a possuir o catálogo live e o worker de aggregates; `ROBINHOOD_MARKET_AGGREGATES_ENABLED=true` é
+pré-condição explícita. O alerta realtime possui gates separados de cálculo e publicação
+(`ROBINHOOD_DERIVED_REALTIME_ALERTS_ENABLED` e
+`ROBINHOOD_DERIVED_REALTIME_ALERTS_PUBLISHABLE`). Tanto ele quanto a publicação dos alertas padrão
+falham fechados se as leases do head/processing estiverem inativas, sem telemetria recente, fora do
+head, com gaps, bloqueios ou erro. A leitura de saúde é cacheada por 5s. O corte não desliga o
+monólito automaticamente: overlap, observação e parada continuam sendo ações operacionais.
+
 A projeção Robinhood mantém um reparo persistente de metadata separado da página
 de mercado ativa. Identidades `robinhood-onchain` com imagem ou launchpad pendente
 são priorizadas, e a atividade recente desempata dentro da mesma classe;

@@ -75,7 +75,9 @@ function createRobinhoodDerivedStandardAlertSink(options = {}) {
   const now = options.now || Date.now;
   const maxEventLagMs = boundedInteger(options.maxEventLagMs, 30_000, 1000, 300_000);
   const alertsRequested = options.alertsRequested === true;
-  const publishable = alertsRequested && options.publishable === true;
+  const publishableRequested = alertsRequested && options.publishable === true;
+  const healthProvider = typeof options.healthProvider === 'function'
+    ? options.healthProvider : async () => ({ ready: true, blockers: [] });
   const status = {
     attempted: 0, eligible: 0, skippedIneligible: 0, skippedStale: 0,
     generatedSignals: 0, shadowRuns: 0, publishedRuns: 0, disabledRuns: 0,
@@ -98,6 +100,8 @@ function createRobinhoodDerivedStandardAlertSink(options = {}) {
         return { status: 'skipped', reason: 'stale_event' };
       }
       const signals = await source.buildFromCommittedBuckets(input);
+      const health = await healthProvider();
+      const publishable = publishableRequested && health?.ready === true;
       const summary = await publication.consume({
         signals,
         alertsRequested,
@@ -108,7 +112,7 @@ function createRobinhoodDerivedStandardAlertSink(options = {}) {
       if (!alertsRequested) status.disabledRuns += 1;
       else if (publishable) status.publishedRuns += 1;
       else status.shadowRuns += 1;
-      status.lastSummary = summary;
+      status.lastSummary = { ...summary, healthBlockers: health?.blockers || [] };
       status.lastError = null;
       return summary;
     } catch (error) {

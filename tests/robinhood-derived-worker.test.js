@@ -55,6 +55,12 @@ describe('robinhood derived worker', () => {
     assert.equal(bounded.enabled, true);
     assert.equal(worker.__private.normalizeOptions({ enabled: false }).enabled, false);
     assert.equal(worker.__private.normalizeOptions({ shadowAuditOnly: true }).shadowAuditOnly, true);
+    assert.equal(worker.__private.normalizeOptions({ liveSinksEnabled: true }).liveSinksEnabled, true);
+    assert.equal(
+      worker.__private.normalizeOptions({ signalConfig: { statementTimeoutMs: 9000 } })
+        .alertStatementTimeoutMs,
+      9000
+    );
   });
 
   // Runs first so the module-level prune clock is still at its initial zero.
@@ -163,6 +169,28 @@ describe('robinhood derived worker', () => {
     assert.deepEqual(calls, ['delivery', 'alerts']);
     assert.equal(result.delivered, 1);
     assert.equal(worker.getStatus().mode, 'delivery-with-standard-alerts');
+  });
+
+  it('owns the live-sink lifecycle when the derived process starts', async () => {
+    const calls = [];
+    worker.start({ liveSinksEnabled: true }, {
+      repository: fakeRepo(),
+      runner: fakeRunner(),
+      liveSinks: {
+        start: () => { calls.push('sinks:start'); return true; },
+        stop: async () => { calls.push('sinks:stop'); },
+        getStatus: () => ({ running: true }),
+      },
+      listenerFactory: () => ({
+        start: () => { calls.push('listener:start'); },
+        stop: async () => { calls.push('listener:stop'); },
+      }),
+    });
+
+    assert.deepEqual(calls, ['sinks:start', 'listener:start']);
+    assert.equal(worker.getStatus().liveSinks.running, true);
+    await worker.stop();
+    assert.deepEqual(calls.slice(2), ['listener:stop', 'sinks:stop']);
   });
 });
 

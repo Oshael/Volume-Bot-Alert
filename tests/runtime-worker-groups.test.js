@@ -155,6 +155,10 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_DERIVED_SHADOW_AUDIT_STATEMENT_TIMEOUT_MS: '1',
       ROBINHOOD_DERIVED_STANDARD_ALERTS_ENABLED: 'true',
       ROBINHOOD_DERIVED_STANDARD_ALERTS_PUBLISHABLE: 'true',
+      ROBINHOOD_DERIVED_LIVE_SINKS_ENABLED: 'true',
+      ROBINHOOD_DERIVED_REALTIME_ALERTS_ENABLED: 'true',
+      ROBINHOOD_DERIVED_REALTIME_ALERTS_PUBLISHABLE: 'true',
+      ROBINHOOD_DERIVED_ALERT_HEALTH_MAX_AGE_MS: '1',
       ROBINHOOD_DERIVED_STANDARD_ALERT_MAX_EVENT_LAG_MS: '1',
       ROBINHOOD_DERIVED_STANDARD_ALERT_STATEMENT_TIMEOUT_MS: '999999',
       ROBINHOOD_ALERTS_ENABLED: 'true',
@@ -165,11 +169,23 @@ describe('runtime worker groups config', () => {
       assert.equal(config.robinhoodDerivedWorker.standardAlertsEnabled, true);
       assert.equal(config.robinhoodDerivedWorker.standardAlertsPublishable, true);
       assert.equal(config.robinhoodDerivedWorker.standardAlertsRequested, true);
+      assert.equal(config.robinhoodDerivedWorker.liveSinksEnabled, true);
+      assert.equal(config.robinhoodDerivedWorker.realtimeAlertsEnabled, true);
+      assert.equal(config.robinhoodDerivedWorker.realtimeAlertsPublishable, true);
+      assert.equal(config.robinhoodDerivedWorker.alertHealthMaxAgeMs, 10_000);
       assert.equal(config.robinhoodDerivedWorker.standardAlertMaxEventLagMs, 1000);
       assert.equal(config.robinhoodDerivedWorker.standardAlertStatementTimeoutMs, 60_000);
     });
-    withEnv({ ROBINHOOD_DERIVED_SHADOW_AUDIT_ONLY: undefined }, (config) => {
+    withEnv({
+      ROBINHOOD_DERIVED_SHADOW_AUDIT_ONLY: undefined,
+      ROBINHOOD_DERIVED_LIVE_SINKS_ENABLED: undefined,
+      ROBINHOOD_DERIVED_REALTIME_ALERTS_ENABLED: undefined,
+      ROBINHOOD_DERIVED_REALTIME_ALERTS_PUBLISHABLE: undefined,
+    }, (config) => {
       assert.equal(config.robinhoodDerivedWorker.shadowAuditOnly, false);
+      assert.equal(config.robinhoodDerivedWorker.liveSinksEnabled, false);
+      assert.equal(config.robinhoodDerivedWorker.realtimeAlertsEnabled, false);
+      assert.equal(config.robinhoodDerivedWorker.realtimeAlertsPublishable, false);
     });
   });
 

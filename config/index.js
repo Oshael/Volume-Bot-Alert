@@ -803,6 +803,16 @@ module.exports = {
       process.env.ROBINHOOD_DERIVED_STANDARD_ALERTS_PUBLISHABLE, false
     ),
     standardAlertsRequested: robinhoodRollout.alerts.requested,
+    liveSinksEnabled: parseBoolean(process.env.ROBINHOOD_DERIVED_LIVE_SINKS_ENABLED, false),
+    realtimeAlertsEnabled: parseBoolean(
+      process.env.ROBINHOOD_DERIVED_REALTIME_ALERTS_ENABLED, false
+    ),
+    realtimeAlertsPublishable: parseBoolean(
+      process.env.ROBINHOOD_DERIVED_REALTIME_ALERTS_PUBLISHABLE, false
+    ),
+    alertHealthMaxAgeMs: parseIntegerInRange(
+      process.env.ROBINHOOD_DERIVED_ALERT_HEALTH_MAX_AGE_MS, 90_000, 10_000, 300_000
+    ),
     standardAlertMaxEventLagMs: parseIntegerInRange(
       process.env.ROBINHOOD_DERIVED_STANDARD_ALERT_MAX_EVENT_LAG_MS, 30_000, 1000, 300_000
     ),

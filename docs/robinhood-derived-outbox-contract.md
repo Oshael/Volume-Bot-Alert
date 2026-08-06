@@ -117,5 +117,18 @@ standard signal contract and reuses its idempotent publication. Real sends addit
 sink. Live catalog and aggregate workers are still not started in the derived process and remain a
 separate pre-cutover slice.
 
-Then Corte 6 (shadow/compare/cutover — co-start the in-memory sinks, re-point the alert rollout
-gate at capture/processing health) and Corte 7 (remove the monolith).
+### Corte 6D live-sink ownership
+
+`ROBINHOOD_DERIVED_LIVE_SINKS_ENABLED=true` starts the existing live-catalog and market-aggregate
+singletons inside the derived process; aggregate generation must also remain enabled. Shadow audit
+always wins and prevents these sinks from starting. Realtime alert calculation and publication
+remain separate opt-ins through `ROBINHOOD_DERIVED_REALTIME_ALERTS_ENABLED` and
+`ROBINHOOD_DERIVED_REALTIME_ALERTS_PUBLISHABLE`.
+
+Both realtime and standard alert publication are additionally gated by fresh active head and
+processing leases. Head must be running, caught up and free of unexplained gaps; processing must be
+running, ticking, unblocked and free of a current error. Lease-query failure closes publication,
+and health reads are cached for 5 seconds. This slice does not stop the monolith or turn any gate on
+automatically; the controlled overlap and final monolith removal remain operational steps.
+
+Then Corte 7 removes the monolith after the 6D overlap proves stable.
