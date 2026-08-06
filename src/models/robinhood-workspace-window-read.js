@@ -1,4 +1,5 @@
 const db = require('./db');
+const { MARKET_COVERAGE_CTES } = require('./robinhood-market-coverage-sql');
 const { createTokenIdentity, normalizeTokenAddress } = require('../utils/token-identity');
 const {
   PRICE_CHANGE_WINDOWS,
@@ -33,13 +34,7 @@ windows AS MATERIALIZED (
         THEN INTERVAL '0 hours' ELSE INTERVAL '1 hour' END AS full_hour_start
   FROM raw_windows
 ),
-market_cursor AS (
-  SELECT coverage_start_timestamp AS coverage_start_at,
-    checkpoint_timestamp AS coverage_end_at,
-    next_block > safe_head AS caught_up
-  FROM robinhood_ingestion_cursors
-  WHERE chain = 'robinhood' AND stream = 'market'
-),
+${MARKET_COVERAGE_CTES},
 canonical_volume_bounds AS (
   SELECT coverage_start_at, coverage_end_at,
     CASE WHEN coverage_end_at IS NULL THEN NULL

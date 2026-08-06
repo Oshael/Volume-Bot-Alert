@@ -1,4 +1,5 @@
 const db = require('../models/db');
+const { MARKET_COVERAGE_CTES } = require('../models/robinhood-market-coverage-sql');
 const {
   createRobinhoodWorkspaceWindowReadRepository,
 } = require('../models/robinhood-workspace-window-read');
@@ -127,7 +128,8 @@ function buildActivityCteSql(sorts) {
         + COALESCE(activity_start_${window}.volume_usd, 0)
         + COALESCE(activity_end.volume_usd, 0)
     END AS volume_${window}_usd`).join(',\n    ');
-  return `, full_activity AS MATERIALIZED (
+  return `, ${MARKET_COVERAGE_CTES}
+, full_activity AS MATERIALIZED (
   SELECT bucket.token_address,
     ${fullColumns}
   FROM robinhood_market_buckets_1h bucket
@@ -233,10 +235,7 @@ SELECT tc.address, tc.symbol, tc.name, tc.source, tc.first_seen_at,
   tc.last_twitter_url, tc.last_community_url, tc.monitor_priority,
   COUNT(*) OVER() AS total_count
 FROM catalog_candidates tc
-${hasVolumeSort ? `LEFT JOIN LATERAL (SELECT coverage_start_timestamp AS coverage_start_at,
-    checkpoint_timestamp AS coverage_end_at
-  FROM robinhood_ingestion_cursors
-  WHERE chain = 'robinhood' AND stream = 'market' LIMIT 1) cursor ON TRUE
+${hasVolumeSort ? `LEFT JOIN market_cursor cursor ON TRUE
 LEFT JOIN activity ON activity.token_address = tc.address` : ''}
 ${hasPriceChangeSort ? buildPriceJoinSql(sorts) : ''}
 LEFT JOIN LATERAL (SELECT bucket.close_fdv_usd AS last_fdv_usd,

@@ -159,6 +159,9 @@ describe('Robinhood workspace token reader', () => {
     assert.match(sql, /tc\.last_price/);
     assert.match(sql, /tc\.last_pair_url/);
     assert.match(sql, /robinhood_ingestion_cursors/);
+    assert.match(sql, /robinhood_head_capture_cursors/);
+    assert.match(sql, /market_processing_frontier AS/);
+    assert.match(sql, /LEFT JOIN market_cursor cursor ON TRUE/);
     assert.match(sql, /SUM\(bucket\.volume_usd\)/);
     assert.match(sql, /'uniswap-v2', 'uniswap-v3', 'uniswap-v4'/);
     assert.match(sql, /coverage_start_timestamp/);

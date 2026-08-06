@@ -448,6 +448,13 @@ fallback de rollback. Assim, parar o monólito não produz um falso `syncing`, e
 ponta, telemetria vencida, processing parado, bloqueado ou com erro continuam ocultando os painéis
 de mercado de forma fail-closed.
 
+As janelas do workspace também deixam de usar o `checkpoint_timestamp` congelado do cursor do
+monólito como fim de cobertura. O início histórico continua vindo de
+`robinhood_ingestion_cursors`, mas o fim passa a ser a evidência ativa mais antiga da fila do
+processing (`pending/leased/blocked`); com a fila vazia, usa o checkpoint do head. Desse modo,
+`5m/1h/6h/24h` não degradam artificialmente após o Corte 7 e nunca avançam além dos dados
+efetivamente processados.
+
 A projeção Robinhood mantém um reparo persistente de metadata separado da página
 de mercado ativa. Identidades `robinhood-onchain` com imagem ou launchpad pendente
 são priorizadas, e a atividade recente desempata dentro da mesma classe;

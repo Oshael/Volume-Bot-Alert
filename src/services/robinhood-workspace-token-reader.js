@@ -1,4 +1,5 @@
 const db = require('../models/db');
+const { MARKET_COVERAGE_CTES } = require('../models/robinhood-market-coverage-sql');
 const {
   createRobinhoodWorkspaceWindowReadRepository,
 } = require('../models/robinhood-workspace-window-read');
@@ -83,13 +84,7 @@ function buildActivityJoinSql(sorts) {
   const windows = [...new Set(sorts.filter((sort) => sort.mode === 'vol')
     .map((sort) => sort.window))];
   if (!windows.length) return '';
-  return `LEFT JOIN LATERAL (
-  SELECT coverage_start_timestamp AS coverage_start_at,
-    checkpoint_timestamp AS coverage_end_at
-  FROM robinhood_ingestion_cursors
-  WHERE chain = 'robinhood' AND stream = 'market'
-  LIMIT 1
-) cursor ON TRUE
+  return `LEFT JOIN market_cursor cursor ON TRUE
 LEFT JOIN activity ON activity.token_address = tc.address`;
 }
 
@@ -105,7 +100,8 @@ function buildActivityCteSql(sorts) {
   const columns = windows.map((window) => `SUM(bucket.volume_usd) FILTER (
       WHERE bucket.bucket_ts >= $1::timestamptz
         - INTERVAL '${WINDOW_INTERVALS[window]}') AS ${VOLUME_COLUMNS[window]}`).join(',\n    ');
-  return `, activity AS MATERIALIZED (
+  return `, ${MARKET_COVERAGE_CTES}
+, activity AS MATERIALIZED (
   SELECT bucket.token_address,
     ${columns}
   FROM robinhood_market_buckets_1m bucket

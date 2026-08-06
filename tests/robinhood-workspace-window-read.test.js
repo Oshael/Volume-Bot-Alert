@@ -180,6 +180,14 @@ describe('Robinhood workspace window metric reader', () => {
     assert.match(sql, /bucket\.bucket_ts >= date_trunc/);
     assert.match(sql, /bucket\.last_observed_at > bounds\.window_end - INTERVAL '15 minutes'/);
     assert.match(sql, /robinhood_ingestion_cursors/);
+    assert.match(sql, /robinhood_head_capture_cursors/);
+    assert.match(sql, /market_processing_frontier AS/);
+    assert.match(sql, /processing_status = 'pending'/);
+    assert.match(sql, /processing_status = 'leased'/);
+    assert.match(sql, /processing_status = 'blocked'/);
+    assert.match(sql, /WHEN frontier\.block_number IS NULL THEN head\.checkpoint_timestamp/);
+    assert.match(sql, /TO_TIMESTAMP\(frontier\.timestamp_ms::numeric \/ 1000\)/);
+    assert.doesNotMatch(sql, /checkpoint_timestamp AS coverage_end_at/);
     assert.match(sql, /FROM robinhood_market_observations observation/);
     assert.match(sql, /observed_at > canonical_volume_bounds\.volume_window_end - INTERVAL '10 minutes'/);
     assert.match(sql, /previous_volume_5m_usd/);
