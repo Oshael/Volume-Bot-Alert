@@ -1727,6 +1727,57 @@ function createRobinhoodPersistenceRepository(options = {}) {
     }
   }
 
+  // Discovery counterpart of commitHeadProcessingBatch: drains decoded discovery
+  // captures into the pool registry. It mirrors commitDiscoveryRange's pool/noxa
+  // writes but deliberately omits the cursor advance and backfill publish — the
+  // processing path never touches robinhood_ingestion_cursors nor the head capture
+  // cursor (evidence contract §7). Reprocessing is idempotent: insertProcessedLog
+  // dedups and upsertPool is ON CONFLICT.
+  async function commitDiscoveryProcessingBatch(input = {}) {
+    const entries = (Array.isArray(input.entries) ? input.entries : [])
+      .map((entry) => ({
+        row: normalizeLogEntry(entry, 'discovery'),
+        pool: normalizePool(entry.event),
+        noxaLaunch: normalizeNoxaLaunch(entry.event),
+      }));
+    const client = await database.getClient();
+    let insertedLogs = 0;
+    let upsertedPools = 0;
+    let updatedNoxaLaunches = 0;
+    try {
+      await client.query('BEGIN');
+      const insertedEntries = [];
+      for (const entry of entries) {
+        const inserted = await insertProcessedLog(client, entry.row);
+        if (!inserted.rowCount) continue;
+        insertedLogs += 1;
+        insertedEntries.push(entry);
+      }
+      for (const entry of insertedEntries) {
+        if (!entry.pool) continue;
+        await upsertPool(client, entry.pool);
+        upsertedPools += 1;
+      }
+      for (const entry of insertedEntries) {
+        if (!entry.noxaLaunch) continue;
+        await updatePoolNoxaLaunch(client, entry.noxaLaunch);
+        updatedNoxaLaunches += 1;
+      }
+      await client.query('COMMIT');
+      return {
+        insertedLogs,
+        duplicateLogs: entries.length - insertedLogs,
+        upsertedPools,
+        updatedNoxaLaunches,
+      };
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch (_) {}
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async function commitMarketRange(input = {}) {
     const cursor = normalizeCursor('market', input.cursor);
     const entries = (Array.isArray(input.entries) ? input.entries : []).map((entry) => {
@@ -2051,6 +2102,7 @@ function createRobinhoodPersistenceRepository(options = {}) {
 
   return Object.freeze({
     commitBackfillEnrichmentBatch,
+    commitDiscoveryProcessingBatch,
     commitDiscoveryRange,
     commitHeadProcessingBatch,
     commitMarketRange,

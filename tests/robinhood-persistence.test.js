@@ -482,6 +482,50 @@ describe('Robinhood persistence repository', () => {
     assert.equal(noxaMetadata.noxa.supplyRaw, '1000000000000000000000000000');
   });
 
+  it('drains a discovery capture into the pool registry without advancing any cursor', async () => {
+    const fake = createFakeDatabase();
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+
+    const result = await repository.commitDiscoveryProcessingBatch({
+      entries: [discoveryEntry()],
+    });
+
+    assert.deepEqual(result, {
+      insertedLogs: 1,
+      duplicateLogs: 0,
+      upsertedPools: 1,
+      updatedNoxaLaunches: 0,
+    });
+    assert.equal(fake.calls[0].sql, 'BEGIN');
+    assert.match(fake.calls[1].sql, /INSERT INTO robinhood_processed_logs/);
+    assert.match(fake.calls[2].sql, /INSERT INTO robinhood_pool_registry/);
+    assert.equal(fake.calls[3].sql, 'COMMIT');
+    // The central isolation invariant: processing never touches either cursor.
+    assert.equal(fake.calls.some((call) => /robinhood_ingestion_cursors/.test(call.sql)), false);
+    assert.equal(fake.calls.some((call) => /robinhood_head_capture_cursors/.test(call.sql)), false);
+    assert.equal(fake.calls.some((call) => /robinhood_backfill_ranges/.test(call.sql)), false);
+    assert.equal(fake.isReleased(), true);
+  });
+
+  it('is idempotent on replay: a duplicate log rewrites no pool and advances no cursor', async () => {
+    const fake = createFakeDatabase({ duplicate: true });
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+
+    const result = await repository.commitDiscoveryProcessingBatch({
+      entries: [discoveryEntry()],
+    });
+
+    assert.deepEqual(result, {
+      insertedLogs: 0,
+      duplicateLogs: 1,
+      upsertedPools: 0,
+      updatedNoxaLaunches: 0,
+    });
+    assert.equal(fake.calls.some((call) => /INSERT INTO robinhood_pool_registry/.test(call.sql)), false);
+    assert.equal(fake.calls.some((call) => /robinhood_ingestion_cursors/.test(call.sql)), false);
+    assert.equal(fake.calls.at(-1).sql, 'COMMIT');
+  });
+
   it('rolls back the cursor when a validated NOXA launch has no active v3 pool', async () => {
     const fake = createFakeDatabase({ missingNoxaPool: true });
     const repository = createRobinhoodPersistenceRepository({ database: fake.database });
