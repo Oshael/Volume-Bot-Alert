@@ -9,6 +9,39 @@ const { isRobinhoodTokenChainConfigured } = require('../src/utils/token-chain-av
 
 const NOW_MS = Date.parse('2026-07-14T20:00:00.000Z');
 
+function healthySplitLeases() {
+  return [
+    {
+      key: 'robinhood-head-capture-worker',
+      leaseUntil: new Date(NOW_MS + 60_000).toISOString(),
+      metadata: { telemetry: {
+        version: 1,
+        capturedAt: new Date(NOW_MS - 1000).toISOString(),
+        worker: { running: true },
+        coverage: { caughtUp: true, unexplainedGaps: 0 },
+      } },
+    },
+    {
+      key: 'robinhood-processing-worker',
+      leaseUntil: new Date(NOW_MS + 60_000).toISOString(),
+      metadata: { telemetry: {
+        running: true,
+        lastTickAt: new Date(NOW_MS - 1000).toISOString(),
+        lastBlocked: 0,
+        lastError: null,
+      } },
+    },
+    {
+      key: 'robinhood-ingestion-worker',
+      leaseUntil: new Date(NOW_MS - 60_000).toISOString(),
+      metadata: { telemetry: {
+        version: 1,
+        coverage: { caughtUp: true, unexplainedGaps: 0 },
+      } },
+    },
+  ];
+}
+
 function runtimeConfig(overrides = {}) {
   return {
     mockTrading: { enabled: true },
@@ -133,5 +166,58 @@ describe('workspace chain readiness', () => {
     assert.equal((await provider()).robinhood.status, 'syncing');
     nowMs += 5001;
     assert.equal((await provider()).robinhood.status, 'ready');
+  });
+
+  it('uses the split head and processing leases after the monolith stops', async () => {
+    const provider = createWorkspaceChainReadinessProvider({
+      config: runtimeConfig(),
+      leaseStore: { list: async () => healthySplitLeases() },
+      ingestionWorker: { getStatus: () => ({ running: false }) },
+      now: () => NOW_MS,
+    });
+
+    const readiness = (await provider()).robinhood;
+    assert.equal(readiness.status, 'ready');
+    assert.equal(readiness.publicationReady, true);
+    assert.equal(readiness.capabilities.monitored, true);
+    assert.equal(readiness.capabilities.history, true);
+    assert.equal(readiness.blockers.includes('worker_not_active'), false);
+  });
+
+  it('fails split workspace readiness closed when processing is unavailable', async () => {
+    const leases = healthySplitLeases().filter(
+      (lease) => lease.key !== 'robinhood-processing-worker'
+    );
+    const provider = createWorkspaceChainReadinessProvider({
+      config: runtimeConfig(),
+      leaseStore: { list: async () => leases },
+      ingestionWorker: { getStatus: () => ({ running: false }) },
+      now: () => NOW_MS,
+    });
+
+    const readiness = (await provider()).robinhood;
+    assert.equal(readiness.status, 'syncing');
+    assert.equal(readiness.publicationReady, false);
+    assert.equal(readiness.capabilities.monitored, false);
+    assert.equal(readiness.blockers.includes('processing_lease_inactive'), true);
+  });
+
+  it('falls back to an active monolith lease while split processing is unavailable', async () => {
+    const leases = healthySplitLeases().filter(
+      (lease) => lease.key !== 'robinhood-processing-worker'
+    );
+    const monolith = leases.find((lease) => lease.key === 'robinhood-ingestion-worker');
+    monolith.leaseUntil = new Date(NOW_MS + 60_000).toISOString();
+    const provider = createWorkspaceChainReadinessProvider({
+      config: runtimeConfig(),
+      leaseStore: { list: async () => leases },
+      ingestionWorker: { getStatus: () => ({ running: false }) },
+      now: () => NOW_MS,
+    });
+
+    const readiness = (await provider()).robinhood;
+    assert.equal(readiness.status, 'ready');
+    assert.equal(readiness.publicationReady, true);
+    assert.equal(readiness.blockers.includes('processing_lease_inactive'), false);
   });
 });

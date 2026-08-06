@@ -1,6 +1,11 @@
 const workerLease = require('../models/worker-lease');
 const robinhoodIngestionWorker = require('./robinhood-ingestion-worker');
 const { buildRobinhoodRolloutStatus } = require('./robinhood-rollout-status');
+const {
+  HEAD_LEASE_KEY,
+  activeLease,
+  evaluateRobinhoodPipelineHealth,
+} = require('./robinhood-pipeline-health');
 const { isRobinhoodUserVisible } = require('../utils/token-chain-availability');
 const config = require('../../config');
 
@@ -36,22 +41,27 @@ function buildSolanaReadiness(runtimeConfig, checkedAt) {
   };
 }
 
-function resolveRobinhoodStatus(rollout) {
+function resolveRobinhoodStatus(rollout, pipelineHealth) {
   if (rollout.health?.halted) return 'unavailable';
   if (
     rollout.axes?.transport?.requested
-    && (!rollout.axes.transport.effective || !rollout.health?.coverageReady)
+    && (
+      !rollout.axes.transport.effective
+      || !rollout.health?.coverageReady
+      || pipelineHealth?.ready === false
+    )
   ) {
     return 'syncing';
   }
-  return rollout.publishable ? 'ready' : 'unavailable';
+  return rollout.publishable && pipelineHealth?.ready !== false ? 'ready' : 'unavailable';
 }
 
-function isRobinhoodMarketWorkspaceReady(rollout) {
+function isRobinhoodMarketWorkspaceReady(rollout, pipelineHealth) {
   return rollout.health?.halted !== true
     && rollout.axes?.transport?.effective === true
     && rollout.axes?.persistence?.effective === true
-    && rollout.health?.coverageReady === true;
+    && rollout.health?.coverageReady === true
+    && pipelineHealth?.ready !== false;
 }
 
 function getRobinhoodMessage(status, marketWorkspaceReady) {
@@ -67,20 +77,25 @@ function getRobinhoodMessage(status, marketWorkspaceReady) {
   return 'Robinhood workspace data is unavailable. Solana data is hidden.';
 }
 
-function buildRobinhoodReadiness(rollout, checkedAt, extraBlockers = []) {
-  const status = resolveRobinhoodStatus(rollout);
-  const marketWorkspaceReady = isRobinhoodMarketWorkspaceReady(rollout);
+function buildRobinhoodReadiness(rollout, checkedAt, extraBlockers = [], pipelineHealth = null) {
+  const status = resolveRobinhoodStatus(rollout, pipelineHealth);
+  const marketWorkspaceReady = isRobinhoodMarketWorkspaceReady(rollout, pipelineHealth);
+  const publicationReady = rollout.publishable === true && pipelineHealth?.ready !== false;
   return {
     chain: 'robinhood',
     status,
     phase: rollout.phase,
-    publicationReady: rollout.publishable === true,
+    publicationReady,
     workspaceReady: false,
     checkedAt,
-    blockers: [...new Set([...(rollout.blockers || []), ...extraBlockers])],
+    blockers: [...new Set([
+      ...(rollout.blockers || []),
+      ...(pipelineHealth?.blockers || []),
+      ...extraBlockers,
+    ])],
     message: getRobinhoodMessage(status, marketWorkspaceReady),
     capabilities: {
-      alertFeed: rollout.publishable === true,
+      alertFeed: publicationReady,
       radar: false,
       monitored: marketWorkspaceReady,
       topPerformers: marketWorkspaceReady,
@@ -118,8 +133,30 @@ function buildWorkspaceChainReadiness(input = {}) {
     rollout,
     checkedAt,
     input.telemetryAvailable === false ? ['readiness_telemetry_unavailable'] : [],
+    input.pipelineHealth,
   );
   return readiness;
+}
+
+function selectRobinhoodRuntime(leases, nowMs) {
+  const headLease = leases.find((lease) => lease.key === HEAD_LEASE_KEY) || null;
+  const monolithLease = leases.find(
+    (lease) => lease.key === ROBINHOOD_INGESTION_LEASE_KEY
+  ) || null;
+  if (activeLease(headLease, nowMs)) {
+    const pipelineHealth = evaluateRobinhoodPipelineHealth(leases, { nowMs });
+    if (!pipelineHealth.ready && activeLease(monolithLease, nowMs)) {
+      return { sharedLease: monolithLease, pipelineHealth: null };
+    }
+    return {
+      sharedLease: headLease,
+      pipelineHealth,
+    };
+  }
+  return {
+    sharedLease: monolithLease,
+    pipelineHealth: null,
+  };
 }
 
 function createWorkspaceChainReadinessProvider(deps = {}) {
@@ -135,20 +172,22 @@ function createWorkspaceChainReadinessProvider(deps = {}) {
     if (!isRobinhoodUserVisible(runtimeConfig)) {
       return buildWorkspaceChainReadiness({ config: runtimeConfig, nowMs: now() });
     }
-    let sharedLease = null;
+    let runtime = { sharedLease: null, pipelineHealth: null };
     let telemetryAvailable = true;
+    const nowMs = now();
     try {
       const leases = await leaseStore.list();
-      sharedLease = leases.find((lease) => lease.key === ROBINHOOD_INGESTION_LEASE_KEY) || null;
+      runtime = selectRobinhoodRuntime(leases, nowMs);
     } catch (_) {
       telemetryAvailable = false;
     }
     return buildWorkspaceChainReadiness({
       config: runtimeConfig,
       ingestionStatus: ingestionWorker.getStatus(),
-      sharedLease,
+      sharedLease: runtime.sharedLease,
+      pipelineHealth: runtime.pipelineHealth,
       telemetryAvailable,
-      nowMs: now(),
+      nowMs,
     });
   }
 
@@ -173,4 +212,5 @@ module.exports = {
   buildWorkspaceChainReadiness,
   createWorkspaceChainReadinessProvider,
   getWorkspaceChainReadiness: createWorkspaceChainReadinessProvider(),
+  __private: { selectRobinhoodRuntime },
 };

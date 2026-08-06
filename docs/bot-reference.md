@@ -441,6 +441,13 @@ head, com gaps, bloqueios ou erro. O gate também lê, pelos índices parciais d
 vazia ou um lote recente em voo continuam saudáveis. A leitura completa é cacheada por 5s. O corte não desliga o
 monólito automaticamente: overlap, observação e parada continuam sendo ações operacionais.
 
+Após o Corte 7, a readiness do workspace prefere a lease ativa
+`robinhood-head-capture-worker` e exige também a saúde de
+`robinhood-processing-worker`; a lease combinada `robinhood-ingestion-worker` fica somente como
+fallback de rollback. Assim, parar o monólito não produz um falso `syncing`, enquanto head fora da
+ponta, telemetria vencida, processing parado, bloqueado ou com erro continuam ocultando os painéis
+de mercado de forma fail-closed.
+
 A projeção Robinhood mantém um reparo persistente de metadata separado da página
 de mercado ativa. Identidades `robinhood-onchain` com imagem ou launchpad pendente
 são priorizadas, e a atividade recente desempata dentro da mesma classe;
