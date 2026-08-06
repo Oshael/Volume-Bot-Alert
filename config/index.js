@@ -238,7 +238,7 @@ function getRuntimeRole(runSocketHub, runBackgroundJobs) {
 const SHARED_WORKER_GROUPS = Object.freeze(['core', 'market', 'maintenance']);
 const ISOLATED_WORKER_GROUPS = Object.freeze([
   'robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-derived',
-  'robinhood-backfill',
+  'robinhood-wallet', 'robinhood-backfill',
 ]);
 const WORKER_GROUPS = Object.freeze([...SHARED_WORKER_GROUPS, ...ISOLATED_WORKER_GROUPS]);
 const WORKER_GROUP_SET = new Set(WORKER_GROUPS);

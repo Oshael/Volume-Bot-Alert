@@ -507,10 +507,15 @@ function startRobinhoodDerivedWorkerGroup() {
   }
 }
 
-function startRobinhoodWalletSwapLiveRuntime() {
+// Wallet-swap attribution is its own isolated group: it re-reads accepted
+// observations and issues heavy eth_getBlockByNumber(full-tx) calls per block to
+// resolve tx senders, so it must not share a process with head/processing/derived.
+// It keeps an independent cursor and catches up from wherever it left off.
+function startRobinhoodWalletSwapWorkerGroup() {
+  if (!hasWorkerGroup('robinhood-wallet')) return;
   if (!config.robinhoodWalletSwapLiveWorker.enabled) return;
   startLockedWorker(
-    'robinhood',
+    'robinhood-wallet',
     ROBINHOOD_WALLET_SWAP_LIVE_LEASE_KEY,
     'Robinhood wallet-swap LIVE worker',
     () => robinhoodWalletSwapLiveWorker.start({
@@ -651,7 +656,6 @@ function startWorkerSet() {
     }
   }
   if (hasWorkerGroup('robinhood')) {
-    startRobinhoodWalletSwapLiveRuntime();
     const ingestionGate = evaluateRobinhoodIngestionGate(config);
     if (ingestionGate.allowed) {
       startLockedWorker('robinhood', ROBINHOOD_INGESTION_LEASE_KEY, 'Robinhood ingestion worker', () => {
@@ -761,6 +765,7 @@ function startWorkerSet() {
   startRobinhoodHeadCaptureWorkerGroup();
   startRobinhoodProcessingWorkerGroup();
   startRobinhoodDerivedWorkerGroup();
+  startRobinhoodWalletSwapWorkerGroup();
 }
 
 function bootstrapWebRuntime(httpServer) {
