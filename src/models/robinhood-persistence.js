@@ -1870,6 +1870,12 @@ function createRobinhoodPersistenceRepository(options = {}) {
         { checkpointTimestamp: emit?.checkpointTimestamp ?? null },
         { includeExistingTargets: Boolean(emit) }
       );
+      // Roll the touched minute buckets up into buckets_1h in the same tx, the way
+      // the monolith's commitMarketRange did. Post-cutover nothing else writes
+      // buckets_1h (the aggregate worker only builds buckets_agg FROM it), so
+      // without this the hourly table freezes and liquidity/6h/24h go stale. No
+      // defer here: the current hour must stay fresh for the 15m liquidity gate.
+      await refreshHourlyBuckets(client, observations);
       const insertedOutboxRows = emit
         ? await insertDerivedOutboxRows(client, marketWrite.liveBuckets, emit)
         : 0;

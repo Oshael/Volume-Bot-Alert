@@ -1210,6 +1210,22 @@ describe('commitHeadProcessingBatch derived outbox', () => {
     assert.equal(result.insertedOutboxRows, 1);
   });
 
+  it('rolls the touched minute buckets up into buckets_1h in the same transaction', async () => {
+    const fake = createFakeDatabase({ liveBuckets: [liveBucketRow()] });
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+
+    await repository.commitHeadProcessingBatch({
+      entries: [marketEntry()],
+      emit: { nextBlock: '8069001', checkpointTimestamp: WINDOW_END },
+    });
+
+    // Post-cutover nothing else writes buckets_1h (the aggregate worker only builds
+    // buckets_agg FROM it), so processing must refresh it or liquidity/6h/24h freeze.
+    const hourlyCall = findCall(fake.calls, /INSERT INTO robinhood_market_buckets_1h/);
+    assert.ok(hourlyCall, 'processing must refresh buckets_1h');
+    assert.match(hourlyCall.sql, /FROM targets[\s\S]*robinhood_market_buckets_1m/);
+  });
+
   it('marks only the newest bucket per token/commit as eligible for standard alerts', async () => {
     const fake = createFakeDatabase({ liveBuckets: [
       liveBucketRow({ lastBlockNumber: '8068999', lastLogIndex: '9' }),
