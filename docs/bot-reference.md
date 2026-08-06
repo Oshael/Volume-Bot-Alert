@@ -333,7 +333,7 @@ Grupos existentes:
 | `robinhood` | ingestão live monolítica: captura + valuation + projeção + staging + agregação + alertas |
 | `robinhood-head` | captura isolada do head: só grava evidência durável na fila e avança o cursor de captura |
 | `robinhood-processing` | consumidor isolado: reclama capturas por lease, decodifica a evidência congelada sem RPC, calcula preço/FDV/liquidez, persiste observações/buckets e poda a fila; no mesmo processo, um 2º runner drena `stream='discovery'` para o `robinhood_pool_registry` |
-| `robinhood-derived` | consumidor isolado: drena a outbox de emit ao vivo e replica o fan-out `market:bucket` (socket/relay) sem o monólito |
+| `robinhood-derived` | consumidor isolado: drena a outbox de emit ao vivo e replica o fan-out `market:bucket` (socket/relay) sem o monólito; hospeda o catalog projection worker (metadata de token) |
 | `robinhood-backfill` | discovery, scan, enrichment, finalizer e aggregation do replay |
 
 `robinhood`, `robinhood-head`, `robinhood-processing`, `robinhood-derived` e
@@ -420,6 +420,16 @@ isola a linha (retry/backoff, dead-letter `blocked`). Os sinks in-memory (catalo
 **não** sobem nesse processo ainda — evita double-processing no overlap; o co-start e o cutover do
 monólito são a etapa seguinte (Corte 6/7). Nenhum `.env` atual seleciona o grupo nem liga a flag.
 Contrato: `docs/robinhood-derived-outbox-contract.md`.
+
+Além do worker de outbox, o grupo `robinhood-derived` também sobe o **catalog projection
+worker** (lease `robinhood-catalog-projection-worker`, gate `ROBINHOOD_CATALOG_PROJECTION_ENABLED`,
+default on). É o reparo frio de metadata (nome/símbolo/decimais on-chain, `icon_url` Blockscout,
+`info.imageUrl` DexScreener, social) — worker de **polling + RPC próprio**, cujos candidatos vêm
+do `robinhood_pool_registry` ativo + atividade de market que o split já escreve. Ele rodava só no
+grupo `robinhood` (monólito); após o cutover ficou parado e pools novos apareciam sem metadata
+(placeholder "Eligible"). Movido pro derived porque é o mesmo tema dos sinks de catálogo e ali há
+RPC disponível — o head não pode hospedá-lo (isolamento da captura). O staging worker (alertas)
+segue exclusivo do grupo `robinhood` e é concern separado.
 
 O Corte 6B adiciona um modo seguro de shadow ao mesmo consumidor:
 `ROBINHOOD_DERIVED_SHADOW_AUDIT_ONLY=true` (default `false`). Nesse modo, cada payload da outbox é
