@@ -29,6 +29,7 @@ const preAccessRoutes = require('./routes/pre-access');
 const bootstrapRoutes = require('./routes/bootstrap');
 const catalogRoutes = require('./routes/catalog');
 const dashboardRoutes = require('./routes/dashboard');
+const robinhoodTradesRoutes = require('./routes/robinhood-trades');
 const tokenGateRoutes = require('./routes/token-gate');
 const xProfileRoutes = require('./routes/x-profile');
 const telegramRoutes = require('./routes/telegram');
@@ -236,6 +237,7 @@ app.use('/api/config', defaultApiLimiter, require('./routes/config'));
 app.use('/api/bootstrap', defaultApiLimiter, bootstrapRoutes);
 app.use('/api/catalog', catalogRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/robinhood', defaultApiLimiter, robinhoodTradesRoutes);
 app.use('/api/x-profile', xProfileLimiter, xProfileRoutes);
 app.use('/api/telegram', defaultApiLimiter, telegramRoutes);
 
