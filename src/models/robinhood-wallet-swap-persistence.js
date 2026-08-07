@@ -68,6 +68,11 @@ function optionalNumeric(value, label) {
   return raw;
 }
 
+function optionalNonNegativeInteger(value, label) {
+  if (value === null || value === undefined || value === '') return null;
+  return nonNegativeInteger(value, label);
+}
+
 function isoTimestamp(value, label) {
   const date = value instanceof Date ? value : new Date(String(value ?? ''));
   if (Number.isNaN(date.getTime())) throw new Error(`${label} must be a valid timestamp`);
@@ -126,8 +131,45 @@ function normalizeSwapRow(input = {}) {
   };
 }
 
+// Narrow sidecar row (robinhood_swap_mc): the per-swap MC + at-block supply that
+// must outlive the pruned observation. Keyed by log_index (= the swap action_index).
+// Returns null when the swap carries no MC (nothing worth persisting).
+function normalizeMcRow(input = {}) {
+  const fdvUsd = optionalNumeric(input.fdvUsd, 'fdvUsd');
+  const tokenTotalSupplyRaw = optionalNonNegativeInteger(
+    input.tokenTotalSupplyRaw, 'tokenTotalSupplyRaw',
+  );
+  if (fdvUsd === null && tokenTotalSupplyRaw === null) return null;
+  return {
+    chain: CHAIN,
+    transaction_hash: fixedHex(input.transactionHash, 'transactionHash', 32),
+    log_index: nonNegativeInteger(input.actionIndex, 'actionIndex'),
+    fdv_usd: fdvUsd,
+    token_total_supply_raw: tokenTotalSupplyRaw,
+  };
+}
+
 function createRobinhoodWalletSwapRepository(options = {}) {
   const database = options.database || db;
+
+  async function insertSwapMc(rows = []) {
+    const payload = (Array.isArray(rows) ? rows : []).map(normalizeMcRow).filter(Boolean);
+    if (payload.length === 0) return { inserted: 0 };
+    const result = await database.query(
+      `INSERT INTO robinhood_swap_mc (
+         chain, transaction_hash, log_index, fdv_usd, token_total_supply_raw
+       )
+       SELECT item.chain, item.transaction_hash, item.log_index::bigint,
+              item.fdv_usd::numeric, item.token_total_supply_raw::numeric
+       FROM jsonb_to_recordset($1::jsonb) AS item(
+         chain text, transaction_hash text, log_index text,
+         fdv_usd text, token_total_supply_raw text
+       )
+       ON CONFLICT (chain, transaction_hash, log_index) DO NOTHING`,
+      [JSON.stringify(payload)]
+    );
+    return { inserted: result.rowCount || 0 };
+  }
 
   async function ensurePartitionForDay(dayKey) {
     const name = partitionName(dayKey);
@@ -181,15 +223,20 @@ function createRobinhoodWalletSwapRepository(options = {}) {
        ON CONFLICT (chain, transaction_hash, action_index, block_time) DO NOTHING`,
       [JSON.stringify(payload)]
     );
-    return { inserted: result.rowCount || 0, ensuredDays };
+    // Crystallize the per-swap MC into the durable sidecar so it survives the
+    // observation prune. Idempotent; safe to retry with the wallet-swap insert.
+    const mc = await insertSwapMc(rows);
+    return { inserted: result.rowCount || 0, ensuredDays, mcInserted: mc.inserted };
   }
 
-  return { ensurePartitionForDay, ensurePartitionsForDays, insertWalletSwaps };
+  return {
+    ensurePartitionForDay, ensurePartitionsForDays, insertWalletSwaps, insertSwapMc,
+  };
 }
 
 module.exports = {
   createRobinhoodWalletSwapRepository,
   PROTOCOLS,
   SIDES,
-  __private: { normalizeSwapRow, partitionName, dayBounds, partitionDayKey },
+  __private: { normalizeSwapRow, normalizeMcRow, partitionName, dayBounds, partitionDayKey },
 };

@@ -3,7 +3,7 @@ const { describe, it } = require('node:test');
 
 const {
   createRobinhoodWalletSwapRepository,
-  __private: { normalizeSwapRow, partitionName, dayBounds, partitionDayKey },
+  __private: { normalizeSwapRow, normalizeMcRow, partitionName, dayBounds, partitionDayKey },
 } = require('../src/models/robinhood-wallet-swap-persistence');
 
 function validRow(overrides = {}) {
@@ -61,6 +61,21 @@ describe('robinhood wallet swap persistence', () => {
     assert.equal(row.volume_usd, '2500');
   });
 
+  it('projects the MC sidecar row (log_index = action_index) when MC is present', () => {
+    const mc = normalizeMcRow(validRow({
+      fdvUsd: '48000.5', tokenTotalSupplyRaw: '1000000000000000000000000',
+    }));
+    assert.equal(mc.log_index, '3'); // = the swap action_index
+    assert.equal(mc.transaction_hash, `0x${'1'.repeat(64)}`);
+    assert.equal(mc.fdv_usd, '48000.5');
+    assert.equal(mc.token_total_supply_raw, '1000000000000000000000000');
+    assert.throws(() => normalizeMcRow(validRow({ tokenTotalSupplyRaw: '-1' })), /non-negative integer/);
+  });
+
+  it('skips the sidecar row when the swap carries no MC', () => {
+    assert.equal(normalizeMcRow(validRow()), null);
+  });
+
   it('rejects malformed rows', () => {
     assert.throws(() => normalizeSwapRow(validRow({ walletAddress: '0xnothex' })), /walletAddress/);
     assert.throws(() => normalizeSwapRow(validRow({ tokenAmountRaw: '0' })), /greater than zero/);
@@ -104,5 +119,23 @@ describe('robinhood wallet swap persistence', () => {
     const result = await repo.insertWalletSwaps([]);
     assert.equal(database.calls.length, 0);
     assert.deepEqual(result, { inserted: 0, ensuredDays: [] });
+  });
+
+  it('also writes the MC sidecar (only swaps with a market cap), after the swap insert', async () => {
+    const database = fakeDb();
+    const repo = createRobinhoodWalletSwapRepository({ database });
+    await repo.insertWalletSwaps([
+      validRow({ fdvUsd: '48000', tokenTotalSupplyRaw: '1000000000000000000000000' }),
+      validRow({ transactionHash: `0x${'2'.repeat(64)}` }), // no MC -> excluded from sidecar
+    ]);
+    const swapInsert = database.calls.find((c) => /INSERT INTO robinhood_wallet_swaps/.test(c.sql));
+    const mcInsert = database.calls.find((c) => /INSERT INTO robinhood_swap_mc/.test(c.sql));
+    assert.ok(swapInsert && mcInsert, 'both inserts issued');
+    assert.ok(database.calls.indexOf(mcInsert) > database.calls.indexOf(swapInsert));
+    assert.match(mcInsert.sql, /ON CONFLICT \(chain, transaction_hash, log_index\) DO NOTHING/);
+    const mcPayload = JSON.parse(mcInsert.params[0]);
+    assert.equal(mcPayload.length, 1); // the no-MC swap is excluded
+    assert.equal(mcPayload[0].log_index, '3'); // = action_index
+    assert.equal(mcPayload[0].fdv_usd, '48000');
   });
 });

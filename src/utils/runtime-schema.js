@@ -2340,6 +2340,30 @@ const SCHEMA_GROUPS = [
     ],
   },
   {
+    key: 'stage109-robinhood-swap-mc',
+    name: 'Stage 109 durable per-swap market cap sidecar',
+    repair: 'node src/utils/db-init-stage109.js',
+    tables: [
+      {
+        table: 'robinhood_swap_mc',
+        columns: [
+          'chain', 'transaction_hash', 'log_index', 'fdv_usd',
+          'token_total_supply_raw', 'created_at',
+        ],
+        constraints: [
+          {
+            name: 'robinhood_swap_mc_pkey',
+            includes: ['PRIMARY KEY', 'chain', 'transaction_hash', 'log_index'],
+          },
+          {
+            name: 'robinhood_swap_mc_supply_check',
+            includes: ['CHECK', 'token_total_supply_raw'],
+          },
+        ],
+      },
+    ],
+  },
+  {
     key: 'stage91-robinhood-wallet-swap-cursors',
     name: 'Stage 91 Robinhood wallet-swap attribution cursors',
     repair: 'node src/utils/db-init-stage91.js',

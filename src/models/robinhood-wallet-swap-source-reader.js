@@ -18,7 +18,7 @@ const OBSERVATION_COLUMNS = [
   'transaction_hash', 'log_index', 'block_number', 'protocol', 'market_key',
   'token_address', 'quote_address', 'side', 'token_amount_raw', 'quote_amount_raw',
   'token_decimals', 'quote_decimals', 'token_amount', 'quote_amount',
-  'price_usd', 'volume_usd',
+  'price_usd', 'volume_usd', 'fdv_usd', 'token_total_supply_raw',
 ];
 
 function nonNegativeInteger(value, label) {

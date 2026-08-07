@@ -26,6 +26,8 @@ function observation(txHash, logIndex, overrides = {}) {
     quote_decimals: '6',
     price_usd: '1.5',
     volume_usd: '3000',
+    fdv_usd: '48000',
+    token_total_supply_raw: '1000000000000000000000000',
     ...overrides,
   };
 }
@@ -73,6 +75,9 @@ describe('robinhood wallet swap attributor', () => {
     });
     const rows = repository.inserted[0];
     assert.equal(rows[0].walletAddress, SIGNER_A);
+    // Crystallized per-swap MC + at-block supply carried from the observation.
+    assert.equal(rows[0].fdvUsd, '48000');
+    assert.equal(rows[0].tokenTotalSupplyRaw, '1000000000000000000000000');
     assert.equal(rows[0].actionIndex, '5');
     assert.equal(rows[0].blockTime, new Date(0x60000000 * 1000).toISOString());
     assert.equal(rows[0].parserVersion, 'rh-wallet-seed-1');

@@ -38,6 +38,10 @@ function buildRow(observation, walletAddress, blockTime, parserVersion) {
     quoteAmount: observation.quote_amount,
     priceUsd: observation.price_usd,
     volumeUsd: observation.volume_usd,
+    // Crystallize the per-swap MC (and at-block supply) so the trades feed keeps it
+    // after the observation is pruned (~3 days). See stage109 / feed plan §8.
+    fdvUsd: observation.fdv_usd,
+    tokenTotalSupplyRaw: observation.token_total_supply_raw,
     parserVersion,
   };
 }
