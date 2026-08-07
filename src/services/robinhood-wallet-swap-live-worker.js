@@ -1,4 +1,5 @@
 const { createRobinhoodPersistenceRepository } = require('../models/robinhood-persistence');
+const { createRobinhoodHeadProcessingRepository } = require('../models/robinhood-head-processing');
 const { createRobinhoodWalletSwapCursorRepository } = require('../models/robinhood-wallet-swap-cursor');
 const { createRobinhoodWalletSwapRepository } = require('../models/robinhood-wallet-swap-persistence');
 const { createRobinhoodWalletSwapSourceReader } = require('../models/robinhood-wallet-swap-source-reader');
@@ -43,6 +44,9 @@ async function buildRuntime(options, deps = {}) {
   const marketRepository = (
     deps.marketRepositoryFactory || createRobinhoodPersistenceRepository
   )({ emitMarketBucketUpdate: () => false });
+  const headProcessingRepository = (
+    deps.headProcessingRepositoryFactory || createRobinhoodHeadProcessingRepository
+  )();
   const fetchBlock = (number, fullTransactions) => client.request(
     'eth_getBlockByNumber', [blockTag(number), fullTransactions]
   );
@@ -60,7 +64,16 @@ async function buildRuntime(options, deps = {}) {
       reorgDepth: options.reorgDepth,
       maxBlocks: options.maxBlocks,
       readNodeHead: () => client.request('eth_blockNumber'),
-      loadMarketCursor: () => marketRepository.loadCursor('market'),
+      // Post-cutover the isolated worker must bound itself by the strict
+      // processing frontier (oldest non-terminal capture) rather than the
+      // monolith's robinhood_ingestion_cursors 'market': that legacy cursor froze
+      // at the cutover block and pinned the live cursor there forever. This mirrors
+      // robinhood-processing's derived emit (resolveDerivedEmit) so both consumers
+      // share one honest "how far observations are complete" watermark.
+      loadMarketCursor: async () => {
+        const active = await headProcessingRepository.getOldestActiveCapture('market');
+        return marketRepository.resolveMarketFrontier(active?.blockNumber ?? null);
+      },
       fetchBlockHeader: (number) => fetchBlock(number, false),
     },
   };

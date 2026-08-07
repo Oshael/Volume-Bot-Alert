@@ -119,7 +119,20 @@ describe('Robinhood wallet-swap LIVE worker', () => {
     };
     const cursor = { loadCursor() {}, advanceLiveCursor() {} };
     const reader = { readAcceptedBlockGroups() {} };
-    const marketRepository = { loadCursor: async () => ({ next_block: '190' }) };
+    const frontierCalls = [];
+    const marketRepository = {
+      loadCursor: async () => ({ next_block: '190' }),
+      resolveMarketFrontier: async (pendingBlock) => {
+        frontierCalls.push(pendingBlock);
+        return { nextBlock: pendingBlock == null ? '999' : String(pendingBlock) };
+      },
+    };
+    const headProcessingRepository = {
+      getOldestActiveCapture: async (stream) => {
+        assert.equal(stream, 'market');
+        return { blockNumber: '150' };
+      },
+    };
     const attributor = { attributeBlock() {} };
     const runtime = await buildRuntime({ rpcOptions: {}, reorgDepth: 12, maxBlocks: 200 }, {
       clientFactory: () => client,
@@ -131,6 +144,7 @@ describe('Robinhood wallet-swap LIVE worker', () => {
       cursorFactory: () => cursor,
       sourceReaderFactory: () => reader,
       marketRepositoryFactory: () => marketRepository,
+      headProcessingRepositoryFactory: () => headProcessingRepository,
       attributorFactory: (input) => {
         attributorInput = input;
         return attributor;
@@ -149,5 +163,12 @@ describe('Robinhood wallet-swap LIVE worker', () => {
       { method: 'eth_getBlockByNumber', params: ['0xa', false] },
       { method: 'eth_getBlockByNumber', params: ['0xb', true] },
     ]);
+
+    // Regression: the market frontier must come from the strict processing
+    // watermark (oldest active capture -> resolveMarketFrontier), never the
+    // frozen monolith robinhood_ingestion_cursors that pinned the live cursor.
+    const frontier = await runtime.runnerDeps.loadMarketCursor();
+    assert.deepEqual(frontier, { nextBlock: '150' });
+    assert.deepEqual(frontierCalls, ['150']);
   });
 });
