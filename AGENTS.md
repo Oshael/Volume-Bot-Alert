@@ -10,6 +10,8 @@ If context is missing, investigate the repository before agreeing with the propo
 
 Always include a statement labeled exactly "Ponto importante" for significant changes, feature updates, and other work that may materially affect the bot's behavior. This helps ensure that relevant details and consequences of the applied changes are not overlooked.
 
+Update the doc "bot-reference.md" with the latests updates we made, you don't need to update everysingle detail, just outdated lines and new lines when its necessary to keep the doc up with the bot. 
+
 always run npm --prefix frontend run build after frontend changes
 always run node --test ... for affected tests
 always run npm run db:schema-check when changing schema/init
@@ -146,3 +148,10 @@ These rules are mandatory:
 - Do not declare a block complete merely because tests passed; review the full diff and confirm that scope did not expand.
 
 Ask me questions until you are certain you understand what I requested; do not guess what I want.
+
+## Architecture guardrail
+
+- Before a new chain or cross-cutting feature, estimate the production files and subsystems affected.
+- Treat a change as an architecture checkpoint if it is estimated to touch more than 12 production files or add business logic in 2 or more hub files; report the fan-out and proposed boundaries before editing.
+- New chains must extend a capability/adapter boundary; do not spread new `chain === ...` branches through central modules.
+- In hub files, keep new features limited to wiring and composition; extract new business logic or domain responsibilities behind a tested interface.
