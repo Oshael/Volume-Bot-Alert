@@ -16,16 +16,25 @@ function toNumber(value) {
 }
 
 // Returns { spike, reason, nextReference, nextConsecutiveRejects, recovered }.
+// `value` (or legacy `priceUsd`) is the magnitude gated on — pass token-level fdv_usd
+// for a token-stable reference. `ceiling` is an absolute hard cap: any value above it
+// is always a spike, even the market's first swap and even under recovery (no real
+// token approaches it), which catches catastrophic fakes the relative gate can miss.
 function evaluatePriceSpike(input) {
-  const price = toNumber(input.priceUsd);
+  const price = toNumber(input.value ?? input.priceUsd);
   const ref = toNumber(input.reference);
   const consecutiveRejects = Number(input.consecutiveRejects) || 0;
   const k = Number(input.maxMultiple);
   const recover = Math.max(1, Number(input.recoverAfter) || 1);
+  const ceiling = toNumber(input.ceiling);
 
   if (price == null || price <= 0) {
     // Accepted rows are > 0 by constraint; pass through without changing state.
     return { spike: false, reason: null, nextReference: ref, nextConsecutiveRejects: 0 };
+  }
+  if (ceiling != null && ceiling > 0 && price > ceiling) {
+    // Absolute hard cap — unconditional, never becomes the reference.
+    return { spike: true, reason: 'above_ceiling', nextReference: ref, nextConsecutiveRejects: consecutiveRejects + 1 };
   }
   if (ref == null || ref <= 0) {
     // First observation of the market: nothing to compare, bootstrap the reference.
@@ -51,11 +60,12 @@ function replayMarket(prices, options) {
   let consecutiveRejects = 0;
   return prices.map((row) => {
     const r = evaluatePriceSpike({
-      priceUsd: row.priceUsd,
+      value: row.value ?? row.priceUsd,
       reference,
       consecutiveRejects,
       maxMultiple: options.maxMultiple,
       recoverAfter: options.recoverAfter,
+      ceiling: options.ceiling,
     });
     reference = r.nextReference;
     consecutiveRejects = r.nextConsecutiveRejects;

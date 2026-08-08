@@ -38,3 +38,11 @@ test('K controls sensitivity: an 8x spike is caught at K=5 but not at K=10', () 
   assert.deepEqual(verdicts([5, 40, 5.1], { maxMultiple: 5, recoverAfter: 3 }), [false, true, false]);
   assert.deepEqual(verdicts([5, 40, 5.1], { maxMultiple: 10, recoverAfter: 3 }), [false, false, false]);
 });
+
+test('absolute ceiling rejects unconditionally — even the first value and under recovery', () => {
+  const opts = { maxMultiple: 8, recoverAfter: 3, ceiling: 1e10 };
+  // first value already above the ceiling -> rejected, never anchors the reference
+  assert.deepEqual(verdicts([1e12], opts), [true]);
+  // a burst that would recover under the relative rule stays rejected by the ceiling
+  assert.deepEqual(verdicts([1, 1e12, 1e12, 1e12, 1e12], opts), [false, true, true, true, true]);
+});

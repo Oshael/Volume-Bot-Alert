@@ -27,15 +27,19 @@ function parseArgs(argv = process.argv.slice(2)) {
     token,
     maxMultiple: Number(args['max-multiple'] ?? 8),
     recoverAfter: Number(args['recover-after'] ?? 3),
+    ceiling: Number(args.ceiling ?? 10e9), // $10B absolute cap; 0 disables
   };
 }
 
+// One time-ordered sequence for the whole token (gate on token-level fdv, which is
+// stable across pools) rather than per-pool price (sparse pools give a bad reference).
 const LOAD_SQL = `
-  SELECT market_key, block_number, log_index,
+  SELECT block_number, log_index,
          price_usd::float8 AS price, fdv_usd::float8 AS fdv
   FROM robinhood_market_observations
   WHERE chain = 'robinhood' AND token_address = $1 AND status = 'accepted'
-  ORDER BY market_key, block_number, log_index`;
+    AND fdv_usd IS NOT NULL
+  ORDER BY block_number, log_index`;
 
 function quantile(sortedAsc, q) {
   if (sortedAsc.length === 0) return null;
@@ -52,18 +56,10 @@ async function run() {
     return;
   }
 
-  const byMarket = new Map();
-  for (const r of rows) {
-    if (!byMarket.has(r.market_key)) byMarket.set(r.market_key, []);
-    byMarket.get(r.market_key).push(r);
-  }
-
   const kept = [];
   const rejected = [];
-  for (const seq of byMarket.values()) {
-    const verdicts = replayMarket(seq.map((r) => ({ priceUsd: r.price })), options);
-    verdicts.forEach((v, i) => (v.spike ? rejected : kept).push(seq[i]));
-  }
+  const verdicts = replayMarket(rows.map((r) => ({ value: r.fdv })), options);
+  verdicts.forEach((v, i) => (v.spike ? rejected : kept).push(rows[i]));
 
   const keptFdv = kept.map((r) => r.fdv).filter((x) => x != null).sort((a, b) => a - b);
   const rejFdv = rejected.map((r) => r.fdv).filter((x) => x != null).sort((a, b) => a - b);
@@ -76,8 +72,8 @@ async function run() {
   const overReject = rejected.filter((r) => r.fdv != null && keptP95 != null && r.fdv <= keptP95).length;
   const falseNeg = kept.filter((r) => r.fdv != null && r.fdv > 1e10).length;
 
-  console.log(`Token ${options.token}   K=${options.maxMultiple}  recoverAfter=${options.recoverAfter}`);
-  console.log(`Observations: ${rows.length}   markets: ${byMarket.size}`);
+  console.log(`Token ${options.token}   K=${options.maxMultiple}  recoverAfter=${options.recoverAfter}  ceiling=${money(options.ceiling)}`);
+  console.log(`Observations: ${rows.length}`);
   console.log('');
   console.log(`REJECTED (spikes): ${rejected.length}  (${(100 * rejected.length / rows.length).toFixed(3)}%)`);
   console.log(`  rejected FDV   min ${money(rejFdv[0])}   p50 ${money(quantile(rejFdv, 0.5))}   max ${money(rejFdv[rejFdv.length - 1])}`);
