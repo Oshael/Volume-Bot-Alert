@@ -2466,7 +2466,11 @@ function upsertExpandedChartCandle(data: CandlestickData<UTCTimestamp>[], candle
 
 function renderExpandedCandleChart(sparkline: TokenSparklineEntry) {
   const candleCount = getRenderableExpandedCandles(sparkline).length;
-  if (candleCount < 2) {
+  // Render the candlestick whenever at least one candle exists. Young / thinly
+  // traded tokens have very few coarse (1h/4h/24h) candles, and the old `< 2`
+  // guard silently dropped them to the line-sparkline fallback, which read as
+  // broken "dots" on those timeframes.
+  if (candleCount < 1) {
     return '';
   }
   const valuationLabel = getTokenChartValuationLabel(sparkline);
@@ -2855,8 +2859,20 @@ function getExpandedChartInitialPriceRange(data: CandlestickData<UTCTimestamp>[]
 function getExpandedChartInitialTimeRange(data: CandlestickData<UTCTimestamp>[], granularityMinutes: number) {
   const latest = Number(data[data.length - 1]?.time);
   const first = Number(data[0]?.time);
-  if (!Number.isFinite(latest) || !Number.isFinite(first) || latest <= first) {
+  if (!Number.isFinite(latest) || !Number.isFinite(first)) {
     return null;
+  }
+  const granularitySeconds = getExpandedChartGranularitySeconds(granularityMinutes);
+
+  // A lone candle (or a token whose whole history sits in one bucket) has no
+  // span to fit. Centre it in a few empty slots instead of returning null and
+  // falling back to fitContent, which zooms out across the future whitespace
+  // and shrinks the candle to a speck.
+  if (latest <= first) {
+    return {
+      from: (first - (granularitySeconds * 3)) as UTCTimestamp,
+      to: (latest + (granularitySeconds * 3)) as UTCTimestamp,
+    };
   }
 
   const recentDaysByGranularity = new Map<number, number>([
@@ -2869,12 +2885,16 @@ function getExpandedChartInitialTimeRange(data: CandlestickData<UTCTimestamp>[],
   ]);
   const recentDays = recentDaysByGranularity.get(Math.round(Number(granularityMinutes))) || 7;
   const from = Math.max(first, latest - (recentDays * 86400));
-  const totalFutureSeconds = getExpandedChartGranularitySeconds(granularityMinutes) * getExpandedChartFuturePointCount(granularityMinutes);
+  const totalFutureSeconds = granularitySeconds * getExpandedChartFuturePointCount(granularityMinutes);
+  // Keep the leading whitespace proportional to the visible history with just a
+  // single bucket as the floor, so a token with few coarse candles fills the
+  // viewport instead of being crushed against the axis by a fixed 12-bucket
+  // future pad. Dense charts are unaffected: the proportional term dominates.
   const initialFutureSeconds = Math.min(
     totalFutureSeconds,
-    Math.max(getExpandedChartGranularitySeconds(granularityMinutes) * 12, Math.round((latest - from) * 0.25)),
+    Math.max(granularitySeconds, Math.round((latest - from) * 0.25)),
   );
-  return from < latest ? { from: from as UTCTimestamp, to: (latest + initialFutureSeconds) as UTCTimestamp } : null;
+  return { from: from as UTCTimestamp, to: (latest + initialFutureSeconds) as UTCTimestamp };
 }
 
 function bindExpandedPriceScaleWheel(container: HTMLElement, priceScale: IPriceScaleApi) {
@@ -3810,7 +3830,7 @@ async function mountExpandedCandlestickChart(
     chartCandles: data.length,
     normalizeMs: performance.now() - normalizeStartedAt,
   });
-  if (!container || data.length < 2) {
+  if (!container || data.length < 1) {
     debug.cleanup();
     return;
   }
