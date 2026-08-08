@@ -27,7 +27,8 @@ function parseArgs(argv = process.argv.slice(2)) {
     token,
     maxMultiple: Number(args['max-multiple'] ?? 8),
     recoverAfter: Number(args['recover-after'] ?? 3),
-    ceiling: Number(args.ceiling ?? 10e9), // $10B absolute cap; 0 disables
+    ceiling: Number(args.ceiling ?? 10e9), // absolute cap fallback; 0 disables
+    hardMultiple: Number(args['hard-multiple'] ?? 5), // adaptive cap = this x token median fdv
   };
 }
 
@@ -56,9 +57,21 @@ async function run() {
     return;
   }
 
+  // Adaptive per-token hard cap: hardMultiple x the token's median fdv. The median is
+  // robust (fakes are <0.01% of rows), so it reflects the token's real level and the
+  // cap scales per token — catching clustered/first-swap fakes the relative gate misses,
+  // AND small relative fakes (e.g. $40M on a $5M token) that no absolute ceiling could.
+  const allFdv = rows.map((r) => r.fdv).filter((x) => x != null).sort((a, b) => a - b);
+  const median = quantile(allFdv, 0.5) || 0;
+  const adaptiveCap = median > 0 ? options.hardMultiple * median : Infinity;
+  const effectiveCeiling = options.ceiling > 0 ? Math.min(options.ceiling, adaptiveCap) : adaptiveCap;
+
   const kept = [];
   const rejected = [];
-  const verdicts = replayMarket(rows.map((r) => ({ value: r.fdv })), options);
+  const verdicts = replayMarket(
+    rows.map((r) => ({ value: r.fdv })),
+    { ...options, ceiling: effectiveCeiling }
+  );
   verdicts.forEach((v, i) => (v.spike ? rejected : kept).push(rows[i]));
 
   const keptFdv = kept.map((r) => r.fdv).filter((x) => x != null).sort((a, b) => a - b);
@@ -70,9 +83,10 @@ async function run() {
   //  - falseNeg    = kept rows still absurd (FDV > $10B) that the guard MISSED.
   const keptP95 = quantile(keptFdv, 0.95);
   const overReject = rejected.filter((r) => r.fdv != null && keptP95 != null && r.fdv <= keptP95).length;
-  const falseNeg = kept.filter((r) => r.fdv != null && r.fdv > 1e10).length;
+  const falseNeg = kept.filter((r) => r.fdv != null && r.fdv > effectiveCeiling).length;
 
-  console.log(`Token ${options.token}   K=${options.maxMultiple}  recoverAfter=${options.recoverAfter}  ceiling=${money(options.ceiling)}`);
+  console.log(`Token ${options.token}   K=${options.maxMultiple}  recoverAfter=${options.recoverAfter}`);
+  console.log(`token median FDV ${money(median)}  ->  adaptive cap (${options.hardMultiple}x) ${money(adaptiveCap)}  ->  effective ceiling ${money(effectiveCeiling)}`);
   console.log(`Observations: ${rows.length}`);
   console.log('');
   console.log(`REJECTED (spikes): ${rejected.length}  (${(100 * rejected.length / rows.length).toFixed(3)}%)`);
@@ -90,7 +104,7 @@ async function run() {
   console.log('--- SANITY ---');
   console.log(`KEPT max FDV = ${money(keptFdv[keptFdv.length - 1])}  <-- should look like this token's REAL market cap`);
   console.log(`false positives (rejected but inside normal band): ${overReject}  <-- want ~0`);
-  console.log(`missed spikes  (kept but FDV > $10B): ${falseNeg}  <-- want 0 (lower --max-multiple if >0)`);
+  console.log(`missed spikes  (kept but FDV > effective ceiling): ${falseNeg}  <-- want 0`);
 }
 
 run()
