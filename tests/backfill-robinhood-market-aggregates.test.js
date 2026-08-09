@@ -8,7 +8,8 @@ const TOKEN_B = '0x2222222222222222222222222222222222222222';
 function options(overrides = {}) {
   return {
     mode: 'dry-run', from: null, to: new Date('2026-07-18T13:00:00.000Z'),
-    checkpointFile: null, tokenLimit: 25, maxChunks: 1, statementTimeoutMs: 5000,
+    checkpointFile: null, tokenAddress: null,
+    tokenLimit: 25, maxChunks: 1, statementTimeoutMs: 5000,
     lockTimeoutMs: 750,
     sleepMs: 0, fineWindowHours: 1, hourlyWindowHours: 24, coarseWindowHours: 24,
     ...overrides,
@@ -41,6 +42,7 @@ describe('Robinhood aggregate backfill', () => {
     assert.equal(parsed.statementTimeoutMs, 10_000);
     assert.equal(parsed.lockTimeoutMs, 1000);
     assert.equal(parsed.hourlyWindowHours, 24);
+    assert.equal(parsed.tokenAddress, null);
     assert.throws(
       () => parseCliArgs(['--mode', 'write']),
       /write mode requires --checkpoint/
@@ -48,6 +50,10 @@ describe('Robinhood aggregate backfill', () => {
     assert.equal(parseCliArgs([
       '--mode', 'write', '--checkpoint', './progress.json', '--maxChunks', '7',
     ]).maxChunks, 7);
+    assert.equal(parseCliArgs([
+      '--token', TOKEN.toUpperCase().replace('0X', '0x'),
+    ]).tokenAddress, TOKEN);
+    assert.throws(() => parseCliArgs(['--token', 'not-an-address']), /valid EVM address/);
   });
   it('applies statement and lock timeouts inside each database transaction', async () => {
     const calls = [];
@@ -220,6 +226,51 @@ describe('Robinhood aggregate backfill', () => {
       durationMs: 15,
     });
     assert.equal(database.calls.some((call) => /candidate_tokens/.test(call.sql)), false);
+  });
+
+  it('limits a write checkpoint and repository calls to one explicit token', async () => {
+    const ranges = [];
+    const checkpoint = {
+      version: 2,
+      asOf: '2026-07-18T13:00:00.000Z',
+      tokenAddress: TOKEN,
+      cursor: { phase: 'coarse', windowStart: '2026-07-18T12:00:00.000Z', afterToken: null },
+    };
+    const summary = await runBackfill(options({
+      mode: 'write', checkpointFile: '/tmp/rh-token.json', tokenAddress: TOKEN,
+    }), {
+      database: fakeDatabase(),
+      repository: {
+        async refreshAggregateRange(range) {
+          ranges.push(range);
+          return {
+            sourceBuckets: 1, targetBuckets: 3, writtenBuckets: 2,
+            deletedBuckets: 1, lastToken: TOKEN, hasMoreTokens: false,
+          };
+        },
+      },
+      readCheckpoint: async () => structuredClone(checkpoint),
+      writeCheckpoint: async () => {},
+    });
+
+    assert.equal(ranges.length, 1);
+    assert.equal(ranges[0].tokenAddress, TOKEN);
+    assert.equal(summary.deleted, 1);
+  });
+
+  it('rejects reusing a checkpoint with a different token scope', async () => {
+    await assert.rejects(
+      runBackfill(options({ tokenAddress: TOKEN }), {
+        database: fakeDatabase(),
+        readCheckpoint: async () => ({
+          version: 2,
+          asOf: '2026-07-18T13:00:00.000Z',
+          tokenAddress: TOKEN_B,
+          cursor: { phase: 'fine', windowStart: null, afterToken: null },
+        }),
+      }),
+      /checkpoint token scope/
+    );
   });
 
   it('does not advance the checkpoint when a set-based window fails', async () => {

@@ -970,11 +970,16 @@ Depois do catch-up:
   explícito quando o token ultrapassa esse teto; o frontend solicita esse modo
   somente nesses três períodos e mantém 1m/1h/4h/24h nos limites usuais;
 - agregados por token separam atividade de valoração: volume, swaps e contadores
-  continuam somando todas as pools, enquanto preço/FDV OHLC usam, entre as pools
-  ativas no candle, a de maior volume acumulado nas 24h encerradas no candle;
+  continuam somando todas as pools, enquanto preço/FDV OHLC usam a pool de maior
+  volume acumulado nas 24h encerradas no candle, mesmo que outra pool seja a única
+  ativa naquele intervalo. Se a principal não negociou no candle, o agregado de
+  valoração fica esparso em vez de promover uma pool secundária/morta;
   `valuation_protocol`, `valuation_market_key` e `valuation_volume_24h_usd`
   preservam a proveniência e os desempates são atividade mais recente, protocolo
   e `market_key`;
+- o backfill de agregados aceita `--token 0x...` para reprocessar isoladamente um
+  contrato com checkpoint próprio; o modo set-based também remove candles antigos
+  quando a nova seleção conclui que a pool principal não negociou no intervalo;
 - o backfill relê os limites da tabela fonte em cada mudança de fase; assim a
   fase coarse inclui buckets `1h` antigos que acabaram de ser regenerados pela
   fase hourly da mesma execução;

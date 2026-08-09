@@ -49,6 +49,9 @@ describe('Robinhood aggregate coverage auditor', () => {
     assert.match(fine, /primary_markets AS MATERIALIZED/);
     assert.match(fine, /INTERVAL '24 hours'/);
     assert.match(fine, /activity\.volume_24h_usd DESC/);
+    assert.match(fine, /FROM targets target[\s\S]*JOIN robinhood_market_buckets_1m history/);
+    assert.doesNotMatch(fine, /target_markets AS MATERIALIZED/);
+    assert.match(fine, /HAVING BOOL_OR/);
     assert.match(fine, /FILTER \(WHERE[\s\S]*valuation_market\.valuation_market_key/);
     assert.match(fine, /COUNT\(DISTINCT \(bucket\.protocol, bucket\.market_key\)\)/);
     assert.match(fine, /SUM\(bucket\.volume_usd\)/);

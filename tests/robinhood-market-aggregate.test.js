@@ -125,6 +125,24 @@ describe('Robinhood market aggregate repository', () => {
     assert.doesNotMatch(sourceQueries[0], /\bprimary\b/);
   });
 
+  it('drops a candle when the trailing-volume primary market is inactive in that interval', async () => {
+    const calls = [];
+    const repository = createRobinhoodMarketAggregateRepository({
+      async query(sql, params) {
+        calls.push({ sql, params });
+        return { rows: [] };
+      },
+    });
+
+    assert.equal(await repository.refreshBucket(INPUT), null);
+    assert.equal(calls.length, 2);
+    assert.match(calls[0].sql, /FROM robinhood_market_buckets_1m history/);
+    assert.match(calls[0].sql, /INTERVAL '24 hours'/);
+    assert.match(calls[0].sql, /WHERE EXISTS[\s\S]*FROM source_rows valuation/);
+    assert.doesNotMatch(calls[0].sql, /active_markets/);
+    assert.match(calls[1].sql, /DELETE FROM robinhood_market_buckets_agg/);
+  });
+
   it('rebuilds complete hourly ranges in one set-based statement', async () => {
     const calls = [];
     const repository = createRobinhoodMarketAggregateRepository({
@@ -162,6 +180,7 @@ describe('Robinhood market aggregate repository', () => {
       '2026-07-18T14:00:00.000Z',
       null,
       2,
+      null,
     ]);
     assert.match(calls[0].sql, /candidate_tokens[\s\S]*token_address > \$3/);
     assert.match(calls[0].sql, /LIMIT \(\$4::int \+ 1\)/);
@@ -242,6 +261,7 @@ describe('Robinhood market aggregate repository', () => {
       sourceBuckets: 40,
       targetBuckets: 12,
       writtenBuckets: 9,
+      deletedBuckets: 0,
       tokenCount: 3,
       lastToken: ADDRESS,
       hasMoreTokens: false,
@@ -252,11 +272,16 @@ describe('Robinhood market aggregate repository', () => {
       [5, 15, 30],
       ADDRESS,
       3,
+      null,
     ]);
     assert.match(calls[0].sql, /source_window AS MATERIALIZED/);
     assert.match(calls[0].sql, /primary_markets AS MATERIALIZED/);
     assert.match(calls[0].sql, /INTERVAL '24 hours'/);
     assert.match(calls[0].sql, /activity\.volume_24h_usd DESC/);
+    assert.match(calls[0].sql, /FROM targets target[\s\S]*JOIN robinhood_market_buckets_1m history/);
+    assert.doesNotMatch(calls[0].sql, /target_markets AS MATERIALIZED/);
+    assert.match(calls[0].sql, /HAVING BOOL_OR/);
+    assert.match(calls[0].sql, /DELETE FROM robinhood_market_buckets_agg existing/);
     assert.match(calls[0].sql, /date_bin\(/);
     assert.match(calls[0].sql, /INNER JOIN robinhood_market_buckets_1m bucket/);
     assert.match(calls[0].sql,

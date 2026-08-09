@@ -55,6 +55,7 @@ const HOURLY_REFRESH_SQL = `WITH candidate_tokens AS MATERIALIZED (
       AND bucket_ts >= $1::timestamptz
       AND bucket_ts < $2::timestamptz
       AND ($3::text IS NULL OR token_address > $3::text)
+      AND ($5::text IS NULL OR token_address = $5::text)
     GROUP BY token_address
     ORDER BY token_address ASC
     LIMIT ($4::int + 1)
@@ -162,6 +163,7 @@ function buildAggregateRangeSql(source) {
         AND bucket_ts >= $1::timestamptz
         AND bucket_ts < $2::timestamptz
         AND ($4::text IS NULL OR token_address > $4::text)
+        AND ($6::text IS NULL OR token_address = $6::text)
       GROUP BY token_address
       ORDER BY token_address ASC
       LIMIT ($5::int + 1)
@@ -194,36 +196,22 @@ function buildAggregateRangeSql(source) {
       FROM source_window source
       CROSS JOIN granularities granularity
     ),
-    target_markets AS MATERIALIZED (
-      SELECT DISTINCT
-        target.chain, target.token_address, target.granularity_minutes,
-        target.bucket_ts, bucket.protocol, bucket.market_key
-      FROM targets target
-      INNER JOIN ${source.table} bucket
-        ON bucket.chain = target.chain
-       AND bucket.token_address = target.token_address
-       AND bucket.bucket_ts >= target.bucket_ts
-       AND bucket.bucket_ts < target.bucket_ts
-         + (target.granularity_minutes * INTERVAL '1 minute')
-    ),
     market_activity AS MATERIALIZED (
       SELECT
         target.chain, target.token_address, target.granularity_minutes,
-        target.bucket_ts, target.protocol, target.market_key,
-        COALESCE(SUM(history.volume_usd), 0) AS volume_24h_usd,
+        target.bucket_ts, history.protocol, history.market_key,
+        SUM(history.volume_usd) AS volume_24h_usd,
         MAX(history.last_observed_at) AS last_observed_at
-      FROM target_markets target
-      LEFT JOIN ${source.table} history
+      FROM targets target
+      INNER JOIN ${source.table} history
         ON history.chain = target.chain
        AND history.token_address = target.token_address
-       AND history.protocol = target.protocol
-       AND history.market_key = target.market_key
        AND history.bucket_ts >= target.bucket_ts
          + (target.granularity_minutes * INTERVAL '1 minute') - INTERVAL '24 hours'
        AND history.bucket_ts < target.bucket_ts
          + (target.granularity_minutes * INTERVAL '1 minute')
       GROUP BY target.chain, target.token_address, target.granularity_minutes,
-        target.bucket_ts, target.protocol, target.market_key
+        target.bucket_ts, history.protocol, history.market_key
     ),
     primary_markets AS MATERIALIZED (
       SELECT DISTINCT ON (
@@ -316,6 +304,10 @@ function buildAggregateRangeSql(source) {
         target.granularity_minutes, target.bucket_ts,
         valuation_market.valuation_protocol, valuation_market.valuation_market_key,
         valuation_market.valuation_volume_24h_usd
+      HAVING BOOL_OR(
+        bucket.protocol = valuation_market.valuation_protocol
+        AND bucket.market_key = valuation_market.valuation_market_key
+      )
     ),
     upserted AS (
       INSERT INTO robinhood_market_buckets_agg (${AGGREGATE_COLUMNS.join(', ')})
@@ -328,11 +320,29 @@ function buildAggregateRangeSql(source) {
     `robinhood_market_buckets_agg.${column} IS DISTINCT FROM EXCLUDED.${column}`
   )).join(' OR ')}
       RETURNING 1
+    ),
+    deleted AS (
+      DELETE FROM robinhood_market_buckets_agg existing
+      USING targets target
+      WHERE existing.chain = target.chain
+        AND existing.token_address = target.token_address
+        AND existing.granularity_minutes = target.granularity_minutes
+        AND existing.bucket_ts = target.bucket_ts
+        AND NOT EXISTS (
+          SELECT 1
+          FROM aggregated valid
+          WHERE valid.chain = existing.chain
+            AND valid.token_address = existing.token_address
+            AND valid.granularity_minutes = existing.granularity_minutes
+            AND valid.bucket_ts = existing.bucket_ts
+        )
+      RETURNING 1
     )
     SELECT
       (SELECT COUNT(*)::int FROM source_window) AS source_buckets,
       (SELECT COUNT(*)::int FROM targets) AS target_buckets,
       (SELECT COUNT(*)::int FROM upserted) AS written_buckets,
+      (SELECT COUNT(*)::int FROM deleted) AS deleted_buckets,
       (SELECT COUNT(*)::int FROM page_tokens) AS token_count,
       (SELECT MAX(token_address) FROM page_tokens) AS last_token,
       (SELECT COUNT(*) FROM candidate_tokens) > $5::int AS has_more_tokens`;
@@ -362,13 +372,19 @@ function normalizeTokenPage(input) {
     ? null
     : String(input.afterToken).trim().toLowerCase();
   const tokenLimit = Number(input.tokenLimit);
+  const tokenAddress = input.tokenAddress == null
+    ? null
+    : String(input.tokenAddress).trim().toLowerCase();
   if (afterToken != null && !/^0x[0-9a-f]{40}$/.test(afterToken)) {
     throw new TypeError('afterToken is invalid');
   }
   if (!Number.isInteger(tokenLimit) || tokenLimit < 1 || tokenLimit > 1000) {
     throw new TypeError('tokenLimit must be between 1 and 1000');
   }
-  return { afterToken, tokenLimit };
+  if (tokenAddress != null && !/^0x[0-9a-f]{40}$/.test(tokenAddress)) {
+    throw new TypeError('tokenAddress is invalid');
+  }
+  return { afterToken, tokenLimit, tokenAddress };
 }
 
 function normalizeAggregateRange(input = {}) {
@@ -526,21 +542,17 @@ function createRobinhoodMarketAggregateRepository(database = db) {
          WHERE chain = 'robinhood' AND token_address = $1
            AND bucket_ts >= $2::timestamptz
            AND bucket_ts < $2::timestamptz + ($3::int * INTERVAL '1 minute')
-       ), active_markets AS (
-         SELECT DISTINCT protocol, market_key FROM source_rows
        ), market_activity AS (
-         SELECT active.protocol, active.market_key,
-           COALESCE(SUM(history.volume_usd), 0) AS volume_24h_usd,
+         SELECT history.protocol, history.market_key,
+           SUM(history.volume_usd) AS volume_24h_usd,
            MAX(history.last_observed_at) AS last_observed_at
-         FROM active_markets active
-         LEFT JOIN ${input.source.table} history
-           ON history.chain = 'robinhood' AND history.token_address = $1
-          AND history.protocol = active.protocol AND history.market_key = active.market_key
-          AND history.bucket_ts >= $2::timestamptz
-            + ($3::int * INTERVAL '1 minute') - INTERVAL '24 hours'
-          AND history.bucket_ts < $2::timestamptz
-            + ($3::int * INTERVAL '1 minute')
-         GROUP BY active.protocol, active.market_key
+         FROM ${input.source.table} history
+         WHERE history.chain = 'robinhood' AND history.token_address = $1
+           AND history.bucket_ts >= $2::timestamptz
+             + ($3::int * INTERVAL '1 minute') - INTERVAL '24 hours'
+           AND history.bucket_ts < $2::timestamptz
+             + ($3::int * INTERVAL '1 minute')
+         GROUP BY history.protocol, history.market_key
        ), primary_market AS (
          SELECT protocol, market_key, volume_24h_usd
          FROM market_activity
@@ -551,7 +563,12 @@ function createRobinhoodMarketAggregateRepository(database = db) {
        SELECT source.*, valuation_market.protocol AS valuation_protocol,
          valuation_market.market_key AS valuation_market_key,
          valuation_market.volume_24h_usd AS valuation_volume_24h_usd
-       FROM source_rows source CROSS JOIN primary_market valuation_market`,
+       FROM source_rows source CROSS JOIN primary_market valuation_market
+       WHERE EXISTS (
+         SELECT 1 FROM source_rows valuation
+         WHERE valuation.protocol = valuation_market.protocol
+           AND valuation.market_key = valuation_market.market_key
+       )`,
       [input.tokenAddress, input.bucketTs, input.granularityMinutes]
     );
     const aggregate = foldMarketRows(sourceResult.rows, input);
@@ -571,7 +588,7 @@ function createRobinhoodMarketAggregateRepository(database = db) {
   async function refreshHourlyRange(rawInput) {
     const input = normalizeHourlyRange(rawInput);
     const result = await database.query(HOURLY_REFRESH_SQL, [
-      input.from, input.to, input.afterToken, input.tokenLimit,
+      input.from, input.to, input.afterToken, input.tokenLimit, input.tokenAddress,
     ]);
     const counts = result.rows[0] || {};
     const identityConflicts = Number(counts.identity_conflicts || 0);
@@ -592,12 +609,14 @@ function createRobinhoodMarketAggregateRepository(database = db) {
     const sql = buildAggregateRangeSql(input.source);
     const result = await database.query(sql, [
       input.from, input.to, input.granularities, input.afterToken, input.tokenLimit,
+      input.tokenAddress,
     ]);
     const counts = result.rows[0] || {};
     return {
       sourceBuckets: Number(counts.source_buckets || 0),
       targetBuckets: Number(counts.target_buckets || 0),
       writtenBuckets: Number(counts.written_buckets || 0),
+      deletedBuckets: Number(counts.deleted_buckets || 0),
       tokenCount: Number(counts.token_count || 0),
       lastToken: counts.last_token || null,
       hasMoreTokens: counts.has_more_tokens === true,

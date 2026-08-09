@@ -22,6 +22,12 @@ function dateValue(value, name) {
   if (!Number.isFinite(parsed.getTime())) throw new Error(`${name} must be a valid timestamp`);
   return parsed;
 }
+function tokenAddressValue(value) {
+  if (value == null || value === '') return null;
+  const normalized = String(value).trim().toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(normalized)) throw new Error('token must be a valid EVM address');
+  return normalized;
+}
 function parseCliArgs(argv = process.argv.slice(2)) {
   const args = {};
   for (let index = 0; index < argv.length; index += 1) {
@@ -44,6 +50,7 @@ function parseCliArgs(argv = process.argv.slice(2)) {
     mode,
     from,
     to,
+    tokenAddress: tokenAddressValue(args.token),
     checkpointFile: checkpointFile ? path.resolve(checkpointFile) : null,
     tokenLimit: integer(args.tokenLimit, 'tokenLimit', 25, 1, 100),
     maxChunks: integer(args.maxChunks, 'maxChunks', 1, 1, 100_000),
@@ -99,12 +106,14 @@ function queryRunner(database, statementTimeoutMs, lockTimeoutMs) {
   }
   return (sql, params) => database.query(sql, params);
 }
-async function sourceBounds(phase, execute) {
+async function sourceBounds(phase, execute, tokenAddress = null) {
   const definition = PHASES[phase];
   const result = await execute(
     `SELECT MIN(bucket_ts) AS min_ts, MAX(bucket_ts) AS max_ts
-     FROM ${definition.table} WHERE chain = 'robinhood'`,
-    []
+     FROM ${definition.table}
+     WHERE chain = 'robinhood'
+       AND ($1::text IS NULL OR token_address = $1::text)`,
+    [tokenAddress]
   );
   const row = result.rows[0] || {};
   return {
@@ -121,6 +130,7 @@ async function listSourceRows(input, execute) {
        WHERE chain = 'robinhood'
          AND bucket_ts >= $1::timestamptz AND bucket_ts < $2::timestamptz
          AND ($3::text IS NULL OR token_address > $3::text)
+         AND ($5::text IS NULL OR token_address = $5::text)
        GROUP BY token_address
        ORDER BY token_address ASC
        LIMIT $4::int
@@ -132,7 +142,7 @@ async function listSourceRows(input, execute) {
        AND source.bucket_ts >= $1::timestamptz AND source.bucket_ts < $2::timestamptz
      GROUP BY source.token_address, source.bucket_ts
      ORDER BY source.token_address ASC, source.bucket_ts ASC`,
-    [input.windowStart, input.windowEnd, input.afterToken, input.tokenLimit]
+    [input.windowStart, input.windowEnd, input.afterToken, input.tokenLimit, input.tokenAddress]
   );
   return result.rows;
 }
@@ -201,9 +211,12 @@ function nextPagedCursor(phase, windowStartMs, windowEndMs, counts) {
   };
 }
 
-function assertCheckpoint(checkpoint) {
+function assertCheckpoint(checkpoint, tokenAddress) {
   if (checkpoint.version !== 2 || (checkpoint.cursor?.phase != null && !PHASES[checkpoint.cursor.phase])) {
     throw new Error('checkpoint is incompatible');
+  }
+  if ((checkpoint.tokenAddress || null) !== (tokenAddress || null)) {
+    throw new Error('checkpoint token scope does not match --token');
   }
 }
 
@@ -246,6 +259,7 @@ async function processNextChunk(context) {
         to: new Date(windowEndMs).toISOString(),
         afterToken: checkpoint.cursor.afterToken,
         tokenLimit: options.tokenLimit,
+        ...(options.tokenAddress ? { tokenAddress: options.tokenAddress } : {}),
       }).catch((error) => {
         summary.failed += 1;
         error.summary = summary;
@@ -273,6 +287,7 @@ async function processNextChunk(context) {
       granularities: PHASES[phase].granularities,
       afterToken: checkpoint.cursor.afterToken,
       tokenLimit: options.tokenLimit,
+      ...(options.tokenAddress ? { tokenAddress: options.tokenAddress } : {}),
     }).catch((error) => {
       summary.failed += 1;
       error.summary = summary;
@@ -280,7 +295,10 @@ async function processNextChunk(context) {
     });
     summary.scanned += counts.sourceBuckets;
     summary.written += counts.writtenBuckets;
-    summary.skipped += Math.max(0, counts.targetBuckets - counts.writtenBuckets);
+    summary.deleted += counts.deletedBuckets || 0;
+    summary.skipped += Math.max(
+      0, counts.targetBuckets - counts.writtenBuckets - (counts.deletedBuckets || 0)
+    );
     checkpoint.cursor = nextPagedCursor(phase, windowStartMs, windowEndMs, counts);
     await save(options.checkpointFile, checkpoint);
     return true;
@@ -291,6 +309,7 @@ async function processNextChunk(context) {
     windowEnd: new Date(windowEndMs).toISOString(),
     afterToken: checkpoint.cursor.afterToken,
     tokenLimit: options.tokenLimit,
+    ...(options.tokenAddress ? { tokenAddress: options.tokenAddress } : {}),
   }, execute).catch((error) => {
     summary.failed += 1;
     error.summary = summary;
@@ -316,7 +335,7 @@ async function refreshBoundsAfterPhaseChange(input) {
     options,
     checkpoint,
     nextPhaseName,
-    await sourceBounds(nextPhaseName, execute)
+    await sourceBounds(nextPhaseName, execute, options.tokenAddress)
   );
 }
 
@@ -329,14 +348,18 @@ async function runBackfill(options, deps = {}) {
   const checkpoint = await load(options.checkpointFile) || {
     version: 2,
     asOf: (options.to || new Date()).toISOString(),
+    tokenAddress: options.tokenAddress,
     cursor: { phase: 'fine', windowStart: null, afterToken: null },
   };
-  assertCheckpoint(checkpoint);
+  assertCheckpoint(checkpoint, options.tokenAddress);
   const phaseBounds = Object.fromEntries(await Promise.all(PHASE_ORDER.map(async (phase) => (
-    [phase, resolvePhaseRange(options, checkpoint, phase, await sourceBounds(phase, execute))]
+    [phase, resolvePhaseRange(
+      options, checkpoint, phase, await sourceBounds(phase, execute, options.tokenAddress)
+    )]
   ))));
   const summary = {
-    mode: options.mode, scanned: 0, written: 0, skipped: 0, failed: 0,
+    mode: options.mode, tokenAddress: options.tokenAddress,
+    scanned: 0, written: 0, deleted: 0, skipped: 0, failed: 0,
     chunks: 0, aggregateWindows: 0,
     hourlyWindows: 0, hourlySourceBuckets: 0, hourlyWrittenBuckets: 0,
     totalBatchDurationMs: 0, maxBatchDurationMs: 0, lastBatch: null,

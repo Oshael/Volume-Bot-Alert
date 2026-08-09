@@ -146,26 +146,24 @@ function buildAggregateAuditSql(granularityMinutes) {
     FROM ${source.table} bucket
     WHERE bucket.chain = 'robinhood' AND bucket.token_address = ANY($1)
       AND bucket.bucket_ts >= $2 AND bucket.bucket_ts < $3
-  ), target_markets AS MATERIALIZED (
-    SELECT DISTINCT token_address, aggregate_bucket_ts, protocol, market_key
+  ), targets AS MATERIALIZED (
+    SELECT DISTINCT token_address, aggregate_bucket_ts
     FROM source_buckets
   ), market_activity AS MATERIALIZED (
     SELECT target.token_address, target.aggregate_bucket_ts,
-      target.protocol, target.market_key,
-      COALESCE(SUM(history.volume_usd), 0) AS volume_24h_usd,
+      history.protocol, history.market_key,
+      SUM(history.volume_usd) AS volume_24h_usd,
       MAX(history.last_observed_at) AS last_observed_at
-    FROM target_markets target
-    LEFT JOIN ${source.table} history
+    FROM targets target
+    INNER JOIN ${source.table} history
       ON history.chain = 'robinhood'
      AND history.token_address = target.token_address
-     AND history.protocol = target.protocol
-     AND history.market_key = target.market_key
      AND history.bucket_ts >= target.aggregate_bucket_ts
        + INTERVAL '${granularityMinutes} minutes' - INTERVAL '24 hours'
      AND history.bucket_ts < target.aggregate_bucket_ts
        + INTERVAL '${granularityMinutes} minutes'
     GROUP BY target.token_address, target.aggregate_bucket_ts,
-      target.protocol, target.market_key
+      history.protocol, history.market_key
   ), primary_markets AS MATERIALIZED (
     SELECT DISTINCT ON (activity.token_address, activity.aggregate_bucket_ts)
       activity.token_address, activity.aggregate_bucket_ts,
@@ -234,7 +232,11 @@ function buildAggregateAuditSql(granularityMinutes) {
    AND valuation_market.aggregate_bucket_ts = bucket.aggregate_bucket_ts
   GROUP BY bucket.token_address, bucket.aggregate_bucket_ts,
     valuation_market.valuation_protocol, valuation_market.valuation_market_key,
-    valuation_market.valuation_volume_24h_usd`;
+    valuation_market.valuation_volume_24h_usd
+  HAVING BOOL_OR(
+    bucket.protocol = valuation_market.valuation_protocol
+    AND bucket.market_key = valuation_market.valuation_market_key
+  )`;
   const actual = `SELECT ${AGGREGATE_FIELDS.join(', ')}
   FROM robinhood_market_buckets_agg
   WHERE chain = 'robinhood' AND token_address = ANY($1)
