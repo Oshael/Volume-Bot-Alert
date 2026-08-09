@@ -77,4 +77,20 @@ describe('evaluateFdvBand (live dead-pool guard)', () => {
     assert.equal(band(94e6, null), false);
     assert.equal(band(94e6, 0), false);
   });
+
+  test('keeps a real fast move — out of band but backed by real volume (both ways)', () => {
+    const real = (fdvUsd) => evaluateFdvBand({
+      fdvUsd, reference: 70e6, maxMultiple: 3, volumeUsd: 50_000, minVolumeUsd: 100,
+    }).outlier;
+    assert.equal(real(13e6), false); // real dump crash ($70M -> $13M) with volume
+    assert.equal(real(300e6), false); // real pump wick with volume
+  });
+
+  test('rejects a dead-pool outlier — out of band with negligible volume (both ways)', () => {
+    const dead = (fdvUsd) => evaluateFdvBand({
+      fdvUsd, reference: 70e6, maxMultiple: 3, volumeUsd: 0.8, minVolumeUsd: 100,
+    }).outlier;
+    assert.equal(dead(13e6), true); // dead-pool crash, ~$0 volume
+    assert.equal(dead(8e12), true); // catastrophic pump, ~$0 volume
+  });
 });

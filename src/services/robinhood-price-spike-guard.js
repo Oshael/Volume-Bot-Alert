@@ -75,10 +75,15 @@ function replayMarket(prices, options) {
 
 // Live guard (dead-pool outlier). A swap in a dead / near-zero-liquidity pool drives
 // the token's fdv far ABOVE or BELOW its recent real level (one swap moves an empty
-// pool anywhere). `reference` is the token's recent median fdv; anything outside the
-// band [reference/k, reference*k] is an economically-meaningless outlier and rejected.
-// Relative-to-recent on purpose: it kills a $0 crash while the token trades at $100M,
-// yet keeps a genuine $0 at genesis (when the recent level itself is ~$0).
+// pool anywhere). `reference` is the token's recent median fdv; a value outside the
+// band [reference/k, reference*k] is a candidate outlier. Relative-to-recent on
+// purpose: it targets a $0 crash while the token trades at $100M, yet keeps a genuine
+// $0 at genesis (when the recent level itself is ~$0).
+//
+// Volume gate (both directions): an fdv this far off only happens with ~no liquidity,
+// and a no-liquidity swap moves ~no value, so its volume is negligible. A REAL fast
+// pump/dump moves the same distance but with real volume — so a candidate whose
+// `volumeUsd` >= `minVolumeUsd` is a genuine move and is KEPT despite the band.
 function evaluateFdvBand(input) {
   const fdv = toNumber(input.fdvUsd);
   const reference = toNumber(input.reference);
@@ -87,10 +92,16 @@ function evaluateFdvBand(input) {
     // No fdv (supply-suppressed), no reference yet, or misconfigured k: cannot judge.
     return { outlier: false, reason: null };
   }
-  if (fdv > k * reference || fdv < reference / k) {
-    return { outlier: true, reason: 'dead_pool_price' };
+  if (fdv <= k * reference && fdv >= reference / k) {
+    return { outlier: false, reason: null };
   }
-  return { outlier: false, reason: null };
+  const volume = toNumber(input.volumeUsd);
+  const minVolume = toNumber(input.minVolumeUsd);
+  if (minVolume != null && minVolume > 0 && volume != null && volume >= minVolume) {
+    // Out of band but backed by real volume -> a genuine pump/dump, keep it.
+    return { outlier: false, reason: null };
+  }
+  return { outlier: true, reason: 'dead_pool_price' };
 }
 
 module.exports = { evaluatePriceSpike, replayMarket, evaluateFdvBand };

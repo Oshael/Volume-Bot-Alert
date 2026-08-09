@@ -39,6 +39,7 @@ function createDeadPoolGuardApplier(persistence, guardConfig = {}) {
   const enabled = guardConfig.enabled !== false;
   const maxMultiple = Number(guardConfig.maxMultiple) || 5;
   const sampleSize = Number(guardConfig.sampleSize) || 500;
+  const minVolumeUsd = Number(guardConfig.minVolumeUsd) || 100;
   return async function applyDeadPoolGuard(observation, batchState) {
     if (!enabled || observation.fdvUsd == null
       || typeof persistence.loadTokenFdvReference !== 'function') return observation;
@@ -49,7 +50,10 @@ function createDeadPoolGuardApplier(persistence, guardConfig = {}) {
       );
     }
     const reference = await batchState.tokenRefByAddress.get(token);
-    const verdict = evaluateFdvBand({ fdvUsd: observation.fdvUsd, reference, maxMultiple });
+    const verdict = evaluateFdvBand({
+      fdvUsd: observation.fdvUsd, reference, maxMultiple,
+      volumeUsd: observation.volumeUsd, minVolumeUsd,
+    });
     return verdict.outlier ? { ...observation, accepted: false, reason: verdict.reason } : observation;
   };
 }

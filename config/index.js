@@ -800,6 +800,9 @@ module.exports = {
     enabled: parseBoolean(process.env.ROBINHOOD_DEAD_POOL_GUARD_ENABLED, true),
     maxMultiple: parseIntegerInRange(process.env.ROBINHOOD_DEAD_POOL_GUARD_MAX_MULTIPLE, 5, 2, 1000),
     sampleSize: parseIntegerInRange(process.env.ROBINHOOD_DEAD_POOL_GUARD_SAMPLE_SIZE, 500, 20, 5000),
+    // Out-of-band fdv is only rejected when the swap volume is below this floor (dead
+    // pool). A real fast pump/dump has volume above it and is kept.
+    minVolumeUsd: parseIntegerInRange(process.env.ROBINHOOD_DEAD_POOL_GUARD_MIN_VOLUME_USD, 100, 0, 1_000_000),
   },
   robinhoodDerivedWorker: {
     enabled: parseBoolean(process.env.ROBINHOOD_DERIVED_ENABLED, true),
