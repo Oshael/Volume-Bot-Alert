@@ -4,7 +4,9 @@ const { describe, it } = require('node:test');
 const stage110 = require('../src/utils/db-init-stage110');
 const { createRobinhoodTokenAttributionRepository } = require('../src/models/robinhood-token-attribution');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
-const { CONFIRM, parseArgs, run } = require('../src/utils/backfill-robinhood-token-creators');
+const {
+  CONFIRM, parseArgs, run, __private,
+} = require('../src/utils/backfill-robinhood-token-creators');
 
 const TOKEN = `0x${'a'.repeat(40)}`;
 const CREATOR = `0x${'b'.repeat(40)}`;
@@ -81,7 +83,7 @@ describe('Robinhood token creator attribution', () => {
     });
 
     assert.deepEqual(summary, {
-      apply: false, candidates: 1, resolved: 0, unresolved: 0, failed: 0,
+      apply: false, candidates: 1, resolved: 0, unresolved: 0, failed: 0, retried: 0,
     });
     assert.equal(lookups, 0);
     assert.equal(writes, 0);
@@ -109,7 +111,7 @@ describe('Robinhood token creator attribution', () => {
     });
 
     assert.deepEqual(summary, {
-      apply: true, candidates: 3, resolved: 1, unresolved: 1, failed: 1,
+      apply: true, candidates: 3, resolved: 1, unresolved: 1, failed: 1, retried: 0,
     });
     assert.equal(attempts[0].creatorAddress, CREATOR);
     assert.equal(attempts[1].creatorAddress, null);
@@ -129,11 +131,38 @@ describe('Robinhood token creator attribution', () => {
     assert.equal(writes, 1);
   });
 
+  it('retries transient provider failures with bounded exponential backoff', async () => {
+    let lookups = 0;
+    const waits = [];
+    const timeout = Object.assign(new Error('timed out'), { code: 'timeout' });
+    const result = await __private.resolveCreatorWithRetry({
+      getContractCreator: async () => {
+        lookups += 1;
+        if (lookups < 3) throw timeout;
+        return CREATOR;
+      },
+    }, TOKEN, { requestRetries: 2, retryDelayMs: 250 }, async (ms) => waits.push(ms));
+
+    assert.deepEqual(result, { creatorAddress: CREATOR, retries: 2 });
+    assert.deepEqual(waits, [250, 500]);
+    assert.equal(__private.isRetryableProviderError(
+      Object.assign(new Error('server error'), { code: 'http_error', httpStatus: 500 })
+    ), true);
+    assert.equal(__private.isRetryableProviderError(
+      Object.assign(new Error('bad request'), { code: 'http_error', httpStatus: 400 })
+    ), false);
+  });
+
   it('requires explicit confirmation and validates operational bounds', () => {
     assert.equal(parseArgs([]).apply, false);
     assert.equal(parseArgs([CONFIRM, '--limit', '25', '--sleep-ms', '0']).apply, true);
     assert.throws(() => parseArgs(['--limit', '0']), /--limit/);
     assert.throws(() => parseArgs(['--sleep-ms', '-1']), /--sleep-ms/);
     assert.throws(() => parseArgs(['--retry-hours', '-1']), /--retry-hours/);
+    assert.throws(() => parseArgs(['--request-retries', '6']), /--request-retries/);
+    assert.throws(() => parseArgs(['--retry-delay-ms', '-1']), /--retry-delay-ms/);
+    const retries = parseArgs(['--request-retries', '3', '--retry-delay-ms', '750']);
+    assert.equal(retries.requestRetries, 3);
+    assert.equal(retries.retryDelayMs, 750);
   });
 });
