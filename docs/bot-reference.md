@@ -1036,6 +1036,8 @@ Decisão de produto:
 Estado atual:
 
 - Robinhood já possui tabelas duráveis de observações, buckets e backfill;
+- o feed por swap Robinhood possui leitura paginada, painel no chart expandido e
+  realtime opt-in por token via `market:trade`; polling de 5s reconcilia perdas;
 - Solana já possui buckets de mercado;
 - a retenção normalizada multichain de swaps por 30 dias é um plano aprovado,
   mas não deve ser tratada como totalmente implantada sem schema, jobs e
@@ -1043,26 +1045,21 @@ Estado atual:
 
 ## 15. Wallet tracking multichain
 
-Wallet tracking de produto ainda é roadmap, mas a fundação de captura Robinhood
-já existe localmente: tabela particionada, persistência, adapter `tx.from`,
-attributor, cursores `seed`/`live` e seed standalone. A captura contínua do stream
-`live` também está implementada no checkout local, mas permanece desabilitada e
-sem cursor até executar o bootstrap explícito; não confundir código pronto com
-cobertura LIVE já ativa de `robinhood_wallet_swaps`.
+Wallet tracking de produto ainda é roadmap, mas a fundação Robinhood está ativa:
+tabela particionada, persistência, adapter `tx.from`, attributor e cursores
+`seed`/`live`. Em 2026-08-09 o grupo isolado `robinhood-wallet` estava rodando no
+head (lag observado de ~45 blocos), alimentando continuamente
+`robinhood_wallet_swaps` e o sidecar `robinhood_swap_mc`.
 
 Os contratos locais de atribuição já são fail-closed: o bloco cheio fornece hash,
 número e timestamp para checkpoint; qualquer transação ausente impede escrita
 parcial e avanço do seed. O repository também possui avanço monotônico específico
-para o futuro cursor `live`, preservando checkpoint em atualizações de frontier.
+para o cursor `live`, preservando checkpoint em atualizações de frontier.
 
-O runner e o worker de wallet-swaps LIVE existem localmente. Eles limitam o trabalho
-ao menor valor entre `nodeHead - 12` e o último bloco commitado pelo cursor market,
-revalidam checkpoint, avançam ranges comprovadamente vazios e ficam em
-`awaiting-bootstrap` enquanto o cursor `live` não foi criado. O worker reutiliza o
-RPC Robinhood com preflight de chain ID `4663`, lease própria, telemetria, backoff e
-wiring no grupo isolado `robinhood-wallet` (systemd `trendscope-worker@robinhood-wallet`,
-`BACKGROUND_WORKER_GROUPS=robinhood-wallet` + `ROBINHOOD_WALLET_SWAP_LIVE_ENABLED=true`);
-execução do bootstrap, deploy e canary continuam pendentes.
+O worker limita o trabalho pelo frontier estrito da captura/processing ativa,
+revalida checkpoint e usa RPC Robinhood com preflight de chain ID `4663`, lease,
+telemetria e backoff no grupo `robinhood-wallet`. O antigo frontier do cursor
+monolítico congelado foi removido; não usá-lo para medir lag atual.
 
 O bootstrap também existe localmente como
 `npm run robinhood:wallet-live-bootstrap`: dry-run por padrão, audita observações
@@ -1343,10 +1340,9 @@ esta referência.
   mas ainda precisa da auditoria final de staging/outbox antes de ser desligado;
 - o LIVE Robinhood preparado no código precisa de migrations, deploy, canary com
   overlap e estabilização no head da VPS2;
-- o worker LIVE de wallet-swaps, seu runner fail-closed, configuração, lease e
-  bootstrap auditável já existem no checkout local, desabilitados por padrão.
-  Ainda faltam executar o bootstrap na VPS2, deploy e canary antes de considerar
-  o desligamento do seed/archive como handoff completo de wallet tracking;
+- o worker LIVE de wallet-swaps está implantado no grupo isolado e acompanha o
+  frontier ativo; a entrega realtime `market:trade` ainda requer deploy/restart
+  do web e desse worker;
 - retenção de swaps por 30 dias precisa virar implementação verificável;
 - wallet tracking multichain ainda é roadmap;
 - SHYFT/Yellowstone ainda é roadmap;

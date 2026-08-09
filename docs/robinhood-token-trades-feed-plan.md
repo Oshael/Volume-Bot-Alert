@@ -1,14 +1,14 @@
 # Robinhood — Token Trades Feed (Axiom-style) — Implementation Plan
 
-Status: **Phase 1 landed.** Slices A + A2 + B are built (A/A2/B code committed;
-A2 = read-model integration test, still uncommitted). The durable MC path
+Status: **Phase 1 built.** Slices A + A2 + B are committed; Slice C is implemented
+in the checkout and awaits commit/deploy. The durable MC path
 (sidecar `robinhood_swap_mc` + forward-write + history backfill) is built and
 committed. The sqrtPriceX96 repair is **done**, and the sidecar backfill has been
 **run in prod** (33.5M+ rows and climbing when last checked). The `robinhood-wallet`
 attribution worker is **running and at head** (2026-08-09: lag ≈ 45 blocks) — the
-earlier "stopped, 746k behind" blocker is resolved (§5). Remaining: Slice C
-(realtime), verify the sidecar backfill is complete then prune observations, and the
-Phase 2 tabs. This document began as the `CLAUDE.md` architecture-checkpoint report;
+earlier "stopped, 746k behind" blocker is resolved (§5). Remaining: deploy Slice C,
+verify the sidecar backfill is complete then prune observations, and the Phase 2
+tabs. This document began as the `CLAUDE.md` architecture-checkpoint report;
 it is kept current as the work lands.
 
 ## 1. Goal
@@ -218,6 +218,11 @@ side, live. **No** DEV/TRACKED/YOU tabs. **No new schema.**
 - **Verify first (cheap, on prod DB):** `robinhood_wallet_swap_cursors` position vs
   head — if attribution lags the head, the "live" feed shows stale trades.
 - Est.: ~300–450 changed lines.
+- **Status: implemented locally.** The attributor publishes through `pg_notify` to
+  a web listener, which relays only to the dedicated
+  `market-trade:robinhood:<token>` room. Opening the panel opts in; closing it
+  unsubscribes. The client deduplicates and caps at 30, while the 5s poll remains
+  the reconciliation path. Web + `robinhood-wallet` deploy/restarts are pending.
 
 ## 5. Risks & constraints
 
@@ -309,8 +314,8 @@ the transitional fallback.
 1. **Going forward — written at attribution (committed).** The source-reader now
    carries `fdv_usd`/`token_total_supply_raw`; the attributor's `buildRow` forwards
    them; `insertWalletSwaps → insertSwapMc` upserts the sidecar (`ON CONFLICT DO
-   NOTHING`). New swaps crystallize their MC as they are attributed — but this only
-   produces rows once the **`robinhood-wallet` worker is started** (§5, still stopped).
+   NOTHING`). New swaps crystallize their MC as they are attributed by the running
+   **`robinhood-wallet` worker** (§5).
 
 2. **History — backfilled from the intact observations (committed; run in prod).**
    `src/utils/backfill-robinhood-swap-mc.js` keyset-scans accepted observations
@@ -332,7 +337,7 @@ The DEV/TRACKED/YOU tabs (§6) remain the open Phase-2 architecture checkpoint.
 
 1. ✅ sqrtPriceX96 repair — **done**.
 2. ✅ **Slice A** (read model + route + unit) and **A2** (read-model integration test)
-   — landed (A2 test still uncommitted).
+   — landed and committed.
 3. ✅ **Slice B** (frontend polling panel) — landed & committed (expanded-chart side
    panel, Robinhood-only). The "attributed up to block X" label is no longer needed —
    the wallet group is at head (§5).
@@ -340,7 +345,7 @@ The DEV/TRACKED/YOU tabs (§6) remain the open Phase-2 architecture checkpoint.
    backfill built & committed; backfill **run in prod** post-repair.
 5. ✅ **`robinhood-wallet` worker running + at head** (2026-08-09, lag ≈ 45) — the
    frozen legacy-cursor bug is fixed; forward-write of the sidecar is now live (§5).
-6. ▶ **Slice C** (realtime) — now unblocked (group is at head). Next up.
+6. ◐ **Slice C** (realtime) — implemented locally; commit/deploy and restarts pending.
 7. **Verify the sidecar backfill is complete → prune observations → drop the
    observation-fallback JOIN** (§8 disk reclamation).
 8. **Phase 2** — DEV/TRACKED/YOU tabs (§6).
