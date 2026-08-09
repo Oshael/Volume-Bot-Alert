@@ -27,6 +27,7 @@ import { buildTokenExplorerUrl, buildTokenIdentityKey, buildTokenMarketUrl, reso
 import { buildTokenChartViewportKey, getTokenChartValuationLabel, normalizeTokenChartCandle, normalizeTokenChartCandles, resolveTokenChartValuationType } from '../../utils/token-chart';
 import { resolveTokenValuation } from '../../utils/token-valuation';
 import { buildTokenChainIcon, buildTokenIdentityBadgeGroup, getTokenChainTitle } from '../token-chain-badge';
+import { destroyRobinhoodExpandedTrades, mountRobinhoodExpandedTrades } from '../robinhood-expanded-trades';
 import { bindMonitoredTickerPeerPanelClose, buildTickerPeerBadge } from './monitored-section';
 import { bindTelegramSettings, renderTelegramSettings } from './telegram-settings';
 
@@ -2788,6 +2789,7 @@ function destroyExpandedCandlestickChart() {
   expandedCandlestickChartCleanup?.();
   expandedCandlestickChartCaptureViewport = null;
   expandedCandlestickChartCleanup = null;
+  destroyRobinhoodExpandedTrades();
 }
 
 function resolveExpandedChartTimeZone(timeZone: string) {
@@ -4134,6 +4136,38 @@ function getExpandedSparklineStatusText(
   return `Updated ${escapeHtml(updatedLabel)}. ${historyMode}${truncated}`;
 }
 
+// Assembles the expanded-chart area. Robinhood gets a side-by-side trades panel
+// (mounted separately); every other chain keeps the original single-child markup.
+// Kept out of renderExpandedSparklineModal so the chain branching does not add to
+// that hub function's complexity.
+function renderExpandedChartArea(
+  state: AppState,
+  sparkline: TokenSparklineEntry,
+  address: string,
+  chain: TokenChain,
+) {
+  const body = renderExpandedChartBody(state, sparkline, address, chain);
+  const loadingClass = sparkline.loading ? ' is-loading' : '';
+  const loadingOverlay = sparkline.loading
+    ? '<span class="expanded-sparkline-loading" role="status" aria-label="Loading full chart"><span class="expanded-sparkline-loading-spinner" aria-hidden="true"></span></span>'
+    : '';
+  if (chain !== 'robinhood') {
+    return `
+        <div class="expanded-sparkline-chart${loadingClass}">
+          ${body}
+          ${loadingOverlay}
+        </div>`;
+  }
+  return `
+        <div class="expanded-sparkline-chart${loadingClass} has-trades">
+          <div class="expanded-sparkline-chart-main">
+            ${body}
+            ${loadingOverlay}
+          </div>
+          <aside class="robinhood-trades-panel" data-robinhood-trades-panel aria-label="Recent trades"></aside>
+        </div>`;
+}
+
 function renderExpandedSparklineModal(state: AppState, address: string) {
   const chain = state.ui.expandedSparklineChain;
   const token = getTrackedToken(state, address, chain);
@@ -4171,10 +4205,7 @@ function renderExpandedSparklineModal(state: AppState, address: string) {
           ${renderExpandedGranularityControls(state.ui.expandedSparklineGranularityMinutes, oneMinuteAvailable)}
           <button type="button" class="legacy-profile-modal-close" data-action="close-expanded-sparkline" aria-label="Close dialog">X</button>
         </div>
-        <div class="expanded-sparkline-chart${sparkline.loading ? ' is-loading' : ''}">
-          ${renderExpandedChartBody(state, sparkline, address, chain)}
-          ${sparkline.loading ? '<span class="expanded-sparkline-loading" role="status" aria-label="Loading full chart"><span class="expanded-sparkline-loading-spinner" aria-hidden="true"></span></span>' : ''}
-        </div>
+        ${renderExpandedChartArea(state, sparkline, address, chain)}
         ${renderExpandedSparklineFootnote(loadingText, address, state.ui.expandedSparklineTimeZone)}
       </div>
     </div>
@@ -4387,6 +4418,11 @@ function bindExpandedSparklineModal(
   ).catch((error) => {
     console.warn('[ExpandedChart] Failed to mount Lightweight Charts:', error instanceof Error ? error.message : error);
   });
+  if (state.ui.expandedSparklineChain === 'robinhood') {
+    mountRobinhoodExpandedTrades(section, { token: address, authToken: state.session.token });
+  } else {
+    destroyRobinhoodExpandedTrades();
+  }
   bindSparklineHover(section, {
     [buildTokenIdentityKey(state.ui.expandedSparklineChain, address)]: sparkline,
   });

@@ -3295,6 +3295,134 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   opacity: 0.64;
 }
 
+/* Robinhood-only: per-swap trades panel beside the expanded chart. */
+.expanded-sparkline-chart.has-trades {
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+}
+
+.expanded-sparkline-chart.has-trades .expanded-sparkline-chart-main {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.robinhood-trades-panel {
+  flex: 0 0 300px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid rgba(55, 61, 75, 0.92);
+  border-radius: 12px;
+  background: rgba(8, 10, 14, 0.92);
+  overflow: hidden;
+}
+
+.robinhood-trades-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(55, 61, 75, 0.6);
+}
+
+.robinhood-trades-title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #e6e9ef;
+}
+
+.robinhood-trades-status {
+  font-size: 11px;
+  color: rgba(230, 233, 239, 0.5);
+}
+
+.robinhood-trades-cols,
+.robinhood-trade-row {
+  display: grid;
+  grid-template-columns: 44px 1fr 1fr 40px;
+  gap: 6px;
+  align-items: center;
+}
+
+.robinhood-trades-cols {
+  padding: 6px 12px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(230, 233, 239, 0.45);
+}
+
+.robinhood-trades-list {
+  flex: 1 1 auto;
+  margin: 0;
+  padding: 0 4px 6px;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.robinhood-trade-row {
+  padding: 5px 8px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  border-radius: 6px;
+}
+
+.robinhood-trade-row:nth-child(odd) {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.robinhood-trade-side {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.robinhood-trade-row.is-buy .robinhood-trade-side,
+.robinhood-trade-row.is-buy .robinhood-trade-amount {
+  color: #3ad29f;
+}
+
+.robinhood-trade-row.is-sell .robinhood-trade-side,
+.robinhood-trade-row.is-sell .robinhood-trade-amount {
+  color: #ff6b7d;
+}
+
+.robinhood-trade-trader,
+.robinhood-trade-mc,
+.robinhood-trade-age {
+  color: rgba(230, 233, 239, 0.82);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.robinhood-trade-age {
+  text-align: right;
+  color: rgba(230, 233, 239, 0.55);
+}
+
+.robinhood-trades-empty {
+  padding: 16px 12px;
+  font-size: 12px;
+  text-align: center;
+  color: rgba(230, 233, 239, 0.5);
+  list-style: none;
+}
+
+@media (max-width: 900px) {
+  .expanded-sparkline-chart.has-trades {
+    flex-direction: column;
+  }
+
+  .robinhood-trades-panel {
+    flex-basis: auto;
+    max-height: 260px;
+  }
+}
+
 .expanded-candles-wrap {
   position: relative;
   width: 100%;
