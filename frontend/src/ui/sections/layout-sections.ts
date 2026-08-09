@@ -24,7 +24,7 @@ import { escapeHtml, sanitizeOptionalHttpUrl } from './html-safety';
 import { bindCopyButtons, bindSparklineHover, fmtMoney, fmtPct, getAgeToneClassFromCreatedAt, getTradeTerminalLabel, renderFlash, renderSparklineFigure, renderTokenLaunchpadBadge, renderTotalLiquidityCell, renderTradeTerminalIconForKey } from './shared';
 import { fmtMockSol, fmtMockSolAmount, resolveLiveMockSolUsdcRate, resolveMockTradeSolUsdcRate, resolveMockTradingPositionPnl } from '../../utils/mock-trading-display';
 import { buildTokenExplorerUrl, buildTokenIdentityKey, buildTokenMarketUrl, resolveChainScopedConfigValue, type TokenChain } from '../../utils/token-chain';
-import { buildTokenChartViewportKey, fillTokenChartCandleGaps, getTokenChartValuationLabel, normalizeTokenChartCandle, normalizeTokenChartCandles, resolveTokenChartValuationType } from '../../utils/token-chart';
+import { buildTokenChartViewportKey, getTokenChartValuationLabel, normalizeTokenChartCandle, normalizeTokenChartCandles, resolveTokenChartValuationType } from '../../utils/token-chart';
 import { resolveTokenValuation } from '../../utils/token-valuation';
 import { buildTokenChainIcon, buildTokenIdentityBadgeGroup, getTokenChainTitle } from '../token-chain-badge';
 import { bindMonitoredTickerPeerPanelClose, buildTickerPeerBadge } from './monitored-section';
@@ -2401,10 +2401,11 @@ function getExpandedCandleLatestValue(sparkline: TokenSparklineEntry) {
 }
 
 function getRenderableExpandedCandles(sparkline: TokenSparklineEntry) {
-  return fillTokenChartCandleGaps(
-    normalizeTokenChartCandles(sparkline),
-    sparkline.granularityMinutes,
-  );
+  // Gap-filling was removed: on sparse buckets it synthesised flat carry-forward
+  // dojis that rendered as dashed horizontal "phantom" candles (worst on 1h,
+  // where the fill still ran). Render only the real candles, sorted ascending.
+  return [...normalizeTokenChartCandles(sparkline)]
+    .sort((left, right) => Date.parse(left.bucketTs) - Date.parse(right.bucketTs));
 }
 
 function toLightweightCandles(sparkline: TokenSparklineEntry): CandlestickData<UTCTimestamp>[] {
