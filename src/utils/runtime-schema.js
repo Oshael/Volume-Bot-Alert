@@ -2364,6 +2364,53 @@ const SCHEMA_GROUPS = [
     ],
   },
   {
+    key: 'stage110-robinhood-token-attributions',
+    name: 'Stage 110 Robinhood token creator attributions',
+    repair: 'node src/utils/db-init-stage110.js',
+    tables: [
+      {
+        table: 'robinhood_token_attributions',
+        columns: [
+          'chain', 'token_address', 'creator_address', 'source',
+          'last_attempted_at', 'last_resolved_at', 'last_error',
+          'created_at', 'updated_at',
+        ],
+        constraints: [
+          {
+            name: 'robinhood_token_attributions_pkey',
+            includes: ['PRIMARY KEY', 'chain', 'token_address'],
+          },
+          {
+            name: 'robinhood_token_attributions_chain_check',
+            includes: ['CHECK', 'chain', 'robinhood'],
+          },
+          {
+            name: 'robinhood_token_attributions_token_check',
+            includes: ['CHECK', 'token_address'],
+          },
+          {
+            name: 'robinhood_token_attributions_creator_check',
+            includes: ['CHECK', 'creator_address'],
+          },
+          {
+            name: 'robinhood_token_attributions_source_check',
+            includes: ['CHECK', 'source', 'blockscout'],
+          },
+          {
+            name: 'robinhood_token_attributions_resolution_check',
+            includes: ['CHECK', 'creator_address', 'last_resolved_at'],
+          },
+        ],
+        indexes: [
+          {
+            name: 'idx_robinhood_token_attributions_retry',
+            includes: ['last_attempted_at', 'creator_address IS NULL'],
+          },
+        ],
+      },
+    ],
+  },
+  {
     key: 'stage91-robinhood-wallet-swap-cursors',
     name: 'Stage 91 Robinhood wallet-swap attribution cursors',
     repair: 'node src/utils/db-init-stage91.js',
