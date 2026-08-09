@@ -1,7 +1,15 @@
 # Robinhood — Token Trades Feed (Axiom-style) — Implementation Plan
 
-Status: **proposed / not started**. This document is the architecture-checkpoint
-report required by `CLAUDE.md` before editing. No production code has been touched.
+Status: **Phase 1 landed.** Slices A + A2 + B are built (A/A2/B code committed;
+A2 = read-model integration test, still uncommitted). The durable MC path
+(sidecar `robinhood_swap_mc` + forward-write + history backfill) is built and
+committed. The sqrtPriceX96 repair is **done**, and the sidecar backfill has been
+**run in prod** (33.5M+ rows and climbing when last checked). The `robinhood-wallet`
+attribution worker is **running and at head** (2026-08-09: lag ≈ 45 blocks) — the
+earlier "stopped, 746k behind" blocker is resolved (§5). Remaining: Slice C
+(realtime), verify the sidecar backfill is complete then prune observations, and the
+Phase 2 tabs. This document began as the `CLAUDE.md` architecture-checkpoint report;
+it is kept current as the work lands.
 
 ## 1. Goal
 
@@ -60,7 +68,7 @@ resolved signing wallet:
 | Age           | `now() - robinhood_wallet_swaps.block_time`                   |
 | **MC**        | **not in this table** — see §2.3                              |
 
-### 2.3 MC (market cap) source — decision: **LEFT JOIN to observations**
+### 2.3 MC (market cap) source — sidecar-first, observation fallback
 
 `robinhood_wallet_swaps` has no FDV/MC column. The attributor sets
 `actionIndex = observation.log_index`
@@ -72,34 +80,26 @@ observations **primary key** (verified — stage64, and a stage83 FK targets it)
 the join is a cheap point lookup; the earlier "confirm the PK / else recompute"
 note is resolved and the recompute fallback is dead code.
 
-- **Chosen:** MC via a **LEFT JOIN** (not INNER). See the retention caveat below —
-  an INNER JOIN would silently drop trades whose observation has been pruned.
+- **How MC is read now:** `COALESCE(mc.fdv_usd, observation.fdv_usd)` — the durable
+  sidecar `robinhood_swap_mc` (§8) first, the live observation as fallback. Both are
+  **LEFT JOINs** (not INNER): a swap whose MC is genuinely absent surfaces
+  `mcUsd: null` instead of vanishing (trader/amount/side/age stay intact).
 
-**Hard limit — MC is only retained ~3 days (this is not cosmetic):**
+**The original ~3-day retention worry does not bite today.** Observations carry
+`expires_at` (`OBSERVATION_RETENTION_DAYS = 3`, stage64) and would cascade-delete with
+`robinhood_processed_logs` (stage63, `ON DELETE CASCADE`) — **but only if the retention
+worker runs, and it lives in the `maintenance` group, which is disabled.** So
+observations are **intact** (full FDV history on the VPS, oldest ~2026-06-10) and MC is
+available for **all** trades via the join right now. The sidecar (§8) then copies that
+FDV into durable storage, so MC survives even once observations are eventually pruned
+for disk. `robinhood_wallet_swaps` is itself durable (partitioned), and per-swap price,
+USD size, side and trader are copied there at attribution (`attributor.js` `buildRow`).
 
-Observations carry `expires_at` (`OBSERVATION_RETENTION_DAYS = 3`, stage64) and are
-**cascade-deleted**: `robinhood-retention-worker` deletes expired
-`robinhood_processed_logs` (retention 3 days, stage63) once the accepted
-observation has been safely folded into a 1m bucket, and observations have
-`FOREIGN KEY … ON DELETE CASCADE` to processed_logs, so the observation row goes
-with it. `robinhood_wallet_swaps` is durable (partitioned), so the **trade never
-disappears**, but the per-swap FDV lives **only** on the observation (the bucket
-tables keep per-minute OHLC FDV, not per-swap FDV). Consequently:
-
-- **Recent trades (< ~3 days): `mcUsd` present** (exact per-swap FDV).
-- **Older trades (> ~3 days): `mcUsd` null** — the exact per-swap FDV is gone and is
-  unrecoverable at per-swap granularity. This is why the join must be a LEFT JOIN:
-  the trade stays visible (trader/amount/side/price/age intact) with MC blank,
-  instead of vanishing. This matches how DEX trade tables show **price**, not MC,
-  for old trades. Per-swap **price, USD size, token/quote amounts, side, trader**
-  are all copied durably into `robinhood_wallet_swaps` at attribution time
-  (`attributor.js` `buildRow`), so only MC is affected by retention.
-- Restoring MC on old trades (Axiom-style) is **Phase 2 §8**, not Phase 1.
-
-**sqrtPriceX96 repair note:** the repair corrects `observations.price_usd`/`fdv_usd`;
-the live feed reads recent (post-repair-range, sqrt-based) trades, so it is
-unaffected. But note `wallet_swaps.price_usd` is **crystallized** at attribution
-(copied, never re-read) — see the price-provenance risk in §5 and §8.
+**sqrtPriceX96 repair note:** the repair (now done) corrected
+`observations.price_usd`/`fdv_usd`, and the sidecar backfill ran **after** it, so the
+MC the feed shows is the corrected value. Only `wallet_swaps.price_usd` stays
+**crystallized** at attribution (copied, never re-read) — see the price-provenance
+risk in §5.
 
 ### 2.4 Realtime template already exists
 
@@ -169,19 +169,44 @@ side, live. **No** DEV/TRACKED/YOU tabs. **No new schema.**
   boundaries. The ORDER BY prefix (`block_time DESC`) still rides the `token_time`
   index; the cursor is opaque (`nextCursor`). MC via the LEFT JOIN (§2.3).
 - **Status: production + unit test landed** (`robinhood-wallet-swap-read.js`,
-  `robinhood-trades.js`, server wiring, `robinhood-wallet-swap-read.test.js`;
-  ~319 lines). The route integration test (auth + visibility gating + DB fixtures,
-  added to `INTEGRATION_TESTS` in `run-test-group.js`) is split to **Slice A2** to
-  respect the 500-line cap.
+  `robinhood-trades.js`, server wiring, `robinhood-wallet-swap-read.test.js`).
 - **Deploy-light** (a read route). Safe to build during the repair.
 
-### Slice B — frontend panel (polling)
-- API client method + trades panel component + section wiring.
-- Renders the table (Amount/Trader/MC/Age, buy/sell color, volume bars), fed by
-  Slice A via refresh/polling.
-- `npm --prefix frontend run build`.
-- **Deliverable:** visible feature without realtime.
-- Est.: ~400–500 changed lines.
+### Slice A2 — read-model integration test — **landed**
+- `robinhood-wallet-swap-read.integration.test.js`, registered in
+  `INTEGRATION_TESTS` (`run-test-group.js`). Ensures stages 63/64/90/109 in
+  `before` (the wallet-swap stages are outside the test schema profile), seeds
+  through the real persistence repo, and asserts against the real DB the part the
+  fake-db unit test cannot: the 2-JOIN `RECENT_TRADES_SQL` executing on the
+  daily-partitioned `robinhood_wallet_swaps` + `robinhood_swap_mc` sidecar +
+  `robinhood_market_observations` — token filtering, `COALESCE` MC (sidecar wins,
+  null when absent), newest-first ordering, and keyset pagination across a
+  partition boundary with no overlap/skip. Seeding via `insertWalletSwaps` also
+  exercises the forward-write `insertSwapMc` end-to-end on the real schema.
+- **Deliberately not re-tested here:** auth and the Robinhood visibility gating.
+  Those are thin `router.use` composition already covered by `auth.test.js` and
+  the visibility middleware's own tests; rebuilding an authenticated express
+  harness would duplicate that for marginal gain (per the testing-discipline
+  guardrail). The route's own 400 mapping (invalid token/cursor/limit) is covered
+  at the unit layer by the read model's `normalizeQuery`.
+
+### Slice B — frontend panel (polling) — **landed**
+- **Placement (corrected):** there is **no** token-detail view; the only per-token
+  detail surface is the **expanded-chart modal** (`renderExpandedSparklineModal` in
+  `layout-sections.ts`). The panel sits **beside** that chart, **Robinhood-only** —
+  the chart shrinks (`.has-trades` flex) and a `<aside data-robinhood-trades-panel>`
+  holds the table. Other chains render byte-identical markup (no wrapper/aside).
+- **Hub discipline:** all logic is in new modules — `services/api/robinhood-trades.ts`
+  (client), `ui/robinhood-trades-format.ts` (pure formatters + row markup, unit-tested),
+  `ui/robinhood-expanded-trades.ts` (mount/poll/cleanup). `layout-sections.ts` (an
+  already-huge hub) only gained **wiring**: one import, a `renderExpandedChartArea`
+  helper (extracted so the chain branching did not raise the modal's complexity), and
+  mount/destroy calls at the existing hydrate/`destroyExpandedCandlestickChart` points.
+- Table columns Amount/Trader/MC/Age with buy/sell color; polls Slice A every 5s
+  (fetches the latest 30, replaces the list); cleaned up on close.
+- Validated: format unit test (5/5), `tsc --noEmit` + `vite build`, lint 0. ~451
+  changed lines (one slice).
+- **Deliverable:** visible feature without realtime. No deploy/schema — pure frontend.
 
 ### Slice C — realtime (`market:trade`)
 - Emit `market:trade` when new `robinhood_wallet_swaps` rows land (mirror the
@@ -196,30 +221,35 @@ side, live. **No** DEV/TRACKED/YOU tabs. **No new schema.**
 
 ## 5. Risks & constraints
 
-- **Repair in flight:** the sqrtPriceX96 observation re-pricing job is running on the
-  same VPS as the DB and head worker. Slices A/B are pure development + a read route +
-  a frontend build → safe now. **Any deploy (worker restart) and any schema change
-  waits until the repair finishes.**
+- **Repair (done):** the sqrtPriceX96 observation re-pricing job has completed. All
+  code was built read-only/frontend while it ran; deploy/worker-restart/schema were
+  correctly deferred until it finished. That gate is now lifted — the remaining work
+  is operational (start the wallet worker), not repair-blocked.
 - **Realtime volume (Slice C):** every swap, not just alerts. Must be opt-in per
   watched token and length-capped client-side, or it floods sockets/clients.
-- **Attribution liveness — affects Slices A/B too, not just C (measured blocker):**
-  the isolated `robinhood-wallet` group is **stopped**. On 2026-08-06 the `live`
-  cursor (`robinhood_wallet_swap_cursors`) was frozen at block 29 003 237 since the
-  head cutover (~2026-08-05 23:51), **~746k blocks behind** the observations head and
-  only growing. Root cause (code-verified): before `bd529c37` the live attributor
-  ran inside `if (hasWorkerGroup('robinhood'))` (the now-off monolith); the isolation
-  moved it to its own `robinhood-wallet` group whose systemd unit
-  (`trendscope-worker@robinhood-wallet`) was never enabled on VPS2. So the feed reads
-  a table that stops at that block: **any feed built now is stale/incomplete until the
-  group is restarted and catches up (post-repair)**. Label the feed "attributed up to
-  block X", not "live", until then. Fix is operational, not code.
+- **Attribution liveness — RESOLVED (was the main blocker):** the `robinhood-wallet`
+  group is now **running and at head**. On 2026-08-09 the `live` cursor was at
+  31 699 090 vs a head-capture tip of 31 699 135 — **lag ≈ 45 blocks** (reorg depth /
+  in-flight queue), and climbing between reads. History: on 2026-08-06 the cursor was
+  frozen at 29 003 237 (~746k behind) because the live worker derived its source
+  frontier from the retired monolith cursor `robinhood_ingestion_cursors` ('market'),
+  which froze at the cutover block and pinned the live cursor there. That is fixed in
+  code (`robinhood-wallet-swap-live-worker.js:69-74`): the worker now takes the
+  frontier from `headProcessingRepository.getOldestActiveCapture('market')` (the live
+  pipeline). So the feed is genuinely live now; the "attributed up to block X" label is
+  no longer needed. **Check query:** compare `robinhood_wallet_swap_cursors` (live)
+  `next_block` to `MAX(block_number)` of `robinhood_head_captures` — **not** to
+  `robinhood_ingestion_cursors` 'market', which is dead and reads ~29.0M forever.
 - **`wallet_swaps.price_usd` is crystallized (repair-provenance trap):** it is copied
   from the observation at attribution and **never re-read** (no `UPDATE` path). The
   sqrtPriceX96 repair fixes `observations.price_usd` but not the already-copied
   `wallet_swaps.price_usd`. The seed range (≤25.47M) sits inside the repair window
-  (1.68M–25.47M), so historical trades can show **pre-repair price** — and any
-  `price × supply` MC reconstruction (§8) inherits that error. Re-hydrating
-  `wallet_swaps.price_usd` from the repaired observations is a §8 prerequisite.
+  (1.68M–25.47M), so the displayed **price** column can still show a pre-repair value.
+  **MC is not affected:** it comes from the sidecar `robinhood_swap_mc`, whose
+  `fdv_usd` was backfilled from the *repaired* observations (§8) — so the earlier
+  "re-hydrate `wallet_swaps.price_usd` / reconstruct `price × supply`" plan is moot.
+  Only the secondary `priceUsd` field carries the crystallized value; if it ever
+  needs to be correct, re-hydrate it from repaired observations too.
 - **MC join key:** relies on `action_index == log_index` (verified in the attributor)
   and on the observations PK `(chain, transaction_hash, log_index)` (verified) — point
   lookups are cheap.
@@ -253,64 +283,64 @@ Phase 2 fan-out (estimate, to be re-checked before starting):
 Phase 2 is intentionally **not** sliced here; it gets its own architecture-checkpoint
 pass once Phase 1 ships and the deployer/tracked sources are decided.
 
-## 8. Phase 2 — MC parity on old trades (Axiom-style)
+## 8. Durable MC parity — the sidecar (BUILT / done)
 
-Axiom shows MC even on 2-month-old trades; our `mcUsd` goes null after ~3 days
-(§2.3). Because per-swap **price is retained** and MC = `price × supply`, MC is
-reconstructable — but the exact per-swap **FDV and supply were captured then
-thrown away** (both live only on the pruned observation:
-`observation.fdv_usd`, `observation.token_total_supply_raw`, at the swap block).
-Direction (decided 2026-08-06):
+Axiom shows MC even on 2-month-old trades. MC (FDV) is not stored on
+`robinhood_wallet_swaps`; it lives on the observation
+(`observation.fdv_usd`, `observation.token_total_supply_raw`, at the swap block).
+The feed therefore joins the observation for MC — but observations are meant to be
+pruned for disk, so MC would eventually go null. This section solved that durably.
 
-**Two horizons.**
+**Key discovery (2026-08-06, overturns the old plan):** observations are **not**
+pruned today — the retention worker lives in the `maintenance` group, which is
+**disabled**. So the full FDV history is **intact on the VPS** (oldest ~2026-06-10).
+That retires the earlier design entirely: **no archive node and no PC↔VPS tunnel are
+needed** — the exact FDV is already in `robinhood_market_observations`, so there is
+nothing to reconstruct via `price × supply`.
 
-1. **Going forward — crystallize into `robinhood_wallet_swaps` (zero RPC, exact).**
-   The attributor's `buildRow` already copies `price_usd`/`volume_usd` from the
-   observation but drops `fdv_usd` and `token_total_supply_raw`. Add durable columns
-   for both and copy them at attribution; the read model then prefers
-   `COALESCE(swap.fdv_usd, observation.fdv_usd)`. `token_decimals` is already durable
-   on the row, so `price × supply` is fully reconstructable later too.
-   - Requires: **new schema stage** (`ALTER TABLE … ADD COLUMN IF NOT EXISTS
-     fdv_usd`, `token_total_supply_raw`) + register the columns in
-     `runtime-schema.js` + attributor + persistence `insertWalletSwaps` + read-model
-     `COALESCE` + tests + `npm run db:schema-check`.
-   - **Blocked until post-repair:** a migration + a wallet-worker deploy, and the
-     wallet group is stopped (§5) — so nothing is "saved for new swaps" until the
-     group is restarted. The code can be written/validated in dev now (test DB); it
-     is **inert in prod until post-repair**. Forward-only: pre-column rows stay null
-     until backfill.
+**Architecture (implemented): a narrow sidecar, not columns on `wallet_swaps`.**
+`robinhood_wallet_swaps` has ~426M rows, so an in-place `ALTER … ADD COLUMN` +
+UPDATE backfill was rejected as too heavy. Instead, a dedicated table
+`robinhood_swap_mc` (stage109) keyed by `(chain, transaction_hash, log_index)` holds
+`fdv_usd` + `token_total_supply_raw`. The read model reads
+`COALESCE(mc.fdv_usd, observation.fdv_usd)` — the sidecar wins, the observation is
+the transitional fallback.
 
-2. **Already-pruned history — archive backfill via the PC↔VPS tunnel.**
-   For trades whose observation is gone, the exact FDV is unrecoverable; reconstruct
-   `fdv ≈ totalSupply(at block) × price_usd`. Supply-at-block must come from the
-   **self-hosted archive node** (the three configured RPCs —
-   `rpc.mainnet.chain.robinhood.com`, Alchemy, dRPC — are external; there is **no**
-   archive-node URL wired today, only a `ROBINHOOD_ARCHIVE_RPC_MIN_INTERVAL_MS`
-   knob). `evm-erc20-metadata.js` already supports at-block `totalSupply` via
-   `blockTag`, so wiring the node makes it **exact** (no mint/burn approximation).
-   - The node is an **on-demand tunnel resource** (PC serves archive RPC ←tunnel→ VPS
-     worker writes PSQL — the same pattern used for the earlier enrichment backfill),
-     **not** a standing endpoint. Therefore the **live feed must never call the archive
-     node**: it reads only the durable column; RPC is backfill-only, offline.
-   - **Dependency order:** repair `price_usd` → re-hydrate `wallet_swaps.price_usd`
-     from repaired observations → restart wallet group + catch-up → run the
-     supply/FDV backfill via tunnel. All post-repair.
+1. **Going forward — written at attribution (committed).** The source-reader now
+   carries `fdv_usd`/`token_total_supply_raw`; the attributor's `buildRow` forwards
+   them; `insertWalletSwaps → insertSwapMc` upserts the sidecar (`ON CONFLICT DO
+   NOTHING`). New swaps crystallize their MC as they are attributed — but this only
+   produces rows once the **`robinhood-wallet` worker is started** (§5, still stopped).
 
-Phase 2 (MC parity + DEV/TRACKED/YOU tabs) is an architecture checkpoint; it gets
-its own slicing pass once Phase 1 ships.
+2. **History — backfilled from the intact observations (committed; run in prod).**
+   `src/utils/backfill-robinhood-swap-mc.js` keyset-scans accepted observations
+   (`status='accepted' AND fdv_usd IS NOT NULL`) and upserts the sidecar
+   (refresh-safe `DO UPDATE`, throttled, checkpointed, dry-run by default). It was run
+   **after** the repair so the copied `fdv_usd` is the corrected value; **33.5M+ rows
+   copied** when last observed. No RPC, no tunnel — it reads observations directly.
+
+**Disk reclamation (the point of all this) — not yet done.** Only once the sidecar
+backfill is verified complete may `robinhood_market_observations` be pruned; at that
+cutover, drop the observation-fallback LEFT JOIN from the read model so MC comes from
+the sidecar alone. Ordering for the head region: the wallet worker must catch up
+first (it is the only durable copy of the trader/`wallet_address`, which the
+observation lacks), then prune.
+
+The DEV/TRACKED/YOU tabs (§6) remain the open Phase-2 architecture checkpoint.
 
 ## 9. Suggested order
 
-1. Finish the sqrtPriceX96 repair + bucket rebuild (separate effort).
-2. **Slice A** (backend read model + route + tests) — landed (prod + unit); A2 (route
-   integration) pending. Safe during the repair.
-3. **Slice B** (frontend polling panel) — safe to build during the repair; deploy after.
-   Label the feed "attributed up to block X" while the wallet group is behind (§5).
-4. Restart the `robinhood-wallet` group + catch-up (post-repair, operational).
-5. **Slice C** (realtime) — after the group is at head.
-6. **Phase 2 §8** — crystallize FDV/supply going forward (schema + attributor); then
-   the tunnel backfill for pruned history; then DEV/TRACKED/YOU tabs.
-
-The "going-forward crystallize" code (§8.1) may be written in dev during the repair
-but must not be migrated/deployed until the repair finishes and the wallet group is
-restarted.
+1. ✅ sqrtPriceX96 repair — **done**.
+2. ✅ **Slice A** (read model + route + unit) and **A2** (read-model integration test)
+   — landed (A2 test still uncommitted).
+3. ✅ **Slice B** (frontend polling panel) — landed & committed (expanded-chart side
+   panel, Robinhood-only). The "attributed up to block X" label is no longer needed —
+   the wallet group is at head (§5).
+4. ✅ **Durable MC (§8)** — sidecar `robinhood_swap_mc` + forward-write + history
+   backfill built & committed; backfill **run in prod** post-repair.
+5. ✅ **`robinhood-wallet` worker running + at head** (2026-08-09, lag ≈ 45) — the
+   frozen legacy-cursor bug is fixed; forward-write of the sidecar is now live (§5).
+6. ▶ **Slice C** (realtime) — now unblocked (group is at head). Next up.
+7. **Verify the sidecar backfill is complete → prune observations → drop the
+   observation-fallback JOIN** (§8 disk reclamation).
+8. **Phase 2** — DEV/TRACKED/YOU tabs (§6).
