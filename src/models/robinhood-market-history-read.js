@@ -408,6 +408,11 @@ function numberValue(value, label) {
   return parsed;
 }
 
+function nullableNumberValue(value, label) {
+  if (value == null || (typeof value === 'string' && value.trim() === '')) return null;
+  return numberValue(value, label);
+}
+
 function countValue(value, label) {
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < 0) throw new Error(`${label} is outside safe range`);
@@ -420,6 +425,13 @@ function normalizeCandle(row, address) {
   const sourceGranularityMinutes = countValue(
     row.source_granularity_minutes, 'source_granularity_minutes',
   );
+  const fdv = {
+    open: nullableNumberValue(row.open_fdv_usd, 'open_fdv_usd'),
+    high: nullableNumberValue(row.high_fdv_usd, 'high_fdv_usd'),
+    low: nullableNumberValue(row.low_fdv_usd, 'low_fdv_usd'),
+    close: nullableNumberValue(row.close_fdv_usd, 'close_fdv_usd'),
+  };
+  if (Object.values(fdv).some((value) => value == null)) return null;
   return Object.freeze({
     chain: CHAIN,
     address,
@@ -427,10 +439,10 @@ function normalizeCandle(row, address) {
     granularityMinutes,
     sourceGranularityMinutes,
     valuationType: 'fdv',
-    openFdvUsd: numberValue(row.open_fdv_usd, 'open_fdv_usd'),
-    highFdvUsd: numberValue(row.high_fdv_usd, 'high_fdv_usd'),
-    lowFdvUsd: numberValue(row.low_fdv_usd, 'low_fdv_usd'),
-    closeFdvUsd: numberValue(row.close_fdv_usd, 'close_fdv_usd'),
+    openFdvUsd: fdv.open,
+    highFdvUsd: fdv.high,
+    lowFdvUsd: fdv.low,
+    closeFdvUsd: fdv.close,
     openPriceUsd: numberValue(row.open_price_usd, 'open_price_usd'),
     highPriceUsd: numberValue(row.high_price_usd, 'high_price_usd'),
     lowPriceUsd: numberValue(row.low_price_usd, 'low_price_usd'),
@@ -491,7 +503,9 @@ function resolveResolution(candles) {
 }
 
 function buildHistoryResult(query, address, rows) {
-  const normalized = carryForwardOpens(rows.map((row) => normalizeCandle(row, address)));
+  const normalized = carryForwardOpens(
+    rows.map((row) => normalizeCandle(row, address)).filter(Boolean),
+  );
   const truncated = normalized.length > query.limit;
   const candles = Object.freeze(normalized.slice(truncated ? -query.limit : 0));
   return Object.freeze({

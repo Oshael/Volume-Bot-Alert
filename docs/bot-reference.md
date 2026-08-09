@@ -1002,7 +1002,9 @@ Depois do catch-up:
   do bucket) já saltava do fechamento anterior e deixava vãos entre candles. É
   apresentação apenas: buckets gravados, alertas (que leem as tabelas de bucket
   direto) e Solana ficam intactos; minutos sem swap seguem esparsos e nenhum candle
-  é fabricado; o primeiro candle da série mantém a abertura crua;
+  é fabricado; o primeiro candle da série mantém a abertura crua. Buckets de
+  atividade com FDV OHLC incompleto são omitidos da série em vez de converter
+  `NULL` para zero; a densificação visual conecta apenas os candles válidos;
 - archive completo do node não é necessário apenas para processar blocos novos;
 - qualquer consulta histórica fora da janela do node precisa do PostgreSQL,
   de um provedor archive ou de um snapshot próprio.

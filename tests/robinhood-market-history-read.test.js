@@ -201,6 +201,43 @@ describe('Robinhood native market history reader', () => {
     assert.equal(result.candles.length, 2);
   });
 
+  it('omits incomplete FDV buckets instead of converting NULL values to zero', async () => {
+    const repository = createRobinhoodMarketHistoryReadRepository({
+      database: { async query() {
+        return { rows: [
+          row({
+            bucket_ts: '2026-07-15T09:00:00.000Z',
+            open_fdv_usd: '100', high_fdv_usd: '140', low_fdv_usd: '90', close_fdv_usd: '130',
+          }),
+          row({
+            bucket_ts: '2026-07-15T10:00:00.000Z',
+            close_fdv_usd: null,
+          }),
+          row({
+            bucket_ts: '2026-07-15T11:00:00.000Z',
+            open_fdv_usd: '300', high_fdv_usd: '340', low_fdv_usd: '290', close_fdv_usd: '320',
+          }),
+        ] };
+      } },
+    });
+
+    const result = await repository.getHistory({
+      address: ADDRESS,
+      startAt: '2026-07-14T00:00:00.000Z',
+      endAt: '2026-07-16T00:00:00.000Z',
+      granularityMinutes: 60,
+      limit: 10,
+    });
+
+    assert.deepEqual(result.candles.map((candle) => candle.bucketTs), [
+      '2026-07-15T09:00:00.000Z',
+      '2026-07-15T11:00:00.000Z',
+    ]);
+    assert.equal(result.candles[1].openFdvUsd, 130);
+    assert.equal(result.candles[1].lowFdvUsd, 130);
+    assert.equal(result.candles.some((candle) => candle.closeFdvUsd === 0), false);
+  });
+
   it('loads multiple tokens in one query and limits each token independently', async () => {
     const calls = [];
     const repository = createRobinhoodMarketHistoryReadRepository({
