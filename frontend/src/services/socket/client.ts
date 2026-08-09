@@ -5,17 +5,23 @@ import type { TokenChain } from '../../utils/token-chain';
 import {
   createMarketEventOrderGate,
   normalizeMarketBucketUpdate,
+  normalizeMarketTradeUpdate,
   normalizeMarketSubscription,
   type MarketBucketUpdateEvent,
   type MarketSubscriptionIdentity,
+  type MarketTradeUpdateEvent,
 } from './market-events';
 
-export type { MarketBucketUpdateEvent } from './market-events';
+export type { MarketBucketUpdateEvent, MarketTradeUpdateEvent } from './market-events';
 
 let socket: Socket | null = null;
 const chartMarketSubscriptions = new Map<string, MarketSubscriptionIdentity>();
 const workspaceMarketSubscriptions = new Map<string, MarketSubscriptionIdentity>();
 const marketEventOrder = createMarketEventOrderGate();
+const marketTradeListeners = new Map<string, {
+  identity: MarketSubscriptionIdentity;
+  listeners: Set<(event: MarketTradeUpdateEvent) => void>;
+}>();
 let desiredLivePresence: {
   workspace: 'live';
   mode: 'foreground' | 'hidden' | 'inactive';
@@ -49,6 +55,13 @@ function emitMarketSubscriptionSync(current = socket) {
   current.emit('market:sync', { subscriptions });
 }
 
+function emitMarketTradeSubscriptionSync(current = socket) {
+  if (!current?.connected) return;
+  const subscriptions = [...marketTradeListeners.values()]
+    .map(({ identity }) => ({ chain: identity.chain, address: identity.address }));
+  current.emit('market:trade:sync', { subscriptions });
+}
+
 export function bindSocketLifecycle(options: {
   onRevoked: (reason: string) => void;
   onStatus?: (message: string) => void;
@@ -63,12 +76,14 @@ export function bindSocketLifecycle(options: {
   current.off('auth:revoked');
   current.off('alert:event');
   current.off('market:bucket');
+  current.off('market:trade');
 
   current.on('connect', () => {
     if (desiredLivePresence) {
       current.emit('live:presence', desiredLivePresence);
     }
     emitMarketSubscriptionSync(current);
+    emitMarketTradeSubscriptionSync(current);
     options.onStatus?.('Socket connected.');
   });
 
@@ -93,6 +108,13 @@ export function bindSocketLifecycle(options: {
     if (event && marketEventOrder.accept(event)) {
       options.onMarketBucket?.(event);
     }
+  });
+
+  current.on('market:trade', (payload: unknown) => {
+    const event = normalizeMarketTradeUpdate(payload);
+    const identity = event && normalizeMarketSubscription(event.address, event.chain);
+    if (!event || !identity) return;
+    for (const listener of marketTradeListeners.get(identity.key)?.listeners || []) listener(event);
   });
 
   return current;
@@ -123,6 +145,23 @@ export function unsubscribeMarketChart(address: string, chain: TokenChain = 'sol
   if (!workspaceMarketSubscriptions.has(identity.key)) marketEventOrder.clearIdentity(identity);
   emitMarketSubscriptionSync();
   return true;
+}
+
+export function subscribeRobinhoodTrades(
+  address: string,
+  listener: (event: MarketTradeUpdateEvent) => void,
+) {
+  const identity = normalizeMarketSubscription(address, 'robinhood');
+  if (!identity) return null;
+  const entry = marketTradeListeners.get(identity.key) || { identity, listeners: new Set() };
+  entry.listeners.add(listener);
+  marketTradeListeners.set(identity.key, entry);
+  emitMarketTradeSubscriptionSync(connectSocket());
+  return () => {
+    entry.listeners.delete(listener);
+    if (entry.listeners.size === 0) marketTradeListeners.delete(identity.key);
+    emitMarketTradeSubscriptionSync();
+  };
 }
 
 export function replaceWorkspaceMarketSubscriptions(items: MarketSubscriptionIdentity[]) {
@@ -172,5 +211,6 @@ export function disconnectSocket() {
   chartMarketSubscriptions.clear();
   workspaceMarketSubscriptions.clear();
   marketEventOrder.clear();
+  marketTradeListeners.clear();
   socket?.disconnect();
 }

@@ -12,7 +12,10 @@ const {
   createMarketSubscriptionProtocolTelemetry,
   getMarketSubscriptionRooms,
   getMarketSubscriptionRoom,
+  getMarketTradeRoom,
+  getMarketTradeSubscriptionRooms,
   normalizeMarketBucketUpdate,
+  normalizeMarketTradeUpdate,
   recordMarketSubscriptionProtocolUsage,
   resolveMarketIdentity,
 } = socketHub.__private;
@@ -96,6 +99,30 @@ describe('chain-aware socket market protocol', () => {
     assert.equal(getMarketSubscriptionRoom({ chain: 'robinhood', address: SOLANA_ADDRESS }), null);
     assert.equal(getMarketSubscriptionRoom({ chain: 'unknown', address: EVM_ADDRESS }), null);
     assert.equal(getMarketSubscriptionRoom({ chain: 'solana', address: 'short' }), null);
+  });
+
+  it('isolates and validates opt-in Robinhood trade rooms', () => {
+    const rooms = getMarketTradeSubscriptionRooms({ subscriptions: [
+      { chain: 'robinhood', address: EVM_ADDRESS },
+    ] }, { config: VISIBLE_CONFIG });
+    assert.deepEqual([...rooms], [`market-trade:robinhood:${EVM_ADDRESS.toLowerCase()}`]);
+    assert.equal(getMarketTradeRoom(resolveMarketIdentity({ chain: 'base', address: EVM_ADDRESS })), null);
+    assert.equal(getMarketTradeSubscriptionRooms({ subscriptions: [
+      { chain: 'base', address: EVM_ADDRESS },
+    ] }), null);
+  });
+
+  it('normalizes the public market:trade payload contract', () => {
+    const event = normalizeMarketTradeUpdate({
+      chain: 'robinhood', address: EVM_ADDRESS,
+      transactionHash: `0x${'1'.repeat(64)}`, actionIndex: 7, blockNumber: 100,
+      blockTime: '2026-08-09T12:00:00Z', side: 'buy',
+      walletAddress: `0x${'2'.repeat(40)}`, amountUsd: '12.5', mcUsd: '48000',
+    });
+    assert.equal(event.type, 'market:trade');
+    assert.equal(event.address, EVM_ADDRESS.toLowerCase());
+    assert.equal(event.amountUsd, 12.5);
+    assert.equal(normalizeMarketTradeUpdate({ ...event, side: 'hold' }), null);
   });
 
   it('normalizes an ordered market event without guessing its chain', () => {

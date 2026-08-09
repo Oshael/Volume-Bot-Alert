@@ -50,6 +50,8 @@ function createRobinhoodWalletSwapAttributor(deps = {}) {
   const { repository, fetchBlock } = deps;
   const adapter = deps.adapter || senderAdapterModule;
   const parserVersion = deps.parserVersion || DEFAULT_PARSER_VERSION;
+  const onTradesPersisted = typeof deps.onTradesPersisted === 'function'
+    ? deps.onTradesPersisted : null;
 
   if (typeof fetchBlock !== 'function') {
     throw new Error('attributor requires a fetchBlock(blockNumber) function');
@@ -86,6 +88,10 @@ function createRobinhoodWalletSwapAttributor(deps = {}) {
     ));
 
     const { inserted } = await repository.insertWalletSwaps(rows);
+    // Publish every persisted batch, including an idempotent retry. If NOTIFY
+    // fails after the DB insert, the worker retries and clients dedupe the event;
+    // the polling snapshot remains the final reconciliation path.
+    await onTradesPersisted?.(rows);
     return {
       blockNumber: String(blockNumber), blockHash, blockTime,
       attributed: rows.length,

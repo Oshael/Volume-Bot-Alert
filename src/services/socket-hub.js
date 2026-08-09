@@ -6,6 +6,7 @@
  * - alert:event       - backend-owned alert event payload
  * - auth:revoked      - session revoked; client must logout
  * - market:bucket     - live market bucket update for subscribed token charts
+ * - market:trade      - live Robinhood swap for an explicitly watched trades panel
  *
  * Events received from clients:
  * - live:presence     - { workspace, mode, hiddenGraceMs? } - live alert presence
@@ -98,6 +99,24 @@ function getMarketRoom(identity) {
   return identity?.key ? `market:${identity.key}` : null;
 }
 
+function getMarketTradeRoom(identity) {
+  return identity?.chain === 'robinhood' && identity.key
+    ? `market-trade:${identity.key}` : null;
+}
+
+function getMarketTradeSubscriptionRooms(payload, options = {}) {
+  if (!Array.isArray(payload?.subscriptions)) return null;
+  const rooms = new Set();
+  for (const subscription of payload.subscriptions) {
+    const identity = resolveMarketIdentity(subscription);
+    const room = isTokenChainUserVisible(identity?.chain, options.config || config)
+      ? getMarketTradeRoom(identity) : null;
+    if (!room) return null;
+    rooms.add(room);
+  }
+  return rooms;
+}
+
 function getMarketSubscriptionRoom(payload, options = {}) {
   const identity = resolveMarketIdentity(payload, { allowLegacySolana: true });
   const runtimeConfig = options.config || config;
@@ -131,6 +150,36 @@ function normalizeMarketBucketUpdate(payload) {
     bucketTs: new Date(bucketTsMs).toISOString(),
     sequence,
   };
+}
+
+function normalizeMarketTradeUpdate(payload) {
+  const identity = resolveMarketIdentity(payload);
+  const blockTimeMs = Date.parse(String(payload?.blockTime || ''));
+  const transactionHash = String(payload?.transactionHash || '').toLowerCase();
+  const walletAddress = String(payload?.walletAddress || '').toLowerCase();
+  const actionIndex = Number(payload?.actionIndex);
+  const blockNumber = Number(payload?.blockNumber);
+  const side = String(payload?.side || '');
+  const valid = [
+    identity?.chain === 'robinhood',
+    Number.isFinite(blockTimeMs),
+    /^0x[0-9a-f]{64}$/.test(transactionHash),
+    /^0x[0-9a-f]{40}$/.test(walletAddress),
+    Number.isSafeInteger(actionIndex) && actionIndex >= 0,
+    Number.isSafeInteger(blockNumber) && blockNumber >= 0,
+    ['buy', 'sell'].includes(side),
+  ].every(Boolean);
+  if (!valid) return null;
+  const numeric = (value) => (value == null || value === '' ? null : Number(value));
+  const event = {
+    ...payload, type: 'market:trade', chain: identity.chain, address: identity.address,
+    transactionHash, walletAddress, actionIndex, blockNumber, side,
+    blockTime: new Date(blockTimeMs).toISOString(),
+    amountUsd: numeric(payload.amountUsd), priceUsd: numeric(payload.priceUsd),
+    mcUsd: numeric(payload.mcUsd),
+  };
+  return [event.amountUsd, event.priceUsd, event.mcUsd]
+    .every((value) => value == null || Number.isFinite(value)) ? event : null;
 }
 
 function sanitizeMint(rawMint) {
@@ -584,6 +633,19 @@ function init(httpServer) {
       socket.marketRooms = nextRooms;
     });
 
+    socket.on('market:trade:sync', (data) => {
+      if (!noteSocketAction(socket, 'market:trade:sync')) return;
+      const nextRooms = getMarketTradeSubscriptionRooms(data);
+      const maxSubscriptions = Math.max(
+        1, Number(config.security?.socket?.maxSubscriptionsPerSocket) || 350
+      );
+      if (!nextRooms || nextRooms.size > maxSubscriptions) return;
+      const currentRooms = socket.marketTradeRooms || new Set();
+      for (const room of currentRooms) if (!nextRooms.has(room)) socket.leave(room);
+      for (const room of nextRooms) if (!currentRooms.has(room)) socket.join(room);
+      socket.marketTradeRooms = nextRooms;
+    });
+
     socket.on('disconnect', (reason) => {
       untrackSessionSocket(socket);
       userAlertProfileCache.clearLivePresence(socket.id);
@@ -596,6 +658,7 @@ function init(httpServer) {
       );
       socketActionState.delete(socket.id);
       socket.marketRooms?.clear?.();
+      socket.marketTradeRooms?.clear?.();
       console.log(`[Socket.io] ${socket.user.username} disconnected (${reason})`);
     });
   });
@@ -716,6 +779,17 @@ function emitMarketBucketUpdate(payload) {
   return true;
 }
 
+function emitMarketTradeUpdate(payload) {
+  if (!io || !payload || typeof payload !== 'object') return false;
+  const event = normalizeMarketTradeUpdate(payload);
+  const room = getMarketTradeRoom(resolveMarketIdentity(event));
+  if (!event || !room || !isTokenChainUserVisible(event.chain, config)) return false;
+  const sockets = io.sockets.adapter.rooms.get(room);
+  if (!sockets || sockets.size === 0) return false;
+  io.to(room).emit('market:trade', event);
+  return true;
+}
+
 module.exports = {
   init,
   stop,
@@ -723,14 +797,18 @@ module.exports = {
   getIO,
   emitBackendAlertEvent,
   emitMarketBucketUpdate,
+  emitMarketTradeUpdate,
   revokeSessionSockets,
   revokeUserSockets,
   __private: {
     createMarketSubscriptionProtocolTelemetry,
     getMarketRoom,
+    getMarketTradeRoom,
+    getMarketTradeSubscriptionRooms,
     getMarketSubscriptionRoom,
     getMarketSubscriptionRooms,
     normalizeMarketBucketUpdate,
+    normalizeMarketTradeUpdate,
     recordMarketSubscriptionProtocolUsage,
     resolveMarketIdentity,
   },

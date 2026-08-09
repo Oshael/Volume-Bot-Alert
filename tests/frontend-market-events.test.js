@@ -59,6 +59,21 @@ describe('frontend realtime market events', () => {
     assert.equal(marketEvents.normalizeMarketBucketUpdate(event({ candle: null })), null);
   });
 
+  it('normalizes Robinhood trades and rejects malformed identities', () => {
+    const trade = {
+      type: 'market:trade', chain: 'robinhood', address: EVM.toUpperCase(),
+      transactionHash: `0x${'1'.repeat(64)}`, actionIndex: 4, blockNumber: 100,
+      blockTime: '2026-08-09T12:00:00Z', side: 'sell',
+      walletAddress: `0x${'2'.repeat(40)}`, amountUsd: '7.5', priceUsd: null, mcUsd: '9000',
+    };
+    const normalized = marketEvents.normalizeMarketTradeUpdate(trade);
+    assert.equal(normalized.address, EVM);
+    assert.equal(normalized.amountUsd, 7.5);
+    assert.equal(normalized.priceUsd, null);
+    assert.equal(marketEvents.normalizeMarketTradeUpdate({ ...trade, chain: 'base' }), null);
+    assert.equal(marketEvents.normalizeMarketTradeUpdate({ ...trade, transactionHash: 'bad' }), null);
+  });
+
   it('rejects duplicate and older updates only within the same source bucket', () => {
     const gate = marketEvents.createMarketEventOrderGate(4);
     const current = marketEvents.normalizeMarketBucketUpdate(event());

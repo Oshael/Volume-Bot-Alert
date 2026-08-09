@@ -3,7 +3,9 @@
 // hub (layout-sections.ts) only calls mount/destroy, keeping its footprint to
 // wiring. All formatting lives in ./robinhood-trades-format (unit-tested).
 import { fetchRobinhoodTokenTrades } from '../services/api/robinhood-trades';
-import { tradesListHtml } from './robinhood-trades-format';
+import { subscribeRobinhoodTrades } from '../services/socket/client';
+import { mergeLiveTrade, tradesListHtml } from './robinhood-trades-format';
+import type { RobinhoodTrade } from '../services/api/robinhood-trades';
 
 const REFRESH_INTERVAL_MS = 5000;
 const PANEL_LIMIT = 30;
@@ -51,6 +53,14 @@ export function mountRobinhoodExpandedTrades(section: ParentNode, options: Mount
 
   let disposed = false;
   let timer: number | null = null;
+  let trades: RobinhoodTrade[] = [];
+
+  const render = () => setList(panel, tradesListHtml(trades, Date.now()));
+  const unsubscribe = subscribeRobinhoodTrades(options.token, (event) => {
+    if (disposed) return;
+    trades = mergeLiveTrade(trades, event, PANEL_LIMIT);
+    render();
+  });
 
   const load = async () => {
     try {
@@ -61,7 +71,8 @@ export function mountRobinhoodExpandedTrades(section: ParentNode, options: Mount
       if (disposed) {
         return;
       }
-      setList(panel, tradesListHtml(page.trades, Date.now()));
+      trades = page.trades;
+      render();
     } catch (_) {
       if (disposed) {
         return;
@@ -75,6 +86,7 @@ export function mountRobinhoodExpandedTrades(section: ParentNode, options: Mount
 
   activeCleanup = () => {
     disposed = true;
+    unsubscribe?.();
     if (timer != null) {
       window.clearInterval(timer);
       timer = null;

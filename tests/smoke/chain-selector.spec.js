@@ -533,6 +533,15 @@ const ROBINHOOD_MARKET_API_FIXTURES = {
 
 const ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES = {
   ...ROBINHOOD_MARKET_API_FIXTURES,
+  'GET /api/robinhood/trades': {
+    chain: 'robinhood', token: ROBINHOOD_TOKEN, hasMore: false, nextCursor: null,
+    trades: [{
+      chain: 'robinhood', transactionHash: `0x${'1'.repeat(64)}`,
+      actionIndex: 1, blockNumber: 99, blockTime: '2026-07-15T11:00:00.000Z',
+      side: 'buy', walletAddress: `0x${'2'.repeat(40)}`,
+      amountUsd: 10, priceUsd: 0.1, mcUsd: 350000,
+    }],
+  },
   'GET /api/config': {
     ...ROBINHOOD_MARKET_CONFIG,
     uiPrefs: {
@@ -1425,6 +1434,19 @@ test('opens a Robinhood FDV chart and applies only its realtime updates', async 
   await expect.poll(() => socketScenario.clientFrames.some((frame) => (
     frame.includes('"market:sync"') && frame.includes(`"address":"${ROBINHOOD_TOKEN}"`)
   ))).toBe(true);
+  await expect.poll(() => socketScenario.clientFrames.some((frame) => (
+    frame.includes('"market:trade:sync"') && frame.includes(`"address":"${ROBINHOOD_TOKEN}"`)
+  ))).toBe(true);
+
+  const tradesPanel = dialog.locator('[data-robinhood-trades-panel]');
+  await expect(tradesPanel).toContainText('$10');
+  sendSocketEvent(socketScenario, 'market:trade', {
+    type: 'market:trade', chain: 'robinhood', address: ROBINHOOD_TOKEN,
+    transactionHash: `0x${'3'.repeat(64)}`, actionIndex: 2, blockNumber: 100,
+    blockTime: '2026-07-15T11:01:00.000Z', side: 'sell',
+    walletAddress: `0x${'4'.repeat(40)}`, amountUsd: 777, priceUsd: 0.2, mcUsd: 420000,
+  });
+  await expect(tradesPanel).toContainText('$777');
 
   const legend = dialog.locator('[data-expanded-chart-legend]');
   await expect(legend).toContainText('350K');

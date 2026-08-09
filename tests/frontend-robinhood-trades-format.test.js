@@ -5,6 +5,7 @@ const {
   formatUsd,
   shortenTrader,
   formatTradeAge,
+  mergeLiveTrade,
   tradeRowHtml,
   tradesListHtml,
 } = require('../frontend/src/ui/robinhood-trades-format.ts');
@@ -68,5 +69,12 @@ describe('robinhood trades format', () => {
     assert.match(tradesListHtml([], NOW), /robinhood-trades-empty/);
     const list = tradesListHtml([trade(), trade({ side: 'sell' })], NOW);
     assert.equal((list.match(/robinhood-trade-row/g) || []).length, 2);
+  });
+
+  it('prepends, orders, deduplicates and caps live trades', () => {
+    const old = trade({ blockTime: '2026-08-06T23:58:00.000Z', actionIndex: 1 });
+    const current = trade({ transactionHash: `0x${'b'.repeat(64)}`, actionIndex: 2 });
+    const duplicate = trade({ ...current, amountUsd: 99 });
+    assert.deepEqual(mergeLiveTrade([old, current], duplicate, 2), [duplicate, old]);
   });
 });

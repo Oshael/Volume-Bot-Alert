@@ -79,6 +79,7 @@ const gmgnDiscoveryWorker = require('./services/gmgn-discovery-worker');
 const gmgnClaimSignalWorker = require('./services/gmgn-claim-signal-worker');
 const backendAlertRealtime = require('./services/backend-alert-realtime');
 const marketBucketRealtime = require('./services/market-bucket-realtime');
+const marketTradeRealtime = require('./services/market-trade-realtime');
 const {
   createRobinhoodMarketBucketFanout,
 } = require('./services/robinhood-market-bucket-fanout');
@@ -782,6 +783,9 @@ function bootstrapWebRuntime(httpServer) {
   marketBucketRealtime.start().catch((err) => {
     console.error('[MarketBucketRealtime] Failed to start listener:', err.message);
   });
+  marketTradeRealtime.start().catch((err) => {
+    console.error('[MarketTradeRealtime] Failed to start listener:', err.message);
+  });
 }
 
 function bootstrapBackgroundRuntime() {
@@ -912,6 +916,7 @@ async function shutdownGracefully(signal = 'SIGTERM') {
       telegramAlertRuntime.stop(),
       backendAlertRealtime.stop(),
       marketBucketRealtime.stop(),
+      marketTradeRealtime.stop(),
       userConfigSync.stop(),
     ]);
     const releaseResult = await workerLeaseManager.stop({ releaseLeases: true });

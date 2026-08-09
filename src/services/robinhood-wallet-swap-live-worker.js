@@ -9,6 +9,7 @@ const {
   validateRobinhoodProviderChainIds,
 } = require('./robinhood-ingestion-worker');
 const { runLiveTick } = require('./robinhood-wallet-swap-live-runner');
+const marketTradeRealtime = require('./market-trade-realtime');
 
 const FATAL_CODES = new Set(['configuration_error', 'persistent_reorg', 'source_contract_error']);
 
@@ -54,6 +55,7 @@ async function buildRuntime(options, deps = {}) {
     repository: walletRepository,
     fetchBlock: (number) => fetchBlock(number, true),
     parserVersion: 'rh-wallet-live-1',
+    onTradesPersisted: (rows) => (deps.marketTradeRealtime || marketTradeRealtime).publishRows(rows),
   });
   return {
     providerChainIds,

@@ -11,6 +11,18 @@ export interface TradeView {
   blockTime: string;
   transactionHash: string;
   actionIndex: number;
+  blockNumber?: number;
+}
+
+export function mergeLiveTrade<T extends TradeView>(trades: T[], incoming: T, limit: number): T[] {
+  const identity = `${incoming.transactionHash.toLowerCase()}:${incoming.actionIndex}`;
+  return [incoming, ...trades.filter((trade) => (
+    `${trade.transactionHash.toLowerCase()}:${trade.actionIndex}` !== identity
+  ))].sort((left, right) => (
+    Date.parse(right.blockTime) - Date.parse(left.blockTime)
+    || Number(right.blockNumber || 0) - Number(left.blockNumber || 0)
+    || right.actionIndex - left.actionIndex
+  )).slice(0, Math.max(0, limit));
 }
 
 function escapeHtml(value: string): string {

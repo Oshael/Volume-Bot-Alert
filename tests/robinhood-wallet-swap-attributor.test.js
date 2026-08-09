@@ -60,7 +60,10 @@ describe('robinhood wallet swap attributor', () => {
       { hash: TX_1, from: SIGNER_A },
       { hash: TX_2, from: SIGNER_B },
     ]);
-    const attributor = createRobinhoodWalletSwapAttributor({ repository, fetchBlock });
+    const published = [];
+    const attributor = createRobinhoodWalletSwapAttributor({
+      repository, fetchBlock, onTradesPersisted: async (rows) => published.push(rows),
+    });
 
     const result = await attributor.attributeBlock(100n, [
       observation(TX_1, 5),
@@ -82,6 +85,7 @@ describe('robinhood wallet swap attributor', () => {
     assert.equal(rows[0].blockTime, new Date(0x60000000 * 1000).toISOString());
     assert.equal(rows[0].parserVersion, 'rh-wallet-seed-1');
     assert.equal(rows[1].walletAddress, SIGNER_B);
+    assert.equal(published[0], rows);
   });
 
   it('writes nothing when any transaction is absent from the block', async () => {

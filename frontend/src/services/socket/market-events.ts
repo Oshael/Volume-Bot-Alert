@@ -60,6 +60,21 @@ export interface MarketBucketUpdateEvent {
   candle: MarketBucketCandle;
 }
 
+export interface MarketTradeUpdateEvent {
+  type: 'market:trade';
+  chain: 'robinhood';
+  address: string;
+  transactionHash: string;
+  actionIndex: number;
+  blockNumber: number;
+  blockTime: string;
+  side: 'buy' | 'sell';
+  walletAddress: string;
+  amountUsd: number | null;
+  priceUsd: number | null;
+  mcUsd: number | null;
+}
+
 export interface RealtimeTokenMarketPatch {
   observedAt: string;
   priceUsd: number | null;
@@ -160,6 +175,38 @@ export function normalizeMarketBucketUpdate(value: unknown): MarketBucketUpdateE
       granularityMinutes,
     },
   } as MarketBucketUpdateEvent;
+}
+
+export function normalizeMarketTradeUpdate(value: unknown): MarketTradeUpdateEvent | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const source = value as Record<string, unknown>;
+  const identity = normalizeMarketSubscription(source.address, source.chain);
+  const transactionHash = String(source.transactionHash || '').toLowerCase();
+  const walletAddress = String(source.walletAddress || '').toLowerCase();
+  const blockTime = validTimestamp(source.blockTime);
+  const actionIndex = Number(source.actionIndex);
+  const blockNumber = Number(source.blockNumber);
+  const side = String(source.side || '');
+  const nullableNumber = (metric: unknown) => (
+    metric == null || metric === '' ? null : Number(metric)
+  );
+  const amountUsd = nullableNumber(source.amountUsd);
+  const priceUsd = nullableNumber(source.priceUsd);
+  const mcUsd = nullableNumber(source.mcUsd);
+  if (
+    identity?.chain !== 'robinhood' || !blockTime
+    || !/^0x[0-9a-f]{64}$/.test(transactionHash)
+    || !/^0x[0-9a-f]{40}$/.test(walletAddress)
+    || !Number.isSafeInteger(actionIndex) || actionIndex < 0
+    || !Number.isSafeInteger(blockNumber) || blockNumber < 0
+    || !['buy', 'sell'].includes(side)
+    || ![amountUsd, priceUsd, mcUsd].every((metric) => metric == null || Number.isFinite(metric))
+  ) return null;
+  return {
+    type: 'market:trade', chain: 'robinhood', address: identity.address,
+    transactionHash, actionIndex, blockNumber, blockTime,
+    side: side as 'buy' | 'sell', walletAddress, amountUsd, priceUsd, mcUsd,
+  };
 }
 
 export function compareMarketEventSequence(left: unknown, right: unknown) {
