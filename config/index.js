@@ -24,6 +24,14 @@ function parseIntegerInRange(value, fallback, min, max) {
   return Math.max(min, Math.min(parsed, max));
 }
 
+function parseFloatInRange(value, fallback, min, max) {
+  const parsed = Number.parseFloat(String(value ?? ''));
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(min, Math.min(parsed, max));
+}
+
 function parseOptionalTimestamp(value) {
   const normalized = String(value || '').trim();
   if (!normalized) {
@@ -798,7 +806,7 @@ module.exports = {
     // Reject a swap whose fdv is a dead-pool outlier vs the token's recent median
     // (band [ref/maxMultiple, ref*maxMultiple]). See robinhood-price-spike-guard.js.
     enabled: parseBoolean(process.env.ROBINHOOD_DEAD_POOL_GUARD_ENABLED, true),
-    maxMultiple: parseIntegerInRange(process.env.ROBINHOOD_DEAD_POOL_GUARD_MAX_MULTIPLE, 5, 2, 1000),
+    maxMultiple: parseFloatInRange(process.env.ROBINHOOD_DEAD_POOL_GUARD_MAX_MULTIPLE, 2.5, 1.5, 1000),
     sampleSize: parseIntegerInRange(process.env.ROBINHOOD_DEAD_POOL_GUARD_SAMPLE_SIZE, 500, 20, 5000),
     // Out-of-band fdv is only rejected when the swap volume is below this floor (dead
     // pool). A real fast pump/dump has volume above it and is kept.
