@@ -794,6 +794,13 @@ module.exports = {
       process.env.ROBINHOOD_PROCESSING_SHADOW_AUDIT_STATEMENT_TIMEOUT_MS, 1000, 100, 10_000
     ),
   },
+  robinhoodDeadPoolGuard: {
+    // Reject a swap whose fdv is a dead-pool outlier vs the token's recent median
+    // (band [ref/maxMultiple, ref*maxMultiple]). See robinhood-price-spike-guard.js.
+    enabled: parseBoolean(process.env.ROBINHOOD_DEAD_POOL_GUARD_ENABLED, true),
+    maxMultiple: parseIntegerInRange(process.env.ROBINHOOD_DEAD_POOL_GUARD_MAX_MULTIPLE, 5, 2, 1000),
+    sampleSize: parseIntegerInRange(process.env.ROBINHOOD_DEAD_POOL_GUARD_SAMPLE_SIZE, 500, 20, 5000),
+  },
   robinhoodDerivedWorker: {
     enabled: parseBoolean(process.env.ROBINHOOD_DERIVED_ENABLED, true),
     standardAlertsEnabled: parseBoolean(

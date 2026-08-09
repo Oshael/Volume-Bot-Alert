@@ -1,8 +1,8 @@
 'use strict';
 
-const test = require('node:test');
+const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
-const { replayMarket } = require('../src/services/robinhood-price-spike-guard');
+const { replayMarket, evaluateFdvBand } = require('../src/services/robinhood-price-spike-guard');
 
 const K = { maxMultiple: 8, recoverAfter: 3 };
 const verdicts = (prices, opts = K) => replayMarket(prices.map((priceUsd) => ({ priceUsd })), opts).map((v) => v.spike);
@@ -45,4 +45,36 @@ test('absolute ceiling rejects unconditionally — even the first value and unde
   assert.deepEqual(verdicts([1e12], opts), [true]);
   // a burst that would recover under the relative rule stays rejected by the ceiling
   assert.deepEqual(verdicts([1, 1e12, 1e12, 1e12, 1e12], opts), [false, true, true, true, true]);
+});
+
+describe('evaluateFdvBand (live dead-pool guard)', () => {
+  const band = (fdvUsd, reference, maxMultiple = 5) => (
+    evaluateFdvBand({ fdvUsd, reference, maxMultiple }).outlier
+  );
+
+  test('keeps fdv inside the band [ref/k, ref*k]', () => {
+    assert.equal(band(94e6, 94e6), false); // at the reference
+    assert.equal(band(200e6, 94e6), false); // ~2.1x, within 5x
+    assert.equal(band(40e6, 94e6), false); // real dip, within ref/5
+  });
+
+  test('rejects an upward outlier above ref*k', () => {
+    assert.equal(band(8e12, 94e6), true); // catastrophic
+    assert.equal(band(600e6, 94e6), true); // >5x
+  });
+
+  test('rejects a downward outlier below ref/k — the $90M -> $8M wick', () => {
+    assert.equal(band(8e6, 90e6), true); // ~11x drop, below ref/5
+    assert.equal(band(1000, 90e6), true); // near-zero crash while token is $90M
+  });
+
+  test('keeps a genuine low when the recent reference is itself low (genesis)', () => {
+    assert.equal(band(0.3e6, 0.5e6), false); // $0.3M near a $0.5M launch level
+  });
+
+  test('cannot judge without a usable fdv or reference', () => {
+    assert.equal(band(null, 94e6), false);
+    assert.equal(band(94e6, null), false);
+    assert.equal(band(94e6, 0), false);
+  });
 });

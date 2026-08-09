@@ -73,4 +73,24 @@ function replayMarket(prices, options) {
   });
 }
 
-module.exports = { evaluatePriceSpike, replayMarket };
+// Live guard (dead-pool outlier). A swap in a dead / near-zero-liquidity pool drives
+// the token's fdv far ABOVE or BELOW its recent real level (one swap moves an empty
+// pool anywhere). `reference` is the token's recent median fdv; anything outside the
+// band [reference/k, reference*k] is an economically-meaningless outlier and rejected.
+// Relative-to-recent on purpose: it kills a $0 crash while the token trades at $100M,
+// yet keeps a genuine $0 at genesis (when the recent level itself is ~$0).
+function evaluateFdvBand(input) {
+  const fdv = toNumber(input.fdvUsd);
+  const reference = toNumber(input.reference);
+  const k = Number(input.maxMultiple);
+  if (fdv == null || fdv <= 0 || reference == null || reference <= 0 || !(k > 1)) {
+    // No fdv (supply-suppressed), no reference yet, or misconfigured k: cannot judge.
+    return { outlier: false, reason: null };
+  }
+  if (fdv > k * reference || fdv < reference / k) {
+    return { outlier: true, reason: 'dead_pool_price' };
+  }
+  return { outlier: false, reason: null };
+}
+
+module.exports = { evaluatePriceSpike, replayMarket, evaluateFdvBand };

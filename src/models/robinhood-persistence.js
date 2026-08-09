@@ -1995,6 +1995,28 @@ function createRobinhoodPersistenceRepository(options = {}) {
     };
   }
 
+  // Robust recent fdv level for a token: the median over its most recent accepted
+  // observations. Used by the dead-pool guard as the reference the incoming swap's
+  // fdv is banded against. The median ignores the rare outliers, so it stays the
+  // token's real level even before the guard has scrubbed everything.
+  async function loadTokenFdvReference(tokenAddress, sampleSize = 500) {
+    const limit = Math.max(1, Math.min(5000, Number(sampleSize) || 500));
+    const result = await database.query(
+      `SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY fdv_usd) AS median
+       FROM (
+         SELECT fdv_usd
+         FROM robinhood_market_observations
+         WHERE chain = 'robinhood' AND token_address = $1
+           AND status = 'accepted' AND fdv_usd IS NOT NULL
+         ORDER BY observed_at DESC
+         LIMIT $2::int
+       ) recent`,
+      [String(tokenAddress || '').toLowerCase(), limit]
+    );
+    const median = result.rows[0]?.median;
+    return median == null ? null : String(median);
+  }
+
   async function listCurrentV4LiquidityRanges(poolId) {
     const result = await database.query(
       `SELECT ranges.tick_lower, ranges.tick_upper, ranges.liquidity_gross
@@ -2112,6 +2134,7 @@ function createRobinhoodPersistenceRepository(options = {}) {
     listSignalDryRunCandidates,
     loadCursor,
     resolveMarketFrontier,
+    loadTokenFdvReference,
   });
 }
 

@@ -12,6 +12,8 @@
  *  - head-level rejections and unknown evidence settle as auditable terminals.
  */
 const defaultDecoder = require('./robinhood-head-processing-decoder');
+const config = require('../../config');
+const { evaluateFdvBand } = require('./robinhood-price-spike-guard');
 
 const DEFAULT_BATCH_SIZE = 200;
 const DEFAULT_LEASE_MS = 60_000;
@@ -27,6 +29,29 @@ function identityOf(row) {
 function backoffFor(attempt, baseMs, maxMs) {
   const exponential = baseMs * 2 ** Math.max(0, Number(attempt) - 1);
   return Math.max(1, Math.min(maxMs, exponential));
+}
+
+// Dead-pool guard applier: reject an accepted observation whose fdv is a per-token
+// relative outlier (dead / near-zero-liquidity pool). Flipping accepted->false makes
+// the batch persist it as status='rejected' (kept as evidence, excluded from buckets).
+// The token reference is loaded once per token per batch (like v4RangesByPool).
+function createDeadPoolGuardApplier(persistence, guardConfig = {}) {
+  const enabled = guardConfig.enabled !== false;
+  const maxMultiple = Number(guardConfig.maxMultiple) || 5;
+  const sampleSize = Number(guardConfig.sampleSize) || 500;
+  return async function applyDeadPoolGuard(observation, batchState) {
+    if (!enabled || observation.fdvUsd == null
+      || typeof persistence.loadTokenFdvReference !== 'function') return observation;
+    const token = observation.tokenAddress;
+    if (!batchState.tokenRefByAddress.has(token)) {
+      batchState.tokenRefByAddress.set(
+        token, Promise.resolve(persistence.loadTokenFdvReference(token, sampleSize))
+      );
+    }
+    const reference = await batchState.tokenRefByAddress.get(token);
+    const verdict = evaluateFdvBand({ fdvUsd: observation.fdvUsd, reference, maxMultiple });
+    return verdict.outlier ? { ...observation, accepted: false, reason: verdict.reason } : observation;
+  };
 }
 
 function createRobinhoodProcessingRunner(deps = {}) {
@@ -47,6 +72,9 @@ function createRobinhoodProcessingRunner(deps = {}) {
   const maxBackoffMs = Number(options.maxBackoffMs) || DEFAULT_MAX_BACKOFF_MS;
   const emitOutbox = options.emitOutbox === true;
   const logger = deps.logger || console;
+  const applyDeadPoolGuard = createDeadPoolGuardApplier(
+    persistence, options.deadPoolGuard || config.robinhoodDeadPoolGuard || {}
+  );
 
   // Coverage window end for the derived emit (Corte 5, option A): the processing
   // frontier just below the queue's pending block. Returns null until there is a
@@ -73,7 +101,9 @@ function createRobinhoodProcessingRunner(deps = {}) {
       v4Ranges = await batchState.v4RangesByPool.get(poolId);
     }
     const assessment = decoder.assessLiquidity(decoded.liquidityInputs, { v4Ranges });
-    return { log: decoded.log, event: decoded.swap, observation: decoder.attachLiquidity(observation, assessment) };
+    const withLiquidity = decoder.attachLiquidity(observation, assessment);
+    const guarded = await applyDeadPoolGuard(withLiquidity, batchState);
+    return { log: decoded.log, event: decoded.swap, observation: guarded };
   }
 
   // Decodes and values one claimed row, sorting it into a persistable entry or a
@@ -131,7 +161,7 @@ function createRobinhoodProcessingRunner(deps = {}) {
     const buckets = { persist: [], rejected: [] };
     // Every V4 swap in this phase reads the same pre-commit materialized ledger.
     // Reuse that snapshot per pool instead of repeating an identical DB query.
-    const batchState = { v4RangesByPool: new Map() };
+    const batchState = { v4RangesByPool: new Map(), tokenRefByAddress: new Map() };
     for (const row of rows) {
       await classify(row, buckets, batchState);
     }
