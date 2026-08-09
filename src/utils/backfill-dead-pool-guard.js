@@ -37,8 +37,11 @@ function parseArgs(argv = process.argv.slice(2)) {
     recomputeEvery: Math.max(1, Number(args['recompute-every'] ?? 50)),
     checkpoint: typeof args.checkpoint === 'string' ? args.checkpoint : null,
     flushSize: Math.max(500, Number(args['flush-size'] ?? 5000)),
+    sleepMs: Math.max(0, Number(args['sleep-ms'] ?? 0)),
   };
 }
+
+const delay = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
 function median(sortedAsc) {
   const n = sortedAsc.length;
@@ -139,6 +142,7 @@ async function run() {
       }
       summary.tokens += 1;
       afterToken = token;
+      if (options.sleepMs) await delay(options.sleepMs);
     }
     await flush(pending, options, summary);
     if (!options.token && options.checkpoint) {
