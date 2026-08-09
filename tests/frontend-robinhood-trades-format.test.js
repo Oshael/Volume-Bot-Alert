@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const {
-  formatUsdCompact,
+  formatUsd,
   shortenTrader,
   formatTradeAge,
   tradeRowHtml,
@@ -25,14 +25,16 @@ function trade(overrides = {}) {
 }
 
 describe('robinhood trades format', () => {
-  it('formats compact USD across magnitudes and null', () => {
-    assert.equal(formatUsdCompact(1_500_000_000), '$1.50B');
-    assert.equal(formatUsdCompact(987_654), '$987.65K');
-    assert.equal(formatUsdCompact(2_500), '$2.50K');
-    assert.equal(formatUsdCompact(42), '$42');
-    assert.equal(formatUsdCompact(0.25), '$0.25');
-    assert.equal(formatUsdCompact(null), '—');
-    assert.equal(formatUsdCompact(Number.NaN), '—');
+  it('formats USD with significant figures and K/M/B compaction', () => {
+    assert.equal(formatUsd(1_500_000_000), '$1.5B');
+    assert.equal(formatUsd(13_600_000), '$13.6M');
+    assert.equal(formatUsd(2_060), '$2.06K');
+    assert.equal(formatUsd(611.8), '$611.8');
+    assert.equal(formatUsd(7.59), '$7.59');
+    assert.equal(formatUsd(0.06), '$0.06');
+    assert.equal(formatUsd(0), '$0');
+    assert.equal(formatUsd(null), '—');
+    assert.equal(formatUsd(Number.NaN), '—');
   });
 
   it('shortens only long trader addresses', () => {
@@ -49,15 +51,15 @@ describe('robinhood trades format', () => {
     assert.equal(formatTradeAge('not-a-date', NOW), '—');
   });
 
-  it('marks buy vs sell and escapes rendered values', () => {
+  it('encodes side via the row class (no BUY/SELL cell) and escapes values', () => {
     const buy = tradeRowHtml(trade(), NOW);
     assert.match(buy, /robinhood-trade-row is-buy/);
-    assert.match(buy, />BUY</);
-    assert.match(buy, /\$2\.50K/);
+    assert.doesNotMatch(buy, />BUY</); // side is color-only now
+    // columns are Amount | MC | Trader | Age in that order
+    assert.match(buy, /trade-amount">\$2\.5K<.*trade-mc">\$988K<.*trade-trader">0x/);
 
     const sell = tradeRowHtml(trade({ side: 'sell', amountUsd: null }), NOW);
     assert.match(sell, /robinhood-trade-row is-sell/);
-    assert.match(sell, />SELL</);
     // null amount surfaces the em-dash, not a crash
     assert.match(sell, /robinhood-trade-amount">—</);
   });

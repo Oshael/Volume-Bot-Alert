@@ -3309,7 +3309,7 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 }
 
 .robinhood-trades-panel {
-  flex: 0 0 300px;
+  flex: 0 0 340px;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -3342,8 +3342,8 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 .robinhood-trades-cols,
 .robinhood-trade-row {
   display: grid;
-  grid-template-columns: 44px 1fr 1fr 40px;
-  gap: 6px;
+  grid-template-columns: minmax(58px, 0.9fr) minmax(54px, 0.8fr) minmax(0, 1fr) 40px;
+  gap: 8px;
   align-items: center;
 }
 
@@ -3355,6 +3355,10 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   color: rgba(230, 233, 239, 0.45);
 }
 
+.robinhood-trades-col-age {
+  text-align: right;
+}
+
 .robinhood-trades-list {
   flex: 1 1 auto;
   margin: 0;
@@ -3364,44 +3368,42 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 }
 
 .robinhood-trade-row {
-  padding: 5px 8px;
-  font-size: 12px;
+  padding: 6px 8px;
+  font-size: 12.5px;
   font-variant-numeric: tabular-nums;
   border-radius: 6px;
+  white-space: nowrap;
 }
 
-.robinhood-trade-row:nth-child(odd) {
-  background: rgba(255, 255, 255, 0.02);
+.robinhood-trade-row:hover {
+  background: rgba(255, 255, 255, 0.04);
 }
 
-.robinhood-trade-side {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
+.robinhood-trade-amount {
+  font-weight: 600;
 }
 
-.robinhood-trade-row.is-buy .robinhood-trade-side,
 .robinhood-trade-row.is-buy .robinhood-trade-amount {
   color: #3ad29f;
 }
 
-.robinhood-trade-row.is-sell .robinhood-trade-side,
 .robinhood-trade-row.is-sell .robinhood-trade-amount {
   color: #ff6b7d;
 }
 
-.robinhood-trade-trader,
-.robinhood-trade-mc,
-.robinhood-trade-age {
-  color: rgba(230, 233, 239, 0.82);
+.robinhood-trade-mc {
+  color: rgba(230, 233, 239, 0.9);
+}
+
+.robinhood-trade-trader {
+  color: rgba(230, 233, 239, 0.66);
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .robinhood-trade-age {
   text-align: right;
-  color: rgba(230, 233, 239, 0.55);
+  color: rgba(230, 233, 239, 0.5);
 }
 
 .robinhood-trades-empty {

@@ -23,17 +23,24 @@ function escapeHtml(value: string): string {
   });
 }
 
-// Compact USD used for both the swap amount and the market cap.
-export function formatUsdCompact(value: number | null): string {
+// Trim a fixed-precision string to its shortest exact form ("2.50" -> "2.5").
+function trimNumber(text: string): string {
+  return String(Number(text));
+}
+
+// Axiom-style USD: significant-figure precision (not fixed decimals), K/M/B
+// compaction above 1,000. Used for both the swap amount and the market cap, so
+// small trades read "$7.59" and caps read "$13.6M".
+export function formatUsd(value: number | null): string {
   if (value == null || !Number.isFinite(value)) {
     return '—';
   }
+  if (value === 0) return '$0';
   const abs = Math.abs(value);
-  if (abs >= 1e9) return `$${(value / 1e9).toFixed(2)}B`;
-  if (abs >= 1e6) return `$${(value / 1e6).toFixed(2)}M`;
-  if (abs >= 1e3) return `$${(value / 1e3).toFixed(2)}K`;
-  if (abs >= 1) return `$${value.toFixed(0)}`;
-  return `$${value.toFixed(2)}`;
+  if (abs >= 1e9) return `$${trimNumber((value / 1e9).toPrecision(3))}B`;
+  if (abs >= 1e6) return `$${trimNumber((value / 1e6).toPrecision(3))}M`;
+  if (abs >= 1e3) return `$${trimNumber((value / 1e3).toPrecision(3))}K`;
+  return `$${trimNumber(value.toPrecision(4))}`;
 }
 
 export function shortenTrader(address: string): string {
@@ -59,14 +66,14 @@ export function formatTradeAge(blockTime: string, nowMs: number): string {
   return `${Math.floor(hours / 24)}d`;
 }
 
+// Columns match Axiom: Amount | MC | Trader | Age. Side is encoded by the amount
+// color (green buy / red sell) via the row class — no separate BUY/SELL cell.
 export function tradeRowHtml(trade: TradeView, nowMs: number): string {
   const sideClass = trade.side === 'sell' ? 'is-sell' : 'is-buy';
-  const sideLabel = trade.side === 'sell' ? 'SELL' : 'BUY';
   return `<li class="robinhood-trade-row ${sideClass}">`
-    + `<span class="robinhood-trade-side">${sideLabel}</span>`
-    + `<span class="robinhood-trade-amount">${escapeHtml(formatUsdCompact(trade.amountUsd))}</span>`
+    + `<span class="robinhood-trade-amount">${escapeHtml(formatUsd(trade.amountUsd))}</span>`
+    + `<span class="robinhood-trade-mc">${escapeHtml(formatUsd(trade.mcUsd))}</span>`
     + `<span class="robinhood-trade-trader">${escapeHtml(shortenTrader(trade.walletAddress))}</span>`
-    + `<span class="robinhood-trade-mc">${escapeHtml(formatUsdCompact(trade.mcUsd))}</span>`
     + `<span class="robinhood-trade-age">${escapeHtml(formatTradeAge(trade.blockTime, nowMs))}</span>`
     + '</li>';
 }
