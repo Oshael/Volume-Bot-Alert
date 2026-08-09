@@ -3339,6 +3339,38 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   color: rgba(230, 233, 239, 0.5);
 }
 
+.robinhood-trades-scopes {
+  display: flex;
+  gap: 4px;
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(55, 61, 75, 0.45);
+}
+
+.robinhood-trades-scopes button {
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: rgba(230, 233, 239, 0.55);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.robinhood-trades-scopes button:hover,
+.robinhood-trades-scopes button.active {
+  border-color: rgba(82, 140, 255, 0.55);
+  background: rgba(82, 140, 255, 0.14);
+  color: #e6e9ef;
+}
+
+.robinhood-trades-scopes button:focus-visible {
+  outline: 2px solid #67a0ff;
+  outline-offset: 1px;
+}
+
 .robinhood-trades-cols,
 .robinhood-trade-row {
   display: grid;

@@ -24,9 +24,15 @@ const { normalizeTokenAddress } = require('../utils/token-identity');
 const CHAIN = 'robinhood';
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 100;
+const TRADE_SCOPES = new Set(['all', 'dev']);
+
+const CREATOR_SQL = `SELECT creator_address
+  FROM robinhood_token_attributions
+  WHERE chain = '${CHAIN}' AND token_address = $1`;
 
 // $1 token_address, $2 cursor block_time (or NULL for the first page),
-// $3 cursor block_number, $4 cursor action_index, $5 row limit (fetch limit + 1).
+// $3 cursor block_number, $4 cursor action_index, $5 row limit (fetch limit + 1),
+// $6 optional creator wallet for the DEV scope.
 const RECENT_TRADES_SQL = `SELECT
     swap.transaction_hash, swap.action_index, swap.block_number, swap.block_time,
     swap.side, swap.wallet_address, swap.volume_usd, swap.price_usd,
@@ -42,6 +48,7 @@ const RECENT_TRADES_SQL = `SELECT
    AND observation.log_index = swap.action_index
   WHERE swap.chain = '${CHAIN}'
     AND swap.token_address = $1
+    AND ($6::varchar IS NULL OR swap.wallet_address = $6)
     AND (
       $2::timestamptz IS NULL
       OR (swap.block_time, swap.block_number, swap.action_index)
@@ -86,11 +93,18 @@ function normalizeLimit(value) {
   return parsed;
 }
 
+function normalizeScope(value) {
+  const scope = String(value || 'all').trim().toLowerCase();
+  if (!TRADE_SCOPES.has(scope)) throw taggedError('INVALID_SCOPE', 'scope must be all or dev');
+  return scope;
+}
+
 function normalizeQuery(input = {}) {
   const tokenAddress = normalizeTokenAddress(CHAIN, input.tokenAddress);
   const limit = normalizeLimit(input.limit);
   const cursor = decodeCursor(input.cursor);
-  return { tokenAddress, limit, cursor };
+  const scope = normalizeScope(input.scope);
+  return { tokenAddress, limit, cursor, scope };
 }
 
 function numberOrNull(value) {
@@ -119,12 +133,25 @@ function createRobinhoodWalletSwapReadRepository(options = {}) {
 
   async function getRecentTrades(input = {}) {
     const query = normalizeQuery(input);
+    let creatorAddress = null;
+    if (query.scope === 'dev') {
+      const creatorResult = await database.query(CREATOR_SQL, [query.tokenAddress]);
+      const rawCreator = creatorResult.rows[0]?.creator_address;
+      creatorAddress = rawCreator ? normalizeTokenAddress(CHAIN, rawCreator) : null;
+      if (!creatorAddress) {
+        return Object.freeze({
+          chain: CHAIN, token: query.tokenAddress, scope: query.scope,
+          creatorAddress: null, trades: Object.freeze([]), hasMore: false, nextCursor: null,
+        });
+      }
+    }
     const params = [
       query.tokenAddress,
       query.cursor ? query.cursor.blockTime : null,
       query.cursor ? String(query.cursor.blockNumber) : null,
       query.cursor ? String(query.cursor.actionIndex) : null,
       query.limit + 1,
+      creatorAddress,
     ];
     const result = await database.query(RECENT_TRADES_SQL, params);
     const rows = result.rows.map(normalizeTrade);
@@ -133,6 +160,8 @@ function createRobinhoodWalletSwapReadRepository(options = {}) {
     return Object.freeze({
       chain: CHAIN,
       token: query.tokenAddress,
+      scope: query.scope,
+      creatorAddress,
       trades: Object.freeze(trades),
       hasMore,
       nextCursor: hasMore ? encodeCursor(trades[trades.length - 1]) : null,
@@ -145,7 +174,7 @@ function createRobinhoodWalletSwapReadRepository(options = {}) {
 module.exports = {
   createRobinhoodWalletSwapReadRepository,
   __private: {
-    RECENT_TRADES_SQL, DEFAULT_LIMIT, MAX_LIMIT,
-    encodeCursor, decodeCursor, normalizeLimit, normalizeQuery, normalizeTrade,
+    CREATOR_SQL, RECENT_TRADES_SQL, DEFAULT_LIMIT, MAX_LIMIT,
+    encodeCursor, decodeCursor, normalizeLimit, normalizeQuery, normalizeScope, normalizeTrade,
   },
 };

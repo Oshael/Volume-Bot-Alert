@@ -28,10 +28,11 @@ router.get('/trades', async (req, res) => {
       tokenAddress,
       cursor: req.query?.cursor,
       limit: req.query?.limit,
+      scope: req.query?.scope,
     });
     return res.json(page);
   } catch (err) {
-    if (err.code === 'INVALID_CURSOR' || err.code === 'INVALID_LIMIT') {
+    if (err.code === 'INVALID_CURSOR' || err.code === 'INVALID_LIMIT' || err.code === 'INVALID_SCOPE') {
       return res.status(400).json({ error: err.message });
     }
     console.error('GET /robinhood/trades error:', err.message);

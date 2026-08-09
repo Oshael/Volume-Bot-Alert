@@ -6,6 +6,7 @@ const SOLANA_TOP = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
 const SOLANA_BLOCKED = 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6QXgB263vZyVfSRm';
 const ROBINHOOD_TOKEN = '0xabcdef0123456789abcdef0123456789abcdef01';
 const ROBINHOOD_TOP = '0xabcdef0123456789abcdef0123456789abcdef02';
+const ROBINHOOD_DEV = `0x${'2'.repeat(40)}`;
 
 const SOLANA_CAPABILITIES = {
   alertFeed: true,
@@ -533,14 +534,19 @@ const ROBINHOOD_MARKET_API_FIXTURES = {
 
 const ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES = {
   ...ROBINHOOD_MARKET_API_FIXTURES,
-  'GET /api/robinhood/trades': {
-    chain: 'robinhood', token: ROBINHOOD_TOKEN, hasMore: false, nextCursor: null,
-    trades: [{
-      chain: 'robinhood', transactionHash: `0x${'1'.repeat(64)}`,
-      actionIndex: 1, blockNumber: 99, blockTime: '2026-07-15T11:00:00.000Z',
-      side: 'buy', walletAddress: `0x${'2'.repeat(40)}`,
-      amountUsd: 10, priceUsd: 0.1, mcUsd: 350000,
-    }],
+  'GET /api/robinhood/trades': (request) => {
+    const scope = new URL(request.url()).searchParams.get('scope') === 'dev' ? 'dev' : 'all';
+    return {
+      chain: 'robinhood', token: ROBINHOOD_TOKEN, scope,
+      creatorAddress: scope === 'dev' ? ROBINHOOD_DEV : null,
+      hasMore: false, nextCursor: null,
+      trades: [{
+        chain: 'robinhood', transactionHash: `0x${'1'.repeat(64)}`,
+        actionIndex: 1, blockNumber: 99, blockTime: '2026-07-15T11:00:00.000Z',
+        side: 'buy', walletAddress: ROBINHOOD_DEV,
+        amountUsd: scope === 'dev' ? 25 : 10, priceUsd: 0.1, mcUsd: 350000,
+      }],
+    };
   },
   'GET /api/config': {
     ...ROBINHOOD_MARKET_CONFIG,
@@ -1447,6 +1453,25 @@ test('opens a Robinhood FDV chart and applies only its realtime updates', async 
     walletAddress: `0x${'4'.repeat(40)}`, amountUsd: 777, priceUsd: 0.2, mcUsd: 420000,
   });
   await expect(tradesPanel).toContainText('$777');
+
+  await tradesPanel.getByRole('tab', { name: 'Dev' }).click();
+  await expect(tradesPanel.getByRole('tab', { name: 'Dev' })).toHaveAttribute('aria-selected', 'true');
+  await expect(tradesPanel).toContainText('$25');
+  await expect(tradesPanel).not.toContainText('$777');
+  sendSocketEvent(socketScenario, 'market:trade', {
+    type: 'market:trade', chain: 'robinhood', address: ROBINHOOD_TOKEN,
+    transactionHash: `0x${'5'.repeat(64)}`, actionIndex: 3, blockNumber: 101,
+    blockTime: '2026-07-15T11:02:00.000Z', side: 'buy',
+    walletAddress: `0x${'4'.repeat(40)}`, amountUsd: 999, priceUsd: 0.2, mcUsd: 420000,
+  });
+  await expect(tradesPanel).not.toContainText('$999');
+  sendSocketEvent(socketScenario, 'market:trade', {
+    type: 'market:trade', chain: 'robinhood', address: ROBINHOOD_TOKEN,
+    transactionHash: `0x${'6'.repeat(64)}`, actionIndex: 4, blockNumber: 102,
+    blockTime: '2026-07-15T11:03:00.000Z', side: 'buy',
+    walletAddress: ROBINHOOD_DEV, amountUsd: 888, priceUsd: 0.2, mcUsd: 420000,
+  });
+  await expect(tradesPanel).toContainText('$888');
 
   const legend = dialog.locator('[data-expanded-chart-legend]');
   await expect(legend).toContainText('350K');

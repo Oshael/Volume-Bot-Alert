@@ -25,6 +25,16 @@ export function mergeLiveTrade<T extends TradeView>(trades: T[], incoming: T, li
   )).slice(0, Math.max(0, limit));
 }
 
+export function tradeMatchesWalletScope(
+  trade: TradeView,
+  scope: 'all' | 'dev',
+  creatorAddress: string | null,
+): boolean {
+  if (scope === 'all') return true;
+  const creator = String(creatorAddress || '').toLowerCase();
+  return Boolean(creator) && trade.walletAddress.toLowerCase() === creator;
+}
+
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (ch) => {
     if (ch === '&') return '&amp;';

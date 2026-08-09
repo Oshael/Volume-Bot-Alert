@@ -16,6 +16,8 @@ export interface RobinhoodTrade {
 export interface RobinhoodTradesPage {
   chain: string;
   token: string;
+  scope: RobinhoodTradeScope;
+  creatorAddress: string | null;
   trades: RobinhoodTrade[];
   hasMore: boolean;
   nextCursor: string | null;
@@ -23,9 +25,12 @@ export interface RobinhoodTradesPage {
 
 export interface FetchRobinhoodTokenTradesParams {
   token: string;
+  scope?: RobinhoodTradeScope;
   cursor?: string | null;
   limit?: number;
 }
+
+export type RobinhoodTradeScope = 'all' | 'dev';
 
 // GET /api/robinhood/trades — recent per-swap trades for one Robinhood token.
 // Authenticated + Robinhood-visibility gated on the server; the panel is only
@@ -35,6 +40,9 @@ export function fetchRobinhoodTokenTrades(
   authToken?: string | null,
 ) {
   const query = new URLSearchParams({ token: params.token });
+  if (params.scope && params.scope !== 'all') {
+    query.set('scope', params.scope);
+  }
   if (params.cursor) {
     query.set('cursor', params.cursor);
   }

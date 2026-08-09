@@ -58,6 +58,7 @@ describe('Robinhood wallet-swap trades read model', () => {
       /\(swap\.block_time, swap\.block_number, swap\.action_index\)\s*<\s*\(\$2::timestamptz, \$3::bigint, \$4::bigint\)/,
     );
     assert.match(__private.RECENT_TRADES_SQL, /\$2::timestamptz IS NULL/);
+    assert.match(__private.RECENT_TRADES_SQL, /\$6::varchar IS NULL OR swap\.wallet_address = \$6/);
   });
 
   it('normalizes a swap row into the feed contract (buy/sell, amount, MC, nulls)', () => {
@@ -81,6 +82,9 @@ describe('Robinhood wallet-swap trades read model', () => {
     assert.equal(__private.normalizeQuery({ tokenAddress: TOKEN, limit: '10' }).limit, 10);
     assert.throws(() => __private.normalizeLimit('0'), /limit must be between/);
     assert.throws(() => __private.normalizeLimit(String(__private.MAX_LIMIT + 1)), /limit must be between/);
+    assert.equal(__private.normalizeScope(undefined), 'all');
+    assert.equal(__private.normalizeScope('DEV'), 'dev');
+    assert.throws(() => __private.normalizeScope('tracked'), (err) => err.code === 'INVALID_SCOPE');
   });
 
   it('round-trips the keyset cursor and rejects a malformed one', () => {
@@ -107,6 +111,7 @@ describe('Robinhood wallet-swap trades read model', () => {
     assert.equal(database.calls[0].params[0], TOKEN);
     assert.equal(database.calls[0].params[1], null); // no cursor block_time
     assert.equal(database.calls[0].params[4], 3); // limit + 1
+    assert.equal(database.calls[0].params[5], null); // all scope has no wallet filter
     assert.equal(page.trades.length, 2);
     assert.equal(page.hasMore, true);
     assert.ok(page.nextCursor);
@@ -130,5 +135,37 @@ describe('Robinhood wallet-swap trades read model', () => {
     assert.equal(page.hasMore, false);
     assert.equal(page.nextCursor, null);
     assert.equal(page.token, TOKEN);
+    assert.equal(page.scope, 'all');
+    assert.equal(page.creatorAddress, null);
+  });
+
+  it('resolves DEV once and filters trades by the direct contract creator', async () => {
+    const calls = [];
+    const creator = '0x2222222222222222222222222222222222222222';
+    const database = {
+      query: async (sql, params) => {
+        calls.push({ sql, params });
+        if (sql === __private.CREATOR_SQL) return { rows: [{ creator_address: creator }] };
+        return { rows: [row({ wallet_address: creator })] };
+      },
+    };
+    const repository = createRobinhoodWalletSwapReadRepository({ database });
+
+    const page = await repository.getRecentTrades({ tokenAddress: TOKEN, scope: 'dev' });
+    assert.equal(calls.length, 2);
+    assert.equal(calls[1].params[5], creator);
+    assert.equal(page.scope, 'dev');
+    assert.equal(page.creatorAddress, creator);
+    assert.equal(page.trades[0].walletAddress, creator);
+  });
+
+  it('returns an empty DEV page without scanning swaps when creator is unresolved', async () => {
+    const database = fakeDatabase([]);
+    const repository = createRobinhoodWalletSwapReadRepository({ database });
+    const page = await repository.getRecentTrades({ tokenAddress: TOKEN, scope: 'dev' });
+
+    assert.equal(database.calls.length, 1);
+    assert.equal(page.creatorAddress, null);
+    assert.deepEqual(page.trades, []);
   });
 });

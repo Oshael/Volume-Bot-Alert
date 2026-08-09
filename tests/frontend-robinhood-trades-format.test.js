@@ -6,6 +6,7 @@ const {
   shortenTrader,
   formatTradeAge,
   mergeLiveTrade,
+  tradeMatchesWalletScope,
   tradeRowHtml,
   tradesListHtml,
 } = require('../frontend/src/ui/robinhood-trades-format.ts');
@@ -76,5 +77,16 @@ describe('robinhood trades format', () => {
     const current = trade({ transactionHash: `0x${'b'.repeat(64)}`, actionIndex: 2 });
     const duplicate = trade({ ...current, amountUsd: 99 });
     assert.deepEqual(mergeLiveTrade([old, current], duplicate, 2), [duplicate, old]);
+  });
+
+  it('filters DEV realtime trades fail-closed by the resolved creator wallet', () => {
+    const creator = '0x1111111111111111111111111111111111111111';
+    assert.equal(tradeMatchesWalletScope(trade(), 'all', null), true);
+    assert.equal(tradeMatchesWalletScope(trade(), 'dev', null), false);
+    assert.equal(tradeMatchesWalletScope(trade(), 'dev', creator.toUpperCase()), true);
+    assert.equal(tradeMatchesWalletScope(
+      trade({ walletAddress: '0x2222222222222222222222222222222222222222' }),
+      'dev', creator,
+    ), false);
   });
 });

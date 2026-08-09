@@ -1058,6 +1058,15 @@ tabela particionada, persistência, adapter `tx.from`, attributor e cursores
 head (lag observado de ~45 blocos), alimentando continuamente
 `robinhood_wallet_swaps` e o sidecar `robinhood_swap_mc`.
 
+A Fase 2 do feed separa DEV/TRACKED/YOU. A fundação DEV usa a tabela aditiva
+`robinhood_token_attributions` (stage 110) e um backfill Blockscout dry-run-first
+para guardar o criador direto do contrato; esse endereço pode ser uma factory e
+não prova a identidade humana do desenvolvedor. YOU exigirá vínculo EVM por SIWE,
+sem transação nem aprovação de tokens; `user_wallets` continua Solana-only.
+O painel Robinhood já oferece ALL/DEV: a consulta `scope=dev` filtra pelo criador
+persistido e devolve `creatorAddress`, usado pelo cliente para aplicar o mesmo
+escopo aos eventos realtime do token. TRACKED e YOU ainda não estão disponíveis.
+
 Os contratos locais de atribuição já são fail-closed: o bloco cheio fornece hash,
 número e timestamp para checkpoint; qualquer transação ausente impede escrita
 parcial e avanço do seed. O repository também possui avanço monotônico específico

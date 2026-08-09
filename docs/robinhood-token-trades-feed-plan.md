@@ -267,13 +267,16 @@ side, live. **No** DEV/TRACKED/YOU tabs. **No new schema.**
 Each tab is a **filter of the same feed by wallet classification**; the
 `wallet_time` index already supports per-wallet queries.
 
-- **YOU** — filter `wallet_address` against the authenticated user's wallets in
-  `user_wallets` (`src/utils/db-init-stage44.js`). No new schema; needs auth context
-  on the trades route and a `mine=true` filter.
-- **DEV** — the token **deployer/creator** wallet. **Needs a source**: the creator is
-  not in `robinhood_wallet_swaps`. Candidates: the pool/token registry
-  (`robinhood_pool_registry`) or the token-creation event; likely a small lookup or a
-  new column/table. **Schema decision deferred to Phase 2.**
+- **YOU** — requires EVM wallet linkage by a domain-bound SIWE signature. The
+  existing `user_wallets` model is Solana-only and must not be reused as if it were
+  already multichain. The signature is authentication only: no transaction or token
+  approval belongs in this flow.
+- **DEV** — filter by the token's direct on-chain contract creator. Stage 110 adds
+  `robinhood_token_attributions`; a dry-run-first Blockscout backfill resolves
+  creators from registry tokens. A creator can be a factory contract, so this is
+  provenance, not proof of the human developer's identity. The read model and
+  panel now support `scope=dev`; the HTTP page supplies `creatorAddress` so the
+  existing per-token realtime stream can be filtered without another socket room.
 - **TRACKED** — the user's **tracked-wallet watchlist**. This concept does not exist
   yet (`user_wallets` holds the user's *own* wallets, not a watchlist). **Requires a
   new table** (e.g. `user_tracked_wallets`) + CRUD + UI to manage the list.
@@ -285,8 +288,9 @@ Phase 2 fan-out (estimate, to be re-checked before starting):
 - Schema: `user_tracked_wallets` (+ possibly a deployer column/lookup) → **migration
   → must be run in a maintenance-safe window, not during a heavy repair.**
 
-Phase 2 is intentionally **not** sliced here; it gets its own architecture-checkpoint
-pass once Phase 1 ships and the deployer/tracked sources are decided.
+Phase 2 architecture checkpoint: Slice 1 is the persistent DEV attribution
+foundation and Slice 2 wires the ALL/DEV feed filter. Later slices add TRACKED
+CRUD/UI and only then implement YOU with SIWE.
 
 ## 8. Durable MC parity — the sidecar (BUILT / done)
 
@@ -345,7 +349,7 @@ The DEV/TRACKED/YOU tabs (§6) remain the open Phase-2 architecture checkpoint.
    backfill built & committed; backfill **run in prod** post-repair.
 5. ✅ **`robinhood-wallet` worker running + at head** (2026-08-09, lag ≈ 45) — the
    frozen legacy-cursor bug is fixed; forward-write of the sidecar is now live (§5).
-6. ◐ **Slice C** (realtime) — implemented locally; commit/deploy and restarts pending.
-7. **Verify the sidecar backfill is complete → prune observations → drop the
-   observation-fallback JOIN** (§8 disk reclamation).
-8. **Phase 2** — DEV/TRACKED/YOU tabs (§6).
+6. ✅ **Slice C** (realtime) — committed; production still depends on its rollout.
+7. **Observation pruning deferred** — keep the table and fallback JOIN for now (§8).
+8. ◐ **Phase 2** — DEV attribution and the ALL/DEV feed filter are built; TRACKED
+   and YOU remain subsequent slices (§6).
