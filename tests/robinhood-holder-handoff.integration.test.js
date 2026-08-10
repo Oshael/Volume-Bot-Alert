@@ -24,7 +24,7 @@ function journal(token, block, hash, index, overrides = {}) {
 }
 
 describe('Robinhood holder live handoff persistence', () => {
-  it('promotes at an exact barrier and applies capture beginning at the next block', async () => {
+  it('promotes from a retained barrier and applies the preserved live tail', async () => {
     const client = await db.getClient();
     try {
       for (const table of [
@@ -33,9 +33,10 @@ describe('Robinhood holder live handoff persistence', () => {
       ]) {
         await client.query(`CREATE TEMP TABLE ${table} (LIKE public.${table} INCLUDING ALL)`);
       }
-      const database = { getClient: async () => ({
-        query: client.query.bind(client), release() {},
-      }) };
+      const database = {
+        query: client.query.bind(client),
+        getClient: async () => ({ query: client.query.bind(client), release() {} }),
+      };
       const handoff = createRobinhoodHolderHandoffRepository({ database });
       const ledger = createRobinhoodHolderLedgerRepository({ database });
       await client.query(
@@ -47,18 +48,19 @@ describe('Robinhood holder live handoff persistence', () => {
          `INSERT INTO robinhood_holder_token_states (
            token_address, holder_count, ledger_status, deployment_block,
            backfill_next_block, live_through_block, live_through_hash
-         ) VALUES ($1, 1, 'backfilling', 90, 107, 106, $4),
+         ) VALUES ($1, 1, 'backfilling', 90, 105, 104, $3),
                   ($2, 0, 'backfilling', 90, 99, 98, $3)`,
-        [TOKEN, OTHER_TOKEN, HASH_A, HASH_C]
+        [TOKEN, OTHER_TOKEN, HASH_A]
       );
       await client.query(
         `INSERT INTO robinhood_holder_balances (
            token_address, wallet_address, balance_raw, last_block_number,
            last_transaction_hash, last_log_index
-         ) VALUES ($1, $2, 10, 106, $3, 0)`, [TOKEN, ALICE, HASH_C]
+         ) VALUES ($1, $2, 10, 104, $3, 1)`,
+        [TOKEN, ALICE, `0x${'1'.padStart(64, '0')}`]
       );
       const events = [
-        journal(TOKEN, 104, HASH_A, 1),
+        journal(TOKEN, 104, HASH_A, 1, { toWallet: ALICE }),
         journal(TOKEN, 105, HASH_B, 2),
         journal(OTHER_TOKEN, 104, HASH_A, 3),
       ];
@@ -74,10 +76,19 @@ describe('Robinhood holder live handoff persistence', () => {
           ]
         );
       }
-      assert.deepEqual(await handoff.promoteAtLiveBarrier({ tokenAddress: TOKEN }), {
+      assert.deepEqual(await handoff.getNextCandidate(), {
+        tokenAddress: TOKEN, backfillNextBlock: '105',
+        checkpoint: { number: '104', hash: HASH_A }, version: 0,
+      });
+      assert.deepEqual(await handoff.promoteAtLiveBarrier({
+        tokenAddress: TOKEN, verifiedCheckpoint: { number: '104', hash: HASH_A },
+      }), {
         status: 'shadow', tokenAddress: TOKEN, holderCount: '1', version: 1,
-        discardedOverlapEvents: 2,
+        discardedOverlapEvents: 1,
         journalFloorBlock: '100', liveCursorNextBlock: '107',
+      });
+      assert.deepEqual(await ledger.applyNextPendingEvent(), {
+        status: 'applied', tokenAddress: TOKEN, holderCount: '2', holderDelta: 1,
       });
       await ledger.appendCapturedRange({
         transfers: [{
@@ -91,7 +102,7 @@ describe('Robinhood holder live handoff persistence', () => {
         },
       });
       assert.deepEqual(await ledger.applyNextPendingEvent(), {
-        status: 'applied', tokenAddress: TOKEN, holderCount: '2', holderDelta: 1,
+        status: 'applied', tokenAddress: TOKEN, holderCount: '2', holderDelta: 0,
       });
       const balances = await client.query(
         `SELECT wallet_address, balance_raw FROM robinhood_holder_balances
@@ -99,14 +110,16 @@ describe('Robinhood holder live handoff persistence', () => {
       );
       assert.deepEqual(balances.rows.map((row) => [
         row.wallet_address, String(row.balance_raw),
-      ]), [[ALICE, '6'], [BOB, '4']]);
+      ]), [[ALICE, '2'], [BOB, '8']]);
       const state = await client.query(
         `SELECT ledger_status, backfill_next_block FROM robinhood_holder_token_states
           WHERE token_address = $1`, [TOKEN]
       );
-      assert.deepEqual(state.rows[0], { ledger_status: 'shadow', backfill_next_block: '107' });
+      assert.deepEqual(state.rows[0], { ledger_status: 'shadow', backfill_next_block: '105' });
       await assert.rejects(
-        handoff.promoteAtLiveBarrier({ tokenAddress: OTHER_TOKEN }),
+        handoff.promoteAtLiveBarrier({
+          tokenAddress: OTHER_TOKEN, verifiedCheckpoint: { number: '98', hash: HASH_A },
+        }),
         (error) => error.code === 'holder_handoff_below_floor'
       );
       const remaining = await client.query(
@@ -115,7 +128,7 @@ describe('Robinhood holder live handoff persistence', () => {
       );
       assert.deepEqual(remaining.rows.map((row) => [
         row.token_address, String(row.block_number), row.applied,
-      ]), [[TOKEN, '107', true], [OTHER_TOKEN, '104', false]]);
+      ]), [[TOKEN, '105', true], [TOKEN, '107', true], [OTHER_TOKEN, '104', false]]);
     } finally {
       client.release();
     }

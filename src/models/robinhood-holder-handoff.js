@@ -12,6 +12,27 @@ function codedError(message, code) {
   return error;
 }
 
+function verifiedCheckpoint(value = {}) {
+  const number = String(value.number ?? '').trim();
+  const hash = String(value.hash || '').trim().toLowerCase();
+  if (!/^\d+$/.test(number) || !/^0x[0-9a-f]{64}$/.test(hash)) {
+    throw codedError('holder handoff checkpoint is invalid', 'holder_handoff_checkpoint_unverified');
+  }
+  return Object.freeze({ number: BigInt(number).toString(), hash });
+}
+
+function candidateRow(row) {
+  if (!row) return null;
+  return Object.freeze({
+    tokenAddress: row.token_address,
+    backfillNextBlock: String(row.backfill_next_block),
+    checkpoint: Object.freeze({
+      number: String(row.live_through_block), hash: row.live_through_hash,
+    }),
+    version: Number(row.version),
+  });
+}
+
 async function lockLiveCursor(client) {
   const result = await client.query(
     `SELECT next_block, safe_head, checkpoint_block, checkpoint_hash,
@@ -62,21 +83,31 @@ function validateCoverage(cursor, state) {
   if (backfillNext > liveNext) {
     throw codedError('holder live cursor has not reached backfill', 'holder_handoff_live_behind');
   }
-  if (backfillNext < liveNext
-      || String(state.live_through_block) !== String(cursor.checkpoint_block)
-      || state.live_through_hash !== cursor.checkpoint_hash) {
+  if (backfillNext === liveNext
+      && (String(state.live_through_block) !== String(cursor.checkpoint_block)
+        || state.live_through_hash !== cursor.checkpoint_hash)) {
     throw codedError('holder backfill is not at the exact live barrier', 'holder_handoff_not_at_barrier');
   }
 }
 
-async function lockCoveredJournal(client, token, liveNextBlock) {
+function validateVerifiedCheckpoint(state, value) {
+  const checkpoint = verifiedCheckpoint(value);
+  if (checkpoint.number !== String(state.live_through_block)
+      || checkpoint.hash !== state.live_through_hash) {
+    throw codedError(
+      'holder handoff checkpoint was not verified', 'holder_handoff_checkpoint_unverified'
+    );
+  }
+}
+
+async function lockBackfilledOverlap(client, token, backfillNextBlock) {
   const result = await client.query(
     `SELECT block_number, transaction_hash, log_index, applied
        FROM robinhood_holder_transfer_journal
       WHERE chain = 'robinhood' AND token_address = $1 AND block_number < $2
       ORDER BY block_number, transaction_index, log_index
       FOR UPDATE`,
-    [token, liveNextBlock]
+    [token, backfillNextBlock]
   );
   if (result.rows.some((row) => row.applied)) {
     throw codedError('backfilling token already has applied live events', 'holder_handoff_applied_overlap');
@@ -113,6 +144,44 @@ async function promoteState(client, token, state) {
 function createRobinhoodHolderHandoffRepository(options = {}) {
   const database = options.database || db;
 
+  async function getNextCandidate() {
+    const result = await database.query(
+      `SELECT state.token_address, state.backfill_next_block,
+              state.live_through_block, state.live_through_hash, state.version
+         FROM robinhood_holder_token_states state
+         INNER JOIN robinhood_holder_cursors cursor
+           ON cursor.chain = state.chain AND cursor.stream = 'live'
+        WHERE state.chain = 'robinhood' AND state.ledger_status = 'backfilling'
+          AND cursor.journal_floor_block IS NOT NULL
+          AND state.backfill_next_block BETWEEN cursor.journal_floor_block AND cursor.next_block
+          AND state.live_through_block + 1 = state.backfill_next_block
+          AND state.live_through_hash IS NOT NULL
+        ORDER BY state.backfill_next_block DESC, state.token_address
+        LIMIT 1`
+    );
+    return candidateRow(result.rows[0]);
+  }
+
+  async function markResyncing(input = {}) {
+    const token = tokenAddress(input.tokenAddress);
+    const version = Number(input.version);
+    if (!Number.isSafeInteger(version) || version < 0) {
+      throw codedError('holder handoff version is invalid', 'holder_handoff_stale');
+    }
+    const result = await database.query(
+      `UPDATE robinhood_holder_token_states
+          SET ledger_status = 'resyncing', version = version + 1, updated_at = NOW()
+        WHERE chain = 'robinhood' AND token_address = $1
+          AND ledger_status = 'backfilling' AND version = $2
+        RETURNING token_address`,
+      [token, version]
+    );
+    if (!result.rowCount) {
+      throw codedError('holder handoff candidate changed', 'holder_handoff_stale');
+    }
+    return Object.freeze({ status: 'resyncing', tokenAddress: token });
+  }
+
   async function promoteAtLiveBarrier(input = {}) {
     const token = tokenAddress(input.tokenAddress);
     const client = await database.getClient();
@@ -120,8 +189,9 @@ function createRobinhoodHolderHandoffRepository(options = {}) {
       await client.query('BEGIN');
       const cursor = await lockLiveCursor(client);
       const state = await lockBackfillState(client, token);
+      validateVerifiedCheckpoint(state, input.verifiedCheckpoint);
       validateCoverage(cursor, state);
-      const journal = await lockCoveredJournal(client, token, cursor.next_block);
+      const journal = await lockBackfilledOverlap(client, token, state.backfill_next_block);
       const discardedOverlapEvents = await deleteBackfilledOverlap(
         client, token, state.backfill_next_block
       );
@@ -145,10 +215,10 @@ function createRobinhoodHolderHandoffRepository(options = {}) {
     }
   }
 
-  return Object.freeze({ promoteAtLiveBarrier });
+  return Object.freeze({ getNextCandidate, markResyncing, promoteAtLiveBarrier });
 }
 
 module.exports = {
   createRobinhoodHolderHandoffRepository,
-  __private: { validateCoverage },
+  __private: { validateCoverage, validateVerifiedCheckpoint },
 };
