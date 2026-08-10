@@ -402,7 +402,7 @@ altera a sequencia deste quadro.
 | 3 | Backfill/catch-up de tokens novos sem lacuna | concluido no codigo/desligado | RT3A-RT3C runner opt-in; RT4A/RT4E1 handoff retido; RT4F1 wiring com lease |
 | 4 | Live incremental shadow, deteccao automatica de reorg e scheduler da poda | concluido no codigo/desligado | RT4A-RT4E2 base integrada; RT4F1/F2 grupo, leases e poda opt-in |
 | 5 | Backfill frio dos tokens antigos | concluido no codigo/desligado | RT5A-RT5B3; admissao, verificacao, tick limitado e runtime opt-in com lease |
-| 6 | Reconciliacao, promocao e publicacao REST/socket | em andamento/desligado | RT6A-RT6C criam promocao, runtime e wiring opt-in; drift/publicacao pendentes |
+| 6 | Reconciliacao, promocao e publicacao REST/socket | em andamento/desligado | RT6A-RT6D criam promocao, runtime, wiring e auditoria live; publicacao pendente |
 | 7 | Frontend realtime/expanded chart | pendente de layout aprovado | nao reutilizar o prototipo sem decisao explicita |
 
 Os nomes RT nao sao uma segunda arquitetura. Eles apenas repartem os macros
@@ -1145,8 +1145,23 @@ false por default; habilita-la sem `ROBINHOOD_HOLDER_LIVE_ENABLED=true` falha o
 boot. Mesmo com ambas ligadas, cada tick espera o worker live estar running, sem
 erro/halt e com ao menos um tick concluido antes de consultar ou promover.
 
-Pull, deploy e o grupo isolado sozinhos nao iniciam o reconciliador. Deteccao de
-drift depois da promocao e publicacao do count local continuam pendentes.
+Pull, deploy e o grupo isolado sozinhos nao iniciam o reconciliador. Auditoria
+live entra no RT6D abaixo; isolamento automatico e publicacao continuam pendentes.
+
+#### Corte RT6D - Auditoria live sem isolamento falso
+
+Status: implementado no codigo e desligado junto do reconciliador.
+
+O runtime alterna com justica entre promocao `shadow` e auditoria de tokens
+`live`. A auditoria exige tres observacoes Blockscout temporalmente distintas com
+o mesmo count externo e o mesmo count local antes de emitir `drift-suspected` na
+telemetria. Igualdade exata emite `live-verified`; mudanca em qualquer lado reinicia
+a evidencia transitoria. Tokens com cauda live pendente nao sao auditados.
+
+O sinal nao altera `ledger_status`, nao apaga balances e nao bloqueia captura. O
+Blockscout nao ancora seu count a um bloco, portanto mismatch repetido ainda pode
+ser atraso de indexacao, nao prova canonica de drift. Isolamento/resync automatico
+exigira evidencia mais forte; a publicacao do count local continua pendente.
 
 Cada item acima deve ser repartido novamente se estimar mais de 500 linhas. O
 probe e a estimativa de storage sao pre-condicoes; “outros terminais fazem” nao

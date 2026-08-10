@@ -1059,6 +1059,11 @@ worker live tambem esteja explicitamente habilitado; configuracao contraditoria
 falha no boot. Em runtime, o reconciliador espera ao menos um tick live saudavel
 e interrompe novas consultas enquanto live estiver parado, halted ou com erro.
 Nenhum count local e publicado por este wiring.
+O RT6D alterna promocao e auditoria dos estados `live`. Tres divergencias estaveis
+e distintas geram apenas `drift-suspected` na telemetria; igualdade gera
+`live-verified`. Como o count Blockscout nao possui bloco de referencia, esse sinal
+nao muda o status do ledger nem dispara resync automatico, evitando falso drift
+por diferenca de indexacao. Publicacao do count local segue pendente.
 
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.
