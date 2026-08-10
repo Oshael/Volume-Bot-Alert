@@ -3,6 +3,8 @@ const db = require('../models/db');
 const { createRobinhoodTokenAttributionRepository } = require('../models/robinhood-token-attribution');
 const {
   createRobinhoodBlockscoutMetadataClient,
+  DEFAULT_API_URL,
+  DEFAULT_PRO_API_URL,
   requestWithRetry,
   __private: { isRetryableProviderError },
 } = require('../services/robinhood-blockscout-metadata');
@@ -17,7 +19,7 @@ function boundedInteger(value, name, minimum, maximum) {
   return parsed;
 }
 
-function parseArgs(argv = process.argv.slice(2)) {
+function parseArgs(argv = process.argv.slice(2), env = process.env) {
   const read = (name, fallback) => {
     const index = argv.indexOf(name);
     return index < 0 ? fallback : argv[index + 1];
@@ -34,10 +36,15 @@ function parseArgs(argv = process.argv.slice(2)) {
   const timeoutMs = boundedInteger(read('--timeout-ms', 10000), '--timeout-ms', 1000, 15000);
   const batchSize = boundedInteger(read('--batch-size', 10), '--batch-size', 1, 10);
   const concurrency = boundedInteger(read('--concurrency', 2), '--concurrency', 1, 5);
+  const apiKey = String(env.ROBINHOOD_BLOCKSCOUT_API_KEY || '').trim() || null;
+  const apiUrl = String(env.ROBINHOOD_BLOCKSCOUT_API_URL || (
+    apiKey ? DEFAULT_PRO_API_URL : DEFAULT_API_URL
+  )).trim();
   if (!Number.isFinite(retryHours) || retryHours < 0) throw new Error('--retry-hours must be >= 0');
   return {
     apply: argv.includes(CONFIRM), limit, sleepMs, retryHours,
     requestRetries, retryDelayMs, timeoutMs, batchSize, concurrency,
+    apiKey, apiUrl,
   };
 }
 
@@ -69,10 +76,14 @@ async function run(deps = {}) {
     apply: options.apply, eligible: selection.eligible, candidates: candidates.length,
     batches: batches.length, requests: 0,
     resolved: 0, unresolved: 0, failed: 0, retried: 0,
+    creditsRemaining: null, stopReason: null,
   };
   if (!options.apply) return summary;
   const clientFactory = deps.clientFactory || createRobinhoodBlockscoutMetadataClient;
-  const client = deps.client || clientFactory({ timeoutMs: options.timeoutMs ?? 10000 });
+  const clientOptions = { timeoutMs: options.timeoutMs ?? 10000 };
+  if (options.apiKey) clientOptions.apiKey = options.apiKey;
+  if (options.apiUrl) clientOptions.apiUrl = options.apiUrl;
+  const client = deps.client || clientFactory(clientOptions);
 
   const persistAttempts = async (attempts) => {
     if (typeof repository.recordAttempts === 'function') return repository.recordAttempts(attempts);
@@ -89,6 +100,14 @@ async function run(deps = {}) {
     } catch (error) {
       summary.retried += error.requestRetriesUsed || 0;
       summary.requests += (error.requestRetriesUsed || 0) + 1;
+      const creditsRemaining = error.creditsRemaining
+        ?? client.getCreditsRemaining?.()
+        ?? null;
+      if (error.code === 'credits_exhausted' || creditsRemaining === 0) {
+        summary.creditsRemaining = 0;
+        summary.stopReason = 'credits_exhausted';
+        return;
+      }
       await persistAttempts(batch.map((candidate) => ({ ...candidate, error: error.message })));
       summary.failed += batch.length;
       return;
@@ -100,11 +119,14 @@ async function run(deps = {}) {
     await persistAttempts(attempts);
     summary.resolved += attempts.filter((attempt) => attempt.creatorAddress).length;
     summary.unresolved += attempts.filter((attempt) => !attempt.creatorAddress).length;
+    const creditsRemaining = client.getCreditsRemaining?.() ?? null;
+    if (creditsRemaining != null) summary.creditsRemaining = creditsRemaining;
+    if (creditsRemaining === 0) summary.stopReason = 'credits_exhausted';
   };
 
   let nextBatch = 0;
   const worker = async () => {
-    while (nextBatch < batches.length) {
+    while (nextBatch < batches.length && summary.stopReason == null) {
       const batch = batches[nextBatch];
       nextBatch += 1;
       await processBatch(batch);

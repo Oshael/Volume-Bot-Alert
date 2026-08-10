@@ -4,6 +4,7 @@ const { normalizeText, sanitizeAssetUrl } = require('../utils/url-safety');
 const DEFAULT_BASE_URL = 'https://robinhoodchain.blockscout.com/api/v2/tokens/';
 const DEFAULT_ADDRESS_BASE_URL = 'https://robinhoodchain.blockscout.com/api/v2/addresses/';
 const DEFAULT_API_URL = 'https://robinhoodchain.blockscout.com/api';
+const DEFAULT_PRO_API_URL = 'https://api.blockscout.com/v2/api?chain_id=4663';
 const DEFAULT_TIMEOUT_MS = 5000;
 
 class RobinhoodBlockscoutMetadataError extends Error {
@@ -12,6 +13,7 @@ class RobinhoodBlockscoutMetadataError extends Error {
     this.name = 'RobinhoodBlockscoutMetadataError';
     this.code = code;
     this.httpStatus = details.httpStatus ?? null;
+    this.creditsRemaining = details.creditsRemaining ?? null;
   }
 }
 
@@ -71,10 +73,22 @@ function createRobinhoodBlockscoutMetadataClient(options = {}) {
   const baseUrl = new URL(String(options.baseUrl || DEFAULT_BASE_URL));
   const addressBaseUrl = new URL(String(options.addressBaseUrl || DEFAULT_ADDRESS_BASE_URL));
   const apiUrl = new URL(String(options.apiUrl || DEFAULT_API_URL));
+  const apiKey = String(options.apiKey || '').trim();
   if (baseUrl.protocol !== 'https:') throw new TypeError('Blockscout metadata URL must use HTTPS');
   if (addressBaseUrl.protocol !== 'https:') throw new TypeError('Blockscout address URL must use HTTPS');
   if (apiUrl.protocol !== 'https:') throw new TypeError('Blockscout API URL must use HTTPS');
   const timeoutMs = boundedTimeout(options.timeoutMs);
+  let minimumCreditsRemaining = null;
+
+  function trackCredits(response) {
+    const raw = response.headers?.get?.('x-credits-remaining');
+    if (!/^\d+$/.test(String(raw ?? ''))) return null;
+    const remaining = Number(raw);
+    minimumCreditsRemaining = minimumCreditsRemaining == null
+      ? remaining
+      : Math.min(minimumCreditsRemaining, remaining);
+    return remaining;
+  }
 
   async function requestUrl(url, resource) {
     const controller = new AbortController();
@@ -94,14 +108,21 @@ function createRobinhoodBlockscoutMetadataClient(options = {}) {
     } finally {
       clearTimeout(timeout);
     }
+    const creditsRemaining = trackCredits(response);
     if (response.status === 404) {
       return null;
     }
     if (!response.ok) {
+      if (creditsRemaining === 0) {
+        throw new RobinhoodBlockscoutMetadataError(
+          'Blockscout daily API credits exhausted', 'credits_exhausted',
+          { httpStatus: response.status, creditsRemaining }
+        );
+      }
       throw new RobinhoodBlockscoutMetadataError(
         `Blockscout ${resource} returned HTTP ${response.status}`,
         'http_error',
-        { httpStatus: response.status }
+        { httpStatus: response.status, creditsRemaining }
       );
     }
     return response.json();
@@ -146,6 +167,7 @@ function createRobinhoodBlockscoutMetadataClient(options = {}) {
     url.searchParams.set('module', 'contract');
     url.searchParams.set('action', 'getcontractcreation');
     url.searchParams.set('contractaddresses', addresses.join(','));
+    if (apiKey) url.searchParams.set('apikey', apiKey);
     const payload = await requestUrl(url, 'contract creation');
     if (!payload || payload.status !== '1' || !Array.isArray(payload.result)) {
       throw new RobinhoodBlockscoutMetadataError(
@@ -168,13 +190,17 @@ function createRobinhoodBlockscoutMetadataClient(options = {}) {
     })));
   }
 
-  return Object.freeze({ getContractCreator, getContractCreators, getTokenMetadata });
+  const getCreditsRemaining = () => minimumCreditsRemaining;
+  return Object.freeze({
+    getContractCreator, getContractCreators, getCreditsRemaining, getTokenMetadata,
+  });
 }
 
 module.exports = {
   DEFAULT_BASE_URL,
   DEFAULT_ADDRESS_BASE_URL,
   DEFAULT_API_URL,
+  DEFAULT_PRO_API_URL,
   DEFAULT_TIMEOUT_MS,
   RobinhoodBlockscoutMetadataError,
   createRobinhoodBlockscoutMetadataClient,

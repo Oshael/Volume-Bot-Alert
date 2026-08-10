@@ -222,6 +222,7 @@ describe('Robinhood token creator attribution', () => {
     assert.deepEqual(summary, {
       apply: false, eligible: 1, candidates: 1,
       batches: 1, requests: 0, resolved: 0, unresolved: 0, failed: 0, retried: 0,
+      creditsRemaining: null, stopReason: null,
     });
     assert.equal(lookups, 0);
     assert.equal(writes, 0);
@@ -254,10 +255,41 @@ describe('Robinhood token creator attribution', () => {
     assert.deepEqual(summary, {
       apply: true, eligible: 3, candidates: 3,
       batches: 3, requests: 3, resolved: 1, unresolved: 1, failed: 1, retried: 0,
+      creditsRemaining: null, stopReason: null,
     });
     assert.equal(attempts[0].creatorAddress, CREATOR);
     assert.equal(attempts[1].creatorAddress, null);
     assert.equal(attempts[2].error, 'rate limited');
+  });
+
+  it('stops cleanly at zero PRO credits without persisting untouched candidates', async () => {
+    const candidates = [TOKEN, `0x${'c'.repeat(40)}`]
+      .map((tokenAddress) => ({ tokenAddress, discoveryBlock: '1' }));
+    const attempts = [];
+    let creditsRemaining = 20;
+    const summary = await run({
+      options: {
+        apply: true, limit: 10, sleepMs: 0, retryHours: 0,
+        batchSize: 1, concurrency: 1,
+      },
+      repository: {
+        listCreatorCandidates: async () => ({ eligible: candidates.length, candidates }),
+        recordAttempt: async (attempt) => { attempts.push(attempt); },
+      },
+      client: {
+        getContractCreators: async ([tokenAddress]) => {
+          creditsRemaining = 0;
+          return [{ tokenAddress, creatorAddress: CREATOR }];
+        },
+        getCreditsRemaining: () => creditsRemaining,
+      },
+    });
+
+    assert.equal(attempts.length, 1);
+    assert.equal(summary.resolved, 1);
+    assert.equal(summary.requests, 1);
+    assert.equal(summary.creditsRemaining, 0);
+    assert.equal(summary.stopReason, 'credits_exhausted');
   });
 
   it('does not misclassify a persistence failure as a provider failure', async () => {
@@ -349,6 +381,9 @@ describe('Robinhood token creator attribution', () => {
     assert.equal(retries.timeoutMs, 10000);
     assert.equal(retries.batchSize, 10);
     assert.equal(retries.concurrency, 2);
+    const pro = parseArgs([], { ROBINHOOD_BLOCKSCOUT_API_KEY: 'proapi_test' });
+    assert.equal(pro.apiKey, 'proapi_test');
+    assert.match(pro.apiUrl, /api\.blockscout\.com\/v2\/api\?chain_id=4663/);
     assert.equal(parseArgs(['--timeout-ms', '15000']).timeoutMs, 15000);
   });
 });

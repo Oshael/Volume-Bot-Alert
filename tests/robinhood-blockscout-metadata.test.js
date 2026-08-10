@@ -8,10 +8,11 @@ const {
 const TOKEN = `0x${'1'.repeat(40)}`;
 const TOKEN_2 = `0x${'3'.repeat(40)}`;
 
-function response(status, payload) {
+function response(status, payload, headers = {}) {
   return {
     status,
     ok: status >= 200 && status < 300,
+    headers: { get: (name) => headers[name.toLowerCase()] ?? null },
     async json() { return payload; },
   };
 }
@@ -71,12 +72,14 @@ describe('Robinhood Blockscout metadata client', () => {
     const creator = `0x${'2'.repeat(40)}`;
     let requestedUrl;
     const client = createRobinhoodBlockscoutMetadataClient({
+      apiUrl: 'https://api.blockscout.com/v2/api?chain_id=4663',
+      apiKey: 'proapi_test',
       fetchImpl: async (url) => {
         requestedUrl = new URL(url);
         return response(200, {
           status: '1',
           result: [{ contractAddress: TOKEN, contractCreator: creator }],
-        });
+        }, { 'x-credits-remaining': '99980' });
       },
     });
 
@@ -85,11 +88,26 @@ describe('Robinhood Blockscout metadata client', () => {
       { tokenAddress: TOKEN_2, creatorAddress: null },
     ]);
     assert.equal(requestedUrl.searchParams.get('action'), 'getcontractcreation');
+    assert.equal(requestedUrl.searchParams.get('chain_id'), '4663');
+    assert.equal(requestedUrl.searchParams.get('apikey'), 'proapi_test');
     assert.equal(requestedUrl.searchParams.get('contractaddresses'), `${TOKEN},${TOKEN_2}`);
+    assert.equal(client.getCreditsRemaining(), 99980);
     await assert.rejects(
       () => client.getContractCreators(Array.from({ length: 11 }, () => TOKEN)),
       /1\.\.10/
     );
+  });
+
+  it('classifies an exhausted PRO allowance without treating it as a transient 429', async () => {
+    const client = createRobinhoodBlockscoutMetadataClient({
+      fetchImpl: async () => response(429, null, { 'x-credits-remaining': '0' }),
+    });
+
+    await assert.rejects(() => client.getContractCreators([TOKEN]), (error) => {
+      assert.equal(error.code, 'credits_exhausted');
+      assert.equal(error.creditsRemaining, 0);
+      return true;
+    });
   });
 
   it('rejects HTTP failures and mismatched token identities', async () => {
