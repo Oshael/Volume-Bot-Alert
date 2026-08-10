@@ -2,6 +2,7 @@ const db = require('./db');
 
 const CHAIN = 'robinhood';
 const STREAM = 'live';
+const ZERO_ADDRESS = `0x${'0'.repeat(40)}`;
 
 function decimalQuantity(value, label) {
   const raw = String(value ?? '').trim();
@@ -141,6 +142,196 @@ function normalizeCursorRow(row) {
   });
 }
 
+function deriveBalanceChanges(value, balances = {}) {
+  const transfer = normalizeTransfer(value);
+  const amount = BigInt(transfer.amountRaw);
+  const getBalance = (wallet) => BigInt(String(balances[wallet] ?? 0));
+  const transitions = new Map();
+  const record = (wallet, before, after) => transitions.set(wallet, {
+    walletAddress: wallet, before: before.toString(), after: after.toString(),
+  });
+  let fromBefore = null;
+  let fromAfter = null;
+  let toBefore = null;
+  let toAfter = null;
+
+  if (transfer.fromWallet !== ZERO_ADDRESS) {
+    fromBefore = getBalance(transfer.fromWallet);
+    if (fromBefore < amount) {
+      const error = new Error('transfer amount exceeds the indexed sender balance');
+      error.code = 'holder_negative_balance';
+      throw error;
+    }
+    fromAfter = transfer.toWallet === transfer.fromWallet ? fromBefore : fromBefore - amount;
+    record(transfer.fromWallet, fromBefore, fromAfter);
+  }
+  if (transfer.toWallet !== ZERO_ADDRESS) {
+    toBefore = transfer.toWallet === transfer.fromWallet
+      ? fromBefore : getBalance(transfer.toWallet);
+    toAfter = transfer.toWallet === transfer.fromWallet
+      ? fromBefore : toBefore + amount;
+    record(transfer.toWallet, toBefore, toAfter);
+  }
+  const ordered = [...transitions.values()].sort((left, right) => (
+    left.walletAddress.localeCompare(right.walletAddress)
+  ));
+  const holderDelta = ordered.reduce((total, transition) => (
+    total + (BigInt(transition.after) > 0n ? 1 : 0)
+      - (BigInt(transition.before) > 0n ? 1 : 0)
+  ), 0);
+  return Object.freeze({
+    transfer, transitions: ordered, holderDelta,
+    fromBalanceBefore: fromBefore?.toString() ?? null,
+    fromBalanceAfter: fromAfter?.toString() ?? null,
+    toBalanceBefore: toBefore?.toString() ?? null,
+    toBalanceAfter: toAfter?.toString() ?? null,
+  });
+}
+
+async function lockNextApplicableEvent(client) {
+  const cursor = await client.query(
+    `SELECT next_block FROM robinhood_holder_cursors
+      WHERE chain = 'robinhood' AND stream = 'live' FOR UPDATE`
+  );
+  if (!cursor.rowCount) {
+    const error = new Error('holder live cursor is missing');
+    error.code = 'holder_cursor_missing';
+    throw error;
+  }
+  const result = await client.query(
+    `SELECT journal.block_number, journal.block_hash, journal.transaction_hash,
+            journal.transaction_index, journal.log_index, journal.token_address,
+            journal.from_wallet, journal.to_wallet, journal.amount_raw
+       FROM robinhood_holder_transfer_journal journal
+       INNER JOIN robinhood_holder_token_states state
+         ON state.chain = journal.chain AND state.token_address = journal.token_address
+        AND state.ledger_status IN ('shadow', 'live')
+      WHERE journal.chain = 'robinhood' AND journal.applied = false
+      ORDER BY journal.block_number, journal.transaction_index, journal.log_index
+      LIMIT 1
+      FOR UPDATE OF journal, state SKIP LOCKED`
+  );
+  return result.rows[0] || null;
+}
+
+function transferFromRow(row) {
+  return normalizeTransfer({
+    blockNumber: row.block_number, blockHash: row.block_hash,
+    transactionHash: row.transaction_hash, transactionIndex: row.transaction_index,
+    logIndex: row.log_index, tokenAddress: row.token_address,
+    fromWallet: row.from_wallet, toWallet: row.to_wallet, amountRaw: row.amount_raw,
+  });
+}
+
+async function loadLockedBalances(client, transfer) {
+  const wallets = [...new Set([transfer.fromWallet, transfer.toWallet]
+    .filter((wallet) => wallet !== ZERO_ADDRESS))].sort();
+  if (!wallets.length) return {};
+  const result = await client.query(
+    `SELECT wallet_address, balance_raw
+       FROM robinhood_holder_balances
+      WHERE chain = 'robinhood' AND token_address = $1
+        AND wallet_address = ANY($2::varchar[])
+      ORDER BY wallet_address FOR UPDATE`,
+    [transfer.tokenAddress, wallets]
+  );
+  return Object.fromEntries(result.rows.map((row) => (
+    [row.wallet_address, String(row.balance_raw)]
+  )));
+}
+
+async function persistBalance(client, transfer, transition) {
+  if (BigInt(transition.after) === 0n) {
+    await client.query(
+      `DELETE FROM robinhood_holder_balances
+        WHERE chain = 'robinhood' AND token_address = $1 AND wallet_address = $2`,
+      [transfer.tokenAddress, transition.walletAddress]
+    );
+    return;
+  }
+  await client.query(
+    `INSERT INTO robinhood_holder_balances (
+       chain, token_address, wallet_address, balance_raw, last_block_number,
+       last_transaction_hash, last_log_index
+     ) VALUES ('robinhood', $1, $2, $3::numeric, $4, $5, $6)
+     ON CONFLICT (chain, token_address, wallet_address) DO UPDATE SET
+       balance_raw = EXCLUDED.balance_raw,
+       last_block_number = EXCLUDED.last_block_number,
+       last_transaction_hash = EXCLUDED.last_transaction_hash,
+       last_log_index = EXCLUDED.last_log_index,
+       updated_at = NOW()`,
+    [
+      transfer.tokenAddress, transition.walletAddress, transition.after,
+      transfer.blockNumber, transfer.transactionHash, transfer.logIndex,
+    ]
+  );
+}
+
+async function markTokenDrifted(client, tokenAddress) {
+  await client.query(
+    `UPDATE robinhood_holder_token_states
+        SET ledger_status = 'drifted', version = version + 1, updated_at = NOW()
+      WHERE chain = 'robinhood' AND token_address = $1`,
+    [tokenAddress]
+  );
+}
+
+async function commitAppliedEvent(client, changes) {
+  for (const transition of changes.transitions) {
+    await persistBalance(client, changes.transfer, transition);
+  }
+  const state = await client.query(
+    `UPDATE robinhood_holder_token_states
+        SET holder_count = holder_count + $2::smallint,
+            live_through_block = $3, live_through_hash = $4,
+            version = version + 1, updated_at = NOW()
+      WHERE chain = 'robinhood' AND token_address = $1
+        AND ledger_status IN ('shadow', 'live')
+        AND holder_count + $2::smallint >= 0
+        AND (live_through_block IS NULL OR live_through_block <= $3)
+      RETURNING holder_count, version`,
+    [
+      changes.transfer.tokenAddress, changes.holderDelta,
+      changes.transfer.blockNumber, changes.transfer.blockHash,
+    ]
+  );
+  if (!state.rowCount) throw new Error('holder token state rejected an ordered transfer');
+  const journal = await client.query(
+    `UPDATE robinhood_holder_transfer_journal
+        SET from_balance_before = $3::numeric, from_balance_after = $4::numeric,
+            to_balance_before = $5::numeric, to_balance_after = $6::numeric,
+            holder_delta = $7, applied = true, applied_at = NOW()
+      WHERE chain = 'robinhood' AND transaction_hash = $1 AND log_index = $2
+        AND applied = false
+      RETURNING transaction_hash`,
+    [
+      changes.transfer.transactionHash, changes.transfer.logIndex,
+      changes.fromBalanceBefore, changes.fromBalanceAfter,
+      changes.toBalanceBefore, changes.toBalanceAfter, changes.holderDelta,
+    ]
+  );
+  if (!journal.rowCount) throw new Error('holder journal event was concurrently applied');
+  return Object.freeze({
+    status: 'applied', tokenAddress: changes.transfer.tokenAddress,
+    holderCount: String(state.rows[0].holder_count), holderDelta: changes.holderDelta,
+  });
+}
+
+async function withTransaction(database, operation) {
+  const client = await database.getClient();
+  try {
+    await client.query('BEGIN');
+    const result = await operation(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch (_) {}
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 function createRobinhoodHolderLedgerRepository(options = {}) {
   const database = options.database || db;
 
@@ -149,26 +340,39 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
       .map(normalizeTransfer);
     const cursor = normalizeCursor(input.cursor);
     validateRange(transfers, cursor);
-    const client = await database.getClient();
-    try {
-      await client.query('BEGIN');
+    return withTransaction(database, async (client) => {
       let insertedTransfers = 0;
       for (const transfer of transfers) {
         if (await insertTransfer(client, transfer)) insertedTransfers += 1;
       }
       const version = await advanceCursor(client, cursor);
-      await client.query('COMMIT');
       return Object.freeze({
         insertedTransfers,
         duplicateTransfers: transfers.length - insertedTransfers,
         cursorVersion: version,
       });
-    } catch (error) {
-      try { await client.query('ROLLBACK'); } catch (_) {}
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
+  }
+
+  async function applyNextPendingEvent() {
+    return withTransaction(database, async (client) => {
+      const row = await lockNextApplicableEvent(client);
+      if (!row) return Object.freeze({ status: 'idle' });
+      const transfer = transferFromRow(row);
+      const balances = await loadLockedBalances(client, transfer);
+      let changes;
+      try {
+        changes = deriveBalanceChanges(transfer, balances);
+      } catch (error) {
+        if (error.code !== 'holder_negative_balance') throw error;
+        await markTokenDrifted(client, transfer.tokenAddress);
+        return Object.freeze({
+          status: 'drifted', tokenAddress: transfer.tokenAddress,
+          reason: error.code,
+        });
+      }
+      return commitAppliedEvent(client, changes);
+    });
   }
 
   async function getCursor() {
@@ -181,10 +385,10 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     return normalizeCursorRow(result.rows[0]);
   }
 
-  return Object.freeze({ appendCapturedRange, getCursor });
+  return Object.freeze({ appendCapturedRange, applyNextPendingEvent, getCursor });
 }
 
 module.exports = {
   createRobinhoodHolderLedgerRepository,
-  __private: { normalizeCursor, normalizeTransfer, validateRange },
+  __private: { deriveBalanceChanges, normalizeCursor, normalizeTransfer, validateRange },
 };

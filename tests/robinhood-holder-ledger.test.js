@@ -64,6 +64,33 @@ describe('Robinhood holder ledger repository', () => {
     assert.throws(() => __private.normalizeTransfer(transfer({ tokenAddress: 'bad' })), /20 bytes/);
   });
 
+  it('derives holder transitions for mint, burn, transfer and self-transfer', () => {
+    const derive = __private.deriveBalanceChanges;
+    const zero = `0x${'0'.repeat(40)}`;
+    const cases = [
+      { input: transfer({ fromWallet: zero, amountRaw: '5' }), balances: {}, delta: 1,
+        after: { [BOB]: '5' } },
+      { input: transfer({ toWallet: zero, amountRaw: '5' }), balances: { [ALICE]: '5' },
+        delta: -1, after: { [ALICE]: '0' } },
+      { input: transfer({ amountRaw: '4' }), balances: { [ALICE]: '10' }, delta: 1,
+        after: { [ALICE]: '6', [BOB]: '4' } },
+      { input: transfer({ toWallet: ALICE, amountRaw: '4' }), balances: { [ALICE]: '10' },
+        delta: 0, after: { [ALICE]: '10' } },
+    ];
+    for (const scenario of cases) {
+      const changes = derive(scenario.input, scenario.balances);
+      assert.equal(changes.holderDelta, scenario.delta);
+      assert.deepEqual(Object.fromEntries(changes.transitions.map((item) => (
+        [item.walletAddress, item.after]
+      ))), scenario.after);
+      if (scenario.input.toWallet === ALICE) assert.equal(changes.fromBalanceAfter, '10');
+    }
+    assert.throws(
+      () => derive(transfer({ amountRaw: '11' }), { [ALICE]: '10' }),
+      (error) => error.code === 'holder_negative_balance'
+    );
+  });
+
   it('commits matching captures and advances a bootstrap cursor atomically', async () => {
     const fake = fakeDatabase([
       { rows: [{ inserted: true }], rowCount: 1 },
