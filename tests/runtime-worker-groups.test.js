@@ -342,15 +342,17 @@ describe('runtime worker groups config', () => {
     });
   });
 
-  it('keeps both RPC holder workers opt-in and bounded', () => {
+  it('keeps all isolated holder workers opt-in and bounded', () => {
     withEnv({
       ROBINHOOD_HOLDER_BACKFILL_ENABLED: undefined,
       ROBINHOOD_HOLDER_BACKFILL_ADMITTED_AFTER: undefined,
       ROBINHOOD_HOLDER_LIVE_ENABLED: undefined,
+      ROBINHOOD_HOLDER_JOURNAL_PRUNE_ENABLED: undefined,
     }, (config) => {
       assert.equal(config.robinhoodHolderBackfillWorker.enabled, false);
       assert.equal(config.robinhoodHolderBackfillWorker.admittedAfter, null);
       assert.equal(config.robinhoodHolderLiveWorker.enabled, false);
+      assert.equal(config.robinhoodHolderJournalPruneWorker.enabled, false);
     });
     withEnv({
       ROBINHOOD_RPC_URL: 'http://127.0.0.1:8547',
@@ -368,6 +370,12 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_HOLDER_LIVE_CONFIRMATIONS: '9999',
       ROBINHOOD_HOLDER_LIVE_MAX_APPLY_EVENTS: '999999',
       ROBINHOOD_HOLDER_LIVE_RPC_TIMEOUT_MS: '1',
+      ROBINHOOD_HOLDER_JOURNAL_PRUNE_ENABLED: 'true',
+      ROBINHOOD_HOLDER_JOURNAL_PRUNE_INTERVAL_MS: '1',
+      ROBINHOOD_HOLDER_JOURNAL_PRUNE_MAX_ERROR_BACKOFF_MS: '1',
+      ROBINHOOD_HOLDER_JOURNAL_RETENTION_BLOCKS: '9999999',
+      ROBINHOOD_HOLDER_JOURNAL_PRUNE_BATCH_LIMIT: '999999',
+      ROBINHOOD_HOLDER_JOURNAL_PRUNE_MAX_BATCHES: '999',
     }, (config) => {
       assert.deepEqual(config.robinhoodHolderBackfillWorker, {
         enabled: true,
@@ -386,6 +394,14 @@ describe('runtime worker groups config', () => {
         confirmations: 1000,
         maxApplyEvents: 50_000,
         rpcTimeoutMs: 1000,
+      });
+      assert.deepEqual(config.robinhoodHolderJournalPruneWorker, {
+        enabled: true,
+        intervalMs: 10_000,
+        maxErrorBackoffMs: 10_000,
+        retentionBlocks: 1_000_000,
+        batchLimit: 50_000,
+        maxBatches: 50,
       });
     });
   });
