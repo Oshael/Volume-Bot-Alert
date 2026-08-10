@@ -18,6 +18,10 @@ describe('Robinhood holder bootstrap repository', () => {
     assert.throws(() => __private.normalizeOptions({
       admittedAfter: '2026-08-10T00:00:00.000Z', limit: 1001,
     }), /limit/);
+    assert.deepEqual(__private.normalizeColdOptions({
+      admittedBefore: '2026-08-10T00:00:00.000Z', limit: 10,
+    }), { admittedBefore: '2026-08-10T00:00:00.000Z', limit: 10 });
+    assert.throws(() => __private.normalizeColdOptions({ admittedBefore: 'invalid' }), /admittedBefore/);
   });
 
   it('seeds only catalog tokens with exact on-chain deployment provenance', async () => {
@@ -47,6 +51,35 @@ describe('Robinhood holder bootstrap repository', () => {
     assert.match(calls[0].sql, /ON CONFLICT \(chain, token_address\) DO NOTHING/);
     assert.deepEqual(calls[0].params, [
       'robinhood', '2026-08-10T00:00:00.000Z', [...EXACT_DEPLOYMENT_SOURCES], 12,
+    ]);
+  });
+
+  it('admits an old cohort only from exact deployment evidence', async () => {
+    const calls = [];
+    const repository = createRobinhoodHolderBootstrapRepository({
+      database: {
+        query: async (sql, params) => {
+          calls.push({ sql, params });
+          return { rows: [{
+            token_address: TOKEN, deployment_block: '99',
+            backfill_next_block: '99', ledger_status: 'backfilling',
+          }] };
+        },
+      },
+    });
+    assert.deepEqual(await repository.seedColdTokens({
+      admittedBefore: '2026-08-10T00:00:00.000Z', limit: 5,
+    }), [{
+      tokenAddress: TOKEN, deploymentBlock: '99',
+      backfillNextBlock: '99', ledgerStatus: 'backfilling',
+    }]);
+    assert.match(calls[0].sql, /catalog\.first_seen_at < \$2::timestamptz/);
+    assert.match(calls[0].sql, /attribution\.source = ANY\(\$3::varchar\[\]\)/);
+    assert.match(calls[0].sql, /attribution\.attribution_block IS NOT NULL/);
+    assert.match(calls[0].sql, /ORDER BY catalog\.first_seen_at DESC, catalog\.address/);
+    assert.match(calls[0].sql, /state\.token_address IS NULL/);
+    assert.deepEqual(calls[0].params, [
+      'robinhood', '2026-08-10T00:00:00.000Z', [...EXACT_DEPLOYMENT_SOURCES], 5,
     ]);
   });
 });

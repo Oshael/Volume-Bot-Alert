@@ -15,6 +15,18 @@ function normalizeOptions(input = {}) {
   return Object.freeze({ admittedAfter: admittedAfter.toISOString(), limit });
 }
 
+function normalizeColdOptions(input = {}) {
+  const admittedBefore = new Date(input.admittedBefore);
+  if (!Number.isFinite(admittedBefore.getTime())) {
+    throw new Error('holderBootstrap.admittedBefore is invalid');
+  }
+  const limit = input.limit == null ? 25 : Number(input.limit);
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) {
+    throw new Error('holderBootstrap.limit is invalid');
+  }
+  return Object.freeze({ admittedBefore: admittedBefore.toISOString(), limit });
+}
+
 function normalizeSeededRow(row) {
   return Object.freeze({
     tokenAddress: row.token_address,
@@ -64,11 +76,48 @@ function createRobinhoodHolderBootstrapRepository(options = {}) {
     return Object.freeze(result.rows.map(normalizeSeededRow));
   }
 
-  return Object.freeze({ seedNewTokens });
+  async function seedColdTokens(input = {}) {
+    const normalized = normalizeColdOptions(input);
+    const result = await database.query(
+      `WITH candidates AS MATERIALIZED (
+         SELECT catalog.address AS token_address, attribution.attribution_block
+           FROM token_catalog catalog
+           INNER JOIN robinhood_token_attributions attribution
+             ON attribution.chain = catalog.chain
+            AND attribution.token_address = catalog.address
+           LEFT JOIN robinhood_holder_token_states state
+             ON state.chain = catalog.chain AND state.token_address = catalog.address
+          WHERE catalog.chain = $1
+            AND catalog.first_seen_at < $2::timestamptz
+            AND attribution.source = ANY($3::varchar[])
+            AND attribution.attribution_block IS NOT NULL
+            AND state.token_address IS NULL
+          ORDER BY catalog.first_seen_at DESC, catalog.address
+          LIMIT $4::int
+          FOR UPDATE OF attribution SKIP LOCKED
+       )
+       INSERT INTO robinhood_holder_token_states (
+         chain, token_address, holder_count, ledger_status,
+         deployment_block, backfill_next_block
+       )
+       SELECT $1, token_address, 0, 'backfilling',
+              attribution_block, attribution_block
+         FROM candidates
+       ON CONFLICT (chain, token_address) DO NOTHING
+       RETURNING token_address, deployment_block, backfill_next_block, ledger_status`,
+      [
+        CHAIN, normalized.admittedBefore,
+        [...EXACT_DEPLOYMENT_SOURCES], normalized.limit,
+      ]
+    );
+    return Object.freeze(result.rows.map(normalizeSeededRow));
+  }
+
+  return Object.freeze({ seedColdTokens, seedNewTokens });
 }
 
 module.exports = {
   EXACT_DEPLOYMENT_SOURCES,
   createRobinhoodHolderBootstrapRepository,
-  __private: { normalizeOptions },
+  __private: { normalizeColdOptions, normalizeOptions },
 };

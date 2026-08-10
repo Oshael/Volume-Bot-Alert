@@ -11,7 +11,7 @@ const TOKENS = ['a', 'b', 'c', 'd'].map((digit) => `0x${digit.repeat(40)}`);
 after(() => db.pool.end());
 
 describe('Robinhood holder bootstrap persistence', () => {
-  it('admits only new exact deployments and remains idempotent', async () => {
+  it('admits disjoint new/cold exact cohorts and remains idempotent', async () => {
     const client = await db.getClient();
     try {
       await client.query(`CREATE TEMP TABLE token_catalog (
@@ -56,6 +56,15 @@ describe('Robinhood holder bootstrap persistence', () => {
       assert.deepEqual(await repository.seedNewTokens({
         admittedAfter: '2026-08-10T00:00:00Z', limit: 10,
       }), []);
+      assert.deepEqual(await repository.seedColdTokens({
+        admittedBefore: '2026-08-10T00:00:00Z', limit: 10,
+      }), [{
+        tokenAddress: TOKENS[1], deploymentBlock: '99',
+        backfillNextBlock: '99', ledgerStatus: 'backfilling',
+      }]);
+      assert.deepEqual(await repository.seedColdTokens({
+        admittedBefore: '2026-08-10T00:00:00Z', limit: 10,
+      }), []);
       const states = await client.query(
         `SELECT token_address, holder_count, ledger_status,
                 deployment_block, backfill_next_block
@@ -68,6 +77,9 @@ describe('Robinhood holder bootstrap persistence', () => {
       })), [{
         tokenAddress: TOKENS[0], holderCount: '0', ledgerStatus: 'backfilling',
         deploymentBlock: '101', backfillNextBlock: '101',
+      }, {
+        tokenAddress: TOKENS[1], holderCount: '0', ledgerStatus: 'backfilling',
+        deploymentBlock: '99', backfillNextBlock: '99',
       }, {
         tokenAddress: TOKENS[3], holderCount: '0', ledgerStatus: 'backfilling',
         deploymentBlock: '104', backfillNextBlock: '104',
