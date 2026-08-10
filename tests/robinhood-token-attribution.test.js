@@ -4,6 +4,7 @@ const { describe, it } = require('node:test');
 const stage110 = require('../src/utils/db-init-stage110');
 const stage113 = require('../src/utils/db-init-stage113');
 const stage114 = require('../src/utils/db-init-stage114');
+const stage115 = require('../src/utils/db-init-stage115');
 const { createRobinhoodTokenAttributionRepository } = require('../src/models/robinhood-token-attribution');
 const { runDirectCreatorTick, __private: directPrivate } = require(
   '../src/services/robinhood-direct-creator-worker'
@@ -51,6 +52,14 @@ describe('Robinhood token creator attribution', () => {
     assert.match(sql, /'blockscout', 'rpc_direct', 'launchpad_event'/);
     assert.match(sql, /attribution_factory_address ~ '\^0x\[0-9a-f\]\{40\}\$'/);
     assert.equal(group.repair, 'node src/utils/db-init-stage114.js');
+  });
+
+  it('registers an independent historical launchpad cursor', () => {
+    const sql = stage115.STATEMENTS.join('\n');
+    const group = SCHEMA_GROUPS.find((entry) => entry.key === 'stage115-robinhood-launchpad-creator-backfill');
+    assert.match(sql, /stream IN \('live', 'launchpad_backfill'\)/);
+    assert.match(sql, /ALTER COLUMN stream TYPE VARCHAR\(32\)/);
+    assert.equal(group.repair, 'node src/utils/db-init-stage115.js');
   });
 
   it('registers direct RPC provenance and its independent LIVE cursor', () => {

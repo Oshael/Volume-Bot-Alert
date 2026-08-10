@@ -2452,6 +2452,19 @@ const SCHEMA_GROUPS = [
     }],
   },
   {
+    key: 'stage115-robinhood-launchpad-creator-backfill',
+    name: 'Stage 115 Robinhood launchpad creator backfill cursor',
+    repair: 'node src/utils/db-init-stage115.js',
+    tables: [{
+      table: 'robinhood_direct_creator_cursors',
+      columns: ['stream', 'next_block', 'safe_head', 'checkpoint_block'],
+      constraints: [{
+        name: 'robinhood_direct_creator_cursors_stream_check',
+        includes: ['launchpad_backfill'],
+      }],
+    }],
+  },
+  {
     key: 'stage111-robinhood-token-holder-summaries',
     name: 'Stage 111 Robinhood token holder summaries',
     repair: 'node src/utils/db-init-stage111.js',

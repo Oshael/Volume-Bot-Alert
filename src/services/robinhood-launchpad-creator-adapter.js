@@ -28,11 +28,10 @@ function topicAddress(value, label) {
   return `0x${word.slice(-40)}`;
 }
 
-function buildLaunchpadCreatorFilter(blockNumber) {
-  const blockTag = `0x${BigInt(blockNumber).toString(16)}`;
+function buildLaunchpadCreatorFilter(fromBlock, toBlock = fromBlock) {
   return {
-    fromBlock: blockTag,
-    toBlock: blockTag,
+    fromBlock: `0x${BigInt(fromBlock).toString(16)}`,
+    toBlock: `0x${BigInt(toBlock).toString(16)}`,
     address: [...FACTORIES.keys()],
     topics: [[PONS_TOKEN_LAUNCHED_TOPIC, LAUNCHHOOD_TOKEN_LAUNCHED_TOPIC]],
   };

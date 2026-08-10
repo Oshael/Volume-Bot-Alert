@@ -67,6 +67,7 @@
     "robinhood:wallet-live-bootstrap": "node src/utils/bootstrap-robinhood-wallet-swap-live.js",
     "robinhood:signal-dry-run": "node src/utils/robinhood-signal-dry-run.js",
     "robinhood:creator-backfill": "node src/utils/backfill-robinhood-token-creators.js",
+    "robinhood:launchpad-creator-backfill": "node src/utils/backfill-robinhood-launchpad-creators.js",
     "robinhood:aggregates:backfill": "node src/utils/backfill-robinhood-market-aggregates.js",
     "robinhood:aggregates:audit": "node src/utils/audit-robinhood-market-aggregate-coverage.js",
     "robinhood:aggregates:explain": "node src/utils/explain-robinhood-market-queries.js",
