@@ -961,6 +961,9 @@ Conflito de evidência aborta tudo; o runner e a publicação continuam desligad
 A Stage 118 adiciona `journal_floor_block` nullable ao cursor holder. Floor
 ausente mantém poda/rollback dependente bloqueado; nenhum dado é apagado neste
 corte. A janela aprovada para o pruner independente é de 20.000 blocos.
+O RT2C4 implementa a poda transacional em lotes de 5.000 eventos aplicados. A
+primeira captura inicializa o floor; pendência anterior ao cutoff bloqueia deletes
+e o floor só avança após drenar o range. Ainda não existe scheduler para a poda.
 
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.

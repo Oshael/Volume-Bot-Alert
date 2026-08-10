@@ -728,6 +728,18 @@ com default de 20.000 blocos e fara deletes limitados somente no journal holder.
 Nenhuma linha e removida por esta migration e o retention geral permanece
 independente.
 
+#### Corte RT2C4 - Poda limitada do journal holder
+
+Status: implementado localmente; nenhum scheduler ligado.
+
+A primeira captura inicializa o floor no `rangeStart`. A operacao independente
+de poda usa 20.000 blocos por default e remove somente eventos aplicados abaixo
+do cutoff, em lotes de ate 5.000 linhas. Evento pendente antigo bloqueia todo o
+lote; o floor avanca apenas quando nao resta nenhuma linha abaixo do cutoff.
+Rollback abaixo do floor falha antes de tocar balances ou cursor.
+
+A operacao ainda nao e iniciada pelo `server.js` e nao depende do retention geral.
+
 Cada item acima deve ser repartido novamente se estimar mais de 500 linhas. O
 probe e a estimativa de storage sao pre-condicoes; “outros terminais fazem” nao
 substitui evidencia de volume, limites de RPC e custo de banco desta chain.
