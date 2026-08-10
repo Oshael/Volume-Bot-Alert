@@ -980,6 +980,9 @@ falha fechado e saldo negativo marca o token `drifted`, sem commit parcial.
 O RT3B3 conecta selecao, reader e commit por uma chamada limitada. Ele exige
 `ROBINHOOD_RPC_URL`, usa safe head com 12 confirmacoes, isola checkpoint orfao como
 `resyncing` e nunca promove automaticamente para `shadow`; nao ha runner ligado.
+O RT3C adiciona o runner opt-in para tokens novos: admite uma coorte limitada com
+cutoff duravel obrigatorio e processa um unico range por tick, com single-flight e
+backoff. Ele nao possui config nem wiring no servidor e permanece desligado.
 O RT4A implementa o handoff transacional: exige cobertura pelo floor live, remove
 somente overlap pendente ja aplicado pelo backfill e exige igualdade exata de
 bloco/hash antes de promover para `shadow`. Continua desligado ate existir captura
