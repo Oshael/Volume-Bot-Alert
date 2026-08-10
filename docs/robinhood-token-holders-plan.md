@@ -400,7 +400,7 @@ altera a sequencia deste quadro.
 | 1 | Probe read-only global e catalog-scoped | concluido, commitado e executado no node da VPS | RT1/RT1B; `afd0147a`, `9b43e90e` |
 | 2 | Schema e ledger shadow reversivel | concluido no codigo; migrations 116-118 ainda nao aplicadas em producao; nenhum runner ligado | RT2A-RT2C4; `43a6f9d7` ate `49609b99` |
 | 3 | Backfill/catch-up de tokens novos sem lacuna | em andamento | RT3A/RT3B prontos; RT4A handoff pronto; runner global pendente |
-| 4 | Live incremental shadow, deteccao automatica de reorg e scheduler da poda | em andamento | RT4A handoff; RT4B captura um range; RT4C1 protege baseline; loop/detector/poda pendentes |
+| 4 | Live incremental shadow, deteccao automatica de reorg e scheduler da poda | em andamento | RT4A handoff; RT4B captura; RT4C1/RT4C2 rollback seguro; loop/poda pendentes |
 | 5 | Backfill frio dos tokens antigos | pendente | depende de checkpoint/throttle/promocao |
 | 6 | Reconciliacao, promocao e publicacao REST/socket | pendente | Blockscout continua sendo fallback atual |
 | 7 | Frontend realtime/expanded chart | pendente de layout aprovado | nao reutilizar o prototipo sem decisao explicita |
@@ -908,8 +908,24 @@ como `resyncing` na mesma transacao, em vez de publicar um total possivelmente
 corrompido. Estados antigos sem fronteira conhecida tambem falham de forma
 conservadora para `resyncing`.
 
-Este corte somente torna o primitive de rewind seguro. Deteccao do ancestral
-canonico, chamada automatica do rewind e loop com lease continuam pendentes.
+Este corte somente tornou o primitive de rewind seguro. O RT4C2 abaixo conecta
+a deteccao e a chamada automatica; o loop com lease continua pendente.
+
+#### Corte RT4C2 - Deteccao e rewind automaticos
+
+Status: implementado localmente; nenhum loop ou worker ligado.
+
+Quando o checkpoint live diverge do RPC, a captura consulta os blocos distintos
+com `Transfer` ainda retidos no journal e faz busca binaria pelo ultimo hash que
+continua canonico. O rewind atomico recomeca no bloco seguinte a essa evidencia,
+mesmo que isso recue alem do fork exato, evitando lacunas. Versao otimista do
+cursor protege contra captura concorrente durante a busca.
+
+O journal nao guarda hashes de blocos sem eventos. Se nenhum bloco retido puder
+provar um ancestral, a operacao retorna `reorg-unrecoverable` sem tocar balances,
+journal ou cursor. Persistir checkpoints de ranges vazios seria uma extensao de
+schema separada; o loop, lease, aplicador continuo e scheduler da poda ainda nao
+foram ligados.
 
 Cada item acima deve ser repartido novamente se estimar mais de 500 linhas. O
 probe e a estimativa de storage sao pre-condicoes; “outros terminais fazem” nao

@@ -990,7 +990,11 @@ sem write quando o checkpoint diverge. Ainda nao existe loop ou worker ligado.
 O RT4C1 preserva a barreira `backfill_next_block` apos o handoff como limite do
 baseline historico. Rewind dentro da cauda mantem o token ativo; rewind que cruza
 essa barreira (ou estado legado sem barreira conhecida) marca `resyncing` na mesma
-transacao. A deteccao automatica do ancestral e o runner continuam desligados.
+transacao. A deteccao automatica e conectada pelo RT4C2; o runner segue desligado.
+O RT4C2 usa busca binaria nos hashes de blocos com eventos ainda retidos para
+encontrar a ultima evidencia canonica e acionar o rewind atomico. Ausencia de
+evidencia dentro do floor retorna `reorg-unrecoverable` sem writes. Blocos vazios
+nao possuem hash historico persistido; loop e worker continuam desligados.
 
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.
