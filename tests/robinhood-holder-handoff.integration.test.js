@@ -104,7 +104,7 @@ describe('Robinhood holder live handoff persistence', () => {
         `SELECT ledger_status, backfill_next_block FROM robinhood_holder_token_states
           WHERE token_address = $1`, [TOKEN]
       );
-      assert.deepEqual(state.rows[0], { ledger_status: 'shadow', backfill_next_block: null });
+      assert.deepEqual(state.rows[0], { ledger_status: 'shadow', backfill_next_block: '107' });
       await assert.rejects(
         handoff.promoteAtLiveBarrier({ tokenAddress: OTHER_TOKEN }),
         (error) => error.code === 'holder_handoff_below_floor'

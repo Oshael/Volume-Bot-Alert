@@ -517,6 +517,18 @@ async function revertAppliedEvent(client, row) {
   if (!state.rowCount) throw new Error('holder token state rejected an orphan rollback');
 }
 
+async function markStatesCrossingBaseline(client, nextBlock) {
+  const result = await client.query(
+    `UPDATE robinhood_holder_token_states
+        SET ledger_status = 'resyncing', version = version + 1, updated_at = NOW()
+      WHERE chain = 'robinhood' AND ledger_status IN ('shadow', 'live')
+        AND (backfill_next_block IS NULL OR backfill_next_block > $1)
+      RETURNING token_address`,
+    [nextBlock]
+  );
+  return result.rowCount;
+}
+
 async function commitRewind(client, rewind, affectedTokens) {
   if (affectedTokens.length) {
     await client.query(
@@ -615,10 +627,11 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
       const applied = events.filter((row) => row.applied);
       for (const row of applied) await revertAppliedEvent(client, row);
       const affectedTokens = [...new Set(applied.map((row) => row.token_address))];
+      const resyncingTokens = await markStatesCrossingBaseline(client, rewind.nextBlock);
       const committed = await commitRewind(client, rewind, affectedTokens);
       return Object.freeze({
         status: 'rewound', revertedEvents: applied.length,
-        affectedTokens: affectedTokens.length, ...committed,
+        affectedTokens: affectedTokens.length, resyncingTokens, ...committed,
       });
     });
   }

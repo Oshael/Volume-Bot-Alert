@@ -97,8 +97,7 @@ async function deleteBackfilledOverlap(client, token, backfillNextBlock) {
 async function promoteState(client, token, state) {
   const result = await client.query(
     `UPDATE robinhood_holder_token_states
-        SET ledger_status = 'shadow', backfill_next_block = NULL,
-            version = version + 1, updated_at = NOW()
+        SET ledger_status = 'shadow', version = version + 1, updated_at = NOW()
       WHERE chain = 'robinhood' AND token_address = $1
         AND ledger_status = 'backfilling' AND version = $2
         AND backfill_next_block = $3

@@ -14,6 +14,7 @@ const HASH_B = `0x${'2'.repeat(64)}`;
 const HASH_C = `0x${'7'.repeat(64)}`;
 const TOKEN = `0x${'3'.repeat(40)}`;
 const TOKEN_2 = `0x${'6'.repeat(40)}`;
+const TOKEN_3 = `0x${'8'.repeat(40)}`;
 const ALICE = `0x${'4'.repeat(40)}`;
 const BOB = `0x${'5'.repeat(40)}`;
 const ZERO_ADDRESS = `0x${'0'.repeat(40)}`;
@@ -57,7 +58,8 @@ describe('Robinhood holder ledger persistence', () => {
       const retention = createRobinhoodHolderJournalRetention({ database });
       await client.query(
         `INSERT INTO robinhood_holder_token_states
-          (token_address, holder_count, ledger_status) VALUES ($1, 1, 'shadow')`, [TOKEN]
+          (token_address, holder_count, ledger_status, backfill_next_block)
+         VALUES ($1, 1, 'shadow', 100), ($2, 0, 'shadow', 101)`, [TOKEN, TOKEN_3]
       );
       await client.query(
         `INSERT INTO robinhood_holder_balances (
@@ -184,7 +186,7 @@ describe('Robinhood holder ledger persistence', () => {
         checkpoint: { number: '99', hash: HASH_B },
       }), {
         status: 'rewound', revertedEvents: 2, affectedTokens: 1,
-        removedEvents: 3, cursorVersion: 2,
+        resyncingTokens: 1, removedEvents: 3, cursorVersion: 2,
       });
       const restored = await client.query(
         `SELECT wallet_address, balance_raw, last_block_number,
@@ -225,6 +227,11 @@ describe('Robinhood holder ledger persistence', () => {
         [TOKEN_2]
       );
       assert.equal(stillDrifted.rows[0].ledger_status, 'drifted');
+      const crossedBaseline = await client.query(
+        `SELECT ledger_status FROM robinhood_holder_token_states WHERE token_address = $1`,
+        [TOKEN_3]
+      );
+      assert.equal(crossedBaseline.rows[0].ledger_status, 'resyncing');
 
       await client.query(
         `UPDATE robinhood_holder_cursors
