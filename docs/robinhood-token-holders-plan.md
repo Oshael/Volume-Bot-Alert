@@ -399,8 +399,8 @@ altera a sequencia deste quadro.
 |---|---|---|---|
 | 1 | Probe read-only global e catalog-scoped | concluido, commitado e executado no node da VPS | RT1/RT1B; `afd0147a`, `9b43e90e` |
 | 2 | Schema e ledger shadow reversivel | concluido no codigo; migrations 116-118 ainda nao aplicadas em producao; nenhum runner ligado | RT2A-RT2C4; `43a6f9d7` ate `49609b99` |
-| 3 | Backfill/catch-up de tokens novos sem lacuna | em andamento | RT3A-RT3C runner opt-in pronto/desligado; RT4A/RT4E1 handoff retido pronto; wiring pendente |
-| 4 | Live incremental shadow, deteccao automatica de reorg e scheduler da poda | em andamento | RT4A-RT4C2 base segura; RT4D1/D2 loop desligado; RT4E1/RT4E2 handoff integrado; wiring/lease/poda pendentes |
+| 3 | Backfill/catch-up de tokens novos sem lacuna | concluido no codigo/desligado | RT3A-RT3C runner opt-in; RT4A/RT4E1 handoff retido; RT4F1 wiring com lease |
+| 4 | Live incremental shadow, deteccao automatica de reorg e scheduler da poda | em andamento | RT4A-RT4E2 base integrada; RT4F1 wiring/lease pronto e desligado; poda pendente |
 | 5 | Backfill frio dos tokens antigos | pendente | depende de checkpoint/throttle/promocao |
 | 6 | Reconciliacao, promocao e publicacao REST/socket | pendente | Blockscout continua sendo fallback atual |
 | 7 | Frontend realtime/expanded chart | pendente de layout aprovado | nao reutilizar o prototipo sem decisao explicita |
@@ -878,8 +878,8 @@ duravel; nao e derivado do horario de restart. O loop e single-flight, aplica
 backoff exponencial limitado e isola falhas ao pipeline holder.
 
 O runtime usa exclusivamente `ROBINHOOD_RPC_URL` pelo executor RT3B3. Este corte
-nao adiciona entrada em config, import em `server.js` ou lease; portanto pull ou
-presenca de env nao inicia o worker.
+nasceu sem config, import em `server.js` ou lease; o RT4F1 abaixo adiciona esse
+wiring mantendo o worker opt-in e desligado por default.
 
 #### Corte RT4A - Handoff atomico para shadow
 
@@ -996,8 +996,24 @@ handoff quanto aplicacao. Status desconhecido falha fechado como erro fatal de
 contrato.
 
 O runtime usa o mesmo database e o mesmo reader/RPC do capture para repository e
-coordenador de handoff. Telemetria separa promocoes e tokens isolados. Nao foi
-adicionado timer, RPC alternativo, config, import em `server.js` ou lease.
+coordenador de handoff. Telemetria separa promocoes e tokens isolados. O RT4F1
+abaixo adiciona config, grupo e lease sem RPC alternativo nem ativacao default.
+
+#### Corte RT4F1 - Grupo isolado, config e leases
+
+Status: implementado no codigo e desligado por default.
+
+Backfill de tokens novos e live holder pertencem ao novo grupo isolado
+`robinhood-holders`, com leases distintas. Ambos exigem opt-in; se qualquer um
+for habilitado, `ROBINHOOD_RPC_URL` e obrigatorio. O backfill tambem exige
+`ROBINHOOD_HOLDER_BACKFILL_ADMITTED_AFTER` valido e duravel. Config invalida
+interrompe o boot em vez de escolher cutoff ou RPC implicitamente.
+
+O wiring registra telemetria, propaga fatal para a lease e para os dois workers
+no shutdown gracioso. `all` nao inclui grupos Robinhood isolados. Pull, migrations
+ou mera presenca de `ROBINHOOD_RPC_URL` nao habilitam holders; e necessario usar
+o grupo `robinhood-holders` e ativar cada flag explicitamente. No rollout, ligar
+primeiro `ROBINHOOD_HOLDER_LIVE_ENABLED` e somente depois o backfill.
 
 Cada item acima deve ser repartido novamente se estimar mais de 500 linhas. O
 probe e a estimativa de storage sao pre-condicoes; “outros terminais fazem” nao

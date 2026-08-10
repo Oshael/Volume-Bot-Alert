@@ -982,7 +982,7 @@ O RT3B3 conecta selecao, reader e commit por uma chamada limitada. Ele exige
 `resyncing` e nunca promove automaticamente para `shadow`; nao ha runner ligado.
 O RT3C adiciona o runner opt-in para tokens novos: admite uma coorte limitada com
 cutoff duravel obrigatorio e processa um unico range por tick, com single-flight e
-backoff. Ele nao possui config nem wiring no servidor e permanece desligado.
+backoff. O RT4F1 abaixo faz o wiring no servidor mantendo-o desligado por default.
 O RT4A implementa o handoff transacional: exige cobertura pelo floor live, remove
 somente overlap pendente ja aplicado pelo backfill e exige igualdade exata de
 bloco/hash antes de promover para `shadow`. Continua desligado ate existir captura
@@ -1012,7 +1012,11 @@ preserva a cauda posterior para aplicacao em `shadow`. Checkpoint orfao isola o
 token como `resyncing`.
 O RT4E2 compoe um handoff por tick canonico antes do aplicador, usando o mesmo
 database e reader/RPC da captura. Recuperacao pula handoff e aplicacao; status
-desconhecido falha fechado. Worker, lease, config e wiring continuam desligados.
+desconhecido falha fechado. O RT4F1 abaixo adiciona lease/config opt-in.
+O RT4F1 cria o grupo isolado `robinhood-holders` e conecta live/backfill a leases
+distintas. As duas flags ficam false por default; RPC proprio e exigido ao ligar,
+e o backfill exige cutoff duravel. Pull/env de RPC nao inicia os workers. O rollout
+deve ligar live antes do backfill; scheduler da poda continua pendente.
 
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.
