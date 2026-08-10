@@ -94,6 +94,23 @@ describe('Robinhood holder Transfer reader', () => {
     assert.deepEqual(result.transfers, []);
   });
 
+  it('filters a global topic response to tracked holder tokens before decoding', async () => {
+    const nft = `0x${'9'.repeat(40)}`;
+    const source = rpc(async (method, params) => {
+      if (method === 'eth_getBlockByNumber') return { number: '0x64', hash: HASH_A };
+      assert.equal('address' in params[0], false);
+      return [log(), log({ address: nft, topics: [...log().topics, BOB], data: '0x' })];
+    });
+    const result = await createRobinhoodHolderTransferReader({
+      rpcClient: source.client,
+    }).readGlobalRange({ tokenAddresses: [TOKEN], fromBlock: 100, toBlock: 100 });
+
+    assert.equal(result.transfers.length, 1);
+    assert.deepEqual(result.telemetry, {
+      requests: 1, splits: 0, observedLogs: 2, ignoredLogs: 1,
+    });
+  });
+
   it('fails closed on wrong chain, oversized ranges and conflicting evidence', async () => {
     const wrongChain = { request: async () => '0x1' };
     await assert.rejects(

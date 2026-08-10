@@ -634,8 +634,19 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     return normalizeCursorRow(result.rows[0]);
   }
 
+  async function listTrackedTokenAddresses() {
+    const result = await database.query(
+      `SELECT token_address FROM robinhood_holder_token_states
+        WHERE chain = $1 AND ledger_status IN ('backfilling', 'shadow', 'live')
+        ORDER BY token_address`,
+      [CHAIN]
+    );
+    return Object.freeze(result.rows.map((row) => row.token_address));
+  }
+
   return Object.freeze({
-    appendCapturedRange, applyNextPendingEvent, rewindOrphanedRange, getCursor,
+    appendCapturedRange, applyNextPendingEvent, rewindOrphanedRange,
+    getCursor, listTrackedTokenAddresses,
   });
 }
 

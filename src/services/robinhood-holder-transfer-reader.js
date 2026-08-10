@@ -48,7 +48,9 @@ function topicAddress(value, label) {
 function decodeTransferLog(log, context) {
   if (log?.removed === true) throw new Error('Transfer log is marked removed');
   const tokenAddress = address(log?.address, 'log.address');
-  if (tokenAddress !== context.tokenAddress) throw new Error('Transfer log token does not match filter');
+  if (context.tokenAddress && tokenAddress !== context.tokenAddress) {
+    throw new Error('Transfer log token does not match filter');
+  }
   const topics = Array.isArray(log?.topics) ? log.topics : [];
   if (topics.length !== 3 || String(topics[0]).toLowerCase() !== TRANSFER_TOPIC) {
     throw new Error('Transfer log topics are invalid');
@@ -71,6 +73,19 @@ function decodeTransferLog(log, context) {
     toWallet: topicAddress(topics[2], 'log.to'),
     amountRaw: BigInt(amount).toString(),
   });
+}
+
+function orderTransfers(logs, context) {
+  const transfers = logs.map((log) => decodeTransferLog(log, context)).sort((left, right) => (
+    BigInt(left.blockNumber) < BigInt(right.blockNumber) ? -1
+      : BigInt(left.blockNumber) > BigInt(right.blockNumber) ? 1
+        : left.transactionIndex - right.transactionIndex || left.logIndex - right.logIndex
+  ));
+  const identities = new Set(transfers.map(({ transactionHash, logIndex }) => (
+    `${transactionHash}:${logIndex}`
+  )));
+  if (identities.size !== transfers.length) throw new Error('holder replay returned duplicate logs');
+  return Object.freeze(transfers);
 }
 
 function isAdaptiveRangeError(error) {
@@ -100,10 +115,11 @@ function createRobinhoodHolderTransferReader(options = {}) {
   async function readLogs(fromBlock, toBlock, tokenAddress, telemetry) {
     telemetry.requests += 1;
     try {
-      const logs = await rpcClient.request('eth_getLogs', [{
-        address: tokenAddress, fromBlock: blockTag(fromBlock), toBlock: blockTag(toBlock),
-        topics: [TRANSFER_TOPIC],
-      }]);
+      const filter = {
+        fromBlock: blockTag(fromBlock), toBlock: blockTag(toBlock), topics: [TRANSFER_TOPIC],
+      };
+      if (tokenAddress) filter.address = tokenAddress;
+      const logs = await rpcClient.request('eth_getLogs', [filter]);
       if (!Array.isArray(logs)) throw new Error('eth_getLogs result must be an array');
       return logs;
     } catch (error) {
@@ -156,15 +172,7 @@ function createRobinhoodHolderTransferReader(options = {}) {
     ]);
     const checkpointHash = checkpoint.hash;
     const context = { tokenAddress, fromBlock, toBlock, checkpointHash };
-    const transfers = logs.map((log) => decodeTransferLog(log, context)).sort((left, right) => (
-      BigInt(left.blockNumber) < BigInt(right.blockNumber) ? -1
-        : BigInt(left.blockNumber) > BigInt(right.blockNumber) ? 1
-          : left.transactionIndex - right.transactionIndex || left.logIndex - right.logIndex
-    ));
-    const identities = new Set(transfers.map(({ transactionHash, logIndex }) => (
-      `${transactionHash}:${logIndex}`
-    )));
-    if (identities.size !== transfers.length) throw new Error('holder replay returned duplicate logs');
+    const transfers = orderTransfers(logs, context);
     return Object.freeze({
       tokenAddress, fromBlock: fromBlock.toString(), toBlock: toBlock.toString(),
       nextBlock: (toBlock + 1n).toString(),
@@ -173,7 +181,37 @@ function createRobinhoodHolderTransferReader(options = {}) {
     });
   }
 
-  return Object.freeze({ assertChain, getSafeHead, matchesCheckpoint, readBlock, readRange });
+  async function readGlobalRange(input = {}) {
+    if (!Array.isArray(input.tokenAddresses)) throw new TypeError('tokenAddresses must be an array');
+    const allowed = new Set(input.tokenAddresses.map((value) => address(value, 'tokenAddress')));
+    const fromBlock = quantity(input.fromBlock, 'fromBlock');
+    const toBlock = quantity(input.toBlock, 'toBlock');
+    if (fromBlock > toBlock) throw new Error('holder live range is inverted');
+    if (toBlock - fromBlock + 1n > MAX_RANGE_BLOCKS) {
+      throw new Error(`holder live range exceeds ${MAX_RANGE_BLOCKS} blocks`);
+    }
+    await assertChain();
+    const telemetry = { requests: 0, splits: 0 };
+    const [observedLogs, checkpoint] = await Promise.all([
+      allowed.size ? readLogs(fromBlock, toBlock, null, telemetry) : [],
+      readBlock(toBlock),
+    ]);
+    const logs = observedLogs.filter((log) => allowed.has(String(log?.address || '').toLowerCase()));
+    const context = { tokenAddress: null, fromBlock, toBlock, checkpointHash: checkpoint.hash };
+    return Object.freeze({
+      fromBlock: fromBlock.toString(), toBlock: toBlock.toString(),
+      nextBlock: (toBlock + 1n).toString(), scopeTokens: allowed.size,
+      checkpoint, transfers: orderTransfers(logs, context),
+      telemetry: Object.freeze({
+        ...telemetry, observedLogs: observedLogs.length,
+        ignoredLogs: observedLogs.length - logs.length,
+      }),
+    });
+  }
+
+  return Object.freeze({
+    assertChain, getSafeHead, matchesCheckpoint, readBlock, readGlobalRange, readRange,
+  });
 }
 
 module.exports = {
