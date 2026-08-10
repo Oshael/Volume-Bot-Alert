@@ -664,6 +664,19 @@ pendentes e rollback/prune por bloco; ele nao e um historico permanente.
 O proximo corte implementa as operacoes atomicas do repositorio shadow. Criar as
 tabelas isoladamente nao altera o count Blockscout atualmente publicado.
 
+#### Corte RT2B1 - Captura transacional shadow
+
+Status: implementado localmente; nenhum runner ligado.
+
+O repositorio captura ranges normalizados no journal e avanca o cursor live na
+mesma transacao. Repetir evidencia identica e idempotente; a mesma identidade com
+payload divergente falha como conflito, e cursor com versao stale causa rollback
+do range inteiro. O `rangeStart` precisa coincidir com o cursor persistido e o
+checkpoint precisa ser exatamente `nextBlock - 1`, impedindo salto de blocos.
+
+O RT2B2 aplicara eventos pendentes aos balances/totais e marcara no journal os
+valores antes/depois. Ate la, esta captura nao deve ser iniciada em producao.
+
 Cada item acima deve ser repartido novamente se estimar mais de 500 linhas. O
 probe e a estimativa de storage sao pre-condicoes; “outros terminais fazem” nao
 substitui evidencia de volume, limites de RPC e custo de banco desta chain.

@@ -946,6 +946,9 @@ O RT2A adiciona somente a Stage 116 do ledger shadow: balances positivos em
 `NUMERIC(78,0)`, estado/total por token, cursor live e journal curto reversível.
 Não existe writer nem leitura pública desse ledger neste corte; Blockscout segue
 como fonte dos counts visíveis até promoção posterior.
+O RT2B1 adiciona o repositório de captura shadow: journal e cursor avançam na
+mesma transação, com conflito de evidência e optimistic version tratados como
+rollback. Ainda não existe runner nem aplicação dos eventos aos balances.
 
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.
