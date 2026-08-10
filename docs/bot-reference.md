@@ -984,6 +984,9 @@ O RT4A implementa o handoff transacional: exige cobertura pelo floor live, remov
 somente overlap pendente ja aplicado pelo backfill e exige igualdade exata de
 bloco/hash antes de promover para `shadow`. Continua desligado ate existir captura
 global `Transfer`.
+O RT4B captura um range global confirmado por chamada, filtra localmente somente
+tokens holder ativos, grava journal/cursor atomicamente e retorna `reorg-detected`
+sem write quando o checkpoint diverge. Ainda nao existe loop ou worker ligado.
 
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.

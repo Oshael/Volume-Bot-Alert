@@ -400,7 +400,7 @@ altera a sequencia deste quadro.
 | 1 | Probe read-only global e catalog-scoped | concluido, commitado e executado no node da VPS | RT1/RT1B; `afd0147a`, `9b43e90e` |
 | 2 | Schema e ledger shadow reversivel | concluido no codigo; migrations 116-118 ainda nao aplicadas em producao; nenhum runner ligado | RT2A-RT2C4; `43a6f9d7` ate `49609b99` |
 | 3 | Backfill/catch-up de tokens novos sem lacuna | em andamento | RT3A/RT3B prontos; RT4A handoff pronto; runner global pendente |
-| 4 | Live incremental shadow, deteccao automatica de reorg e scheduler da poda | em andamento | RT4A implementa handoff atomico; captura global e runner pendentes |
+| 4 | Live incremental shadow, deteccao automatica de reorg e scheduler da poda | em andamento | RT4A handoff; RT4B captura um range; loop/reorg/poda pendentes |
 | 5 | Backfill frio dos tokens antigos | pendente | depende de checkpoint/throttle/promocao |
 | 6 | Reconciliacao, promocao e publicacao REST/socket | pendente | Blockscout continua sendo fallback atual |
 | 7 | Frontend realtime/expanded chart | pendente de layout aprovado | nao reutilizar o prototipo sem decisao explicita |
@@ -880,6 +880,20 @@ captura live seguinte recomeca exatamente no proximo bloco.
 A operacao pressupoe que o cursor `live` represente captura global do topico
 `Transfer`. O runner dessa captura ainda nao existe; portanto o handoff nao esta
 ligado e nao deve ser chamado em producao ate essa garantia ser implementada.
+
+#### Corte RT4B - Captura global de um range confirmado
+
+Status: implementado localmente; nenhum loop ligado.
+
+A operacao valida o checkpoint persistido, le no maximo 250 blocos ate o safe
+head e grava transfers/cursor atomicamente pelo ledger existente. A primeira
+execucao ancora o cursor no safe head atual; concorrencia continua protegida pela
+versao otimista do cursor. Checkpoint divergente retorna `reorg-detected` sem write.
+
+O request RPC usa o topico global sem filtro de address, mas decodifica somente
+contratos presentes nos estados holder ativos. Isso ignora ERC-721 e outros logs
+homonimos observados no probe sem multiplicar chamadas por 100 mil tokens. Loop,
+lease, rollback automatico, aplicador e scheduler da poda continuam pendentes.
 
 Cada item acima deve ser repartido novamente se estimar mais de 500 linhas. O
 probe e a estimativa de storage sao pre-condicoes; “outros terminais fazem” nao
