@@ -641,6 +641,8 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
 
 module.exports = {
   createRobinhoodHolderLedgerRepository,
+  deriveHolderBalanceChanges: deriveBalanceChanges,
+  normalizeHolderTransfer: normalizeTransfer,
   __private: {
     deriveBalanceChanges, normalizeCursor, normalizeRewind, normalizeTransfer, validateRange,
   },
