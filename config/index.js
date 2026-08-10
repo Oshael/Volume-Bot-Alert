@@ -466,6 +466,10 @@ const robinhoodHolderBackfillEnabled = parseBoolean(
 const robinhoodHolderBackfillAdmittedAfter = parseOptionalTimestamp(
   process.env.ROBINHOOD_HOLDER_BACKFILL_ADMITTED_AFTER
 );
+const robinhoodHolderColdEnabled = parseBoolean(process.env.ROBINHOOD_HOLDER_COLD_ENABLED, false);
+const robinhoodHolderColdAdmittedBefore = parseOptionalTimestamp(
+  process.env.ROBINHOOD_HOLDER_COLD_ADMITTED_BEFORE
+);
 const robinhoodHolderLiveEnabled = parseBoolean(process.env.ROBINHOOD_HOLDER_LIVE_ENABLED, false);
 const telegramDeliveryIntervalMs = parseIntegerInRange(
   process.env.TELEGRAM_DELIVERY_INTERVAL_MS, 1_000, 250, 60_000
@@ -535,7 +539,10 @@ if (workerGroups.isolationConflict) {
 if (robinhoodHolderBackfillEnabled && !robinhoodHolderBackfillAdmittedAfter) {
   missing.push('ROBINHOOD_HOLDER_BACKFILL_ADMITTED_AFTER');
 }
-if ((robinhoodHolderBackfillEnabled || robinhoodHolderLiveEnabled)
+if (robinhoodHolderColdEnabled && !robinhoodHolderColdAdmittedBefore) {
+  missing.push('ROBINHOOD_HOLDER_COLD_ADMITTED_BEFORE');
+}
+if ((robinhoodHolderBackfillEnabled || robinhoodHolderColdEnabled || robinhoodHolderLiveEnabled)
     && !String(process.env.ROBINHOOD_RPC_URL || '').trim()) {
   missing.push('ROBINHOOD_RPC_URL for Robinhood holder workers');
 }
@@ -975,6 +982,23 @@ module.exports = {
     confirmations: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_BACKFILL_CONFIRMATIONS, 12, 0, 1000
     ),
+  },
+
+  robinhoodHolderColdWorker: {
+    enabled: robinhoodHolderColdEnabled,
+    admittedBefore: robinhoodHolderColdAdmittedBefore,
+    intervalMs: parseIntegerInRange(process.env.ROBINHOOD_HOLDER_COLD_INTERVAL_MS, 60_000, 10_000, 3_600_000),
+    maxErrorBackoffMs: parseIntegerInRange(process.env.ROBINHOOD_HOLDER_COLD_MAX_ERROR_BACKOFF_MS, 900_000, 10_000, 3_600_000),
+    candidateLimit: parseIntegerInRange(process.env.ROBINHOOD_HOLDER_COLD_CANDIDATE_LIMIT, 10, 1, 10),
+    retryMs: parseIntegerInRange(process.env.ROBINHOOD_HOLDER_COLD_RETRY_MS, 604_800_000, 60_000, 2_592_000_000),
+    rangeSize: parseIntegerInRange(process.env.ROBINHOOD_HOLDER_COLD_RANGE_SIZE, 250, 1, 5000),
+    confirmations: parseIntegerInRange(process.env.ROBINHOOD_HOLDER_COLD_CONFIRMATIONS, 12, 0, 1000),
+    blockscoutTimeoutMs: parseIntegerInRange(process.env.ROBINHOOD_HOLDER_COLD_BLOCKSCOUT_TIMEOUT_MS, 10_000, 1000, 15_000),
+    requestOptions: {
+      requestsPerSecond: parseFloatInRange(process.env.ROBINHOOD_HOLDER_COLD_REQUESTS_PER_SECOND, 0.25, 0.1, 0.5),
+      concurrency: 1,
+      maxRetries: parseIntegerInRange(process.env.ROBINHOOD_HOLDER_COLD_REQUEST_MAX_RETRIES, 1, 0, 1),
+    },
   },
 
   robinhoodHolderLiveWorker: {

@@ -107,6 +107,7 @@ describe('Robinhood Blockscout metadata client', () => {
     await assert.rejects(() => client.getContractCreators([TOKEN]), (error) => {
       assert.equal(error.code, 'credits_exhausted');
       assert.equal(error.creditsRemaining, 0);
+      assert.equal(error.retryable, false);
       return true;
     });
   });
@@ -115,7 +116,11 @@ describe('Robinhood Blockscout metadata client', () => {
     const failed = createRobinhoodBlockscoutMetadataClient({
       fetchImpl: async () => response(503, null),
     });
-    await assert.rejects(() => failed.getTokenMetadata(TOKEN), /HTTP 503/);
+    await assert.rejects(() => failed.getTokenMetadata(TOKEN), (error) => {
+      assert.match(error.message, /HTTP 503/);
+      assert.equal(error.retryable, true);
+      return true;
+    });
 
     const mismatched = createRobinhoodBlockscoutMetadataClient({
       fetchImpl: async () => response(200, {

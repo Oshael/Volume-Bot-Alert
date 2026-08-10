@@ -346,11 +346,15 @@ describe('runtime worker groups config', () => {
     withEnv({
       ROBINHOOD_HOLDER_BACKFILL_ENABLED: undefined,
       ROBINHOOD_HOLDER_BACKFILL_ADMITTED_AFTER: undefined,
+      ROBINHOOD_HOLDER_COLD_ENABLED: undefined,
+      ROBINHOOD_HOLDER_COLD_ADMITTED_BEFORE: undefined,
       ROBINHOOD_HOLDER_LIVE_ENABLED: undefined,
       ROBINHOOD_HOLDER_JOURNAL_PRUNE_ENABLED: undefined,
     }, (config) => {
       assert.equal(config.robinhoodHolderBackfillWorker.enabled, false);
       assert.equal(config.robinhoodHolderBackfillWorker.admittedAfter, null);
+      assert.equal(config.robinhoodHolderColdWorker.enabled, false);
+      assert.equal(config.robinhoodHolderColdWorker.admittedBefore, null);
       assert.equal(config.robinhoodHolderLiveWorker.enabled, false);
       assert.equal(config.robinhoodHolderJournalPruneWorker.enabled, false);
     });
@@ -363,6 +367,17 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_HOLDER_BACKFILL_SEED_LIMIT: '9999',
       ROBINHOOD_HOLDER_BACKFILL_RANGE_SIZE: '9999',
       ROBINHOOD_HOLDER_BACKFILL_CONFIRMATIONS: '9999',
+      ROBINHOOD_HOLDER_COLD_ENABLED: 'true',
+      ROBINHOOD_HOLDER_COLD_ADMITTED_BEFORE: '2026-08-10T00:00:00Z',
+      ROBINHOOD_HOLDER_COLD_INTERVAL_MS: '1',
+      ROBINHOOD_HOLDER_COLD_MAX_ERROR_BACKOFF_MS: '1',
+      ROBINHOOD_HOLDER_COLD_CANDIDATE_LIMIT: '9999',
+      ROBINHOOD_HOLDER_COLD_RETRY_MS: '9999999999',
+      ROBINHOOD_HOLDER_COLD_RANGE_SIZE: '9999',
+      ROBINHOOD_HOLDER_COLD_CONFIRMATIONS: '9999',
+      ROBINHOOD_HOLDER_COLD_BLOCKSCOUT_TIMEOUT_MS: '1',
+      ROBINHOOD_HOLDER_COLD_REQUESTS_PER_SECOND: '99',
+      ROBINHOOD_HOLDER_COLD_REQUEST_MAX_RETRIES: '99',
       ROBINHOOD_HOLDER_LIVE_ENABLED: 'true',
       ROBINHOOD_HOLDER_LIVE_INTERVAL_MS: '999999',
       ROBINHOOD_HOLDER_LIVE_MAX_ERROR_BACKOFF_MS: '1',
@@ -385,6 +400,14 @@ describe('runtime worker groups config', () => {
         seedLimit: 1000,
         rangeSize: 5000,
         confirmations: 1000,
+      });
+      assert.deepEqual(config.robinhoodHolderColdWorker, {
+        enabled: true,
+        admittedBefore: '2026-08-10T00:00:00.000Z',
+        intervalMs: 10_000, maxErrorBackoffMs: 10_000,
+        candidateLimit: 10, retryMs: 2_592_000_000,
+        rangeSize: 5000, confirmations: 1000, blockscoutTimeoutMs: 1000,
+        requestOptions: { requestsPerSecond: 0.5, concurrency: 1, maxRetries: 1 },
       });
       assert.deepEqual(config.robinhoodHolderLiveWorker, {
         enabled: true,
@@ -420,6 +443,21 @@ describe('runtime worker groups config', () => {
 
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /ROBINHOOD_HOLDER_BACKFILL_ADMITTED_AFTER/);
+  });
+
+  it('fails fast when holder cold runtime lacks its durable cutoff', () => {
+    const result = spawnSync(process.execPath, ['-e', "require('./config')"], {
+      cwd: ROOT_DIR,
+      env: {
+        ...process.env,
+        ROBINHOOD_RPC_URL: 'http://127.0.0.1:8547',
+        ROBINHOOD_HOLDER_COLD_ENABLED: 'true',
+        ROBINHOOD_HOLDER_COLD_ADMITTED_BEFORE: '',
+      },
+      encoding: 'utf8',
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /ROBINHOOD_HOLDER_COLD_ADMITTED_BEFORE/);
   });
 
   it('keeps the DexScreener profile fast path disabled and bounded by default', () => {

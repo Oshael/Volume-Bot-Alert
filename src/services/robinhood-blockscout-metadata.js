@@ -14,6 +14,7 @@ class RobinhoodBlockscoutMetadataError extends Error {
     this.code = code;
     this.httpStatus = details.httpStatus ?? null;
     this.creditsRemaining = details.creditsRemaining ?? null;
+    this.retryable = isRetryableProviderError(this);
   }
 }
 
