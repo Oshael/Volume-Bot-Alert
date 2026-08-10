@@ -1,6 +1,7 @@
 const db = require('../models/db');
 const { createRobinhoodHolderBackfillRepository } = require('../models/robinhood-holder-backfill');
 const { createEvmJsonRpcClient } = require('./evm-json-rpc-client');
+const { resolveRobinhoodHolderRpcProvider } = require('./robinhood-holder-rpc');
 const { createRobinhoodHolderTransferReader } = require('./robinhood-holder-transfer-reader');
 
 const PROVIDER_NAME = 'robinhood-holder-backfill';
@@ -14,9 +15,7 @@ function boundedInteger(value, fallback, minimum, maximum, label) {
 }
 
 function resolveRpcProvider(env = process.env) {
-  const url = String(env.ROBINHOOD_RPC_URL || '').trim();
-  if (!url) throw new Error('ROBINHOOD_RPC_URL is required for holder backfill');
-  return Object.freeze({ name: PROVIDER_NAME, url });
+  return resolveRobinhoodHolderRpcProvider(env, PROVIDER_NAME);
 }
 
 function createRobinhoodHolderBackfillExecutor(options = {}) {
