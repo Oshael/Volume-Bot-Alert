@@ -2,6 +2,7 @@ const db = require('../models/db');
 const userAlertEvent = require('../models/user-alert-event');
 const userCustomAlertRule = require('../models/user-custom-alert-rule');
 const backendAlertPublisher = require('./backend-alert-publisher');
+const alertTickerPeers = require('./alert-ticker-peers');
 const {
   issueAutomaticAlertPublicationAuthorization,
 } = require('./automatic-alert-publication-guard');
@@ -48,7 +49,28 @@ function createRobinhoodAlertDelivery(options = {}) {
   const eventModel = options.userAlertEvent || userAlertEvent;
   const customRuleModel = options.userCustomAlertRule || userCustomAlertRule;
   const publisher = options.backendAlertPublisher || backendAlertPublisher;
+  const tickerPeerService = options.alertTickerPeers || alertTickerPeers;
   const database = options.db || db;
+
+  async function enrichIntentWithTickerPeers(intent, cache) {
+    const address = intent.tokenAddress;
+    let snapshotPromise = cache.get(address);
+    if (!snapshotPromise) {
+      snapshotPromise = tickerPeerService.buildTickerPeerSnapshotForAlert({
+        chain: CHAIN,
+        address,
+        symbol: intent.payload?.symbol || null,
+        name: intent.payload?.name || null,
+      }, { snapshotTsMs: new Date(intent.triggeredAt).getTime() });
+      cache.set(address, snapshotPromise);
+    }
+    const tickerPeers = await snapshotPromise;
+    if (!tickerPeers) return intent;
+    return {
+      ...intent,
+      payload: { ...intent.payload, tickerPeers },
+    };
+  }
 
   async function persistCustomIntent(intent, authorization) {
     const client = await database.getClient();
@@ -112,10 +134,13 @@ function createRobinhoodAlertDelivery(options = {}) {
       errors: 0,
       lastError: null,
     };
+    const tickerPeersByAddress = new Map();
 
     for (const rawIntent of intents) {
       try {
-        const intent = validateIntent(rawIntent);
+        const intent = await enrichIntentWithTickerPeers(
+          validateIntent(rawIntent), tickerPeersByAddress,
+        );
         const event = await persistIntent(intent, authorization);
         if (!event) {
           summary.duplicates += 1;

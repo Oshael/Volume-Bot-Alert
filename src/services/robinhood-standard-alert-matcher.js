@@ -67,6 +67,7 @@ function payload(signal, extras = {}) {
     volume6h: numberOrNull(signal.volumeWindows?.['6h']?.usd),
     volume24h: numberOrNull(signal.volumeWindows?.['24h']?.usd),
     tokenAgeMs: numberOrNull(signal.tokenAge.ageMs),
+    tokenCreatedAt: timestampMs(signal.tokenAge.createdAt),
     ...extras,
   });
 }

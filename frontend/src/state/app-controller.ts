@@ -8741,14 +8741,18 @@ export function createAppController(): AppController {
     };
   }
 
-  function seedExpandedSparklineFromAlert(alertId: string, address: string) {
+  function seedExpandedSparklineFromAlert(
+    alertId: string,
+    address: string,
+    chain: TokenChain = 'solana',
+  ) {
     const normalized = String(address || '').trim();
     const alertSparkline = state.data.alertSparklineById[String(alertId || '').trim()];
     if (!normalized || !hasRenderableSparklineSeries(alertSparkline)) {
       return null;
     }
 
-    const cacheKey = getExpandedSparklineCacheKey(normalized, undefined, 'solana');
+    const cacheKey = getExpandedSparklineCacheKey(normalized, undefined, chain);
     const existing = state.data.expandedSparklineByAddress[cacheKey];
     if (isExpandedSparklineCacheFresh(existing)) {
       return existing;
@@ -8756,7 +8760,7 @@ export function createAppController(): AppController {
 
     const seed = {
       ...alertSparkline,
-      chain: 'solana',
+      chain,
       address: normalized,
       loading: false,
     } satisfies TokenSparklineEntry;
@@ -13786,37 +13790,42 @@ export function createAppController(): AppController {
         return;
       }
       const sourceAlert = state.data.alerts.find((item) => item.id === alertId);
-      if (sourceAlert && (sourceAlert.chain || 'solana') !== 'solana') {
+      const identity = createLegacyCompatibleTokenIdentity(sourceAlert?.chain || 'solana', normalized);
+      if (state.data.chainReadiness[identity.chain]?.capabilities.charts !== true) {
         return;
       }
 
-      restorePreferredExpandedSparklineGranularityForAddress(normalized);
-      void refreshCustomAlertRules().catch(() => {});
-      const seed = seedExpandedSparklineFromAlert(alertId, normalized);
+      restorePreferredExpandedSparklineGranularityForAddress(identity.address, identity.chain);
+      if (identity.chain === 'solana') void refreshCustomAlertRules().catch(() => {});
+      const seed = seedExpandedSparklineFromAlert(alertId, identity.address, identity.chain);
 
       if (state.ui.expandedSparklineAddress && (
-        state.ui.expandedSparklineAddress !== normalized
-        || state.ui.expandedSparklineChain !== 'solana'
+        state.ui.expandedSparklineAddress !== identity.address
+        || state.ui.expandedSparklineChain !== identity.chain
       )) {
         unsubscribeMarketChart(state.ui.expandedSparklineAddress, state.ui.expandedSparklineChain);
       }
-      state.ui.expandedSparklineChain = 'solana';
-      state.ui.expandedSparklineAddress = normalized;
-      subscribeMarketChart(normalized, 'solana');
+      state.ui.expandedSparklineChain = identity.chain;
+      state.ui.expandedSparklineAddress = identity.address;
+      subscribeMarketChart(identity.address, identity.chain);
       state.ui.mockTradingPnlAddress = null;
       if (typeof window !== 'undefined') {
-        const nextPath = getWorkspaceSparklinePath(state.ui.workspace, normalized);
+        const nextPath = getWorkspaceSparklinePath(state.ui.workspace, identity.address, identity.chain);
         if (window.location.pathname !== nextPath) {
           window.history.pushState({}, document.title, nextPath);
         }
       }
       emit('overlay');
-      if (isExpandedSparklineCacheFresh(getExpandedSparklineCacheEntry(normalized))) {
+      if (isExpandedSparklineCacheFresh(getExpandedSparklineCacheEntry(
+        identity.address,
+        undefined,
+        identity.chain,
+      ))) {
         return;
       }
-      setExpandedSparklineLoading(normalized, seed);
+      setExpandedSparklineLoading(identity.address, seed, undefined, identity.chain);
       emit('overlay');
-      void refreshExpandedSparkline(normalized);
+      void refreshExpandedSparkline(identity.address, undefined, undefined, undefined, identity.chain);
     },
     closeExpandedSparkline() {
       if (!state.ui.expandedSparklineAddress) {

@@ -55,6 +55,7 @@ function dependencies(overrides = {}) {
         return { notified: true };
       },
     },
+    alertTickerPeers: { buildTickerPeerSnapshotForAlert: async () => null },
     issueAuthorization: () => ({ opaque: true }),
     ...overrides,
   };
@@ -128,6 +129,36 @@ describe('Robinhood standard alert publication', () => {
     assert.equal(fixture.calls.published, 1);
     assert.equal(publication.getStatus().averageCommitToAlertLatencyMs, 125);
     assert.deepEqual(fixture.transaction, ['BEGIN', 'COMMIT', 'RELEASE', 'BEGIN', 'COMMIT', 'RELEASE']);
+  });
+
+  it('persists the Robinhood ticker-peer snapshot on emitted alerts', async () => {
+    const tickerPeers = {
+      chain: 'robinhood', count: 2, sourcePeerRole: 'mcap_leader', items: [],
+    };
+    let capturedIntent;
+    const fixture = dependencies({
+      evaluateSignal: () => evaluation([
+        { action: 'emit', ruleKey: 'monitored-fdv', candidate: candidate(), state: null },
+      ]),
+      alertTickerPeers: {
+        async buildTickerPeerSnapshotForAlert(input, options) {
+          assert.deepEqual(input, {
+            chain: 'robinhood', address: TOKEN, symbol: null, name: null,
+          });
+          assert.equal(options.snapshotTsMs, Date.parse(GENERATED_AT));
+          return tickerPeers;
+        },
+      },
+    });
+    fixture.deps.userAlertEvent.createEventOnce = async (intent) => {
+      capturedIntent = intent;
+      return { id: 94, ...intent };
+    };
+
+    const publication = createRobinhoodStandardAlertPublication(fixture.deps);
+    await publication.consume({ signals: [signal()], alertsRequested: true, publishable: true });
+
+    assert.equal(capturedIntent.payload.tickerPeers, tickerPeers);
   });
 
   it('renders monitored repeats against the persisted anchor and coalesces hidden dedupe', async () => {

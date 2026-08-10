@@ -5,6 +5,7 @@ const SOLANA_MONITORED = 'So11111111111111111111111111111111111111112';
 const SOLANA_TOP = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
 const SOLANA_BLOCKED = 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6QXgB263vZyVfSRm';
 const ROBINHOOD_TOKEN = '0xabcdef0123456789abcdef0123456789abcdef01';
+const ROBINHOOD_POOL = '0xa70fc67c9f69da90b63a0e4c05d229954574e313';
 const ROBINHOOD_TOP = '0xabcdef0123456789abcdef0123456789abcdef02';
 const ROBINHOOD_DEV = `0x${'2'.repeat(40)}`;
 
@@ -309,6 +310,7 @@ const ROBINHOOD_API_FIXTURES = {
           kind: 'hvnc',
           ruleKey: 'robinhood-hvnc-v2',
           address: '0xabcdef0123456789abcdef0123456789abcdef01',
+          pairAddress: ROBINHOOD_POOL,
           symbol: 'RHV',
           mcap: null,
           fdv: 500000,
@@ -317,8 +319,38 @@ const ROBINHOOD_API_FIXTURES = {
           liquidityUsd: 5000,
           transactions: 15,
           volume5m: 2000,
+          tokenCreatedAt: Date.parse('2026-07-01T18:00:00.000Z'),
           pairDexId: 'uniswap-v2',
           launchpadId: 'robinhood',
+          tickerPeers: {
+            chain: 'robinhood',
+            sourceSymbol: 'RHV',
+            normalizedSymbol: 'RHV',
+            count: 2,
+            exactCount: 2,
+            subtickerCount: 0,
+            hasSubtickerMatch: false,
+            sourcePeerRole: 'mcap_leader',
+            oldestExactAddress: '0x1111111111111111111111111111111111111111',
+            highestMcapExactAddress: '0xabcdef0123456789abcdef0123456789abcdef01',
+            items: [{
+              address: '0xabcdef0123456789abcdef0123456789abcdef01',
+              symbol: 'RHV',
+              name: 'Robinhood Volume',
+              mcap: 500000,
+              mcapStale: false,
+              tokenCreatedAt: Date.parse('2026-07-01T18:00:00.000Z'),
+              matchType: 'exact',
+            }, {
+              address: '0x1111111111111111111111111111111111111111',
+              symbol: 'RHV',
+              name: 'Older Robinhood Volume',
+              mcap: 250000,
+              mcapStale: false,
+              tokenCreatedAt: Date.parse('2026-06-01T18:00:00.000Z'),
+              matchType: 'exact',
+            }],
+          },
           isHvnc: true,
           label: 'HVNC',
           triggeredAt: '2026-07-14T18:00:00.000Z',
@@ -1095,12 +1127,32 @@ test('filters a combined Solana and Robinhood alert feed through the master sele
   await expect.poll(async () => page.evaluate(() => window.trendscopeAlertDebug?.snapshot()?.memory?.count)).toBe(2);
   await expect(solanaAlert).toBeVisible();
   await expect(robinhoodAlert).toBeVisible();
-  await expect(robinhoodAlert.locator('.token-launchpad-uniswap'))
-    .toHaveAttribute('title', 'Uniswap · Pool: Uniswap V2');
-  await expect(robinhoodAlert.locator('.token-launchpad-uniswap'))
-    .toHaveCSS('pointer-events', 'auto');
+  const primaryLaunchpadBadge = robinhoodAlert.getByLabel('Uniswap · Pool: Uniswap V2', { exact: true });
+  await expect(primaryLaunchpadBadge).toHaveAttribute('data-tooltip', 'Uniswap · Pool: Uniswap V2');
+  await expect(primaryLaunchpadBadge).toHaveCSS('pointer-events', 'auto');
   await expect(robinhoodAlert).toContainText('5m vol');
   await expect(robinhoodAlert).toContainText('FDV');
+  await expect(robinhoodAlert.locator('.alert-stats-v68')).not.toContainText('AGE -');
+  await expect(robinhoodAlert.locator('.alert-ticker-peers-badge-mark')).toHaveText('#1');
+  await expect(robinhoodAlert.locator('.alert-ticker-peers-badge')).toHaveAttribute(
+    'title', 'FDV leader among exact ticker peers',
+  );
+  await expect(robinhoodAlert.locator('[data-action="open-alert-chart"]')).toHaveCount(1);
+  await expect(robinhoodAlert.locator('[data-action="toggle-star"]'))
+    .toHaveAttribute('data-chain', 'robinhood');
+  await expect(robinhoodAlert.locator('[data-action="block-token"]'))
+    .toHaveAttribute('data-chain', 'robinhood');
+  await expect(robinhoodAlert.locator('.trade-link.axiom')).toHaveAttribute(
+    'href',
+    `https://axiom.trade/meme/${ROBINHOOD_POOL}?chain=robinhood&pulseChains=sol,robinhood,bnb&trackerChains=sol,robinhood,bnb,eth`,
+  );
+  await expect(robinhoodAlert.locator('.trade-link.padre'))
+    .toHaveAttribute('href', `https://trade.padre.gg/trade/robinhood/${ROBINHOOD_POOL}`);
+  await expect(robinhoodAlert.locator('.trade-link.gmgn'))
+    .toHaveAttribute('href', `https://gmgn.ai/robinhood/token/${ROBINHOOD_TOKEN}`);
+  await expect(robinhoodAlert.locator('.trade-link.fomo'))
+    .toHaveAttribute('href', `https://fomo.family/tokens/robinhood/${ROBINHOOD_TOKEN}`);
+  await expect(robinhoodAlert.locator('.trade-link.photon, .trade-link.bullx')).toHaveCount(0);
 
   await solanaButton.click();
 
@@ -1403,9 +1455,14 @@ test('opens a Robinhood FDV chart and applies only its realtime updates', async 
   const diagnostics = await openAuthenticatedWorkspace(
     page,
     ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES,
-    `/alerts/robinhood/${ROBINHOOD_TOKEN}`,
+    '/',
     socketScenario,
   );
+
+  const robinhoodAlert = page.locator('article.alert-row[data-alert-id="backend:hvnc:102"]');
+  await expect(robinhoodAlert).toBeVisible();
+  await robinhoodAlert.locator('[data-action="open-alert-chart"]').click();
+  await expect(page).toHaveURL(`/alerts/robinhood/${ROBINHOOD_TOKEN}`);
 
   const dialog = page.locator('[data-auth-modal="expanded-sparkline"]');
   await expect(dialog).toBeVisible();

@@ -29,12 +29,19 @@ function intent(overrides = {}) {
   };
 }
 
+function deliveryOptions(overrides = {}) {
+  return {
+    alertTickerPeers: { buildTickerPeerSnapshotForAlert: async () => null },
+    ...overrides,
+  };
+}
+
 describe('Robinhood alert delivery', () => {
   it('does not touch persistence while either rollout gate is closed', async () => {
     let writes = 0;
-    const delivery = createRobinhoodAlertDelivery({
+    const delivery = createRobinhoodAlertDelivery(deliveryOptions({
       userAlertEvent: { createEventOnce: async () => { writes += 1; } },
-    });
+    }));
 
     assert.equal((await delivery.deliver({ intents: [intent()] })).reason, 'alerts_disabled');
     assert.equal((await delivery.deliver({
@@ -48,7 +55,7 @@ describe('Robinhood alert delivery', () => {
   it('persists once and publishes only newly inserted events', async () => {
     let writes = 0;
     let publishes = 0;
-    const delivery = createRobinhoodAlertDelivery({
+    const delivery = createRobinhoodAlertDelivery(deliveryOptions({
       userAlertEvent: {
         async createEventOnce(value) {
           writes += 1;
@@ -61,7 +68,7 @@ describe('Robinhood alert delivery', () => {
           return { notified: true };
         },
       },
-    });
+    }));
 
     const result = await delivery.deliver({
       alertsRequested: true,
@@ -76,6 +83,43 @@ describe('Robinhood alert delivery', () => {
     assert.equal(publishes, 1);
   });
 
+  it('reuses one ticker-peer snapshot and persists it for every matching user', async () => {
+    let peerReads = 0;
+    const persisted = [];
+    const tickerPeers = {
+      chain: 'robinhood', count: 3, sourcePeerRole: 'peer_warning', items: [],
+    };
+    const delivery = createRobinhoodAlertDelivery(deliveryOptions({
+      alertTickerPeers: {
+        async buildTickerPeerSnapshotForAlert(input, options) {
+          peerReads += 1;
+          assert.equal(input.chain, 'robinhood');
+          assert.equal(input.address, TOKEN);
+          assert.equal(options.snapshotTsMs, Date.parse('2026-07-14T18:00:00.000Z'));
+          return tickerPeers;
+        },
+      },
+      userAlertEvent: {
+        async createEventOnce(value) {
+          persisted.push(value);
+          return { id: 100 + persisted.length, ...value };
+        },
+      },
+      backendAlertPublisher: { publishEventSafe: async () => ({ notified: true }) },
+    }));
+
+    const result = await delivery.deliver({
+      alertsRequested: true,
+      publishable: true,
+      intents: [intent(), intent({ userId: 8, dedupeKey: `8:${RULE_KEY}:robinhood:${TOKEN}` })],
+    });
+
+    assert.equal(peerReads, 1);
+    assert.equal(result.persisted, 2);
+    assert.equal(persisted[0].payload.tickerPeers, tickerPeers);
+    assert.equal(persisted[1].payload.tickerPeers, tickerPeers);
+  });
+
   it('marks a custom rule and inserts its event in one authorized transaction', async () => {
     const transaction = [];
     const client = {
@@ -83,7 +127,7 @@ describe('Robinhood alert delivery', () => {
       release() { transaction.push('RELEASE'); },
     };
     let markOptions = null;
-    const delivery = createRobinhoodAlertDelivery({
+    const delivery = createRobinhoodAlertDelivery(deliveryOptions({
       db: { getClient: async () => client },
       userCustomAlertRule: {
         async markTriggered(_id, _userId, options, runner) {
@@ -102,7 +146,7 @@ describe('Robinhood alert delivery', () => {
       backendAlertPublisher: {
         publishEventSafe: async () => ({ notified: true }),
       },
-    });
+    }));
 
     const result = await delivery.deliver({
       alertsRequested: true,
@@ -143,7 +187,7 @@ describe('Robinhood alert delivery', () => {
         async query(sql) { transaction.push(sql); return { rows: [] }; },
         release() { transaction.push('RELEASE'); },
       };
-      const delivery = createRobinhoodAlertDelivery({
+      const delivery = createRobinhoodAlertDelivery(deliveryOptions({
         db: { getClient: async () => client },
         userCustomAlertRule: {
           markTriggered: async () => scenario.markResult,
@@ -158,7 +202,7 @@ describe('Robinhood alert delivery', () => {
         backendAlertPublisher: {
           async publishEventSafe() { publishes += 1; return { notified: true }; },
         },
-      });
+      }));
 
       const result = await delivery.deliver({
         alertsRequested: true,

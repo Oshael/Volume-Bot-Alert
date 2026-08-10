@@ -3,6 +3,7 @@ const userAlertEvent = require('../models/user-alert-event');
 const userAlertRuleState = require('../models/user-alert-rule-state');
 const backendAlertPublisher = require('./backend-alert-publisher');
 const userAlertProfileCache = require('./user-alert-profile-cache');
+const alertTickerPeers = require('./alert-ticker-peers');
 const {
   issueAutomaticAlertPublicationAuthorization,
 } = require('./automatic-alert-publication-guard');
@@ -30,12 +31,13 @@ function numberOrNull(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function buildEventPayload(plan, signal) {
+function buildEventPayload(plan, signal, tickerPeers = null) {
   const candidate = plan.candidate;
   const eventPayload = {
     ...candidate.payload, chain: CHAIN, address: signal.address,
     label: candidate.label || null, pct: candidate.pct ?? null,
   };
+  if (tickerPeers) eventPayload.tickerPeers = tickerPeers;
   const anchor = numberOrNull(plan.state?.lastAlertedValue);
   const current = numberOrNull(candidate.lastAlertedValue);
   if (!ANCHORED_REPEAT_RULE_KEYS.has(plan.ruleKey) || !(anchor > 0) || current == null) {
@@ -55,13 +57,13 @@ function buildEventDedupeKey(userId, signal, plan) {
   return `${userId}:${plan.ruleKey}:${signal.address}:${candidate.fingerprint}`;
 }
 
-function buildEventIntent(userId, signal, plan, triggeredAt) {
+function buildEventIntent(userId, signal, plan, triggeredAt, tickerPeers = null) {
   const candidate = plan.candidate;
   return {
     userId, chain: CHAIN, ruleKey: plan.ruleKey, kind: candidate.kind,
     tokenAddress: signal.address,
     dedupeKey: buildEventDedupeKey(userId, signal, plan),
-    payload: buildEventPayload(plan, signal),
+    payload: buildEventPayload(plan, signal, tickerPeers),
     triggeredAt,
   };
 }
@@ -124,7 +126,9 @@ async function persistContinuation(context, plan, event) {
 }
 
 async function persistEmit(context, plan) {
-  const intent = buildEventIntent(context.userId, context.signal, plan, context.triggeredAt);
+  const intent = buildEventIntent(
+    context.userId, context.signal, plan, context.triggeredAt, context.tickerPeers,
+  );
   const event = await context.eventModel.createEventOnce(intent, {
     db: context.client, authorization: context.authorization,
   });
@@ -223,6 +227,7 @@ function createRobinhoodStandardAlertPublication(options = {}) {
   const profileCache = options.userAlertProfileCache || userAlertProfileCache;
   const publisher = options.backendAlertPublisher || backendAlertPublisher;
   const evaluateSignal = options.evaluateSignal || evaluateRobinhoodStandardSignal;
+  const tickerPeerService = options.alertTickerPeers || alertTickerPeers;
   const authorize = options.issueAuthorization || issueAutomaticAlertPublicationAuthorization;
   const now = options.now || Date.now;
   const status = {
@@ -285,9 +290,20 @@ function createRobinhoodStandardAlertPublication(options = {}) {
     const authorization = authorize({ chain: CHAIN, alertsRequested: true, publishable: true });
     for (const item of evaluated) {
       const triggeredAt = new Date(item.signal.generatedAt);
+      const hasEmit = item.result.evaluations.some((evaluation) => (
+        evaluation.plans.some((plan) => plan.action === 'emit')
+      ));
+      const tickerPeers = hasEmit
+        ? await tickerPeerService.buildTickerPeerSnapshotForAlert({
+          chain: CHAIN,
+          address: item.signal.address,
+          symbol: item.signal.symbol || null,
+          name: item.signal.name || null,
+        }, { snapshotTsMs: triggeredAt.getTime() })
+        : null;
       for (const evaluation of item.result.evaluations) {
         const persisted = await transactEvaluation({
-          ...dependencies, authorization, signal: item.signal, triggeredAt,
+          ...dependencies, authorization, signal: item.signal, triggeredAt, tickerPeers,
         }, evaluation);
         summary.persisted += persisted.events.length;
         summary.duplicates += persisted.duplicate;

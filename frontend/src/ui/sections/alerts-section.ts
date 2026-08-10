@@ -2235,21 +2235,16 @@ function buildAlertRowContent(
 
   const actions = document.createElement('div');
   actions.className = 'alert-actions-v68';
-  const chartActions = alert.chain === 'solana' ? [buildAlertChartButton(alert)] : [];
-  const legacyAddressActions = alert.chain === 'solana'
-    ? [
-        buildStarButton(alert.address, isStarred, busy, 'Star token'),
-        buildActionButton('Block', 'alert-action-button danger', 'block-token', alert.address, symbol, busy),
-      ]
-    : [];
   actions.append(
     buildAlertCopyButton(alert.address),
-    ...chartActions,
+    buildAlertChartButton(alert),
     buildTradeTerminalMenuElement(alert.address, alert.mintAddress, alert.pairAddress, {
       chain: alert.chain,
       enabledTradeTerminals,
+      robinhoodAlertLinks: true,
     }),
-    ...legacyAddressActions,
+    buildStarButton(alert.chain, alert.address, isStarred, busy, 'Star token'),
+    buildActionButton('Block', 'alert-action-button danger', 'block-token', alert.address, symbol, busy, alert.chain),
   );
 
   if (isAdmin && alert.chain === 'solana') {
@@ -2346,18 +2341,15 @@ function buildAdminReviewAlertRowContent(
 
   const actions = document.createElement('div');
   actions.className = 'alert-actions-v68';
-  const chartActions = alert.chain === 'solana' ? [buildAlertChartButton(alert)] : [];
-  const legacyAddressActions = alert.chain === 'solana'
-    ? [buildStarButton(alert.address, isStarred, busy, 'Star token')]
-    : [];
   actions.append(
     buildAlertCopyButton(alert.address),
-    ...chartActions,
+    buildAlertChartButton(alert),
     buildTradeTerminalMenuElement(alert.address, alert.mintAddress, alert.pairAddress, {
       chain: alert.chain,
       enabledTradeTerminals,
+      robinhoodAlertLinks: true,
     }),
-    ...legacyAddressActions,
+    buildStarButton(alert.chain, alert.address, isStarred, busy, 'Star token'),
     buildReviewActionButton('Valid', 'mark_valid', reviewAlertId, busy),
     buildReviewActionButton('Weak', 'mark_weak', reviewAlertId, busy),
     buildReviewActionButton('Dismiss', 'dismiss', reviewAlertId, busy),
@@ -2958,6 +2950,7 @@ function buildActionButton(
   address: string,
   dataLabel?: string | null,
   disabled = false,
+  chain?: TokenChain,
 ) {
   const button = document.createElement('button');
   button.type = 'button';
@@ -2966,6 +2959,9 @@ function buildActionButton(
   button.dataset.address = address;
   if (dataLabel) {
     button.dataset.label = dataLabel;
+  }
+  if (chain) {
+    button.dataset.chain = chain;
   }
   button.disabled = disabled;
   button.textContent = label;
@@ -3024,11 +3020,12 @@ function buildAlertDismissButton(alertId: string, reviewAlertId?: number | null)
   return button;
 }
 
-function buildStarButton(address: string, isStarred: boolean, disabled: boolean, title: string) {
+function buildStarButton(chain: TokenChain, address: string, isStarred: boolean, disabled: boolean, title: string) {
   const button = document.createElement('button');
   button.type = 'button';
   button.className = `action-glyph starred-button${isStarred ? ' active' : ''}`;
   button.dataset.action = 'toggle-star';
+  button.dataset.chain = chain;
   button.dataset.address = address;
   button.disabled = disabled;
   button.title = title;
@@ -3100,7 +3097,9 @@ function buildTickerPeersControl(alert: AlertEntry) {
 
     const stats = document.createElement('div');
     stats.className = 'alert-ticker-peers-stats';
-    const mcapLabel = buildTickerPeerMcapLabel(item);
+    const mcapLabel = buildTickerPeerMcapLabel(
+      item, alert.chain === 'robinhood' ? 'FDV' : 'Market cap',
+    );
     const separator = document.createElement('span');
     separator.textContent = ' • ';
     const ageMs = resolveTickerPeerAgeMs(alert, item);
@@ -3124,7 +3123,10 @@ function buildTickerPeersRowBadges(tickerPeers: AlertEntry['tickerPeers'], addre
     badges.push(buildTickerPeersRowBadge('OG', 'og', 'Oldest exact ticker match'));
   }
   if (normalizedAddress && normalizedAddress === String(tickerPeers?.highestMcapExactAddress || '').trim()) {
-    badges.push(buildTickerPeersRowBadge('#1', 'mcap_leader', 'Market-cap leader among exact ticker peers'));
+    const title = tickerPeers?.chain === 'robinhood'
+      ? 'FDV leader among exact ticker peers'
+      : 'Market-cap leader among exact ticker peers';
+    badges.push(buildTickerPeersRowBadge('#1', 'mcap_leader', title));
   }
   return badges;
 }
@@ -3167,7 +3169,9 @@ function buildTickerPeersBadgeTitle(
     return 'OG ticker peer: oldest known exact ticker match';
   }
   if (role === 'mcap_leader') {
-    return 'Market-cap leader among exact ticker peers';
+    return tickerPeers?.chain === 'robinhood'
+      ? 'FDV leader among exact ticker peers'
+      : 'Market-cap leader among exact ticker peers';
   }
   return tickerPeers?.hasSubtickerMatch
     ? `${count} ticker/subticker peers snapshot`

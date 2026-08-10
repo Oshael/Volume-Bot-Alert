@@ -148,6 +148,9 @@ describe('alert ticker peers', () => {
     assert.equal(calls.length, 1);
     assert.equal(calls[0].params[4], 'robinhood');
     assert.match(calls[0].sql, /WHERE chain = \$5/);
+    assert.match(calls[0].sql, /CASE WHEN chain = 'robinhood' THEN last_fdv ELSE last_mcap END AS last_mcap/);
+    assert.match(calls[0].sql, /WHEN chain = 'robinhood' AND first_seen_at IS NOT NULL/);
+    assert.match(calls[0].sql, /CASE WHEN chain = 'robinhood' THEN last_seen_at ELSE metadata_updated_at END/);
     assert.equal(snapshot.chain, 'robinhood');
     assert.equal(snapshot.sourcePeerRole, 'og');
     assert.equal(snapshot.items.length, 2);
@@ -181,7 +184,10 @@ describe('alert ticker peers', () => {
       // The leader aggregate must be restricted to peers with fresh market data,
       // otherwise a rugged token keeps the #1 badge with its frozen peak mcap.
       assert.match(sql, /last_mcap > 0\s+AND has_fresh_mcap/i);
-      assert.match(sql, /metadata_updated_at > NOW\(\) - make_interval\(secs => \$\d+\)/i);
+      assert.match(
+        sql,
+        /CASE WHEN chain = 'robinhood' THEN last_seen_at ELSE metadata_updated_at END\)\s+> NOW\(\) - make_interval\(secs => \$\d+\)/i,
+      );
     }
   });
 

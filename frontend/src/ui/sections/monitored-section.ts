@@ -1358,7 +1358,9 @@ function getTickerPeerBadgeTitle(tickerPeers: ManualTokenEntry['tickerPeers'], r
     return 'OG ticker peer: oldest known exact ticker match';
   }
   if (role === 'mcap_leader') {
-    return 'Market-cap leader among exact ticker peers';
+    return tickerPeers?.chain === 'robinhood'
+      ? 'FDV leader among exact ticker peers'
+      : 'Market-cap leader among exact ticker peers';
   }
   return `${Number(tickerPeers?.count) || 0} exact ticker peers`;
 }
@@ -1440,7 +1442,9 @@ function buildTickerPeerList(
 
     const stats = document.createElement('div');
     stats.className = 'alert-ticker-peers-stats';
-    const mcapLabel = buildTickerPeerMcapLabel(item);
+    const mcapLabel = buildTickerPeerMcapLabel(
+      item, tickerPeers?.chain === 'robinhood' ? 'FDV' : 'Market cap',
+    );
     const separator = document.createElement('span');
     separator.textContent = ' • ';
     const ageMs = resolveTickerPeerAgeMs(item);
@@ -1463,7 +1467,10 @@ function buildTickerPeerRowBadges(tickerPeers: ManualTokenEntry['tickerPeers'], 
     badges.push(buildTickerPeerRowBadge('OG', 'og', 'Oldest exact ticker match'));
   }
   if (normalizedAddress && normalizedAddress === String(tickerPeers?.highestMcapExactAddress || '').trim()) {
-    badges.push(buildTickerPeerRowBadge('#1', 'mcap_leader', 'Market-cap leader among exact ticker peers'));
+    const title = tickerPeers?.chain === 'robinhood'
+      ? 'FDV leader among exact ticker peers'
+      : 'Market-cap leader among exact ticker peers';
+    badges.push(buildTickerPeerRowBadge('#1', 'mcap_leader', title));
   }
   return badges;
 }

@@ -68,6 +68,7 @@ type TradeTerminalOptions = {
   axiomAddress?: string | null;
   chain?: TokenChain;
   enabledTradeTerminals?: TradeTerminalKey[];
+  robinhoodAlertLinks?: boolean;
 };
 
 const SPARKLINE_SVG_WIDTH = 144;
@@ -1421,21 +1422,32 @@ function getTradeTerminalLinks(
   pairAddress?: string | null,
   options?: TradeTerminalOptions,
 ): TradeTerminalLink[] {
-  if (!supportsConfiguredTradeTerminals(options?.chain || 'solana')) {
+  const chain = options?.chain || 'solana';
+  const isRobinhoodAlert = chain === 'robinhood' && options?.robinhoodAlertLinks === true;
+  if (!supportsConfiguredTradeTerminals(chain) && !isRobinhoodAlert) {
     return [];
   }
   const tokenAddress = mintAddress || address;
   const terminalAddress = pairAddress || mintAddress || address;
   const axiomAddress = options?.axiomAddress || pairAddress || tokenAddress;
   const enabledTradeTerminals = normalizeEnabledTradeTerminals(options?.enabledTradeTerminals);
-  const links: TradeTerminalLink[] = [
-    { key: 'axiom', label: getTradeTerminalLabel('axiom'), href: `https://axiom.trade/meme/${axiomAddress}?chain=sol`, cls: 'axiom', iconHref: TRADE_TERMINAL_ICON_URLS.axiom },
-    { key: 'photon', label: getTradeTerminalLabel('photon'), href: `https://photon-sol.tinyastro.io/en/lp/${tokenAddress}`, cls: 'photon', iconHref: TRADE_TERMINAL_ICON_URLS.photon },
-    { key: 'bullx', label: getTradeTerminalLabel('bullx'), href: `https://neo.bullx.io/terminal?chainId=1399811149&address=${tokenAddress}`, cls: 'bullx', iconHref: TRADE_TERMINAL_ICON_URLS.bullx },
-    { key: 'gmgn', label: getTradeTerminalLabel('gmgn'), href: `https://gmgn.ai/sol/token/${tokenAddress}`, cls: 'gmgn', iconHref: TRADE_TERMINAL_ICON_URLS.gmgn },
-    { key: 'padre', label: getTradeTerminalLabel('padre'), href: `https://trade.padre.gg/trade/solana/${terminalAddress}`, cls: 'padre', iconHref: TRADE_TERMINAL_ICON_URLS.padre },
-    { key: 'fomo', label: getTradeTerminalLabel('fomo'), href: `https://fomo.family/tokens/solana/${tokenAddress}`, cls: 'fomo', iconHref: TRADE_TERMINAL_ICON_URLS.fomo },
-  ];
+  const links: TradeTerminalLink[] = isRobinhoodAlert
+    ? [
+        ...(pairAddress ? [
+          { key: 'axiom', label: getTradeTerminalLabel('axiom'), href: `https://axiom.trade/meme/${axiomAddress}?chain=robinhood&pulseChains=sol,robinhood,bnb&trackerChains=sol,robinhood,bnb,eth`, cls: 'axiom', iconHref: TRADE_TERMINAL_ICON_URLS.axiom },
+          { key: 'padre', label: getTradeTerminalLabel('padre'), href: `https://trade.padre.gg/trade/robinhood/${terminalAddress}`, cls: 'padre', iconHref: TRADE_TERMINAL_ICON_URLS.padre },
+        ] as TradeTerminalLink[] : []),
+        { key: 'gmgn', label: getTradeTerminalLabel('gmgn'), href: `https://gmgn.ai/robinhood/token/${tokenAddress}`, cls: 'gmgn', iconHref: TRADE_TERMINAL_ICON_URLS.gmgn },
+        { key: 'fomo', label: getTradeTerminalLabel('fomo'), href: `https://fomo.family/tokens/robinhood/${tokenAddress}`, cls: 'fomo', iconHref: TRADE_TERMINAL_ICON_URLS.fomo },
+      ]
+    : [
+        { key: 'axiom', label: getTradeTerminalLabel('axiom'), href: `https://axiom.trade/meme/${axiomAddress}?chain=sol`, cls: 'axiom', iconHref: TRADE_TERMINAL_ICON_URLS.axiom },
+        { key: 'photon', label: getTradeTerminalLabel('photon'), href: `https://photon-sol.tinyastro.io/en/lp/${tokenAddress}`, cls: 'photon', iconHref: TRADE_TERMINAL_ICON_URLS.photon },
+        { key: 'bullx', label: getTradeTerminalLabel('bullx'), href: `https://neo.bullx.io/terminal?chainId=1399811149&address=${tokenAddress}`, cls: 'bullx', iconHref: TRADE_TERMINAL_ICON_URLS.bullx },
+        { key: 'gmgn', label: getTradeTerminalLabel('gmgn'), href: `https://gmgn.ai/sol/token/${tokenAddress}`, cls: 'gmgn', iconHref: TRADE_TERMINAL_ICON_URLS.gmgn },
+        { key: 'padre', label: getTradeTerminalLabel('padre'), href: `https://trade.padre.gg/trade/solana/${terminalAddress}`, cls: 'padre', iconHref: TRADE_TERMINAL_ICON_URLS.padre },
+        { key: 'fomo', label: getTradeTerminalLabel('fomo'), href: `https://fomo.family/tokens/solana/${tokenAddress}`, cls: 'fomo', iconHref: TRADE_TERMINAL_ICON_URLS.fomo },
+      ];
   return links.filter((link) => enabledTradeTerminals.includes(link.key));
 }
 
@@ -3091,11 +3103,14 @@ export function fmtMoney(value?: number | null) {
 }
 
 /**
- * Market cap cell of a ticker peer row, shared by the monitored and alert panels.
+ * Valuation cell of a ticker peer row, shared by the monitored and alert panels.
  * A peer the catalog stopped refreshing keeps showing its last known value, so it
  * is marked instead of hidden: that value is also why the peer cannot hold `#1`.
  */
-export function buildTickerPeerMcapLabel(peer: { mcap?: number | null; mcapStale?: boolean; mcapAgeMs?: number | null }) {
+export function buildTickerPeerMcapLabel(
+  peer: { mcap?: number | null; mcapStale?: boolean; mcapAgeMs?: number | null },
+  valuationLabel = 'Market cap',
+) {
   const label = document.createElement('span');
   label.className = 'alert-ticker-peers-mcap';
   if (!peer.mcapStale) {
@@ -3108,7 +3123,7 @@ export function buildTickerPeerMcapLabel(peer: { mcap?: number | null; mcapStale
     ? ` for ${fmtAgeFromDurationMs(ageMs)}`
     : '';
   label.dataset.mcapStale = 'true';
-  label.title = `Market cap not refreshed${staleFor} — cannot hold the #1 badge`;
+  label.title = `${valuationLabel} not refreshed${staleFor} — cannot hold the #1 badge`;
 
   const mark = document.createElement('span');
   mark.className = 'alert-ticker-peers-stale-mark';

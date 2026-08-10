@@ -26,6 +26,7 @@ function signal(overrides = {}) {
       },
     },
     tokenAge: {
+      createdAt: '2026-07-09T18:00:30.000Z',
       ageMs: 10 * 24 * 60 * 60 * 1000,
       eligibility: {
         minimum1h: true, recentSurge1h: false, recentSurge6h: false, oldWeekSurge: true,
@@ -83,7 +84,8 @@ describe('Robinhood standard alert matcher', () => {
     assert.deepEqual(result.evaluations[0].plans[0].candidate.payload, {
       address: TOKEN, valuationType: 'fdv', fdv: 200_000,
       volume5m: 300, volume1h: 1200, volume6h: 3400, volume24h: 5600,
-      tokenAgeMs: 10 * 24 * 60 * 60 * 1000, prevVolume5m: 100,
+      tokenAgeMs: 10 * 24 * 60 * 60 * 1000,
+      tokenCreatedAt: Date.parse('2026-07-09T18:00:30.000Z'), prevVolume5m: 100,
     });
     assert.equal(result.evaluations[1].plans.length, 0);
   });

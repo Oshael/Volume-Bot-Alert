@@ -8,10 +8,10 @@ const DEFAULT_LIMIT = 8;
 // lookup asks for this ceiling. The OG and the market-cap leader are pinned on
 // top of it, so a low-cap or inactive OG never falls off the list.
 const MAX_LIMIT = 20;
-// `last_mcap` is never cleared when a token dies: the catalog only overwrites it
-// with a non-null reading, so a rugged peer keeps its peak market cap forever.
-// Only a peer whose market data was refreshed inside this window can hold the
-// market-cap leader role; the stale ones stay listed but flagged.
+// Catalog valuations are never cleared when a token dies, so a rugged peer can
+// keep its last peak forever. Only a peer whose market data was refreshed inside
+// this window can hold #1; stale peers stay listed but flagged. Solana compares
+// market cap, while Robinhood compares its canonical FDV.
 const MCAP_FRESHNESS_SECONDS = 24 * 60 * 60;
 const SOURCE_PEER_ROLE_OG = 'og';
 const SOURCE_PEER_ROLE_MCAP_LEADER = 'mcap_leader';
@@ -252,19 +252,29 @@ async function listTickerPeerSummariesForTokens(tokens = [], options = {}, runne
          symbol,
          name,
          last_image_url AS image_url,
-         last_mcap,
+         CASE WHEN chain = 'robinhood' THEN last_fdv ELSE last_mcap END AS last_mcap,
          last_vol_24h,
-         last_token_created_at_ms,
+         CASE
+           WHEN last_token_created_at_ms IS NOT NULL AND last_token_created_at_ms > 0
+             THEN last_token_created_at_ms
+           WHEN chain = 'robinhood' AND first_seen_at IS NOT NULL
+             THEN ROUND(EXTRACT(EPOCH FROM first_seen_at) * 1000)
+           ELSE NULL
+         END AS last_token_created_at_ms,
          CASE
            WHEN last_token_created_at_ms IS NOT NULL AND last_token_created_at_ms > 0
             THEN GREATEST(0, $3::bigint - last_token_created_at_ms)
+           WHEN chain = 'robinhood' AND first_seen_at IS NOT NULL
+            THEN GREATEST(0, $3::bigint - ROUND(EXTRACT(EPOCH FROM first_seen_at) * 1000))
            ELSE NULL
          END AS age_ms_at_alert,
-         metadata_updated_at IS NOT NULL
-           AND metadata_updated_at > NOW() - make_interval(secs => $5) AS has_fresh_mcap,
+         (CASE WHEN chain = 'robinhood' THEN last_seen_at ELSE metadata_updated_at END)
+           > NOW() - make_interval(secs => $5) AS has_fresh_mcap,
          CASE
-           WHEN metadata_updated_at IS NOT NULL
-            THEN ROUND(EXTRACT(EPOCH FROM (NOW() - metadata_updated_at)) * 1000)
+           WHEN (CASE WHEN chain = 'robinhood' THEN last_seen_at ELSE metadata_updated_at END) IS NOT NULL
+            THEN ROUND(EXTRACT(EPOCH FROM (
+              NOW() - (CASE WHEN chain = 'robinhood' THEN last_seen_at ELSE metadata_updated_at END)
+            )) * 1000)
            ELSE NULL
          END AS mcap_age_ms,
          regexp_replace(upper(COALESCE(symbol, '')), '[^A-Z0-9]', '', 'g') AS normalized_symbol
@@ -365,19 +375,29 @@ async function queryTickerPeerRowsBySymbol(symbol, options = {}, runner = db) {
          symbol,
          name,
          last_image_url AS image_url,
-         last_mcap,
+         CASE WHEN chain = 'robinhood' THEN last_fdv ELSE last_mcap END AS last_mcap,
          last_vol_24h,
-         last_token_created_at_ms,
+         CASE
+           WHEN last_token_created_at_ms IS NOT NULL AND last_token_created_at_ms > 0
+             THEN last_token_created_at_ms
+           WHEN chain = 'robinhood' AND first_seen_at IS NOT NULL
+             THEN ROUND(EXTRACT(EPOCH FROM first_seen_at) * 1000)
+           ELSE NULL
+         END AS last_token_created_at_ms,
          CASE
            WHEN last_token_created_at_ms IS NOT NULL AND last_token_created_at_ms > 0
             THEN GREATEST(0, $4::bigint - last_token_created_at_ms)
+           WHEN chain = 'robinhood' AND first_seen_at IS NOT NULL
+            THEN GREATEST(0, $4::bigint - ROUND(EXTRACT(EPOCH FROM first_seen_at) * 1000))
            ELSE NULL
          END AS age_ms_at_alert,
-         metadata_updated_at IS NOT NULL
-           AND metadata_updated_at > NOW() - make_interval(secs => $6) AS has_fresh_mcap,
+         (CASE WHEN chain = 'robinhood' THEN last_seen_at ELSE metadata_updated_at END)
+           > NOW() - make_interval(secs => $6) AS has_fresh_mcap,
          CASE
-           WHEN metadata_updated_at IS NOT NULL
-            THEN ROUND(EXTRACT(EPOCH FROM (NOW() - metadata_updated_at)) * 1000)
+           WHEN (CASE WHEN chain = 'robinhood' THEN last_seen_at ELSE metadata_updated_at END) IS NOT NULL
+            THEN ROUND(EXTRACT(EPOCH FROM (
+              NOW() - (CASE WHEN chain = 'robinhood' THEN last_seen_at ELSE metadata_updated_at END)
+            )) * 1000)
            ELSE NULL
          END AS mcap_age_ms,
          regexp_replace(upper(COALESCE(symbol, '')), '[^A-Z0-9]', '', 'g') AS normalized_symbol
