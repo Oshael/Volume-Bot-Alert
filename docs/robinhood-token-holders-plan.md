@@ -715,6 +715,19 @@ todo o rollback; tokens ja `drifted` permanecem assim para reconciliacao segura.
 
 Captura, rollback e publicacao continuam sem runner e desligados.
 
+#### Corte RT2C3 - Floor duravel do journal
+
+Status: implementado localmente; migration ainda nao aplicada em producao.
+
+A Stage 118 acrescenta `journal_floor_block` nullable ao cursor live. `NULL`
+significa que nenhuma fronteira de retencao foi inicializada e deve bloquear poda
+ou rollback que dependa dela. Quando inicializado, o floor nunca pode ficar acima
+de `next_block`. O corte seguinte ligara essa fronteira a uma janela configuravel
+com default de 20.000 blocos e fara deletes limitados somente no journal holder.
+
+Nenhuma linha e removida por esta migration e o retention geral permanece
+independente.
+
 Cada item acima deve ser repartido novamente se estimar mais de 500 linhas. O
 probe e a estimativa de storage sao pre-condicoes; “outros terminais fazem” nao
 substitui evidencia de volume, limites de RPC e custo de banco desta chain.

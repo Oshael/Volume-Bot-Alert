@@ -958,6 +958,9 @@ histórico permanente; rollback, retenção, runner e publicação seguem deslig
 O RT2C2 reverte atomicamente um range órfão em ordem inversa, restaura balances e
 totais, remove o journal do range e reposiciona o cursor no checkpoint canônico.
 Conflito de evidência aborta tudo; o runner e a publicação continuam desligados.
+A Stage 118 adiciona `journal_floor_block` nullable ao cursor holder. Floor
+ausente mantém poda/rollback dependente bloqueado; nenhum dado é apagado neste
+corte. A janela aprovada para o pruner independente é de 20.000 blocos.
 
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.
