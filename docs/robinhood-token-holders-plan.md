@@ -400,7 +400,7 @@ altera a sequencia deste quadro.
 | 1 | Probe read-only global e catalog-scoped | concluido, commitado e executado no node da VPS | RT1/RT1B; `afd0147a`, `9b43e90e` |
 | 2 | Schema e ledger shadow reversivel | concluido no codigo; migrations 116-118 ainda nao aplicadas em producao; nenhum runner ligado | RT2A-RT2C4; `43a6f9d7` ate `49609b99` |
 | 3 | Backfill/catch-up de tokens novos sem lacuna | em andamento | RT3A/RT3B prontos; RT4A handoff pronto; runner global pendente |
-| 4 | Live incremental shadow, deteccao automatica de reorg e scheduler da poda | em andamento | RT4A handoff; RT4B captura; RT4C1/RT4C2 rollback; RT4D1 tick bounded; loop/lease/poda pendentes |
+| 4 | Live incremental shadow, deteccao automatica de reorg e scheduler da poda | em andamento | RT4A handoff; RT4B captura; RT4C1/RT4C2 rollback; RT4D1 tick; RT4D2 loop pronto/desligado; wiring/lease/poda pendentes |
 | 5 | Backfill frio dos tokens antigos | pendente | depende de checkpoint/throttle/promocao |
 | 6 | Reconciliacao, promocao e publicacao REST/socket | pendente | Blockscout continua sendo fallback atual |
 | 7 | Frontend realtime/expanded chart | pendente de layout aprovado | nao reutilizar o prototipo sem decisao explicita |
@@ -941,6 +941,20 @@ Status desconhecido das dependencias falha fechado como erro de contrato. Este
 corte nao seleciona handoff, nao cria timer e nao adquire lease: o loop deve usar
 o `worker-lease-manager` central no wiring posterior, sem uma segunda camada de
 coordenacao.
+
+#### Corte RT4D2 - Runtime e loop live
+
+Status: implementado localmente e desligado por default; sem wiring no servidor.
+
+O worker compoe ledger, reader, captura e runner sobre um unico provider criado
+exclusivamente de `ROBINHOOD_RPC_URL`; `ROBINHOOD_DRPC_RPC_URL` nao e fallback.
+O primeiro tick valida chain ID 4663. O loop tem intervalo default de 500 ms,
+single-flight, backoff exponencial limitado e telemetria compacta sem expor URL.
+
+`reorg-unrecoverable` interrompe o loop e propaga erro fatal para o futuro lease.
+O modulo nao e importado por `server.js`, nao possui entrada em `config` e nao
+pode iniciar em producao neste corte. Seletor de handoff, wiring no grupo correto,
+lease central e scheduler da poda continuam pendentes.
 
 Cada item acima deve ser repartido novamente se estimar mais de 500 linhas. O
 probe e a estimativa de storage sao pre-condicoes; “outros terminais fazem” nao

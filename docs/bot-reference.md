@@ -999,6 +999,10 @@ O RT4D1 coordena um tick one-shot: captura um range confirmado e aplica ate 5.00
 eventos elegiveis por default. Recuperacao ou reorg sem evidencia encerram o tick
 antes de novas aplicacoes. Timer, lease central, seletor de handoff e wiring de
 worker continuam pendentes e desligados.
+O RT4D2 adiciona runtime e loop single-flight, ainda sem wiring. Ele usa somente
+`ROBINHOOD_RPC_URL`, valida chain ID 4663 no primeiro tick, aplica backoff e para
+como fatal em reorg sem evidencia. O modulo permanece desligado por default e nao
+e importado pelo servidor; lease, handoff e poda ainda estao pendentes.
 
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.
