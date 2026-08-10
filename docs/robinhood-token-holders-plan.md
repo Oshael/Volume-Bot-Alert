@@ -401,7 +401,7 @@ altera a sequencia deste quadro.
 | 2 | Schema e ledger shadow reversivel | concluido no codigo; migrations 116-118 ainda nao aplicadas em producao; nenhum runner ligado | RT2A-RT2C4; `43a6f9d7` ate `49609b99` |
 | 3 | Backfill/catch-up de tokens novos sem lacuna | concluido no codigo/desligado | RT3A-RT3C runner opt-in; RT4A/RT4E1 handoff retido; RT4F1 wiring com lease |
 | 4 | Live incremental shadow, deteccao automatica de reorg e scheduler da poda | concluido no codigo/desligado | RT4A-RT4E2 base integrada; RT4F1/F2 grupo, leases e poda opt-in |
-| 5 | Backfill frio dos tokens antigos | em andamento no codigo/desligado | RT5A admite coorte antiga; RT5B1 verifica hints diretos Blockscout no RPC; runner/throttle ainda pendentes |
+| 5 | Backfill frio dos tokens antigos | em andamento no codigo/desligado | RT5A admite coorte antiga; RT5B1/B2 verificam hints e executam um tick limitado; timer/lease ainda pendentes |
 | 6 | Reconciliacao, promocao e publicacao REST/socket | pendente | Blockscout continua sendo fallback atual |
 | 7 | Frontend realtime/expanded chart | pendente de layout aprovado | nao reutilizar o prototipo sem decisao explicita |
 
@@ -1063,6 +1063,27 @@ nao aparecam como `receipt.contractAddress` continuam rejeitados; launchpads
 conhecidos permanecem cobertos por `launchpad_event`. Este corte ainda nao busca
 candidatos nem executa RPC automaticamente; runner, throttle e checkpoint da
 campanha fria pertencem aos proximos subcortes.
+
+#### Corte RT5B2 - Tick frio limitado e retomavel
+
+Status: implementado no codigo; nenhum timer, lease ou wiring ligado.
+
+O repository seleciona no maximo dez tokens antigos ainda sem estado holder cuja
+proveniencia continua apenas `blockscout`. `last_attempted_at` e a ausencia de
+`attribution_block` formam o checkpoint da descoberta: falhas preservam o creator,
+salvam um codigo seguro e so voltam a ser elegiveis depois da janela de retry;
+sucessos viram `rpc_direct` e deixam definitivamente essa fila.
+
+Cada tick faz no maximo um batch Blockscout protegido pelo scheduler, verifica os
+hints serialmente no RPC e executa no maximo um range do replay existente. O
+backlog e consultado antes da admissao: um novo token frio so entra, sozinho,
+quando o executor esta idle. Indisponibilidade/circuit breaker do Blockscout e
+reportada sem bloquear tokens que ja possuem deployment exato. Chain incorreta e
+contratos internos invalidos continuam fail-closed.
+
+O modulo e one-shot e recebe todas as dependencias por adapter. O proximo corte
+criara runtime, timer, configuracao opt-in e lease no grupo `robinhood-holders`;
+ate la nao existe caminho de producao que invoque esse tick.
 
 Cada item acima deve ser repartido novamente se estimar mais de 500 linhas. O
 probe e a estimativa de storage sao pre-condicoes; “outros terminais fazem” nao

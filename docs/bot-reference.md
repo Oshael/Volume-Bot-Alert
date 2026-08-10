@@ -1030,6 +1030,12 @@ mas o trata somente como hint. A promocao para `rpc_direct` exige que o RPC da
 Robinhood confirme criacao top-level, creator, receipt, contract address e bloco
 canonico; a persistencia historica nao move o cursor live. Ainda nao existe runner
 para executar essa verificacao automaticamente.
+O RT5B2 compoe um tick frio one-shot: seleciona ate dez hints antigos com retry
+persistido, faz um unico batch Blockscout throttled, verifica cada deployment
+serialmente no RPC e executa somente um range de replay. Um token frio novo so e
+admitido quando o backlog esta idle, no maximo um por tick. Falha externa nao
+bloqueia o replay ja elegivel. O modulo continua sem timer, configuracao ou lease
+e, portanto, nao inicia em producao.
 
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.
