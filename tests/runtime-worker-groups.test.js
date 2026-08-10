@@ -37,7 +37,7 @@ describe('runtime worker groups config', () => {
     withEnv({ BACKGROUND_WORKER_GROUPS: '' }, (config) => {
       assert.deepEqual(config.runtime.workerGroupsRequested, ['all']);
       assert.deepEqual(config.runtime.workerGroupsActive, ['core', 'market', 'maintenance']);
-      assert.deepEqual(config.runtime.workerGroupsSkipped, ['robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-derived', 'robinhood-wallet', 'robinhood-backfill']);
+      assert.deepEqual(config.runtime.workerGroupsSkipped, ['robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-derived', 'robinhood-wallet', 'robinhood-backfill', 'robinhood-holders']);
     });
   });
 
@@ -47,7 +47,7 @@ describe('runtime worker groups config', () => {
       assert.deepEqual(config.runtime.workerGroupsActive, ['core', 'market']);
       assert.deepEqual(
         config.runtime.workerGroupsSkipped,
-        ['maintenance', 'robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-derived', 'robinhood-wallet', 'robinhood-backfill']
+        ['maintenance', 'robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-derived', 'robinhood-wallet', 'robinhood-backfill', 'robinhood-holders']
       );
     });
   });
@@ -56,7 +56,7 @@ describe('runtime worker groups config', () => {
     withEnv({ BACKGROUND_WORKER_GROUPS: 'maintenance,all' }, (config) => {
       assert.deepEqual(config.runtime.workerGroupsRequested, ['maintenance', 'all']);
       assert.deepEqual(config.runtime.workerGroupsActive, ['core', 'market', 'maintenance']);
-      assert.deepEqual(config.runtime.workerGroupsSkipped, ['robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-derived', 'robinhood-wallet', 'robinhood-backfill']);
+      assert.deepEqual(config.runtime.workerGroupsSkipped, ['robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-derived', 'robinhood-wallet', 'robinhood-backfill', 'robinhood-holders']);
     });
   });
 
@@ -84,7 +84,7 @@ describe('runtime worker groups config', () => {
       assert.deepEqual(config.runtime.workerGroupsActive, ['robinhood']);
       assert.deepEqual(
         config.runtime.workerGroupsSkipped,
-        ['core', 'market', 'maintenance', 'robinhood-head', 'robinhood-processing', 'robinhood-derived', 'robinhood-wallet', 'robinhood-backfill']
+        ['core', 'market', 'maintenance', 'robinhood-head', 'robinhood-processing', 'robinhood-derived', 'robinhood-wallet', 'robinhood-backfill', 'robinhood-holders']
       );
     });
   });
@@ -95,7 +95,18 @@ describe('runtime worker groups config', () => {
       assert.deepEqual(config.runtime.workerGroupsActive, ['robinhood-backfill']);
       assert.deepEqual(
         config.runtime.workerGroupsSkipped,
-        ['core', 'market', 'maintenance', 'robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-derived', 'robinhood-wallet']
+        ['core', 'market', 'maintenance', 'robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-derived', 'robinhood-wallet', 'robinhood-holders']
+      );
+    });
+  });
+
+  it('allows Robinhood holders only as an isolated worker group', () => {
+    withEnv({ BACKGROUND_WORKER_GROUPS: 'robinhood-holders' }, (config) => {
+      assert.deepEqual(config.runtime.workerGroupsRequested, ['robinhood-holders']);
+      assert.deepEqual(config.runtime.workerGroupsActive, ['robinhood-holders']);
+      assert.deepEqual(
+        config.runtime.workerGroupsSkipped,
+        ['core', 'market', 'maintenance', 'robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-derived', 'robinhood-wallet', 'robinhood-backfill']
       );
     });
   });
@@ -106,7 +117,7 @@ describe('runtime worker groups config', () => {
       assert.deepEqual(config.runtime.workerGroupsActive, ['robinhood-head']);
       assert.deepEqual(
         config.runtime.workerGroupsSkipped,
-        ['core', 'market', 'maintenance', 'robinhood', 'robinhood-processing', 'robinhood-derived', 'robinhood-wallet', 'robinhood-backfill']
+        ['core', 'market', 'maintenance', 'robinhood', 'robinhood-processing', 'robinhood-derived', 'robinhood-wallet', 'robinhood-backfill', 'robinhood-holders']
       );
     });
   });
@@ -117,7 +128,7 @@ describe('runtime worker groups config', () => {
       assert.deepEqual(config.runtime.workerGroupsActive, ['robinhood-processing']);
       assert.deepEqual(
         config.runtime.workerGroupsSkipped,
-        ['core', 'market', 'maintenance', 'robinhood', 'robinhood-head', 'robinhood-derived', 'robinhood-wallet', 'robinhood-backfill']
+        ['core', 'market', 'maintenance', 'robinhood', 'robinhood-head', 'robinhood-derived', 'robinhood-wallet', 'robinhood-backfill', 'robinhood-holders']
       );
     });
   });
@@ -143,7 +154,7 @@ describe('runtime worker groups config', () => {
       assert.deepEqual(config.runtime.workerGroupsActive, ['robinhood-derived']);
       assert.deepEqual(
         config.runtime.workerGroupsSkipped,
-        ['core', 'market', 'maintenance', 'robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-wallet', 'robinhood-backfill']
+        ['core', 'market', 'maintenance', 'robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-wallet', 'robinhood-backfill', 'robinhood-holders']
       );
     });
   });
@@ -154,7 +165,7 @@ describe('runtime worker groups config', () => {
       assert.deepEqual(config.runtime.workerGroupsActive, ['robinhood-wallet']);
       assert.deepEqual(
         config.runtime.workerGroupsSkipped,
-        ['core', 'market', 'maintenance', 'robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-derived', 'robinhood-backfill']
+        ['core', 'market', 'maintenance', 'robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-derived', 'robinhood-backfill', 'robinhood-holders']
       );
     });
   });
@@ -315,7 +326,7 @@ describe('runtime worker groups config', () => {
     });
   });
 
-  it('keeps the Robinhood holder backfill opt-in and bounded', () => {
+  it('keeps the Blockscout holder summary opt-in and bounded', () => {
     withEnv({
       ROBINHOOD_HOLDER_SUMMARY_ENABLED: undefined,
       ROBINHOOD_HOLDER_SUMMARY_INTERVAL_MS: '1',
@@ -329,6 +340,70 @@ describe('runtime worker groups config', () => {
       assert.equal(config.robinhoodHolderSummaryWorker.hotRefreshMs, 60_000);
       assert.equal(config.robinhoodHolderSummaryWorker.coldRefreshMs, 604_800_000);
     });
+  });
+
+  it('keeps both RPC holder workers opt-in and bounded', () => {
+    withEnv({
+      ROBINHOOD_HOLDER_BACKFILL_ENABLED: undefined,
+      ROBINHOOD_HOLDER_BACKFILL_ADMITTED_AFTER: undefined,
+      ROBINHOOD_HOLDER_LIVE_ENABLED: undefined,
+    }, (config) => {
+      assert.equal(config.robinhoodHolderBackfillWorker.enabled, false);
+      assert.equal(config.robinhoodHolderBackfillWorker.admittedAfter, null);
+      assert.equal(config.robinhoodHolderLiveWorker.enabled, false);
+    });
+    withEnv({
+      ROBINHOOD_RPC_URL: 'http://127.0.0.1:8547',
+      ROBINHOOD_HOLDER_BACKFILL_ENABLED: 'true',
+      ROBINHOOD_HOLDER_BACKFILL_ADMITTED_AFTER: '2026-08-10T00:00:00Z',
+      ROBINHOOD_HOLDER_BACKFILL_INTERVAL_MS: '1',
+      ROBINHOOD_HOLDER_BACKFILL_MAX_ERROR_BACKOFF_MS: '1',
+      ROBINHOOD_HOLDER_BACKFILL_SEED_LIMIT: '9999',
+      ROBINHOOD_HOLDER_BACKFILL_RANGE_SIZE: '9999',
+      ROBINHOOD_HOLDER_BACKFILL_CONFIRMATIONS: '9999',
+      ROBINHOOD_HOLDER_LIVE_ENABLED: 'true',
+      ROBINHOOD_HOLDER_LIVE_INTERVAL_MS: '999999',
+      ROBINHOOD_HOLDER_LIVE_MAX_ERROR_BACKOFF_MS: '1',
+      ROBINHOOD_HOLDER_LIVE_RANGE_SIZE: '9999',
+      ROBINHOOD_HOLDER_LIVE_CONFIRMATIONS: '9999',
+      ROBINHOOD_HOLDER_LIVE_MAX_APPLY_EVENTS: '999999',
+      ROBINHOOD_HOLDER_LIVE_RPC_TIMEOUT_MS: '1',
+    }, (config) => {
+      assert.deepEqual(config.robinhoodHolderBackfillWorker, {
+        enabled: true,
+        admittedAfter: '2026-08-10T00:00:00.000Z',
+        intervalMs: 100,
+        maxErrorBackoffMs: 1000,
+        seedLimit: 1000,
+        rangeSize: 5000,
+        confirmations: 1000,
+      });
+      assert.deepEqual(config.robinhoodHolderLiveWorker, {
+        enabled: true,
+        intervalMs: 300_000,
+        maxErrorBackoffMs: 1000,
+        rangeSize: 5000,
+        confirmations: 1000,
+        maxApplyEvents: 50_000,
+        rpcTimeoutMs: 1000,
+      });
+    });
+  });
+
+  it('fails fast when holder backfill lacks its durable cutoff', () => {
+    const result = spawnSync(process.execPath, ['-e', "require('./config')"], {
+      cwd: ROOT_DIR,
+      env: {
+        ...process.env,
+        ROBINHOOD_RPC_URL: 'http://127.0.0.1:8547',
+        ROBINHOOD_HOLDER_BACKFILL_ENABLED: 'true',
+        ROBINHOOD_HOLDER_BACKFILL_ADMITTED_AFTER: '',
+      },
+      encoding: 'utf8',
+    });
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /ROBINHOOD_HOLDER_BACKFILL_ADMITTED_AFTER/);
   });
 
   it('keeps the DexScreener profile fast path disabled and bounded by default', () => {

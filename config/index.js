@@ -246,7 +246,7 @@ function getRuntimeRole(runSocketHub, runBackgroundJobs) {
 const SHARED_WORKER_GROUPS = Object.freeze(['core', 'market', 'maintenance']);
 const ISOLATED_WORKER_GROUPS = Object.freeze([
   'robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-derived',
-  'robinhood-wallet', 'robinhood-backfill',
+  'robinhood-wallet', 'robinhood-backfill', 'robinhood-holders',
 ]);
 const WORKER_GROUPS = Object.freeze([...SHARED_WORKER_GROUPS, ...ISOLATED_WORKER_GROUPS]);
 const WORKER_GROUP_SET = new Set(WORKER_GROUPS);
@@ -460,6 +460,13 @@ function validateTestDbTarget(dbConfig) {
 
 const db = getDbConfig(nodeEnv);
 const workerGroups = normalizeWorkerGroups(process.env.BACKGROUND_WORKER_GROUPS);
+const robinhoodHolderBackfillEnabled = parseBoolean(
+  process.env.ROBINHOOD_HOLDER_BACKFILL_ENABLED, false
+);
+const robinhoodHolderBackfillAdmittedAfter = parseOptionalTimestamp(
+  process.env.ROBINHOOD_HOLDER_BACKFILL_ADMITTED_AFTER
+);
+const robinhoodHolderLiveEnabled = parseBoolean(process.env.ROBINHOOD_HOLDER_LIVE_ENABLED, false);
 const telegramDeliveryIntervalMs = parseIntegerInRange(
   process.env.TELEGRAM_DELIVERY_INTERVAL_MS, 1_000, 250, 60_000
 );
@@ -524,6 +531,13 @@ if (workerGroups.invalid.length > 0) {
 }
 if (workerGroups.isolationConflict) {
   missing.push('BACKGROUND_WORKER_GROUPS cannot combine isolated worker groups with other groups or all');
+}
+if (robinhoodHolderBackfillEnabled && !robinhoodHolderBackfillAdmittedAfter) {
+  missing.push('ROBINHOOD_HOLDER_BACKFILL_ADMITTED_AFTER');
+}
+if ((robinhoodHolderBackfillEnabled || robinhoodHolderLiveEnabled)
+    && !String(process.env.ROBINHOOD_RPC_URL || '').trim()) {
+  missing.push('ROBINHOOD_RPC_URL for Robinhood holder workers');
 }
 if (telegram.enabled) {
   const telegramRequired = [
@@ -941,6 +955,51 @@ module.exports = {
     failureBackoffMs: parseIntegerInRange(process.env.ROBINHOOD_HOLDER_FAILURE_BACKOFF_MS, 300_000, 60_000, 3_600_000),
     maxFailureBackoffMs: parseIntegerInRange(process.env.ROBINHOOD_HOLDER_MAX_FAILURE_BACKOFF_MS, 21_600_000, 60_000, 86_400_000),
     unavailableRetryMs: parseIntegerInRange(process.env.ROBINHOOD_HOLDER_UNAVAILABLE_RETRY_MS, 86_400_000, 3_600_000, 604_800_000),
+  },
+
+  robinhoodHolderBackfillWorker: {
+    enabled: robinhoodHolderBackfillEnabled,
+    admittedAfter: robinhoodHolderBackfillAdmittedAfter,
+    intervalMs: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_BACKFILL_INTERVAL_MS, 500, 100, 300_000
+    ),
+    maxErrorBackoffMs: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_BACKFILL_MAX_ERROR_BACKOFF_MS, 30_000, 1000, 300_000
+    ),
+    seedLimit: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_BACKFILL_SEED_LIMIT, 100, 1, 1000
+    ),
+    rangeSize: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_BACKFILL_RANGE_SIZE, 250, 1, 5000
+    ),
+    confirmations: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_BACKFILL_CONFIRMATIONS, 12, 0, 1000
+    ),
+  },
+
+  robinhoodHolderLiveWorker: {
+    enabled: robinhoodHolderLiveEnabled,
+    intervalMs: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_LIVE_INTERVAL_MS, 500, 100, 300_000
+    ),
+    maxErrorBackoffMs: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_LIVE_MAX_ERROR_BACKOFF_MS, 30_000, 1000, 300_000
+    ),
+    rangeSize: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_LIVE_RANGE_SIZE, 250, 1, 5000
+    ),
+    confirmations: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_LIVE_CONFIRMATIONS, 12, 0, 1000
+    ),
+    maxApplyEvents: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_LIVE_MAX_APPLY_EVENTS, 5000, 1, 50_000
+    ),
+    rpcTimeoutMs: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_LIVE_RPC_TIMEOUT_MS,
+      parseIntegerInRange(process.env.ROBINHOOD_RPC_TIMEOUT_MS, 15_000, 1000, 60_000),
+      1000,
+      60_000
+    ),
   },
 
   robinhoodIngestionWorker: {
