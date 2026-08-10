@@ -955,6 +955,9 @@ token como `drifted`. Nenhum runner ou publicação foi ligado.
 O RT2C1 adiciona a Stage 117 e salva no journal curto a procedência anterior das
 duas wallets tocadas. Isso prepara uma reversão fiel dos balances sem criar
 histórico permanente; rollback, retenção, runner e publicação seguem desligados.
+O RT2C2 reverte atomicamente um range órfão em ordem inversa, restaura balances e
+totais, remove o journal do range e reposiciona o cursor no checkpoint canônico.
+Conflito de evidência aborta tudo; o runner e a publicação continuam desligados.
 
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.

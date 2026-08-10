@@ -702,6 +702,19 @@ fora da janela de reorg; nao constituem historico permanente de wallets.
 O proximo corte implementa a reversao atomica e o rewind do cursor. Nenhum runner
 ou publicacao foi ligado.
 
+#### Corte RT2C2 - Rollback atomico de reorg
+
+Status: implementado localmente; nenhum runner ligado.
+
+O repositorio recebe o novo `nextBlock` e o checkpoint canonico imediatamente
+anterior, trava o cursor, reverte eventos aplicados em ordem on-chain inversa,
+restaura balances/procedencia e subtrai os deltas de holders. Depois remove todo
+o journal orfao, incluindo eventos ainda pendentes, e faz rewind do cursor na
+mesma transacao. Divergencia entre o balance atual e a evidencia esperada aborta
+todo o rollback; tokens ja `drifted` permanecem assim para reconciliacao segura.
+
+Captura, rollback e publicacao continuam sem runner e desligados.
+
 Cada item acima deve ser repartido novamente se estimar mais de 500 linhas. O
 probe e a estimativa de storage sao pre-condicoes; “outros terminais fazem” nao
 substitui evidencia de volume, limites de RPC e custo de banco desta chain.
