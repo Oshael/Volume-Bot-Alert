@@ -402,7 +402,7 @@ altera a sequencia deste quadro.
 | 3 | Backfill/catch-up de tokens novos sem lacuna | concluido no codigo/desligado | RT3A-RT3C runner opt-in; RT4A/RT4E1 handoff retido; RT4F1 wiring com lease |
 | 4 | Live incremental shadow, deteccao automatica de reorg e scheduler da poda | concluido no codigo/desligado | RT4A-RT4E2 base integrada; RT4F1/F2 grupo, leases e poda opt-in |
 | 5 | Backfill frio dos tokens antigos | concluido no codigo/desligado | RT5A-RT5B3; admissao, verificacao, tick limitado e runtime opt-in com lease |
-| 6 | Reconciliacao, promocao e publicacao REST/socket | pendente | Blockscout continua sendo fallback atual |
+| 6 | Reconciliacao, promocao e publicacao REST/socket | em andamento/desligado | RT6A cria reconciliacao e promocao sem schema novo; runtime/publicacao pendentes |
 | 7 | Frontend realtime/expanded chart | pendente de layout aprovado | nao reutilizar o prototipo sem decisao explicita |
 
 Os nomes RT nao sao uma segunda arquitetura. Eles apenas repartem os macros
@@ -1102,6 +1102,22 @@ sem fallback dRPC/publico. O scheduler Blockscout frio e separado, com default d
 o worker. Com esse wiring, o macro realtime 5 esta concluido no codigo; migrations
 116-118 e rollout operacional continuam pendentes. No rollout, live deve estar
 saudavel antes de habilitar o worker frio.
+
+#### Corte RT6A - Reconciliacao transitoria e promocao para live
+
+Status: implementado no codigo; sem worker, wiring ou publicacao.
+
+O reconciliador acompanha somente um token `shadow` por vez em memoria e exige
+tres observacoes Blockscout exatas, com timestamps crescentes, antes de promover
+o estado para `live`. Mismatch, indisponibilidade ou restart descartam a sequencia
+transitoria e fazem a validacao recomecar, de modo que nenhuma tabela ou coluna
+foi criada apenas para guardar o streak. A selecao ignora tokens com eventos live
+pendentes, e a gravacao usa status, count e version otimista para impedir promocao
+de um estado alterado durante a consulta externa.
+
+Este corte entrega apenas repository e politica one-shot por dependencia
+injetada. Blockscout automatico, scheduler/lease, deteccao de drift depois da
+promocao e publicacao do ledger no summary/REST/socket permanecem pendentes.
 
 Cada item acima deve ser repartido novamente se estimar mais de 500 linhas. O
 probe e a estimativa de storage sao pre-condicoes; “outros terminais fazem” nao

@@ -1041,6 +1041,12 @@ timer single-flight, backoff, telemetria e shutdown gracioso. O worker frio exig
 flag, cutoff duravel e RPC principal; permanece false por default. Seu scheduler
 Blockscout usa 0,25 request/s e concorrencia 1 por default, e o verificador e o
 replay compartilham exclusivamente o RPC configurado da VPS.
+O RT6A inicia a promocao do ledger sem migration adicional: um coordenador
+transitorio exige tres counts Blockscout exatos e temporalmente distintos para o
+mesmo estado `shadow`. A sequencia vive somente em memoria e reinicia com seguranca
+apos restart; a transicao final reutiliza `last_reconciled_at`, version otimista e
+falha se existir cauda live pendente. Worker, drift continuo e publicacao seguem
+desligados e pendentes.
 
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.
