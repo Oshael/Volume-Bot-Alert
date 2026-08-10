@@ -937,6 +937,11 @@ probe RPC estritamente read-only e limitado que mede o tópico global `Transfer`
 faz split adaptativo e estima upper bounds de ledger/cauda live sem criar cursor,
 schema ou publicação. O relatório não trata mint observado no sample como prova
 de deployment block; a execução real na VPS ainda é necessária antes do ledger.
+O complemento catalog-scoped é `npm run robinhood:holder-catalog-transfer-probe`:
+ele lê até 1.000 endereços recentes do catálogo por default, filtra `eth_getLogs`
+em batches de 100 e informa a cobertura sem extrapolar tokens não medidos. Para
+probes manuais na VPS, o endpoint do node live deve ser passado explicitamente,
+pois o `.env` do checkout pode diferir do EnvironmentFile da unit systemd.
 
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.

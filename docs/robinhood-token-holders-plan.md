@@ -635,6 +635,22 @@ Variaveis operacionais opcionais:
 - `ROBINHOOD_HOLDER_TRANSFER_PROBE_FROM_BLOCK`;
 - `ROBINHOOD_HOLDER_TRANSFER_PROBE_TIMEOUT_MS`.
 
+#### Corte RT1B - Probe filtrado pelo catalogo
+
+Status: implementado localmente; execucao no node da VPS ainda pendente.
+
+Comando: `npm run robinhood:holder-catalog-transfer-probe`. O modo consulta o
+PostgreSQL apenas com `SELECT`, escolhe por default os 1.000 tokens Robinhood mais
+recentemente vistos e divide o filtro RPC em lotes de 100 enderecos. O relatorio
+mostra `selectedTokens/catalogTotal` e nao extrapola a amostra para tokens que nao
+foram consultados. Limites opcionais:
+
+- `ROBINHOOD_HOLDER_TRANSFER_PROBE_CATALOG_LIMIT` (1 a 50.000);
+- `ROBINHOOD_HOLDER_TRANSFER_PROBE_ADDRESS_BATCH_SIZE` (1 a 500).
+
+O endpoint explicito continua tendo prioridade; na ausencia dele, o probe agora
+usa `ROBINHOOD_RPC_URL` antes da dRPC para refletir o transporte principal do bot.
+
 Cada item acima deve ser repartido novamente se estimar mais de 500 linhas. O
 probe e a estimativa de storage sao pre-condicoes; “outros terminais fazem” nao
 substitui evidencia de volume, limites de RPC e custo de banco desta chain.
