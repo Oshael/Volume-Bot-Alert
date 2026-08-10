@@ -1210,6 +1210,14 @@ O backfill repete automaticamente falhas transitórias do provedor com backoff
 limitado; erros semânticos não entram em retry. O timeout HTTP do backfill aceita
 `--timeout-ms` entre 1s e 15s e usa 10s por padrão; `--batch-size` aceita até 10,
 `--concurrency` aceita até 5 e a rodada processa 1.000 tokens por padrão.
+Sem `ROBINHOOD_BLOCKSCOUT_API_KEY`, a criação continua usando a API pública da
+instância Robinhood. Quando a chave `proapi_...` está presente, somente esse
+lookup troca automaticamente para a API PRO com `chain_id=4663`; metadata de
+catálogo permanece nos endpoints da instância. O backfill acompanha
+`x-credits-remaining` e, ao chegar a zero, conclui a rodada com
+`stopReason=credits_exhausted` sem marcar o próximo lote como falha. Assim os
+tokens não iniciados continuam elegíveis para a execução após a renovação da
+franquia.
 O painel Robinhood já oferece ALL/DEV: a consulta `scope=dev` filtra pelo criador
 persistido e devolve `creatorAddress`, usado pelo cliente para aplicar o mesmo
 escopo aos eventos realtime do token. TRACKED e YOU ainda não estão disponíveis.
