@@ -400,7 +400,7 @@ altera a sequencia deste quadro.
 | 1 | Probe read-only global e catalog-scoped | concluido, commitado e executado no node da VPS | RT1/RT1B; `afd0147a`, `9b43e90e` |
 | 2 | Schema e ledger shadow reversivel | concluido no codigo; migrations 116-118 ainda nao aplicadas em producao; nenhum runner ligado | RT2A-RT2C4; `43a6f9d7` ate `49609b99` |
 | 3 | Backfill/catch-up de tokens novos sem lacuna | em andamento | RT3A/RT3B prontos; RT4A/RT4E1 handoff retido pronto; runner global pendente |
-| 4 | Live incremental shadow, deteccao automatica de reorg e scheduler da poda | em andamento | RT4A-RT4C2 base segura; RT4D1/D2 loop desligado; RT4E1 handoff coordenado; integracao/wiring/lease/poda pendentes |
+| 4 | Live incremental shadow, deteccao automatica de reorg e scheduler da poda | em andamento | RT4A-RT4C2 base segura; RT4D1/D2 loop desligado; RT4E1/RT4E2 handoff integrado; wiring/lease/poda pendentes |
 | 5 | Backfill frio dos tokens antigos | pendente | depende de checkpoint/throttle/promocao |
 | 6 | Reconciliacao, promocao e publicacao REST/socket | pendente | Blockscout continua sendo fallback atual |
 | 7 | Frontend realtime/expanded chart | pendente de layout aprovado | nao reutilizar o prototipo sem decisao explicita |
@@ -937,10 +937,10 @@ Eventos que isolam um token como `drifted` contam no budget; `idle` encerra cedo
 Rewind concluido ou ausencia de evidencia canonica encerram o tick sem aplicar
 mais eventos, impedindo que balances sejam alterados durante recuperacao.
 
-Status desconhecido das dependencias falha fechado como erro de contrato. Este
-corte nao seleciona handoff, nao cria timer e nao adquire lease: o loop deve usar
-o `worker-lease-manager` central no wiring posterior, sem uma segunda camada de
-coordenacao.
+Status desconhecido das dependencias falha fechado como erro de contrato. O
+RT4E2 adiciona um handoff por tick; timer e lease continuam responsabilidades do
+loop e do `worker-lease-manager` central no wiring posterior, sem uma segunda
+camada de coordenacao.
 
 #### Corte RT4D2 - Runtime e loop live
 
@@ -953,8 +953,8 @@ single-flight, backoff exponencial limitado e telemetria compacta sem expor URL.
 
 `reorg-unrecoverable` interrompe o loop e propaga erro fatal para o futuro lease.
 O modulo nao e importado por `server.js`, nao possui entrada em `config` e nao
-pode iniciar em producao neste corte. O RT4E1 abaixo entrega o seletor; composicao
-no loop, wiring, lease central e scheduler da poda continuam pendentes.
+pode iniciar em producao neste corte. O RT4E1 entrega o seletor e o RT4E2 o compoe
+no tick; wiring, lease central e scheduler da poda continuam pendentes.
 
 #### Corte RT4E1 - Seletor e handoff em barreira retida
 
@@ -968,8 +968,22 @@ avancado, eliminando a perseguicao de uma barreira movel.
 
 A transacao remove somente eventos anteriores a `backfill_next_block`, ja
 incorporados ao baseline, e preserva os eventos posteriores pendentes para o
-aplicador. O coordenador ainda nao foi composto no RT4D1/D2; wiring, lease e poda
+aplicador. O RT4E2 abaixo compoe esse coordenador no tick; wiring, lease e poda
 continuam desligados.
+
+#### Corte RT4E2 - Handoff composto no tick live
+
+Status: implementado localmente; worker ainda sem wiring e desligado por default.
+
+Depois de uma captura canonica (`captured` ou `idle`), o tick tenta exatamente um
+handoff antes de aplicar o journal. Assim, a cauda de um token promovido pode ser
+aplicada no mesmo tick. Recuperacao de reorg ou ausencia de evidencia pula tanto
+handoff quanto aplicacao. Status desconhecido falha fechado como erro fatal de
+contrato.
+
+O runtime usa o mesmo database e o mesmo reader/RPC do capture para repository e
+coordenador de handoff. Telemetria separa promocoes e tokens isolados. Nao foi
+adicionado timer, RPC alternativo, config, import em `server.js` ou lease.
 
 Cada item acima deve ser repartido novamente se estimar mais de 500 linhas. O
 probe e a estimativa de storage sao pre-condicoes; “outros terminais fazem” nao

@@ -997,16 +997,19 @@ evidencia dentro do floor retorna `reorg-unrecoverable` sem writes. Blocos vazio
 nao possuem hash historico persistido; loop e worker continuam desligados.
 O RT4D1 coordena um tick one-shot: captura um range confirmado e aplica ate 5.000
 eventos elegiveis por default. Recuperacao ou reorg sem evidencia encerram o tick
-antes de novas aplicacoes. Timer, lease central, seletor de handoff e wiring de
-worker continuam pendentes e desligados.
+antes de novas aplicacoes. Timer, lease central e wiring de worker continuam
+pendentes e desligados; o RT4E2 abaixo incorpora o seletor de handoff.
 O RT4D2 adiciona runtime e loop single-flight, ainda sem wiring. Ele usa somente
 `ROBINHOOD_RPC_URL`, valida chain ID 4663 no primeiro tick, aplica backoff e para
 como fatal em reorg sem evidencia. O modulo permanece desligado por default e nao
-e importado pelo servidor; lease, handoff e poda ainda estao pendentes.
+e importado pelo servidor; lease, wiring e poda ainda estao pendentes.
 O RT4E1 elimina a barreira movel do handoff: seleciona um backfill ainda coberto
 pelo floor, verifica seu checkpoint no RPC, remove somente overlap anterior e
 preserva a cauda posterior para aplicacao em `shadow`. Checkpoint orfao isola o
-token como `resyncing`. A composicao no loop e o wiring continuam pendentes.
+token como `resyncing`.
+O RT4E2 compoe um handoff por tick canonico antes do aplicador, usando o mesmo
+database e reader/RPC da captura. Recuperacao pula handoff e aplicacao; status
+desconhecido falha fechado. Worker, lease, config e wiring continuam desligados.
 
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.
