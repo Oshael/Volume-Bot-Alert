@@ -12,6 +12,22 @@ function boundedLimit(value, fallback = 1000) {
   return parsed;
 }
 
+function verificationCandidateOptions(input = {}) {
+  const admittedBefore = new Date(input.admittedBefore);
+  const retryBefore = new Date(input.retryBefore);
+  if (!Number.isFinite(admittedBefore.getTime())) throw new Error('admittedBefore is invalid');
+  if (!Number.isFinite(retryBefore.getTime())) throw new Error('retryBefore is invalid');
+  const limit = input.limit == null ? 10 : Number(input.limit);
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 10) {
+    throw new Error('verification candidate limit is invalid');
+  }
+  return Object.freeze({
+    admittedBefore: admittedBefore.toISOString(),
+    retryBefore: retryBefore.toISOString(),
+    limit,
+  });
+}
+
 function createRobinhoodTokenAttributionRepository(options = {}) {
   const database = options.database || db;
 
@@ -71,6 +87,46 @@ function createRobinhoodTokenAttributionRepository(options = {}) {
         discoveryBlock: String(row.discovery_block),
       }))),
     });
+  }
+
+  async function listHolderDirectVerificationCandidates(input = {}) {
+    const normalized = verificationCandidateOptions(input);
+    const { rows } = await database.query(
+      `SELECT catalog.address AS token_address, attribution.creator_address
+         FROM token_catalog catalog
+         INNER JOIN robinhood_token_attributions attribution
+           ON attribution.chain = catalog.chain
+          AND attribution.token_address = catalog.address
+         LEFT JOIN robinhood_holder_token_states state
+           ON state.chain = catalog.chain AND state.token_address = catalog.address
+        WHERE catalog.chain = '${CHAIN}'
+          AND catalog.first_seen_at < $1::timestamptz
+          AND attribution.source = 'blockscout'
+          AND attribution.creator_address IS NOT NULL
+          AND attribution.attribution_block IS NULL
+          AND attribution.last_attempted_at < $2::timestamptz
+          AND state.token_address IS NULL
+        ORDER BY catalog.first_seen_at DESC, catalog.address
+        LIMIT $3::int`,
+      [normalized.admittedBefore, normalized.retryBefore, normalized.limit]
+    );
+    return Object.freeze(rows.map((row) => Object.freeze({
+      tokenAddress: normalizeTokenAddress(CHAIN, row.token_address),
+      creatorAddress: normalizeTokenAddress(CHAIN, row.creator_address),
+    })));
+  }
+
+  async function recordDirectVerificationFailure(input = {}) {
+    const tokenAddress = normalizeTokenAddress(CHAIN, input.tokenAddress);
+    const error = String(input.error || 'direct_deployment_unverified').slice(0, 500);
+    const result = await database.query(
+      `UPDATE robinhood_token_attributions
+          SET last_attempted_at = NOW(), last_error = $2, updated_at = NOW()
+        WHERE chain = '${CHAIN}' AND token_address = $1
+          AND source = 'blockscout' AND attribution_block IS NULL`,
+      [tokenAddress, error]
+    );
+    return Object.freeze({ recorded: result.rowCount === 1 });
   }
 
   async function recordAttempts(inputs = []) {
@@ -258,10 +314,15 @@ function createRobinhoodTokenAttributionRepository(options = {}) {
 
   return Object.freeze({
     initializeDirectCursor, initializeLaunchpadBackfillCursor,
-    listCreatorCandidates, loadDirectCursor, loadLaunchpadBackfillCursor,
-    recordAttempt, recordAttempts, recordCreatorBlock, recordLaunchpadBackfillRange,
+    listCreatorCandidates, listHolderDirectVerificationCandidates,
+    loadDirectCursor, loadLaunchpadBackfillCursor,
+    recordAttempt, recordAttempts, recordCreatorBlock, recordDirectVerificationFailure,
+    recordLaunchpadBackfillRange,
     recordVerifiedDirectDeployments,
   });
 }
 
-module.exports = { createRobinhoodTokenAttributionRepository, __private: { boundedLimit } };
+module.exports = {
+  createRobinhoodTokenAttributionRepository,
+  __private: { boundedLimit, verificationCandidateOptions },
+};

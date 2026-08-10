@@ -5,7 +5,10 @@ const stage110 = require('../src/utils/db-init-stage110');
 const stage113 = require('../src/utils/db-init-stage113');
 const stage114 = require('../src/utils/db-init-stage114');
 const stage115 = require('../src/utils/db-init-stage115');
-const { createRobinhoodTokenAttributionRepository } = require('../src/models/robinhood-token-attribution');
+const {
+  createRobinhoodTokenAttributionRepository,
+  __private: attributionPrivate,
+} = require('../src/models/robinhood-token-attribution');
 const { runDirectCreatorTick, __private: directPrivate } = require(
   '../src/services/robinhood-direct-creator-worker'
 );
@@ -199,6 +202,53 @@ describe('Robinhood token creator attribution', () => {
     assert.match(calls[0].sql, /attribution\.last_attempted_at < \$1/);
     assert.match(calls[0].sql, /ORDER BY MIN\(registry\.discovery_block\), registry\.token_address/);
     assert.deepEqual(calls[0].params, [retryBefore.toISOString(), 12]);
+  });
+
+  it('selects only retryable old Blockscout holder deployments in bounded order', async () => {
+    const calls = [];
+    const repository = createRobinhoodTokenAttributionRepository({
+      database: {
+        query: async (sql, params) => {
+          calls.push({ sql, params });
+          return { rows: [{ token_address: TOKEN, creator_address: CREATOR }] };
+        },
+      },
+    });
+    const result = await repository.listHolderDirectVerificationCandidates({
+      admittedBefore: '2026-08-10T00:00:00Z',
+      retryBefore: '2026-08-03T00:00:00Z', limit: 7,
+    });
+
+    assert.deepEqual(result, [{ tokenAddress: TOKEN, creatorAddress: CREATOR }]);
+    assert.match(calls[0].sql, /catalog\.first_seen_at < \$1::timestamptz/);
+    assert.match(calls[0].sql, /attribution\.source = 'blockscout'/);
+    assert.match(calls[0].sql, /attribution\.attribution_block IS NULL/);
+    assert.match(calls[0].sql, /attribution\.last_attempted_at < \$2::timestamptz/);
+    assert.match(calls[0].sql, /state\.token_address IS NULL/);
+    assert.match(calls[0].sql, /ORDER BY catalog\.first_seen_at DESC, catalog\.address/);
+    assert.deepEqual(calls[0].params, [
+      '2026-08-10T00:00:00.000Z', '2026-08-03T00:00:00.000Z', 7,
+    ]);
+    assert.throws(() => attributionPrivate.verificationCandidateOptions({
+      admittedBefore: '2026-08-10T00:00:00Z',
+      retryBefore: '2026-08-03T00:00:00Z', limit: 11,
+    }), /limit/);
+  });
+
+  it('checkpoints a failed direct verification without erasing its creator', async () => {
+    const calls = [];
+    const repository = createRobinhoodTokenAttributionRepository({
+      database: {
+        query: async (sql, params) => { calls.push({ sql, params }); return { rowCount: 1 }; },
+      },
+    });
+    assert.deepEqual(await repository.recordDirectVerificationFailure({
+      tokenAddress: TOKEN, error: 'holder_deployment_evidence_invalid',
+    }), { recorded: true });
+    assert.match(calls[0].sql, /SET last_attempted_at = NOW\(\), last_error = \$2/);
+    assert.match(calls[0].sql, /source = 'blockscout' AND attribution_block IS NULL/);
+    assert.doesNotMatch(calls[0].sql, /creator_address\s*=/);
+    assert.deepEqual(calls[0].params, [TOKEN, 'holder_deployment_evidence_invalid']);
   });
 
   it('normalizes and records a resolved direct contract creator', async () => {
