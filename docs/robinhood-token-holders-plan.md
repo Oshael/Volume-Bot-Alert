@@ -401,7 +401,7 @@ altera a sequencia deste quadro.
 | 2 | Schema e ledger shadow reversivel | concluido no codigo; migrations 116-118 ainda nao aplicadas em producao; nenhum runner ligado | RT2A-RT2C4; `43a6f9d7` ate `49609b99` |
 | 3 | Backfill/catch-up de tokens novos sem lacuna | concluido no codigo/desligado | RT3A-RT3C runner opt-in; RT4A/RT4E1 handoff retido; RT4F1 wiring com lease |
 | 4 | Live incremental shadow, deteccao automatica de reorg e scheduler da poda | concluido no codigo/desligado | RT4A-RT4E2 base integrada; RT4F1/F2 grupo, leases e poda opt-in |
-| 5 | Backfill frio dos tokens antigos | em andamento no codigo/desligado | RT5A admite coorte antiga; RT5B1/B2 verificam hints e executam um tick limitado; timer/lease ainda pendentes |
+| 5 | Backfill frio dos tokens antigos | concluido no codigo/desligado | RT5A-RT5B3; admissao, verificacao, tick limitado e runtime opt-in com lease |
 | 6 | Reconciliacao, promocao e publicacao REST/socket | pendente | Blockscout continua sendo fallback atual |
 | 7 | Frontend realtime/expanded chart | pendente de layout aprovado | nao reutilizar o prototipo sem decisao explicita |
 
@@ -1081,9 +1081,27 @@ quando o executor esta idle. Indisponibilidade/circuit breaker do Blockscout e
 reportada sem bloquear tokens que ja possuem deployment exato. Chain incorreta e
 contratos internos invalidos continuam fail-closed.
 
-O modulo e one-shot e recebe todas as dependencias por adapter. O proximo corte
-criara runtime, timer, configuracao opt-in e lease no grupo `robinhood-holders`;
-ate la nao existe caminho de producao que invoque esse tick.
+O modulo one-shot recebe todas as dependencias por adapter. O RT5B3 abaixo cria
+seu runtime, timer, configuracao opt-in e lease no grupo `robinhood-holders`.
+
+#### Corte RT5B3 - Runtime frio isolado e opt-in
+
+Status: implementado no codigo e desligado por default.
+
+O grupo `robinhood-holders` agora pode iniciar o tick frio sob lease exclusiva,
+timer single-flight e backoff limitado. A ativacao exige
+`ROBINHOOD_HOLDER_COLD_ENABLED=true`, cutoff duravel
+`ROBINHOOD_HOLDER_COLD_ADMITTED_BEFORE` e `ROBINHOOD_RPC_URL`; configuracao
+incompleta interrompe o boot. O shutdown gracioso aguarda o tick em andamento e
+a telemetria aparece no status operacional.
+
+O runtime compartilha o mesmo client do RPC proprio entre verificador e executor,
+sem fallback dRPC/publico. O scheduler Blockscout frio e separado, com default de
+0,25 request/s, concorrencia 1 e no maximo um retry; seus limites absolutos sao
+0,5 request/s e um retry. Pull, grupo isolado ou apenas configurar o RPC nao ligam
+o worker. Com esse wiring, o macro realtime 5 esta concluido no codigo; migrations
+116-118 e rollout operacional continuam pendentes. No rollout, live deve estar
+saudavel antes de habilitar o worker frio.
 
 Cada item acima deve ser repartido novamente se estimar mais de 500 linhas. O
 probe e a estimativa de storage sao pre-condicoes; “outros terminais fazem” nao

@@ -1035,7 +1035,12 @@ persistido, faz um unico batch Blockscout throttled, verifica cada deployment
 serialmente no RPC e executa somente um range de replay. Um token frio novo so e
 admitido quando o backlog esta idle, no maximo um por tick. Falha externa nao
 bloqueia o replay ja elegivel. O modulo continua sem timer, configuracao ou lease
-e, portanto, nao inicia em producao.
+naquele subcorte e, portanto, ainda nao iniciava em producao.
+O RT5B3 conecta esse tick ao grupo isolado `robinhood-holders` com lease propria,
+timer single-flight, backoff, telemetria e shutdown gracioso. O worker frio exige
+flag, cutoff duravel e RPC principal; permanece false por default. Seu scheduler
+Blockscout usa 0,25 request/s e concorrencia 1 por default, e o verificador e o
+replay compartilham exclusivamente o RPC configurado da VPS.
 
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.
