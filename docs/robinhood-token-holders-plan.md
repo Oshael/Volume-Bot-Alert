@@ -399,7 +399,7 @@ altera a sequencia deste quadro.
 |---|---|---|---|
 | 1 | Probe read-only global e catalog-scoped | concluido, commitado e executado no node da VPS | RT1/RT1B; `afd0147a`, `9b43e90e` |
 | 2 | Schema e ledger shadow reversivel | concluido no codigo; migrations 116-118 ainda nao aplicadas em producao; nenhum runner ligado | RT2A-RT2C4; `43a6f9d7` ate `49609b99` |
-| 3 | Backfill/catch-up de tokens novos sem lacuna | em andamento | RT3A admite deployment; RT3B1 le RPC; RT3B2 persiste range atomico |
+| 3 | Backfill/catch-up de tokens novos sem lacuna | em andamento | RT3A e RT3B1-RT3B3 implementados sem runner; handoff live pendente |
 | 4 | Live incremental shadow, deteccao automatica de reorg e scheduler da poda | pendente | operacoes atomicas existem, orquestracao nao |
 | 5 | Backfill frio dos tokens antigos | pendente | depende de checkpoint/throttle/promocao |
 | 6 | Reconciliacao, promocao e publicacao REST/socket | pendente | Blockscout continua sendo fallback atual |
@@ -850,8 +850,22 @@ cursor/checkpoint do token avancam na mesma transacao. Retry de range ja avancad
 falha fechado; saldo negativo nao grava o range e marca somente o token `drifted`.
 
 Ranges historicos de catch-up nao entram no journal live de 20.000 blocos. O
-RT3B3 ainda precisa validar o checkpoint anterior e estabelecer a barreira de
-handoff confirmada antes de qualquer promocao para `shadow`.
+RT3B3 valida o checkpoint anterior e alcanca uma barreira confirmada, mas o
+handoff atomico e qualquer promocao para `shadow` continuam pendentes.
+
+#### Corte RT3B3 - Executor de um range e barreira confirmada
+
+Status: implementado localmente; nenhum worker ligado.
+
+Cada chamada calcula safe head com 12 confirmacoes por default, seleciona somente
+token `backfilling` com trabalho confirmado, valida o checkpoint anterior e
+processa no maximo um range de 250 blocos. Checkpoint orfao isola o token como
+`resyncing`; chegar ao safe head apenas retorna `at-barrier`, sem promover o
+estado para `shadow` nem bloquear o catch-up dos demais tokens.
+
+O factory configurado exige `ROBINHOOD_RPC_URL` e nao consulta dRPC ou RPC publico
+como fallback. Scheduler, lease entre instancias e handoff atomico com a captura
+live pertencem ao macro realtime 4 e continuam desligados.
 
 Cada item acima deve ser repartido novamente se estimar mais de 500 linhas. O
 probe e a estimativa de storage sao pre-condicoes; “outros terminais fazem” nao

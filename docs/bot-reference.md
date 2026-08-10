@@ -977,6 +977,9 @@ validacao integral dos logs e checkpoint. Ele nao escolhe provider nem grava DB.
 O RT3B2 aplica um range por token em transacao unica: calcula primeiro, faz writes
 em lote, remove saldos zero e avanca total/cursor/checkpoint juntos. Cursor stale
 falha fechado e saldo negativo marca o token `drifted`, sem commit parcial.
+O RT3B3 conecta selecao, reader e commit por uma chamada limitada. Ele exige
+`ROBINHOOD_RPC_URL`, usa safe head com 12 confirmacoes, isola checkpoint orfao como
+`resyncing` e nunca promove automaticamente para `shadow`; nao ha runner ligado.
 
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.
