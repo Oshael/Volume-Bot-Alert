@@ -399,8 +399,8 @@ altera a sequencia deste quadro.
 |---|---|---|---|
 | 1 | Probe read-only global e catalog-scoped | concluido, commitado e executado no node da VPS | RT1/RT1B; `afd0147a`, `9b43e90e` |
 | 2 | Schema e ledger shadow reversivel | concluido no codigo; migrations 116-118 ainda nao aplicadas em producao; nenhum runner ligado | RT2A-RT2C4; `43a6f9d7` ate `49609b99` |
-| 3 | Backfill/catch-up de tokens novos sem lacuna | em andamento | RT3A e RT3B1-RT3B3 implementados sem runner; handoff live pendente |
-| 4 | Live incremental shadow, deteccao automatica de reorg e scheduler da poda | pendente | operacoes atomicas existem, orquestracao nao |
+| 3 | Backfill/catch-up de tokens novos sem lacuna | em andamento | RT3A/RT3B prontos; RT4A handoff pronto; runner global pendente |
+| 4 | Live incremental shadow, deteccao automatica de reorg e scheduler da poda | em andamento | RT4A implementa handoff atomico; captura global e runner pendentes |
 | 5 | Backfill frio dos tokens antigos | pendente | depende de checkpoint/throttle/promocao |
 | 6 | Reconciliacao, promocao e publicacao REST/socket | pendente | Blockscout continua sendo fallback atual |
 | 7 | Frontend realtime/expanded chart | pendente de layout aprovado | nao reutilizar o prototipo sem decisao explicita |
@@ -866,6 +866,20 @@ estado para `shadow` nem bloquear o catch-up dos demais tokens.
 O factory configurado exige `ROBINHOOD_RPC_URL` e nao consulta dRPC ou RPC publico
 como fallback. Scheduler, lease entre instancias e handoff atomico com a captura
 live pertencem ao macro realtime 4 e continuam desligados.
+
+#### Corte RT4A - Handoff atomico para shadow
+
+Status: implementado localmente; nenhum worker ligado.
+
+O handoff trava cursor live e estado do token, exige que `journal_floor_block`
+cubra o `backfill_next_block` e exige igualdade exata de bloco e hash entre os
+checkpoints. Eventos pendentes ate a barreira sao descartados como overlap ja
+aplicado pelo backfill; a promocao para `shadow` ocorre na mesma transacao e a
+captura live seguinte recomeca exatamente no proximo bloco.
+
+A operacao pressupoe que o cursor `live` represente captura global do topico
+`Transfer`. O runner dessa captura ainda nao existe; portanto o handoff nao esta
+ligado e nao deve ser chamado em producao ate essa garantia ser implementada.
 
 Cada item acima deve ser repartido novamente se estimar mais de 500 linhas. O
 probe e a estimativa de storage sao pre-condicoes; “outros terminais fazem” nao

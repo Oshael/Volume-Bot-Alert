@@ -980,6 +980,10 @@ falha fechado e saldo negativo marca o token `drifted`, sem commit parcial.
 O RT3B3 conecta selecao, reader e commit por uma chamada limitada. Ele exige
 `ROBINHOOD_RPC_URL`, usa safe head com 12 confirmacoes, isola checkpoint orfao como
 `resyncing` e nunca promove automaticamente para `shadow`; nao ha runner ligado.
+O RT4A implementa o handoff transacional: exige cobertura pelo floor live, remove
+somente overlap pendente ja aplicado pelo backfill e exige igualdade exata de
+bloco/hash antes de promover para `shadow`. Continua desligado ate existir captura
+global `Transfer`.
 
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.
