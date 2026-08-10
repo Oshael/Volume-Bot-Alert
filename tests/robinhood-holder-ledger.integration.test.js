@@ -5,6 +5,9 @@ const db = require('../src/models/db');
 const {
   createRobinhoodHolderLedgerRepository,
 } = require('../src/models/robinhood-holder-ledger');
+const {
+  createRobinhoodHolderJournalRetention,
+} = require('../src/models/robinhood-holder-journal-retention');
 
 const HASH_A = `0x${'1'.repeat(64)}`;
 const HASH_B = `0x${'2'.repeat(64)}`;
@@ -13,6 +16,7 @@ const TOKEN = `0x${'3'.repeat(40)}`;
 const TOKEN_2 = `0x${'6'.repeat(40)}`;
 const ALICE = `0x${'4'.repeat(40)}`;
 const BOB = `0x${'5'.repeat(40)}`;
+const ZERO_ADDRESS = `0x${'0'.repeat(40)}`;
 
 after(() => db.pool.end());
 
@@ -50,6 +54,7 @@ describe('Robinhood holder ledger persistence', () => {
         }),
       };
       const repository = createRobinhoodHolderLedgerRepository({ database });
+      const retention = createRobinhoodHolderJournalRetention({ database });
       await client.query(
         `INSERT INTO robinhood_holder_token_states
           (token_address, holder_count, ledger_status) VALUES ($1, 1, 'shadow')`, [TOKEN]
@@ -116,13 +121,17 @@ describe('Robinhood holder ledger persistence', () => {
         (error) => error.code === 'holder_capture_conflict'
       );
       const { rows } = await client.query(
-        `SELECT next_block, checkpoint_block, version FROM robinhood_holder_cursors`
+        `SELECT next_block, checkpoint_block, journal_floor_block, version
+           FROM robinhood_holder_cursors`
       );
       assert.deepEqual(rows.map((row) => ({
         nextBlock: String(row.next_block),
         checkpointBlock: String(row.checkpoint_block),
+        journalFloorBlock: String(row.journal_floor_block),
         version: Number(row.version),
-      })), [{ nextBlock: '101', checkpointBlock: '100', version: 0 }]);
+      })), [{
+        nextBlock: '101', checkpointBlock: '100', journalFloorBlock: '100', version: 0,
+      }]);
 
       await client.query(
         `INSERT INTO robinhood_holder_token_states
@@ -216,6 +225,59 @@ describe('Robinhood holder ledger persistence', () => {
         [TOKEN_2]
       );
       assert.equal(stillDrifted.rows[0].ledger_status, 'drifted');
+
+      await client.query(
+        `UPDATE robinhood_holder_cursors
+            SET next_block = 20150, safe_head = 20200,
+                checkpoint_block = 20149, checkpoint_hash = $1
+          WHERE chain = 'robinhood' AND stream = 'live'`, [HASH_A]
+      );
+      await client.query(
+        `INSERT INTO robinhood_holder_transfer_journal (
+           block_number, block_hash, transaction_hash, transaction_index,
+           log_index, token_address, from_wallet, to_wallet, amount_raw,
+           from_balance_before, from_balance_after,
+           to_balance_before, to_balance_after, holder_delta, applied, applied_at
+         ) VALUES
+           (100, $1, $1, 0, 0, $4, $5, $6, 1,
+             NULL, NULL, 0, 1, 1, true, NOW()),
+           (102, $1, $2, 1, 1, $4, $5, $7, 1,
+             NULL, NULL, 0, 1, 1, true, NOW()),
+           (101, $1, $3, 2, 2, $4, $7, $6, 1,
+             NULL, NULL, NULL, NULL, NULL, false, NULL)`,
+        [HASH_A, HASH_C, HASH_B, TOKEN, ZERO_ADDRESS, BOB, ALICE]
+      );
+      assert.deepEqual(await retention.pruneOnce({ batchLimit: 1 }), {
+        status: 'blocked', reason: 'pending_event_before_cutoff', deletedEvents: 0,
+        cutoffBlock: '150', journalFloorBlock: '100',
+      });
+      await client.query(
+        `DELETE FROM robinhood_holder_transfer_journal WHERE applied = false`
+      );
+      assert.deepEqual(await retention.pruneOnce({ batchLimit: 1 }), {
+        status: 'draining', deletedEvents: 1,
+        cutoffBlock: '150', journalFloorBlock: '100',
+      });
+      assert.deepEqual(await retention.pruneOnce({ batchLimit: 1 }), {
+        status: 'pruned', deletedEvents: 1,
+        cutoffBlock: '150', journalFloorBlock: '150',
+      });
+      const pruned = await client.query(
+        `SELECT journal_floor_block,
+                (SELECT COUNT(*) FROM robinhood_holder_transfer_journal) AS journal_count
+           FROM robinhood_holder_cursors`
+      );
+      assert.deepEqual(pruned.rows.map((row) => ({
+        journalFloorBlock: String(row.journal_floor_block),
+        journalCount: Number(row.journal_count),
+      })), [{ journalFloorBlock: '150', journalCount: 0 }]);
+      await assert.rejects(
+        repository.rewindOrphanedRange({
+          nextBlock: '149', safeHead: '20149', expectedVersion: 2,
+          checkpoint: { number: '148', hash: HASH_B },
+        }),
+        (error) => error.code === 'holder_rewind_below_floor'
+      );
     } finally {
       client.release();
     }

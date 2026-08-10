@@ -128,13 +128,17 @@ async function insertTransfer(client, transfer) {
 async function advanceCursor(client, cursor) {
   const result = await client.query(
     `INSERT INTO robinhood_holder_cursors (
-       chain, stream, next_block, safe_head, checkpoint_block, checkpoint_hash
-     ) VALUES ('robinhood', 'live', $1, $2, $3, $4)
+       chain, stream, next_block, safe_head, checkpoint_block, checkpoint_hash,
+       journal_floor_block
+     ) VALUES ('robinhood', 'live', $1, $2, $3, $4, $6)
      ON CONFLICT (chain, stream) DO UPDATE SET
        next_block = EXCLUDED.next_block,
        safe_head = EXCLUDED.safe_head,
        checkpoint_block = EXCLUDED.checkpoint_block,
        checkpoint_hash = EXCLUDED.checkpoint_hash,
+       journal_floor_block = COALESCE(
+         robinhood_holder_cursors.journal_floor_block, EXCLUDED.journal_floor_block
+       ),
        version = robinhood_holder_cursors.version + 1,
        updated_at = NOW()
      WHERE $5::bigint IS NOT NULL
@@ -162,6 +166,8 @@ function normalizeCursorRow(row) {
     safeHead: row.safe_head == null ? null : String(row.safe_head),
     checkpointBlock: row.checkpoint_block == null ? null : String(row.checkpoint_block),
     checkpointHash: row.checkpoint_hash,
+    journalFloorBlock: row.journal_floor_block == null
+      ? null : String(row.journal_floor_block),
     version: Number(row.version),
   });
 }
@@ -361,7 +367,7 @@ async function commitAppliedEvent(client, changes, priorProvenance) {
 
 async function lockCursorForRewind(client, rewind) {
   const result = await client.query(
-    `SELECT next_block, version
+    `SELECT next_block, journal_floor_block, version
        FROM robinhood_holder_cursors
       WHERE chain = 'robinhood' AND stream = 'live' FOR UPDATE`
   );
@@ -379,6 +385,16 @@ async function lockCursorForRewind(client, rewind) {
   if (BigInt(rewind.nextBlock) >= BigInt(row.next_block)) {
     const error = new Error('holder rewind must move the cursor backward');
     error.code = 'holder_rewind_not_behind';
+    throw error;
+  }
+  if (row.journal_floor_block == null) {
+    const error = new Error('holder journal floor is not initialized');
+    error.code = 'holder_journal_floor_uninitialized';
+    throw error;
+  }
+  if (BigInt(rewind.nextBlock) < BigInt(row.journal_floor_block)) {
+    const error = new Error('holder rewind is below the retained journal floor');
+    error.code = 'holder_rewind_below_floor';
     throw error;
   }
 }
@@ -609,7 +625,8 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
 
   async function getCursor() {
     const result = await database.query(
-      `SELECT stream, next_block, safe_head, checkpoint_block, checkpoint_hash, version
+      `SELECT stream, next_block, safe_head, checkpoint_block, checkpoint_hash,
+              journal_floor_block, version
          FROM robinhood_holder_cursors
         WHERE chain = $1 AND stream = $2`,
       [CHAIN, STREAM]

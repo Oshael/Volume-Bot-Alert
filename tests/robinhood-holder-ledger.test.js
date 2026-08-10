@@ -144,12 +144,12 @@ describe('Robinhood holder ledger repository', () => {
   it('reads the independent live cursor without starting a transaction', async () => {
     const fake = fakeDatabase([{ rows: [{
       stream: 'live', next_block: '101', safe_head: '105', checkpoint_block: '100',
-      checkpoint_hash: HASH, version: '7',
+      checkpoint_hash: HASH, journal_floor_block: '50', version: '7',
     }], rowCount: 1 }]);
     const cursorState = await createRobinhoodHolderLedgerRepository(fake).getCursor();
     assert.deepEqual(cursorState, {
       stream: 'live', nextBlock: '101', safeHead: '105', checkpointBlock: '100',
-      checkpointHash: HASH, version: 7,
+      checkpointHash: HASH, journalFloorBlock: '50', version: 7,
     });
     assert.equal(fake.calls.length, 1);
   });
