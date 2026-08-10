@@ -1153,6 +1153,8 @@ DEV-L2 também está construído localmente: o mesmo cursor consulta logs por bl
 e aceita somente assinaturas comprovadas de Pons/NOXA e LaunchHood, persistindo a
 factory como evidência. RobinPad segue excluído por falta de ABI/logs verificáveis;
 Blockscout e `rpc_direct` não podem sobrescrever um `launchpad_event`.
+O hotfix pós-rollout usa o contrato real `db.getClient()` para a transação atômica;
+o cursor permanece parado quando a conexão ou qualquer escrita falha.
 
 Os contratos locais de atribuição já são fail-closed: o bloco cheio fornece hash,
 número e timestamp para checkpoint; qualquer transação ausente impede escrita
