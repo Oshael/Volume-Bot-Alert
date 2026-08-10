@@ -142,6 +142,24 @@ describe('Robinhood token creator attribution', () => {
     assert.match(calls[1], /WHEN 'blockscout' THEN 0 WHEN 'rpc_direct' THEN 1 ELSE 2/);
   });
 
+  it('persists verified historical direct evidence without advancing a live cursor', async () => {
+    const calls = [];
+    const client = {
+      query: async (sql) => { calls.push(sql); return { rows: [] }; },
+      release: () => {},
+    };
+    const repository = createRobinhoodTokenAttributionRepository({
+      database: { getClient: async () => client },
+    });
+    assert.deepEqual(await repository.recordVerifiedDirectDeployments([{
+      tokenAddress: TOKEN, creatorAddress: CREATOR,
+      transactionHash: `0x${'d'.repeat(64)}`, blockNumber: '100',
+      source: 'rpc_direct', factoryAddress: null,
+    }]), { attributed: 1 });
+    assert.deepEqual(calls.map((sql) => sql.split(/\s+/)[0]), ['BEGIN', 'INSERT', 'COMMIT']);
+    assert.doesNotMatch(calls.join('\n'), /UPDATE robinhood_direct_creator_cursors/);
+  });
+
   it('registers an additive, retryable attribution table in the runtime guard', () => {
     const sql = stage110.STATEMENTS.join('\n');
     const group = SCHEMA_GROUPS.find((entry) => (

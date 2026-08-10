@@ -205,6 +205,24 @@ function createRobinhoodTokenAttributionRepository(options = {}) {
     }
   }
 
+  async function recordVerifiedDirectDeployments(inputs = []) {
+    const deployments = normalizeDeployments(inputs);
+    if (deployments.some((item) => item.source !== 'rpc_direct' || item.factoryAddress !== null)) {
+      throw new Error('verified direct deployment evidence must use rpc_direct');
+    }
+    if (!deployments.length) return Object.freeze({ attributed: 0 });
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      await upsertDeployments(client, deployments);
+      await client.query('COMMIT');
+      return Object.freeze({ attributed: deployments.length });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally { client.release(); }
+  }
+
   async function recordLaunchpadBackfillRange(input = {}) {
     const fromBlock = BigInt(String(input.fromBlock));
     const toBlock = BigInt(String(input.toBlock));
@@ -242,6 +260,7 @@ function createRobinhoodTokenAttributionRepository(options = {}) {
     initializeDirectCursor, initializeLaunchpadBackfillCursor,
     listCreatorCandidates, loadDirectCursor, loadLaunchpadBackfillCursor,
     recordAttempt, recordAttempts, recordCreatorBlock, recordLaunchpadBackfillRange,
+    recordVerifiedDirectDeployments,
   });
 }
 

@@ -183,10 +183,15 @@ function createRobinhoodBlockscoutMetadataClient(options = {}) {
       let creatorAddress = null;
       try { creatorAddress = normalizeTokenAddress('robinhood', item?.contractCreator); }
       catch (_) {}
-      creators.set(tokenAddress, creatorAddress);
+      const rawTransactionHash = String(item?.txHash ?? '').trim().toLowerCase();
+      const transactionHash = /^0x[0-9a-f]{64}$/.test(rawTransactionHash)
+        ? rawTransactionHash
+        : null;
+      creators.set(tokenAddress, { creatorAddress, transactionHash });
     }
+    const unresolved = Object.freeze({ creatorAddress: null, transactionHash: null });
     return Object.freeze(addresses.map((tokenAddress) => Object.freeze({
-      tokenAddress, creatorAddress: creators.get(tokenAddress) || null,
+      tokenAddress, ...(creators.get(tokenAddress) || unresolved),
     })));
   }
 

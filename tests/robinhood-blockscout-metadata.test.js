@@ -70,6 +70,7 @@ describe('Robinhood Blockscout metadata client', () => {
 
   it('resolves up to ten contract creators in one Blockscout request', async () => {
     const creator = `0x${'2'.repeat(40)}`;
+    const transactionHash = `0x${'4'.repeat(64)}`;
     let requestedUrl;
     const client = createRobinhoodBlockscoutMetadataClient({
       apiUrl: 'https://api.blockscout.com/v2/api?chain_id=4663',
@@ -78,14 +79,14 @@ describe('Robinhood Blockscout metadata client', () => {
         requestedUrl = new URL(url);
         return response(200, {
           status: '1',
-          result: [{ contractAddress: TOKEN, contractCreator: creator }],
+          result: [{ contractAddress: TOKEN, contractCreator: creator, txHash: transactionHash }],
         }, { 'x-credits-remaining': '99980' });
       },
     });
 
     assert.deepEqual(await client.getContractCreators([TOKEN.toUpperCase(), TOKEN_2]), [
-      { tokenAddress: TOKEN, creatorAddress: creator },
-      { tokenAddress: TOKEN_2, creatorAddress: null },
+      { tokenAddress: TOKEN, creatorAddress: creator, transactionHash },
+      { tokenAddress: TOKEN_2, creatorAddress: null, transactionHash: null },
     ]);
     assert.equal(requestedUrl.searchParams.get('action'), 'getcontractcreation');
     assert.equal(requestedUrl.searchParams.get('chain_id'), '4663');
