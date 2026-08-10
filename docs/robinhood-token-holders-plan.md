@@ -689,6 +689,19 @@ pendente para resync, sem bloquear tokens ainda saudaveis.
 
 O proximo corte cobre rollback de reorg. Captura/aplicacao continuam desligadas.
 
+#### Corte RT2C1 - Procedencia reversivel do journal
+
+Status: implementado localmente; migration ainda nao aplicada em producao.
+
+A Stage 117 acrescenta ao journal a procedencia anterior de bloco, transacao e
+log das wallets de origem/destino. A aplicacao atomica salva essa evidencia antes
+de substituir ou apagar o balance, permitindo ao rollback restaurar tambem o
+ultimo evento conhecido. Esses campos pertencem ao journal curto e serao podados
+fora da janela de reorg; nao constituem historico permanente de wallets.
+
+O proximo corte implementa a reversao atomica e o rewind do cursor. Nenhum runner
+ou publicacao foi ligado.
+
 Cada item acima deve ser repartido novamente se estimar mais de 500 linhas. O
 probe e a estimativa de storage sao pre-condicoes; “outros terminais fazem” nao
 substitui evidencia de volume, limites de RPC e custo de banco desta chain.

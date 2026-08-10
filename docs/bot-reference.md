@@ -952,6 +952,9 @@ rollback. Ainda não existe runner nem aplicação dos eventos aos balances.
 O RT2B2 aplica serialmente o próximo evento elegível: balances positivos, total
 e before/after do journal são commitados juntos; saldo impossível marca apenas o
 token como `drifted`. Nenhum runner ou publicação foi ligado.
+O RT2C1 adiciona a Stage 117 e salva no journal curto a procedência anterior das
+duas wallets tocadas. Isso prepara uma reversão fiel dos balances sem criar
+histórico permanente; rollback, retenção, runner e publicação seguem desligados.
 
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.
