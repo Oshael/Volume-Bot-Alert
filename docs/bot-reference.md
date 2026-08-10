@@ -536,18 +536,23 @@ Contratos diretos, desconhecidos ou respostas antigas sem atribuição usam o
 unicórnio da Uniswap. O tooltip do badge identifica a pool como Uniswap V2, V3
 ou V4 quando `pairDexId` está disponível.
 
-Nos cards do feed de alertas, Robinhood oferece as mesmas ações gerais de Solana:
-chart expandido chain-aware, estrela, blocklist do usuário e menu de terminais.
+Nos cards do feed de alertas e nas listas `Monitored`, `Recent`, `Old` e `Manual`,
+Robinhood oferece o menu de terminais usado nas superfícies equivalentes de Solana.
+Os alertas também mantêm chart expandido chain-aware, estrela e blocklist do usuário.
 GMGN e FOMO recebem o CA do token; Axiom e Padre recebem `pairAddress` e só são
 exibidos quando a pool está disponível, evitando tratar o contrato ERC-20 como
-pool. Photon e BullX permanecem exclusivos de Solana. O `AGE` dos alertas padrão
+pool. A configuração de tokens manuais inclui a última pool do catálogo para que
+Axiom e Padre apareçam quando esse dado existir. Photon e BullX permanecem
+exclusivos de Solana. O `AGE` dos alertas padrão
 publica `tokenCreatedAt` a partir da data canônica do sinal; quando o catálogo não
 tem criação nativa, essa data usa a primeira descoberta de pool já adotada pelo
 pipeline como fallback aproximado. O `Admin Block` ainda é Solana-only e não deve
 ser exibido para Robinhood até rota e controller administrativos aceitarem chain.
 
 Os snapshots de ticker peers também são persistidos nos alertas Robinhood padrão,
-HVNC e customizados. A regra visual é a mesma de Solana: `OG` identifica o contrato
+HVNC e customizados, enquanto `Monitored`, `Recent`, `Old` e `Manual` recebem a
+classificação atual do catálogo em seus payloads. A regra visual é a mesma de
+Solana: `OG` identifica o contrato
 mais antigo entre matches exatos do ticker, `#1` identifica o líder de valuation
 recente e `!` identifica um peer exato que não ocupa nenhum dos dois papéis. Na
 Robinhood, `OG` usa `tokenCreatedAt` e cai para `firstSeenAt` quando a criação
@@ -555,6 +560,13 @@ on-chain não está disponível; `#1` compara FDV (não market cap) e usa `lastS
 para impedir que uma valuation sem atualização nas últimas 24 horas retenha o
 badge. O snapshot fica no payload do evento, preservando a classificação observada
 no momento do alerta.
+
+As preferências de trading terminal são salvas por chain no perfil do usuário.
+`enabledTradeTerminals` controla Solana (Axiom, Photon, BullX, GMGN, Padre e FOMO),
+enquanto `enabledRobinhoodTradeTerminals` controla Robinhood (Axiom, GMGN, Padre
+e FOMO). Contas antigas recebem os quatro destinos Robinhood habilitados por
+padrão; cada seletor exige ao menos um terminal ativo e não interfere na outra
+chain.
 
 Worker leases no PostgreSQL evitam dois donos ativos para loops protegidos. Eles
 não autorizam iniciar processos arbitrários: sempre verifique as leases e os
