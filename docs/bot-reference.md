@@ -974,6 +974,9 @@ operacional e com deployment exato `rpc_direct`/`launchpad_event`. Ele cria esta
 O RT3B foi dividido em reader, persistencia e executor. O RT3B1 entrega somente o
 reader: chain ID 4663, um token por range, maximo de 5.000 blocos, split adaptativo,
 validacao integral dos logs e checkpoint. Ele nao escolhe provider nem grava DB.
+O RT3B2 aplica um range por token em transacao unica: calcula primeiro, faz writes
+em lote, remove saldos zero e avanca total/cursor/checkpoint juntos. Cursor stale
+falha fechado e saldo negativo marca o token `drifted`, sem commit parcial.
 
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.
