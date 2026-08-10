@@ -2674,6 +2674,20 @@ const SCHEMA_GROUPS = [
     }],
   },
   {
+    key: 'stage118-robinhood-holder-journal-floor',
+    name: 'Stage 118 Robinhood holder journal floor',
+    repair: 'node src/utils/db-init-stage118.js',
+    tables: [{
+      table: 'robinhood_holder_cursors',
+      columns: ['journal_floor_block'],
+      columnTypes: { journal_floor_block: { dataType: 'bigint' } },
+      constraints: [{
+        name: 'robinhood_holder_cursors_journal_floor_check',
+        includes: ['journal_floor_block', 'next_block'],
+      }],
+    }],
+  },
+  {
     key: 'stage91-robinhood-wallet-swap-cursors',
     name: 'Stage 91 Robinhood wallet-swap attribution cursors',
     repair: 'node src/utils/db-init-stage91.js',

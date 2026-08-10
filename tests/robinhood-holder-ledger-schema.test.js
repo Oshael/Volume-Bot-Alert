@@ -3,6 +3,7 @@ const { describe, it } = require('node:test');
 
 const stage116 = require('../src/utils/db-init-stage116');
 const stage117 = require('../src/utils/db-init-stage117');
+const stage118 = require('../src/utils/db-init-stage118');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 
 describe('Robinhood holder shadow ledger schema', () => {
@@ -70,5 +71,22 @@ describe('Robinhood holder shadow ledger schema', () => {
     ));
     assert.equal(group.repair, 'node src/utils/db-init-stage117.js');
     assert.equal(group.tables[0].columns.length, 6);
+  });
+
+  it('persists a fail-closed journal floor behind the live cursor', () => {
+    const sql = stage118.STATEMENTS.join('\n');
+    assert.match(sql, /ADD COLUMN IF NOT EXISTS journal_floor_block BIGINT/);
+    assert.match(sql, /journal_floor_block >= 0/);
+    assert.match(sql, /journal_floor_block <= next_block/);
+    assert.doesNotMatch(sql, /DEFAULT|NOT NULL/);
+    assert.doesNotMatch(sql, /DROP\s+(?:TABLE|COLUMN|CONSTRAINT|INDEX)/i);
+
+    const group = SCHEMA_GROUPS.find(({ key }) => (
+      key === 'stage118-robinhood-holder-journal-floor'
+    ));
+    assert.equal(group.repair, 'node src/utils/db-init-stage118.js');
+    assert.deepEqual(group.tables[0].columnTypes.journal_floor_block, {
+      dataType: 'bigint',
+    });
   });
 });
