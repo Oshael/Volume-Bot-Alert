@@ -25,6 +25,26 @@ function blockHash(value) {
   return normalized;
 }
 
+function stateRow(row) {
+  if (!row) return null;
+  const state = {
+    tokenAddress: tokenAddress(row.token_address),
+    deploymentBlock: quantity(row.deployment_block, 'deploymentBlock').toString(),
+    backfillNextBlock: quantity(row.backfill_next_block, 'backfillNextBlock').toString(),
+    liveThroughBlock: row.live_through_block == null ? null : String(row.live_through_block),
+    liveThroughHash: row.live_through_hash,
+    version: Number(row.version),
+  };
+  if ((state.liveThroughBlock === null) !== (state.liveThroughHash === null)) {
+    throw new Error('holder backfill checkpoint pair is inconsistent');
+  }
+  if (state.liveThroughBlock !== null
+      && BigInt(state.liveThroughBlock) + 1n !== BigInt(state.backfillNextBlock)) {
+    throw new Error('holder backfill checkpoint does not precede its cursor');
+  }
+  return Object.freeze(state);
+}
+
 function normalizeRange(input = {}) {
   const token = tokenAddress(input.tokenAddress);
   const fromBlock = quantity(input.fromBlock, 'fromBlock');
@@ -190,6 +210,40 @@ async function markDrifted(client, range, reason) {
 function createRobinhoodHolderBackfillRepository(options = {}) {
   const database = options.database || db;
 
+  async function getNextToken(input = {}) {
+    const throughBlock = quantity(input.throughBlock, 'throughBlock').toString();
+    const result = await database.query(
+      `SELECT token_address, deployment_block, backfill_next_block,
+              live_through_block, live_through_hash, version
+         FROM robinhood_holder_token_states
+        WHERE chain = 'robinhood' AND ledger_status = 'backfilling'
+          AND backfill_next_block <= $1
+        ORDER BY backfill_next_block, token_address
+        LIMIT 1`,
+      [throughBlock]
+    );
+    return stateRow(result.rows[0]);
+  }
+
+  async function markResyncing(input = {}) {
+    const token = tokenAddress(input.tokenAddress);
+    const nextBlock = quantity(input.backfillNextBlock, 'backfillNextBlock').toString();
+    const result = await database.query(
+      `UPDATE robinhood_holder_token_states
+          SET ledger_status = 'resyncing', version = version + 1, updated_at = NOW()
+        WHERE chain = 'robinhood' AND token_address = $1
+          AND ledger_status = 'backfilling' AND backfill_next_block = $2
+        RETURNING token_address`,
+      [token, nextBlock]
+    );
+    if (!result.rowCount) {
+      const error = new Error('holder backfill cursor changed before resync isolation');
+      error.code = 'holder_backfill_cursor_stale';
+      throw error;
+    }
+    return Object.freeze({ status: 'resyncing', tokenAddress: token });
+  }
+
   async function commitRange(input = {}) {
     const range = normalizeRange(input);
     const client = await database.getClient();
@@ -225,10 +279,10 @@ function createRobinhoodHolderBackfillRepository(options = {}) {
     }
   }
 
-  return Object.freeze({ commitRange });
+  return Object.freeze({ commitRange, getNextToken, markResyncing });
 }
 
 module.exports = {
   createRobinhoodHolderBackfillRepository,
-  __private: { computeRange, normalizeRange },
+  __private: { computeRange, normalizeRange, stateRow },
 };

@@ -40,9 +40,10 @@ describe('Robinhood holder backfill persistence', () => {
         [TOKEN, DRIFT_TOKEN]
       );
       const repository = createRobinhoodHolderBackfillRepository({
-        database: { getClient: async () => ({
-          query: client.query.bind(client), release() {},
-        }) },
+        database: {
+          query: client.query.bind(client),
+          getClient: async () => ({ query: client.query.bind(client), release() {} }),
+        },
       });
       const range = {
         tokenAddress: TOKEN, fromBlock: 100, toBlock: 101,
@@ -103,6 +104,15 @@ describe('Robinhood holder backfill persistence', () => {
         { token: TOKEN, count: '1', status: 'backfilling', next: '103', live: '102' },
         { token: DRIFT_TOKEN, count: '0', status: 'drifted', next: '200', live: null },
       ]);
+      assert.equal(await repository.getNextToken({ throughBlock: '102' }), null);
+      assert.deepEqual(await repository.getNextToken({ throughBlock: '103' }), {
+        tokenAddress: TOKEN, deploymentBlock: '100', backfillNextBlock: '103',
+        liveThroughBlock: '102', liveThroughHash: HASH_C, version: 2,
+      });
+      assert.deepEqual(await repository.markResyncing({
+        tokenAddress: TOKEN, backfillNextBlock: '103',
+      }), { status: 'resyncing', tokenAddress: TOKEN });
+      assert.equal(await repository.getNextToken({ throughBlock: '103' }), null);
     } finally {
       client.release();
     }

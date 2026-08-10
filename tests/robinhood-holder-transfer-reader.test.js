@@ -37,6 +37,7 @@ describe('Robinhood holder Transfer reader', () => {
   it('decodes, orders and checkpoints one bounded token range', async () => {
     const source = rpc(async (method) => {
       if (method === 'eth_getBlockByNumber') return { number: '0x64', hash: HASH_A };
+      if (method === 'eth_blockNumber') return '0x70';
       if (method === 'eth_getLogs') return [
         log({ transactionHash: `0x${'d'.repeat(64)}`, transactionIndex: '0x2', logIndex: '0x3' }),
         log({ topics: [TRANSFER_TOPIC, ZERO_TOPIC, BOB], data: `0x${'0'.repeat(63)}5` }),
@@ -45,6 +46,10 @@ describe('Robinhood holder Transfer reader', () => {
     });
     const reader = createRobinhoodHolderTransferReader({ rpcClient: source.client });
     const result = await reader.readRange({ tokenAddress: TOKEN, fromBlock: 99, toBlock: 100 });
+    assert.deepEqual(await reader.getSafeHead(12), {
+      head: '112', safeHead: '100', confirmations: 12,
+    });
+    assert.equal(await reader.matchesCheckpoint({ number: 100, hash: HASH_A }), true);
 
     assert.deepEqual({
       tokenAddress: result.tokenAddress, fromBlock: result.fromBlock,
@@ -64,6 +69,7 @@ describe('Robinhood holder Transfer reader', () => {
     assert.deepEqual(source.calls.find(({ method }) => method === 'eth_getLogs').params[0], {
       address: TOKEN, fromBlock: '0x63', toBlock: '0x64', topics: [TRANSFER_TOPIC],
     });
+    assert.equal(source.calls.filter(({ method }) => method === 'eth_chainId').length, 1);
   });
 
   it('splits range-limit failures without widening the requested window', async () => {

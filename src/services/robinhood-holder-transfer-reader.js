@@ -31,6 +31,14 @@ function blockTag(value) {
   return `0x${BigInt(value).toString(16)}`;
 }
 
+function boundedInteger(value, fallback, minimum, maximum, label) {
+  const parsed = value == null ? fallback : Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new Error(`${label} must be between ${minimum} and ${maximum}`);
+  }
+  return parsed;
+}
+
 function topicAddress(value, label) {
   const topic = hex(value, 32, label);
   if (!/^0x0{24}[0-9a-f]{40}$/.test(topic)) throw new Error(`${label} is not an address topic`);
@@ -108,6 +116,30 @@ function createRobinhoodHolderTransferReader(options = {}) {
     }
   }
 
+  async function readBlock(value) {
+    const number = quantity(value, 'block.number');
+    await assertChain();
+    const block = await rpcClient.request('eth_getBlockByNumber', [blockTag(number), false]);
+    if (quantity(block?.number, 'block.number') !== number) {
+      throw new Error('RPC block does not match requested number');
+    }
+    return Object.freeze({ number: number.toString(), hash: hex(block?.hash, 32, 'block.hash') });
+  }
+
+  async function getSafeHead(value = 12) {
+    const confirmations = boundedInteger(value, 12, 0, 1000, 'confirmations');
+    await assertChain();
+    const head = quantity(await rpcClient.request('eth_blockNumber'), 'eth_blockNumber');
+    const safeHead = head >= BigInt(confirmations) ? head - BigInt(confirmations) : 0n;
+    return Object.freeze({ head: head.toString(), safeHead: safeHead.toString(), confirmations });
+  }
+
+  async function matchesCheckpoint(checkpoint = {}) {
+    const expectedHash = hex(checkpoint.hash, 32, 'checkpoint.hash');
+    const block = await readBlock(checkpoint.number);
+    return block.hash === expectedHash;
+  }
+
   async function readRange(input = {}) {
     const tokenAddress = address(input.tokenAddress, 'tokenAddress');
     const fromBlock = quantity(input.fromBlock, 'fromBlock');
@@ -120,12 +152,9 @@ function createRobinhoodHolderTransferReader(options = {}) {
     const telemetry = { requests: 0, splits: 0 };
     const [logs, checkpoint] = await Promise.all([
       readLogs(fromBlock, toBlock, tokenAddress, telemetry),
-      rpcClient.request('eth_getBlockByNumber', [blockTag(toBlock), false]),
+      readBlock(toBlock),
     ]);
-    if (quantity(checkpoint?.number, 'checkpoint.number') !== toBlock) {
-      throw new Error('holder replay checkpoint does not match requested range');
-    }
-    const checkpointHash = hex(checkpoint?.hash, 32, 'checkpoint.hash');
+    const checkpointHash = checkpoint.hash;
     const context = { tokenAddress, fromBlock, toBlock, checkpointHash };
     const transfers = logs.map((log) => decodeTransferLog(log, context)).sort((left, right) => (
       BigInt(left.blockNumber) < BigInt(right.blockNumber) ? -1
@@ -144,7 +173,7 @@ function createRobinhoodHolderTransferReader(options = {}) {
     });
   }
 
-  return Object.freeze({ assertChain, readRange });
+  return Object.freeze({ assertChain, getSafeHead, matchesCheckpoint, readBlock, readRange });
 }
 
 module.exports = {
