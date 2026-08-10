@@ -902,6 +902,7 @@ Stages confirmados:
 | 100 | cursor independente do replay histórico de liquidez V4 pelo RPC local |
 | 101 | faixas V4 materializadas e mantidas incrementalmente após o replay |
 | 102 | TVL V4 point-in-time pelas faixas de ticks e constraints correspondentes |
+| 113 | proveniência RPC e cursor live independente para deployments diretos Robinhood |
 
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.
@@ -1105,6 +1106,22 @@ limitado; erros semânticos não entram em retry. O timeout HTTP do backfill ace
 O painel Robinhood já oferece ALL/DEV: a consulta `scope=dev` filtra pelo criador
 persistido e devolve `creatorAddress`, usado pelo cliente para aplicar o mesmo
 escopo aos eventos realtime do token. TRACKED e YOU ainda não estão disponíveis.
+
+O backfill da Stage 110 é somente a trilha histórica/fallback; rate limits do
+Blockscout (especialmente HTTP 429) impedem tratá-lo como captura live. A captura
+live de DEV ainda está planejada em três slices independentes: DEV-L1 varre todos
+os blocos no frontier seguro e persiste deployments diretos (`to = null`,
+`contractAddress` do receipt, DEV = `tx.from`); DEV-L2 decodifica eventos de
+launchpads/factories conhecidos; DEV-L3 cobre `CREATE`/`CREATE2` internos por
+traces. O RPC público Robinhood testado em 2026-08-10 não oferece
+`debug_traceTransaction` nem `trace_transaction`, portanto DEV-L3 depende de um
+RPC trace-enabled. A precedência de evidência é criador explícito do evento,
+`tx.from`, factory técnica e, por último, Blockscout. Nenhuma falha dessa trilha
+pode bloquear discovery, mercado ou ingestão de swaps.
+DEV-L1 já está construído localmente como worker opt-in no grupo
+`robinhood-wallet`: loteia receipts, grava atribuição e cursor na mesma transação
+e para em divergência de checkpoint. A produção ainda depende da Stage 113 e do
+enable explícito; DEV-L2/L3 continuam pendentes.
 
 Os contratos locais de atribuição já são fail-closed: o bloco cheio fornece hash,
 número e timestamp para checkpoint; qualquer transação ausente impede escrita

@@ -285,6 +285,60 @@ Each tab is a **filter of the same feed by wallet classification**; the
   yet (`user_wallets` holds the user's *own* wallets, not a watchlist). **Requires a
   new table** (e.g. `user_tracked_wallets`) + CRUD + UI to manage the list.
 
+### DEV creator provenance — historical vs live
+
+The Stage 110 Blockscout job is the **historical/fallback lane**. It can repair the
+whole registry, but its throughput is limited by the provider (notably HTTP 429),
+and it must not become the critical path for newly created tokens. The current
+discovery and wallet workers do not provide a complete live creator lane: the
+wallet worker only reads full blocks selected by accepted swap observations, and
+the image-metadata lookup is best-effort classification whose creator result is
+not persisted.
+
+The live implementation is split into three bounded slices:
+
+1. **DEV-L1 — direct deployments (`CREATE` transaction):** add an isolated worker
+   that scans every block at the same reorg-safe frontier used by the Robinhood
+   pipeline with full transactions. For each transaction whose `to` is null, read
+   its receipt, map `contractAddress` to `tx.from`, and persist the attribution
+   idempotently with block/transaction provenance. Its cursor and failures must be
+   independent: creator enrichment cannot block market discovery or wallet-swap
+   ingestion. Target: the direct creator is durable before the token reaches the
+   product through its first safe pool/market observation.
+   **Built locally:** Stage 113 adds RPC provenance plus the independent cursor;
+   the opt-in worker scans full blocks, batches receipts and commits attribution
+   and cursor atomically. Production still requires migration, enablement and
+   rollout validation. Blockscout cannot overwrite an `rpc_direct` result.
+2. **DEV-L2 — known launchpads/factories:** add adapters for known token-created
+   events and persist the developer/owner explicitly emitted by the launchpad.
+   Attribution priority is: explicit launchpad creator, transaction initiator
+   (`tx.from`), technical factory, then Blockscout fallback. Relayers remain an
+   explicit ambiguity; `tx.from` is not automatically the human developer.
+3. **DEV-L3 — generic internal `CREATE`/`CREATE2`:** consume transaction traces to
+   find contracts created inside arbitrary factories. The public Robinhood RPC was
+   verified on 2026-08-10 and exposes neither `debug_traceTransaction` nor
+   `trace_transaction`, so this slice requires a trace-enabled local/provider node.
+   Known factory event adapters therefore precede generic tracing.
+
+Blockscout remains the backfill and reconciliation source for missed/old tokens;
+polling it every 30–60 seconds is not the intended live architecture. “Live” here
+means the pipeline's safe frontier, not an unconfirmed zero-block event.
+
+Estimated change size, to be re-checked before each authorization:
+
+- DEV-L1: 350–450 changed lines.
+- DEV-L2: 300–500 changed lines.
+- DEV-L3: 300–450 changed lines, only after trace-capable RPC is available.
+- Full live coverage: approximately 950–1,400 changed lines and likely more than
+  12 production files, so it is an architecture checkpoint. Each slice stays at
+  or below 500 changed lines and is implemented, validated and authorized
+  separately.
+
+Live DEV is complete only when direct deployments are covered at the safe
+frontier, known launchpads use explicit evidence where available, attribution is
+idempotent/reorg-safe, lag and source coverage are observable, and provider
+failure never stalls the main Robinhood ingestion paths.
+
 Phase 2 fan-out (estimate, to be re-checked before starting):
 - Backend: `mine` / `tracked` / `dev` filters on the read model + route; deployer
   source; tracked-wallet table + CRUD routes.
@@ -292,9 +346,10 @@ Phase 2 fan-out (estimate, to be re-checked before starting):
 - Schema: `user_tracked_wallets` (+ possibly a deployer column/lookup) → **migration
   → must be run in a maintenance-safe window, not during a heavy repair.**
 
-Phase 2 architecture checkpoint: Slice 1 is the persistent DEV attribution
-foundation and Slice 2 wires the ALL/DEV feed filter. Later slices add TRACKED
-CRUD/UI and only then implement YOU with SIWE.
+Phase 2 architecture checkpoint: the persistent DEV attribution foundation and
+the ALL/DEV feed filter are built. DEV-L1/L2/L3 above add live provenance in
+separate slices. Later slices add TRACKED CRUD/UI and only then implement YOU with
+SIWE.
 
 ## 8. Durable MC parity — the sidecar (BUILT / done)
 
@@ -355,6 +410,7 @@ The DEV/TRACKED/YOU tabs (§6) remain the open Phase-2 architecture checkpoint.
    frozen legacy-cursor bug is fixed; forward-write of the sidecar is now live (§5).
 6. ✅ **Slice C** (realtime) — committed; production still depends on its rollout.
 7. **Observation pruning deferred** — keep the table and fallback JOIN for now (§8).
-8. ◐ **Phase 2** — DEV attribution and the ALL/DEV feed filter are built; TRACKED
-   and YOU remain subsequent slices (§6). Registry-wide creator attribution now
-   uses Blockscout's 10-contract batch endpoint.
+8. ◐ **Phase 2** — historical DEV attribution, ALL/DEV and DEV-L1 are built
+   locally; DEV-L1 awaits rollout, while DEV-L2/L3 and TRACKED/YOU remain
+   subsequent slices (§6). Registry-wide repair uses Blockscout's 10-contract
+   batch endpoint, but Blockscout is not the live critical path.
