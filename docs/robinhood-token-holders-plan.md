@@ -401,7 +401,7 @@ altera a sequencia deste quadro.
 | 2 | Schema e ledger shadow reversivel | concluido no codigo; migrations 116-118 ainda nao aplicadas em producao; nenhum runner ligado | RT2A-RT2C4; `43a6f9d7` ate `49609b99` |
 | 3 | Backfill/catch-up de tokens novos sem lacuna | concluido no codigo/desligado | RT3A-RT3C runner opt-in; RT4A/RT4E1 handoff retido; RT4F1 wiring com lease |
 | 4 | Live incremental shadow, deteccao automatica de reorg e scheduler da poda | concluido no codigo/desligado | RT4A-RT4E2 base integrada; RT4F1/F2 grupo, leases e poda opt-in |
-| 5 | Backfill frio dos tokens antigos | pendente | depende de checkpoint/throttle/promocao |
+| 5 | Backfill frio dos tokens antigos | em andamento no codigo/desligado | RT5A admite coorte antiga somente com deployment exato; runner/throttle ainda pendentes |
 | 6 | Reconciliacao, promocao e publicacao REST/socket | pendente | Blockscout continua sendo fallback atual |
 | 7 | Frontend realtime/expanded chart | pendente de layout aprovado | nao reutilizar o prototipo sem decisao explicita |
 
@@ -1029,6 +1029,23 @@ telemetria e continua no tick seguinte.
 A flag e `ROBINHOOD_HOLDER_JOURNAL_PRUNE_ENABLED`, false por default. O worker
 propaga contrato invalido para sua lease, aplica backoff em falha transiente e
 participa do shutdown gracioso. Pull e o grupo isolado, sozinhos, nao ligam a poda.
+
+#### Corte RT5A - Admissao fria limitada com deployment exato
+
+Status: implementado no codigo; nenhum runner ligado.
+
+O mesmo repository de bootstrap agora admite uma coorte anterior ao cutoff
+duravel, em lote limitado e ordenada dos tokens antigos mais recentes para os
+mais antigos. Repeticoes sao idempotentes porque tokens ja presentes no estado
+holder deixam de ser candidatos. O bloco inicial continua vindo exclusivamente
+de `rpc_direct` ou `launchpad_event` com `attribution_block`; a atribuicao atual
+do Blockscout informa criador, mas nao bloco/transaction de deployment, e por isso
+nao e promovida a evidencia exata.
+
+O corte apenas cria estados `backfilling`, reutilizando o executor checkpointado
+existente. Scheduler frio, throttle operacional e descoberta historica exata de
+deployments diretos ainda estao pendentes; nenhuma consulta RPC ou externa foi
+ligada pelo RT5A.
 
 Cada item acima deve ser repartido novamente se estimar mais de 500 linhas. O
 probe e a estimativa de storage sao pre-condicoes; “outros terminais fazem” nao

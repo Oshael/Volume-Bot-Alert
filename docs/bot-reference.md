@@ -1020,6 +1020,12 @@ deve ligar live antes do backfill.
 O RT4F2 adiciona uma terceira lease opt-in para podar somente o journal holder,
 independente do retention geral e sem RPC. Mantem 20.000 blocos por default e
 limita cada tick a 5 lotes de 5.000; pull/grupo nao ativam a flag.
+O RT5A inicia o backfill frio admitindo, em lotes limitados, somente tokens
+anteriores ao cutoff que possuam deployment exato `rpc_direct` ou
+`launchpad_event`. Ele reutiliza o replay checkpointado existente e permanece sem
+runner. Blockscout nao e usado como origem do bloco porque a integracao atual
+resolve apenas o criador; throttle e cobertura de deployments diretos antigos
+continuam pendentes.
 
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.
