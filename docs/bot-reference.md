@@ -906,6 +906,7 @@ Stages confirmados:
 | 112 | snapshots diários UTC do total de holders por token Robinhood |
 | 113 | proveniência RPC e cursor live independente para deployments diretos Robinhood |
 | 114 | proveniência DEV explícita por eventos de launchpads Robinhood conhecidos |
+| 115 | cursor retomável independente para backfill histórico DEV de launchpads |
 
 O refresh de holders é um worker opt-in do grupo `robinhood-derived`: prioriza
 tokens ativos, faz backfill gradual dos demais e persiste backoff por token.
@@ -1155,6 +1156,8 @@ factory como evidência. RobinPad segue excluído por falta de ABI/logs verific�
 Blockscout e `rpc_direct` não podem sobrescrever um `launchpad_event`.
 O hotfix pós-rollout usa o contrato real `db.getClient()` para a transação atômica;
 o cursor permanece parado quando a conexão ou qualquer escrita falha.
+O backfill histórico L2 usa `npm run robinhood:launchpad-creator-backfill`, é
+dry-run por padrão e mantém `launchpad_backfill` separado do cursor `live`.
 
 Os contratos locais de atribuição já são fail-closed: o bloco cheio fornece hash,
 número e timestamp para checkpoint; qualquer transação ausente impede escrita

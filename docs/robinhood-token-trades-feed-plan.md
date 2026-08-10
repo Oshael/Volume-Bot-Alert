@@ -318,6 +318,9 @@ The live implementation is split into three bounded slices:
    evidence from Pons/NOXA and LaunchHood. RobinPad is deliberately excluded
    because its mapped factory had neither verified ABI nor observed launch logs
    when audited on 2026-08-10.
+   Stage 115 adds an independent resumable cursor for the historical L2
+   `eth_getLogs` backfill. It is dry-run by default, shrinks rejected ranges and
+   commits each decoded range atomically without moving the LIVE cursor.
 3. **DEV-L3 — generic internal `CREATE`/`CREATE2`:** consume transaction traces to
    find contracts created inside arbitrary factories. The public Robinhood RPC was
    verified on 2026-08-10 and exposes neither `debug_traceTransaction` nor
