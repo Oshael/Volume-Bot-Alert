@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const stage116 = require('../src/utils/db-init-stage116');
+const stage117 = require('../src/utils/db-init-stage117');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 
 describe('Robinhood holder shadow ledger schema', () => {
@@ -52,5 +53,22 @@ describe('Robinhood holder shadow ledger schema', () => {
     assert.deepEqual(group.tables[0].columnTypes.balance_raw, {
       dataType: 'numeric', numericPrecision: 78, numericScale: 0,
     });
+  });
+
+  it('adds reversible journal provenance without creating a history table', () => {
+    const sql = stage117.STATEMENTS.join('\n');
+    assert.match(sql, /ADD COLUMN IF NOT EXISTS from_last_block_before BIGINT/);
+    assert.match(sql, /from_last_transaction_hash_before VARCHAR\(66\)/);
+    assert.match(sql, /ADD COLUMN IF NOT EXISTS to_last_block_before BIGINT/);
+    assert.match(sql, /to_last_transaction_hash_before VARCHAR\(66\)/);
+    assert.match(sql, /rh_holder_journal_from_provenance_check/);
+    assert.match(sql, /rh_holder_journal_to_provenance_check/);
+    assert.doesNotMatch(sql, /DROP\s+(?:TABLE|COLUMN|CONSTRAINT|INDEX)/i);
+
+    const group = SCHEMA_GROUPS.find(({ key }) => (
+      key === 'stage117-robinhood-holder-rollback-provenance'
+    ));
+    assert.equal(group.repair, 'node src/utils/db-init-stage117.js');
+    assert.equal(group.tables[0].columns.length, 6);
   });
 });

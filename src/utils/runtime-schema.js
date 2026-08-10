@@ -2645,6 +2645,35 @@ const SCHEMA_GROUPS = [
     ],
   },
   {
+    key: 'stage117-robinhood-holder-rollback-provenance',
+    name: 'Stage 117 Robinhood holder rollback provenance',
+    repair: 'node src/utils/db-init-stage117.js',
+    tables: [{
+      table: 'robinhood_holder_transfer_journal',
+      columns: [
+        'from_last_block_before', 'from_last_transaction_hash_before',
+        'from_last_log_index_before', 'to_last_block_before',
+        'to_last_transaction_hash_before', 'to_last_log_index_before',
+      ],
+      constraints: [
+        {
+          name: 'rh_holder_journal_from_provenance_check',
+          includes: [
+            'from_last_block_before', 'from_last_transaction_hash_before',
+            'from_last_log_index_before',
+          ],
+        },
+        {
+          name: 'rh_holder_journal_to_provenance_check',
+          includes: [
+            'to_last_block_before', 'to_last_transaction_hash_before',
+            'to_last_log_index_before',
+          ],
+        },
+      ],
+    }],
+  },
+  {
     key: 'stage91-robinhood-wallet-swap-cursors',
     name: 'Stage 91 Robinhood wallet-swap attribution cursors',
     repair: 'node src/utils/db-init-stage91.js',

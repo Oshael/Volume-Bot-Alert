@@ -75,14 +75,28 @@ describe('Robinhood holder ledger persistence', () => {
         [ALICE, '6'], [BOB, '4'],
       ]);
       const journal = await client.query(
-        `SELECT applied, from_balance_before, to_balance_after
+        `SELECT applied, from_balance_before, to_balance_after,
+                from_last_block_before, from_last_transaction_hash_before,
+                from_last_log_index_before, to_last_block_before,
+                to_last_transaction_hash_before, to_last_log_index_before
            FROM robinhood_holder_transfer_journal`
       );
       assert.deepEqual(journal.rows.map((row) => ({
         applied: row.applied,
         fromBefore: String(row.from_balance_before),
         toAfter: String(row.to_balance_after),
-      })), [{ applied: true, fromBefore: '10', toAfter: '4' }]);
+        fromPrior: [
+          String(row.from_last_block_before), row.from_last_transaction_hash_before,
+          Number(row.from_last_log_index_before),
+        ],
+        toPrior: [
+          row.to_last_block_before, row.to_last_transaction_hash_before,
+          row.to_last_log_index_before,
+        ],
+      })), [{
+        applied: true, fromBefore: '10', toAfter: '4',
+        fromPrior: ['99', HASH_B, 0], toPrior: [null, null, null],
+      }]);
 
       await assert.rejects(
         repository.appendCapturedRange(capture('101', HASH_B, 0, '101')),

@@ -226,18 +226,26 @@ function transferFromRow(row) {
 async function loadLockedBalances(client, transfer) {
   const wallets = [...new Set([transfer.fromWallet, transfer.toWallet]
     .filter((wallet) => wallet !== ZERO_ADDRESS))].sort();
-  if (!wallets.length) return {};
+  if (!wallets.length) return { balances: {}, provenance: {} };
   const result = await client.query(
-    `SELECT wallet_address, balance_raw
+    `SELECT wallet_address, balance_raw, last_block_number,
+            last_transaction_hash, last_log_index
        FROM robinhood_holder_balances
       WHERE chain = 'robinhood' AND token_address = $1
         AND wallet_address = ANY($2::varchar[])
       ORDER BY wallet_address FOR UPDATE`,
     [transfer.tokenAddress, wallets]
   );
-  return Object.fromEntries(result.rows.map((row) => (
-    [row.wallet_address, String(row.balance_raw)]
-  )));
+  return {
+    balances: Object.fromEntries(result.rows.map((row) => (
+      [row.wallet_address, String(row.balance_raw)]
+    ))),
+    provenance: Object.fromEntries(result.rows.map((row) => [row.wallet_address, {
+      blockNumber: String(row.last_block_number),
+      transactionHash: row.last_transaction_hash,
+      logIndex: Number(row.last_log_index),
+    }])),
+  };
 }
 
 async function persistBalance(client, transfer, transition) {
@@ -276,7 +284,7 @@ async function markTokenDrifted(client, tokenAddress) {
   );
 }
 
-async function commitAppliedEvent(client, changes) {
+async function commitAppliedEvent(client, changes, priorProvenance) {
   for (const transition of changes.transitions) {
     await persistBalance(client, changes.transfer, transition);
   }
@@ -296,11 +304,18 @@ async function commitAppliedEvent(client, changes) {
     ]
   );
   if (!state.rowCount) throw new Error('holder token state rejected an ordered transfer');
+  const fromPrior = priorProvenance[changes.transfer.fromWallet] || {};
+  const toPrior = priorProvenance[changes.transfer.toWallet] || {};
   const journal = await client.query(
     `UPDATE robinhood_holder_transfer_journal
         SET from_balance_before = $3::numeric, from_balance_after = $4::numeric,
             to_balance_before = $5::numeric, to_balance_after = $6::numeric,
-            holder_delta = $7, applied = true, applied_at = NOW()
+            holder_delta = $7,
+            from_last_block_before = $8, from_last_transaction_hash_before = $9,
+            from_last_log_index_before = $10,
+            to_last_block_before = $11, to_last_transaction_hash_before = $12,
+            to_last_log_index_before = $13,
+            applied = true, applied_at = NOW()
       WHERE chain = 'robinhood' AND transaction_hash = $1 AND log_index = $2
         AND applied = false
       RETURNING transaction_hash`,
@@ -308,6 +323,9 @@ async function commitAppliedEvent(client, changes) {
       changes.transfer.transactionHash, changes.transfer.logIndex,
       changes.fromBalanceBefore, changes.fromBalanceAfter,
       changes.toBalanceBefore, changes.toBalanceAfter, changes.holderDelta,
+      fromPrior.blockNumber ?? null, fromPrior.transactionHash ?? null,
+      fromPrior.logIndex ?? null, toPrior.blockNumber ?? null,
+      toPrior.transactionHash ?? null, toPrior.logIndex ?? null,
     ]
   );
   if (!journal.rowCount) throw new Error('holder journal event was concurrently applied');
@@ -359,10 +377,10 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
       const row = await lockNextApplicableEvent(client);
       if (!row) return Object.freeze({ status: 'idle' });
       const transfer = transferFromRow(row);
-      const balances = await loadLockedBalances(client, transfer);
+      const locked = await loadLockedBalances(client, transfer);
       let changes;
       try {
-        changes = deriveBalanceChanges(transfer, balances);
+        changes = deriveBalanceChanges(transfer, locked.balances);
       } catch (error) {
         if (error.code !== 'holder_negative_balance') throw error;
         await markTokenDrifted(client, transfer.tokenAddress);
@@ -371,7 +389,7 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
           reason: error.code,
         });
       }
-      return commitAppliedEvent(client, changes);
+      return commitAppliedEvent(client, changes, locked.provenance);
     });
   }
 
