@@ -2,7 +2,11 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const stage110 = require('../src/utils/db-init-stage110');
+const stage113 = require('../src/utils/db-init-stage113');
 const { createRobinhoodTokenAttributionRepository } = require('../src/models/robinhood-token-attribution');
+const { runDirectCreatorTick, __private: directPrivate } = require(
+  '../src/services/robinhood-direct-creator-worker'
+);
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 const {
   CONFIRM, parseArgs, run, __private,
@@ -12,6 +16,81 @@ const TOKEN = `0x${'a'.repeat(40)}`;
 const CREATOR = `0x${'b'.repeat(40)}`;
 
 describe('Robinhood token creator attribution', () => {
+  it('registers direct RPC provenance and its independent LIVE cursor', () => {
+    const sql = stage113.STATEMENTS.join('\n');
+    const group = SCHEMA_GROUPS.find((entry) => entry.key === 'stage113-robinhood-direct-creator-live');
+    assert.match(sql, /source IN \('blockscout', 'rpc_direct'\)/);
+    assert.match(sql, /CREATE TABLE IF NOT EXISTS robinhood_direct_creator_cursors/);
+    assert.match(sql, /attribution_tx_hash ~ '\^0x\[0-9a-f\]\{64\}\$'/);
+    assert.equal(group.repair, 'node src/utils/db-init-stage113.js');
+  });
+
+  it('captures direct deployments at the safe head and skips failed creations', async () => {
+    const tx = (digit) => ({
+      hash: `0x${digit.repeat(64)}`, from: `0x${digit.repeat(40)}`, to: null,
+    });
+    const direct = [tx('a'), tx('b')];
+    let persisted;
+    const client = {
+      request: async (method) => method === 'eth_blockNumber' ? '0x66' : ({
+        number: '0x64', hash: `0x${'c'.repeat(64)}`, timestamp: '0x1',
+        transactions: [...direct, { ...tx('d'), to: TOKEN }],
+      }),
+      requestBatch: async () => direct.map((item, index) => ({
+        transactionHash: item.hash, blockNumber: '0x64',
+        blockHash: `0x${'c'.repeat(64)}`,
+        contractAddress: index === 0 ? TOKEN : null,
+      })),
+    };
+    const repository = {
+      loadDirectCursor: async () => null,
+      initializeDirectCursor: async () => ({ next_block: '100', safe_head: '100' }),
+      recordDirectBlock: async (input) => { persisted = input; return { attributed: 1 }; },
+    };
+    const result = await runDirectCreatorTick({ client, repository, confirmations: 2 });
+    assert.equal(result.status, 'caught-up');
+    assert.equal(result.attributed, 1);
+    assert.deepEqual(persisted.deployments, [{
+      tokenAddress: TOKEN, creatorAddress: direct[0].from, transactionHash: direct[0].hash,
+    }]);
+  });
+
+  it('fails closed when a direct-creation receipt belongs to another block', async () => {
+    const txHash = `0x${'a'.repeat(64)}`;
+    const client = {
+      request: async () => ({
+        number: '0x64', hash: `0x${'b'.repeat(64)}`, timestamp: '0x1',
+        transactions: [{ hash: txHash, from: CREATOR, to: null }],
+      }),
+      requestBatch: async () => [{
+        transactionHash: txHash, blockNumber: '0x63',
+        blockHash: `0x${'b'.repeat(64)}`, contractAddress: TOKEN,
+      }],
+    };
+    await assert.rejects(() => directPrivate.scanBlock(client, 100n), /receipt diverged/);
+  });
+
+  it('commits direct attribution and cursor advancement atomically', async () => {
+    const calls = [];
+    const client = {
+      query: async (sql) => {
+        calls.push(sql);
+        return sql.startsWith('UPDATE') ? { rowCount: 1, rows: [{}] } : { rows: [] };
+      },
+      release: () => {},
+    };
+    const repository = createRobinhoodTokenAttributionRepository({
+      database: { connect: async () => client },
+    });
+    const result = await repository.recordDirectBlock({
+      blockNumber: '100', safeHead: '100', blockHash: `0x${'c'.repeat(64)}`,
+      blockTimestamp: '2026-08-10T00:00:00.000Z',
+      deployments: [{ tokenAddress: TOKEN, creatorAddress: CREATOR, transactionHash: `0x${'d'.repeat(64)}` }],
+    });
+    assert.equal(result.attributed, 1);
+    assert.deepEqual(calls.map((sql) => sql.split(/\s+/)[0]), ['BEGIN', 'INSERT', 'UPDATE', 'COMMIT']);
+  });
+
   it('registers an additive, retryable attribution table in the runtime guard', () => {
     const sql = stage110.STATEMENTS.join('\n');
     const group = SCHEMA_GROUPS.find((entry) => (
@@ -71,7 +150,7 @@ describe('Robinhood token creator attribution', () => {
     assert.deepEqual(calls[0].params, [[TOKEN], [CREATOR], [null]]);
     assert.match(calls[0].sql, /UNNEST\(\$1::varchar\[\], \$2::varchar\[\], \$3::varchar\[\]\)/);
     assert.match(calls[0].sql, /ON CONFLICT \(chain, token_address\) DO UPDATE/);
-    assert.match(calls[0].sql, /COALESCE\(EXCLUDED\.creator_address/);
+    assert.match(calls[0].sql, /COALESCE\(EXCLUDED\.creator_address[\s\S]+source = 'blockscout'/);
   });
 
   it('is dry-run by default and performs no Blockscout lookup or write', async () => {

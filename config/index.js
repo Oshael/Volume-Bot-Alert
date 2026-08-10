@@ -1001,6 +1001,16 @@ module.exports = {
     ),
   },
 
+  robinhoodDirectCreatorWorker: {
+    enabled: parseBoolean(process.env.ROBINHOOD_DIRECT_CREATOR_LIVE_ENABLED, false),
+    intervalMs: parseIntegerInRange(
+      process.env.ROBINHOOD_DIRECT_CREATOR_LIVE_INTERVAL_MS, 2000, 250, 300_000
+    ),
+    maxBlocks: parseIntegerInRange(
+      process.env.ROBINHOOD_DIRECT_CREATOR_LIVE_MAX_BLOCKS_PER_TICK, 100, 1, 2000
+    ),
+  },
+
   robinhoodBackfillMarketScanner: {
     enabled: parseBoolean(process.env.ROBINHOOD_BACKFILL_SHADOW_ENABLED, false),
     startBlock: parseOptionalBlock(process.env.ROBINHOOD_BACKFILL_START_BLOCK),

@@ -12,6 +12,25 @@ function boundedLimit(value, fallback = 1000) {
 function createRobinhoodTokenAttributionRepository(options = {}) {
   const database = options.database || db;
 
+  async function loadDirectCursor() {
+    const { rows } = await database.query(
+      `SELECT * FROM robinhood_direct_creator_cursors
+       WHERE chain = '${CHAIN}' AND stream = 'live'`
+    );
+    return rows[0] || null;
+  }
+
+  async function initializeDirectCursor(nextBlock) {
+    const normalized = BigInt(String(nextBlock)).toString();
+    await database.query(
+      `INSERT INTO robinhood_direct_creator_cursors (chain, stream, next_block, safe_head)
+       VALUES ('${CHAIN}', 'live', $1::bigint, $1::bigint)
+       ON CONFLICT (chain, stream) DO NOTHING`,
+      [normalized]
+    );
+    return loadDirectCursor();
+  }
+
   async function listCreatorCandidates(input = {}) {
     const retryBefore = new Date(input.retryBefore || 0);
     if (!Number.isFinite(retryBefore.getTime())) throw new Error('retryBefore is invalid');
@@ -74,6 +93,7 @@ function createRobinhoodTokenAttributionRepository(options = {}) {
            ELSE NULL
        END,
          updated_at = NOW()
+       WHERE robinhood_token_attributions.source = 'blockscout'
        RETURNING *`,
       [
         normalized.map((item) => item.tokenAddress),
@@ -88,7 +108,67 @@ function createRobinhoodTokenAttributionRepository(options = {}) {
     return (await recordAttempts([input]))[0];
   }
 
-  return Object.freeze({ listCreatorCandidates, recordAttempt, recordAttempts });
+  async function recordDirectBlock(input = {}) {
+    const blockNumber = BigInt(String(input.blockNumber)).toString();
+    const nextBlock = (BigInt(blockNumber) + 1n).toString();
+    const safeHead = BigInt(String(input.safeHead)).toString();
+    const deployments = (input.deployments || []).map((item) => ({
+      tokenAddress: normalizeTokenAddress(CHAIN, item.tokenAddress),
+      creatorAddress: normalizeTokenAddress(CHAIN, item.creatorAddress),
+      transactionHash: String(item.transactionHash).toLowerCase(),
+    }));
+    const client = await database.connect();
+    try {
+      await client.query('BEGIN');
+      if (deployments.length) await client.query(
+        `INSERT INTO robinhood_token_attributions (
+           chain, token_address, creator_address, source, attribution_block,
+           attribution_tx_hash, last_attempted_at, last_resolved_at, last_error
+         ) SELECT '${CHAIN}', item.token_address, item.creator_address, 'rpc_direct',
+                  $4::bigint, item.transaction_hash, NOW(), NOW(), NULL
+           FROM UNNEST($1::varchar[], $2::varchar[], $3::varchar[])
+             AS item(token_address, creator_address, transaction_hash)
+         ON CONFLICT (chain, token_address) DO UPDATE SET
+           creator_address = EXCLUDED.creator_address,
+           source = EXCLUDED.source,
+           attribution_block = EXCLUDED.attribution_block,
+           attribution_tx_hash = EXCLUDED.attribution_tx_hash,
+           last_attempted_at = NOW(), last_resolved_at = NOW(), last_error = NULL,
+           updated_at = NOW()
+         WHERE robinhood_token_attributions.source IN ('blockscout', 'rpc_direct')`,
+        [
+          deployments.map((item) => item.tokenAddress),
+          deployments.map((item) => item.creatorAddress),
+          deployments.map((item) => item.transactionHash),
+          blockNumber,
+        ]
+      );
+      const advanced = await client.query(
+        `UPDATE robinhood_direct_creator_cursors
+         SET next_block = $1::bigint, safe_head = GREATEST(safe_head, $2::bigint),
+             checkpoint_block = $3::bigint, checkpoint_hash = $4,
+             checkpoint_timestamp = $5::timestamptz, updated_at = NOW()
+         WHERE chain = '${CHAIN}' AND stream = 'live' AND next_block = $3::bigint
+         RETURNING *`,
+        [nextBlock, safeHead, blockNumber, input.blockHash, input.blockTimestamp]
+      );
+      if (advanced.rowCount !== 1) throw Object.assign(new Error('direct creator cursor conflict'), {
+        code: 'cursor_conflict', retryable: true,
+      });
+      await client.query('COMMIT');
+      return { cursor: advanced.rows[0], attributed: deployments.length };
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  return Object.freeze({
+    initializeDirectCursor, listCreatorCandidates, loadDirectCursor,
+    recordAttempt, recordAttempts, recordDirectBlock,
+  });
 }
 
 module.exports = { createRobinhoodTokenAttributionRepository, __private: { boundedLimit } };

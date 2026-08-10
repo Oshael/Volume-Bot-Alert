@@ -2411,6 +2411,34 @@ const SCHEMA_GROUPS = [
     ],
   },
   {
+    key: 'stage113-robinhood-direct-creator-live',
+    name: 'Stage 113 Robinhood direct creator LIVE provenance',
+    repair: 'node src/utils/db-init-stage113.js',
+    tables: [
+      {
+        table: 'robinhood_token_attributions',
+        columns: ['attribution_block', 'attribution_tx_hash'],
+        constraints: [
+          { name: 'robinhood_token_attributions_source_check', includes: ['rpc_direct'] },
+          { name: 'robinhood_token_attributions_provenance_check', includes: ['rpc_direct'] },
+        ],
+      },
+      {
+        table: 'robinhood_direct_creator_cursors',
+        columns: [
+          'chain', 'stream', 'next_block', 'safe_head', 'checkpoint_block',
+          'checkpoint_hash', 'checkpoint_timestamp', 'created_at', 'updated_at',
+        ],
+        constraints: [
+          { name: 'robinhood_direct_creator_cursors_pkey', includes: ['PRIMARY KEY'] },
+          { name: 'robinhood_direct_creator_cursors_stream_check', includes: ['live'] },
+          { name: 'robinhood_direct_creator_cursors_blocks_check', includes: ['next_block'] },
+          { name: 'robinhood_direct_creator_cursors_checkpoint_pair_check', includes: ['checkpoint_block'] },
+        ],
+      },
+    ],
+  },
+  {
     key: 'stage91-robinhood-wallet-swap-cursors',
     name: 'Stage 91 Robinhood wallet-swap attribution cursors',
     repair: 'node src/utils/db-init-stage91.js',
