@@ -651,6 +651,19 @@ foram consultados. Limites opcionais:
 O endpoint explicito continua tendo prioridade; na ausencia dele, o probe agora
 usa `ROBINHOOD_RPC_URL` antes da dRPC para refletir o transporte principal do bot.
 
+#### Corte RT2A - Fundacao do ledger shadow
+
+Status: implementado localmente; migration ainda nao aplicada em producao.
+
+A Stage 116 cria quatro estruturas sem ligar writer ou publicacao: balances
+positivos `token + wallet` em `NUMERIC(78,0)`, estado/total e progresso por token,
+cursor live independente e journal curto de eventos com balances antes/depois para
+deduplicacao e rollback de reorg. O journal possui indices separados para drain de
+pendentes e rollback/prune por bloco; ele nao e um historico permanente.
+
+O proximo corte implementa as operacoes atomicas do repositorio shadow. Criar as
+tabelas isoladamente nao altera o count Blockscout atualmente publicado.
+
 Cada item acima deve ser repartido novamente se estimar mais de 500 linhas. O
 probe e a estimativa de storage sao pre-condicoes; “outros terminais fazem” nao
 substitui evidencia de volume, limites de RPC e custo de banco desta chain.

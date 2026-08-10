@@ -942,6 +942,10 @@ ele lê até 1.000 endereços recentes do catálogo por default, filtra `eth_get
 em batches de 100 e informa a cobertura sem extrapolar tokens não medidos. Para
 probes manuais na VPS, o endpoint do node live deve ser passado explicitamente,
 pois o `.env` do checkout pode diferir do EnvironmentFile da unit systemd.
+O RT2A adiciona somente a Stage 116 do ledger shadow: balances positivos em
+`NUMERIC(78,0)`, estado/total por token, cursor live e journal curto reversível.
+Não existe writer nem leitura pública desse ledger neste corte; Blockscout segue
+como fonte dos counts visíveis até promoção posterior.
 
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.
