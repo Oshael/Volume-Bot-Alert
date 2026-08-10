@@ -314,6 +314,10 @@ The live implementation is split into three bounded slices:
    Attribution priority is: explicit launchpad creator, transaction initiator
    (`tx.from`), technical factory, then Blockscout fallback. Relayers remain an
    explicit ambiguity; `tx.from` is not automatically the human developer.
+   **Built locally:** Stage 114 and the LIVE worker decode explicit deployer
+   evidence from Pons/NOXA and LaunchHood. RobinPad is deliberately excluded
+   because its mapped factory had neither verified ABI nor observed launch logs
+   when audited on 2026-08-10.
 3. **DEV-L3 — generic internal `CREATE`/`CREATE2`:** consume transaction traces to
    find contracts created inside arbitrary factories. The public Robinhood RPC was
    verified on 2026-08-10 and exposes neither `debug_traceTransaction` nor
@@ -410,7 +414,7 @@ The DEV/TRACKED/YOU tabs (§6) remain the open Phase-2 architecture checkpoint.
    frozen legacy-cursor bug is fixed; forward-write of the sidecar is now live (§5).
 6. ✅ **Slice C** (realtime) — committed; production still depends on its rollout.
 7. **Observation pruning deferred** — keep the table and fallback JOIN for now (§8).
-8. ◐ **Phase 2** — historical DEV attribution, ALL/DEV and DEV-L1 are built
-   locally; DEV-L1 awaits rollout, while DEV-L2/L3 and TRACKED/YOU remain
+8. ◐ **Phase 2** — historical DEV attribution, ALL/DEV and DEV-L1/L2 are built
+   locally; live attribution awaits rollout, while DEV-L3 and TRACKED/YOU remain
    subsequent slices (§6). Registry-wide repair uses Blockscout's 10-contract
    batch endpoint, but Blockscout is not the live critical path.
