@@ -8,6 +8,7 @@ const {
 
 const HASH_A = `0x${'1'.repeat(64)}`;
 const HASH_B = `0x${'2'.repeat(64)}`;
+const HASH_C = `0x${'7'.repeat(64)}`;
 const TOKEN = `0x${'3'.repeat(40)}`;
 const TOKEN_2 = `0x${'6'.repeat(40)}`;
 const ALICE = `0x${'4'.repeat(40)}`;
@@ -31,7 +32,7 @@ function capture(blockNumber, blockHash, expectedVersion, rangeStart, overrides 
 }
 
 describe('Robinhood holder ledger persistence', () => {
-  it('commits a capture and rolls back conflicting evidence in PostgreSQL', async () => {
+  it('commits captures and atomically rewinds orphaned evidence in PostgreSQL', async () => {
     const client = await db.getClient();
     try {
       await client.query(`CREATE TEMP TABLE robinhood_holder_transfer_journal
@@ -61,27 +62,36 @@ describe('Robinhood holder ledger persistence', () => {
       );
       const initial = capture('100', HASH_A, null, '100');
       initial.transfers.push({ ...initial.transfers[0] });
+      initial.transfers.push({
+        ...initial.transfers[0], transactionHash: HASH_C,
+        transactionIndex: 1, logIndex: 1, fromWallet: BOB,
+        toWallet: ALICE, amountRaw: '1',
+      });
       const first = await repository.appendCapturedRange(initial);
       assert.deepEqual(first, {
-        insertedTransfers: 1, duplicateTransfers: 1, cursorVersion: 0,
+        insertedTransfers: 2, duplicateTransfers: 1, cursorVersion: 0,
       });
       assert.deepEqual(await repository.applyNextPendingEvent(), {
         status: 'applied', tokenAddress: TOKEN, holderCount: '2', holderDelta: 1,
+      });
+      assert.deepEqual(await repository.applyNextPendingEvent(), {
+        status: 'applied', tokenAddress: TOKEN, holderCount: '2', holderDelta: 0,
       });
       const applied = await client.query(
         `SELECT wallet_address, balance_raw FROM robinhood_holder_balances ORDER BY wallet_address`
       );
       assert.deepEqual(applied.rows.map((row) => [row.wallet_address, String(row.balance_raw)]), [
-        [ALICE, '6'], [BOB, '4'],
+        [ALICE, '7'], [BOB, '3'],
       ]);
       const journal = await client.query(
-        `SELECT applied, from_balance_before, to_balance_after,
+        `SELECT transaction_hash, applied, from_balance_before, to_balance_after,
                 from_last_block_before, from_last_transaction_hash_before,
                 from_last_log_index_before, to_last_block_before,
                 to_last_transaction_hash_before, to_last_log_index_before
-           FROM robinhood_holder_transfer_journal`
+           FROM robinhood_holder_transfer_journal ORDER BY transaction_index, log_index`
       );
       assert.deepEqual(journal.rows.map((row) => ({
+        transactionHash: row.transaction_hash,
         applied: row.applied,
         fromBefore: String(row.from_balance_before),
         toAfter: String(row.to_balance_after),
@@ -94,8 +104,11 @@ describe('Robinhood holder ledger persistence', () => {
           row.to_last_log_index_before,
         ],
       })), [{
-        applied: true, fromBefore: '10', toAfter: '4',
+        transactionHash: HASH_A, applied: true, fromBefore: '10', toAfter: '4',
         fromPrior: ['99', HASH_B, 0], toPrior: [null, null, null],
+      }, {
+        transactionHash: HASH_C, applied: true, fromBefore: '4', toAfter: '7',
+        fromPrior: ['100', HASH_A, 0], toPrior: ['100', HASH_A, 0],
       }]);
 
       await assert.rejects(
@@ -135,6 +148,74 @@ describe('Robinhood holder ledger persistence', () => {
           WHERE state.token_address = $1`, [TOKEN_2]
       );
       assert.deepEqual(drifted.rows, [{ ledger_status: 'drifted', applied: false }]);
+
+      await client.query(
+        `UPDATE robinhood_holder_balances SET balance_raw = 5
+          WHERE token_address = $1 AND wallet_address = $2`, [TOKEN, BOB]
+      );
+      await assert.rejects(
+        repository.rewindOrphanedRange({
+          nextBlock: '100', safeHead: '199', expectedVersion: 1,
+          checkpoint: { number: '99', hash: HASH_B },
+        }),
+        (error) => error.code === 'holder_rollback_conflict'
+      );
+      const failedRollback = await client.query(
+        `SELECT balance_raw FROM robinhood_holder_balances
+          WHERE token_address = $1 AND wallet_address = $2`, [TOKEN, ALICE]
+      );
+      assert.equal(String(failedRollback.rows[0].balance_raw), '7');
+      await client.query(
+        `UPDATE robinhood_holder_balances SET balance_raw = 3
+          WHERE token_address = $1 AND wallet_address = $2`, [TOKEN, BOB]
+      );
+
+      assert.deepEqual(await repository.rewindOrphanedRange({
+        nextBlock: '100', safeHead: '199', expectedVersion: 1,
+        checkpoint: { number: '99', hash: HASH_B },
+      }), {
+        status: 'rewound', revertedEvents: 2, affectedTokens: 1,
+        removedEvents: 3, cursorVersion: 2,
+      });
+      const restored = await client.query(
+        `SELECT wallet_address, balance_raw, last_block_number,
+                last_transaction_hash, last_log_index
+           FROM robinhood_holder_balances WHERE token_address = $1`, [TOKEN]
+      );
+      assert.deepEqual(restored.rows.map((row) => ({
+        wallet: row.wallet_address, balance: String(row.balance_raw),
+        block: String(row.last_block_number), transactionHash: row.last_transaction_hash,
+        logIndex: Number(row.last_log_index),
+      })), [{
+        wallet: ALICE, balance: '10', block: '99',
+        transactionHash: HASH_B, logIndex: 0,
+      }]);
+      const rewound = await client.query(
+        `SELECT state.token_address, state.holder_count, state.ledger_status,
+                state.live_through_block, state.live_through_hash,
+                cursor.next_block, cursor.safe_head, cursor.checkpoint_block,
+                cursor.checkpoint_hash, cursor.version,
+                (SELECT COUNT(*) FROM robinhood_holder_transfer_journal) AS journal_count
+           FROM robinhood_holder_token_states state
+           CROSS JOIN robinhood_holder_cursors cursor
+          WHERE state.token_address = $1`, [TOKEN]
+      );
+      assert.deepEqual(rewound.rows.map((row) => ({
+        holderCount: String(row.holder_count), ledgerStatus: row.ledger_status,
+        liveThroughBlock: String(row.live_through_block), liveThroughHash: row.live_through_hash,
+        nextBlock: String(row.next_block), safeHead: String(row.safe_head),
+        checkpointBlock: String(row.checkpoint_block), checkpointHash: row.checkpoint_hash,
+        version: Number(row.version), journalCount: Number(row.journal_count),
+      })), [{
+        holderCount: '1', ledgerStatus: 'shadow', liveThroughBlock: '99',
+        liveThroughHash: HASH_B, nextBlock: '100', safeHead: '199',
+        checkpointBlock: '99', checkpointHash: HASH_B, version: 2, journalCount: 0,
+      }]);
+      const stillDrifted = await client.query(
+        `SELECT ledger_status FROM robinhood_holder_token_states WHERE token_address = $1`,
+        [TOKEN_2]
+      );
+      assert.equal(stillDrifted.rows[0].ledger_status, 'drifted');
     } finally {
       client.release();
     }

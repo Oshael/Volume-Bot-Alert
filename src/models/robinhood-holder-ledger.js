@@ -54,6 +54,30 @@ function normalizeCursor(value = {}) {
   });
 }
 
+function normalizeRewind(value = {}) {
+  const nextBlock = decimalQuantity(value.nextBlock, 'rewind.nextBlock');
+  const safeHead = value.safeHead == null
+    ? null : decimalQuantity(value.safeHead, 'rewind.safeHead');
+  const expectedVersion = nonNegativeInteger(
+    value.expectedVersion, 'rewind.expectedVersion'
+  );
+  const checkpoint = value.checkpoint == null ? null : Object.freeze({
+    number: decimalQuantity(value.checkpoint.number, 'rewind.checkpoint.number'),
+    hash: hex(value.checkpoint.hash, 32, 'rewind.checkpoint.hash'),
+  });
+  const next = BigInt(nextBlock);
+  if ((next === 0n) !== (checkpoint === null)) {
+    throw new Error('rewind checkpoint must be null only at genesis');
+  }
+  if (checkpoint && BigInt(checkpoint.number) + 1n !== next) {
+    throw new Error('rewind checkpoint must immediately precede nextBlock');
+  }
+  if (safeHead != null && checkpoint && BigInt(safeHead) < BigInt(checkpoint.number)) {
+    throw new Error('rewind safeHead cannot precede its checkpoint');
+  }
+  return Object.freeze({ nextBlock, safeHead, expectedVersion, checkpoint });
+}
+
 function validateRange(transfers, cursor) {
   const rangeStart = BigInt(cursor.rangeStart);
   const nextBlock = BigInt(cursor.nextBlock);
@@ -335,6 +359,180 @@ async function commitAppliedEvent(client, changes, priorProvenance) {
   });
 }
 
+async function lockCursorForRewind(client, rewind) {
+  const result = await client.query(
+    `SELECT next_block, version
+       FROM robinhood_holder_cursors
+      WHERE chain = 'robinhood' AND stream = 'live' FOR UPDATE`
+  );
+  if (!result.rowCount) {
+    const error = new Error('holder live cursor is missing');
+    error.code = 'holder_cursor_missing';
+    throw error;
+  }
+  const row = result.rows[0];
+  if (Number(row.version) !== rewind.expectedVersion) {
+    const error = new Error('holder rewind cursor is stale');
+    error.code = 'holder_cursor_stale';
+    throw error;
+  }
+  if (BigInt(rewind.nextBlock) >= BigInt(row.next_block)) {
+    const error = new Error('holder rewind must move the cursor backward');
+    error.code = 'holder_rewind_not_behind';
+    throw error;
+  }
+}
+
+async function loadOrphanedEvents(client, nextBlock) {
+  const result = await client.query(
+    `SELECT block_number, block_hash, transaction_hash, transaction_index,
+            log_index, token_address, from_wallet, to_wallet,
+            from_balance_before, from_balance_after,
+            to_balance_before, to_balance_after, holder_delta, applied,
+            from_last_block_before, from_last_transaction_hash_before,
+            from_last_log_index_before, to_last_block_before,
+            to_last_transaction_hash_before, to_last_log_index_before
+       FROM robinhood_holder_transfer_journal
+      WHERE chain = 'robinhood' AND block_number >= $1
+      ORDER BY block_number DESC, transaction_index DESC, log_index DESC
+      FOR UPDATE`,
+    [nextBlock]
+  );
+  return result.rows;
+}
+
+function rollbackTransitions(row) {
+  const transitions = new Map();
+  const add = (walletAddress, before, after, prior) => {
+    if (walletAddress === ZERO_ADDRESS) return;
+    const transition = {
+      walletAddress, before: String(before), after: String(after), prior,
+    };
+    const existing = transitions.get(walletAddress);
+    if (existing && JSON.stringify(existing) !== JSON.stringify(transition)) {
+      const error = new Error('self-transfer rollback evidence is inconsistent');
+      error.code = 'holder_rollback_corrupt';
+      throw error;
+    }
+    transitions.set(walletAddress, transition);
+  };
+  add(row.from_wallet, row.from_balance_before, row.from_balance_after, {
+    blockNumber: row.from_last_block_before,
+    transactionHash: row.from_last_transaction_hash_before,
+    logIndex: row.from_last_log_index_before,
+  });
+  add(row.to_wallet, row.to_balance_before, row.to_balance_after, {
+    blockNumber: row.to_last_block_before,
+    transactionHash: row.to_last_transaction_hash_before,
+    logIndex: row.to_last_log_index_before,
+  });
+  return [...transitions.values()].sort((left, right) => (
+    left.walletAddress.localeCompare(right.walletAddress)
+  ));
+}
+
+async function restoreBalance(client, row, transition) {
+  const current = await client.query(
+    `SELECT balance_raw, last_block_number, last_transaction_hash, last_log_index
+       FROM robinhood_holder_balances
+      WHERE chain = 'robinhood' AND token_address = $1 AND wallet_address = $2
+      FOR UPDATE`,
+    [row.token_address, transition.walletAddress]
+  );
+  const expectedPositive = BigInt(transition.after) > 0n;
+  const value = current.rows[0];
+  const matches = expectedPositive
+    ? value && String(value.balance_raw) === transition.after
+      && String(value.last_block_number) === String(row.block_number)
+      && value.last_transaction_hash === row.transaction_hash
+      && Number(value.last_log_index) === Number(row.log_index)
+    : !value;
+  if (!matches) {
+    const error = new Error('holder balance no longer matches rollback evidence');
+    error.code = 'holder_rollback_conflict';
+    throw error;
+  }
+  if (BigInt(transition.before) === 0n) {
+    await client.query(
+      `DELETE FROM robinhood_holder_balances
+        WHERE chain = 'robinhood' AND token_address = $1 AND wallet_address = $2`,
+      [row.token_address, transition.walletAddress]
+    );
+    return;
+  }
+  if (transition.prior.blockNumber == null || transition.prior.transactionHash == null
+      || transition.prior.logIndex == null) {
+    const error = new Error('holder rollback is missing prior balance provenance');
+    error.code = 'holder_rollback_corrupt';
+    throw error;
+  }
+  await client.query(
+    `INSERT INTO robinhood_holder_balances (
+       chain, token_address, wallet_address, balance_raw, last_block_number,
+       last_transaction_hash, last_log_index
+     ) VALUES ('robinhood', $1, $2, $3::numeric, $4, $5, $6)
+     ON CONFLICT (chain, token_address, wallet_address) DO UPDATE SET
+       balance_raw = EXCLUDED.balance_raw,
+       last_block_number = EXCLUDED.last_block_number,
+       last_transaction_hash = EXCLUDED.last_transaction_hash,
+       last_log_index = EXCLUDED.last_log_index,
+       updated_at = NOW()`,
+    [
+      row.token_address, transition.walletAddress, transition.before,
+      transition.prior.blockNumber, transition.prior.transactionHash,
+      transition.prior.logIndex,
+    ]
+  );
+}
+
+async function revertAppliedEvent(client, row) {
+  for (const transition of rollbackTransitions(row)) {
+    await restoreBalance(client, row, transition);
+  }
+  const state = await client.query(
+    `UPDATE robinhood_holder_token_states
+        SET holder_count = holder_count - $2::smallint,
+            version = version + 1, updated_at = NOW()
+      WHERE chain = 'robinhood' AND token_address = $1
+        AND holder_count - $2::smallint >= 0
+      RETURNING token_address`,
+    [row.token_address, row.holder_delta]
+  );
+  if (!state.rowCount) throw new Error('holder token state rejected an orphan rollback');
+}
+
+async function commitRewind(client, rewind, affectedTokens) {
+  if (affectedTokens.length) {
+    await client.query(
+      `UPDATE robinhood_holder_token_states
+          SET live_through_block = $2, live_through_hash = $3, updated_at = NOW()
+        WHERE chain = 'robinhood' AND token_address = ANY($1::varchar[])`,
+      [
+        affectedTokens, rewind.checkpoint?.number ?? null,
+        rewind.checkpoint?.hash ?? null,
+      ]
+    );
+  }
+  const removed = await client.query(
+    `DELETE FROM robinhood_holder_transfer_journal
+      WHERE chain = 'robinhood' AND block_number >= $1`,
+    [rewind.nextBlock]
+  );
+  const cursor = await client.query(
+    `UPDATE robinhood_holder_cursors
+        SET next_block = $1, safe_head = $2, checkpoint_block = $3,
+            checkpoint_hash = $4, version = version + 1, updated_at = NOW()
+      WHERE chain = 'robinhood' AND stream = 'live' AND version = $5
+      RETURNING version`,
+    [
+      rewind.nextBlock, rewind.safeHead, rewind.checkpoint?.number ?? null,
+      rewind.checkpoint?.hash ?? null, rewind.expectedVersion,
+    ]
+  );
+  if (!cursor.rowCount) throw new Error('holder rewind cursor was concurrently changed');
+  return { removedEvents: removed.rowCount, cursorVersion: Number(cursor.rows[0].version) };
+}
+
 async function withTransaction(database, operation) {
   const client = await database.getClient();
   try {
@@ -393,6 +591,22 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     });
   }
 
+  async function rewindOrphanedRange(input = {}) {
+    const rewind = normalizeRewind(input);
+    return withTransaction(database, async (client) => {
+      await lockCursorForRewind(client, rewind);
+      const events = await loadOrphanedEvents(client, rewind.nextBlock);
+      const applied = events.filter((row) => row.applied);
+      for (const row of applied) await revertAppliedEvent(client, row);
+      const affectedTokens = [...new Set(applied.map((row) => row.token_address))];
+      const committed = await commitRewind(client, rewind, affectedTokens);
+      return Object.freeze({
+        status: 'rewound', revertedEvents: applied.length,
+        affectedTokens: affectedTokens.length, ...committed,
+      });
+    });
+  }
+
   async function getCursor() {
     const result = await database.query(
       `SELECT stream, next_block, safe_head, checkpoint_block, checkpoint_hash, version
@@ -403,10 +617,14 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     return normalizeCursorRow(result.rows[0]);
   }
 
-  return Object.freeze({ appendCapturedRange, applyNextPendingEvent, getCursor });
+  return Object.freeze({
+    appendCapturedRange, applyNextPendingEvent, rewindOrphanedRange, getCursor,
+  });
 }
 
 module.exports = {
   createRobinhoodHolderLedgerRepository,
-  __private: { deriveBalanceChanges, normalizeCursor, normalizeTransfer, validateRange },
+  __private: {
+    deriveBalanceChanges, normalizeCursor, normalizeRewind, normalizeTransfer, validateRange,
+  },
 };

@@ -62,6 +62,17 @@ describe('Robinhood holder ledger repository', () => {
       rangeStart: '101',
     }))), /inside the captured range/);
     assert.throws(() => __private.normalizeTransfer(transfer({ tokenAddress: 'bad' })), /20 bytes/);
+    assert.deepEqual(__private.normalizeRewind({
+      nextBlock: '100', safeHead: '105', expectedVersion: 2,
+      checkpoint: { number: '99', hash: HASH },
+    }), {
+      nextBlock: '100', safeHead: '105', expectedVersion: 2,
+      checkpoint: { number: '99', hash: HASH },
+    });
+    assert.throws(() => __private.normalizeRewind({
+      nextBlock: '100', safeHead: '105', expectedVersion: 2,
+      checkpoint: { number: '98', hash: HASH },
+    }), /immediately precede/);
   });
 
   it('derives holder transitions for mint, burn, transfer and self-transfer', () => {
