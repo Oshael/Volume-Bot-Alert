@@ -677,6 +677,18 @@ checkpoint precisa ser exatamente `nextBlock - 1`, impedindo salto de blocos.
 O RT2B2 aplicara eventos pendentes aos balances/totais e marcara no journal os
 valores antes/depois. Ate la, esta captura nao deve ser iniciada em producao.
 
+#### Corte RT2B2 - Aplicacao atomica shadow
+
+Status: implementado localmente; nenhum runner ligado.
+
+A aplicacao trava o cursor global para serializar consumidores, escolhe o proximo
+evento elegivel em ordem on-chain e trava estado/balances do token. Mint, burn,
+transfer e self-transfer atualizam balances positivos, total e journal na mesma
+transacao. Saldo de origem insuficiente marca o token `drifted` e deixa o evento
+pendente para resync, sem bloquear tokens ainda saudaveis.
+
+O proximo corte cobre rollback de reorg. Captura/aplicacao continuam desligadas.
+
 Cada item acima deve ser repartido novamente se estimar mais de 500 linhas. O
 probe e a estimativa de storage sao pre-condicoes; “outros terminais fazem” nao
 substitui evidencia de volume, limites de RPC e custo de banco desta chain.

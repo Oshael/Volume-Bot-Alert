@@ -949,6 +949,9 @@ como fonte dos counts visíveis até promoção posterior.
 O RT2B1 adiciona o repositório de captura shadow: journal e cursor avançam na
 mesma transação, com conflito de evidência e optimistic version tratados como
 rollback. Ainda não existe runner nem aplicação dos eventos aos balances.
+O RT2B2 aplica serialmente o próximo evento elegível: balances positivos, total
+e before/after do journal são commitados juntos; saldo impossível marca apenas o
+token como `drifted`. Nenhum runner ou publicação foi ligado.
 
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.
