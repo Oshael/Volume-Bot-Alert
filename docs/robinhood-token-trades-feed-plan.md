@@ -273,8 +273,10 @@ Each tab is a **filter of the same feed by wallet classification**; the
   approval belongs in this flow.
 - **DEV** — filter by the token's direct on-chain contract creator. Stage 110 adds
   `robinhood_token_attributions`; a dry-run-first Blockscout backfill resolves
-  creators from registry tokens. A creator can be a factory contract, so this is
-  provenance, not proof of the human developer's identity. The read model and
+  the full registry through the contract-creation API in batches of up to 10, with
+  bounded concurrency, batch retries and bulk persistence.
+  A creator can be a factory contract, so this is provenance, not proof of the
+  human developer's identity. The read model and
   panel now support `scope=dev`; the HTTP page supplies `creatorAddress` so the
   existing per-token realtime stream can be filtered without another socket room.
   Provider timeout/transport/429/5xx failures receive bounded exponential retries.
@@ -354,4 +356,5 @@ The DEV/TRACKED/YOU tabs (§6) remain the open Phase-2 architecture checkpoint.
 6. ✅ **Slice C** (realtime) — committed; production still depends on its rollout.
 7. **Observation pruning deferred** — keep the table and fallback JOIN for now (§8).
 8. ◐ **Phase 2** — DEV attribution and the ALL/DEV feed filter are built; TRACKED
-   and YOU remain subsequent slices (§6).
+   and YOU remain subsequent slices (§6). Registry-wide creator attribution now
+   uses Blockscout's 10-contract batch endpoint.

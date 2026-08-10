@@ -27,21 +27,25 @@ describe('Robinhood token creator attribution', () => {
     assert.equal(group.tables[0].indexes[0].name, 'idx_robinhood_token_attributions_retry');
   });
 
-  it('lists only unresolved or stale registry tokens in discovery order', async () => {
+  it('lists every unresolved registry token and exposes the total before the limit', async () => {
     const calls = [];
     const repository = createRobinhoodTokenAttributionRepository({
       database: {
         query: async (sql, params) => {
           calls.push({ sql, params });
-          return { rows: [{ token_address: TOKEN.toUpperCase(), discovery_block: '123' }] };
+          return { rows: [{
+            token_address: TOKEN.toUpperCase(), discovery_block: '123', eligible_count: '588037',
+          }] };
         },
       },
     });
     const retryBefore = new Date('2026-08-01T00:00:00.000Z');
 
-    assert.deepEqual(await repository.listCreatorCandidates({ retryBefore, limit: 12 }), [
-      { tokenAddress: TOKEN, discoveryBlock: '123' },
-    ]);
+    assert.deepEqual(await repository.listCreatorCandidates({ retryBefore, limit: 12 }), {
+      eligible: 588037, candidates: [{ tokenAddress: TOKEN, discoveryBlock: '123' }],
+    });
+    assert.match(calls[0].sql, /FROM robinhood_pool_registry registry/);
+    assert.doesNotMatch(calls[0].sql, /user_(?:tokens|starred_tokens|pinned_monitored_tokens)/);
     assert.match(calls[0].sql, /LEFT JOIN robinhood_token_attributions/);
     assert.match(calls[0].sql, /attribution\.creator_address IS NULL/);
     assert.match(calls[0].sql, /attribution\.last_attempted_at < \$1/);
@@ -55,7 +59,7 @@ describe('Robinhood token creator attribution', () => {
       database: {
         query: async (sql, params) => {
           calls.push({ sql, params });
-          return { rows: [{ token_address: params[0], creator_address: params[1] }] };
+          return { rows: [{ token_address: params[0][0], creator_address: params[1][0] }] };
         },
       },
     });
@@ -64,7 +68,8 @@ describe('Robinhood token creator attribution', () => {
       tokenAddress: TOKEN.toUpperCase(), creatorAddress: CREATOR.toUpperCase(),
     });
     assert.deepEqual(row, { token_address: TOKEN, creator_address: CREATOR });
-    assert.deepEqual(calls[0].params, [TOKEN, CREATOR, null]);
+    assert.deepEqual(calls[0].params, [[TOKEN], [CREATOR], [null]]);
+    assert.match(calls[0].sql, /UNNEST\(\$1::varchar\[\], \$2::varchar\[\], \$3::varchar\[\]\)/);
     assert.match(calls[0].sql, /ON CONFLICT \(chain, token_address\) DO UPDATE/);
     assert.match(calls[0].sql, /COALESCE\(EXCLUDED\.creator_address/);
   });
@@ -73,17 +78,20 @@ describe('Robinhood token creator attribution', () => {
     let lookups = 0;
     let writes = 0;
     const repository = {
-      listCreatorCandidates: async () => [{ tokenAddress: TOKEN, discoveryBlock: '1' }],
+      listCreatorCandidates: async () => ({
+        eligible: 1, candidates: [{ tokenAddress: TOKEN }],
+      }),
       recordAttempt: async () => { writes += 1; },
     };
     const summary = await run({
       options: { apply: false, limit: 10, sleepMs: 0, retryHours: 24 },
       repository,
-      client: { getContractCreator: async () => { lookups += 1; } },
+      client: { getContractCreators: async () => { lookups += 1; } },
     });
 
     assert.deepEqual(summary, {
-      apply: false, candidates: 1, resolved: 0, unresolved: 0, failed: 0, retried: 0,
+      apply: false, eligible: 1, candidates: 1,
+      batches: 1, requests: 0, resolved: 0, unresolved: 0, failed: 0, retried: 0,
     });
     assert.equal(lookups, 0);
     assert.equal(writes, 0);
@@ -95,23 +103,27 @@ describe('Robinhood token creator attribution', () => {
     const attempts = [];
     let index = 0;
     const summary = await run({
-      options: { apply: true, limit: 10, sleepMs: 0, retryHours: 24 },
+      options: {
+        apply: true, limit: 10, sleepMs: 0, retryHours: 24,
+        batchSize: 1, concurrency: 1,
+      },
       repository: {
-        listCreatorCandidates: async () => candidates,
+        listCreatorCandidates: async () => ({ eligible: candidates.length, candidates }),
         recordAttempt: async (attempt) => { attempts.push(attempt); },
       },
       client: {
-        getContractCreator: async () => {
+        getContractCreators: async ([tokenAddress]) => {
           index += 1;
-          if (index === 1) return CREATOR;
-          if (index === 2) return null;
+          if (index === 1) return [{ tokenAddress, creatorAddress: CREATOR }];
+          if (index === 2) return [{ tokenAddress, creatorAddress: null }];
           throw new Error('rate limited');
         },
       },
     });
 
     assert.deepEqual(summary, {
-      apply: true, candidates: 3, resolved: 1, unresolved: 1, failed: 1, retried: 0,
+      apply: true, eligible: 3, candidates: 3,
+      batches: 3, requests: 3, resolved: 1, unresolved: 1, failed: 1, retried: 0,
     });
     assert.equal(attempts[0].creatorAddress, CREATOR);
     assert.equal(attempts[1].creatorAddress, null);
@@ -123,10 +135,14 @@ describe('Robinhood token creator attribution', () => {
     await assert.rejects(() => run({
       options: { apply: true, limit: 1, sleepMs: 0, retryHours: 24 },
       repository: {
-        listCreatorCandidates: async () => [{ tokenAddress: TOKEN, discoveryBlock: '1' }],
+        listCreatorCandidates: async () => ({
+          eligible: 1, candidates: [{ tokenAddress: TOKEN }],
+        }),
         recordAttempt: async () => { writes += 1; throw new Error('database unavailable'); },
       },
-      client: { getContractCreator: async () => CREATOR },
+      client: {
+        getContractCreators: async ([tokenAddress]) => [{ tokenAddress, creatorAddress: CREATOR }],
+      },
     }), /database unavailable/);
     assert.equal(writes, 1);
   });
@@ -135,15 +151,17 @@ describe('Robinhood token creator attribution', () => {
     let lookups = 0;
     const waits = [];
     const timeout = Object.assign(new Error('timed out'), { code: 'timeout' });
-    const result = await __private.resolveCreatorWithRetry({
-      getContractCreator: async () => {
+    const result = await __private.resolveCreatorBatchWithRetry({
+      getContractCreators: async ([tokenAddress]) => {
         lookups += 1;
         if (lookups < 3) throw timeout;
-        return CREATOR;
+        return [{ tokenAddress, creatorAddress: CREATOR }];
       },
-    }, TOKEN, { requestRetries: 2, retryDelayMs: 250 }, async (ms) => waits.push(ms));
+    }, [TOKEN], { requestRetries: 2, retryDelayMs: 250 }, async (ms) => waits.push(ms));
 
-    assert.deepEqual(result, { creatorAddress: CREATOR, retries: 2 });
+    assert.deepEqual(result, {
+      creators: [{ tokenAddress: TOKEN, creatorAddress: CREATOR }], retries: 2,
+    });
     assert.deepEqual(waits, [250, 500]);
     assert.equal(__private.isRetryableProviderError(
       Object.assign(new Error('server error'), { code: 'http_error', httpStatus: 500 })
@@ -162,12 +180,16 @@ describe('Robinhood token creator attribution', () => {
         requestRetries: 0, retryDelayMs: 0, timeoutMs: 12000,
       },
       repository: {
-        listCreatorCandidates: async () => [{ tokenAddress: TOKEN, discoveryBlock: '1' }],
+        listCreatorCandidates: async () => ({
+          eligible: 1, candidates: [{ tokenAddress: TOKEN }],
+        }),
         recordAttempt: async (attempt) => { attempts.push(attempt); },
       },
       clientFactory: (options) => {
         clientOptions = options;
-        return { getContractCreator: async () => CREATOR };
+        return {
+          getContractCreators: async ([tokenAddress]) => [{ tokenAddress, creatorAddress: CREATOR }],
+        };
       },
     });
 
@@ -178,18 +200,25 @@ describe('Robinhood token creator attribution', () => {
 
   it('requires explicit confirmation and validates operational bounds', () => {
     assert.equal(parseArgs([]).apply, false);
+    assert.equal(parseArgs([]).limit, 1000);
+    assert.equal(parseArgs([]).sleepMs, 500);
     assert.equal(parseArgs([CONFIRM, '--limit', '25', '--sleep-ms', '0']).apply, true);
     assert.throws(() => parseArgs(['--limit', '0']), /--limit/);
+    assert.throws(() => parseArgs(['--limit', '10001']), /--limit/);
     assert.throws(() => parseArgs(['--sleep-ms', '-1']), /--sleep-ms/);
     assert.throws(() => parseArgs(['--retry-hours', '-1']), /--retry-hours/);
     assert.throws(() => parseArgs(['--request-retries', '6']), /--request-retries/);
     assert.throws(() => parseArgs(['--retry-delay-ms', '-1']), /--retry-delay-ms/);
     assert.throws(() => parseArgs(['--timeout-ms', '999']), /--timeout-ms/);
     assert.throws(() => parseArgs(['--timeout-ms', '15001']), /--timeout-ms/);
+    assert.throws(() => parseArgs(['--batch-size', '11']), /--batch-size/);
+    assert.throws(() => parseArgs(['--concurrency', '6']), /--concurrency/);
     const retries = parseArgs(['--request-retries', '3', '--retry-delay-ms', '750']);
     assert.equal(retries.requestRetries, 3);
     assert.equal(retries.retryDelayMs, 750);
     assert.equal(retries.timeoutMs, 10000);
+    assert.equal(retries.batchSize, 10);
+    assert.equal(retries.concurrency, 2);
     assert.equal(parseArgs(['--timeout-ms', '15000']).timeoutMs, 15000);
   });
 });

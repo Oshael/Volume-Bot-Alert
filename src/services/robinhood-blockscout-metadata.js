@@ -3,6 +3,7 @@ const { normalizeText, sanitizeAssetUrl } = require('../utils/url-safety');
 
 const DEFAULT_BASE_URL = 'https://robinhoodchain.blockscout.com/api/v2/tokens/';
 const DEFAULT_ADDRESS_BASE_URL = 'https://robinhoodchain.blockscout.com/api/v2/addresses/';
+const DEFAULT_API_URL = 'https://robinhoodchain.blockscout.com/api';
 const DEFAULT_TIMEOUT_MS = 5000;
 
 class RobinhoodBlockscoutMetadataError extends Error {
@@ -17,6 +18,32 @@ class RobinhoodBlockscoutMetadataError extends Error {
 function boundedTimeout(value) {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) ? Math.max(1000, Math.min(parsed, 15_000)) : DEFAULT_TIMEOUT_MS;
+}
+
+function isRetryableProviderError(error) {
+  if (error?.code === 'timeout' || error?.code === 'transport_error') return true;
+  return error?.code === 'http_error'
+    && (error.httpStatus === 429 || Number(error.httpStatus) >= 500);
+}
+
+const delay = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+
+async function requestWithRetry(operation, options = {}, wait = delay) {
+  const requestRetries = Number.isSafeInteger(options.requestRetries) ? options.requestRetries : 2;
+  const retryDelayMs = Number.isSafeInteger(options.retryDelayMs) ? options.retryDelayMs : 500;
+  let retries = 0;
+  for (;;) {
+    try {
+      return { value: await operation(), retries };
+    } catch (error) {
+      if (!isRetryableProviderError(error) || retries >= requestRetries) {
+        error.requestRetriesUsed = retries;
+        throw error;
+      }
+      await wait(Math.min(60_000, retryDelayMs * (2 ** retries)));
+      retries += 1;
+    }
+  }
 }
 
 function normalizePayload(address, payload) {
@@ -43,16 +70,18 @@ function createRobinhoodBlockscoutMetadataClient(options = {}) {
   if (typeof fetchImpl !== 'function') throw new TypeError('A fetch implementation is required');
   const baseUrl = new URL(String(options.baseUrl || DEFAULT_BASE_URL));
   const addressBaseUrl = new URL(String(options.addressBaseUrl || DEFAULT_ADDRESS_BASE_URL));
+  const apiUrl = new URL(String(options.apiUrl || DEFAULT_API_URL));
   if (baseUrl.protocol !== 'https:') throw new TypeError('Blockscout metadata URL must use HTTPS');
   if (addressBaseUrl.protocol !== 'https:') throw new TypeError('Blockscout address URL must use HTTPS');
+  if (apiUrl.protocol !== 'https:') throw new TypeError('Blockscout API URL must use HTTPS');
   const timeoutMs = boundedTimeout(options.timeoutMs);
 
-  async function request(address, url, resource) {
+  async function requestUrl(url, resource) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     let response;
     try {
-      response = await fetchImpl(new URL(address, url), {
+      response = await fetchImpl(url, {
         headers: { accept: 'application/json' },
         signal: controller.signal,
       });
@@ -77,6 +106,8 @@ function createRobinhoodBlockscoutMetadataClient(options = {}) {
     }
     return response.json();
   }
+
+  const request = (address, url, resource) => requestUrl(new URL(address, url), resource);
 
   async function getTokenMetadata(tokenAddress) {
     const address = normalizeTokenAddress('robinhood', tokenAddress);
@@ -104,14 +135,49 @@ function createRobinhoodBlockscoutMetadataClient(options = {}) {
     }
   }
 
-  return Object.freeze({ getContractCreator, getTokenMetadata });
+  async function getContractCreators(tokenAddresses) {
+    if (!Array.isArray(tokenAddresses) || tokenAddresses.length < 1 || tokenAddresses.length > 10) {
+      throw new TypeError('Blockscout creator batch must contain 1..10 token addresses');
+    }
+    const addresses = [...new Set(tokenAddresses.map((value) => (
+      normalizeTokenAddress('robinhood', value)
+    )))];
+    const url = new URL(apiUrl);
+    url.searchParams.set('module', 'contract');
+    url.searchParams.set('action', 'getcontractcreation');
+    url.searchParams.set('contractaddresses', addresses.join(','));
+    const payload = await requestUrl(url, 'contract creation');
+    if (!payload || payload.status !== '1' || !Array.isArray(payload.result)) {
+      throw new RobinhoodBlockscoutMetadataError(
+        'Blockscout contract creation response is invalid', 'invalid_response'
+      );
+    }
+    const creators = new Map();
+    for (const item of payload.result) {
+      let tokenAddress;
+      try { tokenAddress = normalizeTokenAddress('robinhood', item?.contractAddress); }
+      catch (_) { continue; }
+      if (!addresses.includes(tokenAddress)) continue;
+      let creatorAddress = null;
+      try { creatorAddress = normalizeTokenAddress('robinhood', item?.contractCreator); }
+      catch (_) {}
+      creators.set(tokenAddress, creatorAddress);
+    }
+    return Object.freeze(addresses.map((tokenAddress) => Object.freeze({
+      tokenAddress, creatorAddress: creators.get(tokenAddress) || null,
+    })));
+  }
+
+  return Object.freeze({ getContractCreator, getContractCreators, getTokenMetadata });
 }
 
 module.exports = {
   DEFAULT_BASE_URL,
   DEFAULT_ADDRESS_BASE_URL,
+  DEFAULT_API_URL,
   DEFAULT_TIMEOUT_MS,
   RobinhoodBlockscoutMetadataError,
   createRobinhoodBlockscoutMetadataClient,
-  __private: { boundedTimeout, normalizePayload },
+  requestWithRetry,
+  __private: { boundedTimeout, isRetryableProviderError, normalizePayload },
 };

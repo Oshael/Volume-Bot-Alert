@@ -1092,12 +1092,16 @@ head (lag observado de ~45 blocos), alimentando continuamente
 
 A Fase 2 do feed separa DEV/TRACKED/YOU. A fundação DEV usa a tabela aditiva
 `robinhood_token_attributions` (stage 110) e um backfill Blockscout dry-run-first
-para guardar o criador direto do contrato; esse endereço pode ser uma factory e
-não prova a identidade humana do desenvolvedor. YOU exigirá vínculo EVM por SIWE,
+que cobre o registry em lotes de até 10 contratos, com concorrência limitada,
+retry por batch e escrita em lote. O total `eligible` não é escondido pelo limite
+operacional do dry-run. O endereço guardado
+pode ser uma factory e não prova a identidade humana do desenvolvedor. YOU exigirá
+vínculo EVM por SIWE,
 sem transação nem aprovação de tokens; `user_wallets` continua Solana-only.
 O backfill repete automaticamente falhas transitórias do provedor com backoff
 limitado; erros semânticos não entram em retry. O timeout HTTP do backfill aceita
-`--timeout-ms` entre 1s e 15s e usa 10s por padrão.
+`--timeout-ms` entre 1s e 15s e usa 10s por padrão; `--batch-size` aceita até 10,
+`--concurrency` aceita até 5 e a rodada processa 1.000 tokens por padrão.
 O painel Robinhood já oferece ALL/DEV: a consulta `scope=dev` filtra pelo criador
 persistido e devolve `creatorAddress`, usado pelo cliente para aplicar o mesmo
 escopo aos eventos realtime do token. TRACKED e YOU ainda não estão disponíveis.

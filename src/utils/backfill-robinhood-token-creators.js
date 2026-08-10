@@ -1,7 +1,11 @@
 /** Resolve token creators through Blockscout. Dry-run unless confirmation is explicit. */
 const db = require('../models/db');
 const { createRobinhoodTokenAttributionRepository } = require('../models/robinhood-token-attribution');
-const { createRobinhoodBlockscoutMetadataClient } = require('../services/robinhood-blockscout-metadata');
+const {
+  createRobinhoodBlockscoutMetadataClient,
+  requestWithRetry,
+  __private: { isRetryableProviderError },
+} = require('../services/robinhood-blockscout-metadata');
 
 const CONFIRM = '--confirm-backfill-robinhood-token-creators';
 
@@ -18,8 +22,8 @@ function parseArgs(argv = process.argv.slice(2)) {
     const index = argv.indexOf(name);
     return index < 0 ? fallback : argv[index + 1];
   };
-  const limit = boundedInteger(read('--limit', 100), '--limit', 1, 1000);
-  const sleepMs = boundedInteger(read('--sleep-ms', 100), '--sleep-ms', 0, 60000);
+  const limit = boundedInteger(read('--limit', 1000), '--limit', 1, 10000);
+  const sleepMs = boundedInteger(read('--sleep-ms', 500), '--sleep-ms', 0, 60000);
   const retryHours = Number(read('--retry-hours', 24));
   const requestRetries = boundedInteger(
     read('--request-retries', 2), '--request-retries', 0, 5,
@@ -28,71 +32,87 @@ function parseArgs(argv = process.argv.slice(2)) {
     read('--retry-delay-ms', 500), '--retry-delay-ms', 0, 60000,
   );
   const timeoutMs = boundedInteger(read('--timeout-ms', 10000), '--timeout-ms', 1000, 15000);
+  const batchSize = boundedInteger(read('--batch-size', 10), '--batch-size', 1, 10);
+  const concurrency = boundedInteger(read('--concurrency', 2), '--concurrency', 1, 5);
   if (!Number.isFinite(retryHours) || retryHours < 0) throw new Error('--retry-hours must be >= 0');
   return {
     apply: argv.includes(CONFIRM), limit, sleepMs, retryHours,
-    requestRetries, retryDelayMs, timeoutMs,
+    requestRetries, retryDelayMs, timeoutMs, batchSize, concurrency,
   };
 }
 
 const delay = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
-function isRetryableProviderError(error) {
-  if (error?.code === 'timeout' || error?.code === 'transport_error') return true;
-  return error?.code === 'http_error'
-    && (error.httpStatus === 429 || Number(error.httpStatus) >= 500);
+async function resolveCreatorBatchWithRetry(client, tokenAddresses, options, wait = delay) {
+  const result = await requestWithRetry(
+    () => client.getContractCreators(tokenAddresses), options, wait,
+  );
+  return { creators: result.value, retries: result.retries };
 }
 
-async function resolveCreatorWithRetry(client, tokenAddress, options, wait = delay) {
-  const requestRetries = Number.isSafeInteger(options.requestRetries) ? options.requestRetries : 2;
-  const retryDelayMs = Number.isSafeInteger(options.retryDelayMs) ? options.retryDelayMs : 500;
-  let retries = 0;
-  for (;;) {
-    try {
-      return { creatorAddress: await client.getContractCreator(tokenAddress), retries };
-    } catch (error) {
-      if (!isRetryableProviderError(error) || retries >= requestRetries) {
-        error.requestRetriesUsed = retries;
-        throw error;
-      }
-      await wait(Math.min(60000, retryDelayMs * (2 ** retries)));
-      retries += 1;
-    }
-  }
+function chunks(items, size) {
+  const result = [];
+  for (let index = 0; index < items.length; index += size) result.push(items.slice(index, index + size));
+  return result;
 }
 
 async function run(deps = {}) {
   const options = deps.options || parseArgs();
   const repository = deps.repository || createRobinhoodTokenAttributionRepository();
   const retryBefore = new Date(Date.now() - options.retryHours * 3600000);
-  const candidates = await repository.listCreatorCandidates({ limit: options.limit, retryBefore });
+  const selection = await repository.listCreatorCandidates({
+    limit: options.limit, retryBefore, includeEligible: !options.apply,
+  });
+  const { candidates } = selection;
+  const batches = chunks(candidates, options.batchSize ?? 10);
   const summary = {
-    apply: options.apply, candidates: candidates.length,
+    apply: options.apply, eligible: selection.eligible, candidates: candidates.length,
+    batches: batches.length, requests: 0,
     resolved: 0, unresolved: 0, failed: 0, retried: 0,
   };
   if (!options.apply) return summary;
   const clientFactory = deps.clientFactory || createRobinhoodBlockscoutMetadataClient;
   const client = deps.client || clientFactory({ timeoutMs: options.timeoutMs ?? 10000 });
-  for (const candidate of candidates) {
-    let creatorAddress;
+
+  const persistAttempts = async (attempts) => {
+    if (typeof repository.recordAttempts === 'function') return repository.recordAttempts(attempts);
+    return Promise.all(attempts.map((attempt) => repository.recordAttempt(attempt)));
+  };
+  const processBatch = async (batch) => {
+    let resolved;
     try {
-      const resolved = await resolveCreatorWithRetry(
-        client, candidate.tokenAddress, options, deps.delay || delay,
+      resolved = await resolveCreatorBatchWithRetry(
+        client, batch.map((candidate) => candidate.tokenAddress), options, deps.delay || delay,
       );
-      creatorAddress = resolved.creatorAddress;
       summary.retried += resolved.retries;
+      summary.requests += resolved.retries + 1;
     } catch (error) {
       summary.retried += error.requestRetriesUsed || 0;
-      await repository.recordAttempt({ ...candidate, error: error.message });
-      summary.failed += 1;
-      if (options.sleepMs) await (deps.delay || delay)(options.sleepMs);
-      continue;
+      summary.requests += (error.requestRetriesUsed || 0) + 1;
+      await persistAttempts(batch.map((candidate) => ({ ...candidate, error: error.message })));
+      summary.failed += batch.length;
+      return;
     }
-    await repository.recordAttempt({ ...candidate, creatorAddress });
-    if (creatorAddress) summary.resolved += 1;
-    else summary.unresolved += 1;
-    if (options.sleepMs) await (deps.delay || delay)(options.sleepMs);
-  }
+    const byToken = new Map(resolved.creators.map((item) => [item.tokenAddress, item.creatorAddress]));
+    const attempts = batch.map((candidate) => ({
+      ...candidate, creatorAddress: byToken.get(candidate.tokenAddress) || null,
+    }));
+    await persistAttempts(attempts);
+    summary.resolved += attempts.filter((attempt) => attempt.creatorAddress).length;
+    summary.unresolved += attempts.filter((attempt) => !attempt.creatorAddress).length;
+  };
+
+  let nextBatch = 0;
+  const worker = async () => {
+    while (nextBatch < batches.length) {
+      const batch = batches[nextBatch];
+      nextBatch += 1;
+      await processBatch(batch);
+      if (options.sleepMs) await (deps.delay || delay)(options.sleepMs);
+    }
+  };
+  const workerCount = Math.min(options.concurrency ?? 2, batches.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
   return summary;
 }
 
@@ -106,5 +126,5 @@ if (require.main === module) void main();
 
 module.exports = {
   CONFIRM, parseArgs, run,
-  __private: { isRetryableProviderError, resolveCreatorWithRetry },
+  __private: { chunks, isRetryableProviderError, resolveCreatorBatchWithRetry },
 };

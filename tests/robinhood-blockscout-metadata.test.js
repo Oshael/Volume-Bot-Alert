@@ -6,6 +6,7 @@ const {
 } = require('../src/services/robinhood-blockscout-metadata');
 
 const TOKEN = `0x${'1'.repeat(40)}`;
+const TOKEN_2 = `0x${'3'.repeat(40)}`;
 
 function response(status, payload) {
   return {
@@ -64,6 +65,31 @@ describe('Robinhood Blockscout metadata client', () => {
     });
 
     assert.equal(await client.getContractCreator(TOKEN), creator);
+  });
+
+  it('resolves up to ten contract creators in one Blockscout request', async () => {
+    const creator = `0x${'2'.repeat(40)}`;
+    let requestedUrl;
+    const client = createRobinhoodBlockscoutMetadataClient({
+      fetchImpl: async (url) => {
+        requestedUrl = new URL(url);
+        return response(200, {
+          status: '1',
+          result: [{ contractAddress: TOKEN, contractCreator: creator }],
+        });
+      },
+    });
+
+    assert.deepEqual(await client.getContractCreators([TOKEN.toUpperCase(), TOKEN_2]), [
+      { tokenAddress: TOKEN, creatorAddress: creator },
+      { tokenAddress: TOKEN_2, creatorAddress: null },
+    ]);
+    assert.equal(requestedUrl.searchParams.get('action'), 'getcontractcreation');
+    assert.equal(requestedUrl.searchParams.get('contractaddresses'), `${TOKEN},${TOKEN_2}`);
+    await assert.rejects(
+      () => client.getContractCreators(Array.from({ length: 11 }, () => TOKEN)),
+      /1\.\.10/
+    );
   });
 
   it('rejects HTTP failures and mismatched token identities', async () => {
