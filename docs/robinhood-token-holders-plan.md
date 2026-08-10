@@ -400,7 +400,7 @@ altera a sequencia deste quadro.
 | 1 | Probe read-only global e catalog-scoped | concluido, commitado e executado no node da VPS | RT1/RT1B; `afd0147a`, `9b43e90e` |
 | 2 | Schema e ledger shadow reversivel | concluido no codigo; migrations 116-118 ainda nao aplicadas em producao; nenhum runner ligado | RT2A-RT2C4; `43a6f9d7` ate `49609b99` |
 | 3 | Backfill/catch-up de tokens novos sem lacuna | concluido no codigo/desligado | RT3A-RT3C runner opt-in; RT4A/RT4E1 handoff retido; RT4F1 wiring com lease |
-| 4 | Live incremental shadow, deteccao automatica de reorg e scheduler da poda | em andamento | RT4A-RT4E2 base integrada; RT4F1 wiring/lease pronto e desligado; poda pendente |
+| 4 | Live incremental shadow, deteccao automatica de reorg e scheduler da poda | concluido no codigo/desligado | RT4A-RT4E2 base integrada; RT4F1/F2 grupo, leases e poda opt-in |
 | 5 | Backfill frio dos tokens antigos | pendente | depende de checkpoint/throttle/promocao |
 | 6 | Reconciliacao, promocao e publicacao REST/socket | pendente | Blockscout continua sendo fallback atual |
 | 7 | Frontend realtime/expanded chart | pendente de layout aprovado | nao reutilizar o prototipo sem decisao explicita |
@@ -807,7 +807,8 @@ do cutoff, em lotes de ate 5.000 linhas. Evento pendente antigo bloqueia todo o
 lote; o floor avanca apenas quando nao resta nenhuma linha abaixo do cutoff.
 Rollback abaixo do floor falha antes de tocar balances ou cursor.
 
-A operacao ainda nao e iniciada pelo `server.js` e nao depende do retention geral.
+A operacao nao depende do retention geral. O RT4F2 abaixo adiciona um scheduler
+dedicado, opt-in, no grupo isolado de holders.
 
 #### Corte RT3A - Admissao de tokens novos com deployment exato
 
@@ -1014,6 +1015,20 @@ no shutdown gracioso. `all` nao inclui grupos Robinhood isolados. Pull, migratio
 ou mera presenca de `ROBINHOOD_RPC_URL` nao habilitam holders; e necessario usar
 o grupo `robinhood-holders` e ativar cada flag explicitamente. No rollout, ligar
 primeiro `ROBINHOOD_HOLDER_LIVE_ENABLED` e somente depois o backfill.
+
+#### Corte RT4F2 - Scheduler isolado da poda holder
+
+Status: implementado no codigo e desligado por default.
+
+Uma terceira lease no grupo `robinhood-holders` executa somente a poda do journal
+holder; ela nao usa RPC nem depende de `ROBINHOOD_RETENTION_ENABLED`. O default
+mantem 20.000 blocos e, a cada minuto, drena no maximo 5 lotes de 5.000 eventos.
+`blocked` ou `idle` encerram o tick; backlog apos o budget fica explicitamente na
+telemetria e continua no tick seguinte.
+
+A flag e `ROBINHOOD_HOLDER_JOURNAL_PRUNE_ENABLED`, false por default. O worker
+propaga contrato invalido para sua lease, aplica backoff em falha transiente e
+participa do shutdown gracioso. Pull e o grupo isolado, sozinhos, nao ligam a poda.
 
 Cada item acima deve ser repartido novamente se estimar mais de 500 linhas. O
 probe e a estimativa de storage sao pre-condicoes; “outros terminais fazem” nao
