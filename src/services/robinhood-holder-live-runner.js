@@ -8,9 +8,13 @@ function boundedInteger(value, fallback, minimum, maximum, label) {
 
 function createRobinhoodHolderLiveRunner(options = {}) {
   const capture = options.capture;
+  const handoff = options.handoff;
   const ledger = options.ledger;
   if (typeof capture?.captureOnce !== 'function') {
     throw new TypeError('holder live capture is required');
+  }
+  if (typeof handoff?.runOnce !== 'function') {
+    throw new TypeError('holder live handoff is required');
   }
   if (typeof ledger?.applyNextPendingEvent !== 'function') {
     throw new TypeError('holder live ledger is required');
@@ -29,6 +33,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
         reason: captured.reason, checkpointBlock: captured.checkpointBlock,
         journalFloorBlock: captured.journalFloorBlock,
         checkedCheckpoints: captured.checkedCheckpoints,
+        handoffStatus: 'skipped', handoffPromotions: 0, handoffResyncs: 0,
         appliedEvents: 0, driftedTokens: 0, applyAttempts: 0,
         applyBudgetExhausted: false,
       });
@@ -40,6 +45,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
         orphanedCheckpointBlock: captured.orphanedCheckpointBlock,
         revertedEvents: Number(captured.revertedEvents) || 0,
         resyncingTokens: Number(captured.resyncingTokens) || 0,
+        handoffStatus: 'skipped', handoffPromotions: 0, handoffResyncs: 0,
         appliedEvents: 0, driftedTokens: 0, applyAttempts: 0,
         applyBudgetExhausted: false,
       });
@@ -47,6 +53,13 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     if (!['captured', 'idle'].includes(captured.status)) {
       const error = new Error(`unexpected holder capture status: ${captured.status}`);
       error.code = 'holder_live_capture_contract_error';
+      throw error;
+    }
+    const handedOff = await handoff.runOnce();
+    const handoffStatus = handedOff?.status;
+    if (!['idle', 'shadow', 'resyncing'].includes(handoffStatus)) {
+      const error = new Error(`unexpected holder handoff status: ${handoffStatus}`);
+      error.code = 'holder_live_handoff_contract_error';
       throw error;
     }
 
@@ -72,6 +85,9 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     return Object.freeze({
       status: 'completed', captureStatus: captured.status,
       capturedTransfers: Number(captured.transfers) || 0,
+      handoffStatus,
+      handoffPromotions: handoffStatus === 'shadow' ? 1 : 0,
+      handoffResyncs: handoffStatus === 'resyncing' ? 1 : 0,
       appliedEvents, driftedTokens, applyAttempts,
       applyBudgetExhausted: !reachedIdle && applyAttempts === maxApplyEvents,
       nextBlock: captured.nextBlock, safeHead: captured.safeHead,

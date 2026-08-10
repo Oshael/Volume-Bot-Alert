@@ -5,7 +5,7 @@ const {
   createRobinhoodHolderLiveRunner,
 } = require('../src/services/robinhood-holder-live-runner');
 
-function harness(captureResult, applyResults = []) {
+function harness(captureResult, applyResults = [], handoffResult = { status: 'idle' }) {
   const calls = [];
   const capture = {
     captureOnce: async (input) => {
@@ -19,9 +19,15 @@ function harness(captureResult, applyResults = []) {
       return applyResults.shift() || { status: 'idle' };
     },
   };
+  const handoff = {
+    runOnce: async () => {
+      calls.push(['handoff']);
+      return handoffResult;
+    },
+  };
   return {
     calls,
-    runner: createRobinhoodHolderLiveRunner({ capture, ledger }),
+    runner: createRobinhoodHolderLiveRunner({ capture, handoff, ledger }),
   };
 }
 
@@ -40,11 +46,13 @@ describe('Robinhood holder live runner', () => {
       rangeSize: 100, confirmations: 20, maxApplyEvents: 10,
     }), {
       status: 'completed', captureStatus: 'captured', capturedTransfers: 3,
+      handoffStatus: 'idle', handoffPromotions: 0, handoffResyncs: 0,
       appliedEvents: 2, driftedTokens: 1, applyAttempts: 3,
       applyBudgetExhausted: false, nextBlock: '106', safeHead: '105',
     });
     assert.deepEqual(context.calls, [
       ['capture', { rangeSize: 100, confirmations: 20 }],
+      ['handoff'],
       ['apply'], ['apply'], ['apply'], ['apply'],
     ]);
   });
@@ -71,10 +79,12 @@ describe('Robinhood holder live runner', () => {
       status: 'recovered', captureStatus: 'reorg-rewound',
       canonicalCheckpointBlock: '95', orphanedCheckpointBlock: '100',
       revertedEvents: 4, resyncingTokens: 1,
+      handoffStatus: 'skipped', handoffPromotions: 0, handoffResyncs: 0,
       appliedEvents: 0, driftedTokens: 0, applyAttempts: 0,
       applyBudgetExhausted: false,
     });
     assert.equal(recovered.calls.some(([name]) => name === 'apply'), false);
+    assert.equal(recovered.calls.some(([name]) => name === 'handoff'), false);
 
     const blocked = harness({
       status: 'reorg-unrecoverable', reason: 'canonical-evidence-unavailable',
@@ -84,10 +94,27 @@ describe('Robinhood holder live runner', () => {
       status: 'blocked', captureStatus: 'reorg-unrecoverable',
       reason: 'canonical-evidence-unavailable', checkpointBlock: '100',
       journalFloorBlock: '90', checkedCheckpoints: 3,
+      handoffStatus: 'skipped', handoffPromotions: 0, handoffResyncs: 0,
       appliedEvents: 0, driftedTokens: 0, applyAttempts: 0,
       applyBudgetExhausted: false,
     });
     assert.equal(blocked.calls.some(([name]) => name === 'apply'), false);
+    assert.equal(blocked.calls.some(([name]) => name === 'handoff'), false);
+  });
+
+  it('promotes at most one token before applying its preserved tail', async () => {
+    const context = harness({
+      status: 'idle', transfers: 0, nextBlock: '106', safeHead: '105',
+    }, [{ status: 'applied' }, { status: 'idle' }], { status: 'shadow' });
+
+    const result = await context.runner.runOnce();
+
+    assert.equal(result.handoffStatus, 'shadow');
+    assert.equal(result.handoffPromotions, 1);
+    assert.equal(result.handoffResyncs, 0);
+    assert.deepEqual(context.calls.map(([name]) => name), [
+      'capture', 'handoff', 'apply', 'apply',
+    ]);
   });
 
   it('fails closed on an unknown dependency status', async () => {
@@ -101,6 +128,12 @@ describe('Robinhood holder live runner', () => {
     await assert.rejects(
       applyContract.runner.runOnce(),
       (error) => error.code === 'holder_live_apply_contract_error'
+    );
+
+    const handoffContract = harness({ status: 'idle' }, [], { status: 'mystery' });
+    await assert.rejects(
+      handoffContract.runner.runOnce(),
+      (error) => error.code === 'holder_live_handoff_contract_error'
     );
   });
 });

@@ -1,6 +1,10 @@
 const db = require('../models/db');
+const { createRobinhoodHolderHandoffRepository } = require('../models/robinhood-holder-handoff');
 const { createRobinhoodHolderLedgerRepository } = require('../models/robinhood-holder-ledger');
 const { createEvmJsonRpcClient } = require('./evm-json-rpc-client');
+const {
+  createRobinhoodHolderHandoffCoordinator,
+} = require('./robinhood-holder-handoff-coordinator');
 const { createRobinhoodHolderLiveCapture } = require('./robinhood-holder-live-capture');
 const { createRobinhoodHolderLiveRunner } = require('./robinhood-holder-live-runner');
 const { resolveRobinhoodHolderRpcProvider } = require('./robinhood-holder-rpc');
@@ -8,7 +12,7 @@ const { createRobinhoodHolderTransferReader } = require('./robinhood-holder-tran
 
 const FATAL_CODES = new Set([
   'configuration_error', 'holder_live_apply_contract_error',
-  'holder_live_capture_contract_error',
+  'holder_live_capture_contract_error', 'holder_live_handoff_contract_error',
 ]);
 
 function boundedInteger(value, fallback, minimum, maximum) {
@@ -33,6 +37,7 @@ function normalizeOptions(options = {}, env = process.env) {
 }
 
 async function buildRuntime(options, deps = {}) {
+  const database = deps.database || db;
   const provider = resolveRobinhoodHolderRpcProvider(
     deps.env || process.env, 'robinhood-holder-live'
   );
@@ -40,7 +45,7 @@ async function buildRuntime(options, deps = {}) {
     providers: [provider], timeoutMs: options.rpcTimeoutMs, maxRetries: 1,
   });
   const ledger = deps.ledger || (deps.ledgerFactory || createRobinhoodHolderLedgerRepository)({
-    database: deps.database || db,
+    database,
   });
   const reader = deps.reader || (deps.readerFactory || createRobinhoodHolderTransferReader)({
     rpcClient,
@@ -49,8 +54,14 @@ async function buildRuntime(options, deps = {}) {
   const capture = deps.capture || (deps.captureFactory || createRobinhoodHolderLiveCapture)({
     ledger, reader,
   });
+  const handoffRepository = deps.handoffRepository
+    || (deps.handoffRepositoryFactory || createRobinhoodHolderHandoffRepository)({ database });
+  const handoff = deps.handoff
+    || (deps.handoffFactory || createRobinhoodHolderHandoffCoordinator)({
+      repository: handoffRepository, reader,
+    });
   const runner = deps.runner || (deps.runnerFactory || createRobinhoodHolderLiveRunner)({
-    capture, ledger,
+    capture, handoff, ledger,
   });
   return Object.freeze({ providerName: provider.name, runner });
 }
@@ -71,6 +82,9 @@ function compactResult(result) {
     nextBlock: result.nextBlock ?? null,
     safeHead: result.safeHead ?? null,
     capturedTransfers: Number(result.capturedTransfers) || 0,
+    handoffStatus: result.handoffStatus || null,
+    handoffPromotions: Number(result.handoffPromotions) || 0,
+    handoffResyncs: Number(result.handoffResyncs) || 0,
     appliedEvents: Number(result.appliedEvents) || 0,
     driftedTokens: Number(result.driftedTokens) || 0,
     applyBudgetExhausted: result.applyBudgetExhausted === true,
@@ -94,6 +108,7 @@ function createRobinhoodHolderLiveWorker(deps = {}) {
     providerName: null, lastResult: null, lastError: null,
     totalRuns: 0, totalErrors: 0, consecutiveErrors: 0,
     totalCapturedTransfers: 0, totalAppliedEvents: 0,
+    totalHandoffPromotions: 0, totalHandoffResyncs: 0,
     totalDriftedTokens: 0, totalRecoveries: 0, lastCompletedAt: null,
   };
 
@@ -122,6 +137,8 @@ function createRobinhoodHolderLiveWorker(deps = {}) {
   function recordResult(result) {
     status.lastResult = compactResult(result);
     status.totalCapturedTransfers += Number(result.capturedTransfers) || 0;
+    status.totalHandoffPromotions += Number(result.handoffPromotions) || 0;
+    status.totalHandoffResyncs += Number(result.handoffResyncs) || 0;
     status.totalAppliedEvents += Number(result.appliedEvents) || 0;
     status.totalDriftedTokens += Number(result.driftedTokens) || 0;
     if (result.status === 'recovered') status.totalRecoveries += 1;

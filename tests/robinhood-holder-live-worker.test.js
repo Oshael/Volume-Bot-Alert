@@ -23,6 +23,7 @@ function scheduler() {
 function completed(overrides = {}) {
   return {
     status: 'completed', captureStatus: 'captured', nextBlock: '106', safeHead: '105',
+    handoffStatus: 'shadow', handoffPromotions: 1, handoffResyncs: 0,
     capturedTransfers: 3, appliedEvents: 2, driftedTokens: 1,
     applyBudgetExhausted: false, ...overrides,
   };
@@ -51,10 +52,12 @@ describe('Robinhood holder live worker', () => {
     assert.equal(calls[0].maxApplyEvents, 5000);
     assert.deepEqual(worker.getStatus().lastResult, {
       status: 'completed', captureStatus: 'captured', nextBlock: '106', safeHead: '105',
+      handoffStatus: 'shadow', handoffPromotions: 1, handoffResyncs: 0,
       capturedTransfers: 3, appliedEvents: 2, driftedTokens: 1,
       applyBudgetExhausted: false,
     });
     assert.equal(worker.getStatus().totalAppliedEvents, 2);
+    assert.equal(worker.getStatus().totalHandoffPromotions, 1);
     await worker.stop();
     assert.equal(clock.cancelled.length, 1);
   });
@@ -118,6 +121,8 @@ describe('Robinhood holder live worker', () => {
     const ledger = { applyNextPendingEvent() {} };
     const reader = { assertChain: async () => calls.push('chain') };
     const capture = { captureOnce() {} };
+    const handoffRepository = { getNextCandidate() {} };
+    const handoff = { runOnce() {} };
     const runner = { runOnce() {} };
     const runtime = await buildRuntime({ rpcTimeoutMs: 9000 }, {
       env: {
@@ -131,6 +136,11 @@ describe('Robinhood holder live worker', () => {
       ledgerFactory: (input) => { calls.push(['ledger', input]); return ledger; },
       readerFactory: (input) => { calls.push(['reader', input]); return reader; },
       captureFactory: (input) => { calls.push(['capture', input]); return capture; },
+      handoffRepositoryFactory: (input) => {
+        calls.push(['handoffRepository', input]);
+        return handoffRepository;
+      },
+      handoffFactory: (input) => { calls.push(['handoff', input]); return handoff; },
       runnerFactory: (input) => { calls.push(['runner', input]); return runner; },
       database: 'database',
     });
@@ -145,7 +155,9 @@ describe('Robinhood holder live worker', () => {
       ['ledger', { database: 'database' }],
       ['reader', { rpcClient }], 'chain',
       ['capture', { ledger, reader }],
-      ['runner', { capture, ledger }],
+      ['handoffRepository', { database: 'database' }],
+      ['handoff', { repository: handoffRepository, reader }],
+      ['runner', { capture, handoff, ledger }],
     ]);
   });
 });
