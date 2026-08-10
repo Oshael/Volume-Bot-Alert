@@ -402,7 +402,7 @@ altera a sequencia deste quadro.
 | 3 | Backfill/catch-up de tokens novos sem lacuna | concluido no codigo/desligado | RT3A-RT3C runner opt-in; RT4A/RT4E1 handoff retido; RT4F1 wiring com lease |
 | 4 | Live incremental shadow, deteccao automatica de reorg e scheduler da poda | concluido no codigo/desligado | RT4A-RT4E2 base integrada; RT4F1/F2 grupo, leases e poda opt-in |
 | 5 | Backfill frio dos tokens antigos | concluido no codigo/desligado | RT5A-RT5B3; admissao, verificacao, tick limitado e runtime opt-in com lease |
-| 6 | Reconciliacao, promocao e publicacao REST/socket | em andamento/desligado | RT6A/RT6B criam promocao e runtime isolado; wiring/publicacao pendentes |
+| 6 | Reconciliacao, promocao e publicacao REST/socket | em andamento/desligado | RT6A-RT6C criam promocao, runtime e wiring opt-in; drift/publicacao pendentes |
 | 7 | Frontend realtime/expanded chart | pendente de layout aprovado | nao reutilizar o prototipo sem decisao explicita |
 
 Os nomes RT nao sao uma segunda arquitetura. Eles apenas repartem os macros
@@ -1133,6 +1133,20 @@ O modulo somente inicia com `enabled: true`, mas ainda nao e importado por
 `server.js` nem possui flag/lease em config. Portanto, pull ou deploy nao executa
 consultas nem promocoes. Wiring opt-in, reconciliacao continua de estados `live`
 e publicacao permanecem para os proximos subcortes.
+
+#### Corte RT6C - Wiring opt-in e lease de reconciliacao
+
+Status: implementado no codigo e desligado por default.
+
+O runtime entra no grupo isolado `robinhood-holders` sob a lease exclusiva
+`robinhood-holder-reconciliation-worker`, participa do health operacional e do
+shutdown gracioso. A flag `ROBINHOOD_HOLDER_RECONCILIATION_ENABLED` permanece
+false por default; habilita-la sem `ROBINHOOD_HOLDER_LIVE_ENABLED=true` falha o
+boot. Mesmo com ambas ligadas, cada tick espera o worker live estar running, sem
+erro/halt e com ao menos um tick concluido antes de consultar ou promover.
+
+Pull, deploy e o grupo isolado sozinhos nao iniciam o reconciliador. Deteccao de
+drift depois da promocao e publicacao do count local continuam pendentes.
 
 Cada item acima deve ser repartido novamente se estimar mais de 500 linhas. O
 probe e a estimativa de storage sao pre-condicoes; “outros terminais fazem” nao

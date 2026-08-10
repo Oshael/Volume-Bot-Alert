@@ -1053,6 +1053,12 @@ Ele consulta no maximo um token por tick por um scheduler Blockscout dedicado
 snapshot em sucesso e mantem single-flight, backoff e telemetria. A API do modulo
 e opt-in, mas nenhuma flag ou lease de producao existe nesse corte; pull/deploy
 continua incapaz de inicia-lo.
+O RT6C conecta o runtime ao grupo `robinhood-holders` sob lease exclusiva, health
+e shutdown gracioso. A flag de reconciliacao e false por default e exige que o
+worker live tambem esteja explicitamente habilitado; configuracao contraditoria
+falha no boot. Em runtime, o reconciliador espera ao menos um tick live saudavel
+e interrompe novas consultas enquanto live estiver parado, halted ou com erro.
+Nenhum count local e publicado por este wiring.
 
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.
