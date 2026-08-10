@@ -1023,9 +1023,13 @@ limita cada tick a 5 lotes de 5.000; pull/grupo nao ativam a flag.
 O RT5A inicia o backfill frio admitindo, em lotes limitados, somente tokens
 anteriores ao cutoff que possuam deployment exato `rpc_direct` ou
 `launchpad_event`. Ele reutiliza o replay checkpointado existente e permanece sem
-runner. Blockscout nao e usado como origem do bloco porque a integracao atual
-resolve apenas o criador; throttle e cobertura de deployments diretos antigos
-continuam pendentes.
+runner. Uma atribuicao apenas Blockscout nao e usada como origem do bloco;
+throttle e cobertura de deployments diretos antigos continuam pendentes.
+O RT5B1 passa a preservar tambem o `txHash` fornecido por `getcontractcreation`,
+mas o trata somente como hint. A promocao para `rpc_direct` exige que o RPC da
+Robinhood confirme criacao top-level, creator, receipt, contract address e bloco
+canonico; a persistencia historica nao move o cursor live. Ainda nao existe runner
+para executar essa verificacao automaticamente.
 
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.
