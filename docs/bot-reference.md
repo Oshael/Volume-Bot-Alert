@@ -902,7 +902,33 @@ Stages confirmados:
 | 100 | cursor independente do replay histórico de liquidez V4 pelo RPC local |
 | 101 | faixas V4 materializadas e mantidas incrementalmente após o replay |
 | 102 | TVL V4 point-in-time pelas faixas de ticks e constraints correspondentes |
+| 111 | resumo durável de holders por token Robinhood, sem persistir a lista de wallets |
+| 112 | snapshots diários UTC do total de holders por token Robinhood |
 | 113 | proveniência RPC e cursor live independente para deployments diretos Robinhood |
+
+O refresh de holders é um worker opt-in do grupo `robinhood-derived`: prioriza
+tokens ativos, faz backfill gradual dos demais e persiste backoff por token.
+`GET /api/robinhood/holders` entrega páginas Blockscout normalizadas de 50 itens,
+com summary cacheado e refresh prioritário best-effort na primeira página.
+As leituras de `monitored`, `recent`, `old-week` e da carga inicial de tokens
+manuais fazem `LEFT JOIN` somente no resumo persistido: tokens RH exibem a
+contagem e a idade do snapshot, enquanto outras chains ou resumos ausentes
+continuam exibindo `-`, sem request Blockscout por linha.
+Cada sucesso também atualiza o fechamento do dia UTC na Stage 112. A rota
+`GET /api/robinhood/holder-history` lê apenas PostgreSQL e entrega uma baseline
+mais até 30 fechamentos UTC por padrão, com total, delta e percentual; dias
+ausentes não são comparados como se fossem uma janela válida de 24 horas. A rota
+paginada permanece disponível para um consumidor futuro, mas o frontend do
+expanded chart não integra esta entrega enquanto seu layout não for aprovado.
+
+Esse worker Blockscout não é uma fonte realtime: o intervalo de seleção default é
+30 segundos e o refresh hot default é cinco minutos. A evolução aprovada para
+planejamento usa um ledger próprio reconstruído por eventos ERC-20 `Transfer`,
+com catch-up desde o deployment, cursor/reorg, publicação somente após commit e
+reconciliação periódica pelo Blockscout. Antes de implementar, um probe read-only
+deve medir logs, wallets únicas, custo de replay e crescimento do banco. O layout
+do expanded chart permanece sem aprovação de produto; o protótipo local não faz
+parte dos commits aprovados e não deve ser tratado como decisão de rollout.
 
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.
