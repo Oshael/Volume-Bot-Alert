@@ -400,7 +400,7 @@ altera a sequencia deste quadro.
 | 1 | Probe read-only global e catalog-scoped | concluido, commitado e executado no node da VPS | RT1/RT1B; `afd0147a`, `9b43e90e` |
 | 2 | Schema e ledger shadow reversivel | concluido no codigo; migrations 116-118 ainda nao aplicadas em producao; nenhum runner ligado | RT2A-RT2C4; `43a6f9d7` ate `49609b99` |
 | 3 | Backfill/catch-up de tokens novos sem lacuna | em andamento | RT3A/RT3B prontos; RT4A handoff pronto; runner global pendente |
-| 4 | Live incremental shadow, deteccao automatica de reorg e scheduler da poda | em andamento | RT4A handoff; RT4B captura; RT4C1/RT4C2 rollback seguro; loop/poda pendentes |
+| 4 | Live incremental shadow, deteccao automatica de reorg e scheduler da poda | em andamento | RT4A handoff; RT4B captura; RT4C1/RT4C2 rollback; RT4D1 tick bounded; loop/lease/poda pendentes |
 | 5 | Backfill frio dos tokens antigos | pendente | depende de checkpoint/throttle/promocao |
 | 6 | Reconciliacao, promocao e publicacao REST/socket | pendente | Blockscout continua sendo fallback atual |
 | 7 | Frontend realtime/expanded chart | pendente de layout aprovado | nao reutilizar o prototipo sem decisao explicita |
@@ -926,6 +926,21 @@ provar um ancestral, a operacao retorna `reorg-unrecoverable` sem tocar balances
 journal ou cursor. Persistir checkpoints de ranges vazios seria uma extensao de
 schema separada; o loop, lease, aplicador continuo e scheduler da poda ainda nao
 foram ligados.
+
+#### Corte RT4D1 - Tick live bounded
+
+Status: implementado localmente; nenhum loop, lease ou worker ligado.
+
+O coordenador executa uma captura confirmada por tick e depois aplica no maximo
+5.000 eventos elegiveis por default (limite configuravel entre 1 e 50.000).
+Eventos que isolam um token como `drifted` contam no budget; `idle` encerra cedo.
+Rewind concluido ou ausencia de evidencia canonica encerram o tick sem aplicar
+mais eventos, impedindo que balances sejam alterados durante recuperacao.
+
+Status desconhecido das dependencias falha fechado como erro de contrato. Este
+corte nao seleciona handoff, nao cria timer e nao adquire lease: o loop deve usar
+o `worker-lease-manager` central no wiring posterior, sem uma segunda camada de
+coordenacao.
 
 Cada item acima deve ser repartido novamente se estimar mais de 500 linhas. O
 probe e a estimativa de storage sao pre-condicoes; “outros terminais fazem” nao

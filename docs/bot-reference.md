@@ -995,6 +995,10 @@ O RT4C2 usa busca binaria nos hashes de blocos com eventos ainda retidos para
 encontrar a ultima evidencia canonica e acionar o rewind atomico. Ausencia de
 evidencia dentro do floor retorna `reorg-unrecoverable` sem writes. Blocos vazios
 nao possuem hash historico persistido; loop e worker continuam desligados.
+O RT4D1 coordena um tick one-shot: captura um range confirmado e aplica ate 5.000
+eventos elegiveis por default. Recuperacao ou reorg sem evidencia encerram o tick
+antes de novas aplicacoes. Timer, lease central, seletor de handoff e wiring de
+worker continuam pendentes e desligados.
 
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.
