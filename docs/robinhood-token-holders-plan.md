@@ -402,7 +402,7 @@ altera a sequencia deste quadro.
 | 3 | Backfill/catch-up de tokens novos sem lacuna | concluido no codigo/desligado | RT3A-RT3C runner opt-in; RT4A/RT4E1 handoff retido; RT4F1 wiring com lease |
 | 4 | Live incremental shadow, deteccao automatica de reorg e scheduler da poda | concluido no codigo/desligado | RT4A-RT4E2 base integrada; RT4F1/F2 grupo, leases e poda opt-in |
 | 5 | Backfill frio dos tokens antigos | concluido no codigo/desligado | RT5A-RT5B3; admissao, verificacao, tick limitado e runtime opt-in com lease |
-| 6 | Reconciliacao, promocao e publicacao REST/socket | em andamento/desligado | RT6A cria reconciliacao e promocao sem schema novo; runtime/publicacao pendentes |
+| 6 | Reconciliacao, promocao e publicacao REST/socket | em andamento/desligado | RT6A/RT6B criam promocao e runtime isolado; wiring/publicacao pendentes |
 | 7 | Frontend realtime/expanded chart | pendente de layout aprovado | nao reutilizar o prototipo sem decisao explicita |
 
 Os nomes RT nao sao uma segunda arquitetura. Eles apenas repartem os macros
@@ -1118,6 +1118,21 @@ de um estado alterado durante a consulta externa.
 Este corte entrega apenas repository e politica one-shot por dependencia
 injetada. Blockscout automatico, scheduler/lease, deteccao de drift depois da
 promocao e publicacao do ledger no summary/REST/socket permanecem pendentes.
+
+#### Corte RT6B - Runtime isolado da reconciliacao
+
+Status: implementado no codigo, opt-in e sem wiring no servidor.
+
+O worker compoe o provider Blockscout, scheduler limitado, repository de
+reconciliacao e store de summaries. Cada tick processa uma unica observacao; um
+sucesso tambem atualiza o fallback/snapshot existente antes da comparacao. O
+default e 0,25 request/s, concorrencia 1, um retry e intervalo de 30 segundos,
+com single-flight, backoff e telemetria de promocoes/mismatches/indisponibilidade.
+
+O modulo somente inicia com `enabled: true`, mas ainda nao e importado por
+`server.js` nem possui flag/lease em config. Portanto, pull ou deploy nao executa
+consultas nem promocoes. Wiring opt-in, reconciliacao continua de estados `live`
+e publicacao permanecem para os proximos subcortes.
 
 Cada item acima deve ser repartido novamente se estimar mais de 500 linhas. O
 probe e a estimativa de storage sao pre-condicoes; “outros terminais fazem” nao

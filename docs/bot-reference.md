@@ -1047,6 +1047,12 @@ mesmo estado `shadow`. A sequencia vive somente em memoria e reinicia com segura
 apos restart; a transicao final reutiliza `last_reconciled_at`, version otimista e
 falha se existir cauda live pendente. Worker, drift continuo e publicacao seguem
 desligados e pendentes.
+O RT6B compoe esse coordenador em um runtime isolado ainda sem import no servidor.
+Ele consulta no maximo um token por tick por um scheduler Blockscout dedicado
+(0,25 request/s, concorrencia 1 e um retry por default), atualiza o summary/daily
+snapshot em sucesso e mantem single-flight, backoff e telemetria. A API do modulo
+e opt-in, mas nenhuma flag ou lease de producao existe nesse corte; pull/deploy
+continua incapaz de inicia-lo.
 
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.
