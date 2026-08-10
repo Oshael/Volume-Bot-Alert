@@ -30,6 +30,7 @@ const bootstrapRoutes = require('./routes/bootstrap');
 const catalogRoutes = require('./routes/catalog');
 const dashboardRoutes = require('./routes/dashboard');
 const robinhoodTradesRoutes = require('./routes/robinhood-trades');
+const robinhoodHoldersRoutes = require('./routes/robinhood-holders');
 const tokenGateRoutes = require('./routes/token-gate');
 const xProfileRoutes = require('./routes/x-profile');
 const telegramRoutes = require('./routes/telegram');
@@ -42,6 +43,7 @@ const catalogCleanupWorker = require('./services/catalog-cleanup-worker');
 const robinhoodRetentionWorker = require('./services/robinhood-retention-worker');
 const robinhoodProcessingWorker = require('./services/robinhood-processing-worker');
 const robinhoodDerivedWorker = require('./services/robinhood-derived-worker');
+const robinhoodHolderSummaryWorker = require('./services/robinhood-holder-summary-worker');
 const robinhoodBackfillDiscoveryScanner = require('./services/robinhood-backfill-discovery-scanner');
 const robinhoodBackfillMarketScanner = require('./services/robinhood-backfill-market-scanner');
 const robinhoodBackfillRuntime = require('./services/robinhood-backfill-runtime');
@@ -99,6 +101,7 @@ const ROBINHOOD_INGESTION_LEASE_KEY = 'robinhood-ingestion-worker';
 const ROBINHOOD_HEAD_CAPTURE_LEASE_KEY = 'robinhood-head-capture-worker';
 const ROBINHOOD_PROCESSING_LEASE_KEY = 'robinhood-processing-worker';
 const ROBINHOOD_DERIVED_LEASE_KEY = 'robinhood-derived-worker';
+const ROBINHOOD_HOLDER_SUMMARY_LEASE_KEY = 'robinhood-holder-summary-worker';
 const ROBINHOOD_WALLET_SWAP_LIVE_LEASE_KEY = 'robinhood-wallet-swap-live-worker';
 const ROBINHOOD_DIRECT_CREATOR_LIVE_LEASE_KEY = 'robinhood-direct-creator-live-worker';
 const ROBINHOOD_BACKFILL_DISCOVERY_LEASE_KEY = 'robinhood-backfill-discovery-scanner';
@@ -241,6 +244,7 @@ app.use('/api/bootstrap', defaultApiLimiter, bootstrapRoutes);
 app.use('/api/catalog', catalogRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/robinhood', defaultApiLimiter, robinhoodTradesRoutes);
+app.use('/api/robinhood', defaultApiLimiter, robinhoodHoldersRoutes);
 app.use('/api/x-profile', xProfileLimiter, xProfileRoutes);
 app.use('/api/telegram', defaultApiLimiter, telegramRoutes);
 
@@ -508,6 +512,18 @@ function startRobinhoodDerivedWorkerGroup() {
           ),
         }),
       }
+    );
+  }
+  if (config.robinhoodHolderSummaryWorker.enabled) {
+    startLockedWorker(
+      'robinhood-derived',
+      ROBINHOOD_HOLDER_SUMMARY_LEASE_KEY,
+      'Robinhood holder summary worker',
+      () => robinhoodHolderSummaryWorker.start({
+        ...config.robinhoodHolderSummaryWorker,
+        requestOptions: config.robinhoodHolderRequests,
+      }),
+      { metadataProvider: () => ({ telemetry: robinhoodHolderSummaryWorker.getStatus() }) }
     );
   }
 }
@@ -920,6 +936,7 @@ async function shutdownGracefully(signal = 'SIGTERM') {
       robinhoodBackfillRuntime.aggregation.stop(),
       robinhoodCatalogStagingWorker.stop(),
       robinhoodCatalogProjectionWorker.stop(),
+      robinhoodHolderSummaryWorker.stop(),
       robinhoodLiveCatalogWorker.stop(),
       robinhoodRealtimeAlertWorker.stop(),
       robinhoodMarketAggregateWorker.stop(),

@@ -911,6 +911,38 @@ module.exports = {
     ),
   },
 
+  robinhoodHolderRequests: {
+    requestsPerSecond: parseFloatInRange(
+      process.env.ROBINHOOD_HOLDER_REQUESTS_PER_SECOND, 2, 0.1, 2
+    ),
+    concurrency: parseIntegerInRange(process.env.ROBINHOOD_HOLDER_REQUEST_CONCURRENCY, 2, 1, 2),
+    maxRetries: parseIntegerInRange(process.env.ROBINHOOD_HOLDER_MAX_RETRIES, 2, 0, 3),
+    baseBackoffMs: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_BACKOFF_BASE_MS, 1000, 250, 30_000
+    ),
+    maxBackoffMs: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_BACKOFF_MAX_MS, 30_000, 1000, 120_000
+    ),
+    circuitFailureThreshold: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_CIRCUIT_FAILURE_THRESHOLD, 5, 2, 20
+    ),
+    circuitResetMs: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_CIRCUIT_RESET_MS, 30_000, 5000, 300_000
+    ),
+  },
+
+  robinhoodHolderSummaryWorker: {
+    enabled: parseBoolean(process.env.ROBINHOOD_HOLDER_SUMMARY_ENABLED, false),
+    intervalMs: parseIntegerInRange(process.env.ROBINHOOD_HOLDER_SUMMARY_INTERVAL_MS, 30_000, 10_000, 3_600_000),
+    batchSize: parseIntegerInRange(process.env.ROBINHOOD_HOLDER_SUMMARY_BATCH_SIZE, 20, 2, 50),
+    hotWindowMs: parseIntegerInRange(process.env.ROBINHOOD_HOLDER_HOT_WINDOW_MS, 3_600_000, 300_000, 86_400_000),
+    hotRefreshMs: parseIntegerInRange(process.env.ROBINHOOD_HOLDER_HOT_REFRESH_MS, 300_000, 60_000, 3_600_000),
+    coldRefreshMs: parseIntegerInRange(process.env.ROBINHOOD_HOLDER_COLD_REFRESH_MS, 21_600_000, 300_000, 604_800_000),
+    failureBackoffMs: parseIntegerInRange(process.env.ROBINHOOD_HOLDER_FAILURE_BACKOFF_MS, 300_000, 60_000, 3_600_000),
+    maxFailureBackoffMs: parseIntegerInRange(process.env.ROBINHOOD_HOLDER_MAX_FAILURE_BACKOFF_MS, 21_600_000, 60_000, 86_400_000),
+    unavailableRetryMs: parseIntegerInRange(process.env.ROBINHOOD_HOLDER_UNAVAILABLE_RETRY_MS, 86_400_000, 3_600_000, 604_800_000),
+  },
+
   robinhoodIngestionWorker: {
     enabled: robinhoodIngestionEnabled,
     publicRpcUrl: String(

@@ -2439,6 +2439,102 @@ const SCHEMA_GROUPS = [
     ],
   },
   {
+    key: 'stage111-robinhood-token-holder-summaries',
+    name: 'Stage 111 Robinhood token holder summaries',
+    repair: 'node src/utils/db-init-stage111.js',
+    tables: [
+      {
+        table: 'robinhood_token_holder_summaries',
+        columns: [
+          'chain', 'token_address', 'holder_count', 'source',
+          'observed_at', 'checked_at', 'last_error_code',
+          'consecutive_failures', 'retry_after_at', 'created_at', 'updated_at',
+        ],
+        columnTypes: {
+          holder_count: { dataType: 'bigint' },
+        },
+        constraints: [
+          {
+            name: 'robinhood_token_holder_summaries_pkey',
+            includes: ['PRIMARY KEY', 'chain', 'token_address'],
+          },
+          {
+            name: 'robinhood_token_holder_summaries_chain_check',
+            includes: ['CHECK', 'chain', 'robinhood'],
+          },
+          {
+            name: 'robinhood_token_holder_summaries_token_check',
+            includes: ['CHECK', 'token_address'],
+          },
+          {
+            name: 'robinhood_token_holder_summaries_count_check',
+            includes: ['CHECK', 'holder_count'],
+          },
+          {
+            name: 'robinhood_token_holder_summaries_source_check',
+            includes: ['CHECK', 'source', 'blockscout'],
+          },
+          {
+            name: 'robinhood_token_holder_summaries_failures_check',
+            includes: ['CHECK', 'consecutive_failures'],
+          },
+        ],
+        indexes: [
+          {
+            name: 'idx_robinhood_token_holder_summaries_refresh',
+            includes: ['retry_after_at', 'checked_at', 'token_address'],
+          },
+        ],
+      },
+    ],
+  },
+  {
+    key: 'stage112-robinhood-token-holder-daily-snapshots',
+    name: 'Stage 112 Robinhood daily holder snapshots',
+    repair: 'node src/utils/db-init-stage112.js',
+    tables: [
+      {
+        table: 'robinhood_token_holder_daily_snapshots',
+        columns: [
+          'chain', 'token_address', 'snapshot_date', 'holder_count',
+          'source', 'observed_at', 'created_at', 'updated_at',
+        ],
+        columnTypes: {
+          holder_count: { dataType: 'bigint' },
+          snapshot_date: { dataType: 'date' },
+        },
+        constraints: [
+          {
+            name: 'robinhood_token_holder_daily_snapshots_pkey',
+            includes: ['PRIMARY KEY', 'chain', 'token_address', 'snapshot_date'],
+          },
+          {
+            name: 'robinhood_token_holder_daily_snapshots_chain_check',
+            includes: ['CHECK', 'chain', 'robinhood'],
+          },
+          {
+            name: 'robinhood_token_holder_daily_snapshots_token_check',
+            includes: ['CHECK', 'token_address'],
+          },
+          {
+            name: 'robinhood_token_holder_daily_snapshots_count_check',
+            includes: ['CHECK', 'holder_count'],
+          },
+          {
+            name: 'robinhood_token_holder_daily_snapshots_source_check',
+            includes: ['CHECK', 'source', 'blockscout'],
+          },
+        ],
+        indexes: [
+          {
+            name: 'idx_robinhood_token_holder_daily_history',
+            includes: ['token_address', 'snapshot_date'],
+          },
+        ],
+      },
+    ],
+  },
+  {
     key: 'stage91-robinhood-wallet-swap-cursors',
     name: 'Stage 91 Robinhood wallet-swap attribution cursors',
     repair: 'node src/utils/db-init-stage91.js',

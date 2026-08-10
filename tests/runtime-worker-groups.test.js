@@ -293,6 +293,44 @@ describe('runtime worker groups config', () => {
     });
   });
 
+  it('keeps Robinhood holder requests below the public Blockscout ceiling', () => {
+    withEnv({
+      ROBINHOOD_HOLDER_REQUESTS_PER_SECOND: '99',
+      ROBINHOOD_HOLDER_REQUEST_CONCURRENCY: '99',
+      ROBINHOOD_HOLDER_MAX_RETRIES: '99',
+      ROBINHOOD_HOLDER_BACKOFF_BASE_MS: '1',
+      ROBINHOOD_HOLDER_BACKOFF_MAX_MS: '999999',
+      ROBINHOOD_HOLDER_CIRCUIT_FAILURE_THRESHOLD: '1',
+      ROBINHOOD_HOLDER_CIRCUIT_RESET_MS: '1',
+    }, (config) => {
+      assert.deepEqual(config.robinhoodHolderRequests, {
+        requestsPerSecond: 2,
+        concurrency: 2,
+        maxRetries: 3,
+        baseBackoffMs: 250,
+        maxBackoffMs: 120_000,
+        circuitFailureThreshold: 2,
+        circuitResetMs: 5000,
+      });
+    });
+  });
+
+  it('keeps the Robinhood holder backfill opt-in and bounded', () => {
+    withEnv({
+      ROBINHOOD_HOLDER_SUMMARY_ENABLED: undefined,
+      ROBINHOOD_HOLDER_SUMMARY_INTERVAL_MS: '1',
+      ROBINHOOD_HOLDER_SUMMARY_BATCH_SIZE: '999',
+      ROBINHOOD_HOLDER_HOT_REFRESH_MS: '1',
+      ROBINHOOD_HOLDER_COLD_REFRESH_MS: '9999999999',
+    }, (config) => {
+      assert.equal(config.robinhoodHolderSummaryWorker.enabled, false);
+      assert.equal(config.robinhoodHolderSummaryWorker.intervalMs, 10_000);
+      assert.equal(config.robinhoodHolderSummaryWorker.batchSize, 50);
+      assert.equal(config.robinhoodHolderSummaryWorker.hotRefreshMs, 60_000);
+      assert.equal(config.robinhoodHolderSummaryWorker.coldRefreshMs, 604_800_000);
+    });
+  });
+
   it('keeps the DexScreener profile fast path disabled and bounded by default', () => {
     withEnv({
       ROBINHOOD_DEXSCREENER_PROFILE_ENABLED: undefined,

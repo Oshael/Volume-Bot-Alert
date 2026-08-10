@@ -18,6 +18,7 @@ const INTEGRATION_TESTS = [
   'robinhood-head-capture.integration.test.js',
   'robinhood-head-capture-adapter.integration.test.js',
   'robinhood-head-processing.integration.test.js',
+  'robinhood-token-holder-summary.integration.test.js',
   'robinhood-wallet-swap-read.integration.test.js',
   'user-alert-presence.integration.test.js',
 ];

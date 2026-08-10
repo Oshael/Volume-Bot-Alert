@@ -59,10 +59,23 @@ function createTokenChainVisibilityMiddleware(runtimeConfig = config) {
   };
 }
 
+function createRobinhoodRouteVisibilityMiddleware(runtimeConfig = config) {
+  return function rejectHiddenRobinhoodRoute(_req, res, next) {
+    if (isRobinhoodUserVisible(runtimeConfig)) return next();
+    return res.status(400).json({
+      error: 'Requested chain is not available',
+      code: 'CHAIN_NOT_AVAILABLE',
+    });
+  };
+}
+
 const rejectHiddenRobinhoodRequests = createTokenChainVisibilityMiddleware();
+const rejectHiddenRobinhoodRoute = createRobinhoodRouteVisibilityMiddleware();
 
 module.exports = {
+  createRobinhoodRouteVisibilityMiddleware,
   createTokenChainVisibilityMiddleware,
+  rejectHiddenRobinhoodRoute,
   rejectHiddenRobinhoodRequests,
   __private: { referencesRobinhood, ruleIsRobinhoodOnly, stringReferencesRobinhood },
 };
