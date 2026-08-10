@@ -428,6 +428,10 @@ function marketToken(chain, symbol) {
         volume24h: 850000,
         coverage: { '5m': 'complete', '1h': 'partial', '6h': 'unavailable', '24h': 'complete' },
         activityState: 'stale',
+        holderCount: 4424,
+        holderObservedAt: '2026-07-14T17:50:00.000Z',
+        holderCheckedAt: '2026-07-14T17:51:00.000Z',
+        holderFreshness: 'fresh',
         priceChange24h: 38,
       }
     : {
@@ -651,6 +655,8 @@ const ROBINHOOD_RADAR_CONFIG = {
     chain: 'robinhood', address: ROBINHOOD_MANUAL, label: 'MANUALRH',
     symbol: 'MANUALRH', name: 'Manual Robinhood', last_fdv: 180000,
     last_pair_address: ROBINHOOD_POOL, last_dex_id: 'uniswap-v3',
+    holderCount: 2001, holderObservedAt: '2026-07-14T17:49:00.000Z',
+    holderCheckedAt: '2026-07-14T17:51:00.000Z', holderFreshness: 'fresh',
     tickerPeers: robinhoodTickerPeers(ROBINHOOD_MANUAL, 'og'),
   }],
   configs: {
@@ -1628,6 +1634,7 @@ test('renders Robinhood peer badges and terminals across tracked token lists', a
   await expect(monitoredRow).toBeVisible();
   await expect(monitoredRow.locator('.monitored-ticker-peer-badge')).toHaveText('#1');
   await expect(monitoredRow.locator('.trade-link')).toHaveCount(2);
+  await expect(monitoredRow).toContainText('HOLDERS 4,424');
   await expect(monitoredRow.locator('.trade-link.axiom, .trade-link.padre')).toHaveCount(0);
   await expect(monitoredRow.locator('.trade-link.gmgn'))
     .toHaveAttribute('href', `https://gmgn.ai/robinhood/token/${ROBINHOOD_TOKEN}`);
@@ -1635,6 +1642,7 @@ test('renders Robinhood peer badges and terminals across tracked token lists', a
   await expect(manualRow).toBeVisible();
   await expect(manualRow.locator('.monitored-ticker-peer-badge')).toHaveText('OG');
   await expect(manualRow.locator('.trade-link')).toHaveCount(2);
+  await expect(manualRow.locator('.radar-size-item').filter({ hasText: 'HLD' })).toContainText('2,001');
   await expect(manualRow.locator('.trade-link.axiom, .trade-link.padre')).toHaveCount(0);
   await expect(manualRow.locator('.trade-link.fomo'))
     .toHaveAttribute('href', `https://fomo.family/tokens/robinhood/${ROBINHOOD_MANUAL}`);
@@ -1646,6 +1654,7 @@ test('renders Robinhood peer badges and terminals across tracked token lists', a
   await expect(recentRow).toBeVisible();
   await expect(recentRow.locator('.monitored-ticker-peer-badge')).toHaveText('#1');
   await expect(recentRow.locator('.trade-link')).toHaveCount(2);
+  await expect(recentRow.locator('.radar-size-item').filter({ hasText: 'HLD' })).toContainText('4,424');
   await expect(recentRow.locator('.trade-link.gmgn'))
     .toHaveAttribute('href', `https://gmgn.ai/robinhood/token/${ROBINHOOD_TOKEN}`);
   const oldRow = page.locator(
@@ -1654,8 +1663,13 @@ test('renders Robinhood peer badges and terminals across tracked token lists', a
   await expect(oldRow).toBeVisible();
   await expect(oldRow.locator('.monitored-ticker-peer-badge')).toHaveText('#1');
   await expect(oldRow.locator('.trade-link')).toHaveCount(2);
+  await expect(oldRow.locator('.radar-size-item').filter({ hasText: 'HLD' })).toContainText('4,424');
   await expect(oldRow.locator('.trade-link.gmgn'))
     .toHaveAttribute('href', `https://gmgn.ai/robinhood/token/${ROBINHOOD_OLD}`);
+  const solanaRow = page.locator(
+    `.recent-bar tr[data-token-identity="solana:${SOLANA_TOP}"]`,
+  );
+  await expect(solanaRow.locator('.radar-size-item').filter({ hasText: 'HLD' }).locator('dd')).toHaveText('-');
 
   expect(diagnostics.unexpectedRequests).toEqual([]);
   expect(diagnostics.pageErrors).toEqual([]);

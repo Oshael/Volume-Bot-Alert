@@ -202,6 +202,10 @@ export interface ManualTokenEntry {
     poolId?: string | null;
     liquidityUsd: number;
   }>;
+  holderCount?: number | null;
+  holderObservedAt?: string | null;
+  holderCheckedAt?: string | null;
+  holderFreshness?: 'fresh' | 'stale' | 'unavailable' | null;
   volume5m?: number | null;
   volume1h?: number | null;
   volume6h?: number | null;

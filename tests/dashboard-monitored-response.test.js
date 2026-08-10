@@ -34,6 +34,10 @@ function normalizedRow(chain, overrides = {}) {
     twitterUrl: 'https://x.com/token',
     communityUrl: null,
     monitorPriority: 'normal',
+    holderCount: chain === 'robinhood' ? 4424 : null,
+    holderObservedAt: chain === 'robinhood' ? '2026-07-15T17:50:00.000Z' : null,
+    holderCheckedAt: chain === 'robinhood' ? '2026-07-15T17:51:00.000Z' : null,
+    holderFreshness: chain === 'robinhood' ? 'fresh' : 'unavailable',
     valuation: {
       type: chain === 'solana' ? 'mcap' : 'fdv',
       usd: 50_000,
@@ -85,6 +89,9 @@ describe('dashboard monitored response', () => {
     assert.equal(robinhood.volume5mBaselineAt, '2026-07-15T17:55:00.000Z');
     assert.equal(robinhood.volume5mDeltaCoverage, 'complete');
     assert.equal(robinhood.launchpadId, 'pons');
+    assert.equal(robinhood.holderCount, 4424);
+    assert.equal(robinhood.holderFreshness, 'fresh');
+    assert.equal(solana.holderCount, null);
     assert.equal(solana.volume1h, null);
     assert.equal(solana.coverage['1h'], 'unavailable');
     assert.equal(solana.catalogFirstSeenAt, Date.parse('2026-07-14T12:00:00.000Z'));
@@ -114,6 +121,13 @@ describe('dashboard monitored response', () => {
     }));
     assert.equal(unknown.fdv, null);
     assert.equal(unknown.valuationType, null);
+
+    const missingHolders = buildDashboardMonitoredToken(normalizedRow('robinhood', {
+      holderCount: undefined, holderObservedAt: undefined,
+      holderCheckedAt: undefined, holderFreshness: undefined,
+    }));
+    assert.equal(missingHolders.holderCount, null);
+    assert.equal(missingHolders.holderFreshness, 'unavailable');
   });
 
   it('builds a stable page payload and applies canonical pin order', () => {

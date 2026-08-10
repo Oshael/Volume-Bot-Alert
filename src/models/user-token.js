@@ -1,5 +1,8 @@
 const db = require('./db');
 const { normalizeTokenAddress, normalizeTokenChain } = require('../utils/token-identity');
+const {
+  normalizeRobinhoodHolderSummary,
+} = require('../utils/robinhood-holder-summary-view');
 
 // Solana address: base58, 32-44 chars
 // Ethereum/BSC/Base: hex, 42 chars (0x + 40)
@@ -46,15 +49,27 @@ async function getAllForChains(userId, chainValues = ['solana', 'robinhood']) {
             tc.last_vol_6h, tc.last_vol_24h, tc.last_price_change_1h,
             tc.last_price_change_6h, tc.last_price_change_24h,
             tc.last_pair_address, tc.last_dex_id,
-            tc.last_token_created_at_ms, tc.first_seen_at, tc.last_seen_at
+            tc.last_token_created_at_ms, tc.first_seen_at, tc.last_seen_at,
+            holder_summary.holder_count,
+            holder_summary.observed_at AS holder_observed_at,
+            holder_summary.checked_at AS holder_checked_at
      FROM user_tokens ut
      LEFT JOIN token_catalog tc
        ON tc.chain = ut.chain AND tc.address = ut.address
+     LEFT JOIN robinhood_token_holder_summaries holder_summary
+       ON holder_summary.chain = ut.chain AND holder_summary.token_address = ut.address
      WHERE ut.user_id = $1 AND ut.chain = ANY($2::varchar[])
      ORDER BY ut.added_at ASC, ut.chain ASC, ut.address ASC`,
     [userId, chains]
   );
-  return rows;
+  const asOf = new Date();
+  return rows.map((row) => ({
+    ...row,
+    ...(row.chain === 'robinhood'
+      ? normalizeRobinhoodHolderSummary(row, asOf)
+      : { holderCount: null, holderObservedAt: null, holderCheckedAt: null,
+        holderFreshness: 'unavailable' }),
+  }));
 }
 
 /**

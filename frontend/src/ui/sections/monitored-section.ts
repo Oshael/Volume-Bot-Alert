@@ -1,6 +1,6 @@
 import type { AppController } from '../../state/app-controller';
 import { getChainCapabilityNotice, getMockTradingPositionView, getMonitoredTokens, getTokenSparkline, isTokenStarred, type AppState, type ManualTokenEntry, type MeteoraEntry } from '../../state/app-state';
-import { bindCompactSearch, bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindSparklineHover, bindSparklineRangeControls, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTickerPeerMcapLabel, buildTradeTerminalMenuElement, buildXSearchUrl, fmtAge, fmtAgeFromDurationMs, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderManualQuickAddAction, renderSparklineFigure, renderSparklineRangeControl, renderTokenLaunchpadBadge, renderTotalLiquidityCell, resolveTokenAgeMs } from './shared';
+import { bindCompactSearch, bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindSparklineHover, bindSparklineRangeControls, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTickerPeerMcapLabel, buildTradeTerminalMenuElement, buildXSearchUrl, fmtAge, fmtAgeFromDurationMs, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderManualQuickAddAction, renderSparklineFigure, renderSparklineRangeControl, renderTokenLaunchpadBadge, renderTotalLiquidityCell, resolveTokenAgeMs, resolveTokenHolderDisplay } from './shared';
 import { escapeHtml, sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 import { fmtMockSol, resolveLiveMockSolUsdcRate, resolveMockTradingPositionPnl } from '../../utils/mock-trading-display';
 import { resolveMonitoredTableRows } from '../../utils/token-table';
@@ -1022,6 +1022,7 @@ function buildMonitoredRow(item: ManualTokenEntry, manualTokenFolders: AppState[
     buildCoveredMoneyMetric('VOL 6H', item.volume6h, item.coverage?.['6h']),
     buildCoveredMoneyMetric('VOL 24H', item.volume24h, item.coverage?.['24h']),
     buildMetaMetric('TOTAL LIQ', buildMonitoredTotalLiquidityValue(item)),
+    buildMetaMetric('HOLDERS', buildMonitoredHolderValue(item)),
   );
 
   const actions = document.createElement('div');
@@ -1303,6 +1304,14 @@ function buildMonitoredTotalLiquidityValue(item: ManualTokenEntry) {
   }
 
   value.innerHTML = renderTotalLiquidityCell(item, meteoraEntry, 0);
+  return value;
+}
+
+function buildMonitoredHolderValue(item: ManualTokenEntry) {
+  const display = resolveTokenHolderDisplay(item);
+  const value = document.createElement('span');
+  value.textContent = display.value;
+  value.title = display.title;
   return value;
 }
 

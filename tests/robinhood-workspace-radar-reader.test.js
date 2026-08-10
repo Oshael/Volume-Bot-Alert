@@ -21,6 +21,8 @@ function catalogRow(overrides = {}) {
     last_dex_id: 'uniswap-v3', last_image_url: null, launchpad_id: 'launchhood',
     last_twitter_url: null,
     last_community_url: null, monitor_priority: 'dormant', total_count: '1',
+    holder_count: '4424', holder_observed_at: '2026-07-15T17:50:00.000Z',
+    holder_checked_at: '2026-07-15T17:51:00.000Z',
     ...overrides,
   };
 }
@@ -64,6 +66,8 @@ describe('Robinhood workspace radar reader', () => {
     assert.equal(result.rows[0].valuation.freshness, 'stale');
     assert.equal(result.rows[0].liquidityUsd, 12000);
     assert.equal(result.rows[0].launchpadId, 'launchhood');
+    assert.equal(result.rows[0].holderCount, 4424);
+    assert.equal(result.rows[0].holderFreshness, 'fresh');
     assert.equal(result.rows[0].volume1hUsd, 0);
     assert.deepEqual(calls[0].params.slice(1), [
       30_000, 80_000, 0, 10_080, '%persistent%', [DISMISSED], false, [], 30,
@@ -82,6 +86,7 @@ describe('Robinhood workspace radar reader', () => {
     assert.match(sql, /robinhood_head_capture_cursors/);
     assert.match(sql, /market_processing_frontier AS/);
     assert.match(sql, /LEFT JOIN market_cursor cursor ON TRUE/);
+    assert.match(sql, /LEFT JOIN robinhood_token_holder_summaries holder_summary/);
     assert.match(sql, /WITH catalog_candidates AS MATERIALIZED/);
     assert.match(sql, /tc\.last_seen_at > \$1::timestamptz/);
     assert.match(sql, /tc\.last_fdv IS NULL/);

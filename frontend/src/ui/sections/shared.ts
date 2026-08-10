@@ -2080,14 +2080,34 @@ function renderRadarRemoveManualGlyph(
 }
 
 function renderRadarSizeBlock(item: ManualTokenEntry, meteora: MeteoraEntry | undefined, meteoraMinPool: number) {
+  const holders = resolveTokenHolderDisplay(item);
   return `
     <dl class="radar-size">
       <div class="radar-size-item"><dt>MC</dt><dd>${renderTokenTableValuation(item)}</dd></div>
       <div class="radar-size-item"><dt>LQ</dt><dd>${renderTotalLiquidityCell(item, meteora, meteoraMinPool)}</dd></div>
       <div class="radar-size-item"><dt>AGE</dt><dd class="radar-size-age ${getAgeToneClassFromCreatedAt(item.createdAt)}">${item.createdAt ? fmtAge(item.createdAt) : '-'}</dd></div>
-      <div class="radar-size-item"><dt>HLD</dt><dd class="radar-size-empty" title="Holders data is not tracked yet">-</dd></div>
+      <div class="radar-size-item"><dt>HLD</dt><dd${holders.available ? '' : ' class="radar-size-empty"'} title="${escapeHtml(holders.title)}">${escapeHtml(holders.value)}</dd></div>
     </dl>
   `;
+}
+
+export function resolveTokenHolderDisplay(item: ManualTokenEntry) {
+  if ((item.chain || 'solana') !== 'robinhood') {
+    return { available: false, value: '-', title: 'Holders are available for Robinhood tokens' };
+  }
+  if (!Number.isSafeInteger(item.holderCount) || Number(item.holderCount) < 0) {
+    return { available: false, value: '-', title: 'Holder count is not available yet' };
+  }
+  const observedAt = item.holderObservedAt ? new Date(item.holderObservedAt) : null;
+  const observedLabel = observedAt && Number.isFinite(observedAt.getTime())
+    ? observedAt.toLocaleString()
+    : 'unknown time';
+  const freshnessLabel = item.holderFreshness === 'fresh' ? 'fresh snapshot' : 'stale snapshot';
+  return {
+    available: true,
+    value: Number(item.holderCount).toLocaleString('en-US'),
+    title: `Observed ${observedLabel} · ${freshnessLabel}`,
+  };
 }
 
 const RADAR_TRIO_WINDOWS = [

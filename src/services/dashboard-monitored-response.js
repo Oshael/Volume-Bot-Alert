@@ -19,6 +19,29 @@ function optionalValue(value) {
   return value == null ? null : value;
 }
 
+function holderFields(row, chain) {
+  if (chain !== 'robinhood') {
+    return { holderCount: null, holderObservedAt: null, holderCheckedAt: null,
+      holderFreshness: 'unavailable' };
+  }
+  const freshness = row.holderFreshness == null && row.holderCount == null
+    ? 'unavailable'
+    : row.holderFreshness;
+  if (!['fresh', 'stale', 'unavailable'].includes(freshness)) {
+    throw new Error('holder freshness is invalid');
+  }
+  const holderCount = optionalNumber(row.holderCount, 'holderCount');
+  if (holderCount != null && (!Number.isSafeInteger(holderCount) || holderCount < 0)) {
+    throw new Error('holderCount is invalid');
+  }
+  return {
+    holderCount,
+    holderObservedAt: optionalValue(row.holderObservedAt),
+    holderCheckedAt: optionalValue(row.holderCheckedAt),
+    holderFreshness: freshness,
+  };
+}
+
 function valuationFields(row) {
   const type = row?.valuation?.type;
   if (!['mcap', 'fdv'].includes(type)) throw new Error('valuation type is invalid');
@@ -53,6 +76,7 @@ function buildDashboardMonitoredToken(row, options = {}) {
     twitterUrl: social.twitterUrl,
     communityUrl: social.communityUrl,
     monitorPriority: optionalValue(row.monitorPriority),
+    ...holderFields(row, identity.chain),
     ...valuationFields(row),
     valuation: row.valuation,
     priceUsd: optionalNumber(row.priceUsd, 'priceUsd'),

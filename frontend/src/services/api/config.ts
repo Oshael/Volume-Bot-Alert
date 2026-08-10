@@ -26,6 +26,10 @@ export interface AddressItem {
   last_token_created_at_ms?: number | string | null;
   first_seen_at?: string | null;
   last_seen_at?: string | null;
+  holderCount?: number | null;
+  holderObservedAt?: string | null;
+  holderCheckedAt?: string | null;
+  holderFreshness?: 'fresh' | 'stale' | 'unavailable' | null;
   tickerPeers?: DashboardMonitoredToken['tickerPeers'];
 }
 

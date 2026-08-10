@@ -32,6 +32,9 @@ function catalogRow(address, overrides = {}) {
     monitor_priority: 'dormant',
     last_seen_at: new Date('2026-07-15T17:20:00.000Z'),
     last_evaluated_at: null,
+    holder_count: '4424',
+    holder_observed_at: new Date('2026-07-15T17:50:00.000Z'),
+    holder_checked_at: new Date('2026-07-15T17:51:00.000Z'),
     ranking_volume_5m_usd: '0',
     ranking_volume_1h_usd: '500',
     ranking_volume_6h_usd: '2000',
@@ -125,6 +128,8 @@ describe('Robinhood workspace token reader', () => {
     assert.equal(prefix.rows[0].liquidityCoverage, 'partial');
     assert.equal(prefix.rows[0].liquidityMarketCount, 3);
     assert.equal(prefix.rows[0].valuedLiquidityMarketCount, 2);
+    assert.equal(prefix.rows[0].holderCount, 4424);
+    assert.equal(prefix.rows[0].holderFreshness, 'fresh');
     assert.equal(prefix.rows[0].liquidityPools[0].liquidityUsd, 9000);
     assert.equal(prefix.rows[1].volume1hUsd, 0);
     assert.deepEqual(calls[0].params, [
@@ -162,6 +167,7 @@ describe('Robinhood workspace token reader', () => {
     assert.match(sql, /robinhood_head_capture_cursors/);
     assert.match(sql, /market_processing_frontier AS/);
     assert.match(sql, /LEFT JOIN market_cursor cursor ON TRUE/);
+    assert.match(sql, /LEFT JOIN robinhood_token_holder_summaries holder_summary/);
     assert.match(sql, /SUM\(bucket\.volume_usd\)/);
     assert.match(sql, /'uniswap-v2', 'uniswap-v3', 'uniswap-v4'/);
     assert.match(sql, /coverage_start_timestamp/);

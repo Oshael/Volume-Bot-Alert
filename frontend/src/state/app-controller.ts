@@ -2108,6 +2108,30 @@ export function createAppController(): AppController {
     };
   }
 
+  function buildMergedHolderFields(
+    existingItem: ManualTokenEntry | undefined,
+    dashboardItem: DashboardMonitoredToken | undefined,
+    base: ManualTokenEntry,
+  ): Partial<ManualTokenEntry> {
+    const candidates = [dashboardItem, existingItem, base]
+      .filter((item) => Number.isSafeInteger(item?.holderCount) && Number(item?.holderCount) >= 0)
+      .sort((left, right) => (
+        (toTrackedFreshnessMs(right?.holderObservedAt) ?? -1)
+        - (toTrackedFreshnessMs(left?.holderObservedAt) ?? -1)
+      ));
+    const selected = candidates[0];
+    return {
+      holderCount: selected?.holderCount ?? null,
+      holderObservedAt: selected?.holderObservedAt ?? null,
+      holderCheckedAt: selectFreshestTrackedTimestamp(
+        dashboardItem?.holderCheckedAt,
+        existingItem?.holderCheckedAt,
+        base.holderCheckedAt,
+      ),
+      holderFreshness: selected?.holderFreshness ?? 'unavailable',
+    };
+  }
+
   function canonicalSnapshotValue<T>(
     existing: T | null | undefined,
     dashboard: T | null | undefined,
@@ -2279,6 +2303,7 @@ export function createAppController(): AppController {
     return {
       ...base,
       ...buildMergedTrackedColdFields(existingItem, dashboardItem, base, coldRefreshDue),
+      ...buildMergedHolderFields(existingItem, dashboardItem, base),
       ...buildMergedTrackedMarketFields(existingItem, dashboardItem, base),
       ...buildMergedTrackedAlertFields(existingItem, base),
     };
@@ -7314,6 +7339,22 @@ export function createAppController(): AppController {
     return Number.isFinite(parsed) ? parsed : null;
   }
 
+  function buildManualHolderFields(
+    item: ConfigPayload['tokens'][number],
+    chain: TokenChain,
+  ): Partial<ManualTokenEntry> {
+    if (chain !== 'robinhood') {
+      return { holderCount: null, holderObservedAt: null, holderCheckedAt: null,
+        holderFreshness: 'unavailable' };
+    }
+    return {
+      holderCount: finiteNumberOrNull(item.holderCount),
+      holderObservedAt: item.holderObservedAt ?? null,
+      holderCheckedAt: item.holderCheckedAt ?? null,
+      holderFreshness: item.holderFreshness ?? 'unavailable',
+    };
+  }
+
   function buildManualConfigTokenBase(item: ConfigPayload['tokens'][number], existingItem?: ManualTokenEntry) {
     const chain = resolveAppTokenChain(item.chain);
     return {
@@ -7347,6 +7388,7 @@ export function createAppController(): AppController {
       createdAt: finiteNumberOrNull(item.last_token_created_at_ms),
       catalogFirstSeenAt: item.first_seen_at ? new Date(item.first_seen_at).getTime() : null,
       lastSeenAt: firstDefinedTrackedValue(item.last_seen_at, null),
+      ...buildManualHolderFields(item, chain),
       tickerPeers: firstDefinedTrackedValue(item.tickerPeers, existingItem?.tickerPeers, null),
       manual: true,
       _userManual: true,
@@ -10995,6 +11037,10 @@ export function createAppController(): AppController {
       valuedLiquidityMarketCount: toNullableTrackedValue(item.valuedLiquidityMarketCount),
       liquidityIsLowerBound: item.liquidityIsLowerBound === true,
       liquidityPools: item.liquidityPools,
+      holderCount: toNullableTrackedValue(item.holderCount),
+      holderObservedAt: toNullableTrackedValue(item.holderObservedAt),
+      holderCheckedAt: toNullableTrackedValue(item.holderCheckedAt),
+      holderFreshness: toNullableTrackedValue(item.holderFreshness),
       volume5m: toNullableTrackedValue(item.volume5m),
       volume1h: toNullableTrackedValue(item.volume1h),
       volume6h: toNullableTrackedValue(item.volume6h),

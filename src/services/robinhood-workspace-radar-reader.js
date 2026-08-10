@@ -4,6 +4,9 @@ const {
   createRobinhoodWorkspaceWindowReadRepository,
 } = require('../models/robinhood-workspace-window-read');
 const { createTokenIdentity, normalizeTokenAddress } = require('../utils/token-identity');
+const {
+  normalizeRobinhoodHolderSummary,
+} = require('../utils/robinhood-holder-summary-view');
 const { evaluateWorkspaceVisibility } = require('./workspace-visibility-policy');
 const {
   MAX_CATALOG_FDV_USD,
@@ -233,6 +236,8 @@ SELECT tc.address, tc.symbol, tc.name, tc.source, tc.first_seen_at,
   tc.last_pair_address, tc.last_pair_url, tc.last_dex_id, tc.last_image_url,
   tc.launchpad_id,
   tc.last_twitter_url, tc.last_community_url, tc.monitor_priority,
+  holder_summary.holder_count, holder_summary.observed_at AS holder_observed_at,
+  holder_summary.checked_at AS holder_checked_at,
   COUNT(*) OVER() AS total_count
 FROM catalog_candidates tc
 ${hasVolumeSort ? `LEFT JOIN market_cursor cursor ON TRUE
@@ -247,6 +252,8 @@ LEFT JOIN LATERAL (SELECT bucket.close_fdv_usd AS last_fdv_usd,
   ORDER BY bucket.bucket_ts DESC, bucket.last_observed_at DESC,
     bucket.last_block_number DESC, bucket.last_log_index DESC,
     bucket.protocol, bucket.market_key LIMIT 1) valuation ON TRUE
+LEFT JOIN robinhood_token_holder_summaries holder_summary
+  ON holder_summary.chain = 'robinhood' AND holder_summary.token_address = tc.address
 WHERE ((valuation.last_fdv_usd IS NULL AND $2::numeric = 0)
     OR (valuation.last_fdv_usd >= $2::numeric
       AND ($3::numeric IS NULL OR valuation.last_fdv_usd <= $3::numeric)))
@@ -261,7 +268,9 @@ const PINNED_SQL = `SELECT tc.address, tc.symbol, tc.name, tc.source, tc.first_s
   valuation.last_fdv_usd, valuation.valuation_observed_at, tc.last_price, tc.last_liquidity_usd,
   tc.last_pair_address, tc.last_pair_url, tc.last_dex_id, tc.last_image_url,
   tc.launchpad_id,
-  tc.last_twitter_url, tc.last_community_url, tc.monitor_priority
+  tc.last_twitter_url, tc.last_community_url, tc.monitor_priority,
+  holder_summary.holder_count, holder_summary.observed_at AS holder_observed_at,
+  holder_summary.checked_at AS holder_checked_at
 FROM token_catalog tc
 LEFT JOIN LATERAL (SELECT bucket.close_fdv_usd AS last_fdv_usd,
     bucket.last_observed_at AS valuation_observed_at
@@ -271,6 +280,8 @@ LEFT JOIN LATERAL (SELECT bucket.close_fdv_usd AS last_fdv_usd,
     AND bucket.last_observed_at <= $1::timestamptz AND bucket.close_fdv_usd > 0
   ORDER BY bucket.last_observed_at DESC, bucket.last_block_number DESC,
     bucket.last_log_index DESC, bucket.protocol ASC, bucket.market_key ASC LIMIT 1) valuation ON TRUE
+LEFT JOIN robinhood_token_holder_summaries holder_summary
+  ON holder_summary.chain = 'robinhood' AND holder_summary.token_address = tc.address
 WHERE tc.chain = 'robinhood' AND tc.address = ANY($2::varchar[])
   AND (valuation.last_fdv_usd IS NULL
     OR valuation.last_fdv_usd < ${MAX_CATALOG_FDV_USD})
@@ -329,6 +340,7 @@ function normalizeRow(row, metrics, query, options = {}) {
     twitterUrl: row.last_twitter_url || null,
     communityUrl: row.last_community_url || null, monitorPriority: row.monitor_priority || null,
     activityState: visibility.activityState, dataQuality: visibility.dataQuality,
+    ...normalizeRobinhoodHolderSummary(row, query.asOf),
     ...windowMetrics,
   });
 }
