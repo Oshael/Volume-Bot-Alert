@@ -399,8 +399,8 @@ altera a sequencia deste quadro.
 |---|---|---|---|
 | 1 | Probe read-only global e catalog-scoped | concluido, commitado e executado no node da VPS | RT1/RT1B; `afd0147a`, `9b43e90e` |
 | 2 | Schema e ledger shadow reversivel | concluido no codigo; migrations 116-118 ainda nao aplicadas em producao; nenhum runner ligado | RT2A-RT2C4; `43a6f9d7` ate `49609b99` |
-| 3 | Backfill/catch-up de tokens novos sem lacuna | em andamento | RT3A/RT3B prontos; RT4A handoff pronto; runner global pendente |
-| 4 | Live incremental shadow, deteccao automatica de reorg e scheduler da poda | em andamento | RT4A handoff; RT4B captura; RT4C1/RT4C2 rollback; RT4D1 tick; RT4D2 loop pronto/desligado; wiring/lease/poda pendentes |
+| 3 | Backfill/catch-up de tokens novos sem lacuna | em andamento | RT3A/RT3B prontos; RT4A/RT4E1 handoff retido pronto; runner global pendente |
+| 4 | Live incremental shadow, deteccao automatica de reorg e scheduler da poda | em andamento | RT4A-RT4C2 base segura; RT4D1/D2 loop desligado; RT4E1 handoff coordenado; integracao/wiring/lease/poda pendentes |
 | 5 | Backfill frio dos tokens antigos | pendente | depende de checkpoint/throttle/promocao |
 | 6 | Reconciliacao, promocao e publicacao REST/socket | pendente | Blockscout continua sendo fallback atual |
 | 7 | Frontend realtime/expanded chart | pendente de layout aprovado | nao reutilizar o prototipo sem decisao explicita |
@@ -871,15 +871,15 @@ live pertencem ao macro realtime 4 e continuam desligados.
 
 Status: implementado localmente; nenhum worker ligado.
 
-O handoff trava cursor live e estado do token, exige que `journal_floor_block`
-cubra o `backfill_next_block` e exige igualdade exata de bloco e hash entre os
-checkpoints. Eventos pendentes ate a barreira sao descartados como overlap ja
-aplicado pelo backfill; a promocao para `shadow` ocorre na mesma transacao e a
-captura live seguinte recomeca exatamente no proximo bloco.
+O handoff trava cursor live e estado do token e exige que `journal_floor_block`
+cubra o `backfill_next_block`. O RT4E1 abaixo substitui a igualdade com o cursor
+movel por uma barreira retida e verificada no RPC. Eventos anteriores a barreira
+sao descartados como overlap ja aplicado pelo backfill; a cauda posterior fica no
+journal para aplicacao depois da promocao atomica para `shadow`.
 
 A operacao pressupoe que o cursor `live` represente captura global do topico
-`Transfer`. O runner dessa captura ainda nao existe; portanto o handoff nao esta
-ligado e nao deve ser chamado em producao ate essa garantia ser implementada.
+`Transfer`. Captura e loop existem nos RT4B/RT4D2, mas seguem sem wiring; portanto
+o handoff nao deve ser chamado em producao fora do coordenador verificado.
 
 #### Corte RT4B - Captura global de um range confirmado
 
@@ -953,8 +953,23 @@ single-flight, backoff exponencial limitado e telemetria compacta sem expor URL.
 
 `reorg-unrecoverable` interrompe o loop e propaga erro fatal para o futuro lease.
 O modulo nao e importado por `server.js`, nao possui entrada em `config` e nao
-pode iniciar em producao neste corte. Seletor de handoff, wiring no grupo correto,
-lease central e scheduler da poda continuam pendentes.
+pode iniciar em producao neste corte. O RT4E1 abaixo entrega o seletor; composicao
+no loop, wiring, lease central e scheduler da poda continuam pendentes.
+
+#### Corte RT4E1 - Seletor e handoff em barreira retida
+
+Status: implementado localmente; ainda nao integrado ao loop live.
+
+O repository seleciona um token `backfilling` cuja fronteira esteja entre o
+`journal_floor_block` e o cursor live. O coordenador valida no RPC o checkpoint
+do backfill imediatamente anterior; divergencia marca somente esse token como
+`resyncing`. Checkpoint valido permite promover mesmo que o cursor live ja tenha
+avancado, eliminando a perseguicao de uma barreira movel.
+
+A transacao remove somente eventos anteriores a `backfill_next_block`, ja
+incorporados ao baseline, e preserva os eventos posteriores pendentes para o
+aplicador. O coordenador ainda nao foi composto no RT4D1/D2; wiring, lease e poda
+continuam desligados.
 
 Cada item acima deve ser repartido novamente se estimar mais de 500 linhas. O
 probe e a estimativa de storage sao pre-condicoes; “outros terminais fazem” nao
