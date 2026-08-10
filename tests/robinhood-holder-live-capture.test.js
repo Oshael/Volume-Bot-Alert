@@ -5,19 +5,24 @@ const { createRobinhoodHolderLiveCapture } = require('../src/services/robinhood-
 
 const TOKEN = `0x${'1'.repeat(40)}`;
 const HASH = `0x${'a'.repeat(64)}`;
+const HASH_B = `0x${'b'.repeat(64)}`;
+const HASH_C = `0x${'c'.repeat(64)}`;
 
 describe('Robinhood holder global live capture', () => {
   it('captures one confirmed global range with optimistic cursor continuity', async () => {
     const calls = [];
     const ledger = {
       getCursor: async () => ({
-        nextBlock: '103', checkpointBlock: '102', checkpointHash: HASH, version: 4,
+        nextBlock: '103', checkpointBlock: '102', checkpointHash: HASH,
+        journalFloorBlock: '90', version: 4,
       }),
+      listJournalBlockCheckpoints: async () => [],
       listTrackedTokenAddresses: async () => [TOKEN],
       appendCapturedRange: async (input) => {
         calls.push(['append', input]);
         return { insertedTransfers: 1, duplicateTransfers: 0, cursorVersion: 5 };
       },
+      rewindOrphanedRange: async () => { throw new Error('unexpected rewind'); },
     };
     const transfer = { tokenAddress: TOKEN };
     const reader = {
@@ -69,11 +74,13 @@ describe('Robinhood holder global live capture', () => {
     };
     const initialLedger = {
       getCursor: async () => null,
+      listJournalBlockCheckpoints: async () => [],
       listTrackedTokenAddresses: async () => [],
       appendCapturedRange: async (input) => {
         appended.push(input);
         return { insertedTransfers: 0, duplicateTransfers: 0, cursorVersion: 0 };
       },
+      rewindOrphanedRange: async () => { throw new Error('unexpected rewind'); },
     };
     const initialized = await createRobinhoodHolderLiveCapture({
       ledger: initialLedger, reader,
@@ -83,13 +90,64 @@ describe('Robinhood holder global live capture', () => {
 
     const orphaned = await createRobinhoodHolderLiveCapture({
       ledger: { ...initialLedger, getCursor: async () => ({
-        nextBlock: '101', checkpointBlock: '100', checkpointHash: HASH, version: 0,
+        nextBlock: '101', checkpointBlock: '100', checkpointHash: HASH,
+        journalFloorBlock: '90', version: 0,
       }) },
       reader,
     }).captureOnce();
     assert.deepEqual(orphaned, {
-      status: 'reorg-detected', nextBlock: '101', checkpointBlock: '100', cursorVersion: 0,
+      status: 'reorg-unrecoverable', reason: 'canonical-evidence-unavailable',
+      nextBlock: '101', checkpointBlock: '100', journalFloorBlock: '90',
+      cursorVersion: 0, checkedCheckpoints: 0,
     });
     assert.equal(appended.length, 1);
+  });
+
+  it('finds the latest canonical journal evidence and rewinds atomically', async () => {
+    const calls = [];
+    const ledger = {
+      getCursor: async () => ({
+        nextBlock: '101', checkpointBlock: '100', checkpointHash: HASH,
+        journalFloorBlock: '90', version: 7,
+      }),
+      listJournalBlockCheckpoints: async (input) => {
+        calls.push(['candidates', input]);
+        return [
+          { number: '90', hash: HASH },
+          { number: '95', hash: HASH_B },
+          { number: '99', hash: HASH_C },
+        ];
+      },
+      rewindOrphanedRange: async (input) => {
+        calls.push(['rewind', input]);
+        return { status: 'rewound', revertedEvents: 3, cursorVersion: 8 };
+      },
+      listTrackedTokenAddresses: async () => [],
+      appendCapturedRange: async () => { throw new Error('unexpected capture'); },
+    };
+    const reader = {
+      getSafeHead: async () => ({ head: '112', safeHead: '100', confirmations: 12 }),
+      matchesCheckpoint: async (checkpoint) => {
+        calls.push(['checkpoint', checkpoint.number]);
+        return BigInt(checkpoint.number) <= 95n;
+      },
+      readGlobalRange: async () => { throw new Error('unexpected read'); },
+    };
+    const result = await createRobinhoodHolderLiveCapture({ ledger, reader }).captureOnce();
+
+    assert.deepEqual(result, {
+      status: 'reorg-rewound', revertedEvents: 3, cursorVersion: 8,
+      orphanedCheckpointBlock: '100', canonicalCheckpointBlock: '95',
+      checkedCheckpoints: 2,
+    });
+    assert.deepEqual(calls, [
+      ['checkpoint', '100'],
+      ['candidates', { fromBlock: '90', toBlock: '99' }],
+      ['checkpoint', '95'], ['checkpoint', '99'],
+      ['rewind', {
+        nextBlock: '96', safeHead: '100', expectedVersion: 7,
+        checkpoint: { number: '95', hash: HASH_B },
+      }],
+    ]);
   });
 });

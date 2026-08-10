@@ -49,6 +49,7 @@ describe('Robinhood holder ledger persistence', () => {
       await client.query(`CREATE TEMP TABLE robinhood_holder_token_states
         (LIKE public.robinhood_holder_token_states INCLUDING ALL)`);
       const database = {
+        query: client.query.bind(client),
         getClient: async () => ({
           query: client.query.bind(client),
           release() {},
@@ -117,6 +118,9 @@ describe('Robinhood holder ledger persistence', () => {
         transactionHash: HASH_C, applied: true, fromBefore: '4', toAfter: '7',
         fromPrior: ['100', HASH_A, 0], toPrior: ['100', HASH_A, 0],
       }]);
+      assert.deepEqual(await repository.listJournalBlockCheckpoints({
+        fromBlock: '100', toBlock: '100',
+      }), [{ number: '100', hash: HASH_A }]);
 
       await assert.rejects(
         repository.appendCapturedRange(capture('101', HASH_B, 0, '101')),

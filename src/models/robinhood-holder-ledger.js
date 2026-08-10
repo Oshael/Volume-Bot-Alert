@@ -657,9 +657,34 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     return Object.freeze(result.rows.map((row) => row.token_address));
   }
 
+  async function listJournalBlockCheckpoints(input = {}) {
+    const fromBlock = decimalQuantity(input.fromBlock, 'journal.fromBlock');
+    const toBlock = decimalQuantity(input.toBlock, 'journal.toBlock');
+    if (BigInt(fromBlock) > BigInt(toBlock)) throw new Error('journal range is inverted');
+    const result = await database.query(
+      `SELECT block_number, MIN(block_hash) AS block_hash,
+              COUNT(DISTINCT block_hash)::int AS hash_count
+         FROM robinhood_holder_transfer_journal
+        WHERE chain = $1 AND block_number BETWEEN $2 AND $3
+        GROUP BY block_number ORDER BY block_number`,
+      [CHAIN, fromBlock, toBlock]
+    );
+    return Object.freeze(result.rows.map((row) => {
+      if (Number(row.hash_count) !== 1) {
+        const error = new Error('holder journal contains conflicting block hashes');
+        error.code = 'holder_journal_corrupt';
+        throw error;
+      }
+      return Object.freeze({
+        number: decimalQuantity(row.block_number, 'journal.blockNumber'),
+        hash: hex(row.block_hash, 32, 'journal.blockHash'),
+      });
+    }));
+  }
+
   return Object.freeze({
     appendCapturedRange, applyNextPendingEvent, rewindOrphanedRange,
-    getCursor, listTrackedTokenAddresses,
+    getCursor, listJournalBlockCheckpoints, listTrackedTokenAddresses,
   });
 }
 

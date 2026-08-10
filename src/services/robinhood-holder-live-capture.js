@@ -6,12 +6,48 @@ function boundedInteger(value, fallback, minimum, maximum, label) {
   return parsed;
 }
 
+function normalizedJournalCheckpoints(values) {
+  if (!Array.isArray(values)) throw new TypeError('holder journal checkpoints are required');
+  let previous = -1n;
+  return values.map((value) => {
+    const number = BigInt(String(value?.number ?? ''));
+    const hash = String(value?.hash || '').toLowerCase();
+    if (number < 0n || number <= previous || !/^0x[0-9a-f]{64}$/.test(hash)) {
+      throw new Error('holder journal checkpoints are invalid');
+    }
+    previous = number;
+    return Object.freeze({ number: number.toString(), hash });
+  });
+}
+
+async function findLastCanonicalCheckpoint(reader, values) {
+  const checkpoints = normalizedJournalCheckpoints(values);
+  let low = 0;
+  let high = checkpoints.length - 1;
+  let canonical = null;
+  let checkedCheckpoints = 0;
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    const candidate = checkpoints[middle];
+    checkedCheckpoints += 1;
+    if (await reader.matchesCheckpoint(candidate)) {
+      canonical = candidate;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+  return Object.freeze({ canonical, checkedCheckpoints });
+}
+
 function createRobinhoodHolderLiveCapture(options = {}) {
   const ledger = options.ledger;
   const reader = options.reader;
   if (typeof ledger?.getCursor !== 'function'
+      || typeof ledger?.listJournalBlockCheckpoints !== 'function'
       || typeof ledger?.listTrackedTokenAddresses !== 'function'
-      || typeof ledger?.appendCapturedRange !== 'function') {
+      || typeof ledger?.appendCapturedRange !== 'function'
+      || typeof ledger?.rewindOrphanedRange !== 'function') {
     throw new TypeError('holder live ledger is required');
   }
   if (typeof reader?.getSafeHead !== 'function'
@@ -30,9 +66,38 @@ function createRobinhoodHolderLiveCapture(options = {}) {
         number: cursor.checkpointBlock, hash: cursor.checkpointHash,
       });
       if (!matches) {
+        if (cursor.journalFloorBlock == null
+            || BigInt(cursor.checkpointBlock) <= BigInt(cursor.journalFloorBlock)) {
+          return Object.freeze({
+            status: 'reorg-unrecoverable', reason: 'canonical-evidence-unavailable',
+            nextBlock: cursor.nextBlock, checkpointBlock: cursor.checkpointBlock,
+            journalFloorBlock: cursor.journalFloorBlock, cursorVersion: cursor.version,
+            checkedCheckpoints: 0,
+          });
+        }
+        const candidates = await ledger.listJournalBlockCheckpoints({
+          fromBlock: cursor.journalFloorBlock,
+          toBlock: (BigInt(cursor.checkpointBlock) - 1n).toString(),
+        });
+        const located = await findLastCanonicalCheckpoint(reader, candidates);
+        if (!located.canonical) {
+          return Object.freeze({
+            status: 'reorg-unrecoverable', reason: 'canonical-evidence-unavailable',
+            nextBlock: cursor.nextBlock, checkpointBlock: cursor.checkpointBlock,
+            journalFloorBlock: cursor.journalFloorBlock, cursorVersion: cursor.version,
+            checkedCheckpoints: located.checkedCheckpoints,
+          });
+        }
+        const rewind = await ledger.rewindOrphanedRange({
+          nextBlock: (BigInt(located.canonical.number) + 1n).toString(),
+          safeHead: head.safeHead, expectedVersion: cursor.version,
+          checkpoint: located.canonical,
+        });
         return Object.freeze({
-          status: 'reorg-detected', nextBlock: cursor.nextBlock,
-          checkpointBlock: cursor.checkpointBlock, cursorVersion: cursor.version,
+          ...rewind, status: 'reorg-rewound',
+          orphanedCheckpointBlock: cursor.checkpointBlock,
+          canonicalCheckpointBlock: located.canonical.number,
+          checkedCheckpoints: located.checkedCheckpoints,
         });
       }
     }
