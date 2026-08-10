@@ -3,19 +3,56 @@ const { describe, it } = require('node:test');
 
 const stage110 = require('../src/utils/db-init-stage110');
 const stage113 = require('../src/utils/db-init-stage113');
+const stage114 = require('../src/utils/db-init-stage114');
 const { createRobinhoodTokenAttributionRepository } = require('../src/models/robinhood-token-attribution');
 const { runDirectCreatorTick, __private: directPrivate } = require(
   '../src/services/robinhood-direct-creator-worker'
 );
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 const {
+  LAUNCHHOOD_TOKEN_LAUNCHED_TOPIC, PONS_TOKEN_LAUNCHED_TOPIC,
+  decodeLaunchpadCreatorLog,
+} = require('../src/services/robinhood-launchpad-creator-adapter');
+const {
   CONFIRM, parseArgs, run, __private,
 } = require('../src/utils/backfill-robinhood-token-creators');
 
 const TOKEN = `0x${'a'.repeat(40)}`;
 const CREATOR = `0x${'b'.repeat(40)}`;
+const BLOCK_HASH = `0x${'c'.repeat(64)}`;
+
+function launchLog(factory, topic = PONS_TOKEN_LAUNCHED_TOPIC) {
+  return {
+    address: factory, topics: [topic, `0x${'0'.repeat(24)}${TOKEN.slice(2)}`, `0x${'0'.repeat(24)}${CREATOR.slice(2)}`, `0x${'d'.repeat(64)}`],
+    data: `0x${'0'.repeat(448)}`, transactionHash: `0x${'e'.repeat(64)}`,
+    blockNumber: '0x64', blockHash: BLOCK_HASH,
+  };
+}
 
 describe('Robinhood token creator attribution', () => {
+  it('decodes only proven Pons/NOXA and LaunchHood creator events', () => {
+    const cases = [
+      ['0xa5aab3f0c6eeadf30ef1d3eb997108e976351feb', PONS_TOKEN_LAUNCHED_TOPIC, 'pons'],
+      ['0xd9ec2db5f3d1b236843925949fe5bd8a3836fccb', PONS_TOKEN_LAUNCHED_TOPIC, 'noxa'],
+      ['0x62b33a039d289cbda50ebeb72fe4261449e61bcf', LAUNCHHOOD_TOKEN_LAUNCHED_TOPIC, 'launchhood'],
+    ];
+    for (const [factory, topic, launchpadId] of cases) {
+      const decoded = decodeLaunchpadCreatorLog(launchLog(factory, topic));
+      assert.deepEqual([decoded.tokenAddress, decoded.creatorAddress, decoded.launchpadId], [TOKEN, CREATOR, launchpadId]);
+    }
+    assert.throws(() => decodeLaunchpadCreatorLog(
+      launchLog('0x5c1c1de6950f9dcfe31be99d457fa7732b2ce93b')
+    ), /unsupported/);
+  });
+
+  it('registers launchpad-event provenance after the direct creator schema', () => {
+    const sql = stage114.STATEMENTS.join('\n');
+    const group = SCHEMA_GROUPS.find((entry) => entry.key === 'stage114-robinhood-launchpad-creators');
+    assert.match(sql, /'blockscout', 'rpc_direct', 'launchpad_event'/);
+    assert.match(sql, /attribution_factory_address ~ '\^0x\[0-9a-f\]\{40\}\$'/);
+    assert.equal(group.repair, 'node src/utils/db-init-stage114.js');
+  });
+
   it('registers direct RPC provenance and its independent LIVE cursor', () => {
     const sql = stage113.STATEMENTS.join('\n');
     const group = SCHEMA_GROUPS.find((entry) => entry.key === 'stage113-robinhood-direct-creator-live');
@@ -32,10 +69,11 @@ describe('Robinhood token creator attribution', () => {
     const direct = [tx('a'), tx('b')];
     let persisted;
     const client = {
-      request: async (method) => method === 'eth_blockNumber' ? '0x66' : ({
-        number: '0x64', hash: `0x${'c'.repeat(64)}`, timestamp: '0x1',
-        transactions: [...direct, { ...tx('d'), to: TOKEN }],
-      }),
+      request: async (method) => {
+        if (method === 'eth_blockNumber') return '0x66';
+        if (method === 'eth_getLogs') return [launchLog('0xa5aab3f0c6eeadf30ef1d3eb997108e976351feb')];
+        return { number: '0x64', hash: BLOCK_HASH, timestamp: '0x1', transactions: [...direct, { ...tx('d'), to: TOKEN }] };
+      },
       requestBatch: async () => direct.map((item, index) => ({
         transactionHash: item.hash, blockNumber: '0x64',
         blockHash: `0x${'c'.repeat(64)}`,
@@ -45,20 +83,22 @@ describe('Robinhood token creator attribution', () => {
     const repository = {
       loadDirectCursor: async () => null,
       initializeDirectCursor: async () => ({ next_block: '100', safe_head: '100' }),
-      recordDirectBlock: async (input) => { persisted = input; return { attributed: 1 }; },
+      recordCreatorBlock: async (input) => { persisted = input; return { attributed: input.deployments.length }; },
     };
     const result = await runDirectCreatorTick({ client, repository, confirmations: 2 });
     assert.equal(result.status, 'caught-up');
-    assert.equal(result.attributed, 1);
-    assert.deepEqual(persisted.deployments, [{
+    assert.equal(result.attributed, 2);
+    assert.deepEqual(persisted.deployments[0], {
       tokenAddress: TOKEN, creatorAddress: direct[0].from, transactionHash: direct[0].hash,
-    }]);
+      factoryAddress: null, source: 'rpc_direct',
+    });
+    assert.equal(persisted.deployments[1].source, 'launchpad_event');
   });
 
   it('fails closed when a direct-creation receipt belongs to another block', async () => {
     const txHash = `0x${'a'.repeat(64)}`;
     const client = {
-      request: async () => ({
+      request: async (method) => method === 'eth_getLogs' ? [] : ({
         number: '0x64', hash: `0x${'b'.repeat(64)}`, timestamp: '0x1',
         transactions: [{ hash: txHash, from: CREATOR, to: null }],
       }),
@@ -82,13 +122,15 @@ describe('Robinhood token creator attribution', () => {
     const repository = createRobinhoodTokenAttributionRepository({
       database: { connect: async () => client },
     });
-    const result = await repository.recordDirectBlock({
+    const result = await repository.recordCreatorBlock({
       blockNumber: '100', safeHead: '100', blockHash: `0x${'c'.repeat(64)}`,
       blockTimestamp: '2026-08-10T00:00:00.000Z',
       deployments: [{ tokenAddress: TOKEN, creatorAddress: CREATOR, transactionHash: `0x${'d'.repeat(64)}` }],
     });
     assert.equal(result.attributed, 1);
     assert.deepEqual(calls.map((sql) => sql.split(/\s+/)[0]), ['BEGIN', 'INSERT', 'UPDATE', 'COMMIT']);
+    assert.match(calls[1], /attribution_factory_address/);
+    assert.match(calls[1], /WHEN 'blockscout' THEN 0 WHEN 'rpc_direct' THEN 1 ELSE 2/);
   });
 
   it('registers an additive, retryable attribution table in the runtime guard', () => {

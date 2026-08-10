@@ -2439,6 +2439,19 @@ const SCHEMA_GROUPS = [
     ],
   },
   {
+    key: 'stage114-robinhood-launchpad-creators',
+    name: 'Stage 114 Robinhood launchpad-event creator provenance',
+    repair: 'node src/utils/db-init-stage114.js',
+    tables: [{
+      table: 'robinhood_token_attributions',
+      columns: ['attribution_factory_address'],
+      constraints: [
+        { name: 'robinhood_token_attributions_source_check', includes: ['launchpad_event'] },
+        { name: 'robinhood_token_attributions_provenance_check', includes: ['attribution_factory_address'] },
+      ],
+    }],
+  },
+  {
     key: 'stage111-robinhood-token-holder-summaries',
     name: 'Stage 111 Robinhood token holder summaries',
     repair: 'node src/utils/db-init-stage111.js',

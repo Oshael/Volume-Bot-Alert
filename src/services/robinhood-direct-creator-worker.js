@@ -2,6 +2,9 @@ const { createRobinhoodTokenAttributionRepository } = require('../models/robinho
 const {
   createRobinhoodRpcClient, validateRobinhoodProviderChainIds,
 } = require('./robinhood-ingestion-worker');
+const {
+  buildLaunchpadCreatorFilter, decodeLaunchpadCreatorLog,
+} = require('./robinhood-launchpad-creator-adapter');
 
 function quantity(value, label) {
   const raw = String(value ?? '').trim();
@@ -28,9 +31,12 @@ function bounded(value, fallback, min, max) {
 function blockTag(value) { return `0x${BigInt(value).toString(16)}`; }
 
 async function scanBlock(client, expectedBlock) {
-  const block = await client.request('eth_getBlockByNumber', [blockTag(expectedBlock), true]);
+  const [block, launchLogs] = await Promise.all([
+    client.request('eth_getBlockByNumber', [blockTag(expectedBlock), true]),
+    client.request('eth_getLogs', [buildLaunchpadCreatorFilter(expectedBlock)]),
+  ]);
   const number = quantity(block?.number, 'block.number');
-  if (number !== expectedBlock || !Array.isArray(block?.transactions)) {
+  if (number !== expectedBlock || !Array.isArray(block?.transactions) || !Array.isArray(launchLogs)) {
     throw Object.assign(new Error(`direct creator block ${expectedBlock} is incomplete`), {
       code: 'source_contract_error', fatal: true,
     });
@@ -54,7 +60,7 @@ async function scanBlock(client, expectedBlock) {
       method: 'eth_getTransactionReceipt', params: [tx.hash],
     }))));
   }
-  const deployments = direct.flatMap((tx, index) => {
+  const directDeployments = direct.flatMap((tx, index) => {
     const receipt = receipts[index];
     if (
       hex(receipt?.transactionHash, 32, 'receipt.transactionHash') !== tx.hash.toLowerCase()
@@ -68,11 +74,25 @@ async function scanBlock(client, expectedBlock) {
       tokenAddress: hex(receipt.contractAddress, 20, 'receipt.contractAddress'),
       creatorAddress: tx.from.toLowerCase(),
       transactionHash: tx.hash.toLowerCase(),
+      factoryAddress: null,
+      source: 'rpc_direct',
     }];
   });
+  let launchpadDeployments;
+  try {
+    launchpadDeployments = launchLogs.map(decodeLaunchpadCreatorLog);
+    if (launchpadDeployments.some((item) => (
+      BigInt(item.blockNumber) !== expectedBlock || item.blockHash !== blockHash
+    ))) throw new Error('launchpad event diverged from its block');
+  } catch (cause) {
+    throw Object.assign(new Error(`launchpad creator evidence is invalid: ${cause.message}`), {
+      code: 'source_contract_error', fatal: true, cause,
+    });
+  }
   return {
     blockNumber: number.toString(), blockHash,
-    blockTimestamp: blockTimestamp.toISOString(), deployments,
+    blockTimestamp: blockTimestamp.toISOString(),
+    deployments: [...directDeployments, ...launchpadDeployments],
   };
 }
 
@@ -107,7 +127,7 @@ async function runDirectCreatorTick(deps = {}) {
   let attributed = 0;
   while (nextBlock <= safeHead && processedBlocks < maxBlocks) {
     const scanned = await scanBlock(deps.client, nextBlock);
-    const result = await deps.repository.recordDirectBlock({ ...scanned, safeHead: safeHead.toString() });
+    const result = await deps.repository.recordCreatorBlock({ ...scanned, safeHead: safeHead.toString() });
     attributed += result.attributed;
     processedBlocks += 1;
     nextBlock += 1n;
