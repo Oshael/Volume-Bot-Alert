@@ -614,6 +614,27 @@ conhecido; caso contrario existe uma corrida impossivel de reconciliar exatament
 6. Publicacao: REST/socket sequenciado para counts; snapshots usam o total live.
 7. Frontend: somente apos decisao explicita de layout do expanded chart.
 
+#### Corte RT1 - Probe read-only de capacidade
+
+Status: implementado localmente; execucao real na VPS ainda pendente.
+
+Comando: `npm run robinhood:holder-transfer-probe`.
+
+O probe consulta somente `eth_chainId`, head/blocos e `eth_getLogs` para o topico
+global `Transfer`. O default cobre 2.000 blocos confirmados em chunks de 250,
+divide ranges rejeitados e nao grava banco, cursor ou arquivo. O relatorio inclui
+eventos, tokens, wallets e pares `token + wallet` tocados, mint/burn, throughput
+RPC e upper bounds diarios de ledger/cauda live. A cobertura de mint no sample e
+evidencia parcial; nao substitui um deployment block confiavel.
+
+Variaveis operacionais opcionais:
+
+- `ROBINHOOD_HOLDER_TRANSFER_PROBE_RPC_URL` (prefere dRPC quando ausente);
+- `ROBINHOOD_HOLDER_TRANSFER_PROBE_BLOCKS` (1 a 50.000);
+- `ROBINHOOD_HOLDER_TRANSFER_PROBE_CHUNK_BLOCKS` (1 a 5.000);
+- `ROBINHOOD_HOLDER_TRANSFER_PROBE_FROM_BLOCK`;
+- `ROBINHOOD_HOLDER_TRANSFER_PROBE_TIMEOUT_MS`.
+
 Cada item acima deve ser repartido novamente se estimar mais de 500 linhas. O
 probe e a estimativa de storage sao pre-condicoes; “outros terminais fazem” nao
 substitui evidencia de volume, limites de RPC e custo de banco desta chain.

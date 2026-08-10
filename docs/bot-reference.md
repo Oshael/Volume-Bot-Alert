@@ -932,6 +932,12 @@ deve medir logs, wallets únicas, custo de replay e crescimento do banco. O layo
 do expanded chart permanece sem aprovação de produto; o protótipo local não faz
 parte dos commits aprovados e não deve ser tratado como decisão de rollout.
 
+O primeiro artefato dessa fase é `npm run robinhood:holder-transfer-probe`: um
+probe RPC estritamente read-only e limitado que mede o tópico global `Transfer`,
+faz split adaptativo e estima upper bounds de ledger/cauda live sem criar cursor,
+schema ou publicação. O relatório não trata mint observado no sample como prova
+de deployment block; a execução real na VPS ainda é necessária antes do ledger.
+
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.
 V2 mantém o preço médio executado enquanto não houver spot de reservas no contrato
