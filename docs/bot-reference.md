@@ -971,6 +971,9 @@ andamento e os macros 4 a 7 seguem pendentes.
 O RT3A inicia o macro 3 admitindo somente tokens catalogados após um cutoff
 operacional e com deployment exato `rpc_direct`/`launchpad_event`. Ele cria estado
 `backfilling` idempotente; replay RPC e worker permanecem desligados.
+O RT3B foi dividido em reader, persistencia e executor. O RT3B1 entrega somente o
+reader: chain ID 4663, um token por range, maximo de 5.000 blocos, split adaptativo,
+validacao integral dos logs e checkpoint. Ele nao escolhe provider nem grava DB.
 
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.
