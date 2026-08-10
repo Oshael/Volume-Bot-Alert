@@ -987,6 +987,10 @@ global `Transfer`.
 O RT4B captura um range global confirmado por chamada, filtra localmente somente
 tokens holder ativos, grava journal/cursor atomicamente e retorna `reorg-detected`
 sem write quando o checkpoint diverge. Ainda nao existe loop ou worker ligado.
+O RT4C1 preserva a barreira `backfill_next_block` apos o handoff como limite do
+baseline historico. Rewind dentro da cauda mantem o token ativo; rewind que cruza
+essa barreira (ou estado legado sem barreira conhecida) marca `resyncing` na mesma
+transacao. A deteccao automatica do ancestral e o runner continuam desligados.
 
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.

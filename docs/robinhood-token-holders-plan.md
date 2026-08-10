@@ -400,7 +400,7 @@ altera a sequencia deste quadro.
 | 1 | Probe read-only global e catalog-scoped | concluido, commitado e executado no node da VPS | RT1/RT1B; `afd0147a`, `9b43e90e` |
 | 2 | Schema e ledger shadow reversivel | concluido no codigo; migrations 116-118 ainda nao aplicadas em producao; nenhum runner ligado | RT2A-RT2C4; `43a6f9d7` ate `49609b99` |
 | 3 | Backfill/catch-up de tokens novos sem lacuna | em andamento | RT3A/RT3B prontos; RT4A handoff pronto; runner global pendente |
-| 4 | Live incremental shadow, deteccao automatica de reorg e scheduler da poda | em andamento | RT4A handoff; RT4B captura um range; loop/reorg/poda pendentes |
+| 4 | Live incremental shadow, deteccao automatica de reorg e scheduler da poda | em andamento | RT4A handoff; RT4B captura um range; RT4C1 protege baseline; loop/detector/poda pendentes |
 | 5 | Backfill frio dos tokens antigos | pendente | depende de checkpoint/throttle/promocao |
 | 6 | Reconciliacao, promocao e publicacao REST/socket | pendente | Blockscout continua sendo fallback atual |
 | 7 | Frontend realtime/expanded chart | pendente de layout aprovado | nao reutilizar o prototipo sem decisao explicita |
@@ -894,6 +894,22 @@ O request RPC usa o topico global sem filtro de address, mas decodifica somente
 contratos presentes nos estados holder ativos. Isso ignora ERC-721 e outros logs
 homonimos observados no probe sem multiplicar chamadas por 100 mil tokens. Loop,
 lease, rollback automatico, aplicador e scheduler da poda continuam pendentes.
+
+#### Corte RT4C1 - Fronteira segura para rollback
+
+Status: implementado localmente; nenhum loop ou worker ligado.
+
+O handoff preserva `backfill_next_block` depois da promocao para `shadow`. Nesse
+estado o campo deixa de ser cursor mutavel e passa a representar a primeira
+altura coberta pela cauda live reversivel; o baseline historico termina no bloco
+anterior. Um rewind ate essa altura continua seguro pelo journal. Se o novo
+`next_block` ficar abaixo dela, o rollback atravessou o baseline e marca o token
+como `resyncing` na mesma transacao, em vez de publicar um total possivelmente
+corrompido. Estados antigos sem fronteira conhecida tambem falham de forma
+conservadora para `resyncing`.
+
+Este corte somente torna o primitive de rewind seguro. Deteccao do ancestral
+canonico, chamada automatica do rewind e loop com lease continuam pendentes.
 
 Cada item acima deve ser repartido novamente se estimar mais de 500 linhas. O
 probe e a estimativa de storage sao pre-condicoes; “outros terminais fazem” nao
