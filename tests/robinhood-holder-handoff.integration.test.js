@@ -179,6 +179,12 @@ describe('Robinhood holder live handoff persistence', () => {
       });
       assert.equal(promoted.status, 'live');
       assert.equal(promoted.version, 1);
+      const audited = await reconciliation.recordLiveAudit({
+        tokenAddress: TOKEN, expectedHolderCount: '42', expectedVersion: 1,
+        observedAt: '2026-08-10T12:02:00Z',
+      });
+      assert.equal(audited.version, 2);
+      assert.equal(audited.lastReconciledAt, '2026-08-10T12:02:00.000Z');
     } finally {
       client.release();
     }

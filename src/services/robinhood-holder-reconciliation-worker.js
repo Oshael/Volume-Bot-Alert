@@ -11,6 +11,7 @@ const {
 const {
   createRobinhoodHolderReconciliation,
 } = require('./robinhood-holder-reconciliation');
+const { createRobinhoodHolderLiveAudit } = require('./robinhood-holder-live-audit');
 const {
   createRobinhoodHolderRequestScheduler,
 } = require('./robinhood-holder-request-scheduler');
@@ -77,8 +78,21 @@ function buildRuntime(deps, options) {
     }
     return summary;
   };
-  return (deps.reconcilerFactory || createRobinhoodHolderReconciliation)({
+  const promotion = (deps.reconcilerFactory || createRobinhoodHolderReconciliation)({
     repository, observeHolderCount, requiredMatches: options.requiredMatches,
+  });
+  const audit = (deps.auditFactory || createRobinhoodHolderLiveAudit)({
+    repository, observeHolderCount, requiredMismatches: options.requiredMatches,
+  });
+  let auditFirst = true;
+  return Object.freeze({
+    async runOnce() {
+      const first = auditFirst ? audit : promotion;
+      const second = auditFirst ? promotion : audit;
+      auditFirst = !auditFirst;
+      const result = await first.runOnce();
+      return result.status === 'idle' ? second.runOnce() : result;
+    },
   });
 }
 
@@ -106,6 +120,7 @@ function createRobinhoodHolderReconciliationWorker(deps = {}) {
     enabled: false, running: false, inFlight: false, halted: false,
     totalRuns: 0, totalPromoted: 0, totalMismatches: 0, totalUnavailable: 0,
     totalWaitingLive: 0,
+    totalLiveVerified: 0, totalLiveMismatches: 0, totalDriftSuspected: 0,
     totalErrors: 0, consecutiveErrors: 0,
     lastResult: null, lastError: null, lastCompletedAt: null,
   };
@@ -142,6 +157,9 @@ function createRobinhoodHolderReconciliationWorker(deps = {}) {
       if (result.status === 'live') status.totalPromoted += 1;
       if (result.status === 'mismatch') status.totalMismatches += 1;
       if (result.status === 'unavailable') status.totalUnavailable += 1;
+      if (result.status === 'live-verified') status.totalLiveVerified += 1;
+      if (result.status === 'live-mismatch') status.totalLiveMismatches += 1;
+      if (result.status === 'drift-suspected') status.totalDriftSuspected += 1;
       return result;
     } catch (error) {
       status.totalErrors += 1; status.consecutiveErrors += 1; status.lastError = publicError(error);

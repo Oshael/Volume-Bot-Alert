@@ -95,5 +95,14 @@ describe('Robinhood holder reconciliation', () => {
     assert.match(calls[1].sql, /state\.version = \$2::bigint/);
     assert.match(calls[1].sql, /state\.holder_count = \$3::bigint/);
     assert.match(calls[1].sql, /state\.last_reconciled_at < \$4::timestamptz/);
+
+    await repository.getNextLiveCandidate();
+    await repository.recordLiveAudit({
+      tokenAddress: TOKEN, expectedHolderCount: '42', expectedVersion: 2,
+      observedAt: '2026-08-10T12:02:00Z',
+    });
+    assert.match(calls[2].sql, /ledger_status = 'live'/);
+    assert.match(calls[3].sql, /state\.ledger_status = 'live'/);
+    assert.doesNotMatch(calls[3].sql, /ledger_status = CASE/);
   });
 });

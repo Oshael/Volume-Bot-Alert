@@ -61,6 +61,8 @@ describe('Robinhood holder reconciliation worker', () => {
       recordSuccess: async (input) => { calls.push(['summary', input]); },
     };
     let observer;
+    let promotionRuns = 0;
+    let auditRuns = 0;
     const options = __private.normalizeOptions({ enabled: true });
     const runtime = __private.buildRuntime({
       database: 'database',
@@ -68,7 +70,13 @@ describe('Robinhood holder reconciliation worker', () => {
       summaryRepositoryFactory: make('summaryRepository', summaryRepository),
       clientFactory: make('client', client),
       schedulerFactory: make('scheduler', { schedule: (task) => task() }),
-      reconcilerFactory: (input) => { observer = input.observeHolderCount; return { runOnce() {} }; },
+      reconcilerFactory: (input) => {
+        observer = input.observeHolderCount;
+        return { runOnce: async () => { promotionRuns += 1; return { status: 'matching' }; } };
+      },
+      auditFactory: () => ({
+        runOnce: async () => { auditRuns += 1; return { status: 'idle' }; },
+      }),
     }, options);
 
     assert.equal(typeof runtime.runOnce, 'function');
@@ -79,6 +87,9 @@ describe('Robinhood holder reconciliation worker', () => {
     assert.deepEqual(calls.find(([name]) => name === 'scheduler')[1], {
       requestsPerSecond: 0.25, concurrency: 1, maxRetries: 1,
     });
+    assert.equal((await runtime.runOnce()).status, 'matching');
+    assert.equal(auditRuns, 1);
+    assert.equal(promotionRuns, 1);
   });
 
   it('backs off transient failures and halts on invalid runtime contracts', async () => {

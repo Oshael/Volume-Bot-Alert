@@ -32,11 +32,11 @@ function mapCandidate(row) {
   });
 }
 
-function candidateSql(where = '') {
+function candidateSql(status, where = '') {
   return `SELECT state.token_address, state.holder_count, state.version,
                  state.last_reconciled_at
             FROM robinhood_holder_token_states state
-           WHERE state.chain = '${CHAIN}' AND state.ledger_status = 'shadow'
+           WHERE state.chain = '${CHAIN}' AND state.ledger_status = '${status}'
              ${where}
              AND NOT EXISTS (
                SELECT 1 FROM robinhood_holder_transfer_journal journal
@@ -51,7 +51,7 @@ function createRobinhoodHolderReconciliationRepository(options = {}) {
 
   async function getNextCandidate() {
     const { rows } = await database.query(
-      `${candidateSql()}
+      `${candidateSql('shadow')}
        ORDER BY state.last_reconciled_at ASC NULLS FIRST, state.token_address ASC
        LIMIT 1`
     );
@@ -61,8 +61,56 @@ function createRobinhoodHolderReconciliationRepository(options = {}) {
   async function getCandidate(value) {
     const token = normalizeTokenAddress(CHAIN, value);
     const { rows } = await database.query(
-      candidateSql('AND state.token_address = $1'), [token]
+      candidateSql('shadow', 'AND state.token_address = $1'), [token]
     );
+    return mapCandidate(rows[0]);
+  }
+
+  async function getNextLiveCandidate() {
+    const { rows } = await database.query(
+      `${candidateSql('live')}
+       ORDER BY state.last_reconciled_at ASC NULLS FIRST, state.token_address ASC
+       LIMIT 1`
+    );
+    return mapCandidate(rows[0]);
+  }
+
+  async function getLiveCandidate(value) {
+    const token = normalizeTokenAddress(CHAIN, value);
+    const { rows } = await database.query(
+      candidateSql('live', 'AND state.token_address = $1'), [token]
+    );
+    return mapCandidate(rows[0]);
+  }
+
+  async function recordLiveAudit(input = {}) {
+    const token = normalizeTokenAddress(CHAIN, input.tokenAddress);
+    const expectedCount = nonNegativeInteger(input.expectedHolderCount, 'expected holder count');
+    const expectedVersion = Number(input.expectedVersion);
+    if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0) {
+      throw new TypeError('expected version is invalid');
+    }
+    const observedAt = timestamp(input.observedAt, 'observed timestamp');
+    const { rows } = await database.query(
+      `UPDATE robinhood_holder_token_states state
+          SET last_reconciled_at = $4::timestamptz,
+              version = version + 1, updated_at = NOW()
+        WHERE state.chain = '${CHAIN}' AND state.token_address = $1
+          AND state.ledger_status = 'live' AND state.version = $2::bigint
+          AND state.holder_count = $3::bigint
+          AND (state.last_reconciled_at IS NULL OR state.last_reconciled_at < $4::timestamptz)
+          AND NOT EXISTS (
+            SELECT 1 FROM robinhood_holder_transfer_journal journal
+             WHERE journal.chain = state.chain AND journal.token_address = state.token_address
+               AND journal.applied = false
+          )
+        RETURNING state.token_address, state.holder_count, state.version,
+                  state.last_reconciled_at`,
+      [token, expectedVersion, expectedCount, observedAt]
+    );
+    if (!rows[0]) {
+      throw codedError('holder live audit candidate changed', 'holder_reconciliation_stale');
+    }
     return mapCandidate(rows[0]);
   }
 
@@ -99,7 +147,10 @@ function createRobinhoodHolderReconciliationRepository(options = {}) {
     return Object.freeze({ ...mapCandidate(rows[0]), status: rows[0].ledger_status });
   }
 
-  return Object.freeze({ getNextCandidate, getCandidate, recordComparison });
+  return Object.freeze({
+    getNextCandidate, getCandidate, recordComparison,
+    getNextLiveCandidate, getLiveCandidate, recordLiveAudit,
+  });
 }
 
 module.exports = { createRobinhoodHolderReconciliationRepository };
