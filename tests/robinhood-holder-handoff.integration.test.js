@@ -4,6 +4,9 @@ const { after, describe, it } = require('node:test');
 const db = require('../src/models/db');
 const { createRobinhoodHolderHandoffRepository } = require('../src/models/robinhood-holder-handoff');
 const { createRobinhoodHolderLedgerRepository } = require('../src/models/robinhood-holder-ledger');
+const {
+  createRobinhoodHolderReconciliationRepository,
+} = require('../src/models/robinhood-holder-reconciliation');
 
 const TOKEN = `0x${'1'.repeat(40)}`;
 const OTHER_TOKEN = `0x${'2'.repeat(40)}`;
@@ -129,6 +132,53 @@ describe('Robinhood holder live handoff persistence', () => {
       assert.deepEqual(remaining.rows.map((row) => [
         row.token_address, String(row.block_number), row.applied,
       ]), [[TOKEN, '105', true], [TOKEN, '107', true], [OTHER_TOKEN, '104', false]]);
+    } finally {
+      client.release();
+    }
+  });
+
+  it('promotes an unchanged shadow count only after its pending tail is empty', async () => {
+    const client = await db.getClient();
+    try {
+      for (const table of [
+        'robinhood_holder_transfer_journal', 'robinhood_holder_token_states',
+      ]) {
+        await client.query(`CREATE TEMP TABLE IF NOT EXISTS ${table} (
+          LIKE public.${table} INCLUDING ALL
+        )`);
+        await client.query(`TRUNCATE ${table}`);
+      }
+      const reconciliation = createRobinhoodHolderReconciliationRepository({
+        database: { query: client.query.bind(client) },
+      });
+      await client.query(
+        `INSERT INTO robinhood_holder_token_states (
+           token_address, holder_count, ledger_status, live_through_block, live_through_hash
+         ) VALUES ($1, 42, 'shadow', 104, $2)`,
+        [TOKEN, HASH_A]
+      );
+      assert.equal((await reconciliation.getNextCandidate()).holderCount, '42');
+      await client.query(
+        `INSERT INTO robinhood_holder_transfer_journal (
+           block_number, block_hash, transaction_hash, transaction_index, log_index,
+           token_address, from_wallet, to_wallet, amount_raw
+         ) VALUES (105, $1, $2, 0, 0, $3, $4, $5, 1)`,
+        [HASH_B, `0x${'9'.repeat(64)}`, TOKEN, ALICE, BOB]
+      );
+      await assert.rejects(
+        reconciliation.recordComparison({
+          tokenAddress: TOKEN, expectedHolderCount: '42', expectedVersion: 0,
+          observedAt: '2026-08-10T12:00:00Z', promote: true,
+        }),
+        (error) => error.code === 'holder_reconciliation_stale'
+      );
+      await client.query('DELETE FROM robinhood_holder_transfer_journal');
+      const promoted = await reconciliation.recordComparison({
+        tokenAddress: TOKEN, expectedHolderCount: '42', expectedVersion: 0,
+        observedAt: '2026-08-10T12:01:00Z', promote: true,
+      });
+      assert.equal(promoted.status, 'live');
+      assert.equal(promoted.version, 1);
     } finally {
       client.release();
     }
