@@ -153,6 +153,29 @@ describe('Robinhood token creator attribution', () => {
     ), false);
   });
 
+  it('passes the configured request timeout to the Blockscout client', async () => {
+    let clientOptions;
+    const attempts = [];
+    const summary = await run({
+      options: {
+        apply: true, limit: 1, sleepMs: 0, retryHours: 0,
+        requestRetries: 0, retryDelayMs: 0, timeoutMs: 12000,
+      },
+      repository: {
+        listCreatorCandidates: async () => [{ tokenAddress: TOKEN, discoveryBlock: '1' }],
+        recordAttempt: async (attempt) => { attempts.push(attempt); },
+      },
+      clientFactory: (options) => {
+        clientOptions = options;
+        return { getContractCreator: async () => CREATOR };
+      },
+    });
+
+    assert.deepEqual(clientOptions, { timeoutMs: 12000 });
+    assert.equal(attempts[0].creatorAddress, CREATOR);
+    assert.equal(summary.resolved, 1);
+  });
+
   it('requires explicit confirmation and validates operational bounds', () => {
     assert.equal(parseArgs([]).apply, false);
     assert.equal(parseArgs([CONFIRM, '--limit', '25', '--sleep-ms', '0']).apply, true);
@@ -161,8 +184,12 @@ describe('Robinhood token creator attribution', () => {
     assert.throws(() => parseArgs(['--retry-hours', '-1']), /--retry-hours/);
     assert.throws(() => parseArgs(['--request-retries', '6']), /--request-retries/);
     assert.throws(() => parseArgs(['--retry-delay-ms', '-1']), /--retry-delay-ms/);
+    assert.throws(() => parseArgs(['--timeout-ms', '999']), /--timeout-ms/);
+    assert.throws(() => parseArgs(['--timeout-ms', '15001']), /--timeout-ms/);
     const retries = parseArgs(['--request-retries', '3', '--retry-delay-ms', '750']);
     assert.equal(retries.requestRetries, 3);
     assert.equal(retries.retryDelayMs, 750);
+    assert.equal(retries.timeoutMs, 10000);
+    assert.equal(parseArgs(['--timeout-ms', '15000']).timeoutMs, 15000);
   });
 });

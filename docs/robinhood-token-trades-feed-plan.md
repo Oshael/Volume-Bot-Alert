@@ -278,6 +278,7 @@ Each tab is a **filter of the same feed by wallet classification**; the
   panel now support `scope=dev`; the HTTP page supplies `creatorAddress` so the
   existing per-token realtime stream can be filtered without another socket room.
   Provider timeout/transport/429/5xx failures receive bounded exponential retries.
+  The backfill request timeout is configurable (`--timeout-ms`, 10s default, 15s max).
 - **TRACKED** — the user's **tracked-wallet watchlist**. This concept does not exist
   yet (`user_wallets` holds the user's *own* wallets, not a watchlist). **Requires a
   new table** (e.g. `user_tracked_wallets`) + CRUD + UI to manage the list.

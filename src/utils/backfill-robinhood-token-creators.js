@@ -5,27 +5,33 @@ const { createRobinhoodBlockscoutMetadataClient } = require('../services/robinho
 
 const CONFIRM = '--confirm-backfill-robinhood-token-creators';
 
+function boundedInteger(value, name, minimum, maximum) {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new Error(`${name} must be ${minimum}..${maximum}`);
+  }
+  return parsed;
+}
+
 function parseArgs(argv = process.argv.slice(2)) {
   const read = (name, fallback) => {
     const index = argv.indexOf(name);
     return index < 0 ? fallback : argv[index + 1];
   };
-  const limit = Number(read('--limit', 100));
-  const sleepMs = Number(read('--sleep-ms', 100));
+  const limit = boundedInteger(read('--limit', 100), '--limit', 1, 1000);
+  const sleepMs = boundedInteger(read('--sleep-ms', 100), '--sleep-ms', 0, 60000);
   const retryHours = Number(read('--retry-hours', 24));
-  const requestRetries = Number(read('--request-retries', 2));
-  const retryDelayMs = Number(read('--retry-delay-ms', 500));
-  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new Error('--limit must be 1..1000');
-  if (!Number.isSafeInteger(sleepMs) || sleepMs < 0 || sleepMs > 60000) throw new Error('--sleep-ms must be 0..60000');
+  const requestRetries = boundedInteger(
+    read('--request-retries', 2), '--request-retries', 0, 5,
+  );
+  const retryDelayMs = boundedInteger(
+    read('--retry-delay-ms', 500), '--retry-delay-ms', 0, 60000,
+  );
+  const timeoutMs = boundedInteger(read('--timeout-ms', 10000), '--timeout-ms', 1000, 15000);
   if (!Number.isFinite(retryHours) || retryHours < 0) throw new Error('--retry-hours must be >= 0');
-  if (!Number.isSafeInteger(requestRetries) || requestRetries < 0 || requestRetries > 5) {
-    throw new Error('--request-retries must be 0..5');
-  }
-  if (!Number.isSafeInteger(retryDelayMs) || retryDelayMs < 0 || retryDelayMs > 60000) {
-    throw new Error('--retry-delay-ms must be 0..60000');
-  }
   return {
-    apply: argv.includes(CONFIRM), limit, sleepMs, retryHours, requestRetries, retryDelayMs,
+    apply: argv.includes(CONFIRM), limit, sleepMs, retryHours,
+    requestRetries, retryDelayMs, timeoutMs,
   };
 }
 
@@ -65,7 +71,8 @@ async function run(deps = {}) {
     resolved: 0, unresolved: 0, failed: 0, retried: 0,
   };
   if (!options.apply) return summary;
-  const client = deps.client || createRobinhoodBlockscoutMetadataClient();
+  const clientFactory = deps.clientFactory || createRobinhoodBlockscoutMetadataClient;
+  const client = deps.client || clientFactory({ timeoutMs: options.timeoutMs ?? 10000 });
   for (const candidate of candidates) {
     let creatorAddress;
     try {

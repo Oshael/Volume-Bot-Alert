@@ -1064,7 +1064,8 @@ para guardar o criador direto do contrato; esse endereço pode ser uma factory e
 não prova a identidade humana do desenvolvedor. YOU exigirá vínculo EVM por SIWE,
 sem transação nem aprovação de tokens; `user_wallets` continua Solana-only.
 O backfill repete automaticamente falhas transitórias do provedor com backoff
-limitado; erros semânticos não entram em retry.
+limitado; erros semânticos não entram em retry. O timeout HTTP do backfill aceita
+`--timeout-ms` entre 1s e 15s e usa 10s por padrão.
 O painel Robinhood já oferece ALL/DEV: a consulta `scope=dev` filtra pelo criador
 persistido e devolve `creatorAddress`, usado pelo cliente para aplicar o mesmo
 escopo aos eventos realtime do token. TRACKED e YOU ainda não estão disponíveis.
