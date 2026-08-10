@@ -223,9 +223,21 @@ function buildTickerPeerSummary(input = {}, stats = null, items = []) {
 }
 
 async function listTickerPeerSummariesForTokens(tokens = [], options = {}, runner = db) {
-  const chain = normalizePeerChain(options.chain || tokens.find((item) => item?.chain)?.chain || 'solana');
+  const tokenList = Array.isArray(tokens) ? tokens : [];
+  if (!options.chain) {
+    const chains = [...new Set(tokenList
+      .map((item) => normalizePeerIdentity(item?.address, item?.chain || 'solana')?.chain)
+      .filter(Boolean))];
+    if (chains.length > 1) {
+      const summariesByChain = await Promise.all(chains.map((chain) => (
+        listTickerPeerSummariesForTokens(tokenList, { ...options, chain }, runner)
+      )));
+      return new Map(summariesByChain.flatMap((summaries) => [...summaries.entries()]));
+    }
+  }
+  const chain = normalizePeerChain(options.chain || tokenList.find((item) => item?.chain)?.chain || 'solana');
   const inputs = Array.from(new Map(
-    (Array.isArray(tokens) ? tokens : [])
+    tokenList
       .map((item) => {
         const identity = normalizePeerIdentity(item?.address, item?.chain || chain);
         return identity?.chain === chain ? {

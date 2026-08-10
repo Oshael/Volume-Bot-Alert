@@ -407,6 +407,7 @@ export function renderRecentSection(state: AppState, controller: AppController) 
       state.session.role === 'admin',
       state.ui.enabledTradeTerminals,
       {
+        enabledRobinhoodTradeTerminals: state.ui.enabledRobinhoodTradeTerminals,
         totalCount: recentTotalCount,
         skipClientSort: usesServerSlice,
         showSparkline: usesServerSlice,
@@ -668,6 +669,7 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
       state.session.role === 'admin',
       state.ui.enabledTradeTerminals,
       {
+        enabledRobinhoodTradeTerminals: state.ui.enabledRobinhoodTradeTerminals,
         totalCount: oldWeekTotalCount,
         skipClientSort: usesServerSlice,
         showSparkline: usesServerSlice,

@@ -45,6 +45,7 @@ async function getAllForChains(userId, chainValues = ['solana', 'robinhood']) {
             tc.last_liquidity_usd, tc.last_vol_5m, tc.last_vol_1h,
             tc.last_vol_6h, tc.last_vol_24h, tc.last_price_change_1h,
             tc.last_price_change_6h, tc.last_price_change_24h,
+            tc.last_pair_address, tc.last_dex_id,
             tc.last_token_created_at_ms, tc.first_seen_at, tc.last_seen_at
      FROM user_tokens ut
      LEFT JOIN token_catalog tc

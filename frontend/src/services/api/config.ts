@@ -1,5 +1,6 @@
 import { apiFetch } from './base';
 import type { ChainFilterPreferences, TokenChain, WorkspaceChainReadinessMap } from '../../utils/token-chain';
+import type { DashboardMonitoredToken } from './catalog';
 
 export interface AddressItem {
   chain?: TokenChain;
@@ -20,9 +21,12 @@ export interface AddressItem {
   last_price_change_1h?: number | string | null;
   last_price_change_6h?: number | string | null;
   last_price_change_24h?: number | string | null;
+  last_pair_address?: string | null;
+  last_dex_id?: string | null;
   last_token_created_at_ms?: number | string | null;
   first_seen_at?: string | null;
   last_seen_at?: string | null;
+  tickerPeers?: DashboardMonitoredToken['tickerPeers'];
 }
 
 export interface AdminTokenReviewAlert {
@@ -137,6 +141,7 @@ export interface UiPrefsPayload {
     tokenPresetByAddress: Record<string, '1h' | '4h' | '12h' | '1d' | '3d' | '7d' | '14d' | 'all'>;
   };
   enabledTradeTerminals: TradeTerminalKey[];
+  enabledRobinhoodTradeTerminals: TradeTerminalKey[];
   livePanelLayout: LivePanelLayoutPayload;
 }
 

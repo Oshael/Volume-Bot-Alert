@@ -7,6 +7,8 @@ const SOLANA_BLOCKED = 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6QXgB263vZyVfSRm';
 const ROBINHOOD_TOKEN = '0xabcdef0123456789abcdef0123456789abcdef01';
 const ROBINHOOD_POOL = '0xa70fc67c9f69da90b63a0e4c05d229954574e313';
 const ROBINHOOD_TOP = '0xabcdef0123456789abcdef0123456789abcdef02';
+const ROBINHOOD_MANUAL = '0xabcdef0123456789abcdef0123456789abcdef03';
+const ROBINHOOD_OLD = '0xabcdef0123456789abcdef0123456789abcdef04';
 const ROBINHOOD_DEV = `0x${'2'.repeat(40)}`;
 
 const SOLANA_CAPABILITIES = {
@@ -80,6 +82,7 @@ const SMOKE_CONFIG = {
       browserNotificationChains: ['solana'],
     },
     enabledTradeTerminals: ['axiom', 'photon', 'bullx', 'gmgn', 'padre', 'fomo'],
+    enabledRobinhoodTradeTerminals: ['axiom', 'gmgn', 'padre', 'fomo'],
   },
   tokens: [],
   blocklist: [],
@@ -389,6 +392,16 @@ const radarBootstrapPayloads = [];
 const chartRequestPayloads = [];
 const compactChartRequestPayloads = [];
 
+function robinhoodTickerPeers(address, role = 'mcap_leader') {
+  return {
+    chain: 'robinhood', count: 2, exactCount: 2, subtickerCount: 0,
+    sourcePeerRole: role,
+    oldestExactAddress: role === 'og' ? address : '0x1111111111111111111111111111111111111111',
+    highestMcapExactAddress: role === 'mcap_leader' ? address : ROBINHOOD_TOKEN,
+    items: [],
+  };
+}
+
 function marketToken(chain, symbol) {
   const isTop = symbol.startsWith('TOP');
   return chain === 'robinhood'
@@ -399,6 +412,8 @@ function marketToken(chain, symbol) {
         name: `${symbol} Robinhood`,
         launchpadId: 'pons',
         pairDexId: 'uniswap-v3',
+        pairAddress: ROBINHOOD_POOL,
+        tickerPeers: robinhoodTickerPeers(isTop ? ROBINHOOD_TOP : ROBINHOOD_TOKEN),
         fdv: 350000,
         valuationType: 'fdv',
         valuation: {
@@ -632,6 +647,12 @@ const ROBINHOOD_RADAR_READINESS = {
 
 const ROBINHOOD_RADAR_CONFIG = {
   ...ROBINHOOD_MARKET_CONFIG,
+  tokens: [{
+    chain: 'robinhood', address: ROBINHOOD_MANUAL, label: 'MANUALRH',
+    symbol: 'MANUALRH', name: 'Manual Robinhood', last_fdv: 180000,
+    last_pair_address: ROBINHOOD_POOL, last_dex_id: 'uniswap-v3',
+    tickerPeers: robinhoodTickerPeers(ROBINHOOD_MANUAL, 'og'),
+  }],
   configs: {
     'old-mcap-min': 120000,
     'old-mcap-max': 100000000,
@@ -644,6 +665,7 @@ const ROBINHOOD_RADAR_CONFIG = {
   },
   uiPrefs: {
     ...ROBINHOOD_MARKET_CONFIG.uiPrefs,
+    enabledRobinhoodTradeTerminals: ['gmgn', 'fomo'],
     chainFilters: {
       ...ROBINHOOD_MARKET_CONFIG.uiPrefs.chainFilters,
       enabledChains: ['solana', 'robinhood'],
@@ -696,11 +718,17 @@ const ROBINHOOD_RADAR_API_FIXTURES = {
     const recentTokens = requestPayload.chains?.includes('solana')
       ? [robinhoodToken, solanaToken]
       : [robinhoodToken];
+    const oldToken = {
+      ...marketToken('robinhood', 'RADAROLD'),
+      address: ROBINHOOD_OLD,
+      tickerPeers: robinhoodTickerPeers(ROBINHOOD_OLD),
+      tokenCreatedAt: Date.now() - (20 * 24 * 60 * 60 * 1000),
+    };
     return {
       generatedAt: '2026-07-14T18:00:00.000Z',
       asOf: '2026-07-14T18:00:00.000Z',
       recent: { total: recentTokens.length, page: 0, perPage: 15, count: recentTokens.length, hasMore: false, tokens: recentTokens, pinnedTokens: [] },
-      oldWeek: { total: 0, page: 0, perPage: 15, count: 0, hasMore: false, tokens: [], pinnedTokens: [] },
+      oldWeek: { total: 1, page: 0, perPage: 15, count: 1, hasMore: false, tokens: [oldToken], pinnedTokens: [] },
     };
   },
 };
@@ -1040,6 +1068,33 @@ test('chain-scoped bot settings persist independent supported controls and roll 
   await expect(dialog.locator('input[name="robinhood-mcap-threshold"]')).toHaveCount(0);
   await expect(dialog.locator('input[name="robinhood-meteora-alert-1h-threshold"]')).toHaveCount(0);
   await expect(dialog.locator('[data-config-toggle-key="robinhood-alert-gmgn-claim-pump-enabled"]')).toHaveCount(0);
+  const robinhoodTerminalMenu = dialog.locator(
+    '[data-bot-settings-section="robinhood"] [data-trade-terminal-chain="robinhood"]',
+  );
+  const robinhoodTerminalButton = robinhoodTerminalMenu.getByRole('button', {
+    name: 'Open Robinhood trading terminal preferences',
+  });
+  await expect(robinhoodTerminalButton).toHaveText('4/4 on');
+  await robinhoodTerminalButton.click();
+  const terminalPrefPatch = page.waitForRequest((request) => (
+    request.method() === 'PATCH' && new URL(request.url()).pathname === '/api/config/ui-prefs'
+  ));
+  await robinhoodTerminalMenu.locator('[data-trade-terminal-key="axiom"]').click();
+  const terminalPrefsPayload = (await terminalPrefPatch).postDataJSON().uiPrefs;
+  expect(terminalPrefsPayload.enabledRobinhoodTradeTerminals).toEqual(['gmgn', 'padre', 'fomo']);
+  expect(terminalPrefsPayload.enabledTradeTerminals)
+    .toEqual(['axiom', 'photon', 'bullx', 'gmgn', 'padre', 'fomo']);
+  await expect(robinhoodTerminalButton).toHaveText('3/4 on');
+
+  await dialog.getByRole('tab', { name: 'Solana' }).click();
+  const solanaTerminalMenu = dialog.locator(
+    '[data-bot-settings-section="solana"] [data-trade-terminal-chain="solana"]',
+  );
+  await expect(solanaTerminalMenu.getByRole('button', {
+    name: 'Open trading terminal preferences',
+  })).toHaveText('6/6 on');
+  await expect(solanaTerminalMenu.locator('[data-trade-terminal-key="axiom"]')).toHaveClass(/active/);
+  await dialog.getByRole('tab', { name: 'Robinhood' }).click();
 
   const thresholdPatch = page.waitForRequest((request) => (
     request.method() === 'PATCH' && new URL(request.url()).pathname === '/api/config'
@@ -1561,6 +1616,47 @@ test('opens a Robinhood FDV chart and applies only its realtime updates', async 
   expect(alertHistoryRequest).toBeTruthy();
   expect(new URL(alertHistoryRequest).searchParams.get('chain')).toBe('robinhood');
   expect(new URL(alertHistoryRequest).searchParams.get('address')).toBe(ROBINHOOD_TOKEN);
+  expect(diagnostics.unexpectedRequests).toEqual([]);
+  expect(diagnostics.pageErrors).toEqual([]);
+});
+
+test('renders Robinhood peer badges and terminals across tracked token lists', async ({ page }) => {
+  const diagnostics = await openAuthenticatedWorkspace(page, ROBINHOOD_RADAR_API_FIXTURES);
+  const monitoredRow = page.locator(
+    `.monitored-panel article.monitored-token-row[data-address="${ROBINHOOD_TOKEN}"]`,
+  );
+  await expect(monitoredRow).toBeVisible();
+  await expect(monitoredRow.locator('.monitored-ticker-peer-badge')).toHaveText('#1');
+  await expect(monitoredRow.locator('.trade-link')).toHaveCount(2);
+  await expect(monitoredRow.locator('.trade-link.axiom, .trade-link.padre')).toHaveCount(0);
+  await expect(monitoredRow.locator('.trade-link.gmgn'))
+    .toHaveAttribute('href', `https://gmgn.ai/robinhood/token/${ROBINHOOD_TOKEN}`);
+  const manualRow = page.locator(`#manual-tokens-section tr[data-token-identity="robinhood:${ROBINHOOD_MANUAL}"]`);
+  await expect(manualRow).toBeVisible();
+  await expect(manualRow.locator('.monitored-ticker-peer-badge')).toHaveText('OG');
+  await expect(manualRow.locator('.trade-link')).toHaveCount(2);
+  await expect(manualRow.locator('.trade-link.axiom, .trade-link.padre')).toHaveCount(0);
+  await expect(manualRow.locator('.trade-link.fomo'))
+    .toHaveAttribute('href', `https://fomo.family/tokens/robinhood/${ROBINHOOD_MANUAL}`);
+  await page.goto('/radar');
+
+  const recentRow = page.locator(
+    `.recent-bar tr[data-token-identity="robinhood:${ROBINHOOD_TOKEN}"]`,
+  );
+  await expect(recentRow).toBeVisible();
+  await expect(recentRow.locator('.monitored-ticker-peer-badge')).toHaveText('#1');
+  await expect(recentRow.locator('.trade-link')).toHaveCount(2);
+  await expect(recentRow.locator('.trade-link.gmgn'))
+    .toHaveAttribute('href', `https://gmgn.ai/robinhood/token/${ROBINHOOD_TOKEN}`);
+  const oldRow = page.locator(
+    `.old-week-bar tr[data-token-identity="robinhood:${ROBINHOOD_OLD}"]`,
+  );
+  await expect(oldRow).toBeVisible();
+  await expect(oldRow.locator('.monitored-ticker-peer-badge')).toHaveText('#1');
+  await expect(oldRow.locator('.trade-link')).toHaveCount(2);
+  await expect(oldRow.locator('.trade-link.gmgn'))
+    .toHaveAttribute('href', `https://gmgn.ai/robinhood/token/${ROBINHOOD_OLD}`);
+
   expect(diagnostics.unexpectedRequests).toEqual([]);
   expect(diagnostics.pageErrors).toEqual([]);
 });

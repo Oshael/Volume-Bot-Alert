@@ -1490,12 +1490,15 @@ function reconcileAlertRows(
     const fxState = getOrCreateAlertFxState(view, alert, renderNow);
     const isStarred = isTokenStarred(state, alert.address, alert.chain);
     const sparkline = state.data.alertSparklineById[alert.id] || null;
+    const enabledTradeTerminals = alert.chain === 'robinhood'
+      ? state.ui.enabledRobinhoodTradeTerminals
+      : state.ui.enabledTradeTerminals;
     const renderKey = getAlertRowRenderKey(
       alert,
       state.ui.busy,
       isStarred,
       state.session.role === 'admin',
-      state.ui.enabledTradeTerminals,
+      enabledTradeTerminals,
       renderNow,
       sparkline,
     );
@@ -1521,7 +1524,7 @@ function reconcileAlertRows(
         state.ui.busy,
         isStarred,
         state.session.role === 'admin',
-        state.ui.enabledTradeTerminals,
+        enabledTradeTerminals,
         renderNow,
         sparkline,
         fxState,
@@ -2241,7 +2244,6 @@ function buildAlertRowContent(
     buildTradeTerminalMenuElement(alert.address, alert.mintAddress, alert.pairAddress, {
       chain: alert.chain,
       enabledTradeTerminals,
-      robinhoodAlertLinks: true,
     }),
     buildStarButton(alert.chain, alert.address, isStarred, busy, 'Star token'),
     buildActionButton('Block', 'alert-action-button danger', 'block-token', alert.address, symbol, busy, alert.chain),
@@ -2347,7 +2349,6 @@ function buildAdminReviewAlertRowContent(
     buildTradeTerminalMenuElement(alert.address, alert.mintAddress, alert.pairAddress, {
       chain: alert.chain,
       enabledTradeTerminals,
-      robinhoodAlertLinks: true,
     }),
     buildStarButton(alert.chain, alert.address, isStarred, busy, 'Star token'),
     buildReviewActionButton('Valid', 'mark_valid', reviewAlertId, busy),

@@ -604,15 +604,22 @@ function buildRadarTokenPayload(row) {
   });
 }
 
-function buildRadarBucketPayload(page, pinnedRows) {
+function buildRadarBucketPayload(page, pinnedRows, tickerPeersByAddress = new Map()) {
+  const buildToken = (row) => {
+    const token = buildRadarTokenPayload(row);
+    return {
+      ...token,
+      tickerPeers: tickerPeersByAddress.get(token.address) || null,
+    };
+  };
   return {
     total: page.total,
     page: page.page,
     perPage: page.perPage,
     count: page.rows.length,
     hasMore: page.hasMore,
-    tokens: page.rows.map(buildRadarTokenPayload),
-    pinnedTokens: pinnedRows.map(buildRadarTokenPayload),
+    tokens: page.rows.map(buildToken),
+    pinnedTokens: pinnedRows.map(buildToken),
   };
 }
 
@@ -994,7 +1001,8 @@ async function loadTickerPeerSummariesSafe(items = []) {
 
 async function buildExactMonitoredDashboardResponse(page, pinnedRows, filters, coverage) {
   const mapped = buildDashboardMonitoredPayload(page, { pinnedRows, coverage });
-  const solanaItems = [...mapped.tokens, ...mapped.pinnedTokens]
+  const peerItems = [...mapped.tokens, ...mapped.pinnedTokens];
+  const solanaItems = peerItems
     .filter((item) => item.chain === 'solana');
   const addresses = [...new Set(solanaItems.map((item) => item.address))];
   const meteoraByAddress = new Map();
@@ -1005,7 +1013,7 @@ async function buildExactMonitoredDashboardResponse(page, pinnedRows, filters, c
     uiMeteoraSummaryCache.listUiSummaryByAddresses(addresses),
     tokenMarketBucket1m.listCurrentAndBaselineByAddresses(addresses, 5),
     tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses(addresses, 5),
-    loadTickerPeerSummariesSafe(solanaItems),
+    loadTickerPeerSummariesSafe(peerItems),
   ]);
 
   for (const row of meteoraSummaryRows) {
@@ -1021,7 +1029,8 @@ async function buildExactMonitoredDashboardResponse(page, pinnedRows, filters, c
   }
 
   const enrich = (item) => {
-    if (item.chain !== 'solana') return item;
+    const tickerPeers = tickerPeersByAddress.get(item.address) || null;
+    if (item.chain !== 'solana') return { ...item, tickerPeers };
     return {
       ...item,
       ...buildMarketBaseline(
@@ -1029,7 +1038,7 @@ async function buildExactMonitoredDashboardResponse(page, pinnedRows, filters, c
         marketVolumeBaselineByAddress.get(item.address) || null,
       ),
       meteora: buildMeteoraSummary(item.address, meteoraByAddress.get(item.address) || null),
-      tickerPeers: tickerPeersByAddress.get(item.address) || null,
+      tickerPeers,
     };
   };
   return {
@@ -1426,13 +1435,19 @@ router.post('/history-bootstrap', dashboardLimiter, requireTrustedOrigin, async 
         pinnedIdentities: pinnedIdentitiesByBucket.oldWeek,
         excludedIdentities: blockedIdentities, pageRows: oldWeekResult.rows }),
     ]);
+    const tickerPeersByAddress = await loadTickerPeerSummariesSafe([
+      ...recentResult.rows,
+      ...oldWeekResult.rows,
+      ...recentPinnedRows,
+      ...oldWeekPinnedRows,
+    ].map(buildRadarTokenPayload));
     return res.json({
       generatedAt: asOf,
       asOf,
       chains,
       source: 'workspace-catalog-v2',
-      recent: buildRadarBucketPayload(recentResult, recentPinnedRows),
-      oldWeek: buildRadarBucketPayload(oldWeekResult, oldWeekPinnedRows),
+      recent: buildRadarBucketPayload(recentResult, recentPinnedRows, tickerPeersByAddress),
+      oldWeek: buildRadarBucketPayload(oldWeekResult, oldWeekPinnedRows, tickerPeersByAddress),
     });
   } catch (err) {
     console.error('POST /dashboard/history-bootstrap error:', err.message);

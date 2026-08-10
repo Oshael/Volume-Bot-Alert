@@ -26,6 +26,7 @@ const dashboardRadarReader = require('../src/services/dashboard-radar-reader');
 const dashboardRoutes = require('../src/routes/dashboard');
 const uiMeteoraSummaryCache = require('../src/services/ui-meteora-summary-cache');
 const workspaceChainReadiness = require('../src/services/workspace-chain-readiness');
+const alertTickerPeers = require('../src/services/alert-ticker-peers');
 
 const TEST_USER = {
   username: `dashboardtest_${Date.now()}`,
@@ -86,6 +87,7 @@ function installExactMonitoredStubs(options = {}) {
     blocklist: userBlocklist.getAllForChains,
     pinList: userPinnedMonitoredToken.getAllForChains,
     readiness: workspaceChainReadiness.getWorkspaceChainReadiness,
+    tickerPeers: alertTickerPeers.listTickerPeerSummariesForTokens,
   };
   dashboardChainReader.listExactMonitored = async (input) => {
     options.onMonitored?.(input);
@@ -103,6 +105,9 @@ function installExactMonitoredStubs(options = {}) {
   workspaceChainReadiness.getWorkspaceChainReadiness = async () => ({
     solana: { status: 'ready' }, robinhood: { status: 'ready' },
   });
+  alertTickerPeers.listTickerPeerSummariesForTokens = async () => (
+    options.tickerPeersByAddress || new Map()
+  );
   dashboardRoutes.__private.resetMonitoredCache();
   return () => {
     dashboardChainReader.listExactMonitored = originals.monitored;
@@ -110,6 +115,7 @@ function installExactMonitoredStubs(options = {}) {
     userBlocklist.getAllForChains = originals.blocklist;
     userPinnedMonitoredToken.getAllForChains = originals.pinList;
     workspaceChainReadiness.getWorkspaceChainReadiness = originals.readiness;
+    alertTickerPeers.listTickerPeerSummariesForTokens = originals.tickerPeers;
     dashboardRoutes.__private.resetMonitoredCache();
   };
 }
@@ -434,6 +440,9 @@ describe('Dashboard routes', () => {
         valuation: { type: 'fdv', usd: 30_000,
           observedAt: '2026-07-15T17:59:00.000Z', freshness: 'fresh' },
       })],
+      tickerPeersByAddress: new Map([[`0x${'a'.repeat(40)}`, {
+        chain: 'robinhood', count: 2, exactCount: 2, sourcePeerRole: 'mcap_leader',
+      }]]),
       onMonitored(input) { capturedOptions = input; },
     });
 
@@ -454,6 +463,7 @@ describe('Dashboard routes', () => {
       assert.equal(res.body.tokens[0].prevVolume5mCanonical, 800);
       assert.equal(res.body.tokens[0].volume5mDeltaCoverage, 'complete');
       assert.equal(res.body.tokens[0].meteora, undefined);
+      assert.equal(res.body.tokens[0].tickerPeers.sourcePeerRole, 'mcap_leader');
     } finally {
       restoreExact();
       dashboardChainReader.listMonitored = originalListMonitored;
@@ -1190,6 +1200,7 @@ describe('Dashboard routes', () => {
     const originalListRadarPins = dashboardRadarReader.listRadarPins;
     const originalUserBlocklist = userBlocklist.getAllForChains;
     const originalUiMeteora = uiMeteoraSummaryCache.listUiSummaryByAddresses;
+    const originalTickerPeers = alertTickerPeers.listTickerPeerSummariesForTokens;
     const capturedRadarCalls = [];
     const capturedRadarPinCalls = [];
     let solanaNativeCalls = 0;
@@ -1233,6 +1244,10 @@ describe('Dashboard routes', () => {
     uiMeteoraSummaryCache.listUiSummaryByAddresses = async () => { solanaNativeCalls += 1; return []; };
     tokenMarketBucket1m.listCurrentAndBaselineByAddresses = async () => { solanaNativeCalls += 1; return []; };
     tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses = async () => { solanaNativeCalls += 1; return []; };
+    alertTickerPeers.listTickerPeerSummariesForTokens = async (items) => new Map(items.map((item) => [
+      item.address,
+      { chain: item.chain, count: 2, exactCount: 2, sourcePeerRole: 'mcap_leader' },
+    ]));
 
     try {
       const res = await request(app)
@@ -1298,10 +1313,13 @@ describe('Dashboard routes', () => {
       assert.equal(res.body.recent.tokens[0].tokenAgeProvenance, 'first-seen');
       assert.equal(res.body.recent.pinnedTokens.length, 1);
       assert.equal(res.body.recent.pinnedTokens[0].symbol, 'PINREC');
+      assert.equal(res.body.recent.tokens[0].tickerPeers.sourcePeerRole, 'mcap_leader');
+      assert.equal(res.body.recent.pinnedTokens[0].tickerPeers.chain, 'robinhood');
       assert.equal(res.body.oldWeek.total, 11);
       assert.equal(res.body.oldWeek.tokens[0].symbol, 'ROLD');
       assert.equal(res.body.oldWeek.pinnedTokens.length, 1);
       assert.equal(res.body.oldWeek.pinnedTokens[0].symbol, 'PINOLD');
+      assert.equal(res.body.oldWeek.tokens[0].tickerPeers.chain, 'robinhood');
       assert.equal(res.body.debug, undefined);
       assert.equal(solanaNativeCalls, 0);
     } finally {
@@ -1314,6 +1332,7 @@ describe('Dashboard routes', () => {
       dashboardRadarReader.listRadarPins = originalListRadarPins;
       userBlocklist.getAllForChains = originalUserBlocklist;
       uiMeteoraSummaryCache.listUiSummaryByAddresses = originalUiMeteora;
+      alertTickerPeers.listTickerPeerSummariesForTokens = originalTickerPeers;
     }
   });
 

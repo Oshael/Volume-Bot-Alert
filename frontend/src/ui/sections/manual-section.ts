@@ -186,6 +186,7 @@ function renderManualFolderAwareTable(state: AppState, searchQuery: string) {
     state.session.role === 'admin',
     state.ui.enabledTradeTerminals,
     {
+      enabledRobinhoodTradeTerminals: state.ui.enabledRobinhoodTradeTerminals,
       showSparkline: true,
       sparklineByAddress: state.data.sparklineByAddress,
       mockTradingPositionsByAddress: getMockTradingPositionsViewByAddress(state),

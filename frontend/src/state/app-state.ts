@@ -970,6 +970,7 @@ export interface AppState {
     oldWeekSorts: BucketSortCriterion[];
     monitoredSorts: MonitoredSortCriterion[];
     enabledTradeTerminals: TradeTerminalKey[];
+    enabledRobinhoodTradeTerminals: TradeTerminalKey[];
     livePanelLayout: LivePanelLayout;
     soundEnabled: boolean;
     soundVolume: number;
@@ -1242,6 +1243,7 @@ export function createAppState(): AppState {
       oldWeekSorts: [{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }],
       monitoredSorts: [{ mode: 'vol', window: '5m' }],
       enabledTradeTerminals: ['axiom', 'photon', 'bullx', 'gmgn', 'padre', 'fomo'],
+      enabledRobinhoodTradeTerminals: ['axiom', 'gmgn', 'padre', 'fomo'],
       livePanelLayout: {
         order: ['monitored', 'pumpfun', 'alerts'],
         spans: {

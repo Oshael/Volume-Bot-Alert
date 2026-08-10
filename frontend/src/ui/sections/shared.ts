@@ -68,7 +68,6 @@ type TradeTerminalOptions = {
   axiomAddress?: string | null;
   chain?: TokenChain;
   enabledTradeTerminals?: TradeTerminalKey[];
-  robinhoodAlertLinks?: boolean;
 };
 
 const SPARKLINE_SVG_WIDTH = 144;
@@ -1423,15 +1422,15 @@ function getTradeTerminalLinks(
   options?: TradeTerminalOptions,
 ): TradeTerminalLink[] {
   const chain = options?.chain || 'solana';
-  const isRobinhoodAlert = chain === 'robinhood' && options?.robinhoodAlertLinks === true;
-  if (!supportsConfiguredTradeTerminals(chain) && !isRobinhoodAlert) {
+  const isRobinhood = chain === 'robinhood';
+  if (!supportsConfiguredTradeTerminals(chain) && !isRobinhood) {
     return [];
   }
   const tokenAddress = mintAddress || address;
   const terminalAddress = pairAddress || mintAddress || address;
   const axiomAddress = options?.axiomAddress || pairAddress || tokenAddress;
   const enabledTradeTerminals = normalizeEnabledTradeTerminals(options?.enabledTradeTerminals);
-  const links: TradeTerminalLink[] = isRobinhoodAlert
+  const links: TradeTerminalLink[] = isRobinhood
     ? [
         ...(pairAddress ? [
           { key: 'axiom', label: getTradeTerminalLabel('axiom'), href: `https://axiom.trade/meme/${axiomAddress}?chain=robinhood&pulseChains=sol,robinhood,bnb&trackerChains=sol,robinhood,bnb,eth`, cls: 'axiom', iconHref: TRADE_TERMINAL_ICON_URLS.axiom },
@@ -1794,6 +1793,7 @@ export function renderManualTokenTable(
   isAdmin = false,
   enabledTradeTerminals: TradeTerminalKey[] = DEFAULT_TRADE_TERMINALS,
   options?: {
+    enabledRobinhoodTradeTerminals?: TradeTerminalKey[];
     showSparkline?: boolean;
     sparklineByAddress?: Record<string, TokenSparklineEntry>;
     mockTradingPositionsByAddress?: Record<string, MockTradingPositionEntry>;
@@ -1813,6 +1813,7 @@ export function renderManualTokenTable(
     meteoraMinPool,
     isAdmin,
     enabledTradeTerminals,
+    enabledRobinhoodTradeTerminals: options?.enabledRobinhoodTradeTerminals,
     showSparkline: options?.showSparkline,
     sparklineByAddress: options?.sparklineByAddress,
     mockTradingPositionsByAddress: options?.mockTradingPositionsByAddress,
@@ -1834,6 +1835,7 @@ export function renderPagedAgeBucketList(
   isAdmin = false,
   enabledTradeTerminals: TradeTerminalKey[] = DEFAULT_TRADE_TERMINALS,
   options?: {
+    enabledRobinhoodTradeTerminals?: TradeTerminalKey[];
     totalCount?: number;
     skipClientSort?: boolean;
     showSparkline?: boolean;
@@ -1865,6 +1867,7 @@ export function renderPagedAgeBucketList(
       startRank: pageStart + 1,
       isAdmin,
       enabledTradeTerminals,
+      enabledRobinhoodTradeTerminals: options?.enabledRobinhoodTradeTerminals,
       manualTokenFolders: options?.manualTokenFolders,
       showSparkline: options?.showSparkline,
       sparklineByAddress: options?.sparklineByAddress,
@@ -1903,6 +1906,7 @@ interface TokenTableShellOptions {
   startRank?: number;
   isAdmin?: boolean;
   enabledTradeTerminals: TradeTerminalKey[];
+  enabledRobinhoodTradeTerminals?: TradeTerminalKey[];
   manualTokenFolders?: AppState['data']['manualTokenFolders'];
   showSparkline?: boolean;
   sparklineByAddress?: Record<string, TokenSparklineEntry>;
@@ -1949,7 +1953,9 @@ function renderRadarTableShell(options: TokenTableShellOptions, hasFdvOnlyRows: 
         <tbody>
           ${options.rows.map((item, index) => renderRadarTokenTableRow({
             busy: options.busy,
-            enabledTradeTerminals: options.enabledTradeTerminals,
+            enabledTradeTerminals: (item.chain || 'solana') === 'robinhood'
+              ? options.enabledRobinhoodTradeTerminals ?? options.enabledTradeTerminals
+              : options.enabledTradeTerminals,
             isAdmin: Boolean(options.isAdmin),
             isStarred: options.starredSet.has(buildTokenIdentityKey(item.chain || 'solana', item.address)),
             item,
@@ -3235,13 +3241,14 @@ export function fmtConfig(state: AppState, key: string, fallback: number) {
   return Number.isFinite(value) ? value : fallback;
 }
 
-export function renderTokenCard(item: ManualTokenEntry, busy: boolean, options: { mode: 'manual' | 'monitored' | 'recent' | 'old-week'; isStarred?: boolean; isAdmin?: boolean; enabledTradeTerminals?: TradeTerminalKey[] }) {
+export function renderTokenCard(item: ManualTokenEntry, busy: boolean, options: { mode: 'manual' | 'monitored' | 'recent' | 'old-week'; isStarred?: boolean; isAdmin?: boolean; enabledTradeTerminals?: TradeTerminalKey[]; enabledRobinhoodTradeTerminals?: TradeTerminalKey[] }) {
   const wrapper = document.createElement('div');
   wrapper.innerHTML = renderManualTokenTable(
     [item], busy,
     options.isStarred ? [buildTokenIdentityKey(item.chain || 'solana', item.address)] : [],
     [{ mode: 'mcap', window: 'highest' }], {}, 5000, Boolean(options.isAdmin),
     options.enabledTradeTerminals ?? DEFAULT_TRADE_TERMINALS,
+    { enabledRobinhoodTradeTerminals: options.enabledRobinhoodTradeTerminals },
   );
   return wrapper.innerHTML;
 }

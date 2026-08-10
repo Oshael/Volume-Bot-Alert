@@ -52,6 +52,7 @@ export function renderStarredSection(state: AppState, controller: AppController)
           isStarred: true,
           isAdmin: state.session.role === 'admin',
           enabledTradeTerminals: state.ui.enabledTradeTerminals,
+          enabledRobinhoodTradeTerminals: state.ui.enabledRobinhoodTradeTerminals,
         });
         const card = wrapper.firstElementChild;
         if (card) {

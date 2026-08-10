@@ -6681,10 +6681,15 @@ function renderChainAlertSettings(state: AppState, chain: AlertSettingsChain) {
           </div>
           <div class="bot-settings-footer-section">
             <div class="bot-settings-subhead"><span></span><strong>Trading terminal</strong><i></i></div>
-            ${renderTradeTerminalPrefsMenu(state)}
+            ${renderTradeTerminalPrefsMenu(state, chain)}
           </div>
         </div>
-      ` : ''}
+      ` : `
+        <div class="bot-settings-footer-section">
+          <div class="bot-settings-subhead"><span></span><strong>Trading terminal</strong><i></i></div>
+          ${renderTradeTerminalPrefsMenu(state, chain)}
+        </div>
+      `}
     </div>
   `;
 }
@@ -6796,21 +6801,29 @@ function renderBrowserNotificationControl(state: AppState) {
   `;
 }
 
-function renderTradeTerminalPrefsMenu(state: AppState) {
+function renderTradeTerminalPrefsMenu(state: AppState, chain: AlertSettingsChain) {
   const terminalFields: Array<{ key: AppState['ui']['enabledTradeTerminals'][number]; label: string }> = [
     { key: 'axiom', label: getTradeTerminalLabel('axiom') },
-    { key: 'photon', label: getTradeTerminalLabel('photon') },
-    { key: 'bullx', label: getTradeTerminalLabel('bullx') },
+    ...(chain === 'solana' ? [
+      { key: 'photon' as const, label: getTradeTerminalLabel('photon') },
+      { key: 'bullx' as const, label: getTradeTerminalLabel('bullx') },
+    ] : []),
     { key: 'gmgn', label: getTradeTerminalLabel('gmgn') },
     { key: 'padre', label: getTradeTerminalLabel('padre') },
     { key: 'fomo', label: getTradeTerminalLabel('fomo') },
   ];
-  const enabled = new Set(state.ui.enabledTradeTerminals);
+  const enabledTerminals = chain === 'robinhood'
+    ? state.ui.enabledRobinhoodTradeTerminals
+    : state.ui.enabledTradeTerminals;
+  const enabled = new Set(enabledTerminals);
+  const ariaLabel = chain === 'robinhood'
+    ? 'Open Robinhood trading terminal preferences'
+    : 'Open trading terminal preferences';
 
   return `
     <div class="config-item config-item-menu bot-settings-terminal-menu">
-      <div class="sort-menu-wrap config-menu-wrap trade-terminal-menu-wrap" data-sort-wrap>
-        <button type="button" class="old-filter-btn config-menu-button active" data-sort-toggle="trade-terminals" aria-label="Open trading terminal preferences">${state.ui.enabledTradeTerminals.length}/${terminalFields.length} on</button>
+      <div class="sort-menu-wrap config-menu-wrap trade-terminal-menu-wrap" data-sort-wrap data-trade-terminal-chain="${chain}">
+        <button type="button" class="old-filter-btn config-menu-button active" data-sort-toggle="trade-terminals" aria-label="${ariaLabel}">${enabledTerminals.length}/${terminalFields.length} on</button>
         <div class="sort-menu-dropdown config-menu-dropdown">
           <div class="config-menu-summary">Choose which terminal destinations appear in redirect buttons. If only one stays enabled, the terminal button opens it directly.</div>
           <div class="config-toggle-list">
@@ -7525,48 +7538,48 @@ function bindChainFilterPrefsMenus(
 }
 
 function bindTradeTerminalPrefsMenu(section: HTMLElement, controller: AppController) {
-  const wrap = section.querySelector<HTMLElement>('.trade-terminal-menu-wrap');
-  if (!wrap) {
-    return;
-  }
+  section.querySelectorAll<HTMLElement>('.trade-terminal-menu-wrap').forEach((wrap) => {
+    const chain: TokenChain = wrap.dataset.tradeTerminalChain === 'robinhood' ? 'robinhood' : 'solana';
 
-  const getItems = () => [...wrap.querySelectorAll<HTMLButtonElement>('[data-trade-terminal-key]')];
+    const getItems = () => [...wrap.querySelectorAll<HTMLButtonElement>('[data-trade-terminal-key]')];
 
-  const updateSummary = () => {
-    const toggleButton = wrap.querySelector<HTMLButtonElement>('.config-menu-button');
-    const items = getItems();
-    if (!toggleButton || items.length === 0) {
-      return;
-    }
-    const enabledCount = items.filter((item) => item.classList.contains('active')).length;
-    toggleButton.textContent = `${enabledCount}/${items.length} on`;
-  };
-
-  wrap.querySelectorAll<HTMLButtonElement>('[data-trade-terminal-key]').forEach((button) => {
-    button.addEventListener('pointerdown', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-
+    const updateSummary = () => {
+      const toggleButton = wrap.querySelector<HTMLButtonElement>('.config-menu-button');
       const items = getItems();
-      const activeItems = items.filter((item) => item.classList.contains('active'));
-      const isActive = button.classList.contains('active');
-      if (isActive && activeItems.length <= 1) {
+      if (!toggleButton || items.length === 0) {
         return;
       }
+      const enabledCount = items.filter((item) => item.classList.contains('active')).length;
+      toggleButton.textContent = `${enabledCount}/${items.length} on`;
+    };
 
-      button.classList.toggle('active', !isActive);
-      const stateLabel = button.querySelector<HTMLElement>('.config-toggle-state');
-      if (stateLabel) {
-        stateLabel.textContent = isActive ? 'OFF' : 'ON';
-      }
+    wrap.querySelectorAll<HTMLButtonElement>('[data-trade-terminal-key]').forEach((button) => {
+      button.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
 
-      updateSummary();
-      controller.setEnabledTradeTerminals(
-        items
-          .filter((item) => item.classList.contains('active'))
-          .map((item) => item.dataset.tradeTerminalKey)
-          .filter((item): item is AppState['ui']['enabledTradeTerminals'][number] => Boolean(item)),
-      );
+        const items = getItems();
+        const activeItems = items.filter((item) => item.classList.contains('active'));
+        const isActive = button.classList.contains('active');
+        if (isActive && activeItems.length <= 1) {
+          return;
+        }
+
+        button.classList.toggle('active', !isActive);
+        const stateLabel = button.querySelector<HTMLElement>('.config-toggle-state');
+        if (stateLabel) {
+          stateLabel.textContent = isActive ? 'OFF' : 'ON';
+        }
+
+        updateSummary();
+        controller.setEnabledTradeTerminals(
+          chain,
+          items
+            .filter((item) => item.classList.contains('active'))
+            .map((item) => item.dataset.tradeTerminalKey)
+            .filter((item): item is AppState['ui']['enabledTradeTerminals'][number] => Boolean(item)),
+        );
+      });
     });
   });
 }

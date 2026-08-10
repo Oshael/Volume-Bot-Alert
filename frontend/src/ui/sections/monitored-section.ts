@@ -304,7 +304,9 @@ function renderMonitoredRows(
       state.ui.busy,
       isTokenStarred(state, item.address, item.chain || 'solana'),
       state.session.role === 'admin',
-      state.ui.enabledTradeTerminals,
+      chain === 'robinhood'
+        ? state.ui.enabledRobinhoodTradeTerminals
+        : state.ui.enabledTradeTerminals,
       miniChartEnabled ? getTokenSparkline(state, item.address, chain) : null,
       miniChartEnabled,
       state.ui.monitoredSparklineHoursByAddress,
@@ -1034,12 +1036,10 @@ function buildMonitoredRow(item: ManualTokenEntry, manualTokenFolders: AppState[
   actions.append(
     buildGlyphButton('⧉', 'action-glyph copy-button', 'copy-address', item.address, null, false, 'Copy contract'),
   );
-  if (chain === 'solana') {
-    actions.append(buildTradeTerminalMenuElement(item.address, item.mintAddress, item.pairAddress, {
-      chain: item.chain,
-      enabledTradeTerminals,
-    }));
-  }
+  actions.append(buildTradeTerminalMenuElement(item.address, item.mintAddress, item.pairAddress, {
+    chain: item.chain,
+    enabledTradeTerminals,
+  }));
   const blockButton = buildGlyphButton(
     '⊗', 'action-glyph danger-glyph', 'block-token', item.address, symbol, busy, 'Block token',
   );

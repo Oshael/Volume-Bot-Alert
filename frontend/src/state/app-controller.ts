@@ -814,7 +814,10 @@ export interface AppController {
   pinMonitoredToken(address: string, position?: number, chain?: TokenChain): Promise<void>;
   unpinMonitoredToken(address: string, chain?: TokenChain): Promise<void>;
   resetMonitoredTokenPins(): Promise<void>;
-  setEnabledTradeTerminals(terminals: AppState['ui']['enabledTradeTerminals']): void;
+  setEnabledTradeTerminals(
+    chain: TokenChain,
+    terminals: AppState['ui']['enabledTradeTerminals'],
+  ): void;
   setLivePanelSpan(panel: 'monitored' | 'alerts', span: 1 | 2 | 3): void;
   setLivePanelHeight(panel: 'monitored' | 'alerts', height: number): void;
   setLivePanelOrder(order: Array<'monitored' | 'pumpfun' | 'alerts'>): void;
@@ -4210,8 +4213,13 @@ export function createAppController(): AppController {
     return next;
   }
 
-  function normalizeTradeTerminals(input: unknown): AppState['ui']['enabledTradeTerminals'] {
-    const defaults = createAppState().ui.enabledTradeTerminals;
+  function normalizeTradeTerminals(
+    input: unknown,
+    chain: TokenChain = 'solana',
+  ): AppState['ui']['enabledTradeTerminals'] {
+    const defaults = chain === 'robinhood'
+      ? createAppState().ui.enabledRobinhoodTradeTerminals
+      : createAppState().ui.enabledTradeTerminals;
     if (!Array.isArray(input)) {
       return [...defaults];
     }
@@ -4220,7 +4228,8 @@ export function createAppController(): AppController {
     const seen = new Set<string>();
     for (const item of input) {
       const normalized = String(item || '').trim().toLowerCase();
-      if (normalized !== 'axiom' && normalized !== 'photon' && normalized !== 'bullx' && normalized !== 'gmgn' && normalized !== 'padre' && normalized !== 'fomo') {
+      if (normalized !== 'axiom' && normalized !== 'gmgn' && normalized !== 'padre' && normalized !== 'fomo'
+        && (chain !== 'solana' || (normalized !== 'photon' && normalized !== 'bullx'))) {
         continue;
       }
       if (seen.has(normalized)) {
@@ -4429,6 +4438,7 @@ export function createAppController(): AppController {
         tokenPresetByAddress: pruneSparklineRangeTokenPresets(state.ui.sparklineRange.tokenPresetByAddress),
       },
       enabledTradeTerminals: [...state.ui.enabledTradeTerminals],
+      enabledRobinhoodTradeTerminals: [...state.ui.enabledRobinhoodTradeTerminals],
       livePanelLayout: {
         order: [...state.ui.livePanelLayout.order],
         spans: {
@@ -4811,6 +4821,10 @@ export function createAppController(): AppController {
     applyExpandedSparklineUiPreferences(uiPrefs);
     state.ui.sparklineRange = normalizeSparklineRange(uiPrefs?.sparklineRange);
     state.ui.enabledTradeTerminals = normalizeTradeTerminals(uiPrefs?.enabledTradeTerminals);
+    state.ui.enabledRobinhoodTradeTerminals = normalizeTradeTerminals(
+      uiPrefs?.enabledRobinhoodTradeTerminals,
+      'robinhood',
+    );
     state.ui.livePanelLayout = normalizeLivePanelLayout(uiPrefs?.livePanelLayout);
     syncRoutedPagination();
   }
@@ -7326,9 +7340,14 @@ export function createAppController(): AppController {
       priceChange1h: finiteNumberOrNull(item.last_price_change_1h),
       priceChange6h: finiteNumberOrNull(item.last_price_change_6h),
       priceChange24h: finiteNumberOrNull(item.last_price_change_24h),
+      pairAddress: firstDefinedTrackedValue(
+        item.last_pair_address, existingItem?.pairAddress, null,
+      ),
+      pairDexId: firstDefinedTrackedValue(item.last_dex_id, existingItem?.pairDexId, null),
       createdAt: finiteNumberOrNull(item.last_token_created_at_ms),
       catalogFirstSeenAt: item.first_seen_at ? new Date(item.first_seen_at).getTime() : null,
       lastSeenAt: firstDefinedTrackedValue(item.last_seen_at, null),
+      tickerPeers: firstDefinedTrackedValue(item.tickerPeers, existingItem?.tickerPeers, null),
       manual: true,
       _userManual: true,
       _isPinnedMonitored: false,
@@ -14386,8 +14405,12 @@ export function createAppController(): AppController {
         monitoredPinMutationInFlight = false;
       }
     },
-    setEnabledTradeTerminals(terminals: AppState['ui']['enabledTradeTerminals']) {
-      state.ui.enabledTradeTerminals = normalizeTradeTerminals(terminals);
+    setEnabledTradeTerminals(chain, terminals) {
+      if (chain === 'robinhood') {
+        state.ui.enabledRobinhoodTradeTerminals = normalizeTradeTerminals(terminals, chain);
+      } else {
+        state.ui.enabledTradeTerminals = normalizeTradeTerminals(terminals, chain);
+      }
       queueUiPrefsPersist();
       emit('manual', 'recent', 'old-week', 'monitored', 'bid-zone', 'pumpfun', 'alerts', 'overlay');
     },

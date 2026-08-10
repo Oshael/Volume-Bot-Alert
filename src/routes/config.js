@@ -12,6 +12,7 @@ const tokenCatalog = require('../models/token-catalog');
 const userAlertProfileCache = require('../services/user-alert-profile-cache');
 const userConfigSync = require('../services/user-config-sync');
 const manualTokenBootstrap = require('../services/manual-token-bootstrap');
+const alertTickerPeers = require('../services/alert-ticker-peers');
 const { normalizeText } = require('../utils/url-safety');
 const { normalizeTokenAddress, normalizeTokenChain } = require('../utils/token-identity');
 const {
@@ -33,6 +34,19 @@ const MAX_BLOCKLIST = 500;   // per user and chain
 const MAX_STARRED = 500;     // per user and chain
 const USER_COLLECTION_CHAINS = Object.freeze(['solana', 'robinhood']);
 const ADMIN_ONLY_CONFIG_KEYS = new Set(['chain', 'mock-sol-usdc-rate']);
+
+async function attachTickerPeerSummaries(tokens = []) {
+  try {
+    const tickerPeersByAddress = await alertTickerPeers.listTickerPeerSummariesForTokens(tokens);
+    return tokens.map((item) => ({
+      ...item,
+      tickerPeers: tickerPeersByAddress.get(item.address) || null,
+    }));
+  } catch (error) {
+    console.warn('[Config] Failed to load manual-token ticker peers:', error.message);
+    return tokens;
+  }
+}
 
 function isValidLegacySolanaAddress(address) {
   try {
@@ -205,11 +219,12 @@ router.get('/', async (req, res) => {
       userStarredToken.getAllForChains(req.user.id, getVisibleCollectionChains()),
       getWorkspaceChainReadiness(),
     ]);
+    const tokensWithTickerPeers = await attachTickerPeerSummaries(tokens);
 
     const responsePayload = {
       configs,
       uiPrefs,
-      tokens,
+      tokens: tokensWithTickerPeers,
       blocklist,
       starredTokens,
       availableChains: buildAvailableTokenChains(),
@@ -388,7 +403,9 @@ router.put('/', async (req, res) => {
     const result = {
       configs: await userConfig.getAll(req.user.id),
       uiPrefs: await userUiPref.getAll(req.user.id),
-      tokens: await userToken.getAllForChains(req.user.id, getVisibleCollectionChains()),
+      tokens: await attachTickerPeerSummaries(
+        await userToken.getAllForChains(req.user.id, getVisibleCollectionChains()),
+      ),
       blocklist: await userBlocklist.getAllForChains(req.user.id, getVisibleCollectionChains()),
       starredTokens: await userStarredToken.getAllForChains(req.user.id, getVisibleCollectionChains()),
       availableChains: buildAvailableTokenChains(),

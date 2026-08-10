@@ -16,6 +16,7 @@ const BOOLEAN_PREF_KEYS = [
   'oldWeekStarredOnly',
 ];
 const TRADE_TERMINAL_KEYS = ['axiom', 'photon', 'bullx', 'gmgn', 'padre', 'fomo'];
+const ROBINHOOD_TRADE_TERMINAL_KEYS = ['axiom', 'gmgn', 'padre', 'fomo'];
 const TRADE_TERMINAL_CATALOG_VERSION = 2;
 const LIVE_PANEL_KEYS = ['monitored', 'pumpfun', 'alerts'];
 const LIVE_PANEL_SPANS = {
@@ -103,6 +104,7 @@ const DEFAULT_UI_PREFS = {
     tokenPresetByAddress: {},
   },
   enabledTradeTerminals: [...TRADE_TERMINAL_KEYS],
+  enabledRobinhoodTradeTerminals: [...ROBINHOOD_TRADE_TERMINAL_KEYS],
   tradeTerminalCatalogVersion: TRADE_TERMINAL_CATALOG_VERSION,
   livePanelLayout: {
     order: [...LIVE_PANEL_KEYS],
@@ -402,7 +404,7 @@ function validateSorts(key, value, options) {
   };
 }
 
-function validateTradeTerminals(key, value) {
+function validateTradeTerminals(key, value, allowedKeys = TRADE_TERMINAL_KEYS) {
   if (!Array.isArray(value)) {
     return { valid: false, error: `${key} must be an array` };
   }
@@ -412,7 +414,7 @@ function validateTradeTerminals(key, value) {
 
   for (const item of value) {
     const normalized = String(item || '').trim().toLowerCase();
-    if (!TRADE_TERMINAL_KEYS.includes(normalized)) {
+    if (!allowedKeys.includes(normalized)) {
       return { valid: false, error: `${key} contains invalid terminal: ${normalized || '(empty)'}` };
     }
     if (seen.has(normalized)) {
@@ -675,6 +677,14 @@ function normalizePrefs(raw) {
     && !normalizedTradeTerminals.includes('fomo')
     ? [...normalizedTradeTerminals, 'fomo']
     : normalizedTradeTerminals;
+  defaults.enabledRobinhoodTradeTerminals = normalizedStoredValue(
+    validateTradeTerminals(
+      'enabledRobinhoodTradeTerminals',
+      source.enabledRobinhoodTradeTerminals,
+      ROBINHOOD_TRADE_TERMINAL_KEYS,
+    ),
+    defaults.enabledRobinhoodTradeTerminals,
+  );
   defaults.tradeTerminalCatalogVersion = TRADE_TERMINAL_CATALOG_VERSION;
   defaults.livePanelLayout = normalizedStoredValue(
     validateLivePanelLayout('livePanelLayout', source.livePanelLayout),
@@ -709,6 +719,9 @@ const UI_PREF_VALIDATORS = new Map([
     isAllowedWindow: isAllowedMonitoredWindow,
   })],
   ['enabledTradeTerminals', validateTradeTerminals],
+  ['enabledRobinhoodTradeTerminals', (key, value) => (
+    validateTradeTerminals(key, value, ROBINHOOD_TRADE_TERMINAL_KEYS)
+  )],
   ['livePanelLayout', validateLivePanelLayout],
   ['chainFilters', validateChainFilters],
 ]);

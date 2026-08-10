@@ -156,6 +156,40 @@ describe('alert ticker peers', () => {
     assert.equal(snapshot.items.length, 2);
   });
 
+  it('loads dashboard peer summaries for mixed Solana and Robinhood batches', async () => {
+    const calls = [];
+    const runner = {
+      async query(_sql, params) {
+        const chain = params[3];
+        calls.push(chain);
+        const source = chain === 'robinhood' ? ROBINHOOD_SOURCE_ADDRESS : SOURCE_ADDRESS;
+        const peer = chain === 'robinhood' ? ROBINHOOD_PEER_ADDRESS : PEER_ADDRESS;
+        const symbol = chain === 'robinhood' ? 'RHP' : 'SOLP';
+        return { rows: [source, peer].map((address, index) => ({
+          address,
+          symbol,
+          normalized_symbol: symbol,
+          last_mcap: index === 0 ? '300000' : '100000',
+          last_token_created_at_ms: String(1700000000000 + (index * 1000)),
+          match_type: 'exact',
+          exact_count: '2',
+          subticker_count: '0',
+          oldest_exact_address: source,
+          highest_mcap_exact_address: source,
+        })) };
+      },
+    };
+
+    const summaries = await alertTickerPeers.listTickerPeerSummariesForTokens([
+      { chain: 'solana', address: SOURCE_ADDRESS, symbol: 'SOLP' },
+      { chain: 'robinhood', address: ROBINHOOD_SOURCE_ADDRESS, symbol: 'RHP' },
+    ], {}, runner);
+
+    assert.deepEqual(calls.sort(), ['robinhood', 'solana']);
+    assert.equal(summaries.get(SOURCE_ADDRESS).chain, 'solana');
+    assert.equal(summaries.get(ROBINHOOD_SOURCE_ADDRESS).chain, 'robinhood');
+  });
+
   it('keeps the market-cap leader role when other exact peers have no market cap data', () => {
     const role = alertTickerPeers.__private.resolveSourcePeerRole(SOURCE_ADDRESS, {
       exactCount: 40,

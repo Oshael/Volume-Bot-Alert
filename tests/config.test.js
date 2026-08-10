@@ -23,6 +23,7 @@ const stage54 = require('../src/utils/db-init-stage54');
 const stage55 = require('../src/utils/db-init-stage55');
 const { CONFIG_SCHEMA } = require('../src/models/user-config');
 const userAlertProfileCache = require('../src/services/user-alert-profile-cache');
+const alertTickerPeers = require('../src/services/alert-ticker-peers');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const VALID_ADDR_1 = 'So11111111111111111111111111111111111111112';
@@ -232,6 +233,7 @@ describe('Config routes', () => {
     assert.equal(response.body.configs['mock-sol-usdc-rate'], 88);
 
     assert.deepEqual(response.body.uiPrefs.enabledTradeTerminals, ['axiom', 'photon', 'bullx', 'gmgn', 'padre', 'fomo']);
+    assert.deepEqual(response.body.uiPrefs.enabledRobinhoodTradeTerminals, ['axiom', 'gmgn', 'padre', 'fomo']);
     assert.deepEqual(response.body.uiPrefs.monitoredSorts, [{ mode: 'vol', window: '5m' }]);
     assert.deepEqual(response.body.uiPrefs.recentSorts, [{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }]);
     assert.deepEqual(response.body.uiPrefs.oldWeekSorts, [{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }]);
@@ -676,14 +678,27 @@ describe('Config routes', () => {
     assert.equal(addFolderItem.body.tokenCreated, false);
     assert.equal(addFolderItem.body.item.chain, 'robinhood');
 
-    const legacySync = await request(app)
-      .put('/api/config')
-      .set('Authorization', `Bearer ${userToken}`)
-      .send({ tokens: [], blocklist: [], starredTokens: [] });
+    const originalTickerPeers = alertTickerPeers.listTickerPeerSummariesForTokens;
+    alertTickerPeers.listTickerPeerSummariesForTokens = async () => new Map([[
+      ROBINHOOD_ADDR,
+      { chain: 'robinhood', count: 2, exactCount: 2, sourcePeerRole: 'og' },
+    ]]);
+    let legacySync;
+    try {
+      legacySync = await request(app)
+        .put('/api/config')
+        .set('Authorization', `Bearer ${userToken}`)
+        .send({ tokens: [], blocklist: [], starredTokens: [] });
+    } finally {
+      alertTickerPeers.listTickerPeerSummariesForTokens = originalTickerPeers;
+    }
     assert.equal(legacySync.status, 200);
     assert.equal(legacySync.body.tokens.some((item) => (
       item.chain === 'robinhood' && item.address === ROBINHOOD_ADDR
     )), true);
+    assert.equal(legacySync.body.tokens.find((item) => (
+      item.chain === 'robinhood' && item.address === ROBINHOOD_ADDR
+    )).tickerPeers.sourcePeerRole, 'og');
     assert.equal(legacySync.body.starredTokens.some((item) => item.chain === 'robinhood'), true);
     assert.equal(legacySync.body.blocklist.some((item) => item.chain === 'robinhood'), true);
 
@@ -824,6 +839,7 @@ describe('Config routes', () => {
             browserNotificationChains: ['solana'],
           },
           enabledTradeTerminals: ['photon', 'bullx'],
+          enabledRobinhoodTradeTerminals: ['gmgn', 'fomo'],
           monitoredPerPage: 50,
           expandedSparklineGranularityMinutes: 60,
           expandedSparklineTimeZone: 'America/Sao_Paulo',
@@ -878,6 +894,7 @@ describe('Config routes', () => {
       },
     });
     assert.deepEqual(response.body.uiPrefs.enabledTradeTerminals, ['photon', 'bullx']);
+    assert.deepEqual(response.body.uiPrefs.enabledRobinhoodTradeTerminals, ['gmgn', 'fomo']);
     assert.deepEqual(response.body.uiPrefs.livePanelLayout, {
       order: ['alerts', 'monitored', 'pumpfun'],
       spans: {

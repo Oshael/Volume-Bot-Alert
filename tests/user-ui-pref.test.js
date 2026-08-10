@@ -7,6 +7,7 @@ describe('user-ui-pref', () => {
   it('defaults enabled trade terminals for legacy prefs', () => {
     const prefs = userUiPref.normalizePrefs({});
     assert.deepEqual(prefs.enabledTradeTerminals, ['axiom', 'photon', 'bullx', 'gmgn', 'padre', 'fomo']);
+    assert.deepEqual(prefs.enabledRobinhoodTradeTerminals, ['axiom', 'gmgn', 'padre', 'fomo']);
     assert.equal(prefs.tradeTerminalCatalogVersion, 2);
     assert.equal(prefs.manualFolderDeleteWarningDismissed, false);
     assert.equal(prefs.expandedSparklineGranularityMinutes, 5);
@@ -117,11 +118,13 @@ describe('user-ui-pref', () => {
   it('accepts a filtered trade terminal selection', () => {
     const validation = userUiPref.validatePatch({
       enabledTradeTerminals: ['bullx', 'gmgn'],
+      enabledRobinhoodTradeTerminals: ['gmgn', 'fomo'],
       manualFolderDeleteWarningDismissed: true,
     });
 
     assert.equal(validation.valid, true);
     assert.deepEqual(validation.prefs.enabledTradeTerminals, ['bullx', 'gmgn']);
+    assert.deepEqual(validation.prefs.enabledRobinhoodTradeTerminals, ['gmgn', 'fomo']);
     assert.equal(validation.prefs.manualFolderDeleteWarningDismissed, true);
   });
 
@@ -264,6 +267,17 @@ describe('user-ui-pref', () => {
 
     assert.equal(validation.valid, false);
     assert.ok(validation.errors.includes('enabledTradeTerminals must contain at least one terminal'));
+  });
+
+  it('rejects Solana-only terminals in Robinhood preferences', () => {
+    const validation = userUiPref.validatePatch({
+      enabledRobinhoodTradeTerminals: ['gmgn', 'photon'],
+    });
+
+    assert.equal(validation.valid, false);
+    assert.ok(validation.errors.includes(
+      'enabledRobinhoodTradeTerminals contains invalid terminal: photon',
+    ));
   });
 
   it('accepts complete chain filters constrained by the master selection', () => {
