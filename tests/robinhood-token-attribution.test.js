@@ -120,7 +120,7 @@ describe('Robinhood token creator attribution', () => {
       release: () => {},
     };
     const repository = createRobinhoodTokenAttributionRepository({
-      database: { connect: async () => client },
+      database: { getClient: async () => client },
     });
     const result = await repository.recordCreatorBlock({
       blockNumber: '100', safeHead: '100', blockHash: `0x${'c'.repeat(64)}`,

@@ -127,7 +127,7 @@ function createRobinhoodTokenAttributionRepository(options = {}) {
         throw new Error('launchpad creator source requires its factory address');
       }
     }
-    const client = await database.connect();
+    const client = await database.getClient();
     try {
       await client.query('BEGIN');
       if (deployments.length) await client.query(
