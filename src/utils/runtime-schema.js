@@ -2561,6 +2561,90 @@ const SCHEMA_GROUPS = [
     ],
   },
   {
+    key: 'stage116-robinhood-holder-shadow-ledger',
+    name: 'Stage 116 Robinhood holder shadow ledger',
+    repair: 'node src/utils/db-init-stage116.js',
+    tables: [
+      {
+        table: 'robinhood_holder_balances',
+        columns: [
+          'chain', 'token_address', 'wallet_address', 'balance_raw',
+          'last_block_number', 'last_transaction_hash', 'last_log_index',
+          'created_at', 'updated_at',
+        ],
+        columnTypes: {
+          balance_raw: { dataType: 'numeric', numericPrecision: 78, numericScale: 0 },
+        },
+        constraints: [
+          { name: 'robinhood_holder_balances_pkey', includes: ['PRIMARY KEY', 'chain', 'token_address', 'wallet_address'] },
+          { name: 'robinhood_holder_balances_positive_check', includes: ['CHECK', 'balance_raw'] },
+          { name: 'robinhood_holder_balances_wallet_check', includes: ['CHECK', 'wallet_address'] },
+        ],
+        indexes: [{
+          name: 'idx_robinhood_holder_balances_top',
+          includes: ['token_address', 'balance_raw', 'wallet_address'],
+        }],
+      },
+      {
+        table: 'robinhood_holder_token_states',
+        columns: [
+          'chain', 'token_address', 'holder_count', 'ledger_status',
+          'deployment_block', 'backfill_next_block', 'live_through_block',
+          'live_through_hash', 'version', 'last_reconciled_at', 'created_at', 'updated_at',
+        ],
+        columnTypes: { holder_count: { dataType: 'bigint' } },
+        constraints: [
+          { name: 'robinhood_holder_token_states_pkey', includes: ['PRIMARY KEY', 'chain', 'token_address'] },
+          { name: 'robinhood_holder_token_states_count_check', includes: ['CHECK', 'holder_count'] },
+          { name: 'robinhood_holder_token_states_status_check', includes: ['pending', 'backfilling', 'shadow', 'live', 'drifted', 'resyncing'] },
+          { name: 'robinhood_holder_token_states_live_pair_check', includes: ['live_through_block', 'live_through_hash'] },
+        ],
+        indexes: [{
+          name: 'idx_robinhood_holder_token_states_work',
+          includes: ['ledger_status', 'backfill_next_block', 'token_address'],
+        }],
+      },
+      {
+        table: 'robinhood_holder_cursors',
+        columns: [
+          'chain', 'stream', 'next_block', 'safe_head', 'checkpoint_block',
+          'checkpoint_hash', 'version', 'created_at', 'updated_at',
+        ],
+        constraints: [
+          { name: 'robinhood_holder_cursors_pkey', includes: ['PRIMARY KEY', 'chain', 'stream'] },
+          { name: 'robinhood_holder_cursors_stream_check', includes: ['CHECK', 'stream', 'live'] },
+          { name: 'robinhood_holder_cursors_checkpoint_pair_check', includes: ['checkpoint_block', 'checkpoint_hash'] },
+        ],
+      },
+      {
+        table: 'robinhood_holder_transfer_journal',
+        columns: [
+          'chain', 'block_number', 'block_hash', 'transaction_hash',
+          'transaction_index', 'log_index', 'token_address', 'from_wallet',
+          'to_wallet', 'amount_raw', 'from_balance_before', 'from_balance_after',
+          'to_balance_before', 'to_balance_after', 'holder_delta', 'applied',
+          'captured_at', 'applied_at',
+        ],
+        columnTypes: {
+          amount_raw: { dataType: 'numeric', numericPrecision: 78, numericScale: 0 },
+          from_balance_before: { dataType: 'numeric', numericPrecision: 78, numericScale: 0 },
+          from_balance_after: { dataType: 'numeric', numericPrecision: 78, numericScale: 0 },
+          to_balance_before: { dataType: 'numeric', numericPrecision: 78, numericScale: 0 },
+          to_balance_after: { dataType: 'numeric', numericPrecision: 78, numericScale: 0 },
+        },
+        constraints: [
+          { name: 'robinhood_holder_transfer_journal_pkey', includes: ['PRIMARY KEY', 'transaction_hash', 'log_index'] },
+          { name: 'robinhood_holder_transfer_journal_applied_check', includes: ['applied', 'applied_at', 'holder_delta'] },
+          { name: 'robinhood_holder_transfer_journal_applied_balances_check', includes: ['from_balance_before', 'to_balance_before'] },
+        ],
+        indexes: [
+          { name: 'idx_robinhood_holder_journal_pending', includes: ['block_number', 'transaction_index', 'log_index', 'applied = false'] },
+          { name: 'idx_robinhood_holder_journal_rollback', includes: ['block_number', 'log_index'] },
+        ],
+      },
+    ],
+  },
+  {
     key: 'stage91-robinhood-wallet-swap-cursors',
     name: 'Stage 91 Robinhood wallet-swap attribution cursors',
     repair: 'node src/utils/db-init-stage91.js',
