@@ -374,7 +374,67 @@ operacional. A margem inclui testes e ajustes de CSS/smoke. Se qualquer corte
 ultrapassar a estimativa em mais de 20%, ele deve parar antes de editar o novo
 escopo.
 
+## Mapa Executivo de Entrega
+
+Atualizado em 2026-08-10. Este mapa e a fonte de verdade para status e ordem
+macro. A posicao historica das secoes detalhadas abaixo nao cria outra fase nem
+altera a sequencia deste quadro.
+
+### Entrega Blockscout e superficies atuais
+
+| Macro | Entrega | Status | Evidencia principal |
+|---|---|---|---|
+| 1 | Provider Blockscout e contrato puro | concluido e commitado | `574ad326` |
+| 2 | Scheduler, retry e circuit breaker | concluido e commitado | `574ad326` |
+| 3 | Schema/repository de summary (Stage 111) | concluido e commitado | `574ad326` |
+| 4 | Worker hot/cold de summaries | concluido e commitado | `574ad326` |
+| 5 | Rota paginada/lista de holders | concluido e commitado | `574ad326` |
+| 6 | Count em monitored/recent/old/manual | concluido e commitado | `e7b1de26` |
+| 7 | Snapshot diario e endpoint historico (Stage 112) | concluido e commitado | `574ad326` |
+| 8 | Expanded chart HOLDERS | bloqueado por decisao visual | prototipo local fora dos commits |
+
+### Fase realtime por `Transfer`
+
+| Macro realtime | Entrega | Status | Subcortes/evidencia |
+|---|---|---|---|
+| 1 | Probe read-only global e catalog-scoped | concluido, commitado e executado no node da VPS | RT1/RT1B; `afd0147a`, `9b43e90e` |
+| 2 | Schema e ledger shadow reversivel | concluido no codigo; migrations 116-118 ainda nao aplicadas em producao; nenhum runner ligado | RT2A-RT2C4; `43a6f9d7` ate `49609b99` |
+| 3 | Backfill/catch-up de tokens novos sem lacuna | pendente | proximo macro funcional |
+| 4 | Live incremental shadow, deteccao automatica de reorg e scheduler da poda | pendente | operacoes atomicas existem, orquestracao nao |
+| 5 | Backfill frio dos tokens antigos | pendente | depende de checkpoint/throttle/promocao |
+| 6 | Reconciliacao, promocao e publicacao REST/socket | pendente | Blockscout continua sendo fallback atual |
+| 7 | Frontend realtime/expanded chart | pendente de layout aprovado | nao reutilizar o prototipo sem decisao explicita |
+
+Os nomes RT nao sao uma segunda arquitetura. Eles apenas repartem os macros
+realtime em slices de no maximo 500 linhas:
+
+- RT1/RT1B realizam o macro realtime 1;
+- RT2A cria a fundacao persistente do macro 2;
+- RT2B1/RT2B2 implementam captura e aplicacao atomicas;
+- RT2C1/RT2C2 implementam procedencia e rollback;
+- RT2C3/RT2C4 implementam floor e poda limitada de 20.000 blocos;
+- RT3 em diante devem continuar os macros pendentes deste quadro, sem abrir um
+  plano paralelo.
+
+### Reuso dos arquivos da entrega inicial
+
+| Componente existente | Papel durante e depois do realtime |
+|---|---|
+| `robinhood-blockscout-holders.js` | bootstrap, lista paginada, auditoria e reconciliacao externa |
+| `robinhood-holder-request-scheduler.js` | protege chamadas Blockscout de rate limit/falhas |
+| `robinhood-holder-summary-worker.js` | fallback e refresh do ultimo valor conhecido |
+| `robinhood-token-holder-summary.js` / Stage 111 | store publicado consumido pelas superficies atuais |
+| Stage 112 e endpoint historico | snapshots diarios e sticks de total/delta |
+| `robinhood-holders.js` | lista paginada autenticada; nao depende do ledger por wallet |
+| UI de monitored/recent/old/manual | continua consumindo o mesmo contrato de summary |
+| ledger RT2 | nova fonte shadow/live que alimentara summary e reconciliacao |
+
+Portanto, o realtime complementa a entrega inicial; ele nao descarta provider,
+scheduler, summaries, snapshots, rotas ou superficies ja implementadas.
+
 ### Corte 1 - Provider Blockscout e contrato puro
+
+Status: implementado, validado e commitado em `574ad326`.
 
 Estimativa: 350 a 480 linhas.
 
@@ -401,6 +461,8 @@ Validacao:
 
 ### Corte 2 - Scheduler, retry e circuit breaker
 
+Status: implementado, validado e commitado em `574ad326`.
+
 Estimativa: 350 a 500 linhas.
 
 Arquivos previstos:
@@ -423,6 +485,8 @@ Validacao:
 - revisao integral do diff.
 
 ### Corte 3 - Schema e repositorio de summary
+
+Status: implementado, validado e commitado em `574ad326`.
 
 Estimativa: 350 a 490 linhas.
 
@@ -449,6 +513,8 @@ Validacao:
 - revisao integral do diff.
 
 ### Corte 4 - Worker de summaries hot/cold
+
+Status: implementado, validado e commitado em `574ad326`.
 
 Estimativa: 350 a 500 linhas.
 
@@ -477,6 +543,8 @@ Validacao:
 
 ### Corte 5 - Rota paginada de holders
 
+Status: implementado, validado e commitado em `574ad326`.
+
 Estimativa: 300 a 450 linhas.
 
 Arquivos previstos:
@@ -501,7 +569,7 @@ Validacao:
 
 ### Corte 6 - Holder count nos payloads e listas
 
-Status: implementado e validado localmente em 2026-08-10.
+Status: implementado, validado e commitado em `e7b1de26`.
 
 Estimativa: 400 a 500 linhas.
 
@@ -528,9 +596,10 @@ Validacao:
 - smoke focal se a mudanca de layout justificar;
 - revisao integral do diff.
 
-### Fase 2 apos o Corte 8 - Holder count realtime por eventos `Transfer`
+### Fase 2 - Holder count realtime por eventos `Transfer`
 
-Status: arquitetura planejada, implementacao nao iniciada.
+Status: macros 1 e 2 implementados no codigo; migrations 116-118 nao aplicadas
+em producao e nenhum runner realtime ligado. Macros 3 a 7 permanecem pendentes.
 
 #### Por que o worker atual nao resolve realtime
 
@@ -616,7 +685,7 @@ conhecido; caso contrario existe uma corrida impossivel de reconciliar exatament
 
 #### Corte RT1 - Probe read-only de capacidade
 
-Status: implementado localmente; execucao real na VPS ainda pendente.
+Status: implementado, commitado e executado no node proprio da VPS.
 
 Comando: `npm run robinhood:holder-transfer-probe`.
 
@@ -637,7 +706,7 @@ Variaveis operacionais opcionais:
 
 #### Corte RT1B - Probe filtrado pelo catalogo
 
-Status: implementado localmente; execucao no node da VPS ainda pendente.
+Status: implementado, commitado e executado no node proprio da VPS.
 
 Comando: `npm run robinhood:holder-catalog-transfer-probe`. O modo consulta o
 PostgreSQL apenas com `SELECT`, escolhe por default os 1.000 tokens Robinhood mais
@@ -653,7 +722,7 @@ usa `ROBINHOOD_RPC_URL` antes da dRPC para refletir o transporte principal do bo
 
 #### Corte RT2A - Fundacao do ledger shadow
 
-Status: implementado localmente; migration ainda nao aplicada em producao.
+Status: implementado e commitado; migration ainda nao aplicada em producao.
 
 A Stage 116 cria quatro estruturas sem ligar writer ou publicacao: balances
 positivos `token + wallet` em `NUMERIC(78,0)`, estado/total e progresso por token,
@@ -666,7 +735,7 @@ tabelas isoladamente nao altera o count Blockscout atualmente publicado.
 
 #### Corte RT2B1 - Captura transacional shadow
 
-Status: implementado localmente; nenhum runner ligado.
+Status: implementado e commitado; nenhum runner ligado.
 
 O repositorio captura ranges normalizados no journal e avanca o cursor live na
 mesma transacao. Repetir evidencia identica e idempotente; a mesma identidade com
@@ -679,7 +748,7 @@ valores antes/depois. Ate la, esta captura nao deve ser iniciada em producao.
 
 #### Corte RT2B2 - Aplicacao atomica shadow
 
-Status: implementado localmente; nenhum runner ligado.
+Status: implementado e commitado; nenhum runner ligado.
 
 A aplicacao trava o cursor global para serializar consumidores, escolhe o proximo
 evento elegivel em ordem on-chain e trava estado/balances do token. Mint, burn,
@@ -691,7 +760,7 @@ O proximo corte cobre rollback de reorg. Captura/aplicacao continuam desligadas.
 
 #### Corte RT2C1 - Procedencia reversivel do journal
 
-Status: implementado localmente; migration ainda nao aplicada em producao.
+Status: implementado e commitado; migration ainda nao aplicada em producao.
 
 A Stage 117 acrescenta ao journal a procedencia anterior de bloco, transacao e
 log das wallets de origem/destino. A aplicacao atomica salva essa evidencia antes
@@ -704,7 +773,7 @@ ou publicacao foi ligado.
 
 #### Corte RT2C2 - Rollback atomico de reorg
 
-Status: implementado localmente; nenhum runner ligado.
+Status: implementado e commitado; nenhum runner ligado.
 
 O repositorio recebe o novo `nextBlock` e o checkpoint canonico imediatamente
 anterior, trava o cursor, reverte eventos aplicados em ordem on-chain inversa,
@@ -717,7 +786,7 @@ Captura, rollback e publicacao continuam sem runner e desligados.
 
 #### Corte RT2C3 - Floor duravel do journal
 
-Status: implementado localmente; migration ainda nao aplicada em producao.
+Status: implementado e commitado; migration ainda nao aplicada em producao.
 
 A Stage 118 acrescenta `journal_floor_block` nullable ao cursor live. `NULL`
 significa que nenhuma fronteira de retencao foi inicializada e deve bloquear poda
@@ -730,7 +799,7 @@ independente.
 
 #### Corte RT2C4 - Poda limitada do journal holder
 
-Status: implementado localmente; nenhum scheduler ligado.
+Status: implementado e commitado; nenhum scheduler ligado.
 
 A primeira captura inicializa o floor no `rangeStart`. A operacao independente
 de poda usa 20.000 blocos por default e remove somente eventos aplicados abaixo
@@ -755,7 +824,7 @@ substitui evidencia de volume, limites de RPC e custo de banco desta chain.
 
 ### Corte 7 - Snapshots diarios e endpoint historico
 
-Status: implementado e validado localmente em 2026-08-10.
+Status: implementado, validado e commitado em `574ad326`.
 
 Estimativa: 400 a 500 linhas.
 
