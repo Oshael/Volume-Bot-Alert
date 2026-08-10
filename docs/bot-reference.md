@@ -966,8 +966,11 @@ primeira captura inicializa o floor; pendência anterior ao cutoff bloqueia dele
 e o floor só avança após drenar o range. Ainda não existe scheduler para a poda.
 O mapa executivo em `docs/robinhood-token-holders-plan.md` é a fonte de verdade
 do rollout: Blockscout/summaries/snapshots continuam como bootstrap, fallback e
-store publicado; macros realtime 1 e 2 estão implementados, enquanto 3 a 7
-seguem pendentes.
+store publicado; macros realtime 1 e 2 estão implementados, o macro 3 está em
+andamento e os macros 4 a 7 seguem pendentes.
+O RT3A inicia o macro 3 admitindo somente tokens catalogados após um cutoff
+operacional e com deployment exato `rpc_direct`/`launchpad_event`. Ele cria estado
+`backfilling` idempotente; replay RPC e worker permanecem desligados.
 
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.

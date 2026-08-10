@@ -399,7 +399,7 @@ altera a sequencia deste quadro.
 |---|---|---|---|
 | 1 | Probe read-only global e catalog-scoped | concluido, commitado e executado no node da VPS | RT1/RT1B; `afd0147a`, `9b43e90e` |
 | 2 | Schema e ledger shadow reversivel | concluido no codigo; migrations 116-118 ainda nao aplicadas em producao; nenhum runner ligado | RT2A-RT2C4; `43a6f9d7` ate `49609b99` |
-| 3 | Backfill/catch-up de tokens novos sem lacuna | pendente | proximo macro funcional |
+| 3 | Backfill/catch-up de tokens novos sem lacuna | em andamento | RT3A admite apenas deployment exato; replay RPC ainda pendente |
 | 4 | Live incremental shadow, deteccao automatica de reorg e scheduler da poda | pendente | operacoes atomicas existem, orquestracao nao |
 | 5 | Backfill frio dos tokens antigos | pendente | depende de checkpoint/throttle/promocao |
 | 6 | Reconciliacao, promocao e publicacao REST/socket | pendente | Blockscout continua sendo fallback atual |
@@ -413,7 +413,7 @@ realtime em slices de no maximo 500 linhas:
 - RT2B1/RT2B2 implementam captura e aplicacao atomicas;
 - RT2C1/RT2C2 implementam procedencia e rollback;
 - RT2C3/RT2C4 implementam floor e poda limitada de 20.000 blocos;
-- RT3 em diante devem continuar os macros pendentes deste quadro, sem abrir um
+- RT3 em diante continuam os macros pendentes deste quadro, sem abrir um
   plano paralelo.
 
 ### Reuso dos arquivos da entrega inicial
@@ -808,6 +808,20 @@ lote; o floor avanca apenas quando nao resta nenhuma linha abaixo do cutoff.
 Rollback abaixo do floor falha antes de tocar balances ou cursor.
 
 A operacao ainda nao e iniciada pelo `server.js` e nao depende do retention geral.
+
+#### Corte RT3A - Admissao de tokens novos com deployment exato
+
+Status: implementado localmente; nenhum worker ligado.
+
+O repository usa `token_catalog.first_seen_at` somente como cutoff duravel da
+coorte admitida depois do rollout. O inicio do replay vem exclusivamente de
+`robinhood_token_attributions.attribution_block` com source `rpc_direct` ou
+`launchpad_event`; discovery block e atribuicao apenas Blockscout nao sao aceitos
+como deployment. A admissao idempotente cria o estado `backfilling` com
+`deployment_block = backfill_next_block` e nao sobrescreve token ja inicializado.
+
+Este corte depende das Stages 113-118 em producao. O RT3B fara o primeiro replay
+limitado de `Transfer` pelo RPC proprio da VPS; nenhum request RPC ocorre no RT3A.
 
 Cada item acima deve ser repartido novamente se estimar mais de 500 linhas. O
 probe e a estimativa de storage sao pre-condicoes; “outros terminais fazem” nao
