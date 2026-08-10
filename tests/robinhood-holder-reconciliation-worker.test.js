@@ -36,7 +36,9 @@ describe('Robinhood holder reconciliation worker', () => {
 
     assert.equal(worker.start(), false);
     assert.equal(timer.scheduled.length, 0);
-    assert.equal(worker.start({ enabled: true, intervalMs: 30_000 }), true);
+    assert.equal(worker.start({
+      enabled: true, intervalMs: 30_000, isLiveReady: () => true,
+    }), true);
     await timer.scheduled[0].callback();
     await timer.scheduled[1].callback();
     assert.equal(worker.getStatus().totalRuns, 2);
@@ -95,6 +97,7 @@ describe('Robinhood holder reconciliation worker', () => {
     });
     worker.start({
       enabled: true, intervalMs: 10_000, maxErrorBackoffMs: 100_000,
+      isLiveReady: () => true,
       onFatal: (error) => fatals.push(error),
     });
 
@@ -118,5 +121,23 @@ describe('Robinhood holder reconciliation worker', () => {
       () => __private.normalizeOptions({ requiredMatches: 1 }),
       (error) => error.code === 'configuration_error'
     );
+    assert.throws(
+      () => createRobinhoodHolderReconciliationWorker().start({ enabled: true }),
+      (error) => error.code === 'configuration_error'
+    );
+  });
+
+  it('does not build the runtime before live capture is healthy', async () => {
+    const timer = clock();
+    let built = false;
+    const worker = createRobinhoodHolderReconciliationWorker({
+      ...timer, runtimeFactory: () => { built = true; return { runOnce() {} }; },
+    });
+    worker.start({ enabled: true, isLiveReady: () => false });
+    await timer.scheduled[0].callback();
+    assert.equal(worker.getStatus().lastResult.status, 'waiting-live');
+    assert.equal(worker.getStatus().totalWaitingLive, 1);
+    assert.equal(built, false);
+    await worker.stop();
   });
 });

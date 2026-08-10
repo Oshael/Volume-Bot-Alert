@@ -47,6 +47,7 @@ const robinhoodHolderBackfillWorker = require('./services/robinhood-holder-backf
 const robinhoodHolderColdWorker = require('./services/robinhood-holder-cold-worker');
 const robinhoodHolderJournalPruneWorker = require('./services/robinhood-holder-journal-prune-worker');
 const robinhoodHolderLiveWorker = require('./services/robinhood-holder-live-worker');
+const robinhoodHolderReconciliationWorker = require('./services/robinhood-holder-reconciliation-worker');
 const robinhoodHolderSummaryWorker = require('./services/robinhood-holder-summary-worker');
 const robinhoodBackfillDiscoveryScanner = require('./services/robinhood-backfill-discovery-scanner');
 const robinhoodBackfillMarketScanner = require('./services/robinhood-backfill-market-scanner');
@@ -109,6 +110,7 @@ const ROBINHOOD_HOLDER_BACKFILL_LEASE_KEY = 'robinhood-holder-backfill-worker';
 const ROBINHOOD_HOLDER_COLD_LEASE_KEY = 'robinhood-holder-cold-worker';
 const ROBINHOOD_HOLDER_JOURNAL_PRUNE_LEASE_KEY = 'robinhood-holder-journal-prune-worker';
 const ROBINHOOD_HOLDER_LIVE_LEASE_KEY = 'robinhood-holder-live-worker';
+const ROBINHOOD_HOLDER_RECONCILIATION_LEASE_KEY = 'robinhood-holder-reconciliation-worker';
 const ROBINHOOD_HOLDER_SUMMARY_LEASE_KEY = 'robinhood-holder-summary-worker';
 const ROBINHOOD_WALLET_SWAP_LIVE_LEASE_KEY = 'robinhood-wallet-swap-live-worker';
 const ROBINHOOD_DIRECT_CREATOR_LIVE_LEASE_KEY = 'robinhood-direct-creator-live-worker';
@@ -302,6 +304,7 @@ app.get('/api/admin/ws-status', authenticate, requireAdmin, async (req, res) => 
     robinhoodHolderColdWorker: robinhoodHolderColdWorker.getStatus(),
     robinhoodHolderJournalPruneWorker: robinhoodHolderJournalPruneWorker.getStatus(),
     robinhoodHolderLiveWorker: robinhoodHolderLiveWorker.getStatus(),
+    robinhoodHolderReconciliationWorker: robinhoodHolderReconciliationWorker.getStatus(),
     robinhoodIngestionWorker: {
       ...robinhoodIngestionStatus,
       sharedLease: robinhoodIngestionLease,
@@ -595,6 +598,24 @@ function startRobinhoodHolderWorkerGroup() {
         ...config.robinhoodHolderColdWorker,
         onFatal: (error) => workerLeaseManager.halt(ROBINHOOD_HOLDER_COLD_LEASE_KEY, error),
       }), { metadataProvider: () => ({ telemetry: robinhoodHolderColdWorker.getStatus() }) }
+    );
+  }
+  if (config.robinhoodHolderReconciliationWorker.enabled) {
+    startLockedWorker(
+      'robinhood-holders', ROBINHOOD_HOLDER_RECONCILIATION_LEASE_KEY,
+      'Robinhood holder reconciliation worker', () => robinhoodHolderReconciliationWorker.start({
+        ...config.robinhoodHolderReconciliationWorker,
+        isLiveReady: () => {
+          const live = robinhoodHolderLiveWorker.getStatus();
+          return live.running === true && live.halted !== true && live.totalRuns > 0
+            && live.lastCompletedAt != null && live.lastError == null;
+        },
+        onFatal: (error) => workerLeaseManager.halt(
+          ROBINHOOD_HOLDER_RECONCILIATION_LEASE_KEY, error
+        ),
+      }), {
+        metadataProvider: () => ({ telemetry: robinhoodHolderReconciliationWorker.getStatus() }),
+      }
     );
   }
   if (config.robinhoodHolderJournalPruneWorker.enabled) {
@@ -989,6 +1010,7 @@ async function shutdownGracefully(signal = 'SIGTERM') {
       robinhoodHolderColdWorker.stop(),
       robinhoodHolderJournalPruneWorker.stop(),
       robinhoodHolderLiveWorker.stop(),
+      robinhoodHolderReconciliationWorker.stop(),
       robinhoodBackfillDiscoveryScanner.stop(),
       robinhoodBackfillMarketScanner.stop(),
       robinhoodBackfillRuntime.enrichment.stop(),

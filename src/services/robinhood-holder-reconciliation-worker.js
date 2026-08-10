@@ -101,9 +101,11 @@ function createRobinhoodHolderReconciliationWorker(deps = {}) {
   let activeRun = null;
   let running = false;
   let onFatal = null;
+  let isLiveReady = null;
   const status = {
     enabled: false, running: false, inFlight: false, halted: false,
     totalRuns: 0, totalPromoted: 0, totalMismatches: 0, totalUnavailable: 0,
+    totalWaitingLive: 0,
     totalErrors: 0, consecutiveErrors: 0,
     lastResult: null, lastError: null, lastCompletedAt: null,
   };
@@ -129,6 +131,12 @@ function createRobinhoodHolderReconciliationWorker(deps = {}) {
   async function execute() {
     status.inFlight = true; status.totalRuns += 1;
     try {
+      if (isLiveReady && !isLiveReady()) {
+        const result = Object.freeze({ status: 'waiting-live' });
+        status.totalWaitingLive += 1; status.lastResult = result;
+        status.lastError = null; status.consecutiveErrors = 0;
+        return result;
+      }
       const result = await (await runtime()).runOnce();
       status.lastResult = result; status.lastError = null; status.consecutiveErrors = 0;
       if (result.status === 'live') status.totalPromoted += 1;
@@ -169,6 +177,12 @@ function createRobinhoodHolderReconciliationWorker(deps = {}) {
     onFatal = typeof input.onFatal === 'function' ? input.onFatal : null;
     status.enabled = options.enabled;
     if (!options.enabled) return false;
+    if (typeof input.isLiveReady !== 'function') {
+      const error = new Error('holder reconciliation live readiness check is required');
+      error.code = 'configuration_error';
+      throw error;
+    }
+    isLiveReady = input.isLiveReady;
     status.halted = false; running = true; status.running = true; queueNext(0);
     return true;
   }

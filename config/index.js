@@ -471,6 +471,9 @@ const robinhoodHolderColdAdmittedBefore = parseOptionalTimestamp(
   process.env.ROBINHOOD_HOLDER_COLD_ADMITTED_BEFORE
 );
 const robinhoodHolderLiveEnabled = parseBoolean(process.env.ROBINHOOD_HOLDER_LIVE_ENABLED, false);
+const robinhoodHolderReconciliationEnabled = parseBoolean(
+  process.env.ROBINHOOD_HOLDER_RECONCILIATION_ENABLED, false
+);
 const telegramDeliveryIntervalMs = parseIntegerInRange(
   process.env.TELEGRAM_DELIVERY_INTERVAL_MS, 1_000, 250, 60_000
 );
@@ -541,6 +544,9 @@ if (robinhoodHolderBackfillEnabled && !robinhoodHolderBackfillAdmittedAfter) {
 }
 if (robinhoodHolderColdEnabled && !robinhoodHolderColdAdmittedBefore) {
   missing.push('ROBINHOOD_HOLDER_COLD_ADMITTED_BEFORE');
+}
+if (robinhoodHolderReconciliationEnabled && !robinhoodHolderLiveEnabled) {
+  missing.push('ROBINHOOD_HOLDER_LIVE_ENABLED=true for holder reconciliation');
 }
 if ((robinhoodHolderBackfillEnabled || robinhoodHolderColdEnabled || robinhoodHolderLiveEnabled)
     && !String(process.env.ROBINHOOD_RPC_URL || '').trim()) {
@@ -1024,6 +1030,37 @@ module.exports = {
       1000,
       60_000
     ),
+  },
+
+  robinhoodHolderReconciliationWorker: {
+    enabled: robinhoodHolderReconciliationEnabled,
+    intervalMs: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_RECONCILIATION_INTERVAL_MS, 30_000, 10_000, 900_000
+    ),
+    maxErrorBackoffMs: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_RECONCILIATION_MAX_ERROR_BACKOFF_MS,
+      900_000,
+      10_000,
+      3_600_000
+    ),
+    requiredMatches: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_RECONCILIATION_REQUIRED_MATCHES, 3, 2, 5
+    ),
+    blockscoutTimeoutMs: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_RECONCILIATION_BLOCKSCOUT_TIMEOUT_MS,
+      8_000,
+      1_000,
+      30_000
+    ),
+    requestOptions: {
+      requestsPerSecond: parseFloatInRange(
+        process.env.ROBINHOOD_HOLDER_RECONCILIATION_REQUESTS_PER_SECOND, 0.25, 0.1, 0.5
+      ),
+      concurrency: 1,
+      maxRetries: parseIntegerInRange(
+        process.env.ROBINHOOD_HOLDER_RECONCILIATION_REQUEST_MAX_RETRIES, 1, 0, 1
+      ),
+    },
   },
 
   robinhoodHolderJournalPruneWorker: {

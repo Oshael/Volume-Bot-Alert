@@ -349,6 +349,7 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_HOLDER_COLD_ENABLED: undefined,
       ROBINHOOD_HOLDER_COLD_ADMITTED_BEFORE: undefined,
       ROBINHOOD_HOLDER_LIVE_ENABLED: undefined,
+      ROBINHOOD_HOLDER_RECONCILIATION_ENABLED: undefined,
       ROBINHOOD_HOLDER_JOURNAL_PRUNE_ENABLED: undefined,
     }, (config) => {
       assert.equal(config.robinhoodHolderBackfillWorker.enabled, false);
@@ -356,6 +357,7 @@ describe('runtime worker groups config', () => {
       assert.equal(config.robinhoodHolderColdWorker.enabled, false);
       assert.equal(config.robinhoodHolderColdWorker.admittedBefore, null);
       assert.equal(config.robinhoodHolderLiveWorker.enabled, false);
+      assert.equal(config.robinhoodHolderReconciliationWorker.enabled, false);
       assert.equal(config.robinhoodHolderJournalPruneWorker.enabled, false);
     });
     withEnv({
@@ -385,6 +387,13 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_HOLDER_LIVE_CONFIRMATIONS: '9999',
       ROBINHOOD_HOLDER_LIVE_MAX_APPLY_EVENTS: '999999',
       ROBINHOOD_HOLDER_LIVE_RPC_TIMEOUT_MS: '1',
+      ROBINHOOD_HOLDER_RECONCILIATION_ENABLED: 'true',
+      ROBINHOOD_HOLDER_RECONCILIATION_INTERVAL_MS: '1',
+      ROBINHOOD_HOLDER_RECONCILIATION_MAX_ERROR_BACKOFF_MS: '9999999999',
+      ROBINHOOD_HOLDER_RECONCILIATION_REQUIRED_MATCHES: '99',
+      ROBINHOOD_HOLDER_RECONCILIATION_BLOCKSCOUT_TIMEOUT_MS: '1',
+      ROBINHOOD_HOLDER_RECONCILIATION_REQUESTS_PER_SECOND: '99',
+      ROBINHOOD_HOLDER_RECONCILIATION_REQUEST_MAX_RETRIES: '99',
       ROBINHOOD_HOLDER_JOURNAL_PRUNE_ENABLED: 'true',
       ROBINHOOD_HOLDER_JOURNAL_PRUNE_INTERVAL_MS: '1',
       ROBINHOOD_HOLDER_JOURNAL_PRUNE_MAX_ERROR_BACKOFF_MS: '1',
@@ -417,6 +426,14 @@ describe('runtime worker groups config', () => {
         confirmations: 1000,
         maxApplyEvents: 50_000,
         rpcTimeoutMs: 1000,
+      });
+      assert.deepEqual(config.robinhoodHolderReconciliationWorker, {
+        enabled: true,
+        intervalMs: 10_000,
+        maxErrorBackoffMs: 3_600_000,
+        requiredMatches: 5,
+        blockscoutTimeoutMs: 1000,
+        requestOptions: { requestsPerSecond: 0.5, concurrency: 1, maxRetries: 1 },
       });
       assert.deepEqual(config.robinhoodHolderJournalPruneWorker, {
         enabled: true,
@@ -458,6 +475,20 @@ describe('runtime worker groups config', () => {
     });
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /ROBINHOOD_HOLDER_COLD_ADMITTED_BEFORE/);
+  });
+
+  it('fails fast when holder reconciliation is enabled without live capture', () => {
+    const result = spawnSync(process.execPath, ['-e', "require('./config')"], {
+      cwd: ROOT_DIR,
+      env: {
+        ...process.env,
+        ROBINHOOD_HOLDER_LIVE_ENABLED: 'false',
+        ROBINHOOD_HOLDER_RECONCILIATION_ENABLED: 'true',
+      },
+      encoding: 'utf8',
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /ROBINHOOD_HOLDER_LIVE_ENABLED=true/);
   });
 
   it('keeps the DexScreener profile fast path disabled and bounded by default', () => {
