@@ -943,7 +943,9 @@ são opt-in e permanecem desligados por default; pull ou presença de
 `ROBINHOOD_RPC_URL` não os inicia. O live deve ser ligado antes dos backfills. Os
 backfills exigem cutoff durável e deployment exato `rpc_direct` ou
 `launchpad_event`; Blockscout sozinho fornece apenas hint para deployments
-diretos antigos, que precisam ser confirmados pelo RPC principal.
+diretos antigos, que precisam ser confirmados pelo RPC principal. A fila de
+replay prioriza o menor trabalho restante até a barreira live; estados antigos
+continuam duráveis e retomáveis, mas não bloqueiam tokens próximos do head.
 
 A reconciliação exige o live saudável e três counts Blockscout exatos e distintos
 antes de promover `shadow` para `live`. Divergência estável depois da promoção
