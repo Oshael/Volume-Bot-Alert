@@ -191,21 +191,51 @@ describe('Robinhood holder ledger persistence', () => {
           fromWallet: ALICE, toWallet: BOB, amountRaw: '1',
         }],
       });
+      await client.query(
+        `UPDATE robinhood_holder_token_states SET ledger_status = 'live'
+          WHERE token_address = $1`, [TOKEN_2]
+      );
       const persistent = await repository.applyNextPendingEvent();
       assert.equal(persistent.status, 'drift-suspected');
       assert.equal(persistent.recoverySafe, false);
-      assert.equal((await repository.applyNextPendingEvent({
-        confirmDriftFingerprint: persistent.fingerprint,
-      })).status, 'drifted');
-      const drifted = await client.query(
-        `SELECT state.ledger_status,
-                COUNT(*) FILTER (WHERE journal.applied = false)::int AS pending
+      const rolledBack = await repository.rollbackAppliedTail({
+        tokenAddress: persistent.tokenAddress,
+        backfillNextBlock: persistent.recoveryFromBlock,
+        failedBlock: persistent.failedBlock,
+        failedTransactionHash: persistent.failedTransactionHash,
+        failedLogIndex: persistent.failedLogIndex,
+      });
+      const { publication, ...rollbackSummary } = rolledBack;
+      assert.deepEqual(rollbackSummary, {
+        status: 'requeued', tokenAddress: TOKEN_2, priorStatus: 'live',
+        backfillNextBlock: '101', revertedEvents: 2,
+      });
+      assert.deepEqual({ ...publication, observedAt: undefined }, {
+        tokenAddress: TOKEN_2, invalidated: true, ledgerVersion: '3',
+        liveThroughBlock: '101', liveThroughHash: HASH_B, observedAt: undefined,
+      });
+      assert.ok(publication.observedAt instanceof Date);
+      const recoveredTail = await client.query(
+        `SELECT state.holder_count, state.ledger_status, state.live_through_block,
+                COUNT(*) FILTER (WHERE journal.applied = false)::int AS pending,
+                COUNT(*) FILTER (WHERE journal.applied = true)::int AS applied
            FROM robinhood_holder_token_states state
            INNER JOIN robinhood_holder_transfer_journal journal
              ON journal.token_address = state.token_address
-          WHERE state.token_address = $1 GROUP BY state.ledger_status`, [TOKEN_2]
+          WHERE state.token_address = $1
+          GROUP BY state.holder_count, state.ledger_status, state.live_through_block`, [TOKEN_2]
       );
-      assert.deepEqual(drifted.rows, [{ ledger_status: 'drifted', pending: 1 }]);
+      assert.deepEqual(recoveredTail.rows, [{
+        holder_count: '1', ledger_status: 'backfilling', live_through_block: null,
+        pending: 3, applied: 0,
+      }]);
+      const restoredTailBalances = await client.query(
+        `SELECT wallet_address, balance_raw FROM robinhood_holder_balances
+          WHERE token_address = $1 ORDER BY wallet_address`, [TOKEN_2]
+      );
+      assert.deepEqual(restoredTailBalances.rows.map((row) => [
+        row.wallet_address, String(row.balance_raw),
+      ]), [[ALICE, '1']]);
 
       await client.query(
         `UPDATE robinhood_holder_balances SET balance_raw = 5
@@ -238,7 +268,7 @@ describe('Robinhood holder ledger persistence', () => {
       });
       const { publications, ...rewindSummary } = rewoundResult;
       assert.deepEqual(rewindSummary, {
-        status: 'rewound', revertedEvents: 4, affectedTokens: 2,
+        status: 'rewound', revertedEvents: 2, affectedTokens: 1,
         resyncingTokens: 1, removedEvents: 5, cursorVersion: 2,
       });
       assert.deepEqual(publications.map(({ observedAt, ...publication }) => {
@@ -285,11 +315,11 @@ describe('Robinhood holder ledger persistence', () => {
         liveThroughHash: HASH_B, nextBlock: '100', safeHead: '199',
         checkpointBlock: '99', checkpointHash: HASH_B, version: 2, journalCount: 0,
       }]);
-      const stillDrifted = await client.query(
+      const stillRecovering = await client.query(
         `SELECT ledger_status FROM robinhood_holder_token_states WHERE token_address = $1`,
         [TOKEN_2]
       );
-      assert.equal(stillDrifted.rows[0].ledger_status, 'drifted');
+      assert.equal(stillRecovering.rows[0].ledger_status, 'backfilling');
       const crossedBaseline = await client.query(
         `SELECT ledger_status FROM robinhood_holder_token_states WHERE token_address = $1`,
         [TOKEN_3]

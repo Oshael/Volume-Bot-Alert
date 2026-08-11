@@ -56,6 +56,7 @@ describe('Robinhood holder live worker', () => {
       handoffStatus: 'shadow', handoffPromotions: 1, handoffResyncs: 0,
       capturedTransfers: 3, appliedEvents: 2, driftedTokens: 1,
       driftSuspicions: 0, receiptRecoveries: 0, driftDeferred: 0,
+      tailRollbacks: 0, tailRollbackEvents: 0,
       holderCountUpdates: 1, holderCountPublished: 1,
       applyBudgetExhausted: false,
     });

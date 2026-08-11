@@ -51,7 +51,8 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     throw new TypeError('holder live handoff is required');
   }
   if (typeof ledger?.applyNextPendingEvent !== 'function'
-      || typeof ledger?.repairCapturedRange !== 'function') {
+      || typeof ledger?.repairCapturedRange !== 'function'
+      || typeof ledger?.rollbackAppliedTail !== 'function') {
     throw new TypeError('holder live ledger is required');
   }
   if (typeof reader?.readReceiptRange !== 'function') {
@@ -90,8 +91,17 @@ function createRobinhoodHolderLiveRunner(options = {}) {
   }
 
   async function repairDrift(suspicion) {
-    if (suspicion.recoverySafe !== true || suspicion.recoveryFromBlock == null) {
-      return Object.freeze({ status: 'deferred', reason: 'live_tail_already_applied' });
+    if (suspicion.recoveryFromBlock == null) {
+      return Object.freeze({ status: 'deferred', reason: 'live_tail_baseline_unavailable' });
+    }
+    if (suspicion.recoverySafe !== true) {
+      return ledger.rollbackAppliedTail({
+        tokenAddress: suspicion.tokenAddress,
+        backfillNextBlock: suspicion.recoveryFromBlock,
+        failedBlock: suspicion.failedBlock,
+        failedTransactionHash: suspicion.failedTransactionHash,
+        failedLogIndex: suspicion.failedLogIndex,
+      });
     }
     const blocks = BigInt(suspicion.failedBlock) - BigInt(suspicion.recoveryFromBlock) + 1n;
     if (blocks < 1n || blocks > BigInt(receiptBlockLimit)) {
@@ -166,6 +176,8 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     let driftSuspicions = 0;
     let receiptRecoveries = 0;
     let driftDeferred = 0;
+    let tailRollbacks = 0;
+    let tailRollbackEvents = 0;
     const holderCountUpdates = new Map();
     while (applyAttempts < maxApplyEvents) {
       const excluded = deferredTokenAddresses();
@@ -188,6 +200,13 @@ function createRobinhoodHolderLiveRunner(options = {}) {
       } else if (applied.status === 'drift-suspected') {
         driftSuspicions += 1;
         const repair = await repairDrift(applied);
+        if (repair.status === 'requeued') {
+          tailRollbacks += 1;
+          tailRollbackEvents += Number(repair.revertedEvents) || 0;
+          driftEvidence.delete(applied.tokenAddress);
+          rememberHolderCountUpdate(holderCountUpdates, repair);
+          break;
+        }
         if (repair.status === 'repaired' && repair.insertedTransfers > 0) {
           receiptRecoveries += 1;
           driftEvidence.delete(applied.tokenAddress);
@@ -223,6 +242,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     return {
       appliedEvents, driftedTokens, applyAttempts, reachedIdle,
       driftSuspicions, receiptRecoveries, driftDeferred, holderCountUpdates,
+      tailRollbacks, tailRollbackEvents,
     };
   }
 
@@ -247,6 +267,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
       appliedEvents: drained.appliedEvents, driftedTokens: drained.driftedTokens,
       applyAttempts: drained.applyAttempts, driftSuspicions: drained.driftSuspicions,
       receiptRecoveries: drained.receiptRecoveries, driftDeferred: drained.driftDeferred,
+      tailRollbacks: drained.tailRollbacks, tailRollbackEvents: drained.tailRollbackEvents,
       holderCountUpdates: drained.holderCountUpdates.size, holderCountPublished,
       applyBudgetExhausted: !drained.reachedIdle && drained.applyAttempts === maxApplyEvents,
       nextBlock: prepared.captured.nextBlock, safeHead: prepared.captured.safeHead,

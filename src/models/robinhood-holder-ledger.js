@@ -344,8 +344,94 @@ function liveDeficit(transfer, row, balances) {
   return Object.freeze({
     status: 'drift-suspected', tokenAddress: transfer.tokenAddress,
     reason: 'holder_negative_balance', fingerprint,
-    failedBlock: transfer.blockNumber, recoveryFromBlock, recoverySafe,
+    failedBlock: transfer.blockNumber, failedTransactionHash: transfer.transactionHash,
+    failedLogIndex: transfer.logIndex, recoveryFromBlock, recoverySafe,
   });
+}
+
+function tailWalletSnapshots(rows) {
+  const snapshots = new Map();
+  for (const row of rows) {
+    for (const side of ['from', 'to']) {
+      const walletAddress = row[`${side}_wallet`];
+      if (walletAddress === ZERO_ADDRESS) continue;
+      const before = row[`${side}_balance_before`];
+      const after = row[`${side}_balance_after`];
+      if (before == null || after == null) throw new Error('holder tail evidence is incomplete');
+      if (!snapshots.has(walletAddress)) {
+        snapshots.set(walletAddress, {
+          walletAddress, balanceRaw: String(before),
+          blockNumber: row[`${side}_last_block_before`],
+          transactionHash: row[`${side}_last_transaction_hash_before`],
+          logIndex: row[`${side}_last_log_index_before`],
+        });
+      }
+      snapshots.get(walletAddress).expected = {
+        balanceRaw: String(after), blockNumber: String(row.block_number),
+        transactionHash: row.transaction_hash, logIndex: Number(row.log_index),
+      };
+    }
+  }
+  return [...snapshots.values()];
+}
+
+function assertTailBalances(snapshots, currentRows) {
+  const current = new Map(currentRows.map((row) => [row.wallet_address, row]));
+  for (const snapshot of snapshots) {
+    const row = current.get(snapshot.walletAddress);
+    const expected = snapshot.expected;
+    const matches = BigInt(expected.balanceRaw) === 0n ? !row : row
+      && String(row.balance_raw) === expected.balanceRaw
+      && String(row.last_block_number) === expected.blockNumber
+      && row.last_transaction_hash === expected.transactionHash
+      && Number(row.last_log_index) === expected.logIndex;
+    if (!matches) {
+      const error = new Error('holder balance no longer matches tail rollback evidence');
+      error.code = 'holder_tail_rollback_conflict';
+      throw error;
+    }
+  }
+}
+
+async function restoreTailBalances(client, tokenAddress, snapshots) {
+  const wallets = snapshots.map(({ walletAddress }) => walletAddress);
+  const current = await client.query(
+    `SELECT wallet_address, balance_raw, last_block_number,
+            last_transaction_hash, last_log_index
+       FROM robinhood_holder_balances
+      WHERE chain = 'robinhood' AND token_address = $1
+        AND wallet_address = ANY($2::varchar[]) FOR UPDATE`,
+    [tokenAddress, wallets]
+  );
+  assertTailBalances(snapshots, current.rows);
+  await client.query(
+    `DELETE FROM robinhood_holder_balances
+      WHERE chain = 'robinhood' AND token_address = $1
+        AND wallet_address = ANY($2::varchar[])`,
+    [tokenAddress, wallets]
+  );
+  const restored = snapshots.filter(({ balanceRaw }) => BigInt(balanceRaw) > 0n);
+  for (const snapshot of restored) {
+    if (snapshot.blockNumber == null || snapshot.transactionHash == null
+        || snapshot.logIndex == null) throw new Error('holder tail baseline provenance is missing');
+  }
+  if (!restored.length) return;
+  await client.query(
+    `INSERT INTO robinhood_holder_balances (
+       chain, token_address, wallet_address, balance_raw, last_block_number,
+       last_transaction_hash, last_log_index
+     ) SELECT 'robinhood', $1, item.wallet_address, item.balance_raw::numeric,
+              item.block_number::bigint, item.transaction_hash, item.log_index
+         FROM jsonb_to_recordset($2::jsonb) AS item(
+           wallet_address text, balance_raw text, block_number text,
+           transaction_hash text, log_index int
+         )`,
+    [tokenAddress, JSON.stringify(restored.map((snapshot) => ({
+      wallet_address: snapshot.walletAddress, balance_raw: snapshot.balanceRaw,
+      block_number: String(snapshot.blockNumber), transaction_hash: snapshot.transactionHash,
+      log_index: Number(snapshot.logIndex),
+    })))]
+  );
 }
 
 async function commitAppliedEvent(client, changes, priorProvenance) {
@@ -759,6 +845,116 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     });
   }
 
+  async function rollbackAppliedTail(input = {}) {
+    const tokenAddress = hex(input.tokenAddress, 20, 'tailRollback.tokenAddress');
+    const backfillNextBlock = decimalQuantity(
+      input.backfillNextBlock, 'tailRollback.backfillNextBlock'
+    );
+    const failedBlock = decimalQuantity(input.failedBlock, 'tailRollback.failedBlock');
+    const failedTransactionHash = hex(
+      input.failedTransactionHash, 32, 'tailRollback.failedTransactionHash'
+    );
+    const failedLogIndex = nonNegativeInteger(
+      input.failedLogIndex, 'tailRollback.failedLogIndex'
+    );
+    return withTransaction(database, async (client) => {
+      await client.query(
+        `SELECT next_block FROM robinhood_holder_cursors
+          WHERE chain = 'robinhood' AND stream = 'live' FOR UPDATE`
+      );
+      const stateResult = await client.query(
+        `SELECT holder_count, ledger_status, backfill_next_block,
+                live_through_block, live_through_hash, version
+           FROM robinhood_holder_token_states
+          WHERE chain = 'robinhood' AND token_address = $1
+            AND ledger_status IN ('shadow', 'live') FOR UPDATE`,
+        [tokenAddress]
+      );
+      const state = stateResult.rows[0];
+      if (!state || String(state.backfill_next_block) !== backfillNextBlock) {
+        const error = new Error('holder tail rollback state is stale');
+        error.code = 'holder_tail_rollback_stale';
+        throw error;
+      }
+      const pending = await client.query(
+        `SELECT block_number, transaction_hash, log_index
+           FROM robinhood_holder_transfer_journal
+          WHERE chain = 'robinhood' AND token_address = $1 AND applied = false
+          ORDER BY block_number, transaction_index, log_index
+          LIMIT 1 FOR UPDATE`,
+        [tokenAddress]
+      );
+      const failed = pending.rows[0];
+      if (!failed || String(failed.block_number) !== failedBlock
+          || failed.transaction_hash !== failedTransactionHash
+          || Number(failed.log_index) !== failedLogIndex) {
+        const error = new Error('holder tail rollback pending event is stale');
+        error.code = 'holder_tail_rollback_stale';
+        throw error;
+      }
+      const applied = await client.query(
+        `SELECT block_number, transaction_hash, transaction_index, log_index,
+                from_wallet, to_wallet, from_balance_before, from_balance_after,
+                to_balance_before, to_balance_after, holder_delta,
+                from_last_block_before, from_last_transaction_hash_before,
+                from_last_log_index_before, to_last_block_before,
+                to_last_transaction_hash_before, to_last_log_index_before
+           FROM robinhood_holder_transfer_journal
+          WHERE chain = 'robinhood' AND token_address = $1 AND applied = true
+            AND block_number >= $2::bigint
+          ORDER BY block_number, transaction_index, log_index FOR UPDATE`,
+        [tokenAddress, backfillNextBlock]
+      );
+      if (!applied.rowCount) {
+        const error = new Error('holder tail rollback has no applied evidence');
+        error.code = 'holder_tail_rollback_stale';
+        throw error;
+      }
+      await restoreTailBalances(client, tokenAddress, tailWalletSnapshots(applied.rows));
+      const holderDelta = applied.rows.reduce(
+        (total, row) => total + BigInt(row.holder_delta), 0n
+      );
+      const reverted = await client.query(
+        `UPDATE robinhood_holder_transfer_journal
+            SET from_balance_before = NULL, from_balance_after = NULL,
+                to_balance_before = NULL, to_balance_after = NULL,
+                holder_delta = NULL, from_last_block_before = NULL,
+                from_last_transaction_hash_before = NULL, from_last_log_index_before = NULL,
+                to_last_block_before = NULL, to_last_transaction_hash_before = NULL,
+                to_last_log_index_before = NULL, applied = false, applied_at = NULL
+          WHERE chain = 'robinhood' AND token_address = $1 AND applied = true
+            AND block_number >= $2::bigint`,
+        [tokenAddress, backfillNextBlock]
+      );
+      if (reverted.rowCount !== applied.rowCount) {
+        throw new Error('holder tail rollback journal changed while locked');
+      }
+      const reset = await client.query(
+        `UPDATE robinhood_holder_token_states
+            SET holder_count = holder_count - $3::bigint,
+                ledger_status = 'backfilling', live_through_block = NULL,
+                live_through_hash = NULL, version = version + 1, updated_at = NOW()
+          WHERE chain = 'robinhood' AND token_address = $1 AND version = $2::bigint
+            AND ledger_status IN ('shadow', 'live')
+            AND holder_count - $3::bigint >= 0
+          RETURNING version, updated_at`,
+        [tokenAddress, state.version, holderDelta.toString()]
+      );
+      if (!reset.rowCount) throw new Error('holder tail rollback state changed while locked');
+      const publication = state.ledger_status === 'live' ? Object.freeze({
+        tokenAddress, invalidated: true, ledgerVersion: String(reset.rows[0].version),
+        observedAt: reset.rows[0].updated_at,
+        liveThroughBlock: String(state.live_through_block),
+        liveThroughHash: state.live_through_hash,
+      }) : null;
+      return Object.freeze({
+        status: 'requeued', tokenAddress, priorStatus: state.ledger_status,
+        backfillNextBlock, revertedEvents: applied.rowCount,
+        ...(publication ? { publication } : {}),
+      });
+    });
+  }
+
   async function rewindOrphanedRange(input = {}) {
     const rewind = normalizeRewind(input);
     return withTransaction(database, async (client) => {
@@ -834,7 +1030,8 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
   }
 
   return Object.freeze({
-    appendCapturedRange, applyNextPendingEvent, repairCapturedRange, rewindOrphanedRange,
+    appendCapturedRange, applyNextPendingEvent, repairCapturedRange, rollbackAppliedTail,
+    rewindOrphanedRange,
     getCursor, listJournalBlockCheckpoints, listTrackedTokenAddresses,
   });
 }

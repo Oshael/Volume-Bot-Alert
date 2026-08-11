@@ -27,6 +27,12 @@ function harness(
         status: 'repaired', insertedTransfers: 0, duplicateTransfers: 0,
       };
     },
+    rollbackAppliedTail: async (input) => {
+      calls.push(['rollback-tail', input]);
+      return options.rollbackResults?.shift() || {
+        status: 'requeued', tokenAddress: input.tokenAddress, revertedEvents: 1,
+      };
+    },
   };
   const reader = {
     readReceiptRange: async (input) => {
@@ -68,6 +74,7 @@ describe('Robinhood holder live runner', () => {
       handoffStatus: 'idle', handoffPromotions: 0, handoffResyncs: 0,
       appliedEvents: 2, driftedTokens: 1, applyAttempts: 3,
       driftSuspicions: 0, receiptRecoveries: 0, driftDeferred: 0,
+      tailRollbacks: 0, tailRollbackEvents: 0,
       holderCountUpdates: 0, holderCountPublished: 0,
       applyBudgetExhausted: false, nextBlock: '106', safeHead: '105',
     });
@@ -96,6 +103,40 @@ describe('Robinhood holder live runner', () => {
     assert.equal(result.receiptRecoveries, 1);
     assert.equal(context.calls.filter(([name]) => name === 'receipts').length, 1);
     assert.equal(context.calls.filter(([name]) => name === 'apply').length, 3);
+  });
+
+  it('rolls back an applied tail and invalidates a previously live token', async () => {
+    const tokenAddress = `0x${'1'.repeat(40)}`;
+    const failedTransactionHash = `0x${'b'.repeat(64)}`;
+    const publication = { tokenAddress, invalidated: true, ledgerVersion: '9' };
+    const published = [];
+    const suspicion = {
+      status: 'drift-suspected', tokenAddress, fingerprint: 'unsafe-tail',
+      failedBlock: '110', failedTransactionHash, failedLogIndex: 3,
+      recoveryFromBlock: '100', recoverySafe: false,
+    };
+    const context = harness({
+      status: 'captured', transfers: 1, nextBlock: '111', safeHead: '110',
+    }, [suspicion, { status: 'idle' }], { status: 'idle' }, async (updates) => {
+      published.push(updates);
+      return updates.length;
+    }, { rollbackResults: [{
+      status: 'requeued', tokenAddress, revertedEvents: 7, publication,
+    }] });
+
+    const result = await context.runner.runOnce();
+
+    assert.equal(result.tailRollbacks, 1);
+    assert.equal(result.tailRollbackEvents, 7);
+    assert.equal(result.driftDeferred, 0);
+    assert.equal(context.calls.filter(([name]) => name === 'apply').length, 1);
+    assert.deepEqual(published, [[publication]]);
+    assert.deepEqual(context.calls.find(([name]) => name === 'rollback-tail'), [
+      'rollback-tail', {
+        tokenAddress, backfillNextBlock: '100', failedBlock: '110',
+        failedTransactionHash, failedLogIndex: 3,
+      },
+    ]);
   });
 
   it('isolates only after three spaced receipt-confirmed live deficits', async () => {
