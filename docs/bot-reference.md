@@ -985,6 +985,9 @@ pendentes até materialização e handoff. Materialização exige checkpoint can
 com pelo menos 2.000 blocos de finality. O rollback operacional é desligar apenas
 `ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ENABLED`, preservando campanha, balances e
 cursores para retomada; após attach, nunca promova manualmente baseline incompleto.
+Se receipts canônicos ainda reproduzem saldo negativo, somente esse token é
+excluído da coorte, seu baseline provisório é removido e o mesmo range é repetido;
+falhas de leitura permanecem retomáveis e não causam exclusão.
 
 Na aplicacao do tail `shadow/live`, saldo negativo tambem nao altera o estado.
 Enquanto o token ainda esta na barreira segura (`live_through_block` anterior a
