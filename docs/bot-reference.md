@@ -946,6 +946,10 @@ backfills exigem cutoff durável e deployment exato `rpc_direct` ou
 diretos antigos, que precisam ser confirmados pelo RPC principal. A fila de
 replay prioriza o menor trabalho restante até a barreira live; estados antigos
 continuam duráveis e retomáveis, mas não bloqueiam tokens próximos do head.
+Durante replay, saldo negativo isolado gera apenas `drift-suspected` e nao move
+cursor nem balances. O token so vira `drifted` depois de tres leituras consecutivas
+com o mesmo fingerprint de deficit; evidencia diferente reinicia a contagem e
+restart do processo descarta apenas essa evidencia transitoria em memoria.
 
 A reconciliação exige o live saudável e três counts Blockscout exatos e distintos
 antes de promover `shadow` para `live`. Divergência estável depois da promoção
