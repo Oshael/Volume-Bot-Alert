@@ -8,6 +8,7 @@ const {
 
 const TOKEN = `0x${'1'.repeat(40)}`;
 const DRIFT_TOKEN = `0x${'2'.repeat(40)}`;
+const PRIORITY_TOKEN = `0x${'5'.repeat(40)}`;
 const ALICE = `0x${'3'.repeat(40)}`;
 const BOB = `0x${'4'.repeat(40)}`;
 const ZERO = `0x${'0'.repeat(40)}`;
@@ -108,6 +109,15 @@ describe('Robinhood holder backfill persistence', () => {
       assert.deepEqual(await repository.getNextToken({ throughBlock: '103' }), {
         tokenAddress: TOKEN, deploymentBlock: '100', backfillNextBlock: '103',
         liveThroughBlock: '102', liveThroughHash: HASH_C, version: 2,
+      });
+      await client.query(
+        `INSERT INTO robinhood_holder_token_states (
+           token_address, ledger_status, deployment_block, backfill_next_block
+         ) VALUES ($1, 'backfilling', 150, 150)`, [PRIORITY_TOKEN]
+      );
+      assert.deepEqual(await repository.getNextToken({ throughBlock: '200' }), {
+        tokenAddress: PRIORITY_TOKEN, deploymentBlock: '150', backfillNextBlock: '150',
+        liveThroughBlock: null, liveThroughHash: null, version: 0,
       });
       assert.deepEqual(await repository.markResyncing({
         tokenAddress: TOKEN, backfillNextBlock: '103',

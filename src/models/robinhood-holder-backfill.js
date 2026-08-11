@@ -218,7 +218,7 @@ function createRobinhoodHolderBackfillRepository(options = {}) {
          FROM robinhood_holder_token_states
         WHERE chain = 'robinhood' AND ledger_status = 'backfilling'
           AND backfill_next_block <= $1
-        ORDER BY backfill_next_block, token_address
+        ORDER BY backfill_next_block DESC, token_address
         LIMIT 1`,
       [throughBlock]
     );
