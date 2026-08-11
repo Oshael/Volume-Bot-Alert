@@ -12,6 +12,7 @@ const {
 const HASH_A = `0x${'1'.repeat(64)}`;
 const HASH_B = `0x${'2'.repeat(64)}`;
 const HASH_C = `0x${'7'.repeat(64)}`;
+const HASH_D = `0x${'d'.repeat(64)}`;
 const TOKEN = `0x${'3'.repeat(40)}`;
 const TOKEN_2 = `0x${'6'.repeat(40)}`;
 const TOKEN_3 = `0x${'8'.repeat(40)}`;
@@ -141,7 +142,9 @@ describe('Robinhood holder ledger persistence', () => {
 
       await client.query(
         `INSERT INTO robinhood_holder_token_states
-          (token_address, holder_count, ledger_status) VALUES ($1, 1, 'shadow')`, [TOKEN_2]
+          (token_address, holder_count, ledger_status, backfill_next_block,
+           live_through_block, live_through_hash)
+         VALUES ($1, 1, 'shadow', 101, 100, $2)`, [TOKEN_2, HASH_A]
       );
       await client.query(
         `INSERT INTO robinhood_holder_balances (
@@ -150,19 +153,56 @@ describe('Robinhood holder ledger persistence', () => {
          ) VALUES ($1, $2, 1, 100, $3, 0)`, [TOKEN_2, ALICE, HASH_A]
       );
       await repository.appendCapturedRange(capture('101', HASH_B, 0, '101', {
-        transactionHash: HASH_B, tokenAddress: TOKEN_2,
+        transactionHash: HASH_B, transactionIndex: 1, tokenAddress: TOKEN_2,
       }));
-      assert.deepEqual(await repository.applyNextPendingEvent(), {
-        status: 'drifted', tokenAddress: TOKEN_2, reason: 'holder_negative_balance',
+      const suspicion = await repository.applyNextPendingEvent();
+      assert.deepEqual({
+        status: suspicion.status, tokenAddress: suspicion.tokenAddress,
+        failedBlock: suspicion.failedBlock, recoveryFromBlock: suspicion.recoveryFromBlock,
+        recoverySafe: suspicion.recoverySafe,
+      }, {
+        status: 'drift-suspected', tokenAddress: TOKEN_2,
+        failedBlock: '101', recoveryFromBlock: '101', recoverySafe: true,
       });
+      assert.deepEqual(await repository.repairCapturedRange({
+        tokenAddress: TOKEN_2, fromBlock: '101', toBlock: '101',
+        checkpoint: { number: '101', hash: HASH_B },
+        transfers: [{
+          blockNumber: '101', blockHash: HASH_B, transactionHash: HASH_D,
+          transactionIndex: 0, logIndex: 1, tokenAddress: TOKEN_2,
+          fromWallet: ZERO_ADDRESS, toWallet: ALICE, amountRaw: '3',
+        }],
+      }), {
+        status: 'repaired', tokenAddress: TOKEN_2,
+        insertedTransfers: 1, duplicateTransfers: 0,
+      });
+      assert.equal((await repository.applyNextPendingEvent()).status, 'applied');
+      assert.equal((await repository.applyNextPendingEvent()).status, 'applied');
+      await repository.repairCapturedRange({
+        tokenAddress: TOKEN_2, fromBlock: '101', toBlock: '101',
+        checkpoint: { number: '101', hash: HASH_B },
+        transfers: [{
+          blockNumber: '101', blockHash: HASH_B,
+          transactionHash: `0x${'9'.repeat(64)}`,
+          transactionIndex: 2, logIndex: 2, tokenAddress: TOKEN_2,
+          fromWallet: ALICE, toWallet: BOB, amountRaw: '1',
+        }],
+      });
+      const persistent = await repository.applyNextPendingEvent();
+      assert.equal(persistent.status, 'drift-suspected');
+      assert.equal(persistent.recoverySafe, false);
+      assert.equal((await repository.applyNextPendingEvent({
+        confirmDriftFingerprint: persistent.fingerprint,
+      })).status, 'drifted');
       const drifted = await client.query(
-        `SELECT state.ledger_status, journal.applied
+        `SELECT state.ledger_status,
+                COUNT(*) FILTER (WHERE journal.applied = false)::int AS pending
            FROM robinhood_holder_token_states state
            INNER JOIN robinhood_holder_transfer_journal journal
              ON journal.token_address = state.token_address
-          WHERE state.token_address = $1`, [TOKEN_2]
+          WHERE state.token_address = $1 GROUP BY state.ledger_status`, [TOKEN_2]
       );
-      assert.deepEqual(drifted.rows, [{ ledger_status: 'drifted', applied: false }]);
+      assert.deepEqual(drifted.rows, [{ ledger_status: 'drifted', pending: 1 }]);
 
       await client.query(
         `UPDATE robinhood_holder_balances SET balance_raw = 5
@@ -195,8 +235,8 @@ describe('Robinhood holder ledger persistence', () => {
       });
       const { publications, ...rewindSummary } = rewoundResult;
       assert.deepEqual(rewindSummary, {
-        status: 'rewound', revertedEvents: 2, affectedTokens: 1,
-        resyncingTokens: 1, removedEvents: 3, cursorVersion: 2,
+        status: 'rewound', revertedEvents: 4, affectedTokens: 2,
+        resyncingTokens: 1, removedEvents: 5, cursorVersion: 2,
       });
       assert.deepEqual(publications.map(({ observedAt, ...publication }) => {
         assert.ok(observedAt instanceof Date);

@@ -55,6 +55,7 @@ describe('Robinhood holder live worker', () => {
       status: 'completed', captureStatus: 'captured', nextBlock: '106', safeHead: '105',
       handoffStatus: 'shadow', handoffPromotions: 1, handoffResyncs: 0,
       capturedTransfers: 3, appliedEvents: 2, driftedTokens: 1,
+      driftSuspicions: 0, receiptRecoveries: 0, driftDeferred: 0,
       holderCountUpdates: 1, holderCountPublished: 1,
       applyBudgetExhausted: false,
     });
@@ -162,7 +163,7 @@ describe('Robinhood holder live worker', () => {
       ['capture', { ledger, reader }],
       ['handoffRepository', { database: 'database' }],
       ['handoff', { repository: handoffRepository, reader }],
-      ['runner', { capture, handoff, ledger, publishHolderCounts }],
+      ['runner', { capture, handoff, ledger, reader, publishHolderCounts }],
     ]);
   });
 });

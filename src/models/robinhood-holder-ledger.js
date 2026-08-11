@@ -231,7 +231,8 @@ async function lockNextApplicableEvent(client) {
   const result = await client.query(
     `SELECT journal.block_number, journal.block_hash, journal.transaction_hash,
             journal.transaction_index, journal.log_index, journal.token_address,
-            journal.from_wallet, journal.to_wallet, journal.amount_raw
+            journal.from_wallet, journal.to_wallet, journal.amount_raw,
+            state.backfill_next_block, state.live_through_block
        FROM robinhood_holder_transfer_journal journal
        INNER JOIN robinhood_holder_token_states state
          ON state.chain = journal.chain AND state.token_address = journal.token_address
@@ -306,12 +307,33 @@ async function persistBalance(client, transfer, transition) {
 }
 
 async function markTokenDrifted(client, tokenAddress) {
-  await client.query(
+  const result = await client.query(
     `UPDATE robinhood_holder_token_states
         SET ledger_status = 'drifted', version = version + 1, updated_at = NOW()
-      WHERE chain = 'robinhood' AND token_address = $1`,
+      WHERE chain = 'robinhood' AND token_address = $1
+        AND ledger_status IN ('shadow', 'live')
+      RETURNING token_address`,
     [tokenAddress]
   );
+  if (!result.rowCount) throw new Error('holder live drift confirmation is stale');
+}
+
+function liveDeficit(transfer, row, balances) {
+  const fingerprint = [
+    transfer.blockHash, transfer.transactionHash, transfer.logIndex,
+    transfer.fromWallet, transfer.amountRaw, balances[transfer.fromWallet] ?? '0',
+  ].join(':');
+  const recoveryFromBlock = row.backfill_next_block == null
+    ? null : String(row.backfill_next_block);
+  const recoverySafe = recoveryFromBlock !== null && (
+    row.live_through_block == null
+    || BigInt(row.live_through_block) < BigInt(recoveryFromBlock)
+  );
+  return Object.freeze({
+    status: 'drift-suspected', tokenAddress: transfer.tokenAddress,
+    reason: 'holder_negative_balance', fingerprint,
+    failedBlock: transfer.blockNumber, recoveryFromBlock, recoverySafe,
+  });
 }
 
 async function commitAppliedEvent(client, changes, priorProvenance) {
@@ -657,7 +679,50 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     });
   }
 
-  async function applyNextPendingEvent() {
+  async function repairCapturedRange(input = {}) {
+    const transfers = (Array.isArray(input.transfers) ? input.transfers : [])
+      .map(normalizeTransfer);
+    const tokenAddress = hex(input.tokenAddress, 20, 'repair.tokenAddress');
+    const fromBlock = decimalQuantity(input.fromBlock, 'repair.fromBlock');
+    const toBlock = decimalQuantity(input.toBlock, 'repair.toBlock');
+    const checkpointBlock = decimalQuantity(
+      input.checkpoint?.number, 'repair.checkpoint.number'
+    );
+    hex(input.checkpoint?.hash, 32, 'repair.checkpoint.hash');
+    if (BigInt(fromBlock) > BigInt(toBlock)
+        || checkpointBlock !== toBlock
+        || transfers.some((transfer) => transfer.tokenAddress !== tokenAddress
+          || BigInt(transfer.blockNumber) < BigInt(fromBlock)
+          || BigInt(transfer.blockNumber) > BigInt(toBlock))) {
+      throw new Error('holder repair range is invalid');
+    }
+    return withTransaction(database, async (client) => {
+      const cursor = await client.query(
+        `SELECT next_block, safe_head, journal_floor_block
+           FROM robinhood_holder_cursors
+          WHERE chain = 'robinhood' AND stream = 'live' FOR UPDATE`
+      );
+      const row = cursor.rows[0];
+      if (!row || row.journal_floor_block == null || row.safe_head == null
+          || BigInt(fromBlock) < BigInt(row.journal_floor_block)
+          || BigInt(toBlock) >= BigInt(row.next_block)
+          || BigInt(toBlock) > BigInt(row.safe_head)) {
+        const error = new Error('holder repair range is outside retained live evidence');
+        error.code = 'holder_live_repair_unavailable';
+        throw error;
+      }
+      let insertedTransfers = 0;
+      for (const transfer of transfers) {
+        if (await insertTransfer(client, transfer)) insertedTransfers += 1;
+      }
+      return Object.freeze({
+        status: 'repaired', tokenAddress, insertedTransfers,
+        duplicateTransfers: transfers.length - insertedTransfers,
+      });
+    });
+  }
+
+  async function applyNextPendingEvent(input = {}) {
     return withTransaction(database, async (client) => {
       const row = await lockNextApplicableEvent(client);
       if (!row) return Object.freeze({ status: 'idle' });
@@ -668,11 +733,15 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
         changes = deriveBalanceChanges(transfer, locked.balances);
       } catch (error) {
         if (error.code !== 'holder_negative_balance') throw error;
+        const suspicion = liveDeficit(transfer, row, locked.balances);
+        if (input.confirmDriftFingerprint == null) return suspicion;
+        if (String(input.confirmDriftFingerprint) !== suspicion.fingerprint) {
+          const stale = new Error('holder live drift evidence changed before confirmation');
+          stale.code = 'holder_live_drift_stale';
+          throw stale;
+        }
         await markTokenDrifted(client, transfer.tokenAddress);
-        return Object.freeze({
-          status: 'drifted', tokenAddress: transfer.tokenAddress,
-          reason: error.code,
-        });
+        return Object.freeze({ ...suspicion, status: 'drifted' });
       }
       return commitAppliedEvent(client, changes, locked.provenance);
     });
@@ -746,7 +815,7 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
   }
 
   return Object.freeze({
-    appendCapturedRange, applyNextPendingEvent, rewindOrphanedRange,
+    appendCapturedRange, applyNextPendingEvent, repairCapturedRange, rewindOrphanedRange,
     getCursor, listJournalBlockCheckpoints, listTrackedTokenAddresses,
   });
 }

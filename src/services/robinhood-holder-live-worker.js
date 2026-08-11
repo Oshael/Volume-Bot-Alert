@@ -66,7 +66,7 @@ async function buildRuntime(options, deps = {}) {
       repository: handoffRepository, reader,
     });
   const runner = deps.runner || (deps.runnerFactory || createRobinhoodHolderLiveRunner)({
-    capture, handoff, ledger,
+    capture, handoff, ledger, reader,
     publishHolderCounts: resolveHolderCountPublisher(deps),
   });
   return Object.freeze({ providerName: provider.name, runner });
@@ -93,6 +93,9 @@ function compactResult(result) {
     handoffResyncs: Number(result.handoffResyncs) || 0,
     appliedEvents: Number(result.appliedEvents) || 0,
     driftedTokens: Number(result.driftedTokens) || 0,
+    driftSuspicions: Number(result.driftSuspicions) || 0,
+    receiptRecoveries: Number(result.receiptRecoveries) || 0,
+    driftDeferred: Number(result.driftDeferred) || 0,
     applyBudgetExhausted: result.applyBudgetExhausted === true,
     holderCountUpdates: Number(result.holderCountUpdates) || 0,
     holderCountPublished: Number(result.holderCountPublished) || 0,
@@ -118,7 +121,8 @@ function createRobinhoodHolderLiveWorker(deps = {}) {
     totalCapturedTransfers: 0, totalAppliedEvents: 0,
     totalHolderCountUpdates: 0, totalHolderCountPublished: 0,
     totalHandoffPromotions: 0, totalHandoffResyncs: 0,
-    totalDriftedTokens: 0, totalRecoveries: 0, lastCompletedAt: null,
+    totalDriftedTokens: 0, totalDriftSuspicions: 0,
+    totalReceiptRecoveries: 0, totalRecoveries: 0, lastCompletedAt: null,
   };
 
   async function getRuntime() {
@@ -152,6 +156,8 @@ function createRobinhoodHolderLiveWorker(deps = {}) {
     status.totalHolderCountUpdates += Number(result.holderCountUpdates) || 0;
     status.totalHolderCountPublished += Number(result.holderCountPublished) || 0;
     status.totalDriftedTokens += Number(result.driftedTokens) || 0;
+    status.totalDriftSuspicions += Number(result.driftSuspicions) || 0;
+    status.totalReceiptRecoveries += Number(result.receiptRecoveries) || 0;
     if (result.status === 'recovered') status.totalRecoveries += 1;
   }
 

@@ -7,7 +7,7 @@ const {
 
 function harness(
   captureResult, applyResults = [], handoffResult = { status: 'idle' },
-  publishHolderCounts = async () => 0
+  publishHolderCounts = async () => 0, options = {}
 ) {
   const calls = [];
   const capture = {
@@ -17,9 +17,22 @@ function harness(
     },
   };
   const ledger = {
-    applyNextPendingEvent: async () => {
-      calls.push(['apply']);
+    applyNextPendingEvent: async (input) => {
+      calls.push(input ? ['apply', input] : ['apply']);
       return applyResults.shift() || { status: 'idle' };
+    },
+    repairCapturedRange: async (range) => {
+      calls.push(['repair', range]);
+      return options.repairResults?.shift() || {
+        status: 'repaired', insertedTransfers: 0, duplicateTransfers: 0,
+      };
+    },
+  };
+  const reader = {
+    readReceiptRange: async (input) => {
+      calls.push(['receipts', input]);
+      return { ...input, checkpoint: { number: input.toBlock, hash: `0x${'a'.repeat(64)}` },
+        transfers: [] };
     },
   };
   const handoff = {
@@ -30,7 +43,10 @@ function harness(
   };
   return {
     calls,
-    runner: createRobinhoodHolderLiveRunner({ capture, handoff, ledger, publishHolderCounts }),
+    runner: createRobinhoodHolderLiveRunner({
+      capture, handoff, ledger, reader, publishHolderCounts,
+      now: options.now, driftRecheckMs: options.driftRecheckMs,
+    }),
   };
 }
 
@@ -51,6 +67,7 @@ describe('Robinhood holder live runner', () => {
       status: 'completed', captureStatus: 'captured', capturedTransfers: 3,
       handoffStatus: 'idle', handoffPromotions: 0, handoffResyncs: 0,
       appliedEvents: 2, driftedTokens: 1, applyAttempts: 3,
+      driftSuspicions: 0, receiptRecoveries: 0, driftDeferred: 0,
       holderCountUpdates: 0, holderCountPublished: 0,
       applyBudgetExhausted: false, nextBlock: '106', safeHead: '105',
     });
@@ -59,6 +76,54 @@ describe('Robinhood holder live runner', () => {
       ['handoff'],
       ['apply'], ['apply'], ['apply'], ['apply'],
     ]);
+  });
+
+  it('repairs a missing live-tail transfer from receipts before retrying application', async () => {
+    const suspicion = {
+      status: 'drift-suspected', tokenAddress: `0x${'1'.repeat(40)}`,
+      fingerprint: 'deficit', failedBlock: '105', recoveryFromBlock: '103',
+      recoverySafe: true,
+    };
+    const context = harness({
+      status: 'captured', transfers: 1, nextBlock: '106', safeHead: '105',
+    }, [suspicion, { status: 'applied' }, { status: 'idle' }], { status: 'idle' },
+    async () => 0, { repairResults: [{ status: 'repaired', insertedTransfers: 1 }] });
+
+    const result = await context.runner.runOnce();
+
+    assert.equal(result.driftedTokens, 0);
+    assert.equal(result.driftSuspicions, 1);
+    assert.equal(result.receiptRecoveries, 1);
+    assert.equal(context.calls.filter(([name]) => name === 'receipts').length, 1);
+    assert.equal(context.calls.filter(([name]) => name === 'apply').length, 3);
+  });
+
+  it('isolates only after three spaced receipt-confirmed live deficits', async () => {
+    let nowMs = Date.parse('2026-08-11T00:00:00.000Z');
+    const suspicion = {
+      status: 'drift-suspected', tokenAddress: `0x${'1'.repeat(40)}`,
+      fingerprint: 'persistent-deficit', failedBlock: '105', recoveryFromBlock: '103',
+      recoverySafe: true,
+    };
+    const context = harness({
+      status: 'captured', transfers: 0, nextBlock: '106', safeHead: '105',
+    }, [suspicion, suspicion, suspicion, { status: 'drifted' }, { status: 'idle' }],
+    { status: 'idle' }, async () => 0, {
+      now: () => nowMs, driftRecheckMs: 60_000,
+      repairResults: Array.from({ length: 3 }, () => ({
+        status: 'repaired', insertedTransfers: 0, duplicateTransfers: 1,
+      })),
+    });
+
+    assert.equal((await context.runner.runOnce()).driftedTokens, 0);
+    nowMs += 60_000;
+    assert.equal((await context.runner.runOnce()).driftedTokens, 0);
+    nowMs += 60_000;
+    assert.equal((await context.runner.runOnce()).driftedTokens, 1);
+    assert.equal(context.calls.filter(([name]) => name === 'receipts').length, 3);
+    assert.equal(context.calls.some(([, input]) => (
+      input?.confirmDriftFingerprint === 'persistent-deficit'
+    )), true);
   });
 
   it('stops exactly at the apply budget without starting another capture', async () => {
