@@ -41,7 +41,7 @@ describe('Robinhood holder drift probe', () => {
       queries.push(sql);
       if (sql.includes('FROM robinhood_holder_token_states')) return { rows: [{
         token_address: TOKEN, deployment_block: '100', backfill_next_block: '110',
-        holder_count: '1',
+        holder_count: '1', version: '7',
       }] };
       if (sql.includes('FROM robinhood_holder_balances')) {
         return { rows: [{ wallet_address: ALICE, balance_raw: '5' }] };
@@ -71,6 +71,7 @@ describe('Robinhood holder drift probe', () => {
     assert.equal(result.results[0].classification, 'missing-or-implicit-credit-before-block');
     assert.equal(result.results[0].localBalanceAtBlockStart, '5');
     assert.equal(result.results[0].historicalBalanceAtPrecedingBlock, '9');
+    assert.equal(result.results[0].version, '7');
     assert.deepEqual(calls[0], ['eth_call', [{
       to: TOKEN, data: balanceOfData(ALICE),
     }, '0x6d']]);

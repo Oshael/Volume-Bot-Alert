@@ -5,6 +5,9 @@ const db = require('../src/models/db');
 const {
   createRobinhoodHolderBackfillRepository,
 } = require('../src/models/robinhood-holder-backfill');
+const {
+  __private: { requeueCandidate },
+} = require('../src/utils/robinhood-holder-drift-recovery');
 
 const TOKEN = `0x${'1'.repeat(40)}`;
 const DRIFT_TOKEN = `0x${'2'.repeat(40)}`;
@@ -133,6 +136,17 @@ describe('Robinhood holder backfill persistence', () => {
         tokenAddress: TOKEN, backfillNextBlock: '103',
       }), { status: 'resyncing', tokenAddress: TOKEN });
       assert.equal(await repository.getNextToken({ throughBlock: '103' }), null);
+      assert.equal(await requeueCandidate(client, {
+        tokenAddress: DRIFT_TOKEN, version: '1', backfillNextBlock: '200',
+      }), true);
+      assert.equal(await requeueCandidate(client, {
+        tokenAddress: DRIFT_TOKEN, version: '1', backfillNextBlock: '200',
+      }), false);
+      const recovered = await client.query(
+        `SELECT ledger_status, version FROM robinhood_holder_token_states
+          WHERE token_address = $1`, [DRIFT_TOKEN]
+      );
+      assert.deepEqual(recovered.rows[0], { ledger_status: 'backfilling', version: '2' });
     } finally {
       client.release();
     }

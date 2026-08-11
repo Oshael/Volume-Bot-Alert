@@ -31,6 +31,7 @@ function optionalAddress(value) {
 function normalizeOptions(input = {}) {
   return Object.freeze({
     tokenAddress: optionalAddress(input.tokenAddress),
+    afterTokenAddress: optionalAddress(input.afterTokenAddress),
     limit: boundedInteger(input.limit, 5, 1, 100, 'drift probe limit'),
     rangeSize: boundedInteger(input.rangeSize, 5000, 1, 5000, 'drift probe rangeSize'),
     confirmations: boundedInteger(input.confirmations, 12, 0, 1000, 'confirmations'),
@@ -101,19 +102,21 @@ function classifyDivergence(localBalanceAtBlockStart, historicalBalance) {
 
 async function loadDriftedStates(database, options) {
   const { rows } = await database.query(
-    `SELECT token_address, deployment_block, backfill_next_block, holder_count
+    `SELECT token_address, deployment_block, backfill_next_block, holder_count, version
        FROM robinhood_holder_token_states
       WHERE chain = 'robinhood' AND ledger_status = 'drifted'
         AND ($1::varchar IS NULL OR token_address = $1)
-      ORDER BY updated_at ASC, token_address ASC
-      LIMIT $2::int`,
-    [options.tokenAddress, options.limit]
+        AND ($2::varchar IS NULL OR token_address > $2)
+      ORDER BY token_address ASC
+      LIMIT $3::int`,
+    [options.tokenAddress, options.afterTokenAddress, options.limit]
   );
   return rows.map((row) => Object.freeze({
     tokenAddress: row.token_address,
     deploymentBlock: String(row.deployment_block),
     backfillNextBlock: String(row.backfill_next_block),
     holderCount: String(row.holder_count),
+    version: String(row.version),
   }));
 }
 
