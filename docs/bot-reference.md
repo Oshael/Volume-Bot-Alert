@@ -907,175 +907,49 @@ Stages confirmados:
 | 113 | proveniência RPC e cursor live independente para deployments diretos Robinhood |
 | 114 | proveniência DEV explícita por eventos de launchpads Robinhood conhecidos |
 | 115 | cursor retomável independente para backfill histórico DEV de launchpads |
+| 116 | ledger de holders Robinhood, estados por token, cursor live e journal reversível |
+| 117 | proveniência anterior necessária para rollback exato do journal de holders |
+| 118 | floor durável de retenção/rollback do journal de holders |
 | 119 | view não materializada para publicação de holders live-first e source diário `ledger_live` |
 
-O refresh de holders é um worker opt-in do grupo `robinhood-derived`: prioriza
-tokens ativos, faz backfill gradual dos demais e persiste backoff por token.
-`GET /api/robinhood/holders` entrega páginas Blockscout normalizadas de 50 itens,
-com summary cacheado e refresh prioritário best-effort na primeira página.
-As leituras de `monitored`, `recent`, `old-week` e da carga inicial de tokens
-manuais fazem `LEFT JOIN` somente no resumo persistido: tokens RH exibem a
-contagem e a idade do snapshot, enquanto outras chains ou resumos ausentes
-continuam exibindo `-`, sem request Blockscout por linha.
-Cada sucesso também atualiza o fechamento do dia UTC na Stage 112. A rota
-`GET /api/robinhood/holder-history` lê apenas PostgreSQL e entrega uma baseline
-mais até 30 fechamentos UTC por padrão, com total, delta e percentual; dias
-ausentes não são comparados como se fossem uma janela válida de 24 horas. A rota
-paginada permanece disponível para um consumidor futuro, mas o frontend do
-expanded chart não integra esta entrega enquanto seu layout não for aprovado.
+Holders RH possuem duas fontes complementares. A Stage 111 guarda o summary
+Blockscout usado como bootstrap/fallback; as Stages 116–118 mantêm o ledger local
+por eventos ERC-20 `Transfer`, com apenas balances positivos, journal reversível,
+detecção automática de reorg e retenção padrão de 20.000 blocos. A Stage 119 é a
+fronteira de leitura: publica o ledger somente quando o token está `live` e há
+cursor, usando o summary Blockscout nos demais estados. Ela não duplica dados.
 
-Esse worker Blockscout não é uma fonte realtime: o intervalo de seleção default é
-30 segundos e o refresh hot default é cinco minutos. A evolução aprovada para
-planejamento usa um ledger próprio reconstruído por eventos ERC-20 `Transfer`,
-com catch-up desde o deployment, cursor/reorg, publicação somente após commit e
-reconciliação periódica pelo Blockscout. Antes de implementar, um probe read-only
-deve medir logs, wallets únicas, custo de replay e crescimento do banco. O layout
-do expanded chart permanece sem aprovação de produto; o protótipo local não faz
-parte dos commits aprovados e não deve ser tratado como decisão de rollout.
+`monitored`, `recent`, `old-week`, pins, tokens manuais e o summary de
+`GET /api/robinhood/holders` consultam essa view em lote, sem RPC ou Blockscout por
+linha. Para `ledger_live`, freshness acompanha o avanço do cursor (`checked_at`);
+no fallback acompanha a última observação Blockscout. A lista paginada de 50
+wallets continua vindo do Blockscout e não é um snapshot atômico com o count.
+`GET /api/robinhood/holder-history` lê snapshots diários do PostgreSQL e não
+inventa comparação de 24 horas quando falta um dia. A escrita diária pelo ledger
+live, socket realtime e frontend do expanded chart ainda não estão concluídos.
 
-O primeiro artefato dessa fase é `npm run robinhood:holder-transfer-probe`: um
-probe RPC estritamente read-only e limitado que mede o tópico global `Transfer`,
-faz split adaptativo e estima upper bounds de ledger/cauda live sem criar cursor,
-schema ou publicação. O relatório não trata mint observado no sample como prova
-de deployment block; a execução real na VPS ainda é necessária antes do ledger.
-O complemento catalog-scoped é `npm run robinhood:holder-catalog-transfer-probe`:
-ele lê até 1.000 endereços recentes do catálogo por default, filtra `eth_getLogs`
-em batches de 100 e informa a cobertura sem extrapolar tokens não medidos. Para
-probes manuais na VPS, o endpoint do node live deve ser passado explicitamente,
-pois o `.env` do checkout pode diferir do EnvironmentFile da unit systemd.
-O RT2A adiciona somente a Stage 116 do ledger shadow: balances positivos em
-`NUMERIC(78,0)`, estado/total por token, cursor live e journal curto reversível.
-Não existe writer nem leitura pública desse ledger neste corte; Blockscout segue
-como fonte dos counts visíveis até promoção posterior.
-O RT2B1 adiciona o repositório de captura shadow: journal e cursor avançam na
-mesma transação, com conflito de evidência e optimistic version tratados como
-rollback. Ainda não existe runner nem aplicação dos eventos aos balances.
-O RT2B2 aplica serialmente o próximo evento elegível: balances positivos, total
-e before/after do journal são commitados juntos; saldo impossível marca apenas o
-token como `drifted`. Nenhum runner ou publicação foi ligado.
-O RT2C1 adiciona a Stage 117 e salva no journal curto a procedência anterior das
-duas wallets tocadas. Isso prepara uma reversão fiel dos balances sem criar
-histórico permanente; rollback, retenção, runner e publicação seguem desligados.
-O RT2C2 reverte atomicamente um range órfão em ordem inversa, restaura balances e
-totais, remove o journal do range e reposiciona o cursor no checkpoint canônico.
-Conflito de evidência aborta tudo; o runner e a publicação continuam desligados.
-A Stage 118 adiciona `journal_floor_block` nullable ao cursor holder. Floor
-ausente mantém poda/rollback dependente bloqueado; nenhum dado é apagado neste
-corte. A janela aprovada para o pruner independente é de 20.000 blocos.
-O RT2C4 implementa a poda transacional em lotes de 5.000 eventos aplicados. A
-primeira captura inicializa o floor; pendência anterior ao cutoff bloqueia deletes
-e o floor só avança após drenar o range. Ainda não existe scheduler para a poda.
-O mapa executivo em `docs/robinhood-token-holders-plan.md` é a fonte de verdade
-do rollout: Blockscout/summaries/snapshots continuam como bootstrap, fallback e
-store publicado; macros realtime 1 e 2 estão implementados, o macro 3 está em
-andamento e os macros 4 a 7 seguem pendentes.
-O RT3A inicia o macro 3 admitindo somente tokens catalogados após um cutoff
-operacional e com deployment exato `rpc_direct`/`launchpad_event`. Ele cria estado
-`backfilling` idempotente; replay RPC e worker permanecem desligados.
-O RT3B foi dividido em reader, persistencia e executor. O RT3B1 entrega somente o
-reader: chain ID 4663, um token por range, maximo de 5.000 blocos, split adaptativo,
-validacao integral dos logs e checkpoint. Ele nao escolhe provider nem grava DB.
-O RT3B2 aplica um range por token em transacao unica: calcula primeiro, faz writes
-em lote, remove saldos zero e avanca total/cursor/checkpoint juntos. Cursor stale
-falha fechado e saldo negativo marca o token `drifted`, sem commit parcial.
-O RT3B3 conecta selecao, reader e commit por uma chamada limitada. Ele exige
-`ROBINHOOD_RPC_URL`, usa safe head com 12 confirmacoes, isola checkpoint orfao como
-`resyncing` e nunca promove automaticamente para `shadow`; nao ha runner ligado.
-O RT3C adiciona o runner opt-in para tokens novos: admite uma coorte limitada com
-cutoff duravel obrigatorio e processa um unico range por tick, com single-flight e
-backoff. O RT4F1 abaixo faz o wiring no servidor mantendo-o desligado por default.
-O RT4A implementa o handoff transacional: exige cobertura pelo floor live, remove
-somente overlap pendente ja aplicado pelo backfill e exige igualdade exata de
-bloco/hash antes de promover para `shadow`. Continua desligado ate existir captura
-global `Transfer`.
-O RT4B captura um range global confirmado por chamada, filtra localmente somente
-tokens holder ativos, grava journal/cursor atomicamente e retorna `reorg-detected`
-sem write quando o checkpoint diverge. Ainda nao existe loop ou worker ligado.
-O RT4C1 preserva a barreira `backfill_next_block` apos o handoff como limite do
-baseline historico. Rewind dentro da cauda mantem o token ativo; rewind que cruza
-essa barreira (ou estado legado sem barreira conhecida) marca `resyncing` na mesma
-transacao. A deteccao automatica e conectada pelo RT4C2; o runner segue desligado.
-O RT4C2 usa busca binaria nos hashes de blocos com eventos ainda retidos para
-encontrar a ultima evidencia canonica e acionar o rewind atomico. Ausencia de
-evidencia dentro do floor retorna `reorg-unrecoverable` sem writes. Blocos vazios
-nao possuem hash historico persistido; loop e worker continuam desligados.
-O RT4D1 coordena um tick one-shot: captura um range confirmado e aplica ate 5.000
-eventos elegiveis por default. Recuperacao ou reorg sem evidencia encerram o tick
-antes de novas aplicacoes. Timer, lease central e wiring de worker continuam
-pendentes e desligados; o RT4E2 abaixo incorpora o seletor de handoff.
-O RT4D2 adiciona runtime e loop single-flight, ainda sem wiring. Ele usa somente
-`ROBINHOOD_RPC_URL`, valida chain ID 4663 no primeiro tick, aplica backoff e para
-como fatal em reorg sem evidencia. O modulo permanece desligado por default e nao
-e importado pelo servidor; lease, wiring e poda ainda estao pendentes.
-O RT4E1 elimina a barreira movel do handoff: seleciona um backfill ainda coberto
-pelo floor, verifica seu checkpoint no RPC, remove somente overlap anterior e
-preserva a cauda posterior para aplicacao em `shadow`. Checkpoint orfao isola o
-token como `resyncing`.
-O RT4E2 compoe um handoff por tick canonico antes do aplicador, usando o mesmo
-database e reader/RPC da captura. Recuperacao pula handoff e aplicacao; status
-desconhecido falha fechado. O RT4F1 abaixo adiciona lease/config opt-in.
-O RT4F1 cria o grupo isolado `robinhood-holders` e conecta live/backfill a leases
-distintas. As duas flags ficam false por default; RPC proprio e exigido ao ligar,
-e o backfill exige cutoff duravel. Pull/env de RPC nao inicia os workers. O rollout
-deve ligar live antes do backfill.
-O RT4F2 adiciona uma terceira lease opt-in para podar somente o journal holder,
-independente do retention geral e sem RPC. Mantem 20.000 blocos por default e
-limita cada tick a 5 lotes de 5.000; pull/grupo nao ativam a flag.
-O RT5A inicia o backfill frio admitindo, em lotes limitados, somente tokens
-anteriores ao cutoff que possuam deployment exato `rpc_direct` ou
-`launchpad_event`. Ele reutiliza o replay checkpointado existente e permanece sem
-runner. Uma atribuicao apenas Blockscout nao e usada como origem do bloco;
-throttle e cobertura de deployments diretos antigos continuam pendentes.
-O RT5B1 passa a preservar tambem o `txHash` fornecido por `getcontractcreation`,
-mas o trata somente como hint. A promocao para `rpc_direct` exige que o RPC da
-Robinhood confirme criacao top-level, creator, receipt, contract address e bloco
-canonico; a persistencia historica nao move o cursor live. Ainda nao existe runner
-para executar essa verificacao automaticamente.
-O RT5B2 compoe um tick frio one-shot: seleciona ate dez hints antigos com retry
-persistido, faz um unico batch Blockscout throttled, verifica cada deployment
-serialmente no RPC e executa somente um range de replay. Um token frio novo so e
-admitido quando o backlog esta idle, no maximo um por tick. Falha externa nao
-bloqueia o replay ja elegivel. O modulo continua sem timer, configuracao ou lease
-naquele subcorte e, portanto, ainda nao iniciava em producao.
-O RT5B3 conecta esse tick ao grupo isolado `robinhood-holders` com lease propria,
-timer single-flight, backoff, telemetria e shutdown gracioso. O worker frio exige
-flag, cutoff duravel e RPC principal; permanece false por default. Seu scheduler
-Blockscout usa 0,25 request/s e concorrencia 1 por default, e o verificador e o
-replay compartilham exclusivamente o RPC configurado da VPS.
-O RT6A inicia a promocao do ledger sem migration adicional: um coordenador
-transitorio exige tres counts Blockscout exatos e temporalmente distintos para o
-mesmo estado `shadow`. A sequencia vive somente em memoria e reinicia com seguranca
-apos restart; a transicao final reutiliza `last_reconciled_at`, version otimista e
-falha se existir cauda live pendente. Worker, drift continuo e publicacao seguem
-desligados e pendentes.
-O RT6B compoe esse coordenador em um runtime isolado ainda sem import no servidor.
-Ele consulta no maximo um token por tick por um scheduler Blockscout dedicado
-(0,25 request/s, concorrencia 1 e um retry por default), atualiza o summary/daily
-snapshot em sucesso e mantem single-flight, backoff e telemetria. A API do modulo
-e opt-in, mas nenhuma flag ou lease de producao existe nesse corte; pull/deploy
-continua incapaz de inicia-lo.
-O RT6C conecta o runtime ao grupo `robinhood-holders` sob lease exclusiva, health
-e shutdown gracioso. A flag de reconciliacao e false por default e exige que o
-worker live tambem esteja explicitamente habilitado; configuracao contraditoria
-falha no boot. Em runtime, o reconciliador espera ao menos um tick live saudavel
-e interrompe novas consultas enquanto live estiver parado, halted ou com erro.
-Nenhum count local e publicado por este wiring.
-O RT6D alterna promocao e auditoria dos estados `live`. Tres divergencias estaveis
-e distintas geram apenas `drift-suspected` na telemetria; igualdade gera
-`live-verified`. Como o count Blockscout nao possui bloco de referencia, esse sinal
-nao muda o status do ledger nem dispara resync automatico, evitando falso drift
-por diferenca de indexacao. Publicacao do count local segue pendente.
-O RT6E1 adiciona a Stage 119 sem nova tabela: a view
-`robinhood_published_holder_summaries` escolhe ledger `live` quando existe cursor
-e usa Blockscout como fallback. Ela expoe timestamps separados do commit do count
-e do avanco do cursor, alem de version/bloco para consumidores posteriores. A
-constraint dos snapshots diarios passa a aceitar `ledger_live`, mas nenhum reader
-ou writer muda neste subcorte. O RT6E2 conecta essa view aos readers de
-monitored/recent/old/manual e ao summary da rota paginada. Para `ledger_live`,
-freshness acompanha `checked_at` (avanco do cursor), nao o instante da ultima
-mudanca do count; a rota tambem deixa de enfileirar refresh Blockscout de summary
-quando o ledger live ja e a fonte publicada. Escrita/auditoria Blockscout seguem
-separadas como fallback, e socket/snapshots live continuam pendentes.
+O grupo `robinhood-holders` contém workers independentes de captura live,
+backfill de tokens novos, backfill frio, reconciliação e poda do journal. Todos
+são opt-in e permanecem desligados por default; pull ou presença de
+`ROBINHOOD_RPC_URL` não os inicia. O live deve ser ligado antes dos backfills. Os
+backfills exigem cutoff durável e deployment exato `rpc_direct` ou
+`launchpad_event`; Blockscout sozinho fornece apenas hint para deployments
+diretos antigos, que precisam ser confirmados pelo RPC principal.
+
+A reconciliação exige o live saudável e três counts Blockscout exatos e distintos
+antes de promover `shadow` para `live`. Divergência estável depois da promoção
+gera telemetria `drift-suspected`, mas não isola nem ressincroniza automaticamente,
+pois o Blockscout não ancora o count a um bloco. Reorg dentro do journal retido é
+revertido automaticamente; ausência de evidência canônica suficiente falha
+fechado. O refresh Blockscout legado continua opt-in no grupo
+`robinhood-derived` como fallback.
+
+Antes de subir readers live-first, a Stage 119 deve estar aplicada. Os probes
+read-only `npm run robinhood:holder-transfer-probe` e
+`npm run robinhood:holder-catalog-transfer-probe` medem volume/custo sem criar
+schema ou cursor; na VPS devem apontar explicitamente para o mesmo node configurado
+na unit systemd. O histórico de cortes e a ordem detalhada de rollout ficam apenas
+em `docs/robinhood-token-holders-plan.md`.
 
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.
