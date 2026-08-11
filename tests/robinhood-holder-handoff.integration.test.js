@@ -15,6 +15,7 @@ const BOB = `0x${'4'.repeat(40)}`;
 const HASH_A = `0x${'a'.repeat(64)}`;
 const HASH_B = `0x${'b'.repeat(64)}`;
 const HASH_C = `0x${'c'.repeat(64)}`;
+const RECOVERY_TOKEN = `0x${'6'.repeat(40)}`;
 
 after(() => db.pool.end());
 
@@ -132,6 +133,66 @@ describe('Robinhood holder live handoff persistence', () => {
       assert.deepEqual(remaining.rows.map((row) => [
         row.token_address, String(row.block_number), row.applied,
       ]), [[TOKEN, '105', true], [TOKEN, '107', true], [OTHER_TOKEN, '104', false]]);
+    } finally {
+      client.release();
+    }
+  });
+
+  it('keeps a requeued token in backfill until its first pending event is covered', async () => {
+    const client = await db.getClient();
+    try {
+      for (const table of [
+        'robinhood_holder_transfer_journal', 'robinhood_holder_cursors',
+        'robinhood_holder_token_states',
+      ]) {
+        await client.query(`CREATE TEMP TABLE IF NOT EXISTS ${table} (
+          LIKE public.${table} INCLUDING ALL
+        )`);
+        await client.query(`TRUNCATE ${table}`);
+      }
+      const handoff = createRobinhoodHolderHandoffRepository({
+        database: { query: client.query.bind(client) },
+      });
+      await client.query(
+        `INSERT INTO robinhood_holder_cursors (
+           next_block, safe_head, checkpoint_block, checkpoint_hash, journal_floor_block
+         ) VALUES (110, 109, 109, $1, 100)`, [HASH_C]
+      );
+      await client.query(
+        `INSERT INTO robinhood_holder_token_states (
+           token_address, holder_count, ledger_status, deployment_block,
+           backfill_next_block, live_through_block, live_through_hash
+         ) VALUES ($1, 0, 'backfilling', 90, 105, 104, $3),
+                  ($2, 0, 'backfilling', 90, 106, 105, $3)`,
+        [TOKEN, RECOVERY_TOKEN, HASH_A]
+      );
+      for (const event of [
+        journal(TOKEN, 105, HASH_B, 10),
+        journal(RECOVERY_TOKEN, 108, HASH_B, 11),
+      ]) {
+        await client.query(
+          `INSERT INTO robinhood_holder_transfer_journal (
+             block_number, block_hash, transaction_hash, transaction_index,
+             log_index, token_address, from_wallet, to_wallet, amount_raw
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          [
+            event.block, event.hash, event.transactionHash, event.transactionIndex,
+            event.logIndex, event.token, event.fromWallet, event.toWallet, event.amountRaw,
+          ]
+        );
+      }
+      assert.equal(await handoff.getNextCandidate(), null);
+      await client.query(
+        `UPDATE robinhood_holder_token_states
+            SET backfill_next_block = 108, live_through_block = 107,
+                live_through_hash = $1, version = version + 1
+          WHERE token_address = $2`,
+        [HASH_B, RECOVERY_TOKEN]
+      );
+      assert.deepEqual(await handoff.getNextCandidate(), {
+        tokenAddress: RECOVERY_TOKEN, backfillNextBlock: '108',
+        checkpoint: { number: '107', hash: HASH_B }, version: 1,
+      });
     } finally {
       client.release();
     }

@@ -146,18 +146,30 @@ function createRobinhoodHolderHandoffRepository(options = {}) {
 
   async function getNextCandidate() {
     const result = await database.query(
-      `SELECT state.token_address, state.backfill_next_block,
-              state.live_through_block, state.live_through_hash, state.version
-         FROM robinhood_holder_token_states state
-         INNER JOIN robinhood_holder_cursors cursor
-           ON cursor.chain = state.chain AND cursor.stream = 'live'
-        WHERE state.chain = 'robinhood' AND state.ledger_status = 'backfilling'
-          AND cursor.journal_floor_block IS NOT NULL
-          AND state.backfill_next_block BETWEEN cursor.journal_floor_block AND cursor.next_block
-          AND state.live_through_block + 1 = state.backfill_next_block
-          AND state.live_through_hash IS NOT NULL
-        ORDER BY state.backfill_next_block DESC, state.token_address
-        LIMIT 1`
+      `WITH candidate AS MATERIALIZED (
+         SELECT state.token_address, state.backfill_next_block,
+                state.live_through_block, state.live_through_hash, state.version
+           FROM robinhood_holder_token_states state
+           INNER JOIN robinhood_holder_cursors cursor
+             ON cursor.chain = state.chain AND cursor.stream = 'live'
+          WHERE state.chain = 'robinhood' AND state.ledger_status = 'backfilling'
+            AND cursor.journal_floor_block IS NOT NULL
+            AND state.backfill_next_block BETWEEN cursor.journal_floor_block AND cursor.next_block
+            AND state.live_through_block + 1 = state.backfill_next_block
+            AND state.live_through_hash IS NOT NULL
+          ORDER BY state.backfill_next_block DESC, state.token_address
+          LIMIT 1
+       )
+       SELECT candidate.* FROM candidate
+        WHERE candidate.backfill_next_block >= COALESCE((
+          SELECT journal.block_number
+            FROM robinhood_holder_transfer_journal journal
+           WHERE journal.chain = 'robinhood'
+             AND journal.token_address = candidate.token_address
+             AND journal.applied = false
+           ORDER BY journal.block_number, journal.transaction_index, journal.log_index
+           LIMIT 1
+        ), candidate.backfill_next_block)`
     );
     return candidateRow(result.rows[0]);
   }
