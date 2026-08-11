@@ -12,7 +12,7 @@ const TOKEN_C = `0x${'3'.repeat(40)}`;
 function result(tokenAddress, status, overrides = {}) {
   return {
     tokenAddress, status, deploymentBlock: '100', backfillNextBlock: '200',
-    holderCount: '1', version: '7', ...overrides,
+    liveThroughBlock: '199', holderCount: '1', version: '7', ...overrides,
   };
 }
 
@@ -40,6 +40,7 @@ describe('Robinhood holder drift recovery', () => {
     assert.deepEqual(cursors, [null, TOKEN_B]);
     assert.equal(recovered.mode, 'dry-run');
     assert.deepEqual(recovered.eligibleTokens, [TOKEN_A, TOKEN_C]);
+    assert.deepEqual(recovered.unsafeTokens, []);
     assert.deepEqual(recovered.requeuedTokens, []);
     assert.equal(recovered.remainingDrifted, 3);
     assert.equal(queries.every((sql) => /^\s*SELECT/.test(sql)), true);
@@ -54,6 +55,7 @@ describe('Robinhood holder drift recovery', () => {
     } };
     const probe = async () => ({ provider: 'node', safeHead: '500', results: [
       result(TOKEN_A, 'not-reproduced'),
+      result(TOKEN_C, 'not-reproduced', { liveThroughBlock: '250' }),
       result(TOKEN_B, 'deficit-found', { classification: 'archive-state-unavailable' }),
     ] });
 
@@ -63,10 +65,12 @@ describe('Robinhood holder drift recovery', () => {
 
     assert.equal(recovered.mode, 'confirmed');
     assert.deepEqual(recovered.requeuedTokens, [TOKEN_A]);
+    assert.deepEqual(recovered.unsafeTokens, [TOKEN_C]);
     assert.deepEqual(recovered.staleTokens, []);
     assert.equal(recovered.remainingDrifted, 1);
     const update = queries.find(([sql]) => /^\s*UPDATE/.test(sql));
     assert.deepEqual(update[1], [TOKEN_A, '7', '200']);
     assert.match(update[0], /ledger_status = 'drifted' AND version = \$2::bigint/);
+    assert.match(update[0], /live_through_block \+ 1 = backfill_next_block/);
   });
 });

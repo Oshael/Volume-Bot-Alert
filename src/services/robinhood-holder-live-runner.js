@@ -41,7 +41,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
   const receiptBatchSize = boundedInteger(
     options.receiptBatchSize, 25, 1, 100, 'receiptBatchSize'
   );
-  let driftEvidence = null;
+  const driftEvidence = new Map();
   const publishHolderCounts = typeof options.publishHolderCounts === 'function'
     ? options.publishHolderCounts : async () => 0;
   if (typeof capture?.captureOnce !== 'function') {
@@ -65,20 +65,28 @@ function createRobinhoodHolderLiveRunner(options = {}) {
   }
 
   function deferDrift(suspicion) {
-    driftEvidence = Object.freeze({
+    driftEvidence.set(suspicion.tokenAddress, Object.freeze({
       fingerprint: null, tokenAddress: suspicion.tokenAddress, observations: 0,
       nextObservationAtMs: clockMs() + driftRecheckMs,
-    });
+    }));
   }
 
   function observeDrift(suspicion) {
-    const observations = driftEvidence?.fingerprint === suspicion.fingerprint
-      ? driftEvidence.observations + 1 : 1;
-    driftEvidence = Object.freeze({
+    const previous = driftEvidence.get(suspicion.tokenAddress);
+    const observations = previous?.fingerprint === suspicion.fingerprint
+      ? previous.observations + 1 : 1;
+    driftEvidence.set(suspicion.tokenAddress, Object.freeze({
       fingerprint: suspicion.fingerprint, tokenAddress: suspicion.tokenAddress,
       observations, nextObservationAtMs: clockMs() + driftRecheckMs,
-    });
+    }));
     return observations;
+  }
+
+  function deferredTokenAddresses() {
+    const currentMs = clockMs();
+    return [...driftEvidence.values()]
+      .filter(({ nextObservationAtMs }) => nextObservationAtMs > currentMs)
+      .map(({ tokenAddress }) => tokenAddress);
   }
 
   async function repairDrift(suspicion) {
@@ -118,7 +126,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
       }) };
     }
     if (captured.status === 'reorg-rewound') {
-      driftEvidence = null;
+      driftEvidence.clear();
       const holderCountUpdates = rewindHolderUpdates(captured);
       const holderCountPublished = await publishCountUpdates(
         publishHolderCounts, holderCountUpdates
@@ -159,39 +167,45 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     let receiptRecoveries = 0;
     let driftDeferred = 0;
     const holderCountUpdates = new Map();
-    const waitingForDrift = driftEvidence?.nextObservationAtMs > clockMs();
-    if (waitingForDrift) driftDeferred = 1;
-    while (!waitingForDrift && applyAttempts < maxApplyEvents) {
-      const applied = await ledger.applyNextPendingEvent();
+    while (applyAttempts < maxApplyEvents) {
+      const excluded = deferredTokenAddresses();
+      const applied = await ledger.applyNextPendingEvent(
+        excluded.length ? { excludeTokenAddresses: excluded } : undefined
+      );
       if (applied.status === 'idle') {
-        reachedIdle = true;
+        reachedIdle = excluded.length === 0;
+        driftDeferred = Math.max(driftDeferred, excluded.length);
         break;
       }
       applyAttempts += 1;
       if (applied.status === 'applied') {
-        driftEvidence = null;
+        driftEvidence.delete(applied.tokenAddress);
         appliedEvents += 1;
         rememberHolderCountUpdate(holderCountUpdates, applied);
       } else if (applied.status === 'drifted') {
         driftedTokens += 1;
-        driftEvidence = null;
+        driftEvidence.delete(applied.tokenAddress);
       } else if (applied.status === 'drift-suspected') {
         driftSuspicions += 1;
         const repair = await repairDrift(applied);
         if (repair.status === 'repaired' && repair.insertedTransfers > 0) {
           receiptRecoveries += 1;
-          driftEvidence = null;
+          driftEvidence.delete(applied.tokenAddress);
           continue;
         }
         if (repair.status !== 'repaired') {
           deferDrift(applied);
           driftDeferred += 1;
-          break;
+          continue;
         }
         const observations = observeDrift(applied);
-        if (observations < 3) break;
+        if (observations < 3) {
+          driftDeferred += 1;
+          continue;
+        }
         const confirmed = await ledger.applyNextPendingEvent({
           confirmDriftFingerprint: applied.fingerprint,
+          onlyTokenAddress: applied.tokenAddress,
         });
         if (confirmed.status !== 'drifted') {
           const error = new Error('holder live drift confirmation did not isolate the token');
@@ -199,7 +213,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
           throw error;
         }
         driftedTokens += 1;
-        driftEvidence = null;
+        driftEvidence.delete(applied.tokenAddress);
       } else {
         const error = new Error(`unexpected holder apply status: ${applied.status}`);
         error.code = 'holder_live_apply_contract_error';

@@ -8,10 +8,14 @@ const {
 const {
   __private: { requeueCandidate },
 } = require('../src/utils/robinhood-holder-drift-recovery');
+const {
+  runCheckpointRepair, __private: { resetCandidate },
+} = require('../src/utils/repair-robinhood-holder-backfill-checkpoints');
 
 const TOKEN = `0x${'1'.repeat(40)}`;
 const DRIFT_TOKEN = `0x${'2'.repeat(40)}`;
 const PRIORITY_TOKEN = `0x${'5'.repeat(40)}`;
+const REPAIR_TOKEN = `0x${'6'.repeat(40)}`;
 const ALICE = `0x${'3'.repeat(40)}`;
 const BOB = `0x${'4'.repeat(40)}`;
 const ZERO = `0x${'0'.repeat(40)}`;
@@ -37,18 +41,19 @@ describe('Robinhood holder backfill persistence', () => {
         (LIKE public.robinhood_holder_balances INCLUDING ALL)`);
       await client.query(`CREATE TEMP TABLE robinhood_holder_token_states
         (LIKE public.robinhood_holder_token_states INCLUDING ALL)`);
+      await client.query(`CREATE TEMP TABLE robinhood_holder_transfer_journal
+        (LIKE public.robinhood_holder_transfer_journal INCLUDING ALL)`);
       await client.query(
         `INSERT INTO robinhood_holder_token_states (
            token_address, ledger_status, deployment_block, backfill_next_block
          ) VALUES ($1, 'backfilling', 100, 100), ($2, 'backfilling', 200, 200)`,
         [TOKEN, DRIFT_TOKEN]
       );
-      const repository = createRobinhoodHolderBackfillRepository({
-        database: {
-          query: client.query.bind(client),
-          getClient: async () => ({ query: client.query.bind(client), release() {} }),
-        },
-      });
+      const database = {
+        query: client.query.bind(client),
+        getClient: async () => ({ query: client.query.bind(client), release() {} }),
+      };
+      const repository = createRobinhoodHolderBackfillRepository({ database });
       const range = {
         tokenAddress: TOKEN, fromBlock: 100, toBlock: 101,
         checkpoint: { number: 101, hash: HASH_B },
@@ -154,6 +159,48 @@ describe('Robinhood holder backfill persistence', () => {
           WHERE token_address = $1`, [DRIFT_TOKEN]
       );
       assert.deepEqual(recovered.rows[0], { ledger_status: 'backfilling', version: '2' });
+
+      await client.query(
+        `INSERT INTO robinhood_holder_token_states (
+           token_address, holder_count, ledger_status, deployment_block,
+           backfill_next_block, live_through_block, live_through_hash
+         ) VALUES ($1, 1, 'backfilling', 100, 150, 200, $2)`, [REPAIR_TOKEN, HASH_A]
+      );
+      await client.query(
+        `INSERT INTO robinhood_holder_balances (
+           token_address, wallet_address, balance_raw, last_block_number,
+           last_transaction_hash, last_log_index
+         ) VALUES ($1, $2, 1, 200, $3, 0)`, [REPAIR_TOKEN, ALICE, HASH_A]
+      );
+      await client.query(
+        `INSERT INTO robinhood_holder_transfer_journal (
+           block_number, block_hash, transaction_hash, transaction_index, log_index,
+           token_address, from_wallet, to_wallet, amount_raw
+         ) VALUES (201, $1, $2, 0, 0, $3, $4, $5, 1)`,
+        [HASH_A, HASH_B, REPAIR_TOKEN, ALICE, BOB]
+      );
+      const preview = await runCheckpointRepair({ database });
+      assert.equal(preview.mode, 'dry-run');
+      assert.deepEqual(preview.candidates.map(({ tokenAddress }) => tokenAddress), [REPAIR_TOKEN]);
+      await client.query(
+        `UPDATE robinhood_holder_token_states SET version = version + 1
+          WHERE token_address = $1`, [REPAIR_TOKEN]
+      );
+      assert.equal(await resetCandidate(database, preview.candidates[0]), null);
+      const repair = await runCheckpointRepair({ database, confirm: true });
+      assert.equal(repair.repaired[0].restartBlock, '100');
+      assert.equal(repair.repaired[0].deletedBalances, 1);
+      assert.equal(repair.repaired[0].deletedJournalEvents, 1);
+      const reset = await client.query(
+        `SELECT holder_count, backfill_next_block, live_through_block, version
+           FROM robinhood_holder_token_states WHERE token_address = $1`, [REPAIR_TOKEN]
+      );
+      assert.deepEqual({
+        holderCount: String(reset.rows[0].holder_count),
+        nextBlock: String(reset.rows[0].backfill_next_block),
+        liveThroughBlock: reset.rows[0].live_through_block,
+        version: String(reset.rows[0].version),
+      }, { holderCount: '0', nextBlock: '100', liveThroughBlock: null, version: '2' });
     } finally {
       client.release();
     }

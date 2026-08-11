@@ -28,10 +28,16 @@ async function requeueCandidate(database, candidate) {
       WHERE chain = 'robinhood' AND token_address = $1
         AND ledger_status = 'drifted' AND version = $2::bigint
         AND backfill_next_block = $3::bigint
+        AND (live_through_block IS NULL OR live_through_block + 1 = backfill_next_block)
       RETURNING token_address, version`,
     [candidate.tokenAddress, candidate.version, candidate.backfillNextBlock]
   );
   return result.rowCount === 1;
+}
+
+function hasReplayCheckpoint(candidate) {
+  return candidate.liveThroughBlock == null
+    || BigInt(candidate.liveThroughBlock) + 1n === BigInt(candidate.backfillNextBlock);
 }
 
 async function countRemaining(database) {
@@ -49,6 +55,7 @@ function diagnostic(result) {
     status: result.status,
     classification: result.classification || null,
     backfillNextBlock: result.backfillNextBlock,
+    liveThroughBlock: result.liveThroughBlock ?? null,
     version: result.version,
   });
 }
@@ -57,6 +64,10 @@ async function processPage(results, context) {
   for (const result of results) {
     context.diagnostics.push(diagnostic(result));
     if (result.status !== 'not-reproduced') continue;
+    if (!hasReplayCheckpoint(result)) {
+      context.unsafeTokens.push(result.tokenAddress);
+      continue;
+    }
     context.eligibleTokens.push(result.tokenAddress);
     if (!context.confirm) continue;
     if (await requeueCandidate(context.database, result)) {
@@ -84,6 +95,7 @@ async function runDriftRecovery(input = {}) {
   const eligibleTokens = [];
   const requeuedTokens = [];
   const staleTokens = [];
+  const unsafeTokens = [];
   let afterTokenAddress = null;
   let provider = null;
   let safeHead = null;
@@ -100,7 +112,7 @@ async function runDriftRecovery(input = {}) {
     safeHead = page.safeHead ?? safeHead;
     await processPage(page.results, {
       database, confirm: options.confirm, diagnostics, eligibleTokens,
-      requeuedTokens, staleTokens,
+      requeuedTokens, staleTokens, unsafeTokens,
     });
     const nextCursor = nextPageCursor(page.results, options.batchSize, afterTokenAddress);
     if (nextCursor == null) break;
@@ -110,6 +122,7 @@ async function runDriftRecovery(input = {}) {
   return Object.freeze({
     mode: options.confirm ? 'confirmed' : 'dry-run', provider, safeHead,
     inspectedTokens: diagnostics.length, eligibleTokens: Object.freeze(eligibleTokens),
+    unsafeTokens: Object.freeze(unsafeTokens),
     requeuedTokens: Object.freeze(requeuedTokens), staleTokens: Object.freeze(staleTokens),
     remainingDrifted: await countRemaining(database),
     diagnostics: Object.freeze(diagnostics),
@@ -138,5 +151,5 @@ if (require.main === module) main().catch((error) => {
 
 module.exports = {
   runDriftRecovery,
-  __private: { nextPageCursor, normalizeOptions, requeueCandidate },
+  __private: { hasReplayCheckpoint, nextPageCursor, normalizeOptions, requeueCandidate },
 };

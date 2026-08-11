@@ -107,7 +107,11 @@ describe('Robinhood holder live runner', () => {
     };
     const context = harness({
       status: 'captured', transfers: 0, nextBlock: '106', safeHead: '105',
-    }, [suspicion, suspicion, suspicion, { status: 'drifted' }, { status: 'idle' }],
+    }, [
+      suspicion, { status: 'idle' },
+      suspicion, { status: 'idle' },
+      suspicion, { status: 'drifted' }, { status: 'idle' },
+    ],
     { status: 'idle' }, async () => 0, {
       now: () => nowMs, driftRecheckMs: 60_000,
       repairResults: Array.from({ length: 3 }, () => ({
@@ -123,6 +127,27 @@ describe('Robinhood holder live runner', () => {
     assert.equal(context.calls.filter(([name]) => name === 'receipts').length, 3);
     assert.equal(context.calls.some(([, input]) => (
       input?.confirmDriftFingerprint === 'persistent-deficit'
+    )), true);
+  });
+
+  it('defers one unrecoverable token without starving other token events', async () => {
+    const deferredToken = `0x${'1'.repeat(40)}`;
+    const context = harness({
+      status: 'captured', transfers: 0, nextBlock: '106', safeHead: '105',
+    }, [{
+      status: 'drift-suspected', tokenAddress: deferredToken,
+      fingerprint: 'wide-deficit', failedBlock: '700', recoveryFromBlock: '100',
+      recoverySafe: true,
+    }, {
+      status: 'applied', tokenAddress: `0x${'2'.repeat(40)}`,
+    }, { status: 'idle' }]);
+
+    const result = await context.runner.runOnce();
+
+    assert.equal(result.appliedEvents, 1);
+    assert.equal(result.driftDeferred, 1);
+    assert.equal(context.calls.some(([, input]) => (
+      input?.excludeTokenAddresses?.includes(deferredToken)
     )), true);
   });
 

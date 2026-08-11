@@ -155,6 +155,9 @@ describe('Robinhood holder ledger persistence', () => {
       await repository.appendCapturedRange(capture('101', HASH_B, 0, '101', {
         transactionHash: HASH_B, transactionIndex: 1, tokenAddress: TOKEN_2,
       }));
+      assert.deepEqual(await repository.applyNextPendingEvent({
+        excludeTokenAddresses: [TOKEN_2],
+      }), { status: 'idle' });
       const suspicion = await repository.applyNextPendingEvent();
       assert.deepEqual({
         status: suspicion.status, tokenAddress: suspicion.tokenAddress,

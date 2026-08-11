@@ -218,7 +218,16 @@ function deriveBalanceChanges(value, balances = {}) {
   });
 }
 
-async function lockNextApplicableEvent(client) {
+function tokenFilter(value, label) {
+  if (value == null) return [];
+  if (!Array.isArray(value) || value.length > 50_000) throw new Error(`${label} is invalid`);
+  return [...new Set(value.map((token) => hex(token, 20, label)))];
+}
+
+async function lockNextApplicableEvent(client, input = {}) {
+  const excluded = tokenFilter(input.excludeTokenAddresses, 'excluded token');
+  const onlyToken = input.onlyTokenAddress == null
+    ? null : hex(input.onlyTokenAddress, 20, 'only token');
   const cursor = await client.query(
     `SELECT next_block FROM robinhood_holder_cursors
       WHERE chain = 'robinhood' AND stream = 'live' FOR UPDATE`
@@ -238,9 +247,12 @@ async function lockNextApplicableEvent(client) {
          ON state.chain = journal.chain AND state.token_address = journal.token_address
         AND state.ledger_status IN ('shadow', 'live')
       WHERE journal.chain = 'robinhood' AND journal.applied = false
+        AND NOT (journal.token_address = ANY($1::varchar[]))
+        AND ($2::varchar IS NULL OR journal.token_address = $2)
       ORDER BY journal.block_number, journal.transaction_index, journal.log_index
       LIMIT 1
-      FOR UPDATE OF journal, state SKIP LOCKED`
+      FOR UPDATE OF journal, state SKIP LOCKED`,
+    [excluded, onlyToken]
   );
   return result.rows[0] || null;
 }
@@ -724,7 +736,7 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
 
   async function applyNextPendingEvent(input = {}) {
     return withTransaction(database, async (client) => {
-      const row = await lockNextApplicableEvent(client);
+      const row = await lockNextApplicableEvent(client, input);
       if (!row) return Object.freeze({ status: 'idle' });
       const transfer = transferFromRow(row);
       const locked = await loadLockedBalances(client, transfer);

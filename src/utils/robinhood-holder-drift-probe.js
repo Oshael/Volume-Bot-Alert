@@ -194,7 +194,8 @@ function classifyDivergence(localBalanceAtBlockStart, historicalBalance) {
 
 async function loadDriftedStates(database, options) {
   const { rows } = await database.query(
-    `SELECT token_address, deployment_block, backfill_next_block, holder_count, version
+    `SELECT token_address, deployment_block, backfill_next_block, holder_count,
+            live_through_block, live_through_hash, version
        FROM robinhood_holder_token_states
       WHERE chain = 'robinhood' AND ledger_status = 'drifted'
         AND ($1::varchar IS NULL OR token_address = $1)
@@ -207,6 +208,8 @@ async function loadDriftedStates(database, options) {
     tokenAddress: row.token_address,
     deploymentBlock: String(row.deployment_block),
     backfillNextBlock: String(row.backfill_next_block),
+    liveThroughBlock: row.live_through_block == null ? null : String(row.live_through_block),
+    liveThroughHash: row.live_through_hash,
     holderCount: String(row.holder_count),
     version: String(row.version),
   }));
