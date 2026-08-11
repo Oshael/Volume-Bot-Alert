@@ -927,8 +927,12 @@ wallets continua vindo do Blockscout e não é um snapshot atômico com o count.
 `GET /api/robinhood/holder-history` lê snapshots diários do PostgreSQL e não
 inventa comparação de 24 horas quando falta um dia. O worker diário `ledger_live`
 é opt-in por `ROBINHOOD_HOLDER_SNAPSHOT_ENABLED`, exige captura live habilitada e
-saudável e grava batches limitados; socket realtime e frontend do expanded chart
-ainda não estão concluídos.
+saudável e grava batches limitados. O backend publica `holder:count` sequenciado
+via relay PostgreSQL para as mesmas rooms por token já usadas pelo mercado.
+Mudanças do mesmo token são
+coalescidas por tick e emitidas somente após commit; REST continua sendo o caminho
+de bootstrap/recuperação. O consumidor frontend e a invalidação explícita após
+rewind de reorg ainda não estão concluídos.
 
 O grupo `robinhood-holders` contém workers independentes de captura live,
 backfill de tokens novos, backfill frio, reconciliação, snapshot e poda do
