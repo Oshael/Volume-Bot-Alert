@@ -59,6 +59,7 @@
     "robinhood:backfill-provider-probe": "node src/utils/robinhood-backfill-provider-probe.js",
     "robinhood:holder-transfer-probe": "node src/utils/robinhood-holder-transfer-probe.js",
     "robinhood:holder-catalog-transfer-probe": "ROBINHOOD_HOLDER_TRANSFER_PROBE_SCOPE=catalog node src/utils/robinhood-holder-transfer-probe.js",
+    "robinhood:holder-drift-probe": "node src/utils/robinhood-holder-drift-probe.js",
     "robinhood:v2-dry-run": "node src/utils/robinhood-v2-fixture-dry-run.js",
     "robinhood:v3-dry-run": "node src/utils/robinhood-v3-fixture-dry-run.js",
     "robinhood:noxa-dry-run": "node src/utils/robinhood-noxa-fixture-dry-run.js",
