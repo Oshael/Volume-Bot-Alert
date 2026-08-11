@@ -959,8 +959,13 @@ Antes de subir readers live-first, a Stage 119 deve estar aplicada. Os probes
 read-only `npm run robinhood:holder-transfer-probe` e
 `npm run robinhood:holder-catalog-transfer-probe` medem volume/custo sem criar
 schema ou cursor; na VPS devem apontar explicitamente para o mesmo node configurado
-na unit systemd. O histórico de cortes e a ordem detalhada de rollout ficam apenas
-em `docs/robinhood-token-holders-plan.md`.
+na unit systemd. `npm run robinhood:holder-drift-probe` inspeciona, sem writes, ate
+cinco tokens `drifted` por default: reproduz o primeiro deficit no range pendente e
+compara o ledger no inicio do bloco com `balanceOf` historico. Na VPS, execute-o com
+`ROBINHOOD_RPC_URL=http://127.0.0.1:8547`; token, limite e range podem ser limitados
+por `ROBINHOOD_HOLDER_DRIFT_PROBE_TOKEN`, `_LIMIT` e `_RANGE_SIZE`. O histórico de
+cortes e a ordem detalhada de rollout ficam apenas em
+`docs/robinhood-token-holders-plan.md`.
 
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.
