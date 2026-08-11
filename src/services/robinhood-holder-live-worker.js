@@ -7,6 +7,7 @@ const {
 } = require('./robinhood-holder-handoff-coordinator');
 const { createRobinhoodHolderLiveCapture } = require('./robinhood-holder-live-capture');
 const { createRobinhoodHolderLiveRunner } = require('./robinhood-holder-live-runner');
+const holderCountRealtime = require('./robinhood-holder-count-realtime');
 const { resolveRobinhoodHolderRpcProvider } = require('./robinhood-holder-rpc');
 const { createRobinhoodHolderTransferReader } = require('./robinhood-holder-transfer-reader');
 
@@ -36,6 +37,10 @@ function normalizeOptions(options = {}, env = process.env) {
   });
 }
 
+function resolveHolderCountPublisher(deps) {
+  return deps.publishHolderCounts || holderCountRealtime.publishUpdates;
+}
+
 async function buildRuntime(options, deps = {}) {
   const database = deps.database || db;
   const provider = resolveRobinhoodHolderRpcProvider(
@@ -62,6 +67,7 @@ async function buildRuntime(options, deps = {}) {
     });
   const runner = deps.runner || (deps.runnerFactory || createRobinhoodHolderLiveRunner)({
     capture, handoff, ledger,
+    publishHolderCounts: resolveHolderCountPublisher(deps),
   });
   return Object.freeze({ providerName: provider.name, runner });
 }
@@ -88,6 +94,8 @@ function compactResult(result) {
     appliedEvents: Number(result.appliedEvents) || 0,
     driftedTokens: Number(result.driftedTokens) || 0,
     applyBudgetExhausted: result.applyBudgetExhausted === true,
+    holderCountUpdates: Number(result.holderCountUpdates) || 0,
+    holderCountPublished: Number(result.holderCountPublished) || 0,
   });
 }
 
@@ -108,6 +116,7 @@ function createRobinhoodHolderLiveWorker(deps = {}) {
     providerName: null, lastResult: null, lastError: null,
     totalRuns: 0, totalErrors: 0, consecutiveErrors: 0,
     totalCapturedTransfers: 0, totalAppliedEvents: 0,
+    totalHolderCountUpdates: 0, totalHolderCountPublished: 0,
     totalHandoffPromotions: 0, totalHandoffResyncs: 0,
     totalDriftedTokens: 0, totalRecoveries: 0, lastCompletedAt: null,
   };
@@ -140,6 +149,8 @@ function createRobinhoodHolderLiveWorker(deps = {}) {
     status.totalHandoffPromotions += Number(result.handoffPromotions) || 0;
     status.totalHandoffResyncs += Number(result.handoffResyncs) || 0;
     status.totalAppliedEvents += Number(result.appliedEvents) || 0;
+    status.totalHolderCountUpdates += Number(result.holderCountUpdates) || 0;
+    status.totalHolderCountPublished += Number(result.holderCountPublished) || 0;
     status.totalDriftedTokens += Number(result.driftedTokens) || 0;
     if (result.status === 'recovered') status.totalRecoveries += 1;
   }

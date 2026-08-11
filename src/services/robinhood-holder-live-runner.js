@@ -6,10 +6,23 @@ function boundedInteger(value, fallback, minimum, maximum, label) {
   return parsed;
 }
 
+function rememberHolderCountUpdate(updates, applied) {
+  if (applied.publication) {
+    updates.set(applied.publication.tokenAddress, applied.publication);
+  }
+}
+
+async function publishCountUpdates(publish, updates) {
+  if (updates.size === 0) return 0;
+  return Number(await publish([...updates.values()])) || 0;
+}
+
 function createRobinhoodHolderLiveRunner(options = {}) {
   const capture = options.capture;
   const handoff = options.handoff;
   const ledger = options.ledger;
+  const publishHolderCounts = typeof options.publishHolderCounts === 'function'
+    ? options.publishHolderCounts : async () => 0;
   if (typeof capture?.captureOnce !== 'function') {
     throw new TypeError('holder live capture is required');
   }
@@ -35,6 +48,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
         checkedCheckpoints: captured.checkedCheckpoints,
         handoffStatus: 'skipped', handoffPromotions: 0, handoffResyncs: 0,
         appliedEvents: 0, driftedTokens: 0, applyAttempts: 0,
+        holderCountUpdates: 0, holderCountPublished: 0,
         applyBudgetExhausted: false,
       });
     }
@@ -47,6 +61,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
         resyncingTokens: Number(captured.resyncingTokens) || 0,
         handoffStatus: 'skipped', handoffPromotions: 0, handoffResyncs: 0,
         appliedEvents: 0, driftedTokens: 0, applyAttempts: 0,
+        holderCountUpdates: 0, holderCountPublished: 0,
         applyBudgetExhausted: false,
       });
     }
@@ -67,6 +82,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     let driftedTokens = 0;
     let applyAttempts = 0;
     let reachedIdle = false;
+    const holderCountUpdates = new Map();
     while (applyAttempts < maxApplyEvents) {
       const applied = await ledger.applyNextPendingEvent();
       if (applied.status === 'idle') {
@@ -74,14 +90,19 @@ function createRobinhoodHolderLiveRunner(options = {}) {
         break;
       }
       applyAttempts += 1;
-      if (applied.status === 'applied') appliedEvents += 1;
-      else if (applied.status === 'drifted') driftedTokens += 1;
+      if (applied.status === 'applied') {
+        appliedEvents += 1;
+        rememberHolderCountUpdate(holderCountUpdates, applied);
+      } else if (applied.status === 'drifted') driftedTokens += 1;
       else {
         const error = new Error(`unexpected holder apply status: ${applied.status}`);
         error.code = 'holder_live_apply_contract_error';
         throw error;
       }
     }
+    const holderCountPublished = await publishCountUpdates(
+      publishHolderCounts, holderCountUpdates
+    );
     return Object.freeze({
       status: 'completed', captureStatus: captured.status,
       capturedTransfers: Number(captured.transfers) || 0,
@@ -89,6 +110,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
       handoffPromotions: handoffStatus === 'shadow' ? 1 : 0,
       handoffResyncs: handoffStatus === 'resyncing' ? 1 : 0,
       appliedEvents, driftedTokens, applyAttempts,
+      holderCountUpdates: holderCountUpdates.size, holderCountPublished,
       applyBudgetExhausted: !reachedIdle && applyAttempts === maxApplyEvents,
       nextBlock: captured.nextBlock, safeHead: captured.safeHead,
     });

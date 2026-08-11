@@ -25,6 +25,7 @@ function completed(overrides = {}) {
     status: 'completed', captureStatus: 'captured', nextBlock: '106', safeHead: '105',
     handoffStatus: 'shadow', handoffPromotions: 1, handoffResyncs: 0,
     capturedTransfers: 3, appliedEvents: 2, driftedTokens: 1,
+    holderCountUpdates: 1, holderCountPublished: 1,
     applyBudgetExhausted: false, ...overrides,
   };
 }
@@ -54,9 +55,11 @@ describe('Robinhood holder live worker', () => {
       status: 'completed', captureStatus: 'captured', nextBlock: '106', safeHead: '105',
       handoffStatus: 'shadow', handoffPromotions: 1, handoffResyncs: 0,
       capturedTransfers: 3, appliedEvents: 2, driftedTokens: 1,
+      holderCountUpdates: 1, holderCountPublished: 1,
       applyBudgetExhausted: false,
     });
     assert.equal(worker.getStatus().totalAppliedEvents, 2);
+    assert.equal(worker.getStatus().totalHolderCountPublished, 1);
     assert.equal(worker.getStatus().totalHandoffPromotions, 1);
     await worker.stop();
     assert.equal(clock.cancelled.length, 1);
@@ -124,6 +127,7 @@ describe('Robinhood holder live worker', () => {
     const handoffRepository = { getNextCandidate() {} };
     const handoff = { runOnce() {} };
     const runner = { runOnce() {} };
+    const publishHolderCounts = async () => 0;
     const runtime = await buildRuntime({ rpcTimeoutMs: 9000 }, {
       env: {
         ROBINHOOD_RPC_URL: 'http://127.0.0.1:8547',
@@ -142,6 +146,7 @@ describe('Robinhood holder live worker', () => {
       },
       handoffFactory: (input) => { calls.push(['handoff', input]); return handoff; },
       runnerFactory: (input) => { calls.push(['runner', input]); return runner; },
+      publishHolderCounts,
       database: 'database',
     });
 
@@ -157,7 +162,7 @@ describe('Robinhood holder live worker', () => {
       ['capture', { ledger, reader }],
       ['handoffRepository', { database: 'database' }],
       ['handoff', { repository: handoffRepository, reader }],
-      ['runner', { capture, handoff, ledger }],
+      ['runner', { capture, handoff, ledger, publishHolderCounts }],
     ]);
   });
 });

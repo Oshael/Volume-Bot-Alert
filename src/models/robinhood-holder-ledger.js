@@ -327,7 +327,8 @@ async function commitAppliedEvent(client, changes, priorProvenance) {
         AND ledger_status IN ('shadow', 'live')
         AND holder_count + $2::smallint >= 0
         AND (live_through_block IS NULL OR live_through_block <= $3)
-      RETURNING holder_count, version`,
+      RETURNING holder_count, version, ledger_status, updated_at,
+                live_through_block, live_through_hash`,
     [
       changes.transfer.tokenAddress, changes.holderDelta,
       changes.transfer.blockNumber, changes.transfer.blockHash,
@@ -359,9 +360,20 @@ async function commitAppliedEvent(client, changes, priorProvenance) {
     ]
   );
   if (!journal.rowCount) throw new Error('holder journal event was concurrently applied');
+  const row = state.rows[0];
+  const publication = row.ledger_status === 'live' && changes.holderDelta !== 0
+    ? Object.freeze({
+        tokenAddress: changes.transfer.tokenAddress,
+        holderCount: String(row.holder_count), ledgerVersion: String(row.version),
+        observedAt: row.updated_at,
+        liveThroughBlock: String(row.live_through_block),
+        liveThroughHash: row.live_through_hash,
+      })
+    : null;
   return Object.freeze({
     status: 'applied', tokenAddress: changes.transfer.tokenAddress,
-    holderCount: String(state.rows[0].holder_count), holderDelta: changes.holderDelta,
+    holderCount: String(row.holder_count), holderDelta: changes.holderDelta,
+    ...(publication ? { publication } : {}),
   });
 }
 

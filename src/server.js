@@ -89,6 +89,7 @@ const gmgnClaimSignalWorker = require('./services/gmgn-claim-signal-worker');
 const backendAlertRealtime = require('./services/backend-alert-realtime');
 const marketBucketRealtime = require('./services/market-bucket-realtime');
 const marketTradeRealtime = require('./services/market-trade-realtime');
+const robinhoodHolderCountRealtime = require('./services/robinhood-holder-count-realtime');
 const {
   createRobinhoodMarketBucketFanout,
 } = require('./services/robinhood-market-bucket-fanout');
@@ -308,6 +309,7 @@ app.get('/api/admin/ws-status', authenticate, requireAdmin, async (req, res) => 
     robinhoodHolderLiveWorker: robinhoodHolderLiveWorker.getStatus(),
     robinhoodHolderReconciliationWorker: robinhoodHolderReconciliationWorker.getStatus(),
     robinhoodHolderSnapshotWorker: robinhoodHolderSnapshotWorker.getStatus(),
+    robinhoodHolderCountRealtime: robinhoodHolderCountRealtime.getStatus(),
     robinhoodIngestionWorker: {
       ...robinhoodIngestionStatus,
       sharedLease: robinhoodIngestionLease,
@@ -908,6 +910,9 @@ function bootstrapWebRuntime(httpServer) {
   marketTradeRealtime.start().catch((err) => {
     console.error('[MarketTradeRealtime] Failed to start listener:', err.message);
   });
+  robinhoodHolderCountRealtime.start().catch((err) => {
+    console.error('[RobinhoodHolderCountRealtime] Failed to start listener:', err.message);
+  });
 }
 
 function bootstrapBackgroundRuntime() {
@@ -1047,6 +1052,7 @@ async function shutdownGracefully(signal = 'SIGTERM') {
       backendAlertRealtime.stop(),
       marketBucketRealtime.stop(),
       marketTradeRealtime.stop(),
+      robinhoodHolderCountRealtime.stop(),
       userConfigSync.stop(),
     ]);
     const releaseResult = await workerLeaseManager.stop({ releaseLeases: true });

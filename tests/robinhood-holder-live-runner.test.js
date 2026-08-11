@@ -5,7 +5,10 @@ const {
   createRobinhoodHolderLiveRunner,
 } = require('../src/services/robinhood-holder-live-runner');
 
-function harness(captureResult, applyResults = [], handoffResult = { status: 'idle' }) {
+function harness(
+  captureResult, applyResults = [], handoffResult = { status: 'idle' },
+  publishHolderCounts = async () => 0
+) {
   const calls = [];
   const capture = {
     captureOnce: async (input) => {
@@ -27,7 +30,7 @@ function harness(captureResult, applyResults = [], handoffResult = { status: 'id
   };
   return {
     calls,
-    runner: createRobinhoodHolderLiveRunner({ capture, handoff, ledger }),
+    runner: createRobinhoodHolderLiveRunner({ capture, handoff, ledger, publishHolderCounts }),
   };
 }
 
@@ -48,6 +51,7 @@ describe('Robinhood holder live runner', () => {
       status: 'completed', captureStatus: 'captured', capturedTransfers: 3,
       handoffStatus: 'idle', handoffPromotions: 0, handoffResyncs: 0,
       appliedEvents: 2, driftedTokens: 1, applyAttempts: 3,
+      holderCountUpdates: 0, holderCountPublished: 0,
       applyBudgetExhausted: false, nextBlock: '106', safeHead: '105',
     });
     assert.deepEqual(context.calls, [
@@ -81,6 +85,7 @@ describe('Robinhood holder live runner', () => {
       revertedEvents: 4, resyncingTokens: 1,
       handoffStatus: 'skipped', handoffPromotions: 0, handoffResyncs: 0,
       appliedEvents: 0, driftedTokens: 0, applyAttempts: 0,
+      holderCountUpdates: 0, holderCountPublished: 0,
       applyBudgetExhausted: false,
     });
     assert.equal(recovered.calls.some(([name]) => name === 'apply'), false);
@@ -96,10 +101,48 @@ describe('Robinhood holder live runner', () => {
       journalFloorBlock: '90', checkedCheckpoints: 3,
       handoffStatus: 'skipped', handoffPromotions: 0, handoffResyncs: 0,
       appliedEvents: 0, driftedTokens: 0, applyAttempts: 0,
+      holderCountUpdates: 0, holderCountPublished: 0,
       applyBudgetExhausted: false,
     });
     assert.equal(blocked.calls.some(([name]) => name === 'apply'), false);
     assert.equal(blocked.calls.some(([name]) => name === 'handoff'), false);
+  });
+
+  it('coalesces committed live count changes per token before publishing', async () => {
+    const published = [];
+    const first = { tokenAddress: `0x${'a'.repeat(40)}`, holderCount: '10' };
+    const latest = { ...first, holderCount: '11', ledgerVersion: '2' };
+    const other = { tokenAddress: `0x${'b'.repeat(40)}`, holderCount: '4' };
+    const context = harness({
+      status: 'captured', transfers: 3, nextBlock: '106', safeHead: '105',
+    }, [
+      { status: 'applied', publication: first },
+      { status: 'applied', publication: latest },
+      { status: 'applied', publication: other },
+      { status: 'idle' },
+    ], { status: 'idle' }, async (updates) => {
+      published.push(updates);
+      return updates.length;
+    });
+
+    const result = await context.runner.runOnce();
+
+    assert.deepEqual(published, [[latest, other]]);
+    assert.equal(result.holderCountUpdates, 2);
+    assert.equal(result.holderCountPublished, 2);
+    assert.equal(context.calls.at(-1)[0], 'apply');
+  });
+
+  it('propagates relay failure only after the ledger event was committed', async () => {
+    const publication = { tokenAddress: `0x${'a'.repeat(40)}`, holderCount: '10' };
+    const context = harness({
+      status: 'captured', transfers: 1, nextBlock: '106', safeHead: '105',
+    }, [
+      { status: 'applied', publication }, { status: 'idle' },
+    ], { status: 'idle' }, async () => { throw new Error('relay offline'); });
+
+    await assert.rejects(context.runner.runOnce(), /relay offline/);
+    assert.equal(context.calls.filter(([name]) => name === 'apply').length, 2);
   });
 
   it('promotes at most one token before applying its preserved tail', async () => {
