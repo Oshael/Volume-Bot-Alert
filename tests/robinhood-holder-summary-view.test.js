@@ -36,6 +36,17 @@ describe('Robinhood holder summary view', () => {
     assert.equal(missing.holderFreshness, 'unavailable');
   });
 
+  it('uses live cursor progress instead of the last count change for ledger freshness', () => {
+    const live = normalizeRobinhoodHolderSummary({
+      holder_count: 4424,
+      holder_source: 'ledger_live',
+      holder_observed_at: '2026-08-10T10:00:00.000Z',
+      holder_checked_at: '2026-08-10T11:59:59.000Z',
+    }, '2026-08-10T12:00:00.000Z');
+
+    assert.equal(live.holderFreshness, 'fresh');
+  });
+
   it('rejects unsafe persisted counts', () => {
     assert.throws(() => normalizeRobinhoodHolderSummary({
       holder_count: '9007199254740992',

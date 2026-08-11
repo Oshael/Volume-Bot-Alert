@@ -119,6 +119,17 @@ describe('Robinhood token holder summaries', () => {
     assert.equal(fake.calls.length, 1);
   });
 
+  it('reads live-first published summaries without changing the raw cache reader', async () => {
+    const fake = databaseReturning({ source: 'ledger_live' });
+    const repository = createRobinhoodTokenHolderSummaryRepository(fake);
+    const summaries = await repository.getPublishedSummaries([TOKEN]);
+
+    assert.equal(summaries[0].source, 'ledger_live');
+    assert.match(fake.calls[0].sql, /FROM robinhood_published_holder_summaries/);
+    assert.deepEqual(await repository.getPublishedSummaries([]), []);
+    assert.equal(fake.calls.length, 1);
+  });
+
   it('reads one baseline plus the requested daily range in chronological order', async () => {
     const calls = [];
     const repository = createRobinhoodTokenHolderSummaryRepository({

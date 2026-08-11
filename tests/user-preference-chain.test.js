@@ -107,7 +107,7 @@ describe('chain-aware user token preferences', () => {
     const removed = await userStarredToken.remove(7, EVM_MIXED, 'robinhood');
 
     assert.match(calls[0].sql, /LEFT JOIN token_catalog tc/);
-    assert.match(calls[0].sql, /LEFT JOIN robinhood_token_holder_summaries holder_summary/);
+    assert.match(calls[0].sql, /LEFT JOIN robinhood_published_holder_summaries holder_summary/);
     assert.deepEqual(calls[0].params, [7, ['solana', 'robinhood']]);
     assert.match(calls[1].sql, /chain = ANY\(\$2::varchar\[\]\)/);
     assert.deepEqual(starred, { chain: 'robinhood', address: EVM_LOWER });

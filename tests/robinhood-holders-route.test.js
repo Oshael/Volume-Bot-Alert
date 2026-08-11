@@ -48,7 +48,7 @@ function appWith(options = {}) {
   const authenticate = options.authenticate || ((_req, _res, next) => next());
   const visibility = options.visibility || ((_req, _res, next) => next());
   const repository = options.repository || {
-    getSummaries: async () => [cachedSummary()],
+    getPublishedSummaries: async () => [cachedSummary()],
     listDailySnapshots: async () => [],
     recordSuccess: async () => {},
     recordFailure: async () => {},
@@ -184,7 +184,7 @@ describe('Robinhood holders route', () => {
     const calls = [];
     const writes = [];
     const repository = {
-      getSummaries: async () => [cachedSummary({
+      getPublishedSummaries: async () => [cachedSummary({
         observedAt: '2026-08-10T04:00:00.000Z',
         checkedAt: '2026-08-10T04:00:00.000Z',
       })],
@@ -209,6 +209,29 @@ describe('Robinhood holders route', () => {
     assert.equal(writes[0].holderCount, 4500);
   });
 
+  it('publishes a live ledger count without queuing a Blockscout summary refresh', async () => {
+    let summaryCalls = 0;
+    const response = await request(appWith({
+      repository: {
+        getPublishedSummaries: async () => [cachedSummary({
+          source: 'ledger_live',
+          observedAt: '2026-08-10T04:00:00.000Z',
+          checkedAt: '2026-08-10T04:59:59.000Z',
+        })],
+      },
+      client: {
+        getTokenHoldersPage: async () => page(),
+        getTokenHolderSummary: async () => { summaryCalls += 1; },
+      },
+    })).get(`/api/robinhood/holders?token=${TOKEN}`);
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.summary.source, 'ledger_live');
+    assert.equal(response.body.summary.freshness, 'fresh');
+    assert.equal(response.body.refreshQueued, false);
+    assert.equal(summaryCalls, 0);
+  });
+
   it('does not enqueue another summary refresh while paginating', async () => {
     let summaryCalls = 0;
     const cursor = Buffer.from(JSON.stringify({
@@ -218,7 +241,7 @@ describe('Robinhood holders route', () => {
     })).toString('base64url');
     const response = await request(appWith({
       repository: {
-        getSummaries: async () => [cachedSummary({
+        getPublishedSummaries: async () => [cachedSummary({
           observedAt: '2026-08-10T04:00:00.000Z',
           checkedAt: '2026-08-10T04:00:00.000Z',
         })],

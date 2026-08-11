@@ -174,13 +174,14 @@ SELECT
   tc.last_pair_url, tc.last_dex_id, tc.last_image_url, tc.launchpad_id,
   tc.last_twitter_url, tc.last_community_url, tc.monitor_priority,
   tc.last_seen_at, tc.last_evaluated_at,
-  holder_summary.holder_count, holder_summary.observed_at AS holder_observed_at,
+  holder_summary.holder_count, holder_summary.source AS holder_source,
+  holder_summary.observed_at AS holder_observed_at,
   holder_summary.checked_at AS holder_checked_at${activitySelect ? `,
   ${activitySelect}` : ''}, COUNT(*) OVER() AS total_count
 FROM catalog_candidates tc
 ${buildActivityJoinSql(sorts)}
 ${buildValuationJoinSql(options.preferCatalogValuation === true)}
-LEFT JOIN robinhood_token_holder_summaries holder_summary
+LEFT JOIN robinhood_published_holder_summaries holder_summary
   ON holder_summary.chain = 'robinhood' AND holder_summary.token_address = tc.address
 WHERE tc.chain = 'robinhood'
   AND ((valuation.last_fdv_usd IS NULL AND $2::numeric = 0)
@@ -199,7 +200,8 @@ const PINNED_SQL = `SELECT
   tc.last_pair_url, tc.last_dex_id, tc.last_image_url, tc.launchpad_id,
   tc.last_twitter_url, tc.last_community_url, tc.monitor_priority,
   tc.last_seen_at, tc.last_evaluated_at,
-  holder_summary.holder_count, holder_summary.observed_at AS holder_observed_at,
+  holder_summary.holder_count, holder_summary.source AS holder_source,
+  holder_summary.observed_at AS holder_observed_at,
   holder_summary.checked_at AS holder_checked_at
 FROM token_catalog tc
 LEFT JOIN LATERAL (
@@ -213,7 +215,7 @@ LEFT JOIN LATERAL (
     bucket.last_log_index DESC, bucket.protocol ASC, bucket.market_key ASC
   LIMIT 1
 ) valuation ON TRUE
-LEFT JOIN robinhood_token_holder_summaries holder_summary
+LEFT JOIN robinhood_published_holder_summaries holder_summary
   ON holder_summary.chain = 'robinhood' AND holder_summary.token_address = tc.address
 WHERE tc.chain = 'robinhood'
   AND tc.address = ANY($2::varchar[])

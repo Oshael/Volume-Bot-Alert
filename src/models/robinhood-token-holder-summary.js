@@ -32,13 +32,15 @@ function addressBatch(values) {
   return [...new Set(values.map((value) => normalizeTokenAddress(CHAIN, value)))];
 }
 
-function normalizeSummaryRow(row) {
+function normalizeSummaryRow(row, allowLive = false) {
   if (!row) throw new Error('Holder summary write returned no row');
   const failures = Number(row.consecutive_failures);
   if (!Number.isSafeInteger(failures) || failures < 0) {
     throw new Error('Holder summary consecutive failures are invalid');
   }
-  if (row.source !== 'blockscout') throw new Error('Holder summary source is invalid');
+  if (row.source !== 'blockscout' && !(allowLive && row.source === 'ledger_live')) {
+    throw new Error('Holder summary source is invalid');
+  }
   return Object.freeze({
     tokenAddress: normalizeTokenAddress(CHAIN, row.token_address),
     holderCount: row.holder_count == null ? null : holderCount(row.holder_count),
@@ -238,6 +240,20 @@ function createRobinhoodTokenHolderSummaryRepository(options = {}) {
     return rows.map(normalizeSummaryRow);
   }
 
+  async function getPublishedSummaries(tokenAddresses) {
+    const addresses = addressBatch(tokenAddresses);
+    if (addresses.length === 0) return [];
+    const { rows } = await database.query(
+      `SELECT token_address, holder_count, source, observed_at, checked_at,
+              last_error_code, consecutive_failures, retry_after_at
+       FROM robinhood_published_holder_summaries
+       WHERE chain = '${CHAIN}' AND token_address = ANY($1::varchar[])
+       ORDER BY token_address ASC`,
+      [addresses]
+    );
+    return rows.map((row) => normalizeSummaryRow(row, true));
+  }
+
   async function listDailySnapshots(input = {}) {
     const tokenAddress = normalizeTokenAddress(CHAIN, input.tokenAddress);
     const days = historyDays(input.days);
@@ -259,7 +275,8 @@ function createRobinhoodTokenHolderSummaryRepository(options = {}) {
   }
 
   return Object.freeze({
-    listRefreshCandidates, recordSuccess, recordFailure, getSummaries, listDailySnapshots,
+    listRefreshCandidates, recordSuccess, recordFailure, getSummaries,
+    getPublishedSummaries, listDailySnapshots,
   });
 }
 

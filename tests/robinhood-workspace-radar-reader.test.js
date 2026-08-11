@@ -86,7 +86,8 @@ describe('Robinhood workspace radar reader', () => {
     assert.match(sql, /robinhood_head_capture_cursors/);
     assert.match(sql, /market_processing_frontier AS/);
     assert.match(sql, /LEFT JOIN market_cursor cursor ON TRUE/);
-    assert.match(sql, /LEFT JOIN robinhood_token_holder_summaries holder_summary/);
+    assert.match(sql, /LEFT JOIN robinhood_published_holder_summaries holder_summary/);
+    assert.match(sql, /holder_summary\.source AS holder_source/);
     assert.match(sql, /WITH catalog_candidates AS MATERIALIZED/);
     assert.match(sql, /tc\.last_seen_at > \$1::timestamptz/);
     assert.match(sql, /tc\.last_fdv IS NULL/);

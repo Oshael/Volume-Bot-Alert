@@ -20,12 +20,17 @@ function normalizeRobinhoodHolderSummary(row, asOf = new Date()) {
   const holderCount = optionalHolderCount(row?.holder_count);
   const holderObservedAt = optionalIso(row?.holder_observed_at, 'holder observedAt');
   const holderCheckedAt = optionalIso(row?.holder_checked_at, 'holder checkedAt');
+  const holderSource = row?.holder_source == null ? 'blockscout' : row.holder_source;
+  if (!['blockscout', 'ledger_live'].includes(holderSource)) {
+    throw new Error('holder source is invalid');
+  }
   const asOfMs = new Date(asOf).getTime();
   if (!Number.isFinite(asOfMs)) throw new Error('holder summary asOf is invalid');
 
   let holderFreshness = 'unavailable';
-  if (holderCount != null && holderObservedAt != null) {
-    holderFreshness = asOfMs - Date.parse(holderObservedAt) <= HOLDER_FRESHNESS_TARGET_MS
+  const freshnessAt = holderSource === 'ledger_live' ? holderCheckedAt : holderObservedAt;
+  if (holderCount != null && freshnessAt != null) {
+    holderFreshness = asOfMs - Date.parse(freshnessAt) <= HOLDER_FRESHNESS_TARGET_MS
       ? 'fresh'
       : 'stale';
   }

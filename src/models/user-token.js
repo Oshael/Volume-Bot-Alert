@@ -50,13 +50,13 @@ async function getAllForChains(userId, chainValues = ['solana', 'robinhood']) {
             tc.last_price_change_6h, tc.last_price_change_24h,
             tc.last_pair_address, tc.last_dex_id,
             tc.last_token_created_at_ms, tc.first_seen_at, tc.last_seen_at,
-            holder_summary.holder_count,
+            holder_summary.holder_count, holder_summary.source AS holder_source,
             holder_summary.observed_at AS holder_observed_at,
             holder_summary.checked_at AS holder_checked_at
      FROM user_tokens ut
      LEFT JOIN token_catalog tc
        ON tc.chain = ut.chain AND tc.address = ut.address
-     LEFT JOIN robinhood_token_holder_summaries holder_summary
+     LEFT JOIN robinhood_published_holder_summaries holder_summary
        ON holder_summary.chain = ut.chain AND holder_summary.token_address = ut.address
      WHERE ut.user_id = $1 AND ut.chain = ANY($2::varchar[])
      ORDER BY ut.added_at ASC, ut.chain ASC, ut.address ASC`,

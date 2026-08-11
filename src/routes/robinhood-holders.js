@@ -41,10 +41,11 @@ function publicSummary(row, nowMs, refreshMs) {
     checkedAt: null,
     freshness: 'unavailable',
   });
-  const observedMs = row.observedAt == null ? NaN : Date.parse(row.observedAt);
+  const freshnessAt = row.source === 'ledger_live' ? row.checkedAt : row.observedAt;
+  const freshnessMs = freshnessAt == null ? NaN : Date.parse(freshnessAt);
   const freshness = row.holderCount == null
     ? 'unavailable'
-    : (Number.isFinite(observedMs) && nowMs - observedMs <= refreshMs ? 'fresh' : 'stale');
+    : (Number.isFinite(freshnessMs) && nowMs - freshnessMs <= refreshMs ? 'fresh' : 'stale');
   return Object.freeze({
     holderCount: row.holderCount,
     source: row.source,
@@ -55,7 +56,7 @@ function publicSummary(row, nowMs, refreshMs) {
 }
 
 function shouldQueueRefresh(row, hasCursor, nowMs, refreshMs) {
-  if (hasCursor) return false;
+  if (hasCursor || row?.source === 'ledger_live') return false;
   if (!row) return true;
   const retryAfterMs = row.retryAfterAt == null ? NaN : Date.parse(row.retryAfterAt);
   if (Number.isFinite(retryAfterMs) && retryAfterMs > nowMs) return false;
@@ -166,7 +167,7 @@ function createRobinhoodHoldersRouter(options = {}) {
     );
     let cached = null;
     try {
-      [cached] = await repository.getSummaries([tokenAddress]);
+      [cached] = await repository.getPublishedSummaries([tokenAddress]);
     } catch (error) {
       logger.warn?.('[RobinhoodHoldersRoute] summary cache unavailable', {
         code: safeErrorCode(error),
