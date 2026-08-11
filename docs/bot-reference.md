@@ -957,6 +957,15 @@ blocos/25 por batch usam `ROBINHOOD_HOLDER_RECEIPT_BLOCK_LIMIT` e
 `ROBINHOOD_HOLDER_RECEIPT_BATCH_SIZE`.
 Evidencia diferente reinicia a contagem e restart descarta a evidencia em memoria.
 
+Na aplicacao do tail `shadow/live`, saldo negativo tambem nao altera o estado.
+Enquanto o token ainda esta na barreira segura (`live_through_block` anterior a
+`backfill_next_block`), receipts podem inserir Transfers ausentes no journal e a
+aplicacao reinicia pela ordem canonica. Sem essa barreira, com range acima de 250
+blocos ou receipts indisponiveis, o evento fica deferido sem falso `drifted`.
+Deficit sem eventos ausentes so vira `drifted` apos tres fingerprints identicos
+confirmados por receipts e espacados em 60s. A telemetria distingue
+`driftSuspicions`, `receiptRecoveries` e `driftDeferred`.
+
 A reconciliação exige o live saudável e três counts Blockscout exatos e distintos
 antes de promover `shadow` para `live`. Divergência estável depois da promoção
 gera telemetria `drift-suspected`, mas não isola nem ressincroniza automaticamente,
