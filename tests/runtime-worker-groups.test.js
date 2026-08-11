@@ -111,6 +111,15 @@ describe('runtime worker groups config', () => {
     });
   });
 
+  it('ships the systemd-compatible Robinhood holders worker runner', () => {
+    const command = require('../package.json').scripts['start:worker:robinhood-holders'];
+
+    assert.match(command, /PORT=\$\{PORT:-3010\}/);
+    assert.match(command, /RUN_SOCKET_HUB=false/);
+    assert.match(command, /RUN_BACKGROUND_JOBS=true/);
+    assert.match(command, /BACKGROUND_WORKER_GROUPS=robinhood-holders/);
+  });
+
   it('allows the Robinhood head only as an isolated worker group', () => {
     withEnv({ BACKGROUND_WORKER_GROUPS: 'robinhood-head' }, (config) => {
       assert.deepEqual(config.runtime.workerGroupsRequested, ['robinhood-head']);
