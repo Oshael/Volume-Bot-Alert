@@ -531,14 +531,61 @@ async function revertAppliedEvent(client, row) {
 
 async function markStatesCrossingBaseline(client, nextBlock) {
   const result = await client.query(
-    `UPDATE robinhood_holder_token_states
-        SET ledger_status = 'resyncing', version = version + 1, updated_at = NOW()
-      WHERE chain = 'robinhood' AND ledger_status IN ('shadow', 'live')
-        AND (backfill_next_block IS NULL OR backfill_next_block > $1)
-      RETURNING token_address`,
+    `WITH candidates AS MATERIALIZED (
+       SELECT token_address, ledger_status AS prior_status
+         FROM robinhood_holder_token_states
+        WHERE chain = 'robinhood' AND ledger_status IN ('shadow', 'live')
+          AND (backfill_next_block IS NULL OR backfill_next_block > $1)
+        FOR UPDATE
+     ), updated AS (
+       UPDATE robinhood_holder_token_states AS state
+          SET ledger_status = 'resyncing', version = version + 1, updated_at = NOW()
+         FROM candidates
+        WHERE state.chain = 'robinhood'
+          AND state.token_address = candidates.token_address
+       RETURNING state.token_address
+     )
+     SELECT updated.token_address, candidates.prior_status
+       FROM updated INNER JOIN candidates USING (token_address)`,
     [nextBlock]
   );
-  return result.rowCount;
+  return result.rows;
+}
+
+async function loadRewindPublications(
+  client, affectedTokens, resyncingStates, checkpoint
+) {
+  const affected = new Set(affectedTokens);
+  const invalidated = new Set(resyncingStates
+    .filter((row) => row.prior_status === 'live')
+    .map((row) => row.token_address));
+  const publicTokens = [...new Set([...affected, ...invalidated])];
+  if (!publicTokens.length || !checkpoint) return [];
+  const result = await client.query(
+    `SELECT token_address, holder_count, ledger_status, version, updated_at,
+            live_through_block, live_through_hash
+       FROM robinhood_holder_token_states
+      WHERE chain = 'robinhood' AND token_address = ANY($1::varchar[])`,
+    [publicTokens]
+  );
+  return result.rows.flatMap((row) => {
+    if (invalidated.has(row.token_address)) {
+      return [{
+        tokenAddress: row.token_address, invalidated: true,
+        ledgerVersion: String(row.version), observedAt: row.updated_at,
+        liveThroughBlock: checkpoint.number, liveThroughHash: checkpoint.hash,
+      }];
+    }
+    if (affected.has(row.token_address) && row.ledger_status === 'live') {
+      return [{
+        tokenAddress: row.token_address, holderCount: String(row.holder_count),
+        ledgerVersion: String(row.version), observedAt: row.updated_at,
+        liveThroughBlock: String(row.live_through_block),
+        liveThroughHash: row.live_through_hash,
+      }];
+    }
+    return [];
+  });
 }
 
 async function commitRewind(client, rewind, affectedTokens) {
@@ -639,11 +686,15 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
       const applied = events.filter((row) => row.applied);
       for (const row of applied) await revertAppliedEvent(client, row);
       const affectedTokens = [...new Set(applied.map((row) => row.token_address))];
-      const resyncingTokens = await markStatesCrossingBaseline(client, rewind.nextBlock);
+      const resyncingStates = await markStatesCrossingBaseline(client, rewind.nextBlock);
       const committed = await commitRewind(client, rewind, affectedTokens);
+      const publications = await loadRewindPublications(
+        client, affectedTokens, resyncingStates, rewind.checkpoint
+      );
       return Object.freeze({
         status: 'rewound', revertedEvents: applied.length,
-        affectedTokens: affectedTokens.length, resyncingTokens, ...committed,
+        affectedTokens: affectedTokens.length, resyncingTokens: resyncingStates.length,
+        publications: Object.freeze(publications.map(Object.freeze)), ...committed,
       });
     });
   }

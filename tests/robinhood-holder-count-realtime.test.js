@@ -4,6 +4,7 @@ const { EventEmitter } = require('node:events');
 
 const {
   normalizeRobinhoodHolderCountEvent,
+  normalizeRobinhoodHolderRealtimeEvent,
 } = require('../src/services/robinhood-holder-count-event');
 const {
   CHANNEL,
@@ -34,6 +35,15 @@ describe('Robinhood holder count realtime', () => {
     assert.equal(normalizeRobinhoodHolderCountEvent(update({
       holderCount: '9007199254740992',
     })), null);
+    assert.deepEqual(normalizeRobinhoodHolderRealtimeEvent(update({
+      invalidated: true, holderCount: undefined, ledgerVersion: '8',
+    })), {
+      type: 'holder:invalidate', chain: 'robinhood', address: TOKEN,
+      source: 'ledger_live', observedAt: '2026-08-10T12:00:00.000Z',
+      ledgerVersion: '8', liveThroughBlock: '32653260', liveThroughHash: HASH,
+      sequence: `robinhood-holder:${TOKEN}:000000000000000000000008`,
+      reason: 'reorg_resync',
+    });
   });
 
   it('coalesces each token and publishes bounded PostgreSQL notifications', async () => {
@@ -71,17 +81,21 @@ describe('Robinhood holder count realtime', () => {
     client.query = async (sql) => queries.push(sql);
     client.release = () => {};
     const realtime = createRobinhoodHolderCountRealtime({
-      socketHub: { emitHolderCountUpdate: (event) => emitted.push(event) },
+      socketHub: { emitHolderUpdate: (event) => emitted.push(event) },
       logger: { error() {}, log() {} },
     });
 
     await realtime.start({ pool: { connect: async () => client } });
     client.emit('notification', { channel: CHANNEL, payload: JSON.stringify(update()) });
+    client.emit('notification', {
+      channel: CHANNEL, payload: JSON.stringify(update({ invalidated: true })),
+    });
     client.emit('notification', { channel: CHANNEL, payload: '{}' });
 
     assert.match(queries[0], new RegExp(`LISTEN ${CHANNEL}`));
-    assert.equal(emitted.length, 1);
+    assert.equal(emitted.length, 2);
     assert.equal(emitted[0].type, 'holder:count');
+    assert.equal(emitted[1].type, 'holder:invalidate');
     await realtime.stop();
   });
 });

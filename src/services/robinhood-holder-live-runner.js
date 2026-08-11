@@ -17,6 +17,15 @@ async function publishCountUpdates(publish, updates) {
   return Number(await publish([...updates.values()])) || 0;
 }
 
+function rewindHolderUpdates(captured) {
+  const updates = new Map();
+  for (const publication of Array.isArray(captured.publications)
+    ? captured.publications : []) {
+    if (publication?.tokenAddress) updates.set(publication.tokenAddress, publication);
+  }
+  return updates;
+}
+
 function createRobinhoodHolderLiveRunner(options = {}) {
   const capture = options.capture;
   const handoff = options.handoff;
@@ -53,6 +62,10 @@ function createRobinhoodHolderLiveRunner(options = {}) {
       });
     }
     if (captured.status === 'reorg-rewound') {
+      const holderCountUpdates = rewindHolderUpdates(captured);
+      const holderCountPublished = await publishCountUpdates(
+        publishHolderCounts, holderCountUpdates
+      );
       return Object.freeze({
         status: 'recovered', captureStatus: captured.status,
         canonicalCheckpointBlock: captured.canonicalCheckpointBlock,
@@ -61,7 +74,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
         resyncingTokens: Number(captured.resyncingTokens) || 0,
         handoffStatus: 'skipped', handoffPromotions: 0, handoffResyncs: 0,
         appliedEvents: 0, driftedTokens: 0, applyAttempts: 0,
-        holderCountUpdates: 0, holderCountPublished: 0,
+        holderCountUpdates: holderCountUpdates.size, holderCountPublished,
         applyBudgetExhausted: false,
       });
     }

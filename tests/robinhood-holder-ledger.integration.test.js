@@ -184,14 +184,30 @@ describe('Robinhood holder ledger persistence', () => {
         `UPDATE robinhood_holder_balances SET balance_raw = 3
           WHERE token_address = $1 AND wallet_address = $2`, [TOKEN, BOB]
       );
+      await client.query(
+        `UPDATE robinhood_holder_token_states SET ledger_status = 'live'
+          WHERE token_address = ANY($1::varchar[])`, [[TOKEN, TOKEN_3]]
+      );
 
-      assert.deepEqual(await repository.rewindOrphanedRange({
+      const rewoundResult = await repository.rewindOrphanedRange({
         nextBlock: '100', safeHead: '199', expectedVersion: 1,
         checkpoint: { number: '99', hash: HASH_B },
-      }), {
+      });
+      const { publications, ...rewindSummary } = rewoundResult;
+      assert.deepEqual(rewindSummary, {
         status: 'rewound', revertedEvents: 2, affectedTokens: 1,
         resyncingTokens: 1, removedEvents: 3, cursorVersion: 2,
       });
+      assert.deepEqual(publications.map(({ observedAt, ...publication }) => {
+        assert.ok(observedAt instanceof Date);
+        return publication;
+      }).sort((left, right) => left.tokenAddress.localeCompare(right.tokenAddress)), [{
+        tokenAddress: TOKEN, holderCount: '1', ledgerVersion: '4',
+        liveThroughBlock: '99', liveThroughHash: HASH_B,
+      }, {
+        tokenAddress: TOKEN_3, invalidated: true, ledgerVersion: '1',
+        liveThroughBlock: '99', liveThroughHash: HASH_B,
+      }]);
       const restored = await client.query(
         `SELECT wallet_address, balance_raw, last_block_number,
                 last_transaction_hash, last_log_index
@@ -222,7 +238,7 @@ describe('Robinhood holder ledger persistence', () => {
         checkpointBlock: String(row.checkpoint_block), checkpointHash: row.checkpoint_hash,
         version: Number(row.version), journalCount: Number(row.journal_count),
       })), [{
-        holderCount: '1', ledgerStatus: 'shadow', liveThroughBlock: '99',
+        holderCount: '1', ledgerStatus: 'live', liveThroughBlock: '99',
         liveThroughHash: HASH_B, nextBlock: '100', safeHead: '199',
         checkpointBlock: '99', checkpointHash: HASH_B, version: 2, journalCount: 0,
       }]);

@@ -75,9 +75,16 @@ describe('Robinhood holder live runner', () => {
   });
 
   it('does not apply events during recovery or without canonical evidence', async () => {
+    const published = [];
+    const correction = { tokenAddress: `0x${'a'.repeat(40)}`, holderCount: '9' };
+    const invalidation = { tokenAddress: `0x${'b'.repeat(40)}`, invalidated: true };
     const recovered = harness({
       status: 'reorg-rewound', canonicalCheckpointBlock: '95',
       orphanedCheckpointBlock: '100', revertedEvents: 4, resyncingTokens: 1,
+      publications: [correction, invalidation],
+    }, [], { status: 'idle' }, async (updates) => {
+      published.push(updates);
+      return updates.length;
     });
     assert.deepEqual(await recovered.runner.runOnce(), {
       status: 'recovered', captureStatus: 'reorg-rewound',
@@ -85,9 +92,10 @@ describe('Robinhood holder live runner', () => {
       revertedEvents: 4, resyncingTokens: 1,
       handoffStatus: 'skipped', handoffPromotions: 0, handoffResyncs: 0,
       appliedEvents: 0, driftedTokens: 0, applyAttempts: 0,
-      holderCountUpdates: 0, holderCountPublished: 0,
+      holderCountUpdates: 2, holderCountPublished: 2,
       applyBudgetExhausted: false,
     });
+    assert.deepEqual(published, [[correction, invalidation]]);
     assert.equal(recovered.calls.some(([name]) => name === 'apply'), false);
     assert.equal(recovered.calls.some(([name]) => name === 'handoff'), false);
 

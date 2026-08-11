@@ -2,7 +2,7 @@ const db = require('../models/db');
 const socketHub = require('./socket-hub');
 const { createPostgresRealtimeListener } = require('./postgres-realtime-listener');
 const {
-  normalizeRobinhoodHolderCountEvent,
+  normalizeRobinhoodHolderRealtimeEvent,
 } = require('./robinhood-holder-count-event');
 
 const CHANNEL = 'robinhood_holder_count_updated';
@@ -18,7 +18,7 @@ function createRobinhoodHolderCountRealtime(deps = {}) {
   async function publishUpdates(values = []) {
     const byToken = new Map();
     for (const value of values) {
-      const event = normalizeRobinhoodHolderCountEvent(value);
+      const event = normalizeRobinhoodHolderRealtimeEvent(value);
       if (!event) continue;
       const serialized = JSON.stringify(event);
       if (Buffer.byteLength(serialized, 'utf8') <= MAX_PAYLOAD_BYTES) {
@@ -47,13 +47,13 @@ function createRobinhoodHolderCountRealtime(deps = {}) {
     if (message?.channel !== CHANNEL) return null;
     let event;
     try {
-      event = normalizeRobinhoodHolderCountEvent(JSON.parse(String(message.payload || '{}')));
+      event = normalizeRobinhoodHolderRealtimeEvent(JSON.parse(String(message.payload || '{}')));
     } catch (_) {
       return null;
     }
     if (!event) return null;
     stats.received += 1;
-    hub.emitHolderCountUpdate(event);
+    hub.emitHolderUpdate(event);
     return event;
   }
 

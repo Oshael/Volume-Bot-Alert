@@ -8,6 +8,7 @@
  * - market:bucket     - live market bucket update for subscribed token charts
  * - market:trade      - live Robinhood swap for an explicitly watched trades panel
  * - holder:count      - sequenced Robinhood holder count for a subscribed token
+ * - holder:invalidate - holder count must be refreshed after a reorg
  *
  * Events received from clients:
  * - live:presence     - { workspace, mode, hiddenGraceMs? } - live alert presence
@@ -35,7 +36,7 @@ const { logTrace } = require('../utils/pump-migrate-trace');
 const { createTokenIdentity } = require('../utils/token-identity');
 const { isTokenChainUserVisible } = require('../utils/token-chain-availability');
 const {
-  normalizeRobinhoodHolderCountEvent,
+  normalizeRobinhoodHolderRealtimeEvent,
 } = require('./robinhood-holder-count-event');
 
 let io = null;
@@ -794,14 +795,14 @@ function emitMarketTradeUpdate(payload) {
   return true;
 }
 
-function emitHolderCountUpdate(payload) {
+function emitHolderUpdate(payload) {
   if (!io || !payload || typeof payload !== 'object') return false;
-  const event = normalizeRobinhoodHolderCountEvent(payload);
+  const event = normalizeRobinhoodHolderRealtimeEvent(payload);
   const room = getMarketRoom(resolveMarketIdentity(event));
   if (!event || !room || !isTokenChainUserVisible('robinhood', config)) return false;
   const sockets = io.sockets.adapter.rooms.get(room);
   if (!sockets || sockets.size === 0) return false;
-  io.to(room).emit('holder:count', event);
+  io.to(room).emit(event.type, event);
   return true;
 }
 
@@ -813,7 +814,7 @@ module.exports = {
   emitBackendAlertEvent,
   emitMarketBucketUpdate,
   emitMarketTradeUpdate,
-  emitHolderCountUpdate,
+  emitHolderUpdate,
   revokeSessionSockets,
   revokeUserSockets,
   __private: {
