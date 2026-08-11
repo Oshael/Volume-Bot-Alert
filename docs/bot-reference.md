@@ -957,6 +957,9 @@ mantem `drift-unverified` em cooldown, sem bloquear a fila nem isolar o token.
 blocos/25 por batch usam `ROBINHOOD_HOLDER_RECEIPT_BLOCK_LIMIT` e
 `ROBINHOOD_HOLDER_RECEIPT_BATCH_SIZE`.
 Evidencia diferente reinicia a contagem e restart descarta a evidencia em memoria.
+O handoff não promove um token `backfilling` enquanto seu cursor ainda estiver
+abaixo do primeiro evento pendente; esse fence impede que uma recuperação de
+cauda larga retorne prematuramente a `shadow` e repita o mesmo deferimento.
 
 O backfill global do catálogo antigo usa a lease
 `robinhood-holder-global-backfill-worker` e permanece desligado por default via
