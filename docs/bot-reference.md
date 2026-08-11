@@ -945,8 +945,9 @@ são opt-in e permanecem desligados por default; pull ou presença de
 backfills exigem cutoff durável e deployment exato `rpc_direct` ou
 `launchpad_event`; Blockscout sozinho fornece apenas hint para deployments
 diretos antigos, que precisam ser confirmados pelo RPC principal. A fila de
-replay prioriza o menor trabalho restante até a barreira live; estados antigos
-continuam duráveis e retomáveis, mas não bloqueiam tokens próximos do head.
+replay conclui primeiro estados que já possuem checkpoint live e, dentro de cada
+classe, prioriza o menor trabalho restante até a barreira; assim novas admissões
+não deixam recuperações já iniciadas permanentemente no fim da fila.
 Durante replay, saldo negativo isolado gera apenas `drift-suspected` e nao move
 cursor nem balances. O executor rele o trecho ate o primeiro deficit por
 `eth_getBlockReceipts`; se esse replay passa, commita o trecho e recupera o token.
