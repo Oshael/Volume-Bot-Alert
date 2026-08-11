@@ -2,6 +2,7 @@ const { TRANSFER_TOPIC } = require('./evm-erc20-supply-delta');
 
 const EXPECTED_CHAIN_ID = 4663n;
 const MAX_RANGE_BLOCKS = 5000n;
+const MAX_RECEIPT_RANGE_BLOCKS = 1000n;
 
 function quantity(value, label) {
   const raw = String(value ?? '').trim();
@@ -181,6 +182,59 @@ function createRobinhoodHolderTransferReader(options = {}) {
     });
   }
 
+  async function readReceiptRange(input = {}) {
+    if (typeof rpcClient.requestBatch !== 'function') {
+      throw new TypeError('holder receipt RPC batch support is required');
+    }
+    const tokenAddress = address(input.tokenAddress, 'tokenAddress');
+    const fromBlock = quantity(input.fromBlock, 'fromBlock');
+    const toBlock = quantity(input.toBlock, 'toBlock');
+    const batchSize = boundedInteger(input.batchSize, 25, 1, 100, 'receipt batchSize');
+    if (fromBlock > toBlock) throw new Error('holder receipt range is inverted');
+    if (toBlock - fromBlock + 1n > MAX_RECEIPT_RANGE_BLOCKS) {
+      throw new Error(`holder receipt range exceeds ${MAX_RECEIPT_RANGE_BLOCKS} blocks`);
+    }
+    await assertChain();
+    const blockCount = Number(toBlock - fromBlock + 1n);
+    const requests = Array.from({ length: blockCount }, (_, offset) => ({
+      method: 'eth_getBlockReceipts', params: [blockTag(fromBlock + BigInt(offset))],
+    }));
+    const observedLogs = [];
+    let receiptCount = 0;
+    let requestCount = 0;
+    for (let offset = 0; offset < requests.length; offset += batchSize) {
+      requestCount += 1;
+      const batch = requests.slice(offset, offset + batchSize);
+      const results = await rpcClient.requestBatch(batch);
+      if (!Array.isArray(results) || results.length !== batch.length) {
+        throw new Error('eth_getBlockReceipts batch is invalid');
+      }
+      for (const receipts of results) {
+        if (!Array.isArray(receipts)) throw new Error('eth_getBlockReceipts result is invalid');
+        receiptCount += receipts.length;
+        for (const receipt of receipts) {
+          if (!Array.isArray(receipt?.logs)) throw new Error('receipt logs are invalid');
+          observedLogs.push(...receipt.logs);
+        }
+      }
+    }
+    const checkpoint = await readBlock(toBlock);
+    const logs = observedLogs.filter((log) => (
+      String(log?.address || '').toLowerCase() === tokenAddress
+      && String(log?.topics?.[0] || '').toLowerCase() === TRANSFER_TOPIC
+    ));
+    const context = { tokenAddress, fromBlock, toBlock, checkpointHash: checkpoint.hash };
+    return Object.freeze({
+      tokenAddress, fromBlock: fromBlock.toString(), toBlock: toBlock.toString(),
+      nextBlock: (toBlock + 1n).toString(), checkpoint,
+      transfers: orderTransfers(logs, context),
+      telemetry: Object.freeze({
+        requests: requestCount, receiptBlocks: blockCount, receipts: receiptCount,
+        observedLogs: observedLogs.length, ignoredLogs: observedLogs.length - logs.length,
+      }),
+    });
+  }
+
   async function readGlobalRange(input = {}) {
     if (!Array.isArray(input.tokenAddresses)) throw new TypeError('tokenAddresses must be an array');
     const allowed = new Set(input.tokenAddresses.map((value) => address(value, 'tokenAddress')));
@@ -210,13 +264,15 @@ function createRobinhoodHolderTransferReader(options = {}) {
   }
 
   return Object.freeze({
-    assertChain, getSafeHead, matchesCheckpoint, readBlock, readGlobalRange, readRange,
+    assertChain, getSafeHead, matchesCheckpoint, readBlock,
+    readGlobalRange, readRange, readReceiptRange,
   });
 }
 
 module.exports = {
   EXPECTED_CHAIN_ID,
   MAX_RANGE_BLOCKS,
+  MAX_RECEIPT_RANGE_BLOCKS,
   createRobinhoodHolderTransferReader,
   __private: { decodeTransferLog },
 };

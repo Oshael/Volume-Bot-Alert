@@ -94,6 +94,39 @@ describe('Robinhood holder Transfer reader', () => {
     assert.deepEqual(result.transfers, []);
   });
 
+  it('replays one token from bounded block receipts in limited batches', async () => {
+    const batchCalls = [];
+    const nft = `0x${'9'.repeat(40)}`;
+    const client = {
+      async request(method, params) {
+        if (method === 'eth_chainId') return '0x1237';
+        if (method === 'eth_getBlockByNumber') {
+          return { number: params[0], hash: HASH_A };
+        }
+        throw new Error(`unexpected method ${method}`);
+      },
+      async requestBatch(requests) {
+        batchCalls.push(requests);
+        const block = requests[0].params[0];
+        return [[{ logs: [block === '0x64' ? log() : log({
+          address: nft, blockNumber: '0x65', logIndex: '0x3',
+        })] }]];
+      },
+    };
+    const result = await createRobinhoodHolderTransferReader({ rpcClient: client })
+      .readReceiptRange({ tokenAddress: TOKEN, fromBlock: 100, toBlock: 101, batchSize: 1 });
+
+    assert.deepEqual(batchCalls, [
+      [{ method: 'eth_getBlockReceipts', params: ['0x64'] }],
+      [{ method: 'eth_getBlockReceipts', params: ['0x65'] }],
+    ]);
+    assert.equal(result.transfers.length, 1);
+    assert.deepEqual(result.checkpoint, { number: '101', hash: HASH_A });
+    assert.deepEqual(result.telemetry, {
+      requests: 2, receiptBlocks: 2, receipts: 2, observedLogs: 2, ignoredLogs: 1,
+    });
+  });
+
   it('filters a global topic response to tracked holder tokens before decoding', async () => {
     const nft = `0x${'9'.repeat(40)}`;
     const source = rpc(async (method, params) => {

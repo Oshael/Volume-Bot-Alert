@@ -47,6 +47,7 @@ describe('Robinhood holder backfill executor', () => {
         calls.push(['read', range]);
         return { ...range, checkpoint: { number: '105', hash: HASH }, transfers: [] };
       },
+      readReceiptRange: async () => { throw new Error('must not read receipts'); },
     };
     const result = await createRobinhoodHolderBackfillExecutor({
       repository, reader,
@@ -79,6 +80,7 @@ describe('Robinhood holder backfill executor', () => {
       getSafeHead: async () => ({ head: '120', safeHead: '108', confirmations: 12 }),
       matchesCheckpoint: async () => false,
       readRange: async () => { throw new Error('must not read'); },
+      readReceiptRange: async () => { throw new Error('must not read receipts'); },
     };
     const result = await createRobinhoodHolderBackfillExecutor({ repository, reader }).runOnce();
 
@@ -89,7 +91,87 @@ describe('Robinhood holder backfill executor', () => {
     assert.equal(calls.length, 1);
   });
 
-  it('requires three identical deficit readings before isolating drift', async () => {
+  it('recovers a transient getLogs deficit from the bounded receipt range', async () => {
+    const commits = [];
+    const receiptReads = [];
+    const repository = {
+      getNextToken: async () => state(),
+      markResyncing: async () => { throw new Error('must not resync'); },
+      commitRange: async (range) => {
+        commits.push(range);
+        if (commits.length === 1) return {
+          status: 'drift-suspected', tokenAddress: TOKEN,
+          reason: 'holder_negative_balance', fingerprint: 'getlogs-deficit', failedBlock: '104',
+        };
+        return {
+          status: 'committed', tokenAddress: TOKEN, holderCount: '4',
+          backfillNextBlock: '105', liveThroughBlock: '104', liveThroughHash: HASH, version: 3,
+        };
+      },
+    };
+    const reader = {
+      getSafeHead: async () => ({ safeHead: '105' }),
+      matchesCheckpoint: async () => true,
+      readRange: async (range) => ({
+        ...range, checkpoint: { number: '105', hash: HASH }, transfers: [],
+      }),
+      readReceiptRange: async (range) => {
+        receiptReads.push(range);
+        return { ...range, checkpoint: { number: '104', hash: HASH }, transfers: [] };
+      },
+    };
+
+    const result = await createRobinhoodHolderBackfillExecutor({ repository, reader }).runOnce();
+
+    assert.equal(result.status, 'committed');
+    assert.equal(result.recoverySource, 'receipts');
+    assert.deepEqual(receiptReads, [{
+      tokenAddress: TOKEN, fromBlock: '103', toBlock: '104', batchSize: 25,
+    }]);
+    assert.equal(commits.length, 2);
+    assert.equal(commits[1].toBlock, '104');
+  });
+
+  it('defers an unverified deficit that exceeds the receipt safety limit', async () => {
+    let nowMs = Date.parse('2026-08-11T00:00:00.000Z');
+    const commits = [];
+    const repository = {
+      getNextToken: async ({ excludeTokenAddresses }) => (
+        excludeTokenAddresses.includes(TOKEN) ? null : state()
+      ),
+      markResyncing: async () => { throw new Error('must not resync'); },
+      commitRange: async (range) => {
+        commits.push(range);
+        return {
+          status: 'drift-suspected', tokenAddress: TOKEN,
+          reason: 'holder_negative_balance', fingerprint: 'wide-deficit', failedBlock: '400',
+        };
+      },
+    };
+    const reader = {
+      getSafeHead: async () => ({ safeHead: '500' }),
+      matchesCheckpoint: async () => true,
+      readRange: async (range) => ({
+        ...range, checkpoint: { number: range.toBlock, hash: HASH }, transfers: [],
+      }),
+      readReceiptRange: async () => { throw new Error('must not read oversized receipt range'); },
+    };
+    const executor = createRobinhoodHolderBackfillExecutor({
+      repository, reader, now: () => nowMs, receiptBlockLimit: 250,
+    });
+
+    const result = await executor.runOnce();
+    nowMs += 1000;
+    const waiting = await executor.runOnce();
+
+    assert.equal(result.status, 'drift-unverified');
+    assert.equal(result.reason, 'holder_receipt_range_too_wide');
+    assert.equal(result.receiptBlocks, '298');
+    assert.equal(waiting.status, 'idle');
+    assert.equal(commits.length, 1);
+  });
+
+  it('requires three identical receipt deficits before isolating drift', async () => {
     const commits = [];
     const selections = [];
     let nowMs = Date.parse('2026-08-11T00:00:00.000Z');
@@ -104,13 +186,16 @@ describe('Robinhood holder backfill executor', () => {
         return range.confirmDrift
           ? { status: 'drifted', tokenAddress: TOKEN, reason: 'holder_negative_balance' }
           : { status: 'drift-suspected', tokenAddress: TOKEN,
-            reason: 'holder_negative_balance', fingerprint: 'same-deficit' };
+            reason: 'holder_negative_balance', fingerprint: 'same-deficit', failedBlock: '105' };
       },
     };
     const reader = {
       getSafeHead: async () => ({ safeHead: '105' }),
       matchesCheckpoint: async () => true,
       readRange: async (range) => ({
+        ...range, checkpoint: { number: '105', hash: HASH }, transfers: [],
+      }),
+      readReceiptRange: async (range) => ({
         ...range, checkpoint: { number: '105', hash: HASH }, transfers: [],
       }),
     };
@@ -132,7 +217,7 @@ describe('Robinhood holder backfill executor', () => {
     assert.equal(second.observations, 2);
     assert.equal(third.status, 'drifted');
     assert.equal(third.observations, 3);
-    assert.equal(commits.length, 4);
+    assert.equal(commits.length, 7);
     assert.equal(commits.filter(({ confirmDrift }) => confirmDrift === true).length, 1);
     assert.deepEqual(selections.map(({ excludeTokenAddresses }) => excludeTokenAddresses), [
       [], [TOKEN], [], [],

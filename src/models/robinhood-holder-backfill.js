@@ -139,6 +139,7 @@ function computeRange(range, balances) {
         transfer.blockHash, transfer.transactionHash, transfer.logIndex,
         transfer.fromWallet, transfer.amountRaw, balances[transfer.fromWallet] ?? '0',
       ].join(':');
+      error.deficitBlockNumber = transfer.blockNumber;
       throw error;
     }
     holderDelta += changes.holderDelta;
@@ -282,6 +283,7 @@ function createRobinhoodHolderBackfillRepository(options = {}) {
           : Object.freeze({
             status: 'drift-suspected', tokenAddress: range.tokenAddress,
             reason: error.code, fingerprint: error.deficitFingerprint,
+            failedBlock: error.deficitBlockNumber,
           });
         await client.query('COMMIT');
         return result;

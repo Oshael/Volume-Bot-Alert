@@ -7,6 +7,8 @@ const { createRobinhoodHolderTransferReader } = require('./robinhood-holder-tran
 const PROVIDER_NAME = 'robinhood-holder-backfill';
 const REQUIRED_DRIFT_OBSERVATIONS = 3;
 const DEFAULT_DRIFT_RECHECK_MS = 60_000;
+const DEFAULT_RECEIPT_BLOCK_LIMIT = 250;
+const DEFAULT_RECEIPT_BATCH_SIZE = 25;
 
 function boundedInteger(value, fallback, minimum, maximum, label) {
   const parsed = value == null ? fallback : Number(value);
@@ -30,14 +32,27 @@ function createRobinhoodHolderBackfillExecutor(options = {}) {
   }
   if (typeof reader?.getSafeHead !== 'function'
       || typeof reader?.matchesCheckpoint !== 'function'
-      || typeof reader?.readRange !== 'function') {
+      || typeof reader?.readRange !== 'function'
+      || typeof reader?.readReceiptRange !== 'function') {
     throw new TypeError('holder transfer reader is required');
   }
   const now = options.now || Date.now;
   const driftRecheckMs = boundedInteger(
     options.driftRecheckMs, DEFAULT_DRIFT_RECHECK_MS, 1000, 600_000, 'driftRecheckMs'
   );
+  const receiptBlockLimit = boundedInteger(
+    options.receiptBlockLimit, DEFAULT_RECEIPT_BLOCK_LIMIT, 1, 1000, 'receiptBlockLimit'
+  );
+  const receiptBatchSize = boundedInteger(
+    options.receiptBatchSize, DEFAULT_RECEIPT_BATCH_SIZE, 1, 100, 'receiptBatchSize'
+  );
   const driftEvidence = new Map();
+
+  function clockMs() {
+    const value = Number(now());
+    if (!Number.isFinite(value)) throw new Error('holder backfill clock is invalid');
+    return value;
+  }
 
   function observeDrift(result, state, observedAtMs) {
     const previous = driftEvidence.get(state.tokenAddress);
@@ -54,11 +69,64 @@ function createRobinhoodHolderBackfillExecutor(options = {}) {
     return evidence;
   }
 
+  function deferDrift(state, observedAtMs) {
+    const evidence = Object.freeze({
+      fromBlock: state.backfillNextBlock, observations: 0,
+      nextObservationAtMs: observedAtMs + driftRecheckMs,
+    });
+    driftEvidence.set(state.tokenAddress, evidence);
+    return evidence;
+  }
+
+  async function verifyDriftWithReceipts(suspicion, state) {
+    const fromBlock = BigInt(state.backfillNextBlock);
+    const failedBlock = BigInt(suspicion.failedBlock);
+    const receiptBlocks = failedBlock - fromBlock + 1n;
+    if (receiptBlocks < 1n || receiptBlocks > BigInt(receiptBlockLimit)) {
+      const evidence = deferDrift(state, clockMs());
+      return Object.freeze({
+        status: 'drift-unverified', tokenAddress: state.tokenAddress,
+        reason: 'holder_receipt_range_too_wide', receiptBlocks: receiptBlocks.toString(),
+        receiptBlockLimit, nextObservationAt: new Date(evidence.nextObservationAtMs).toISOString(),
+      });
+    }
+    let receiptRange;
+    try {
+      receiptRange = await reader.readReceiptRange({
+        tokenAddress: state.tokenAddress, fromBlock: state.backfillNextBlock,
+        toBlock: suspicion.failedBlock, batchSize: receiptBatchSize,
+      });
+    } catch (error) {
+      const evidence = deferDrift(state, clockMs());
+      return Object.freeze({
+        status: 'drift-unverified', tokenAddress: state.tokenAddress,
+        reason: 'holder_receipt_unavailable',
+        error: String(error?.code || error?.message || error).slice(0, 160),
+        nextObservationAt: new Date(evidence.nextObservationAtMs).toISOString(),
+      });
+    }
+    let verified = await repository.commitRange(receiptRange);
+    if (verified.status !== 'drift-suspected') {
+      driftEvidence.delete(state.tokenAddress);
+      return Object.freeze({ ...verified, recoverySource: 'receipts' });
+    }
+    const observedAtMs = clockMs();
+    const evidence = observeDrift(verified, state, observedAtMs);
+    if (evidence.observations >= REQUIRED_DRIFT_OBSERVATIONS) {
+      verified = await repository.commitRange({ ...receiptRange, confirmDrift: true });
+      driftEvidence.delete(state.tokenAddress);
+    }
+    return Object.freeze({
+      ...verified, verificationSource: 'receipts', observations: evidence.observations,
+      requiredObservations: REQUIRED_DRIFT_OBSERVATIONS,
+      nextObservationAt: new Date(evidence.nextObservationAtMs).toISOString(),
+    });
+  }
+
   async function runOnce(input = {}) {
     const rangeSize = boundedInteger(input.rangeSize, 250, 1, 5000, 'rangeSize');
     const confirmations = boundedInteger(input.confirmations, 12, 0, 1000, 'confirmations');
-    const selectedAtMs = Number(now());
-    if (!Number.isFinite(selectedAtMs)) throw new Error('holder backfill clock is invalid');
+    const selectedAtMs = clockMs();
     const head = await reader.getSafeHead(confirmations);
     const excludeTokenAddresses = [...driftEvidence.entries()]
       .filter(([, evidence]) => evidence.nextObservationAtMs > selectedAtMs)
@@ -87,28 +155,13 @@ function createRobinhoodHolderBackfillExecutor(options = {}) {
     });
     let committed = await repository.commitRange(range);
     if (committed.status === 'drift-suspected') {
-      const observedAtMs = Number(now());
-      if (!Number.isFinite(observedAtMs)) throw new Error('holder backfill clock is invalid');
-      const evidence = observeDrift(committed, state, observedAtMs);
-      if (evidence.observations >= REQUIRED_DRIFT_OBSERVATIONS) {
-        committed = await repository.commitRange({ ...range, confirmDrift: true });
-        driftEvidence.delete(state.tokenAddress);
-      } else {
-        return Object.freeze({
-          ...committed, observations: evidence.observations,
-          requiredObservations: REQUIRED_DRIFT_OBSERVATIONS,
-          nextObservationAt: new Date(evidence.nextObservationAtMs).toISOString(),
-          safeHead: head.safeHead, atBarrier: false,
-        });
-      }
+      committed = await verifyDriftWithReceipts(committed, state);
     } else {
       driftEvidence.delete(state.tokenAddress);
     }
     if (committed.status !== 'committed') {
       return Object.freeze({
-        ...committed, observations: REQUIRED_DRIFT_OBSERVATIONS,
-        requiredObservations: REQUIRED_DRIFT_OBSERVATIONS,
-        safeHead: head.safeHead, atBarrier: false,
+        ...committed, safeHead: head.safeHead, atBarrier: false,
       });
     }
     return Object.freeze({
@@ -136,11 +189,22 @@ function createConfiguredRobinhoodHolderBackfillExecutor(options = {}) {
       env.ROBINHOOD_HOLDER_DRIFT_RECHECK_MS,
       DEFAULT_DRIFT_RECHECK_MS, 1000, 600_000, 'drift recheck interval'
     ),
+    receiptBlockLimit: boundedInteger(
+      env.ROBINHOOD_HOLDER_RECEIPT_BLOCK_LIMIT,
+      DEFAULT_RECEIPT_BLOCK_LIMIT, 1, 1000, 'receipt block limit'
+    ),
+    receiptBatchSize: boundedInteger(
+      env.ROBINHOOD_HOLDER_RECEIPT_BATCH_SIZE,
+      DEFAULT_RECEIPT_BATCH_SIZE, 1, 100, 'receipt batch size'
+    ),
   });
 }
 
 module.exports = {
   createConfiguredRobinhoodHolderBackfillExecutor,
   createRobinhoodHolderBackfillExecutor,
-  __private: { DEFAULT_DRIFT_RECHECK_MS, REQUIRED_DRIFT_OBSERVATIONS, resolveRpcProvider },
+  __private: {
+    DEFAULT_DRIFT_RECHECK_MS, DEFAULT_RECEIPT_BATCH_SIZE, DEFAULT_RECEIPT_BLOCK_LIMIT,
+    REQUIRED_DRIFT_OBSERVATIONS, resolveRpcProvider,
+  },
 };

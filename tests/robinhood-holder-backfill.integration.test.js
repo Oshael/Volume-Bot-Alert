@@ -89,6 +89,7 @@ describe('Robinhood holder backfill persistence', () => {
       const suspected = await repository.commitRange(driftRange);
       assert.equal(suspected.status, 'drift-suspected');
       assert.equal(suspected.reason, 'holder_negative_balance');
+      assert.equal(suspected.failedBlock, '200');
       assert.match(suspected.fingerprint, new RegExp(HASH_B));
       const pendingState = await client.query(
         `SELECT ledger_status FROM robinhood_holder_token_states WHERE token_address = $1`,
