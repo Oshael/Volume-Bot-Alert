@@ -144,6 +144,18 @@ describe('Robinhood holder Transfer reader', () => {
     });
   });
 
+  it('identifies malformed Transfer evidence from an allowed token', async () => {
+    const source = rpc(async (method) => method === 'eth_getBlockByNumber'
+      ? { number: '0x64', hash: HASH_A }
+      : [log({ topics: [TRANSFER_TOPIC, ALICE] })]);
+    const reader = createRobinhoodHolderTransferReader({ rpcClient: source.client });
+    await assert.rejects(
+      reader.readGlobalRange({ tokenAddresses: [TOKEN], fromBlock: 100, toBlock: 100 }),
+      (error) => error.code === 'holder_transfer_invalid_log'
+        && error.tokenAddress === TOKEN
+    );
+  });
+
   it('fails closed on wrong chain, oversized ranges and conflicting evidence', async () => {
     const wrongChain = { request: async () => '0x1' };
     await assert.rejects(

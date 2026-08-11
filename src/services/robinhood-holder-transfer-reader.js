@@ -53,8 +53,14 @@ function decodeTransferLog(log, context) {
     throw new Error('Transfer log token does not match filter');
   }
   const topics = Array.isArray(log?.topics) ? log.topics : [];
-  if (topics.length !== 3 || String(topics[0]).toLowerCase() !== TRANSFER_TOPIC) {
+  if (String(topics[0]).toLowerCase() !== TRANSFER_TOPIC) {
     throw new Error('Transfer log topics are invalid');
+  }
+  if (topics.length !== 3) {
+    const error = new Error('Transfer log topics are invalid');
+    error.code = 'holder_transfer_invalid_log';
+    error.tokenAddress = tokenAddress;
+    throw error;
   }
   const blockNumber = quantity(log.blockNumber, 'log.blockNumber');
   if (blockNumber < context.fromBlock || blockNumber > context.toBlock) {
@@ -64,14 +70,24 @@ function decodeTransferLog(log, context) {
   if (blockNumber === context.toBlock && blockHash !== context.checkpointHash) {
     throw new Error('Transfer log conflicts with range checkpoint');
   }
-  const amount = hex(log.data, 32, 'log.data');
+  let amount;
+  let fromWallet;
+  let toWallet;
+  try {
+    amount = hex(log.data, 32, 'log.data');
+    fromWallet = topicAddress(topics[1], 'log.from');
+    toWallet = topicAddress(topics[2], 'log.to');
+  } catch (error) {
+    error.code = 'holder_transfer_invalid_log';
+    error.tokenAddress = tokenAddress;
+    throw error;
+  }
   return Object.freeze({
     blockNumber: blockNumber.toString(), blockHash,
     transactionHash: hex(log.transactionHash, 32, 'log.transactionHash'),
     transactionIndex: index(log.transactionIndex, 'log.transactionIndex'),
     logIndex: index(log.logIndex, 'log.logIndex'), tokenAddress,
-    fromWallet: topicAddress(topics[1], 'log.from'),
-    toWallet: topicAddress(topics[2], 'log.to'),
+    fromWallet, toWallet,
     amountRaw: BigInt(amount).toString(),
   });
 }
@@ -144,7 +160,7 @@ function createRobinhoodHolderTransferReader(options = {}) {
   }
 
   async function getSafeHead(value = 12) {
-    const confirmations = boundedInteger(value, 12, 0, 1000, 'confirmations');
+    const confirmations = boundedInteger(value, 12, 0, 100_000, 'confirmations');
     await assertChain();
     const head = quantity(await rpcClient.request('eth_blockNumber'), 'eth_blockNumber');
     const safeHead = head >= BigInt(confirmations) ? head - BigInt(confirmations) : 0n;
