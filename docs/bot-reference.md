@@ -960,6 +960,10 @@ Evidencia diferente reinicia a contagem e restart descarta a evidencia em memori
 O handoff não promove um token `backfilling` enquanto seu cursor ainda estiver
 abaixo do primeiro evento pendente; esse fence impede que uma recuperação de
 cauda larga retorne prematuramente a `shadow` e repita o mesmo deferimento.
+Se o deficit aparece depois de eventos live já aplicados, o ledger reverte essa
+cauda atomicamente pela evidência de balances/proveniência do journal, devolve
+os eventos a `pending` e muda o token para `backfilling`. Tokens antes `live`
+publicam invalidação; `tailRollbacks` e `tailRollbackEvents` expõem a recuperação.
 
 O backfill global do catálogo antigo usa a lease
 `robinhood-holder-global-backfill-worker` e permanece desligado por default via
