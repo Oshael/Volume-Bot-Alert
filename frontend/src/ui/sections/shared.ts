@@ -2084,7 +2084,7 @@ function renderRadarSizeBlock(item: ManualTokenEntry, meteora: MeteoraEntry | un
   return `
     <dl class="radar-size">
       <div class="radar-size-item"><dt>MC</dt><dd>${renderTokenTableValuation(item)}</dd></div>
-      <div class="radar-size-item"><dt>LQ</dt><dd>${renderTotalLiquidityCell(item, meteora, meteoraMinPool)}</dd></div>
+      <div class="radar-size-item"><dt>LP</dt><dd>${renderTotalLiquidityCell(item, meteora, meteoraMinPool)}</dd></div>
       <div class="radar-size-item"><dt>AGE</dt><dd class="radar-size-age ${getAgeToneClassFromCreatedAt(item.createdAt)}">${item.createdAt ? fmtAge(item.createdAt) : '-'}</dd></div>
       <div class="radar-size-item"><dt>HLD</dt><dd${holders.available ? '' : ' class="radar-size-empty"'} title="${escapeHtml(holders.title)}">${escapeHtml(holders.value)}</dd></div>
     </dl>

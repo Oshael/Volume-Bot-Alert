@@ -4277,7 +4277,7 @@ function renderExpandedTotalLiquidityStat(
   meteoraMinPool: number,
 ) {
   if (!token) {
-    return renderExpandedSparklineStat('total-liq', 'TOTAL LIQ', '-');
+    return renderExpandedSparklineStat('total-liq', 'TOTAL LP', '-');
   }
 
   const trackedMeteora = token.meteora;
@@ -4288,7 +4288,7 @@ function renderExpandedTotalLiquidityStat(
 
   return `
     <div class="expanded-sparkline-stat expanded-sparkline-stat-total-liq">
-      <span>TOTAL LIQ</span>
+      <span>TOTAL LP</span>
       <div class="expanded-sparkline-stat-rich-value">${renderTotalLiquidityCell(token, resolvedMeteora, meteoraMinPool)}</div>
     </div>
   `;
@@ -6940,7 +6940,7 @@ function renderTokenReviewAlertRow(alert: AdminTokenReviewAlertEntry, busy: bool
   const createdAt = formatDateTime(alert.createdAt);
   const metricItems = [
     ['MCAP', fmtMoney(getRecordNumber(market, 'mcap') ?? getRecordNumber(alert.assessment, 'marketCap'))],
-    ['LIQ', fmtMoney(getRecordNumber(market, 'liquidityUsd'))],
+    ['LP', fmtMoney(getRecordNumber(market, 'liquidityUsd'))],
     ['VOL24H', fmtMoney(getRecordNumber(market, 'vol24h'))],
     ['TOP10', formatReviewPct(getRecordNumber(risk, 'top10Pct'))],
     ['TOP20', formatReviewPct(getRecordNumber(risk, 'top20Pct'))],

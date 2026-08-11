@@ -2758,7 +2758,7 @@ function appendSpecialAlertStatsLine(container: HTMLElement, alert: AlertEntry) 
     appendMetricRow(container, [
       buildMetricPair('AGE', alert.tokenCreatedAt ? fmtAge(alert.tokenCreatedAt) : '-', getAlertAgeToneClass(alert)),
       buildMetricPair('PRICE', formatPriceUsd(alert.priceUsd), 'white'),
-      buildMetricPair('LIQ', fmtMoney(alert.liquidityUsd), 'white'),
+      buildMetricPair('LP', fmtMoney(alert.liquidityUsd), 'white'),
       buildMetricPair('TX 5M', alert.transactions == null ? '-' : String(alert.transactions), 'white'),
     ]);
     return true;
