@@ -937,7 +937,8 @@ O consumidor frontend ainda não está concluído.
 
 O grupo `robinhood-holders` contém workers independentes de captura live,
 backfill de tokens novos, backfill frio, reconciliação, snapshot e poda do
-journal. Todos
+journal. A unit template usa `start:worker:robinhood-holders`, com porta default
+3010 e sem socket no processo worker. Todos
 são opt-in e permanecem desligados por default; pull ou presença de
 `ROBINHOOD_RPC_URL` não os inicia. O live deve ser ligado antes dos backfills. Os
 backfills exigem cutoff durável e deployment exato `rpc_direct` ou
