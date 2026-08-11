@@ -1027,6 +1027,14 @@ journal desses tokens e reinicia cada um no `deployment_block` com count zero. O
 reset completo evita legitimar balances de tail live como baseline historico; o
 replay e o handoff reconstroem o estado canonico.
 
+`npm run robinhood:holder-tail-requeue` lista, sem writes, estados `shadow` que
+ainda estão exatamente na barreira do backfill, não possuem evento live aplicado
+na cauda e cujo primeiro evento pendente excede a janela de receipts. Depois da
+revisão, `-- --confirm-requeue` usa CAS de versão/cursor/checkpoint para mudar
+somente `shadow -> backfilling`; balances, holder count, checkpoint e journal são
+preservados. O backfill per-token relê a lacuna desde `backfill_next_block` e o
+handoff descarta o overlap já reconstruído.
+
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.
 V2 mantém o preço médio executado enquanto não houver spot de reservas no contrato
