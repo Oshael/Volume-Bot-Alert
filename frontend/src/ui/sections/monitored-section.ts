@@ -1021,8 +1021,8 @@ function buildMonitoredRow(item: ManualTokenEntry, manualTokenFolders: AppState[
     buildCoveredMoneyMetric('VOL 1H', item.volume1h, item.coverage?.['1h']),
     buildCoveredMoneyMetric('VOL 6H', item.volume6h, item.coverage?.['6h']),
     buildCoveredMoneyMetric('VOL 24H', item.volume24h, item.coverage?.['24h']),
-    buildMetaMetric('TOTAL LIQ', buildMonitoredTotalLiquidityValue(item)),
-    buildMetaMetric('HOLDERS', buildMonitoredHolderValue(item)),
+    buildMetaMetric('LIQ', buildMonitoredTotalLiquidityValue(item)),
+    buildMetaMetric('HLD', buildMonitoredHolderValue(item)),
   );
 
   const actions = document.createElement('div');
