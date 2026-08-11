@@ -112,6 +112,31 @@ describe('Robinhood holder backfill worker', () => {
     await worker.stop();
   });
 
+  it('keeps an unverified drift in cooldown without halting the worker', async () => {
+    const clock = scheduler();
+    const worker = createRobinhoodHolderBackfillWorker({
+      ...clock,
+      runtimeFactory: () => ({
+        bootstrap: { seedNewTokens: async () => [] },
+        executor: { runOnce: async () => ({
+          status: 'drift-unverified', tokenAddress: TOKEN,
+          reason: 'holder_receipt_range_too_wide', safeHead: '105',
+        }) },
+      }),
+    });
+    worker.start({ enabled: true, admittedAfter: CUTOFF, intervalMs: 500 });
+
+    await clock.scheduled[0].callback();
+
+    const status = worker.getStatus();
+    assert.equal(status.halted, false);
+    assert.equal(status.lastError, null);
+    assert.equal(status.lastResult.replayStatus, 'drift-unverified');
+    assert.equal(status.lastResult.reason, 'holder_receipt_range_too_wide');
+    assert.equal(clock.scheduled[1].delayMs, 500);
+    await worker.stop();
+  });
+
   it('halts and propagates an invalid executor contract', async () => {
     const clock = scheduler();
     const fatals = [];

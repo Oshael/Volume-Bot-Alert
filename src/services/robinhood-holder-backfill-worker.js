@@ -7,7 +7,7 @@ const {
 } = require('./robinhood-holder-backfill-executor');
 
 const REPLAY_STATUSES = new Set([
-  'idle', 'committed', 'drift-suspected', 'drifted', 'resyncing',
+  'idle', 'committed', 'drift-suspected', 'drift-unverified', 'drifted', 'resyncing',
 ]);
 
 function boundedInteger(value, fallback, minimum, maximum, label) {
@@ -87,6 +87,7 @@ function normalizeResult(seeded, replay) {
     resyncingTokens: replay.status === 'resyncing' ? 1 : 0,
     atBarrier: replay.atBarrier === true,
     safeHead: replay.safeHead ?? null,
+    ...(replay.reason ? { reason: replay.reason } : {}),
   });
 }
 
