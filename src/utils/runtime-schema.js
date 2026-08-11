@@ -2710,6 +2710,57 @@ const SCHEMA_GROUPS = [
     ],
   },
   {
+    key: 'stage120-robinhood-holder-global-backfill',
+    name: 'Stage 120 Robinhood holder global backfill campaign',
+    repair: 'node src/utils/db-init-stage120.js',
+    tables: [
+      {
+        table: 'robinhood_holder_global_backfill_runs',
+        columns: [
+          'id', 'chain', 'status', 'catalog_cutoff', 'next_block',
+          'checkpoint_block', 'checkpoint_hash', 'barrier_block',
+          'barrier_checkpoint_block', 'barrier_checkpoint_hash',
+          'barrier_attached_at', 'cohort_token_count', 'telemetry', 'version',
+          'completed_at', 'created_at', 'updated_at',
+        ],
+        constraints: [
+          { name: 'rh_holder_global_runs_chain_check', includes: ['chain', 'robinhood'] },
+          { name: 'rh_holder_global_runs_status_check', includes: ['frozen', 'scanning', 'attached', 'materializing', 'paused', 'completed'] },
+          { name: 'rh_holder_global_runs_cursor_check', includes: ['next_block', 'checkpoint_block', 'version'] },
+          { name: 'rh_holder_global_runs_checkpoint_check', includes: ['checkpoint_block', 'checkpoint_hash'] },
+          { name: 'rh_holder_global_runs_barrier_check', includes: ['barrier_block', 'barrier_checkpoint_block', 'barrier_checkpoint_hash'] },
+          { name: 'rh_holder_global_runs_telemetry_check', includes: ['telemetry', 'object'] },
+          { name: 'rh_holder_global_runs_completion_check', includes: ['status', 'completed_at'] },
+        ],
+        indexes: [{
+          name: 'idx_rh_holder_global_runs_active',
+          includes: ['chain', 'status', 'completed'],
+        }],
+      },
+      {
+        table: 'robinhood_holder_global_backfill_tokens',
+        columns: [
+          'run_id', 'chain', 'token_address', 'holder_count', 'status',
+          'exclusion_reason', 'created_at', 'updated_at',
+        ],
+        columnTypes: { holder_count: { dataType: 'bigint' } },
+        constraints: [
+          { name: 'rh_holder_global_tokens_pkey', includes: ['PRIMARY KEY', 'run_id', 'chain', 'token_address'] },
+          { name: 'rh_holder_global_tokens_run_fkey', includes: ['FOREIGN KEY', 'run_id', 'robinhood_holder_global_backfill_runs'] },
+          { name: 'rh_holder_global_tokens_chain_check', includes: ['chain', 'robinhood'] },
+          { name: 'rh_holder_global_tokens_address_check', includes: ['token_address'] },
+          { name: 'rh_holder_global_tokens_count_check', includes: ['holder_count'] },
+          { name: 'rh_holder_global_tokens_status_check', includes: ['active', 'excluded', 'materialized', 'completed'] },
+          { name: 'rh_holder_global_tokens_exclusion_check', includes: ['status', 'exclusion_reason'] },
+        ],
+        indexes: [{
+          name: 'idx_rh_holder_global_tokens_work',
+          includes: ['run_id', 'status', 'token_address'],
+        }],
+      },
+    ],
+  },
+  {
     key: 'stage91-robinhood-wallet-swap-cursors',
     name: 'Stage 91 Robinhood wallet-swap attribution cursors',
     repair: 'node src/utils/db-init-stage91.js',
