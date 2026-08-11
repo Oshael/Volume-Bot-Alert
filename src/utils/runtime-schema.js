@@ -2688,6 +2688,28 @@ const SCHEMA_GROUPS = [
     }],
   },
   {
+    key: 'stage119-robinhood-holder-publication-view',
+    name: 'Stage 119 Robinhood holder publication view',
+    repair: 'node src/utils/db-init-stage119.js',
+    tables: [
+      {
+        table: 'robinhood_token_holder_daily_snapshots',
+        constraints: [{
+          name: 'robinhood_token_holder_daily_snapshots_source_check',
+          includes: ['blockscout', 'ledger_live'],
+        }],
+      },
+      {
+        table: 'robinhood_published_holder_summaries',
+        columns: [
+          'chain', 'token_address', 'holder_count', 'source', 'observed_at',
+          'checked_at', 'last_error_code', 'consecutive_failures', 'retry_after_at',
+          'ledger_version', 'live_through_block', 'live_through_hash',
+        ],
+      },
+    ],
+  },
+  {
     key: 'stage91-robinhood-wallet-swap-cursors',
     name: 'Stage 91 Robinhood wallet-swap attribution cursors',
     repair: 'node src/utils/db-init-stage91.js',

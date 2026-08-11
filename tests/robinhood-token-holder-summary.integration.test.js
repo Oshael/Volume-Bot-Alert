@@ -9,6 +9,8 @@ const {
 } = require('../src/models/robinhood-token-holder-summary');
 const stage111 = require('../src/utils/db-init-stage111');
 const stage112 = require('../src/utils/db-init-stage112');
+const stage116 = require('../src/utils/db-init-stage116');
+const stage119 = require('../src/utils/db-init-stage119');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const TOKEN = `0x${'e'.repeat(40)}`;
@@ -32,6 +34,8 @@ describe('Robinhood token holder summary repository integration', () => {
     await assertUsingTestDatabase(db);
     await stage111.init({ closePool: false });
     await stage112.init({ closePool: false });
+    await stage116.init({ closePool: false });
+    await stage119.init({ closePool: false });
   });
 
   beforeEach(clearFixture);
@@ -93,5 +97,58 @@ describe('Robinhood token holder summary repository integration', () => {
       coldQuota: 5,
     });
     assert.ok(Array.isArray(candidates));
+  });
+
+  it('publishes live ledger state through the view and otherwise falls back', async () => {
+    const client = await db.getClient();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        `INSERT INTO robinhood_token_holder_summaries (
+           chain, token_address, holder_count, source, observed_at, checked_at
+         ) VALUES ('robinhood', $1, 5000, 'blockscout',
+                   '2026-08-10T03:00:00Z', '2026-08-10T03:00:01Z')`,
+        [TOKEN]
+      );
+      let published = await client.query(
+        `SELECT holder_count, source, ledger_version
+           FROM robinhood_published_holder_summaries
+          WHERE token_address = $1`, [TOKEN]
+      );
+      assert.deepEqual(published.rows[0], {
+        holder_count: '5000', source: 'blockscout', ledger_version: null,
+      });
+
+      await client.query(
+        `INSERT INTO robinhood_holder_cursors (chain, stream, next_block)
+         VALUES ('robinhood', 'live', 1)
+         ON CONFLICT (chain, stream) DO NOTHING`
+      );
+      await client.query(
+        `INSERT INTO robinhood_holder_token_states (
+           chain, token_address, holder_count, ledger_status, version
+         ) VALUES ('robinhood', $1, 5100, 'live', 7)`, [TOKEN]
+      );
+      published = await client.query(
+        `SELECT holder_count, source, ledger_version
+           FROM robinhood_published_holder_summaries
+          WHERE token_address = $1`, [TOKEN]
+      );
+      assert.deepEqual(published.rows[0], {
+        holder_count: '5100', source: 'ledger_live', ledger_version: '7',
+      });
+      await client.query(
+        `INSERT INTO robinhood_token_holder_daily_snapshots (
+           chain, token_address, snapshot_date, holder_count, source, observed_at
+         ) VALUES ('robinhood', $1, '2026-08-10', 5100, 'ledger_live', NOW())`,
+        [TOKEN]
+      );
+      await client.query('ROLLBACK');
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch (_) {}
+      throw error;
+    } finally {
+      client.release();
+    }
   });
 });
