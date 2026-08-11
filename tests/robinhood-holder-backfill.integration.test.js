@@ -11,17 +11,22 @@ const {
 const {
   runCheckpointRepair, __private: { resetCandidate },
 } = require('../src/utils/repair-robinhood-holder-backfill-checkpoints');
+const {
+  runWideTailRequeue, __private: { requeueCandidate: requeueWideTail },
+} = require('../src/utils/requeue-robinhood-holder-wide-tails');
 
 const TOKEN = `0x${'1'.repeat(40)}`;
 const DRIFT_TOKEN = `0x${'2'.repeat(40)}`;
 const PRIORITY_TOKEN = `0x${'5'.repeat(40)}`;
 const REPAIR_TOKEN = `0x${'6'.repeat(40)}`;
+const SHADOW_TOKEN = `0x${'7'.repeat(40)}`;
 const ALICE = `0x${'3'.repeat(40)}`;
 const BOB = `0x${'4'.repeat(40)}`;
 const ZERO = `0x${'0'.repeat(40)}`;
 const HASH_A = `0x${'a'.repeat(64)}`;
 const HASH_B = `0x${'b'.repeat(64)}`;
 const HASH_C = `0x${'c'.repeat(64)}`;
+const HASH_D = `0x${'d'.repeat(64)}`;
 
 after(() => db.pool.end());
 
@@ -201,6 +206,61 @@ describe('Robinhood holder backfill persistence', () => {
         liveThroughBlock: reset.rows[0].live_through_block,
         version: String(reset.rows[0].version),
       }, { holderCount: '0', nextBlock: '100', liveThroughBlock: null, version: '2' });
+
+      await client.query(
+        `INSERT INTO robinhood_holder_token_states (
+           token_address, holder_count, ledger_status, deployment_block,
+           backfill_next_block, live_through_block, live_through_hash
+         ) VALUES ($1, 1, 'shadow', 100, 201, 200, $2)`, [SHADOW_TOKEN, HASH_A]
+      );
+      await client.query(
+        `INSERT INTO robinhood_holder_balances (
+           token_address, wallet_address, balance_raw, last_block_number,
+           last_transaction_hash, last_log_index
+         ) VALUES ($1, $2, 1, 200, $3, 0)`, [SHADOW_TOKEN, ALICE, HASH_A]
+      );
+      await client.query(
+        `INSERT INTO robinhood_holder_transfer_journal (
+           block_number, block_hash, transaction_hash, transaction_index, log_index,
+           token_address, from_wallet, to_wallet, amount_raw
+         ) VALUES (500, $1, $2, 0, 0, $3, $4, $5, 1)`,
+        [HASH_D, HASH_D, SHADOW_TOKEN, ALICE, BOB]
+      );
+      const tailPreview = await runWideTailRequeue({ database, receiptBlockLimit: 250 });
+      assert.deepEqual(tailPreview.candidates.map(({ tokenAddress }) => tokenAddress), [
+        SHADOW_TOKEN,
+      ]);
+      await client.query(
+        `UPDATE robinhood_holder_token_states SET version = version + 1
+          WHERE token_address = $1`, [SHADOW_TOKEN]
+      );
+      assert.equal(await requeueWideTail(database, tailPreview.candidates[0], 250), null);
+      const tailRequeue = await runWideTailRequeue({
+        database, receiptBlockLimit: 250, confirm: true,
+      });
+      assert.equal(tailRequeue.requeued[0].backfillNextBlock, '201');
+      const preserved = await client.query(
+        `SELECT state.ledger_status, state.holder_count, state.backfill_next_block,
+                state.live_through_block, state.version,
+                (SELECT COUNT(*) FROM robinhood_holder_balances balances
+                  WHERE balances.token_address = state.token_address)::int AS balances,
+                (SELECT COUNT(*) FROM robinhood_holder_transfer_journal journal
+                  WHERE journal.token_address = state.token_address)::int AS journal_events
+           FROM robinhood_holder_token_states state WHERE state.token_address = $1`,
+        [SHADOW_TOKEN]
+      );
+      assert.deepEqual({
+        status: preserved.rows[0].ledger_status,
+        holderCount: String(preserved.rows[0].holder_count),
+        nextBlock: String(preserved.rows[0].backfill_next_block),
+        liveThroughBlock: String(preserved.rows[0].live_through_block),
+        version: String(preserved.rows[0].version),
+        balances: Number(preserved.rows[0].balances),
+        journalEvents: Number(preserved.rows[0].journal_events),
+      }, {
+        status: 'backfilling', holderCount: '1', nextBlock: '201',
+        liveThroughBlock: '200', version: '2', balances: 1, journalEvents: 1,
+      });
     } finally {
       client.release();
     }
