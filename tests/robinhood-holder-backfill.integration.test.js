@@ -140,14 +140,14 @@ describe('Robinhood holder backfill persistence', () => {
          ) VALUES ($1, 'backfilling', 150, 150)`, [PRIORITY_TOKEN]
       );
       assert.deepEqual(await repository.getNextToken({ throughBlock: '200' }), {
-        tokenAddress: PRIORITY_TOKEN, deploymentBlock: '150', backfillNextBlock: '150',
-        liveThroughBlock: null, liveThroughHash: null, version: 0,
-      });
-      assert.deepEqual(await repository.getNextToken({
-        throughBlock: '200', excludeTokenAddresses: [PRIORITY_TOKEN],
-      }), {
         tokenAddress: TOKEN, deploymentBlock: '100', backfillNextBlock: '103',
         liveThroughBlock: '102', liveThroughHash: HASH_C, version: 2,
+      });
+      assert.deepEqual(await repository.getNextToken({
+        throughBlock: '200', excludeTokenAddresses: [TOKEN],
+      }), {
+        tokenAddress: PRIORITY_TOKEN, deploymentBlock: '150', backfillNextBlock: '150',
+        liveThroughBlock: null, liveThroughHash: null, version: 0,
       });
       assert.deepEqual(await repository.markResyncing({
         tokenAddress: TOKEN, backfillNextBlock: '103',

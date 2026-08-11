@@ -239,7 +239,8 @@ function createRobinhoodHolderBackfillRepository(options = {}) {
         WHERE chain = 'robinhood' AND ledger_status = 'backfilling'
           AND backfill_next_block <= $1
           AND NOT (token_address = ANY($2::varchar[]))
-        ORDER BY backfill_next_block DESC, token_address
+        ORDER BY (live_through_block IS NOT NULL) DESC,
+                 backfill_next_block DESC, token_address
         LIMIT 1`,
       [throughBlock, excluded]
     );
