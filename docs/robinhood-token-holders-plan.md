@@ -98,11 +98,12 @@ de um adapter substituivel e nunca ser chamada diretamente pelo frontend.
 ## Decisoes Fechadas
 
 1. A funcionalidade e exclusiva da chain `robinhood`.
-2. `holderCount` representa a contagem bruta publicada pelo Blockscout.
+2. `holderCount` representa o ledger local promovido a `live`; antes da promocao,
+   usa a ultima contagem bruta publicada pelo Blockscout como fallback.
 3. Pools, contratos, wallets comuns e burn address participam do total.
 4. A lista identifica o tipo do endereco; nao o esconde automaticamente.
 5. Solana continua mostrando `HLD -` neste projeto.
-6. O dashboard le somente o ultimo resumo persistido; nunca aguarda Blockscout.
+6. O dashboard le somente a view SQL live-first; nunca aguarda Blockscout.
 7. Falha externa preserva o ultimo valor conhecido.
 8. Valor sem sucesso anterior e exibido como `-`, nunca como zero.
 9. `0` e um valor valido somente quando confirmado pela fonte.
@@ -402,7 +403,7 @@ altera a sequencia deste quadro.
 | 3 | Backfill/catch-up de tokens novos sem lacuna | concluido no codigo/desligado | RT3A-RT3C runner opt-in; RT4A/RT4E1 handoff retido; RT4F1 wiring com lease |
 | 4 | Live incremental shadow, deteccao automatica de reorg e scheduler da poda | concluido no codigo/desligado | RT4A-RT4E2 base integrada; RT4F1/F2 grupo, leases e poda opt-in |
 | 5 | Backfill frio dos tokens antigos | concluido no codigo/desligado | RT5A-RT5B3; admissao, verificacao, tick limitado e runtime opt-in com lease |
-| 6 | Reconciliacao, promocao e publicacao REST/socket | em andamento/desligado | RT6A-RT6E1 chegam a fronteira SQL live-first; readers/socket pendentes |
+| 6 | Reconciliacao, promocao e publicacao REST/socket | em andamento/desligado | RT6A-RT6E2 publicam REST/listas live-first; socket e snapshot live pendentes |
 | 7 | Frontend realtime/expanded chart | pendente de layout aprovado | nao reutilizar o prototipo sem decisao explicita |
 
 Os nomes RT nao sao uma segunda arquitetura. Eles apenas repartem os macros
@@ -423,7 +424,8 @@ realtime em slices de no maximo 500 linhas:
 | `robinhood-blockscout-holders.js` | bootstrap, lista paginada, auditoria e reconciliacao externa |
 | `robinhood-holder-request-scheduler.js` | protege chamadas Blockscout de rate limit/falhas |
 | `robinhood-holder-summary-worker.js` | fallback e refresh do ultimo valor conhecido |
-| `robinhood-token-holder-summary.js` / Stage 111 | store publicado consumido pelas superficies atuais |
+| `robinhood-token-holder-summary.js` / Stage 111 | cache Blockscout e fallback da view publicada |
+| Stage 119 / `robinhood_published_holder_summaries` | fronteira live-first consumida pelas superficies atuais |
 | Stage 112 e endpoint historico | snapshots diarios e sticks de total/delta |
 | `robinhood-holders.js` | lista paginada autenticada; nao depende do ledger por wallet |
 | UI de monitored/recent/old/manual | continua consumindo o mesmo contrato de summary |
@@ -1177,6 +1179,26 @@ A mesma migration amplia somente a constraint `source` da tabela diaria ja
 existente para aceitar `ledger_live`. Nenhum snapshot local e escrito neste corte,
 e nenhum endpoint foi trocado. RT6E2 conectara os readers REST/listas; o writer de
 snapshots e o socket permanecem posteriores.
+
+#### Corte RT6E2 - Readers REST/listas live-first
+
+Status: implementado e validado em `d5ab9859`; workers continuam desligados.
+
+Monitored/recent/old, pins, manual tokens e o summary da rota paginada agora leem
+`robinhood_published_holder_summaries`. A selecao continua set-based, sem consulta
+RPC/Blockscout por linha. O cache e os writers Blockscout permanecem separados e
+inalterados para fallback, auditoria e refresh de tokens ainda nao promovidos.
+
+Para `ledger_live`, freshness usa `checked_at`, que representa o progresso do
+cursor mesmo quando o numero total nao muda; para fallback Blockscout, continua
+usando `observed_at`. A rota nao agenda refresh Blockscout do summary enquanto a
+fonte publicada for live. A pagina de wallets continua vindo do Blockscout e nao
+e um snapshot atomico do count. Socket e persistencia dos snapshots diarios a
+partir do ledger live seguem para os proximos subcortes.
+
+Ordem operacional obrigatoria: aplicar/validar a Stage 119 antes de subir esse
+backend, pois os readers consultam a view mesmo com todos os workers opt-in
+desligados.
 
 Cada item acima deve ser repartido novamente se estimar mais de 500 linhas. O
 probe e a estimativa de storage sao pre-condicoes; “outros terminais fazem” nao

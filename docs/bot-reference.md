@@ -1070,7 +1070,12 @@ O RT6E1 adiciona a Stage 119 sem nova tabela: a view
 e usa Blockscout como fallback. Ela expoe timestamps separados do commit do count
 e do avanco do cursor, alem de version/bloco para consumidores posteriores. A
 constraint dos snapshots diarios passa a aceitar `ledger_live`, mas nenhum reader
-ou writer muda neste subcorte.
+ou writer muda neste subcorte. O RT6E2 conecta essa view aos readers de
+monitored/recent/old/manual e ao summary da rota paginada. Para `ledger_live`,
+freshness acompanha `checked_at` (avanco do cursor), nao o instante da ultima
+mudanca do count; a rota tambem deixa de enfileirar refresh Blockscout de summary
+quando o ledger live ja e a fonte publicada. Escrita/auditoria Blockscout seguem
+separadas como fallback, e socket/snapshots live continuam pendentes.
 
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.
