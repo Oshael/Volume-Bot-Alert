@@ -907,6 +907,7 @@ Stages confirmados:
 | 113 | proveniência RPC e cursor live independente para deployments diretos Robinhood |
 | 114 | proveniência DEV explícita por eventos de launchpads Robinhood conhecidos |
 | 115 | cursor retomável independente para backfill histórico DEV de launchpads |
+| 119 | view não materializada para publicação de holders live-first e source diário `ledger_live` |
 
 O refresh de holders é um worker opt-in do grupo `robinhood-derived`: prioriza
 tokens ativos, faz backfill gradual dos demais e persiste backoff por token.
@@ -1064,6 +1065,12 @@ e distintas geram apenas `drift-suspected` na telemetria; igualdade gera
 `live-verified`. Como o count Blockscout nao possui bloco de referencia, esse sinal
 nao muda o status do ledger nem dispara resync automatico, evitando falso drift
 por diferenca de indexacao. Publicacao do count local segue pendente.
+O RT6E1 adiciona a Stage 119 sem nova tabela: a view
+`robinhood_published_holder_summaries` escolhe ledger `live` quando existe cursor
+e usa Blockscout como fallback. Ela expoe timestamps separados do commit do count
+e do avanco do cursor, alem de version/bloco para consumidores posteriores. A
+constraint dos snapshots diarios passa a aceitar `ledger_live`, mas nenhum reader
+ou writer muda neste subcorte.
 
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.

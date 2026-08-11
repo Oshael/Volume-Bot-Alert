@@ -402,7 +402,7 @@ altera a sequencia deste quadro.
 | 3 | Backfill/catch-up de tokens novos sem lacuna | concluido no codigo/desligado | RT3A-RT3C runner opt-in; RT4A/RT4E1 handoff retido; RT4F1 wiring com lease |
 | 4 | Live incremental shadow, deteccao automatica de reorg e scheduler da poda | concluido no codigo/desligado | RT4A-RT4E2 base integrada; RT4F1/F2 grupo, leases e poda opt-in |
 | 5 | Backfill frio dos tokens antigos | concluido no codigo/desligado | RT5A-RT5B3; admissao, verificacao, tick limitado e runtime opt-in com lease |
-| 6 | Reconciliacao, promocao e publicacao REST/socket | em andamento/desligado | RT6A-RT6D criam promocao, runtime, wiring e auditoria live; publicacao pendente |
+| 6 | Reconciliacao, promocao e publicacao REST/socket | em andamento/desligado | RT6A-RT6E1 chegam a fronteira SQL live-first; readers/socket pendentes |
 | 7 | Frontend realtime/expanded chart | pendente de layout aprovado | nao reutilizar o prototipo sem decisao explicita |
 
 Os nomes RT nao sao uma segunda arquitetura. Eles apenas repartem os macros
@@ -1162,6 +1162,21 @@ O sinal nao altera `ledger_status`, nao apaga balances e nao bloqueia captura. O
 Blockscout nao ancora seu count a um bloco, portanto mismatch repetido ainda pode
 ser atraso de indexacao, nao prova canonica de drift. Isolamento/resync automatico
 exigira evidencia mais forte; a publicacao do count local continua pendente.
+
+#### Corte RT6E1 - Fronteira SQL publicada live-first
+
+Status: implementado no schema; readers ainda nao consomem a view.
+
+A Stage 119 cria `robinhood_published_holder_summaries` como view SQL nao
+materializada. Ela nao armazena nem duplica linhas: para estado `live` com cursor
+existente, projeta count/version/bloco do ledger; nos demais casos preserva o
+summary Blockscout. `observed_at` representa o ultimo commit do estado e
+`checked_at` o ultimo avanco do cursor, preparando freshness correta no reader.
+
+A mesma migration amplia somente a constraint `source` da tabela diaria ja
+existente para aceitar `ledger_live`. Nenhum snapshot local e escrito neste corte,
+e nenhum endpoint foi trocado. RT6E2 conectara os readers REST/listas; o writer de
+snapshots e o socket permanecem posteriores.
 
 Cada item acima deve ser repartido novamente se estimar mais de 500 linhas. O
 probe e a estimativa de storage sao pre-condicoes; “outros terminais fazem” nao
