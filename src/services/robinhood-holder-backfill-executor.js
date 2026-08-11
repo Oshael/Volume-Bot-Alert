@@ -6,6 +6,7 @@ const { createRobinhoodHolderTransferReader } = require('./robinhood-holder-tran
 
 const PROVIDER_NAME = 'robinhood-holder-backfill';
 const REQUIRED_DRIFT_OBSERVATIONS = 3;
+const DEFAULT_DRIFT_RECHECK_MS = 60_000;
 
 function boundedInteger(value, fallback, minimum, maximum, label) {
   const parsed = value == null ? fallback : Number(value);
@@ -32,9 +33,13 @@ function createRobinhoodHolderBackfillExecutor(options = {}) {
       || typeof reader?.readRange !== 'function') {
     throw new TypeError('holder transfer reader is required');
   }
+  const now = options.now || Date.now;
+  const driftRecheckMs = boundedInteger(
+    options.driftRecheckMs, DEFAULT_DRIFT_RECHECK_MS, 1000, 600_000, 'driftRecheckMs'
+  );
   const driftEvidence = new Map();
 
-  function observeDrift(result, state) {
+  function observeDrift(result, state, observedAtMs) {
     const previous = driftEvidence.get(state.tokenAddress);
     const observations = previous?.fingerprint === result.fingerprint
       && previous.fromBlock === state.backfillNextBlock
@@ -43,6 +48,7 @@ function createRobinhoodHolderBackfillExecutor(options = {}) {
       fingerprint: result.fingerprint,
       fromBlock: state.backfillNextBlock,
       observations,
+      nextObservationAtMs: observedAtMs + driftRecheckMs,
     });
     driftEvidence.set(state.tokenAddress, evidence);
     return evidence;
@@ -51,14 +57,22 @@ function createRobinhoodHolderBackfillExecutor(options = {}) {
   async function runOnce(input = {}) {
     const rangeSize = boundedInteger(input.rangeSize, 250, 1, 5000, 'rangeSize');
     const confirmations = boundedInteger(input.confirmations, 12, 0, 1000, 'confirmations');
+    const selectedAtMs = Number(now());
+    if (!Number.isFinite(selectedAtMs)) throw new Error('holder backfill clock is invalid');
     const head = await reader.getSafeHead(confirmations);
-    const state = await repository.getNextToken({ throughBlock: head.safeHead });
+    const excludeTokenAddresses = [...driftEvidence.entries()]
+      .filter(([, evidence]) => evidence.nextObservationAtMs > selectedAtMs)
+      .map(([tokenAddress]) => tokenAddress);
+    const state = await repository.getNextToken({
+      throughBlock: head.safeHead, excludeTokenAddresses,
+    });
     if (!state) return Object.freeze({ status: 'idle', safeHead: head.safeHead });
     if (state.liveThroughBlock !== null) {
       const matches = await reader.matchesCheckpoint({
         number: state.liveThroughBlock, hash: state.liveThroughHash,
       });
       if (!matches) {
+        driftEvidence.delete(state.tokenAddress);
         const isolated = await repository.markResyncing(state);
         return Object.freeze({ ...isolated, reason: 'holder_backfill_checkpoint_orphaned' });
       }
@@ -73,7 +87,9 @@ function createRobinhoodHolderBackfillExecutor(options = {}) {
     });
     let committed = await repository.commitRange(range);
     if (committed.status === 'drift-suspected') {
-      const evidence = observeDrift(committed, state);
+      const observedAtMs = Number(now());
+      if (!Number.isFinite(observedAtMs)) throw new Error('holder backfill clock is invalid');
+      const evidence = observeDrift(committed, state, observedAtMs);
       if (evidence.observations >= REQUIRED_DRIFT_OBSERVATIONS) {
         committed = await repository.commitRange({ ...range, confirmDrift: true });
         driftEvidence.delete(state.tokenAddress);
@@ -81,6 +97,7 @@ function createRobinhoodHolderBackfillExecutor(options = {}) {
         return Object.freeze({
           ...committed, observations: evidence.observations,
           requiredObservations: REQUIRED_DRIFT_OBSERVATIONS,
+          nextObservationAt: new Date(evidence.nextObservationAtMs).toISOString(),
           safeHead: head.safeHead, atBarrier: false,
         });
       }
@@ -113,11 +130,17 @@ function createConfiguredRobinhoodHolderBackfillExecutor(options = {}) {
   const database = options.database || db;
   const repository = options.repository || createRobinhoodHolderBackfillRepository({ database });
   const reader = options.reader || createRobinhoodHolderTransferReader({ rpcClient });
-  return createRobinhoodHolderBackfillExecutor({ repository, reader });
+  return createRobinhoodHolderBackfillExecutor({
+    repository, reader,
+    driftRecheckMs: boundedInteger(
+      env.ROBINHOOD_HOLDER_DRIFT_RECHECK_MS,
+      DEFAULT_DRIFT_RECHECK_MS, 1000, 600_000, 'drift recheck interval'
+    ),
+  });
 }
 
 module.exports = {
   createConfiguredRobinhoodHolderBackfillExecutor,
   createRobinhoodHolderBackfillExecutor,
-  __private: { REQUIRED_DRIFT_OBSERVATIONS, resolveRpcProvider },
+  __private: { DEFAULT_DRIFT_RECHECK_MS, REQUIRED_DRIFT_OBSERVATIONS, resolveRpcProvider },
 };

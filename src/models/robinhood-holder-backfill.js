@@ -19,6 +19,14 @@ function tokenAddress(value) {
   return normalized;
 }
 
+function tokenAddressList(value) {
+  if (value == null) return [];
+  if (!Array.isArray(value) || value.length > 1000) {
+    throw new Error('excludeTokenAddresses must be an array with at most 1000 items');
+  }
+  return [...new Set(value.map(tokenAddress))];
+}
+
 function blockHash(value) {
   const normalized = String(value || '').trim().toLowerCase();
   if (!/^0x[0-9a-f]{64}$/.test(normalized)) throw new Error('checkpoint.hash is invalid');
@@ -222,15 +230,17 @@ function createRobinhoodHolderBackfillRepository(options = {}) {
 
   async function getNextToken(input = {}) {
     const throughBlock = quantity(input.throughBlock, 'throughBlock').toString();
+    const excluded = tokenAddressList(input.excludeTokenAddresses);
     const result = await database.query(
       `SELECT token_address, deployment_block, backfill_next_block,
               live_through_block, live_through_hash, version
          FROM robinhood_holder_token_states
         WHERE chain = 'robinhood' AND ledger_status = 'backfilling'
           AND backfill_next_block <= $1
+          AND NOT (token_address = ANY($2::varchar[]))
         ORDER BY backfill_next_block DESC, token_address
         LIMIT 1`,
-      [throughBlock]
+      [throughBlock, excluded]
     );
     return stateRow(result.rows[0]);
   }
@@ -300,5 +310,5 @@ function createRobinhoodHolderBackfillRepository(options = {}) {
 
 module.exports = {
   createRobinhoodHolderBackfillRepository,
-  __private: { computeRange, normalizeRange, stateRow },
+  __private: { computeRange, normalizeRange, stateRow, tokenAddressList },
 };

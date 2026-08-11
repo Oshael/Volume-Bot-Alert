@@ -55,7 +55,7 @@ describe('Robinhood holder backfill executor', () => {
     assert.equal(result.atBarrier, true);
     assert.deepEqual(calls, [
       ['head', 12],
-      ['select', { throughBlock: '105' }],
+      ['select', { throughBlock: '105', excludeTokenAddresses: [] }],
       ['checkpoint', { number: '102', hash: HASH }],
       ['read', { tokenAddress: TOKEN, fromBlock: '103', toBlock: '105' }],
       ['commit', {
@@ -91,16 +91,20 @@ describe('Robinhood holder backfill executor', () => {
 
   it('requires three identical deficit readings before isolating drift', async () => {
     const commits = [];
-    const fingerprints = ['original', 'original', 'changed', 'changed', 'changed'];
+    const selections = [];
+    let nowMs = Date.parse('2026-08-11T00:00:00.000Z');
     const repository = {
-      getNextToken: async () => state(),
+      getNextToken: async (input) => {
+        selections.push(input);
+        return input.excludeTokenAddresses.includes(TOKEN) ? null : state();
+      },
       markResyncing: async () => { throw new Error('must not resync'); },
       commitRange: async (range) => {
         commits.push(range);
         return range.confirmDrift
           ? { status: 'drifted', tokenAddress: TOKEN, reason: 'holder_negative_balance' }
           : { status: 'drift-suspected', tokenAddress: TOKEN,
-            reason: 'holder_negative_balance', fingerprint: fingerprints.shift() };
+            reason: 'holder_negative_balance', fingerprint: 'same-deficit' };
       },
     };
     const reader = {
@@ -110,24 +114,29 @@ describe('Robinhood holder backfill executor', () => {
         ...range, checkpoint: { number: '105', hash: HASH }, transfers: [],
       }),
     };
-    const executor = createRobinhoodHolderBackfillExecutor({ repository, reader });
+    const executor = createRobinhoodHolderBackfillExecutor({
+      repository, reader, now: () => nowMs, driftRecheckMs: 60_000,
+    });
 
     const first = await executor.runOnce();
+    nowMs += 1000;
+    const waiting = await executor.runOnce();
+    nowMs += 59_000;
     const second = await executor.runOnce();
+    nowMs += 60_000;
     const third = await executor.runOnce();
-    const fourth = await executor.runOnce();
-    const fifth = await executor.runOnce();
 
     assert.equal(first.status, 'drift-suspected');
     assert.equal(first.observations, 1);
+    assert.equal(waiting.status, 'idle');
     assert.equal(second.observations, 2);
-    assert.equal(third.status, 'drift-suspected');
-    assert.equal(third.observations, 1);
-    assert.equal(fourth.observations, 2);
-    assert.equal(fifth.status, 'drifted');
-    assert.equal(fifth.observations, 3);
-    assert.equal(commits.length, 6);
+    assert.equal(third.status, 'drifted');
+    assert.equal(third.observations, 3);
+    assert.equal(commits.length, 4);
     assert.equal(commits.filter(({ confirmDrift }) => confirmDrift === true).length, 1);
+    assert.deepEqual(selections.map(({ excludeTokenAddresses }) => excludeTokenAddresses), [
+      [], [TOKEN], [], [],
+    ]);
   });
 
   it('requires the configured Robinhood RPC and never falls back to dRPC', () => {
