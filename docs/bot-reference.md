@@ -925,11 +925,14 @@ linha. Para `ledger_live`, freshness acompanha o avanço do cursor (`checked_at`
 no fallback acompanha a última observação Blockscout. A lista paginada de 50
 wallets continua vindo do Blockscout e não é um snapshot atômico com o count.
 `GET /api/robinhood/holder-history` lê snapshots diários do PostgreSQL e não
-inventa comparação de 24 horas quando falta um dia. A escrita diária pelo ledger
-live, socket realtime e frontend do expanded chart ainda não estão concluídos.
+inventa comparação de 24 horas quando falta um dia. O worker diário `ledger_live`
+é opt-in por `ROBINHOOD_HOLDER_SNAPSHOT_ENABLED`, exige captura live habilitada e
+saudável e grava batches limitados; socket realtime e frontend do expanded chart
+ainda não estão concluídos.
 
 O grupo `robinhood-holders` contém workers independentes de captura live,
-backfill de tokens novos, backfill frio, reconciliação e poda do journal. Todos
+backfill de tokens novos, backfill frio, reconciliação, snapshot e poda do
+journal. Todos
 são opt-in e permanecem desligados por default; pull ou presença de
 `ROBINHOOD_RPC_URL` não os inicia. O live deve ser ligado antes dos backfills. Os
 backfills exigem cutoff durável e deployment exato `rpc_direct` ou

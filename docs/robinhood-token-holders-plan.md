@@ -403,7 +403,7 @@ altera a sequencia deste quadro.
 | 3 | Backfill/catch-up de tokens novos sem lacuna | concluido no codigo/desligado | RT3A-RT3C runner opt-in; RT4A/RT4E1 handoff retido; RT4F1 wiring com lease |
 | 4 | Live incremental shadow, deteccao automatica de reorg e scheduler da poda | concluido no codigo/desligado | RT4A-RT4E2 base integrada; RT4F1/F2 grupo, leases e poda opt-in |
 | 5 | Backfill frio dos tokens antigos | concluido no codigo/desligado | RT5A-RT5B3; admissao, verificacao, tick limitado e runtime opt-in com lease |
-| 6 | Reconciliacao, promocao e publicacao REST/socket | em andamento/desligado | RT6A-RT6E2 publicam REST/listas live-first; socket e snapshot live pendentes |
+| 6 | Reconciliacao, promocao e publicacao REST/socket | em andamento/desligado | RT6A-RT6E3 publicam REST/listas e snapshot live; socket pendente |
 | 7 | Frontend realtime/expanded chart | pendente de layout aprovado | nao reutilizar o prototipo sem decisao explicita |
 
 Os nomes RT nao sao uma segunda arquitetura. Eles apenas repartem os macros
@@ -1193,12 +1193,23 @@ Para `ledger_live`, freshness usa `checked_at`, que representa o progresso do
 cursor mesmo quando o numero total nao muda; para fallback Blockscout, continua
 usando `observed_at`. A rota nao agenda refresh Blockscout do summary enquanto a
 fonte publicada for live. A pagina de wallets continua vindo do Blockscout e nao
-e um snapshot atomico do count. Socket e persistencia dos snapshots diarios a
-partir do ledger live seguem para os proximos subcortes.
+e um snapshot atomico do count. A persistencia diaria live entra no RT6E3; socket
+segue pendente.
 
 Ordem operacional obrigatoria: aplicar/validar a Stage 119 antes de subir esse
 backend, pois os readers consultam a view mesmo com todos os workers opt-in
 desligados.
+
+#### Corte RT6E3 - Snapshot diario do ledger live
+
+Status: implementado e validado em `9ae30729`; desligado por default.
+
+Um worker PostgreSQL independente projeta, em batches limitados, somente tokens
+`ledger_live` sem snapshot UTC atual ou cujo estado mudou. O source live tem
+precedencia duravel sobre refresh Blockscout do mesmo dia. A flag
+`ROBINHOOD_HOLDER_SNAPSHOT_ENABLED` exige live habilitado, e cada tick espera o
+worker live estar saudavel antes de escrever. Nao ha nova tabela nem chamada RPC;
+socket e frontend continuam pendentes.
 
 Cada item acima deve ser repartido novamente se estimar mais de 500 linhas. O
 probe e a estimativa de storage sao pre-condicoes; “outros terminais fazem” nao
