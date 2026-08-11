@@ -116,6 +116,21 @@ describe('Robinhood holder cold tick', () => {
     assert.equal(calls.filter(([name]) => name === 'replay').length, 1);
   });
 
+  it('does not admit another token while repeated drift evidence is pending', async () => {
+    const { calls, deps } = runtime({
+      executor: {
+        runOnce: async () => ({
+          status: 'drift-suspected', tokenAddress: TOKEN_A, observations: 1,
+        }),
+      },
+    });
+    const result = await runRobinhoodHolderColdTick(deps, { admittedBefore: CUTOFF });
+
+    assert.equal(result.replayStatus, 'drift-suspected');
+    assert.equal(result.seededTokens, 0);
+    assert.equal(calls.some(([name]) => name === 'seed'), false);
+  });
+
   it('continues existing exact replay when Blockscout is unavailable', async () => {
     const { deps } = runtime({
       requestScheduler: {

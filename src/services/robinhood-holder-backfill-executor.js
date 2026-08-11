@@ -5,6 +5,7 @@ const { resolveRobinhoodHolderRpcProvider } = require('./robinhood-holder-rpc');
 const { createRobinhoodHolderTransferReader } = require('./robinhood-holder-transfer-reader');
 
 const PROVIDER_NAME = 'robinhood-holder-backfill';
+const REQUIRED_DRIFT_OBSERVATIONS = 3;
 
 function boundedInteger(value, fallback, minimum, maximum, label) {
   const parsed = value == null ? fallback : Number(value);
@@ -31,6 +32,21 @@ function createRobinhoodHolderBackfillExecutor(options = {}) {
       || typeof reader?.readRange !== 'function') {
     throw new TypeError('holder transfer reader is required');
   }
+  const driftEvidence = new Map();
+
+  function observeDrift(result, state) {
+    const previous = driftEvidence.get(state.tokenAddress);
+    const observations = previous?.fingerprint === result.fingerprint
+      && previous.fromBlock === state.backfillNextBlock
+      ? previous.observations + 1 : 1;
+    const evidence = Object.freeze({
+      fingerprint: result.fingerprint,
+      fromBlock: state.backfillNextBlock,
+      observations,
+    });
+    driftEvidence.set(state.tokenAddress, evidence);
+    return evidence;
+  }
 
   async function runOnce(input = {}) {
     const rangeSize = boundedInteger(input.rangeSize, 250, 1, 5000, 'rangeSize');
@@ -55,9 +71,28 @@ function createRobinhoodHolderBackfillExecutor(options = {}) {
       tokenAddress: state.tokenAddress,
       fromBlock: fromBlock.toString(), toBlock: toBlock.toString(),
     });
-    const committed = await repository.commitRange(range);
+    let committed = await repository.commitRange(range);
+    if (committed.status === 'drift-suspected') {
+      const evidence = observeDrift(committed, state);
+      if (evidence.observations >= REQUIRED_DRIFT_OBSERVATIONS) {
+        committed = await repository.commitRange({ ...range, confirmDrift: true });
+        driftEvidence.delete(state.tokenAddress);
+      } else {
+        return Object.freeze({
+          ...committed, observations: evidence.observations,
+          requiredObservations: REQUIRED_DRIFT_OBSERVATIONS,
+          safeHead: head.safeHead, atBarrier: false,
+        });
+      }
+    } else {
+      driftEvidence.delete(state.tokenAddress);
+    }
     if (committed.status !== 'committed') {
-      return Object.freeze({ ...committed, safeHead: head.safeHead, atBarrier: false });
+      return Object.freeze({
+        ...committed, observations: REQUIRED_DRIFT_OBSERVATIONS,
+        requiredObservations: REQUIRED_DRIFT_OBSERVATIONS,
+        safeHead: head.safeHead, atBarrier: false,
+      });
     }
     return Object.freeze({
       ...committed, safeHead: head.safeHead,
@@ -84,5 +119,5 @@ function createConfiguredRobinhoodHolderBackfillExecutor(options = {}) {
 module.exports = {
   createConfiguredRobinhoodHolderBackfillExecutor,
   createRobinhoodHolderBackfillExecutor,
-  __private: { resolveRpcProvider },
+  __private: { REQUIRED_DRIFT_OBSERVATIONS, resolveRpcProvider },
 };

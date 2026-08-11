@@ -1,4 +1,6 @@
-const REPLAY_STATUSES = new Set(['idle', 'committed', 'drifted', 'resyncing']);
+const REPLAY_STATUSES = new Set([
+  'idle', 'committed', 'drift-suspected', 'drifted', 'resyncing',
+]);
 function boundedInteger(value, fallback, minimum, maximum, label) {
   const parsed = value == null ? fallback : Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {

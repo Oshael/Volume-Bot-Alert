@@ -89,6 +89,47 @@ describe('Robinhood holder backfill executor', () => {
     assert.equal(calls.length, 1);
   });
 
+  it('requires three identical deficit readings before isolating drift', async () => {
+    const commits = [];
+    const fingerprints = ['original', 'original', 'changed', 'changed', 'changed'];
+    const repository = {
+      getNextToken: async () => state(),
+      markResyncing: async () => { throw new Error('must not resync'); },
+      commitRange: async (range) => {
+        commits.push(range);
+        return range.confirmDrift
+          ? { status: 'drifted', tokenAddress: TOKEN, reason: 'holder_negative_balance' }
+          : { status: 'drift-suspected', tokenAddress: TOKEN,
+            reason: 'holder_negative_balance', fingerprint: fingerprints.shift() };
+      },
+    };
+    const reader = {
+      getSafeHead: async () => ({ safeHead: '105' }),
+      matchesCheckpoint: async () => true,
+      readRange: async (range) => ({
+        ...range, checkpoint: { number: '105', hash: HASH }, transfers: [],
+      }),
+    };
+    const executor = createRobinhoodHolderBackfillExecutor({ repository, reader });
+
+    const first = await executor.runOnce();
+    const second = await executor.runOnce();
+    const third = await executor.runOnce();
+    const fourth = await executor.runOnce();
+    const fifth = await executor.runOnce();
+
+    assert.equal(first.status, 'drift-suspected');
+    assert.equal(first.observations, 1);
+    assert.equal(second.observations, 2);
+    assert.equal(third.status, 'drift-suspected');
+    assert.equal(third.observations, 1);
+    assert.equal(fourth.observations, 2);
+    assert.equal(fifth.status, 'drifted');
+    assert.equal(fifth.observations, 3);
+    assert.equal(commits.length, 6);
+    assert.equal(commits.filter(({ confirmDrift }) => confirmDrift === true).length, 1);
+  });
+
   it('requires the configured Robinhood RPC and never falls back to dRPC', () => {
     assert.deepEqual(__private.resolveRpcProvider({ ROBINHOOD_RPC_URL: 'http://127.0.0.1:8547' }), {
       name: 'robinhood-holder-backfill', url: 'http://127.0.0.1:8547',

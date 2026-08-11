@@ -122,7 +122,17 @@ function computeRange(range, balances) {
   const finalRows = new Map();
   let holderDelta = 0;
   for (const transfer of range.transfers) {
-    const changes = deriveHolderBalanceChanges(transfer, balances);
+    let changes;
+    try {
+      changes = deriveHolderBalanceChanges(transfer, balances);
+    } catch (error) {
+      if (error.code !== 'holder_negative_balance') throw error;
+      error.deficitFingerprint = [
+        transfer.blockHash, transfer.transactionHash, transfer.logIndex,
+        transfer.fromWallet, transfer.amountRaw, balances[transfer.fromWallet] ?? '0',
+      ].join(':');
+      throw error;
+    }
     holderDelta += changes.holderDelta;
     for (const transition of changes.transitions) {
       balances[transition.walletAddress] = transition.after;
@@ -245,6 +255,7 @@ function createRobinhoodHolderBackfillRepository(options = {}) {
   }
 
   async function commitRange(input = {}) {
+    const confirmDrift = input.confirmDrift === true;
     const range = normalizeRange(input);
     const client = await database.getClient();
     try {
@@ -256,9 +267,14 @@ function createRobinhoodHolderBackfillRepository(options = {}) {
         computed = computeRange(range, balances);
       } catch (error) {
         if (error.code !== 'holder_negative_balance') throw error;
-        const drifted = await markDrifted(client, range, error.code);
+        const result = confirmDrift
+          ? await markDrifted(client, range, error.code)
+          : Object.freeze({
+            status: 'drift-suspected', tokenAddress: range.tokenAddress,
+            reason: error.code, fingerprint: error.deficitFingerprint,
+          });
         await client.query('COMMIT');
-        return drifted;
+        return result;
       }
       await persistBalances(client, range.tokenAddress, computed.finalRows);
       const state = await advanceState(client, range, computed.holderDelta);

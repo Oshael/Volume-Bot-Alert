@@ -6,7 +6,9 @@ const {
   createConfiguredRobinhoodHolderBackfillExecutor,
 } = require('./robinhood-holder-backfill-executor');
 
-const REPLAY_STATUSES = new Set(['idle', 'committed', 'drifted', 'resyncing']);
+const REPLAY_STATUSES = new Set([
+  'idle', 'committed', 'drift-suspected', 'drifted', 'resyncing',
+]);
 
 function boundedInteger(value, fallback, minimum, maximum, label) {
   const parsed = value == null ? fallback : Number(value);
@@ -80,6 +82,7 @@ function normalizeResult(seeded, replay) {
     replayStatus: replay.status,
     tokenAddress: replay.tokenAddress || null,
     committedRanges: replay.status === 'committed' ? 1 : 0,
+    driftSuspicions: replay.status === 'drift-suspected' ? 1 : 0,
     driftedTokens: replay.status === 'drifted' ? 1 : 0,
     resyncingTokens: replay.status === 'resyncing' ? 1 : 0,
     atBarrier: replay.atBarrier === true,
@@ -102,7 +105,8 @@ function createRobinhoodHolderBackfillWorker(deps = {}) {
     enabled: false, running: false, inFlight: false, halted: false,
     lastResult: null, lastError: null, totalRuns: 0, totalErrors: 0,
     consecutiveErrors: 0, totalSeededTokens: 0, totalCommittedRanges: 0,
-    totalDriftedTokens: 0, totalResyncingTokens: 0, lastCompletedAt: null,
+    totalDriftSuspicions: 0, totalDriftedTokens: 0,
+    totalResyncingTokens: 0, lastCompletedAt: null,
   };
 
   async function getRuntime() {
@@ -144,6 +148,7 @@ function createRobinhoodHolderBackfillWorker(deps = {}) {
       status.consecutiveErrors = 0;
       status.totalSeededTokens += result.seededTokens;
       status.totalCommittedRanges += result.committedRanges;
+      status.totalDriftSuspicions += result.driftSuspicions;
       status.totalDriftedTokens += result.driftedTokens;
       status.totalResyncingTokens += result.resyncingTokens;
       return result;

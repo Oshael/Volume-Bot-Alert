@@ -75,14 +75,24 @@ describe('Robinhood holder backfill persistence', () => {
         tokenAddress: TOKEN, fromBlock: 102, toBlock: 102,
         checkpoint: { number: 102, hash: HASH_C }, transfers: [],
       })).backfillNextBlock, '103');
-      const drifted = await repository.commitRange({
+      const driftRange = {
         tokenAddress: DRIFT_TOKEN, fromBlock: 200, toBlock: 200,
         checkpoint: { number: 200, hash: HASH_B },
         transfers: [transfer(DRIFT_TOKEN, {
           blockNumber: 200, blockHash: HASH_B, fromWallet: ALICE,
           toWallet: BOB, amountRaw: '1',
         })],
-      });
+      };
+      const suspected = await repository.commitRange(driftRange);
+      assert.equal(suspected.status, 'drift-suspected');
+      assert.equal(suspected.reason, 'holder_negative_balance');
+      assert.match(suspected.fingerprint, new RegExp(HASH_B));
+      const pendingState = await client.query(
+        `SELECT ledger_status FROM robinhood_holder_token_states WHERE token_address = $1`,
+        [DRIFT_TOKEN]
+      );
+      assert.equal(pendingState.rows[0].ledger_status, 'backfilling');
+      const drifted = await repository.commitRange({ ...driftRange, confirmDrift: true });
       assert.deepEqual(drifted, {
         status: 'drifted', tokenAddress: DRIFT_TOKEN, reason: 'holder_negative_balance',
       });
