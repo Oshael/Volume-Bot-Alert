@@ -238,7 +238,11 @@ Validacao do G1:
 Flag proposta: `ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ENABLED=false` por default.
 
 1. Aplicar Stage 120 com todos os workers globais desligados.
-2. Validar schema e criar campanha em dry-run/preview.
+2. Validar schema e criar campanha em dry-run/preview. Antes de `AUTO_START`, o
+   backfill per-token nao pode registrar erro de checkpoint e o aplicador live
+   deve continuar drenando outros tokens quando um tail ficar deferido. Estados
+   invalidos sao inspecionados com `npm run robinhood:holder-checkpoint-repair` e
+   so resetados depois da revisao do dry-run.
 3. Rodar amostra global read-only em ranges antigos e recentes.
 4. Ligar com prefetch 1, medir RPC/PostgreSQL/live lag.
 5. Subir para 2 e depois 4 somente com evidencia estavel.

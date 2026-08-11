@@ -983,6 +983,8 @@ Enquanto o token ainda esta na barreira segura (`live_through_block` anterior a
 `backfill_next_block`), receipts podem inserir Transfers ausentes no journal e a
 aplicacao reinicia pela ordem canonica. Sem essa barreira, com range acima de 250
 blocos ou receipts indisponiveis, o evento fica deferido sem falso `drifted`.
+O deferimento e isolado por token: os demais tails elegiveis continuam drenando
+enquanto o token suspeito aguarda o proximo recheck.
 Deficit sem eventos ausentes so vira `drifted` apos tres fingerprints identicos
 confirmados por receipts e espacados em 60s. A telemetria distingue
 `driftSuspicions`, `receiptRecoveries` e `driftDeferred`.
@@ -1013,8 +1015,17 @@ cortes e a ordem detalhada de rollout ficam apenas em
 
 `npm run robinhood:holder-drift-recovery` pagina todos os `drifted` atuais e e
 dry-run por default. `-- --confirm-requeue` reencaminha somente deficits que nao
-se reproduzem na releitura; o UPDATE exige `version` e cursor inalterados, preserva
-balances e deixa a validacao canonica do checkpoint para o executor de backfill.
+se reproduzem na releitura e cujo checkpoint precede imediatamente o cursor de
+backfill; candidatos vindos de tail live aparecem em `unsafeTokens` e não são
+alterados. O UPDATE exige `version` e cursor inalterados, preserva balances e
+deixa a validacao canonica do checkpoint para o executor de backfill.
+
+`npm run robinhood:holder-checkpoint-repair` lista, sem writes, estados
+`backfilling` cujo checkpoint não precede o cursor. Depois de revisar a lista,
+`-- --confirm-reset` usa CAS de versão/cursor/checkpoint, remove apenas balances e
+journal desses tokens e reinicia cada um no `deployment_block` com count zero. O
+reset completo evita legitimar balances de tail live como baseline historico; o
+replay e o handoff reconstroem o estado canonico.
 
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.
