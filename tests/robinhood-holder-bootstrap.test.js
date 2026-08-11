@@ -47,6 +47,8 @@ describe('Robinhood holder bootstrap repository', () => {
     assert.match(calls[0].sql, /attribution\.source = ANY\(\$3::varchar\[\]\)/);
     assert.match(calls[0].sql, /attribution\.attribution_block IS NOT NULL/);
     assert.match(calls[0].sql, /state\.token_address IS NULL/);
+    assert.match(calls[0].sql, /robinhood_holder_global_backfill_tokens cohort/);
+    assert.match(calls[0].sql, /run\.barrier_block IS NOT NULL/);
     assert.match(calls[0].sql, /FOR UPDATE OF attribution SKIP LOCKED/);
     assert.match(calls[0].sql, /ON CONFLICT \(chain, token_address\) DO NOTHING/);
     assert.deepEqual(calls[0].params, [
@@ -78,6 +80,8 @@ describe('Robinhood holder bootstrap repository', () => {
     assert.match(calls[0].sql, /attribution\.attribution_block IS NOT NULL/);
     assert.match(calls[0].sql, /ORDER BY catalog\.first_seen_at DESC, catalog\.address/);
     assert.match(calls[0].sql, /state\.token_address IS NULL/);
+    assert.match(calls[0].sql, /robinhood_holder_global_backfill_tokens cohort/);
+    assert.match(calls[0].sql, /cohort\.status = 'active'/);
     assert.deepEqual(calls[0].params, [
       'robinhood', '2026-08-10T00:00:00.000Z', [...EXACT_DEPLOYMENT_SOURCES], 5,
     ]);

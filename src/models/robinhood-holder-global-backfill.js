@@ -26,6 +26,9 @@ function runRow(row) {
     checkpointBlock: row.checkpoint_block == null ? null : String(row.checkpoint_block),
     checkpointHash: row.checkpoint_hash,
     barrierBlock: row.barrier_block == null ? null : String(row.barrier_block),
+    barrierCheckpoint: row.barrier_checkpoint_block == null ? null : Object.freeze({
+      number: String(row.barrier_checkpoint_block), hash: row.barrier_checkpoint_hash,
+    }),
     cohortTokenCount: String(row.cohort_token_count),
     telemetry: Object.freeze(row.telemetry || {}), version: String(row.version),
   });
@@ -117,7 +120,170 @@ function createRobinhoodHolderGlobalBackfillRepository(options = {}) {
     return runRow(result.rows[0]);
   }
 
-  return Object.freeze({ createRun, getActiveRun, loadCohort, startRun });
+  async function attachToLive(input = {}) {
+    const runId = integer(input.runId, 'runId', 1);
+    const version = integer(input.version, 'version');
+    const attachWindow = integer(input.attachWindow ?? 10_000, 'attachWindow', 1);
+    if (attachWindow >= 20_000) throw new Error('attachWindow must be below journal retention');
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      const cursorResult = await client.query(
+        `SELECT next_block, checkpoint_block, checkpoint_hash, version
+           FROM robinhood_holder_cursors
+          WHERE chain = $1 AND stream = 'live' FOR UPDATE`, [CHAIN]
+      );
+      const cursor = cursorResult.rows[0];
+      if (!cursor || cursor.checkpoint_block == null || cursor.checkpoint_hash == null
+          || BigInt(cursor.checkpoint_block) + 1n !== BigInt(cursor.next_block)) {
+        const error = new Error('Robinhood holder live cursor is unavailable or inconsistent');
+        error.code = 'holder_global_backfill_live_cursor_unavailable';
+        throw error;
+      }
+      const runResult = await client.query(
+        `SELECT * FROM robinhood_holder_global_backfill_runs
+          WHERE id = $1 AND chain = $2 AND status = 'scanning' AND version = $3
+          FOR UPDATE`, [runId, CHAIN, version]
+      );
+      const run = runResult.rows[0];
+      const distance = run ? BigInt(cursor.next_block) - BigInt(run.next_block) : -1n;
+      if (!run || distance < 0n || distance > BigInt(attachWindow)) {
+        const error = new Error('Robinhood holder global backfill is stale or outside attach window');
+        error.code = 'holder_global_backfill_attach_unavailable';
+        throw error;
+      }
+      const attached = await client.query(
+        `UPDATE robinhood_holder_global_backfill_runs
+            SET status = 'attached', barrier_block = $4,
+                barrier_checkpoint_block = $5, barrier_checkpoint_hash = $6,
+                barrier_attached_at = NOW(), version = version + 1, updated_at = NOW()
+          WHERE id = $1 AND chain = $2 AND version = $3 RETURNING *`,
+        [runId, CHAIN, version, cursor.next_block,
+          cursor.checkpoint_block, cursor.checkpoint_hash]
+      );
+      const fenced = await client.query(
+        `UPDATE robinhood_holder_cursors
+            SET version = version + 1, updated_at = NOW()
+          WHERE chain = $1 AND stream = 'live' AND version = $2 RETURNING version`,
+        [CHAIN, cursor.version]
+      );
+      if (!fenced.rowCount) throw new Error('Robinhood holder live cursor changed while locked');
+      await client.query('COMMIT');
+      return Object.freeze({
+        ...runRow(attached.rows[0]), liveCursorVersion: Number(fenced.rows[0].version),
+      });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async function getMaterializationCandidate() {
+    const result = await database.query(
+      `SELECT * FROM robinhood_holder_global_backfill_runs
+        WHERE chain = $1 AND status IN ('attached', 'materializing')
+          AND EXISTS (
+            SELECT 1 FROM robinhood_holder_global_backfill_tokens token
+             WHERE token.run_id = robinhood_holder_global_backfill_runs.id
+               AND token.chain = $1 AND token.status = 'active'
+          )
+        ORDER BY id DESC LIMIT 1`, [CHAIN]
+    );
+    return runRow(result.rows[0]);
+  }
+
+  async function materializeBatch(input = {}) {
+    const runId = integer(input.runId, 'runId', 1);
+    const version = integer(input.version, 'version');
+    const limit = integer(input.limit ?? 1000, 'limit', 1);
+    if (limit > 5000) throw new Error('limit must not exceed 5000');
+    const checkpointNumber = integer(input.verifiedCheckpoint?.number, 'checkpoint.number');
+    const checkpointHash = String(input.verifiedCheckpoint?.hash || '').toLowerCase();
+    if (!/^0x[0-9a-f]{64}$/.test(checkpointHash)) throw new Error('checkpoint.hash is invalid');
+    const finalizedThrough = integer(input.finalizedThrough, 'finalizedThrough');
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      const locked = await client.query(
+        `SELECT * FROM robinhood_holder_global_backfill_runs
+          WHERE id = $1 AND chain = $2 AND status IN ('attached', 'materializing')
+            AND version = $3 FOR UPDATE`, [runId, CHAIN, version]
+      );
+      const run = locked.rows[0];
+      if (!run || String(run.next_block) !== String(run.barrier_block)
+          || String(run.checkpoint_block) !== String(run.barrier_checkpoint_block)
+          || run.checkpoint_hash !== run.barrier_checkpoint_hash
+          || String(checkpointNumber) !== String(run.barrier_checkpoint_block)
+          || checkpointHash !== run.barrier_checkpoint_hash
+          || BigInt(finalizedThrough) < BigInt(run.barrier_checkpoint_block)) {
+        const error = new Error('Robinhood holder global barrier is not verified and final');
+        error.code = 'holder_global_backfill_barrier_unverified';
+        throw error;
+      }
+      const tokens = await client.query(
+        `SELECT token_address FROM robinhood_holder_global_backfill_tokens
+          WHERE run_id = $1 AND chain = $2 AND status = 'active'
+          ORDER BY token_address LIMIT $3 FOR UPDATE`, [runId, CHAIN, limit]
+      );
+      const addresses = tokens.rows.map((row) => row.token_address);
+      if (addresses.length) {
+        const conflicts = await client.query(
+          `SELECT token_address FROM robinhood_holder_token_states
+            WHERE chain = $1 AND token_address = ANY($2::varchar[]) LIMIT 1`,
+          [CHAIN, addresses]
+        );
+        if (conflicts.rowCount) {
+          const error = new Error('Global cohort token already has holder state');
+          error.code = 'holder_global_backfill_state_conflict';
+          throw error;
+        }
+        await client.query(
+          `INSERT INTO robinhood_holder_token_states (
+             chain, token_address, holder_count, ledger_status, deployment_block,
+             backfill_next_block, live_through_block, live_through_hash
+           ) SELECT chain, token_address, holder_count, 'backfilling', 0,
+                    $3, $4, $5
+               FROM robinhood_holder_global_backfill_tokens
+              WHERE run_id = $1 AND chain = $2 AND token_address = ANY($6::varchar[])
+                AND status = 'active'`,
+          [runId, CHAIN, run.barrier_block, run.barrier_checkpoint_block,
+            run.barrier_checkpoint_hash, addresses]
+        );
+        await client.query(
+          `UPDATE robinhood_holder_global_backfill_tokens
+              SET status = 'materialized', updated_at = NOW()
+            WHERE run_id = $1 AND chain = $2 AND token_address = ANY($3::varchar[])
+              AND status = 'active'`, [runId, CHAIN, addresses]
+        );
+      }
+      const updated = await client.query(
+        `UPDATE robinhood_holder_global_backfill_runs
+            SET status = 'materializing', version = version + 1, updated_at = NOW()
+          WHERE id = $1 RETURNING version`, [runId]
+      );
+      const remaining = await client.query(
+        `SELECT COUNT(*)::int AS count FROM robinhood_holder_global_backfill_tokens
+          WHERE run_id = $1 AND chain = $2 AND status = 'active'`, [runId, CHAIN]
+      );
+      await client.query('COMMIT');
+      return Object.freeze({
+        status: 'materializing', runId: String(runId), materializedTokens: addresses.length,
+        remainingTokens: Number(remaining.rows[0].count), version: String(updated.rows[0].version),
+      });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  return Object.freeze({
+    attachToLive, createRun, getActiveRun, getMaterializationCandidate,
+    loadCohort, materializeBatch, startRun,
+  });
 }
 
 module.exports = {

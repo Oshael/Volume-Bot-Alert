@@ -783,6 +783,13 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     const result = await database.query(
       `SELECT token_address FROM robinhood_holder_token_states
         WHERE chain = $1 AND ledger_status IN ('backfilling', 'shadow', 'live')
+       UNION
+       SELECT token.token_address
+         FROM robinhood_holder_global_backfill_tokens token
+         INNER JOIN robinhood_holder_global_backfill_runs run
+           ON run.id = token.run_id AND run.chain = token.chain
+        WHERE token.chain = $1 AND token.status = 'active'
+          AND run.barrier_block IS NOT NULL AND run.status <> 'completed'
         ORDER BY token_address`,
       [CHAIN]
     );

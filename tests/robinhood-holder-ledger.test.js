@@ -154,11 +154,13 @@ describe('Robinhood holder ledger repository', () => {
     assert.equal(fake.calls.length, 1);
   });
 
-  it('lists only token states covered by the global holder stream', async () => {
+  it('unions tracked states with active cohorts fenced into the live stream', async () => {
     const fake = fakeDatabase([{ rows: [{ token_address: TOKEN }], rowCount: 1 }]);
     const addresses = await createRobinhoodHolderLedgerRepository(fake)
       .listTrackedTokenAddresses();
     assert.deepEqual(addresses, [TOKEN]);
     assert.match(fake.calls[0].sql, /ledger_status IN \('backfilling', 'shadow', 'live'\)/);
+    assert.match(fake.calls[0].sql, /run\.barrier_block IS NOT NULL/);
+    assert.match(fake.calls[0].sql, /token\.status = 'active'/);
   });
 });

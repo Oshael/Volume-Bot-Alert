@@ -55,6 +55,14 @@ function createRobinhoodHolderBootstrapRepository(options = {}) {
             AND attribution.source = ANY($3::varchar[])
             AND attribution.attribution_block IS NOT NULL
             AND state.token_address IS NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM robinhood_holder_global_backfill_tokens cohort
+              INNER JOIN robinhood_holder_global_backfill_runs run
+                ON run.id = cohort.run_id AND run.chain = cohort.chain
+              WHERE cohort.chain = catalog.chain AND cohort.token_address = catalog.address
+                AND cohort.status = 'active' AND run.barrier_block IS NOT NULL
+                AND run.status <> 'completed'
+            )
           ORDER BY catalog.first_seen_at, catalog.address
           LIMIT $4::int
           FOR UPDATE OF attribution SKIP LOCKED
@@ -92,6 +100,14 @@ function createRobinhoodHolderBootstrapRepository(options = {}) {
             AND attribution.source = ANY($3::varchar[])
             AND attribution.attribution_block IS NOT NULL
             AND state.token_address IS NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM robinhood_holder_global_backfill_tokens cohort
+              INNER JOIN robinhood_holder_global_backfill_runs run
+                ON run.id = cohort.run_id AND run.chain = cohort.chain
+              WHERE cohort.chain = catalog.chain AND cohort.token_address = catalog.address
+                AND cohort.status = 'active' AND run.barrier_block IS NOT NULL
+                AND run.status <> 'completed'
+            )
           ORDER BY catalog.first_seen_at DESC, catalog.address
           LIMIT $4::int
           FOR UPDATE OF attribution SKIP LOCKED
