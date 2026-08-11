@@ -82,7 +82,8 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
   let stableBatches = 0;
   const totals = {
     fetchedRanges: 0, committedRanges: 0, discardedPrefetch: 0,
-    transfers: 0, splits: 0, receiptRecoveries: 0, exclusions: 0,
+    rpcRequests: 0, observedLogs: 0, acceptedTransfers: 0, ignoredLogs: 0,
+    touchedTokens: 0, touchedWallets: 0, splits: 0, receiptRecoveries: 0, exclusions: 0,
   };
 
   function reducePrefetch() {
@@ -196,6 +197,9 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
 
   function observeFetched(value) {
     totals.fetchedRanges += 1;
+    totals.rpcRequests += Number(value.telemetry?.requests || 0);
+    totals.observedLogs += Number(value.telemetry?.observedLogs || 0);
+    totals.ignoredLogs += Number(value.telemetry?.ignoredLogs || 0);
     totals.splits += Number(value.telemetry?.splits || 0);
     return { value };
   }
@@ -245,7 +249,9 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
       }
       committed.push(outcome.committed);
       totals.committedRanges += 1;
-      totals.transfers += fetched.value.transfers.length;
+      totals.acceptedTransfers += fetched.value.transfers.length;
+      totals.touchedTokens += Number(outcome.committed.touchedTokens || 0);
+      totals.touchedWallets += Number(outcome.committed.touchedWallets || 0);
     }
     observeHealthyBatch(pressured);
     return Object.freeze({

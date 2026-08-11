@@ -470,6 +470,12 @@ const robinhoodHolderColdEnabled = parseBoolean(process.env.ROBINHOOD_HOLDER_COL
 const robinhoodHolderColdAdmittedBefore = parseOptionalTimestamp(
   process.env.ROBINHOOD_HOLDER_COLD_ADMITTED_BEFORE
 );
+const robinhoodHolderGlobalBackfillEnabled = parseBoolean(
+  process.env.ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ENABLED, false
+);
+const robinhoodHolderGlobalCatalogCutoff = parseOptionalTimestamp(
+  process.env.ROBINHOOD_HOLDER_GLOBAL_BACKFILL_CATALOG_CUTOFF
+);
 const robinhoodHolderLiveEnabled = parseBoolean(process.env.ROBINHOOD_HOLDER_LIVE_ENABLED, false);
 const robinhoodHolderReconciliationEnabled = parseBoolean(
   process.env.ROBINHOOD_HOLDER_RECONCILIATION_ENABLED, false
@@ -548,13 +554,27 @@ if (robinhoodHolderBackfillEnabled && !robinhoodHolderBackfillAdmittedAfter) {
 if (robinhoodHolderColdEnabled && !robinhoodHolderColdAdmittedBefore) {
   missing.push('ROBINHOOD_HOLDER_COLD_ADMITTED_BEFORE');
 }
+if (robinhoodHolderGlobalBackfillEnabled && !robinhoodHolderGlobalCatalogCutoff) {
+  missing.push('ROBINHOOD_HOLDER_GLOBAL_BACKFILL_CATALOG_CUTOFF');
+}
+if (robinhoodHolderGlobalBackfillEnabled && !robinhoodHolderLiveEnabled) {
+  missing.push('ROBINHOOD_HOLDER_LIVE_ENABLED=true for holder global backfill');
+}
+if (robinhoodHolderGlobalBackfillEnabled && robinhoodHolderColdEnabled) {
+  missing.push('ROBINHOOD_HOLDER_COLD_ENABLED must be false during holder global backfill');
+}
+if (robinhoodHolderGlobalBackfillEnabled && robinhoodHolderBackfillEnabled
+    && robinhoodHolderBackfillAdmittedAfter < robinhoodHolderGlobalCatalogCutoff) {
+  missing.push('ROBINHOOD_HOLDER_BACKFILL_ADMITTED_AFTER must not precede global catalog cutoff');
+}
 if (robinhoodHolderReconciliationEnabled && !robinhoodHolderLiveEnabled) {
   missing.push('ROBINHOOD_HOLDER_LIVE_ENABLED=true for holder reconciliation');
 }
 if (robinhoodHolderSnapshotEnabled && !robinhoodHolderLiveEnabled) {
   missing.push('ROBINHOOD_HOLDER_LIVE_ENABLED=true for holder snapshots');
 }
-if ((robinhoodHolderBackfillEnabled || robinhoodHolderColdEnabled || robinhoodHolderLiveEnabled)
+if ((robinhoodHolderBackfillEnabled || robinhoodHolderColdEnabled || robinhoodHolderLiveEnabled
+      || robinhoodHolderGlobalBackfillEnabled)
     && !String(process.env.ROBINHOOD_RPC_URL || '').trim()) {
   missing.push('ROBINHOOD_RPC_URL for Robinhood holder workers');
 }
@@ -1011,6 +1031,34 @@ module.exports = {
       concurrency: 1,
       maxRetries: parseIntegerInRange(process.env.ROBINHOOD_HOLDER_COLD_REQUEST_MAX_RETRIES, 1, 0, 1),
     },
+  },
+
+  robinhoodHolderGlobalBackfillWorker: {
+    enabled: robinhoodHolderGlobalBackfillEnabled,
+    autoStart: parseBoolean(process.env.ROBINHOOD_HOLDER_GLOBAL_BACKFILL_AUTO_START, false),
+    catalogCutoff: robinhoodHolderGlobalCatalogCutoff,
+    intervalMs: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_GLOBAL_BACKFILL_INTERVAL_MS, 1000, 250, 300_000
+    ),
+    maxErrorBackoffMs: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_GLOBAL_BACKFILL_MAX_ERROR_BACKOFF_MS,
+      30_000, 1000, 300_000
+    ),
+    rangeSize: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_GLOBAL_BACKFILL_RANGE_SIZE, 250, 1, 5000
+    ),
+    prefetch: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_GLOBAL_BACKFILL_PREFETCH, 1, 1, 8
+    ),
+    finalityBlocks: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_GLOBAL_BACKFILL_FINALITY_BLOCKS, 2000, 2000, 100_000
+    ),
+    attachWindow: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ATTACH_WINDOW, 10_000, 1, 19_999
+    ),
+    materializeBatchSize: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_GLOBAL_BACKFILL_MATERIALIZE_BATCH_SIZE, 1000, 1, 5000
+    ),
   },
 
   robinhoodHolderLiveWorker: {

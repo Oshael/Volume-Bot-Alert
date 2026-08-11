@@ -169,6 +169,14 @@ describe('Robinhood holder global backfill live attach', () => {
       assert.equal((await client.query(
         'SELECT 1 FROM robinhood_holder_transfer_journal WHERE applied = false'
       )).rowCount, 1);
+      assert.equal((await global.syncCompletion({ runId })).status, 'materializing');
+      await client.query(
+        `UPDATE robinhood_holder_token_states SET ledger_status = 'live'
+          WHERE token_address = $1`, [TOKEN]
+      );
+      const completed = await global.syncCompletion({ runId });
+      assert.equal(completed.status, 'completed');
+      assert.equal(completed.promotedTokens, 1);
     } finally {
       client.release();
     }

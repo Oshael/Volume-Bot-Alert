@@ -357,6 +357,8 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_HOLDER_BACKFILL_ADMITTED_AFTER: undefined,
       ROBINHOOD_HOLDER_COLD_ENABLED: undefined,
       ROBINHOOD_HOLDER_COLD_ADMITTED_BEFORE: undefined,
+      ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ENABLED: undefined,
+      ROBINHOOD_HOLDER_GLOBAL_BACKFILL_CATALOG_CUTOFF: undefined,
       ROBINHOOD_HOLDER_LIVE_ENABLED: undefined,
       ROBINHOOD_HOLDER_RECONCILIATION_ENABLED: undefined,
       ROBINHOOD_HOLDER_JOURNAL_PRUNE_ENABLED: undefined,
@@ -366,10 +368,24 @@ describe('runtime worker groups config', () => {
       assert.equal(config.robinhoodHolderBackfillWorker.admittedAfter, null);
       assert.equal(config.robinhoodHolderColdWorker.enabled, false);
       assert.equal(config.robinhoodHolderColdWorker.admittedBefore, null);
+      assert.equal(config.robinhoodHolderGlobalBackfillWorker.enabled, false);
+      assert.equal(config.robinhoodHolderGlobalBackfillWorker.autoStart, false);
       assert.equal(config.robinhoodHolderLiveWorker.enabled, false);
       assert.equal(config.robinhoodHolderReconciliationWorker.enabled, false);
       assert.equal(config.robinhoodHolderJournalPruneWorker.enabled, false);
       assert.equal(config.robinhoodHolderSnapshotWorker.enabled, false);
+    });
+    withEnv({
+      ROBINHOOD_RPC_URL: 'http://127.0.0.1:8547',
+      ROBINHOOD_HOLDER_LIVE_ENABLED: 'true', ROBINHOOD_HOLDER_COLD_ENABLED: 'false',
+      ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ENABLED: 'true',
+      ROBINHOOD_HOLDER_GLOBAL_BACKFILL_AUTO_START: 'true',
+      ROBINHOOD_HOLDER_GLOBAL_BACKFILL_CATALOG_CUTOFF: '2026-08-10T00:00:00Z',
+      ROBINHOOD_HOLDER_GLOBAL_BACKFILL_PREFETCH: '99',
+    }, (config) => {
+      assert.equal(config.robinhoodHolderGlobalBackfillWorker.enabled, true);
+      assert.equal(config.robinhoodHolderGlobalBackfillWorker.autoStart, true);
+      assert.equal(config.robinhoodHolderGlobalBackfillWorker.prefetch, 8);
     });
     withEnv({
       ROBINHOOD_RPC_URL: 'http://127.0.0.1:8547',
@@ -494,6 +510,18 @@ describe('runtime worker groups config', () => {
     });
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /ROBINHOOD_HOLDER_COLD_ADMITTED_BEFORE/);
+  });
+
+  it('rejects the serial cold worker during a global holder campaign', () => {
+    const result = spawnSync(process.execPath, ['-e', "require('./config')"], {
+      cwd: ROOT_DIR, encoding: 'utf8', env: { ...process.env,
+        ROBINHOOD_RPC_URL: 'http://127.0.0.1:8547', ROBINHOOD_HOLDER_LIVE_ENABLED: 'true',
+        ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ENABLED: 'true',
+        ROBINHOOD_HOLDER_GLOBAL_BACKFILL_CATALOG_CUTOFF: '2026-08-10T00:00:00Z',
+        ROBINHOOD_HOLDER_COLD_ENABLED: 'true', ROBINHOOD_HOLDER_COLD_ADMITTED_BEFORE: '2026-08-10T00:00:00Z' },
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /ROBINHOOD_HOLDER_COLD_ENABLED must be false/);
   });
 
   it('fails fast when holder reconciliation is enabled without live capture', () => {

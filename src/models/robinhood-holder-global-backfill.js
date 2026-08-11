@@ -22,6 +22,7 @@ function runRow(row) {
   return Object.freeze({
     id: String(row.id), status: row.status,
     catalogCutoff: row.catalog_cutoff?.toISOString?.() || row.catalog_cutoff,
+    createdAt: row.created_at?.toISOString?.() || row.created_at,
     nextBlock: String(row.next_block),
     checkpointBlock: row.checkpoint_block == null ? null : String(row.checkpoint_block),
     checkpointHash: row.checkpoint_hash,
@@ -30,6 +31,7 @@ function runRow(row) {
       number: String(row.barrier_checkpoint_block), hash: row.barrier_checkpoint_hash,
     }),
     cohortTokenCount: String(row.cohort_token_count),
+    completedAt: row.completed_at?.toISOString?.() || row.completed_at || null,
     telemetry: Object.freeze(row.telemetry || {}), version: String(row.version),
   });
 }
@@ -89,6 +91,14 @@ function createRobinhoodHolderGlobalBackfillRepository(options = {}) {
     const result = await database.query(
       `SELECT * FROM robinhood_holder_global_backfill_runs
         WHERE chain = $1 AND status <> 'completed' ORDER BY id DESC LIMIT 1`, [CHAIN]
+    );
+    return runRow(result.rows[0]);
+  }
+
+  async function getLatestRun() {
+    const result = await database.query(
+      `SELECT * FROM robinhood_holder_global_backfill_runs
+        WHERE chain = $1 ORDER BY id DESC LIMIT 1`, [CHAIN]
     );
     return runRow(result.rows[0]);
   }
@@ -280,9 +290,67 @@ function createRobinhoodHolderGlobalBackfillRepository(options = {}) {
     }
   }
 
+  async function syncCompletion(input = {}) {
+    const runId = integer(input.runId, 'runId', 1);
+    const result = await database.query(
+      `WITH promoted AS (
+         UPDATE robinhood_holder_global_backfill_tokens token
+            SET status = 'completed', updated_at = NOW()
+           FROM robinhood_holder_token_states state
+          WHERE token.run_id = $1 AND token.chain = $2 AND token.status = 'materialized'
+            AND state.chain = token.chain AND state.token_address = token.token_address
+            AND state.ledger_status = 'live'
+         RETURNING token.token_address
+       ), counts AS MATERIALIZED (
+         SELECT COUNT(*) FILTER (WHERE token.status = 'active')::int AS active,
+                COUNT(*) FILTER (WHERE token.status = 'materialized'
+                  AND state.ledger_status IS DISTINCT FROM 'live')::int AS materialized,
+                COUNT(*) FILTER (WHERE token.status = 'completed' OR token.status = 'materialized'
+                  AND state.ledger_status = 'live')::int AS completed,
+                COUNT(*) FILTER (WHERE token.status = 'excluded')::int AS excluded,
+                COUNT(*) FILTER (WHERE token.status = 'materialized'
+                  AND state.ledger_status IN ('drifted', 'resyncing'))::int AS failed
+           FROM robinhood_holder_global_backfill_tokens token
+           LEFT JOIN robinhood_holder_token_states state
+             ON state.chain = token.chain AND state.token_address = token.token_address
+          WHERE token.run_id = $1 AND token.chain = $2
+       )
+       UPDATE robinhood_holder_global_backfill_runs run
+          SET status = CASE WHEN counts.active = 0 AND counts.materialized = 0
+                 THEN 'completed' ELSE run.status END,
+              completed_at = CASE WHEN counts.active = 0 AND counts.materialized = 0
+                 THEN NOW() ELSE NULL END,
+              version = version + 1, updated_at = NOW()
+         FROM counts
+        WHERE run.id = $1 AND run.chain = $2 AND run.status = 'materializing'
+       RETURNING run.status, counts.*, (SELECT COUNT(*)::int FROM promoted) AS promoted`,
+      [runId, CHAIN]
+    );
+    if (!result.rowCount) throw new Error('Global holder run is unavailable for completion');
+    const row = result.rows[0];
+    return Object.freeze({
+      status: row.status, runId: String(runId), promotedTokens: Number(row.promoted),
+      activeTokens: Number(row.active), materializedTokens: Number(row.materialized),
+      completedTokens: Number(row.completed), excludedTokens: Number(row.excluded),
+      failedTokens: Number(row.failed),
+    });
+  }
+
+  async function recordTelemetry(input = {}) {
+    const runId = integer(input.runId, 'runId', 1);
+    if (!input.telemetry || typeof input.telemetry !== 'object' || Array.isArray(input.telemetry)) {
+      throw new Error('telemetry is invalid');
+    }
+    await database.query(
+      `UPDATE robinhood_holder_global_backfill_runs
+          SET telemetry = $3::jsonb, updated_at = NOW()
+        WHERE id = $1 AND chain = $2`, [runId, CHAIN, JSON.stringify(input.telemetry)]
+    );
+  }
+
   return Object.freeze({
-    attachToLive, createRun, getActiveRun, getMaterializationCandidate,
-    loadCohort, materializeBatch, startRun,
+    attachToLive, createRun, getActiveRun, getLatestRun, getMaterializationCandidate,
+    loadCohort, materializeBatch, recordTelemetry, startRun, syncCompletion,
   });
 }
 
