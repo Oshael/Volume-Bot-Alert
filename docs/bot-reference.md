@@ -911,6 +911,7 @@ Stages confirmados:
 | 117 | proveniência anterior necessária para rollback exato do journal de holders |
 | 118 | floor durável de retenção/rollback do journal de holders |
 | 119 | view não materializada para publicação de holders live-first e source diário `ledger_live` |
+| 120 | campanha/coorte duráveis para backfill global de holders e attach ao cursor live |
 
 Holders RH possuem duas fontes complementares. A Stage 111 guarda o summary
 Blockscout usado como bootstrap/fallback; as Stages 116–118 mantêm o ledger local
@@ -956,6 +957,26 @@ mantem `drift-unverified` em cooldown, sem bloquear a fila nem isolar o token.
 blocos/25 por batch usam `ROBINHOOD_HOLDER_RECEIPT_BLOCK_LIMIT` e
 `ROBINHOOD_HOLDER_RECEIPT_BATCH_SIZE`.
 Evidencia diferente reinicia a contagem e restart descarta a evidencia em memoria.
+
+O backfill global do catálogo antigo usa a lease
+`robinhood-holder-global-backfill-worker` e permanece desligado por default via
+`ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ENABLED=false`. Ao habilitar, exige
+`ROBINHOOD_HOLDER_GLOBAL_BACKFILL_CATALOG_CUTOFF` e captura live ativa. A primeira
+execução apenas congela a coorte para inspeção; o scan começa somente com
+`ROBINHOOD_HOLDER_GLOBAL_BACKFILL_AUTO_START=true`. O prefetch começa em 1, pode
+ser configurado de 1 a 8 e reduz diante de splits, commits lentos ou lag live.
+O cold serial deve permanecer desligado, e o cutoff do backfill de tokens novos
+não pode preceder o cutoff global.
+
+O worker lê `Transfer` uma vez por range para toda a coorte, commita ranges em
+ordem e não grava o histórico bruto no journal. Dentro da janela de attach
+(10.000 blocos por default e sempre abaixo da retenção de 20.000), ele incrementa
+a versão do cursor live sem avançá-lo e ativa a coorte no mesmo commit. Capturas
+com o escopo anterior falham no CAS e repetem; eventos da barreira em diante ficam
+pendentes até materialização e handoff. Materialização exige checkpoint canônico
+com pelo menos 2.000 blocos de finality. O rollback operacional é desligar apenas
+`ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ENABLED`, preservando campanha, balances e
+cursores para retomada; após attach, nunca promova manualmente baseline incompleto.
 
 Na aplicacao do tail `shadow/live`, saldo negativo tambem nao altera o estado.
 Enquanto o token ainda esta na barreira segura (`live_through_block` anterior a
