@@ -5,6 +5,7 @@ const {
   deriveHolderBalanceChanges,
 } = require('../models/robinhood-holder-ledger');
 const { createEvmJsonRpcClient } = require('../services/evm-json-rpc-client');
+const { TRANSFER_TOPIC } = require('../services/evm-erc20-supply-delta');
 const {
   createRobinhoodHolderTransferReader,
 } = require('../services/robinhood-holder-transfer-reader');
@@ -36,11 +37,23 @@ function normalizeOptions(input = {}) {
     rangeSize: boundedInteger(input.rangeSize, 5000, 1, 5000, 'drift probe rangeSize'),
     confirmations: boundedInteger(input.confirmations, 12, 0, 1000, 'confirmations'),
     timeoutMs: boundedInteger(input.timeoutMs, 15_000, 1000, 60_000, 'RPC timeout'),
+    receiptBlockLimit: boundedInteger(
+      input.receiptBlockLimit, 250, 1, 1000, 'receipt block limit'
+    ),
+    receiptBatchSize: boundedInteger(
+      input.receiptBatchSize, 25, 1, 100, 'receipt batch size'
+    ),
   });
 }
 
 function blockTag(value) {
   return `0x${BigInt(value).toString(16)}`;
+}
+
+function quantity(value, label) {
+  const normalized = String(value ?? '').trim();
+  if (!/^(?:0x[0-9a-f]+|\d+)$/i.test(normalized)) throw new Error(`${label} is invalid`);
+  return BigInt(normalized);
 }
 
 function balanceOfData(walletAddress) {
@@ -59,6 +72,85 @@ function touchedWallets(transfers) {
   return [...new Set(transfers.flatMap(({ fromWallet, toWallet }) => (
     [fromWallet, toWallet]
   )).filter((wallet) => wallet !== ZERO_ADDRESS))].sort();
+}
+
+function receiptTransferIdentity(log, tokenAddress, fromBlock, toBlock) {
+  const topics = Array.isArray(log?.topics) ? log.topics : [];
+  if (String(log?.address || '').toLowerCase() !== tokenAddress
+      || String(topics[0] || '').toLowerCase() !== TRANSFER_TOPIC) return null;
+  const blockNumber = quantity(log.blockNumber, 'receipt log blockNumber');
+  if (blockNumber < fromBlock || blockNumber > toBlock || log.removed === true) {
+    throw new Error('receipt Transfer log is outside the canonical probe range');
+  }
+  const transactionHash = String(log.transactionHash || '').toLowerCase();
+  if (!/^0x[0-9a-f]{64}$/.test(transactionHash)) {
+    throw new Error('receipt Transfer transactionHash is invalid');
+  }
+  return `${transactionHash}:${quantity(log.logIndex, 'receipt logIndex').toString()}`;
+}
+
+function difference(left, right) {
+  return [...left].filter((value) => !right.has(value));
+}
+
+async function readReceiptEvidence(range, deficit, context) {
+  const fromBlock = BigInt(range.fromBlock);
+  const toBlock = BigInt(deficit.transfer.blockNumber);
+  const blockCount = Number(toBlock - fromBlock + 1n);
+  if (blockCount > context.receiptBlockLimit) return Object.freeze({
+    status: 'range-too-wide', fromBlock: fromBlock.toString(), toBlock: toBlock.toString(),
+    blockCount, blockLimit: context.receiptBlockLimit,
+  });
+  const requests = Array.from({ length: blockCount }, (_, offset) => ({
+    method: 'eth_getBlockReceipts', params: [blockTag(fromBlock + BigInt(offset))],
+  }));
+  const receiptResults = [];
+  const startedAt = context.now();
+  try {
+    for (let offset = 0; offset < requests.length; offset += context.receiptBatchSize) {
+      receiptResults.push(...await context.rpcClient.requestBatch(
+        requests.slice(offset, offset + context.receiptBatchSize)
+      ));
+    }
+  } catch (error) {
+    return Object.freeze({
+      status: 'unavailable', fromBlock: fromBlock.toString(), toBlock: toBlock.toString(),
+      blockCount, error: String(error?.code || error?.message || error).slice(0, 160),
+    });
+  }
+  const identities = [];
+  let receiptCount = 0;
+  for (const blockReceipts of receiptResults) {
+    if (!Array.isArray(blockReceipts)) throw new Error('eth_getBlockReceipts result is invalid');
+    receiptCount += blockReceipts.length;
+    for (const receipt of blockReceipts) {
+      if (!Array.isArray(receipt?.logs)) throw new Error('receipt logs are invalid');
+      for (const log of receipt.logs) {
+        const identity = receiptTransferIdentity(
+          log, range.tokenAddress, fromBlock, toBlock
+        );
+        if (identity) identities.push(identity);
+      }
+    }
+  }
+  const receiptSet = new Set(identities);
+  if (receiptSet.size !== identities.length) throw new Error('receipt probe returned duplicate logs');
+  const getLogsSet = new Set(range.transfers
+    .filter(({ blockNumber }) => BigInt(blockNumber) <= toBlock)
+    .map(({ transactionHash, logIndex }) => `${transactionHash}:${logIndex}`));
+  const missingFromGetLogs = difference(receiptSet, getLogsSet);
+  const missingFromReceipts = difference(getLogsSet, receiptSet);
+  return Object.freeze({
+    status: missingFromGetLogs.length || missingFromReceipts.length ? 'mismatch' : 'match',
+    fromBlock: fromBlock.toString(), toBlock: toBlock.toString(), blockCount,
+    rpcBatches: Math.ceil(blockCount / context.receiptBatchSize), receiptCount,
+    getLogsTransfers: getLogsSet.size, receiptTransfers: receiptSet.size,
+    missingFromGetLogsCount: missingFromGetLogs.length,
+    missingFromReceiptsCount: missingFromReceipts.length,
+    missingFromGetLogs: Object.freeze(missingFromGetLogs.slice(0, 20)),
+    missingFromReceipts: Object.freeze(missingFromReceipts.slice(0, 20)),
+    elapsedMs: Math.max(0, context.now() - startedAt),
+  });
 }
 
 function findFirstDeficit(transfers, initialBalances = {}) {
@@ -171,6 +263,7 @@ async function inspectState(state, context) {
   } catch (error) {
     archiveError = String(error?.code || error?.message || error).slice(0, 160);
   }
+  const receiptEvidence = await readReceiptEvidence(range, deficit, context);
   return Object.freeze({
     ...state,
     status: 'deficit-found',
@@ -185,7 +278,7 @@ async function inspectState(state, context) {
     localBalanceBefore: deficit.localBalanceBefore,
     localBalanceAtBlockStart: deficit.localBalanceAtBlockStart,
     historicalBalanceAtPrecedingBlock: historicalBalance,
-    archiveError,
+    archiveError, receiptEvidence,
   });
 }
 
@@ -206,6 +299,9 @@ async function runDriftProbe(input = {}) {
     try {
       results.push(await inspectState(state, {
         database, rpcClient, reader, safeHead: head.safeHead, rangeSize: options.rangeSize,
+        receiptBlockLimit: options.receiptBlockLimit,
+        receiptBatchSize: options.receiptBatchSize,
+        now: input.now || Date.now,
       }));
     } catch (error) {
       results.push(Object.freeze({
@@ -214,9 +310,12 @@ async function runDriftProbe(input = {}) {
       }));
     }
   }
+  const rpcMetrics = typeof rpcClient.getMetrics === 'function'
+    ? rpcClient.getMetrics()?.[provider.name]?.['eth_getBlockReceipts:batch'] || null
+    : null;
   return Object.freeze({
     provider: provider.name, safeHead: head.safeHead, selectedTokens: states.length,
-    results: Object.freeze(results),
+    receiptRpcMetrics: rpcMetrics, results: Object.freeze(results),
   });
 }
 
@@ -228,6 +327,8 @@ async function main() {
       rangeSize: process.env.ROBINHOOD_HOLDER_DRIFT_PROBE_RANGE_SIZE,
       confirmations: process.env.ROBINHOOD_HOLDER_BACKFILL_CONFIRMATIONS,
       timeoutMs: process.env.ROBINHOOD_RPC_TIMEOUT_MS,
+      receiptBlockLimit: process.env.ROBINHOOD_HOLDER_DRIFT_PROBE_RECEIPT_BLOCK_LIMIT,
+      receiptBatchSize: process.env.ROBINHOOD_HOLDER_DRIFT_PROBE_RECEIPT_BATCH_SIZE,
     });
     console.log(JSON.stringify(result, null, 2));
   } finally {
@@ -244,5 +345,6 @@ module.exports = {
   runDriftProbe,
   __private: {
     balanceOfData, classifyDivergence, findFirstDeficit, normalizeOptions,
+    readReceiptEvidence, receiptTransferIdentity,
   },
 };
