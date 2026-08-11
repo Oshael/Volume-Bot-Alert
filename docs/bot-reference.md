@@ -967,7 +967,11 @@ read-only `npm run robinhood:holder-transfer-probe` e
 schema ou cursor; na VPS devem apontar explicitamente para o mesmo node configurado
 na unit systemd. `npm run robinhood:holder-drift-probe` inspeciona, sem writes, ate
 cinco tokens `drifted` por default: reproduz o primeiro deficit no range pendente e
-compara o ledger no inicio do bloco com `balanceOf` historico. Na VPS, execute-o com
+compara o ledger no inicio do bloco com `balanceOf` historico. Para deficits dentro
+do limite default de 250 blocos, tambem compara os eventos de `eth_getLogs` com
+`eth_getBlockReceipts` em batches de 25 e reporta eventos ausentes, latencia e custo
+RPC; `_RECEIPT_BLOCK_LIMIT` e `_RECEIPT_BATCH_SIZE` ajustam esses limites. Na VPS,
+execute-o com
 `ROBINHOOD_RPC_URL=http://127.0.0.1:8547`; token, limite e range podem ser limitados
 por `ROBINHOOD_HOLDER_DRIFT_PROBE_TOKEN`, `_LIMIT` e `_RANGE_SIZE`. O histórico de
 cortes e a ordem detalhada de rollout ficam apenas em
