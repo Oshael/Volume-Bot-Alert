@@ -170,4 +170,61 @@ describe('Robinhood holder global backfill scanner', () => {
     assert.equal(scanner.getStatus().totals.receiptRecoveries, 1);
     assert.deepEqual(calls[1].transfers, [receiptTransfer]);
   });
+
+  it('excludes a token that remains negative under canonical receipts', async () => {
+    let nextBlock = '100';
+    let commitAttempts = 0;
+    const exclusions = [];
+    const scopes = [];
+    const negativeBalance = () => Object.assign(new Error('negative'), {
+      code: 'holder_negative_balance', tokenAddress: TOKEN,
+      failedBlock: '100', fingerprint: `${HASH}:tx:0`,
+    });
+    const scanner = createRobinhoodHolderGlobalBackfillScanner({
+      lifecycleRepository: {
+        getActiveRun: async () => runState(nextBlock), loadCohort: async () => [TOKEN],
+      },
+      commitRepository: {
+        async commitRange(input) {
+          commitAttempts += 1;
+          if (commitAttempts <= 2) throw negativeBalance();
+          nextBlock = input.nextBlock;
+          return { status: 'committed', ...input, runId: '1' };
+        },
+        async excludeToken(input) {
+          exclusions.push(input);
+          return { status: 'excluded', tokenAddress: input.tokenAddress, deletedBalances: 3 };
+        },
+      },
+      reader: {
+        getSafeHead: async () => ({ safeHead: '100' }),
+        readGlobalRange: async ({ tokenAddresses }) => {
+          scopes.push(tokenAddresses);
+          return range(100, 100, {
+            transfers: tokenAddresses.includes(TOKEN)
+              ? [{ tokenAddress: TOKEN, blockNumber: '100' }] : [],
+          });
+        },
+        readReceiptRange: async () => ({
+          checkpoint: { number: '100', hash: HASH },
+          transfers: [{ tokenAddress: TOKEN, blockNumber: '100' }],
+        }),
+      },
+      options: { prefetch: 1 },
+    });
+
+    const excluded = await scanner.runOnce({ throughBlock: 100 });
+    assert.equal(excluded.status, 'excluded');
+    assert.equal(excluded.reason, 'receipt_replay_still_negative');
+    assert.equal(nextBlock, '100');
+    assert.deepEqual(exclusions, [{
+      runId: '1', tokenAddress: TOKEN, reason: 'receipt_replay_still_negative',
+    }]);
+
+    const resumed = await scanner.runOnce({ throughBlock: 100 });
+    assert.equal(resumed.status, 'committed');
+    assert.equal(nextBlock, '101');
+    assert.deepEqual(scopes, [[TOKEN], []]);
+    assert.equal(scanner.getStatus().totals.exclusions, 1);
+  });
 });

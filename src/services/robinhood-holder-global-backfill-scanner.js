@@ -111,13 +111,19 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
     return cohort;
   }
 
-  async function excludeMalformed(runId, error) {
+  async function excludeCohortToken(runId, tokenAddress, reason) {
     const excluded = await committer.excludeToken({
-      runId, tokenAddress: error.tokenAddress, reason: 'malformed_transfer_log',
+      runId, tokenAddress, reason,
     });
-    cohort = Object.freeze(cohort.filter((token) => token !== error.tokenAddress));
+    cohort = Object.freeze(cohort.filter((token) => token !== tokenAddress));
     totals.exclusions += 1;
-    return Object.freeze({ ...excluded, reason: 'malformed_transfer_log' });
+    return Object.freeze({ ...excluded, reason });
+  }
+
+  function excludeMalformed(runId, error) {
+    return excludeCohortToken(
+      runId, error.tokenAddress, 'malformed_transfer_log'
+    );
   }
 
   async function throughBlock(input, run) {
@@ -161,10 +167,9 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
           reason: String(error.code || error.message || error).slice(0, 160),
         });
       }
-      return Object.freeze({
-        status: 'deficit-unverified', tokenAddress: deficit.tokenAddress,
-        failedBlock: deficit.failedBlock, reason: 'receipt_replay_still_negative',
-      });
+      return excludeCohortToken(
+        runId, deficit.tokenAddress, 'receipt_replay_still_negative'
+      );
     }
   }
 
