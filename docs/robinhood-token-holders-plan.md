@@ -403,7 +403,7 @@ altera a sequencia deste quadro.
 | 3 | Backfill/catch-up de tokens novos sem lacuna | concluido no codigo/desligado | RT3A-RT3C runner opt-in; RT4A/RT4E1 handoff retido; RT4F1 wiring com lease |
 | 4 | Live incremental shadow, deteccao automatica de reorg e scheduler da poda | concluido no codigo/desligado | RT4A-RT4E2 base integrada; RT4F1/F2 grupo, leases e poda opt-in |
 | 5 | Backfill frio dos tokens antigos | concluido no codigo/desligado | RT5A-RT5B3; admissao, verificacao, tick limitado e runtime opt-in com lease |
-| 6 | Reconciliacao, promocao e publicacao REST/socket | em andamento/desligado | RT6A-RT6E4 cobrem REST/listas, snapshot e socket normal; reorg socket pendente |
+| 6 | Reconciliacao, promocao e publicacao REST/socket | concluido no codigo/desligado | RT6A-RT6E5 cobrem REST/listas, snapshot e socket com reorg |
 | 7 | Frontend realtime/expanded chart | pendente de layout aprovado | nao reutilizar o prototipo sem decisao explicita |
 
 Os nomes RT nao sao uma segunda arquitetura. Eles apenas repartem os macros
@@ -1221,6 +1221,16 @@ relay PostgreSQL entrega ao processo web e reutiliza as rooms de mercado ja
 assinadas; REST permanece como bootstrap/recuperacao. Nao ha tabela ou flag nova.
 Consumidor frontend e invalidação/correcao explicita no rewind de reorg seguem
 pendentes.
+
+#### Corte RT6E5 - Correcao e invalidacao socket no reorg
+
+Status: implementado e validado; depende do live opt-in.
+
+O rewind retorna publicacoes somente depois da transacao: tokens que continuam
+`live` emitem `holder:count` corrigido e tokens antes publicos que cruzaram a
+barreira do baseline emitem `holder:invalidate`. Ambos preservam a mesma sequencia
+por version e o checkpoint canonico; o frontend deve descartar o valor invalidado
+e recuperar via REST. Nao ha schema, tabela ou flag nova.
 
 Cada item acima deve ser repartido novamente se estimar mais de 500 linhas. O
 probe e a estimativa de storage sao pre-condicoes; “outros terminais fazem” nao

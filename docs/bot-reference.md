@@ -931,8 +931,9 @@ saudável e grava batches limitados. O backend publica `holder:count` sequenciad
 via relay PostgreSQL para as mesmas rooms por token já usadas pelo mercado.
 Mudanças do mesmo token são
 coalescidas por tick e emitidas somente após commit; REST continua sendo o caminho
-de bootstrap/recuperação. O consumidor frontend e a invalidação explícita após
-rewind de reorg ainda não estão concluídos.
+de bootstrap/recuperação. Após rewind de reorg, o backend emite o count corrigido
+para tokens ainda `live` ou `holder:invalidate` para os que exigem ressincronização.
+O consumidor frontend ainda não está concluído.
 
 O grupo `robinhood-holders` contém workers independentes de captura live,
 backfill de tokens novos, backfill frio, reconciliação, snapshot e poda do
