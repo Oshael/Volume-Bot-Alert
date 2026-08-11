@@ -971,6 +971,11 @@ por `ROBINHOOD_HOLDER_DRIFT_PROBE_TOKEN`, `_LIMIT` e `_RANGE_SIZE`. O histórico
 cortes e a ordem detalhada de rollout ficam apenas em
 `docs/robinhood-token-holders-plan.md`.
 
+`npm run robinhood:holder-drift-recovery` pagina todos os `drifted` atuais e e
+dry-run por default. `-- --confirm-requeue` reencaminha somente deficits que nao
+se reproduzem na releitura; o UPDATE exige `version` e cursor inalterados, preserva
+balances e deixa a validacao canonica do checkpoint para o executor de backfill.
+
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.
 V2 mantém o preço médio executado enquanto não houver spot de reservas no contrato
