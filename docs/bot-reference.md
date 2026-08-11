@@ -947,11 +947,15 @@ diretos antigos, que precisam ser confirmados pelo RPC principal. A fila de
 replay prioriza o menor trabalho restante até a barreira live; estados antigos
 continuam duráveis e retomáveis, mas não bloqueiam tokens próximos do head.
 Durante replay, saldo negativo isolado gera apenas `drift-suspected` e nao move
-cursor nem balances. O token so vira `drifted` depois de tres leituras com o mesmo
-fingerprint de deficit, espacadas em 60s por default. Enquanto aguarda a proxima
-leitura ele sai temporariamente da selecao, sem bloquear os demais backfills;
-`ROBINHOOD_HOLDER_DRIFT_RECHECK_MS` ajusta o intervalo entre 1s e 10min. Evidencia
-diferente reinicia a contagem e restart descarta apenas a evidencia em memoria.
+cursor nem balances. O executor rele o trecho ate o primeiro deficit por
+`eth_getBlockReceipts`; se esse replay passa, commita o trecho e recupera o token.
+Somente deficit reproduzido por receipts conta para as tres confirmacoes de
+`drifted`, espacadas em 60s por default. Receipt indisponivel ou alem do limite
+mantem `drift-unverified` em cooldown, sem bloquear a fila nem isolar o token.
+`ROBINHOOD_HOLDER_DRIFT_RECHECK_MS` ajusta o intervalo; os limites default de 250
+blocos/25 por batch usam `ROBINHOOD_HOLDER_RECEIPT_BLOCK_LIMIT` e
+`ROBINHOOD_HOLDER_RECEIPT_BATCH_SIZE`.
+Evidencia diferente reinicia a contagem e restart descarta a evidencia em memoria.
 
 A reconciliação exige o live saudável e três counts Blockscout exatos e distintos
 antes de promover `shadow` para `live`. Divergência estável depois da promoção
