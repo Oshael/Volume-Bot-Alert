@@ -351,6 +351,7 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_HOLDER_LIVE_ENABLED: undefined,
       ROBINHOOD_HOLDER_RECONCILIATION_ENABLED: undefined,
       ROBINHOOD_HOLDER_JOURNAL_PRUNE_ENABLED: undefined,
+      ROBINHOOD_HOLDER_SNAPSHOT_ENABLED: undefined,
     }, (config) => {
       assert.equal(config.robinhoodHolderBackfillWorker.enabled, false);
       assert.equal(config.robinhoodHolderBackfillWorker.admittedAfter, null);
@@ -359,6 +360,7 @@ describe('runtime worker groups config', () => {
       assert.equal(config.robinhoodHolderLiveWorker.enabled, false);
       assert.equal(config.robinhoodHolderReconciliationWorker.enabled, false);
       assert.equal(config.robinhoodHolderJournalPruneWorker.enabled, false);
+      assert.equal(config.robinhoodHolderSnapshotWorker.enabled, false);
     });
     withEnv({
       ROBINHOOD_RPC_URL: 'http://127.0.0.1:8547',
@@ -400,6 +402,10 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_HOLDER_JOURNAL_RETENTION_BLOCKS: '9999999',
       ROBINHOOD_HOLDER_JOURNAL_PRUNE_BATCH_LIMIT: '999999',
       ROBINHOOD_HOLDER_JOURNAL_PRUNE_MAX_BATCHES: '999',
+      ROBINHOOD_HOLDER_SNAPSHOT_ENABLED: 'true',
+      ROBINHOOD_HOLDER_SNAPSHOT_INTERVAL_MS: '1',
+      ROBINHOOD_HOLDER_SNAPSHOT_MAX_ERROR_BACKOFF_MS: '9999999999',
+      ROBINHOOD_HOLDER_SNAPSHOT_BATCH_SIZE: '99999',
     }, (config) => {
       assert.deepEqual(config.robinhoodHolderBackfillWorker, {
         enabled: true,
@@ -442,6 +448,10 @@ describe('runtime worker groups config', () => {
         retentionBlocks: 1_000_000,
         batchLimit: 50_000,
         maxBatches: 50,
+      });
+      assert.deepEqual(config.robinhoodHolderSnapshotWorker, {
+        enabled: true, intervalMs: 10_000,
+        maxErrorBackoffMs: 3_600_000, batchSize: 5000,
       });
     });
   });
@@ -489,6 +499,21 @@ describe('runtime worker groups config', () => {
     });
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /ROBINHOOD_HOLDER_LIVE_ENABLED=true/);
+  });
+
+  it('fails fast when holder snapshots are enabled without live capture', () => {
+    const result = spawnSync(process.execPath, ['-e', "require('./config')"], {
+      cwd: ROOT_DIR,
+      env: {
+        ...process.env,
+        ROBINHOOD_HOLDER_LIVE_ENABLED: 'false',
+        ROBINHOOD_HOLDER_SNAPSHOT_ENABLED: 'true',
+      },
+      encoding: 'utf8',
+    });
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /ROBINHOOD_HOLDER_LIVE_ENABLED=true for holder snapshots/);
   });
 
   it('keeps the DexScreener profile fast path disabled and bounded by default', () => {

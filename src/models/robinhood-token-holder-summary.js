@@ -193,6 +193,7 @@ function createRobinhoodTokenHolderSummaryRepository(options = {}) {
          updated_at = NOW()
        WHERE EXCLUDED.observed_at >=
          robinhood_token_holder_daily_snapshots.observed_at
+         AND robinhood_token_holder_daily_snapshots.source <> 'ledger_live'
        RETURNING 1
      )
        SELECT * FROM saved_summary`,
@@ -254,6 +255,45 @@ function createRobinhoodTokenHolderSummaryRepository(options = {}) {
     return rows.map((row) => normalizeSummaryRow(row, true));
   }
 
+  async function syncLiveDailySnapshots(input = {}) {
+    const asOf = timestamp(input.asOf || new Date(), 'snapshot asOf');
+    const limit = Number(input.limit ?? 500);
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 5000) {
+      throw new RangeError('snapshot limit must be between 1 and 5000');
+    }
+    const { rows } = await database.query(
+      `WITH candidates AS MATERIALIZED (
+         SELECT published.chain, published.token_address, published.holder_count
+           FROM robinhood_published_holder_summaries published
+           LEFT JOIN robinhood_token_holder_daily_snapshots snapshot
+             ON snapshot.chain = published.chain
+            AND snapshot.token_address = published.token_address
+            AND snapshot.snapshot_date = ($1::timestamptz AT TIME ZONE 'UTC')::date
+          WHERE published.source = 'ledger_live'
+            AND (snapshot.token_address IS NULL OR snapshot.source <> 'ledger_live'
+              OR snapshot.observed_at < published.observed_at)
+          ORDER BY snapshot.observed_at ASC NULLS FIRST, published.token_address ASC
+          LIMIT $2::int
+       ), saved AS (
+         INSERT INTO robinhood_token_holder_daily_snapshots (
+           chain, token_address, snapshot_date, holder_count, source, observed_at
+         )
+         SELECT chain, token_address, ($1::timestamptz AT TIME ZONE 'UTC')::date,
+                holder_count, 'ledger_live', $1::timestamptz
+           FROM candidates
+         ON CONFLICT (chain, token_address, snapshot_date) DO UPDATE SET
+           holder_count = EXCLUDED.holder_count, source = EXCLUDED.source,
+           observed_at = EXCLUDED.observed_at, updated_at = NOW()
+         WHERE robinhood_token_holder_daily_snapshots.source <> 'ledger_live'
+            OR EXCLUDED.observed_at >= robinhood_token_holder_daily_snapshots.observed_at
+         RETURNING 1
+       )
+       SELECT COUNT(*)::int AS saved_count FROM saved`,
+      [asOf, limit]
+    );
+    return Object.freeze({ savedCount: Number(rows[0]?.saved_count) || 0, asOf });
+  }
+
   async function listDailySnapshots(input = {}) {
     const tokenAddress = normalizeTokenAddress(CHAIN, input.tokenAddress);
     const days = historyDays(input.days);
@@ -276,7 +316,7 @@ function createRobinhoodTokenHolderSummaryRepository(options = {}) {
 
   return Object.freeze({
     listRefreshCandidates, recordSuccess, recordFailure, getSummaries,
-    getPublishedSummaries, listDailySnapshots,
+    getPublishedSummaries, syncLiveDailySnapshots, listDailySnapshots,
   });
 }
 

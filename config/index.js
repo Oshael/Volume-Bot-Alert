@@ -474,6 +474,9 @@ const robinhoodHolderLiveEnabled = parseBoolean(process.env.ROBINHOOD_HOLDER_LIV
 const robinhoodHolderReconciliationEnabled = parseBoolean(
   process.env.ROBINHOOD_HOLDER_RECONCILIATION_ENABLED, false
 );
+const robinhoodHolderSnapshotEnabled = parseBoolean(
+  process.env.ROBINHOOD_HOLDER_SNAPSHOT_ENABLED, false
+);
 const telegramDeliveryIntervalMs = parseIntegerInRange(
   process.env.TELEGRAM_DELIVERY_INTERVAL_MS, 1_000, 250, 60_000
 );
@@ -547,6 +550,9 @@ if (robinhoodHolderColdEnabled && !robinhoodHolderColdAdmittedBefore) {
 }
 if (robinhoodHolderReconciliationEnabled && !robinhoodHolderLiveEnabled) {
   missing.push('ROBINHOOD_HOLDER_LIVE_ENABLED=true for holder reconciliation');
+}
+if (robinhoodHolderSnapshotEnabled && !robinhoodHolderLiveEnabled) {
+  missing.push('ROBINHOOD_HOLDER_LIVE_ENABLED=true for holder snapshots');
 }
 if ((robinhoodHolderBackfillEnabled || robinhoodHolderColdEnabled || robinhoodHolderLiveEnabled)
     && !String(process.env.ROBINHOOD_RPC_URL || '').trim()) {
@@ -1082,6 +1088,22 @@ module.exports = {
     ),
     maxBatches: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_JOURNAL_PRUNE_MAX_BATCHES, 5, 1, 50
+    ),
+  },
+
+  robinhoodHolderSnapshotWorker: {
+    enabled: robinhoodHolderSnapshotEnabled,
+    intervalMs: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_SNAPSHOT_INTERVAL_MS, 60_000, 10_000, 3_600_000
+    ),
+    maxErrorBackoffMs: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_SNAPSHOT_MAX_ERROR_BACKOFF_MS,
+      300_000,
+      10_000,
+      3_600_000
+    ),
+    batchSize: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_SNAPSHOT_BATCH_SIZE, 500, 1, 5000
     ),
   },
 

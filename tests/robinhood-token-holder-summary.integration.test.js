@@ -137,12 +137,30 @@ describe('Robinhood token holder summary repository integration', () => {
       assert.deepEqual(published.rows[0], {
         holder_count: '5100', source: 'ledger_live', ledger_version: '7',
       });
-      await client.query(
-        `INSERT INTO robinhood_token_holder_daily_snapshots (
-           chain, token_address, snapshot_date, holder_count, source, observed_at
-         ) VALUES ('robinhood', $1, '2026-08-10', 5100, 'ledger_live', NOW())`,
+      const transactionRepository = createRobinhoodTokenHolderSummaryRepository({
+        database: { query: client.query.bind(client) },
+      });
+      assert.deepEqual(await transactionRepository.syncLiveDailySnapshots({
+        asOf: '2026-08-10T23:59:00.000Z', limit: 10,
+      }), { savedCount: 1, asOf: '2026-08-10T23:59:00.000Z' });
+      await transactionRepository.recordSuccess({
+        tokenAddress: TOKEN, holderCount: 9999,
+        observedAt: '2026-08-10T23:59:30.000Z',
+      });
+      const daily = await client.query(
+        `SELECT holder_count, source, observed_at
+           FROM robinhood_token_holder_daily_snapshots
+          WHERE chain = 'robinhood' AND token_address = $1
+            AND snapshot_date = '2026-08-10'`,
         [TOKEN]
       );
+      assert.deepEqual(daily.rows.map((row) => ({
+        holderCount: String(row.holder_count), source: row.source,
+        observedAt: row.observed_at.toISOString(),
+      })), [{
+        holderCount: '5100', source: 'ledger_live',
+        observedAt: '2026-08-10T23:59:00.000Z',
+      }]);
       await client.query('ROLLBACK');
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch (_) {}

@@ -80,6 +80,7 @@ describe('Robinhood token holder summaries', () => {
     assert.match(fake.calls[0].sql, /INSERT INTO robinhood_token_holder_daily_snapshots/);
     assert.match(fake.calls[0].sql, /ON CONFLICT \(chain, token_address, snapshot_date\)/);
     assert.match(fake.calls[0].sql, /WHERE observed_at = \$3::timestamptz/);
+    assert.match(fake.calls[0].sql, /source <> 'ledger_live'/);
   });
 
   it('records failures without overwriting the last valid count or observation', async () => {
@@ -128,6 +129,35 @@ describe('Robinhood token holder summaries', () => {
     assert.match(fake.calls[0].sql, /FROM robinhood_published_holder_summaries/);
     assert.deepEqual(await repository.getPublishedSummaries([]), []);
     assert.equal(fake.calls.length, 1);
+  });
+
+  it('projects bounded live counts into the UTC daily snapshot with live precedence', async () => {
+    const calls = [];
+    const repository = createRobinhoodTokenHolderSummaryRepository({ database: {
+      async query(sql, params) {
+        calls.push({ sql, params });
+        return { rows: [{ saved_count: 2 }] };
+      },
+    } });
+    const result = await repository.syncLiveDailySnapshots({
+      asOf: '2026-08-10T23:59:00.000Z', limit: 250,
+    });
+
+    assert.deepEqual(result, { savedCount: 2, asOf: '2026-08-10T23:59:00.000Z' });
+    assert.deepEqual(calls[0].params, ['2026-08-10T23:59:00.000Z', 250]);
+    assert.match(calls[0].sql, /published\.source = 'ledger_live'/);
+    assert.match(calls[0].sql, /snapshot_date = \(\$1::timestamptz AT TIME ZONE 'UTC'\)::date/);
+    assert.match(calls[0].sql, /snapshot\.source <> 'ledger_live'/);
+    assert.match(calls[0].sql, /LIMIT \$2::int/);
+    assert.match(calls[0].sql, /source = EXCLUDED\.source/);
+  });
+
+  it('rejects an unbounded live snapshot batch before querying', async () => {
+    const fake = databaseReturning();
+    const repository = createRobinhoodTokenHolderSummaryRepository(fake);
+
+    await assert.rejects(repository.syncLiveDailySnapshots({ limit: 5001 }), /between 1 and 5000/);
+    assert.equal(fake.calls.length, 0);
   });
 
   it('reads one baseline plus the requested daily range in chronological order', async () => {

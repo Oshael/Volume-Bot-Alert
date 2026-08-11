@@ -48,6 +48,7 @@ const robinhoodHolderColdWorker = require('./services/robinhood-holder-cold-work
 const robinhoodHolderJournalPruneWorker = require('./services/robinhood-holder-journal-prune-worker');
 const robinhoodHolderLiveWorker = require('./services/robinhood-holder-live-worker');
 const robinhoodHolderReconciliationWorker = require('./services/robinhood-holder-reconciliation-worker');
+const robinhoodHolderSnapshotWorker = require('./services/robinhood-holder-snapshot-worker');
 const robinhoodHolderSummaryWorker = require('./services/robinhood-holder-summary-worker');
 const robinhoodBackfillDiscoveryScanner = require('./services/robinhood-backfill-discovery-scanner');
 const robinhoodBackfillMarketScanner = require('./services/robinhood-backfill-market-scanner');
@@ -111,6 +112,7 @@ const ROBINHOOD_HOLDER_COLD_LEASE_KEY = 'robinhood-holder-cold-worker';
 const ROBINHOOD_HOLDER_JOURNAL_PRUNE_LEASE_KEY = 'robinhood-holder-journal-prune-worker';
 const ROBINHOOD_HOLDER_LIVE_LEASE_KEY = 'robinhood-holder-live-worker';
 const ROBINHOOD_HOLDER_RECONCILIATION_LEASE_KEY = 'robinhood-holder-reconciliation-worker';
+const ROBINHOOD_HOLDER_SNAPSHOT_LEASE_KEY = 'robinhood-holder-snapshot-worker';
 const ROBINHOOD_HOLDER_SUMMARY_LEASE_KEY = 'robinhood-holder-summary-worker';
 const ROBINHOOD_WALLET_SWAP_LIVE_LEASE_KEY = 'robinhood-wallet-swap-live-worker';
 const ROBINHOOD_DIRECT_CREATOR_LIVE_LEASE_KEY = 'robinhood-direct-creator-live-worker';
@@ -305,6 +307,7 @@ app.get('/api/admin/ws-status', authenticate, requireAdmin, async (req, res) => 
     robinhoodHolderJournalPruneWorker: robinhoodHolderJournalPruneWorker.getStatus(),
     robinhoodHolderLiveWorker: robinhoodHolderLiveWorker.getStatus(),
     robinhoodHolderReconciliationWorker: robinhoodHolderReconciliationWorker.getStatus(),
+    robinhoodHolderSnapshotWorker: robinhoodHolderSnapshotWorker.getStatus(),
     robinhoodIngestionWorker: {
       ...robinhoodIngestionStatus,
       sharedLease: robinhoodIngestionLease,
@@ -628,6 +631,21 @@ function startRobinhoodHolderWorkerGroup() {
         ),
       }), {
         metadataProvider: () => ({ telemetry: robinhoodHolderJournalPruneWorker.getStatus() }),
+      }
+    );
+  }
+  if (config.robinhoodHolderSnapshotWorker.enabled) {
+    startLockedWorker(
+      'robinhood-holders', ROBINHOOD_HOLDER_SNAPSHOT_LEASE_KEY,
+      'Robinhood holder snapshot worker', () => robinhoodHolderSnapshotWorker.start({
+        ...config.robinhoodHolderSnapshotWorker,
+        isLiveReady: () => {
+          const live = robinhoodHolderLiveWorker.getStatus();
+          return live.running === true && live.halted !== true && live.totalRuns > 0
+            && live.lastCompletedAt != null && live.lastError == null;
+        },
+      }), {
+        metadataProvider: () => ({ telemetry: robinhoodHolderSnapshotWorker.getStatus() }),
       }
     );
   }
@@ -1011,6 +1029,7 @@ async function shutdownGracefully(signal = 'SIGTERM') {
       robinhoodHolderJournalPruneWorker.stop(),
       robinhoodHolderLiveWorker.stop(),
       robinhoodHolderReconciliationWorker.stop(),
+      robinhoodHolderSnapshotWorker.stop(),
       robinhoodBackfillDiscoveryScanner.stop(),
       robinhoodBackfillMarketScanner.stop(),
       robinhoodBackfillRuntime.enrichment.stop(),
