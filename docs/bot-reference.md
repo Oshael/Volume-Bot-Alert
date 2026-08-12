@@ -960,7 +960,12 @@ e poda do journal. Captura/handoff usam a lease `robinhood-holder-live-worker`;
 o apply serial usa `robinhood-holder-live-apply-worker`, intervalo default de
 100ms e o budget `ROBINHOOD_HOLDER_LIVE_MAX_APPLY_EVENTS`. Ambos bloqueiam o
 mesmo cursor em cada transação, então captura, apply e rewind de reorg permanecem
-ordenados sem manter a captura esperando o lote inteiro. A unit template usa
+ordenados sem manter a captura esperando o lote inteiro. O apply escolhe o evento
+elegível global mais antigo e mantém afinidade no token enquanto houver eventos;
+o índice parcial da stage 121 preserva a ordem canônica por token sem reescanear
+o journal pendente inteiro a cada evento. No deploy, execute
+`node src/utils/db-init-stage121.js` antes do restart; o índice é criado
+concorrentemente para não bloquear writes do journal. A unit template usa
 `start:worker:robinhood-holders`, com porta default
 3010 e sem socket no processo worker. Todos
 são opt-in e permanecem desligados por default; pull ou presença de
