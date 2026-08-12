@@ -44,12 +44,6 @@ function createRobinhoodHolderLiveRunner(options = {}) {
   const driftEvidence = new Map();
   const publishHolderCounts = typeof options.publishHolderCounts === 'function'
     ? options.publishHolderCounts : async () => 0;
-  if (typeof capture?.captureOnce !== 'function') {
-    throw new TypeError('holder live capture is required');
-  }
-  if (typeof handoff?.runOnce !== 'function') {
-    throw new TypeError('holder live handoff is required');
-  }
   if (typeof ledger?.applyNextPendingEvent !== 'function'
       || typeof ledger?.repairCapturedRange !== 'function'
       || typeof ledger?.rollbackAppliedTail !== 'function') {
@@ -122,6 +116,12 @@ function createRobinhoodHolderLiveRunner(options = {}) {
   }
 
   async function prepareTick(rangeSize, confirmations) {
+    if (typeof capture?.captureOnce !== 'function') {
+      throw new TypeError('holder live capture is required');
+    }
+    if (typeof handoff?.runOnce !== 'function') {
+      throw new TypeError('holder live handoff is required');
+    }
     const captured = await capture.captureOnce({ rangeSize, confirmations });
     if (captured.status === 'reorg-unrecoverable') {
       return { terminal: Object.freeze({
@@ -246,35 +246,47 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     };
   }
 
-  async function runOnce(input = {}) {
+  async function captureOnce(input = {}) {
     const rangeSize = boundedInteger(input.rangeSize, 250, 1, 5000, 'rangeSize');
     const confirmations = boundedInteger(input.confirmations, 12, 0, 1000, 'confirmations');
-    const maxApplyEvents = boundedInteger(
-      input.maxApplyEvents, 5000, 1, 50_000, 'maxApplyEvents'
-    );
     const prepared = await prepareTick(rangeSize, confirmations);
     if (prepared.terminal) return prepared.terminal;
-    const drained = await drainPendingEvents(maxApplyEvents);
-    const holderCountPublished = await publishCountUpdates(
-      publishHolderCounts, drained.holderCountUpdates
-    );
     return Object.freeze({
       status: 'completed', captureStatus: prepared.captured.status,
       capturedTransfers: Number(prepared.captured.transfers) || 0,
       handoffStatus: prepared.handoffStatus,
       handoffPromotions: prepared.handoffStatus === 'shadow' ? 1 : 0,
       handoffResyncs: prepared.handoffStatus === 'resyncing' ? 1 : 0,
+      nextBlock: prepared.captured.nextBlock, safeHead: prepared.captured.safeHead,
+    });
+  }
+
+  async function applyOnce(input = {}) {
+    const maxApplyEvents = boundedInteger(
+      input.maxApplyEvents, 5000, 1, 50_000, 'maxApplyEvents'
+    );
+    const drained = await drainPendingEvents(maxApplyEvents);
+    const holderCountPublished = await publishCountUpdates(
+      publishHolderCounts, drained.holderCountUpdates
+    );
+    return Object.freeze({
+      status: 'completed',
       appliedEvents: drained.appliedEvents, driftedTokens: drained.driftedTokens,
       applyAttempts: drained.applyAttempts, driftSuspicions: drained.driftSuspicions,
       receiptRecoveries: drained.receiptRecoveries, driftDeferred: drained.driftDeferred,
       tailRollbacks: drained.tailRollbacks, tailRollbackEvents: drained.tailRollbackEvents,
       holderCountUpdates: drained.holderCountUpdates.size, holderCountPublished,
       applyBudgetExhausted: !drained.reachedIdle && drained.applyAttempts === maxApplyEvents,
-      nextBlock: prepared.captured.nextBlock, safeHead: prepared.captured.safeHead,
     });
   }
 
-  return Object.freeze({ runOnce });
+  async function runOnce(input = {}) {
+    const captured = await captureOnce(input);
+    if (captured.status !== 'completed') return captured;
+    return Object.freeze({ ...captured, ...await applyOnce(input), status: 'completed' });
+  }
+
+  return Object.freeze({ runOnce, captureOnce, applyOnce });
 }
 
 module.exports = { createRobinhoodHolderLiveRunner };

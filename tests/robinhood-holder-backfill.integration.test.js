@@ -318,7 +318,7 @@ describe('Robinhood holder backfill persistence', () => {
       });
       await client.query(
         `INSERT INTO worker_leases (lease_key, owner_id, lease_until)
-         VALUES ('robinhood-holder-global-backfill-worker', 'test-owner',
+         VALUES ('robinhood-holder-live-apply-worker', 'test-owner',
                  NOW() + INTERVAL '1 minute')`
       );
       await assert.rejects(
@@ -328,7 +328,7 @@ describe('Robinhood holder backfill persistence', () => {
         (error) => error.code === 'holder_quarantine_writer_active'
       );
       await client.query(`DELETE FROM worker_leases
-        WHERE lease_key = 'robinhood-holder-global-backfill-worker'`);
+        WHERE lease_key = 'robinhood-holder-live-apply-worker'`);
       const quarantine = await runHolderQuarantine({
         database, tokenAddress: QUARANTINE_TOKEN, confirm: true,
       });

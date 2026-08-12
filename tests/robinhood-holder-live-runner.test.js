@@ -205,6 +205,37 @@ describe('Robinhood holder live runner', () => {
     assert.equal(context.calls.filter(([name]) => name === 'capture').length, 1);
   });
 
+  it('allows capture to advance while an independent apply tick is in flight', async () => {
+    let releaseApply;
+    const applyGate = new Promise((resolve) => { releaseApply = resolve; });
+    const context = harness({
+      status: 'captured', transfers: 2, nextBlock: '108', safeHead: '107',
+    }, [{ status: 'applied' }]);
+    context.runner = createRobinhoodHolderLiveRunner({
+      capture: {
+        captureOnce: async () => ({
+          status: 'captured', transfers: 2, nextBlock: '108', safeHead: '107',
+        }),
+      },
+      handoff: { runOnce: async () => ({ status: 'idle' }) },
+      ledger: {
+        applyNextPendingEvent: async () => {
+          await applyGate;
+          return { status: 'applied' };
+        },
+        repairCapturedRange: async () => ({ status: 'repaired', insertedTransfers: 0 }),
+        rollbackAppliedTail: async () => ({ status: 'requeued', revertedEvents: 0 }),
+      },
+      reader: { readReceiptRange: async () => ({ transfers: [] }) },
+    });
+
+    const applying = context.runner.applyOnce({ maxApplyEvents: 1 });
+    const captured = await context.runner.captureOnce();
+    assert.equal(captured.nextBlock, '108');
+    releaseApply();
+    assert.equal((await applying).applyBudgetExhausted, true);
+  });
+
   it('does not apply events during recovery or without canonical evidence', async () => {
     const published = [];
     const correction = { tokenAddress: `0x${'a'.repeat(40)}`, holderCount: '9' };

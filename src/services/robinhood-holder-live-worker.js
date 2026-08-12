@@ -30,7 +30,6 @@ function normalizeOptions(options = {}, env = process.env) {
     maxErrorBackoffMs: boundedInteger(options.maxErrorBackoffMs, 30_000, 1000, 300_000),
     rangeSize: boundedInteger(options.rangeSize, 250, 1, 5000),
     confirmations: boundedInteger(options.confirmations, 12, 0, 1000),
-    maxApplyEvents: boundedInteger(options.maxApplyEvents, 5000, 1, 50_000),
     addressShardConcurrency: boundedInteger(options.addressShardConcurrency, 2, 1, 4),
     rpcTimeoutMs: boundedInteger(
       options.rpcTimeoutMs ?? env.ROBINHOOD_RPC_TIMEOUT_MS, 15_000, 1000, 60_000
@@ -178,7 +177,7 @@ function createRobinhoodHolderLiveWorker(deps = {}) {
     try {
       const runtime = await getRuntime();
       status.providerName = runtime.providerName;
-      const result = await runtime.runner.runOnce(options);
+      const result = await runtime.runner.captureOnce(options);
       recordResult(result);
       status.consecutiveErrors = 0;
       status.lastError = null;

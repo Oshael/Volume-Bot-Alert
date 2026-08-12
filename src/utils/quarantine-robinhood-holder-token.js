@@ -4,6 +4,7 @@ const db = require('../models/db');
 
 const WRITER_LEASE_KEYS = Object.freeze([
   'robinhood-holder-live-worker',
+  'robinhood-holder-live-apply-worker',
   'robinhood-holder-backfill-worker',
   'robinhood-holder-cold-worker',
   'robinhood-holder-global-backfill-worker',

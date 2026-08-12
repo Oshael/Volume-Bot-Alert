@@ -39,7 +39,7 @@ describe('Robinhood holder live worker', () => {
       env: { ROBINHOOD_RPC_URL: 'http://127.0.0.1:8547' },
       runtimeFactory: async () => ({
         providerName: 'robinhood-holder-live',
-        runner: { runOnce: async (input) => { calls.push(input); return completed(); } },
+        runner: { captureOnce: async (input) => { calls.push(input); return completed(); } },
       }),
     });
 
@@ -50,7 +50,7 @@ describe('Robinhood holder live worker', () => {
     await clock.scheduled[0].callback();
     assert.equal(clock.scheduled[1].delayMs, 750);
     assert.equal(calls[0].rangeSize, 250);
-    assert.equal(calls[0].maxApplyEvents, 5000);
+    assert.equal(calls[0].addressShardConcurrency, 2);
     assert.deepEqual(worker.getStatus().lastResult, {
       status: 'completed', captureStatus: 'captured', nextBlock: '106', safeHead: '105',
       handoffStatus: 'shadow', handoffPromotions: 1, handoffResyncs: 0,
@@ -77,7 +77,7 @@ describe('Robinhood holder live worker', () => {
       logger: { warn: (message) => warnings.push(message), error() {} },
       runtimeFactory: async () => ({
         providerName: 'robinhood-holder-live',
-        runner: { runOnce: async () => {
+        runner: { captureOnce: async () => {
           attempts += 1;
           if (attempts === 1) throw new Error('temporary RPC failure');
           return completed();
@@ -104,7 +104,7 @@ describe('Robinhood holder live worker', () => {
       env: { ROBINHOOD_RPC_URL: 'http://127.0.0.1:8547' },
       runtimeFactory: async () => ({
         providerName: 'robinhood-holder-live',
-        runner: { runOnce: async () => ({
+        runner: { captureOnce: async () => ({
           status: 'blocked', reason: 'canonical-evidence-unavailable',
         }) },
       }),
