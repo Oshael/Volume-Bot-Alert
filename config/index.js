@@ -243,12 +243,17 @@ function getRuntimeRole(runSocketHub, runBackgroundJobs) {
   return 'idle';
 }
 
-const SHARED_WORKER_GROUPS = Object.freeze(['core', 'market', 'maintenance']);
+const SHARED_WORKER_GROUPS = Object.freeze(['core', 'market', 'solana-maintenance']);
+const LEGACY_WORKER_GROUPS = Object.freeze(['maintenance']);
 const ISOLATED_WORKER_GROUPS = Object.freeze([
-  'robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-derived',
-  'robinhood-wallet', 'robinhood-backfill', 'robinhood-holders',
+  'robinhood-maintenance', 'robinhood', 'robinhood-head', 'robinhood-processing',
+  'robinhood-derived', 'robinhood-wallet', 'robinhood-backfill', 'robinhood-holders',
 ]);
-const WORKER_GROUPS = Object.freeze([...SHARED_WORKER_GROUPS, ...ISOLATED_WORKER_GROUPS]);
+const WORKER_GROUPS = Object.freeze([
+  ...SHARED_WORKER_GROUPS,
+  ...LEGACY_WORKER_GROUPS,
+  ...ISOLATED_WORKER_GROUPS,
+]);
 const WORKER_GROUP_SET = new Set(WORKER_GROUPS);
 
 function normalizeWorkerGroups(value) {
@@ -260,6 +265,7 @@ function normalizeWorkerGroups(value) {
   const invalid = uniqueRequested.filter((group) => group !== 'all' && !WORKER_GROUP_SET.has(group));
   const isolatedRequested = uniqueRequested.filter((group) => ISOLATED_WORKER_GROUPS.includes(group));
   const isolationConflict = isolatedRequested.length > 0 && uniqueRequested.length > 1;
+  const legacyConflict = uniqueRequested.includes('maintenance') && uniqueRequested.length > 1;
   const active = uniqueRequested.includes('all')
     ? [...SHARED_WORKER_GROUPS]
     : uniqueRequested.filter((group) => WORKER_GROUP_SET.has(group));
@@ -270,7 +276,20 @@ function normalizeWorkerGroups(value) {
     skipped: WORKER_GROUPS.filter((group) => !active.includes(group)),
     invalid,
     isolationConflict,
+    legacyConflict,
   };
+}
+
+function resolveMaintenanceWorkerOwners(activeGroups) {
+  const active = new Set(activeGroups);
+  const legacyOwner = active.has('maintenance') ? 'maintenance' : null;
+  return Object.freeze({
+    catalogCleanup: active.has('solana-maintenance') ? 'solana-maintenance' : legacyOwner,
+    robinhoodRetention: active.has('robinhood-maintenance')
+      ? 'robinhood-maintenance'
+      : legacyOwner,
+    mockTradingTakeProfit: legacyOwner,
+  });
 }
 
 function getDefaultMoonpayApiBaseUrl(network) {
@@ -548,6 +567,9 @@ if (workerGroups.invalid.length > 0) {
 if (workerGroups.isolationConflict) {
   missing.push('BACKGROUND_WORKER_GROUPS cannot combine isolated worker groups with other groups or all');
 }
+if (workerGroups.legacyConflict) {
+  missing.push('BACKGROUND_WORKER_GROUPS cannot combine legacy maintenance with other groups or all');
+}
 if (robinhoodHolderBackfillEnabled && !robinhoodHolderBackfillAdmittedAfter) {
   missing.push('ROBINHOOD_HOLDER_BACKFILL_ADMITTED_AFTER');
 }
@@ -603,6 +625,7 @@ runtime.role = getRuntimeRole(runtime.runSocketHub, runtime.runBackgroundJobs);
 runtime.workerGroupsRequested = workerGroups.requested;
 runtime.workerGroupsActive = workerGroups.active;
 runtime.workerGroupsSkipped = workerGroups.skipped;
+runtime.maintenanceWorkerOwners = resolveMaintenanceWorkerOwners(workerGroups.active);
 
 const robinhoodIngestionEnabled = parseBoolean(process.env.ROBINHOOD_INGESTION_ENABLED, false);
 const robinhoodRpcMinIntervalMs = parseIntegerInRange(

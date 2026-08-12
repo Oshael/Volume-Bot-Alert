@@ -1,10 +1,20 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const { spawnSync } = require('node:child_process');
 const path = require('node:path');
 
 const CONFIG_PATH = require.resolve('../config');
 const ROOT_DIR = path.resolve(__dirname, '..');
+const WORKER_GROUPS = [
+  'core', 'market', 'solana-maintenance', 'maintenance', 'robinhood-maintenance',
+  'robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-derived',
+  'robinhood-wallet', 'robinhood-backfill', 'robinhood-holders',
+];
+
+function skippedExcept(...active) {
+  return WORKER_GROUPS.filter((group) => !active.includes(group));
+}
 
 function withEnv(overrides, fn) {
   const previous = {};
@@ -36,8 +46,19 @@ describe('runtime worker groups config', () => {
   it('defaults to all worker groups', () => {
     withEnv({ BACKGROUND_WORKER_GROUPS: '' }, (config) => {
       assert.deepEqual(config.runtime.workerGroupsRequested, ['all']);
-      assert.deepEqual(config.runtime.workerGroupsActive, ['core', 'market', 'maintenance']);
-      assert.deepEqual(config.runtime.workerGroupsSkipped, ['robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-derived', 'robinhood-wallet', 'robinhood-backfill', 'robinhood-holders']);
+      assert.deepEqual(
+        config.runtime.workerGroupsActive,
+        ['core', 'market', 'solana-maintenance']
+      );
+      assert.deepEqual(
+        config.runtime.workerGroupsSkipped,
+        skippedExcept('core', 'market', 'solana-maintenance')
+      );
+      assert.deepEqual(config.runtime.maintenanceWorkerOwners, {
+        catalogCleanup: 'solana-maintenance',
+        robinhoodRetention: null,
+        mockTradingTakeProfit: null,
+      });
     });
   });
 
@@ -45,19 +66,102 @@ describe('runtime worker groups config', () => {
     withEnv({ BACKGROUND_WORKER_GROUPS: ' core,market,core ' }, (config) => {
       assert.deepEqual(config.runtime.workerGroupsRequested, ['core', 'market']);
       assert.deepEqual(config.runtime.workerGroupsActive, ['core', 'market']);
-      assert.deepEqual(
-        config.runtime.workerGroupsSkipped,
-        ['maintenance', 'robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-derived', 'robinhood-wallet', 'robinhood-backfill', 'robinhood-holders']
-      );
+      assert.deepEqual(config.runtime.workerGroupsSkipped, skippedExcept('core', 'market'));
     });
   });
 
-  it('treats all as all groups even when combined with a specific group', () => {
-    withEnv({ BACKGROUND_WORKER_GROUPS: 'maintenance,all' }, (config) => {
-      assert.deepEqual(config.runtime.workerGroupsRequested, ['maintenance', 'all']);
-      assert.deepEqual(config.runtime.workerGroupsActive, ['core', 'market', 'maintenance']);
-      assert.deepEqual(config.runtime.workerGroupsSkipped, ['robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-derived', 'robinhood-wallet', 'robinhood-backfill', 'robinhood-holders']);
+  it('rejects combining the legacy maintenance alias with all', () => {
+    const result = spawnSync(process.execPath, ['-e', "require('./config')"], {
+      cwd: ROOT_DIR,
+      env: { ...process.env, BACKGROUND_WORKER_GROUPS: 'maintenance,all' },
+      encoding: 'utf8',
     });
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /cannot combine legacy maintenance/);
+  });
+
+  it('keeps the legacy maintenance group explicit with its previous worker ownership', () => {
+    withEnv({ BACKGROUND_WORKER_GROUPS: 'maintenance' }, (config) => {
+      assert.deepEqual(config.runtime.workerGroupsActive, ['maintenance']);
+      assert.deepEqual(config.runtime.maintenanceWorkerOwners, {
+        catalogCleanup: 'maintenance',
+        robinhoodRetention: 'maintenance',
+        mockTradingTakeProfit: 'maintenance',
+      });
+    });
+  });
+
+  it('allows Solana maintenance to share a process without Robinhood workers', () => {
+    withEnv({ BACKGROUND_WORKER_GROUPS: 'core,solana-maintenance' }, (config) => {
+      assert.deepEqual(config.runtime.workerGroupsActive, ['core', 'solana-maintenance']);
+      assert.deepEqual(config.runtime.maintenanceWorkerOwners, {
+        catalogCleanup: 'solana-maintenance',
+        robinhoodRetention: null,
+        mockTradingTakeProfit: null,
+      });
+    });
+  });
+
+  it('allows Robinhood maintenance only as an isolated worker group', () => {
+    withEnv({ BACKGROUND_WORKER_GROUPS: 'robinhood-maintenance' }, (config) => {
+      assert.deepEqual(config.runtime.workerGroupsActive, ['robinhood-maintenance']);
+      assert.deepEqual(config.runtime.workerGroupsSkipped, skippedExcept('robinhood-maintenance'));
+      assert.deepEqual(config.runtime.maintenanceWorkerOwners, {
+        catalogCleanup: null,
+        robinhoodRetention: 'robinhood-maintenance',
+        mockTradingTakeProfit: null,
+      });
+    });
+  });
+
+  it('rejects combining Robinhood maintenance with Solana maintenance', () => {
+    const result = spawnSync(process.execPath, ['-e', "require('./config')"], {
+      cwd: ROOT_DIR,
+      env: {
+        ...process.env,
+        BACKGROUND_WORKER_GROUPS: 'robinhood-maintenance,solana-maintenance',
+      },
+      encoding: 'utf8',
+    });
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /cannot combine isolated worker groups/);
+  });
+
+  it('ships symmetric maintenance runners with distinct ports', () => {
+    const scripts = require('../package.json').scripts;
+    for (const prefix of ['start:worker', 'dev:worker']) {
+      const solana = scripts[`${prefix}:solana-maintenance`];
+      const robinhood = scripts[`${prefix}:robinhood-maintenance`];
+      assert.match(solana, /PORT=\$\{PORT:-3003\}/);
+      assert.match(solana, /RUN_SOCKET_HUB=false/);
+      assert.match(solana, /BACKGROUND_WORKER_GROUPS=solana-maintenance/);
+      assert.match(robinhood, /PORT=\$\{PORT:-3011\}/);
+      assert.match(robinhood, /RUN_SOCKET_HUB=false/);
+      assert.match(robinhood, /BACKGROUND_WORKER_GROUPS=robinhood-maintenance/);
+    }
+  });
+
+  it('ships symmetric maintenance units with Robinhood retention disabled', () => {
+    const systemdDir = path.join(ROOT_DIR, 'deploy', 'systemd');
+    for (const [network, port] of [['solana', '3003'], ['robinhood', '3011']]) {
+      const name = `${network}-maintenance`;
+      const service = fs.readFileSync(
+        path.join(systemdDir, `trendscope-worker@${name}.service.example`),
+        'utf8'
+      );
+      const env = fs.readFileSync(path.join(systemdDir, `${name}.env.example`), 'utf8');
+      assert.match(service, new RegExp(`EnvironmentFile=.*/${name}\\.env`));
+      assert.match(env, new RegExp(`PORT=${port}`));
+      assert.match(env, new RegExp(`BACKGROUND_WORKER_GROUPS=${name}`));
+    }
+
+    const robinhoodEnv = fs.readFileSync(
+      path.join(systemdDir, 'robinhood-maintenance.env.example'),
+      'utf8'
+    );
+    assert.match(robinhoodEnv, /ROBINHOOD_RETENTION_ENABLED=false/);
   });
 
   it('fails fast on invalid worker groups', () => {
@@ -82,10 +186,7 @@ describe('runtime worker groups config', () => {
     withEnv({ BACKGROUND_WORKER_GROUPS: 'robinhood' }, (config) => {
       assert.deepEqual(config.runtime.workerGroupsRequested, ['robinhood']);
       assert.deepEqual(config.runtime.workerGroupsActive, ['robinhood']);
-      assert.deepEqual(
-        config.runtime.workerGroupsSkipped,
-        ['core', 'market', 'maintenance', 'robinhood-head', 'robinhood-processing', 'robinhood-derived', 'robinhood-wallet', 'robinhood-backfill', 'robinhood-holders']
-      );
+      assert.deepEqual(config.runtime.workerGroupsSkipped, skippedExcept('robinhood'));
     });
   });
 
@@ -93,10 +194,7 @@ describe('runtime worker groups config', () => {
     withEnv({ BACKGROUND_WORKER_GROUPS: 'robinhood-backfill' }, (config) => {
       assert.deepEqual(config.runtime.workerGroupsRequested, ['robinhood-backfill']);
       assert.deepEqual(config.runtime.workerGroupsActive, ['robinhood-backfill']);
-      assert.deepEqual(
-        config.runtime.workerGroupsSkipped,
-        ['core', 'market', 'maintenance', 'robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-derived', 'robinhood-wallet', 'robinhood-holders']
-      );
+      assert.deepEqual(config.runtime.workerGroupsSkipped, skippedExcept('robinhood-backfill'));
     });
   });
 
@@ -104,10 +202,7 @@ describe('runtime worker groups config', () => {
     withEnv({ BACKGROUND_WORKER_GROUPS: 'robinhood-holders' }, (config) => {
       assert.deepEqual(config.runtime.workerGroupsRequested, ['robinhood-holders']);
       assert.deepEqual(config.runtime.workerGroupsActive, ['robinhood-holders']);
-      assert.deepEqual(
-        config.runtime.workerGroupsSkipped,
-        ['core', 'market', 'maintenance', 'robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-derived', 'robinhood-wallet', 'robinhood-backfill']
-      );
+      assert.deepEqual(config.runtime.workerGroupsSkipped, skippedExcept('robinhood-holders'));
     });
   });
 
@@ -124,10 +219,7 @@ describe('runtime worker groups config', () => {
     withEnv({ BACKGROUND_WORKER_GROUPS: 'robinhood-head' }, (config) => {
       assert.deepEqual(config.runtime.workerGroupsRequested, ['robinhood-head']);
       assert.deepEqual(config.runtime.workerGroupsActive, ['robinhood-head']);
-      assert.deepEqual(
-        config.runtime.workerGroupsSkipped,
-        ['core', 'market', 'maintenance', 'robinhood', 'robinhood-processing', 'robinhood-derived', 'robinhood-wallet', 'robinhood-backfill', 'robinhood-holders']
-      );
+      assert.deepEqual(config.runtime.workerGroupsSkipped, skippedExcept('robinhood-head'));
     });
   });
 
@@ -135,10 +227,7 @@ describe('runtime worker groups config', () => {
     withEnv({ BACKGROUND_WORKER_GROUPS: 'robinhood-processing' }, (config) => {
       assert.deepEqual(config.runtime.workerGroupsRequested, ['robinhood-processing']);
       assert.deepEqual(config.runtime.workerGroupsActive, ['robinhood-processing']);
-      assert.deepEqual(
-        config.runtime.workerGroupsSkipped,
-        ['core', 'market', 'maintenance', 'robinhood', 'robinhood-head', 'robinhood-derived', 'robinhood-wallet', 'robinhood-backfill', 'robinhood-holders']
-      );
+      assert.deepEqual(config.runtime.workerGroupsSkipped, skippedExcept('robinhood-processing'));
     });
   });
 
@@ -161,10 +250,7 @@ describe('runtime worker groups config', () => {
     withEnv({ BACKGROUND_WORKER_GROUPS: 'robinhood-derived' }, (config) => {
       assert.deepEqual(config.runtime.workerGroupsRequested, ['robinhood-derived']);
       assert.deepEqual(config.runtime.workerGroupsActive, ['robinhood-derived']);
-      assert.deepEqual(
-        config.runtime.workerGroupsSkipped,
-        ['core', 'market', 'maintenance', 'robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-wallet', 'robinhood-backfill', 'robinhood-holders']
-      );
+      assert.deepEqual(config.runtime.workerGroupsSkipped, skippedExcept('robinhood-derived'));
     });
   });
 
@@ -172,10 +258,7 @@ describe('runtime worker groups config', () => {
     withEnv({ BACKGROUND_WORKER_GROUPS: 'robinhood-wallet' }, (config) => {
       assert.deepEqual(config.runtime.workerGroupsRequested, ['robinhood-wallet']);
       assert.deepEqual(config.runtime.workerGroupsActive, ['robinhood-wallet']);
-      assert.deepEqual(
-        config.runtime.workerGroupsSkipped,
-        ['core', 'market', 'maintenance', 'robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-derived', 'robinhood-backfill', 'robinhood-holders']
-      );
+      assert.deepEqual(config.runtime.workerGroupsSkipped, skippedExcept('robinhood-wallet'));
     });
   });
 

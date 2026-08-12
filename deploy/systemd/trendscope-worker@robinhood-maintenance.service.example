@@ -1,0 +1,25 @@
+[Unit]
+Description=Trendscope Robinhood maintenance worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=REPLACE_APP_USER
+Group=REPLACE_APP_GROUP
+WorkingDirectory=/REPLACE/ABSOLUTE/PATH/Volume-Bot-Alert
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/volume-bot-alert/robinhood-maintenance.env
+ExecStart=/REPLACE/ABSOLUTE/PATH/TO/node src/server.js
+Restart=always
+RestartSec=10
+TimeoutStopSec=90
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

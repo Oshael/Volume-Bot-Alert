@@ -699,16 +699,19 @@ function startWorkerSet() {
     });
   }
 
-  if (hasWorkerGroup('maintenance')) {
-    startLockedWorker('maintenance', 'catalog-cleanup-worker', 'Catalog cleanup worker', () => {
+  const maintenanceOwners = config.runtime.maintenanceWorkerOwners || {};
+  if (maintenanceOwners.catalogCleanup) {
+    startLockedWorker(maintenanceOwners.catalogCleanup, 'catalog-cleanup-worker', 'Catalog cleanup worker', () => {
       catalogCleanupWorker.start();
     });
-    if (config.robinhoodRetentionWorker.enabled) {
-      startLockedWorker('maintenance', 'robinhood-retention-worker', 'Robinhood retention worker', () => {
-        robinhoodRetentionWorker.start(config.robinhoodRetentionWorker);
-      });
-    }
-    startLockedWorker('maintenance', 'mock-trading-take-profit-worker', 'Mock trading take-profit worker', () => {
+  }
+  if (maintenanceOwners.robinhoodRetention && config.robinhoodRetentionWorker.enabled) {
+    startLockedWorker(maintenanceOwners.robinhoodRetention, 'robinhood-retention-worker', 'Robinhood retention worker', () => {
+      robinhoodRetentionWorker.start(config.robinhoodRetentionWorker);
+    });
+  }
+  if (maintenanceOwners.mockTradingTakeProfit) {
+    startLockedWorker(maintenanceOwners.mockTradingTakeProfit, 'mock-trading-take-profit-worker', 'Mock trading take-profit worker', () => {
       mockTradingTakeProfitWorker.start(config.mockTradingTakeProfitWorker);
     });
   }

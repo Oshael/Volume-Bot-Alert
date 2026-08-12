@@ -306,10 +306,17 @@ describe('Admin panel auth and management', () => {
       assert.equal(res.status, 200);
       assert.ok(res.body.runtime);
       assert.deepEqual(res.body.runtime.workerGroupsRequested, ['all']);
-      assert.deepEqual(res.body.runtime.workerGroupsActive, ['core', 'market', 'maintenance']);
+      assert.deepEqual(
+        res.body.runtime.workerGroupsActive,
+        ['core', 'market', 'solana-maintenance']
+      );
       assert.deepEqual(
         res.body.runtime.workerGroupsSkipped,
-        ['robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-derived', 'robinhood-backfill']
+        [
+          'maintenance', 'robinhood-maintenance', 'robinhood', 'robinhood-head',
+          'robinhood-processing', 'robinhood-derived', 'robinhood-wallet',
+          'robinhood-backfill', 'robinhood-holders',
+        ]
       );
       assert.ok(res.body.catalogWorker);
       assert.ok(res.body.robinhoodIngestionWorker);
