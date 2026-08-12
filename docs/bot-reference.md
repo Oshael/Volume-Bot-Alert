@@ -990,7 +990,10 @@ O backfill global do catálogo antigo usa a lease
 `ROBINHOOD_HOLDER_GLOBAL_BACKFILL_CATALOG_CUTOFF` e captura live ativa. A primeira
 execução apenas congela a coorte para inspeção; o scan começa somente com
 `ROBINHOOD_HOLDER_GLOBAL_BACKFILL_AUTO_START=true`. O prefetch começa em 1, pode
-ser configurado de 1 a 8 e reduz diante de splits, commits lentos ou lag live.
+ser configurado de 1 a 8 e reduz diante de splits ou commits lentos. Com lag live
+acima de 100 blocos, três batches saudáveis só elevam o prefetch quando o lag está
+caindo; crescimento acima de 25 blocos entre ticks reduz pela metade e oscilação
+menor mantém o nível. `liveLagTrend` e `liveLagDeltaBlocks` expõem a decisão.
 O cold serial deve permanecer desligado, e o cutoff do backfill de tokens novos
 não pode preceder o cutoff global.
 
