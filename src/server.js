@@ -623,19 +623,6 @@ function startRobinhoodHolderWorkerGroup() {
       }), { metadataProvider: () => ({ telemetry: robinhoodHolderColdWorker.getStatus() }) }
     );
   }
-  if (config.robinhoodHolderGlobalBackfillWorker.enabled) {
-    startLockedWorker(
-      'robinhood-holders', ROBINHOOD_HOLDER_GLOBAL_BACKFILL_LEASE_KEY,
-      'Robinhood holder global backfill worker', () => robinhoodHolderGlobalBackfillWorker.start({
-        ...config.robinhoodHolderGlobalBackfillWorker,
-        onFatal: (error) => workerLeaseManager.halt(
-          ROBINHOOD_HOLDER_GLOBAL_BACKFILL_LEASE_KEY, error
-        ),
-      }), {
-        metadataProvider: () => ({ telemetry: robinhoodHolderGlobalBackfillWorker.getStatus() }),
-      }
-    );
-  }
   if (config.robinhoodHolderReconciliationWorker.enabled) {
     startLockedWorker(
       'robinhood-holders', ROBINHOOD_HOLDER_RECONCILIATION_LEASE_KEY,
@@ -682,6 +669,25 @@ function startRobinhoodHolderWorkerGroup() {
       }
     );
   }
+}
+
+function startRobinhoodHolderGlobalBackfillWorkerGroup() {
+  const group = hasWorkerGroup('robinhood-holder-global')
+    ? 'robinhood-holder-global'
+    : hasWorkerGroup('robinhood-holders') ? 'robinhood-holders' : null;
+  if (!group || !config.robinhoodHolderGlobalBackfillWorker.enabled) return;
+
+  startLockedWorker(
+    group, ROBINHOOD_HOLDER_GLOBAL_BACKFILL_LEASE_KEY,
+    'Robinhood holder global backfill worker', () => robinhoodHolderGlobalBackfillWorker.start({
+      ...config.robinhoodHolderGlobalBackfillWorker,
+      onFatal: (error) => workerLeaseManager.halt(
+        ROBINHOOD_HOLDER_GLOBAL_BACKFILL_LEASE_KEY, error
+      ),
+    }), {
+      metadataProvider: () => ({ telemetry: robinhoodHolderGlobalBackfillWorker.getStatus() }),
+    }
+  );
 }
 
 function startWorkerSet() {
@@ -927,6 +933,7 @@ function startWorkerSet() {
   startRobinhoodDerivedWorkerGroup();
   startRobinhoodWalletSwapWorkerGroup();
   startRobinhoodHolderWorkerGroup();
+  startRobinhoodHolderGlobalBackfillWorkerGroup();
 }
 
 function bootstrapWebRuntime(httpServer) {

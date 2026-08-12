@@ -366,7 +366,7 @@ describe('Volume Alert Server auth flow', () => {
         [
           'maintenance', 'robinhood-maintenance', 'robinhood', 'robinhood-head',
           'robinhood-processing', 'robinhood-derived', 'robinhood-wallet',
-          'robinhood-backfill', 'robinhood-holders',
+          'robinhood-backfill', 'robinhood-holders', 'robinhood-holder-global',
         ]
       );
       assert.equal(res.body.telegramAlerts.status, 'disabled');

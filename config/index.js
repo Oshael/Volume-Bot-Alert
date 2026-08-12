@@ -248,6 +248,7 @@ const LEGACY_WORKER_GROUPS = Object.freeze(['maintenance']);
 const ISOLATED_WORKER_GROUPS = Object.freeze([
   'robinhood-maintenance', 'robinhood', 'robinhood-head', 'robinhood-processing',
   'robinhood-derived', 'robinhood-wallet', 'robinhood-backfill', 'robinhood-holders',
+  'robinhood-holder-global',
 ]);
 const WORKER_GROUPS = Object.freeze([
   ...SHARED_WORKER_GROUPS,
@@ -479,6 +480,7 @@ function validateTestDbTarget(dbConfig) {
 
 const db = getDbConfig(nodeEnv);
 const workerGroups = normalizeWorkerGroups(process.env.BACKGROUND_WORKER_GROUPS);
+const robinhoodHolderGlobalIsolated = workerGroups.active.includes('robinhood-holder-global');
 const robinhoodHolderBackfillEnabled = parseBoolean(
   process.env.ROBINHOOD_HOLDER_BACKFILL_ENABLED, false
 );
@@ -579,7 +581,8 @@ if (robinhoodHolderColdEnabled && !robinhoodHolderColdAdmittedBefore) {
 if (robinhoodHolderGlobalBackfillEnabled && !robinhoodHolderGlobalCatalogCutoff) {
   missing.push('ROBINHOOD_HOLDER_GLOBAL_BACKFILL_CATALOG_CUTOFF');
 }
-if (robinhoodHolderGlobalBackfillEnabled && !robinhoodHolderLiveEnabled) {
+if (robinhoodHolderGlobalBackfillEnabled && !robinhoodHolderLiveEnabled
+    && !robinhoodHolderGlobalIsolated) {
   missing.push('ROBINHOOD_HOLDER_LIVE_ENABLED=true for holder global backfill');
 }
 if (robinhoodHolderGlobalBackfillEnabled && robinhoodHolderColdEnabled) {

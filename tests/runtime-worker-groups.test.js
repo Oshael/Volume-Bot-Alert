@@ -10,6 +10,7 @@ const WORKER_GROUPS = [
   'core', 'market', 'solana-maintenance', 'maintenance', 'robinhood-maintenance',
   'robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-derived',
   'robinhood-wallet', 'robinhood-backfill', 'robinhood-holders',
+  'robinhood-holder-global',
 ];
 
 function skippedExcept(...active) {
@@ -213,6 +214,51 @@ describe('runtime worker groups config', () => {
     assert.match(command, /RUN_SOCKET_HUB=false/);
     assert.match(command, /RUN_BACKGROUND_JOBS=true/);
     assert.match(command, /BACKGROUND_WORKER_GROUPS=robinhood-holders/);
+  });
+
+  it('allows the global holder backfill as an isolated worker group without local live', () => {
+    withEnv({
+      BACKGROUND_WORKER_GROUPS: 'robinhood-holder-global',
+      ROBINHOOD_RPC_URL: 'http://127.0.0.1:8547',
+      ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ENABLED: 'true',
+      ROBINHOOD_HOLDER_GLOBAL_BACKFILL_CATALOG_CUTOFF: '2026-08-10T00:00:00Z',
+      ROBINHOOD_HOLDER_LIVE_ENABLED: 'false',
+    }, (config) => {
+      assert.deepEqual(config.runtime.workerGroupsActive, ['robinhood-holder-global']);
+      assert.deepEqual(
+        config.runtime.workerGroupsSkipped,
+        skippedExcept('robinhood-holder-global')
+      );
+    });
+  });
+
+  it('still requires local live when global backfill runs in the holders group', () => {
+    const result = spawnSync(process.execPath, ['-e', "require('./config')"], {
+      cwd: ROOT_DIR,
+      env: {
+        ...process.env,
+        BACKGROUND_WORKER_GROUPS: 'robinhood-holders',
+        ROBINHOOD_RPC_URL: 'http://127.0.0.1:8547',
+        ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ENABLED: 'true',
+        ROBINHOOD_HOLDER_GLOBAL_BACKFILL_CATALOG_CUTOFF: '2026-08-10T00:00:00Z',
+        ROBINHOOD_HOLDER_LIVE_ENABLED: 'false',
+      },
+      encoding: 'utf8',
+    });
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /ROBINHOOD_HOLDER_LIVE_ENABLED=true/);
+  });
+
+  it('ships the isolated global holder backfill worker runner', () => {
+    const command = require('../package.json').scripts[
+      'start:worker:robinhood-holder-global'
+    ];
+
+    assert.match(command, /PORT=\$\{PORT:-3012\}/);
+    assert.match(command, /RUN_SOCKET_HUB=false/);
+    assert.match(command, /RUN_BACKGROUND_JOBS=true/);
+    assert.match(command, /BACKGROUND_WORKER_GROUPS=robinhood-holder-global/);
   });
 
   it('allows the Robinhood head only as an isolated worker group', () => {

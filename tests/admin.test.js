@@ -315,7 +315,7 @@ describe('Admin panel auth and management', () => {
         [
           'maintenance', 'robinhood-maintenance', 'robinhood', 'robinhood-head',
           'robinhood-processing', 'robinhood-derived', 'robinhood-wallet',
-          'robinhood-backfill', 'robinhood-holders',
+          'robinhood-backfill', 'robinhood-holders', 'robinhood-holder-global',
         ]
       );
       assert.ok(res.body.catalogWorker);
