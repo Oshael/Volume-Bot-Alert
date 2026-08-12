@@ -2064,6 +2064,11 @@ async function applyQuarantineCleanup(options = {}) {
       AND COALESCE(tc.last_mcap, 0) < 15000
       AND tc.eligible_for_monitoring = FALSE
       AND (tc.last_vol_24h IS NULL OR tc.last_vol_24h < 1000)
+      AND (
+        COALESCE(tc.suppressed_reason, '') <> 'cleanup_quarantine'
+        OR tc.next_evaluation_at IS NULL
+        OR tc.next_evaluation_at <= NOW()
+      )
       AND NOT EXISTS (
         SELECT 1
         FROM protected_identities protected

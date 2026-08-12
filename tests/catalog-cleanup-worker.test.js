@@ -7,6 +7,53 @@ const tokenMarketVolumeBucket1m = require('../src/models/token-market-volume-buc
 const tokenMeteoraSnapshot = require('../src/models/token-meteora-snapshot');
 
 describe('catalog cleanup worker archive scheduling', () => {
+  it('never overlaps maintenance operations from independent timers', async () => {
+    const calls = [];
+    let releaseFirst;
+    const firstPending = new Promise((resolve) => { releaseFirst = resolve; });
+    const first = cleanupWorker.__private.enqueueCleanup(async () => {
+      calls.push('first:start');
+      await firstPending;
+      calls.push('first:end');
+    });
+    const second = cleanupWorker.__private.enqueueCleanup(async () => {
+      calls.push('second');
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(calls, ['first:start']);
+    releaseFirst();
+    await Promise.all([first, second]);
+    assert.deepEqual(calls, ['first:start', 'first:end', 'second']);
+  });
+
+  it('serializes initial cleanup before archive scheduling can begin', async () => {
+    const calls = [];
+    let releaseQuarantine;
+    const quarantinePending = new Promise((resolve) => { releaseQuarantine = resolve; });
+    const sequence = cleanupWorker.__private.runInitialCleanupSequence({
+      runQuarantineOnce: async () => {
+        calls.push('quarantine:start');
+        await quarantinePending;
+        calls.push('quarantine:end');
+      },
+      runBlockedArtifactCleanupOnce: async () => {
+        calls.push('blocked-artifacts');
+      },
+      initializeArchiveSchedule: async () => {
+        calls.push('archive-schedule');
+      },
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(calls, ['quarantine:start']);
+    releaseQuarantine();
+    await sequence;
+    assert.deepEqual(calls, [
+      'quarantine:start', 'quarantine:end', 'blocked-artifacts', 'archive-schedule',
+    ]);
+  });
+
   it('waits a full archive interval when there is no persisted anchor', () => {
     assert.equal(
       cleanupWorker.__private.computeArchiveDelayMs(null, Date.UTC(2026, 2, 25, 12, 0, 0)),

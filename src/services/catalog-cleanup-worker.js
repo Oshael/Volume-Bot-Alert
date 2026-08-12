@@ -45,6 +45,7 @@ let quarantineTimer = null;
 let archiveTimer = null;
 let blockedArtifactTimer = null;
 let running = false;
+let cleanupQueue = Promise.resolve();
 let status = {
   running: false,
   lastQuarantineRunAt: null,
@@ -97,7 +98,13 @@ function computeBlockedArtifactDelayMs(summary = null) {
     : BLOCKED_ARTIFACT_IDLE_INTERVAL_MS;
 }
 
-async function runQuarantineOnce() {
+function enqueueCleanup(task) {
+  const scheduled = cleanupQueue.then(task, task);
+  cleanupQueue = scheduled.catch(() => {});
+  return scheduled;
+}
+
+async function performQuarantineOnce() {
   if (!running) return;
 
   status.lastQuarantineRunAt = new Date().toISOString();
@@ -119,7 +126,11 @@ async function runQuarantineOnce() {
   }
 }
 
-async function runArchiveOnce() {
+function runQuarantineOnce() {
+  return enqueueCleanup(performQuarantineOnce);
+}
+
+async function performArchiveOnce() {
   if (!running) return;
 
   const startedAt = new Date();
@@ -167,6 +178,10 @@ async function runArchiveOnce() {
   }
 }
 
+function runArchiveOnce() {
+  return enqueueCleanup(performArchiveOnce);
+}
+
 async function deleteBlockedArtifactsForAddresses(addresses) {
   const blockedAddresses = Array.isArray(addresses) ? addresses : [];
   if (!blockedAddresses.length) {
@@ -206,7 +221,7 @@ async function deleteBlockedArtifactsForAddresses(addresses) {
   };
 }
 
-async function runBlockedArtifactCleanupOnce() {
+async function performBlockedArtifactCleanupOnce() {
   if (!running) return;
 
   status.lastBlockedArtifactRunAt = new Date().toISOString();
@@ -234,6 +249,10 @@ async function runBlockedArtifactCleanupOnce() {
     status.totalErrors += 1;
     console.error('[CatalogCleanupWorker] Blocked token artifact cleanup failed:', err.message);
   }
+}
+
+function runBlockedArtifactCleanupOnce() {
+  return enqueueCleanup(performBlockedArtifactCleanupOnce);
 }
 
 function scheduleQuarantine() {
@@ -292,19 +311,34 @@ async function initializeArchiveSchedule() {
   scheduleArchiveIn(delayMs);
 }
 
+async function runInitialCleanupSequence(steps = {}) {
+  const quarantine = steps.runQuarantineOnce || runQuarantineOnce;
+  const blockedArtifacts = steps.runBlockedArtifactCleanupOnce
+    || runBlockedArtifactCleanupOnce;
+  const archiveSchedule = steps.initializeArchiveSchedule || initializeArchiveSchedule;
+  await quarantine();
+  await blockedArtifacts();
+  await archiveSchedule();
+}
+
+async function initializeWorker() {
+  try {
+    await runInitialCleanupSequence();
+  } catch (err) {
+    status.totalErrors += 1;
+    console.error('[CatalogCleanupWorker] Archive schedule initialization failed:', err.message);
+    scheduleArchive();
+  }
+  if (!running) return;
+  scheduleQuarantine();
+  scheduleBlockedArtifactCleanup();
+}
+
 function start() {
   if (running) return;
   running = true;
   status.running = true;
-  void runQuarantineOnce();
-  void runBlockedArtifactCleanupOnce();
-  scheduleQuarantine();
-  scheduleBlockedArtifactCleanup();
-  void initializeArchiveSchedule().catch((err) => {
-    status.totalErrors += 1;
-    console.error('[CatalogCleanupWorker] Archive schedule initialization failed:', err.message);
-    scheduleArchive();
-  });
+  void initializeWorker();
   console.log('[CatalogCleanupWorker] Started');
 }
 
@@ -340,6 +374,8 @@ module.exports = {
     computeArchiveDelayMs,
     computeBlockedArtifactDelayMs,
     deleteBlockedArtifactsForAddresses,
+    enqueueCleanup,
+    runInitialCleanupSequence,
     toIsoStringOrNull,
   },
 };

@@ -139,6 +139,10 @@ describe('token catalog chain identity', () => {
 
     assert.match(calls[1].sql, /SELECT tc\.chain, tc\.address/);
     assert.match(
+      calls[0].sql,
+      /suppressed_reason[\s\S]*<> 'cleanup_quarantine'[\s\S]*next_evaluation_at <= NOW\(\)/
+    );
+    assert.match(
       calls[1].sql,
       /WHERE tc\.chain = candidate\.chain\s+AND tc\.address = candidate\.address/
     );
