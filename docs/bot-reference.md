@@ -337,6 +337,11 @@ Grupos existentes:
 | `robinhood-wallet` | consumidor isolado: re-lê observações aceitas e atribui `tx.from` via `eth_getBlockByNumber` (full-tx) por bloco, com cursor `live` próprio; alimenta `robinhood_wallet_swaps` |
 | `robinhood-backfill` | discovery, scan, enrichment, finalizer e aggregation do replay |
 
+O catalog cleanup do grupo `maintenance` atua somente sobre identidades
+`(chain, address)` de `chain = 'solana'`. Quarantine, soft archive e os conjuntos
+de proteção não podem selecionar nem atualizar linhas Robinhood com endereço
+semelhante.
+
 `robinhood`, `robinhood-head`, `robinhood-processing`, `robinhood-derived`,
 `robinhood-wallet` e `robinhood-backfill` são grupos isolados. O config rejeita combinar
 um grupo isolado com grupos compartilhados ou entre si.
