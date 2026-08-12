@@ -954,9 +954,14 @@ de bootstrap/recuperação. Após rewind de reorg, o backend emite o count corri
 para tokens ainda `live` ou `holder:invalidate` para os que exigem ressincronização.
 O consumidor frontend ainda não está concluído.
 
-O grupo `robinhood-holders` contém workers independentes de captura live,
-backfill de tokens novos, backfill frio, reconciliação, snapshot e poda do
-journal. A unit template usa `start:worker:robinhood-holders`, com porta default
+O grupo `robinhood-holders` contém workers independentes de captura live, apply
+do journal live, backfill de tokens novos, backfill frio, reconciliação, snapshot
+e poda do journal. Captura/handoff usam a lease `robinhood-holder-live-worker`;
+o apply serial usa `robinhood-holder-live-apply-worker`, intervalo default de
+100ms e o budget `ROBINHOOD_HOLDER_LIVE_MAX_APPLY_EVENTS`. Ambos bloqueiam o
+mesmo cursor em cada transação, então captura, apply e rewind de reorg permanecem
+ordenados sem manter a captura esperando o lote inteiro. A unit template usa
+`start:worker:robinhood-holders`, com porta default
 3010 e sem socket no processo worker. Todos
 são opt-in e permanecem desligados por default; pull ou presença de
 `ROBINHOOD_RPC_URL` não os inicia. O live deve ser ligado antes dos backfills. Os
@@ -1076,8 +1081,8 @@ handoff descarta o overlap já reconstruído.
 robinhood:holder-quarantine` inspeciona, sem writes, um token patológico em
 `backfilling`. `-- --confirm-quarantine` só aceita estado com cursor completo,
 nenhum evento aplicado e no máximo uma campanha global em `scanning` ou
-`attached`, e falha se os leases dos writers live, backfill, cold ou global ainda
-estiverem vigentes. Dentro de uma transação com CAS, remove balances e journal
+`attached`, e falha se os leases dos writers live, live-apply, backfill, cold ou
+global ainda estiverem vigentes. Dentro de uma transação com CAS, remove balances e journal
 provisórios, exclui o token da campanha ativa, zera o count, limpa o checkpoint
 live e move o token para `drifted` com cursor no `deployment_block`. Isso habilita
 o fallback Blockscout imediatamente, mas o ledger local só pode voltar após replay
