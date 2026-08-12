@@ -192,6 +192,34 @@ describe('Robinhood holder live runner', () => {
     )), true);
   });
 
+  it('keeps draining one token before returning to the global pending order', async () => {
+    const tokenA = `0x${'a'.repeat(40)}`;
+    const tokenB = `0x${'b'.repeat(40)}`;
+    const context = harness({
+      status: 'idle', transfers: 0, nextBlock: '106', safeHead: '105',
+    }, [
+      { status: 'applied', tokenAddress: tokenA },
+      { status: 'applied', tokenAddress: tokenA },
+      { status: 'idle' },
+      { status: 'applied', tokenAddress: tokenB },
+      { status: 'idle' },
+      { status: 'idle' },
+    ]);
+
+    const result = await context.runner.applyOnce({ maxApplyEvents: 10 });
+
+    assert.equal(result.appliedEvents, 3);
+    assert.equal(result.applyBudgetExhausted, false);
+    assert.deepEqual(context.calls, [
+      ['apply'],
+      ['apply', { onlyTokenAddress: tokenA }],
+      ['apply', { onlyTokenAddress: tokenA }],
+      ['apply'],
+      ['apply', { onlyTokenAddress: tokenB }],
+      ['apply'],
+    ]);
+  });
+
   it('stops exactly at the apply budget without starting another capture', async () => {
     const context = harness({
       status: 'idle', transfers: 0, nextBlock: '106', safeHead: '105',

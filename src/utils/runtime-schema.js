@@ -2761,6 +2761,21 @@ const SCHEMA_GROUPS = [
     ],
   },
   {
+    key: 'stage121-robinhood-holder-pending-token-index',
+    name: 'Stage 121 Robinhood holder pending-token index',
+    repair: 'node src/utils/db-init-stage121.js',
+    tables: [{
+      table: 'robinhood_holder_transfer_journal',
+      indexes: [{
+        name: 'idx_rh_holder_journal_pending_token',
+        includes: [
+          'chain', 'token_address', 'block_number', 'transaction_index',
+          'log_index', 'applied = false',
+        ],
+      }],
+    }],
+  },
+  {
     key: 'stage91-robinhood-wallet-swap-cursors',
     name: 'Stage 91 Robinhood wallet-swap attribution cursors',
     repair: 'node src/utils/db-init-stage91.js',

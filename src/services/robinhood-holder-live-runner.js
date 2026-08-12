@@ -26,6 +26,15 @@ function rewindHolderUpdates(captured) {
   return updates;
 }
 
+function pendingEventFilter(excluded, preferredTokenAddress) {
+  const filter = {};
+  if (excluded.length) filter.excludeTokenAddresses = excluded;
+  if (preferredTokenAddress && !excluded.includes(preferredTokenAddress)) {
+    filter.onlyTokenAddress = preferredTokenAddress;
+  }
+  return Object.keys(filter).length ? filter : undefined;
+}
+
 function createRobinhoodHolderLiveRunner(options = {}) {
   const capture = options.capture;
   const handoff = options.handoff;
@@ -178,13 +187,18 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     let driftDeferred = 0;
     let tailRollbacks = 0;
     let tailRollbackEvents = 0;
+    let preferredTokenAddress = null;
     const holderCountUpdates = new Map();
     while (applyAttempts < maxApplyEvents) {
       const excluded = deferredTokenAddresses();
       const applied = await ledger.applyNextPendingEvent(
-        excluded.length ? { excludeTokenAddresses: excluded } : undefined
+        pendingEventFilter(excluded, preferredTokenAddress)
       );
       if (applied.status === 'idle') {
+        if (preferredTokenAddress) {
+          preferredTokenAddress = null;
+          continue;
+        }
         reachedIdle = excluded.length === 0;
         driftDeferred = Math.max(driftDeferred, excluded.length);
         break;
@@ -192,12 +206,15 @@ function createRobinhoodHolderLiveRunner(options = {}) {
       applyAttempts += 1;
       if (applied.status === 'applied') {
         driftEvidence.delete(applied.tokenAddress);
+        preferredTokenAddress = applied.tokenAddress || null;
         appliedEvents += 1;
         rememberHolderCountUpdate(holderCountUpdates, applied);
       } else if (applied.status === 'drifted') {
+        preferredTokenAddress = null;
         driftedTokens += 1;
         driftEvidence.delete(applied.tokenAddress);
       } else if (applied.status === 'drift-suspected') {
+        preferredTokenAddress = null;
         driftSuspicions += 1;
         const repair = await repairDrift(applied);
         if (repair.status === 'requeued') {
@@ -210,6 +227,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
         if (repair.status === 'repaired' && repair.insertedTransfers > 0) {
           receiptRecoveries += 1;
           driftEvidence.delete(applied.tokenAddress);
+          preferredTokenAddress = applied.tokenAddress;
           continue;
         }
         if (repair.status !== 'repaired') {
