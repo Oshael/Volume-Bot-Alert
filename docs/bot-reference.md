@@ -1025,6 +1025,10 @@ cursores para retomada; após attach, nunca promova manualmente baseline incompl
 Se receipts canônicos ainda reproduzem saldo negativo, somente esse token é
 excluído da coorte, seu baseline provisório é removido e o mesmo range é repetido;
 falhas de leitura permanecem retomáveis e não causam exclusão.
+`scanner.lastBatch` separa `rpcWaitMs`, duração agregada/máxima dos ranges RPC,
+`commitDurationMs` e overhead do último batch, além de ranges, requests, logs,
+transfers e throughput. Compare essas medidas com o mesmo prefetch e concorrência
+estáveis antes de atribuir o gargalo ao node ou ao PostgreSQL.
 
 Na aplicacao do tail `shadow/live`, saldo negativo tambem nao altera o estado.
 Enquanto o token ainda esta na barreira segura (`live_through_block` anterior a
