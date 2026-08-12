@@ -83,7 +83,8 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
   const totals = {
     fetchedRanges: 0, committedRanges: 0, discardedPrefetch: 0,
     rpcRequests: 0, observedLogs: 0, acceptedTransfers: 0, ignoredLogs: 0,
-    touchedTokens: 0, touchedWallets: 0, splits: 0, receiptRecoveries: 0, exclusions: 0,
+    touchedTokens: 0, touchedWallets: 0, splits: 0, addressSplits: 0,
+    receiptRecoveries: 0, exclusions: 0,
   };
 
   function reducePrefetch() {
@@ -206,6 +207,7 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
     totals.observedLogs += Number(value.telemetry?.observedLogs || 0);
     totals.ignoredLogs += Number(value.telemetry?.ignoredLogs || 0);
     totals.splits += Number(value.telemetry?.splits || 0);
+    totals.addressSplits += Number(value.telemetry?.addressSplits || 0);
     return { value };
   }
 

@@ -110,10 +110,17 @@ function isAdaptiveRangeError(error) {
     || (error?.code === 'http_error' && [400, 408, 413, 429].includes(error.httpStatus));
 }
 
+function isAdaptiveAddressError(error) {
+  return (error?.code === 'http_error' && [400, 413].includes(error.httpStatus))
+    || (error?.code === 'rpc_error' && error.rpcCode === -32602)
+    || error?.code === 'timeout';
+}
+
 function createRobinhoodHolderTransferReader(options = {}) {
   const rpcClient = options.rpcClient;
   if (typeof rpcClient?.request !== 'function') throw new TypeError('holder transfer RPC is required');
   let chainValidation;
+  let learnedAddressLimit = null;
 
   async function assertChain() {
     if (!chainValidation) {
@@ -129,24 +136,49 @@ function createRobinhoodHolderTransferReader(options = {}) {
     return chainValidation;
   }
 
-  async function readLogs(fromBlock, toBlock, tokenAddress, telemetry) {
+  async function readLogs(fromBlock, toBlock, tokenFilter, telemetry) {
     telemetry.requests += 1;
     try {
       const filter = {
         fromBlock: blockTag(fromBlock), toBlock: blockTag(toBlock), topics: [TRANSFER_TOPIC],
       };
-      if (tokenAddress) filter.address = tokenAddress;
+      if (tokenFilter) filter.address = tokenFilter;
       const logs = await rpcClient.request('eth_getLogs', [filter]);
       if (!Array.isArray(logs)) throw new Error('eth_getLogs result must be an array');
       return logs;
     } catch (error) {
+      if (Array.isArray(tokenFilter) && tokenFilter.length > 1
+          && isAdaptiveAddressError(error)) {
+        telemetry.addressSplits += 1;
+        const middle = Math.ceil(tokenFilter.length / 2);
+        learnedAddressLimit = learnedAddressLimit == null
+          ? middle : Math.min(learnedAddressLimit, middle);
+        const left = await readAddressFilteredLogs(
+          fromBlock, toBlock, tokenFilter.slice(0, middle), telemetry
+        );
+        const right = await readAddressFilteredLogs(
+          fromBlock, toBlock, tokenFilter.slice(middle), telemetry
+        );
+        return [...left, ...right];
+      }
       if (!isAdaptiveRangeError(error) || fromBlock >= toBlock) throw error;
       telemetry.splits += 1;
       const middle = (fromBlock + toBlock) / 2n;
-      const left = await readLogs(fromBlock, middle, tokenAddress, telemetry);
-      const right = await readLogs(middle + 1n, toBlock, tokenAddress, telemetry);
+      const left = await readLogs(fromBlock, middle, tokenFilter, telemetry);
+      const right = await readLogs(middle + 1n, toBlock, tokenFilter, telemetry);
       return [...left, ...right];
     }
+  }
+
+  async function readAddressFilteredLogs(fromBlock, toBlock, addresses, telemetry) {
+    const limit = learnedAddressLimit || addresses.length;
+    const logs = [];
+    for (let offset = 0; offset < addresses.length; offset += limit) {
+      logs.push(...await readLogs(
+        fromBlock, toBlock, addresses.slice(offset, offset + limit), telemetry
+      ));
+    }
+    return logs;
   }
 
   async function readBlock(value) {
@@ -261,9 +293,9 @@ function createRobinhoodHolderTransferReader(options = {}) {
       throw new Error(`holder live range exceeds ${MAX_RANGE_BLOCKS} blocks`);
     }
     await assertChain();
-    const telemetry = { requests: 0, splits: 0 };
+    const telemetry = { requests: 0, splits: 0, addressSplits: 0 };
     const [observedLogs, checkpoint] = await Promise.all([
-      allowed.size ? readLogs(fromBlock, toBlock, null, telemetry) : [],
+      allowed.size ? readAddressFilteredLogs(fromBlock, toBlock, [...allowed], telemetry) : [],
       readBlock(toBlock),
     ]);
     const logs = observedLogs.filter((log) => allowed.has(String(log?.address || '').toLowerCase()));

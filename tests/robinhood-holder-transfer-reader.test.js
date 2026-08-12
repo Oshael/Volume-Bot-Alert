@@ -127,11 +127,11 @@ describe('Robinhood holder Transfer reader', () => {
     });
   });
 
-  it('filters a global topic response to tracked holder tokens before decoding', async () => {
+  it('filters global Transfer logs by tracked token addresses at the RPC boundary', async () => {
     const nft = `0x${'9'.repeat(40)}`;
     const source = rpc(async (method, params) => {
       if (method === 'eth_getBlockByNumber') return { number: '0x64', hash: HASH_A };
-      assert.equal('address' in params[0], false);
+      assert.deepEqual(params[0].address, [TOKEN]);
       return [log(), log({ address: nft, topics: [...log().topics, BOB], data: '0x' })];
     });
     const result = await createRobinhoodHolderTransferReader({
@@ -140,7 +140,41 @@ describe('Robinhood holder Transfer reader', () => {
 
     assert.equal(result.transfers.length, 1);
     assert.deepEqual(result.telemetry, {
-      requests: 1, splits: 0, observedLogs: 2, ignoredLogs: 1,
+      requests: 1, splits: 0, addressSplits: 0, observedLogs: 2, ignoredLogs: 1,
+    });
+  });
+
+  it('adaptively shards an address allowlist rejected by the RPC payload boundary', async () => {
+    const token2 = `0x${'8'.repeat(40)}`;
+    const filters = [];
+    const source = rpc(async (method, params) => {
+      if (method === 'eth_getBlockByNumber') return { number: '0x64', hash: HASH_A };
+      filters.push(params[0].address);
+      if (params[0].address.length > 1) {
+        const error = new Error('request body too large');
+        error.code = 'http_error';
+        error.httpStatus = 413;
+        throw error;
+      }
+      return params[0].address[0] === TOKEN ? [log()] : [];
+    });
+    const reader = createRobinhoodHolderTransferReader({ rpcClient: source.client });
+    const result = await reader.readGlobalRange({
+      tokenAddresses: [TOKEN, token2], fromBlock: 100, toBlock: 100,
+    });
+
+    assert.deepEqual(filters, [[TOKEN, token2], [TOKEN], [token2]]);
+    assert.equal(result.transfers.length, 1);
+    assert.deepEqual(result.telemetry, {
+      requests: 3, splits: 0, addressSplits: 1, observedLogs: 1, ignoredLogs: 0,
+    });
+    filters.length = 0;
+    const learned = await reader.readGlobalRange({
+      tokenAddresses: [TOKEN, token2], fromBlock: 100, toBlock: 100,
+    });
+    assert.deepEqual(filters, [[TOKEN], [token2]]);
+    assert.deepEqual(learned.telemetry, {
+      requests: 2, splits: 0, addressSplits: 0, observedLogs: 1, ignoredLogs: 0,
     });
   });
 

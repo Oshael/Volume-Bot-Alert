@@ -46,7 +46,10 @@ describe('Robinhood holder global backfill scanner', () => {
         readReceiptRange: async () => { throw new Error('unexpected receipts'); },
         readGlobalRange: ({ fromBlock, toBlock }) => new Promise((resolve) => {
           releases.set(fromBlock, () => resolve(range(fromBlock, toBlock, {
-            telemetry: { requests: 1, splits: fromBlock === '110' ? 1 : 0 },
+            telemetry: {
+              requests: 1, splits: fromBlock === '110' ? 1 : 0,
+              addressSplits: fromBlock === '120' ? 2 : 0,
+            },
           })));
         }),
       },
@@ -62,6 +65,7 @@ describe('Robinhood holder global backfill scanner', () => {
     assert.deepEqual(commits, ['100', '110', '120']);
     assert.equal(result.nextBlock, '130');
     assert.equal(scanner.getStatus().prefetch, 2);
+    assert.equal(scanner.getStatus().totals.addressSplits, 2);
     assert.deepEqual(await scanner.runOnce({ throughBlock: 129 }), {
       status: 'caught-up', runId: '1', nextBlock: '130', throughBlock: '129', prefetch: 2,
     });
