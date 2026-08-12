@@ -71,6 +71,46 @@ describe('Robinhood holder global backfill scanner', () => {
     });
   });
 
+  it('separates RPC wait from commit time in the last batch telemetry', async () => {
+    let clock = 0;
+    let releaseFetch;
+    const scanner = createRobinhoodHolderGlobalBackfillScanner({
+      lifecycleRepository: {
+        getActiveRun: async () => runState('100'), loadCohort: async () => [TOKEN],
+      },
+      commitRepository: {
+        async commitRange(input) {
+          clock += 10;
+          return { status: 'committed', ...input };
+        },
+        async excludeToken() { throw new Error('unexpected exclusion'); },
+      },
+      reader: {
+        getSafeHead: async () => ({ safeHead: '109' }),
+        readReceiptRange: async () => { throw new Error('unexpected receipts'); },
+        readGlobalRange: () => new Promise((resolve) => { releaseFetch = resolve; }),
+      },
+      options: { rangeSize: 10, prefetch: 1 }, now: () => clock,
+    });
+
+    const pending = scanner.runOnce({ throughBlock: 109 });
+    await new Promise((resolve) => setImmediate(resolve));
+    clock += 40;
+    releaseFetch(range(100, 109, {
+      transfers: [{ tokenAddress: TOKEN }],
+      telemetry: { requests: 7, observedLogs: 11, splits: 0 },
+    }));
+    await pending;
+
+    assert.deepEqual(scanner.getStatus().lastBatch, {
+      durationMs: 50, rpcWaitMs: 40, rpcRangeDurationMs: 40,
+      maxRpcRangeDurationMs: 40, commitDurationMs: 10, overheadMs: 0,
+      rangesPlanned: 1, rangesCommitted: 1, committedBlocks: 10,
+      blocksPerSecond: 200, rpcRequests: 7, observedLogs: 11,
+      acceptedTransfers: 1,
+    });
+  });
+
   it('excludes malformed cohort logs without advancing the cursor', async () => {
     const exclusions = [];
     const invalid = new Error('bad topics');

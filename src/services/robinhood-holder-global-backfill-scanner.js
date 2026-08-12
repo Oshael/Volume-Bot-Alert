@@ -57,6 +57,36 @@ function mergeReceiptRepair(range, deficit, receiptRange) {
   return [...retained, ...receiptRange.transfers];
 }
 
+function batchTelemetry(timing, planned, committed, completedAt) {
+  const durationMs = Math.max(0, completedAt - timing.startedAt);
+  const committedBlocks = committed.reduce((total, range) => (
+    total + Number(BigInt(range.toBlock) - BigInt(range.fromBlock) + 1n)
+  ), 0);
+  return Object.freeze({
+    durationMs, rpcWaitMs: timing.rpcWaitMs,
+    rpcRangeDurationMs: timing.rpcRangeDurationMs,
+    maxRpcRangeDurationMs: timing.maxRpcRangeDurationMs,
+    commitDurationMs: timing.commitDurationMs,
+    overheadMs: Math.max(0, durationMs - timing.rpcWaitMs - timing.commitDurationMs),
+    rangesPlanned: planned.length, rangesCommitted: committed.length,
+    committedBlocks,
+    blocksPerSecond: durationMs > 0
+      ? Number((committedBlocks * 1000 / durationMs).toFixed(3)) : null,
+    rpcRequests: timing.rpcRequests, observedLogs: timing.observedLogs,
+    acceptedTransfers: timing.acceptedTransfers,
+  });
+}
+
+function observeBatchFetch(timing, fetched) {
+  timing.rpcRangeDurationMs += fetched.durationMs;
+  timing.maxRpcRangeDurationMs = Math.max(
+    timing.maxRpcRangeDurationMs, fetched.durationMs
+  );
+  timing.rpcRequests += Number(fetched.value.telemetry?.requests || 0);
+  timing.observedLogs += Number(fetched.value.telemetry?.observedLogs || 0);
+  timing.acceptedTransfers += fetched.value.transfers.length;
+}
+
 function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
   const lifecycle = deps.lifecycleRepository;
   const committer = deps.commitRepository;
@@ -84,6 +114,7 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
   let lastLiveLag = null;
   let liveLagDelta = null;
   let liveLagTrend = 'unknown';
+  let lastBatch = null;
   const totals = {
     fetchedRanges: 0, committedRanges: 0, discardedPrefetch: 0,
     rpcRequests: 0, observedLogs: 0, acceptedTransfers: 0, ignoredLogs: 0,
@@ -237,14 +268,14 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
     throw error;
   }
 
-  function observeFetched(value) {
+  function observeFetched(value, durationMs) {
     totals.fetchedRanges += 1;
     totals.rpcRequests += Number(value.telemetry?.requests || 0);
     totals.observedLogs += Number(value.telemetry?.observedLogs || 0);
     totals.ignoredLogs += Number(value.telemetry?.ignoredLogs || 0);
     totals.splits += Number(value.telemetry?.splits || 0);
     totals.addressSplits += Number(value.telemetry?.addressSplits || 0);
-    return { value };
+    return { value, durationMs };
   }
 
   async function scanOnce(input = {}) {
@@ -264,20 +295,32 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
     }
     const scope = await loadCohort(run.id);
     const planned = planRanges(nextBlock, target, options.rangeSize, effectivePrefetch);
-    const pending = planned.map((range) => reader.readGlobalRange({
-      tokenAddresses: scope, ...range,
-    }).then(observeFetched, (error) => ({ error })));
+    const timing = {
+      startedAt: now(), rpcWaitMs: 0, rpcRangeDurationMs: 0,
+      maxRpcRangeDurationMs: 0, commitDurationMs: 0,
+      rpcRequests: 0, observedLogs: 0, acceptedTransfers: 0,
+    };
+    const pending = planned.map((range) => {
+      const startedAt = now();
+      return reader.readGlobalRange({ tokenAddresses: scope, ...range })
+        .then((value) => observeFetched(value, Math.max(0, now() - startedAt)),
+          (error) => ({ error }));
+    });
     const committed = [];
     let pressured = false;
     for (let index = 0; index < pending.length; index += 1) {
+      const waitStartedAt = now();
       const fetched = await pending[index];
+      timing.rpcWaitMs += Math.max(0, now() - waitStartedAt);
       if (fetched.error) {
         return handleFetchError(fetched.error, {
           runId: run.id, pending, index, committedRanges: committed.length,
         });
       }
+      observeBatchFetch(timing, fetched);
       pressured ||= Number(fetched.value.telemetry?.splits || 0) > 0;
       const outcome = await commitFetched(run.id, fetched.value);
+      timing.commitDurationMs += outcome.durationMs;
       pressured ||= outcome.durationMs > options.maxCommitMs;
       if (outcome.committed.status !== 'committed') {
         totals.discardedPrefetch += pending.length - index - 1;
@@ -294,6 +337,7 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
       totals.touchedTokens += Number(outcome.committed.touchedTokens || 0);
       totals.touchedWallets += Number(outcome.committed.touchedWallets || 0);
     }
+    lastBatch = batchTelemetry(timing, planned, committed, now());
     observeHealthyBatch(pressured, allowPrefetchGrowth);
     return Object.freeze({
       status: 'committed', runId: run.id, ranges: committed.length,
@@ -314,6 +358,7 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
       prefetch: effectivePrefetch, stableBatches, active: activeRun !== null,
       liveLagBlocks: lastLiveLag?.toString() ?? null,
       liveLagDeltaBlocks: liveLagDelta?.toString() ?? null, liveLagTrend,
+      lastBatch,
       totals: Object.freeze({ ...totals }),
     }),
   });
@@ -321,5 +366,5 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
 
 module.exports = {
   createRobinhoodHolderGlobalBackfillScanner,
-  __private: { mergeReceiptRepair, normalizeOptions, planRanges },
+  __private: { batchTelemetry, mergeReceiptRepair, normalizeOptions, planRanges },
 };
