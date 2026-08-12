@@ -1064,6 +1064,18 @@ somente `shadow -> backfilling`; balances, holder count, checkpoint e journal s�
 preservados. O backfill per-token relê a lacuna desde `backfill_next_block` e o
 handoff descarta o overlap já reconstruído.
 
+`ROBINHOOD_HOLDER_QUARANTINE_TOKEN=<address> npm run
+robinhood:holder-quarantine` inspeciona, sem writes, um token patológico em
+`backfilling`. `-- --confirm-quarantine` só aceita estado com cursor completo,
+nenhum evento aplicado e no máximo uma campanha global em `scanning` ou
+`attached`, e falha se os leases dos writers live, backfill, cold ou global ainda
+estiverem vigentes. Dentro de uma transação com CAS, remove balances e journal
+provisórios, exclui o token da campanha ativa, zera o count, limpa o checkpoint
+live e move o token para `drifted` com cursor no `deployment_block`. Isso habilita
+o fallback Blockscout imediatamente, mas o ledger local só pode voltar após replay
+integral; a unit `trendscope-worker@robinhood-holders.service` deve permanecer
+parada durante o confirm.
+
 Observações V3/V4 usam o preço spot pós-swap derivado do `sqrtPriceX96` para
 preço e FDV; os amounts executados continuam sendo a fonte exclusiva do volume.
 V2 mantém o preço médio executado enquanto não houver spot de reservas no contrato
