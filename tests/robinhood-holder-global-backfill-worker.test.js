@@ -79,11 +79,12 @@ describe('Robinhood holder global backfill worker', () => {
     await worker.stop();
   });
 
-  it('uses the dedicated RPC and passes shard concurrency to the transfer reader', async () => {
+  it('passes dedicated RPC, shard concurrency and commit pressure threshold', async () => {
     const calls = [];
     const reader = { assertChain: async () => {}, getSafeHead() {} };
     await buildRuntime(normalizeOptions({
       enabled: true, catalogCutoff: CUTOFF, addressShardConcurrency: 3,
+      maxCommitMs: 10_000,
     }), {
       env: {
         ROBINHOOD_RPC_URL: 'http://127.0.0.1:8547',
@@ -93,11 +94,13 @@ describe('Robinhood holder global backfill worker', () => {
       lifecycleFactory: () => ({}), committerFactory: () => ({}),
       ledgerFactory: () => ({}),
       readerFactory: (input) => { calls.push(input); return reader; },
-      scannerFactory: () => ({}), attachFactory: () => ({}), database: 'database',
+      scannerFactory: (input) => { calls.push(input); return {}; },
+      attachFactory: () => ({}), database: 'database',
     });
 
     assert.equal(calls[0].providers[0].url, 'http://127.0.0.1:18547');
     assert.deepEqual(calls[1], { rpcClient: 'rpc-client', addressShardConcurrency: 3 });
+    assert.equal(calls[2].options.maxCommitMs, 10_000);
   });
 
   it('falls back to the shared holder RPC when the dedicated URL is absent', async () => {

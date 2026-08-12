@@ -33,6 +33,7 @@ function normalizeOptions(input = {}) {
     ),
     rangeSize: boundedInteger(input.rangeSize, 250, 1, 5000, 'rangeSize'),
     prefetch: boundedInteger(input.prefetch, 1, 1, 8, 'prefetch'),
+    maxCommitMs: boundedInteger(input.maxCommitMs, 2000, 1, 300_000, 'maxCommitMs'),
     addressShardConcurrency: boundedInteger(
       input.addressShardConcurrency, 1, 1, 4, 'addressShardConcurrency'
     ),
@@ -67,7 +68,7 @@ async function buildRuntime(options, deps = {}) {
     lifecycleRepository: lifecycle, commitRepository: committer, reader,
     options: {
       rangeSize: options.rangeSize, prefetch: options.prefetch,
-      finalityBlocks: options.finalityBlocks,
+      finalityBlocks: options.finalityBlocks, maxCommitMs: options.maxCommitMs,
     },
   });
   const materializer = (deps.attachFactory || createRobinhoodHolderGlobalBackfillAttach)({
