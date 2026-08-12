@@ -1,4 +1,7 @@
 const db = require('../models/db');
+const {
+  createRobinhoodWalletSwapCursorRepository,
+} = require('../models/robinhood-wallet-swap-cursor');
 
 const DEFAULT_INTERVAL_MS = 60 * 1000;
 const DEFAULT_BATCH_LIMIT = 2000;
@@ -19,6 +22,17 @@ let status = {
   lastExaminedProcessedLogs: 0,
   lastDeletedProcessedLogs: 0,
   lastProtectedProcessedLogs: 0,
+  lastCandidatesProtectedByWallet: 0,
+  lastCandidatesProtectedByBucketCoverage: 0,
+  lastRetentionCandidateBlockMin: null,
+  lastRetentionCandidateBlockMax: null,
+  lastWalletGateValid: false,
+  lastWalletGateReason: 'not_evaluated',
+  lastWalletCompleteThroughBlock: null,
+  walletCompleteThroughHighWaterBlock: null,
+  lastWalletWatermarkUpdatedAt: null,
+  lastWalletWatermarkAgeMs: null,
+  lastWalletLagBlocks: null,
   lastDeletedObservations: 0,
   lastDeletedMinuteBuckets: 0,
   lastProtectedMinuteBuckets: 0,
@@ -78,42 +92,90 @@ function queryWithTimeout(database, sql, params, timeoutMs) {
 }
 
 async function deleteExpiredProcessedLogs(database, options) {
+  const laneLimit = Math.max(1, Math.floor(options.batchLimit / 2));
   const result = await queryWithTimeout(
     database,
-    `WITH expired AS MATERIALIZED (
+    `WITH independent_expired AS MATERIALIZED (
        SELECT processed.chain, processed.transaction_hash, processed.log_index
        FROM robinhood_processed_logs processed
+       LEFT JOIN robinhood_market_observations observation
+         ON observation.chain = processed.chain
+        AND observation.transaction_hash = processed.transaction_hash
+        AND observation.log_index = processed.log_index
        WHERE processed.expires_at <= NOW()
+         AND (observation.status IS NULL OR observation.status = 'rejected')
        ORDER BY processed.expires_at ASC
        LIMIT $1::int
        FOR UPDATE OF processed SKIP LOCKED
      ),
-     candidates AS (
-       SELECT expired.chain, expired.transaction_hash, expired.log_index
+     guarded_expired AS MATERIALIZED (
+       SELECT processed.chain, processed.transaction_hash, processed.log_index
+       FROM robinhood_processed_logs processed
+       INNER JOIN robinhood_market_observations observation
+         ON observation.chain = processed.chain
+        AND observation.transaction_hash = processed.transaction_hash
+        AND observation.log_index = processed.log_index
+       WHERE processed.expires_at <= NOW()
+         AND observation.status <> 'rejected'
+       ORDER BY processed.expires_at ASC
+       LIMIT $1::int
+       FOR UPDATE OF processed SKIP LOCKED
+     ),
+     expired AS MATERIALIZED (
+       SELECT chain, transaction_hash, log_index FROM independent_expired
+       UNION ALL
+       SELECT chain, transaction_hash, log_index FROM guarded_expired
+     ),
+     classified AS MATERIALIZED (
+       SELECT expired.chain, expired.transaction_hash, expired.log_index,
+         observation.status,
+         observation.block_number,
+         (
+           observation.status = 'accepted'
+           AND $2::bigint IS NOT NULL
+           AND observation.block_number <= $2::bigint
+         ) AS wallet_complete,
+         (
+           observation.status = 'accepted'
+           AND EXISTS (
+             SELECT 1
+             FROM robinhood_market_buckets_1m minute
+             WHERE minute.chain = observation.chain
+               AND minute.protocol = observation.protocol
+               AND minute.market_key = observation.market_key
+               AND minute.token_address = observation.token_address
+               AND minute.quote_address = observation.quote_address
+               AND minute.bucket_ts = date_trunc('minute', observation.observed_at)
+               AND (minute.first_block_number, minute.first_log_index)
+                 <= (observation.block_number, observation.log_index)
+               AND (minute.last_block_number, minute.last_log_index)
+                 >= (observation.block_number, observation.log_index)
+           )
+         ) AS bucket_covered
        FROM expired
        LEFT JOIN robinhood_market_observations observation
          ON observation.chain = expired.chain
         AND observation.transaction_hash = expired.transaction_hash
         AND observation.log_index = expired.log_index
-       WHERE observation.status IS NULL
-          OR observation.status = 'rejected'
-          OR (
-            observation.status = 'accepted'
-            AND EXISTS (
-              SELECT 1
-              FROM robinhood_market_buckets_1m minute
-              WHERE minute.chain = observation.chain
-                AND minute.protocol = observation.protocol
-                AND minute.market_key = observation.market_key
-                AND minute.token_address = observation.token_address
-                AND minute.quote_address = observation.quote_address
-                AND minute.bucket_ts = date_trunc('minute', observation.observed_at)
-                AND (minute.first_block_number, minute.first_log_index)
-                  <= (observation.block_number, observation.log_index)
-                AND (minute.last_block_number, minute.last_log_index)
-                  >= (observation.block_number, observation.log_index)
-            )
-          )
+     ),
+     candidates AS (
+       SELECT chain, transaction_hash, log_index
+       FROM classified
+       WHERE status IS NULL
+          OR status = 'rejected'
+          OR (status = 'accepted' AND wallet_complete AND bucket_covered)
+     ),
+     protection_stats AS (
+       SELECT
+         COUNT(*) FILTER (
+           WHERE status = 'accepted' AND NOT wallet_complete
+         )::int AS wallet_protected,
+         COUNT(*) FILTER (
+           WHERE status = 'accepted' AND wallet_complete AND NOT bucket_covered
+         )::int AS bucket_protected,
+         MIN(block_number) FILTER (WHERE status = 'accepted')::text AS candidate_block_min,
+         MAX(block_number) FILTER (WHERE status = 'accepted')::text AS candidate_block_max
+       FROM classified
      ),
      observation_stats AS (
        SELECT COUNT(*)::int AS observations
@@ -134,8 +196,13 @@ async function deleteExpiredProcessedLogs(database, options) {
      SELECT
        (SELECT COUNT(*)::int FROM expired) AS examined_logs,
        (SELECT COUNT(*)::int FROM deleted) AS processed_logs,
-       (SELECT observations FROM observation_stats) AS observations`,
-    [options.batchLimit],
+       (SELECT observations FROM observation_stats) AS observations,
+       protection_stats.wallet_protected,
+       protection_stats.bucket_protected,
+       protection_stats.candidate_block_min,
+       protection_stats.candidate_block_max
+     FROM protection_stats`,
+    [laneLimit, options.walletCompleteThroughBlock],
     options.statementTimeoutMs
   );
   const examined = Number(result.rows[0]?.examined_logs || 0);
@@ -145,6 +212,10 @@ async function deleteExpiredProcessedLogs(database, options) {
     protected: Math.max(0, examined - processedLogs),
     processedLogs,
     observations: Number(result.rows[0]?.observations || 0),
+    protectedByWallet: Number(result.rows[0]?.wallet_protected || 0),
+    protectedByBucketCoverage: Number(result.rows[0]?.bucket_protected || 0),
+    candidateBlockMin: result.rows[0]?.candidate_block_min || null,
+    candidateBlockMax: result.rows[0]?.candidate_block_max || null,
   };
 }
 
@@ -228,12 +299,22 @@ async function deleteExpiredMinuteBuckets(database, options) {
   };
 }
 
-function emptySummary() {
+function emptySummary(wallet = {}) {
   return {
     batches: 0,
     examinedProcessedLogs: 0,
     processedLogs: 0,
     protectedProcessedLogs: 0,
+    candidatesProtectedByWallet: 0,
+    candidatesProtectedByBucketCoverage: 0,
+    retentionCandidateBlockMin: null,
+    retentionCandidateBlockMax: null,
+    walletGateValid: wallet.valid === true,
+    walletGateReason: wallet.valid === true ? null : (wallet.reason || 'not_evaluated'),
+    walletCompleteThroughBlock: wallet.completeThroughBlock || null,
+    walletWatermarkUpdatedAt: wallet.updatedAt || null,
+    walletWatermarkAgeMs: wallet.ageMs ?? null,
+    walletLagBlocks: wallet.lagBlocks ?? null,
     observations: 0,
     minuteBuckets: 0,
     protectedMinuteBuckets: 0,
@@ -243,14 +324,65 @@ function emptySummary() {
   };
 }
 
-async function runCleanupBatches(database, options) {
-  const summary = emptySummary();
+function lowerBlock(current, candidate) {
+  if (candidate == null) return current;
+  return current == null || BigInt(candidate) < BigInt(current) ? String(candidate) : current;
+}
+
+function higherBlock(current, candidate) {
+  if (candidate == null) return current;
+  return current == null || BigInt(candidate) > BigInt(current) ? String(candidate) : current;
+}
+
+function walletTelemetry(gate, nowMs = Date.now()) {
+  if (!gate.valid) return { valid: false, reason: gate.reason || 'watermark_invalid' };
+  const updatedAtMs = Date.parse(gate.updatedAt);
+  return {
+    valid: true,
+    reason: null,
+    completeThroughBlock: gate.completeThroughBlock,
+    updatedAt: gate.updatedAt || null,
+    ageMs: Number.isFinite(updatedAtMs) ? Math.max(0, nowMs - updatedAtMs) : null,
+    lagBlocks: gate.sourceFrontierBlock == null
+      ? null
+      : (BigInt(gate.sourceFrontierBlock) - BigInt(gate.completeThroughBlock)).toString(),
+  };
+}
+
+async function loadWalletGate(database, deps) {
+  const repository = deps.watermarkRepository
+    || createRobinhoodWalletSwapCursorRepository({ database });
+  try {
+    return await repository.loadRetentionGate({
+      previousCompleteThroughBlock: status.walletCompleteThroughHighWaterBlock,
+    });
+  } catch (error) {
+    return {
+      valid: false,
+      reason: 'watermark_load_error',
+      error: String(error?.message || error).slice(0, 1000),
+    };
+  }
+}
+
+async function runCleanupBatches(database, options, wallet) {
+  const summary = emptySummary(wallet);
   for (let index = 0; index < options.maxBatches; index += 1) {
     const raw = await deleteExpiredProcessedLogs(database, options);
     summary.batches += 1;
     summary.examinedProcessedLogs += raw.examined;
     summary.processedLogs += raw.processedLogs;
     summary.protectedProcessedLogs += raw.protected;
+    summary.candidatesProtectedByWallet += raw.protectedByWallet;
+    summary.candidatesProtectedByBucketCoverage += raw.protectedByBucketCoverage;
+    summary.retentionCandidateBlockMin = lowerBlock(
+      summary.retentionCandidateBlockMin,
+      raw.candidateBlockMin
+    );
+    summary.retentionCandidateBlockMax = higherBlock(
+      summary.retentionCandidateBlockMax,
+      raw.candidateBlockMax
+    );
     summary.observations += raw.observations;
     if (raw.protected > 0) break;
     if (!options.verifiedCoverage) {
@@ -283,10 +415,30 @@ async function runOnce(options = {}, meta = {}, deps = {}) {
     status.lastRunAt = new Date(startedAtMs).toISOString();
     status.lastError = null;
     try {
-      const summary = await runCleanupBatches(deps.database || db, normalized);
+      const database = deps.database || db;
+      const gate = await loadWalletGate(database, deps);
+      const wallet = walletTelemetry(gate);
+      if (wallet.valid) {
+        status.walletCompleteThroughHighWaterBlock = wallet.completeThroughBlock;
+      }
+      const summary = await runCleanupBatches(database, {
+        ...normalized,
+        walletCompleteThroughBlock: wallet.completeThroughBlock || null,
+      }, wallet);
       status.lastExaminedProcessedLogs = summary.examinedProcessedLogs;
       status.lastDeletedProcessedLogs = summary.processedLogs;
       status.lastProtectedProcessedLogs = summary.protectedProcessedLogs;
+      status.lastCandidatesProtectedByWallet = summary.candidatesProtectedByWallet;
+      status.lastCandidatesProtectedByBucketCoverage =
+        summary.candidatesProtectedByBucketCoverage;
+      status.lastRetentionCandidateBlockMin = summary.retentionCandidateBlockMin;
+      status.lastRetentionCandidateBlockMax = summary.retentionCandidateBlockMax;
+      status.lastWalletGateValid = summary.walletGateValid;
+      status.lastWalletGateReason = summary.walletGateReason;
+      status.lastWalletCompleteThroughBlock = summary.walletCompleteThroughBlock;
+      status.lastWalletWatermarkUpdatedAt = summary.walletWatermarkUpdatedAt;
+      status.lastWalletWatermarkAgeMs = summary.walletWatermarkAgeMs;
+      status.lastWalletLagBlocks = summary.walletLagBlocks;
       status.lastDeletedObservations = summary.observations;
       status.lastDeletedMinuteBuckets = summary.minuteBuckets;
       status.lastProtectedMinuteBuckets = summary.protectedMinuteBuckets;
@@ -322,6 +474,9 @@ function schedule(options, delayMs) {
           '[RobinhoodRetentionWorker]',
           `logs=${summary.processedLogs}/${summary.examinedProcessedLogs}`,
           `protectedLogs=${summary.protectedProcessedLogs}`,
+          `walletProtected=${summary.candidatesProtectedByWallet}`,
+          `bucketProtected=${summary.candidatesProtectedByBucketCoverage}`,
+          `walletGate=${summary.walletGateValid ? 'valid' : summary.walletGateReason}`,
           `observations=${summary.observations}`,
           `minuteBuckets=${summary.minuteBuckets}`,
           `protectedMinuteBuckets=${summary.protectedMinuteBuckets}`,
