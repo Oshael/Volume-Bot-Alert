@@ -1001,7 +1001,9 @@ O worker lê `Transfer` por range com a coorte enviada como allowlist `address` 
 RPC, commita ranges em ordem e não grava o histórico bruto no journal. Se o node
 rejeitar o tamanho da allowlist, ela é dividida ao meio adaptativamente sem
 ampliar a janela de blocos; `addressSplits` distingue esse caso dos splits de
-range. Dentro da janela de attach
+range. O global lê esses shards serialmente; a captura live priorizada usa dois
+em paralelo por default, configurável de 1 a 4 por
+`ROBINHOOD_HOLDER_LIVE_ADDRESS_SHARD_CONCURRENCY`. Dentro da janela de attach
 (10.000 blocos por default e sempre abaixo da retenção de 20.000), ele incrementa
 a versão do cursor live sem avançá-lo e ativa a coorte no mesmo commit. Capturas
 com o escopo anterior falham no CAS e repetem; eventos da barreira em diante ficam
