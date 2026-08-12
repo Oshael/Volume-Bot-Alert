@@ -95,34 +95,76 @@ function validateRange(transfers, cursor) {
   }
 }
 
-async function insertTransfer(client, transfer) {
-  const result = await client.query(
-    `INSERT INTO robinhood_holder_transfer_journal (
-       chain, block_number, block_hash, transaction_hash, transaction_index,
-       log_index, token_address, from_wallet, to_wallet, amount_raw
-     ) VALUES ('robinhood', $1, $2, $3, $4, $5, $6, $7, $8, $9::numeric)
-     ON CONFLICT (chain, transaction_hash, log_index) DO UPDATE SET
-       captured_at = robinhood_holder_transfer_journal.captured_at
-     WHERE robinhood_holder_transfer_journal.block_number = EXCLUDED.block_number
-       AND robinhood_holder_transfer_journal.block_hash = EXCLUDED.block_hash
-       AND robinhood_holder_transfer_journal.transaction_index = EXCLUDED.transaction_index
-       AND robinhood_holder_transfer_journal.token_address = EXCLUDED.token_address
-       AND robinhood_holder_transfer_journal.from_wallet = EXCLUDED.from_wallet
-       AND robinhood_holder_transfer_journal.to_wallet = EXCLUDED.to_wallet
-       AND robinhood_holder_transfer_journal.amount_raw = EXCLUDED.amount_raw
-     RETURNING (xmax = 0) AS inserted`,
-    [
-      transfer.blockNumber, transfer.blockHash, transfer.transactionHash,
-      transfer.transactionIndex, transfer.logIndex, transfer.tokenAddress,
-      transfer.fromWallet, transfer.toWallet, transfer.amountRaw,
-    ]
-  );
-  if (!result.rowCount) {
-    const error = new Error('captured transfer conflicts with existing journal evidence');
-    error.code = 'holder_capture_conflict';
-    throw error;
+const TRANSFER_EVIDENCE_FIELDS = Object.freeze([
+  'blockNumber', 'blockHash', 'transactionHash', 'transactionIndex', 'logIndex',
+  'tokenAddress', 'fromWallet', 'toWallet', 'amountRaw',
+]);
+
+function captureConflict() {
+  const error = new Error('captured transfer conflicts with existing journal evidence');
+  error.code = 'holder_capture_conflict';
+  return error;
+}
+
+function uniqueTransferEvidence(transfers) {
+  const unique = new Map();
+  for (const transfer of transfers) {
+    const identity = `${transfer.transactionHash}:${transfer.logIndex}`;
+    const existing = unique.get(identity);
+    if (existing && TRANSFER_EVIDENCE_FIELDS.some(
+      (field) => existing[field] !== transfer[field]
+    )) throw captureConflict();
+    if (!existing) unique.set(identity, transfer);
   }
-  return result.rows[0]?.inserted === true;
+  return [...unique.values()];
+}
+
+async function insertTransfers(client, transfers) {
+  const unique = uniqueTransferEvidence(transfers);
+  if (!unique.length) return 0;
+  const result = await client.query(
+    `WITH inserted AS (
+       INSERT INTO robinhood_holder_transfer_journal (
+         chain, block_number, block_hash, transaction_hash, transaction_index,
+         log_index, token_address, from_wallet, to_wallet, amount_raw
+       )
+       SELECT 'robinhood', item.block_number::bigint, item.block_hash,
+              item.transaction_hash, item.transaction_index, item.log_index,
+              item.token_address, item.from_wallet, item.to_wallet,
+              item.amount_raw::numeric
+         FROM jsonb_to_recordset($1::jsonb) AS item(
+           block_number text, block_hash text, transaction_hash text,
+           transaction_index int, log_index int, token_address text,
+           from_wallet text, to_wallet text, amount_raw text
+         )
+       ON CONFLICT (chain, transaction_hash, log_index) DO UPDATE SET
+         captured_at = robinhood_holder_transfer_journal.captured_at
+       WHERE robinhood_holder_transfer_journal.block_number = EXCLUDED.block_number
+         AND robinhood_holder_transfer_journal.block_hash = EXCLUDED.block_hash
+         AND robinhood_holder_transfer_journal.transaction_index = EXCLUDED.transaction_index
+         AND robinhood_holder_transfer_journal.token_address = EXCLUDED.token_address
+         AND robinhood_holder_transfer_journal.from_wallet = EXCLUDED.from_wallet
+         AND robinhood_holder_transfer_journal.to_wallet = EXCLUDED.to_wallet
+         AND robinhood_holder_transfer_journal.amount_raw = EXCLUDED.amount_raw
+       RETURNING (xmax = 0) AS inserted
+     )
+     SELECT COUNT(*)::int AS matched,
+            COUNT(*) FILTER (WHERE inserted)::int AS inserted
+       FROM inserted`,
+    [JSON.stringify(unique.map((transfer) => ({
+      block_number: transfer.blockNumber,
+      block_hash: transfer.blockHash,
+      transaction_hash: transfer.transactionHash,
+      transaction_index: transfer.transactionIndex,
+      log_index: transfer.logIndex,
+      token_address: transfer.tokenAddress,
+      from_wallet: transfer.fromWallet,
+      to_wallet: transfer.toWallet,
+      amount_raw: transfer.amountRaw,
+    })))]
+  );
+  if (Number(result.rows[0]?.matched) !== unique.length) throw captureConflict();
+  return Number(result.rows[0]?.inserted) || 0;
 }
 
 async function advanceCursor(client, cursor) {
@@ -764,10 +806,7 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     const cursor = normalizeCursor(input.cursor);
     validateRange(transfers, cursor);
     return withTransaction(database, async (client) => {
-      let insertedTransfers = 0;
-      for (const transfer of transfers) {
-        if (await insertTransfer(client, transfer)) insertedTransfers += 1;
-      }
+      const insertedTransfers = await insertTransfers(client, transfers);
       const version = await advanceCursor(client, cursor);
       return Object.freeze({
         insertedTransfers,
@@ -809,10 +848,7 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
         error.code = 'holder_live_repair_unavailable';
         throw error;
       }
-      let insertedTransfers = 0;
-      for (const transfer of transfers) {
-        if (await insertTransfer(client, transfer)) insertedTransfers += 1;
-      }
+      const insertedTransfers = await insertTransfers(client, transfers);
       return Object.freeze({
         status: 'repaired', tokenAddress, insertedTransfers,
         duplicateTransfers: transfers.length - insertedTransfers,

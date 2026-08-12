@@ -69,6 +69,14 @@ describe('Robinhood holder ledger persistence', () => {
            last_transaction_hash, last_log_index
          ) VALUES ($1, $2, 10, 99, $3, 0)`, [TOKEN, ALICE, HASH_B]
       );
+      const conflictingBatch = capture('100', HASH_A, null, '100');
+      conflictingBatch.transfers.push({
+        ...conflictingBatch.transfers[0], amountRaw: '5',
+      });
+      await assert.rejects(
+        repository.appendCapturedRange(conflictingBatch),
+        (error) => error.code === 'holder_capture_conflict'
+      );
       const initial = capture('100', HASH_A, null, '100');
       initial.transfers.push({ ...initial.transfers[0] });
       initial.transfers.push({
