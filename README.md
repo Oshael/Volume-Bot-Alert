@@ -119,7 +119,9 @@ The launch topology should use split roles:
 npm run start:web
 npm run start:worker:core
 npm run start:worker:market
-npm run start:worker:maintenance
+npm run start:worker:solana-maintenance
+# Destructive retention remains opt-in and starts disabled during rollout.
+ROBINHOOD_RETENTION_ENABLED=false npm run start:worker:robinhood-maintenance
 # Controlled Robinhood rollout only (requires ROBINHOOD_START_BLOCK initially)
 npm run start:worker:robinhood
 # Durable Robinhood replay only
@@ -140,6 +142,9 @@ npm run start:web
 npm run start:worker
 npm run start:worker:core
 npm run start:worker:market
+npm run start:worker:solana-maintenance
+npm run start:worker:robinhood-maintenance
+# Temporary rollback alias; do not combine with all or either new group.
 npm run start:worker:maintenance
 npm run start:worker:robinhood
 npm run start:worker:robinhood-backfill
@@ -148,6 +153,8 @@ npm run dev:web
 npm run dev:worker
 npm run dev:worker:core
 npm run dev:worker:market
+npm run dev:worker:solana-maintenance
+npm run dev:worker:robinhood-maintenance
 npm run dev:worker:maintenance
 npm run dev:worker:robinhood
 npm run dev:worker:robinhood-backfill
@@ -179,9 +186,11 @@ sudo systemctl list-units --type=service --all \
 ```
 
 The npm script defaults are `3000` for web, `3001` for worker-core, `3002` for
-worker-market, `3003` for worker-maintenance, `3004` for Robinhood live, and
-`3005` for Robinhood backfill. Worker ports are internal process defaults, not
-public endpoints.
+worker-market, `3003` for Solana maintenance, `3004` for Robinhood live, `3005`
+for Robinhood backfill, and `3011` for Robinhood maintenance. The maintenance
+units are `trendscope-worker@solana-maintenance.service` and
+`trendscope-worker@robinhood-maintenance.service`. Worker ports are internal
+process defaults, not public endpoints.
 
 ## Local Setup
 

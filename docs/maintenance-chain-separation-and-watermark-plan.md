@@ -124,10 +124,15 @@ Não pertence a esse grupo:
 - qualquer worker Robinhood;
 - mock trading.
 
-### `robinhood-retention`
+### `robinhood-maintenance`
 
 Grupo isolado, iniciado explicitamente e proibido de combinar com grupos
 compartilhados ou com outro grupo isolado no mesmo processo.
+
+O nome é canônico em config, scripts, ownership de processo e deploy. A unit
+simétrica à Solana é `trendscope-worker@robinhood-maintenance.service`, na porta
+`3011`; Solana usa `trendscope-worker@solana-maintenance.service`, na porta
+`3003`.
 
 Responsabilidade inicial:
 
@@ -485,7 +490,7 @@ Arquivos estimados:
 Mudanças:
 
 - criar `solana-maintenance` compartilhado;
-- criar `robinhood-retention` isolado;
+- criar `robinhood-maintenance` isolado;
 - adicionar scripts start/dev com portas distintas;
 - manter alias legado somente durante rollout;
 - impedir combinações inválidas no config;
@@ -587,7 +592,7 @@ Mudanças:
 
 Rollback:
 
-- desligar `robinhood-retention` preserva dados e é o primeiro rollback;
+- desligar `robinhood-maintenance` preserva dados e é o primeiro rollback;
 - nunca fazer rollback removendo ou resetando cursores;
 - `solana-maintenance` pode ser pausado temporariamente sem iniciar o grupo
   legado misto.
@@ -621,13 +626,10 @@ remoção da feature.
 
 ## Decisões pendentes antes dos blocos de código
 
-1. Nome final: `solana-maintenance` e `robinhood-retention` são os nomes
-   recomendados.
-2. Persistência do watermark: cursor existente, view ou tabela genérica.
-3. Estado durável do seed e condição formal de `complete`/`abandoned`.
-4. Porta e unit final do novo processo Robinhood retention.
-5. Destino dos dados históricos de mock trading.
-6. Região SHYFT e estratégia de recovery além da janela de slot replay.
+1. Persistência do watermark: cursor existente, view ou tabela genérica.
+2. Estado durável do seed e condição formal de `complete`/`abandoned`.
+3. Destino dos dados históricos de mock trading.
+4. Região SHYFT e estratégia de recovery além da janela de slot replay.
 
 ## Ponto importante
 

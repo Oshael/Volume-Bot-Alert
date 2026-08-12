@@ -329,7 +329,9 @@ Grupos existentes:
 |---|---|
 | `core` | catálogo, descoberta DEX, risco/enrichment e review sync |
 | `market` | Meteora, bid zone, GMGN discovery e claim signals |
-| `maintenance` | limpeza, retenção Robinhood e mock-trading take-profit |
+| `solana-maintenance` | catalog cleanup Solana; compartilhado e incluído por `all` |
+| `robinhood-maintenance` | Robinhood retention; isolado, destrutivo e sempre opt-in |
+| `maintenance` | alias temporário de rollback com cleanup Solana, retention Robinhood e mock-trading take-profit |
 | `robinhood` | ingestão live monolítica: captura + valuation + projeção + staging + agregação + alertas |
 | `robinhood-head` | captura isolada do head: só grava evidência durável na fila e avança o cursor de captura |
 | `robinhood-processing` | consumidor isolado: reclama capturas por lease, decodifica a evidência congelada sem RPC, calcula preço/FDV/liquidez, persiste observações/buckets e poda a fila; no mesmo processo, um 2º runner drena `stream='discovery'` para o `robinhood_pool_registry` |
@@ -337,14 +339,22 @@ Grupos existentes:
 | `robinhood-wallet` | consumidor isolado: re-lê observações aceitas e atribui `tx.from` via `eth_getBlockByNumber` (full-tx) por bloco, com cursor `live` próprio; alimenta `robinhood_wallet_swaps` |
 | `robinhood-backfill` | discovery, scan, enrichment, finalizer e aggregation do replay |
 
-O catalog cleanup do grupo `maintenance` atua somente sobre identidades
+O catalog cleanup do grupo `solana-maintenance` atua somente sobre identidades
 `(chain, address)` de `chain = 'solana'`. Quarantine, soft archive e os conjuntos
 de proteção não podem selecionar nem atualizar linhas Robinhood com endereço
-semelhante.
+semelhante. Durante a transição, o alias explícito `maintenance` preserva o
+comportamento misto anterior, mas o config rejeita combiná-lo com `all` ou com
+qualquer outro grupo.
 
-`robinhood`, `robinhood-head`, `robinhood-processing`, `robinhood-derived`,
-`robinhood-wallet` e `robinhood-backfill` são grupos isolados. O config rejeita combinar
-um grupo isolado com grupos compartilhados ou entre si.
+`robinhood-maintenance`, `robinhood`, `robinhood-head`, `robinhood-processing`,
+`robinhood-derived`, `robinhood-wallet` e `robinhood-backfill` são grupos
+isolados. O config rejeita combinar um grupo isolado com grupos compartilhados
+ou entre si. `all` inclui `solana-maintenance`, nunca `robinhood-maintenance`.
+
+As units de manutenção usam nomes simétricos:
+`trendscope-worker@solana-maintenance.service` na porta `3003` e
+`trendscope-worker@robinhood-maintenance.service` na porta `3011`. A unit
+Robinhood deve subir inicialmente com `ROBINHOOD_RETENTION_ENABLED=false`.
 
 O grupo `robinhood-head` roda um processo separado (systemd
 `trendscope-worker@robinhood-head.service`) que instancia o runner de ingestão com o
