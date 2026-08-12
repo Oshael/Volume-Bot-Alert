@@ -14,12 +14,16 @@ const {
 const {
   runWideTailRequeue, __private: { requeueCandidate: requeueWideTail },
 } = require('../src/utils/requeue-robinhood-holder-wide-tails');
+const {
+  runHolderQuarantine,
+} = require('../src/utils/quarantine-robinhood-holder-token');
 
 const TOKEN = `0x${'1'.repeat(40)}`;
 const DRIFT_TOKEN = `0x${'2'.repeat(40)}`;
 const PRIORITY_TOKEN = `0x${'5'.repeat(40)}`;
 const REPAIR_TOKEN = `0x${'6'.repeat(40)}`;
 const SHADOW_TOKEN = `0x${'7'.repeat(40)}`;
+const QUARANTINE_TOKEN = `0x${'9'.repeat(40)}`;
 const ALICE = `0x${'3'.repeat(40)}`;
 const BOB = `0x${'4'.repeat(40)}`;
 const ZERO = `0x${'0'.repeat(40)}`;
@@ -27,6 +31,7 @@ const HASH_A = `0x${'a'.repeat(64)}`;
 const HASH_B = `0x${'b'.repeat(64)}`;
 const HASH_C = `0x${'c'.repeat(64)}`;
 const HASH_D = `0x${'d'.repeat(64)}`;
+const HASH_E = `0x${'e'.repeat(64)}`;
 
 after(() => db.pool.end());
 
@@ -48,6 +53,12 @@ describe('Robinhood holder backfill persistence', () => {
         (LIKE public.robinhood_holder_token_states INCLUDING ALL)`);
       await client.query(`CREATE TEMP TABLE robinhood_holder_transfer_journal
         (LIKE public.robinhood_holder_transfer_journal INCLUDING ALL)`);
+      await client.query(`CREATE TEMP TABLE robinhood_holder_global_backfill_runs
+        (LIKE public.robinhood_holder_global_backfill_runs INCLUDING ALL)`);
+      await client.query(`CREATE TEMP TABLE robinhood_holder_global_backfill_tokens
+        (LIKE public.robinhood_holder_global_backfill_tokens INCLUDING ALL)`);
+      await client.query(`CREATE TEMP TABLE worker_leases
+        (LIKE public.worker_leases INCLUDING ALL)`);
       await client.query(
         `INSERT INTO robinhood_holder_token_states (
            token_address, ledger_status, deployment_block, backfill_next_block
@@ -260,6 +271,101 @@ describe('Robinhood holder backfill persistence', () => {
       }, {
         status: 'backfilling', holderCount: '1', nextBlock: '201',
         liveThroughBlock: '200', version: '2', balances: 1, journalEvents: 1,
+      });
+
+      await client.query(
+        `INSERT INTO robinhood_holder_token_states (
+           token_address, holder_count, ledger_status, deployment_block,
+           backfill_next_block, live_through_block, live_through_hash
+         ) VALUES ($1, 1, 'backfilling', 100, 150, 149, $2)`,
+        [QUARANTINE_TOKEN, HASH_E]
+      );
+      await client.query(
+        `INSERT INTO robinhood_holder_balances (
+           token_address, wallet_address, balance_raw, last_block_number,
+           last_transaction_hash, last_log_index
+         ) VALUES ($1, $2, 1, 149, $3, 0)`, [QUARANTINE_TOKEN, ALICE, HASH_E]
+      );
+      await client.query(
+        `INSERT INTO robinhood_holder_transfer_journal (
+           block_number, block_hash, transaction_hash, transaction_index, log_index,
+           token_address, from_wallet, to_wallet, amount_raw
+         ) VALUES (500, $1, $1, 0, 0, $2, $3, $4, 1)`,
+        [HASH_E, QUARANTINE_TOKEN, ALICE, BOB]
+      );
+      await client.query(
+        `INSERT INTO robinhood_holder_global_backfill_runs (
+           id, status, catalog_cutoff, next_block
+         ) VALUES (9001, 'scanning', NOW(), 100)`
+      );
+      await client.query(
+        `INSERT INTO robinhood_holder_global_backfill_tokens (run_id, token_address)
+         VALUES (9001, $1)`, [QUARANTINE_TOKEN]
+      );
+      const quarantinePreview = await runHolderQuarantine({
+        database, tokenAddress: QUARANTINE_TOKEN,
+      });
+      assert.deepEqual({
+        mode: quarantinePreview.mode,
+        eligible: quarantinePreview.candidate.eligible,
+        balances: quarantinePreview.candidate.balanceRows,
+        pending: quarantinePreview.candidate.pendingEvents,
+        applied: quarantinePreview.candidate.appliedEvents,
+        activeCampaigns: quarantinePreview.candidate.activeCampaigns,
+      }, {
+        mode: 'dry-run', eligible: true, balances: 1, pending: 1, applied: 0,
+        activeCampaigns: 1,
+      });
+      await client.query(
+        `INSERT INTO worker_leases (lease_key, owner_id, lease_until)
+         VALUES ('robinhood-holder-global-backfill-worker', 'test-owner',
+                 NOW() + INTERVAL '1 minute')`
+      );
+      await assert.rejects(
+        runHolderQuarantine({
+          database, tokenAddress: QUARANTINE_TOKEN, confirm: true,
+        }),
+        (error) => error.code === 'holder_quarantine_writer_active'
+      );
+      await client.query(`DELETE FROM worker_leases
+        WHERE lease_key = 'robinhood-holder-global-backfill-worker'`);
+      const quarantine = await runHolderQuarantine({
+        database, tokenAddress: QUARANTINE_TOKEN, confirm: true,
+      });
+      assert.deepEqual(quarantine.quarantined, {
+        tokenAddress: QUARANTINE_TOKEN, ledgerStatus: 'drifted', restartBlock: '100',
+        version: '1', deletedBalances: 1, deletedJournalEvents: 1,
+        excludedCampaignTokens: 1,
+      });
+      const quarantined = await client.query(
+        `SELECT state.ledger_status, state.holder_count, state.backfill_next_block,
+                state.live_through_block,
+                (SELECT COUNT(*) FROM robinhood_holder_balances balances
+                  WHERE balances.token_address = state.token_address)::int AS balances,
+                (SELECT COUNT(*) FROM robinhood_holder_transfer_journal journal
+                  WHERE journal.token_address = state.token_address)::int AS journal_events
+           FROM robinhood_holder_token_states state WHERE state.token_address = $1`,
+        [QUARANTINE_TOKEN]
+      );
+      assert.deepEqual({
+        status: quarantined.rows[0].ledger_status,
+        holderCount: String(quarantined.rows[0].holder_count),
+        nextBlock: String(quarantined.rows[0].backfill_next_block),
+        liveThroughBlock: quarantined.rows[0].live_through_block,
+        balances: Number(quarantined.rows[0].balances),
+        journalEvents: Number(quarantined.rows[0].journal_events),
+      }, {
+        status: 'drifted', holderCount: '0', nextBlock: '100', liveThroughBlock: null,
+        balances: 0, journalEvents: 0,
+      });
+      const excludedCampaign = await client.query(
+        `SELECT status, holder_count, exclusion_reason
+           FROM robinhood_holder_global_backfill_tokens
+          WHERE run_id = 9001 AND token_address = $1`, [QUARANTINE_TOKEN]
+      );
+      assert.deepEqual(excludedCampaign.rows[0], {
+        status: 'excluded', holder_count: '0',
+        exclusion_reason: 'operator_quarantine_pathological_volume',
       });
     } finally {
       client.release();

@@ -67,6 +67,7 @@
     "robinhood:holder-drift-recovery": "node src/utils/robinhood-holder-drift-recovery.js",
     "robinhood:holder-checkpoint-repair": "node src/utils/repair-robinhood-holder-backfill-checkpoints.js",
     "robinhood:holder-tail-requeue": "node src/utils/requeue-robinhood-holder-wide-tails.js",
+    "robinhood:holder-quarantine": "node src/utils/quarantine-robinhood-holder-token.js",
     "robinhood:v2-dry-run": "node src/utils/robinhood-v2-fixture-dry-run.js",
     "robinhood:v3-dry-run": "node src/utils/robinhood-v3-fixture-dry-run.js",
     "robinhood:noxa-dry-run": "node src/utils/robinhood-noxa-fixture-dry-run.js",
