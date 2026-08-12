@@ -47,7 +47,8 @@ function normalizeOptions(input = {}) {
 async function buildRuntime(options, deps = {}) {
   const database = deps.database || db;
   const provider = resolveRobinhoodHolderRpcProvider(
-    deps.env || process.env, 'robinhood-holder-global-backfill'
+    deps.env || process.env, 'robinhood-holder-global-backfill',
+    'ROBINHOOD_HOLDER_GLOBAL_BACKFILL_RPC_URL'
   );
   const rpcClient = deps.rpcClient || (deps.rpcClientFactory || createEvmJsonRpcClient)({
     providers: [provider], timeoutMs: 15_000, maxRetries: 1,

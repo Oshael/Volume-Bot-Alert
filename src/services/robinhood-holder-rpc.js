@@ -1,5 +1,8 @@
-function resolveRobinhoodHolderRpcProvider(env = process.env, name = 'robinhood-holder') {
-  const url = String(env.ROBINHOOD_RPC_URL || '').trim();
+function resolveRobinhoodHolderRpcProvider(
+  env = process.env, name = 'robinhood-holder', preferredUrlEnv = null
+) {
+  const preferredUrl = preferredUrlEnv ? env[preferredUrlEnv] : null;
+  const url = String(preferredUrl || env.ROBINHOOD_RPC_URL || '').trim();
   if (!url) {
     const error = new Error('ROBINHOOD_RPC_URL is required for holder indexing');
     error.code = 'configuration_error';
