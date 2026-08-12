@@ -17,10 +17,12 @@ O plano complementa, sem substituir:
 
 ## Status
 
-- Plano aprovado conceitualmente; nenhum bloco de implementação iniciado.
-- O runtime ainda usa o grupo compartilhado `maintenance`.
-- O grupo ainda inicia catalog cleanup, Robinhood retention e mock-trading
-  take-profit no mesmo processo.
+- Blocos 0–3 implementados localmente.
+- O runtime possui `solana-maintenance` compartilhado e
+  `robinhood-maintenance` isolado; `maintenance` permanece somente como alias
+  explícito de rollback durante a transição.
+- Catalog cleanup é Solana-only e o gate durável de wallet attribution existe,
+  mas Robinhood retention ainda não o consome até o Bloco 4.
 - SHYFT/Yellowstone continua planejado; não existe consumer gRPC de produção no
   repositório.
 - Mock trading continua no código, mas está destinado a desativação e remoção
@@ -514,7 +516,9 @@ node --test tests/runtime-worker-groups.test.js
 
 ### Bloco 3 — Contrato durável de watermark
 
-Este bloco exige decisão final entre reutilizar cursor, view ou nova tabela.
+Decisão implementada: reutilizar e estender `robinhood_wallet_swap_cursors`,
+evitando uma segunda fonte de progresso. A Stage 122 adiciona lifecycle durável;
+o modelo publica um gate validado para a retention.
 
 Arquivos estimados:
 
@@ -531,6 +535,17 @@ Riscos protegidos:
 - cálculo correto de `next_block - 1`;
 - seed ativo mantém seu range protegido;
 - watermark ausente não libera retention.
+
+Resultado:
+
+- `seed` usa `pending`, `running`, `complete` ou `abandoned`;
+- conclusão exige `next_block > safe_head`; cauda vazia avança até
+  `safe_head + 1` antes do estado terminal;
+- abandono exige motivo explícito;
+- LIVE e seed não podem regredir pelo repository;
+- o gate rejeita seed não terminal, frontier não comprovado, checkpoint inválido
+  e regressão em relação ao watermark previamente observado;
+- a retention permanece inalterada até o Bloco 4.
 
 Estimativa: 220–450 linhas alteradas.
 

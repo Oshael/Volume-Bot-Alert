@@ -927,6 +927,7 @@ Stages confirmados:
 | 118 | floor durável de retenção/rollback do journal de holders |
 | 119 | view não materializada para publicação de holders live-first e source diário `ledger_live` |
 | 120 | campanha/coorte duráveis para backfill global de holders e attach ao cursor live |
+| 122 | lifecycle durável e fail-closed dos watermarks de wallet attribution |
 
 Holders RH possuem duas fontes complementares. A Stage 111 guarda o summary
 Blockscout usado como bootstrap/fallback; as Stages 116–118 mantêm o ledger local
@@ -1338,6 +1339,16 @@ Os contratos locais de atribuição já são fail-closed: o bloco cheio fornece 
 número e timestamp para checkpoint; qualquer transação ausente impede escrita
 parcial e avanço do seed. O repository também possui avanço monotônico específico
 para o cursor `live`, preservando checkpoint em atualizações de frontier.
+
+A Stage 122 estende `robinhood_wallet_swap_cursors` com os estados `pending`,
+`running`, `complete` e `abandoned`. Execute
+`node src/utils/db-init-stage122.js` antes de reiniciar o wallet worker. O seed
+só chega a `complete` depois de provar a cauda vazia até `safe_head`, avançar
+`next_block` para `safe_head + 1` e persistir o timestamp terminal. `abandoned`
+exige uma decisão explícita com motivo. O gate de retenção usa
+`completeThroughBlock = next_block - 1` do LIVE e falha fechado quando seed/LIVE,
+frontier, checkpoint ou monotonicidade não comprovam completude. A retention
+ainda não consome esse gate até o Bloco 4 do plano de separação de maintenance.
 
 O worker limita o trabalho pelo frontier estrito da captura/processing ativa,
 revalida checkpoint e usa RPC Robinhood com preflight de chain ID `4663`, lease,
