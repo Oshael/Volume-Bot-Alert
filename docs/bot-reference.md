@@ -994,8 +994,11 @@ ser configurado de 1 a 8 e reduz diante de splits, commits lentos ou lag live.
 O cold serial deve permanecer desligado, e o cutoff do backfill de tokens novos
 não pode preceder o cutoff global.
 
-O worker lê `Transfer` uma vez por range para toda a coorte, commita ranges em
-ordem e não grava o histórico bruto no journal. Dentro da janela de attach
+O worker lê `Transfer` por range com a coorte enviada como allowlist `address` ao
+RPC, commita ranges em ordem e não grava o histórico bruto no journal. Se o node
+rejeitar o tamanho da allowlist, ela é dividida ao meio adaptativamente sem
+ampliar a janela de blocos; `addressSplits` distingue esse caso dos splits de
+range. Dentro da janela de attach
 (10.000 blocos por default e sempre abaixo da retenção de 20.000), ele incrementa
 a versão do cursor live sem avançá-lo e ativa a coorte no mesmo commit. Capturas
 com o escopo anterior falham no CAS e repetem; eventos da barreira em diante ficam
