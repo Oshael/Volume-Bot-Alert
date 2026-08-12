@@ -1013,6 +1013,9 @@ ser configurado de 1 a 8 e reduz diante de splits ou commits lentos. Com lag liv
 acima de 100 blocos, três batches saudáveis só elevam o prefetch quando o lag está
 caindo; crescimento acima de 25 blocos entre ticks reduz pela metade e oscilação
 menor mantém o nível. `liveLagTrend` e `liveLagDeltaBlocks` expõem a decisão.
+Commits acima de 2s também reduzem o prefetch; runtimes com PostgreSQL remoto
+podem ajustar esse limiar por
+`ROBINHOOD_HOLDER_GLOBAL_BACKFILL_MAX_COMMIT_MS` sem alterar o default da VPS.
 `ROBINHOOD_HOLDER_GLOBAL_BACKFILL_RPC_URL` isola o scan em outro endpoint RPC;
 quando ausente, o global continua usando `ROBINHOOD_RPC_URL`. Isso permite manter
 live e backfill regular no node da VPS enquanto somente o global usa um túnel.
