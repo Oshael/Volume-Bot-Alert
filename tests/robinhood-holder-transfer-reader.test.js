@@ -147,6 +147,8 @@ describe('Robinhood holder Transfer reader', () => {
   it('adaptively shards an address allowlist rejected by the RPC payload boundary', async () => {
     const token2 = `0x${'8'.repeat(40)}`;
     const filters = [];
+    let activeRequests = 0;
+    let maxActiveRequests = 0;
     const source = rpc(async (method, params) => {
       if (method === 'eth_getBlockByNumber') return { number: '0x64', hash: HASH_A };
       filters.push(params[0].address);
@@ -156,9 +158,15 @@ describe('Robinhood holder Transfer reader', () => {
         error.httpStatus = 413;
         throw error;
       }
+      activeRequests += 1;
+      maxActiveRequests = Math.max(maxActiveRequests, activeRequests);
+      await new Promise((resolve) => setImmediate(resolve));
+      activeRequests -= 1;
       return params[0].address[0] === TOKEN ? [log()] : [];
     });
-    const reader = createRobinhoodHolderTransferReader({ rpcClient: source.client });
+    const reader = createRobinhoodHolderTransferReader({
+      rpcClient: source.client, addressShardConcurrency: 2,
+    });
     const result = await reader.readGlobalRange({
       tokenAddresses: [TOKEN, token2], fromBlock: 100, toBlock: 100,
     });
@@ -173,6 +181,7 @@ describe('Robinhood holder Transfer reader', () => {
       tokenAddresses: [TOKEN, token2], fromBlock: 100, toBlock: 100,
     });
     assert.deepEqual(filters, [[TOKEN], [token2]]);
+    assert.equal(maxActiveRequests, 2);
     assert.deepEqual(learned.telemetry, {
       requests: 2, splits: 0, addressSplits: 0, observedLogs: 1, ignoredLogs: 0,
     });

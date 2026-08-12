@@ -130,7 +130,7 @@ describe('Robinhood holder live worker', () => {
     const handoff = { runOnce() {} };
     const runner = { runOnce() {} };
     const publishHolderCounts = async () => 0;
-    const runtime = await buildRuntime({ rpcTimeoutMs: 9000 }, {
+    const runtime = await buildRuntime({ rpcTimeoutMs: 9000, addressShardConcurrency: 2 }, {
       env: {
         ROBINHOOD_RPC_URL: 'http://127.0.0.1:8547',
         ROBINHOOD_DRPC_RPC_URL: 'https://drpc.invalid',
@@ -160,7 +160,7 @@ describe('Robinhood holder live worker', () => {
         timeoutMs: 9000, maxRetries: 1,
       }],
       ['ledger', { database: 'database' }],
-      ['reader', { rpcClient }], 'chain',
+      ['reader', { rpcClient, addressShardConcurrency: 2 }], 'chain',
       ['capture', { ledger, reader }],
       ['handoffRepository', { database: 'database' }],
       ['handoff', { repository: handoffRepository, reader }],

@@ -1101,6 +1101,9 @@ module.exports = {
     maxApplyEvents: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_LIVE_MAX_APPLY_EVENTS, 5000, 1, 50_000
     ),
+    addressShardConcurrency: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_LIVE_ADDRESS_SHARD_CONCURRENCY, 2, 1, 4
+    ),
     rpcTimeoutMs: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_LIVE_RPC_TIMEOUT_MS,
       parseIntegerInRange(process.env.ROBINHOOD_RPC_TIMEOUT_MS, 15_000, 1000, 60_000),

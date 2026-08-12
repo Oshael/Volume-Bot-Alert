@@ -119,6 +119,9 @@ function isAdaptiveAddressError(error) {
 function createRobinhoodHolderTransferReader(options = {}) {
   const rpcClient = options.rpcClient;
   if (typeof rpcClient?.request !== 'function') throw new TypeError('holder transfer RPC is required');
+  const addressShardConcurrency = boundedInteger(
+    options.addressShardConcurrency, 1, 1, 4, 'addressShardConcurrency'
+  );
   let chainValidation;
   let learnedAddressLimit = null;
 
@@ -173,10 +176,17 @@ function createRobinhoodHolderTransferReader(options = {}) {
   async function readAddressFilteredLogs(fromBlock, toBlock, addresses, telemetry) {
     const limit = learnedAddressLimit || addresses.length;
     const logs = [];
-    for (let offset = 0; offset < addresses.length; offset += limit) {
-      logs.push(...await readLogs(
-        fromBlock, toBlock, addresses.slice(offset, offset + limit), telemetry
-      ));
+    const batchWidth = limit * addressShardConcurrency;
+    for (let offset = 0; offset < addresses.length; offset += batchWidth) {
+      const pending = [];
+      const through = Math.min(addresses.length, offset + batchWidth);
+      for (let shard = offset; shard < through; shard += limit) {
+        pending.push(readLogs(
+          fromBlock, toBlock, addresses.slice(shard, shard + limit), telemetry
+        ));
+      }
+      const resolved = await Promise.all(pending);
+      for (const shardLogs of resolved) logs.push(...shardLogs);
     }
     return logs;
   }

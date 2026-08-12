@@ -31,6 +31,7 @@ function normalizeOptions(options = {}, env = process.env) {
     rangeSize: boundedInteger(options.rangeSize, 250, 1, 5000),
     confirmations: boundedInteger(options.confirmations, 12, 0, 1000),
     maxApplyEvents: boundedInteger(options.maxApplyEvents, 5000, 1, 50_000),
+    addressShardConcurrency: boundedInteger(options.addressShardConcurrency, 2, 1, 4),
     rpcTimeoutMs: boundedInteger(
       options.rpcTimeoutMs ?? env.ROBINHOOD_RPC_TIMEOUT_MS, 15_000, 1000, 60_000
     ),
@@ -53,7 +54,7 @@ async function buildRuntime(options, deps = {}) {
     database,
   });
   const reader = deps.reader || (deps.readerFactory || createRobinhoodHolderTransferReader)({
-    rpcClient,
+    rpcClient, addressShardConcurrency: options.addressShardConcurrency,
   });
   await reader.assertChain();
   const capture = deps.capture || (deps.captureFactory || createRobinhoodHolderLiveCapture)({
