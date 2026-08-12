@@ -342,9 +342,12 @@ Grupos existentes:
 O catalog cleanup do grupo `solana-maintenance` atua somente sobre identidades
 `(chain, address)` de `chain = 'solana'`. Quarantine, soft archive e os conjuntos
 de proteção não podem selecionar nem atualizar linhas Robinhood com endereço
-semelhante. Durante a transição, o alias explícito `maintenance` preserva o
-comportamento misto anterior, mas o config rejeita combiná-lo com `all` ou com
-qualquer outro grupo.
+semelhante. No startup, quarantine e limpeza de artefatos executam em sequência
+antes do agendamento de archive; tokens já em `cleanup_quarantine` só voltam a ser
+gravados quando `next_evaluation_at` vence. Uma fila única serializa também os
+ciclos posteriores de quarantine, artefatos e archive. Durante a transição, o
+alias explícito `maintenance` preserva o comportamento misto anterior, mas o
+config rejeita combiná-lo com `all` ou com qualquer outro grupo.
 
 `robinhood-maintenance`, `robinhood`, `robinhood-head`, `robinhood-processing`,
 `robinhood-derived`, `robinhood-wallet` e `robinhood-backfill` são grupos
