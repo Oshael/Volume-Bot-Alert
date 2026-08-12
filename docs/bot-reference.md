@@ -934,6 +934,9 @@ por eventos ERC-20 `Transfer`, com apenas balances positivos, journal reversíve
 detecção automática de reorg e retenção padrão de 20.000 blocos. A Stage 119 é a
 fronteira de leitura: publica o ledger somente quando o token está `live` e há
 cursor, usando o summary Blockscout nos demais estados. Ela não duplica dados.
+A captura persiste cada range do journal em um único bulk insert; duplicatas
+idênticas permanecem idempotentes e qualquer evidência conflitante aborta também
+o avanço atômico do cursor.
 
 `monitored`, `recent`, `old-week`, pins, tokens manuais e o summary de
 `GET /api/robinhood/holders` consultam essa view em lote, sem RPC ou Blockscout por
