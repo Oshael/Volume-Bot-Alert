@@ -2805,6 +2805,25 @@ const SCHEMA_GROUPS = [
     ],
   },
   {
+    key: 'stage122-robinhood-wallet-watermark-lifecycle',
+    name: 'Stage 122 Robinhood wallet-attribution watermark lifecycle',
+    repair: 'node src/utils/db-init-stage122.js',
+    tables: [{
+      table: 'robinhood_wallet_swap_cursors',
+      columns: ['lifecycle_state', 'state_reason', 'completed_at', 'abandoned_at'],
+      constraints: [
+        {
+          name: 'robinhood_wallet_swap_cursors_lifecycle_check',
+          includes: ['CHECK', 'pending', 'running', 'complete', 'abandoned'],
+        },
+        {
+          name: 'robinhood_wallet_swap_cursors_terminal_check',
+          includes: ['CHECK', 'completed_at', 'abandoned_at', 'state_reason'],
+        },
+      ],
+    }],
+  },
+  {
     key: 'stage92-robinhood-observation-attribution-index',
     name: 'Stage 92 Robinhood observation attribution index',
     repair: 'node src/utils/db-init-stage92.js',

@@ -16,6 +16,13 @@ function nextBlockAfter(lastBlock) {
   return (BigInt(lastBlock) + 1n).toString();
 }
 
+async function completeSeed(cursor, state, fromBlock, toBlock) {
+  const completed = await cursor.completeSeed({ expectedVersion: state.version });
+  return completed
+    ? { done: true, processedBlocks: 0, fromBlock, toBlock, completed: true }
+    : { done: true, processedBlocks: 0, fromBlock, toBlock, conflict: true };
+}
+
 async function runSeedBatch(deps = {}) {
   const { reader, attributor, cursor, stream = 'seed', maxBlocks } = deps;
   const state = await cursor.loadCursor(stream);
@@ -25,12 +32,21 @@ async function runSeedBatch(deps = {}) {
   if (toBlock == null) throw new Error('runSeedBatch needs a toBlock or a cursor safe_head');
   const fromBlock = state.nextBlock;
   if (BigInt(fromBlock) > BigInt(toBlock)) {
-    return { done: true, processedBlocks: 0, fromBlock, toBlock };
+    if (state.lifecycleState === 'complete') {
+      return { done: true, processedBlocks: 0, fromBlock, toBlock, completed: true };
+    }
+    return completeSeed(cursor, state, fromBlock, toBlock);
   }
 
   const { groups, blockNumbers } = await reader.readAcceptedBlockGroups({ fromBlock, toBlock, maxBlocks });
   if (groups.length === 0) {
-    return { done: true, processedBlocks: 0, fromBlock, toBlock };
+    const advanced = await cursor.advanceCursor(stream, {
+      nextBlock: nextBlockAfter(toBlock), expectedVersion: state.version,
+    });
+    if (!advanced) {
+      return { done: true, processedBlocks: 0, fromBlock, toBlock, conflict: true };
+    }
+    return completeSeed(cursor, advanced, fromBlock, toBlock);
   }
 
   const totals = await attributor.attributeGroups(groups);

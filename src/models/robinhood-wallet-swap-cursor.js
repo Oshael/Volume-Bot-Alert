@@ -10,6 +10,7 @@ const db = require('./db');
 
 const CHAIN = 'robinhood';
 const STREAMS = new Set(['seed', 'live']);
+const TERMINAL_SEED_STATES = new Set(['complete', 'abandoned']);
 
 function stream(value) {
   const normalized = String(value ?? '').trim();
@@ -47,7 +48,69 @@ function normalizeCursor(row) {
     checkpointTimestamp: row.checkpoint_timestamp
       ? new Date(row.checkpoint_timestamp).toISOString()
       : null,
+    lifecycleState: row.lifecycle_state || null,
+    stateReason: row.state_reason || null,
+    completedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null,
+    abandonedAt: row.abandoned_at ? new Date(row.abandoned_at).toISOString() : null,
+    updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null,
     version: Number(row.version),
+  };
+}
+
+function invalidRetentionGate(reason, cursors = {}) {
+  return { valid: false, reason, completeThroughBlock: null, ...cursors };
+}
+
+function seedGateReason(seed) {
+  if (!seed) return 'seed_missing';
+  if (!TERMINAL_SEED_STATES.has(seed.lifecycleState)) return 'seed_incomplete';
+  if (seed.lifecycleState === 'complete') {
+    const complete = seed.safeHead != null && seed.nextBlock != null
+      && BigInt(seed.nextBlock) > BigInt(seed.safeHead) && seed.completedAt != null;
+    return complete ? null : 'seed_terminal_invalid';
+  }
+  return seed.stateReason && seed.abandonedAt != null ? null : 'seed_terminal_invalid';
+}
+
+function liveGateValidation(live, previousCompleteThroughBlock) {
+  if (!live) return { reason: 'live_missing' };
+  if (live.lifecycleState !== 'running') return { reason: 'live_not_running' };
+  if (live.nextBlock == null || BigInt(live.nextBlock) === 0n || live.safeHead == null) {
+    return { reason: 'live_frontier_invalid' };
+  }
+  const completeThrough = BigInt(live.nextBlock) - 1n;
+  if (completeThrough > BigInt(live.safeHead)) return { reason: 'live_frontier_unproven' };
+  const checkpointValid = live.checkpointBlock != null && live.checkpointHash != null
+    && live.checkpointTimestamp != null && /^0x[0-9a-f]{64}$/.test(live.checkpointHash)
+    && BigInt(live.checkpointBlock) <= completeThrough;
+  if (!checkpointValid) return { reason: 'live_checkpoint_invalid' };
+  if (previousCompleteThroughBlock != null
+      && completeThrough < BigInt(previousCompleteThroughBlock)) {
+    return { reason: 'watermark_regressed' };
+  }
+  return { reason: null, completeThrough };
+}
+
+function buildRetentionGate(rows, options = {}) {
+  const cursors = Object.fromEntries((rows || []).map((row) => [row.stream, normalizeCursor(row)]));
+  const seed = cursors.seed || null;
+  const live = cursors.live || null;
+  const seedReason = seedGateReason(seed);
+  if (seedReason) return invalidRetentionGate(seedReason, { seed, live });
+  const validation = liveGateValidation(live, options.previousCompleteThroughBlock);
+  if (validation.reason) return invalidRetentionGate(validation.reason, { seed, live });
+  return {
+    valid: true,
+    reason: null,
+    consumer: 'wallet-attribution',
+    completeThroughBlock: validation.completeThrough.toString(),
+    sourceFrontierBlock: live.safeHead,
+    checkpointBlock: live.checkpointBlock,
+    checkpointHash: live.checkpointHash,
+    version: live.version,
+    updatedAt: live.updatedAt,
+    seed,
+    live,
   };
 }
 
@@ -107,13 +170,21 @@ function createRobinhoodWalletSwapCursorRepository(options = {}) {
     const result = await database.query(
       `UPDATE robinhood_wallet_swap_cursors
        SET next_block = $3::bigint,
-           safe_head = COALESCE($4::bigint, safe_head),
+           safe_head = CASE
+             WHEN $4::bigint IS NULL THEN safe_head
+             ELSE GREATEST(COALESCE(safe_head, $4::bigint), $4::bigint)
+           END,
            checkpoint_block = $5::bigint,
            checkpoint_hash = $6,
            checkpoint_timestamp = COALESCE($7::timestamptz, checkpoint_timestamp),
+           lifecycle_state = 'running',
+           state_reason = NULL,
            version = version + 1,
            updated_at = NOW()
        WHERE chain = $1 AND stream = $2 AND version = $8
+         AND next_block <= $3::bigint
+         AND (safe_head IS NULL OR $4::bigint IS NULL OR safe_head <= $4::bigint)
+         AND lifecycle_state IN ('pending', 'running')
        RETURNING *`,
       [
         CHAIN,
@@ -149,10 +220,13 @@ function createRobinhoodWalletSwapCursorRepository(options = {}) {
            checkpoint_block = COALESCE($5::bigint, checkpoint_block),
            checkpoint_hash = COALESCE($6, checkpoint_hash),
            checkpoint_timestamp = COALESCE($7::timestamptz, checkpoint_timestamp),
+           lifecycle_state = 'running',
+           state_reason = NULL,
            version = version + 1,
            updated_at = NOW()
        WHERE chain = $1 AND stream = $2 AND version = $8
          AND next_block <= $3::bigint
+         AND lifecycle_state IN ('pending', 'running')
          AND (safe_head IS NULL OR $4::bigint IS NULL OR safe_head <= $4::bigint)
          AND (
            checkpoint_block IS NULL
@@ -168,11 +242,56 @@ function createRobinhoodWalletSwapCursorRepository(options = {}) {
     return normalizeCursor(result.rows[0]);
   }
 
-  return { loadCursor, initCursor, advanceCursor, advanceLiveCursor };
+  async function completeSeed(input = {}) {
+    const result = await database.query(
+      `UPDATE robinhood_wallet_swap_cursors
+       SET lifecycle_state = 'complete', state_reason = NULL,
+           completed_at = NOW(), abandoned_at = NULL,
+           version = version + 1, updated_at = NOW()
+       WHERE chain = $1 AND stream = 'seed' AND version = $2
+         AND lifecycle_state IN ('pending', 'running')
+         AND safe_head IS NOT NULL AND next_block > safe_head
+       RETURNING *`,
+      [CHAIN, Number(input.expectedVersion)]
+    );
+    return normalizeCursor(result.rows[0]);
+  }
+
+  async function abandonSeed(input = {}) {
+    const reason = String(input.reason || '').trim();
+    if (!reason || reason.length > 500) {
+      throw new Error('seed abandonment requires a reason of at most 500 characters');
+    }
+    const result = await database.query(
+      `UPDATE robinhood_wallet_swap_cursors
+       SET lifecycle_state = 'abandoned', state_reason = $3,
+           completed_at = NULL, abandoned_at = NOW(),
+           version = version + 1, updated_at = NOW()
+       WHERE chain = $1 AND stream = 'seed' AND version = $2
+         AND lifecycle_state IN ('pending', 'running')
+       RETURNING *`,
+      [CHAIN, Number(input.expectedVersion), reason]
+    );
+    return normalizeCursor(result.rows[0]);
+  }
+
+  async function loadRetentionGate(input = {}) {
+    const result = await database.query(
+      `SELECT * FROM robinhood_wallet_swap_cursors
+       WHERE chain = $1 AND stream IN ('seed', 'live')`,
+      [CHAIN]
+    );
+    return buildRetentionGate(result.rows, input);
+  }
+
+  return {
+    loadCursor, initCursor, advanceCursor, advanceLiveCursor,
+    completeSeed, abandonSeed, loadRetentionGate,
+  };
 }
 
 module.exports = {
   createRobinhoodWalletSwapCursorRepository,
   STREAMS,
-  __private: { normalizeCursor, checkpointPair, liveCheckpoint },
+  __private: { normalizeCursor, checkpointPair, liveCheckpoint, buildRetentionGate },
 };

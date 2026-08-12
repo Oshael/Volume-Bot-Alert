@@ -37,6 +37,7 @@ const stage102 = require('../src/utils/db-init-stage102');
 const stage106 = require('../src/utils/db-init-stage106');
 const stage107 = require('../src/utils/db-init-stage107');
 const stage108 = require('../src/utils/db-init-stage108');
+const stage122 = require('../src/utils/db-init-stage122');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 
 describe('Robinhood additive chain schema', () => {
@@ -613,6 +614,21 @@ describe('Robinhood additive chain schema', () => {
     assert.doesNotMatch(sql, /DROP\s+(?:TABLE|COLUMN|CONSTRAINT|INDEX)/i);
     assert.equal(group.repair, 'node src/utils/db-init-stage91.js');
     assert.equal(group.tables.length, 1);
+  });
+
+  it('adds durable lifecycle state to wallet attribution watermarks', () => {
+    const sql = stage122.STATEMENTS.join('\n');
+    const group = SCHEMA_GROUPS.find((entry) => (
+      entry.key === 'stage122-robinhood-wallet-watermark-lifecycle'
+    ));
+
+    assert.match(sql, /ADD COLUMN IF NOT EXISTS lifecycle_state/);
+    assert.match(sql, /'pending', 'running', 'complete', 'abandoned'/);
+    assert.match(sql, /completed_at IS NOT NULL/);
+    assert.match(sql, /abandoned_at IS NOT NULL/);
+    assert.match(sql, /NULLIF\(BTRIM\(state_reason\), ''\) IS NOT NULL/);
+    assert.doesNotMatch(sql, /DROP\s+(?:TABLE|COLUMN|CONSTRAINT|INDEX)/i);
+    assert.equal(group.repair, 'node src/utils/db-init-stage122.js');
   });
 
   it('adds a concurrent by-block attribution index over accepted observations', () => {

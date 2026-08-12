@@ -14,13 +14,22 @@ function fakeAttributor(totals = { attributed: 1, inserted: 1, unresolved: 0, mi
 // cursor stub with a mutable state and optional version-conflict on advance.
 function fakeCursor(state, { conflict = false } = {}) {
   const advances = [];
+  const completions = [];
   return {
-    advances,
+    advances, completions,
     loadCursor: async () => (state ? { ...state } : null),
     advanceCursor: async (stream, input) => {
       advances.push({ stream, input });
       if (conflict) return null;
-      state = { ...state, nextBlock: input.nextBlock, version: state.version + 1 };
+      state = {
+        ...state, nextBlock: input.nextBlock, lifecycleState: 'running',
+        version: state.version + 1,
+      };
+      return { ...state };
+    },
+    completeSeed: async (input) => {
+      completions.push(input);
+      state = { ...state, lifecycleState: 'complete', version: state.version + 1 };
       return { ...state };
     },
   };
@@ -47,7 +56,7 @@ describe('robinhood wallet swap seed runner', () => {
     assert.equal(result.totals.inserted, 2);
   });
 
-  it('reports done without advancing when no accepted blocks remain', async () => {
+  it('proves an empty tail through the target and completes the seed', async () => {
     const reader = fakeReader([{ groups: [], blockNumbers: [] }]);
     const attributor = fakeAttributor();
     const cursor = fakeCursor({ stream: 'seed', nextBlock: '150', safeHead: '200', version: 3 });
@@ -55,15 +64,21 @@ describe('robinhood wallet swap seed runner', () => {
     const result = await runSeedBatch({ reader, attributor, cursor });
     assert.equal(result.done, true);
     assert.equal(result.processedBlocks, 0);
-    assert.equal(cursor.advances.length, 0);
+    assert.deepEqual(cursor.advances[0].input, { nextBlock: '201', expectedVersion: 3 });
+    assert.deepEqual(cursor.completions, [{ expectedVersion: 4 }]);
+    assert.equal(result.completed, true);
     assert.equal(attributor.seen.length, 0);
   });
 
   it('is done immediately when the cursor has passed the target', async () => {
     const reader = fakeReader([]);
-    const cursor = fakeCursor({ stream: 'seed', nextBlock: '201', safeHead: '200', version: 0 });
+    const cursor = fakeCursor({
+      stream: 'seed', nextBlock: '201', safeHead: '200', lifecycleState: 'running', version: 0,
+    });
     const result = await runSeedBatch({ reader, attributor: fakeAttributor(), cursor });
     assert.equal(result.done, true);
+    assert.equal(result.completed, true);
+    assert.deepEqual(cursor.completions, [{ expectedVersion: 0 }]);
     assert.equal(result.processedBlocks, 0);
   });
 
