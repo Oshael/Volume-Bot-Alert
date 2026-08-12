@@ -1348,7 +1348,14 @@ só chega a `complete` depois de provar a cauda vazia até `safe_head`, avançar
 exige uma decisão explícita com motivo. O gate de retenção usa
 `completeThroughBlock = next_block - 1` do LIVE e falha fechado quando seed/LIVE,
 frontier, checkpoint ou monotonicidade não comprovam completude. A retention
-ainda não consome esse gate até o Bloco 4 do plano de separação de maintenance.
+consome esse gate antes de cada execução. Observações `accepted` só podem ser
+removidas quando o bloco está em ou abaixo de `completeThroughBlock` e a cobertura
+do bucket de minuto também está comprovada. Gate ausente, inválido, regressivo ou
+com erro preserva todas as observações `accepted`; itens sem observação e
+`rejected` mantêm uma faixa limitada independente no mesmo lote, evitando
+starvation atrás de itens `accepted` protegidos. O status do worker expõe validade e
+motivo do gate, watermark, idade, lag, faixa candidata e proteções atribuídas ao
+wallet ou à cobertura de buckets.
 
 O worker limita o trabalho pelo frontier estrito da captura/processing ativa,
 revalida checkpoint e usa RPC Robinhood com preflight de chain ID `4663`, lease,
