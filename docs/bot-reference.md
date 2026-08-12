@@ -998,7 +998,12 @@ publicam invalidação; `tailRollbacks` e `tailRollbackEvents` expõem a recuper
 O backfill global do catálogo antigo usa a lease
 `robinhood-holder-global-backfill-worker` e permanece desligado por default via
 `ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ENABLED=false`. Ao habilitar, exige
-`ROBINHOOD_HOLDER_GLOBAL_BACKFILL_CATALOG_CUTOFF` e captura live ativa. A primeira
+`ROBINHOOD_HOLDER_GLOBAL_BACKFILL_CATALOG_CUTOFF` e captura live ativa. Ele pode
+rodar junto dos demais holders no grupo `robinhood-holders` ou sozinho com
+`npm run start:worker:robinhood-holder-global`, porta default 3012. O grupo
+isolado inicia somente o global e permite `ROBINHOOD_HOLDER_LIVE_ENABLED=false`
+no processo local, pois consome o cursor live mantido no PostgreSQL compartilhado;
+a lease live deve continuar saudável em outro runtime. A primeira
 execução apenas congela a coorte para inspeção; o scan começa somente com
 `ROBINHOOD_HOLDER_GLOBAL_BACKFILL_AUTO_START=true`. O prefetch começa em 1, pode
 ser configurado de 1 a 8 e reduz diante de splits ou commits lentos. Com lag live
