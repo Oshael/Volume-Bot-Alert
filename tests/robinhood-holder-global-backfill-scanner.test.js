@@ -133,6 +133,52 @@ describe('Robinhood holder global backfill scanner', () => {
     assert.equal(scanner.getStatus().totals.discardedPrefetch, 1);
   });
 
+  it('ramps prefetch while high live lag improves and backs off when it worsens', async () => {
+    let nextBlock = '100';
+    const scanner = createRobinhoodHolderGlobalBackfillScanner({
+      lifecycleRepository: {
+        getActiveRun: async () => runState(nextBlock), loadCohort: async () => [TOKEN],
+      },
+      commitRepository: {
+        async commitRange(input) {
+          nextBlock = input.nextBlock;
+          return { status: 'committed', ...input };
+        },
+        async excludeToken() { throw new Error('unexpected exclusion'); },
+      },
+      reader: {
+        getSafeHead: async () => ({ safeHead: '1000' }),
+        readReceiptRange: async () => { throw new Error('unexpected receipts'); },
+        readGlobalRange: async ({ fromBlock, toBlock }) => range(fromBlock, toBlock),
+      },
+      options: { rangeSize: 10, prefetch: 4 },
+    });
+
+    await scanner.runOnce({ throughBlock: 1000, liveLagBlocks: 1000 });
+    assert.deepEqual({
+      prefetch: scanner.getStatus().prefetch, trend: scanner.getStatus().liveLagTrend,
+    }, { prefetch: 1, trend: 'observing' });
+    await scanner.runOnce({ throughBlock: 1000, liveLagBlocks: 900 });
+    await scanner.runOnce({ throughBlock: 1000, liveLagBlocks: 800 });
+    await scanner.runOnce({ throughBlock: 1000, liveLagBlocks: 700 });
+    assert.deepEqual({
+      prefetch: scanner.getStatus().prefetch,
+      stableBatches: scanner.getStatus().stableBatches,
+      delta: scanner.getStatus().liveLagDeltaBlocks,
+      trend: scanner.getStatus().liveLagTrend,
+    }, { prefetch: 2, stableBatches: 0, delta: '-100', trend: 'improving' });
+    await scanner.runOnce({ throughBlock: 1000, liveLagBlocks: 750 });
+    assert.deepEqual({
+      prefetch: scanner.getStatus().prefetch, trend: scanner.getStatus().liveLagTrend,
+    }, { prefetch: 1, trend: 'worsening' });
+    await scanner.runOnce({ throughBlock: 1000, liveLagBlocks: 760 });
+    assert.deepEqual({
+      prefetch: scanner.getStatus().prefetch,
+      stableBatches: scanner.getStatus().stableBatches,
+      trend: scanner.getStatus().liveLagTrend,
+    }, { prefetch: 1, stableBatches: 0, trend: 'steady' });
+  });
+
   it('replaces the suspect token prefix with receipt evidence before committing', async () => {
     const receiptTransfer = { tokenAddress: TOKEN, blockNumber: '100' };
     const calls = [];

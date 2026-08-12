@@ -1,6 +1,7 @@
 const DEFAULT_RANGE_SIZE = 250;
 const DEFAULT_PREFETCH = 4;
 const DEFAULT_FINALITY_BLOCKS = 2000;
+const LIVE_LAG_GROWTH_TOLERANCE_BLOCKS = 25n;
 
 function boundedInteger(value, fallback, minimum, maximum, label) {
   const parsed = value == null ? fallback : Number(value);
@@ -80,6 +81,9 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
   let cohort = Object.freeze([]);
   let effectivePrefetch = options.prefetch;
   let stableBatches = 0;
+  let lastLiveLag = null;
+  let liveLagDelta = null;
+  let liveLagTrend = 'unknown';
   const totals = {
     fetchedRanges: 0, committedRanges: 0, discardedPrefetch: 0,
     rpcRequests: 0, observedLogs: 0, acceptedTransfers: 0, ignoredLogs: 0,
@@ -92,9 +96,13 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
     stableBatches = 0;
   }
 
-  function observeHealthyBatch(pressured) {
+  function observeHealthyBatch(pressured, allowGrowth = true) {
     if (pressured) {
       reducePrefetch();
+      return;
+    }
+    if (!allowGrowth) {
+      stableBatches = 0;
       return;
     }
     stableBatches += 1;
@@ -102,6 +110,34 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
       effectivePrefetch += 1;
       stableBatches = 0;
     }
+  }
+
+  function observeLiveLag(value) {
+    const current = quantity(value, 'liveLagBlocks');
+    liveLagDelta = lastLiveLag == null ? null : current - lastLiveLag;
+    lastLiveLag = current;
+    if (current <= BigInt(options.maxLiveLagBlocks)) {
+      liveLagTrend = 'healthy';
+      return true;
+    }
+    if (liveLagDelta == null) {
+      effectivePrefetch = 1;
+      stableBatches = 0;
+      liveLagTrend = 'observing';
+      return false;
+    }
+    if (liveLagDelta < 0n) {
+      liveLagTrend = 'improving';
+      return true;
+    }
+    if (liveLagDelta > LIVE_LAG_GROWTH_TOLERANCE_BLOCKS) {
+      liveLagTrend = 'worsening';
+      reducePrefetch();
+      return false;
+    }
+    liveLagTrend = 'steady';
+    stableBatches = 0;
+    return false;
   }
 
   async function loadCohort(runId) {
@@ -217,9 +253,7 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
     if (!['scanning', 'attached'].includes(run.status)) {
       return Object.freeze({ status: 'idle', reason: `run_${run.status}`, runId: run.id });
     }
-    if (quantity(input.liveLagBlocks ?? 0, 'liveLagBlocks') > BigInt(options.maxLiveLagBlocks)) {
-      reducePrefetch();
-    }
+    const allowPrefetchGrowth = observeLiveLag(input.liveLagBlocks ?? 0);
     const target = await throughBlock(input, run);
     const nextBlock = BigInt(run.nextBlock);
     if (nextBlock > target) {
@@ -248,7 +282,7 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
       if (outcome.committed.status !== 'committed') {
         totals.discardedPrefetch += pending.length - index - 1;
         await Promise.all(pending);
-        observeHealthyBatch(true);
+        observeHealthyBatch(true, allowPrefetchGrowth);
         return Object.freeze({
           ...outcome.committed, runId: run.id, committedRanges: committed.length,
           prefetch: effectivePrefetch,
@@ -260,7 +294,7 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
       totals.touchedTokens += Number(outcome.committed.touchedTokens || 0);
       totals.touchedWallets += Number(outcome.committed.touchedWallets || 0);
     }
-    observeHealthyBatch(pressured);
+    observeHealthyBatch(pressured, allowPrefetchGrowth);
     return Object.freeze({
       status: 'committed', runId: run.id, ranges: committed.length,
       fromBlock: committed[0].fromBlock, toBlock: committed.at(-1).toBlock,
@@ -278,6 +312,8 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
     runOnce,
     getStatus: () => Object.freeze({
       prefetch: effectivePrefetch, stableBatches, active: activeRun !== null,
+      liveLagBlocks: lastLiveLag?.toString() ?? null,
+      liveLagDeltaBlocks: liveLagDelta?.toString() ?? null, liveLagTrend,
       totals: Object.freeze({ ...totals }),
     }),
   });
