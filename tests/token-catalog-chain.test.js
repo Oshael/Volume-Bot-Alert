@@ -109,7 +109,38 @@ describe('token catalog chain identity', () => {
     assert.match(calls[0].sql, /ut\.chain = token_catalog\.chain/);
     assert.match(calls[1].sql, /SELECT id[\s\S]*WHERE chain = 'solana'/);
     assert.match(calls[1].sql, /WHERE tc\.id = claimed\.id/);
-    assert.match(calls[2].sql, /WHERE tc\.chain = 'solana'/);
+    assert.match(calls[2].sql, /WHERE catalog_candidate\.chain = 'solana'/);
+    assert.match(calls[2].sql, /ON pool_candidate\.chain = 'solana'/);
     assert.match(calls[3].sql, /WHERE chain = 'solana'/);
+  });
+
+  it('scopes catalog cleanup candidates and protections to Solana identities', async () => {
+    const calls = [];
+    await withCatalogQueries(async (sql, params) => {
+      calls.push({ sql, params });
+      return { rows: [], rowCount: 0 };
+    }, async () => {
+      await tokenCatalog.applyQuarantineCleanup({ quarantineRecheckMs: 60_000 });
+      await tokenCatalog.applySoftArchiveCleanup({
+        archiveLimit: 25,
+        softArchiveRecheckMs: 60_000,
+      });
+    });
+
+    assert.equal(calls.length, 2);
+    for (const { sql } of calls) {
+      assert.match(sql, /SELECT chain, address FROM user_tokens/);
+      assert.match(sql, /SELECT chain, address FROM user_starred_tokens/);
+      assert.match(sql, /SELECT chain, address FROM user_blocklist/);
+      assert.match(sql, /SELECT chain, address FROM token_catalog WHERE source = 'user-manual'/);
+      assert.match(sql, /WHERE tc\.chain = 'solana'/);
+      assert.match(sql, /protected\.chain = tc\.chain\s+AND protected\.address = tc\.address/);
+    }
+
+    assert.match(calls[1].sql, /SELECT tc\.chain, tc\.address/);
+    assert.match(
+      calls[1].sql,
+      /WHERE tc\.chain = candidate\.chain\s+AND tc\.address = candidate\.address/
+    );
   });
 });

@@ -2044,29 +2044,31 @@ async function applyQuarantineCleanup(options = {}) {
   const quarantineRecheckMs = Math.max(60 * 1000, Number(options.quarantineRecheckMs) || (6 * 60 * 60 * 1000));
 
   const quarantineQuery = `
-    WITH protected_addresses AS (
-      SELECT DISTINCT address FROM user_tokens
+    WITH protected_identities AS (
+      SELECT chain, address FROM user_tokens
       UNION
-      SELECT DISTINCT address FROM user_starred_tokens
+      SELECT chain, address FROM user_starred_tokens
       UNION
-      SELECT DISTINCT address FROM user_blocklist
+      SELECT chain, address FROM user_blocklist
       UNION
-      SELECT DISTINCT address FROM token_catalog WHERE source = 'user-manual'
+      SELECT chain, address FROM token_catalog WHERE source = 'user-manual'
     )
     UPDATE token_catalog tc
     SET eligible_for_monitoring = FALSE,
         monitor_priority = 'dormant',
         suppressed_reason = 'cleanup_quarantine',
         next_evaluation_at = NOW() + ($1 * INTERVAL '1 millisecond')
-    WHERE tc.source = 'dexscreener-discovery'
+    WHERE tc.chain = 'solana'
+      AND tc.source = 'dexscreener-discovery'
       AND tc.is_active_monitor_candidate = TRUE
       AND COALESCE(tc.last_mcap, 0) < 15000
       AND tc.eligible_for_monitoring = FALSE
       AND (tc.last_vol_24h IS NULL OR tc.last_vol_24h < 1000)
       AND NOT EXISTS (
         SELECT 1
-        FROM protected_addresses pa
-        WHERE pa.address = tc.address
+        FROM protected_identities protected
+        WHERE protected.chain = tc.chain
+          AND protected.address = tc.address
       )
     RETURNING tc.address, tc.source
   `;
@@ -2089,25 +2091,27 @@ async function applySoftArchiveCleanup(options = {}) {
   const softArchiveRecheckMs = Math.max(60 * 1000, Number(options.softArchiveRecheckMs) || (30 * 24 * 60 * 60 * 1000));
 
   const archiveQuery = `
-    WITH protected_addresses AS (
-      SELECT DISTINCT address FROM user_tokens
+    WITH protected_identities AS (
+      SELECT chain, address FROM user_tokens
       UNION
-      SELECT DISTINCT address FROM user_starred_tokens
+      SELECT chain, address FROM user_starred_tokens
       UNION
-      SELECT DISTINCT address FROM user_blocklist
+      SELECT chain, address FROM user_blocklist
       UNION
-      SELECT DISTINCT address FROM token_catalog WHERE source = 'user-manual'
+      SELECT chain, address FROM token_catalog WHERE source = 'user-manual'
     ),
-    candidate_addresses AS (
-      SELECT tc.address
+    candidate_identities AS (
+      SELECT tc.chain, tc.address
       FROM token_catalog tc
-      WHERE COALESCE(tc.last_mcap, 0) > 0
+      WHERE tc.chain = 'solana'
+        AND COALESCE(tc.last_mcap, 0) > 0
         AND COALESCE(tc.last_mcap, 0) < 15000
         AND COALESCE(tc.suppressed_reason, '') NOT IN ('cleanup_soft_archive', 'cleanup_quarantine')
         AND NOT EXISTS (
           SELECT 1
-          FROM protected_addresses pa
-          WHERE pa.address = tc.address
+          FROM protected_identities protected
+          WHERE protected.chain = tc.chain
+            AND protected.address = tc.address
         )
         AND (
           tc.eligible_for_monitoring = FALSE
@@ -2126,8 +2130,9 @@ async function applySoftArchiveCleanup(options = {}) {
         suppressed_reason = 'cleanup_soft_archive',
         next_evaluation_at = NOW() + ($1 * INTERVAL '1 millisecond'),
         metadata_updated_at = NOW()
-    FROM candidate_addresses ca
-    WHERE tc.address = ca.address
+    FROM candidate_identities candidate
+    WHERE tc.chain = candidate.chain
+      AND tc.address = candidate.address
     RETURNING tc.address, tc.source
   `;
 
