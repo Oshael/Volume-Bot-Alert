@@ -3,7 +3,7 @@ const { describe, it } = require('node:test');
 
 const {
   createRobinhoodHolderGlobalBackfillWorker,
-  __private: { normalizeOptions, runCampaignTick },
+  __private: { buildRuntime, normalizeOptions, runCampaignTick },
 } = require('../src/services/robinhood-holder-global-backfill-worker');
 const CUTOFF = '2026-08-10T00:00:00.000Z';
 function campaign(status, overrides = {}) {
@@ -77,5 +77,22 @@ describe('Robinhood holder global backfill worker', () => {
     await scheduled[0].callback();
     assert.equal(worker.getStatus().lastResult.status, 'completed');
     await worker.stop();
+  });
+
+  it('passes bounded address shard concurrency to the transfer reader', async () => {
+    const calls = [];
+    const reader = { assertChain: async () => {}, getSafeHead() {} };
+    await buildRuntime(normalizeOptions({
+      enabled: true, catalogCutoff: CUTOFF, addressShardConcurrency: 3,
+    }), {
+      env: { ROBINHOOD_RPC_URL: 'http://127.0.0.1:8547' },
+      rpcClientFactory: () => 'rpc-client',
+      lifecycleFactory: () => ({}), committerFactory: () => ({}),
+      ledgerFactory: () => ({}),
+      readerFactory: (input) => { calls.push(input); return reader; },
+      scannerFactory: () => ({}), attachFactory: () => ({}), database: 'database',
+    });
+
+    assert.deepEqual(calls, [{ rpcClient: 'rpc-client', addressShardConcurrency: 3 }]);
   });
 });

@@ -465,10 +465,12 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_HOLDER_GLOBAL_BACKFILL_AUTO_START: 'true',
       ROBINHOOD_HOLDER_GLOBAL_BACKFILL_CATALOG_CUTOFF: '2026-08-10T00:00:00Z',
       ROBINHOOD_HOLDER_GLOBAL_BACKFILL_PREFETCH: '99',
+      ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ADDRESS_SHARD_CONCURRENCY: '99',
     }, (config) => {
       assert.equal(config.robinhoodHolderGlobalBackfillWorker.enabled, true);
       assert.equal(config.robinhoodHolderGlobalBackfillWorker.autoStart, true);
       assert.equal(config.robinhoodHolderGlobalBackfillWorker.prefetch, 8);
+      assert.equal(config.robinhoodHolderGlobalBackfillWorker.addressShardConcurrency, 4);
     });
     withEnv({
       ROBINHOOD_RPC_URL: 'http://127.0.0.1:8547',

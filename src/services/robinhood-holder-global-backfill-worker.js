@@ -33,6 +33,9 @@ function normalizeOptions(input = {}) {
     ),
     rangeSize: boundedInteger(input.rangeSize, 250, 1, 5000, 'rangeSize'),
     prefetch: boundedInteger(input.prefetch, 1, 1, 8, 'prefetch'),
+    addressShardConcurrency: boundedInteger(
+      input.addressShardConcurrency, 1, 1, 4, 'addressShardConcurrency'
+    ),
     finalityBlocks: boundedInteger(input.finalityBlocks, 2000, 2000, 100_000, 'finalityBlocks'),
     attachWindow: boundedInteger(input.attachWindow, 10_000, 1, 19_999, 'attachWindow'),
     materializeBatchSize: boundedInteger(
@@ -55,7 +58,9 @@ async function buildRuntime(options, deps = {}) {
   const committer = (deps.committerFactory
     || createRobinhoodHolderGlobalBackfillCommitRepository)({ database });
   const ledger = (deps.ledgerFactory || createRobinhoodHolderLedgerRepository)({ database });
-  const reader = (deps.readerFactory || createRobinhoodHolderTransferReader)({ rpcClient });
+  const reader = (deps.readerFactory || createRobinhoodHolderTransferReader)({
+    rpcClient, addressShardConcurrency: options.addressShardConcurrency,
+  });
   await reader.assertChain();
   const scanner = (deps.scannerFactory || createRobinhoodHolderGlobalBackfillScanner)({
     lifecycleRepository: lifecycle, commitRepository: committer, reader,

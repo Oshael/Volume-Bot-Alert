@@ -1073,6 +1073,9 @@ module.exports = {
     prefetch: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_GLOBAL_BACKFILL_PREFETCH, 1, 1, 8
     ),
+    addressShardConcurrency: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ADDRESS_SHARD_CONCURRENCY, 1, 1, 4
+    ),
     finalityBlocks: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_GLOBAL_BACKFILL_FINALITY_BLOCKS, 2000, 2000, 100_000
     ),
