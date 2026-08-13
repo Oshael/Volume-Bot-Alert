@@ -6,7 +6,7 @@ import { sortBucketTokens } from '../../utils/token-table';
 import { fmtMockSol, fmtMockSolAmount, resolveMockTradeSolUsdcRate, resolveMockTradingPositionPnl } from '../../utils/mock-trading-display';
 import { resolveApiBase } from '../../services/api/base';
 import { buildTokenExplorerUrl, buildTokenIdentityKey, buildTokenMarketUrl, normalizeTokenChain, supportsConfiguredTradeTerminals, type TokenChain } from '../../utils/token-chain';
-import { resolveCoveredMetric, resolveTokenValuation, type TokenMetricCoverage } from '../../utils/token-valuation';
+import { resolveCompactTokenValuation, resolveCoveredMetric, resolveTokenValuation, type TokenMetricCoverage } from '../../utils/token-valuation';
 import { buildTokenChainBadge } from '../token-chain-badge';
 import { getTokenChartValuationLabel } from '../../utils/token-chart';
 
@@ -2087,9 +2087,10 @@ function renderRadarRemoveManualGlyph(
 
 function renderRadarSizeBlock(item: ManualTokenEntry, meteora: MeteoraEntry | undefined, meteoraMinPool: number) {
   const holders = resolveTokenHolderDisplay(item);
+  const valuation = resolveCompactTokenValuation(item);
   return `
     <dl class="radar-size">
-      <div class="radar-size-item"><dt>MC</dt><dd>${renderTokenTableValuation(item)}</dd></div>
+      <div class="radar-size-item"><dt>${valuation.label}</dt><dd>${renderTokenTableValuation(valuation)}</dd></div>
       <div class="radar-size-item"><dt>LP</dt><dd>${renderTotalLiquidityCell(item, meteora, meteoraMinPool)}</dd></div>
       <div class="radar-size-item"><dt>AGE</dt><dd class="radar-size-age ${getAgeToneClassFromCreatedAt(item.createdAt)}">${item.createdAt ? fmtAge(item.createdAt) : '-'}</dd></div>
       <div class="radar-size-item"><dt>HLD</dt><dd${holders.available ? '' : ' class="radar-size-empty"'} title="${escapeHtml(holders.title)}">${escapeHtml(holders.value)}</dd></div>
@@ -2828,12 +2829,10 @@ function renderTokenTableActions(options: {
   return `${quickAdd}${star}${block}${solanaOnly}`;
 }
 
-function renderTokenTableValuation(item: ManualTokenEntry) {
-  const valuation = resolveTokenValuation(item);
-  const prefix = valuation.type === 'fdv' ? 'FDV ' : '';
+function renderTokenTableValuation(valuation: ReturnType<typeof resolveCompactTokenValuation>) {
   const freshnessClass = valuation.freshness === 'stale' ? ' radar-valuation-stale' : '';
   const title = valuation.observedAt ? ` title="Observed at ${escapeHtml(valuation.observedAt)}"` : '';
-  return `<span class="radar-valuation${freshnessClass}"${title}>${prefix}${fmtMoney(valuation.value)}</span>`;
+  return `<span class="radar-valuation${freshnessClass}"${title}>${fmtMoney(valuation.value)}</span>`;
 }
 
 const X_SEARCH_MIN_FAVES = 1;

@@ -115,6 +115,14 @@ export function resolveTokenValuation(input: TokenValuationInput): ResolvedToken
   };
 }
 
+export function resolveCompactTokenValuation(input: TokenValuationInput) {
+  const valuation = resolveTokenValuation(input);
+  return {
+    ...valuation,
+    label: valuation.label === 'FDV' ? 'FDV' as const : 'MC' as const,
+  };
+}
+
 export function resolveCoveredMetric(
   value: number | null | undefined,
   coverage: TokenMetricCoverage | null | undefined,

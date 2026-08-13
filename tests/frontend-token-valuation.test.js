@@ -5,6 +5,7 @@ let resolveCoveredMetric;
 let buildTokenChartViewportKey;
 let fillTokenChartCandleGaps;
 let normalizeTokenChartCandle;
+let resolveCompactTokenValuation;
 let resolveTokenValuation;
 let resolveWorkspaceMarketSnapshotMs;
 let selectWorkspaceSnapshotValue;
@@ -12,6 +13,7 @@ let selectWorkspaceSnapshotValue;
 before(async () => {
   ({
     resolveCoveredMetric,
+    resolveCompactTokenValuation,
     resolveTokenValuation,
     resolveWorkspaceMarketSnapshotMs,
     selectWorkspaceSnapshotValue,
@@ -52,6 +54,24 @@ describe('frontend token valuation presentation', () => {
         observedAt: '2026-07-15T18:00:00.000Z', freshness: 'stale',
       },
     );
+  });
+
+  it('keeps compact valuation labels separate from their numeric values', () => {
+    assert.deepEqual(resolveCompactTokenValuation({
+      mcap: null,
+      fdv: 500_000,
+      valuationType: 'fdv',
+    }), {
+      label: 'FDV', value: 500_000, type: 'fdv',
+      observedAt: null, freshness: 'unknown',
+    });
+    assert.deepEqual(resolveCompactTokenValuation({
+      mcap: 125_000,
+      fdv: null,
+    }), {
+      label: 'MC', value: 125_000, type: 'market-cap',
+      observedAt: null, freshness: 'unknown',
+    });
   });
 
   it('does not manufacture a valuation when neither metric exists', () => {
