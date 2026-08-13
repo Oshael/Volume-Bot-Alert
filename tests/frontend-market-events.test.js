@@ -59,6 +59,20 @@ describe('frontend realtime market events', () => {
     assert.equal(marketEvents.normalizeMarketBucketUpdate(event({ candle: null })), null);
   });
 
+  it('coalesces only updates for the same token source bucket', () => {
+    const current = marketEvents.normalizeMarketBucketUpdate(event());
+    const newerSequence = marketEvents.normalizeMarketBucketUpdate(event({
+      sequence: 'robinhood:000000000000000080690002:000000000000000080690001:000000000000000000000001',
+    }));
+    const previousBucket = marketEvents.normalizeMarketBucketUpdate(event({
+      bucketTs: '2026-07-15T11:59:00.000Z',
+      candle: { ...event().candle, bucketTs: '2026-07-15T11:59:00.000Z' },
+    }));
+
+    assert.equal(marketEvents.getMarketBucketFrameKey(current), marketEvents.getMarketBucketFrameKey(newerSequence));
+    assert.notEqual(marketEvents.getMarketBucketFrameKey(current), marketEvents.getMarketBucketFrameKey(previousBucket));
+  });
+
   it('normalizes Robinhood trades and rejects malformed identities', () => {
     const trade = {
       type: 'market:trade', chain: 'robinhood', address: EVM.toUpperCase(),

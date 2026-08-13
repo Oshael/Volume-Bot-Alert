@@ -177,6 +177,10 @@ export function normalizeMarketBucketUpdate(value: unknown): MarketBucketUpdateE
   } as MarketBucketUpdateEvent;
 }
 
+export function getMarketBucketFrameKey(event: MarketBucketUpdateEvent) {
+  return `${event.chain}:${event.address}:${event.bucketTs}`;
+}
+
 export function normalizeMarketTradeUpdate(value: unknown): MarketTradeUpdateEvent | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const source = value as Record<string, unknown>;

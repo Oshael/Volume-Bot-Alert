@@ -107,7 +107,7 @@ import {
   saveDismissedRecent,
 } from '../utils/bar-storage';
 import { bindSocketLifecycle, disconnectSocket, replaceWorkspaceMarketSubscriptions, subscribeMarketChart, subscribePumpMint, unsubscribeMarketChart, unsubscribePumpMint, type MarketBucketUpdateEvent } from '../services/socket/client';
-import { buildLiveTokenChartCandle, buildRealtimeTokenMarketPatch, shouldReplaceMarketCandleClose, type RealtimeActivityState, type RealtimeTokenMarketPatch } from '../services/socket/market-events';
+import { buildLiveTokenChartCandle, buildRealtimeTokenMarketPatch, getMarketBucketFrameKey, shouldReplaceMarketCandleClose, type RealtimeActivityState, type RealtimeTokenMarketPatch } from '../services/socket/market-events';
 import { clearChartAlertHistory, publishRealtimeChartAlert } from '../services/charts/chart-alert-history';
 import {
   normalizeInviteCode,
@@ -1390,6 +1390,8 @@ export function createAppController(): AppController {
   let sparklineRefreshQueuedCaller = '';
   const expandedSparklineRequests = new Set<string>();
   const deferredExpandedSparklineRenderRegions = new Set<AppRenderRegion>();
+  const pendingLiveMarketBuckets = new Map<string, MarketBucketUpdateEvent>();
+  let pendingLiveMarketFrame = 0;
   let preferredExpandedSparklineGranularityMinutes = EXPANDED_SPARKLINE_DEFAULT_GRANULARITY_MINUTES;
   let historyBootstrapRefreshInFlight = false;
   let historyBootstrapInFlightRequestKey = '';
@@ -8709,11 +8711,10 @@ export function createAppController(): AppController {
       const nextCache = { ...state.data.sparklineByAddress };
       writeWorkspaceSparklineCacheEntry(nextCache, compactUpdate.identity, compactUpdate.entry);
       state.data.sparklineByAddress = nextCache;
-      emit('monitored', 'manual', 'recent', 'old-week', 'top-performers');
     }
 
     const update = buildLiveExpandedSparklineEntry(payload);
-    if (!update) return;
+    if (!update) return Boolean(compactUpdate);
     state.data.expandedSparklineByAddress = {
       ...state.data.expandedSparklineByAddress,
       [update.cacheKey]: update.entry,
@@ -8724,6 +8725,7 @@ export function createAppController(): AppController {
         detail: { chain: payload.chain, address: update.entry.address, candle: latestCandle },
       }));
     }
+    return Boolean(compactUpdate);
   }
 
   function applyLiveTokenMarketUpdate(payload: MarketBucketUpdateEvent) {
@@ -8753,9 +8755,52 @@ export function createAppController(): AppController {
       _liveMarketSequence: payload.sequence,
     });
     state.runtime.monitoredRevision += 1;
-    syncWorkspaceMarketSubscriptions();
-    emit('monitored', 'manual', 'recent', 'old-week', 'top-performers');
     return true;
+  }
+
+  function addLiveMarketRenderRegions(payload: MarketBucketUpdateEvent, regions: Set<AppRenderRegion>) {
+    const identityKey = createLegacyCompatibleTokenIdentity(payload.chain, payload.address).key;
+    if (
+      state.data.monitoredTokenIdentities.includes(identityKey)
+      || state.data.pinnedMonitoredTokenIdentities.includes(identityKey)
+    ) regions.add('monitored');
+    if (state.data.manualTokenIdentities.includes(identityKey)) regions.add('manual');
+    if (state.data.recentTokenIdentities.includes(identityKey)) regions.add('recent');
+    if (state.data.oldWeekTokenIdentities.includes(identityKey)) regions.add('old-week');
+    if (state.data.topPerformerIdentities.includes(identityKey)) regions.add('top-performers');
+  }
+
+  function flushLiveMarketBuckets() {
+    pendingLiveMarketFrame = 0;
+    const payloads = [...pendingLiveMarketBuckets.values()];
+    pendingLiveMarketBuckets.clear();
+    if (state.runtime.mode !== 'active' || state.session.status !== 'authenticated') {
+      return;
+    }
+
+    const dirtyRegions = new Set<AppRenderRegion>();
+    for (const payload of payloads) {
+      const tokenChanged = applyLiveTokenMarketUpdate(payload);
+      const sparklineChanged = applyLiveMarketBucketUpdate(payload);
+      if (tokenChanged || sparklineChanged) {
+        addLiveMarketRenderRegions(payload, dirtyRegions);
+      }
+    }
+    if (state.ui.expandedSparklineAddress) {
+      for (const region of dirtyRegions) deferredExpandedSparklineRenderRegions.add(region);
+    } else if (dirtyRegions.size > 0) {
+      emit(...dirtyRegions);
+    }
+  }
+
+  function queueLiveMarketBucket(payload: MarketBucketUpdateEvent) {
+    pendingLiveMarketBuckets.set(getMarketBucketFrameKey(payload), payload);
+    if (pendingLiveMarketFrame) return;
+    if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+      flushLiveMarketBuckets();
+      return;
+    }
+    pendingLiveMarketFrame = window.requestAnimationFrame(flushLiveMarketBuckets);
   }
 
   function isExpandedSparklineCacheFresh(entry?: TokenSparklineEntry | null, now = Date.now()) {
@@ -10279,8 +10324,7 @@ export function createAppController(): AppController {
         if (state.runtime.mode !== 'active' || state.session.status !== 'authenticated') {
           return;
         }
-        applyLiveTokenMarketUpdate(payload);
-        applyLiveMarketBucketUpdate(payload);
+        queueLiveMarketBucket(payload);
       },
     });
   }
@@ -13942,7 +13986,6 @@ export function createAppController(): AppController {
       }
 
       setExpandedSparklineLoading(address, null, safeGranularity, chain);
-      emit('overlay');
       void refreshExpandedSparkline(address, undefined, safeGranularity, undefined, chain);
     },
     setExpandedSparklineTimeZone(timeZone: string) {

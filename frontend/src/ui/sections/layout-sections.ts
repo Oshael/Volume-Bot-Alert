@@ -111,8 +111,6 @@ const EXPANDED_TOKEN_AGE_MONTH_DAYS = 30;
 const EXPANDED_TOKEN_AGE_YEAR_DAYS = 365;
 const CHART_ALERT_MARKER_SIDE_OFFSET_PX = 36;
 const CHART_ALERT_MARKER_EDGE_PADDING_PX = 28;
-const CHART_ALERT_MARKER_SYNC_FRAMES = 8;
-const CHART_ALERT_MARKER_POINTER_SYNC_FRAMES = 2;
 const CHART_ALERT_MARKER_INTERACTION_IDLE_MS = 140;
 const CHART_ALERT_TOOLTIP_WIDTH_PX = 300;
 const CHART_ALERT_TOOLTIP_ESTIMATED_HEIGHT_PX = 210;
@@ -2441,19 +2439,18 @@ function getExpandedChartTimeZoneLabel(option: typeof EXPANDED_CHART_TIME_ZONE_O
   return `${option.label} (${offset.replace('GMT', 'UTC').replace('-', '−')})`;
 }
 
-function withExpandedChartFutureTimePoints(
+function getExpandedChartFutureTimePoints(
   data: CandlestickData<UTCTimestamp>[],
   granularityMinutes: number,
-): Array<CandlestickData<UTCTimestamp> | WhitespaceData<UTCTimestamp>> {
+): WhitespaceData<UTCTimestamp>[] {
   const latest = data[data.length - 1];
   if (!latest) {
-    return data;
+    return [];
   }
   const granularitySeconds = getExpandedChartGranularitySeconds(granularityMinutes);
-  const futurePoints = Array.from({ length: getExpandedChartFuturePointCount(granularityMinutes) }, (_, index) => ({
+  return Array.from({ length: getExpandedChartFuturePointCount(granularityMinutes) }, (_, index) => ({
     time: (Number(latest.time) + (granularitySeconds * (index + 1))) as UTCTimestamp,
   }));
-  return [...data, ...futurePoints];
 }
 
 function upsertExpandedChartCandle(data: CandlestickData<UTCTimestamp>[], candle: CandlestickData<UTCTimestamp>) {
@@ -3405,8 +3402,6 @@ function mountExpandedChartAlertOverlay(
   container.append(overlay, tooltip, recap);
 
   let raf = 0;
-  let syncRaf = 0;
-  let syncFramesRemaining = 0;
   let expiryTimer = 0;
   let interactionTimer = 0;
   let overlayHiddenForInteraction = false;
@@ -3649,34 +3644,12 @@ function mountExpandedChartAlertOverlay(
     raf = window.requestAnimationFrame(render);
   }
 
-  function renderNow() {
-    if (raf) {
-      window.cancelAnimationFrame(raf);
-      raf = 0;
-    }
-    render();
-  }
-
-  function scheduleRenderBurst(frameCount = CHART_ALERT_MARKER_SYNC_FRAMES) {
+  function scheduleVisibleRender() {
     if (disposed) {
       return;
     }
     showOverlayAfterInteraction();
-    syncFramesRemaining = Math.max(syncFramesRemaining, frameCount);
-    renderNow();
-    if (syncRaf) {
-      return;
-    }
-    const tick = () => {
-      syncRaf = 0;
-      if (disposed || syncFramesRemaining <= 0) {
-        return;
-      }
-      syncFramesRemaining -= 1;
-      render();
-      syncRaf = window.requestAnimationFrame(tick);
-    };
-    syncRaf = window.requestAnimationFrame(tick);
+    scheduleRender();
   }
 
   const scheduleRenderFrame = () => scheduleRender();
@@ -3712,7 +3685,7 @@ function mountExpandedChartAlertOverlay(
     debug.count('pointerUps');
     window.clearTimeout(interactionTimer);
     interactionTimer = 0;
-    scheduleRenderBurst(CHART_ALERT_MARKER_POINTER_SYNC_FRAMES);
+    scheduleVisibleRender();
   };
 
   const onChartAlert = (event: Event) => {
@@ -3720,7 +3693,7 @@ function mountExpandedChartAlertOverlay(
     if (detail?.chain !== chain || detail?.address !== address) {
       return;
     }
-    scheduleRenderBurst();
+    scheduleVisibleRender();
     scheduleExpiry();
   };
   const onDocumentPointerDown = (event: PointerEvent) => {
@@ -3766,7 +3739,7 @@ function mountExpandedChartAlertOverlay(
         if (disposed) return;
         debug.markTiming('fetchAlertMarkersMs', performance.now() - alertFetchStartedAt);
         mergeChartAlertHistory(payload);
-        scheduleRenderBurst();
+        scheduleVisibleRender();
         scheduleExpiry();
       })
       .catch((error) => {
@@ -3786,7 +3759,6 @@ function mountExpandedChartAlertOverlay(
     cleanup() {
       disposed = true;
       window.cancelAnimationFrame(raf);
-      window.cancelAnimationFrame(syncRaf);
       window.clearTimeout(expiryTimer);
       expandedPanel?.classList.remove('is-showing-alert-recap');
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(onVisibleLogicalRangeChange);
@@ -3825,7 +3797,6 @@ async function mountExpandedCandlestickChart(
     granularityMinutes,
   );
   const useMacTrackpadDrag = isMacPlatform();
-  const chartData = withExpandedChartFutureTimePoints(data, granularityMinutes);
   const debug = createExpandedChartDebugSession({
     address: chartIdentityKey,
     granularityMinutes,
@@ -3841,7 +3812,7 @@ async function mountExpandedCandlestickChart(
   destroyExpandedCandlestickChart();
   const mountId = expandedCandlestickChartMountId;
   const importStartedAt = performance.now();
-  const { CandlestickSeries, ColorType, CrosshairMode, LineStyle, createChart } = await import('lightweight-charts');
+  const { CandlestickSeries, ColorType, CrosshairMode, LineSeries, LineStyle, createChart } = await import('lightweight-charts');
   debug.markTiming('importLightweightChartsMs', performance.now() - importStartedAt);
   if (mountId !== expandedCandlestickChartMountId || !container.isConnected) {
     debug.cleanup();
@@ -3905,8 +3876,16 @@ async function mountExpandedCandlestickChart(
     wickUpColor: '#18c79a',
     wickDownColor: '#ff4f67',
   });
+  const futureTimeSeries = chart.addSeries(LineSeries, {
+    color: 'transparent',
+    crosshairMarkerVisible: false,
+    lastValueVisible: false,
+    lineVisible: false,
+    priceLineVisible: false,
+  });
   const setDataStartedAt = performance.now();
-  candleSeries.setData(chartData);
+  candleSeries.setData(data);
+  futureTimeSeries.setData(getExpandedChartFutureTimePoints(data, granularityMinutes));
   debug.markTiming('setDataMs', performance.now() - setDataStartedAt);
   const latest = data[data.length - 1];
   const resolveReferenceValue = () => {
@@ -4013,8 +3992,16 @@ async function mountExpandedCandlestickChart(
       low: normalized.low,
       close: normalized.close,
     } satisfies CandlestickData<UTCTimestamp>;
+    const previousLatestTime = Number(data[data.length - 1]?.time || 0);
     upsertExpandedChartCandle(data, liveCandle);
-    candleSeries.setData(withExpandedChartFutureTimePoints(data, granularityMinutes));
+    if (Number(liveCandle.time) >= previousLatestTime) {
+      candleSeries.update(liveCandle);
+      if (Number(liveCandle.time) > previousLatestTime) {
+        futureTimeSeries.setData(getExpandedChartFutureTimePoints(data, granularityMinutes));
+      }
+    } else {
+      candleSeries.setData(data);
+    }
     debug.count('liveUpdates');
     chartAlertOverlay.upsertCandle(liveCandle);
     if (legend) {
@@ -4362,6 +4349,11 @@ function bindExpandedSparklineModal(
       event.preventDefault();
       event.stopPropagation();
       captureExpandedCandlestickChartViewport();
+      section.querySelectorAll<HTMLButtonElement>('[data-action="set-expanded-sparkline-granularity"]').forEach((button) => {
+        const active = button === element;
+        button.classList.toggle('is-active', active);
+        button.setAttribute('aria-pressed', String(active));
+      });
       controller.setExpandedSparklineGranularity(Number(element.dataset.granularityMinutes));
     });
   });
