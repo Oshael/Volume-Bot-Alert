@@ -1034,7 +1034,13 @@ priorizada usa dois em paralelo por default, configurável de 1 a 4 por
 a versão do cursor live sem avançá-lo e ativa a coorte no mesmo commit. Capturas
 com o escopo anterior falham no CAS e repetem; eventos da barreira em diante ficam
 pendentes até materialização e handoff. Materialização exige checkpoint canônico
-com pelo menos 2.000 blocos de finality. O rollback operacional é desligar apenas
+com pelo menos 2.000 blocos de finality. Depois dela, o próprio worker global
+valida uma vez o checkpoint comum e promove em lote `backfilling -> shadow`, até
+`ROBINHOOD_HOLDER_GLOBAL_BACKFILL_MATERIALIZE_BATCH_SIZE` tokens por tick. O lote
+remove somente overlap pendente anterior à barreira; eventos posteriores continuam
+no journal para o live aplicar. A campanha considera `shadow` ou `live` concluído;
+a reconciliação Blockscout continua gradualmente como auditoria e promoção
+`shadow -> live`, sem bloquear o término da campanha. O rollback operacional é desligar apenas
 `ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ENABLED`, preservando campanha, balances e
 cursores para retomada; após attach, nunca promova manualmente baseline incompleto.
 Se receipts canônicos ainda reproduzem saldo negativo, somente esse token é

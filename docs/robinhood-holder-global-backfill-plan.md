@@ -145,7 +145,8 @@ Sequencia:
 6. a captura live passa a guardar eventos da coorte a partir da barreira;
 7. o scanner historico termina ate `barrier_block - 1`;
 8. materializar os token states com count/checkpoint exatos;
-9. liberar os tokens para o handoff atual e depois para reconciliacao.
+9. validar uma vez o checkpoint comum e fazer o handoff em lote para `shadow`;
+10. manter a reconciliacao externa gradual para promocao `shadow -> live`.
 
 Enquanto a campanha estiver anexada, o executor per-token deve excluir seus
 membros. O journal posterior a barreira permanece pendente ate o state chegar a
@@ -161,8 +162,11 @@ Um token so sai da campanha quando:
 - o baseline global chegou exatamente a barreira;
 - o checkpoint foi validado;
 - o state foi criado com count e cursor coerentes;
-- o handoff removeu overlap pendente, se houver;
-- reconciliacao promoveu o token normalmente.
+- o handoff em lote removeu overlap pendente anterior à barreira, se houver;
+- o state chegou a `shadow` ou já foi promovido a `live`.
+
+A reconciliacao Blockscout nao bloqueia a conclusao da campanha: ela permanece
+assíncrona como auditoria externa e promove `shadow -> live` pelo fluxo normal.
 
 Tokens excluidos/invalidos continuam usando o fallback ja existente e nunca
 aparecem como `ledger_live`.
