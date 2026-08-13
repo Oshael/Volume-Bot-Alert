@@ -1274,26 +1274,76 @@ async function insertMarketObservations(client, rows, cursor, options = {}) {
        FROM protocol_activity
        GROUP BY chain, token_address, bucket_ts
      ),
+     aggregate_primary_markets AS MATERIALIZED (
+       SELECT target.chain, target.token_address, target.bucket_ts,
+         selected.valuation_protocol, selected.valuation_market_key
+       FROM touched_token_buckets target
+       INNER JOIN LATERAL (
+         SELECT stored.valuation_protocol, stored.valuation_market_key
+         FROM robinhood_market_buckets_agg stored
+         WHERE stored.chain = target.chain
+           AND stored.token_address = target.token_address
+           AND stored.granularity_minutes = 5
+           AND stored.bucket_ts <= target.bucket_ts
+           AND stored.valuation_market_key IS NOT NULL
+         ORDER BY stored.bucket_ts DESC
+         LIMIT 1
+       ) selected ON TRUE
+     ),
+     current_primary_markets AS MATERIALIZED (
+       SELECT DISTINCT ON (current.chain, current.token_address, current.bucket_ts)
+         current.chain, current.token_address, current.bucket_ts,
+         current.protocol AS valuation_protocol,
+         current.market_key AS valuation_market_key
+       FROM all_token_buckets current
+       ORDER BY current.chain, current.token_address, current.bucket_ts,
+         current.volume_usd DESC, current.last_observed_at DESC NULLS LAST,
+         current.protocol, current.market_key
+     ),
+     primary_markets AS MATERIALIZED (
+       SELECT target.chain, target.token_address, target.bucket_ts,
+         COALESCE(aggregate_market.valuation_protocol, fallback_market.valuation_protocol)
+           AS valuation_protocol,
+         COALESCE(aggregate_market.valuation_market_key, fallback_market.valuation_market_key)
+           AS valuation_market_key
+       FROM touched_token_buckets target
+       LEFT JOIN aggregate_primary_markets aggregate_market
+         USING (chain, token_address, bucket_ts)
+       LEFT JOIN current_primary_markets fallback_market
+         USING (chain, token_address, bucket_ts)
+     ),
      live_buckets AS (
        SELECT bucket.chain, bucket.token_address, bucket.bucket_ts,
          (array_agg(bucket.open_price_usd ORDER BY bucket.first_block_number,
-           bucket.first_log_index, bucket.protocol, bucket.market_key))[1] AS open_price_usd,
-         MAX(bucket.high_price_usd) AS high_price_usd,
-         MIN(bucket.low_price_usd) AS low_price_usd,
+           bucket.first_log_index, bucket.protocol, bucket.market_key) FILTER (WHERE
+             bucket.protocol = valuation_market.valuation_protocol
+             AND bucket.market_key = valuation_market.valuation_market_key))[1] AS open_price_usd,
+         MAX(bucket.high_price_usd) FILTER (WHERE
+           bucket.protocol = valuation_market.valuation_protocol
+           AND bucket.market_key = valuation_market.valuation_market_key) AS high_price_usd,
+         MIN(bucket.low_price_usd) FILTER (WHERE
+           bucket.protocol = valuation_market.valuation_protocol
+           AND bucket.market_key = valuation_market.valuation_market_key) AS low_price_usd,
          (array_agg(bucket.close_price_usd ORDER BY bucket.last_block_number DESC,
-           bucket.last_log_index DESC, bucket.protocol, bucket.market_key))[1] AS close_price_usd,
+           bucket.last_log_index DESC, bucket.protocol, bucket.market_key) FILTER (WHERE
+             bucket.protocol = valuation_market.valuation_protocol
+             AND bucket.market_key = valuation_market.valuation_market_key))[1] AS close_price_usd,
          (array_agg(bucket.open_fdv_usd ORDER BY bucket.first_block_number,
-           bucket.first_log_index, bucket.protocol, bucket.market_key))[1] AS open_fdv_usd,
-         MAX(bucket.high_fdv_usd) AS high_fdv_usd,
-         MIN(bucket.low_fdv_usd) AS low_fdv_usd,
+           bucket.first_log_index, bucket.protocol, bucket.market_key) FILTER (WHERE
+             bucket.protocol = valuation_market.valuation_protocol
+             AND bucket.market_key = valuation_market.valuation_market_key))[1] AS open_fdv_usd,
+         MAX(bucket.high_fdv_usd) FILTER (WHERE
+           bucket.protocol = valuation_market.valuation_protocol
+           AND bucket.market_key = valuation_market.valuation_market_key) AS high_fdv_usd,
+         MIN(bucket.low_fdv_usd) FILTER (WHERE
+           bucket.protocol = valuation_market.valuation_protocol
+           AND bucket.market_key = valuation_market.valuation_market_key) AS low_fdv_usd,
          (array_agg(bucket.close_fdv_usd ORDER BY bucket.last_block_number DESC,
-           bucket.last_log_index DESC, bucket.protocol, bucket.market_key))[1] AS close_fdv_usd,
-         (array_agg(bucket.protocol ORDER BY bucket.last_block_number DESC,
-           bucket.last_log_index DESC, bucket.protocol, bucket.market_key))[1]
-           AS valuation_protocol,
-         (array_agg(bucket.market_key ORDER BY bucket.last_block_number DESC,
-           bucket.last_log_index DESC, bucket.protocol, bucket.market_key))[1]
-           AS valuation_market_key,
+           bucket.last_log_index DESC, bucket.protocol, bucket.market_key) FILTER (WHERE
+             bucket.protocol = valuation_market.valuation_protocol
+             AND bucket.market_key = valuation_market.valuation_market_key))[1] AS close_fdv_usd,
+         valuation_market.valuation_protocol,
+         valuation_market.valuation_market_key,
          SUM(bucket.volume_usd) AS volume_usd,
          SUM(bucket.swaps)::bigint AS swaps,
          SUM(bucket.buys)::bigint AS buys,
@@ -1305,11 +1355,17 @@ async function insertMarketObservations(client, rows, cursor, options = {}) {
            bucket.last_log_index DESC, bucket.protocol, bucket.market_key))[1] AS last_log_index,
          diagnostics.protocols
        FROM all_token_buckets bucket
+       INNER JOIN primary_markets valuation_market
+         ON valuation_market.chain = bucket.chain
+        AND valuation_market.token_address = bucket.token_address
+        AND valuation_market.bucket_ts = bucket.bucket_ts
        INNER JOIN protocol_diagnostics diagnostics
          ON diagnostics.chain = bucket.chain
         AND diagnostics.token_address = bucket.token_address
         AND diagnostics.bucket_ts = bucket.bucket_ts
-       GROUP BY bucket.chain, bucket.token_address, bucket.bucket_ts, diagnostics.protocols
+       GROUP BY bucket.chain, bucket.token_address, bucket.bucket_ts,
+         valuation_market.valuation_protocol, valuation_market.valuation_market_key,
+         diagnostics.protocols
      ),
      live_bucket_payloads AS (
        SELECT bucket.*, canonical.current_volume_5m_usd,

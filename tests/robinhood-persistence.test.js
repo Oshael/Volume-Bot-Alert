@@ -711,6 +711,18 @@ describe('Robinhood persistence repository', () => {
     assert.match(fake.calls[2].sql, /close_liquidity_status = CASE/);
     assert.match(fake.calls[2].sql, /all_token_buckets AS/);
     assert.match(fake.calls[2].sql, /jsonb_object_agg\(protocol/);
+    assert.match(fake.calls[2].sql, /aggregate_primary_markets AS MATERIALIZED/);
+    assert.match(fake.calls[2].sql, /current_primary_markets AS MATERIALIZED/);
+    assert.match(fake.calls[2].sql, /primary_markets AS MATERIALIZED/);
+    assert.match(fake.calls[2].sql, /FROM robinhood_market_buckets_agg stored/);
+    assert.match(fake.calls[2].sql, /stored\.granularity_minutes = 5/);
+    assert.match(fake.calls[2].sql, /ORDER BY stored\.bucket_ts DESC/);
+    assert.match(fake.calls[2].sql,
+      /COALESCE\(aggregate_market\.valuation_market_key, fallback_market\.valuation_market_key\)/);
+    assert.match(fake.calls[2].sql,
+      /MAX\(bucket\.high_fdv_usd\) FILTER \(WHERE[\s\S]*valuation_market\.valuation_market_key/);
+    assert.match(fake.calls[2].sql,
+      /SUM\(bucket\.volume_usd\) AS volume_usd/);
     assert.match(fake.calls[2].sql, /canonical_volume_5m AS/);
     assert.match(fake.calls[2].sql, /AS valuation_protocol/);
     assert.match(fake.calls[2].sql, /'valuationMarketKey', valuation_market_key/);
