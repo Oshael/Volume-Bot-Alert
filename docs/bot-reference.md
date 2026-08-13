@@ -1228,8 +1228,10 @@ Depois do catch-up:
   fase coarse inclui buckets `1h` antigos que acabaram de ser regenerados pela
   fase hourly da mesma execução;
 - o modo “Tudo” de 1h troca para agregados corrigidos apenas com reads habilitados
-  e cobertura verificada; fora desse intervalo preserva o histórico `1h` legado
-  como fallback e mantém a amostragem limitada;
+  e cobertura verificada; fora desse intervalo, o fallback `1h` recalcula o OHLC
+  pela mesma pool dominante nas 24h encerradas no candle, mantém atividade token-wide
+  e omite a vela se essa pool não negociou. A cobertura verificada escolhe a fonte
+  otimizada, mas seu vencimento não permite mais misturar pools na valoração;
 - o gráfico expandido densifica somente para apresentação os intervalos internos
   sem candle entre 1m e 1h: os pontos sintéticos interpolam do último fechamento
   real até a abertura do próximo candle, com `open` conectado ao `close` anterior;
