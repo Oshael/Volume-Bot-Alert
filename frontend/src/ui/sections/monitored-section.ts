@@ -1,6 +1,6 @@
 import type { AppController } from '../../state/app-controller';
 import { getChainCapabilityNotice, getMockTradingPositionView, getMonitoredTokens, getTokenSparkline, isTokenStarred, type AppState, type ManualTokenEntry, type MeteoraEntry } from '../../state/app-state';
-import { bindCompactSearch, bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindSparklineHover, bindSparklineRangeControls, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTickerPeerMcapLabel, buildTradeTerminalMenuElement, buildXSearchUrl, fmtAge, fmtAgeFromDurationMs, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderManualQuickAddAction, renderSparklineFigure, renderSparklineRangeControl, renderTokenLaunchpadBadge, renderTotalLiquidityCell, resolveTokenAgeMs, resolveTokenHolderDisplay } from './shared';
+import { bindCompactSearch, bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindSparklineHover, bindSparklineRangeControls, bindTokenActions, bindTokenImagePreview, buildTickerPeerMcapLabel, buildTradeTerminalMenuElement, buildXSearchUrl, fmtAge, fmtAgeFromDurationMs, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderManualQuickAddAction, renderSparklineFigure, renderSparklineRangeControl, renderTokenLaunchpadBadge, renderTotalLiquidityCell, resolveTokenAgeMs, resolveTokenHolderDisplay } from './shared';
 import { escapeHtml, sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 import { fmtMockSol, resolveLiveMockSolUsdcRate, resolveMockTradingPositionPnl } from '../../utils/mock-trading-display';
 import { resolveMonitoredTableRows } from '../../utils/token-table';
@@ -112,22 +112,44 @@ export function patchMonitoredSection(slot: ParentNode, state: AppState, control
   if (currentRows.length !== view.pageItems.length || rowsByIdentity.size !== currentRows.length) {
     return false;
   }
+  const scrollAnchor = getMonitoredScrollAnchor(list, currentRows);
 
   const patchedRows: HTMLElement[] = [];
   for (const item of view.pageItems) {
     const identity = buildTokenIdentityKey(item.chain || 'solana', item.address);
-    const currentRow = rowsByIdentity.get(identity);
-    if (!currentRow || !patchMonitoredRow(currentRow, item, state, controller)) {
-      return false;
+    let currentRow = rowsByIdentity.get(identity);
+    if (!currentRow) return false;
+    if (!patchMonitoredRow(currentRow, item, state, controller)) {
+      const replacement = buildMonitoredRowForState(item, state);
+      const currentIndex = currentRows.indexOf(currentRow);
+      currentRow.replaceWith(replacement);
+      bindMonitoredRowControls(replacement, state, controller);
+      if (scrollAnchor?.row === currentRow) scrollAnchor.row = replacement;
+      if (currentIndex >= 0) currentRows[currentIndex] = replacement;
+      currentRow = replacement;
     }
     patchedRows.push(currentRow);
   }
 
   const orderChanged = patchedRows.some((row, index) => currentRows[index] !== row);
-  if (orderChanged) {
-    list.append(...patchedRows);
-  }
+  if (orderChanged) list.append(...patchedRows);
+  restoreMonitoredScrollAnchor(list, scrollAnchor);
   return true;
+}
+
+function getMonitoredScrollAnchor(list: HTMLElement, rows: HTMLElement[]) {
+  const listTop = list.getBoundingClientRect().top;
+  const row = rows.find((candidate) => candidate.getBoundingClientRect().bottom > listTop) || null;
+  return row ? { row, offset: row.getBoundingClientRect().top - listTop } : null;
+}
+
+function restoreMonitoredScrollAnchor(
+  list: HTMLElement,
+  anchor: { row: HTMLElement; offset: number } | null,
+) {
+  if (!anchor?.row.isConnected) return;
+  const nextOffset = anchor.row.getBoundingClientRect().top - list.getBoundingClientRect().top;
+  list.scrollTop += nextOffset - anchor.offset;
 }
 
 type MonitoredSectionView = ReturnType<typeof resolveMonitoredSectionView>;
@@ -443,8 +465,8 @@ function patchMonitoredRow(
   ].join(',')).forEach((button) => {
     button.disabled = state.ui.busy;
   });
-  currentMeta.replaceChildren(...buildMonitoredMetaMetrics(item));
-  currentSide.replaceChildren(...buildMonitoredSide(item).childNodes);
+  patchMonitoredMetaMetrics(currentMeta, item);
+  patchMonitoredSide(currentSide, item);
 
   const currentMockLine = current.querySelector<HTMLElement>('.mock-trading-line');
   if (currentMockLine && mockTradingPosition) {
@@ -467,12 +489,57 @@ function patchMonitoredRow(
       item,
       getTokenSparkline(state, item.address, chain),
     );
-    if (currentChart.innerHTML === nextChart.innerHTML) return true;
-    currentChart.replaceChildren(...nextChart.childNodes);
+    patchMonitoredMiniChartFigure(currentChart, nextChart);
     bindSparklineHover(currentChart, state.data.sparklineByAddress, { controller });
   }
 
   return true;
+}
+
+function patchMonitoredMetaMetrics(current: HTMLElement, item: ManualTokenEntry) {
+  const currentMetrics = [...current.children];
+  const nextMetrics = buildMonitoredMetaMetrics(item);
+  if (currentMetrics.length !== nextMetrics.length) {
+    current.replaceChildren(...nextMetrics);
+    return;
+  }
+  nextMetrics.forEach((nextMetric, index) => {
+    const currentMetric = currentMetrics[index];
+    if (!currentMetric.isEqualNode(nextMetric)) currentMetric.replaceWith(nextMetric);
+  });
+}
+
+function patchMonitoredSide(current: HTMLElement, item: ManualTokenEntry) {
+  const next = buildMonitoredSide(item);
+  const currentParts = [...current.children];
+  const nextParts = [...next.children];
+  if (currentParts.length !== nextParts.length) {
+    current.replaceChildren(...nextParts);
+    return;
+  }
+  nextParts.forEach((nextPart, index) => {
+    const currentPart = currentParts[index];
+    if (!currentPart.isEqualNode(nextPart)) currentPart.replaceWith(nextPart);
+  });
+}
+
+function patchMonitoredMiniChartFigure(current: HTMLElement, next: HTMLElement) {
+  if (current.innerHTML === next.innerHTML) return;
+  const currentWrap = current.querySelector<HTMLElement>(':scope > .sparkline-wrap');
+  const nextWrap = next.querySelector<HTMLElement>(':scope > .sparkline-wrap');
+  if (!currentWrap || !nextWrap) {
+    current.replaceChildren(...next.childNodes);
+    return;
+  }
+  currentWrap.className = nextWrap.className;
+  for (const name of ['data-chain', 'data-address', 'data-sparkline-key', 'data-sparkline-summary']) {
+    const value = nextWrap.getAttribute(name);
+    if (value == null) currentWrap.removeAttribute(name);
+    else currentWrap.setAttribute(name, value);
+  }
+  const currentSvg = currentWrap.querySelector(':scope > svg');
+  const nextSvg = nextWrap.querySelector(':scope > svg');
+  if (currentSvg && nextSvg && !currentSvg.isEqualNode(nextSvg)) currentSvg.replaceWith(nextSvg);
 }
 
 function buildMonitoredStaticKey(
@@ -530,18 +597,21 @@ function bindMonitoredSectionControls(
   }
   bindMonitoredCollapseToggle(section, controller);
   bindMonitoredSearchInput(searchInput, controller);
+  bindMonitoredRowControls(section, state, controller);
+  bindSparklineRangeControls(section, controller);
+  bindMonitoredSortControls(section, controller);
+  bindPagedMonitoredControls(section, controller);
+  bindMonitoredTickerPeerPanelClose(section);
+  bindMonitoredPinControls(section, state, controller);
+  bindMonitoredFilters(section, controller, view);
+}
+
+function bindMonitoredRowControls(section: ParentNode, state: AppState, controller: AppController) {
   bindTokenActions(section, controller);
   bindCopyButtons(section);
   bindTokenImagePreview(section);
-  bindTopEdgePageScrollBridge(section.querySelector<HTMLElement>('.monitored-list'));
   bindSparklineHover(section, state.data.sparklineByAddress, { controller });
   bindMonitoredSparklineQuickRanges(section, controller);
-  bindSparklineRangeControls(section, controller);
-  bindMonitoredTickerPeerPanelClose(section);
-  bindMonitoredSortControls(section, controller);
-  bindPagedMonitoredControls(section, controller);
-  bindMonitoredPinControls(section, state, controller);
-  bindMonitoredFilters(section, controller, view);
 }
 
 function bindMonitoredSparklineQuickRanges(section: ParentNode, controller: AppController) {

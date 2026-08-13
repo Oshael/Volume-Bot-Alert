@@ -109,6 +109,11 @@ const SPARKLINE_RANGE_PRESET_BY_HOURS = new Map(
 );
 const sparklineExpandBoundElements = new WeakSet<HTMLElement>();
 const sparklineHoverBoundElements = new WeakSet<HTMLElement>();
+const sparklineHoverState = new WeakMap<HTMLElement, {
+  entry: TokenSparklineEntry;
+  series: number[];
+  displaySeries: number[];
+}>();
 const tokenImagePreviewBoundRoots = new WeakSet<EventTarget>();
 let tokenImagePreviewTarget: HTMLElement | null = null;
 let tokenImagePreviewTimer: ReturnType<typeof window.setTimeout> | null = null;
@@ -1119,6 +1124,11 @@ export function bindSparklineHover(
       variant: wrap.dataset.sparklineVariant === 'alert' ? 'alert' : 'default',
       preserveTerminalScaleShift: isFreshSparklineTerminal(entry),
     });
+    if (entry && series.length >= 2 && displaySeries.length >= 2) {
+      sparklineHoverState.set(wrap, { entry, series, displaySeries });
+    } else {
+      sparklineHoverState.delete(wrap);
+    }
     bindExpandableSparkline(
       wrap,
       address,
@@ -1134,36 +1144,32 @@ export function bindSparklineHover(
 
     const { hover, line, dot, tooltip } = hoverParts;
 
-    let activeIndex = -1;
-
     const hide = () => {
-      activeIndex = -1;
       closeTokenSparklineRangeMenu(wrap);
       hover.classList.remove('active');
     };
 
     const update = (clientX: number) => {
+      const state = sparklineHoverState.get(wrap);
+      if (!state) return;
+      const { entry: currentEntry, series: currentSeries, displaySeries: currentDisplaySeries } = state;
       const rect = wrap.getBoundingClientRect();
       if (!(rect.width > 0)) {
         return;
       }
 
       const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-      const index = Math.max(0, Math.min(series.length - 1, Math.round(ratio * (series.length - 1))));
-      if (index === activeIndex) {
-        return;
-      }
+      const index = Math.max(0, Math.min(currentSeries.length - 1, Math.round(ratio * (currentSeries.length - 1))));
 
-      activeIndex = index;
-      const point = resolveSparklineHoverPoint(displaySeries, index, wrap);
+      const point = resolveSparklineHoverPoint(currentDisplaySeries, index, wrap);
       const tooltipLeft = Math.max(10, Math.min(rect.width - 10, point.x));
 
       line.style.left = `${point.x}px`;
       dot.style.left = `${point.x}px`;
       dot.style.top = `${point.y}px`;
       tooltip.style.left = `${tooltipLeft}px`;
-      const hoverValue = displaySeries[index] ?? series[index];
-      tooltip.textContent = `${getTokenChartValuationLabel(entry)} ${fmtMoney(hoverValue)} · ~ ${formatApproxSparklineTime(entry, index, series.length)}`;
+      const hoverValue = currentDisplaySeries[index] ?? currentSeries[index];
+      tooltip.textContent = `${getTokenChartValuationLabel(currentEntry)} ${fmtMoney(hoverValue)} · ~ ${formatApproxSparklineTime(currentEntry, index, currentSeries.length)}`;
       hover.classList.add('active');
     };
 
