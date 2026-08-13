@@ -73,6 +73,30 @@ describe('frontend realtime market events', () => {
     assert.notEqual(marketEvents.getMarketBucketFrameKey(current), marketEvents.getMarketBucketFrameKey(previousBucket));
   });
 
+  it('updates ordered candle history without rebuilding its order', () => {
+    const candles = [
+      { bucketTs: '2026-07-15T11:58:00.000Z', close: 1 },
+      { bucketTs: '2026-07-15T12:00:00.000Z', close: 3 },
+    ];
+    const merge = (_existing, incoming) => incoming;
+    const inserted = marketEvents.upsertOrderedMarketCandle(
+      candles,
+      { bucketTs: '2026-07-15T11:59:00.000Z', close: 2 },
+      3,
+      merge,
+    );
+    const appended = marketEvents.upsertOrderedMarketCandle(
+      inserted,
+      { bucketTs: '2026-07-15T12:01:00.000Z', close: 4 },
+      3,
+      merge,
+    );
+
+    assert.deepEqual(inserted.map((item) => item.close), [1, 2, 3]);
+    assert.deepEqual(appended.map((item) => item.close), [2, 3, 4]);
+    assert.deepEqual(candles.map((item) => item.close), [1, 3]);
+  });
+
   it('normalizes Robinhood trades and rejects malformed identities', () => {
     const trade = {
       type: 'market:trade', chain: 'robinhood', address: EVM.toUpperCase(),

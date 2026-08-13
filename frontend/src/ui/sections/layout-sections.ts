@@ -2985,7 +2985,45 @@ function bindExpandedMacTrackpadDrag(
     scrollPosition: number;
     priceRange: { from: number; to: number } | null;
     direction: 'pending' | 'time' | 'price';
+    ending: boolean;
   } | null = null;
+  let dragFrame = 0;
+  let pendingDragPoint: { clientX: number; clientY: number } | null = null;
+
+  const applyPendingDrag = () => {
+    dragFrame = 0;
+    const point = pendingDragPoint;
+    pendingDragPoint = null;
+    if (!drag || !point) return;
+
+    const deltaX = point.clientX - drag.startX;
+    const deltaY = point.clientY - drag.startY;
+    if (drag.direction === 'pending') {
+      if (Math.max(Math.abs(deltaX), Math.abs(deltaY)) < 2) {
+        if (drag.ending) drag = null;
+        return;
+      }
+      drag.direction = Math.abs(deltaX) >= Math.abs(deltaY) ? 'time' : 'price';
+    }
+    if (drag.direction === 'price') {
+      if (drag.priceRange && drag.priceRange.to > drag.priceRange.from) {
+        const priceDelta = (deltaY / Math.max(1, container.clientHeight)) * (drag.priceRange.to - drag.priceRange.from);
+        priceScale.setAutoScale(false);
+        priceScale.setVisibleRange({
+          from: drag.priceRange.from + priceDelta,
+          to: drag.priceRange.to + priceDelta,
+        });
+      }
+    } else {
+      const visibleRange = chart.timeScale().getVisibleLogicalRange();
+      const plotWidth = Math.max(1, container.clientWidth - priceScale.width());
+      if (visibleRange && Number(visibleRange.to) > Number(visibleRange.from)) {
+        const barsPerPixel = (Number(visibleRange.to) - Number(visibleRange.from)) / plotWidth;
+        chart.timeScale().scrollToPosition(drag.scrollPosition - (deltaX * barsPerPixel), false);
+      }
+    }
+    if (drag.ending) drag = null;
+  };
 
   const onPointerDown = (event: PointerEvent) => {
     if (event.pointerType !== 'mouse' || event.button !== 0) {
@@ -2999,6 +3037,9 @@ function bindExpandedMacTrackpadDrag(
     if (event.clientX >= rect.right - priceScale.width()) {
       return;
     }
+    if (dragFrame) window.cancelAnimationFrame(dragFrame);
+    dragFrame = 0;
+    pendingDragPoint = null;
     drag = {
       pointerId: event.pointerId,
       startX: event.clientX,
@@ -3006,6 +3047,7 @@ function bindExpandedMacTrackpadDrag(
       scrollPosition: chart.timeScale().scrollPosition(),
       priceRange: priceScale.getVisibleRange(),
       direction: 'pending',
+      ending: false,
     };
   };
 
@@ -3013,50 +3055,35 @@ function bindExpandedMacTrackpadDrag(
     if (!drag || event.pointerId !== drag.pointerId || !(event.buttons & 1)) {
       return;
     }
-    const deltaX = event.clientX - drag.startX;
-    const deltaY = event.clientY - drag.startY;
-    if (drag.direction === 'pending') {
-      if (Math.max(Math.abs(deltaX), Math.abs(deltaY)) < 2) {
-        return;
-      }
-      drag.direction = Math.abs(deltaX) >= Math.abs(deltaY) ? 'time' : 'price';
-    }
-    if (drag.direction === 'price') {
-      if (!drag.priceRange || !(drag.priceRange.to > drag.priceRange.from)) {
-        return;
-      }
-      const priceDelta = (deltaY / Math.max(1, container.clientHeight)) * (drag.priceRange.to - drag.priceRange.from);
-      priceScale.setAutoScale(false);
-      priceScale.setVisibleRange({
-        from: drag.priceRange.from + priceDelta,
-        to: drag.priceRange.to + priceDelta,
-      });
-      return;
-    }
-    const visibleRange = chart.timeScale().getVisibleLogicalRange();
-    const plotWidth = Math.max(1, container.clientWidth - priceScale.width());
-    if (!visibleRange || !(Number(visibleRange.to) > Number(visibleRange.from))) {
-      return;
-    }
-    const barsPerPixel = (Number(visibleRange.to) - Number(visibleRange.from)) / plotWidth;
-    chart.timeScale().scrollToPosition(drag.scrollPosition - (deltaX * barsPerPixel), false);
+    pendingDragPoint = { clientX: event.clientX, clientY: event.clientY };
+    if (!dragFrame) dragFrame = window.requestAnimationFrame(applyPendingDrag);
   };
 
   const endDrag = (event: PointerEvent) => {
     if (drag?.pointerId === event.pointerId) {
-      drag = null;
+      if (pendingDragPoint) drag.ending = true;
+      else drag = null;
     }
+  };
+
+  const cancelDrag = (event: PointerEvent) => {
+    if (drag?.pointerId !== event.pointerId) return;
+    if (dragFrame) window.cancelAnimationFrame(dragFrame);
+    dragFrame = 0;
+    pendingDragPoint = null;
+    drag = null;
   };
 
   container.addEventListener('pointerdown', onPointerDown, true);
   document.addEventListener('pointermove', onPointerMove, true);
   document.addEventListener('pointerup', endDrag, true);
-  document.addEventListener('pointercancel', endDrag, true);
+  document.addEventListener('pointercancel', cancelDrag, true);
   return () => {
+    if (dragFrame) window.cancelAnimationFrame(dragFrame);
     container.removeEventListener('pointerdown', onPointerDown, true);
     document.removeEventListener('pointermove', onPointerMove, true);
     document.removeEventListener('pointerup', endDrag, true);
-    document.removeEventListener('pointercancel', endDrag, true);
+    document.removeEventListener('pointercancel', cancelDrag, true);
   };
 }
 

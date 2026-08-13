@@ -107,7 +107,7 @@ import {
   saveDismissedRecent,
 } from '../utils/bar-storage';
 import { bindSocketLifecycle, disconnectSocket, replaceWorkspaceMarketSubscriptions, subscribeMarketChart, subscribePumpMint, unsubscribeMarketChart, unsubscribePumpMint, type MarketBucketUpdateEvent } from '../services/socket/client';
-import { buildLiveTokenChartCandle, buildRealtimeTokenMarketPatch, getMarketBucketFrameKey, shouldReplaceMarketCandleClose, type RealtimeActivityState, type RealtimeTokenMarketPatch } from '../services/socket/market-events';
+import { buildLiveTokenChartCandle, buildRealtimeTokenMarketPatch, getMarketBucketFrameKey, shouldReplaceMarketCandleClose, upsertOrderedMarketCandle, type RealtimeActivityState, type RealtimeTokenMarketPatch } from '../services/socket/market-events';
 import { clearChartAlertHistory, publishRealtimeChartAlert } from '../services/charts/chart-alert-history';
 import {
   normalizeInviteCode,
@@ -8586,20 +8586,12 @@ export function createAppController(): AppController {
       return null;
     }
 
-    const nextCandles = candles.slice();
-    const existingIndex = nextCandles.findIndex((candle) => candle.bucketTs === bucketTs);
-    const merged = mergeLiveCandle(existingIndex >= 0 ? nextCandles[existingIndex] : null, incoming, granularityMinutes);
-    if (!merged) {
-      return null;
-    }
-
-    if (existingIndex >= 0) {
-      nextCandles[existingIndex] = merged;
-    } else {
-      nextCandles.push(merged);
-    }
-    nextCandles.sort((left, right) => Date.parse(left.bucketTs) - Date.parse(right.bucketTs));
-    return nextCandles.slice(-maxCandles);
+    return upsertOrderedMarketCandle(
+      candles,
+      { ...incoming, bucketTs },
+      maxCandles,
+      (existing, next) => mergeLiveCandle(existing, next, granularityMinutes),
+    );
   }
 
   function getLiveExpandedSparklineContext(payload: MarketBucketUpdateEvent) {

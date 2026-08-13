@@ -181,6 +181,43 @@ export function getMarketBucketFrameKey(event: MarketBucketUpdateEvent) {
   return `${event.chain}:${event.address}:${event.bucketTs}`;
 }
 
+export function upsertOrderedMarketCandle<T extends { bucketTs: string }>(
+  candles: readonly T[],
+  incoming: T,
+  maxCandles: number,
+  merge: (existing: T | null, incoming: T) => T | null,
+) {
+  const incomingMs = Date.parse(incoming.bucketTs);
+  if (!Number.isFinite(incomingMs)) return null;
+
+  let low = 0;
+  let high = candles.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (Date.parse(candles[middle].bucketTs) < incomingMs) low = middle + 1;
+    else high = middle;
+  }
+
+  const found = Date.parse(candles[low]?.bucketTs || '') === incomingMs;
+  const merged = merge(found ? candles[low] : null, incoming);
+  if (!merged) return null;
+
+  const limit = Math.max(1, Math.floor(maxCandles) || 1);
+  if (!found && low === candles.length) {
+    const nextCandles = candles.slice(Math.max(0, candles.length - limit + 1));
+    nextCandles.push(merged);
+    return nextCandles;
+  }
+
+  const nextCandles = candles.slice();
+  if (found) nextCandles[low] = merged;
+  else nextCandles.splice(low, 0, merged);
+  if (nextCandles.length > limit) {
+    nextCandles.splice(0, nextCandles.length - limit);
+  }
+  return nextCandles;
+}
+
 export function normalizeMarketTradeUpdate(value: unknown): MarketTradeUpdateEvent | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const source = value as Record<string, unknown>;
