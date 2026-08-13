@@ -1,6 +1,7 @@
 const DEFAULT_DIAGNOSIS_DURATION_MS = 15_000;
 const MAX_DIAGNOSIS_DURATION_MS = 60_000;
 const MAX_RECORDED_EVENTS = 120;
+const DIAGNOSIS_STORAGE_KEY = 'trendscope:monitored-interaction-diagnosis';
 
 type InteractionZone = 'liquidity' | 'sparkline-range' | 'terminal' | 'other';
 
@@ -44,11 +45,49 @@ export type MonitoredInteractionDiagnosis = {
   events: InteractionMutationEvent[];
 };
 
+type MonitoredInteractionDiagnosisRun = {
+  startedAt: string;
+  finishesAt: string;
+  durationMs: number;
+};
+
+let activeDiagnosis: Promise<void> | null = null;
+let activeDiagnosisRun: MonitoredInteractionDiagnosisRun | null = null;
+
 declare global {
   interface Window {
     trendscopeInteractionDebug?: {
       diagnose: (options?: { durationMs?: number }) => Promise<MonitoredInteractionDiagnosis>;
+      start: (options?: { durationMs?: number }) => MonitoredInteractionDiagnosisRun;
+      dump: () => MonitoredInteractionDiagnosis | null;
+      clear: () => void;
+      isRunning: () => boolean;
     };
+  }
+}
+
+function readStoredDiagnosis() {
+  try {
+    const raw = window.localStorage.getItem(DIAGNOSIS_STORAGE_KEY);
+    return raw ? JSON.parse(raw) as MonitoredInteractionDiagnosis : null;
+  } catch {
+    return null;
+  }
+}
+
+function storeDiagnosis(report: MonitoredInteractionDiagnosis) {
+  try {
+    window.localStorage.setItem(DIAGNOSIS_STORAGE_KEY, JSON.stringify(report));
+  } catch {
+    console.warn('[Monitored interaction diagnosis] Could not persist the report.');
+  }
+}
+
+function clearStoredDiagnosis() {
+  try {
+    window.localStorage.removeItem(DIAGNOSIS_STORAGE_KEY);
+  } catch {
+    // Ignore local persistence failures.
   }
 }
 
@@ -223,9 +262,44 @@ async function diagnoseMonitoredInteractions(
   return report;
 }
 
+function startMonitoredInteractionDiagnosis(
+  options: { durationMs?: number } = {},
+): MonitoredInteractionDiagnosisRun {
+  if (activeDiagnosis) {
+    throw new Error(`A Monitored interaction diagnosis is already running until ${activeDiagnosisRun?.finishesAt}.`);
+  }
+  if (!document.querySelector('.monitored-list')) {
+    throw new Error('Monitored list not found. Open the Monitored panel before starting the diagnosis.');
+  }
+
+  const durationMs = normalizedDuration(options.durationMs);
+  const startedAtMs = Date.now();
+  const run = {
+    startedAt: new Date(startedAtMs).toISOString(),
+    finishesAt: new Date(startedAtMs + durationMs).toISOString(),
+    durationMs,
+  };
+  activeDiagnosisRun = run;
+  clearStoredDiagnosis();
+  activeDiagnosis = diagnoseMonitoredInteractions({ durationMs })
+    .then(storeDiagnosis)
+    .catch((error: unknown) => {
+      console.error('[Monitored interaction diagnosis] Failed.', error);
+    })
+    .finally(() => {
+      activeDiagnosis = null;
+      activeDiagnosisRun = null;
+    });
+  return run;
+}
+
 export function installMonitoredInteractionDebugConsole() {
   if (typeof window === 'undefined') return;
   window.trendscopeInteractionDebug = {
     diagnose: diagnoseMonitoredInteractions,
+    start: startMonitoredInteractionDiagnosis,
+    dump: readStoredDiagnosis,
+    clear: clearStoredDiagnosis,
+    isRunning: () => activeDiagnosis != null,
   };
 }
