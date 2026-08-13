@@ -21,6 +21,7 @@ const SOURCE_COLUMNS = `bucket.token_address, bucket.protocol, bucket.market_key
   bucket.close_price_usd, bucket.open_fdv_usd, bucket.high_fdv_usd,
   bucket.low_fdv_usd, bucket.close_fdv_usd, bucket.volume_usd,
   bucket.swaps, bucket.buys, bucket.sells, bucket.transactions,
+  bucket.last_observed_at,
   bucket.first_block_number, bucket.first_log_index,
   bucket.last_block_number, bucket.last_log_index`;
 const ALL_AVAILABLE_CANDLE_COLUMNS = `token_address, bucket_ts, granularity_minutes,

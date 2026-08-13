@@ -42,6 +42,7 @@ describe('Robinhood native market history reader', () => {
     assert.match(__private.LEGACY_HISTORY_SQL, /market_activity AS MATERIALIZED/);
     assert.match(__private.LEGACY_HISTORY_SQL, /INTERVAL '24 hours'/);
     assert.match(__private.LEGACY_HISTORY_SQL, /activity\.volume_24h_usd DESC/);
+    assert.match(__private.LEGACY_HISTORY_SQL, /bucket\.transactions,\s+bucket\.last_observed_at/);
     assert.match(__private.LEGACY_HISTORY_SQL, /SUM\(source\.volume_usd\)/);
     assert.match(__private.LEGACY_HISTORY_SQL,
       /COUNT\(DISTINCT \(source\.protocol, source\.market_key\)\)/);
