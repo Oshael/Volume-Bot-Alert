@@ -147,6 +147,8 @@ const LEGACY_HISTORY_SQL = `WITH requested AS MATERIALIZED (
     AND bucket.bucket_ts >= date_trunc('hour', $2::timestamptz) - INTERVAL '24 hours'
     AND bucket.bucket_ts < $3::timestamptz
     AND ($4::int >= 60 OR bucket.bucket_ts < $5::timestamptz)
+    AND ($7::timestamptz IS NULL OR bucket.bucket_ts < $7
+      OR bucket.bucket_ts >= $8::timestamptz - INTERVAL '24 hours')
   UNION ALL
   SELECT ${SOURCE_COLUMNS}, 1 AS source_granularity_minutes
   FROM robinhood_market_buckets_1m bucket
@@ -159,6 +161,8 @@ const LEGACY_HISTORY_SQL = `WITH requested AS MATERIALIZED (
       $4::int * INTERVAL '1 minute', $2::timestamptz, TIMESTAMPTZ '1970-01-01')
         - INTERVAL '24 hours'
     AND bucket.bucket_ts < $3::timestamptz
+    AND ($7::timestamptz IS NULL OR bucket.bucket_ts < $7
+      OR bucket.bucket_ts >= $8::timestamptz - INTERVAL '24 hours')
 ), normalized AS (
   SELECT source_rows.*,
     GREATEST($4::int, source_granularity_minutes) AS output_granularity_minutes,

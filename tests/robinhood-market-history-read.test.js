@@ -35,6 +35,9 @@ describe('Robinhood native market history reader', () => {
     assert.match(__private.LEGACY_HISTORY_SQL, /GREATEST\(\$4::int, source_granularity_minutes\)/);
     assert.match(__private.LEGACY_HISTORY_SQL,
       /ROW_NUMBER\(\) OVER \(PARTITION BY token_address ORDER BY bucket_ts DESC\)/);
+    assert.equal((__private.LEGACY_HISTORY_SQL.match(
+      /\$7::timestamptz IS NULL OR bucket\.bucket_ts < \$7\s+OR bucket\.bucket_ts >= \$8::timestamptz - INTERVAL '24 hours'/g,
+    ) || []).length, 2);
     assert.doesNotMatch(__private.LEGACY_HISTORY_SQL, /bucket\.\*/);
   });
 
