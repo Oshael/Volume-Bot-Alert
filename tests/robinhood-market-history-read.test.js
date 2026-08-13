@@ -38,13 +38,36 @@ describe('Robinhood native market history reader', () => {
     assert.doesNotMatch(__private.LEGACY_HISTORY_SQL, /bucket\.\*/);
   });
 
-  it('aggregates token-wide activity and deterministic OHLC ordering', () => {
-    assert.match(__private.LEGACY_HISTORY_SQL, /SUM\(volume_usd\)/);
-    assert.match(__private.LEGACY_HISTORY_SQL, /COUNT\(DISTINCT \(protocol, market_key\)\)/);
+  it('filters legacy OHLC by the 24h dominant pool and keeps activity token-wide', () => {
+    assert.match(__private.LEGACY_HISTORY_SQL, /market_activity AS MATERIALIZED/);
+    assert.match(__private.LEGACY_HISTORY_SQL, /INTERVAL '24 hours'/);
+    assert.match(__private.LEGACY_HISTORY_SQL, /activity\.volume_24h_usd DESC/);
+    assert.match(__private.LEGACY_HISTORY_SQL, /SUM\(source\.volume_usd\)/);
     assert.match(__private.LEGACY_HISTORY_SQL,
-      /open_fdv_usd ORDER BY bucket_ts, first_block_number,[\s\S]*protocol, market_key/);
+      /COUNT\(DISTINCT \(source\.protocol, source\.market_key\)\)/);
     assert.match(__private.LEGACY_HISTORY_SQL,
-      /close_fdv_usd ORDER BY bucket_ts DESC, last_block_number DESC,[\s\S]*protocol, market_key/);
+      /source\.open_fdv_usd ORDER BY source\.bucket_ts,[\s\S]*FILTER \(WHERE[\s\S]*valuation\.valuation_market_key/);
+    assert.match(__private.LEGACY_HISTORY_SQL,
+      /MAX\(source\.high_fdv_usd\) FILTER \(WHERE[\s\S]*valuation\.valuation_market_key/);
+    assert.match(__private.LEGACY_HISTORY_SQL,
+      /MIN\(source\.low_fdv_usd\) FILTER \(WHERE[\s\S]*valuation\.valuation_market_key/);
+    assert.match(__private.LEGACY_HISTORY_SQL, /HAVING BOOL_OR/);
+  });
+
+  it('applies the same dominant-pool guard to sampled hourly fallback paths', () => {
+    for (const sql of [
+      __private.ALL_AVAILABLE_HISTORY_SQL,
+      __private.VERIFIED_ALL_AVAILABLE_HISTORY_SQL,
+    ]) {
+      assert.match(sql, /market_activity AS MATERIALIZED/);
+      assert.match(sql, /activity\.volume_24h_usd DESC/);
+      assert.match(sql,
+        /MAX\(source\.high_fdv_usd\) FILTER \(WHERE[\s\S]*valuation\.valuation_market_key/);
+      assert.match(sql, /SUM\(source\.volume_usd\)/);
+      assert.match(sql, /HAVING BOOL_OR/);
+    }
+    assert.match(__private.VERIFIED_ALL_AVAILABLE_HISTORY_SQL,
+      /WHERE \(bucket_ts < \$4::timestamptz OR bucket_ts >= \$5::timestamptz\)/);
   });
 
   it('reads exact stored aggregate resolutions without regrouping raw buckets', () => {
@@ -438,7 +461,7 @@ describe('Robinhood native market history reader', () => {
     assert.match(calls[0].sql, /robinhood_market_buckets_agg/);
     assert.match(calls[1].sql, /robinhood_market_buckets_1m/);
     assert.match(calls[1].sql,
-      /\$7::timestamptz IS NULL OR bucket\.bucket_ts < \$7 OR bucket\.bucket_ts >= \$8/);
+      /\$7::timestamptz IS NULL OR output_bucket_ts < \$7 OR output_bucket_ts >= \$8/);
     assert.deepEqual(calls[1].params.slice(6), [
       new Date('2026-07-15T00:00:00.000Z'),
       new Date('2026-07-16T00:00:00.000Z'),

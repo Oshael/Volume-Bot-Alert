@@ -143,10 +143,9 @@ const LEGACY_HISTORY_SQL = `WITH requested AS MATERIALIZED (
   INNER JOIN requested ON requested.token_address = bucket.token_address
   WHERE bucket.chain = 'robinhood'
     AND bucket.protocol IN ('uniswap-v2', 'uniswap-v3', 'uniswap-v4')
-    AND bucket.bucket_ts >= date_trunc('hour', $2::timestamptz)
+    AND bucket.bucket_ts >= date_trunc('hour', $2::timestamptz) - INTERVAL '24 hours'
     AND bucket.bucket_ts < $3::timestamptz
     AND ($4::int >= 60 OR bucket.bucket_ts < $5::timestamptz)
-    AND ($7::timestamptz IS NULL OR bucket.bucket_ts < $7 OR bucket.bucket_ts >= $8)
   UNION ALL
   SELECT ${SOURCE_COLUMNS}, 1 AS source_granularity_minutes
   FROM robinhood_market_buckets_1m bucket
@@ -157,8 +156,8 @@ const LEGACY_HISTORY_SQL = `WITH requested AS MATERIALIZED (
     AND bucket.bucket_ts >= $5::timestamptz
     AND bucket.bucket_ts >= date_bin(
       $4::int * INTERVAL '1 minute', $2::timestamptz, TIMESTAMPTZ '1970-01-01')
+        - INTERVAL '24 hours'
     AND bucket.bucket_ts < $3::timestamptz
-    AND ($7::timestamptz IS NULL OR bucket.bucket_ts < $7 OR bucket.bucket_ts >= $8)
 ), normalized AS (
   SELECT source_rows.*,
     GREATEST($4::int, source_granularity_minutes) AS output_granularity_minutes,
@@ -167,30 +166,102 @@ const LEGACY_HISTORY_SQL = `WITH requested AS MATERIALIZED (
       bucket_ts, TIMESTAMPTZ '1970-01-01'
     ) AS output_bucket_ts
   FROM source_rows
-), candles AS (
-  SELECT token_address, output_bucket_ts AS bucket_ts,
-    output_granularity_minutes AS granularity_minutes,
-    MIN(source_granularity_minutes) AS source_granularity_minutes,
-    (array_agg(open_fdv_usd ORDER BY bucket_ts, first_block_number,
-      first_log_index, protocol, market_key))[1] AS open_fdv_usd,
-    MAX(high_fdv_usd) AS high_fdv_usd,
-    MIN(low_fdv_usd) AS low_fdv_usd,
-    (array_agg(close_fdv_usd ORDER BY bucket_ts DESC, last_block_number DESC,
-      last_log_index DESC, protocol, market_key))[1] AS close_fdv_usd,
-    (array_agg(open_price_usd ORDER BY bucket_ts, first_block_number,
-      first_log_index, protocol, market_key))[1] AS open_price_usd,
-    MAX(high_price_usd) AS high_price_usd,
-    MIN(low_price_usd) AS low_price_usd,
-    (array_agg(close_price_usd ORDER BY bucket_ts DESC, last_block_number DESC,
-      last_log_index DESC, protocol, market_key))[1] AS close_price_usd,
-    SUM(volume_usd) AS volume_usd,
-    SUM(swaps)::bigint AS swaps, SUM(buys)::bigint AS buys,
-    SUM(sells)::bigint AS sells,
-    SUM(transactions)::bigint AS transaction_contributions,
-    COUNT(DISTINCT (protocol, market_key))::int AS market_count,
-    array_agg(DISTINCT protocol ORDER BY protocol) AS protocols
+), targets AS MATERIALIZED (
+  SELECT DISTINCT token_address, output_bucket_ts, output_granularity_minutes,
+    source_granularity_minutes
   FROM normalized
-  GROUP BY token_address, output_bucket_ts, output_granularity_minutes
+  WHERE output_bucket_ts >= date_bin(
+      output_granularity_minutes * INTERVAL '1 minute',
+      $2::timestamptz, TIMESTAMPTZ '1970-01-01')
+    AND ($7::timestamptz IS NULL OR output_bucket_ts < $7 OR output_bucket_ts >= $8)
+), market_activity AS MATERIALIZED (
+  SELECT target.token_address, target.output_bucket_ts,
+    target.output_granularity_minutes, target.source_granularity_minutes,
+    history.protocol, history.market_key,
+    SUM(history.volume_usd) AS volume_24h_usd,
+    MAX(history.last_observed_at) AS last_observed_at
+  FROM targets target
+  INNER JOIN normalized history
+    ON history.token_address = target.token_address
+   AND history.bucket_ts >= target.output_bucket_ts
+     + (target.output_granularity_minutes * INTERVAL '1 minute') - INTERVAL '24 hours'
+   AND history.bucket_ts < target.output_bucket_ts
+     + (target.output_granularity_minutes * INTERVAL '1 minute')
+  GROUP BY target.token_address, target.output_bucket_ts,
+    target.output_granularity_minutes, target.source_granularity_minutes,
+    history.protocol, history.market_key
+), valuation_markets AS MATERIALIZED (
+  SELECT DISTINCT ON (
+    activity.token_address, activity.output_bucket_ts,
+    activity.output_granularity_minutes, activity.source_granularity_minutes
+  ) activity.token_address, activity.output_bucket_ts,
+    activity.output_granularity_minutes, activity.source_granularity_minutes,
+    activity.protocol AS valuation_protocol,
+    activity.market_key AS valuation_market_key
+  FROM market_activity activity
+  ORDER BY activity.token_address, activity.output_bucket_ts,
+    activity.output_granularity_minutes, activity.source_granularity_minutes,
+    activity.volume_24h_usd DESC, activity.last_observed_at DESC NULLS LAST,
+    activity.protocol, activity.market_key
+), candles AS (
+  SELECT target.token_address, target.output_bucket_ts AS bucket_ts,
+    target.output_granularity_minutes AS granularity_minutes,
+    target.source_granularity_minutes,
+    (array_agg(source.open_fdv_usd ORDER BY source.bucket_ts,
+      source.first_block_number, source.first_log_index,
+      source.protocol, source.market_key) FILTER (WHERE
+        source.protocol = valuation.valuation_protocol
+        AND source.market_key = valuation.valuation_market_key))[1] AS open_fdv_usd,
+    MAX(source.high_fdv_usd) FILTER (WHERE
+      source.protocol = valuation.valuation_protocol
+      AND source.market_key = valuation.valuation_market_key) AS high_fdv_usd,
+    MIN(source.low_fdv_usd) FILTER (WHERE
+      source.protocol = valuation.valuation_protocol
+      AND source.market_key = valuation.valuation_market_key) AS low_fdv_usd,
+    (array_agg(source.close_fdv_usd ORDER BY source.bucket_ts DESC,
+      source.last_block_number DESC, source.last_log_index DESC,
+      source.protocol, source.market_key) FILTER (WHERE
+        source.protocol = valuation.valuation_protocol
+        AND source.market_key = valuation.valuation_market_key))[1] AS close_fdv_usd,
+    (array_agg(source.open_price_usd ORDER BY source.bucket_ts,
+      source.first_block_number, source.first_log_index,
+      source.protocol, source.market_key) FILTER (WHERE
+        source.protocol = valuation.valuation_protocol
+        AND source.market_key = valuation.valuation_market_key))[1] AS open_price_usd,
+    MAX(source.high_price_usd) FILTER (WHERE
+      source.protocol = valuation.valuation_protocol
+      AND source.market_key = valuation.valuation_market_key) AS high_price_usd,
+    MIN(source.low_price_usd) FILTER (WHERE
+      source.protocol = valuation.valuation_protocol
+      AND source.market_key = valuation.valuation_market_key) AS low_price_usd,
+    (array_agg(source.close_price_usd ORDER BY source.bucket_ts DESC,
+      source.last_block_number DESC, source.last_log_index DESC,
+      source.protocol, source.market_key) FILTER (WHERE
+        source.protocol = valuation.valuation_protocol
+        AND source.market_key = valuation.valuation_market_key))[1] AS close_price_usd,
+    SUM(source.volume_usd) AS volume_usd,
+    SUM(source.swaps)::bigint AS swaps, SUM(source.buys)::bigint AS buys,
+    SUM(source.sells)::bigint AS sells,
+    SUM(source.transactions)::bigint AS transaction_contributions,
+    COUNT(DISTINCT (source.protocol, source.market_key))::int AS market_count,
+    array_agg(DISTINCT source.protocol ORDER BY source.protocol) AS protocols
+  FROM targets target
+  INNER JOIN valuation_markets valuation
+    USING (token_address, output_bucket_ts, output_granularity_minutes,
+      source_granularity_minutes)
+  INNER JOIN normalized source
+    ON source.token_address = target.token_address
+   AND source.source_granularity_minutes = target.source_granularity_minutes
+   AND source.bucket_ts >= target.output_bucket_ts
+   AND source.bucket_ts < target.output_bucket_ts
+     + (target.output_granularity_minutes * INTERVAL '1 minute')
+  GROUP BY target.token_address, target.output_bucket_ts,
+    target.output_granularity_minutes, target.source_granularity_minutes,
+    valuation.valuation_protocol, valuation.valuation_market_key
+  HAVING BOOL_OR(
+    source.protocol = valuation.valuation_protocol
+    AND source.market_key = valuation.valuation_market_key
+  )
 ), ranked AS (
   SELECT candles.*,
     ROW_NUMBER() OVER (PARTITION BY token_address ORDER BY bucket_ts DESC) AS recency_rank
@@ -199,6 +270,83 @@ const LEGACY_HISTORY_SQL = `WITH requested AS MATERIALIZED (
 SELECT * FROM ranked
 WHERE recency_rank <= $6::int
 ORDER BY token_address ASC, bucket_ts ASC`;
+
+function buildDominantHourlyCandleCtes(options = {}) {
+  const candles = options.candles || 'candles';
+  const targetWhere = options.targetWhere || 'TRUE';
+  return `hourly_targets AS MATERIALIZED (
+  SELECT DISTINCT token_address, bucket_ts
+  FROM source_rows
+  WHERE ${targetWhere}
+), market_activity AS MATERIALIZED (
+  SELECT target.token_address, target.bucket_ts, history.protocol, history.market_key,
+    SUM(history.volume_usd) AS volume_24h_usd,
+    MAX(history.last_observed_at) AS last_observed_at
+  FROM hourly_targets target
+  INNER JOIN source_rows history
+    ON history.token_address = target.token_address
+   AND history.bucket_ts >= target.bucket_ts + INTERVAL '1 hour' - INTERVAL '24 hours'
+   AND history.bucket_ts < target.bucket_ts + INTERVAL '1 hour'
+  GROUP BY target.token_address, target.bucket_ts, history.protocol, history.market_key
+), valuation_markets AS MATERIALIZED (
+  SELECT DISTINCT ON (activity.token_address, activity.bucket_ts)
+    activity.token_address, activity.bucket_ts,
+    activity.protocol AS valuation_protocol,
+    activity.market_key AS valuation_market_key
+  FROM market_activity activity
+  ORDER BY activity.token_address, activity.bucket_ts,
+    activity.volume_24h_usd DESC, activity.last_observed_at DESC NULLS LAST,
+    activity.protocol, activity.market_key
+), ${candles} AS (
+  SELECT target.token_address, target.bucket_ts,
+    60 AS granularity_minutes, 60 AS source_granularity_minutes,
+    (array_agg(source.open_fdv_usd ORDER BY source.first_block_number,
+      source.first_log_index, source.protocol, source.market_key) FILTER (WHERE
+        source.protocol = valuation.valuation_protocol
+        AND source.market_key = valuation.valuation_market_key))[1] AS open_fdv_usd,
+    MAX(source.high_fdv_usd) FILTER (WHERE
+      source.protocol = valuation.valuation_protocol
+      AND source.market_key = valuation.valuation_market_key) AS high_fdv_usd,
+    MIN(source.low_fdv_usd) FILTER (WHERE
+      source.protocol = valuation.valuation_protocol
+      AND source.market_key = valuation.valuation_market_key) AS low_fdv_usd,
+    (array_agg(source.close_fdv_usd ORDER BY source.last_block_number DESC,
+      source.last_log_index DESC, source.protocol, source.market_key) FILTER (WHERE
+        source.protocol = valuation.valuation_protocol
+        AND source.market_key = valuation.valuation_market_key))[1] AS close_fdv_usd,
+    (array_agg(source.open_price_usd ORDER BY source.first_block_number,
+      source.first_log_index, source.protocol, source.market_key) FILTER (WHERE
+        source.protocol = valuation.valuation_protocol
+        AND source.market_key = valuation.valuation_market_key))[1] AS open_price_usd,
+    MAX(source.high_price_usd) FILTER (WHERE
+      source.protocol = valuation.valuation_protocol
+      AND source.market_key = valuation.valuation_market_key) AS high_price_usd,
+    MIN(source.low_price_usd) FILTER (WHERE
+      source.protocol = valuation.valuation_protocol
+      AND source.market_key = valuation.valuation_market_key) AS low_price_usd,
+    (array_agg(source.close_price_usd ORDER BY source.last_block_number DESC,
+      source.last_log_index DESC, source.protocol, source.market_key) FILTER (WHERE
+        source.protocol = valuation.valuation_protocol
+        AND source.market_key = valuation.valuation_market_key))[1] AS close_price_usd,
+    SUM(source.volume_usd) AS volume_usd,
+    SUM(source.swaps)::bigint AS swaps, SUM(source.buys)::bigint AS buys,
+    SUM(source.sells)::bigint AS sells,
+    SUM(source.transactions)::bigint AS transaction_contributions,
+    COUNT(DISTINCT (source.protocol, source.market_key))::int AS market_count,
+    array_agg(DISTINCT source.protocol ORDER BY source.protocol) AS protocols
+  FROM hourly_targets target
+  INNER JOIN valuation_markets valuation USING (token_address, bucket_ts)
+  INNER JOIN source_rows source
+    ON source.token_address = target.token_address
+   AND source.bucket_ts = target.bucket_ts
+  GROUP BY target.token_address, target.bucket_ts,
+    valuation.valuation_protocol, valuation.valuation_market_key
+  HAVING BOOL_OR(
+    source.protocol = valuation.valuation_protocol
+    AND source.market_key = valuation.valuation_market_key
+  )
+)`;
+}
 
 const ALL_AVAILABLE_HISTORY_SQL = `WITH requested AS MATERIALIZED (
   SELECT UNNEST($1::varchar[]) AS token_address
@@ -209,30 +357,7 @@ const ALL_AVAILABLE_HISTORY_SQL = `WITH requested AS MATERIALIZED (
   WHERE bucket.chain = 'robinhood'
     AND bucket.protocol IN ('uniswap-v2', 'uniswap-v3', 'uniswap-v4')
     AND bucket.bucket_ts < $2::timestamptz
-), candles AS (
-  SELECT token_address, bucket_ts,
-    60 AS granularity_minutes, 60 AS source_granularity_minutes,
-    (array_agg(open_fdv_usd ORDER BY first_block_number,
-      first_log_index, protocol, market_key))[1] AS open_fdv_usd,
-    MAX(high_fdv_usd) AS high_fdv_usd,
-    MIN(low_fdv_usd) AS low_fdv_usd,
-    (array_agg(close_fdv_usd ORDER BY last_block_number DESC,
-      last_log_index DESC, protocol, market_key))[1] AS close_fdv_usd,
-    (array_agg(open_price_usd ORDER BY first_block_number,
-      first_log_index, protocol, market_key))[1] AS open_price_usd,
-    MAX(high_price_usd) AS high_price_usd,
-    MIN(low_price_usd) AS low_price_usd,
-    (array_agg(close_price_usd ORDER BY last_block_number DESC,
-      last_log_index DESC, protocol, market_key))[1] AS close_price_usd,
-    SUM(volume_usd) AS volume_usd,
-    SUM(swaps)::bigint AS swaps, SUM(buys)::bigint AS buys,
-    SUM(sells)::bigint AS sells,
-    SUM(transactions)::bigint AS transaction_contributions,
-    COUNT(DISTINCT (protocol, market_key))::int AS market_count,
-    array_agg(DISTINCT protocol ORDER BY protocol) AS protocols
-  FROM source_rows
-  GROUP BY token_address, bucket_ts
-), ranked AS (
+), ${buildDominantHourlyCandleCtes()}, ranked AS (
   SELECT candles.*,
     ROW_NUMBER() OVER (PARTITION BY token_address ORDER BY bucket_ts ASC) AS row_number,
     COUNT(*) OVER (PARTITION BY token_address) AS total_count
@@ -261,38 +386,19 @@ ORDER BY ranked.token_address ASC, ranked.bucket_ts ASC`;
 
 const VERIFIED_ALL_AVAILABLE_HISTORY_SQL = `WITH requested AS MATERIALIZED (
   SELECT UNNEST($1::varchar[]) AS token_address
-), legacy_source_rows AS MATERIALIZED (
+), source_rows AS MATERIALIZED (
   SELECT ${SOURCE_COLUMNS}
   FROM robinhood_market_buckets_1h bucket
   INNER JOIN requested ON requested.token_address = bucket.token_address
   WHERE bucket.chain = 'robinhood'
     AND bucket.protocol IN ('uniswap-v2', 'uniswap-v3', 'uniswap-v4')
     AND bucket.bucket_ts < $2::timestamptz
-    AND (bucket.bucket_ts < $4::timestamptz OR bucket.bucket_ts >= $5::timestamptz)
-), legacy_candles AS (
-  SELECT token_address, bucket_ts,
-    60 AS granularity_minutes, 60 AS source_granularity_minutes,
-    (array_agg(open_fdv_usd ORDER BY first_block_number,
-      first_log_index, protocol, market_key))[1] AS open_fdv_usd,
-    MAX(high_fdv_usd) AS high_fdv_usd,
-    MIN(low_fdv_usd) AS low_fdv_usd,
-    (array_agg(close_fdv_usd ORDER BY last_block_number DESC,
-      last_log_index DESC, protocol, market_key))[1] AS close_fdv_usd,
-    (array_agg(open_price_usd ORDER BY first_block_number,
-      first_log_index, protocol, market_key))[1] AS open_price_usd,
-    MAX(high_price_usd) AS high_price_usd,
-    MIN(low_price_usd) AS low_price_usd,
-    (array_agg(close_price_usd ORDER BY last_block_number DESC,
-      last_log_index DESC, protocol, market_key))[1] AS close_price_usd,
-    SUM(volume_usd) AS volume_usd,
-    SUM(swaps)::bigint AS swaps, SUM(buys)::bigint AS buys,
-    SUM(sells)::bigint AS sells,
-    SUM(transactions)::bigint AS transaction_contributions,
-    COUNT(DISTINCT (protocol, market_key))::int AS market_count,
-    array_agg(DISTINCT protocol ORDER BY protocol) AS protocols,
-    'legacy'::text AS history_source
-  FROM legacy_source_rows
-  GROUP BY token_address, bucket_ts
+), ${buildDominantHourlyCandleCtes({
+    candles: 'dominant_legacy_candles',
+    targetWhere: '(bucket_ts < $4::timestamptz OR bucket_ts >= $5::timestamptz)',
+  })}, legacy_candles AS (
+  SELECT dominant.*, 'legacy'::text AS history_source
+  FROM dominant_legacy_candles dominant
 ), aggregate_candles AS (
   SELECT bucket.token_address, bucket.bucket_ts, bucket.granularity_minutes,
     bucket.source_granularity_minutes,
