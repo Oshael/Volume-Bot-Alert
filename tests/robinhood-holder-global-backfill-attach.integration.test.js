@@ -6,13 +6,13 @@ const {
   createRobinhoodHolderGlobalBackfillRepository,
 } = require('../src/models/robinhood-holder-global-backfill');
 const { createRobinhoodHolderBootstrapRepository } = require('../src/models/robinhood-holder-bootstrap');
-const { createRobinhoodHolderHandoffRepository } = require('../src/models/robinhood-holder-handoff');
 const { createRobinhoodHolderLedgerRepository } = require('../src/models/robinhood-holder-ledger');
 const {
   createRobinhoodHolderGlobalBackfillAttach,
 } = require('../src/services/robinhood-holder-global-backfill-attach');
 
 const TOKEN = `0x${'1'.repeat(40)}`;
+const TOKEN_TWO = `0x${'5'.repeat(40)}`;
 const ALICE = `0x${'2'.repeat(40)}`;
 const BOB = `0x${'3'.repeat(40)}`;
 const HASH_A = `0x${'a'.repeat(64)}`;
@@ -46,25 +46,28 @@ describe('Robinhood holder global backfill live attach', () => {
       const global = createRobinhoodHolderGlobalBackfillRepository({ database });
       const bootstrap = createRobinhoodHolderBootstrapRepository({ database });
       const ledger = createRobinhoodHolderLedgerRepository({ database });
-      const handoff = createRobinhoodHolderHandoffRepository({ database });
       const inserted = await client.query(
         `INSERT INTO robinhood_holder_global_backfill_runs (
            status, catalog_cutoff, next_block, checkpoint_block, checkpoint_hash,
            cohort_token_count
-         ) VALUES ('scanning', '2026-08-10T00:00:00Z', 100, 99, $1, 1)
+         ) VALUES ('scanning', '2026-08-10T00:00:00Z', 100, 99, $1, 2)
          RETURNING id`, [HASH_A]
       );
       const runId = String(inserted.rows[0].id);
       await client.query(
         `INSERT INTO robinhood_holder_global_backfill_tokens
-           (run_id, token_address, holder_count) VALUES ($1, $2, 1)`, [runId, TOKEN]
+           (run_id, token_address, holder_count)
+         VALUES ($1, $2, 1), ($1, $3, 0)`, [runId, TOKEN, TOKEN_TWO]
       );
       await client.query(
-        `INSERT INTO token_catalog VALUES ('robinhood', $1, '2026-08-09T00:00:00Z')`, [TOKEN]
+        `INSERT INTO token_catalog VALUES
+           ('robinhood', $1, '2026-08-09T00:00:00Z'),
+           ('robinhood', $2, '2026-08-09T00:00:00Z')`, [TOKEN, TOKEN_TWO]
       );
       await client.query(
-        `INSERT INTO robinhood_token_attributions VALUES ('robinhood', $1, 'rpc_direct', 10)`,
-        [TOKEN]
+        `INSERT INTO robinhood_token_attributions VALUES
+           ('robinhood', $1, 'rpc_direct', 10),
+           ('robinhood', $2, 'rpc_direct', 10)`, [TOKEN, TOKEN_TWO]
       );
       await client.query(
         `INSERT INTO robinhood_holder_cursors (
@@ -82,7 +85,7 @@ describe('Robinhood holder global backfill live attach', () => {
       assert.equal(attached.barrierBlock, '105');
       assert.deepEqual(attached.barrierCheckpoint, { number: '104', hash: HASH_B });
       assert.equal(attached.liveCursorVersion, 8);
-      assert.deepEqual(await ledger.listTrackedTokenAddresses(), [TOKEN]);
+      assert.deepEqual(await ledger.listTrackedTokenAddresses(), [TOKEN, TOKEN_TWO]);
       assert.deepEqual(await bootstrap.seedColdTokens({
         admittedBefore: '2026-08-10T00:00:00Z', limit: 10,
       }), []);
@@ -138,7 +141,7 @@ describe('Robinhood holder global backfill live attach', () => {
       });
       finalizedThrough = '104';
       assert.deepEqual(await attach.materializeOnce({ limit: 10 }), {
-        status: 'materializing', runId, materializedTokens: 1,
+        status: 'materializing', runId, materializedTokens: 2,
         remainingTokens: 0, version: '3',
       });
       assert.deepEqual(await attach.materializeOnce(), { status: 'idle' });
@@ -159,24 +162,21 @@ describe('Robinhood holder global backfill live attach', () => {
       assert.equal((await client.query(
         'SELECT 1 FROM robinhood_holder_transfer_journal WHERE applied = false'
       )).rowCount, 1);
-      const candidate = await handoff.getNextCandidate();
-      assert.equal(candidate.tokenAddress, TOKEN);
-      const promoted = await handoff.promoteAtLiveBarrier({
-        tokenAddress: TOKEN, verifiedCheckpoint: candidate.checkpoint,
+      const promoted = await attach.handoffOnce({
+        finalityBlocks: 2000, limit: 10,
       });
-      assert.equal(promoted.status, 'shadow');
-      assert.equal(promoted.discardedOverlapEvents, 0);
+      assert.deepEqual(promoted, {
+        status: 'handed-off', runId, handedOffTokens: 2, version: '4',
+      });
+      assert.equal((await client.query(
+        `SELECT 1 FROM robinhood_holder_token_states WHERE ledger_status = 'shadow'`
+      )).rowCount, 2);
       assert.equal((await client.query(
         'SELECT 1 FROM robinhood_holder_transfer_journal WHERE applied = false'
       )).rowCount, 1);
-      assert.equal((await global.syncCompletion({ runId })).status, 'materializing');
-      await client.query(
-        `UPDATE robinhood_holder_token_states SET ledger_status = 'live'
-          WHERE token_address = $1`, [TOKEN]
-      );
       const completed = await global.syncCompletion({ runId });
       assert.equal(completed.status, 'completed');
-      assert.equal(completed.promotedTokens, 1);
+      assert.equal(completed.promotedTokens, 2);
     } finally {
       client.release();
     }

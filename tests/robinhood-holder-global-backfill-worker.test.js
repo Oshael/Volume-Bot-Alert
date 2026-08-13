@@ -16,6 +16,7 @@ describe('Robinhood holder global backfill worker', () => {
   it('keeps preview explicit and advances scan, attach, materialization and completion', async () => {
     let run = null;
     let attachReady = false;
+    let handoffDone = false;
     const telemetry = [];
     const runtime = {
       lifecycle: {
@@ -39,13 +40,20 @@ describe('Robinhood holder global backfill worker', () => {
         runOnce: async () => run.status === 'attached'
           ? { status: 'caught-up' } : { status: 'committed', nextBlock: '101' },
       },
-      materializer: { materializeOnce: async () => {
-        if (run.status === 'attached') {
-          run = campaign('materializing', { barrierBlock: '105' });
-          return { status: 'materializing', materializedTokens: 2 };
-        }
-        return { status: 'idle' };
-      } },
+      materializer: {
+        materializeOnce: async () => {
+          if (run.status === 'attached') {
+            run = campaign('materializing', { barrierBlock: '105' });
+            return { status: 'materializing', materializedTokens: 2 };
+          }
+          return { status: 'idle' };
+        },
+        handoffOnce: async () => {
+          if (handoffDone) return { status: 'idle' };
+          handoffDone = true;
+          return { status: 'handed-off', handedOffTokens: 2 };
+        },
+      },
     };
     const preview = normalizeOptions({ enabled: true, catalogCutoff: CUTOFF });
     assert.equal((await runCampaignTick(runtime, preview)).status, 'frozen-preview');
@@ -56,6 +64,7 @@ describe('Robinhood holder global backfill worker', () => {
     attachReady = true;
     assert.equal((await runCampaignTick(runtime, active)).status, 'attached');
     assert.equal((await runCampaignTick(runtime, active)).status, 'materializing');
+    assert.equal((await runCampaignTick(runtime, active)).status, 'handed-off');
     assert.equal((await runCampaignTick(runtime, active)).status, 'completed');
     assert.equal(telemetry.at(-1).telemetry.liveLagBlocks, '6');
   });

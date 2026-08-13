@@ -111,8 +111,12 @@ async function advanceRun(runtime, options, run, context) {
     const materialized = await runtime.materializer.materializeOnce({
       finalityBlocks: options.finalityBlocks, limit: options.materializeBatchSize,
     });
-    return materialized.status === 'idle'
-      ? runtime.lifecycle.syncCompletion({ runId: run.id }) : materialized;
+    if (materialized.status !== 'idle') return materialized;
+    const handedOff = await runtime.materializer.handoffOnce({
+      finalityBlocks: options.finalityBlocks, limit: options.materializeBatchSize,
+    });
+    return handedOff.status === 'idle'
+      ? runtime.lifecycle.syncCompletion({ runId: run.id }) : handedOff;
   }
   return Object.freeze({ status: run.status, runId: run.id });
 }

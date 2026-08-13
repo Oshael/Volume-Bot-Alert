@@ -36,6 +36,43 @@ function runRow(row) {
   });
 }
 
+function normalizeHandoffInput(input = {}) {
+  const limit = integer(input.limit ?? 1000, 'limit', 1);
+  if (limit > 5000) throw new Error('limit must not exceed 5000');
+  const checkpointHash = String(input.verifiedCheckpoint?.hash || '').toLowerCase();
+  if (!/^0x[0-9a-f]{64}$/.test(checkpointHash)) throw new Error('checkpoint.hash is invalid');
+  return Object.freeze({
+    runId: integer(input.runId, 'runId', 1),
+    version: integer(input.version, 'version'), limit,
+    checkpointNumber: integer(input.verifiedCheckpoint?.number, 'checkpoint.number'),
+    checkpointHash, finalizedThrough: integer(input.finalizedThrough, 'finalizedThrough'),
+  });
+}
+
+function assertVerifiedBarrier(run, input) {
+  if (run && String(run.next_block) === String(run.barrier_block)
+      && String(run.checkpoint_block) === String(run.barrier_checkpoint_block)
+      && run.checkpoint_hash === run.barrier_checkpoint_hash
+      && String(input.checkpointNumber) === String(run.barrier_checkpoint_block)
+      && input.checkpointHash === run.barrier_checkpoint_hash
+      && BigInt(input.finalizedThrough) >= BigInt(run.barrier_checkpoint_block)) return;
+  const error = new Error('Robinhood holder global barrier is not verified and final');
+  error.code = 'holder_global_backfill_barrier_unverified';
+  throw error;
+}
+
+function assertLiveCoverage(run, cursor) {
+  const exactCursor = String(run.barrier_block) !== String(cursor?.next_block)
+    || (String(run.barrier_checkpoint_block) === String(cursor?.checkpoint_block)
+      && run.barrier_checkpoint_hash === cursor?.checkpoint_hash);
+  if (cursor?.journal_floor_block != null
+      && BigInt(run.barrier_block) >= BigInt(cursor.journal_floor_block)
+      && BigInt(run.barrier_block) <= BigInt(cursor.next_block) && exactCursor) return;
+  const error = new Error('Robinhood holder global handoff is outside live coverage');
+  error.code = 'holder_global_backfill_handoff_unavailable';
+  throw error;
+}
+
 function createRobinhoodHolderGlobalBackfillRepository(options = {}) {
   const database = options.database || db;
 
@@ -204,6 +241,22 @@ function createRobinhoodHolderGlobalBackfillRepository(options = {}) {
     return runRow(result.rows[0]);
   }
 
+  async function getMaterializedHandoffCandidate() {
+    const result = await database.query(
+      `SELECT * FROM robinhood_holder_global_backfill_runs run
+        WHERE run.chain = $1 AND run.status = 'materializing'
+          AND EXISTS (
+            SELECT 1 FROM robinhood_holder_global_backfill_tokens token
+            INNER JOIN robinhood_holder_token_states state
+              ON state.chain = token.chain AND state.token_address = token.token_address
+            WHERE token.run_id = run.id AND token.chain = $1
+              AND token.status = 'materialized' AND state.ledger_status = 'backfilling'
+          )
+        ORDER BY run.id DESC LIMIT 1`, [CHAIN]
+    );
+    return runRow(result.rows[0]);
+  }
+
   async function materializeBatch(input = {}) {
     const runId = integer(input.runId, 'runId', 1);
     const version = integer(input.version, 'version');
@@ -290,6 +343,85 @@ function createRobinhoodHolderGlobalBackfillRepository(options = {}) {
     }
   }
 
+  async function promoteMaterializedBatch(input = {}) {
+    const normalized = normalizeHandoffInput(input);
+    const { runId, version, limit } = normalized;
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      const locked = await client.query(
+        `SELECT * FROM robinhood_holder_global_backfill_runs
+          WHERE id = $1 AND chain = $2 AND status = 'materializing'
+            AND version = $3 FOR UPDATE`, [runId, CHAIN, version]
+      );
+      const run = locked.rows[0];
+      assertVerifiedBarrier(run, normalized);
+      const cursorResult = await client.query(
+        `SELECT next_block, checkpoint_block, checkpoint_hash, journal_floor_block
+           FROM robinhood_holder_cursors
+          WHERE chain = $1 AND stream = 'live' FOR UPDATE`, [CHAIN]
+      );
+      const cursor = cursorResult.rows[0];
+      assertLiveCoverage(run, cursor);
+      const candidates = await client.query(
+        `SELECT token.token_address
+           FROM robinhood_holder_global_backfill_tokens token
+           INNER JOIN robinhood_holder_token_states state
+             ON state.chain = token.chain AND state.token_address = token.token_address
+          WHERE token.run_id = $1 AND token.chain = $2 AND token.status = 'materialized'
+            AND state.ledger_status = 'backfilling'
+            AND state.backfill_next_block = $3
+            AND state.live_through_block = $4 AND state.live_through_hash = $5
+            AND NOT EXISTS (
+              SELECT 1 FROM robinhood_holder_transfer_journal journal
+               WHERE journal.chain = state.chain AND journal.token_address = state.token_address
+                 AND journal.block_number < $3 AND journal.applied = true
+            )
+          ORDER BY token.token_address LIMIT $6
+          FOR UPDATE OF token, state SKIP LOCKED`,
+        [runId, CHAIN, run.barrier_block, run.barrier_checkpoint_block,
+          run.barrier_checkpoint_hash, limit]
+      );
+      const addresses = candidates.rows.map((row) => row.token_address);
+      if (addresses.length) {
+        await client.query(
+          `DELETE FROM robinhood_holder_transfer_journal
+            WHERE chain = $1 AND token_address = ANY($2::varchar[])
+              AND block_number < $3 AND applied = false`,
+          [CHAIN, addresses, run.barrier_block]
+        );
+        const promoted = await client.query(
+          `UPDATE robinhood_holder_token_states
+              SET ledger_status = 'shadow', version = version + 1, updated_at = NOW()
+            WHERE chain = $1 AND token_address = ANY($2::varchar[])
+              AND ledger_status = 'backfilling' AND backfill_next_block = $3
+              AND live_through_block = $4 AND live_through_hash = $5
+            RETURNING token_address`,
+          [CHAIN, addresses, run.barrier_block, run.barrier_checkpoint_block,
+            run.barrier_checkpoint_hash]
+        );
+        if (promoted.rowCount !== addresses.length) {
+          throw new Error('Global holder handoff batch changed while locked');
+        }
+      }
+      const updated = await client.query(
+        `UPDATE robinhood_holder_global_backfill_runs
+            SET version = version + 1, updated_at = NOW()
+          WHERE id = $1 RETURNING version`, [runId]
+      );
+      await client.query('COMMIT');
+      return Object.freeze({
+        status: addresses.length ? 'handed-off' : 'idle', runId: String(runId),
+        handedOffTokens: addresses.length, version: String(updated.rows[0].version),
+      });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async function syncCompletion(input = {}) {
     const runId = integer(input.runId, 'runId', 1);
     const result = await database.query(
@@ -299,14 +431,15 @@ function createRobinhoodHolderGlobalBackfillRepository(options = {}) {
            FROM robinhood_holder_token_states state
           WHERE token.run_id = $1 AND token.chain = $2 AND token.status = 'materialized'
             AND state.chain = token.chain AND state.token_address = token.token_address
-            AND state.ledger_status = 'live'
+            AND state.ledger_status IN ('shadow', 'live')
          RETURNING token.token_address
        ), counts AS MATERIALIZED (
-         SELECT COUNT(*) FILTER (WHERE token.status = 'active')::int AS active,
+        SELECT COUNT(*) FILTER (WHERE token.status = 'active')::int AS active,
                 COUNT(*) FILTER (WHERE token.status = 'materialized'
-                  AND state.ledger_status IS DISTINCT FROM 'live')::int AS materialized,
+                  AND (state.ledger_status IS NULL
+                    OR state.ledger_status NOT IN ('shadow', 'live')))::int AS materialized,
                 COUNT(*) FILTER (WHERE token.status = 'completed' OR token.status = 'materialized'
-                  AND state.ledger_status = 'live')::int AS completed,
+                  AND state.ledger_status IN ('shadow', 'live'))::int AS completed,
                 COUNT(*) FILTER (WHERE token.status = 'excluded')::int AS excluded,
                 COUNT(*) FILTER (WHERE token.status = 'materialized'
                   AND state.ledger_status IN ('drifted', 'resyncing'))::int AS failed
@@ -350,7 +483,8 @@ function createRobinhoodHolderGlobalBackfillRepository(options = {}) {
 
   return Object.freeze({
     attachToLive, createRun, getActiveRun, getLatestRun, getMaterializationCandidate,
-    loadCohort, materializeBatch, recordTelemetry, startRun, syncCompletion,
+    getMaterializedHandoffCandidate, loadCohort, materializeBatch,
+    promoteMaterializedBatch, recordTelemetry, startRun, syncCompletion,
   });
 }
 

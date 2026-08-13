@@ -4,7 +4,9 @@ function createRobinhoodHolderGlobalBackfillAttach(options = {}) {
   const repository = options.repository;
   const reader = options.reader;
   if (typeof repository?.getMaterializationCandidate !== 'function'
-      || typeof repository?.materializeBatch !== 'function') {
+      || typeof repository?.getMaterializedHandoffCandidate !== 'function'
+      || typeof repository?.materializeBatch !== 'function'
+      || typeof repository?.promoteMaterializedBatch !== 'function') {
     throw new TypeError('global holder backfill repository is required');
   }
   if (typeof reader?.getSafeHead !== 'function'
@@ -37,7 +39,27 @@ function createRobinhoodHolderGlobalBackfillAttach(options = {}) {
     });
   }
 
-  return Object.freeze({ materializeOnce });
+  async function handoffOnce(input = {}) {
+    const finalityBlocks = Number(input.finalityBlocks ?? MIN_FINALITY_BLOCKS);
+    if (!Number.isSafeInteger(finalityBlocks) || finalityBlocks < MIN_FINALITY_BLOCKS) {
+      throw new Error(`finalityBlocks must be at least ${MIN_FINALITY_BLOCKS}`);
+    }
+    const run = await repository.getMaterializedHandoffCandidate();
+    if (!run) return Object.freeze({ status: 'idle' });
+    if (!await reader.matchesCheckpoint(run.barrierCheckpoint)) {
+      return Object.freeze({ status: 'checkpoint-diverged', runId: run.id });
+    }
+    const head = await reader.getSafeHead(finalityBlocks);
+    if (BigInt(head.safeHead) < BigInt(run.barrierCheckpoint.number)) {
+      return Object.freeze({ status: 'waiting-finality', runId: run.id });
+    }
+    return repository.promoteMaterializedBatch({
+      runId: run.id, version: run.version, limit: input.limit,
+      verifiedCheckpoint: run.barrierCheckpoint, finalizedThrough: head.safeHead,
+    });
+  }
+
+  return Object.freeze({ handoffOnce, materializeOnce });
 }
 
 module.exports = { createRobinhoodHolderGlobalBackfillAttach };
