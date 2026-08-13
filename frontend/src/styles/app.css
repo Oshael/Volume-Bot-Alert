@@ -10118,10 +10118,21 @@ TEMP_LEGACY_BAR_TITLE {
   pointer-events: none;
 }
 
-.met-tip-wrap:hover .met-tip-dd {
+.met-tip-wrap:hover .met-tip-dd,
+.met-tip-wrap:focus-within .met-tip-dd {
   opacity: 1;
   visibility: visible;
   transform: translateY(0);
+  pointer-events: auto;
+}
+
+.met-tip-dd::before {
+  position: absolute;
+  right: 0;
+  bottom: 100%;
+  width: 100%;
+  height: 8px;
+  content: '';
 }
 
 .meteora-tip-head {
@@ -11475,6 +11486,10 @@ TEMP_LEGACY_BAR_TITLE {
   overflow-y: auto;
   padding: 8px;
   overscroll-behavior: contain;
+}
+
+.monitored-list {
+  overscroll-behavior-y: auto;
 }
 
 .monitored-list::-webkit-scrollbar,
