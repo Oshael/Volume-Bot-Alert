@@ -1588,6 +1588,19 @@ curl -i https://api.trendscope.pro/api/health
 curl -I https://www.trendscope.pro
 ```
 
+Diagnóstico consolidado das sparklines do Radar, no console do navegador autenticado:
+
+```js
+await trendscopeSparklineDebug.diagnose()
+```
+
+O comando aguarda a rodada atual, força uma leitura de todos os batches visíveis e
+retorna, além de tentar copiar para o clipboard, o tempo por batch, todos os tokens
+pedidos, retornados, ausentes ou com série vazia e o estado final do cache. Com
+`PERF_METRICS_ENABLED=true` no web, o relatório também inclui `Server-Timing` com
+as fases `total`, `query` e `build`; sem a flag, os tempos HTTP do navegador ainda
+ficam disponíveis. O comando exige sessão autenticada no workspace Radar.
+
 Banco:
 
 ```bash
