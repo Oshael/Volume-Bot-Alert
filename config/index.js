@@ -248,7 +248,7 @@ const LEGACY_WORKER_GROUPS = Object.freeze(['maintenance']);
 const ISOLATED_WORKER_GROUPS = Object.freeze([
   'robinhood-maintenance', 'robinhood', 'robinhood-head', 'robinhood-processing',
   'robinhood-derived', 'robinhood-wallet', 'robinhood-backfill', 'robinhood-holders',
-  'robinhood-holder-global',
+  'robinhood-holder-global', 'x-match',
 ]);
 const WORKER_GROUPS = Object.freeze([
   ...SHARED_WORKER_GROUPS,
@@ -827,6 +827,14 @@ module.exports = {
     enabled: parseBoolean(process.env.PUMPFUN_PRE_MIGRATION_CAPTURE_ENABLED, false),
     maxTracked: Math.max(1, Math.min(parseInt(process.env.PUMPFUN_PRE_MIGRATION_MAX_TRACKED || '250', 10) || 250, 2000)),
     trackTtlMs: Math.max(60000, parseInt(process.env.PUMPFUN_PRE_MIGRATION_TRACK_TTL_MS || `${2 * 60 * 60 * 1000}`, 10) || (2 * 60 * 60 * 1000)),
+  },
+
+  tokenImageFingerprintWorker: {
+    enabled: parseBoolean(process.env.X_MATCH_FINGERPRINT_ENABLED, false),
+    intervalMs: Math.max(1000, parseInt(process.env.X_MATCH_FINGERPRINT_INTERVAL_MS || '60000', 10) || 60000),
+    batchLimit: Math.max(1, Math.min(parseInt(process.env.X_MATCH_FINGERPRINT_BATCH_LIMIT || '25', 10) || 25, 500)),
+    retryIntervalMs: Math.max(0, parseInt(process.env.X_MATCH_FINGERPRINT_RETRY_MS || `${6 * 60 * 60 * 1000}`, 10) || (6 * 60 * 60 * 1000)),
+    downloadTimeoutMs: Math.max(1000, parseInt(process.env.X_MATCH_FINGERPRINT_DOWNLOAD_TIMEOUT_MS || '8000', 10) || 8000),
   },
 
   tokenRiskEnrichmentWorker: {

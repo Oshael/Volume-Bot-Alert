@@ -3184,6 +3184,18 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage123-token-image-fingerprint',
+    name: 'Stage 123 X-match token image fingerprints',
+    repair: 'node src/utils/db-init-stage123.js',
+    tables: [{
+      table: 'token_image_fingerprint',
+      columns: [
+        'chain', 'token_address', 'source_image_url',
+        'phash', 'dhash', 'phash_mirror', 'dhash_mirror', 'ok', 'computed_at',
+      ],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

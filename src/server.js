@@ -39,6 +39,7 @@ const telegramWebhookRoutes = require('./routes/telegram-webhook');
 // Services
 const socketHub = require('./services/socket-hub');
 const catalogWorker = require('./services/catalog-worker');
+const tokenImageFingerprintWorker = require('./services/token-image-fingerprint-worker');
 const catalogCleanupWorker = require('./services/catalog-cleanup-worker');
 const robinhoodRetentionWorker = require('./services/robinhood-retention-worker');
 const robinhoodProcessingWorker = require('./services/robinhood-processing-worker');
@@ -934,6 +935,19 @@ function startWorkerSet() {
   startRobinhoodWalletSwapWorkerGroup();
   startRobinhoodHolderWorkerGroup();
   startRobinhoodHolderGlobalBackfillWorkerGroup();
+  startTokenImageFingerprintWorkerGroup();
+}
+
+function startTokenImageFingerprintWorkerGroup() {
+  if (!hasWorkerGroup('x-match')) return;
+  if (!config.tokenImageFingerprintWorker.enabled) return;
+  startLockedWorker(
+    'x-match',
+    'token-image-fingerprint-worker',
+    'Token image fingerprint worker',
+    () => tokenImageFingerprintWorker.start(config.tokenImageFingerprintWorker),
+    { metadataProvider: () => ({ telemetry: tokenImageFingerprintWorker.getStatus() }) },
+  );
 }
 
 function bootstrapWebRuntime(httpServer) {
