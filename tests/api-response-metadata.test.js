@@ -17,6 +17,9 @@ describe('API response metadata', () => {
       'RateLimit-Remaining': '17',
       'RateLimit-Reset': '42',
       'Retry-After': '42',
+      'Server-Timing': 'total;dur=120, query;dur=95, build;dur=5',
+      'X-Perf-Label': 'catalog.sparklines',
+      'X-Perf-Response-Bytes': '2048',
     });
 
     assert.deepEqual(readApiResponseMetadata({ status: 429, ok: false, headers }), {
@@ -28,6 +31,9 @@ describe('API response metadata', () => {
       rateLimitRemaining: '17',
       rateLimitReset: '42',
       retryAfter: '42',
+      serverTiming: 'total;dur=120, query;dur=95, build;dur=5',
+      perfLabel: 'catalog.sparklines',
+      perfResponseBytes: '2048',
     });
   });
 
@@ -41,6 +47,9 @@ describe('API response metadata', () => {
       rateLimitRemaining: null,
       rateLimitReset: null,
       retryAfter: null,
+      serverTiming: null,
+      perfLabel: null,
+      perfResponseBytes: null,
     }), false);
 
     assert.equal(shouldEmitApiResponseDebug({
@@ -52,6 +61,9 @@ describe('API response metadata', () => {
       rateLimitRemaining: null,
       rateLimitReset: null,
       retryAfter: null,
+      serverTiming: null,
+      perfLabel: null,
+      perfResponseBytes: null,
     }), true);
 
     assert.equal(shouldEmitApiResponseDebug({
@@ -63,6 +75,9 @@ describe('API response metadata', () => {
       rateLimitRemaining: '585',
       rateLimitReset: null,
       retryAfter: null,
+      serverTiming: null,
+      perfLabel: null,
+      perfResponseBytes: null,
     }), true);
   });
 });

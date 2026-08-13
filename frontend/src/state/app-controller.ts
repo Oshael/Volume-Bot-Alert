@@ -126,7 +126,7 @@ import {
   getApiRateLimitBackoffRemainingMs,
   isApiRateLimitBackoffError,
 } from '../services/api/rate-limit-backoff';
-import { API_RESPONSE_DEBUG_EVENT } from '../services/api/response-metadata';
+import { API_RESPONSE_DEBUG_EVENT, type ApiResponseMetadata } from '../services/api/response-metadata';
 import { trimLoginEmailValue } from '../ui/sections/login-form-utils';
 import {
   getWorkspaceSparklineNextRefreshAt,
@@ -138,6 +138,12 @@ import {
   splitWorkspaceSparklineBatchesByChain,
 } from './workspace-sparkline-refresh';
 import { evaluateSparklineDebugEvent } from './sparkline-debug-policy';
+import {
+  buildSparklineDiagnosticReport,
+  type SparklineDiagnosticBatchObservation,
+  type SparklineDiagnosticCacheEntry,
+  type SparklineDiagnosticReport,
+} from './sparkline-diagnostic-report';
 import {
   findPreviousPasswordMatch,
   formatPasswordChangedDate,
@@ -475,6 +481,7 @@ type SparklineDebugWindow = Window & {
     copy: () => Promise<string | undefined>;
     capture: (durationMs?: number) => void;
     disable: () => void;
+    diagnose: () => Promise<SparklineDiagnosticReport>;
     dump: () => SparklineDebugEntry[];
     enable: () => void;
     status: () => Record<string, unknown>;
@@ -1441,6 +1448,11 @@ export function createAppController(): AppController {
   let sparklineDebugCaptureUntil = 0;
   let sparklineDebugRecentEntries: SparklineDebugEntry[] = [];
   let sparklineDebugApiResponseListenerBound = false;
+  let activeSparklineDiagnosticRun: {
+    startedAt: number;
+    batches: SparklineDiagnosticBatchObservation[];
+  } | null = null;
+  let sparklineDiagnosticPromise: Promise<SparklineDiagnosticReport> | null = null;
   const pendingManualFolderDeleteIds = new Set<number>();
   const pendingManualFolderDeleteAddresses = new Set<string>();
   let suppressSocketStatusNoticeUntil = 0;
@@ -2879,6 +2891,135 @@ export function createAppController(): AppController {
     }
   }
 
+  function beginSparklineDiagnosticBatch(batch: SparklineBatchRequest, startedAt: number) {
+    if (!activeSparklineDiagnosticRun) return null;
+    const observation: SparklineDiagnosticBatchObservation = {
+      startedAt,
+      headersAt: null,
+      completedAt: null,
+      hours: batch.hours,
+      granularityMinutes: batch.granularityMinutes,
+      allAvailable: batch.allAvailable === true,
+      queryAllAvailable: batch.queryAllAvailable === true,
+      identities: batch.identities.map((identity) => ({
+        key: identity.key,
+        chain: identity.chain,
+        address: identity.address,
+      })),
+      response: null,
+      returned: [],
+      error: null,
+    };
+    activeSparklineDiagnosticRun.batches.push(observation);
+    return observation;
+  }
+
+  function noteSparklineDiagnosticHeaders(
+    observation: SparklineDiagnosticBatchObservation | null,
+    response: ApiResponseMetadata,
+  ) {
+    if (!observation) return;
+    observation.headersAt = Date.now();
+    observation.response = response;
+  }
+
+  function completeSparklineDiagnosticBatch(
+    observation: SparklineDiagnosticBatchObservation | null,
+    payload: TokenSparklinesPayload,
+  ) {
+    if (!observation) return;
+    observation.completedAt = Date.now();
+    observation.returned = payload.items.map((item) => ({
+      key: createLegacyCompatibleTokenIdentity(item.chain, item.address).key,
+      seriesPoints: Array.isArray(item.series) ? item.series.length : 0,
+      bucketCount: Number.isFinite(Number(item.bucketCount)) ? Number(item.bucketCount) : null,
+    }));
+  }
+
+  function failSparklineDiagnosticBatch(
+    observation: SparklineDiagnosticBatchObservation | null,
+    error: unknown,
+  ) {
+    if (!observation) return;
+    observation.completedAt = Date.now();
+    observation.error = formatDebugErrorMessage(error);
+  }
+
+  function buildSparklineDiagnosticCacheSnapshot(
+    batches: SparklineDiagnosticBatchObservation[],
+  ) {
+    const cacheByIdentity: Record<string, SparklineDiagnosticCacheEntry | undefined> = {};
+    const identities = new Map(batches.flatMap((batch) => (
+      batch.identities.map((identity) => [identity.key, identity] as const)
+    )));
+    for (const [key, identity] of identities) {
+      const entry = state.data.sparklineByAddress[key]
+        || (identity.chain === 'solana' ? state.data.sparklineByAddress[identity.address] : null);
+      if (!entry) continue;
+      cacheByIdentity[key] = {
+        loading: entry.loading === true,
+        seriesPoints: Array.isArray(entry.series) ? entry.series.length : 0,
+        bucketCount: Number.isFinite(Number(entry.bucketCount)) ? Number(entry.bucketCount) : null,
+        firstBucketAt: entry.firstBucketAt || null,
+        latestBucketAt: entry.latestBucketAt || null,
+        refreshedAt: Number.isFinite(Number(entry.refreshedAt)) ? Number(entry.refreshedAt) : null,
+      };
+    }
+    return cacheByIdentity;
+  }
+
+  async function waitForSparklineDiagnosticIdle() {
+    const deadline = Date.now() + (SPARKLINE_REQUEST_TIMEOUT_MS * 2);
+    while (sparklineRefreshInFlight && Date.now() < deadline) {
+      await new Promise((resolve) => window.setTimeout(resolve, 50));
+    }
+    if (sparklineRefreshInFlight) {
+      throw new Error('Sparkline refresh did not become idle before the diagnostic timeout');
+    }
+  }
+
+  async function runSparklineDiagnosis() {
+    if (sparklineDiagnosticPromise) return sparklineDiagnosticPromise;
+    const diagnosis = (async () => {
+      await waitForSparklineDiagnosticIdle();
+      const token = state.session.token ?? undefined;
+      if (!isWorkspaceSparklineRefreshAllowed(token)) {
+        throw new Error('Sparkline diagnosis requires an authenticated Radar workspace');
+      }
+      if (getVisibleWorkspaceSparklineBatches().length === 0) {
+        throw new Error('No visible workspace sparklines are available to diagnose');
+      }
+      const run = { startedAt: Date.now(), batches: [] as SparklineDiagnosticBatchObservation[] };
+      activeSparklineDiagnosticRun = run;
+      try {
+        await refreshHistoryWorkspaceSparklines({
+          token,
+          force: true,
+          caller: 'debug.diagnose',
+        });
+        await waitForSparklineDiagnosticIdle();
+        if (run.batches.length === 0) {
+          throw new Error('Sparkline diagnosis completed without issuing a batch');
+        }
+        const completedAt = Date.now();
+        return buildSparklineDiagnosticReport({
+          startedAt: run.startedAt,
+          completedAt,
+          batches: run.batches,
+          cacheByIdentity: buildSparklineDiagnosticCacheSnapshot(run.batches),
+        });
+      } finally {
+        activeSparklineDiagnosticRun = null;
+      }
+    })();
+    sparklineDiagnosticPromise = diagnosis;
+    try {
+      return await diagnosis;
+    } finally {
+      if (sparklineDiagnosticPromise === diagnosis) sparklineDiagnosticPromise = null;
+    }
+  }
+
   function installSparklineDebugConsole() {
     if (typeof window === 'undefined') {
       return;
@@ -2909,6 +3050,16 @@ export function createAppController(): AppController {
       disable: () => {
         window.localStorage.removeItem(SPARKLINE_DEBUG_ENABLED_KEY);
         sparklineDebugCaptureUntil = 0;
+      },
+      diagnose: async () => {
+        const report = await runSparklineDiagnosis();
+        try {
+          await navigator.clipboard.writeText(JSON.stringify(report, null, 2));
+          console.info('[Sparkline diagnostics] Report copied to clipboard.');
+        } catch (_) {
+          console.info('[Sparkline diagnostics] Clipboard unavailable; copy the returned report.');
+        }
+        return report;
       },
       dump: readSparklineDebugOutputLog,
       enable: () => {
@@ -9369,6 +9520,7 @@ export function createAppController(): AppController {
       () => Promise.all(
         batches.map(async (batch): Promise<WorkspaceSparklineBatchResult> => {
           const startedAt = Date.now();
+          const diagnosticBatch = beginSparklineDiagnosticBatch(batch, startedAt);
           try {
             const payload = await runWorkspaceSparklineRequestWithTimeout(
               SPARKLINE_REQUEST_TIMEOUT_MS,
@@ -9379,18 +9531,23 @@ export function createAppController(): AppController {
                 allAvailable: batch.queryAllAvailable,
                 allowOneMinuteFallback: true,
                 signal,
-                onResponse: (response) => recordSparklineDebug('http.response', {
-                  endpoint: 'sparklines',
-                  source: 'workspace',
-                  durationMs: Date.now() - startedAt,
-                  batch: summarizeSparklineDebugBatches([batch]),
-                  response,
-                }),
+                onResponse: (response) => {
+                  noteSparklineDiagnosticHeaders(diagnosticBatch, response);
+                  recordSparklineDebug('http.response', {
+                    endpoint: 'sparklines',
+                    source: 'workspace',
+                    durationMs: Date.now() - startedAt,
+                    batch: summarizeSparklineDebugBatches([batch]),
+                    response,
+                  });
+                },
               }, token),
             );
+            completeSparklineDiagnosticBatch(diagnosticBatch, payload);
             onPayload(batch, payload);
             return { batch, payload };
           } catch (error) {
+            failSparklineDiagnosticBatch(diagnosticBatch, error);
             return { batch, error };
           }
         })

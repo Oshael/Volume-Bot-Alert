@@ -7,6 +7,9 @@ export type ApiResponseMetadata = {
   rateLimitRemaining: string | null;
   rateLimitReset: string | null;
   retryAfter: string | null;
+  serverTiming: string | null;
+  perfLabel: string | null;
+  perfResponseBytes: string | null;
 };
 
 export const API_RESPONSE_DEBUG_EVENT = 'trendscope:api-response-debug';
@@ -21,6 +24,9 @@ export function readApiResponseMetadata(response: Pick<Response, 'status' | 'ok'
     rateLimitRemaining: response.headers.get('RateLimit-Remaining'),
     rateLimitReset: response.headers.get('RateLimit-Reset'),
     retryAfter: response.headers.get('Retry-After'),
+    serverTiming: response.headers.get('Server-Timing'),
+    perfLabel: response.headers.get('X-Perf-Label'),
+    perfResponseBytes: response.headers.get('X-Perf-Response-Bytes'),
   };
 }
 
