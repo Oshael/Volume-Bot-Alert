@@ -16,6 +16,7 @@ import {
   recordRuntimePerfDebugEntry,
 } from './utils/runtime-perf-debug';
 import { shouldLockListInteraction } from './utils/list-interaction-lock';
+import { installMonitoredInteractionDebugConsole } from './utils/monitored-interaction-debug';
 
 const rootElement = document.querySelector<HTMLDivElement>('#app');
 
@@ -86,6 +87,7 @@ const SCOPED_LIST_INTERACTION_LOCK_ZONE_SELECTOR = [
 
 controller.setDocumentHidden(isDocumentHidden);
 installRuntimePerfDebugConsole();
+installMonitoredInteractionDebugConsole();
 
 function isRuntimePerfDebugActive(state: AppState | null = latestState) {
   return Boolean(state?.session.role === 'admin' && isRuntimePerfDebugEnabled());
