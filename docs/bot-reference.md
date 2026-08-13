@@ -1219,7 +1219,8 @@ Depois do catch-up:
   valoração fica esparso em vez de promover uma pool secundária/morta;
   `valuation_protocol`, `valuation_market_key` e `valuation_volume_24h_usd`
   preservam a proveniência e os desempates são atividade mais recente, protocolo
-  e `market_key`;
+  e `market_key`. O payload realtime aplica a mesma seleção somente ao OHLC e à
+  valoração; atividade e diagnósticos realtime permanecem token-wide;
 - o backfill de agregados aceita `--token 0x...` para reprocessar isoladamente um
   contrato com checkpoint próprio; o modo set-based também remove candles antigos
   quando a nova seleção conclui que a pool principal não negociou no intervalo;
