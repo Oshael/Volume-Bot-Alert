@@ -16,7 +16,15 @@ Data inicial: 2026-07-29.
 
 - Revisao 2026-08-13: taxonomia de sinais expandida (tiers de perfil, Sinal 3b de
   OCR, Sinal 4 de tendencia); alpha fixado como **deterministico, sem IA**.
-- Nenhum bloco iniciado.
+- Implementacao 2026-08-13: **Blocos 0 e 1 concluidos** no repo do bot (branch
+  `Robinhood-Implementation`). Ver "Blocos de execucao" para o estado de cada um.
+  - Bloco 0 (gate) rodou contra o catalogo real: gate **passa** com as ressalvas
+    de crop agressivo e espelhamento (ambas ja previstas). Modulo de hash duravel
+    em `src/utils/image-fingerprint.js`.
+  - Bloco 1: tabela `token_image_fingerprint` (stage123), worker isolado no grupo
+    `x-match` **desligado por default**; nada roda em producao ate ligar o flag e
+    aplicar a migracao.
+- Ainda pendente: Blocos 2/3 (camada X hostil) em diante.
 - Nenhuma conta X, proxy ou sessao contratada.
 - Nenhum codigo de ingestao X existe no repositorio.
 - Ja existe em producao, de trabalho anterior desta mesma sessao: card de perfil
@@ -346,8 +354,10 @@ e novo e a tese nao foi provada. Escala depois, com evidencia.
   thumbnail da o mesmo resultado com uma fracao da banda.
 - Calcular pHash (DCT) e dHash (gradiente) por imagem. Dois hashes independentes
   reduzem falso positivo sem custo relevante.
-- Requer dependencia nova de decodificacao (`sharp` ou equivalente). Hoje o
-  repositorio nao tem nenhuma.
+- Decodificacao ja disponivel: `sharp` **ja e dependencia do repositorio**
+  (confirmado 2026-08-13). Nao ha dependencia nova de decodificacao. O pHash/dHash
+  vivem em `src/utils/image-fingerprint.js`. A unica dependencia nova real do plano
+  e o **OCR** (Bloco 4).
 
 **4. Fingerprint das moedas**
 
@@ -424,9 +434,12 @@ x_post_media_fingerprint(
   PRIMARY KEY (post_id, media_index)
 )
 
--- fingerprint das moedas
+-- fingerprint das moedas (implementado: stage123)
 token_image_fingerprint(
-  chain, token_address, source_image_url, phash BIGINT, dhash BIGINT,
+  chain, token_address, source_image_url,
+  phash BIGINT, dhash BIGINT,
+  phash_mirror BIGINT, dhash_mirror BIGINT,  -- hash da versao espelhada
+  ok BOOLEAN DEFAULT TRUE,                    -- false = falha de download/decode
   computed_at, PRIMARY KEY (chain, token_address)
 )
 
@@ -606,11 +619,29 @@ o hash se afasta do original:
 | Texto sobreposto | ticker escrito por cima e comum |
 | Espelhamento horizontal | caso conhecido de falha do pHash |
 
-- Script isolado no padrao `scripts/*-probe`, fora do caminho de producao.
+- Script isolado no padrao `src/utils/*-probe.js` (o repo nao tem `scripts/`;
+  ha varios `*-probe` nesse diretorio), fora do caminho de producao.
 - Saida: distribuicao de hamming por tipo de transformacao, para pHash e dHash.
 - Criterio: se recompressao e resize ficarem abaixo de ~4 e recorte de 10%
   abaixo de ~10, o limiar e utilizavel e seguimos. Se recorte leve ja estourar,
   **parar** e reavaliar com embedding visual, que muda a conta de custo.
+
+**Resultado (2026-08-13, `src/utils/token-image-phash-probe.js`, 12 imagens do
+catalogo real).** Gate **PASSA** na metrica `min(pHash,dHash)`:
+
+- recompressao JPEG q90/70/50: mediana 0, p90 <= 1;
+- resize 50%/25%: mediana 0, p90 <= 2;
+- crop 10%: mediana 8 (dentro do orcamento ~10); crop 20%: mediana 20 (invade a
+  faixa de negativos -- recorte agressivo continua fora do alcance do hash);
+- texto sobreposto: mediana 4;
+- piso de negativos (cross-token) comeca em **22**.
+
+Separacao limpa: transforms realistas ficam <= 12, negativos comecam em 22 -- um
+limiar ~16-18 sobre o minimo dos dois hashes separa bem. Ressalva confirmada: o
+**espelhamento** zera o pHash (18-32, igual a negativo), por isso o Bloco 1 guarda
+tambem o hash da versao espelhada da moeda. Amostra de 12 imagens: rodar com
+`--limit` alto (500-1000) onde o catalogo e grande para ver o piso real de falso
+positivo antes de investir em proxies/contas.
 
 O que este bloco **nao** prova: que um post real de uma conta grande casa com uma
 moeda real. Isso so o Bloco 5 prova, em producao admin-only. O que ele prova e o
@@ -618,14 +649,27 @@ cenario de falha mais provavel e mais barato de descobrir.
 
 Sem dependencia de X. Sem imagem baixada na mao.
 
-### Bloco 1 - Fingerprint das moedas
+### Bloco 1 - Fingerprint das moedas [CONCLUIDO 2026-08-13]
 
-- Tabela `token_image_fingerprint` e migracao.
-- Worker que consome `imageUrl` do catalogo e calcula pHash/dHash.
-- Dependencia nova de decodificacao de imagem.
-- Testes: normalizacao do hash, idempotencia, recalculo em troca de imagem.
+- Tabela `token_image_fingerprint` via `src/utils/db-init-stage123.js` +
+  declaracao em `runtime-schema.js`. Alem do esboco do "Modelo de dados", ganhou
+  colunas `phash_mirror`/`dhash_mirror` (hash da versao espelhada, calculado com
+  `sharp.flop()` sem 2o download) e flag `ok` para marcar falha de download/decode
+  e nao re-tentar URL morta a cada ciclo.
+- Model `src/models/token-image-fingerprint.js`: `selectCandidates` (recompute so
+  quando `last_image_url` muda -- `IS DISTINCT FROM` -- ou apos backoff de falha),
+  `upsertFingerprint`, e round-trip do hash de 64 bits por `BIGINT` assinado
+  (`BigInt.asIntN/asUintN`; Hamming e sempre em memoria, nunca em SQL).
+- Worker `src/services/token-image-fingerprint-worker.js`: grupo isolado
+  `x-match`, **desligado por default** (`X_MATCH_FINGERPRINT_ENABLED=false`).
+  Script `npm run start:worker:x-match`.
+- Sem dependencia nova (`sharp` ja existia); reusa o modulo de hash do Bloco 0.
+- Testes: unit da orquestracao do worker (dupla orientacao, marcacao de falha,
+  iteracao de batch) + integracao do `selectCandidates` (recompute-on-change e
+  backoff).
 
-Independe totalmente do X. Ja deixa o lado das moedas pronto.
+Independe totalmente do X. Ja deixa o lado das moedas pronto. Para ativar em
+producao: aplicar a stage123 no DB e subir o worker no grupo `x-match`.
 
 ### Bloco 2 - Sessao X e probe de list timeline
 
