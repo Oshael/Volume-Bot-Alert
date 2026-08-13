@@ -2,8 +2,10 @@
 
 Documento de decisao e execucao para construir o alerta em tempo real que cruza
 posts de contas conhecidas do X contra as moedas ja existentes no catalogo,
-usando imagem (hash perceptual) e nome/ticker como chave de match, e emite no
-feed a possivel causa de um pump antes ou durante ele.
+usando imagem (hash perceptual), nome/ticker (texto do post e OCR da imagem) e
+**convergencia de tema entre varias contas** como chave de match, e emite no feed
+a possivel causa de um pump antes ou durante ele. Alpha 100% deterministico, sem
+IA.
 
 Este documento e a fonte de verdade para continuar o trabalho sem depender do
 contexto da conversa.
@@ -12,6 +14,8 @@ Data inicial: 2026-07-29.
 
 ## Status
 
+- Revisao 2026-08-13: taxonomia de sinais expandida (tiers de perfil, Sinal 3b de
+  OCR, Sinal 4 de tendencia); alpha fixado como **deterministico, sem IA**.
 - Nenhum bloco iniciado.
 - Nenhuma conta X, proxy ou sessao contratada.
 - Nenhum codigo de ingestao X existe no repositorio.
@@ -139,9 +143,27 @@ Requisitos:
 
 ## Tipos de sinal
 
-Tres sinais independentes, em ordem decrescente de precisao.
+Os sinais se organizam em dois eixos: **pontual** (um post basta) vs **agregado**
+(a forca vem da convergencia de varios posts), e **por tier de perfil** (nem todo
+perfil tem direito a disparar sozinho). Nenhum sinal abaixo precisa de IA: todos
+sao deterministicos (string, hash, contagem). A convergencia *abstrata* -- varios
+posts apontando pra mesma entidade sem compartilhar termo nem imagem -- seria a
+unica que exigiria multimodal, e esta fora de escopo por ora (ver "Fora de
+escopo").
 
-### Sinal 1 - Follow (deterministico, precisao maxima)
+### Tiers de perfil
+
+A mesma lista de perfis tem dois usos simultaneos sobre o mesmo fluxo:
+
+- **Tier carimbado -> direito a alerta single-post.** Para essas contas, um unico
+  post basta: se o cara posta sobre uma moeda (follow, imagem, ou ticker na
+  legenda), a probabilidade condicional de mover o mercado ja e alta o bastante
+  pra alertar. Marcado no campo `tier` de `x_tracked_account`.
+- **Todos os perfis (inclusive os carimbados) -> alimentam o alerta de
+  tendencia.** Uma conta ruidosa demais pra disparar sozinha ainda *conta* pra
+  medir convergencia de tema. O mesmo `x_post` alimenta os dois consumidores.
+
+### Sinal 1 - Follow (deterministico, precisao maxima, single-post)
 
 Quando uma conta monitorada **passa a seguir** uma conta de meme que ja tem o
 contrato publicado (bio, post fixado ou nome), a associacao e exata: o CA e uma
@@ -151,24 +173,67 @@ string, e a moeda quase certamente ja esta no catalogo.
 - Deteccao: `friends_count` do batch de perfis muda -> buscar `Following`
   daquela conta -> perfis novos -> extrair CA da bio/nome/pinned.
 - Alerta: "@toly passou a seguir @burniesender ($SENDER)".
-- Volume baixissimo, precisao altissima. **E o primeiro que eu construiria**
-  depois do match de imagem, e talvez antes.
+- Volume baixissimo, precisao altissima.
 
-### Sinal 2 - Imagem (pHash/dHash)
+### Sinal 2 - Imagem (pHash/dHash, single-post)
 
 Coberto pelas medicoes acima. Limiar inicial ~22 sobre o minimo dos dois hashes.
+Dispara sozinho apenas para o tier carimbado; para os demais, contribui pra
+tendencia.
 
-### Sinal 3 - Termo (texto do post x nome/ticker)
+### Sinal 3 - Termo (single-post ou tendencia)
 
-O post usa uma palavra que da nome a uma moeda. Caso real: Sam Altman escreveu
-*"what if we name the next model goblin"* e a GOBLIN Coin subiu forte.
+O post usa uma palavra que da nome/ticker a uma moeda. Duas origens do termo, com
+o mesmo tratamento a jusante (normalizacao + gate de raridade + desempate por
+mcap):
 
-Este e o sinal mais ruidoso e exige as regras de desempate da secao seguinte.
+- **3a - texto do post** (legenda, ticker escrito). Caso real: Sam Altman escreveu
+  *"what if we name the next model goblin"* e a GOBLIN Coin subiu forte.
+- **3b - texto embutido na imagem (OCR + stemming).** O termo decisivo as vezes
+  mora *dentro* da imagem, nao na legenda -- o normalizador de timeline nunca ve
+  essa string sem OCR. Caso real: a $Plumber (@PlumberORG) subiu ~400% num swarm
+  sobre "plumbing"; o elo legivel era o letreiro "Plumbing School" no meme. Exige
+  **stemming**, nao match exato: "plumbing", "plumber" e o token `Plumber` so se
+  encontram no radical `plumb`. O OCR e utilitario barato (CPU, self-hosted), nao
+  a IA cara.
+
+Termo comum ("bear", "dog", "moon") nunca dispara sozinho -- ver gate de raridade
+no "Controle de ruido".
+
+### Sinal 4 - Alerta de tendencia (agregado, deterministico enquanto lexical)
+
+Nenhum post isolado e a causa; a causa e a **convergencia** -- varias contas
+monitoradas tocando no mesmo termo numa janela curta (sugestao inicial: 5h). Foi
+o que de fato explicou a $Plumber: dezenas de perfis grandes comentando o tema ao
+mesmo tempo, nao um post unico.
+
+- Generaliza o modelo de entidade do doc: em vez de um ponteiro pra entidade, sao
+  *muitos*, e a contagem/velocidade e a forca do sinal.
+- Fluxo: extrai termo por post (texto + OCR) -> agrega por **contas distintas** na
+  janela -> dispara por **aceleracao** de um termo (nao contagem absoluta) ->
+  resolve termo -> moeda -> alerta.
+- Antecede o pump: o swarm de atencao vem antes do retail e do preco. Detectado
+  enquanto se forma, fica a frente do movimento.
+- Deterministico **enquanto a convergencia for lexical** (um termo compartilhado,
+  de texto ou OCR). Convergencia sem termo comum exigiria embedding/multimodal e
+  esta fora de escopo.
 
 ## Decisoes confirmadas
 
 - Match por **pHash de imagem** como sinal primario; nome/ticker como sinal
   secundario.
+- **Alpha 100% deterministico, sem IA.** Single-post + alerta de tendencia se
+  resolvem com string, hash, OCR (utilitario barato) e contagem. Multimodal/LLM
+  nao e requisito do produto; fica adiado e, se um dia entrar, e gatilhado por
+  evento (nao por post) -- ver "Fora de escopo".
+- **Direito a single-post e por tier de perfil.** So o tier carimbado dispara com
+  um post so; os demais perfis contribuem apenas pro alerta de tendencia. Campo
+  `tier` em `x_tracked_account`.
+- **Sinal de termo tem duas origens** -- texto do post e texto embutido na imagem
+  (OCR) -- convergindo no mesmo indice de termos raros, com stemming.
+- **Alerta de tendencia e sinal de primeira classe**, deterministico enquanto
+  lexical: convergencia de um termo entre contas distintas numa janela, medida por
+  aceleracao.
 - Fingerprint das moedas calculado **uma vez** e persistido; recalculado apenas
   quando `imageUrl` muda.
 - Indice de moedas mantido **em memoria** no worker, reconstruido no boot.
@@ -191,10 +256,16 @@ Este e o sinal mais ruidoso e exige as regras de desempate da secao seguinte.
   porque quem cria a moeda linka o post. Nao ha valor a adicionar.
 - **Comunidades do X.** Sem fonte publica; exigiria GraphQL so para nome e
   contagem de membros. Nao compensa.
+- **Convergencia abstrata (embedding/CLIP/LLM multimodal).** So seria necessaria
+  pra pegar swarm/tema *sem* termo compartilhado (varios posts apontando pra mesma
+  entidade sem palavra nem imagem em comum). Nao entra no alpha deterministico. Se
+  um dia entrar, e **gatilhada por evento** (pico de tendencia ou anomalia de
+  mercado), nunca rodada por post -- rodar multimodal no firehose e economicamente
+  inviavel. O caso $Plumber nao precisa disso: tinha o termo legivel.
 - **Explicacao retroativa e marcacao no chart.** Mesmo motor, produto diferente.
-  Fica para depois do tempo real funcionar, reutilizando os posts ja gravados.
-- **Embedding visual (CLIP) e LLM multimodal.** So se o Bloco 0 provar que pHash
-  nao basta. Muda a conta de custo inteira.
+  Fica para depois do tempo real funcionar, reutilizando os posts ja gravados. E
+  tambem o **caminho de gatilho** de qualquer sinal conceitual futuro: partir do
+  pump/tendencia detectada e olhar pra tras, em vez de tentar explicar todo post.
 - **Monitorar likes, follows e mudanca de PFP.** Nao serve a este objetivo.
 - **Deploy automatico de moeda a partir de post.** Nao e nosso produto.
 
@@ -212,7 +283,7 @@ Este e o sinal mais ruidoso e exige as regras de desempate da secao seguinte.
    |
    |  fila de imagens
    v
-[image-fingerprint-worker]  -> baixa variante small, decodifica, pHash + dHash
+[image-fingerprint-worker]  -> baixa variante small, decodifica, pHash + dHash + OCR
    |
    v
 [x_post_media_fingerprint]
@@ -225,6 +296,14 @@ Este e o sinal mais ruidoso e exige as regras de desempate da secao seguinte.
    v
 [x_token_match_event]  -> dedupe -> feed de alertas / socket
 ```
+
+O mesmo fluxo de posts alimenta um **segundo consumidor** em paralelo ao
+match-worker: um **agregador de tendencia**. Ele coleta os termos extraidos por
+post (texto + OCR), conta por contas distintas numa janela deslizante (~5h) e
+dispara quando a *aceleracao* de um termo cruza o limiar; ai resolve termo ->
+moeda pelo mesmo indice. Single-post (match-worker) e tendencia (agregador) sao
+dois consumidores do mesmo `x_post`/`x_post_media`, com tiers de perfil diferentes
+(ver "Tipos de sinal").
 
 ### Componentes
 
@@ -293,10 +372,17 @@ Esboco, sujeito a revisao no bloco correspondente. Nenhuma tabela existente e
 alterada.
 
 ```sql
--- contas monitoradas
+-- contas monitoradas (quem voce observa)
 x_tracked_account(
   id, screen_name, rest_id, followers, tier, enabled,
   added_reason, added_at, last_seen_post_at
+)
+
+-- sessoes de scraping (identidades proprias, quem observa) + proxy fixo.
+-- escalar = inserir linha; nao confundir com x_tracked_account
+x_session(
+  id, label, auth_token, ct0, proxy_url, enabled,
+  quarantined_until, last_used_at
 )
 
 -- posts observados, retencao curta
@@ -311,7 +397,9 @@ x_post_media(
 )
 
 x_post_media_fingerprint(
-  post_id, media_index, phash BIGINT, dhash BIGINT, computed_at,
+  post_id, media_index, phash BIGINT, dhash BIGINT,
+  ocr_text TEXT, ocr_tokens TEXT[],   -- termos normalizados extraidos da imagem
+  computed_at,
   PRIMARY KEY (post_id, media_index)
 )
 
@@ -324,11 +412,12 @@ token_image_fingerprint(
 -- resultado
 x_token_match_event(
   id, chain, token_address,
-  post_id,                      -- null quando match_kind = 'follow'
-  match_kind,                   -- 'image' | 'text' | 'follow'
+  post_id,                      -- null quando match_kind e 'follow' ou 'trend'
+  match_kind,                   -- 'image' | 'text' | 'follow' | 'trend'
   hamming_distance,             -- so para 'image'
-  matched_terms TEXT[],         -- so para 'text'
+  matched_terms TEXT[],         -- so para 'text' e 'trend'
   followed_screen_name,         -- so para 'follow'
+  trend_accounts INT,           -- so para 'trend': contas distintas na janela
   author_rest_id, author_followers, token_market_cap, mcap_rank,
   matched_at, alerted BOOLEAN DEFAULT FALSE,
   admin_label,                  -- 'good' | 'bad' | null, calibracao do Bloco 5
@@ -338,6 +427,13 @@ x_token_match_event(
 -- estado para detectar novos follows por delta
 x_account_follow_state(
   rest_id PK, friends_count, checked_at
+)
+
+-- observacoes de termo por post, alimenta o alerta de tendencia
+x_post_term(
+  post_id, term, source,          -- source: 'text' | 'ocr'
+  author_rest_id, observed_at,
+  PRIMARY KEY (post_id, term, source)
 )
 ```
 
@@ -383,6 +479,23 @@ alerta.
   urso repostado 40 vezes gera um alerta, nao 40.
 - **Exigir concordancia dos dois hashes** (pHash e dHash) para o limiar mais
   frouxo.
+- **Gate de raridade vale tambem pro termo de OCR.** Meme e cheio de texto ("gm",
+  "wagmi", "100x", "boyz"); so termo raro (radical incomum) conta. "plumb" passa;
+  "school", "today" morrem no gate.
+
+### Controle de ruido do alerta de tendencia
+
+- **Aceleracao, nao contagem absoluta.** Crypto twitter sempre tem tema morno de
+  fundo; o gatilho e a *derivada* -- convergencia subita -- nao um piso fixo de
+  mencoes.
+- **Amplificacao != convergencia.** 15 contas retuitando o mesmo post = 1 ponteiro,
+  nao 15. Contar **expressao independente por conta distinta**; reusar a resolucao
+  de retweet ja prevista na ingestao. Sem isso, um unico viral vira falso swarm.
+- **Segundo portao: a maioria dos temas nao tem moeda.** "Todo mundo falando do
+  FOMC" e burst real, zero moeda. A resolucao termo->moeda filtra isso depois do
+  gatilho (mais raro) do burst.
+- **Janela e limiar sao calibracao** (sugestao 5h), nao constante -- apertar com os
+  rotulos da fase admin-only.
 
 ## Custo estimado
 
@@ -403,10 +516,57 @@ engenharia. O compute nao aparece na conta.
 Ordem de grandeza para provar a tese, com pool inicial pequeno: **US$ 50-80/mes**.
 E o valor que se aceita gastar antes de ter prova de que o match funciona.
 
+## Modo bootstrap (teste sem escala)
+
+Objetivo desta fase: montar e testar **tudo o que nao depende de escala**, com
+1-2 contas proprias, pra que ampliar depois seja so adicionar contas e proxies --
+digitacao, nao codigo.
+
+**Duravel vs. perecivel.**
+
+- **Duravel (constroi agora, nao apodrece):** normalizacao, pHash/dHash, OCR,
+  extracao de termo, indice de match, agregador de tendencia, dedup, schema, feed
+  admin-only, fingerprint das moedas. Independe do X e da escala.
+- **Perecivel (a camada que fala com o X):** `queryId`/`features` do bundle,
+  assinatura do `x-client-transaction-id`, shape do GraphQL. Quebra sozinha em
+  semanas -- nao da pra "congelar e esperar". Constroi-se com extracao automatica
+  no boot e **valida-se junto com o uso**, nao antes.
+
+**Alpha = 1-2 contas, nao 40.** O alpha ja e 1-2 sessoes (ver "Custo estimado").
+Contas proprias que voce topa queimar + uma lista com 20-40 influencers reais
+seguidos testam a tese inteira. Dinheiro (mais contas + proxies) escala *alem* do
+alpha; nao e requisito pra validar.
+
+**Regra que torna a escala trivial.** Sessoes e proxies sao **linhas numa tabela**
+(`x_session`: `auth_token`, `ct0`, `proxy_url`, `enabled` por sessao), lidas em
+runtime. O pool itera sobre as linhas -- escalar = inserir linhas, zero deploy.
+Entra no Bloco 3.
+
+**Cuidados.**
+
+- **Nao use a conta que voce preza** -- scraping viola ToS e queima contas; use
+  descartaveis.
+- **Do IP de casa voce amarra teu IP a atividade.** Um proxy residencial baratinho
+  ($30-60/mes) ja remove isso e ainda testa o binding proxy-por-sessao de verdade.
+- **Nao sobre-engenheirar** a orquestracao de 40 sessoes antes da tese fechar;
+  construa o minimo que roda 1-2 sessoes limpo e e extensivel por config.
+
 ## Blocos de execucao
 
 Cada bloco respeita o limite de 500 linhas alteradas e termina com lint, testes
 aplicaveis, revisao de diff e relatorio. Nenhum bloco comeca sem autorizacao.
+
+Escopo do modo bootstrap -- o que da pra testar so com contas proprias:
+
+| Bloco | O que | Testavel agora? |
+|---|---|---|
+| 0 | robustez do pHash (probe) | sim, sem infra |
+| 1 | fingerprint das moedas | sim, independe do X |
+| 2 | sessao X + probe do timeline | sim, 1 conta (home IP ou 1 proxy) |
+| 3 | ingestao continua (config-driven) | sim, 1-2 sessoes |
+| 4 / 4b / 4c | imagem+OCR / follow / tendencia | sim |
+| 5 | matcher + feed admin-only | sim -- aqui voce ve se "monitora legal" |
+| 6 | liberacao pra usuarios | nao -- precisa de escala + rotulos do Bloco 5 |
 
 ### Bloco 0 - Robustez do pHash (GATE, sem infra, sem trabalho manual)
 
@@ -455,16 +615,22 @@ Independe totalmente do X. Ja deixa o lado das moedas pronto.
 
 ### Bloco 3 - Ingestao continua
 
+- **Sessoes e proxies como tabela** (`x_session`: `auth_token`, `ct0`,
+  `proxy_url`, `enabled`), lidas em runtime -- escalar depois e inserir linhas, sem
+  deploy.
 - Pool de sessoes com bucket por endpoint e quarentena.
 - Normalizador de timeline (incluindo `TweetWithVisibilityResults` e retweet).
 - Tabelas `x_tracked_account`, `x_post`, `x_post_media`.
-- Worker dedicado, desligado por default via env.
+- Worker dedicado, desligado por default via env. Roda com 1-2 sessoes no
+  bootstrap; o mesmo codigo escala pra N.
 
 ### Bloco 4 - Fingerprint de imagens de post
 
 - Fila de download com variante `small`.
-- `x_post_media_fingerprint`.
+- `x_post_media_fingerprint` (phash/dhash **e** OCR: texto + termos normalizados).
 - Reaproveita o codigo de hash do Bloco 1.
+- OCR self-hosted (Tesseract/PaddleOCR ou equivalente); dependencia nova, roda em
+  CPU sobre a imagem ja decodificada. Nao e a IA cara.
 
 ### Bloco 4b - Sinal de follow
 
@@ -478,6 +644,19 @@ Independente do pipeline de imagem e pode ser feito antes dele.
 
 Menor volume e maior precisao de todos os sinais. Se o tempo for curto, este
 entrega valor antes do match de imagem.
+
+### Bloco 4c - Alerta de tendencia (agregador de termos)
+
+Deterministico, independente do sinal de follow; consome o que os Blocos 3 e 4
+extraem.
+
+- Grava `x_post_term` (termos de texto + OCR por post).
+- Janela deslizante (~5h) contando contas distintas por termo; dispara por
+  **aceleracao**, nao contagem absoluta.
+- Dedup de amplificacao: reusa a resolucao de retweet pra nao contar 15
+  repostagens como 15 ponteiros.
+- Resolve termo -> moeda pelo indice de termos raros; desempate por mcap.
+- Nenhuma dependencia de IA.
 
 ### Bloco 5 - Matcher com feed admin-only
 
