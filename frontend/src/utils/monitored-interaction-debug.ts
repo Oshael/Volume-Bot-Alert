@@ -1,6 +1,7 @@
 const DEFAULT_DIAGNOSIS_DURATION_MS = 15_000;
 const MAX_DIAGNOSIS_DURATION_MS = 60_000;
 const MAX_RECORDED_EVENTS = 120;
+const MAX_RECORDED_HOVER_EVENTS = 240;
 const DIAGNOSIS_STORAGE_KEY = 'trendscope:monitored-interaction-diagnosis';
 
 type InteractionZone = 'liquidity' | 'sparkline-range' | 'terminal' | 'other';
@@ -25,6 +26,26 @@ type InteractionMutationEvent = {
   pointer: PointerSnapshot;
 };
 
+type HoverTransitionEvent = {
+  atMs: number;
+  transition: 'enter' | 'leave';
+  identity: string | null;
+  zone: Exclude<InteractionZone, 'other'>;
+  x: number;
+  y: number;
+  target: string;
+  relatedTarget: string;
+  hitTarget: string;
+  rootHovered: boolean;
+  popupVisible: boolean | null;
+  rootRect: { left: number; top: number; right: number; bottom: number };
+};
+
+type HoverTransitionCounts = Record<Exclude<InteractionZone, 'other'>, {
+  enters: number;
+  leaves: number;
+}>;
+
 export type MonitoredInteractionDiagnosis = {
   generatedAt: string;
   durationMs: number;
@@ -43,6 +64,8 @@ export type MonitoredInteractionDiagnosis = {
     pointerTargetDisconnects: number;
   };
   events: InteractionMutationEvent[];
+  hoverSummary: HoverTransitionCounts;
+  hoverEvents: HoverTransitionEvent[];
 };
 
 type MonitoredInteractionDiagnosisRun = {
@@ -112,9 +135,37 @@ function getRowIdentity(row: HTMLElement) {
 function getPointerZone(target: HTMLElement | null): InteractionZone {
   if (!target) return 'other';
   if (target.closest('.total-liq-tip-wrap')) return 'liquidity';
-  if (target.closest('.monitored-sparkline-quick-ranges')) return 'sparkline-range';
+  if (target.closest('.monitored-mini-chart')) return 'sparkline-range';
   if (target.closest('[data-trade-wrap], .trade-btn-direct')) return 'terminal';
   return 'other';
+}
+
+function getInteractionRoot(target: HTMLElement | null, zone: InteractionZone) {
+  if (!target || zone === 'other') return null;
+  if (zone === 'liquidity') return target.closest<HTMLElement>('.total-liq-tip-wrap');
+  if (zone === 'sparkline-range') return target.closest<HTMLElement>('.monitored-mini-chart');
+  return target.closest<HTMLElement>('[data-trade-wrap], .trade-btn-direct');
+}
+
+function describeElement(element: HTMLElement | null) {
+  if (!element) return '(none)';
+  const action = element.dataset.action ? `[data-action="${element.dataset.action}"]` : '';
+  const classes = [...element.classList].slice(0, 4).map((name) => `.${name}`).join('');
+  return `${element.tagName.toLowerCase()}${action}${classes}`;
+}
+
+function isPopupVisible(root: HTMLElement, zone: Exclude<InteractionZone, 'other'>) {
+  const selector = zone === 'liquidity'
+    ? '.met-tip-dd'
+    : zone === 'sparkline-range'
+      ? '.monitored-sparkline-quick-ranges'
+      : '.trade-dd';
+  const popup = root.querySelector<HTMLElement>(selector);
+  if (!popup) return null;
+  const style = window.getComputedStyle(popup);
+  return style.display !== 'none'
+    && style.visibility !== 'hidden'
+    && Number(style.opacity || 1) > 0.01;
 }
 
 function getPointerSnapshot(target: HTMLElement | null): PointerSnapshot {
@@ -150,6 +201,12 @@ async function diagnoseMonitoredInteractions(
   let pointerTarget: HTMLElement | null = null;
   let previousOrder = rowOrder(list);
   const events: InteractionMutationEvent[] = [];
+  const hoverEvents: HoverTransitionEvent[] = [];
+  const hoverSummary: HoverTransitionCounts = {
+    liquidity: { enters: 0, leaves: 0 },
+    'sparkline-range': { enters: 0, leaves: 0 },
+    terminal: { enters: 0, leaves: 0 },
+  };
   const summary = {
     mutationBatches: 0,
     orderChanges: 0,
@@ -166,7 +223,44 @@ async function diagnoseMonitoredInteractions(
   const onPointerMove = (event: PointerEvent) => {
     pointerTarget = event.target instanceof HTMLElement ? event.target : null;
   };
+  const recordHoverTransition = (event: PointerEvent, transition: 'enter' | 'leave') => {
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    const relatedTarget = event.relatedTarget instanceof HTMLElement ? event.relatedTarget : null;
+    const zone = getPointerZone(target);
+    if (zone === 'other') return;
+    const root = getInteractionRoot(target, zone);
+    const relatedRoot = getInteractionRoot(relatedTarget, getPointerZone(relatedTarget));
+    if (!root || root === relatedRoot) return;
+
+    hoverSummary[zone][transition === 'enter' ? 'enters' : 'leaves'] += 1;
+    if (hoverEvents.length >= MAX_RECORDED_HOVER_EVENTS) return;
+    const rect = root.getBoundingClientRect();
+    const hitTarget = document.elementFromPoint(event.clientX, event.clientY);
+    hoverEvents.push({
+      atMs: Number((performance.now() - startedAt).toFixed(1)),
+      transition,
+      identity: root.closest<HTMLElement>('.monitored-token-row')?.dataset.identity || null,
+      zone,
+      x: Math.round(event.clientX),
+      y: Math.round(event.clientY),
+      target: describeElement(target),
+      relatedTarget: describeElement(relatedTarget),
+      hitTarget: describeElement(hitTarget instanceof HTMLElement ? hitTarget : null),
+      rootHovered: root.matches(':hover'),
+      popupVisible: isPopupVisible(root, zone),
+      rootRect: {
+        left: Math.round(rect.left),
+        top: Math.round(rect.top),
+        right: Math.round(rect.right),
+        bottom: Math.round(rect.bottom),
+      },
+    });
+  };
+  const onPointerOver = (event: PointerEvent) => recordHoverTransition(event, 'enter');
+  const onPointerOut = (event: PointerEvent) => recordHoverTransition(event, 'leave');
   document.addEventListener('pointermove', onPointerMove, { capture: true, passive: true });
+  document.addEventListener('pointerover', onPointerOver, { capture: true, passive: true });
+  document.addEventListener('pointerout', onPointerOut, { capture: true, passive: true });
 
   const observer = new MutationObserver((records) => {
     const removedRows = new Set<HTMLElement>();
@@ -249,6 +343,8 @@ async function diagnoseMonitoredInteractions(
   await new Promise<void>((resolve) => window.setTimeout(resolve, durationMs));
   observer.disconnect();
   document.removeEventListener('pointermove', onPointerMove, { capture: true });
+  document.removeEventListener('pointerover', onPointerOver, { capture: true });
+  document.removeEventListener('pointerout', onPointerOut, { capture: true });
 
   const report: MonitoredInteractionDiagnosis = {
     generatedAt: new Date().toISOString(),
@@ -257,6 +353,8 @@ async function diagnoseMonitoredInteractions(
     finalRows: list.querySelectorAll(':scope > .monitored-token-row').length,
     summary,
     events,
+    hoverSummary,
+    hoverEvents,
   };
   console.info('[Monitored interaction diagnosis]', report);
   return report;
