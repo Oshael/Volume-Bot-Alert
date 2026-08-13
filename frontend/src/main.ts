@@ -311,6 +311,15 @@ function isInteractionLocked() {
 }
 
 function isListInteractionLocked() {
+  if (shouldLockListInteraction({
+    insideBroadList: false,
+    insideScopedList: false,
+    insideInteractiveZone: false,
+    insideMonitoredList: false,
+    monitoredPinDragActive: Boolean(root.querySelector('.monitored-list.monitored-pin-drag-active')),
+  })) {
+    return true;
+  }
   if (!currentListInteractionZone?.isConnected) {
     currentListInteractionZone = null;
     return false;
@@ -348,7 +357,7 @@ function isSortMenuOpen() {
  * While a panel is open the list is frozen, the same way an open sort menu is.
  */
 function isTickerPeersPanelOpen() {
-  return Boolean(root.querySelector('.alert-ticker-peers-panel[open]'));
+  return Boolean(root.querySelector('.alert-ticker-peers-panel[open]:not(.monitored-ticker-peers-panel)'));
 }
 
 function getBotSettingsBrowserNotificationsRenderKey(state: AppState) {
@@ -658,16 +667,21 @@ function resolveListInteractionZone(target: HTMLElement | null) {
     insideBroadList: Boolean(broadList),
     insideScopedList: false,
     insideInteractiveZone: false,
+    insideMonitoredList: false,
+    monitoredPinDragActive: false,
   })) {
     return broadList;
   }
 
   const scopedList = target?.closest<HTMLElement>(SCOPED_LIST_INTERACTION_LOCK_SELECTOR);
   const interactionZone = target?.closest<HTMLElement>(SCOPED_LIST_INTERACTION_LOCK_ZONE_SELECTOR);
+  const insideMonitoredList = Boolean(scopedList?.classList.contains('monitored-list'));
   if (!shouldLockListInteraction({
     insideBroadList: false,
     insideScopedList: Boolean(scopedList),
     insideInteractiveZone: Boolean(interactionZone && scopedList?.contains(interactionZone)),
+    insideMonitoredList,
+    monitoredPinDragActive: false,
   })) {
     return null;
   }
@@ -695,11 +709,12 @@ function armHiddenRuntimeStopTimer() {
 
 root.addEventListener('pointerdown', (event) => {
   void primeAlertAudio();
-  if (event.isPrimary && event.button === 0) {
+  const target = event.target as HTMLElement | null;
+  const insideMonitoredPanel = Boolean(target?.closest('.monitored-panel'));
+  if (event.isPrimary && event.button === 0 && !insideMonitoredPanel) {
     activeRootPointerGesture = true;
   }
-  const target = event.target as HTMLElement | null;
-  if (target?.closest('button, a, [data-action], [data-trade-wrap]')) {
+  if (!insideMonitoredPanel && target?.closest('button, a, [data-action], [data-trade-wrap]')) {
     interactionLockUntil = Date.now() + 300;
     suppressNextFocusFlush = true;
     window.setTimeout(() => {

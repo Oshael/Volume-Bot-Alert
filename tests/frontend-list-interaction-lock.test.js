@@ -6,24 +6,37 @@ const {
 } = require('../frontend/src/utils/list-interaction-lock.ts');
 
 describe('frontend list interaction lock', () => {
-  it('keeps monitored background hover live while protecting interactive controls', () => {
+  it('keeps monitored controls live while preserving the real pin drag lock', () => {
     assert.equal(shouldLockListInteraction({
       insideBroadList: false,
       insideScopedList: true,
-      insideInteractiveZone: false,
+      insideInteractiveZone: true,
+      insideMonitoredList: true,
+      monitoredPinDragActive: false,
     }), false);
     assert.equal(shouldLockListInteraction({
       insideBroadList: false,
       insideScopedList: true,
       insideInteractiveZone: true,
+      insideMonitoredList: true,
+      monitoredPinDragActive: true,
     }), true);
   });
 
-  it('preserves full-list locks for reorder-sensitive legacy lists', () => {
+  it('preserves interactive and full-list locks outside monitored', () => {
     assert.equal(shouldLockListInteraction({
       insideBroadList: true,
       insideScopedList: false,
       insideInteractiveZone: false,
+      insideMonitoredList: false,
+      monitoredPinDragActive: false,
+    }), true);
+    assert.equal(shouldLockListInteraction({
+      insideBroadList: false,
+      insideScopedList: true,
+      insideInteractiveZone: true,
+      insideMonitoredList: false,
+      monitoredPinDragActive: false,
     }), true);
   });
 });

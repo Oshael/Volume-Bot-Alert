@@ -56,10 +56,13 @@ let monitoredFiltersDraft: MonitoredValuationFilterDraft | null = null;
 let activeMonitoredFilters: HTMLElement | null = null;
 let commitActiveMonitoredFilters: (() => void) | null = null;
 let monitoredFiltersDocumentBound = false;
+const monitoredSectionStructureKeys = new WeakMap<HTMLElement, string>();
+const monitoredRowStaticKeys = new WeakMap<HTMLElement, string>();
 
 export function renderMonitoredSection(state: AppState, controller: AppController) {
   const section = document.createElement('section');
   const view = resolveMonitoredSectionView(state);
+  monitoredSectionStructureKeys.set(section, buildMonitoredStructureKey(state, view));
   section.className = `panel legacy-panel monitored-panel${view.isCollapsed ? ' panel-collapsed' : ''}${view.miniChartEnabled ? ' monitored-panel-mini-chart-enabled' : ''}`;
   if (view.capabilityNotice) {
     section.innerHTML = `
@@ -86,7 +89,70 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
   return section;
 }
 
+export function patchMonitoredSection(slot: ParentNode, state: AppState, controller: AppController) {
+  const section = slot.querySelector<HTMLElement>(':scope > .monitored-panel');
+  const view = resolveMonitoredSectionView(state);
+  if (!section || monitoredSectionStructureKeys.get(section) !== buildMonitoredStructureKey(state, view)) {
+    return false;
+  }
+  if (view.capabilityNotice || view.isCollapsed) {
+    return true;
+  }
+
+  const list = section.querySelector<HTMLElement>('.monitored-list');
+  if (!list || list.classList.contains('monitored-pin-drag-active')) {
+    return false;
+  }
+  if (view.pageItems.length === 0) {
+    return true;
+  }
+
+  const currentRows = [...list.querySelectorAll<HTMLElement>(':scope > .monitored-token-row')];
+  const rowsByIdentity = new Map(currentRows.map((row) => [row.dataset.identity || '', row]));
+  if (currentRows.length !== view.pageItems.length || rowsByIdentity.size !== currentRows.length) {
+    return false;
+  }
+
+  const patchedRows: HTMLElement[] = [];
+  for (const item of view.pageItems) {
+    const identity = buildTokenIdentityKey(item.chain || 'solana', item.address);
+    const currentRow = rowsByIdentity.get(identity);
+    if (!currentRow || !patchMonitoredRow(currentRow, item, state, controller)) {
+      return false;
+    }
+    patchedRows.push(currentRow);
+  }
+
+  const orderChanged = patchedRows.some((row, index) => currentRows[index] !== row);
+  if (orderChanged) {
+    list.append(...patchedRows);
+  }
+  return true;
+}
+
 type MonitoredSectionView = ReturnType<typeof resolveMonitoredSectionView>;
+
+function buildMonitoredStructureKey(state: AppState, view: MonitoredSectionView) {
+  return JSON.stringify({
+    capabilityNotice: view.capabilityNotice,
+    collapsed: view.isCollapsed,
+    search: view.searchQuery,
+    loadError: view.loadError,
+    perPage: view.safePerPage,
+    page: view.filteredSafePage,
+    totalPages: view.filteredTotalPages,
+    totalItems: view.filteredTracked.length,
+    sorts: state.ui.monitoredSorts,
+    sparklinePreset: state.ui.sparklineRange.monitoredPreset,
+    miniChartEnabled: view.miniChartEnabled,
+    pinCount: view.pinCount,
+    filters: [view.minMcap, view.maxMcap, view.minFdv, view.maxFdv],
+    role: state.session.role,
+    tradeTerminals: state.ui.enabledTradeTerminals,
+    robinhoodTradeTerminals: state.ui.enabledRobinhoodTradeTerminals,
+    manualTokenFolders: state.data.manualTokenFolders,
+  });
+}
 
 function resolveMonitoredSectionView(state: AppState) {
   const safePerPage = Math.max(10, Math.floor(state.ui.monitoredPerPage) || 30);
@@ -295,26 +361,135 @@ function renderMonitoredRows(
   const mockSolUsdcRate = resolveLiveMockSolUsdcRate(state.data.mockTradingSummary, state.data.configs);
   for (const item of view.pageItems) {
     const chain = item.chain || 'solana';
-    const isSolana = chain === 'solana';
     const miniChartEnabled = state.ui.livePanelLayout.spans.monitored > 1
       && state.data.chainReadiness[chain]?.capabilities.charts === true;
-    monitoredList.append(buildMonitoredRow(
-      item,
-      state.data.manualTokenFolders,
-      state.ui.busy,
-      isTokenStarred(state, item.address, item.chain || 'solana'),
-      state.session.role === 'admin',
-      chain === 'robinhood'
-        ? state.ui.enabledRobinhoodTradeTerminals
-        : state.ui.enabledTradeTerminals,
-      miniChartEnabled ? getTokenSparkline(state, item.address, chain) : null,
+    monitoredList.append(buildMonitoredRowForState(item, state, {
       miniChartEnabled,
-      state.ui.monitoredSparklineHoursByAddress,
-      isSolana ? getMockTradingPositionView(state, item.address) : null,
-      isSolana ? state.data.mockTradingTradesByAddress[item.address] : [],
       mockSolUsdcRate,
-    ));
+    }));
   }
+}
+
+function buildMonitoredRowForState(
+  item: ManualTokenEntry,
+  state: AppState,
+  resolved?: { miniChartEnabled: boolean; mockSolUsdcRate?: number },
+) {
+  const chain = item.chain || 'solana';
+  const isSolana = chain === 'solana';
+  const miniChartEnabled = resolved?.miniChartEnabled ?? (
+    state.ui.livePanelLayout.spans.monitored > 1
+    && state.data.chainReadiness[chain]?.capabilities.charts === true
+  );
+  const mockTradingPosition = isSolana ? getMockTradingPositionView(state, item.address) : null;
+  return buildMonitoredRow(
+    item,
+    state.data.manualTokenFolders,
+    state.ui.busy,
+    isTokenStarred(state, item.address, chain),
+    state.session.role === 'admin',
+    chain === 'robinhood'
+      ? state.ui.enabledRobinhoodTradeTerminals
+      : state.ui.enabledTradeTerminals,
+    miniChartEnabled ? getTokenSparkline(state, item.address, chain) : null,
+    miniChartEnabled,
+    state.ui.monitoredSparklineHoursByAddress,
+    mockTradingPosition,
+    isSolana ? state.data.mockTradingTradesByAddress[item.address] : [],
+    resolved?.mockSolUsdcRate
+      ?? resolveLiveMockSolUsdcRate(state.data.mockTradingSummary, state.data.configs),
+    buildMonitoredStaticKey(item, state, miniChartEnabled, mockTradingPosition),
+  );
+}
+
+function patchMonitoredRow(
+  current: HTMLElement,
+  item: ManualTokenEntry,
+  state: AppState,
+  controller: AppController,
+) {
+  const chain = item.chain || 'solana';
+  const miniChartEnabled = state.ui.livePanelLayout.spans.monitored > 1
+    && state.data.chainReadiness[chain]?.capabilities.charts === true;
+  const mockTradingPosition = chain === 'solana' ? getMockTradingPositionView(state, item.address) : null;
+  if (monitoredRowStaticKeys.get(current) !== buildMonitoredStaticKey(
+    item, state, miniChartEnabled, mockTradingPosition,
+  )) {
+    return false;
+  }
+
+  const currentMeta = current.querySelector<HTMLElement>('.monitored-meta-line');
+  const currentSide = current.querySelector<HTMLElement>('.monitored-side-v68');
+  if (!currentMeta || !currentSide) {
+    return false;
+  }
+
+  const isStarred = isTokenStarred(state, item.address, chain);
+  current.classList.toggle('token-starred', isStarred);
+  current.classList.toggle('monitored-activity-stale', item.activityState === 'stale');
+  const starButton = current.querySelector<HTMLButtonElement>('[data-action="toggle-star"]');
+  if (starButton) {
+    starButton.classList.toggle('active', isStarred);
+    starButton.textContent = isStarred ? '★' : '☆';
+  }
+  current.querySelectorAll<HTMLButtonElement>([
+    '[data-action="manual-quick-add"]',
+    '[data-action="manual-quick-add-target"]',
+    '[data-action="toggle-star"]',
+    '[data-action="block-token"]',
+    '[data-action="mock-buy-token"]',
+    '[data-action="mock-sell-token"]',
+    '[data-action="admin-block-token"]',
+  ].join(',')).forEach((button) => {
+    button.disabled = state.ui.busy;
+  });
+  currentMeta.replaceChildren(...buildMonitoredMetaMetrics(item));
+  currentSide.replaceChildren(...buildMonitoredSide(item).childNodes);
+
+  const currentMockLine = current.querySelector<HTMLElement>('.mock-trading-line');
+  if (currentMockLine && mockTradingPosition) {
+    const mockLineHost = document.createElement('div');
+    appendMonitoredMockTradingLine(
+      mockLineHost,
+      mockTradingPosition,
+      state.data.mockTradingTradesByAddress[item.address] || [],
+      resolveLiveMockSolUsdcRate(state.data.mockTradingSummary, state.data.configs),
+    );
+    const nextMockLine = mockLineHost.firstElementChild;
+    if (!(nextMockLine instanceof HTMLElement)) return false;
+    currentMockLine.replaceWith(nextMockLine);
+    bindTokenActions(current, controller);
+  }
+
+  const currentChart = current.querySelector<HTMLElement>('.monitored-mini-chart-figure');
+  if (currentChart && miniChartEnabled) {
+    const nextChart = buildMonitoredMiniChartFigure(
+      item,
+      getTokenSparkline(state, item.address, chain),
+    );
+    if (currentChart.innerHTML === nextChart.innerHTML) return true;
+    currentChart.replaceChildren(...nextChart.childNodes);
+    bindSparklineHover(currentChart, state.data.sparklineByAddress, { controller });
+  }
+
+  return true;
+}
+
+function buildMonitoredStaticKey(
+  item: ManualTokenEntry,
+  state: AppState,
+  miniChartEnabled: boolean,
+  mockTradingPosition: AppState['data']['mockTradingPositionsByAddress'][string] | null,
+) {
+  const { chain, primaryUrl, subtitle, symbol } = resolveMonitoredIdentityPresentation(item);
+  const identityKey = buildTokenIdentityKey(chain, item.address);
+  return JSON.stringify([
+    identityKey, symbol, subtitle, primaryUrl, sanitizeOptionalHttpUrl(item.imageUrl),
+    item.launchpadId, item.pairDexId, item.mintAddress, item.pairAddress,
+    item.twitterUrl, item.communityUrl, item.tickerPeers, Boolean(item._isPinnedMonitored),
+    miniChartEnabled,
+    state.ui.monitoredSparklineHoursByAddress[identityKey], Boolean(mockTradingPosition),
+  ]);
 }
 
 function buildMonitoredEmptyState(loadError: string | null, hasSearchQuery: boolean) {
@@ -966,13 +1141,10 @@ function resolveMonitoredIdentityPresentation(item: ManualTokenEntry) {
   return { chain, primaryUrl, subtitle, symbol };
 }
 
-function buildMonitoredRow(item: ManualTokenEntry, manualTokenFolders: AppState['data']['manualTokenFolders'], busy: boolean, isStarred: boolean, isAdmin: boolean, enabledTradeTerminals: AppState['ui']['enabledTradeTerminals'], sparkline: AppState['data']['sparklineByAddress'][string] | null, miniChartEnabled: boolean, monitoredSparklineHoursByAddress: AppState['ui']['monitoredSparklineHoursByAddress'], mockTradingPosition: AppState['data']['mockTradingPositionsByAddress'][string] | null, mockTradingTrades: AppState['data']['mockTradingTradesByAddress'][string] = [], mockSolUsdcRate?: number) {
+function buildMonitoredRow(item: ManualTokenEntry, manualTokenFolders: AppState['data']['manualTokenFolders'], busy: boolean, isStarred: boolean, isAdmin: boolean, enabledTradeTerminals: AppState['ui']['enabledTradeTerminals'], sparkline: AppState['data']['sparklineByAddress'][string] | null, miniChartEnabled: boolean, monitoredSparklineHoursByAddress: AppState['ui']['monitoredSparklineHoursByAddress'], mockTradingPosition: AppState['data']['mockTradingPositionsByAddress'][string] | null, mockTradingTrades: AppState['data']['mockTradingTradesByAddress'][string] = [], mockSolUsdcRate?: number, staticKey = '') {
   const { chain, primaryUrl, subtitle, symbol } = resolveMonitoredIdentityPresentation(item);
-  const valuation = resolveTokenValuation(item);
   const xSearch = buildXSearchUrl(symbol, item.address, resolveTokenAgeMs(item.createdAt));
   const socialLinks = splitTokenSocialUrls(item.twitterUrl, item.communityUrl);
-  const age = item.createdAt ? fmtAge(item.createdAt) : '-';
-  const ageToneClass = getAgeToneClassFromCreatedAt(item.createdAt);
   const imageUrl = sanitizeOptionalHttpUrl(item.imageUrl);
   const volDelta = calculateCanonicalVolume5mDelta(
     item.volume5m, item.prevVolume5mCanonical,
@@ -989,6 +1161,7 @@ function buildMonitoredRow(item: ManualTokenEntry, manualTokenFolders: AppState[
   article.dataset.identity = identityKey;
   article.dataset.chain = chain;
   article.dataset.address = item.address;
+  monitoredRowStaticKeys.set(article, staticKey);
 
   article.append(buildMonitoredPinHandle(item));
   article.append(buildMonitoredAvatar(
@@ -1015,15 +1188,7 @@ function buildMonitoredRow(item: ManualTokenEntry, manualTokenFolders: AppState[
 
   const metaLine = document.createElement('div');
   metaLine.className = 'panel-row-meta monitored-meta-line';
-  metaLine.append(
-    buildValuationMetric(valuation),
-    buildMetaMetric('AGE', age, ageToneClass),
-    buildCoveredMoneyMetric('VOL 1H', item.volume1h, item.coverage?.['1h']),
-    buildCoveredMoneyMetric('VOL 6H', item.volume6h, item.coverage?.['6h']),
-    buildCoveredMoneyMetric('VOL 24H', item.volume24h, item.coverage?.['24h']),
-    buildMetaMetric('LP', buildMonitoredTotalLiquidityValue(item)),
-    buildMetaMetric('HLD', buildMonitoredHolderValue(item)),
-  );
+  metaLine.append(...buildMonitoredMetaMetrics(item));
 
   const actions = document.createElement('div');
   actions.className = 'panel-row-actions monitored-actions-line';
@@ -1057,6 +1222,35 @@ function buildMonitoredRow(item: ManualTokenEntry, manualTokenFolders: AppState[
   main.append(titleLine, metaLine, actions);
   appendMonitoredMockTradingLine(main, mockTradingPosition, mockTradingTrades, mockSolUsdcRate);
 
+  const side = buildMonitoredSide(item, volDelta);
+
+  article.append(main);
+  if (miniChartEnabled) {
+    article.append(buildMonitoredMiniChart(item, sparkline, monitoredSparklineHoursByAddress));
+  }
+  article.append(side);
+  return article;
+}
+
+function buildMonitoredMetaMetrics(item: ManualTokenEntry) {
+  const age = item.createdAt ? fmtAge(item.createdAt) : '-';
+  return [
+    buildValuationMetric(resolveTokenValuation(item)),
+    buildMetaMetric('AGE', age, getAgeToneClassFromCreatedAt(item.createdAt)),
+    buildCoveredMoneyMetric('VOL 1H', item.volume1h, item.coverage?.['1h']),
+    buildCoveredMoneyMetric('VOL 6H', item.volume6h, item.coverage?.['6h']),
+    buildCoveredMoneyMetric('VOL 24H', item.volume24h, item.coverage?.['24h']),
+    buildMetaMetric('LP', buildMonitoredTotalLiquidityValue(item)),
+    buildMetaMetric('HLD', buildMonitoredHolderValue(item)),
+  ];
+}
+
+function buildMonitoredSide(item: ManualTokenEntry, resolvedDelta?: number | null) {
+  const chain = item.chain || 'solana';
+  const volDelta = resolvedDelta ?? calculateCanonicalVolume5mDelta(
+    item.volume5m, item.prevVolume5mCanonical,
+    chain === 'robinhood' ? item.volume5mDeltaCoverage : 'complete',
+  );
   const side = document.createElement('div');
   side.className = 'panel-row-side monitored-side-v68';
   const volLabel = document.createElement('div');
@@ -1071,13 +1265,7 @@ function buildMonitoredRow(item: ManualTokenEntry, manualTokenFolders: AppState[
   delta.className = `panel-side-delta ${volDelta != null && volDelta < 0 ? 'down' : 'up'}`;
   delta.textContent = fmtPct(volDelta);
   side.append(volLabel, mainMetric, delta);
-
-  article.append(main);
-  if (miniChartEnabled) {
-    article.append(buildMonitoredMiniChart(item, sparkline, monitoredSparklineHoursByAddress));
-  }
-  article.append(side);
-  return article;
+  return side;
 }
 
 function buildValuationMetric(valuation: ReturnType<typeof resolveTokenValuation>) {
@@ -1143,15 +1331,7 @@ function buildMonitoredMiniChart(
     ?? Number(sparkline?.hours);
   const miniChart = document.createElement('div');
   miniChart.className = 'monitored-mini-chart';
-  const figure = document.createElement('div');
-  figure.className = 'monitored-mini-chart-figure';
-  figure.innerHTML = renderSparklineFigure(sparkline, item.address, {
-    areaFill: true,
-    expandable: true,
-    showTokenRangeControl: false,
-    lookupKey: identityKey,
-    liveMcap: resolveTokenValuation(item).value,
-  });
+  const figure = buildMonitoredMiniChartFigure(item, sparkline);
   const controls = document.createElement('div');
   controls.className = 'monitored-sparkline-quick-ranges';
   controls.setAttribute('role', 'group');
@@ -1171,6 +1351,23 @@ function buildMonitoredMiniChart(
   }
   miniChart.append(figure, controls);
   return miniChart;
+}
+
+function buildMonitoredMiniChartFigure(
+  item: ManualTokenEntry,
+  sparkline: AppState['data']['sparklineByAddress'][string] | null,
+) {
+  const chain = item.chain || 'solana';
+  const figure = document.createElement('div');
+  figure.className = 'monitored-mini-chart-figure';
+  figure.innerHTML = renderSparklineFigure(sparkline, item.address, {
+    areaFill: true,
+    expandable: true,
+    showTokenRangeControl: false,
+    lookupKey: buildTokenIdentityKey(chain, item.address),
+    liveMcap: resolveTokenValuation(item).value,
+  });
+  return figure;
 }
 
 function appendMonitoredAdminActions(

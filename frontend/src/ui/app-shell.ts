@@ -1,16 +1,16 @@
 import type { AppController, AppRenderRegion } from '../state/app-controller';
-import { getAlertFeedAlerts, getExpandedTokenSparkline, getManualTokens, getMockTradingPositionView, getMockTradingSummaryView, getMonitoredTokens, getOldWeekTokens, getRecentTokens, getTokenSparkline, getTopPerformerTokens, getTrackedToken, getVisibleManualTokens, isProfileAuthPanel, type AppState } from '../state/app-state';
+import { getAlertFeedAlerts, getChainCapabilityNotice, getExpandedTokenSparkline, getManualTokens, getMockTradingPositionView, getMockTradingSummaryView, getMonitoredTokens, getOldWeekTokens, getRecentTokens, getTokenSparkline, getTopPerformerTokens, getTrackedToken, getVisibleManualTokens, isProfileAuthPanel, type AppState } from '../state/app-state';
 import { renderAlertsSection } from './sections/alerts-section';
 import { renderLegacyShell, renderWorkspaceHeader, renderWorkspaceProfileOverlay } from './sections/layout-sections';
 import { renderManualTokensSection } from './sections/manual-section';
-import { renderMonitoredSection } from './sections/monitored-section';
+import { patchMonitoredSection, renderMonitoredSection } from './sections/monitored-section';
 import { renderMarketTickerSection } from './sections/market-ticker-section';
 import { patchOldWeekSection, patchRecentSection, renderOldWeekSection, renderRecentSection } from './sections/routed-sections';
 import { logTopPerformersDebug, renderTopPerformersSection } from './sections/top-performers-section';
 import { resolveManualTableRows, resolveMonitoredTableRows } from '../utils/token-table';
 import { bindCopyButtons } from './sections/shared';
 import { escapeHtml } from './sections/html-safety';
-import type { TokenChain } from '../utils/token-chain';
+import { buildTokenIdentityKey, type TokenChain } from '../utils/token-chain';
 
 type ConfigDraft = {
   values: Record<string, string>;
@@ -285,7 +285,14 @@ export function renderAppShell(
         () => patchTopPerformersSlot(renderFrame.topPerformersSlot, state, controller),
       );
       updateRegionSlot(renderFrame.manualSlot, 'manual', dirtyRegions, getManualRenderKey(state), () => [renderManualTokensSection(state, controller)]);
-      updateRegionSlot(renderFrame.monitoredSlot, 'monitored', dirtyRegions, getMonitoredRenderKey(state), () => [renderMonitoredSection(state, controller)]);
+      updateRegionSlot(
+        renderFrame.monitoredSlot,
+        'monitored',
+        dirtyRegions,
+        getMonitoredRenderKey(state),
+        () => [renderMonitoredSection(state, controller)],
+        () => patchMonitoredSection(renderFrame.monitoredSlot, state, controller),
+      );
       updateRenderSlot(renderFrame.pumpfunSlot, 'hidden', () => []);
       updateRegionSlot(renderFrame.alertsSlot, 'alerts', dirtyRegions, getAlertsRenderKey(state), () => [renderAlertsSection(state, controller)]);
     } else {
@@ -984,6 +991,45 @@ function serializeTrackedTokenForView(token: ReturnType<typeof getMonitoredToken
   ]);
 }
 
+function serializeMonitoredTokenForView(token: ReturnType<typeof getMonitoredTokens>[number]) {
+  return serializePrimitiveList([
+    token.address,
+    token.chain,
+    token.symbol,
+    token.name,
+    token.label,
+    token.createdAt,
+    token.mintAddress,
+    token.pairAddress,
+    token.pairUrl,
+    token.pairDexId,
+    token.imageUrl,
+    token.launchpadId,
+    token.twitterUrl,
+    token.communityUrl,
+    JSON.stringify(token.tickerPeers),
+    token._isPinnedMonitored,
+    token.pinnedSortOrder,
+    token.mcap,
+    token.fdv,
+    JSON.stringify(token.valuation),
+    token.liquidityUsd,
+    JSON.stringify(token.meteora),
+    token.holderCount,
+    token.holderObservedAt,
+    token.holderCheckedAt,
+    token.holderFreshness,
+    token.volume5m,
+    token.volume1h,
+    token.volume6h,
+    token.volume24h,
+    token.prevVolume5mCanonical,
+    token.volume5mDeltaCoverage,
+    JSON.stringify(token.coverage),
+    token.activityState,
+  ]);
+}
+
 function serializeRenderedMoneyValue(value?: number | null) {
   if (value == null || !Number.isFinite(value)) {
     return '';
@@ -1397,6 +1443,7 @@ function getMonitoredRenderKey(state: AppState) {
   const pageItems = filteredMonitoredTokens.slice(safePage * safePerPage, safePage * safePerPage + safePerPage);
 
   return JSON.stringify({
+    capabilityNotice: getChainCapabilityNotice(state, 'monitored'),
     collapsed: state.ui.collapsed.monitored,
     span: monitoredSpan,
     busy: state.ui.busy,
@@ -1407,11 +1454,22 @@ function getMonitoredRenderKey(state: AppState) {
     page: state.ui.monitoredPage,
     perPage: state.ui.monitoredPerPage,
     sorts: state.ui.monitoredSorts,
-    sparklineRange: state.ui.sparklineRange,
-    monitoredQuickSparklineRanges: state.ui.monitoredSparklineHoursByAddress,
+    sparklinePreset: state.ui.sparklineRange.monitoredPreset,
+    monitoredQuickSparklineRanges: pageItems.map((token) => {
+      const identity = buildTokenIdentityKey(token.chain || 'solana', token.address);
+      return [identity, state.ui.monitoredSparklineHoursByAddress[identity]];
+    }),
     starred: state.data.starredTokenIdentities,
-    tokens: getMonitoredTokens(state).map(serializeTrackedTokenForView),
-    mockTrading: getMonitoredTokens(state).map((token) => serializeMockTradingForView(state, token.address)),
+    pinned: state.data.pinnedMonitoredTokenIdentities,
+    loadError: state.ui.monitoredLoadError,
+    filters: [
+      state.data.configs['monitored-mcap-min'],
+      state.data.configs['monitored-view-mcap-max'],
+      state.data.configs['monitored-fdv-min'],
+      state.data.configs['monitored-view-fdv-max'],
+    ],
+    tokens: pageItems.map(serializeMonitoredTokenForView),
+    mockTrading: pageItems.map((token) => serializeMockTradingForView(state, token.address)),
     sparklines: monitoredSpan > 1
       ? pageItems.map((token) => serializeSparklineForView(state, token.address, token.chain))
       : [],
