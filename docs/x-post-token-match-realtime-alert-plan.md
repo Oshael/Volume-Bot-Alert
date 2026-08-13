@@ -366,6 +366,27 @@ e novo e a tese nao foi provada. Escala depois, com evidencia.
 - Para cada texto de post: lookup no indice invertido de tokens raros.
 - Reconstroi o indice no boot e incrementalmente quando o catalogo muda.
 
+### Fronteira de deploy e isolamento
+
+Decisao (2026-08-13): **tudo no mesmo repo do bot (monorepo), sem repo/servico
+separado.** O acoplamento e bidirecional -- o tracker le o catalogo (imageUrl,
+nome/ticker, mcap, liquidez) e escreve no feed/socket -- entao um repo separado so
+trocaria queries internas por um contrato a manter, alem de duplicar DB,
+migrations, `db:schema-check`, config, deploy e governanca. Reusa-se tudo isso.
+
+Isolamento vem do **processo**, nao do repo:
+
+- A camada hostil (Bloco 2/3: sessoes, proxies, GraphQL, timeline) roda como
+  **worker/systemd proprio**, desligavel por env. Se o X quebra ou o scraper
+  crasha, ingestao e alertas do bot seguem vivos.
+- A **costura** entre scraper e o resto e `x_post`/`x_post_media`: o scraper
+  escreve posts crus; os consumidores (fingerprint, OCR, tendencia, matcher, feed)
+  leem dali. Bloco 2/3 = produtor isolavel; Blocos 1/4/4b/4c/5/6 = consumidores que
+  vivem com o bot porque ja precisam do catalogo e do feed.
+- Promover pra infra fisica separada (VPS propria por IP/ToS) ou trocar a costura
+  por uma fila fica pra quando houver motivo concreto -- move-se **um processo**,
+  sem reescrever o resto.
+
 ## Modelo de dados
 
 Esboco, sujeito a revisao no bloco correspondente. Nenhuma tabela existente e
