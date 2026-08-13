@@ -167,6 +167,9 @@ Um token so sai da campanha quando:
 
 A reconciliacao Blockscout nao bloqueia a conclusao da campanha: ela permanece
 assíncrona como auditoria externa e promove `shadow -> live` pelo fluxo normal.
+Uma campanha já `completed` pode ter sua coorte promovida operacionalmente em
+lote sem Blockscout, mas somente para states `shadow` sem journal pendente; o
+comando é limitado por `run_id` e não muda o contrato dos tokens futuros.
 
 Tokens excluidos/invalidos continuam usando o fallback ja existente e nunca
 aparecem como `ledger_live`.

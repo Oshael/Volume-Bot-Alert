@@ -1070,6 +1070,13 @@ revertido automaticamente; ausência de evidência canônica suficiente falha
 fechado. O refresh Blockscout legado continua opt-in no grupo
 `robinhood-derived` como fallback.
 
+Para uma campanha global já `completed`, o one-shot
+`ROBINHOOD_HOLDER_GLOBAL_PROMOTE_RUN_ID=<id> npm run robinhood:holder-global-promote`
+faz dry-run da promoção local. `-- --confirm-promote` promove em lotes apenas os
+membros `completed` dessa coorte que estejam em `shadow` e sem journal pendente;
+tokens bloqueados permanecem em `shadow` e aparecem no resumo para nova execução
+depois que o live drenar. Esse bypass não altera a reconciliação dos tokens futuros.
+
 Antes de subir readers live-first, a Stage 119 deve estar aplicada. Os probes
 read-only `npm run robinhood:holder-transfer-probe` e
 `npm run robinhood:holder-catalog-transfer-probe` medem volume/custo sem criar
