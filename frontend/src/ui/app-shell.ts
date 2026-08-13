@@ -11,6 +11,7 @@ import { resolveManualTableRows, resolveMonitoredTableRows } from '../utils/toke
 import { bindCopyButtons } from './sections/shared';
 import { escapeHtml } from './sections/html-safety';
 import { buildTokenIdentityKey, type TokenChain } from '../utils/token-chain';
+import { syncElementChildOrder } from '../utils/dom-child-order';
 
 type ConfigDraft = {
   values: Record<string, string>;
@@ -602,7 +603,10 @@ function syncLivePanelLayout(renderFrame: AppRenderFrame, state: AppState) {
     syncLivePanelResizeFrame(monitoredItem, 'monitored', false);
     syncLivePanelResizeFrame(renderFrame.pumpfunSlot, 'pumpfun', false);
     syncLivePanelResizeFrame(renderFrame.alertsSlot, 'alerts', false);
-    renderFrame.panels.replaceChildren(monitoredItem, renderFrame.alertsSlot, renderFrame.pumpfunSlot);
+    syncElementChildOrder(
+      renderFrame.panels,
+      [monitoredItem, renderFrame.alertsSlot, renderFrame.pumpfunSlot],
+    );
     return;
   }
 
@@ -630,19 +634,22 @@ function syncLivePanelLayout(renderFrame: AppRenderFrame, state: AppState) {
   const collapsedStackLayout = resolveLivePanelCollapsedStackLayout(previewOrder, spanMap, state);
   if (collapsedStackLayout) {
     const stack = getOrCreateLivePanelCollapsedStack(renderFrame.panels);
-    stack.replaceChildren(...collapsedStackLayout.stackKeys.map((panelKey) => livePanelItems[panelKey]));
-    renderFrame.panels.replaceChildren(
+    syncElementChildOrder(
+      stack,
+      collapsedStackLayout.stackKeys.map((panelKey) => livePanelItems[panelKey]),
+    );
+    syncElementChildOrder(renderFrame.panels, [
       ...(collapsedStackLayout.placeStackBefore
         ? [stack, livePanelItems[collapsedStackLayout.mainKey]]
         : [livePanelItems[collapsedStackLayout.mainKey], stack]),
-    );
+      renderFrame.pumpfunSlot,
+    ]);
   } else {
     flattenLivePanelCollapsedStack(renderFrame.panels);
-    renderFrame.panels.replaceChildren(...previewOrder.map((panelKey) => livePanelItems[panelKey]));
-  }
-
-  if (!renderFrame.panels.contains(renderFrame.pumpfunSlot)) {
-    renderFrame.panels.append(renderFrame.pumpfunSlot);
+    syncElementChildOrder(renderFrame.panels, [
+      ...previewOrder.map((panelKey) => livePanelItems[panelKey]),
+      renderFrame.pumpfunSlot,
+    ]);
   }
 
   if (livePanelReorderDraft) {

@@ -10,6 +10,7 @@ import { buildTokenIdentityBadgeGroup } from '../token-chain-badge';
 import { fetchTickerPeers, type TickerPeerListItem, type TickerPeerListPayload } from '../../services/api/catalog';
 import { resolveMonitoredEmptyStateContent } from '../../utils/monitored-empty-state';
 import { calculateCanonicalVolume5mDelta } from '../../utils/canonical-volume';
+import { syncElementChildOrder } from '../../utils/dom-child-order';
 
 const TICKER_PEERS_PANEL_GAP_PX = 8;
 const TICKER_PEERS_VIEWPORT_MARGIN_PX = 12;
@@ -132,7 +133,7 @@ export function patchMonitoredSection(slot: ParentNode, state: AppState, control
   }
 
   const orderChanged = patchedRows.some((row, index) => currentRows[index] !== row);
-  if (orderChanged) list.append(...patchedRows);
+  if (orderChanged) syncElementChildOrder(list, patchedRows);
   restoreMonitoredScrollAnchor(list, scrollAnchor);
   return true;
 }
