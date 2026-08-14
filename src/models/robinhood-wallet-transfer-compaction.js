@@ -217,7 +217,7 @@ function createRobinhoodWalletTransferCompactionAuditor(options = {}) {
   const database = options.database || db;
   const loadCanonicalBlockHash = options.loadCanonicalBlockHash;
   if (typeof loadCanonicalBlockHash !== 'function') throw new Error('loadCanonicalBlockHash is required');
-  async function auditDay(input = {}) {
+  async function inspectDay(input = {}) {
     const normalized = {
       projectionVersion: identifier(input.projectionVersion, 'projectionVersion'),
       positionProjectionVersion: identifier(input.positionProjectionVersion, 'positionProjectionVersion'),
@@ -227,10 +227,13 @@ function createRobinhoodWalletTransferCompactionAuditor(options = {}) {
       throw new Error('swap_only_v1 cannot prove transfer-adjusted positions');
     }
     const snapshot = await readAuditSnapshot(database, normalized);
-    const audit = await evaluateSnapshot(snapshot, normalized, loadCanonicalBlockHash);
+    return evaluateSnapshot(snapshot, normalized, loadCanonicalBlockHash);
+  }
+  async function auditDay(input = {}) {
+    const audit = await inspectDay(input);
     return { audit, watermark: await persistAudit(database, audit) };
   }
-  return { auditDay };
+  return { auditDay, inspectDay };
 }
 
 module.exports = { createRobinhoodWalletTransferCompactionAuditor };

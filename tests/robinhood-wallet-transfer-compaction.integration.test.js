@@ -82,6 +82,14 @@ describe('Robinhood wallet transfer compaction audit', () => {
     const auditor = createRobinhoodWalletTransferCompactionAuditor({
       database: db, loadCanonicalBlockHash: async () => HASH,
     });
+    const inspected = await auditor.inspectDay({
+      projectionVersion: VERSION, positionProjectionVersion: POSITION_VERSION, partitionDay: DAY,
+    });
+    assert.equal(inspected.lifecycleState, 'blocked');
+    const untouched = await db.query(
+      'SELECT COUNT(*)::text AS count FROM robinhood_wallet_transfer_compaction_watermarks'
+    );
+    assert.equal(untouched.rows[0].count, '0');
     const blocked = await auditor.auditDay({
       projectionVersion: VERSION, positionProjectionVersion: POSITION_VERSION, partitionDay: DAY,
     });

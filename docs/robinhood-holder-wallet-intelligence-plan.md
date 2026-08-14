@@ -1234,6 +1234,11 @@ valida o checkpoint por adapter canônico injetado e grava `blocked`/`verified`.
 Ele rejeita `swap_only_v1` como prova de posição e não possui loop automático;
 portanto ainda não libera nem remove partições.
 
+O B5d2 adiciona um comando restrito a um dia por execução, dry-run por padrão e
+com `--commit` limitado a persistir o watermark. A validação de chain ID e hash
+canônico usa o mesmo cliente RPC Robinhood do LIVE; não há seleção em massa,
+scheduler ou DDL destrutivo.
+
 ### Corte B6 — backfill histórico summary-first
 
 Objetivo:

@@ -1505,10 +1505,16 @@ diários com estados `pending`/`blocked`/`verified`/`dropped`; constraints imped
 cursor e checkpoint canônico. Ainda não há scheduler ou executor de drop;
 a retenção segue desligada.
 
-O auditor de compactação expõe somente `auditDay`: lê um dia em snapshot
-`REPEATABLE READ`, compara raw/resumo por token, valida o checkpoint por callback
-canônico e persiste `blocked` ou `verified`. Ele rejeita `swap_only_v1`, não tem
-scheduler e não executa drop; a versão de posição deve incluir transfers.
+O auditor de compactação lê um dia em snapshot `REPEATABLE READ`, compara
+raw/resumo por token e valida o checkpoint por callback canônico. `inspectDay`
+não escreve; `auditDay` persiste `blocked` ou `verified`. Ele rejeita
+`swap_only_v1`, não tem scheduler e não executa drop; a versão de posição deve
+incluir transfers.
+
+Execute `npm run robinhood:wallet-transfer-compaction-audit -- --day=YYYY-MM-DD
+--projection-version=VERSAO --position-projection-version=VERSAO` para inspecionar
+um único dia sem escrita. Acrescente `--commit` somente para persistir o
+watermark revisado; o comando valida chain ID/hash e nunca remove partições.
 
 O repository de projeção persiste arestas, resumo diário por token, evidências
 `first`/`last`/`largest` e cursor sob a mesma transação com lock/CAS. O resumo
