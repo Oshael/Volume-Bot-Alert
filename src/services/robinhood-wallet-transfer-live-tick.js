@@ -25,6 +25,7 @@ function assertDependencies(deps) {
     'listTrackedTokenAddresses', 'loadRangeContext', 'loadSwapFrontier',
   ], 'transfer LIVE source');
   requireMethods(deps.evidence, ['matchesCheckpoint', 'readRange'], 'transfer evidence reader');
+  requireMethods(deps.roles, ['resolveRoles'], 'transfer endpoint role reader');
   requireMethods(deps.projection, ['commitBatch', 'initCursor', 'loadCursor'], 'transfer projection');
   requireMethods(deps.raw, ['insertTransferEvents'], 'raw transfer repository');
 }
@@ -98,6 +99,18 @@ function classifyTransfers(transfers, context, classifierFactory) {
   return { counts, events };
 }
 
+function withEndpointRoles(context, roles) {
+  return {
+    ...context,
+    contractAddresses: [...new Set([
+      ...(context.contractAddresses || []), ...roles.contractAddresses,
+    ])],
+    walletAddresses: [...new Set([
+      ...(context.walletAddresses || []), ...roles.walletAddresses,
+    ])],
+  };
+}
+
 async function initializeCursor(projection, captured, sourceThrough) {
   return projection.initCursor({
     projectionVersion: CLASSIFICATION_VERSION, stream: STREAM,
@@ -139,8 +152,17 @@ async function runRobinhoodWalletTransferLiveTick(deps, input = {}) {
       completeThroughBlock: context.completeThroughBlock || null,
     });
   }
+  const roles = await deps.roles.resolveRoles({
+    transfers: captured.transfers,
+    poolAddresses: context.poolAddresses,
+    routerAddresses: context.routerAddresses,
+    contractAddresses: context.contractAddresses,
+    walletAddresses: context.walletAddresses,
+  });
+  const classificationContext = withEndpointRoles(context, roles);
   const classified = classifyTransfers(
-    captured.transfers, context, deps.classifierFactory || createRobinhoodTransferClassifier
+    captured.transfers, classificationContext,
+    deps.classifierFactory || createRobinhoodTransferClassifier
   );
   const raw = await deps.raw.insertTransferEvents(classified.events);
   const projected = await deps.projection.commitBatch({
@@ -157,11 +179,11 @@ async function runRobinhoodWalletTransferLiveTick(deps, input = {}) {
     transfers: classified.events.length, classifications: Object.freeze(classified.counts),
     rawInserted: raw.inserted, edgeGroups: projected.edgeGroups || 0,
     evidenceCandidates: projected.evidenceCandidates || 0,
-    telemetry: captured.telemetry,
+    telemetry: Object.freeze({ ...captured.telemetry, endpointRoles: roles.telemetry }),
   });
 }
 
 module.exports = {
   runRobinhoodWalletTransferLiveTick,
-  __private: { classificationInput, rangeFor, validateCursorAgainstSource },
+  __private: { classificationInput, rangeFor, validateCursorAgainstSource, withEndpointRoles },
 };

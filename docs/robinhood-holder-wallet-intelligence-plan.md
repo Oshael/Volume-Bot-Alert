@@ -1171,8 +1171,8 @@ evidências limitadas e cursor na mesma transação. Ainda não há worker ativo
 
 ### Corte B4 — captura/projeção live de transfers
 
-Status: B4a–B4c concluídos como adapters PostgreSQL/RPC e tick isolado; scheduler
-e wiring permanecem pendentes.
+Status: B4a–B4d concluídos como adapters PostgreSQL/RPC, tick isolado e evidência
+de tipo dos endpoints; scheduler e wiring permanecem pendentes.
 
 Objetivo:
 
@@ -1192,6 +1192,10 @@ Assim, o futuro tick recebe `blockTime` verificável sem iniciar worker ou escri
 O B4c compõe captura, classificação, bruto idempotente e commit atômico de
 arestas/cursor. O bootstrap começa em um único bloco já coberto pelo source; a
 cobertura histórica continua sendo responsabilidade do B6.
+
+O B4d consulta `eth_getCode` no bloco de cada transfer em batches limitados.
+Ausência de bytecode permite classificar o endpoint operacionalmente como wallet,
+mas não prova propriedade; qualquer bytecode observado prevalece como contrato.
 
 ### Corte B5 — compactação e retenção
 

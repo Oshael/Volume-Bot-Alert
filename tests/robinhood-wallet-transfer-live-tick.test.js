@@ -34,7 +34,7 @@ function captured() {
 }
 
 function dependencies(overrides = {}) {
-  const calls = { contexts: [], evidence: [], initialized: [], raw: [], projected: [] };
+  const calls = { contexts: [], evidence: [], initialized: [], raw: [], projected: [], roles: [] };
   const currentCursor = overrides.cursor === undefined ? cursor() : overrides.cursor;
   return {
     calls,
@@ -47,13 +47,22 @@ function dependencies(overrides = {}) {
         calls.contexts.push(input);
         return overrides.context || {
           ready: true, swapCoverageComplete: true, swaps: [], poolAddresses: [],
-          routerAddresses: [], walletAddresses: [ALICE, BOB],
+          routerAddresses: [], walletAddresses: [ALICE],
         };
       },
     },
     evidence: {
       matchesCheckpoint: async () => overrides.canonical !== false,
       readRange: async (input) => { calls.evidence.push(input); return captured(); },
+    },
+    roles: {
+      resolveRoles: async (input) => {
+        calls.roles.push(input);
+        return overrides.roles || {
+          contractAddresses: [], walletAddresses: [BOB],
+          telemetry: { probes: 1, batches: 1, endpoints: 1 },
+        };
+      },
     },
     projection: {
       loadCursor: async () => currentCursor,
@@ -79,6 +88,7 @@ describe('Robinhood wallet transfer LIVE tick', () => {
     assert.equal(result.rawInserted, 1);
     assert.equal(deps.calls.raw[0][0].transferKind, 'wallet_transfer');
     assert.equal(deps.calls.projected[0].events.length, 1);
+    assert.deepEqual(result.telemetry.endpointRoles, { probes: 1, batches: 1, endpoints: 1 });
     assert.deepEqual(deps.calls.evidence[0], {
       tokenAddresses: [TOKEN], fromBlock: '100', toBlock: '100',
     });
@@ -115,10 +125,16 @@ describe('Robinhood wallet transfer LIVE tick', () => {
   });
 
   it('stores insufficient endpoint evidence as unknown without creating an edge', async () => {
-    const deps = dependencies({ context: {
-      ready: true, swapCoverageComplete: true, swaps: [], poolAddresses: [],
-      routerAddresses: [], walletAddresses: [ALICE],
-    } });
+    const deps = dependencies({
+      context: {
+        ready: true, swapCoverageComplete: true, swaps: [], poolAddresses: [],
+        routerAddresses: [], walletAddresses: [ALICE],
+      },
+      roles: {
+        contractAddresses: [], walletAddresses: [],
+        telemetry: { probes: 0, batches: 0, endpoints: 0 },
+      },
+    });
     const result = await runRobinhoodWalletTransferLiveTick(deps);
 
     assert.deepEqual(result.classifications, { unknown: 1 });
