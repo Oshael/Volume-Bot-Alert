@@ -22,6 +22,7 @@ const INTEGRATION_TESTS = [
   'robinhood-holder-global-backfill.integration.test.js',
   'robinhood-token-holder-summary.integration.test.js',
   'robinhood-wallet-swap-read.integration.test.js',
+  'robinhood-wallet-position.integration.test.js',
   'token-image-fingerprint.integration.test.js',
   'x-ingestion-store.integration.test.js',
   'user-alert-presence.integration.test.js',

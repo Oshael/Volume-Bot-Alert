@@ -3235,6 +3235,47 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage126-robinhood-wallet-positions',
+    name: 'Stage 126 versioned Robinhood wallet positions',
+    repair: 'node src/utils/db-init-stage126.js',
+    tables: [
+      {
+        table: 'robinhood_wallet_token_positions',
+        columns: [
+          'chain', 'projection_version', 'token_address', 'wallet_address',
+          'quantity_raw', 'cost_basis_usd', 'realized_pnl_usd', 'buy_volume_usd',
+          'sell_proceeds_usd', 'buy_mcap_weighted_sum', 'buy_mcap_weight_usd',
+          'sell_mcap_weighted_sum', 'sell_mcap_weight_usd', 'buy_tx_count',
+          'sell_tx_count', 'zero_cost_received_raw', 'zero_cost_sold_raw',
+          'cost_basis_source', 'quality', 'through_block', 'through_log_index',
+          'created_at', 'updated_at',
+        ],
+        constraints: [
+          { name: 'rh_wallet_positions_pkey', includes: ['PRIMARY KEY', 'projection_version'] },
+          { name: 'rh_wallet_positions_values_check', includes: ['CHECK', 'quantity_raw'] },
+          { name: 'rh_wallet_positions_quality_check', includes: ['CHECK', 'unavailable'] },
+        ],
+      },
+      {
+        table: 'robinhood_wallet_position_cursors',
+        columns: [
+          'chain', 'projection_version', 'stream', 'next_block', 'safe_head',
+          'checkpoint_block', 'checkpoint_hash', 'lifecycle_state', 'state_reason',
+          'completed_at', 'abandoned_at', 'version', 'created_at', 'updated_at',
+        ],
+        constraints: [
+          { name: 'rh_wallet_position_cursors_pkey', includes: ['PRIMARY KEY', 'projection_version'] },
+          { name: 'rh_wallet_position_cursors_checkpoint_check', includes: ['CHECK', 'checkpoint_hash'] },
+          { name: 'rh_wallet_position_cursors_terminal_check', includes: ['CHECK', 'completed_at'] },
+        ],
+        indexes: [{
+          name: 'idx_rh_wallet_position_cursors_work',
+          includes: ['chain', 'lifecycle_state', 'stream', 'next_block'],
+        }],
+      },
+    ],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

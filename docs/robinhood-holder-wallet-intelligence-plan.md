@@ -553,8 +553,11 @@ updated_at
 Chave:
 
 ```text
-PRIMARY KEY (chain, token_address, wallet_address)
+PRIMARY KEY (chain, projection_version, token_address, wallet_address)
 ```
+
+Isso permite manter `swap_only_v1` e uma futura projeção unificada em shadow ao
+mesmo tempo, sem sobrescrever a versão ativa antes da validação e do cutover.
 
 Contagem de transações distintas não pode ser mantida com `count += rows` em um
 retry. O projetor precisa de deduplicação por evento/transaction ou de uma
@@ -1037,6 +1040,8 @@ Validação:
 
 ### Corte A1 — domínio financeiro puro
 
+Status: concluído.
+
 Objetivo:
 
 - implementar a máquina de estado de compra, venda, transfer-in e transfer-out;
@@ -1051,6 +1056,8 @@ Arquivos previstos:
 Sem schema, rota, worker ou frontend.
 
 ### Corte A2 — schema de posição e cursor
+
+Status: concluído com schema versionado no Stage 126 e persistência transacional.
 
 Objetivo:
 
