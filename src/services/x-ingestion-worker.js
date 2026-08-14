@@ -12,6 +12,7 @@ const xListModel = require('../models/x-list');
 const xPostModel = require('../models/x-post');
 const { createSessionPool } = require('./x-session-pool');
 const { callGraphql } = require('./x-graphql-client');
+const { resolveQueryId } = require('./x-query-resolver');
 const { normalizeTimeline } = require('./x-timeline-normalizer');
 
 const LIST_ENDPOINT = 'timeline';
@@ -59,6 +60,7 @@ function createXIngestionWorker(options = {}) {
   const now = options.now || Date.now;
   const logger = options.logger || console;
   const call = options.call || callGraphql;
+  const resolveTimelineQueryId = options.resolveQueryId || resolveQueryId;
   const normalize = options.normalize || normalizeTimeline;
   const pool = options.pool || createSessionPool({ model: sessionModel, now });
 
@@ -68,8 +70,8 @@ function createXIngestionWorker(options = {}) {
   const settings = { ...DEFAULTS };
   const retryAfterByList = new Map();
   const metrics = {
-    cycles: 0, polls: 0, postsSeen: 0, saved: 0, skipped: 0, errors: 0,
-    noSession: 0, backedOff: 0, lastRunAt: null,
+    cycles: 0, polls: 0, postsSeen: 0, saved: 0, errors: 0,
+    noSession: 0, backedOff: 0, queryRefreshes: 0, queryRetries: 0, lastRunAt: null,
   };
 
   function deferList(listId) {
@@ -83,21 +85,20 @@ function createXIngestionWorker(options = {}) {
     }
   }
 
-  // Poll one list once: acquire a session, call, report the outcome back to the
-  // pool (rate limit / ct0 / auth disable), then persist and advance the cursor.
-  // Returns false when no session was available (stop polling further lists).
-  async function pollList(list) {
-    if ((retryAfterByList.get(list.id) || 0) > now()) {
-      metrics.backedOff += 1;
-      return true;
+  async function refreshQueryId(list, session) {
+    const queryId = await resolveTimelineQueryId({ session });
+    metrics.queryRefreshes += 1;
+    if (queryId !== list.queryId) {
+      await listModel.updateQueryId(list.id, queryId);
+      list.queryId = queryId;
     }
-    if (!list.queryId) { metrics.skipped += 1; return true; }
-    const session = pool.acquire(LIST_ENDPOINT);
-    if (!session) { metrics.noSession += 1; return false; }
+    return queryId;
+  }
 
+  async function callTimeline(list, session, queryId) {
     const result = await call({
       session,
-      queryId: list.queryId,
+      queryId,
       operationName: OPERATION,
       variables: { listId: list.listId, count: settings.count },
       features: LIST_TIMELINE_FEATURES,
@@ -106,6 +107,30 @@ function createXIngestionWorker(options = {}) {
       status: result.status, rateLimit: result.rateLimit, newCt0: result.newCt0,
     });
     metrics.polls += 1;
+    return result;
+  }
+
+  // Poll one list once: acquire a session, call, report the outcome back to the
+  // pool (rate limit / ct0 / auth disable), then persist and advance the cursor.
+  // Returns false when no session was available (stop polling further lists).
+  async function pollList(list) {
+    if ((retryAfterByList.get(list.id) || 0) > now()) {
+      metrics.backedOff += 1;
+      return true;
+    }
+    const session = pool.acquire(LIST_ENDPOINT);
+    if (!session) { metrics.noSession += 1; return false; }
+
+    let queryId = list.queryId || await refreshQueryId(list, session);
+    let result = await callTimeline(list, session, queryId);
+    if (!result.ok && (result.status === 400 || result.status === 404)) {
+      const refreshed = await refreshQueryId(list, session);
+      if (refreshed !== queryId) {
+        queryId = refreshed;
+        metrics.queryRetries += 1;
+        result = await callTimeline(list, session, queryId);
+      }
+    }
 
     if (!result.ok) {
       metrics.errors += 1;

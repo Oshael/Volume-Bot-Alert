@@ -9,6 +9,7 @@ const assert = require('node:assert/strict');
 const { after, before, beforeEach, describe, it } = require('node:test');
 
 const db = require('../src/models/db');
+const xList = require('../src/models/x-list');
 const xPost = require('../src/models/x-post');
 const xSession = require('../src/models/x-session');
 const stage124 = require('../src/utils/db-init-stage124');
@@ -28,6 +29,7 @@ async function mediaRows(postId) {
 async function cleanup() {
   await db.query("DELETE FROM x_post_media WHERE post_id LIKE 'test-%'");
   await db.query("DELETE FROM x_post WHERE post_id LIKE 'test-%'");
+  await db.query("DELETE FROM x_list WHERE list_id LIKE 'test-%'");
   await db.query("DELETE FROM x_session WHERE label LIKE 'test-%'");
 }
 
@@ -98,6 +100,15 @@ describe('X ingestion store integration', () => {
 
     await xSession.quarantine(id, Date.now() + 60_000);
     assert.ok(!(await xSession.listActive()).some((s) => s.id === id));
+  });
+
+  it('updateQueryId persists the resolver result for the next worker cycle', async () => {
+    const { rows } = await db.query(
+      "INSERT INTO x_list (list_id, query_id) VALUES ('test-list', 'OLD') RETURNING id",
+    );
+    await xList.updateQueryId(rows[0].id, 'NEW');
+    const lists = await xList.listActive();
+    assert.equal(lists.find((list) => list.id === rows[0].id).queryId, 'NEW');
   });
 
   it('upsertSession inserts a new session then re-seeds it by label', async () => {

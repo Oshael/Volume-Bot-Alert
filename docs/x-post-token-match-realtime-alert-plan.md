@@ -42,8 +42,11 @@ Data inicial: 2026-07-29.
 - Implementacao 2026-08-14: Bloco 3 chegou ao endpoint de re-seed (3.5a), mas
   **3.3 e 3.4 foram reabertos** depois de auditoria contra o plano:
   - 3.3 agora desabilita 401/403 ate re-seed e impede que `proxy_url` configurada
-    caia silenciosamente em conexao direta. O transporte real de proxy e a
-    recuperacao automatica de `queryId` continuam pendentes.
+    caia silenciosamente em conexao direta. A recuperacao automatica de
+    `queryId` foi concluida em corte corretivo: le o manifesto autenticado,
+    resolve `bundle.LoggedInMain`, extrai a operacao sem executar bundle,
+    persiste em `x_list` e tenta uma vez de novo em 400/404. O transporte real
+    de proxy continua pendente.
   - 3.4 agora polla a cada 5s por default, isola erro por lista e aplica backoff
     de 60s. Catch-up paginado depois de downtime continua pendente.
   - 3.5a ganhou unicidade concorrente por `x_session.label` (stage125). A
@@ -356,9 +359,11 @@ e novo e a tese nao foi provada. Escala depois, com evidencia.
   - `auth_token` NAO rotaciona no relogio; so morre quando a conta e flagada/
     deslogada (raro, semanas). Morte -> 401/403 -> sessao desabilitada; o pool
     segue nas outras. Reacquirir exige login e re-seed (manual, sem bot).
-  - **Alvo ainda pendente:** extrair `queryId`/`features` do bundle no boot e
-    re-extrair quando uma chamada falhar (400 nomeia a feature, 404 = queryId
-    velho), mantendo cache em `x_list.query_id` e valor manual como fallback.
+  - `queryId` e extraido do bootstrap web autenticado quando falta e re-extraido
+    uma vez em 400/404; valor novo e persistido em `x_list.query_id`. O parser
+    nao executa JavaScript externo: le o manifesto de chunks e o descritor da
+    operacao em `bundle.LoggedInMain`. `features` continuam no conjunto medido;
+    400 com o mesmo `queryId` permanece erro visivel para ajuste do conjunto.
 - **Proxy fixo por sessao = ancora de identidade.** O IP de nascimento (login) e
   o IP de uso (scraping) tem que ser o mesmo, senao o X mata a conta. Logo:
   - **Loga-se JA atraves do proxy da conta** (anti-detect browser -- Multilogin/
@@ -737,7 +742,8 @@ producao: aplicar a stage123 no DB e subir o worker no grupo `x-match`.
   gate de leitura, rate-limit 500/15min, realtime = pool, retweets ~41%, foto
   ~22%, replies filtradas, Following newest-first.
 - O `queryId` foi obtido do Network tab (o scrape do bundle no probe e best-effort
-  e falhou; extracao robusta fica pro Bloco 3). `features` default aceitas sem 400.
+  e falhou; a extracao robusta foi concluida no corte corretivo 3.3 de
+  2026-08-14). `features` default aceitas sem 400.
 
 ### Bloco 3 - Ingestao continua
 
@@ -752,8 +758,9 @@ Bloco grande -> fatiado (cada slice <=500 linhas, commit proprio):
   retuitador), extrai midia, dedupe. Nucleo duravel, teste unit com fixtures reais.
 - **3.3 [REABERTO] Pool + client.** Pool, token bucket e `ct0` self-heal estao
   implementados. Correcao de 2026-08-14: 401/403 desabilita ate re-seed e proxy
-  configurado falha fechada. Pendencias: transporte real via `ProxyAgent` e
-  `queryId` auto-extract + fallback persistido.
+  configurado falha fechada; `queryId` tem auto-extract, persistencia e retry
+  unico em 400/404, validado contra o bundle real. Pendente: transporte real via
+  `ProxyAgent`.
 - **3.4 [REABERTO] Worker + wiring.** Loop, persistencia e grupo isolado
   `x-ingest` estao implementados e desligados por default. Correcao de
   2026-08-14: default de 5s, erro isolado por lista e backoff de 60s. Pendente:

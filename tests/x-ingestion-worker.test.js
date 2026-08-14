@@ -23,10 +23,13 @@ function fakePool(session) {
 
 function fakeListModel(lists) {
   const cursors = [];
+  const queryIds = [];
   return {
     cursors,
+    queryIds,
     listActive: async () => lists.map((l) => ({ ...l })),
     updateCursor: async (id, patch) => cursors.push({ id, ...patch }),
+    updateQueryId: async (id, queryId) => queryIds.push({ id, queryId }),
   };
 }
 
@@ -57,7 +60,7 @@ test('a cycle polls a list, persists posts, advances the cursor and reports', as
   assert.equal(worker.getStatus().saved, 2);
 });
 
-test('a list without a queryId is skipped and never polled', async () => {
+test('a query resolver failure is contained and never calls GraphQL', async () => {
   const pool = fakePool({ id: 1 });
   const listModel = fakeListModel([{ id: 7, listId: '900', queryId: null }]);
   const postModel = fakePostModel();
@@ -65,12 +68,18 @@ test('a list without a queryId is skipped and never polled', async () => {
   const call = async () => { called += 1; return { ok: true, status: 200, body: {} }; };
 
   const worker = createXIngestionWorker({
-    pool, listModel, postModel, call, normalize: () => ({ posts: [], cursors: {} }),
+    pool,
+    listModel,
+    postModel,
+    call,
+    resolveQueryId: async () => { throw new Error('manifest unavailable'); },
+    normalize: () => ({ posts: [], cursors: {} }),
+    logger: { error: () => {}, warn: () => {} },
   });
   await worker.runOnce();
 
-  assert.equal(called, 0, 'no GraphQL call for a list with no queryId');
-  assert.equal(worker.getStatus().skipped, 1);
+  assert.equal(called, 0, 'no GraphQL call without a resolved queryId');
+  assert.equal(worker.getStatus().errors, 1);
   assert.equal(pool.state.reports.length, 0);
 });
 
@@ -168,4 +177,53 @@ test('a thrown list error is backed off without starving the next list', async (
 test('default polling interval is below the ten-second freshness target', () => {
   const worker = createXIngestionWorker();
   assert.equal(worker.getStatus().settings.intervalMs, 5_000);
+});
+
+test('a missing queryId is resolved and persisted before the first poll', async () => {
+  const pool = fakePool({ id: 1, authToken: 'a', ct0: 'c' });
+  const listModel = fakeListModel([{ id: 7, listId: '900', queryId: null }]);
+  let calledQueryId = null;
+  const worker = createXIngestionWorker({
+    pool,
+    listModel,
+    postModel: fakePostModel(),
+    resolveQueryId: async () => 'AUTO',
+    call: async ({ queryId }) => {
+      calledQueryId = queryId;
+      return { ok: true, status: 200, body: {} };
+    },
+    normalize: () => ({ posts: [], cursors: {} }),
+  });
+
+  await worker.runOnce();
+
+  assert.equal(calledQueryId, 'AUTO');
+  assert.deepEqual(listModel.queryIds, [{ id: 7, queryId: 'AUTO' }]);
+  assert.equal(worker.getStatus().queryRefreshes, 1);
+});
+
+test('a stale queryId is refreshed, persisted and retried only once', async () => {
+  const pool = fakePool({ id: 1, authToken: 'a', ct0: 'c' });
+  const listModel = fakeListModel([{ id: 7, listId: '900', queryId: 'OLD' }]);
+  const calls = [];
+  const worker = createXIngestionWorker({
+    pool,
+    listModel,
+    postModel: fakePostModel(),
+    resolveQueryId: async () => 'NEW',
+    call: async ({ queryId }) => {
+      calls.push(queryId);
+      return queryId === 'OLD'
+        ? { ok: false, status: 404, body: null }
+        : { ok: true, status: 200, body: {} };
+    },
+    normalize: () => ({ posts: [], cursors: {} }),
+  });
+
+  await worker.runOnce();
+
+  assert.deepEqual(calls, ['OLD', 'NEW']);
+  assert.deepEqual(listModel.queryIds, [{ id: 7, queryId: 'NEW' }]);
+  assert.equal(worker.getStatus().queryRetries, 1);
+  assert.equal(worker.getStatus().errors, 0);
 });

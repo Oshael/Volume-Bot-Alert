@@ -33,4 +33,8 @@ async function updateCursor(id, { cursor = null, now = Date.now } = {}) {
   );
 }
 
-module.exports = { listActive, updateCursor };
+async function updateQueryId(id, queryId) {
+  await db.query('UPDATE x_list SET query_id = $2 WHERE id = $1', [id, queryId]);
+}
+
+module.exports = { listActive, updateCursor, updateQueryId };
