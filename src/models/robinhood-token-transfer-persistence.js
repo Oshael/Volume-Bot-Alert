@@ -137,6 +137,8 @@ function createRobinhoodTokenTransferRepository(options = {}) {
 module.exports = {
   RAW_RETENTION_DAYS,
   TRANSFER_KINDS,
+  dayBounds,
+  partitionName,
   createRobinhoodTokenTransferRepository,
   __private: { dayBounds, dayKey, normalizeTransferEvent, partitionName },
 };

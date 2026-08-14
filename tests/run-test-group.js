@@ -29,6 +29,7 @@ const INTEGRATION_TESTS = [
   'robinhood-wallet-transfer-projection.integration.test.js',
   'robinhood-wallet-transfer-daily-summary-schema.integration.test.js',
   'robinhood-wallet-transfer-compaction-schema.integration.test.js',
+  'robinhood-wallet-transfer-compaction.integration.test.js',
   'robinhood-wallet-transfer-live-source.integration.test.js',
   'token-image-fingerprint.integration.test.js',
   'x-ingestion-store.integration.test.js',

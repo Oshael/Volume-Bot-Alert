@@ -1206,7 +1206,7 @@ limitados, e mismatch de checkpoint paralisa o writer.
 Status: em andamento. O B5a criou o contrato persistente do resumo diário por
 token e versão. O B5b integrou seu `UPSERT` ao mesmo commit de arestas,
 evidências e cursor. O B5c criou o watermark diário fail-closed; ainda não existe
-auditor ou remoção de partições.
+remoção de partições. O B5d1 adicionou o auditor shadow de um dia, sem scheduler.
 
 Objetivo:
 
@@ -1226,8 +1226,13 @@ falha no resumo reverte também as arestas, evidências e avanço do cursor.
 
 A Stage 132 impede `verified` enquanto classificação, reconciliação do resumo,
 posição, evidências, cursor e checkpoint canônico não estiverem comprovados. O
-estado `dropped` fica reservado para o futuro executor, mas nenhum código deste
-corte cria watermarks, libera retenção ou remove partições.
+estado `dropped` fica reservado para o futuro executor; auditorias explícitas
+podem criar watermarks, mas não liberam retenção nem removem partições.
+
+O auditor B5d1 compara raw e resumo por token sob snapshot `REPEATABLE READ`,
+valida o checkpoint por adapter canônico injetado e grava `blocked`/`verified`.
+Ele rejeita `swap_only_v1` como prova de posição e não possui loop automático;
+portanto ainda não libera nem remove partições.
 
 ### Corte B6 — backfill histórico summary-first
 

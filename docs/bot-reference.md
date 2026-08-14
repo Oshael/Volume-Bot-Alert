@@ -1502,8 +1502,13 @@ transfers continua desligada.
 Aplique então `node src/utils/db-init-stage132.js`. A Stage 132 cria watermarks
 diários com estados `pending`/`blocked`/`verified`/`dropped`; constraints impedem
 `verified` sem todos os gates de classificação, resumo, posição, evidência,
-cursor e checkpoint canônico. Ainda não há auditor ou executor de drop, portanto
-esses watermarks não são populados automaticamente e a retenção segue desligada.
+cursor e checkpoint canônico. Ainda não há scheduler ou executor de drop;
+a retenção segue desligada.
+
+O auditor de compactação expõe somente `auditDay`: lê um dia em snapshot
+`REPEATABLE READ`, compara raw/resumo por token, valida o checkpoint por callback
+canônico e persiste `blocked` ou `verified`. Ele rejeita `swap_only_v1`, não tem
+scheduler e não executa drop; a versão de posição deve incluir transfers.
 
 O repository de projeção persiste arestas, resumo diário por token, evidências
 `first`/`last`/`largest` e cursor sob a mesma transação com lock/CAS. O resumo
