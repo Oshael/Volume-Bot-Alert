@@ -5,6 +5,7 @@ const { after, before, describe, it } = require('node:test');
 
 const db = require('../src/models/db');
 const stage129 = require('../src/utils/db-init-stage129');
+const stage130 = require('../src/utils/db-init-stage130');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const TOKEN = `0x${'1'.repeat(40)}`;
@@ -26,8 +27,10 @@ async function insertEdge(version) {
        chain, classification_version, token_address, from_wallet, to_wallet,
        transfer_count, total_amount_raw, first_block, first_seen_at,
        first_transaction_hash, last_block, last_seen_at, last_transaction_hash,
-       largest_amount_raw, largest_transaction_hash
-     ) VALUES ('robinhood', $1, $2, $3, $4, 1, 0, 10, $5, $6, 10, $5, $6, 0, $6)`,
+       largest_amount_raw, largest_transaction_hash, first_log_index,
+       last_log_index, largest_log_index
+     ) VALUES ('robinhood', $1, $2, $3, $4, 1, 0, 10, $5, $6, 10, $5, $6, 0, $6,
+       1, 1, 1)`,
     [version, TOKEN, LEFT, RIGHT, TIME, TX]
   );
 }
@@ -36,6 +39,7 @@ describe('Robinhood wallet transfer projection schema integration', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
     await stage129.init({ closePool: false });
+    await stage130.init({ closePool: false });
     await cleanup();
   });
   after(async () => {

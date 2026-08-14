@@ -1488,8 +1488,11 @@ permanece desligada até existirem classificação, compactação e watermark se
 
 A Stage 129 cria arestas permanentes versionadas, quatro slots explicáveis de
 evidência por relação e cursores `seed`/`live`. Aplique
-`node src/utils/db-init-stage129.js` depois da Stage 128. O schema sozinho não
-autoriza retenção nem altera a projeção financeira `swap_only_v1`.
+`node src/utils/db-init-stage129.js` depois da Stage 128 e, em seguida,
+`node src/utils/db-init-stage130.js`; a Stage 130 preserva a ordem exata das
+fronteiras quando há mais de um transfer no mesmo bloco e falha se encontrar
+arestas antigas sem essa informação. Esses schemas não autorizam retenção nem
+alteram a projeção financeira `swap_only_v1`.
 
 O bootstrap também existe localmente como
 `npm run robinhood:wallet-live-bootstrap`: dry-run por padrão, audita observações

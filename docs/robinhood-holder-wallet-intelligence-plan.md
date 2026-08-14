@@ -1146,7 +1146,8 @@ dependem de papéis fornecidos pelo futuro adapter B4.
 
 ### Corte B3 — arestas e evidências permanentes
 
-Status: B3a concluído com schema versionado; commit transacional permanece no B3b.
+Status: B3a concluído com schema versionado; B3b1 adiciona frontiers exatos de
+log e o commit transacional permanece no B3b2.
 
 Objetivo:
 
@@ -1160,7 +1161,9 @@ materializada.
 
 A Stage 129 permite versões de classificação coexistirem em shadow, limita
 evidências aos papéis `first`, `largest`, `last` e `temporal`, e mantém cursor
-on-chain mais watermark diário. Nenhum writer é ativado neste subcorte.
+on-chain mais watermark diário. A Stage 130 acrescenta `log_index` às fronteiras
+primeira, última e maior para ordenar transfers do mesmo bloco sem depender do
+raw após a compactação. Nenhum writer é ativado nesses subcortes.
 
 ### Corte B4 — captura/projeção live de transfers
 

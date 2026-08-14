@@ -3369,6 +3369,19 @@ const SCHEMA_GROUPS = [
       },
     ],
   },
+  {
+    key: 'stage130-robinhood-wallet-transfer-edge-frontiers',
+    name: 'Stage 130 Robinhood wallet transfer edge frontiers',
+    repair: 'node src/utils/db-init-stage130.js',
+    tables: [{
+      table: 'robinhood_wallet_transfer_edges',
+      columns: ['first_log_index', 'last_log_index', 'largest_log_index'],
+      constraints: [{
+        name: 'rh_wallet_transfer_edges_log_index_check',
+        includes: ['CHECK', 'first_log_index', 'last_log_index', 'largest_log_index'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
