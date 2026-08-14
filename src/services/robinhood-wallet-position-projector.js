@@ -26,6 +26,7 @@ function createRobinhoodWalletPositionProjector(options = {}) {
       fromTime: activeCursor.nextBlockTime,
       toBlock: activeCursor.safeHead,
       maxBlocks: input.maxBlocks,
+      emptyNextBlockTime: input.emptyNextBlockTime,
     });
     const pairs = [...new Map(batch.swaps.map((swap) => {
       const pair = {
@@ -79,7 +80,15 @@ function createRobinhoodWalletPositionProjector(options = {}) {
       nextBlock: batch.nextBlock, nextBlockTime: batch.nextBlockTime,
       safeHead: activeCursor.safeHead, positions: changedPositions,
     });
-    return { ...summary, persisted };
+    return {
+      ...summary,
+      persisted,
+      ...(input.includeTouched ? {
+        touched: changedPositions.map(({ tokenAddress, walletAddress }) => ({
+          tokenAddress, walletAddress,
+        })),
+      } : {}),
+    };
   }
 
   return { runBatch };

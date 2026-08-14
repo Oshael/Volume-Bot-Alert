@@ -5,6 +5,7 @@ const { after, before, describe, it } = require('node:test');
 
 const db = require('../src/models/db');
 const { createRobinhoodWalletPositionRepository } = require('../src/models/robinhood-wallet-position');
+const stage116 = require('../src/utils/db-init-stage116');
 const stage126 = require('../src/utils/db-init-stage126');
 const stage127 = require('../src/utils/db-init-stage127');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
@@ -17,11 +18,14 @@ const WALLET = `0x${'22'.repeat(20)}`;
 async function cleanup() {
   await db.query('DELETE FROM robinhood_wallet_token_positions WHERE projection_version = $1', [VERSION]);
   await db.query('DELETE FROM robinhood_wallet_position_cursors WHERE projection_version = $1', [VERSION]);
+  await db.query('DELETE FROM robinhood_holder_balances WHERE token_address = $1', [TOKEN]);
+  await db.query('DELETE FROM robinhood_holder_token_states WHERE token_address = $1', [TOKEN]);
 }
 
 describe('Robinhood wallet position persistence', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
+    await stage116.init({ closePool: false });
     await stage126.init({ closePool: false });
     await stage127.init({ closePool: false });
     await cleanup();
@@ -90,5 +94,24 @@ describe('Robinhood wallet position persistence', () => {
       [VERSION, TOKEN, WALLET]
     );
     assert.deepEqual(rows[0], { quantity_raw: '10', cost_basis_usd: '25' });
+
+    await db.query(
+      `INSERT INTO robinhood_holder_token_states (
+         chain, token_address, ledger_status, live_through_block, live_through_hash
+       ) VALUES ('robinhood', $1, 'live', 100, $2)`,
+      [TOKEN, `0x${'bb'.repeat(32)}`]
+    );
+    await db.query(
+      `INSERT INTO robinhood_holder_balances (
+         chain, token_address, wallet_address, balance_raw, last_block_number,
+         last_transaction_hash, last_log_index
+       ) VALUES ('robinhood', $1, $2, 9, 100, $3, 1)`,
+      [TOKEN, WALLET, `0x${'cc'.repeat(32)}`]
+    );
+    const reconciliation = await repository.reconcileTouchedPositions(
+      VERSION, [{ tokenAddress: TOKEN, walletAddress: WALLET }], '100'
+    );
+    assert.equal(reconciliation.aligned, 1);
+    assert.equal(reconciliation.mismatched, 1);
   });
 });

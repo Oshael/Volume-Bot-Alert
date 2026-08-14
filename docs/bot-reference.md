@@ -337,6 +337,7 @@ Grupos existentes:
 | `robinhood-processing` | consumidor isolado: reclama capturas por lease, decodifica a evidência congelada sem RPC, calcula preço/FDV/liquidez, persiste observações/buckets e poda a fila; no mesmo processo, um 2º runner drena `stream='discovery'` para o `robinhood_pool_registry` |
 | `robinhood-derived` | consumidor isolado: drena a outbox de emit ao vivo e replica o fan-out `market:bucket` (socket/relay) sem o monólito; hospeda o catalog projection worker (metadata de token) |
 | `robinhood-wallet` | consumidor isolado: re-lê observações aceitas e atribui `tx.from` via `eth_getBlockByNumber` (full-tx) por bloco, com cursor `live` próprio; alimenta `robinhood_wallet_swaps` |
+| `robinhood-wallet-intelligence` | projeta posições `swap_only_v1` após persistência durável dos swaps e reconcilia em shadow com o holder ledger quando os frontiers coincidem |
 | `robinhood-backfill` | discovery, scan, enrichment, finalizer e aggregation do replay |
 
 O catalog cleanup do grupo `solana-maintenance` atua somente sobre identidades
@@ -350,7 +351,8 @@ alias explícito `maintenance` preserva o comportamento misto anterior, mas o
 config rejeita combiná-lo com `all` ou com qualquer outro grupo.
 
 `robinhood-maintenance`, `robinhood`, `robinhood-head`, `robinhood-processing`,
-`robinhood-derived`, `robinhood-wallet` e `robinhood-backfill` são grupos
+`robinhood-derived`, `robinhood-wallet`, `robinhood-wallet-intelligence` e
+`robinhood-backfill` são grupos
 isolados. O config rejeita combinar um grupo isolado com grupos compartilhados
 ou entre si. `all` inclui `solana-maintenance`, nunca `robinhood-maintenance`.
 
@@ -1465,8 +1467,15 @@ replays unificados em shadow; o tempo permite poda das partições diárias de
 `node src/utils/db-init-stage127.js` antes de usar
 `npm run robinhood:wallet-position-backfill`. O comando é dry-run por padrão e
 só persiste batches limitados com `--commit`; usa `robinhood_swap_mc` como fonte
-histórica de market cap. Esse backfill ainda não está ligado a worker nem serve
-dados às rotas de holders.
+histórica de market cap. Esse backfill histórico ainda não serve dados às rotas
+de holders.
+
+O grupo opt-in `robinhood-wallet-intelligence`, ativado por
+`ROBINHOOD_WALLET_POSITION_LIVE_ENABLED=true`, continua `swap_only_v1` somente
+até o frontier durável do cursor wallet-swap LIVE. Ele exige o seed da posição
+`complete`. A reconciliação de quantidade é informativa e só ocorre quando o
+holder ledger está `live` exatamente no mesmo bloco; mismatch é classificado
+como gap provisório de transfers e não altera a qualidade persistida.
 
 O bootstrap também existe localmente como
 `npm run robinhood:wallet-live-bootstrap`: dry-run por padrão, audita observações

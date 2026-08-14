@@ -1092,12 +1092,20 @@ estiver pronta; este corte não define o estado financeiro final.
 
 ### Corte A4 — projeção live de swaps e reconciliação
 
+Status: concluído em shadow com grupo isolado e reconciliação conservadora.
+
 Objetivo:
 
 - acompanhar o frontier live;
 - atualizar posições depois de persistência durável do swap;
 - reconciliar quantidade projetada com o holder ledger;
 - expor telemetria e estados degradados.
+
+O worker usa somente o frontier durável de `robinhood_wallet_swap_cursors.live`,
+faz handoff após o seed da posição estar `complete` e permanece opt-in. A
+reconciliação só compara saldos quando o holder ledger está exatamente no mesmo
+bloco da projeção. Divergências continuam como telemetria provisória até o replay
+unificado incluir transfers; não degradam permanentemente a qualidade persistida.
 
 ### Corte B1 — schema bruto de transfers
 

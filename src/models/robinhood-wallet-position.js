@@ -153,7 +153,11 @@ function createRobinhoodWalletPositionRepository(options = {}) {
        ORDER BY block_time, block_number LIMIT $5::int`,
       [CHAIN, fromTime, fromBlock, toBlock, maxBlocks]
     );
-    if (blocks.rows.length === 0) return { swaps: [], nextBlock: (BigInt(toBlock) + 1n).toString(), nextBlockTime: fromTime };
+    if (blocks.rows.length === 0) return {
+      swaps: [],
+      nextBlock: (BigInt(toBlock) + 1n).toString(),
+      nextBlockTime: timestamp(input.emptyNextBlockTime, 'emptyNextBlockTime') || fromTime,
+    };
     const blockNumbers = blocks.rows.map((row) => String(row.block_number));
     const last = blocks.rows[blocks.rows.length - 1];
     const swaps = await database.query(
@@ -173,6 +177,54 @@ function createRobinhoodWalletPositionRepository(options = {}) {
       swaps: swaps.rows,
       nextBlock: (BigInt(last.block_number) + 1n).toString(),
       nextBlockTime: new Date(last.block_time).toISOString(),
+    };
+  }
+
+  async function reconcileTouchedPositions(projectionVersion, pairs = [], throughBlock) {
+    const frontier = uint(throughBlock, 'throughBlock');
+    if (pairs.length === 0) {
+      return { checked: 0, aligned: 0, matching: 0, mismatched: 0, unaligned: 0, samples: [] };
+    }
+    const payload = pairs.map((pair) => ({
+      token_address: address(pair.tokenAddress, 'tokenAddress'),
+      wallet_address: address(pair.walletAddress, 'walletAddress'),
+    }));
+    const result = await database.query(
+      `SELECT position.token_address, position.wallet_address, position.quantity_raw,
+              state.ledger_status, state.live_through_block,
+              COALESCE(balance.balance_raw, 0) AS holder_balance_raw
+       FROM robinhood_wallet_token_positions position
+       JOIN jsonb_to_recordset($3::jsonb) AS item(token_address text, wallet_address text)
+         ON item.token_address = position.token_address
+        AND item.wallet_address = position.wallet_address
+       LEFT JOIN robinhood_holder_token_states state
+         ON state.chain = position.chain AND state.token_address = position.token_address
+       LEFT JOIN robinhood_holder_balances balance
+         ON balance.chain = position.chain AND balance.token_address = position.token_address
+        AND balance.wallet_address = position.wallet_address
+       WHERE position.chain = $1 AND position.projection_version = $2`,
+      [CHAIN, identifier(projectionVersion, 'projectionVersion'), JSON.stringify(payload)]
+    );
+    const aligned = result.rows.filter((row) => (
+      row.ledger_status === 'live'
+      && row.live_through_block != null
+      && String(row.live_through_block) === frontier
+    ));
+    const mismatches = aligned.filter((row) => (
+      String(row.quantity_raw) !== String(row.holder_balance_raw)
+    ));
+    return {
+      checked: result.rows.length,
+      aligned: aligned.length,
+      matching: aligned.length - mismatches.length,
+      mismatched: mismatches.length,
+      unaligned: result.rows.length - aligned.length,
+      samples: mismatches.slice(0, 10).map((row) => ({
+        tokenAddress: row.token_address,
+        walletAddress: row.wallet_address,
+        projectedRaw: String(row.quantity_raw),
+        holderRaw: String(row.holder_balance_raw),
+      })),
     };
   }
 
@@ -281,7 +333,10 @@ function createRobinhoodWalletPositionRepository(options = {}) {
     }
   }
 
-  return { commitBatch, initCursor, loadCursor, loadPositions, readSwapBatch };
+  return {
+    commitBatch, initCursor, loadCursor, loadPositions,
+    readSwapBatch, reconcileTouchedPositions,
+  };
 }
 
 module.exports = { createRobinhoodWalletPositionRepository };

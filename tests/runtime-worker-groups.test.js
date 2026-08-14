@@ -10,7 +10,7 @@ const WORKER_GROUPS = [
   'core', 'market', 'solana-maintenance', 'maintenance', 'robinhood-maintenance',
   'robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-derived',
   'robinhood-wallet', 'robinhood-backfill', 'robinhood-holders',
-  'robinhood-holder-global',
+  'robinhood-holder-global', 'robinhood-wallet-intelligence', 'x-match', 'x-ingest',
 ];
 
 function skippedExcept(...active) {
@@ -305,6 +305,13 @@ describe('runtime worker groups config', () => {
       assert.deepEqual(config.runtime.workerGroupsRequested, ['robinhood-wallet']);
       assert.deepEqual(config.runtime.workerGroupsActive, ['robinhood-wallet']);
       assert.deepEqual(config.runtime.workerGroupsSkipped, skippedExcept('robinhood-wallet'));
+    });
+  });
+
+  it('isolates Robinhood wallet intelligence', () => {
+    withEnv({ BACKGROUND_WORKER_GROUPS: 'robinhood-wallet-intelligence' }, (config) => {
+      assert.deepEqual(config.runtime.workerGroupsActive, ['robinhood-wallet-intelligence']);
+      assert.deepEqual(config.runtime.workerGroupsSkipped, skippedExcept('robinhood-wallet-intelligence'));
     });
   });
 

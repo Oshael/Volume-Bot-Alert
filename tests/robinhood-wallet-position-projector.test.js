@@ -96,6 +96,36 @@ describe('Robinhood wallet position projector', () => {
     assert.equal(batch.nextBlock, '11');
   });
 
+  it('reconciles only against a holder ledger at the exact projection frontier', async () => {
+    const database = {
+      async query() {
+        return { rows: [
+          {
+            token_address: TOKEN, wallet_address: WALLET,
+            quantity_raw: '25', holder_balance_raw: '20',
+            ledger_status: 'live', live_through_block: '11',
+          },
+          {
+            token_address: TOKEN, wallet_address: `0x${'33'.repeat(20)}`,
+            quantity_raw: '10', holder_balance_raw: '10',
+            ledger_status: 'live', live_through_block: '10',
+          },
+        ] };
+      },
+    };
+    const report = await createRobinhoodWalletPositionRepository({ database })
+      .reconcileTouchedPositions('swap_only_v1', [
+        { tokenAddress: TOKEN, walletAddress: WALLET },
+        { tokenAddress: TOKEN, walletAddress: `0x${'33'.repeat(20)}` },
+      ], '11');
+
+    assert.deepEqual(
+      { aligned: report.aligned, mismatched: report.mismatched, unaligned: report.unaligned },
+      { aligned: 1, mismatched: 1, unaligned: 1 }
+    );
+    assert.equal(report.samples[0].projectedRaw, '25');
+  });
+
   it('registers the additive Stage 127 time frontier', () => {
     assert.match(stage127.STATEMENTS.join('\n'), /ADD COLUMN IF NOT EXISTS next_block_time/);
     assert.equal(SCHEMA_GROUPS.find(({ key }) => (

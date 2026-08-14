@@ -248,7 +248,7 @@ const LEGACY_WORKER_GROUPS = Object.freeze(['maintenance']);
 const ISOLATED_WORKER_GROUPS = Object.freeze([
   'robinhood-maintenance', 'robinhood', 'robinhood-head', 'robinhood-processing',
   'robinhood-derived', 'robinhood-wallet', 'robinhood-backfill', 'robinhood-holders',
-  'robinhood-holder-global', 'x-match', 'x-ingest',
+  'robinhood-holder-global', 'robinhood-wallet-intelligence', 'x-match', 'x-ingest',
 ]);
 const WORKER_GROUPS = Object.freeze([
   ...SHARED_WORKER_GROUPS,
@@ -1335,6 +1335,22 @@ module.exports = {
     ),
     maxConsecutiveFailures: parseIntegerInRange(
       process.env.ROBINHOOD_WALLET_SWAP_LIVE_MAX_CONSECUTIVE_FAILURES, 5, 1, 100
+    ),
+  },
+
+  robinhoodWalletPositionLiveWorker: {
+    enabled: parseBoolean(process.env.ROBINHOOD_WALLET_POSITION_LIVE_ENABLED, false),
+    projectionVersion: String(
+      process.env.ROBINHOOD_WALLET_POSITION_PROJECTION_VERSION || 'swap_only_v1'
+    ).trim(),
+    intervalMs: parseIntegerInRange(
+      process.env.ROBINHOOD_WALLET_POSITION_LIVE_INTERVAL_MS, 2000, 250, 300_000
+    ),
+    maxErrorBackoffMs: parseIntegerInRange(
+      process.env.ROBINHOOD_WALLET_POSITION_LIVE_MAX_ERROR_BACKOFF_MS, 30_000, 1000, 300_000
+    ),
+    maxBlocks: parseIntegerInRange(
+      process.env.ROBINHOOD_WALLET_POSITION_LIVE_MAX_BLOCKS_PER_TICK, 200, 1, 500
     ),
   },
 
