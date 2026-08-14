@@ -1054,6 +1054,9 @@ module.exports = {
       process.env.ROBINHOOD_HOLDER_BACKFILL_MAX_INITIAL_GAP_BLOCKS,
       20_000, 1, 100_000_000
     ),
+    concurrency: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_BACKFILL_CONCURRENCY, 1, 1, 8
+    ),
     rangeSize: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_BACKFILL_RANGE_SIZE, 250, 1, 5000
     ),

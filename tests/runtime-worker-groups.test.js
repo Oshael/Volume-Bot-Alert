@@ -534,6 +534,7 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_HOLDER_BACKFILL_MAX_ERROR_BACKOFF_MS: '1',
       ROBINHOOD_HOLDER_BACKFILL_SEED_LIMIT: '9999',
       ROBINHOOD_HOLDER_BACKFILL_MAX_INITIAL_GAP_BLOCKS: '9999999999',
+      ROBINHOOD_HOLDER_BACKFILL_CONCURRENCY: '99',
       ROBINHOOD_HOLDER_BACKFILL_RANGE_SIZE: '9999',
       ROBINHOOD_HOLDER_BACKFILL_CONFIRMATIONS: '9999',
       ROBINHOOD_HOLDER_COLD_ENABLED: 'true',
@@ -582,6 +583,7 @@ describe('runtime worker groups config', () => {
         maxErrorBackoffMs: 1000,
         seedLimit: 1000,
         maxInitialGapBlocks: 100_000_000,
+        concurrency: 8,
         rangeSize: 5000,
         confirmations: 1000,
       });

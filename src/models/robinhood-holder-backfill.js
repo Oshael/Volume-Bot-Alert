@@ -27,6 +27,18 @@ function tokenAddressList(value) {
   return [...new Set(value.map(tokenAddress))];
 }
 
+function shardOptions(input = {}) {
+  const count = input.shardCount == null ? 1 : Number(input.shardCount);
+  const index = input.shardIndex == null ? 0 : Number(input.shardIndex);
+  if (!Number.isSafeInteger(count) || count < 1 || count > 8) {
+    throw new Error('holder backfill shardCount must be between 1 and 8');
+  }
+  if (!Number.isSafeInteger(index) || index < 0 || index >= count) {
+    throw new Error('holder backfill shardIndex is invalid');
+  }
+  return Object.freeze({ count, index });
+}
+
 function blockHash(value) {
   const normalized = String(value || '').trim().toLowerCase();
   if (!/^0x[0-9a-f]{64}$/.test(normalized)) throw new Error('checkpoint.hash is invalid');
@@ -232,6 +244,7 @@ function createRobinhoodHolderBackfillRepository(options = {}) {
   async function getNextToken(input = {}) {
     const throughBlock = quantity(input.throughBlock, 'throughBlock').toString();
     const excluded = tokenAddressList(input.excludeTokenAddresses);
+    const shard = shardOptions(input);
     const result = await database.query(
       `SELECT token_address, deployment_block, backfill_next_block,
               live_through_block, live_through_hash, version
@@ -239,10 +252,14 @@ function createRobinhoodHolderBackfillRepository(options = {}) {
         WHERE chain = 'robinhood' AND ledger_status = 'backfilling'
           AND backfill_next_block <= $1
           AND NOT (token_address = ANY($2::varchar[]))
+          AND mod(
+            hashtextextended(token_address, 0) & 9223372036854775807,
+            $3::bigint
+          ) = $4::bigint
         ORDER BY (live_through_block IS NOT NULL) DESC,
                  backfill_next_block DESC, token_address
         LIMIT 1`,
-      [throughBlock, excluded]
+      [throughBlock, excluded, shard.count, shard.index]
     );
     return stateRow(result.rows[0]);
   }

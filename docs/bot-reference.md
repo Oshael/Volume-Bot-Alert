@@ -1038,6 +1038,13 @@ os tokens adotados sem publicação local até a nova baseline ser materializada
 Para operação contínua, `ROBINHOOD_HOLDER_BACKFILL_MAX_INITIAL_GAP_BLOCKS`
 (20.000 por default) limita o incremental da VPS a deployments próximos do head.
 Tokens com gap maior permanecem sem state para não criar trabalho serial largo.
+O incremental conserva uma única lease, mas pode executar entre 1 e 8 partições
+determinísticas em paralelo por `ROBINHOOD_HOLDER_BACKFILL_CONCURRENCY` (1 por
+default). Cada token pertence a somente uma partição na configuração carregada,
+evitando RPC e commit duplicados. `concurrency` no status informa o valor ativo;
+`activeExecutors` e `committedRanges` no último resultado mostram quantas
+partições trabalharam e quantos ranges foram confirmados no tick. Aumente o
+valor gradualmente enquanto live lag e pressão do RPC permanecerem saudáveis.
 No runtime global do PC, habilite também
 `ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ROLLING_ENABLED=true`; rolling exige auto-start.
 Depois que o run anterior completa, o worker verifica a cada 5 minutos tokens

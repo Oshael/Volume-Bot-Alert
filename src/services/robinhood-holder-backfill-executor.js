@@ -126,13 +126,15 @@ function createRobinhoodHolderBackfillExecutor(options = {}) {
   async function runOnce(input = {}) {
     const rangeSize = boundedInteger(input.rangeSize, 250, 1, 5000, 'rangeSize');
     const confirmations = boundedInteger(input.confirmations, 12, 0, 1000, 'confirmations');
+    const shardCount = boundedInteger(input.shardCount, 1, 1, 8, 'shardCount');
+    const shardIndex = boundedInteger(input.shardIndex, 0, 0, shardCount - 1, 'shardIndex');
     const selectedAtMs = clockMs();
     const head = await reader.getSafeHead(confirmations);
     const excludeTokenAddresses = [...driftEvidence.entries()]
       .filter(([, evidence]) => evidence.nextObservationAtMs > selectedAtMs)
       .map(([tokenAddress]) => tokenAddress);
     const state = await repository.getNextToken({
-      throughBlock: head.safeHead, excludeTokenAddresses,
+      throughBlock: head.safeHead, excludeTokenAddresses, shardCount, shardIndex,
     });
     if (!state) return Object.freeze({ status: 'idle', safeHead: head.safeHead });
     if (state.liveThroughBlock !== null) {

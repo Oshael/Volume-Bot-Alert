@@ -49,6 +49,7 @@ function normalizeOptions(input = {}) {
     maxInitialGapBlocks: boundedInteger(
       input.maxInitialGapBlocks, 20_000, 1, 100_000_000, 'maxInitialGapBlocks'
     ),
+    concurrency: boundedInteger(input.concurrency, 1, 1, 8, 'concurrency'),
     rangeSize: boundedInteger(input.rangeSize, 250, 1, 5000, 'rangeSize'),
     confirmations: boundedInteger(input.confirmations, 12, 0, 1000, 'confirmations'),
   });
@@ -73,24 +74,30 @@ function publicError(error) {
   });
 }
 
-function normalizeResult(seeded, replay) {
-  if (!Array.isArray(seeded) || !REPLAY_STATUSES.has(replay?.status)) {
-    const error = new Error(`unexpected holder backfill result: ${replay?.status}`);
+function normalizeResult(seeded, replays) {
+  if (!Array.isArray(seeded) || !Array.isArray(replays) || !replays.length
+      || replays.some((replay) => !REPLAY_STATUSES.has(replay?.status))) {
+    const statuses = Array.isArray(replays)
+      ? replays.map((replay) => replay?.status).join(',') : 'missing';
+    const error = new Error(`unexpected holder backfill result: ${statuses}`);
     error.code = 'holder_backfill_contract_error';
     throw error;
   }
+  const active = replays.filter((replay) => replay.status !== 'idle');
+  const primary = active[0] || replays[0];
   return Object.freeze({
-    status: seeded.length || replay.status !== 'idle' ? 'completed' : 'idle',
+    status: seeded.length || active.length ? 'completed' : 'idle',
     seededTokens: seeded.length,
-    replayStatus: replay.status,
-    tokenAddress: replay.tokenAddress || null,
-    committedRanges: replay.status === 'committed' ? 1 : 0,
-    driftSuspicions: replay.status === 'drift-suspected' ? 1 : 0,
-    driftedTokens: replay.status === 'drifted' ? 1 : 0,
-    resyncingTokens: replay.status === 'resyncing' ? 1 : 0,
-    atBarrier: replay.atBarrier === true,
-    safeHead: replay.safeHead ?? null,
-    ...(replay.reason ? { reason: replay.reason } : {}),
+    replayStatus: primary.status,
+    tokenAddress: primary.tokenAddress || null,
+    committedRanges: replays.filter(({ status }) => status === 'committed').length,
+    driftSuspicions: replays.filter(({ status }) => status === 'drift-suspected').length,
+    driftedTokens: replays.filter(({ status }) => status === 'drifted').length,
+    resyncingTokens: replays.filter(({ status }) => status === 'resyncing').length,
+    activeExecutors: active.length,
+    atBarrier: replays.some((replay) => replay.atBarrier === true),
+    safeHead: primary.safeHead ?? null,
+    ...(primary.reason ? { reason: primary.reason } : {}),
   });
 }
 
@@ -107,6 +114,7 @@ function createRobinhoodHolderBackfillWorker(deps = {}) {
   let onFatal = null;
   const status = {
     enabled: false, running: false, inFlight: false, halted: false,
+    concurrency: 1,
     lastResult: null, lastError: null, totalRuns: 0, totalErrors: 0,
     consecutiveErrors: 0, totalSeededTokens: 0, totalCommittedRanges: 0,
     totalDriftSuspicions: 0, totalDriftedTokens: 0,
@@ -144,10 +152,17 @@ function createRobinhoodHolderBackfillWorker(deps = {}) {
         admittedAfter: options.admittedAfter, limit: options.seedLimit,
         maxInitialGapBlocks: options.maxInitialGapBlocks,
       });
-      const replay = await runtime.executor.runOnce({
-        rangeSize: options.rangeSize, confirmations: options.confirmations,
-      });
-      const result = normalizeResult(seeded, replay);
+      const settled = await Promise.allSettled(Array.from(
+        { length: options.concurrency },
+        (_, shardIndex) => runtime.executor.runOnce({
+          rangeSize: options.rangeSize, confirmations: options.confirmations,
+          shardCount: options.concurrency, shardIndex,
+        })
+      ));
+      const failed = settled.find(({ status: outcome }) => outcome === 'rejected');
+      if (failed) throw failed.reason;
+      const replays = settled.map(({ value }) => value);
+      const result = normalizeResult(seeded, replays);
       status.lastResult = result;
       status.lastError = null;
       status.consecutiveErrors = 0;
@@ -197,6 +212,7 @@ function createRobinhoodHolderBackfillWorker(deps = {}) {
     options = normalizeOptions(input);
     onFatal = typeof input.onFatal === 'function' ? input.onFatal : null;
     status.enabled = options.enabled;
+    status.concurrency = options.concurrency;
     if (!options.enabled) return false;
     status.halted = false;
     running = true;

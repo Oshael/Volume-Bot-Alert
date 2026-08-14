@@ -160,6 +160,25 @@ describe('Robinhood holder backfill persistence', () => {
         tokenAddress: PRIORITY_TOKEN, deploymentBlock: '150', backfillNextBlock: '150',
         liveThroughBlock: null, liveThroughHash: null, version: 0,
       });
+      const partition = await client.query(
+        `SELECT mod(
+           hashtextextended($1, 0) & 9223372036854775807,
+           2::bigint
+         )::int AS shard`,
+        [PRIORITY_TOKEN]
+      );
+      const priorityShard = partition.rows[0].shard;
+      assert.deepEqual(await repository.getNextToken({
+        throughBlock: '200', excludeTokenAddresses: [TOKEN],
+        shardCount: 2, shardIndex: priorityShard,
+      }), {
+        tokenAddress: PRIORITY_TOKEN, deploymentBlock: '150', backfillNextBlock: '150',
+        liveThroughBlock: null, liveThroughHash: null, version: 0,
+      });
+      assert.equal(await repository.getNextToken({
+        throughBlock: '200', excludeTokenAddresses: [TOKEN],
+        shardCount: 2, shardIndex: 1 - priorityShard,
+      }), null);
       assert.deepEqual(await repository.markResyncing({
         tokenAddress: TOKEN, backfillNextBlock: '103',
       }), { status: 'resyncing', tokenAddress: TOKEN });

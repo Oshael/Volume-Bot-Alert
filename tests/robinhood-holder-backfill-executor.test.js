@@ -56,7 +56,9 @@ describe('Robinhood holder backfill executor', () => {
     assert.equal(result.atBarrier, true);
     assert.deepEqual(calls, [
       ['head', 12],
-      ['select', { throughBlock: '105', excludeTokenAddresses: [] }],
+      ['select', {
+        throughBlock: '105', excludeTokenAddresses: [], shardCount: 1, shardIndex: 0,
+      }],
       ['checkpoint', { number: '102', hash: HASH }],
       ['read', { tokenAddress: TOKEN, fromBlock: '103', toBlock: '105' }],
       ['commit', {
@@ -64,6 +66,30 @@ describe('Robinhood holder backfill executor', () => {
         checkpoint: { number: '105', hash: HASH }, transfers: [],
       }],
     ]);
+  });
+
+  it('forwards a deterministic shard to token selection', async () => {
+    const selections = [];
+    const repository = {
+      getNextToken: async (input) => { selections.push(input); return null; },
+      markResyncing: async () => { throw new Error('must not isolate'); },
+      commitRange: async () => { throw new Error('must not commit'); },
+    };
+    const reader = {
+      getSafeHead: async () => ({ safeHead: '105' }),
+      matchesCheckpoint: async () => { throw new Error('must not verify'); },
+      readRange: async () => { throw new Error('must not read'); },
+      readReceiptRange: async () => { throw new Error('must not read receipts'); },
+    };
+
+    const result = await createRobinhoodHolderBackfillExecutor({
+      repository, reader,
+    }).runOnce({ shardCount: 4, shardIndex: 2 });
+
+    assert.equal(result.status, 'idle');
+    assert.deepEqual(selections, [{
+      throughBlock: '105', excludeTokenAddresses: [], shardCount: 4, shardIndex: 2,
+    }]);
   });
 
   it('isolates an orphaned checkpoint without reading or committing another range', async () => {
