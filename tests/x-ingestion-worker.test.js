@@ -102,10 +102,11 @@ test('a failed poll still reports to the pool and skips persistence', async () =
   });
   await worker.runOnce();
 
-  assert.equal(pool.state.reports[0].result.status, 403, 'auth failure forwarded so the pool can quarantine');
+  assert.equal(pool.state.reports[0].result.status, 403, 'auth failure forwarded so the pool can disable');
   assert.equal(postModel.saved.length, 0);
   assert.equal(listModel.cursors.length, 0, 'cursor not advanced on a failed poll');
   assert.equal(worker.getStatus().errors, 1);
+  assert.equal(worker.getStatus().backedOff, 0, 'auth failure disables the session, not the list');
 });
 
 test('pool exhaustion stops polling the remaining lists this cycle', async () => {
@@ -130,4 +131,41 @@ test('pool exhaustion stops polling the remaining lists this cycle', async () =>
 
   assert.equal(calls, 1, 'second list not polled once the pool is exhausted');
   assert.equal(worker.getStatus().noSession, 1);
+});
+
+test('a thrown list error is backed off without starving the next list', async () => {
+  let nowMs = 1_000;
+  const pool = fakePool({ id: 1, ct0: 'c' });
+  const listModel = fakeListModel([
+    { id: 1, listId: 'broken', queryId: 'Q' },
+    { id: 2, listId: 'healthy', queryId: 'Q' },
+  ]);
+  const calls = [];
+  const call = async ({ variables }) => {
+    calls.push(variables.listId);
+    if (variables.listId === 'broken') throw new Error('network down');
+    return { ok: true, status: 200, body: {} };
+  };
+  const worker = createXIngestionWorker({
+    pool,
+    listModel,
+    postModel: fakePostModel(),
+    call,
+    normalize: () => ({ posts: [], cursors: {} }),
+    now: () => nowMs,
+    logger: { error: () => {}, warn: () => {} },
+  });
+
+  await worker.runOnce();
+  assert.deepEqual(calls, ['broken', 'healthy']);
+
+  nowMs += 1_000;
+  await worker.runOnce();
+  assert.deepEqual(calls, ['broken', 'healthy', 'healthy'], 'broken list remains in backoff');
+  assert.equal(worker.getStatus().backedOff, 1);
+});
+
+test('default polling interval is below the ten-second freshness target', () => {
+  const worker = createXIngestionWorker();
+  assert.equal(worker.getStatus().settings.intervalMs, 5_000);
 });

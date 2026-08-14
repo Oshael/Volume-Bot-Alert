@@ -34,9 +34,26 @@ test('extractNewCt0 returns a rotated ct0 only when it changed', () => {
   assert.equal(extractNewCt0(headers({}, ['other=x; Path=/']), 'OLD'), null);
 });
 
-test('dispatcherFor is null in the alpha (no proxy)', () => {
+test('dispatcherFor permits local alpha but fails closed for configured proxy', () => {
   assert.equal(dispatcherFor(null), null);
-  assert.equal(dispatcherFor('http://proxy:8080'), null); // deferred seam
+  assert.throws(
+    () => dispatcherFor('http://proxy:8080'),
+    (error) => error.code === 'X_PROXY_TRANSPORT_UNAVAILABLE',
+  );
+});
+
+test('callGraphql never falls through to direct fetch when a proxy is configured', async () => {
+  let called = false;
+  await assert.rejects(
+    callGraphql({
+      session: { authToken: 'a', ct0: 'c', proxyUrl: 'http://proxy:8080' },
+      queryId: 'QID', operationName: 'ListLatestTweetsTimeline',
+      variables: { listId: '9' }, features: {},
+      fetchImpl: async () => { called = true; },
+    }),
+    (error) => error.code === 'X_PROXY_TRANSPORT_UNAVAILABLE',
+  );
+  assert.equal(called, false);
 });
 
 test('callGraphql returns body, rate limit and rotated ct0 from the response', async () => {

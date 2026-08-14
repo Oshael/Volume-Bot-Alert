@@ -39,8 +39,15 @@ Data inicial: 2026-07-29.
       cobertura consciente).
     - **Following vem newest-first** (confirmado com 4 follows controlados) ->
       Bloco 4b barato (le pagina 1, follows novos no topo; sem diff completo).
-- Ainda pendente: **Bloco 3 (ingestao continua)** em diante -- primeiro bloco de
-  construcao pesada.
+- Implementacao 2026-08-14: Bloco 3 chegou ao endpoint de re-seed (3.5a), mas
+  **3.3 e 3.4 foram reabertos** depois de auditoria contra o plano:
+  - 3.3 agora desabilita 401/403 ate re-seed e impede que `proxy_url` configurada
+    caia silenciosamente em conexao direta. O transporte real de proxy e a
+    recuperacao automatica de `queryId` continuam pendentes.
+  - 3.4 agora polla a cada 5s por default, isola erro por lista e aplica backoff
+    de 60s. Catch-up paginado depois de downtime continua pendente.
+  - 3.5a ganhou unicidade concorrente por `x_session.label` (stage125). A
+    extensao de browser continua pendente.
 - 1 conta X descartavel em uso para os probes (home IP, sem proxy). Nenhum proxy
   contratado ainda.
 - Ja existe em producao, de trabalho anterior desta mesma sessao: card de perfil
@@ -347,11 +354,11 @@ e novo e a tese nao foi provada. Escala depois, com evidencia.
     le o `Set-Cookie`, atualiza `x_session.ct0` e o `x-csrf-token`. Headless na
     VPS, sem intervencao. Esse e o "sessao troca de tempos em tempos" -- resolvido.
   - `auth_token` NAO rotaciona no relogio; so morre quando a conta e flagada/
-    deslogada (raro, semanas). Morte -> 401/403 -> quarentena; o pool segue nas
-    outras. Reacquirir exige login (manual, sem bot).
-  - `queryId`/`features` extraidos do bundle no boot e **re-extraidos so quando
-    uma chamada falha** (400 nomeia a feature, 404 = queryId velho); cache em
-    `x_list.query_id`, com valor manual como fallback. Degrada com elegancia.
+    deslogada (raro, semanas). Morte -> 401/403 -> sessao desabilitada; o pool
+    segue nas outras. Reacquirir exige login e re-seed (manual, sem bot).
+  - **Alvo ainda pendente:** extrair `queryId`/`features` do bundle no boot e
+    re-extrair quando uma chamada falhar (400 nomeia a feature, 404 = queryId
+    velho), mantendo cache em `x_list.query_id` e valor manual como fallback.
 - **Proxy fixo por sessao = ancora de identidade.** O IP de nascimento (login) e
   o IP de uso (scraping) tem que ser o mesmo, senao o X mata a conta. Logo:
   - **Loga-se JA atraves do proxy da conta** (anti-detect browser -- Multilogin/
@@ -363,6 +370,9 @@ e novo e a tese nao foi provada. Escala depois, com evidencia.
     browser** (permissao `cookies`) que colhe `auth_token`+`ct0` do perfil e faz
     POST num endpoint admin -> insere linha em `x_session`. Um clique, nao editar
     env. (Bloco 3.5.)
+  - **Estado do bootstrap:** o transporte de proxy ainda nao foi validado contra
+    um proxy contratado. Ate isso acontecer, qualquer sessao com `proxy_url`
+    falha fechada; nunca sai direto pelo IP do worker por fallback silencioso.
 - Modelo de proxy: **estatico/ISP por-IP fixo**, nao rotativo por-GB (polling de
   alta frequencia queima GB). Ver "Custo estimado".
 - Headers necessarios (medido no Bloco 2): bearer publico do web client,
@@ -372,7 +382,7 @@ e novo e a tese nao foi provada. Escala depois, com evidencia.
   provar o contrario, nao construir o gerador especulativamente.
 - Rate limit lido de `x-rate-limit-remaining` / `-reset`, nunca chutado. Token
   bucket por sessao x endpoint.
-- 401/403 = quarentena imediata da sessao, nunca retry.
+- 401/403 = desabilita a sessao ate re-seed, nunca retry por relogio.
 
 **2. Ingestao e normalizacao**
 
@@ -737,17 +747,20 @@ Bloco grande -> fatiado (cada slice <=500 linhas, commit proprio):
   `x_tracked_account`, `x_post`, `x_post_media`) + schema-check. `x-post.savePost`
   transacional e idempotente por `post_id`; `x-session.listActive` filtra
   desabilitada/quarentena. Aditivo e inerte. Teste de integracao (dedupe + filtro).
-- **3.2 Normalizer (puro).** `instructions` -> posts: unwrap
+- **3.2 [CONCLUIDO 2026-08-13] Normalizer (puro).** `instructions` -> posts: unwrap
   `TweetWithVisibilityResults`, resolve retweet (midia do original + alcance do
   retuitador), extrai midia, dedupe. Nucleo duravel, teste unit com fixtures reais.
-- **3.3 Pool + client.** Pool de sessoes (bucket por endpoint, quarentena em
-  401/403) + client GraphQL. **ct0 self-heal via `Set-Cookie`** e **queryId
-  auto-extract + fallback** vivem aqui. Proxy por sessao via `ProxyAgent`.
-- **3.4 Worker + wiring.** Loop pool->client->normalizer->persist, cursor, backoff.
-  Grupo isolado `x-ingest`, desligado por default. Roda com 1-2 sessoes; escala pra N.
-- **3.5 Re-seed de sessao.** Endpoint admin + extensao de browser que colhe
-  `auth_token`/`ct0` (httpOnly) e insere linha em `x_session`. Um clique, sem editar
-  env, sem login-bot. Ver "Pool de sessoes X".
+- **3.3 [REABERTO] Pool + client.** Pool, token bucket e `ct0` self-heal estao
+  implementados. Correcao de 2026-08-14: 401/403 desabilita ate re-seed e proxy
+  configurado falha fechada. Pendencias: transporte real via `ProxyAgent` e
+  `queryId` auto-extract + fallback persistido.
+- **3.4 [REABERTO] Worker + wiring.** Loop, persistencia e grupo isolado
+  `x-ingest` estao implementados e desligados por default. Correcao de
+  2026-08-14: default de 5s, erro isolado por lista e backoff de 60s. Pendente:
+  catch-up paginado para cobrir downtime/pico maior que a pagina da timeline.
+- **3.5 [PARCIAL] Re-seed de sessao.** Endpoint admin implementado (3.5a), com
+  unicidade de `label` via stage125 e upsert seguro sob concorrencia. Pendente:
+  extensao de browser e seu contrato de autenticacao.
 
 ### Bloco 4 - Fingerprint de imagens de post
 

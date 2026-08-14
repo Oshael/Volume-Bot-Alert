@@ -5,11 +5,12 @@ const assert = require('node:assert/strict');
 const { createSessionPool } = require('../src/services/x-session-pool');
 
 function fakeModel(list) {
-  const calls = { quarantine: [], updateCt0: [], markUsed: [] };
+  const calls = { quarantine: [], disable: [], updateCt0: [], markUsed: [] };
   return {
     calls,
     listActive: async () => list.map((s) => ({ ...s })),
     quarantine: async (id, until) => calls.quarantine.push({ id, until }),
+    disable: async (id) => calls.disable.push(id),
     updateCt0: async (id, ct0) => calls.updateCt0.push({ id, ct0 }),
     markUsed: async (id) => calls.markUsed.push({ id }),
   };
@@ -32,14 +33,14 @@ test('an exhausted bucket blocks acquire until the reset window passes', async (
   assert.equal(pool.acquire('timeline').id, 1, 'window rolled over -> available again');
 });
 
-test('a 403 quarantines the session and drops it from the pool', async () => {
+test('a 403 disables the session until re-seed and drops it from the pool', async () => {
   const model = fakeModel([{ id: 1 }, { id: 2 }]);
-  const pool = createSessionPool({ model, now: () => 1000, quarantineMs: 60_000 });
+  const pool = createSessionPool({ model, now: () => 1000 });
   await pool.refresh();
   const session = pool.acquire('timeline');
   await pool.report(session, 'timeline', { status: 403 });
-  assert.equal(model.calls.quarantine.length, 1);
-  assert.equal(model.calls.quarantine[0].until, 61_000);
+  assert.deepEqual(model.calls.disable, [session.id]);
+  assert.equal(model.calls.quarantine.length, 0);
   assert.equal(pool.size(), 1);
 });
 

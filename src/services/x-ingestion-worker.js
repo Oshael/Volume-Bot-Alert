@@ -3,7 +3,7 @@
 // Bloco 3, slice 3.4: X ingestion worker. Each cycle refreshes the session pool,
 // then polls the head of every enabled list with a pooled session, normalizes
 // the timeline, persists posts (idempotently), and advances the list cursor. The
-// pool self-heals ct0 and quarantines a session on auth failure. Isolated
+// pool self-heals ct0 and disables a session on auth failure. Isolated
 // 'x-ingest' group, disabled by default. It reads x_session / x_list and writes
 // x_post / x_post_media only; it never touches the Solana or Robinhood paths.
 
@@ -46,9 +46,10 @@ const LIST_TIMELINE_FEATURES = {
 };
 
 const DEFAULTS = {
-  intervalMs: 15_000,
+  intervalMs: 5_000,
   count: 20,
   maxListsPerCycle: 25,
+  errorBackoffMs: 60_000,
 };
 
 function createXIngestionWorker(options = {}) {
@@ -65,10 +66,15 @@ function createXIngestionWorker(options = {}) {
   let running = false;
   let draining = false;
   const settings = { ...DEFAULTS };
+  const retryAfterByList = new Map();
   const metrics = {
     cycles: 0, polls: 0, postsSeen: 0, saved: 0, skipped: 0, errors: 0,
-    noSession: 0, lastRunAt: null,
+    noSession: 0, backedOff: 0, lastRunAt: null,
   };
+
+  function deferList(listId) {
+    retryAfterByList.set(listId, now() + settings.errorBackoffMs);
+  }
 
   async function persistPosts(posts) {
     for (const item of posts) {
@@ -78,9 +84,13 @@ function createXIngestionWorker(options = {}) {
   }
 
   // Poll one list once: acquire a session, call, report the outcome back to the
-  // pool (rate limit / ct0 / quarantine), then persist and advance the cursor.
+  // pool (rate limit / ct0 / auth disable), then persist and advance the cursor.
   // Returns false when no session was available (stop polling further lists).
   async function pollList(list) {
+    if ((retryAfterByList.get(list.id) || 0) > now()) {
+      metrics.backedOff += 1;
+      return true;
+    }
     if (!list.queryId) { metrics.skipped += 1; return true; }
     const session = pool.acquire(LIST_ENDPOINT);
     if (!session) { metrics.noSession += 1; return false; }
@@ -99,6 +109,9 @@ function createXIngestionWorker(options = {}) {
 
     if (!result.ok) {
       metrics.errors += 1;
+      // Auth failures belong to the session, which the pool just disabled. Do
+      // not stall the list: another healthy session may pick it up next cycle.
+      if (result.status !== 401 && result.status !== 403) deferList(list.id);
       logger.warn?.(`[XIngest] list ${list.listId} poll failed status=${result.status}`);
       return true;
     }
@@ -107,7 +120,19 @@ function createXIngestionWorker(options = {}) {
     metrics.postsSeen += posts.length;
     await persistPosts(posts);
     await listModel.updateCursor(list.id, { cursor: cursors?.top || null, now });
+    retryAfterByList.delete(list.id);
     return true;
+  }
+
+  async function pollListSafely(list) {
+    try {
+      return await pollList(list);
+    } catch (err) {
+      metrics.errors += 1;
+      deferList(list.id);
+      logger.error?.(`[XIngest] list ${list.listId} error: ${err.message}`);
+      return true;
+    }
   }
 
   async function runOnce() {
@@ -120,7 +145,7 @@ function createXIngestionWorker(options = {}) {
       if (!active) return;
       const lists = (await listModel.listActive()).slice(0, settings.maxListsPerCycle);
       for (const list of lists) {
-        const keepGoing = await pollList(list);
+        const keepGoing = await pollListSafely(list);
         if (!keepGoing) break; // pool exhausted this cycle
       }
     } catch (err) {
@@ -137,6 +162,7 @@ function createXIngestionWorker(options = {}) {
       intervalMs: Math.max(1_000, Number(config.intervalMs) || DEFAULTS.intervalMs),
       count: Math.max(1, Number(config.count) || DEFAULTS.count),
       maxListsPerCycle: Math.max(1, Number(config.maxListsPerCycle) || DEFAULTS.maxListsPerCycle),
+      errorBackoffMs: Math.max(1_000, Number(config.errorBackoffMs) || DEFAULTS.errorBackoffMs),
     });
     running = true;
     void runOnce();

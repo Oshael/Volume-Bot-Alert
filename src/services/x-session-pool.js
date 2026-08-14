@@ -2,17 +2,14 @@
 
 // Bloco 3, slice 3.3: session pool. Hands the worker a usable session per cycle,
 // rotates across sessions (least-recently-used), tracks a token bucket per
-// (session, endpoint) from the real rate-limit headers, quarantines a session on
+// (session, endpoint) from the real rate-limit headers, disables a session on
 // 401/403, and persists a rotated ct0. Purely in-memory over the x_session model.
 
 const xSessionModel = require('../models/x-session');
 
-const DEFAULT_QUARANTINE_MS = 15 * 60_000;
-
 function createSessionPool(options = {}) {
   const model = options.model || xSessionModel;
   const now = options.now || Date.now;
-  const quarantineMs = options.quarantineMs || DEFAULT_QUARANTINE_MS;
 
   let sessions = [];
   const buckets = new Map(); // `${id}:${endpoint}` -> { remaining, resetMs }
@@ -45,7 +42,7 @@ function createSessionPool(options = {}) {
 
   async function report(session, endpoint, result = {}) {
     if (result.status === 401 || result.status === 403) {
-      await model.quarantine(session.id, now() + quarantineMs);
+      await model.disable(session.id);
       sessions = sessions.filter((s) => s.id !== session.id);
       return;
     }

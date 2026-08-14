@@ -55,12 +55,14 @@ function extractNewCt0(headers, currentCt0) {
   return null;
 }
 
-// Proxy dispatch seam. The alpha runs on the home IP with no proxy, so this
-// returns null (plain fetch). When proxies are contracted, add undici and return
-// `new ProxyAgent(proxyUrl)` here, validated against a real proxy -- not built blind.
+// The local alpha deliberately runs without a proxy. A configured proxy must
+// never be ignored: until the transport is validated against a real contracted
+// proxy, fail closed instead of leaking the session through the worker host IP.
 function dispatcherFor(proxyUrl) {
   if (!proxyUrl) return null;
-  return null; // TODO(undici ProxyAgent): wire when proxies exist
+  const error = new Error('X proxy transport is not enabled; refusing a direct request');
+  error.code = 'X_PROXY_TRANSPORT_UNAVAILABLE';
+  throw error;
 }
 
 async function callGraphql({ session, queryId, operationName, variables, features, fetchImpl = fetch }) {

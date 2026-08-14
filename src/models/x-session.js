@@ -1,7 +1,7 @@
 'use strict';
 
-// Read/lifecycle for scraping sessions (Bloco 3). The pool (later slice) asks
-// for the sessions it may currently use; a 401/403 quarantines one. Secrets
+// Read/lifecycle for scraping sessions (Bloco 3). The pool asks for the sessions
+// it may currently use; a 401/403 disables one until operator re-seed. Secrets
 // (auth_token, ct0) live in the row by design so scaling is inserting rows.
 
 const db = require('../models/db');
@@ -35,6 +35,15 @@ async function quarantine(id, untilMs) {
   await db.query('UPDATE x_session SET quarantined_until = $2 WHERE id = $1', [id, new Date(untilMs).toISOString()]);
 }
 
+// An authentication failure means the auth_token is no longer trustworthy.
+// Keep the row for operator re-seed, but never retry it on a timer.
+async function disable(id) {
+  await db.query(
+    'UPDATE x_session SET enabled = FALSE, quarantined_until = NULL WHERE id = $1',
+    [id],
+  );
+}
+
 // ct0 self-heal: X rotates ct0 and returns the new one via Set-Cookie; the pool
 // persists it so the session stays valid without manual intervention.
 async function updateCt0(id, ct0) {
@@ -44,42 +53,22 @@ async function updateCt0(id, ct0) {
 // Re-seed (Bloco 3, slice 3.5): the only way a fresh auth_token enters the
 // system, since it can't be self-healed once the account is flagged. Keyed by
 // label so re-seeding an existing account overwrites its cookies, re-enables it,
-// and clears any quarantine. Select-for-update + insert-or-update keeps it
-// idempotent without a unique constraint on label.
+// and clears any quarantine. Stage 125 makes label unique, so ON CONFLICT keeps
+// concurrent first-time seeds idempotent too.
 async function upsertSession({ label, authToken, ct0, proxyUrl = null }) {
-  const client = await db.getClient();
-  try {
-    await client.query('BEGIN');
-    const existing = await client.query('SELECT id FROM x_session WHERE label = $1 FOR UPDATE', [label]);
-    let id;
-    let created;
-    if (existing.rows.length) {
-      id = existing.rows[0].id;
-      created = false;
-      await client.query(
-        `UPDATE x_session
-            SET auth_token = $2, ct0 = $3, proxy_url = $4,
-                enabled = TRUE, quarantined_until = NULL
-          WHERE id = $1`,
-        [id, authToken, ct0, proxyUrl],
-      );
-    } else {
-      const inserted = await client.query(
-        `INSERT INTO x_session (label, auth_token, ct0, proxy_url)
-         VALUES ($1, $2, $3, $4) RETURNING id`,
-        [label, authToken, ct0, proxyUrl],
-      );
-      id = inserted.rows[0].id;
-      created = true;
-    }
-    await client.query('COMMIT');
-    return { id, created };
-  } catch (err) {
-    try { await client.query('ROLLBACK'); } catch (_) {}
-    throw err;
-  } finally {
-    client.release();
-  }
+  const { rows } = await db.query(
+    `INSERT INTO x_session (label, auth_token, ct0, proxy_url)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (label) DO UPDATE SET
+       auth_token = EXCLUDED.auth_token,
+       ct0 = EXCLUDED.ct0,
+       proxy_url = EXCLUDED.proxy_url,
+       enabled = TRUE,
+       quarantined_until = NULL
+     RETURNING id, (xmax = 0) AS created`,
+    [label, authToken, ct0, proxyUrl],
+  );
+  return { id: rows[0].id, created: rows[0].created === true };
 }
 
-module.exports = { listActive, markUsed, quarantine, updateCt0, upsertSession };
+module.exports = { listActive, markUsed, quarantine, disable, updateCt0, upsertSession };

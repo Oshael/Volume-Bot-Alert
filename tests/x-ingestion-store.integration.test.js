@@ -12,6 +12,7 @@ const db = require('../src/models/db');
 const xPost = require('../src/models/x-post');
 const xSession = require('../src/models/x-session');
 const stage124 = require('../src/utils/db-init-stage124');
+const stage125 = require('../src/utils/db-init-stage125');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const POST_ID = 'test-post-1';
@@ -34,6 +35,7 @@ describe('X ingestion store integration', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
     await stage124.init({ closePool: false });
+    await stage125.init({ closePool: false });
   });
 
   beforeEach(cleanup);
@@ -113,6 +115,17 @@ describe('X ingestion store integration', () => {
     assert.equal(rows[0].auth_token, 'A2');
     assert.equal(rows[0].ct0, 'C2');
     assert.equal(rows[0].proxy_url, null, 'omitted proxy is cleared on re-seed');
+  });
+
+  it('concurrent first-time re-seeds keep one row per label', async () => {
+    await Promise.all([
+      xSession.upsertSession({ label: 'test-concurrent', authToken: 'A1', ct0: 'C1' }),
+      xSession.upsertSession({ label: 'test-concurrent', authToken: 'A2', ct0: 'C2' }),
+    ]);
+    const { rows } = await db.query(
+      "SELECT COUNT(*)::int AS count FROM x_session WHERE label = 'test-concurrent'",
+    );
+    assert.equal(rows[0].count, 1);
   });
 
   it('re-seeding revives a disabled, quarantined session', async () => {

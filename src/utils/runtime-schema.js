@@ -3223,6 +3223,18 @@ const SCHEMA_GROUPS = [
       },
     ],
   },
+  {
+    key: 'stage125-x-session-label-uniqueness',
+    name: 'Stage 125 X session label uniqueness',
+    repair: 'node src/utils/db-init-stage125.js',
+    tables: [{
+      table: 'x_session',
+      indexes: [{
+        name: 'idx_x_session_label_unique',
+        includes: ['UNIQUE', 'label'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

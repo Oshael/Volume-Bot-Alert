@@ -839,9 +839,10 @@ module.exports = {
 
   xIngestionWorker: {
     enabled: parseBoolean(process.env.X_INGEST_ENABLED, false),
-    intervalMs: Math.max(1000, parseInt(process.env.X_INGEST_INTERVAL_MS || '15000', 10) || 15000),
+    intervalMs: Math.max(1000, parseInt(process.env.X_INGEST_INTERVAL_MS || '5000', 10) || 5000),
     count: Math.max(1, Math.min(parseInt(process.env.X_INGEST_COUNT || '20', 10) || 20, 100)),
     maxListsPerCycle: Math.max(1, Math.min(parseInt(process.env.X_INGEST_MAX_LISTS || '25', 10) || 25, 200)),
+    errorBackoffMs: Math.max(1000, parseInt(process.env.X_INGEST_ERROR_BACKOFF_MS || '60000', 10) || 60000),
   },
 
   tokenRiskEnrichmentWorker: {
