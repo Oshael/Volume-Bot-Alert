@@ -1022,6 +1022,19 @@ live e backfill regular no node da VPS enquanto somente o global usa um túnel.
 O cold serial deve permanecer desligado, e o cutoff do backfill de tokens novos
 não pode preceder o cutoff global.
 
+Depois de uma campanha concluída, uma coorte delta explícita pode adotar tokens
+`backfilling` e tokens ainda sem state que tenham deployment exato. Defina um
+cutoff imutável em `ROBINHOOD_HOLDER_GLOBAL_DELTA_CATALOG_CUTOFF` e execute
+`npm run robinhood:holder-global-delta` para o dry-run. Antes de confirmar,
+desligue o backfill incremental e aguarde sua lease expirar; o comando recusa
+`-- --confirm-create` enquanto a lease estiver ativa. A confirmação cria um novo
+run `frozen`, inicia no menor deployment da coorte e remove atomicamente states,
+balances parciais e journal antigo dos tokens adotados. O bootstrap incremental
+ignora qualquer coorte global ativa mesmo antes do attach. Depois disso, o worker
+global isolado pode ser iniciado no PC e segue o mesmo scan, materialização e
+handoff da campanha original. Essa operação é reconstruível pela chain, mas deixa
+os tokens adotados sem publicação local até a nova baseline ser materializada.
+
 O worker lê `Transfer` por range com a coorte enviada como allowlist `address` ao
 RPC, commita ranges em ordem e não grava o histórico bruto no journal. Se o node
 rejeitar o tamanho da allowlist, ela é dividida ao meio adaptativamente sem
