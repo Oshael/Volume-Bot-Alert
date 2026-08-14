@@ -1146,6 +1146,8 @@ dependem de papéis fornecidos pelo futuro adapter B4.
 
 ### Corte B3 — arestas e evidências permanentes
 
+Status: B3a concluído com schema versionado; commit transacional permanece no B3b.
+
 Objetivo:
 
 - criar resumo por `(token, from, to)`;
@@ -1155,6 +1157,10 @@ Objetivo:
 
 Não aplicar transfers históricos diretamente sobre a posição swap-only já
 materializada.
+
+A Stage 129 permite versões de classificação coexistirem em shadow, limita
+evidências aos papéis `first`, `largest`, `last` e `temporal`, e mantém cursor
+on-chain mais watermark diário. Nenhum writer é ativado neste subcorte.
 
 ### Corte B4 — captura/projeção live de transfers
 

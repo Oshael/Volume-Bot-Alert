@@ -3309,6 +3309,66 @@ const SCHEMA_GROUPS = [
       ],
     }],
   },
+  {
+    key: 'stage129-robinhood-wallet-transfer-projection',
+    name: 'Stage 129 Robinhood wallet transfer projection',
+    repair: 'node src/utils/db-init-stage129.js',
+    tables: [
+      {
+        table: 'robinhood_wallet_transfer_edges',
+        columns: [
+          'chain', 'classification_version', 'token_address', 'from_wallet',
+          'to_wallet', 'transfer_count', 'total_amount_raw', 'first_block',
+          'first_seen_at', 'first_transaction_hash', 'last_block', 'last_seen_at',
+          'last_transaction_hash', 'largest_amount_raw', 'largest_transaction_hash',
+          'wallet_transfer_count', 'dex_flow_count', 'created_at', 'updated_at',
+        ],
+        constraints: [{
+          name: 'rh_wallet_transfer_edges_pkey',
+          includes: ['PRIMARY KEY', 'classification_version'],
+        }],
+        indexes: [
+          { name: 'idx_rh_wallet_transfer_edges_from', includes: ['from_wallet', 'updated_at'] },
+          { name: 'idx_rh_wallet_transfer_edges_to', includes: ['to_wallet', 'updated_at'] },
+        ],
+      },
+      {
+        table: 'robinhood_wallet_relationship_evidence',
+        columns: [
+          'evidence_id', 'chain', 'token_address', 'left_wallet', 'right_wallet',
+          'relationship_kind', 'evidence_role', 'evidence_transaction_hash',
+          'evidence_block', 'evidence_log_index', 'evidence_at', 'amount_raw',
+          'score_component', 'algorithm_version', 'created_at',
+        ],
+        constraints: [{
+          name: 'rh_wallet_relationship_evidence_pair_check',
+          includes: ['CHECK', 'left_wallet', 'right_wallet'],
+        }],
+        indexes: [
+          { name: 'idx_rh_wallet_relationship_evidence_slot', includes: ['UNIQUE', 'evidence_role'] },
+          { name: 'idx_rh_wallet_relationship_evidence_token', includes: ['token_address', 'evidence_at'] },
+        ],
+      },
+      {
+        table: 'robinhood_wallet_transfer_cursors',
+        columns: [
+          'chain', 'projection_version', 'stream', 'next_block',
+          'next_transaction_index', 'next_log_index', 'next_block_time', 'safe_head',
+          'checkpoint_block', 'checkpoint_hash', 'summarized_through_day',
+          'lifecycle_state', 'state_reason', 'completed_at', 'failed_at', 'version',
+          'created_at', 'updated_at',
+        ],
+        constraints: [{
+          name: 'rh_wallet_transfer_cursors_state_check',
+          includes: ['CHECK', 'failed_at'],
+        }],
+        indexes: [{
+          name: 'idx_rh_wallet_transfer_cursors_work',
+          includes: ['lifecycle_state', 'next_block', 'next_transaction_index', 'next_log_index'],
+        }],
+      },
+    ],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

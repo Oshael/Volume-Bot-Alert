@@ -1486,6 +1486,11 @@ qualquer writer futuro. O repository garante a partição antes do insert e dedu
 pela identidade on-chain; a janela bruta contratada é de 30 dias, mas retenção
 permanece desligada até existirem classificação, compactação e watermark seguros.
 
+A Stage 129 cria arestas permanentes versionadas, quatro slots explicáveis de
+evidência por relação e cursores `seed`/`live`. Aplique
+`node src/utils/db-init-stage129.js` depois da Stage 128. O schema sozinho não
+autoriza retenção nem altera a projeção financeira `swap_only_v1`.
+
 O bootstrap também existe localmente como
 `npm run robinhood:wallet-live-bootstrap`: dry-run por padrão, audita observações
 aceitas sem wallet até `seed.safe_head`, valida o RPC/chain e prova o bloco cheio
