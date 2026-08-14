@@ -1059,9 +1059,9 @@ No expanded chart RH, chart, trades e holders ficam visíveis simultaneamente.
 O painel fixo de holders fica na parte inferior e pode ser redimensionado pelo
 handle horizontal (ou pelas setas/Home/End quando focado); aumentar holders
 reduz a área compartilhada por chart e trades. A lista mostra 50 endereços por
-página, preserva a pilha de cursores para voltar, expõe loading/error/retry e
-apresenta os snapshots diários como sticks de variação. O histórico e a lista
-começam a carregar na abertura do modal; fechá-lo cancela respostas atrasadas.
+página, preserva a pilha de cursores para voltar e expõe loading/error/retry.
+A lista começa a carregar na abertura do modal; fechá-lo cancela respostas
+atrasadas.
 
 O worker lê `Transfer` por range com a coorte enviada como allowlist `address` ao
 RPC, commita ranges em ordem e não grava o histórico bruto no journal. Se o node
