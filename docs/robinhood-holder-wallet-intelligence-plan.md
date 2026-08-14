@@ -1239,6 +1239,11 @@ com `--commit` limitado a persistir o watermark. A validação de chain ID e has
 canônico usa o mesmo cliente RPC Robinhood do LIVE; não há seleção em massa,
 scheduler ou DDL destrutivo.
 
+O B5e planeja no máximo 100 candidatos `verified` anteriores à janela de 30 dias
+e confere existência, vínculo com a tabela pai e bounds diários no catálogo. O
+resultado é sempre não destrutivo e exige reauditoria canônica antes de qualquer
+futuro executor.
+
 ### Corte B6 — backfill histórico summary-first
 
 Objetivo:

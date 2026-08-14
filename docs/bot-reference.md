@@ -1516,6 +1516,11 @@ Execute `npm run robinhood:wallet-transfer-compaction-audit -- --day=YYYY-MM-DD
 um único dia sem escrita. Acrescente `--commit` somente para persistir o
 watermark revisado; o comando valida chain ID/hash e nunca remove partições.
 
+Execute `npm run robinhood:wallet-transfer-retention-plan --
+--projection-version=VERSAO --limit=10` para listar candidatos antigos. O limite
+aceito é 1–100; o relatório apenas confere catálogo/bounds, declara
+`destructive=false` e exige nova validação canônica antes de qualquer drop.
+
 O repository de projeção persiste arestas, resumo diário por token, evidências
 `first`/`last`/`largest` e cursor sob a mesma transação com lock/CAS. O resumo
 separa count e soma raw de `wallet_transfer`/`dex_flow`; retry obsoleto é
