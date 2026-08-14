@@ -9,7 +9,8 @@ const CUTOFF = '2026-08-10T00:00:00.000Z';
 function campaign(status, overrides = {}) {
   return {
     id: '1', status, catalogCutoff: CUTOFF, createdAt: CUTOFF,
-    nextBlock: '100', barrierBlock: null, cohortTokenCount: '2', version: '0', ...overrides,
+    nextBlock: '100', barrierBlock: null, cohortTokenCount: '2', version: '0',
+    telemetry: {}, ...overrides,
   };
 }
 describe('Robinhood holder global backfill worker', () => {
@@ -67,6 +68,29 @@ describe('Robinhood holder global backfill worker', () => {
     assert.equal((await runCampaignTick(runtime, active)).status, 'handed-off');
     assert.equal((await runCampaignTick(runtime, active)).status, 'completed');
     assert.equal(telemetry.at(-1).telemetry.liveLagBlocks, '6');
+  });
+  it('measures delta throughput from its nonzero start block', async () => {
+    const telemetry = [];
+    const run = campaign('scanning', {
+      createdAt: new Date(Date.now() - 1000).toISOString(),
+      nextBlock: '150', telemetry: { startBlock: '100' },
+    });
+    const runtime = {
+      lifecycle: {
+        getLatestRun: async () => run,
+        attachToLive: async () => { throw Object.assign(new Error('far'), {
+          code: 'holder_global_backfill_attach_unavailable',
+        }); },
+        recordTelemetry: async (value) => telemetry.push(value),
+      },
+      ledger: { getCursor: async () => ({ nextBlock: '160' }) },
+      reader: { getSafeHead: async () => ({ safeHead: '170' }) },
+      scanner: { runOnce: async () => ({ status: 'committed' }), getStatus: () => ({}) },
+    };
+    await runCampaignTick(runtime, normalizeOptions({ enabled: true, catalogCutoff: CUTOFF }));
+    assert.equal(telemetry[0].telemetry.startBlock, '100');
+    assert.ok(telemetry[0].telemetry.blocksPerSecond <= 50);
+    assert.ok(telemetry[0].telemetry.blocksPerSecond > 40);
   });
   it('is opt-in and rejects an enabled run without cutoff', async () => {
     const scheduled = [];

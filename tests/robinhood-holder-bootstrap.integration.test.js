@@ -6,7 +6,7 @@ const {
   createRobinhoodHolderBootstrapRepository,
 } = require('../src/models/robinhood-holder-bootstrap');
 
-const TOKENS = ['a', 'b', 'c', 'd'].map((digit) => `0x${digit.repeat(40)}`);
+const TOKENS = ['a', 'b', 'c', 'd', 'e'].map((digit) => `0x${digit.repeat(40)}`);
 
 after(() => db.pool.end());
 
@@ -26,24 +26,38 @@ describe('Robinhood holder bootstrap persistence', () => {
       )`);
       await client.query(`CREATE TEMP TABLE robinhood_holder_token_states
         (LIKE public.robinhood_holder_token_states INCLUDING ALL)`);
+      await client.query(`CREATE TEMP TABLE robinhood_holder_global_backfill_runs
+        (LIKE public.robinhood_holder_global_backfill_runs INCLUDING ALL)`);
+      await client.query(`CREATE TEMP TABLE robinhood_holder_global_backfill_tokens
+        (LIKE public.robinhood_holder_global_backfill_tokens INCLUDING ALL)`);
       await client.query(
         `INSERT INTO token_catalog VALUES
           ('robinhood', $1, '2026-08-10T00:01:00Z'),
           ('robinhood', $2, '2026-08-09T23:59:00Z'),
           ('robinhood', $3, '2026-08-10T00:02:00Z'),
-          ('robinhood', $4, '2026-08-10T00:03:00Z')`, TOKENS
+          ('robinhood', $4, '2026-08-10T00:03:00Z'),
+          ('robinhood', $5, '2026-08-10T00:04:00Z')`, TOKENS
       );
       await client.query(
         `INSERT INTO robinhood_token_attributions VALUES
           ('robinhood', $1, 'rpc_direct', 101),
           ('robinhood', $2, 'rpc_direct', 99),
           ('robinhood', $3, 'blockscout', NULL),
-          ('robinhood', $4, 'launchpad_event', 104)`, TOKENS
+          ('robinhood', $4, 'launchpad_event', 104),
+          ('robinhood', $5, 'rpc_direct', 105)`, TOKENS
       );
       await client.query(
         `INSERT INTO robinhood_holder_token_states (
            token_address, ledger_status, deployment_block, backfill_next_block
          ) VALUES ($1, 'backfilling', 104, 104)`, [TOKENS[3]]
+      );
+      const run = await client.query(
+        `INSERT INTO robinhood_holder_global_backfill_runs (catalog_cutoff)
+         VALUES ('2026-08-10T00:05:00Z') RETURNING id`
+      );
+      await client.query(
+        `INSERT INTO robinhood_holder_global_backfill_tokens (run_id, token_address)
+         VALUES ($1, $2)`, [run.rows[0].id, TOKENS[4]]
       );
       const database = { query: client.query.bind(client) };
       const repository = createRobinhoodHolderBootstrapRepository({ database });

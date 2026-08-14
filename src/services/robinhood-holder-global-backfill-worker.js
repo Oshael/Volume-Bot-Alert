@@ -139,9 +139,12 @@ async function runCampaignTick(runtime, options) {
   const result = await advanceRun(runtime, options, run, context);
   run = await runtime.lifecycle.getLatestRun();
   const elapsedSeconds = Math.max(1, (Date.now() - new Date(run.createdAt).getTime()) / 1000);
-  const blocksPerSecond = Number(run.nextBlock) / elapsedSeconds;
+  const startBlock = BigInt(run.telemetry?.startBlock ?? 0);
+  const scannedBlocks = BigInt(run.nextBlock) - startBlock;
+  const blocksPerSecond = Number(scannedBlocks > 0n ? scannedBlocks : 0n) / elapsedSeconds;
   const telemetry = Object.freeze({
-    phase: run.status, nextBlock: run.nextBlock, barrierBlock: run.barrierBlock,
+    phase: run.status, startBlock: startBlock.toString(),
+    nextBlock: run.nextBlock, barrierBlock: run.barrierBlock,
     ...context, blocksPerSecond: Number(blocksPerSecond.toFixed(3)),
     etaSeconds: blocksPerSecond > 0 && context.barrierDistance != null
       ? Math.ceil(Number(context.barrierDistance) / blocksPerSecond) : null,
