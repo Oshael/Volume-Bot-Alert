@@ -28,6 +28,14 @@ function candidatesSql(options) {
           AND cursor.safe_head IS NOT NULL
           AND cursor.safe_head - attribution.attribution_block + 1 > $4::bigint
      ))
+     AND ($6::bigint IS NULL OR EXISTS (
+       SELECT 1 FROM robinhood_holder_cursors cursor
+        WHERE cursor.chain = catalog.chain AND cursor.stream = 'live'
+          AND cursor.safe_head IS NOT NULL
+          AND cursor.safe_head
+            - COALESCE(state.deployment_block, attribution.attribution_block) + 1
+              <= $6::bigint
+     ))
      AND NOT EXISTS (
        SELECT 1 FROM robinhood_holder_global_backfill_tokens prior
         WHERE prior.chain = catalog.chain AND prior.token_address = catalog.address
@@ -39,9 +47,15 @@ function candidatesSql(options) {
 function candidateOptions(input) {
   const minimumGapBlocks = input.minimumGapBlocks == null
     ? null : Number(input.minimumGapBlocks);
+  const maximumGapBlocks = input.maximumGapBlocks == null
+    ? null : Number(input.maximumGapBlocks);
   if (minimumGapBlocks !== null
       && (!Number.isSafeInteger(minimumGapBlocks) || minimumGapBlocks < 1)) {
     throw new Error('delta minimumGapBlocks is invalid');
+  }
+  if (maximumGapBlocks !== null
+      && (!Number.isSafeInteger(maximumGapBlocks) || maximumGapBlocks < 1)) {
+    throw new Error('delta maximumGapBlocks is invalid');
   }
   const options = {
     cutoff: cutoffTimestamp(input.catalogCutoff),
@@ -50,12 +64,17 @@ function candidateOptions(input) {
     includeBackfilling: input.includeBackfilling !== false,
     includeUnseeded: input.includeUnseeded !== false,
     minimumGapBlocks,
+    maximumGapBlocks,
   };
   if (!options.includeBackfilling && !options.includeUnseeded) {
     throw new Error('delta candidate scope is empty');
   }
   if (options.catalogFloor !== null && options.catalogFloor > options.cutoff) {
     throw new Error('delta catalogFloor exceeds catalogCutoff');
+  }
+  if (minimumGapBlocks !== null && maximumGapBlocks !== null
+      && minimumGapBlocks >= maximumGapBlocks) {
+    throw new Error('delta gap range is empty');
   }
   return Object.freeze(options);
 }
@@ -105,7 +124,7 @@ function createRobinhoodHolderGlobalDeltaRepository(options = {}) {
            ON cursor.chain = $1 AND cursor.stream = 'live'
         GROUP BY cursor.safe_head`,
       [CHAIN, normalized.cutoff, [...EXACT_SOURCES], normalized.minimumGapBlocks,
-        normalized.catalogFloor]
+        normalized.catalogFloor, normalized.maximumGapBlocks]
     );
     return summary(result.rows[0]);
   }
@@ -139,7 +158,7 @@ function createRobinhoodHolderGlobalDeltaRepository(options = {}) {
       const candidates = await client.query(
         `${candidatesSql(normalized)} FOR UPDATE OF catalog, attribution`,
         [CHAIN, normalized.cutoff, [...EXACT_SOURCES], normalized.minimumGapBlocks,
-          normalized.catalogFloor]
+          normalized.catalogFloor, normalized.maximumGapBlocks]
       );
       if (!candidates.rowCount) {
         const error = new Error('Robinhood holder global delta has no eligible tokens');

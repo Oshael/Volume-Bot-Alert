@@ -70,12 +70,15 @@ describe('Robinhood holder global delta command', () => {
     const result = await runGlobalHolderDelta({
       ...fixture, catalogCutoff: '2026-08-14T00:00:00Z',
       includeUnseeded: false, sinceLatestCompletedRun: true,
+      maximumGapBlocks: 500_000,
     });
 
     assert.equal(result.catalogFloor, '2026-08-13T00:00:00.000Z');
+    assert.equal(result.maxScanBlocks, 500_000);
     assert.deepEqual(fixture.previews, [{
       catalogCutoff: '2026-08-14T00:00:00Z', includeUnseeded: false,
       catalogFloor: '2026-08-13T00:00:00.000Z',
+      maximumGapBlocks: 500_000,
     }]);
   });
 

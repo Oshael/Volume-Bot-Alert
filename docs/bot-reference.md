@@ -1042,7 +1042,10 @@ Esse modo exclui tokens sem state e impede que um deployment histórico recém
 descoberto amplie acidentalmente o início do scan. Para limitar essa limpeza aos
 tokens vistos desde a última run global concluída, combine também
 `--since-latest-completed-run`; o dry-run informa em `catalogFloor` o cutoff
-efetivamente usado. Use exatamente os mesmos flags na confirmação.
+efetivamente usado. `--max-scan-blocks=N` limita a coorte a candidatos cujo
+deployment esteja no máximo `N` blocos atrás do safe head; use-o para isolar
+deployments históricos que ampliariam o scan comum. O dry-run informa o limite
+em `maxScanBlocks`. Use exatamente os mesmos flags na confirmação.
 
 Para operação contínua, `ROBINHOOD_HOLDER_BACKFILL_MAX_INITIAL_GAP_BLOCKS`
 (20.000 por default) limita o incremental da VPS a deployments próximos do head.

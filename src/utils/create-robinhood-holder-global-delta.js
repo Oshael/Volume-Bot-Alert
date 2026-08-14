@@ -41,6 +41,9 @@ async function runGlobalHolderDelta(input = {}) {
     includeUnseeded: input.includeUnseeded !== false,
   };
   if (catalogFloor != null) candidateInput.catalogFloor = catalogFloor;
+  if (input.maximumGapBlocks != null) {
+    candidateInput.maximumGapBlocks = input.maximumGapBlocks;
+  }
   const preview = await repository.previewRun(candidateInput);
   const incrementalBackfillActive = await backfillLeaseActive(database);
   if (input.confirm !== true) {
@@ -49,6 +52,8 @@ async function runGlobalHolderDelta(input = {}) {
       selection: candidateInput.includeUnseeded
         ? 'unseeded-and-backfilling' : 'backfilling-only',
       catalogFloor: candidateInput.catalogFloor || null,
+      maxScanBlocks: candidateInput.maximumGapBlocks == null
+        ? null : Number(candidateInput.maximumGapBlocks),
       incrementalBackfillActive,
       preview,
     });
@@ -66,10 +71,14 @@ async function runGlobalHolderDelta(input = {}) {
 
 async function main() {
   try {
+    const maximumGapArgument = process.argv.find(
+      (argument) => argument.startsWith('--max-scan-blocks=')
+    );
     console.log(JSON.stringify(await runGlobalHolderDelta({
       catalogCutoff: process.env.ROBINHOOD_HOLDER_GLOBAL_DELTA_CATALOG_CUTOFF,
       includeUnseeded: !process.argv.includes('--backfilling-only'),
       sinceLatestCompletedRun: process.argv.includes('--since-latest-completed-run'),
+      maximumGapBlocks: maximumGapArgument?.slice('--max-scan-blocks='.length),
       confirm: process.argv.includes('--confirm-create'),
     }), null, 2));
   } finally {
