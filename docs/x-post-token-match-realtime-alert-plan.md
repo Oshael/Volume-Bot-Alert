@@ -24,9 +24,25 @@ Data inicial: 2026-07-29.
   - Bloco 1: tabela `token_image_fingerprint` (stage123), worker isolado no grupo
     `x-match` **desligado por default**; nada roda em producao ate ligar o flag e
     aplicar a migracao.
-- Ainda pendente: Blocos 2/3 (camada X hostil) em diante.
-- Nenhuma conta X, proxy ou sessao contratada.
-- Nenhum codigo de ingestao X existe no repositorio.
+  - Bloco 2 (probe read-only, `src/utils/x-timeline-probe.js`): **viabilidade da
+    camada X fechada contra dados reais**, com 1 conta descartavel + IP de casa,
+    sem proxy. Verificado ao vivo:
+    - **Cookies de sessao bastam** (`auth_token` + `ct0` + bearer publico + csrf):
+      `ListLatestTweetsTimeline` responde 200. **`x-client-transaction-id` NAO e
+      exigido** para leitura hoje -- o principal risco tecnico caiu.
+    - Rate-limit real medido: **500 req / 15 min** por sessao nesse endpoint.
+    - Realtime = **polling de lista por um pool de sessoes**, nao stream. 1 sessao
+      da frescor ~1,8s; N sessoes dividem por N (o custo escala com frequencia de
+      poll, nao com nº de contas: uma lista aguenta ~5000 membros num request).
+    - Estrutura do feed: ~41% retweets (resolucao obrigatoria), ~22% com foto
+      (feed do Bloco 4), **replies filtradas** pelo endpoint de lista (gap de
+      cobertura consciente).
+    - **Following vem newest-first** (confirmado com 4 follows controlados) ->
+      Bloco 4b barato (le pagina 1, follows novos no topo; sem diff completo).
+- Ainda pendente: **Bloco 3 (ingestao continua)** em diante -- primeiro bloco de
+  construcao pesada.
+- 1 conta X descartavel em uso para os probes (home IP, sem proxy). Nenhum proxy
+  contratado ainda.
 - Ja existe em producao, de trabalho anterior desta mesma sessao: card de perfil
   do X (`src/services/x-profile-card.js`, `src/routes/x-profile.js`,
   `frontend/src/ui/x-profile-card.ts`), que usa `api.fxtwitter.com` sem
@@ -326,9 +342,11 @@ e novo e a tese nao foi provada. Escala depois, com evidencia.
   causa do Arkose captcha.
 - Um proxy residencial **fixo por sessao**. Cookie saindo de IPs diferentes mata
   a conta rapido.
-- Headers obrigatorios: bearer publico do web client, `x-csrf-token` igual ao
-  cookie `ct0`, `x-twitter-auth-type: OAuth2Session`, `x-twitter-active-user`,
-  e `x-client-transaction-id` assinado.
+- Headers necessarios (medido no Bloco 2): bearer publico do web client,
+  `x-csrf-token` igual ao cookie `ct0`, `x-twitter-auth-type: OAuth2Session`,
+  `x-twitter-active-user`. O **`x-client-transaction-id` NAO foi exigido** para
+  ler `ListLatestTweetsTimeline` (2026-08-13) -- tratar como opcional ate um 404
+  provar o contrario, nao construir o gerador especulativamente.
 - `queryId` e `features` extraidos do bundle `main.{hash}.js` no boot. Hardcodar
   garante quebra em semanas. Erro 400 nomeia a flag faltante.
 - Rate limit lido de `x-rate-limit-remaining` / `-reset`, nunca chutado. Token
@@ -561,10 +579,11 @@ digitacao, nao codigo.
 - **Duravel (constroi agora, nao apodrece):** normalizacao, pHash/dHash, OCR,
   extracao de termo, indice de match, agregador de tendencia, dedup, schema, feed
   admin-only, fingerprint das moedas. Independe do X e da escala.
-- **Perecivel (a camada que fala com o X):** `queryId`/`features` do bundle,
-  assinatura do `x-client-transaction-id`, shape do GraphQL. Quebra sozinha em
-  semanas -- nao da pra "congelar e esperar". Constroi-se com extracao automatica
-  no boot e **valida-se junto com o uso**, nao antes.
+- **Perecivel (a camada que fala com o X):** `queryId`/`features` do bundle, o
+  shape do GraphQL, e -- **se/quando o X passar a exigir** -- a assinatura do
+  `x-client-transaction-id` (hoje nao e gate de leitura, ver Bloco 2). Quebra
+  sozinha em semanas -- nao da pra "congelar e esperar". Constroi-se com extracao
+  automatica no boot e **valida-se junto com o uso**, nao antes.
 
 **Alpha = 1-2 contas, nao 40.** O alpha ja e 1-2 sessoes (ver "Custo estimado").
 Contas proprias que voce topa queimar + uma lista com 20-40 influencers reais
@@ -671,12 +690,16 @@ Sem dependencia de X. Sem imagem baixada na mao.
 Independe totalmente do X. Ja deixa o lado das moedas pronto. Para ativar em
 producao: aplicar a stage123 no DB e subir o worker no grupo `x-match`.
 
-### Bloco 2 - Sessao X e probe de list timeline
+### Bloco 2 - Sessao X e probe de list timeline [CONCLUIDO 2026-08-13]
 
-- Script de probe: autentica com uma sessao, extrai `queryId` do bundle, chama
-  `ListLatestTweetsTimeline` de uma lista de teste, imprime rate limits reais.
-- Mede o custo verdadeiro antes de comprometer arquitetura.
-- Nao integra com nada. Read-only.
+- `src/utils/x-timeline-probe.js`: read-only, env-driven (credenciais no `.env`,
+  nunca commitadas), 3 camadas -- auth de sessao, `ListLatestTweetsTimeline`
+  (com analise de estrutura do feed) e `Following` (ordem). Nao integra com nada.
+- Veredictos (ver "Status" para o detalhe): cookies bastam, transaction-id nao e
+  gate de leitura, rate-limit 500/15min, realtime = pool, retweets ~41%, foto
+  ~22%, replies filtradas, Following newest-first.
+- O `queryId` foi obtido do Network tab (o scrape do bundle no probe e best-effort
+  e falhou; extracao robusta fica pro Bloco 3). `features` default aceitas sem 400.
 
 ### Bloco 3 - Ingestao continua
 
@@ -701,9 +724,14 @@ producao: aplicar a stage123 no DB e subir o worker no grupo `x-match`.
 
 Independente do pipeline de imagem e pode ser feito antes dele.
 
-- `UsersByRestIds` em batch para as contas monitoradas, detectando delta de
-  `friends_count` (tabela `x_account_follow_state`).
-- Ao detectar incremento, buscar `Following` daquela conta e diferenciar.
+- **`Following` vem newest-first** (confirmado no Bloco 2 com 4 follows
+  controlados): follows novos aparecem no topo da pagina 1. Deteccao barata --
+  guardar o topo conhecido por conta e ler so a pagina 1; o que esta acima do
+  ultimo topo sao os follows novos. Sem paginar nem diffar a lista inteira. Em
+  producao, diffar um top-N pequeno contra cache (cobre follow multiplo/unfollow).
+- Gatilho de `friends_count` via `UsersByRestIds` em batch (tabela
+  `x_account_follow_state`) e **otimizacao de escala**, nao requisito do alpha:
+  com pool pequeno da pra pollar `Following` pagina 1 por conta direto no ciclo.
 - Para cada perfil novo seguido: extrair CA de nome, bio e post fixado.
 - Casar o CA contra o catalogo. Match exato, sem limiar.
 
