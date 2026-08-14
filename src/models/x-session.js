@@ -35,4 +35,10 @@ async function quarantine(id, untilMs) {
   await db.query('UPDATE x_session SET quarantined_until = $2 WHERE id = $1', [id, new Date(untilMs).toISOString()]);
 }
 
-module.exports = { listActive, markUsed, quarantine };
+// ct0 self-heal: X rotates ct0 and returns the new one via Set-Cookie; the pool
+// persists it so the session stays valid without manual intervention.
+async function updateCt0(id, ct0) {
+  await db.query('UPDATE x_session SET ct0 = $2 WHERE id = $1', [id, ct0]);
+}
+
+module.exports = { listActive, markUsed, quarantine, updateCt0 };
