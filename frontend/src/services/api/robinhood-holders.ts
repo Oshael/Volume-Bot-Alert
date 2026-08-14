@@ -11,6 +11,7 @@ export interface RobinhoodHolder {
 
 export interface RobinhoodHolderSummary {
   holderCount: number | null;
+  totalSupplyRaw: string | null;
   source: 'ledger_live' | 'blockscout';
   observedAt: string | null;
   checkedAt: string | null;

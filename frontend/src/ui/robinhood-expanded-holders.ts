@@ -1,9 +1,11 @@
 import { fetchRobinhoodHoldersPage, type RobinhoodHoldersPage } from '../services/api/robinhood-holders';
+import { formatUsd } from './robinhood-trades-format';
 import { escapeHtml } from './sections/html-safety';
 
 interface MountOptions {
   token: string;
   authToken?: string | null;
+  fdv?: number | null;
 }
 
 let activeCleanup: (() => void) | null = null;
@@ -65,7 +67,34 @@ export function renderRobinhoodExpandedHolderViews(
 // muted placeholders so the target layout is visible; each explains itself on hover.
 const PENDING = '<td class="rh-col-num rh-pending" title="Not available in the holders feed yet">—</td>';
 
-function holderPageHtml(page: RobinhoodHoldersPage, pageNumber: number, hasPrevious: boolean) {
+function formatSupplyPct(pct: number): string {
+  if (!Number.isFinite(pct) || pct <= 0) return '0%';
+  if (pct < 0.01) return '<0.01%';
+  return `${Number(pct.toFixed(pct >= 1 ? 2 : 3))}%`;
+}
+
+// Remaining share of supply: fraction = balanceRaw / totalSupplyRaw (exact, no
+// decimals needed); USD value = fraction × fdv (fdv already carries supply × price).
+function remainingCell(balanceRaw: string, totalSupplyRaw: string | null, fdv?: number | null) {
+  const rawTitle = `Raw balance: ${escapeHtml(rawBalance(balanceRaw))}`;
+  let fraction: number | null = null;
+  try {
+    const supply = totalSupplyRaw ? BigInt(totalSupplyRaw) : 0n;
+    if (supply > 0n) fraction = Number(BigInt(balanceRaw)) / Number(supply);
+  } catch { fraction = null; }
+  if (fraction == null || !Number.isFinite(fraction)) {
+    return `<td class="rh-col-num rh-pending" title="${rawTitle}">—</td>`;
+  }
+  const value = fdv != null && fdv > 0 ? formatUsd(fraction * fdv) : '—';
+  return `<td class="rh-col-num rh-remaining" title="${rawTitle}">
+      <span class="rh-remaining-value">${escapeHtml(value)}</span>
+      <span class="rh-remaining-pct">${escapeHtml(formatSupplyPct(fraction * 100))}</span>
+    </td>`;
+}
+
+function holderPageHtml(
+  page: RobinhoodHoldersPage, pageNumber: number, hasPrevious: boolean, fdv?: number | null,
+) {
   const observed = new Date(page.observedAt).toLocaleString();
   const rows = page.holders.map((holder) => `<tr>
     <td class="rh-col-rank">${holder.rank}</td>
@@ -74,7 +103,7 @@ function holderPageHtml(page: RobinhoodHoldersPage, pageNumber: number, hasPrevi
       <span class="rh-holder-type">${escapeHtml(holder.addressType)}${holder.isVerifiedContract ? ' · verified' : ''}</span>
     </td>
     ${PENDING}${PENDING}${PENDING}${PENDING}
-    <td class="rh-col-num rh-pending" title="Raw balance: ${escapeHtml(rawBalance(holder.balanceRaw))}">—</td>
+    ${remainingCell(holder.balanceRaw, page.summary.totalSupplyRaw, fdv)}
   </tr>`).join('');
   return `<header><span class="robinhood-holder-page-title">Top holders</span>
       <span class="holder-freshness is-${page.summary.freshness}">${escapeHtml(page.summary.freshness)} · ${escapeHtml(observed)}</span></header>
@@ -187,7 +216,7 @@ export function mountRobinhoodExpandedHolders(section: ParentNode, options: Moun
       if (disposed || id !== requestId) return;
       currentPage = result;
       root.querySelector<HTMLElement>('[data-holder-count]')!.textContent = count(result.summary.holderCount);
-      pageContainer.innerHTML = holderPageHtml(result, cursors.length, cursors.length > 1);
+      pageContainer.innerHTML = holderPageHtml(result, cursors.length, cursors.length > 1, options.fdv);
     } catch { if (!disposed && id === requestId) pageContainer.innerHTML = errorHtml(); }
   };
   const onClick = (event: Event) => {

@@ -589,7 +589,7 @@ const ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES = {
     const secondPage = new URL(request.url()).searchParams.has('cursor');
     return {
       token: ROBINHOOD_TOKEN,
-      summary: { holderCount: 4424, source: 'ledger_live', observedAt: '2026-07-15T11:55:00.000Z', checkedAt: '2026-07-15T11:55:00.000Z', freshness: 'fresh' },
+      summary: { holderCount: 4424, totalSupplyRaw: '50000000000000000000', source: 'ledger_live', observedAt: '2026-07-15T11:55:00.000Z', checkedAt: '2026-07-15T11:55:00.000Z', freshness: 'fresh' },
       holders: [{
         rank: secondPage ? 51 : 1,
         address: secondPage ? `0x${'7'.repeat(40)}` : ROBINHOOD_DEV,
@@ -1663,6 +1663,7 @@ test('renders holders and cursor pages in the Robinhood expanded chart', async (
     new URL(requestUrl).pathname === '/api/robinhood/holder-history'
   ))).toBe(false);
   await expect(panel).toContainText('Main whale');
+  await expect(panel.locator('.rh-remaining-pct').first()).toHaveText('10%');
 
   const resizeHandle = dialog.locator('[data-holder-resize-handle]');
   const beforeResize = await dialog.evaluate((element) => ({

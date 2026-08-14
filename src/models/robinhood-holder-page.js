@@ -64,9 +64,12 @@ function mapPage(tokenAddress, cursor, rows) {
     isVerifiedContract: false,
   }));
   const last = items.at(-1);
+  const totalSupplyRaw = rows[0].token_total_supply_raw != null
+    ? String(rows[0].token_total_supply_raw) : null;
   return Object.freeze({
     address: tokenAddress,
     holderCount,
+    totalSupplyRaw,
     items: Object.freeze(items),
     hasMore,
     nextCursor: hasMore ? encodeCursor({
@@ -93,6 +96,14 @@ function createRobinhoodHolderPageRepository(options = {}) {
              ON cursor.chain = state.chain AND cursor.stream = 'live'
           WHERE state.chain = 'robinhood' AND state.token_address = $1
             AND state.ledger_status = 'live'
+       ), token_supply AS MATERIALIZED (
+         SELECT observation.token_total_supply_raw
+           FROM robinhood_market_observations observation
+          WHERE observation.chain = 'robinhood' AND observation.token_address = $1
+            AND observation.status = 'accepted'
+            AND observation.token_total_supply_raw IS NOT NULL
+          ORDER BY observation.observed_at DESC
+          LIMIT 1
        ), page AS MATERIALIZED (
          SELECT balance.wallet_address, balance.balance_raw,
                 CASE
@@ -112,9 +123,12 @@ function createRobinhoodHolderPageRepository(options = {}) {
           ORDER BY balance.balance_raw DESC, balance.wallet_address ASC
           LIMIT ${PAGE_SIZE + 1}
        )
-       SELECT state.holder_count, state.observed_at, state.checked_at, page.wallet_address,
+       SELECT state.holder_count, state.observed_at, state.checked_at,
+              supply.token_total_supply_raw, page.wallet_address,
               page.balance_raw, page.address_type
-         FROM published_state state LEFT JOIN page ON TRUE
+         FROM published_state state
+         LEFT JOIN token_supply supply ON TRUE
+         LEFT JOIN page ON TRUE
         ORDER BY page.balance_raw DESC NULLS LAST, page.wallet_address ASC`,
       [tokenAddress, cursor?.balanceRaw || null, cursor?.walletAddress || null]
     );

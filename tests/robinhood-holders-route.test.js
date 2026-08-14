@@ -190,7 +190,7 @@ describe('Robinhood holders route', () => {
         listPublishedPage: async (input) => {
           assert.deepEqual(input, { tokenAddress: TOKEN, cursor: null });
           return {
-            holderCount: 1, source: 'ledger_live',
+            holderCount: 1, source: 'ledger_live', totalSupplyRaw: '10000',
             observedAt: '2026-08-10T04:59:59.000Z',
             checkedAt: '2026-08-10T05:00:00.000Z',
             items: [{
@@ -207,6 +207,7 @@ describe('Robinhood holders route', () => {
     assert.equal(response.status, 200);
     assert.equal(response.body.summary.source, 'ledger_live');
     assert.equal(response.body.summary.holderCount, 1);
+    assert.equal(response.body.summary.totalSupplyRaw, '10000');
     assert.equal(response.body.holders[0].balanceRaw, '5000');
     assert.equal(response.body.nextCursor, 'ledger_v1.next');
     assert.equal(response.body.refreshQueued, false);

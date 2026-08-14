@@ -41,6 +41,7 @@ function parseHistoryDays(value) {
 function publicSummary(row, nowMs, refreshMs) {
   if (!row) return Object.freeze({
     holderCount: null,
+    totalSupplyRaw: null,
     source: 'blockscout',
     observedAt: null,
     checkedAt: null,
@@ -53,6 +54,7 @@ function publicSummary(row, nowMs, refreshMs) {
     : (Number.isFinite(freshnessMs) && nowMs - freshnessMs <= refreshMs ? 'fresh' : 'stale');
   return Object.freeze({
     holderCount: row.holderCount,
+    totalSupplyRaw: row.totalSupplyRaw ?? null,
     source: row.source,
     observedAt: row.observedAt,
     checkedAt: row.checkedAt,
@@ -97,8 +99,8 @@ async function sendPublishedLedgerPage(input) {
       input.response.json({
         token: input.tokenAddress,
         summary: publicSummary({
-          holderCount: page.holderCount, source: page.source,
-          observedAt: page.observedAt, checkedAt: page.checkedAt,
+          holderCount: page.holderCount, totalSupplyRaw: page.totalSupplyRaw,
+          source: page.source, observedAt: page.observedAt, checkedAt: page.checkedAt,
         }, input.nowMs, input.refreshMs),
         holders: page.items, hasMore: page.hasMore, nextCursor: page.nextCursor,
         observedAt: page.observedAt, refreshQueued: false,

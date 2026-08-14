@@ -3636,6 +3636,14 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 }
 .rh-pending { color: rgba(230, 233, 239, 0.26); }
 
+.rh-remaining { line-height: 1.2; }
+.rh-remaining-value { display: block; color: #d7e3f4; }
+.rh-remaining-pct {
+  display: block;
+  font-size: 10px;
+  color: rgba(230, 233, 239, 0.42);
+}
+
 .robinhood-holder-page th,
 .holder-freshness { color: rgba(230, 233, 239, 0.5); font-size: 10px; letter-spacing: 0.04em; }
 .holder-freshness.is-stale { color: #ffbd66; }

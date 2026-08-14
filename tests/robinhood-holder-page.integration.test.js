@@ -61,11 +61,26 @@ describe('Robinhood published holder page persistence', () => {
         [SHADOW_TOKEN, wallets[2]]
       );
 
+      await client.query(`CREATE TEMP TABLE robinhood_market_observations (
+        chain varchar(16) NOT NULL, token_address varchar(42) NOT NULL,
+        status varchar(16) NOT NULL, token_total_supply_raw numeric(78, 0),
+        observed_at timestamptz NOT NULL
+      )`);
+      await client.query(
+        `INSERT INTO robinhood_market_observations
+           (chain, token_address, status, token_total_supply_raw, observed_at)
+         VALUES ('robinhood', $1, 'accepted', 900000, '2026-08-14T02:00:00Z'),
+                ('robinhood', $1, 'accepted', 1000000, '2026-08-14T03:00:00Z'),
+                ('robinhood', $1, 'rejected', 5, '2026-08-14T04:00:00Z')`,
+        [TOKEN]
+      );
+
       const repository = createRobinhoodHolderPageRepository({
         database: { query: client.query.bind(client) },
       });
       const first = await repository.listPublishedPage({ tokenAddress: TOKEN });
       assert.equal(first.holderCount, 52);
+      assert.equal(first.totalSupplyRaw, '1000000');
       assert.equal(first.checkedAt, '2026-08-14T03:00:01.000Z');
       assert.equal(first.items.length, __private.PAGE_SIZE);
       assert.equal(first.hasMore, true);

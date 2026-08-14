@@ -4416,6 +4416,7 @@ function bindExpandedSparklineModal(
     mountRobinhoodExpandedHolders(section, {
       token: address,
       authToken: state.session.token,
+      fdv: getTrackedToken(state, address, state.ui.expandedSparklineChain)?.fdv ?? null,
     });
   } else {
     destroyRobinhoodExpandedTrades();
