@@ -3615,11 +3615,26 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 
 .robinhood-holder-page th,
 .robinhood-holder-page td {
-  padding: 8px 10px;
+  padding: 6px 10px;
   border-bottom: 1px solid rgba(55, 61, 75, 0.55);
   text-align: left;
   white-space: nowrap;
 }
+
+.robinhood-holder-page th.rh-col-num,
+.robinhood-holder-page td.rh-col-num { text-align: right; }
+.robinhood-holder-page th.rh-col-rank,
+.robinhood-holder-page td.rh-col-rank { width: 1%; color: rgba(230, 233, 239, 0.4); }
+
+.rh-col-holder a { display: block; line-height: 1.25; }
+.rh-holder-type {
+  display: block;
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: rgba(230, 233, 239, 0.38);
+}
+.rh-pending { color: rgba(230, 233, 239, 0.26); }
 
 .robinhood-holder-page th,
 .holder-freshness { color: rgba(230, 233, 239, 0.5); font-size: 10px; letter-spacing: 0.04em; }
@@ -3627,7 +3642,37 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 .robinhood-holder-page a { color: #8fb7d8; text-decoration: none; }
 .robinhood-holder-page a:hover { color: #d7f3ff; text-decoration: underline; }
 
-.robinhood-holder-page footer button,
+.robinhood-holder-page footer {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  gap: 6px;
+  padding-top: 4px;
+}
+
+.robinhood-holder-page footer .rh-page-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid rgba(82, 140, 255, 0.4);
+  border-radius: 5px;
+  background: rgba(82, 140, 255, 0.12);
+  color: #cdd6e6;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.robinhood-holder-page footer .rh-page-indicator {
+  min-width: 16px;
+  text-align: center;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(230, 233, 239, 0.55);
+}
+
 .robinhood-holder-error button {
   padding: 6px 12px;
   border: 1px solid rgba(82, 140, 255, 0.55);

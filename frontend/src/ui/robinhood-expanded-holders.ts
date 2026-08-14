@@ -61,20 +61,34 @@ export function renderRobinhoodExpandedHolderViews(
   </div>`;
 }
 
+// Columns without a data source in /api/robinhood/holders yet. Rendered as
+// muted placeholders so the target layout is visible; each explains itself on hover.
+const PENDING = '<td class="rh-col-num rh-pending" title="Not available in the holders feed yet">—</td>';
+
 function holderPageHtml(page: RobinhoodHoldersPage, pageNumber: number, hasPrevious: boolean) {
   const observed = new Date(page.observedAt).toLocaleString();
   const rows = page.holders.map((holder) => `<tr>
-    <td>${holder.rank}</td>
-    <td><a href="https://robinhoodchain.blockscout.com/address/${escapeHtml(holder.address)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(holder.address)}">${escapeHtml(holder.label || shortAddress(holder.address))}</a></td>
-    <td>${escapeHtml(holder.addressType)}${holder.isVerifiedContract ? ' · verified' : ''}</td>
-    <td title="Raw on-chain balance">${escapeHtml(rawBalance(holder.balanceRaw))}</td>
+    <td class="rh-col-rank">${holder.rank}</td>
+    <td class="rh-col-holder">
+      <a href="https://robinhoodchain.blockscout.com/address/${escapeHtml(holder.address)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(holder.address)}">${escapeHtml(holder.label || shortAddress(holder.address))}</a>
+      <span class="rh-holder-type">${escapeHtml(holder.addressType)}${holder.isVerifiedContract ? ' · verified' : ''}</span>
+    </td>
+    ${PENDING}${PENDING}${PENDING}${PENDING}
+    <td class="rh-col-num rh-pending" title="Raw balance: ${escapeHtml(rawBalance(holder.balanceRaw))}">—</td>
   </tr>`).join('');
   return `<header><span class="robinhood-holder-page-title">Top holders</span>
       <span class="holder-freshness is-${page.summary.freshness}">${escapeHtml(page.summary.freshness)} · ${escapeHtml(observed)}</span></header>
-    <div class="robinhood-holder-table-wrap"><table><thead><tr><th>#</th><th>Holder</th><th>Type</th><th>Raw balance</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="4">No holders returned.</td></tr>'}</tbody></table></div>
-    <footer><button type="button" data-holder-page-action="previous" ${hasPrevious ? '' : 'disabled'}>Previous</button>
-      <span>Page ${pageNumber}</span><button type="button" data-holder-page-action="next" ${page.hasMore ? '' : 'disabled'}>Next</button></footer>`;
+    <div class="robinhood-holder-table-wrap"><table><thead><tr>
+        <th class="rh-col-rank">#</th><th class="rh-col-holder">Holder</th>
+        <th class="rh-col-num">ETH Bal</th><th class="rh-col-num">Avg Buy</th>
+        <th class="rh-col-num">Avg Sell</th><th class="rh-col-num">U. PnL</th>
+        <th class="rh-col-num">Remaining</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="7">No holders returned.</td></tr>'}</tbody></table></div>
+    <footer>
+      <button type="button" class="rh-page-btn" aria-label="Previous" data-holder-page-action="previous" ${hasPrevious ? '' : 'disabled'}>‹</button>
+      <span class="rh-page-indicator">${pageNumber}</span>
+      <button type="button" class="rh-page-btn" aria-label="Next" data-holder-page-action="next" ${page.hasMore ? '' : 'disabled'}>›</button>
+    </footer>`;
 }
 
 function errorHtml() {
