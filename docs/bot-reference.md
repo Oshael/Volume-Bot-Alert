@@ -1046,6 +1046,11 @@ cursores para retomada; após attach, nunca promova manualmente baseline incompl
 Se receipts canônicos ainda reproduzem saldo negativo, somente esse token é
 excluído da coorte, seu baseline provisório é removido e o mesmo range é repetido;
 falhas de leitura permanecem retomáveis e não causam exclusão.
+No live, um endereço rastreado que emita `Transfer` fora do formato ERC-20 é
+quarentenado isoladamente: balances e journal desse endereço são removidos, seu
+state vira `drifted`, o cursor não avança e o mesmo range é repetido sem ele no
+tick seguinte. `quarantinedTokenAddress` e `quarantinedTokens` registram a ação
+na telemetria do worker.
 `scanner.lastBatch` separa `rpcWaitMs`, duração agregada/máxima dos ranges RPC,
 `commitDurationMs` e overhead do último batch, além de ranges, requests, logs,
 transfers e throughput. Compare essas medidas com o mesmo prefetch e concorrência

@@ -124,6 +124,8 @@ Nao ignorar silenciosamente um log do contrato permitido:
 
 - log fora do formato ERC-20 deve excluir o token inteiro da campanha e apagar seu
   baseline provisorio, sem publicar count parcial;
+- se o formato inválido só aparecer depois da campanha, o live deve quarentenar
+  apenas esse state sem avançar o cursor e repetir o range sem o endereço;
 - saldo negativo deve parar o commit do range;
 - usar receipts apenas no bloco/range suspeito para diferenciar omissao do
   `eth_getLogs` de token invalido;
