@@ -40,6 +40,7 @@ const telegramWebhookRoutes = require('./routes/telegram-webhook');
 const socketHub = require('./services/socket-hub');
 const catalogWorker = require('./services/catalog-worker');
 const tokenImageFingerprintWorker = require('./services/token-image-fingerprint-worker');
+const xIngestionWorker = require('./services/x-ingestion-worker');
 const catalogCleanupWorker = require('./services/catalog-cleanup-worker');
 const robinhoodRetentionWorker = require('./services/robinhood-retention-worker');
 const robinhoodProcessingWorker = require('./services/robinhood-processing-worker');
@@ -936,6 +937,7 @@ function startWorkerSet() {
   startRobinhoodHolderWorkerGroup();
   startRobinhoodHolderGlobalBackfillWorkerGroup();
   startTokenImageFingerprintWorkerGroup();
+  startXIngestionWorkerGroup();
 }
 
 function startTokenImageFingerprintWorkerGroup() {
@@ -947,6 +949,18 @@ function startTokenImageFingerprintWorkerGroup() {
     'Token image fingerprint worker',
     () => tokenImageFingerprintWorker.start(config.tokenImageFingerprintWorker),
     { metadataProvider: () => ({ telemetry: tokenImageFingerprintWorker.getStatus() }) },
+  );
+}
+
+function startXIngestionWorkerGroup() {
+  if (!hasWorkerGroup('x-ingest')) return;
+  if (!config.xIngestionWorker.enabled) return;
+  startLockedWorker(
+    'x-ingest',
+    'x-ingestion-worker',
+    'X ingestion worker',
+    () => xIngestionWorker.start(config.xIngestionWorker),
+    { metadataProvider: () => ({ telemetry: xIngestionWorker.getStatus() }) },
   );
 }
 

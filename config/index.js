@@ -248,7 +248,7 @@ const LEGACY_WORKER_GROUPS = Object.freeze(['maintenance']);
 const ISOLATED_WORKER_GROUPS = Object.freeze([
   'robinhood-maintenance', 'robinhood', 'robinhood-head', 'robinhood-processing',
   'robinhood-derived', 'robinhood-wallet', 'robinhood-backfill', 'robinhood-holders',
-  'robinhood-holder-global', 'x-match',
+  'robinhood-holder-global', 'x-match', 'x-ingest',
 ]);
 const WORKER_GROUPS = Object.freeze([
   ...SHARED_WORKER_GROUPS,
@@ -835,6 +835,13 @@ module.exports = {
     batchLimit: Math.max(1, Math.min(parseInt(process.env.X_MATCH_FINGERPRINT_BATCH_LIMIT || '25', 10) || 25, 500)),
     retryIntervalMs: Math.max(0, parseInt(process.env.X_MATCH_FINGERPRINT_RETRY_MS || `${6 * 60 * 60 * 1000}`, 10) || (6 * 60 * 60 * 1000)),
     downloadTimeoutMs: Math.max(1000, parseInt(process.env.X_MATCH_FINGERPRINT_DOWNLOAD_TIMEOUT_MS || '8000', 10) || 8000),
+  },
+
+  xIngestionWorker: {
+    enabled: parseBoolean(process.env.X_INGEST_ENABLED, false),
+    intervalMs: Math.max(1000, parseInt(process.env.X_INGEST_INTERVAL_MS || '15000', 10) || 15000),
+    count: Math.max(1, Math.min(parseInt(process.env.X_INGEST_COUNT || '20', 10) || 20, 100)),
+    maxListsPerCycle: Math.max(1, Math.min(parseInt(process.env.X_INGEST_MAX_LISTS || '25', 10) || 25, 200)),
   },
 
   tokenRiskEnrichmentWorker: {

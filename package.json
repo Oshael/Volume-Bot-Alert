@@ -21,6 +21,7 @@
     "start:worker:robinhood-holders": "PORT=${PORT:-3010} RUN_SOCKET_HUB=false RUN_BACKGROUND_JOBS=true BACKGROUND_WORKER_GROUPS=robinhood-holders node src/server.js",
     "start:worker:robinhood-holder-global": "PORT=${PORT:-3012} RUN_SOCKET_HUB=false RUN_BACKGROUND_JOBS=true BACKGROUND_WORKER_GROUPS=robinhood-holder-global node src/server.js",
     "start:worker:x-match": "PORT=${PORT:-3013} RUN_SOCKET_HUB=false RUN_BACKGROUND_JOBS=true BACKGROUND_WORKER_GROUPS=x-match X_MATCH_FINGERPRINT_ENABLED=true node src/server.js",
+    "start:worker:x-ingest": "PORT=${PORT:-3014} RUN_SOCKET_HUB=false RUN_BACKGROUND_JOBS=true BACKGROUND_WORKER_GROUPS=x-ingest X_INGEST_ENABLED=true node src/server.js",
     "dev": "node --watch src/server.js",
     "dev:web": "RUN_SOCKET_HUB=true RUN_BACKGROUND_JOBS=false node --watch src/server.js",
     "dev:worker": "PORT=${PORT:-3001} RUN_SOCKET_HUB=false RUN_BACKGROUND_JOBS=true node --watch src/server.js",
