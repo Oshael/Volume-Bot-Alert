@@ -1499,6 +1499,12 @@ diário versionado por token que permitirá reconciliar contagem, soma raw e
 frontier antes da compactação. Ela não autoriza drop de partições; a retenção de
 transfers continua desligada.
 
+Aplique então `node src/utils/db-init-stage132.js`. A Stage 132 cria watermarks
+diários com estados `pending`/`blocked`/`verified`/`dropped`; constraints impedem
+`verified` sem todos os gates de classificação, resumo, posição, evidência,
+cursor e checkpoint canônico. Ainda não há auditor ou executor de drop, portanto
+esses watermarks não são populados automaticamente e a retenção segue desligada.
+
 O repository de projeção persiste arestas, resumo diário por token, evidências
 `first`/`last`/`largest` e cursor sob a mesma transação com lock/CAS. O resumo
 separa count e soma raw de `wallet_transfer`/`dex_flow`; retry obsoleto é

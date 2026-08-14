@@ -1205,8 +1205,8 @@ limitados, e mismatch de checkpoint paralisa o writer.
 
 Status: em andamento. O B5a criou o contrato persistente do resumo diário por
 token e versão. O B5b integrou seu `UPSERT` ao mesmo commit de arestas,
-evidências e cursor; ainda não existe watermark de liberação ou remoção de
-partições.
+evidências e cursor. O B5c criou o watermark diário fail-closed; ainda não existe
+auditor ou remoção de partições.
 
 Objetivo:
 
@@ -1223,6 +1223,11 @@ contraparte compacta necessária para reconciliar o raw; as arestas, por serem
 acumuladas entre dias, não servem sozinhas como prova de completude diária.
 Retry obsoleto é rejeitado pelo CAS do cursor antes de tocar o resumo, e qualquer
 falha no resumo reverte também as arestas, evidências e avanço do cursor.
+
+A Stage 132 impede `verified` enquanto classificação, reconciliação do resumo,
+posição, evidências, cursor e checkpoint canônico não estiverem comprovados. O
+estado `dropped` fica reservado para o futuro executor, mas nenhum código deste
+corte cria watermarks, libera retenção ou remove partições.
 
 ### Corte B6 — backfill histórico summary-first
 

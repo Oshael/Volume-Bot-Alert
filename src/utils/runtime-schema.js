@@ -3415,6 +3415,45 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage132-robinhood-wallet-transfer-compaction-watermarks',
+    name: 'Stage 132 Robinhood wallet transfer compaction watermarks',
+    repair: 'node src/utils/db-init-stage132.js',
+    tables: [{
+      table: 'robinhood_wallet_transfer_compaction_watermarks',
+      columns: [
+        'chain', 'projection_version', 'partition_day', 'lifecycle_state',
+        'state_reason', 'raw_event_count', 'target_classified_event_count',
+        'eligible_transfer_count', 'eligible_amount_raw', 'summary_transfer_count',
+        'summary_amount_raw', 'raw_last_block', 'raw_last_transaction_index',
+        'raw_last_log_index', 'cursor_next_block', 'cursor_next_transaction_index',
+        'cursor_next_log_index', 'cursor_next_block_time', 'checkpoint_block',
+        'checkpoint_hash', 'position_projection_version', 'position_next_block',
+        'summary_reconciled', 'position_complete', 'evidence_complete', 'cursor_complete',
+        'checkpoint_canonical', 'audited_at', 'verified_at', 'dropped_at',
+        'version', 'created_at', 'updated_at',
+      ],
+      constraints: [
+        {
+          name: 'rh_wallet_transfer_compaction_pkey',
+          includes: ['PRIMARY KEY', 'projection_version', 'partition_day'],
+        },
+        {
+          name: 'rh_wallet_transfer_compaction_reconciliation_check',
+          includes: ['CHECK', 'target_classified_event_count', 'summary_transfer_count',
+            'summary_reconciled', 'position_complete', 'checkpoint_canonical'],
+        },
+        {
+          name: 'rh_wallet_transfer_compaction_lifecycle_check',
+          includes: ['CHECK', 'blocked', 'verified', 'dropped', 'state_reason'],
+        },
+      ],
+      indexes: [{
+        name: 'idx_rh_wallet_transfer_compaction_state',
+        includes: ['chain', 'lifecycle_state', 'partition_day', 'projection_version'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
