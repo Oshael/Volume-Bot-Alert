@@ -226,14 +226,21 @@ Uma amostra real de 2.000 blocos encontrou:
 
 Na ordem de grandeza atual:
 
-- 30 dias brutos: aproximadamente 57 GB;
-- 90 dias brutos: aproximadamente 170 GB;
-- um ano bruto: aproximadamente 690 GB.
+- baseline histórico do journal: aproximadamente 1,9 GB/dia;
+- upper bound chain-wide medido no preflight A0 de 2026-08-14:
+  aproximadamente 3,93 GB/dia;
+- 30 dias brutos no upper bound atual: aproximadamente 118 GB, antes de
+  índices/WAL;
+- 90 dias brutos no upper bound atual: aproximadamente 354 GB;
+- um ano bruto no upper bound atual: aproximadamente 1,43 TB.
 
-Esses valores representam a projeção global existente e funcionam como upper
-bound. O escopo elegível do produto deve ser medido separadamente. Os valores
-não substituem a auditoria do schema estreito proposto; índices, WAL, autovacuum,
-backups e margem operacional precisam ser medidos antes do rollout.
+Esses valores representam projeções globais e funcionam como upper bounds. O
+preflight atual mediu densidade maior que a amostra histórica; portanto, 57 GB
+não é mais uma estimativa segura para provisionar 30 dias. O escopo elegível do
+produto deve ser medido separadamente na VPS e deve ser significativamente menor
+que chain-wide. Os valores não substituem a auditoria do schema estreito
+proposto; índices, WAL, autovacuum, backups e margem operacional precisam ser
+medidos antes do rollout.
 
 ## 6. Semântica financeira
 
@@ -938,6 +945,65 @@ O resultado da auditoria pode reduzir ou aumentar escopo. Crescimento superior a
 20%, dependência de traces ou novo subsistema exige novo checkpoint antes de
 editar.
 
+### 16.4 Preflight A0 local de 2026-08-14
+
+O preflight foi executado sem escrita, usando transação PostgreSQL `READ ONLY`,
+`statement_timeout` de 30 segundos, amostras limitadas e o probe RPC existente.
+
+#### PostgreSQL local
+
+O banco local não representa a VPS de produção:
+
+- `token_catalog` possui zero tokens Robinhood;
+- não há rows em `robinhood_wallet_swaps`, `robinhood_swap_mc`, holder balances,
+  holder states ou journals;
+- não há cursores seed/live de wallet swaps ou holders;
+- a Stage 118 está presente (`journal_floor_block` existe);
+- a Stage 122 não está aplicada (`lifecycle_state`, `completed_at` e
+  `abandoned_at` não existem).
+
+Consequências:
+
+- cobertura histórica de volume/MC não pôde ser medida localmente;
+- divergência net swaps versus holder balance não pôde ser medida;
+- o rollout deve validar/aplicar migrations pendentes antes de iniciar qualquer
+  novo worker;
+- nenhuma conclusão de capacidade da VPS pode usar os tamanhos do banco local.
+
+#### RPC Robinhood chain-wide
+
+Amostra recente:
+
+- range: blocos 36.432.773–36.433.272;
+- 500 blocos em 50 segundos de chain time;
+- 10.332 transfers ERC-20 válidos;
+- 1.765 logs com o mesmo tópico que não passaram pelo formato ERC-20 esperado;
+- 252 tokens e 3.945 wallets;
+- 6.219 pares token-wallet tocados;
+- 743 mints e 494 burns;
+- duas chamadas `eth_getLogs`, sem split, range de 250 blocos por chamada;
+- projeção chain-wide de aproximadamente 17,85 milhões de eventos válidos/dia;
+- upper bound de tail: aproximadamente 3,93 GB/dia com 220 bytes/evento;
+- upper bound bruto de 30 dias: aproximadamente 118 GB antes de índices/WAL.
+
+Os logs malformados são chain-wide e podem incluir padrões `Transfer` que não são
+ERC-20; não devem ser interpretados automaticamente como defeito de tokens
+elegíveis. A amostra curta e recente também não é SLA para o scan histórico.
+
+#### Pendências para concluir A0
+
+Executar na VPS, ainda read-only:
+
+1. o mesmo probe limitado ao catálogo elegível;
+2. cobertura de `volume_usd` e `robinhood_swap_mc` em ranges antigo/recente;
+3. tamanhos reais, partições, WAL e espaço livre;
+4. cursores seed/live e frontier;
+5. razão evento/aresta `(token, from, to)`;
+6. proporção de transfers correlacionados a swaps;
+7. `EXPLAIN` das queries candidatas.
+
+Nenhum corte de schema deve começar antes dessas medições.
+
 ## 17. Plano de implementação em cortes
 
 Estimativa inicial: 4.800–6.400 linhas de código/testes, mais documentação. A
@@ -946,6 +1012,8 @@ linhas e termina com validação, revisão integral do diff, commit e nova
 autorização.
 
 ### Corte A0 — auditoria read-only
+
+Status: preflight local concluído; medições definitivas na VPS pendentes.
 
 Objetivo:
 
