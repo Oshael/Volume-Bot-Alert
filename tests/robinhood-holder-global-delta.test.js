@@ -5,12 +5,16 @@ const {
   runGlobalHolderDelta,
 } = require('../src/utils/create-robinhood-holder-global-delta');
 
-function harness(active) {
+function harness(active, completedCutoff = '2026-08-13T00:00:00Z') {
   let creates = 0;
   const previews = [];
   const createdInputs = [];
   return {
-    database: { query: async () => ({ rows: [{ active }] }) },
+    database: { query: async (sql) => (
+      sql.includes('SELECT catalog_cutoff')
+        ? { rowCount: 1, rows: [{ catalog_cutoff: completedCutoff }] }
+        : { rows: [{ active }] }
+    ) },
     repository: {
       previewRun: async (input) => {
         previews.push(input);
@@ -59,6 +63,20 @@ describe('Robinhood holder global delta command', () => {
       catalogCutoff: '2026-08-14T00:00:00Z', includeUnseeded: false,
     }]);
     assert.deepEqual(fixture.createdInputs, fixture.previews);
+  });
+
+  it('uses the latest completed run cutoff as the immutable candidate floor', async () => {
+    const fixture = harness(false);
+    const result = await runGlobalHolderDelta({
+      ...fixture, catalogCutoff: '2026-08-14T00:00:00Z',
+      includeUnseeded: false, sinceLatestCompletedRun: true,
+    });
+
+    assert.equal(result.catalogFloor, '2026-08-13T00:00:00.000Z');
+    assert.deepEqual(fixture.previews, [{
+      catalogCutoff: '2026-08-14T00:00:00Z', includeUnseeded: false,
+      catalogFloor: '2026-08-13T00:00:00.000Z',
+    }]);
   });
 
   it('creates the frozen delta after the incremental lease stops', async () => {

@@ -1037,7 +1037,10 @@ os tokens adotados sem publicação local até a nova baseline ser materializada
 Quando a intenção for limpar somente states incrementais já `backfilling`, use
 `-- --backfilling-only` tanto no dry-run quanto junto de `--confirm-create`.
 Esse modo exclui tokens sem state e impede que um deployment histórico recém
-descoberto amplie acidentalmente o início do scan.
+descoberto amplie acidentalmente o início do scan. Para limitar essa limpeza aos
+tokens vistos desde a última run global concluída, combine também
+`--since-latest-completed-run`; o dry-run informa em `catalogFloor` o cutoff
+efetivamente usado. Use exatamente os mesmos flags na confirmação.
 
 Para operação contínua, `ROBINHOOD_HOLDER_BACKFILL_MAX_INITIAL_GAP_BLOCKS`
 (20.000 por default) limita o incremental da VPS a deployments próximos do head.

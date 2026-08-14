@@ -14,14 +14,33 @@ async function backfillLeaseActive(database) {
   return result.rows[0]?.active === true;
 }
 
+async function latestCompletedCatalogCutoff(database) {
+  const result = await database.query(
+    `SELECT catalog_cutoff
+       FROM robinhood_holder_global_backfill_runs
+      WHERE chain = 'robinhood' AND status = 'completed'
+      ORDER BY id DESC
+      LIMIT 1`
+  );
+  if (!result.rowCount) {
+    const error = new Error('A completed Robinhood holder global run is required for this delta');
+    error.code = 'holder_global_delta_completed_run_missing';
+    throw error;
+  }
+  return new Date(result.rows[0].catalog_cutoff).toISOString();
+}
+
 async function runGlobalHolderDelta(input = {}) {
   const database = input.database || db;
   const repository = input.repository
     || createRobinhoodHolderGlobalDeltaRepository({ database });
+  const catalogFloor = input.sinceLatestCompletedRun === true
+    ? await latestCompletedCatalogCutoff(database) : input.catalogFloor;
   const candidateInput = {
     catalogCutoff: input.catalogCutoff,
     includeUnseeded: input.includeUnseeded !== false,
   };
+  if (catalogFloor != null) candidateInput.catalogFloor = catalogFloor;
   const preview = await repository.previewRun(candidateInput);
   const incrementalBackfillActive = await backfillLeaseActive(database);
   if (input.confirm !== true) {
@@ -29,6 +48,7 @@ async function runGlobalHolderDelta(input = {}) {
       mode: 'dry-run',
       selection: candidateInput.includeUnseeded
         ? 'unseeded-and-backfilling' : 'backfilling-only',
+      catalogFloor: candidateInput.catalogFloor || null,
       incrementalBackfillActive,
       preview,
     });
@@ -49,6 +69,7 @@ async function main() {
     console.log(JSON.stringify(await runGlobalHolderDelta({
       catalogCutoff: process.env.ROBINHOOD_HOLDER_GLOBAL_DELTA_CATALOG_CUTOFF,
       includeUnseeded: !process.argv.includes('--backfilling-only'),
+      sinceLatestCompletedRun: process.argv.includes('--since-latest-completed-run'),
       confirm: process.argv.includes('--confirm-create'),
     }), null, 2));
   } finally {
@@ -61,4 +82,7 @@ if (require.main === module) main().catch((error) => {
   process.exitCode = 1;
 });
 
-module.exports = { runGlobalHolderDelta, __private: { backfillLeaseActive } };
+module.exports = {
+  runGlobalHolderDelta,
+  __private: { backfillLeaseActive, latestCompletedCatalogCutoff },
+};

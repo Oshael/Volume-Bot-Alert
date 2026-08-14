@@ -96,6 +96,14 @@ describe('Robinhood holder global delta persistence', () => {
         balanceRows: 1, journalEvents: 1,
       });
       assert.deepEqual(await repository.previewRun({
+        catalogCutoff: '2026-08-12T00:00:00Z',
+        catalogFloor: '2026-08-11T00:30:00Z',
+      }), {
+        candidateTokens: 1, unseededTokens: 1, adoptedBackfillingTokens: 0,
+        startBlock: '200', safeHead: '1000', scanBlocks: '801',
+        balanceRows: 0, journalEvents: 0,
+      });
+      assert.deepEqual(await repository.previewRun({
         catalogCutoff: '2026-08-14T00:00:00Z',
         includeBackfilling: false, minimumGapBlocks: 750,
       }), {

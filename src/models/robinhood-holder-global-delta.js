@@ -18,6 +18,7 @@ function candidatesSql(options) {
     LEFT JOIN robinhood_holder_token_states state
       ON state.chain = catalog.chain AND state.token_address = catalog.address
    WHERE catalog.chain = $1 AND catalog.first_seen_at < $2::timestamptz
+     AND ($5::timestamptz IS NULL OR catalog.first_seen_at >= $5::timestamptz)
      AND attribution.source = ANY($3::varchar[])
      AND attribution.attribution_block IS NOT NULL
      AND ${stateScope}
@@ -44,6 +45,8 @@ function candidateOptions(input) {
   }
   const options = {
     cutoff: cutoffTimestamp(input.catalogCutoff),
+    catalogFloor: input.catalogFloor == null
+      ? null : cutoffTimestamp(input.catalogFloor, 'catalogFloor'),
     includeBackfilling: input.includeBackfilling !== false,
     includeUnseeded: input.includeUnseeded !== false,
     minimumGapBlocks,
@@ -51,12 +54,15 @@ function candidateOptions(input) {
   if (!options.includeBackfilling && !options.includeUnseeded) {
     throw new Error('delta candidate scope is empty');
   }
+  if (options.catalogFloor !== null && options.catalogFloor > options.cutoff) {
+    throw new Error('delta catalogFloor exceeds catalogCutoff');
+  }
   return Object.freeze(options);
 }
 
-function cutoffTimestamp(value) {
+function cutoffTimestamp(value, field = 'catalogCutoff') {
   const parsed = new Date(value);
-  if (!Number.isFinite(parsed.getTime())) throw new Error('delta catalogCutoff is invalid');
+  if (!Number.isFinite(parsed.getTime())) throw new Error(`delta ${field} is invalid`);
   return parsed.toISOString();
 }
 
@@ -98,7 +104,8 @@ function createRobinhoodHolderGlobalDeltaRepository(options = {}) {
          LEFT JOIN robinhood_holder_cursors cursor
            ON cursor.chain = $1 AND cursor.stream = 'live'
         GROUP BY cursor.safe_head`,
-      [CHAIN, normalized.cutoff, [...EXACT_SOURCES], normalized.minimumGapBlocks]
+      [CHAIN, normalized.cutoff, [...EXACT_SOURCES], normalized.minimumGapBlocks,
+        normalized.catalogFloor]
     );
     return summary(result.rows[0]);
   }
@@ -131,7 +138,8 @@ function createRobinhoodHolderGlobalDeltaRepository(options = {}) {
       }
       const candidates = await client.query(
         `${candidatesSql(normalized)} FOR UPDATE OF catalog, attribution`,
-        [CHAIN, normalized.cutoff, [...EXACT_SOURCES], normalized.minimumGapBlocks]
+        [CHAIN, normalized.cutoff, [...EXACT_SOURCES], normalized.minimumGapBlocks,
+          normalized.catalogFloor]
       );
       if (!candidates.rowCount) {
         const error = new Error('Robinhood holder global delta has no eligible tokens');
@@ -187,6 +195,7 @@ function createRobinhoodHolderGlobalDeltaRepository(options = {}) {
       await client.query('COMMIT');
       return Object.freeze({
         runId: String(runId), status: 'frozen', catalogCutoff: normalized.cutoff,
+        catalogFloor: normalized.catalogFloor,
         cohortTokens: addresses.length, adoptedBackfillingTokens: adopted,
         unseededTokens: addresses.length - adopted, startBlock,
         safeHead: cursor.rows[0].safe_head == null ? null : String(cursor.rows[0].safe_head),
