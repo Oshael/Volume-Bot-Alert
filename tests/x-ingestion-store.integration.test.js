@@ -97,4 +97,35 @@ describe('X ingestion store integration', () => {
     await xSession.quarantine(id, Date.now() + 60_000);
     assert.ok(!(await xSession.listActive()).some((s) => s.id === id));
   });
+
+  it('upsertSession inserts a new session then re-seeds it by label', async () => {
+    const first = await xSession.upsertSession({ label: 'test-seed', authToken: 'A1', ct0: 'C1', proxyUrl: 'http://p:1' });
+    assert.equal(first.created, true);
+
+    const second = await xSession.upsertSession({ label: 'test-seed', authToken: 'A2', ct0: 'C2' });
+    assert.equal(second.created, false, 're-seed of same label updates, not inserts');
+    assert.equal(second.id, first.id);
+
+    const { rows } = await db.query(
+      "SELECT auth_token, ct0, proxy_url FROM x_session WHERE label = 'test-seed'",
+    );
+    assert.equal(rows.length, 1, 'must not duplicate a re-seeded label');
+    assert.equal(rows[0].auth_token, 'A2');
+    assert.equal(rows[0].ct0, 'C2');
+    assert.equal(rows[0].proxy_url, null, 'omitted proxy is cleared on re-seed');
+  });
+
+  it('re-seeding revives a disabled, quarantined session', async () => {
+    const future = new Date(Date.now() + 60_000).toISOString();
+    await db.query(
+      "INSERT INTO x_session (label, auth_token, ct0, enabled, quarantined_until) VALUES ('test-dead', 'old', 'old', FALSE, $1)",
+      [future],
+    );
+    await xSession.upsertSession({ label: 'test-dead', authToken: 'fresh', ct0: 'fresh' });
+
+    const active = await xSession.listActive();
+    const revived = active.find((s) => s.label === 'test-dead');
+    assert.ok(revived, 're-seed re-enables and clears quarantine');
+    assert.equal(revived.authToken, 'fresh');
+  });
 });

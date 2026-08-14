@@ -41,4 +41,45 @@ async function updateCt0(id, ct0) {
   await db.query('UPDATE x_session SET ct0 = $2 WHERE id = $1', [id, ct0]);
 }
 
-module.exports = { listActive, markUsed, quarantine, updateCt0 };
+// Re-seed (Bloco 3, slice 3.5): the only way a fresh auth_token enters the
+// system, since it can't be self-healed once the account is flagged. Keyed by
+// label so re-seeding an existing account overwrites its cookies, re-enables it,
+// and clears any quarantine. Select-for-update + insert-or-update keeps it
+// idempotent without a unique constraint on label.
+async function upsertSession({ label, authToken, ct0, proxyUrl = null }) {
+  const client = await db.getClient();
+  try {
+    await client.query('BEGIN');
+    const existing = await client.query('SELECT id FROM x_session WHERE label = $1 FOR UPDATE', [label]);
+    let id;
+    let created;
+    if (existing.rows.length) {
+      id = existing.rows[0].id;
+      created = false;
+      await client.query(
+        `UPDATE x_session
+            SET auth_token = $2, ct0 = $3, proxy_url = $4,
+                enabled = TRUE, quarantined_until = NULL
+          WHERE id = $1`,
+        [id, authToken, ct0, proxyUrl],
+      );
+    } else {
+      const inserted = await client.query(
+        `INSERT INTO x_session (label, auth_token, ct0, proxy_url)
+         VALUES ($1, $2, $3, $4) RETURNING id`,
+        [label, authToken, ct0, proxyUrl],
+      );
+      id = inserted.rows[0].id;
+      created = true;
+    }
+    await client.query('COMMIT');
+    return { id, created };
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch (_) {}
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+module.exports = { listActive, markUsed, quarantine, updateCt0, upsertSession };

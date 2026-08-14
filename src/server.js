@@ -21,6 +21,7 @@ const socialAuthRoutes = require('./routes/social-auth');
 const inviteRoutes = require('./routes/invites');
 const healthRoutes = require('./routes/health');
 const adminRoutes = require('./routes/admin');
+const xSessionRoutes = require('./routes/x-sessions');
 const mockTradingRoutes = require('./routes/mock-trading');
 const accountRoutes = require('./routes/account');
 const accountSecurityRoutes = require('./routes/account-security');
@@ -252,6 +253,7 @@ if (config.mockTrading.enabled) {
     res.status(404).json({ error: 'Mock trading is disabled' });
   });
 }
+app.use('/api/admin/x-sessions', defaultApiLimiter, xSessionRoutes);
 app.use('/api/admin', defaultApiLimiter, adminRoutes);
 app.use('/api/account', defaultApiLimiter, accountRoutes);
 app.use('/api/account-security', defaultApiLimiter, accountSecurityRoutes);
