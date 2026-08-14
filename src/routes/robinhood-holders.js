@@ -8,6 +8,11 @@ const {
   createRobinhoodTokenHolderSummaryRepository,
 } = require('../models/robinhood-token-holder-summary');
 const {
+  createRobinhoodHolderPageRepository,
+  isLedgerCursor,
+  validateLedgerCursor,
+} = require('../models/robinhood-holder-page');
+const {
   createRobinhoodBlockscoutHoldersClient,
   validateHoldersCursor,
 } = require('../services/robinhood-blockscout-holders');
@@ -69,11 +74,63 @@ function safeErrorCode(error) {
   return normalized.replace(/[^a-z0-9_:-]+/g, '_').slice(0, 64) || 'provider_error';
 }
 
+function parsePageCursor(value) {
+  if (isLedgerCursor(value)) {
+    return Object.freeze({
+      source: 'ledger', ledgerCursor: validateLedgerCursor(value), blockscoutCursor: null,
+    });
+  }
+  const blockscoutCursor = validateHoldersCursor(value);
+  return Object.freeze({
+    source: blockscoutCursor ? 'blockscout' : 'auto',
+    ledgerCursor: null, blockscoutCursor,
+  });
+}
+
+async function sendPublishedLedgerPage(input) {
+  if (input.cursor.source === 'blockscout') return false;
+  try {
+    const page = await input.repository.listPublishedPage({
+      tokenAddress: input.tokenAddress, cursor: input.cursor.ledgerCursor,
+    });
+    if (page) {
+      input.response.json({
+        token: input.tokenAddress,
+        summary: publicSummary({
+          holderCount: page.holderCount, source: page.source,
+          observedAt: page.observedAt, checkedAt: page.checkedAt,
+        }, input.nowMs, input.refreshMs),
+        holders: page.items, hasMore: page.hasMore, nextCursor: page.nextCursor,
+        observedAt: page.observedAt, refreshQueued: false,
+      });
+      return true;
+    }
+    if (input.cursor.source === 'ledger') {
+      input.response.status(503).json({
+        error: 'Holder ledger is not currently published', code: 'HOLDERS_NOT_READY',
+      });
+      return true;
+    }
+    return false;
+  } catch (error) {
+    const invalid = error?.code === 'invalid_cursor';
+    input.logger.warn?.('[RobinhoodHoldersRoute] holder ledger page unavailable', {
+      code: safeErrorCode(error),
+    });
+    input.response.status(invalid ? 400 : 503).json(invalid
+      ? { error: 'token or cursor is invalid', code: 'INVALID_REQUEST' }
+      : { error: 'Holder data is temporarily unavailable', code: 'HOLDERS_UNAVAILABLE' });
+    return true;
+  }
+}
+
 function createRobinhoodHoldersRouter(options = {}) {
   const router = express.Router();
   const auth = options.authenticate || authenticate;
   const visibility = options.visibility || rejectHiddenRobinhoodRoute;
   const repository = options.repository || createRobinhoodTokenHolderSummaryRepository();
+  const holderPageRepository = options.holderPageRepository
+    || createRobinhoodHolderPageRepository();
   const client = options.client || createRobinhoodBlockscoutHoldersClient();
   const scheduler = options.scheduler || createRobinhoodHolderRequestScheduler(
     options.requestOptions || config.robinhoodHolderRequests
@@ -154,13 +211,19 @@ function createRobinhoodHoldersRouter(options = {}) {
 
   router.get('/holders', auth, visibility, async (req, res) => {
     let tokenAddress;
-    let cursor;
+    let pageCursor;
     try {
       tokenAddress = normalizeTokenAddress('robinhood', req.query?.token);
-      cursor = validateHoldersCursor(req.query?.cursor);
+      pageCursor = parsePageCursor(req.query?.cursor);
     } catch (_) {
       return res.status(400).json({ error: 'token or cursor is invalid', code: 'INVALID_REQUEST' });
     }
+
+    if (await sendPublishedLedgerPage({
+      repository: holderPageRepository, tokenAddress, cursor: pageCursor,
+      response: res, logger, nowMs: now(), refreshMs,
+    })) return undefined;
+    const cursor = pageCursor.blockscoutCursor;
 
     const pagePromise = scheduler.schedule(
       () => client.getTokenHoldersPage(tokenAddress, cursor)

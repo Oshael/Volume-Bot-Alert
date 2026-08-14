@@ -66,6 +66,9 @@ function appWith(options = {}) {
     authenticate,
     visibility,
     repository,
+    holderPageRepository: options.holderPageRepository || {
+      listPublishedPage: async () => null,
+    },
     client,
     scheduler,
     logger: options.logger || { warn() {} },
@@ -178,6 +181,51 @@ describe('Robinhood holders route', () => {
     assert.equal(response.body.hasMore, true);
     assert.equal(response.body.nextCursor, 'opaque_cursor');
     assert.equal(response.body.refreshQueued, false);
+  });
+
+  it('prefers a published ledger page without occupying the external scheduler', async () => {
+    let scheduled = 0;
+    const response = await request(appWith({
+      holderPageRepository: {
+        listPublishedPage: async (input) => {
+          assert.deepEqual(input, { tokenAddress: TOKEN, cursor: null });
+          return {
+            holderCount: 1, source: 'ledger_live',
+            observedAt: '2026-08-10T04:59:59.000Z',
+            checkedAt: '2026-08-10T05:00:00.000Z',
+            items: [{
+              rank: 1, address: `0x${'b'.repeat(40)}`, balanceRaw: '5000',
+              addressType: 'unknown', label: null, isVerifiedContract: false,
+            }],
+            hasMore: true, nextCursor: 'ledger_v1.next',
+          };
+        },
+      },
+      scheduler: { schedule: () => { scheduled += 1; return Promise.resolve(); } },
+    })).get(`/api/robinhood/holders?token=${TOKEN}`);
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.summary.source, 'ledger_live');
+    assert.equal(response.body.summary.holderCount, 1);
+    assert.equal(response.body.holders[0].balanceRaw, '5000');
+    assert.equal(response.body.nextCursor, 'ledger_v1.next');
+    assert.equal(response.body.refreshQueued, false);
+    assert.equal(scheduled, 0);
+  });
+
+  it('fails closed when a ledger cursor becomes unavailable', async () => {
+    let providerCalls = 0;
+    const response = await request(appWith({
+      holderPageRepository: { listPublishedPage: async () => null },
+      client: {
+        getTokenHoldersPage: async () => { providerCalls += 1; },
+        getTokenHolderSummary: async () => { providerCalls += 1; },
+      },
+    })).get(`/api/robinhood/holders?token=${TOKEN}&cursor=ledger_v1.e30`);
+
+    assert.equal(response.status, 400);
+    assert.equal(response.body.code, 'INVALID_REQUEST');
+    assert.equal(providerCalls, 0);
   });
 
   it('queues a stale first-page summary refresh after prioritizing the page', async () => {
