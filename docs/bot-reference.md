@@ -1498,6 +1498,10 @@ O repository de projeção persiste arestas, evidências `first`/`last`/`largest
 cursor sob a mesma transação com lock/CAS. Ele permanece sem worker e aceita
 somente `wallet_transfer` e `dex_flow` previamente classificados na mesma versão.
 
+O adapter LIVE de fonte permanece inativo e só considera cobertura de swaps
+com cursor `live` em `running`, frontier/checkpoint comprovados e sem ultrapassar
+o `safe_head`; também lê em lote o escopo de tokens, swaps e pools conhecidos.
+
 O bootstrap também existe localmente como
 `npm run robinhood:wallet-live-bootstrap`: dry-run por padrão, audita observações
 aceitas sem wallet até `seed.safe_head`, valida o RPC/chain e prova o bloco cheio
