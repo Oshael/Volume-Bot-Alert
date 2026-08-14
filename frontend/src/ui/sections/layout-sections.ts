@@ -28,6 +28,11 @@ import { buildTokenChartViewportKey, getTokenChartValuationLabel, normalizeToken
 import { resolveTokenValuation } from '../../utils/token-valuation';
 import { buildTokenChainIcon, buildTokenIdentityBadgeGroup, getTokenChainTitle } from '../token-chain-badge';
 import { destroyRobinhoodExpandedTrades, mountRobinhoodExpandedTrades } from '../robinhood-expanded-trades';
+import {
+  destroyRobinhoodExpandedHolders,
+  mountRobinhoodExpandedHolders,
+  renderRobinhoodExpandedHolderViews,
+} from '../robinhood-expanded-holders';
 import { bindMonitoredTickerPeerPanelClose, buildTickerPeerBadge } from './monitored-section';
 import { bindTelegramSettings, renderTelegramSettings } from './telegram-settings';
 
@@ -2787,6 +2792,7 @@ function destroyExpandedCandlestickChart() {
   expandedCandlestickChartCaptureViewport = null;
   expandedCandlestickChartCleanup = null;
   destroyRobinhoodExpandedTrades();
+  destroyRobinhoodExpandedHolders();
 }
 
 function resolveExpandedChartTimeZone(timeZone: string) {
@@ -4182,6 +4188,17 @@ function renderExpandedChartArea(
         </div>`;
 }
 
+function renderExpandedModalBody(
+  chain: TokenChain,
+  chartArea: string,
+  footnote: string,
+  holderCount?: number | null,
+) {
+  return chain === 'robinhood'
+    ? renderRobinhoodExpandedHolderViews(chartArea, footnote, holderCount)
+    : `${chartArea}${footnote}`;
+}
+
 function renderExpandedSparklineModal(state: AppState, address: string) {
   const chain = state.ui.expandedSparklineChain;
   const token = getTrackedToken(state, address, chain);
@@ -4197,6 +4214,9 @@ function renderExpandedSparklineModal(state: AppState, address: string) {
   const ageLabel = formatExpandedTokenAge(token?.createdAt);
   const oneMinuteAvailable = isExpandedOneMinuteChartOptionAvailable(token, sparkline, chain);
   const loadingText = getExpandedSparklineStatusText(sparkline, stats.updatedLabel);
+  const chartArea = renderExpandedChartArea(state, sparkline, address, chain);
+  const footnote = renderExpandedSparklineFootnote(loadingText, address, state.ui.expandedSparklineTimeZone);
+  const expandedBody = renderExpandedModalBody(chain, chartArea, footnote, token?.holderCount);
 
   return `
     <div class="legacy-auth-modal" data-auth-modal="expanded-sparkline" data-auth-modal-scope="sparkline">
@@ -4219,8 +4239,7 @@ function renderExpandedSparklineModal(state: AppState, address: string) {
           ${renderExpandedGranularityControls(state.ui.expandedSparklineGranularityMinutes, oneMinuteAvailable)}
           <button type="button" class="legacy-profile-modal-close" data-action="close-expanded-sparkline" aria-label="Close dialog">X</button>
         </div>
-        ${renderExpandedChartArea(state, sparkline, address, chain)}
-        ${renderExpandedSparklineFootnote(loadingText, address, state.ui.expandedSparklineTimeZone)}
+        ${expandedBody}
       </div>
     </div>
   `;
@@ -4439,8 +4458,18 @@ function bindExpandedSparklineModal(
   });
   if (state.ui.expandedSparklineChain === 'robinhood') {
     mountRobinhoodExpandedTrades(section, { token: address, authToken: state.session.token });
+    mountRobinhoodExpandedHolders(section, {
+      token: address,
+      authToken: state.session.token,
+      onShowHolders: destroyRobinhoodExpandedTrades,
+      onShowChart: () => {
+        mountRobinhoodExpandedTrades(section, { token: address, authToken: state.session.token });
+        window.dispatchEvent(new Event('resize'));
+      },
+    });
   } else {
     destroyRobinhoodExpandedTrades();
+    destroyRobinhoodExpandedHolders();
   }
   bindSparklineHover(section, {
     [buildTokenIdentityKey(state.ui.expandedSparklineChain, address)]: sparkline,

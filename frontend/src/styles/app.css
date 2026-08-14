@@ -3446,6 +3446,143 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   list-style: none;
 }
 
+.robinhood-holder-tabs {
+  display: flex;
+  gap: 24px;
+  margin: 2px 4px 8px;
+  border-bottom: 1px solid rgba(55, 61, 75, 0.75);
+}
+
+.robinhood-holder-tabs button {
+  padding: 8px 2px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: rgba(230, 233, 239, 0.55);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.robinhood-holder-tabs button:hover,
+.robinhood-holder-tabs button.active {
+  border-bottom-color: #67a0ff;
+  color: #f2f5fa;
+}
+
+.robinhood-holder-panel {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  height: clamp(500px, 75vh, 820px);
+  color: #e6e9ef;
+  overflow-y: auto;
+}
+
+.robinhood-holder-panel[hidden] {
+  display: none;
+}
+
+.legacy-auth-panel-expanded-sparkline.is-holder-view .expanded-sparkline-resolution-control {
+  visibility: hidden;
+}
+
+.robinhood-holder-history,
+.robinhood-holder-page {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid rgba(55, 61, 75, 0.92);
+  border-radius: 14px;
+  background: rgba(8, 10, 14, 0.96);
+  overflow: hidden;
+}
+
+.robinhood-holder-history header,
+.robinhood-holder-page header,
+.robinhood-holder-page footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.robinhood-holder-history header div,
+.robinhood-holder-page header div {
+  display: grid;
+  gap: 4px;
+}
+
+.robinhood-holder-history small,
+.robinhood-holder-page small {
+  color: rgba(230, 233, 239, 0.45);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.robinhood-holder-history .is-up,
+.holder-stick.is-up { color: #3ad29f; stroke: #3ad29f; }
+.robinhood-holder-history .is-down,
+.holder-stick.is-down { color: #ff6b7d; stroke: #ff6b7d; }
+.robinhood-holder-history .is-missing,
+.holder-stick.is-missing,
+.holder-stick.is-flat { color: #7f8998; stroke: #7f8998; }
+
+.robinhood-holder-stick-chart {
+  margin-top: 18px;
+  overflow-x: auto;
+}
+
+.holder-stick line {
+  stroke-width: 5;
+  stroke-linecap: round;
+}
+
+.holder-stick circle {
+  fill: currentColor;
+  stroke-width: 0;
+}
+
+.robinhood-holder-table-wrap {
+  max-height: clamp(240px, 45vh, 480px);
+  margin: 12px 0;
+  overflow: auto;
+}
+
+.robinhood-holder-page table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.robinhood-holder-page th,
+.robinhood-holder-page td {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(55, 61, 75, 0.55);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.robinhood-holder-page th,
+.holder-freshness { color: rgba(230, 233, 239, 0.5); }
+.holder-freshness.is-stale { color: #ffbd66; }
+.robinhood-holder-page a { color: #8fb7d8; text-decoration: none; }
+.robinhood-holder-page a:hover { color: #d7f3ff; text-decoration: underline; }
+
+.robinhood-holder-page footer button,
+.robinhood-holder-error button {
+  padding: 6px 12px;
+  border: 1px solid rgba(82, 140, 255, 0.55);
+  border-radius: 7px;
+  background: rgba(82, 140, 255, 0.14);
+  color: #e6e9ef;
+  cursor: pointer;
+}
+
+.robinhood-holder-page footer button:disabled { opacity: 0.35; cursor: default; }
+.robinhood-holder-error { padding: 24px; color: #ff8b98; text-align: center; }
+
 @media (max-width: 900px) {
   .expanded-sparkline-chart.has-trades {
     flex-direction: column;
@@ -3455,6 +3592,8 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
     flex-basis: auto;
     max-height: 260px;
   }
+
+  .robinhood-holder-panel { grid-template-columns: 1fr; overflow-y: auto; }
 }
 
 .expanded-candles-wrap {

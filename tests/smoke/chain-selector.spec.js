@@ -585,6 +585,30 @@ const ROBINHOOD_MARKET_API_FIXTURES = {
 
 const ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES = {
   ...ROBINHOOD_MARKET_API_FIXTURES,
+  'GET /api/robinhood/holders': (request) => {
+    const secondPage = new URL(request.url()).searchParams.has('cursor');
+    return {
+      token: ROBINHOOD_TOKEN,
+      summary: { holderCount: 4424, source: 'ledger_live', observedAt: '2026-07-15T11:55:00.000Z', checkedAt: '2026-07-15T11:55:00.000Z', freshness: 'fresh' },
+      holders: [{
+        rank: secondPage ? 51 : 1,
+        address: secondPage ? `0x${'7'.repeat(40)}` : ROBINHOOD_DEV,
+        balanceRaw: secondPage ? '2500000000000000000' : '5000000000000000000',
+        addressType: 'unknown', label: secondPage ? 'Second page whale' : 'Main whale',
+        isVerifiedContract: false,
+      }],
+      hasMore: !secondPage, nextCursor: secondPage ? null : 'page-2',
+      observedAt: '2026-07-15T11:55:00.000Z', refreshQueued: false,
+    };
+  },
+  'GET /api/robinhood/holder-history': {
+    token: ROBINHOOD_TOKEN, days: 30, asOf: '2026-07-15T12:00:00.000Z',
+    baseline: { date: '2026-07-12', holderCount: 4400, observedAt: '2026-07-12T23:00:00.000Z' },
+    points: [
+      { date: '2026-07-13', holderCount: 4430, observedAt: '2026-07-13T23:00:00.000Z', delta24h: 30, delta24hPct: 0.6818, comparison: 'complete' },
+      { date: '2026-07-14', holderCount: 4424, observedAt: '2026-07-14T23:00:00.000Z', delta24h: -6, delta24hPct: -0.1354, comparison: 'complete' },
+    ],
+  },
   'GET /api/robinhood/trades': (request) => {
     const scope = new URL(request.url()).searchParams.get('scope') === 'dev' ? 'dev' : 'all';
     return {
@@ -1622,6 +1646,34 @@ test('opens a Robinhood FDV chart and applies only its realtime updates', async 
   expect(alertHistoryRequest).toBeTruthy();
   expect(new URL(alertHistoryRequest).searchParams.get('chain')).toBe('robinhood');
   expect(new URL(alertHistoryRequest).searchParams.get('address')).toBe(ROBINHOOD_TOKEN);
+  expect(diagnostics.unexpectedRequests).toEqual([]);
+  expect(diagnostics.pageErrors).toEqual([]);
+});
+
+test('renders daily holder sticks and cursor pages in the Robinhood expanded chart', async ({ page }) => {
+  const diagnostics = await openAuthenticatedWorkspace(page, ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES);
+  await page.getByRole('group', { name: 'Filter workspace by blockchain' })
+    .locator('[data-chain="robinhood"]').click();
+  const row = page.locator(`article.monitored-token-row[data-address="${ROBINHOOD_TOKEN}"]`);
+  await expect(row).toBeVisible();
+  await row.locator('.monitored-mini-chart .sparkline-wrap').click();
+
+  const dialog = page.locator('[data-auth-modal="expanded-sparkline"]');
+  await expect(dialog).toBeVisible();
+  expect(diagnostics.apiRequests.some((url) => new URL(url).pathname === '/api/robinhood/holders')).toBe(false);
+  await dialog.getByRole('tab', { name: 'HOLDERS (4,424)' }).click();
+  const panel = dialog.locator('[data-holder-panel]');
+  await expect(panel).toBeVisible();
+  await expect(dialog.locator('[data-holder-chart-view]')).toBeHidden();
+  await expect(panel.locator('.holder-stick.is-up')).toHaveCount(1);
+  await expect(panel.locator('.holder-stick.is-down')).toHaveCount(1);
+  await expect(panel).toContainText('Main whale');
+  await panel.getByRole('button', { name: 'Next' }).click();
+  await expect(panel).toContainText('Second page whale');
+  await panel.getByRole('button', { name: 'Previous' }).click();
+  await expect(panel).toContainText('Main whale');
+  await dialog.getByRole('tab', { name: 'CHART' }).click();
+  await expect(dialog.locator('[data-holder-chart-view]')).toBeVisible();
   expect(diagnostics.unexpectedRequests).toEqual([]);
   expect(diagnostics.pageErrors).toEqual([]);
 });
