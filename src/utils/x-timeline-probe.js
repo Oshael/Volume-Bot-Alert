@@ -137,9 +137,65 @@ async function listTimeline({ headers, queryId, listId, features }) {
     const entries = instructions
       .filter((i) => i.type === 'TimelineAddEntries')
       .flatMap((i) => i.entries || []);
-    return { ok: true, status: res.status, entries: entries.length, rateLimit };
+    return { ok: true, status: res.status, entries: entries.length, rawEntries: entries, rateLimit };
   }
   return { ok: false, status: res.status, body: await readBodySnippet(res), rateLimit };
+}
+
+// result.__typename is 'Tweet' or 'TweetWithVisibilityResults'; the latter hides
+// the real tweet under .tweet. Not unwrapping = silently losing every post with
+// a visibility notice (a gotcha the plan calls out for Bloco 3).
+function unwrapTweet(result) {
+  if (!result) return null;
+  if (result.__typename === 'TweetWithVisibilityResults') return result.tweet || null;
+  if (result.tweet && !result.legacy) return result.tweet;
+  return result;
+}
+
+function mediaOf(legacy) {
+  return legacy?.extended_entities?.media || legacy?.entities?.media || [];
+}
+
+function screenNameOf(tweet) {
+  const user = tweet?.core?.user_results?.result;
+  return user?.legacy?.screen_name || user?.core?.screen_name || '?';
+}
+
+// Walk the entries and summarize what a Bloco 3 normalizer will actually face:
+// visibility-wrapped tweets, retweets (media lives in the original), and how
+// many posts carry an image worth fingerprinting.
+function analyzeTimeline(entries) {
+  const stats = { entryTypes: {}, tweets: 0, typenames: {}, retweets: 0, withMedia: 0, withImage: 0, mediaTypes: {}, samples: [] };
+  for (const entry of entries) {
+    const content = entry.content || {};
+    const et = content.entryType || content.__typename || 'unknown';
+    stats.entryTypes[et] = (stats.entryTypes[et] || 0) + 1;
+    const result = content.itemContent?.tweet_results?.result;
+    if (!result) continue;
+    stats.tweets += 1;
+    stats.typenames[result.__typename || 'unknown'] = (stats.typenames[result.__typename || 'unknown'] || 0) + 1;
+    const tweet = unwrapTweet(result);
+    const legacy = tweet?.legacy || {};
+    const isRt = Boolean(legacy.retweeted_status_result) || String(legacy.full_text || '').startsWith('RT @');
+    if (isRt) stats.retweets += 1;
+    const srcLegacy = legacy.retweeted_status_result?.result?.legacy || legacy;
+    const media = mediaOf(srcLegacy);
+    if (media.length) {
+      stats.withMedia += 1;
+      let hasImage = false;
+      for (const m of media) {
+        stats.mediaTypes[m.type] = (stats.mediaTypes[m.type] || 0) + 1;
+        if (m.type === 'photo') hasImage = true;
+      }
+      if (hasImage) stats.withImage += 1;
+    }
+    if (stats.samples.length < 6) {
+      const text = String(srcLegacy.full_text || legacy.full_text || '').replace(/\s+/g, ' ').slice(0, 60);
+      const mediaTag = media.length ? ` [${media.map((m) => m.type).join(',')}]` : '';
+      stats.samples.push(`@${screenNameOf(tweet)}${isRt ? ' [RT]' : ''}${mediaTag} ${text}`);
+    }
+  }
+  return stats;
 }
 
 function fmtRate(rl) {
@@ -201,6 +257,14 @@ async function main() {
   if (timeline.ok) {
     console.log(`OK  status=${timeline.status}  entries=${timeline.entries}  rate=${fmtRate(timeline.rateLimit)}`);
     console.log('Timeline is readable with this session. Bloco 3 (continuous ingestion) is unblocked.');
+    const stats = analyzeTimeline(timeline.rawEntries);
+    console.log('\n--- timeline structure (informs the Bloco 3 normalizer) ---');
+    console.log('entry types :', JSON.stringify(stats.entryTypes));
+    console.log('tweets      :', stats.tweets, '| typenames:', JSON.stringify(stats.typenames));
+    console.log('retweets    :', stats.retweets, '| with media:', stats.withMedia, '| with image(photo):', stats.withImage);
+    console.log('media types :', JSON.stringify(stats.mediaTypes));
+    console.log('samples:');
+    for (const sample of stats.samples) console.log('  ', sample);
   } else {
     console.log(`FAIL status=${timeline.status}  rate=${fmtRate(timeline.rateLimit)}`);
     console.log(`  body: ${timeline.body}`);
