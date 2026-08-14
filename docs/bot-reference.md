@@ -1053,13 +1053,19 @@ e endereço crescente, retornando 50 wallets por página. Cursores locais nunca
 degradam para Blockscout no meio da navegação; se o state deixar de ser publicado,
 a rota falha fechado. Tokens ainda sem state `live` preservam o fallback paginado
 do Blockscout. Classificação local só afirma burn e pools conhecidos; os demais
-endereços permanecem `unknown`, sem fingir que contrato é EOA.
+endereços permanecem `unknown`, sem fingir que contrato é EOA. O `summary`
+inclui `totalSupplyRaw` (última observação `accepted` de `robinhood_market_observations`,
+só no caminho ledger; `null` no fallback Blockscout), consumido pelo frontend.
 
 No expanded chart RH, chart, trades e holders ficam visíveis simultaneamente.
 O painel fixo de holders fica na parte inferior e pode ser redimensionado pelo
 handle horizontal (ou pelas setas/Home/End quando focado); aumentar holders
-reduz a área compartilhada por chart e trades. A lista mostra 50 endereços por
-página, preserva a pilha de cursores para voltar e expõe loading/error/retry.
+reduz a área compartilhada por chart e trades. A tabela segue o layout Axiom;
+a coluna Remaining calcula valor/% do supply por wallet via `balanceRaw /
+totalSupplyRaw` (× `fdv` do token para o valor USD), e as colunas ETH Bal /
+Avg Buy / Avg Sell / U. PnL seguem placeholders até haver fonte na feed. A lista
+mostra 50 endereços por página, preserva a pilha de cursores para voltar e expõe
+loading/error/retry.
 A lista começa a carregar na abertura do modal; fechá-lo cancela respostas
 atrasadas.
 
