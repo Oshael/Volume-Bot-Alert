@@ -1528,6 +1528,12 @@ LIVE comprovada cuja origem seja exatamente o bloco seguinte ao seed. Execute
 `node src/utils/db-init-stage133.js` antes do código; cursores antigos ficam
 bloqueados até ambas as origens serem reparadas explicitamente.
 
+Inspecione com `npm run robinhood:wallet-swap-origin-repair --
+--seed-origin-block=BLOCO_AUDITADO`. O comando não infere a origem de dados
+retidos; após revisar o relatório e parar o worker LIVE, acrescente
+`--confirm-repair-robinhood-wallet-swap-origins` para gravar seed e handoff LIVE
+atomicamente.
+
 O repository de projeção persiste arestas, resumo diário por token, evidências
 `first`/`last`/`largest` e cursor sob a mesma transação com lock/CAS. O resumo
 separa count e soma raw de `wallet_transfer`/`dex_flow`; retry obsoleto é

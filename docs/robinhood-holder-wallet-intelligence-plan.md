@@ -1263,6 +1263,11 @@ frontier terminal válido, `origin_block` explícito e o cursor LIVE provando su
 cobertura atual desde o bloco seguinte ao seed. Cursores antigos sem ambas as
 origens permanecem bloqueados até reparo.
 
+O B6b adiciona reparo operacional dry-run das origens antigas. O bloco inicial
+do seed é sempre informado pelo operador; somente a origem LIVE é derivada do
+handoff durável (`seed.safe_head + 1`). A confirmação exige lease LIVE inativa,
+locks, validação de conflitos e pós-condição atômica.
+
 ### Corte C1 — read model e API de inteligência
 
 Objetivo:
