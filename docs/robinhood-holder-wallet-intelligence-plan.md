@@ -1171,8 +1171,8 @@ evidências limitadas e cursor na mesma transação. Ainda não há worker ativo
 
 ### Corte B4 — captura/projeção live de transfers
 
-Status: B4a–B4d concluídos como adapters PostgreSQL/RPC, tick isolado e evidência
-de tipo dos endpoints; scheduler e wiring permanecem pendentes.
+Status: concluído em B4a–B4e com adapters PostgreSQL/RPC, tick, evidência de tipo,
+worker opt-in e lease isolada.
 
 Objetivo:
 
@@ -1196,6 +1196,10 @@ cobertura histórica continua sendo responsabilidade do B6.
 O B4d consulta `eth_getCode` no bloco de cada transfer em batches limitados.
 Ausência de bytecode permite classificar o endpoint operacionalmente como wallet,
 mas não prova propriedade; qualquer bytecode observado prevalece como contrato.
+
+O B4e liga o tick somente sob flag explícita e lease própria no grupo
+`robinhood-wallet-intelligence`; configuração, batches, backoff e telemetria são
+limitados, e mismatch de checkpoint paralisa o writer.
 
 ### Corte B5 — compactação e retenção
 

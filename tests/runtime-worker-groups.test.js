@@ -315,6 +315,26 @@ describe('runtime worker groups config', () => {
     });
   });
 
+  it('keeps Robinhood wallet transfers opt-in and bounds RPC work', () => {
+    withEnv({
+      ROBINHOOD_WALLET_TRANSFER_LIVE_ENABLED: 'true',
+      ROBINHOOD_WALLET_TRANSFER_LIVE_INTERVAL_MS: '1',
+      ROBINHOOD_WALLET_TRANSFER_LIVE_MAX_BLOCKS_PER_TICK: '999',
+      ROBINHOOD_WALLET_TRANSFER_ADDRESS_SHARD_CONCURRENCY: '9',
+      ROBINHOOD_WALLET_TRANSFER_BLOCK_BATCH_SIZE: '999',
+      ROBINHOOD_WALLET_TRANSFER_ROLE_BATCH_SIZE: '0',
+    }, (config) => {
+      assert.deepEqual(config.robinhoodWalletTransferLiveWorker, {
+        enabled: true, intervalMs: 250, maxErrorBackoffMs: 30_000,
+        maxBlocks: 250, addressShardConcurrency: 4,
+        blockEvidenceBatchSize: 100, endpointRoleBatchSize: 1,
+      });
+    });
+    withEnv({ ROBINHOOD_WALLET_TRANSFER_LIVE_ENABLED: undefined }, (config) => {
+      assert.equal(config.robinhoodWalletTransferLiveWorker.enabled, false);
+    });
+  });
+
   it('keeps the derived bucket shadow audit opt-in and bounds its query controls', () => {
     withEnv({
       ROBINHOOD_DERIVED_SHADOW_AUDIT_ONLY: 'true',

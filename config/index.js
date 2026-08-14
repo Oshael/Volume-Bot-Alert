@@ -1354,6 +1354,28 @@ module.exports = {
     ),
   },
 
+  robinhoodWalletTransferLiveWorker: {
+    enabled: parseBoolean(process.env.ROBINHOOD_WALLET_TRANSFER_LIVE_ENABLED, false),
+    intervalMs: parseIntegerInRange(
+      process.env.ROBINHOOD_WALLET_TRANSFER_LIVE_INTERVAL_MS, 2000, 250, 300_000
+    ),
+    maxErrorBackoffMs: parseIntegerInRange(
+      process.env.ROBINHOOD_WALLET_TRANSFER_LIVE_MAX_ERROR_BACKOFF_MS, 30_000, 1000, 300_000
+    ),
+    maxBlocks: parseIntegerInRange(
+      process.env.ROBINHOOD_WALLET_TRANSFER_LIVE_MAX_BLOCKS_PER_TICK, 25, 1, 250
+    ),
+    addressShardConcurrency: parseIntegerInRange(
+      process.env.ROBINHOOD_WALLET_TRANSFER_ADDRESS_SHARD_CONCURRENCY, 1, 1, 4
+    ),
+    blockEvidenceBatchSize: parseIntegerInRange(
+      process.env.ROBINHOOD_WALLET_TRANSFER_BLOCK_BATCH_SIZE, 50, 1, 100
+    ),
+    endpointRoleBatchSize: parseIntegerInRange(
+      process.env.ROBINHOOD_WALLET_TRANSFER_ROLE_BATCH_SIZE, 50, 1, 100
+    ),
+  },
+
   robinhoodDirectCreatorWorker: {
     enabled: parseBoolean(process.env.ROBINHOOD_DIRECT_CREATOR_LIVE_ENABLED, false),
     intervalMs: parseIntegerInRange(

@@ -337,7 +337,7 @@ Grupos existentes:
 | `robinhood-processing` | consumidor isolado: reclama capturas por lease, decodifica a evidência congelada sem RPC, calcula preço/FDV/liquidez, persiste observações/buckets e poda a fila; no mesmo processo, um 2º runner drena `stream='discovery'` para o `robinhood_pool_registry` |
 | `robinhood-derived` | consumidor isolado: drena a outbox de emit ao vivo e replica o fan-out `market:bucket` (socket/relay) sem o monólito; hospeda o catalog projection worker (metadata de token) |
 | `robinhood-wallet` | consumidor isolado: re-lê observações aceitas e atribui `tx.from` via `eth_getBlockByNumber` (full-tx) por bloco, com cursor `live` próprio; alimenta `robinhood_wallet_swaps` |
-| `robinhood-wallet-intelligence` | projeta posições `swap_only_v1` após persistência durável dos swaps e reconcilia em shadow com o holder ledger quando os frontiers coincidem |
+| `robinhood-wallet-intelligence` | projeta posições `swap_only_v1` e, sob flag/lease separadas, captura e resume transfers ERC-20 após o frontier durável de swaps |
 | `robinhood-backfill` | discovery, scan, enrichment, finalizer e aggregation do replay |
 
 O catalog cleanup do grupo `solana-maintenance` atua somente sobre identidades
@@ -1501,6 +1501,15 @@ somente `wallet_transfer` e `dex_flow` previamente classificados na mesma versã
 O adapter LIVE de fonte permanece inativo e só considera cobertura de swaps
 com cursor `live` em `running`, frontier/checkpoint comprovados e sem ultrapassar
 o `safe_head`; também lê em lote o escopo de tokens, swaps e pools conhecidos.
+
+O writer LIVE de transfers é opt-in por
+`ROBINHOOD_WALLET_TRANSFER_LIVE_ENABLED=true`, usa a lease
+`robinhood-wallet-transfer-live-worker` no grupo isolado
+`robinhood-wallet-intelligence` e pode ser iniciado separadamente por
+`npm run start:worker:robinhood-wallet-transfers`. O default é 25 blocos por
+tick, batches RPC de 50 e concorrência de shards igual a 1. Ele valida chain ID,
+checkpoint e hashes antes de persistir raw/arestas; divergência canônica paralisa
+a lease. As Stages 128–130 devem estar aplicadas antes de habilitar o writer.
 
 O bootstrap também existe localmente como
 `npm run robinhood:wallet-live-bootstrap`: dry-run por padrão, audita observações
