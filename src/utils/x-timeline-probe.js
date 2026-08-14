@@ -164,6 +164,35 @@ function screenNameOf(tweet) {
 // Walk the entries and summarize what a Bloco 3 normalizer will actually face:
 // visibility-wrapped tweets, retweets (media lives in the original), and how
 // many posts carry an image worth fingerprinting.
+// Resolve one tweet result into the view the analyzer needs: unwrapped tweet,
+// its legacy block, retweet flag, and the source legacy (the original, where a
+// retweet's media lives).
+function tweetView(result) {
+  const tweet = unwrapTweet(result);
+  const legacy = tweet?.legacy || {};
+  const isRt = Boolean(legacy.retweeted_status_result) || String(legacy.full_text || '').startsWith('RT @');
+  const srcLegacy = legacy.retweeted_status_result?.result?.legacy || legacy;
+  return { tweet, legacy, isRt, srcLegacy, media: mediaOf(srcLegacy) };
+}
+
+function recordMedia(stats, media) {
+  if (!media.length) return;
+  stats.withMedia += 1;
+  let hasImage = false;
+  for (const m of media) {
+    stats.mediaTypes[m.type] = (stats.mediaTypes[m.type] || 0) + 1;
+    if (m.type === 'photo') hasImage = true;
+  }
+  if (hasImage) stats.withImage += 1;
+}
+
+function recordSample(stats, view) {
+  if (stats.samples.length >= 6) return;
+  const text = String(view.srcLegacy.full_text || view.legacy.full_text || '').replace(/\s+/g, ' ').slice(0, 60);
+  const mediaTag = view.media.length ? ` [${view.media.map((m) => m.type).join(',')}]` : '';
+  stats.samples.push(`@${screenNameOf(view.tweet)}${view.isRt ? ' [RT]' : ''}${mediaTag} ${text}`);
+}
+
 function analyzeTimeline(entries) {
   const stats = { entryTypes: {}, tweets: 0, typenames: {}, retweets: 0, replies: 0, withMedia: 0, withImage: 0, mediaTypes: {}, times: [], samples: [] };
   for (const entry of entries) {
@@ -173,36 +202,125 @@ function analyzeTimeline(entries) {
     const result = content.itemContent?.tweet_results?.result;
     if (!result) continue;
     stats.tweets += 1;
-    stats.typenames[result.__typename || 'unknown'] = (stats.typenames[result.__typename || 'unknown'] || 0) + 1;
-    const tweet = unwrapTweet(result);
-    const legacy = tweet?.legacy || {};
-    const isRt = Boolean(legacy.retweeted_status_result) || String(legacy.full_text || '').startsWith('RT @');
-    if (isRt) stats.retweets += 1;
-    if (legacy.in_reply_to_status_id_str || legacy.in_reply_to_screen_name) stats.replies += 1;
-    const created = legacy.created_at ? Date.parse(legacy.created_at) : NaN;
+    const tn = result.__typename || 'unknown';
+    stats.typenames[tn] = (stats.typenames[tn] || 0) + 1;
+    const view = tweetView(result);
+    if (view.isRt) stats.retweets += 1;
+    if (view.legacy.in_reply_to_status_id_str || view.legacy.in_reply_to_screen_name) stats.replies += 1;
+    const created = view.legacy.created_at ? Date.parse(view.legacy.created_at) : NaN;
     if (!Number.isNaN(created)) stats.times.push(created);
-    const srcLegacy = legacy.retweeted_status_result?.result?.legacy || legacy;
-    const media = mediaOf(srcLegacy);
-    if (media.length) {
-      stats.withMedia += 1;
-      let hasImage = false;
-      for (const m of media) {
-        stats.mediaTypes[m.type] = (stats.mediaTypes[m.type] || 0) + 1;
-        if (m.type === 'photo') hasImage = true;
-      }
-      if (hasImage) stats.withImage += 1;
-    }
-    if (stats.samples.length < 6) {
-      const text = String(srcLegacy.full_text || legacy.full_text || '').replace(/\s+/g, ' ').slice(0, 60);
-      const mediaTag = media.length ? ` [${media.map((m) => m.type).join(',')}]` : '';
-      stats.samples.push(`@${screenNameOf(tweet)}${isRt ? ' [RT]' : ''}${mediaTag} ${text}`);
-    }
+    recordMedia(stats, view.media);
+    recordSample(stats, view);
   }
   return stats;
 }
 
 function fmtRate(rl) {
   return rl ? `${rl.remaining}/${rl.limit} (reset ${rl.resetIso})` : 'n/a';
+}
+
+// Layer 3 support: fetch page 1 of an account's Following, preserving order.
+// Following edges carry no timestamp, so order is all we have to inspect.
+async function fetchFollowing({ headers, queryId, userId, features }) {
+  const variables = { userId, count: 20, includePromotedContent: false };
+  const url =
+    `https://x.com/i/api/graphql/${queryId}/Following` +
+    `?variables=${encodeURIComponent(JSON.stringify(variables))}` +
+    `&features=${encodeURIComponent(JSON.stringify(features))}`;
+  const res = await fetch(url, { headers });
+  const rateLimit = readRateLimit(res);
+  if (!res.ok) {
+    return { ok: false, status: res.status, body: await readBodySnippet(res), rateLimit };
+  }
+  const body = await res.json().catch(() => ({}));
+  return { ok: true, status: res.status, users: parseFollowingUsers(body), rateLimit };
+}
+
+function parseFollowingUsers(body) {
+  const instructions = body?.data?.user?.result?.timeline?.timeline?.instructions || [];
+  const entries = instructions
+    .filter((i) => i.type === 'TimelineAddEntries')
+    .flatMap((i) => i.entries || []);
+  const users = [];
+  for (const entry of entries) {
+    const result = entry.content?.itemContent?.user_results?.result;
+    if (!result) continue;
+    users.push({
+      restId: result.rest_id || null,
+      screenName: result.legacy?.screen_name || result.core?.screen_name || '?',
+    });
+  }
+  return users;
+}
+
+async function probeListTimeline(headers) {
+  const listId = readEnv('X_LIST_ID');
+  if (!listId) {
+    console.log('\n=== Layer 2 skipped: set X_LIST_ID to probe ListLatestTweetsTimeline ===');
+    return;
+  }
+  let queryId = readEnv('X_LIST_TIMELINE_QUERY_ID');
+  if (!queryId) {
+    console.log('\nNo X_LIST_TIMELINE_QUERY_ID set; attempting bundle scrape...');
+    queryId = await scrapeQueryId(headers);
+  }
+  if (!queryId) {
+    console.log('Could not resolve a queryId (bundle scrape failed). Set X_LIST_TIMELINE_QUERY_ID and retry.');
+    return;
+  }
+  let features = DEFAULT_FEATURES;
+  const featuresOverride = readEnv('X_FEATURES');
+  if (featuresOverride) {
+    try { features = JSON.parse(featuresOverride); } catch { console.log('X_FEATURES is not valid JSON; using defaults.'); }
+  }
+  console.log(`\n=== Layer 2: ListLatestTweetsTimeline (queryId=${queryId}, list=${listId}) ===`);
+  const timeline = await listTimeline({ headers, queryId, listId, features });
+  if (timeline.ok) {
+    console.log(`OK  status=${timeline.status}  entries=${timeline.entries}  rate=${fmtRate(timeline.rateLimit)}`);
+    console.log('Timeline is readable with this session. Bloco 3 (continuous ingestion) is unblocked.');
+    const stats = analyzeTimeline(timeline.rawEntries);
+    console.log('\n--- timeline structure (informs the Bloco 3 normalizer) ---');
+    console.log('entry types :', JSON.stringify(stats.entryTypes));
+    console.log('tweets      :', stats.tweets, '| typenames:', JSON.stringify(stats.typenames));
+    console.log('retweets    :', stats.retweets, '| replies:', stats.replies, '| with media:', stats.withMedia, '| with image(photo):', stats.withImage);
+    console.log('media types :', JSON.stringify(stats.mediaTypes));
+    if (stats.times.length) {
+      const newest = Math.max(...stats.times);
+      const oldest = Math.min(...stats.times);
+      const ageSec = Math.round((Date.now() - newest) / 1000);
+      const spanMin = Math.round((newest - oldest) / 60000);
+      console.log('freshness   :', `newest post ${ageSec}s ago | window spans ${spanMin} min (newest -> oldest)`);
+    }
+    console.log('samples:');
+    for (const sample of stats.samples) console.log('  ', sample);
+  } else {
+    console.log(`FAIL status=${timeline.status}  rate=${fmtRate(timeline.rateLimit)}`);
+    console.log(`  body: ${timeline.body}`);
+    console.log('Diagnose: 400 usually names a missing feature flag (set X_FEATURES); 404 often means the');
+    console.log('x-client-transaction-id wall or a stale queryId. This is the measurement Bloco 2 exists for.');
+  }
+}
+
+async function probeFollowing(headers) {
+  const queryId = readEnv('X_FOLLOWING_QUERY_ID');
+  const userId = readEnv('X_FOLLOWING_USER_ID');
+  if (!queryId || !userId) {
+    console.log('\n=== Layer 3 skipped: set X_FOLLOWING_QUERY_ID and X_FOLLOWING_USER_ID to probe Following order ===');
+    return;
+  }
+  console.log(`\n=== Layer 3: Following order (userId=${userId}) ===`);
+  const following = await fetchFollowing({ headers, queryId, userId, features: DEFAULT_FEATURES });
+  if (following.ok) {
+    console.log(`OK  status=${following.status}  count=${following.users.length}  rate=${fmtRate(following.rateLimit)}`);
+    console.log('Top of Following (index : @handle : rest_id):');
+    following.users.slice(0, 12).forEach((u, i) => console.log(`  ${String(i).padStart(2)} : @${u.screenName} : ${u.restId}`));
+    console.log('\nExperiment: note index 0, follow a NEW account in the browser, then re-run this probe.');
+    console.log('New account at index 0 -> newest-first (cheap follow detection). Elsewhere -> ranked (needs full diff).');
+  } else {
+    console.log(`FAIL status=${following.status}  rate=${fmtRate(following.rateLimit)}`);
+    console.log(`  body: ${following.body}`);
+    console.log('Diagnose: 400 names a missing feature flag; 404 a stale queryId or a blocked operation.');
+  }
 }
 
 async function main() {
@@ -233,54 +351,8 @@ async function main() {
     return;
   }
 
-  const listId = readEnv('X_LIST_ID');
-  if (!listId) {
-    console.log('\n=== Layer 2 skipped: set X_LIST_ID to probe ListLatestTweetsTimeline ===');
-    return;
-  }
-
-  let queryId = readEnv('X_LIST_TIMELINE_QUERY_ID');
-  if (!queryId) {
-    console.log('\nNo X_LIST_TIMELINE_QUERY_ID set; attempting bundle scrape...');
-    queryId = await scrapeQueryId(headers);
-  }
-  if (!queryId) {
-    console.log('Could not resolve a queryId (bundle scrape failed). Set X_LIST_TIMELINE_QUERY_ID and retry.');
-    return;
-  }
-
-  let features = DEFAULT_FEATURES;
-  const featuresOverride = readEnv('X_FEATURES');
-  if (featuresOverride) {
-    try { features = JSON.parse(featuresOverride); } catch { console.log('X_FEATURES is not valid JSON; using defaults.'); }
-  }
-
-  console.log(`\n=== Layer 2: ListLatestTweetsTimeline (queryId=${queryId}, list=${listId}) ===`);
-  const timeline = await listTimeline({ headers, queryId, listId, features });
-  if (timeline.ok) {
-    console.log(`OK  status=${timeline.status}  entries=${timeline.entries}  rate=${fmtRate(timeline.rateLimit)}`);
-    console.log('Timeline is readable with this session. Bloco 3 (continuous ingestion) is unblocked.');
-    const stats = analyzeTimeline(timeline.rawEntries);
-    console.log('\n--- timeline structure (informs the Bloco 3 normalizer) ---');
-    console.log('entry types :', JSON.stringify(stats.entryTypes));
-    console.log('tweets      :', stats.tweets, '| typenames:', JSON.stringify(stats.typenames));
-    console.log('retweets    :', stats.retweets, '| replies:', stats.replies, '| with media:', stats.withMedia, '| with image(photo):', stats.withImage);
-    console.log('media types :', JSON.stringify(stats.mediaTypes));
-    if (stats.times.length) {
-      const newest = Math.max(...stats.times);
-      const oldest = Math.min(...stats.times);
-      const ageSec = Math.round((Date.now() - newest) / 1000);
-      const spanMin = Math.round((newest - oldest) / 60000);
-      console.log('freshness   :', `newest post ${ageSec}s ago | window spans ${spanMin} min (newest -> oldest)`);
-    }
-    console.log('samples:');
-    for (const sample of stats.samples) console.log('  ', sample);
-  } else {
-    console.log(`FAIL status=${timeline.status}  rate=${fmtRate(timeline.rateLimit)}`);
-    console.log(`  body: ${timeline.body}`);
-    console.log('Diagnose: 400 usually names a missing feature flag (set X_FEATURES); 404 often means the');
-    console.log('x-client-transaction-id wall or a stale queryId. This is the measurement Bloco 2 exists for.');
-  }
+  await probeListTimeline(headers);
+  await probeFollowing(headers);
 }
 
 main().catch((err) => {
