@@ -1480,6 +1480,12 @@ até o frontier durável do cursor wallet-swap LIVE. Ele exige o seed da posiç�
 holder ledger está `live` exatamente no mesmo bloco; mismatch é classificado
 como gap provisório de transfers e não altera a qualidade persistida.
 
+A Stage 128 cria `robinhood_token_transfer_events`, evidência ERC-20 estreita e
+particionada por dia UTC. Aplique `node src/utils/db-init-stage128.js` antes de
+qualquer writer futuro. O repository garante a partição antes do insert e dedupe
+pela identidade on-chain; a janela bruta contratada é de 30 dias, mas retenção
+permanece desligada até existirem classificação, compactação e watermark seguros.
+
 O bootstrap também existe localmente como
 `npm run robinhood:wallet-live-bootstrap`: dry-run por padrão, audita observações
 aceitas sem wallet até `seed.safe_head`, valida o RPC/chain e prova o bloco cheio

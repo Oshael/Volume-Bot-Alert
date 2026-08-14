@@ -3285,6 +3285,30 @@ const SCHEMA_GROUPS = [
       columns: ['next_block_time'],
     }],
   },
+  {
+    key: 'stage128-robinhood-token-transfer-events',
+    name: 'Stage 128 Robinhood token transfer evidence',
+    repair: 'node src/utils/db-init-stage128.js',
+    tables: [{
+      table: 'robinhood_token_transfer_events',
+      columns: [
+        'chain', 'block_number', 'block_hash', 'block_time', 'transaction_hash',
+        'transaction_index', 'log_index', 'token_address', 'from_wallet',
+        'to_wallet', 'amount_raw', 'transfer_kind', 'classification_version',
+        'created_at',
+      ],
+      constraints: [
+        { name: 'rh_token_transfer_events_pkey', includes: ['PRIMARY KEY', 'block_time'] },
+        { name: 'rh_token_transfer_events_kind_check', includes: ['CHECK', 'wallet_transfer'] },
+        { name: 'rh_token_transfer_events_classification_check', includes: ['CHECK', 'classification_version'] },
+      ],
+      indexes: [
+        { name: 'idx_rh_token_transfers_token_time', includes: ['chain', 'token_address', 'block_time'] },
+        { name: 'idx_rh_token_transfers_from_time', includes: ['chain', 'from_wallet', 'block_time'] },
+        { name: 'idx_rh_token_transfers_to_time', includes: ['chain', 'to_wallet', 'block_time'] },
+      ],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

@@ -1109,6 +1109,8 @@ unificado incluir transfers; não degradam permanentemente a qualidade persistid
 
 ### Corte B1 — schema bruto de transfers
 
+Status: concluído como fundação de persistência, sem writer ativo ou retenção.
+
 Objetivo:
 
 - criar tabela particionada estreita;
@@ -1116,6 +1118,11 @@ Objetivo:
 - partições diárias;
 - índices mínimos aprovados pelo A0;
 - contrato de 30 dias sem ligar retenção.
+
+A Stage 128 mantém evidência on-chain imutável em partições UTC diárias. Novos
+eventos entram como `unclassified`; a classificação versionada será preenchida
+no B2. O contrato de 30 dias está explícito no repository, mas nenhuma partição
+é removida antes dos gates de compactação e checkpoint existirem.
 
 Validação inclui schema check e integração em fronteira de partição.
 
