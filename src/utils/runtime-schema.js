@@ -3276,6 +3276,15 @@ const SCHEMA_GROUPS = [
       },
     ],
   },
+  {
+    key: 'stage127-robinhood-wallet-position-time-frontier',
+    name: 'Stage 127 Robinhood wallet position time frontier',
+    repair: 'node src/utils/db-init-stage127.js',
+    tables: [{
+      table: 'robinhood_wallet_position_cursors',
+      columns: ['next_block_time'],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

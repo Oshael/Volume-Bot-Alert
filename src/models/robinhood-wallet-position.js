@@ -28,6 +28,13 @@ function stream(value) {
   return result;
 }
 
+function timestamp(value, label) {
+  if (value == null || value === '') return null;
+  const date = value instanceof Date ? value : new Date(String(value));
+  if (Number.isNaN(date.getTime())) throw new Error(`${label} must be a timestamp`);
+  return date.toISOString();
+}
+
 function checkpoint(input, nextBlock) {
   const block = input.checkpointBlock == null
     ? null : uint(input.checkpointBlock, 'checkpointBlock');
@@ -44,6 +51,7 @@ function cursor(row) {
   return row ? {
     projectionVersion: row.projection_version, stream: row.stream,
     nextBlock: String(row.next_block), safeHead: row.safe_head == null ? null : String(row.safe_head),
+    nextBlockTime: row.next_block_time ? new Date(row.next_block_time).toISOString() : null,
     checkpointBlock: row.checkpoint_block == null ? null : String(row.checkpoint_block),
     checkpointHash: row.checkpoint_hash || null, lifecycleState: row.lifecycle_state,
     version: Number(row.version),
@@ -90,13 +98,82 @@ function createRobinhoodWalletPositionRepository(options = {}) {
     const streamName = stream(input.stream);
     await database.query(
       `INSERT INTO robinhood_wallet_position_cursors (
-         chain, projection_version, stream, next_block, safe_head
-       ) VALUES ($1, $2, $3, $4::bigint, $5::bigint)
+         chain, projection_version, stream, next_block, safe_head, next_block_time
+       ) VALUES ($1, $2, $3, $4::bigint, $5::bigint, $6::timestamptz)
        ON CONFLICT (chain, projection_version, stream) DO NOTHING`,
       [CHAIN, version, streamName, uint(input.nextBlock, 'nextBlock'),
-        input.safeHead == null ? null : uint(input.safeHead, 'safeHead')]
+        input.safeHead == null ? null : uint(input.safeHead, 'safeHead'),
+        timestamp(input.nextBlockTime, 'nextBlockTime')]
     );
     return loadCursor(version, streamName);
+  }
+
+  async function loadPositions(projectionVersion, pairs = []) {
+    if (pairs.length === 0) return [];
+    const payload = pairs.map((pair) => ({
+      token_address: address(pair.tokenAddress, 'tokenAddress'),
+      wallet_address: address(pair.walletAddress, 'walletAddress'),
+    }));
+    const result = await database.query(
+      `SELECT position.* FROM robinhood_wallet_token_positions position
+       JOIN jsonb_to_recordset($3::jsonb) AS item(token_address text, wallet_address text)
+         ON item.token_address = position.token_address
+        AND item.wallet_address = position.wallet_address
+       WHERE position.chain = $1 AND position.projection_version = $2`,
+      [CHAIN, identifier(projectionVersion, 'projectionVersion'), JSON.stringify(payload)]
+    );
+    return result.rows.map((row) => ({
+      tokenAddress: row.token_address, walletAddress: row.wallet_address,
+      quantityRaw: String(row.quantity_raw), costBasisUsd: String(row.cost_basis_usd),
+      realizedPnlUsd: String(row.realized_pnl_usd), buyVolumeUsd: String(row.buy_volume_usd),
+      sellProceedsUsd: String(row.sell_proceeds_usd),
+      buyMcapWeightedSum: String(row.buy_mcap_weighted_sum),
+      buyMcapWeightUsd: String(row.buy_mcap_weight_usd),
+      sellMcapWeightedSum: String(row.sell_mcap_weighted_sum),
+      sellMcapWeightUsd: String(row.sell_mcap_weight_usd),
+      buyTxCount: Number(row.buy_tx_count), sellTxCount: Number(row.sell_tx_count),
+      zeroCostReceivedRaw: String(row.zero_cost_received_raw),
+      zeroCostSoldRaw: String(row.zero_cost_sold_raw),
+      costBasisSource: row.cost_basis_source, quality: row.quality,
+      throughBlock: String(row.through_block), throughLogIndex: String(row.through_log_index),
+    }));
+  }
+
+  async function readSwapBatch(input = {}) {
+    const fromBlock = uint(input.fromBlock, 'fromBlock');
+    const toBlock = uint(input.toBlock, 'toBlock');
+    const fromTime = timestamp(input.fromTime, 'fromTime');
+    const maxBlocks = Math.max(1, Math.min(Number(input.maxBlocks) || 50, 500));
+    if (!fromTime) throw new Error('fromTime is required for partition pruning');
+    const blocks = await database.query(
+      `SELECT DISTINCT block_time, block_number
+       FROM robinhood_wallet_swaps
+       WHERE chain = $1 AND block_time >= $2::timestamptz
+         AND block_number >= $3::bigint AND block_number <= $4::bigint
+       ORDER BY block_time, block_number LIMIT $5::int`,
+      [CHAIN, fromTime, fromBlock, toBlock, maxBlocks]
+    );
+    if (blocks.rows.length === 0) return { swaps: [], nextBlock: (BigInt(toBlock) + 1n).toString(), nextBlockTime: fromTime };
+    const blockNumbers = blocks.rows.map((row) => String(row.block_number));
+    const last = blocks.rows[blocks.rows.length - 1];
+    const swaps = await database.query(
+      `SELECT swap.wallet_address, swap.transaction_hash, swap.action_index,
+              swap.block_number, swap.block_time, swap.token_address, swap.side,
+              swap.token_amount_raw, swap.volume_usd, mc.fdv_usd AS market_cap_usd
+       FROM robinhood_wallet_swaps swap
+       LEFT JOIN robinhood_swap_mc mc ON mc.chain = swap.chain
+        AND mc.transaction_hash = swap.transaction_hash AND mc.log_index = swap.action_index
+       WHERE swap.chain = $1 AND swap.block_time >= $2::timestamptz
+         AND swap.block_time <= $3::timestamptz
+         AND swap.block_number = ANY($4::bigint[])
+       ORDER BY swap.block_time, swap.block_number, swap.action_index, swap.transaction_hash`,
+      [CHAIN, fromTime, last.block_time, blockNumbers]
+    );
+    return {
+      swaps: swaps.rows,
+      nextBlock: (BigInt(last.block_number) + 1n).toString(),
+      nextBlockTime: new Date(last.block_time).toISOString(),
+    };
   }
 
   async function commitBatch(input = {}) {
@@ -105,6 +182,10 @@ function createRobinhoodWalletPositionRepository(options = {}) {
     const nextBlock = uint(input.nextBlock, 'nextBlock');
     const expectedVersion = uint(input.expectedVersion, 'expectedVersion');
     const nextCheckpoint = checkpoint(input, nextBlock);
+    const nextBlockTime = timestamp(input.nextBlockTime, 'nextBlockTime');
+    const safeHead = input.safeHead == null ? null : uint(input.safeHead, 'safeHead');
+    const complete = streamName === 'seed' && safeHead !== null
+      && BigInt(nextBlock) > BigInt(safeHead);
     const rows = (input.positions || []).map((item) => (
       positionRow(item, projectionVersion, nextBlock)
     ));
@@ -168,16 +249,21 @@ function createRobinhoodWalletPositionRepository(options = {}) {
                ELSE GREATEST(COALESCE(safe_head, $5::bigint), $5::bigint) END,
              checkpoint_block = COALESCE($6::bigint, checkpoint_block),
              checkpoint_hash = COALESCE($7, checkpoint_hash),
-             lifecycle_state = 'running', state_reason = NULL,
+             next_block_time = CASE WHEN $9::timestamptz IS NULL THEN next_block_time
+               ELSE GREATEST(COALESCE(next_block_time, $9::timestamptz), $9::timestamptz) END,
+             lifecycle_state = CASE WHEN $10::boolean THEN 'complete' ELSE 'running' END,
+             completed_at = CASE WHEN $10::boolean THEN NOW() ELSE NULL END,
+             state_reason = NULL,
              version = version + 1, updated_at = NOW()
          WHERE chain = $1 AND projection_version = $2 AND stream = $3
            AND version = $8::bigint AND next_block <= $4::bigint
            AND (safe_head IS NULL OR $5::bigint IS NULL OR safe_head <= $5::bigint)
            AND (checkpoint_block IS NULL OR $6::bigint IS NULL OR checkpoint_block <= $6::bigint)
+           AND (next_block_time IS NULL OR $9::timestamptz IS NULL OR next_block_time <= $9::timestamptz)
+           AND lifecycle_state IN ('pending', 'running')
          RETURNING *`,
-        [CHAIN, projectionVersion, streamName, nextBlock,
-          input.safeHead == null ? null : uint(input.safeHead, 'safeHead'),
-          nextCheckpoint.block, nextCheckpoint.hash, expectedVersion]
+        [CHAIN, projectionVersion, streamName, nextBlock, safeHead,
+          nextCheckpoint.block, nextCheckpoint.hash, expectedVersion, nextBlockTime, complete]
       );
       if (!advanced.rows[0]) {
         const error = new Error('projection cursor conflict');
@@ -195,7 +281,7 @@ function createRobinhoodWalletPositionRepository(options = {}) {
     }
   }
 
-  return { commitBatch, initCursor, loadCursor };
+  return { commitBatch, initCursor, loadCursor, loadPositions, readSwapBatch };
 }
 
 module.exports = { createRobinhoodWalletPositionRepository };

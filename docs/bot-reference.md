@@ -1455,6 +1455,16 @@ revalida checkpoint e usa RPC Robinhood com preflight de chain ID `4663`, lease,
 telemetria e backoff no grupo `robinhood-wallet`. O antigo frontier do cursor
 monolítico congelado foi removido; não usá-lo para medir lag atual.
 
+As Stages 126–127 criam posições financeiras Robinhood versionadas e um cursor
+com frontier de bloco e tempo. A versão faz `swap_only_v1` coexistir com futuros
+replays unificados em shadow; o tempo permite poda das partições diárias de
+`robinhood_wallet_swaps`. Aplique `node src/utils/db-init-stage126.js` e depois
+`node src/utils/db-init-stage127.js` antes de usar
+`npm run robinhood:wallet-position-backfill`. O comando é dry-run por padrão e
+só persiste batches limitados com `--commit`; usa `robinhood_swap_mc` como fonte
+histórica de market cap. Esse backfill ainda não está ligado a worker nem serve
+dados às rotas de holders.
+
 O bootstrap também existe localmente como
 `npm run robinhood:wallet-live-bootstrap`: dry-run por padrão, audita observações
 aceitas sem wallet até `seed.safe_head`, valida o RPC/chain e prova o bloco cheio

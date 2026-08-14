@@ -1075,6 +1075,9 @@ Validação:
 
 ### Corte A3 — projeção histórica de swaps
 
+Status: concluído com backfill `swap_only_v1` dry-run-first e Stage 127 para
+leitura particionada.
+
 Objetivo:
 
 - ler swaps em ordem;
