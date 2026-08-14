@@ -1146,8 +1146,8 @@ dependem de papéis fornecidos pelo futuro adapter B4.
 
 ### Corte B3 — arestas e evidências permanentes
 
-Status: B3a concluído com schema versionado; B3b1 adiciona frontiers exatos de
-log e o commit transacional permanece no B3b2.
+Status: concluído. B3a criou o schema versionado, B3b1 adicionou frontiers exatos
+de log e B3b2 implementou o commit transacional.
 
 Objetivo:
 
@@ -1164,6 +1164,10 @@ evidências aos papéis `first`, `largest`, `last` e `temporal`, e mantém curso
 on-chain mais watermark diário. A Stage 130 acrescenta `log_index` às fronteiras
 primeira, última e maior para ordenar transfers do mesmo bloco sem depender do
 raw após a compactação. Nenhum writer é ativado nesses subcortes.
+
+O repository do B3b2 bloqueia o cursor antes de resumir somente
+`wallet_transfer`/`dex_flow`, rejeita overlap e writer obsoleto, e grava arestas,
+evidências limitadas e cursor na mesma transação. Ainda não há worker ativo.
 
 ### Corte B4 — captura/projeção live de transfers
 

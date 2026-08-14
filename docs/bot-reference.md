@@ -1494,6 +1494,10 @@ fronteiras quando há mais de um transfer no mesmo bloco e falha se encontrar
 arestas antigas sem essa informação. Esses schemas não autorizam retenção nem
 alteram a projeção financeira `swap_only_v1`.
 
+O repository de projeção persiste arestas, evidências `first`/`last`/`largest` e
+cursor sob a mesma transação com lock/CAS. Ele permanece sem worker e aceita
+somente `wallet_transfer` e `dex_flow` previamente classificados na mesma versão.
+
 O bootstrap também existe localmente como
 `npm run robinhood:wallet-live-bootstrap`: dry-run por padrão, audita observações
 aceitas sem wallet até `seed.safe_head`, valida o RPC/chain e prova o bloco cheio
