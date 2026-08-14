@@ -1047,6 +1047,14 @@ ajustam esses limites. VPS e PC devem usar o mesmo
 `ROBINHOOD_HOLDER_BACKFILL_MAX_INITIAL_GAP_BLOCKS`. Se o PC ficar offline, somente
 essa fila larga sem state aguarda; tokens já entregues ao live continuam na VPS.
 
+`GET /api/robinhood/holders` prefere o ledger PostgreSQL quando o token está
+`live`. A paginação local usa cursor opaco e ordem estável por balance decrescente
+e endereço crescente, retornando 50 wallets por página. Cursores locais nunca
+degradam para Blockscout no meio da navegação; se o state deixar de ser publicado,
+a rota falha fechado. Tokens ainda sem state `live` preservam o fallback paginado
+do Blockscout. Classificação local só afirma burn e pools conhecidos; os demais
+endereços permanecem `unknown`, sem fingir que contrato é EOA.
+
 O worker lê `Transfer` por range com a coorte enviada como allowlist `address` ao
 RPC, commita ranges em ordem e não grava o histórico bruto no journal. Se o node
 rejeitar o tamanho da allowlist, ela é dividida ao meio adaptativamente sem
