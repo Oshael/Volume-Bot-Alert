@@ -1171,8 +1171,8 @@ evidências limitadas e cursor na mesma transação. Ainda não há worker ativo
 
 ### Corte B4 — captura/projeção live de transfers
 
-Status: B4a e B4b concluídos como adapters PostgreSQL de fonte e de evidência
-RPC; tick e wiring permanecem pendentes.
+Status: B4a–B4c concluídos como adapters PostgreSQL/RPC e tick isolado; scheduler
+e wiring permanecem pendentes.
 
 Objetivo:
 
@@ -1188,6 +1188,10 @@ pools e papéis já persistidos. Ele não inicia RPC nem worker.
 O B4b reutiliza o reader global de `Transfer`, busca número, hash e timestamp dos
 blocos em batches limitados e rejeita o range inteiro se qualquer hash divergir.
 Assim, o futuro tick recebe `blockTime` verificável sem iniciar worker ou escrita.
+
+O B4c compõe captura, classificação, bruto idempotente e commit atômico de
+arestas/cursor. O bootstrap começa em um único bloco já coberto pelo source; a
+cobertura histórica continua sendo responsabilidade do B6.
 
 ### Corte B5 — compactação e retenção
 

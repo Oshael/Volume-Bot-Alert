@@ -46,7 +46,10 @@ function dependencies(result = captured(), overrideBlock = null) {
   const hashes = new Map([['100', HASH_A], ['101', HASH_B], ['102', HASH_C]]);
   return {
     batches,
-    transferReader: { readGlobalRange: async () => result },
+    transferReader: {
+      readGlobalRange: async () => result,
+      matchesCheckpoint: async () => true,
+    },
     rpcClient: {
       requestBatch: async (requests) => {
         batches.push(requests);
@@ -84,6 +87,7 @@ describe('Robinhood wallet transfer RPC evidence reader', () => {
     assert.deepEqual(result.telemetry, {
       requests: 1, splits: 0, evidenceBatches: 2, evidenceBlocks: 3,
     });
+    assert.equal(await reader.matchesCheckpoint({ number: '102', hash: HASH_C }), true);
   });
 
   it('fetches checkpoint evidence even when the range has no transfers', async () => {
@@ -125,7 +129,10 @@ describe('Robinhood wallet transfer RPC evidence reader', () => {
     for (const testCase of cases) {
       const input = captured({ transfers: Object.freeze([]) });
       const reader = createRobinhoodWalletTransferEvidenceReader({
-        transferReader: { readGlobalRange: async () => input },
+        transferReader: {
+          readGlobalRange: async () => input,
+          matchesCheckpoint: async () => true,
+        },
         rpcClient: { requestBatch: async () => testCase.response },
       });
       await assert.rejects(reader.readRange({}), testCase.pattern);

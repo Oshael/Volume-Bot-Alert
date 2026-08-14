@@ -91,6 +91,9 @@ function createRobinhoodWalletTransferEvidenceReader(options = {}) {
   if (typeof transferReader?.readGlobalRange !== 'function') {
     throw new TypeError('holder global Transfer reader is required');
   }
+  if (typeof transferReader?.matchesCheckpoint !== 'function') {
+    throw new TypeError('holder checkpoint reader is required');
+  }
   if (typeof rpcClient?.requestBatch !== 'function') {
     throw new TypeError('block evidence RPC batch support is required');
   }
@@ -124,7 +127,11 @@ function createRobinhoodWalletTransferEvidenceReader(options = {}) {
     });
   }
 
-  return Object.freeze({ readRange });
+  function matchesCheckpoint(checkpoint) {
+    return transferReader.matchesCheckpoint(checkpoint);
+  }
+
+  return Object.freeze({ matchesCheckpoint, readRange });
 }
 
 module.exports = {
