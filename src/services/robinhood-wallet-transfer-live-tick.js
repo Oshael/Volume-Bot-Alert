@@ -1,10 +1,8 @@
 const {
-  CLASSIFICATION_VERSION,
-  createRobinhoodTransferClassifier,
-} = require('./robinhood-transfer-classifier');
+  CLASSIFICATION_VERSION, EDGE_KINDS, classificationInput, classifyTransfers, withEndpointRoles,
+} = require('./robinhood-wallet-transfer-batch');
 
 const STREAM = 'live';
-const EDGE_KINDS = new Set(['wallet_transfer', 'dex_flow']);
 
 function boundedInteger(value, fallback, minimum, maximum, label) {
   const parsed = value == null ? fallback : Number(value);
@@ -64,53 +62,6 @@ function rangeFor(cursor, sourceThrough, maxBlocks) {
   };
 }
 
-function classificationInput(captured, fromTime) {
-  const transactionHashes = new Set();
-  const endpointAddresses = new Set();
-  for (const transfer of captured.transfers) {
-    transactionHashes.add(transfer.transactionHash);
-    endpointAddresses.add(transfer.fromWallet);
-    endpointAddresses.add(transfer.toWallet);
-  }
-  return {
-    fromBlock: captured.fromBlock, toBlock: captured.toBlock,
-    fromTime,
-    toTime: captured.checkpoint.blockTime,
-    transactionHashes: [...transactionHashes], endpointAddresses: [...endpointAddresses],
-  };
-}
-
-function classifyTransfers(transfers, context, classifierFactory) {
-  const classifier = classifierFactory({
-    poolAddresses: context.poolAddresses,
-    routerAddresses: context.routerAddresses,
-    contractAddresses: context.contractAddresses,
-    walletAddresses: context.walletAddresses,
-  });
-  const counts = {};
-  const events = transfers.map((transfer) => {
-    const decision = classifier.classify(transfer, context);
-    counts[decision.kind] = (counts[decision.kind] || 0) + 1;
-    return {
-      ...transfer, transferKind: decision.kind,
-      classificationVersion: decision.classificationVersion,
-    };
-  });
-  return { counts, events };
-}
-
-function withEndpointRoles(context, roles) {
-  return {
-    ...context,
-    contractAddresses: [...new Set([
-      ...(context.contractAddresses || []), ...roles.contractAddresses,
-    ])],
-    walletAddresses: [...new Set([
-      ...(context.walletAddresses || []), ...roles.walletAddresses,
-    ])],
-  };
-}
-
 async function initializeCursor(projection, captured, sourceThrough) {
   return projection.initCursor({
     projectionVersion: CLASSIFICATION_VERSION, stream: STREAM,
@@ -161,8 +112,7 @@ async function runRobinhoodWalletTransferLiveTick(deps, input = {}) {
   });
   const classificationContext = withEndpointRoles(context, roles);
   const classified = classifyTransfers(
-    captured.transfers, classificationContext,
-    deps.classifierFactory || createRobinhoodTransferClassifier
+    captured.transfers, classificationContext, deps.classifierFactory
   );
   const raw = await deps.raw.insertTransferEvents(classified.events);
   const projected = await deps.projection.commitBatch({

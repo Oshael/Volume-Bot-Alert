@@ -1278,6 +1278,11 @@ comprovada dos swaps e termina exatamente no bloco anterior à origem LIVE de
 transfers. O plano falha fechado se houver gap, sobreposição ou se um cursor
 seed existente não preservar as mesmas fronteiras imutáveis.
 
+O B6e adiciona um tick histórico bounded apenas em memória. Ele revalida o
+checkpoint seed, captura e classifica um range, separa eventos dentro da janela
+raw de 30 dias dos que seriam somente resumidos e reporta telemetria, sem criar
+ou avançar cursor e sem persistir eventos, arestas ou evidências.
+
 ### Corte C1 — read model e API de inteligência
 
 Objetivo:

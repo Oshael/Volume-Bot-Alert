@@ -138,6 +138,8 @@ function transferCursor(row) {
     safeHead: optionalBlockNumber(row.safe_head),
     lifecycleState: row.lifecycle_state || null,
     completedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null,
+    checkpointBlock: optionalBlockNumber(row.checkpoint_block),
+    checkpointHash: row.checkpoint_hash || null,
     version: Number(row.version),
   }) : null;
 }
@@ -268,7 +270,7 @@ function createRobinhoodWalletTransferLiveSourceRepository(options = {}) {
       loadBackfillFrontier(),
       database.query(
         `SELECT stream, origin_block, next_block, safe_head, lifecycle_state,
-                completed_at, version
+                completed_at, checkpoint_block, checkpoint_hash, version
            FROM robinhood_wallet_transfer_cursors
           WHERE chain = $1 AND projection_version = $2 AND stream IN ('seed', 'live')`,
         [CHAIN, version]

@@ -87,11 +87,15 @@ describe('Robinhood wallet transfer seed plan', () => {
 
   it('resumes only a seed with identical immutable boundaries', () => {
     const running = transferBackfillPlan(swap, [
-      transferCursor('live'), transferCursor('seed'),
+      transferCursor('live'), transferCursor('seed', {
+        checkpoint_block: '94', checkpoint_hash: BASE.checkpoint_hash,
+      }),
     ]);
     assert.equal(running.status, 'running');
     assert.equal(running.nextBlock, '95');
     assert.equal(running.remainingBlocks, '15');
+    assert.equal(running.seed.checkpointBlock, '94');
+    assert.equal(running.seed.checkpointHash, BASE.checkpoint_hash);
 
     const complete = transferBackfillPlan(swap, [
       transferCursor('live'),
