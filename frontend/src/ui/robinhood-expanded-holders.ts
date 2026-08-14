@@ -9,11 +9,35 @@ import { escapeHtml } from './sections/html-safety';
 interface MountOptions {
   token: string;
   authToken?: string | null;
-  onShowChart: () => void;
-  onShowHolders: () => void;
 }
 
 let activeCleanup: (() => void) | null = null;
+const MIN_HOLDER_PANEL_HEIGHT = 220;
+const MIN_CHART_AREA_HEIGHT = 250;
+
+interface HolderDataCache {
+  history: RobinhoodHolderHistory | null;
+  historyRequest: Promise<RobinhoodHolderHistory> | null;
+  pages: Map<string, RobinhoodHoldersPage>;
+  pageRequests: Map<string, Promise<RobinhoodHoldersPage>>;
+  cursorStack: Array<string | null>;
+}
+
+const holderDataCacheByToken = new Map<string, HolderDataCache>();
+
+function getHolderDataCache(token: string): HolderDataCache {
+  const existing = holderDataCacheByToken.get(token);
+  if (existing) return existing;
+  const created: HolderDataCache = {
+    history: null,
+    historyRequest: null,
+    pages: new Map(),
+    pageRequests: new Map(),
+    cursorStack: [null],
+  };
+  holderDataCacheByToken.set(token, created);
+  return created;
+}
 
 function count(value: number | null) {
   return value == null ? '—' : value.toLocaleString('en-US');
@@ -38,14 +62,17 @@ export function renderRobinhoodExpandedHolderViews(
   holderCount: number | null | undefined,
 ) {
   return `<div class="robinhood-holder-views" data-robinhood-holder-views>
-    <nav class="robinhood-holder-tabs" role="tablist" aria-label="Expanded token data">
-      <button type="button" class="active" role="tab" aria-selected="true" data-holder-tab="chart">CHART</button>
-      <button type="button" role="tab" aria-selected="false" data-holder-tab="holders">HOLDERS (<span data-holder-tab-count>${count(holderCount ?? null)}</span>)</button>
-    </nav>
-    <div data-holder-chart-view>${chartHtml}${footnoteHtml}</div>
-    <section class="robinhood-holder-panel" data-holder-panel hidden aria-label="Token holders">
-      <div class="robinhood-holder-history" data-holder-history><p>Loading holder history…</p></div>
-      <div class="robinhood-holder-page" data-holder-page><p>Loading holders…</p></div>
+    <div class="robinhood-holder-chart-shell" data-holder-chart-view>${chartHtml}${footnoteHtml}</div>
+    <section class="robinhood-holder-panel" data-holder-panel aria-label="Token holders">
+      <div class="robinhood-holder-resize-handle" data-holder-resize-handle role="separator" tabindex="0"
+        aria-orientation="horizontal" aria-label="Resize holders panel" aria-valuemin="${MIN_HOLDER_PANEL_HEIGHT}" aria-valuemax="720" aria-valuenow="340">
+        <span class="robinhood-holder-panel-label">HOLDERS <strong data-holder-count>${count(holderCount ?? null)}</strong></span>
+        <span class="robinhood-holder-resize-grip" aria-hidden="true"></span>
+      </div>
+      <div class="robinhood-holder-panel-body">
+        <div class="robinhood-holder-history" data-holder-history><p>Loading holder history…</p></div>
+        <div class="robinhood-holder-page" data-holder-page><p>Loading holders…</p></div>
+      </div>
     </section>
   </div>`;
 }
@@ -110,54 +137,111 @@ export function mountRobinhoodExpandedHolders(section: ParentNode, options: Moun
   destroyRobinhoodExpandedHolders();
   const root = section.querySelector<HTMLElement>('[data-robinhood-holder-views]');
   if (!root) return;
-  const chartView = root.querySelector<HTMLElement>('[data-holder-chart-view]')!;
   const panel = root.querySelector<HTMLElement>('[data-holder-panel]')!;
+  const resizeHandle = root.querySelector<HTMLElement>('[data-holder-resize-handle]')!;
   const history = root.querySelector<HTMLElement>('[data-holder-history]')!;
   const pageContainer = root.querySelector<HTMLElement>('[data-holder-page]')!;
   let disposed = false;
-  let loaded = false;
   let requestId = 0;
   let currentPage: RobinhoodHoldersPage | null = null;
-  const cursors: Array<string | null> = [null];
+  const cache = getHolderDataCache(options.token);
+  const cursors = [...cache.cursorStack];
+  let dragStartY = 0;
+  let dragStartHeight = 0;
+  let dragging = false;
+
+  const setHolderPanelHeight = (requestedHeight: number) => {
+    const availableHeight = root.getBoundingClientRect().height;
+    const maxHeight = Math.max(
+      MIN_HOLDER_PANEL_HEIGHT,
+      availableHeight - MIN_CHART_AREA_HEIGHT,
+    );
+    const height = Math.round(Math.min(Math.max(requestedHeight, MIN_HOLDER_PANEL_HEIGHT), maxHeight));
+    root.style.setProperty('--holders-height', `${height}px`);
+    resizeHandle.setAttribute('aria-valuemax', String(Math.round(maxHeight)));
+    resizeHandle.setAttribute('aria-valuenow', String(height));
+  };
+
+  const stopDragging = () => {
+    if (!dragging) return;
+    dragging = false;
+    root.removeAttribute('data-holder-resizing');
+  };
+
+  const onPointerDown = (event: Event) => {
+    const pointerEvent = event as PointerEvent;
+    if (pointerEvent.button !== 0) return;
+    dragging = true;
+    dragStartY = pointerEvent.clientY;
+    dragStartHeight = panel.getBoundingClientRect().height;
+    resizeHandle.setPointerCapture?.(pointerEvent.pointerId);
+    root.setAttribute('data-holder-resizing', 'true');
+    pointerEvent.preventDefault();
+  };
+  const onPointerMove = (event: Event) => {
+    if (!dragging) return;
+    const pointerEvent = event as PointerEvent;
+    setHolderPanelHeight(dragStartHeight - (pointerEvent.clientY - dragStartY));
+  };
+  const onPointerUp = () => stopDragging();
+  const onKeyDown = (event: Event) => {
+    const keyEvent = event as KeyboardEvent;
+    const currentHeight = panel.getBoundingClientRect().height;
+    if (keyEvent.key === 'ArrowUp') {
+      setHolderPanelHeight(currentHeight + 32);
+      keyEvent.preventDefault();
+    } else if (keyEvent.key === 'ArrowDown') {
+      setHolderPanelHeight(currentHeight - 32);
+      keyEvent.preventDefault();
+    } else if (keyEvent.key === 'Home') {
+      setHolderPanelHeight(Number(resizeHandle.getAttribute('aria-valuemax')) || currentHeight);
+      keyEvent.preventDefault();
+    } else if (keyEvent.key === 'End') {
+      setHolderPanelHeight(MIN_HOLDER_PANEL_HEIGHT);
+      keyEvent.preventDefault();
+    }
+  };
 
   const loadHistory = async () => {
     try {
-      const result = await fetchRobinhoodHolderHistory(options.token, options.authToken);
+      if (!cache.historyRequest && !cache.history) {
+        cache.historyRequest = fetchRobinhoodHolderHistory(options.token, options.authToken)
+          .then((result) => {
+            cache.history = result;
+            return result;
+          })
+          .finally(() => { cache.historyRequest = null; });
+      }
+      const result = cache.history || (cache.historyRequest ? await cache.historyRequest : null);
+      if (!result) return;
       if (!disposed) history.innerHTML = historyHtml(result);
     } catch { if (!disposed) history.innerHTML = errorHtml('history'); }
   };
   const loadPage = async () => {
     const id = ++requestId;
+    const cursor = cursors.at(-1) || null;
+    cache.cursorStack = [...cursors];
     pageContainer.innerHTML = '<p>Loading holders…</p>';
     try {
-      const result = await fetchRobinhoodHoldersPage(options.token, cursors.at(-1), options.authToken);
+      let pageRequest = cache.pageRequests.get(cursor || 'first');
+      if (!pageRequest && !cache.pages.has(cursor || 'first')) {
+        pageRequest = fetchRobinhoodHoldersPage(options.token, cursor, options.authToken)
+          .then((result) => {
+            cache.pages.set(cursor || 'first', result);
+            return result;
+          })
+          .finally(() => { cache.pageRequests.delete(cursor || 'first'); });
+        cache.pageRequests.set(cursor || 'first', pageRequest);
+      }
+      const result = cache.pages.get(cursor || 'first') || await pageRequest!;
       if (disposed || id !== requestId) return;
       currentPage = result;
-      root.querySelector<HTMLElement>('[data-holder-tab-count]')!.textContent = count(result.summary.holderCount);
+      root.querySelector<HTMLElement>('[data-holder-count]')!.textContent = count(result.summary.holderCount);
       pageContainer.innerHTML = holderPageHtml(result, cursors.length, cursors.length > 1);
     } catch { if (!disposed && id === requestId) pageContainer.innerHTML = errorHtml('page'); }
   };
-  const show = (tab: 'chart' | 'holders') => {
-    const holders = tab === 'holders';
-    chartView.hidden = holders;
-    panel.hidden = !holders;
-    root.closest('.legacy-auth-panel-expanded-sparkline')?.classList.toggle('is-holder-view', holders);
-    root.querySelectorAll<HTMLButtonElement>('[data-holder-tab]').forEach((button) => {
-      const active = button.dataset.holderTab === tab;
-      button.classList.toggle('active', active);
-      button.setAttribute('aria-selected', String(active));
-    });
-    if (holders) {
-      options.onShowHolders();
-      if (!loaded) { loaded = true; void loadHistory(); void loadPage(); }
-    } else {
-      options.onShowChart();
-    }
-  };
   const onClick = (event: Event) => {
     const target = event.target as Element | null;
-    const tab = target?.closest<HTMLButtonElement>('[data-holder-tab]')?.dataset.holderTab;
-    if (tab === 'chart' || tab === 'holders') return show(tab);
     const retry = target?.closest<HTMLButtonElement>('[data-holder-retry]')?.dataset.holderRetry;
     if (retry === 'history') return void loadHistory();
     if (retry === 'page') return void loadPage();
@@ -165,8 +249,32 @@ export function mountRobinhoodExpandedHolders(section: ParentNode, options: Moun
     if (action === 'next' && currentPage?.nextCursor) cursors.push(currentPage.nextCursor);
     else if (action === 'previous' && cursors.length > 1) cursors.pop();
     else return;
+    cache.cursorStack = [...cursors];
     void loadPage();
   };
+  const onResize = () => {
+    const configuredHeight = Number.parseFloat(root.style.getPropertyValue('--holders-height'));
+    if (Number.isFinite(configuredHeight)) setHolderPanelHeight(configuredHeight);
+  };
   root.addEventListener('click', onClick);
-  activeCleanup = () => { disposed = true; requestId += 1; root.removeEventListener('click', onClick); };
+  resizeHandle.addEventListener('pointerdown', onPointerDown);
+  resizeHandle.addEventListener('pointermove', onPointerMove);
+  resizeHandle.addEventListener('pointerup', onPointerUp);
+  resizeHandle.addEventListener('pointercancel', onPointerUp);
+  resizeHandle.addEventListener('keydown', onKeyDown);
+  window.addEventListener('resize', onResize);
+  void loadHistory();
+  void loadPage();
+  activeCleanup = () => {
+    disposed = true;
+    requestId += 1;
+    root.removeEventListener('click', onClick);
+    resizeHandle.removeEventListener('pointerdown', onPointerDown);
+    resizeHandle.removeEventListener('pointermove', onPointerMove);
+    resizeHandle.removeEventListener('pointerup', onPointerUp);
+    resizeHandle.removeEventListener('pointercancel', onPointerUp);
+    resizeHandle.removeEventListener('keydown', onKeyDown);
+    window.removeEventListener('resize', onResize);
+    stopDragging();
+  };
 }

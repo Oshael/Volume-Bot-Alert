@@ -1660,19 +1660,32 @@ test('renders daily holder sticks and cursor pages in the Robinhood expanded cha
 
   const dialog = page.locator('[data-auth-modal="expanded-sparkline"]');
   await expect(dialog).toBeVisible();
-  expect(diagnostics.apiRequests.some((url) => new URL(url).pathname === '/api/robinhood/holders')).toBe(false);
-  await dialog.getByRole('tab', { name: 'HOLDERS (4,424)' }).click();
   const panel = dialog.locator('[data-holder-panel]');
   await expect(panel).toBeVisible();
-  await expect(dialog.locator('[data-holder-chart-view]')).toBeHidden();
+  await expect(dialog.locator('[data-holder-tab]')).toHaveCount(0);
+  await expect(dialog.locator('[data-holder-chart-view]')).toBeVisible();
+  await expect(dialog.locator('[data-robinhood-trades-panel]')).toBeVisible();
   await expect(panel.locator('.holder-stick.is-up')).toHaveCount(1);
   await expect(panel.locator('.holder-stick.is-down')).toHaveCount(1);
   await expect(panel).toContainText('Main whale');
+
+  const resizeHandle = dialog.locator('[data-holder-resize-handle]');
+  const beforeResize = await dialog.evaluate((element) => ({
+    holders: element.querySelector('[data-holder-panel]')?.getBoundingClientRect().height ?? 0,
+    chart: element.querySelector('[data-holder-chart-view]')?.getBoundingClientRect().height ?? 0,
+  }));
+  await resizeHandle.press('ArrowUp');
+  const afterResize = await dialog.evaluate((element) => ({
+    holders: element.querySelector('[data-holder-panel]')?.getBoundingClientRect().height ?? 0,
+    chart: element.querySelector('[data-holder-chart-view]')?.getBoundingClientRect().height ?? 0,
+  }));
+  expect(afterResize.holders).toBeGreaterThan(beforeResize.holders);
+  expect(afterResize.chart).toBeLessThan(beforeResize.chart);
+
   await panel.getByRole('button', { name: 'Next' }).click();
   await expect(panel).toContainText('Second page whale');
   await panel.getByRole('button', { name: 'Previous' }).click();
   await expect(panel).toContainText('Main whale');
-  await dialog.getByRole('tab', { name: 'CHART' }).click();
   await expect(dialog.locator('[data-holder-chart-view]')).toBeVisible();
   expect(diagnostics.unexpectedRequests).toEqual([]);
   expect(diagnostics.pageErrors).toEqual([]);

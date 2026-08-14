@@ -2983,6 +2983,15 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   animation: expanded-sparkline-hologram-enter 0.16s ease-out;
 }
 
+.legacy-auth-panel-expanded-sparkline.has-robinhood-holders {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: min(90vh, 940px);
+  min-height: 620px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
 .legacy-auth-panel-expanded-sparkline::before {
   display: none;
 }
@@ -3446,56 +3455,120 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   list-style: none;
 }
 
-.robinhood-holder-tabs {
+.robinhood-holder-views {
   display: flex;
-  gap: 24px;
-  margin: 2px 4px 8px;
-  border-bottom: 1px solid rgba(55, 61, 75, 0.75);
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  color: #e6e9ef;
 }
 
-.robinhood-holder-tabs button {
-  padding: 8px 2px;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  background: transparent;
-  color: rgba(230, 233, 239, 0.55);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
+.robinhood-holder-chart-shell {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
 }
 
-.robinhood-holder-tabs button:hover,
-.robinhood-holder-tabs button.active {
-  border-bottom-color: #67a0ff;
-  color: #f2f5fa;
+.robinhood-holder-chart-shell > .expanded-sparkline-chart {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.robinhood-holder-chart-shell .expanded-sparkline-chart-main {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.robinhood-holder-chart-shell .expanded-candles-wrap {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
 }
 
 .robinhood-holder-panel {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 12px;
-  height: clamp(500px, 75vh, 820px);
+  display: flex;
+  flex: 0 0 var(--holders-height, clamp(220px, 38%, 520px));
+  flex-direction: column;
+  min-height: 220px;
+  border: 1px solid rgba(55, 61, 75, 0.92);
+  border-radius: 14px;
+  background: rgba(8, 10, 14, 0.96);
   color: #e6e9ef;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
-.robinhood-holder-panel[hidden] {
-  display: none;
+.robinhood-holder-resize-handle {
+  position: relative;
+  display: flex;
+  flex: 0 0 32px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-bottom: 1px solid rgba(55, 61, 75, 0.75);
+  background: rgba(12, 17, 25, 0.96);
+  color: rgba(230, 233, 239, 0.72);
+  cursor: row-resize;
+  user-select: none;
+  touch-action: none;
 }
 
-.legacy-auth-panel-expanded-sparkline.is-holder-view .expanded-sparkline-resolution-control {
-  visibility: hidden;
+.robinhood-holder-resize-handle:focus-visible {
+  outline: 2px solid #67a0ff;
+  outline-offset: -2px;
+}
+
+.robinhood-holder-panel-label {
+  position: absolute;
+  left: 12px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.robinhood-holder-panel-label strong {
+  color: #8fb7d8;
+  font-weight: 800;
+}
+
+.robinhood-holder-resize-grip {
+  width: 42px;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(143, 183, 216, 0.58);
+  box-shadow: 0 0 12px rgba(103, 160, 255, 0.18);
+}
+
+.robinhood-holder-panel-body {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: minmax(0, 0.75fr) minmax(0, 1.25fr);
+  gap: 10px;
+  min-height: 0;
+  padding: 10px;
+  overflow: auto;
 }
 
 .robinhood-holder-history,
 .robinhood-holder-page {
   min-width: 0;
+  min-height: 0;
   padding: 14px;
   border: 1px solid rgba(55, 61, 75, 0.92);
   border-radius: 14px;
   background: rgba(8, 10, 14, 0.96);
   overflow: hidden;
+}
+
+.robinhood-holder-history,
+.robinhood-holder-page {
+  display: flex;
+  flex-direction: column;
 }
 
 .robinhood-holder-history header,
@@ -3544,7 +3617,8 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 }
 
 .robinhood-holder-table-wrap {
-  max-height: clamp(240px, 45vh, 480px);
+  flex: 1 1 auto;
+  min-height: 0;
   margin: 12px 0;
   overflow: auto;
 }
@@ -3593,7 +3667,7 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
     max-height: 260px;
   }
 
-  .robinhood-holder-panel { grid-template-columns: 1fr; overflow-y: auto; }
+  .robinhood-holder-panel-body { grid-template-columns: 1fr; overflow-y: auto; }
 }
 
 .expanded-candles-wrap {

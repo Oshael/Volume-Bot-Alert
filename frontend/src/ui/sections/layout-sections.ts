@@ -4199,6 +4199,10 @@ function renderExpandedModalBody(
     : `${chartArea}${footnote}`;
 }
 
+function getExpandedSparklinePanelClass(chain: TokenChain) {
+  return chain === 'robinhood' ? ' has-robinhood-holders' : '';
+}
+
 function renderExpandedSparklineModal(state: AppState, address: string) {
   const chain = state.ui.expandedSparklineChain;
   const token = getTrackedToken(state, address, chain);
@@ -4221,7 +4225,7 @@ function renderExpandedSparklineModal(state: AppState, address: string) {
   return `
     <div class="legacy-auth-modal" data-auth-modal="expanded-sparkline" data-auth-modal-scope="sparkline">
       <div class="legacy-auth-modal-backdrop" data-action="close-expanded-sparkline"></div>
-      <div class="legacy-auth-panel legacy-auth-panel-expanded-sparkline" data-auth-panel="expanded-sparkline" role="dialog" aria-modal="true" aria-labelledby="expanded-sparkline-title">
+      <div class="legacy-auth-panel legacy-auth-panel-expanded-sparkline${getExpandedSparklinePanelClass(chain)}" data-auth-panel="expanded-sparkline" role="dialog" aria-modal="true" aria-labelledby="expanded-sparkline-title">
         <div class="expanded-sparkline-toolbar">
           ${renderExpandedSparklineIdentity(
             symbol, name, imageUrl, address, chain, token?.tickerPeers,
@@ -4461,11 +4465,6 @@ function bindExpandedSparklineModal(
     mountRobinhoodExpandedHolders(section, {
       token: address,
       authToken: state.session.token,
-      onShowHolders: destroyRobinhoodExpandedTrades,
-      onShowChart: () => {
-        mountRobinhoodExpandedTrades(section, { token: address, authToken: state.session.token });
-        window.dispatchEvent(new Event('resize'));
-      },
     });
   } else {
     destroyRobinhoodExpandedTrades();
