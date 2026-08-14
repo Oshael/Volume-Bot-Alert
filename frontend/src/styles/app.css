@@ -3528,14 +3528,13 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 .robinhood-holder-resize-handle {
   position: relative;
   display: flex;
-  flex: 0 0 20px;
+  flex: 0 0 14px;
   align-items: center;
   justify-content: center;
   border: 0;
-  border-top: 1px solid rgba(55, 61, 75, 0.75);
-  border-bottom: 1px solid rgba(55, 61, 75, 0.75);
-  background: rgba(12, 17, 25, 0.96);
-  color: rgba(230, 233, 239, 0.72);
+  border-top: 1px solid rgba(55, 61, 75, 0.6);
+  background: rgba(10, 13, 19, 0.9);
+  color: rgba(230, 233, 239, 0.6);
   cursor: row-resize;
   user-select: none;
   touch-action: none;
@@ -3560,11 +3559,10 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 }
 
 .robinhood-holder-resize-grip {
-  width: 36px;
-  height: 3px;
+  width: 30px;
+  height: 2px;
   border-radius: 999px;
-  background: rgba(143, 183, 216, 0.58);
-  box-shadow: 0 0 12px rgba(103, 160, 255, 0.18);
+  background: rgba(143, 183, 216, 0.4);
 }
 
 .robinhood-holder-panel-body {
@@ -3572,23 +3570,17 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   flex: 1 1 auto;
   grid-template-columns: 1fr;
   min-height: 0;
-  padding: 10px;
+  padding: 0;
   overflow: auto;
-}
-
-.robinhood-holder-page {
-  min-width: 0;
-  min-height: 0;
-  padding: 14px;
-  border: 1px solid rgba(55, 61, 75, 0.92);
-  border-radius: 14px;
-  background: rgba(8, 10, 14, 0.96);
-  overflow: hidden;
 }
 
 .robinhood-holder-page {
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 8px 14px 12px;
+  overflow: hidden;
 }
 
 .robinhood-holder-page header,
@@ -3599,15 +3591,12 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   gap: 12px;
 }
 
-.robinhood-holder-page header div {
-  display: grid;
-  gap: 4px;
-}
-
-.robinhood-holder-page small {
-  color: rgba(230, 233, 239, 0.45);
+.robinhood-holder-page-title {
   font-size: 10px;
-  letter-spacing: 0.08em;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: rgba(230, 233, 239, 0.5);
 }
 
 .robinhood-holder-table-wrap {
@@ -3633,7 +3622,7 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 }
 
 .robinhood-holder-page th,
-.holder-freshness { color: rgba(230, 233, 239, 0.5); }
+.holder-freshness { color: rgba(230, 233, 239, 0.5); font-size: 10px; letter-spacing: 0.04em; }
 .holder-freshness.is-stale { color: #ffbd66; }
 .robinhood-holder-page a { color: #8fb7d8; text-decoration: none; }
 .robinhood-holder-page a:hover { color: #d7f3ff; text-decoration: underline; }

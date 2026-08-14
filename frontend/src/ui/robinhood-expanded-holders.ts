@@ -69,7 +69,7 @@ function holderPageHtml(page: RobinhoodHoldersPage, pageNumber: number, hasPrevi
     <td>${escapeHtml(holder.addressType)}${holder.isVerifiedContract ? ' · verified' : ''}</td>
     <td title="Raw on-chain balance">${escapeHtml(rawBalance(holder.balanceRaw))}</td>
   </tr>`).join('');
-  return `<header><div><small>TOP HOLDERS</small><strong>${count(page.summary.holderCount)} total</strong></div>
+  return `<header><span class="robinhood-holder-page-title">Top holders</span>
       <span class="holder-freshness is-${page.summary.freshness}">${escapeHtml(page.summary.freshness)} · ${escapeHtml(observed)}</span></header>
     <div class="robinhood-holder-table-wrap"><table><thead><tr><th>#</th><th>Holder</th><th>Type</th><th>Raw balance</th></tr></thead>
       <tbody>${rows || '<tr><td colspan="4">No holders returned.</td></tr>'}</tbody></table></div>
