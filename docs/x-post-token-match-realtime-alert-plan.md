@@ -340,15 +340,36 @@ e novo e a tese nao foi provada. Escala depois, com evidencia.
 - Cada sessao = `auth_token` + `ct0` de uma conta real, obtidos por login manual
   no navegador. Automatizar o login (`onboarding/task.json`) nao compensa por
   causa do Arkose captcha.
-- Um proxy residencial **fixo por sessao**. Cookie saindo de IPs diferentes mata
-  a conta rapido.
+- **Sessoes vivem em `x_session` (tabela), nao em env.** Escalar = inserir linha.
+  Env foi so do probe.
+- **Rotacao de credencial e auto-curada, nao manual:**
+  - `ct0` o X rotaciona sozinho e devolve o novo no header `Set-Cookie`. O worker
+    le o `Set-Cookie`, atualiza `x_session.ct0` e o `x-csrf-token`. Headless na
+    VPS, sem intervencao. Esse e o "sessao troca de tempos em tempos" -- resolvido.
+  - `auth_token` NAO rotaciona no relogio; so morre quando a conta e flagada/
+    deslogada (raro, semanas). Morte -> 401/403 -> quarentena; o pool segue nas
+    outras. Reacquirir exige login (manual, sem bot).
+  - `queryId`/`features` extraidos do bundle no boot e **re-extraidos so quando
+    uma chamada falha** (400 nomeia a feature, 404 = queryId velho); cache em
+    `x_list.query_id`, com valor manual como fallback. Degrada com elegancia.
+- **Proxy fixo por sessao = ancora de identidade.** O IP de nascimento (login) e
+  o IP de uso (scraping) tem que ser o mesmo, senao o X mata a conta. Logo:
+  - **Loga-se JA atraves do proxy da conta** (anti-detect browser -- Multilogin/
+    GoLogin/AdsPower/Dolphin -- 1 perfil por conta com proxy+fingerprint proprios).
+    O IP de casa nunca toca a conta.
+  - Login roda **na maquina do operador** (unico lugar com browser); scraping roda
+    **headless na VPS**, os dois saindo pelo **mesmo proxy**. A costura e o DB.
+  - `auth_token` e `httpOnly` (JS de pagina nao le) -> re-seed via **extensao de
+    browser** (permissao `cookies`) que colhe `auth_token`+`ct0` do perfil e faz
+    POST num endpoint admin -> insere linha em `x_session`. Um clique, nao editar
+    env. (Bloco 3.5.)
+- Modelo de proxy: **estatico/ISP por-IP fixo**, nao rotativo por-GB (polling de
+  alta frequencia queima GB). Ver "Custo estimado".
 - Headers necessarios (medido no Bloco 2): bearer publico do web client,
   `x-csrf-token` igual ao cookie `ct0`, `x-twitter-auth-type: OAuth2Session`,
   `x-twitter-active-user`. O **`x-client-transaction-id` NAO foi exigido** para
   ler `ListLatestTweetsTimeline` (2026-08-13) -- tratar como opcional ate um 404
   provar o contrario, nao construir o gerador especulativamente.
-- `queryId` e `features` extraidos do bundle `main.{hash}.js` no boot. Hardcodar
-  garante quebra em semanas. Erro 400 nomeia a flag faltante.
 - Rate limit lido de `x-rate-limit-remaining` / `-reset`, nunca chutado. Token
   bucket por sessao x endpoint.
 - 401/403 = quarentena imediata da sessao, nunca retry.
@@ -553,17 +574,20 @@ alerta.
 
 | Item | Estimativa | Observacao |
 |---|---|---|
-| Proxies residenciais | US$ 200-500/mes em regime; **US$ 30-60/mes** no pool
-  inicial de 1-2 sessoes | custo dominante |
-| Contas X | US$ 2-15 por conta, com churn | 1-2 contas no inicio; queimam e
-  repoe-se |
+| Proxies **estaticos/ISP** (por-IP fixo) | ~$1,5-3/IP/mes budget; ~$3-6/IP/mes
+  mid | **10-15 contas = ~$30-90/mes.** 1 IP dedicado por conta, sem compartilhar |
+| ~~Proxies rotativos por-GB~~ | evitar | polling de alta freq. queima GB;
+  worst-case $500-1500/mes. O "$200-500" antigo assumia esse modelo errado |
+| Contas X | US$ 2-15 por conta, com churn | mais custo de setup que recorrente;
+  queimam e repoe-se |
 | Banda de imagem | baixa | variante `small`, ~10 img/s |
 | Compute de match | irrelevante | 0,005% de um nucleo |
 | Manutencao de engenharia | o mais caro | X muda `queryId` e a rotina de
   `transaction-id` sem aviso |
 
-Ordem de grandeza em regime: US$ 150-400/mes de infra, mais horas recorrentes de
-engenharia. O compute nao aparece na conta.
+Ordem de grandeza em regime (10-15 contas, proxies ISP por-IP): **~$50-150/mes**
+de infra (proxies + reposicao de conta), mais horas recorrentes de engenharia. O
+compute nao aparece na conta. (O "$150-400" anterior assumia proxy por-GB.)
 
 Ordem de grandeza para provar a tese, com pool inicial pequeno: **US$ 50-80/mes**.
 E o valor que se aceita gastar antes de ter prova de que o match funciona.
@@ -601,6 +625,10 @@ Entra no Bloco 3.
   descartaveis.
 - **Do IP de casa voce amarra teu IP a atividade.** Um proxy residencial baratinho
   ($30-60/mes) ja remove isso e ainda testa o binding proxy-por-sessao de verdade.
+- **No alpha (sessao nascida no IP de casa, sem proxy), rode o worker LOCAL** (mesma
+  rede do login). **Nao suba essa sessao pra VPS pelada** -- o pulo IP-de-casa ->
+  IP-de-datacenter e gatilho de ban. A migracao pra VPS vem junto com o proxy: reloga
+  a conta *atraves do proxy* (nasce no proxy) e a VPS usa o mesmo proxy.
 - **Nao sobre-engenheirar** a orquestracao de 40 sessoes antes da tese fechar;
   construa o minimo que roda 1-2 sessoes limpo e e extensivel por config.
 
@@ -703,14 +731,23 @@ producao: aplicar a stage123 no DB e subir o worker no grupo `x-match`.
 
 ### Bloco 3 - Ingestao continua
 
-- **Sessoes e proxies como tabela** (`x_session`: `auth_token`, `ct0`,
-  `proxy_url`, `enabled`), lidas em runtime -- escalar depois e inserir linhas, sem
-  deploy.
-- Pool de sessoes com bucket por endpoint e quarentena.
-- Normalizador de timeline (incluindo `TweetWithVisibilityResults` e retweet).
-- Tabelas `x_tracked_account`, `x_post`, `x_post_media`.
-- Worker dedicado, desligado por default via env. Roda com 1-2 sessoes no
-  bootstrap; o mesmo codigo escala pra N.
+Bloco grande -> fatiado (cada slice <=500 linhas, commit proprio):
+
+- **3.1 [CONCLUIDO 2026-08-13] Data layer.** stage124 (`x_session`, `x_list`,
+  `x_tracked_account`, `x_post`, `x_post_media`) + schema-check. `x-post.savePost`
+  transacional e idempotente por `post_id`; `x-session.listActive` filtra
+  desabilitada/quarentena. Aditivo e inerte. Teste de integracao (dedupe + filtro).
+- **3.2 Normalizer (puro).** `instructions` -> posts: unwrap
+  `TweetWithVisibilityResults`, resolve retweet (midia do original + alcance do
+  retuitador), extrai midia, dedupe. Nucleo duravel, teste unit com fixtures reais.
+- **3.3 Pool + client.** Pool de sessoes (bucket por endpoint, quarentena em
+  401/403) + client GraphQL. **ct0 self-heal via `Set-Cookie`** e **queryId
+  auto-extract + fallback** vivem aqui. Proxy por sessao via `ProxyAgent`.
+- **3.4 Worker + wiring.** Loop pool->client->normalizer->persist, cursor, backoff.
+  Grupo isolado `x-ingest`, desligado por default. Roda com 1-2 sessoes; escala pra N.
+- **3.5 Re-seed de sessao.** Endpoint admin + extensao de browser que colhe
+  `auth_token`/`ct0` (httpOnly) e insere linha em `x_session`. Um clique, sem editar
+  env, sem login-bot. Ver "Pool de sessoes X".
 
 ### Bloco 4 - Fingerprint de imagens de post
 
