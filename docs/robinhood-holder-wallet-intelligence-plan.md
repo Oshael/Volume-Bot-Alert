@@ -1128,6 +1128,8 @@ Validação inclui schema check e integração em fronteira de partição.
 
 ### Corte B2 — classificador de transfers
 
+Status: concluído como domínio puro, explicável e fail-closed.
+
 Objetivo:
 
 - classificar mint, burn, pool, router, DEX, wallet e unknown;
@@ -1136,6 +1138,11 @@ Objetivo:
 - manter decisão explicável/versionada.
 
 Somente domínio e testes unitários; sem worker.
+
+A versão `rh_transfer_v1` só produz `wallet_transfer` quando ambos os endpoints
+são wallets comprovadas e a cobertura de swaps da transação está confirmada.
+Correlação DEX ambígua vira `unknown`, e fluxos de pool, router e contrato
+dependem de papéis fornecidos pelo futuro adapter B4.
 
 ### Corte B3 — arestas e evidências permanentes
 
