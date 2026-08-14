@@ -13,6 +13,7 @@ const stage91 = require('../src/utils/db-init-stage91');
 const stage116 = require('../src/utils/db-init-stage116');
 const stage120 = require('../src/utils/db-init-stage120');
 const stage122 = require('../src/utils/db-init-stage122');
+const stage133 = require('../src/utils/db-init-stage133');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const TOKEN = `0x${'1'.repeat(40)}`;
@@ -27,13 +28,13 @@ async function cleanup() {
   await db.query('DELETE FROM robinhood_wallet_swaps WHERE transaction_hash = $1', [TX]);
   await db.query('DELETE FROM robinhood_pool_registry WHERE market_key = $1', ['test-transfer-source']);
   await db.query('DELETE FROM robinhood_holder_token_states WHERE token_address = $1', [TOKEN]);
-  await db.query("DELETE FROM robinhood_wallet_swap_cursors WHERE chain = 'robinhood' AND stream = 'live'");
+  await db.query("DELETE FROM robinhood_wallet_swap_cursors WHERE chain = 'robinhood' AND stream IN ('seed', 'live')");
 }
 
 describe('Robinhood wallet transfer LIVE source', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
-    for (const stage of [stage63, stage90, stage91, stage116, stage120, stage122]) {
+    for (const stage of [stage63, stage90, stage91, stage116, stage120, stage122, stage133]) {
       await stage.init({ closePool: false });
     }
     await db.query(`CREATE TABLE IF NOT EXISTS ${PARTITION}
@@ -50,9 +51,15 @@ describe('Robinhood wallet transfer LIVE source', () => {
   it('exposes only proven swap coverage and bounded classification context', async () => {
     await db.query(
       `INSERT INTO robinhood_wallet_swap_cursors (
-         chain, stream, next_block, safe_head, checkpoint_block, checkpoint_hash,
+         chain, stream, origin_block, next_block, safe_head, lifecycle_state, completed_at
+       ) VALUES ('robinhood', 'seed', 100, 101, 100, 'complete', NOW())`
+    );
+    await db.query(
+      `INSERT INTO robinhood_wallet_swap_cursors (
+         chain, stream, origin_block, next_block, safe_head, checkpoint_block, checkpoint_hash,
          checkpoint_timestamp, lifecycle_state
-       ) VALUES ('robinhood', 'live', 120, 150, 119, $1, '2099-02-01T00:00:00Z', 'running')`,
+       ) VALUES ('robinhood', 'live', 101, 120, 150, 119, $1,
+         '2099-02-01T00:00:00Z', 'running')`,
       [HASH]
     );
     await db.query(
@@ -80,8 +87,14 @@ describe('Robinhood wallet transfer LIVE source', () => {
 
     const repository = createRobinhoodWalletTransferLiveSourceRepository({ database: db });
     const frontier = await repository.loadSwapFrontier();
+    const backfillFrontier = await repository.loadBackfillFrontier();
     const tokens = await repository.listTrackedTokenAddresses();
     const context = await repository.loadRangeContext({
+      fromBlock: '100', toBlock: '119',
+      transactionHashes: [TX], endpointAddresses: [WALLET, POOL, ROUTER],
+      fromTime: '2099-02-01T00:00:00Z', toTime: '2099-02-01T23:59:59Z',
+    });
+    const backfillContext = await repository.loadBackfillRangeContext({
       fromBlock: '100', toBlock: '119',
       transactionHashes: [TX], endpointAddresses: [WALLET, POOL, ROUTER],
       fromTime: '2099-02-01T00:00:00Z', toTime: '2099-02-01T23:59:59Z',
@@ -89,12 +102,22 @@ describe('Robinhood wallet transfer LIVE source', () => {
 
     assert.equal(frontier.ready, true);
     assert.equal(frontier.completeThroughBlock, '119');
+    assert.equal(backfillFrontier.ready, true);
+    assert.equal(backfillFrontier.historicalFromBlock, '100');
+    assert.equal(backfillFrontier.historicalThroughBlock, '100');
+    assert.equal(backfillFrontier.completeThroughBlock, '119');
     assert.equal(tokens.includes(TOKEN), true);
     assert.equal(context.swapCoverageComplete, true);
     assert.equal(context.swaps.length, 1);
     assert.deepEqual(context.poolAddresses, [POOL]);
     assert.deepEqual(context.routerAddresses, [ROUTER]);
     assert.deepEqual(context.walletAddresses, [WALLET]);
+    assert.equal(backfillContext.ready, true);
+    assert.equal(backfillContext.swaps.length, 1);
+    assert.equal((await repository.loadBackfillRangeContext({
+      fromBlock: '99', toBlock: '100', transactionHashes: [], endpointAddresses: [],
+      fromTime: '2099-02-01T00:00:00Z', toTime: '2099-02-01T23:59:59Z',
+    })).reason, 'swap_coverage_before_seed');
 
     const uncovered = await repository.loadRangeContext({
       fromBlock: '120', toBlock: '120', transactionHashes: [], endpointAddresses: [],

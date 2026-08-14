@@ -63,8 +63,8 @@ SELECT
   gap.oldest_needed_block
 FROM seed_audit CROSS JOIN gap`;
 const INSERT_SQL = `INSERT INTO robinhood_wallet_swap_cursors (
-    chain, stream, next_block, safe_head
-  ) VALUES ('robinhood', 'live', $1::bigint, NULL)
+    chain, stream, origin_block, next_block, safe_head
+  ) VALUES ('robinhood', 'live', $1::bigint, $1::bigint, NULL)
   ON CONFLICT (chain, stream) DO NOTHING
   RETURNING next_block::text, safe_head::text, version::text`;
 const LOAD_LIVE_SQL = `SELECT next_block::text, safe_head::text, version::text

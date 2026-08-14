@@ -1521,6 +1521,13 @@ Execute `npm run robinhood:wallet-transfer-retention-plan --
 aceito é 1–100; o relatório apenas confere catálogo/bounds, declara
 `destructive=false` e exige nova validação canônica antes de qualquer drop.
 
+O source de classificação de transfers mantém gates distintos para LIVE e
+backfill. O gate histórico falha fechado até o seed de swaps estar `complete`
+e terminalmente válido, ter `origin_block` explícito e contar com uma frontier
+LIVE comprovada cuja origem seja exatamente o bloco seguinte ao seed. Execute
+`node src/utils/db-init-stage133.js` antes do código; cursores antigos ficam
+bloqueados até ambas as origens serem reparadas explicitamente.
+
 O repository de projeção persiste arestas, resumo diário por token, evidências
 `first`/`last`/`largest` e cursor sob a mesma transação com lock/CAS. O resumo
 separa count e soma raw de `wallet_transfer`/`dex_flow`; retry obsoleto é

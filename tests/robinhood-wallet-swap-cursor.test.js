@@ -20,7 +20,8 @@ function fakeDb(rows = []) {
 }
 
 const SEED_ROW = {
-  chain: 'robinhood', stream: 'seed', next_block: '991040', safe_head: '24401995',
+  chain: 'robinhood', stream: 'seed', origin_block: '991040',
+  next_block: '991040', safe_head: '24401995',
   checkpoint_block: null, checkpoint_hash: null, checkpoint_timestamp: null, version: '0',
   lifecycle_state: 'pending', state_reason: null, completed_at: null, abandoned_at: null,
   updated_at: '2026-08-12T00:00:00.000Z',
@@ -29,6 +30,7 @@ const SEED_ROW = {
 describe('robinhood wallet swap cursor repository', () => {
   it('normalizes a cursor row into typed fields', () => {
     const cursor = normalizeCursor({ ...SEED_ROW, version: '3' });
+    assert.equal(cursor.originBlock, '991040');
     assert.equal(cursor.nextBlock, '991040');
     assert.equal(cursor.safeHead, '24401995');
     assert.equal(cursor.checkpointBlock, null);
@@ -57,7 +59,13 @@ describe('robinhood wallet swap cursor repository', () => {
     const repo = createRobinhoodWalletSwapCursorRepository({ database });
     await repo.initCursor('seed', '991040', { safeHead: '24401995' });
     assert.match(database.calls[0].sql, /INSERT INTO robinhood_wallet_swap_cursors[\s\S]*ON CONFLICT \(chain, stream\) DO NOTHING/);
-    assert.deepEqual(database.calls[0].params, ['robinhood', 'seed', '991040', '24401995']);
+    assert.deepEqual(database.calls[0].params, [
+      'robinhood', 'seed', '991040', '991040', '24401995',
+    ]);
+    await assert.rejects(
+      repo.initCursor('seed', '10', { originBlock: '11' }),
+      /cannot exceed nextBlock/
+    );
   });
 
   it('advances with an optimistic version guard and returns null on conflict', async () => {

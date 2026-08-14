@@ -1257,6 +1257,12 @@ Objetivo:
   ordem canônica;
 - promover a nova versão somente depois de reconciliar saldo e frontier.
 
+O B6a separa a cobertura histórica da cobertura LIVE: contexto de classificação
+para backfill só fica disponível quando o seed de swaps está `complete`, com
+frontier terminal válido, `origin_block` explícito e o cursor LIVE provando sua
+cobertura atual desde o bloco seguinte ao seed. Cursores antigos sem ambas as
+origens permanecem bloqueados até reparo.
+
 ### Corte C1 — read model e API de inteligência
 
 Objetivo:

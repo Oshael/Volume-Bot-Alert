@@ -41,6 +41,7 @@ function normalizeCursor(row) {
   return {
     chain: row.chain,
     stream: row.stream,
+    originBlock: row.origin_block == null ? null : String(row.origin_block),
     nextBlock: row.next_block == null ? null : String(row.next_block),
     safeHead: row.safe_head == null ? null : String(row.safe_head),
     checkpointBlock: row.checkpoint_block == null ? null : String(row.checkpoint_block),
@@ -153,12 +154,17 @@ function createRobinhoodWalletSwapCursorRepository(options = {}) {
 
   // Idempotent: creates the cursor if absent, never resets an existing one.
   async function initCursor(streamName, nextBlock, input = {}) {
+    const start = nonNegativeInteger(nextBlock, 'nextBlock');
+    const origin = input.originBlock == null
+      ? start : nonNegativeInteger(input.originBlock, 'originBlock');
+    if (BigInt(origin) > BigInt(start)) throw new Error('originBlock cannot exceed nextBlock');
     const safeHead = optionalNonNegativeInteger(input.safeHead, 'safeHead');
     await database.query(
-      `INSERT INTO robinhood_wallet_swap_cursors (chain, stream, next_block, safe_head)
-       VALUES ($1, $2, $3::bigint, $4::bigint)
+      `INSERT INTO robinhood_wallet_swap_cursors (
+         chain, stream, origin_block, next_block, safe_head
+       ) VALUES ($1, $2, $3::bigint, $4::bigint, $5::bigint)
        ON CONFLICT (chain, stream) DO NOTHING`,
-      [CHAIN, stream(streamName), nonNegativeInteger(nextBlock, 'nextBlock'), safeHead]
+      [CHAIN, stream(streamName), origin, start, safeHead]
     );
     return loadCursor(streamName);
   }
