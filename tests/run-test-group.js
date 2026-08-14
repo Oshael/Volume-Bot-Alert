@@ -33,6 +33,7 @@ const INTEGRATION_TESTS = [
   'robinhood-wallet-transfer-retention-plan.integration.test.js',
   'robinhood-wallet-transfer-live-source.integration.test.js',
   'repair-robinhood-wallet-swap-origins.integration.test.js',
+  'repair-robinhood-wallet-transfer-live-origin.integration.test.js',
   'token-image-fingerprint.integration.test.js',
   'x-ingestion-store.integration.test.js',
   'user-alert-presence.integration.test.js',

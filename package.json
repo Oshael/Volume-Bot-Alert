@@ -90,6 +90,7 @@
     "robinhood:wallet-transfer-compaction-audit": "node src/utils/audit-robinhood-wallet-transfer-compaction.js",
     "robinhood:wallet-transfer-retention-plan": "node src/utils/plan-robinhood-wallet-transfer-retention.js",
     "robinhood:wallet-swap-origin-repair": "node src/utils/repair-robinhood-wallet-swap-origins.js",
+    "robinhood:wallet-transfer-live-origin-repair": "node src/utils/repair-robinhood-wallet-transfer-live-origin.js",
     "robinhood:signal-dry-run": "node src/utils/robinhood-signal-dry-run.js",
     "robinhood:creator-backfill": "node src/utils/backfill-robinhood-token-creators.js",
     "robinhood:launchpad-creator-backfill": "node src/utils/backfill-robinhood-launchpad-creators.js",

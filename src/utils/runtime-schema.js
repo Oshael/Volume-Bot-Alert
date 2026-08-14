@@ -3467,6 +3467,19 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage134-robinhood-wallet-transfer-cursor-origins',
+    name: 'Stage 134 Robinhood wallet-transfer cursor origins',
+    repair: 'node src/utils/db-init-stage134.js',
+    tables: [{
+      table: 'robinhood_wallet_transfer_cursors',
+      columns: ['origin_block'],
+      constraints: [{
+        name: 'rh_wallet_transfer_cursors_origin_check',
+        includes: ['CHECK', 'origin_block', 'next_block'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

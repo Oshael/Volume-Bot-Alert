@@ -1268,6 +1268,11 @@ do seed é sempre informado pelo operador; somente a origem LIVE é derivada do
 handoff durável (`seed.safe_head + 1`). A confirmação exige lease LIVE inativa,
 locks, validação de conflitos e pós-condição atômica.
 
+O B6c preserva `origin_block` nos novos cursores de transfers, usando a posição
+inicial do próprio cursor. Para um cursor LIVE antigo, a origem deve ser auditada
+e informada explicitamente ao comando dry-run; confirmação exige a lease LIVE
+inativa e nunca deriva a origem do primeiro evento retido.
+
 ### Corte C1 — read model e API de inteligência
 
 Objetivo:

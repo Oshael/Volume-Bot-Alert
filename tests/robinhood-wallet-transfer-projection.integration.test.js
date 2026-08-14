@@ -7,6 +7,7 @@ const { createRobinhoodWalletTransferProjectionRepository } = require('../src/mo
 const stage129 = require('../src/utils/db-init-stage129');
 const stage130 = require('../src/utils/db-init-stage130');
 const stage131 = require('../src/utils/db-init-stage131');
+const stage134 = require('../src/utils/db-init-stage134');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const VERSION = 'test_transfer_projection_v1';
@@ -36,6 +37,7 @@ describe('Robinhood wallet transfer projection persistence', () => {
     await stage129.init({ closePool: false });
     await stage130.init({ closePool: false });
     await stage131.init({ closePool: false });
+    await stage134.init({ closePool: false });
     await cleanup();
   });
   after(async () => {
@@ -45,10 +47,11 @@ describe('Robinhood wallet transfer projection persistence', () => {
 
   it('commits edges, bounded evidence and cursor atomically', async () => {
     const repository = createRobinhoodWalletTransferProjectionRepository({ database: db });
-    await repository.initCursor({
+    const initialized = await repository.initCursor({
       projectionVersion: VERSION, stream: 'seed', nextBlock: '100',
       nextBlockTime: '2099-01-01T00:00:00.000Z', safeHead: '200',
     });
+    assert.equal(initialized.originBlock, '100');
     const first = await repository.commitBatch({
       projectionVersion: VERSION, stream: 'seed', expectedVersion: 0,
       nextBlock: '101', nextBlockTime: '2099-01-02T00:00:00.000Z', safeHead: '200',

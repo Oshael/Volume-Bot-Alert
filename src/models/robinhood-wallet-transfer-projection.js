@@ -153,6 +153,7 @@ function summarize(events, projectionVersion) {
 function cursor(row) {
   return row ? {
     projectionVersion: row.projection_version, stream: row.stream,
+    originBlock: row.origin_block == null ? null : String(row.origin_block),
     nextBlock: String(row.next_block), nextTransactionIndex: row.next_transaction_index,
     nextLogIndex: row.next_log_index, nextBlockTime: new Date(row.next_block_time).toISOString(),
     safeHead: row.safe_head == null ? null : String(row.safe_head),
@@ -240,15 +241,19 @@ function createRobinhoodWalletTransferProjectionRepository(options = {}) {
     const stream = identifier(input.stream, 'stream');
     if (!STREAMS.has(stream)) throw new Error('stream must be seed or live');
     const next = position(input, 'next');
+    const originBlock = input.originBlock == null
+      ? next.block : uint(input.originBlock, 'originBlock');
+    if (BigInt(originBlock) > BigInt(next.block)) throw new Error('originBlock exceeds nextBlock');
     await database.query(
       `INSERT INTO robinhood_wallet_transfer_cursors (
          chain, projection_version, stream, next_block, next_transaction_index,
-         next_log_index, next_block_time, safe_head
-       ) VALUES ($1, $2, $3, $4::bigint, $5::integer, $6::integer, $7::timestamptz, $8::bigint)
+         next_log_index, next_block_time, safe_head, origin_block
+       ) VALUES ($1, $2, $3, $4::bigint, $5::integer, $6::integer, $7::timestamptz,
+                 $8::bigint, $9::bigint)
        ON CONFLICT (chain, projection_version, stream) DO NOTHING`,
       [CHAIN, projectionVersion, stream, next.block, next.transactionIndex, next.logIndex,
         timestamp(input.nextBlockTime, 'nextBlockTime'),
-        input.safeHead == null ? null : uint(input.safeHead, 'safeHead')]
+        input.safeHead == null ? null : uint(input.safeHead, 'safeHead'), originBlock]
     );
     return loadCursor(projectionVersion, stream);
   }
