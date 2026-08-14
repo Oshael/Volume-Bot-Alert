@@ -12,6 +12,10 @@ contexto da conversa.
 
 Data inicial: 2026-07-29.
 
+Requisito de escala revisado em 2026-08-14: **500+ contas monitoradas ao mesmo
+tempo**, com uma consulta global da timeline agregada iniciada a cada **200ms**.
+Nao usar X API paga nem comprar o feed de outro provedor que faça scraping.
+
 ## Status
 
 - Revisao 2026-08-13: taxonomia de sinais expandida (tiers de perfil, Sinal 3b de
@@ -31,9 +35,14 @@ Data inicial: 2026-07-29.
       `ListLatestTweetsTimeline` responde 200. **`x-client-transaction-id` NAO e
       exigido** para leitura hoje -- o principal risco tecnico caiu.
     - Rate-limit real medido: **500 req / 15 min** por sessao nesse endpoint.
-    - Realtime = **polling de lista por um pool de sessoes**, nao stream. 1 sessao
-      da frescor ~1,8s; N sessoes dividem por N (o custo escala com frequencia de
-      poll, nao com nº de contas: uma lista aguenta ~5000 membros num request).
+    - Realtime = **polling de lista por um pool de sessoes**, nao stream. O
+      endpoint agrega os membros: monitorar 500 contas numa lista nao produz 500
+      requests. A carga escala com a frequencia global de poll e com o numero de
+      listas, nao com o numero de membros dentro da lista.
+    - Cadencia operacional requerida: **1 request global a cada 200ms = 5 req/s
+      = 4.500 req/15min**. Com 15 sessoes, a distribuicao uniforme consome 300
+      requests/sessao/janela (60% do limite medido). Dez sessoes consumiriam 450
+      (90%) e nao sao capacidade de producao confortavel.
     - Estrutura do feed: ~41% retweets (resolucao obrigatoria), ~22% com foto
       (feed do Bloco 4), **replies filtradas** pelo endpoint de lista (gap de
       cobertura consciente).
@@ -48,7 +57,9 @@ Data inicial: 2026-07-29.
     persiste em `x_list` e tenta uma vez de novo em 400/404. O transporte real
     de proxy continua pendente.
   - 3.4 agora polla a cada 5s por default, isola erro por lista e aplica backoff
-    de 60s. Catch-up paginado depois de downtime continua pendente.
+    de 60s, mas esse desenho **nao atende 200ms**: tem piso de 1s, recarrega pool
+    e listas em cada ciclo, persiste dentro do hot path e descarta ticks enquanto
+    `draining`. A refatoracao obrigatoria foi dividida em 3.4a-3.4d.
   - 3.5a ganhou unicidade concorrente por `x_session.label` (stage125). A
     extensao de browser continua pendente.
 - 1 conta X descartavel em uso para os probes (home IP, sem proxy). Nenhum proxy
@@ -169,7 +180,16 @@ Emitir, no feed de alertas, um evento do tipo:
 
 Requisitos:
 
-- Latencia entre o post existir e o alerta sair: alvo abaixo de 10s.
+- **Cadencia de aquisicao:** iniciar uma consulta global da lista a cada 200ms
+  enquanto o worker e a fonte estiverem saudaveis. Isto e cadencia de polling,
+  nao promessa de que o X exponha ou entregue cada post em ate 200ms.
+- **Latencia ponta a ponta:** manter o alvo inicial abaixo de 10s e medir
+  separadamente `created_at -> primeira observacao -> fingerprint -> alerta`.
+  A cadencia de 200ms reduz apenas a parcela de espera do coletor.
+- **Escala inicial de producao:** 500+ contas publicas na mesma lista agregada.
+  Adicionar membros ate a capacidade da lista nao pode multiplicar requests.
+- **Fonte:** GraphQL web autenticado. X API paga e feeds comerciais de terceiros
+  ficam explicitamente fora da solucao.
 - O alerta e **evidencia**, nunca veredito. O texto precisa dizer "possivel
   causa".
 - Falso positivo custa um clique; falso negativo custa a operacao. Calibrar para
@@ -273,16 +293,22 @@ mesmo tempo, nao um post unico.
 - Indice de moedas mantido **em memoria** no worker, reconstruido no boot.
 - Ingestao via `ListLatestTweetsTimeline` (uma lista privada com as contas
   monitoradas), nao via polling por perfil.
+- **Uma requisicao global por tick.** Sessoes se revezam para executar a mesma
+  timeline; nao existe um poll simultaneo por conta monitorada nem por sessao.
+- **Sem X API paga e sem revendedor de feed.** O custo cresce com contas e posts
+  justamente nos modelos recusados; o produto assume conscientemente o custo de
+  manutencao e o risco operacional do scraping proprio.
 - Alerta comeca **admin-only**. A calibracao de limiar acontece com admin vendo
   match real no feed, nao com tabela silenciosa que ninguem olha.
 - **A validacao real do match acontece em producao admin-only, nao em
   experimento previo.** Montar pares historicos (imagem do post + imagem da
   moeda) exigiria lembrar de moedas antigas e caçar os posts correspondentes na
   mao; e trabalho manual que nao vai ser feito. Decisao consciente: assumir o
-  custo de infra antes da prova completa, compensando com pool inicial pequeno.
-- **Pool inicial deliberadamente pequeno**: 20-40 contas, 1-2 sessoes, uma lista.
-  Se a tese nao funcionar com 30 contas, nao funciona com 1000. O numero de
-  contas e variavel de calibracao, nao parametro fixo.
+  custo de infra antes da prova completa, mas separar o bootstrap funcional do
+  ensaio operacional com o pool completo.
+- **Cobertura operacional inicial:** 500+ contas em uma lista. O bootstrap de
+  codigo pode usar 1-2 sessoes em cadencia lenta para provar corretude, mas nao
+  valida nem representa a capacidade de producao de 200ms.
 
 ## Fora de escopo (decisao registrada, nao esquecimento)
 
@@ -307,10 +333,13 @@ mesmo tempo, nao um post unico.
 
 ```
 [X GraphQL autenticado]
-   |  ListLatestTweetsTimeline (1 request por ciclo)
+   |  ListLatestTweetsTimeline (1 request global iniciado a cada 200ms)
    v
-[x-ingestion-worker]  <- pool de sessoes, proxy fixo por sessao, rate limit
-   |  normaliza instructions -> posts
+[head-poll producer]  <- pool de sessoes, proxy fixo, budget e concorrencia limitada
+   |  resposta bruta; hot path nao toca no banco
+   v
+[dedupe + ingestion queue]  <- seen-set em memoria, backpressure e recovery lane
+   |  normaliza instructions -> somente posts novos
    |  resolve retweet -> post original (midia) + retuitador (alcance)
    v
 [x_post] + [x_post_media]  (retencao curta, ex. 48h)
@@ -343,9 +372,24 @@ dois consumidores do mesmo `x_post`/`x_post_media`, com tiers de perfil diferent
 
 **1. Pool de sessoes X**
 
-Dimensionamento inicial: **20-40 contas monitoradas, 1-2 sessoes, uma lista**.
-Nao e limitacao tecnica, e reducao deliberada de risco e custo enquanto o codigo
-e novo e a tese nao foi provada. Escala depois, com evidencia.
+Dimensionamento operacional: **500+ contas monitoradas, uma lista e 15 sessoes
+ativas**, com sessoes adicionais apenas como reposicao de falha. A lista agrega
+os perfis; aumentar de 500 membros nao altera a frequencia de request enquanto
+couber na mesma lista.
+
+Capacidade medida para a timeline:
+
+- 200ms = 5 req/s = 4.500 requests por janela de 15 minutos.
+- 15 sessoes = 300 requests por sessao (60% de 500).
+- O scheduler reserva inicialmente 20% de cada bucket (100 requests). Com 400
+  requests utilizaveis por sessao, **12 sessoes saudaveis sao o minimo
+  matematico** para sustentar 200ms; 15 e o alvo operacional.
+- Abaixo de 12 sessoes saudaveis, o worker aumenta o intervalo (reduz a
+  frequencia) automaticamente conforme `remaining/reset`; nunca consome a
+  reserva para fingir que o SLA esta saudavel. A degradacao precisa gerar alerta
+  operacional.
+- O limite e capacidade tecnica, nao garantia contra enforcement. Varias sessoes
+  consultando continuamente a mesma lista continuam sendo um padrao correlacionavel.
 
 - Cada sessao = `auth_token` + `ct0` de uma conta real, obtidos por login manual
   no navegador. Automatizar o login (`onboarding/task.json`) nao compensa por
@@ -386,10 +430,36 @@ e novo e a tese nao foi provada. Escala depois, com evidencia.
   ler `ListLatestTweetsTimeline` (2026-08-13) -- tratar como opcional ate um 404
   provar o contrario, nao construir o gerador especulativamente.
 - Rate limit lido de `x-rate-limit-remaining` / `-reset`, nunca chutado. Token
-  bucket por sessao x endpoint.
+  bucket por sessao x endpoint, com reserva operacional configuravel.
 - 401/403 = desabilita a sessao ate re-seed, nunca retry por relogio.
 
 **2. Ingestao e normalizacao**
+
+- **Hot path e produtor, nao pipeline inteiro.** O tick de 200ms apenas escolhe
+  sessao/lista, inicia o request e entrega a resposta a uma fila limitada.
+  Normalizacao, dedupe persistente e escrita no banco rodam em consumidores
+  separados e nao seguram o relogio do coletor.
+- Scheduler usa relogio monotonicamente corrigido, nao `setInterval` com guard
+  `draining`. Inicia no maximo um request por tick global e aceita concorrencia
+  em voo limitada (default inicial 3) para que RTT acima de 200ms nao derrube a
+  cadencia. Fila cheia ou fonte lenta causa degradacao controlada, nunca memoria
+  sem limite.
+- Pool, lista ativa e `queryId` ficam em cache no hot path. Refresh de banco roda
+  fora do tick (periodico e sob invalidacao por erro), sem `listActive()` a cada
+  200ms.
+- Head poll usa pagina pequena (alvo inicial `count=5-10`) e seen-set/LRU de
+  `post_id` antes do banco. Respostas repetidas nao geram 25-50 upserts/s sem
+  post novo.
+- Recovery lane e separada: depois de downtime, saturacao da pagina ou cursor
+  ausente, pagina com lote maior ate reencontrar o ultimo ID conhecido. Recovery
+  nao altera silenciosamente a cadencia nem compartilha o budget sem limite.
+- Erros sao classificados pelo dono: 401/403 remove a sessao e tenta outro tick;
+  429 esgota apenas o bucket da sessao ate `reset`; 400/404 pode atualizar
+  `queryId` uma vez; 5xx/rede aplica backoff do request/fonte. Um erro de sessao
+  nao congela a lista inteira por 60s.
+- Telemetria minima: ticks planejados/iniciados/perdidos, intervalo real, RTT,
+  requests em voo, profundidade/idade da fila, posts vistos/novos/repetidos,
+  budget por sessao, sessoes saudaveis e duracao de recovery.
 
 - Resposta de timeline vem em `data...timeline.instructions[]`, tipo
   `TimelineAddEntries`, com o post em
@@ -590,7 +660,8 @@ alerta.
 | Item | Estimativa | Observacao |
 |---|---|---|
 | Proxies **estaticos/ISP** (por-IP fixo) | ~$1,5-3/IP/mes budget; ~$3-6/IP/mes
-  mid | **10-15 contas = ~$30-90/mes.** 1 IP dedicado por conta, sem compartilhar |
+  mid | **15 sessoes ativas = ~$22,5-90/mes**, fora reposicoes. 1 IP dedicado por
+  conta, sem compartilhar |
 | ~~Proxies rotativos por-GB~~ | evitar | polling de alta freq. queima GB;
   worst-case $500-1500/mes. O "$200-500" antigo assumia esse modelo errado |
 | Contas X | US$ 2-15 por conta, com churn | mais custo de setup que recorrente;
@@ -600,18 +671,19 @@ alerta.
 | Manutencao de engenharia | o mais caro | X muda `queryId` e a rotina de
   `transaction-id` sem aviso |
 
-Ordem de grandeza em regime (10-15 contas, proxies ISP por-IP): **~$50-150/mes**
+Ordem de grandeza em regime (15 contas, proxies ISP por-IP): **~$50-150/mes**
 de infra (proxies + reposicao de conta), mais horas recorrentes de engenharia. O
 compute nao aparece na conta. (O "$150-400" anterior assumia proxy por-GB.)
 
-Ordem de grandeza para provar a tese, com pool inicial pequeno: **US$ 50-80/mes**.
-E o valor que se aceita gastar antes de ter prova de que o match funciona.
+Nao entram nesta estimativa X API paga nem assinatura de fornecedor de feed;
+ambos foram recusados como modelo de custo.
 
-## Modo bootstrap (teste sem escala)
+## Modo bootstrap (corretude sem capacidade operacional)
 
-Objetivo desta fase: montar e testar **tudo o que nao depende de escala**, com
-1-2 contas proprias, pra que ampliar depois seja so adicionar contas e proxies --
-digitacao, nao codigo.
+Objetivo desta fase: montar e testar **corretude funcional** com 1-2 sessoes
+proprias em cadencia lenta. Esse bootstrap nao valida 200ms. A validacao de carga
+e uma etapa separada com o scheduler novo, respostas controladas e, por fim, o
+pool operacional.
 
 **Duravel vs. perecivel.**
 
@@ -624,10 +696,10 @@ digitacao, nao codigo.
   sozinha em semanas -- nao da pra "congelar e esperar". Constroi-se com extracao
   automatica no boot e **valida-se junto com o uso**, nao antes.
 
-**Alpha = 1-2 contas, nao 40.** O alpha ja e 1-2 sessoes (ver "Custo estimado").
-Contas proprias que voce topa queimar + uma lista com 20-40 influencers reais
-seguidos testam a tese inteira. Dinheiro (mais contas + proxies) escala *alem* do
-alpha; nao e requisito pra validar.
+**Bootstrap funcional = 1-2 sessoes; cobertura do produto = 500+ perfis.** Uma
+lista com os 500 perfis pode ser usada desde o bootstrap porque membros nao
+multiplicam requests. Com 1-2 sessoes a cadencia precisa respeitar o budget e sera
+mais lenta; ela testa parsing, dedupe e match, nao a latencia de producao.
 
 **Regra que torna a escala trivial.** Sessoes e proxies sao **linhas numa tabela**
 (`x_session`: `auth_token`, `ct0`, `proxy_url`, `enabled` por sessao), lidas em
@@ -644,8 +716,9 @@ Entra no Bloco 3.
   rede do login). **Nao suba essa sessao pra VPS pelada** -- o pulo IP-de-casa ->
   IP-de-datacenter e gatilho de ban. A migracao pra VPS vem junto com o proxy: reloga
   a conta *atraves do proxy* (nasce no proxy) e a VPS usa o mesmo proxy.
-- **Nao sobre-engenheirar** a orquestracao de 40 sessoes antes da tese fechar;
-  construa o minimo que roda 1-2 sessoes limpo e e extensivel por config.
+- **Nao confundir corretude com capacidade.** O mesmo codigo precisa rodar limpo
+  com 1-2 sessoes em cadencia degradada e sustentar 200ms com 15; nao manter dois
+  workers ou dois caminhos de ingestao.
 
 ## Blocos de execucao
 
@@ -659,7 +732,8 @@ Escopo do modo bootstrap -- o que da pra testar so com contas proprias:
 | 0 | robustez do pHash (probe) | sim, sem infra |
 | 1 | fingerprint das moedas | sim, independe do X |
 | 2 | sessao X + probe do timeline | sim, 1 conta (home IP ou 1 proxy) |
-| 3 | ingestao continua (config-driven) | sim, 1-2 sessoes |
+| 3 | ingestao continua (config-driven) | corretude com 1-2; carga com fakes;
+  200ms real requer pool operacional |
 | 4 / 4b / 4c | imagem+OCR / follow / tendencia | sim |
 | 5 | matcher + feed admin-only | sim -- aqui voce ve se "monitora legal" |
 | 6 | liberacao pra usuarios | nao -- precisa de escala + rotulos do Bloco 5 |
@@ -763,8 +837,32 @@ Bloco grande -> fatiado (cada slice <=500 linhas, commit proprio):
   `ProxyAgent`.
 - **3.4 [REABERTO] Worker + wiring.** Loop, persistencia e grupo isolado
   `x-ingest` estao implementados e desligados por default. Correcao de
-  2026-08-14: default de 5s, erro isolado por lista e backoff de 60s. Pendente:
-  catch-up paginado para cobrir downtime/pico maior que a pagina da timeline.
+  2026-08-14: default de 5s, erro isolado por lista e backoff de 60s. A auditoria
+  para o requisito de 200ms mostrou que baixar `intervalMs` nao basta: o codigo
+  atual tem piso de 1s, `setInterval` + `draining`, refresh de pool/lista por
+  ciclo, persistencia sequencial dos mesmos 20 posts e backoff que pode congelar
+  a lista por erro de uma sessao. Refatoracao dividida para manter cada corte
+  <=500 linhas:
+  - **3.4a [PENDENTE] Scheduler e hot path.** Relogio monotonicamente corrigido
+    de 200ms, um start global por tick, concorrencia em voo limitada, cache de
+    lista/pool/`queryId` e refresh fora do tick. Se houver mais de uma lista, o
+    scheduler distribui a cadencia global; nunca cria 5 req/s por lista sem
+    decisao explicita. Testes unitarios com relogio e chamadas lentas protegem
+    cadencia, limite de concorrencia e degradacao.
+  - **3.4b [PENDENTE] Fila e dedupe antes do banco.** Separar produtor de
+    consumidores, seen-set/LRU por `post_id`, persistir somente itens novos,
+    backpressure limitada e shutdown com drain. Estender
+    `tests/x-ingestion-worker.test.js`; integracao existente continua protegendo
+    idempotencia persistente.
+  - **3.4c [PENDENTE] Head leve + recovery.** `count` pequeno no fluxo de 200ms;
+    catch-up paginado com lote maior apos downtime, pagina cheia ou gap, sem
+    bloquear o head poll. Testar que nao perde posts nem duplica efeitos na
+    transicao recovery -> head.
+  - **3.4d [PENDENTE] Budget, falhas e observabilidade.** Reserva inicial de 20%
+    por sessao, cadencia automatica conforme sessoes saudaveis, 401/403/429/5xx
+    classificados sem backoff indevido da lista, metricas de tick/RTT/fila/budget
+    e ensaio sustentado com 15 sessoes fake. Criterio: aproximar 5 starts/s mesmo
+    com RTT >200ms, respeitar o limite em voo e nunca ultrapassar budget.
 - **3.5 [PARCIAL] Re-seed de sessao.** Endpoint admin implementado (3.5a), com
   unicidade de `label` via stage125 e upsert seguro sob concorrencia. Pendente:
   extensao de browser e seu contrato de autenticacao.
@@ -787,8 +885,10 @@ Independente do pipeline de imagem e pode ser feito antes dele.
   ultimo topo sao os follows novos. Sem paginar nem diffar a lista inteira. Em
   producao, diffar um top-N pequeno contra cache (cobre follow multiplo/unfollow).
 - Gatilho de `friends_count` via `UsersByRestIds` em batch (tabela
-  `x_account_follow_state`) e **otimizacao de escala**, nao requisito do alpha:
-  com pool pequeno da pra pollar `Following` pagina 1 por conta direto no ciclo.
+  `x_account_follow_state`) e **requisito para 500+ perfis**, nao mera
+  otimizacao. Os perfis sao verificados em cohorts/batches; `Following` pagina 1
+  so e consultado para a conta cujo contador mudou. Esse scheduler tem budget e
+  fila proprios e nunca entra no hot path de 200ms dos posts.
 - Para cada perfil novo seguido: extrair CA de nome, bio e post fixado.
 - Casar o CA contra o catalogo. Match exato, sem limiar.
 
@@ -851,18 +951,23 @@ calibracao vem de ver match real todo dia.
 3. **Dependencia externa hostil.** X nao tem contrato, SLA nem versionamento.
    Quebra sem aviso e vira incidente de producao.
 4. **Risco operacional e de ToS.** Contas banidas, IPs bloqueados. Uso viola os
-   termos do X. Decisao consciente registrada aqui.
+   termos do X. Estar abaixo de 500 requests/15min evita apenas o 429 daquele
+   bucket; nao torna inofensivo o padrao correlacionado de varias sessoes
+   consultando a mesma lista. Decisao consciente registrada aqui.
 5. **Degradacao do pHash** com recorte agressivo, espelhamento, texto sobreposto
    ou "mesmo assunto, outra foto". Bloco 0 mede exatamente isso.
 6. **Spam de alerta** se o limiar ficar frouxo. A fase admin-only do Bloco 5
    existe para absorver isso antes de chegar em usuario.
-7. **A tese so e provada gastando.** Nao existe experimento previo barato que
+7. **A tese so e provada rodando.** Nao existe experimento previo barato que
    demonstre "post real casa com moeda real": montar pares historicos exigiria
    lembrar de moedas antigas e caçar os posts na mao, trabalho manual que nao vai
    ser feito. O Bloco 0 mata o modo de falha mais provavel (pHash fragil demais),
-   mas o resto so aparece com o pipeline rodando. Mitigacao: pool inicial de
-   20-40 contas e 1-2 sessoes, US$ 50-80/mes, para que o valor em risco antes da
-   prova seja pequeno.
+   mas o resto so aparece com o pipeline rodando. Mitigacao: validar corretude
+   com 1-2 sessoes em cadencia lenta e validar 200ms primeiro com carga simulada;
+   ampliar para 15 sessoes so quando esses dois gates passarem.
+8. **200ms pode nao produzir observacao em 200ms.** Cache e replicacao internos
+   do X, RTT e processamento de midia fazem parte da latencia. Instrumentar as
+   etapas e comparar cadencias antes de atribuir ganho ao aumento de requests.
 
 ## Pontos importantes
 
@@ -874,8 +979,15 @@ calibracao vem de ver match real todo dia.
   se post real casa com moeda real; isso so o Bloco 5 responde.
 - **A validacao final acontece em producao admin-only.** Isso e decisao
   consciente, nao descuido: nao ha experimento previo viavel para essa parte. O
-  contrapeso e o pool pequeno, que mantem o valor em risco na casa de dezenas de
-  dolares por mes ate haver evidencia.
+  contrapeso e separar o bootstrap funcional de 1-2 sessoes do ensaio operacional
+  de 15, sem reduzir a cobertura pretendida de 500 perfis.
+- **A lista agregada e a unidade de eficiencia.** Quinhentos perfis nao geram
+  quinhentos polls; um unico head poll cobre todos. Polling por perfil, browser
+  headless, varias listas equivalentes ou busca paralela aumentariam custo sem
+  fonte comprovadamente mais rapida.
+- **O worker atual de 5s nao vira um worker de 200ms trocando uma constante.** A
+  separacao produtor/consumidor, dedupe antes do banco, concorrencia limitada,
+  recovery e budget com reserva sao pre-condicoes de operacao.
 - Os Blocos 1 e 2 sao **independentes entre si**. O Bloco 1 nao toca no X e pode
   ser feito enquanto a decisao sobre contas e proxies ainda esta aberta.
 - O indice de match em memoria e barato ate escala muito maior que a nossa. Nao
