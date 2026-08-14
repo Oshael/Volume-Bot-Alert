@@ -80,6 +80,7 @@ describe('Robinhood wallet transfer RPC evidence reader', () => {
       [blockNumber, logIndex]
     )), [['100', 1], ['101', 2], ['100', 3]]);
     assert.equal(result.transfers[0].blockTime, new Date(1_900_000_100_000).toISOString());
+    assert.equal(result.fromBlockTime, new Date(1_900_000_100_000).toISOString());
     assert.deepEqual(result.checkpoint, {
       number: '102', hash: HASH_C,
       blockTime: new Date(1_900_000_102_000).toISOString(),
@@ -95,9 +96,9 @@ describe('Robinhood wallet transfer RPC evidence reader', () => {
     const result = await createRobinhoodWalletTransferEvidenceReader(deps).readRange({});
 
     assert.equal(deps.batches.length, 1);
-    assert.equal(deps.batches[0].length, 1);
+    assert.equal(deps.batches[0].length, 2);
     assert.deepEqual(result.transfers, []);
-    assert.equal(result.telemetry.evidenceBlocks, 1);
+    assert.equal(result.telemetry.evidenceBlocks, 2);
   });
 
   it('fails closed when a transfer block hash conflicts with canonical evidence', async () => {
@@ -122,8 +123,10 @@ describe('Robinhood wallet transfer RPC evidence reader', () => {
 
   it('rejects malformed block identity, timestamp and batch responses', async () => {
     const cases = [
-      { response: [{ ...block(102, HASH_C), number: '0x65' }], pattern: /requested number/ },
-      { response: [{ ...block(102, HASH_C), timestamp: 'invalid' }], pattern: /timestamp/ },
+      { response: [block(100, HASH_A), { ...block(102, HASH_C), number: '0x65' }],
+        pattern: /requested number/ },
+      { response: [block(100, HASH_A), { ...block(102, HASH_C), timestamp: 'invalid' }],
+        pattern: /timestamp/ },
       { response: [], pattern: /invalid result count/ },
     ];
     for (const testCase of cases) {

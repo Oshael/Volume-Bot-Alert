@@ -1283,6 +1283,11 @@ checkpoint seed, captura e classifica um range, separa eventos dentro da janela
 raw de 30 dias dos que seriam somente resumidos e reporta telemetria, sem criar
 ou avançar cursor e sem persistir eventos, arestas ou evidências.
 
+O B6f adiciona commit explícito ao tick, sem scheduler. A origem usa o timestamp
+canônico do primeiro bloco; raw é escrito somente dentro da janela, enquanto
+resumos/arestas/evidências e cursor usam CAS transacional. Corrida de bootstrap
+é rejeitada antes do raw e retry após conflito continua idempotente.
+
 ### Corte C1 — read model e API de inteligência
 
 Objetivo:

@@ -20,12 +20,6 @@ function classificationInput(captured, fromTime) {
   };
 }
 
-function earliestTransferTime(captured) {
-  return captured.transfers.reduce((earliest, transfer) => (
-    earliest === null || transfer.blockTime < earliest ? transfer.blockTime : earliest
-  ), null) || captured.checkpoint.blockTime;
-}
-
 function classifyTransfers(transfers, context, classifierFactory = createRobinhoodTransferClassifier) {
   const classifier = classifierFactory({
     poolAddresses: context.poolAddresses,
@@ -59,5 +53,5 @@ function withEndpointRoles(context, roles) {
 
 module.exports = {
   CLASSIFICATION_VERSION, EDGE_KINDS, classificationInput, classifyTransfers,
-  earliestTransferTime, withEndpointRoles,
+  withEndpointRoles,
 };

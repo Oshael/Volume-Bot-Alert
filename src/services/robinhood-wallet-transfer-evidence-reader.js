@@ -48,6 +48,7 @@ function sortedBlockNumbers(captured) {
   const values = new Set(captured.transfers.map((transfer) => (
     quantity(transfer.blockNumber, 'transfer.blockNumber').toString()
   )));
+  values.add(quantity(captured.fromBlock, 'captured.fromBlock').toString());
   values.add(quantity(captured.toBlock, 'captured.toBlock').toString());
   return [...values].sort((left, right) => (
     BigInt(left) < BigInt(right) ? -1 : BigInt(left) > BigInt(right) ? 1 : 0
@@ -109,6 +110,8 @@ function createRobinhoodWalletTransferEvidenceReader(options = {}) {
     const toBlock = quantity(captured.toBlock, 'captured.toBlock').toString();
     if (checkpointNumber !== toBlock) throw new Error('captured checkpoint does not end the range');
     const checkpoint = loaded.evidence.get(checkpointNumber);
+    const fromBlockNumber = quantity(captured.fromBlock, 'captured.fromBlock').toString();
+    const fromBlock = loaded.evidence.get(fromBlockNumber);
     const checkpointHash = fixedHex(captured.checkpoint?.hash, 'checkpoint.hash', 32);
     if (checkpoint.hash !== checkpointHash) {
       throw new Error('captured checkpoint hash conflicts with RPC evidence');
@@ -116,6 +119,7 @@ function createRobinhoodWalletTransferEvidenceReader(options = {}) {
     const transfers = enrichTransfers(captured.transfers, loaded.evidence);
     return Object.freeze({
       ...captured,
+      fromBlockTime: fromBlock.blockTime,
       checkpoint: Object.freeze({
         number: checkpointNumber, hash: checkpointHash, blockTime: checkpoint.blockTime,
       }),

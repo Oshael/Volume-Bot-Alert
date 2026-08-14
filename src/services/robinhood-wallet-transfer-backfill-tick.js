@@ -1,7 +1,7 @@
 const { RAW_RETENTION_DAYS } = require('../models/robinhood-token-transfer-persistence');
 const {
   CLASSIFICATION_VERSION, EDGE_KINDS, classificationInput, classifyTransfers,
-  earliestTransferTime, withEndpointRoles,
+  withEndpointRoles,
 } = require('./robinhood-wallet-transfer-batch');
 
 function boundedInteger(value, fallback, minimum, maximum, label) {
@@ -49,27 +49,55 @@ async function checkpointIsCanonical(evidence, seed) {
   return evidence.matchesCheckpoint({ number: seed.checkpointBlock, hash: seed.checkpointHash });
 }
 
-async function runRobinhoodWalletTransferBackfillDryRun(deps, input = {}) {
+function summarizeThroughDay(fromTime, checkpointTime) {
+  const fromDay = String(fromTime).slice(0, 10);
+  const checkpointDay = String(checkpointTime).slice(0, 10);
+  if (fromDay >= checkpointDay) return null;
+  const boundary = new Date(`${checkpointDay}T00:00:00.000Z`);
+  boundary.setUTCDate(boundary.getUTCDate() - 1);
+  return boundary.toISOString().slice(0, 10);
+}
+
+function report(prepared, additions = {}) {
+  if (prepared.outcome) return prepared.outcome;
+  const { plan, captured, classified, rawEligible, summaryOnly, edgeEligible, cutoff, roles } = prepared;
+  return Object.freeze({
+    status: 'dry-run', reason: null, plan, fromBlock: captured.fromBlock,
+    toBlock: captured.toBlock, nextBlock: captured.nextBlock,
+    completesSeed: BigInt(captured.nextBlock) > BigInt(plan.throughBlock),
+    scopeTokens: captured.scopeTokens, transfers: classified.events.length,
+    classifications: classified.counts, rawEligible: rawEligible.length,
+    summaryOnly: summaryOnly.length,
+    classificationOnly: classified.events.length - rawEligible.length - summaryOnly.length,
+    edgeEligible: edgeEligible.length, rawCutoff: cutoff.toISOString(),
+    telemetry: Object.freeze({ ...captured.telemetry, endpointRoles: roles.telemetry }),
+    ...additions,
+  });
+}
+
+async function prepareBackfillRange(deps, input = {}) {
   assertDependencies(deps);
   const maxBlocks = boundedInteger(input.maxBlocks, 250, 1, 5000, 'maxBlocks');
   const plan = await deps.source.loadBackfillPlan(CLASSIFICATION_VERSION);
   if (!plan.ready) {
-    return Object.freeze({ status: 'blocked', reason: plan.reason, plan });
+    return { outcome: Object.freeze({ status: 'blocked', reason: plan.reason, plan }) };
   }
   if (plan.status === 'complete') {
-    return Object.freeze({ status: 'complete', reason: null, plan });
+    return { outcome: Object.freeze({ status: 'complete', reason: null, plan }) };
   }
   if (!await checkpointIsCanonical(deps.evidence, plan.seed)) {
-    return Object.freeze({ status: 'blocked', reason: 'checkpoint_mismatch', plan });
+    return { outcome: Object.freeze({ status: 'blocked', reason: 'checkpoint_mismatch', plan }) };
   }
   const range = rangeForPlan(plan, maxBlocks);
   const tokenAddresses = await deps.source.listTrackedTokenAddresses();
   const captured = await deps.evidence.readRange({ tokenAddresses, ...range });
   const context = await deps.source.loadBackfillRangeContext(classificationInput(
-    captured, earliestTransferTime(captured)
+    captured, captured.fromBlockTime
   ));
   if (!context.ready) {
-    return Object.freeze({ status: 'awaiting-context', reason: context.reason, plan, ...range });
+    return { outcome: Object.freeze({
+      status: 'awaiting-context', reason: context.reason, plan, ...range,
+    }) };
   }
   const roles = await deps.roles.resolveRoles({
     transfers: captured.transfers,
@@ -86,20 +114,63 @@ async function runRobinhoodWalletTransferBackfillDryRun(deps, input = {}) {
   const rawEligible = classified.events.filter(isRawEligible);
   const edgeEligible = classified.events.filter(({ transferKind }) => EDGE_KINDS.has(transferKind));
   const summaryOnly = edgeEligible.filter((event) => !isRawEligible(event));
-  return Object.freeze({
-    status: 'dry-run', reason: null, plan, fromBlock: captured.fromBlock,
-    toBlock: captured.toBlock, nextBlock: captured.nextBlock,
-    completesSeed: BigInt(captured.nextBlock) > BigInt(plan.throughBlock),
-    scopeTokens: captured.scopeTokens, transfers: classified.events.length,
-    classifications: classified.counts, rawEligible: rawEligible.length,
-    summaryOnly: summaryOnly.length,
-    classificationOnly: classified.events.length - rawEligible.length - summaryOnly.length,
-    edgeEligible: edgeEligible.length, rawCutoff: cutoff.toISOString(),
-    telemetry: Object.freeze({ ...captured.telemetry, endpointRoles: roles.telemetry }),
+  return { plan, captured, classified, rawEligible, edgeEligible, summaryOnly, cutoff, roles };
+}
+
+async function runRobinhoodWalletTransferBackfillDryRun(deps, input = {}) {
+  return report(await prepareBackfillRange(deps, input));
+}
+
+function cursorMatchesRange(cursor, prepared) {
+  return cursor?.stream === 'seed'
+    && cursor.originBlock === prepared.plan.fromBlock
+    && cursor.safeHead === prepared.plan.throughBlock
+    && cursor.nextBlock === prepared.captured.fromBlock
+    && ['pending', 'running'].includes(cursor.lifecycleState);
+}
+
+async function seedCursor(projection, prepared) {
+  if (prepared.plan.seed) return prepared.plan.seed;
+  return projection.initCursor({
+    projectionVersion: CLASSIFICATION_VERSION, stream: 'seed',
+    originBlock: prepared.plan.fromBlock, nextBlock: prepared.plan.fromBlock,
+    nextBlockTime: prepared.captured.fromBlockTime, safeHead: prepared.plan.throughBlock,
+  });
+}
+
+async function runRobinhoodWalletTransferBackfillCommit(deps, input = {}) {
+  requireMethods(deps.projection, ['commitBatch', 'initCursor'], 'transfer projection');
+  requireMethods(deps.raw, ['insertTransferEvents'], 'raw transfer repository');
+  const prepared = await prepareBackfillRange(deps, input);
+  if (prepared.outcome) return prepared.outcome;
+  const cursor = await seedCursor(deps.projection, prepared);
+  if (!cursorMatchesRange(cursor, prepared)) {
+    return report(prepared, { status: 'cursor-conflict', rawInserted: 0 });
+  }
+  const raw = await deps.raw.insertTransferEvents(prepared.rawEligible);
+  const projected = await deps.projection.commitBatch({
+    projectionVersion: CLASSIFICATION_VERSION, stream: 'seed',
+    expectedVersion: cursor.version, nextBlock: prepared.captured.nextBlock,
+    nextBlockTime: prepared.captured.checkpoint.blockTime,
+    safeHead: prepared.plan.throughBlock,
+    checkpointBlock: prepared.captured.checkpoint.number,
+    checkpointHash: prepared.captured.checkpoint.hash,
+    summarizedThroughDay: summarizeThroughDay(
+      cursor.nextBlockTime, prepared.captured.checkpoint.blockTime
+    ),
+    events: prepared.edgeEligible,
+  });
+  return report(prepared, {
+    status: projected.committed
+      ? (projected.cursor.lifecycleState === 'complete' ? 'complete' : 'projected')
+      : 'cursor-conflict',
+    rawInserted: raw.inserted, edgeGroups: projected.edgeGroups || 0,
+    evidenceCandidates: projected.evidenceCandidates || 0,
   });
 }
 
 module.exports = {
+  runRobinhoodWalletTransferBackfillCommit,
   runRobinhoodWalletTransferBackfillDryRun,
-  __private: { rangeForPlan, retentionCutoff },
+  __private: { rangeForPlan, retentionCutoff, summarizeThroughDay },
 };

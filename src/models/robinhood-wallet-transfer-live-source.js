@@ -140,6 +140,7 @@ function transferCursor(row) {
     completedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null,
     checkpointBlock: optionalBlockNumber(row.checkpoint_block),
     checkpointHash: row.checkpoint_hash || null,
+    nextBlockTime: row.next_block_time ? new Date(row.next_block_time).toISOString() : null,
     version: Number(row.version),
   }) : null;
 }
@@ -269,7 +270,7 @@ function createRobinhoodWalletTransferLiveSourceRepository(options = {}) {
     const [swap, cursors] = await Promise.all([
       loadBackfillFrontier(),
       database.query(
-        `SELECT stream, origin_block, next_block, safe_head, lifecycle_state,
+        `SELECT stream, origin_block, next_block, next_block_time, safe_head, lifecycle_state,
                 completed_at, checkpoint_block, checkpoint_hash, version
            FROM robinhood_wallet_transfer_cursors
           WHERE chain = $1 AND projection_version = $2 AND stream IN ('seed', 'live')`,
