@@ -1055,6 +1055,12 @@ a rota falha fechado. Tokens ainda sem state `live` preservam o fallback paginad
 do Blockscout. Classificação local só afirma burn e pools conhecidos; os demais
 endereços permanecem `unknown`, sem fingir que contrato é EOA.
 
+No expanded chart RH, a aba `HOLDERS` carrega lista e histórico somente ao ser
+aberta. Ela mostra 50 endereços por página, preserva a pilha de cursores para
+voltar, expõe loading/error/retry e apresenta os snapshots diários como sticks
+de variação. Retornar para `CHART` remonta o feed de trades e fechar o modal
+cancela a aplicação de respostas holder atrasadas.
+
 O worker lê `Transfer` por range com a coorte enviada como allowlist `address` ao
 RPC, commita ranges em ordem e não grava o histórico bruto no journal. Se o node
 rejeitar o tamanho da allowlist, ela é dividida ao meio adaptativamente sem
