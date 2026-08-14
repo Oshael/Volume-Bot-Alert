@@ -13,7 +13,10 @@ describe('Robinhood holder bootstrap repository', () => {
   it('requires a durable admission cutoff and bounded batch', () => {
     assert.deepEqual(__private.normalizeOptions({
       admittedAfter: '2026-08-10T00:00:00.000Z', limit: 25,
-    }), { admittedAfter: '2026-08-10T00:00:00.000Z', limit: 25 });
+    }), {
+      admittedAfter: '2026-08-10T00:00:00.000Z', limit: 25,
+      maxInitialGapBlocks: 20_000,
+    });
     assert.throws(() => __private.normalizeOptions({ admittedAfter: 'invalid' }), /admittedAfter/);
     assert.throws(() => __private.normalizeOptions({
       admittedAfter: '2026-08-10T00:00:00.000Z', limit: 1001,
@@ -46,13 +49,14 @@ describe('Robinhood holder bootstrap repository', () => {
     assert.match(calls[0].sql, /catalog\.first_seen_at >= \$2::timestamptz/);
     assert.match(calls[0].sql, /attribution\.source = ANY\(\$3::varchar\[\]\)/);
     assert.match(calls[0].sql, /attribution\.attribution_block IS NOT NULL/);
+    assert.match(calls[0].sql, /cursor\.safe_head - \$5::bigint/);
     assert.match(calls[0].sql, /state\.token_address IS NULL/);
     assert.match(calls[0].sql, /robinhood_holder_global_backfill_tokens cohort/);
-    assert.match(calls[0].sql, /run\.barrier_block IS NOT NULL/);
+    assert.doesNotMatch(calls[0].sql, /run\.barrier_block IS NOT NULL/);
     assert.match(calls[0].sql, /FOR UPDATE OF attribution SKIP LOCKED/);
     assert.match(calls[0].sql, /ON CONFLICT \(chain, token_address\) DO NOTHING/);
     assert.deepEqual(calls[0].params, [
-      'robinhood', '2026-08-10T00:00:00.000Z', [...EXACT_DEPLOYMENT_SOURCES], 12,
+      'robinhood', '2026-08-10T00:00:00.000Z', [...EXACT_DEPLOYMENT_SOURCES], 12, 20_000,
     ]);
   });
 

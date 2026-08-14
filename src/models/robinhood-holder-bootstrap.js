@@ -12,7 +12,15 @@ function normalizeOptions(input = {}) {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) {
     throw new Error('holderBootstrap.limit is invalid');
   }
-  return Object.freeze({ admittedAfter: admittedAfter.toISOString(), limit });
+  const maxInitialGapBlocks = input.maxInitialGapBlocks == null
+    ? 20_000 : Number(input.maxInitialGapBlocks);
+  if (!Number.isSafeInteger(maxInitialGapBlocks)
+      || maxInitialGapBlocks < 1 || maxInitialGapBlocks > 100_000_000) {
+    throw new Error('holderBootstrap.maxInitialGapBlocks is invalid');
+  }
+  return Object.freeze({
+    admittedAfter: admittedAfter.toISOString(), limit, maxInitialGapBlocks,
+  });
 }
 
 function normalizeColdOptions(input = {}) {
@@ -46,14 +54,20 @@ function createRobinhoodHolderBootstrapRepository(options = {}) {
          SELECT catalog.address AS token_address, attribution.attribution_block
            FROM token_catalog catalog
            INNER JOIN robinhood_token_attributions attribution
-             ON attribution.chain = catalog.chain
+            ON attribution.chain = catalog.chain
             AND attribution.token_address = catalog.address
+           INNER JOIN robinhood_holder_cursors cursor
+             ON cursor.chain = catalog.chain AND cursor.stream = 'live'
            LEFT JOIN robinhood_holder_token_states state
              ON state.chain = catalog.chain AND state.token_address = catalog.address
           WHERE catalog.chain = $1
             AND catalog.first_seen_at >= $2::timestamptz
             AND attribution.source = ANY($3::varchar[])
             AND attribution.attribution_block IS NOT NULL
+            AND cursor.safe_head IS NOT NULL
+            AND attribution.attribution_block >= GREATEST(
+              cursor.safe_head - $5::bigint + 1, 0
+            )
             AND state.token_address IS NULL
             AND NOT EXISTS (
               SELECT 1 FROM robinhood_holder_global_backfill_tokens cohort
@@ -77,7 +91,7 @@ function createRobinhoodHolderBootstrapRepository(options = {}) {
        RETURNING token_address, deployment_block, backfill_next_block, ledger_status`,
       [
         CHAIN, normalized.admittedAfter,
-        [...EXACT_DEPLOYMENT_SOURCES], normalized.limit,
+        [...EXACT_DEPLOYMENT_SOURCES], normalized.limit, normalized.maxInitialGapBlocks,
       ]
     );
     return Object.freeze(result.rows.map(normalizeSeededRow));

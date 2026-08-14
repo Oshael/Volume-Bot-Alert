@@ -488,6 +488,7 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_HOLDER_COLD_ADMITTED_BEFORE: undefined,
       ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ENABLED: undefined,
       ROBINHOOD_HOLDER_GLOBAL_BACKFILL_CATALOG_CUTOFF: undefined,
+      ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ROLLING_ENABLED: undefined,
       ROBINHOOD_HOLDER_LIVE_ENABLED: undefined,
       ROBINHOOD_HOLDER_RECONCILIATION_ENABLED: undefined,
       ROBINHOOD_HOLDER_JOURNAL_PRUNE_ENABLED: undefined,
@@ -499,6 +500,7 @@ describe('runtime worker groups config', () => {
       assert.equal(config.robinhoodHolderColdWorker.admittedBefore, null);
       assert.equal(config.robinhoodHolderGlobalBackfillWorker.enabled, false);
       assert.equal(config.robinhoodHolderGlobalBackfillWorker.autoStart, false);
+      assert.equal(config.robinhoodHolderGlobalBackfillWorker.rollingEnabled, false);
       assert.equal(config.robinhoodHolderLiveWorker.enabled, false);
       assert.equal(config.robinhoodHolderReconciliationWorker.enabled, false);
       assert.equal(config.robinhoodHolderJournalPruneWorker.enabled, false);
@@ -513,12 +515,16 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_HOLDER_GLOBAL_BACKFILL_PREFETCH: '99',
       ROBINHOOD_HOLDER_GLOBAL_BACKFILL_MAX_COMMIT_MS: '10000',
       ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ADDRESS_SHARD_CONCURRENCY: '99',
+      ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ROLLING_ENABLED: 'true',
+      ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ROLLING_MIN_TOKENS: '999999',
     }, (config) => {
       assert.equal(config.robinhoodHolderGlobalBackfillWorker.enabled, true);
       assert.equal(config.robinhoodHolderGlobalBackfillWorker.autoStart, true);
       assert.equal(config.robinhoodHolderGlobalBackfillWorker.prefetch, 8);
       assert.equal(config.robinhoodHolderGlobalBackfillWorker.maxCommitMs, 10_000);
       assert.equal(config.robinhoodHolderGlobalBackfillWorker.addressShardConcurrency, 4);
+      assert.equal(config.robinhoodHolderGlobalBackfillWorker.rollingEnabled, true);
+      assert.equal(config.robinhoodHolderGlobalBackfillWorker.rollingMinTokens, 100_000);
     });
     withEnv({
       ROBINHOOD_RPC_URL: 'http://127.0.0.1:8547',
@@ -527,6 +533,7 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_HOLDER_BACKFILL_INTERVAL_MS: '1',
       ROBINHOOD_HOLDER_BACKFILL_MAX_ERROR_BACKOFF_MS: '1',
       ROBINHOOD_HOLDER_BACKFILL_SEED_LIMIT: '9999',
+      ROBINHOOD_HOLDER_BACKFILL_MAX_INITIAL_GAP_BLOCKS: '9999999999',
       ROBINHOOD_HOLDER_BACKFILL_RANGE_SIZE: '9999',
       ROBINHOOD_HOLDER_BACKFILL_CONFIRMATIONS: '9999',
       ROBINHOOD_HOLDER_COLD_ENABLED: 'true',
@@ -574,6 +581,7 @@ describe('runtime worker groups config', () => {
         intervalMs: 100,
         maxErrorBackoffMs: 1000,
         seedLimit: 1000,
+        maxInitialGapBlocks: 100_000_000,
         rangeSize: 5000,
         confirmations: 1000,
       });

@@ -46,6 +46,9 @@ function normalizeOptions(input = {}) {
       input.maxErrorBackoffMs, 30_000, 1000, 300_000, 'maxErrorBackoffMs'
     ),
     seedLimit: boundedInteger(input.seedLimit, 100, 1, 1000, 'seedLimit'),
+    maxInitialGapBlocks: boundedInteger(
+      input.maxInitialGapBlocks, 20_000, 1, 100_000_000, 'maxInitialGapBlocks'
+    ),
     rangeSize: boundedInteger(input.rangeSize, 250, 1, 5000, 'rangeSize'),
     confirmations: boundedInteger(input.confirmations, 12, 0, 1000, 'confirmations'),
   });
@@ -139,6 +142,7 @@ function createRobinhoodHolderBackfillWorker(deps = {}) {
       const runtime = await getRuntime();
       const seeded = await runtime.bootstrap.seedNewTokens({
         admittedAfter: options.admittedAfter, limit: options.seedLimit,
+        maxInitialGapBlocks: options.maxInitialGapBlocks,
       });
       const replay = await runtime.executor.runOnce({
         rangeSize: options.rangeSize, confirmations: options.confirmations,

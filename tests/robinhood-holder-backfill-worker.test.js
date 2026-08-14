@@ -60,7 +60,7 @@ describe('Robinhood holder backfill worker', () => {
       ['executor', {
         database: 'database', env: { ROBINHOOD_RPC_URL: 'http://node' },
       }],
-      ['seed', { admittedAfter: CUTOFF, limit: 25 }],
+      ['seed', { admittedAfter: CUTOFF, limit: 25, maxInitialGapBlocks: 20_000 }],
       ['replay', { rangeSize: 100, confirmations: 20 }],
     ]);
     assert.equal(clock.scheduled[1].delayMs, 750);

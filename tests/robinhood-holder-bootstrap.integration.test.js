@@ -6,7 +6,7 @@ const {
   createRobinhoodHolderBootstrapRepository,
 } = require('../src/models/robinhood-holder-bootstrap');
 
-const TOKENS = ['a', 'b', 'c', 'd', 'e'].map((digit) => `0x${digit.repeat(40)}`);
+const TOKENS = ['a', 'b', 'c', 'd', 'e', 'f'].map((digit) => `0x${digit.repeat(40)}`);
 
 after(() => db.pool.end());
 
@@ -26,6 +26,8 @@ describe('Robinhood holder bootstrap persistence', () => {
       )`);
       await client.query(`CREATE TEMP TABLE robinhood_holder_token_states
         (LIKE public.robinhood_holder_token_states INCLUDING ALL)`);
+      await client.query(`CREATE TEMP TABLE robinhood_holder_cursors
+        (LIKE public.robinhood_holder_cursors INCLUDING ALL)`);
       await client.query(`CREATE TEMP TABLE robinhood_holder_global_backfill_runs
         (LIKE public.robinhood_holder_global_backfill_runs INCLUDING ALL)`);
       await client.query(`CREATE TEMP TABLE robinhood_holder_global_backfill_tokens
@@ -36,7 +38,8 @@ describe('Robinhood holder bootstrap persistence', () => {
           ('robinhood', $2, '2026-08-09T23:59:00Z'),
           ('robinhood', $3, '2026-08-10T00:02:00Z'),
           ('robinhood', $4, '2026-08-10T00:03:00Z'),
-          ('robinhood', $5, '2026-08-10T00:04:00Z')`, TOKENS
+          ('robinhood', $5, '2026-08-10T00:04:00Z'),
+          ('robinhood', $6, '2026-08-10T00:05:00Z')`, TOKENS
       );
       await client.query(
         `INSERT INTO robinhood_token_attributions VALUES
@@ -44,7 +47,8 @@ describe('Robinhood holder bootstrap persistence', () => {
           ('robinhood', $2, 'rpc_direct', 99),
           ('robinhood', $3, 'blockscout', NULL),
           ('robinhood', $4, 'launchpad_event', 104),
-          ('robinhood', $5, 'rpc_direct', 105)`, TOKENS
+          ('robinhood', $5, 'rpc_direct', 105),
+          ('robinhood', $6, 'rpc_direct', 50)`, TOKENS
       );
       await client.query(
         `INSERT INTO robinhood_holder_token_states (
@@ -59,16 +63,19 @@ describe('Robinhood holder bootstrap persistence', () => {
         `INSERT INTO robinhood_holder_global_backfill_tokens (run_id, token_address)
          VALUES ($1, $2)`, [run.rows[0].id, TOKENS[4]]
       );
+      await client.query(
+        `INSERT INTO robinhood_holder_cursors (next_block, safe_head) VALUES (201, 200)`
+      );
       const database = { query: client.query.bind(client) };
       const repository = createRobinhoodHolderBootstrapRepository({ database });
       assert.deepEqual(await repository.seedNewTokens({
-        admittedAfter: '2026-08-10T00:00:00Z', limit: 10,
+        admittedAfter: '2026-08-10T00:00:00Z', limit: 10, maxInitialGapBlocks: 100,
       }), [{
         tokenAddress: TOKENS[0], deploymentBlock: '101',
         backfillNextBlock: '101', ledgerStatus: 'backfilling',
       }]);
       assert.deepEqual(await repository.seedNewTokens({
-        admittedAfter: '2026-08-10T00:00:00Z', limit: 10,
+        admittedAfter: '2026-08-10T00:00:00Z', limit: 10, maxInitialGapBlocks: 100,
       }), []);
       assert.deepEqual(await repository.seedColdTokens({
         admittedBefore: '2026-08-10T00:00:00Z', limit: 10,

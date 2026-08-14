@@ -92,6 +92,42 @@ describe('Robinhood holder global backfill worker', () => {
     assert.ok(telemetry[0].telemetry.blocksPerSecond <= 50);
     assert.ok(telemetry[0].telemetry.blocksPerSecond > 40);
   });
+  it('freezes a rolling wide-gap cohort after the previous run completes', async () => {
+    const inputs = [];
+    const runtime = {
+      lifecycle: { getLatestRun: async () => campaign('completed') },
+      delta: {
+        previewRun: async (input) => { inputs.push(input); return { candidateTokens: 120 }; },
+        createRun: async (input) => {
+          inputs.push(input); return { runId: '2', cohortTokens: 120 };
+        },
+      },
+    };
+    const result = await runCampaignTick(runtime, normalizeOptions({
+      enabled: true, autoStart: true, catalogCutoff: CUTOFF, rollingEnabled: true,
+      rollingDelayMs: 60_000, rollingMinTokens: 100, rollingMinGapBlocks: 20_000,
+    }));
+    assert.equal(result.status, 'frozen-preview');
+    assert.equal(result.runId, '2');
+    assert.equal(inputs.length, 2);
+    assert.equal(inputs[0].includeBackfilling, false);
+    assert.equal(inputs[0].minimumGapBlocks, 20_000);
+  });
+  it('keeps a sub-threshold rolling cohort pending without creating a run', async () => {
+    const runtime = {
+      lifecycle: { getLatestRun: async () => campaign('completed') },
+      delta: {
+        previewRun: async () => ({ candidateTokens: 99 }),
+        createRun: async () => { throw new Error('must not create'); },
+      },
+    };
+    const result = await runCampaignTick(runtime, normalizeOptions({
+      enabled: true, autoStart: true, catalogCutoff: CUTOFF,
+      rollingEnabled: true, rollingMinTokens: 100,
+    }));
+    assert.equal(result.status, 'rolling-idle');
+    assert.equal(result.candidateTokens, 99);
+  });
   it('is opt-in and rejects an enabled run without cutoff', async () => {
     const scheduled = [];
     const worker = createRobinhoodHolderGlobalBackfillWorker({

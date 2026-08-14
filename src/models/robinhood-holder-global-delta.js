@@ -2,7 +2,11 @@ const db = require('./db');
 
 const CHAIN = 'robinhood';
 const EXACT_SOURCES = Object.freeze(['rpc_direct', 'launchpad_event']);
-const CANDIDATES_SQL = `
+function candidatesSql(includeBackfilling) {
+  const stateScope = includeBackfilling
+    ? `(state.token_address IS NULL OR state.ledger_status = 'backfilling')`
+    : 'state.token_address IS NULL';
+  return `
   SELECT catalog.address AS token_address,
          COALESCE(state.deployment_block, attribution.attribution_block)::bigint
            AS deployment_block,
@@ -15,13 +19,34 @@ const CANDIDATES_SQL = `
    WHERE catalog.chain = $1 AND catalog.first_seen_at < $2::timestamptz
      AND attribution.source = ANY($3::varchar[])
      AND attribution.attribution_block IS NOT NULL
-     AND (state.token_address IS NULL OR state.ledger_status = 'backfilling')
+     AND ${stateScope}
+     AND ($4::bigint IS NULL OR EXISTS (
+       SELECT 1 FROM robinhood_holder_cursors cursor
+        WHERE cursor.chain = catalog.chain AND cursor.stream = 'live'
+          AND cursor.safe_head IS NOT NULL
+          AND cursor.safe_head - attribution.attribution_block + 1 > $4::bigint
+     ))
      AND NOT EXISTS (
        SELECT 1 FROM robinhood_holder_global_backfill_tokens prior
         WHERE prior.chain = catalog.chain AND prior.token_address = catalog.address
           AND prior.status = 'excluded'
      )
    ORDER BY catalog.address`;
+}
+
+function candidateOptions(input) {
+  const minimumGapBlocks = input.minimumGapBlocks == null
+    ? null : Number(input.minimumGapBlocks);
+  if (minimumGapBlocks !== null
+      && (!Number.isSafeInteger(minimumGapBlocks) || minimumGapBlocks < 1)) {
+    throw new Error('delta minimumGapBlocks is invalid');
+  }
+  return Object.freeze({
+    cutoff: cutoffTimestamp(input.catalogCutoff),
+    includeBackfilling: input.includeBackfilling !== false,
+    minimumGapBlocks,
+  });
+}
 
 function cutoffTimestamp(value) {
   const parsed = new Date(value);
@@ -47,9 +72,9 @@ function createRobinhoodHolderGlobalDeltaRepository(options = {}) {
   const database = options.database || db;
 
   async function previewRun(input = {}) {
-    const cutoff = cutoffTimestamp(input.catalogCutoff);
+    const normalized = candidateOptions(input);
     const result = await database.query(
-      `WITH candidates AS MATERIALIZED (${CANDIDATES_SQL})
+      `WITH candidates AS MATERIALIZED (${candidatesSql(normalized.includeBackfilling)})
        SELECT COUNT(*)::int AS candidate_tokens,
               COUNT(*) FILTER (WHERE NOT adopted)::int AS unseeded_tokens,
               COUNT(*) FILTER (WHERE adopted)::int AS adopted_backfilling_tokens,
@@ -67,13 +92,13 @@ function createRobinhoodHolderGlobalDeltaRepository(options = {}) {
          LEFT JOIN robinhood_holder_cursors cursor
            ON cursor.chain = $1 AND cursor.stream = 'live'
         GROUP BY cursor.safe_head`,
-      [CHAIN, cutoff, [...EXACT_SOURCES]]
+      [CHAIN, normalized.cutoff, [...EXACT_SOURCES], normalized.minimumGapBlocks]
     );
     return summary(result.rows[0]);
   }
 
   async function createRun(input = {}) {
-    const cutoff = cutoffTimestamp(input.catalogCutoff);
+    const normalized = candidateOptions(input);
     const client = await database.getClient();
     try {
       await client.query('BEGIN');
@@ -99,8 +124,8 @@ function createRobinhoodHolderGlobalDeltaRepository(options = {}) {
         throw error;
       }
       const candidates = await client.query(
-        `${CANDIDATES_SQL} FOR UPDATE OF catalog, attribution`,
-        [CHAIN, cutoff, [...EXACT_SOURCES]]
+        `${candidatesSql(normalized.includeBackfilling)} FOR UPDATE OF catalog, attribution`,
+        [CHAIN, normalized.cutoff, [...EXACT_SOURCES], normalized.minimumGapBlocks]
       );
       if (!candidates.rowCount) {
         const error = new Error('Robinhood holder global delta has no eligible tokens');
@@ -123,7 +148,7 @@ function createRobinhoodHolderGlobalDeltaRepository(options = {}) {
            chain, catalog_cutoff, next_block, telemetry
          ) VALUES ($1, $2, $3::bigint,
                    jsonb_build_object('startBlock', ($3::bigint)::text))
-         RETURNING id`, [CHAIN, cutoff, startBlock]
+         RETURNING id`, [CHAIN, normalized.cutoff, startBlock]
       );
       const runId = inserted.rows[0].id;
       await client.query(
@@ -155,7 +180,7 @@ function createRobinhoodHolderGlobalDeltaRepository(options = {}) {
       );
       await client.query('COMMIT');
       return Object.freeze({
-        runId: String(runId), status: 'frozen', catalogCutoff: cutoff,
+        runId: String(runId), status: 'frozen', catalogCutoff: normalized.cutoff,
         cohortTokens: addresses.length, adoptedBackfillingTokens: adopted,
         unseededTokens: addresses.length - adopted, startBlock,
         safeHead: cursor.rows[0].safe_head == null ? null : String(cursor.rows[0].safe_head),

@@ -1,4 +1,5 @@
 const db = require('../models/db');
+const { createRobinhoodHolderGlobalDeltaRepository } = require('../models/robinhood-holder-global-delta');
 const { createRobinhoodHolderGlobalBackfillRepository } = require('../models/robinhood-holder-global-backfill');
 const { createRobinhoodHolderGlobalBackfillCommitRepository } = require('../models/robinhood-holder-global-backfill-commit');
 const { createRobinhoodHolderLedgerRepository } = require('../models/robinhood-holder-ledger');
@@ -18,14 +19,21 @@ function boundedInteger(value, fallback, minimum, maximum, label) {
 }
 function normalizeOptions(input = {}) {
   const enabled = input.enabled === true;
+  const rollingEnabled = input.rollingEnabled === true;
   const cutoff = input.catalogCutoff == null ? null : new Date(input.catalogCutoff);
   if (enabled && (!cutoff || !Number.isFinite(cutoff.getTime()))) {
     throw Object.assign(new Error('global holder catalogCutoff is required'), {
       code: 'configuration_error',
     });
   }
+  if (enabled && rollingEnabled && input.autoStart !== true) {
+    throw Object.assign(new Error('rolling global holder backfill requires autoStart'), {
+      code: 'configuration_error',
+    });
+  }
   return Object.freeze({
     enabled, autoStart: input.autoStart === true,
+    rollingEnabled,
     catalogCutoff: cutoff?.toISOString() || null,
     intervalMs: boundedInteger(input.intervalMs, 1000, 250, 300_000, 'intervalMs'),
     maxErrorBackoffMs: boundedInteger(
@@ -42,6 +50,18 @@ function normalizeOptions(input = {}) {
     materializeBatchSize: boundedInteger(
       input.materializeBatchSize, 1000, 1, 5000, 'materializeBatchSize'
     ),
+    rollingDelayMs: boundedInteger(
+      input.rollingDelayMs, 3_600_000, 60_000, 86_400_000, 'rollingDelayMs'
+    ),
+    rollingCheckIntervalMs: boundedInteger(
+      input.rollingCheckIntervalMs, 300_000, 60_000, 3_600_000, 'rollingCheckIntervalMs'
+    ),
+    rollingMinTokens: boundedInteger(
+      input.rollingMinTokens, 100, 1, 100_000, 'rollingMinTokens'
+    ),
+    rollingMinGapBlocks: boundedInteger(
+      input.rollingMinGapBlocks, 20_000, 1, 100_000_000, 'rollingMinGapBlocks'
+    ),
     liveConfirmations: boundedInteger(input.liveConfirmations, 12, 0, 1000, 'liveConfirmations'),
   });
 }
@@ -57,6 +77,7 @@ async function buildRuntime(options, deps = {}) {
   const lifecycle = (deps.lifecycleFactory || createRobinhoodHolderGlobalBackfillRepository)({
     database,
   });
+  const delta = (deps.deltaFactory || createRobinhoodHolderGlobalDeltaRepository)({ database });
   const committer = (deps.committerFactory
     || createRobinhoodHolderGlobalBackfillCommitRepository)({ database });
   const ledger = (deps.ledgerFactory || createRobinhoodHolderLedgerRepository)({ database });
@@ -74,7 +95,9 @@ async function buildRuntime(options, deps = {}) {
   const materializer = (deps.attachFactory || createRobinhoodHolderGlobalBackfillAttach)({
     repository: lifecycle, reader,
   });
-  return Object.freeze({ lifecycle, ledger, materializer, providerName: provider.name, reader, scanner });
+  return Object.freeze({
+    delta, lifecycle, ledger, materializer, providerName: provider.name, reader, scanner,
+  });
 }
 async function liveContext(runtime, options, run) {
   const cursor = await runtime.ledger.getCursor();
@@ -126,7 +149,26 @@ async function runCampaignTick(runtime, options) {
     run = await runtime.lifecycle.createRun({ catalogCutoff: options.catalogCutoff });
     return Object.freeze({ status: 'frozen-preview', runId: run.id, cohortTokens: run.cohortTokenCount });
   }
-  if (run.status === 'completed') return Object.freeze({ status: 'completed', runId: run.id });
+  if (run.status === 'completed') {
+    if (!options.rollingEnabled) return Object.freeze({ status: 'completed', runId: run.id });
+    const catalogCutoff = new Date(Date.now() - options.rollingDelayMs).toISOString();
+    const candidateInput = {
+      catalogCutoff, includeBackfilling: false,
+      minimumGapBlocks: options.rollingMinGapBlocks,
+    };
+    const preview = await runtime.delta.previewRun(candidateInput);
+    if ((preview?.candidateTokens || 0) < options.rollingMinTokens) {
+      return Object.freeze({
+        status: 'rolling-idle', candidateTokens: preview?.candidateTokens || 0,
+        minimumTokens: options.rollingMinTokens, catalogCutoff,
+      });
+    }
+    const created = await runtime.delta.createRun(candidateInput);
+    return Object.freeze({
+      status: 'frozen-preview', runId: created.runId,
+      cohortTokens: created.cohortTokens, catalogCutoff,
+    });
+  }
   if (run.status === 'frozen') {
     if (!options.autoStart) return Object.freeze({
       status: 'frozen-preview', runId: run.id, cohortTokens: run.cohortTokenCount,
@@ -215,7 +257,8 @@ function createRobinhoodHolderGlobalBackfillWorker(deps = {}) {
       await runOnce();
       const delay = status.consecutiveErrors
         ? Math.min(options.maxErrorBackoffMs, options.intervalMs * (2 ** status.consecutiveErrors))
-        : options.intervalMs;
+        : status.lastResult?.status === 'rolling-idle'
+          ? options.rollingCheckIntervalMs : options.intervalMs;
       queue(delay);
     }, delayMs);
     timer?.unref?.();

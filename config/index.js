@@ -1042,6 +1042,10 @@ module.exports = {
     seedLimit: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_BACKFILL_SEED_LIMIT, 100, 1, 1000
     ),
+    maxInitialGapBlocks: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_BACKFILL_MAX_INITIAL_GAP_BLOCKS,
+      20_000, 1, 100_000_000
+    ),
     rangeSize: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_BACKFILL_RANGE_SIZE, 250, 1, 5000
     ),
@@ -1070,6 +1074,9 @@ module.exports = {
   robinhoodHolderGlobalBackfillWorker: {
     enabled: robinhoodHolderGlobalBackfillEnabled,
     autoStart: parseBoolean(process.env.ROBINHOOD_HOLDER_GLOBAL_BACKFILL_AUTO_START, false),
+    rollingEnabled: parseBoolean(
+      process.env.ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ROLLING_ENABLED, false
+    ),
     catalogCutoff: robinhoodHolderGlobalCatalogCutoff,
     intervalMs: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_GLOBAL_BACKFILL_INTERVAL_MS, 1000, 250, 300_000
@@ -1098,6 +1105,22 @@ module.exports = {
     ),
     materializeBatchSize: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_GLOBAL_BACKFILL_MATERIALIZE_BATCH_SIZE, 1000, 1, 5000
+    ),
+    rollingDelayMs: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ROLLING_DELAY_MS,
+      3_600_000, 60_000, 86_400_000
+    ),
+    rollingCheckIntervalMs: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ROLLING_CHECK_INTERVAL_MS,
+      300_000, 60_000, 3_600_000
+    ),
+    rollingMinTokens: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ROLLING_MIN_TOKENS,
+      100, 1, 100_000
+    ),
+    rollingMinGapBlocks: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_BACKFILL_MAX_INITIAL_GAP_BLOCKS,
+      20_000, 1, 100_000_000
     ),
   },
 
