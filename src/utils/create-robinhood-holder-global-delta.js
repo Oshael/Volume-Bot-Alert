@@ -18,10 +18,20 @@ async function runGlobalHolderDelta(input = {}) {
   const database = input.database || db;
   const repository = input.repository
     || createRobinhoodHolderGlobalDeltaRepository({ database });
-  const preview = await repository.previewRun({ catalogCutoff: input.catalogCutoff });
+  const candidateInput = {
+    catalogCutoff: input.catalogCutoff,
+    includeUnseeded: input.includeUnseeded !== false,
+  };
+  const preview = await repository.previewRun(candidateInput);
   const incrementalBackfillActive = await backfillLeaseActive(database);
   if (input.confirm !== true) {
-    return Object.freeze({ mode: 'dry-run', incrementalBackfillActive, preview });
+    return Object.freeze({
+      mode: 'dry-run',
+      selection: candidateInput.includeUnseeded
+        ? 'unseeded-and-backfilling' : 'backfilling-only',
+      incrementalBackfillActive,
+      preview,
+    });
   }
   if (incrementalBackfillActive) {
     const error = new Error('Stop the incremental holder backfill lease before confirming delta');
@@ -30,7 +40,7 @@ async function runGlobalHolderDelta(input = {}) {
   }
   return Object.freeze({
     mode: 'confirmed', before: preview,
-    created: await repository.createRun({ catalogCutoff: input.catalogCutoff }),
+    created: await repository.createRun(candidateInput),
   });
 }
 
@@ -38,6 +48,7 @@ async function main() {
   try {
     console.log(JSON.stringify(await runGlobalHolderDelta({
       catalogCutoff: process.env.ROBINHOOD_HOLDER_GLOBAL_DELTA_CATALOG_CUTOFF,
+      includeUnseeded: !process.argv.includes('--backfilling-only'),
       confirm: process.argv.includes('--confirm-create'),
     }), null, 2));
   } finally {

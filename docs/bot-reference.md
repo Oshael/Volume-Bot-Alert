@@ -1034,6 +1034,10 @@ ignora qualquer coorte global ativa mesmo antes do attach. Depois disso, o worke
 global isolado pode ser iniciado no PC e segue o mesmo scan, materialização e
 handoff da campanha original. Essa operação é reconstruível pela chain, mas deixa
 os tokens adotados sem publicação local até a nova baseline ser materializada.
+Quando a intenção for limpar somente states incrementais já `backfilling`, use
+`-- --backfilling-only` tanto no dry-run quanto junto de `--confirm-create`.
+Esse modo exclui tokens sem state e impede que um deployment histórico recém
+descoberto amplie acidentalmente o início do scan.
 
 Para operação contínua, `ROBINHOOD_HOLDER_BACKFILL_MAX_INITIAL_GAP_BLOCKS`
 (20.000 por default) limita o incremental da VPS a deployments próximos do head.

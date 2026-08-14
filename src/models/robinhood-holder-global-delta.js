@@ -2,10 +2,11 @@ const db = require('./db');
 
 const CHAIN = 'robinhood';
 const EXACT_SOURCES = Object.freeze(['rpc_direct', 'launchpad_event']);
-function candidatesSql(includeBackfilling) {
-  const stateScope = includeBackfilling
-    ? `(state.token_address IS NULL OR state.ledger_status = 'backfilling')`
-    : 'state.token_address IS NULL';
+function candidatesSql(options) {
+  const scopes = [];
+  if (options.includeUnseeded) scopes.push('state.token_address IS NULL');
+  if (options.includeBackfilling) scopes.push(`state.ledger_status = 'backfilling'`);
+  const stateScope = `(${scopes.join(' OR ')})`;
   return `
   SELECT catalog.address AS token_address,
          COALESCE(state.deployment_block, attribution.attribution_block)::bigint
@@ -41,11 +42,16 @@ function candidateOptions(input) {
       && (!Number.isSafeInteger(minimumGapBlocks) || minimumGapBlocks < 1)) {
     throw new Error('delta minimumGapBlocks is invalid');
   }
-  return Object.freeze({
+  const options = {
     cutoff: cutoffTimestamp(input.catalogCutoff),
     includeBackfilling: input.includeBackfilling !== false,
+    includeUnseeded: input.includeUnseeded !== false,
     minimumGapBlocks,
-  });
+  };
+  if (!options.includeBackfilling && !options.includeUnseeded) {
+    throw new Error('delta candidate scope is empty');
+  }
+  return Object.freeze(options);
 }
 
 function cutoffTimestamp(value) {
@@ -74,7 +80,7 @@ function createRobinhoodHolderGlobalDeltaRepository(options = {}) {
   async function previewRun(input = {}) {
     const normalized = candidateOptions(input);
     const result = await database.query(
-      `WITH candidates AS MATERIALIZED (${candidatesSql(normalized.includeBackfilling)})
+      `WITH candidates AS MATERIALIZED (${candidatesSql(normalized)})
        SELECT COUNT(*)::int AS candidate_tokens,
               COUNT(*) FILTER (WHERE NOT adopted)::int AS unseeded_tokens,
               COUNT(*) FILTER (WHERE adopted)::int AS adopted_backfilling_tokens,
@@ -124,7 +130,7 @@ function createRobinhoodHolderGlobalDeltaRepository(options = {}) {
         throw error;
       }
       const candidates = await client.query(
-        `${candidatesSql(normalized.includeBackfilling)} FOR UPDATE OF catalog, attribution`,
+        `${candidatesSql(normalized)} FOR UPDATE OF catalog, attribution`,
         [CHAIN, normalized.cutoff, [...EXACT_SOURCES], normalized.minimumGapBlocks]
       );
       if (!candidates.rowCount) {
