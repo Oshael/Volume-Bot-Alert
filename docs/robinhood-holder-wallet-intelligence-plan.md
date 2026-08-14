@@ -1171,8 +1171,8 @@ evidências limitadas e cursor na mesma transação. Ainda não há worker ativo
 
 ### Corte B4 — captura/projeção live de transfers
 
-Status: B4a concluído como adapter PostgreSQL de fonte; evidência RPC, tick e
-wiring permanecem pendentes.
+Status: B4a e B4b concluídos como adapters PostgreSQL de fonte e de evidência
+RPC; tick e wiring permanecem pendentes.
 
 Objetivo:
 
@@ -1184,6 +1184,10 @@ Objetivo:
 O B4a limita a futura leitura ao frontier `live` comprovado de wallet-swaps,
 reutiliza o mesmo escopo de tokens do holder ledger e carrega em lote swaps,
 pools e papéis já persistidos. Ele não inicia RPC nem worker.
+
+O B4b reutiliza o reader global de `Transfer`, busca número, hash e timestamp dos
+blocos em batches limitados e rejeita o range inteiro se qualquer hash divergir.
+Assim, o futuro tick recebe `blockTime` verificável sem iniciar worker ou escrita.
 
 ### Corte B5 — compactação e retenção
 
