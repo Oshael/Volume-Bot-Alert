@@ -3382,6 +3382,39 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage131-robinhood-wallet-transfer-daily-summaries',
+    name: 'Stage 131 Robinhood wallet transfer daily summaries',
+    repair: 'node src/utils/db-init-stage131.js',
+    tables: [{
+      table: 'robinhood_wallet_transfer_daily_summaries',
+      columns: [
+        'chain', 'projection_version', 'summary_day', 'token_address',
+        'transfer_count', 'total_amount_raw', 'wallet_transfer_count',
+        'wallet_transfer_amount_raw', 'dex_flow_count', 'dex_flow_amount_raw',
+        'through_block', 'through_transaction_index', 'through_log_index',
+        'through_block_time', 'created_at', 'updated_at',
+      ],
+      constraints: [
+        {
+          name: 'rh_wallet_transfer_daily_summaries_pkey',
+          includes: ['PRIMARY KEY', 'projection_version', 'summary_day', 'token_address'],
+        },
+        {
+          name: 'rh_wallet_transfer_daily_summaries_totals_check',
+          includes: ['CHECK', 'wallet_transfer_count', 'dex_flow_count', 'transfer_count'],
+        },
+        {
+          name: 'rh_wallet_transfer_daily_summaries_frontier_check',
+          includes: ['CHECK', 'through_block_time', 'summary_day'],
+        },
+      ],
+      indexes: [{
+        name: 'idx_rh_wallet_transfer_daily_summaries_day',
+        includes: ['chain', 'summary_day', 'projection_version'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

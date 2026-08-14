@@ -1203,6 +1203,10 @@ limitados, e mismatch de checkpoint paralisa o writer.
 
 ### Corte B5 — compactação e retenção
 
+Status: em andamento. O B5a criou somente o contrato persistente do resumo
+diário por token e versão; ainda não existe writer, watermark de liberação ou
+remoção de partições.
+
 Objetivo:
 
 - criar watermark diário;
@@ -1211,6 +1215,11 @@ Objetivo:
 - manter retenção desligada por default.
 
 Nenhuma partição é removida no primeiro rollout desse corte.
+
+A Stage 131 mantém contagem e soma raw separadas para `wallet_transfer` e
+`dex_flow`, além do frontier exato processado em cada dia UTC. Esse resumo é a
+contraparte compacta necessária para reconciliar o raw; as arestas, por serem
+acumuladas entre dias, não servem sozinhas como prova de completude diária.
 
 ### Corte B6 — backfill histórico summary-first
 

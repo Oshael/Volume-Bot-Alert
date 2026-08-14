@@ -1494,6 +1494,11 @@ fronteiras quando há mais de um transfer no mesmo bloco e falha se encontrar
 arestas antigas sem essa informação. Esses schemas não autorizam retenção nem
 alteram a projeção financeira `swap_only_v1`.
 
+Aplique depois `node src/utils/db-init-stage131.js`. A Stage 131 cria o resumo
+diário versionado por token que permitirá reconciliar contagem, soma raw e
+frontier antes da compactação. Ela não possui writer nem autoriza drop de
+partições; a retenção de transfers continua desligada.
+
 O repository de projeção persiste arestas, evidências `first`/`last`/`largest` e
 cursor sob a mesma transação com lock/CAS. Ele permanece sem worker e aceita
 somente `wallet_transfer` e `dex_flow` previamente classificados na mesma versão.
