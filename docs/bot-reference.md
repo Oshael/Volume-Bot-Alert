@@ -1496,12 +1496,14 @@ alteram a projeção financeira `swap_only_v1`.
 
 Aplique depois `node src/utils/db-init-stage131.js`. A Stage 131 cria o resumo
 diário versionado por token que permitirá reconciliar contagem, soma raw e
-frontier antes da compactação. Ela não possui writer nem autoriza drop de
-partições; a retenção de transfers continua desligada.
+frontier antes da compactação. Ela não autoriza drop de partições; a retenção de
+transfers continua desligada.
 
-O repository de projeção persiste arestas, evidências `first`/`last`/`largest` e
-cursor sob a mesma transação com lock/CAS. Ele permanece sem worker e aceita
-somente `wallet_transfer` e `dex_flow` previamente classificados na mesma versão.
+O repository de projeção persiste arestas, resumo diário por token, evidências
+`first`/`last`/`largest` e cursor sob a mesma transação com lock/CAS. O resumo
+separa count e soma raw de `wallet_transfer`/`dex_flow`; retry obsoleto é
+rejeitado antes dos `UPSERTs`. Ele aceita somente eventos previamente
+classificados na mesma versão.
 
 O adapter LIVE de fonte permanece inativo e só considera cobertura de swaps
 com cursor `live` em `running`, frontier/checkpoint comprovados e sem ultrapassar

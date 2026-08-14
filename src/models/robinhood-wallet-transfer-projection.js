@@ -83,6 +83,27 @@ function larger(left, right) {
   if (amount !== 0n) return amount > 0n ? left : right;
   return earlier(left, right);
 }
+function addDailySummary(summaries, event) {
+  const summaryDay = event.blockTime.slice(0, 10);
+  const key = `${summaryDay}:${event.tokenAddress}`;
+  const summary = summaries.get(key) || {
+    summaryDay, tokenAddress: event.tokenAddress, transferCount: 0n, totalAmountRaw: 0n,
+    walletTransferCount: 0n, walletTransferAmountRaw: 0n,
+    dexFlowCount: 0n, dexFlowAmountRaw: 0n, through: event,
+  };
+  const amount = BigInt(event.amountRaw);
+  summary.transferCount += 1n;
+  summary.totalAmountRaw += amount;
+  if (event.transferKind === 'wallet_transfer') {
+    summary.walletTransferCount += 1n;
+    summary.walletTransferAmountRaw += amount;
+  } else {
+    summary.dexFlowCount += 1n;
+    summary.dexFlowAmountRaw += amount;
+  }
+  summary.through = later(summary.through, event);
+  summaries.set(key, summary);
+}
 function summarize(events, projectionVersion) {
   const normalized = events.map((event) => normalizeEvent(event, projectionVersion));
   const identities = new Set(normalized.map((event) => (
@@ -93,7 +114,9 @@ function summarize(events, projectionVersion) {
 
   const edges = new Map();
   const relationships = new Map();
+  const dailySummaries = new Map();
   for (const event of normalized) {
+    addDailySummary(dailySummaries, event);
     const edgeKey = `${event.tokenAddress}:${event.fromWallet}:${event.toWallet}`;
     const edge = edges.get(edgeKey) || {
       tokenAddress: event.tokenAddress, fromWallet: event.fromWallet,
@@ -122,7 +145,10 @@ function summarize(events, projectionVersion) {
     relationship.largest = larger(relationship.largest, event);
     relationships.set(relationshipKey, relationship);
   }
-  return { events: normalized, edges: [...edges.values()], relationships: [...relationships.values()] };
+  return {
+    events: normalized, edges: [...edges.values()], relationships: [...relationships.values()],
+    dailySummaries: [...dailySummaries.values()],
+  };
 }
 function cursor(row) {
   return row ? {
@@ -251,12 +277,14 @@ function createRobinhoodWalletTransferProjectionRepository(options = {}) {
         return { committed: false, reason };
       }
       await persistEdges(client, batch.projectionVersion, batch.summary.edges);
+      await persistDailySummaries(client, batch.projectionVersion, batch.summary.dailySummaries);
       await persistEvidence(client, batch.projectionVersion, batch.summary.relationships);
       const advanced = await advanceCursor(client, batch, effectiveSafeHead);
       if (!advanced.rows[0]) throw new Error('locked transfer cursor changed unexpectedly');
       await client.query('COMMIT');
       return {
         committed: true, edgeGroups: batch.summary.edges.length,
+        dailySummaryGroups: batch.summary.dailySummaries.length,
         evidenceCandidates: batch.summary.relationships.length * 3, cursor: cursor(advanced.rows[0]),
       };
     } catch (error) {
@@ -358,6 +386,80 @@ async function persistEdges(client, projectionVersion, edges) {
          THEN EXCLUDED.largest_log_index ELSE robinhood_wallet_transfer_edges.largest_log_index END,
        largest_transaction_hash = CASE WHEN EXCLUDED.largest_amount_raw > robinhood_wallet_transfer_edges.largest_amount_raw
          THEN EXCLUDED.largest_transaction_hash ELSE robinhood_wallet_transfer_edges.largest_transaction_hash END,
+       updated_at = NOW()`,
+    [CHAIN, projectionVersion, JSON.stringify(rows)]
+  );
+}
+async function persistDailySummaries(client, projectionVersion, summaries) {
+  if (!summaries.length) return;
+  const rows = summaries.map((summary) => ({
+    summary_day: summary.summaryDay, token_address: summary.tokenAddress,
+    transfer_count: summary.transferCount.toString(),
+    total_amount_raw: summary.totalAmountRaw.toString(),
+    wallet_transfer_count: summary.walletTransferCount.toString(),
+    wallet_transfer_amount_raw: summary.walletTransferAmountRaw.toString(),
+    dex_flow_count: summary.dexFlowCount.toString(),
+    dex_flow_amount_raw: summary.dexFlowAmountRaw.toString(),
+    through_block: summary.through.block,
+    through_transaction_index: summary.through.transactionIndex,
+    through_log_index: summary.through.logIndex,
+    through_block_time: summary.through.blockTime,
+  }));
+  await client.query(
+    `INSERT INTO robinhood_wallet_transfer_daily_summaries (
+       chain, projection_version, summary_day, token_address,
+       transfer_count, total_amount_raw, wallet_transfer_count,
+       wallet_transfer_amount_raw, dex_flow_count, dex_flow_amount_raw,
+       through_block, through_transaction_index, through_log_index, through_block_time
+     ) SELECT $1, $2, item.summary_day::date, item.token_address,
+       item.transfer_count::bigint, item.total_amount_raw::numeric,
+       item.wallet_transfer_count::bigint, item.wallet_transfer_amount_raw::numeric,
+       item.dex_flow_count::bigint, item.dex_flow_amount_raw::numeric,
+       item.through_block::bigint, item.through_transaction_index::integer,
+       item.through_log_index::integer, item.through_block_time::timestamptz
+       FROM jsonb_to_recordset($3::jsonb) AS item(
+         summary_day text, token_address text, transfer_count text, total_amount_raw text,
+         wallet_transfer_count text, wallet_transfer_amount_raw text,
+         dex_flow_count text, dex_flow_amount_raw text, through_block text,
+         through_transaction_index int, through_log_index int, through_block_time text
+       ) ON CONFLICT (chain, projection_version, summary_day, token_address)
+     DO UPDATE SET
+       transfer_count = robinhood_wallet_transfer_daily_summaries.transfer_count
+         + EXCLUDED.transfer_count,
+       total_amount_raw = robinhood_wallet_transfer_daily_summaries.total_amount_raw
+         + EXCLUDED.total_amount_raw,
+       wallet_transfer_count = robinhood_wallet_transfer_daily_summaries.wallet_transfer_count
+         + EXCLUDED.wallet_transfer_count,
+       wallet_transfer_amount_raw = robinhood_wallet_transfer_daily_summaries.wallet_transfer_amount_raw
+         + EXCLUDED.wallet_transfer_amount_raw,
+       dex_flow_count = robinhood_wallet_transfer_daily_summaries.dex_flow_count
+         + EXCLUDED.dex_flow_count,
+       dex_flow_amount_raw = robinhood_wallet_transfer_daily_summaries.dex_flow_amount_raw
+         + EXCLUDED.dex_flow_amount_raw,
+       through_block = CASE WHEN (EXCLUDED.through_block, EXCLUDED.through_transaction_index,
+         EXCLUDED.through_log_index) > (robinhood_wallet_transfer_daily_summaries.through_block,
+         robinhood_wallet_transfer_daily_summaries.through_transaction_index,
+         robinhood_wallet_transfer_daily_summaries.through_log_index)
+         THEN EXCLUDED.through_block ELSE robinhood_wallet_transfer_daily_summaries.through_block END,
+       through_transaction_index = CASE WHEN (EXCLUDED.through_block,
+         EXCLUDED.through_transaction_index, EXCLUDED.through_log_index) >
+         (robinhood_wallet_transfer_daily_summaries.through_block,
+         robinhood_wallet_transfer_daily_summaries.through_transaction_index,
+         robinhood_wallet_transfer_daily_summaries.through_log_index)
+         THEN EXCLUDED.through_transaction_index
+         ELSE robinhood_wallet_transfer_daily_summaries.through_transaction_index END,
+       through_log_index = CASE WHEN (EXCLUDED.through_block, EXCLUDED.through_transaction_index,
+         EXCLUDED.through_log_index) > (robinhood_wallet_transfer_daily_summaries.through_block,
+         robinhood_wallet_transfer_daily_summaries.through_transaction_index,
+         robinhood_wallet_transfer_daily_summaries.through_log_index)
+         THEN EXCLUDED.through_log_index
+         ELSE robinhood_wallet_transfer_daily_summaries.through_log_index END,
+       through_block_time = CASE WHEN (EXCLUDED.through_block, EXCLUDED.through_transaction_index,
+         EXCLUDED.through_log_index) > (robinhood_wallet_transfer_daily_summaries.through_block,
+         robinhood_wallet_transfer_daily_summaries.through_transaction_index,
+         robinhood_wallet_transfer_daily_summaries.through_log_index)
+         THEN EXCLUDED.through_block_time
+         ELSE robinhood_wallet_transfer_daily_summaries.through_block_time END,
        updated_at = NOW()`,
     [CHAIN, projectionVersion, JSON.stringify(rows)]
   );

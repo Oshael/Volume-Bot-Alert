@@ -6,6 +6,7 @@ const db = require('../src/models/db');
 const { createRobinhoodWalletTransferProjectionRepository } = require('../src/models/robinhood-wallet-transfer-projection');
 const stage129 = require('../src/utils/db-init-stage129');
 const stage130 = require('../src/utils/db-init-stage130');
+const stage131 = require('../src/utils/db-init-stage131');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const VERSION = 'test_transfer_projection_v1';
@@ -25,6 +26,7 @@ function event(block, logIndex, amountRaw, transferKind = 'wallet_transfer') {
 async function cleanup() {
   await db.query('DELETE FROM robinhood_wallet_relationship_evidence WHERE algorithm_version = $1', [VERSION]);
   await db.query('DELETE FROM robinhood_wallet_transfer_edges WHERE classification_version = $1', [VERSION]);
+  await db.query('DELETE FROM robinhood_wallet_transfer_daily_summaries WHERE projection_version = $1', [VERSION]);
   await db.query('DELETE FROM robinhood_wallet_transfer_cursors WHERE projection_version = $1', [VERSION]);
 }
 
@@ -33,6 +35,7 @@ describe('Robinhood wallet transfer projection persistence', () => {
     await assertUsingTestDatabase(db);
     await stage129.init({ closePool: false });
     await stage130.init({ closePool: false });
+    await stage131.init({ closePool: false });
     await cleanup();
   });
   after(async () => {
@@ -55,7 +58,10 @@ describe('Robinhood wallet transfer projection persistence', () => {
     });
     assert.equal(first.committed, true);
     assert.equal(first.cursor.version, 1);
-    assert.deepEqual({ edges: first.edgeGroups, evidence: first.evidenceCandidates }, { edges: 1, evidence: 3 });
+    assert.deepEqual(
+      { edges: first.edgeGroups, daily: first.dailySummaryGroups, evidence: first.evidenceCandidates },
+      { edges: 1, daily: 1, evidence: 3 }
+    );
 
     const stale = await repository.commitBatch({
       projectionVersion: VERSION, stream: 'seed', expectedVersion: 0,
@@ -86,6 +92,29 @@ describe('Robinhood wallet transfer projection persistence', () => {
       dex_flow_count: '1', first_block: '100', first_log_index: 5,
       last_block: '101', last_log_index: 1, largest_amount_raw: '40', largest_log_index: 1,
     });
+    const daily = await db.query(
+      `SELECT summary_day::text, transfer_count::text, total_amount_raw::text,
+              wallet_transfer_count::text, wallet_transfer_amount_raw::text,
+              dex_flow_count::text, dex_flow_amount_raw::text,
+              through_block::text, through_transaction_index, through_log_index
+       FROM robinhood_wallet_transfer_daily_summaries
+       WHERE projection_version = $1 ORDER BY summary_day`,
+      [VERSION]
+    );
+    assert.deepEqual(daily.rows, [
+      {
+        summary_day: '2099-01-01', transfer_count: '3', total_amount_raw: '60',
+        wallet_transfer_count: '2', wallet_transfer_amount_raw: '40',
+        dex_flow_count: '1', dex_flow_amount_raw: '20', through_block: '100',
+        through_transaction_index: 8, through_log_index: 8,
+      },
+      {
+        summary_day: '2099-01-02', transfer_count: '1', total_amount_raw: '40',
+        wallet_transfer_count: '1', wallet_transfer_amount_raw: '40',
+        dex_flow_count: '0', dex_flow_amount_raw: '0', through_block: '101',
+        through_transaction_index: 1, through_log_index: 1,
+      },
+    ]);
     const evidence = await db.query(
       `SELECT evidence_role, evidence_block::text, evidence_log_index
        FROM robinhood_wallet_relationship_evidence

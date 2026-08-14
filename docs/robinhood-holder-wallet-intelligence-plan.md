@@ -1203,9 +1203,10 @@ limitados, e mismatch de checkpoint paralisa o writer.
 
 ### Corte B5 — compactação e retenção
 
-Status: em andamento. O B5a criou somente o contrato persistente do resumo
-diário por token e versão; ainda não existe writer, watermark de liberação ou
-remoção de partições.
+Status: em andamento. O B5a criou o contrato persistente do resumo diário por
+token e versão. O B5b integrou seu `UPSERT` ao mesmo commit de arestas,
+evidências e cursor; ainda não existe watermark de liberação ou remoção de
+partições.
 
 Objetivo:
 
@@ -1220,6 +1221,8 @@ A Stage 131 mantém contagem e soma raw separadas para `wallet_transfer` e
 `dex_flow`, além do frontier exato processado em cada dia UTC. Esse resumo é a
 contraparte compacta necessária para reconciliar o raw; as arestas, por serem
 acumuladas entre dias, não servem sozinhas como prova de completude diária.
+Retry obsoleto é rejeitado pelo CAS do cursor antes de tocar o resumo, e qualquer
+falha no resumo reverte também as arestas, evidências e avanço do cursor.
 
 ### Corte B6 — backfill histórico summary-first
 
