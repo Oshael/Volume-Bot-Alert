@@ -58,11 +58,10 @@ function shortAddress(value: string) {
 
 export function renderRobinhoodExpandedHolderViews(
   chartHtml: string,
-  footnoteHtml: string,
   holderCount: number | null | undefined,
 ) {
   return `<div class="robinhood-holder-views" data-robinhood-holder-views>
-    <div class="robinhood-holder-chart-shell" data-holder-chart-view>${chartHtml}${footnoteHtml}</div>
+    <div class="robinhood-holder-chart-shell" data-holder-chart-view>${chartHtml}</div>
     <section class="robinhood-holder-panel" data-holder-panel aria-label="Token holders">
       <div class="robinhood-holder-resize-handle" data-holder-resize-handle role="separator" tabindex="0"
         aria-orientation="horizontal" aria-label="Resize holders panel" aria-valuemin="${MIN_HOLDER_PANEL_HEIGHT}" aria-valuemax="720" aria-valuenow="340">
@@ -220,7 +219,6 @@ export function mountRobinhoodExpandedHolders(section: ParentNode, options: Moun
   const loadPage = async () => {
     const id = ++requestId;
     const cursor = cursors.at(-1) || null;
-    cache.cursorStack = [...cursors];
     pageContainer.innerHTML = '<p>Loading holders…</p>';
     try {
       let pageRequest = cache.pageRequests.get(cursor || 'first');

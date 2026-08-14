@@ -1552,10 +1552,11 @@ test('opens a Robinhood FDV chart and applies only its realtime updates', async 
   const dialog = page.locator('[data-auth-modal="expanded-sparkline"]');
   await expect(dialog).toBeVisible();
   await expect(dialog.locator('.expanded-sparkline-stat-mcap')).toContainText('FDV');
-  await expect(dialog.locator('.expanded-sparkline-footnote')).toContainText('Minute and hourly history');
+  await expect(dialog.locator('.expanded-sparkline-footnote')).toHaveCount(0);
   const timeZoneControl = dialog.locator('.expanded-sparkline-time-zone-control');
   const timeZoneLabel = timeZoneControl.locator('[data-expanded-sparkline-time-zone-label]');
-  await expect(timeZoneControl).toHaveCSS('width', '160px');
+  await expect(timeZoneControl).toHaveCSS('width', '124px');
+  await expect(timeZoneLabel).toContainText('(UTC');
   await expect(timeZoneLabel).toHaveCSS('white-space', 'nowrap');
   await expect(timeZoneLabel).toHaveCSS('overflow', 'hidden');
   await expect(dialog.locator('[data-expanded-candlestick-chart]')).toHaveAttribute(

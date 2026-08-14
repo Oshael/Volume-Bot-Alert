@@ -3230,6 +3230,25 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   color: #d6ecff;
 }
 
+.expanded-sparkline-chart > .expanded-sparkline-time-zone-control,
+.expanded-sparkline-chart-main > .expanded-sparkline-time-zone-control {
+  position: absolute;
+  right: 68px;
+  bottom: 8px;
+  z-index: 4;
+  width: 124px;
+  min-width: 124px;
+  height: 22px;
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.expanded-sparkline-chart > .expanded-sparkline-time-zone-control > span,
+.expanded-sparkline-chart-main > .expanded-sparkline-time-zone-control > span {
+  padding: 0 22px 0 8px;
+  font-size: 8px;
+}
+
 .expanded-sparkline-resolution-button {
   min-width: 34px;
   height: 24px;
@@ -3459,7 +3478,7 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
-  gap: 10px;
+  gap: 0;
   height: 100%;
   min-height: 0;
   overflow: hidden;
@@ -3470,13 +3489,15 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   display: flex;
   flex: 1 1 0;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
   min-height: 0;
 }
 
 .robinhood-holder-chart-shell > .expanded-sparkline-chart {
   flex: 1 1 auto;
   min-height: 0;
+  border-bottom-right-radius: 0;
+  border-bottom-left-radius: 0;
 }
 
 .robinhood-holder-chart-shell .expanded-sparkline-chart-main {
@@ -3497,7 +3518,8 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   flex-direction: column;
   min-height: 220px;
   border: 1px solid rgba(55, 61, 75, 0.92);
-  border-radius: 14px;
+  border-top: 0;
+  border-radius: 0 0 14px 14px;
   background: rgba(8, 10, 14, 0.96);
   color: #e6e9ef;
   overflow: hidden;
@@ -3506,10 +3528,11 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 .robinhood-holder-resize-handle {
   position: relative;
   display: flex;
-  flex: 0 0 32px;
+  flex: 0 0 20px;
   align-items: center;
   justify-content: center;
   border: 0;
+  border-top: 1px solid rgba(55, 61, 75, 0.75);
   border-bottom: 1px solid rgba(55, 61, 75, 0.75);
   background: rgba(12, 17, 25, 0.96);
   color: rgba(230, 233, 239, 0.72);
@@ -3526,7 +3549,7 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 .robinhood-holder-panel-label {
   position: absolute;
   left: 12px;
-  font-size: 11px;
+  font-size: 9px;
   font-weight: 800;
   letter-spacing: 0.08em;
 }
@@ -3537,8 +3560,8 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 }
 
 .robinhood-holder-resize-grip {
-  width: 42px;
-  height: 4px;
+  width: 36px;
+  height: 3px;
   border-radius: 999px;
   background: rgba(143, 183, 216, 0.58);
   box-shadow: 0 0 12px rgba(103, 160, 255, 0.18);
@@ -4398,66 +4421,6 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   to {
     transform: rotate(360deg);
   }
-}
-
-.expanded-sparkline-footnote {
-  display: flex;
-  align-items: center;
-  min-height: 44px;
-  padding: 0 0 12px;
-  box-sizing: border-box;
-  gap: 8px;
-  min-width: 0;
-  color: #7593af;
-  font-size: 9px;
-  line-height: 1.5;
-  text-shadow: 0 0 10px rgba(0, 212, 255, 0.08);
-  position: relative;
-  z-index: 1;
-}
-
-.expanded-sparkline-address-copy {
-  min-width: 0;
-  max-width: min(100%, 48ch);
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: #8fb7d8;
-  font: inherit;
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0;
-  line-height: inherit;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  cursor: copy;
-  user-select: none;
-}
-
-.expanded-sparkline-address-copy:hover,
-.expanded-sparkline-address-copy:focus-visible {
-  color: #d7f3ff;
-  outline: none;
-  text-decoration: underline;
-  text-decoration-thickness: 1px;
-  text-underline-offset: 2px;
-}
-
-.expanded-sparkline-address-copy[data-copy-state="copied"] {
-  color: #8fe7ff;
-}
-
-.expanded-sparkline-address-copy[data-copy-state="failed"] {
-  color: #ff9fa6;
-}
-
-.expanded-sparkline-copy-status {
-  flex: 0 0 auto;
-  min-width: 48px;
-  color: #8fe7ff;
-  font-weight: 800;
-  white-space: nowrap;
 }
 
 .legacy-auth-panel-settings {

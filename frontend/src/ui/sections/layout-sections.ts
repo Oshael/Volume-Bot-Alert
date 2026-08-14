@@ -2434,14 +2434,32 @@ function getExpandedChartFuturePointCount(granularityMinutes: number) {
 }
 
 function getExpandedChartTimeZoneLabel(option: typeof EXPANDED_CHART_TIME_ZONE_OPTIONS[number]) {
-  const timeZone = option.value === 'browser'
-    ? Intl.DateTimeFormat().resolvedOptions().timeZone
-    : option.value;
+  const timeZone = resolveExpandedTimeZoneOption(option.value);
+  return `${option.label} (${getExpandedChartTimeZoneOffset(timeZone)})`;
+}
+
+function resolveExpandedTimeZoneOption(value: string) {
+  return value === 'browser' ? Intl.DateTimeFormat().resolvedOptions().timeZone : value;
+}
+
+function getExpandedChartTimeZoneOffset(timeZone: string) {
   const offset = new Intl.DateTimeFormat('en-US', {
     timeZone,
     timeZoneName: 'shortOffset',
   }).formatToParts(new Date()).find((part) => part.type === 'timeZoneName')?.value || 'GMT';
-  return `${option.label} (${offset.replace('GMT', 'UTC').replace('-', '−')})`;
+  return offset.replace('GMT', 'UTC').replace('-', '−');
+}
+
+function getExpandedChartTimeZoneCompactLabel(option: typeof EXPANDED_CHART_TIME_ZONE_OPTIONS[number]) {
+  const timeZone = resolveExpandedTimeZoneOption(option.value);
+  const time = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(new Date());
+  return `${time} (${getExpandedChartTimeZoneOffset(timeZone)})`;
 }
 
 function getExpandedChartFutureTimePoints(
@@ -4119,7 +4137,7 @@ function renderExpandedGranularityControls(activeGranularityMinutes: number, one
 function renderExpandedTimeZoneControl(activeTimeZone: string) {
   const activeOption = EXPANDED_CHART_TIME_ZONE_OPTIONS.find((option) => option.value === activeTimeZone)
     || EXPANDED_CHART_TIME_ZONE_OPTIONS[0];
-  const activeLabel = getExpandedChartTimeZoneLabel(activeOption);
+  const activeLabel = getExpandedChartTimeZoneCompactLabel(activeOption);
   return `
     <label class="expanded-sparkline-time-zone-control" aria-label="Expanded chart time zone">
       <select data-action="set-expanded-sparkline-time-zone" aria-label="Expanded chart time zone">
@@ -4132,30 +4150,6 @@ function renderExpandedTimeZoneControl(activeTimeZone: string) {
   `;
 }
 
-function renderExpandedSparklineFootnote(loadingText: string, address: string, timeZone: string) {
-  const safeAddress = escapeHtml(address);
-  return `
-    <div class="expanded-sparkline-footnote">
-      <span>${loadingText}</span>
-      <button type="button" class="expanded-sparkline-address-copy" data-action="copy-expanded-sparkline-address" data-address="${safeAddress}" title="Copy contract address" aria-label="Copy contract address">${safeAddress}</button>
-      <span class="expanded-sparkline-copy-status" data-expanded-sparkline-copy-status aria-live="polite"></span>
-      ${renderExpandedTimeZoneControl(timeZone)}
-    </div>
-  `;
-}
-
-function getExpandedSparklineStatusText(
-  sparkline: TokenSparklineEntry,
-  updatedLabel: string,
-) {
-  if (sparkline.loading) return 'Loading full available history.';
-  const historyMode = sparkline.resolution === 'mixed'
-    ? 'Minute and hourly history.'
-    : sparkline.resolution === 'hour' ? 'Hourly history.' : 'Minute history.';
-  const truncated = sparkline.truncated ? ' Showing the latest available window.' : '';
-  return `Updated ${escapeHtml(updatedLabel)}. ${historyMode}${truncated}`;
-}
-
 // Assembles the expanded-chart area. Robinhood gets a side-by-side trades panel
 // (mounted separately); every other chain keeps the original single-child markup.
 // Kept out of renderExpandedSparklineModal so the chain branching does not add to
@@ -4165,6 +4159,7 @@ function renderExpandedChartArea(
   sparkline: TokenSparklineEntry,
   address: string,
   chain: TokenChain,
+  timeZone: string,
 ) {
   const body = renderExpandedChartBody(state, sparkline, address, chain);
   const loadingClass = sparkline.loading ? ' is-loading' : '';
@@ -4175,6 +4170,7 @@ function renderExpandedChartArea(
     return `
         <div class="expanded-sparkline-chart${loadingClass}">
           ${body}
+          ${renderExpandedTimeZoneControl(timeZone)}
           ${loadingOverlay}
         </div>`;
   }
@@ -4182,6 +4178,7 @@ function renderExpandedChartArea(
         <div class="expanded-sparkline-chart${loadingClass} has-trades">
           <div class="expanded-sparkline-chart-main">
             ${body}
+            ${renderExpandedTimeZoneControl(timeZone)}
             ${loadingOverlay}
           </div>
           <aside class="robinhood-trades-panel" data-robinhood-trades-panel aria-label="Recent trades"></aside>
@@ -4191,12 +4188,11 @@ function renderExpandedChartArea(
 function renderExpandedModalBody(
   chain: TokenChain,
   chartArea: string,
-  footnote: string,
   holderCount?: number | null,
 ) {
   return chain === 'robinhood'
-    ? renderRobinhoodExpandedHolderViews(chartArea, footnote, holderCount)
-    : `${chartArea}${footnote}`;
+    ? renderRobinhoodExpandedHolderViews(chartArea, holderCount)
+    : chartArea;
 }
 
 function getExpandedSparklinePanelClass(chain: TokenChain) {
@@ -4213,14 +4209,14 @@ function renderExpandedSparklineModal(state: AppState, address: string) {
 
   const symbol = token?.symbol || token?.label || address.slice(0, 8);
   const name = token?.name || token?.label || address;
-  const stats = getExpandedSparklineStats(sparkline, state.ui.expandedSparklineTimeZone);
+  const stats = getExpandedSparklineStats(sparkline);
   const imageUrl = sanitizeOptionalHttpUrl(token?.imageUrl);
   const ageLabel = formatExpandedTokenAge(token?.createdAt);
   const oneMinuteAvailable = isExpandedOneMinuteChartOptionAvailable(token, sparkline, chain);
-  const loadingText = getExpandedSparklineStatusText(sparkline, stats.updatedLabel);
-  const chartArea = renderExpandedChartArea(state, sparkline, address, chain);
-  const footnote = renderExpandedSparklineFootnote(loadingText, address, state.ui.expandedSparklineTimeZone);
-  const expandedBody = renderExpandedModalBody(chain, chartArea, footnote, token?.holderCount);
+  const chartArea = renderExpandedChartArea(
+    state, sparkline, address, chain, state.ui.expandedSparklineTimeZone,
+  );
+  const expandedBody = renderExpandedModalBody(chain, chartArea, token?.holderCount);
 
   return `
     <div class="legacy-auth-modal" data-auth-modal="expanded-sparkline" data-auth-modal-scope="sparkline">
@@ -4353,25 +4349,9 @@ function formatExpandedTokenAge(createdAt: number | null | undefined) {
   return `${Math.floor(ageDays / EXPANDED_TOKEN_AGE_YEAR_DAYS)}y`;
 }
 
-function getExpandedSparklineStats(sparkline: NonNullable<ReturnType<typeof getTokenSparkline>>, timeZone: string) {
-  const candles = normalizeTokenChartCandles(sparkline);
+function getExpandedSparklineStats(sparkline: NonNullable<ReturnType<typeof getTokenSparkline>>) {
   const latestValue = getExpandedCandleLatestValue(sparkline);
-  const updatedLabel = sparkline.generatedAt
-    ? formatExpandedChartTime(Math.floor(new Date(sparkline.generatedAt).getTime() / 1000) as UTCTimestamp, timeZone, {
-      year: 'numeric',
-      month: 'short',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-    })
-    : 'unknown';
-  return {
-    latestValue,
-    updatedLabel,
-    hasCandles: candles.length >= 2,
-  };
+  return { latestValue };
 }
 
 function bindExpandedSparklineModal(
@@ -4415,41 +4395,12 @@ function bindExpandedSparklineModal(
     select
       .closest<HTMLElement>('.expanded-sparkline-time-zone-control')
       ?.querySelector<HTMLElement>('[data-expanded-sparkline-time-zone-label]')
-      ?.replaceChildren(select.selectedOptions[0]?.textContent || 'Browser time');
+      ?.replaceChildren(getExpandedChartTimeZoneCompactLabel(
+        EXPANDED_CHART_TIME_ZONE_OPTIONS.find((option) => option.value === select.value)
+          || EXPANDED_CHART_TIME_ZONE_OPTIONS[0],
+      ));
     captureExpandedCandlestickChartViewport();
     controller.setExpandedSparklineTimeZone(select.value);
-  });
-  section.querySelectorAll<HTMLButtonElement>('[data-action="copy-expanded-sparkline-address"]').forEach((element) => {
-    element.addEventListener('click', async (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const tokenAddress = element.dataset.address;
-      if (!tokenAddress) {
-        return;
-      }
-
-      try {
-        await navigator.clipboard.writeText(tokenAddress);
-        element.dataset.copyState = 'copied';
-        element
-          .closest<HTMLElement>('.expanded-sparkline-footnote')
-          ?.querySelector<HTMLElement>('[data-expanded-sparkline-copy-status]')
-          ?.replaceChildren('Copied');
-      } catch {
-        element.dataset.copyState = 'failed';
-        element
-          .closest<HTMLElement>('.expanded-sparkline-footnote')
-          ?.querySelector<HTMLElement>('[data-expanded-sparkline-copy-status]')
-          ?.replaceChildren('Copy failed');
-      }
-      window.setTimeout(() => {
-        delete element.dataset.copyState;
-        element
-          .closest<HTMLElement>('.expanded-sparkline-footnote')
-          ?.querySelector<HTMLElement>('[data-expanded-sparkline-copy-status]')
-          ?.replaceChildren();
-      }, 1200);
-    });
   });
   void mountExpandedCandlestickChart(
     section,
