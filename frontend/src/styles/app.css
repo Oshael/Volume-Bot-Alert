@@ -3570,14 +3570,12 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 .robinhood-holder-panel-body {
   display: grid;
   flex: 1 1 auto;
-  grid-template-columns: minmax(0, 0.75fr) minmax(0, 1.25fr);
-  gap: 10px;
+  grid-template-columns: 1fr;
   min-height: 0;
   padding: 10px;
   overflow: auto;
 }
 
-.robinhood-holder-history,
 .robinhood-holder-page {
   min-width: 0;
   min-height: 0;
@@ -3588,13 +3586,11 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   overflow: hidden;
 }
 
-.robinhood-holder-history,
 .robinhood-holder-page {
   display: flex;
   flex-direction: column;
 }
 
-.robinhood-holder-history header,
 .robinhood-holder-page header,
 .robinhood-holder-page footer {
   display: flex;
@@ -3603,40 +3599,15 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   gap: 12px;
 }
 
-.robinhood-holder-history header div,
 .robinhood-holder-page header div {
   display: grid;
   gap: 4px;
 }
 
-.robinhood-holder-history small,
 .robinhood-holder-page small {
   color: rgba(230, 233, 239, 0.45);
   font-size: 10px;
   letter-spacing: 0.08em;
-}
-
-.robinhood-holder-history .is-up,
-.holder-stick.is-up { color: #3ad29f; stroke: #3ad29f; }
-.robinhood-holder-history .is-down,
-.holder-stick.is-down { color: #ff6b7d; stroke: #ff6b7d; }
-.robinhood-holder-history .is-missing,
-.holder-stick.is-missing,
-.holder-stick.is-flat { color: #7f8998; stroke: #7f8998; }
-
-.robinhood-holder-stick-chart {
-  margin-top: 18px;
-  overflow-x: auto;
-}
-
-.holder-stick line {
-  stroke-width: 5;
-  stroke-linecap: round;
-}
-
-.holder-stick circle {
-  fill: currentColor;
-  stroke-width: 0;
 }
 
 .robinhood-holder-table-wrap {
@@ -3690,7 +3661,7 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
     max-height: 260px;
   }
 
-  .robinhood-holder-panel-body { grid-template-columns: 1fr; overflow-y: auto; }
+  .robinhood-holder-panel-body { overflow-y: auto; }
 }
 
 .expanded-candles-wrap {

@@ -27,34 +27,10 @@ export interface RobinhoodHoldersPage {
   refreshQueued: boolean;
 }
 
-export interface RobinhoodHolderHistoryPoint {
-  date: string;
-  holderCount: number;
-  observedAt: string;
-  delta24h: number | null;
-  delta24hPct: number | null;
-  comparison: 'complete' | 'unavailable';
-}
-
-export interface RobinhoodHolderHistory {
-  token: string;
-  days: number;
-  asOf: string;
-  baseline: Omit<RobinhoodHolderHistoryPoint, 'delta24h' | 'delta24hPct' | 'comparison'> | null;
-  points: RobinhoodHolderHistoryPoint[];
-}
-
 export function fetchRobinhoodHoldersPage(token: string, cursor?: string | null, authToken?: string | null) {
   const query = new URLSearchParams({ token });
   if (cursor) query.set('cursor', cursor);
   return apiFetch<RobinhoodHoldersPage>(`/api/robinhood/holders?${query}`, {
-    method: 'GET', token: authToken ?? null,
-  });
-}
-
-export function fetchRobinhoodHolderHistory(token: string, authToken?: string | null) {
-  const query = new URLSearchParams({ token, days: '30' });
-  return apiFetch<RobinhoodHolderHistory>(`/api/robinhood/holder-history?${query}`, {
     method: 'GET', token: authToken ?? null,
   });
 }

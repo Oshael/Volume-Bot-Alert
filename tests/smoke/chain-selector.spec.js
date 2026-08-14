@@ -601,14 +601,6 @@ const ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES = {
       observedAt: '2026-07-15T11:55:00.000Z', refreshQueued: false,
     };
   },
-  'GET /api/robinhood/holder-history': {
-    token: ROBINHOOD_TOKEN, days: 30, asOf: '2026-07-15T12:00:00.000Z',
-    baseline: { date: '2026-07-12', holderCount: 4400, observedAt: '2026-07-12T23:00:00.000Z' },
-    points: [
-      { date: '2026-07-13', holderCount: 4430, observedAt: '2026-07-13T23:00:00.000Z', delta24h: 30, delta24hPct: 0.6818, comparison: 'complete' },
-      { date: '2026-07-14', holderCount: 4424, observedAt: '2026-07-14T23:00:00.000Z', delta24h: -6, delta24hPct: -0.1354, comparison: 'complete' },
-    ],
-  },
   'GET /api/robinhood/trades': (request) => {
     const scope = new URL(request.url()).searchParams.get('scope') === 'dev' ? 'dev' : 'all';
     return {
@@ -1651,7 +1643,7 @@ test('opens a Robinhood FDV chart and applies only its realtime updates', async 
   expect(diagnostics.pageErrors).toEqual([]);
 });
 
-test('renders daily holder sticks and cursor pages in the Robinhood expanded chart', async ({ page }) => {
+test('renders holders and cursor pages in the Robinhood expanded chart', async ({ page }) => {
   const diagnostics = await openAuthenticatedWorkspace(page, ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES);
   await page.getByRole('group', { name: 'Filter workspace by blockchain' })
     .locator('[data-chain="robinhood"]').click();
@@ -1666,8 +1658,10 @@ test('renders daily holder sticks and cursor pages in the Robinhood expanded cha
   await expect(dialog.locator('[data-holder-tab]')).toHaveCount(0);
   await expect(dialog.locator('[data-holder-chart-view]')).toBeVisible();
   await expect(dialog.locator('[data-robinhood-trades-panel]')).toBeVisible();
-  await expect(panel.locator('.holder-stick.is-up')).toHaveCount(1);
-  await expect(panel.locator('.holder-stick.is-down')).toHaveCount(1);
+  await expect(panel.locator('[data-holder-history]')).toHaveCount(0);
+  expect(diagnostics.apiRequests.some((requestUrl) => (
+    new URL(requestUrl).pathname === '/api/robinhood/holder-history'
+  ))).toBe(false);
   await expect(panel).toContainText('Main whale');
 
   const resizeHandle = dialog.locator('[data-holder-resize-handle]');

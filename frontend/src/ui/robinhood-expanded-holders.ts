@@ -1,9 +1,4 @@
-import {
-  fetchRobinhoodHolderHistory,
-  fetchRobinhoodHoldersPage,
-  type RobinhoodHolderHistory,
-  type RobinhoodHoldersPage,
-} from '../services/api/robinhood-holders';
+import { fetchRobinhoodHoldersPage, type RobinhoodHoldersPage } from '../services/api/robinhood-holders';
 import { escapeHtml } from './sections/html-safety';
 
 interface MountOptions {
@@ -16,8 +11,6 @@ const MIN_HOLDER_PANEL_HEIGHT = 220;
 const MIN_CHART_AREA_HEIGHT = 250;
 
 interface HolderDataCache {
-  history: RobinhoodHolderHistory | null;
-  historyRequest: Promise<RobinhoodHolderHistory> | null;
   pages: Map<string, RobinhoodHoldersPage>;
   pageRequests: Map<string, Promise<RobinhoodHoldersPage>>;
   cursorStack: Array<string | null>;
@@ -29,8 +22,6 @@ function getHolderDataCache(token: string): HolderDataCache {
   const existing = holderDataCacheByToken.get(token);
   if (existing) return existing;
   const created: HolderDataCache = {
-    history: null,
-    historyRequest: null,
     pages: new Map(),
     pageRequests: new Map(),
     cursorStack: [null],
@@ -41,11 +32,6 @@ function getHolderDataCache(token: string): HolderDataCache {
 
 function count(value: number | null) {
   return value == null ? '—' : value.toLocaleString('en-US');
-}
-
-function signed(value: number | null) {
-  if (value == null) return 'comparison unavailable';
-  return `${value > 0 ? '+' : ''}${value.toLocaleString('en-US')}`;
 }
 
 function rawBalance(value: string) {
@@ -69,41 +55,10 @@ export function renderRobinhoodExpandedHolderViews(
         <span class="robinhood-holder-resize-grip" aria-hidden="true"></span>
       </div>
       <div class="robinhood-holder-panel-body">
-        <div class="robinhood-holder-history" data-holder-history><p>Loading holder history…</p></div>
         <div class="robinhood-holder-page" data-holder-page><p>Loading holders…</p></div>
       </div>
     </section>
   </div>`;
-}
-
-function historyHtml(history: RobinhoodHolderHistory) {
-  if (!history.baseline || history.points.length === 0) {
-    return '<header><div><small>30 DAY HISTORY</small><strong>No daily history yet</strong></div></header>';
-  }
-  const all = [history.baseline.holderCount, ...history.points.map((point) => point.holderCount)];
-  const min = Math.min(...all);
-  const max = Math.max(...all);
-  const spread = Math.max(max - min, 1);
-  const width = Math.max(560, history.points.length * 34);
-  const y = (value: number) => 118 - ((value - min) / spread) * 86;
-  let previous = history.baseline.holderCount;
-  const sticks = history.points.map((point, index) => {
-    const x = 26 + index * ((width - 52) / Math.max(history.points.length - 1, 1));
-    const tone = point.delta24h == null ? 'missing' : point.delta24h > 0 ? 'up' : point.delta24h < 0 ? 'down' : 'flat';
-    const pct = point.delta24hPct == null ? '' : ` (${point.delta24hPct > 0 ? '+' : ''}${point.delta24hPct.toFixed(2)}%)`;
-    const title = `${point.date} · Total ${count(point.holderCount)} · ${signed(point.delta24h)}${pct}`;
-    const line = point.comparison === 'complete'
-      ? `<line x1="${x}" y1="${y(previous)}" x2="${x}" y2="${y(point.holderCount)}"></line>`
-      : `<circle cx="${x}" cy="${y(point.holderCount)}" r="3"></circle>`;
-    previous = point.holderCount;
-    return `<g class="holder-stick is-${tone}"><title>${escapeHtml(title)}</title>${line}</g>`;
-  }).join('');
-  const latest = history.points.at(-1)!;
-  return `<header><div><small>30 DAY HISTORY</small><strong>${count(latest.holderCount)} holders</strong></div>
-      <span class="is-${latest.delta24h == null ? 'missing' : latest.delta24h >= 0 ? 'up' : 'down'}">${signed(latest.delta24h)} / 24h</span></header>
-    <div class="robinhood-holder-stick-chart" role="img" aria-label="Daily total holder changes">
-      <svg viewBox="0 0 ${width} 140" width="${width}" height="140">${sticks}</svg>
-    </div>`;
 }
 
 function holderPageHtml(page: RobinhoodHoldersPage, pageNumber: number, hasPrevious: boolean) {
@@ -122,9 +77,8 @@ function holderPageHtml(page: RobinhoodHoldersPage, pageNumber: number, hasPrevi
       <span>Page ${pageNumber}</span><button type="button" data-holder-page-action="next" ${page.hasMore ? '' : 'disabled'}>Next</button></footer>`;
 }
 
-function errorHtml(kind: 'history' | 'page') {
-  return `<div class="robinhood-holder-error">Failed to load ${kind === 'history' ? 'holder history' : 'holders'}.
-    <button type="button" data-holder-retry="${kind}">Retry</button></div>`;
+function errorHtml() {
+  return '<div class="robinhood-holder-error">Failed to load holders. <button type="button" data-holder-retry="page">Retry</button></div>';
 }
 
 export function destroyRobinhoodExpandedHolders() {
@@ -138,7 +92,6 @@ export function mountRobinhoodExpandedHolders(section: ParentNode, options: Moun
   if (!root) return;
   const panel = root.querySelector<HTMLElement>('[data-holder-panel]')!;
   const resizeHandle = root.querySelector<HTMLElement>('[data-holder-resize-handle]')!;
-  const history = root.querySelector<HTMLElement>('[data-holder-history]')!;
   const pageContainer = root.querySelector<HTMLElement>('[data-holder-page]')!;
   let disposed = false;
   let requestId = 0;
@@ -201,21 +154,6 @@ export function mountRobinhoodExpandedHolders(section: ParentNode, options: Moun
     }
   };
 
-  const loadHistory = async () => {
-    try {
-      if (!cache.historyRequest && !cache.history) {
-        cache.historyRequest = fetchRobinhoodHolderHistory(options.token, options.authToken)
-          .then((result) => {
-            cache.history = result;
-            return result;
-          })
-          .finally(() => { cache.historyRequest = null; });
-      }
-      const result = cache.history || (cache.historyRequest ? await cache.historyRequest : null);
-      if (!result) return;
-      if (!disposed) history.innerHTML = historyHtml(result);
-    } catch { if (!disposed) history.innerHTML = errorHtml('history'); }
-  };
   const loadPage = async () => {
     const id = ++requestId;
     const cursor = cursors.at(-1) || null;
@@ -236,12 +174,11 @@ export function mountRobinhoodExpandedHolders(section: ParentNode, options: Moun
       currentPage = result;
       root.querySelector<HTMLElement>('[data-holder-count]')!.textContent = count(result.summary.holderCount);
       pageContainer.innerHTML = holderPageHtml(result, cursors.length, cursors.length > 1);
-    } catch { if (!disposed && id === requestId) pageContainer.innerHTML = errorHtml('page'); }
+    } catch { if (!disposed && id === requestId) pageContainer.innerHTML = errorHtml(); }
   };
   const onClick = (event: Event) => {
     const target = event.target as Element | null;
     const retry = target?.closest<HTMLButtonElement>('[data-holder-retry]')?.dataset.holderRetry;
-    if (retry === 'history') return void loadHistory();
     if (retry === 'page') return void loadPage();
     const action = target?.closest<HTMLButtonElement>('[data-holder-page-action]')?.dataset.holderPageAction;
     if (action === 'next' && currentPage?.nextCursor) cursors.push(currentPage.nextCursor);
@@ -261,7 +198,6 @@ export function mountRobinhoodExpandedHolders(section: ParentNode, options: Moun
   resizeHandle.addEventListener('pointercancel', onPointerUp);
   resizeHandle.addEventListener('keydown', onKeyDown);
   window.addEventListener('resize', onResize);
-  void loadHistory();
   void loadPage();
   activeCleanup = () => {
     disposed = true;
