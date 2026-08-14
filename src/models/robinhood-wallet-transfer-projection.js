@@ -137,6 +137,67 @@ function cursor(row) {
     lifecycleState: row.lifecycle_state, version: Number(row.version),
   } : null;
 }
+function normalizeCommitInput(input) {
+  const projectionVersion = identifier(input.projectionVersion, 'projectionVersion');
+  const stream = identifier(input.stream, 'stream');
+  if (!STREAMS.has(stream)) throw new Error('stream must be seed or live');
+  const next = position(input, 'next');
+  const nextBlockTime = timestamp(input.nextBlockTime, 'nextBlockTime');
+  const safeHead = input.safeHead == null ? null : uint(input.safeHead, 'safeHead');
+  const checkpointBlock = input.checkpointBlock == null
+    ? null : uint(input.checkpointBlock, 'checkpointBlock');
+  const checkpointHash = input.checkpointHash == null
+    ? null : hash(input.checkpointHash, 'checkpointHash');
+  if ((checkpointBlock === null) !== (checkpointHash === null)
+      || (checkpointBlock !== null && BigInt(checkpointBlock) > BigInt(next.block))) {
+    throw new Error('checkpoint is inconsistent with next position');
+  }
+  const summarizedThroughDay = optionalDay(input.summarizedThroughDay);
+  if (summarizedThroughDay !== null && summarizedThroughDay >= nextBlockTime.slice(0, 10)) {
+    throw new Error('summarizedThroughDay must precede nextBlockTime');
+  }
+  if (input.events != null && !Array.isArray(input.events)) throw new Error('events must be a list');
+  return {
+    projectionVersion, stream, expectedVersion: uint(input.expectedVersion, 'expectedVersion'),
+    next, nextBlockTime, safeHead, checkpointBlock, checkpointHash, summarizedThroughDay,
+    summary: summarize(Array.isArray(input.events) ? input.events : [], projectionVersion),
+  };
+}
+function currentPosition(current) {
+  return {
+    block: String(current.next_block), transactionIndex: current.next_transaction_index,
+    logIndex: current.next_log_index,
+  };
+}
+function cursorConflict(current, batch, effectiveSafeHead) {
+  return comparePosition(currentPosition(current), batch.next) >= 0
+    || (batch.safeHead !== null && current.safe_head != null
+      && BigInt(batch.safeHead) < BigInt(current.safe_head))
+    || (batch.checkpointBlock !== null && current.checkpoint_block != null
+      && BigInt(batch.checkpointBlock) < BigInt(current.checkpoint_block))
+    || (batch.checkpointBlock !== null && String(current.checkpoint_block) === batch.checkpointBlock
+      && current.checkpoint_hash !== batch.checkpointHash)
+    || (batch.checkpointBlock !== null && effectiveSafeHead !== null
+      && BigInt(batch.checkpointBlock) > BigInt(effectiveSafeHead))
+    || new Date(batch.nextBlockTime) < new Date(current.next_block_time)
+    || (batch.summarizedThroughDay !== null && current.summarized_through_day != null
+      && batch.summarizedThroughDay
+        < new Date(current.summarized_through_day).toISOString().slice(0, 10));
+}
+function hasEventOutsideRange(current, batch, effectiveSafeHead) {
+  const start = currentPosition(current);
+  const startTime = new Date(current.next_block_time).toISOString();
+  return batch.summary.events.some((event) => (
+    comparePosition(event, start) < 0 || comparePosition(event, batch.next) >= 0
+    || event.blockTime < startTime || event.blockTime > batch.nextBlockTime
+    || (effectiveSafeHead !== null && BigInt(event.block) > BigInt(effectiveSafeHead))
+  ));
+}
+function rejectionReason(current, batch, effectiveSafeHead) {
+  if (cursorConflict(current, batch, effectiveSafeHead)) return 'cursor_conflict';
+  return hasEventOutsideRange(current, batch, effectiveSafeHead)
+    ? 'event_outside_cursor_range' : null;
+}
 function createRobinhoodWalletTransferProjectionRepository(options = {}) {
   const database = options.database || db;
   async function loadCursor(projectionVersion, stream) {
@@ -167,94 +228,36 @@ function createRobinhoodWalletTransferProjectionRepository(options = {}) {
   }
 
   async function commitBatch(input = {}) {
-    const projectionVersion = identifier(input.projectionVersion, 'projectionVersion');
-    const stream = identifier(input.stream, 'stream');
-    if (!STREAMS.has(stream)) throw new Error('stream must be seed or live');
-    const expectedVersion = uint(input.expectedVersion, 'expectedVersion');
-    const next = position(input, 'next');
-    const nextBlockTime = timestamp(input.nextBlockTime, 'nextBlockTime');
-    const safeHead = input.safeHead == null ? null : uint(input.safeHead, 'safeHead');
-    const checkpointBlock = input.checkpointBlock == null
-      ? null : uint(input.checkpointBlock, 'checkpointBlock');
-    const checkpointHash = input.checkpointHash == null
-      ? null : hash(input.checkpointHash, 'checkpointHash');
-    if ((checkpointBlock === null) !== (checkpointHash === null)
-        || (checkpointBlock !== null && BigInt(checkpointBlock) > BigInt(next.block))) {
-      throw new Error('checkpoint is inconsistent with next position');
-    }
-    const summarizedThroughDay = optionalDay(input.summarizedThroughDay);
-    if (summarizedThroughDay !== null && summarizedThroughDay >= nextBlockTime.slice(0, 10)) {
-      throw new Error('summarizedThroughDay must precede nextBlockTime');
-    }
-    if (input.events != null && !Array.isArray(input.events)) throw new Error('events must be a list');
-    const summary = summarize(Array.isArray(input.events) ? input.events : [], projectionVersion);
+    const batch = normalizeCommitInput(input);
     const client = await database.getClient();
     try {
       await client.query('BEGIN');
       const locked = await client.query(
         `SELECT * FROM robinhood_wallet_transfer_cursors
          WHERE chain = $1 AND projection_version = $2 AND stream = $3 FOR UPDATE`,
-        [CHAIN, projectionVersion, stream]
+        [CHAIN, batch.projectionVersion, batch.stream]
       );
       const current = locked.rows[0];
-      if (!current || String(current.version) !== expectedVersion
+      if (!current || String(current.version) !== batch.expectedVersion
           || !['pending', 'running'].includes(current.lifecycle_state)) {
         await client.query('ROLLBACK');
         return { committed: false, reason: 'cursor_conflict' };
       }
-      const currentPosition = {
-        block: String(current.next_block), transactionIndex: current.next_transaction_index,
-        logIndex: current.next_log_index,
-      };
-      const effectiveSafeHead = safeHead ?? (current.safe_head == null ? null : String(current.safe_head));
-      const conflict = comparePosition(currentPosition, next) >= 0
-        || (safeHead !== null && current.safe_head != null
-          && BigInt(safeHead) < BigInt(current.safe_head))
-        || (checkpointBlock !== null && current.checkpoint_block != null
-          && BigInt(checkpointBlock) < BigInt(current.checkpoint_block))
-        || (checkpointBlock !== null && String(current.checkpoint_block) === checkpointBlock
-          && current.checkpoint_hash !== checkpointHash)
-        || (checkpointBlock !== null && effectiveSafeHead !== null
-          && BigInt(checkpointBlock) > BigInt(effectiveSafeHead))
-        || new Date(nextBlockTime) < new Date(current.next_block_time)
-        || (summarizedThroughDay !== null && current.summarized_through_day != null
-          && summarizedThroughDay < new Date(current.summarized_through_day).toISOString().slice(0, 10));
-      const outsideRange = summary.events.some((event) => (
-        comparePosition(event, currentPosition) < 0 || comparePosition(event, next) >= 0
-        || event.blockTime < new Date(current.next_block_time).toISOString()
-        || event.blockTime > nextBlockTime
-        || (effectiveSafeHead !== null && BigInt(event.block) > BigInt(effectiveSafeHead))
-      ));
-      if (conflict || outsideRange) {
+      const effectiveSafeHead = batch.safeHead
+        ?? (current.safe_head == null ? null : String(current.safe_head));
+      const reason = rejectionReason(current, batch, effectiveSafeHead);
+      if (reason) {
         await client.query('ROLLBACK');
-        return { committed: false, reason: conflict ? 'cursor_conflict' : 'event_outside_cursor_range' };
+        return { committed: false, reason };
       }
-      await persistEdges(client, projectionVersion, summary.edges);
-      await persistEvidence(client, projectionVersion, summary.relationships);
-      const complete = stream === 'seed' && effectiveSafeHead !== null
-        && BigInt(next.block) > BigInt(effectiveSafeHead);
-      const advanced = await client.query(
-        `UPDATE robinhood_wallet_transfer_cursors SET
-           next_block = $4::bigint, next_transaction_index = $5::integer,
-           next_log_index = $6::integer, next_block_time = $7::timestamptz,
-           safe_head = COALESCE($8::bigint, safe_head),
-           checkpoint_block = COALESCE($9::bigint, checkpoint_block),
-           checkpoint_hash = COALESCE($10, checkpoint_hash),
-           summarized_through_day = COALESCE($11::date, summarized_through_day),
-           lifecycle_state = CASE WHEN $12::boolean THEN 'complete' ELSE 'running' END,
-           completed_at = CASE WHEN $12::boolean THEN NOW() ELSE NULL END,
-           state_reason = NULL, failed_at = NULL, version = version + 1, updated_at = NOW()
-         WHERE chain = $1 AND projection_version = $2 AND stream = $3 AND version = $13::bigint
-         RETURNING *`,
-        [CHAIN, projectionVersion, stream, next.block, next.transactionIndex, next.logIndex,
-          nextBlockTime, safeHead, checkpointBlock, checkpointHash, summarizedThroughDay,
-          complete, expectedVersion]
-      );
+      await persistEdges(client, batch.projectionVersion, batch.summary.edges);
+      await persistEvidence(client, batch.projectionVersion, batch.summary.relationships);
+      const advanced = await advanceCursor(client, batch, effectiveSafeHead);
       if (!advanced.rows[0]) throw new Error('locked transfer cursor changed unexpectedly');
       await client.query('COMMIT');
       return {
-        committed: true, edgeGroups: summary.edges.length,
-        evidenceCandidates: summary.relationships.length * 3, cursor: cursor(advanced.rows[0]),
+        committed: true, edgeGroups: batch.summary.edges.length,
+        evidenceCandidates: batch.summary.relationships.length * 3, cursor: cursor(advanced.rows[0]),
       };
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
@@ -265,6 +268,28 @@ function createRobinhoodWalletTransferProjectionRepository(options = {}) {
   }
 
   return { commitBatch, initCursor, loadCursor };
+}
+async function advanceCursor(client, batch, effectiveSafeHead) {
+  const complete = batch.stream === 'seed' && effectiveSafeHead !== null
+    && BigInt(batch.next.block) > BigInt(effectiveSafeHead);
+  return client.query(
+    `UPDATE robinhood_wallet_transfer_cursors SET
+       next_block = $4::bigint, next_transaction_index = $5::integer,
+       next_log_index = $6::integer, next_block_time = $7::timestamptz,
+       safe_head = COALESCE($8::bigint, safe_head),
+       checkpoint_block = COALESCE($9::bigint, checkpoint_block),
+       checkpoint_hash = COALESCE($10, checkpoint_hash),
+       summarized_through_day = COALESCE($11::date, summarized_through_day),
+       lifecycle_state = CASE WHEN $12::boolean THEN 'complete' ELSE 'running' END,
+       completed_at = CASE WHEN $12::boolean THEN NOW() ELSE NULL END,
+       state_reason = NULL, failed_at = NULL, version = version + 1, updated_at = NOW()
+     WHERE chain = $1 AND projection_version = $2 AND stream = $3 AND version = $13::bigint
+     RETURNING *`,
+    [CHAIN, batch.projectionVersion, batch.stream, batch.next.block,
+      batch.next.transactionIndex, batch.next.logIndex, batch.nextBlockTime,
+      batch.safeHead, batch.checkpointBlock, batch.checkpointHash, batch.summarizedThroughDay,
+      complete, batch.expectedVersion]
+  );
 }
 async function persistEdges(client, projectionVersion, edges) {
   if (!edges.length) return;
