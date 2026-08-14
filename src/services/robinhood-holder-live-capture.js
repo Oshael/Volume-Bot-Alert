@@ -40,21 +40,44 @@ async function findLastCanonicalCheckpoint(reader, values) {
   return Object.freeze({ canonical, checkedCheckpoints });
 }
 
+async function readOrQuarantine(input) {
+  try {
+    return await input.reader.readGlobalRange({
+      tokenAddresses: input.tokenAddresses,
+      fromBlock: input.fromBlock.toString(), toBlock: input.toBlock.toString(),
+    });
+  } catch (error) {
+    if (error.code !== 'holder_transfer_invalid_log' || !error.tokenAddress) throw error;
+    const quarantined = await input.ledger.quarantineMalformedToken({
+      tokenAddress: error.tokenAddress,
+    });
+    return Object.freeze({
+      ...quarantined, status: 'malformed-token-quarantined',
+      nextBlock: input.fromBlock.toString(), safeHead: input.safeHead,
+    });
+  }
+}
+
+function hasMethods(value, names) {
+  return names.every((name) => typeof value?.[name] === 'function');
+}
+
+function assertDependencies(ledger, reader) {
+  if (!hasMethods(ledger, [
+    'getCursor', 'listJournalBlockCheckpoints', 'listTrackedTokenAddresses',
+    'quarantineMalformedToken', 'appendCapturedRange', 'rewindOrphanedRange',
+  ])) {
+    throw new TypeError('holder live ledger is required');
+  }
+  if (!hasMethods(reader, ['getSafeHead', 'matchesCheckpoint', 'readGlobalRange'])) {
+    throw new TypeError('holder global Transfer reader is required');
+  }
+}
+
 function createRobinhoodHolderLiveCapture(options = {}) {
   const ledger = options.ledger;
   const reader = options.reader;
-  if (typeof ledger?.getCursor !== 'function'
-      || typeof ledger?.listJournalBlockCheckpoints !== 'function'
-      || typeof ledger?.listTrackedTokenAddresses !== 'function'
-      || typeof ledger?.appendCapturedRange !== 'function'
-      || typeof ledger?.rewindOrphanedRange !== 'function') {
-    throw new TypeError('holder live ledger is required');
-  }
-  if (typeof reader?.getSafeHead !== 'function'
-      || typeof reader?.matchesCheckpoint !== 'function'
-      || typeof reader?.readGlobalRange !== 'function') {
-    throw new TypeError('holder global Transfer reader is required');
-  }
+  assertDependencies(ledger, reader);
 
   async function captureOnce(input = {}) {
     const rangeSize = boundedInteger(input.rangeSize, 250, 1, 5000, 'rangeSize');
@@ -109,9 +132,10 @@ function createRobinhoodHolderLiveCapture(options = {}) {
     const candidateEnd = fromBlock + BigInt(rangeSize - 1);
     const toBlock = cursor && candidateEnd < safeHead ? candidateEnd : safeHead;
     const tokenAddresses = await ledger.listTrackedTokenAddresses();
-    const captured = await reader.readGlobalRange({
-      tokenAddresses, fromBlock: fromBlock.toString(), toBlock: toBlock.toString(),
+    const captured = await readOrQuarantine({
+      ledger, reader, tokenAddresses, fromBlock, toBlock, safeHead: head.safeHead,
     });
+    if (captured.status === 'malformed-token-quarantined') return captured;
     const committed = await ledger.appendCapturedRange({
       transfers: captured.transfers,
       cursor: {

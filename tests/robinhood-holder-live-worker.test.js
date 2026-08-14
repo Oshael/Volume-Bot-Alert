@@ -57,6 +57,7 @@ describe('Robinhood holder live worker', () => {
       capturedTransfers: 3, appliedEvents: 2, driftedTokens: 1,
       driftSuspicions: 0, receiptRecoveries: 0, driftDeferred: 0,
       tailRollbacks: 0, tailRollbackEvents: 0,
+      quarantinedTokenAddress: null, quarantinedTokens: 0,
       holderCountUpdates: 1, holderCountPublished: 1,
       applyBudgetExhausted: false,
     });

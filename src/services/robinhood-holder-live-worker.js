@@ -85,6 +85,10 @@ function numericMetric(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function nullableMetric(value) {
+  return value == null ? null : value;
+}
+
 function compactResult(result) {
   if (!result) return null;
   return Object.freeze({
@@ -103,6 +107,8 @@ function compactResult(result) {
     driftDeferred: Number(result.driftDeferred) || 0,
     tailRollbacks: numericMetric(result.tailRollbacks),
     tailRollbackEvents: numericMetric(result.tailRollbackEvents),
+    quarantinedTokenAddress: nullableMetric(result.quarantinedTokenAddress),
+    quarantinedTokens: numericMetric(result.quarantinedTokens),
     applyBudgetExhausted: result.applyBudgetExhausted === true,
     holderCountUpdates: Number(result.holderCountUpdates) || 0,
     holderCountPublished: Number(result.holderCountPublished) || 0,
@@ -130,7 +136,7 @@ function createRobinhoodHolderLiveWorker(deps = {}) {
     totalHandoffPromotions: 0, totalHandoffResyncs: 0,
     totalDriftedTokens: 0, totalDriftSuspicions: 0,
     totalReceiptRecoveries: 0, totalTailRollbacks: 0, totalTailRollbackEvents: 0,
-    totalRecoveries: 0, lastCompletedAt: null,
+    totalMalformedTokenQuarantines: 0, totalRecoveries: 0, lastCompletedAt: null,
   };
 
   async function getRuntime() {
@@ -168,6 +174,7 @@ function createRobinhoodHolderLiveWorker(deps = {}) {
     status.totalReceiptRecoveries += Number(result.receiptRecoveries) || 0;
     status.totalTailRollbacks += Number(result.tailRollbacks) || 0;
     status.totalTailRollbackEvents += Number(result.tailRollbackEvents) || 0;
+    status.totalMalformedTokenQuarantines += Number(result.quarantinedTokens) || 0;
     if (result.status === 'recovered') status.totalRecoveries += 1;
   }
 

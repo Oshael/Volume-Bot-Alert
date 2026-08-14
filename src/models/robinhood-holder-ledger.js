@@ -1040,6 +1040,59 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     return Object.freeze(result.rows.map((row) => row.token_address));
   }
 
+  async function quarantineMalformedToken(input = {}) {
+    const tokenAddress = hex(input.tokenAddress, 20, 'malformed.tokenAddress');
+    return withTransaction(database, async (client) => {
+      await client.query(
+        `SELECT next_block FROM robinhood_holder_cursors
+          WHERE chain = $1 AND stream = $2 FOR UPDATE`, [CHAIN, STREAM]
+      );
+      const prior = await client.query(
+        `SELECT ledger_status FROM robinhood_holder_token_states
+          WHERE chain = $1 AND token_address = $2
+            AND ledger_status IN ('backfilling', 'shadow', 'live') FOR UPDATE`,
+        [CHAIN, tokenAddress]
+      );
+      const balances = await client.query(
+        `DELETE FROM robinhood_holder_balances
+          WHERE chain = $1 AND token_address = $2`, [CHAIN, tokenAddress]
+      );
+      const journal = await client.query(
+        `DELETE FROM robinhood_holder_transfer_journal
+          WHERE chain = $1 AND token_address = $2`, [CHAIN, tokenAddress]
+      );
+      const states = await client.query(
+        `UPDATE robinhood_holder_token_states
+            SET holder_count = 0, ledger_status = 'drifted',
+                backfill_next_block = deployment_block,
+                live_through_block = NULL, live_through_hash = NULL,
+                last_reconciled_at = NULL, version = version + 1, updated_at = NOW()
+          WHERE chain = $1 AND token_address = $2
+            AND ledger_status IN ('backfilling', 'shadow', 'live')
+        RETURNING version`, [CHAIN, tokenAddress]
+      );
+      const cohort = await client.query(
+        `UPDATE robinhood_holder_global_backfill_tokens
+            SET holder_count = 0, status = 'excluded',
+                exclusion_reason = 'malformed_transfer_log_live', updated_at = NOW()
+          WHERE chain = $1 AND token_address = $2
+            AND status IN ('active', 'materialized')`, [CHAIN, tokenAddress]
+      );
+      if (!states.rowCount && !cohort.rowCount) {
+        const error = new Error('malformed holder token is no longer tracked');
+        error.code = 'holder_malformed_token_stale';
+        throw error;
+      }
+      return Object.freeze({
+        status: 'quarantined', tokenAddress,
+        priorStatus: prior.rows[0]?.ledger_status || null,
+        version: states.rows[0] ? String(states.rows[0].version) : null,
+        deletedBalances: balances.rowCount, deletedJournalEvents: journal.rowCount,
+        excludedCohortTokens: cohort.rowCount,
+      });
+    });
+  }
+
   async function listJournalBlockCheckpoints(input = {}) {
     const fromBlock = decimalQuantity(input.fromBlock, 'journal.fromBlock');
     const toBlock = decimalQuantity(input.toBlock, 'journal.toBlock');
@@ -1069,6 +1122,7 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     appendCapturedRange, applyNextPendingEvent, repairCapturedRange, rollbackAppliedTail,
     rewindOrphanedRange,
     getCursor, listJournalBlockCheckpoints, listTrackedTokenAddresses,
+    quarantineMalformedToken,
   });
 }
 

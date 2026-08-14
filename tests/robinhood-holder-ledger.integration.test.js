@@ -16,6 +16,7 @@ const HASH_D = `0x${'d'.repeat(64)}`;
 const TOKEN = `0x${'3'.repeat(40)}`;
 const TOKEN_2 = `0x${'6'.repeat(40)}`;
 const TOKEN_3 = `0x${'8'.repeat(40)}`;
+const TOKEN_4 = `0x${'a'.repeat(40)}`;
 const ALICE = `0x${'4'.repeat(40)}`;
 const BOB = `0x${'5'.repeat(40)}`;
 const ZERO_ADDRESS = `0x${'0'.repeat(40)}`;
@@ -49,6 +50,10 @@ describe('Robinhood holder ledger persistence', () => {
         (LIKE public.robinhood_holder_balances INCLUDING ALL)`);
       await client.query(`CREATE TEMP TABLE robinhood_holder_token_states
         (LIKE public.robinhood_holder_token_states INCLUDING ALL)`);
+      await client.query(`CREATE TEMP TABLE robinhood_holder_global_backfill_runs
+        (LIKE public.robinhood_holder_global_backfill_runs INCLUDING ALL)`);
+      await client.query(`CREATE TEMP TABLE robinhood_holder_global_backfill_tokens
+        (LIKE public.robinhood_holder_global_backfill_tokens INCLUDING ALL)`);
       const database = {
         query: client.query.bind(client),
         getClient: async () => ({
@@ -146,6 +151,42 @@ describe('Robinhood holder ledger persistence', () => {
         version: Number(row.version),
       })), [{
         nextBlock: '101', checkpointBlock: '100', journalFloorBlock: '100', version: 0,
+      }]);
+
+      await client.query(
+        `INSERT INTO robinhood_holder_token_states (
+           token_address, holder_count, ledger_status, deployment_block,
+           backfill_next_block, live_through_block, live_through_hash
+         ) VALUES ($1, 1, 'live', 50, 101, 100, $2)`, [TOKEN_4, HASH_A]
+      );
+      await client.query(
+        `INSERT INTO robinhood_holder_balances (
+           token_address, wallet_address, balance_raw, last_block_number,
+           last_transaction_hash, last_log_index
+         ) VALUES ($1, $2, 1, 100, $3, 9)`, [TOKEN_4, ALICE, HASH_D]
+      );
+      await client.query(
+        `INSERT INTO robinhood_holder_transfer_journal (
+           block_number, block_hash, transaction_hash, transaction_index,
+           log_index, token_address, from_wallet, to_wallet, amount_raw, applied
+         ) VALUES (100, $1, $2, 9, 9, $3, $4, $5, 1, false)`,
+        [HASH_A, HASH_D, TOKEN_4, ZERO_ADDRESS, ALICE]
+      );
+      assert.deepEqual(await repository.quarantineMalformedToken({ tokenAddress: TOKEN_4 }), {
+        status: 'quarantined', tokenAddress: TOKEN_4, priorStatus: 'live', version: '1',
+        deletedBalances: 1, deletedJournalEvents: 1, excludedCohortTokens: 0,
+      });
+      const quarantined = await client.query(
+        `SELECT holder_count, ledger_status, backfill_next_block, live_through_block,
+                (SELECT COUNT(*) FROM robinhood_holder_balances
+                  WHERE token_address = $1)::int AS balances,
+                (SELECT COUNT(*) FROM robinhood_holder_transfer_journal
+                  WHERE token_address = $1)::int AS journal
+           FROM robinhood_holder_token_states WHERE token_address = $1`, [TOKEN_4]
+      );
+      assert.deepEqual(quarantined.rows, [{
+        holder_count: '0', ledger_status: 'drifted', backfill_next_block: '50',
+        live_through_block: null, balances: 0, journal: 0,
       }]);
 
       await client.query(

@@ -18,6 +18,7 @@ describe('Robinhood holder global live capture', () => {
       }),
       listJournalBlockCheckpoints: async () => [],
       listTrackedTokenAddresses: async () => [TOKEN],
+      quarantineMalformedToken: async () => { throw new Error('unexpected quarantine'); },
       appendCapturedRange: async (input) => {
         calls.push(['append', input]);
         return { insertedTransfers: 1, duplicateTransfers: 0, cursorVersion: 5 };
@@ -76,6 +77,7 @@ describe('Robinhood holder global live capture', () => {
       getCursor: async () => null,
       listJournalBlockCheckpoints: async () => [],
       listTrackedTokenAddresses: async () => [],
+      quarantineMalformedToken: async () => { throw new Error('unexpected quarantine'); },
       appendCapturedRange: async (input) => {
         appended.push(input);
         return { insertedTransfers: 0, duplicateTransfers: 0, cursorVersion: 0 };
@@ -123,6 +125,7 @@ describe('Robinhood holder global live capture', () => {
         return { status: 'rewound', revertedEvents: 3, cursorVersion: 8 };
       },
       listTrackedTokenAddresses: async () => [],
+      quarantineMalformedToken: async () => { throw new Error('unexpected quarantine'); },
       appendCapturedRange: async () => { throw new Error('unexpected capture'); },
     };
     const reader = {
@@ -149,5 +152,44 @@ describe('Robinhood holder global live capture', () => {
         checkpoint: { number: '95', hash: HASH_B },
       }],
     ]);
+  });
+
+  it('quarantines one malformed tracked token without advancing the live cursor', async () => {
+    const calls = [];
+    const invalid = new Error('Transfer log topics are invalid');
+    invalid.code = 'holder_transfer_invalid_log';
+    invalid.tokenAddress = TOKEN;
+    const ledger = {
+      getCursor: async () => ({
+        nextBlock: '103', checkpointBlock: '102', checkpointHash: HASH,
+        journalFloorBlock: '90', version: 4,
+      }),
+      listJournalBlockCheckpoints: async () => [],
+      listTrackedTokenAddresses: async () => [TOKEN],
+      appendCapturedRange: async () => { throw new Error('unexpected capture'); },
+      rewindOrphanedRange: async () => { throw new Error('unexpected rewind'); },
+      quarantineMalformedToken: async (input) => {
+        calls.push(input);
+        return {
+          status: 'quarantined', tokenAddress: TOKEN, priorStatus: 'live',
+          version: '8', deletedBalances: 2, deletedJournalEvents: 3,
+          excludedCohortTokens: 0,
+        };
+      },
+    };
+    const reader = {
+      getSafeHead: async () => ({ head: '117', safeHead: '105', confirmations: 12 }),
+      matchesCheckpoint: async () => true,
+      readGlobalRange: async () => { throw invalid; },
+    };
+
+    const result = await createRobinhoodHolderLiveCapture({ ledger, reader }).captureOnce();
+
+    assert.deepEqual(result, {
+      status: 'malformed-token-quarantined', tokenAddress: TOKEN, priorStatus: 'live',
+      version: '8', deletedBalances: 2, deletedJournalEvents: 3,
+      excludedCohortTokens: 0, nextBlock: '103', safeHead: '105',
+    });
+    assert.deepEqual(calls, [{ tokenAddress: TOKEN }]);
   });
 });

@@ -85,6 +85,26 @@ describe('Robinhood holder live runner', () => {
     ]);
   });
 
+  it('reports a malformed-token quarantine as recovery without advancing or applying', async () => {
+    const tokenAddress = `0x${'7'.repeat(40)}`;
+    const context = harness({
+      status: 'malformed-token-quarantined', tokenAddress,
+      nextBlock: '103', safeHead: '105', deletedBalances: 4, deletedJournalEvents: 6,
+    });
+
+    assert.deepEqual(await context.runner.runOnce(), {
+      status: 'recovered', captureStatus: 'malformed-token-quarantined',
+      quarantinedTokenAddress: tokenAddress, quarantinedTokens: 1,
+      deletedBalances: 4, deletedJournalEvents: 6,
+      nextBlock: '103', safeHead: '105',
+      handoffStatus: 'skipped', handoffPromotions: 0, handoffResyncs: 0,
+      appliedEvents: 0, driftedTokens: 1, applyAttempts: 0,
+      holderCountUpdates: 0, holderCountPublished: 0,
+      applyBudgetExhausted: false,
+    });
+    assert.equal(context.calls.some(([name]) => name === 'handoff' || name === 'apply'), false);
+  });
+
   it('repairs a missing live-tail transfer from receipts before retrying application', async () => {
     const suspicion = {
       status: 'drift-suspected', tokenAddress: `0x${'1'.repeat(40)}`,

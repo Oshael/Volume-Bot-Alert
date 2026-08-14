@@ -162,6 +162,19 @@ function createRobinhoodHolderLiveRunner(options = {}) {
         applyBudgetExhausted: false,
       }) };
     }
+    if (captured.status === 'malformed-token-quarantined') {
+      return { terminal: Object.freeze({
+        status: 'recovered', captureStatus: captured.status,
+        quarantinedTokenAddress: captured.tokenAddress, quarantinedTokens: 1,
+        deletedBalances: Number(captured.deletedBalances) || 0,
+        deletedJournalEvents: Number(captured.deletedJournalEvents) || 0,
+        nextBlock: captured.nextBlock, safeHead: captured.safeHead,
+        handoffStatus: 'skipped', handoffPromotions: 0, handoffResyncs: 0,
+        appliedEvents: 0, driftedTokens: 1, applyAttempts: 0,
+        holderCountUpdates: 0, holderCountPublished: 0,
+        applyBudgetExhausted: false,
+      }) };
+    }
     if (!['captured', 'idle'].includes(captured.status)) {
       const error = new Error(`unexpected holder capture status: ${captured.status}`);
       error.code = 'holder_live_capture_contract_error';
