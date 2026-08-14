@@ -14,6 +14,8 @@ const stage116 = require('../src/utils/db-init-stage116');
 const stage120 = require('../src/utils/db-init-stage120');
 const stage122 = require('../src/utils/db-init-stage122');
 const stage133 = require('../src/utils/db-init-stage133');
+const stage129 = require('../src/utils/db-init-stage129');
+const stage134 = require('../src/utils/db-init-stage134');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const TOKEN = `0x${'1'.repeat(40)}`;
@@ -29,12 +31,15 @@ async function cleanup() {
   await db.query('DELETE FROM robinhood_pool_registry WHERE market_key = $1', ['test-transfer-source']);
   await db.query('DELETE FROM robinhood_holder_token_states WHERE token_address = $1', [TOKEN]);
   await db.query("DELETE FROM robinhood_wallet_swap_cursors WHERE chain = 'robinhood' AND stream IN ('seed', 'live')");
+  await db.query("DELETE FROM robinhood_wallet_transfer_cursors WHERE projection_version = 'test_transfer_plan_v1'");
 }
 
 describe('Robinhood wallet transfer LIVE source', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
-    for (const stage of [stage63, stage90, stage91, stage116, stage120, stage122, stage133]) {
+    for (const stage of [
+      stage63, stage90, stage91, stage116, stage120, stage122, stage133, stage129, stage134,
+    ]) {
       await stage.init({ closePool: false });
     }
     await db.query(`CREATE TABLE IF NOT EXISTS ${PARTITION}
@@ -63,6 +68,12 @@ describe('Robinhood wallet transfer LIVE source', () => {
       [HASH]
     );
     await db.query(
+      `INSERT INTO robinhood_wallet_transfer_cursors (
+         chain, projection_version, stream, origin_block, next_block,
+         next_block_time, safe_head, lifecycle_state
+       ) VALUES ('robinhood', 'test_transfer_plan_v1', 'live', 110, 120, NOW(), 150, 'running')`
+    );
+    await db.query(
       `INSERT INTO robinhood_holder_token_states (chain, token_address, ledger_status)
        VALUES ('robinhood', $1, 'live')`, [TOKEN]
     );
@@ -88,6 +99,7 @@ describe('Robinhood wallet transfer LIVE source', () => {
     const repository = createRobinhoodWalletTransferLiveSourceRepository({ database: db });
     const frontier = await repository.loadSwapFrontier();
     const backfillFrontier = await repository.loadBackfillFrontier();
+    const backfillPlan = await repository.loadBackfillPlan('test_transfer_plan_v1');
     const tokens = await repository.listTrackedTokenAddresses();
     const context = await repository.loadRangeContext({
       fromBlock: '100', toBlock: '119',
@@ -106,6 +118,10 @@ describe('Robinhood wallet transfer LIVE source', () => {
     assert.equal(backfillFrontier.historicalFromBlock, '100');
     assert.equal(backfillFrontier.historicalThroughBlock, '100');
     assert.equal(backfillFrontier.completeThroughBlock, '119');
+    assert.equal(backfillPlan.ready, true);
+    assert.equal(backfillPlan.fromBlock, '100');
+    assert.equal(backfillPlan.throughBlock, '109');
+    assert.equal(backfillPlan.remainingBlocks, '10');
     assert.equal(tokens.includes(TOKEN), true);
     assert.equal(context.swapCoverageComplete, true);
     assert.equal(context.swaps.length, 1);

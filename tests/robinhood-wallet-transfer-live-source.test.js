@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const {
-  __private: { backfillFrontier, sourceFrontier },
+  __private: { backfillFrontier, sourceFrontier, transferBackfillPlan },
 } = require('../src/models/robinhood-wallet-transfer-live-source');
 
 const BASE = Object.freeze({
@@ -62,5 +62,62 @@ describe('Robinhood wallet transfer backfill source frontier', () => {
     assert.equal(result.historicalFromBlock, '90');
     assert.equal(result.historicalThroughBlock, '100');
     assert.equal(result.completeThroughBlock, '119');
+  });
+});
+
+function transferCursor(stream, overrides = {}) {
+  return {
+    stream, origin_block: stream === 'live' ? '110' : '90',
+    next_block: stream === 'live' ? '120' : '95', safe_head: stream === 'seed' ? '109' : '150',
+    lifecycle_state: 'running', completed_at: null, version: 1, ...overrides,
+  };
+}
+
+describe('Robinhood wallet transfer seed plan', () => {
+  const swap = backfillFrontier([SEED, BASE]);
+
+  it('plans exactly through the block before the durable LIVE origin', () => {
+    const plan = transferBackfillPlan(swap, [transferCursor('live')]);
+    assert.equal(plan.ready, true);
+    assert.equal(plan.status, 'uninitialized');
+    assert.equal(plan.fromBlock, '90');
+    assert.equal(plan.throughBlock, '109');
+    assert.equal(plan.remainingBlocks, '20');
+  });
+
+  it('resumes only a seed with identical immutable boundaries', () => {
+    const running = transferBackfillPlan(swap, [
+      transferCursor('live'), transferCursor('seed'),
+    ]);
+    assert.equal(running.status, 'running');
+    assert.equal(running.nextBlock, '95');
+    assert.equal(running.remainingBlocks, '15');
+
+    const complete = transferBackfillPlan(swap, [
+      transferCursor('live'),
+      transferCursor('seed', {
+        next_block: '110', lifecycle_state: 'complete', completed_at: '2099-01-01T00:00:00Z',
+      }),
+    ]);
+    assert.equal(complete.status, 'complete');
+    assert.equal(complete.remainingBlocks, '0');
+  });
+
+  it('fails closed for gaps, overlap and cursor boundary conflicts', () => {
+    const cases = [
+      [[], 'transfer_live_missing'],
+      [[transferCursor('live', { origin_block: null })], 'transfer_live_origin_missing'],
+      [[transferCursor('live', { origin_block: '89' })],
+        'transfer_live_origin_before_swap_coverage'],
+      [[transferCursor('live', { origin_block: '121', next_block: '130' })],
+        'transfer_seed_target_beyond_swap_coverage'],
+      [[transferCursor('live'), transferCursor('seed', { origin_block: '91' })],
+        'transfer_seed_origin_conflict'],
+      [[transferCursor('live'), transferCursor('seed', { safe_head: '108' })],
+        'transfer_seed_target_conflict'],
+    ];
+    for (const [rows, reason] of cases) {
+      assert.equal(transferBackfillPlan(swap, rows).reason, reason);
+    }
   });
 });

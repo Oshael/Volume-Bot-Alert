@@ -1273,6 +1273,11 @@ inicial do próprio cursor. Para um cursor LIVE antigo, a origem deve ser audita
 e informada explicitamente ao comando dry-run; confirmação exige a lease LIVE
 inativa e nunca deriva a origem do primeiro evento retido.
 
+O B6d calcula a janela seed sem RPC ou escrita: começa na origem histórica
+comprovada dos swaps e termina exatamente no bloco anterior à origem LIVE de
+transfers. O plano falha fechado se houver gap, sobreposição ou se um cursor
+seed existente não preservar as mesmas fronteiras imutáveis.
+
 ### Corte C1 — read model e API de inteligência
 
 Objetivo:
