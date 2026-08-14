@@ -165,7 +165,7 @@ function screenNameOf(tweet) {
 // visibility-wrapped tweets, retweets (media lives in the original), and how
 // many posts carry an image worth fingerprinting.
 function analyzeTimeline(entries) {
-  const stats = { entryTypes: {}, tweets: 0, typenames: {}, retweets: 0, withMedia: 0, withImage: 0, mediaTypes: {}, samples: [] };
+  const stats = { entryTypes: {}, tweets: 0, typenames: {}, retweets: 0, replies: 0, withMedia: 0, withImage: 0, mediaTypes: {}, times: [], samples: [] };
   for (const entry of entries) {
     const content = entry.content || {};
     const et = content.entryType || content.__typename || 'unknown';
@@ -178,6 +178,9 @@ function analyzeTimeline(entries) {
     const legacy = tweet?.legacy || {};
     const isRt = Boolean(legacy.retweeted_status_result) || String(legacy.full_text || '').startsWith('RT @');
     if (isRt) stats.retweets += 1;
+    if (legacy.in_reply_to_status_id_str || legacy.in_reply_to_screen_name) stats.replies += 1;
+    const created = legacy.created_at ? Date.parse(legacy.created_at) : NaN;
+    if (!Number.isNaN(created)) stats.times.push(created);
     const srcLegacy = legacy.retweeted_status_result?.result?.legacy || legacy;
     const media = mediaOf(srcLegacy);
     if (media.length) {
@@ -261,8 +264,15 @@ async function main() {
     console.log('\n--- timeline structure (informs the Bloco 3 normalizer) ---');
     console.log('entry types :', JSON.stringify(stats.entryTypes));
     console.log('tweets      :', stats.tweets, '| typenames:', JSON.stringify(stats.typenames));
-    console.log('retweets    :', stats.retweets, '| with media:', stats.withMedia, '| with image(photo):', stats.withImage);
+    console.log('retweets    :', stats.retweets, '| replies:', stats.replies, '| with media:', stats.withMedia, '| with image(photo):', stats.withImage);
     console.log('media types :', JSON.stringify(stats.mediaTypes));
+    if (stats.times.length) {
+      const newest = Math.max(...stats.times);
+      const oldest = Math.min(...stats.times);
+      const ageSec = Math.round((Date.now() - newest) / 1000);
+      const spanMin = Math.round((newest - oldest) / 60000);
+      console.log('freshness   :', `newest post ${ageSec}s ago | window spans ${spanMin} min (newest -> oldest)`);
+    }
     console.log('samples:');
     for (const sample of stats.samples) console.log('  ', sample);
   } else {
