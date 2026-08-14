@@ -3196,6 +3196,33 @@ const SCHEMA_GROUPS = [
       ],
     }],
   },
+  {
+    key: 'stage124-x-ingestion-store',
+    name: 'Stage 124 X ingestion store',
+    repair: 'node src/utils/db-init-stage124.js',
+    tables: [
+      {
+        table: 'x_session',
+        columns: ['id', 'label', 'auth_token', 'ct0', 'proxy_url', 'enabled', 'quarantined_until', 'last_used_at', 'created_at'],
+      },
+      {
+        table: 'x_list',
+        columns: ['id', 'list_id', 'query_id', 'label', 'enabled', 'last_cursor', 'last_polled_at', 'created_at'],
+      },
+      {
+        table: 'x_tracked_account',
+        columns: ['rest_id', 'screen_name', 'followers', 'tier', 'enabled', 'added_reason', 'added_at', 'last_seen_post_at'],
+      },
+      {
+        table: 'x_post',
+        columns: ['post_id', 'author_rest_id', 'author_screen_name', 'author_followers', 'text', 'lang', 'posted_at', 'retweet_of_post_id', 'engagement', 'ingested_at'],
+      },
+      {
+        table: 'x_post_media',
+        columns: ['post_id', 'media_index', 'media_url', 'media_type'],
+      },
+    ],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
