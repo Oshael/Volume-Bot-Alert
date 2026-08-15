@@ -50,6 +50,7 @@ function checkpoint(input, nextBlock) {
 function cursor(row) {
   return row ? {
     projectionVersion: row.projection_version, stream: row.stream,
+    originBlock: row.origin_block == null ? null : String(row.origin_block),
     nextBlock: String(row.next_block), safeHead: row.safe_head == null ? null : String(row.safe_head),
     nextBlockTime: row.next_block_time ? new Date(row.next_block_time).toISOString() : null,
     checkpointBlock: row.checkpoint_block == null ? null : String(row.checkpoint_block),
@@ -114,12 +115,18 @@ function createRobinhoodWalletPositionRepository(options = {}) {
   async function initCursor(input = {}) {
     const version = identifier(input.projectionVersion, 'projectionVersion');
     const streamName = stream(input.stream);
+    const nextBlock = uint(input.nextBlock, 'nextBlock');
+    const originBlock = input.originBlock == null
+      ? nextBlock : uint(input.originBlock, 'originBlock');
+    if (BigInt(originBlock) > BigInt(nextBlock)) {
+      throw new Error('originBlock cannot exceed nextBlock');
+    }
     await database.query(
       `INSERT INTO robinhood_wallet_position_cursors (
-         chain, projection_version, stream, next_block, safe_head, next_block_time
-       ) VALUES ($1, $2, $3, $4::bigint, $5::bigint, $6::timestamptz)
+         chain, projection_version, stream, origin_block, next_block, safe_head, next_block_time
+       ) VALUES ($1, $2, $3, $4::bigint, $5::bigint, $6::bigint, $7::timestamptz)
        ON CONFLICT (chain, projection_version, stream) DO NOTHING`,
-      [CHAIN, version, streamName, uint(input.nextBlock, 'nextBlock'),
+      [CHAIN, version, streamName, originBlock, nextBlock,
         input.safeHead == null ? null : uint(input.safeHead, 'safeHead'),
         timestamp(input.nextBlockTime, 'nextBlockTime')]
     );

@@ -13,6 +13,7 @@ const stage109 = require('../src/utils/db-init-stage109');
 const stage116 = require('../src/utils/db-init-stage116');
 const stage126 = require('../src/utils/db-init-stage126');
 const stage127 = require('../src/utils/db-init-stage127');
+const stage137 = require('../src/utils/db-init-stage137');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
@@ -53,6 +54,7 @@ describe('Robinhood wallet position persistence', () => {
     await stage116.init({ closePool: false });
     await stage126.init({ closePool: false });
     await stage127.init({ closePool: false });
+    await stage137.init({ closePool: false });
     await cleanup();
   });
   after(async () => {
@@ -96,9 +98,11 @@ describe('Robinhood wallet position persistence', () => {
     const repository = createRobinhoodWalletPositionRepository({ database: db });
     const initial = await repository.initCursor({
       projectionVersion: VERSION, stream: 'seed', nextBlock: '100', safeHead: '200',
+      originBlock: '90',
       nextBlockTime: '2026-08-01T00:00:00.000Z',
     });
     assert.equal(initial.version, 0);
+    assert.equal(initial.originBlock, '90');
     assert.equal(initial.nextBlockTime, '2026-08-01T00:00:00.000Z');
 
     const first = await repository.commitBatch({
@@ -134,6 +138,7 @@ describe('Robinhood wallet position persistence', () => {
       nextBlock: '201', safeHead: '200', nextBlockTime: '2026-08-02T00:00:00.000Z',
     });
     assert.equal(completed.cursor.lifecycleState, 'complete');
+    assert.equal(completed.cursor.originBlock, '90');
 
     const { rows } = await db.query(
       `SELECT quantity_raw::text, cost_basis_usd::text

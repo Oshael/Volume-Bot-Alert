@@ -3547,6 +3547,19 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage137-robinhood-wallet-position-cursor-origins',
+    name: 'Stage 137 Robinhood wallet-position cursor origins',
+    repair: 'node src/utils/db-init-stage137.js',
+    tables: [{
+      table: 'robinhood_wallet_position_cursors',
+      columns: ['origin_block'],
+      constraints: [{
+        name: 'rh_wallet_position_cursors_origin_check',
+        includes: ['CHECK', 'origin_block', 'next_block'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

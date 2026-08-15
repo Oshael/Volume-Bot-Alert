@@ -1364,6 +1364,12 @@ grava arestas, resumos, posições unificadas e ambos os cursores. Conflito no
 cursor financeiro reverte todo o range, inclusive os agregados de transfer. O
 tick histórico ainda não produz nem envia o batch financeiro neste subcorte.
 
+O B6j4 adiciona na Stage 137 a origem durável e nullable do cursor financeiro.
+Novos cursores registram a origem exata somente na criação; valores ausentes em
+cursores antigos não são inferidos. Isso permite provar o início de um catch-up
+financeiro isolado antes de acoplar a posição ao backfill unificado, sem declarar
+como processados os 500 blocos já avançados apenas pela projeção de transfers.
+
 ### Corte C1 — read model e API de inteligência
 
 Objetivo:

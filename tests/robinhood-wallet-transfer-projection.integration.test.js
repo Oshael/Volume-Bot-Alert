@@ -11,6 +11,7 @@ const stage129 = require('../src/utils/db-init-stage129');
 const stage130 = require('../src/utils/db-init-stage130');
 const stage131 = require('../src/utils/db-init-stage131');
 const stage134 = require('../src/utils/db-init-stage134');
+const stage137 = require('../src/utils/db-init-stage137');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const VERSION = 'test_transfer_projection_v1';
@@ -48,6 +49,7 @@ describe('Robinhood wallet transfer projection persistence', () => {
     await stage130.init({ closePool: false });
     await stage131.init({ closePool: false });
     await stage134.init({ closePool: false });
+    await stage137.init({ closePool: false });
     await cleanup();
   });
   after(async () => {
@@ -150,10 +152,11 @@ describe('Robinhood wallet transfer projection persistence', () => {
       projectionVersion: ATOMIC_VERSION, stream: 'seed', nextBlock: '100',
       nextBlockTime: '2099-01-01T00:00:00.000Z', safeHead: '200',
     });
-    await positions.initCursor({
+    const positionInitialized = await positions.initCursor({
       projectionVersion: POSITION_VERSION, stream: 'seed', nextBlock: '100',
       nextBlockTime: '2099-01-01T00:00:00.000Z', safeHead: '200',
     });
+    assert.equal(positionInitialized.originBlock, '100');
     const atomicEvent = { ...event(100, 5, 10), classificationVersion: ATOMIC_VERSION };
     const first = await transfers.commitBatch({
       projectionVersion: ATOMIC_VERSION, stream: 'seed', expectedVersion: 0,

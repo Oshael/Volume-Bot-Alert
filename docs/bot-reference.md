@@ -1464,10 +1464,14 @@ telemetria e backoff no grupo `robinhood-wallet`. O antigo frontier do cursor
 monolítico congelado foi removido; não usá-lo para medir lag atual.
 
 As Stages 126–127 criam posições financeiras Robinhood versionadas e um cursor
-com frontier de bloco e tempo. A versão faz `swap_only_v1` coexistir com futuros
+com frontier de bloco e tempo. A Stage 137 adiciona a origem durável desse cursor;
+cursores existentes permanecem sem origem até reparo apoiado em evidência, enquanto
+novos cursores persistem a origem exata apenas na criação. A versão faz
+`swap_only_v1` coexistir com futuros
 replays unificados em shadow; o tempo permite poda das partições diárias de
 `robinhood_wallet_swaps`. Aplique `node src/utils/db-init-stage126.js` e depois
-`node src/utils/db-init-stage127.js` antes de usar
+`node src/utils/db-init-stage127.js` e `node src/utils/db-init-stage137.js` antes
+de usar
 `npm run robinhood:wallet-position-backfill`. O comando é dry-run por padrão e
 só persiste batches limitados com `--commit`; usa `robinhood_swap_mc` como fonte
 histórica de market cap. Esse backfill histórico ainda não serve dados às rotas
