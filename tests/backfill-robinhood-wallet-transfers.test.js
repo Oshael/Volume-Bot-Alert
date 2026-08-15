@@ -22,18 +22,27 @@ function harness() {
       calls.push({ method: 'commit', tickDeps, input });
       return { status: 'projected' };
     },
+    runBackfill: async (input, runnerDeps) => {
+      calls.push({ method: 'backfill', input, runnerDeps });
+      return { status: 'range-limit', rangesCompleted: input.maxRanges };
+    },
   };
   return { calls, deps };
 }
 
 describe('Robinhood wallet-transfer backfill command', () => {
   it('accepts only one bounded range and a long confirmation flag', () => {
-    assert.deepEqual(parseArgs([]), { confirm: false, maxBlocks: 250 });
-    assert.deepEqual(parseArgs(['--max-blocks=5000', CONFIRM_FLAG]), {
-      confirm: true, maxBlocks: 5000,
+    assert.deepEqual(parseArgs([]), {
+      confirm: false, maxBlocks: 250, maxRanges: 1, pauseMs: 250,
+    });
+    assert.deepEqual(parseArgs([
+      '--max-blocks=5000', '--max-ranges=20', '--pause-ms=1000', CONFIRM_FLAG,
+    ]), {
+      confirm: true, maxBlocks: 5000, maxRanges: 20, pauseMs: 1000,
     });
     assert.throws(() => parseArgs(['--max-blocks=0']), /between 1 and 5000/);
     assert.throws(() => parseArgs(['--max-blocks=2', '--max-blocks=3']), /cannot be repeated/);
+    assert.throws(() => parseArgs(['--max-ranges=2']), /require the confirmation flag/);
     assert.throws(() => parseArgs(['--commit']), /unknown argument/);
   });
 
@@ -49,12 +58,15 @@ describe('Robinhood wallet-transfer backfill command', () => {
     assert.equal(test.calls.filter(({ method }) => method === 'log').length, 2);
   });
 
-  it('commits exactly one range only with the explicit confirmation', async () => {
+  it('runs a bounded leased backfill only with the explicit confirmation', async () => {
     const test = harness();
-    const report = await main([CONFIRM_FLAG], test.deps);
-    assert.equal(report.mode, 'commit-one-range');
-    assert.equal(report.result.status, 'projected');
-    assert.equal(test.calls.filter(({ method }) => method === 'commit').length, 1);
+    const report = await main([CONFIRM_FLAG, '--max-ranges=3'], test.deps);
+    assert.equal(report.mode, 'commit-bounded-ranges');
+    assert.equal(report.result.status, 'range-limit');
+    const call = test.calls.find(({ method }) => method === 'backfill');
+    assert.deepEqual(call.input, {
+      maxBlocks: 250, maxRanges: 3, pauseMs: 250, now: test.deps.now,
+    });
     assert.equal(test.calls.some(({ method }) => method === 'dry-run'), false);
     assert.equal(test.calls.filter(({ method }) => method === 'log').length, 1);
   });

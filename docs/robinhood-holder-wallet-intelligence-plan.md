@@ -1292,6 +1292,12 @@ O B6g expõe somente uma faixa por invocação em comando dry-run-first, validan
 chain ID antes do tick. Escrita exige a confirmação longa específica; não há
 loop, lease ou auto-start, e o limite informado continua entre 1 e 5.000 blocos.
 
+O B6h adiciona ao mesmo comando um loop manual limitado por `--max-ranges`, com
+pausa explícita e lease exclusiva `robinhood-wallet-transfer-backfill-worker`.
+Uma faixa continua sendo o default; conclusão, bloqueio, conflito de cursor ou
+perda da lease interrompem o processo. Ainda não há auto-start ou wiring no
+`server.js`.
+
 ### Corte C1 — read model e API de inteligência
 
 Objetivo:

@@ -337,7 +337,7 @@ Grupos existentes:
 | `robinhood-processing` | consumidor isolado: reclama capturas por lease, decodifica a evidência congelada sem RPC, calcula preço/FDV/liquidez, persiste observações/buckets e poda a fila; no mesmo processo, um 2º runner drena `stream='discovery'` para o `robinhood_pool_registry` |
 | `robinhood-derived` | consumidor isolado: drena a outbox de emit ao vivo e replica o fan-out `market:bucket` (socket/relay) sem o monólito; hospeda o catalog projection worker (metadata de token) |
 | `robinhood-wallet` | consumidor isolado: re-lê observações aceitas e atribui `tx.from` via `eth_getBlockByNumber` (full-tx) por bloco, com cursor `live` próprio; alimenta `robinhood_wallet_swaps` |
-| `robinhood-wallet-intelligence` | projeta posições `swap_only_v1` e, sob flag/lease separadas, captura e resume transfers ERC-20 após o frontier durável de swaps |
+| `robinhood-wallet-intelligence` | projeta posições `swap_only_v1` e, sob flag/lease separadas, captura e resume transfers ERC-20 após o frontier durável de swaps; o backfill histórico permanece comando manual, bounded e com lease própria |
 | `robinhood-backfill` | discovery, scan, enrichment, finalizer e aggregation do replay |
 
 O catalog cleanup do grupo `solana-maintenance` atua somente sobre identidades
