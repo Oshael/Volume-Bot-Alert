@@ -5,6 +5,11 @@ const { after, before, describe, it } = require('node:test');
 
 const db = require('../src/models/db');
 const { createRobinhoodWalletPositionRepository } = require('../src/models/robinhood-wallet-position');
+const {
+  createRobinhoodWalletSwapRepository,
+} = require('../src/models/robinhood-wallet-swap-persistence');
+const stage90 = require('../src/utils/db-init-stage90');
+const stage109 = require('../src/utils/db-init-stage109');
 const stage116 = require('../src/utils/db-init-stage116');
 const stage126 = require('../src/utils/db-init-stage126');
 const stage127 = require('../src/utils/db-init-stage127');
@@ -14,17 +19,37 @@ const { assertUsingTestDatabase } = require('./helpers/test-db');
 const VERSION = 'test_swap_only_v1';
 const TOKEN = `0x${'11'.repeat(20)}`;
 const WALLET = `0x${'22'.repeat(20)}`;
+const OTHER_TOKEN = `0x${'33'.repeat(20)}`;
+const QUOTE = `0x${'44'.repeat(20)}`;
+const SWAP_HASHES = [`0x${'a1'.repeat(32)}`, `0x${'b2'.repeat(32)}`];
+
+function swapRow(overrides = {}) {
+  return {
+    walletAddress: WALLET, transactionHash: SWAP_HASHES[0], actionIndex: '3',
+    blockNumber: '150', blockTime: '2099-08-15T00:01:00.000Z',
+    protocol: 'uniswap-v2', marketKey: `uniswap-v2:${TOKEN}:${QUOTE}`,
+    tokenAddress: TOKEN, quoteAddress: QUOTE, side: 'buy',
+    tokenAmountRaw: '10', quoteAmountRaw: '20', volumeUsd: '25',
+    parserVersion: 'test-unified-v1', fdvUsd: '50000', ...overrides,
+  };
+}
 
 async function cleanup() {
   await db.query('DELETE FROM robinhood_wallet_token_positions WHERE projection_version = $1', [VERSION]);
   await db.query('DELETE FROM robinhood_wallet_position_cursors WHERE projection_version = $1', [VERSION]);
   await db.query('DELETE FROM robinhood_holder_balances WHERE token_address = $1', [TOKEN]);
   await db.query('DELETE FROM robinhood_holder_token_states WHERE token_address = $1', [TOKEN]);
+  await db.query('DELETE FROM robinhood_wallet_swaps WHERE transaction_hash = ANY($1::varchar[])',
+    [SWAP_HASHES]);
+  await db.query('DELETE FROM robinhood_swap_mc WHERE transaction_hash = ANY($1::varchar[])',
+    [SWAP_HASHES]);
 }
 
 describe('Robinhood wallet position persistence', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
+    await stage90.init({ closePool: false });
+    await stage109.init({ closePool: false });
     await stage116.init({ closePool: false });
     await stage126.init({ closePool: false });
     await stage127.init({ closePool: false });
@@ -42,6 +67,29 @@ describe('Robinhood wallet position persistence', () => {
     assert.equal(SCHEMA_GROUPS.find(({ key }) => (
       key === 'stage126-robinhood-wallet-positions'
     )).repair, 'node src/utils/db-init-stage126.js');
+  });
+
+  it('loads every scoped swap and durable market cap from an exact range', async () => {
+    const writer = createRobinhoodWalletSwapRepository({ database: db });
+    await writer.insertWalletSwaps([
+      swapRow(),
+      swapRow({
+        transactionHash: SWAP_HASHES[1], actionIndex: '4', blockNumber: '151',
+        tokenAddress: OTHER_TOKEN, marketKey: `uniswap-v2:${OTHER_TOKEN}:${QUOTE}`,
+        fdvUsd: '90000',
+      }),
+    ]);
+    const repository = createRobinhoodWalletPositionRepository({ database: db });
+    const swaps = await repository.readUnifiedRangeSwaps({
+      fromBlock: '149', toBlock: '151',
+      fromTime: '2099-08-15T00:00:00.000Z', toTime: '2099-08-15T00:02:00.000Z',
+      tokenAddresses: [TOKEN],
+    });
+
+    assert.equal(swaps.length, 1);
+    assert.equal(swaps[0].transaction_hash, SWAP_HASHES[0]);
+    assert.equal(String(swaps[0].market_cap_usd), '50000');
+    assert.equal(String(swaps[0].volume_usd), '25');
   });
 
   it('commits positions with the cursor and rolls back a stale writer', async () => {

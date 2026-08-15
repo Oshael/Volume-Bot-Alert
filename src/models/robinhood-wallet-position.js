@@ -180,6 +180,36 @@ function createRobinhoodWalletPositionRepository(options = {}) {
     };
   }
 
+  async function readUnifiedRangeSwaps(input = {}) {
+    const fromBlock = uint(input.fromBlock, 'fromBlock');
+    const toBlock = uint(input.toBlock, 'toBlock');
+    if (BigInt(fromBlock) > BigInt(toBlock)) throw new Error('swap block range is inverted');
+    const fromTime = timestamp(input.fromTime, 'fromTime');
+    const toTime = timestamp(input.toTime, 'toTime');
+    if (!fromTime || !toTime) throw new Error('swap range times are required');
+    if (fromTime > toTime) throw new Error('swap time range is inverted');
+    if (!Array.isArray(input.tokenAddresses)) throw new TypeError('tokenAddresses must be a list');
+    const tokenAddresses = [...new Set(input.tokenAddresses.map((item) => (
+      address(item, 'tokenAddress')
+    )))];
+    if (!tokenAddresses.length) return [];
+    const result = await database.query(
+      `SELECT swap.wallet_address, swap.transaction_hash, swap.action_index,
+              swap.block_number, swap.block_time, swap.token_address, swap.side,
+              swap.token_amount_raw, swap.volume_usd, mc.fdv_usd AS market_cap_usd
+       FROM robinhood_wallet_swaps swap
+       LEFT JOIN robinhood_swap_mc mc ON mc.chain = swap.chain
+        AND mc.transaction_hash = swap.transaction_hash AND mc.log_index = swap.action_index
+       WHERE swap.chain = $1
+         AND swap.block_time >= $2::timestamptz AND swap.block_time <= $3::timestamptz
+         AND swap.block_number >= $4::bigint AND swap.block_number <= $5::bigint
+         AND swap.token_address = ANY($6::varchar[])
+       ORDER BY swap.block_number, swap.action_index, swap.transaction_hash`,
+      [CHAIN, fromTime, toTime, fromBlock, toBlock, tokenAddresses]
+    );
+    return result.rows;
+  }
+
   async function reconcileTouchedPositions(projectionVersion, pairs = [], throughBlock) {
     const frontier = uint(throughBlock, 'throughBlock');
     if (pairs.length === 0) {
@@ -335,7 +365,7 @@ function createRobinhoodWalletPositionRepository(options = {}) {
 
   return {
     commitBatch, initCursor, loadCursor, loadPositions,
-    readSwapBatch, reconcileTouchedPositions,
+    readSwapBatch, readUnifiedRangeSwaps, reconcileTouchedPositions,
   };
 }
 

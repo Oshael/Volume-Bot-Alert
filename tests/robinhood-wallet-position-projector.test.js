@@ -96,6 +96,37 @@ describe('Robinhood wallet position projector', () => {
     assert.equal(batch.nextBlock, '11');
   });
 
+  it('reads unified swaps from one exact time, block and token range', async () => {
+    const calls = [];
+    const database = { query: async (sql, params) => {
+      calls.push({ sql, params });
+      return { rows: [swap()] };
+    } };
+    const repository = createRobinhoodWalletPositionRepository({ database });
+    const swaps = await repository.readUnifiedRangeSwaps({
+      fromBlock: '10', toBlock: '20', fromTime: TIME,
+      toTime: '2026-08-01T00:10:00.000Z', tokenAddresses: [TOKEN, TOKEN.toUpperCase()],
+    });
+
+    assert.equal(swaps.length, 1);
+    assert.match(calls[0].sql, /LEFT JOIN robinhood_swap_mc/);
+    assert.match(calls[0].sql, /swap\.block_time >= \$2[\s\S]+swap\.block_number >= \$4/);
+    assert.match(calls[0].sql, /swap\.token_address = ANY\(\$6::varchar\[\]\)/);
+    assert.deepEqual(calls[0].params, [
+      'robinhood', TIME, '2026-08-01T00:10:00.000Z', '10', '20', [TOKEN],
+    ]);
+  });
+
+  it('does not query unified swaps for an empty token scope', async () => {
+    const database = { query: async () => { throw new Error('must not query'); } };
+    const swaps = await createRobinhoodWalletPositionRepository({ database })
+      .readUnifiedRangeSwaps({
+        fromBlock: '10', toBlock: '20', fromTime: TIME, toTime: TIME,
+        tokenAddresses: [],
+      });
+    assert.deepEqual(swaps, []);
+  });
+
   it('reconciles only against a holder ledger at the exact projection frontier', async () => {
     const database = {
       async query() {

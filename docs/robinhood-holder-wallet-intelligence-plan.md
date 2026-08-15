@@ -1354,6 +1354,11 @@ com as regras financeiras existentes. A ausência do índice canônico de qualqu
 swap falha fechado. Este subcorte ainda não lê nem grava banco e não altera o
 backfill operacional.
 
+O B6j2 adiciona ao repository de posições a leitura exata dos swaps financeiros
+de uma faixa, limitada simultaneamente por tempo, bloco e escopo de tokens. A
+query preserva partition pruning e usa `robinhood_swap_mc` como market cap
+durável. Ainda não existe commit conjunto nem avanço do cursor unificado.
+
 ### Corte C1 — read model e API de inteligência
 
 Objetivo:
