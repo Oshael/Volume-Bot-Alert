@@ -50,6 +50,9 @@ describe('Robinhood wallet transfer endpoint roles', () => {
       { endpointAddress: BOB, endpointRole: 'wallet', evidenceBlock: '101', evidenceBlockHash: HASH },
       { endpointAddress: CONTRACT, endpointRole: 'contract', evidenceBlock: '100', evidenceBlockHash: HASH },
     ]);
+    assert.equal(result.observations.length, 6);
+    assert.deepEqual(new Set(result.observations.map(({ evidenceBlock }) => evidenceBlock)),
+      new Set(['100', '101', '102']));
     assert.deepEqual(result.telemetry, { probes: 6, batches: 3, endpoints: 3 });
   });
 

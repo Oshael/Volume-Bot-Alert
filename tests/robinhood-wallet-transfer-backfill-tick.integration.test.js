@@ -77,6 +77,10 @@ describe('Robinhood wallet-transfer backfill commit integration', () => {
         }),
       },
       evidence: { matchesCheckpoint: async () => true, readRange: async () => captured },
+      endpointRoles: { hydrate: async () => ({
+        probes: 0, resolved: 0, persisted: 0,
+        contractAddresses: [], walletAddresses: [],
+      }) },
       raw: createRobinhoodTokenTransferRepository({ database: db }),
       projection: createRobinhoodWalletTransferProjectionRepository({ database: db }),
     };

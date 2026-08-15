@@ -44,7 +44,9 @@ function captured() {
 }
 
 function dependencies(overrides = {}) {
-  const calls = { evidence: [], contexts: [], initialized: [], raw: [], projected: [] };
+  const calls = {
+    evidence: [], contexts: [], hydration: [], initialized: [], raw: [], projected: [],
+  };
   return {
     calls,
     source: {
@@ -64,6 +66,14 @@ function dependencies(overrides = {}) {
       matchesCheckpoint: async () => overrides.canonical !== false,
       readRange: async (input) => { calls.evidence.push(input); return captured(); },
     },
+    endpointRoles: { hydrate: async (input) => {
+      calls.hydration.push(input);
+      if (overrides.hydrationError) throw overrides.hydrationError;
+      return overrides.hydration || {
+        probes: 0, resolved: 0, persisted: 0,
+        contractAddresses: [], walletAddresses: [],
+      };
+    } },
     classifierFactory: overrides.classifierFactory,
     raw: {
       insertTransferEvents: async (events) => {
@@ -93,12 +103,22 @@ function dependencies(overrides = {}) {
 
 describe('Robinhood wallet-transfer backfill dry-run tick', () => {
   it('classifies one bounded range and reports raw versus summary-only writes', async () => {
-    const deps = dependencies({ classifierFactory: () => ({
-      classify: (event) => ({
-        kind: event.logIndex === 1 ? 'unknown' : 'wallet_transfer',
-        classificationVersion: 'rh_transfer_v1',
-      }),
-    }) });
+    let classifierOptions;
+    const deps = dependencies({
+      hydration: {
+        probes: 1, resolved: 1, persisted: 0,
+        contractAddresses: [BOB], walletAddresses: [],
+      },
+      classifierFactory: (options) => {
+        classifierOptions = options;
+        return ({
+          classify: (event) => ({
+            kind: event.logIndex === 1 ? 'unknown' : 'wallet_transfer',
+            classificationVersion: 'rh_transfer_v1',
+          }),
+        });
+      },
+    });
     const result = await runRobinhoodWalletTransferBackfillDryRun(deps, {
       maxBlocks: 250, now: '2026-08-14T18:00:00Z',
     });
@@ -113,6 +133,9 @@ describe('Robinhood wallet-transfer backfill dry-run tick', () => {
       tokenAddresses: [TOKEN], fromBlock: '90', toBlock: '200',
     });
     assert.equal(deps.calls.contexts[0].fromTime, '2026-07-14T00:00:00.000Z');
+    assert.equal(deps.calls.hydration[0].commit, false);
+    assert.deepEqual(classifierOptions.contractAddresses, [BOB]);
+    assert.deepEqual(classifierOptions.walletAddresses, [ALICE]);
   });
 
   it('stops before RPC for blocked, complete or orphaned checkpoint plans', async () => {
@@ -137,6 +160,7 @@ describe('Robinhood wallet-transfer backfill dry-run tick', () => {
     assert.equal(result.status, 'awaiting-context');
     assert.equal(result.reason, 'swap_coverage_incomplete');
     assert.equal(deps.calls.contexts.length, 1);
+    assert.equal(deps.calls.hydration.length, 0);
   });
 
   it('bounds ranges and retention by UTC days', () => {
@@ -160,6 +184,7 @@ describe('Robinhood wallet-transfer backfill dry-run tick', () => {
     });
     assert.equal(result.status, 'complete');
     assert.equal(result.rawInserted, 1);
+    assert.equal(deps.calls.hydration[0].commit, true);
     assert.deepEqual(deps.calls.initialized[0], {
       projectionVersion: 'rh_transfer_v1', stream: 'seed', originBlock: '90',
       nextBlock: '90', nextBlockTime: '2026-07-14T00:00:00.000Z', safeHead: '200',
@@ -179,6 +204,16 @@ describe('Robinhood wallet-transfer backfill dry-run tick', () => {
       now: '2026-08-14T18:00:00Z',
     });
     assert.equal(result.status, 'cursor-conflict');
+    assert.equal(deps.calls.raw.length, 0);
+    assert.equal(deps.calls.projected.length, 0);
+  });
+
+  it('does not initialize or advance the cursor when archive hydration fails', async () => {
+    const deps = dependencies({ hydrationError: new Error('archive unavailable') });
+    await assert.rejects(
+      runRobinhoodWalletTransferBackfillCommit(deps), /archive unavailable/
+    );
+    assert.equal(deps.calls.initialized.length, 0);
     assert.equal(deps.calls.raw.length, 0);
     assert.equal(deps.calls.projected.length, 0);
   });

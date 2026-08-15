@@ -22,6 +22,7 @@ function assertDependencies(deps) {
     'listTrackedTokenAddresses', 'loadBackfillPlan', 'loadBackfillRangeContext',
   ], 'transfer backfill source');
   requireMethods(deps.evidence, ['matchesCheckpoint', 'readRange'], 'transfer evidence reader');
+  requireMethods(deps.endpointRoles, ['hydrate'], 'archive endpoint role hydrator');
 }
 
 function rangeForPlan(plan, maxBlocks) {
@@ -59,7 +60,7 @@ function summarizeThroughDay(fromTime, checkpointTime) {
 function report(prepared, additions = {}) {
   if (prepared.outcome) return prepared.outcome;
   const {
-    plan, captured, classified, rawEligible, summaryOnly, edgeEligible, cutoff, context,
+    plan, captured, classified, rawEligible, summaryOnly, edgeEligible, cutoff, context, hydration,
   } = prepared;
   return Object.freeze({
     status: 'dry-run', reason: null, plan, fromBlock: captured.fromBlock,
@@ -71,9 +72,25 @@ function report(prepared, additions = {}) {
     classificationOnly: classified.events.length - rawEligible.length - summaryOnly.length,
     edgeEligible: edgeEligible.length, rawCutoff: cutoff.toISOString(),
     telemetry: Object.freeze({
-      ...captured.telemetry, endpointRoles: context.endpointRoleCoverage,
+      ...captured.telemetry,
+      endpointRoles: Object.freeze({ ...context.endpointRoleCoverage, hydration }),
     }),
     ...additions,
+  });
+}
+
+function mergeHydratedRoles(context, hydration) {
+  const contracts = new Set([
+    ...context.contractAddresses, ...hydration.contractAddresses,
+  ]);
+  const wallets = new Set([
+    ...context.walletAddresses, ...hydration.walletAddresses,
+  ]);
+  for (const address of contracts) wallets.delete(address);
+  return Object.freeze({
+    ...context,
+    contractAddresses: Object.freeze([...contracts].sort()),
+    walletAddresses: Object.freeze([...wallets].sort()),
   });
 }
 
@@ -93,14 +110,18 @@ async function prepareBackfillRange(deps, input = {}) {
   const range = rangeForPlan(plan, maxBlocks);
   const tokenAddresses = await deps.source.listTrackedTokenAddresses();
   const captured = await deps.evidence.readRange({ tokenAddresses, ...range });
-  const context = await deps.source.loadBackfillRangeContext(classificationInput(
+  const baseContext = await deps.source.loadBackfillRangeContext(classificationInput(
     captured, captured.fromBlockTime
   ));
-  if (!context.ready) {
+  if (!baseContext.ready) {
     return { outcome: Object.freeze({
-      status: 'awaiting-context', reason: context.reason, plan, ...range,
+      status: 'awaiting-context', reason: baseContext.reason, plan, ...range,
     }) };
   }
+  const hydration = await deps.endpointRoles.hydrate({
+    transfers: captured.transfers, commit: input.commit === true,
+  });
+  const context = mergeHydratedRoles(baseContext, hydration);
   const classified = classifyTransfers(
     captured.transfers, context, deps.classifierFactory
   );
@@ -109,7 +130,9 @@ async function prepareBackfillRange(deps, input = {}) {
   const rawEligible = classified.events.filter(isRawEligible);
   const edgeEligible = classified.events.filter(({ transferKind }) => EDGE_KINDS.has(transferKind));
   const summaryOnly = edgeEligible.filter((event) => !isRawEligible(event));
-  return { plan, captured, classified, rawEligible, edgeEligible, summaryOnly, cutoff, context };
+  return {
+    plan, captured, classified, rawEligible, edgeEligible, summaryOnly, cutoff, context, hydration,
+  };
 }
 
 async function runRobinhoodWalletTransferBackfillDryRun(deps, input = {}) {
@@ -136,7 +159,7 @@ async function seedCursor(projection, prepared) {
 async function runRobinhoodWalletTransferBackfillCommit(deps, input = {}) {
   requireMethods(deps.projection, ['commitBatch', 'initCursor'], 'transfer projection');
   requireMethods(deps.raw, ['insertTransferEvents'], 'raw transfer repository');
-  const prepared = await prepareBackfillRange(deps, input);
+  const prepared = await prepareBackfillRange(deps, { ...input, commit: true });
   if (prepared.outcome) return prepared.outcome;
   const cursor = await seedCursor(deps.projection, prepared);
   if (!cursorMatchesRange(cursor, prepared)) {
@@ -167,5 +190,5 @@ async function runRobinhoodWalletTransferBackfillCommit(deps, input = {}) {
 module.exports = {
   runRobinhoodWalletTransferBackfillCommit,
   runRobinhoodWalletTransferBackfillDryRun,
-  __private: { rangeForPlan, retentionCutoff, summarizeThroughDay },
+  __private: { mergeHydratedRoles, rangeForPlan, retentionCutoff, summarizeThroughDay },
 };

@@ -76,6 +76,7 @@ function probePlan(input) {
 
 async function executeProbes(rpcClient, probes, batchSize) {
   const endpointState = new Map();
+  const observations = [];
   let batches = 0;
   for (let offset = 0; offset < probes.length; offset += batchSize) {
     const batch = probes.slice(offset, offset + batchSize);
@@ -89,13 +90,17 @@ async function executeProbes(rpcClient, probes, batchSize) {
     for (let index = 0; index < batch.length; index += 1) {
       const probe = batch[index];
       const hasCode = bytecodePresent(codes[index]);
+      observations.push(Object.freeze({
+        endpointAddress: probe.endpoint, endpointRole: hasCode ? 'contract' : 'wallet',
+        evidenceBlock: probe.blockNumber, evidenceBlockHash: probe.blockHash,
+      }));
       const current = endpointState.get(probe.endpoint);
       if (!current || (!current.hasCode && hasCode)) {
         endpointState.set(probe.endpoint, { ...probe, hasCode });
       }
     }
   }
-  return { batches, endpointState };
+  return { batches, endpointState, observations };
 }
 
 function createRobinhoodWalletTransferEndpointRoleReader(options = {}) {
@@ -126,6 +131,7 @@ function createRobinhoodWalletTransferEndpointRoleReader(options = {}) {
       contractAddresses: Object.freeze(contractAddresses),
       walletAddresses: Object.freeze(walletAddresses),
       evidence: Object.freeze(evidence),
+      observations: Object.freeze(resolved.observations),
       telemetry: Object.freeze({
         probes: probes.length, batches: resolved.batches,
         endpoints: resolved.endpointState.size,

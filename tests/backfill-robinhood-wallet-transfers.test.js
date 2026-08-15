@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const {
-  CONFIRM_FLAG, main, parseArgs,
+  CONFIRM_FLAG, buildRuntime, main, parseArgs,
 } = require('../src/utils/backfill-robinhood-wallet-transfers');
 
 function harness() {
@@ -44,6 +44,33 @@ describe('Robinhood wallet-transfer backfill command', () => {
     assert.throws(() => parseArgs(['--max-blocks=2', '--max-blocks=3']), /cannot be repeated/);
     assert.throws(() => parseArgs(['--max-ranges=2']), /require the confirmation flag/);
     assert.throws(() => parseArgs(['--commit']), /unknown argument/);
+  });
+
+  it('builds transfer capture and role hydration on only the PC archive RPC', async () => {
+    const created = {};
+    const rpcClient = { marker: 'archive-client' };
+    const runtime = await buildRuntime({ endpointRoleBatchSize: 25 }, {
+      env: { RH_NODE_RPC_URL: 'http://127.0.0.1:8547', DATABASE_URL: 'postgres://tunnel' },
+      database: { query: async () => ({ rows: [{ roles: 'roles' }] }) },
+      rpcClientFactory: (options) => { created.rpc = options; return rpcClient; },
+      transferRuntimeFactory: async (_options, deps) => {
+        assert.equal(deps.rpcClient, rpcClient);
+        return { providerChainIds: { 'robinhood-pc-archive': '4663' }, tickDeps: { base: true } };
+      },
+      roleRepositoryFactory: () => ({ marker: 'repository' }),
+      roleReaderFactory: (options) => { created.reader = options; return { marker: 'reader' }; },
+      hydratorFactory: (deps) => { created.hydrator = deps; return { hydrate: async () => ({}) }; },
+    });
+    assert.deepEqual(created.rpc.providers, [{
+      name: 'robinhood-pc-archive', url: 'http://127.0.0.1:8547',
+      minRequestIntervalMs: undefined,
+    }]);
+    assert.equal(created.reader.rpcClient, rpcClient);
+    assert.equal(created.reader.batchSize, 25);
+    assert.deepEqual(created.hydrator, {
+      repository: { marker: 'repository' }, reader: { marker: 'reader' },
+    });
+    assert.equal(typeof runtime.tickDeps.endpointRoles.hydrate, 'function');
   });
 
   it('is dry-run by default and validates the runtime before executing', async () => {

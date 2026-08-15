@@ -1214,11 +1214,10 @@ papéis por endpoint. O registro é conservador: evidência de contrato prevalec
 sobre wallet, inclusive em replays fora de ordem. O worker ainda não consome
 essa tabela neste subcorte e deve permanecer desligado até o B4g2.
 
-O B4g2 move a leitura de papéis para o mesmo source PostgreSQL que carrega
-swaps e pools. LIVE e backfill deixam de instanciar o reader RPC de
-`eth_getCode`; endpoint sem registro continua `unknown`, é persistido como
-evidência bruta e não impede o avanço do cursor. A resolução histórica pelo PC
-e a reclassificação dos eventos já capturados ficam para os próximos subcortes.
+O B4g2 move a leitura normal de papéis para o mesmo source PostgreSQL que carrega
+swaps e pools. O LIVE deixa de instanciar o reader RPC de `eth_getCode`; endpoint
+sem registro continua `unknown`, é persistido como evidência bruta e não impede
+o avanço do cursor. O backfill seed recebeu depois o gate archive descrito no B6i.
 
 O B4g3 adiciona um comando bounded e idempotente para o PC. Ele seleciona na
 VPS endpoints sem papel ou wallets com evidência desatualizada entre as transfers brutas, consulta
@@ -1340,6 +1339,13 @@ pausa explícita e lease exclusiva `robinhood-wallet-transfer-backfill-worker`.
 Uma faixa continua sendo o default; conclusão, bloqueio, conflito de cursor ou
 perda da lease interrompem o processo. Ainda não há auto-start ou wiring no
 `server.js`.
+
+O corretivo B6i impede que uma faixa antiga perca transfers `unknown` após sair
+da retenção bruta. Antes da classificação, o comando consulta na Stage 135 quais
+endpoints/blocos ainda não têm cobertura, resolve somente esses pares no archive
+do PC e, em modo confirmado, persiste a evidência antes de avançar o cursor. A
+captura e essa hidratação compartilham exclusivamente `RH_NODE_RPC_URL`; falha ou
+resposta incompleta do archive aborta a faixa. O dry-run consulta sem gravar.
 
 ### Corte C1 — read model e API de inteligência
 

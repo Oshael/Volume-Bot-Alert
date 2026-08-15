@@ -1545,7 +1545,12 @@ revisar o relatório, confirme com
 
 O backfill de transfers pode inspecionar uma única faixa com
 `npm run robinhood:wallet-transfer-backfill -- --max-blocks=250`. O comando
-valida os providers e não escreve por padrão. Para persistir somente essa faixa,
+deve ser executado no PC com `RH_NODE_RPC_URL` apontando para o archive local e
+`DATABASE_URL` para a VPS pelo túnel. Tanto os logs quanto `eth_getCode` usam
+exclusivamente esse RPC, sem Alchemy/DRPC. Antes de classificar cada faixa, ele
+preenche lacunas de cobertura da Stage 135; erro ou evidência incompleta aborta
+a faixa sem avançar o cursor. O dry-run consulta, mas não grava. Para persistir
+somente essa faixa,
 repita com `--confirm-backfill-robinhood-wallet-transfers`; `--max-ranges`
 adiciona um loop manual limitado, com pausa configurável e lease exclusiva. O
 limite por faixa é 1–5.000 blocos e uma faixa continua sendo o default. Não há

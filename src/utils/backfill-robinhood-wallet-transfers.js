@@ -3,11 +3,21 @@ require('dotenv').config();
 const config = require('../../config');
 const db = require('../models/db');
 const {
+  createRobinhoodWalletEndpointRoleRepository,
+} = require('../models/robinhood-wallet-endpoint-role');
+const { createEvmJsonRpcClient } = require('../services/evm-json-rpc-client');
+const {
   runRobinhoodWalletTransferBackfillDryRun,
 } = require('../services/robinhood-wallet-transfer-backfill-tick');
 const {
   buildRobinhoodWalletTransferRuntime,
 } = require('../services/robinhood-wallet-transfer-runtime');
+const {
+  createRobinhoodWalletTransferEndpointRoleReader,
+} = require('../services/robinhood-wallet-transfer-endpoint-roles');
+const {
+  createRobinhoodWalletTransferRoleHydrator,
+} = require('../services/robinhood-wallet-transfer-role-hydration');
 const {
   runRobinhoodWalletTransferBackfill,
 } = require('../services/robinhood-wallet-transfer-backfill-runner');
@@ -65,10 +75,55 @@ function runtimeOptions() {
   });
 }
 
+function requiredEnvironment(env, name) {
+  const value = String(env[name] || '').trim();
+  if (!value) throw new Error(`missing required env ${name}`);
+  return value;
+}
+
+function archiveRpcOptions(env, options = {}) {
+  return Object.freeze({
+    providers: [Object.freeze({
+      name: 'robinhood-pc-archive',
+      url: requiredEnvironment(env, 'RH_NODE_RPC_URL'),
+      minRequestIntervalMs: options.rpcOptions?.archiveRpcMinIntervalMs,
+    })],
+    timeoutMs: 30_000, maxRetries: 1,
+  });
+}
+
+async function buildRuntime(options = {}, deps = {}) {
+  const env = deps.env || process.env;
+  requiredEnvironment(env, 'DATABASE_URL');
+  const database = deps.database || db;
+  const schema = await database.query(
+    "SELECT to_regclass('robinhood_wallet_endpoint_roles') AS roles"
+  );
+  if (!schema.rows[0]?.roles) throw new Error('schema not ready: apply Stage 135 on the VPS');
+  const rpcClient = deps.rpcClient || (deps.rpcClientFactory || createEvmJsonRpcClient)(
+    archiveRpcOptions(env, options)
+  );
+  const runtime = await (deps.transferRuntimeFactory || buildRobinhoodWalletTransferRuntime)(
+    options, { ...deps, database, rpcClient }
+  );
+  const repository = (deps.roleRepositoryFactory
+    || createRobinhoodWalletEndpointRoleRepository)({ database });
+  const reader = (deps.roleReaderFactory
+    || createRobinhoodWalletTransferEndpointRoleReader)({
+    rpcClient, batchSize: options.endpointRoleBatchSize,
+  });
+  const endpointRoles = (deps.hydratorFactory
+    || createRobinhoodWalletTransferRoleHydrator)({ repository, reader });
+  return Object.freeze({
+    ...runtime,
+    tickDeps: Object.freeze({ ...runtime.tickDeps, endpointRoles }),
+  });
+}
+
 async function main(argv = process.argv.slice(2), deps = {}) {
   const args = parseArgs(argv);
   const runtime = deps.runtime || await (
-    deps.runtimeFactory || buildRobinhoodWalletTransferRuntime
+    deps.runtimeFactory || buildRuntime
   )(deps.options || runtimeOptions(), deps);
   const result = args.confirm
     ? await (deps.runBackfill || runRobinhoodWalletTransferBackfill)({
@@ -96,4 +151,7 @@ if (require.main === module) main().catch((error) => {
   process.exitCode = 1;
 }).finally(() => db.pool.end().catch(() => {}));
 
-module.exports = { CONFIRM_FLAG, main, parseArgs, runtimeOptions };
+module.exports = {
+  CONFIRM_FLAG, buildRuntime, main, parseArgs, runtimeOptions,
+  __private: { archiveRpcOptions },
+};
