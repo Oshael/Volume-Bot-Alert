@@ -3511,6 +3511,42 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage136-robinhood-wallet-transfer-reclassifications',
+    name: 'Stage 136 Robinhood wallet transfer reclassification ledger',
+    repair: 'node src/utils/db-init-stage136.js',
+    tables: [{
+      table: 'robinhood_wallet_transfer_reclassifications',
+      columns: [
+        'chain', 'transaction_hash', 'log_index', 'block_time', 'block_number',
+        'block_hash', 'transaction_index', 'token_address', 'from_wallet', 'to_wallet',
+        'amount_raw', 'from_transfer_kind', 'from_classification_version',
+        'to_transfer_kind', 'to_classification_version', 'transition_version',
+        'decision_reason', 'decision_evidence', 'applied_at', 'created_at',
+      ],
+      constraints: [
+        {
+          name: 'rh_wallet_transfer_reclassifications_pkey',
+          includes: [
+            'PRIMARY KEY', 'transaction_hash', 'log_index', 'block_time',
+            'to_classification_version',
+          ],
+        },
+        {
+          name: 'rh_wallet_transfer_reclassifications_transition_check',
+          includes: ['CHECK', 'from_transfer_kind', 'unknown', 'to_transfer_kind'],
+        },
+        {
+          name: 'rh_wallet_transfer_reclassifications_evidence_check',
+          includes: ['CHECK', 'jsonb_typeof', 'decision_evidence'],
+        },
+      ],
+      indexes: [{
+        name: 'idx_rh_wallet_transfer_reclassifications_token',
+        includes: ['chain', 'to_classification_version', 'token_address', 'applied_at'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

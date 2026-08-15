@@ -1225,6 +1225,11 @@ VPS endpoints sem papel ou wallets com evidência desatualizada entre as transfe
 somente `RH_NODE_RPC_URL` e grava evidência na Stage 135 via `DATABASE_URL`.
 O comando é dry-run por padrão; não avança cursores nem reclassifica eventos.
 
+O B4g4a cria a Stage 136, um ledger imutável para transições aplicadas de
+`unknown` para uma decisão comprovada. O registro preserva o evento original,
+versões anterior/nova, motivo e snapshot JSON da evidência. Não existe writer
+neste subcorte; raw, arestas, resumos e cursores permanecem inalterados.
+
 ### Corte B5 — compactação e retenção
 
 Status: em andamento. O B5a criou o contrato persistente do resumo diário por
