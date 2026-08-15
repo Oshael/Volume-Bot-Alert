@@ -1207,6 +1207,13 @@ tópico `Transfer` e filtra localmente pelo allowlist, expondo o modo e os split
 na telemetria. A medição operacional que motivou o corte encontrou 119.168
 tokens, que não podem ser enviados em um único filtro `address`.
 
+O corretivo B4g substitui a dependência histórica de `eth_getCode`/Alchemy por
+evidência compacta produzida no PC com archive node e persistida na VPS pelo
+túnel já usado nos demais backfills. O B4g1 cria a Stage 135 e o repository de
+papéis por endpoint. O registro é conservador: evidência de contrato prevalece
+sobre wallet, inclusive em replays fora de ordem. O worker ainda não consome
+essa tabela neste subcorte e deve permanecer desligado até o B4g2.
+
 ### Corte B5 — compactação e retenção
 
 Status: em andamento. O B5a criou o contrato persistente do resumo diário por

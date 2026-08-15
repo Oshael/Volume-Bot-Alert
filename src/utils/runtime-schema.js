@@ -3480,6 +3480,37 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage135-robinhood-wallet-endpoint-roles',
+    name: 'Stage 135 Robinhood wallet endpoint roles',
+    repair: 'node src/utils/db-init-stage135.js',
+    tables: [{
+      table: 'robinhood_wallet_endpoint_roles',
+      columns: [
+        'chain', 'endpoint_address', 'endpoint_role', 'evidence_source',
+        'evidence_block', 'evidence_block_hash', 'resolver_version',
+        'observed_from_block', 'observed_through_block', 'created_at', 'updated_at',
+      ],
+      constraints: [
+        {
+          name: 'rh_wallet_endpoint_roles_pkey',
+          includes: ['PRIMARY KEY', 'chain', 'endpoint_address'],
+        },
+        {
+          name: 'rh_wallet_endpoint_roles_role_check',
+          includes: ['CHECK', 'wallet', 'contract'],
+        },
+        {
+          name: 'rh_wallet_endpoint_roles_evidence_check',
+          includes: ['CHECK', 'evidence_block', 'observed_from_block', 'observed_through_block'],
+        },
+      ],
+      indexes: [{
+        name: 'idx_rh_wallet_endpoint_roles_role',
+        includes: ['chain', 'endpoint_role', 'endpoint_address'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
