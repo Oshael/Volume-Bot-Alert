@@ -53,9 +53,15 @@ function probePlan(input) {
   const probes = new Map();
   for (const transfer of input.transfers) {
     const blockNumber = quantity(transfer.blockNumber, 'transfer.blockNumber').toString();
+    const blockHash = String(transfer.blockHash ?? '').trim().toLowerCase();
+    if (!/^0x[0-9a-f]{64}$/.test(blockHash)) {
+      throw new Error('transfer.blockHash must be 32 bytes');
+    }
     for (const value of [transfer.fromWallet, transfer.toWallet]) {
       const endpoint = address(value, 'transfer endpoint');
-      if (!excluded.has(endpoint)) probes.set(`${endpoint}:${blockNumber}`, { endpoint, blockNumber });
+      if (!excluded.has(endpoint)) {
+        probes.set(`${endpoint}:${blockNumber}`, { endpoint, blockNumber, blockHash });
+      }
     }
   }
   if (probes.size > MAX_ROLE_PROBES) {
@@ -69,7 +75,7 @@ function probePlan(input) {
 }
 
 async function executeProbes(rpcClient, probes, batchSize) {
-  const contractState = new Map();
+  const endpointState = new Map();
   let batches = 0;
   for (let offset = 0; offset < probes.length; offset += batchSize) {
     const batch = probes.slice(offset, offset + batchSize);
@@ -81,11 +87,15 @@ async function executeProbes(rpcClient, probes, batchSize) {
       throw new Error('endpoint role batch returned an invalid result count');
     }
     for (let index = 0; index < batch.length; index += 1) {
-      const endpoint = batch[index].endpoint;
-      contractState.set(endpoint, Boolean(contractState.get(endpoint)) || bytecodePresent(codes[index]));
+      const probe = batch[index];
+      const hasCode = bytecodePresent(codes[index]);
+      const current = endpointState.get(probe.endpoint);
+      if (!current || (!current.hasCode && hasCode)) {
+        endpointState.set(probe.endpoint, { ...probe, hasCode });
+      }
     }
   }
-  return { batches, contractState };
+  return { batches, endpointState };
 }
 
 function createRobinhoodWalletTransferEndpointRoleReader(options = {}) {
@@ -100,17 +110,25 @@ function createRobinhoodWalletTransferEndpointRoleReader(options = {}) {
     const resolved = await executeProbes(rpcClient, probes, batchSize);
     const contractAddresses = [];
     const walletAddresses = [];
-    for (const [endpoint, hasCode] of resolved.contractState) {
-      (hasCode ? contractAddresses : walletAddresses).push(endpoint);
+    const evidence = [];
+    for (const [endpoint, state] of resolved.endpointState) {
+      const endpointRole = state.hasCode ? 'contract' : 'wallet';
+      (state.hasCode ? contractAddresses : walletAddresses).push(endpoint);
+      evidence.push(Object.freeze({
+        endpointAddress: endpoint, endpointRole,
+        evidenceBlock: state.blockNumber, evidenceBlockHash: state.blockHash,
+      }));
     }
     contractAddresses.sort();
     walletAddresses.sort();
+    evidence.sort((left, right) => left.endpointAddress.localeCompare(right.endpointAddress));
     return Object.freeze({
       contractAddresses: Object.freeze(contractAddresses),
       walletAddresses: Object.freeze(walletAddresses),
+      evidence: Object.freeze(evidence),
       telemetry: Object.freeze({
         probes: probes.length, batches: resolved.batches,
-        endpoints: resolved.contractState.size,
+        endpoints: resolved.endpointState.size,
       }),
     });
   }

@@ -85,4 +85,18 @@ describe('Robinhood wallet endpoint role repository', () => {
     assert.deepEqual(fake.calls[0].params, [[ADDRESS]]);
     assert.equal(result[0].observedThroughBlock, '110');
   });
+
+  it('lists the latest retained block for unresolved non-system endpoints', async () => {
+    const fake = database([{
+      endpoint_address: ADDRESS, block_number: '120', block_hash: HASH,
+    }]);
+    const result = await createRobinhoodWalletEndpointRoleRepository({ database: fake })
+      .listUnresolvedCandidates(25);
+    assert.match(fake.calls[0].sql, /robinhood_token_transfer_events/);
+    assert.match(fake.calls[0].sql, /LEFT JOIN robinhood_wallet_endpoint_roles/);
+    assert.deepEqual(fake.calls[0].params, [25]);
+    assert.deepEqual(result, [{
+      endpointAddress: ADDRESS, blockNumber: '120', blockHash: HASH,
+    }]);
+  });
 });

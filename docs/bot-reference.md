@@ -1565,6 +1565,14 @@ antes de iniciar o writer. O worker permanente não consulta `eth_getCode` nem
 Alchemy para classificar endpoints: registro ausente permanece `unknown` sem
 bloquear o cursor.
 
+No PC com o archive node, configure `RH_NODE_RPC_URL` para o RPC local e
+`DATABASE_URL` para o PostgreSQL da VPS através do túnel. Execute
+`npm run robinhood:wallet-endpoint-role-backfill -- --limit=100`; após revisar o
+dry-run, repita com `--confirm-backfill-robinhood-wallet-endpoint-roles`. O
+comando usa somente o provider local, não avança cursores e pode ser repetido
+até retornar `caught-up`; wallets voltam à fila apenas quando surge uma transfer
+posterior à evidência já persistida.
+
 O writer LIVE de transfers é opt-in por
 `ROBINHOOD_WALLET_TRANSFER_LIVE_ENABLED=true`, usa a lease
 `robinhood-wallet-transfer-live-worker` no grupo isolado

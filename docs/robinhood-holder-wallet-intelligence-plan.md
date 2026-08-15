@@ -1220,6 +1220,11 @@ swaps e pools. LIVE e backfill deixam de instanciar o reader RPC de
 evidência bruta e não impede o avanço do cursor. A resolução histórica pelo PC
 e a reclassificação dos eventos já capturados ficam para os próximos subcortes.
 
+O B4g3 adiciona um comando bounded e idempotente para o PC. Ele seleciona na
+VPS endpoints sem papel ou wallets com evidência desatualizada entre as transfers brutas, consulta
+somente `RH_NODE_RPC_URL` e grava evidência na Stage 135 via `DATABASE_URL`.
+O comando é dry-run por padrão; não avança cursores nem reclassifica eventos.
+
 ### Corte B5 — compactação e retenção
 
 Status: em andamento. O B5a criou o contrato persistente do resumo diário por

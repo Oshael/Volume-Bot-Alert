@@ -85,6 +85,49 @@ function normalizeRow(row) {
 function createRobinhoodWalletEndpointRoleRepository(options = {}) {
   const database = options.database || db;
 
+  async function listUnresolvedCandidates(limitInput = 100) {
+    const limit = Number(limitInput);
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) {
+      throw new Error('unresolved endpoint limit must be between 1 and 1000');
+    }
+    const { rows } = await database.query(
+      `WITH endpoint_events AS (
+         SELECT from_wallet AS endpoint_address, block_number, block_hash,
+                transaction_hash, log_index
+           FROM robinhood_token_transfer_events WHERE chain = '${CHAIN}'
+         UNION ALL
+         SELECT to_wallet AS endpoint_address, block_number, block_hash,
+                transaction_hash, log_index
+           FROM robinhood_token_transfer_events WHERE chain = '${CHAIN}'
+       ), candidates AS (
+         SELECT DISTINCT ON (event.endpoint_address)
+                event.endpoint_address, event.block_number, event.block_hash
+           FROM endpoint_events event
+           LEFT JOIN robinhood_wallet_endpoint_roles role
+             ON role.chain = '${CHAIN}' AND role.endpoint_address = event.endpoint_address
+          WHERE (role.endpoint_address IS NULL OR (
+              role.endpoint_role = 'wallet'
+              AND event.block_number > role.observed_through_block
+            ))
+            AND event.endpoint_address NOT IN (
+              '0x0000000000000000000000000000000000000000',
+              '0x000000000000000000000000000000000000dead'
+            )
+            AND event.endpoint_address !~ '^0x0{39}[1-9a]$'
+          ORDER BY event.endpoint_address, event.block_number DESC,
+                   event.transaction_hash DESC, event.log_index DESC
+       )
+       SELECT endpoint_address, block_number, block_hash FROM candidates
+       ORDER BY block_number, endpoint_address LIMIT $1::int`,
+      [limit]
+    );
+    return Object.freeze(rows.map((row) => Object.freeze({
+      endpointAddress: row.endpoint_address,
+      blockNumber: String(row.block_number),
+      blockHash: row.block_hash,
+    })));
+  }
+
   async function upsertEvidence(inputs = []) {
     const payload = compactEvidence(inputs);
     if (!payload.length) return Object.freeze([]);
@@ -154,7 +197,7 @@ function createRobinhoodWalletEndpointRoleRepository(options = {}) {
     return Object.freeze(rows.map(normalizeRow));
   }
 
-  return Object.freeze({ loadRoles, upsertEvidence });
+  return Object.freeze({ listUnresolvedCandidates, loadRoles, upsertEvidence });
 }
 
 module.exports = {

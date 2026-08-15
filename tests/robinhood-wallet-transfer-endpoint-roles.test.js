@@ -15,9 +15,10 @@ const ROUTER = `0x${'5'.repeat(40)}`;
 const KNOWN = `0x${'6'.repeat(40)}`;
 const ZERO = `0x${'0'.repeat(40)}`;
 const PRECOMPILE = `0x${'0'.repeat(39)}9`;
+const HASH = `0x${'a'.repeat(64)}`;
 
 function transfer(blockNumber, fromWallet, toWallet) {
-  return { blockNumber: String(blockNumber), fromWallet, toWallet };
+  return { blockNumber: String(blockNumber), blockHash: HASH, fromWallet, toWallet };
 }
 
 describe('Robinhood wallet transfer endpoint roles', () => {
@@ -44,6 +45,11 @@ describe('Robinhood wallet transfer endpoint roles', () => {
     ]));
     assert.deepEqual(result.contractAddresses, [CONTRACT]);
     assert.deepEqual(result.walletAddresses, [ALICE, BOB]);
+    assert.deepEqual(result.evidence, [
+      { endpointAddress: ALICE, endpointRole: 'wallet', evidenceBlock: '100', evidenceBlockHash: HASH },
+      { endpointAddress: BOB, endpointRole: 'wallet', evidenceBlock: '101', evidenceBlockHash: HASH },
+      { endpointAddress: CONTRACT, endpointRole: 'contract', evidenceBlock: '100', evidenceBlockHash: HASH },
+    ]);
     assert.deepEqual(result.telemetry, { probes: 6, batches: 3, endpoints: 3 });
   });
 
