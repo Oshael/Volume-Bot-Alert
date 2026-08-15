@@ -81,6 +81,24 @@ function positionRow(input, projectionVersion, nextBlock) {
   };
 }
 
+async function transactionScope(database, externalClient) {
+  if (externalClient != null) {
+    if (typeof externalClient.query !== 'function') {
+      throw new TypeError('transactionClient must support query');
+    }
+    return {
+      client: externalClient,
+      begin: async () => {}, commit: async () => {}, rollback: async () => {}, release: () => {},
+    };
+  }
+  const client = await database.getClient();
+  return {
+    client,
+    begin: () => client.query('BEGIN'), commit: () => client.query('COMMIT'),
+    rollback: () => client.query('ROLLBACK').catch(() => {}), release: () => client.release(),
+  };
+}
+
 function createRobinhoodWalletPositionRepository(options = {}) {
   const database = options.database || db;
 
@@ -273,9 +291,10 @@ function createRobinhoodWalletPositionRepository(options = {}) {
     ));
     const identities = new Set(rows.map((row) => `${row.token_address}:${row.wallet_address}`));
     if (identities.size !== rows.length) throw new Error('positions must be unique within a batch');
-    const client = await database.getClient();
+    const transaction = await transactionScope(database, input.transactionClient);
+    const { client } = transaction;
     try {
-      await client.query('BEGIN');
+      await transaction.begin();
       if (rows.length > 0) {
         const upsert = await client.query(
           `INSERT INTO robinhood_wallet_token_positions (
@@ -352,14 +371,14 @@ function createRobinhoodWalletPositionRepository(options = {}) {
         error.code = 'CURSOR_CONFLICT';
         throw error;
       }
-      await client.query('COMMIT');
+      await transaction.commit();
       return { committed: true, positions: rows.length, cursor: cursor(advanced.rows[0]) };
     } catch (error) {
-      await client.query('ROLLBACK').catch(() => {});
+      await transaction.rollback();
       if (error.code === 'CURSOR_CONFLICT') return { committed: false, reason: 'cursor_conflict' };
       throw error;
     } finally {
-      client.release();
+      transaction.release();
     }
   }
 

@@ -1359,6 +1359,11 @@ de uma faixa, limitada simultaneamente por tempo, bloco e escopo de tokens. A
 query preserva partition pruning e usa `robinhood_swap_mc` como market cap
 durável. Ainda não existe commit conjunto nem avanço do cursor unificado.
 
+O B6j3 permite que o repository de transfers seja o único dono da transação que
+grava arestas, resumos, posições unificadas e ambos os cursores. Conflito no
+cursor financeiro reverte todo o range, inclusive os agregados de transfer. O
+tick histórico ainda não produz nem envia o batch financeiro neste subcorte.
+
 ### Corte C1 — read model e API de inteligência
 
 Objetivo:

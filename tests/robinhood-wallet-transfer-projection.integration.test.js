@@ -3,7 +3,10 @@ const assert = require('node:assert/strict');
 const { after, before, describe, it } = require('node:test');
 
 const db = require('../src/models/db');
+const { createRobinhoodWalletPositionRepository } = require('../src/models/robinhood-wallet-position');
 const { createRobinhoodWalletTransferProjectionRepository } = require('../src/models/robinhood-wallet-transfer-projection');
+const stage126 = require('../src/utils/db-init-stage126');
+const stage127 = require('../src/utils/db-init-stage127');
 const stage129 = require('../src/utils/db-init-stage129');
 const stage130 = require('../src/utils/db-init-stage130');
 const stage131 = require('../src/utils/db-init-stage131');
@@ -11,6 +14,8 @@ const stage134 = require('../src/utils/db-init-stage134');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const VERSION = 'test_transfer_projection_v1';
+const ATOMIC_VERSION = 'test_transfer_position_atomic_v1';
+const POSITION_VERSION = 'test_unified_transfer_v1';
 const TOKEN = `0x${'1'.repeat(40)}`;
 const ALICE = `0x${'2'.repeat(40)}`;
 const BOB = `0x${'3'.repeat(40)}`;
@@ -25,15 +30,20 @@ function event(block, logIndex, amountRaw, transferKind = 'wallet_transfer') {
 }
 
 async function cleanup() {
-  await db.query('DELETE FROM robinhood_wallet_relationship_evidence WHERE algorithm_version = $1', [VERSION]);
-  await db.query('DELETE FROM robinhood_wallet_transfer_edges WHERE classification_version = $1', [VERSION]);
-  await db.query('DELETE FROM robinhood_wallet_transfer_daily_summaries WHERE projection_version = $1', [VERSION]);
-  await db.query('DELETE FROM robinhood_wallet_transfer_cursors WHERE projection_version = $1', [VERSION]);
+  const transferVersions = [VERSION, ATOMIC_VERSION];
+  await db.query('DELETE FROM robinhood_wallet_relationship_evidence WHERE algorithm_version = ANY($1::varchar[])', [transferVersions]);
+  await db.query('DELETE FROM robinhood_wallet_transfer_edges WHERE classification_version = ANY($1::varchar[])', [transferVersions]);
+  await db.query('DELETE FROM robinhood_wallet_transfer_daily_summaries WHERE projection_version = ANY($1::varchar[])', [transferVersions]);
+  await db.query('DELETE FROM robinhood_wallet_transfer_cursors WHERE projection_version = ANY($1::varchar[])', [transferVersions]);
+  await db.query('DELETE FROM robinhood_wallet_token_positions WHERE projection_version = $1', [POSITION_VERSION]);
+  await db.query('DELETE FROM robinhood_wallet_position_cursors WHERE projection_version = $1', [POSITION_VERSION]);
 }
 
 describe('Robinhood wallet transfer projection persistence', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
+    await stage126.init({ closePool: false });
+    await stage127.init({ closePool: false });
     await stage129.init({ closePool: false });
     await stage130.init({ closePool: false });
     await stage131.init({ closePool: false });
@@ -129,5 +139,66 @@ describe('Robinhood wallet transfer projection persistence', () => {
       { evidence_role: 'largest', evidence_block: '101', evidence_log_index: 1 },
       { evidence_role: 'last', evidence_block: '101', evidence_log_index: 1 },
     ]);
+  });
+
+  it('commits unified positions with transfers and rolls everything back on position conflict', async () => {
+    const positions = createRobinhoodWalletPositionRepository({ database: db });
+    const transfers = createRobinhoodWalletTransferProjectionRepository({
+      database: db, positionProjection: positions,
+    });
+    await transfers.initCursor({
+      projectionVersion: ATOMIC_VERSION, stream: 'seed', nextBlock: '100',
+      nextBlockTime: '2099-01-01T00:00:00.000Z', safeHead: '200',
+    });
+    await positions.initCursor({
+      projectionVersion: POSITION_VERSION, stream: 'seed', nextBlock: '100',
+      nextBlockTime: '2099-01-01T00:00:00.000Z', safeHead: '200',
+    });
+    const atomicEvent = { ...event(100, 5, 10), classificationVersion: ATOMIC_VERSION };
+    const first = await transfers.commitBatch({
+      projectionVersion: ATOMIC_VERSION, stream: 'seed', expectedVersion: 0,
+      nextBlock: '101', nextBlockTime: '2099-01-02T00:00:00.000Z', safeHead: '200',
+      events: [atomicEvent],
+      positionBatch: {
+        projectionVersion: POSITION_VERSION, stream: 'seed', expectedVersion: 0,
+        nextBlock: '101', nextBlockTime: '2099-01-02T00:00:00.000Z', safeHead: '200',
+        positions: [{
+          tokenAddress: TOKEN, walletAddress: ALICE, quantityRaw: '10',
+          throughBlock: '100', throughLogIndex: '5',
+        }],
+      },
+    });
+    assert.equal(first.committed, true);
+    assert.equal(first.positionProjection.positions, 1);
+
+    const conflict = await transfers.commitBatch({
+      projectionVersion: ATOMIC_VERSION, stream: 'seed', expectedVersion: 1,
+      nextBlock: '102', nextBlockTime: '2099-01-03T00:00:00.000Z', safeHead: '200',
+      events: [{ ...event(101, 6, 20), classificationVersion: ATOMIC_VERSION }],
+      positionBatch: {
+        projectionVersion: POSITION_VERSION, stream: 'seed', expectedVersion: 0,
+        nextBlock: '102', nextBlockTime: '2099-01-03T00:00:00.000Z', safeHead: '200',
+        positions: [{
+          tokenAddress: TOKEN, walletAddress: ALICE, quantityRaw: '30',
+          throughBlock: '101', throughLogIndex: '6',
+        }],
+      },
+    });
+    assert.deepEqual(conflict, { committed: false, reason: 'position_cursor_conflict' });
+
+    const edge = await db.query(
+      `SELECT transfer_count::text FROM robinhood_wallet_transfer_edges
+       WHERE classification_version = $1`, [ATOMIC_VERSION]
+    );
+    const position = await db.query(
+      `SELECT quantity_raw::text FROM robinhood_wallet_token_positions
+       WHERE projection_version = $1`, [POSITION_VERSION]
+    );
+    const transferCursor = await transfers.loadCursor(ATOMIC_VERSION, 'seed');
+    const positionCursor = await positions.loadCursor(POSITION_VERSION, 'seed');
+    assert.deepEqual(edge.rows, [{ transfer_count: '1' }]);
+    assert.deepEqual(position.rows, [{ quantity_raw: '10' }]);
+    assert.equal(transferCursor.version, 1);
+    assert.equal(positionCursor.version, 1);
   });
 });

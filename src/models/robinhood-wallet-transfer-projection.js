@@ -227,6 +227,7 @@ function rejectionReason(current, batch, effectiveSafeHead) {
 }
 function createRobinhoodWalletTransferProjectionRepository(options = {}) {
   const database = options.database || db;
+  const positionProjection = options.positionProjection || null;
   async function loadCursor(projectionVersion, stream) {
     const result = await database.query(
       `SELECT * FROM robinhood_wallet_transfer_cursors
@@ -284,16 +285,35 @@ function createRobinhoodWalletTransferProjectionRepository(options = {}) {
       await persistEdges(client, batch.projectionVersion, batch.summary.edges);
       await persistDailySummaries(client, batch.projectionVersion, batch.summary.dailySummaries);
       await persistEvidence(client, batch.projectionVersion, batch.summary.relationships);
+      let positionResult = null;
+      if (input.positionBatch) {
+        if (typeof positionProjection?.commitBatch !== 'function') {
+          throw new TypeError('position projection repository is required');
+        }
+        positionResult = await positionProjection.commitBatch({
+          ...input.positionBatch, transactionClient: client,
+        });
+        if (!positionResult.committed) {
+          const error = new Error('position projection cursor conflict');
+          error.code = 'POSITION_CURSOR_CONFLICT';
+          throw error;
+        }
+      }
       const advanced = await advanceCursor(client, batch, effectiveSafeHead);
       if (!advanced.rows[0]) throw new Error('locked transfer cursor changed unexpectedly');
       await client.query('COMMIT');
       return {
         committed: true, edgeGroups: batch.summary.edges.length,
         dailySummaryGroups: batch.summary.dailySummaries.length,
-        evidenceCandidates: batch.summary.relationships.length * 3, cursor: cursor(advanced.rows[0]),
+        evidenceCandidates: batch.summary.relationships.length * 3,
+        ...(positionResult ? { positionProjection: positionResult } : {}),
+        cursor: cursor(advanced.rows[0]),
       };
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
+      if (error.code === 'POSITION_CURSOR_CONFLICT') {
+        return { committed: false, reason: 'position_cursor_conflict' };
+      }
       throw error;
     } finally {
       client.release();
