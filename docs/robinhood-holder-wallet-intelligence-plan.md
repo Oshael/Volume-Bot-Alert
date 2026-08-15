@@ -1230,6 +1230,11 @@ O B4g4a cria a Stage 136, um ledger imutável para transições aplicadas de
 versões anterior/nova, motivo e snapshot JSON da evidência. Não existe writer
 neste subcorte; raw, arestas, resumos e cursores permanecem inalterados.
 
+O B4g4b aplica cada transição uma única vez e na mesma transação: ledger, raw,
+arestas, evidências limitadas e resumo diário. Watermarks existentes das versões
+afetadas voltam para `blocked`, pois a prova anterior fica obsoleta. A projeção
+financeira continua separada; `swap_only_v1` não é alterada por este writer.
+
 ### Corte B5 — compactação e retenção
 
 Status: em andamento. O B5a criou o contrato persistente do resumo diário por

@@ -514,4 +514,21 @@ async function persistEvidence(client, projectionVersion, relationships) {
     [CHAIN, projectionVersion, JSON.stringify(rows)]
   );
 }
-module.exports = { createRobinhoodWalletTransferProjectionRepository };
+async function persistTransferProjection(client, projectionVersion, events = []) {
+  if (!client || typeof client.query !== 'function') throw new Error('transaction client is required');
+  if (!Array.isArray(events)) throw new Error('events must be a list');
+  const version = identifier(projectionVersion, 'projectionVersion');
+  const summary = summarize(events, version);
+  await persistEdges(client, version, summary.edges);
+  await persistDailySummaries(client, version, summary.dailySummaries);
+  await persistEvidence(client, version, summary.relationships);
+  return Object.freeze({
+    edgeGroups: summary.edges.length,
+    dailySummaryGroups: summary.dailySummaries.length,
+    evidenceCandidates: summary.relationships.length * 3,
+  });
+}
+module.exports = {
+  createRobinhoodWalletTransferProjectionRepository,
+  persistTransferProjection,
+};
