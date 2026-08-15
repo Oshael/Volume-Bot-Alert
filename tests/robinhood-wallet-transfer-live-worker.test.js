@@ -42,7 +42,10 @@ describe('Robinhood wallet transfer LIVE worker', () => {
       runtimeFactory: async () => ({ providerChainIds: { public: '4663' }, tickDeps: {} }),
       runTick: async () => ({
         status: 'projected', transfers: 2, rawInserted: 2, edgeGroups: 1,
-        evidenceCandidates: 3, telemetry: { endpointRoles: { probes: 4 } },
+        evidenceCandidates: 3, telemetry: {
+          filterMode: 'topics-only', requests: 2, splits: 1, addressSplits: 0,
+          endpointRoles: { probes: 4 },
+        },
         classifications: { wallet_transfer: 2 },
       }),
     });
@@ -56,6 +59,9 @@ describe('Robinhood wallet transfer LIVE worker', () => {
     assert.equal(status.totalTransfers, 2);
     assert.equal(status.totalRawInserted, 2);
     assert.equal(status.totalEndpointRoleProbes, 4);
+    assert.equal(status.lastResult.transferFilterMode, 'topics-only');
+    assert.equal(status.lastResult.transferLogRequests, 2);
+    assert.equal(status.lastResult.transferRangeSplits, 1);
     assert.deepEqual(status.providerChainIds, { public: '4663' });
     await worker.stop();
   });

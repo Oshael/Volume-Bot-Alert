@@ -3,6 +3,7 @@ const { TRANSFER_TOPIC } = require('./evm-erc20-supply-delta');
 const EXPECTED_CHAIN_ID = 4663n;
 const MAX_RANGE_BLOCKS = 5000n;
 const MAX_RECEIPT_RANGE_BLOCKS = 1000n;
+const DEFAULT_ADDRESS_FILTER_LIMIT = 100;
 
 function quantity(value, label) {
   const raw = String(value ?? '').trim();
@@ -121,6 +122,9 @@ function createRobinhoodHolderTransferReader(options = {}) {
   if (typeof rpcClient?.request !== 'function') throw new TypeError('holder transfer RPC is required');
   const addressShardConcurrency = boundedInteger(
     options.addressShardConcurrency, 1, 1, 4, 'addressShardConcurrency'
+  );
+  const addressFilterLimit = boundedInteger(
+    options.addressFilterLimit, DEFAULT_ADDRESS_FILTER_LIMIT, 1, 1000, 'addressFilterLimit'
   );
   let chainValidation;
   let learnedAddressLimit = null;
@@ -304,8 +308,13 @@ function createRobinhoodHolderTransferReader(options = {}) {
     }
     await assertChain();
     const telemetry = { requests: 0, splits: 0, addressSplits: 0 };
+    const filterMode = allowed.size === 0
+      ? 'empty-scope'
+      : (allowed.size <= addressFilterLimit ? 'address-filtered' : 'topics-only');
     const [observedLogs, checkpoint] = await Promise.all([
-      allowed.size ? readAddressFilteredLogs(fromBlock, toBlock, [...allowed], telemetry) : [],
+      filterMode === 'address-filtered'
+        ? readAddressFilteredLogs(fromBlock, toBlock, [...allowed], telemetry)
+        : (filterMode === 'topics-only' ? readLogs(fromBlock, toBlock, null, telemetry) : []),
       readBlock(toBlock),
     ]);
     const logs = observedLogs.filter((log) => allowed.has(String(log?.address || '').toLowerCase()));
@@ -315,7 +324,7 @@ function createRobinhoodHolderTransferReader(options = {}) {
       nextBlock: (toBlock + 1n).toString(), scopeTokens: allowed.size,
       checkpoint, transfers: orderTransfers(logs, context),
       telemetry: Object.freeze({
-        ...telemetry, observedLogs: observedLogs.length,
+        ...telemetry, filterMode, observedLogs: observedLogs.length,
         ignoredLogs: observedLogs.length - logs.length,
       }),
     });
@@ -328,6 +337,7 @@ function createRobinhoodHolderTransferReader(options = {}) {
 }
 
 module.exports = {
+  DEFAULT_ADDRESS_FILTER_LIMIT,
   EXPECTED_CHAIN_ID,
   MAX_RANGE_BLOCKS,
   MAX_RECEIPT_RANGE_BLOCKS,

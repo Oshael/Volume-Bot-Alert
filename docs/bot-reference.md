@@ -1546,8 +1546,10 @@ revisar o relatório, confirme com
 O backfill de transfers pode inspecionar uma única faixa com
 `npm run robinhood:wallet-transfer-backfill -- --max-blocks=250`. O comando
 valida os providers e não escreve por padrão. Para persistir somente essa faixa,
-repita com `--confirm-backfill-robinhood-wallet-transfers`; o limite aceito é
-1–5.000 blocos. Não existe loop ou auto-start nesse comando.
+repita com `--confirm-backfill-robinhood-wallet-transfers`; `--max-ranges`
+adiciona um loop manual limitado, com pausa configurável e lease exclusiva. O
+limite por faixa é 1–5.000 blocos e uma faixa continua sendo o default. Não há
+auto-start nesse comando.
 
 O repository de projeção persiste arestas, resumo diário por token, evidências
 `first`/`last`/`largest` e cursor sob a mesma transação com lock/CAS. O resumo
@@ -1564,9 +1566,13 @@ O writer LIVE de transfers é opt-in por
 `robinhood-wallet-transfer-live-worker` no grupo isolado
 `robinhood-wallet-intelligence` e pode ser iniciado separadamente por
 `npm run start:worker:robinhood-wallet-transfers`. O default é 25 blocos por
-tick, batches RPC de 50 e concorrência de shards igual a 1. Ele valida chain ID,
-checkpoint e hashes antes de persistir raw/arestas; divergência canônica paralisa
-a lease. As Stages 128–130 devem estar aplicadas antes de habilitar o writer.
+tick, batches RPC de 50 e concorrência de shards igual a 1. Escopos de até 100
+tokens usam filtro RPC por endereço; escopos maiores usam o tópico global
+`Transfer` e filtragem local, evitando payloads com dezenas de milhares de
+endereços. O worker expõe esse modo e os splits na telemetria. Ele valida chain
+ID, checkpoint e hashes antes de persistir raw/arestas; divergência canônica
+paralisa a lease. As Stages 128–130 devem estar aplicadas antes de habilitar o
+writer.
 
 O bootstrap também existe localmente como
 `npm run robinhood:wallet-live-bootstrap`: dry-run por padrão, audita observações

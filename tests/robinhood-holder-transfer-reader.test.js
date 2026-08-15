@@ -140,7 +140,30 @@ describe('Robinhood holder Transfer reader', () => {
 
     assert.equal(result.transfers.length, 1);
     assert.deepEqual(result.telemetry, {
-      requests: 1, splits: 0, addressSplits: 0, observedLogs: 2, ignoredLogs: 1,
+      requests: 1, splits: 0, addressSplits: 0, filterMode: 'address-filtered',
+      observedLogs: 2, ignoredLogs: 1,
+    });
+  });
+
+  it('uses a topic-only query and filters locally when the allowlist is too large', async () => {
+    const token2 = `0x${'8'.repeat(40)}`;
+    const untracked = `0x${'9'.repeat(40)}`;
+    const source = rpc(async (method, params) => {
+      if (method === 'eth_getBlockByNumber') return { number: '0x64', hash: HASH_A };
+      assert.equal(Object.hasOwn(params[0], 'address'), false);
+      return [log(), log({ address: untracked, logIndex: '0x3' })];
+    });
+    const result = await createRobinhoodHolderTransferReader({
+      rpcClient: source.client, addressFilterLimit: 1,
+    }).readGlobalRange({
+      tokenAddresses: [TOKEN, token2], fromBlock: 100, toBlock: 100,
+    });
+
+    assert.equal(result.scopeTokens, 2);
+    assert.equal(result.transfers.length, 1);
+    assert.deepEqual(result.telemetry, {
+      requests: 1, splits: 0, addressSplits: 0, filterMode: 'topics-only',
+      observedLogs: 2, ignoredLogs: 1,
     });
   });
 
@@ -174,7 +197,8 @@ describe('Robinhood holder Transfer reader', () => {
     assert.deepEqual(filters, [[TOKEN, token2], [TOKEN], [token2]]);
     assert.equal(result.transfers.length, 1);
     assert.deepEqual(result.telemetry, {
-      requests: 3, splits: 0, addressSplits: 1, observedLogs: 1, ignoredLogs: 0,
+      requests: 3, splits: 0, addressSplits: 1, filterMode: 'address-filtered',
+      observedLogs: 1, ignoredLogs: 0,
     });
     filters.length = 0;
     const learned = await reader.readGlobalRange({
@@ -183,7 +207,8 @@ describe('Robinhood holder Transfer reader', () => {
     assert.deepEqual(filters, [[TOKEN], [token2]]);
     assert.equal(maxActiveRequests, 2);
     assert.deepEqual(learned.telemetry, {
-      requests: 2, splits: 0, addressSplits: 0, observedLogs: 1, ignoredLogs: 0,
+      requests: 2, splits: 0, addressSplits: 0, filterMode: 'address-filtered',
+      observedLogs: 1, ignoredLogs: 0,
     });
   });
 

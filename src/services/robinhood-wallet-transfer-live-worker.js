@@ -34,19 +34,27 @@ function publicError(error) {
   }) : null;
 }
 
+function count(value) {
+  return Number(value) || 0;
+}
+
 function compactResult(result) {
   if (!result) return null;
   return Object.freeze({
     status: result.status || null, reason: result.reason || null,
     fromBlock: result.fromBlock ?? null, toBlock: result.toBlock ?? null,
     nextBlock: result.nextBlock ?? null, sourceThrough: result.sourceThrough ?? null,
-    scopeTokens: Number(result.scopeTokens) || 0,
-    transfers: Number(result.transfers) || 0,
-    rawInserted: Number(result.rawInserted) || 0,
-    edgeGroups: Number(result.edgeGroups) || 0,
-    evidenceCandidates: Number(result.evidenceCandidates) || 0,
+    scopeTokens: count(result.scopeTokens),
+    transfers: count(result.transfers),
+    rawInserted: count(result.rawInserted),
+    edgeGroups: count(result.edgeGroups),
+    evidenceCandidates: count(result.evidenceCandidates),
     classifications: result.classifications || {},
-    endpointRoleProbes: Number(result.telemetry?.endpointRoles?.probes) || 0,
+    transferFilterMode: result.telemetry?.filterMode || null,
+    transferLogRequests: count(result.telemetry?.requests),
+    transferRangeSplits: count(result.telemetry?.splits),
+    transferAddressSplits: count(result.telemetry?.addressSplits),
+    endpointRoleProbes: count(result.telemetry?.endpointRoles?.probes),
   });
 }
 

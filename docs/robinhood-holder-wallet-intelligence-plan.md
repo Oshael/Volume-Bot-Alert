@@ -1201,6 +1201,12 @@ O B4e liga o tick somente sob flag explícita e lease própria no grupo
 `robinhood-wallet-intelligence`; configuração, batches, backoff e telemetria são
 limitados, e mismatch de checkpoint paralisa o writer.
 
+O corretivo B4f evita filtros RPC inviáveis para catálogos grandes. Até 100
+tokens o reader mantém `address-filtered`; acima disso consulta globalmente pelo
+tópico `Transfer` e filtra localmente pelo allowlist, expondo o modo e os splits
+na telemetria. A medição operacional que motivou o corte encontrou 119.168
+tokens, que não podem ser enviados em um único filtro `address`.
+
 ### Corte B5 — compactação e retenção
 
 Status: em andamento. O B5a criou o contrato persistente do resumo diário por
