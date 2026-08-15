@@ -12,8 +12,7 @@ describe('Robinhood wallet transfer LIVE worker', () => {
     const created = {};
     const factory = (name) => (input) => { created[name] = input; return { name }; };
     const runtime = await buildRuntime({
-      addressShardConcurrency: 2, blockEvidenceBatchSize: 20,
-      endpointRoleBatchSize: 30, rpcOptions: {},
+      addressShardConcurrency: 2, blockEvidenceBatchSize: 20, rpcOptions: {},
     }, {
       database: { name: 'db' }, rpcClient,
       validateChainIds: async (client) => {
@@ -23,14 +22,13 @@ describe('Robinhood wallet transfer LIVE worker', () => {
       transferReaderFactory: factory('transferReader'),
       sourceFactory: factory('source'), rawFactory: factory('raw'),
       projectionFactory: factory('projection'), evidenceFactory: factory('evidence'),
-      roleReaderFactory: factory('roles'),
     });
 
     assert.deepEqual(runtime.providerChainIds, { public: '4663' });
     assert.equal(runtime.tickDeps.evidence.name, 'evidence');
     assert.equal(created.transferReader.addressShardConcurrency, 2);
     assert.equal(created.evidence.blockBatchSize, 20);
-    assert.equal(created.roles.batchSize, 30);
+    assert.equal(runtime.tickDeps.roles, undefined);
     assert.equal(created.source.database.name, 'db');
   });
 

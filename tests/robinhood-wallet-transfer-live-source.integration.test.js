@@ -16,6 +16,7 @@ const stage122 = require('../src/utils/db-init-stage122');
 const stage133 = require('../src/utils/db-init-stage133');
 const stage129 = require('../src/utils/db-init-stage129');
 const stage134 = require('../src/utils/db-init-stage134');
+const stage135 = require('../src/utils/db-init-stage135');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const TOKEN = `0x${'1'.repeat(40)}`;
@@ -32,6 +33,7 @@ async function cleanup() {
   await db.query('DELETE FROM robinhood_holder_token_states WHERE token_address = $1', [TOKEN]);
   await db.query("DELETE FROM robinhood_wallet_swap_cursors WHERE chain = 'robinhood' AND stream IN ('seed', 'live')");
   await db.query("DELETE FROM robinhood_wallet_transfer_cursors WHERE projection_version = 'test_transfer_plan_v1'");
+  await db.query('DELETE FROM robinhood_wallet_endpoint_roles WHERE endpoint_address = $1', [POOL]);
 }
 
 describe('Robinhood wallet transfer LIVE source', () => {
@@ -39,6 +41,7 @@ describe('Robinhood wallet transfer LIVE source', () => {
     await assertUsingTestDatabase(db);
     for (const stage of [
       stage63, stage90, stage91, stage116, stage120, stage122, stage133, stage129, stage134,
+      stage135,
     ]) {
       await stage.init({ closePool: false });
     }
@@ -95,6 +98,14 @@ describe('Robinhood wallet transfer LIVE source', () => {
          'uniswap-v2', 'test-transfer-source', $3, $4, 'buy', 25, 5, $5, 'test-v1')`,
       [WALLET, TX, TOKEN, ROUTER, ROUTER]
     );
+    await db.query(
+      `INSERT INTO robinhood_wallet_endpoint_roles (
+         chain, endpoint_address, endpoint_role, evidence_source, evidence_block,
+         evidence_block_hash, resolver_version, observed_from_block, observed_through_block
+       ) VALUES ('robinhood', $1, 'contract', 'pc_archive', 110, $2,
+         'rh_endpoint_v1', 110, 110)`,
+      [POOL, HASH]
+    );
 
     const repository = createRobinhoodWalletTransferLiveSourceRepository({ database: db });
     const frontier = await repository.loadSwapFrontier();
@@ -127,7 +138,11 @@ describe('Robinhood wallet transfer LIVE source', () => {
     assert.equal(context.swaps.length, 1);
     assert.deepEqual(context.poolAddresses, [POOL]);
     assert.deepEqual(context.routerAddresses, [ROUTER]);
+    assert.deepEqual(context.contractAddresses, [POOL]);
     assert.deepEqual(context.walletAddresses, [WALLET]);
+    assert.deepEqual(context.endpointRoleCoverage, {
+      requested: 3, persisted: 1, unpersisted: 2, probes: 0,
+    });
     assert.equal(backfillContext.ready, true);
     assert.equal(backfillContext.swaps.length, 1);
     assert.equal((await repository.loadBackfillRangeContext({

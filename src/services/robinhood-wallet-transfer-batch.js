@@ -39,19 +39,6 @@ function classifyTransfers(transfers, context, classifierFactory = createRobinho
   return Object.freeze({ counts: Object.freeze(counts), events: Object.freeze(events) });
 }
 
-function withEndpointRoles(context, roles) {
-  return {
-    ...context,
-    contractAddresses: [...new Set([
-      ...(context.contractAddresses || []), ...roles.contractAddresses,
-    ])],
-    walletAddresses: [...new Set([
-      ...(context.walletAddresses || []), ...roles.walletAddresses,
-    ])],
-  };
-}
-
 module.exports = {
   CLASSIFICATION_VERSION, EDGE_KINDS, classificationInput, classifyTransfers,
-  withEndpointRoles,
 };

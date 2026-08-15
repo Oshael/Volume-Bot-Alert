@@ -1,7 +1,6 @@
 const { RAW_RETENTION_DAYS } = require('../models/robinhood-token-transfer-persistence');
 const {
   CLASSIFICATION_VERSION, EDGE_KINDS, classificationInput, classifyTransfers,
-  withEndpointRoles,
 } = require('./robinhood-wallet-transfer-batch');
 
 function boundedInteger(value, fallback, minimum, maximum, label) {
@@ -23,7 +22,6 @@ function assertDependencies(deps) {
     'listTrackedTokenAddresses', 'loadBackfillPlan', 'loadBackfillRangeContext',
   ], 'transfer backfill source');
   requireMethods(deps.evidence, ['matchesCheckpoint', 'readRange'], 'transfer evidence reader');
-  requireMethods(deps.roles, ['resolveRoles'], 'transfer endpoint role reader');
 }
 
 function rangeForPlan(plan, maxBlocks) {
@@ -60,7 +58,9 @@ function summarizeThroughDay(fromTime, checkpointTime) {
 
 function report(prepared, additions = {}) {
   if (prepared.outcome) return prepared.outcome;
-  const { plan, captured, classified, rawEligible, summaryOnly, edgeEligible, cutoff, roles } = prepared;
+  const {
+    plan, captured, classified, rawEligible, summaryOnly, edgeEligible, cutoff, context,
+  } = prepared;
   return Object.freeze({
     status: 'dry-run', reason: null, plan, fromBlock: captured.fromBlock,
     toBlock: captured.toBlock, nextBlock: captured.nextBlock,
@@ -70,7 +70,9 @@ function report(prepared, additions = {}) {
     summaryOnly: summaryOnly.length,
     classificationOnly: classified.events.length - rawEligible.length - summaryOnly.length,
     edgeEligible: edgeEligible.length, rawCutoff: cutoff.toISOString(),
-    telemetry: Object.freeze({ ...captured.telemetry, endpointRoles: roles.telemetry }),
+    telemetry: Object.freeze({
+      ...captured.telemetry, endpointRoles: context.endpointRoleCoverage,
+    }),
     ...additions,
   });
 }
@@ -99,22 +101,15 @@ async function prepareBackfillRange(deps, input = {}) {
       status: 'awaiting-context', reason: context.reason, plan, ...range,
     }) };
   }
-  const roles = await deps.roles.resolveRoles({
-    transfers: captured.transfers,
-    poolAddresses: context.poolAddresses,
-    routerAddresses: context.routerAddresses,
-    contractAddresses: context.contractAddresses,
-    walletAddresses: context.walletAddresses,
-  });
   const classified = classifyTransfers(
-    captured.transfers, withEndpointRoles(context, roles), deps.classifierFactory
+    captured.transfers, context, deps.classifierFactory
   );
   const cutoff = retentionCutoff(input.now);
   const isRawEligible = (event) => new Date(event.blockTime) >= cutoff;
   const rawEligible = classified.events.filter(isRawEligible);
   const edgeEligible = classified.events.filter(({ transferKind }) => EDGE_KINDS.has(transferKind));
   const summaryOnly = edgeEligible.filter((event) => !isRawEligible(event));
-  return { plan, captured, classified, rawEligible, edgeEligible, summaryOnly, cutoff, roles };
+  return { plan, captured, classified, rawEligible, edgeEligible, summaryOnly, cutoff, context };
 }
 
 async function runRobinhoodWalletTransferBackfillDryRun(deps, input = {}) {

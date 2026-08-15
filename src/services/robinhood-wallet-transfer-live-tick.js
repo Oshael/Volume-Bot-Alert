@@ -1,5 +1,5 @@
 const {
-  CLASSIFICATION_VERSION, EDGE_KINDS, classificationInput, classifyTransfers, withEndpointRoles,
+  CLASSIFICATION_VERSION, EDGE_KINDS, classificationInput, classifyTransfers,
 } = require('./robinhood-wallet-transfer-batch');
 
 const STREAM = 'live';
@@ -23,7 +23,6 @@ function assertDependencies(deps) {
     'listTrackedTokenAddresses', 'loadRangeContext', 'loadSwapFrontier',
   ], 'transfer LIVE source');
   requireMethods(deps.evidence, ['matchesCheckpoint', 'readRange'], 'transfer evidence reader');
-  requireMethods(deps.roles, ['resolveRoles'], 'transfer endpoint role reader');
   requireMethods(deps.projection, ['commitBatch', 'initCursor', 'loadCursor'], 'transfer projection');
   requireMethods(deps.raw, ['insertTransferEvents'], 'raw transfer repository');
 }
@@ -103,16 +102,8 @@ async function runRobinhoodWalletTransferLiveTick(deps, input = {}) {
       completeThroughBlock: context.completeThroughBlock || null,
     });
   }
-  const roles = await deps.roles.resolveRoles({
-    transfers: captured.transfers,
-    poolAddresses: context.poolAddresses,
-    routerAddresses: context.routerAddresses,
-    contractAddresses: context.contractAddresses,
-    walletAddresses: context.walletAddresses,
-  });
-  const classificationContext = withEndpointRoles(context, roles);
   const classified = classifyTransfers(
-    captured.transfers, classificationContext, deps.classifierFactory
+    captured.transfers, context, deps.classifierFactory
   );
   const raw = await deps.raw.insertTransferEvents(classified.events);
   const projected = await deps.projection.commitBatch({
@@ -129,11 +120,13 @@ async function runRobinhoodWalletTransferLiveTick(deps, input = {}) {
     transfers: classified.events.length, classifications: Object.freeze(classified.counts),
     rawInserted: raw.inserted, edgeGroups: projected.edgeGroups || 0,
     evidenceCandidates: projected.evidenceCandidates || 0,
-    telemetry: Object.freeze({ ...captured.telemetry, endpointRoles: roles.telemetry }),
+    telemetry: Object.freeze({
+      ...captured.telemetry, endpointRoles: context.endpointRoleCoverage,
+    }),
   });
 }
 
 module.exports = {
   runRobinhoodWalletTransferLiveTick,
-  __private: { classificationInput, rangeFor, validateCursorAgainstSource, withEndpointRoles },
+  __private: { classificationInput, rangeFor, validateCursorAgainstSource },
 };

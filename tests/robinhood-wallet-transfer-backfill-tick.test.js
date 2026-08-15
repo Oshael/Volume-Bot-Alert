@@ -44,7 +44,7 @@ function captured() {
 }
 
 function dependencies(overrides = {}) {
-  const calls = { evidence: [], contexts: [], roles: [], initialized: [], raw: [], projected: [] };
+  const calls = { evidence: [], contexts: [], initialized: [], raw: [], projected: [] };
   return {
     calls,
     source: {
@@ -54,19 +54,15 @@ function dependencies(overrides = {}) {
         calls.contexts.push(input);
         return overrides.context || {
           ready: true, swaps: [], swapCoverageComplete: true,
-          poolAddresses: [], routerAddresses: [], walletAddresses: [ALICE],
+          poolAddresses: [], routerAddresses: [], contractAddresses: [],
+          walletAddresses: [ALICE, BOB],
+          endpointRoleCoverage: { requested: 2, persisted: 1, unpersisted: 1, probes: 0 },
         };
       },
     },
     evidence: {
       matchesCheckpoint: async () => overrides.canonical !== false,
       readRange: async (input) => { calls.evidence.push(input); return captured(); },
-    },
-    roles: {
-      resolveRoles: async (input) => {
-        calls.roles.push(input);
-        return { contractAddresses: [], walletAddresses: [BOB], telemetry: { probes: 2 } };
-      },
     },
     classifierFactory: overrides.classifierFactory,
     raw: {
@@ -140,7 +136,7 @@ describe('Robinhood wallet-transfer backfill dry-run tick', () => {
     const result = await runRobinhoodWalletTransferBackfillDryRun(deps);
     assert.equal(result.status, 'awaiting-context');
     assert.equal(result.reason, 'swap_coverage_incomplete');
-    assert.equal(deps.calls.roles.length, 0);
+    assert.equal(deps.calls.contexts.length, 1);
   });
 
   it('bounds ranges and retention by UTC days', () => {

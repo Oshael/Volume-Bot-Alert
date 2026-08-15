@@ -1214,6 +1214,12 @@ papéis por endpoint. O registro é conservador: evidência de contrato prevalec
 sobre wallet, inclusive em replays fora de ordem. O worker ainda não consome
 essa tabela neste subcorte e deve permanecer desligado até o B4g2.
 
+O B4g2 move a leitura de papéis para o mesmo source PostgreSQL que carrega
+swaps e pools. LIVE e backfill deixam de instanciar o reader RPC de
+`eth_getCode`; endpoint sem registro continua `unknown`, é persistido como
+evidência bruta e não impede o avanço do cursor. A resolução histórica pelo PC
+e a reclassificação dos eventos já capturados ficam para os próximos subcortes.
+
 ### Corte B5 — compactação e retenção
 
 Status: em andamento. O B5a criou o contrato persistente do resumo diário por

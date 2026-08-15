@@ -16,9 +16,6 @@ const {
   createRobinhoodHolderTransferReader,
 } = require('./robinhood-holder-transfer-reader');
 const {
-  createRobinhoodWalletTransferEndpointRoleReader,
-} = require('./robinhood-wallet-transfer-endpoint-roles');
-const {
   createRobinhoodWalletTransferEvidenceReader,
 } = require('./robinhood-wallet-transfer-evidence-reader');
 
@@ -42,9 +39,6 @@ async function buildRobinhoodWalletTransferRuntime(options = {}, deps = {}) {
       }),
       evidence: (deps.evidenceFactory || createRobinhoodWalletTransferEvidenceReader)({
         transferReader, rpcClient, blockBatchSize: options.blockEvidenceBatchSize,
-      }),
-      roles: (deps.roleReaderFactory || createRobinhoodWalletTransferEndpointRoleReader)({
-        rpcClient, batchSize: options.endpointRoleBatchSize,
       }),
     }),
   });

@@ -71,13 +71,12 @@ describe('Robinhood wallet-transfer backfill commit integration', () => {
         listTrackedTokenAddresses: async () => [TOKEN],
         loadBackfillRangeContext: async () => ({
           ready: true, swaps: [], swapCoverageComplete: true,
-          poolAddresses: [], routerAddresses: [], walletAddresses: [ALICE, BOB],
+          poolAddresses: [], routerAddresses: [], contractAddresses: [],
+          walletAddresses: [ALICE, BOB],
+          endpointRoleCoverage: { requested: 2, persisted: 2, unpersisted: 0, probes: 0 },
         }),
       },
       evidence: { matchesCheckpoint: async () => true, readRange: async () => captured },
-      roles: { resolveRoles: async () => ({
-        contractAddresses: [], walletAddresses: [], telemetry: { probes: 0 },
-      }) },
       raw: createRobinhoodTokenTransferRepository({ database: db }),
       projection: createRobinhoodWalletTransferProjectionRepository({ database: db }),
     };

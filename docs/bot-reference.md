@@ -1559,20 +1559,24 @@ classificados na mesma versão.
 
 O adapter LIVE de fonte permanece inativo e só considera cobertura de swaps
 com cursor `live` em `running`, frontier/checkpoint comprovados e sem ultrapassar
-o `safe_head`; também lê em lote o escopo de tokens, swaps e pools conhecidos.
+o `safe_head`; também lê em lote o escopo de tokens, swaps, pools conhecidos e
+papéis compactos de endpoints. Aplique `node src/utils/db-init-stage135.js`
+antes de iniciar o writer. O worker permanente não consulta `eth_getCode` nem
+Alchemy para classificar endpoints: registro ausente permanece `unknown` sem
+bloquear o cursor.
 
 O writer LIVE de transfers é opt-in por
 `ROBINHOOD_WALLET_TRANSFER_LIVE_ENABLED=true`, usa a lease
 `robinhood-wallet-transfer-live-worker` no grupo isolado
 `robinhood-wallet-intelligence` e pode ser iniciado separadamente por
 `npm run start:worker:robinhood-wallet-transfers`. O default é 25 blocos por
-tick, batches RPC de 50 e concorrência de shards igual a 1. Escopos de até 100
+tick, batches de evidência de bloco de 50 e concorrência de shards igual a 1. Escopos de até 100
 tokens usam filtro RPC por endereço; escopos maiores usam o tópico global
 `Transfer` e filtragem local, evitando payloads com dezenas de milhares de
 endereços. O worker expõe esse modo e os splits na telemetria. Ele valida chain
 ID, checkpoint e hashes antes de persistir raw/arestas; divergência canônica
-paralisa a lease. As Stages 128–130 devem estar aplicadas antes de habilitar o
-writer.
+paralisa a lease. As Stages 128–130 e 135 devem estar aplicadas antes de
+habilitar o writer.
 
 O bootstrap também existe localmente como
 `npm run robinhood:wallet-live-bootstrap`: dry-run por padrão, audita observações

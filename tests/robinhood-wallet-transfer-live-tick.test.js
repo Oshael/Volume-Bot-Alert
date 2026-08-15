@@ -34,7 +34,7 @@ function captured() {
 }
 
 function dependencies(overrides = {}) {
-  const calls = { contexts: [], evidence: [], initialized: [], raw: [], projected: [], roles: [] };
+  const calls = { contexts: [], evidence: [], initialized: [], raw: [], projected: [] };
   const currentCursor = overrides.cursor === undefined ? cursor() : overrides.cursor;
   return {
     calls,
@@ -47,22 +47,14 @@ function dependencies(overrides = {}) {
         calls.contexts.push(input);
         return overrides.context || {
           ready: true, swapCoverageComplete: true, swaps: [], poolAddresses: [],
-          routerAddresses: [], walletAddresses: [ALICE],
+          routerAddresses: [], contractAddresses: [], walletAddresses: [ALICE, BOB],
+          endpointRoleCoverage: { requested: 2, persisted: 1, unpersisted: 1, probes: 0 },
         };
       },
     },
     evidence: {
       matchesCheckpoint: async () => overrides.canonical !== false,
       readRange: async (input) => { calls.evidence.push(input); return captured(); },
-    },
-    roles: {
-      resolveRoles: async (input) => {
-        calls.roles.push(input);
-        return overrides.roles || {
-          contractAddresses: [], walletAddresses: [BOB],
-          telemetry: { probes: 1, batches: 1, endpoints: 1 },
-        };
-      },
     },
     projection: {
       loadCursor: async () => currentCursor,
@@ -88,7 +80,9 @@ describe('Robinhood wallet transfer LIVE tick', () => {
     assert.equal(result.rawInserted, 1);
     assert.equal(deps.calls.raw[0][0].transferKind, 'wallet_transfer');
     assert.equal(deps.calls.projected[0].events.length, 1);
-    assert.deepEqual(result.telemetry.endpointRoles, { probes: 1, batches: 1, endpoints: 1 });
+    assert.deepEqual(result.telemetry.endpointRoles, {
+      requested: 2, persisted: 1, unpersisted: 1, probes: 0,
+    });
     assert.deepEqual(deps.calls.evidence[0], {
       tokenAddresses: [TOKEN], fromBlock: '100', toBlock: '100',
     });
@@ -128,11 +122,8 @@ describe('Robinhood wallet transfer LIVE tick', () => {
     const deps = dependencies({
       context: {
         ready: true, swapCoverageComplete: true, swaps: [], poolAddresses: [],
-        routerAddresses: [], walletAddresses: [ALICE],
-      },
-      roles: {
-        contractAddresses: [], walletAddresses: [],
-        telemetry: { probes: 0, batches: 0, endpoints: 0 },
+        routerAddresses: [], contractAddresses: [], walletAddresses: [ALICE],
+        endpointRoleCoverage: { requested: 2, persisted: 0, unpersisted: 2, probes: 0 },
       },
     });
     const result = await runRobinhoodWalletTransferLiveTick(deps);

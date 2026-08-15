@@ -342,7 +342,15 @@ function createRobinhoodWalletTransferLiveSourceRepository(options = {}) {
            OR (protocol = 'uniswap-v4' AND origin_address = ANY($2::varchar[])))`,
       [CHAIN, endpointAddresses]
     );
-    const [swapResult, poolResult] = await Promise.all([swapPromise, poolPromise]);
+    const rolePromise = endpointAddresses.length === 0 ? { rows: [] } : database.query(
+      `SELECT endpoint_address, endpoint_role FROM robinhood_wallet_endpoint_roles
+       WHERE chain = $1 AND endpoint_address = ANY($2::varchar[])
+       ORDER BY endpoint_address`,
+      [CHAIN, endpointAddresses]
+    );
+    const [swapResult, poolResult, roleResult] = await Promise.all([
+      swapPromise, poolPromise, rolePromise,
+    ]);
     const swaps = swapResult.rows.map(normalizeSwap);
     const poolAddresses = new Set();
     for (const row of poolResult.rows) {
@@ -351,6 +359,12 @@ function createRobinhoodWalletTransferLiveSourceRepository(options = {}) {
         poolAddresses.add(row.origin_address);
       }
     }
+    const persistedWallets = roleResult.rows
+      .filter(({ endpoint_role: role }) => role === 'wallet')
+      .map(({ endpoint_address: endpoint }) => endpoint);
+    const persistedContracts = roleResult.rows
+      .filter(({ endpoint_role: role }) => role === 'contract')
+      .map(({ endpoint_address: endpoint }) => endpoint);
     return Object.freeze({
       ready: true, reason: null, swapCoverageComplete: true,
       completeThroughBlock: frontier.completeThroughBlock,
@@ -359,9 +373,16 @@ function createRobinhoodWalletTransferLiveSourceRepository(options = {}) {
       routerAddresses: Object.freeze([...new Set(swaps.map(({ routerAddress }) => (
         routerAddress
       )).filter(Boolean))].sort()),
-      walletAddresses: Object.freeze([...new Set(swaps.map(({ walletAddress }) => (
-        walletAddress
-      )))].sort()),
+      contractAddresses: Object.freeze([...new Set(persistedContracts)].sort()),
+      walletAddresses: Object.freeze([...new Set([
+        ...swaps.map(({ walletAddress }) => walletAddress), ...persistedWallets,
+      ])].sort()),
+      endpointRoleCoverage: Object.freeze({
+        requested: endpointAddresses.length,
+        persisted: roleResult.rows.length,
+        unpersisted: endpointAddresses.length - roleResult.rows.length,
+        probes: 0,
+      }),
     });
   }
 
