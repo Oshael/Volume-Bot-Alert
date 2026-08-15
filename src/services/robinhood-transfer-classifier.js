@@ -144,9 +144,9 @@ function createRobinhoodTransferClassifier(options = {}) {
     }
     if (wallets.has(transfer.fromWallet) && wallets.has(transfer.toWallet)) {
       const selfTransfer = transfer.fromWallet === transfer.toWallet;
-      return decision('wallet_transfer', selfTransfer ? 'wallet_self_transfer' : 'known_wallet_pair', {
-        selfTransfer,
-      });
+      return selfTransfer
+        ? decision('wallet_self', 'wallet_self_transfer', { selfTransfer: true })
+        : decision('wallet_transfer', 'known_wallet_pair');
     }
     return decision('unknown', 'endpoint_types_unproven', { confidence: 'insufficient_evidence' });
   }

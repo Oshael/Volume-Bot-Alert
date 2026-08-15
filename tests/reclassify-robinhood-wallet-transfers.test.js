@@ -3,6 +3,7 @@ const { describe, it } = require('node:test');
 
 const {
   runRobinhoodWalletTransferReclassification,
+  __private: { prepareAction },
 } = require('../src/services/robinhood-wallet-transfer-reclassification');
 const {
   CONFIRM_FLAG, buildRuntime, main, parseArgs,
@@ -51,6 +52,13 @@ function harness() {
 }
 
 describe('Robinhood wallet transfer reclassification command', () => {
+  it('keeps a self-transfer outside reclassification projections', () => {
+    const self = { ...candidate(), toWallet: ALICE };
+    assert.deepEqual(prepareAction(self, {
+      classify: () => ({ kind: 'wallet_self', reasonCode: 'wallet_self_transfer' }),
+    }, {}), { skipped: 'wallet_self_transfer_unsupported' });
+  });
+
   it('requires a UTC day, bounded limit and long confirmation flag', () => {
     assert.deepEqual(parseArgs([`--day=${DAY}`]), { confirm: false, day: DAY, limit: 100 });
     assert.deepEqual(parseArgs([`--day=${DAY}`, '--limit=1000', CONFIRM_FLAG]), {

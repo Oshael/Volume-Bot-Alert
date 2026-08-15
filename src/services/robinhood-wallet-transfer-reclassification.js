@@ -28,7 +28,7 @@ function classificationInput(candidates) {
 function prepareAction(candidate, classifier, context) {
   const decision = classifier.classify(candidate, context);
   if (decision.kind === 'unknown') return { skipped: decision.reasonCode };
-  if (decision.kind === 'wallet_transfer' && candidate.fromWallet === candidate.toWallet) {
+  if (candidate.fromWallet === candidate.toWallet) {
     return { skipped: 'wallet_self_transfer_unsupported' };
   }
   return {

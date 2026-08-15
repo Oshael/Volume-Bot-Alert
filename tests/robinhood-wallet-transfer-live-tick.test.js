@@ -54,7 +54,10 @@ function dependencies(overrides = {}) {
     },
     evidence: {
       matchesCheckpoint: async () => overrides.canonical !== false,
-      readRange: async (input) => { calls.evidence.push(input); return captured(); },
+      readRange: async (input) => {
+        calls.evidence.push(input);
+        return overrides.captured || captured();
+      },
     },
     projection: {
       loadCursor: async () => currentCursor,
@@ -130,6 +133,18 @@ describe('Robinhood wallet transfer LIVE tick', () => {
 
     assert.deepEqual(result.classifications, { unknown: 1 });
     assert.equal(deps.calls.raw[0][0].transferKind, 'unknown');
+    assert.deepEqual(deps.calls.projected[0].events, []);
+  });
+
+  it('persists a known-wallet self-transfer as raw classification-only evidence', async () => {
+    const self = captured();
+    self.transfers[0] = { ...self.transfers[0], toWallet: ALICE };
+    const deps = dependencies({ captured: self });
+    const result = await runRobinhoodWalletTransferLiveTick(deps);
+
+    assert.deepEqual(result.classifications, { wallet_self: 1 });
+    assert.equal(deps.calls.raw[0][0].reasonCode, 'wallet_self_transfer');
+    assert.equal(deps.calls.raw[0][0].affectsPosition, false);
     assert.deepEqual(deps.calls.projected[0].events, []);
   });
 

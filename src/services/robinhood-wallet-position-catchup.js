@@ -40,7 +40,7 @@ function touchedPairs(swaps, transfers) {
     add(field(swap, 'tokenAddress', 'token_address'), field(swap, 'walletAddress', 'wallet_address'));
   }
   for (const transfer of transfers) {
-    if (transfer.transferKind !== 'wallet_transfer') continue;
+    if (transfer.transferKind !== 'wallet_transfer' || transfer.affectsPosition === false) continue;
     add(transfer.tokenAddress, transfer.fromWallet);
     add(transfer.tokenAddress, transfer.toWallet);
   }

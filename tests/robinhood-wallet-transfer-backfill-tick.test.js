@@ -64,7 +64,10 @@ function dependencies(overrides = {}) {
     },
     evidence: {
       matchesCheckpoint: async () => overrides.canonical !== false,
-      readRange: async (input) => { calls.evidence.push(input); return captured(); },
+      readRange: async (input) => {
+        calls.evidence.push(input);
+        return overrides.captured || captured();
+      },
     },
     endpointRoles: { hydrate: async (input) => {
       calls.hydration.push(input);
@@ -216,5 +219,29 @@ describe('Robinhood wallet-transfer backfill dry-run tick', () => {
     assert.equal(deps.calls.initialized.length, 0);
     assert.equal(deps.calls.raw.length, 0);
     assert.equal(deps.calls.projected.length, 0);
+  });
+
+  it('keeps a known-wallet self-transfer classification-only and advances the range', async () => {
+    const self = captured();
+    self.transfers = [{ ...self.transfers[0], fromWallet: ALICE, toWallet: ALICE }];
+    const deps = dependencies({
+      captured: self,
+      context: {
+        ready: true, swapCoverageComplete: true, swaps: [], poolAddresses: [],
+        routerAddresses: [], contractAddresses: [], walletAddresses: [ALICE],
+        endpointRoleCoverage: { requested: 1, persisted: 1, unpersisted: 0, probes: 0 },
+      },
+    });
+    const result = await runRobinhoodWalletTransferBackfillCommit(deps, {
+      now: '2026-07-15T18:00:00Z',
+    });
+
+    assert.equal(result.status, 'complete');
+    assert.deepEqual(result.classifications, { wallet_self: 1 });
+    assert.equal(result.edgeEligible, 0);
+    assert.equal(deps.calls.raw[0][0].reasonCode, 'wallet_self_transfer');
+    assert.equal(deps.calls.raw[0][0].affectsPosition, false);
+    assert.equal(deps.calls.raw[0][0].connectionEligible, false);
+    assert.deepEqual(deps.calls.projected[0].events, []);
   });
 });

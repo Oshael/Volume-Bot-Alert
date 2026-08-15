@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const stage128 = require('../src/utils/db-init-stage128');
+const stage138 = require('../src/utils/db-init-stage138');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 const {
   RAW_RETENTION_DAYS,
@@ -44,6 +45,21 @@ describe('Robinhood token transfer persistence', () => {
     assert.equal(RAW_RETENTION_DAYS, 30);
   });
 
+  it('adds wallet_self as a durable non-edge kind in Stage 138', () => {
+    const sql = stage138.STATEMENTS.join('\n');
+    const group = SCHEMA_GROUPS.find(({ key }) => (
+      key === 'stage138-robinhood-wallet-self-transfer-kind'
+    ));
+    assert.match(sql, /wallet_self/);
+    assert.match(sql, /NOT VALID/);
+    assert.match(sql, /VALIDATE CONSTRAINT rh_token_transfer_events_kind_check/);
+    assert.match(sql, /UPDATE robinhood_token_transfer_events/);
+    assert.match(sql, /from_wallet = to_wallet/);
+    assert.match(sql, /wallet_transfer' OR from_wallet <> to_wallet/);
+    assert.doesNotMatch(sql, /DELETE|DROP\s+(?:TABLE|COLUMN)/i);
+    assert.equal(group.repair, 'node src/utils/db-init-stage138.js');
+  });
+
   it('derives strict UTC daily partition identities', () => {
     const date = new Date('2026-08-14T23:59:59.000Z');
     assert.equal(dayKey(date), '2026-08-14');
@@ -61,6 +77,9 @@ describe('Robinhood token transfer persistence', () => {
     assert.equal(row.classification_version, null);
     assert.equal(row.__dayKey, '2026-08-14');
     assert.equal(normalizeTransferEvent(event({ transferKind: 'mint', classificationVersion: 'v1' })).transfer_kind, 'mint');
+    assert.equal(normalizeTransferEvent(event({
+      transferKind: 'wallet_self', classificationVersion: 'rh_transfer_v1',
+    })).transfer_kind, 'wallet_self');
   });
 
   it('rejects malformed evidence and inconsistent classification metadata', () => {

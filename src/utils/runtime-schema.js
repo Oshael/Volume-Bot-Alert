@@ -3560,6 +3560,19 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage138-robinhood-wallet-self-transfer-kind',
+    name: 'Stage 138 Robinhood wallet self-transfer kind',
+    repair: 'node src/utils/db-init-stage138.js',
+    tables: [{
+      table: 'robinhood_token_transfer_events',
+      columns: ['transfer_kind'],
+      constraints: [{
+        name: 'rh_token_transfer_events_kind_check',
+        includes: ['CHECK', 'wallet_self', 'from_wallet', 'to_wallet'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

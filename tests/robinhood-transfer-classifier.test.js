@@ -100,8 +100,10 @@ describe('Robinhood transfer classifier', () => {
     assert.equal(connected.kind, 'wallet_transfer');
     assert.equal(connected.affectsPosition, true);
     assert.equal(connected.connectionEligible, true);
-    assert.equal(self.kind, 'wallet_transfer');
+    assert.equal(self.kind, 'wallet_self');
+    assert.equal(self.reasonCode, 'wallet_self_transfer');
     assert.equal(self.affectsPosition, false);
+    assert.equal(self.connectionEligible, false);
     assert.equal(coverageGap.reasonCode, 'swap_coverage_unproven');
     assert.equal(unproven.kind, 'unknown');
     assert.equal(unproven.reasonCode, 'endpoint_types_unproven');

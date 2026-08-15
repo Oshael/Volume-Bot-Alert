@@ -1,6 +1,6 @@
 const { RAW_RETENTION_DAYS } = require('../models/robinhood-token-transfer-persistence');
 const {
-  CLASSIFICATION_VERSION, EDGE_KINDS, classificationInput, classifyTransfers,
+  CLASSIFICATION_VERSION, classificationInput, classifyTransfers, isEdgeEligibleTransfer,
 } = require('./robinhood-wallet-transfer-batch');
 
 function boundedInteger(value, fallback, minimum, maximum, label) {
@@ -151,7 +151,7 @@ async function prepareBackfillRange(deps, input = {}) {
   const cutoff = retentionCutoff(input.now);
   const isRawEligible = (event) => new Date(event.blockTime) >= cutoff;
   const rawEligible = classified.events.filter(isRawEligible);
-  const edgeEligible = classified.events.filter(({ transferKind }) => EDGE_KINDS.has(transferKind));
+  const edgeEligible = classified.events.filter(isEdgeEligibleTransfer);
   const summaryOnly = edgeEligible.filter((event) => !isRawEligible(event));
   return {
     plan, captured, classified, rawEligible, edgeEligible, summaryOnly, cutoff, context, hydration,

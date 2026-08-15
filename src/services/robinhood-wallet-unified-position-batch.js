@@ -89,6 +89,7 @@ function swapEvent(swap, positions) {
 
 function transferEvents(transfer) {
   if (String(value(transfer, 'transferKind', 'transfer_kind')) !== 'wallet_transfer') return [];
+  if (value(transfer, 'affectsPosition', 'affects_position') === false) return [];
   const amountRaw = uint(value(transfer, 'amountRaw', 'amount_raw'), 'transfer amountRaw');
   if (amountRaw === '0') return [];
   const fromWallet = fixedHex(

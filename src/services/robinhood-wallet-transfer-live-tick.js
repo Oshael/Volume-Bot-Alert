@@ -1,5 +1,5 @@
 const {
-  CLASSIFICATION_VERSION, EDGE_KINDS, classificationInput, classifyTransfers,
+  CLASSIFICATION_VERSION, classificationInput, classifyTransfers, isEdgeEligibleTransfer,
 } = require('./robinhood-wallet-transfer-batch');
 
 const STREAM = 'live';
@@ -111,7 +111,7 @@ async function runRobinhoodWalletTransferLiveTick(deps, input = {}) {
     expectedVersion: cursor.version, nextBlock: captured.nextBlock,
     nextBlockTime: captured.checkpoint.blockTime, safeHead: sourceThrough,
     checkpointBlock: captured.checkpoint.number, checkpointHash: captured.checkpoint.hash,
-    events: classified.events.filter(({ transferKind }) => EDGE_KINDS.has(transferKind)),
+    events: classified.events.filter(isEdgeEligibleTransfer),
   });
   return Object.freeze({
     status: projected.committed ? 'projected' : 'cursor-conflict',

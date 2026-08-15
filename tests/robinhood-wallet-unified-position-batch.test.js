@@ -115,4 +115,15 @@ describe('Robinhood unified wallet position batch', () => {
       })],
     }), /conflicts with captured transfers/);
   });
+
+  it('ignores a classified self-transfer that cannot affect a position', () => {
+    const result = buildRobinhoodWalletUnifiedPositionBatch({
+      transfers: [transfer({
+        fromWallet: ALICE, toWallet: ALICE,
+        affectsPosition: false, connectionEligible: false,
+      })],
+    });
+    assert.deepEqual(result.positions, []);
+    assert.equal(result.telemetry.financialEvents, 0);
+  });
 });

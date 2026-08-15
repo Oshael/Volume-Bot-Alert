@@ -5,7 +5,7 @@ const ZERO_ADDRESS = `0x${'0'.repeat(40)}`;
 const RAW_RETENTION_DAYS = 30;
 const TRANSFER_KINDS = new Set([
   'unclassified', 'mint', 'burn', 'dex_flow', 'liquidity_flow',
-  'router_flow', 'wallet_transfer', 'contract_flow', 'unknown',
+  'router_flow', 'wallet_transfer', 'wallet_self', 'contract_flow', 'unknown',
 ]);
 
 function fixedHex(value, label, bytes) {

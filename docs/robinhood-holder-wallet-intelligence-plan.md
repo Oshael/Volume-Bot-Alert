@@ -1377,6 +1377,12 @@ classificados e avança somente `unified_transfer_v1`. Checkpoint não canônico
 origem ausente/divergente ou posição à frente falham fechados. O backfill de
 transfers ainda não envia o batch financeiro automaticamente neste subcorte.
 
+O corretivo B6j6 resolve o hard-block causado por self-transfer entre wallets
+conhecidas. A Stage 138 cria o tipo durável não-edge `wallet_self`; classifier,
+raw, LIVE, backfill e posição passam a preservar a evidência sem gerar aresta,
+resumo, conexão ou mutação financeira. A projection continua falhando para uma
+aresta inválida, de modo que o filtro explícito não enfraquece sua invariante.
+
 ### Corte C1 — read model e API de inteligência
 
 Objetivo:

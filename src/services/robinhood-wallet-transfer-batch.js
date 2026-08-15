@@ -4,6 +4,15 @@ const {
 } = require('./robinhood-transfer-classifier');
 
 const EDGE_KINDS = new Set(['wallet_transfer', 'dex_flow']);
+const ZERO_ADDRESS = `0x${'0'.repeat(40)}`;
+
+function isEdgeEligibleTransfer(event = {}) {
+  if (!EDGE_KINDS.has(event.transferKind)) return false;
+  if (event.transferKind === 'wallet_transfer' && event.connectionEligible === false) return false;
+  const fromWallet = String(event.fromWallet ?? '').toLowerCase();
+  const toWallet = String(event.toWallet ?? '').toLowerCase();
+  return fromWallet !== ZERO_ADDRESS && toWallet !== ZERO_ADDRESS && fromWallet !== toWallet;
+}
 
 function classificationInput(captured, fromTime) {
   const transactionHashes = new Set();
@@ -34,6 +43,10 @@ function classifyTransfers(transfers, context, classifierFactory = createRobinho
     return {
       ...transfer, transferKind: decision.kind,
       classificationVersion: decision.classificationVersion,
+      reasonCode: decision.reasonCode,
+      affectsPosition: decision.affectsPosition,
+      connectionEligible: decision.connectionEligible,
+      duplicateOfSwap: decision.duplicateOfSwap,
     };
   });
   return Object.freeze({ counts: Object.freeze(counts), events: Object.freeze(events) });
@@ -41,4 +54,5 @@ function classifyTransfers(transfers, context, classifierFactory = createRobinho
 
 module.exports = {
   CLASSIFICATION_VERSION, EDGE_KINDS, classificationInput, classifyTransfers,
+  isEdgeEligibleTransfer,
 };

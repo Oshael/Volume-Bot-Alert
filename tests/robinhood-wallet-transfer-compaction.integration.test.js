@@ -12,6 +12,7 @@ const stage128 = require('../src/utils/db-init-stage128');
 const stage129 = require('../src/utils/db-init-stage129');
 const stage131 = require('../src/utils/db-init-stage131');
 const stage132 = require('../src/utils/db-init-stage132');
+const stage138 = require('../src/utils/db-init-stage138');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const VERSION = 'test_compaction_audit_v1';
@@ -21,13 +22,13 @@ const PARTITION = 'robinhood_token_transfer_events_2099_01_03';
 const HASH = `0x${'a'.repeat(64)}`;
 const TOKEN = `0x${'1'.repeat(40)}`;
 
-function event(logIndex, transferKind, amountRaw) {
+function event(logIndex, transferKind, amountRaw, overrides = {}) {
   return {
     blockNumber: '100', blockHash: HASH, blockTime: `${DAY}T12:00:00.000Z`,
     transactionHash: `0x${String(logIndex).padStart(64, 'b')}`,
     transactionIndex: String(logIndex), logIndex: String(logIndex), tokenAddress: TOKEN,
     fromWallet: `0x${'2'.repeat(40)}`, toWallet: `0x${'3'.repeat(40)}`,
-    amountRaw: String(amountRaw), transferKind, classificationVersion: VERSION,
+    amountRaw: String(amountRaw), transferKind, classificationVersion: VERSION, ...overrides,
   };
 }
 
@@ -46,7 +47,7 @@ async function cleanup() {
 describe('Robinhood wallet transfer compaction audit', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
-    for (const stage of [stage126, stage127, stage128, stage129, stage131, stage132]) {
+    for (const stage of [stage126, stage127, stage128, stage129, stage131, stage132, stage138]) {
       await stage.init({ closePool: false });
     }
     await cleanup();
@@ -62,6 +63,7 @@ describe('Robinhood wallet transfer compaction audit', () => {
     await raw.insertTransferEvents([
       event(1, 'wallet_transfer', 10),
       event(2, 'mint', 20),
+      event(3, 'wallet_self', 30, { toWallet: `0x${'2'.repeat(40)}` }),
     ]);
     await db.query(
       `INSERT INTO robinhood_wallet_transfer_daily_summaries (
@@ -96,7 +98,7 @@ describe('Robinhood wallet transfer compaction audit', () => {
     assert.equal(blocked.watermark.lifecycle_state, 'blocked');
     assert.match(blocked.watermark.state_reason, /position_incomplete/);
     assert.equal(blocked.audit.summaryMismatchCount, 0);
-    assert.equal(blocked.audit.targetClassifiedEventCount, '2');
+    assert.equal(blocked.audit.targetClassifiedEventCount, '3');
 
     await db.query(
       `INSERT INTO robinhood_wallet_position_cursors (

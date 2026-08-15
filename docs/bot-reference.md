@@ -1560,6 +1560,16 @@ adiciona um loop manual limitado, com pausa configurável e lease exclusiva. O
 limite por faixa é 1–5.000 blocos e uma faixa continua sendo o default. Não há
 auto-start nesse comando.
 
+Pare brevemente o writer permanente de transfers antes do deploy e aplique
+`node src/utils/db-init-stage138.js` antes de reiniciá-lo ou executar o backfill.
+A Stage 138 adiciona `wallet_self` ao constraint do raw e corrige somente
+self-transfers legados ainda marcados como
+`wallet_transfer` na `rh_transfer_v1`. Outros eventos não são reclassificados.
+Self-transfers entre wallets conhecidas continuam como evidência classificada,
+mas não entram em arestas, resumos, conexões nem posições financeiras. A
+projection mantém a rejeição de endpoints iguais como defesa contra callers
+inválidos.
+
 Quando o cursor de transfers já avançou além da posição `unified_transfer_v1`,
 execute no mesmo PC/archive `npm run robinhood:wallet-position-catch-up --
 --max-blocks=500`. O comando relê e classifica somente a lacuna comprovada entre
