@@ -1370,6 +1370,13 @@ cursores antigos não são inferidos. Isso permite provar o início de um catch-
 financeiro isolado antes de acoplar a posição ao backfill unificado, sem declarar
 como processados os 500 blocos já avançados apenas pela projeção de transfers.
 
+O B6j5 implementa o catch-up manual e dry-run-first da posição unificada. Ele
+usa a origem e o frontier duráveis dos dois cursores, relê no archive apenas a
+lacuna financeira, combina os swaps persistidos na VPS com transfers novamente
+classificados e avança somente `unified_transfer_v1`. Checkpoint não canônico,
+origem ausente/divergente ou posição à frente falham fechados. O backfill de
+transfers ainda não envia o batch financeiro automaticamente neste subcorte.
+
 ### Corte C1 — read model e API de inteligência
 
 Objetivo:

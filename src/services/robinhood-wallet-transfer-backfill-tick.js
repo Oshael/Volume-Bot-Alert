@@ -18,10 +18,16 @@ function requireMethods(value, names, label) {
 }
 
 function assertDependencies(deps) {
+  assertRangeDependencies(deps);
+  requireMethods(deps.source, ['loadBackfillPlan'], 'transfer backfill source');
+  requireMethods(deps.evidence, ['matchesCheckpoint'], 'transfer evidence reader');
+}
+
+function assertRangeDependencies(deps) {
   requireMethods(deps.source, [
-    'listTrackedTokenAddresses', 'loadBackfillPlan', 'loadBackfillRangeContext',
+    'listTrackedTokenAddresses', 'loadBackfillRangeContext',
   ], 'transfer backfill source');
-  requireMethods(deps.evidence, ['matchesCheckpoint', 'readRange'], 'transfer evidence reader');
+  requireMethods(deps.evidence, ['readRange'], 'transfer evidence reader');
   requireMethods(deps.endpointRoles, ['hydrate'], 'archive endpoint role hydrator');
 }
 
@@ -94,6 +100,31 @@ function mergeHydratedRoles(context, hydration) {
   });
 }
 
+async function prepareRobinhoodWalletTransferRange(deps, input = {}) {
+  assertRangeDependencies(deps);
+  const tokenAddresses = await deps.source.listTrackedTokenAddresses();
+  const captured = await deps.evidence.readRange({
+    tokenAddresses, fromBlock: input.fromBlock, toBlock: input.toBlock,
+  });
+  const baseContext = await deps.source.loadBackfillRangeContext(classificationInput(
+    captured, captured.fromBlockTime
+  ));
+  if (!baseContext.ready) {
+    return { outcome: Object.freeze({
+      status: 'awaiting-context', reason: baseContext.reason,
+      fromBlock: captured.fromBlock, toBlock: captured.toBlock,
+    }) };
+  }
+  const hydration = await deps.endpointRoles.hydrate({
+    transfers: captured.transfers, commit: input.commit === true,
+  });
+  const context = mergeHydratedRoles(baseContext, hydration);
+  const classified = classifyTransfers(
+    captured.transfers, context, deps.classifierFactory
+  );
+  return { tokenAddresses, captured, classified, context, hydration };
+}
+
 async function prepareBackfillRange(deps, input = {}) {
   assertDependencies(deps);
   const maxBlocks = boundedInteger(input.maxBlocks, 250, 1, 5000, 'maxBlocks');
@@ -108,23 +139,15 @@ async function prepareBackfillRange(deps, input = {}) {
     return { outcome: Object.freeze({ status: 'blocked', reason: 'checkpoint_mismatch', plan }) };
   }
   const range = rangeForPlan(plan, maxBlocks);
-  const tokenAddresses = await deps.source.listTrackedTokenAddresses();
-  const captured = await deps.evidence.readRange({ tokenAddresses, ...range });
-  const baseContext = await deps.source.loadBackfillRangeContext(classificationInput(
-    captured, captured.fromBlockTime
-  ));
-  if (!baseContext.ready) {
+  const preparedRange = await prepareRobinhoodWalletTransferRange(deps, {
+    ...range, commit: input.commit,
+  });
+  if (preparedRange.outcome) {
     return { outcome: Object.freeze({
-      status: 'awaiting-context', reason: baseContext.reason, plan, ...range,
+      ...preparedRange.outcome, plan, ...range,
     }) };
   }
-  const hydration = await deps.endpointRoles.hydrate({
-    transfers: captured.transfers, commit: input.commit === true,
-  });
-  const context = mergeHydratedRoles(baseContext, hydration);
-  const classified = classifyTransfers(
-    captured.transfers, context, deps.classifierFactory
-  );
+  const { captured, classified, context, hydration } = preparedRange;
   const cutoff = retentionCutoff(input.now);
   const isRawEligible = (event) => new Date(event.blockTime) >= cutoff;
   const rawEligible = classified.events.filter(isRawEligible);
@@ -188,6 +211,7 @@ async function runRobinhoodWalletTransferBackfillCommit(deps, input = {}) {
 }
 
 module.exports = {
+  prepareRobinhoodWalletTransferRange,
   runRobinhoodWalletTransferBackfillCommit,
   runRobinhoodWalletTransferBackfillDryRun,
   __private: { mergeHydratedRoles, rangeForPlan, retentionCutoff, summarizeThroughDay },

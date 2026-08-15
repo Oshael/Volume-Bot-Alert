@@ -1560,6 +1560,14 @@ adiciona um loop manual limitado, com pausa configurável e lease exclusiva. O
 limite por faixa é 1–5.000 blocos e uma faixa continua sendo o default. Não há
 auto-start nesse comando.
 
+Quando o cursor de transfers já avançou além da posição `unified_transfer_v1`,
+execute no mesmo PC/archive `npm run robinhood:wallet-position-catch-up --
+--max-blocks=500`. O comando relê e classifica somente a lacuna comprovada entre
+os dois cursores, combina transfers e swaps da VPS e não altera o cursor de
+transfers. O dry-run é o padrão; após revisar a faixa, confirme com
+`--confirm-catch-up-robinhood-wallet-positions`. Repita até `caught-up` antes de
+retomar o backfill unificado. A Stage 137 é obrigatória.
+
 O repository de projeção persiste arestas, resumo diário por token, evidências
 `first`/`last`/`largest` e cursor sob a mesma transação com lock/CAS. O resumo
 separa count e soma raw de `wallet_transfer`/`dex_flow`; retry obsoleto é
