@@ -69,6 +69,7 @@ describe('Robinhood wallet endpoint role persistence', () => {
       endpointAddress: ADDRESS, blockNumber: '90', blockHash: HASH,
     }]);
     await repository.upsertEvidence([evidence('wallet', '100')]);
+    assert.equal((await repository.listUnresolvedCandidates(10))[0].blockNumber, '90');
     await repository.upsertEvidence([evidence('contract', '120')]);
     await repository.upsertEvidence([evidence('wallet', '140')]);
 
@@ -77,6 +78,12 @@ describe('Robinhood wallet endpoint role persistence', () => {
     assert.equal(stored.evidenceBlock, '120');
     assert.equal(stored.observedFromBlock, '100');
     assert.equal(stored.observedThroughBlock, '140');
+    assert.equal((await repository.listUnresolvedCandidates(10))[0].blockNumber, '90');
+    await repository.upsertEvidence([evidence('wallet', '90')]);
+    const [expanded] = await repository.loadRoles([ADDRESS]);
+    assert.equal(expanded.endpointRole, 'contract');
+    assert.equal(expanded.observedFromBlock, '90');
+    assert.equal(expanded.observedThroughBlock, '140');
     assert.deepEqual(await repository.listUnresolvedCandidates(10), []);
   });
 });

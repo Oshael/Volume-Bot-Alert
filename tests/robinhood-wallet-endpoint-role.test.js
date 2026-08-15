@@ -86,7 +86,7 @@ describe('Robinhood wallet endpoint role repository', () => {
     assert.equal(result[0].observedThroughBlock, '110');
   });
 
-  it('lists the latest retained block for unresolved non-system endpoints', async () => {
+  it('lists retained endpoints outside either observed coverage boundary', async () => {
     const fake = database([{
       endpoint_address: ADDRESS, block_number: '120', block_hash: HASH,
     }]);
@@ -94,6 +94,9 @@ describe('Robinhood wallet endpoint role repository', () => {
       .listUnresolvedCandidates(25);
     assert.match(fake.calls[0].sql, /robinhood_token_transfer_events/);
     assert.match(fake.calls[0].sql, /LEFT JOIN robinhood_wallet_endpoint_roles/);
+    assert.match(fake.calls[0].sql, /event\.block_number < role\.observed_from_block/);
+    assert.match(fake.calls[0].sql, /event\.block_number > role\.observed_through_block/);
+    assert.doesNotMatch(fake.calls[0].sql, /role\.endpoint_role = 'wallet'/);
     assert.deepEqual(fake.calls[0].params, [25]);
     assert.deepEqual(result, [{
       endpointAddress: ADDRESS, blockNumber: '120', blockHash: HASH,

@@ -1240,6 +1240,10 @@ Ele reutiliza swaps, pools e o classifier existente, aceita somente endpoints
 dentro da cobertura Stage 135 e é dry-run por padrão. Não usa RPC nem inicia
 worker; a confirmação longa aplica cada transição pelo writer do B4g4b.
 
+O B4g5 corrige a fila do PC para expandir a Stage 135 nas duas direções. Transfers
+anteriores a `observed_from_block` e posteriores a `observed_through_block`
+voltam ao backfill; a precedência conservadora de contrato permanece inalterada.
+
 ### Corte B5 — compactação e retenção
 
 Status: em andamento. O B5a criou o contrato persistente do resumo diário por

@@ -105,10 +105,9 @@ function createRobinhoodWalletEndpointRoleRepository(options = {}) {
            FROM endpoint_events event
            LEFT JOIN robinhood_wallet_endpoint_roles role
              ON role.chain = '${CHAIN}' AND role.endpoint_address = event.endpoint_address
-          WHERE (role.endpoint_address IS NULL OR (
-              role.endpoint_role = 'wallet'
-              AND event.block_number > role.observed_through_block
-            ))
+          WHERE (role.endpoint_address IS NULL
+              OR event.block_number < role.observed_from_block
+              OR event.block_number > role.observed_through_block)
             AND event.endpoint_address NOT IN (
               '0x0000000000000000000000000000000000000000',
               '0x000000000000000000000000000000000000dead'

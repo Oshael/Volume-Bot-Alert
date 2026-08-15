@@ -1570,8 +1570,9 @@ No PC com o archive node, configure `RH_NODE_RPC_URL` para o RPC local e
 `npm run robinhood:wallet-endpoint-role-backfill -- --limit=100`; após revisar o
 dry-run, repita com `--confirm-backfill-robinhood-wallet-endpoint-roles`. O
 comando usa somente o provider local, não avança cursores e pode ser repetido
-até retornar `caught-up`; wallets voltam à fila apenas quando surge uma transfer
-posterior à evidência já persistida.
+até retornar `caught-up`; endpoints voltam à fila quando existe transfer anterior
+ou posterior ao intervalo de evidência já persistido. Evidência de contrato nunca
+é rebaixada por uma observação posterior ou histórica sem bytecode.
 
 Depois de preencher os papéis, execute `npm run
 robinhood:wallet-transfer-reclassification -- --day=YYYY-MM-DD --limit=100`.
