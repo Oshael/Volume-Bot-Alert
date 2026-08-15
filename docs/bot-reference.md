@@ -1573,6 +1573,14 @@ comando usa somente o provider local, não avança cursores e pode ser repetido
 até retornar `caught-up`; wallets voltam à fila apenas quando surge uma transfer
 posterior à evidência já persistida.
 
+Depois de preencher os papéis, execute `npm run
+robinhood:wallet-transfer-reclassification -- --day=YYYY-MM-DD --limit=100`.
+O comando usa apenas PostgreSQL, restringe a leitura à partição UTC informada e
+não escreve por padrão. Ele reclassifica somente eventos cobertos pela Stage 135
+e pelo contexto completo de swaps/pools; após revisar, acrescente
+`--confirm-reclassify-robinhood-wallet-transfers`. Repita o mesmo dia até
+`caught-up`; eventos sem cobertura permanecem `unknown`.
+
 O writer LIVE de transfers é opt-in por
 `ROBINHOOD_WALLET_TRANSFER_LIVE_ENABLED=true`, usa a lease
 `robinhood-wallet-transfer-live-worker` no grupo isolado

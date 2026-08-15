@@ -1235,6 +1235,11 @@ arestas, evidências limitadas e resumo diário. Watermarks existentes das vers�
 afetadas voltam para `blocked`, pois a prova anterior fica obsoleta. A projeção
 financeira continua separada; `swap_only_v1` não é alterada por este writer.
 
+O B4g4c adiciona o executor manual limitado a um dia UTC e até 1.000 eventos.
+Ele reutiliza swaps, pools e o classifier existente, aceita somente endpoints
+dentro da cobertura Stage 135 e é dry-run por padrão. Não usa RPC nem inicia
+worker; a confirmação longa aplica cada transição pelo writer do B4g4b.
+
 ### Corte B5 — compactação e retenção
 
 Status: em andamento. O B5a criou o contrato persistente do resumo diário por

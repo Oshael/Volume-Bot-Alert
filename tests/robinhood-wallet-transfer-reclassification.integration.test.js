@@ -17,6 +17,7 @@ const stage129 = require('../src/utils/db-init-stage129');
 const stage130 = require('../src/utils/db-init-stage130');
 const stage131 = require('../src/utils/db-init-stage131');
 const stage132 = require('../src/utils/db-init-stage132');
+const stage135 = require('../src/utils/db-init-stage135');
 const stage136 = require('../src/utils/db-init-stage136');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
@@ -40,6 +41,10 @@ async function cleanup() {
   await db.query('DELETE FROM robinhood_wallet_transfer_edges WHERE classification_version = $1', [VERSION]);
   await db.query('DELETE FROM robinhood_wallet_transfer_daily_summaries WHERE projection_version = $1', [VERSION]);
   await db.query('DELETE FROM robinhood_wallet_transfer_compaction_watermarks WHERE projection_version = $1', [VERSION]);
+  await db.query(
+    'DELETE FROM robinhood_wallet_endpoint_roles WHERE endpoint_address = ANY($1::varchar[])',
+    [[ALICE, BOB]]
+  );
   await db.query(
     `DELETE FROM robinhood_token_transfer_events
      WHERE chain = 'robinhood' AND transaction_hash = ANY($1::varchar[])`,
@@ -86,10 +91,21 @@ async function insertVerifiedWatermark() {
   );
 }
 
+async function insertRole(endpoint, evidenceBlock) {
+  await db.query(
+    `INSERT INTO robinhood_wallet_endpoint_roles (
+       chain, endpoint_address, endpoint_role, evidence_source, evidence_block,
+       evidence_block_hash, resolver_version, observed_from_block, observed_through_block
+     ) VALUES ('robinhood', $1, 'wallet', 'pc_archive', $2, $3,
+       'test_role_v1', $2, $2)`,
+    [endpoint, evidenceBlock, BLOCK_HASH]
+  );
+}
+
 describe('Robinhood wallet transfer reclassification persistence', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
-    for (const stage of [stage128, stage129, stage130, stage131, stage132, stage136]) {
+    for (const stage of [stage128, stage129, stage130, stage131, stage132, stage135, stage136]) {
       await stage.init({ closePool: false });
     }
     await cleanup();
@@ -102,8 +118,21 @@ describe('Robinhood wallet transfer reclassification persistence', () => {
 
   it('applies once, invalidates stale proof and rolls every effect back on failure', async () => {
     await insertUnknown(TX1, 1, '25');
-    await insertVerifiedWatermark();
+    await insertRole(ALICE, 100);
+    await insertRole(BOB, 101);
     const repository = createRobinhoodWalletTransferReclassificationRepository({ database: db });
+    const selection = { classificationVersion: VERSION, day: DAY, limit: 10 };
+    assert.equal((await repository.listCandidates(selection)).length, 0);
+    await db.query(
+      `UPDATE robinhood_wallet_endpoint_roles SET evidence_block = 100,
+         observed_from_block = 100, observed_through_block = 100
+       WHERE endpoint_address = $1`,
+      [BOB]
+    );
+    const [candidate] = await repository.listCandidates(selection);
+    assert.equal(candidate.transactionHash, TX1);
+    assert.equal(candidate.fromRoleEvidence.observedFromBlock, '100');
+    await insertVerifiedWatermark();
     const applied = await repository.applyTransition(transition(TX1, 1));
     assert.deepEqual(applied, {
       applied: true,

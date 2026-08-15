@@ -64,6 +64,27 @@ function normalizeTransition(input = {}) {
   });
 }
 
+function utcDay(value) {
+  const normalized = String(value ?? '').trim();
+  const date = new Date(`${normalized}T00:00:00.000Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized) || Number.isNaN(date.getTime())
+      || date.toISOString().slice(0, 10) !== normalized) throw new Error('day must be a valid UTC day');
+  return normalized;
+}
+
+function candidate(row) {
+  return Object.freeze({
+    blockNumber: String(row.block_number), blockHash: row.block_hash,
+    blockTime: new Date(row.block_time).toISOString(), transactionHash: row.transaction_hash,
+    transactionIndex: String(row.transaction_index), logIndex: String(row.log_index),
+    tokenAddress: row.token_address, fromWallet: row.from_wallet, toWallet: row.to_wallet,
+    amountRaw: String(row.amount_raw), transferKind: row.transfer_kind,
+    classificationVersion: row.classification_version,
+    fromRoleEvidence: Object.freeze(row.from_role_evidence),
+    toRoleEvidence: Object.freeze(row.to_role_evidence),
+  });
+}
+
 async function lockRawEvent(client, transition) {
   const result = await client.query(
     `SELECT * FROM robinhood_token_transfer_events
@@ -170,6 +191,49 @@ function createRobinhoodWalletTransferReclassificationRepository(options = {}) {
   const database = options.database || db;
   const persistProjection = options.persistProjection || persistTransferProjection;
 
+  async function listCandidates(input = {}) {
+    const version = identifier(input.classificationVersion, 'classificationVersion');
+    const day = utcDay(input.day);
+    const limit = Number(input.limit ?? 100);
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) {
+      throw new Error('limit must be between 1 and 1000');
+    }
+    const result = await database.query(
+      `SELECT raw.*,
+         jsonb_build_object(
+           'endpointRole', from_role.endpoint_role, 'evidenceSource', from_role.evidence_source,
+           'evidenceBlock', from_role.evidence_block::text,
+           'evidenceBlockHash', from_role.evidence_block_hash,
+           'resolverVersion', from_role.resolver_version,
+           'observedFromBlock', from_role.observed_from_block::text,
+           'observedThroughBlock', from_role.observed_through_block::text
+         ) AS from_role_evidence,
+         jsonb_build_object(
+           'endpointRole', to_role.endpoint_role, 'evidenceSource', to_role.evidence_source,
+           'evidenceBlock', to_role.evidence_block::text,
+           'evidenceBlockHash', to_role.evidence_block_hash,
+           'resolverVersion', to_role.resolver_version,
+           'observedFromBlock', to_role.observed_from_block::text,
+           'observedThroughBlock', to_role.observed_through_block::text
+         ) AS to_role_evidence
+       FROM robinhood_token_transfer_events raw
+       JOIN robinhood_wallet_endpoint_roles from_role
+         ON from_role.chain = raw.chain AND from_role.endpoint_address = raw.from_wallet
+        AND raw.block_number BETWEEN from_role.observed_from_block AND from_role.observed_through_block
+       JOIN robinhood_wallet_endpoint_roles to_role
+         ON to_role.chain = raw.chain AND to_role.endpoint_address = raw.to_wallet
+        AND raw.block_number BETWEEN to_role.observed_from_block AND to_role.observed_through_block
+       WHERE raw.chain = $1 AND raw.transfer_kind = 'unknown'
+         AND raw.classification_version = $2
+         AND raw.block_time >= ($3::date::timestamp AT TIME ZONE 'UTC')
+         AND raw.block_time < (($3::date + 1)::timestamp AT TIME ZONE 'UTC')
+       ORDER BY raw.block_number, raw.transaction_index, raw.log_index, raw.transaction_hash
+       LIMIT $4::integer`,
+      [CHAIN, version, day, limit]
+    );
+    return Object.freeze(result.rows.map(candidate));
+  }
+
   async function applyTransition(input = {}) {
     const transition = normalizeTransition(input);
     const client = await database.getClient();
@@ -206,10 +270,10 @@ function createRobinhoodWalletTransferReclassificationRepository(options = {}) {
     }
   }
 
-  return Object.freeze({ applyTransition });
+  return Object.freeze({ applyTransition, listCandidates });
 }
 
 module.exports = {
   createRobinhoodWalletTransferReclassificationRepository,
-  __private: { normalizeTransition },
+  __private: { normalizeTransition, utcDay },
 };
