@@ -1288,6 +1288,10 @@ canônico do primeiro bloco; raw é escrito somente dentro da janela, enquanto
 resumos/arestas/evidências e cursor usam CAS transacional. Corrida de bootstrap
 é rejeitada antes do raw e retry após conflito continua idempotente.
 
+O B6g expõe somente uma faixa por invocação em comando dry-run-first, validando
+chain ID antes do tick. Escrita exige a confirmação longa específica; não há
+loop, lease ou auto-start, e o limite informado continua entre 1 e 5.000 blocos.
+
 ### Corte C1 — read model e API de inteligência
 
 Objetivo:

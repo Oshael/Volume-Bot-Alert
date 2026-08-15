@@ -1543,6 +1543,12 @@ dry-run e não infere a origem pelo primeiro evento retido. Após parar o worker
 revisar o relatório, confirme com
 `--confirm-repair-robinhood-wallet-transfer-live-origin`.
 
+O backfill de transfers pode inspecionar uma única faixa com
+`npm run robinhood:wallet-transfer-backfill -- --max-blocks=250`. O comando
+valida os providers e não escreve por padrão. Para persistir somente essa faixa,
+repita com `--confirm-backfill-robinhood-wallet-transfers`; o limite aceito é
+1–5.000 blocos. Não existe loop ou auto-start nesse comando.
+
 O repository de projeção persiste arestas, resumo diário por token, evidências
 `first`/`last`/`largest` e cursor sob a mesma transação com lock/CAS. O resumo
 separa count e soma raw de `wallet_transfer`/`dex_flow`; retry obsoleto é
