@@ -1347,6 +1347,13 @@ do PC e, em modo confirmado, persiste a evidência antes de avançar o cursor. A
 captura e essa hidratação compartilham exclusivamente `RH_NODE_RPC_URL`; falha ou
 resposta incompleta do archive aborta a faixa. O dry-run consulta sem gravar.
 
+O B6j1 cria o domínio puro da posição `unified_transfer_v1`. Ele ordena swaps e
+`wallet_transfer` por bloco, índice da transação e log, evita contabilizar
+`dex_flow` duas vezes, preserva a contagem por transação e aplica entrada/saída
+com as regras financeiras existentes. A ausência do índice canônico de qualquer
+swap falha fechado. Este subcorte ainda não lê nem grava banco e não altera o
+backfill operacional.
+
 ### Corte C1 — read model e API de inteligência
 
 Objetivo:
