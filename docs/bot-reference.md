@@ -1575,15 +1575,20 @@ aplique `node src/utils/db-init-stage139.js`. Ambos persistem bloco, hash e
 `transaction_index` na sidecar `robinhood_transaction_positions` antes de
 gravar o swap e sem RPC adicional, pois reutilizam o full-block da atribuição.
 Falha nessa escrita impede o cursor de avançar. O acervo anterior à Stage 139
-permanece sem posição até a resolução histórica pelo archive.
+é preenchido progressivamente pelo catch-up de posição, sem UPDATE no acervo de
+`robinhood_wallet_swaps`.
 
 Quando o cursor de transfers já avançou além da posição `unified_transfer_v1`,
 execute no mesmo PC/archive `npm run robinhood:wallet-position-catch-up --
 --max-blocks=500`. O comando relê e classifica somente a lacuna comprovada entre
 os dois cursores, combina transfers e swaps da VPS e não altera o cursor de
-transfers. O dry-run é o padrão; após revisar a faixa, confirme com
+transfers. Para swaps ainda sem `transaction_index`, consulta full-blocks apenas
+dos blocos ausentes no mesmo `RH_NODE_RPC_URL` archive; nunca usa fallback por
+`action_index`. O dry-run resolve em memória sem gravar a sidecar. Após revisar
+a faixa, confirme com
 `--confirm-catch-up-robinhood-wallet-positions`. Repita até `caught-up` antes de
-retomar o backfill unificado. A Stage 137 é obrigatória.
+retomar o backfill unificado; o modo confirmado persiste as posições canônicas
+antes do cursor financeiro. As Stages 137 e 139 são obrigatórias.
 
 O repository de projeção persiste arestas, resumo diário por token, evidências
 `first`/`last`/`largest` e cursor sob a mesma transação com lock/CAS. O resumo

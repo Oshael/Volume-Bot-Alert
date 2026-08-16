@@ -110,6 +110,8 @@ describe('Robinhood wallet position projector', () => {
 
     assert.equal(swaps.length, 1);
     assert.match(calls[0].sql, /LEFT JOIN robinhood_swap_mc/);
+    assert.match(calls[0].sql, /LEFT JOIN robinhood_transaction_positions position/);
+    assert.match(calls[0].sql, /position\.transaction_index/);
     assert.match(calls[0].sql, /swap\.block_time >= \$2[\s\S]+swap\.block_number >= \$4/);
     assert.match(calls[0].sql, /swap\.token_address = ANY\(\$6::varchar\[\]\)/);
     assert.deepEqual(calls[0].params, [

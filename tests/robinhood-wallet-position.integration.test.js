@@ -8,12 +8,16 @@ const { createRobinhoodWalletPositionRepository } = require('../src/models/robin
 const {
   createRobinhoodWalletSwapRepository,
 } = require('../src/models/robinhood-wallet-swap-persistence');
+const {
+  createRobinhoodTransactionPositionRepository,
+} = require('../src/models/robinhood-transaction-position');
 const stage90 = require('../src/utils/db-init-stage90');
 const stage109 = require('../src/utils/db-init-stage109');
 const stage116 = require('../src/utils/db-init-stage116');
 const stage126 = require('../src/utils/db-init-stage126');
 const stage127 = require('../src/utils/db-init-stage127');
 const stage137 = require('../src/utils/db-init-stage137');
+const stage139 = require('../src/utils/db-init-stage139');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
@@ -44,6 +48,10 @@ async function cleanup() {
     [SWAP_HASHES]);
   await db.query('DELETE FROM robinhood_swap_mc WHERE transaction_hash = ANY($1::varchar[])',
     [SWAP_HASHES]);
+  await db.query(
+    'DELETE FROM robinhood_transaction_positions WHERE transaction_hash = ANY($1::varchar[])',
+    [SWAP_HASHES]
+  );
 }
 
 describe('Robinhood wallet position persistence', () => {
@@ -55,6 +63,7 @@ describe('Robinhood wallet position persistence', () => {
     await stage126.init({ closePool: false });
     await stage127.init({ closePool: false });
     await stage137.init({ closePool: false });
+    await stage139.init({ closePool: false });
     await cleanup();
   });
   after(async () => {
@@ -81,6 +90,10 @@ describe('Robinhood wallet position persistence', () => {
         fdvUsd: '90000',
       }),
     ]);
+    await createRobinhoodTransactionPositionRepository({ database: db }).upsertPositions([{
+      transactionHash: SWAP_HASHES[0], blockNumber: '150',
+      blockHash: `0x${'ee'.repeat(32)}`, transactionIndex: '2',
+    }]);
     const repository = createRobinhoodWalletPositionRepository({ database: db });
     const swaps = await repository.readUnifiedRangeSwaps({
       fromBlock: '149', toBlock: '151',
@@ -92,6 +105,7 @@ describe('Robinhood wallet position persistence', () => {
     assert.equal(swaps[0].transaction_hash, SWAP_HASHES[0]);
     assert.equal(String(swaps[0].market_cap_usd), '50000');
     assert.equal(String(swaps[0].volume_usd), '25');
+    assert.equal(String(swaps[0].transaction_index), '2');
   });
 
   it('commits positions with the cursor and rolls back a stale writer', async () => {

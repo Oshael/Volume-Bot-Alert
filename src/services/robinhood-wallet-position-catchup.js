@@ -65,6 +65,7 @@ async function runRobinhoodWalletPositionCatchup(deps, input = {}) {
   methods(deps.positionProjection, [
     'loadCursor', 'initCursor', 'loadPositions', 'readUnifiedRangeSwaps', 'commitBatch',
   ], 'position projection');
+  methods(deps.transactionPositions, ['resolveSwaps'], 'transaction-position resolver');
   methods(deps.evidence, ['matchesCheckpoint'], 'transfer evidence reader');
   const transfer = await deps.transferProjection.loadCursor(CLASSIFICATION_VERSION, 'seed');
   let position = await deps.positionProjection.loadCursor(UNIFIED_POSITION_VERSION, 'seed');
@@ -86,11 +87,15 @@ async function runRobinhoodWalletPositionCatchup(deps, input = {}) {
     fromBlock, toBlock, commit: input.commit === true,
   });
   if (prepared.outcome) return prepared.outcome;
-  const swaps = await deps.positionProjection.readUnifiedRangeSwaps({
+  const swapRows = await deps.positionProjection.readUnifiedRangeSwaps({
     fromBlock, toBlock, fromTime: prepared.captured.fromBlockTime,
     toTime: prepared.captured.checkpoint.blockTime,
     tokenAddresses: prepared.tokenAddresses,
   });
+  const resolvedSwaps = await deps.transactionPositions.resolveSwaps(swapRows, {
+    commit: input.commit === true,
+  });
+  const swaps = resolvedSwaps.swaps;
   const pairs = touchedPairs(swaps, prepared.classified.events);
   const stored = await deps.positionProjection.loadPositions(UNIFIED_POSITION_VERSION, pairs);
   const batch = buildRobinhoodWalletUnifiedPositionBatch({
@@ -101,6 +106,7 @@ async function runRobinhoodWalletPositionCatchup(deps, input = {}) {
     status: input.commit === true ? 'pending-commit' : 'dry-run', reason: null,
     fromBlock, toBlock, nextBlock, targetNextBlock,
     transfers: prepared.classified.events.length, classifications: prepared.classified.counts,
+    transactionPositions: resolvedSwaps.telemetry,
     ...batch.telemetry,
   };
   if (input.commit !== true) return Object.freeze(summary);

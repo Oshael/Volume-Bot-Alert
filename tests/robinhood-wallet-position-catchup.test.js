@@ -14,6 +14,7 @@ const BOB = `0x${'3'.repeat(40)}`;
 const POOL = `0x${'4'.repeat(40)}`;
 const HASH_A = `0x${'a'.repeat(64)}`;
 const HASH_B = `0x${'b'.repeat(64)}`;
+const HASH_C = `0x${'d'.repeat(64)}`;
 const BLOCK_HASH = `0x${'c'.repeat(64)}`;
 
 function transfer(overrides = {}) {
@@ -25,7 +26,9 @@ function transfer(overrides = {}) {
 }
 
 function harness(overrides = {}) {
-  const calls = { evidence: [], hydration: [], initialized: [], committed: [] };
+  const calls = {
+    evidence: [], hydration: [], initialized: [], committed: [], resolved: [],
+  };
   const transferCursor = {
     projectionVersion: 'rh_transfer_v1', stream: 'seed', originBlock: '90',
     nextBlock: '92', safeHead: '200', checkpointBlock: '91', checkpointHash: BLOCK_HASH,
@@ -54,7 +57,7 @@ function harness(overrides = {}) {
         return { ...input, lifecycleState: 'pending', version: 0 };
       },
       readUnifiedRangeSwaps: async () => [{
-        block_number: '91', transaction_hash: HASH_B, action_index: '3',
+        block_number: '91', transaction_hash: HASH_C, action_index: '3',
         token_address: TOKEN, wallet_address: ALICE, token_amount_raw: '5',
         side: 'buy', volume_usd: '10', market_cap_usd: '1000',
       }],
@@ -64,6 +67,13 @@ function harness(overrides = {}) {
         return { committed: true, cursor: { nextBlock: input.nextBlock } };
       },
     },
+    transactionPositions: { resolveSwaps: async (swaps, input) => {
+      calls.resolved.push({ swaps, input });
+      return {
+        swaps: swaps.map((swap) => ({ ...swap, transaction_index: '2' })),
+        telemetry: { required: 1, resolved: 1, persisted: input.commit ? 1 : 0 },
+      };
+    } },
     source: {
       listTrackedTokenAddresses: async () => [TOKEN],
       loadBackfillRangeContext: async () => ({
@@ -94,6 +104,7 @@ describe('Robinhood unified wallet-position catch-up', () => {
     assert.equal(result.status, 'dry-run');
     assert.deepEqual([result.fromBlock, result.toBlock, result.targetNextBlock], ['90', '91', '92']);
     assert.equal(result.swaps, 1);
+    assert.deepEqual(test.calls.resolved[0].input, { commit: false });
     assert.equal(test.calls.hydration[0].commit, false);
     assert.equal(test.calls.initialized.length, 0);
     assert.equal(test.calls.committed.length, 0);
@@ -113,6 +124,7 @@ describe('Robinhood unified wallet-position catch-up', () => {
     assert.equal(test.calls.committed[0].expectedVersion, 0);
     assert.equal(test.calls.committed[0].nextBlock, '92');
     assert.equal(test.calls.committed[0].positions.length, 2);
+    assert.deepEqual(test.calls.resolved[0].input, { commit: true });
   });
 
   it('fails closed on missing position origin or a non-canonical transfer checkpoint', async () => {
@@ -130,15 +142,21 @@ describe('Robinhood unified wallet-position catch-up', () => {
 
 describe('Robinhood unified wallet-position catch-up command', () => {
   it('requires Stage 137 and composes archive evidence with the position repository', async () => {
-    const database = { query: async () => ({ rows: [{ ready: true }] }) };
+    const database = { query: async () => ({
+      rows: [{ ready: true, transaction_positions: 'robinhood_transaction_positions' }],
+    }) };
     const transferProjection = { loadCursor: async () => null };
     const positionProjection = { loadCursor: async () => null };
+    const archiveRpcClient = { requestBatch: async () => [] };
+    const transactionPositionRepository = { upsertPositions: async () => ({ persisted: 0 }) };
+    const transactionPositions = { resolveSwaps: async () => ({ swaps: [], telemetry: {} }) };
     const runtime = await buildRuntime({}, {
       database,
       transferRuntimeFactory: async (_options, deps) => {
         assert.equal(deps.database, database);
         return {
           providerChainIds: { archive: '4663' },
+          archiveRpcClient,
           tickDeps: { projection: transferProjection, evidence: { readRange: async () => null } },
         };
       },
@@ -146,12 +164,26 @@ describe('Robinhood unified wallet-position catch-up command', () => {
         assert.equal(options.database, database);
         return positionProjection;
       },
+      transactionPositionRepositoryFactory: (options) => {
+        assert.equal(options.database, database);
+        return transactionPositionRepository;
+      },
+      transactionPositionResolverFactory: (options) => {
+        assert.deepEqual(options, {
+          rpcClient: archiveRpcClient, repository: transactionPositionRepository,
+        });
+        return transactionPositions;
+      },
     });
     assert.equal(runtime.catchupDeps.transferProjection, transferProjection);
     assert.equal(runtime.catchupDeps.positionProjection, positionProjection);
+    assert.equal(runtime.catchupDeps.transactionPositions, transactionPositions);
     await assert.rejects(buildRuntime({}, {
       database: { query: async () => ({ rows: [{ ready: false }] }) },
     }), /Stage 137/);
+    await assert.rejects(buildRuntime({}, {
+      database: { query: async () => ({ rows: [{ ready: true, transaction_positions: null }] }) },
+    }), /Stage 139/);
   });
 
   it('is dry-run-first and requires the long confirmation flag', async () => {

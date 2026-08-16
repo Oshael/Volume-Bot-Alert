@@ -489,8 +489,9 @@ A Stage 139 cria `robinhood_transaction_positions`, sidecar estreita por
 `(chain, transaction_hash)` com bloco, hash canônico e `transaction_index`.
 Ela evita reescrever o acervo de `robinhood_wallet_swaps`. Seed e LIVE gravam a
 posição antes do swap usando o mesmo full-block já consultado; falha da sidecar
-impede o avanço do cursor. O resolvedor histórico continua em corte próprio
-antes de a posição unificada depender da sidecar.
+impede o avanço do cursor. No catch-up histórico, somente hashes ainda ausentes
+na sidecar são resolvidos pelo archive do PC; o dry-run mantém a resolução em
+memória e o modo confirmado persiste antes de avançar a posição unificada.
 
 ### 9.1 `robinhood_token_transfer_events`
 

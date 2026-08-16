@@ -71,6 +71,7 @@ describe('Robinhood wallet-transfer backfill command', () => {
       repository: { marker: 'repository' }, reader: { marker: 'reader' },
     });
     assert.equal(typeof runtime.tickDeps.endpointRoles.hydrate, 'function');
+    assert.equal(runtime.archiveRpcClient, rpcClient);
   });
 
   it('is dry-run by default and validates the runtime before executing', async () => {

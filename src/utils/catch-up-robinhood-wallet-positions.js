@@ -5,6 +5,12 @@ const {
   createRobinhoodWalletPositionRepository,
 } = require('../models/robinhood-wallet-position');
 const {
+  createRobinhoodTransactionPositionRepository,
+} = require('../models/robinhood-transaction-position');
+const {
+  createRobinhoodTransactionPositionResolver,
+} = require('../services/robinhood-transaction-position-resolver');
+const {
   runRobinhoodWalletPositionCatchup,
 } = require('../services/robinhood-wallet-position-catchup');
 const {
@@ -36,20 +42,32 @@ async function buildRuntime(options = {}, deps = {}) {
        WHERE table_schema = 'public'
          AND table_name = 'robinhood_wallet_position_cursors'
          AND column_name = 'origin_block'
-     ) AS ready`
+     ) AS ready,
+     to_regclass('robinhood_transaction_positions') AS transaction_positions`
   );
   if (!schema.rows[0]?.ready) throw new Error('schema not ready: apply Stage 137 on the VPS');
+  if (!schema.rows[0]?.transaction_positions) {
+    throw new Error('schema not ready: apply Stage 139 on the VPS');
+  }
   const transfer = await (deps.transferRuntimeFactory || buildTransferRuntime)(options, {
     ...deps, database,
   });
   const positionProjection = (deps.positionRepositoryFactory
     || createRobinhoodWalletPositionRepository)({ database });
+  const transactionPositionRepository = (deps.transactionPositionRepositoryFactory
+    || createRobinhoodTransactionPositionRepository)({ database });
+  const transactionPositions = (deps.transactionPositionResolverFactory
+    || createRobinhoodTransactionPositionResolver)({
+    rpcClient: transfer.archiveRpcClient,
+    repository: transactionPositionRepository,
+  });
   return Object.freeze({
     providerChainIds: transfer.providerChainIds,
     catchupDeps: Object.freeze({
       ...transfer.tickDeps,
       transferProjection: transfer.tickDeps.projection,
       positionProjection,
+      transactionPositions,
     }),
   });
 }

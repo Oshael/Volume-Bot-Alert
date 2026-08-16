@@ -116,6 +116,7 @@ async function buildRuntime(options = {}, deps = {}) {
     || createRobinhoodWalletTransferRoleHydrator)({ repository, reader });
   return Object.freeze({
     ...runtime,
+    archiveRpcClient: rpcClient,
     tickDeps: Object.freeze({ ...runtime.tickDeps, endpointRoles }),
   });
 }

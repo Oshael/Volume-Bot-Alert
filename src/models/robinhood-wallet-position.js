@@ -220,16 +220,21 @@ function createRobinhoodWalletPositionRepository(options = {}) {
     if (!tokenAddresses.length) return [];
     const result = await database.query(
       `SELECT swap.wallet_address, swap.transaction_hash, swap.action_index,
+              position.transaction_index,
               swap.block_number, swap.block_time, swap.token_address, swap.side,
               swap.token_amount_raw, swap.volume_usd, mc.fdv_usd AS market_cap_usd
        FROM robinhood_wallet_swaps swap
        LEFT JOIN robinhood_swap_mc mc ON mc.chain = swap.chain
         AND mc.transaction_hash = swap.transaction_hash AND mc.log_index = swap.action_index
+       LEFT JOIN robinhood_transaction_positions position ON position.chain = swap.chain
+        AND position.transaction_hash = swap.transaction_hash
+        AND position.block_number = swap.block_number
        WHERE swap.chain = $1
          AND swap.block_time >= $2::timestamptz AND swap.block_time <= $3::timestamptz
          AND swap.block_number >= $4::bigint AND swap.block_number <= $5::bigint
          AND swap.token_address = ANY($6::varchar[])
-       ORDER BY swap.block_number, swap.action_index, swap.transaction_hash`,
+       ORDER BY swap.block_number, position.transaction_index NULLS LAST,
+                swap.action_index, swap.transaction_hash`,
       [CHAIN, fromTime, toTime, fromBlock, toBlock, tokenAddresses]
     );
     return result.rows;
