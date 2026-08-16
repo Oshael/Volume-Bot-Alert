@@ -140,34 +140,15 @@ function createRobinhoodTransferClassifier(options = {}) {
   let cachedSwapIndex = null;
   let cacheArmed = false;
 
-  function classify(input = {}, context = {}) {
-    const transfer = normalizeTransfer(input);
-    if (transfer.fromWallet === ZERO_ADDRESS) {
-      return decision('mint', 'zero_address_sender', { confidence: 'deterministic' });
-    }
-    if (burns.has(transfer.toWallet)) {
-      return decision('burn', 'burn_address_recipient', { confidence: 'deterministic' });
-    }
+  function swapIndex(swaps) {
+    if (cacheArmed && swaps === cachedSwapsRef) return cachedSwapIndex;
+    cachedSwapsRef = swaps;
+    cachedSwapIndex = buildSwapIndex(swaps);
+    cacheArmed = true;
+    return cachedSwapIndex;
+  }
 
-    if (context.swapCoverageComplete !== true) {
-      return decision('unknown', 'swap_coverage_unproven', {
-        confidence: 'insufficient_evidence',
-      });
-    }
-    const swaps = context.swaps;
-    let index;
-    if (cacheArmed && swaps === cachedSwapsRef) {
-      index = cachedSwapIndex;
-    } else {
-      index = buildSwapIndex(swaps);
-      cachedSwapsRef = swaps;
-      cachedSwapIndex = index;
-      cacheArmed = true;
-    }
-    const sameAssetSwaps = index && index.get(`${transfer.transactionHash}:${transfer.tokenAddress}`);
-    const swapFlow = decideSwapFlow(transfer, sameAssetSwaps || null);
-    if (swapFlow) return swapFlow;
-
+  function classifyKnownFlow(transfer) {
     if (pools.has(transfer.fromWallet) || pools.has(transfer.toWallet)) {
       return decision('liquidity_flow', 'known_pool_endpoint');
     }
@@ -184,6 +165,27 @@ function createRobinhoodTransferClassifier(options = {}) {
         : decision('wallet_transfer', 'known_wallet_pair');
     }
     return decision('unknown', 'endpoint_types_unproven', { confidence: 'insufficient_evidence' });
+  }
+
+  function classify(input = {}, context = {}) {
+    const transfer = normalizeTransfer(input);
+    if (transfer.fromWallet === ZERO_ADDRESS) {
+      return decision('mint', 'zero_address_sender', { confidence: 'deterministic' });
+    }
+    if (burns.has(transfer.toWallet)) {
+      return decision('burn', 'burn_address_recipient', { confidence: 'deterministic' });
+    }
+
+    if (context.swapCoverageComplete !== true) {
+      return decision('unknown', 'swap_coverage_unproven', {
+        confidence: 'insufficient_evidence',
+      });
+    }
+    const index = swapIndex(context.swaps);
+    const sameAssetSwaps = index && index.get(`${transfer.transactionHash}:${transfer.tokenAddress}`);
+    const swapFlow = decideSwapFlow(transfer, sameAssetSwaps || null);
+    if (swapFlow) return swapFlow;
+    return classifyKnownFlow(transfer);
   }
 
   return Object.freeze({ classify });

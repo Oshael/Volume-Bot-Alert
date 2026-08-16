@@ -40,18 +40,29 @@ function leaseMetadata(input, rangesCompleted, lastResult) {
   };
 }
 
-async function runRobinhoodWalletTransferBackfill(input = {}, deps = {}) {
-  const options = Object.freeze({
+function normalizeOptions(input) {
+  const options = {
     maxBlocks: boundedInteger(input.maxBlocks, 250, 1, 5000, 'maxBlocks'),
     maxRanges: boundedInteger(input.maxRanges, 1, 1, 10_000, 'maxRanges'),
     pauseMs: boundedInteger(input.pauseMs, 250, 0, 60_000, 'pauseMs'),
     leaseTtlMs: boundedInteger(input.leaseTtlMs, 120_000, 5000, 600_000, 'leaseTtlMs'),
     heartbeatMs: boundedInteger(input.heartbeatMs, 30_000, 1000, 300_000, 'heartbeatMs'),
     ownerId: ownerId(input.ownerId),
-  });
+  };
   if (options.heartbeatMs * 2 > options.leaseTtlMs) {
     throw new Error('heartbeatMs must be at most half of leaseTtlMs');
   }
+  return Object.freeze(options);
+}
+
+async function loadTrackedTokenAddresses(tickDeps) {
+  const list = tickDeps?.source?.listTrackedTokenAddresses;
+  if (typeof list !== 'function') return undefined;
+  return list.call(tickDeps.source).catch(() => undefined);
+}
+
+async function runRobinhoodWalletTransferBackfill(input = {}, deps = {}) {
+  const options = normalizeOptions(input);
   const leaseStore = deps.leaseStore || workerLease;
   const runCommit = deps.runCommit || runRobinhoodWalletTransferBackfillCommit;
   const delay = deps.sleep || sleep;
@@ -83,9 +94,7 @@ async function runRobinhoodWalletTransferBackfill(input = {}, deps = {}) {
 
   heartbeatTimer = (deps.setInterval || setInterval)(() => { void heartbeat(); }, options.heartbeatMs);
   heartbeatTimer?.unref?.();
-  const tokenAddresses = typeof deps.tickDeps?.source?.listTrackedTokenAddresses === 'function'
-    ? await deps.tickDeps.source.listTrackedTokenAddresses().catch(() => undefined)
-    : undefined;
+  const tokenAddresses = await loadTrackedTokenAddresses(deps.tickDeps);
   try {
     while (rangesCompleted < options.maxRanges) {
       if (leaseLost) {
