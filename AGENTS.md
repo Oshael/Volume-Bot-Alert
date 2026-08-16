@@ -1,157 +1,72 @@
-Always critically validate the user's requests and assumptions against the actual code in this repository.
+# Core behavior
 
-Do not accept suggestions merely because they were requested. Before implementing:
-- compare the idea against the existing code
-- point out inconsistencies, risks, and false assumptions
-- clearly state when the request conflicts with the current architecture
-- prefer code evidence over user assumptions
-
-If context is missing, investigate the repository before agreeing with the proposed approach.
+- Critically validate requests and assumptions against the repository before implementing. Compare proposals with the existing code, identify conflicts, risks, and false assumptions, and prefer code evidence over user assumptions.
+- Investigate missing context first. Ask only when an unresolved ambiguity would materially change behavior, scope, architecture, data, or an irreversible action. Otherwise, state the reasonable assumption and proceed.
+- For requests to answer, review, explain, diagnose, or plan, inspect the relevant materials and report the result without implementing changes unless requested. For requests to change, build, or fix, make the requested in-scope local changes and run relevant non-destructive validation without asking first.
+- Require confirmation for destructive actions, external writes, purchases, or material scope expansion.
+- Before editing, check `git status` and preserve unrelated user changes. If preexisting changes overlap the target and cannot be safely separated, stop and ask how to proceed.
 
 Always include a statement labeled exactly "Ponto importante" for significant changes, feature updates, and other work that may materially affect the bot's behavior. This helps ensure that relevant details and consequences of the applied changes are not overlooked.
 
-Update the doc "bot-reference.md" with the latests updates we made, you don't need to update everysingle detail, just outdated lines and new lines when its necessary to keep the doc up with the bot. 
+## Operational reference
 
-always run npm --prefix frontend run build after frontend changes
-always run node --test ... for affected tests
-always run npm run db:schema-check when changing schema/init
-always review git diff before suggesting a commit
-always separate commits by scope
+`docs/bot-reference.md` describes the bot's current operational state, not its change history. Update it only when a change affects information needed to understand, operate, deploy, configure, debug, or safely modify the bot, including:
 
-## Testing discipline
+- architecture, data flow, source of truth, or fallback behavior
+- runtime flags, defaults, workers, commands, or deployment order
+- required schemas or migrations
+- important invariants, failure modes, or recovery procedures
+- public contracts consumed by other subsystems
 
-Tests must be proportional to risk and protect relevant behavior. Do not treat test quantity, test line count, or raw coverage as goals.
+Replace or consolidate outdated text. Do not add slice history, commit hashes, test counts, temporary states, or file-by-file progress unless operationally relevant. If the existing reference remains accurate and complete, do not edit it.
 
-Before creating or expanding tests:
-- identify the concrete regression the test must detect
-- look for existing tests that already protect the same contract
-- choose the cheapest layer capable of detecting the regression
-- prefer extending an existing test when the new scenario belongs to the same contract
-- do not replicate every unit-test detail in integration tests
+## Testing and validation
 
-Layers:
-- unit:
-  - use for business rules, boundaries, calculations, normalization, deduplication, and state machines
-  - this should be the default when no database, server, or browser is required
-- integration:
-  - use for contracts between modules, persistence, schema, critical routes, auth, billing, and transactional effects
-  - cover the primary flow and critical failures; do not repeat every unit-test variation
-- smoke/E2E:
-  - use only for visible flows and integrations that can only be verified with the assembled system
-  - avoid testing browser combinations already covered at lower layers
+Validation must be proportional to risk and protect observable behavior:
 
-A new test must satisfy at least one of these criteria:
-- protects a significant business rule or boundary
-- reproduces a real regression or plausible risk
-- verifies a public contract between components
-- protects security, authorization, money, persistence, or idempotency
-- covers external-failure handling with relevant consequences
+- Identify the concrete regression or contract at risk, check existing coverage, and use the cheapest layer that can detect it. Extend an existing test when it owns the same contract.
+- Use unit tests by default for business rules, boundaries, calculations, normalization, deduplication, and state machines.
+- Use integration tests for module contracts, persistence, schema, critical routes, auth, billing, authorization, and transactional effects. Cover the primary flow and critical failures without duplicating unit variations.
+- Use smoke/E2E only for visible or external flows that require the assembled system.
+- Add tests for significant rules or boundaries, plausible regressions, public contracts, security, money, persistence, idempotency, or consequential external failures. Do not test trivial mappings, implementation details, non-contractual call order, or the same scenario at every layer.
+- When fixing a bug, add the smallest regression test that fails before the fix and passes afterward. Do not add tests merely because code changed.
+- Keep tests isolated. Reuse fixtures and builders, prefer table-driven cases for variations, and do not create mocks that reimplement the subject under test.
 
-Avoid creating tests for:
-- getters, setters, wrappers, or trivial mappings without logic
-- internal details with no observable contract impact
-- exact call order when order is not part of the behavior
-- every field of large objects when only some represent the contract
-- repeating the same scenario in unit, integration, and E2E tests without a risk-based justification
-- restoring state for later tests; each test or group must prepare and clean up its own state
+Run validation after consolidating edits:
 
-Maintenance rules:
-- use shared fixtures, builders, and helpers when relevant setup is repeated
-- prefer table-driven cases for variations of the same rule
-- do not create mocks that reimplement the module under test
-- test observable results and effects; spy on internal details only when they are genuinely part of the contract
-- large test files, shared state, and order dependence are refactoring signals
-- when fixing a bug, write the smallest test that fails before the fix and passes afterward
-- do not add a test merely because code changed; add one when there is new behavior or risk
+- Any code change: run `npm run lint`. Fix warnings introduced by the change; treat new complexity warnings in hub files as a refactoring signal.
+- Frontend change: also run `npm --prefix frontend run build` and the smallest affected test. Run `npm run test:smoke` only when a visible flow requires assembled-system verification.
+- Backend behavior: run the smallest affected test with `node --test ...` when isolated, or the relevant unit/integration group when the contract requires its harness.
+- Schema or init change: also run `npm run db:schema-check` and the affected integration test.
+- Auth, billing, authorization, or persistence change: maintain strong targeted integration coverage.
+- Structural or larger change: run repository-wide lint plus applicable build/typecheck and affected tests.
+- Documentation- or instruction-only change: review the rendered text and diff; runtime lint/tests are unnecessary unless executable documentation or tooling changed.
 
-When completing a change:
-- run the affected tests, but do not use that requirement as a reason to create unnecessary tests
-- report which risks were covered and at which layer
-- if you decide not to create a test, briefly explain why the existing validation is sufficient
-- for auth, billing, authorization, schema, and persistence, maintain stronger validation while eliminating duplication rather than reducing critical scenarios
-
-Commands by layer:
-- `npm run test:unit`: fast, isolated suites; the default path for `npm test`
-- `npm run test:integration`: sequential suites with database/server and test schema checks
-- `npm run test:all`: unit and integration tests
-- `npm run test:smoke`: Playwright for applicable visible flows
-
-## Validation discipline
-
-Always use lint as the first line of defense against coupling, excessive complexity, dead code, and structural regressions.
-
-Mandatory rules:
-- Whenever you edit any relevant file, run validation before considering the task complete.
-- Do not introduce new warnings without a clear justification.
-- If a change touches central files, treat complexity warnings as an immediate refactoring signal, not as a cosmetic detail.
-- If a change is structural, validate in layers: lint, typecheck/build, and tests.
-
-Minimum checklist by change type:
-- Small frontend change:
-  - run `npm run lint`
-- Medium change:
-  - run `npm run lint`
-  - run `cd frontend && npm run build`
-- Change touching a visible flow, auth, billing, config, app shell, controller, or central routes:
-  - run `npm run lint`
-  - run `cd frontend && npm run build`
-  - run `npm run test:smoke` when applicable
-- Before finishing any larger task:
-  - run `npm run lint` for the entire repository
-
-Warning policy:
-- Fix new warnings within the same task whenever possible.
-- Do not defer a warning without a concrete reason.
-- If a warning cannot be resolved now, explain why it remains and what risk it creates.
-
-Hygiene priority:
-- Prefer preventing warning accumulation over scheduling large cleanup efforts later.
-- When you detect a hub function, excessive branching, or a file concentrating too many responsibilities, break the problem apart early.
+Always review the complete `git diff` before proposing or creating a commit. Report which risks were covered and at which layer; if no new test is needed, briefly state why existing validation is sufficient.
 
 ## Execution and token efficiency
 
-Validate rigorously, but avoid repetition and unnecessary tool output.
+- Consolidate edits before lint, build, or tests. Do not validate every intermediate change.
+- Do not repeat a passing command unless a later edit could affect its result. If only one layer changed, rerun only that layer.
+- Prefer the smallest targeted test over a complete suite.
+- After a failure, diagnose before retrying. Retry once after the fix unless there is concrete evidence of flakiness or the user authorizes more.
+- Keep long-command output to summaries and relevant error excerpts. Poll running commands no more than once every 30 seconds.
+- If validation is interrupted, reuse still-valid results and report what passed, what stopped, and the residual risk. If the user asks to stop validation, stop immediately and start no new commands.
+- Final reports should lead with the outcome and include affected files, validation, material risks, commit hashes when applicable, and pending work. Omit transcripts, repeated rationale, and unchanged details.
 
-Mandatory rules:
-- Consolidate edits before starting lint, build, and tests; do not validate every small intermediate change.
-- Do not repeat a command that already passed if no later change could affect the validated behavior.
-- If a later change affects only one layer, repeat validation only for that layer.
-- Prefer the smallest targeted test that covers the regression; do not run a complete suite when a specific file, test, or `--grep` is sufficient.
-- After a failure, diagnose the cause before running the command again. Make at most one retry after the fix unless there is concrete evidence of flakiness or the user authorizes more.
-- For long-running commands, limit output to what is necessary and poll at intervals of no more than once every 30 seconds. Do not dump complete logs when a summary or error excerpt is sufficient.
-- Do not repeat validation merely to obtain cleaner output, reconfirm something already proven, or compensate for a tool session that is still running.
-- If a long validation is interrupted, reuse any still-valid prior results and clearly report what passed, what was interrupted, and what residual risk remains.
-- If the user asks you to stop or interrupt validation, stop immediately and do not start new commands.
+## Change limits and commits
 
-Goal: spend tokens and time only on new evidence that could change the conclusion about the safety of the change.
-
-## Mandatory change limit
-
-These rules are mandatory:
-
-- The 500-line limit does not apply to creating operational documentation; operational docs may exceed it.
-- "Changed lines" means additions plus deletions, including code, tests, schema, and documentation. New files count in full.
-- Before changes estimated above 500 lines, report the files, total estimate, planned slices, and tests; wait for approval.
-- Each slice may change at most 500 lines, with no tolerance, unless I explicitly authorize exceeding the limit.
-- An approval such as "start the block" authorizes only the next slice unless I explicitly authorize doing more or going beyond it.
-- After each slice:
-  - stop editing
-  - run applicable lint/tests
-  - review the diff
-  - report files, changed lines, risks, and pending work
-  - end the response and wait for new authorization
-- Never execute two slices in the same response or automatic continuation without my prior permission.
-- Unless I explicitly request more than one slice, do not perform more than one slice under any circumstances. Only do so when I explicitly require it.
-- If the estimate grows by more than 20%, a migration/schema change appears, another subsystem is involved, or a new responsibility emerges, stop and request authorization.
-- Before editing, check `git status`. If there are preexisting changes in the same files and they cannot be separated, stop.
-- If compaction or context loss occurs during a change, stop editing, reread this file, review status/diff, and wait for authorization.
-- Do not declare a block complete merely because tests passed; review the full diff and confirm that scope did not expand.
-
-Ask me questions until you are certain you understand what I requested; do not guess what I want.
+- A slice may change at most 500 lines, counted as additions plus deletions across code, tests, schema, and documentation; new files count in full. Operational documentation creation is exempt from this line limit.
+- Before work estimated above 500 changed lines, report affected files, total estimate, planned slices, and validation, then wait for approval. Each approval authorizes one slice unless the user explicitly authorizes more or permits exceeding the limit.
+- Perform only one slice per response or automatic continuation unless the user explicitly requests multiple slices. Never exceed 500 changed lines in a slice without explicit authorization.
+- Stop and request direction if the estimate grows by more than 20%, schema or migration work unexpectedly appears, another subsystem becomes involved, or a new responsibility emerges.
+- If compaction or context loss occurs during a change, stop editing, reread this file, review status and diff, and wait for authorization.
+- After each slice, stop editing, run applicable validation, review the full diff, and confirm scope did not expand. Tests passing alone do not establish completion.
+- Commit each completed meaningful slice by scope; never mix unrelated or parallel changes. Report changed files and lines, risks, pending work, and commit hashes, then wait for authorization before another slice.
 
 ## Architecture guardrail
 
 - Before a new chain or cross-cutting feature, estimate the production files and subsystems affected.
-- Treat a change as an architecture checkpoint if it is estimated to touch more than 12 production files or add business logic in 2 or more hub files; report the fan-out and proposed boundaries before editing.
-- New chains must extend a capability/adapter boundary; do not spread new `chain === ...` branches through central modules.
-- In hub files, keep new features limited to wiring and composition; extract new business logic or domain responsibilities behind a tested interface.
+- Treat work estimated to touch more than 12 production files or add business logic to two or more hub files as an architecture checkpoint. Report the fan-out and proposed boundaries before editing.
+- New chains must extend a capability or adapter boundary; do not spread new `chain === ...` branches through central modules.
+- Keep hub-file changes limited to wiring and composition. Put new business logic or domain responsibilities behind a tested interface.
