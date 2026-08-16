@@ -1570,6 +1570,13 @@ mas não entram em arestas, resumos, conexões nem posições financeiras. A
 projection mantém a rejeição de endpoints iguais como defesa contra callers
 inválidos.
 
+Antes de iniciar seed ou LIVE de wallet swaps com a captura de posição exata,
+aplique `node src/utils/db-init-stage139.js`. Ambos persistem bloco, hash e
+`transaction_index` na sidecar `robinhood_transaction_positions` antes de
+gravar o swap e sem RPC adicional, pois reutilizam o full-block da atribuição.
+Falha nessa escrita impede o cursor de avançar. O acervo anterior à Stage 139
+permanece sem posição até a resolução histórica pelo archive.
+
 Quando o cursor de transfers já avançou além da posição `unified_transfer_v1`,
 execute no mesmo PC/archive `npm run robinhood:wallet-position-catch-up --
 --max-blocks=500`. O comando relê e classifica somente a lacuna comprovada entre

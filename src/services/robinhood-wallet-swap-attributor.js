@@ -47,7 +47,7 @@ function buildRow(observation, walletAddress, blockTime, parserVersion) {
 }
 
 function createRobinhoodWalletSwapAttributor(deps = {}) {
-  const { repository, fetchBlock } = deps;
+  const { repository, transactionPositionRepository, fetchBlock } = deps;
   const adapter = deps.adapter || senderAdapterModule;
   const parserVersion = deps.parserVersion || DEFAULT_PARSER_VERSION;
   const onTradesPersisted = typeof deps.onTradesPersisted === 'function'
@@ -59,6 +59,10 @@ function createRobinhoodWalletSwapAttributor(deps = {}) {
   if (!repository || typeof repository.insertWalletSwaps !== 'function') {
     throw new Error('attributor requires a wallet-swap repository');
   }
+  if (!transactionPositionRepository
+    || typeof transactionPositionRepository.upsertPositions !== 'function') {
+    throw new Error('attributor requires a transaction-position repository');
+  }
 
   async function attributeBlock(blockNumber, observations = []) {
     if (!Array.isArray(observations) || observations.length === 0) {
@@ -69,9 +73,9 @@ function createRobinhoodWalletSwapAttributor(deps = {}) {
     }
     const hashes = observations.map((observation) => observation.transaction_hash);
     const block = await fetchBlock(blockNumber);
-    const { blockHash, blockTime, resolved, missing } = adapter.resolveSenders(block, hashes, {
-      expectedBlockNumber: blockNumber,
-    });
+    const {
+      blockHash, blockTime, resolved, resolvedPositions, missing,
+    } = adapter.resolveSenders(block, hashes, { expectedBlockNumber: blockNumber });
 
     if (missing.length > 0) {
       return {
@@ -87,6 +91,7 @@ function createRobinhoodWalletSwapAttributor(deps = {}) {
       parserVersion
     ));
 
+    await transactionPositionRepository.upsertPositions([...resolvedPositions.values()]);
     const { inserted } = await repository.insertWalletSwaps(rows);
     // Publish every persisted batch, including an idempotent retry. If NOTIFY
     // fails after the DB insert, the worker retries and clients dedupe the event;

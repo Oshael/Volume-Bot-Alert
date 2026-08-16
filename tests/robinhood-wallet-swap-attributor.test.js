@@ -42,27 +42,43 @@ function blockWith(transactions) {
   };
 }
 
-function fakeRepository() {
+function fakeRepository(calls = []) {
   const inserted = [];
   return {
     inserted,
     insertWalletSwaps: async (rows) => {
+      calls.push('swaps');
       inserted.push(rows);
       return { inserted: rows.length, ensuredDays: [] };
     },
   };
 }
 
+function fakeTransactionPositionRepository(calls = []) {
+  const inserted = [];
+  return {
+    inserted,
+    upsertPositions: async (rows) => {
+      calls.push('positions');
+      inserted.push(rows);
+      return { requested: rows.length, persisted: rows.length };
+    },
+  };
+}
+
 describe('robinhood wallet swap attributor', () => {
   it('attributes each swap to its transaction signer and writes mapped rows', async () => {
-    const repository = fakeRepository();
+    const calls = [];
+    const repository = fakeRepository(calls);
+    const transactionPositionRepository = fakeTransactionPositionRepository(calls);
     const fetchBlock = async () => blockWith([
       { hash: TX_1, from: SIGNER_A },
       { hash: TX_2, from: SIGNER_B },
     ]);
     const published = [];
     const attributor = createRobinhoodWalletSwapAttributor({
-      repository, fetchBlock, onTradesPersisted: async (rows) => published.push(rows),
+      repository, transactionPositionRepository, fetchBlock,
+      onTradesPersisted: async (rows) => published.push(rows),
     });
 
     const result = await attributor.attributeBlock(100n, [
@@ -86,12 +102,23 @@ describe('robinhood wallet swap attributor', () => {
     assert.equal(rows[0].parserVersion, 'rh-wallet-seed-1');
     assert.equal(rows[1].walletAddress, SIGNER_B);
     assert.equal(published[0], rows);
+    assert.deepEqual(transactionPositionRepository.inserted[0], [{
+      transactionHash: TX_1, blockNumber: '100',
+      blockHash: `0x${'f'.repeat(64)}`, transactionIndex: '0',
+    }, {
+      transactionHash: TX_2, blockNumber: '100',
+      blockHash: `0x${'f'.repeat(64)}`, transactionIndex: '1',
+    }]);
+    assert.deepEqual(calls, ['positions', 'swaps']);
   });
 
   it('writes nothing when any transaction is absent from the block', async () => {
     const repository = fakeRepository();
+    const transactionPositionRepository = fakeTransactionPositionRepository();
     const fetchBlock = async () => blockWith([{ hash: TX_1, from: SIGNER_A }]);
-    const attributor = createRobinhoodWalletSwapAttributor({ repository, fetchBlock });
+    const attributor = createRobinhoodWalletSwapAttributor({
+      repository, transactionPositionRepository, fetchBlock,
+    });
 
     const result = await attributor.attributeBlock(100n, [
       observation(TX_1, 5),
@@ -106,8 +133,11 @@ describe('robinhood wallet swap attributor', () => {
 
   it('propagates the reorg guard when the fetched block number is wrong', async () => {
     const repository = fakeRepository();
+    const transactionPositionRepository = fakeTransactionPositionRepository();
     const fetchBlock = async () => blockWith([{ hash: TX_1, from: SIGNER_A }]); // number 0x64 = 100
-    const attributor = createRobinhoodWalletSwapAttributor({ repository, fetchBlock });
+    const attributor = createRobinhoodWalletSwapAttributor({
+      repository, transactionPositionRepository, fetchBlock,
+    });
 
     await assert.rejects(
       () => attributor.attributeBlock(101n, [observation(TX_1, 5)]),
@@ -118,9 +148,12 @@ describe('robinhood wallet swap attributor', () => {
 
   it('does not fetch or write for an empty observation set', async () => {
     const repository = fakeRepository();
+    const transactionPositionRepository = fakeTransactionPositionRepository();
     let fetched = 0;
     const fetchBlock = async () => { fetched += 1; return blockWith([]); };
-    const attributor = createRobinhoodWalletSwapAttributor({ repository, fetchBlock });
+    const attributor = createRobinhoodWalletSwapAttributor({
+      repository, transactionPositionRepository, fetchBlock,
+    });
 
     const result = await attributor.attributeBlock(100n, []);
     assert.equal(fetched, 0);
@@ -133,6 +166,7 @@ describe('robinhood wallet swap attributor', () => {
 
   it('aggregates totals across grouped blocks', async () => {
     const repository = fakeRepository();
+    const transactionPositionRepository = fakeTransactionPositionRepository();
     const blocks = {
       100n: blockWith([{ hash: TX_1, from: SIGNER_A }]),
       101n: blockWith([{ hash: TX_2, from: SIGNER_B }]),
@@ -142,12 +176,31 @@ describe('robinhood wallet swap attributor', () => {
       const base = blocks[BigInt(n)];
       return { ...base, number: `0x${BigInt(n).toString(16)}` };
     };
-    const attributor = createRobinhoodWalletSwapAttributor({ repository, fetchBlock });
+    const attributor = createRobinhoodWalletSwapAttributor({
+      repository, transactionPositionRepository, fetchBlock,
+    });
 
     const totals = await attributor.attributeGroups([
       [100n, [observation(TX_1, 1)]],
       [101n, [observation(TX_2, 2)]],
     ]);
     assert.deepEqual(totals, { blocks: 2, attributed: 2, inserted: 2, unresolved: 0, missing: 0 });
+  });
+
+  it('does not persist swaps or advanceable output when position persistence fails', async () => {
+    const repository = fakeRepository();
+    const expected = new Error('position store unavailable');
+    const transactionPositionRepository = {
+      upsertPositions: async () => { throw expected; },
+    };
+    const attributor = createRobinhoodWalletSwapAttributor({
+      repository, transactionPositionRepository,
+      fetchBlock: async () => blockWith([{ hash: TX_1, from: SIGNER_A }]),
+    });
+
+    await assert.rejects(() => attributor.attributeBlock(
+      100n, [observation(TX_1, 5)]
+    ), expected);
+    assert.equal(repository.inserted.length, 0);
   });
 });

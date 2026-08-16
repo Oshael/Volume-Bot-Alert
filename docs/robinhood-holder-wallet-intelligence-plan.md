@@ -487,9 +487,10 @@ sendo escolhidas somente no início do respectivo corte.
 
 A Stage 139 cria `robinhood_transaction_positions`, sidecar estreita por
 `(chain, transaction_hash)` com bloco, hash canônico e `transaction_index`.
-Ela evita reescrever o acervo de `robinhood_wallet_swaps`; neste corte a tabela
-é apenas fundação, sem writer ligado. Seed/LIVE e o resolvedor histórico serão
-conectados em cortes próprios antes de a posição unificada depender da sidecar.
+Ela evita reescrever o acervo de `robinhood_wallet_swaps`. Seed e LIVE gravam a
+posição antes do swap usando o mesmo full-block já consultado; falha da sidecar
+impede o avanço do cursor. O resolvedor histórico continua em corte próprio
+antes de a posição unificada depender da sidecar.
 
 ### 9.1 `robinhood_token_transfer_events`
 

@@ -46,9 +46,29 @@ function blockTimeIso(timestamp) {
   return new Date(timestampMs).toISOString();
 }
 
+function indexedTransaction(tx, arrayIndex, blockNumber, blockHash) {
+  const hash = normalizeTxHash(tx?.hash, 'transaction.hash');
+  const from = normalizeAddress(tx?.from, 'transaction.from');
+  const transactionIndex = tx?.transactionIndex == null
+    ? BigInt(arrayIndex)
+    : parseQuantity(tx.transactionIndex, 'transaction.transactionIndex');
+  if (transactionIndex !== BigInt(arrayIndex)) {
+    throw new Error(`transaction ${hash} index conflicts with its block position`);
+  }
+  return {
+    hash,
+    from,
+    position: {
+      transactionHash: hash,
+      blockNumber: blockNumber.toString(),
+      blockHash,
+      transactionIndex: transactionIndex.toString(),
+    },
+  };
+}
+
 /**
- * Index a full block into { blockNumber, blockHash, blockTime, senders } where `senders`
- * maps normalized transaction hash -> normalized signer (`from`).
+ * Index a full block into signer and canonical transaction-position maps.
  *
  * Throws when the block was fetched without full transactions (an array of
  * hash strings), when a transaction is malformed, or when the block number
@@ -77,16 +97,19 @@ function indexBlockSenders(block, options = {}) {
   }
 
   const senders = new Map();
-  for (const tx of transactions) {
-    const hash = normalizeTxHash(tx?.hash, 'transaction.hash');
-    const from = normalizeAddress(tx?.from, 'transaction.from');
+  const positions = new Map();
+  for (const [arrayIndex, tx] of transactions.entries()) {
+    const { hash, from, position } = indexedTransaction(
+      tx, arrayIndex, blockNumber, blockHash
+    );
     const existing = senders.get(hash);
     if (existing !== undefined && existing !== from) {
       throw new Error(`transaction ${hash} has conflicting senders in the same block`);
     }
     senders.set(hash, from);
+    positions.set(hash, position);
   }
-  return { blockNumber, blockHash, blockTime, senders };
+  return { blockNumber, blockHash, blockTime, senders, positions };
 }
 
 /**
@@ -96,15 +119,21 @@ function indexBlockSenders(block, options = {}) {
  * signals a wrong block or reorg to the caller, not a silent drop).
  */
 function resolveSenders(block, transactionHashes, options = {}) {
-  const { blockNumber, blockHash, blockTime, senders } = indexBlockSenders(block, options);
+  const {
+    blockNumber, blockHash, blockTime, senders, positions,
+  } = indexBlockSenders(block, options);
   const resolved = new Map();
+  const resolvedPositions = new Map();
   const missing = [];
   for (const raw of transactionHashes || []) {
     const hash = normalizeTxHash(raw, 'transactionHash');
-    if (senders.has(hash)) resolved.set(hash, senders.get(hash));
+    if (senders.has(hash)) {
+      resolved.set(hash, senders.get(hash));
+      resolvedPositions.set(hash, positions.get(hash));
+    }
     else if (!resolved.has(hash)) missing.push(hash);
   }
-  return { blockNumber, blockHash, blockTime, resolved, missing };
+  return { blockNumber, blockHash, blockTime, resolved, resolvedPositions, missing };
 }
 
 module.exports = {

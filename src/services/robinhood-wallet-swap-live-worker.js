@@ -2,6 +2,9 @@ const { createRobinhoodPersistenceRepository } = require('../models/robinhood-pe
 const { createRobinhoodHeadProcessingRepository } = require('../models/robinhood-head-processing');
 const { createRobinhoodWalletSwapCursorRepository } = require('../models/robinhood-wallet-swap-cursor');
 const { createRobinhoodWalletSwapRepository } = require('../models/robinhood-wallet-swap-persistence');
+const {
+  createRobinhoodTransactionPositionRepository,
+} = require('../models/robinhood-transaction-position');
 const { createRobinhoodWalletSwapSourceReader } = require('../models/robinhood-wallet-swap-source-reader');
 const { createRobinhoodWalletSwapAttributor } = require('./robinhood-wallet-swap-attributor');
 const {
@@ -40,6 +43,9 @@ async function buildRuntime(options, deps = {}) {
     deps.validateChainIds || validateRobinhoodProviderChainIds
   )(client);
   const walletRepository = (deps.walletRepositoryFactory || createRobinhoodWalletSwapRepository)();
+  const transactionPositionRepository = (
+    deps.transactionPositionRepositoryFactory || createRobinhoodTransactionPositionRepository
+  )();
   const cursor = (deps.cursorFactory || createRobinhoodWalletSwapCursorRepository)();
   const reader = (deps.sourceReaderFactory || createRobinhoodWalletSwapSourceReader)();
   const marketRepository = (
@@ -53,6 +59,7 @@ async function buildRuntime(options, deps = {}) {
   );
   const attributor = (deps.attributorFactory || createRobinhoodWalletSwapAttributor)({
     repository: walletRepository,
+    transactionPositionRepository,
     fetchBlock: (number) => fetchBlock(number, true),
     parserVersion: 'rh-wallet-live-1',
     onTradesPersisted: (rows) => (deps.marketTradeRealtime || marketTradeRealtime).publishRows(rows),

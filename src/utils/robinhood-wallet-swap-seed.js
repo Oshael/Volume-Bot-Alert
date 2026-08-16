@@ -24,6 +24,9 @@ const { Pool } = require('pg');
 
 const { createRobinhoodWalletSwapSourceReader } = require('../models/robinhood-wallet-swap-source-reader');
 const { createRobinhoodWalletSwapRepository } = require('../models/robinhood-wallet-swap-persistence');
+const {
+  createRobinhoodTransactionPositionRepository,
+} = require('../models/robinhood-transaction-position');
 const { createRobinhoodWalletSwapCursorRepository } = require('../models/robinhood-wallet-swap-cursor');
 const { createRobinhoodWalletSwapAttributor } = require('../services/robinhood-wallet-swap-attributor');
 const { runSeed } = require('../services/robinhood-wallet-swap-seed-runner');
@@ -75,13 +78,20 @@ async function assertSchema(database) {
   const result = await database.query(
     `SELECT to_regclass('robinhood_wallet_swaps') AS swaps,
             to_regclass('robinhood_wallet_swap_cursors') AS cursors,
-            to_regclass('idx_robinhood_market_observations_attribution') AS attribution_index`
+            to_regclass('idx_robinhood_market_observations_attribution') AS attribution_index,
+            to_regclass('robinhood_transaction_positions') AS transaction_positions`
   );
-  const { swaps, cursors, attribution_index: attributionIndex } = result.rows[0];
+  const {
+    swaps, cursors, attribution_index: attributionIndex,
+    transaction_positions: transactionPositions,
+  } = result.rows[0];
   const missing = [];
   if (!swaps) missing.push('robinhood_wallet_swaps (run db-init-stage90.js)');
   if (!cursors) missing.push('robinhood_wallet_swap_cursors (run db-init-stage91.js)');
   if (!attributionIndex) missing.push('idx_robinhood_market_observations_attribution (run db-init-stage92.js)');
+  if (!transactionPositions) {
+    missing.push('robinhood_transaction_positions (run db-init-stage139.js)');
+  }
   if (missing.length) throw new Error(`schema not ready:\n  - ${missing.join('\n  - ')}`);
 }
 
@@ -134,8 +144,11 @@ async function main() {
 
     const reader = createRobinhoodWalletSwapSourceReader({ database });
     const repository = createRobinhoodWalletSwapRepository({ database });
+    const transactionPositionRepository = createRobinhoodTransactionPositionRepository({ database });
     const fetchBlock = (blockNumber) => rpcCall(rpcUrl, 'eth_getBlockByNumber', [toHex(blockNumber), true]);
-    const attributor = createRobinhoodWalletSwapAttributor({ repository, fetchBlock });
+    const attributor = createRobinhoodWalletSwapAttributor({
+      repository, transactionPositionRepository, fetchBlock,
+    });
 
     const maxBlocks = process.env.RH_SEED_MAX_BLOCKS ? Number(process.env.RH_SEED_MAX_BLOCKS) : undefined;
     const maxBatches = process.env.RH_SEED_BATCH_LIMIT ? Number(process.env.RH_SEED_BATCH_LIMIT) : undefined;

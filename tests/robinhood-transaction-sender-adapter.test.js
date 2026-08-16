@@ -25,7 +25,9 @@ function fullBlock(transactions, overrides = {}) {
 
 describe('robinhood transaction sender adapter', () => {
   it('indexes signers by hash and derives onchain block time', () => {
-    const { blockNumber, blockHash, blockTime, senders } = indexBlockSenders(fullBlock([
+    const {
+      blockNumber, blockHash, blockTime, senders, positions,
+    } = indexBlockSenders(fullBlock([
       { hash: TX_1, from: SIGNER_A },
       { hash: TX_2, from: SIGNER_B },
     ]));
@@ -35,6 +37,10 @@ describe('robinhood transaction sender adapter', () => {
     assert.equal(blockTime, new Date(0x60000000 * 1000).toISOString());
     assert.equal(senders.get(TX_1), SIGNER_A);
     assert.equal(senders.get(TX_2), SIGNER_B);
+    assert.deepEqual(positions.get(TX_2), {
+      transactionHash: TX_2, blockNumber: '100',
+      blockHash: `0x${'f'.repeat(64)}`, transactionIndex: '1',
+    });
   });
 
   it('normalizes checksummed hashes and addresses to lowercase', () => {
@@ -91,11 +97,18 @@ describe('robinhood transaction sender adapter', () => {
       { hash: TX_1, from: SIGNER_A },
       { hash: TX_2, from: SIGNER_B },
     ]);
-    const { resolved, missing } = resolveSenders(block, [TX_1, TX_3]);
+    const { resolved, resolvedPositions, missing } = resolveSenders(block, [TX_1, TX_3]);
 
     assert.equal(resolved.get(TX_1), SIGNER_A);
     assert.equal(resolved.has(TX_3), false);
     assert.deepEqual(missing, [TX_3]);
+    assert.equal(resolvedPositions.get(TX_1).transactionIndex, '0');
+  });
+
+  it('rejects an RPC transaction index that conflicts with block order', () => {
+    assert.throws(() => indexBlockSenders(fullBlock([
+      { hash: TX_1, from: SIGNER_A, transactionIndex: '0x1' },
+    ])), /index conflicts with its block position/);
   });
 
   it('throws when the same hash carries conflicting signers in one block', () => {

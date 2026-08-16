@@ -141,6 +141,7 @@ describe('Robinhood wallet-swap LIVE worker', () => {
         return { local: '4663' };
       },
       walletRepositoryFactory: () => ({ insertWalletSwaps() {} }),
+      transactionPositionRepositoryFactory: () => ({ upsertPositions() {} }),
       cursorFactory: () => cursor,
       sourceReaderFactory: () => reader,
       marketRepositoryFactory: () => marketRepository,
@@ -155,6 +156,7 @@ describe('Robinhood wallet-swap LIVE worker', () => {
     assert.equal(runtime.runnerDeps.reader, reader);
     assert.equal(runtime.runnerDeps.attributor, attributor);
     assert.equal(attributorInput.parserVersion, 'rh-wallet-live-1');
+    assert.equal(typeof attributorInput.transactionPositionRepository.upsertPositions, 'function');
     await runtime.runnerDeps.readNodeHead();
     await runtime.runnerDeps.fetchBlockHeader('10');
     await attributorInput.fetchBlock('11');
