@@ -102,7 +102,8 @@ function mergeHydratedRoles(context, hydration) {
 
 async function prepareRobinhoodWalletTransferRange(deps, input = {}) {
   assertRangeDependencies(deps);
-  const tokenAddresses = await deps.source.listTrackedTokenAddresses();
+  const tokenAddresses = input.tokenAddresses
+    || await deps.source.listTrackedTokenAddresses();
   const captured = await deps.evidence.readRange({
     tokenAddresses, fromBlock: input.fromBlock, toBlock: input.toBlock,
   });
@@ -128,7 +129,10 @@ async function prepareRobinhoodWalletTransferRange(deps, input = {}) {
 async function prepareBackfillRange(deps, input = {}) {
   assertDependencies(deps);
   const maxBlocks = boundedInteger(input.maxBlocks, 250, 1, 5000, 'maxBlocks');
-  const plan = await deps.source.loadBackfillPlan(CLASSIFICATION_VERSION);
+  const [plan, tokenAddresses] = await Promise.all([
+    deps.source.loadBackfillPlan(CLASSIFICATION_VERSION),
+    input.tokenAddresses || deps.source.listTrackedTokenAddresses(),
+  ]);
   if (!plan.ready) {
     return { outcome: Object.freeze({ status: 'blocked', reason: plan.reason, plan }) };
   }
@@ -140,7 +144,7 @@ async function prepareBackfillRange(deps, input = {}) {
   }
   const range = rangeForPlan(plan, maxBlocks);
   const preparedRange = await prepareRobinhoodWalletTransferRange(deps, {
-    ...range, commit: input.commit,
+    ...range, commit: input.commit, tokenAddresses,
   });
   if (preparedRange.outcome) {
     return { outcome: Object.freeze({

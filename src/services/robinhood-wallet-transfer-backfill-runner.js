@@ -83,13 +83,16 @@ async function runRobinhoodWalletTransferBackfill(input = {}, deps = {}) {
 
   heartbeatTimer = (deps.setInterval || setInterval)(() => { void heartbeat(); }, options.heartbeatMs);
   heartbeatTimer?.unref?.();
+  const tokenAddresses = typeof deps.tickDeps?.source?.listTrackedTokenAddresses === 'function'
+    ? await deps.tickDeps.source.listTrackedTokenAddresses().catch(() => undefined)
+    : undefined;
   try {
     while (rangesCompleted < options.maxRanges) {
       if (leaseLost) {
         return Object.freeze({ status: 'lease-lost', rangesCompleted, lastResult });
       }
       lastResult = await runCommit(deps.tickDeps, {
-        maxBlocks: options.maxBlocks, now: input.now,
+        maxBlocks: options.maxBlocks, now: input.now, tokenAddresses,
       });
       rangesCompleted += 1;
       if (TERMINAL_STATUSES.has(lastResult.status)) {
