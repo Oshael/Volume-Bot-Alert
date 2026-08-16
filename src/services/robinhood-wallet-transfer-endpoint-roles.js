@@ -74,19 +74,41 @@ function probePlan(input) {
   ));
 }
 
+const PROBE_BATCH_CONCURRENCY = 8;
+
 async function executeProbes(rpcClient, probes, batchSize) {
   const endpointState = new Map();
   const observations = [];
-  let batches = 0;
+  const batchList = [];
   for (let offset = 0; offset < probes.length; offset += batchSize) {
-    const batch = probes.slice(offset, offset + batchSize);
-    const codes = await rpcClient.requestBatch(batch.map(({ endpoint, blockNumber }) => ({
-      method: 'eth_getCode', params: [endpoint, blockTag(blockNumber)],
-    })));
-    batches += 1;
-    if (!Array.isArray(codes) || codes.length !== batch.length) {
-      throw new Error('endpoint role batch returned an invalid result count');
+    batchList.push(probes.slice(offset, offset + batchSize));
+  }
+  // Dispara os batches de eth_getCode com concorrencia limitada (o no local
+  // pipeliniza; sequencial era ~15x mais lento). A montagem de observations e
+  // endpointState roda depois, na ORDEM ORIGINAL dos probes -> saida identica.
+  const codesByBatch = new Array(batchList.length);
+  let nextBatch = 0;
+  async function worker() {
+    for (;;) {
+      const index = nextBatch;
+      if (index >= batchList.length) return;
+      nextBatch += 1;
+      const batch = batchList[index];
+      const codes = await rpcClient.requestBatch(batch.map(({ endpoint, blockNumber }) => ({
+        method: 'eth_getCode', params: [endpoint, blockTag(blockNumber)],
+      })));
+      if (!Array.isArray(codes) || codes.length !== batch.length) {
+        throw new Error('endpoint role batch returned an invalid result count');
+      }
+      codesByBatch[index] = codes;
     }
+  }
+  const workerCount = Math.min(PROBE_BATCH_CONCURRENCY, batchList.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
+  for (let batchIndex = 0; batchIndex < batchList.length; batchIndex += 1) {
+    const batch = batchList[batchIndex];
+    const codes = codesByBatch[batchIndex];
     for (let index = 0; index < batch.length; index += 1) {
       const probe = batch[index];
       const hasCode = bytecodePresent(codes[index]);
@@ -100,7 +122,7 @@ async function executeProbes(rpcClient, probes, batchSize) {
       }
     }
   }
-  return { batches, endpointState, observations };
+  return { batches: batchList.length, endpointState, observations };
 }
 
 function createRobinhoodWalletTransferEndpointRoleReader(options = {}) {
