@@ -84,13 +84,26 @@ function decision(kind, reasonCode, options = {}) {
   });
 }
 
-function classifySwapFlow(transfer, input) {
-  if (input != null && !Array.isArray(input)) throw new Error('swaps must be a list');
-  const sameAssetSwaps = (input || []).map(normalizeSwap).filter((swap) => (
-    swap.transactionHash === transfer.transactionHash
-    && swap.tokenAddress === transfer.tokenAddress
-  ));
-  if (sameAssetSwaps.length === 0) return null;
+// Normaliza os swaps UMA vez e agrupa por (transactionHash, tokenAddress). O
+// mesmo array e reusado para todos os transfers do batch, entao normalizar 1x
+// (em vez de T x) elimina o custo O(T x S) que dominava a CPU. A ordem de
+// entrada e preservada dentro de cada grupo -> saida identica ao filtro antigo.
+function buildSwapIndex(input) {
+  if (input == null) return null;
+  if (!Array.isArray(input)) throw new Error('swaps must be a list');
+  const index = new Map();
+  for (const raw of input) {
+    const swap = normalizeSwap(raw);
+    const key = `${swap.transactionHash}:${swap.tokenAddress}`;
+    const bucket = index.get(key);
+    if (bucket) bucket.push(swap);
+    else index.set(key, [swap]);
+  }
+  return index;
+}
+
+function decideSwapFlow(transfer, sameAssetSwaps) {
+  if (!sameAssetSwaps || sameAssetSwaps.length === 0) return null;
   const matches = sameAssetSwaps.filter((swap) => matchesSwap(transfer, swap));
   if (matches.length !== 1) {
     return decision('unknown', 'swap_correlation_ambiguous', { confidence: 'ambiguous' });
@@ -107,6 +120,12 @@ function classifySwapFlow(transfer, input) {
   });
 }
 
+function classifySwapFlow(transfer, input) {
+  const index = buildSwapIndex(input);
+  const sameAssetSwaps = index && index.get(`${transfer.transactionHash}:${transfer.tokenAddress}`);
+  return decideSwapFlow(transfer, sameAssetSwaps || null);
+}
+
 function createRobinhoodTransferClassifier(options = {}) {
   const pools = addressSet(options.poolAddresses, 'poolAddresses');
   const routers = addressSet(options.routerAddresses, 'routerAddresses');
@@ -115,6 +134,11 @@ function createRobinhoodTransferClassifier(options = {}) {
   const burns = addressSet(options.burnAddresses, 'burnAddresses');
   burns.add(ZERO_ADDRESS);
   burns.add(DEAD_ADDRESS);
+
+  // memo do indice de swaps por referencia do array (estavel dentro de um batch)
+  let cachedSwapsRef;
+  let cachedSwapIndex = null;
+  let cacheArmed = false;
 
   function classify(input = {}, context = {}) {
     const transfer = normalizeTransfer(input);
@@ -130,7 +154,18 @@ function createRobinhoodTransferClassifier(options = {}) {
         confidence: 'insufficient_evidence',
       });
     }
-    const swapFlow = classifySwapFlow(transfer, context.swaps);
+    const swaps = context.swaps;
+    let index;
+    if (cacheArmed && swaps === cachedSwapsRef) {
+      index = cachedSwapIndex;
+    } else {
+      index = buildSwapIndex(swaps);
+      cachedSwapsRef = swaps;
+      cachedSwapIndex = index;
+      cacheArmed = true;
+    }
+    const sameAssetSwaps = index && index.get(`${transfer.transactionHash}:${transfer.tokenAddress}`);
+    const swapFlow = decideSwapFlow(transfer, sameAssetSwaps || null);
     if (swapFlow) return swapFlow;
 
     if (pools.has(transfer.fromWallet) || pools.has(transfer.toWallet)) {
