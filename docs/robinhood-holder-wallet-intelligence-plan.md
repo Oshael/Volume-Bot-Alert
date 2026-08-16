@@ -480,8 +480,16 @@ isolados. `server.js`, `config/index.js` e outros hubs recebem somente wiring.
 
 ## 9. Modelo de dados conceitual
 
-Os números de Stage serão escolhidos no início do corte de schema, depois de
-confirmar o próximo número livre. Não reservar um número neste documento.
+A fundação de posição canônica usa a Stage 139; stages posteriores continuam
+sendo escolhidas somente no início do respectivo corte.
+
+### 9.0 Posição canônica das transações de swap
+
+A Stage 139 cria `robinhood_transaction_positions`, sidecar estreita por
+`(chain, transaction_hash)` com bloco, hash canônico e `transaction_index`.
+Ela evita reescrever o acervo de `robinhood_wallet_swaps`; neste corte a tabela
+é apenas fundação, sem writer ligado. Seed/LIVE e o resolvedor histórico serão
+conectados em cortes próprios antes de a posição unificada depender da sidecar.
 
 ### 9.1 `robinhood_token_transfer_events`
 

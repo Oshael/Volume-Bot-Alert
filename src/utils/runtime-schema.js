@@ -3573,6 +3573,41 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage139-robinhood-transaction-positions',
+    name: 'Stage 139 Robinhood transaction positions',
+    repair: 'node src/utils/db-init-stage139.js',
+    tables: [{
+      table: 'robinhood_transaction_positions',
+      columns: [
+        'chain', 'transaction_hash', 'block_number', 'block_hash',
+        'transaction_index', 'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'robinhood_transaction_positions_pkey',
+        includes: ['PRIMARY KEY', 'chain', 'transaction_hash'],
+      }, {
+        name: 'robinhood_transaction_positions_chain_check',
+        includes: ['CHECK', 'chain', 'robinhood'],
+      }, {
+        name: 'robinhood_transaction_positions_tx_hash_check',
+        includes: ['CHECK', 'transaction_hash'],
+      }, {
+        name: 'robinhood_transaction_positions_block_hash_check',
+        includes: ['CHECK', 'block_hash'],
+      }, {
+        name: 'robinhood_transaction_positions_block_check',
+        includes: ['CHECK', 'block_number'],
+      }, {
+        name: 'robinhood_transaction_positions_index_check',
+        includes: ['CHECK', 'transaction_index'],
+      }],
+      indexes: [{
+        name: 'idx_robinhood_transaction_positions_block',
+        includes: ['chain', 'block_number', 'transaction_index'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
