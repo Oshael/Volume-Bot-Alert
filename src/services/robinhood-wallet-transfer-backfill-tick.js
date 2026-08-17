@@ -100,6 +100,10 @@ function mergeHydratedRoles(context, hydration) {
   });
 }
 
+function knownContextAddresses(context) {
+  return [...new Set(context.rpcExemptAddresses || [])];
+}
+
 async function prepareRobinhoodWalletTransferRange(deps, input = {}) {
   assertRangeDependencies(deps);
   const tokenAddresses = input.tokenAddresses
@@ -118,6 +122,7 @@ async function prepareRobinhoodWalletTransferRange(deps, input = {}) {
   }
   const hydration = await deps.endpointRoles.hydrate({
     transfers: captured.transfers, commit: input.commit === true,
+    knownAddresses: knownContextAddresses(baseContext),
   });
   const context = mergeHydratedRoles(baseContext, hydration);
   const classified = classifyTransfers(
@@ -218,5 +223,7 @@ module.exports = {
   prepareRobinhoodWalletTransferRange,
   runRobinhoodWalletTransferBackfillCommit,
   runRobinhoodWalletTransferBackfillDryRun,
-  __private: { mergeHydratedRoles, rangeForPlan, retentionCutoff, summarizeThroughDay },
+  __private: {
+    knownContextAddresses, mergeHydratedRoles, rangeForPlan, retentionCutoff, summarizeThroughDay,
+  },
 };

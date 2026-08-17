@@ -365,17 +365,22 @@ function createRobinhoodWalletTransferLiveSourceRepository(options = {}) {
     const persistedContracts = roleResult.rows
       .filter(({ endpoint_role: role }) => role === 'contract')
       .map(({ endpoint_address: endpoint }) => endpoint);
+    const swapWalletAddresses = swaps.map(({ walletAddress }) => walletAddress);
+    const routerAddresses = [...new Set(swaps.map(({ routerAddress }) => (
+      routerAddress
+    )).filter(Boolean))].sort();
     return Object.freeze({
       ready: true, reason: null, swapCoverageComplete: true,
       completeThroughBlock: frontier.completeThroughBlock,
       swaps: Object.freeze(swaps),
       poolAddresses: Object.freeze([...poolAddresses].sort()),
-      routerAddresses: Object.freeze([...new Set(swaps.map(({ routerAddress }) => (
-        routerAddress
-      )).filter(Boolean))].sort()),
+      routerAddresses: Object.freeze(routerAddresses),
       contractAddresses: Object.freeze([...new Set(persistedContracts)].sort()),
       walletAddresses: Object.freeze([...new Set([
-        ...swaps.map(({ walletAddress }) => walletAddress), ...persistedWallets,
+        ...swapWalletAddresses, ...persistedWallets,
+      ])].sort()),
+      rpcExemptAddresses: Object.freeze([...new Set([
+        ...poolAddresses, ...routerAddresses, ...swapWalletAddresses,
       ])].sort()),
       endpointRoleCoverage: Object.freeze({
         requested: endpointAddresses.length,

@@ -1613,6 +1613,13 @@ até retornar `caught-up`; endpoints voltam à fila quando existe transfer anter
 ou posterior ao intervalo de evidência já persistido. Evidência de contrato nunca
 é rebaixada por uma observação posterior ou histórica sem bytecode.
 
+Durante o backfill principal de transfers, endpoints determinísticos do contexto
+do range (pool, router ou wallet presente em swap) não geram `eth_getCode`
+novamente. Roles persistidos só são dispensados quando a evidência cobre o bloco;
+fora de `observed_from/through`, continuam sendo revalidados pelo archive RPC.
+Somente os demais endpoints entram na hidratação; a telemetria `knownSkipped`
+informa quantos endereços foram eliminados do plano.
+
 Depois de preencher os papéis, execute `npm run
 robinhood:wallet-transfer-reclassification -- --day=YYYY-MM-DD --limit=100`.
 O comando usa apenas PostgreSQL, restringe a leitura à partição UTC informada e

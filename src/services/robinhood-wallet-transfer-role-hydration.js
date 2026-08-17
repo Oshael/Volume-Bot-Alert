@@ -39,19 +39,28 @@ function endpointAddresses(transfers) {
   return [...addresses];
 }
 
+function knownAddresses(values) {
+  if (values == null) return new Set();
+  if (!Array.isArray(values) && !(values instanceof Set)) {
+    throw new TypeError('known endpoint addresses must be a list');
+  }
+  return new Set([...values].map(endpoint));
+}
+
 function isCovered(role, block) {
   return role && BigInt(block) >= BigInt(role.observedFromBlock)
     && BigInt(block) <= BigInt(role.observedThroughBlock);
 }
 
-function unresolvedTransfers(transfers, roles) {
+function unresolvedTransfers(transfers, roles, known = new Set()) {
   const byAddress = new Map(roles.map((role) => [role.endpointAddress, role]));
   const unresolved = new Map();
   for (const transfer of transfers) {
     const blockNumber = BigInt(transfer.blockNumber).toString();
     for (const value of [transfer.fromWallet, transfer.toWallet]) {
       const address = endpoint(value);
-      if (isExcluded(address) || isCovered(byAddress.get(address), blockNumber)) continue;
+      if (known.has(address) || isExcluded(address)
+          || isCovered(byAddress.get(address), blockNumber)) continue;
       unresolved.set(`${address}:${blockNumber}`, Object.freeze({
         blockNumber, blockHash: transfer.blockHash,
         fromWallet: address, toWallet: ZERO_ADDRESS,
@@ -82,11 +91,14 @@ function createRobinhoodWalletTransferRoleHydrator(deps = {}) {
   async function hydrate(input = {}) {
     const transfers = input.transfers || [];
     const addresses = endpointAddresses(transfers);
-    const roles = await deps.repository.loadRoles(addresses);
-    const planned = unresolvedTransfers(transfers, roles);
+    const known = knownAddresses(input.knownAddresses);
+    const unknownAddresses = addresses.filter((address) => !known.has(address));
+    const roles = await deps.repository.loadRoles(unknownAddresses);
+    const planned = unresolvedTransfers(transfers, roles, known);
+    const knownSkipped = addresses.length - unknownAddresses.length;
     if (!planned.length) {
       return Object.freeze({
-        probes: 0, resolved: 0, persisted: 0,
+        probes: 0, resolved: 0, persisted: 0, knownSkipped,
         contractAddresses: Object.freeze([]), walletAddresses: Object.freeze([]),
       });
     }
@@ -99,7 +111,7 @@ function createRobinhoodWalletTransferRoleHydrator(deps = {}) {
     const persisted = input.commit === true
       ? await deps.repository.upsertEvidence(evidence) : [];
     return Object.freeze({
-      probes: planned.length, resolved: evidence.length, persisted: persisted.length,
+      probes: planned.length, resolved: evidence.length, persisted: persisted.length, knownSkipped,
       contractAddresses: result.contractAddresses,
       walletAddresses: result.walletAddresses,
       telemetry: result.telemetry,
@@ -111,5 +123,5 @@ function createRobinhoodWalletTransferRoleHydrator(deps = {}) {
 
 module.exports = {
   createRobinhoodWalletTransferRoleHydrator,
-  __private: { endpointAddresses, isCovered, unresolvedTransfers },
+  __private: { endpointAddresses, isCovered, knownAddresses, unresolvedTransfers },
 };

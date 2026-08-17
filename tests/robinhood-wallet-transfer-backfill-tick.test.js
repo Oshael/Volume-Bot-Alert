@@ -58,6 +58,7 @@ function dependencies(overrides = {}) {
           ready: true, swaps: [], swapCoverageComplete: true,
           poolAddresses: [], routerAddresses: [], contractAddresses: [],
           walletAddresses: [ALICE, BOB],
+          rpcExemptAddresses: [ALICE, BOB],
           endpointRoleCoverage: { requested: 2, persisted: 1, unpersisted: 1, probes: 0 },
         };
       },
@@ -131,6 +132,7 @@ describe('Robinhood wallet-transfer backfill dry-run tick', () => {
     assert.equal(result.rawEligible, 1);
     assert.equal(result.summaryOnly, 1);
     assert.equal(result.classificationOnly, 1);
+    assert.deepEqual(deps.calls.hydration[0].knownAddresses, [ALICE, BOB]);
     assert.equal(result.edgeEligible, 2);
     assert.deepEqual(deps.calls.evidence[0], {
       tokenAddresses: [TOKEN], fromBlock: '90', toBlock: '200',

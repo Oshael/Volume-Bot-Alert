@@ -144,6 +144,7 @@ describe('Robinhood wallet transfer LIVE source', () => {
       requested: 3, persisted: 1, unpersisted: 2, probes: 0,
     });
     assert.equal(backfillContext.ready, true);
+    assert.deepEqual(backfillContext.rpcExemptAddresses, [POOL, ROUTER, WALLET].sort());
     assert.equal(backfillContext.swaps.length, 1);
     assert.equal((await repository.loadBackfillRangeContext({
       fromBlock: '99', toBlock: '100', transactionHashes: [], endpointAddresses: [],

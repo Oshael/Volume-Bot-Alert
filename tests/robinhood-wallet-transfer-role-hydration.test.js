@@ -37,6 +37,30 @@ function harness(roles = []) {
 }
 
 describe('Robinhood historical transfer endpoint-role hydration', () => {
+  it('does not probe endpoints already proven by the range context', async () => {
+    const test = harness();
+    const result = await test.hydrator.hydrate({
+      transfers: [transfer(100), transfer(200)], knownAddresses: [ALICE],
+    });
+
+    assert.deepEqual(test.calls.reads[0], [BOB]);
+    assert.equal(result.knownSkipped, 1);
+    assert.equal(result.probes, 2);
+    assert.ok(test.calls.probes[0].every(({ fromWallet }) => fromWallet === BOB));
+  });
+
+  it('skips role reads and archive RPC when every endpoint is already known', async () => {
+    const test = harness();
+    const result = await test.hydrator.hydrate({
+      transfers: [transfer(100)], knownAddresses: new Set([ALICE, BOB]),
+    });
+
+    assert.deepEqual(test.calls.reads[0], []);
+    assert.equal(result.knownSkipped, 2);
+    assert.equal(result.probes, 0);
+    assert.equal(test.calls.probes.length, 0);
+  });
+
   it('skips archive RPC when persisted evidence covers every transfer block', async () => {
     const test = harness([
       { endpointAddress: ALICE, observedFromBlock: '90', observedThroughBlock: '210' },
