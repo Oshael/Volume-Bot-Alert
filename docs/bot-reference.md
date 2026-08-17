@@ -933,6 +933,7 @@ Stages confirmados:
 | 119 | view não materializada para publicação de holders live-first e source diário `ledger_live` |
 | 120 | campanha/coorte duráveis para backfill global de holders e attach ao cursor live |
 | 122 | lifecycle durável e fail-closed dos watermarks de wallet attribution |
+| 140 | última observação horária UTC do total de holders por token Robinhood |
 
 Holders RH possuem duas fontes complementares. A Stage 111 guarda o summary
 Blockscout usado como bootstrap/fallback; as Stages 116–118 mantêm o ledger local
@@ -952,7 +953,14 @@ wallets continua vindo do Blockscout e não é um snapshot atômico com o count.
 `GET /api/robinhood/holder-history` lê snapshots diários do PostgreSQL e não
 inventa comparação de 24 horas quando falta um dia. O worker diário `ledger_live`
 é opt-in por `ROBINHOOD_HOLDER_SNAPSHOT_ENABLED`, exige captura live habilitada e
-saudável e grava batches limitados. O backend publica `holder:count` sequenciado
+saudável e grava batches limitados. A Stage 140 também projeta, no mesmo tick,
+`published.observed_at` para um bucket de 1h UTC; Blockscout faz o mesmo na escrita
+do summary. O bucket guarda a última observação da hora, com `ledger_live` acima de
+Blockscout, e não representa necessariamente uma coleta no fechamento exato. Não
+há backfill sub-diário. Aplique `node src/utils/db-init-stage140.js` antes do código
+e mantenha `ROBINHOOD_HOLDER_SNAPSHOT_ENABLED` ou
+`ROBINHOOD_HOLDER_SUMMARY_ENABLED` ativo para a série crescer. O backend publica
+`holder:count` sequenciado
 via relay PostgreSQL para as mesmas rooms por token já usadas pelo mercado.
 Mudanças do mesmo token são
 coalescidas por tick e emitidas somente após commit; REST continua sendo o caminho

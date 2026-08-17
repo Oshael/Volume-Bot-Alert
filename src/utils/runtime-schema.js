@@ -3608,6 +3608,41 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage140-robinhood-token-holder-buckets',
+    name: 'Stage 140 Robinhood hourly holder buckets',
+    repair: 'node src/utils/db-init-stage140.js',
+    tables: [{
+      table: 'robinhood_token_holder_buckets',
+      columns: [
+        'chain', 'token_address', 'bucket_start', 'holder_count', 'source',
+        'observed_at', 'created_at', 'updated_at',
+      ],
+      columnTypes: {
+        bucket_start: { dataType: 'timestamp with time zone' },
+        holder_count: { dataType: 'bigint' },
+      },
+      constraints: [{
+        name: 'robinhood_token_holder_buckets_pkey',
+        includes: ['PRIMARY KEY', 'chain', 'token_address', 'bucket_start'],
+      }, {
+        name: 'robinhood_token_holder_buckets_chain_check',
+        includes: ['CHECK', 'chain', 'robinhood'],
+      }, {
+        name: 'robinhood_token_holder_buckets_token_check',
+        includes: ['CHECK', 'token_address'],
+      }, {
+        name: 'robinhood_token_holder_buckets_count_check',
+        includes: ['CHECK', 'holder_count'],
+      }, {
+        name: 'robinhood_token_holder_buckets_source_check',
+        includes: ['CHECK', 'blockscout', 'ledger_live'],
+      }, {
+        name: 'robinhood_token_holder_buckets_hour_check',
+        includes: ['CHECK', 'bucket_start', 'date_trunc', 'UTC'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

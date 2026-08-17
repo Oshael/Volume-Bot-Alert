@@ -195,6 +195,27 @@ function createRobinhoodTokenHolderSummaryRepository(options = {}) {
          robinhood_token_holder_daily_snapshots.observed_at
          AND robinhood_token_holder_daily_snapshots.source <> 'ledger_live'
        RETURNING 1
+     ), saved_hourly AS (
+       INSERT INTO robinhood_token_holder_buckets (
+         chain, token_address, bucket_start, holder_count, source, observed_at
+       ) VALUES (
+         '${CHAIN}', $1,
+         date_trunc('hour', $3::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC',
+         $2::bigint, 'blockscout', $3::timestamptz
+       )
+       ON CONFLICT (chain, token_address, bucket_start) DO UPDATE SET
+         holder_count = EXCLUDED.holder_count,
+         source = EXCLUDED.source,
+         observed_at = EXCLUDED.observed_at,
+         updated_at = NOW()
+       WHERE (
+         robinhood_token_holder_buckets.source = 'blockscout'
+         AND EXCLUDED.source = 'ledger_live'
+       ) OR (
+         robinhood_token_holder_buckets.source = EXCLUDED.source
+         AND EXCLUDED.observed_at >= robinhood_token_holder_buckets.observed_at
+       )
+       RETURNING 1
      )
        SELECT * FROM saved_summary`,
       [tokenAddress, String(count), observedAt]
@@ -263,16 +284,30 @@ function createRobinhoodTokenHolderSummaryRepository(options = {}) {
     }
     const { rows } = await database.query(
       `WITH candidates AS MATERIALIZED (
-         SELECT published.chain, published.token_address, published.holder_count
+         SELECT published.chain, published.token_address, published.holder_count,
+                published.observed_at
            FROM robinhood_published_holder_summaries published
            LEFT JOIN robinhood_token_holder_daily_snapshots snapshot
              ON snapshot.chain = published.chain
             AND snapshot.token_address = published.token_address
             AND snapshot.snapshot_date = ($1::timestamptz AT TIME ZONE 'UTC')::date
+           LEFT JOIN robinhood_token_holder_buckets holder_bucket
+             ON holder_bucket.chain = published.chain
+            AND holder_bucket.token_address = published.token_address
+            AND holder_bucket.bucket_start = (
+              date_trunc('hour', published.observed_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+            )
           WHERE published.source = 'ledger_live'
-            AND (snapshot.token_address IS NULL OR snapshot.source <> 'ledger_live'
-              OR snapshot.observed_at < published.observed_at)
-          ORDER BY snapshot.observed_at ASC NULLS FIRST, published.token_address ASC
+            AND published.observed_at <= $1::timestamptz
+            AND (
+              snapshot.token_address IS NULL OR snapshot.source <> 'ledger_live'
+              OR snapshot.observed_at < published.observed_at
+              OR holder_bucket.token_address IS NULL
+              OR holder_bucket.source <> 'ledger_live'
+              OR holder_bucket.observed_at < published.observed_at
+            )
+          ORDER BY holder_bucket.observed_at ASC NULLS FIRST,
+                   snapshot.observed_at ASC NULLS FIRST, published.token_address ASC
           LIMIT $2::int
        ), saved AS (
          INSERT INTO robinhood_token_holder_daily_snapshots (
@@ -286,6 +321,25 @@ function createRobinhoodTokenHolderSummaryRepository(options = {}) {
            observed_at = EXCLUDED.observed_at, updated_at = NOW()
          WHERE robinhood_token_holder_daily_snapshots.source <> 'ledger_live'
             OR EXCLUDED.observed_at >= robinhood_token_holder_daily_snapshots.observed_at
+         RETURNING 1
+       ), saved_hourly AS (
+         INSERT INTO robinhood_token_holder_buckets (
+           chain, token_address, bucket_start, holder_count, source, observed_at
+         )
+         SELECT chain, token_address,
+                date_trunc('hour', observed_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC',
+                holder_count, 'ledger_live', observed_at
+           FROM candidates
+         ON CONFLICT (chain, token_address, bucket_start) DO UPDATE SET
+           holder_count = EXCLUDED.holder_count, source = EXCLUDED.source,
+           observed_at = EXCLUDED.observed_at, updated_at = NOW()
+         WHERE (
+           robinhood_token_holder_buckets.source = 'blockscout'
+           AND EXCLUDED.source = 'ledger_live'
+         ) OR (
+           robinhood_token_holder_buckets.source = EXCLUDED.source
+           AND EXCLUDED.observed_at >= robinhood_token_holder_buckets.observed_at
+         )
          RETURNING 1
        )
        SELECT COUNT(*)::int AS saved_count FROM saved`,

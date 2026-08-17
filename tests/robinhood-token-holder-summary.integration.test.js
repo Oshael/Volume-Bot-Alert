@@ -11,12 +11,18 @@ const stage111 = require('../src/utils/db-init-stage111');
 const stage112 = require('../src/utils/db-init-stage112');
 const stage116 = require('../src/utils/db-init-stage116');
 const stage119 = require('../src/utils/db-init-stage119');
+const stage140 = require('../src/utils/db-init-stage140');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const TOKEN = `0x${'e'.repeat(40)}`;
 const repository = createRobinhoodTokenHolderSummaryRepository({ database: db });
 
 async function clearFixture() {
+  await db.query(
+    `DELETE FROM robinhood_token_holder_buckets
+     WHERE chain = 'robinhood' AND token_address = $1`,
+    [TOKEN]
+  );
   await db.query(
     `DELETE FROM robinhood_token_holder_daily_snapshots
      WHERE chain = 'robinhood' AND token_address = $1`,
@@ -36,6 +42,7 @@ describe('Robinhood token holder summary repository integration', () => {
     await stage112.init({ closePool: false });
     await stage116.init({ closePool: false });
     await stage119.init({ closePool: false });
+    await stage140.init({ closePool: false });
   });
 
   beforeEach(clearFixture);
@@ -88,6 +95,24 @@ describe('Robinhood token holder summary repository integration', () => {
       observedAt: '2026-08-10T03:02:00.000Z',
     }]);
 
+    const hourly = await db.query(
+      `SELECT bucket_start, holder_count, source, observed_at
+         FROM robinhood_token_holder_buckets
+        WHERE chain = 'robinhood' AND token_address = $1
+        ORDER BY bucket_start ASC`,
+      [TOKEN]
+    );
+    assert.deepEqual(hourly.rows.map((row) => ({
+      bucketStart: row.bucket_start.toISOString(), holderCount: String(row.holder_count),
+      source: row.source, observedAt: row.observed_at.toISOString(),
+    })), [{
+      bucketStart: '2026-08-10T02:00:00.000Z', holderCount: '4000',
+      source: 'blockscout', observedAt: '2026-08-10T02:59:00.000Z',
+    }, {
+      bucketStart: '2026-08-10T03:00:00.000Z', holderCount: '5100',
+      source: 'blockscout', observedAt: '2026-08-10T03:02:00.000Z',
+    }]);
+
     const candidates = await repository.listRefreshCandidates({
       asOf: '2026-08-10T04:00:00.000Z',
       hotWindowMs: 3_600_000,
@@ -126,8 +151,9 @@ describe('Robinhood token holder summary repository integration', () => {
       );
       await client.query(
         `INSERT INTO robinhood_holder_token_states (
-           chain, token_address, holder_count, ledger_status, version
-         ) VALUES ('robinhood', $1, 5100, 'live', 7)`, [TOKEN]
+           chain, token_address, holder_count, ledger_status, version, updated_at
+         ) VALUES ('robinhood', $1, 5100, 'live', 7,
+                   '2026-08-10T23:58:00Z')`, [TOKEN]
       );
       published = await client.query(
         `SELECT holder_count, source, ledger_version
@@ -161,6 +187,22 @@ describe('Robinhood token holder summary repository integration', () => {
         holderCount: '5100', source: 'ledger_live',
         observedAt: '2026-08-10T23:59:00.000Z',
       }]);
+      const hourly = await client.query(
+        `SELECT bucket_start, holder_count, source, observed_at
+           FROM robinhood_token_holder_buckets
+          WHERE chain = 'robinhood' AND token_address = $1`,
+        [TOKEN]
+      );
+      assert.deepEqual(hourly.rows.map((row) => ({
+        bucketStart: row.bucket_start.toISOString(), holderCount: String(row.holder_count),
+        source: row.source, observedAt: row.observed_at.toISOString(),
+      })), [{
+        bucketStart: '2026-08-10T23:00:00.000Z', holderCount: '5100',
+        source: 'ledger_live', observedAt: '2026-08-10T23:58:00.000Z',
+      }]);
+      assert.deepEqual(await transactionRepository.syncLiveDailySnapshots({
+        asOf: '2026-08-10T23:59:30.000Z', limit: 10,
+      }), { savedCount: 0, asOf: '2026-08-10T23:59:30.000Z' });
       await client.query('ROLLBACK');
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch (_) {}

@@ -3,6 +3,7 @@ const { describe, it } = require('node:test');
 
 const stage111 = require('../src/utils/db-init-stage111');
 const stage112 = require('../src/utils/db-init-stage112');
+const stage140 = require('../src/utils/db-init-stage140');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 const {
   createRobinhoodTokenHolderSummaryRepository,
@@ -61,6 +62,19 @@ describe('Robinhood token holder summaries', () => {
     assert.doesNotMatch(historySql, /DROP\s+(?:TABLE|COLUMN|CONSTRAINT|INDEX)/i);
     assert.equal(historyGroup.repair, 'node src/utils/db-init-stage112.js');
     assert.equal(historyGroup.tables[0].columnTypes.snapshot_date.dataType, 'date');
+
+    const bucketSql = stage140.STATEMENTS.join('\n');
+    const bucketGroup = SCHEMA_GROUPS.find(({ key }) => (
+      key === 'stage140-robinhood-token-holder-buckets'
+    ));
+    assert.match(bucketSql, /CREATE TABLE IF NOT EXISTS robinhood_token_holder_buckets/);
+    assert.match(bucketSql, /PRIMARY KEY \(chain, token_address, bucket_start\)/);
+    assert.match(bucketSql, /date_trunc\('hour',[\s\S]*AT TIME ZONE 'UTC'/);
+    assert.match(bucketSql, /source IN \('blockscout', 'ledger_live'\)/);
+    assert.doesNotMatch(bucketSql, /CREATE INDEX/i);
+    assert.equal(bucketGroup.repair, 'node src/utils/db-init-stage140.js');
+    assert.equal(bucketGroup.tables[0].columnTypes.bucket_start.dataType,
+      'timestamp with time zone');
   });
 
   it('upserts success without allowing an older observation to replace a newer one', async () => {
@@ -81,6 +95,11 @@ describe('Robinhood token holder summaries', () => {
     assert.match(fake.calls[0].sql, /ON CONFLICT \(chain, token_address, snapshot_date\)/);
     assert.match(fake.calls[0].sql, /WHERE observed_at = \$3::timestamptz/);
     assert.match(fake.calls[0].sql, /source <> 'ledger_live'/);
+    assert.match(fake.calls[0].sql, /INSERT INTO robinhood_token_holder_buckets/);
+    assert.match(fake.calls[0].sql,
+      /date_trunc\('hour', \$3::timestamptz AT TIME ZONE 'UTC'\)/);
+    assert.match(fake.calls[0].sql,
+      /robinhood_token_holder_buckets\.source = EXCLUDED\.source/);
   });
 
   it('records failures without overwriting the last valid count or observation', async () => {
@@ -150,6 +169,11 @@ describe('Robinhood token holder summaries', () => {
     assert.match(calls[0].sql, /snapshot\.source <> 'ledger_live'/);
     assert.match(calls[0].sql, /LIMIT \$2::int/);
     assert.match(calls[0].sql, /source = EXCLUDED\.source/);
+    assert.match(calls[0].sql, /published\.observed_at <= \$1::timestamptz/);
+    assert.match(calls[0].sql, /holder_bucket\.observed_at < published\.observed_at/);
+    assert.match(calls[0].sql, /INSERT INTO robinhood_token_holder_buckets/);
+    assert.match(calls[0].sql,
+      /date_trunc\('hour', observed_at AT TIME ZONE 'UTC'\)/);
   });
 
   it('rejects an unbounded live snapshot batch before querying', async () => {
