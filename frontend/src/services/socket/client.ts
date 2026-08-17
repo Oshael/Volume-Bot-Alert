@@ -11,16 +11,32 @@ import {
   type MarketSubscriptionIdentity,
   type MarketTradeUpdateEvent,
 } from './market-events';
+import {
+  createRobinhoodHolderEventOrderGate,
+  normalizeRobinhoodHolderEvent,
+  type RobinhoodHolderCountEvent,
+  type RobinhoodHolderInvalidateEvent,
+} from './holder-events';
 
 export type { MarketBucketUpdateEvent, MarketTradeUpdateEvent } from './market-events';
+export type { RobinhoodHolderCountEvent, RobinhoodHolderInvalidateEvent } from './holder-events';
 
 let socket: Socket | null = null;
 const chartMarketSubscriptions = new Map<string, MarketSubscriptionIdentity>();
 const workspaceMarketSubscriptions = new Map<string, MarketSubscriptionIdentity>();
 const marketEventOrder = createMarketEventOrderGate();
+const holderEventOrder = createRobinhoodHolderEventOrderGate();
 const marketTradeListeners = new Map<string, {
   identity: MarketSubscriptionIdentity;
   listeners: Set<(event: MarketTradeUpdateEvent) => void>;
+}>();
+const holderListeners = new Map<string, {
+  identity: MarketSubscriptionIdentity;
+  listeners: Set<{
+    onCount: (event: RobinhoodHolderCountEvent) => void;
+    onInvalidate: (event: RobinhoodHolderInvalidateEvent) => void;
+    onRecover: () => void;
+  }>;
 }>();
 let desiredLivePresence: {
   workspace: 'live';
@@ -62,6 +78,16 @@ function emitMarketTradeSubscriptionSync(current = socket) {
   current.emit('market:trade:sync', { subscriptions });
 }
 
+function dispatchHolderEvent(payload: unknown) {
+  const event = normalizeRobinhoodHolderEvent(payload);
+  const identity = event && normalizeMarketSubscription(event.address, event.chain);
+  if (!event || !identity || !holderEventOrder.accept(event)) return;
+  for (const listener of holderListeners.get(identity.key)?.listeners || []) {
+    if (event.type === 'holder:count') listener.onCount(event);
+    else listener.onInvalidate(event);
+  }
+}
+
 export function bindSocketLifecycle(options: {
   onRevoked: (reason: string) => void;
   onStatus?: (message: string) => void;
@@ -77,6 +103,8 @@ export function bindSocketLifecycle(options: {
   current.off('alert:event');
   current.off('market:bucket');
   current.off('market:trade');
+  current.off('holder:count');
+  current.off('holder:invalidate');
 
   current.on('connect', () => {
     if (desiredLivePresence) {
@@ -84,6 +112,9 @@ export function bindSocketLifecycle(options: {
     }
     emitMarketSubscriptionSync(current);
     emitMarketTradeSubscriptionSync(current);
+    for (const entry of holderListeners.values()) {
+      for (const listener of entry.listeners) listener.onRecover();
+    }
     options.onStatus?.('Socket connected.');
   });
 
@@ -116,6 +147,9 @@ export function bindSocketLifecycle(options: {
     if (!event || !identity) return;
     for (const listener of marketTradeListeners.get(identity.key)?.listeners || []) listener(event);
   });
+
+  current.on('holder:count', dispatchHolderEvent);
+  current.on('holder:invalidate', dispatchHolderEvent);
 
   return current;
 }
@@ -161,6 +195,28 @@ export function subscribeRobinhoodTrades(
     entry.listeners.delete(listener);
     if (entry.listeners.size === 0) marketTradeListeners.delete(identity.key);
     emitMarketTradeSubscriptionSync();
+  };
+}
+
+export function subscribeRobinhoodHolderUpdates(
+  address: string,
+  listener: {
+    onCount: (event: RobinhoodHolderCountEvent) => void;
+    onInvalidate: (event: RobinhoodHolderInvalidateEvent) => void;
+    onRecover: () => void;
+  },
+) {
+  const identity = normalizeMarketSubscription(address, 'robinhood');
+  if (!identity) return null;
+  const entry = holderListeners.get(identity.key) || { identity, listeners: new Set() };
+  entry.listeners.add(listener);
+  holderListeners.set(identity.key, entry);
+  return () => {
+    entry.listeners.delete(listener);
+    if (entry.listeners.size === 0) {
+      holderListeners.delete(identity.key);
+      holderEventOrder.clearAddress(identity.address);
+    }
   };
 }
 
@@ -211,6 +267,8 @@ export function disconnectSocket() {
   chartMarketSubscriptions.clear();
   workspaceMarketSubscriptions.clear();
   marketEventOrder.clear();
+  holderEventOrder.clear();
   marketTradeListeners.clear();
+  holderListeners.clear();
   socket?.disconnect();
 }

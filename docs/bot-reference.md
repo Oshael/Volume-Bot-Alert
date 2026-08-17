@@ -979,7 +979,11 @@ para tokens ainda `live` ou `holder:invalidate` para os que exigem ressincroniza
 O painel expandido faz bootstrap REST desse endpoint, começa em `4H`, permite
 `1H / 4H / 12H / 24H` e mantém no DOM no máximo 30 dias de barras para qualquer
 intervalo. Essa janela é somente de renderização: não limita a leitura nem remove
-buckets do PostgreSQL. A atualização realtime do chart ainda não está concluída.
+buckets do PostgreSQL. Enquanto o painel está aberto, `holder:count` válido e
+sequenciado atualiza a barra da hora corrente e os deltas sem nova leitura. Evento
+duplicado ou anterior é ignorado. `holder:invalidate`, reconexão do socket ou
+mudança de hora força recuperação REST antes de novas comparações; a assinatura e
+o order gate do token são limpos ao fechar ou trocar o painel.
 
 O grupo `robinhood-holders` contém workers independentes de captura live, apply
 do journal live, backfill de tokens novos, backfill frio, reconciliação, snapshot

@@ -5,6 +5,11 @@ import {
   type RobinhoodHolderInterval,
   type RobinhoodHoldersPage,
 } from '../services/api/robinhood-holders';
+import { subscribeRobinhoodHolderUpdates } from '../services/socket/client';
+import {
+  patchRobinhoodHolderSeries,
+  type RobinhoodHolderCountEvent,
+} from '../services/socket/holder-events';
 import { formatUsd } from './robinhood-trades-format';
 import { escapeHtml } from './sections/html-safety';
 
@@ -200,6 +205,9 @@ export function mountRobinhoodExpandedHolders(section: ParentNode, options: Moun
   const cache = getHolderDataCache(options.token);
   let history: RobinhoodHolderCountSeries | null = null;
   let holderInterval: RobinhoodHolderInterval = '4h';
+  let recoveringHistory = false;
+  let pendingLiveCount: RobinhoodHolderCountEvent | null = null;
+  let recoveryRequest: Promise<void> | null = null;
   const cursors = [...cache.cursorStack];
   let dragStartY = 0;
   let dragStartHeight = 0;
@@ -290,15 +298,61 @@ export function mountRobinhoodExpandedHolders(section: ParentNode, options: Moun
       if (disposed) return;
       if (history.current) root.querySelector<HTMLElement>('[data-holder-count]')!.textContent = count(history.current.holderCount);
       historyContainer.innerHTML = holderHistoryHtml(history, holderInterval);
+      return true;
     } catch {
       if (!disposed) historyContainer.innerHTML = '<div class="robinhood-holder-error">Failed to load holder history. <button type="button" data-holder-retry="history">Retry</button></div>';
+      return false;
     }
+  };
+  const applyLiveCount = (event: RobinhoodHolderCountEvent) => {
+    if (recoveringHistory) {
+      pendingLiveCount = event;
+      return;
+    }
+    const patched = history && patchRobinhoodHolderSeries(history, event);
+    if (!patched) {
+      pendingLiveCount = event;
+      recoverHistory();
+      return;
+    }
+    history = patched;
+    root.querySelector<HTMLElement>('[data-holder-count]')!.textContent = count(event.holderCount);
+    historyContainer.innerHTML = holderHistoryHtml(history, holderInterval);
+  };
+  const recoverHistory = () => {
+    if (disposed || recoveryRequest) return;
+    recoveringHistory = true;
+    recoveryRequest = (async () => {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        if (!await loadHistory()) return;
+        const queued = pendingLiveCount;
+        pendingLiveCount = null;
+        if (!queued) {
+          recoveringHistory = false;
+          return;
+        }
+        const patched = history && patchRobinhoodHolderSeries(history, queued);
+        if (patched) {
+          history = patched;
+          recoveringHistory = false;
+          root.querySelector<HTMLElement>('[data-holder-count]')!.textContent = count(queued.holderCount);
+          historyContainer.innerHTML = holderHistoryHtml(history, holderInterval);
+          return;
+        }
+        pendingLiveCount = queued;
+      }
+      if (!disposed) historyContainer.innerHTML = '<div class="robinhood-holder-error">Unable to reconcile live holder data. <button type="button" data-holder-retry="history">Retry</button></div>';
+    })().finally(() => { recoveryRequest = null; });
   };
   const onClick = (event: Event) => {
     const target = event.target as Element | null;
     const retry = target?.closest<HTMLButtonElement>('[data-holder-retry]')?.dataset.holderRetry;
     if (retry === 'page') return void loadPage();
-    if (retry === 'history') return void loadHistory();
+    if (retry === 'history') {
+      if (recoveringHistory) recoverHistory();
+      else void loadHistory();
+      return;
+    }
     const interval = target?.closest<HTMLButtonElement>('[data-holder-interval]')?.dataset.holderInterval as RobinhoodHolderInterval | undefined;
     if (interval && HOLDER_INTERVALS.includes(interval) && history) {
       holderInterval = interval;
@@ -323,6 +377,14 @@ export function mountRobinhoodExpandedHolders(section: ParentNode, options: Moun
   resizeHandle.addEventListener('pointercancel', onPointerUp);
   resizeHandle.addEventListener('keydown', onKeyDown);
   window.addEventListener('resize', onResize);
+  const unsubscribeHolderUpdates = subscribeRobinhoodHolderUpdates(options.token, {
+    onCount: applyLiveCount,
+    onInvalidate: () => {
+      pendingLiveCount = null;
+      recoverHistory();
+    },
+    onRecover: recoverHistory,
+  });
   void loadPage();
   void loadHistory();
   activeCleanup = () => {
@@ -335,6 +397,7 @@ export function mountRobinhoodExpandedHolders(section: ParentNode, options: Moun
     resizeHandle.removeEventListener('pointercancel', onPointerUp);
     resizeHandle.removeEventListener('keydown', onKeyDown);
     window.removeEventListener('resize', onResize);
+    unsubscribeHolderUpdates?.();
     stopDragging();
   };
 }

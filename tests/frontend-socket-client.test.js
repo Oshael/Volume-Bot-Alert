@@ -95,4 +95,39 @@ describe('frontend socket market subscriptions', () => {
       ] });
     }
   });
+
+  it('dispatches ordered holder events and requests REST recovery after reconnect', () => {
+    const counts = [];
+    const invalidations = [];
+    let recoveries = 0;
+    const unsubscribe = client.subscribeRobinhoodHolderUpdates(ROBINHOOD, {
+      onCount: (event) => counts.push(event.holderCount),
+      onInvalidate: (event) => invalidations.push(event.reason),
+      onRecover: () => { recoveries += 1; },
+    });
+    const holderEvent = (overrides = {}) => {
+      const version = String(overrides.ledgerVersion || '7');
+      return {
+        type: 'holder:count', chain: 'robinhood', address: ROBINHOOD,
+        holderCount: 4424, source: 'ledger_live', observedAt: '2026-08-10T12:00:00.000Z',
+        ledgerVersion: version, liveThroughBlock: '32653260', liveThroughHash: `0x${'b'.repeat(64)}`,
+        sequence: `robinhood-holder:${ROBINHOOD}:${version.padStart(24, '0')}`,
+        ...overrides,
+      };
+    };
+
+    socket.trigger('holder:count', holderEvent());
+    socket.trigger('holder:count', holderEvent({ holderCount: 9999 }));
+    socket.trigger('holder:invalidate', holderEvent({
+      type: 'holder:invalidate', holderCount: undefined, ledgerVersion: '8',
+      sequence: `robinhood-holder:${ROBINHOOD}:000000000000000000000008`, reason: 'reorg_resync',
+    }));
+    socket.trigger('disconnect', 'transport close');
+    socket.trigger('connect');
+
+    assert.deepEqual(counts, [4424]);
+    assert.deepEqual(invalidations, ['reorg_resync']);
+    assert.equal(recoveries, 1);
+    unsubscribe();
+  });
 });

@@ -1674,7 +1674,10 @@ test('opens a Robinhood FDV chart and applies only its realtime updates', async 
 });
 
 test('renders holders and cursor pages in the Robinhood expanded chart', async ({ page }) => {
-  const diagnostics = await openAuthenticatedWorkspace(page, ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES);
+  const socketScenario = { socket: null, clientFrames: [] };
+  const diagnostics = await openAuthenticatedWorkspace(
+    page, ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES, '/alerts', socketScenario,
+  );
   await page.getByRole('group', { name: 'Filter workspace by blockchain' })
     .locator('[data-chain="robinhood"]').click();
   const row = page.locator(`article.monitored-token-row[data-address="${ROBINHOOD_TOKEN}"]`);
@@ -1698,6 +1701,32 @@ test('renders holders and cursor pages in the Robinhood expanded chart', async (
   await expect(holderHistory.locator('[data-holder-bar]')).toHaveCount(720);
   await holderHistory.getByRole('button', { name: '24H', exact: true }).click();
   await expect(holderHistory.locator('[data-holder-bar]')).toHaveCount(30);
+  await expect.poll(() => socketScenario.clientFrames.some((frame) => (
+    frame.includes('"market:sync"') && frame.includes(`"address":"${ROBINHOOD_TOKEN}"`)
+  ))).toBe(true);
+  const holderCount = panel.locator('[data-holder-count]');
+  const holderPayload = {
+    type: 'holder:count', chain: 'robinhood', address: ROBINHOOD_TOKEN,
+    holderCount: 4429, source: 'ledger_live', observedAt: '2026-07-15T12:01:00.000Z',
+    ledgerVersion: '7', liveThroughBlock: '32653260', liveThroughHash: `0x${'b'.repeat(64)}`,
+    sequence: `robinhood-holder:${ROBINHOOD_TOKEN}:000000000000000000000007`,
+  };
+  sendSocketEvent(socketScenario, 'holder:count', holderPayload);
+  await expect(holderCount).toHaveText('4,429');
+  sendSocketEvent(socketScenario, 'holder:count', { ...holderPayload, holderCount: 9999 });
+  await expect(holderCount).toHaveText('4,429');
+  const holderReads = diagnostics.apiRequests.filter((requestUrl) => (
+    new URL(requestUrl).pathname === '/api/robinhood/holder-count-series'
+  )).length;
+  sendSocketEvent(socketScenario, 'holder:invalidate', {
+    ...holderPayload, type: 'holder:invalidate', holderCount: undefined,
+    ledgerVersion: '8', sequence: `robinhood-holder:${ROBINHOOD_TOKEN}:000000000000000000000008`,
+    reason: 'reorg_resync',
+  });
+  await expect.poll(() => diagnostics.apiRequests.filter((requestUrl) => (
+    new URL(requestUrl).pathname === '/api/robinhood/holder-count-series'
+  )).length).toBeGreaterThan(holderReads);
+  await expect(holderCount).toHaveText('4,424');
   expect(diagnostics.apiRequests.some((requestUrl) => (
     new URL(requestUrl).pathname === '/api/robinhood/holder-count-series'
   ))).toBe(true);
