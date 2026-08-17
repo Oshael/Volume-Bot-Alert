@@ -102,13 +102,22 @@ describe('Robinhood holder summary view', () => {
       holderCount: 1200, source: 'ledger_live', observedAt: '2026-08-10T05:29:00.000Z',
     }, asOf);
 
-    assert.equal(series.bars.length, 42);
+    assert.deepEqual(series.intervals, ['1h', '4h', '12h', '24h']);
+    assert.equal(series.series['1h'].length, 168);
+    assert.equal(series.series['4h'].length, 42);
+    assert.equal(series.series['12h'].length, 14);
+    assert.equal(series.series['24h'].length, 7);
     assert.deepEqual(series.current, {
       holderCount: 1200, source: 'ledger_live', observedAt: '2026-08-10T05:29:00.000Z',
     });
     assert.equal(series.deltas['4h'].delta, 36);
     assert.equal(series.deltas['7d'].delta, 200);
-    assert.deepEqual(series.bars.at(-1), {
+    assert.deepEqual(series.series['1h'].at(-1), {
+      start: '2026-08-10T05:00:00.000Z', end: '2026-08-10T06:00:00.000Z',
+      holderCount: 1200, observedAt: '2026-08-10T05:29:00.000Z', delta: 33,
+      status: 'open', comparison: 'complete',
+    });
+    assert.deepEqual(series.series['4h'].at(-1), {
       start: '2026-08-10T04:00:00.000Z', end: '2026-08-10T08:00:00.000Z',
       holderCount: 1200, observedAt: '2026-08-10T05:29:00.000Z', delta: 34,
       status: 'open', comparison: 'complete',
@@ -128,6 +137,7 @@ describe('Robinhood holder summary view', () => {
     assert.equal(zero.deltas['7d'].comparison, 'complete');
     assert.equal(gap.deltas['4h'].delta, null);
     assert.equal(gap.deltas['4h'].comparison, 'unavailable');
-    assert.equal(gap.bars.at(-1).comparison, 'unavailable');
+    assert.equal(gap.series['1h'].at(-1).comparison, 'complete');
+    assert.equal(gap.series['4h'].at(-1).comparison, 'unavailable');
   });
 });

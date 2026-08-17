@@ -208,9 +208,12 @@ describe('Robinhood holders route', () => {
 
     assert.equal(response.status, 200);
     assert.equal(response.body.resolution, '1h');
-    assert.equal(response.body.interval, '4h');
-    assert.equal(response.body.bars.length, 42);
-    assert.equal(response.body.bars.at(-1).status, 'open');
+    assert.deepEqual(response.body.intervals, ['1h', '4h', '12h', '24h']);
+    assert.equal(response.body.series['1h'].length, 168);
+    assert.equal(response.body.series['4h'].length, 42);
+    assert.equal(response.body.series['12h'].length, 14);
+    assert.equal(response.body.series['24h'].length, 7);
+    assert.equal(response.body.series['1h'].at(-1).status, 'open');
     assert.equal(response.body.deltas['7d'].delta, 200);
     assert.equal(response.body.current.source, 'ledger_live');
     assert.equal(scheduled, 0);

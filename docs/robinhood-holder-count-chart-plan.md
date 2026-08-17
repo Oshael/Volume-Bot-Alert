@@ -164,8 +164,10 @@ Architecture checkpoint. Próximo Stage livre confirmado em 2026-08-17: **140**
 
 - Read model isolado para baseline, gaps, agregação e estado
   `open`/`complete`/`unavailable`.
-- Endpoint separado da lista paginada de holders, devolvendo série, bounds,
-  contagem atual e deltas de 4h/12h/1d/3d/7d.
+- Endpoint separado da lista paginada de holders, devolvendo séries de barras
+  selecionáveis em 1h/4h/12h/24h, bounds, contagem atual e deltas de
+  4h/12h/1d/3d/7d. Todas as granularidades são derivadas da persistência de 1h;
+  não se gravam agregados duplicados.
 - Bootstrap da barra corrente pela publicação live-first já existente.
 - Isolamento de falha: não pode derrubar a lista básica de holders.
 - Testes unitários das derivações e testes de rota para série, gaps, `null` vs
@@ -175,7 +177,8 @@ Architecture checkpoint. Próximo Stage livre confirmado em 2026-08-17: **140**
 
 - `frontend/src/ui/robinhood-expanded-holders.ts` +
   `frontend/src/services/api/robinhood-holders.ts` + estilos: bootstrap REST,
-  chart de barras, estados vazio/parcial/erro e deltas do header.
+  chart de barras, seletor `1H / 4H / 12H / 24H`, estados vazio/parcial/erro e
+  deltas do header.
 - Apresentação (cor única / tudo para cima / verde-vermelho) definida aqui.
 - Validação: `npm run lint`, `npm --prefix frontend run build` e o menor teste de
   componente aplicável. O frontend ainda funciona por REST sem realtime.
