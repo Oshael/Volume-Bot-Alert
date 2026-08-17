@@ -10,8 +10,9 @@ const {
 describe('Robinhood holder summary view', () => {
   function hourlyBuckets(asOf, overrides = {}) {
     const endMs = Math.floor(Date.parse(asOf) / 3_600_000) * 3_600_000;
-    return Array.from({ length: 169 }, (_, index) => {
-      const bucketMs = endMs - ((168 - index) * 3_600_000);
+    const spanHours = overrides.spanHours ?? 168;
+    return Array.from({ length: spanHours + 1 }, (_, index) => {
+      const bucketMs = endMs - ((spanHours - index) * 3_600_000);
       return {
         bucketStart: new Date(bucketMs).toISOString(),
         holderCount: overrides.holderCount ?? 1000 + index,
@@ -103,10 +104,10 @@ describe('Robinhood holder summary view', () => {
     }, asOf);
 
     assert.deepEqual(series.intervals, ['1h', '4h', '12h', '24h']);
-    assert.equal(series.series['1h'].length, 168);
-    assert.equal(series.series['4h'].length, 42);
-    assert.equal(series.series['12h'].length, 14);
-    assert.equal(series.series['24h'].length, 7);
+    assert.equal(series.series['1h'].length, 169);
+    assert.equal(series.series['4h'].length, 43);
+    assert.equal(series.series['12h'].length, 15);
+    assert.equal(series.series['24h'].length, 8);
     assert.deepEqual(series.current, {
       holderCount: 1200, source: 'ledger_live', observedAt: '2026-08-10T05:29:00.000Z',
     });
@@ -126,6 +127,21 @@ describe('Robinhood holder summary view', () => {
       holderCount: 9000, source: 'ledger_live', observedAt: '2026-08-10T04:59:00.000Z',
     }, asOf);
     assert.equal(staleEdge.deltas['4h'].delta, 4);
+  });
+
+  it('keeps every stored bucket beyond the seven-day delta window', () => {
+    const asOf = '2026-08-10T05:30:00.000Z';
+    const series = buildHourlyHolderSeries(hourlyBuckets(asOf, { spanHours: 240 }), null, asOf);
+
+    assert.deepEqual(series.range, {
+      start: '2026-07-31T05:00:00.000Z',
+      through: asOf,
+      bucketCount: 241,
+    });
+    assert.equal(series.series['1h'].length, 241);
+    assert.equal(series.series['4h'].length, 61);
+    assert.equal(series.series['12h'].length, 21);
+    assert.equal(series.series['24h'].length, 11);
   });
 
   it('preserves true zero and marks comparisons crossing an hourly gap unavailable', () => {

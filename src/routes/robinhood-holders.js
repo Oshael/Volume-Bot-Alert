@@ -24,7 +24,6 @@ const { normalizeTokenAddress } = require('../utils/token-identity');
 const {
   buildDailyHolderHistory,
   buildHourlyHolderSeries,
-  HOLDER_SERIES_HOURS,
 } = require('../utils/robinhood-holder-summary-view');
 
 const DEFAULT_REFRESH_MS = 5 * 60_000;
@@ -224,7 +223,7 @@ function createRobinhoodHoldersRouter(options = {}) {
     try {
       const [buckets, summaries] = await Promise.all([
         repository.listHourlyBuckets({
-          tokenAddress, hours: HOLDER_SERIES_HOURS, asOf,
+          tokenAddress, asOf,
         }),
         repository.getPublishedSummaries([tokenAddress]),
       ]);

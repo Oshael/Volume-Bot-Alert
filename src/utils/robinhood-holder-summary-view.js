@@ -1,6 +1,5 @@
 const HOLDER_FRESHNESS_TARGET_MS = 15 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
-const HOLDER_SERIES_HOURS = 168;
 const HOLDER_BAR_INTERVALS = Object.freeze([
   ['1h', 1], ['4h', 4], ['12h', 12], ['24h', 24],
 ]);
@@ -129,16 +128,14 @@ function comparison(points, fromMs, throughMs) {
 }
 
 function indexHourlyBuckets(buckets, bounds) {
-  if (!Array.isArray(buckets) || buckets.length > HOLDER_SERIES_HOURS + 1) {
-    throw new Error('hourly holder bucket range is invalid');
-  }
+  if (!Array.isArray(buckets)) throw new TypeError('hourly holder buckets must be an array');
   const points = new Map();
   let previousMs = -Infinity;
   for (const bucket of buckets) {
     const point = normalizeSeriesPoint(bucket, previousMs);
     const observedMs = Date.parse(point.observedAt);
-    if (point.bucketMs < bounds.firstBucketMs || point.bucketMs > bounds.currentBucketMs
-      || observedMs < point.bucketMs || observedMs >= point.bucketMs + HOUR_MS
+    if (point.bucketMs > bounds.currentBucketMs || observedMs < point.bucketMs
+      || observedMs >= point.bucketMs + HOUR_MS
       || observedMs > bounds.asOfMs) {
       throw new Error('hourly holder bucket range is invalid');
     }
@@ -173,13 +170,13 @@ function applyCurrentHolder(points, current, bounds) {
   return normalized;
 }
 
-function buildHolderBars(points, currentBucketMs, intervalHours) {
+function buildHolderBars(points, firstBucketMs, currentBucketMs, intervalHours) {
+  if (firstBucketMs == null) return Object.freeze([]);
   const intervalMs = intervalHours * HOUR_MS;
+  const firstBarStart = Math.floor(firstBucketMs / intervalMs) * intervalMs;
   const currentBarStart = Math.floor(currentBucketMs / intervalMs) * intervalMs;
   const bars = [];
-  const barCount = HOLDER_SERIES_HOURS / intervalHours;
-  for (let index = barCount - 1; index >= 0; index -= 1) {
-    const startMs = currentBarStart - (index * intervalMs);
+  for (let startMs = firstBarStart; startMs <= currentBarStart; startMs += intervalMs) {
     const open = startMs === currentBarStart;
     const throughMs = open ? currentBucketMs : startMs + intervalMs - HOUR_MS;
     const result = comparison(points, startMs - HOUR_MS, throughMs);
@@ -203,19 +200,23 @@ function buildHourlyHolderSeries(buckets, current, asOf = new Date()) {
   const currentBucketMs = Math.floor(asOfMs / HOUR_MS) * HOUR_MS;
   const bounds = {
     asOfMs, currentBucketMs,
-    firstBucketMs: currentBucketMs - (HOLDER_SERIES_HOURS * HOUR_MS),
   };
   const points = indexHourlyBuckets(buckets, bounds);
   const normalizedCurrent = applyCurrentHolder(points, current, bounds);
+  const firstBucketMs = points.size ? points.keys().next().value : null;
   const deltas = Object.fromEntries(HOLDER_DELTA_WINDOWS.map(([key, hours]) => [
     key, comparison(points, currentBucketMs - (hours * HOUR_MS), currentBucketMs),
   ]));
   const series = Object.fromEntries(HOLDER_BAR_INTERVALS.map(([key, hours]) => [
-    key, buildHolderBars(points, currentBucketMs, hours),
+    key, buildHolderBars(points, firstBucketMs, currentBucketMs, hours),
   ]));
   return Object.freeze({
     resolution: '1h', intervals: Object.freeze(HOLDER_BAR_INTERVALS.map(([key]) => key)),
-    hours: HOLDER_SERIES_HOURS,
+    range: Object.freeze({
+      start: firstBucketMs == null ? null : new Date(firstBucketMs).toISOString(),
+      through: new Date(asOfMs).toISOString(),
+      bucketCount: points.size,
+    }),
     current: normalizedCurrent,
     deltas: Object.freeze(deltas),
     series: Object.freeze(series),
@@ -224,7 +225,6 @@ function buildHourlyHolderSeries(buckets, current, asOf = new Date()) {
 
 module.exports = {
   HOLDER_FRESHNESS_TARGET_MS,
-  HOLDER_SERIES_HOURS,
   buildDailyHolderHistory,
   buildHourlyHolderSeries,
   normalizeRobinhoodHolderSummary,

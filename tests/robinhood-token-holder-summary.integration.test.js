@@ -96,7 +96,7 @@ describe('Robinhood token holder summary repository integration', () => {
     }]);
 
     const hourly = await repository.listHourlyBuckets({
-      tokenAddress: TOKEN, hours: 2, asOf: '2026-08-10T04:00:00.000Z',
+      tokenAddress: TOKEN, asOf: '2026-08-10T04:00:00.000Z',
     });
     assert.deepEqual(hourly, [{
       bucketStart: '2026-08-10T02:00:00.000Z', holderCount: 4000,
@@ -181,7 +181,7 @@ describe('Robinhood token holder summary repository integration', () => {
         observedAt: '2026-08-10T23:59:00.000Z',
       }]);
       const hourly = await transactionRepository.listHourlyBuckets({
-        tokenAddress: TOKEN, hours: 1, asOf: '2026-08-10T23:59:00.000Z',
+        tokenAddress: TOKEN, asOf: '2026-08-10T23:59:00.000Z',
       });
       assert.deepEqual(hourly, [{
         bucketStart: '2026-08-10T23:00:00.000Z', holderCount: 5100,

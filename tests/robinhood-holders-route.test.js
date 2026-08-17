@@ -188,13 +188,13 @@ describe('Robinhood holders route', () => {
     assert.equal(reads, 0);
   });
 
-  it('returns the isolated 7d holder-count series without using the provider', async () => {
+  it('returns the isolated full holder-count series without using the provider', async () => {
     let scheduled = 0;
     const response = await request(appWith({
       repository: {
         listHourlyBuckets: async (input) => {
           assert.deepEqual(input, {
-            tokenAddress: TOKEN, hours: 168, asOf: new Date(NOW).toISOString(),
+            tokenAddress: TOKEN, asOf: new Date(NOW).toISOString(),
           });
           return hourlyBuckets();
         },
@@ -209,10 +209,11 @@ describe('Robinhood holders route', () => {
     assert.equal(response.status, 200);
     assert.equal(response.body.resolution, '1h');
     assert.deepEqual(response.body.intervals, ['1h', '4h', '12h', '24h']);
-    assert.equal(response.body.series['1h'].length, 168);
-    assert.equal(response.body.series['4h'].length, 42);
-    assert.equal(response.body.series['12h'].length, 14);
-    assert.equal(response.body.series['24h'].length, 7);
+    assert.equal(response.body.series['1h'].length, 169);
+    assert.equal(response.body.series['4h'].length, 43);
+    assert.equal(response.body.series['12h'].length, 15);
+    assert.equal(response.body.series['24h'].length, 8);
+    assert.equal(response.body.range.bucketCount, 169);
     assert.equal(response.body.series['1h'].at(-1).status, 'open');
     assert.equal(response.body.deltas['7d'].delta, 200);
     assert.equal(response.body.current.source, 'ledger_live');

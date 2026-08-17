@@ -127,8 +127,8 @@ Por que 1h e não 5min ou 4h:
 
 - **Nasce vazio.** Não existe backfill: nunca gravamos sub-diário, então não dá
   para reconstruir buckets de 1h do passado a partir das linhas diárias. O chart
-  vai preenchendo a partir do deploy e só fica "cheio" (janela de 7d) depois de ~7
-  dias de coleta.
+  começa no primeiro bucket coletado, cresce indefinidamente e nunca é truncado
+  para uma janela fixa.
 - **Piso de zoom = 1h.** Não dá para exibir barra mais fina que 1h (a imagem
   também não mostra nada mais fino que 4h).
 - **Só chain robinhood.**
@@ -167,7 +167,7 @@ Architecture checkpoint. Próximo Stage livre confirmado em 2026-08-17: **140**
 - Endpoint separado da lista paginada de holders, devolvendo séries de barras
   selecionáveis em 1h/4h/12h/24h, bounds, contagem atual e deltas de
   4h/12h/1d/3d/7d. Todas as granularidades são derivadas da persistência de 1h;
-  não se gravam agregados duplicados.
+  não se gravam agregados duplicados nem se limita a leitura aos últimos 7 dias.
 - Bootstrap da barra corrente pela publicação live-first já existente.
 - Isolamento de falha: não pode derrubar a lista básica de holders.
 - Testes unitários das derivações e testes de rota para série, gaps, `null` vs
@@ -211,8 +211,8 @@ O sinal intradiário de holders já existe e é descartado ao colapsar em `DATE`
 Reproduzir o chart é adicionar uma tabela de série temporal **paralela** (grão de
 1h, contagem absoluta, retida para sempre) e passar a gravar o que já observamos —
 não é um pipeline de captura novo. Mas há um custo temporal inescapável: como
-nunca guardamos sub-diário, o chart **nasce vazio e só fica completo após ~7 dias**
-de coleta. Prometer o painel idêntico à imagem no dia do deploy seria falso.
+nunca guardamos sub-diário, o chart **nasce vazio e acumula histórico somente a
+partir do deploy**. Prometer histórico anterior ao deploy seria falso.
 
 Além do Stage 140, o deploy precisa manter ao menos um caminho de coleta ativo.
 `ROBINHOOD_HOLDER_SNAPSHOT_ENABLED` e `ROBINHOOD_HOLDER_SUMMARY_ENABLED` são
