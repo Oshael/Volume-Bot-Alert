@@ -507,8 +507,21 @@ function patchMonitoredMetaMetrics(current: HTMLElement, item: ManualTokenEntry)
   }
   nextMetrics.forEach((nextMetric, index) => {
     const currentMetric = currentMetrics[index];
-    if (!currentMetric.isEqualNode(nextMetric)) currentMetric.replaceWith(nextMetric);
+    if (!currentMetric.isEqualNode(nextMetric) && !patchMonitoredHolderMetric(currentMetric, nextMetric)) {
+      currentMetric.replaceWith(nextMetric);
+    }
   });
+}
+
+function patchMonitoredHolderMetric(current: Element, next: Element) {
+  const currentHolder = current.querySelector<HTMLElement>('[data-holder-hover-address]');
+  const nextHolder = next.querySelector<HTMLElement>('[data-holder-hover-address]');
+  if (!currentHolder || !nextHolder
+    || currentHolder.dataset.holderHoverAddress !== nextHolder.dataset.holderHoverAddress) return false;
+  currentHolder.textContent = nextHolder.textContent;
+  currentHolder.title = nextHolder.title;
+  currentHolder.setAttribute('aria-label', nextHolder.getAttribute('aria-label') || 'Open holder history');
+  return true;
 }
 
 function patchMonitoredSide(current: HTMLElement, item: ManualTokenEntry) {
@@ -1586,6 +1599,8 @@ function buildMonitoredHolderValue(item: ManualTokenEntry) {
     value.className = 'robinhood-holder-hover-trigger';
     value.dataset.holderHoverAddress = item.address;
     value.tabIndex = 0;
+    value.setAttribute('aria-controls', 'robinhood-holder-hover-card');
+    value.setAttribute('aria-haspopup', 'dialog');
     value.setAttribute('aria-label', `Open holder history for ${item.symbol || item.label || item.address}`);
   }
   return value;

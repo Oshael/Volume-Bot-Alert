@@ -2088,7 +2088,7 @@ function renderRadarRemoveManualGlyph(
 function renderRadarSizeBlock(item: ManualTokenEntry, meteora: MeteoraEntry | undefined, meteoraMinPool: number) {
   const holders = resolveTokenHolderDisplay(item);
   const holderHover = holders.available
-    ? ` class="robinhood-holder-hover-trigger" data-holder-hover-address="${escapeHtml(item.address)}" tabindex="0" aria-label="Open holder history for ${escapeHtml(item.symbol || item.label || item.address)}"`
+    ? ` class="robinhood-holder-hover-trigger" data-holder-hover-address="${escapeHtml(item.address)}" tabindex="0" aria-controls="robinhood-holder-hover-card" aria-haspopup="dialog" aria-label="Open holder history for ${escapeHtml(item.symbol || item.label || item.address)}"`
     : ' class="radar-size-empty"';
   const valuation = resolveCompactTokenValuation(item);
   return `

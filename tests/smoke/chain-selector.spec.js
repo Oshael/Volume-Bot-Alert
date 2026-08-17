@@ -1762,6 +1762,37 @@ test('renders holders and cursor pages in the Robinhood expanded chart', async (
   await panel.getByRole('button', { name: 'Previous' }).click();
   await expect(panel).toContainText('Main whale');
   await expect(dialog.locator('[data-holder-chart-view]')).toBeVisible();
+  await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  await row.locator('[data-holder-hover-address]').focus();
+  await expect(holderHover).toBeVisible();
+  await holderHover.getByRole('button', { name: '24H', exact: true }).click();
+  await row.locator('[data-holder-hover-address]').evaluate((element) => {
+    window.__holderHoverStableTarget = element;
+  });
+  const holderReadsOnHover = diagnostics.apiRequests.filter((requestUrl) => (
+    new URL(requestUrl).pathname === '/api/robinhood/holder-count-series'
+  )).length;
+  sendSocketEvent(socketScenario, 'market:bucket', {
+    type: 'market:bucket', chain: 'robinhood', address: ROBINHOOD_TOKEN,
+    bucketTs: '2026-07-15T12:01:00.000Z', granularityMinutes: 1,
+    sequence: 'robinhood:000000000000000000000010:000000000000000000000001:000000000000000000000001',
+    valuation: { type: 'fdv', fdvUsd: 360000, observedAt: '2026-07-15T12:01:10.000Z' },
+    candle: {
+      bucketTs: '2026-07-15T12:01:00.000Z', granularityMinutes: 1,
+      openFdvUsd: 350000, highFdvUsd: 365000, lowFdvUsd: 348000,
+      closeFdvUsd: 360000, sampleCount: 4,
+    },
+  });
+  await expect(row.locator('.monitored-meta-line')).toContainText('$360K');
+  expect(await row.locator('[data-holder-hover-address]').evaluate((element) => (
+    element === window.__holderHoverStableTarget
+  ))).toBe(true);
+  await expect(holderHover).toBeVisible();
+  await expect(holderHover.getByRole('button', { name: '24H', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(holderHover.locator('[data-holder-hover-bar]')).toHaveCount(30);
+  expect(diagnostics.apiRequests.filter((requestUrl) => (
+    new URL(requestUrl).pathname === '/api/robinhood/holder-count-series'
+  ))).toHaveLength(holderReadsOnHover);
   expect(diagnostics.unexpectedRequests).toEqual([]);
   expect(diagnostics.pageErrors).toEqual([]);
 });

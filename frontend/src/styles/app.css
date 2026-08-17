@@ -3690,8 +3690,7 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 }
 
 .robinhood-holder-hover-trigger:hover,
-.robinhood-holder-hover-trigger:focus-visible,
-.robinhood-holder-hover-trigger[aria-expanded="true"] {
+.robinhood-holder-hover-trigger:focus-visible {
   color: #d7f3ff !important;
   text-decoration: underline dotted rgba(143, 183, 216, 0.7);
   text-underline-offset: 3px;

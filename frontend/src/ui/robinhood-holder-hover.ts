@@ -20,6 +20,7 @@ const cache = new Map<string, { history: RobinhoodHolderCountSeries; cachedAt: n
 const requests = new Map<string, Promise<RobinhoodHolderCountSeries>>();
 let activeTarget: HTMLElement | null = null;
 let activeHistory: RobinhoodHolderCountSeries | null = null;
+let activeAddress: string | null = null;
 let activeAuthToken: string | null | undefined;
 let interval: RobinhoodHolderInterval = '4h';
 let hideTimer = 0;
@@ -83,6 +84,10 @@ function getCard() {
   card.hidden = true;
   card.addEventListener('pointerenter', () => window.clearTimeout(hideTimer));
   card.addEventListener('pointerleave', scheduleHide);
+  card.addEventListener('focusin', () => window.clearTimeout(hideTimer));
+  card.addEventListener('focusout', (event) => {
+    if (!(event.relatedTarget instanceof Node && card?.contains(event.relatedTarget))) scheduleHide();
+  });
   card.addEventListener('click', onCardClick);
   document.body.append(card);
   return card;
@@ -109,9 +114,9 @@ function positionCard() {
 function hideCard() {
   window.clearTimeout(hideTimer);
   requestVersion += 1;
-  activeTarget?.setAttribute('aria-expanded', 'false');
   activeTarget = null;
   activeHistory = null;
+  activeAddress = null;
   getCard().hidden = true;
 }
 
@@ -139,19 +144,24 @@ async function loadHistory(address: string, version: number) {
 
 function showCard(target: HTMLElement, authToken?: string | null) {
   window.clearTimeout(hideTimer);
-  activeTarget?.setAttribute('aria-expanded', 'false');
+  const address = String(target.dataset.holderHoverAddress);
+  const card = getCard();
+  if (activeAddress === address && !card.hidden) {
+    activeTarget = target;
+    activeAuthToken = authToken;
+    positionCard();
+    return;
+  }
   activeTarget = target;
+  activeAddress = address;
   activeAuthToken = authToken;
   activeHistory = null;
   interval = '4h';
-  target.setAttribute('aria-expanded', 'true');
-  target.setAttribute('aria-controls', 'robinhood-holder-hover-card');
-  const card = getCard();
   card.innerHTML = '<p class="rh-holder-hover-state">Loading holder history…</p>';
   card.hidden = false;
   positionCard();
   const version = ++requestVersion;
-  void loadHistory(String(target.dataset.holderHoverAddress), version).then((history) => {
+  void loadHistory(address, version).then((history) => {
     if (version !== requestVersion || activeTarget !== target) return;
     activeHistory = history;
     card.innerHTML = renderHistory(history);
@@ -196,5 +206,7 @@ export function bindRobinhoodHolderHover(section: ParentNode, authToken?: string
     const target = resolveTarget(event);
     if (target) showCard(target, authToken);
   });
-  section.addEventListener('focusout', scheduleHide);
+  section.addEventListener('focusout', (event) => {
+    if (!(event.relatedTarget instanceof Node && getCard().contains(event.relatedTarget))) scheduleHide();
+  });
 }
