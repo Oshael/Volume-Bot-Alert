@@ -583,6 +583,21 @@ const ROBINHOOD_MARKET_API_FIXTURES = {
   },
 };
 
+function holderSeriesBars(intervalHours, length) {
+  const intervalMs = intervalHours * 60 * 60 * 1000;
+  const asOfMs = Date.parse('2026-07-15T12:00:00.000Z');
+  const currentStart = Math.floor(asOfMs / intervalMs) * intervalMs;
+  return Array.from({ length }, (_, index) => {
+    const startMs = currentStart - ((length - index - 1) * intervalMs);
+    const delta = (index % 9) - 4;
+    return {
+      start: new Date(startMs).toISOString(), end: new Date(startMs + intervalMs).toISOString(),
+      holderCount: 4400 + index, observedAt: new Date(Math.min(asOfMs, startMs + intervalMs - 1)).toISOString(),
+      delta, status: index === length - 1 ? 'open' : 'complete', comparison: 'complete',
+    };
+  });
+}
+
 const ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES = {
   ...ROBINHOOD_MARKET_API_FIXTURES,
   'GET /api/robinhood/holders': (request) => {
@@ -600,6 +615,21 @@ const ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES = {
       hasMore: !secondPage, nextCursor: secondPage ? null : 'page-2',
       observedAt: '2026-07-15T11:55:00.000Z', refreshQueued: false,
     };
+  },
+  'GET /api/robinhood/holder-count-series': {
+    token: ROBINHOOD_TOKEN, asOf: '2026-07-15T12:00:00.000Z', resolution: '1h',
+    intervals: ['1h', '4h', '12h', '24h'],
+    range: { start: '2026-06-01T00:00:00.000Z', through: '2026-07-15T12:00:00.000Z', bucketCount: 800 },
+    current: { holderCount: 4424, source: 'ledger_live', observedAt: '2026-07-15T12:00:00.000Z' },
+    deltas: Object.fromEntries([
+      ['4h', 4], ['12h', 12], ['1d', 24], ['3d', 72], ['7d', 168],
+    ].map(([key, delta]) => [key, {
+      delta, comparison: 'complete', from: '2026-07-08T12:00:00.000Z', through: '2026-07-15T12:00:00.000Z',
+    }])),
+    series: {
+      '1h': holderSeriesBars(1, 800), '4h': holderSeriesBars(4, 200),
+      '12h': holderSeriesBars(12, 80), '24h': holderSeriesBars(24, 40),
+    },
   },
   'GET /api/robinhood/trades': (request) => {
     const scope = new URL(request.url()).searchParams.get('scope') === 'dev' ? 'dev' : 'all';
@@ -1658,10 +1688,19 @@ test('renders holders and cursor pages in the Robinhood expanded chart', async (
   await expect(dialog.locator('[data-holder-tab]')).toHaveCount(0);
   await expect(dialog.locator('[data-holder-chart-view]')).toBeVisible();
   await expect(dialog.locator('[data-robinhood-trades-panel]')).toBeVisible();
-  await expect(panel.locator('[data-holder-history]')).toHaveCount(0);
+  const holderHistory = panel.locator('[data-holder-history]');
+  await expect(holderHistory).toBeVisible();
+  await expect(holderHistory.locator('[data-holder-interval]')).toHaveText(['1H', '4H', '12H', '24H']);
+  await expect(holderHistory.getByRole('button', { name: '4H', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(holderHistory.locator('[data-holder-bar]')).toHaveCount(180);
+  await holderHistory.getByRole('button', { name: '1H', exact: true }).click();
+  await expect(holderHistory.getByRole('button', { name: '1H', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(holderHistory.locator('[data-holder-bar]')).toHaveCount(720);
+  await holderHistory.getByRole('button', { name: '24H', exact: true }).click();
+  await expect(holderHistory.locator('[data-holder-bar]')).toHaveCount(30);
   expect(diagnostics.apiRequests.some((requestUrl) => (
-    new URL(requestUrl).pathname === '/api/robinhood/holder-history'
-  ))).toBe(false);
+    new URL(requestUrl).pathname === '/api/robinhood/holder-count-series'
+  ))).toBe(true);
   await expect(panel).toContainText('Main whale');
   await expect(panel.locator('.rh-remaining-pct').first()).toHaveText('10%');
 

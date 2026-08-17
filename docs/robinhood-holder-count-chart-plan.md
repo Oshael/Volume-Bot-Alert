@@ -178,7 +178,8 @@ Architecture checkpoint. Próximo Stage livre confirmado em 2026-08-17: **140**
 - `frontend/src/ui/robinhood-expanded-holders.ts` +
   `frontend/src/services/api/robinhood-holders.ts` + estilos: bootstrap REST,
   chart de barras, seletor `1H / 4H / 12H / 24H`, estados vazio/parcial/erro e
-  deltas do header.
+  deltas do header. O frontend renderiza no máximo os últimos 30 dias, sem alterar
+  a retenção indefinida da tabela.
 - Apresentação (cor única / tudo para cima / verde-vermelho) definida aqui.
 - Validação: `npm run lint`, `npm --prefix frontend run build` e o menor teste de
   componente aplicável. O frontend ainda funciona por REST sem realtime.

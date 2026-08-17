@@ -976,7 +976,10 @@ Mudanças do mesmo token são
 coalescidas por tick e emitidas somente após commit; REST continua sendo o caminho
 de bootstrap/recuperação. Após rewind de reorg, o backend emite o count corrigido
 para tokens ainda `live` ou `holder:invalidate` para os que exigem ressincronização.
-O consumidor frontend ainda não está concluído.
+O painel expandido faz bootstrap REST desse endpoint, começa em `4H`, permite
+`1H / 4H / 12H / 24H` e mantém no DOM no máximo 30 dias de barras para qualquer
+intervalo. Essa janela é somente de renderização: não limita a leitura nem remove
+buckets do PostgreSQL. A atualização realtime do chart ainda não está concluída.
 
 O grupo `robinhood-holders` contém workers independentes de captura live, apply
 do journal live, backfill de tokens novos, backfill frio, reconciliação, snapshot

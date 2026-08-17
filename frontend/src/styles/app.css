@@ -3569,9 +3569,117 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   display: grid;
   flex: 1 1 auto;
   grid-template-columns: 1fr;
+  grid-template-rows: minmax(150px, 42%) minmax(0, 1fr);
   min-height: 0;
   padding: 0;
-  overflow: auto;
+  overflow: hidden;
+}
+
+.robinhood-holder-history {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 8px 14px 5px;
+  border-bottom: 1px solid rgba(55, 61, 75, 0.55);
+  background: rgba(5, 7, 11, 0.74);
+}
+
+.robinhood-holder-history header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: rgba(230, 233, 239, 0.72);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.robinhood-holder-history header small {
+  margin-left: 5px;
+  color: rgba(230, 233, 239, 0.34);
+  font-size: 8px;
+}
+
+.rh-holder-intervals {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.rh-holder-intervals button {
+  min-width: 30px;
+  padding: 3px 6px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: rgba(230, 233, 239, 0.48);
+  font-size: 9px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.rh-holder-intervals button:hover { color: #d7f3ff; }
+.rh-holder-intervals button[aria-pressed="true"] {
+  border-color: rgba(82, 140, 255, 0.5);
+  background: rgba(82, 140, 255, 0.16);
+  color: #d7f3ff;
+}
+
+.rh-holder-deltas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  padding: 4px 0 2px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.rh-holder-delta small {
+  margin-right: 4px;
+  color: rgba(230, 233, 239, 0.35);
+  font-size: 8px;
+}
+
+.rh-holder-delta.is-positive { color: #3ad29f; }
+.rh-holder-delta.is-negative { color: #ff6b7d; }
+.rh-holder-delta.is-flat { color: #8fb7d8; }
+.rh-holder-delta.is-unavailable { color: rgba(230, 233, 239, 0.3); }
+
+.rh-holder-plot {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.rh-holder-bars {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 55px;
+  overflow: visible;
+}
+
+.rh-holder-bars line { stroke: rgba(230, 233, 239, 0.18); stroke-width: 0.8; }
+.rh-holder-bars rect { fill: #8fb7d8; }
+.rh-holder-bars rect.is-positive { fill: #3ad29f; }
+.rh-holder-bars rect.is-negative { fill: #ff6b7d; }
+.rh-holder-bars rect.is-unavailable { fill: rgba(230, 233, 239, 0.2); }
+.rh-holder-bars rect.is-open { opacity: 0.72; }
+
+.rh-holder-range {
+  display: flex;
+  justify-content: space-between;
+  color: rgba(230, 233, 239, 0.3);
+  font-size: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.rh-holder-history-state {
+  margin: auto;
+  color: rgba(230, 233, 239, 0.42);
+  font-size: 11px;
+  text-align: center;
 }
 
 .robinhood-holder-page {
