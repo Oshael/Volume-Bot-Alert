@@ -1619,6 +1619,11 @@ novamente. Roles persistidos só são dispensados quando a evidência cobre o bl
 fora de `observed_from/through`, continuam sendo revalidados pelo archive RPC.
 Somente os demais endpoints entram na hidratação; a telemetria `knownSkipped`
 informa quantos endereços foram eliminados do plano.
+Ranges densos não abortam quando ultrapassam 10.000 combinações endereço/bloco:
+a hidratação divide o plano em chunks de até 10.000, expostos em
+`endpointRoles.hydration.telemetry.chunks`, e mantém o range/cursor original.
+Cada chunk confirmado persiste evidência idempotente; uma falha posterior não
+avança o cursor e a repetição reaproveita o que já foi comprovado.
 
 Depois de preencher os papéis, execute `npm run
 robinhood:wallet-transfer-reclassification -- --day=YYYY-MM-DD --limit=100`.

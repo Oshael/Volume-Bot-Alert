@@ -2,6 +2,9 @@ const { MAX_ADDRESSES } = require('../models/robinhood-wallet-endpoint-role');
 const {
   EVIDENCE_SOURCE, RESOLVER_VERSION,
 } = require('./robinhood-wallet-endpoint-role-backfill');
+const {
+  MAX_ROLE_PROBES,
+} = require('./robinhood-wallet-transfer-endpoint-roles');
 
 const ZERO_ADDRESS = `0x${'0'.repeat(40)}`;
 const DEAD_ADDRESS = '0x000000000000000000000000000000000000dead';
@@ -84,6 +87,24 @@ function assertCompleteEvidence(planned, evidence) {
   }
 }
 
+function chunks(values, size) {
+  const result = [];
+  for (let offset = 0; offset < values.length; offset += size) {
+    result.push(values.slice(offset, offset + size));
+  }
+  return result;
+}
+
+function mergeResolvedAddresses(contracts, wallets, result) {
+  for (const address of result.walletAddresses || []) {
+    if (!contracts.has(address)) wallets.add(address);
+  }
+  for (const address of result.contractAddresses || []) {
+    contracts.add(address);
+    wallets.delete(address);
+  }
+}
+
 function createRobinhoodWalletTransferRoleHydrator(deps = {}) {
   requireMethods(deps.repository, ['loadRoles', 'upsertEvidence'], 'endpoint role repository');
   requireMethods(deps.reader, ['resolveRoles'], 'archive endpoint role reader');
@@ -102,19 +123,35 @@ function createRobinhoodWalletTransferRoleHydrator(deps = {}) {
         contractAddresses: Object.freeze([]), walletAddresses: Object.freeze([]),
       });
     }
-    const result = await deps.reader.resolveRoles({ transfers: planned });
-    const observations = result.observations || [];
-    assertCompleteEvidence(planned, observations);
-    const evidence = observations.map((item) => ({
-      ...item, evidenceSource: EVIDENCE_SOURCE, resolverVersion: RESOLVER_VERSION,
-    }));
-    const persisted = input.commit === true
-      ? await deps.repository.upsertEvidence(evidence) : [];
+    const plans = chunks(planned, MAX_ROLE_PROBES);
+    const contractAddresses = new Set();
+    const walletAddresses = new Set();
+    let resolved = 0;
+    let persisted = 0;
+    let batches = 0;
+    for (const plan of plans) {
+      const result = await deps.reader.resolveRoles({ transfers: plan });
+      const observations = result.observations || [];
+      assertCompleteEvidence(plan, observations);
+      const evidence = observations.map((item) => ({
+        ...item, evidenceSource: EVIDENCE_SOURCE, resolverVersion: RESOLVER_VERSION,
+      }));
+      resolved += evidence.length;
+      batches += Number(result.telemetry?.batches || 0);
+      mergeResolvedAddresses(contractAddresses, walletAddresses, result);
+      if (input.commit === true) {
+        persisted += (await deps.repository.upsertEvidence(evidence)).length;
+      }
+    }
     return Object.freeze({
-      probes: planned.length, resolved: evidence.length, persisted: persisted.length, knownSkipped,
-      contractAddresses: result.contractAddresses,
-      walletAddresses: result.walletAddresses,
-      telemetry: result.telemetry,
+      probes: planned.length, resolved, persisted, knownSkipped,
+      contractAddresses: Object.freeze([...contractAddresses].sort()),
+      walletAddresses: Object.freeze([...walletAddresses].sort()),
+      telemetry: Object.freeze({
+        probes: planned.length, batches,
+        endpoints: contractAddresses.size + walletAddresses.size,
+        chunks: plans.length,
+      }),
     });
   }
 
@@ -123,5 +160,7 @@ function createRobinhoodWalletTransferRoleHydrator(deps = {}) {
 
 module.exports = {
   createRobinhoodWalletTransferRoleHydrator,
-  __private: { endpointAddresses, isCovered, knownAddresses, unresolvedTransfers },
+  __private: {
+    chunks, endpointAddresses, isCovered, knownAddresses, unresolvedTransfers,
+  },
 };

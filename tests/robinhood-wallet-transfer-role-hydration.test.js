@@ -4,6 +4,9 @@ const { describe, it } = require('node:test');
 const {
   createRobinhoodWalletTransferRoleHydrator,
 } = require('../src/services/robinhood-wallet-transfer-role-hydration');
+const {
+  MAX_ROLE_PROBES,
+} = require('../src/services/robinhood-wallet-transfer-endpoint-roles');
 
 const ALICE = `0x${'1'.repeat(40)}`;
 const BOB = `0x${'2'.repeat(40)}`;
@@ -94,6 +97,23 @@ describe('Robinhood historical transfer endpoint-role hydration', () => {
     assert.ok(test.calls.writes[0].every((item) => (
       item.evidenceSource === 'pc_archive' && item.resolverVersion === 'rh_endpoint_v1'
     )));
+  });
+
+  it('chunks dense confirmed ranges without exceeding the reader or repository limits', async () => {
+    const test = harness();
+    const transfers = Array.from(
+      { length: (MAX_ROLE_PROBES / 2) + 1 }, (_, index) => transfer(index + 1)
+    );
+    const result = await test.hydrator.hydrate({ transfers, commit: true });
+
+    assert.deepEqual(test.calls.probes.map((items) => items.length), [MAX_ROLE_PROBES, 2]);
+    assert.deepEqual(test.calls.writes.map((items) => items.length), [MAX_ROLE_PROBES, 2]);
+    assert.equal(result.probes, MAX_ROLE_PROBES + 2);
+    assert.equal(result.resolved, MAX_ROLE_PROBES + 2);
+    assert.equal(result.persisted, MAX_ROLE_PROBES + 2);
+    assert.deepEqual(result.telemetry, {
+      probes: MAX_ROLE_PROBES + 2, batches: 2, endpoints: 2, chunks: 2,
+    });
   });
 
   it('fails closed when the archive omits evidence for any planned probe', async () => {
