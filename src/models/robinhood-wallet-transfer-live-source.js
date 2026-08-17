@@ -35,10 +35,26 @@ function projectionVersion(value) {
   return normalized;
 }
 
-function identityList(values, label, bytes) {
+function identityChunks(values, label, bytes) {
   if (!Array.isArray(values)) throw new TypeError(`${label} must be a list`);
-  if (values.length > MAX_IDENTITIES) throw new RangeError(`${label} exceeds ${MAX_IDENTITIES}`);
-  return [...new Set(values.map((value) => fixedHex(value, label, bytes)))];
+  const identities = [...new Set(values.map((value) => fixedHex(value, label, bytes)))];
+  const result = [];
+  for (let offset = 0; offset < identities.length; offset += MAX_IDENTITIES) {
+    result.push(identities.slice(offset, offset + MAX_IDENTITIES));
+  }
+  return result;
+}
+
+async function queryRows(promises) {
+  return (await Promise.all(promises)).flatMap(({ rows }) => rows);
+}
+
+function compareSwapRows(left, right) {
+  const block = BigInt(left.block_number) - BigInt(right.block_number);
+  if (block !== 0n) return block < 0n ? -1 : 1;
+  const action = BigInt(left.action_index) - BigInt(right.action_index);
+  if (action !== 0n) return action < 0n ? -1 : 1;
+  return left.transaction_hash.localeCompare(right.transaction_hash);
 }
 
 function sourceFrontier(row) {
@@ -320,49 +336,56 @@ function createRobinhoodWalletTransferLiveSourceRepository(options = {}) {
         completeThroughBlock: frontier.completeThroughBlock,
       });
     }
-    const transactionHashes = identityList(input.transactionHashes || [], 'transactionHashes', 32);
-    const endpointAddresses = identityList(input.endpointAddresses || [], 'endpointAddresses', 20);
+    const transactionHashChunks = identityChunks(
+      input.transactionHashes || [], 'transactionHashes', 32
+    );
+    const endpointAddressChunks = identityChunks(
+      input.endpointAddresses || [], 'endpointAddresses', 20
+    );
+    const endpointAddressCount = endpointAddressChunks.reduce(
+      (total, values) => total + values.length, 0
+    );
     const fromTime = timestamp(input.fromTime, 'fromTime');
     const toTime = timestamp(input.toTime, 'toTime');
     if (fromTime > toTime) throw new Error('classification time range is inverted');
-    const swapPromise = transactionHashes.length === 0 ? { rows: [] } : database.query(
+    const swapPromise = queryRows(transactionHashChunks.map((transactionHashes) => database.query(
       `SELECT transaction_hash, action_index, token_address, wallet_address,
-              recipient_address, router_address, token_amount_raw, side
+              recipient_address, router_address, token_amount_raw, side, block_number
        FROM robinhood_wallet_swaps
        WHERE chain = $1 AND block_time >= $2::timestamptz AND block_time <= $3::timestamptz
          AND block_number >= $4::bigint AND block_number <= $5::bigint
          AND transaction_hash = ANY($6::varchar[])
        ORDER BY block_number, action_index, transaction_hash`,
       [CHAIN, fromTime, toTime, fromBlock, toBlock, transactionHashes]
-    );
-    const poolPromise = endpointAddresses.length === 0 ? { rows: [] } : database.query(
+    )));
+    const poolPromise = queryRows(endpointAddressChunks.map((endpointAddresses) => database.query(
       `SELECT protocol, pool_address, origin_address FROM robinhood_pool_registry
        WHERE chain = $1 AND active = true
          AND (pool_address = ANY($2::varchar[])
            OR (protocol = 'uniswap-v4' AND origin_address = ANY($2::varchar[])))`,
       [CHAIN, endpointAddresses]
-    );
-    const rolePromise = endpointAddresses.length === 0 ? { rows: [] } : database.query(
+    )));
+    const rolePromise = queryRows(endpointAddressChunks.map((endpointAddresses) => database.query(
       `SELECT endpoint_address, endpoint_role FROM robinhood_wallet_endpoint_roles
        WHERE chain = $1 AND endpoint_address = ANY($2::varchar[])
        ORDER BY endpoint_address`,
       [CHAIN, endpointAddresses]
-    );
-    const [swapResult, poolResult, roleResult] = await Promise.all([
+    )));
+    const [swapRows, poolRows, roleRows] = await Promise.all([
       swapPromise, poolPromise, rolePromise,
     ]);
-    const swaps = swapResult.rows.map(normalizeSwap);
+    const swaps = swapRows.sort(compareSwapRows).map(normalizeSwap);
     const poolAddresses = new Set();
-    for (const row of poolResult.rows) {
+    for (const row of poolRows) {
       if (row.pool_address) poolAddresses.add(row.pool_address);
       if (row.protocol === 'uniswap-v4' && row.origin_address) {
         poolAddresses.add(row.origin_address);
       }
     }
-    const persistedWallets = roleResult.rows
+    const persistedWallets = roleRows
       .filter(({ endpoint_role: role }) => role === 'wallet')
       .map(({ endpoint_address: endpoint }) => endpoint);
-    const persistedContracts = roleResult.rows
+    const persistedContracts = roleRows
       .filter(({ endpoint_role: role }) => role === 'contract')
       .map(({ endpoint_address: endpoint }) => endpoint);
     const swapWalletAddresses = swaps.map(({ walletAddress }) => walletAddress);
@@ -382,10 +405,14 @@ function createRobinhoodWalletTransferLiveSourceRepository(options = {}) {
       rpcExemptAddresses: Object.freeze([...new Set([
         ...poolAddresses, ...routerAddresses, ...swapWalletAddresses,
       ])].sort()),
+      contextQueryChunks: Object.freeze({
+        transactionHashes: transactionHashChunks.length,
+        endpointAddresses: endpointAddressChunks.length,
+      }),
       endpointRoleCoverage: Object.freeze({
-        requested: endpointAddresses.length,
-        persisted: roleResult.rows.length,
-        unpersisted: endpointAddresses.length - roleResult.rows.length,
+        requested: endpointAddressCount,
+        persisted: roleRows.length,
+        unpersisted: endpointAddressCount - roleRows.length,
         probes: 0,
       }),
     });
@@ -408,5 +435,7 @@ function createRobinhoodWalletTransferLiveSourceRepository(options = {}) {
 module.exports = {
   MAX_IDENTITIES,
   createRobinhoodWalletTransferLiveSourceRepository,
-  __private: { backfillFrontier, seedFrontier, sourceFrontier, transferBackfillPlan },
+  __private: {
+    backfillFrontier, identityChunks, seedFrontier, sourceFrontier, transferBackfillPlan,
+  },
 };

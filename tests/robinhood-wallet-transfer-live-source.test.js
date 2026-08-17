@@ -2,7 +2,8 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const {
-  __private: { backfillFrontier, sourceFrontier, transferBackfillPlan },
+  MAX_IDENTITIES,
+  __private: { backfillFrontier, identityChunks, sourceFrontier, transferBackfillPlan },
 } = require('../src/models/robinhood-wallet-transfer-live-source');
 
 const BASE = Object.freeze({
@@ -18,6 +19,18 @@ const SEED = Object.freeze({
 });
 
 describe('Robinhood wallet transfer LIVE source frontier', () => {
+  it('chunks normalized classification identities instead of rejecting dense ranges', () => {
+    const values = Array.from({ length: MAX_IDENTITIES + 1 }, (_, index) => (
+      `0x${BigInt(index + 1).toString(16).padStart(64, '0')}`
+    ));
+    values.push(values[0]);
+
+    const result = identityChunks(values, 'transactionHashes', 32);
+    assert.deepEqual(result.map((items) => items.length), [MAX_IDENTITIES, 1]);
+    assert.equal(result[0][0], values[0]);
+    assert.throws(() => identityChunks(['bad'], 'transactionHashes', 32), /32 bytes/);
+  });
+
   it('fails closed for every incomplete source state', () => {
     const cases = [
       [null, 'swap_live_missing'],

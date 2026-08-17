@@ -36,9 +36,6 @@ function endpointAddresses(transfers) {
       if (!isExcluded(address)) addresses.add(address);
     }
   }
-  if (addresses.size > MAX_ADDRESSES) {
-    throw new RangeError(`endpoint addresses exceed ${MAX_ADDRESSES}`);
-  }
   return [...addresses];
 }
 
@@ -114,7 +111,9 @@ function createRobinhoodWalletTransferRoleHydrator(deps = {}) {
     const addresses = endpointAddresses(transfers);
     const known = knownAddresses(input.knownAddresses);
     const unknownAddresses = addresses.filter((address) => !known.has(address));
-    const roles = await deps.repository.loadRoles(unknownAddresses);
+    const roleLoads = chunks(unknownAddresses, MAX_ADDRESSES)
+      .map((items) => deps.repository.loadRoles(items));
+    const roles = (await Promise.all(roleLoads)).flat();
     const planned = unresolvedTransfers(transfers, roles, known);
     const knownSkipped = addresses.length - unknownAddresses.length;
     if (!planned.length) {

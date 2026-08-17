@@ -1624,6 +1624,10 @@ a hidratação divide o plano em chunks de até 10.000, expostos em
 `endpointRoles.hydration.telemetry.chunks`, e mantém o range/cursor original.
 Cada chunk confirmado persiste evidência idempotente; uma falha posterior não
 avança o cursor e a repetição reaproveita o que já foi comprovado.
+As listas de `transactionHashes`, `endpointAddresses` e roles também são
+divididas em consultas PostgreSQL de até 10.000 identidades, sem reduzir o range.
+`contextQueryChunks` informa quantas consultas foram necessárias para hashes e
+endpoints; os limites continuam valendo por query, não por batch do backfill.
 
 Depois de preencher os papéis, execute `npm run
 robinhood:wallet-transfer-reclassification -- --day=YYYY-MM-DD --limit=100`.
