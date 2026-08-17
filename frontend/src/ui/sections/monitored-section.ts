@@ -11,6 +11,7 @@ import { fetchTickerPeers, type TickerPeerListItem, type TickerPeerListPayload }
 import { resolveMonitoredEmptyStateContent } from '../../utils/monitored-empty-state';
 import { calculateCanonicalVolume5mDelta } from '../../utils/canonical-volume';
 import { syncElementChildOrder } from '../../utils/dom-child-order';
+import { bindRobinhoodHolderHover } from '../robinhood-holder-hover';
 
 const TICKER_PEERS_PANEL_GAP_PX = 8;
 const TICKER_PEERS_VIEWPORT_MARGIN_PX = 12;
@@ -613,6 +614,7 @@ function bindMonitoredRowControls(section: ParentNode, state: AppState, controll
   bindTokenImagePreview(section);
   bindSparklineHover(section, state.data.sparklineByAddress, { controller });
   bindMonitoredSparklineQuickRanges(section, controller);
+  bindRobinhoodHolderHover(section, state.session.token);
 }
 
 function bindMonitoredSparklineQuickRanges(section: ParentNode, controller: AppController) {
@@ -1580,6 +1582,12 @@ function buildMonitoredHolderValue(item: ManualTokenEntry) {
   const value = document.createElement('span');
   value.textContent = display.value;
   value.title = display.title;
+  if (display.available) {
+    value.className = 'robinhood-holder-hover-trigger';
+    value.dataset.holderHoverAddress = item.address;
+    value.tabIndex = 0;
+    value.setAttribute('aria-label', `Open holder history for ${item.symbol || item.label || item.address}`);
+  }
   return value;
 }
 

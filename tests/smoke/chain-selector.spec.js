@@ -1682,6 +1682,17 @@ test('renders holders and cursor pages in the Robinhood expanded chart', async (
     .locator('[data-chain="robinhood"]').click();
   const row = page.locator(`article.monitored-token-row[data-address="${ROBINHOOD_TOKEN}"]`);
   await expect(row).toBeVisible();
+  await row.locator('[data-holder-hover-address]').hover();
+  const holderHover = page.locator('[data-holder-hover-card]');
+  await expect(holderHover).toBeVisible();
+  await expect(holderHover.locator('[data-holder-hover-count]')).toHaveText('4,424');
+  await expect(holderHover.locator('.rh-holder-hover-delta')).toHaveCount(4);
+  await expect(holderHover).toContainText('+4 / +0.09%');
+  await expect(holderHover.locator('[data-holder-hover-bar]')).toHaveCount(180);
+  await holderHover.getByRole('button', { name: '24H', exact: true }).click();
+  await expect(holderHover.locator('[data-holder-hover-bar]')).toHaveCount(30);
+  await page.mouse.move(0, 0);
+  await expect(holderHover).toBeHidden();
   await row.locator('.monitored-mini-chart .sparkline-wrap').click();
 
   const dialog = page.locator('[data-auth-modal="expanded-sparkline"]');

@@ -4,6 +4,7 @@ import { bindBucketSortControls, bindCompactSearch, bindCopyButtons, bindPagedBu
 import { bindMonitoredTickerPeerPanelClose } from './monitored-section';
 import { bindRadarIdentityBadges } from './radar-identity-badges';
 import { resolveLiveMockSolUsdcRate } from '../../utils/mock-trading-display';
+import { bindRobinhoodHolderHover } from '../robinhood-holder-hover';
 
 const RECENT_MAX_AGE_MINUTES = 7 * 24 * 60;
 const OLD_WEEK_MIN_AGE_MINUTES = RECENT_MAX_AGE_MINUTES;
@@ -459,6 +460,7 @@ export function renderRecentSection(state: AppState, controller: AppController) 
   bindSparklineHover(section, state.data.sparklineByAddress, { controller });
   bindSparklineRangeControls(section, controller);
   bindTokenImagePreview(section);
+  bindRobinhoodHolderHover(section, state.session.token);
   bindPagedBucketControls(section, controller, 'recent');
   bindBucketSortControls(section, controller, 'recent');
   bindHistoryBucketOrderLock(section, controller, 'recent');
@@ -721,6 +723,7 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
   bindSparklineHover(section, state.data.sparklineByAddress, { controller });
   bindSparklineRangeControls(section, controller);
   bindTokenImagePreview(section);
+  bindRobinhoodHolderHover(section, state.session.token);
   bindPagedBucketControls(section, controller, 'old-week');
   bindBucketSortControls(section, controller, 'old-week');
   bindHistoryBucketOrderLock(section, controller, 'old-week');

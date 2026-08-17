@@ -8,6 +8,7 @@ import { resolveLiveMockSolUsdcRate } from '../../utils/mock-trading-display';
 import { escapeHtml } from './html-safety';
 import { normalizeTokenChain, type TokenChain } from '../../utils/token-chain';
 import { buildTokenChainIcon, getTokenChainTitle } from '../token-chain-badge';
+import { bindRobinhoodHolderHover } from '../robinhood-holder-hover';
 
 let manualFolderCreateModalOpen = false;
 let manualFolderCreateDraft = '';
@@ -132,6 +133,7 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
   bindCopyButtons(section);
   bindSparklineHover(section, state.data.sparklineByAddress, { controller });
   bindTokenImagePreview(section);
+  bindRobinhoodHolderHover(section, state.session.token);
   bindBucketSortControls(section, controller, 'manual');
   mountManualChainIcons(section);
   bindManualTokenEntryForm(section, controller);

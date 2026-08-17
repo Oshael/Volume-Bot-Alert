@@ -3682,6 +3682,153 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   text-align: center;
 }
 
+.robinhood-holder-hover-trigger {
+  border-radius: 3px;
+  color: #8fb7d8 !important;
+  cursor: help;
+  outline: none;
+}
+
+.robinhood-holder-hover-trigger:hover,
+.robinhood-holder-hover-trigger:focus-visible,
+.robinhood-holder-hover-trigger[aria-expanded="true"] {
+  color: #d7f3ff !important;
+  text-decoration: underline dotted rgba(143, 183, 216, 0.7);
+  text-underline-offset: 3px;
+}
+
+.robinhood-holder-hover-trigger:focus-visible {
+  box-shadow: 0 0 0 2px rgba(82, 140, 255, 0.45);
+}
+
+.robinhood-holder-hover-card {
+  position: fixed;
+  z-index: 12020;
+  width: min(330px, calc(100vw - 24px));
+  padding: 16px;
+  border: 1px solid rgba(93, 113, 170, 0.34);
+  border-radius: 13px;
+  background: linear-gradient(160deg, rgba(17, 19, 27, 0.99), rgba(24, 31, 52, 0.99));
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.58), 0 0 0 1px rgba(255, 255, 255, 0.025);
+  color: #f4f6fb;
+  font-variant-numeric: tabular-nums;
+}
+
+.robinhood-holder-hover-card[hidden] {
+  display: none;
+}
+
+.robinhood-holder-hover-card > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(143, 183, 216, 0.14);
+}
+
+.robinhood-holder-hover-card > header span {
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.robinhood-holder-hover-card > header strong {
+  color: #849be6;
+  font-size: 25px;
+  font-weight: 650;
+}
+
+.rh-holder-hover-deltas {
+  display: grid;
+  gap: 7px;
+  padding: 12px 0;
+}
+
+.rh-holder-hover-delta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  font-size: 13px;
+}
+
+.rh-holder-hover-delta span {
+  color: rgba(244, 246, 251, 0.78);
+}
+
+.rh-holder-hover-delta strong {
+  font-weight: 600;
+}
+
+.rh-holder-hover-delta.is-positive strong { color: #6cbd72; }
+.rh-holder-hover-delta.is-negative strong { color: #ef5350; }
+.rh-holder-hover-delta.is-flat strong { color: #849be6; }
+.rh-holder-hover-delta.is-unavailable strong { color: rgba(244, 246, 251, 0.38); }
+
+.rh-holder-hover-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: rgba(132, 155, 230, 0.9);
+  font-size: 11px;
+}
+
+.rh-holder-hover-controls > div {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.rh-holder-hover-controls button {
+  min-width: 31px;
+  padding: 3px 5px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: rgba(244, 246, 251, 0.48);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.rh-holder-hover-controls button:hover,
+.rh-holder-hover-controls button[aria-pressed="true"] {
+  border-color: rgba(132, 155, 230, 0.45);
+  background: rgba(132, 155, 230, 0.13);
+  color: #dce5ff;
+}
+
+.rh-holder-hover-plot {
+  height: 105px;
+  margin-top: 8px;
+}
+
+.rh-holder-hover-bars {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.rh-holder-hover-bars line { stroke: rgba(244, 246, 251, 0.16); stroke-width: 0.8; }
+.rh-holder-hover-bars rect { fill: #849be6; }
+.rh-holder-hover-bars rect.is-positive { fill: #6cbd72; }
+.rh-holder-hover-bars rect.is-negative { fill: #ef5350; }
+.rh-holder-hover-bars rect.is-unavailable { fill: rgba(244, 246, 251, 0.18); }
+.rh-holder-hover-bars rect.is-open { opacity: 0.72; }
+
+.rh-holder-hover-state {
+  margin: 20px 0;
+  color: rgba(244, 246, 251, 0.55);
+  font-size: 12px;
+  text-align: center;
+}
+
+.robinhood-holder-hover-card > footer {
+  margin-top: 7px;
+  color: rgba(244, 246, 251, 0.3);
+  font-size: 9px;
+  text-align: center;
+}
+
 .robinhood-holder-page {
   display: flex;
   flex-direction: column;
