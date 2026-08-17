@@ -1,4 +1,10 @@
 const HOLDER_FRESHNESS_TARGET_MS = 15 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+const HOLDER_SERIES_HOURS = 168;
+const HOLDER_BAR_HOURS = 4;
+const HOLDER_DELTA_WINDOWS = Object.freeze([
+  ['4h', 4], ['12h', 12], ['1d', 24], ['3d', 72], ['7d', 168],
+]);
 
 function optionalIso(value, label) {
   if (value == null || value === '') return null;
@@ -87,8 +93,132 @@ function buildDailyHolderHistory(snapshots, requestedDays) {
   return Object.freeze({ baseline, points: Object.freeze(points) });
 }
 
+function normalizeSeriesPoint(value, previousMs) {
+  const bucketStart = optionalIso(value?.bucketStart, 'holder bucketStart');
+  const bucketMs = Date.parse(bucketStart);
+  const observedAt = optionalIso(value?.observedAt, 'holder bucket observedAt');
+  const holderCount = optionalHolderCount(value?.holderCount);
+  const source = value?.source;
+  if (bucketMs % HOUR_MS !== 0 || bucketMs <= previousMs || holderCount == null
+    || observedAt == null
+    || !['blockscout', 'ledger_live'].includes(source)) {
+    throw new Error('hourly holder buckets are invalid');
+  }
+  return { bucketStart, bucketMs, holderCount, source, observedAt };
+}
+
+function hasSequence(points, fromMs, throughMs) {
+  for (let bucketMs = fromMs; bucketMs <= throughMs; bucketMs += HOUR_MS) {
+    if (!points.has(bucketMs)) return false;
+  }
+  return true;
+}
+
+function comparison(points, fromMs, throughMs) {
+  const complete = hasSequence(points, fromMs, throughMs);
+  const first = points.get(fromMs);
+  const last = points.get(throughMs);
+  return Object.freeze({
+    delta: complete ? last.holderCount - first.holderCount : null,
+    comparison: complete ? 'complete' : 'unavailable',
+    from: new Date(fromMs).toISOString(),
+    through: last?.observedAt || null,
+  });
+}
+
+function indexHourlyBuckets(buckets, bounds) {
+  if (!Array.isArray(buckets) || buckets.length > HOLDER_SERIES_HOURS + 1) {
+    throw new Error('hourly holder bucket range is invalid');
+  }
+  const points = new Map();
+  let previousMs = -Infinity;
+  for (const bucket of buckets) {
+    const point = normalizeSeriesPoint(bucket, previousMs);
+    const observedMs = Date.parse(point.observedAt);
+    if (point.bucketMs < bounds.firstBucketMs || point.bucketMs > bounds.currentBucketMs
+      || observedMs < point.bucketMs || observedMs >= point.bucketMs + HOUR_MS
+      || observedMs > bounds.asOfMs) {
+      throw new Error('hourly holder bucket range is invalid');
+    }
+    points.set(point.bucketMs, point);
+    previousMs = point.bucketMs;
+  }
+  return points;
+}
+
+function applyCurrentHolder(points, current, bounds) {
+  if (current?.holderCount == null || current?.observedAt == null) return null;
+  const holderCount = optionalHolderCount(current.holderCount);
+  const observedAt = optionalIso(current.observedAt, 'current holder observedAt');
+  const observedMs = Date.parse(observedAt);
+  const source = current.source;
+  if (holderCount == null || observedMs > bounds.asOfMs
+    || !['blockscout', 'ledger_live'].includes(source)) {
+    throw new Error('current holder summary is invalid');
+  }
+  const normalized = Object.freeze({ holderCount, source, observedAt });
+  const bucketMs = Math.floor(observedMs / HOUR_MS) * HOUR_MS;
+  const stored = points.get(bucketMs);
+  const replace = !stored
+    || (stored.source === 'blockscout' && source === 'ledger_live')
+    || (stored.source === source && observedMs >= Date.parse(stored.observedAt));
+  if (replace && bucketMs === bounds.currentBucketMs) {
+    points.set(bucketMs, {
+      bucketStart: new Date(bucketMs).toISOString(), bucketMs,
+      holderCount, source, observedAt,
+    });
+  }
+  return normalized;
+}
+
+function buildHolderBars(points, currentBucketMs) {
+  const currentBarStart = Math.floor(currentBucketMs / (HOLDER_BAR_HOURS * HOUR_MS))
+    * HOLDER_BAR_HOURS * HOUR_MS;
+  const bars = [];
+  for (let index = 41; index >= 0; index -= 1) {
+    const startMs = currentBarStart - (index * HOLDER_BAR_HOURS * HOUR_MS);
+    const open = startMs === currentBarStart;
+    const throughMs = open ? currentBucketMs : startMs + (3 * HOUR_MS);
+    const result = comparison(points, startMs - HOUR_MS, throughMs);
+    const last = points.get(throughMs);
+    bars.push(Object.freeze({
+      start: new Date(startMs).toISOString(),
+      end: new Date(startMs + (HOLDER_BAR_HOURS * HOUR_MS)).toISOString(),
+      holderCount: last?.holderCount ?? null,
+      observedAt: last?.observedAt ?? null,
+      delta: result.delta,
+      status: open ? 'open' : 'complete',
+      comparison: result.comparison,
+    }));
+  }
+  return Object.freeze(bars);
+}
+
+function buildHourlyHolderSeries(buckets, current, asOf = new Date()) {
+  const asOfMs = new Date(asOf).getTime();
+  if (!Number.isFinite(asOfMs)) throw new Error('hourly holder series asOf is invalid');
+  const currentBucketMs = Math.floor(asOfMs / HOUR_MS) * HOUR_MS;
+  const bounds = {
+    asOfMs, currentBucketMs,
+    firstBucketMs: currentBucketMs - (HOLDER_SERIES_HOURS * HOUR_MS),
+  };
+  const points = indexHourlyBuckets(buckets, bounds);
+  const normalizedCurrent = applyCurrentHolder(points, current, bounds);
+  const deltas = Object.fromEntries(HOLDER_DELTA_WINDOWS.map(([key, hours]) => [
+    key, comparison(points, currentBucketMs - (hours * HOUR_MS), currentBucketMs),
+  ]));
+  return Object.freeze({
+    resolution: '1h', interval: '4h', hours: HOLDER_SERIES_HOURS,
+    current: normalizedCurrent,
+    deltas: Object.freeze(deltas),
+    bars: buildHolderBars(points, currentBucketMs),
+  });
+}
+
 module.exports = {
   HOLDER_FRESHNESS_TARGET_MS,
+  HOLDER_SERIES_HOURS,
   buildDailyHolderHistory,
+  buildHourlyHolderSeries,
   normalizeRobinhoodHolderSummary,
 };

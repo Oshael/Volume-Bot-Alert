@@ -3,10 +3,24 @@ const { describe, it } = require('node:test');
 const {
   HOLDER_FRESHNESS_TARGET_MS,
   buildDailyHolderHistory,
+  buildHourlyHolderSeries,
   normalizeRobinhoodHolderSummary,
 } = require('../src/utils/robinhood-holder-summary-view');
 
 describe('Robinhood holder summary view', () => {
+  function hourlyBuckets(asOf, overrides = {}) {
+    const endMs = Math.floor(Date.parse(asOf) / 3_600_000) * 3_600_000;
+    return Array.from({ length: 169 }, (_, index) => {
+      const bucketMs = endMs - ((168 - index) * 3_600_000);
+      return {
+        bucketStart: new Date(bucketMs).toISOString(),
+        holderCount: overrides.holderCount ?? 1000 + index,
+        source: 'blockscout',
+        observedAt: new Date(bucketMs + 1_200_000).toISOString(),
+      };
+    }).filter((_, index) => index !== overrides.removeIndex);
+  }
+
   it('normalizes a fresh persisted count without losing integer precision', () => {
     const asOf = new Date('2026-08-10T12:00:00.000Z');
     const summary = normalizeRobinhoodHolderSummary({
@@ -80,5 +94,40 @@ describe('Robinhood holder summary view', () => {
     assert.equal(history.points[0].comparison, 'unavailable');
     assert.equal(history.points[0].delta24h, null);
     assert.equal(history.points[0].delta24hPct, null);
+  });
+
+  it('builds UTC-aligned bars and rolling deltas with a live current edge', () => {
+    const asOf = '2026-08-10T05:30:00.000Z';
+    const series = buildHourlyHolderSeries(hourlyBuckets(asOf), {
+      holderCount: 1200, source: 'ledger_live', observedAt: '2026-08-10T05:29:00.000Z',
+    }, asOf);
+
+    assert.equal(series.bars.length, 42);
+    assert.deepEqual(series.current, {
+      holderCount: 1200, source: 'ledger_live', observedAt: '2026-08-10T05:29:00.000Z',
+    });
+    assert.equal(series.deltas['4h'].delta, 36);
+    assert.equal(series.deltas['7d'].delta, 200);
+    assert.deepEqual(series.bars.at(-1), {
+      start: '2026-08-10T04:00:00.000Z', end: '2026-08-10T08:00:00.000Z',
+      holderCount: 1200, observedAt: '2026-08-10T05:29:00.000Z', delta: 34,
+      status: 'open', comparison: 'complete',
+    });
+    const staleEdge = buildHourlyHolderSeries(hourlyBuckets(asOf), {
+      holderCount: 9000, source: 'ledger_live', observedAt: '2026-08-10T04:59:00.000Z',
+    }, asOf);
+    assert.equal(staleEdge.deltas['4h'].delta, 4);
+  });
+
+  it('preserves true zero and marks comparisons crossing an hourly gap unavailable', () => {
+    const asOf = '2026-08-10T05:30:00.000Z';
+    const zero = buildHourlyHolderSeries(hourlyBuckets(asOf, { holderCount: 100 }), null, asOf);
+    const gap = buildHourlyHolderSeries(hourlyBuckets(asOf, { removeIndex: 166 }), null, asOf);
+
+    assert.equal(zero.deltas['7d'].delta, 0);
+    assert.equal(zero.deltas['7d'].comparison, 'complete');
+    assert.equal(gap.deltas['4h'].delta, null);
+    assert.equal(gap.deltas['4h'].comparison, 'unavailable');
+    assert.equal(gap.bars.at(-1).comparison, 'unavailable');
   });
 });

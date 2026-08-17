@@ -962,6 +962,12 @@ e mantenha `ROBINHOOD_HOLDER_SNAPSHOT_ENABLED` ou
 `ROBINHOOD_HOLDER_SUMMARY_ENABLED` ativo para a série crescer. O backend publica
 `holder:count` sequenciado
 via relay PostgreSQL para as mesmas rooms por token já usadas pelo mercado.
+`GET /api/robinhood/holder-count-series` é uma leitura PostgreSQL isolada da lista
+paginada: devolve 42 barras de 4h alinhadas em UTC, a barra corrente aberta e
+deltas móveis de 4h/12h/1d/3d/7d. Cada comparação exige todos os buckets horários
+entre os extremos; lacuna retorna `delta: null` e `comparison: unavailable`,
+enquanto zero real permanece `0`. A publicação live-first pode substituir somente
+a ponta corrente da série retornada.
 Mudanças do mesmo token são
 coalescidas por tick e emitidas somente após commit; REST continua sendo o caminho
 de bootstrap/recuperação. Após rewind de reorg, o backend emite o count corrigido

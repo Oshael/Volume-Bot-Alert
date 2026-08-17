@@ -4,6 +4,7 @@ const { normalizeTokenAddress } = require('../utils/token-identity');
 const CHAIN = 'robinhood';
 const MAX_BATCH_SIZE = 500;
 const MAX_HISTORY_DAYS = 90;
+const MAX_HOURLY_HISTORY_HOURS = 168;
 
 function holderCount(value) {
   const normalized = String(value ?? '').trim();
@@ -73,6 +74,18 @@ function normalizeDailySnapshotRow(row) {
     date: normalizeSnapshotDate(row.snapshot_date),
     holderCount: holderCount(row.holder_count),
     observedAt: timestamp(row.observed_at, 'snapshot observedAt'),
+  });
+}
+
+function normalizeHourlyBucketRow(row) {
+  if (!['blockscout', 'ledger_live'].includes(row.source)) {
+    throw new Error('Hourly holder bucket source is invalid');
+  }
+  return Object.freeze({
+    bucketStart: timestamp(row.bucket_start, 'bucketStart'),
+    holderCount: holderCount(row.holder_count),
+    source: row.source,
+    observedAt: timestamp(row.observed_at, 'bucket observedAt'),
   });
 }
 
@@ -368,9 +381,32 @@ function createRobinhoodTokenHolderSummaryRepository(options = {}) {
     return rows.map(normalizeDailySnapshotRow);
   }
 
+  async function listHourlyBuckets(input = {}) {
+    const tokenAddress = normalizeTokenAddress(CHAIN, input.tokenAddress);
+    const hours = Number(input.hours ?? MAX_HOURLY_HISTORY_HOURS);
+    if (!Number.isSafeInteger(hours) || hours < 1 || hours > MAX_HOURLY_HISTORY_HOURS) {
+      throw new RangeError(`hours must be between 1 and ${MAX_HOURLY_HISTORY_HOURS}`);
+    }
+    const asOf = timestamp(input.asOf || new Date(), 'hourly history asOf');
+    const { rows } = await database.query(
+      `SELECT bucket_start, holder_count, source, observed_at
+         FROM robinhood_token_holder_buckets
+        WHERE chain = '${CHAIN}' AND token_address = $1
+          AND bucket_start BETWEEN (
+            date_trunc('hour', $2::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+              - ($3::int * INTERVAL '1 hour')
+          ) AND (
+            date_trunc('hour', $2::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+          )
+        ORDER BY bucket_start ASC`,
+      [tokenAddress, asOf, hours]
+    );
+    return rows.map(normalizeHourlyBucketRow);
+  }
+
   return Object.freeze({
     listRefreshCandidates, recordSuccess, recordFailure, getSummaries,
-    getPublishedSummaries, syncLiveDailySnapshots, listDailySnapshots,
+    getPublishedSummaries, syncLiveDailySnapshots, listDailySnapshots, listHourlyBuckets,
   });
 }
 
@@ -378,6 +414,6 @@ module.exports = {
   createRobinhoodTokenHolderSummaryRepository,
   __private: {
     addressBatch, errorCode, historyDays, holderCount,
-    normalizeDailySnapshotRow, normalizeSummaryRow,
+    normalizeDailySnapshotRow, normalizeHourlyBucketRow, normalizeSummaryRow,
   },
 };

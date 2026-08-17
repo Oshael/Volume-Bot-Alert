@@ -43,6 +43,17 @@ function page() {
   };
 }
 
+function hourlyBuckets() {
+  return Array.from({ length: 169 }, (_, index) => {
+    const bucketMs = NOW - ((168 - index) * 3_600_000);
+    return {
+      bucketStart: new Date(bucketMs).toISOString(), holderCount: 4000 + index,
+      source: 'blockscout',
+      observedAt: new Date(bucketMs + (index === 168 ? 0 : 1_000)).toISOString(),
+    };
+  });
+}
+
 function appWith(options = {}) {
   const app = express();
   const authenticate = options.authenticate || ((_req, _res, next) => next());
@@ -50,6 +61,7 @@ function appWith(options = {}) {
   const repository = options.repository || {
     getPublishedSummaries: async () => [cachedSummary()],
     listDailySnapshots: async () => [],
+    listHourlyBuckets: async () => [],
     recordSuccess: async () => {},
     recordFailure: async () => {},
   };
@@ -91,9 +103,13 @@ describe('Robinhood holders route', () => {
     const historyResponse = await request(appWith({
       authenticate: (_req, res) => res.status(401).json({ error: 'Authentication required' }),
     })).get(`/api/robinhood/holder-history?token=${TOKEN}`);
+    const seriesResponse = await request(appWith({
+      authenticate: (_req, res) => res.status(401).json({ error: 'Authentication required' }),
+    })).get(`/api/robinhood/holder-count-series?token=${TOKEN}`);
 
     assert.equal(response.status, 401);
     assert.equal(historyResponse.status, 401);
+    assert.equal(seriesResponse.status, 401);
     assert.equal(providerCalls, 0);
   });
 
@@ -105,9 +121,12 @@ describe('Robinhood holders route', () => {
       .get(`/api/robinhood/holders?token=${TOKEN}`);
     const historyResponse = await request(appWith({ visibility }))
       .get(`/api/robinhood/holder-history?token=${TOKEN}`);
+    const seriesResponse = await request(appWith({ visibility }))
+      .get(`/api/robinhood/holder-count-series?token=${TOKEN}`);
 
     assert.equal(response.status, 400);
     assert.equal(historyResponse.status, 400);
+    assert.equal(seriesResponse.status, 400);
     assert.equal(response.body.code, 'CHAIN_NOT_AVAILABLE');
   });
 
@@ -167,6 +186,53 @@ describe('Robinhood holders route', () => {
     assert.equal(badToken.status, 400);
     assert.equal(badDays.status, 400);
     assert.equal(reads, 0);
+  });
+
+  it('returns the isolated 7d holder-count series without using the provider', async () => {
+    let scheduled = 0;
+    const response = await request(appWith({
+      repository: {
+        listHourlyBuckets: async (input) => {
+          assert.deepEqual(input, {
+            tokenAddress: TOKEN, hours: 168, asOf: new Date(NOW).toISOString(),
+          });
+          return hourlyBuckets();
+        },
+        getPublishedSummaries: async () => [cachedSummary({
+          holderCount: 4200, source: 'ledger_live',
+          observedAt: '2026-08-10T05:00:00.000Z',
+        })],
+      },
+      scheduler: { schedule: () => { scheduled += 1; return Promise.resolve(); } },
+    })).get(`/api/robinhood/holder-count-series?token=${TOKEN}`);
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.resolution, '1h');
+    assert.equal(response.body.interval, '4h');
+    assert.equal(response.body.bars.length, 42);
+    assert.equal(response.body.bars.at(-1).status, 'open');
+    assert.equal(response.body.deltas['7d'].delta, 200);
+    assert.equal(response.body.current.source, 'ledger_live');
+    assert.equal(scheduled, 0);
+  });
+
+  it('validates and isolates holder-count series failures from the holders page', async () => {
+    let reads = 0;
+    const app = appWith({ repository: {
+      listHourlyBuckets: async () => { reads += 1; throw new Error('database offline'); },
+      getPublishedSummaries: async () => [cachedSummary()],
+      recordSuccess: async () => {},
+      recordFailure: async () => {},
+    } });
+    const invalid = await request(app).get('/api/robinhood/holder-count-series?token=nope');
+    const failed = await request(app).get(`/api/robinhood/holder-count-series?token=${TOKEN}`);
+    const holders = await request(app).get(`/api/robinhood/holders?token=${TOKEN}`);
+
+    assert.equal(invalid.status, 400);
+    assert.equal(failed.status, 500);
+    assert.equal(failed.body.code, 'HOLDER_COUNT_SERIES_UNAVAILABLE');
+    assert.equal(holders.status, 200);
+    assert.equal(reads, 1);
   });
 
   it('returns the normalized page with a fresh cached summary', async () => {

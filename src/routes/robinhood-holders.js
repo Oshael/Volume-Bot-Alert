@@ -23,6 +23,8 @@ const {
 const { normalizeTokenAddress } = require('../utils/token-identity');
 const {
   buildDailyHolderHistory,
+  buildHourlyHolderSeries,
+  HOLDER_SERIES_HOURS,
 } = require('../utils/robinhood-holder-summary-view');
 
 const DEFAULT_REFRESH_MS = 5 * 60_000;
@@ -207,6 +209,34 @@ function createRobinhoodHoldersRouter(options = {}) {
       return res.status(500).json({
         error: 'Holder history is temporarily unavailable',
         code: 'HOLDER_HISTORY_UNAVAILABLE',
+      });
+    }
+  });
+
+  router.get('/holder-count-series', auth, visibility, async (req, res) => {
+    let tokenAddress;
+    try {
+      tokenAddress = normalizeTokenAddress('robinhood', req.query?.token);
+    } catch (_) {
+      return res.status(400).json({ error: 'token is invalid', code: 'INVALID_REQUEST' });
+    }
+    const asOf = new Date(now()).toISOString();
+    try {
+      const [buckets, summaries] = await Promise.all([
+        repository.listHourlyBuckets({
+          tokenAddress, hours: HOLDER_SERIES_HOURS, asOf,
+        }),
+        repository.getPublishedSummaries([tokenAddress]),
+      ]);
+      return res.json({ token: tokenAddress, asOf,
+        ...buildHourlyHolderSeries(buckets, summaries[0] || null, asOf) });
+    } catch (error) {
+      logger.warn?.('[RobinhoodHoldersRoute] holder count series unavailable', {
+        code: safeErrorCode(error),
+      });
+      return res.status(500).json({
+        error: 'Holder count series is temporarily unavailable',
+        code: 'HOLDER_COUNT_SERIES_UNAVAILABLE',
       });
     }
   });

@@ -95,21 +95,14 @@ describe('Robinhood token holder summary repository integration', () => {
       observedAt: '2026-08-10T03:02:00.000Z',
     }]);
 
-    const hourly = await db.query(
-      `SELECT bucket_start, holder_count, source, observed_at
-         FROM robinhood_token_holder_buckets
-        WHERE chain = 'robinhood' AND token_address = $1
-        ORDER BY bucket_start ASC`,
-      [TOKEN]
-    );
-    assert.deepEqual(hourly.rows.map((row) => ({
-      bucketStart: row.bucket_start.toISOString(), holderCount: String(row.holder_count),
-      source: row.source, observedAt: row.observed_at.toISOString(),
-    })), [{
-      bucketStart: '2026-08-10T02:00:00.000Z', holderCount: '4000',
+    const hourly = await repository.listHourlyBuckets({
+      tokenAddress: TOKEN, hours: 2, asOf: '2026-08-10T04:00:00.000Z',
+    });
+    assert.deepEqual(hourly, [{
+      bucketStart: '2026-08-10T02:00:00.000Z', holderCount: 4000,
       source: 'blockscout', observedAt: '2026-08-10T02:59:00.000Z',
     }, {
-      bucketStart: '2026-08-10T03:00:00.000Z', holderCount: '5100',
+      bucketStart: '2026-08-10T03:00:00.000Z', holderCount: 5100,
       source: 'blockscout', observedAt: '2026-08-10T03:02:00.000Z',
     }]);
 
@@ -187,17 +180,11 @@ describe('Robinhood token holder summary repository integration', () => {
         holderCount: '5100', source: 'ledger_live',
         observedAt: '2026-08-10T23:59:00.000Z',
       }]);
-      const hourly = await client.query(
-        `SELECT bucket_start, holder_count, source, observed_at
-           FROM robinhood_token_holder_buckets
-          WHERE chain = 'robinhood' AND token_address = $1`,
-        [TOKEN]
-      );
-      assert.deepEqual(hourly.rows.map((row) => ({
-        bucketStart: row.bucket_start.toISOString(), holderCount: String(row.holder_count),
-        source: row.source, observedAt: row.observed_at.toISOString(),
-      })), [{
-        bucketStart: '2026-08-10T23:00:00.000Z', holderCount: '5100',
+      const hourly = await transactionRepository.listHourlyBuckets({
+        tokenAddress: TOKEN, hours: 1, asOf: '2026-08-10T23:59:00.000Z',
+      });
+      assert.deepEqual(hourly, [{
+        bucketStart: '2026-08-10T23:00:00.000Z', holderCount: 5100,
         source: 'ledger_live', observedAt: '2026-08-10T23:58:00.000Z',
       }]);
       assert.deepEqual(await transactionRepository.syncLiveDailySnapshots({

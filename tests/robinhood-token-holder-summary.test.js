@@ -207,6 +207,31 @@ describe('Robinhood token holder summaries', () => {
     assert.match(calls[0].sql, /ORDER BY snapshot_date ASC/);
   });
 
+  it('reads a bounded hourly range including the comparison baseline', async () => {
+    const calls = [];
+    const repository = createRobinhoodTokenHolderSummaryRepository({ database: {
+      async query(sql, params) {
+        calls.push({ sql, params });
+        return { rows: [{
+          bucket_start: '2026-08-10T04:00:00.000Z', holder_count: '4400',
+          source: 'ledger_live', observed_at: '2026-08-10T04:59:00.000Z',
+        }] };
+      },
+    } });
+    assert.deepEqual(await repository.listHourlyBuckets({
+      tokenAddress: TOKEN, hours: 168, asOf: '2026-08-10T05:30:00.000Z',
+    }), [{
+      bucketStart: '2026-08-10T04:00:00.000Z', holderCount: 4400,
+      source: 'ledger_live', observedAt: '2026-08-10T04:59:00.000Z',
+    }]);
+    assert.deepEqual(calls[0].params, [TOKEN, '2026-08-10T05:30:00.000Z', 168]);
+    assert.match(calls[0].sql, /bucket_start BETWEEN/);
+    assert.match(calls[0].sql, /ORDER BY bucket_start ASC/);
+    await assert.rejects(repository.listHourlyBuckets({
+      tokenAddress: TOKEN, hours: 169,
+    }), /between 1 and 168/);
+  });
+
   it('selects due hot tokens before cold backfill candidates', async () => {
     const fake = databaseReturning({ priority: 'hot', consecutive_failures: 2 });
     const repository = createRobinhoodTokenHolderSummaryRepository(fake);
