@@ -3684,16 +3684,15 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 
 .robinhood-holder-hover-trigger {
   border-radius: 3px;
-  color: #8fb7d8 !important;
-  cursor: help;
+  color: #fff !important;
+  cursor: text;
   outline: none;
+  user-select: text;
 }
 
 .robinhood-holder-hover-trigger:hover,
 .robinhood-holder-hover-trigger:focus-visible {
-  color: #d7f3ff !important;
-  text-decoration: underline dotted rgba(143, 183, 216, 0.7);
-  text-underline-offset: 3px;
+  color: #fff !important;
 }
 
 .robinhood-holder-hover-trigger:focus-visible {

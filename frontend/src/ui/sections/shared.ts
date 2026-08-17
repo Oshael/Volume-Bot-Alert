@@ -2089,14 +2089,14 @@ function renderRadarSizeBlock(item: ManualTokenEntry, meteora: MeteoraEntry | un
   const holders = resolveTokenHolderDisplay(item);
   const holderHover = holders.available
     ? ` class="robinhood-holder-hover-trigger" data-holder-hover-address="${escapeHtml(item.address)}" tabindex="0" aria-controls="robinhood-holder-hover-card" aria-haspopup="dialog" aria-label="Open holder history for ${escapeHtml(item.symbol || item.label || item.address)}"`
-    : ' class="radar-size-empty"';
+    : ` class="radar-size-empty" title="${escapeHtml(holders.title)}"`;
   const valuation = resolveCompactTokenValuation(item);
   return `
     <dl class="radar-size">
       <div class="radar-size-item"><dt>${valuation.label}</dt><dd>${renderTokenTableValuation(valuation)}</dd></div>
       <div class="radar-size-item"><dt>LP</dt><dd>${renderTotalLiquidityCell(item, meteora, meteoraMinPool)}</dd></div>
       <div class="radar-size-item"><dt>AGE</dt><dd class="radar-size-age ${getAgeToneClassFromCreatedAt(item.createdAt)}">${item.createdAt ? fmtAge(item.createdAt) : '-'}</dd></div>
-      <div class="radar-size-item"><dt>HLD</dt><dd${holderHover} title="${escapeHtml(holders.title)}">${escapeHtml(holders.value)}</dd></div>
+      <div class="radar-size-item"><dt>HLD</dt><dd${holderHover}>${escapeHtml(holders.value)}</dd></div>
     </dl>
   `;
 }

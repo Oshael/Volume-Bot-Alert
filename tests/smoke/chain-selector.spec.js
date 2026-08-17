@@ -1682,7 +1682,13 @@ test('renders holders and cursor pages in the Robinhood expanded chart', async (
     .locator('[data-chain="robinhood"]').click();
   const row = page.locator(`article.monitored-token-row[data-address="${ROBINHOOD_TOKEN}"]`);
   await expect(row).toBeVisible();
-  await row.locator('[data-holder-hover-address]').hover();
+  const holderTrigger = row.locator('[data-holder-hover-address]');
+  expect(await holderTrigger.getAttribute('title')).toBeNull();
+  expect(await holderTrigger.evaluate((element) => ({
+    color: getComputedStyle(element).color,
+    cursor: getComputedStyle(element).cursor,
+  }))).toEqual({ color: 'rgb(255, 255, 255)', cursor: 'text' });
+  await holderTrigger.hover();
   const holderHover = page.locator('[data-holder-hover-card]');
   await expect(holderHover).toBeVisible();
   await expect(holderHover.locator('[data-holder-hover-count]')).toHaveText('4,424');
@@ -1763,10 +1769,10 @@ test('renders holders and cursor pages in the Robinhood expanded chart', async (
   await expect(panel).toContainText('Main whale');
   await expect(dialog.locator('[data-holder-chart-view]')).toBeVisible();
   await dialog.getByRole('button', { name: 'Close dialog' }).click();
-  await row.locator('[data-holder-hover-address]').focus();
+  await holderTrigger.focus();
   await expect(holderHover).toBeVisible();
   await holderHover.getByRole('button', { name: '24H', exact: true }).click();
-  await row.locator('[data-holder-hover-address]').evaluate((element) => {
+  await holderTrigger.evaluate((element) => {
     window.__holderHoverStableTarget = element;
   });
   const holderReadsOnHover = diagnostics.apiRequests.filter((requestUrl) => (

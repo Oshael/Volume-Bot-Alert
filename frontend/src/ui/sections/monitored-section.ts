@@ -519,7 +519,8 @@ function patchMonitoredHolderMetric(current: Element, next: Element) {
   if (!currentHolder || !nextHolder
     || currentHolder.dataset.holderHoverAddress !== nextHolder.dataset.holderHoverAddress) return false;
   currentHolder.textContent = nextHolder.textContent;
-  currentHolder.title = nextHolder.title;
+  if (nextHolder.hasAttribute('title')) currentHolder.title = nextHolder.title;
+  else currentHolder.removeAttribute('title');
   currentHolder.setAttribute('aria-label', nextHolder.getAttribute('aria-label') || 'Open holder history');
   return true;
 }
@@ -1594,7 +1595,6 @@ function buildMonitoredHolderValue(item: ManualTokenEntry) {
   const display = resolveTokenHolderDisplay(item);
   const value = document.createElement('span');
   value.textContent = display.value;
-  value.title = display.title;
   if (display.available) {
     value.className = 'robinhood-holder-hover-trigger';
     value.dataset.holderHoverAddress = item.address;
@@ -1602,6 +1602,8 @@ function buildMonitoredHolderValue(item: ManualTokenEntry) {
     value.setAttribute('aria-controls', 'robinhood-holder-hover-card');
     value.setAttribute('aria-haspopup', 'dialog');
     value.setAttribute('aria-label', `Open holder history for ${item.symbol || item.label || item.address}`);
+  } else {
+    value.title = display.title;
   }
   return value;
 }
