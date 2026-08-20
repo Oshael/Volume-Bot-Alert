@@ -1015,7 +1015,10 @@ o apply serial usa `robinhood-holder-live-apply-worker`, intervalo default de
 do mesmo token são aplicados em uma transação, em lotes default de 100 e ajustáveis
 por `ROBINHOOD_HOLDER_LIVE_APPLY_BATCH_SIZE` entre 1 e 1.000. O primeiro déficit
 encerra o lote antes de alterar o evento inválido; o prefixo válido já aplicado
-preserva sua evidência reversível. Captura e apply bloqueiam o mesmo cursor em cada
+preserva sua evidência reversível. Cada lote carrega as carteiras envolvidas uma
+vez, calcula a sequência em memória e persiste saldos finais e evidências do journal
+em operações bulk; o tamanho do lote não multiplica queries PostgreSQL por evento.
+Captura e apply bloqueiam o mesmo cursor em cada
 transação, então captura, apply e rewind de reorg permanecem ordenados. O apply
 escolhe o evento elegível global mais antigo e mantém afinidade no token enquanto houver eventos;
 o índice parcial da stage 121 preserva a ordem canônica por token sem reescanear

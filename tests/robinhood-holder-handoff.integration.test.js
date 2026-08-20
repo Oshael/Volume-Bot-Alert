@@ -93,6 +93,7 @@ describe('Robinhood holder live handoff persistence', () => {
       });
       assert.deepEqual(await ledger.applyNextPendingEvent(), {
         status: 'applied', tokenAddress: TOKEN, holderCount: '2', holderDelta: 1,
+        appliedEvents: 1, attemptedEvents: 1,
       });
       await ledger.appendCapturedRange({
         transfers: [{
@@ -107,6 +108,7 @@ describe('Robinhood holder live handoff persistence', () => {
       });
       assert.deepEqual(await ledger.applyNextPendingEvent(), {
         status: 'applied', tokenAddress: TOKEN, holderCount: '2', holderDelta: 0,
+        appliedEvents: 1, attemptedEvents: 1,
       });
       const balances = await client.query(
         `SELECT wallet_address, balance_raw FROM robinhood_holder_balances

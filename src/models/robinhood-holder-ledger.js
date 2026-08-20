@@ -291,6 +291,7 @@ async function lockNextApplicableEvent(client, input = {}) {
     `SELECT journal.block_number, journal.block_hash, journal.transaction_hash,
             journal.transaction_index, journal.log_index, journal.token_address,
             journal.from_wallet, journal.to_wallet, journal.amount_raw,
+            state.holder_count, state.version, state.ledger_status,
             state.backfill_next_block, state.live_through_block
        FROM robinhood_holder_transfer_journal journal
        INNER JOIN robinhood_holder_token_states state
@@ -313,6 +314,7 @@ async function lockApplicableTokenEvents(client, first, limit) {
     `SELECT journal.block_number, journal.block_hash, journal.transaction_hash,
             journal.transaction_index, journal.log_index, journal.token_address,
             journal.from_wallet, journal.to_wallet, journal.amount_raw,
+            state.holder_count, state.version, state.ledger_status,
             state.backfill_next_block, state.live_through_block
        FROM robinhood_holder_transfer_journal journal
        INNER JOIN robinhood_holder_token_states state
@@ -337,8 +339,8 @@ function transferFromRow(row) {
   });
 }
 
-async function loadLockedBalances(client, transfer) {
-  const wallets = [...new Set([transfer.fromWallet, transfer.toWallet]
+async function loadLockedBalanceBook(client, tokenAddress, rows) {
+  const wallets = [...new Set(rows.flatMap((row) => [row.from_wallet, row.to_wallet])
     .filter((wallet) => wallet !== ZERO_ADDRESS))].sort();
   if (!wallets.length) return { balances: {}, provenance: {} };
   const result = await client.query(
@@ -348,7 +350,7 @@ async function loadLockedBalances(client, transfer) {
       WHERE chain = 'robinhood' AND token_address = $1
         AND wallet_address = ANY($2::varchar[])
       ORDER BY wallet_address FOR UPDATE`,
-    [transfer.tokenAddress, wallets]
+    [tokenAddress, wallets]
   );
   return {
     balances: Object.fromEntries(result.rows.map((row) => (
@@ -362,30 +364,41 @@ async function loadLockedBalances(client, transfer) {
   };
 }
 
-async function persistBalance(client, transfer, transition) {
-  if (BigInt(transition.after) === 0n) {
+async function persistBatchBalances(client, tokenAddress, finalRows) {
+  const rows = [...finalRows.values()];
+  const zeroWallets = rows.filter(({ balanceRaw }) => BigInt(balanceRaw) === 0n)
+    .map(({ walletAddress }) => walletAddress);
+  const positiveRows = rows.filter(({ balanceRaw }) => BigInt(balanceRaw) > 0n);
+  if (zeroWallets.length) {
     await client.query(
       `DELETE FROM robinhood_holder_balances
-        WHERE chain = 'robinhood' AND token_address = $1 AND wallet_address = $2`,
-      [transfer.tokenAddress, transition.walletAddress]
+        WHERE chain = 'robinhood' AND token_address = $1
+          AND wallet_address = ANY($2::varchar[])`,
+      [tokenAddress, zeroWallets]
     );
-    return;
   }
+  if (!positiveRows.length) return;
   await client.query(
     `INSERT INTO robinhood_holder_balances (
        chain, token_address, wallet_address, balance_raw, last_block_number,
        last_transaction_hash, last_log_index
-     ) VALUES ('robinhood', $1, $2, $3::numeric, $4, $5, $6)
+     ) SELECT 'robinhood', $1, item.wallet_address, item.balance_raw::numeric,
+              item.block_number::bigint, item.transaction_hash, item.log_index
+         FROM jsonb_to_recordset($2::jsonb) AS item(
+           wallet_address text, balance_raw text, block_number text,
+           transaction_hash text, log_index int
+         )
      ON CONFLICT (chain, token_address, wallet_address) DO UPDATE SET
        balance_raw = EXCLUDED.balance_raw,
        last_block_number = EXCLUDED.last_block_number,
        last_transaction_hash = EXCLUDED.last_transaction_hash,
        last_log_index = EXCLUDED.last_log_index,
        updated_at = NOW()`,
-    [
-      transfer.tokenAddress, transition.walletAddress, transition.after,
-      transfer.blockNumber, transfer.transactionHash, transfer.logIndex,
-    ]
+    [tokenAddress, JSON.stringify(positiveRows.map((row) => ({
+      wallet_address: row.walletAddress, balance_raw: row.balanceRaw,
+      block_number: row.blockNumber, transaction_hash: row.transactionHash,
+      log_index: row.logIndex,
+    })))]
   );
 }
 
@@ -505,56 +518,160 @@ async function restoreTailBalances(client, tokenAddress, snapshots) {
   );
 }
 
-async function commitAppliedEvent(client, changes, priorProvenance) {
+function priorPosition(provenance, walletAddress) {
+  return provenance[walletAddress] || {};
+}
+
+function journalEvidence(changes, provenance) {
+  const fromPrior = priorPosition(provenance, changes.transfer.fromWallet);
+  const toPrior = priorPosition(provenance, changes.transfer.toWallet);
+  return {
+    block_number: changes.transfer.blockNumber,
+    transaction_hash: changes.transfer.transactionHash,
+    log_index: changes.transfer.logIndex,
+    from_balance_before: changes.fromBalanceBefore,
+    from_balance_after: changes.fromBalanceAfter,
+    to_balance_before: changes.toBalanceBefore,
+    to_balance_after: changes.toBalanceAfter,
+    holder_delta: changes.holderDelta,
+    from_last_block_before: fromPrior.blockNumber ?? null,
+    from_last_transaction_hash_before: fromPrior.transactionHash ?? null,
+    from_last_log_index_before: fromPrior.logIndex ?? null,
+    to_last_block_before: toPrior.blockNumber ?? null,
+    to_last_transaction_hash_before: toPrior.transactionHash ?? null,
+    to_last_log_index_before: toPrior.logIndex ?? null,
+  };
+}
+
+function applyTransitionToBook(changes, balances, provenance, finalRows) {
   for (const transition of changes.transitions) {
-    await persistBalance(client, changes.transfer, transition);
+    balances[transition.walletAddress] = transition.after;
+    finalRows.set(transition.walletAddress, {
+      walletAddress: transition.walletAddress, balanceRaw: transition.after,
+      blockNumber: changes.transfer.blockNumber,
+      transactionHash: changes.transfer.transactionHash,
+      logIndex: changes.transfer.logIndex,
+    });
+    if (BigInt(transition.after) === 0n) {
+      delete provenance[transition.walletAddress];
+    } else {
+      provenance[transition.walletAddress] = {
+        blockNumber: changes.transfer.blockNumber,
+        transactionHash: changes.transfer.transactionHash,
+        logIndex: changes.transfer.logIndex,
+      };
+    }
   }
+}
+
+function computeApplicablePrefix(rows, locked) {
+  const balances = { ...locked.balances };
+  const provenance = { ...locked.provenance };
+  const journalRows = [];
+  const finalRows = new Map();
+  let holderCount = BigInt(rows[0].holder_count);
+  let holderDelta = 0;
+  let holderCountChanged = false;
+  let latestChanges = null;
+  let suspicion = null;
+  for (const row of rows) {
+    const transfer = transferFromRow(row);
+    let changes;
+    try {
+      changes = deriveBalanceChanges(transfer, balances);
+    } catch (error) {
+      if (error.code !== 'holder_negative_balance') throw error;
+      suspicion = liveDeficit(transfer, {
+        ...row,
+        live_through_block: latestChanges?.transfer.blockNumber ?? row.live_through_block,
+      }, balances);
+      break;
+    }
+    const nextHolderCount = holderCount + BigInt(changes.holderDelta);
+    if (nextHolderCount < 0n) throw new Error('holder token state rejected an ordered transfer');
+    journalRows.push(journalEvidence(changes, provenance));
+    applyTransitionToBook(changes, balances, provenance, finalRows);
+    holderCount = nextHolderCount;
+    holderDelta += changes.holderDelta;
+    holderCountChanged ||= changes.holderDelta !== 0;
+    latestChanges = changes;
+  }
+  return {
+    tokenAddress: rows[0].token_address,
+    initialVersion: String(rows[0].version), finalRows, journalRows,
+    holderDelta, holderCountChanged, latestChanges, suspicion,
+  };
+}
+
+async function advanceAppliedState(client, computed) {
+  const first = computed.journalRows[0];
+  const latest = computed.latestChanges.transfer;
   const state = await client.query(
     `UPDATE robinhood_holder_token_states
-        SET holder_count = holder_count + $2::smallint,
+        SET holder_count = holder_count + $2::bigint,
             live_through_block = $3, live_through_hash = $4,
-            version = version + 1, updated_at = NOW()
+            version = version + $5::bigint, updated_at = NOW()
       WHERE chain = 'robinhood' AND token_address = $1
         AND ledger_status IN ('shadow', 'live')
-        AND holder_count + $2::smallint >= 0
-        AND (live_through_block IS NULL OR live_through_block <= $3)
+        AND holder_count + $2::bigint >= 0
+        AND version = $6::bigint
+        AND (live_through_block IS NULL OR live_through_block <= $7::bigint)
       RETURNING holder_count, version, ledger_status, updated_at,
                 live_through_block, live_through_hash`,
     [
-      changes.transfer.tokenAddress, changes.holderDelta,
-      changes.transfer.blockNumber, changes.transfer.blockHash,
+      computed.tokenAddress, String(computed.holderDelta),
+      latest.blockNumber, latest.blockHash, computed.journalRows.length,
+      computed.initialVersion, first.block_number,
     ]
   );
   if (!state.rowCount) throw new Error('holder token state rejected an ordered transfer');
-  const fromPrior = priorProvenance[changes.transfer.fromWallet] || {};
-  const toPrior = priorProvenance[changes.transfer.toWallet] || {};
-  const journal = await client.query(
+  return state.rows[0];
+}
+
+async function persistJournalEvidence(client, journalRows) {
+  const result = await client.query(
     `UPDATE robinhood_holder_transfer_journal
-        SET from_balance_before = $3::numeric, from_balance_after = $4::numeric,
-            to_balance_before = $5::numeric, to_balance_after = $6::numeric,
-            holder_delta = $7,
-            from_last_block_before = $8, from_last_transaction_hash_before = $9,
-            from_last_log_index_before = $10,
-            to_last_block_before = $11, to_last_transaction_hash_before = $12,
-            to_last_log_index_before = $13,
+        SET from_balance_before = item.from_balance_before::numeric,
+            from_balance_after = item.from_balance_after::numeric,
+            to_balance_before = item.to_balance_before::numeric,
+            to_balance_after = item.to_balance_after::numeric,
+            holder_delta = item.holder_delta,
+            from_last_block_before = item.from_last_block_before::bigint,
+            from_last_transaction_hash_before = item.from_last_transaction_hash_before,
+            from_last_log_index_before = item.from_last_log_index_before,
+            to_last_block_before = item.to_last_block_before::bigint,
+            to_last_transaction_hash_before = item.to_last_transaction_hash_before,
+            to_last_log_index_before = item.to_last_log_index_before,
             applied = true, applied_at = NOW()
-      WHERE chain = 'robinhood' AND transaction_hash = $1 AND log_index = $2
+       FROM jsonb_to_recordset($1::jsonb) AS item(
+         transaction_hash text, log_index int,
+         from_balance_before text, from_balance_after text,
+         to_balance_before text, to_balance_after text, holder_delta smallint,
+         from_last_block_before text, from_last_transaction_hash_before text,
+         from_last_log_index_before int, to_last_block_before text,
+         to_last_transaction_hash_before text, to_last_log_index_before int
+       )
+      WHERE chain = 'robinhood'
+        AND robinhood_holder_transfer_journal.transaction_hash = item.transaction_hash
+        AND robinhood_holder_transfer_journal.log_index = item.log_index
         AND applied = false
-      RETURNING transaction_hash`,
-    [
-      changes.transfer.transactionHash, changes.transfer.logIndex,
-      changes.fromBalanceBefore, changes.fromBalanceAfter,
-      changes.toBalanceBefore, changes.toBalanceAfter, changes.holderDelta,
-      fromPrior.blockNumber ?? null, fromPrior.transactionHash ?? null,
-      fromPrior.logIndex ?? null, toPrior.blockNumber ?? null,
-      toPrior.transactionHash ?? null, toPrior.logIndex ?? null,
-    ]
+      RETURNING robinhood_holder_transfer_journal.transaction_hash`,
+    [JSON.stringify(journalRows)]
   );
-  if (!journal.rowCount) throw new Error('holder journal event was concurrently applied');
-  const row = state.rows[0];
-  const publication = row.ledger_status === 'live' && changes.holderDelta !== 0
+  if (result.rowCount !== journalRows.length) {
+    throw new Error('holder journal event was concurrently applied');
+  }
+}
+
+async function commitAppliedPrefix(client, computed) {
+  if (!computed.journalRows.length) return null;
+  await persistBatchBalances(client, computed.tokenAddress, computed.finalRows);
+  const row = await advanceAppliedState(client, computed);
+  await persistJournalEvidence(client, computed.journalRows);
+  const latest = computed.latestChanges;
+  const publication = row.ledger_status === 'live' && computed.holderCountChanged
     ? Object.freeze({
-        tokenAddress: changes.transfer.tokenAddress,
+        tokenAddress: computed.tokenAddress,
         holderCount: String(row.holder_count), ledgerVersion: String(row.version),
         observedAt: row.updated_at,
         liveThroughBlock: String(row.live_through_block),
@@ -562,8 +679,10 @@ async function commitAppliedEvent(client, changes, priorProvenance) {
       })
     : null;
   return Object.freeze({
-    status: 'applied', tokenAddress: changes.transfer.tokenAddress,
-    holderCount: String(row.holder_count), holderDelta: changes.holderDelta,
+    status: 'applied', tokenAddress: computed.tokenAddress,
+    holderCount: String(row.holder_count), holderDelta: latest.holderDelta,
+    appliedEvents: computed.journalRows.length,
+    attemptedEvents: computed.journalRows.length,
     ...(publication ? { publication } : {}),
   });
 }
@@ -896,44 +1015,25 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
       const first = await lockNextApplicableEvent(client, input);
       if (!first) return Object.freeze({ status: 'idle' });
       const rows = await lockApplicableTokenEvents(client, first, maxEvents);
-      let appliedEvents = 0;
-      let publication = null;
-      let latest = null;
-      let latestAppliedBlock = null;
-      for (const row of rows) {
-        const transfer = transferFromRow(row);
-        const locked = await loadLockedBalances(client, transfer);
-        let changes;
-        try {
-          changes = deriveBalanceChanges(transfer, locked.balances);
-        } catch (error) {
-          if (error.code !== 'holder_negative_balance') throw error;
-          const suspicion = liveDeficit(transfer, {
-            ...row,
-            live_through_block: latestAppliedBlock ?? row.live_through_block,
-          }, locked.balances);
-          const result = {
-            ...suspicion, appliedEvents, attemptedEvents: appliedEvents + 1,
-            ...(publication ? { publication } : {}),
-          };
-          if (input.confirmDriftFingerprint == null) return Object.freeze(result);
-          if (String(input.confirmDriftFingerprint) !== suspicion.fingerprint) {
-            const stale = new Error('holder live drift evidence changed before confirmation');
-            stale.code = 'holder_live_drift_stale';
-            throw stale;
-          }
-          await markTokenDrifted(client, transfer.tokenAddress);
-          return Object.freeze({ ...result, status: 'drifted' });
-        }
-        latest = await commitAppliedEvent(client, changes, locked.provenance);
-        appliedEvents += 1;
-        latestAppliedBlock = transfer.blockNumber;
-        if (latest.publication) publication = latest.publication;
+      const locked = await loadLockedBalanceBook(client, first.token_address, rows);
+      const computed = computeApplicablePrefix(rows, locked);
+      if (computed.suspicion && input.confirmDriftFingerprint != null
+          && String(input.confirmDriftFingerprint) !== computed.suspicion.fingerprint) {
+        const stale = new Error('holder live drift evidence changed before confirmation');
+        stale.code = 'holder_live_drift_stale';
+        throw stale;
       }
-      return Object.freeze({
-        ...latest, appliedEvents, attemptedEvents: appliedEvents,
-        ...(publication ? { publication } : {}),
-      });
+      const applied = await commitAppliedPrefix(client, computed);
+      if (!computed.suspicion) return applied;
+      const result = {
+        ...computed.suspicion,
+        appliedEvents: computed.journalRows.length,
+        attemptedEvents: computed.journalRows.length + 1,
+        ...(applied?.publication ? { publication: applied.publication } : {}),
+      };
+      if (input.confirmDriftFingerprint == null) return Object.freeze(result);
+      await markTokenDrifted(client, computed.tokenAddress);
+      return Object.freeze({ ...result, status: 'drifted' });
     });
   }
 

@@ -14,11 +14,15 @@ const HASH_B = `0x${'2'.repeat(64)}`;
 const HASH_C = `0x${'7'.repeat(64)}`;
 const HASH_D = `0x${'d'.repeat(64)}`;
 const HASH_E = `0x${'e'.repeat(64)}`;
+const HASH_F = `0x${'f'.repeat(64)}`;
+const HASH_6 = `0x${'6'.repeat(64)}`;
+const HASH_8 = `0x${'8'.repeat(64)}`;
 const TOKEN = `0x${'3'.repeat(40)}`;
 const TOKEN_2 = `0x${'6'.repeat(40)}`;
 const TOKEN_3 = `0x${'8'.repeat(40)}`;
 const TOKEN_4 = `0x${'a'.repeat(40)}`;
 const TOKEN_5 = `0x${'9'.repeat(40)}`;
+const TOKEN_BATCH = `0x${'b'.repeat(40)}`;
 const ALICE = `0x${'4'.repeat(40)}`;
 const BOB = `0x${'5'.repeat(40)}`;
 const ZERO_ADDRESS = `0x${'0'.repeat(40)}`;
@@ -166,6 +170,90 @@ describe('Robinhood holder ledger persistence', () => {
         transactionHash: HASH_C, applied: true, fromBefore: '4', toAfter: '7',
         fromPrior: ['100', HASH_A, 0], toPrior: ['100', HASH_A, 0],
       }]);
+
+      await client.query(
+        `INSERT INTO robinhood_holder_token_states (
+           token_address, holder_count, ledger_status, backfill_next_block,
+           live_through_block, live_through_hash
+         ) VALUES ($1, 1, 'live', 100, 99, $2)`, [TOKEN_BATCH, HASH_B]
+      );
+      await client.query(
+        `INSERT INTO robinhood_holder_balances (
+           token_address, wallet_address, balance_raw, last_block_number,
+           last_transaction_hash, last_log_index
+         ) VALUES ($1, $2, 5, 99, $3, 0)`, [TOKEN_BATCH, ALICE, HASH_B]
+      );
+      await client.query(
+        `INSERT INTO robinhood_holder_transfer_journal (
+           block_number, block_hash, transaction_hash, transaction_index,
+           log_index, token_address, from_wallet, to_wallet, amount_raw
+         ) VALUES
+           (100, $1, $2, 10, 10, $5, $6, $7, 2),
+           (100, $1, $3, 11, 11, $5, $7, $6, 1),
+           (100, $1, $4, 12, 12, $5, $7, $6, 9)`,
+        [HASH_A, HASH_F, HASH_6, HASH_8, TOKEN_BATCH, ALICE, BOB]
+      );
+      const partial = await repository.applyNextPendingEvent({
+        onlyTokenAddress: TOKEN_BATCH, maxEvents: 3,
+      });
+      assert.deepEqual({
+        status: partial.status, tokenAddress: partial.tokenAddress,
+        appliedEvents: partial.appliedEvents, attemptedEvents: partial.attemptedEvents,
+        failedTransactionHash: partial.failedTransactionHash,
+        recoverySafe: partial.recoverySafe,
+      }, {
+        status: 'drift-suspected', tokenAddress: TOKEN_BATCH,
+        appliedEvents: 2, attemptedEvents: 3,
+        failedTransactionHash: HASH_8, recoverySafe: false,
+      });
+      assert.deepEqual({ ...partial.publication, observedAt: undefined }, {
+        tokenAddress: TOKEN_BATCH, holderCount: '2', ledgerVersion: '2',
+        liveThroughBlock: '100', liveThroughHash: HASH_A, observedAt: undefined,
+      });
+      assert.ok(partial.publication.observedAt instanceof Date);
+      const partialState = await client.query(
+        `SELECT holder_count, version, live_through_block
+           FROM robinhood_holder_token_states WHERE token_address = $1`, [TOKEN_BATCH]
+      );
+      assert.deepEqual(partialState.rows.map((row) => ({
+        holderCount: String(row.holder_count), version: Number(row.version),
+        liveThroughBlock: String(row.live_through_block),
+      })), [{ holderCount: '2', version: 2, liveThroughBlock: '100' }]);
+      const partialBalances = await client.query(
+        `SELECT wallet_address, balance_raw FROM robinhood_holder_balances
+          WHERE token_address = $1 ORDER BY wallet_address`, [TOKEN_BATCH]
+      );
+      assert.deepEqual(partialBalances.rows.map((row) => [
+        row.wallet_address, String(row.balance_raw),
+      ]), [[ALICE, '4'], [BOB, '1']]);
+      const partialJournal = await client.query(
+        `SELECT transaction_hash, applied, from_last_transaction_hash_before,
+                to_last_transaction_hash_before
+           FROM robinhood_holder_transfer_journal
+          WHERE token_address = $1 ORDER BY transaction_index`, [TOKEN_BATCH]
+      );
+      assert.deepEqual(partialJournal.rows, [{
+        transaction_hash: HASH_F, applied: true,
+        from_last_transaction_hash_before: HASH_B,
+        to_last_transaction_hash_before: null,
+      }, {
+        transaction_hash: HASH_6, applied: true,
+        from_last_transaction_hash_before: HASH_F,
+        to_last_transaction_hash_before: HASH_F,
+      }, {
+        transaction_hash: HASH_8, applied: false,
+        from_last_transaction_hash_before: null,
+        to_last_transaction_hash_before: null,
+      }]);
+      await client.query(
+        `DELETE FROM robinhood_holder_transfer_journal WHERE token_address = $1`, [TOKEN_BATCH]
+      );
+      await client.query(
+        `DELETE FROM robinhood_holder_balances WHERE token_address = $1`, [TOKEN_BATCH]
+      );
+      await client.query(
+        `DELETE FROM robinhood_holder_token_states WHERE token_address = $1`, [TOKEN_BATCH]
+      );
       assert.deepEqual(await repository.listJournalBlockCheckpoints({
         fromBlock: '100', toBlock: '100',
       }), [{ number: '100', hash: HASH_A }]);
