@@ -716,14 +716,24 @@ function buildCacheKey(query, cacheTtlMs, rollout) {
     rollout.aggregateReadsEnabled,
     rollout.fallbackEnabled,
     rollout.shadowCompareEnabled,
+    rollout.liveCoverageEnabled,
     rollout.verifiedCoverage?.from.toISOString() || null,
     rollout.verifiedCoverage?.through.toISOString() || null,
   ]);
 }
 
+function resolveConfiguredCoverage(query, rollout) {
+  const configured = rollout.verifiedCoverage;
+  if (!configured) return null;
+  const through = rollout.liveCoverageEnabled && configured.through < query.endAt
+    ? query.endAt
+    : configured.through;
+  return intersectCoverage(query, { from: configured.from, through });
+}
+
 function resolveReadCoverage(query, rollout) {
   if (!rollout.aggregateReadsEnabled || query.granularityMinutes === 1) return null;
-  const coverage = intersectCoverage(query, rollout.verifiedCoverage);
+  const coverage = resolveConfiguredCoverage(query, rollout);
   if (coverage && !rollout.fallbackEnabled && !coversQuery(query, coverage)) return null;
   return coverage;
 }
@@ -843,9 +853,11 @@ function createRobinhoodMarketHistoryReadRepository(options = {}) {
   const aggregateReadsEnabled = options.aggregateReadsEnabled === true;
   const fallbackEnabled = options.fallbackEnabled !== false;
   const shadowCompareEnabled = options.shadowCompareEnabled === true;
+  const liveCoverageEnabled = options.liveCoverageEnabled === true;
   const verifiedCoverage = normalizeVerifiedCoverage(options.verifiedCoverage);
   const rollout = {
-    aggregateReadsEnabled, fallbackEnabled, shadowCompareEnabled, verifiedCoverage,
+    aggregateReadsEnabled, fallbackEnabled, shadowCompareEnabled,
+    liveCoverageEnabled, verifiedCoverage,
   };
   const cacheTtlMs = Math.max(1000, Number(options.cacheTtlMs) || DEFAULT_CACHE_TTL_MS);
   const cache = new Map();
@@ -882,9 +894,10 @@ function createRobinhoodMarketHistoryReadRepository(options = {}) {
       const exactAggregates = isRobinhoodFullHistoryGranularityMinutes(
         query.granularityMinutes,
       );
+      const effectiveVerifiedCoverage = resolveConfiguredCoverage(query, rollout);
       const verifiedHourlyAggregates = !exactAggregates
         && rollout.aggregateReadsEnabled
-        && rollout.verifiedCoverage != null;
+        && effectiveVerifiedCoverage != null;
       const result = exactAggregates
         ? await execute(AGGREGATE_HISTORY_SQL, [
           query.addresses, query.startAt, query.endAt,
@@ -897,7 +910,7 @@ function createRobinhoodMarketHistoryReadRepository(options = {}) {
           verifiedHourlyAggregates
             ? [
               query.addresses, query.endAt, query.limit,
-              rollout.verifiedCoverage.from, rollout.verifiedCoverage.through,
+              effectiveVerifiedCoverage.from, effectiveVerifiedCoverage.through,
             ]
             : [query.addresses, query.endAt, query.limit]
         );
@@ -951,6 +964,7 @@ module.exports = {
     PRIMARY_ONE_MINUTE_HISTORY_SQL,
     VERIFIED_ALL_AVAILABLE_HISTORY_SQL, buildHistoryResult, carryForwardOpens, compareShadowRows,
     intersectCoverage, mergeRows, normalizeAddresses, normalizeCandle, normalizeQuery,
-    normalizeVerifiedCoverage, readCoveredHistories, resolveResolution,
+    normalizeVerifiedCoverage, readCoveredHistories, resolveConfiguredCoverage,
+    resolveResolution,
   },
 };

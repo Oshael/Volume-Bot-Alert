@@ -165,6 +165,9 @@ function createCatalogMarketHistoryService(options = {}) {
       aggregateReadsEnabled: config.robinhoodMarketAggregateReader.enabled,
       fallbackEnabled: config.robinhoodMarketAggregateReader.fallbackEnabled,
       shadowCompareEnabled: config.robinhoodMarketAggregateReader.shadowCompareEnabled,
+      // VERIFIED_THROUGH is the audited handoff, not a date that operators
+      // advance daily. The derived worker owns aggregate buckets after it.
+      liveCoverageEnabled: true,
       verifiedCoverage: {
         from: config.robinhoodMarketAggregateReader.verifiedFrom,
         through: config.robinhoodMarketAggregateReader.verifiedThrough,

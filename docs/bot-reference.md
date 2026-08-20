@@ -493,6 +493,12 @@ head, com gaps, bloqueios ou erro. O gate também lê, pelos índices parciais d
 vazia ou um lote recente em voo continuam saudáveis. A leitura completa é cacheada por 5s. O corte não desliga o
 monólito automaticamente: overlap, observação e parada continuam sendo ações operacionais.
 
+No leitor de histórico, `ROBINHOOD_MARKET_AGGREGATE_VERIFIED_FROM/THROUGH` delimitam o handoff
+histórico auditado, não um watermark que precise avançar diariamente. Depois do handoff, o serviço
+de catálogo estende a borda superior da cobertura até o fim de cada consulta, pois os aggregates
+live pertencem ao `robinhood-derived`. O fallback legado permanece aplicável ao trecho anterior ao
+`VERIFIED_FROM`; portanto, o início auditado não deve ser antecipado sem backfill validado.
+
 Após o Corte 7, a readiness do workspace prefere a lease ativa
 `robinhood-head-capture-worker` e exige também a saúde de
 `robinhood-processing-worker`; a lease combinada `robinhood-ingestion-worker` fica somente como

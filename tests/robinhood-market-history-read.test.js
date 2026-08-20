@@ -431,6 +431,46 @@ describe('Robinhood native market history reader', () => {
     assert.equal(metrics.fallbackAddresses, 0);
   });
 
+  it('extends an audited handoff through the live head without legacy fallback', async () => {
+    const calls = [];
+    let metrics;
+    const repository = createRobinhoodMarketHistoryReadRepository({
+      aggregateReadsEnabled: true,
+      liveCoverageEnabled: true,
+      verifiedCoverage: {
+        from: '2026-06-11T00:00:00.000Z',
+        through: '2026-08-13T00:00:00.000Z',
+      },
+      database: { async query(sql, params) {
+        calls.push({ sql, params });
+        return { rows: [row({
+          bucket_ts: '2026-08-27T23:30:00.000Z',
+          granularity_minutes: 30,
+          source_granularity_minutes: 1,
+        })] };
+      } },
+    });
+
+    await repository.getHistory({
+      address: ADDRESS,
+      startAt: '2026-08-14T00:00:00.000Z',
+      endAt: '2026-08-28T00:00:00.000Z',
+      granularityMinutes: 30,
+      limit: 336,
+      onMetrics(value) { metrics = value; },
+    });
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].sql, __private.AGGREGATE_HISTORY_SQL);
+    assert.deepEqual(calls[0].params.slice(1, 3), [
+      new Date('2026-08-14T00:00:00.000Z'),
+      new Date('2026-08-28T00:00:00.000Z'),
+    ]);
+    assert.equal(metrics.source, 'aggregate');
+    assert.equal(metrics.fallbackRows, 0);
+    assert.equal(metrics.aggregateCoverageThrough, '2026-08-28T00:00:00.000Z');
+  });
+
   it('uses legacy rows outside the globally verified aggregate interval', async () => {
     const calls = [];
     let metrics;
