@@ -40,21 +40,22 @@ function formatPercent(history: RobinhoodHolderCountSeries, delta: number | null
 }
 
 function renderBars(history: RobinhoodHolderCountSeries) {
-  const bars = history.series[interval].slice(-BAR_LIMITS[interval]);
+  const bars = history.series[interval]
+    .slice(-BAR_LIMITS[interval])
+    .filter((bar) => bar.holderCount != null);
   if (!bars.length) return '<p class="rh-holder-hover-state">No holder history collected yet.</p>';
-  const counts = bars.flatMap((bar) => bar.holderCount == null ? [] : [bar.holderCount]);
-  const minCount = counts.length ? Math.min(...counts) : 0;
-  const maxCount = counts.length ? Math.max(...counts) : 0;
+  const counts = bars.map((bar) => bar.holderCount!);
+  const minCount = Math.min(...counts);
+  const maxCount = Math.max(...counts);
   const countRange = maxCount - minCount;
   const slotWidth = 1000 / bars.length;
   const barWidth = Math.max(0.35, slotWidth * 0.82);
   const rectangles = bars.map((bar, index) => {
-    const available = bar.holderCount != null;
-    const height = !available ? 2 : countRange === 0
+    const height = countRange === 0
       ? 62
       : 24 + (((bar.holderCount! - minCount) / countRange) * 70);
     const title = `${new Date(bar.start).toLocaleString()} · total ${formatCount(bar.holderCount)} · change ${formatCount(bar.delta, true)}`;
-    return `<rect data-holder-hover-bar class="${available ? '' : 'is-unavailable'}${bar.status === 'open' ? ' is-open' : ''}" x="${(index * slotWidth).toFixed(3)}" y="${(96 - height).toFixed(3)}" width="${barWidth.toFixed(3)}" height="${height.toFixed(3)}"><title>${escapeHtml(title)}</title></rect>`;
+    return `<rect data-holder-hover-bar class="${bar.status === 'open' ? 'is-open' : ''}" x="${(index * slotWidth).toFixed(3)}" y="${(96 - height).toFixed(3)}" width="${barWidth.toFixed(3)}" height="${height.toFixed(3)}"><title>${escapeHtml(title)}</title></rect>`;
   }).join('');
   return `<svg class="rh-holder-hover-bars" viewBox="0 0 1000 100" preserveAspectRatio="none" role="img" aria-label="Holder totals for up to the last 30 days">
       <line x1="0" y1="96" x2="1000" y2="96"></line>${rectangles}

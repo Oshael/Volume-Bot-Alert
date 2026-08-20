@@ -71,19 +71,22 @@ function signedCount(value: number | null) {
 }
 
 function holderHistoryHtml(history: RobinhoodHolderCountSeries, interval: RobinhoodHolderInterval) {
-  const bars = history.series[interval].slice(-HOLDER_RENDER_LIMITS[interval]);
-  const available = bars.filter((bar) => bar.delta != null);
-  const maxDelta = Math.max(1, ...available.map((bar) => Math.abs(bar.delta!)));
+  const bars = history.series[interval]
+    .slice(-HOLDER_RENDER_LIMITS[interval])
+    .filter((bar) => bar.holderCount != null);
+  const counts = bars.map((bar) => bar.holderCount!);
+  const minCount = counts.length ? Math.min(...counts) : 0;
+  const maxCount = counts.length ? Math.max(...counts) : 0;
+  const countRange = maxCount - minCount;
   const slotWidth = bars.length ? 1000 / bars.length : 1000;
   const barWidth = Math.max(0.35, slotWidth - Math.min(0.8, slotWidth * 0.18));
   const rectangles = bars.map((bar, index) => {
-    const delta = bar.delta;
-    const height = delta == null ? 1.5 : Math.max(1.5, (Math.abs(delta) / maxDelta) * 44);
-    const y = delta != null && delta > 0 ? 50 - height : 50;
-    const state = delta == null ? 'is-unavailable' : delta > 0 ? 'is-positive' : delta < 0 ? 'is-negative' : 'is-flat';
-    const title = `${bar.start} · ${signedCount(delta)} holders${bar.holderCount == null ? '' : ` · total ${count(bar.holderCount)}`}`;
-    return `<rect data-holder-bar class="${state}${bar.status === 'open' ? ' is-open' : ''}"
-      x="${(index * slotWidth).toFixed(3)}" y="${y.toFixed(3)}" width="${barWidth.toFixed(3)}" height="${height.toFixed(3)}"><title>${escapeHtml(title)}</title></rect>`;
+    const height = countRange === 0
+      ? 62
+      : 24 + (((bar.holderCount! - minCount) / countRange) * 70);
+    const title = `${bar.start} · total ${count(bar.holderCount)} · change ${signedCount(bar.delta)}`;
+    return `<rect data-holder-bar class="${bar.status === 'open' ? 'is-open' : ''}"
+      x="${(index * slotWidth).toFixed(3)}" y="${(96 - height).toFixed(3)}" width="${barWidth.toFixed(3)}" height="${height.toFixed(3)}"><title>${escapeHtml(title)}</title></rect>`;
   }).join('');
   const deltas = HOLDER_DELTA_LABELS.map(([key, label]) => {
     const value = history.deltas[key].delta;
@@ -95,11 +98,11 @@ function holderHistoryHtml(history: RobinhoodHolderCountSeries, interval: Robinh
   const first = bars[0]?.start.slice(0, 10) || '—';
   const last = bars.at(-1)?.end.slice(0, 10) || '—';
   const plot = bars.length
-    ? `<svg class="rh-holder-bars" viewBox="0 0 1000 100" preserveAspectRatio="none" role="img" aria-label="Holder count changes for up to the last 30 days">
-        <line x1="0" y1="50" x2="1000" y2="50"></line>${rectangles}</svg>
+    ? `<svg class="rh-holder-bars" viewBox="0 0 1000 100" preserveAspectRatio="none" role="img" aria-label="Holder totals for up to the last 30 days">
+        <line x1="0" y1="96" x2="1000" y2="96"></line>${rectangles}</svg>
       <div class="rh-holder-range"><span>${first}</span><span>${last}</span></div>`
     : '<p class="rh-holder-history-state">No holder history collected yet.</p>';
-  return `<header><span>Holder change <small>max 30d</small></span>
+  return `<header><span>Holders <small>max 30d</small></span>
       <div class="rh-holder-intervals" role="group" aria-label="Holder chart interval">${controls}</div></header>
     <div class="rh-holder-deltas">${deltas}</div>
     <div class="rh-holder-plot">${plot}</div>`;

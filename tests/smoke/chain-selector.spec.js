@@ -590,10 +590,13 @@ function holderSeriesBars(intervalHours, length) {
   return Array.from({ length }, (_, index) => {
     const startMs = currentStart - ((length - index - 1) * intervalMs);
     const delta = (index % 9) - 4;
+    const missing = index === length - 1;
     return {
       start: new Date(startMs).toISOString(), end: new Date(startMs + intervalMs).toISOString(),
-      holderCount: 4400 + index, observedAt: new Date(Math.min(asOfMs, startMs + intervalMs - 1)).toISOString(),
-      delta, status: index === length - 1 ? 'open' : 'complete', comparison: 'complete',
+      holderCount: missing ? null : 4400 + index,
+      observedAt: missing ? null : new Date(Math.min(asOfMs, startMs + intervalMs - 1)).toISOString(),
+      delta: missing ? null : delta,
+      status: missing ? 'open' : 'complete', comparison: missing ? 'unavailable' : 'complete',
     };
   });
 }
@@ -1695,8 +1698,8 @@ test('renders and switches Robinhood holder hover bars', async ({ page }) => {
   await expect(holderHover.locator('[data-holder-hover-count]')).toHaveText('4,424');
   await expect(holderHover.locator('.rh-holder-hover-delta')).toHaveCount(4);
   await expect(holderHover).toContainText('+4 / +0.09%');
-  await expect(holderHover.locator('[data-holder-hover-bar]')).toHaveCount(180);
-  await expect(holderHover.locator('[data-holder-hover-bar].is-positive, [data-holder-hover-bar].is-negative')).toHaveCount(0);
+  await expect(holderHover.locator('[data-holder-hover-bar]')).toHaveCount(179);
+  await expect(holderHover.locator('[data-holder-hover-bar].is-positive, [data-holder-hover-bar].is-negative, [data-holder-hover-bar].is-unavailable')).toHaveCount(0);
   expect(await holderHover.locator('[data-holder-hover-bar]').evaluateAll((bars) => bars.every((bar) => {
     const y = Number(bar.getAttribute('y'));
     const height = Number(bar.getAttribute('height'));
@@ -1709,7 +1712,10 @@ test('renders and switches Robinhood holder hover bars', async ({ page }) => {
   await page.waitForTimeout(180);
   await expect(holderHover).toBeVisible();
   await expect(holderHover.getByRole('button', { name: '24H', exact: true })).toHaveAttribute('aria-pressed', 'true');
-  await expect(holderHover.locator('[data-holder-hover-bar]')).toHaveCount(30);
+  await expect(holderHover.locator('[data-holder-hover-bar]')).toHaveCount(29);
+  expect(await holderHover.locator('[data-holder-hover-bar]').last().evaluate((bar) => (
+    Number(bar.getAttribute('x')) + Number(bar.getAttribute('width'))
+  ))).toBeGreaterThan(990);
   expect(await holderHover.evaluate((element) => ({
     left: getComputedStyle(element).left, top: getComputedStyle(element).top,
   }))).toEqual(hoverPosition);
@@ -1745,12 +1751,17 @@ test('renders holders and cursor pages in the Robinhood expanded chart', async (
   await expect(holderHistory).toBeVisible();
   await expect(holderHistory.locator('[data-holder-interval]')).toHaveText(['1H', '4H', '12H', '24H']);
   await expect(holderHistory.getByRole('button', { name: '4H', exact: true })).toHaveAttribute('aria-pressed', 'true');
-  await expect(holderHistory.locator('[data-holder-bar]')).toHaveCount(180);
+  await expect(holderHistory.locator('[data-holder-bar]')).toHaveCount(179);
+  expect(await holderHistory.locator('[data-holder-bar]').evaluateAll((bars) => bars.every((bar) => {
+    const y = Number(bar.getAttribute('y'));
+    const height = Number(bar.getAttribute('height'));
+    return height >= 24 && Math.abs((y + height) - 96) < 0.01;
+  }))).toBe(true);
   await holderHistory.getByRole('button', { name: '1H', exact: true }).click();
   await expect(holderHistory.getByRole('button', { name: '1H', exact: true })).toHaveAttribute('aria-pressed', 'true');
-  await expect(holderHistory.locator('[data-holder-bar]')).toHaveCount(720);
+  await expect(holderHistory.locator('[data-holder-bar]')).toHaveCount(719);
   await holderHistory.getByRole('button', { name: '24H', exact: true }).click();
-  await expect(holderHistory.locator('[data-holder-bar]')).toHaveCount(30);
+  await expect(holderHistory.locator('[data-holder-bar]')).toHaveCount(29);
   await expect.poll(() => socketScenario.clientFrames.some((frame) => (
     frame.includes('"market:sync"') && frame.includes(`"address":"${ROBINHOOD_TOKEN}"`)
   ))).toBe(true);
@@ -1828,7 +1839,7 @@ test('renders holders and cursor pages in the Robinhood expanded chart', async (
   ))).toBe(true);
   await expect(holderHover).toBeVisible();
   await expect(holderHover.getByRole('button', { name: '24H', exact: true })).toHaveAttribute('aria-pressed', 'true');
-  await expect(holderHover.locator('[data-holder-hover-bar]')).toHaveCount(30);
+  await expect(holderHover.locator('[data-holder-hover-bar]')).toHaveCount(29);
   expect(diagnostics.apiRequests.filter((requestUrl) => (
     new URL(requestUrl).pathname === '/api/robinhood/holder-count-series'
   ))).toHaveLength(holderReadsOnHover);
