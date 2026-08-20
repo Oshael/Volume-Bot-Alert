@@ -1199,6 +1199,12 @@ module.exports = {
       1_000,
       30_000
     ),
+    unavailableRetryMs: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_RECONCILIATION_UNAVAILABLE_RETRY_MS,
+      3_600_000,
+      60_000,
+      86_400_000
+    ),
     requestOptions: {
       requestsPerSecond: parseFloatInRange(
         process.env.ROBINHOOD_HOLDER_RECONCILIATION_REQUESTS_PER_SECOND, 0.25, 0.1, 0.5

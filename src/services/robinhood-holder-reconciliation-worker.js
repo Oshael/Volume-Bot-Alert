@@ -13,8 +13,10 @@ const {
 } = require('./robinhood-holder-reconciliation');
 const { createRobinhoodHolderLiveAudit } = require('./robinhood-holder-live-audit');
 const {
-  createRobinhoodHolderRequestScheduler,
+  createRobinhoodHolderRequestScheduler, parseRetryAfterMs,
 } = require('./robinhood-holder-request-scheduler');
+
+const MAX_RETRY_MS = 24 * 60 * 60_000;
 
 function boundedInteger(value, fallback, minimum, maximum, label) {
   const parsed = value == null ? fallback : Number(value);
@@ -51,8 +53,23 @@ function normalizeOptions(input = {}) {
     blockscoutTimeoutMs: boundedInteger(
       input.blockscoutTimeoutMs, 8_000, 1_000, 30_000, 'blockscoutTimeoutMs'
     ),
+    unavailableRetryMs: boundedInteger(
+      input.unavailableRetryMs, 60 * 60_000, 60_000, MAX_RETRY_MS,
+      'unavailableRetryMs'
+    ),
     requestOptions: normalizeRequestOptions(input.requestOptions),
   });
+}
+
+function safeErrorCode(error) {
+  const raw = String(error?.code || 'provider_error').trim().toLowerCase();
+  return raw.replace(/[^a-z0-9_:-]+/g, '_').slice(0, 64) || 'provider_error';
+}
+
+function retryAfterAt(error, nowMs, fallbackMs) {
+  const providerDelay = parseRetryAfterMs(error, nowMs);
+  const delayMs = providerDelay == null ? fallbackMs : Math.min(providerDelay, MAX_RETRY_MS);
+  return new Date(nowMs + delayMs).toISOString();
 }
 
 function buildRuntime(deps, options) {
@@ -69,11 +86,28 @@ function buildRuntime(deps, options) {
   const scheduler = (deps.schedulerFactory || createRobinhoodHolderRequestScheduler)(
     options.requestOptions
   );
+  const now = deps.now || Date.now;
   const observeHolderCount = async (tokenAddress) => {
-    const summary = await scheduler.schedule(() => client.getTokenHolderSummary(tokenAddress));
+    let summary;
+    try {
+      summary = await scheduler.schedule(() => client.getTokenHolderSummary(tokenAddress));
+    } catch (error) {
+      const nowMs = now();
+      await summaryRepository.recordFailure({
+        tokenAddress, errorCode: safeErrorCode(error),
+        retryAfterAt: retryAfterAt(error, nowMs, options.unavailableRetryMs),
+      });
+      throw error;
+    }
     if (summary.available === true) {
       await summaryRepository.recordSuccess({
         tokenAddress, holderCount: summary.holderCount, observedAt: summary.observedAt,
+      });
+    } else {
+      const nowMs = now();
+      await summaryRepository.recordFailure({
+        tokenAddress, errorCode: 'unavailable',
+        retryAfterAt: retryAfterAt(null, nowMs, options.unavailableRetryMs),
       });
     }
     return summary;
@@ -219,5 +253,7 @@ const worker = createRobinhoodHolderReconciliationWorker();
 module.exports = {
   createRobinhoodHolderReconciliationWorker,
   getStatus: worker.getStatus, runOnce: worker.runOnce, start: worker.start, stop: worker.stop,
-  __private: { buildRuntime, normalizeOptions, normalizeRequestOptions },
+  __private: {
+    buildRuntime, normalizeOptions, normalizeRequestOptions, retryAfterAt, safeErrorCode,
+  },
 };

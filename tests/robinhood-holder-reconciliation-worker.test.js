@@ -92,6 +92,37 @@ describe('Robinhood holder reconciliation worker', () => {
     assert.equal(promotionRuns, 1);
   });
 
+  it('persists an unavailable cooldown before rotating reconciliation candidates', async () => {
+    const failures = [];
+    let observer;
+    const options = __private.normalizeOptions({
+      enabled: true, unavailableRetryMs: 60_000,
+    });
+    __private.buildRuntime({
+      now: () => Date.parse('2026-08-20T06:00:00.000Z'),
+      repositoryFactory: () => ({}),
+      summaryRepositoryFactory: () => ({
+        recordSuccess: async () => { throw new Error('must not save success'); },
+        recordFailure: async (input) => { failures.push(input); },
+      }),
+      clientFactory: () => ({
+        getTokenHolderSummary: async () => ({ available: false }),
+      }),
+      schedulerFactory: () => ({ schedule: (task) => task() }),
+      reconcilerFactory: (input) => {
+        observer = input.observeHolderCount;
+        return { runOnce: async () => ({ status: 'idle' }) };
+      },
+      auditFactory: () => ({ runOnce: async () => ({ status: 'idle' }) }),
+    }, options);
+
+    assert.deepEqual(await observer(TOKEN), { available: false });
+    assert.deepEqual(failures, [{
+      tokenAddress: TOKEN, errorCode: 'unavailable',
+      retryAfterAt: '2026-08-20T06:01:00.000Z',
+    }]);
+  });
+
   it('backs off transient failures and halts on invalid runtime contracts', async () => {
     const timer = clock();
     const fatals = [];
@@ -130,6 +161,10 @@ describe('Robinhood holder reconciliation worker', () => {
     );
     assert.throws(
       () => __private.normalizeOptions({ requiredMatches: 1 }),
+      (error) => error.code === 'configuration_error'
+    );
+    assert.throws(
+      () => __private.normalizeOptions({ unavailableRetryMs: 1000 }),
       (error) => error.code === 'configuration_error'
     );
     assert.throws(

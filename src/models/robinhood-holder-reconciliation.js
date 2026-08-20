@@ -43,6 +43,12 @@ function candidateSql(status, where = '') {
                 WHERE journal.chain = state.chain
                   AND journal.token_address = state.token_address
                   AND journal.applied = false
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM robinhood_token_holder_summaries summary
+                WHERE summary.chain = state.chain
+                  AND summary.token_address = state.token_address
+                  AND summary.retry_after_at > NOW()
              )`;
 }
 

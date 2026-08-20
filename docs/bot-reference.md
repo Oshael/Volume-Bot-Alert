@@ -1170,6 +1170,12 @@ pois o Blockscout não ancora o count a um bloco. Reorg dentro do journal retido
 revertido automaticamente; ausência de evidência canônica suficiente falha
 fechado. O refresh Blockscout legado continua opt-in no grupo
 `robinhood-derived` como fallback.
+Quando o Blockscout retorna indisponível ou falha, a reconciliação persiste o
+erro e exclui temporariamente o token das filas `shadow` e `live`, evitando
+bloqueio da fila pelo primeiro endereço. O cooldown padrão é 1 hora e pode ser
+ajustado por `ROBINHOOD_HOLDER_RECONCILIATION_UNAVAILABLE_RETRY_MS`; uma resposta
+válida limpa o cooldown. Para o card exibir `HLD` antes da promoção ao ledger,
+mantenha também `ROBINHOOD_HOLDER_SUMMARY_ENABLED=true` na VPS.
 
 Para uma campanha global já `completed`, o one-shot
 `ROBINHOOD_HOLDER_GLOBAL_PROMOTE_RUN_ID=<id> npm run robinhood:holder-global-promote`

@@ -592,6 +592,7 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_HOLDER_RECONCILIATION_MAX_ERROR_BACKOFF_MS: '9999999999',
       ROBINHOOD_HOLDER_RECONCILIATION_REQUIRED_MATCHES: '99',
       ROBINHOOD_HOLDER_RECONCILIATION_BLOCKSCOUT_TIMEOUT_MS: '1',
+      ROBINHOOD_HOLDER_RECONCILIATION_UNAVAILABLE_RETRY_MS: '1',
       ROBINHOOD_HOLDER_RECONCILIATION_REQUESTS_PER_SECOND: '99',
       ROBINHOOD_HOLDER_RECONCILIATION_REQUEST_MAX_RETRIES: '99',
       ROBINHOOD_HOLDER_JOURNAL_PRUNE_ENABLED: 'true',
@@ -643,6 +644,7 @@ describe('runtime worker groups config', () => {
         maxErrorBackoffMs: 3_600_000,
         requiredMatches: 5,
         blockscoutTimeoutMs: 1000,
+        unavailableRetryMs: 60_000,
         requestOptions: { requestsPerSecond: 0.5, concurrency: 1, maxRetries: 1 },
       });
       assert.deepEqual(config.robinhoodHolderJournalPruneWorker, {

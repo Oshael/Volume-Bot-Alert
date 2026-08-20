@@ -203,6 +203,7 @@ describe('Robinhood holder live handoff persistence', () => {
     try {
       for (const table of [
         'robinhood_holder_transfer_journal', 'robinhood_holder_token_states',
+        'robinhood_token_holder_summaries',
       ]) {
         await client.query(`CREATE TEMP TABLE IF NOT EXISTS ${table} (
           LIKE public.${table} INCLUDING ALL
@@ -246,6 +247,44 @@ describe('Robinhood holder live handoff persistence', () => {
       });
       assert.equal(audited.version, 2);
       assert.equal(audited.lastReconciledAt, '2026-08-10T12:02:00.000Z');
+    } finally {
+      client.release();
+    }
+  });
+
+  it('rotates shadow and live candidates while a summary cooldown is active', async () => {
+    const client = await db.getClient();
+    try {
+      for (const table of [
+        'robinhood_holder_transfer_journal', 'robinhood_holder_token_states',
+        'robinhood_token_holder_summaries',
+      ]) {
+        await client.query(`CREATE TEMP TABLE IF NOT EXISTS ${table} (
+          LIKE public.${table} INCLUDING ALL
+        )`);
+        await client.query(`TRUNCATE ${table}`);
+      }
+      const reconciliation = createRobinhoodHolderReconciliationRepository({
+        database: { query: client.query.bind(client) },
+      });
+      await client.query(
+        `INSERT INTO robinhood_holder_token_states (
+           token_address, holder_count, ledger_status
+         ) VALUES ($1, 10, 'shadow'), ($2, 20, 'shadow')`,
+        [TOKEN, OTHER_TOKEN]
+      );
+      await client.query(
+        `INSERT INTO robinhood_token_holder_summaries (
+           token_address, holder_count, retry_after_at
+         ) VALUES ($1, NULL, NOW() + INTERVAL '1 hour')`,
+        [TOKEN]
+      );
+
+      assert.equal((await reconciliation.getNextCandidate()).tokenAddress, OTHER_TOKEN);
+      await client.query(
+        `UPDATE robinhood_holder_token_states SET ledger_status = 'live'`
+      );
+      assert.equal((await reconciliation.getNextLiveCandidate()).tokenAddress, OTHER_TOKEN);
     } finally {
       client.release();
     }

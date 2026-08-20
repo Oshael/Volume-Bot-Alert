@@ -92,6 +92,7 @@ describe('Robinhood holder reconciliation', () => {
     assert.equal(saved.status, 'live');
     assert.match(calls[0].sql, /ledger_status = 'shadow'/);
     assert.match(calls[0].sql, /journal\.applied = false/);
+    assert.match(calls[0].sql, /summary\.retry_after_at > NOW\(\)/);
     assert.match(calls[1].sql, /state\.version = \$2::bigint/);
     assert.match(calls[1].sql, /state\.holder_count = \$3::bigint/);
     assert.match(calls[1].sql, /state\.last_reconciled_at < \$4::timestamptz/);
@@ -102,6 +103,7 @@ describe('Robinhood holder reconciliation', () => {
       observedAt: '2026-08-10T12:02:00Z',
     });
     assert.match(calls[2].sql, /ledger_status = 'live'/);
+    assert.match(calls[2].sql, /summary\.retry_after_at > NOW\(\)/);
     assert.match(calls[3].sql, /state\.ledger_status = 'live'/);
     assert.doesNotMatch(calls[3].sql, /ledger_status = CASE/);
   });
