@@ -1732,7 +1732,7 @@ test('renders and switches Robinhood holder hover bars', async ({ page }) => {
   expect(diagnostics.pageErrors).toEqual([]);
 });
 
-test('renders holders and cursor pages in the Robinhood expanded chart', async ({ page }) => {
+test('renders holder pages without the holder bar chart in the Robinhood expanded chart', async ({ page }) => {
   const socketScenario = { socket: null, clientFrames: [] };
   const diagnostics = await openAuthenticatedWorkspace(
     page, ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES, '/alerts', socketScenario,
@@ -1756,21 +1756,8 @@ test('renders holders and cursor pages in the Robinhood expanded chart', async (
   await expect(dialog.locator('[data-holder-tab]')).toHaveCount(0);
   await expect(dialog.locator('[data-holder-chart-view]')).toBeVisible();
   await expect(dialog.locator('[data-robinhood-trades-panel]')).toBeVisible();
-  const holderHistory = panel.locator('[data-holder-history]');
-  await expect(holderHistory).toBeVisible();
-  await expect(holderHistory.locator('[data-holder-interval]')).toHaveText(['1H', '4H', '12H', '24H']);
-  await expect(holderHistory.getByRole('button', { name: '4H', exact: true })).toHaveAttribute('aria-pressed', 'true');
-  await expect(holderHistory.locator('[data-holder-bar]')).toHaveCount(179);
-  expect(await holderHistory.locator('[data-holder-bar]').evaluateAll((bars) => bars.every((bar) => {
-    const y = Number(bar.getAttribute('y'));
-    const height = Number(bar.getAttribute('height'));
-    return height >= 24 && Math.abs((y + height) - 96) < 0.01;
-  }))).toBe(true);
-  await holderHistory.getByRole('button', { name: '1H', exact: true }).click();
-  await expect(holderHistory.getByRole('button', { name: '1H', exact: true })).toHaveAttribute('aria-pressed', 'true');
-  await expect(holderHistory.locator('[data-holder-bar]')).toHaveCount(719);
-  await holderHistory.getByRole('button', { name: '24H', exact: true }).click();
-  await expect(holderHistory.locator('[data-holder-bar]')).toHaveCount(29);
+  await expect(panel.locator('[data-holder-history]')).toHaveCount(0);
+  await expect(panel.locator('[data-holder-bar]')).toHaveCount(0);
   await expect.poll(() => socketScenario.clientFrames.some((frame) => (
     frame.includes('"market:sync"') && frame.includes(`"address":"${ROBINHOOD_TOKEN}"`)
   ))).toBe(true);
@@ -1793,13 +1780,10 @@ test('renders holders and cursor pages in the Robinhood expanded chart', async (
     ledgerVersion: '8', sequence: `robinhood-holder:${ROBINHOOD_TOKEN}:000000000000000000000008`,
     reason: 'reorg_resync',
   });
-  await expect.poll(() => diagnostics.apiRequests.filter((requestUrl) => (
-    new URL(requestUrl).pathname === '/api/robinhood/holder-count-series'
-  )).length).toBeGreaterThan(holderReads);
   await expect(holderCount).toHaveText('4,424');
-  expect(diagnostics.apiRequests.some((requestUrl) => (
+  expect(diagnostics.apiRequests.filter((requestUrl) => (
     new URL(requestUrl).pathname === '/api/robinhood/holder-count-series'
-  ))).toBe(true);
+  ))).toHaveLength(holderReads);
   await expect(panel).toContainText('Main whale');
   await expect(panel.locator('.rh-remaining-pct').first()).toHaveText('10%');
   await expect(panel.locator('.rh-native-balance').first()).toHaveText('3.4 ETH');

@@ -113,6 +113,9 @@ Serviço web:
 trendscope-web.service
 ```
 
+Respostas HTTP compressíveis acima de 1 KiB usam negociação gzip/Brotli pelo Express. O contrato
+JSON não muda; clientes sem `Accept-Encoding` compatível recebem o corpo sem compressão.
+
 Contrato do runtime:
 
 ```env
@@ -992,17 +995,17 @@ Mudanças do mesmo token são
 coalescidas por tick e emitidas somente após commit; REST continua sendo o caminho
 de bootstrap/recuperação. Após rewind de reorg, o backend emite o count corrigido
 para tokens ainda `live` ou `holder:invalidate` para os que exigem ressincronização.
-O painel expandido faz bootstrap REST desse endpoint, começa em `4H`, permite
+O painel expandido não renderiza a série histórica de holders: mantém somente o
+count no divisor redimensionável e a tabela paginada de top holders. Um
+`holder:count` válido e sequenciado atualiza esse count diretamente;
+`holder:invalidate` ou reconexão recupera a página REST. O hover de holders
+continua consumindo `holder-count-series`, começa em `4H`, permite
 `1H / 4H / 12H / 24H` e mantém no DOM no máximo 30 dias de barras para qualquer
 intervalo. Essa janela é somente de renderização: não limita a leitura nem remove
-buckets do PostgreSQL. O painel e o hover compactam somente barras com holder
-count disponível; lacunas persistidas não reservam espaço visual nem são
-convertidas em candles artificiais. Enquanto o painel está aberto,
-`holder:count` válido e sequenciado atualiza a barra da hora corrente e os deltas
-sem nova leitura. Evento
-duplicado ou anterior é ignorado. `holder:invalidate`, reconexão do socket ou
-mudança de hora força recuperação REST antes de novas comparações; a assinatura e
-o order gate do token são limpos ao fechar ou trocar o painel.
+buckets do PostgreSQL. O hover compacta somente barras com holder count
+disponível; lacunas persistidas não reservam espaço visual nem são convertidas em
+candles artificiais. Evento duplicado ou anterior é ignorado; a assinatura e o
+order gate do token são limpos ao fechar ou trocar a visualização.
 
 O grupo `robinhood-holders` contém workers independentes de captura live, apply
 do journal live, backfill de tokens novos, backfill frio, reconciliação, snapshot
