@@ -614,6 +614,14 @@ const ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES = {
         balanceRaw: secondPage ? '2500000000000000000' : '5000000000000000000',
         addressType: 'unknown', label: secondPage ? 'Second page whale' : 'Main whale',
         isVerifiedContract: false,
+        avgBuyMcapUsd: secondPage ? '0' : '125000',
+        avgSellMcapUsd: secondPage ? '0' : '200000',
+        buyTxCount: secondPage ? 0 : 3, sellTxCount: secondPage ? 0 : 2,
+        realizedPnlUsd: secondPage ? '0' : '1250',
+        unrealizedPnlUsd: secondPage ? '18000' : '5000',
+        unrealizedPnlPct: secondPage ? null : '25',
+        positionQuality: secondPage ? 'transferred_assumed_zero' : 'exact_swap_only',
+        costBasisSource: secondPage ? 'transferred_assumed_zero' : 'swap_only',
       }],
       hasMore: !secondPage, nextCursor: secondPage ? null : 'page-2',
       observedAt: '2026-07-15T11:55:00.000Z', refreshQueued: false,
@@ -1793,6 +1801,10 @@ test('renders holders and cursor pages in the Robinhood expanded chart', async (
   ))).toBe(true);
   await expect(panel).toContainText('Main whale');
   await expect(panel.locator('.rh-remaining-pct').first()).toHaveText('10%');
+  await expect(panel.locator('.rh-financial-cell').nth(0)).toContainText('$125K');
+  await expect(panel.locator('.rh-financial-cell').nth(1)).toContainText('R +$1.25K');
+  await expect(panel.locator('.rh-pnl').first()).toContainText('+$5K');
+  await expect(panel.locator('.rh-pnl').first()).toContainText('+25%');
 
   const resizeHandle = dialog.locator('[data-holder-resize-handle]');
   const beforeResize = await dialog.evaluate((element) => ({

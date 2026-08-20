@@ -266,6 +266,7 @@ describe('Robinhood holders route', () => {
             items: [{
               rank: 1, address: `0x${'b'.repeat(40)}`, balanceRaw: '5000',
               addressType: 'unknown', label: null, isVerifiedContract: false,
+              avgBuyMcapUsd: '25000', unrealizedPnlUsd: '100',
             }],
             hasMore: true, nextCursor: 'ledger_v1.next',
           };
@@ -279,6 +280,8 @@ describe('Robinhood holders route', () => {
     assert.equal(response.body.summary.holderCount, 1);
     assert.equal(response.body.summary.totalSupplyRaw, '10000');
     assert.equal(response.body.holders[0].balanceRaw, '5000');
+    assert.equal(response.body.holders[0].avgBuyMcapUsd, '25000');
+    assert.equal(response.body.holders[0].unrealizedPnlUsd, '100');
     assert.equal(response.body.nextCursor, 'ledger_v1.next');
     assert.equal(response.body.refreshQueued, false);
     assert.equal(scheduled, 0);

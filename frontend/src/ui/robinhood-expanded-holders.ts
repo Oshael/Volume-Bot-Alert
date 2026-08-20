@@ -128,9 +128,50 @@ export function renderRobinhoodExpandedHolderViews(
   </div>`;
 }
 
-// Columns without a data source in /api/robinhood/holders yet. Rendered as
-// muted placeholders so the target layout is visible; each explains itself on hover.
-const PENDING = '<td class="rh-col-num rh-pending" title="Not available in the holders feed yet">—</td>';
+const ETH_BALANCE_PENDING = '<td class="rh-col-num rh-pending" title="Native balance is not collected yet">—</td>';
+
+function numberValue(value?: string | null): number | null {
+  if (value == null) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function signedUsd(value?: string | null): string {
+  const parsed = numberValue(value);
+  if (parsed == null) return '—';
+  if (parsed === 0) return '$0';
+  const formatted = formatUsd(Math.abs(parsed));
+  return `${parsed > 0 ? '+' : '-'}${formatted}`;
+}
+
+function averageCell(value: string | null | undefined, transactions: number | null | undefined,
+  side: 'buy' | 'sell', realizedPnlUsd?: string | null) {
+  if (value == null || transactions == null) {
+    return '<td class="rh-col-num rh-pending" title="Financial position is unavailable">—</td>';
+  }
+  const realized = side === 'sell' && realizedPnlUsd != null
+    ? ` · R ${signedUsd(realizedPnlUsd)}` : '';
+  return `<td class="rh-col-num rh-financial-cell">
+      <span>${escapeHtml(formatUsd(numberValue(value)))}</span>
+      <small>${transactions.toLocaleString('en-US')} ${side}${transactions === 1 ? '' : 's'}${escapeHtml(realized)}</small>
+    </td>`;
+}
+
+function pnlCell(value: string | null | undefined, pct: string | null | undefined,
+  quality: string | null | undefined) {
+  const parsed = numberValue(value);
+  if (parsed == null) {
+    return '<td class="rh-col-num rh-pending" title="Current valuation is unavailable">—</td>';
+  }
+  const tone = parsed > 0 ? 'is-positive' : parsed < 0 ? 'is-negative' : 'is-flat';
+  const parsedPct = numberValue(pct);
+  const detail = parsedPct == null
+    ? (quality === 'transferred_assumed_zero' ? 'zero-cost basis' : '—')
+    : `${parsedPct > 0 ? '+' : ''}${Number(parsedPct.toFixed(2))}%`;
+  return `<td class="rh-col-num rh-financial-cell rh-pnl ${tone}">
+      <span>${escapeHtml(signedUsd(value))}</span><small>${escapeHtml(detail)}</small>
+    </td>`;
+}
 
 function formatSupplyPct(pct: number): string {
   if (!Number.isFinite(pct) || pct <= 0) return '0%';
@@ -167,7 +208,10 @@ function holderPageHtml(
       <a href="https://robinhoodchain.blockscout.com/address/${escapeHtml(holder.address)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(holder.address)}">${escapeHtml(holder.label || shortAddress(holder.address))}</a>
       <span class="rh-holder-type">${escapeHtml(holder.addressType)}${holder.isVerifiedContract ? ' · verified' : ''}</span>
     </td>
-    ${PENDING}${PENDING}${PENDING}${PENDING}
+    ${ETH_BALANCE_PENDING}
+    ${averageCell(holder.avgBuyMcapUsd, holder.buyTxCount, 'buy')}
+    ${averageCell(holder.avgSellMcapUsd, holder.sellTxCount, 'sell', holder.realizedPnlUsd)}
+    ${pnlCell(holder.unrealizedPnlUsd, holder.unrealizedPnlPct, holder.positionQuality)}
     ${remainingCell(holder.balanceRaw, page.summary.totalSupplyRaw, fdv)}
   </tr>`).join('');
   return `<header><span class="robinhood-holder-page-title">Top holders</span>

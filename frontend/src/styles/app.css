@@ -3646,6 +3646,22 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 .rh-holder-delta.is-flat { color: #8fb7d8; }
 .rh-holder-delta.is-unavailable { color: rgba(230, 233, 239, 0.3); }
 
+.rh-financial-cell span,
+.rh-financial-cell small {
+  display: block;
+  white-space: nowrap;
+}
+
+.rh-financial-cell small {
+  margin-top: 2px;
+  color: rgba(230, 233, 239, 0.42);
+  font-size: 9px;
+}
+
+.rh-pnl.is-positive span { color: #3ad29f; }
+.rh-pnl.is-negative span { color: #ff6b7d; }
+.rh-pnl.is-flat span { color: #8fb7d8; }
+
 .rh-holder-plot {
   display: flex;
   flex: 1 1 auto;

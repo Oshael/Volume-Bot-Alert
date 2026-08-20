@@ -1723,6 +1723,13 @@ ausente. Não usa `action_index` como fallback: falha de RPC ou evidência
 canônica ausente impede os dois cursores de avançar, e o próximo tick tenta o
 mesmo range novamente.
 
+A página publicada de holders junta cada saldo com `unified_transfer_v1` e a
+última avaliação aceita do token. O payload expõe médias ponderadas de market
+cap de compra/venda, contagens de transações, PnL realizado, valor atual e PnL
+não realizado. Wallet sem compra conhecida recebe custo zero, portanto seu
+U. PnL em USD equivale ao valor atual e o percentual fica indisponível. O saldo
+nativo da wallet ainda não faz parte desse contrato.
+
 O bootstrap também existe localmente como
 `npm run robinhood:wallet-live-bootstrap`: dry-run por padrão, audita observações
 aceitas sem wallet até `seed.safe_head`, valida o RPC/chain e prova o bloco cheio

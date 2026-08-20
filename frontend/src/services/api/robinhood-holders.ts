@@ -7,6 +7,16 @@ export interface RobinhoodHolder {
   addressType: 'wallet' | 'contract' | 'pool' | 'burn' | 'unknown';
   label: string | null;
   isVerifiedContract: boolean;
+  avgBuyMcapUsd?: string | null;
+  avgSellMcapUsd?: string | null;
+  buyTxCount?: number | null;
+  sellTxCount?: number | null;
+  realizedPnlUsd?: string | null;
+  unrealizedPnlUsd?: string | null;
+  unrealizedPnlPct?: string | null;
+  currentValueUsd?: string | null;
+  positionQuality?: string | null;
+  costBasisSource?: string | null;
 }
 
 export interface RobinhoodHolderSummary {

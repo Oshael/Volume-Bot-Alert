@@ -1,5 +1,8 @@
 const db = require('./db');
 const { normalizeTokenAddress } = require('../utils/token-identity');
+const {
+  deriveWalletPositionMetrics,
+} = require('../services/robinhood-wallet-position-domain');
 
 const PAGE_SIZE = 50;
 const CURSOR_PREFIX = 'ledger_v1.';
@@ -45,6 +48,46 @@ function validateLedgerCursor(value) {
   return String(value);
 }
 
+function financialMetrics(row, totalSupplyRaw, currentFdvUsd) {
+  const position = row.projection_version == null ? {
+    quantityRaw: String(row.balance_raw),
+    zeroCostReceivedRaw: String(row.balance_raw),
+    costBasisSource: 'transferred_assumed_zero',
+    quality: 'transferred_assumed_zero',
+  } : {
+    quantityRaw: String(row.quantity_raw),
+    costBasisUsd: String(row.cost_basis_usd),
+    realizedPnlUsd: String(row.realized_pnl_usd),
+    buyVolumeUsd: String(row.buy_volume_usd),
+    sellProceedsUsd: String(row.sell_proceeds_usd),
+    buyMcapWeightedSum: String(row.buy_mcap_weighted_sum),
+    buyMcapWeightUsd: String(row.buy_mcap_weight_usd),
+    sellMcapWeightedSum: String(row.sell_mcap_weighted_sum),
+    sellMcapWeightUsd: String(row.sell_mcap_weight_usd),
+    buyTxCount: Number(row.buy_tx_count),
+    sellTxCount: Number(row.sell_tx_count),
+    zeroCostReceivedRaw: String(row.zero_cost_received_raw),
+    zeroCostSoldRaw: String(row.zero_cost_sold_raw),
+    costBasisSource: row.cost_basis_source,
+    quality: row.quality,
+  };
+  const metrics = deriveWalletPositionMetrics(position, {
+    holderBalanceRaw: String(row.balance_raw), totalSupplyRaw, currentFdvUsd,
+  });
+  return Object.freeze({
+    avgBuyMcapUsd: metrics.avgBuyMcapUsd,
+    avgSellMcapUsd: metrics.avgSellMcapUsd,
+    buyTxCount: metrics.buyTxCount,
+    sellTxCount: metrics.sellTxCount,
+    realizedPnlUsd: metrics.realizedPnlUsd,
+    unrealizedPnlUsd: metrics.unrealizedPnlUsd,
+    unrealizedPnlPct: metrics.unrealizedPnlPct,
+    currentValueUsd: metrics.currentValueUsd,
+    positionQuality: metrics.quality,
+    costBasisSource: metrics.costBasisSource,
+  });
+}
+
 function mapPage(tokenAddress, cursor, rows) {
   if (!rows.length) return null;
   const holderCount = Number(rows[0].holder_count);
@@ -55,6 +98,10 @@ function mapPage(tokenAddress, cursor, rows) {
   const hasMore = pageRows.length > PAGE_SIZE;
   const selected = pageRows.slice(0, PAGE_SIZE);
   const startRank = cursor?.rank || 0;
+  const totalSupplyRaw = rows[0].token_total_supply_raw != null
+    ? String(rows[0].token_total_supply_raw) : null;
+  const currentFdvUsd = rows[0].current_fdv_usd != null
+    ? String(rows[0].current_fdv_usd) : null;
   const items = selected.map((row, index) => Object.freeze({
     rank: startRank + index + 1,
     address: row.wallet_address,
@@ -62,10 +109,9 @@ function mapPage(tokenAddress, cursor, rows) {
     addressType: row.address_type,
     label: null,
     isVerifiedContract: false,
+    ...financialMetrics(row, totalSupplyRaw, currentFdvUsd),
   }));
   const last = items.at(-1);
-  const totalSupplyRaw = rows[0].token_total_supply_raw != null
-    ? String(rows[0].token_total_supply_raw) : null;
   return Object.freeze({
     address: tokenAddress,
     holderCount,
@@ -96,8 +142,8 @@ function createRobinhoodHolderPageRepository(options = {}) {
              ON cursor.chain = state.chain AND cursor.stream = 'live'
           WHERE state.chain = 'robinhood' AND state.token_address = $1
             AND state.ledger_status = 'live'
-       ), token_supply AS MATERIALIZED (
-         SELECT observation.token_total_supply_raw
+       ), token_valuation AS MATERIALIZED (
+         SELECT observation.token_total_supply_raw, observation.fdv_usd
            FROM robinhood_market_observations observation
           WHERE observation.chain = 'robinhood' AND observation.token_address = $1
             AND observation.status = 'accepted'
@@ -124,11 +170,24 @@ function createRobinhoodHolderPageRepository(options = {}) {
           LIMIT ${PAGE_SIZE + 1}
        )
        SELECT state.holder_count, state.observed_at, state.checked_at,
-              supply.token_total_supply_raw, page.wallet_address,
-              page.balance_raw, page.address_type
+              valuation.token_total_supply_raw, valuation.fdv_usd AS current_fdv_usd,
+              page.wallet_address, page.balance_raw, page.address_type,
+              position.projection_version, position.quantity_raw,
+              position.cost_basis_usd, position.realized_pnl_usd,
+              position.buy_volume_usd, position.sell_proceeds_usd,
+              position.buy_mcap_weighted_sum, position.buy_mcap_weight_usd,
+              position.sell_mcap_weighted_sum, position.sell_mcap_weight_usd,
+              position.buy_tx_count, position.sell_tx_count,
+              position.zero_cost_received_raw, position.zero_cost_sold_raw,
+              position.cost_basis_source, position.quality
          FROM published_state state
-         LEFT JOIN token_supply supply ON TRUE
+         LEFT JOIN token_valuation valuation ON TRUE
          LEFT JOIN page ON TRUE
+         LEFT JOIN robinhood_wallet_token_positions position
+           ON position.chain = 'robinhood'
+          AND position.projection_version = 'unified_transfer_v1'
+          AND position.token_address = $1
+          AND position.wallet_address = page.wallet_address
         ORDER BY page.balance_raw DESC NULLS LAST, page.wallet_address ASC`,
       [tokenAddress, cursor?.balanceRaw || null, cursor?.walletAddress || null]
     );
