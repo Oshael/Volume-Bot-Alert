@@ -12,6 +12,9 @@ const {
   createRobinhoodWalletPositionRepository,
 } = require('../models/robinhood-wallet-position');
 const {
+  createRobinhoodTransactionPositionRepository,
+} = require('../models/robinhood-transaction-position');
+const {
   createRobinhoodRpcClient,
   validateRobinhoodProviderChainIds,
 } = require('./robinhood-ingestion-worker');
@@ -21,6 +24,9 @@ const {
 const {
   createRobinhoodWalletTransferEvidenceReader,
 } = require('./robinhood-wallet-transfer-evidence-reader');
+const {
+  createRobinhoodTransactionPositionResolver,
+} = require('./robinhood-transaction-position-resolver');
 
 async function buildRobinhoodWalletTransferRuntime(options = {}, deps = {}) {
   const database = deps.database || db;
@@ -33,6 +39,12 @@ async function buildRobinhoodWalletTransferRuntime(options = {}, deps = {}) {
     rpcClient, addressShardConcurrency: options.addressShardConcurrency,
   });
   const positions = (deps.positionFactory || createRobinhoodWalletPositionRepository)({ database });
+  const transactionPositionRepository = (deps.transactionPositionRepositoryFactory
+    || createRobinhoodTransactionPositionRepository)({ database });
+  const transactionPositions = (deps.transactionPositionResolverFactory
+    || createRobinhoodTransactionPositionResolver)({
+    rpcClient, repository: transactionPositionRepository,
+  });
   return Object.freeze({
     providerChainIds,
     tickDeps: Object.freeze({
@@ -42,6 +54,7 @@ async function buildRobinhoodWalletTransferRuntime(options = {}, deps = {}) {
         database, positionProjection: positions,
       }),
       positions,
+      transactionPositions,
       evidence: (deps.evidenceFactory || createRobinhoodWalletTransferEvidenceReader)({
         transferReader, rpcClient, blockBatchSize: options.blockEvidenceBatchSize,
       }),

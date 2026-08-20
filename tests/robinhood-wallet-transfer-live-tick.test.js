@@ -71,6 +71,8 @@ function dependencies(overrides = {}) {
       insertTransferEvents: async (events) => { calls.raw.push(events); return { inserted: events.length }; },
     },
     ...(overrides.positions ? { positions: overrides.positions } : {}),
+    ...(overrides.transactionPositions
+      ? { transactionPositions: overrides.transactionPositions } : {}),
   };
 }
 
@@ -211,7 +213,12 @@ describe('Robinhood wallet transfer LIVE tick', () => {
       loadPositions: async () => [],
       readUnifiedRangeSwaps: async () => [],
     };
-    const deps = dependencies({ positions });
+    const transactionPositions = {
+      resolveSwaps: async (swaps) => ({
+        swaps, telemetry: { required: 0, resolved: 0, persisted: 0, rpcBlocks: 0, rpcBatches: 0 },
+      }),
+    };
+    const deps = dependencies({ positions, transactionPositions });
     const result = await runRobinhoodWalletTransferLiveTick(deps, {
       maxBlocks: 25, unifiedPositionEnabled: true,
     });
@@ -223,6 +230,45 @@ describe('Robinhood wallet transfer LIVE tick', () => {
     assert.equal(deps.calls.projected[0].positionBatch.positions.length, 2);
     assert.deepEqual(result.unifiedPosition, {
       swaps: 0, walletTransfers: 1, financialEvents: 2, touchedPositions: 2,
+      transactionPositions: {
+        required: 0, resolved: 0, persisted: 0, rpcBlocks: 0, rpcBatches: 0,
+      },
     });
+  });
+
+  it('repairs missing swap transaction positions before projecting unified LIVE', async () => {
+    const swaps = [{
+      block_number: '100', transaction_hash: `0x${'c'.repeat(64)}`, action_index: '3',
+      transaction_index: null, token_address: TOKEN, wallet_address: ALICE,
+      token_amount_raw: '10', side: 'buy', volume_usd: '50', market_cap_usd: '1000',
+    }];
+    const resolved = swaps.map((swap) => ({ ...swap, transaction_index: '4' }));
+    const resolverCalls = [];
+    const positions = {
+      loadCursor: async (_version, stream) => (stream === 'seed' ? {
+        lifecycleState: 'complete', originBlock: '90', nextBlock: '100', nextBlockTime: TIME,
+      } : cursor({ projectionVersion: 'unified_transfer_v1' })),
+      initCursor: async () => null,
+      loadPositions: async () => [],
+      readUnifiedRangeSwaps: async () => swaps,
+    };
+    const transactionPositions = {
+      resolveSwaps: async (rows, input) => {
+        resolverCalls.push({ rows, input });
+        return {
+          swaps: resolved,
+          telemetry: { required: 1, resolved: 1, persisted: 1, rpcBlocks: 1, rpcBatches: 1 },
+        };
+      },
+    };
+    const deps = dependencies({ positions, transactionPositions });
+    const result = await runRobinhoodWalletTransferLiveTick(deps, {
+      maxBlocks: 25, unifiedPositionEnabled: true,
+    });
+
+    assert.equal(result.status, 'projected');
+    assert.deepEqual(resolverCalls, [{ rows: swaps, input: { commit: true } }]);
+    assert.equal(result.unifiedPosition.transactionPositions.persisted, 1);
+    assert.equal(deps.calls.projected[0].positionBatch.positions.length, 2);
   });
 });

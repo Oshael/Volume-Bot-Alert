@@ -38,6 +38,10 @@ function assertPositionDependencies(positions) {
   ], 'unified position projection');
 }
 
+function assertTransactionPositionDependencies(transactionPositions) {
+  requireMethods(transactionPositions, ['resolveSwaps'], 'transaction-position resolver');
+}
+
 function sourceRegression(message) {
   return Object.assign(new Error(message), { code: 'transfer_source_frontier_regressed' });
 }
@@ -124,13 +128,16 @@ async function prepareUnifiedPosition(deps, input) {
   if (BigInt(live.nextBlock) > BigInt(input.transfer.nextBlock)) {
     throw sourceRegression('unified position LIVE cursor is ahead of transfers');
   }
-  const swaps = await deps.positions.readUnifiedRangeSwaps({
+  assertTransactionPositionDependencies(deps.transactionPositions);
+  const swapRows = await deps.positions.readUnifiedRangeSwaps({
     fromBlock: input.captured.fromBlock,
     toBlock: input.captured.toBlock,
     fromTime: input.fromTime,
     toTime: input.captured.checkpoint.blockTime,
     tokenAddresses: input.tokenAddresses,
   });
+  const resolvedSwaps = await deps.transactionPositions.resolveSwaps(swapRows, { commit: true });
+  const swaps = resolvedSwaps.swaps;
   const pairs = listTouchedWalletPositions(swaps, input.transfers);
   const stored = await deps.positions.loadPositions(UNIFIED_POSITION_VERSION, pairs);
   const projected = buildRobinhoodWalletUnifiedPositionBatch({
@@ -148,7 +155,10 @@ async function prepareUnifiedPosition(deps, input) {
       checkpointHash: input.captured.checkpoint.hash,
       positions: projected.positions,
     }),
-    telemetry: projected.telemetry,
+    telemetry: Object.freeze({
+      ...projected.telemetry,
+      transactionPositions: resolvedSwaps.telemetry,
+    }),
   });
 }
 

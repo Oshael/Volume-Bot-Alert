@@ -1717,6 +1717,11 @@ exato entre seed e LIVE e igualdade entre os cursores LIVE financeiro e de
 transfers; cursor financeiro ausente ou atrasado retorna
 `awaiting-position-catch-up` sem avançar transfers. Nunca habilite a flag antes
 de preencher o gap e revisar a igualdade dos cursores.
+Antes de calcular o range, o writer resolve pelo mesmo RPC Robinhood configurado
+e persiste na sidecar da Stage 139 qualquer `transaction_index` de swap ainda
+ausente. Não usa `action_index` como fallback: falha de RPC ou evidência
+canônica ausente impede os dois cursores de avançar, e o próximo tick tenta o
+mesmo range novamente.
 
 O bootstrap também existe localmente como
 `npm run robinhood:wallet-live-bootstrap`: dry-run por padrão, audita observações
