@@ -69,6 +69,8 @@ describe('Robinhood holder live runner', () => {
 
     assert.deepEqual(await context.runner.runOnce({
       rangeSize: 100, confirmations: 20, maxApplyEvents: 10,
+      admittedAfter: '2026-08-20T06:27:49.580Z',
+      seedLimit: 25, maxInitialGapBlocks: 20_000,
     }), {
       status: 'completed', captureStatus: 'captured', capturedTransfers: 3,
       handoffStatus: 'idle', handoffPromotions: 0, handoffResyncs: 0,
@@ -79,7 +81,11 @@ describe('Robinhood holder live runner', () => {
       applyBudgetExhausted: false, nextBlock: '106', safeHead: '105',
     });
     assert.deepEqual(context.calls, [
-      ['capture', { rangeSize: 100, confirmations: 20 }],
+      ['capture', {
+        rangeSize: 100, confirmations: 20,
+        admittedAfter: '2026-08-20T06:27:49.580Z',
+        seedLimit: 25, maxInitialGapBlocks: 20_000,
+      }],
       ['handoff'],
       ['apply'], ['apply'], ['apply'], ['apply'],
     ]);

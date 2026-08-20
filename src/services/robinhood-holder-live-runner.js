@@ -124,14 +124,18 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     }
   }
 
-  async function prepareTick(rangeSize, confirmations) {
+  async function prepareTick(input, rangeSize, confirmations) {
     if (typeof capture?.captureOnce !== 'function') {
       throw new TypeError('holder live capture is required');
     }
     if (typeof handoff?.runOnce !== 'function') {
       throw new TypeError('holder live handoff is required');
     }
-    const captured = await capture.captureOnce({ rangeSize, confirmations });
+    const captureInput = { rangeSize, confirmations };
+    for (const key of ['admittedAfter', 'seedLimit', 'maxInitialGapBlocks']) {
+      if (input[key] != null) captureInput[key] = input[key];
+    }
+    const captured = await capture.captureOnce(captureInput);
     if (captured.status === 'reorg-unrecoverable') {
       return { terminal: Object.freeze({
         status: 'blocked', captureStatus: captured.status,
@@ -280,7 +284,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
   async function captureOnce(input = {}) {
     const rangeSize = boundedInteger(input.rangeSize, 250, 1, 5000, 'rangeSize');
     const confirmations = boundedInteger(input.confirmations, 12, 0, 1000, 'confirmations');
-    const prepared = await prepareTick(rangeSize, confirmations);
+    const prepared = await prepareTick(input, rangeSize, confirmations);
     if (prepared.terminal) return prepared.terminal;
     return Object.freeze({
       status: 'completed', captureStatus: prepared.captured.status,
