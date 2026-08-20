@@ -94,7 +94,8 @@ describe('Robinhood holder live runner', () => {
         seedLimit: 25, maxInitialGapBlocks: 20_000,
       }],
       ['handoff'],
-      ['apply'], ['apply'], ['apply'], ['apply'],
+      ['apply', { maxEvents: 10 }], ['apply', { maxEvents: 9 }],
+      ['apply', { maxEvents: 8 }], ['apply', { maxEvents: 7 }],
       ['promote-shadows', { limit: 10 }],
     ]);
   });
@@ -245,13 +246,35 @@ describe('Robinhood holder live runner', () => {
     assert.equal(result.appliedEvents, 3);
     assert.equal(result.applyBudgetExhausted, false);
     assert.deepEqual(context.calls, [
-      ['apply'],
-      ['apply', { onlyTokenAddress: tokenA }],
-      ['apply', { onlyTokenAddress: tokenA }],
-      ['apply'],
-      ['apply', { onlyTokenAddress: tokenB }],
-      ['apply'],
+      ['apply', { maxEvents: 10 }],
+      ['apply', { onlyTokenAddress: tokenA, maxEvents: 9 }],
+      ['apply', { onlyTokenAddress: tokenA, maxEvents: 8 }],
+      ['apply', { maxEvents: 8 }],
+      ['apply', { onlyTokenAddress: tokenB, maxEvents: 7 }],
+      ['apply', { maxEvents: 7 }],
       ['promote-shadows', { limit: 10 }],
+    ]);
+  });
+
+  it('accounts for a transactional event batch against the apply budget', async () => {
+    const tokenAddress = `0x${'a'.repeat(40)}`;
+    const context = harness({
+      status: 'idle', transfers: 0, nextBlock: '106', safeHead: '105',
+    }, [{
+      status: 'applied', tokenAddress, holderCount: '40',
+      appliedEvents: 100, attemptedEvents: 100,
+    }, { status: 'idle', appliedEvents: 0, attemptedEvents: 0 }]);
+
+    const result = await context.runner.applyOnce({
+      maxApplyEvents: 250, applyBatchSize: 100,
+    });
+
+    assert.equal(result.appliedEvents, 100);
+    assert.equal(result.applyAttempts, 100);
+    assert.equal(result.applyBudgetExhausted, false);
+    assert.deepEqual(context.calls.slice(0, 2), [
+      ['apply', { maxEvents: 100 }],
+      ['apply', { onlyTokenAddress: tokenAddress, maxEvents: 100 }],
     ]);
   });
 

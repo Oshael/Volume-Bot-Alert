@@ -599,6 +599,7 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_HOLDER_LIVE_RANGE_SIZE: '9999',
       ROBINHOOD_HOLDER_LIVE_CONFIRMATIONS: '9999',
       ROBINHOOD_HOLDER_LIVE_MAX_APPLY_EVENTS: '999999',
+      ROBINHOOD_HOLDER_LIVE_APPLY_BATCH_SIZE: '999999',
       ROBINHOOD_HOLDER_LIVE_APPLY_INTERVAL_MS: '1',
       ROBINHOOD_HOLDER_LIVE_APPLY_MAX_ERROR_BACKOFF_MS: '9999999999',
       ROBINHOOD_HOLDER_LIVE_ADDRESS_SHARD_CONCURRENCY: '99',
@@ -652,7 +653,7 @@ describe('runtime worker groups config', () => {
       });
       assert.deepEqual(config.robinhoodHolderLiveApplyWorker, {
         enabled: true, intervalMs: 50, maxErrorBackoffMs: 300_000,
-        maxApplyEvents: 50_000, rpcTimeoutMs: 1000,
+        maxApplyEvents: 50_000, applyBatchSize: 1000, rpcTimeoutMs: 1000,
       });
       assert.deepEqual(config.robinhoodHolderReconciliationWorker, {
         enabled: true,

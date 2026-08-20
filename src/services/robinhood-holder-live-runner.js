@@ -35,6 +35,16 @@ function pendingEventFilter(excluded, preferredTokenAddress) {
   return Object.keys(filter).length ? filter : undefined;
 }
 
+function applyBatchMetrics(result) {
+  const explicitApplied = Number(result?.appliedEvents);
+  const appliedEvents = Number.isSafeInteger(explicitApplied) && explicitApplied >= 0
+    ? explicitApplied : (result?.status === 'applied' ? 1 : 0);
+  const explicitAttempts = Number(result?.attemptedEvents);
+  const attemptedEvents = Number.isSafeInteger(explicitAttempts) && explicitAttempts >= 1
+    ? explicitAttempts : 1;
+  return Object.freeze({ appliedEvents, attemptedEvents });
+}
+
 function createRobinhoodHolderLiveRunner(options = {}) {
   const capture = options.capture;
   const handoff = options.handoff;
@@ -195,7 +205,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     return { captured, handoffStatus };
   }
 
-  async function drainPendingEvents(maxApplyEvents) {
+  async function drainPendingEvents(maxApplyEvents, applyBatchSize) {
     let appliedEvents = 0;
     let driftedTokens = 0;
     let applyAttempts = 0;
@@ -209,9 +219,10 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     const holderCountUpdates = new Map();
     while (applyAttempts < maxApplyEvents) {
       const excluded = deferredTokenAddresses();
-      const applied = await ledger.applyNextPendingEvent(
-        pendingEventFilter(excluded, preferredTokenAddress)
-      );
+      const filter = pendingEventFilter(excluded, preferredTokenAddress) || {};
+      const applied = await ledger.applyNextPendingEvent({
+        ...filter, maxEvents: Math.min(applyBatchSize, maxApplyEvents - applyAttempts),
+      });
       if (applied.status === 'idle') {
         if (preferredTokenAddress) {
           preferredTokenAddress = null;
@@ -221,12 +232,13 @@ function createRobinhoodHolderLiveRunner(options = {}) {
         driftDeferred = Math.max(driftDeferred, excluded.length);
         break;
       }
-      applyAttempts += 1;
+      const batch = applyBatchMetrics(applied);
+      applyAttempts += batch.attemptedEvents;
+      appliedEvents += batch.appliedEvents;
+      rememberHolderCountUpdate(holderCountUpdates, applied);
       if (applied.status === 'applied') {
         driftEvidence.delete(applied.tokenAddress);
         preferredTokenAddress = applied.tokenAddress || null;
-        appliedEvents += 1;
-        rememberHolderCountUpdate(holderCountUpdates, applied);
       } else if (applied.status === 'drifted') {
         preferredTokenAddress = null;
         driftedTokens += 1;
@@ -305,7 +317,10 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     const maxApplyEvents = boundedInteger(
       input.maxApplyEvents, 5000, 1, 50_000, 'maxApplyEvents'
     );
-    const drained = await drainPendingEvents(maxApplyEvents);
+    const applyBatchSize = boundedInteger(
+      input.applyBatchSize, 100, 1, 1000, 'applyBatchSize'
+    );
+    const drained = await drainPendingEvents(maxApplyEvents, applyBatchSize);
     const promoted = await ledger.promoteReadyShadowTokens({ limit: maxApplyEvents });
     for (const publication of promoted.publications) {
       rememberHolderCountUpdate(drained.holderCountUpdates, { publication });

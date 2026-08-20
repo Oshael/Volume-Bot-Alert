@@ -307,6 +307,27 @@ async function lockNextApplicableEvent(client, input = {}) {
   return result.rows[0] || null;
 }
 
+async function lockApplicableTokenEvents(client, first, limit) {
+  if (limit === 1) return [first];
+  const result = await client.query(
+    `SELECT journal.block_number, journal.block_hash, journal.transaction_hash,
+            journal.transaction_index, journal.log_index, journal.token_address,
+            journal.from_wallet, journal.to_wallet, journal.amount_raw,
+            state.backfill_next_block, state.live_through_block
+       FROM robinhood_holder_transfer_journal journal
+       INNER JOIN robinhood_holder_token_states state
+         ON state.chain = journal.chain AND state.token_address = journal.token_address
+        AND state.ledger_status IN ('shadow', 'live')
+      WHERE journal.chain = 'robinhood' AND journal.applied = false
+        AND journal.token_address = $1
+      ORDER BY journal.block_number, journal.transaction_index, journal.log_index
+      LIMIT $2::int
+      FOR UPDATE OF journal, state`,
+    [first.token_address, limit]
+  );
+  return result.rows;
+}
+
 function transferFromRow(row) {
   return normalizeTransfer({
     blockNumber: row.block_number, blockHash: row.block_hash,
@@ -869,27 +890,50 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
   }
 
   async function applyNextPendingEvent(input = {}) {
+    const maxEvents = nonNegativeInteger(input.maxEvents ?? 1, 'apply.maxEvents');
+    if (maxEvents < 1 || maxEvents > 1000) throw new Error('apply.maxEvents is invalid');
     return withTransaction(database, async (client) => {
-      const row = await lockNextApplicableEvent(client, input);
-      if (!row) return Object.freeze({ status: 'idle' });
-      const transfer = transferFromRow(row);
-      const locked = await loadLockedBalances(client, transfer);
-      let changes;
-      try {
-        changes = deriveBalanceChanges(transfer, locked.balances);
-      } catch (error) {
-        if (error.code !== 'holder_negative_balance') throw error;
-        const suspicion = liveDeficit(transfer, row, locked.balances);
-        if (input.confirmDriftFingerprint == null) return suspicion;
-        if (String(input.confirmDriftFingerprint) !== suspicion.fingerprint) {
-          const stale = new Error('holder live drift evidence changed before confirmation');
-          stale.code = 'holder_live_drift_stale';
-          throw stale;
+      const first = await lockNextApplicableEvent(client, input);
+      if (!first) return Object.freeze({ status: 'idle' });
+      const rows = await lockApplicableTokenEvents(client, first, maxEvents);
+      let appliedEvents = 0;
+      let publication = null;
+      let latest = null;
+      let latestAppliedBlock = null;
+      for (const row of rows) {
+        const transfer = transferFromRow(row);
+        const locked = await loadLockedBalances(client, transfer);
+        let changes;
+        try {
+          changes = deriveBalanceChanges(transfer, locked.balances);
+        } catch (error) {
+          if (error.code !== 'holder_negative_balance') throw error;
+          const suspicion = liveDeficit(transfer, {
+            ...row,
+            live_through_block: latestAppliedBlock ?? row.live_through_block,
+          }, locked.balances);
+          const result = {
+            ...suspicion, appliedEvents, attemptedEvents: appliedEvents + 1,
+            ...(publication ? { publication } : {}),
+          };
+          if (input.confirmDriftFingerprint == null) return Object.freeze(result);
+          if (String(input.confirmDriftFingerprint) !== suspicion.fingerprint) {
+            const stale = new Error('holder live drift evidence changed before confirmation');
+            stale.code = 'holder_live_drift_stale';
+            throw stale;
+          }
+          await markTokenDrifted(client, transfer.tokenAddress);
+          return Object.freeze({ ...result, status: 'drifted' });
         }
-        await markTokenDrifted(client, transfer.tokenAddress);
-        return Object.freeze({ ...suspicion, status: 'drifted' });
+        latest = await commitAppliedEvent(client, changes, locked.provenance);
+        appliedEvents += 1;
+        latestAppliedBlock = transfer.blockNumber;
+        if (latest.publication) publication = latest.publication;
       }
-      return commitAppliedEvent(client, changes, locked.provenance);
+      return Object.freeze({
+        ...latest, appliedEvents, attemptedEvents: appliedEvents,
+        ...(publication ? { publication } : {}),
+      });
     });
   }
 

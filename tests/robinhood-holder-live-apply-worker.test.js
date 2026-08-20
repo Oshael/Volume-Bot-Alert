@@ -42,10 +42,13 @@ describe('Robinhood holder live apply worker', () => {
       }),
     });
 
-    assert.equal(worker.start({ enabled: true, intervalMs: 75, maxApplyEvents: 25 }), true);
+    assert.equal(worker.start({
+      enabled: true, intervalMs: 75, maxApplyEvents: 25, applyBatchSize: 20,
+    }), true);
     await clock.scheduled[0].callback();
     assert.equal(clock.scheduled[1].delayMs, 75);
     assert.equal(calls[0].maxApplyEvents, 25);
+    assert.equal(calls[0].applyBatchSize, 20);
     assert.equal(worker.getStatus().totalAppliedEvents, 25);
     assert.equal(worker.getStatus().totalShadowPromotions, 3);
     assert.equal(worker.getStatus().lastResult.applyBudgetExhausted, true);

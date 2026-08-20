@@ -95,11 +95,9 @@ describe('Robinhood holder ledger persistence', () => {
       assert.deepEqual(first, {
         insertedTransfers: 2, duplicateTransfers: 1, cursorVersion: 0,
       });
-      assert.deepEqual(await repository.applyNextPendingEvent(), {
-        status: 'applied', tokenAddress: TOKEN, holderCount: '2', holderDelta: 1,
-      });
-      assert.deepEqual(await repository.applyNextPendingEvent(), {
+      assert.deepEqual(await repository.applyNextPendingEvent({ maxEvents: 2 }), {
         status: 'applied', tokenAddress: TOKEN, holderCount: '2', holderDelta: 0,
+        appliedEvents: 2, attemptedEvents: 2,
       });
       await client.query(
         `INSERT INTO robinhood_holder_token_states
@@ -264,8 +262,10 @@ describe('Robinhood holder ledger persistence', () => {
         status: 'repaired', tokenAddress: TOKEN_2,
         insertedTransfers: 1, duplicateTransfers: 0,
       });
-      assert.equal((await repository.applyNextPendingEvent()).status, 'applied');
-      assert.equal((await repository.applyNextPendingEvent()).status, 'applied');
+      const repairedBatch = await repository.applyNextPendingEvent({ maxEvents: 2 });
+      assert.equal(repairedBatch.status, 'applied');
+      assert.equal(repairedBatch.appliedEvents, 2);
+      assert.equal(repairedBatch.attemptedEvents, 2);
       await repository.repairCapturedRange({
         tokenAddress: TOKEN_2, fromBlock: '101', toBlock: '101',
         checkpoint: { number: '101', hash: HASH_B },

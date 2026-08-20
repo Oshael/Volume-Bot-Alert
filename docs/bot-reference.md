@@ -1011,10 +1011,13 @@ O grupo `robinhood-holders` contém workers independentes de captura live, apply
 do journal live, backfill de tokens novos, backfill frio, reconciliação, snapshot
 e poda do journal. Captura/handoff usam a lease `robinhood-holder-live-worker`;
 o apply serial usa `robinhood-holder-live-apply-worker`, intervalo default de
-100ms e o budget `ROBINHOOD_HOLDER_LIVE_MAX_APPLY_EVENTS`. Ambos bloqueiam o
-mesmo cursor em cada transação, então captura, apply e rewind de reorg permanecem
-ordenados sem manter a captura esperando o lote inteiro. O apply escolhe o evento
-elegível global mais antigo e mantém afinidade no token enquanto houver eventos;
+100ms e o budget `ROBINHOOD_HOLDER_LIVE_MAX_APPLY_EVENTS`. Eventos consecutivos
+do mesmo token são aplicados em uma transação, em lotes default de 100 e ajustáveis
+por `ROBINHOOD_HOLDER_LIVE_APPLY_BATCH_SIZE` entre 1 e 1.000. O primeiro déficit
+encerra o lote antes de alterar o evento inválido; o prefixo válido já aplicado
+preserva sua evidência reversível. Captura e apply bloqueiam o mesmo cursor em cada
+transação, então captura, apply e rewind de reorg permanecem ordenados. O apply
+escolhe o evento elegível global mais antigo e mantém afinidade no token enquanto houver eventos;
 o índice parcial da stage 121 preserva a ordem canônica por token sem reescanear
 o journal pendente inteiro a cada evento. No deploy, execute
 `node src/utils/db-init-stage121.js`, `node src/utils/db-init-stage141.js` e

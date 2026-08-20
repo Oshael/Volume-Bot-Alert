@@ -20,6 +20,7 @@ function normalizeOptions(options = {}, env = process.env) {
     intervalMs: boundedInteger(options.intervalMs, 100, 50, 300_000),
     maxErrorBackoffMs: boundedInteger(options.maxErrorBackoffMs, 30_000, 1000, 300_000),
     maxApplyEvents: boundedInteger(options.maxApplyEvents, 5000, 1, 50_000),
+    applyBatchSize: boundedInteger(options.applyBatchSize, 100, 1, 1000),
     rpcTimeoutMs: boundedInteger(
       options.rpcTimeoutMs ?? env.ROBINHOOD_RPC_TIMEOUT_MS, 15_000, 1000, 60_000
     ),
