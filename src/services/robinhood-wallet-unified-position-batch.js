@@ -24,6 +24,27 @@ function pairKey(tokenAddress, walletAddress) {
   return `${tokenAddress}:${walletAddress}`;
 }
 
+function listTouchedWalletPositions(swaps = [], transfers = []) {
+  const pairs = new Map();
+  const add = (tokenAddress, walletAddress) => {
+    const pair = {
+      tokenAddress: fixedHex(tokenAddress, 'position tokenAddress', 20),
+      walletAddress: fixedHex(walletAddress, 'position walletAddress', 20),
+    };
+    pairs.set(pairKey(pair.tokenAddress, pair.walletAddress), Object.freeze(pair));
+  };
+  for (const swap of swaps) {
+    add(value(swap, 'tokenAddress', 'token_address'), value(swap, 'walletAddress', 'wallet_address'));
+  }
+  for (const transfer of transfers) {
+    if (String(value(transfer, 'transferKind', 'transfer_kind')) !== 'wallet_transfer') continue;
+    if (value(transfer, 'affectsPosition', 'affects_position') === false) continue;
+    add(value(transfer, 'tokenAddress', 'token_address'), value(transfer, 'fromWallet', 'from_wallet'));
+    add(value(transfer, 'tokenAddress', 'token_address'), value(transfer, 'toWallet', 'to_wallet'));
+  }
+  return Object.freeze([...pairs.values()]);
+}
+
 function compareEvents(left, right) {
   for (const field of ['blockNumber', 'transactionIndex', 'logIndex']) {
     const difference = BigInt(left[field]) - BigInt(right[field]);
@@ -181,5 +202,6 @@ function buildRobinhoodWalletUnifiedPositionBatch(input = {}) {
 module.exports = {
   UNIFIED_POSITION_VERSION,
   buildRobinhoodWalletUnifiedPositionBatch,
+  listTouchedWalletPositions,
   __private: { compareEvents, transactionPositions },
 };

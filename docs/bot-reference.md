@@ -337,7 +337,7 @@ Grupos existentes:
 | `robinhood-processing` | consumidor isolado: reclama capturas por lease, decodifica a evidência congelada sem RPC, calcula preço/FDV/liquidez, persiste observações/buckets e poda a fila; no mesmo processo, um 2º runner drena `stream='discovery'` para o `robinhood_pool_registry` |
 | `robinhood-derived` | consumidor isolado: drena a outbox de emit ao vivo e replica o fan-out `market:bucket` (socket/relay) sem o monólito; hospeda o catalog projection worker (metadata de token) |
 | `robinhood-wallet` | consumidor isolado: re-lê observações aceitas e atribui `tx.from` via `eth_getBlockByNumber` (full-tx) por bloco, com cursor `live` próprio; alimenta `robinhood_wallet_swaps` |
-| `robinhood-wallet-intelligence` | projeta posições `swap_only_v1` e, sob flag/lease separadas, captura e resume transfers ERC-20 após o frontier durável de swaps; o backfill histórico permanece comando manual, bounded e com lease própria |
+| `robinhood-wallet-intelligence` | projeta posições `swap_only_v1` e, sob flags/leases separadas, captura transfers ERC-20; após handoff explícito também pode persistir `unified_transfer_v1` atomicamente com o cursor LIVE de transfers |
 | `robinhood-backfill` | discovery, scan, enrichment, finalizer e aggregation do replay |
 
 O catalog cleanup do grupo `solana-maintenance` atua somente sobre identidades
@@ -1674,6 +1674,16 @@ endereços. O worker expõe esse modo e os splits na telemetria. Ele valida chai
 ID, checkpoint e hashes antes de persistir raw/arestas; divergência canônica
 paralisa a lease. As Stages 128–130 e 135 devem estar aplicadas antes de
 habilitar o writer.
+
+A projeção financeira unificada dentro desse writer tem uma segunda flag,
+`ROBINHOOD_WALLET_UNIFIED_POSITION_LIVE_ENABLED=true`, desligada por padrão.
+Quando habilitada, cada range monta `unified_transfer_v1` com todos os swaps do
+range e os transfers classificados, e persiste posições e ambos os cursores na
+mesma transação PostgreSQL. O gate exige o seed financeiro `complete`, handoff
+exato entre seed e LIVE e igualdade entre os cursores LIVE financeiro e de
+transfers; cursor financeiro ausente ou atrasado retorna
+`awaiting-position-catch-up` sem avançar transfers. Nunca habilite a flag antes
+de preencher o gap e revisar a igualdade dos cursores.
 
 O bootstrap também existe localmente como
 `npm run robinhood:wallet-live-bootstrap`: dry-run por padrão, audita observações

@@ -1356,6 +1356,10 @@ module.exports = {
 
   robinhoodWalletTransferLiveWorker: {
     enabled: parseBoolean(process.env.ROBINHOOD_WALLET_TRANSFER_LIVE_ENABLED, false),
+    unifiedPositionEnabled: parseBoolean(
+      process.env.ROBINHOOD_WALLET_UNIFIED_POSITION_LIVE_ENABLED,
+      false
+    ),
     intervalMs: parseIntegerInRange(
       process.env.ROBINHOOD_WALLET_TRANSFER_LIVE_INTERVAL_MS, 2000, 250, 300_000
     ),

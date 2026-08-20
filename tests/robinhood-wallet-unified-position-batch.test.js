@@ -3,6 +3,7 @@ const { describe, it } = require('node:test');
 
 const {
   buildRobinhoodWalletUnifiedPositionBatch,
+  listTouchedWalletPositions,
 } = require('../src/services/robinhood-wallet-unified-position-batch');
 
 const TOKEN = `0x${'1'.repeat(40)}`;
@@ -34,6 +35,16 @@ function position(result, walletAddress) {
 }
 
 describe('Robinhood unified wallet position batch', () => {
+  it('lists each swap and transfer position pair once', () => {
+    assert.deepEqual(listTouchedWalletPositions(
+      [swap({ wallet_address: ALICE })],
+      [transfer(), transfer({ transferKind: 'dex_flow' })]
+    ), [
+      { tokenAddress: TOKEN, walletAddress: ALICE },
+      { tokenAddress: TOKEN, walletAddress: FUNDER },
+    ]);
+  });
+
   it('uses canonical transaction order even when swaps arrive first', () => {
     const result = buildRobinhoodWalletUnifiedPositionBatch({
       swaps: [swap()],

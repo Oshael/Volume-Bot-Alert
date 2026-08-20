@@ -1,6 +1,11 @@
 const {
   CLASSIFICATION_VERSION, classificationInput, classifyTransfers, isEdgeEligibleTransfer,
 } = require('./robinhood-wallet-transfer-batch');
+const {
+  UNIFIED_POSITION_VERSION,
+  buildRobinhoodWalletUnifiedPositionBatch,
+  listTouchedWalletPositions,
+} = require('./robinhood-wallet-unified-position-batch');
 
 const STREAM = 'live';
 
@@ -25,6 +30,12 @@ function assertDependencies(deps) {
   requireMethods(deps.evidence, ['matchesCheckpoint', 'readRange'], 'transfer evidence reader');
   requireMethods(deps.projection, ['commitBatch', 'initCursor', 'loadCursor'], 'transfer projection');
   requireMethods(deps.raw, ['insertTransferEvents'], 'raw transfer repository');
+}
+
+function assertPositionDependencies(positions) {
+  requireMethods(positions, [
+    'loadCursor', 'initCursor', 'loadPositions', 'readUnifiedRangeSwaps',
+  ], 'unified position projection');
 }
 
 function sourceRegression(message) {
@@ -69,6 +80,78 @@ async function initializeCursor(projection, captured, sourceThrough) {
   });
 }
 
+function positionWait(reason, transfer, position = null) {
+  return Object.freeze({
+    status: 'awaiting-position-catch-up', reason,
+    transferNextBlock: transfer.nextBlock,
+    positionNextBlock: position?.nextBlock || null,
+  });
+}
+
+async function prepareUnifiedPosition(deps, input) {
+  if (input.enabled !== true) return Object.freeze({ batch: null, telemetry: null });
+  assertPositionDependencies(deps.positions);
+  const seed = await deps.positions.loadCursor(UNIFIED_POSITION_VERSION, 'seed');
+  if (!seed || seed.lifecycleState !== 'complete') {
+    return { outcome: positionWait('position_seed_incomplete', input.transfer, seed) };
+  }
+  if (seed.nextBlock !== input.transfer.originBlock) {
+    return { outcome: positionWait('position_seed_handoff_mismatch', input.transfer, seed) };
+  }
+  let live = await deps.positions.loadCursor(UNIFIED_POSITION_VERSION, STREAM);
+  if (!live) {
+    if (input.transfer.nextBlock !== seed.nextBlock) {
+      return { outcome: positionWait('position_live_missing', input.transfer) };
+    }
+    live = await deps.positions.initCursor({
+      projectionVersion: UNIFIED_POSITION_VERSION,
+      stream: STREAM,
+      originBlock: seed.nextBlock,
+      nextBlock: seed.nextBlock,
+      nextBlockTime: seed.nextBlockTime,
+      safeHead: input.sourceThrough,
+    });
+  }
+  if (!['pending', 'running'].includes(live.lifecycleState)) {
+    return { outcome: positionWait('position_live_not_running', input.transfer, live) };
+  }
+  if (live.originBlock !== seed.nextBlock) {
+    return { outcome: positionWait('position_live_origin_mismatch', input.transfer, live) };
+  }
+  if (BigInt(live.nextBlock) < BigInt(input.transfer.nextBlock)) {
+    return { outcome: positionWait('position_live_behind', input.transfer, live) };
+  }
+  if (BigInt(live.nextBlock) > BigInt(input.transfer.nextBlock)) {
+    throw sourceRegression('unified position LIVE cursor is ahead of transfers');
+  }
+  const swaps = await deps.positions.readUnifiedRangeSwaps({
+    fromBlock: input.captured.fromBlock,
+    toBlock: input.captured.toBlock,
+    fromTime: input.fromTime,
+    toTime: input.captured.checkpoint.blockTime,
+    tokenAddresses: input.tokenAddresses,
+  });
+  const pairs = listTouchedWalletPositions(swaps, input.transfers);
+  const stored = await deps.positions.loadPositions(UNIFIED_POSITION_VERSION, pairs);
+  const projected = buildRobinhoodWalletUnifiedPositionBatch({
+    swaps, transfers: input.transfers, positions: stored,
+  });
+  return Object.freeze({
+    batch: Object.freeze({
+      projectionVersion: UNIFIED_POSITION_VERSION,
+      stream: STREAM,
+      expectedVersion: live.version,
+      nextBlock: input.captured.nextBlock,
+      nextBlockTime: input.captured.checkpoint.blockTime,
+      safeHead: input.sourceThrough,
+      checkpointBlock: input.captured.checkpoint.number,
+      checkpointHash: input.captured.checkpoint.hash,
+      positions: projected.positions,
+    }),
+    telemetry: projected.telemetry,
+  });
+}
+
 async function runRobinhoodWalletTransferLiveTick(deps, input = {}) {
   assertDependencies(deps);
   const maxBlocks = boundedInteger(input.maxBlocks, 25, 1, 250, 'maxBlocks');
@@ -105,6 +188,16 @@ async function runRobinhoodWalletTransferLiveTick(deps, input = {}) {
   const classified = classifyTransfers(
     captured.transfers, context, deps.classifierFactory
   );
+  const unified = await prepareUnifiedPosition(deps, {
+    enabled: input.unifiedPositionEnabled,
+    transfer: cursor,
+    sourceThrough,
+    captured,
+    fromTime,
+    tokenAddresses,
+    transfers: classified.events,
+  });
+  if (unified.outcome) return unified.outcome;
   const raw = await deps.raw.insertTransferEvents(classified.events);
   const projected = await deps.projection.commitBatch({
     projectionVersion: CLASSIFICATION_VERSION, stream: STREAM,
@@ -112,6 +205,7 @@ async function runRobinhoodWalletTransferLiveTick(deps, input = {}) {
     nextBlockTime: captured.checkpoint.blockTime, safeHead: sourceThrough,
     checkpointBlock: captured.checkpoint.number, checkpointHash: captured.checkpoint.hash,
     events: classified.events.filter(isEdgeEligibleTransfer),
+    ...(unified.batch ? { positionBatch: unified.batch } : {}),
   });
   return Object.freeze({
     status: projected.committed ? 'projected' : 'cursor-conflict',
@@ -120,6 +214,7 @@ async function runRobinhoodWalletTransferLiveTick(deps, input = {}) {
     transfers: classified.events.length, classifications: Object.freeze(classified.counts),
     rawInserted: raw.inserted, edgeGroups: projected.edgeGroups || 0,
     evidenceCandidates: projected.evidenceCandidates || 0,
+    unifiedPosition: unified.telemetry,
     telemetry: Object.freeze({
       ...captured.telemetry, endpointRoles: context.endpointRoleCoverage,
     }),
@@ -128,5 +223,7 @@ async function runRobinhoodWalletTransferLiveTick(deps, input = {}) {
 
 module.exports = {
   runRobinhoodWalletTransferLiveTick,
-  __private: { classificationInput, rangeFor, validateCursorAgainstSource },
+  __private: {
+    classificationInput, prepareUnifiedPosition, rangeFor, validateCursorAgainstSource,
+  },
 };

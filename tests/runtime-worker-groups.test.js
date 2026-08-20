@@ -323,9 +323,11 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_WALLET_TRANSFER_ADDRESS_SHARD_CONCURRENCY: '9',
       ROBINHOOD_WALLET_TRANSFER_BLOCK_BATCH_SIZE: '999',
       ROBINHOOD_WALLET_TRANSFER_ROLE_BATCH_SIZE: '0',
+      ROBINHOOD_WALLET_UNIFIED_POSITION_LIVE_ENABLED: 'true',
     }, (config) => {
       assert.deepEqual(config.robinhoodWalletTransferLiveWorker, {
-        enabled: true, intervalMs: 250, maxErrorBackoffMs: 30_000,
+        enabled: true, unifiedPositionEnabled: true,
+        intervalMs: 250, maxErrorBackoffMs: 30_000,
         maxBlocks: 250, addressShardConcurrency: 4,
         blockEvidenceBatchSize: 100, endpointRoleBatchSize: 1,
       });

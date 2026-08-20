@@ -20,6 +20,7 @@ function normalizeOptions(input = {}) {
     addressShardConcurrency: boundedInteger(input.addressShardConcurrency, 1, 1, 4),
     blockEvidenceBatchSize: boundedInteger(input.blockEvidenceBatchSize, 50, 1, 100),
     endpointRoleBatchSize: boundedInteger(input.endpointRoleBatchSize, 50, 1, 100),
+    unifiedPositionEnabled: input.unifiedPositionEnabled === true,
     rpcOptions: input.rpcOptions || {},
   });
 }
@@ -55,6 +56,7 @@ function compactResult(result) {
     transferRangeSplits: count(result.telemetry?.splits),
     transferAddressSplits: count(result.telemetry?.addressSplits),
     endpointRoleProbes: count(result.telemetry?.endpointRoles?.probes),
+    unifiedPosition: result.unifiedPosition || null,
   });
 }
 
@@ -115,7 +117,10 @@ function createRobinhoodWalletTransferLiveWorker(deps = {}) {
     try {
       const runtime = await getRuntime();
       status.providerChainIds = runtime.providerChainIds;
-      const result = await tick(runtime.tickDeps, { maxBlocks: options.maxBlocks });
+      const result = await tick(runtime.tickDeps, {
+        maxBlocks: options.maxBlocks,
+        unifiedPositionEnabled: options.unifiedPositionEnabled,
+      });
       recordResult(result);
       status.lastError = null; status.consecutiveErrors = 0;
       if (result.status === 'blocked') {

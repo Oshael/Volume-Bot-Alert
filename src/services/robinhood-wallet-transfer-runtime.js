@@ -9,6 +9,9 @@ const {
   createRobinhoodWalletTransferProjectionRepository,
 } = require('../models/robinhood-wallet-transfer-projection');
 const {
+  createRobinhoodWalletPositionRepository,
+} = require('../models/robinhood-wallet-position');
+const {
   createRobinhoodRpcClient,
   validateRobinhoodProviderChainIds,
 } = require('./robinhood-ingestion-worker');
@@ -29,14 +32,16 @@ async function buildRobinhoodWalletTransferRuntime(options = {}, deps = {}) {
   const transferReader = (deps.transferReaderFactory || createRobinhoodHolderTransferReader)({
     rpcClient, addressShardConcurrency: options.addressShardConcurrency,
   });
+  const positions = (deps.positionFactory || createRobinhoodWalletPositionRepository)({ database });
   return Object.freeze({
     providerChainIds,
     tickDeps: Object.freeze({
       source: (deps.sourceFactory || createRobinhoodWalletTransferLiveSourceRepository)({ database }),
       raw: (deps.rawFactory || createRobinhoodTokenTransferRepository)({ database }),
       projection: (deps.projectionFactory || createRobinhoodWalletTransferProjectionRepository)({
-        database,
+        database, positionProjection: positions,
       }),
+      positions,
       evidence: (deps.evidenceFactory || createRobinhoodWalletTransferEvidenceReader)({
         transferReader, rpcClient, blockBatchSize: options.blockEvidenceBatchSize,
       }),

@@ -7,6 +7,7 @@ const {
 const {
   UNIFIED_POSITION_VERSION,
   buildRobinhoodWalletUnifiedPositionBatch,
+  listTouchedWalletPositions,
 } = require('./robinhood-wallet-unified-position-batch');
 
 function methods(value, names, label) {
@@ -21,30 +22,6 @@ function boundedBlocks(value) {
     throw new Error('maxBlocks must be between 1 and 5000');
   }
   return parsed;
-}
-
-function field(row, camel, snake) {
-  return row?.[camel] ?? row?.[snake];
-}
-
-function touchedPairs(swaps, transfers) {
-  const pairs = new Map();
-  const add = (tokenAddress, walletAddress) => {
-    const pair = {
-      tokenAddress: String(tokenAddress).toLowerCase(),
-      walletAddress: String(walletAddress).toLowerCase(),
-    };
-    pairs.set(`${pair.tokenAddress}:${pair.walletAddress}`, pair);
-  };
-  for (const swap of swaps) {
-    add(field(swap, 'tokenAddress', 'token_address'), field(swap, 'walletAddress', 'wallet_address'));
-  }
-  for (const transfer of transfers) {
-    if (transfer.transferKind !== 'wallet_transfer' || transfer.affectsPosition === false) continue;
-    add(transfer.tokenAddress, transfer.fromWallet);
-    add(transfer.tokenAddress, transfer.toWallet);
-  }
-  return [...pairs.values()];
 }
 
 function validateCursors(transfer, position) {
@@ -96,7 +73,7 @@ async function runRobinhoodWalletPositionCatchup(deps, input = {}) {
     commit: input.commit === true,
   });
   const swaps = resolvedSwaps.swaps;
-  const pairs = touchedPairs(swaps, prepared.classified.events);
+  const pairs = listTouchedWalletPositions(swaps, prepared.classified.events);
   const stored = await deps.positionProjection.loadPositions(UNIFIED_POSITION_VERSION, pairs);
   const batch = buildRobinhoodWalletUnifiedPositionBatch({
     swaps, transfers: prepared.classified.events, positions: stored,
@@ -136,4 +113,4 @@ async function runRobinhoodWalletPositionCatchup(deps, input = {}) {
   });
 }
 
-module.exports = { runRobinhoodWalletPositionCatchup, __private: { touchedPairs, validateCursors } };
+module.exports = { runRobinhoodWalletPositionCatchup, __private: { validateCursors } };

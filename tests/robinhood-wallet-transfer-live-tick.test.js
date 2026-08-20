@@ -14,7 +14,7 @@ const TIME = '2099-01-01T00:00:00.000Z';
 
 function cursor(overrides = {}) {
   return {
-    projectionVersion: 'rh_transfer_v1', stream: 'live', nextBlock: '100',
+    projectionVersion: 'rh_transfer_v1', stream: 'live', originBlock: '100', nextBlock: '100',
     nextBlockTime: TIME, safeHead: '100', checkpointBlock: null,
     checkpointHash: null, lifecycleState: 'running', version: 0, ...overrides,
   };
@@ -70,6 +70,7 @@ function dependencies(overrides = {}) {
     raw: {
       insertTransferEvents: async (events) => { calls.raw.push(events); return { inserted: events.length }; },
     },
+    ...(overrides.positions ? { positions: overrides.positions } : {}),
   };
 }
 
@@ -168,5 +169,60 @@ describe('Robinhood wallet transfer LIVE tick', () => {
       runRobinhoodWalletTransferLiveTick(deps),
       (error) => error.code === 'transfer_source_frontier_regressed'
     );
+  });
+
+  it('waits for the unified position gap without advancing transfers', async () => {
+    const positions = {
+      loadCursor: async (_version, stream) => (stream === 'seed' ? {
+        lifecycleState: 'complete', originBlock: '90', nextBlock: '90',
+        nextBlockTime: TIME,
+      } : null),
+      initCursor: async () => null,
+      loadPositions: async () => [],
+      readUnifiedRangeSwaps: async () => [],
+    };
+    const deps = dependencies({
+      cursor: cursor({ originBlock: '90', nextBlock: '100' }),
+      positions,
+    });
+    const result = await runRobinhoodWalletTransferLiveTick(deps, {
+      maxBlocks: 25, unifiedPositionEnabled: true,
+    });
+
+    assert.deepEqual(result, {
+      status: 'awaiting-position-catch-up', reason: 'position_live_missing',
+      transferNextBlock: '100', positionNextBlock: null,
+    });
+    assert.equal(deps.calls.raw.length, 0);
+    assert.equal(deps.calls.projected.length, 0);
+  });
+
+  it('commits unified LIVE positions atomically at an exact cursor handoff', async () => {
+    const initialized = [];
+    const positions = {
+      loadCursor: async (_version, stream) => (stream === 'seed' ? {
+        lifecycleState: 'complete', originBlock: '90', nextBlock: '100',
+        nextBlockTime: TIME,
+      } : null),
+      initCursor: async (input) => {
+        initialized.push(input);
+        return { ...input, lifecycleState: 'pending', version: 0 };
+      },
+      loadPositions: async () => [],
+      readUnifiedRangeSwaps: async () => [],
+    };
+    const deps = dependencies({ positions });
+    const result = await runRobinhoodWalletTransferLiveTick(deps, {
+      maxBlocks: 25, unifiedPositionEnabled: true,
+    });
+
+    assert.equal(result.status, 'projected');
+    assert.equal(initialized[0].projectionVersion, 'unified_transfer_v1');
+    assert.equal(initialized[0].nextBlock, '100');
+    assert.equal(deps.calls.projected[0].positionBatch.nextBlock, '101');
+    assert.equal(deps.calls.projected[0].positionBatch.positions.length, 2);
+    assert.deepEqual(result.unifiedPosition, {
+      swaps: 0, walletTransfers: 1, financialEvents: 2, touchedPositions: 2,
+    });
   });
 });
