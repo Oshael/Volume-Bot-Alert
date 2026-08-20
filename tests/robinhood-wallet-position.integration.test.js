@@ -22,6 +22,7 @@ const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const VERSION = 'test_swap_only_v1';
+const LIVE_VERSION = 'test_unified_live_v1';
 const TOKEN = `0x${'11'.repeat(20)}`;
 const WALLET = `0x${'22'.repeat(20)}`;
 const OTHER_TOKEN = `0x${'33'.repeat(20)}`;
@@ -40,8 +41,15 @@ function swapRow(overrides = {}) {
 }
 
 async function cleanup() {
-  await db.query('DELETE FROM robinhood_wallet_token_positions WHERE projection_version = $1', [VERSION]);
-  await db.query('DELETE FROM robinhood_wallet_position_cursors WHERE projection_version = $1', [VERSION]);
+  const versions = [VERSION, LIVE_VERSION];
+  await db.query(
+    'DELETE FROM robinhood_wallet_token_positions WHERE projection_version = ANY($1::varchar[])',
+    [versions]
+  );
+  await db.query(
+    'DELETE FROM robinhood_wallet_position_cursors WHERE projection_version = ANY($1::varchar[])',
+    [versions]
+  );
   await db.query('DELETE FROM robinhood_holder_balances WHERE token_address = $1', [TOKEN]);
   await db.query('DELETE FROM robinhood_holder_token_states WHERE token_address = $1', [TOKEN]);
   await db.query('DELETE FROM robinhood_wallet_swaps WHERE transaction_hash = ANY($1::varchar[])',
@@ -180,5 +188,34 @@ describe('Robinhood wallet position persistence', () => {
     );
     assert.equal(reconciliation.aligned, 1);
     assert.equal(reconciliation.mismatched, 1);
+  });
+
+  it('hands a completed seed to an independently advancing LIVE cursor', async () => {
+    const repository = createRobinhoodWalletPositionRepository({ database: db });
+    await repository.initCursor({
+      projectionVersion: LIVE_VERSION, stream: 'seed', originBlock: '90',
+      nextBlock: '90', safeHead: '90', nextBlockTime: '2026-08-01T00:00:00.000Z',
+    });
+    const completed = await repository.commitBatch({
+      projectionVersion: LIVE_VERSION, stream: 'seed', expectedVersion: 0,
+      nextBlock: '91', safeHead: '90', nextBlockTime: '2026-08-01T00:01:00.000Z',
+    });
+    assert.equal(completed.cursor.lifecycleState, 'complete');
+
+    await repository.initCursor({
+      projectionVersion: LIVE_VERSION, stream: 'live', originBlock: '91',
+      nextBlock: '91', safeHead: '100', nextBlockTime: '2026-08-01T00:01:00.000Z',
+    });
+    const advanced = await repository.commitBatch({
+      projectionVersion: LIVE_VERSION, stream: 'live', expectedVersion: 0,
+      nextBlock: '92', safeHead: '101', checkpointBlock: '91',
+      checkpointHash: `0x${'dd'.repeat(32)}`,
+      nextBlockTime: '2026-08-01T00:02:00.000Z',
+    });
+
+    assert.equal(advanced.committed, true);
+    assert.equal(advanced.cursor.lifecycleState, 'running');
+    assert.equal(advanced.cursor.originBlock, '91');
+    assert.equal((await repository.loadCursor(LIVE_VERSION, 'seed')).lifecycleState, 'complete');
   });
 });

@@ -1605,15 +1605,20 @@ Falha nessa escrita impede o cursor de avançar. O acervo anterior à Stage 139
 
 Quando o cursor de transfers já avançou além da posição `unified_transfer_v1`,
 execute no mesmo PC/archive `npm run robinhood:wallet-position-catch-up --
---max-blocks=500`. O comando relê e classifica somente a lacuna comprovada entre
-os dois cursores, combina transfers e swaps da VPS e não altera o cursor de
+--max-blocks=500`. O stream histórico `seed` continua sendo o padrão. Depois que
+ele estiver `complete`, use `--stream=live` para preencher somente a lacuna entre
+o handoff do seed e o cursor LIVE de transfers. O comando relê e classifica a
+faixa comprovada, combina transfers e swaps da VPS e não altera o cursor de
 transfers. Para swaps ainda sem `transaction_index`, consulta full-blocks apenas
 dos blocos ausentes no mesmo `RH_NODE_RPC_URL` archive; nunca usa fallback por
 `action_index`. O dry-run resolve em memória sem gravar a sidecar. Após revisar
-a faixa, confirme com
-`--confirm-catch-up-robinhood-wallet-positions`. Repita até `caught-up` antes de
-retomar o backfill unificado; o modo confirmado persiste as posições canônicas
-antes do cursor financeiro. As Stages 137 e 139 são obrigatórias.
+a faixa, confirme com `--confirm-catch-up-robinhood-wallet-positions`; o modo
+confirmado aceita `--max-ranges=10000` e para antes ao retornar `caught-up`,
+`blocked` ou conflito. Para o handoff final, pare brevemente o writer LIVE de transfers,
+iguale os dois cursores com `--stream=live`, habilite
+`ROBINHOOD_WALLET_UNIFIED_POSITION_LIVE_ENABLED=true` e reinicie o writer. O
+modo confirmado persiste as posições canônicas antes do cursor financeiro. As
+Stages 137 e 139 são obrigatórias.
 
 O repository de projeção persiste arestas, resumo diário por token, evidências
 `first`/`last`/`largest` e cursor sob a mesma transação com lock/CAS. O resumo

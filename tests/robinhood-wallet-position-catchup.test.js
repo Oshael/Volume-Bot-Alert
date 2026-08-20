@@ -51,7 +51,11 @@ function harness(overrides = {}) {
   const deps = {
     transferProjection: { loadCursor: async () => transferCursor },
     positionProjection: {
-      loadCursor: async () => overrides.positionCursor || null,
+      loadCursor: async (_version, stream) => (
+        overrides.positionCursors
+          ? (overrides.positionCursors[stream] || null)
+          : (overrides.positionCursor || null)
+      ),
       initCursor: async (input) => {
         calls.initialized.push(input);
         return { ...input, lifecycleState: 'pending', version: 0 };
@@ -138,6 +142,45 @@ describe('Robinhood unified wallet-position catch-up', () => {
       'transfer_checkpoint_mismatch');
     assert.equal(orphaned.calls.evidence.length, 0);
   });
+
+  it('hands a complete seed off to the LIVE position cursor', async () => {
+    const test = harness({
+      transferCursor: { stream: 'live' },
+      positionCursors: {
+        seed: {
+          originBlock: '1', nextBlock: '90', safeHead: '89',
+          lifecycleState: 'complete', version: 5,
+        },
+      },
+    });
+    const result = await runRobinhoodWalletPositionCatchup(test.deps, {
+      stream: 'live', maxBlocks: 500, commit: true,
+    });
+
+    assert.equal(result.status, 'caught-up');
+    assert.equal(result.stream, 'live');
+    assert.deepEqual(test.calls.initialized[0], {
+      projectionVersion: 'unified_transfer_v1', stream: 'live', originBlock: '90',
+      nextBlock: '90', nextBlockTime: '2026-01-01T00:00:00.000Z', safeHead: '200',
+    });
+    assert.equal(test.calls.committed[0].stream, 'live');
+  });
+
+  it('blocks a LIVE catch-up when the seed handoff is discontinuous', async () => {
+    const test = harness({
+      transferCursor: { stream: 'live', originBlock: '91' },
+      positionCursors: {
+        seed: {
+          originBlock: '1', nextBlock: '90', safeHead: '89',
+          lifecycleState: 'complete', version: 5,
+        },
+      },
+    });
+    const result = await runRobinhoodWalletPositionCatchup(test.deps, { stream: 'live' });
+
+    assert.deepEqual(result, { status: 'blocked', reason: 'seed_live_handoff_mismatch' });
+    assert.equal(test.calls.evidence.length, 0);
+  });
 });
 
 describe('Robinhood unified wallet-position catch-up command', () => {
@@ -187,7 +230,14 @@ describe('Robinhood unified wallet-position catch-up command', () => {
   });
 
   it('is dry-run-first and requires the long confirmation flag', async () => {
-    assert.deepEqual(parseArgs(['--max-blocks=500']), { confirm: false, maxBlocks: 500 });
+    assert.deepEqual(parseArgs(['--max-blocks=500']), {
+      confirm: false, maxBlocks: 500, maxRanges: 1, stream: 'seed',
+    });
+    assert.deepEqual(parseArgs(['--stream=live']), {
+      confirm: false, maxBlocks: 500, maxRanges: 1, stream: 'live',
+    });
+    assert.throws(() => parseArgs(['--stream=other']), /seed or live/);
+    assert.throws(() => parseArgs(['--max-ranges=2']), /confirmation flag/);
     assert.throws(() => parseArgs(['--commit']), /unknown argument/);
     const calls = [];
     const deps = {
@@ -196,9 +246,27 @@ describe('Robinhood unified wallet-position catch-up command', () => {
       logger: { log: () => {} },
     };
     assert.equal((await main([], deps)).mode, 'dry-run');
-    assert.equal((await main([CONFIRM_FLAG], deps)).mode, 'commit-bounded-range');
+    const confirmed = await main([CONFIRM_FLAG, '--stream=live'], deps);
+    assert.equal(confirmed.mode, 'commit-bounded-range');
+    assert.equal(confirmed.stream, 'live');
     assert.deepEqual(calls, [
-      { maxBlocks: 500, commit: false }, { maxBlocks: 500, commit: true },
+      { maxBlocks: 500, commit: false, stream: 'seed' },
+      { maxBlocks: 500, commit: true, stream: 'live' },
     ]);
+  });
+
+  it('loops confirmed ranges until the LIVE gap is caught up', async () => {
+    const statuses = ['projected', 'projected', 'caught-up'];
+    const deps = {
+      runtime: { providerChainIds: { archive: '4663' }, catchupDeps: {} },
+      runCatchup: async () => ({ status: statuses.shift() }),
+      logger: { log: () => {} },
+    };
+    const report = await main([
+      CONFIRM_FLAG, '--stream=live', '--max-ranges=10',
+    ], deps);
+
+    assert.equal(report.rangesProcessed, 3);
+    assert.equal(report.result.status, 'caught-up');
   });
 });
