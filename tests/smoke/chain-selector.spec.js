@@ -1673,13 +1673,14 @@ test('opens a Robinhood FDV chart and applies only its realtime updates', async 
   expect(diagnostics.pageErrors).toEqual([]);
 });
 
-test('renders holders and cursor pages in the Robinhood expanded chart', async ({ page }) => {
+test('renders and switches Robinhood holder hover bars', async ({ page }) => {
   const socketScenario = { socket: null, clientFrames: [] };
   const diagnostics = await openAuthenticatedWorkspace(
     page, ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES, '/alerts', socketScenario,
   );
-  await page.getByRole('group', { name: 'Filter workspace by blockchain' })
-    .locator('[data-chain="robinhood"]').click();
+  await page.evaluate(() => {
+    document.querySelector('[aria-label="Filter workspace by blockchain"] [data-chain="robinhood"]')?.click();
+  });
   const row = page.locator(`article.monitored-token-row[data-address="${ROBINHOOD_TOKEN}"]`);
   await expect(row).toBeVisible();
   const holderTrigger = row.locator('[data-holder-hover-address]');
@@ -1695,8 +1696,34 @@ test('renders holders and cursor pages in the Robinhood expanded chart', async (
   await expect(holderHover.locator('.rh-holder-hover-delta')).toHaveCount(4);
   await expect(holderHover).toContainText('+4 / +0.09%');
   await expect(holderHover.locator('[data-holder-hover-bar]')).toHaveCount(180);
+  await expect(holderHover.locator('[data-holder-hover-bar].is-positive, [data-holder-hover-bar].is-negative')).toHaveCount(0);
+  expect(await holderHover.locator('[data-holder-hover-bar]').evaluateAll((bars) => bars.every((bar) => {
+    const y = Number(bar.getAttribute('y'));
+    const height = Number(bar.getAttribute('height'));
+    return height >= 24 && Math.abs((y + height) - 96) < 0.01;
+  }))).toBe(true);
   await holderHover.getByRole('button', { name: '24H', exact: true }).click();
+  await page.waitForTimeout(180);
+  await expect(holderHover).toBeVisible();
+  await expect(holderHover.getByRole('button', { name: '24H', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(holderHover.locator('[data-holder-hover-bar]')).toHaveCount(30);
+  expect(diagnostics.unexpectedRequests).toEqual([]);
+  expect(diagnostics.pageErrors).toEqual([]);
+});
+
+test('renders holders and cursor pages in the Robinhood expanded chart', async ({ page }) => {
+  const socketScenario = { socket: null, clientFrames: [] };
+  const diagnostics = await openAuthenticatedWorkspace(
+    page, ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES, '/alerts', socketScenario,
+  );
+  await page.getByRole('group', { name: 'Filter workspace by blockchain' })
+    .locator('[data-chain="robinhood"]').click();
+  const row = page.locator(`article.monitored-token-row[data-address="${ROBINHOOD_TOKEN}"]`);
+  await expect(row).toBeVisible();
+  const holderTrigger = row.locator('[data-holder-hover-address]');
+  await holderTrigger.hover();
+  const holderHover = page.locator('[data-holder-hover-card]');
+  await expect(holderHover).toBeVisible();
   await page.mouse.move(0, 0);
   await expect(holderHover).toBeHidden();
   await row.locator('.monitored-mini-chart .sparkline-wrap').click();

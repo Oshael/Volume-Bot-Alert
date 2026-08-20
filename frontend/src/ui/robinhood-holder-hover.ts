@@ -42,19 +42,22 @@ function formatPercent(history: RobinhoodHolderCountSeries, delta: number | null
 function renderBars(history: RobinhoodHolderCountSeries) {
   const bars = history.series[interval].slice(-BAR_LIMITS[interval]);
   if (!bars.length) return '<p class="rh-holder-hover-state">No holder history collected yet.</p>';
-  const maxDelta = Math.max(1, ...bars.map((bar) => Math.abs(bar.delta ?? 0)));
+  const counts = bars.flatMap((bar) => bar.holderCount == null ? [] : [bar.holderCount]);
+  const minCount = counts.length ? Math.min(...counts) : 0;
+  const maxCount = counts.length ? Math.max(...counts) : 0;
+  const countRange = maxCount - minCount;
   const slotWidth = 1000 / bars.length;
   const barWidth = Math.max(0.35, slotWidth * 0.82);
   const rectangles = bars.map((bar, index) => {
-    const delta = bar.delta;
-    const height = delta == null ? 1.5 : Math.max(1.5, (Math.abs(delta) / maxDelta) * 44);
-    const y = delta != null && delta > 0 ? 50 - height : 50;
-    const tone = delta == null ? 'is-unavailable' : delta > 0 ? 'is-positive' : delta < 0 ? 'is-negative' : 'is-flat';
-    const title = `${new Date(bar.start).toLocaleString()} · ${formatCount(delta, true)} holders · total ${formatCount(bar.holderCount)}`;
-    return `<rect data-holder-hover-bar class="${tone}${bar.status === 'open' ? ' is-open' : ''}" x="${(index * slotWidth).toFixed(3)}" y="${y.toFixed(3)}" width="${barWidth.toFixed(3)}" height="${height.toFixed(3)}"><title>${escapeHtml(title)}</title></rect>`;
+    const available = bar.holderCount != null;
+    const height = !available ? 2 : countRange === 0
+      ? 62
+      : 24 + (((bar.holderCount! - minCount) / countRange) * 70);
+    const title = `${new Date(bar.start).toLocaleString()} · total ${formatCount(bar.holderCount)} · change ${formatCount(bar.delta, true)}`;
+    return `<rect data-holder-hover-bar class="${available ? '' : 'is-unavailable'}${bar.status === 'open' ? ' is-open' : ''}" x="${(index * slotWidth).toFixed(3)}" y="${(96 - height).toFixed(3)}" width="${barWidth.toFixed(3)}" height="${height.toFixed(3)}"><title>${escapeHtml(title)}</title></rect>`;
   }).join('');
-  return `<svg class="rh-holder-hover-bars" viewBox="0 0 1000 100" preserveAspectRatio="none" role="img" aria-label="Holder changes for up to the last 30 days">
-      <line x1="0" y1="50" x2="1000" y2="50"></line>${rectangles}
+  return `<svg class="rh-holder-hover-bars" viewBox="0 0 1000 100" preserveAspectRatio="none" role="img" aria-label="Holder totals for up to the last 30 days">
+      <line x1="0" y1="96" x2="1000" y2="96"></line>${rectangles}
     </svg>`;
 }
 
@@ -183,7 +186,13 @@ function onCardClick(event: Event) {
   const next = target?.closest<HTMLButtonElement>('[data-holder-hover-interval]')?.dataset.holderHoverInterval as RobinhoodHolderInterval | undefined;
   if (!next || !INTERVALS.includes(next) || !activeHistory) return;
   interval = next;
-  getCard().innerHTML = renderHistory(activeHistory);
+  const card = getCard();
+  card.querySelectorAll<HTMLButtonElement>('[data-holder-hover-interval]').forEach((button) => {
+    button.setAttribute('aria-pressed', String(button.dataset.holderHoverInterval === interval));
+  });
+  const plot = card.querySelector<HTMLElement>('.rh-holder-hover-plot');
+  if (plot) plot.innerHTML = renderBars(activeHistory);
+  window.clearTimeout(hideTimer);
   positionCard();
 }
 

@@ -3808,9 +3808,7 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 
 .rh-holder-hover-bars line { stroke: rgba(244, 246, 251, 0.16); stroke-width: 0.8; }
 .rh-holder-hover-bars rect { fill: #849be6; }
-.rh-holder-hover-bars rect.is-positive { fill: #6cbd72; }
-.rh-holder-hover-bars rect.is-negative { fill: #ef5350; }
-.rh-holder-hover-bars rect.is-unavailable { fill: rgba(244, 246, 251, 0.18); }
+.rh-holder-hover-bars rect.is-unavailable { opacity: 0.22; }
 .rh-holder-hover-bars rect.is-open { opacity: 0.72; }
 
 .rh-holder-hover-state {
