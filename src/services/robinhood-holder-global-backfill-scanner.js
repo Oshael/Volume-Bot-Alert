@@ -108,7 +108,7 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
   const now = deps.now || Date.now;
   let activeRun = null;
   let cachedRunId = null;
-  let cohort = Object.freeze([]);
+  let cohortSchedule = Object.freeze([]);
   let effectivePrefetch = options.prefetch;
   let stableBatches = 0;
   let lastLiveLag = null;
@@ -173,17 +173,32 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
 
   async function loadCohort(runId) {
     if (cachedRunId !== runId) {
-      cohort = await lifecycle.loadCohort({ runId });
+      if (typeof lifecycle.loadCohortSchedule === 'function') {
+        cohortSchedule = await lifecycle.loadCohortSchedule({ runId });
+      } else {
+        cohortSchedule = (await lifecycle.loadCohort({ runId })).map((tokenAddress) => ({
+          tokenAddress, deploymentBlock: '0',
+        }));
+      }
       cachedRunId = runId;
     }
-    return cohort;
+    return cohortSchedule;
+  }
+
+  function rangeScope(schedule, toBlock) {
+    const through = BigInt(toBlock);
+    return schedule
+      .filter((token) => BigInt(token.deploymentBlock) <= through)
+      .map((token) => token.tokenAddress);
   }
 
   async function excludeCohortToken(runId, tokenAddress, reason) {
     const excluded = await committer.excludeToken({
       runId, tokenAddress, reason,
     });
-    cohort = Object.freeze(cohort.filter((token) => token !== tokenAddress));
+    cohortSchedule = Object.freeze(cohortSchedule.filter(
+      (token) => token.tokenAddress !== tokenAddress
+    ));
     totals.exclusions += 1;
     return Object.freeze({ ...excluded, reason });
   }
@@ -293,7 +308,7 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
         throughBlock: target.toString(), prefetch: effectivePrefetch,
       });
     }
-    const scope = await loadCohort(run.id);
+    const schedule = await loadCohort(run.id);
     const planned = planRanges(nextBlock, target, options.rangeSize, effectivePrefetch);
     const timing = {
       startedAt: now(), rpcWaitMs: 0, rpcRangeDurationMs: 0,
@@ -302,7 +317,7 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
     };
     const pending = planned.map((range) => {
       const startedAt = now();
-      return reader.readGlobalRange({ tokenAddresses: scope, ...range })
+      return reader.readGlobalRange({ tokenAddresses: rangeScope(schedule, range.toBlock), ...range })
         .then((value) => observeFetched(value, Math.max(0, now() - startedAt)),
           (error) => ({ error }));
     });

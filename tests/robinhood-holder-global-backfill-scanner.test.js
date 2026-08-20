@@ -71,6 +71,41 @@ describe('Robinhood holder global backfill scanner', () => {
     });
   });
 
+  it('adds cohort tokens to the RPC scope only from their deployment block', async () => {
+    const futureToken = `0x${'2'.repeat(40)}`;
+    const scopes = [];
+    const scanner = createRobinhoodHolderGlobalBackfillScanner({
+      lifecycleRepository: {
+        getActiveRun: async () => runState('100'),
+        loadCohort: async () => { throw new Error('unexpected legacy cohort load'); },
+        loadCohortSchedule: async () => [
+          { tokenAddress: TOKEN, deploymentBlock: '100' },
+          { tokenAddress: futureToken, deploymentBlock: '115' },
+        ],
+      },
+      commitRepository: {
+        async commitRange(input) { return { status: 'committed', ...input }; },
+        async excludeToken() { throw new Error('unexpected exclusion'); },
+      },
+      reader: {
+        getSafeHead: async () => ({ safeHead: '119' }),
+        readReceiptRange: async () => { throw new Error('unexpected receipts'); },
+        readGlobalRange: async ({ tokenAddresses, fromBlock, toBlock }) => {
+          scopes.push({ fromBlock, tokenAddresses });
+          return range(fromBlock, toBlock);
+        },
+      },
+      options: { rangeSize: 10, prefetch: 2 },
+    });
+
+    await scanner.runOnce({ throughBlock: 119 });
+
+    assert.deepEqual(scopes, [
+      { fromBlock: '100', tokenAddresses: [TOKEN] },
+      { fromBlock: '110', tokenAddresses: [TOKEN, futureToken] },
+    ]);
+  });
+
   it('separates RPC wait from commit time in the last batch telemetry', async () => {
     let clock = 0;
     let releaseFetch;

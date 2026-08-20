@@ -150,6 +150,34 @@ function createRobinhoodHolderGlobalBackfillRepository(options = {}) {
     return Object.freeze(result.rows.map((row) => row.token_address));
   }
 
+  async function loadCohortSchedule(input = {}) {
+    const runId = integer(input.runId, 'runId', 1);
+    const result = await database.query(
+      `SELECT token.token_address, attribution.attribution_block AS deployment_block,
+              attribution.source AS attribution_source
+         FROM robinhood_holder_global_backfill_tokens token
+         LEFT JOIN robinhood_token_attributions attribution
+           ON attribution.chain = token.chain
+          AND attribution.token_address = token.token_address
+        WHERE token.run_id = $1 AND token.chain = $2 AND token.status = 'active'
+        ORDER BY attribution.attribution_block, token.token_address`,
+      [runId, CHAIN]
+    );
+    const unavailable = result.rows.find((row) => (
+      !['rpc_direct', 'launchpad_event'].includes(row.attribution_source)
+        || !/^\d+$/.test(String(row.deployment_block ?? ''))
+    ));
+    if (unavailable) {
+      const error = new Error(`global holder cohort deployment unavailable for ${unavailable.token_address}`);
+      error.code = 'holder_global_backfill_deployment_unavailable';
+      throw error;
+    }
+    return Object.freeze(result.rows.map((row) => Object.freeze({
+      tokenAddress: row.token_address,
+      deploymentBlock: String(row.deployment_block),
+    })));
+  }
+
   async function startRun(input = {}) {
     const runId = integer(input.runId, 'runId', 1);
     const version = integer(input.version, 'version');
@@ -483,7 +511,7 @@ function createRobinhoodHolderGlobalBackfillRepository(options = {}) {
 
   return Object.freeze({
     attachToLive, createRun, getActiveRun, getLatestRun, getMaterializationCandidate,
-    getMaterializedHandoffCandidate, loadCohort, materializeBatch,
+    getMaterializedHandoffCandidate, loadCohort, loadCohortSchedule, materializeBatch,
     promoteMaterializedBatch, recordTelemetry, startRun, syncCompletion,
   });
 }
