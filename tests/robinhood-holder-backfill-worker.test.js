@@ -69,7 +69,8 @@ describe('Robinhood holder backfill worker', () => {
     assert.deepEqual(worker.getStatus().lastResult, {
       status: 'completed', seededTokens: 1, replayStatus: 'committed',
       tokenAddress: TOKEN, committedRanges: 1, driftSuspicions: 0, driftedTokens: 0,
-      resyncingTokens: 0, activeExecutors: 1, atBarrier: true, safeHead: '105',
+      resyncingTokens: 0, supersededTokens: 0,
+      activeExecutors: 1, atBarrier: true, safeHead: '105',
     });
     assert.equal(worker.getStatus().concurrency, 1);
     assert.equal(worker.getStatus().totalSeededTokens, 1);
@@ -170,6 +171,34 @@ describe('Robinhood holder backfill worker', () => {
     await clock.scheduled[1].callback();
     assert.equal(clock.scheduled[2].delayMs, 500);
     assert.deepEqual(seedInputs.map(({ admittedAfter }) => admittedAfter), [CUTOFF, CUTOFF]);
+    await worker.stop();
+  });
+
+  it('records superseded handoff work without error backoff', async () => {
+    const clock = scheduler();
+    const worker = createRobinhoodHolderBackfillWorker({
+      ...clock,
+      runtimeFactory: () => ({
+        bootstrap: { seedNewTokens: async () => [] },
+        executor: { runOnce: async () => ({
+          status: 'superseded', tokenAddress: TOKEN,
+          reason: 'holder_backfill_cursor_stale', expectedBackfillNextBlock: '103',
+          safeHead: '105', atBarrier: false,
+        }) },
+      }),
+    });
+    worker.start({ enabled: true, admittedAfter: CUTOFF, intervalMs: 500 });
+
+    await clock.scheduled[0].callback();
+
+    const status = worker.getStatus();
+    assert.equal(status.totalErrors, 0);
+    assert.equal(status.consecutiveErrors, 0);
+    assert.equal(status.totalSupersededTokens, 1);
+    assert.equal(status.lastResult.replayStatus, 'superseded');
+    assert.equal(status.lastResult.supersededTokens, 1);
+    assert.equal(status.lastResult.expectedBackfillNextBlock, '103');
+    assert.equal(clock.scheduled[1].delayMs, 500);
     await worker.stop();
   });
 

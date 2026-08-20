@@ -68,6 +68,36 @@ describe('Robinhood holder backfill executor', () => {
     ]);
   });
 
+  it('treats a cursor changed by concurrent handoff as superseded work', async () => {
+    const stale = Object.assign(
+      new Error('holder backfill token cursor is stale or unavailable'),
+      { code: 'holder_backfill_cursor_stale' }
+    );
+    const repository = {
+      getNextToken: async () => state(),
+      markResyncing: async () => { throw new Error('must not isolate'); },
+      commitRange: async () => { throw stale; },
+    };
+    const reader = {
+      getSafeHead: async () => ({ safeHead: '105' }),
+      matchesCheckpoint: async () => true,
+      readRange: async (range) => ({
+        ...range, checkpoint: { number: '105', hash: HASH }, transfers: [],
+      }),
+      readReceiptRange: async () => { throw new Error('must not read receipts'); },
+    };
+
+    const result = await createRobinhoodHolderBackfillExecutor({
+      repository, reader,
+    }).runOnce();
+
+    assert.deepEqual(result, {
+      status: 'superseded', tokenAddress: TOKEN,
+      reason: 'holder_backfill_cursor_stale', expectedBackfillNextBlock: '103',
+      safeHead: '105', atBarrier: false,
+    });
+  });
+
   it('forwards a deterministic shard to token selection', async () => {
     const selections = [];
     const repository = {

@@ -248,16 +248,37 @@ function createRobinhoodHolderBackfillRepository(options = {}) {
     const result = await database.query(
       `SELECT token_address, deployment_block, backfill_next_block,
               live_through_block, live_through_hash, version
-         FROM robinhood_holder_token_states
-        WHERE chain = 'robinhood' AND ledger_status = 'backfilling'
-          AND backfill_next_block <= $1
-          AND NOT (token_address = ANY($2::varchar[]))
+         FROM robinhood_holder_token_states state
+        WHERE state.chain = 'robinhood' AND state.ledger_status = 'backfilling'
+          AND state.backfill_next_block <= $1
+          AND NOT (state.token_address = ANY($2::varchar[]))
+          AND NOT EXISTS (
+            SELECT 1
+              FROM robinhood_holder_cursors cursor
+             WHERE cursor.chain = state.chain AND cursor.stream = 'live'
+               AND cursor.journal_floor_block IS NOT NULL
+               AND state.live_through_block IS NOT NULL
+               AND state.live_through_hash IS NOT NULL
+               AND state.live_through_block + 1 = state.backfill_next_block
+               AND state.backfill_next_block
+                   BETWEEN cursor.journal_floor_block AND cursor.next_block
+               AND state.backfill_next_block >= COALESCE((
+                 SELECT journal.block_number
+                   FROM robinhood_holder_transfer_journal journal
+                  WHERE journal.chain = state.chain
+                    AND journal.token_address = state.token_address
+                    AND journal.applied = false
+                  ORDER BY journal.block_number, journal.transaction_index,
+                           journal.log_index
+                  LIMIT 1
+               ), state.backfill_next_block)
+          )
           AND mod(
-            hashtextextended(token_address, 0) & 9223372036854775807,
+            hashtextextended(state.token_address, 0) & 9223372036854775807,
             $3::bigint
           ) = $4::bigint
-        ORDER BY (live_through_block IS NOT NULL) DESC,
-                 backfill_next_block DESC, token_address
+        ORDER BY (state.live_through_block IS NOT NULL) DESC,
+                 state.backfill_next_block DESC, state.token_address
         LIMIT 1`,
       [throughBlock, excluded, shard.count, shard.index]
     );

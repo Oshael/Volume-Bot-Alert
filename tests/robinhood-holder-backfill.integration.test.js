@@ -53,12 +53,19 @@ describe('Robinhood holder backfill persistence', () => {
         (LIKE public.robinhood_holder_token_states INCLUDING ALL)`);
       await client.query(`CREATE TEMP TABLE robinhood_holder_transfer_journal
         (LIKE public.robinhood_holder_transfer_journal INCLUDING ALL)`);
+      await client.query(`CREATE TEMP TABLE robinhood_holder_cursors
+        (LIKE public.robinhood_holder_cursors INCLUDING ALL)`);
       await client.query(`CREATE TEMP TABLE robinhood_holder_global_backfill_runs
         (LIKE public.robinhood_holder_global_backfill_runs INCLUDING ALL)`);
       await client.query(`CREATE TEMP TABLE robinhood_holder_global_backfill_tokens
         (LIKE public.robinhood_holder_global_backfill_tokens INCLUDING ALL)`);
       await client.query(`CREATE TEMP TABLE worker_leases
         (LIKE public.worker_leases INCLUDING ALL)`);
+      await client.query(
+        `INSERT INTO robinhood_holder_cursors (
+           next_block, safe_head, journal_floor_block
+         ) VALUES (100, 99, 90)`
+      );
       await client.query(
         `INSERT INTO robinhood_holder_token_states (
            token_address, ledger_status, deployment_block, backfill_next_block
@@ -179,6 +186,11 @@ describe('Robinhood holder backfill persistence', () => {
         throughBlock: '200', excludeTokenAddresses: [TOKEN],
         shardCount: 2, shardIndex: 1 - priorityShard,
       }), null);
+      await client.query(
+        `UPDATE robinhood_holder_cursors
+            SET next_block = 104, safe_head = 103, journal_floor_block = 100`
+      );
+      assert.equal(await repository.getNextToken({ throughBlock: '103' }), null);
       assert.deepEqual(await repository.markResyncing({
         tokenAddress: TOKEN, backfillNextBlock: '103',
       }), { status: 'resyncing', tokenAddress: TOKEN });

@@ -137,39 +137,49 @@ function createRobinhoodHolderBackfillExecutor(options = {}) {
       throughBlock: head.safeHead, excludeTokenAddresses, shardCount, shardIndex,
     });
     if (!state) return Object.freeze({ status: 'idle', safeHead: head.safeHead });
-    if (state.liveThroughBlock !== null) {
-      const matches = await reader.matchesCheckpoint({
-        number: state.liveThroughBlock, hash: state.liveThroughHash,
-      });
-      if (!matches) {
-        driftEvidence.delete(state.tokenAddress);
-        const isolated = await repository.markResyncing(state);
-        return Object.freeze({ ...isolated, reason: 'holder_backfill_checkpoint_orphaned' });
+    try {
+      if (state.liveThroughBlock !== null) {
+        const matches = await reader.matchesCheckpoint({
+          number: state.liveThroughBlock, hash: state.liveThroughHash,
+        });
+        if (!matches) {
+          driftEvidence.delete(state.tokenAddress);
+          const isolated = await repository.markResyncing(state);
+          return Object.freeze({ ...isolated, reason: 'holder_backfill_checkpoint_orphaned' });
+        }
       }
-    }
-    const fromBlock = BigInt(state.backfillNextBlock);
-    const safeHead = BigInt(head.safeHead);
-    const candidateEnd = fromBlock + BigInt(rangeSize - 1);
-    const toBlock = candidateEnd < safeHead ? candidateEnd : safeHead;
-    const range = await reader.readRange({
-      tokenAddress: state.tokenAddress,
-      fromBlock: fromBlock.toString(), toBlock: toBlock.toString(),
-    });
-    let committed = await repository.commitRange(range);
-    if (committed.status === 'drift-suspected') {
-      committed = await verifyDriftWithReceipts(committed, state);
-    } else {
-      driftEvidence.delete(state.tokenAddress);
-    }
-    if (committed.status !== 'committed') {
+      const fromBlock = BigInt(state.backfillNextBlock);
+      const safeHead = BigInt(head.safeHead);
+      const candidateEnd = fromBlock + BigInt(rangeSize - 1);
+      const toBlock = candidateEnd < safeHead ? candidateEnd : safeHead;
+      const range = await reader.readRange({
+        tokenAddress: state.tokenAddress,
+        fromBlock: fromBlock.toString(), toBlock: toBlock.toString(),
+      });
+      let committed = await repository.commitRange(range);
+      if (committed.status === 'drift-suspected') {
+        committed = await verifyDriftWithReceipts(committed, state);
+      } else {
+        driftEvidence.delete(state.tokenAddress);
+      }
+      if (committed.status !== 'committed') {
+        return Object.freeze({
+          ...committed, safeHead: head.safeHead, atBarrier: false,
+        });
+      }
       return Object.freeze({
-        ...committed, safeHead: head.safeHead, atBarrier: false,
+        ...committed, safeHead: head.safeHead,
+        atBarrier: BigInt(committed.backfillNextBlock) > safeHead,
+      });
+    } catch (error) {
+      if (error.code !== 'holder_backfill_cursor_stale') throw error;
+      driftEvidence.delete(state.tokenAddress);
+      return Object.freeze({
+        status: 'superseded', tokenAddress: state.tokenAddress,
+        reason: error.code, expectedBackfillNextBlock: state.backfillNextBlock,
+        safeHead: head.safeHead, atBarrier: false,
       });
     }
-    return Object.freeze({
-      ...committed, safeHead: head.safeHead,
-      atBarrier: BigInt(committed.backfillNextBlock) > safeHead,
-    });
   }
 
   return Object.freeze({ runOnce });

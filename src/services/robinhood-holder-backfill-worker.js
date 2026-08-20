@@ -8,6 +8,7 @@ const {
 
 const REPLAY_STATUSES = new Set([
   'idle', 'committed', 'drift-suspected', 'drift-unverified', 'drifted', 'resyncing',
+  'superseded',
 ]);
 
 function boundedInteger(value, fallback, minimum, maximum, label) {
@@ -94,10 +95,13 @@ function normalizeResult(seeded, replays) {
     driftSuspicions: replays.filter(({ status }) => status === 'drift-suspected').length,
     driftedTokens: replays.filter(({ status }) => status === 'drifted').length,
     resyncingTokens: replays.filter(({ status }) => status === 'resyncing').length,
+    supersededTokens: replays.filter(({ status }) => status === 'superseded').length,
     activeExecutors: active.length,
     atBarrier: replays.some((replay) => replay.atBarrier === true),
     safeHead: primary.safeHead ?? null,
     ...(primary.reason ? { reason: primary.reason } : {}),
+    ...(primary.expectedBackfillNextBlock
+      ? { expectedBackfillNextBlock: primary.expectedBackfillNextBlock } : {}),
   });
 }
 
@@ -118,7 +122,7 @@ function createRobinhoodHolderBackfillWorker(deps = {}) {
     lastResult: null, lastError: null, totalRuns: 0, totalErrors: 0,
     consecutiveErrors: 0, totalSeededTokens: 0, totalCommittedRanges: 0,
     totalDriftSuspicions: 0, totalDriftedTokens: 0,
-    totalResyncingTokens: 0, lastCompletedAt: null,
+    totalResyncingTokens: 0, totalSupersededTokens: 0, lastCompletedAt: null,
   };
 
   async function getRuntime() {
@@ -171,6 +175,7 @@ function createRobinhoodHolderBackfillWorker(deps = {}) {
       status.totalDriftSuspicions += result.driftSuspicions;
       status.totalDriftedTokens += result.driftedTokens;
       status.totalResyncingTokens += result.resyncingTokens;
+      status.totalSupersededTokens += result.supersededTokens;
       return result;
     } catch (error) {
       status.totalErrors += 1;
