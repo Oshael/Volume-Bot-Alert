@@ -793,6 +793,42 @@ describe('Catalog routes', () => {
     }
   });
 
+  it('compresses large sparkline responses when the client accepts gzip', async () => {
+    const originalGetSparklineBatch = catalogMarketHistory.getSparklineBatch;
+    catalogMarketHistory.getSparklineBatch = async (input) => ({
+      generatedAt: '2026-08-21T00:00:00.000Z',
+      chains: ['robinhood'],
+      hours: input.hours,
+      points: input.points,
+      granularityMinutes: input.granularityMinutes,
+      count: 1,
+      items: [{
+        chain: 'robinhood',
+        address: ROBINHOOD_ADDR,
+        series: Array.from({ length: 336 }, (_, index) => 1_000_000 + index),
+      }],
+    });
+
+    try {
+      const res = await request(app)
+        .post('/api/catalog/sparklines')
+        .set('Authorization', `Bearer ${token}`)
+        .set('Accept-Encoding', 'gzip')
+        .send({
+          identities: [{ chain: 'robinhood', address: ROBINHOOD_ADDR }],
+          hours: 336,
+          points: 336,
+          granularityMinutes: 30,
+        });
+
+      assert.equal(res.status, 200);
+      assert.equal(res.headers['content-encoding'], 'gzip');
+      assert.equal(res.body.items[0].series.length, 336);
+    } finally {
+      catalogMarketHistory.getSparklineBatch = originalGetSparklineBatch;
+    }
+  });
+
   it('rejects unsupported chains in sparkline batches before dispatch', async () => {
     const res = await request(app)
       .post('/api/catalog/sparklines')

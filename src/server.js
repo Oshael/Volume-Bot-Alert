@@ -2,6 +2,7 @@ const express = require('express');
 const http = require('http');
 const helmet = require('helmet');
 const cors = require('cors');
+const compression = require('compression');
 const cookieParser = require('cookie-parser');
 const config = require('../config');
 const { defaultApiLimiter, healthLimiter, xProfileLimiter } = require('./middleware/rate-limit');
@@ -189,6 +190,7 @@ app.use(helmet({
     directives: cspDirectives,
   },
 }));
+app.use(compression({ threshold: '1kb' }));
 app.use(cors({
   origin: (origin, callback) => {
     return callback(null, isAllowedOrigin(origin));
