@@ -101,6 +101,40 @@ describe('Robinhood holder ledger persistence', () => {
       assert.deepEqual(await repository.applyNextPendingEvent(), {
         status: 'applied', tokenAddress: TOKEN, holderCount: '2', holderDelta: 0,
       });
+      await client.query(
+        `INSERT INTO robinhood_holder_token_states
+          (token_address, holder_count, ledger_status, deployment_block, backfill_next_block)
+         VALUES ($1, 7, 'shadow', 99, 99), ($2, 8, 'shadow', 99, 99)`,
+        [TOKEN_4, TOKEN_5]
+      );
+      await client.query(
+        `INSERT INTO robinhood_holder_transfer_journal (
+           block_number, block_hash, transaction_hash, transaction_index, log_index,
+           token_address, from_wallet, to_wallet, amount_raw
+         ) VALUES (100, $1, $2, 2, 0, $3, $4, $5, 1)`,
+        [HASH_A, HASH_D, TOKEN_5, ALICE, BOB]
+      );
+      const localPromotion = await repository.promoteReadyShadowTokens({ limit: 10 });
+      assert.equal(localPromotion.promotedTokens, 1);
+      assert.equal(localPromotion.publications[0].tokenAddress, TOKEN_4);
+      assert.equal(localPromotion.publications[0].holderCount, '7');
+      assert.equal(localPromotion.publications[0].liveThroughBlock, '100');
+      const promotionStates = await client.query(
+        `SELECT token_address, ledger_status FROM robinhood_holder_token_states
+          WHERE token_address = ANY($1::varchar[]) ORDER BY token_address`,
+        [[TOKEN_4, TOKEN_5]]
+      );
+      assert.deepEqual(promotionStates.rows, [
+        { token_address: TOKEN_5, ledger_status: 'shadow' },
+        { token_address: TOKEN_4, ledger_status: 'live' },
+      ]);
+      await client.query(
+        `DELETE FROM robinhood_holder_transfer_journal WHERE token_address = $1`, [TOKEN_5]
+      );
+      await client.query(
+        `DELETE FROM robinhood_holder_token_states WHERE token_address = ANY($1::varchar[])`,
+        [[TOKEN_4, TOKEN_5]]
+      );
       const applied = await client.query(
         `SELECT wallet_address, balance_raw FROM robinhood_holder_balances ORDER BY wallet_address`
       );

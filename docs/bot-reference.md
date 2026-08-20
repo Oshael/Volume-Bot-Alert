@@ -1152,8 +1152,9 @@ valida uma vez o checkpoint comum e promove em lote `backfilling -> shadow`, at�
 `ROBINHOOD_HOLDER_GLOBAL_BACKFILL_MATERIALIZE_BATCH_SIZE` tokens por tick. O lote
 remove somente overlap pendente anterior à barreira; eventos posteriores continuam
 no journal para o live aplicar. A campanha considera `shadow` ou `live` concluído;
-a reconciliação Blockscout continua gradualmente como auditoria e promoção
-`shadow -> live`, sem bloquear o término da campanha. O rollback operacional é desligar apenas
+o apply live promove localmente `shadow -> live` em lote assim que o deployment já
+foi varrido e não existe evento pendente para o token. Essa promoção não depende do
+Blockscout. O rollback operacional é desligar apenas
 `ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ENABLED`, preservando campanha, balances e
 cursores para retomada; após attach, nunca promova manualmente baseline incompleto.
 Se receipts canônicos ainda reproduzem saldo negativo, somente esse token é
@@ -1180,26 +1181,24 @@ Deficit sem eventos ausentes so vira `drifted` apos tres fingerprints identicos
 confirmados por receipts e espacados em 60s. A telemetria distingue
 `driftSuspicions`, `receiptRecoveries` e `driftDeferred`.
 
-A reconciliação exige o live saudável e três counts Blockscout exatos e distintos
-antes de promover `shadow` para `live`. Divergência estável depois da promoção
-gera telemetria `drift-suspected`, mas não isola nem ressincroniza automaticamente,
-pois o Blockscout não ancora o count a um bloco. Reorg dentro do journal retido é
-revertido automaticamente; ausência de evidência canônica suficiente falha
-fechado. O refresh Blockscout legado continua opt-in no grupo
-`robinhood-derived` como fallback.
-Quando o Blockscout retorna indisponível ou falha, a reconciliação persiste o
-erro e exclui temporariamente o token das filas `shadow` e `live`, evitando
-bloqueio da fila pelo primeiro endereço. O cooldown padrão é 1 hora e pode ser
-ajustado por `ROBINHOOD_HOLDER_RECONCILIATION_UNAVAILABLE_RETRY_MS`; uma resposta
-válida limpa o cooldown. Para o card exibir `HLD` antes da promoção ao ledger,
-mantenha também `ROBINHOOD_HOLDER_SUMMARY_ENABLED=true` na VPS.
+O critério de publicação local é fail-closed: cursor e checkpoint live precisam
+estar consistentes, `deployment_block < next_block` e todo o journal pendente do
+token precisa estar drenado. A promoção ancora `live_through_block/hash` no
+checkpoint do cursor e publica o count pelo relay PostgreSQL. Reorg dentro do
+journal retido continua sendo revertido automaticamente; ausência de evidência
+canônica suficiente falha fechado. `ROBINHOOD_HOLDER_RECONCILIATION_ENABLED` pode
+permanecer `false`; quando habilitado, o reconciliador Blockscout é somente uma
+verificação externa opcional e não faz parte do caminho necessário de publicação.
+O refresh Blockscout legado continua opt-in no grupo `robinhood-derived` como
+fallback.
 
 Para uma campanha global já `completed`, o one-shot
 `ROBINHOOD_HOLDER_GLOBAL_PROMOTE_RUN_ID=<id> npm run robinhood:holder-global-promote`
 faz dry-run da promoção local. `-- --confirm-promote` promove em lotes apenas os
 membros `completed` dessa coorte que estejam em `shadow` e sem journal pendente;
 tokens bloqueados permanecem em `shadow` e aparecem no resumo para nova execução
-depois que o live drenar. Esse bypass não altera a reconciliação dos tokens futuros.
+depois que o live drenar. Normalmente o apply live realiza a mesma promoção
+automaticamente, inclusive para tokens futuros.
 
 Antes de subir readers live-first, a Stage 119 deve estar aplicada. Os probes
 read-only `npm run robinhood:holder-transfer-probe` e

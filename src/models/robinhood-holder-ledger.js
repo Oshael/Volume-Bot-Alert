@@ -893,6 +893,62 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     });
   }
 
+  async function promoteReadyShadowTokens(input = {}) {
+    const limit = nonNegativeInteger(input.limit ?? 5000, 'shadowPromotion.limit');
+    if (limit < 1 || limit > 50_000) throw new Error('shadowPromotion.limit is invalid');
+    return withTransaction(database, async (client) => {
+      const cursorResult = await client.query(
+        `SELECT next_block, checkpoint_block, checkpoint_hash
+           FROM robinhood_holder_cursors
+          WHERE chain = 'robinhood' AND stream = 'live' FOR UPDATE`
+      );
+      const cursor = cursorResult.rows[0];
+      if (!cursor || cursor.checkpoint_block == null || cursor.checkpoint_hash == null
+          || BigInt(cursor.checkpoint_block) + 1n !== BigInt(cursor.next_block)) {
+        const error = new Error('holder live cursor checkpoint is inconsistent');
+        error.code = 'holder_cursor_corrupt';
+        throw error;
+      }
+      const result = await client.query(
+        `WITH candidates AS MATERIALIZED (
+           SELECT state.token_address
+             FROM robinhood_holder_token_states state
+            WHERE state.chain = 'robinhood' AND state.ledger_status = 'shadow'
+              AND state.deployment_block IS NOT NULL
+              AND state.deployment_block < $1::bigint
+              AND NOT EXISTS (
+                SELECT 1 FROM robinhood_holder_transfer_journal journal
+                 WHERE journal.chain = state.chain
+                   AND journal.token_address = state.token_address
+                   AND journal.applied = false
+              )
+            ORDER BY state.updated_at DESC, state.token_address
+            LIMIT $4::int FOR UPDATE OF state SKIP LOCKED
+         )
+         UPDATE robinhood_holder_token_states state
+            SET ledger_status = 'live', live_through_block = $2::bigint,
+                live_through_hash = $3, version = version + 1, updated_at = NOW()
+           FROM candidates
+          WHERE state.chain = 'robinhood'
+            AND state.token_address = candidates.token_address
+            AND state.ledger_status = 'shadow'
+          RETURNING state.token_address, state.holder_count, state.version,
+                    state.updated_at, state.live_through_block, state.live_through_hash`,
+        [cursor.next_block, cursor.checkpoint_block, cursor.checkpoint_hash, limit]
+      );
+      return Object.freeze({
+        status: result.rowCount ? 'promoted' : 'idle',
+        promotedTokens: result.rowCount,
+        publications: Object.freeze(result.rows.map((row) => Object.freeze({
+          tokenAddress: row.token_address, holderCount: String(row.holder_count),
+          ledgerVersion: String(row.version), observedAt: row.updated_at,
+          liveThroughBlock: String(row.live_through_block),
+          liveThroughHash: row.live_through_hash,
+        }))),
+      });
+    });
+  }
+
   async function rollbackAppliedTail(input = {}) {
     const tokenAddress = hex(input.tokenAddress, 20, 'tailRollback.tokenAddress');
     const backfillNextBlock = decimalQuantity(
@@ -1131,7 +1187,8 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
   }
 
   return Object.freeze({
-    appendCapturedRange, applyNextPendingEvent, repairCapturedRange, rollbackAppliedTail,
+    appendCapturedRange, applyNextPendingEvent, promoteReadyShadowTokens,
+    repairCapturedRange, rollbackAppliedTail,
     rewindOrphanedRange,
     getCursor, listJournalBlockCheckpoints, listTrackedTokenAddresses,
     quarantineMalformedToken,

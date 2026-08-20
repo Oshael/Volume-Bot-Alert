@@ -54,6 +54,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
   const publishHolderCounts = typeof options.publishHolderCounts === 'function'
     ? options.publishHolderCounts : async () => 0;
   if (typeof ledger?.applyNextPendingEvent !== 'function'
+      || typeof ledger?.promoteReadyShadowTokens !== 'function'
       || typeof ledger?.repairCapturedRange !== 'function'
       || typeof ledger?.rollbackAppliedTail !== 'function') {
     throw new TypeError('holder live ledger is required');
@@ -305,6 +306,10 @@ function createRobinhoodHolderLiveRunner(options = {}) {
       input.maxApplyEvents, 5000, 1, 50_000, 'maxApplyEvents'
     );
     const drained = await drainPendingEvents(maxApplyEvents);
+    const promoted = await ledger.promoteReadyShadowTokens({ limit: maxApplyEvents });
+    for (const publication of promoted.publications) {
+      rememberHolderCountUpdate(drained.holderCountUpdates, { publication });
+    }
     const holderCountPublished = await publishCountUpdates(
       publishHolderCounts, drained.holderCountUpdates
     );
@@ -314,6 +319,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
       applyAttempts: drained.applyAttempts, driftSuspicions: drained.driftSuspicions,
       receiptRecoveries: drained.receiptRecoveries, driftDeferred: drained.driftDeferred,
       tailRollbacks: drained.tailRollbacks, tailRollbackEvents: drained.tailRollbackEvents,
+      shadowPromotions: Number(promoted.promotedTokens) || 0,
       holderCountUpdates: drained.holderCountUpdates.size, holderCountPublished,
       applyBudgetExhausted: !drained.reachedIdle && drained.applyAttempts === maxApplyEvents,
     });

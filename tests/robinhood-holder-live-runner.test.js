@@ -33,6 +33,12 @@ function harness(
         status: 'requeued', tokenAddress: input.tokenAddress, revertedEvents: 1,
       };
     },
+    promoteReadyShadowTokens: async (input) => {
+      calls.push(['promote-shadows', input]);
+      return options.shadowPromotion || {
+        status: 'idle', promotedTokens: 0, publications: [],
+      };
+    },
   };
   const reader = {
     readReceiptRange: async (input) => {
@@ -77,6 +83,7 @@ describe('Robinhood holder live runner', () => {
       appliedEvents: 2, driftedTokens: 1, applyAttempts: 3,
       driftSuspicions: 0, receiptRecoveries: 0, driftDeferred: 0,
       tailRollbacks: 0, tailRollbackEvents: 0,
+      shadowPromotions: 0,
       holderCountUpdates: 0, holderCountPublished: 0,
       applyBudgetExhausted: false, nextBlock: '106', safeHead: '105',
     });
@@ -88,6 +95,7 @@ describe('Robinhood holder live runner', () => {
       }],
       ['handoff'],
       ['apply'], ['apply'], ['apply'], ['apply'],
+      ['promote-shadows', { limit: 10 }],
     ]);
   });
 
@@ -243,6 +251,7 @@ describe('Robinhood holder live runner', () => {
       ['apply'],
       ['apply', { onlyTokenAddress: tokenB }],
       ['apply'],
+      ['promote-shadows', { limit: 10 }],
     ]);
   });
 
@@ -279,6 +288,9 @@ describe('Robinhood holder live runner', () => {
         },
         repairCapturedRange: async () => ({ status: 'repaired', insertedTransfers: 0 }),
         rollbackAppliedTail: async () => ({ status: 'requeued', revertedEvents: 0 }),
+        promoteReadyShadowTokens: async () => ({
+          status: 'idle', promotedTokens: 0, publications: [],
+        }),
       },
       reader: { readReceiptRange: async () => ({ transfers: [] }) },
     });
@@ -354,7 +366,30 @@ describe('Robinhood holder live runner', () => {
     assert.deepEqual(published, [[latest, other]]);
     assert.equal(result.holderCountUpdates, 2);
     assert.equal(result.holderCountPublished, 2);
-    assert.equal(context.calls.at(-1)[0], 'apply');
+    assert.equal(context.calls.at(-1)[0], 'promote-shadows');
+  });
+
+  it('publishes locally verified shadow promotions without Blockscout', async () => {
+    const publication = {
+      tokenAddress: `0x${'c'.repeat(40)}`, holderCount: '17', ledgerVersion: '4',
+      observedAt: '2026-08-20T20:00:00.000Z', liveThroughBlock: '200',
+      liveThroughHash: `0x${'d'.repeat(64)}`,
+    };
+    const published = [];
+    const context = harness({
+      status: 'idle', transfers: 0, nextBlock: '201', safeHead: '200',
+    }, [{ status: 'idle' }], { status: 'idle' }, async (updates) => {
+      published.push(updates);
+      return updates.length;
+    }, { shadowPromotion: {
+      status: 'promoted', promotedTokens: 1, publications: [publication],
+    } });
+
+    const result = await context.runner.applyOnce({ maxApplyEvents: 50 });
+
+    assert.equal(result.shadowPromotions, 1);
+    assert.equal(result.holderCountPublished, 1);
+    assert.deepEqual(published, [[publication]]);
   });
 
   it('propagates relay failure only after the ledger event was committed', async () => {
@@ -380,7 +415,7 @@ describe('Robinhood holder live runner', () => {
     assert.equal(result.handoffPromotions, 1);
     assert.equal(result.handoffResyncs, 0);
     assert.deepEqual(context.calls.map(([name]) => name), [
-      'capture', 'handoff', 'apply', 'apply',
+      'capture', 'handoff', 'apply', 'apply', 'promote-shadows',
     ]);
   });
 
