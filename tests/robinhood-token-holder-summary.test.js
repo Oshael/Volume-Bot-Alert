@@ -170,10 +170,13 @@ describe('Robinhood token holder summaries', () => {
     assert.match(calls[0].sql, /LIMIT \$2::int/);
     assert.match(calls[0].sql, /source = EXCLUDED\.source/);
     assert.match(calls[0].sql, /published\.observed_at <= \$1::timestamptz/);
+    assert.match(calls[0].sql,
+      /holder_bucket\.bucket_start = \([\s\S]*date_trunc\('hour', \$1::timestamptz/);
     assert.match(calls[0].sql, /holder_bucket\.observed_at < published\.observed_at/);
     assert.match(calls[0].sql, /INSERT INTO robinhood_token_holder_buckets/);
     assert.match(calls[0].sql,
-      /date_trunc\('hour', observed_at AT TIME ZONE 'UTC'\)/);
+      /date_trunc\('hour', \$1::timestamptz AT TIME ZONE 'UTC'\)/);
+    assert.match(calls[0].sql, /holder_count, 'ledger_live', \$1::timestamptz/);
   });
 
   it('rejects an unbounded live snapshot batch before querying', async () => {

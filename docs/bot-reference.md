@@ -968,8 +968,11 @@ desde o primeiro bucket disponível e com sua barra corrente aberta, além de de
 móveis de 4h/12h/1d/3d/7d. A API não trunca o chart em 7 dias; `range` informa o
 início, o instante da leitura e quantos buckets existem. As quatro séries são
 derivadas dos mesmos buckets persistidos de 1h; não existe persistência duplicada
-por intervalo nem retenção automática dessa tabela. Cada comparação exige todos
-os buckets horários entre os extremos; lacuna retorna `delta: null` e
+por intervalo nem retenção automática dessa tabela. Enquanto o ledger estiver
+live, o snapshot materializa o count vigente na hora UTC corrente mesmo quando o
+valor não mudou; isso mantém a série horária contínua sem depender de transferências.
+Cada comparação exige todos os buckets horários entre os extremos; lacuna legada
+ou operacional retorna `delta: null` e
 `comparison: unavailable`, enquanto zero real permanece `0`. A publicação
 live-first pode substituir somente a ponta corrente da série retornada.
 Mudanças do mesmo token são

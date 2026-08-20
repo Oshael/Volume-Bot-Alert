@@ -1702,11 +1702,17 @@ test('renders and switches Robinhood holder hover bars', async ({ page }) => {
     const height = Number(bar.getAttribute('height'));
     return height >= 24 && Math.abs((y + height) - 96) < 0.01;
   }))).toBe(true);
+  const hoverPosition = await holderHover.evaluate((element) => ({
+    left: getComputedStyle(element).left, top: getComputedStyle(element).top,
+  }));
   await holderHover.getByRole('button', { name: '24H', exact: true }).click();
   await page.waitForTimeout(180);
   await expect(holderHover).toBeVisible();
   await expect(holderHover.getByRole('button', { name: '24H', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(holderHover.locator('[data-holder-hover-bar]')).toHaveCount(30);
+  expect(await holderHover.evaluate((element) => ({
+    left: getComputedStyle(element).left, top: getComputedStyle(element).top,
+  }))).toEqual(hoverPosition);
   expect(diagnostics.unexpectedRequests).toEqual([]);
   expect(diagnostics.pageErrors).toEqual([]);
 });

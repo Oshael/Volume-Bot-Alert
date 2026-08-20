@@ -185,11 +185,23 @@ describe('Robinhood token holder summary repository integration', () => {
       });
       assert.deepEqual(hourly, [{
         bucketStart: '2026-08-10T23:00:00.000Z', holderCount: 5100,
-        source: 'ledger_live', observedAt: '2026-08-10T23:58:00.000Z',
+        source: 'ledger_live', observedAt: '2026-08-10T23:59:00.000Z',
       }]);
       assert.deepEqual(await transactionRepository.syncLiveDailySnapshots({
         asOf: '2026-08-10T23:59:30.000Z', limit: 10,
       }), { savedCount: 0, asOf: '2026-08-10T23:59:30.000Z' });
+      assert.deepEqual(await transactionRepository.syncLiveDailySnapshots({
+        asOf: '2026-08-11T00:05:00.000Z', limit: 10,
+      }), { savedCount: 1, asOf: '2026-08-11T00:05:00.000Z' });
+      assert.deepEqual(await transactionRepository.listHourlyBuckets({
+        tokenAddress: TOKEN, asOf: '2026-08-11T00:05:00.000Z',
+      }), [{
+        bucketStart: '2026-08-10T23:00:00.000Z', holderCount: 5100,
+        source: 'ledger_live', observedAt: '2026-08-10T23:59:00.000Z',
+      }, {
+        bucketStart: '2026-08-11T00:00:00.000Z', holderCount: 5100,
+        source: 'ledger_live', observedAt: '2026-08-11T00:05:00.000Z',
+      }]);
       await client.query('ROLLBACK');
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch (_) {}

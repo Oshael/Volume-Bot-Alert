@@ -193,7 +193,6 @@ function onCardClick(event: Event) {
   const plot = card.querySelector<HTMLElement>('.rh-holder-hover-plot');
   if (plot) plot.innerHTML = renderBars(activeHistory);
   window.clearTimeout(hideTimer);
-  positionCard();
 }
 
 export function bindRobinhoodHolderHover(section: ParentNode, authToken?: string | null) {

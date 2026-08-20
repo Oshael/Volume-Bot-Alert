@@ -307,7 +307,7 @@ function createRobinhoodTokenHolderSummaryRepository(options = {}) {
              ON holder_bucket.chain = published.chain
             AND holder_bucket.token_address = published.token_address
             AND holder_bucket.bucket_start = (
-              date_trunc('hour', published.observed_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+              date_trunc('hour', $1::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
             )
           WHERE published.source = 'ledger_live'
             AND published.observed_at <= $1::timestamptz
@@ -339,8 +339,8 @@ function createRobinhoodTokenHolderSummaryRepository(options = {}) {
            chain, token_address, bucket_start, holder_count, source, observed_at
          )
          SELECT chain, token_address,
-                date_trunc('hour', observed_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC',
-                holder_count, 'ledger_live', observed_at
+                date_trunc('hour', $1::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC',
+                holder_count, 'ledger_live', $1::timestamptz
            FROM candidates
          ON CONFLICT (chain, token_address, bucket_start) DO UPDATE SET
            holder_count = EXCLUDED.holder_count, source = EXCLUDED.source,
