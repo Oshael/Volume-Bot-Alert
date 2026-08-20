@@ -104,8 +104,7 @@ describe('Robinhood holder ledger repository', () => {
 
   it('commits matching captures and advances a bootstrap cursor atomically', async () => {
     const fake = fakeDatabase([
-      { rows: [{ inserted: true }], rowCount: 1 },
-      { rows: [{ inserted: false }], rowCount: 1 },
+      { rows: [{ matched: '2', inserted: '1' }], rowCount: 1 },
       { rows: [{ version: '0' }], rowCount: 1 },
     ]);
     const repository = createRobinhoodHolderLedgerRepository(fake);
@@ -116,18 +115,19 @@ describe('Robinhood holder ledger repository', () => {
 
     assert.deepEqual(result, { insertedTransfers: 1, duplicateTransfers: 1, cursorVersion: 0 });
     assert.deepEqual(fake.calls.map(({ sql }) => sql === 'BEGIN' || sql === 'COMMIT' ? sql : 'query'), [
-      'BEGIN', 'query', 'query', 'query', 'COMMIT',
+      'BEGIN', 'query', 'query', 'COMMIT',
     ]);
     assert.match(fake.calls[1].sql, /ON CONFLICT \(chain, transaction_hash, log_index\)/);
-    assert.match(fake.calls[3].sql, /robinhood_holder_cursors\.version = \$5::bigint/);
-    assert.match(fake.calls[3].sql, /robinhood_holder_cursors\.next_block = \$6::bigint/);
+    assert.match(fake.calls[2].sql, /robinhood_holder_cursors\.version = \$5::bigint/);
+    assert.match(fake.calls[2].sql, /robinhood_holder_cursors\.next_block = \$6::bigint/);
+    assert.equal(fake.calls[2].params[6], false);
     assert.equal(fake.client.released, true);
   });
 
   it('rolls back the range when evidence conflicts or the cursor is stale', async () => {
     for (const [sequence, expectedCode] of [
       [[{ rows: [], rowCount: 0 }], 'holder_capture_conflict'],
-      [[{ rows: [{ inserted: true }], rowCount: 1 }, { rows: [], rowCount: 0 }],
+      [[{ rows: [{ matched: '1', inserted: '1' }], rowCount: 1 }, { rows: [], rowCount: 0 }],
         'holder_cursor_stale'],
     ]) {
       const fake = fakeDatabase(sequence);
@@ -150,6 +150,7 @@ describe('Robinhood holder ledger repository', () => {
     assert.deepEqual(cursorState, {
       stream: 'live', nextBlock: '101', safeHead: '105', checkpointBlock: '100',
       checkpointHash: HASH, journalFloorBlock: '50', version: 7,
+      bufferFloorBlock: null,
     });
     assert.equal(fake.calls.length, 1);
   });

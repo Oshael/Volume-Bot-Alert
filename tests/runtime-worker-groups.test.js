@@ -538,6 +538,7 @@ describe('runtime worker groups config', () => {
     withEnv({
       ROBINHOOD_RPC_URL: 'http://127.0.0.1:8547',
       ROBINHOOD_HOLDER_LIVE_ENABLED: 'true', ROBINHOOD_HOLDER_COLD_ENABLED: 'false',
+      ROBINHOOD_HOLDER_BACKFILL_ADMITTED_AFTER: '2026-08-10T00:00:00Z',
       ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ENABLED: 'true',
       ROBINHOOD_HOLDER_GLOBAL_BACKFILL_AUTO_START: 'true',
       ROBINHOOD_HOLDER_GLOBAL_BACKFILL_CATALOG_CUTOFF: '2026-08-10T00:00:00Z',
@@ -697,6 +698,7 @@ describe('runtime worker groups config', () => {
     const result = spawnSync(process.execPath, ['-e', "require('./config')"], {
       cwd: ROOT_DIR, encoding: 'utf8', env: { ...process.env,
         ROBINHOOD_RPC_URL: 'http://127.0.0.1:8547', ROBINHOOD_HOLDER_LIVE_ENABLED: 'true',
+        ROBINHOOD_HOLDER_BACKFILL_ADMITTED_AFTER: '2026-08-10T00:00:00Z',
         ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ENABLED: 'true',
         ROBINHOOD_HOLDER_GLOBAL_BACKFILL_CATALOG_CUTOFF: '2026-08-10T00:00:00Z',
         ROBINHOOD_HOLDER_COLD_ENABLED: 'true', ROBINHOOD_HOLDER_COLD_ADMITTED_BEFORE: '2026-08-10T00:00:00Z' },

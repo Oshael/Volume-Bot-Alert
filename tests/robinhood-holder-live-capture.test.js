@@ -11,6 +11,10 @@ const HASH_C = `0x${'c'.repeat(64)}`;
 describe('Robinhood holder global live capture', () => {
   it('captures one confirmed global range with optimistic cursor continuity', async () => {
     const calls = [];
+    const bootstrap = { seedNewTokens: async (input) => {
+      calls.push(['seed', input]);
+      return [{ ledgerStatus: 'shadow' }];
+    } };
     const ledger = {
       getCursor: async () => ({
         nextBlock: '103', checkpointBlock: '102', checkpointHash: HASH,
@@ -44,20 +48,34 @@ describe('Robinhood holder global live capture', () => {
         };
       },
     };
-    const result = await createRobinhoodHolderLiveCapture({ ledger, reader }).captureOnce();
+    const result = await createRobinhoodHolderLiveCapture({
+      bootstrap, ledger, reader,
+    }).captureOnce({
+      admittedAfter: '2026-08-10T00:00:00Z', seedLimit: 25,
+      maxInitialGapBlocks: 20_000,
+    });
 
     assert.equal(result.status, 'captured');
     assert.equal(result.cursorVersion, 5);
+    assert.equal(result.bufferedSeededTokens, 1);
     assert.deepEqual(calls, [
       ['head', 12],
       ['checkpoint', { number: '102', hash: HASH }],
-      ['read', { tokenAddresses: [TOKEN], fromBlock: '103', toBlock: '105' }],
+      ['read', {
+        tokenAddresses: [TOKEN], captureAllTransfers: true,
+        fromBlock: '103', toBlock: '105',
+      }],
       ['append', {
         transfers: [transfer],
         cursor: {
           rangeStart: '103', nextBlock: '106', safeHead: '105', expectedVersion: 4,
+          bufferedAllTransfers: true,
           checkpoint: { number: '105', hash: HASH },
         },
+      }],
+      ['seed', {
+        admittedAfter: '2026-08-10T00:00:00Z', limit: 25,
+        maxInitialGapBlocks: 20_000,
       }],
     ]);
   });

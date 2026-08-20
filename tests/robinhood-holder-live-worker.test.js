@@ -45,7 +45,13 @@ describe('Robinhood holder live worker', () => {
 
     assert.equal(worker.start(), false);
     assert.equal(clock.scheduled.length, 0);
-    assert.equal(worker.start({ enabled: true, intervalMs: 750 }), true);
+    assert.throws(
+      () => worker.start({ enabled: true }),
+      (error) => error.code === 'configuration_error'
+    );
+    assert.equal(worker.start({
+      enabled: true, intervalMs: 750, admittedAfter: '2026-08-10T00:00:00Z',
+    }), true);
     assert.equal(clock.scheduled[0].delayMs, 0);
     await clock.scheduled[0].callback();
     assert.equal(clock.scheduled[1].delayMs, 750);
@@ -54,7 +60,8 @@ describe('Robinhood holder live worker', () => {
     assert.deepEqual(worker.getStatus().lastResult, {
       status: 'completed', captureStatus: 'captured', nextBlock: '106', safeHead: '105',
       handoffStatus: 'shadow', handoffPromotions: 1, handoffResyncs: 0,
-      capturedTransfers: 3, appliedEvents: 2, driftedTokens: 1,
+      capturedTransfers: 3, seededTokens: 0, bufferedSeededTokens: 0,
+      appliedEvents: 2, driftedTokens: 1,
       driftSuspicions: 0, receiptRecoveries: 0, driftDeferred: 0,
       tailRollbacks: 0, tailRollbackEvents: 0,
       quarantinedTokenAddress: null, quarantinedTokens: 0,
@@ -85,7 +92,10 @@ describe('Robinhood holder live worker', () => {
         } },
       }),
     });
-    worker.start({ enabled: true, intervalMs: 500, maxErrorBackoffMs: 5000 });
+    worker.start({
+      enabled: true, intervalMs: 500, maxErrorBackoffMs: 5000,
+      admittedAfter: '2026-08-10T00:00:00Z',
+    });
 
     await clock.scheduled[0].callback();
     assert.equal(clock.scheduled[1].delayMs, 1000);
@@ -110,7 +120,10 @@ describe('Robinhood holder live worker', () => {
         }) },
       }),
     });
-    worker.start({ enabled: true, onFatal: async (error) => fatals.push(error) });
+    worker.start({
+      enabled: true, admittedAfter: '2026-08-10T00:00:00Z',
+      onFatal: async (error) => fatals.push(error),
+    });
 
     await clock.scheduled[0].callback();
 
@@ -127,6 +140,7 @@ describe('Robinhood holder live worker', () => {
     const ledger = { applyNextPendingEvent() {} };
     const reader = { assertChain: async () => calls.push('chain') };
     const capture = { captureOnce() {} };
+    const bootstrap = { seedNewTokens() {} };
     const handoffRepository = { getNextCandidate() {} };
     const handoff = { runOnce() {} };
     const runner = { runOnce() {} };
@@ -141,6 +155,7 @@ describe('Robinhood holder live worker', () => {
         return rpcClient;
       },
       ledgerFactory: (input) => { calls.push(['ledger', input]); return ledger; },
+      bootstrapFactory: (input) => { calls.push(['bootstrap', input]); return bootstrap; },
       readerFactory: (input) => { calls.push(['reader', input]); return reader; },
       captureFactory: (input) => { calls.push(['capture', input]); return capture; },
       handoffRepositoryFactory: (input) => {
@@ -161,8 +176,9 @@ describe('Robinhood holder live worker', () => {
         timeoutMs: 9000, maxRetries: 1,
       }],
       ['ledger', { database: 'database' }],
+      ['bootstrap', { database: 'database' }],
       ['reader', { rpcClient, addressShardConcurrency: 2 }], 'chain',
-      ['capture', { ledger, reader }],
+      ['capture', { bootstrap, ledger, reader }],
       ['handoffRepository', { database: 'database' }],
       ['handoff', { repository: handoffRepository, reader }],
       ['runner', { capture, handoff, ledger, reader, publishHolderCounts }],

@@ -572,7 +572,8 @@ if (workerGroups.isolationConflict) {
 if (workerGroups.legacyConflict) {
   missing.push('BACKGROUND_WORKER_GROUPS cannot combine legacy maintenance with other groups or all');
 }
-if (robinhoodHolderBackfillEnabled && !robinhoodHolderBackfillAdmittedAfter) {
+if ((robinhoodHolderBackfillEnabled || robinhoodHolderLiveEnabled)
+    && !robinhoodHolderBackfillAdmittedAfter) {
   missing.push('ROBINHOOD_HOLDER_BACKFILL_ADMITTED_AFTER');
 }
 if (robinhoodHolderColdEnabled && !robinhoodHolderColdAdmittedBefore) {

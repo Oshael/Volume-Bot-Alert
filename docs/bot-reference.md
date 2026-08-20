@@ -934,6 +934,7 @@ Stages confirmados:
 | 120 | campanha/coorte duráveis para backfill global de holders e attach ao cursor live |
 | 122 | lifecycle durável e fail-closed dos watermarks de wallet attribution |
 | 140 | última observação horária UTC do total de holders por token Robinhood |
+| 141 | floor durável a partir do qual a captura live bufferiza todos os `Transfer` |
 
 Holders RH possuem duas fontes complementares. A Stage 111 guarda o summary
 Blockscout usado como bootstrap/fallback; as Stages 116–118 mantêm o ledger local
@@ -943,7 +944,12 @@ fronteira de leitura: publica o ledger somente quando o token está `live` e há
 cursor, usando o summary Blockscout nos demais estados. Ela não duplica dados.
 A captura persiste cada range do journal em um único bulk insert; duplicatas
 idênticas permanecem idempotentes e qualquer evidência conflitante aborta também
-o avanço atômico do cursor.
+o avanço atômico do cursor. A partir da Stage 141, ela consulta o tópico global e
+bufferiza também `Transfer` válidos de tokens ainda fora do catálogo. Quando um
+deployment novo está dentro de `max(journal_floor_block, buffer_floor_block)`, o
+bootstrap o admite direto em `shadow` e aplica o journal preservado, sem replay
+RPC. Cobertura incompleta continua fail-closed em `backfilling`; eventos antigos
+de tokens nunca admitidos são descartados pela retenção depois de 20.000 blocos.
 
 `monitored`, `recent`, `old-week`, pins, tokens manuais e o summary de
 `GET /api/robinhood/holders` consultam essa view em lote, sem RPC ou Blockscout por
@@ -1001,13 +1007,15 @@ ordenados sem manter a captura esperando o lote inteiro. O apply escolhe o event
 elegível global mais antigo e mantém afinidade no token enquanto houver eventos;
 o índice parcial da stage 121 preserva a ordem canônica por token sem reescanear
 o journal pendente inteiro a cada evento. No deploy, execute
-`node src/utils/db-init-stage121.js` antes do restart; o índice é criado
+`node src/utils/db-init-stage121.js` e `node src/utils/db-init-stage141.js` antes
+do restart; o índice é criado
 concorrentemente para não bloquear writes do journal. A unit template usa
 `start:worker:robinhood-holders`, com porta default
 3010 e sem socket no processo worker. Todos
 são opt-in e permanecem desligados por default; pull ou presença de
 `ROBINHOOD_RPC_URL` não os inicia. O live deve ser ligado antes dos backfills. Os
-backfills exigem cutoff durável e deployment exato `rpc_direct` ou
+workers live e incremental compartilham o cutoff obrigatório
+`ROBINHOOD_HOLDER_BACKFILL_ADMITTED_AFTER`; os backfills exigem deployment exato `rpc_direct` ou
 `launchpad_event`; Blockscout sozinho fornece apenas hint para deployments
 diretos antigos, que precisam ser confirmados pelo RPC principal. A fila de
 replay conclui primeiro estados que já possuem checkpoint live e, dentro de cada

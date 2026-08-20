@@ -106,6 +106,32 @@ function orderTransfers(logs, context) {
   return Object.freeze(transfers);
 }
 
+function orderBufferedTransfers(logs, context, trackedTokens) {
+  const transfers = [];
+  let ignoredMalformedLogs = 0;
+  for (const log of logs) {
+    try {
+      transfers.push(decodeTransferLog(log, context));
+    } catch (error) {
+      const tokenAddress = String(log?.address || '').toLowerCase();
+      if (error.code !== 'holder_transfer_invalid_log' || trackedTokens.has(tokenAddress)) {
+        throw error;
+      }
+      ignoredMalformedLogs += 1;
+    }
+  }
+  transfers.sort((left, right) => (
+    BigInt(left.blockNumber) < BigInt(right.blockNumber) ? -1
+      : BigInt(left.blockNumber) > BigInt(right.blockNumber) ? 1
+        : left.transactionIndex - right.transactionIndex || left.logIndex - right.logIndex
+  ));
+  const identities = new Set(transfers.map(({ transactionHash, logIndex }) => (
+    `${transactionHash}:${logIndex}`
+  )));
+  if (identities.size !== transfers.length) throw new Error('holder replay returned duplicate logs');
+  return Object.freeze({ transfers: Object.freeze(transfers), ignoredMalformedLogs });
+}
+
 function isAdaptiveRangeError(error) {
   return ['log_range_error', 'timeout', 'rate_limited'].includes(error?.code)
     || (error?.code === 'http_error' && [400, 408, 413, 429].includes(error.httpStatus));
@@ -300,6 +326,7 @@ function createRobinhoodHolderTransferReader(options = {}) {
   async function readGlobalRange(input = {}) {
     if (!Array.isArray(input.tokenAddresses)) throw new TypeError('tokenAddresses must be an array');
     const allowed = new Set(input.tokenAddresses.map((value) => address(value, 'tokenAddress')));
+    const captureAllTransfers = input.captureAllTransfers === true;
     const fromBlock = quantity(input.fromBlock, 'fromBlock');
     const toBlock = quantity(input.toBlock, 'toBlock');
     if (fromBlock > toBlock) throw new Error('holder live range is inverted');
@@ -308,24 +335,39 @@ function createRobinhoodHolderTransferReader(options = {}) {
     }
     await assertChain();
     const telemetry = { requests: 0, splits: 0, addressSplits: 0 };
-    const filterMode = allowed.size === 0
+    const filterMode = captureAllTransfers
+      ? 'topics-only-buffered'
+      : allowed.size === 0
       ? 'empty-scope'
       : (allowed.size <= addressFilterLimit ? 'address-filtered' : 'topics-only');
     const [observedLogs, checkpoint] = await Promise.all([
       filterMode === 'address-filtered'
         ? readAddressFilteredLogs(fromBlock, toBlock, [...allowed], telemetry)
-        : (filterMode === 'topics-only' ? readLogs(fromBlock, toBlock, null, telemetry) : []),
+        : (filterMode.startsWith('topics-only') ? readLogs(fromBlock, toBlock, null, telemetry) : []),
       readBlock(toBlock),
     ]);
     const logs = observedLogs.filter((log) => allowed.has(String(log?.address || '').toLowerCase()));
     const context = { tokenAddress: null, fromBlock, toBlock, checkpointHash: checkpoint.hash };
+    const buffered = captureAllTransfers
+      ? orderBufferedTransfers(observedLogs, context, allowed)
+      : { transfers: orderTransfers(logs, context), ignoredMalformedLogs: 0 };
+    const bufferedTokenAddresses = captureAllTransfers
+      ? new Set(buffered.transfers
+        .map(({ tokenAddress }) => tokenAddress)
+        .filter((tokenAddress) => !allowed.has(tokenAddress))).size
+      : 0;
     return Object.freeze({
       fromBlock: fromBlock.toString(), toBlock: toBlock.toString(),
       nextBlock: (toBlock + 1n).toString(), scopeTokens: allowed.size,
-      checkpoint, transfers: orderTransfers(logs, context),
+      checkpoint, transfers: buffered.transfers,
       telemetry: Object.freeze({
         ...telemetry, filterMode, observedLogs: observedLogs.length,
-        ignoredLogs: observedLogs.length - logs.length,
+        ignoredLogs: captureAllTransfers
+          ? buffered.ignoredMalformedLogs : observedLogs.length - logs.length,
+        ...(captureAllTransfers ? {
+          ignoredMalformedLogs: buffered.ignoredMalformedLogs,
+          bufferedTokenAddresses,
+        } : {}),
       }),
     });
   }

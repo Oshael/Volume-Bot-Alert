@@ -44,6 +44,7 @@ async function readOrQuarantine(input) {
   try {
     return await input.reader.readGlobalRange({
       tokenAddresses: input.tokenAddresses,
+      captureAllTransfers: true,
       fromBlock: input.fromBlock.toString(), toBlock: input.toBlock.toString(),
     });
   } catch (error) {
@@ -75,9 +76,21 @@ function assertDependencies(ledger, reader) {
 }
 
 function createRobinhoodHolderLiveCapture(options = {}) {
+  const bootstrap = options.bootstrap || null;
   const ledger = options.ledger;
   const reader = options.reader;
   assertDependencies(ledger, reader);
+
+  async function seedNewTokens(input) {
+    if (!bootstrap) return [];
+    return bootstrap.seedNewTokens({
+      admittedAfter: input.admittedAfter,
+      limit: boundedInteger(input.seedLimit, 100, 1, 1000, 'seedLimit'),
+      maxInitialGapBlocks: boundedInteger(
+        input.maxInitialGapBlocks, 20_000, 1, 100_000_000, 'maxInitialGapBlocks'
+      ),
+    });
+  }
 
   async function captureOnce(input = {}) {
     const rangeSize = boundedInteger(input.rangeSize, 250, 1, 5000, 'rangeSize');
@@ -127,7 +140,12 @@ function createRobinhoodHolderLiveCapture(options = {}) {
     const safeHead = BigInt(head.safeHead);
     const fromBlock = cursor ? BigInt(cursor.nextBlock) : safeHead;
     if (fromBlock > safeHead) {
-      return Object.freeze({ status: 'idle', nextBlock: fromBlock.toString(), safeHead: head.safeHead });
+      const seeded = await seedNewTokens(input);
+      return Object.freeze({
+        status: 'idle', nextBlock: fromBlock.toString(), safeHead: head.safeHead,
+        seededTokens: seeded.length,
+        bufferedSeededTokens: seeded.filter(({ ledgerStatus }) => ledgerStatus === 'shadow').length,
+      });
     }
     const candidateEnd = fromBlock + BigInt(rangeSize - 1);
     const toBlock = cursor && candidateEnd < safeHead ? candidateEnd : safeHead;
@@ -141,12 +159,16 @@ function createRobinhoodHolderLiveCapture(options = {}) {
       cursor: {
         rangeStart: captured.fromBlock, nextBlock: captured.nextBlock,
         safeHead: head.safeHead, expectedVersion: cursor?.version ?? null,
+        bufferedAllTransfers: true,
         checkpoint: captured.checkpoint,
       },
     });
+    const seeded = await seedNewTokens(input);
     return Object.freeze({
       status: 'captured', fromBlock: captured.fromBlock, toBlock: captured.toBlock,
       nextBlock: captured.nextBlock, safeHead: head.safeHead,
+      seededTokens: seeded.length,
+      bufferedSeededTokens: seeded.filter(({ ledgerStatus }) => ledgerStatus === 'shadow').length,
       scopeTokens: captured.scopeTokens, transfers: captured.transfers.length,
       telemetry: captured.telemetry, ...committed,
     });

@@ -620,6 +620,9 @@ function startRobinhoodHolderWorkerGroup() {
       'robinhood-holders', ROBINHOOD_HOLDER_LIVE_LEASE_KEY,
       'Robinhood holder LIVE worker', () => robinhoodHolderLiveWorker.start({
         ...config.robinhoodHolderLiveWorker,
+        admittedAfter: config.robinhoodHolderBackfillWorker.admittedAfter,
+        seedLimit: config.robinhoodHolderBackfillWorker.seedLimit,
+        maxInitialGapBlocks: config.robinhoodHolderBackfillWorker.maxInitialGapBlocks,
         onFatal: (error) => workerLeaseManager.halt(ROBINHOOD_HOLDER_LIVE_LEASE_KEY, error),
       }), { metadataProvider: () => ({ telemetry: robinhoodHolderLiveWorker.getStatus() }) }
     );

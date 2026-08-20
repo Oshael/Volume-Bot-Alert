@@ -56,12 +56,57 @@ async function lockCursor(client) {
 
 async function hasOldPendingEvent(client, cutoffBlock) {
   const result = await client.query(
-    `SELECT 1 FROM robinhood_holder_transfer_journal
-      WHERE chain = 'robinhood' AND applied = false AND block_number < $1
+    `SELECT 1 FROM robinhood_holder_transfer_journal journal
+      WHERE journal.chain = 'robinhood' AND journal.applied = false
+        AND journal.block_number < $1
+        AND (EXISTS (
+          SELECT 1 FROM robinhood_holder_token_states state
+           WHERE state.chain = journal.chain AND state.token_address = journal.token_address
+        ) OR EXISTS (
+          SELECT 1 FROM robinhood_holder_global_backfill_tokens token
+          INNER JOIN robinhood_holder_global_backfill_runs run
+             ON run.id = token.run_id AND run.chain = token.chain
+           WHERE token.chain = journal.chain AND token.token_address = journal.token_address
+             AND token.status = 'active' AND run.barrier_block IS NOT NULL
+             AND run.status <> 'completed'
+        ))
       LIMIT 1`,
     [cutoffBlock]
   );
   return result.rowCount > 0;
+}
+
+async function deleteExpiredBufferedBatch(client, cutoffBlock, batchLimit) {
+  const result = await client.query(
+    `WITH candidates AS MATERIALIZED (
+       SELECT journal.chain, journal.transaction_hash, journal.log_index
+         FROM robinhood_holder_transfer_journal journal
+        WHERE journal.chain = 'robinhood' AND journal.applied = false
+          AND journal.block_number < $1
+          AND NOT EXISTS (
+            SELECT 1 FROM robinhood_holder_token_states state
+             WHERE state.chain = journal.chain AND state.token_address = journal.token_address
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM robinhood_holder_global_backfill_tokens token
+            INNER JOIN robinhood_holder_global_backfill_runs run
+               ON run.id = token.run_id AND run.chain = token.chain
+             WHERE token.chain = journal.chain AND token.token_address = journal.token_address
+               AND token.status = 'active' AND run.barrier_block IS NOT NULL
+               AND run.status <> 'completed'
+          )
+        ORDER BY journal.block_number, journal.transaction_index, journal.log_index
+        LIMIT $2::int
+        FOR UPDATE OF journal
+     )
+     DELETE FROM robinhood_holder_transfer_journal journal
+     USING candidates
+      WHERE journal.chain = candidates.chain
+        AND journal.transaction_hash = candidates.transaction_hash
+        AND journal.log_index = candidates.log_index`,
+    [cutoffBlock, batchLimit]
+  );
+  return result.rowCount;
 }
 
 async function deleteAppliedBatch(client, cutoffBlock, batchLimit) {
@@ -124,13 +169,17 @@ function createRobinhoodHolderJournalRetention(options = {}) {
       const cutoffBlock = nextBlock > retained ? nextBlock - retained : 0n;
       if (cutoffBlock <= floorBlock) {
         return Object.freeze({
-          status: 'idle', deletedEvents: 0,
+          status: 'idle', deletedEvents: 0, discardedBufferedEvents: 0,
           cutoffBlock: cutoffBlock.toString(), journalFloorBlock: floorBlock.toString(),
         });
       }
+      const discardedBufferedEvents = await deleteExpiredBufferedBatch(
+        client, cutoffBlock.toString(), normalized.batchLimit
+      );
       if (await hasOldPendingEvent(client, cutoffBlock.toString())) {
         return Object.freeze({
           status: 'blocked', reason: 'pending_event_before_cutoff', deletedEvents: 0,
+          discardedBufferedEvents,
           cutoffBlock: cutoffBlock.toString(), journalFloorBlock: floorBlock.toString(),
         });
       }
@@ -139,13 +188,13 @@ function createRobinhoodHolderJournalRetention(options = {}) {
       );
       if (await hasOlderJournalEvent(client, cutoffBlock.toString())) {
         return Object.freeze({
-          status: 'draining', deletedEvents,
+          status: 'draining', deletedEvents, discardedBufferedEvents,
           cutoffBlock: cutoffBlock.toString(), journalFloorBlock: floorBlock.toString(),
         });
       }
       const journalFloorBlock = await advanceFloor(client, cutoffBlock.toString());
       return Object.freeze({
-        status: 'pruned', deletedEvents,
+        status: 'pruned', deletedEvents, discardedBufferedEvents,
         cutoffBlock: cutoffBlock.toString(), journalFloorBlock,
       });
     });

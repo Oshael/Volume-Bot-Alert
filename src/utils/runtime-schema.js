@@ -3643,6 +3643,22 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage141-robinhood-holder-transfer-buffer-floor',
+    name: 'Stage 141 Robinhood holder Transfer buffer floor',
+    repair: 'node src/utils/db-init-stage141.js',
+    tables: [{
+      table: 'robinhood_holder_cursors',
+      columns: ['buffer_floor_block'],
+      columnTypes: {
+        buffer_floor_block: { dataType: 'bigint' },
+      },
+      constraints: [{
+        name: 'robinhood_holder_cursors_buffer_floor_check',
+        includes: ['CHECK', 'buffer_floor_block', 'next_block'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

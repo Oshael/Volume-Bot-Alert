@@ -1,4 +1,7 @@
 const db = require('../models/db');
+const {
+  createRobinhoodHolderBootstrapRepository,
+} = require('../models/robinhood-holder-bootstrap');
 const { createRobinhoodHolderHandoffRepository } = require('../models/robinhood-holder-handoff');
 const { createRobinhoodHolderLedgerRepository } = require('../models/robinhood-holder-ledger');
 const { createEvmJsonRpcClient } = require('./evm-json-rpc-client');
@@ -24,6 +27,13 @@ function boundedInteger(value, fallback, minimum, maximum) {
 }
 
 function normalizeOptions(options = {}, env = process.env) {
+  const admittedAfter = options.admittedAfter == null ? null : new Date(options.admittedAfter);
+  if ((options.enabled === true && !admittedAfter)
+      || (admittedAfter && !Number.isFinite(admittedAfter.getTime()))) {
+    const error = new Error('holder live admittedAfter is required');
+    error.code = 'configuration_error';
+    throw error;
+  }
   return Object.freeze({
     enabled: options.enabled === true,
     intervalMs: boundedInteger(options.intervalMs, 500, 100, 300_000),
@@ -31,6 +41,9 @@ function normalizeOptions(options = {}, env = process.env) {
     rangeSize: boundedInteger(options.rangeSize, 250, 1, 5000),
     confirmations: boundedInteger(options.confirmations, 12, 0, 1000),
     addressShardConcurrency: boundedInteger(options.addressShardConcurrency, 2, 1, 4),
+    admittedAfter: admittedAfter?.toISOString() || null,
+    seedLimit: boundedInteger(options.seedLimit, 100, 1, 1000),
+    maxInitialGapBlocks: boundedInteger(options.maxInitialGapBlocks, 20_000, 1, 100_000_000),
     rpcTimeoutMs: boundedInteger(
       options.rpcTimeoutMs ?? env.ROBINHOOD_RPC_TIMEOUT_MS, 15_000, 1000, 60_000
     ),
@@ -39,6 +52,11 @@ function normalizeOptions(options = {}, env = process.env) {
 
 function resolveHolderCountPublisher(deps) {
   return deps.publishHolderCounts || holderCountRealtime.publishUpdates;
+}
+
+function resolveBootstrap(deps, database) {
+  return deps.bootstrap
+    || (deps.bootstrapFactory || createRobinhoodHolderBootstrapRepository)({ database });
 }
 
 async function buildRuntime(options, deps = {}) {
@@ -52,12 +70,13 @@ async function buildRuntime(options, deps = {}) {
   const ledger = deps.ledger || (deps.ledgerFactory || createRobinhoodHolderLedgerRepository)({
     database,
   });
+  const bootstrap = resolveBootstrap(deps, database);
   const reader = deps.reader || (deps.readerFactory || createRobinhoodHolderTransferReader)({
     rpcClient, addressShardConcurrency: options.addressShardConcurrency,
   });
   await reader.assertChain();
   const capture = deps.capture || (deps.captureFactory || createRobinhoodHolderLiveCapture)({
-    ledger, reader,
+    bootstrap, ledger, reader,
   });
   const handoffRepository = deps.handoffRepository
     || (deps.handoffRepositoryFactory || createRobinhoodHolderHandoffRepository)({ database });
@@ -96,7 +115,9 @@ function compactResult(result) {
     captureStatus: result.captureStatus || null,
     nextBlock: result.nextBlock ?? null,
     safeHead: result.safeHead ?? null,
-    capturedTransfers: Number(result.capturedTransfers) || 0,
+    capturedTransfers: numericMetric(result.capturedTransfers),
+    seededTokens: numericMetric(result.seededTokens),
+    bufferedSeededTokens: numericMetric(result.bufferedSeededTokens),
     handoffStatus: result.handoffStatus || null,
     handoffPromotions: Number(result.handoffPromotions) || 0,
     handoffResyncs: Number(result.handoffResyncs) || 0,
@@ -131,7 +152,8 @@ function createRobinhoodHolderLiveWorker(deps = {}) {
     enabled: false, running: false, inFlight: false, halted: false,
     providerName: null, lastResult: null, lastError: null,
     totalRuns: 0, totalErrors: 0, consecutiveErrors: 0,
-    totalCapturedTransfers: 0, totalAppliedEvents: 0,
+    totalCapturedTransfers: 0, totalSeededTokens: 0, totalBufferedSeededTokens: 0,
+    totalAppliedEvents: 0,
     totalHolderCountUpdates: 0, totalHolderCountPublished: 0,
     totalHandoffPromotions: 0, totalHandoffResyncs: 0,
     totalDriftedTokens: 0, totalDriftSuspicions: 0,
@@ -164,6 +186,8 @@ function createRobinhoodHolderLiveWorker(deps = {}) {
   function recordResult(result) {
     status.lastResult = compactResult(result);
     status.totalCapturedTransfers += Number(result.capturedTransfers) || 0;
+    status.totalSeededTokens += Number(result.seededTokens) || 0;
+    status.totalBufferedSeededTokens += Number(result.bufferedSeededTokens) || 0;
     status.totalHandoffPromotions += Number(result.handoffPromotions) || 0;
     status.totalHandoffResyncs += Number(result.handoffResyncs) || 0;
     status.totalAppliedEvents += Number(result.appliedEvents) || 0;

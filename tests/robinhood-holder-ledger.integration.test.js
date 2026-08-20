@@ -13,10 +13,12 @@ const HASH_A = `0x${'1'.repeat(64)}`;
 const HASH_B = `0x${'2'.repeat(64)}`;
 const HASH_C = `0x${'7'.repeat(64)}`;
 const HASH_D = `0x${'d'.repeat(64)}`;
+const HASH_E = `0x${'e'.repeat(64)}`;
 const TOKEN = `0x${'3'.repeat(40)}`;
 const TOKEN_2 = `0x${'6'.repeat(40)}`;
 const TOKEN_3 = `0x${'8'.repeat(40)}`;
 const TOKEN_4 = `0x${'a'.repeat(40)}`;
+const TOKEN_5 = `0x${'9'.repeat(40)}`;
 const ALICE = `0x${'4'.repeat(40)}`;
 const BOB = `0x${'5'.repeat(40)}`;
 const ZERO_ADDRESS = `0x${'0'.repeat(40)}`;
@@ -310,6 +312,9 @@ describe('Robinhood holder ledger persistence', () => {
         `UPDATE robinhood_holder_token_states SET ledger_status = 'live'
           WHERE token_address = ANY($1::varchar[])`, [[TOKEN, TOKEN_3]]
       );
+      await client.query(
+        `UPDATE robinhood_holder_cursors SET buffer_floor_block = 101`
+      );
 
       const rewoundResult = await repository.rewindOrphanedRange({
         nextBlock: '100', safeHead: '199', expectedVersion: 1,
@@ -347,7 +352,7 @@ describe('Robinhood holder ledger persistence', () => {
         `SELECT state.token_address, state.holder_count, state.ledger_status,
                 state.live_through_block, state.live_through_hash,
                 cursor.next_block, cursor.safe_head, cursor.checkpoint_block,
-                cursor.checkpoint_hash, cursor.version,
+                cursor.checkpoint_hash, cursor.buffer_floor_block, cursor.version,
                 (SELECT COUNT(*) FROM robinhood_holder_transfer_journal) AS journal_count
            FROM robinhood_holder_token_states state
            CROSS JOIN robinhood_holder_cursors cursor
@@ -358,11 +363,14 @@ describe('Robinhood holder ledger persistence', () => {
         liveThroughBlock: String(row.live_through_block), liveThroughHash: row.live_through_hash,
         nextBlock: String(row.next_block), safeHead: String(row.safe_head),
         checkpointBlock: String(row.checkpoint_block), checkpointHash: row.checkpoint_hash,
+        bufferFloorBlock: row.buffer_floor_block == null
+          ? null : String(row.buffer_floor_block),
         version: Number(row.version), journalCount: Number(row.journal_count),
       })), [{
         holderCount: '1', ledgerStatus: 'live', liveThroughBlock: '99',
         liveThroughHash: HASH_B, nextBlock: '100', safeHead: '199',
-        checkpointBlock: '99', checkpointHash: HASH_B, version: 2, journalCount: 0,
+        checkpointBlock: '99', checkpointHash: HASH_B, bufferFloorBlock: null,
+        version: 2, journalCount: 0,
       }]);
       const stillRecovering = await client.query(
         `SELECT ledger_status FROM robinhood_holder_token_states WHERE token_address = $1`,
@@ -393,11 +401,14 @@ describe('Robinhood holder ledger persistence', () => {
            (102, $1, $2, 1, 1, $4, $5, $7, 1,
              NULL, NULL, 0, 1, 1, true, NOW()),
            (101, $1, $3, 2, 2, $4, $7, $6, 1,
+             NULL, NULL, NULL, NULL, NULL, false, NULL),
+           (103, $1, $8, 3, 3, $9, $5, $6, 1,
              NULL, NULL, NULL, NULL, NULL, false, NULL)`,
-        [HASH_A, HASH_C, HASH_B, TOKEN, ZERO_ADDRESS, BOB, ALICE]
+        [HASH_A, HASH_C, HASH_B, TOKEN, ZERO_ADDRESS, BOB, ALICE, HASH_E, TOKEN_5]
       );
       assert.deepEqual(await retention.pruneOnce({ batchLimit: 1 }), {
         status: 'blocked', reason: 'pending_event_before_cutoff', deletedEvents: 0,
+        discardedBufferedEvents: 1,
         cutoffBlock: '150', journalFloorBlock: '100',
       });
       await client.query(
@@ -405,10 +416,12 @@ describe('Robinhood holder ledger persistence', () => {
       );
       assert.deepEqual(await retention.pruneOnce({ batchLimit: 1 }), {
         status: 'draining', deletedEvents: 1,
+        discardedBufferedEvents: 0,
         cutoffBlock: '150', journalFloorBlock: '100',
       });
       assert.deepEqual(await retention.pruneOnce({ batchLimit: 1 }), {
         status: 'pruned', deletedEvents: 1,
+        discardedBufferedEvents: 0,
         cutoffBlock: '150', journalFloorBlock: '150',
       });
       const pruned = await client.query(

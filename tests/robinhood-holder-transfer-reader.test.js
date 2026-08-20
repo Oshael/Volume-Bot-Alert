@@ -167,6 +167,55 @@ describe('Robinhood holder Transfer reader', () => {
     });
   });
 
+  it('buffers valid Transfers for tokens that are not tracked yet', async () => {
+    const untracked = `0x${'9'.repeat(40)}`;
+    const source = rpc(async (method, params) => {
+      if (method === 'eth_getBlockByNumber') return { number: '0x64', hash: HASH_A };
+      assert.equal(Object.hasOwn(params[0], 'address'), false);
+      return [
+        log(),
+        log({ address: untracked, transactionHash: `0x${'c'.repeat(64)}`, logIndex: '0x3' }),
+      ];
+    });
+    const result = await createRobinhoodHolderTransferReader({ rpcClient: source.client })
+      .readGlobalRange({
+        tokenAddresses: [TOKEN], captureAllTransfers: true,
+        fromBlock: 100, toBlock: 100,
+      });
+
+    assert.deepEqual(result.transfers.map(({ tokenAddress }) => tokenAddress), [TOKEN, untracked]);
+    assert.deepEqual(result.telemetry, {
+      requests: 1, splits: 0, addressSplits: 0, filterMode: 'topics-only-buffered',
+      observedLogs: 2, ignoredLogs: 0, ignoredMalformedLogs: 0,
+      bufferedTokenAddresses: 1,
+    });
+  });
+
+  it('ignores malformed untracked logs but quarantines malformed tracked logs', async () => {
+    const untracked = `0x${'9'.repeat(40)}`;
+    const malformed = log({
+      address: untracked, topics: [TRANSFER_TOPIC, ALICE],
+      transactionHash: `0x${'c'.repeat(64)}`,
+    });
+    const source = rpc(async (method) => method === 'eth_getBlockByNumber'
+      ? { number: '0x64', hash: HASH_A } : [log(), malformed]);
+    const reader = createRobinhoodHolderTransferReader({ rpcClient: source.client });
+    const buffered = await reader.readGlobalRange({
+      tokenAddresses: [TOKEN], captureAllTransfers: true, fromBlock: 100, toBlock: 100,
+    });
+    assert.equal(buffered.transfers.length, 1);
+    assert.equal(buffered.telemetry.ignoredMalformedLogs, 1);
+
+    await assert.rejects(
+      reader.readGlobalRange({
+        tokenAddresses: [TOKEN, untracked], captureAllTransfers: true,
+        fromBlock: 100, toBlock: 100,
+      }),
+      (error) => error.code === 'holder_transfer_invalid_log'
+        && error.tokenAddress === untracked
+    );
+  });
+
   it('adaptively shards an address allowlist rejected by the RPC payload boundary', async () => {
     const token2 = `0x${'8'.repeat(40)}`;
     const filters = [];

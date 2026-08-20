@@ -5,6 +5,7 @@ const stage116 = require('../src/utils/db-init-stage116');
 const stage117 = require('../src/utils/db-init-stage117');
 const stage118 = require('../src/utils/db-init-stage118');
 const stage121 = require('../src/utils/db-init-stage121');
+const stage141 = require('../src/utils/db-init-stage141');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 
 describe('Robinhood holder shadow ledger schema', () => {
@@ -104,5 +105,22 @@ describe('Robinhood holder shadow ledger schema', () => {
     ));
     assert.equal(group.repair, 'node src/utils/db-init-stage121.js');
     assert.equal(group.tables[0].indexes[0].name, 'idx_rh_holder_journal_pending_token');
+  });
+
+  it('persists the proven floor of complete Transfer buffering', () => {
+    const sql = stage141.STATEMENTS.join('\n');
+    assert.match(sql, /ADD COLUMN IF NOT EXISTS buffer_floor_block BIGINT/);
+    assert.match(sql, /buffer_floor_block >= 0/);
+    assert.match(sql, /buffer_floor_block <= next_block/);
+    assert.doesNotMatch(sql, /DEFAULT|NOT NULL/);
+    assert.doesNotMatch(sql, /DROP\s+(?:TABLE|COLUMN|CONSTRAINT|INDEX)/i);
+
+    const group = SCHEMA_GROUPS.find(({ key }) => (
+      key === 'stage141-robinhood-holder-transfer-buffer-floor'
+    ));
+    assert.equal(group.repair, 'node src/utils/db-init-stage141.js');
+    assert.deepEqual(group.tables[0].columnTypes.buffer_floor_block, {
+      dataType: 'bigint',
+    });
   });
 });

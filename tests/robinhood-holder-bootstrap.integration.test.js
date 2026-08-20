@@ -48,7 +48,7 @@ describe('Robinhood holder bootstrap persistence', () => {
           ('robinhood', $3, 'blockscout', NULL),
           ('robinhood', $4, 'launchpad_event', 104),
           ('robinhood', $5, 'rpc_direct', 105),
-          ('robinhood', $6, 'rpc_direct', 50)`, TOKENS
+          ('robinhood', $6, 'rpc_direct', 100)`, TOKENS
       );
       await client.query(
         `INSERT INTO robinhood_holder_token_states (
@@ -64,18 +64,23 @@ describe('Robinhood holder bootstrap persistence', () => {
          VALUES ($1, $2)`, [run.rows[0].id, TOKENS[4]]
       );
       await client.query(
-        `INSERT INTO robinhood_holder_cursors (next_block, safe_head) VALUES (201, 200)`
+        `INSERT INTO robinhood_holder_cursors (
+           next_block, safe_head, journal_floor_block, buffer_floor_block
+         ) VALUES (201, 200, 90, 101)`
       );
       const database = { query: client.query.bind(client) };
       const repository = createRobinhoodHolderBootstrapRepository({ database });
       assert.deepEqual(await repository.seedNewTokens({
-        admittedAfter: '2026-08-10T00:00:00Z', limit: 10, maxInitialGapBlocks: 100,
+        admittedAfter: '2026-08-10T00:00:00Z', limit: 10, maxInitialGapBlocks: 101,
       }), [{
         tokenAddress: TOKENS[0], deploymentBlock: '101',
-        backfillNextBlock: '101', ledgerStatus: 'backfilling',
+        backfillNextBlock: '101', ledgerStatus: 'shadow',
+      }, {
+        tokenAddress: TOKENS[5], deploymentBlock: '100',
+        backfillNextBlock: '100', ledgerStatus: 'backfilling',
       }]);
       assert.deepEqual(await repository.seedNewTokens({
-        admittedAfter: '2026-08-10T00:00:00Z', limit: 10, maxInitialGapBlocks: 100,
+        admittedAfter: '2026-08-10T00:00:00Z', limit: 10, maxInitialGapBlocks: 101,
       }), []);
       assert.deepEqual(await repository.seedColdTokens({
         admittedBefore: '2026-08-10T00:00:00Z', limit: 10,
@@ -96,7 +101,7 @@ describe('Robinhood holder bootstrap persistence', () => {
         ledgerStatus: row.ledger_status, deploymentBlock: String(row.deployment_block),
         backfillNextBlock: String(row.backfill_next_block),
       })), [{
-        tokenAddress: TOKENS[0], holderCount: '0', ledgerStatus: 'backfilling',
+        tokenAddress: TOKENS[0], holderCount: '0', ledgerStatus: 'shadow',
         deploymentBlock: '101', backfillNextBlock: '101',
       }, {
         tokenAddress: TOKENS[1], holderCount: '0', ledgerStatus: 'backfilling',
@@ -104,7 +109,16 @@ describe('Robinhood holder bootstrap persistence', () => {
       }, {
         tokenAddress: TOKENS[3], holderCount: '0', ledgerStatus: 'backfilling',
         deploymentBlock: '104', backfillNextBlock: '104',
+      }, {
+        tokenAddress: TOKENS[5], holderCount: '0', ledgerStatus: 'backfilling',
+        deploymentBlock: '100', backfillNextBlock: '100',
       }]);
+      const cursor = await client.query(
+        `SELECT version, buffer_floor_block FROM robinhood_holder_cursors`
+      );
+      assert.deepEqual(cursor.rows.map((row) => ({
+        version: Number(row.version), bufferFloorBlock: String(row.buffer_floor_block),
+      })), [{ version: 1, bufferFloorBlock: '101' }]);
     } finally {
       client.release();
     }

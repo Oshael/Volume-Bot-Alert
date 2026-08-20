@@ -50,14 +50,18 @@ function createRobinhoodHolderBootstrapRepository(options = {}) {
   async function seedNewTokens(input = {}) {
     const normalized = normalizeOptions(input);
     const result = await database.query(
-      `WITH candidates AS MATERIALIZED (
+      `WITH cursor AS MATERIALIZED (
+         SELECT safe_head, next_block, journal_floor_block, buffer_floor_block, version
+           FROM robinhood_holder_cursors
+          WHERE chain = $1 AND stream = 'live'
+          FOR UPDATE
+       ), candidates AS MATERIALIZED (
          SELECT catalog.address AS token_address, attribution.attribution_block
            FROM token_catalog catalog
            INNER JOIN robinhood_token_attributions attribution
             ON attribution.chain = catalog.chain
             AND attribution.token_address = catalog.address
-           INNER JOIN robinhood_holder_cursors cursor
-             ON cursor.chain = catalog.chain AND cursor.stream = 'live'
+           CROSS JOIN cursor
            LEFT JOIN robinhood_holder_token_states state
              ON state.chain = catalog.chain AND state.token_address = catalog.address
           WHERE catalog.chain = $1
@@ -79,16 +83,32 @@ function createRobinhoodHolderBootstrapRepository(options = {}) {
           ORDER BY catalog.first_seen_at, catalog.address
           LIMIT $4::int
           FOR UPDATE OF attribution SKIP LOCKED
-       )
-       INSERT INTO robinhood_holder_token_states (
+       ), inserted AS (
+         INSERT INTO robinhood_holder_token_states (
          chain, token_address, holder_count, ledger_status,
          deployment_block, backfill_next_block
        )
-       SELECT $1, token_address, 0, 'backfilling',
-              attribution_block, attribution_block
-         FROM candidates
-       ON CONFLICT (chain, token_address) DO NOTHING
-       RETURNING token_address, deployment_block, backfill_next_block, ledger_status`,
+         SELECT $1, candidate.token_address, 0,
+                CASE WHEN cursor.journal_floor_block IS NOT NULL
+                           AND cursor.buffer_floor_block IS NOT NULL
+                           AND candidate.attribution_block >= GREATEST(
+                             cursor.journal_floor_block, cursor.buffer_floor_block
+                           )
+                     THEN 'shadow' ELSE 'backfilling' END,
+                candidate.attribution_block, candidate.attribution_block
+           FROM candidates candidate CROSS JOIN cursor
+         ON CONFLICT (chain, token_address) DO NOTHING
+         RETURNING token_address, deployment_block, backfill_next_block, ledger_status
+       ), fenced AS (
+         UPDATE robinhood_holder_cursors live
+            SET version = live.version + 1, updated_at = NOW()
+          WHERE live.chain = $1 AND live.stream = 'live'
+            AND EXISTS (SELECT 1 FROM inserted WHERE ledger_status = 'shadow')
+         RETURNING live.version
+       )
+       SELECT token_address, deployment_block, backfill_next_block, ledger_status,
+              (SELECT COUNT(*)::int FROM fenced) AS cursor_fenced
+         FROM inserted`,
       [
         CHAIN, normalized.admittedAfter,
         [...EXACT_DEPLOYMENT_SOURCES], normalized.limit, normalized.maxInitialGapBlocks,

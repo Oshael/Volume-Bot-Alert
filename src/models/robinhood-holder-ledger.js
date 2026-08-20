@@ -50,6 +50,7 @@ function normalizeCursor(value = {}) {
     safeHead: value.safeHead == null ? null : decimalQuantity(value.safeHead, 'cursor.safeHead'),
     checkpointBlock: decimalQuantity(checkpoint.number, 'cursor.checkpoint.number'),
     checkpointHash: hex(checkpoint.hash, 32, 'cursor.checkpoint.hash'),
+    bufferedAllTransfers: value.bufferedAllTransfers === true,
     expectedVersion,
   });
 }
@@ -171,8 +172,9 @@ async function advanceCursor(client, cursor) {
   const result = await client.query(
     `INSERT INTO robinhood_holder_cursors (
        chain, stream, next_block, safe_head, checkpoint_block, checkpoint_hash,
-       journal_floor_block
-     ) VALUES ('robinhood', 'live', $1, $2, $3, $4, $6)
+       journal_floor_block, buffer_floor_block
+     ) VALUES ('robinhood', 'live', $1, $2, $3, $4, $6,
+               CASE WHEN $7::boolean THEN $6::bigint ELSE NULL END)
      ON CONFLICT (chain, stream) DO UPDATE SET
        next_block = EXCLUDED.next_block,
        safe_head = EXCLUDED.safe_head,
@@ -181,6 +183,9 @@ async function advanceCursor(client, cursor) {
        journal_floor_block = COALESCE(
          robinhood_holder_cursors.journal_floor_block, EXCLUDED.journal_floor_block
        ),
+       buffer_floor_block = CASE WHEN $7::boolean THEN COALESCE(
+         robinhood_holder_cursors.buffer_floor_block, EXCLUDED.buffer_floor_block
+       ) ELSE robinhood_holder_cursors.buffer_floor_block END,
        version = robinhood_holder_cursors.version + 1,
        updated_at = NOW()
      WHERE $5::bigint IS NOT NULL
@@ -190,6 +195,7 @@ async function advanceCursor(client, cursor) {
     [
       cursor.nextBlock, cursor.safeHead, cursor.checkpointBlock,
       cursor.checkpointHash, cursor.expectedVersion, cursor.rangeStart,
+      cursor.bufferedAllTransfers,
     ]
   );
   if (!result.rowCount) {
@@ -210,6 +216,8 @@ function normalizeCursorRow(row) {
     checkpointHash: row.checkpoint_hash,
     journalFloorBlock: row.journal_floor_block == null
       ? null : String(row.journal_floor_block),
+    bufferFloorBlock: row.buffer_floor_block == null
+      ? null : String(row.buffer_floor_block),
     version: Number(row.version),
   });
 }
@@ -770,7 +778,11 @@ async function commitRewind(client, rewind, affectedTokens) {
   const cursor = await client.query(
     `UPDATE robinhood_holder_cursors
         SET next_block = $1, safe_head = $2, checkpoint_block = $3,
-            checkpoint_hash = $4, version = version + 1, updated_at = NOW()
+            checkpoint_hash = $4,
+            buffer_floor_block = CASE
+              WHEN buffer_floor_block > $1::bigint THEN NULL ELSE buffer_floor_block
+            END,
+            version = version + 1, updated_at = NOW()
       WHERE chain = 'robinhood' AND stream = 'live' AND version = $5
       RETURNING version`,
     [
@@ -1015,7 +1027,7 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
   async function getCursor() {
     const result = await database.query(
       `SELECT stream, next_block, safe_head, checkpoint_block, checkpoint_hash,
-              journal_floor_block, version
+              journal_floor_block, buffer_floor_block, version
          FROM robinhood_holder_cursors
         WHERE chain = $1 AND stream = $2`,
       [CHAIN, STREAM]
