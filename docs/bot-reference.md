@@ -935,6 +935,7 @@ Stages confirmados:
 | 122 | lifecycle durável e fail-closed dos watermarks de wallet attribution |
 | 140 | última observação horária UTC do total de holders por token Robinhood |
 | 141 | floor durável a partir do qual a captura live bufferiza todos os `Transfer` |
+| 142 | índice parcial do journal aplicado usado no handoff do backfill global |
 
 Holders RH possuem duas fontes complementares. A Stage 111 guarda o summary
 Blockscout usado como bootstrap/fallback; as Stages 116–118 mantêm o ledger local
@@ -1007,9 +1008,11 @@ ordenados sem manter a captura esperando o lote inteiro. O apply escolhe o event
 elegível global mais antigo e mantém afinidade no token enquanto houver eventos;
 o índice parcial da stage 121 preserva a ordem canônica por token sem reescanear
 o journal pendente inteiro a cada evento. No deploy, execute
-`node src/utils/db-init-stage121.js` e `node src/utils/db-init-stage141.js` antes
-do restart; o índice é criado
-concorrentemente para não bloquear writes do journal. A unit template usa
+`node src/utils/db-init-stage121.js`, `node src/utils/db-init-stage141.js` e
+`node src/utils/db-init-stage142.js` antes do restart; os índices são criados
+concorrentemente para não bloquear writes do journal. A Stage 142 evita que o
+handoff global reescaneie todo o journal ao verificar evidência já aplicada por
+token antes da barreira. A unit template usa
 `start:worker:robinhood-holders`, com porta default
 3010 e sem socket no processo worker. Todos
 são opt-in e permanecem desligados por default; pull ou presença de

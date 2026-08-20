@@ -3659,6 +3659,19 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage142-robinhood-holder-applied-journal-index',
+    name: 'Stage 142 Robinhood holder applied-journal index',
+    repair: 'node src/utils/db-init-stage142.js',
+    tables: [{
+      table: 'robinhood_holder_transfer_journal',
+      columns: ['chain', 'token_address', 'block_number', 'applied'],
+      indexes: [{
+        name: 'idx_rh_holder_journal_applied_token_block',
+        includes: ['chain', 'token_address', 'block_number', 'WHERE (applied = true)'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
