@@ -43,6 +43,24 @@ function planRanges(fromBlock, throughBlock, rangeSize, limit) {
   return Object.freeze(ranges);
 }
 
+function mergeFetchedRanges(ranges) {
+  if (!Array.isArray(ranges) || ranges.length === 0) {
+    throw new Error('global holder fetched range batch is empty');
+  }
+  for (let index = 1; index < ranges.length; index += 1) {
+    if (BigInt(ranges[index - 1].toBlock) + 1n !== BigInt(ranges[index].fromBlock)) {
+      throw new Error('global holder fetched range batch is not contiguous');
+    }
+  }
+  const first = ranges[0];
+  const last = ranges.at(-1);
+  return Object.freeze({
+    fromBlock: first.fromBlock, toBlock: last.toBlock, nextBlock: last.nextBlock,
+    checkpoint: last.checkpoint,
+    transfers: Object.freeze(ranges.flatMap((range) => range.transfers)),
+  });
+}
+
 function mergeReceiptRepair(range, deficit, receiptRange) {
   const failedBlock = BigInt(deficit.failedBlock);
   const expectedHash = String(deficit.fingerprint || '').split(':')[0];
@@ -268,6 +286,52 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
     }
   }
 
+  async function commitFetchedBatch(runId, ranges) {
+    const merged = mergeFetchedRanges(ranges);
+    if (BigInt(merged.toBlock) - BigInt(merged.fromBlock) + 1n > 5000n) return null;
+    const startedAt = now();
+    try {
+      const committed = await committer.commitRange({ ...merged, runId });
+      return Object.freeze({ committed, durationMs: Math.max(0, now() - startedAt) });
+    } catch (error) {
+      if (error.code === 'holder_negative_balance') return null;
+      throw error;
+    }
+  }
+
+  async function commitFetchedIndividually(runId, ranges) {
+    const committed = [];
+    let durationMs = 0;
+    for (const range of ranges) {
+      const outcome = await commitFetched(runId, range);
+      durationMs += outcome.durationMs;
+      if (outcome.committed.status !== 'committed') {
+        return Object.freeze({ committed, durationMs, terminal: outcome.committed });
+      }
+      committed.push(outcome.committed);
+    }
+    return Object.freeze({ committed, durationMs, terminal: null });
+  }
+
+  async function commitFetchedSet(runId, ranges) {
+    const batched = ranges.length > 1 ? await commitFetchedBatch(runId, ranges) : null;
+    if (batched) return Object.freeze({
+      committed: ranges, durationMs: batched.durationMs, terminal: null,
+      touchedTokens: Number(batched.committed.touchedTokens || 0),
+      touchedWallets: Number(batched.committed.touchedWallets || 0),
+    });
+    const individual = await commitFetchedIndividually(runId, ranges);
+    return Object.freeze({
+      ...individual,
+      touchedTokens: individual.committed.reduce(
+        (total, range) => total + Number(range.touchedTokens || 0), 0
+      ),
+      touchedWallets: individual.committed.reduce(
+        (total, range) => total + Number(range.touchedWallets || 0), 0
+      ),
+    });
+  }
+
   async function handleFetchError(error, context) {
     if (['timeout', 'rate_limited', 'log_range_error'].includes(error.code)) reducePrefetch();
     totals.discardedPrefetch += context.pending.length - context.index - 1;
@@ -321,37 +385,72 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
         .then((value) => observeFetched(value, Math.max(0, now() - startedAt)),
           (error) => ({ error }));
     });
-    const committed = [];
+    let committed = [];
+    const fetchedRanges = [];
     let pressured = false;
     for (let index = 0; index < pending.length; index += 1) {
       const waitStartedAt = now();
       const fetched = await pending[index];
       timing.rpcWaitMs += Math.max(0, now() - waitStartedAt);
       if (fetched.error) {
+        const prefix = await commitFetchedIndividually(run.id, fetchedRanges);
+        timing.commitDurationMs += prefix.durationMs;
+        committed = prefix.committed;
+        if (prefix.terminal) {
+          totals.committedRanges += committed.length;
+          totals.acceptedTransfers += fetchedRanges.slice(0, committed.length).reduce(
+            (total, range) => total + range.transfers.length, 0
+          );
+          totals.touchedTokens += committed.reduce(
+            (total, range) => total + Number(range.touchedTokens || 0), 0
+          );
+          totals.touchedWallets += committed.reduce(
+            (total, range) => total + Number(range.touchedWallets || 0), 0
+          );
+          totals.discardedPrefetch += pending.length - committed.length - 1;
+          await Promise.all(pending);
+          observeHealthyBatch(true, allowPrefetchGrowth);
+          return Object.freeze({
+            ...prefix.terminal, runId: run.id, committedRanges: committed.length,
+            prefetch: effectivePrefetch,
+          });
+        }
+        totals.committedRanges += committed.length;
+        totals.acceptedTransfers += fetchedRanges.reduce(
+          (total, range) => total + range.transfers.length, 0
+        );
+        totals.touchedTokens += committed.reduce(
+          (total, range) => total + Number(range.touchedTokens || 0), 0
+        );
+        totals.touchedWallets += committed.reduce(
+          (total, range) => total + Number(range.touchedWallets || 0), 0
+        );
         return handleFetchError(fetched.error, {
           runId: run.id, pending, index, committedRanges: committed.length,
         });
       }
       observeBatchFetch(timing, fetched);
       pressured ||= Number(fetched.value.telemetry?.splits || 0) > 0;
-      const outcome = await commitFetched(run.id, fetched.value);
-      timing.commitDurationMs += outcome.durationMs;
-      pressured ||= outcome.durationMs > options.maxCommitMs;
-      if (outcome.committed.status !== 'committed') {
-        totals.discardedPrefetch += pending.length - index - 1;
-        await Promise.all(pending);
-        observeHealthyBatch(true, allowPrefetchGrowth);
-        return Object.freeze({
-          ...outcome.committed, runId: run.id, committedRanges: committed.length,
-          prefetch: effectivePrefetch,
-        });
-      }
-      committed.push(outcome.committed);
-      totals.committedRanges += 1;
-      totals.acceptedTransfers += fetched.value.transfers.length;
-      totals.touchedTokens += Number(outcome.committed.touchedTokens || 0);
-      totals.touchedWallets += Number(outcome.committed.touchedWallets || 0);
+      fetchedRanges.push(fetched.value);
     }
+    const committedSet = await commitFetchedSet(run.id, fetchedRanges);
+    timing.commitDurationMs += committedSet.durationMs;
+    pressured ||= committedSet.durationMs > options.maxCommitMs;
+    committed = committedSet.committed;
+    if (committedSet.terminal) {
+      totals.discardedPrefetch += fetchedRanges.length - committed.length - 1;
+      observeHealthyBatch(true, allowPrefetchGrowth);
+      return Object.freeze({
+        ...committedSet.terminal, runId: run.id, committedRanges: committed.length,
+        prefetch: effectivePrefetch,
+      });
+    }
+    totals.committedRanges += committed.length;
+    totals.touchedTokens += committedSet.touchedTokens;
+    totals.touchedWallets += committedSet.touchedWallets;
+    totals.acceptedTransfers += fetchedRanges.reduce(
+      (total, range) => total + range.transfers.length, 0
+    );
     lastBatch = batchTelemetry(timing, planned, committed, now());
     observeHealthyBatch(pressured, allowPrefetchGrowth);
     return Object.freeze({
@@ -381,5 +480,7 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
 
 module.exports = {
   createRobinhoodHolderGlobalBackfillScanner,
-  __private: { batchTelemetry, mergeReceiptRepair, normalizeOptions, planRanges },
+  __private: {
+    batchTelemetry, mergeFetchedRanges, mergeReceiptRepair, normalizeOptions, planRanges,
+  },
 };

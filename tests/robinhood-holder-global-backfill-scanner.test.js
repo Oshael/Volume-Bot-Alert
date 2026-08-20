@@ -24,7 +24,7 @@ function range(fromBlock, toBlock, overrides = {}) {
 }
 
 describe('Robinhood holder global backfill scanner', () => {
-  it('prefetches concurrently, commits in order and resumes from the durable cursor', async () => {
+  it('prefetches concurrently, commits one atomic batch and resumes from its cursor', async () => {
     let nextBlock = '100';
     const releases = new Map();
     const commits = [];
@@ -62,7 +62,7 @@ describe('Robinhood holder global backfill scanner', () => {
     releases.get('100')();
     const result = await pending;
 
-    assert.deepEqual(commits, ['100', '110', '120']);
+    assert.deepEqual(commits, ['100']);
     assert.equal(result.nextBlock, '130');
     assert.equal(scanner.getStatus().prefetch, 2);
     assert.equal(scanner.getStatus().totals.addressSplits, 2);
@@ -252,6 +252,47 @@ describe('Robinhood holder global backfill scanner', () => {
       stableBatches: scanner.getStatus().stableBatches,
       trend: scanner.getStatus().liveLagTrend,
     }, { prefetch: 1, stableBatches: 0, trend: 'steady' });
+  });
+
+  it('falls back to individual ranges when an atomic batch needs receipt repair', async () => {
+    let nextBlock = '100';
+    const commits = [];
+    const scanner = createRobinhoodHolderGlobalBackfillScanner({
+      lifecycleRepository: {
+        getActiveRun: async () => runState(nextBlock), loadCohort: async () => [TOKEN],
+      },
+      commitRepository: {
+        async commitRange(input) {
+          commits.push(`${input.fromBlock}-${input.toBlock}`);
+          if (commits.length <= 2) {
+            throw Object.assign(new Error('negative'), {
+              code: 'holder_negative_balance', tokenAddress: TOKEN,
+              failedBlock: '100', fingerprint: `${HASH}:tx:0`,
+            });
+          }
+          nextBlock = input.nextBlock;
+          return { status: 'committed', ...input, runId: '1' };
+        },
+        async excludeToken() { throw new Error('unexpected exclusion'); },
+      },
+      reader: {
+        getSafeHead: async () => ({ safeHead: '119' }),
+        readGlobalRange: async ({ fromBlock, toBlock }) => range(fromBlock, toBlock, {
+          transfers: fromBlock === '100' ? [{ tokenAddress: TOKEN, blockNumber: '100' }] : [],
+        }),
+        readReceiptRange: async () => ({
+          checkpoint: { number: '100', hash: HASH },
+          transfers: [{ tokenAddress: TOKEN, blockNumber: '100' }],
+        }),
+      },
+      options: { rangeSize: 10, prefetch: 2 },
+    });
+
+    const result = await scanner.runOnce({ throughBlock: 119 });
+
+    assert.equal(result.nextBlock, '120');
+    assert.equal(scanner.getStatus().totals.receiptRecoveries, 1);
+    assert.deepEqual(commits, ['100-119', '100-109', '100-109', '110-119']);
   });
 
   it('replaces the suspect token prefix with receipt evidence before committing', async () => {
