@@ -493,6 +493,21 @@ describe('runtime worker groups config', () => {
     });
   });
 
+  it('keeps native holder balances opt-in and bound to the configured Robinhood RPC', () => {
+    withEnv({
+      ROBINHOOD_HOLDER_NATIVE_BALANCE_ENABLED: 'true',
+      ROBINHOOD_RPC_URL: 'http://127.0.0.1:8547',
+      ROBINHOOD_HOLDER_NATIVE_BALANCE_TIMEOUT_MS: '99999',
+      ROBINHOOD_HOLDER_NATIVE_BALANCE_MAX_RETRIES: '99',
+      ROBINHOOD_HOLDER_NATIVE_BALANCE_CACHE_TTL_MS: '999999',
+    }, (config) => {
+      assert.deepEqual(config.robinhoodHolderNativeBalance, {
+        enabled: true, rpcUrl: 'http://127.0.0.1:8547', timeoutMs: 15_000,
+        maxRetries: 2, cacheTtlMs: 300_000,
+      });
+    });
+  });
+
   it('keeps the Blockscout holder summary opt-in and bounded', () => {
     withEnv({
       ROBINHOOD_HOLDER_SUMMARY_ENABLED: undefined,

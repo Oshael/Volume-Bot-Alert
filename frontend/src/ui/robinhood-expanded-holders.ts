@@ -128,7 +128,21 @@ export function renderRobinhoodExpandedHolderViews(
   </div>`;
 }
 
-const ETH_BALANCE_PENDING = '<td class="rh-col-num rh-pending" title="Native balance is not collected yet">—</td>';
+function nativeBalanceCell(value?: string | null) {
+  if (value == null) {
+    return '<td class="rh-col-num rh-pending" title="Native balance is unavailable">—</td>';
+  }
+  try {
+    const wei = BigInt(value);
+    const amount = Number(wei) / 1e18;
+    const formatted = Number.isFinite(amount)
+      ? amount.toLocaleString('en-US', { maximumFractionDigits: amount < 1 ? 6 : 4 })
+      : (wei / (10n ** 18n)).toLocaleString('en-US');
+    return `<td class="rh-col-num rh-native-balance" title="${escapeHtml(value)} wei">${escapeHtml(formatted)} ETH</td>`;
+  } catch {
+    return '<td class="rh-col-num rh-pending" title="Native balance is invalid">—</td>';
+  }
+}
 
 function numberValue(value?: string | null): number | null {
   if (value == null) return null;
@@ -208,7 +222,7 @@ function holderPageHtml(
       <a href="https://robinhoodchain.blockscout.com/address/${escapeHtml(holder.address)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(holder.address)}">${escapeHtml(holder.label || shortAddress(holder.address))}</a>
       <span class="rh-holder-type">${escapeHtml(holder.addressType)}${holder.isVerifiedContract ? ' · verified' : ''}</span>
     </td>
-    ${ETH_BALANCE_PENDING}
+    ${nativeBalanceCell(holder.nativeBalanceRaw)}
     ${averageCell(holder.avgBuyMcapUsd, holder.buyTxCount, 'buy')}
     ${averageCell(holder.avgSellMcapUsd, holder.sellTxCount, 'sell', holder.realizedPnlUsd)}
     ${pnlCell(holder.unrealizedPnlUsd, holder.unrealizedPnlPct, holder.positionQuality)}

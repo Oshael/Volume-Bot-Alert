@@ -20,6 +20,9 @@ const {
   createRobinhoodHolderRequestScheduler,
   parseRetryAfterMs,
 } = require('../services/robinhood-holder-request-scheduler');
+const {
+  createRobinhoodNativeBalanceProvider,
+} = require('../services/robinhood-native-balance-provider');
 const { normalizeTokenAddress } = require('../utils/token-identity');
 const {
   buildDailyHolderHistory,
@@ -97,13 +100,14 @@ async function sendPublishedLedgerPage(input) {
       tokenAddress: input.tokenAddress, cursor: input.cursor.ledgerCursor,
     });
     if (page) {
+      const items = await enrichNativeBalances(page.items, input.nativeBalances, input.logger);
       input.response.json({
         token: input.tokenAddress,
         summary: publicSummary({
           holderCount: page.holderCount, totalSupplyRaw: page.totalSupplyRaw,
           source: page.source, observedAt: page.observedAt, checkedAt: page.checkedAt,
         }, input.nowMs, input.refreshMs),
-        holders: page.items, hasMore: page.hasMore, nextCursor: page.nextCursor,
+        holders: items, hasMore: page.hasMore, nextCursor: page.nextCursor,
         observedAt: page.observedAt, refreshQueued: false,
       });
       return true;
@@ -127,6 +131,27 @@ async function sendPublishedLedgerPage(input) {
   }
 }
 
+async function enrichNativeBalances(items, provider, logger) {
+  if (!provider || items.length === 0) return items;
+  try {
+    const balances = await provider.readBalances(items.map((item) => item.address));
+    return items.map((item) => Object.freeze({
+      ...item, nativeBalanceRaw: balances[item.address.toLowerCase()] ?? null,
+    }));
+  } catch (error) {
+    logger.warn?.('[RobinhoodHoldersRoute] native balances unavailable', {
+      code: safeErrorCode(error),
+    });
+    return items.map((item) => Object.freeze({ ...item, nativeBalanceRaw: null }));
+  }
+}
+
+function resolveNativeBalanceProvider(options) {
+  if (options.nativeBalanceProvider !== undefined) return options.nativeBalanceProvider;
+  if (!config.robinhoodHolderNativeBalance.enabled) return null;
+  return createRobinhoodNativeBalanceProvider(config.robinhoodHolderNativeBalance);
+}
+
 function createRobinhoodHoldersRouter(options = {}) {
   const router = express.Router();
   const auth = options.authenticate || authenticate;
@@ -139,6 +164,7 @@ function createRobinhoodHoldersRouter(options = {}) {
     options.requestOptions || config.robinhoodHolderRequests
   );
   const logger = options.logger || console;
+  const nativeBalances = resolveNativeBalanceProvider(options);
   const now = options.now || Date.now;
   const refreshMs = Number(options.refreshMs) || config.robinhoodHolderSummaryWorker?.hotRefreshMs
     || DEFAULT_REFRESH_MS;
@@ -252,7 +278,7 @@ function createRobinhoodHoldersRouter(options = {}) {
 
     if (await sendPublishedLedgerPage({
       repository: holderPageRepository, tokenAddress, cursor: pageCursor,
-      response: res, logger, nowMs: now(), refreshMs,
+      response: res, logger, nativeBalances, nowMs: now(), refreshMs,
     })) return undefined;
     const cursor = pageCursor.blockscoutCursor;
 
@@ -273,10 +299,11 @@ function createRobinhoodHoldersRouter(options = {}) {
 
     try {
       const page = await pagePromise;
+      const items = await enrichNativeBalances(page.items, nativeBalances, logger);
       return res.json({
         token: tokenAddress,
         summary: publicSummary(cached, nowMs, refreshMs),
-        holders: page.items,
+        holders: items,
         hasMore: page.hasMore,
         nextCursor: page.nextCursor,
         observedAt: page.observedAt,
@@ -303,6 +330,9 @@ function createRobinhoodHoldersRouter(options = {}) {
 
 const router = createRobinhoodHoldersRouter();
 router.createRobinhoodHoldersRouter = createRobinhoodHoldersRouter;
-router.__private = { parseHistoryDays, publicSummary, safeErrorCode, shouldQueueRefresh };
+router.__private = {
+  enrichNativeBalances, parseHistoryDays, publicSummary, resolveNativeBalanceProvider,
+  safeErrorCode, shouldQueueRefresh,
+};
 
 module.exports = router;

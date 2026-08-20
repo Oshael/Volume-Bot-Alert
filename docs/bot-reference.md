@@ -1728,7 +1728,11 @@ A página publicada de holders junta cada saldo com `unified_transfer_v1` e a
 cap de compra/venda, contagens de transações, PnL realizado, valor atual e PnL
 não realizado. Wallet sem compra conhecida recebe custo zero, portanto seu
 U. PnL em USD equivale ao valor atual e o percentual fica indisponível. O saldo
-nativo da wallet ainda não faz parte desse contrato.
+nativo é opcional: com `ROBINHOOD_HOLDER_NATIVE_BALANCE_ENABLED=true`, a API
+consulta as até 50 wallets da página em um único batch `eth_getBalance` no
+`ROBINHOOD_RPC_URL`, mantém cache em memória por 30 segundos e degrada para
+indisponível sem derrubar a página. A flag exige um RPC explicitamente
+configurado e não habilita fallback público.
 
 O bootstrap também existe localmente como
 `npm run robinhood:wallet-live-bootstrap`: dry-run por padrão, audita observações

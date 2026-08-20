@@ -614,6 +614,7 @@ const ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES = {
         balanceRaw: secondPage ? '2500000000000000000' : '5000000000000000000',
         addressType: 'unknown', label: secondPage ? 'Second page whale' : 'Main whale',
         isVerifiedContract: false,
+        nativeBalanceRaw: secondPage ? '0' : '3400000000000000000',
         avgBuyMcapUsd: secondPage ? '0' : '125000',
         avgSellMcapUsd: secondPage ? '0' : '200000',
         buyTxCount: secondPage ? 0 : 3, sellTxCount: secondPage ? 0 : 2,
@@ -1801,6 +1802,7 @@ test('renders holders and cursor pages in the Robinhood expanded chart', async (
   ))).toBe(true);
   await expect(panel).toContainText('Main whale');
   await expect(panel.locator('.rh-remaining-pct').first()).toHaveText('10%');
+  await expect(panel.locator('.rh-native-balance').first()).toHaveText('3.4 ETH');
   await expect(panel.locator('.rh-financial-cell').nth(0)).toContainText('$125K');
   await expect(panel.locator('.rh-financial-cell').nth(1)).toContainText('R +$1.25K');
   await expect(panel.locator('.rh-pnl').first()).toContainText('+$5K');

@@ -504,6 +504,9 @@ const robinhoodHolderReconciliationEnabled = parseBoolean(
 const robinhoodHolderSnapshotEnabled = parseBoolean(
   process.env.ROBINHOOD_HOLDER_SNAPSHOT_ENABLED, false
 );
+const robinhoodHolderNativeBalanceEnabled = parseBoolean(
+  process.env.ROBINHOOD_HOLDER_NATIVE_BALANCE_ENABLED, false
+);
 const telegramDeliveryIntervalMs = parseIntegerInRange(
   process.env.TELEGRAM_DELIVERY_INTERVAL_MS, 1_000, 250, 60_000
 );
@@ -603,6 +606,10 @@ if ((robinhoodHolderBackfillEnabled || robinhoodHolderColdEnabled || robinhoodHo
       || robinhoodHolderGlobalBackfillEnabled)
     && !String(process.env.ROBINHOOD_RPC_URL || '').trim()) {
   missing.push('ROBINHOOD_RPC_URL for Robinhood holder workers');
+}
+if (robinhoodHolderNativeBalanceEnabled
+    && !String(process.env.ROBINHOOD_RPC_URL || '').trim()) {
+  missing.push('ROBINHOOD_RPC_URL for Robinhood holder native balances');
 }
 if (telegram.enabled) {
   const telegramRequired = [
@@ -1024,6 +1031,20 @@ module.exports = {
     ),
     circuitResetMs: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_CIRCUIT_RESET_MS, 30_000, 5000, 300_000
+    ),
+  },
+
+  robinhoodHolderNativeBalance: {
+    enabled: robinhoodHolderNativeBalanceEnabled,
+    rpcUrl: String(process.env.ROBINHOOD_RPC_URL || '').trim(),
+    timeoutMs: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_NATIVE_BALANCE_TIMEOUT_MS, 5000, 1000, 15_000
+    ),
+    maxRetries: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_NATIVE_BALANCE_MAX_RETRIES, 0, 0, 2
+    ),
+    cacheTtlMs: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_NATIVE_BALANCE_CACHE_TTL_MS, 30_000, 1000, 300_000
     ),
   },
 

@@ -78,6 +78,7 @@ function appWith(options = {}) {
     authenticate,
     visibility,
     repository,
+    nativeBalanceProvider: options.nativeBalanceProvider,
     holderPageRepository: options.holderPageRepository || {
       listPublishedPage: async () => null,
     },
@@ -255,7 +256,14 @@ describe('Robinhood holders route', () => {
 
   it('prefers a published ledger page without occupying the external scheduler', async () => {
     let scheduled = 0;
+    const wallet = `0x${'b'.repeat(40)}`;
     const response = await request(appWith({
+      nativeBalanceProvider: {
+        readBalances: async (addresses) => {
+          assert.deepEqual(addresses, [wallet]);
+          return { [wallet]: '2500000000000000000' };
+        },
+      },
       holderPageRepository: {
         listPublishedPage: async (input) => {
           assert.deepEqual(input, { tokenAddress: TOKEN, cursor: null });
@@ -264,7 +272,7 @@ describe('Robinhood holders route', () => {
             observedAt: '2026-08-10T04:59:59.000Z',
             checkedAt: '2026-08-10T05:00:00.000Z',
             items: [{
-              rank: 1, address: `0x${'b'.repeat(40)}`, balanceRaw: '5000',
+              rank: 1, address: wallet, balanceRaw: '5000',
               addressType: 'unknown', label: null, isVerifiedContract: false,
               avgBuyMcapUsd: '25000', unrealizedPnlUsd: '100',
             }],
@@ -282,6 +290,7 @@ describe('Robinhood holders route', () => {
     assert.equal(response.body.holders[0].balanceRaw, '5000');
     assert.equal(response.body.holders[0].avgBuyMcapUsd, '25000');
     assert.equal(response.body.holders[0].unrealizedPnlUsd, '100');
+    assert.equal(response.body.holders[0].nativeBalanceRaw, '2500000000000000000');
     assert.equal(response.body.nextCursor, 'ledger_v1.next');
     assert.equal(response.body.refreshQueued, false);
     assert.equal(scheduled, 0);
@@ -300,6 +309,29 @@ describe('Robinhood holders route', () => {
     assert.equal(response.status, 400);
     assert.equal(response.body.code, 'INVALID_REQUEST');
     assert.equal(providerCalls, 0);
+  });
+
+  it('keeps the holder page available when native balance RPC fails', async () => {
+    const warnings = [];
+    const response = await request(appWith({
+      nativeBalanceProvider: { readBalances: async () => { throw new Error('node offline'); } },
+      holderPageRepository: {
+        listPublishedPage: async () => ({
+          holderCount: 1, source: 'ledger_live', totalSupplyRaw: '10000',
+          observedAt: '2026-08-10T04:59:59.000Z', checkedAt: '2026-08-10T05:00:00.000Z',
+          items: [{
+            rank: 1, address: `0x${'b'.repeat(40)}`, balanceRaw: '5000',
+            addressType: 'wallet', label: null, isVerifiedContract: false,
+          }],
+          hasMore: false, nextCursor: null,
+        }),
+      },
+      logger: { warn: (...args) => warnings.push(args) },
+    })).get(`/api/robinhood/holders?token=${TOKEN}`);
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.holders[0].nativeBalanceRaw, null);
+    assert.equal(warnings[0][0], '[RobinhoodHoldersRoute] native balances unavailable');
   });
 
   it('queues a stale first-page summary refresh after prioritizing the page', async () => {
