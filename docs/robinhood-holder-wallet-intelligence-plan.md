@@ -261,9 +261,9 @@ integração.
      frontier. A Stage 145 prepara o registro auditável de infraestrutura e o
      lookup interno por endereço/tipo/bloco e o materializador `CEX` estão
      concluídos. O importador auditável append-only também está concluído; o
-     Stage 146 prepara metadados coerentes de encerramento auditado. A ferramenta
-     que encerra janelas abertas ainda aguarda corte próprio. Ainda não há worker
-     nem contrato REST consumindo os snapshots.
+     Stage 146 prepara metadados coerentes de encerramento auditado, e a ferramenta
+     de closure atômico está concluída. Ainda não há worker nem contrato REST
+     consumindo os snapshots.
 3. **SNIPER**
    - materializar âncora de lançamento e primeira compra;
    - fechar notional mínimo com amostra real antes de ativar UI.

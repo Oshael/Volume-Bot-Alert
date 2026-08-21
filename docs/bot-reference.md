@@ -1222,6 +1222,13 @@ somente em uma janela fechada; registros históricos anteriores podem permanecer
 sem closure separado para compatibilidade. Aplique
 `node src/utils/db-init-stage146.js` antes da futura ferramenta de encerramento.
 
+Novos imports com `validThroughBlock` exigem também `closure` com `source`,
+`evidence` e `verifiedAt`. Para encerrar uma janela aberta, use primeiro
+`npm run robinhood:infrastructure-close -- --file=<closure.json>`; o JSON contém
+`address`, `kind`, `validFromBlock`, `validThroughBlock` e `closure`. Após revisar
+o plano read-only, acrescente `--apply`. O fechamento usa a PK esperada, lock e
+transação, rejeita sobreposição inclusiva e é idempotente para a mesma evidência.
+
 O worker lê `Transfer` por range com a coorte enviada como allowlist `address` ao
 RPC, commita ranges em ordem e não grava o histórico bruto no journal. Se o node
 rejeitar o tamanho da allowlist, ela é dividida ao meio adaptativamente sem

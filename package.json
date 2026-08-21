@@ -79,6 +79,7 @@
     "robinhood:holder-global-promote": "node src/utils/promote-robinhood-global-holder-cohort.js",
     "robinhood:holder-global-delta": "node src/utils/create-robinhood-holder-global-delta.js",
     "robinhood:infrastructure-import": "node src/utils/import-robinhood-infrastructure-registry.js",
+    "robinhood:infrastructure-close": "node src/utils/close-robinhood-infrastructure-registry.js",
     "robinhood:v2-dry-run": "node src/utils/robinhood-v2-fixture-dry-run.js",
     "robinhood:v3-dry-run": "node src/utils/robinhood-v3-fixture-dry-run.js",
     "robinhood:noxa-dry-run": "node src/utils/robinhood-noxa-fixture-dry-run.js",

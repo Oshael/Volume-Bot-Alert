@@ -60,13 +60,35 @@ function normalizeValidity(input) {
   return { validFromBlock, validThroughBlock };
 }
 
-function normalizeEntry(input = {}) {
+function normalizeClosure(input, validity, options = {}) {
+  const supplied = input.closure ?? (input.closed_source == null ? null : {
+    source: input.closed_source,
+    evidence: input.closed_evidence_json,
+    verifiedAt: input.closed_verified_at,
+  });
+  if (validity.validThroughBlock == null && supplied != null) {
+    throw new Error('open entries must not contain closure evidence');
+  }
+  if (validity.validThroughBlock != null && supplied == null) {
+    if (options.allowLegacyClosed === true) return null;
+    throw new Error('closed entries require closure evidence');
+  }
+  if (supplied == null) return null;
+  const source = String(supplied.source ?? '').trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9_.-]{0,63}$/.test(source)) throw new Error('closure source is invalid');
+  const evidence = normalizeEvidence(supplied);
+  const verifiedAt = new Date(String(supplied.verifiedAt ?? '')).toISOString();
+  return Object.freeze({ source, evidence, verifiedAt });
+}
+
+function normalizeEntry(input = {}, options = {}) {
   const identity = normalizeIdentity(input);
   const evidence = normalizeEvidence(input);
   const validity = normalizeValidity(input);
+  const closure = normalizeClosure(input, validity, options);
   const verifiedAt = new Date(String(input.verifiedAt ?? input.verified_at ?? '')).toISOString();
   return Object.freeze({
-    ...identity, evidence, ...validity, verifiedAt,
+    ...identity, evidence, ...validity, verifiedAt, closure,
   });
 }
 
@@ -126,14 +148,15 @@ function rowEntry(row) {
   return normalizeEntry({
     ...row, evidence: row.evidence_json, validFromBlock: row.valid_from_block,
     validThroughBlock: row.valid_through_block, verifiedAt: row.verified_at,
-  });
+  }, { allowLegacyClosed: true });
 }
 
 async function buildPlan(database, entries) {
   const addresses = [...new Set(entries.map(({ address }) => address))];
   const { rows } = await database.query(
     `SELECT chain, address, kind, label, source, evidence_json,
-            valid_from_block::text, valid_through_block::text, verified_at
+            valid_from_block::text, valid_through_block::text, verified_at,
+            closed_source, closed_evidence_json, closed_verified_at
        FROM robinhood_infrastructure_registry
       WHERE chain = 'robinhood' AND address = ANY($1::varchar[])
       ORDER BY address, kind, valid_from_block`,
@@ -160,11 +183,15 @@ async function insertEntries(client, entries) {
     await client.query(
       `INSERT INTO robinhood_infrastructure_registry (
          chain, address, kind, label, source, evidence_json, valid_from_block,
-         valid_through_block, verified_at
-       ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::bigint, $8::bigint, $9::timestamptz)`,
+         valid_through_block, verified_at, closed_source, closed_evidence_json,
+         closed_verified_at
+       ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::bigint, $8::bigint,
+         $9::timestamptz, $10, $11::jsonb, $12::timestamptz)`,
       [entry.chain, entry.address, entry.kind, entry.label, entry.source,
         JSON.stringify(entry.evidence), entry.validFromBlock, entry.validThroughBlock,
-        entry.verifiedAt]
+        entry.verifiedAt, entry.closure?.source ?? null,
+        entry.closure ? JSON.stringify(entry.closure.evidence) : null,
+        entry.closure?.verifiedAt ?? null]
     );
   }
 }

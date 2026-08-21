@@ -13,7 +13,12 @@ function entry(overrides = {}) {
   return {
     address: ADDRESS, kind: 'cex', label: 'Example Exchange', source: 'manual_audit',
     evidence: { reference: 'case-1' }, validFromBlock: '10', validThroughBlock: '20',
-    verifiedAt: '2026-08-21T12:00:00Z', ...overrides,
+    verifiedAt: '2026-08-21T12:00:00Z',
+    closure: {
+      source: 'manual_audit', evidence: { reference: 'closure-1' },
+      verifiedAt: '2026-08-21T13:00:00Z',
+    },
+    ...overrides,
   };
 }
 
@@ -22,7 +27,9 @@ function row(input) {
     chain: 'robinhood', address: input.address, kind: input.kind, label: input.label,
     source: input.source, evidence_json: input.evidence,
     valid_from_block: input.validFromBlock, valid_through_block: input.validThroughBlock,
-    verified_at: input.verifiedAt,
+    verified_at: input.verifiedAt, closed_source: input.closure?.source ?? null,
+    closed_evidence_json: input.closure?.evidence ?? null,
+    closed_verified_at: input.closure?.verifiedAt ?? null,
   };
 }
 
@@ -36,7 +43,9 @@ describe('Robinhood infrastructure registry import', () => {
     };
 
     assert.deepEqual(await runRegistryImport({
-      manifest: { entries: [existing, entry({ validFromBlock: '21', validThroughBlock: null })] },
+      manifest: { entries: [
+        existing, entry({ validFromBlock: '21', validThroughBlock: null, closure: null }),
+      ] },
     }, { database }), { mode: 'dry-run', entries: 2, insert: 1, unchanged: 1 });
     assert.equal(queries, 1);
   });
@@ -51,6 +60,9 @@ describe('Robinhood infrastructure registry import', () => {
     assert.throws(() => __private.normalizeManifest({ entries: [
       entry({ validFromBlock: '9223372036854775808', validThroughBlock: null }),
     ] }), /validFromBlock exceeds PostgreSQL BIGINT/);
+    assert.throws(() => __private.normalizeManifest({ entries: [
+      entry({ closure: null }),
+    ] }), /closed entries require closure evidence/);
   });
 
   it('requires an explicit manifest path and apply flag', () => {
