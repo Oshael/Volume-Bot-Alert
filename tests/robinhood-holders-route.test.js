@@ -82,6 +82,17 @@ function appWith(options = {}) {
     holderPageRepository: options.holderPageRepository || {
       listPublishedPage: async () => null,
     },
+    holderIntelligenceRepository: options.holderIntelligenceRepository || {
+      loadPage: async ({ walletAddresses }) => ({
+        classificationVersion: 'rh_holder_v1', classificationStatus: 'unavailable',
+        classificationThroughBlock: null, distribution: [],
+        holders: walletAddresses.map((address) => ({
+          address, tags: [], primaryTag: 'unknown',
+          classificationVersion: 'rh_holder_v1',
+          classificationStatus: 'unavailable', classifications: [],
+        })),
+      }),
+    },
     client,
     scheduler,
     logger: options.logger || { warn() {} },
@@ -280,6 +291,23 @@ describe('Robinhood holders route', () => {
           };
         },
       },
+      holderIntelligenceRepository: {
+        loadPage: async (input) => {
+          assert.deepEqual(input, { tokenAddress: TOKEN, walletAddresses: [wallet] });
+          return {
+            classificationVersion: 'rh_holder_v1', classificationStatus: 'ready',
+            classificationThroughBlock: { blockNumber: '199', blockHash: `0x${'1'.repeat(64)}` },
+            distribution: [{ metric: 'dev_hold', status: 'ready' }],
+            holders: [{
+              address: wallet, tags: ['cex'], primaryTag: 'cex',
+              classificationVersion: 'rh_holder_v1', classificationStatus: 'ready',
+              classifications: [{
+                tag: 'cex', confidence: 'deterministic', reasonCode: 'known_cex_address',
+              }],
+            }],
+          };
+        },
+      },
       scheduler: { schedule: () => { scheduled += 1; return Promise.resolve(); } },
     })).get(`/api/robinhood/holders?token=${TOKEN}`);
 
@@ -291,6 +319,11 @@ describe('Robinhood holders route', () => {
     assert.equal(response.body.holders[0].avgBuyMcapUsd, '25000');
     assert.equal(response.body.holders[0].unrealizedPnlUsd, '100');
     assert.equal(response.body.holders[0].nativeBalanceRaw, '2500000000000000000');
+    assert.deepEqual(response.body.holders[0].tags, ['cex']);
+    assert.equal(response.body.holders[0].primaryTag, 'cex');
+    assert.equal(response.body.classificationStatus, 'ready');
+    assert.equal(response.body.classificationThroughBlock.blockNumber, '199');
+    assert.equal(response.body.distribution[0].metric, 'dev_hold');
     assert.equal(response.body.nextCursor, 'ledger_v1.next');
     assert.equal(response.body.refreshQueued, false);
     assert.equal(scheduled, 0);
@@ -332,6 +365,20 @@ describe('Robinhood holders route', () => {
     assert.equal(response.status, 200);
     assert.equal(response.body.holders[0].nativeBalanceRaw, null);
     assert.equal(warnings[0][0], '[RobinhoodHoldersRoute] native balances unavailable');
+  });
+
+  it('keeps the holder page available when intelligence snapshots cannot be read', async () => {
+    const warnings = [];
+    const response = await request(appWith({
+      holderIntelligenceRepository: { loadPage: async () => { throw new Error('schema pending'); } },
+      logger: { warn: (...args) => warnings.push(args) },
+    })).get(`/api/robinhood/holders?token=${TOKEN}`);
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.classificationStatus, 'unavailable');
+    assert.deepEqual(response.body.holders[0].tags, []);
+    assert.equal(response.body.distribution.length, 8);
+    assert.equal(warnings[0][0], '[RobinhoodHoldersRoute] holder intelligence unavailable');
   });
 
   it('queues a stale first-page summary refresh after prioritizing the page', async () => {

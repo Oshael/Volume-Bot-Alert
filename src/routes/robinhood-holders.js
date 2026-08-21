@@ -13,6 +13,13 @@ const {
   validateLedgerCursor,
 } = require('../models/robinhood-holder-page');
 const {
+  createRobinhoodHolderIntelligenceReadRepository,
+} = require('../models/robinhood-holder-intelligence-read');
+const {
+  HOLDER_CLASSIFICATION_VERSION,
+  HOLDER_DISTRIBUTION_METRICS,
+} = require('../services/robinhood-holder-classification-domain');
+const {
   createRobinhoodBlockscoutHoldersClient,
   validateHoldersCursor,
 } = require('../services/robinhood-blockscout-holders');
@@ -100,14 +107,24 @@ async function sendPublishedLedgerPage(input) {
       tokenAddress: input.tokenAddress, cursor: input.cursor.ledgerCursor,
     });
     if (page) {
-      const items = await enrichNativeBalances(page.items, input.nativeBalances, input.logger);
+      const nativeItems = await enrichNativeBalances(
+        page.items, input.nativeBalances, input.logger
+      );
+      const intelligence = await enrichIntelligence(
+        nativeItems, input.intelligence, input.tokenAddress, input.logger
+      );
       input.response.json({
         token: input.tokenAddress,
         summary: publicSummary({
           holderCount: page.holderCount, totalSupplyRaw: page.totalSupplyRaw,
           source: page.source, observedAt: page.observedAt, checkedAt: page.checkedAt,
         }, input.nowMs, input.refreshMs),
-        holders: items, hasMore: page.hasMore, nextCursor: page.nextCursor,
+        holders: intelligence.holders,
+        classificationVersion: intelligence.classificationVersion,
+        classificationStatus: intelligence.classificationStatus,
+        classificationThroughBlock: intelligence.classificationThroughBlock,
+        distribution: intelligence.distribution,
+        hasMore: page.hasMore, nextCursor: page.nextCursor,
         observedAt: page.observedAt, refreshQueued: false,
       });
       return true;
@@ -128,6 +145,49 @@ async function sendPublishedLedgerPage(input) {
       ? { error: 'token or cursor is invalid', code: 'INVALID_REQUEST' }
       : { error: 'Holder data is temporarily unavailable', code: 'HOLDERS_UNAVAILABLE' });
     return true;
+  }
+}
+
+function unavailableIntelligence(items) {
+  return Object.freeze({
+    classificationVersion: HOLDER_CLASSIFICATION_VERSION,
+    classificationStatus: 'unavailable',
+    classificationThroughBlock: null,
+    holders: items.map((item) => Object.freeze({
+      ...item, tags: [], primaryTag: 'unknown',
+      classificationVersion: HOLDER_CLASSIFICATION_VERSION,
+      classificationStatus: 'unavailable', classifications: [],
+    })),
+    distribution: HOLDER_DISTRIBUTION_METRICS.map((metric) => Object.freeze({
+      metric, status: 'unavailable', value: null, walletCount: null, groupCount: null,
+      classificationVersion: HOLDER_CLASSIFICATION_VERSION,
+      throughBlock: null, observedAt: null,
+    })),
+  });
+}
+
+async function enrichIntelligence(items, repository, tokenAddress, logger) {
+  if (!repository) return unavailableIntelligence(items);
+  try {
+    const intelligence = await repository.loadPage({
+      tokenAddress, walletAddresses: items.map(({ address }) => address),
+    });
+    const byAddress = new Map(intelligence.holders.map((holder) => [holder.address, holder]));
+    return Object.freeze({
+      ...intelligence,
+      holders: items.map((item) => Object.freeze({
+        ...item, tags: [], primaryTag: 'unknown',
+        classificationVersion: intelligence.classificationVersion,
+        classificationStatus: intelligence.classificationStatus,
+        classifications: [],
+        ...byAddress.get(item.address.toLowerCase()),
+      })),
+    });
+  } catch (error) {
+    logger.warn?.('[RobinhoodHoldersRoute] holder intelligence unavailable', {
+      code: safeErrorCode(error),
+    });
+    return unavailableIntelligence(items);
   }
 }
 
@@ -152,6 +212,11 @@ function resolveNativeBalanceProvider(options) {
   return createRobinhoodNativeBalanceProvider(config.robinhoodHolderNativeBalance);
 }
 
+function resolveHolderIntelligenceRepository(options) {
+  return options.holderIntelligenceRepository
+    || createRobinhoodHolderIntelligenceReadRepository();
+}
+
 function createRobinhoodHoldersRouter(options = {}) {
   const router = express.Router();
   const auth = options.authenticate || authenticate;
@@ -159,6 +224,7 @@ function createRobinhoodHoldersRouter(options = {}) {
   const repository = options.repository || createRobinhoodTokenHolderSummaryRepository();
   const holderPageRepository = options.holderPageRepository
     || createRobinhoodHolderPageRepository();
+  const holderIntelligenceRepository = resolveHolderIntelligenceRepository(options);
   const client = options.client || createRobinhoodBlockscoutHoldersClient();
   const scheduler = options.scheduler || createRobinhoodHolderRequestScheduler(
     options.requestOptions || config.robinhoodHolderRequests
@@ -278,6 +344,7 @@ function createRobinhoodHoldersRouter(options = {}) {
 
     if (await sendPublishedLedgerPage({
       repository: holderPageRepository, tokenAddress, cursor: pageCursor,
+      intelligence: holderIntelligenceRepository,
       response: res, logger, nativeBalances, nowMs: now(), refreshMs,
     })) return undefined;
     const cursor = pageCursor.blockscoutCursor;
@@ -299,11 +366,18 @@ function createRobinhoodHoldersRouter(options = {}) {
 
     try {
       const page = await pagePromise;
-      const items = await enrichNativeBalances(page.items, nativeBalances, logger);
+      const nativeItems = await enrichNativeBalances(page.items, nativeBalances, logger);
+      const intelligence = await enrichIntelligence(
+        nativeItems, holderIntelligenceRepository, tokenAddress, logger
+      );
       return res.json({
         token: tokenAddress,
         summary: publicSummary(cached, nowMs, refreshMs),
-        holders: items,
+        holders: intelligence.holders,
+        classificationVersion: intelligence.classificationVersion,
+        classificationStatus: intelligence.classificationStatus,
+        classificationThroughBlock: intelligence.classificationThroughBlock,
+        distribution: intelligence.distribution,
         hasMore: page.hasMore,
         nextCursor: page.nextCursor,
         observedAt: page.observedAt,
@@ -331,7 +405,8 @@ function createRobinhoodHoldersRouter(options = {}) {
 const router = createRobinhoodHoldersRouter();
 router.createRobinhoodHoldersRouter = createRobinhoodHoldersRouter;
 router.__private = {
-  enrichNativeBalances, parseHistoryDays, publicSummary, resolveNativeBalanceProvider,
+  enrichIntelligence, enrichNativeBalances, parseHistoryDays, publicSummary,
+  resolveNativeBalanceProvider,
   safeErrorCode, shouldQueueRefresh,
 };
 

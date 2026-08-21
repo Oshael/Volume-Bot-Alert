@@ -1219,6 +1219,12 @@ batch, concorrência e retry de métricas indisponíveis são configurados por
 `ROBINHOOD_HOLDER_INTELLIGENCE_CONCURRENCY` e
 `ROBINHOOD_HOLDER_INTELLIGENCE_UNAVAILABLE_RETRY_MS`.
 
+`GET /api/robinhood/holders` acrescenta `classificationVersion`,
+`classificationStatus`, `classificationThroughBlock` e `distribution` ao envelope.
+Cada holder recebe `tags`, `primaryTag`, `classificationStatus` e resumos seguros
+em `classifications`; `evidence_json` não é enviado na paginação. Falha ou schema
+pendente de inteligência não derruba holders: os campos retornam `unavailable`.
+
 Cadastros usam um manifesto JSON append-only com `entries`; cada entrada contém
 `address`, `kind`, `label`, `source`, `evidence`, `validFromBlock`,
 `validThroughBlock` (`null` para aberta) e `verifiedAt`. Execute primeiro
