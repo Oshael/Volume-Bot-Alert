@@ -75,6 +75,8 @@ function financialMetrics(row, totalSupplyRaw, currentFdvUsd) {
     holderBalanceRaw: String(row.balance_raw), totalSupplyRaw, currentFdvUsd,
   });
   return Object.freeze({
+    buyVolumeUsd: metrics.buyVolumeUsd,
+    sellProceedsUsd: metrics.sellProceedsUsd,
     avgBuyMcapUsd: metrics.avgBuyMcapUsd,
     avgSellMcapUsd: metrics.avgSellMcapUsd,
     buyTxCount: metrics.buyTxCount,

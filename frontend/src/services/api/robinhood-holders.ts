@@ -8,6 +8,8 @@ export interface RobinhoodHolder {
   label: string | null;
   isVerifiedContract: boolean;
   nativeBalanceRaw?: string | null;
+  buyVolumeUsd?: string | null;
+  sellProceedsUsd?: string | null;
   avgBuyMcapUsd?: string | null;
   avgSellMcapUsd?: string | null;
   buyTxCount?: number | null;

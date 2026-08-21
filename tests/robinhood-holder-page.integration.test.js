@@ -80,10 +80,10 @@ describe('Robinhood published holder page persistence', () => {
       await client.query(
         `INSERT INTO robinhood_wallet_token_positions (
            projection_version, token_address, wallet_address, quantity_raw,
-           cost_basis_usd, realized_pnl_usd, buy_mcap_weighted_sum,
+           cost_basis_usd, realized_pnl_usd, buy_volume_usd, sell_proceeds_usd, buy_mcap_weighted_sum,
            buy_mcap_weight_usd, sell_mcap_weighted_sum, sell_mcap_weight_usd,
            buy_tx_count, sell_tx_count, through_block, through_log_index
-         ) VALUES ('unified_transfer_v1', $1, $2, 9999, 100, 25,
+         ) VALUES ('unified_transfer_v1', $1, $2, 9999, 100, 25, 18400, 44800,
                    4000000, 100, 3000000, 50, 2, 1, 199, 1)`,
         [TOKEN, wallets[2]]
       );
@@ -109,6 +109,8 @@ describe('Robinhood published holder page persistence', () => {
       assert.equal(first.items[0].positionQuality, 'transferred_assumed_zero');
       assert.equal(first.items[2].avgBuyMcapUsd, '40000');
       assert.equal(first.items[2].avgSellMcapUsd, '60000');
+      assert.equal(first.items[2].buyVolumeUsd, '18400');
+      assert.equal(first.items[2].sellProceedsUsd, '44800');
       assert.equal(first.items[2].buyTxCount, 2);
       assert.equal(first.items[2].sellTxCount, 1);
       assert.equal(first.items[2].realizedPnlUsd, '25');

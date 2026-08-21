@@ -3882,6 +3882,101 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 .robinhood-holder-page footer button:disabled { opacity: 0.35; cursor: default; }
 .robinhood-holder-error { padding: 24px; color: #ff8b98; text-align: center; }
 
+/* Compact holder workspace: contiguous black surfaces separated by one-pixel rules. */
+.legacy-auth-panel-expanded-sparkline { border-color: rgba(26, 80, 126, 0.55); background: #000; }
+.expanded-sparkline-toolbar { background: #03080e; border-bottom-color: rgba(31, 102, 158, 0.52); }
+.expanded-sparkline-chart.has-trades { gap: 0; padding: 0; background: #000; }
+.expanded-sparkline-chart.has-trades .expanded-sparkline-chart-main {
+  border-width: 0 1px 0 0; border-color: rgba(31, 102, 158, 0.42); border-radius: 0; background: #000;
+}
+.robinhood-trades-panel { border: 0; border-radius: 0; background: #02060a; }
+.robinhood-trades-head, .robinhood-trades-cols { border-bottom-color: rgba(31, 102, 158, 0.3); }
+.robinhood-holder-panel {
+  flex-basis: var(--holders-height, clamp(360px, 48%, 520px)); min-height: 220px;
+  border: 0; border-top: 1px solid rgba(31, 102, 158, 0.42); border-radius: 0; background: #000;
+}
+.robinhood-holder-resize-handle {
+  flex-basis: 6px; border-top: 0; border-bottom: 1px solid rgba(31, 102, 158, 0.32); background: #02060a;
+}
+.robinhood-holder-resize-grip { width: 26px; height: 1px; background: rgba(55, 135, 196, 0.7); }
+.robinhood-holder-panel-body, .robinhood-holder-page { padding: 0; background: #000; }
+.robinhood-holder-page { flex: 1 1 auto; }
+
+.rh-holder-toolbar {
+  display: flex; flex: 0 0 28px; align-items: center; gap: 10px; height: 28px; padding: 0 10px;
+  box-sizing: border-box; border-bottom: 1px solid rgba(31, 102, 158, 0.28); background: #03080e;
+  color: #b9c0bc; white-space: nowrap;
+}
+.rh-holder-toolbar > strong { font-size: 11px; font-weight: 700; letter-spacing: 0.1em; }
+.rh-holder-toolbar > span { color: #6f7773; font: 11px "JetBrains Mono", monospace; }
+.rh-holder-toolbar > i { flex: 0 0 1px; width: 1px; height: 14px; background: rgba(66, 132, 184, 0.35); }
+.rh-holder-filters { display: flex; gap: 1px; padding: 2px; border-radius: 5px; background: #080d12; }
+.rh-holder-filters button {
+  min-height: 0; padding: 2px 7px; border: 0; border-radius: 3px; background: transparent;
+  color: #7c8480; font-size: 10px; line-height: 1; cursor: default;
+}
+.rh-holder-filters button.active { background: rgba(12, 69, 105, 0.62); color: #55c7ff; }
+.rh-holder-filters button:disabled { opacity: 0.48; }
+.rh-holder-legend { display: flex; flex: 1 1 auto; gap: 9px; min-width: 0; overflow: hidden; }
+.rh-holder-legend > span { display: inline-flex; align-items: center; gap: 3px; color: #5c6461; font-size: 9px; letter-spacing: 0.07em; }
+.rh-holder-legend b { font: 11px "JetBrains Mono", monospace; }
+.rh-holder-toolbar .holder-freshness { flex: none; color: #4c5450; font-size: 10px; letter-spacing: 0; }
+.rh-holder-toolbar nav { display: flex; flex: none; align-items: center; gap: 4px; }
+.rh-holder-toolbar nav button {
+  width: 16px; height: 16px; min-height: 0; padding: 0; border: 0; border-radius: 3px;
+  background: transparent; color: #8a918d; font-size: 13px; line-height: 16px;
+}
+.rh-holder-toolbar nav button:not(:disabled):hover { background: rgba(22, 62, 92, 0.55); color: #d6ecff; }
+.rh-holder-toolbar nav button:disabled { color: #35414a; }
+.rh-holder-toolbar nav span { min-width: 24px; color: #8a918d; font: 10px "JetBrains Mono", monospace; text-align: center; }
+.is-sniper { color: #f2555a; } .is-fresh { color: #e0b451; } .is-cex { color: #7fa8f0; } .is-lp { color: #7fd694; }
+
+.rh-holder-content { display: flex; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.rh-holder-list { flex: 1 1 auto; min-width: 0; border-right: 1px solid rgba(31, 102, 158, 0.28); }
+.robinhood-holder-table-wrap { height: 100%; margin: 0; overflow: auto; scrollbar-width: thin; scrollbar-color: #17486c #02060a; }
+.robinhood-holder-page table { width: 100%; border-collapse: collapse; table-layout: fixed; font: 11px "JetBrains Mono", monospace; }
+.robinhood-holder-page thead tr, .robinhood-holder-page tbody tr {
+  display: grid; grid-template-columns: 22px minmax(120px, 1fr) 104px 120px 120px 132px; gap: 10px; padding: 0 10px;
+}
+.robinhood-holder-page thead { position: sticky; top: 0; z-index: 2; background: #02060a; }
+.robinhood-holder-page thead tr { height: 26px; border-bottom: 1px solid rgba(31, 102, 158, 0.24); }
+.robinhood-holder-page tbody tr { height: 26px; border-bottom: 1px solid rgba(255, 255, 255, 0.03); }
+.robinhood-holder-page tbody tr:hover { background: #050b10; }
+.robinhood-holder-page th, .robinhood-holder-page td {
+  display: flex; align-items: center; justify-content: flex-end; min-width: 0; padding: 0; border: 0; overflow: hidden;
+}
+.robinhood-holder-page th { color: #616966; font-size: 9px; letter-spacing: 0.09em; text-transform: uppercase; }
+.robinhood-holder-page th small { margin-left: 3px; color: #3f5666; font: inherit; }
+.robinhood-holder-page .rh-col-rank { justify-content: flex-start; color: #4c5450; }
+.robinhood-holder-page .rh-col-holder { justify-content: flex-start; gap: 5px; }
+.rh-col-holder a { overflow: hidden; color: #8ab4f8; font-size: 11px; line-height: 1; text-overflow: ellipsis; white-space: nowrap; }
+.rh-holder-glyph { flex: 0 0 13px; width: 13px; font-size: 11px; line-height: 1; text-align: center; }
+.rh-holder-glyph.is-unknown { color: #3f4744; }
+.rh-native-balance { color: #b9c0bc; }
+.rh-native-balance span { margin-left: 3px; color: #7fa8f0; }
+.rh-financial-cell { gap: 5px; }
+.rh-financial-cell span { color: #b9c0bc; }
+.rh-financial-cell small { margin: 0; color: #5c6461; font-size: 10px; }
+.rh-pnl.is-positive span { color: #3ddc97; } .rh-pnl.is-negative span { color: #f2555a; }
+
+.rh-holder-distribution { flex: 0 0 300px; min-width: 300px; background: #010403; }
+.rh-holder-distribution > header {
+  height: 26px; padding: 7px 10px; box-sizing: border-box; border-bottom: 1px solid rgba(31, 102, 158, 0.22);
+  color: #616966; font-size: 9px; letter-spacing: 0.09em;
+}
+.rh-distribution-body { display: grid; gap: 9px; padding: 10px; }
+.rh-distribution-metric > div { display: flex; align-items: center; gap: 8px; font: 11px "JetBrains Mono", monospace; }
+.rh-distribution-metric span { flex: 1 1 auto; color: #8a918d; }
+.rh-distribution-metric strong { color: #e6e9e7; font-weight: 600; }
+.rh-distribution-metric small { width: 62px; color: #4c5450; font-size: 10px; text-align: right; white-space: nowrap; }
+.rh-distribution-metric i { display: block; height: 3px; margin-top: 4px; overflow: hidden; border-radius: 2px; background: #101820; }
+.rh-distribution-metric i b { display: block; height: 100%; background: #3ddc97; }
+.rh-distribution-metric i b.is-sniper { background: #f2555a; } .rh-distribution-metric i b.is-fresh { background: #e0b451; }
+.rh-distribution-flags { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 5px; padding-top: 10px; border-top: 1px solid rgba(31, 102, 158, 0.2); }
+.rh-distribution-flags > div { padding: 6px 8px; border-radius: 5px; background: #050b10; }
+.rh-distribution-flags span { display: block; color: #616966; font-size: 9px; }
+.rh-distribution-flags strong { display: block; margin-top: 2px; color: #41576a; font: 12px "JetBrains Mono", monospace; }
+
 @media (max-width: 900px) {
   .expanded-sparkline-chart.has-trades {
     flex-direction: column;

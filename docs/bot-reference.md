@@ -1152,12 +1152,15 @@ só no caminho ledger; `null` no fallback Blockscout), consumido pelo frontend.
 No expanded chart RH, chart, trades e holders ficam visíveis simultaneamente.
 O painel fixo de holders fica na parte inferior e pode ser redimensionado pelo
 handle horizontal (ou pelas setas/Home/End quando focado); aumentar holders
-reduz a área compartilhada por chart e trades. A tabela segue o layout Axiom;
-a coluna Remaining calcula valor/% do supply por wallet via `balanceRaw /
-totalSupplyRaw` (× `fdv` do token para o valor USD), e as colunas ETH Bal /
-Avg Buy / Avg Sell / U. PnL seguem placeholders até haver fonte na feed. A lista
-mostra 50 endereços por página, preserva a pilha de cursores para voltar e expõe
-loading/error/retry.
+reduz a área compartilhada por chart e trades. A tabela compacta funde U. PnL
+com o percentual remaining (`balanceRaw / totalSupplyRaw`) e mostra saldo nativo,
+volume financeiro comprado/vendido e market cap médio. No caminho ledger, os
+itens de `GET /api/robinhood/holders` expõem `buyVolumeUsd`, `sellProceedsUsd`,
+`avgBuyMcapUsd` e `avgSellMcapUsd` a partir da projeção financeira publicada.
+A distribuição Top 10/Top 50 é calculada somente com balances/supply reais da
+primeira página; classificações sniper/fresh/insider/CEX e flags de risco ficam
+indisponíveis até existir fonte comprovada. A lista mostra 50 endereços por
+página, preserva a pilha de cursores para voltar e expõe loading/error/retry.
 A lista começa a carregar na abertura do modal; fechá-lo cancela respostas
 atrasadas.
 

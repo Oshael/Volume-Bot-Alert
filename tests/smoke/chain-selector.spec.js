@@ -615,6 +615,8 @@ const ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES = {
         addressType: 'unknown', label: secondPage ? 'Second page whale' : 'Main whale',
         isVerifiedContract: false,
         nativeBalanceRaw: secondPage ? '0' : '3400000000000000000',
+        buyVolumeUsd: secondPage ? '0' : '18400',
+        sellProceedsUsd: secondPage ? '0' : '44800',
         avgBuyMcapUsd: secondPage ? '0' : '125000',
         avgSellMcapUsd: secondPage ? '0' : '200000',
         buyTxCount: secondPage ? 0 : 3, sellTxCount: secondPage ? 0 : 2,
@@ -1836,11 +1838,23 @@ test('renders holder pages without the holder bar chart in the Robinhood expande
   ))).toHaveLength(holderReads);
   await expect(panel).toContainText('Main whale');
   await expect(panel.locator('.rh-remaining-pct').first()).toHaveText('10%');
-  await expect(panel.locator('.rh-native-balance').first()).toHaveText('3.4 ETH');
-  await expect(panel.locator('.rh-financial-cell').nth(0)).toContainText('$125K');
-  await expect(panel.locator('.rh-financial-cell').nth(1)).toContainText('R +$1.25K');
+  await expect(panel.locator('.rh-native-balance').first()).toHaveText('3.4 Ξ');
+  await expect(panel.locator('.rh-financial-cell').nth(0)).toContainText('$18.4K@125K');
+  await expect(panel.locator('.rh-financial-cell').nth(1)).toContainText('$44.8K@200K');
   await expect(panel.locator('.rh-pnl').first()).toContainText('+$5K');
-  await expect(panel.locator('.rh-pnl').first()).toContainText('+25%');
+  await expect(panel.locator('.rh-pnl').first()).toContainText('10%');
+  await expect(panel.locator('.rh-holder-distribution')).toHaveCSS('width', '300px');
+  await expect(panel.locator('.rh-holder-distribution')).toContainText('Top 10');
+  await expect(panel.locator('.rh-holder-distribution')).toContainText('10%');
+  await expect(panel.getByRole('button', { name: 'INSIDERS' })).toBeDisabled();
+  await expect(panel.locator('.robinhood-holder-table-wrap')).toHaveCSS('overflow-y', 'auto');
+  await expect(panel.locator('tbody tr').first()).toHaveCSS('height', '26px');
+  expect(await panel.locator('tbody .rh-col-holder').first().evaluate((cell) => (
+    cell.lastElementChild?.classList.contains('rh-holder-glyph')
+  ))).toBe(true);
+  await expect(dialog.locator('.expanded-sparkline-chart.has-trades')).toHaveCSS('gap', '0px');
+  await expect(dialog.locator('[data-auth-panel="expanded-sparkline"]'))
+    .toHaveCSS('background-color', 'rgb(0, 0, 0)');
 
   const resizeHandle = dialog.locator('[data-holder-resize-handle]');
   const beforeResize = await dialog.evaluate((element) => ({

@@ -40,8 +40,8 @@ function count(value: number | null) {
   return value == null ? '—' : value.toLocaleString('en-US');
 }
 
-function rawBalance(value: string) {
-  try { return BigInt(value).toLocaleString('en-US'); } catch { return value; }
+function displayedHolderCount(live: number | null, fallback: number | null) {
+  return live == null ? fallback : live;
 }
 
 function shortAddress(value: string) {
@@ -76,7 +76,7 @@ function nativeBalanceCell(value?: string | null) {
     const formatted = Number.isFinite(amount)
       ? amount.toLocaleString('en-US', { maximumFractionDigits: amount < 1 ? 6 : 4 })
       : (wei / (10n ** 18n)).toLocaleString('en-US');
-    return `<td class="rh-col-num rh-native-balance" title="${escapeHtml(value)} wei">${escapeHtml(formatted)} ETH</td>`;
+    return `<td class="rh-col-num rh-native-balance" title="${escapeHtml(value)} wei">${escapeHtml(formatted)} <span aria-label="ETH">Ξ</span></td>`;
   } catch {
     return '<td class="rh-col-num rh-pending" title="Native balance is invalid">—</td>';
   }
@@ -96,32 +96,32 @@ function signedUsd(value?: string | null): string {
   return `${parsed > 0 ? '+' : '-'}${formatted}`;
 }
 
-function averageCell(value: string | null | undefined, transactions: number | null | undefined,
-  side: 'buy' | 'sell', realizedPnlUsd?: string | null) {
+function positionCell(value: string | null | undefined, averageMcap: string | null | undefined,
+  transactions: number | null | undefined) {
   if (value == null || transactions == null) {
     return '<td class="rh-col-num rh-pending" title="Financial position is unavailable">—</td>';
   }
-  const realized = side === 'sell' && realizedPnlUsd != null
-    ? ` · R ${signedUsd(realizedPnlUsd)}` : '';
+  const average = transactions > 0 && averageMcap != null
+    ? `@${formatUsd(numberValue(averageMcap)).replace(/^\$/, '')}` : '';
   return `<td class="rh-col-num rh-financial-cell">
-      <span>${escapeHtml(formatUsd(numberValue(value)))}</span>
-      <small>${transactions.toLocaleString('en-US')} ${side}${transactions === 1 ? '' : 's'}${escapeHtml(realized)}</small>
+      <span>${escapeHtml(formatUsd(numberValue(value)))}</span><small>${escapeHtml(average)}</small>
     </td>`;
 }
 
-function pnlCell(value: string | null | undefined, pct: string | null | undefined,
-  quality: string | null | undefined) {
+function supplyPct(balanceRaw: string, totalSupplyRaw: string | null) {
+  try {
+    const supply = totalSupplyRaw ? BigInt(totalSupplyRaw) : 0n;
+    if (supply <= 0n) return '—';
+    return formatSupplyPct((Number(BigInt(balanceRaw)) / Number(supply)) * 100);
+  } catch { return '—'; }
+}
+
+function pnlRemainingCell(value: string | null | undefined, balanceRaw: string,
+  totalSupplyRaw: string | null) {
   const parsed = numberValue(value);
-  if (parsed == null) {
-    return '<td class="rh-col-num rh-pending" title="Current valuation is unavailable">—</td>';
-  }
-  const tone = parsed > 0 ? 'is-positive' : parsed < 0 ? 'is-negative' : 'is-flat';
-  const parsedPct = numberValue(pct);
-  const detail = parsedPct == null
-    ? (quality === 'transferred_assumed_zero' ? 'zero-cost basis' : '—')
-    : `${parsedPct > 0 ? '+' : ''}${Number(parsedPct.toFixed(2))}%`;
+  const tone = parsed == null ? 'rh-pending' : parsed > 0 ? 'is-positive' : parsed < 0 ? 'is-negative' : 'is-flat';
   return `<td class="rh-col-num rh-financial-cell rh-pnl ${tone}">
-      <span>${escapeHtml(signedUsd(value))}</span><small>${escapeHtml(detail)}</small>
+      <span>${escapeHtml(signedUsd(value))}</span><small class="rh-remaining-pct">${escapeHtml(supplyPct(balanceRaw, totalSupplyRaw))}</small>
     </td>`;
 }
 
@@ -131,54 +131,71 @@ function formatSupplyPct(pct: number): string {
   return `${Number(pct.toFixed(pct >= 1 ? 2 : 3))}%`;
 }
 
-// Remaining share of supply: fraction = balanceRaw / totalSupplyRaw (exact, no
-// decimals needed); USD value = fraction × fdv (fdv already carries supply × price).
-function remainingCell(balanceRaw: string, totalSupplyRaw: string | null, fdv?: number | null) {
-  const rawTitle = `Raw balance: ${escapeHtml(rawBalance(balanceRaw))}`;
-  let fraction: number | null = null;
+function holderGlyph(addressType: string) {
+  const lp = addressType === 'pool';
+  return `<span class="rh-holder-glyph ${lp ? 'is-lp' : 'is-unknown'}" title="${lp ? 'LP' : 'Unknown'}">${lp ? '≋' : '·'}</span>`;
+}
+
+function concentrationPct(page: RobinhoodHoldersPage, limit: number) {
   try {
-    const supply = totalSupplyRaw ? BigInt(totalSupplyRaw) : 0n;
-    if (supply > 0n) fraction = Number(BigInt(balanceRaw)) / Number(supply);
-  } catch { fraction = null; }
-  if (fraction == null || !Number.isFinite(fraction)) {
-    return `<td class="rh-col-num rh-pending" title="${rawTitle}">—</td>`;
-  }
-  const value = fdv != null && fdv > 0 ? formatUsd(fraction * fdv) : '—';
-  return `<td class="rh-col-num rh-remaining" title="${rawTitle}">
-      <span class="rh-remaining-value">${escapeHtml(value)}</span>
-      <span class="rh-remaining-pct">${escapeHtml(formatSupplyPct(fraction * 100))}</span>
-    </td>`;
+    const supply = page.summary.totalSupplyRaw ? BigInt(page.summary.totalSupplyRaw) : 0n;
+    if (supply <= 0n) return null;
+    const held = page.holders.slice(0, limit).reduce((sum, holder) => sum + BigInt(holder.balanceRaw), 0n);
+    return Math.min(100, Number((held * 10_000n) / supply) / 100);
+  } catch { return null; }
+}
+
+function distributionMetric(label: string, value: number | null, tone: string, sub: string) {
+  return `<div class="rh-distribution-metric"><div><span>${label}</span><strong>${value == null ? '—' : formatSupplyPct(value)}</strong><small>${sub}</small></div><i><b class="${tone}" style="width:${value == null ? 0 : value}%"></b></i></div>`;
+}
+
+function distributionHtml(page: RobinhoodHoldersPage) {
+  return `<aside class="rh-holder-distribution"><header>DISTRIBUIÇÃO</header><div class="rh-distribution-body">
+    ${distributionMetric('Top 10', concentrationPct(page, 10), 'is-top', '10 wlt')}
+    ${distributionMetric('Top 50', concentrationPct(page, 50), 'is-top', `${Math.min(50, page.holders.length)} wlt`)}
+    ${distributionMetric('Snipers', null, 'is-sniper', '—')}
+    ${distributionMetric('Fresh wallets', null, 'is-fresh', '—')}
+    <div class="rh-distribution-flags">${[
+      ['DEV HOLD', '—'], ['INSIDERS', '—'], ['LP LOCKED', '—'], ['BUNDLED', '—'],
+    ].map(([label, value]) => `<div><span>${label}</span><strong>${value}</strong></div>`).join('')}</div>
+  </div></aside>`;
+}
+
+function holderToolbarHtml(page: RobinhoodHoldersPage, pageNumber: number, hasPrevious: boolean,
+  holderCount: number | null) {
+  const observed = new Date(page.observedAt).toLocaleTimeString([], { hour12: false });
+  const pages = Math.max(pageNumber, Math.ceil((holderCount || 0) / 50));
+  const glyphs = [['◎', 'SNIPER', 'is-sniper'], ['✦', 'FRESH', 'is-fresh'], ['⇄', 'CEX', 'is-cex'], ['≋', 'LP', 'is-lp']];
+  return `<header class="rh-holder-toolbar"><strong>TOP HOLDERS</strong><span data-holder-panel-count>${count(holderCount)}</span><i></i>
+    <div class="rh-holder-filters"><button class="active">TOP</button>${['INSIDERS', 'SNIPERS', 'FRESH'].map((label) => `<button disabled title="Classification unavailable">${label}</button>`).join('')}</div>
+    <div class="rh-holder-legend">${glyphs.map(([glyph, label, tone]) => `<span><b class="${tone}">${glyph}</b>${label}</span>`).join('')}</div>
+    <span class="holder-freshness is-${page.summary.freshness}">${escapeHtml(page.summary.freshness)} · ${escapeHtml(observed)}</span>
+    <nav><button aria-label="Previous" data-holder-page-action="previous" ${hasPrevious ? '' : 'disabled'}>‹</button><span>${pageNumber}/${Math.max(1, pages)}</span><button aria-label="Next" data-holder-page-action="next" ${page.hasMore ? '' : 'disabled'}>›</button></nav>
+  </header>`;
 }
 
 function holderPageHtml(
-  page: RobinhoodHoldersPage, pageNumber: number, hasPrevious: boolean, fdv?: number | null,
+  page: RobinhoodHoldersPage, pageNumber: number, hasPrevious: boolean,
+  holderCount: number | null, distributionPage: RobinhoodHoldersPage,
 ) {
-  const observed = new Date(page.observedAt).toLocaleString();
   const rows = page.holders.map((holder) => `<tr>
     <td class="rh-col-rank">${holder.rank}</td>
     <td class="rh-col-holder">
       <a href="https://robinhoodchain.blockscout.com/address/${escapeHtml(holder.address)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(holder.address)}">${escapeHtml(holder.label || shortAddress(holder.address))}</a>
-      <span class="rh-holder-type">${escapeHtml(holder.addressType)}${holder.isVerifiedContract ? ' · verified' : ''}</span>
+      ${holderGlyph(holder.addressType)}
     </td>
     ${nativeBalanceCell(holder.nativeBalanceRaw)}
-    ${averageCell(holder.avgBuyMcapUsd, holder.buyTxCount, 'buy')}
-    ${averageCell(holder.avgSellMcapUsd, holder.sellTxCount, 'sell', holder.realizedPnlUsd)}
-    ${pnlCell(holder.unrealizedPnlUsd, holder.unrealizedPnlPct, holder.positionQuality)}
-    ${remainingCell(holder.balanceRaw, page.summary.totalSupplyRaw, fdv)}
+    ${positionCell(holder.buyVolumeUsd, holder.avgBuyMcapUsd, holder.buyTxCount)}
+    ${positionCell(holder.sellProceedsUsd, holder.avgSellMcapUsd, holder.sellTxCount)}
+    ${pnlRemainingCell(holder.unrealizedPnlUsd, holder.balanceRaw, page.summary.totalSupplyRaw)}
   </tr>`).join('');
-  return `<header><span class="robinhood-holder-page-title">Top holders</span>
-      <span class="holder-freshness is-${page.summary.freshness}">${escapeHtml(page.summary.freshness)} · ${escapeHtml(observed)}</span></header>
-    <div class="robinhood-holder-table-wrap"><table><thead><tr>
+  return `${holderToolbarHtml(page, pageNumber, hasPrevious, holderCount)}<div class="rh-holder-content">
+    <div class="rh-holder-list"><div class="robinhood-holder-table-wrap"><table><thead><tr>
         <th class="rh-col-rank">#</th><th class="rh-col-holder">Holder</th>
-        <th class="rh-col-num">ETH Bal</th><th class="rh-col-num">Avg Buy</th>
-        <th class="rh-col-num">Avg Sell</th><th class="rh-col-num">U. PnL</th>
-        <th class="rh-col-num">Remaining</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="7">No holders returned.</td></tr>'}</tbody></table></div>
-    <footer>
-      <button type="button" class="rh-page-btn" aria-label="Previous" data-holder-page-action="previous" ${hasPrevious ? '' : 'disabled'}>‹</button>
-      <span class="rh-page-indicator">${pageNumber}</span>
-      <button type="button" class="rh-page-btn" aria-label="Next" data-holder-page-action="next" ${page.hasMore ? '' : 'disabled'}>›</button>
-    </footer>`;
+        <th class="rh-col-num">BAL</th><th class="rh-col-num">AVG BUY <small>· MC</small></th>
+        <th class="rh-col-num">AVG SELL <small>· MC</small></th><th class="rh-col-num">U. PNL <small>· REM</small></th></tr></thead>
+      <tbody>${rows || '<tr><td>No holders returned.</td></tr>'}</tbody></table></div></div>
+    ${distributionHtml(distributionPage)}</div>`;
 }
 
 function errorHtml() {
@@ -202,6 +219,7 @@ export function mountRobinhoodExpandedHolders(section: ParentNode, options: Moun
   let requestId = 0;
   let currentPage: RobinhoodHoldersPage | null = null;
   const cache = getHolderDataCache(options.token);
+  let distributionPage = cache.pages.get('first') || null;
   let liveHolderCount: number | null = null;
   const cursors = [...cache.cursorStack];
   let dragStartY = 0;
@@ -278,15 +296,21 @@ export function mountRobinhoodExpandedHolders(section: ParentNode, options: Moun
       const result = cache.pages.get(cursor || 'first') || await pageRequest!;
       if (disposed || id !== requestId) return;
       currentPage = result;
+      distributionPage = cache.pages.get('first') || result;
       if (liveHolderCount == null) {
         if (holderCount) holderCount.textContent = count(result.summary.holderCount);
       }
-      pageContainer.innerHTML = holderPageHtml(result, cursors.length, cursors.length > 1, options.fdv);
+      pageContainer.innerHTML = holderPageHtml(
+        result, cursors.length, cursors.length > 1,
+        displayedHolderCount(liveHolderCount, result.summary.holderCount), distributionPage,
+      );
     } catch { if (!disposed && id === requestId) pageContainer.innerHTML = errorHtml(); }
   };
   const applyLiveCount = (event: { holderCount: number }) => {
     liveHolderCount = event.holderCount;
     if (holderCount) holderCount.textContent = count(event.holderCount);
+    const panelCount = panel.querySelector<HTMLElement>('[data-holder-panel-count]');
+    if (panelCount) panelCount.textContent = count(event.holderCount);
   };
   const recoverPage = () => {
     if (disposed) return;
