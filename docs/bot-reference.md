@@ -1195,7 +1195,12 @@ chain-scoped para CEX, routers, bridges, lockers e burn addresses. Cada entrada
 exige label, fonte, evidência, bloco inicial e verificação; apenas uma janela
 aberta por endereço/tipo é permitida. Aplique `node src/utils/db-init-stage145.js`
 antes de iniciar código que contenha esse grupo no runtime schema. A tabela nasce
-vazia e ainda não possui ferramenta de manutenção ou consumidor no runtime.
+vazia e ainda não possui ferramenta de manutenção. O repository
+`robinhood-infrastructure-registry` oferece lookup interno exato por endereços,
+tipos e bloco, considerando inclusivos os dois extremos da janela de validade;
+ele não infere classificações nem consulta fontes externas. Janelas históricas
+sobrepostas para o mesmo endereço/tipo fazem o lookup falhar, sem escolher uma
+evidência arbitrariamente.
 
 O worker lê `Transfer` por range com a coorte enviada como allowlist `address` ao
 RPC, commita ranges em ordem e não grava o histórico bruto no journal. Se o node

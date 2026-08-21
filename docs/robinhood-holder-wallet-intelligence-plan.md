@@ -258,9 +258,10 @@ integração.
    - Status em 2026-08-21: materializador `LP` concluído, usando a frontier live
      do ledger, contratos V2/V3 e o `PoolManager` contextual das pools V4 ativas;
      o materializador `DEV HOLD` também está concluído com saldo e supply na mesma
-     frontier. A Stage 145 prepara o registro auditável de infraestrutura; lookup,
-     manutenção e materializador `CEX` ainda aguardam cortes próprios. Ainda não
-     há worker nem contrato REST consumindo os snapshots.
+     frontier. A Stage 145 prepara o registro auditável de infraestrutura e o
+     lookup interno por endereço/tipo/bloco está concluído; manutenção e
+     materializador `CEX` ainda aguardam cortes próprios. Ainda não há worker nem
+     contrato REST consumindo os snapshots.
 3. **SNIPER**
    - materializar âncora de lançamento e primeira compra;
    - fechar notional mínimo com amostra real antes de ativar UI.
