@@ -50,14 +50,13 @@ function shortAddress(value: string) {
 
 export function renderRobinhoodExpandedHolderViews(
   chartHtml: string,
-  holderCount: number | null | undefined,
+  _holderCount: number | null | undefined,
 ) {
   return `<div class="robinhood-holder-views" data-robinhood-holder-views>
     <div class="robinhood-holder-chart-shell" data-holder-chart-view>${chartHtml}</div>
     <section class="robinhood-holder-panel" data-holder-panel aria-label="Token holders">
       <div class="robinhood-holder-resize-handle" data-holder-resize-handle role="separator" tabindex="0"
         aria-orientation="horizontal" aria-label="Resize holders panel" aria-valuemin="${MIN_HOLDER_PANEL_HEIGHT}" aria-valuemax="720" aria-valuenow="340">
-        <span class="robinhood-holder-panel-label">HOLDERS <strong data-holder-count>${count(holderCount ?? null)}</strong></span>
         <span class="robinhood-holder-resize-grip" aria-hidden="true"></span>
       </div>
       <div class="robinhood-holder-panel-body">
@@ -198,6 +197,7 @@ export function mountRobinhoodExpandedHolders(section: ParentNode, options: Moun
   const panel = root.querySelector<HTMLElement>('[data-holder-panel]')!;
   const resizeHandle = root.querySelector<HTMLElement>('[data-holder-resize-handle]')!;
   const pageContainer = root.querySelector<HTMLElement>('[data-holder-page]')!;
+  const holderCount = section.querySelector<HTMLElement>('[data-holder-count]');
   let disposed = false;
   let requestId = 0;
   let currentPage: RobinhoodHoldersPage | null = null;
@@ -279,14 +279,14 @@ export function mountRobinhoodExpandedHolders(section: ParentNode, options: Moun
       if (disposed || id !== requestId) return;
       currentPage = result;
       if (liveHolderCount == null) {
-        root.querySelector<HTMLElement>('[data-holder-count]')!.textContent = count(result.summary.holderCount);
+        if (holderCount) holderCount.textContent = count(result.summary.holderCount);
       }
       pageContainer.innerHTML = holderPageHtml(result, cursors.length, cursors.length > 1, options.fdv);
     } catch { if (!disposed && id === requestId) pageContainer.innerHTML = errorHtml(); }
   };
   const applyLiveCount = (event: { holderCount: number }) => {
     liveHolderCount = event.holderCount;
-    root.querySelector<HTMLElement>('[data-holder-count]')!.textContent = count(event.holderCount);
+    if (holderCount) holderCount.textContent = count(event.holderCount);
   };
   const recoverPage = () => {
     if (disposed) return;

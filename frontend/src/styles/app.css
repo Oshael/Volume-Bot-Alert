@@ -2972,12 +2972,12 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   width: min(82vw, 1380px);
   min-width: min(960px, calc(100vw - 28px));
   max-height: min(90vh, 940px);
-  padding: 14px;
-  gap: 10px;
-  overflow: visible;
-  border: 0;
-  border-radius: 20px;
-  background: transparent;
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 8px;
+  background: #080b0a;
   box-shadow: none;
   isolation: isolate;
   animation: expanded-sparkline-hologram-enter 0.16s ease-out;
@@ -3019,39 +3019,25 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 }
 
 .expanded-sparkline-toolbar {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  position: relative;
-  z-index: 40;
+  position: relative; z-index: 40; display: flex; flex: 0 0 28px;
+  align-items: center; gap: 10px; height: 28px; padding: 0 10px; box-sizing: border-box;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  background: #0d100f;
 }
 
 .expanded-sparkline-identity {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  min-width: 0;
-  padding: 2px 2px 0 2px;
+  display: flex; flex: none; align-items: center; gap: 8px; min-width: 0;
 }
 
 .expanded-sparkline-avatar {
-  width: 38px;
-  height: 38px;
-  flex: 0 0 38px;
-  border: 1px solid rgba(96, 166, 218, 0.45);
-  border-radius: 50%;
-  object-fit: cover;
-  background: #07101a;
+  width: 16px; height: 16px; flex: 0 0 16px; box-sizing: border-box;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 50%; object-fit: cover; background: #161b18;
 }
 
 .expanded-sparkline-avatar-placeholder {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: #dff7ff;
-  font-size: 11px;
-  font-weight: 900;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: #e6e9e7; font-size: 7px; font-weight: 700;
 }
 
 .expanded-sparkline-identity-copy {
@@ -3066,12 +3052,8 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 }
 
 .expanded-sparkline-identity strong {
-  color: #f3fbff;
-  font-size: 17px;
-  line-height: 1.1;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  text-shadow: 0 0 14px rgba(73, 236, 255, 0.18);
+  color: #e6e9e7; font-size: 12px; font-weight: 700;
+  line-height: 1; letter-spacing: 0.02em; text-transform: uppercase;
 }
 
 .expanded-sparkline-identity small {
@@ -3084,6 +3066,35 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   text-overflow: ellipsis;
   text-shadow: 0 0 10px rgba(0, 212, 255, 0.12);
 }
+
+.expanded-sparkline-rank {
+  color: #3ddc97; font-size: 10px; line-height: 1;
+  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+}
+
+.expanded-sparkline-toolbar-divider {
+  flex: 0 0 1px; width: 1px; height: 14px;
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.expanded-sparkline-stat-strip {
+  display: flex; flex: 1 1 auto; align-items: center; gap: 8px;
+  min-width: 0; overflow: hidden; color: #8a918d; font-size: 11px; white-space: nowrap;
+  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+}
+
+.expanded-sparkline-stat { color: #8a918d; }
+
+.expanded-sparkline-stat strong {
+  color: #e6e9e7; font: inherit; font-weight: 600;
+}
+
+.expanded-sparkline-stat.is-active,
+.expanded-sparkline-stat.is-active strong {
+  color: #3ddc97;
+}
+
+.expanded-sparkline-stat-separator { color: #333a36; }
 
 .expanded-sparkline-popover-subhead {
   display: flex;
@@ -3154,16 +3165,59 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   line-height: 1;
 }
 
+.expanded-sparkline-details {
+  position: relative; flex: none;
+}
+
+.expanded-sparkline-details > summary {
+  color: #6f7773; font-size: 11px; list-style: none; white-space: nowrap; cursor: pointer;
+}
+
+.expanded-sparkline-details > summary::-webkit-details-marker { display: none; }
+
+.expanded-sparkline-details > summary:hover,
+.expanded-sparkline-details > summary:focus-visible {
+  color: #e6e9e7;
+  outline: none;
+}
+
+.expanded-sparkline-details-popover {
+  position: absolute; top: 22px; right: 0; z-index: 60;
+  display: grid; gap: 8px; width: 250px; padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px; background: #101412;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.48);
+  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+}
+
+.expanded-sparkline-details-metric,
+.expanded-sparkline-details-contract {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; color: #69716d;
+}
+
+.expanded-sparkline-details-metric strong,
+.expanded-sparkline-details-contract code {
+  overflow: hidden; color: #e6e9e7; font: inherit; font-weight: 600;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+
+.expanded-sparkline-details-popover nav {
+  display: flex; flex-wrap: wrap; gap: 6px 12px; padding-top: 2px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.expanded-sparkline-details-popover a { color: #3ddc97; text-decoration: none; }
+
+.expanded-sparkline-details-popover a:hover { color: #8af0bd; }
+
 .expanded-sparkline-resolution-control {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px;
-  border: 1px solid rgba(63, 113, 176, 0.32);
-  border-radius: 999px;
-  background: rgba(5, 12, 22, 0.38);
-  box-shadow: 0 0 0 1px rgba(14, 25, 40, 0.18) inset;
-  backdrop-filter: blur(10px);
+  position: absolute; top: 8px; left: 8px; z-index: 5;
+  display: inline-flex; align-items: center; gap: 1px; padding: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 6px; background: rgba(13, 16, 15, 0.86);
+  backdrop-filter: blur(6px);
 }
 
 .expanded-sparkline-time-zone-control {
@@ -3250,33 +3304,23 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 }
 
 .expanded-sparkline-resolution-button {
-  min-width: 34px;
-  height: 24px;
-  padding: 0 9px;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: #86a8c8;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  cursor: pointer;
+  min-width: 0; height: auto; padding: 3px 6px; border: 0;
+  border-radius: 4px; background: transparent; color: #7c8480;
+  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 10px; font-weight: 500; line-height: 1; cursor: pointer;
 }
 
 .expanded-sparkline-resolution-button:hover,
 .expanded-sparkline-resolution-button:focus-visible {
-  color: #d7f3ff;
-  background: rgba(76, 151, 218, 0.18);
+  color: #e6e9e7;
+  background: rgba(255, 255, 255, 0.04);
   outline: none;
 }
 
 .expanded-sparkline-resolution-button.is-active {
-  color: #ecfbff;
-  background: rgba(0, 212, 255, 0.18);
-  box-shadow:
-    0 0 16px rgba(0, 212, 255, 0.14),
-    inset 0 0 0 1px rgba(130, 223, 255, 0.22);
+  color: #3ddc97;
+  background: #1b2f25;
+  box-shadow: none;
 }
 
 .expanded-sparkline-chart {
@@ -3314,7 +3358,7 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   pointer-events: none;
 }
 
-.expanded-sparkline-chart > * {
+.expanded-sparkline-chart > *:not(.expanded-sparkline-resolution-control) {
   position: relative;
   z-index: 1;
 }
@@ -3325,73 +3369,56 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 
 /* Robinhood-only: per-swap trades panel beside the expanded chart. */
 .expanded-sparkline-chart.has-trades {
-  display: flex;
-  gap: 12px;
-  align-items: stretch;
+  display: flex; gap: 8px; align-items: stretch; padding: 8px;
+  border-color: transparent; border-radius: 0; background: #080b0a; box-shadow: none;
+}
+
+.expanded-sparkline-chart.has-trades::before,
+.expanded-sparkline-chart.has-trades::after {
+  display: none;
 }
 
 .expanded-sparkline-chart.has-trades .expanded-sparkline-chart-main {
-  position: relative;
-  flex: 1 1 auto;
-  min-width: 0;
+  position: relative; flex: 1 1 auto; min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px; background: #0b0e0d; overflow: hidden;
 }
 
 .robinhood-trades-panel {
-  flex: 0 0 340px;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  border: 1px solid rgba(55, 61, 75, 0.92);
-  border-radius: 12px;
-  background: rgba(8, 10, 14, 0.92);
-  overflow: hidden;
+  flex: 0 0 300px; display: flex; flex-direction: column; min-height: 0;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px; background: #0b0e0d; overflow: hidden;
 }
 
 .robinhood-trades-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  padding: 10px 12px;
-  border-bottom: 1px solid rgba(55, 61, 75, 0.6);
+  display: flex; align-items: center; gap: 8px; min-height: 32px;
+  padding: 6px 10px; box-sizing: border-box;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .robinhood-trades-title {
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  color: #e6e9ef;
+  color: #e6e9e7; font-size: 12px; font-weight: 700;
 }
 
 .robinhood-trades-status {
-  font-size: 11px;
-  color: rgba(230, 233, 239, 0.5);
+  margin-left: auto; color: #616966; font-size: 11px;
 }
 
 .robinhood-trades-scopes {
-  display: flex;
-  gap: 4px;
-  padding: 6px 10px;
-  border-bottom: 1px solid rgba(55, 61, 75, 0.45);
+  display: flex; gap: 2px; margin-left: auto; padding: 2px; border-radius: 5px;
+  background: rgba(255, 255, 255, 0.025);
 }
 
 .robinhood-trades-scopes button {
-  padding: 4px 10px;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  background: transparent;
-  color: rgba(230, 233, 239, 0.55);
-  font: inherit;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  cursor: pointer;
+  padding: 3px 8px; border: 0; border-radius: 4px;
+  background: transparent; color: #7c8480; font: inherit;
+  font-size: 10px; font-weight: 500; text-transform: uppercase; cursor: pointer;
 }
 
 .robinhood-trades-scopes button:hover,
 .robinhood-trades-scopes button.active {
-  border-color: rgba(82, 140, 255, 0.55);
-  background: rgba(82, 140, 255, 0.14);
-  color: #e6e9ef;
+  background: #1b2f25;
+  color: #3ddc97;
 }
 
 .robinhood-trades-scopes button:focus-visible {
@@ -3401,18 +3428,15 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 
 .robinhood-trades-cols,
 .robinhood-trade-row {
-  display: grid;
-  grid-template-columns: minmax(58px, 0.9fr) minmax(54px, 0.8fr) minmax(0, 1fr) 40px;
-  gap: 8px;
-  align-items: center;
+  display: grid; grid-template-columns: 1fr 1fr 1.2fr 0.6fr;
+  gap: 6px; align-items: center;
+  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
 }
 
 .robinhood-trades-cols {
-  padding: 6px 12px;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: rgba(230, 233, 239, 0.45);
+  padding: 6px 10px; color: #616966; font-size: 9px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  text-transform: uppercase; letter-spacing: 0.04em;
 }
 
 .robinhood-trades-col-age {
@@ -3422,17 +3446,15 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 .robinhood-trades-list {
   flex: 1 1 auto;
   margin: 0;
-  padding: 0 4px 6px;
+  padding: 0;
   list-style: none;
   overflow-y: auto;
 }
 
 .robinhood-trade-row {
-  padding: 6px 8px;
-  font-size: 12.5px;
-  font-variant-numeric: tabular-nums;
-  border-radius: 6px;
-  white-space: nowrap;
+  padding: 5px 10px; border-radius: 0; font-size: 11px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.035);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
 }
 
 .robinhood-trade-row:hover {
@@ -3444,26 +3466,26 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 }
 
 .robinhood-trade-row.is-buy .robinhood-trade-amount {
-  color: #3ad29f;
+  color: #3ddc97;
 }
 
 .robinhood-trade-row.is-sell .robinhood-trade-amount {
-  color: #ff6b7d;
+  color: #f2555a;
 }
 
 .robinhood-trade-mc {
-  color: rgba(230, 233, 239, 0.9);
+  color: #b8bfbb;
 }
 
 .robinhood-trade-trader {
-  color: rgba(230, 233, 239, 0.66);
+  color: #8a918d;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .robinhood-trade-age {
   text-align: right;
-  color: rgba(230, 233, 239, 0.5);
+  color: #737b77;
 }
 
 .robinhood-trades-empty {
@@ -3831,6 +3853,19 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   font-size: 13px;
   line-height: 1;
   cursor: pointer;
+}
+
+.robinhood-holder-page footer .rh-page-btn {
+  width: 14px; height: 18px; border: 0; background: transparent; font-size: 15px;
+}
+
+.robinhood-holder-page footer .rh-page-btn:not(:disabled):hover {
+  color: #fff;
+}
+
+.robinhood-holder-page footer .rh-page-btn:focus-visible {
+  outline: 1px solid rgba(103, 160, 255, 0.8);
+  outline-offset: 1px;
 }
 
 .robinhood-holder-page footer .rh-page-indicator {
@@ -10373,6 +10408,15 @@ TEMP_LEGACY_BAR_TITLE {
 .legacy-auth-modal[data-auth-modal-scope="sparkline"] .legacy-profile-modal-close:hover {
   border-color: rgba(104, 162, 255, 0.54);
   background: rgba(10, 18, 30, 0.36);
+}
+
+.expanded-sparkline-toolbar .legacy-profile-modal-close {
+  width: 18px; min-width: 18px; height: 18px; border: 0; border-radius: 4px;
+  background: transparent; color: #7c8480; font-size: 12px; backdrop-filter: none; box-shadow: none;
+}
+
+.expanded-sparkline-toolbar .legacy-profile-modal-close:hover {
+  border-color: transparent; background: #1a1f1c; color: #e6e9e7;
 }
 
 .legacy-auth-panel-expanded-sparkline.is-showing-alert-recap .expanded-sparkline-chart {

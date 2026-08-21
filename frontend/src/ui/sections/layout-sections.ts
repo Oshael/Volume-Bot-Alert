@@ -21,19 +21,19 @@ import {
   sanitizeLoginEmailValue,
 } from './login-form-utils';
 import { escapeHtml, sanitizeOptionalHttpUrl } from './html-safety';
-import { bindCopyButtons, bindSparklineHover, fmtMoney, fmtPct, getAgeToneClassFromCreatedAt, getTradeTerminalLabel, renderFlash, renderSparklineFigure, renderTokenLaunchpadBadge, renderTotalLiquidityCell, renderTradeTerminalIconForKey } from './shared';
+import { bindCopyButtons, bindSparklineHover, fmtMoney, fmtPct, getTradeTerminalLabel, renderFlash, renderSparklineFigure, renderTradeTerminalIconForKey } from './shared';
 import { fmtMockSol, fmtMockSolAmount, resolveLiveMockSolUsdcRate, resolveMockTradeSolUsdcRate, resolveMockTradingPositionPnl } from '../../utils/mock-trading-display';
 import { buildTokenExplorerUrl, buildTokenIdentityKey, buildTokenMarketUrl, resolveChainScopedConfigValue, type TokenChain } from '../../utils/token-chain';
 import { buildTokenChartViewportKey, getTokenChartValuationLabel, normalizeTokenChartCandle, normalizeTokenChartCandles, resolveTokenChartValuationType } from '../../utils/token-chart';
 import { resolveTokenValuation } from '../../utils/token-valuation';
-import { buildTokenChainIcon, buildTokenIdentityBadgeGroup, getTokenChainTitle } from '../token-chain-badge';
+import { buildTokenChainIcon, getTokenChainTitle } from '../token-chain-badge';
 import { destroyRobinhoodExpandedTrades, mountRobinhoodExpandedTrades } from '../robinhood-expanded-trades';
 import {
   destroyRobinhoodExpandedHolders,
   mountRobinhoodExpandedHolders,
   renderRobinhoodExpandedHolderViews,
 } from '../robinhood-expanded-holders';
-import { bindMonitoredTickerPeerPanelClose, buildTickerPeerBadge } from './monitored-section';
+import { bindMonitoredTickerPeerPanelClose } from './monitored-section';
 import { bindTelegramSettings, renderTelegramSettings } from './telegram-settings';
 
 const SITE_LOGO_URL = new URL('../../../logofinal1.png', import.meta.url).href;
@@ -76,13 +76,12 @@ const PASSWORD_RESET_TRANSIENT_NOTICES = new Set([
   'Resetting password...',
 ]);
 const EXPANDED_CHART_GRANULARITY_OPTIONS = [
-  { label: '1m', value: 1 },
-  { label: '5m', value: 5 },
-  { label: '15m', value: 15 },
-  { label: '30m', value: 30 },
-  { label: '1h', value: 60 },
-  { label: '4h', value: 240 },
-  { label: '24h', value: 1440 },
+  { label: '1M', value: 1 },
+  { label: '5M', value: 5 },
+  { label: '15M', value: 15 },
+  { label: '1H', value: 60 },
+  { label: '4H', value: 240 },
+  { label: '24H', value: 1440 },
 ];
 const EXPANDED_CHART_FUTURE_DAYS_BY_GRANULARITY = new Map<number, number>([
   [1, 1],
@@ -4160,8 +4159,13 @@ function renderExpandedChartArea(
   address: string,
   chain: TokenChain,
   timeZone: string,
+  activeGranularityMinutes: number,
+  oneMinuteAvailable: boolean,
 ) {
   const body = renderExpandedChartBody(state, sparkline, address, chain);
+  const granularityControls = renderExpandedGranularityControls(
+    activeGranularityMinutes, oneMinuteAvailable,
+  );
   const loadingClass = sparkline.loading ? ' is-loading' : '';
   const loadingOverlay = sparkline.loading
     ? '<span class="expanded-sparkline-loading" role="status" aria-label="Loading full chart"><span class="expanded-sparkline-loading-spinner" aria-hidden="true"></span></span>'
@@ -4169,6 +4173,7 @@ function renderExpandedChartArea(
   if (chain !== 'robinhood') {
     return `
         <div class="expanded-sparkline-chart${loadingClass}">
+          ${granularityControls}
           ${body}
           ${renderExpandedTimeZoneControl(timeZone)}
           ${loadingOverlay}
@@ -4177,6 +4182,7 @@ function renderExpandedChartArea(
   return `
         <div class="expanded-sparkline-chart${loadingClass} has-trades">
           <div class="expanded-sparkline-chart-main">
+            ${granularityControls}
             ${body}
             ${renderExpandedTimeZoneControl(timeZone)}
             ${loadingOverlay}
@@ -4208,13 +4214,13 @@ function renderExpandedSparklineModal(state: AppState, address: string) {
   }
 
   const symbol = token?.symbol || token?.label || address.slice(0, 8);
-  const name = token?.name || token?.label || address;
   const stats = getExpandedSparklineStats(sparkline);
   const imageUrl = sanitizeOptionalHttpUrl(token?.imageUrl);
   const ageLabel = formatExpandedTokenAge(token?.createdAt);
   const oneMinuteAvailable = isExpandedOneMinuteChartOptionAvailable(token, sparkline, chain);
   const chartArea = renderExpandedChartArea(
     state, sparkline, address, chain, state.ui.expandedSparklineTimeZone,
+    state.ui.expandedSparklineGranularityMinutes, oneMinuteAvailable,
   );
   const expandedBody = renderExpandedModalBody(chain, chartArea, token?.holderCount);
 
@@ -4224,20 +4230,14 @@ function renderExpandedSparklineModal(state: AppState, address: string) {
       <div class="legacy-auth-panel legacy-auth-panel-expanded-sparkline${getExpandedSparklinePanelClass(chain)}" data-auth-panel="expanded-sparkline" role="dialog" aria-modal="true" aria-labelledby="expanded-sparkline-title">
         <div class="expanded-sparkline-toolbar">
           ${renderExpandedSparklineIdentity(
-            symbol, name, imageUrl, address, chain, token?.tickerPeers,
-            token?.launchpadId, token?.pairDexId,
+            symbol, imageUrl, token?.tickerPeers,
           )}
+          <span class="expanded-sparkline-toolbar-divider" aria-hidden="true"></span>
           ${renderExpandedSparklineStatsRow(
-            token,
-            chain === 'solana' ? state.data.meteoraByAddress[address] : undefined,
-            Number(state.data.configs['meteora-min-pool']) || 5000,
-            stats.latestValue,
-            ageLabel,
-            chain,
-            getTokenChartValuationLabel(sparkline),
+            token, stats.latestValue, ageLabel, getTokenChartValuationLabel(sparkline),
           )}
-          ${renderExpandedGranularityControls(state.ui.expandedSparklineGranularityMinutes, oneMinuteAvailable)}
-          <button type="button" class="legacy-profile-modal-close" data-action="close-expanded-sparkline" aria-label="Close dialog">X</button>
+          ${renderExpandedDetailsPopover(token, address, chain)}
+          <button type="button" class="legacy-profile-modal-close" data-action="close-expanded-sparkline" aria-label="Close dialog">×</button>
         </div>
         ${expandedBody}
       </div>
@@ -4247,83 +4247,76 @@ function renderExpandedSparklineModal(state: AppState, address: string) {
 
 function renderExpandedSparklineIdentity(
   symbol: string,
-  name: string,
   imageUrl: string | null,
-  address: string,
-  chain: TokenChain,
   tickerPeers: ManualTokenEntry['tickerPeers'],
-  launchpadId: ManualTokenEntry['launchpadId'],
-  pairDexId: ManualTokenEntry['pairDexId'],
 ) {
   const avatar = imageUrl
     ? `<img src="${escapeHtml(imageUrl)}" alt="" class="expanded-sparkline-avatar" />`
     : `<span class="expanded-sparkline-avatar expanded-sparkline-avatar-placeholder">${escapeHtml(symbol.slice(0, 2).toUpperCase())}</span>`;
-  const identityBadges = buildTokenIdentityBadgeGroup(
-    buildTickerPeerBadge(tickerPeers, chain, address),
-    chain,
-    address,
-  );
-  identityBadges.classList.add('expanded-sparkline-identity-badges');
+  const rank = tickerPeers?.sourcePeerRole === 'og' ? 'OG' : tickerPeers?.sourcePeerRole === 'mcap_leader' ? '#1' : tickerPeers?.sourcePeerRole === 'peer_warning' ? '!' : '';
   return `
     <div class="expanded-sparkline-identity">
-      <span class="token-avatar-wrap expanded-sparkline-avatar-wrap">${avatar}${renderTokenLaunchpadBadge(address, chain, launchpadId, pairDexId)}</span>
-      <span class="expanded-sparkline-identity-copy">
-        <strong id="expanded-sparkline-title">${escapeHtml(symbol)}</strong>
-        <small>${escapeHtml(name)}</small>
-        ${identityBadges.outerHTML}
-      </span>
+      ${avatar}
+      <strong id="expanded-sparkline-title">${escapeHtml(symbol)}</strong>
+      <span class="expanded-sparkline-rank">${escapeHtml(rank)}</span>
     </div>
   `;
 }
 
 function renderExpandedSparklineStatsRow(
   token: ReturnType<typeof getTrackedToken>,
-  meteoraEntry: AppState['data']['meteoraByAddress'][string] | undefined,
-  meteoraMinPool: number,
   latestValue: number | null,
   ageLabel: string,
-  chain: TokenChain,
   valuationLabel: string,
 ) {
+  const separator = '<span class="expanded-sparkline-stat-separator" aria-hidden="true">/</span>';
   return `
-    <div class="expanded-sparkline-popover-subhead">
-      ${renderExpandedSparklineStat('mcap', valuationLabel, fmtMoney(latestValue))}
-      ${renderExpandedSparklineStat('age', 'AGE', ageLabel, getAgeToneClassFromCreatedAt(token?.createdAt))}
-      ${renderExpandedSparklineStat('vol-1h', 'VOL 1H', fmtMoney(token?.volume1h))}
-      ${renderExpandedSparklineStat('vol-6h', 'VOL 6H', fmtMoney(token?.volume6h))}
-      ${renderExpandedSparklineStat('vol-24h', 'VOL 24H', fmtMoney(token?.volume24h))}
-      ${chain === 'solana'
-        ? renderExpandedTotalLiquidityStat(token, meteoraEntry, meteoraMinPool)
-        : renderExpandedSparklineStat('total-liq', 'LIQUIDITY', fmtMoney(token?.liquidityUsd))}
+    <div class="expanded-sparkline-stat-strip">
+      ${renderExpandedSparklineStat(valuationLabel, latestValue)}${separator}
+      ${renderExpandedSparklineStat('LIQ', token?.liquidityUsd)}${separator}
+      <span class="expanded-sparkline-stat-age">${escapeHtml(ageLabel)}</span>${separator}
+      ${renderExpandedSparklineStat('1H', token?.volume1h, true)}${separator}
+      ${renderExpandedSparklineStat('6H', token?.volume6h)}${separator}
+      ${renderExpandedSparklineStat('24H', token?.volume24h)}
     </div>
   `;
 }
 
-function renderExpandedSparklineStat(variant: string, label: string, value: string, valueClassName = '') {
-  const valueClassAttribute = valueClassName ? ` class="${escapeHtml(valueClassName)}"` : '';
-  return `<span class="expanded-sparkline-stat expanded-sparkline-stat-${escapeHtml(variant)}"><span>${escapeHtml(label)}</span><strong${valueClassAttribute}>${escapeHtml(value)}</strong></span>`;
+function renderExpandedSparklineStat(label: string, value?: number | null, active = false) {
+  const formatted = fmtMoney(value).replace(/^\$/, '');
+  return `<span class="expanded-sparkline-stat${active ? ' is-active' : ''}"><span>${escapeHtml(label)}</span> <strong>${escapeHtml(formatted)}</strong></span>`;
 }
 
-function renderExpandedTotalLiquidityStat(
+function formatExpandedHolderCount(value: number | null | undefined) {
+  return Number.isFinite(value)
+    ? Math.max(0, Math.trunc(Number(value))).toLocaleString('en-US')
+    : '—';
+}
+
+function renderExpandedDetailsPopover(
   token: ReturnType<typeof getTrackedToken>,
-  meteoraEntry: AppState['data']['meteoraByAddress'][string] | undefined,
-  meteoraMinPool: number,
+  address: string,
+  chain: TokenChain,
 ) {
-  if (!token) {
-    return renderExpandedSparklineStat('total-liq', 'TOTAL LP', '-');
-  }
-
-  const trackedMeteora = token.meteora;
-  const resolvedMeteora = meteoraEntry || (trackedMeteora ? {
-    ...trackedMeteora,
-    tvl: Number(trackedMeteora.tvl) || 0,
-  } : undefined);
-
+  const explorerUrl = buildTokenExplorerUrl(chain, address);
+  const marketUrl = sanitizeOptionalHttpUrl(token?.pairUrl)
+    || buildTokenMarketUrl(chain, address, token?.pairUrl);
+  const links = [
+    ['Explorer', explorerUrl],
+    ['Chart', marketUrl],
+    ['X', sanitizeOptionalHttpUrl(token?.twitterUrl)],
+    ['Community', sanitizeOptionalHttpUrl(token?.communityUrl)],
+  ].filter((entry): entry is [string, string] => Boolean(entry[1]));
   return `
-    <div class="expanded-sparkline-stat expanded-sparkline-stat-total-liq">
-      <span>TOTAL LP</span>
-      <div class="expanded-sparkline-stat-rich-value">${renderTotalLiquidityCell(token, resolvedMeteora, meteoraMinPool)}</div>
-    </div>
+    <details class="expanded-sparkline-details">
+      <summary>detalhes <span aria-hidden="true">⌄</span></summary>
+      <div class="expanded-sparkline-details-popover">
+        <span class="expanded-sparkline-details-metric"><span>Liquidity</span><strong>${escapeHtml(fmtMoney(token?.liquidityUsd))}</strong></span>
+        <span class="expanded-sparkline-details-metric"><span>Holders</span><strong data-holder-count>${escapeHtml(formatExpandedHolderCount(token?.holderCount))}</strong></span>
+        <span class="expanded-sparkline-details-contract"><span>Contract</span><code title="${escapeHtml(address)}">${escapeHtml(`${address.slice(0, 8)}…${address.slice(-6)}`)}</code></span>
+        <nav aria-label="Token links">${links.map(([label, url]) => `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`).join('')}</nav>
+      </div>
+    </details>
   `;
 }
 

@@ -677,7 +677,7 @@ const ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES = {
 };
 
 const ROBINHOOD_IDENTITY_BADGE_API_FIXTURES = {
-  ...ROBINHOOD_MARKET_API_FIXTURES,
+  ...ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES,
   'GET /api/dashboard/monitored': async (request) => {
     const fixture = await buildMarketPanelFixture(request, 'monitored');
     return {
@@ -1531,7 +1531,7 @@ test('sends Robinhood identity through manual, star and block actions', async ({
   expect(diagnostics.pageErrors).toEqual([]);
 });
 
-test('places expanded token identity badges below the subtitle', async ({ page }) => {
+test('renders the compact expanded chart header and details popover', async ({ page }) => {
   const diagnostics = await openAuthenticatedWorkspace(page, ROBINHOOD_IDENTITY_BADGE_API_FIXTURES);
   const selector = page.getByRole('group', { name: 'Filter workspace by blockchain' });
   await selector.locator('[data-chain="robinhood"]').click();
@@ -1547,23 +1547,19 @@ test('places expanded token identity badges below the subtitle', async ({ page }
   await expect(dialog).toBeVisible();
   await expect(page.locator('.workspace-market-ticker')).toHaveCSS('z-index', '980');
   await expect(page.locator('.workspace-market-ticker')).toBeVisible();
-  const identityCopy = dialog.locator('.expanded-sparkline-identity-copy');
-  const identityBadges = identityCopy.locator(':scope > .expanded-sparkline-identity-badges');
-  await expect(identityCopy.locator(':scope > strong .token-chain-badge')).toHaveCount(0);
-  await expect(identityBadges.locator('.monitored-ticker-peer-badge')).toHaveText('OG');
-  await expect(identityBadges.locator('.token-chain-badge')).toHaveAttribute('data-chain', 'robinhood');
-  const expandedAge = dialog.locator('.expanded-sparkline-stat-age > strong');
-  await expect(expandedAge).toHaveClass('warn');
-  await expect(expandedAge).toHaveCSS('color', 'rgb(255, 138, 0)');
-  const identityRows = await identityCopy.evaluate((copy) => {
-    const subtitle = copy.querySelector(':scope > small')?.getBoundingClientRect();
-    const badges = copy.querySelector(':scope > .expanded-sparkline-identity-badges')?.getBoundingClientRect();
-    return {
-      subtitleBottom: subtitle?.bottom ?? 0,
-      badgesTop: badges?.top ?? 0,
-    };
-  });
-  expect(identityRows.badgesTop).toBeGreaterThanOrEqual(identityRows.subtitleBottom);
+  const toolbar = dialog.locator('.expanded-sparkline-toolbar');
+  await expect(toolbar).toHaveCSS('height', '28px');
+  await expect(toolbar).toHaveCSS('padding', '0px 10px');
+  await expect(toolbar.locator('.expanded-sparkline-avatar')).toHaveCSS('width', '16px');
+  await expect(toolbar.locator('.expanded-sparkline-rank')).toHaveText('OG');
+  await expect(toolbar.locator('.expanded-sparkline-stat-strip')).toContainText('FDV');
+  await expect(toolbar.locator('.expanded-sparkline-stat-strip')).toContainText('LIQ');
+  await expect(toolbar.locator('.expanded-sparkline-stat.is-active')).toContainText('1H');
+  const details = toolbar.locator('.expanded-sparkline-details');
+  await details.locator('summary').click();
+  await expect(details.locator('.expanded-sparkline-details-popover')).toBeVisible();
+  await expect(details).toContainText('Holders');
+  await expect(details.getByRole('link', { name: 'Explorer' })).toBeVisible();
   expect(diagnostics.unexpectedRequests).toEqual([]);
   expect(diagnostics.pageErrors).toEqual([]);
 });
@@ -1578,6 +1574,7 @@ test('opens a Robinhood FDV chart and applies only its realtime updates', async 
     socketScenario,
   );
 
+  await page.getByRole('group', { name: 'Filter workspace by blockchain' }).locator('[data-chain="robinhood"]').click();
   const robinhoodAlert = page.locator('article.alert-row[data-alert-id="backend:hvnc:102"]');
   await expect(robinhoodAlert).toBeVisible();
   await robinhoodAlert.locator('[data-action="open-alert-chart"]').click();
@@ -1585,7 +1582,7 @@ test('opens a Robinhood FDV chart and applies only its realtime updates', async 
 
   const dialog = page.locator('[data-auth-modal="expanded-sparkline"]');
   await expect(dialog).toBeVisible();
-  await expect(dialog.locator('.expanded-sparkline-stat-mcap')).toContainText('FDV');
+  await expect(dialog.locator('.expanded-sparkline-stat-strip')).toContainText('FDV');
   await expect(dialog.locator('.expanded-sparkline-footnote')).toHaveCount(0);
   const timeZoneControl = dialog.locator('.expanded-sparkline-time-zone-control');
   const timeZoneLabel = timeZoneControl.locator('[data-expanded-sparkline-time-zone-label]');
@@ -1598,9 +1595,12 @@ test('opens a Robinhood FDV chart and applies only its realtime updates', async 
     'Interactive FDV candlestick chart',
   );
   const granularityControls = dialog.getByRole('group', { name: 'Chart resolution' });
-  const oneMinuteButton = granularityControls.getByRole('button', { name: '1m', exact: true });
-  await expect(granularityControls.getByRole('button', { name: '15m', exact: true }))
+  const oneMinuteButton = granularityControls.getByRole('button', { name: '1M', exact: true });
+  await expect(granularityControls.getByRole('button', { name: '15M', exact: true }))
     .toHaveAttribute('aria-pressed', 'true');
+  await expect(granularityControls.getByRole('button', { name: '30M', exact: true })).toHaveCount(0);
+  await expect(granularityControls).toHaveCSS('top', '8px');
+  await expect(granularityControls).toHaveCSS('left', '8px');
   await expect(oneMinuteButton).toBeVisible();
   await oneMinuteButton.click();
   await expect(oneMinuteButton).toHaveAttribute('aria-pressed', 'true');
@@ -1612,7 +1612,7 @@ test('opens a Robinhood FDV chart and applies only its realtime updates', async 
     allAvailable: true, points: 10_000,
   });
   expect(chartRequestPayloads.find((payload) => payload.granularityMinutes === 1)).toMatchObject({
-    allAvailable: false, points: 720,
+    allAvailable: false, points: 10_000,
   });
   await expect.poll(() => socketScenario.clientFrames.some((frame) => (
     frame.includes('"market:sync"') && frame.includes(`"address":"${ROBINHOOD_TOKEN}"`)
@@ -1622,6 +1622,8 @@ test('opens a Robinhood FDV chart and applies only its realtime updates', async 
   ))).toBe(true);
 
   const tradesPanel = dialog.locator('[data-robinhood-trades-panel]');
+  await expect(tradesPanel).toHaveCSS('width', '300px');
+  await expect(tradesPanel.locator('.robinhood-trades-head')).toHaveCSS('padding', '6px 10px');
   await expect(tradesPanel).toContainText('$10');
   sendSocketEvent(socketScenario, 'market:trade', {
     type: 'market:trade', chain: 'robinhood', address: ROBINHOOD_TOKEN,
@@ -1758,10 +1760,13 @@ test('renders holder pages without the holder bar chart in the Robinhood expande
   await expect(dialog.locator('[data-robinhood-trades-panel]')).toBeVisible();
   await expect(panel.locator('[data-holder-history]')).toHaveCount(0);
   await expect(panel.locator('[data-holder-bar]')).toHaveCount(0);
+  await expect(panel.locator('[data-holder-count]')).toHaveCount(0);
+  const holderStat = dialog.locator('.expanded-sparkline-details-metric').filter({ hasText: 'Holders' });
+  await expect(holderStat).toBeAttached();
   await expect.poll(() => socketScenario.clientFrames.some((frame) => (
     frame.includes('"market:sync"') && frame.includes(`"address":"${ROBINHOOD_TOKEN}"`)
   ))).toBe(true);
-  const holderCount = panel.locator('[data-holder-count]');
+  const holderCount = holderStat.locator('[data-holder-count]');
   const holderPayload = {
     type: 'holder:count', chain: 'robinhood', address: ROBINHOOD_TOKEN,
     holderCount: 4429, source: 'ledger_live', observedAt: '2026-07-15T12:01:00.000Z',
