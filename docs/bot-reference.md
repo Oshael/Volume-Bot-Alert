@@ -1202,6 +1202,12 @@ ele não infere classificações nem consulta fontes externas. Janelas históric
 sobrepostas para o mesmo endereço/tipo fazem o lookup falhar, sem escolher uma
 evidência arbitrariamente.
 
+O materializador `robinhood-holder-cex-materializer` cruza os saldos positivos
+do ledger com entradas `cex` válidas exatamente na frontier live. As consultas
+ao registro são particionadas em lotes de 10 mil wallets. Ledger ausente ou não
+live adia a publicação; matches publicam `known_cex_address` com a evidência
+auditada completa. Nenhuma inferência comportamental ou chamada externa ocorre.
+
 O worker lê `Transfer` por range com a coorte enviada como allowlist `address` ao
 RPC, commita ranges em ordem e não grava o histórico bruto no journal. Se o node
 rejeitar o tamanho da allowlist, ela é dividida ao meio adaptativamente sem
