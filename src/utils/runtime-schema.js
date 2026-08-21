@@ -3703,8 +3703,9 @@ const SCHEMA_GROUPS = [
       }, {
         name: 'rh_holder_classifications_reason_check',
         includes: [
-          'CHECK', 'registered_token_pool', 'known_cex_address', 'early_launch_buy',
-          'new_wallet_at_first_buy', 'creator_token_distribution',
+          'CHECK', 'registered_token_pool', 'registered_v4_pool_manager',
+          'known_cex_address', 'early_launch_buy', 'new_wallet_at_first_buy',
+          'creator_token_distribution',
           'creator_direct_funding',
         ],
       }, {
@@ -3764,6 +3765,85 @@ const SCHEMA_GROUPS = [
       indexes: [{
         name: 'idx_rh_holder_classification_states_status',
         includes: ['chain', 'classification_version', 'status', 'classifier', 'token_address'],
+      }],
+    }],
+  },
+  {
+    key: 'stage144-robinhood-holder-distribution-metrics',
+    name: 'Stage 144 Robinhood holder distribution metrics',
+    repair: 'node src/utils/db-init-stage144.js',
+    tables: [{
+      table: 'robinhood_holder_distribution_metrics',
+      columns: [
+        'chain', 'token_address', 'metric', 'classification_version', 'status',
+        'status_reason', 'value_numerator_raw', 'value_denominator_raw',
+        'wallet_count', 'group_count', 'evidence_json', 'through_block_number',
+        'through_block_hash', 'observed_at', 'created_at', 'updated_at',
+      ],
+      columnTypes: {
+        value_numerator_raw: {
+          dataType: 'numeric', numericPrecision: 78, numericScale: 0,
+        },
+        value_denominator_raw: {
+          dataType: 'numeric', numericPrecision: 78, numericScale: 0,
+        },
+      },
+      constraints: [{
+        name: 'rh_holder_distribution_metrics_pkey',
+        includes: [
+          'PRIMARY KEY', 'chain', 'token_address', 'metric', 'classification_version',
+        ],
+      }, {
+        name: 'rh_holder_distribution_metrics_chain_check',
+        includes: ['CHECK', 'robinhood'],
+      }, {
+        name: 'rh_holder_distribution_metrics_token_check',
+        includes: ['CHECK', 'token_address'],
+      }, {
+        name: 'rh_holder_distribution_metrics_metric_check',
+        includes: [
+          'CHECK', 'top10', 'top50', 'snipers', 'fresh_wallets', 'insiders',
+          'dev_hold', 'lp_locked', 'bundled',
+        ],
+      }, {
+        name: 'rh_holder_distribution_metrics_version_check',
+        includes: ['CHECK', 'classification_version', 'rh_holder_v'],
+      }, {
+        name: 'rh_holder_distribution_metrics_status_check',
+        includes: [
+          'CHECK', 'unavailable', 'pending', 'ready', 'stale', 'reorged',
+          'status_reason',
+        ],
+      }, {
+        name: 'rh_holder_distribution_metrics_values_check',
+        includes: [
+          'CHECK', 'value_numerator_raw', 'value_denominator_raw', 'wallet_count',
+          'group_count', 'bundled',
+        ],
+      }, {
+        name: 'rh_holder_distribution_metrics_evidence_check',
+        includes: ['CHECK', 'jsonb_typeof', 'evidence_json'],
+      }, {
+        name: 'rh_holder_distribution_metrics_frontier_pair_check',
+        includes: ['CHECK', 'through_block_number', 'through_block_hash'],
+      }, {
+        name: 'rh_holder_distribution_metrics_frontier_value_check',
+        includes: ['CHECK', 'through_block_number', 'through_block_hash'],
+      }, {
+        name: 'rh_holder_distribution_metrics_status_frontier_check',
+        includes: ['CHECK', 'ready', 'stale', 'reorged', 'through_block_number'],
+      }, {
+        name: 'rh_holder_distribution_metrics_payload_check',
+        includes: [
+          'CHECK', 'unavailable', 'pending', 'ready', 'stale', 'reorged',
+          'value_numerator_raw', 'value_denominator_raw', 'wallet_count', 'group_count',
+        ],
+      }],
+      indexes: [{
+        name: 'idx_rh_holder_distribution_metrics_status',
+        includes: [
+          'chain', 'classification_version', 'status', 'metric', 'token_address',
+        ],
       }],
     }],
   },

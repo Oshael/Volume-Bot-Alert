@@ -1179,6 +1179,14 @@ Na V4 usa `registered_v4_pool_manager`; reaplique a Stage 143 para liberar esse
 reason code em bancos que já possuíam o constraint anterior. O endereço é
 infraestrutura LP e não deve produzir AVG BUY/SELL ou PnL de wallet na futura UI.
 
+O Stage 144 cria `robinhood_holder_distribution_metrics` para snapshots
+versionados de métricas agregadas. Percentuais são persistidos como
+numerador/denominador raw; `BUNDLED` usa `wallet_count` e `group_count`.
+Estados sem evidência pronta não podem armazenar valores ou fingir zero. Aplique
+`node src/utils/db-init-stage144.js` antes de iniciar código que contenha esse
+grupo no runtime schema. Ainda não existe repositório, worker ou endpoint para a
+tabela.
+
 O worker lê `Transfer` por range com a coorte enviada como allowlist `address` ao
 RPC, commita ranges em ordem e não grava o histórico bruto no journal. Se o node
 rejeitar o tamanho da allowlist, ela é dividida ao meio adaptativamente sem
