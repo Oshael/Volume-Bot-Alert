@@ -1022,10 +1022,13 @@ Captura, apply e promoção local usam um advisory fence transacional compartilh
 portanto o cursor live pode avançar enquanto um lote é aplicado. Rewind de reorg,
 recuperações de drift e quarentena usam o mesmo fence exclusivo e esperam operações
 normais terminarem antes de alterar journal ou balances; o apply não mantém mais
-`FOR UPDATE` no cursor durante o lote. O apply
-escolhe o evento elegível global mais antigo e mantém afinidade no token enquanto houver eventos;
-o índice parcial da stage 121 preserva a ordem canônica por token sem reescanear
-o journal pendente inteiro a cada evento. O `lastResult.timing` da lease do apply
+`FOR UPDATE` no cursor durante o lote. Antes do drain, o apply lista os tokens
+`shadow/live` que possuem pendência por probes no índice parcial da stage 121,
+ordenados pela primeira posição canônica de cada token. O drain usa então somente
+o caminho indexado por token e mantém afinidade enquanto o lote vier cheio; lote
+parcial já prova que aquele token foi drenado e evita uma consulta vazia adicional.
+Assim eventos `missing/backfilling` não são reescaneados para escolher cada token.
+O `lastResult.timing` da lease do apply
 separa duração total, drain, chamadas do ledger, reparo de drift, promoção shadow,
 publicação e overhead; também expõe quantidade/duração máxima das chamadas, tamanho
 médio/máximo efetivo dos lotes e EPS interno. Essas métricas permitem distinguir

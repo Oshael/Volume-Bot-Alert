@@ -116,6 +116,10 @@ describe('Robinhood holder ledger persistence', () => {
       assert.deepEqual(first, {
         insertedTransfers: 2, duplicateTransfers: 1, cursorVersion: 0,
       });
+      assert.deepEqual(await repository.listPendingTokenAddresses({ limit: 10 }), [TOKEN]);
+      assert.deepEqual(await repository.listPendingTokenAddresses({
+        limit: 10, excludeTokenAddresses: [TOKEN],
+      }), []);
       assert.deepEqual(await repository.applyNextPendingEvent({ maxEvents: 2 }), {
         status: 'applied', tokenAddress: TOKEN, holderCount: '2', holderDelta: 0,
         appliedEvents: 2, attemptedEvents: 2,

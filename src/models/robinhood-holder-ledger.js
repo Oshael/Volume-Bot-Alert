@@ -344,6 +344,44 @@ async function lockApplicableTokenEvents(client, first, limit) {
   return result.rows;
 }
 
+async function lockDirectApplicableTokenEvents(client, input, limit) {
+  const tokenAddress = hex(input.onlyTokenAddress, 20, 'only token');
+  const excluded = tokenFilter(input.excludeTokenAddresses, 'excluded token');
+  await lockReorgFence(client, 'shared');
+  if (excluded.includes(tokenAddress)) return [];
+  const result = await client.query(
+    `SELECT journal.block_number, journal.block_hash, journal.transaction_hash,
+            journal.transaction_index, journal.log_index, journal.token_address,
+            journal.from_wallet, journal.to_wallet, journal.amount_raw,
+            state.holder_count, state.version, state.ledger_status,
+            state.backfill_next_block, state.live_through_block
+       FROM robinhood_holder_transfer_journal journal
+       INNER JOIN robinhood_holder_token_states state
+         ON state.chain = journal.chain AND state.token_address = journal.token_address
+        AND state.ledger_status IN ('shadow', 'live')
+       INNER JOIN robinhood_holder_cursors cursor
+         ON cursor.chain = journal.chain AND cursor.stream = 'live'
+      WHERE journal.chain = 'robinhood' AND journal.applied = false
+        AND journal.token_address = $1
+      ORDER BY journal.block_number, journal.transaction_index, journal.log_index
+      LIMIT $2::int
+      FOR UPDATE OF journal, state`,
+    [tokenAddress, limit]
+  );
+  if (!result.rowCount) {
+    const cursor = await client.query(
+      `SELECT 1 FROM robinhood_holder_cursors
+        WHERE chain = 'robinhood' AND stream = 'live'`
+    );
+    if (!cursor.rowCount) {
+      const error = new Error('holder live cursor is missing');
+      error.code = 'holder_cursor_missing';
+      throw error;
+    }
+  }
+  return result.rows;
+}
+
 function transferFromRow(row) {
   return normalizeTransfer({
     blockNumber: row.block_number, blockHash: row.block_hash,
@@ -1028,10 +1066,15 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     const maxEvents = nonNegativeInteger(input.maxEvents ?? 1, 'apply.maxEvents');
     if (maxEvents < 1 || maxEvents > 1000) throw new Error('apply.maxEvents is invalid');
     return withTransaction(database, async (client) => {
-      const first = await lockNextApplicableEvent(client, input);
-      if (!first) return Object.freeze({ status: 'idle' });
-      const rows = await lockApplicableTokenEvents(client, first, maxEvents);
-      const locked = await loadLockedBalanceBook(client, first.token_address, rows);
+      let rows;
+      if (input.onlyTokenAddress != null) {
+        rows = await lockDirectApplicableTokenEvents(client, input, maxEvents);
+      } else {
+        const first = await lockNextApplicableEvent(client, input);
+        rows = first ? await lockApplicableTokenEvents(client, first, maxEvents) : [];
+      }
+      if (!rows.length) return Object.freeze({ status: 'idle' });
+      const locked = await loadLockedBalanceBook(client, rows[0].token_address, rows);
       const computed = computeApplicablePrefix(rows, locked);
       if (computed.suspicion && input.confirmDriftFingerprint != null
           && String(input.confirmDriftFingerprint) !== computed.suspicion.fingerprint) {
@@ -1271,6 +1314,33 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     return Object.freeze(result.rows.map((row) => row.token_address));
   }
 
+  async function listPendingTokenAddresses(input = {}) {
+    const excluded = tokenFilter(input.excludeTokenAddresses, 'excluded token');
+    const limit = nonNegativeInteger(input.limit ?? 5000, 'pendingTokens.limit');
+    if (limit < 1 || limit > 50_000) throw new Error('pendingTokens.limit is invalid');
+    const result = await database.query(
+      `SELECT state.token_address
+         FROM robinhood_holder_token_states state
+         INNER JOIN LATERAL (
+           SELECT journal.block_number, journal.transaction_index, journal.log_index
+             FROM robinhood_holder_transfer_journal journal
+            WHERE journal.chain = state.chain
+              AND journal.token_address = state.token_address
+              AND journal.applied = false
+            ORDER BY journal.block_number, journal.transaction_index, journal.log_index
+            LIMIT 1
+         ) pending ON true
+        WHERE state.chain = 'robinhood'
+          AND state.ledger_status IN ('shadow', 'live')
+          AND NOT (state.token_address = ANY($1::varchar[]))
+        ORDER BY pending.block_number, pending.transaction_index, pending.log_index,
+                 state.token_address
+        LIMIT $2::int`,
+      [excluded, limit]
+    );
+    return Object.freeze(result.rows.map((row) => row.token_address));
+  }
+
   async function quarantineMalformedToken(input = {}) {
     const tokenAddress = hex(input.tokenAddress, 20, 'malformed.tokenAddress');
     return withTransaction(database, async (client) => {
@@ -1354,7 +1424,8 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     appendCapturedRange, applyNextPendingEvent, promoteReadyShadowTokens,
     repairCapturedRange, rollbackAppliedTail,
     rewindOrphanedRange,
-    getCursor, listJournalBlockCheckpoints, listTrackedTokenAddresses,
+    getCursor, listJournalBlockCheckpoints, listPendingTokenAddresses,
+    listTrackedTokenAddresses,
     quarantineMalformedToken,
   });
 }

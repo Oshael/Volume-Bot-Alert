@@ -17,6 +17,13 @@ function harness(
     },
   };
   const ledger = {
+    listPendingTokenAddresses: async (input) => {
+      calls.push(['list-pending-tokens', input]);
+      const next = applyResults[0];
+      const tokenAddress = next?.tokenAddress || `0x${'f'.repeat(40)}`;
+      return next && next.status !== 'idle'
+        && !input.excludeTokenAddresses?.includes(tokenAddress) ? [tokenAddress] : [];
+    },
     applyNextPendingEvent: async (input) => {
       calls.push(input ? ['apply', input] : ['apply']);
       return applyResults.shift() || { status: 'idle' };
@@ -91,7 +98,7 @@ describe('Robinhood holder live runner', () => {
       holderCountUpdates: 0, holderCountPublished: 0,
       applyBudgetExhausted: false, nextBlock: '106', safeHead: '105',
     });
-    assert.equal(timing.applyCalls, 4);
+    assert.equal(timing.applyCalls, 3);
     assert.equal(timing.nonIdleApplyCalls, 3);
     assert.equal(timing.averageAttemptedEventsPerNonIdleCall, 1);
     assert.equal(timing.maxAttemptedEventsPerCall, 1);
@@ -99,6 +106,7 @@ describe('Robinhood holder live runner', () => {
     for (const key of [
       'totalDurationMs', 'drainDurationMs', 'applyCallDurationMs',
       'maxApplyCallDurationMs', 'driftRepairDurationMs',
+      'selectionDurationMs',
       'drainOverheadDurationMs', 'shadowPromotionDurationMs',
       'publicationDurationMs', 'appliedEventsPerSecond',
     ]) assert.equal(Number.isFinite(timing[key]), true, key);
@@ -109,8 +117,13 @@ describe('Robinhood holder live runner', () => {
         seedLimit: 25, maxInitialGapBlocks: 20_000,
       }],
       ['handoff'],
-      ['apply', { maxEvents: 10 }], ['apply', { maxEvents: 9 }],
-      ['apply', { maxEvents: 8 }], ['apply', { maxEvents: 7 }],
+      ['list-pending-tokens', { excludeTokenAddresses: [], limit: 10 }],
+      ['apply', { onlyTokenAddress: `0x${'f'.repeat(40)}`, maxEvents: 10 }],
+      ['list-pending-tokens', { excludeTokenAddresses: [], limit: 9 }],
+      ['apply', { onlyTokenAddress: `0x${'f'.repeat(40)}`, maxEvents: 9 }],
+      ['list-pending-tokens', { excludeTokenAddresses: [], limit: 8 }],
+      ['apply', { onlyTokenAddress: `0x${'f'.repeat(40)}`, maxEvents: 8 }],
+      ['list-pending-tokens', { excludeTokenAddresses: [], limit: 7 }],
       ['promote-shadows', { limit: 10 }],
     ]);
   });
@@ -152,7 +165,7 @@ describe('Robinhood holder live runner', () => {
     assert.equal(result.driftSuspicions, 1);
     assert.equal(result.receiptRecoveries, 1);
     assert.equal(context.calls.filter(([name]) => name === 'receipts').length, 1);
-    assert.equal(context.calls.filter(([name]) => name === 'apply').length, 3);
+    assert.equal(context.calls.filter(([name]) => name === 'apply').length, 2);
   });
 
   it('rolls back an applied tail and invalidates a previously live token', async () => {
@@ -199,9 +212,7 @@ describe('Robinhood holder live runner', () => {
     const context = harness({
       status: 'captured', transfers: 0, nextBlock: '106', safeHead: '105',
     }, [
-      suspicion, { status: 'idle' },
-      suspicion, { status: 'idle' },
-      suspicion, { status: 'drifted' }, { status: 'idle' },
+      suspicion, suspicion, suspicion, { status: 'drifted' },
     ],
     { status: 'idle' }, async () => 0, {
       now: () => nowMs, driftRecheckMs: 60_000,
@@ -291,17 +302,21 @@ describe('Robinhood holder live runner', () => {
       { status: 'idle' },
     ]);
 
-    const result = await context.runner.applyOnce({ maxApplyEvents: 10 });
+    const result = await context.runner.applyOnce({
+      maxApplyEvents: 10, applyBatchSize: 1,
+    });
 
     assert.equal(result.appliedEvents, 3);
     assert.equal(result.applyBudgetExhausted, false);
     assert.deepEqual(context.calls, [
-      ['apply', { maxEvents: 10 }],
-      ['apply', { onlyTokenAddress: tokenA, maxEvents: 9 }],
-      ['apply', { onlyTokenAddress: tokenA, maxEvents: 8 }],
-      ['apply', { maxEvents: 8 }],
-      ['apply', { onlyTokenAddress: tokenB, maxEvents: 7 }],
-      ['apply', { maxEvents: 7 }],
+      ['list-pending-tokens', { excludeTokenAddresses: [], limit: 10 }],
+      ['apply', { onlyTokenAddress: tokenA, maxEvents: 1 }],
+      ['apply', { onlyTokenAddress: tokenA, maxEvents: 1 }],
+      ['apply', { onlyTokenAddress: tokenA, maxEvents: 1 }],
+      ['list-pending-tokens', { excludeTokenAddresses: [], limit: 8 }],
+      ['apply', { onlyTokenAddress: tokenB, maxEvents: 1 }],
+      ['apply', { onlyTokenAddress: tokenB, maxEvents: 1 }],
+      ['list-pending-tokens', { excludeTokenAddresses: [], limit: 7 }],
       ['promote-shadows', { limit: 10 }],
     ]);
   });
@@ -322,12 +337,12 @@ describe('Robinhood holder live runner', () => {
     assert.equal(result.appliedEvents, 100);
     assert.equal(result.applyAttempts, 100);
     assert.equal(result.applyBudgetExhausted, false);
-    assert.equal(result.timing.applyCalls, 3);
+    assert.equal(result.timing.applyCalls, 2);
     assert.equal(result.timing.nonIdleApplyCalls, 1);
     assert.equal(result.timing.averageAttemptedEventsPerNonIdleCall, 100);
     assert.equal(result.timing.maxAttemptedEventsPerCall, 100);
     assert.deepEqual(context.calls.slice(0, 2), [
-      ['apply', { maxEvents: 100 }],
+      ['list-pending-tokens', { excludeTokenAddresses: [], limit: 250 }],
       ['apply', { onlyTokenAddress: tokenAddress, maxEvents: 100 }],
     ]);
   });
@@ -359,6 +374,7 @@ describe('Robinhood holder live runner', () => {
       },
       handoff: { runOnce: async () => ({ status: 'idle' }) },
       ledger: {
+        listPendingTokenAddresses: async () => [`0x${'a'.repeat(40)}`],
         applyNextPendingEvent: async () => {
           await applyGate;
           return { status: 'applied' };
@@ -478,7 +494,7 @@ describe('Robinhood holder live runner', () => {
     ], { status: 'idle' }, async () => { throw new Error('relay offline'); });
 
     await assert.rejects(context.runner.runOnce(), /relay offline/);
-    assert.equal(context.calls.filter(([name]) => name === 'apply').length, 2);
+    assert.equal(context.calls.filter(([name]) => name === 'apply').length, 1);
   });
 
   it('promotes at most one token before applying its preserved tail', async () => {
@@ -492,7 +508,8 @@ describe('Robinhood holder live runner', () => {
     assert.equal(result.handoffPromotions, 1);
     assert.equal(result.handoffResyncs, 0);
     assert.deepEqual(context.calls.map(([name]) => name), [
-      'capture', 'handoff', 'apply', 'apply', 'promote-shadows',
+      'capture', 'handoff', 'list-pending-tokens', 'apply',
+      'list-pending-tokens', 'promote-shadows',
     ]);
   });
 

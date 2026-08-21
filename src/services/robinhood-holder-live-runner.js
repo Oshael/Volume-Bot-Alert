@@ -65,6 +65,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
   const publishHolderCounts = typeof options.publishHolderCounts === 'function'
     ? options.publishHolderCounts : async () => 0;
   if (typeof ledger?.applyNextPendingEvent !== 'function'
+      || typeof ledger?.listPendingTokenAddresses !== 'function'
       || typeof ledger?.promoteReadyShadowTokens !== 'function'
       || typeof ledger?.repairCapturedRange !== 'function'
       || typeof ledger?.rollbackAppliedTail !== 'function') {
@@ -112,6 +113,24 @@ function createRobinhoodHolderLiveRunner(options = {}) {
         );
       }
     }
+  }
+
+  async function listPendingTokens(input, timing) {
+    const startedAt = measureMs();
+    try {
+      return await ledger.listPendingTokenAddresses(input);
+    } finally {
+      timing.selectionCalls += 1;
+      timing.selectionDurationMs += elapsedMs(startedAt);
+    }
+  }
+
+  async function selectPendingToken(preferred, queued, input, timing) {
+    if (preferred) return { preferred, queued };
+    const candidates = queued.length
+      ? queued : [...await listPendingTokens(input, timing)];
+    if (candidates !== queued) timing.selectedTokens += candidates.length;
+    return { preferred: candidates.shift() || null, queued: candidates };
   }
 
   function deferDrift(suspicion) {
@@ -258,26 +277,39 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     let tailRollbacks = 0;
     let tailRollbackEvents = 0;
     let preferredTokenAddress = null;
+    let pendingTokenAddresses = [];
     const timing = {
       applyCalls: 0, nonIdleApplyCalls: 0, attemptedEvents: 0,
       applyCallDurationMs: 0, maxApplyCallDurationMs: 0,
       maxAttemptedEventsPerCall: 0, driftRepairDurationMs: 0,
+      selectionCalls: 0, selectionDurationMs: 0, selectedTokens: 0,
     };
     const holderCountUpdates = new Map();
     while (applyAttempts < maxApplyEvents) {
       const excluded = deferredTokenAddresses();
-      const filter = pendingEventFilter(excluded, preferredTokenAddress) || {};
-      const applied = await applyWithTiming({
-        ...filter, maxEvents: Math.min(applyBatchSize, maxApplyEvents - applyAttempts),
-      }, timing);
-      if (applied.status === 'idle') {
-        if (preferredTokenAddress) {
-          preferredTokenAddress = null;
-          continue;
-        }
+      const selected = await selectPendingToken(
+        preferredTokenAddress, pendingTokenAddresses, {
+          excludeTokenAddresses: excluded,
+          limit: maxApplyEvents - applyAttempts,
+        }, timing
+      );
+      preferredTokenAddress = selected.preferred;
+      pendingTokenAddresses = selected.queued;
+      if (!preferredTokenAddress) {
         reachedIdle = excluded.length === 0;
         driftDeferred = Math.max(driftDeferred, excluded.length);
         break;
+      }
+      const filter = pendingEventFilter(excluded, preferredTokenAddress) || {};
+      const requestedEvents = Math.min(
+        applyBatchSize, maxApplyEvents - applyAttempts
+      );
+      const applied = await applyWithTiming({
+        ...filter, maxEvents: requestedEvents,
+      }, timing);
+      if (applied.status === 'idle') {
+        preferredTokenAddress = null;
+        continue;
       }
       const batch = applyBatchMetrics(applied);
       applyAttempts += batch.attemptedEvents;
@@ -285,7 +317,8 @@ function createRobinhoodHolderLiveRunner(options = {}) {
       rememberHolderCountUpdate(holderCountUpdates, applied);
       if (applied.status === 'applied') {
         driftEvidence.delete(applied.tokenAddress);
-        preferredTokenAddress = applied.tokenAddress || null;
+        preferredTokenAddress = batch.attemptedEvents >= requestedEvents
+          ? applied.tokenAddress || null : null;
       } else if (applied.status === 'drifted') {
         preferredTokenAddress = null;
         driftedTokens += 1;
@@ -396,13 +429,16 @@ function createRobinhoodHolderLiveRunner(options = {}) {
       maxApplyCallDurationMs: applyTiming.maxApplyCallDurationMs,
       applyCalls: applyTiming.applyCalls,
       nonIdleApplyCalls: applyTiming.nonIdleApplyCalls,
+      selectionDurationMs: applyTiming.selectionDurationMs,
+      selectionCalls: applyTiming.selectionCalls,
+      selectedTokens: applyTiming.selectedTokens,
       averageAttemptedEventsPerNonIdleCall: applyTiming.nonIdleApplyCalls > 0
         ? Number((applyTiming.attemptedEvents / applyTiming.nonIdleApplyCalls).toFixed(2)) : 0,
       maxAttemptedEventsPerCall: applyTiming.maxAttemptedEventsPerCall,
       driftRepairDurationMs: applyTiming.driftRepairDurationMs,
       drainOverheadDurationMs: Math.max(
         0, drainDurationMs - applyTiming.applyCallDurationMs
-          - applyTiming.driftRepairDurationMs
+          - applyTiming.driftRepairDurationMs - applyTiming.selectionDurationMs
       ),
       shadowPromotionDurationMs, publicationDurationMs,
       appliedEventsPerSecond: totalDurationMs > 0
