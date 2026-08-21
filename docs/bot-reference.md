@@ -1167,6 +1167,13 @@ página, preserva a pilha de cursores para voltar e expõe loading/error/retry.
 A lista começa a carregar na abertura do modal; fechá-lo cancela respostas
 atrasadas.
 
+O Stage 143 cria `robinhood_holder_classifications` para tags versionadas com
+evidência e frontier, além de `robinhood_holder_classification_states` para o
+estado independente de cada classificador por token. Aplique
+`node src/utils/db-init-stage143.js` antes de iniciar código que contenha esse
+grupo no runtime schema. O stage apenas prepara persistência: nenhum worker ou
+endpoint consome as tabelas ainda, portanto os filtros continuam indisponíveis.
+
 O worker lê `Transfer` por range com a coorte enviada como allowlist `address` ao
 RPC, commita ranges em ordem e não grava o histórico bruto no journal. Se o node
 rejeitar o tamanho da allowlist, ela é dividida ao meio adaptativamente sem

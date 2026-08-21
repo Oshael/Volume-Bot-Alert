@@ -3672,6 +3672,101 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage143-robinhood-holder-classifications',
+    name: 'Stage 143 Robinhood holder classifications',
+    repair: 'node src/utils/db-init-stage143.js',
+    tables: [{
+      table: 'robinhood_holder_classifications',
+      columns: [
+        'chain', 'token_address', 'wallet_address', 'tag', 'classification_version',
+        'confidence', 'reason_code', 'evidence_json', 'through_block_number',
+        'through_block_hash', 'observed_at', 'expires_at', 'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_holder_classifications_pkey',
+        includes: [
+          'PRIMARY KEY', 'chain', 'token_address', 'wallet_address', 'tag',
+          'classification_version',
+        ],
+      }, {
+        name: 'rh_holder_classifications_chain_check', includes: ['CHECK', 'robinhood'],
+      }, {
+        name: 'rh_holder_classifications_address_check',
+        includes: ['CHECK', 'token_address', 'wallet_address'],
+      }, {
+        name: 'rh_holder_classifications_version_check',
+        includes: ['CHECK', 'classification_version', 'rh_holder_v'],
+      }, {
+        name: 'rh_holder_classifications_confidence_check',
+        includes: ['CHECK', 'deterministic', 'high', 'heuristic', 'lp', 'cex'],
+      }, {
+        name: 'rh_holder_classifications_reason_check',
+        includes: [
+          'CHECK', 'registered_token_pool', 'known_cex_address', 'early_launch_buy',
+          'new_wallet_at_first_buy', 'creator_token_distribution',
+          'creator_direct_funding',
+        ],
+      }, {
+        name: 'rh_holder_classifications_evidence_check',
+        includes: ['CHECK', 'jsonb_typeof', 'evidence_json'],
+      }, {
+        name: 'rh_holder_classifications_frontier_check',
+        includes: ['CHECK', 'through_block_number', 'through_block_hash'],
+      }, {
+        name: 'rh_holder_classifications_expiry_check',
+        includes: ['CHECK', 'expires_at', 'observed_at'],
+      }],
+      indexes: [{
+        name: 'idx_rh_holder_classifications_token_tag',
+        includes: [
+          'chain', 'token_address', 'classification_version', 'tag', 'wallet_address',
+        ],
+      }],
+    }, {
+      table: 'robinhood_holder_classification_states',
+      columns: [
+        'chain', 'token_address', 'classifier', 'classification_version', 'status',
+        'status_reason', 'through_block_number', 'through_block_hash', 'observed_at',
+        'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_holder_classification_states_pkey',
+        includes: [
+          'PRIMARY KEY', 'chain', 'token_address', 'classifier', 'classification_version',
+        ],
+      }, {
+        name: 'rh_holder_classification_states_chain_check', includes: ['CHECK', 'robinhood'],
+      }, {
+        name: 'rh_holder_classification_states_token_check',
+        includes: ['CHECK', 'token_address'],
+      }, {
+        name: 'rh_holder_classification_states_classifier_check',
+        includes: ['CHECK', 'lp', 'cex', 'sniper', 'fresh', 'insider'],
+      }, {
+        name: 'rh_holder_classification_states_version_check',
+        includes: ['CHECK', 'classification_version', 'rh_holder_v'],
+      }, {
+        name: 'rh_holder_classification_states_status_check',
+        includes: [
+          'CHECK', 'unavailable', 'pending', 'ready', 'stale', 'reorged', 'status_reason',
+        ],
+      }, {
+        name: 'rh_holder_classification_states_frontier_pair_check',
+        includes: ['CHECK', 'through_block_number', 'through_block_hash'],
+      }, {
+        name: 'rh_holder_classification_states_frontier_value_check',
+        includes: ['CHECK', 'through_block_number', 'through_block_hash'],
+      }, {
+        name: 'rh_holder_classification_states_status_frontier_check',
+        includes: ['CHECK', 'status', 'through_block_number'],
+      }],
+      indexes: [{
+        name: 'idx_rh_holder_classification_states_status',
+        includes: ['chain', 'classification_version', 'status', 'classifier', 'token_address'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
