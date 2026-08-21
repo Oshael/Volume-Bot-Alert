@@ -60,6 +60,7 @@ function harness(
     runner: createRobinhoodHolderLiveRunner({
       capture, handoff, ledger, reader, publishHolderCounts,
       now: options.now, driftRecheckMs: options.driftRecheckMs,
+      measureNow: options.measureNow,
     }),
   };
 }
@@ -75,11 +76,12 @@ describe('Robinhood holder live runner', () => {
       { status: 'idle' },
     ]);
 
-    assert.deepEqual(await context.runner.runOnce({
+    const { timing, ...result } = await context.runner.runOnce({
       rangeSize: 100, confirmations: 20, maxApplyEvents: 10,
       admittedAfter: '2026-08-20T06:27:49.580Z',
       seedLimit: 25, maxInitialGapBlocks: 20_000,
-    }), {
+    });
+    assert.deepEqual(result, {
       status: 'completed', captureStatus: 'captured', capturedTransfers: 3,
       handoffStatus: 'idle', handoffPromotions: 0, handoffResyncs: 0,
       appliedEvents: 2, driftedTokens: 1, applyAttempts: 3,
@@ -89,6 +91,17 @@ describe('Robinhood holder live runner', () => {
       holderCountUpdates: 0, holderCountPublished: 0,
       applyBudgetExhausted: false, nextBlock: '106', safeHead: '105',
     });
+    assert.equal(timing.applyCalls, 4);
+    assert.equal(timing.nonIdleApplyCalls, 3);
+    assert.equal(timing.averageAttemptedEventsPerNonIdleCall, 1);
+    assert.equal(timing.maxAttemptedEventsPerCall, 1);
+    assert.equal(timing.configuredBatchSize, 100);
+    for (const key of [
+      'totalDurationMs', 'drainDurationMs', 'applyCallDurationMs',
+      'maxApplyCallDurationMs', 'driftRepairDurationMs',
+      'drainOverheadDurationMs', 'shadowPromotionDurationMs',
+      'publicationDurationMs', 'appliedEventsPerSecond',
+    ]) assert.equal(Number.isFinite(timing[key]), true, key);
     assert.deepEqual(context.calls, [
       ['capture', {
         rangeSize: 100, confirmations: 20,
@@ -309,6 +322,10 @@ describe('Robinhood holder live runner', () => {
     assert.equal(result.appliedEvents, 100);
     assert.equal(result.applyAttempts, 100);
     assert.equal(result.applyBudgetExhausted, false);
+    assert.equal(result.timing.applyCalls, 3);
+    assert.equal(result.timing.nonIdleApplyCalls, 1);
+    assert.equal(result.timing.averageAttemptedEventsPerNonIdleCall, 100);
+    assert.equal(result.timing.maxAttemptedEventsPerCall, 100);
     assert.deepEqual(context.calls.slice(0, 2), [
       ['apply', { maxEvents: 100 }],
       ['apply', { onlyTokenAddress: tokenAddress, maxEvents: 100 }],

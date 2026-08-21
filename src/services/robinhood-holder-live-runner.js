@@ -51,6 +51,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
   const ledger = options.ledger;
   const reader = options.reader;
   const now = options.now || Date.now;
+  const measureNow = options.measureNow || Date.now;
   const driftRecheckMs = boundedInteger(
     options.driftRecheckMs, 60_000, 1000, 600_000, 'driftRecheckMs'
   );
@@ -77,6 +78,40 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     const value = Number(now());
     if (!Number.isFinite(value)) throw new Error('holder live clock is invalid');
     return value;
+  }
+
+  function measureMs() {
+    const value = Number(measureNow());
+    if (!Number.isFinite(value)) throw new Error('holder live measurement clock is invalid');
+    return value;
+  }
+
+  function elapsedMs(startedAt) {
+    return Math.max(0, Math.round(measureMs() - startedAt));
+  }
+
+  async function applyWithTiming(input, timing) {
+    const startedAt = measureMs();
+    let result;
+    try {
+      result = await ledger.applyNextPendingEvent(input);
+      return result;
+    } finally {
+      const durationMs = elapsedMs(startedAt);
+      timing.applyCalls += 1;
+      timing.applyCallDurationMs += durationMs;
+      timing.maxApplyCallDurationMs = Math.max(
+        timing.maxApplyCallDurationMs, durationMs
+      );
+      if (result && result.status !== 'idle') {
+        const batch = applyBatchMetrics(result);
+        timing.nonIdleApplyCalls += 1;
+        timing.attemptedEvents += batch.attemptedEvents;
+        timing.maxAttemptedEventsPerCall = Math.max(
+          timing.maxAttemptedEventsPerCall, batch.attemptedEvents
+        );
+      }
+    }
   }
 
   function deferDrift(suspicion) {
@@ -223,13 +258,18 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     let tailRollbacks = 0;
     let tailRollbackEvents = 0;
     let preferredTokenAddress = null;
+    const timing = {
+      applyCalls: 0, nonIdleApplyCalls: 0, attemptedEvents: 0,
+      applyCallDurationMs: 0, maxApplyCallDurationMs: 0,
+      maxAttemptedEventsPerCall: 0, driftRepairDurationMs: 0,
+    };
     const holderCountUpdates = new Map();
     while (applyAttempts < maxApplyEvents) {
       const excluded = deferredTokenAddresses();
       const filter = pendingEventFilter(excluded, preferredTokenAddress) || {};
-      const applied = await ledger.applyNextPendingEvent({
+      const applied = await applyWithTiming({
         ...filter, maxEvents: Math.min(applyBatchSize, maxApplyEvents - applyAttempts),
-      });
+      }, timing);
       if (applied.status === 'idle') {
         if (preferredTokenAddress) {
           preferredTokenAddress = null;
@@ -253,7 +293,13 @@ function createRobinhoodHolderLiveRunner(options = {}) {
       } else if (applied.status === 'drift-suspected') {
         preferredTokenAddress = null;
         driftSuspicions += 1;
-        const repair = await repairDrift(applied);
+        const repairStartedAt = measureMs();
+        let repair;
+        try {
+          repair = await repairDrift(applied);
+        } finally {
+          timing.driftRepairDurationMs += elapsedMs(repairStartedAt);
+        }
         if (repair.status === 'requeued') {
           tailRollbacks += 1;
           tailRollbackEvents += Number(repair.revertedEvents) || 0;
@@ -277,10 +323,10 @@ function createRobinhoodHolderLiveRunner(options = {}) {
           driftDeferred += 1;
           continue;
         }
-        const confirmed = await ledger.applyNextPendingEvent({
+        const confirmed = await applyWithTiming({
           confirmDriftFingerprint: applied.fingerprint,
           onlyTokenAddress: applied.tokenAddress,
-        });
+        }, timing);
         if (confirmed.status !== 'drifted') {
           const error = new Error('holder live drift confirmation did not isolate the token');
           error.code = 'holder_live_apply_contract_error';
@@ -297,7 +343,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     return {
       appliedEvents, driftedTokens, applyAttempts, reachedIdle,
       driftSuspicions, receiptRecoveries, driftDeferred, holderCountUpdates,
-      tailRollbacks, tailRollbackEvents,
+      tailRollbacks, tailRollbackEvents, timing,
     };
   }
 
@@ -327,14 +373,42 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     const applyBatchSize = boundedInteger(
       input.applyBatchSize, 100, 1, 1000, 'applyBatchSize'
     );
+    const totalStartedAt = measureMs();
+    const drainStartedAt = measureMs();
     const drained = await drainPendingEvents(maxApplyEvents, applyBatchSize);
+    const drainDurationMs = elapsedMs(drainStartedAt);
+    const promotionStartedAt = measureMs();
     const promoted = await ledger.promoteReadyShadowTokens({ limit: maxApplyEvents });
+    const shadowPromotionDurationMs = elapsedMs(promotionStartedAt);
     for (const publication of promoted.publications) {
       rememberHolderCountUpdate(drained.holderCountUpdates, { publication });
     }
+    const publicationStartedAt = measureMs();
     const holderCountPublished = await publishCountUpdates(
       publishHolderCounts, drained.holderCountUpdates
     );
+    const publicationDurationMs = elapsedMs(publicationStartedAt);
+    const totalDurationMs = elapsedMs(totalStartedAt);
+    const applyTiming = drained.timing;
+    const timing = Object.freeze({
+      totalDurationMs, drainDurationMs,
+      applyCallDurationMs: applyTiming.applyCallDurationMs,
+      maxApplyCallDurationMs: applyTiming.maxApplyCallDurationMs,
+      applyCalls: applyTiming.applyCalls,
+      nonIdleApplyCalls: applyTiming.nonIdleApplyCalls,
+      averageAttemptedEventsPerNonIdleCall: applyTiming.nonIdleApplyCalls > 0
+        ? Number((applyTiming.attemptedEvents / applyTiming.nonIdleApplyCalls).toFixed(2)) : 0,
+      maxAttemptedEventsPerCall: applyTiming.maxAttemptedEventsPerCall,
+      driftRepairDurationMs: applyTiming.driftRepairDurationMs,
+      drainOverheadDurationMs: Math.max(
+        0, drainDurationMs - applyTiming.applyCallDurationMs
+          - applyTiming.driftRepairDurationMs
+      ),
+      shadowPromotionDurationMs, publicationDurationMs,
+      appliedEventsPerSecond: totalDurationMs > 0
+        ? Number((drained.appliedEvents * 1000 / totalDurationMs).toFixed(2)) : 0,
+      configuredBatchSize: applyBatchSize, maxApplyEvents,
+    });
     return Object.freeze({
       status: 'completed',
       appliedEvents: drained.appliedEvents, driftedTokens: drained.driftedTokens,
@@ -344,6 +418,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
       shadowPromotions: Number(promoted.promotedTokens) || 0,
       holderCountUpdates: drained.holderCountUpdates.size, holderCountPublished,
       applyBudgetExhausted: !drained.reachedIdle && drained.applyAttempts === maxApplyEvents,
+      timing,
     });
   }
 

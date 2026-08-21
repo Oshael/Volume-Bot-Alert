@@ -1025,7 +1025,12 @@ normais terminarem antes de alterar journal ou balances; o apply não mantém ma
 `FOR UPDATE` no cursor durante o lote. O apply
 escolhe o evento elegível global mais antigo e mantém afinidade no token enquanto houver eventos;
 o índice parcial da stage 121 preserva a ordem canônica por token sem reescanear
-o journal pendente inteiro a cada evento. No deploy, execute
+o journal pendente inteiro a cada evento. O `lastResult.timing` da lease do apply
+separa duração total, drain, chamadas do ledger, reparo de drift, promoção shadow,
+publicação e overhead; também expõe quantidade/duração máxima das chamadas, tamanho
+médio/máximo efetivo dos lotes e EPS interno. Essas métricas permitem distinguir
+fragmentação por token, PostgreSQL lento e fases auxiliares sem alterar o workload.
+No deploy, execute
 `node src/utils/db-init-stage121.js`, `node src/utils/db-init-stage141.js` e
 `node src/utils/db-init-stage142.js` antes do restart; os índices são criados
 concorrentemente para não bloquear writes do journal. A Stage 142 evita que o
