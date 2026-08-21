@@ -251,6 +251,9 @@ integração.
 2. **Determinísticos internos**
    - materializar `LP`, `DEV HOLD` e lookup `CEX` pelo registro interno;
    - entregar tool/processo auditável para manter o registro de infraestrutura.
+   - Status em 2026-08-21: materializador `LP` concluído, usando a frontier live
+     do ledger e somente endereços de pool V2/V3 ativos; ainda não há worker nem
+     contrato REST consumindo os snapshots.
 3. **SNIPER**
    - materializar âncora de lançamento e primeira compra;
    - fechar notional mínimo com amostra real antes de ativar UI.
