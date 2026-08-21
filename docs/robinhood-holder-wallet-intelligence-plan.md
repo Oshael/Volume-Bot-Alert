@@ -257,7 +257,8 @@ integração.
    - entregar tool/processo auditável para manter o registro de infraestrutura.
    - Status em 2026-08-21: materializador `LP` concluído, usando a frontier live
      do ledger, contratos V2/V3 e o `PoolManager` contextual das pools V4 ativas;
-     ainda não há worker nem contrato REST consumindo os snapshots.
+     o materializador `DEV HOLD` também está concluído com saldo e supply na mesma
+     frontier. Ainda não há worker nem contrato REST consumindo os snapshots.
 3. **SNIPER**
    - materializar âncora de lançamento e primeira compra;
    - fechar notional mínimo com amostra real antes de ativar UI.

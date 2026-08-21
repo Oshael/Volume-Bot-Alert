@@ -1185,7 +1185,10 @@ numerador/denominador raw; `BUNDLED` usa `wallet_count` e `group_count`.
 Estados sem evidência pronta não podem armazenar valores ou fingir zero. Aplique
 `node src/utils/db-init-stage144.js` antes de iniciar código que contenha esse
 grupo no runtime schema. Ainda não existe repositório, worker ou endpoint para a
-tabela.
+tabela no runtime. O repositório e materializador `DEV HOLD` já existem, mas não
+são agendados: usam o criador atribuído e calculam saldo/supply diretamente do
+ledger na mesma frontier; criador ou supply ausente publica `unavailable`, nunca
+zero inventado.
 
 O worker lê `Transfer` por range com a coorte enviada como allowlist `address` ao
 RPC, commita ranges em ordem e não grava o histórico bruto no journal. Se o node
