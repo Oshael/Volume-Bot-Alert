@@ -45,6 +45,14 @@ function applyBatchMetrics(result) {
   return Object.freeze({ appliedEvents, attemptedEvents });
 }
 
+function isLiveLedger(value) {
+  return [
+    'applyNextPendingEvent', 'listPendingTokenAddresses',
+    'promoteReadyShadowTokens', 'repairCapturedRange',
+    'requeueWideShadowTail', 'rollbackAppliedTail',
+  ].every((method) => typeof value?.[method] === 'function');
+}
+
 function createRobinhoodHolderLiveRunner(options = {}) {
   const capture = options.capture;
   const handoff = options.handoff;
@@ -64,11 +72,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
   const driftEvidence = new Map();
   const publishHolderCounts = typeof options.publishHolderCounts === 'function'
     ? options.publishHolderCounts : async () => 0;
-  if (typeof ledger?.applyNextPendingEvent !== 'function'
-      || typeof ledger?.listPendingTokenAddresses !== 'function'
-      || typeof ledger?.promoteReadyShadowTokens !== 'function'
-      || typeof ledger?.repairCapturedRange !== 'function'
-      || typeof ledger?.rollbackAppliedTail !== 'function') {
+  if (!isLiveLedger(ledger)) {
     throw new TypeError('holder live ledger is required');
   }
   if (typeof reader?.readReceiptRange !== 'function') {
@@ -179,8 +183,18 @@ function createRobinhoodHolderLiveRunner(options = {}) {
       }
     }
     const blocks = BigInt(suspicion.failedBlock) - BigInt(suspicion.recoveryFromBlock) + 1n;
-    if (blocks < 1n || blocks > BigInt(receiptBlockLimit)) {
-      return Object.freeze({ status: 'deferred', reason: 'receipt_range_too_wide' });
+    if (blocks < 1n) {
+      return Object.freeze({ status: 'deferred', reason: 'receipt_range_invalid' });
+    }
+    if (blocks > BigInt(receiptBlockLimit)) {
+      return ledger.requeueWideShadowTail({
+        tokenAddress: suspicion.tokenAddress,
+        backfillNextBlock: suspicion.recoveryFromBlock,
+        failedBlock: suspicion.failedBlock,
+        failedTransactionHash: suspicion.failedTransactionHash,
+        failedLogIndex: suspicion.failedLogIndex,
+        receiptBlockLimit,
+      });
     }
     try {
       const range = await reader.readReceiptRange({
@@ -276,6 +290,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     let driftDeferred = 0;
     let tailRollbacks = 0;
     let tailRollbackEvents = 0;
+    let baselineRequeues = 0;
     let preferredTokenAddress = null;
     let pendingTokenAddresses = [];
     const timing = {
@@ -334,7 +349,8 @@ function createRobinhoodHolderLiveRunner(options = {}) {
           timing.driftRepairDurationMs += elapsedMs(repairStartedAt);
         }
         if (repair.status === 'requeued') {
-          tailRollbacks += 1;
+          if (repair.recovery === 'wide-shadow-tail') baselineRequeues += 1;
+          else tailRollbacks += 1;
           tailRollbackEvents += Number(repair.revertedEvents) || 0;
           driftEvidence.delete(applied.tokenAddress);
           rememberHolderCountUpdate(holderCountUpdates, repair);
@@ -376,7 +392,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     return {
       appliedEvents, driftedTokens, applyAttempts, reachedIdle,
       driftSuspicions, receiptRecoveries, driftDeferred, holderCountUpdates,
-      tailRollbacks, tailRollbackEvents, timing,
+      tailRollbacks, tailRollbackEvents, baselineRequeues, timing,
     };
   }
 
@@ -451,6 +467,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
       applyAttempts: drained.applyAttempts, driftSuspicions: drained.driftSuspicions,
       receiptRecoveries: drained.receiptRecoveries, driftDeferred: drained.driftDeferred,
       tailRollbacks: drained.tailRollbacks, tailRollbackEvents: drained.tailRollbackEvents,
+      baselineRequeues: drained.baselineRequeues,
       shadowPromotions: Number(promoted.promotedTokens) || 0,
       holderCountUpdates: drained.holderCountUpdates.size, holderCountPublished,
       applyBudgetExhausted: !drained.reachedIdle && drained.applyAttempts === maxApplyEvents,

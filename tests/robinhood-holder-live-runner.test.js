@@ -42,6 +42,12 @@ function harness(
         status: 'requeued', tokenAddress: input.tokenAddress, revertedEvents: 1,
       };
     },
+    requeueWideShadowTail: async (input) => {
+      calls.push(['requeue-wide-tail', input]);
+      return options.requeueResults?.shift() || {
+        status: 'not-requeued', reason: 'state-not-safe',
+      };
+    },
     promoteReadyShadowTokens: async (input) => {
       calls.push(['promote-shadows', input]);
       return options.shadowPromotion || {
@@ -94,6 +100,7 @@ describe('Robinhood holder live runner', () => {
       appliedEvents: 2, driftedTokens: 1, applyAttempts: 3,
       driftSuspicions: 0, receiptRecoveries: 0, driftDeferred: 0,
       tailRollbacks: 0, tailRollbackEvents: 0,
+      baselineRequeues: 0,
       shadowPromotions: 0,
       holderCountUpdates: 0, holderCountPublished: 0,
       applyBudgetExhausted: false, nextBlock: '106', safeHead: '105',
@@ -288,6 +295,36 @@ describe('Robinhood holder live runner', () => {
     )), true);
   });
 
+  it('requeues a safe wide shadow tail for baseline backfill', async () => {
+    const tokenAddress = `0x${'1'.repeat(40)}`;
+    const failedTransactionHash = `0x${'b'.repeat(64)}`;
+    const suspicion = {
+      status: 'drift-suspected', tokenAddress, fingerprint: 'wide-deficit',
+      failedBlock: '700', failedTransactionHash, failedLogIndex: 3,
+      recoveryFromBlock: '100', recoverySafe: true,
+    };
+    const context = harness({
+      status: 'captured', transfers: 0, nextBlock: '701', safeHead: '700',
+    }, [suspicion, { status: 'idle' }], { status: 'idle' }, async () => 0, {
+      requeueResults: [{
+        status: 'requeued', recovery: 'wide-shadow-tail', tokenAddress,
+        backfillNextBlock: '100', receiptBlocks: '601', revertedEvents: 0,
+      }],
+    });
+
+    const result = await context.runner.runOnce();
+
+    assert.equal(result.baselineRequeues, 1);
+    assert.equal(result.tailRollbacks, 0);
+    assert.equal(result.driftDeferred, 0);
+    assert.deepEqual(context.calls.find(([name]) => name === 'requeue-wide-tail'), [
+      'requeue-wide-tail', {
+        tokenAddress, backfillNextBlock: '100', failedBlock: '700',
+        failedTransactionHash, failedLogIndex: 3, receiptBlockLimit: 250,
+      },
+    ]);
+  });
+
   it('keeps draining one token before returning to the global pending order', async () => {
     const tokenA = `0x${'a'.repeat(40)}`;
     const tokenB = `0x${'b'.repeat(40)}`;
@@ -380,6 +417,7 @@ describe('Robinhood holder live runner', () => {
           return { status: 'applied' };
         },
         repairCapturedRange: async () => ({ status: 'repaired', insertedTransfers: 0 }),
+        requeueWideShadowTail: async () => ({ status: 'not-requeued' }),
         rollbackAppliedTail: async () => ({ status: 'requeued', revertedEvents: 0 }),
         promoteReadyShadowTokens: async () => ({
           status: 'idle', promotedTokens: 0, publications: [],

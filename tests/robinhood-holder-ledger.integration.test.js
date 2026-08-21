@@ -24,6 +24,7 @@ const TOKEN_4 = `0x${'a'.repeat(40)}`;
 const TOKEN_5 = `0x${'9'.repeat(40)}`;
 const TOKEN_BATCH = `0x${'b'.repeat(40)}`;
 const TOKEN_NO_TAIL = `0x${'c'.repeat(40)}`;
+const TOKEN_WIDE_TAIL = `0x${'d'.repeat(40)}`;
 const ALICE = `0x${'4'.repeat(40)}`;
 const BOB = `0x${'5'.repeat(40)}`;
 const ZERO_ADDRESS = `0x${'0'.repeat(40)}`;
@@ -430,6 +431,57 @@ describe('Robinhood holder ledger persistence', () => {
       assert.deepEqual(restoredTailBalances.rows.map((row) => [
         row.wallet_address, String(row.balance_raw),
       ]), [[ALICE, '1']]);
+
+      await client.query(
+        `INSERT INTO robinhood_holder_token_states
+          (token_address, holder_count, ledger_status, deployment_block,
+           backfill_next_block, live_through_block, live_through_hash)
+         VALUES ($1, 0, 'shadow', 50, 100, 99, $2)`,
+        [TOKEN_WIDE_TAIL, HASH_B]
+      );
+      await client.query(
+        `INSERT INTO robinhood_holder_transfer_journal (
+           block_number, block_hash, transaction_hash, transaction_index,
+           log_index, token_address, from_wallet, to_wallet, amount_raw
+         ) VALUES (500, $1, $2, 30, 30, $3, $4, $5, 2)`,
+        [HASH_A, HASH_E, TOKEN_WIDE_TAIL, ALICE, BOB]
+      );
+      const wideSuspicion = await repository.applyNextPendingEvent({
+        onlyTokenAddress: TOKEN_WIDE_TAIL,
+      });
+      assert.equal(wideSuspicion.status, 'drift-suspected');
+      assert.deepEqual(await repository.requeueWideShadowTail({
+        tokenAddress: TOKEN_WIDE_TAIL, backfillNextBlock: '100', failedBlock: '500',
+        failedTransactionHash: HASH_E, failedLogIndex: 30, receiptBlockLimit: 250,
+      }), {
+        status: 'requeued', recovery: 'wide-shadow-tail',
+        tokenAddress: TOKEN_WIDE_TAIL, backfillNextBlock: '100',
+        receiptBlocks: '401', revertedEvents: 0, version: '1',
+      });
+      assert.deepEqual(await repository.requeueWideShadowTail({
+        tokenAddress: TOKEN_WIDE_TAIL, backfillNextBlock: '100', failedBlock: '500',
+        failedTransactionHash: HASH_E, failedLogIndex: 30, receiptBlockLimit: 250,
+      }), { status: 'not-requeued', reason: 'state-not-safe' });
+      const wideState = await client.query(
+        `SELECT ledger_status, holder_count, backfill_next_block,
+                live_through_block,
+                (SELECT COUNT(*) FROM robinhood_holder_transfer_journal journal
+                  WHERE journal.token_address = state.token_address)::int AS journal_events
+           FROM robinhood_holder_token_states state WHERE token_address = $1`,
+        [TOKEN_WIDE_TAIL]
+      );
+      assert.deepEqual(wideState.rows[0], {
+        ledger_status: 'backfilling', holder_count: '0',
+        backfill_next_block: '100', live_through_block: '99', journal_events: 1,
+      });
+      await client.query(
+        `DELETE FROM robinhood_holder_transfer_journal WHERE token_address = $1`,
+        [TOKEN_WIDE_TAIL]
+      );
+      await client.query(
+        `DELETE FROM robinhood_holder_token_states WHERE token_address = $1`,
+        [TOKEN_WIDE_TAIL]
+      );
 
       await client.query(
         `INSERT INTO robinhood_holder_token_states

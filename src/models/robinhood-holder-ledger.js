@@ -1264,6 +1264,81 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     });
   }
 
+  async function requeueWideShadowTail(input = {}) {
+    const tokenAddress = hex(input.tokenAddress, 20, 'wideTail.tokenAddress');
+    const backfillNextBlock = decimalQuantity(
+      input.backfillNextBlock, 'wideTail.backfillNextBlock'
+    );
+    const failedBlock = decimalQuantity(input.failedBlock, 'wideTail.failedBlock');
+    const failedTransactionHash = hex(
+      input.failedTransactionHash, 32, 'wideTail.failedTransactionHash'
+    );
+    const failedLogIndex = nonNegativeInteger(
+      input.failedLogIndex, 'wideTail.failedLogIndex'
+    );
+    const receiptBlockLimit = nonNegativeInteger(
+      input.receiptBlockLimit, 'wideTail.receiptBlockLimit'
+    );
+    if (receiptBlockLimit < 1 || receiptBlockLimit > 1000) {
+      throw new Error('wideTail.receiptBlockLimit is invalid');
+    }
+    return withTransaction(database, async (client) => {
+      await lockReorgFence(client, 'exclusive');
+      const stateResult = await client.query(
+        `SELECT backfill_next_block, live_through_block, version
+           FROM robinhood_holder_token_states
+          WHERE chain = 'robinhood' AND token_address = $1
+            AND ledger_status = 'shadow' FOR UPDATE`,
+        [tokenAddress]
+      );
+      const state = stateResult.rows[0];
+      if (!state || String(state.backfill_next_block) !== backfillNextBlock
+          || state.live_through_block == null
+          || BigInt(state.live_through_block) + 1n !== BigInt(backfillNextBlock)) {
+        return Object.freeze({ status: 'not-requeued', reason: 'state-not-safe' });
+      }
+      const pending = await client.query(
+        `SELECT block_number, transaction_hash, log_index
+           FROM robinhood_holder_transfer_journal
+          WHERE chain = 'robinhood' AND token_address = $1 AND applied = false
+          ORDER BY block_number, transaction_index, log_index
+          LIMIT 1 FOR UPDATE`,
+        [tokenAddress]
+      );
+      const failed = pending.rows[0];
+      const receiptBlocks = BigInt(failedBlock) - BigInt(backfillNextBlock) + 1n;
+      if (!failed || String(failed.block_number) !== failedBlock
+          || failed.transaction_hash !== failedTransactionHash
+          || Number(failed.log_index) !== failedLogIndex
+          || receiptBlocks <= BigInt(receiptBlockLimit)) {
+        return Object.freeze({ status: 'not-requeued', reason: 'pending-event-changed' });
+      }
+      const applied = await client.query(
+        `SELECT 1 FROM robinhood_holder_transfer_journal
+          WHERE chain = 'robinhood' AND token_address = $1 AND applied = true
+            AND block_number >= $2::bigint LIMIT 1 FOR UPDATE`,
+        [tokenAddress, backfillNextBlock]
+      );
+      if (applied.rowCount) {
+        return Object.freeze({ status: 'not-requeued', reason: 'applied-tail-present' });
+      }
+      const reset = await client.query(
+        `UPDATE robinhood_holder_token_states
+            SET ledger_status = 'backfilling', version = version + 1, updated_at = NOW()
+          WHERE chain = 'robinhood' AND token_address = $1
+            AND ledger_status = 'shadow' AND version = $2::bigint
+          RETURNING version`,
+        [tokenAddress, state.version]
+      );
+      if (!reset.rowCount) throw new Error('holder wide-tail requeue state changed while locked');
+      return Object.freeze({
+        status: 'requeued', recovery: 'wide-shadow-tail', tokenAddress,
+        backfillNextBlock, receiptBlocks: receiptBlocks.toString(),
+        revertedEvents: 0, version: String(reset.rows[0].version),
+      });
+    });
+  }
+
   async function rewindOrphanedRange(input = {}) {
     const rewind = normalizeRewind(input);
     return withTransaction(database, async (client) => {
@@ -1422,7 +1497,7 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
 
   return Object.freeze({
     appendCapturedRange, applyNextPendingEvent, promoteReadyShadowTokens,
-    repairCapturedRange, rollbackAppliedTail,
+    repairCapturedRange, requeueWideShadowTail, rollbackAppliedTail,
     rewindOrphanedRange,
     getCursor, listJournalBlockCheckpoints, listPendingTokenAddresses,
     listTrackedTokenAddresses,
