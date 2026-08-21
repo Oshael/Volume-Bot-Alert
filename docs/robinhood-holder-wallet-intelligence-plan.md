@@ -1,25 +1,344 @@
 # Plano de Holder Wallet Intelligence na Robinhood Chain
 
-Atualizado em 2026-08-14. Este documento consolida as decisões de produto, o
+Atualizado em 2026-08-21. Este documento consolida as decisões de produto, o
 estado confirmado no código e o plano de implementação para enriquecer a lista
 de holders da Robinhood Chain com saldo nativo, médias de entrada/saída, PnL,
-transfers e relações prováveis entre wallets.
+transfers e classificações explicáveis de wallets.
 
-Este é um plano de trabalho futuro. Ele não afirma que as métricas, tabelas,
-workers, rotas ou telas descritas abaixo já estejam implantadas. Cada corte deve
-ser autorizado, implementado, validado, revisado e commitado separadamente,
-respeitando o limite de 500 linhas alteradas por corte.
+A fundação financeira, o ledger de holders, os transfers resumidos e a primeira
+fatia visual já existem. As classificações `SNIPER`, `INSIDER`, `CEX`, `FRESH`,
+`BUNDLED` e `LP LOCKED` ainda não devem ser tratadas como dados disponíveis. A
+seção 0 é a referência canônica para implementar essas classificações. As demais
+seções preservam a arquitetura financeira e o histórico do plano; em caso de
+divergência sobre classificação, prevalece a seção 0.
 
-## 1. Resumo executivo
+Cada corte futuro deve ser autorizado, implementado, validado, revisado e
+commitado separadamente, respeitando o limite de 500 linhas alteradas por corte.
 
-O painel de holders já entrega a lista paginada e calcula `Remaining`, mas as
-colunas `ETH Bal`, `Avg Buy`, `Avg Sell` e `U. PnL` continuam como placeholders.
-Os dados necessários estão distribuídos entre três fontes independentes:
+## 0. Roteiro canônico de classificação de holders
+
+### 0.1 Resultado esperado
+
+O painel de holders continua abaixo do conjunto chart/trades. A UI deve poder:
+
+- filtrar wallets por `TOP`, `INSIDERS`, `SNIPERS` e `FRESH`;
+- exibir glifos de `SNIPER`, `FRESH`, `CEX`, `LP` e `UNKNOWN` sem transformar
+  inferência em fato;
+- mostrar `DEV HOLD`, `INSIDERS`, `LP LOCKED` e `BUNDLED` no painel de
+  distribuição;
+- distinguir zero real, dado indisponível e classificação ainda processando;
+- explicar por que uma tag foi atribuída e até qual bloco a evidência é válida.
+
+Não faz parte deste roteiro afirmar que duas wallets têm o mesmo dono. Relação
+on-chain, funding comum e comportamento coordenado são sinais, não identidade.
+
+### 0.2 Estado confirmado em 2026-08-21
+
+Já existe no repositório:
+
+- ledger de holders com saldo atual e supply;
+- swaps atribuídos a `tx.from`, com lado, volume, bloco, horário e posição na
+  transação;
+- atribuição de criador/deployer com bloco e fonte da atribuição;
+- registro de pools da Robinhood Chain;
+- eventos ERC-20 e arestas permanentes resumidas entre wallets;
+- projeção financeira de compra, venda, market cap médio e PnL;
+- endpoint paginado de holders e a fatia visual compacta;
+- concentração `Top 10` e `Top 50` calculada a partir de saldos reais.
+
+Ainda não existe fonte comprovada para preencher `SNIPER`, `INSIDER`, `CEX`,
+`FRESH`, `BUNDLED` ou `LP LOCKED`. Enquanto isso:
+
+- filtros sem dados permanecem desabilitados;
+- métricas sem dados mostram `—`, nunca `0` inventado;
+- somente `LP` determinístico pelo registro de pools e `UNKNOWN` podem aparecer
+  como glifos hoje.
+
+### 0.3 Invariantes
+
+1. Classificação é materializada de forma assíncrona; abrir o modal nunca dispara
+   varredura pesada, RPC ou consulta externa por wallet.
+2. Toda tag possui versão da regra, `reason_code`, evidência mínima e frontier de
+   bloco/hash.
+3. Ausência de evidência resulta em `unavailable` ou ausência da tag, não em
+   classificação negativa falsa.
+4. Reprocessamento é idempotente e seguro para reorg dentro da frontier adotada.
+5. Endereços são normalizados por chain; registros de infraestrutura nunca são
+   reutilizados implicitamente entre redes.
+6. Uma wallet pode ter múltiplas tags. O glifo é apenas uma representação visual
+   de prioridade, não perda de informação.
+7. `FRESH` é a última fase e a única que depende de enriquecimento externo de
+   histórico da wallet em runtime/worker.
+8. Regras e thresholds são versionados; uma mudança de threshold não reescreve
+   silenciosamente o significado de classificações antigas.
+
+### 0.4 Âncora de lançamento do token
+
+Todas as janelas de lançamento usam o primeiro swap confirmado do token em um
+pool registrado, ordenado pela posição canônica `(block_number,
+transaction_index, action_index)`. Não usar `createdAt` de metadata, horário de
+ingestão ou primeiro alerta.
+
+Se o primeiro swap não puder ser provado, classificações dependentes do
+lançamento ficam `unavailable` para o token.
+
+### 0.5 Regras v1
+
+Os limites abaixo são defaults recomendados para a primeira versão e devem ficar
+em configuração versionada.
+
+#### LP
+
+- Evidência: endereço é pool ativo do token no registro interno de pools.
+- Natureza: determinística.
+- Exclusões: nenhuma heurística por saldo ou padrão de transfer.
+- Motivo público: `registered_token_pool`.
+
+#### CEX
+
+- Evidência: correspondência exata com registro interno, auditado e específico
+  da chain, incluindo origem e data da informação.
+- Natureza: determinística por allowlist; nunca inferida por volume, fan-out ou
+  número de transações.
+- Operação: o registro pode ser mantido com pesquisa externa fora do caminho do
+  produto, mas a classificação consulta somente a cópia interna versionada.
+- Motivo público: `known_cex_address`.
+
+#### DEV HOLD
+
+- Fórmula: saldo atual do criador atribuído dividido pelo supply atual.
+- Evidência: `creator_address` confirmado pela atribuição existente.
+- Sem criador confirmado: `unavailable`, não `0%`.
+- Excluir burn e pool apenas do denominador se uma futura métrica explicitamente
+  adotar circulating supply; a v1 usa supply total para manter consistência com
+  `Remaining`.
+
+#### SNIPER
+
+- Evidência: primeira compra confirmada da wallet satisfaz pelo menos uma das
+  janelas configuradas: `delta_blocks <= 3` ou `delta_seconds <= 90`.
+- Exclusões: criador, pools, routers, burn/dead addresses e CEX conhecido.
+- A compra precisa superar um notional mínimo versionado; o valor será fechado
+  antes da fase SNIPER e não deve ser hardcoded por conveniência.
+- Natureza: regra temporal explicável, não acusação de bot ou má-fé.
+- Motivo público: `early_launch_buy` com bloco, horário e delta da âncora.
+
+#### INSIDER
+
+- V1 aceita somente relação direta e de alta confiança com o criador/deployer:
+  alocação direta do token ou funding direto comprovado antes da primeira compra.
+- Excluir pools, routers, bridges, CEX, lockers e contratos de infraestrutura
+  compartilhada.
+- Não expandir automaticamente para dois ou mais hops na v1.
+- Um funding vindo do criador não prova propriedade comum; a UI deve descrevê-lo
+  como vínculo on-chain.
+- Motivos públicos: `creator_token_distribution` ou `creator_direct_funding`.
+
+#### BUNDLED
+
+- Sinal mínimo: grupo com pelo menos 2 wallets que compartilham o mesmo funder
+  não-CEX e compram na janela de lançamento no mesmo bloco ou em até 2 blocos.
+- Exigir funding anterior às compras e evidência econômica não-dust.
+- Excluir pools, routers, bridges, CEX, lockers e fan-out técnico conhecido.
+- O resultado pertence ao grupo; cada membro recebe o identificador do bundle e
+  as evidências comuns.
+- Se o funding relevante for nativo, a fase exige ingestão/RPC de transfers
+  nativos; arestas ERC-20 não são substituto silencioso.
+- Motivo público: `common_funder_launch_cluster`.
+
+#### LP LOCKED
+
+- Fórmula: participação do LP token ou posição LP NFT comprovadamente enviada a
+  burn address ou custodiada por locker suportado, respeitando expiração.
+- Não inferir lock porque a liquidez continua no pool.
+- Cada protocolo de locker exige adapter testado e registro de contratos.
+- Sem suporte ao tipo de pool/locker: `unavailable`.
+
+#### FRESH
+
+- Implementar somente depois de todas as fases internas estarem estáveis.
+- Default v1: no instante da primeira compra do token, wallet com até 24 horas
+  desde a primeira atividade on-chain e no máximo 5 transações anteriores.
+- Exige histórico anterior da wallet por RPC/explorer/provider externo, porque o
+  banco local começa a observar apenas o recorte do produto.
+- O worker consulta, normaliza e cacheia a evidência; a API do modal nunca chama
+  o provider diretamente.
+- Falha, rate limit ou histórico incompleto resulta em `unavailable`, não em
+  `not_fresh`.
+- Motivo público: `new_wallet_at_first_buy`, incluindo provider, primeira
+  atividade observada, contagem anterior e horário da consulta.
+
+### 0.6 Tags simultâneas e prioridade visual
+
+A API retorna todas as tags aplicáveis. Quando houver espaço para apenas um
+glifo, usar:
+
+`SNIPER > FRESH > CEX > LP > UNKNOWN`
+
+`INSIDER` permanece consultável e filtrável mesmo sem glifo primário próprio.
+`BUNDLED`, `DEV HOLD` e `LP LOCKED` são sinais/métricas adicionais e não devem
+apagar tags de endereço.
+
+### 0.7 Métricas de distribuição
+
+- `Top 10` e `Top 50`: soma dos saldos das primeiras wallets sobre supply total.
+  A UI atual preserva a visão bruta; uma variante que exclua infraestrutura deve
+  ter nome e campo distintos.
+- `Snipers`, `Fresh wallets` e `Insiders`: soma do saldo atual das wallets com a
+  tag correspondente sobre supply total, além de contagem de wallets.
+- `DEV HOLD`: regra da seção 0.5.
+- `LP LOCKED`: percentual efetivamente travado segundo adapter suportado.
+- `BUNDLED`: quantidade de wallets únicas em bundles ativos; a API também deve
+  poder expor quantidade de grupos.
+
+Percentuais usam valores inteiros/raw antes da formatação. Uma wallet com tags
+múltiplas pode participar de mais de uma métrica; as categorias não são parcelas
+mutuamente exclusivas.
+
+### 0.8 Contratos conceituais
+
+Registro materializado por wallet/tag:
+
+```text
+chain
+token_address
+wallet_address
+tag
+classification_version
+confidence                 # deterministic | high | heuristic
+reason_code
+evidence_json
+through_block_number
+through_block_hash
+observed_at
+expires_at                 # opcional para evidência temporal/registry
+```
+
+Registro de infraestrutura:
+
+```text
+chain
+address
+kind                       # cex | router | bridge | locker | burn
+label
+source
+verified_at
+valid_from / valid_to
+```
+
+O endpoint de holders deve evoluir sem quebrar os campos atuais e adicionar:
+
+- `tags[]`, `primaryTag`, `classificationVersion` e `classificationStatus` por
+  wallet;
+- `classificationThroughBlock` no envelope;
+- distribuição com `value`, `walletCount`, `status` e, quando aplicável,
+  `groupCount`;
+- evidência resumida segura para tooltip e detalhe auditável por endpoint
+  dedicado, evitando payload grande na paginação principal.
+
+### 0.9 Ordem de implementação
+
+Cada fase é um corte independente de no máximo 500 linhas alteradas. Mudança de
+schema, se necessária, fica em corte próprio com schema-check e teste de
+integração.
+
+1. **Fundação de classificação**
+   - fechar schema/contrato, versionamento, estados e reason codes;
+   - criar funções puras para prioridade e disponibilidade;
+   - validar idempotência, frontier e reorg.
+2. **Determinísticos internos**
+   - materializar `LP`, `DEV HOLD` e lookup `CEX` pelo registro interno;
+   - entregar tool/processo auditável para manter o registro de infraestrutura.
+3. **SNIPER**
+   - materializar âncora de lançamento e primeira compra;
+   - fechar notional mínimo com amostra real antes de ativar UI.
+4. **INSIDER direto**
+   - começar por distribuição direta do token;
+   - adicionar funding nativo direto somente quando a fonte estiver comprovada.
+5. **BUNDLED**
+   - construir clusters explicáveis por funder e janela;
+   - publicar como `possible bundle`, nunca como identidade comum.
+6. **LP LOCKED**
+   - escolher tipos de pool e lockers prioritários;
+   - implementar um adapter por vez, com fixtures reais.
+7. **FRESH — última fase**
+   - escolher provider externo, orçamento, limites, cache e política de retry;
+   - executar backfill assíncrono e shadow mode antes de habilitar filtro/métrica.
+
+### 0.10 Critério de aceite por fase
+
+Uma fase só pode habilitar UI quando:
+
+- regra, versão, fonte e exclusões estão documentadas;
+- unit tests cobrem boundaries e exclusões plausíveis;
+- integration test prova materialização, persistência e contrato REST;
+- reprocessar o mesmo intervalo não duplica nem altera resultado sem nova
+  evidência/versão;
+- reorg/fonte incompleta produz status explícito;
+- uma amostra real foi auditada com falsos positivos e falsos negativos
+  registrados;
+- métricas e logs mostram duração, frontier, wallets avaliadas, classificadas,
+  indisponíveis e erros por motivo;
+- rollout começa em shadow mode e permite desligar a nova regra sem afetar chart,
+  trades, holders básicos ou alertas.
+
+### 0.11 Decisões pendentes antes de código novo
+
+1. Notional mínimo de `SNIPER` e se ele é absoluto em USD ou relativo à
+   liquidez inicial.
+2. Se haverá uma segunda concentração `Top 10/50 eligible` excluindo
+   infraestrutura, sem substituir a métrica bruta atual.
+3. Processo e fonte de manutenção do registro `CEX`.
+4. Quais AMMs e lockers entram primeiro em `LP LOCKED`.
+5. Fonte de transfers nativos para `INSIDER` e `BUNDLED`.
+6. Provider externo de `FRESH`, orçamento, taxa, cobertura histórica e TTL.
+
+### 0.12 Definição de concluído
+
+O roteiro termina quando todas as tags habilitadas são materializadas,
+versionadas, explicáveis e fail-closed; filtros e métricas exibem somente dados
+com fonte comprovada; o modal não depende de chamadas externas; e `FRESH`, após
+shadow mode, alcança cobertura e custo aceitos sem degradar os workers críticos.
+
+Até lá, a UI deve continuar honesta: funcionalidade indisponível fica
+desabilitada ou marcada com `—`.
+
+### 0.13 Mapa para retomar o trabalho
+
+Pontos de entrada confirmados, para o próximo corte não depender desta conversa:
+
+- leitura/paginação de holders: `src/models/robinhood-holder-page.js`;
+- rota pública: `src/routes/robinhood-holders.js`;
+- swaps e primeira compra: `src/models/robinhood-wallet-swap-read.js` e tabela
+  `robinhood_wallet_swaps`;
+- criador/deployer: `src/models/robinhood-token-attribution.js` e tabela
+  `robinhood_token_attributions`;
+- pools/LP: `src/models/robinhood-persistence.js` e tabela
+  `robinhood_pool_registry`;
+- transfer graph: `src/models/robinhood-wallet-transfer-projection.js` e tabela
+  `robinhood_wallet_transfer_edges`;
+- contrato frontend: `frontend/src/services/api/robinhood-holders.ts`;
+- renderização da lista: `frontend/src/ui/robinhood-expanded-holders.ts`;
+- tooltip de holder: `frontend/src/ui/robinhood-holder-hover.ts`;
+- testes-base de rota e leitura: `tests/robinhood-holders-route.test.js` e
+  `tests/robinhood-holder-page.integration.test.js`;
+- testes-base de transfers: `tests/robinhood-wallet-transfer-projection.integration.test.js`.
+
+Antes do primeiro corte, conferir `docs/bot-reference.md`, `git status` e o
+schema efetivamente implantado. Este documento define intenção e contratos; a
+referência operacional continua sendo a fonte do estado em produção.
+
+## 1. Resumo executivo da fundação financeira
+
+Esta seção registra a arquitetura que originou a fundação financeira. Em
+2026-08-21, o painel já entrega `Remaining`, volumes de compra/venda, market caps
+médios e `U. PnL`; valores indisponíveis continuam explícitos. Os dados vêm de
+três fontes independentes:
 
 1. o ledger de holders fornece o saldo ERC-20 atual por token e wallet;
 2. `robinhood_wallet_swaps` fornece compras e vendas atribuídas a `tx.from`;
-3. os eventos ERC-20 `Transfer` fornecem origem, destino e quantidade, mas o
-   histórico bruto não é preservado atualmente.
+3. eventos ERC-20 `Transfer` e arestas resumidas preservam origem, destino,
+   quantidade e relações relevantes conforme a política de retenção.
 
 A arquitetura alvo deve manter:
 
