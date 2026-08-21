@@ -3,6 +3,7 @@ const db = require('./db');
 const CHAIN = 'robinhood';
 const STREAM = 'live';
 const ZERO_ADDRESS = `0x${'0'.repeat(40)}`;
+const REORG_FENCE_LOCK_ID = '8241992116082026';
 
 function decimalQuantity(value, label) {
   const raw = String(value ?? '').trim();
@@ -274,19 +275,19 @@ function tokenFilter(value, label) {
   return [...new Set(value.map((token) => hex(token, 20, label)))];
 }
 
+async function lockReorgFence(client, mode = 'shared') {
+  if (!['shared', 'exclusive'].includes(mode)) throw new Error('reorg fence mode is invalid');
+  const suffix = mode === 'shared' ? '_shared' : '';
+  await client.query(
+    `SELECT pg_advisory_xact_lock${suffix}($1::bigint)`, [REORG_FENCE_LOCK_ID]
+  );
+}
+
 async function lockNextApplicableEvent(client, input = {}) {
   const excluded = tokenFilter(input.excludeTokenAddresses, 'excluded token');
   const onlyToken = input.onlyTokenAddress == null
     ? null : hex(input.onlyTokenAddress, 20, 'only token');
-  const cursor = await client.query(
-    `SELECT next_block FROM robinhood_holder_cursors
-      WHERE chain = 'robinhood' AND stream = 'live' FOR UPDATE`
-  );
-  if (!cursor.rowCount) {
-    const error = new Error('holder live cursor is missing');
-    error.code = 'holder_cursor_missing';
-    throw error;
-  }
+  await lockReorgFence(client, 'shared');
   const result = await client.query(
     `SELECT journal.block_number, journal.block_hash, journal.transaction_hash,
             journal.transaction_index, journal.log_index, journal.token_address,
@@ -297,6 +298,8 @@ async function lockNextApplicableEvent(client, input = {}) {
        INNER JOIN robinhood_holder_token_states state
          ON state.chain = journal.chain AND state.token_address = journal.token_address
         AND state.ledger_status IN ('shadow', 'live')
+       INNER JOIN robinhood_holder_cursors cursor
+         ON cursor.chain = journal.chain AND cursor.stream = 'live'
       WHERE journal.chain = 'robinhood' AND journal.applied = false
         AND NOT (journal.token_address = ANY($1::varchar[]))
         AND ($2::varchar IS NULL OR journal.token_address = $2)
@@ -305,6 +308,17 @@ async function lockNextApplicableEvent(client, input = {}) {
       FOR UPDATE OF journal, state SKIP LOCKED`,
     [excluded, onlyToken]
   );
+  if (!result.rowCount) {
+    const cursor = await client.query(
+      `SELECT 1 FROM robinhood_holder_cursors
+        WHERE chain = 'robinhood' AND stream = 'live'`
+    );
+    if (!cursor.rowCount) {
+      const error = new Error('holder live cursor is missing');
+      error.code = 'holder_cursor_missing';
+      throw error;
+    }
+  }
   return result.rows[0] || null;
 }
 
@@ -958,6 +972,7 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     const cursor = normalizeCursor(input.cursor);
     validateRange(transfers, cursor);
     return withTransaction(database, async (client) => {
+      await lockReorgFence(client, 'shared');
       const insertedTransfers = await insertTransfers(client, transfers);
       const version = await advanceCursor(client, cursor);
       return Object.freeze({
@@ -986,10 +1001,11 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
       throw new Error('holder repair range is invalid');
     }
     return withTransaction(database, async (client) => {
+      await lockReorgFence(client, 'exclusive');
       const cursor = await client.query(
         `SELECT next_block, safe_head, journal_floor_block
            FROM robinhood_holder_cursors
-          WHERE chain = 'robinhood' AND stream = 'live' FOR UPDATE`
+          WHERE chain = 'robinhood' AND stream = 'live'`
       );
       const row = cursor.rows[0];
       if (!row || row.journal_floor_block == null || row.safe_head == null
@@ -1041,10 +1057,11 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     const limit = nonNegativeInteger(input.limit ?? 5000, 'shadowPromotion.limit');
     if (limit < 1 || limit > 50_000) throw new Error('shadowPromotion.limit is invalid');
     return withTransaction(database, async (client) => {
+      await lockReorgFence(client, 'shared');
       const cursorResult = await client.query(
         `SELECT next_block, checkpoint_block, checkpoint_hash
            FROM robinhood_holder_cursors
-          WHERE chain = 'robinhood' AND stream = 'live' FOR UPDATE`
+          WHERE chain = 'robinhood' AND stream = 'live'`
       );
       const cursor = cursorResult.rows[0];
       if (!cursor || cursor.checkpoint_block == null || cursor.checkpoint_hash == null
@@ -1106,9 +1123,10 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
       input.failedLogIndex, 'tailRollback.failedLogIndex'
     );
     return withTransaction(database, async (client) => {
+      await lockReorgFence(client, 'exclusive');
       await client.query(
         `SELECT next_block FROM robinhood_holder_cursors
-          WHERE chain = 'robinhood' AND stream = 'live' FOR UPDATE`
+          WHERE chain = 'robinhood' AND stream = 'live'`
       );
       const stateResult = await client.query(
         `SELECT holder_count, ledger_status, backfill_next_block,
@@ -1206,6 +1224,7 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
   async function rewindOrphanedRange(input = {}) {
     const rewind = normalizeRewind(input);
     return withTransaction(database, async (client) => {
+      await lockReorgFence(client, 'exclusive');
       await lockCursorForRewind(client, rewind);
       const events = await loadOrphanedEvents(client, rewind.nextBlock);
       const applied = events.filter((row) => row.applied);
@@ -1255,9 +1274,10 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
   async function quarantineMalformedToken(input = {}) {
     const tokenAddress = hex(input.tokenAddress, 20, 'malformed.tokenAddress');
     return withTransaction(database, async (client) => {
+      await lockReorgFence(client, 'exclusive');
       await client.query(
         `SELECT next_block FROM robinhood_holder_cursors
-          WHERE chain = $1 AND stream = $2 FOR UPDATE`, [CHAIN, STREAM]
+          WHERE chain = $1 AND stream = $2`, [CHAIN, STREAM]
       );
       const prior = await client.query(
         `SELECT ledger_status FROM robinhood_holder_token_states
@@ -1344,6 +1364,7 @@ module.exports = {
   deriveHolderBalanceChanges: deriveBalanceChanges,
   normalizeHolderTransfer: normalizeTransfer,
   __private: {
-    deriveBalanceChanges, normalizeCursor, normalizeRewind, normalizeTransfer, validateRange,
+    deriveBalanceChanges, lockReorgFence,
+    normalizeCursor, normalizeRewind, normalizeTransfer, validateRange,
   },
 };

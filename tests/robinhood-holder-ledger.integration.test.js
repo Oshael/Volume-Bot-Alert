@@ -3,7 +3,7 @@ const { after, describe, it } = require('node:test');
 
 const db = require('../src/models/db');
 const {
-  createRobinhoodHolderLedgerRepository,
+  createRobinhoodHolderLedgerRepository, __private,
 } = require('../src/models/robinhood-holder-ledger');
 const {
   createRobinhoodHolderJournalRetention,
@@ -44,6 +44,20 @@ function capture(blockNumber, blockHash, expectedVersion, rangeStart, overrides 
   };
 }
 
+async function observeReorgFenceMode(client, mode) {
+  await client.query('BEGIN');
+  try {
+    await __private.lockReorgFence(client, mode);
+    const result = await client.query(
+      `SELECT mode FROM pg_locks
+        WHERE pid = pg_backend_pid() AND locktype = 'advisory' AND granted`
+    );
+    return result.rows.map((row) => row.mode).sort();
+  } finally {
+    await client.query('ROLLBACK');
+  }
+}
+
 describe('Robinhood holder ledger persistence', () => {
   it('commits captures and atomically rewinds orphaned evidence in PostgreSQL', async () => {
     const client = await db.getClient();
@@ -69,6 +83,8 @@ describe('Robinhood holder ledger persistence', () => {
       };
       const repository = createRobinhoodHolderLedgerRepository({ database });
       const retention = createRobinhoodHolderJournalRetention({ database });
+      assert.deepEqual(await observeReorgFenceMode(client, 'shared'), ['ShareLock']);
+      assert.deepEqual(await observeReorgFenceMode(client, 'exclusive'), ['ExclusiveLock']);
       await client.query(
         `INSERT INTO robinhood_holder_token_states
           (token_address, holder_count, ledger_status, backfill_next_block)
@@ -561,6 +577,11 @@ describe('Robinhood holder ledger persistence', () => {
           checkpoint: { number: '148', hash: HASH_B },
         }),
         (error) => error.code === 'holder_rewind_below_floor'
+      );
+      await client.query(`DELETE FROM robinhood_holder_cursors`);
+      await assert.rejects(
+        repository.applyNextPendingEvent(),
+        (error) => error.code === 'holder_cursor_missing'
       );
     } finally {
       client.release();

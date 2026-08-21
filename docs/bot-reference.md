@@ -1018,8 +1018,11 @@ encerra o lote antes de alterar o evento inválido; o prefixo válido já aplica
 preserva sua evidência reversível. Cada lote carrega as carteiras envolvidas uma
 vez, calcula a sequência em memória e persiste saldos finais e evidências do journal
 em operações bulk; o tamanho do lote não multiplica queries PostgreSQL por evento.
-Captura e apply bloqueiam o mesmo cursor em cada
-transação, então captura, apply e rewind de reorg permanecem ordenados. O apply
+Captura, apply e promoção local usam um advisory fence transacional compartilhado,
+portanto o cursor live pode avançar enquanto um lote é aplicado. Rewind de reorg,
+recuperações de drift e quarentena usam o mesmo fence exclusivo e esperam operações
+normais terminarem antes de alterar journal ou balances; o apply não mantém mais
+`FOR UPDATE` no cursor durante o lote. O apply
 escolhe o evento elegível global mais antigo e mantém afinidade no token enquanto houver eventos;
 o índice parcial da stage 121 preserva a ordem canônica por token sem reescanear
 o journal pendente inteiro a cada evento. No deploy, execute
