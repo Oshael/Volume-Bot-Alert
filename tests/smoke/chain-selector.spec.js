@@ -1616,6 +1616,9 @@ test('opens a Robinhood FDV chart and applies only its realtime updates', async 
   await expect(granularityControls.getByRole('button', { name: '30M', exact: true })).toBeVisible();
   await expect(granularityControls).toHaveCSS('top', '8px');
   await expect(granularityControls).toHaveCSS('left', '8px');
+  await expect(granularityControls).toHaveCSS('width', '205px');
+  await expect(granularityControls).toHaveCSS('height', '24px');
+  await expect(oneMinuteButton).toHaveCSS('height', '18px');
   await expect(oneMinuteButton).toBeVisible();
   await oneMinuteButton.click();
   await expect(oneMinuteButton).toHaveAttribute('aria-pressed', 'true');
@@ -1678,12 +1681,24 @@ test('opens a Robinhood FDV chart and applies only its realtime updates', async 
 
   const legend = dialog.locator('[data-expanded-chart-legend]');
   await expect(legend).toContainText('350K');
+  await expect(dialog.locator('[data-auth-panel="expanded-sparkline"]'))
+    .toHaveCSS('background-color', 'rgb(5, 12, 22)');
+  await expect(dialog.locator('.expanded-sparkline-toolbar'))
+    .toHaveCSS('background-color', 'rgb(7, 16, 26)');
+  await expect(dialog.locator('.expanded-sparkline-stat.is-active'))
+    .toHaveCSS('color', 'rgb(0, 212, 255)');
   const chartTools = await dialog.evaluate(() => {
     const resolutions = document.querySelector('.expanded-sparkline-resolution-control').getBoundingClientRect();
     const chartLegend = document.querySelector('[data-expanded-chart-legend]').getBoundingClientRect();
-    return { resolutionsRight: resolutions.right, legendLeft: chartLegend.left };
+    return {
+      resolutionsBottom: resolutions.bottom,
+      resolutionsWidth: resolutions.width,
+      legendTop: chartLegend.top,
+      legendWidth: chartLegend.width,
+    };
   });
-  expect(chartTools.legendLeft).toBeGreaterThanOrEqual(chartTools.resolutionsRight + 6);
+  expect(chartTools.legendTop).toBeGreaterThanOrEqual(chartTools.resolutionsBottom + 4);
+  expect(Math.abs(chartTools.legendWidth - chartTools.resolutionsWidth)).toBeLessThanOrEqual(1);
   const livePayload = {
     type: 'market:bucket', address: ROBINHOOD_TOKEN,
     bucketTs: '2026-07-15T11:01:00.000Z', granularityMinutes: 1,

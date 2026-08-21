@@ -2975,10 +2975,10 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   padding: 0;
   gap: 0;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(63, 113, 176, 0.32);
   border-radius: 8px;
-  background: #080b0a;
-  box-shadow: none;
+  background: #050c16;
+  box-shadow: 0 0 0 1px rgba(14, 25, 40, 0.28) inset;
   isolation: isolate;
   animation: expanded-sparkline-hologram-enter 0.16s ease-out;
 }
@@ -3021,8 +3021,8 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 .expanded-sparkline-toolbar {
   position: relative; z-index: 40; display: flex; flex: 0 0 28px;
   align-items: center; gap: 10px; height: 28px; padding: 0 10px; box-sizing: border-box;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
-  background: #0d100f;
+  border-bottom: 1px solid rgba(63, 113, 176, 0.28);
+  background: #07101a;
 }
 
 .expanded-sparkline-identity {
@@ -3031,8 +3031,8 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 
 .expanded-sparkline-avatar {
   width: 16px; height: 16px; flex: 0 0 16px; box-sizing: border-box;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 50%; object-fit: cover; background: #161b18;
+  border: 1px solid rgba(96, 166, 218, 0.45);
+  border-radius: 50%; object-fit: cover; background: #07101a;
 }
 
 .expanded-sparkline-avatar-placeholder {
@@ -3052,7 +3052,7 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 }
 
 .expanded-sparkline-identity strong {
-  color: #e6e9e7; font-size: 12px; font-weight: 700;
+  color: #f3fbff; font-size: 12px; font-weight: 700;
   line-height: 1; letter-spacing: 0.02em; text-transform: uppercase;
 }
 
@@ -3073,18 +3073,18 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 }
 
 .expanded-sparkline-network {
-  color: #6f7773; font-size: 9px; line-height: 1; letter-spacing: 0.04em;
+  color: #86a8c8; font-size: 9px; line-height: 1; letter-spacing: 0.04em;
   text-transform: uppercase; white-space: nowrap;
 }
 
 .expanded-sparkline-toolbar-divider {
   flex: 0 0 1px; width: 1px; height: 14px;
-  background: rgba(255, 255, 255, 0.09);
+  background: rgba(112, 168, 226, 0.24);
 }
 
 .expanded-sparkline-stat-strip {
   display: flex; flex: 1 1 auto; align-items: center; gap: 8px;
-  min-width: 0; overflow: hidden; color: #8a918d; font-size: 11px; white-space: nowrap;
+  min-width: 0; overflow: hidden; color: #86a8c8; font-size: 11px; white-space: nowrap;
   font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
 }
 
@@ -3093,18 +3093,18 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   overflow: visible;
 }
 
-.expanded-sparkline-stat { color: #8a918d; }
+.expanded-sparkline-stat { color: #86a8c8; }
 
 .expanded-sparkline-stat strong {
-  color: #e6e9e7; font: inherit; font-weight: 600;
+  color: #d6ecff; font: inherit; font-weight: 600;
 }
 
 .expanded-sparkline-stat.is-active,
 .expanded-sparkline-stat.is-active strong {
-  color: #3ddc97;
+  color: #00d4ff;
 }
 
-.expanded-sparkline-stat-separator { color: #333a36; }
+.expanded-sparkline-stat-separator { color: #29415a; }
 
 .expanded-sparkline-stat-age > strong.up { color: var(--green); }
 .expanded-sparkline-stat-age > strong.warn { color: #ff8a00; }
@@ -3122,13 +3122,13 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 .expanded-sparkline-stat-tooltip {
   position: absolute; top: calc(100% + 8px); left: 50%; z-index: 70;
   display: none; min-width: 120px; padding: 7px 9px;
-  transform: translateX(-50%); border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 6px; background: #101412; box-shadow: 0 12px 28px rgba(0, 0, 0, 0.48);
-  color: #69716d; font-size: 10px; white-space: nowrap;
+  transform: translateX(-50%); border: 1px solid rgba(63, 113, 176, 0.38);
+  border-radius: 6px; background: #07101a; box-shadow: 0 12px 28px rgba(0, 0, 0, 0.48);
+  color: #86a8c8; font-size: 10px; white-space: nowrap;
 }
 
 .expanded-sparkline-stat-tooltip b {
-  margin-left: 10px; color: #e6e9e7; font: inherit; font-weight: 600;
+  margin-left: 10px; color: #d6ecff; font: inherit; font-weight: 600;
 }
 
 .expanded-sparkline-stat-hover-target:hover .expanded-sparkline-stat-tooltip,
@@ -3207,9 +3207,9 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 
 .expanded-sparkline-resolution-control {
   position: absolute; top: 8px; left: 8px; z-index: 5;
-  display: inline-flex; align-items: center; gap: 1px; padding: 2px;
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  border-radius: 6px; background: rgba(13, 16, 15, 0.86);
+  display: inline-flex; align-items: center; gap: 1px; width: 205px; height: 24px;
+  padding: 2px; box-sizing: border-box; border: 1px solid rgba(63, 113, 176, 0.32);
+  border-radius: 6px; background: rgba(5, 12, 22, 0.86);
   backdrop-filter: blur(6px);
 }
 
@@ -3297,23 +3297,23 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 }
 
 .expanded-sparkline-resolution-button {
-  min-width: 0; height: auto; padding: 3px 6px; border: 0;
-  border-radius: 4px; background: transparent; color: #7c8480;
+  flex: 1 1 0; min-width: 0; height: 18px; min-height: 0; padding: 0 2px; border: 0;
+  border-radius: 4px; background: transparent; color: #86a8c8;
   font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
-  font-size: 10px; font-weight: 500; line-height: 1; cursor: pointer;
+  font-size: 9px; font-weight: 700; line-height: 18px; cursor: pointer;
 }
 
 .expanded-sparkline-resolution-button:hover,
 .expanded-sparkline-resolution-button:focus-visible {
-  color: #e6e9e7;
-  background: rgba(255, 255, 255, 0.04);
+  color: #d7f3ff;
+  background: rgba(76, 151, 218, 0.18);
   outline: none;
 }
 
 .expanded-sparkline-resolution-button.is-active {
-  color: #3ddc97;
-  background: #1b2f25;
-  box-shadow: none;
+  color: #ecfbff;
+  background: rgba(0, 212, 255, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(130, 223, 255, 0.22);
 }
 
 .expanded-sparkline-chart {
@@ -3363,7 +3363,7 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 /* Robinhood-only: per-swap trades panel beside the expanded chart. */
 .expanded-sparkline-chart.has-trades {
   display: flex; gap: 8px; align-items: stretch; padding: 8px;
-  border-color: transparent; border-radius: 0; background: #080b0a; box-shadow: none;
+  border-color: transparent; border-radius: 0; background: #050c16; box-shadow: none;
 }
 
 .expanded-sparkline-chart.has-trades::before,
@@ -3373,46 +3373,46 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 
 .expanded-sparkline-chart.has-trades .expanded-sparkline-chart-main {
   position: relative; flex: 1 1 auto; min-width: 0;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 6px; background: #0b0e0d; overflow: hidden;
+  border: 1px solid rgba(63, 113, 176, 0.3);
+  border-radius: 6px; background: #05080d; overflow: hidden;
 }
 
 .robinhood-trades-panel {
   flex: 0 0 300px; display: flex; flex-direction: column; min-height: 0;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 6px; background: #0b0e0d; overflow: hidden;
+  border: 1px solid rgba(63, 113, 176, 0.3);
+  border-radius: 6px; background: #07101a; overflow: hidden;
 }
 
 .robinhood-trades-head {
   display: flex; align-items: center; gap: 8px; height: 32px; min-height: 32px;
   padding: 6px 10px; box-sizing: border-box;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid rgba(63, 113, 176, 0.24);
 }
 
 .robinhood-trades-title {
-  color: #e6e9e7; font-size: 12px; font-weight: 700;
+  color: #f3fbff; font-size: 12px; font-weight: 700;
 }
 
 .robinhood-trades-status {
-  margin-left: auto; color: #616966; font-size: 11px;
+  margin-left: auto; color: #6f8ead; font-size: 11px;
 }
 
 .robinhood-trades-scopes {
   display: flex; align-items: center; gap: 2px; height: 24px; margin-left: auto;
   padding: 2px; box-sizing: border-box; border-radius: 5px;
-  background: rgba(255, 255, 255, 0.025);
+  background: rgba(63, 113, 176, 0.08);
 }
 
 .robinhood-trades-scopes button {
   height: 20px; min-height: 0; padding: 0 8px; border: 0; border-radius: 4px;
-  background: transparent; color: #7c8480; font: inherit;
+  background: transparent; color: #86a8c8; font: inherit;
   font-size: 10px; font-weight: 500; line-height: 20px; text-transform: uppercase; cursor: pointer;
 }
 
 .robinhood-trades-scopes button:hover,
 .robinhood-trades-scopes button.active {
-  background: #1b2f25;
-  color: #3ddc97;
+  background: rgba(0, 212, 255, 0.16);
+  color: #d7f3ff;
 }
 
 .robinhood-trades-scopes button:focus-visible {
@@ -3428,8 +3428,8 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 }
 
 .robinhood-trades-cols {
-  padding: 6px 10px; color: #616966; font-size: 9px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 6px 10px; color: #6f8ead; font-size: 9px;
+  border-bottom: 1px solid rgba(63, 113, 176, 0.2);
   text-transform: uppercase; letter-spacing: 0.04em;
 }
 
@@ -3447,12 +3447,12 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 
 .robinhood-trade-row {
   padding: 5px 10px; border-radius: 0; font-size: 11px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.035);
+  border-bottom: 1px solid rgba(63, 113, 176, 0.12);
   font-variant-numeric: tabular-nums; white-space: nowrap;
 }
 
 .robinhood-trade-row:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(76, 151, 218, 0.1);
 }
 
 .robinhood-trade-amount {
@@ -3468,18 +3468,18 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 }
 
 .robinhood-trade-mc {
-  color: #b8bfbb;
+  color: #b8d2e8;
 }
 
 .robinhood-trade-trader {
-  color: #8a918d;
+  color: #86a8c8;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .robinhood-trade-age {
   text-align: right;
-  color: #737b77;
+  color: #6f8ead;
 }
 
 .robinhood-trades-empty {
@@ -4591,9 +4591,11 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 }
 
 .expanded-sparkline-chart-main .expanded-lightweight-legend {
-  top: 8px;
-  left: 246px;
-  max-width: calc(100% - 344px);
+  top: 36px;
+  left: 8px;
+  width: 205px;
+  max-width: calc(100% - 106px);
+  box-sizing: border-box;
   padding: 4px 8px;
 }
 
@@ -10417,7 +10419,7 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .expanded-sparkline-toolbar .legacy-profile-modal-close:hover {
-  border-color: transparent; background: #1a1f1c; color: #e6e9e7;
+  border-color: transparent; background: rgba(76, 151, 218, 0.18); color: #d7f3ff;
 }
 
 .legacy-auth-panel-expanded-sparkline.is-showing-alert-recap .expanded-sparkline-chart {
