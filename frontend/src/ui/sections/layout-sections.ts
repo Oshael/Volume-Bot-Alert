@@ -21,7 +21,7 @@ import {
   sanitizeLoginEmailValue,
 } from './login-form-utils';
 import { escapeHtml, sanitizeOptionalHttpUrl } from './html-safety';
-import { bindCopyButtons, bindSparklineHover, fmtMoney, fmtPct, getTradeTerminalLabel, renderFlash, renderSparklineFigure, renderTradeTerminalIconForKey } from './shared';
+import { bindCopyButtons, bindSparklineHover, fmtMoney, fmtPct, getAgeToneClassFromCreatedAt, getTradeTerminalLabel, renderFlash, renderSparklineFigure, renderTradeTerminalIconForKey } from './shared';
 import { fmtMockSol, fmtMockSolAmount, resolveLiveMockSolUsdcRate, resolveMockTradeSolUsdcRate, resolveMockTradingPositionPnl } from '../../utils/mock-trading-display';
 import { buildTokenExplorerUrl, buildTokenIdentityKey, buildTokenMarketUrl, resolveChainScopedConfigValue, type TokenChain } from '../../utils/token-chain';
 import { buildTokenChartViewportKey, getTokenChartValuationLabel, normalizeTokenChartCandle, normalizeTokenChartCandles, resolveTokenChartValuationType } from '../../utils/token-chart';
@@ -79,6 +79,7 @@ const EXPANDED_CHART_GRANULARITY_OPTIONS = [
   { label: '1M', value: 1 },
   { label: '5M', value: 5 },
   { label: '15M', value: 15 },
+  { label: '30M', value: 30 },
   { label: '1H', value: 60 },
   { label: '4H', value: 240 },
   { label: '24H', value: 1440 },
@@ -4104,11 +4105,11 @@ function isExpandedOneMinuteChartOptionAvailable(
   sparkline: TokenSparklineEntry,
   chain: TokenChain,
 ) {
-  if (sparkline.oneMinuteAvailable !== true) {
-    return false;
-  }
   if (chain !== 'solana') {
     return true;
+  }
+  if (sparkline.oneMinuteAvailable !== true) {
+    return false;
   }
 
   const createdAt = Number(token?.createdAt);
@@ -4230,13 +4231,12 @@ function renderExpandedSparklineModal(state: AppState, address: string) {
       <div class="legacy-auth-panel legacy-auth-panel-expanded-sparkline${getExpandedSparklinePanelClass(chain)}" data-auth-panel="expanded-sparkline" role="dialog" aria-modal="true" aria-labelledby="expanded-sparkline-title">
         <div class="expanded-sparkline-toolbar">
           ${renderExpandedSparklineIdentity(
-            symbol, imageUrl, token?.tickerPeers,
+            symbol, imageUrl, token?.tickerPeers, chain,
           )}
           <span class="expanded-sparkline-toolbar-divider" aria-hidden="true"></span>
           ${renderExpandedSparklineStatsRow(
             token, stats.latestValue, ageLabel, getTokenChartValuationLabel(sparkline),
           )}
-          ${renderExpandedDetailsPopover(token, address, chain)}
           <button type="button" class="legacy-profile-modal-close" data-action="close-expanded-sparkline" aria-label="Close dialog">×</button>
         </div>
         ${expandedBody}
@@ -4249,6 +4249,7 @@ function renderExpandedSparklineIdentity(
   symbol: string,
   imageUrl: string | null,
   tickerPeers: ManualTokenEntry['tickerPeers'],
+  chain: TokenChain,
 ) {
   const avatar = imageUrl
     ? `<img src="${escapeHtml(imageUrl)}" alt="" class="expanded-sparkline-avatar" />`
@@ -4259,6 +4260,7 @@ function renderExpandedSparklineIdentity(
       ${avatar}
       <strong id="expanded-sparkline-title">${escapeHtml(symbol)}</strong>
       <span class="expanded-sparkline-rank">${escapeHtml(rank)}</span>
+      <span class="expanded-sparkline-network">${escapeHtml(getTokenChainTitle(chain))}</span>
     </div>
   `;
 }
@@ -4270,11 +4272,15 @@ function renderExpandedSparklineStatsRow(
   valuationLabel: string,
 ) {
   const separator = '<span class="expanded-sparkline-stat-separator" aria-hidden="true">/</span>';
+  const ageTone = getAgeToneClassFromCreatedAt(token?.createdAt);
   return `
     <div class="expanded-sparkline-stat-strip">
       ${renderExpandedSparklineStat(valuationLabel, latestValue)}${separator}
-      ${renderExpandedSparklineStat('LIQ', token?.liquidityUsd)}${separator}
-      <span class="expanded-sparkline-stat-age">${escapeHtml(ageLabel)}</span>${separator}
+      ${renderExpandedSparklineHoverStat('LIQ', fmtMoney(token?.liquidityUsd), 'Liquidity')}${separator}
+      ${renderExpandedSparklineHoverStat(
+        'HOLDERS', formatExpandedHolderCount(token?.holderCount), 'Holders', true,
+      )}${separator}
+      <span class="expanded-sparkline-stat expanded-sparkline-stat-age"><span>AGE</span> <strong class="${ageTone}">${escapeHtml(ageLabel)}</strong></span>${separator}
       ${renderExpandedSparklineStat('1H', token?.volume1h, true)}${separator}
       ${renderExpandedSparklineStat('6H', token?.volume6h)}${separator}
       ${renderExpandedSparklineStat('24H', token?.volume24h)}
@@ -4287,37 +4293,20 @@ function renderExpandedSparklineStat(label: string, value?: number | null, activ
   return `<span class="expanded-sparkline-stat${active ? ' is-active' : ''}"><span>${escapeHtml(label)}</span> <strong>${escapeHtml(formatted)}</strong></span>`;
 }
 
+function renderExpandedSparklineHoverStat(
+  label: string,
+  formattedValue: string,
+  tooltipLabel: string,
+  liveHolderCount = false,
+) {
+  const holderAttribute = liveHolderCount ? ' data-holder-count' : '';
+  return `<span class="expanded-sparkline-stat expanded-sparkline-stat-hover"><span>${escapeHtml(label)}</span> <span class="expanded-sparkline-stat-hover-target" tabindex="0"><strong${holderAttribute}>${escapeHtml(formattedValue.replace(/^\$/, ''))}</strong><span class="expanded-sparkline-stat-tooltip" role="tooltip"><span>${escapeHtml(tooltipLabel)}</span><b>${escapeHtml(formattedValue)}</b></span></span></span>`;
+}
+
 function formatExpandedHolderCount(value: number | null | undefined) {
   return Number.isFinite(value)
     ? Math.max(0, Math.trunc(Number(value))).toLocaleString('en-US')
     : '—';
-}
-
-function renderExpandedDetailsPopover(
-  token: ReturnType<typeof getTrackedToken>,
-  address: string,
-  chain: TokenChain,
-) {
-  const explorerUrl = buildTokenExplorerUrl(chain, address);
-  const marketUrl = sanitizeOptionalHttpUrl(token?.pairUrl)
-    || buildTokenMarketUrl(chain, address, token?.pairUrl);
-  const links = [
-    ['Explorer', explorerUrl],
-    ['Chart', marketUrl],
-    ['X', sanitizeOptionalHttpUrl(token?.twitterUrl)],
-    ['Community', sanitizeOptionalHttpUrl(token?.communityUrl)],
-  ].filter((entry): entry is [string, string] => Boolean(entry[1]));
-  return `
-    <details class="expanded-sparkline-details">
-      <summary>detalhes <span aria-hidden="true">⌄</span></summary>
-      <div class="expanded-sparkline-details-popover">
-        <span class="expanded-sparkline-details-metric"><span>Liquidity</span><strong>${escapeHtml(fmtMoney(token?.liquidityUsd))}</strong></span>
-        <span class="expanded-sparkline-details-metric"><span>Holders</span><strong data-holder-count>${escapeHtml(formatExpandedHolderCount(token?.holderCount))}</strong></span>
-        <span class="expanded-sparkline-details-contract"><span>Contract</span><code title="${escapeHtml(address)}">${escapeHtml(`${address.slice(0, 8)}…${address.slice(-6)}`)}</code></span>
-        <nav aria-label="Token links">${links.map(([label, url]) => `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`).join('')}</nav>
-      </div>
-    </details>
-  `;
 }
 
 function formatExpandedTokenAge(createdAt: number | null | undefined) {

@@ -678,6 +678,10 @@ const ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES = {
 
 const ROBINHOOD_IDENTITY_BADGE_API_FIXTURES = {
   ...ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES,
+  'POST /api/catalog/sparklines/expanded': (request) => {
+    const fixture = ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES['POST /api/catalog/sparklines/expanded'](request);
+    return { ...fixture, item: { ...fixture.item, oneMinuteAvailable: false } };
+  },
   'GET /api/dashboard/monitored': async (request) => {
     const fixture = await buildMarketPanelFixture(request, 'monitored');
     return {
@@ -1531,7 +1535,7 @@ test('sends Robinhood identity through manual, star and block actions', async ({
   expect(diagnostics.pageErrors).toEqual([]);
 });
 
-test('renders the compact expanded chart header and details popover', async ({ page }) => {
+test('renders compact expanded chart metrics with direct value tooltips', async ({ page }) => {
   const diagnostics = await openAuthenticatedWorkspace(page, ROBINHOOD_IDENTITY_BADGE_API_FIXTURES);
   const selector = page.getByRole('group', { name: 'Filter workspace by blockchain' });
   await selector.locator('[data-chain="robinhood"]').click();
@@ -1552,14 +1556,25 @@ test('renders the compact expanded chart header and details popover', async ({ p
   await expect(toolbar).toHaveCSS('padding', '0px 10px');
   await expect(toolbar.locator('.expanded-sparkline-avatar')).toHaveCSS('width', '16px');
   await expect(toolbar.locator('.expanded-sparkline-rank')).toHaveText('OG');
+  await expect(toolbar.locator('.expanded-sparkline-network')).toHaveText('Robinhood Chain');
   await expect(toolbar.locator('.expanded-sparkline-stat-strip')).toContainText('FDV');
   await expect(toolbar.locator('.expanded-sparkline-stat-strip')).toContainText('LIQ');
+  await expect(toolbar.locator('.expanded-sparkline-stat-strip')).toContainText('HOLDERS');
+  const ageStat = toolbar.locator('.expanded-sparkline-stat-age');
+  await expect(ageStat).toContainText('AGE');
+  await expect(ageStat.locator('strong')).toHaveClass('warn');
   await expect(toolbar.locator('.expanded-sparkline-stat.is-active')).toContainText('1H');
-  const details = toolbar.locator('.expanded-sparkline-details');
-  await details.locator('summary').click();
-  await expect(details.locator('.expanded-sparkline-details-popover')).toBeVisible();
-  await expect(details).toContainText('Holders');
-  await expect(details.getByRole('link', { name: 'Explorer' })).toBeVisible();
+  await expect(dialog.getByRole('group', { name: 'Chart resolution' })
+    .getByRole('button', { name: '1M', exact: true })).toBeVisible();
+  await expect(toolbar.locator('.expanded-sparkline-details')).toHaveCount(0);
+  const liquidityValue = toolbar.locator('.expanded-sparkline-stat-hover').filter({ hasText: 'LIQ' })
+    .locator('.expanded-sparkline-stat-hover-target');
+  await liquidityValue.hover();
+  await expect(liquidityValue.getByRole('tooltip')).toBeVisible();
+  const holderValue = toolbar.locator('.expanded-sparkline-stat-hover').filter({ hasText: 'HOLDERS' })
+    .locator('.expanded-sparkline-stat-hover-target');
+  await holderValue.focus();
+  await expect(holderValue.getByRole('tooltip')).toBeVisible();
   expect(diagnostics.unexpectedRequests).toEqual([]);
   expect(diagnostics.pageErrors).toEqual([]);
 });
@@ -1598,7 +1613,7 @@ test('opens a Robinhood FDV chart and applies only its realtime updates', async 
   const oneMinuteButton = granularityControls.getByRole('button', { name: '1M', exact: true });
   await expect(granularityControls.getByRole('button', { name: '15M', exact: true }))
     .toHaveAttribute('aria-pressed', 'true');
-  await expect(granularityControls.getByRole('button', { name: '30M', exact: true })).toHaveCount(0);
+  await expect(granularityControls.getByRole('button', { name: '30M', exact: true })).toBeVisible();
   await expect(granularityControls).toHaveCSS('top', '8px');
   await expect(granularityControls).toHaveCSS('left', '8px');
   await expect(oneMinuteButton).toBeVisible();
@@ -1623,7 +1638,16 @@ test('opens a Robinhood FDV chart and applies only its realtime updates', async 
 
   const tradesPanel = dialog.locator('[data-robinhood-trades-panel]');
   await expect(tradesPanel).toHaveCSS('width', '300px');
-  await expect(tradesPanel.locator('.robinhood-trades-head')).toHaveCSS('padding', '6px 10px');
+  const tradesHead = tradesPanel.locator('.robinhood-trades-head');
+  const tradeScopes = tradesPanel.locator('.robinhood-trades-scopes');
+  await expect(tradesHead).toHaveCSS('padding', '6px 10px');
+  await expect(tradeScopes).toHaveCSS('height', '24px');
+  const scopeContainment = await tradesPanel.evaluate((panel) => {
+    const head = panel.querySelector('.robinhood-trades-head').getBoundingClientRect();
+    const scopes = panel.querySelector('.robinhood-trades-scopes').getBoundingClientRect();
+    return { headBottom: head.bottom, scopesBottom: scopes.bottom };
+  });
+  expect(scopeContainment.scopesBottom).toBeLessThanOrEqual(scopeContainment.headBottom);
   await expect(tradesPanel).toContainText('$10');
   sendSocketEvent(socketScenario, 'market:trade', {
     type: 'market:trade', chain: 'robinhood', address: ROBINHOOD_TOKEN,
@@ -1654,6 +1678,12 @@ test('opens a Robinhood FDV chart and applies only its realtime updates', async 
 
   const legend = dialog.locator('[data-expanded-chart-legend]');
   await expect(legend).toContainText('350K');
+  const chartTools = await dialog.evaluate(() => {
+    const resolutions = document.querySelector('.expanded-sparkline-resolution-control').getBoundingClientRect();
+    const chartLegend = document.querySelector('[data-expanded-chart-legend]').getBoundingClientRect();
+    return { resolutionsRight: resolutions.right, legendLeft: chartLegend.left };
+  });
+  expect(chartTools.legendLeft).toBeGreaterThanOrEqual(chartTools.resolutionsRight + 6);
   const livePayload = {
     type: 'market:bucket', address: ROBINHOOD_TOKEN,
     bucketTs: '2026-07-15T11:01:00.000Z', granularityMinutes: 1,
@@ -1761,7 +1791,7 @@ test('renders holder pages without the holder bar chart in the Robinhood expande
   await expect(panel.locator('[data-holder-history]')).toHaveCount(0);
   await expect(panel.locator('[data-holder-bar]')).toHaveCount(0);
   await expect(panel.locator('[data-holder-count]')).toHaveCount(0);
-  const holderStat = dialog.locator('.expanded-sparkline-details-metric').filter({ hasText: 'Holders' });
+  const holderStat = dialog.locator('.expanded-sparkline-stat-hover').filter({ hasText: 'HOLDERS' });
   await expect(holderStat).toBeAttached();
   await expect.poll(() => socketScenario.clientFrames.some((frame) => (
     frame.includes('"market:sync"') && frame.includes(`"address":"${ROBINHOOD_TOKEN}"`)
