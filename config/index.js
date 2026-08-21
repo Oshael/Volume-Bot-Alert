@@ -498,6 +498,9 @@ const robinhoodHolderGlobalCatalogCutoff = parseOptionalTimestamp(
   process.env.ROBINHOOD_HOLDER_GLOBAL_BACKFILL_CATALOG_CUTOFF
 );
 const robinhoodHolderLiveEnabled = parseBoolean(process.env.ROBINHOOD_HOLDER_LIVE_ENABLED, false);
+const robinhoodHolderIntelligenceEnabled = parseBoolean(
+  process.env.ROBINHOOD_HOLDER_INTELLIGENCE_ENABLED, false
+);
 const robinhoodHolderReconciliationEnabled = parseBoolean(
   process.env.ROBINHOOD_HOLDER_RECONCILIATION_ENABLED, false
 );
@@ -601,6 +604,9 @@ if (robinhoodHolderReconciliationEnabled && !robinhoodHolderLiveEnabled) {
 }
 if (robinhoodHolderSnapshotEnabled && !robinhoodHolderLiveEnabled) {
   missing.push('ROBINHOOD_HOLDER_LIVE_ENABLED=true for holder snapshots');
+}
+if (robinhoodHolderIntelligenceEnabled && !robinhoodHolderLiveEnabled) {
+  missing.push('ROBINHOOD_HOLDER_LIVE_ENABLED=true for holder intelligence');
 }
 if ((robinhoodHolderBackfillEnabled || robinhoodHolderColdEnabled || robinhoodHolderLiveEnabled
       || robinhoodHolderGlobalBackfillEnabled)
@@ -1058,6 +1064,27 @@ module.exports = {
     failureBackoffMs: parseIntegerInRange(process.env.ROBINHOOD_HOLDER_FAILURE_BACKOFF_MS, 300_000, 60_000, 3_600_000),
     maxFailureBackoffMs: parseIntegerInRange(process.env.ROBINHOOD_HOLDER_MAX_FAILURE_BACKOFF_MS, 21_600_000, 60_000, 86_400_000),
     unavailableRetryMs: parseIntegerInRange(process.env.ROBINHOOD_HOLDER_UNAVAILABLE_RETRY_MS, 86_400_000, 3_600_000, 604_800_000),
+  },
+
+  robinhoodHolderIntelligenceWorker: {
+    enabled: robinhoodHolderIntelligenceEnabled,
+    intervalMs: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_INTELLIGENCE_INTERVAL_MS, 60_000, 10_000, 3_600_000
+    ),
+    maxErrorBackoffMs: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_INTELLIGENCE_MAX_ERROR_BACKOFF_MS,
+      300_000, 10_000, 3_600_000
+    ),
+    batchSize: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_INTELLIGENCE_BATCH_SIZE, 20, 1, 100
+    ),
+    concurrency: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_INTELLIGENCE_CONCURRENCY, 2, 1, 8
+    ),
+    unavailableRetryMs: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_INTELLIGENCE_UNAVAILABLE_RETRY_MS,
+      3_600_000, 60_000, 86_400_000
+    ),
   },
 
   robinhoodHolderBackfillWorker: {

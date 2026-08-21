@@ -52,6 +52,7 @@ const robinhoodHolderColdWorker = require('./services/robinhood-holder-cold-work
 const robinhoodHolderGlobalBackfillWorker = require('./services/robinhood-holder-global-backfill-worker');
 const robinhoodHolderJournalPruneWorker = require('./services/robinhood-holder-journal-prune-worker');
 const robinhoodHolderLiveApplyWorker = require('./services/robinhood-holder-live-apply-worker');
+const robinhoodHolderIntelligenceWorker = require('./services/robinhood-holder-intelligence-worker');
 const robinhoodHolderLiveWorker = require('./services/robinhood-holder-live-worker');
 const robinhoodHolderReconciliationWorker = require('./services/robinhood-holder-reconciliation-worker');
 const robinhoodHolderSnapshotWorker = require('./services/robinhood-holder-snapshot-worker');
@@ -121,6 +122,7 @@ const ROBINHOOD_HOLDER_COLD_LEASE_KEY = 'robinhood-holder-cold-worker';
 const ROBINHOOD_HOLDER_GLOBAL_BACKFILL_LEASE_KEY = 'robinhood-holder-global-backfill-worker';
 const ROBINHOOD_HOLDER_JOURNAL_PRUNE_LEASE_KEY = 'robinhood-holder-journal-prune-worker';
 const ROBINHOOD_HOLDER_LIVE_APPLY_LEASE_KEY = 'robinhood-holder-live-apply-worker';
+const ROBINHOOD_HOLDER_INTELLIGENCE_LEASE_KEY = 'robinhood-holder-intelligence-worker';
 const ROBINHOOD_HOLDER_LIVE_LEASE_KEY = 'robinhood-holder-live-worker';
 const ROBINHOOD_HOLDER_RECONCILIATION_LEASE_KEY = 'robinhood-holder-reconciliation-worker';
 const ROBINHOOD_HOLDER_SNAPSHOT_LEASE_KEY = 'robinhood-holder-snapshot-worker';
@@ -321,6 +323,7 @@ app.get('/api/admin/ws-status', authenticate, requireAdmin, async (req, res) => 
     robinhoodHolderColdWorker: robinhoodHolderColdWorker.getStatus(),
     robinhoodHolderGlobalBackfillWorker: robinhoodHolderGlobalBackfillWorker.getStatus(),
     robinhoodHolderJournalPruneWorker: robinhoodHolderJournalPruneWorker.getStatus(),
+    robinhoodHolderIntelligenceWorker: robinhoodHolderIntelligenceWorker.getStatus(),
     robinhoodHolderLiveWorker: robinhoodHolderLiveWorker.getStatus(),
     robinhoodHolderReconciliationWorker: robinhoodHolderReconciliationWorker.getStatus(),
     robinhoodHolderSnapshotWorker: robinhoodHolderSnapshotWorker.getStatus(),
@@ -640,6 +643,16 @@ function startRobinhoodHolderWorkerGroup() {
       }), {
         metadataProvider: () => ({ telemetry: robinhoodHolderLiveApplyWorker.getStatus() }),
       }
+    );
+  }
+  if (config.robinhoodHolderIntelligenceWorker.enabled) {
+    startLockedWorker(
+      'robinhood-holders', ROBINHOOD_HOLDER_INTELLIGENCE_LEASE_KEY,
+      'Robinhood holder intelligence worker',
+      () => robinhoodHolderIntelligenceWorker.start(
+        config.robinhoodHolderIntelligenceWorker
+      ),
+      { metadataProvider: () => ({ telemetry: robinhoodHolderIntelligenceWorker.getStatus() }) }
     );
   }
   if (config.robinhoodHolderBackfillWorker.enabled) {
@@ -1141,6 +1154,7 @@ async function shutdownGracefully(signal = 'SIGTERM') {
       robinhoodHolderGlobalBackfillWorker.stop(),
       robinhoodHolderJournalPruneWorker.stop(),
       robinhoodHolderLiveApplyWorker.stop(),
+      robinhoodHolderIntelligenceWorker.stop(),
       robinhoodHolderLiveWorker.stop(),
       robinhoodHolderReconciliationWorker.stop(),
       robinhoodHolderSnapshotWorker.stop(),

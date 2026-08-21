@@ -1208,6 +1208,17 @@ ao registro são particionadas em lotes de 10 mil wallets. Ledger ausente ou nã
 live adia a publicação; matches publicam `known_cex_address` com a evidência
 auditada completa. Nenhuma inferência comportamental ou chamada externa ocorre.
 
+O `robinhood-holder-intelligence-worker`, no grupo `robinhood-holders`, mantém
+`LP`, `CEX` e `DEV HOLD` alinhados à frontier live. Ele não é chamado pela API e
+fica desligado por padrão. Para ativá-lo, use
+`ROBINHOOD_HOLDER_INTELLIGENCE_ENABLED=true` junto de
+`ROBINHOOD_HOLDER_LIVE_ENABLED=true`; a execução usa lease própria. Intervalo,
+batch, concorrência e retry de métricas indisponíveis são configurados por
+`ROBINHOOD_HOLDER_INTELLIGENCE_INTERVAL_MS`,
+`ROBINHOOD_HOLDER_INTELLIGENCE_BATCH_SIZE`,
+`ROBINHOOD_HOLDER_INTELLIGENCE_CONCURRENCY` e
+`ROBINHOOD_HOLDER_INTELLIGENCE_UNAVAILABLE_RETRY_MS`.
+
 Cadastros usam um manifesto JSON append-only com `entries`; cada entrada contém
 `address`, `kind`, `label`, `source`, `evidence`, `validFromBlock`,
 `validThroughBlock` (`null` para aberta) e `verifiedAt`. Execute primeiro
