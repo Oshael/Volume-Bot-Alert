@@ -4,12 +4,16 @@ const assert = require('node:assert/strict');
 const { after, before, describe, it } = require('node:test');
 
 const db = require('../src/models/db');
+const {
+  createRobinhoodHolderClassificationRepository,
+} = require('../src/models/robinhood-holder-classification');
 const stage143 = require('../src/utils/db-init-stage143');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const TOKEN = `0x${'7'.repeat(40)}`;
 const WALLET = `0x${'8'.repeat(40)}`;
 const BLOCK_HASH = `0x${'9'.repeat(64)}`;
+const FORK_HASH = `0x${'a'.repeat(64)}`;
 const VERSION = 'rh_holder_v1';
 
 async function cleanup() {
@@ -106,5 +110,61 @@ describe('Robinhood holder classification schema integration', () => {
       ),
       /rh_holder_classification_states_frontier_pair_check/
     );
+  });
+
+  it('publishes snapshots atomically without regressing their frontier', async () => {
+    await cleanup();
+    const repository = createRobinhoodHolderClassificationRepository({ database: db });
+    const input = {
+      tokenAddress: TOKEN, classifier: 'sniper', status: 'ready',
+      statusReason: 'materialized', throughBlockNumber: '200',
+      throughBlockHash: BLOCK_HASH, observedAt: '2026-08-21T12:00:00Z',
+      records: [{
+        walletAddress: WALLET, confidence: 'high', reasonCode: 'early_launch_buy',
+        evidence: { deltaBlocks: 1 },
+      }],
+    };
+
+    assert.deepEqual(await repository.replaceClassifierSnapshot(input), {
+      status: 'published', records: 1,
+    });
+    assert.deepEqual(await repository.replaceClassifierSnapshot({
+      ...input, observedAt: '2026-08-21T12:05:00Z',
+    }), { status: 'unchanged', records: 1 });
+    await assert.rejects(repository.replaceClassifierSnapshot({
+      ...input, records: [{
+        ...input.records[0], evidence: { deltaBlocks: 2 },
+      }],
+    }), /Conflicting ready snapshot/);
+    assert.deepEqual(await repository.replaceClassifierSnapshot({
+      ...input, throughBlockNumber: '199',
+    }), { status: 'stale_ignored', records: 1 });
+
+    const stored = await repository.loadClassifierSnapshot({
+      tokenAddress: TOKEN, classifier: 'sniper',
+    });
+    assert.equal(stored.state.throughBlockNumber, '200');
+    assert.equal(stored.records.length, 1);
+    assert.deepEqual(stored.records[0].evidence, { deltaBlocks: 1 });
+
+    const reorged = {
+      tokenAddress: TOKEN, classifier: 'sniper', status: 'reorged',
+      statusReason: 'frontier_fork', throughBlockNumber: '200',
+      throughBlockHash: FORK_HASH, observedAt: '2026-08-21T12:10:00Z', records: [],
+    };
+    await assert.rejects(repository.replaceClassifierSnapshot(reorged), /fork/);
+    assert.deepEqual(await repository.replaceClassifierSnapshot(
+      reorged, { allowForkReplacement: true }
+    ), { status: 'state_updated', records: 0 });
+    const quarantined = await repository.loadClassifierSnapshot({
+      tokenAddress: TOKEN, classifier: 'sniper',
+    });
+    assert.equal(quarantined.state.status, 'reorged');
+    assert.equal(quarantined.records.length, 1);
+
+    assert.deepEqual(await repository.replaceClassifierSnapshot({
+      ...input, throughBlockHash: FORK_HASH, observedAt: '2026-08-21T12:11:00Z',
+      records: [{ ...input.records[0], evidence: { deltaBlocks: 2 } }],
+    }), { status: 'published', records: 1 });
   });
 });

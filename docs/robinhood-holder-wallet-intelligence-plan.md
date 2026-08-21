@@ -246,8 +246,8 @@ integração.
    - fechar schema/contrato, versionamento, estados e reason codes;
    - criar funções puras para prioridade e disponibilidade;
    - validar idempotência, frontier e reorg.
-   - Status em 2026-08-21: domínio puro e Stage 143 concluídos; repository,
-     materializadores e integração REST permanecem para cortes próprios.
+   - Status em 2026-08-21: domínio, Stage 143 e repository de snapshots
+     concluídos; materializadores e integração REST permanecem para cortes próprios.
 2. **Determinísticos internos**
    - materializar `LP`, `DEV HOLD` e lookup `CEX` pelo registro interno;
    - entregar tool/processo auditável para manter o registro de infraestrutura.

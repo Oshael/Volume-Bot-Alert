@@ -198,7 +198,7 @@ function deriveClassificationStatus(input = {}) {
 }
 
 function semanticRecord(record) {
-  const { observedAt, ...semantic } = record;
+  const { observedAt: _observedAt, ...semantic } = record;
   return JSON.stringify(semantic);
 }
 
