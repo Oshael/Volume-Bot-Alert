@@ -89,10 +89,12 @@ em configuração versionada.
 
 #### LP
 
-- Evidência: endereço é pool ativo do token no registro interno de pools.
+- Evidência: endereço é pool V2/V3 ativo do token ou o `PoolManager` de uma pool
+  V4 ativa no registro interno. Na V4, a evidência inclui os `pool_id` do token.
 - Natureza: determinística.
-- Exclusões: nenhuma heurística por saldo ou padrão de transfer.
-- Motivo público: `registered_token_pool`.
+- Exclusões: nenhuma heurística por saldo ou padrão de transfer. O `PoolManager`
+  V4 é infraestrutura compartilhada e não produz AVG BUY/SELL ou PnL de wallet.
+- Motivo público: `registered_token_pool` ou `registered_v4_pool_manager`.
 
 #### CEX
 
@@ -252,8 +254,8 @@ integração.
    - materializar `LP`, `DEV HOLD` e lookup `CEX` pelo registro interno;
    - entregar tool/processo auditável para manter o registro de infraestrutura.
    - Status em 2026-08-21: materializador `LP` concluído, usando a frontier live
-     do ledger e somente endereços de pool V2/V3 ativos; ainda não há worker nem
-     contrato REST consumindo os snapshots.
+     do ledger, contratos V2/V3 e o `PoolManager` contextual das pools V4 ativas;
+     ainda não há worker nem contrato REST consumindo os snapshots.
 3. **SNIPER**
    - materializar âncora de lançamento e primeira compra;
    - fechar notional mínimo com amostra real antes de ativar UI.

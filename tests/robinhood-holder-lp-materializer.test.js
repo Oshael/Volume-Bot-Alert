@@ -17,11 +17,13 @@ function candidate(overrides = {}) {
     tokenAddress: TOKEN,
     frontier: { blockNumber: '200', blockHash: HASH },
     pools: [{
-      poolAddress: POOL_B, protocol: 'uniswap-v3', marketKey: 'v3-b',
+      walletAddress: POOL_B, poolAddress: POOL_B, poolId: null,
+      protocol: 'uniswap-v3', marketKey: 'v3-b',
       discoveryBlock: '20', discoveryBlockHash: HASH,
       discoveryTransactionHash: HASH, discoveryLogIndex: '2',
     }, {
-      poolAddress: POOL_A, protocol: 'uniswap-v2', marketKey: 'v2-a',
+      walletAddress: POOL_A, poolAddress: POOL_A, poolId: null,
+      protocol: 'uniswap-v2', marketKey: 'v2-a',
       discoveryBlock: '10', discoveryBlockHash: HASH,
       discoveryTransactionHash: HASH, discoveryLogIndex: '1',
     }],
@@ -41,7 +43,8 @@ describe('Robinhood holder LP materializer', () => {
     assert.deepEqual(snapshot.records[0].evidence, {
       source: 'robinhood_pool_registry',
       registrations: [{
-        protocol: 'uniswap-v2', marketKey: 'v2-a', discoveryBlock: '10',
+        protocol: 'uniswap-v2', marketKey: 'v2-a', role: 'pool_contract',
+        poolAddress: POOL_A, poolId: null, discoveryBlock: '10',
         discoveryBlockHash: HASH, discoveryTransactionHash: HASH, discoveryLogIndex: '1',
       }],
     });

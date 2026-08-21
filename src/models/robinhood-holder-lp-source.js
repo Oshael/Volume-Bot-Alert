@@ -30,8 +30,10 @@ function normalizeRows(rows) {
       blockNumber: String(state.live_through_block),
       blockHash: state.live_through_hash,
     }),
-    pools: Object.freeze(rows.filter((row) => row.pool_address).map((row) => Object.freeze({
+    pools: Object.freeze(rows.filter((row) => row.wallet_address).map((row) => Object.freeze({
+      walletAddress: row.wallet_address,
       poolAddress: row.pool_address,
+      poolId: row.pool_id,
       protocol: row.protocol,
       marketKey: row.market_key,
       discoveryBlock: String(row.discovery_block),
@@ -50,7 +52,11 @@ function createRobinhoodHolderLpSource(options = {}) {
     const result = await database.query(
       `SELECT state.token_address, state.ledger_status,
               state.live_through_block::text, state.live_through_hash,
-              registry.pool_address, registry.protocol, registry.market_key,
+              CASE WHEN registry.protocol = 'uniswap-v4'
+                THEN registry.origin_address ELSE registry.pool_address
+              END AS wallet_address,
+              registry.pool_address, registry.pool_id,
+              registry.protocol, registry.market_key,
               registry.discovery_block::text, registry.discovery_block_hash,
               registry.discovery_tx_hash, registry.discovery_log_index::text
          FROM robinhood_holder_token_states state
@@ -58,11 +64,14 @@ function createRobinhoodHolderLpSource(options = {}) {
            ON registry.chain = state.chain
           AND registry.token_address = state.token_address
           AND registry.active = true
-          AND registry.protocol IN ('uniswap-v2', 'uniswap-v3')
-          AND registry.pool_address IS NOT NULL
+          AND (
+            (registry.protocol IN ('uniswap-v2', 'uniswap-v3')
+              AND registry.pool_address IS NOT NULL)
+            OR (registry.protocol = 'uniswap-v4' AND registry.origin_address IS NOT NULL)
+          )
           AND registry.discovery_block <= state.live_through_block
         WHERE state.chain = $1 AND state.token_address = $2
-        ORDER BY registry.pool_address, registry.protocol, registry.market_key`,
+        ORDER BY wallet_address, registry.protocol, registry.market_key`,
       [CHAIN, normalizedToken]
     );
     return normalizeRows(result.rows);

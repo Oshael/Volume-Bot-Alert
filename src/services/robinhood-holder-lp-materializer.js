@@ -11,23 +11,28 @@ function buildLpSnapshot(input, observedAt) {
   }
   const byAddress = new Map();
   for (const pool of input.pools || []) {
-    const registrations = byAddress.get(pool.poolAddress) || [];
+    const registrations = byAddress.get(pool.walletAddress) || [];
     registrations.push(Object.freeze({
       protocol: pool.protocol,
       marketKey: pool.marketKey,
+      role: pool.protocol === 'uniswap-v4' ? 'v4_pool_manager' : 'pool_contract',
+      poolAddress: pool.poolAddress,
+      poolId: pool.poolId,
       discoveryBlock: pool.discoveryBlock,
       discoveryBlockHash: pool.discoveryBlockHash,
       discoveryTransactionHash: pool.discoveryTransactionHash,
       discoveryLogIndex: pool.discoveryLogIndex,
     }));
-    byAddress.set(pool.poolAddress, registrations);
+    byAddress.set(pool.walletAddress, registrations);
   }
   const records = [...byAddress.entries()].sort(([left], [right]) => (
     left.localeCompare(right)
   )).map(([walletAddress, registrations]) => ({
     walletAddress,
     confidence: 'deterministic',
-    reasonCode: 'registered_token_pool',
+    reasonCode: registrations.every(({ role }) => role === 'v4_pool_manager')
+      ? 'registered_v4_pool_manager'
+      : 'registered_token_pool',
     evidence: {
       source: 'robinhood_pool_registry',
       registrations: registrations.sort((left, right) => (

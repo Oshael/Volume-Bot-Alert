@@ -63,6 +63,7 @@ describe('Robinhood holder classification domain', () => {
   it('accepts only the canonical reason codes for each v1 tag', () => {
     const cases = [
       ['lp', 'registered_token_pool', 'deterministic'],
+      ['lp', 'registered_v4_pool_manager', 'deterministic'],
       ['cex', 'known_cex_address', 'deterministic'],
       ['sniper', 'early_launch_buy', 'high'],
       ['fresh', 'new_wallet_at_first_buy', 'high'],

@@ -11,7 +11,7 @@ const CLASSIFICATION_STATUSES = Object.freeze([
 const PRIMARY_TAG_PRIORITY = Object.freeze(['sniper', 'fresh', 'cex', 'lp']);
 const CONFIDENCE_LEVELS = new Set(['deterministic', 'high', 'heuristic']);
 const REASON_CODES_BY_TAG = Object.freeze({
-  lp: Object.freeze(['registered_token_pool']),
+  lp: Object.freeze(['registered_token_pool', 'registered_v4_pool_manager']),
   cex: Object.freeze(['known_cex_address']),
   sniper: Object.freeze(['early_launch_buy']),
   fresh: Object.freeze(['new_wallet_at_first_buy']),

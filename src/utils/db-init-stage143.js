@@ -35,7 +35,9 @@ const STATEMENTS = Object.freeze([
        AND (tag NOT IN ('lp', 'cex') OR confidence = 'deterministic')
      ),
      CONSTRAINT rh_holder_classifications_reason_check CHECK (
-       (tag = 'lp' AND reason_code = 'registered_token_pool')
+       (tag = 'lp' AND reason_code IN (
+         'registered_token_pool', 'registered_v4_pool_manager'
+       ))
        OR (tag = 'cex' AND reason_code = 'known_cex_address')
        OR (tag = 'sniper' AND reason_code = 'early_launch_buy')
        OR (tag = 'fresh' AND reason_code = 'new_wallet_at_first_buy')
@@ -54,6 +56,19 @@ const STATEMENTS = Object.freeze([
        expires_at IS NULL OR expires_at > observed_at
      )
    )`,
+  `ALTER TABLE robinhood_holder_classifications
+     DROP CONSTRAINT IF EXISTS rh_holder_classifications_reason_check,
+     ADD CONSTRAINT rh_holder_classifications_reason_check CHECK (
+       (tag = 'lp' AND reason_code IN (
+         'registered_token_pool', 'registered_v4_pool_manager'
+       ))
+       OR (tag = 'cex' AND reason_code = 'known_cex_address')
+       OR (tag = 'sniper' AND reason_code = 'early_launch_buy')
+       OR (tag = 'fresh' AND reason_code = 'new_wallet_at_first_buy')
+       OR (tag = 'insider' AND reason_code IN (
+         'creator_token_distribution', 'creator_direct_funding'
+       ))
+     )`,
   `CREATE INDEX IF NOT EXISTS idx_rh_holder_classifications_token_tag
      ON robinhood_holder_classifications(
        chain, token_address, classification_version, tag, wallet_address

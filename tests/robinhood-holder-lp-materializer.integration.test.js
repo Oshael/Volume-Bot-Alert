@@ -72,29 +72,41 @@ describe('Robinhood holder LP materializer integration', () => {
     await db.pool.end();
   });
 
-  it('publishes only address-bearing pools visible at the canonical holder frontier', async () => {
+  it('publishes pool contracts and the contextual V4 manager at the holder frontier', async () => {
     const materializer = createRobinhoodHolderLpMaterializer({
       database: db, now: () => '2026-08-21T13:00:00Z',
     });
 
     assert.deepEqual(await materializer.materializeToken(TOKEN), {
-      status: 'published', records: 1,
+      status: 'published', records: 2,
     });
     assert.deepEqual(await materializer.materializeToken(TOKEN), {
-      status: 'unchanged', records: 1,
+      status: 'unchanged', records: 2,
     });
     const stored = await db.query(
-      `SELECT wallet_address, reason_code, through_block_number::text
+      `SELECT wallet_address, reason_code, evidence_json, through_block_number::text
          FROM robinhood_holder_classifications
-        WHERE token_address = $1 AND tag = 'lp'`,
+        WHERE token_address = $1 AND tag = 'lp' ORDER BY wallet_address`,
       [TOKEN]
     );
-    assert.deepEqual(stored.rows, [{
-      wallet_address: POOL,
-      reason_code: 'registered_token_pool',
-      through_block_number: '100',
+    assert.equal(stored.rows.length, 2);
+    assert.deepEqual(stored.rows.map((row) => ({
+      walletAddress: row.wallet_address,
+      reasonCode: row.reason_code,
+      throughBlockNumber: row.through_block_number,
+    })), [{
+      walletAddress: POOL,
+      reasonCode: 'registered_token_pool',
+      throughBlockNumber: '100',
+    }, {
+      walletAddress: MANAGER,
+      reasonCode: 'registered_v4_pool_manager',
+      throughBlockNumber: '100',
     }]);
-    assert.equal(stored.rows.some((row) => row.wallet_address === MANAGER), false);
+    const manager = stored.rows.find((row) => row.wallet_address === MANAGER);
+    assert.equal(manager.reason_code, 'registered_v4_pool_manager');
+    assert.equal(manager.evidence_json.registrations[0].poolId, POOL_ID);
+    assert.equal(manager.evidence_json.registrations[0].role, 'v4_pool_manager');
     assert.equal(stored.rows.some((row) => row.wallet_address === FUTURE_POOL), false);
   });
 });

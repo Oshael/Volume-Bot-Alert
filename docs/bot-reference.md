@@ -1173,6 +1173,11 @@ estado independente de cada classificador por token. Aplique
 `node src/utils/db-init-stage143.js` antes de iniciar código que contenha esse
 grupo no runtime schema. O stage apenas prepara persistência: nenhum worker ou
 endpoint consome as tabelas ainda, portanto os filtros continuam indisponíveis.
+O materializador LP já aceita contratos de pool V2/V3 e, de forma contextual por
+token, o `origin_address` compartilhado das pools V4 com evidência dos `pool_id`.
+Na V4 usa `registered_v4_pool_manager`; reaplique a Stage 143 para liberar esse
+reason code em bancos que já possuíam o constraint anterior. O endereço é
+infraestrutura LP e não deve produzir AVG BUY/SELL ou PnL de wallet na futura UI.
 
 O worker lê `Transfer` por range com a coorte enviada como allowlist `address` ao
 RPC, commita ranges em ordem e não grava o histórico bruto no journal. Se o node
