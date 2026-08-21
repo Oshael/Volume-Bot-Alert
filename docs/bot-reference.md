@@ -1190,6 +1190,13 @@ são agendados: usam o criador atribuído e calculam saldo/supply diretamente do
 ledger na mesma frontier; criador ou supply ausente publica `unavailable`, nunca
 zero inventado.
 
+O Stage 145 cria `robinhood_infrastructure_registry`, registro histórico e
+chain-scoped para CEX, routers, bridges, lockers e burn addresses. Cada entrada
+exige label, fonte, evidência, bloco inicial e verificação; apenas uma janela
+aberta por endereço/tipo é permitida. Aplique `node src/utils/db-init-stage145.js`
+antes de iniciar código que contenha esse grupo no runtime schema. A tabela nasce
+vazia e ainda não possui ferramenta de manutenção ou consumidor no runtime.
+
 O worker lê `Transfer` por range com a coorte enviada como allowlist `address` ao
 RPC, commita ranges em ordem e não grava o histórico bruto no journal. Se o node
 rejeitar o tamanho da allowlist, ela é dividida ao meio adaptativamente sem

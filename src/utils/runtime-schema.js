@@ -3847,6 +3847,50 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage145-robinhood-infrastructure-registry',
+    name: 'Stage 145 Robinhood infrastructure registry',
+    repair: 'node src/utils/db-init-stage145.js',
+    tables: [{
+      table: 'robinhood_infrastructure_registry',
+      columns: [
+        'chain', 'address', 'kind', 'label', 'source', 'evidence_json',
+        'valid_from_block', 'valid_through_block', 'verified_at',
+        'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_infrastructure_registry_pkey',
+        includes: ['PRIMARY KEY', 'chain', 'address', 'kind', 'valid_from_block'],
+      }, {
+        name: 'rh_infrastructure_registry_chain_check',
+        includes: ['CHECK', 'robinhood'],
+      }, {
+        name: 'rh_infrastructure_registry_address_check',
+        includes: ['CHECK', 'address', 'burn'],
+      }, {
+        name: 'rh_infrastructure_registry_kind_check',
+        includes: ['CHECK', 'cex', 'router', 'bridge', 'locker', 'burn'],
+      }, {
+        name: 'rh_infrastructure_registry_text_check',
+        includes: ['CHECK', 'label', 'source'],
+      }, {
+        name: 'rh_infrastructure_registry_evidence_check',
+        includes: ['CHECK', 'jsonb_typeof', 'evidence_json'],
+      }, {
+        name: 'rh_infrastructure_registry_validity_check',
+        includes: ['CHECK', 'valid_from_block', 'valid_through_block'],
+      }],
+      indexes: [{
+        name: 'idx_rh_infrastructure_registry_open',
+        includes: ['chain', 'address', 'kind', 'WHERE (valid_through_block IS NULL)'],
+      }, {
+        name: 'idx_rh_infrastructure_registry_kind_lookup',
+        includes: [
+          'chain', 'kind', 'address', 'valid_from_block', 'valid_through_block',
+        ],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
