@@ -1208,6 +1208,14 @@ ao registro são particionadas em lotes de 10 mil wallets. Ledger ausente ou nã
 live adia a publicação; matches publicam `known_cex_address` com a evidência
 auditada completa. Nenhuma inferência comportamental ou chamada externa ocorre.
 
+Cadastros usam um manifesto JSON append-only com `entries`; cada entrada contém
+`address`, `kind`, `label`, `source`, `evidence`, `validFromBlock`,
+`validThroughBlock` (`null` para aberta) e `verifiedAt`. Execute primeiro
+`npm run robinhood:infrastructure-import -- --file=<manifest.json>` para o plano
+read-only; somente acrescente `--apply` após revisão. O importador limita 250
+entradas, é idempotente, serializa writes e rejeita intervalos inclusivos
+sobrepostos. Ele não encerra nem altera registros existentes.
+
 O worker lê `Transfer` por range com a coorte enviada como allowlist `address` ao
 RPC, commita ranges em ordem e não grava o histórico bruto no journal. Se o node
 rejeitar o tamanho da allowlist, ela é dividida ao meio adaptativamente sem

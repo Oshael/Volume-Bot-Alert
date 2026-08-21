@@ -260,8 +260,9 @@ integração.
      o materializador `DEV HOLD` também está concluído com saldo e supply na mesma
      frontier. A Stage 145 prepara o registro auditável de infraestrutura e o
      lookup interno por endereço/tipo/bloco e o materializador `CEX` estão
-     concluídos. A ferramenta/processo de manutenção do registro ainda aguarda
-     corte próprio. Ainda não há worker nem contrato REST consumindo os snapshots.
+     concluídos. O importador auditável append-only também está concluído; o
+     encerramento auditado de janelas abertas exige extensão de schema própria.
+     Ainda não há worker nem contrato REST consumindo os snapshots.
 3. **SNIPER**
    - materializar âncora de lançamento e primeira compra;
    - fechar notional mínimo com amostra real antes de ativar UI.
