@@ -29,7 +29,9 @@ function harness(
     },
     rollbackAppliedTail: async (input) => {
       calls.push(['rollback-tail', input]);
-      return options.rollbackResults?.shift() || {
+      const result = options.rollbackResults?.shift();
+      if (result instanceof Error) throw result;
+      return result || {
         status: 'requeued', tokenAddress: input.tokenAddress, revertedEvents: 1,
       };
     },
@@ -203,6 +205,41 @@ describe('Robinhood holder live runner', () => {
     assert.equal(context.calls.filter(([name]) => name === 'receipts').length, 3);
     assert.equal(context.calls.some(([, input]) => (
       input?.confirmDriftFingerprint === 'persistent-deficit'
+    )), true);
+  });
+
+  it('isolates a stable unsafe tail without evidence instead of stopping the drain', async () => {
+    let nowMs = Date.parse('2026-08-21T00:00:00.000Z');
+    const tokenAddress = `0x${'1'.repeat(40)}`;
+    const suspicion = {
+      status: 'drift-suspected', tokenAddress, fingerprint: 'missing-tail-evidence',
+      failedBlock: '110', failedTransactionHash: `0x${'b'.repeat(64)}`,
+      failedLogIndex: 3, recoveryFromBlock: '100', recoverySafe: false,
+    };
+    const unavailable = () => Object.assign(
+      new Error('holder tail rollback has no applied evidence'),
+      { code: 'holder_tail_rollback_unavailable' }
+    );
+    const context = harness({
+      status: 'captured', transfers: 0, nextBlock: '111', safeHead: '110',
+    }, [
+      suspicion, { status: 'applied', tokenAddress: `0x${'2'.repeat(40)}` },
+      suspicion, suspicion, { status: 'drifted', tokenAddress }, { status: 'idle' },
+    ], { status: 'idle' }, async () => 0, {
+      now: () => nowMs, driftRecheckMs: 60_000,
+      rollbackResults: [unavailable(), unavailable(), unavailable()],
+    });
+
+    const first = await context.runner.runOnce({ maxApplyEvents: 2 });
+    assert.equal(first.appliedEvents, 1);
+    assert.equal(first.driftedTokens, 0);
+    nowMs += 60_000;
+    assert.equal((await context.runner.runOnce({ maxApplyEvents: 1 })).driftedTokens, 0);
+    nowMs += 60_000;
+    assert.equal((await context.runner.runOnce()).driftedTokens, 1);
+    assert.equal(context.calls.filter(([name]) => name === 'rollback-tail').length, 3);
+    assert.equal(context.calls.some(([, input]) => (
+      input?.confirmDriftFingerprint === 'missing-tail-evidence'
     )), true);
   });
 

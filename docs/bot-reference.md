@@ -1046,8 +1046,11 @@ Durante replay, saldo negativo isolado gera apenas `drift-suspected` e nao move
 cursor nem balances. O executor rele o trecho ate o primeiro deficit por
 `eth_getBlockReceipts`; se esse replay passa, commita o trecho e recupera o token.
 Somente deficit reproduzido por receipts conta para as tres confirmacoes de
-`drifted`, espacadas em 60s por default. Receipt indisponivel ou alem do limite
-mantem `drift-unverified` em cooldown, sem bloquear a fila nem isolar o token.
+`drifted`, espacadas em 60s por default. A excecao e uma cauda insegura cuja
+evidencia aplicada necessaria para rollback nao existe: tres fingerprints estaveis,
+com confirmacao transacional final, isolam somente esse token em `drifted` sem
+encerrar o apply dos demais. Receipt indisponivel ou alem do limite mantem
+`drift-unverified` em cooldown, sem bloquear a fila nem isolar o token.
 `ROBINHOOD_HOLDER_DRIFT_RECHECK_MS` ajusta o intervalo; os limites default de 250
 blocos/25 por batch usam `ROBINHOOD_HOLDER_RECEIPT_BLOCK_LIMIT` e
 `ROBINHOOD_HOLDER_RECEIPT_BATCH_SIZE`.
@@ -1196,7 +1199,9 @@ blocos ou receipts indisponiveis, o evento fica deferido sem falso `drifted`.
 O deferimento e isolado por token: os demais tails elegiveis continuam drenando
 enquanto o token suspeito aguarda o proximo recheck.
 Deficit sem eventos ausentes so vira `drifted` apos tres fingerprints identicos
-confirmados por receipts e espacados em 60s. A telemetria distingue
+confirmados por receipts e espacados em 60s. Cauda insegura sem qualquer evidencia
+aplicada para rollback segue as mesmas tres observacoes e confirmacao transacional,
+em vez de derrubar a lease do worker. A telemetria distingue
 `driftSuspicions`, `receiptRecoveries` e `driftDeferred`.
 
 O critério de publicação local é fail-closed: cursor e checkpoint live precisam

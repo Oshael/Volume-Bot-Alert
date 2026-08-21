@@ -109,13 +109,20 @@ function createRobinhoodHolderLiveRunner(options = {}) {
       return Object.freeze({ status: 'deferred', reason: 'live_tail_baseline_unavailable' });
     }
     if (suspicion.recoverySafe !== true) {
-      return ledger.rollbackAppliedTail({
-        tokenAddress: suspicion.tokenAddress,
-        backfillNextBlock: suspicion.recoveryFromBlock,
-        failedBlock: suspicion.failedBlock,
-        failedTransactionHash: suspicion.failedTransactionHash,
-        failedLogIndex: suspicion.failedLogIndex,
-      });
+      try {
+        return await ledger.rollbackAppliedTail({
+          tokenAddress: suspicion.tokenAddress,
+          backfillNextBlock: suspicion.recoveryFromBlock,
+          failedBlock: suspicion.failedBlock,
+          failedTransactionHash: suspicion.failedTransactionHash,
+          failedLogIndex: suspicion.failedLogIndex,
+        });
+      } catch (error) {
+        if (error?.code !== 'holder_tail_rollback_unavailable') throw error;
+        return Object.freeze({
+          status: 'unrecoverable', reason: 'tail_applied_evidence_unavailable',
+        });
+      }
     }
     const blocks = BigInt(suspicion.failedBlock) - BigInt(suspicion.recoveryFromBlock) + 1n;
     if (blocks < 1n || blocks > BigInt(receiptBlockLimit)) {
@@ -260,7 +267,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
           preferredTokenAddress = applied.tokenAddress;
           continue;
         }
-        if (repair.status !== 'repaired') {
+        if (!['repaired', 'unrecoverable'].includes(repair.status)) {
           deferDrift(applied);
           driftDeferred += 1;
           continue;

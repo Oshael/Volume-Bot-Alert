@@ -23,6 +23,7 @@ const TOKEN_3 = `0x${'8'.repeat(40)}`;
 const TOKEN_4 = `0x${'a'.repeat(40)}`;
 const TOKEN_5 = `0x${'9'.repeat(40)}`;
 const TOKEN_BATCH = `0x${'b'.repeat(40)}`;
+const TOKEN_NO_TAIL = `0x${'c'.repeat(40)}`;
 const ALICE = `0x${'4'.repeat(40)}`;
 const BOB = `0x${'5'.repeat(40)}`;
 const ZERO_ADDRESS = `0x${'0'.repeat(40)}`;
@@ -425,6 +426,32 @@ describe('Robinhood holder ledger persistence', () => {
       assert.deepEqual(restoredTailBalances.rows.map((row) => [
         row.wallet_address, String(row.balance_raw),
       ]), [[ALICE, '1']]);
+
+      await client.query(
+        `INSERT INTO robinhood_holder_token_states
+          (token_address, holder_count, ledger_status, backfill_next_block,
+           live_through_block, live_through_hash)
+         VALUES ($1, 1, 'live', 101, 101, $2)`, [TOKEN_NO_TAIL, HASH_B]
+      );
+      await client.query(
+        `INSERT INTO robinhood_holder_transfer_journal (
+           block_number, block_hash, transaction_hash, transaction_index,
+           log_index, token_address, from_wallet, to_wallet, amount_raw
+         ) VALUES (101, $1, $2, 20, 20, $3, $4, $5, 2)`,
+        [HASH_B, HASH_E, TOKEN_NO_TAIL, ALICE, BOB]
+      );
+      await assert.rejects(repository.rollbackAppliedTail({
+        tokenAddress: TOKEN_NO_TAIL, backfillNextBlock: '101', failedBlock: '101',
+        failedTransactionHash: HASH_E, failedLogIndex: 20,
+      }), (error) => error.code === 'holder_tail_rollback_unavailable');
+      await client.query(
+        `DELETE FROM robinhood_holder_transfer_journal WHERE token_address = $1`,
+        [TOKEN_NO_TAIL]
+      );
+      await client.query(
+        `DELETE FROM robinhood_holder_token_states WHERE token_address = $1`,
+        [TOKEN_NO_TAIL]
+      );
 
       await client.query(
         `UPDATE robinhood_holder_balances SET balance_raw = 5

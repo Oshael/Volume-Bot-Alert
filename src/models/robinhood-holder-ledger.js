@@ -1173,7 +1173,7 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
       );
       if (!applied.rowCount) {
         const error = new Error('holder tail rollback has no applied evidence');
-        error.code = 'holder_tail_rollback_stale';
+        error.code = 'holder_tail_rollback_unavailable';
         throw error;
       }
       await restoreTailBalances(client, tokenAddress, tailWalletSnapshots(applied.rows));
