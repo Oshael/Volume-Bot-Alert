@@ -1216,6 +1216,12 @@ read-only; somente acrescente `--apply` após revisão. O importador limita 250
 entradas, é idempotente, serializa writes e rejeita intervalos inclusivos
 sobrepostos. Ele não encerra nem altera registros existentes.
 
+O Stage 146 adiciona `closed_source`, `closed_evidence_json` e
+`closed_verified_at` ao registro. Os três campos devem ser preenchidos juntos e
+somente em uma janela fechada; registros históricos anteriores podem permanecer
+sem closure separado para compatibilidade. Aplique
+`node src/utils/db-init-stage146.js` antes da futura ferramenta de encerramento.
+
 O worker lê `Transfer` por range com a coorte enviada como allowlist `address` ao
 RPC, commita ranges em ordem e não grava o histórico bruto no journal. Se o node
 rejeitar o tamanho da allowlist, ela é dividida ao meio adaptativamente sem

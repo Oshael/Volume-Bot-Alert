@@ -3891,6 +3891,25 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage146-robinhood-infrastructure-closure',
+    name: 'Stage 146 Robinhood infrastructure closure metadata',
+    repair: 'node src/utils/db-init-stage146.js',
+    tables: [{
+      table: 'robinhood_infrastructure_registry',
+      columns: ['closed_source', 'closed_evidence_json', 'closed_verified_at'],
+      constraints: [{
+        name: 'rh_infrastructure_registry_closure_payload_check',
+        includes: [
+          'CHECK', 'closed_source', 'closed_evidence_json', 'jsonb_typeof',
+          'closed_verified_at',
+        ],
+      }, {
+        name: 'rh_infrastructure_registry_open_closure_check',
+        includes: ['CHECK', 'valid_through_block', 'closed_source', 'closed_evidence_json'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
