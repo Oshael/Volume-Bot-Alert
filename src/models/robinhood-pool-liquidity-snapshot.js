@@ -100,6 +100,17 @@ function normalizeCandidate(row) {
   });
 }
 
+function normalizeEventLogs(logs = []) {
+  const unique = new Map();
+  for (const log of logs) {
+    const address = normalizeTokenAddress(CHAIN, log?.address);
+    const topic1 = String(log?.topics?.[1] || '').toLowerCase();
+    const poolId = /^0x[0-9a-f]{64}$/.test(topic1) ? topic1 : null;
+    unique.set(`${address}:${poolId || ''}`, { address, poolId });
+  }
+  return [...unique.values()];
+}
+
 function createRobinhoodPoolLiquiditySnapshotRepository(options = {}) {
   const database = options.database || db;
 
@@ -144,6 +155,69 @@ function createRobinhoodPoolLiquiditySnapshotRepository(options = {}) {
                  registry.protocol, registry.market_key
         LIMIT $2::int`,
       [dueBefore, limit]
+    );
+    return Object.freeze(rows.map(normalizeCandidate));
+  }
+
+  async function listPoolsForLiquidityEvents(logs = []) {
+    const events = normalizeEventLogs(logs);
+    if (!events.length) return Object.freeze([]);
+    const { rows } = await database.query(
+      `WITH events AS (
+         SELECT address, pool_id
+         FROM jsonb_to_recordset($1::jsonb) AS event(address text, pool_id text)
+       )
+       SELECT DISTINCT registry.protocol, registry.market_key, registry.pool_address,
+              registry.pool_id, registry.origin_address, registry.token_address,
+              registry.quote_address, registry.currency0, registry.currency1,
+              registry.discovered_at,
+              COALESCE(snapshot.consecutive_failures, 0) AS consecutive_failures
+         FROM events
+         INNER JOIN robinhood_pool_registry registry
+           ON registry.chain = '${CHAIN}' AND registry.active = TRUE
+          AND ((registry.protocol = 'uniswap-v4'
+                AND registry.origin_address = events.address
+                AND registry.pool_id = events.pool_id)
+            OR (registry.protocol <> 'uniswap-v4'
+                AND registry.pool_address = events.address))
+         LEFT JOIN robinhood_pool_liquidity_snapshots snapshot
+           ON snapshot.chain = registry.chain AND snapshot.protocol = registry.protocol
+          AND snapshot.market_key = registry.market_key
+        ORDER BY registry.protocol, registry.market_key`,
+      [JSON.stringify(events.map(({ address, poolId }) => ({
+        address, pool_id: poolId,
+      })))]
+    );
+    return Object.freeze(rows.map(normalizeCandidate));
+  }
+
+  async function invalidateSnapshotsFromBlock(input = {}) {
+    const rewindBlock = quantity(input.rewindBlock, 'rewindBlock');
+    const { rows } = await database.query(
+      `WITH invalidated AS (
+         UPDATE robinhood_pool_liquidity_snapshots snapshot
+            SET snapshot_block_number = NULL, snapshot_block_hash = NULL,
+                snapshot_observed_at = NULL, liquidity_usd = NULL,
+                liquidity_raw = NULL, liquidity_status = NULL,
+                liquidity_confidence = NULL, liquidity_warning = NULL,
+                checked_at = NOW(), last_error_code = NULL,
+                last_error_message = NULL, consecutive_failures = 0,
+                updated_at = NOW()
+          WHERE snapshot.chain = '${CHAIN}'
+            AND snapshot.snapshot_block_number >= $1::bigint
+          RETURNING snapshot.protocol, snapshot.market_key
+       )
+       SELECT registry.protocol, registry.market_key, registry.pool_address,
+              registry.pool_id, registry.origin_address, registry.token_address,
+              registry.quote_address, registry.currency0, registry.currency1,
+              registry.discovered_at, 0 AS consecutive_failures
+         FROM invalidated
+         INNER JOIN robinhood_pool_registry registry
+           ON registry.chain = '${CHAIN}' AND registry.active = TRUE
+          AND registry.protocol = invalidated.protocol
+          AND registry.market_key = invalidated.market_key
+        ORDER BY registry.protocol, registry.market_key`,
+      [rewindBlock]
     );
     return Object.freeze(rows.map(normalizeCandidate));
   }
@@ -219,7 +293,10 @@ function createRobinhoodPoolLiquiditySnapshotRepository(options = {}) {
     return result.rowCount === 1;
   }
 
-  return Object.freeze({ listDuePools, recordFailure, recordSnapshot, resolveAnchorBlock });
+  return Object.freeze({
+    invalidateSnapshotsFromBlock, listDuePools, listPoolsForLiquidityEvents,
+    recordFailure, recordSnapshot, resolveAnchorBlock,
+  });
 }
 
 module.exports = {

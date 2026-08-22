@@ -1,0 +1,110 @@
+const assert = require('node:assert/strict');
+const { describe, it } = require('node:test');
+
+const v2 = require('../src/services/uniswap-v2-decoder');
+const v3 = require('../src/services/uniswap-v3-decoder');
+const v4 = require('../src/services/uniswap-v4-decoder');
+const {
+  LIQUIDITY_EVENT_TOPICS,
+  V3_LIQUIDITY_TOPICS,
+  V4_DONATE_TOPIC,
+  processLiquidityEventRange,
+  repairLiquiditySnapshotsAfterReorg,
+} = require('../src/services/robinhood-pool-liquidity-events');
+
+const NOW = Date.parse('2026-08-22T12:00:00Z');
+const ANCHOR = Object.freeze({
+  number: '110', hash: `0x${'a'.repeat(64)}`, observedAt: '2026-08-22T11:59:58Z',
+});
+
+function pool(id) {
+  return { protocol: 'uniswap-v3', marketKey: `robinhood:uniswap-v3:${id}` };
+}
+
+describe('Robinhood event-driven pool liquidity core', () => {
+  it('tracks only events that can change pool state or balances', () => {
+    assert.deepEqual(LIQUIDITY_EVENT_TOPICS, [
+      v2.TOPICS.sync,
+      V3_LIQUIDITY_TOPICS.mint,
+      V3_LIQUIDITY_TOPICS.burn,
+      V3_LIQUIDITY_TOPICS.collect,
+      v3.TOPICS.swap,
+      V3_LIQUIDITY_TOPICS.flash,
+      v4.TOPICS.modifyLiquidity,
+      v4.TOPICS.swap,
+      V4_DONATE_TOPIC,
+    ]);
+    assert.equal(LIQUIDITY_EVENT_TOPICS.includes(v2.TOPICS.swap), false);
+    assert.equal(new Set(LIQUIDITY_EVENT_TOPICS).size, LIQUIDITY_EVENT_TOPICS.length);
+  });
+
+  it('deduplicates through the repository and values all affected pools at range end', async () => {
+    const snapshots = [];
+    const failures = [];
+    const anchors = [];
+    const repository = {
+      async listPoolsForLiquidityEvents(logs) {
+        assert.equal(logs.length, 3);
+        return [pool('ok'), pool('failed')];
+      },
+      async recordSnapshot(input) { snapshots.push(input); },
+      async recordFailure(input) { failures.push(input); },
+    };
+    const result = await processLiquidityEventRange({
+      repository,
+      reader: {
+        async readAnchor(tag) {
+          anchors.push(tag);
+          return ANCHOR;
+        },
+        async valuePool(candidate) {
+          if (candidate.marketKey.endsWith('failed')) {
+            throw Object.assign(new Error('rpc down'), { code: 'rpc_down' });
+          }
+          return {
+            ...ANCHOR, liquidityUsd: '42', liquidityRaw: '9',
+            status: 'spot_tvl_from_pool_balances', confidence: 'medium',
+          };
+        },
+      },
+    }, { logs: [{}, {}, {}], toBlock: '110' }, { concurrency: 2, now: () => NOW });
+    assert.deepEqual(result, { anchorBlock: '110', affected: 2, saved: 1, failed: 1 });
+    assert.deepEqual(anchors, ['0x6e']);
+    assert.equal(snapshots[0].checkedAt, '2026-08-22T12:00:00.000Z');
+    assert.equal(failures[0].error.code, 'rpc_down');
+  });
+
+  it('clears orphaned snapshots and rebuilds every affected pool before the rewind', async () => {
+    const anchors = [];
+    const repository = {
+      async invalidateSnapshotsFromBlock(input) {
+        assert.deepEqual(input, { rewindBlock: '100' });
+        return [pool('orphaned')];
+      },
+      async recordSnapshot() {},
+      async recordFailure() {},
+    };
+    const result = await repairLiquiditySnapshotsAfterReorg({
+      repository,
+      reader: {
+        async readAnchor(tag) { anchors.push(tag); return { ...ANCHOR, number: '99' }; },
+        async valuePool(_pool, anchor) {
+          return {
+            ...anchor, liquidityUsd: '10', liquidityRaw: '2',
+            status: 'spot_tvl_from_pool_balances', confidence: 'medium',
+          };
+        },
+      },
+    }, { rewindBlock: '100' }, { now: () => NOW });
+    assert.deepEqual(anchors, ['0x63']);
+    assert.deepEqual(result, { anchorBlock: '99', affected: 1, saved: 1, failed: 0 });
+  });
+
+  it('does not read an anchor when a range has no tracked pools', async () => {
+    const result = await processLiquidityEventRange({
+      repository: { async listPoolsForLiquidityEvents() { return []; } },
+      reader: { async readAnchor() { throw new Error('unexpected anchor read'); } },
+    }, { logs: [], toBlock: '123' });
+    assert.deepEqual(result, { anchorBlock: '123', affected: 0, saved: 0, failed: 0 });
+  });
+});

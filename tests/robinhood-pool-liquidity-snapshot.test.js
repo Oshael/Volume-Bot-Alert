@@ -59,6 +59,54 @@ describe('Robinhood current pool liquidity snapshots', () => {
     assert.equal(await repository.resolveAnchorBlock(), '150');
   });
 
+  it('maps event emitters to active V2/V3 addresses or a V4 manager pool id', async () => {
+    const calls = [];
+    const poolAddress = `0x${'5'.repeat(40)}`;
+    const managerAddress = `0x${'4'.repeat(40)}`;
+    const repository = createRobinhoodPoolLiquiditySnapshotRepository({ database: {
+      async query(sql, params) {
+        calls.push({ sql, params });
+        return { rows: [{
+          protocol: 'uniswap-v4', market_key: MARKET, pool_address: null,
+          pool_id: POOL_ID, origin_address: managerAddress,
+          token_address: TOKEN, quote_address: QUOTE,
+          currency0: TOKEN, currency1: QUOTE,
+          discovered_at: new Date('2026-08-22T10:00:00Z'), consecutive_failures: '0',
+        }] };
+      },
+    } });
+    const pools = await repository.listPoolsForLiquidityEvents([
+      { address: poolAddress, topics: [`0x${'a'.repeat(64)}`] },
+      { address: managerAddress, topics: [`0x${'b'.repeat(64)}`, POOL_ID] },
+      { address: managerAddress, topics: [`0x${'b'.repeat(64)}`, POOL_ID] },
+    ]);
+    assert.equal(pools[0].poolId, POOL_ID);
+    assert.match(calls[0].sql, /registry\.origin_address = events\.address/);
+    assert.match(calls[0].sql, /registry\.pool_address = events\.address/);
+    assert.equal(JSON.parse(calls[0].params[0]).length, 2);
+  });
+
+  it('invalidates orphaned snapshots and returns their active pools for repair', async () => {
+    const calls = [];
+    const repository = createRobinhoodPoolLiquiditySnapshotRepository({ database: {
+      async query(sql, params) {
+        calls.push({ sql, params });
+        return { rows: [{
+          protocol: 'uniswap-v4', market_key: MARKET, pool_address: null,
+          pool_id: POOL_ID, origin_address: `0x${'4'.repeat(40)}`,
+          token_address: TOKEN, quote_address: QUOTE,
+          currency0: TOKEN, currency1: QUOTE,
+          discovered_at: new Date('2026-08-22T10:00:00Z'), consecutive_failures: 0,
+        }] };
+      },
+    } });
+    const pools = await repository.invalidateSnapshotsFromBlock({ rewindBlock: '120' });
+    assert.equal(pools[0].marketKey, MARKET);
+    assert.match(calls[0].sql, /snapshot_block_number >= \$1::bigint/);
+    assert.match(calls[0].sql, /liquidity_usd = NULL/);
+    assert.deepEqual(calls[0].params, ['120']);
+  });
+
   it('writes a valid snapshot without allowing inconsistent evidence', async () => {
     const calls = [];
     const repository = createRobinhoodPoolLiquiditySnapshotRepository({ database: {

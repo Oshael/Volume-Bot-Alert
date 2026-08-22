@@ -72,5 +72,14 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
       consecutive_failures: 1, last_error_code: 'rpc_error',
     });
     assert.equal(await repository.recordSnapshot(snapshot('21', `0x${'e'.repeat(64)}`)), true);
+    const invalidated = await repository.invalidateSnapshotsFromBlock({ rewindBlock: '21' });
+    assert.equal(invalidated.length, 1);
+    const cleared = await db.query(
+      `SELECT snapshot_block_number, liquidity_usd, consecutive_failures
+         FROM robinhood_pool_liquidity_snapshots WHERE market_key = $1`, [MARKET]
+    );
+    assert.deepEqual(cleared.rows[0], {
+      snapshot_block_number: null, liquidity_usd: null, consecutive_failures: 0,
+    });
   });
 });
