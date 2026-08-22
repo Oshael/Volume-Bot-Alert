@@ -534,12 +534,12 @@ workers existente:
 npm run start:worker:robinhood-liquidity
 ```
 
-Arquivos de implantação de referência:
-
-```text
-deploy/systemd/trendscope-robinhood-pool-liquidity.service.example
-deploy/systemd/robinhood-pool-liquidity.env.example
-```
+Na VPS2, ele segue o padrão de `docs/new-worker-service-runbook.md`: instância
+`trendscope-worker@robinhood-liquidity.service`, env exclusivo
+`/etc/trendscope/robinhood-liquidity.env` e um drop-in contendo somente o
+`EnvironmentFile`. A unit template resolve o script npm por `%i`; como este executável não inicia
+`src/server.js`, ele não abre porta. Os exemplos em `deploy/systemd` são fallback para hosts sem
+a template compartilhada e não devem ser instalados na VPS2 atual.
 
 O processo usa a lease `robinhood-pool-liquidity-worker`. Por padrão, procura trabalho a cada
 10 segundos, atualiza cada pool após 5 minutos, processa lotes de 50 com concorrência 5 e publica
@@ -557,7 +557,7 @@ Ordem obrigatória do primeiro deploy:
 1. aplicar `node src/utils/db-init-stage147.js` na VPS2;
 2. executar `npm run db:schema-check`;
 3. verificar replay/materialização V4 e a saúde do frontier de head/processing;
-4. instalar e iniciar a unidade dedicada de liquidez na VPS2;
+4. criar o env/drop-in da instância e iniciar `trendscope-worker@robinhood-liquidity.service`;
 5. aguardar a cobertura inicial das pools ativas;
 6. somente então reiniciar a API/web com a leitura canônica.
 
