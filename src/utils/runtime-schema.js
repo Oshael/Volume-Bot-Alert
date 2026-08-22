@@ -3910,6 +3910,41 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage147-robinhood-pool-liquidity-snapshots',
+    name: 'Stage 147 Robinhood current pool liquidity snapshots',
+    repair: 'node src/utils/db-init-stage147.js',
+    tables: [{
+      table: 'robinhood_pool_liquidity_snapshots',
+      columns: [
+        'chain', 'protocol', 'market_key', 'snapshot_block_number',
+        'snapshot_block_hash', 'snapshot_observed_at', 'liquidity_usd',
+        'liquidity_raw', 'liquidity_status', 'liquidity_confidence',
+        'liquidity_warning', 'checked_at', 'last_error_code',
+        'last_error_message', 'consecutive_failures', 'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'robinhood_pool_liquidity_snapshots_pkey',
+        includes: ['PRIMARY KEY', 'chain', 'protocol', 'market_key'],
+      }, {
+        name: 'robinhood_pool_liquidity_snapshots_pool_fkey',
+        includes: ['FOREIGN KEY', 'robinhood_pool_registry'],
+      }, {
+        name: 'robinhood_pool_liquidity_snapshots_snapshot_check',
+        includes: ['CHECK', 'snapshot_block_number', 'liquidity_status', 'liquidity_confidence'],
+      }, {
+        name: 'robinhood_pool_liquidity_snapshots_protocol_metrics_check',
+        includes: ['CHECK', 'uniswap-v2', 'uniswap-v3', 'uniswap-v4', 'liquidity_raw'],
+      }, {
+        name: 'robinhood_pool_liquidity_snapshots_error_check',
+        includes: ['CHECK', 'consecutive_failures', 'last_error_code', 'last_error_message'],
+      }],
+      indexes: [{
+        name: 'idx_robinhood_pool_liquidity_snapshots_due',
+        includes: ['chain', 'checked_at', 'market_key'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
