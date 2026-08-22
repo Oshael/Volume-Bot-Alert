@@ -1332,9 +1332,16 @@ pendente de inteligência não derruba holders: os campos retornam `unavailable`
 O expanded chart usa `primaryTag` nos glifos e os valores materializados no painel
 de distribuição; métricas indisponíveis continuam como `—`.
 
-O materializador `SNIPER` existe, mas não pertence ao processo de holders e não
-tem worker ativo. O runner shadow já executa lotes limitados e retomáveis por
-`afterToken`, mas ainda não possui loop, lease ou configuração operacional. Seu
+O materializador `SNIPER` não pertence ao processo de holders. Seu worker shadow
+fica no grupo isolado `robinhood-wallet-intelligence`, usa a lease própria
+`robinhood-sniper-shadow-worker` e permanece desligado por padrão. Ative com
+`ROBINHOOD_SNIPER_SHADOW_ENABLED=true`; intervalo, backoff, lote, concorrência e
+retry são limitados por `ROBINHOOD_SNIPER_SHADOW_INTERVAL_MS`,
+`ROBINHOOD_SNIPER_SHADOW_MAX_ERROR_BACKOFF_MS`,
+`ROBINHOOD_SNIPER_SHADOW_BATCH_SIZE`, `ROBINHOOD_SNIPER_SHADOW_CONCURRENCY` e
+`ROBINHOOD_SNIPER_SHADOW_RETRY_MS`. O runner executa lotes retomáveis por
+`afterToken`, reinicia a varredura ao esgotar o catálogo e expõe contadores na
+telemetria da lease e em `GET /api/admin/ws-status`. Seu
 seletor só admite ledger `live`, cursor de first-buy alcançado e classificação
 ausente ou atrasada; concorrência máxima é 4 e uma falha de token não aborta o
 lote. A política pública versionada `rh_sniper_high_v1` exige compra
@@ -1360,8 +1367,9 @@ contra todos os tokens elegíveis, preservando somente contagens agregadas no
 relatório. Essa busca resolve cada wallet candidata sequencialmente por igualdade
 indexada, limita a contagem de predecessores canônicos a 5 e resolve anchors por
 token em lotes; não agrega a tabela inteira de swaps.
-Esses sinais são internos; o frontend só deverá expor `SNIPER` produzido pela
-regra pública de alta confiança. A recorrência do materializador agora lê a
+Esses sinais são internos; mesmo com o worker ativo, a allowlist pública continua
+ocultando tags, estado e métrica SNIPER. O frontend só deverá expor `SNIPER`
+produzido pela regra pública de alta confiança. A recorrência do materializador agora lê a
 projeção canônica indexada da Stage 149; não reagrega o histórico bruto de swaps.
 Se o cursor live da Stage 152 estiver ausente ou atrás da cobertura de swaps, o
 materializador retorna `deferred` e não substitui o snapshot vigente.

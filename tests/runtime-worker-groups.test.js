@@ -897,6 +897,25 @@ describe('runtime worker groups config', () => {
     });
   });
 
+  it('keeps the SNIPER classifier shadow worker opt-in and bounded', () => {
+    withEnv({
+      ROBINHOOD_SNIPER_SHADOW_ENABLED: 'true',
+      ROBINHOOD_SNIPER_SHADOW_INTERVAL_MS: '1',
+      ROBINHOOD_SNIPER_SHADOW_MAX_ERROR_BACKOFF_MS: '99999999',
+      ROBINHOOD_SNIPER_SHADOW_BATCH_SIZE: '999',
+      ROBINHOOD_SNIPER_SHADOW_CONCURRENCY: '99',
+      ROBINHOOD_SNIPER_SHADOW_RETRY_MS: '1',
+    }, (config) => {
+      assert.deepEqual(config.robinhoodSniperShadowWorker, {
+        enabled: true, intervalMs: 1000, maxErrorBackoffMs: 3_600_000,
+        batchSize: 100, concurrency: 4, retryMs: 60_000,
+      });
+    });
+    withEnv({ ROBINHOOD_SNIPER_SHADOW_ENABLED: undefined }, (config) => {
+      assert.equal(config.robinhoodSniperShadowWorker.enabled, false);
+    });
+  });
+
   it('fails fast when first-buy LIVE has no completed seed run id', () => {
     const result = spawnSync(process.execPath, ['-e', "require('./config')"], {
       cwd: ROOT_DIR,

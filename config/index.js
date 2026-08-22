@@ -1476,6 +1476,26 @@ module.exports = {
     ),
   },
 
+  robinhoodSniperShadowWorker: {
+    enabled: parseBoolean(process.env.ROBINHOOD_SNIPER_SHADOW_ENABLED, false),
+    intervalMs: parseIntegerInRange(
+      process.env.ROBINHOOD_SNIPER_SHADOW_INTERVAL_MS, 10_000, 1_000, 3_600_000
+    ),
+    maxErrorBackoffMs: parseIntegerInRange(
+      process.env.ROBINHOOD_SNIPER_SHADOW_MAX_ERROR_BACKOFF_MS,
+      300_000, 1_000, 3_600_000
+    ),
+    batchSize: parseIntegerInRange(
+      process.env.ROBINHOOD_SNIPER_SHADOW_BATCH_SIZE, 10, 1, 100
+    ),
+    concurrency: parseIntegerInRange(
+      process.env.ROBINHOOD_SNIPER_SHADOW_CONCURRENCY, 1, 1, 4
+    ),
+    retryMs: parseIntegerInRange(
+      process.env.ROBINHOOD_SNIPER_SHADOW_RETRY_MS, 3_600_000, 60_000, 86_400_000
+    ),
+  },
+
   robinhoodWalletTransferLiveWorker: {
     enabled: parseBoolean(process.env.ROBINHOOD_WALLET_TRANSFER_LIVE_ENABLED, false),
     unifiedPositionEnabled: parseBoolean(

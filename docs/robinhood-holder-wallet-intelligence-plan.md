@@ -356,7 +356,9 @@ carga sem ETA confiável.
      concluído: seleciona apenas ledgers live atrasados, só avança quando o cursor
      de first-buy está alcançado, limita concorrência e contém falhas por token.
      A leitura pública mantém allowlist `LP`/`CEX`, portanto snapshots SNIPER
-     persistidos pelo shadow não vazam para a UI. Loop/lease/telemetria, auditoria
+     persistidos pelo shadow não vazam para a UI. O loop operacional opt-in roda
+     no grupo `robinhood-wallet-intelligence`, usa lease própria, pagina todo o
+     catálogo e publica telemetria sem pertencer ao worker de holders. Auditoria
      da amostra e ativação pública seguem em cortes separados.
 4. **INSIDER direto**
    - começar por distribuição direta do token;

@@ -70,6 +70,7 @@ const robinhoodHeadCaptureWorker = robinhoodIngestionWorker.createRobinhoodInges
 const robinhoodWalletSwapLiveWorker = require('./services/robinhood-wallet-swap-live-worker');
 const robinhoodWalletPositionLiveWorker = require('./services/robinhood-wallet-position-live-worker');
 const robinhoodFirstBuyLiveWorker = require('./services/robinhood-first-buy-live-worker');
+const robinhoodSniperShadowWorker = require('./services/robinhood-sniper-shadow-worker');
 const robinhoodWalletTransferLiveWorker = require('./services/robinhood-wallet-transfer-live-worker');
 const robinhoodDirectCreatorWorker = require('./services/robinhood-direct-creator-worker');
 const robinhoodCatalogStagingWorker = require('./services/robinhood-catalog-staging-worker');
@@ -131,6 +132,7 @@ const ROBINHOOD_HOLDER_SUMMARY_LEASE_KEY = 'robinhood-holder-summary-worker';
 const ROBINHOOD_WALLET_SWAP_LIVE_LEASE_KEY = 'robinhood-wallet-swap-live-worker';
 const ROBINHOOD_WALLET_POSITION_LIVE_LEASE_KEY = 'robinhood-wallet-position-live-worker';
 const ROBINHOOD_FIRST_BUY_LIVE_LEASE_KEY = 'robinhood-first-buy-live-worker';
+const ROBINHOOD_SNIPER_SHADOW_LEASE_KEY = 'robinhood-sniper-shadow-worker';
 const ROBINHOOD_WALLET_TRANSFER_LIVE_LEASE_KEY = 'robinhood-wallet-transfer-live-worker';
 const ROBINHOOD_DIRECT_CREATOR_LIVE_LEASE_KEY = 'robinhood-direct-creator-live-worker';
 const ROBINHOOD_BACKFILL_DISCOVERY_LEASE_KEY = 'robinhood-backfill-discovery-scanner';
@@ -330,6 +332,7 @@ app.get('/api/admin/ws-status', authenticate, requireAdmin, async (req, res) => 
     robinhoodHolderReconciliationWorker: robinhoodHolderReconciliationWorker.getStatus(),
     robinhoodHolderSnapshotWorker: robinhoodHolderSnapshotWorker.getStatus(),
     robinhoodFirstBuyLiveWorker: robinhoodFirstBuyLiveWorker.getStatus(),
+    robinhoodSniperShadowWorker: robinhoodSniperShadowWorker.getStatus(),
     robinhoodHolderCountRealtime: robinhoodHolderCountRealtime.getStatus(),
     robinhoodIngestionWorker: {
       ...robinhoodIngestionStatus,
@@ -599,6 +602,14 @@ function startRobinhoodWalletSwapWorkerGroup() {
 
 function startRobinhoodWalletIntelligenceWorkerGroup() {
   if (!hasWorkerGroup('robinhood-wallet-intelligence')) return;
+  if (config.robinhoodSniperShadowWorker.enabled) {
+    startLockedWorker(
+      'robinhood-wallet-intelligence', ROBINHOOD_SNIPER_SHADOW_LEASE_KEY,
+      'Robinhood SNIPER shadow worker',
+      () => robinhoodSniperShadowWorker.start(config.robinhoodSniperShadowWorker),
+      { metadataProvider: () => ({ telemetry: robinhoodSniperShadowWorker.getStatus() }) }
+    );
+  }
   if (config.robinhoodFirstBuyLiveWorker.enabled) {
     startLockedWorker(
       'robinhood-wallet-intelligence', ROBINHOOD_FIRST_BUY_LIVE_LEASE_KEY,
@@ -1160,6 +1171,7 @@ async function shutdownGracefully(signal = 'SIGTERM') {
       robinhoodWalletSwapLiveWorker.stop(),
       robinhoodWalletPositionLiveWorker.stop(),
       robinhoodFirstBuyLiveWorker.stop(),
+      robinhoodSniperShadowWorker.stop(),
       robinhoodWalletTransferLiveWorker.stop(),
       robinhoodDirectCreatorWorker.stop(),
       robinhoodHolderBackfillWorker.stop(),
