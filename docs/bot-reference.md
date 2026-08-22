@@ -1373,6 +1373,20 @@ produzido pela regra pública de alta confiança. A recorrência do materializad
 projeção canônica indexada da Stage 149; não reagrega o histórico bruto de swaps.
 Se o cursor live da Stage 152 estiver ausente ou atrás da cobertura de swaps, o
 materializador retorna `deferred` e não substitui o snapshot vigente.
+
+Na VPS, a instância permanente é
+`trendscope-worker@robinhood-wallet-intelligence.service`, executada pelo script
+homônimo `start:worker:robinhood-wallet-intelligence` na porta `3015`. Instale
+`deploy/systemd/robinhood-wallet-intelligence.env.example` como
+`/etc/trendscope/robinhood-wallet-intelligence.env` e o drop-in de
+`deploy/systemd/trendscope-worker@robinhood-wallet-intelligence.service.example`
+com `systemctl edit`. O script não força nenhum subworker: first-buy, SNIPER,
+posição e transfers obedecem exclusivamente às respectivas flags do env. Antes
+do primeiro start, aplique as Stages 149, 151 e 152, confirme o seed concluído e
+execute `npm run db:schema-check`. Processo `active` não basta: confirme as leases
+`robinhood-first-buy-live-worker` e `robinhood-sniper-shadow-worker`, heartbeat
+recente, `metadata.telemetry.running=true`, `totalRuns` crescente e
+`lastError=null`.
 A API de holders mantém por padrão somente `LP` e `CEX` na allowlist pública;
 registros SNIPER persistidos durante shadow não entram em `tags`, `primaryTag` ou
 no estado agregado da resposta até a ativação explícita dessa tag.

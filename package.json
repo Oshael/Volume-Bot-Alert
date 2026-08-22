@@ -18,7 +18,7 @@
     "start:worker:robinhood-derived": "PORT=${PORT:-3008} RUN_SOCKET_HUB=false RUN_BACKGROUND_JOBS=true BACKGROUND_WORKER_GROUPS=robinhood-derived node src/server.js",
     "start:worker:robinhood-liquidity": "ROBINHOOD_POOL_LIQUIDITY_ENABLED=true node src/utils/run-robinhood-pool-liquidity-worker.js",
     "start:worker:robinhood-wallet": "PORT=${PORT:-3009} RUN_SOCKET_HUB=false RUN_BACKGROUND_JOBS=true BACKGROUND_WORKER_GROUPS=robinhood-wallet ROBINHOOD_WALLET_SWAP_LIVE_ENABLED=true node src/server.js",
-    "start:worker:robinhood-wallet-intelligence": "PORT=${PORT:-3015} RUN_SOCKET_HUB=false RUN_BACKGROUND_JOBS=true BACKGROUND_WORKER_GROUPS=robinhood-wallet-intelligence ROBINHOOD_WALLET_POSITION_LIVE_ENABLED=true node src/server.js",
+    "start:worker:robinhood-wallet-intelligence": "PORT=${PORT:-3015} RUN_SOCKET_HUB=false RUN_BACKGROUND_JOBS=true BACKGROUND_WORKER_GROUPS=robinhood-wallet-intelligence node src/server.js",
     "start:worker:robinhood-wallet-transfers": "PORT=${PORT:-3016} RUN_SOCKET_HUB=false RUN_BACKGROUND_JOBS=true BACKGROUND_WORKER_GROUPS=robinhood-wallet-intelligence ROBINHOOD_WALLET_TRANSFER_LIVE_ENABLED=true node src/server.js",
     "start:worker:robinhood-backfill": "PORT=${PORT:-3005} RUN_SOCKET_HUB=false RUN_BACKGROUND_JOBS=true BACKGROUND_WORKER_GROUPS=robinhood-backfill node src/server.js",
     "start:worker:robinhood-holders": "PORT=${PORT:-3010} RUN_SOCKET_HUB=false RUN_BACKGROUND_JOBS=true BACKGROUND_WORKER_GROUPS=robinhood-holders node src/server.js",

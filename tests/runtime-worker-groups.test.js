@@ -337,6 +337,29 @@ describe('runtime worker groups config', () => {
     });
   });
 
+  it('ships the systemd-compatible Robinhood wallet-intelligence service', () => {
+    const command = require('../package.json').scripts[
+      'start:worker:robinhood-wallet-intelligence'
+    ];
+    const systemdDir = path.join(ROOT_DIR, 'deploy', 'systemd');
+    const dropIn = fs.readFileSync(path.join(
+      systemdDir, 'trendscope-worker@robinhood-wallet-intelligence.service.example'
+    ), 'utf8');
+    const env = fs.readFileSync(path.join(
+      systemdDir, 'robinhood-wallet-intelligence.env.example'
+    ), 'utf8');
+
+    assert.match(command, /PORT=\$\{PORT:-3015\}/);
+    assert.match(command, /BACKGROUND_WORKER_GROUPS=robinhood-wallet-intelligence/);
+    assert.doesNotMatch(command, /_LIVE_ENABLED=true|SNIPER_SHADOW_ENABLED=true/);
+    assert.match(dropIn,
+      /EnvironmentFile=\/etc\/trendscope\/robinhood-wallet-intelligence\.env/);
+    assert.doesNotMatch(dropIn, /ExecStart|WorkingDirectory|User=/);
+    assert.match(env, /ROBINHOOD_FIRST_BUY_SEED_RUN_ID=REPLACE_WITH_COMPLETED_RUN_ID/);
+    assert.match(env, /ROBINHOOD_SNIPER_SHADOW_ENABLED=true/);
+    assert.match(env, /ROBINHOOD_WALLET_POSITION_LIVE_ENABLED=false/);
+  });
+
   it('keeps Robinhood wallet transfers opt-in and bounds RPC work', () => {
     withEnv({
       ROBINHOOD_WALLET_TRANSFER_LIVE_ENABLED: 'true',
