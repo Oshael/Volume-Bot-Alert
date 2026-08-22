@@ -547,8 +547,6 @@ O processo usa a lease `robinhood-pool-liquidity-worker` e acompanha eventos em 
 com o cursor durável da Stage 148. Ele consulta logs por tópicos e reavalia somente as pools
 afetadas, uma vez por faixa; não percorre periodicamente todo o catálogo. O safe head é limitado
 pelo menor frontier de discovery e market, evitando usar pools ou ranges ainda não processados.
-Esse frontier depende do índice parcial concorrente da Stage 149, que contém somente captures
-`pending`, `leased` ou `blocked` e evita varrer o histórico terminal da fila.
 O cursor só avança depois da valoração e do commit da faixa. Em reorg, snapshots órfãos são
 invalidados e reconstruídos no bloco anterior ao rewind. Resultado indisponível não é gravado como zero e uma
 falha de RPC não apaga o último snapshot válido.
@@ -576,8 +574,7 @@ O replay é resumível e limitado ao target salvo; executá-lo novamente não am
 Ordem obrigatória do primeiro deploy:
 
 1. parar `trendscope-worker@robinhood-liquidity.service` antes de publicar o novo código;
-2. aplicar `node src/utils/db-init-stage147.js`, `node src/utils/db-init-stage148.js` e
-   `node src/utils/db-init-stage149.js` na VPS2;
+2. aplicar `node src/utils/db-init-stage147.js` e `node src/utils/db-init-stage148.js` na VPS2;
 3. executar `npm run db:schema-check`;
 4. verificar replay/materialização V4 e a saúde do frontier de head/processing;
 5. instalar o env e o drop-in dos exemplos, mas ainda não iniciar o processo;
