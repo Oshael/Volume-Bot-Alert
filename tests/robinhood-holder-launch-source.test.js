@@ -19,6 +19,7 @@ function stateRow(overrides = {}) {
     attribution_block: '100',
     live_through_block: '200',
     live_through_hash: FRONTIER_HASH,
+    creator_address: null,
     ...overrides,
   };
 }
@@ -61,6 +62,9 @@ function sourceFixture(input = {}) {
       if (sql.includes('WITH registered_buys')) {
         return { rows: input.buyRows ?? [swapRow()] };
       }
+      if (sql.includes('SELECT address, reason FROM')) {
+        return { rows: input.exclusionRows ?? [] };
+      }
       throw new Error(`Unexpected query: ${sql}`);
     },
   };
@@ -79,6 +83,7 @@ test('normalizes holder state and validates historical coverage boundaries', () 
   assert.deepEqual(__private.normalizeState(stateRow(), TOKEN), {
     ready: true,
     tokenAddress: TOKEN,
+    creatorAddress: null,
     launchFromBlock: '100',
     frontier: { blockNumber: '200', blockHash: FRONTIER_HASH },
   });
@@ -103,11 +108,20 @@ test('reads canonical anchor and first buy evidence without classifying the wall
   assert.equal(result.firstBuys[0].withinLaunchWindow, true);
   assert.equal(result.firstBuys[0].volumeUsd, '25.50');
   assert.equal(Object.hasOwn(result.firstBuys[0], 'tag'), false);
+  assert.deepEqual(result.window, { maxBlocks: 3, maxSeconds: 90 });
+  assert.deepEqual(result.exclusions.map(({ walletAddress }) => walletAddress), [
+    '0x0000000000000000000000000000000000000000',
+    '0x000000000000000000000000000000000000dead',
+  ]);
   assert.deepEqual(queries.map(({ params }) => params), [
     ['robinhood', TOKEN],
     ['robinhood', TOKEN, '100', '200'],
     ['robinhood', TOKEN, '100', '200'],
+    ['robinhood', TOKEN, null, '200', JSON.stringify([{
+      wallet_address: WALLET, block_number: '101',
+    }])],
   ]);
+  assert.match(queries[3].sql, /valid_from_block <= candidate\.block_number/);
   assert.match(queries[1].sql, /registry\.discovery_block <= swap\.block_number/);
   assert.match(queries[2].sql, /MIN\(block_number\).*GROUP BY wallet_address/s);
 });

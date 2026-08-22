@@ -11,6 +11,10 @@ const { normalizeTokenAddress } = require('../utils/token-identity');
 const CHAIN = 'robinhood';
 const DEFAULT_MAX_BLOCKS = 3;
 const DEFAULT_MAX_SECONDS = 90;
+const BURN_ADDRESSES = Object.freeze([
+  '0x0000000000000000000000000000000000000000',
+  '0x000000000000000000000000000000000000dead',
+]);
 
 function unavailable(reason, details = {}) {
   return Object.freeze({ ready: false, reason, ...details });
@@ -32,6 +36,7 @@ function normalizeState(row, tokenAddress) {
   return Object.freeze({
     ready: true,
     tokenAddress,
+    creatorAddress: row.creator_address || null,
     launchFromBlock: String(launchFromBlock),
     frontier: Object.freeze({
       blockNumber: String(row.live_through_block),
@@ -72,7 +77,7 @@ function createRobinhoodHolderLaunchSource(options = {}) {
     const { rows } = await database.query(
       `SELECT state.ledger_status, state.deployment_block::text,
               state.live_through_block::text, state.live_through_hash,
-              attribution.attribution_block::text
+              attribution.attribution_block::text, attribution.creator_address
          FROM robinhood_holder_token_states state
          LEFT JOIN robinhood_token_attributions attribution
            ON attribution.chain = state.chain
@@ -151,6 +156,49 @@ function createRobinhoodHolderLaunchSource(options = {}) {
     return rows;
   }
 
+  async function loadExclusions(state, firstBuys) {
+    const candidates = firstBuys.map(({ walletAddress, blockNumber }) => ({
+      wallet_address: walletAddress, block_number: blockNumber,
+    }));
+    const { rows } = await database.query(
+      `WITH candidates AS (
+         SELECT item.wallet_address, item.block_number::bigint
+           FROM jsonb_to_recordset($5::jsonb) AS item(
+             wallet_address text, block_number text
+           )
+       ) SELECT address, reason FROM (
+         SELECT $3::varchar AS address, 'creator'::text AS reason
+         UNION ALL
+         SELECT CASE WHEN protocol = 'uniswap-v4' THEN origin_address ELSE pool_address END,
+                'registered_pool'
+           FROM robinhood_pool_registry
+          WHERE chain = $1 AND token_address = $2
+            AND discovery_block <= $4::bigint
+         UNION ALL
+         SELECT DISTINCT router_address, 'swap_router'
+           FROM robinhood_wallet_swaps
+          WHERE chain = $1 AND token_address = $2 AND router_address IS NOT NULL
+            AND block_number <= $4::bigint
+         UNION ALL
+         SELECT registry.address, 'infrastructure_' || registry.kind
+           FROM robinhood_infrastructure_registry registry
+           INNER JOIN candidates candidate ON candidate.wallet_address = registry.address
+          WHERE registry.chain = $1
+            AND registry.valid_from_block <= candidate.block_number
+            AND (registry.valid_through_block IS NULL
+              OR registry.valid_through_block >= candidate.block_number)
+       ) exclusions WHERE address IS NOT NULL ORDER BY address, reason`,
+      [
+        CHAIN, state.tokenAddress, state.creatorAddress,
+        state.frontier.blockNumber, JSON.stringify(candidates),
+      ]
+    );
+    const exclusions = new Map(BURN_ADDRESSES.map((address) => [address, 'burn_address']));
+    for (const row of rows) exclusions.set(row.address, row.reason);
+    return Object.freeze([...exclusions].sort(([left], [right]) => left.localeCompare(right))
+      .map(([walletAddress, reason]) => Object.freeze({ walletAddress, reason })));
+  }
+
   async function loadLaunchEvidence(inputTokenAddress) {
     const tokenAddress = normalizeTokenAddress(CHAIN, inputTokenAddress);
     const [state, sourceCoverage] = await Promise.all([
@@ -177,10 +225,12 @@ function createRobinhoodHolderLaunchSource(options = {}) {
       anchorResult, swaps: firstBuyRows, maxBlocks, maxSeconds,
     });
     if (!firstBuys.ready) return unavailable(firstBuys.reason, { tokenAddress });
+    const exclusions = await loadExclusions(state, firstBuys.records);
     return Object.freeze({
       ready: true, reason: null, tokenAddress,
       frontier: state.frontier, coverage, anchor: anchorResult.anchor,
-      firstBuys: firstBuys.records,
+      window: Object.freeze({ maxBlocks, maxSeconds }),
+      firstBuys: firstBuys.records, exclusions,
     });
   }
 
@@ -188,6 +238,7 @@ function createRobinhoodHolderLaunchSource(options = {}) {
 }
 
 module.exports = {
+  BURN_ADDRESSES,
   createRobinhoodHolderLaunchSource,
   __private: { normalizeState, validateCoverage },
 };
