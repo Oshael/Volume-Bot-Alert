@@ -1236,6 +1236,15 @@ pendente de inteligência não derruba holders: os campos retornam `unavailable`
 O expanded chart usa `primaryTag` nos glifos e os valores materializados no painel
 de distribuição; métricas indisponíveis continuam como `—`.
 
+O materializador `SNIPER` existe, mas não pertence ao processo de holders e não
+tem worker ativo. Ele exige `minimumNotionalUsd` positivo e explícito, além da
+cobertura histórica seed/live, posição canônica e exclusões de creator, pools,
+routers, infraestrutura conhecida e burn. Antes de escolher esse limite, execute
+`npm run robinhood:sniper-calibrate -- --limit=25 --seed=default`; o comando é
+somente leitura e retorna quantis agregados, sem endereços. Para comparar limites
+sem classificá-los, acrescente por exemplo `--thresholds=10,25,50,100`. Limite de
+100 tokens e concorrência de 1 a 5 protegem o PostgreSQL; o default é 25/1.
+
 Cadastros usam um manifesto JSON append-only com `entries`; cada entrada contém
 `address`, `kind`, `label`, `source`, `evidence`, `validFromBlock`,
 `validThroughBlock` (`null` para aberta) e `verifiedAt`. Execute primeiro

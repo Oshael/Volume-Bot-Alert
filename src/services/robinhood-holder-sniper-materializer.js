@@ -6,7 +6,7 @@ const {
 } = require('../models/robinhood-holder-launch-source');
 const { parseDecimal } = require('./evm-market-metrics');
 
-function minimumNotional(value) {
+function normalizeMinimumNotionalUsd(value) {
   if (value == null || String(value).trim() === '') {
     throw new Error('minimumNotionalUsd is required');
   }
@@ -32,7 +32,7 @@ function buildSniperSnapshot(input, observedAt, minimumInput) {
   if (!input?.ready || !input.frontier || !input.anchor || !input.window) {
     throw new Error('SNIPER snapshot requires ready launch evidence');
   }
-  const minimum = minimumNotional(minimumInput);
+  const minimum = normalizeMinimumNotionalUsd(minimumInput);
   const excluded = new Set((input.exclusions || []).map(({ walletAddress }) => walletAddress));
   const records = (input.firstBuys || []).filter((buy) => (
     buy.withinLaunchWindow === true
@@ -84,7 +84,7 @@ function buildSniperSnapshot(input, observedAt, minimumInput) {
 }
 
 function createRobinhoodHolderSniperMaterializer(options = {}) {
-  const minimum = minimumNotional(options.minimumNotionalUsd).normalized;
+  const minimum = normalizeMinimumNotionalUsd(options.minimumNotionalUsd).normalized;
   const source = options.source || createRobinhoodHolderLaunchSource(options);
   const classifications = options.classifications
     || createRobinhoodHolderClassificationRepository(options);
@@ -106,4 +106,5 @@ function createRobinhoodHolderSniperMaterializer(options = {}) {
 module.exports = {
   buildSniperSnapshot,
   createRobinhoodHolderSniperMaterializer,
+  normalizeMinimumNotionalUsd,
 };
