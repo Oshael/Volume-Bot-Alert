@@ -1308,20 +1308,33 @@ module.exports = {
 
   robinhoodPoolLiquidityWorker: {
     enabled: parseBoolean(process.env.ROBINHOOD_POOL_LIQUIDITY_ENABLED, false),
-    intervalMs: parseIntegerInRange(
-      process.env.ROBINHOOD_POOL_LIQUIDITY_INTERVAL_MS, 10_000, 1000, 300_000
+    startBlock: String(process.env.ROBINHOOD_POOL_LIQUIDITY_START_BLOCK || '').trim() || null,
+    pollIntervalMs: parseIntegerInRange(
+      process.env.ROBINHOOD_POOL_LIQUIDITY_POLL_INTERVAL_MS, 2000, 10, 300_000
     ),
-    refreshMs: parseIntegerInRange(
-      process.env.ROBINHOOD_POOL_LIQUIDITY_REFRESH_MS, 300_000, 10_000, 86_400_000
+    maxPollIntervalMs: parseIntegerInRange(
+      process.env.ROBINHOOD_POOL_LIQUIDITY_MAX_POLL_INTERVAL_MS, 15_000, 10, 600_000
     ),
-    batchSize: parseIntegerInRange(
-      process.env.ROBINHOOD_POOL_LIQUIDITY_BATCH_SIZE, 50, 1, 500
+    confirmations: parseIntegerInRange(
+      process.env.ROBINHOOD_POOL_LIQUIDITY_CONFIRMATIONS, 2, 0, 1000
+    ),
+    rangeSize: parseIntegerInRange(
+      process.env.ROBINHOOD_POOL_LIQUIDITY_RANGE_SIZE, 10, 1, 10_000
+    ),
+    minRangeSize: parseIntegerInRange(
+      process.env.ROBINHOOD_POOL_LIQUIDITY_MIN_RANGE_SIZE, 1, 1, 1000
+    ),
+    maxRangeSize: parseIntegerInRange(
+      process.env.ROBINHOOD_POOL_LIQUIDITY_MAX_RANGE_SIZE, 100, 1, 10_000
+    ),
+    maxRangesPerPoll: parseIntegerInRange(
+      process.env.ROBINHOOD_POOL_LIQUIDITY_MAX_RANGES_PER_POLL, 20, 1, 1000
+    ),
+    reorgDepth: parseIntegerInRange(
+      process.env.ROBINHOOD_POOL_LIQUIDITY_REORG_DEPTH, 12, 1, 1000
     ),
     concurrency: parseIntegerInRange(
       process.env.ROBINHOOD_POOL_LIQUIDITY_CONCURRENCY, 5, 1, 20
-    ),
-    maxErrorBackoffMs: parseIntegerInRange(
-      process.env.ROBINHOOD_POOL_LIQUIDITY_MAX_ERROR_BACKOFF_MS, 60_000, 1000, 3_600_000
     ),
     leaseHeartbeatMs: parseIntegerInRange(
       process.env.ROBINHOOD_POOL_LIQUIDITY_LEASE_HEARTBEAT_MS, 30_000, 1000, 300_000

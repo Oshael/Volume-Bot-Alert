@@ -119,16 +119,16 @@ function createRobinhoodPoolLiquidityEventCursorRepository(options = {}) {
     return mapCursor(result.rows[0]);
   }
 
-  async function resolveDiscoveryFrontier() {
+  async function resolveProcessingFrontier() {
     const { rows } = await database.query(
-      `SELECT cursor.checkpoint_block,
+      `SELECT MIN(cursor.checkpoint_block) AS checkpoint_block,
               (SELECT MIN(capture.block_number)
                  FROM robinhood_head_captures capture
-                WHERE capture.chain = cursor.chain AND capture.stream = 'discovery'
+                WHERE capture.chain = $1 AND capture.stream IN ('discovery', 'market')
                   AND capture.processing_status IN ('pending', 'leased', 'blocked')) AS pending_block
          FROM robinhood_head_capture_cursors cursor
-        WHERE cursor.chain = $1 AND cursor.stream = 'discovery'
-        LIMIT 1`,
+        WHERE cursor.chain = $1 AND cursor.stream IN ('discovery', 'market')
+        HAVING COUNT(*) = 2 AND COUNT(cursor.checkpoint_block) = 2`,
       [CHAIN]
     );
     if (rows[0]?.checkpoint_block == null) return null;
@@ -139,7 +139,7 @@ function createRobinhoodPoolLiquidityEventCursorRepository(options = {}) {
   }
 
   return Object.freeze({
-    commitRange, initializeCursor, loadCursor, resolveDiscoveryFrontier, rewindCursor,
+    commitRange, initializeCursor, loadCursor, resolveProcessingFrontier, rewindCursor,
   });
 }
 

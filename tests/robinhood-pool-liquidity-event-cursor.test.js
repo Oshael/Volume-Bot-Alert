@@ -62,7 +62,7 @@ describe('Robinhood pool liquidity event cursor', () => {
     }), /checkpoint must be immediately before nextBlock/);
   });
 
-  it('rewinds explicitly and stops before unfinished discovery', async () => {
+  it('rewinds explicitly and stops before unfinished processing', async () => {
     let call = 0;
     const repository = createRobinhoodPoolLiquidityEventCursorRepository({ database: {
       async query(sql) {
@@ -72,11 +72,12 @@ describe('Robinhood pool liquidity event cursor', () => {
           checkpoint_block: null, checkpoint_hash: null,
           checkpoint_timestamp: null, version: '2',
         }] };
+        assert.match(sql, /cursor\.stream IN \('discovery', 'market'\)/);
         assert.match(sql, /processing_status IN \('pending', 'leased', 'blocked'\)/);
         return { rows: [{ checkpoint_block: '200', pending_block: '151' }] };
       },
     } });
     assert.equal((await repository.rewindCursor({ rewindBlock: '105' })).nextBlock, '105');
-    assert.equal(await repository.resolveDiscoveryFrontier(), '150');
+    assert.equal(await repository.resolveProcessingFrontier(), '150');
   });
 });

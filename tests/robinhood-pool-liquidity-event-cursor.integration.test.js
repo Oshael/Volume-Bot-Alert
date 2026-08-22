@@ -27,6 +27,7 @@ describe('Robinhood liquidity event cursor persistence integration', () => {
 
   it('persists contiguous progress and an explicit reorg rewind', async () => {
     const repository = createRobinhoodPoolLiquidityEventCursorRepository({ database: db });
+    await repository.resolveProcessingFrontier();
     const initial = await repository.initializeCursor({ startBlock: '100' });
     assert.equal(initial.coverageStartBlock, '100');
     assert.equal(initial.nextBlock, '100');

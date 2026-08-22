@@ -541,12 +541,18 @@ Na VPS2, ele segue o padrão de `docs/new-worker-service-runbook.md`: instância
 `src/server.js`, ele não abre porta. Os exemplos em `deploy/systemd` são fallback para hosts sem
 a template compartilhada e não devem ser instalados na VPS2 atual.
 
-O processo usa a lease `robinhood-pool-liquidity-worker`. Por padrão, procura trabalho a cada
-10 segundos, atualiza cada pool após 5 minutos, processa lotes de 50 com concorrência 5 e publica
-status cumulativo no metadata da lease. Cada lote é ancorado antes da captura de mercado mais
-antiga ainda não processada; V2, V3, V4 e WETH/USD usam esse mesmo bloco. No V4, as faixas são
-reconstruídas dos deltas até o bloco âncora. Resultado indisponível não é gravado como zero e uma
+O processo usa a lease `robinhood-pool-liquidity-worker` e acompanha eventos em faixas contíguas
+com o cursor durável da Stage 148. Ele consulta logs por tópicos e reavalia somente as pools
+afetadas, uma vez por faixa; não percorre periodicamente todo o catálogo. O safe head é limitado
+pelo menor frontier de discovery e market, evitando usar pools ou ranges ainda não processados.
+O cursor só avança depois da valoração e do commit da faixa. Em reorg, snapshots órfãos são invalidados e
+reconstruídos no bloco anterior ao rewind. Resultado indisponível não é gravado como zero e uma
 falha de RPC não apaga o último snapshot válido.
+
+O primeiro bootstrap exige `ROBINHOOD_POOL_LIQUIDITY_START_BLOCK`; depois disso, o cursor
+persistido é a fonte de verdade. O metadata da lease expõe cursor, lag, métricas do poller e totais
+de pools afetadas, salvas e com falha. Esta versão não deve ser iniciada antes do seed inicial dos
+snapshots e da escolha do bloco de cutover correspondente.
 
 O V4 exige que o replay histórico esteja `completed`, que a materialização inicial exista e que
 o processamento live tenha continuado persistindo `ModifyLiquidity` depois do target do replay.
@@ -554,12 +560,14 @@ O replay é resumível e limitado ao target salvo; executá-lo novamente não am
 
 Ordem obrigatória do primeiro deploy:
 
-1. aplicar `node src/utils/db-init-stage147.js` na VPS2;
+1. aplicar `node src/utils/db-init-stage147.js` e `node src/utils/db-init-stage148.js` na VPS2;
 2. executar `npm run db:schema-check`;
 3. verificar replay/materialização V4 e a saúde do frontier de head/processing;
-4. criar o env/drop-in da instância e iniciar `trendscope-worker@robinhood-liquidity.service`;
-5. aguardar a cobertura inicial das pools ativas;
-6. somente então reiniciar a API/web com a leitura canônica.
+4. executar o seed inicial e definir o mesmo cutover em
+   `ROBINHOOD_POOL_LIQUIDITY_START_BLOCK`;
+5. criar o env/drop-in e iniciar `trendscope-worker@robinhood-liquidity.service`;
+6. confirmar cursor sem lag e cobertura suficiente;
+7. somente então reiniciar a API/web com a leitura canônica.
 
 Cobertura inicial:
 

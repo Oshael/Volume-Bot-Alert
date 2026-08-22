@@ -3,6 +3,9 @@ const db = require('../models/db');
 const {
   createRobinhoodPoolLiquiditySnapshotRepository,
 } = require('../models/robinhood-pool-liquidity-snapshot');
+const {
+  createRobinhoodPoolLiquidityEventCursorRepository,
+} = require('../models/robinhood-pool-liquidity-event-cursor');
 const { createRobinhoodPersistenceRepository } = require('../models/robinhood-persistence');
 const { createWorkerLeaseManager } = require('../services/worker-lease-manager');
 const { createErc20MetadataReader } = require('../services/evm-erc20-metadata');
@@ -27,6 +30,8 @@ async function main(deps = {}) {
   );
   const snapshotRepository = deps.snapshotRepository
     || createRobinhoodPoolLiquiditySnapshotRepository({ database: deps.database || db });
+  const cursorRepository = deps.cursorRepository
+    || createRobinhoodPoolLiquidityEventCursorRepository({ database: deps.database || db });
   const rangeRepository = deps.rangeRepository
     || createRobinhoodPersistenceRepository({ database: deps.database || db });
   const reader = (deps.readerFactory || createRobinhoodPoolLiquidityOnchainReader)({
@@ -35,9 +40,9 @@ async function main(deps = {}) {
     quoteReader: (deps.quoteReaderFactory || createRobinhoodWethUsdQuoteReader)({ rpcClient }),
     v4RangeReader: rangeRepository,
   });
-  const worker = (deps.workerFactory || createRobinhoodPoolLiquidityWorker)({
-    reader, repository: snapshotRepository,
-  });
+  const worker = await (deps.workerFactory || createRobinhoodPoolLiquidityWorker)({
+    rpcClient, reader, snapshotRepository, cursorRepository,
+  }, options);
   const leases = (deps.leaseManagerFactory || createWorkerLeaseManager)({
     heartbeatMs: options.leaseHeartbeatMs, ttlMs: options.leaseTtlMs,
   });
@@ -60,7 +65,7 @@ async function main(deps = {}) {
     metadataProvider: worker.getStatus,
     start: async () => {
       await (deps.validateChainIds || validateRobinhoodProviderChainIds)(rpcClient);
-      worker.start(options);
+      worker.start();
     },
   });
   process.once('SIGINT', () => { void shutdown(); });
