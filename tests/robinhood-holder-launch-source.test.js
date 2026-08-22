@@ -15,8 +15,9 @@ const FRONTIER_HASH = `0x${'55'.repeat(32)}`;
 function stateRow(overrides = {}) {
   return {
     ledger_status: 'live',
-    deployment_block: '100',
-    attribution_block: '100',
+    deployment_block: '1',
+    attribution_block: '1',
+    first_pool_discovery_block: '100',
     live_through_block: '200',
     live_through_hash: FRONTIER_HASH,
     creator_address: null,
@@ -90,8 +91,11 @@ test('normalizes holder state and validates historical coverage boundaries', () 
   const state = __private.normalizeState(stateRow(), TOKEN);
   assert.equal(
     __private.validateCoverage(state, coverage({ historicalFromBlock: '101' })).reason,
-    'swap_coverage_starts_after_token_launch'
+    'swap_coverage_starts_after_first_pool'
   );
+  assert.equal(__private.normalizeState(stateRow({
+    first_pool_discovery_block: null,
+  }), TOKEN).reason, 'registered_pool_unavailable');
   assert.equal(
     __private.validateCoverage(state, coverage({ completeThroughBlock: '199' })).reason,
     'swap_coverage_behind_holder_frontier'
@@ -122,6 +126,7 @@ test('reads canonical anchor and first buy evidence without classifying the wall
     }])],
   ]);
   assert.match(queries[3].sql, /valid_from_block <= candidate\.block_number/);
+  assert.match(queries[0].sql, /MIN\(discovery_block\).*first_pool_discovery_block/s);
   assert.match(queries[1].sql, /registry\.discovery_block <= swap\.block_number/);
   assert.match(queries[2].sql, /MIN\(block_number\).*GROUP BY wallet_address/s);
 });
@@ -134,7 +139,7 @@ test('fails closed before swap reads when complete history does not cover launch
 
   assert.deepEqual(result, {
     ready: false,
-    reason: 'swap_coverage_starts_after_token_launch',
+    reason: 'swap_coverage_starts_after_first_pool',
     tokenAddress: TOKEN,
   });
   assert.equal(queries.length, 1);

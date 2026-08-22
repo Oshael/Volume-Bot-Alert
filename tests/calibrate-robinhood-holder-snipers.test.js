@@ -67,12 +67,12 @@ describe('Robinhood SNIPER calibration command', () => {
           calls.push({ sql, params });
           return { rows: [{
             token_address: 'token-a', live_tokens: 100, eligible_tokens: 20,
-            before_coverage: 65, frontier_beyond_coverage: 10,
-            launch_block_unavailable: 5,
+            before_coverage: 60, pool_ahead_of_holder: 5, frontier_beyond_coverage: 10,
+            pool_block_unavailable: 5,
           }, {
             token_address: 'token-b', live_tokens: 100, eligible_tokens: 20,
-            before_coverage: 65, frontier_beyond_coverage: 10,
-            launch_block_unavailable: 5,
+            before_coverage: 60, pool_ahead_of_holder: 5, frontier_beyond_coverage: 10,
+            pool_block_unavailable: 5,
           }] };
         },
         getClient: async () => { throw new Error('calibration must not write'); },
@@ -87,13 +87,14 @@ describe('Robinhood SNIPER calibration command', () => {
 
     assert.equal(report.mode, 'read-only');
     assert.deepEqual(calls[0].params, ['90', '250', 'test', 2]);
-    assert.match(calls[0].sql, /launch_block >= \$1::bigint/);
+    assert.match(calls[0].sql, /MIN\(discovery_block\) AS first_pool_block/);
     assert.deepEqual(report.coverage, {
       historicalFromBlock: '90', completeThroughBlock: '250',
     });
     assert.deepEqual(report.population, {
-      liveTokens: 100, eligibleTokens: 20, launchedBeforeCoverage: 65,
-      holderFrontierBeyondCoverage: 10, launchBlockUnavailable: 5,
+      liveTokens: 100, eligibleTokens: 20, firstPoolBeforeCoverage: 60,
+      firstPoolAheadOfHolderFrontier: 5, holderFrontierBeyondCoverage: 10,
+      firstPoolUnavailable: 5,
     });
     assert.equal(report.notionalUsd.countsAtThreshold['10'], 1);
     const logs = [];

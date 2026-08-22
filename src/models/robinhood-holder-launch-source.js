@@ -26,12 +26,12 @@ function normalizeState(row, tokenAddress) {
       || row.live_through_hash == null) {
     return unavailable('holder_frontier_unavailable', { tokenAddress });
   }
-  const launchFromBlock = row.deployment_block ?? row.attribution_block;
+  const launchFromBlock = row.first_pool_discovery_block;
   if (launchFromBlock == null) {
-    return unavailable('token_launch_block_unavailable', { tokenAddress });
+    return unavailable('registered_pool_unavailable', { tokenAddress });
   }
   if (BigInt(launchFromBlock) > BigInt(row.live_through_block)) {
-    return unavailable('token_launch_ahead_of_holder_frontier', { tokenAddress });
+    return unavailable('registered_pool_ahead_of_holder_frontier', { tokenAddress });
   }
   return Object.freeze({
     ready: true,
@@ -50,7 +50,7 @@ function validateCoverage(state, coverage) {
     return unavailable(coverage?.reason || 'swap_coverage_unavailable');
   }
   if (BigInt(coverage.historicalFromBlock) > BigInt(state.launchFromBlock)) {
-    return unavailable('swap_coverage_starts_after_token_launch');
+    return unavailable('swap_coverage_starts_after_first_pool');
   }
   if (BigInt(coverage.completeThroughBlock) < BigInt(state.frontier.blockNumber)) {
     return unavailable('swap_coverage_behind_holder_frontier');
@@ -75,13 +75,19 @@ function createRobinhoodHolderLaunchSource(options = {}) {
 
   async function loadState(tokenAddress) {
     const { rows } = await database.query(
-      `SELECT state.ledger_status, state.deployment_block::text,
-              state.live_through_block::text, state.live_through_hash,
-              attribution.attribution_block::text, attribution.creator_address
+      `SELECT state.ledger_status, state.live_through_block::text,
+              state.live_through_hash, attribution.creator_address,
+              pool.first_pool_discovery_block
          FROM robinhood_holder_token_states state
          LEFT JOIN robinhood_token_attributions attribution
            ON attribution.chain = state.chain
           AND attribution.token_address = state.token_address
+         LEFT JOIN LATERAL (
+           SELECT MIN(discovery_block)::text AS first_pool_discovery_block
+             FROM robinhood_pool_registry registry
+            WHERE registry.chain = state.chain
+              AND registry.token_address = state.token_address
+         ) pool ON true
         WHERE state.chain = $1 AND state.token_address = $2`,
       [CHAIN, tokenAddress]
     );

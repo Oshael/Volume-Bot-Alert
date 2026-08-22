@@ -147,28 +147,35 @@ async function runCalibration(runtime, options) {
     throw new Error(`historical swap coverage unavailable: ${coverage?.reason || 'unknown'}`);
   }
   const { rows } = await runtime.database.query(
-    `WITH candidates AS (
+    `WITH pool_origins AS (
+       SELECT token_address, MIN(discovery_block) AS first_pool_block
+         FROM robinhood_pool_registry WHERE chain = 'robinhood'
+        GROUP BY token_address
+     ), candidates AS (
        SELECT state.token_address,
               state.live_through_block,
-              COALESCE(state.deployment_block, attribution.attribution_block) AS launch_block
+              pool.first_pool_block
          FROM robinhood_holder_token_states state
-         LEFT JOIN robinhood_token_attributions attribution
-           ON attribution.chain = state.chain
-          AND attribution.token_address = state.token_address
+         LEFT JOIN pool_origins pool ON pool.token_address = state.token_address
         WHERE state.chain = 'robinhood' AND state.ledger_status = 'live'
           AND state.live_through_block IS NOT NULL AND state.live_through_hash IS NOT NULL
      ), stats AS (
        SELECT COUNT(*)::int AS live_tokens,
-              COUNT(*) FILTER (WHERE launch_block IS NULL)::int AS launch_block_unavailable,
-              COUNT(*) FILTER (WHERE launch_block < $1::bigint)::int AS before_coverage,
-              COUNT(*) FILTER (WHERE launch_block >= $1::bigint
+              COUNT(*) FILTER (WHERE first_pool_block IS NULL)::int AS pool_block_unavailable,
+              COUNT(*) FILTER (WHERE first_pool_block < $1::bigint)::int AS before_coverage,
+              COUNT(*) FILTER (WHERE first_pool_block >= $1::bigint
+                AND first_pool_block > live_through_block)::int AS pool_ahead_of_holder,
+              COUNT(*) FILTER (WHERE first_pool_block >= $1::bigint
+                AND first_pool_block <= live_through_block
                 AND live_through_block > $2::bigint)::int AS frontier_beyond_coverage,
-              COUNT(*) FILTER (WHERE launch_block >= $1::bigint
+              COUNT(*) FILTER (WHERE first_pool_block >= $1::bigint
+                AND first_pool_block <= live_through_block
                 AND live_through_block <= $2::bigint)::int AS eligible_tokens
          FROM candidates
      ), selected AS (
        SELECT token_address FROM candidates
-        WHERE launch_block >= $1::bigint AND live_through_block <= $2::bigint
+        WHERE first_pool_block >= $1::bigint
+          AND first_pool_block <= live_through_block AND live_through_block <= $2::bigint
         ORDER BY MD5(token_address || $3) LIMIT $4::int
      )
      SELECT selected.token_address, stats.* FROM stats LEFT JOIN selected ON true`,
@@ -196,9 +203,10 @@ async function runCalibration(runtime, options) {
     population: Object.freeze({
       liveTokens: Number(population.live_tokens || 0),
       eligibleTokens: Number(population.eligible_tokens || 0),
-      launchedBeforeCoverage: Number(population.before_coverage || 0),
+      firstPoolBeforeCoverage: Number(population.before_coverage || 0),
+      firstPoolAheadOfHolderFrontier: Number(population.pool_ahead_of_holder || 0),
       holderFrontierBeyondCoverage: Number(population.frontier_beyond_coverage || 0),
-      launchBlockUnavailable: Number(population.launch_block_unavailable || 0),
+      firstPoolUnavailable: Number(population.pool_block_unavailable || 0),
     }),
     ...summarizeEvidence(results, options.thresholds),
   });
