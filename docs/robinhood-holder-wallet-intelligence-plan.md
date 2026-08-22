@@ -295,6 +295,9 @@ upstream no próprio runtime.
 3. **SNIPER**
    - materializar âncora de lançamento e primeira compra;
    - fechar notional mínimo com amostra real antes de ativar UI.
+   - Status em 2026-08-21: domínio de evidência temporal concluído, com ordem
+     canônica, boundaries configuráveis e falha fechada sem `transaction_index`;
+     leitura/materialização assíncrona e notional mínimo permanecem pendentes.
 4. **INSIDER direto**
    - começar por distribuição direta do token;
    - adicionar funding nativo direto somente quando a fonte estiver comprovada.
