@@ -39,6 +39,15 @@ function rangeRow(row) {
   });
 }
 
+function runRow(row) {
+  if (!row) return null;
+  return Object.freeze({
+    id: String(row.id), status: row.status,
+    sourceFrom: row.source_from.toISOString(), sourceThrough: row.source_through.toISOString(),
+    rangeSeconds: Number(row.range_seconds), rangeCount: Number(row.range_count),
+  });
+}
+
 function createRobinhoodFirstBuyBackfillRepository(options = {}) {
   const database = options.database || db;
 
@@ -83,6 +92,16 @@ function createRobinhoodFirstBuyBackfillRepository(options = {}) {
     } finally {
       client.release();
     }
+  }
+
+  async function getRun(runIdValue) {
+    const runId = positiveInteger(runIdValue, 'runId');
+    const result = await database.query(
+      `SELECT id, status, source_from, source_through, range_seconds, range_count
+         FROM robinhood_first_buy_backfill_runs WHERE id = $1 AND chain = $2`,
+      [runId, CHAIN]
+    );
+    return runRow(result.rows[0]);
   }
 
   async function startRun(runIdValue) {
@@ -229,7 +248,8 @@ function createRobinhoodFirstBuyBackfillRepository(options = {}) {
   }
 
   return Object.freeze({
-    createRun, startRun, claimRange, reclaimExpired, retryRange, completeRange, getProgress,
+    createRun, getRun, startRun, claimRange, reclaimExpired,
+    retryRange, completeRange, getProgress,
   });
 }
 

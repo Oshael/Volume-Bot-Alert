@@ -7,6 +7,26 @@ const {
 } = require('../src/models/robinhood-wallet-token-first-buy');
 
 describe('Robinhood wallet-token first buy writer', () => {
+  it('benchmarks the same canonical source path without writing', async () => {
+    const calls = [];
+    const repository = createRobinhoodWalletTokenFirstBuyRepository({ database: {
+      async queryWithStatementTimeout(sql, params, timeout) {
+        calls.push({ sql, params, timeout });
+        return { rows: [{
+          rows_scanned: '8', missing_positions: '1', facts_considered: '3',
+        }] };
+      },
+    } });
+    const result = await repository.probeRange({
+      rangeStart: '2026-08-22T00:00:00Z', rangeEnd: '2026-08-22T01:00:00Z',
+    });
+    assert.equal(result.rowsScanned, 8);
+    assert.equal(result.missingPositions, 1);
+    assert.equal(calls[0].timeout, 120_000);
+    assert.doesNotMatch(calls[0].sql, /INSERT INTO robinhood_wallet_token_first_buys/);
+    assert.match(calls[0].sql, /canonical AS MATERIALIZED/);
+  });
+
   it('uses one bounded SQL materialization with canonical conflict ordering', async () => {
     const calls = [];
     const repository = createRobinhoodWalletTokenFirstBuyRepository({ database: {

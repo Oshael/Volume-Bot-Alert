@@ -340,9 +340,11 @@ carga sem ETA confiável.
      também está concluído: processa ranges temporais limitados, aceita execução
      fora de ordem com precedência canônica e falha fechado sem posição de tx.
      A Stage 151 e seu repository acrescentam campanha congelada, ranges
-     checkpointed, claims por lease e progresso/ETA medidos. O comando/worker,
-     preflight de capacidade, manutenção live, decisão da regra e ativação seguem
-     em cortes separados.
+     checkpointed, claims por lease e progresso/ETA medidos. O runner de backfill
+     também está concluído: preflight read-only obrigatório usa amostras
+     distribuídas, margem conservadora e recusa cargas projetadas acima de 5h;
+     campanhas interrompidas retomam pelo `run-id`. Manutenção live, decisão da
+     regra de alta confiança e ativação seguem em cortes separados.
 4. **INSIDER direto**
    - começar por distribuição direta do token;
    - adicionar funding nativo direto somente quando a fonte estiver comprovada.

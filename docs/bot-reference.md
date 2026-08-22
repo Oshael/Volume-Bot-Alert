@@ -1371,6 +1371,18 @@ retomáveis. Progresso e ETA usam apenas ranges realmente concluídos; antes des
 amostra o ETA permanece indisponível. Aplicar a stage não cria campanha nem
 executa carga.
 
+Depois das Stages 149 e 151, planeje a carga com
+`npm run robinhood:first-buy-backfill -- --from=<ISO> --through=<ISO> --range-seconds=3600 --concurrency=2`.
+O modo padrão é somente leitura: consulta três ranges distribuídos pela janela,
+mede o mesmo caminho canônico usado pelo writer, aplica margem de 25% e imprime o
+ETA projetado. `--apply` só cria a campanha após esse preflight aprovar; qualquer
+posição canônica ausente ou projeção acima de 5 horas bloqueia a escrita. O teto
+não pode ser elevado pela CLI. Execute cargas longas em `tmux`; o `run-id` é
+impresso antes do primeiro range e uma interrupção pode ser retomada com
+`npm run robinhood:first-buy-backfill -- --run-id=<id> --apply`. A retomada repete
+o preflight contra a janela congelada antes de escrever e recupera leases
+expiradas. Reduza `--range-seconds` se uma amostra atingir o timeout de 120s.
+
 Cadastros usam um manifesto JSON append-only com `entries`; cada entrada contém
 `address`, `kind`, `label`, `source`, `evidence`, `validFromBlock`,
 `validThroughBlock` (`null` para aberta) e `verifiedAt`. Execute primeiro

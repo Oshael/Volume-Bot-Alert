@@ -40,6 +40,11 @@ describe('Robinhood first-buy backfill control integration', () => {
       rangeSeconds: 3600,
     });
     assert.deepEqual(run, { id: run.id, status: 'planned', rangeCount: 2 });
+    assert.deepEqual(await repository.getRun(run.id), {
+      id: run.id, status: 'planned',
+      sourceFrom: '2026-08-22T00:00:00.000Z', sourceThrough: '2026-08-22T02:00:00.000Z',
+      rangeSeconds: 3600, rangeCount: 2,
+    });
     await repository.startRun(run.id);
     assert.equal((await repository.getProgress({ runId: run.id })).etaSeconds, null);
 

@@ -4,7 +4,7 @@ const CHAIN = 'robinhood';
 const MAX_RANGE_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_STATEMENT_TIMEOUT_MS = 120_000;
 
-const MATERIALIZE_RANGE_SQL = `WITH registered_buys AS MATERIALIZED (
+const SOURCE_CTES_SQL = `WITH registered_buys AS MATERIALIZED (
   SELECT swap.token_address, swap.wallet_address, swap.transaction_hash,
          position.transaction_index, swap.action_index, swap.block_number,
          position.block_hash, swap.block_time, swap.protocol, swap.market_key,
@@ -50,7 +50,14 @@ const MATERIALIZE_RANGE_SQL = `WITH registered_buys AS MATERIALIZED (
    WHERE transaction_index IS NOT NULL AND block_hash IS NOT NULL
    ORDER BY token_address, wallet_address, block_number,
             transaction_index, action_index, transaction_hash
-), upserted AS (
+)`;
+
+const PROBE_RANGE_SQL = `${SOURCE_CTES_SQL}
+SELECT quality.rows_scanned::text, quality.missing_positions::text,
+       (SELECT COUNT(*)::text FROM canonical) AS facts_considered
+  FROM quality`;
+
+const MATERIALIZE_RANGE_SQL = `${SOURCE_CTES_SQL}, upserted AS (
   INSERT INTO robinhood_wallet_token_first_buys (
     chain, token_address, wallet_address, transaction_hash, transaction_index,
     action_index, block_number, block_hash, block_time, protocol, market_key,
@@ -109,14 +116,29 @@ function createRobinhoodWalletTokenFirstBuyRepository(options = {}) {
   const database = options.database || db;
   const statementTimeoutMs = options.statementTimeoutMs ?? DEFAULT_STATEMENT_TIMEOUT_MS;
 
-  async function materializeRange(input = {}) {
-    const range = normalizeRange(input);
+  async function execute(sql, range) {
     const query = database.queryWithStatementTimeout
       ? database.queryWithStatementTimeout.bind(database) : database.query.bind(database);
     const { rows } = await query(
-      MATERIALIZE_RANGE_SQL, [CHAIN, range.rangeStart, range.rangeEnd], statementTimeoutMs
+      sql, [CHAIN, range.rangeStart, range.rangeEnd], statementTimeoutMs
     );
-    const result = rows[0] || {};
+    return rows[0] || {};
+  }
+
+  async function probeRange(input = {}) {
+    const range = normalizeRange(input);
+    const result = await execute(PROBE_RANGE_SQL, range);
+    return Object.freeze({
+      ...range,
+      rowsScanned: Number(result.rows_scanned || 0),
+      factsConsidered: Number(result.facts_considered || 0),
+      missingPositions: Number(result.missing_positions || 0),
+    });
+  }
+
+  async function materializeRange(input = {}) {
+    const range = normalizeRange(input);
+    const result = await execute(MATERIALIZE_RANGE_SQL, range);
     const missingPositions = Number(result.missing_positions || 0);
     if (missingPositions > 0) {
       const error = new Error(`canonical transaction positions missing: ${missingPositions}`);
@@ -132,10 +154,10 @@ function createRobinhoodWalletTokenFirstBuyRepository(options = {}) {
     });
   }
 
-  return Object.freeze({ materializeRange });
+  return Object.freeze({ probeRange, materializeRange });
 }
 
 module.exports = {
   createRobinhoodWalletTokenFirstBuyRepository,
-  __private: { MATERIALIZE_RANGE_SQL, normalizeRange },
+  __private: { MATERIALIZE_RANGE_SQL, PROBE_RANGE_SQL, normalizeRange },
 };
