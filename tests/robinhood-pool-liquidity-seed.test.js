@@ -20,7 +20,7 @@ function candidate(marketKey, blockNumber = '100') {
 }
 
 describe('Robinhood pool liquidity historical seed', () => {
-  it('collapses indexed buckets before selecting the latest valid evidence', async () => {
+  it('uses per-pool indexed lookups instead of global history scans', async () => {
     const calls = [];
     const repository = createRobinhoodPoolLiquiditySeedRepository({ database: {
       async query(sql, params) {
@@ -38,10 +38,11 @@ describe('Robinhood pool liquidity historical seed', () => {
     assert.deepEqual(calls[0].params, ['110']);
     assert.match(calls[0].sql, /robinhood_market_buckets_1m/);
     assert.match(calls[0].sql, /robinhood_market_buckets_1h/);
-    assert.match(calls[0].sql,
-      /latest_1m AS \(\s*SELECT DISTINCT ON \(protocol, market_key\)/);
-    assert.match(calls[0].sql,
-      /latest_1h AS \(\s*SELECT DISTINCT ON \(protocol, market_key\)/);
+    assert.match(calls[0].sql, /FROM token_catalog catalog/);
+    assert.match(calls[0].sql, /INNER JOIN LATERAL/);
+    assert.match(calls[0].sql, /minute\.market_key = pool\.market_key/);
+    assert.match(calls[0].sql, /hour\.market_key = pool\.market_key/);
+    assert.doesNotMatch(calls[0].sql, /SELECT DISTINCT ON/);
     assert.doesNotMatch(calls[0].sql, /robinhood_market_observations/);
     assert.match(calls[0].sql, /latest\.block_number > snapshot\.snapshot_block_number/);
   });

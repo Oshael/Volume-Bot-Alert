@@ -29,7 +29,9 @@ const MARKET = `robinhood:uniswap-v3:${POOL}`;
 
 async function cleanup() {
   await db.query("DELETE FROM robinhood_pool_liquidity_event_cursors WHERE chain = 'robinhood'");
+  await db.query('DELETE FROM robinhood_market_buckets_1m WHERE market_key = $1', [MARKET]);
   await db.query('DELETE FROM robinhood_pool_registry WHERE market_key = $1', [MARKET]);
+  await db.query("DELETE FROM token_catalog WHERE chain = 'robinhood' AND address = $1", [TOKEN]);
 }
 
 describe('Robinhood pool liquidity snapshot persistence integration', () => {
@@ -55,6 +57,26 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
        ) VALUES ('uniswap-v3', $1, $2, $2, $3, $4, $3, $4, 10,
          $5, $6, 0, '2026-08-22T10:00:00Z')`,
       [MARKET, POOL, TOKEN, QUOTE, `0x${'a'.repeat(64)}`, `0x${'b'.repeat(64)}`]
+    );
+    await db.query(
+      `INSERT INTO token_catalog (chain, address, source)
+       VALUES ('robinhood', $1, 'robinhood-onchain')`, [TOKEN]
+    );
+    await db.query(
+      `INSERT INTO robinhood_market_buckets_1m (
+         protocol, market_key, token_address, quote_address, bucket_ts,
+         open_price_usd, high_price_usd, low_price_usd, close_price_usd,
+         open_fdv_usd, high_fdv_usd, low_fdv_usd, close_fdv_usd,
+         volume_usd, swaps, buys, sells, transactions,
+         first_observed_at, first_block_number, first_log_index,
+         last_observed_at, last_block_number, last_log_index, expires_at,
+         close_liquidity_usd, close_liquidity_raw, close_liquidity_status,
+         close_liquidity_confidence
+       ) VALUES ('uniswap-v3', $1, $2, $3, '2026-08-22T11:00:00Z',
+         1, 1, 1, 1, 100, 100, 100, 100, 1, 1, 1, 0, 1,
+         '2026-08-22T11:00:01Z', 22, 0, '2026-08-22T11:00:01Z', 22, 0,
+         '2026-09-05T11:00:00Z', 1200, 60,
+         'spot_tvl_from_pool_balances', 'medium')`, [MARKET, TOKEN, QUOTE]
     );
   });
 
@@ -102,7 +124,10 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
       snapshot_block_number: null, liquidity_usd: null, consecutive_failures: 0,
     });
     const seedRepository = createRobinhoodPoolLiquiditySeedRepository({ database: db });
-    assert.ok(Array.isArray(await seedRepository.listCandidates({ throughBlock: '22' })));
+    const candidates = await seedRepository.listCandidates({ throughBlock: '22' });
+    assert.deepEqual(candidates.map(({ marketKey, blockNumber }) => ({ marketKey, blockNumber })), [
+      { marketKey: MARKET, blockNumber: '22' },
+    ]);
     assert.deepEqual(await seedRepository.commitSeed({
       startBlock: '23', rows: [{
         protocol: 'uniswap-v3', market_key: MARKET, block_number: '22',

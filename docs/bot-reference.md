@@ -553,11 +553,13 @@ falha de RPC não apaga o último snapshot válido.
 
 O bootstrap normal é `npm run robinhood:liquidity-seed` para preview e
 `npm run robinhood:liquidity-seed -- --write` para aplicar. O seed seleciona a última valoração
-válida dos buckets 1m ou 1h até o menor frontier processado, reduz cada fonte a uma linha por pool
-antes de combiná-las, consulta somente os headers dos blocos distintos e grava snapshots e cursor
-em uma transação. Observations não são relidas: cada swap aceito já atualiza o bucket 1m na mesma
-transação, e varrer esse log volumoso seria redundante. O cursor começa no bloco seguinte ao
-cutover, portanto eventos ocorridos enquanto o serviço estava desligado não são perdidos.
+válida dos buckets 1m ou 1h até o menor frontier processado. A busca parte apenas das pools ativas
+dos tokens presentes no catálogo do workspace e faz um lookup indexado por pool em cada bucket; não
+varre globalmente o histórico nem o catálogo bruto de pools. Depois consulta somente os headers dos
+blocos distintos e grava snapshots e cursor em uma transação. Observations não são relidas: cada
+swap aceito já atualiza o bucket 1m na mesma transação, e varrer esse log volumoso seria redundante.
+O cursor começa no bloco seguinte ao cutover, portanto eventos ocorridos enquanto o serviço estava
+desligado não são perdidos.
 `ROBINHOOD_POOL_LIQUIDITY_START_BLOCK` fica reservado ao bootstrap manual sem seed; depois que o
 cursor existe, ele é a fonte de verdade. O metadata da lease expõe cursor, lag, métricas do poller e
 totais de pools afetadas, salvas e com falha.
