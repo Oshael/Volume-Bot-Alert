@@ -271,6 +271,34 @@ exigir uma frontier materializada mínima como entrada, mas devem aguardar ou
 publicar `unavailable` quando ela estiver ausente ou stale, sem iniciar o produtor
 upstream no próprio runtime.
 
+#### 0.9.2 Orçamento obrigatório dos backfills
+
+Cada novo backfill desta iniciativa deve ser projetado para concluir a população
+histórica necessária em **no máximo 3–5 horas na VPS de produção**. Esse teto vale
+para o trabalho completo exigido pela fonte materializada; não pode ser atendido
+artificialmente dividindo a mesma carga em vários comandos de até cinco horas.
+
+Antes da execução completa, um preflight representativo deve medir throughput,
+custo de banco/RPC e projetar o ETA. Se o upper bound projetado ultrapassar cinco
+horas, o backfill completo não deve começar: primeiro é obrigatório otimizar o
+acesso, reduzir trabalho redundante ou redesenhar a materialização e repetir o
+benchmark.
+
+Todo backfill deve ainda:
+
+- ser particionado, idempotente, checkpointed e retomável após interrupção;
+- usar concorrência e tamanho de lote configuráveis, com claim/lease que permita
+  paralelismo seguro quando necessário;
+- publicar progresso, throughput, ETA, falhas e último checkpoint;
+- limitar commits, WAL, conexões e RPC para não degradar os workers live;
+- produzir uma fonte de evidência reutilizável por classificadores, evitando
+  repetir a carga histórica quando thresholds ou regras forem recalibrados.
+
+O requisito se aplica às fontes históricas de primeira compra, transfer/funding,
+custódia/lock de liquidez e freshness externo. Uma exceção futura exige medição
+documentada e aprovação explícita antes da execução, nunca depois de iniciar uma
+carga sem ETA confiável.
+
 1. **Fundação de classificação**
    - fechar schema/contrato, versionamento, estados e reason codes;
    - criar funções puras para prioridade e disponibilidade;
