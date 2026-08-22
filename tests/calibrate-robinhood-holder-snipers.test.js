@@ -100,13 +100,22 @@ describe('Robinhood SNIPER calibration command', () => {
 
   it('summarizes population recurrence without exposing candidate wallets', () => {
     const report = summarizePopulationRecurrence([
-      { walletAddress: WALLET_A, tokenAddress: 'token-a', volumeUsd: '50', positionReady: true },
-      { walletAddress: WALLET_A, tokenAddress: 'token-b', volumeUsd: '25', positionReady: true },
-      { walletAddress: WALLET_A, tokenAddress: 'token-c', volumeUsd: null, positionReady: true },
-      { walletAddress: WALLET_B, tokenAddress: 'token-d', volumeUsd: '100', positionReady: false },
+      { walletAddress: WALLET_A, tokenAddress: 'token-a', volumeUsd: '50',
+        anchorReady: true, withinOneBlock: true, positionReady: true },
+      { walletAddress: WALLET_A, tokenAddress: 'token-b', volumeUsd: '25',
+        anchorReady: true, withinOneBlock: true, positionReady: true },
+      { walletAddress: WALLET_A, tokenAddress: 'token-c', volumeUsd: null,
+        anchorReady: true, withinOneBlock: true, positionReady: true },
+      { walletAddress: WALLET_B, tokenAddress: 'token-d', volumeUsd: '100',
+        anchorReady: true, withinOneBlock: true, positionReady: false },
+      { walletAddress: WALLET_B, tokenAddress: 'token-e', volumeUsd: '100',
+        anchorReady: false, withinOneBlock: false, positionReady: true },
+      { walletAddress: WALLET_B, tokenAddress: 'token-f', volumeUsd: '100',
+        anchorReady: true, withinOneBlock: false, positionReady: true },
     ], [WALLET_A, WALLET_B], ['25', '50']);
 
     assert.equal(report.candidateWallets, 2);
+    assert.equal(report.missingAnchorEvidence, 1);
     assert.equal(report.missingPositionEvidence, 1);
     assert.equal(report.missingVolumeUsd, 1);
     assert.deepEqual(report.atNotionalThreshold['25'].onAtLeast2Tokens, {
@@ -147,7 +156,7 @@ describe('Robinhood SNIPER calibration command', () => {
         assert.deepEqual(wallets, [WALLET_A]);
         return [{
           walletAddress: WALLET_A, tokenAddress: 'token-a',
-          volumeUsd: '12', positionReady: true,
+          volumeUsd: '12', anchorReady: true, withinOneBlock: true, positionReady: true,
         }];
       } },
     };

@@ -158,9 +158,15 @@ function strictCandidateWallets(results) {
 
 function summarizePopulationRecurrence(rows, candidateWallets, thresholds) {
   const ready = [];
+  let missingAnchorEvidence = 0;
   let missingPositionEvidence = 0;
   let missingVolumeUsd = 0;
   for (const row of rows) {
+    if (!row.anchorReady) {
+      missingAnchorEvidence += 1;
+      continue;
+    }
+    if (!row.withinOneBlock) continue;
     if (!row.positionReady) {
       missingPositionEvidence += 1;
       continue;
@@ -180,6 +186,7 @@ function summarizePopulationRecurrence(rows, candidateWallets, thresholds) {
     rule: Object.freeze({ maxBlocks: 1, sampleCandidateMaxBuyerRank: 5 }),
     candidateWallets: candidateWallets.length,
     pricedOccurrences: ready.length,
+    missingAnchorEvidence,
     missingPositionEvidence,
     missingVolumeUsd,
     allPriced: recurrenceSummary(ready),

@@ -5,7 +5,7 @@ const { after, before, describe, it } = require('node:test');
 
 const db = require('../src/models/db');
 const {
-  createRobinhoodHolderSniperCalibrationSource,
+  createRobinhoodHolderSniperCalibrationSource, __private,
 } = require('../src/models/robinhood-holder-sniper-calibration-source');
 const stage63 = require('../src/utils/db-init-stage63');
 const stage90 = require('../src/utils/db-init-stage90');
@@ -36,5 +36,8 @@ describe('Robinhood SNIPER population calibration source integration', () => {
     });
 
     assert.deepEqual(rows, []);
+    assert.deepEqual((await db.query(__private.ANCHORS_SQL, [
+      [], [], [], 'robinhood',
+    ])).rows, []);
   });
 });
