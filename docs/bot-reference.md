@@ -545,14 +545,18 @@ O processo usa a lease `robinhood-pool-liquidity-worker` e acompanha eventos em 
 com o cursor durável da Stage 148. Ele consulta logs por tópicos e reavalia somente as pools
 afetadas, uma vez por faixa; não percorre periodicamente todo o catálogo. O safe head é limitado
 pelo menor frontier de discovery e market, evitando usar pools ou ranges ainda não processados.
-O cursor só avança depois da valoração e do commit da faixa. Em reorg, snapshots órfãos são invalidados e
-reconstruídos no bloco anterior ao rewind. Resultado indisponível não é gravado como zero e uma
+O cursor só avança depois da valoração e do commit da faixa. Em reorg, snapshots órfãos são
+invalidados e reconstruídos no bloco anterior ao rewind. Resultado indisponível não é gravado como zero e uma
 falha de RPC não apaga o último snapshot válido.
 
-O primeiro bootstrap exige `ROBINHOOD_POOL_LIQUIDITY_START_BLOCK`; depois disso, o cursor
-persistido é a fonte de verdade. O metadata da lease expõe cursor, lag, métricas do poller e totais
-de pools afetadas, salvas e com falha. Esta versão não deve ser iniciada antes do seed inicial dos
-snapshots e da escolha do bloco de cutover correspondente.
+O bootstrap normal é `npm run robinhood:liquidity-seed` para preview e
+`npm run robinhood:liquidity-seed -- --write` para aplicar. O seed seleciona a última valoração
+válida de observations, buckets 1m ou 1h até o menor frontier processado, consulta somente os
+headers dos blocos distintos e grava snapshots e cursor em uma transação. O cursor começa no
+bloco seguinte ao cutover, portanto eventos ocorridos enquanto o serviço estava desligado não
+são perdidos. `ROBINHOOD_POOL_LIQUIDITY_START_BLOCK` fica reservado ao bootstrap manual sem seed;
+depois que o cursor existe, ele é a fonte de verdade. O metadata da lease expõe cursor, lag,
+métricas do poller e totais de pools afetadas, salvas e com falha.
 
 O V4 exige que o replay histórico esteja `completed`, que a materialização inicial exista e que
 o processamento live tenha continuado persistindo `ModifyLiquidity` depois do target do replay.
@@ -563,9 +567,8 @@ Ordem obrigatória do primeiro deploy:
 1. aplicar `node src/utils/db-init-stage147.js` e `node src/utils/db-init-stage148.js` na VPS2;
 2. executar `npm run db:schema-check`;
 3. verificar replay/materialização V4 e a saúde do frontier de head/processing;
-4. executar o seed inicial e definir o mesmo cutover em
-   `ROBINHOOD_POOL_LIQUIDITY_START_BLOCK`;
-5. criar o env/drop-in e iniciar `trendscope-worker@robinhood-liquidity.service`;
+4. executar o preview e depois o seed com `--write`; guardar `startBlock` do resultado;
+5. manter o env/drop-in da instância e iniciar `trendscope-worker@robinhood-liquidity.service`;
 6. confirmar cursor sem lag e cobertura suficiente;
 7. somente então reiniciar a API/web com a leitura canônica.
 

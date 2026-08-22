@@ -5,7 +5,18 @@ const { after, before, describe, it } = require('node:test');
 
 const db = require('../src/models/db');
 const stage63 = require('../src/utils/db-init-stage63');
+const stage64 = require('../src/utils/db-init-stage64');
+const stage65 = require('../src/utils/db-init-stage65');
+const stage66 = require('../src/utils/db-init-stage66');
+const stage67 = require('../src/utils/db-init-stage67');
+const stage68 = require('../src/utils/db-init-stage68');
+const stage98 = require('../src/utils/db-init-stage98');
+const stage102 = require('../src/utils/db-init-stage102');
 const stage147 = require('../src/utils/db-init-stage147');
+const stage148 = require('../src/utils/db-init-stage148');
+const {
+  createRobinhoodPoolLiquiditySeedRepository,
+} = require('../src/models/robinhood-pool-liquidity-seed');
 const {
   createRobinhoodPoolLiquiditySnapshotRepository,
 } = require('../src/models/robinhood-pool-liquidity-snapshot');
@@ -17,6 +28,7 @@ const QUOTE = `0x${'9'.repeat(40)}`;
 const MARKET = `robinhood:uniswap-v3:${POOL}`;
 
 async function cleanup() {
+  await db.query("DELETE FROM robinhood_pool_liquidity_event_cursors WHERE chain = 'robinhood'");
   await db.query('DELETE FROM robinhood_pool_registry WHERE market_key = $1', [MARKET]);
 }
 
@@ -24,8 +36,16 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
     await stage63.init({ closePool: false });
+    await stage64.init({ closePool: false });
+    await stage65.init({ closePool: false });
+    await stage66.init({ closePool: false });
+    await stage67.init({ closePool: false });
+    await stage68.init({ closePool: false });
+    await stage98.init({ closePool: false });
+    await stage102.init({ closePool: false });
     await stage147.init({ closePool: false });
     await stage147.init({ closePool: false });
+    await stage148.init({ closePool: false });
     await cleanup();
     await db.query(
       `INSERT INTO robinhood_pool_registry (
@@ -80,6 +100,27 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
     );
     assert.deepEqual(cleared.rows[0], {
       snapshot_block_number: null, liquidity_usd: null, consecutive_failures: 0,
+    });
+    const seedRepository = createRobinhoodPoolLiquiditySeedRepository({ database: db });
+    assert.ok(Array.isArray(await seedRepository.listCandidates({ throughBlock: '22' })));
+    assert.deepEqual(await seedRepository.commitSeed({
+      startBlock: '23', rows: [{
+        protocol: 'uniswap-v3', market_key: MARKET, block_number: '22',
+        block_hash: `0x${'f'.repeat(64)}`, observed_at: '2026-08-22T11:03:00Z',
+        liquidity_usd: '1200', liquidity_raw: '60',
+        liquidity_status: 'spot_tvl_from_pool_balances',
+        liquidity_confidence: 'medium', liquidity_warning: null,
+      }],
+    }), { written: 1, startBlock: '23' });
+    const seeded = await db.query(
+      `SELECT snapshot.snapshot_block_number::text, snapshot.liquidity_usd::text,
+              cursor.next_block::text
+         FROM robinhood_pool_liquidity_snapshots snapshot
+         CROSS JOIN robinhood_pool_liquidity_event_cursors cursor
+        WHERE snapshot.market_key = $1`, [MARKET]
+    );
+    assert.deepEqual(seeded.rows[0], {
+      snapshot_block_number: '22', liquidity_usd: '1200', next_block: '23',
     });
   });
 });
