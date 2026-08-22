@@ -4,9 +4,7 @@ const { normalizeTokenAddress } = require('../utils/token-identity');
 const CHAIN = 'robinhood';
 const ANCHOR_BATCH_SIZE = 250;
 
-const FIRST_BUYS_SQL = `WITH candidate_wallets AS MATERIALIZED (
-  SELECT UNNEST($1::varchar[]) AS wallet_address
-), pool_origins AS MATERIALIZED (
+const FIRST_BUYS_SQL = `WITH pool_origins AS MATERIALIZED (
   SELECT token_address, MIN(discovery_block) AS first_pool_block
     FROM robinhood_pool_registry WHERE chain = $2 GROUP BY token_address
 ), eligible_tokens AS MATERIALIZED (
@@ -22,14 +20,13 @@ const FIRST_BUYS_SQL = `WITH candidate_wallets AS MATERIALIZED (
   SELECT swap.wallet_address, swap.token_address,
          MIN(swap.block_number) AS first_buy_block
     FROM robinhood_wallet_swaps swap
-    INNER JOIN candidate_wallets candidate ON candidate.wallet_address = swap.wallet_address
     INNER JOIN eligible_tokens token ON token.token_address = swap.token_address
     INNER JOIN robinhood_pool_registry registry
       ON registry.chain = swap.chain AND registry.protocol = swap.protocol
      AND registry.market_key = swap.market_key
      AND registry.token_address = swap.token_address
      AND registry.discovery_block <= swap.block_number
-   WHERE swap.chain = $2 AND swap.side = 'buy'
+   WHERE swap.chain = $2 AND swap.wallet_address = $1 AND swap.side = 'buy'
      AND swap.block_number BETWEEN token.first_pool_block AND token.live_through_block
    GROUP BY swap.wallet_address, swap.token_address
 ), ranked_first_buys AS MATERIALIZED (
@@ -139,14 +136,17 @@ function createRobinhoodHolderSniperCalibrationSource(options = {}) {
       normalizeTokenAddress(CHAIN, address)
     )))].sort();
     if (!wallets.length) return Object.freeze([]);
-    const { rows } = await database.query(FIRST_BUYS_SQL, [
-      wallets,
-      CHAIN,
-      block(coverage?.historicalFromBlock, 'historicalFromBlock'),
-      block(coverage?.completeThroughBlock, 'completeThroughBlock'),
-    ]);
-    const anchors = await loadAnchors(rows);
-    return Object.freeze(rows.map((row) => {
+    const fromBlock = block(coverage?.historicalFromBlock, 'historicalFromBlock');
+    const throughBlock = block(coverage?.completeThroughBlock, 'completeThroughBlock');
+    const firstBuys = [];
+    for (const wallet of wallets) {
+      const { rows } = await database.query(FIRST_BUYS_SQL, [
+        wallet, CHAIN, fromBlock, throughBlock,
+      ]);
+      firstBuys.push(...rows);
+    }
+    const anchors = await loadAnchors(firstBuys);
+    return Object.freeze(firstBuys.map((row) => {
       const launchBlock = anchors.get(row.token_address);
       const anchorReady = launchBlock != null;
       const deltaBlocks = anchorReady
