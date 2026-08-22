@@ -58,6 +58,7 @@ async function runRobinhoodPoolLiquiditySeed(deps = {}, options = {}) {
   if (throughBlock == null) throw new Error('processing frontier is unavailable');
   const emitProgress = createProgressEmitter(options);
   const scanStartedAt = (options.now || Date.now)();
+  emitProgress('count', scanStartedAt, { processed: 0, total: 0 });
   const candidates = await deps.repository.listCandidates({
     throughBlock,
     onProgress: (state) => emitProgress('scan', scanStartedAt, state),

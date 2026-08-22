@@ -30,6 +30,11 @@ function duration(value) {
 function createProgressReporter(logger = console, now = Date.now) {
   let lastReportedAt = 0;
   return (state) => {
+    if (state.phase === 'count') {
+      (logger.error || logger.log).call(logger,
+        '[LiquiditySeed] preflight counting relevant pools...');
+      return;
+    }
     const current = now();
     const complete = state.processed >= state.total;
     if (!complete && state.processed > 0 && current - lastReportedAt < 1000) return;
@@ -45,6 +50,7 @@ function createProgressReporter(logger = console, now = Date.now) {
 
 async function main(deps = {}) {
   const options = deps.options || parseArgs(deps.argv);
+  const logger = deps.logger || console;
   const database = deps.database || db;
   const repository = deps.repository
     || createRobinhoodPoolLiquiditySeedRepository({ database });
@@ -52,19 +58,23 @@ async function main(deps = {}) {
     || createRobinhoodPoolLiquidityEventCursorRepository({ database });
   let rpcClient = deps.rpcClient;
   if (options.write && !rpcClient) {
+    (logger.error || logger.log).call(logger, '[LiquiditySeed] preflight validating RPC providers...');
     rpcClient = (deps.rpcClientFactory || createRobinhoodRpcClient)(
       deps.rpcOptions || config.robinhoodIngestionWorker
     );
     await (deps.validateChainIds || validateRobinhoodProviderChainIds)(rpcClient);
+    (logger.error || logger.log).call(logger, '[LiquiditySeed] preflight RPC providers validated');
   }
+  (logger.error || logger.log).call(logger,
+    '[LiquiditySeed] preflight resolving processing frontier...');
   const result = await runRobinhoodPoolLiquiditySeed({
     repository, cursorRepository, rpcClient,
   }, {
     write: options.write,
     concurrency: config.robinhoodPoolLiquidityWorker.concurrency,
-    onProgress: createProgressReporter(deps.logger || console, deps.now),
+    onProgress: createProgressReporter(logger, deps.now),
   });
-  (deps.logger || console).log(JSON.stringify(result, null, 2));
+  logger.log(JSON.stringify(result, null, 2));
   return result;
 }
 

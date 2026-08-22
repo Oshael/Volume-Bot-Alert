@@ -128,7 +128,7 @@ describe('Robinhood pool liquidity historical seed', () => {
     assert.equal(result.cursorInitialized, true);
     assert.equal(result.written, 3);
     assert.deepEqual(new Set(progress.map(({ phase }) => phase)),
-      new Set(['scan', 'headers', 'commit']));
+      new Set(['count', 'scan', 'headers', 'commit']));
   });
 
   it('prints phase progress with elapsed time and ETA', () => {
@@ -140,6 +140,13 @@ describe('Robinhood pool liquidity historical seed', () => {
     });
     assert.match(messages[0], /scan 25\/100 \(25\.0%\) candidates=4/);
     assert.match(messages[0], /elapsed=10s eta=30s/);
+  });
+
+  it('prints the counting preflight before an ETA is available', () => {
+    const messages = [];
+    const report = createProgressReporter({ error(message) { messages.push(message); } });
+    report({ phase: 'count', processed: 0, total: 0, elapsedMs: 0, etaMs: null });
+    assert.deepEqual(messages, ['[LiquiditySeed] preflight counting relevant pools...']);
   });
 
   it('refuses a write after the event cursor exists', async () => {
