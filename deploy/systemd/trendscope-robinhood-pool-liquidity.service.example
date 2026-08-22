@@ -1,0 +1,24 @@
+[Unit]
+Description=TrendScope Robinhood canonical pool liquidity worker
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=REPLACE_APP_USER
+Group=REPLACE_APP_GROUP
+WorkingDirectory=/REPLACE/ABSOLUTE/PATH/Volume-Bot-Alert
+EnvironmentFile=/etc/volume-bot-alert/robinhood-pool-liquidity.env
+ExecStart=/REPLACE/ABSOLUTE/PATH/TO/node src/utils/run-robinhood-pool-liquidity-worker.js
+Restart=always
+RestartSec=10
+TimeoutStopSec=45
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

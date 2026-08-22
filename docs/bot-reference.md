@@ -1,6 +1,6 @@
 # TrendScope — Referência Técnica Atual
 
-> Estado revisado em `2026-08-01`.
+> Estado revisado em `2026-08-22`.
 >
 > Esta referência descreve o que foi confirmado no código, no banco e na
 > infraestrutura durante a migração para os servidores Netcup. Planos futuros
@@ -518,6 +518,71 @@ observação, incluí-los congelaria `coverage_end` no passado e apagaria `5m/1h
 os tokens. A evidência do dead-letter é retida e reprocessável; sua profundidade permanece visível
 no health read da fila. Desse modo, `5m/1h/6h/24h` não degradam artificialmente após o Corte 7 e
 nunca avançam além dos dados efetivamente processados.
+
+### 6.1 Liquidez canônica Robinhood
+
+A LP exibida no workspace não vem mais do último swap nem dos buckets de mercado. A fonte de
+verdade é `robinhood_pool_liquidity_snapshots`, com uma linha corrente por
+`(chain, protocol, market_key)`. O workspace soma os snapshots disponíveis de todas as pools
+ativas do token; pools ainda não valoradas mantêm `liquidityCoverage=partial` ou `unavailable`,
+mas a idade do último swap não invalida uma LP conhecida.
+
+O produtor é um processo independente — não é iniciado por `src/server.js` nem por um grupo de
+workers existente:
+
+```bash
+npm run start:worker:robinhood-liquidity
+```
+
+Arquivos de implantação de referência:
+
+```text
+deploy/systemd/trendscope-robinhood-pool-liquidity.service.example
+deploy/systemd/robinhood-pool-liquidity.env.example
+```
+
+O processo usa a lease `robinhood-pool-liquidity-worker`. Por padrão, procura trabalho a cada
+10 segundos, atualiza cada pool após 5 minutos, processa lotes de 50 com concorrência 5 e publica
+status cumulativo no metadata da lease. Cada lote é ancorado antes da captura de mercado mais
+antiga ainda não processada; V2, V3, V4 e WETH/USD usam esse mesmo bloco. No V4, as faixas são
+reconstruídas dos deltas até o bloco âncora. Resultado indisponível não é gravado como zero e uma
+falha de RPC não apaga o último snapshot válido.
+
+O V4 exige que o replay histórico esteja `completed`, que a materialização inicial exista e que
+o processamento live tenha continuado persistindo `ModifyLiquidity` depois do target do replay.
+O replay é resumível e limitado ao target salvo; executá-lo novamente não amplia esse target.
+
+Ordem obrigatória do primeiro deploy:
+
+1. aplicar `node src/utils/db-init-stage147.js` na VPS2;
+2. executar `npm run db:schema-check`;
+3. verificar replay/materialização V4 e a saúde do frontier de head/processing;
+4. instalar e iniciar a unidade dedicada de liquidez na VPS2;
+5. aguardar a cobertura inicial das pools ativas;
+6. somente então reiniciar a API/web com a leitura canônica.
+
+Cobertura inicial:
+
+```sql
+SELECT count(*) AS pools,
+       count(snapshot.liquidity_usd) AS valued
+FROM robinhood_pool_registry registry
+LEFT JOIN robinhood_pool_liquidity_snapshots snapshot
+  USING (chain, protocol, market_key)
+WHERE registry.chain = 'robinhood' AND registry.active;
+```
+
+Saúde do processo:
+
+```sql
+SELECT lease_until > now() AS active, metadata
+FROM worker_leases
+WHERE lease_key = 'robinhood-pool-liquidity-worker';
+```
+
+Rollback da leitura exige voltar o código da API; não misture novamente buckets de swap com os
+snapshots canônicos. Parar somente o worker congela o último valor válido e deixa a falha visível
+na lease e nas colunas `last_error_*`/`consecutive_failures`.
 
 A projeção Robinhood mantém um reparo persistente de metadata separado da página
 de mercado ativa. Identidades `robinhood-onchain` com imagem ou launchpad pendente

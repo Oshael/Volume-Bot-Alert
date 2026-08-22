@@ -208,29 +208,19 @@ primary_prices AS (
 ),
 latest_pool_liquidity AS MATERIALIZED (
   SELECT requested.token_address, registry.protocol, registry.market_key,
-    registry.pool_address, registry.pool_id, latest.close_liquidity_usd
+    registry.pool_address, registry.pool_id,
+    snapshot.liquidity_usd AS close_liquidity_usd
   FROM requested
-  CROSS JOIN bounds
   INNER JOIN robinhood_pool_registry registry
     ON registry.chain = 'robinhood'
    AND registry.token_address = requested.token_address
    AND registry.active = TRUE
-  LEFT JOIN LATERAL (
-    SELECT bucket.close_liquidity_usd
-    FROM robinhood_market_buckets_1h bucket
-    WHERE bucket.chain = registry.chain
-      AND bucket.protocol = registry.protocol
-      AND bucket.market_key = registry.market_key
-      AND bucket.bucket_ts >= date_trunc(
-        'hour', bounds.window_end - INTERVAL '15 minutes'
-      )
-      AND bucket.bucket_ts <= date_trunc('hour', bounds.window_end)
-      AND bucket.last_observed_at > bounds.window_end - INTERVAL '15 minutes'
-      AND bucket.last_observed_at <= bounds.window_end
-    ORDER BY bucket.last_observed_at DESC, bucket.last_block_number DESC,
-      bucket.last_log_index DESC
-    LIMIT 1
-  ) latest ON TRUE
+  LEFT JOIN robinhood_pool_liquidity_snapshots snapshot
+    ON snapshot.chain = registry.chain
+   AND snapshot.protocol = registry.protocol
+   AND snapshot.market_key = registry.market_key
+   AND snapshot.snapshot_block_number IS NOT NULL
+   AND snapshot.liquidity_confidence = 'medium'
 ),
 token_liquidity AS (
   SELECT token_address,

@@ -175,10 +175,15 @@ describe('Robinhood workspace window metric reader', () => {
     assert.match(sql, /primary_prices AS/);
     assert.match(sql, /latest_pool_liquidity AS MATERIALIZED/);
     assert.match(sql, /INNER JOIN robinhood_pool_registry registry/);
+    assert.match(sql, /LEFT JOIN robinhood_pool_liquidity_snapshots snapshot/);
+    assert.match(sql, /snapshot\.liquidity_confidence = 'medium'/);
     assert.match(sql, /SUM\(close_liquidity_usd\) FILTER/);
     assert.match(sql, /jsonb_agg\(jsonb_build_object/);
-    assert.match(sql, /bucket\.bucket_ts >= date_trunc/);
-    assert.match(sql, /bucket\.last_observed_at > bounds\.window_end - INTERVAL '15 minutes'/);
+    const liquiditySql = sql.slice(
+      sql.indexOf('latest_pool_liquidity AS'), sql.indexOf('token_liquidity AS')
+    );
+    assert.doesNotMatch(liquiditySql, /robinhood_market_buckets/);
+    assert.doesNotMatch(liquiditySql, /15 minutes/);
     assert.match(sql, /robinhood_ingestion_cursors/);
     assert.match(sql, /robinhood_head_capture_cursors/);
     assert.match(sql, /market_processing_frontier AS/);
@@ -195,7 +200,7 @@ describe('Robinhood workspace window metric reader', () => {
     assert.match(sql, /coverage_start_timestamp AS coverage_start_at/);
     assert.doesNotMatch(sql, /created_at AS coverage_start_at/);
     assert.equal((sql.match(/FROM robinhood_market_buckets_1m bucket/g) || []).length, 3);
-    assert.equal((sql.match(/FROM robinhood_market_buckets_1h bucket/g) || []).length, 3);
+    assert.equal((sql.match(/FROM robinhood_market_buckets_1h bucket/g) || []).length, 2);
     assert.match(sql, /FROM market_activity\s+GROUP BY token_address/);
     assert.match(sql, /MAX\(market_last_observed_at\) AS last_activity_at/);
     assert.match(sql, /COALESCE\(token_activity\.last_activity_at, latest_hour\.last_activity_at\)/);
