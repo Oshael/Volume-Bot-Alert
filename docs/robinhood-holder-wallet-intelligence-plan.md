@@ -244,6 +244,30 @@ Cada fase é um corte independente de no máximo 500 linhas alteradas. Mudança 
 schema, se necessária, fica em corte próprio com schema-check e teste de
 integração.
 
+#### 0.9.1 Limite de runtime e deploy
+
+O worker determinístico já entregue (`LP`, `CEX` e `DEV HOLD`) permanece como a
+única exceção dentro do processo `robinhood-holders`. Nenhum classificador futuro
+será acrescentado a esse processo. Os próximos classificadores reutilizam os
+contratos materializados no PostgreSQL, mas terão grupo, processo systemd, lease,
+flags, telemetria e limites de recurso próprios; desligar ou degradar um deles não
+pode interromper captura live, apply ou leitura básica de holders.
+
+Para evitar um processo por tag, a divisão aprovada é por fonte e workload:
+
+1. **Launch intelligence** — `SNIPER`, `INSIDER` direto e `BUNDLED`. Compartilha
+   âncora de lançamento, primeira compra, criador e grafo de funding/transfer;
+   cada classificador mantém estado, métricas e circuit breaker independentes.
+2. **Liquidity custody intelligence** — `LP LOCKED`. Isola adapters de AMM,
+   lockers, NFTs/LP tokens e expiração de locks do caminho de lançamento.
+3. **Wallet freshness enrichment** — `FRESH`. Isola provider externo, rate
+   limits, orçamento, cache, retry e backfill dos classificadores on-chain.
+
+Nenhum desses processos exige que outro classificador esteja ativo. Eles podem
+exigir uma frontier materializada mínima como entrada, mas devem aguardar ou
+publicar `unavailable` quando ela estiver ausente ou stale, sem iniciar o produtor
+upstream no próprio runtime.
+
 1. **Fundação de classificação**
    - fechar schema/contrato, versionamento, estados e reason codes;
    - criar funções puras para prioridade e disponibilidade;

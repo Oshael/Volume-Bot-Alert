@@ -1219,6 +1219,15 @@ batch, concorrência e retry de métricas indisponíveis são configurados por
 `ROBINHOOD_HOLDER_INTELLIGENCE_CONCURRENCY` e
 `ROBINHOOD_HOLDER_INTELLIGENCE_UNAVAILABLE_RETRY_MS`.
 
+Na operação, a fonte de verdade para saúde desse worker é a lease
+`robinhood-holder-intelligence-worker` em `worker_leases`. `lease_until > NOW()`,
+heartbeat recente, `metadata.telemetry.running=true`, `totalRuns` crescente,
+`lastCompletedAt` recente e `lastError=null` provam que o loop está executando.
+`totalCandidates=0` pode ser saudável quando não há tokens com ledger `live` ou
+quando todas as frontiers já estão sincronizadas; por isso ausência de writes ou
+de logs de sucesso, isoladamente, não prova falha. A mesma telemetria aparece em
+`workerLeases` no endpoint admin `GET /api/admin/ws-status`.
+
 `GET /api/robinhood/holders` acrescenta `classificationVersion`,
 `classificationStatus`, `classificationThroughBlock` e `distribution` ao envelope.
 Cada holder recebe `tags`, `primaryTag`, `classificationStatus` e resumos seguros
