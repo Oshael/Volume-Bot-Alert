@@ -3945,6 +3945,29 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage148-robinhood-pool-liquidity-event-cursor',
+    name: 'Stage 148 Robinhood pool liquidity event cursor',
+    repair: 'node src/utils/db-init-stage148.js',
+    tables: [{
+      table: 'robinhood_pool_liquidity_event_cursors',
+      columns: [
+        'chain', 'coverage_start_block', 'next_block', 'safe_head',
+        'checkpoint_block', 'checkpoint_hash', 'checkpoint_timestamp',
+        'version', 'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'robinhood_pool_liquidity_event_cursors_pkey',
+        includes: ['PRIMARY KEY', 'chain'],
+      }, {
+        name: 'robinhood_pool_liquidity_event_cursors_range_check',
+        includes: ['CHECK', 'coverage_start_block', 'next_block', 'safe_head'],
+      }, {
+        name: 'robinhood_pool_liquidity_event_cursors_checkpoint_check',
+        includes: ['CHECK', 'checkpoint_block', 'checkpoint_hash', 'next_block'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
