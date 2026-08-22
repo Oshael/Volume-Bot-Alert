@@ -345,8 +345,10 @@ carga sem ETA confiável.
      distribuídas, margem conservadora e recusa cargas projetadas acima de 5h;
      campanhas interrompidas retomam pelo `run-id`. A Stage 152 e o runner puro
      da manutenção live acrescentam cursor próprio, handoff explícito do seed e
-     avanço fail-closed contra a frontier durável do wallet-swap. O loop/lease,
-     decisão da regra de alta confiança e ativação seguem em cortes separados.
+     avanço fail-closed contra a frontier durável do wallet-swap. O worker opt-in,
+     lease própria, telemetria, backoff e halt fatal também estão concluídos no
+     grupo isolado de wallet intelligence. Decisão da regra de alta confiança e
+     ativação seguem em cortes separados.
 4. **INSIDER direto**
    - começar por distribuição direta do token;
    - adicionar funding nativo direto somente quando a fonte estiver comprovada.

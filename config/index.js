@@ -501,6 +501,12 @@ const robinhoodHolderLiveEnabled = parseBoolean(process.env.ROBINHOOD_HOLDER_LIV
 const robinhoodHolderIntelligenceEnabled = parseBoolean(
   process.env.ROBINHOOD_HOLDER_INTELLIGENCE_ENABLED, false
 );
+const robinhoodFirstBuyLiveEnabled = parseBoolean(
+  process.env.ROBINHOOD_FIRST_BUY_LIVE_ENABLED, false
+);
+const robinhoodFirstBuySeedRunId = parseOptionalNonNegativeInteger(
+  process.env.ROBINHOOD_FIRST_BUY_SEED_RUN_ID, { positive: true }
+);
 const robinhoodHolderReconciliationEnabled = parseBoolean(
   process.env.ROBINHOOD_HOLDER_RECONCILIATION_ENABLED, false
 );
@@ -607,6 +613,9 @@ if (robinhoodHolderSnapshotEnabled && !robinhoodHolderLiveEnabled) {
 }
 if (robinhoodHolderIntelligenceEnabled && !robinhoodHolderLiveEnabled) {
   missing.push('ROBINHOOD_HOLDER_LIVE_ENABLED=true for holder intelligence');
+}
+if (robinhoodFirstBuyLiveEnabled && !robinhoodFirstBuySeedRunId) {
+  missing.push('ROBINHOOD_FIRST_BUY_SEED_RUN_ID');
 }
 if ((robinhoodHolderBackfillEnabled || robinhoodHolderColdEnabled || robinhoodHolderLiveEnabled
       || robinhoodHolderGlobalBackfillEnabled)
@@ -1450,6 +1459,20 @@ module.exports = {
     ),
     maxBlocks: parseIntegerInRange(
       process.env.ROBINHOOD_WALLET_POSITION_LIVE_MAX_BLOCKS_PER_TICK, 200, 1, 500
+    ),
+  },
+
+  robinhoodFirstBuyLiveWorker: {
+    enabled: robinhoodFirstBuyLiveEnabled,
+    seedRunId: robinhoodFirstBuySeedRunId,
+    intervalMs: parseIntegerInRange(
+      process.env.ROBINHOOD_FIRST_BUY_LIVE_INTERVAL_MS, 2000, 250, 300_000
+    ),
+    maxErrorBackoffMs: parseIntegerInRange(
+      process.env.ROBINHOOD_FIRST_BUY_LIVE_MAX_ERROR_BACKOFF_MS, 30_000, 1000, 300_000
+    ),
+    rangeSeconds: parseIntegerInRange(
+      process.env.ROBINHOOD_FIRST_BUY_LIVE_RANGE_SECONDS, 300, 60, 86_400
     ),
   },
 

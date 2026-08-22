@@ -883,6 +883,31 @@ describe('runtime worker groups config', () => {
     });
   });
 
+  it('keeps first-buy LIVE opt-in and binds it to an explicit seed run', () => {
+    withEnv({
+      ROBINHOOD_FIRST_BUY_LIVE_ENABLED: 'true', ROBINHOOD_FIRST_BUY_SEED_RUN_ID: '42',
+      ROBINHOOD_FIRST_BUY_LIVE_INTERVAL_MS: '1',
+      ROBINHOOD_FIRST_BUY_LIVE_MAX_ERROR_BACKOFF_MS: '999999',
+      ROBINHOOD_FIRST_BUY_LIVE_RANGE_SECONDS: '999999',
+    }, (config) => {
+      assert.deepEqual(config.robinhoodFirstBuyLiveWorker, {
+        enabled: true, seedRunId: 42, intervalMs: 250,
+        maxErrorBackoffMs: 300_000, rangeSeconds: 86_400,
+      });
+    });
+  });
+
+  it('fails fast when first-buy LIVE has no completed seed run id', () => {
+    const result = spawnSync(process.execPath, ['-e', "require('./config')"], {
+      cwd: ROOT_DIR,
+      env: { ...process.env,
+        ROBINHOOD_FIRST_BUY_LIVE_ENABLED: 'true', ROBINHOOD_FIRST_BUY_SEED_RUN_ID: '' },
+      encoding: 'utf8',
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /ROBINHOOD_FIRST_BUY_SEED_RUN_ID/);
+  });
+
   it('keeps backfill shadow disabled and bounds its dedicated RPC controls', () => {
     withEnv({ ROBINHOOD_BACKFILL_SHADOW_ENABLED: '' }, (config) => {
       assert.equal(config.robinhoodBackfillMarketScanner.enabled, false);

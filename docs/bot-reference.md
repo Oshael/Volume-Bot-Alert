@@ -1391,8 +1391,20 @@ A Stage 152 cria `robinhood_first_buy_live_cursors`, cursor independente do
 worker de holders e vinculado ao `run-id` concluído usado como seed. Ele avança
 por tempo somente depois de materializar o range, com versão otimista e a
 frontier do wallet-swap registrada. A manutenção recusa regressão temporal ou de
-bloco e aguarda tanto o seed quanto a fonte durável. Aplicar a stage não inicia o
-loop; o worker e sua configuração são entregues separadamente.
+bloco e aguarda tanto o seed quanto a fonte durável.
+
+Depois de concluir o backfill, aplique `node src/utils/db-init-stage152.js` e
+configure no processo `BACKGROUND_WORKER_GROUPS=robinhood-wallet-intelligence`:
+`ROBINHOOD_FIRST_BUY_LIVE_ENABLED=true` e
+`ROBINHOOD_FIRST_BUY_SEED_RUN_ID=<run-id concluído>`. Intervalo, backoff e range
+são opcionais em `ROBINHOOD_FIRST_BUY_LIVE_INTERVAL_MS`,
+`ROBINHOOD_FIRST_BUY_LIVE_MAX_ERROR_BACKOFF_MS` e
+`ROBINHOOD_FIRST_BUY_LIVE_RANGE_SECONDS`. A fonte wallet-swap seed deve estar
+`complete`, e o worker wallet-swap LIVE deve continuar ativo no processo isolado
+`robinhood-wallet`; ele não precisa ser habilitado dentro deste processo. A
+saúde é a lease `robinhood-first-buy-live-worker`: heartbeat recente, telemetria
+`running=true`, `totalRuns` crescente e `lastError=null`. Posição canônica
+ausente, seed divergente ou regressão da fonte haltam a lease em fail-closed.
 
 Cadastros usam um manifesto JSON append-only com `entries`; cada entrada contém
 `address`, `kind`, `label`, `source`, `evidence`, `validFromBlock`,
