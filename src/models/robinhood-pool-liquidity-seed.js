@@ -2,36 +2,49 @@ const db = require('./db');
 
 const CHAIN = 'robinhood';
 const WRITE_BATCH_SIZE = 500;
-const CANDIDATES_SQL = `WITH evidence AS (
-  SELECT protocol, market_key, block_number, log_index, observed_at,
-         liquidity_usd, liquidity_raw, liquidity_status,
-         liquidity_confidence, liquidity_warning, 3 AS source_rank
-    FROM robinhood_market_observations
-   WHERE chain = '${CHAIN}' AND status = 'accepted' AND block_number <= $1::bigint
-  UNION ALL
-  SELECT protocol, market_key, last_block_number, last_log_index, last_observed_at,
-         close_liquidity_usd, close_liquidity_raw, close_liquidity_status,
-         close_liquidity_confidence, close_liquidity_warning, 2
+const CANDIDATES_SQL = `WITH latest_1m AS (
+  SELECT DISTINCT ON (protocol, market_key)
+         protocol, market_key, last_block_number AS block_number,
+         last_log_index AS log_index, close_liquidity_usd AS liquidity_usd,
+         close_liquidity_raw AS liquidity_raw,
+         close_liquidity_status AS liquidity_status,
+         close_liquidity_confidence AS liquidity_confidence,
+         close_liquidity_warning AS liquidity_warning, 2 AS source_rank
     FROM robinhood_market_buckets_1m
    WHERE chain = '${CHAIN}' AND last_block_number <= $1::bigint
-  UNION ALL
-  SELECT protocol, market_key, last_block_number, last_log_index, last_observed_at,
-         close_liquidity_usd, close_liquidity_raw, close_liquidity_status,
-         close_liquidity_confidence, close_liquidity_warning, 1
+     AND close_liquidity_usd IS NOT NULL AND close_liquidity_confidence = 'medium'
+     AND ((protocol = 'uniswap-v2' AND close_liquidity_raw IS NULL
+           AND close_liquidity_status = 'spot_estimate_from_double_quote_reserve')
+       OR (protocol = 'uniswap-v3' AND close_liquidity_raw IS NOT NULL
+           AND close_liquidity_status = 'spot_tvl_from_pool_balances')
+       OR (protocol = 'uniswap-v4' AND close_liquidity_raw IS NOT NULL
+           AND close_liquidity_status = 'spot_tvl_from_v4_tick_ranges'))
+   ORDER BY protocol, market_key, bucket_ts DESC
+), latest_1h AS (
+  SELECT DISTINCT ON (protocol, market_key)
+         protocol, market_key, last_block_number AS block_number,
+         last_log_index AS log_index, close_liquidity_usd AS liquidity_usd,
+         close_liquidity_raw AS liquidity_raw,
+         close_liquidity_status AS liquidity_status,
+         close_liquidity_confidence AS liquidity_confidence,
+         close_liquidity_warning AS liquidity_warning, 1 AS source_rank
     FROM robinhood_market_buckets_1h
    WHERE chain = '${CHAIN}' AND last_block_number <= $1::bigint
-), valued AS (
-  SELECT * FROM evidence
-   WHERE liquidity_usd IS NOT NULL AND liquidity_confidence = 'medium'
-     AND ((protocol = 'uniswap-v2' AND liquidity_raw IS NULL
-           AND liquidity_status = 'spot_estimate_from_double_quote_reserve')
-       OR (protocol = 'uniswap-v3' AND liquidity_raw IS NOT NULL
-           AND liquidity_status = 'spot_tvl_from_pool_balances')
-       OR (protocol = 'uniswap-v4' AND liquidity_raw IS NOT NULL
-           AND liquidity_status = 'spot_tvl_from_v4_tick_ranges'))
+     AND close_liquidity_usd IS NOT NULL AND close_liquidity_confidence = 'medium'
+     AND ((protocol = 'uniswap-v2' AND close_liquidity_raw IS NULL
+           AND close_liquidity_status = 'spot_estimate_from_double_quote_reserve')
+       OR (protocol = 'uniswap-v3' AND close_liquidity_raw IS NOT NULL
+           AND close_liquidity_status = 'spot_tvl_from_pool_balances')
+       OR (protocol = 'uniswap-v4' AND close_liquidity_raw IS NOT NULL
+           AND close_liquidity_status = 'spot_tvl_from_v4_tick_ranges'))
+   ORDER BY protocol, market_key, bucket_ts DESC
+), evidence AS (
+  SELECT * FROM latest_1m
+  UNION ALL
+  SELECT * FROM latest_1h
 ), latest AS (
   SELECT DISTINCT ON (protocol, market_key) *
-    FROM valued
+    FROM evidence
    ORDER BY protocol, market_key, block_number DESC, log_index DESC, source_rank DESC
 )
 SELECT latest.protocol, latest.market_key, latest.block_number,
