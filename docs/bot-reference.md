@@ -1252,8 +1252,10 @@ essa cobertura.
 O mesmo relatório compara perfis de posição (`sameBlockTop5`,
 `within1BlockTop5`, `within1BlockTop10` e `within3BlocksTop10`) e informa,
 somente de forma agregada, quantas wallets repetiram o padrão em 2+ ou 3+ tokens
-da amostra. Esses sinais são internos; o frontend só deverá expor `SNIPER` após
-uma regra de alta confiança ser escolhida e materializada.
+da amostra. As wallets que passam `within1BlockTop5` na amostra também são medidas
+contra todos os tokens elegíveis, preservando somente contagens agregadas no
+relatório. Esses sinais são internos; o frontend só deverá expor `SNIPER` após uma
+regra de alta confiança ser escolhida e materializada.
 
 Cadastros usam um manifesto JSON append-only com `entries`; cada entrada contém
 `address`, `kind`, `label`, `source`, `evidence`, `validFromBlock`,

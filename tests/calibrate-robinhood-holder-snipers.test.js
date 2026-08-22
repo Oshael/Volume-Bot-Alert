@@ -2,7 +2,8 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const {
-  createRuntime, main, parseArgs, runCalibration, summarizeEvidence,
+  createRuntime, main, parseArgs, runCalibration,
+  summarizeEvidence, summarizePopulationRecurrence,
 } = require('../src/utils/calibrate-robinhood-holder-snipers');
 
 const WALLET_A = `0x${'1'.repeat(40)}`;
@@ -97,6 +98,26 @@ describe('Robinhood SNIPER calibration command', () => {
     assert.equal(JSON.stringify(report).includes(WALLET_A), false);
   });
 
+  it('summarizes population recurrence without exposing candidate wallets', () => {
+    const report = summarizePopulationRecurrence([
+      { walletAddress: WALLET_A, tokenAddress: 'token-a', volumeUsd: '50', positionReady: true },
+      { walletAddress: WALLET_A, tokenAddress: 'token-b', volumeUsd: '25', positionReady: true },
+      { walletAddress: WALLET_A, tokenAddress: 'token-c', volumeUsd: null, positionReady: true },
+      { walletAddress: WALLET_B, tokenAddress: 'token-d', volumeUsd: '100', positionReady: false },
+    ], [WALLET_A, WALLET_B], ['25', '50']);
+
+    assert.equal(report.candidateWallets, 2);
+    assert.equal(report.missingPositionEvidence, 1);
+    assert.equal(report.missingVolumeUsd, 1);
+    assert.deepEqual(report.atNotionalThreshold['25'].onAtLeast2Tokens, {
+      wallets: 1, occurrences: 2,
+    });
+    assert.deepEqual(report.atNotionalThreshold['50'].onAtLeast2Tokens, {
+      wallets: 0, occurrences: 0,
+    });
+    assert.equal(JSON.stringify(report).includes(WALLET_A), false);
+  });
+
   it('selects a seeded bounded cohort and never opens a write transaction', async () => {
     const calls = [];
     const runtime = {
@@ -122,6 +143,13 @@ describe('Robinhood SNIPER calibration command', () => {
         token === 'token-a' ? ready([buy(WALLET_A, '12')])
           : { ready: false, reason: 'holder_frontier_unavailable' }
       ) },
+      recurrenceSource: { loadPopulationRecurrence: async (wallets) => {
+        assert.deepEqual(wallets, [WALLET_A]);
+        return [{
+          walletAddress: WALLET_A, tokenAddress: 'token-a',
+          volumeUsd: '12', positionReady: true,
+        }];
+      } },
     };
     const options = parseArgs(['--limit=2', '--seed=test', '--thresholds=10']);
     const report = await runCalibration(runtime, options);
@@ -138,6 +166,7 @@ describe('Robinhood SNIPER calibration command', () => {
       firstPoolUnavailable: 5,
     });
     assert.equal(report.notionalUsd.countsAtThreshold['10'], 1);
+    assert.equal(report.populationRecurrence.atNotionalThreshold['10'].occurrences, 1);
     const logs = [];
     assert.equal((await main([], {
       runtime, runCalibration: async () => report, logger: { log: (line) => logs.push(line) },

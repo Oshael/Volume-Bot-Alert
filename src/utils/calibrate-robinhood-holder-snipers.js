@@ -5,6 +5,9 @@ const {
   createRobinhoodHolderLaunchSource,
 } = require('../models/robinhood-holder-launch-source');
 const {
+  createRobinhoodHolderSniperCalibrationSource,
+} = require('../models/robinhood-holder-sniper-calibration-source');
+const {
   createRobinhoodWalletTransferLiveSourceRepository,
 } = require('../models/robinhood-wallet-transfer-live-source');
 const {
@@ -135,6 +138,56 @@ function summarizePrecision(candidates, thresholds, missingEvidence) {
     scope: 'selected_tokens',
     missingPositionEvidence: missingEvidence,
     profiles: Object.freeze(profiles),
+  });
+}
+
+function strictCandidateWallets(results) {
+  const wallets = new Set();
+  for (const result of results) {
+    if (!result.ready) continue;
+    const excluded = new Set((result.exclusions || []).map(({ walletAddress }) => walletAddress));
+    for (const buy of result.firstBuys || []) {
+      if (buy.withinLaunchWindow === true && buy.volumeUsd != null
+          && !excluded.has(buy.walletAddress) && /^\d+$/.test(String(buy.deltaBlocks ?? ''))
+          && BigInt(buy.deltaBlocks) <= 1n && Number.isSafeInteger(buy.buyerRank)
+          && buy.buyerRank >= 1 && buy.buyerRank <= 5) wallets.add(buy.walletAddress);
+    }
+  }
+  return Object.freeze([...wallets].sort());
+}
+
+function summarizePopulationRecurrence(rows, candidateWallets, thresholds) {
+  const ready = [];
+  let missingPositionEvidence = 0;
+  let missingVolumeUsd = 0;
+  for (const row of rows) {
+    if (!row.positionReady) {
+      missingPositionEvidence += 1;
+      continue;
+    }
+    if (row.volumeUsd == null) {
+      missingVolumeUsd += 1;
+      continue;
+    }
+    ready.push(Object.freeze({
+      walletAddress: row.walletAddress,
+      tokenKey: row.tokenAddress,
+      value: parseDecimal(row.volumeUsd, 'population volumeUsd'),
+    }));
+  }
+  return Object.freeze({
+    scope: 'all_eligible_tokens_for_sample_candidates',
+    rule: Object.freeze({ maxBlocks: 1, sampleCandidateMaxBuyerRank: 5 }),
+    candidateWallets: candidateWallets.length,
+    pricedOccurrences: ready.length,
+    missingPositionEvidence,
+    missingVolumeUsd,
+    allPriced: recurrenceSummary(ready),
+    atNotionalThreshold: Object.freeze(Object.fromEntries(thresholds.map((threshold) => (
+      [threshold, recurrenceSummary(ready.filter((candidate) => (
+        atLeastNotional(candidate, threshold)
+      )))]
+    )))),
   });
 }
 
@@ -269,6 +322,10 @@ async function runCalibration(runtime, options) {
     options.concurrency,
     (tokenAddress) => runtime.source.loadLaunchEvidence(tokenAddress)
   );
+  const candidateWallets = strictCandidateWallets(results);
+  const populationRows = candidateWallets.length
+    ? await runtime.recurrenceSource.loadPopulationRecurrence(candidateWallets, coverage)
+    : [];
   return Object.freeze({
     mode: 'read-only', selection: Object.freeze({
       limit: options.limit, seed: options.seed, concurrency: options.concurrency,
@@ -286,6 +343,9 @@ async function runCalibration(runtime, options) {
       firstPoolUnavailable: Number(population.pool_block_unavailable || 0),
     }),
     ...summarizeEvidence(results, options.thresholds),
+    populationRecurrence: summarizePopulationRecurrence(
+      populationRows, candidateWallets, options.thresholds
+    ),
   });
 }
 
@@ -305,6 +365,8 @@ function createRuntime(database, deps = {}) {
     source: (deps.sourceFactory || createRobinhoodHolderLaunchSource)({
       database, coverageSource,
     }),
+    recurrenceSource: (deps.recurrenceSourceFactory
+      || createRobinhoodHolderSniperCalibrationSource)({ database }),
   });
 }
 
@@ -322,4 +384,7 @@ if (require.main === module) main().catch((error) => {
   process.exitCode = 1;
 }).finally(() => db.pool.end().catch(() => {}));
 
-module.exports = { createRuntime, main, parseArgs, runCalibration, summarizeEvidence };
+module.exports = {
+  createRuntime, main, parseArgs, runCalibration,
+  summarizeEvidence, summarizePopulationRecurrence,
+};

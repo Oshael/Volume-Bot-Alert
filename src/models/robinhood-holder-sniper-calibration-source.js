@@ -1,0 +1,130 @@
+const db = require('./db');
+const { normalizeTokenAddress } = require('../utils/token-identity');
+
+const CHAIN = 'robinhood';
+
+function block(value, label) {
+  const normalized = String(value ?? '').trim();
+  if (!/^\d+$/.test(normalized)) throw new Error(`${label} must be a block number`);
+  return BigInt(normalized).toString();
+}
+
+function createRobinhoodHolderSniperCalibrationSource(options = {}) {
+  const database = options.database || db;
+
+  async function loadPopulationRecurrence(walletAddresses, coverage) {
+    const wallets = [...new Set((walletAddresses || []).map((address) => (
+      normalizeTokenAddress(CHAIN, address)
+    )))].sort();
+    if (!wallets.length) return Object.freeze([]);
+    const fromBlock = block(coverage?.historicalFromBlock, 'historicalFromBlock');
+    const throughBlock = block(coverage?.completeThroughBlock, 'completeThroughBlock');
+    const { rows } = await database.query(
+      `WITH candidate_wallets AS MATERIALIZED (
+         SELECT UNNEST($1::varchar[]) AS wallet_address
+       ), pool_origins AS MATERIALIZED (
+         SELECT token_address, MIN(discovery_block) AS first_pool_block
+           FROM robinhood_pool_registry WHERE chain = $2 GROUP BY token_address
+       ), eligible_tokens AS MATERIALIZED (
+         SELECT state.token_address, state.live_through_block, pool.first_pool_block
+           FROM robinhood_holder_token_states state
+           INNER JOIN pool_origins pool ON pool.token_address = state.token_address
+          WHERE state.chain = $2 AND state.ledger_status = 'live'
+            AND state.live_through_block IS NOT NULL
+            AND state.live_through_hash IS NOT NULL
+            AND pool.first_pool_block >= $3::bigint
+            AND pool.first_pool_block <= state.live_through_block
+            AND state.live_through_block <= $4::bigint
+       ), candidate_buy_blocks AS MATERIALIZED (
+         SELECT swap.wallet_address, swap.token_address,
+                MIN(swap.block_number) AS first_buy_block
+           FROM robinhood_wallet_swaps swap
+           INNER JOIN candidate_wallets candidate
+             ON candidate.wallet_address = swap.wallet_address
+           INNER JOIN eligible_tokens token ON token.token_address = swap.token_address
+           INNER JOIN robinhood_pool_registry registry
+             ON registry.chain = swap.chain AND registry.protocol = swap.protocol
+            AND registry.market_key = swap.market_key
+            AND registry.token_address = swap.token_address
+            AND registry.discovery_block <= swap.block_number
+          WHERE swap.chain = $2 AND swap.side = 'buy'
+            AND swap.block_number BETWEEN token.first_pool_block AND token.live_through_block
+          GROUP BY swap.wallet_address, swap.token_address
+       ), relevant_tokens AS MATERIALIZED (
+         SELECT DISTINCT token_address FROM candidate_buy_blocks
+       ), launch_blocks AS MATERIALIZED (
+         SELECT swap.token_address, MIN(swap.block_number) AS launch_block
+           FROM robinhood_wallet_swaps swap
+           INNER JOIN relevant_tokens relevant ON relevant.token_address = swap.token_address
+           INNER JOIN eligible_tokens token ON token.token_address = swap.token_address
+           INNER JOIN robinhood_pool_registry registry
+             ON registry.chain = swap.chain AND registry.protocol = swap.protocol
+            AND registry.market_key = swap.market_key
+            AND registry.token_address = swap.token_address
+            AND registry.discovery_block <= swap.block_number
+          WHERE swap.chain = $2
+            AND swap.block_number BETWEEN token.first_pool_block AND token.live_through_block
+          GROUP BY swap.token_address
+       ), ranked_first_buys AS MATERIALIZED (
+         SELECT swap.wallet_address, swap.token_address, swap.volume_usd::text,
+                swap.block_number, position.transaction_index,
+                ROW_NUMBER() OVER (
+                  PARTITION BY swap.wallet_address, swap.token_address
+                  ORDER BY position.transaction_index NULLS LAST,
+                           swap.action_index, swap.transaction_hash
+                ) AS canonical_rank,
+                BOOL_AND(position.transaction_index IS NOT NULL
+                  AND position.block_hash IS NOT NULL) OVER (
+                    PARTITION BY swap.wallet_address, swap.token_address
+                ) AS position_ready
+           FROM robinhood_wallet_swaps swap
+           INNER JOIN candidate_buy_blocks first
+             ON first.wallet_address = swap.wallet_address
+            AND first.token_address = swap.token_address
+            AND first.first_buy_block = swap.block_number
+           INNER JOIN robinhood_pool_registry registry
+             ON registry.chain = swap.chain AND registry.protocol = swap.protocol
+            AND registry.market_key = swap.market_key
+            AND registry.token_address = swap.token_address
+            AND registry.discovery_block <= swap.block_number
+           LEFT JOIN robinhood_transaction_positions position
+             ON position.chain = swap.chain
+            AND position.transaction_hash = swap.transaction_hash
+            AND position.block_number = swap.block_number
+          WHERE swap.chain = $2 AND swap.side = 'buy'
+       )
+       SELECT buy.wallet_address, buy.token_address, buy.volume_usd,
+              (buy.block_number - launch.launch_block)::text AS delta_blocks,
+              buy.position_ready
+         FROM ranked_first_buys buy
+         INNER JOIN launch_blocks launch ON launch.token_address = buy.token_address
+         LEFT JOIN robinhood_token_attributions attribution
+           ON attribution.chain = $2 AND attribution.token_address = buy.token_address
+        WHERE buy.canonical_rank = 1
+          AND buy.block_number BETWEEN launch.launch_block AND launch.launch_block + 1
+          AND (attribution.creator_address IS NULL
+            OR attribution.creator_address <> buy.wallet_address)
+          AND NOT EXISTS (
+            SELECT 1 FROM robinhood_infrastructure_registry infrastructure
+             WHERE infrastructure.chain = $2
+               AND infrastructure.address = buy.wallet_address
+               AND infrastructure.valid_from_block <= buy.block_number
+               AND (infrastructure.valid_through_block IS NULL
+                 OR infrastructure.valid_through_block >= buy.block_number)
+          )
+        ORDER BY buy.wallet_address, buy.token_address`,
+      [wallets, CHAIN, fromBlock, throughBlock]
+    );
+    return Object.freeze(rows.map((row) => Object.freeze({
+      walletAddress: row.wallet_address,
+      tokenAddress: row.token_address,
+      volumeUsd: row.volume_usd,
+      deltaBlocks: String(row.delta_blocks),
+      positionReady: row.position_ready === true,
+    })));
+  }
+
+  return Object.freeze({ loadPopulationRecurrence });
+}
+
+module.exports = { createRobinhoodHolderSniperCalibrationSource };

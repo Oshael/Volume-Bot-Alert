@@ -305,8 +305,9 @@ upstream no próprio runtime.
      e permanece sem worker. A ferramenta read-only de amostragem e quantis está
      concluída e usa a criação do primeiro pool registrado, não o deployment,
      para separar a população elegível sem afrouxar a cobertura. A calibração
-     também compara perfis agregados por bloco/posição e recorrência em 2+ e 3+
-     tokens, sem expor endereços; decisão da regra e ativação seguem pendentes.
+     também compara perfis agregados por bloco/posição e mede as wallets
+     `within1BlockTop5` da amostra contra toda a população elegível, sem expor
+     endereços; decisão da regra e ativação seguem pendentes.
 4. **INSIDER direto**
    - começar por distribuição direta do token;
    - adicionar funding nativo direto somente quando a fonte estiver comprovada.
