@@ -4017,6 +4017,20 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage150-robinhood-processing-frontier-index',
+    name: 'Stage 150 Robinhood processing frontier index',
+    repair: 'node src/utils/db-init-stage150.js',
+    tables: [{
+      table: 'robinhood_head_captures',
+      indexes: [{
+        name: 'idx_robinhood_head_captures_processing_frontier',
+        includes: [
+          'chain', 'block_number', 'stream', 'pending', 'leased', 'blocked',
+        ],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

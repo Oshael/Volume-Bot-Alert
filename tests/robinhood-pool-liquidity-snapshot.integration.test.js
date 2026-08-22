@@ -14,6 +14,7 @@ const stage98 = require('../src/utils/db-init-stage98');
 const stage102 = require('../src/utils/db-init-stage102');
 const stage147 = require('../src/utils/db-init-stage147');
 const stage148 = require('../src/utils/db-init-stage148');
+const stage150 = require('../src/utils/db-init-stage150');
 const {
   createRobinhoodPoolLiquiditySeedRepository,
 } = require('../src/models/robinhood-pool-liquidity-seed');
@@ -48,6 +49,8 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
     await stage147.init({ closePool: false });
     await stage147.init({ closePool: false });
     await stage148.init({ closePool: false });
+    await stage150.init({ closePool: false });
+    await stage150.init({ closePool: false });
     await cleanup();
     await db.query(
       `INSERT INTO robinhood_pool_registry (
@@ -86,6 +89,13 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
   });
 
   it('keeps the newest successful block and resets failure state', async () => {
+    const index = await db.query(
+      `SELECT indisvalid, indisready
+         FROM pg_index
+        WHERE indexrelid = to_regclass($1)`,
+      [stage150.INDEX_NAME]
+    );
+    assert.deepEqual(index.rows[0], { indisvalid: true, indisready: true });
     const repository = createRobinhoodPoolLiquiditySnapshotRepository({ database: db });
     const snapshot = (blockNumber, hash) => ({
       protocol: 'uniswap-v3', marketKey: MARKET, blockNumber, blockHash: hash,
