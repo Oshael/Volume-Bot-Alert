@@ -248,7 +248,7 @@ const LEGACY_WORKER_GROUPS = Object.freeze(['maintenance']);
 const ISOLATED_WORKER_GROUPS = Object.freeze([
   'robinhood-maintenance', 'robinhood', 'robinhood-head', 'robinhood-processing',
   'robinhood-derived', 'robinhood-wallet', 'robinhood-backfill', 'robinhood-holders',
-  'robinhood-holder-global', 'robinhood-wallet-intelligence', 'x-match', 'x-ingest',
+  'robinhood-holder-global', 'robinhood-wallet-classification', 'x-match', 'x-ingest',
 ]);
 const WORKER_GROUPS = Object.freeze([
   ...SHARED_WORKER_GROUPS,

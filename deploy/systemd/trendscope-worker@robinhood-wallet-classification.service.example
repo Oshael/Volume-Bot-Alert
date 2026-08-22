@@ -1,0 +1,5 @@
+# Install through: systemctl edit trendscope-worker@robinhood-wallet-classification.service
+# The shared trendscope-worker@.service supplies every other Service directive.
+
+[Service]
+EnvironmentFile=/etc/trendscope/robinhood-wallet-classification.env

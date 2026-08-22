@@ -1,4 +1,4 @@
-# Plano de Holder Wallet Intelligence na Robinhood Chain
+# Plano de Classificação de Wallets na Robinhood Chain
 
 Atualizado em 2026-08-21. Este documento consolida as decisões de produto, o
 estado confirmado no código e o plano de implementação para enriquecer a lista
@@ -348,7 +348,7 @@ carga sem ETA confiável.
      da manutenção live acrescentam cursor próprio, handoff explícito do seed e
      avanço fail-closed contra a frontier durável do wallet-swap. O worker opt-in,
      lease própria, telemetria, backoff e halt fatal também estão concluídos no
-     grupo isolado de wallet intelligence. A regra `rh_sniper_high_v1` também
+     grupo isolado de classificação de wallets. A regra `rh_sniper_high_v1` também
      está fechada e coberta no materializador: top 5, até 1 bloco, pelo menos
      US$50 e recorrência em 2+ lançamentos; a recorrência lê a projeção canônica
      da Stage 149 em vez de reagrupar swaps brutos e adia a classificação até o
@@ -357,7 +357,7 @@ carga sem ETA confiável.
      de first-buy está alcançado, limita concorrência e contém falhas por token.
      A leitura pública mantém allowlist `LP`/`CEX`, portanto snapshots SNIPER
      persistidos pelo shadow não vazam para a UI. O loop operacional opt-in roda
-     no grupo `robinhood-wallet-intelligence`, usa lease própria, pagina todo o
+     no grupo `robinhood-wallet-classification`, usa lease própria, pagina todo o
      catálogo e publica telemetria sem pertencer ao worker de holders. Auditoria
      da amostra e ativação pública seguem em cortes separados.
 4. **INSIDER direto**
@@ -1324,7 +1324,7 @@ Este projeto é um architecture checkpoint:
 - fan-out para RPC, workers, API e frontend.
 
 Criar um grupo isolado, nome provisório
-`robinhood-wallet-intelligence`, em vez de adicionar trabalho pesado aos grupos
+`robinhood-wallet-classification`, em vez de adicionar trabalho pesado aos grupos
 de holders ou mercado.
 
 Responsabilidades:
@@ -1633,7 +1633,7 @@ Ausência de bytecode permite classificar o endpoint operacionalmente como walle
 mas não prova propriedade; qualquer bytecode observado prevalece como contrato.
 
 O B4e liga o tick somente sob flag explícita e lease própria no grupo
-`robinhood-wallet-intelligence`; configuração, batches, backoff e telemetria são
+`robinhood-wallet-classification`; configuração, batches, backoff e telemetria são
 limitados, e mismatch de checkpoint paralisa o writer.
 
 O corretivo B4f evita filtros RPC inviáveis para catálogos grandes. Até 100

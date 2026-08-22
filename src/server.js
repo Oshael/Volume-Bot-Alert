@@ -600,11 +600,11 @@ function startRobinhoodWalletSwapWorkerGroup() {
   }
 }
 
-function startRobinhoodWalletIntelligenceWorkerGroup() {
-  if (!hasWorkerGroup('robinhood-wallet-intelligence')) return;
+function startRobinhoodWalletClassificationWorkerGroup() {
+  if (!hasWorkerGroup('robinhood-wallet-classification')) return;
   if (config.robinhoodSniperShadowWorker.enabled) {
     startLockedWorker(
-      'robinhood-wallet-intelligence', ROBINHOOD_SNIPER_SHADOW_LEASE_KEY,
+      'robinhood-wallet-classification', ROBINHOOD_SNIPER_SHADOW_LEASE_KEY,
       'Robinhood SNIPER shadow worker',
       () => robinhoodSniperShadowWorker.start(config.robinhoodSniperShadowWorker),
       { metadataProvider: () => ({ telemetry: robinhoodSniperShadowWorker.getStatus() }) }
@@ -612,7 +612,7 @@ function startRobinhoodWalletIntelligenceWorkerGroup() {
   }
   if (config.robinhoodFirstBuyLiveWorker.enabled) {
     startLockedWorker(
-      'robinhood-wallet-intelligence', ROBINHOOD_FIRST_BUY_LIVE_LEASE_KEY,
+      'robinhood-wallet-classification', ROBINHOOD_FIRST_BUY_LIVE_LEASE_KEY,
       'Robinhood first-buy LIVE worker', () => robinhoodFirstBuyLiveWorker.start({
         ...config.robinhoodFirstBuyLiveWorker,
         onFatal: (error) => workerLeaseManager.halt(ROBINHOOD_FIRST_BUY_LIVE_LEASE_KEY, error),
@@ -621,7 +621,7 @@ function startRobinhoodWalletIntelligenceWorkerGroup() {
   }
   if (config.robinhoodWalletPositionLiveWorker.enabled) {
     startLockedWorker(
-      'robinhood-wallet-intelligence', ROBINHOOD_WALLET_POSITION_LIVE_LEASE_KEY,
+      'robinhood-wallet-classification', ROBINHOOD_WALLET_POSITION_LIVE_LEASE_KEY,
       'Robinhood wallet-position LIVE worker',
       () => robinhoodWalletPositionLiveWorker.start(config.robinhoodWalletPositionLiveWorker),
       { metadataProvider: () => ({ telemetry: robinhoodWalletPositionLiveWorker.getStatus() }) }
@@ -629,7 +629,7 @@ function startRobinhoodWalletIntelligenceWorkerGroup() {
   }
   if (config.robinhoodWalletTransferLiveWorker.enabled) {
     startLockedWorker(
-      'robinhood-wallet-intelligence', ROBINHOOD_WALLET_TRANSFER_LIVE_LEASE_KEY,
+      'robinhood-wallet-classification', ROBINHOOD_WALLET_TRANSFER_LIVE_LEASE_KEY,
       'Robinhood wallet-transfer LIVE worker', () => robinhoodWalletTransferLiveWorker.start({
         ...config.robinhoodWalletTransferLiveWorker,
         rpcOptions: config.robinhoodIngestionWorker,
@@ -1005,7 +1005,7 @@ function startWorkerSet() {
   startRobinhoodProcessingWorkerGroup();
   startRobinhoodDerivedWorkerGroup();
   startRobinhoodWalletSwapWorkerGroup();
-  startRobinhoodWalletIntelligenceWorkerGroup();
+  startRobinhoodWalletClassificationWorkerGroup();
   startRobinhoodHolderWorkerGroup();
   startRobinhoodHolderGlobalBackfillWorkerGroup();
   startTokenImageFingerprintWorkerGroup();

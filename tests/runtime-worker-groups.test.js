@@ -10,7 +10,7 @@ const WORKER_GROUPS = [
   'core', 'market', 'solana-maintenance', 'maintenance', 'robinhood-maintenance',
   'robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-derived',
   'robinhood-wallet', 'robinhood-backfill', 'robinhood-holders',
-  'robinhood-holder-global', 'robinhood-wallet-intelligence', 'x-match', 'x-ingest',
+  'robinhood-holder-global', 'robinhood-wallet-classification', 'x-match', 'x-ingest',
 ];
 
 function skippedExcept(...active) {
@@ -330,30 +330,30 @@ describe('runtime worker groups config', () => {
     });
   });
 
-  it('isolates Robinhood wallet intelligence', () => {
-    withEnv({ BACKGROUND_WORKER_GROUPS: 'robinhood-wallet-intelligence' }, (config) => {
-      assert.deepEqual(config.runtime.workerGroupsActive, ['robinhood-wallet-intelligence']);
-      assert.deepEqual(config.runtime.workerGroupsSkipped, skippedExcept('robinhood-wallet-intelligence'));
+  it('isolates Robinhood wallet classification', () => {
+    withEnv({ BACKGROUND_WORKER_GROUPS: 'robinhood-wallet-classification' }, (config) => {
+      assert.deepEqual(config.runtime.workerGroupsActive, ['robinhood-wallet-classification']);
+      assert.deepEqual(config.runtime.workerGroupsSkipped, skippedExcept('robinhood-wallet-classification'));
     });
   });
 
-  it('ships the systemd-compatible Robinhood wallet-intelligence service', () => {
+  it('ships the systemd-compatible Robinhood wallet-classification service', () => {
     const command = require('../package.json').scripts[
-      'start:worker:robinhood-wallet-intelligence'
+      'start:worker:robinhood-wallet-classification'
     ];
     const systemdDir = path.join(ROOT_DIR, 'deploy', 'systemd');
     const dropIn = fs.readFileSync(path.join(
-      systemdDir, 'trendscope-worker@robinhood-wallet-intelligence.service.example'
+      systemdDir, 'trendscope-worker@robinhood-wallet-classification.service.example'
     ), 'utf8');
     const env = fs.readFileSync(path.join(
-      systemdDir, 'robinhood-wallet-intelligence.env.example'
+      systemdDir, 'robinhood-wallet-classification.env.example'
     ), 'utf8');
 
     assert.match(command, /PORT=\$\{PORT:-3015\}/);
-    assert.match(command, /BACKGROUND_WORKER_GROUPS=robinhood-wallet-intelligence/);
+    assert.match(command, /BACKGROUND_WORKER_GROUPS=robinhood-wallet-classification/);
     assert.doesNotMatch(command, /_LIVE_ENABLED=true|SNIPER_SHADOW_ENABLED=true/);
     assert.match(dropIn,
-      /EnvironmentFile=\/etc\/trendscope\/robinhood-wallet-intelligence\.env/);
+      /EnvironmentFile=\/etc\/trendscope\/robinhood-wallet-classification\.env/);
     assert.doesNotMatch(dropIn, /ExecStart|WorkingDirectory|User=/);
     assert.match(env, /ROBINHOOD_FIRST_BUY_SEED_RUN_ID=REPLACE_WITH_COMPLETED_RUN_ID/);
     assert.match(env, /ROBINHOOD_SNIPER_SHADOW_ENABLED=true/);

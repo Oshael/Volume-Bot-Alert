@@ -37,7 +37,7 @@ uma resposta online do Blockscout.
 - excluir automaticamente pools, contratos ou burn addresses da contagem;
 - armazenar localmente todas as wallets de todos os tokens.
 
-Wallet intelligence/tracking deve ser tratado como projeto posterior, usando a
+Classificação/tracking de wallets deve ser tratada como projeto posterior, usando a
 lista de holders e `robinhood_wallet_swaps` como duas fontes independentes.
 
 ## Estado Atual Confirmado no Codigo

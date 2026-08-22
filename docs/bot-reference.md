@@ -340,7 +340,7 @@ Grupos existentes:
 | `robinhood-processing` | consumidor isolado: reclama capturas por lease, decodifica a evidência congelada sem RPC, calcula preço/FDV/liquidez, persiste observações/buckets e poda a fila; no mesmo processo, um 2º runner drena `stream='discovery'` para o `robinhood_pool_registry` |
 | `robinhood-derived` | consumidor isolado: drena a outbox de emit ao vivo e replica o fan-out `market:bucket` (socket/relay) sem o monólito; hospeda o catalog projection worker (metadata de token) |
 | `robinhood-wallet` | consumidor isolado: re-lê observações aceitas e atribui `tx.from` via `eth_getBlockByNumber` (full-tx) por bloco, com cursor `live` próprio; alimenta `robinhood_wallet_swaps` |
-| `robinhood-wallet-intelligence` | projeta posições `swap_only_v1` e, sob flags/leases separadas, captura transfers ERC-20; após handoff explícito também pode persistir `unified_transfer_v1` atomicamente com o cursor LIVE de transfers |
+| `robinhood-wallet-classification` | mantém as projeções e classificações de wallets; sob flags/leases separadas, também captura transfers ERC-20 e pode persistir `unified_transfer_v1` atomicamente após o handoff explícito |
 | `robinhood-backfill` | discovery, scan, enrichment, finalizer e aggregation do replay |
 
 O catalog cleanup do grupo `solana-maintenance` atua somente sobre identidades
@@ -354,7 +354,7 @@ alias explícito `maintenance` preserva o comportamento misto anterior, mas o
 config rejeita combiná-lo com `all` ou com qualquer outro grupo.
 
 `robinhood-maintenance`, `robinhood`, `robinhood-head`, `robinhood-processing`,
-`robinhood-derived`, `robinhood-wallet`, `robinhood-wallet-intelligence` e
+`robinhood-derived`, `robinhood-wallet`, `robinhood-wallet-classification` e
 `robinhood-backfill` são grupos
 isolados. O config rejeita combinar um grupo isolado com grupos compartilhados
 ou entre si. `all` inclui `solana-maintenance`, nunca `robinhood-maintenance`.
@@ -1333,7 +1333,7 @@ O expanded chart usa `primaryTag` nos glifos e os valores materializados no pain
 de distribuição; métricas indisponíveis continuam como `—`.
 
 O materializador `SNIPER` não pertence ao processo de holders. Seu worker shadow
-fica no grupo isolado `robinhood-wallet-intelligence`, usa a lease própria
+fica no grupo isolado `robinhood-wallet-classification`, usa a lease própria
 `robinhood-sniper-shadow-worker` e permanece desligado por padrão. Ative com
 `ROBINHOOD_SNIPER_SHADOW_ENABLED=true`; intervalo, backoff, lote, concorrência e
 retry são limitados por `ROBINHOOD_SNIPER_SHADOW_INTERVAL_MS`,
@@ -1375,11 +1375,11 @@ Se o cursor live da Stage 152 estiver ausente ou atrás da cobertura de swaps, o
 materializador retorna `deferred` e não substitui o snapshot vigente.
 
 Na VPS, a instância permanente é
-`trendscope-worker@robinhood-wallet-intelligence.service`, executada pelo script
-homônimo `start:worker:robinhood-wallet-intelligence` na porta `3015`. Instale
-`deploy/systemd/robinhood-wallet-intelligence.env.example` como
-`/etc/trendscope/robinhood-wallet-intelligence.env` e o drop-in de
-`deploy/systemd/trendscope-worker@robinhood-wallet-intelligence.service.example`
+`trendscope-worker@robinhood-wallet-classification.service`, executada pelo script
+homônimo `start:worker:robinhood-wallet-classification` na porta `3015`. Instale
+`deploy/systemd/robinhood-wallet-classification.env.example` como
+`/etc/trendscope/robinhood-wallet-classification.env` e o drop-in de
+`deploy/systemd/trendscope-worker@robinhood-wallet-classification.service.example`
 com `systemctl edit`. O env específico contém somente flags e o `run-id`; banco e
 segredos continuam vindo do `.env` global já carregado pelo processo. O script
 não força nenhum subworker: first-buy, SNIPER,
@@ -1433,7 +1433,7 @@ frontier do wallet-swap registrada. A manutenção recusa regressão temporal ou
 bloco e aguarda tanto o seed quanto a fonte durável.
 
 Depois de concluir o backfill, aplique `node src/utils/db-init-stage152.js` e
-configure no processo `BACKGROUND_WORKER_GROUPS=robinhood-wallet-intelligence`:
+configure no processo `BACKGROUND_WORKER_GROUPS=robinhood-wallet-classification`:
 `ROBINHOOD_FIRST_BUY_LIVE_ENABLED=true` e
 `ROBINHOOD_FIRST_BUY_SEED_RUN_ID=<run-id concluído>`. Intervalo, backoff e range
 são opcionais em `ROBINHOOD_FIRST_BUY_LIVE_INTERVAL_MS`,
@@ -1865,7 +1865,7 @@ só persiste batches limitados com `--commit`; usa `robinhood_swap_mc` como font
 histórica de market cap. Esse backfill histórico ainda não serve dados às rotas
 de holders.
 
-O grupo opt-in `robinhood-wallet-intelligence`, ativado por
+O grupo opt-in `robinhood-wallet-classification`, ativado por
 `ROBINHOOD_WALLET_POSITION_LIVE_ENABLED=true`, continua `swap_only_v1` somente
 até o frontier durável do cursor wallet-swap LIVE. Ele exige o seed da posição
 `complete`. A reconciliação de quantidade é informativa e só ocorre quando o
@@ -2033,7 +2033,7 @@ e pelo contexto completo de swaps/pools; após revisar, acrescente
 O writer LIVE de transfers é opt-in por
 `ROBINHOOD_WALLET_TRANSFER_LIVE_ENABLED=true`, usa a lease
 `robinhood-wallet-transfer-live-worker` no grupo isolado
-`robinhood-wallet-intelligence` e pode ser iniciado separadamente por
+`robinhood-wallet-classification` e pode ser iniciado separadamente por
 `npm run start:worker:robinhood-wallet-transfers`. O default é 25 blocos por
 tick, batches de evidência de bloco de 50 e concorrência de shards igual a 1. Escopos de até 100
 tokens usam filtro RPC por endereço; escopos maiores usam o tópico global
