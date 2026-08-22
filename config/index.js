@@ -1306,6 +1306,31 @@ module.exports = {
     ),
   },
 
+  robinhoodPoolLiquidityWorker: {
+    enabled: parseBoolean(process.env.ROBINHOOD_POOL_LIQUIDITY_ENABLED, false),
+    intervalMs: parseIntegerInRange(
+      process.env.ROBINHOOD_POOL_LIQUIDITY_INTERVAL_MS, 10_000, 1000, 300_000
+    ),
+    refreshMs: parseIntegerInRange(
+      process.env.ROBINHOOD_POOL_LIQUIDITY_REFRESH_MS, 300_000, 10_000, 86_400_000
+    ),
+    batchSize: parseIntegerInRange(
+      process.env.ROBINHOOD_POOL_LIQUIDITY_BATCH_SIZE, 50, 1, 500
+    ),
+    concurrency: parseIntegerInRange(
+      process.env.ROBINHOOD_POOL_LIQUIDITY_CONCURRENCY, 5, 1, 20
+    ),
+    maxErrorBackoffMs: parseIntegerInRange(
+      process.env.ROBINHOOD_POOL_LIQUIDITY_MAX_ERROR_BACKOFF_MS, 60_000, 1000, 3_600_000
+    ),
+    leaseHeartbeatMs: parseIntegerInRange(
+      process.env.ROBINHOOD_POOL_LIQUIDITY_LEASE_HEARTBEAT_MS, 30_000, 1000, 300_000
+    ),
+    leaseTtlMs: parseIntegerInRange(
+      process.env.ROBINHOOD_POOL_LIQUIDITY_LEASE_TTL_MS, 120_000, 5000, 600_000
+    ),
+  },
+
   robinhoodIngestionWorker: {
     enabled: robinhoodIngestionEnabled,
     publicRpcUrl: String(

@@ -53,14 +53,24 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
     });
     assert.equal(await repository.recordSnapshot(snapshot('20', `0x${'c'.repeat(64)}`)), true);
     assert.equal(await repository.recordSnapshot(snapshot('19', `0x${'d'.repeat(64)}`)), false);
+    assert.equal(await repository.recordFailure({
+      protocol: 'uniswap-v3', marketKey: MARKET,
+      checkedAt: '2026-08-22T11:02:00Z',
+      error: { code: 'rpc_error', message: 'temporary failure' },
+    }), true);
     await assert.rejects(db.query(
       `UPDATE robinhood_pool_liquidity_snapshots SET liquidity_raw = NULL
         WHERE market_key = $1`, [MARKET]
     ), /robinhood_pool_liquidity_snapshots_protocol_metrics_check/);
     const { rows } = await db.query(
-      `SELECT snapshot_block_number::text, liquidity_usd::text
+      `SELECT snapshot_block_number::text, liquidity_usd::text,
+              consecutive_failures, last_error_code
          FROM robinhood_pool_liquidity_snapshots WHERE market_key = $1`, [MARKET]
     );
-    assert.deepEqual(rows[0], { snapshot_block_number: '20', liquidity_usd: '1000' });
+    assert.deepEqual(rows[0], {
+      snapshot_block_number: '20', liquidity_usd: '1000',
+      consecutive_failures: 1, last_error_code: 'rpc_error',
+    });
+    assert.equal(await repository.recordSnapshot(snapshot('21', `0x${'e'.repeat(64)}`)), true);
   });
 });

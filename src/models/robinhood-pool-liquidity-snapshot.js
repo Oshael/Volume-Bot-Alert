@@ -49,6 +49,12 @@ function optionalWarning(value) {
   return normalized;
 }
 
+function failure(value, fallback, maximum) {
+  const normalized = String(value || fallback).trim().toLowerCase()
+    .replace(/[^a-z0-9_:-]+/g, '_').replace(/^[^a-z0-9]+/, '').slice(0, maximum);
+  return normalized || fallback;
+}
+
 function normalizeAssessment(input, resolvedProtocol) {
   const status = String(input.liquidityStatus || '');
   const confidence = String(input.liquidityConfidence || '');
@@ -96,6 +102,25 @@ function normalizeCandidate(row) {
 
 function createRobinhoodPoolLiquiditySnapshotRepository(options = {}) {
   const database = options.database || db;
+
+  async function resolveAnchorBlock() {
+    const { rows } = await database.query(
+      `SELECT cursor.checkpoint_block,
+              (SELECT MIN(capture.block_number)
+                 FROM robinhood_head_captures capture
+                WHERE capture.chain = cursor.chain AND capture.stream = cursor.stream
+                  AND capture.processing_status IN ('pending', 'leased', 'blocked')
+              ) AS pending_block
+         FROM robinhood_head_capture_cursors cursor
+        WHERE cursor.chain = '${CHAIN}' AND cursor.stream = 'market'
+        LIMIT 1`
+    );
+    const row = rows[0];
+    if (row?.checkpoint_block == null) return null;
+    const checkpoint = BigInt(row.checkpoint_block);
+    const frontier = row.pending_block == null ? checkpoint : BigInt(row.pending_block) - 1n;
+    return frontier >= 0n ? frontier.toString() : null;
+  }
 
   async function listDuePools(input = {}) {
     const dueBefore = timestamp(input.dueBefore || new Date(), 'dueBefore');
@@ -167,7 +192,34 @@ function createRobinhoodPoolLiquiditySnapshotRepository(options = {}) {
     return result.rowCount === 1;
   }
 
-  return Object.freeze({ listDuePools, recordSnapshot });
+  async function recordFailure(input = {}) {
+    const resolvedProtocol = protocol(input.protocol);
+    const resolvedMarketKey = marketKey(input.marketKey);
+    const code = failure(input.error?.code, 'liquidity_snapshot_error', 64);
+    const message = String(input.error?.message || input.error || code).trim().slice(0, 500);
+    const checkedAt = timestamp(input.checkedAt || new Date(), 'checkedAt');
+    const result = await database.query(
+      `INSERT INTO robinhood_pool_liquidity_snapshots (
+         chain, protocol, market_key, checked_at, last_error_code,
+         last_error_message, consecutive_failures
+       ) SELECT registry.chain, registry.protocol, registry.market_key,
+                $3::timestamptz, $4, $5, 1
+           FROM robinhood_pool_registry registry
+          WHERE registry.chain = '${CHAIN}' AND registry.protocol = $1
+            AND registry.market_key = $2 AND registry.active = TRUE
+       ON CONFLICT (chain, protocol, market_key) DO UPDATE SET
+         checked_at = EXCLUDED.checked_at,
+         last_error_code = EXCLUDED.last_error_code,
+         last_error_message = EXCLUDED.last_error_message,
+         consecutive_failures = robinhood_pool_liquidity_snapshots.consecutive_failures + 1,
+         updated_at = NOW()
+       RETURNING market_key`,
+      [resolvedProtocol, resolvedMarketKey, checkedAt, code, message]
+    );
+    return result.rowCount === 1;
+  }
+
+  return Object.freeze({ listDuePools, recordFailure, recordSnapshot, resolveAnchorBlock });
 }
 
 module.exports = {

@@ -49,6 +49,16 @@ describe('Robinhood current pool liquidity snapshots', () => {
     assert.deepEqual(calls[0].params, ['2026-08-22T11:00:00.000Z', 25]);
   });
 
+  it('anchors snapshots before the oldest unfinished market capture', async () => {
+    const repository = createRobinhoodPoolLiquiditySnapshotRepository({ database: {
+      async query(sql) {
+        assert.match(sql, /processing_status IN \('pending', 'leased', 'blocked'\)/);
+        return { rows: [{ checkpoint_block: '200', pending_block: '151' }] };
+      },
+    } });
+    assert.equal(await repository.resolveAnchorBlock(), '150');
+  });
+
   it('writes a valid snapshot without allowing inconsistent evidence', async () => {
     const calls = [];
     const repository = createRobinhoodPoolLiquiditySnapshotRepository({ database: {
@@ -72,5 +82,23 @@ describe('Robinhood current pool liquidity snapshots', () => {
       liquidityUsd: null, liquidityRaw: null,
       liquidityStatus: 'spot_tvl_from_v4_tick_ranges', liquidityConfidence: 'medium',
     }), /assessment is inconsistent/);
+  });
+
+  it('records a failure without replacing the last valid snapshot fields', async () => {
+    const calls = [];
+    const repository = createRobinhoodPoolLiquiditySnapshotRepository({ database: {
+      async query(sql, params) {
+        calls.push({ sql, params });
+        return { rowCount: 1 };
+      },
+    } });
+    assert.equal(await repository.recordFailure({
+      protocol: 'uniswap-v4', marketKey: MARKET,
+      checkedAt: '2026-08-22T12:00:00Z',
+      error: { code: 'RPC Error!', message: 'temporary failure' },
+    }), true);
+    assert.match(calls[0].sql, /consecutive_failures \+ 1/);
+    assert.doesNotMatch(calls[0].sql, /liquidity_usd = EXCLUDED/);
+    assert.equal(calls[0].params[3], 'rpc_error_');
   });
 });

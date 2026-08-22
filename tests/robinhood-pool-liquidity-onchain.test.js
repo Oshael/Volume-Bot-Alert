@@ -58,7 +58,7 @@ function dependencies(request, overrides = {}) {
       },
     },
     quoteReader: { async getSnapshot() { throw new Error('USDG must not read WETH quote'); } },
-    v4RangeReader: { async listCurrentV4LiquidityRanges() { return []; } },
+    v4RangeReader: { async listHistoricalV4LiquidityRanges() { return []; } },
     stateViewAddress: STATE_VIEW,
     ...overrides,
   };
@@ -128,13 +128,17 @@ describe('Robinhood pool liquidity current-state reader', () => {
 
   it('values V4 from StateView and materialized ranges before any swap', async () => {
     const calls = [];
+    const rangesFor = [];
     const reader = createRobinhoodPoolLiquidityOnchainReader(dependencies(
       async (_method, params) => {
         calls.push(params);
         if (params[0].data.startsWith(V4_GET_SLOT0_SELECTOR)) return words(Q96, 0, 0, 0);
         if (params[0].data.startsWith(V4_GET_LIQUIDITY_SELECTOR)) return words(0);
         throw new Error('unexpected V4 call');
-      }
+      }, { v4RangeReader: { async listHistoricalV4LiquidityRanges(...args) {
+        rangesFor.push(args);
+        return [];
+      } } }
     ));
     const result = await reader.valuePool(pool('uniswap-v4'), ANCHOR);
     assert.equal(result.liquidityUsd, '0');
@@ -142,6 +146,7 @@ describe('Robinhood pool liquidity current-state reader', () => {
     assert.equal(calls.every((params) => (
       params[0].to === STATE_VIEW && params[1] === ANCHOR.blockTag
     )), true);
+    assert.deepEqual(rangesFor, [[POOL_ID, '124', '0']]);
   });
 
   it('fails closed on malformed on-chain state', async () => {

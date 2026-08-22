@@ -102,7 +102,7 @@ function createRobinhoodPoolLiquidityOnchainReader(deps = {}) {
     throw new Error('metadataReader is required');
   }
   if (typeof quoteReader?.getSnapshot !== 'function') throw new Error('quoteReader is required');
-  if (typeof v4RangeReader?.listCurrentV4LiquidityRanges !== 'function') {
+  if (typeof v4RangeReader?.listHistoricalV4LiquidityRanges !== 'function') {
     throw new Error('v4RangeReader is required');
   }
 
@@ -180,7 +180,9 @@ function createRobinhoodPoolLiquidityOnchainReader(deps = {}) {
       rpcCall(stateViewAddress, bytes32Call(
         V4_GET_LIQUIDITY_SELECTOR, pool.poolId, 'poolId'
       ), anchor),
-      v4RangeReader.listCurrentV4LiquidityRanges(pool.poolId),
+      v4RangeReader.listHistoricalV4LiquidityRanges(
+        pool.poolId, (BigInt(anchor.number) + 1n).toString(), '0'
+      ),
     ]);
     const sqrtPriceX96 = decodeWord(slot0, 0, 160, 'V4 getSlot0').toString();
     return {
