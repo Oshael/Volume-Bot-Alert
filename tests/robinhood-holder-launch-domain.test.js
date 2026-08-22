@@ -43,7 +43,7 @@ describe('Robinhood holder launch evidence domain', () => {
     assert.equal(result.ready, true);
     assert.equal(result.anchor.transactionIndex, '1');
     assert.equal(result.anchor.actionIndex, '2');
-    assert.equal(result.anchor.evidenceVersion, 'rh_launch_v1');
+    assert.equal(result.anchor.evidenceVersion, 'rh_launch_v2');
     assert.equal(Object.isFrozen(result.anchor), true);
   });
 
@@ -78,6 +78,7 @@ describe('Robinhood holder launch evidence domain', () => {
     assert.equal(result.records.length, 2);
     assert.equal(result.records.find(({ walletAddress }) => walletAddress === WALLET_A)
       .deltaBlocks, '1');
+    assert.deepEqual(result.records.map(({ buyerRank }) => buyerRank), [1, 2]);
     assert.equal(result.records.every(({ withinLaunchWindow }) => withinLaunchWindow), true);
     assert.equal(result.records.find(({ walletAddress }) => walletAddress === WALLET_B)
       .volumeUsd, null);

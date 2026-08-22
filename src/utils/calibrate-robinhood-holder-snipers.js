@@ -15,6 +15,12 @@ const { formatDecimal, parseDecimal } = require('../services/evm-market-metrics'
 const PREFIXES = Object.freeze({
   limit: '--limit=', concurrency: '--concurrency=', seed: '--seed=', thresholds: '--thresholds=',
 });
+const PRECISION_PROFILES = Object.freeze([
+  Object.freeze({ name: 'sameBlockTop5', maxBlocks: 0n, maxBuyerRank: 5 }),
+  Object.freeze({ name: 'within1BlockTop5', maxBlocks: 1n, maxBuyerRank: 5 }),
+  Object.freeze({ name: 'within1BlockTop10', maxBlocks: 1n, maxBuyerRank: 10 }),
+  Object.freeze({ name: 'within3BlocksTop10', maxBlocks: 3n, maxBuyerRank: 10 }),
+]);
 
 function oneArgument(argv, prefix) {
   const values = argv.filter((value) => value.startsWith(prefix));
@@ -67,6 +73,71 @@ function quantile(sorted, fraction) {
   return formatDecimal(sorted[index].value, 18);
 }
 
+function atLeastNotional(candidate, threshold) {
+  const minimum = parseDecimal(threshold, 'threshold');
+  return candidate.value.numerator * minimum.denominator
+    >= minimum.numerator * candidate.value.denominator;
+}
+
+function precisionCandidate(buy, value, tokenKey) {
+  if (!/^\d+$/.test(String(buy.deltaBlocks ?? ''))
+      || !Number.isSafeInteger(buy.buyerRank) || buy.buyerRank < 1) return null;
+  return Object.freeze({
+    walletAddress: buy.walletAddress,
+    tokenKey,
+    value,
+    deltaBlocks: BigInt(buy.deltaBlocks),
+    buyerRank: buy.buyerRank,
+  });
+}
+
+function recurrenceSummary(candidates) {
+  const tokenSets = new Map();
+  for (const candidate of candidates) {
+    const tokens = tokenSets.get(candidate.walletAddress) || new Set();
+    tokens.add(candidate.tokenKey);
+    tokenSets.set(candidate.walletAddress, tokens);
+  }
+  const tokenCounts = new Map([...tokenSets].map(([wallet, tokens]) => [wallet, tokens.size]));
+  const countAt = (minimum) => ({
+    wallets: [...tokenCounts.values()].filter((count) => count >= minimum).length,
+    occurrences: candidates.filter((candidate) => (
+      tokenCounts.get(candidate.walletAddress) >= minimum
+    )).length,
+  });
+  return Object.freeze({
+    occurrences: candidates.length,
+    uniqueWallets: tokenSets.size,
+    onAtLeast2Tokens: Object.freeze(countAt(2)),
+    onAtLeast3Tokens: Object.freeze(countAt(3)),
+  });
+}
+
+function summarizePrecision(candidates, thresholds, missingEvidence) {
+  const profiles = Object.fromEntries(PRECISION_PROFILES.map((profile) => {
+    const matches = candidates.filter((candidate) => (
+      candidate.deltaBlocks <= profile.maxBlocks
+        && candidate.buyerRank <= profile.maxBuyerRank
+    ));
+    return [profile.name, Object.freeze({
+      rule: Object.freeze({
+        maxBlocks: Number(profile.maxBlocks), maxBuyerRank: profile.maxBuyerRank,
+      }),
+      allPriced: recurrenceSummary(matches),
+      atNotionalThreshold: Object.freeze(Object.fromEntries(thresholds.map((threshold) => (
+        [threshold, recurrenceSummary(matches.filter((candidate) => (
+          atLeastNotional(candidate, threshold)
+        )))]
+      )))),
+    })];
+  }));
+  return Object.freeze({
+    scope: 'selected_tokens',
+    missingPositionEvidence: missingEvidence,
+    profiles: Object.freeze(profiles),
+  });
+}
+
 function summarizeEvidence(results, thresholds) {
   const reasons = {};
   const notionals = [];
@@ -75,7 +146,9 @@ function summarizeEvidence(results, thresholds) {
   let withinWindow = 0;
   let excluded = 0;
   let missingVolumeUsd = 0;
-  for (const result of results) {
+  let missingPositionEvidence = 0;
+  const precisionCandidates = [];
+  for (const [resultIndex, result] of results.entries()) {
     if (!result.ready) {
       reasons[result.reason] = (reasons[result.reason] || 0) + 1;
       continue;
@@ -96,15 +169,18 @@ function summarizeEvidence(results, thresholds) {
         missingVolumeUsd += 1;
         continue;
       }
-      notionals.push({ value: parseDecimal(buy.volumeUsd, 'volumeUsd') });
+      const value = parseDecimal(buy.volumeUsd, 'volumeUsd');
+      notionals.push({ value });
+      const candidate = precisionCandidate(
+        buy, value, result.tokenAddress || `sample-${resultIndex}`
+      );
+      if (candidate) precisionCandidates.push(candidate);
+      else missingPositionEvidence += 1;
     }
   }
   notionals.sort(compareDecimal);
   const countsAtThreshold = Object.fromEntries(thresholds.map((threshold) => {
-    const minimum = parseDecimal(threshold, 'threshold');
-    const count = notionals.filter(({ value }) => (
-      value.numerator * minimum.denominator >= minimum.numerator * value.denominator
-    )).length;
+    const count = notionals.filter((candidate) => atLeastNotional(candidate, threshold)).length;
     return [threshold, count];
   }));
   return Object.freeze({
@@ -124,6 +200,7 @@ function summarizeEvidence(results, thresholds) {
       p90: quantile(notionals, 0.90), p95: quantile(notionals, 0.95),
       max: quantile(notionals, 1), countsAtThreshold: Object.freeze(countsAtThreshold),
     }),
+    precision: summarizePrecision(precisionCandidates, thresholds, missingPositionEvidence),
   });
 }
 

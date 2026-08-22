@@ -1,4 +1,4 @@
-const LAUNCH_EVIDENCE_VERSION = 'rh_launch_v1';
+const LAUNCH_EVIDENCE_VERSION = 'rh_launch_v2';
 
 function uint(value, label, optional = false) {
   if (optional && (value == null || value === '')) return null;
@@ -131,7 +131,7 @@ function deriveFirstBuyEvidence(input = {}) {
     throw new Error('buy position precedes the launch anchor');
   }
   const anchorTime = Date.parse(anchor.blockTime);
-  const records = firstByWallet(buys).map((buy) => {
+  const records = firstByWallet(buys).map((buy, index) => {
     const deltaBlocks = BigInt(buy.blockNumber) - BigInt(anchor.blockNumber);
     const deltaMilliseconds = Date.parse(buy.blockTime) - anchorTime;
     if (deltaMilliseconds < 0) throw new Error('buy blockTime precedes the launch anchor');
@@ -139,6 +139,7 @@ function deriveFirstBuyEvidence(input = {}) {
     return Object.freeze({
       ...buy,
       evidenceVersion: LAUNCH_EVIDENCE_VERSION,
+      buyerRank: index + 1,
       deltaBlocks: deltaBlocks.toString(),
       deltaSeconds,
       withinLaunchWindow: deltaBlocks <= BigInt(maxBlocks) || deltaSeconds <= maxSeconds,

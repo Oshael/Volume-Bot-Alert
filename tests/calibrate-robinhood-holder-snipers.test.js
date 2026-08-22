@@ -8,12 +8,15 @@ const {
 const WALLET_A = `0x${'1'.repeat(40)}`;
 const WALLET_B = `0x${'2'.repeat(40)}`;
 
-function ready(firstBuys, exclusions = []) {
-  return { ready: true, firstBuys, exclusions };
+function ready(firstBuys, exclusions = [], tokenAddress = null) {
+  return { ready: true, firstBuys, exclusions, tokenAddress };
 }
 
-function buy(walletAddress, volumeUsd, withinLaunchWindow = true) {
-  return { walletAddress, volumeUsd, withinLaunchWindow };
+function buy(walletAddress, volumeUsd, withinLaunchWindow = true, details = {}) {
+  return {
+    walletAddress, volumeUsd, withinLaunchWindow,
+    deltaBlocks: '0', buyerRank: 1, ...details,
+  };
 }
 
 describe('Robinhood SNIPER calibration command', () => {
@@ -54,6 +57,44 @@ describe('Robinhood SNIPER calibration command', () => {
       min: '10', p25: '10', p50: '10', p75: '40',
       p90: '40', p95: '40', max: '40', countsAtThreshold: { 10: 2, 25: 1 },
     });
+    assert.equal(report.precision.missingPositionEvidence, 0);
+    assert.deepEqual(report.precision.profiles.sameBlockTop5.atNotionalThreshold['10'], {
+      occurrences: 2, uniqueWallets: 2,
+      onAtLeast2Tokens: { wallets: 0, occurrences: 0 },
+      onAtLeast3Tokens: { wallets: 0, occurrences: 0 },
+    });
+  });
+
+  it('compares strict launch position profiles and wallet recurrence without addresses', () => {
+    const report = summarizeEvidence([
+      ready([
+        buy(WALLET_A, '50', true, { deltaBlocks: '0', buyerRank: 2 }),
+        buy(WALLET_B, '50', true, { deltaBlocks: '1', buyerRank: 7 }),
+      ], [], 'token-a'),
+      ready([
+        buy(WALLET_A, '60', true, { deltaBlocks: '1', buyerRank: 4 }),
+      ], [], 'token-b'),
+      ready([
+        buy(WALLET_A, '70', true, { deltaBlocks: '2', buyerRank: 8 }),
+      ], [], 'token-c'),
+    ], ['50']);
+
+    assert.deepEqual(report.precision.profiles.sameBlockTop5.atNotionalThreshold['50'], {
+      occurrences: 1, uniqueWallets: 1,
+      onAtLeast2Tokens: { wallets: 0, occurrences: 0 },
+      onAtLeast3Tokens: { wallets: 0, occurrences: 0 },
+    });
+    assert.deepEqual(report.precision.profiles.within1BlockTop5.atNotionalThreshold['50'], {
+      occurrences: 2, uniqueWallets: 1,
+      onAtLeast2Tokens: { wallets: 1, occurrences: 2 },
+      onAtLeast3Tokens: { wallets: 0, occurrences: 0 },
+    });
+    assert.deepEqual(report.precision.profiles.within3BlocksTop10.atNotionalThreshold['50'], {
+      occurrences: 4, uniqueWallets: 2,
+      onAtLeast2Tokens: { wallets: 1, occurrences: 3 },
+      onAtLeast3Tokens: { wallets: 1, occurrences: 3 },
+    });
+    assert.equal(JSON.stringify(report).includes(WALLET_A), false);
   });
 
   it('selects a seeded bounded cohort and never opens a write transaction', async () => {

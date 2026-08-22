@@ -1249,6 +1249,11 @@ e tokens sem pool registrado, além de ledgers cuja frontier está à frente dos
 swaps ou ainda atrás da criação do pool. A amostra usa somente tokens cobertos da
 criação do primeiro pool à frontier atual; o deployment do contrato não limita
 essa cobertura.
+O mesmo relatório compara perfis de posição (`sameBlockTop5`,
+`within1BlockTop5`, `within1BlockTop10` e `within3BlocksTop10`) e informa,
+somente de forma agregada, quantas wallets repetiram o padrão em 2+ ou 3+ tokens
+da amostra. Esses sinais são internos; o frontend só deverá expor `SNIPER` após
+uma regra de alta confiança ser escolhida e materializada.
 
 Cadastros usam um manifesto JSON append-only com `entries`; cada entrada contém
 `address`, `kind`, `label`, `source`, `evidence`, `validFromBlock`,

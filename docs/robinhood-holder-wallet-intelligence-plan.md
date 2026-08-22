@@ -124,6 +124,9 @@ em configuração versionada.
   antes da fase SNIPER e não deve ser hardcoded por conveniência.
 - Natureza: regra temporal explicável, não acusação de bot ou má-fé.
 - Motivo público: `early_launch_buy` com bloco, horário e delta da âncora.
+- `early_launch_buy` e candidatos permanecem sinais internos. A UI só publica
+  `SNIPER` quando posição canônica, proximidade da âncora, notional e recorrência
+  entre lançamentos satisfizerem uma regra calibrada de alta confiança.
 
 #### INSIDER
 
@@ -301,8 +304,9 @@ upstream no próprio runtime.
      atômico também está concluído, mas exige notional mínimo positivo explícito
      e permanece sem worker. A ferramenta read-only de amostragem e quantis está
      concluída e usa a criação do primeiro pool registrado, não o deployment,
-     para separar a população elegível sem afrouxar a cobertura; nova amostra na
-     VPS, decisão do notional e ativação seguem pendentes.
+     para separar a população elegível sem afrouxar a cobertura. A calibração
+     também compara perfis agregados por bloco/posição e recorrência em 2+ e 3+
+     tokens, sem expor endereços; decisão da regra e ativação seguem pendentes.
 4. **INSIDER direto**
    - começar por distribuição direta do token;
    - adicionar funding nativo direto somente quando a fonte estiver comprovada.
