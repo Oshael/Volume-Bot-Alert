@@ -1380,7 +1380,9 @@ homônimo `start:worker:robinhood-wallet-intelligence` na porta `3015`. Instale
 `deploy/systemd/robinhood-wallet-intelligence.env.example` como
 `/etc/trendscope/robinhood-wallet-intelligence.env` e o drop-in de
 `deploy/systemd/trendscope-worker@robinhood-wallet-intelligence.service.example`
-com `systemctl edit`. O script não força nenhum subworker: first-buy, SNIPER,
+com `systemctl edit`. O env específico contém somente flags e o `run-id`; banco e
+segredos continuam vindo do `.env` global já carregado pelo processo. O script
+não força nenhum subworker: first-buy, SNIPER,
 posição e transfers obedecem exclusivamente às respectivas flags do env. Antes
 do primeiro start, aplique as Stages 149, 151 e 152, confirme o seed concluído e
 execute `npm run db:schema-check`. Processo `active` não basta: confirme as leases

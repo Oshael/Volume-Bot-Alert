@@ -358,6 +358,7 @@ describe('runtime worker groups config', () => {
     assert.match(env, /ROBINHOOD_FIRST_BUY_SEED_RUN_ID=REPLACE_WITH_COMPLETED_RUN_ID/);
     assert.match(env, /ROBINHOOD_SNIPER_SHADOW_ENABLED=true/);
     assert.match(env, /ROBINHOOD_WALLET_POSITION_LIVE_ENABLED=false/);
+    assert.doesNotMatch(env, /JWT_SECRET|DATABASE_URL|DB_PASSWORD/);
   });
 
   it('keeps Robinhood wallet transfers opt-in and bounds RPC work', () => {
