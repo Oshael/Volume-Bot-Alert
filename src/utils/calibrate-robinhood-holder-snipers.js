@@ -167,6 +167,7 @@ function summarizePopulationRecurrence(rows, candidateWallets, thresholds) {
       continue;
     }
     if (!row.withinOneBlock) continue;
+    if (!Number.isSafeInteger(row.buyerRank) || row.buyerRank < 1 || row.buyerRank > 5) continue;
     if (!row.positionReady) {
       missingPositionEvidence += 1;
       continue;
@@ -183,7 +184,7 @@ function summarizePopulationRecurrence(rows, candidateWallets, thresholds) {
   }
   return Object.freeze({
     scope: 'all_eligible_tokens_for_sample_candidates',
-    rule: Object.freeze({ maxBlocks: 1, sampleCandidateMaxBuyerRank: 5 }),
+    rule: Object.freeze({ maxBlocks: 1, maxBuyerRank: 5 }),
     candidateWallets: candidateWallets.length,
     pricedOccurrences: ready.length,
     missingAnchorEvidence,

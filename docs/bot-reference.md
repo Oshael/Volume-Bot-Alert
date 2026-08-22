@@ -1333,9 +1333,12 @@ O expanded chart usa `primaryTag` nos glifos e os valores materializados no pain
 de distribuição; métricas indisponíveis continuam como `—`.
 
 O materializador `SNIPER` existe, mas não pertence ao processo de holders e não
-tem worker ativo. Ele exige `minimumNotionalUsd` positivo e explícito, além da
-cobertura histórica seed/live, posição canônica e exclusões de creator, pools,
-routers, infraestrutura conhecida e burn. Antes de escolher esse limite, execute
+tem worker ativo. A política pública versionada `rh_sniper_high_v1` exige compra
+entre os 5 primeiros compradores canônicos, em até 1 bloco da âncora, notional
+de pelo menos US$50 e recorrência desse padrão em 2 ou mais lançamentos. Creator,
+pools, routers, infraestrutura conhecida e burn são excluídos. A janela ampla de
+3 blocos/90 segundos continua apenas como sinal candidato interno. Para auditar
+ou recalibrar uma futura versão sem escrever classificação, execute
 `npm run robinhood:sniper-calibrate -- --limit=25 --seed=default`; o comando é
 somente leitura e retorna quantis agregados, sem endereços. Para comparar limites
 sem classificá-los, acrescente por exemplo `--thresholds=10,25,50,100`. Limite de
@@ -1351,9 +1354,14 @@ somente de forma agregada, quantas wallets repetiram o padrão em 2+ ou 3+ token
 da amostra. As wallets que passam `within1BlockTop5` na amostra também são medidas
 contra todos os tokens elegíveis, preservando somente contagens agregadas no
 relatório. Essa busca resolve cada wallet candidata sequencialmente por igualdade
-indexada e os anchors por token em lotes; não agrega a tabela inteira de swaps.
-Esses sinais são internos; o frontend só deverá expor `SNIPER` após uma regra de
-alta confiança ser escolhida e materializada. A Stage 149 introduz
+indexada, limita a contagem de predecessores canônicos a 5 e resolve anchors por
+token em lotes; não agrega a tabela inteira de swaps.
+Esses sinais são internos; o frontend só deverá expor `SNIPER` produzido pela
+regra pública de alta confiança. A recorrência do materializador agora lê a
+projeção canônica indexada da Stage 149; não reagrega o histórico bruto de swaps.
+Se o cursor live da Stage 152 estiver ausente ou atrás da cobertura de swaps, o
+materializador retorna `deferred` e não substitui o snapshot vigente.
+A Stage 149 introduz
 `robinhood_wallet_token_first_buys`, fonte neutra e reutilizável para ordem por
 token e recorrência por wallet. Aplique `node src/utils/db-init-stage149.js` antes
 do futuro backfill; criar a tabela não inicia escrita, worker ou classificação.

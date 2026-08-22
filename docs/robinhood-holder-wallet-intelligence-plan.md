@@ -117,11 +117,12 @@ em configuração versionada.
 
 #### SNIPER
 
-- Evidência: primeira compra confirmada da wallet satisfaz pelo menos uma das
-  janelas configuradas: `delta_blocks <= 3` ou `delta_seconds <= 90`.
+- Candidatos internos continuam usando a janela exploratória
+  `delta_blocks <= 3` ou `delta_seconds <= 90`; ela não publica tag.
 - Exclusões: criador, pools, routers, burn/dead addresses e CEX conhecido.
-- A compra precisa superar um notional mínimo versionado; o valor será fechado
-  antes da fase SNIPER e não deve ser hardcoded por conveniência.
+- A regra pública `rh_sniper_high_v1`, fechada após calibração, exige primeira
+  compra entre os 5 primeiros compradores canônicos, em até 1 bloco da âncora,
+  notional de pelo menos US$50 e o mesmo padrão em pelo menos 2 lançamentos.
 - Natureza: regra temporal explicável, não acusação de bot ou má-fé.
 - Motivo público: `early_launch_buy` com bloco, horário e delta da âncora.
 - `early_launch_buy` e candidatos permanecem sinais internos. A UI só publica
@@ -347,8 +348,12 @@ carga sem ETA confiável.
      da manutenção live acrescentam cursor próprio, handoff explícito do seed e
      avanço fail-closed contra a frontier durável do wallet-swap. O worker opt-in,
      lease própria, telemetria, backoff e halt fatal também estão concluídos no
-     grupo isolado de wallet intelligence. Decisão da regra de alta confiança e
-     ativação seguem em cortes separados.
+     grupo isolado de wallet intelligence. A regra `rh_sniper_high_v1` também
+     está fechada e coberta no materializador: top 5, até 1 bloco, pelo menos
+     US$50 e recorrência em 2+ lançamentos; a recorrência lê a projeção canônica
+     da Stage 149 em vez de reagrupar swaps brutos e adia a classificação até o
+     cursor da Stage 152 estar alcançado. Worker/materialização em escala, shadow
+     audit e ativação da UI seguem em cortes separados.
 4. **INSIDER direto**
    - começar por distribuição direta do token;
    - adicionar funding nativo direto somente quando a fonte estiver comprovada.
@@ -381,14 +386,12 @@ Uma fase só pode habilitar UI quando:
 
 ### 0.11 Decisões pendentes antes de código novo
 
-1. Notional mínimo de `SNIPER` e se ele é absoluto em USD ou relativo à
-   liquidez inicial.
-2. Se haverá uma segunda concentração `Top 10/50 eligible` excluindo
+1. Se haverá uma segunda concentração `Top 10/50 eligible` excluindo
    infraestrutura, sem substituir a métrica bruta atual.
-3. Processo e fonte de manutenção do registro `CEX`.
-4. Quais AMMs e lockers entram primeiro em `LP LOCKED`.
-5. Fonte de transfers nativos para `INSIDER` e `BUNDLED`.
-6. Provider externo de `FRESH`, orçamento, taxa, cobertura histórica e TTL.
+2. Processo e fonte de manutenção do registro `CEX`.
+3. Quais AMMs e lockers entram primeiro em `LP LOCKED`.
+4. Fonte de transfers nativos para `INSIDER` e `BUNDLED`.
+5. Provider externo de `FRESH`, orçamento, taxa, cobertura histórica e TTL.
 
 ### 0.12 Definição de concluído
 

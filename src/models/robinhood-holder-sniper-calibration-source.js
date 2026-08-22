@@ -16,56 +16,29 @@ const FIRST_BUYS_SQL = `WITH pool_origins AS MATERIALIZED (
      AND pool.first_pool_block >= $3::bigint
      AND pool.first_pool_block <= state.live_through_block
      AND state.live_through_block <= $4::bigint
-), candidate_buy_blocks AS MATERIALIZED (
-  SELECT swap.wallet_address, swap.token_address,
-         MIN(swap.block_number) AS first_buy_block
-    FROM robinhood_wallet_swaps swap
-    INNER JOIN eligible_tokens token ON token.token_address = swap.token_address
-    INNER JOIN robinhood_pool_registry registry
-      ON registry.chain = swap.chain AND registry.protocol = swap.protocol
-     AND registry.market_key = swap.market_key
-     AND registry.token_address = swap.token_address
-     AND registry.discovery_block <= swap.block_number
-   WHERE swap.chain = $2 AND swap.wallet_address = $1 AND swap.side = 'buy'
-     AND swap.block_number BETWEEN token.first_pool_block AND token.live_through_block
-   GROUP BY swap.wallet_address, swap.token_address
-), ranked_first_buys AS MATERIALIZED (
-  SELECT swap.wallet_address, swap.token_address, swap.volume_usd::text,
-         swap.block_number, position.transaction_index,
-         ROW_NUMBER() OVER (
-           PARTITION BY swap.wallet_address, swap.token_address
-           ORDER BY position.transaction_index NULLS LAST,
-                    swap.action_index, swap.transaction_hash
-         ) AS canonical_rank,
-         BOOL_AND(position.transaction_index IS NOT NULL
-           AND position.block_hash IS NOT NULL) OVER (
-             PARTITION BY swap.wallet_address, swap.token_address
-         ) AS position_ready
-    FROM robinhood_wallet_swaps swap
-    INNER JOIN candidate_buy_blocks first
-      ON first.wallet_address = swap.wallet_address
-     AND first.token_address = swap.token_address
-     AND first.first_buy_block = swap.block_number
-    INNER JOIN robinhood_pool_registry registry
-      ON registry.chain = swap.chain AND registry.protocol = swap.protocol
-     AND registry.market_key = swap.market_key
-     AND registry.token_address = swap.token_address
-     AND registry.discovery_block <= swap.block_number
-    LEFT JOIN robinhood_transaction_positions position
-      ON position.chain = swap.chain
-     AND position.transaction_hash = swap.transaction_hash
-     AND position.block_number = swap.block_number
-   WHERE swap.chain = $2 AND swap.side = 'buy'
 )
-SELECT buy.wallet_address, buy.token_address, buy.volume_usd,
+SELECT buy.wallet_address, buy.token_address, buy.volume_usd::text,
        buy.block_number::text AS first_buy_block,
        token.first_pool_block::text, token.live_through_block::text,
-       buy.position_ready
-  FROM ranked_first_buys buy
+       true AS position_ready,
+       (SELECT COUNT(*) + 1 FROM (
+          SELECT 1 FROM robinhood_wallet_token_first_buys earlier
+           WHERE earlier.chain = buy.chain
+             AND earlier.token_address = buy.token_address
+             AND ROW(earlier.block_number, earlier.transaction_index,
+                     earlier.action_index, earlier.transaction_hash)
+               < ROW(buy.block_number, buy.transaction_index,
+                     buy.action_index, buy.transaction_hash)
+           ORDER BY earlier.block_number, earlier.transaction_index,
+                    earlier.action_index, earlier.transaction_hash
+           LIMIT 5
+        ) preceding)::int AS buyer_rank
+  FROM robinhood_wallet_token_first_buys buy
   INNER JOIN eligible_tokens token ON token.token_address = buy.token_address
   LEFT JOIN robinhood_token_attributions attribution
     ON attribution.chain = $2 AND attribution.token_address = buy.token_address
- WHERE buy.canonical_rank = 1
+ WHERE buy.chain = $2 AND buy.wallet_address = $1
+   AND buy.block_number BETWEEN token.first_pool_block AND token.live_through_block
    AND (attribution.creator_address IS NULL
      OR attribution.creator_address <> buy.wallet_address)
    AND NOT EXISTS (
@@ -74,6 +47,23 @@ SELECT buy.wallet_address, buy.token_address, buy.volume_usd,
         AND infrastructure.valid_from_block <= buy.block_number
         AND (infrastructure.valid_through_block IS NULL
           OR infrastructure.valid_through_block >= buy.block_number)
+   )
+   AND NOT EXISTS (
+     SELECT 1 FROM robinhood_pool_registry registry
+      WHERE registry.chain = buy.chain AND registry.token_address = buy.token_address
+        AND registry.discovery_block <= buy.block_number
+        AND CASE WHEN registry.protocol = 'uniswap-v4'
+          THEN registry.origin_address ELSE registry.pool_address END = buy.wallet_address
+   )
+   AND NOT EXISTS (
+     SELECT 1 FROM robinhood_wallet_swaps swap
+      WHERE swap.chain = buy.chain AND swap.token_address = buy.token_address
+        AND swap.router_address = buy.wallet_address
+        AND swap.block_number <= token.live_through_block
+   )
+   AND buy.wallet_address NOT IN (
+     '0x0000000000000000000000000000000000000000',
+     '0x000000000000000000000000000000000000dead'
    )
  ORDER BY buy.wallet_address, buy.token_address`;
 
@@ -114,6 +104,27 @@ function uniqueTokens(rows) {
 
 function createRobinhoodHolderSniperCalibrationSource(options = {}) {
   const database = options.database || db;
+
+  async function loadProjectionCoverage(coverage) {
+    const completeThroughBlock = block(
+      coverage?.completeThroughBlock, 'completeThroughBlock'
+    );
+    const { rows } = await database.query(
+      `SELECT next_time, source_through, source_next_block::text
+         FROM robinhood_first_buy_live_cursors WHERE chain = $1`, [CHAIN]
+    );
+    const cursor = rows[0];
+    if (!cursor) return unavailable('first_buy_projection_unavailable');
+    if (new Date(cursor.next_time).toISOString()
+        !== new Date(cursor.source_through).toISOString()) {
+      return unavailable('first_buy_projection_behind');
+    }
+    if (cursor.source_next_block == null
+        || BigInt(cursor.source_next_block) <= BigInt(completeThroughBlock)) {
+      return unavailable('first_buy_projection_behind');
+    }
+    return Object.freeze({ ready: true, completeThroughBlock });
+  }
 
   async function loadAnchors(firstBuys) {
     const tokens = uniqueTokens(firstBuys);
@@ -158,12 +169,27 @@ function createRobinhoodHolderSniperCalibrationSource(options = {}) {
         deltaBlocks: deltaBlocks?.toString() || null,
         anchorReady,
         withinOneBlock: anchorReady && deltaBlocks >= 0n && deltaBlocks <= 1n,
+        buyerRank: Number(row.buyer_rank),
         positionReady: row.position_ready === true,
       });
     }));
   }
 
-  return Object.freeze({ loadPopulationRecurrence });
+  async function loadHighConfidenceRecurrence(walletAddresses, coverage) {
+    const projection = await loadProjectionCoverage(coverage);
+    if (!projection.ready) return projection;
+    return Object.freeze({
+      ready: true,
+      completeThroughBlock: projection.completeThroughBlock,
+      rows: await loadPopulationRecurrence(walletAddresses, coverage),
+    });
+  }
+
+  return Object.freeze({ loadHighConfidenceRecurrence, loadPopulationRecurrence });
+}
+
+function unavailable(reason) {
+  return Object.freeze({ ready: false, reason });
 }
 
 module.exports = {

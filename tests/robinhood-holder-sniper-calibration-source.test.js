@@ -15,12 +15,12 @@ test('reads population recurrence for candidate wallets without writing', async 
   const source = createRobinhoodHolderSniperCalibrationSource({
     database: { query: async (sql, params) => {
       calls.push({ sql, params });
-      if (sql.includes('candidate_buy_blocks')) return { rows: [{
+      if (sql.includes('FROM robinhood_wallet_token_first_buys')) return { rows: [{
         wallet_address: params[0],
         token_address: params[0] === WALLET ? TOKEN : TOKEN_B,
         volume_usd: '25.5',
         first_buy_block: '101', first_pool_block: '90', live_through_block: '250',
-        position_ready: true,
+        position_ready: true, buyer_rank: 2,
       }] };
       return { rows: params[0].map((token_address) => ({
         token_address, launch_block: '100',
@@ -32,11 +32,14 @@ test('reads population recurrence for candidate wallets without writing', async 
     historicalFromBlock: '90', completeThroughBlock: '250',
   }), [WALLET, WALLET_B].map((walletAddress, index) => ({
     walletAddress, tokenAddress: index ? TOKEN_B : TOKEN, volumeUsd: '25.5',
-    deltaBlocks: '1', anchorReady: true, withinOneBlock: true, positionReady: true,
+    deltaBlocks: '1', anchorReady: true, withinOneBlock: true, buyerRank: 2,
+    positionReady: true,
   })));
   assert.deepEqual(calls[0].params, [WALLET, 'robinhood', '90', '250']);
   assert.deepEqual(calls[1].params, [WALLET_B, 'robinhood', '90', '250']);
-  assert.match(calls[0].sql, /swap\.wallet_address = \$1/);
+  assert.match(calls[0].sql, /buy\.wallet_address = \$1/);
+  assert.match(calls[0].sql, /LIMIT 5/);
+  assert.doesNotMatch(calls[0].sql, /candidate_buy_blocks/);
   assert.match(calls[0].sql, /robinhood_infrastructure_registry/);
   assert.deepEqual(calls[2].params, [
     [TOKEN, TOKEN_B], ['90', '90'], ['250', '250'], 'robinhood',
@@ -47,4 +50,29 @@ test('reads population recurrence for candidate wallets without writing', async 
     historicalFromBlock: 'invalid', completeThroughBlock: 'invalid',
   }).then((rows) => rows.length), 0);
   assert.equal(calls.length, 3);
+});
+
+test('fails closed until the canonical first-buy projection is caught up', async () => {
+  const now = new Date('2026-08-22T01:00:00Z');
+  const source = createRobinhoodHolderSniperCalibrationSource({
+    database: { query: async () => ({ rows: [{
+      next_time: now, source_through: now, source_next_block: '251',
+    }] }) },
+  });
+  const result = await source.loadHighConfidenceRecurrence([], {
+    historicalFromBlock: '90', completeThroughBlock: '250',
+  });
+  assert.deepEqual(result, {
+    ready: true, completeThroughBlock: '250', rows: [],
+  });
+
+  const behind = createRobinhoodHolderSniperCalibrationSource({
+    database: { query: async () => ({ rows: [{
+      next_time: new Date('2026-08-22T00:59:59Z'), source_through: now,
+      source_next_block: '251',
+    }] }) },
+  });
+  assert.deepEqual(await behind.loadHighConfidenceRecurrence([WALLET], {
+    historicalFromBlock: '90', completeThroughBlock: '250',
+  }), { ready: false, reason: 'first_buy_projection_behind' });
 });

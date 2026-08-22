@@ -24,15 +24,17 @@ function evidence() {
   const position = {
     walletAddress: WALLET, transactionHash: TX, actionIndex: '0', transactionIndex: '1',
     blockNumber: '101', blockHash: HASH, blockTime: '2026-08-21T12:00:05Z',
-    volumeUsd: '25', evidenceVersion: 'rh_launch_v1',
+    volumeUsd: '50', evidenceVersion: 'rh_launch_v1',
   };
   return {
     ready: true, tokenAddress: TOKEN,
     frontier: { blockNumber: '200', blockHash: HASH },
+    coverage: { historicalFromBlock: '90', completeThroughBlock: '200' },
     window: { maxBlocks: 3, maxSeconds: 90 },
     anchor: { ...position, blockNumber: '100', blockTime: '2026-08-21T12:00:00Z' },
     firstBuys: [{
-      ...position, deltaBlocks: '1', deltaSeconds: 5, withinLaunchWindow: true,
+      ...position, deltaBlocks: '1', deltaSeconds: 5, buyerRank: 1,
+      withinLaunchWindow: true,
     }],
     exclusions: [],
   };
@@ -52,8 +54,14 @@ describe('Robinhood holder SNIPER materializer integration', () => {
 
   it('atomically persists an idempotent explicit-threshold snapshot', async () => {
     const materializer = createRobinhoodHolderSniperMaterializer({
-      minimumNotionalUsd: '10',
       source: { loadLaunchEvidence: async () => evidence() },
+      recurrenceSource: { loadHighConfidenceRecurrence: async () => ({ ready: true, rows: [{
+        walletAddress: WALLET, tokenAddress: TOKEN, volumeUsd: '50',
+        anchorReady: true, withinOneBlock: true, buyerRank: 1, positionReady: true,
+      }, {
+        walletAddress: WALLET, tokenAddress: `0x${'a'.repeat(40)}`, volumeUsd: '50',
+        anchorReady: true, withinOneBlock: true, buyerRank: 1, positionReady: true,
+      }] }) },
       database: db,
       now: () => '2026-08-21T13:00:00Z',
     });
@@ -74,6 +82,8 @@ describe('Robinhood holder SNIPER materializer integration', () => {
     assert.equal(rows[0].confidence, 'high');
     assert.equal(rows[0].reason_code, 'early_launch_buy');
     assert.equal(rows[0].through_block_number, '200');
-    assert.equal(rows[0].evidence_json.rule.minimumNotionalUsd, '10');
+    assert.equal(rows[0].evidence_json.rule.minimumNotionalUsd, '50');
+    assert.equal(rows[0].evidence_json.rule.evidenceVersion, 'rh_sniper_high_v1');
+    assert.equal(rows[0].evidence_json.recurrence.qualifyingLaunches, 2);
   });
 });
