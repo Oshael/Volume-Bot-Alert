@@ -19,6 +19,30 @@ function parseArgs(argv = process.argv.slice(2)) {
   return Object.freeze({ write: argv.includes('--write') });
 }
 
+function duration(value) {
+  if (value == null) return 'calculando';
+  const seconds = Math.max(0, Math.round(Number(value) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m${String(seconds % 60).padStart(2, '0')}s`;
+}
+
+function createProgressReporter(logger = console, now = Date.now) {
+  let lastReportedAt = 0;
+  return (state) => {
+    const current = now();
+    const complete = state.processed >= state.total;
+    if (!complete && state.processed > 0 && current - lastReportedAt < 1000) return;
+    lastReportedAt = current;
+    const percent = state.total > 0 ? ((state.processed / state.total) * 100).toFixed(1) : '100.0';
+    const details = state.phase === 'scan' ? ` candidates=${state.candidates || 0}`
+      : (state.phase === 'commit' ? ` written=${state.written || 0}` : '');
+    (logger.error || logger.log).call(logger,
+      `[LiquiditySeed] ${state.phase} ${state.processed}/${state.total} (${percent}%)${details}`
+      + ` elapsed=${duration(state.elapsedMs)} eta=${duration(state.etaMs)}`);
+  };
+}
+
 async function main(deps = {}) {
   const options = deps.options || parseArgs(deps.argv);
   const database = deps.database || db;
@@ -35,7 +59,11 @@ async function main(deps = {}) {
   }
   const result = await runRobinhoodPoolLiquiditySeed({
     repository, cursorRepository, rpcClient,
-  }, { write: options.write, concurrency: config.robinhoodPoolLiquidityWorker.concurrency });
+  }, {
+    write: options.write,
+    concurrency: config.robinhoodPoolLiquidityWorker.concurrency,
+    onProgress: createProgressReporter(deps.logger || console, deps.now),
+  });
   (deps.logger || console).log(JSON.stringify(result, null, 2));
   return result;
 }
@@ -45,4 +73,4 @@ if (require.main === module) main().catch((error) => {
   process.exitCode = 1;
 }).finally(() => db.pool.end());
 
-module.exports = { main, parseArgs };
+module.exports = { createProgressReporter, duration, main, parseArgs };

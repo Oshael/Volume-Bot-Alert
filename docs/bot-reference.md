@@ -559,7 +559,8 @@ varre globalmente o histórico nem o catálogo bruto de pools. Depois consulta s
 blocos distintos e grava snapshots e cursor em uma transação. Observations não são relidas: cada
 swap aceito já atualiza o bucket 1m na mesma transação, e varrer esse log volumoso seria redundante.
 O cursor começa no bloco seguinte ao cutover, portanto eventos ocorridos enquanto o serviço estava
-desligado não são perdidos.
+desligado não são perdidos. O CLI pagina a busca em lotes de mil pools e exibe progresso, tempo
+decorrido e ETA separadamente para `scan`, `headers` e `commit`; o ETA é recalculado a cada lote.
 `ROBINHOOD_POOL_LIQUIDITY_START_BLOCK` fica reservado ao bootstrap manual sem seed; depois que o
 cursor existe, ele é a fonte de verdade. O metadata da lease expõe cursor, lag, métricas do poller e
 totais de pools afetadas, salvas e com falha.

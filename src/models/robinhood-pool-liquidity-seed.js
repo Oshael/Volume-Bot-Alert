@@ -1,18 +1,29 @@
 const db = require('./db');
 
 const CHAIN = 'robinhood';
+const READ_BATCH_SIZE = 1000;
 const WRITE_BATCH_SIZE = 500;
-const CANDIDATES_SQL = `WITH relevant_pools AS MATERIALIZED (
+const POOL_COUNT_SQL = `SELECT COUNT(*)::text AS total
+  FROM token_catalog catalog
+  INNER JOIN robinhood_pool_registry registry
+    ON registry.chain = catalog.chain AND registry.token_address = catalog.address
+   AND registry.active = TRUE
+ WHERE catalog.chain = '${CHAIN}'`;
+const CANDIDATES_SQL = `WITH pool_page AS MATERIALIZED (
   SELECT registry.chain, registry.protocol, registry.market_key
     FROM token_catalog catalog
     INNER JOIN robinhood_pool_registry registry
       ON registry.chain = catalog.chain AND registry.token_address = catalog.address
      AND registry.active = TRUE
    WHERE catalog.chain = '${CHAIN}'
+     AND ($2::text IS NULL
+       OR (registry.protocol, registry.market_key) > ($2::text, $3::text))
+   ORDER BY registry.protocol, registry.market_key
+   LIMIT $4::int
 ), latest AS (
-  SELECT pool.protocol, pool.market_key, evidence.*
-    FROM relevant_pools pool
-    INNER JOIN LATERAL (
+  SELECT pool.chain, pool.protocol, pool.market_key, evidence.*
+    FROM pool_page pool
+    LEFT JOIN LATERAL (
       SELECT candidate.block_number, candidate.log_index,
              candidate.liquidity_usd, candidate.liquidity_raw,
              candidate.liquidity_status, candidate.liquidity_confidence,
@@ -69,16 +80,12 @@ const CANDIDATES_SQL = `WITH relevant_pools AS MATERIALIZED (
 )
 SELECT latest.protocol, latest.market_key, latest.block_number,
        latest.liquidity_usd, latest.liquidity_raw, latest.liquidity_status,
-       latest.liquidity_confidence, latest.liquidity_warning
+       latest.liquidity_confidence, latest.liquidity_warning,
+       snapshot.snapshot_block_number
   FROM latest
-  INNER JOIN robinhood_pool_registry registry
-    ON registry.chain = '${CHAIN}' AND registry.active = TRUE
-   AND registry.protocol = latest.protocol AND registry.market_key = latest.market_key
   LEFT JOIN robinhood_pool_liquidity_snapshots snapshot
-    ON snapshot.chain = registry.chain AND snapshot.protocol = registry.protocol
-   AND snapshot.market_key = registry.market_key
- WHERE snapshot.snapshot_block_number IS NULL
-    OR latest.block_number > snapshot.snapshot_block_number
+    ON snapshot.chain = latest.chain AND snapshot.protocol = latest.protocol
+   AND snapshot.market_key = latest.market_key
  ORDER BY latest.protocol, latest.market_key`;
 
 const WRITE_SQL = `WITH input AS (
@@ -116,6 +123,9 @@ WHERE robinhood_pool_liquidity_snapshots.snapshot_block_number IS NULL
 RETURNING market_key`;
 
 function mapCandidate(row) {
+  if (row.block_number == null) return null;
+  if (row.snapshot_block_number != null
+    && BigInt(row.snapshot_block_number) >= BigInt(row.block_number)) return null;
   return Object.freeze({
     protocol: String(row.protocol), marketKey: String(row.market_key),
     blockNumber: String(row.block_number), liquidityUsd: String(row.liquidity_usd),
@@ -131,8 +141,30 @@ function createRobinhoodPoolLiquiditySeedRepository(options = {}) {
 
   async function listCandidates(input = {}) {
     const throughBlock = BigInt(String(input.throughBlock)).toString();
-    const { rows } = await database.query(CANDIDATES_SQL, [throughBlock]);
-    return Object.freeze(rows.map(mapCandidate));
+    const batchSize = Math.max(1, Math.min(Number(input.batchSize) || READ_BATCH_SIZE, 5000));
+    const count = await database.query(POOL_COUNT_SQL);
+    const total = Number(count.rows[0]?.total || 0);
+    const candidates = [];
+    let processed = 0;
+    let afterProtocol = null;
+    let afterMarketKey = null;
+    input.onProgress?.({ processed, total, candidates: candidates.length });
+    while (processed < total) {
+      const { rows } = await database.query(CANDIDATES_SQL, [
+        throughBlock, afterProtocol, afterMarketKey, batchSize,
+      ]);
+      if (!rows.length) break;
+      for (const row of rows) {
+        const candidate = mapCandidate(row);
+        if (candidate) candidates.push(candidate);
+      }
+      processed += rows.length;
+      afterProtocol = String(rows.at(-1).protocol);
+      afterMarketKey = String(rows.at(-1).market_key);
+      input.onProgress?.({ processed, total, candidates: candidates.length });
+      if (rows.length < batchSize) break;
+    }
+    return Object.freeze(candidates);
   }
 
   async function commitSeed(input = {}) {
@@ -146,6 +178,9 @@ function createRobinhoodPoolLiquiditySeedRepository(options = {}) {
         const batch = rows.slice(offset, offset + WRITE_BATCH_SIZE);
         const result = await client.query(WRITE_SQL, [JSON.stringify(batch)]);
         written += result.rowCount;
+        input.onProgress?.({
+          processed: Math.min(offset + batch.length, rows.length), total: rows.length, written,
+        });
       }
       const cursor = await client.query(
         `INSERT INTO robinhood_pool_liquidity_event_cursors (
@@ -170,5 +205,5 @@ function createRobinhoodPoolLiquiditySeedRepository(options = {}) {
 }
 
 module.exports = {
-  CANDIDATES_SQL, WRITE_SQL, createRobinhoodPoolLiquiditySeedRepository,
+  CANDIDATES_SQL, POOL_COUNT_SQL, WRITE_SQL, createRobinhoodPoolLiquiditySeedRepository,
 };
