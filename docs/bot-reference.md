@@ -1355,7 +1355,11 @@ token e recorrência por wallet. Aplique `node src/utils/db-init-stage149.js` an
 do futuro backfill; criar a tabela não inicia escrita, worker ou classificação.
 O comando de calibração antigo não deve ser usado para recalcular recorrência
 global diretamente sobre `robinhood_wallet_swaps`; essa leitura permanece cara
-até o backfill da Stage 149 ser entregue e concluído.
+até o backfill da Stage 149 ser entregue e concluído. O writer da projeção opera
+em ranges temporais de no máximo 24 horas, em uma única query por range. Ranges
+podem terminar fora de ordem porque somente uma posição canônica anterior
+substitui o fato vigente. A ausência de `transaction_index`/`block_hash` no
+primeiro bloco de compra aborta o range sem escrita parcial.
 
 Cadastros usam um manifesto JSON append-only com `entries`; cada entrada contém
 `address`, `kind`, `label`, `source`, `evidence`, `validFromBlock`,

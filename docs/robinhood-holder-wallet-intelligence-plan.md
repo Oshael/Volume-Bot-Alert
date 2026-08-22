@@ -336,8 +336,11 @@ carga sem ETA confiável.
      também compara perfis agregados por bloco/posição e mede as wallets
      `within1BlockTop5` da amostra contra toda a população elegível, sem expor
      endereços. A Stage 149 cria a fonte durável de primeira compra canônica por
-     token/wallet, sem misturar classificação ou confiança; backfill checkpointed,
-     manutenção live, decisão da regra e ativação seguem em cortes separados.
+     token/wallet, sem misturar classificação ou confiança. O writer SQL em lote
+     também está concluído: processa ranges temporais limitados, aceita execução
+     fora de ordem com precedência canônica e falha fechado sem posição de tx.
+     Backfill checkpointed, manutenção live, decisão da regra e ativação seguem
+     em cortes separados.
 4. **INSIDER direto**
    - começar por distribuição direta do token;
    - adicionar funding nativo direto somente quando a fonte estiver comprovada.
