@@ -5,7 +5,7 @@ const {
   executeBackfill, plan, runPreflight,
 } = require('../src/services/robinhood-first-buy-backfill-runner');
 const {
-  parseArgs,
+  assertDurableSourceCoverage, parseArgs,
 } = require('../src/utils/backfill-robinhood-first-buys');
 
 const SOURCE = {
@@ -96,5 +96,19 @@ describe('Robinhood first-buy backfill runner', () => {
     assert.deepEqual(parseArgs(['--run-id=12', '--apply']).runId, '12');
     assert.throws(() => parseArgs(['--apply']), /--from and --through/);
     assert.throws(() => parseArgs(['--run-id=12', '--from=x']), /cannot be combined/);
+  });
+
+  it('refuses a backfill beyond the durable wallet-swap frontier', async () => {
+    const sourceCursors = { async loadRetentionGate() { return {
+      valid: true, completeThroughBlock: '100',
+      seed: { lifecycleState: 'complete' },
+      live: { checkpointTimestamp: '2026-08-22T01:00:00.000Z' },
+    }; } };
+    await assert.rejects(assertDurableSourceCoverage(
+      sourceCursors, '2026-08-22T01:00:01.000Z'
+    ), (error) => error.code === 'first_buy_source_ahead');
+    assert.deepEqual(await assertDurableSourceCoverage(
+      sourceCursors, '2026-08-22T01:00:00.001Z'
+    ), { durableThrough: '2026-08-22T01:00:00.001Z', completeThroughBlock: '100' });
   });
 });

@@ -1382,6 +1382,17 @@ impresso antes do primeiro range e uma interrupção pode ser retomada com
 `npm run robinhood:first-buy-backfill -- --run-id=<id> --apply`. A retomada repete
 o preflight contra a janela congelada antes de escrever e recupera leases
 expiradas. Reduza `--range-seconds` se uma amostra atingir o timeout de 120s.
+O preflight também exige seed de wallet-swap realmente `complete` (não apenas
+terminal/abandonado) e que `sourceThrough` não ultrapasse sua frontier durável;
+isso impede declarar como coberto um intervalo cujos swaps ainda não foram
+persistidos.
+
+A Stage 152 cria `robinhood_first_buy_live_cursors`, cursor independente do
+worker de holders e vinculado ao `run-id` concluído usado como seed. Ele avança
+por tempo somente depois de materializar o range, com versão otimista e a
+frontier do wallet-swap registrada. A manutenção recusa regressão temporal ou de
+bloco e aguarda tanto o seed quanto a fonte durável. Aplicar a stage não inicia o
+loop; o worker e sua configuração são entregues separadamente.
 
 Cadastros usam um manifesto JSON append-only com `entries`; cada entrada contém
 `address`, `kind`, `label`, `source`, `evidence`, `validFromBlock`,

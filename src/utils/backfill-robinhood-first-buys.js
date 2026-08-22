@@ -6,8 +6,14 @@ const {
   createRobinhoodWalletTokenFirstBuyRepository,
 } = require('../models/robinhood-wallet-token-first-buy');
 const {
+  createRobinhoodWalletSwapCursorRepository,
+} = require('../models/robinhood-wallet-swap-cursor');
+const {
   executeBackfill, runPreflight,
 } = require('../services/robinhood-first-buy-backfill-runner');
+const {
+  __private: { exclusiveCheckpointTime },
+} = require('../services/robinhood-first-buy-live-runner');
 
 function parseArgs(argv = process.argv.slice(2)) {
   const values = {};
@@ -47,6 +53,25 @@ function progressReporter(logger = console) {
   };
 }
 
+async function assertDurableSourceCoverage(sourceCursors, sourceThrough) {
+  const gate = await sourceCursors.loadRetentionGate();
+  if (!gate?.valid || gate.seed?.lifecycleState !== 'complete') {
+    const reason = gate?.valid ? 'seed_not_complete' : (gate?.reason || 'unknown');
+    const error = new Error(`wallet-swap source is not durable: ${reason}`);
+    error.code = 'first_buy_source_unavailable';
+    throw error;
+  }
+  const durableThrough = exclusiveCheckpointTime(gate.live.checkpointTimestamp);
+  const requestedThrough = new Date(sourceThrough);
+  if (!Number.isFinite(requestedThrough.getTime())) throw new Error('sourceThrough must be an instant');
+  if (requestedThrough > new Date(durableThrough)) {
+    const error = new Error(`sourceThrough exceeds durable wallet swaps (${durableThrough})`);
+    error.code = 'first_buy_source_ahead';
+    throw error;
+  }
+  return Object.freeze({ durableThrough, completeThroughBlock: gate.completeThroughBlock });
+}
+
 async function main(deps = {}) {
   const options = deps.options || parseArgs(deps.argv);
   const database = deps.database || db;
@@ -55,12 +80,15 @@ async function main(deps = {}) {
     || createRobinhoodFirstBuyBackfillRepository({ database });
   const firstBuyRepository = deps.firstBuyRepository
     || createRobinhoodWalletTokenFirstBuyRepository({ database });
+  const sourceCursors = deps.sourceCursors
+    || createRobinhoodWalletSwapCursorRepository({ database });
   let source = options;
   if (options.runId) {
     const run = await backfillRepository.getRun(options.runId);
     if (!run) throw new Error('first-buy backfill run was not found');
     source = { ...options, ...run };
   }
+  await assertDurableSourceCoverage(sourceCursors, source.sourceThrough);
   (logger.error || logger.log).call(logger, '[FirstBuyBackfill] mandatory read-only preflight...');
   const preflight = await runPreflight({ firstBuyRepository, now: deps.now }, source);
   logger.log(JSON.stringify({ mode: 'preflight', ...preflight }, null, 2));
@@ -87,4 +115,4 @@ if (require.main === module) main().catch((error) => {
   process.exitCode = 1;
 }).finally(() => db.pool.end());
 
-module.exports = { main, parseArgs, progressReporter };
+module.exports = { assertDurableSourceCoverage, main, parseArgs, progressReporter };

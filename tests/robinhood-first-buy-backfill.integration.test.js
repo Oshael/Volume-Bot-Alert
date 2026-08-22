@@ -7,11 +7,16 @@ const db = require('../src/models/db');
 const {
   createRobinhoodFirstBuyBackfillRepository,
 } = require('../src/models/robinhood-first-buy-backfill');
+const {
+  createRobinhoodFirstBuyLiveCursorRepository,
+} = require('../src/models/robinhood-first-buy-live-cursor');
 const stage151 = require('../src/utils/db-init-stage151');
+const stage152 = require('../src/utils/db-init-stage152');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 async function cleanup() {
+  await db.query('DELETE FROM robinhood_first_buy_live_cursors');
   await db.query('DELETE FROM robinhood_first_buy_backfill_ranges');
   await db.query('DELETE FROM robinhood_first_buy_backfill_runs');
 }
@@ -20,6 +25,8 @@ describe('Robinhood first-buy backfill control integration', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
     await stage151.init({ closePool: false });
+    await stage152.init({ closePool: false });
+    await stage152.init({ closePool: false });
     await stage151.init({ closePool: false });
     await cleanup();
   });
@@ -89,5 +96,24 @@ describe('Robinhood first-buy backfill control integration', () => {
       etaSeconds: complete.etaSeconds }, {
       status: 'completed', progressPct: 100, rowsScanned: 30, factsWritten: 11, etaSeconds: 0,
     });
+
+    const schema = SCHEMA_GROUPS.find(({ key }) => (
+      key === 'stage152-robinhood-first-buy-live-cursor'
+    ));
+    assert.equal(schema.repair, 'node src/utils/db-init-stage152.js');
+    const live = createRobinhoodFirstBuyLiveCursorRepository({ database: db });
+    const initialized = await live.initializeFromRun(run.id);
+    assert.deepEqual({ seedRunId: initialized.seedRunId, nextTime: initialized.nextTime }, {
+      seedRunId: run.id, nextTime: '2026-08-22T02:00:00.000Z',
+    });
+    const advanced = await live.advance({
+      nextTime: '2026-08-22T02:30:00Z', sourceThrough: '2026-08-22T03:00:00Z',
+      sourceNextBlock: '100', expectedVersion: initialized.version,
+    });
+    assert.equal(advanced.version, initialized.version + 1);
+    assert.equal(await live.advance({
+      nextTime: '2026-08-22T02:40:00Z', sourceThrough: '2026-08-22T03:00:00Z',
+      sourceNextBlock: '100', expectedVersion: initialized.version,
+    }), null);
   });
 });

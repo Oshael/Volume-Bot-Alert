@@ -4089,6 +4089,28 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage152-robinhood-first-buy-live-cursor',
+    name: 'Stage 152 Robinhood first-buy LIVE cursor',
+    repair: 'node src/utils/db-init-stage152.js',
+    tables: [{
+      table: 'robinhood_first_buy_live_cursors',
+      columns: [
+        'chain', 'seed_run_id', 'next_time', 'source_through',
+        'source_next_block', 'version', 'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'robinhood_first_buy_live_cursors_pkey',
+        includes: ['PRIMARY KEY', 'chain'],
+      }, {
+        name: 'robinhood_first_buy_live_cursors_seed_run_id_fkey',
+        includes: ['FOREIGN KEY', 'robinhood_first_buy_backfill_runs'],
+      }, {
+        name: 'rh_first_buy_live_cursors_progress_check',
+        includes: ['CHECK', 'next_time', 'source_through', 'source_next_block', 'version'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
