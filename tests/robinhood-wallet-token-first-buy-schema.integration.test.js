@@ -7,6 +7,9 @@ const db = require('../src/models/db');
 const {
   createRobinhoodWalletTokenFirstBuyRepository,
 } = require('../src/models/robinhood-wallet-token-first-buy');
+const {
+  createRobinhoodTransactionPositionRepairRepository,
+} = require('../src/models/robinhood-transaction-position-repair');
 const stage63 = require('../src/utils/db-init-stage63');
 const stage90 = require('../src/utils/db-init-stage90');
 const stage139 = require('../src/utils/db-init-stage139');
@@ -122,6 +125,12 @@ describe('Robinhood wallet-token first buy schema integration', () => {
       [WALLET, TOKEN, SWAP_HASHES[0], SWAP_HASHES[1], SWAP_HASHES[3], MARKET, QUOTE,
         `0x${'a'.repeat(40)}`, SWAP_HASHES[2]]
     );
+    const repair = createRobinhoodTransactionPositionRepairRepository({ database: db });
+    assert.deepEqual(await repair.listMissing({
+      rangeStart: '2099-01-03T00:00:00Z', rangeEnd: '2099-01-04T00:00:00Z',
+    }), [{
+      transaction_hash: SWAP_HASHES[2], block_number: '40', transaction_index: null,
+    }]);
     const repository = createRobinhoodWalletTokenFirstBuyRepository({ database: db });
     await repository.materializeRange({
       rangeStart: '2099-01-02T00:00:00Z', rangeEnd: '2099-01-03T00:00:00Z',

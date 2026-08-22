@@ -1410,6 +1410,21 @@ retomáveis. Progresso e ETA usam apenas ranges realmente concluídos; antes des
 amostra o ETA permanece indisponível. Aplicar a stage não cria campanha nem
 executa carga.
 
+Acervos anteriores à Stage 139 podem conservar lacunas em
+`robinhood_transaction_positions` mesmo com os cursores `unified_transfer_v1`
+concluídos. Antes do first-buy, execute no PC/archive
+`npm run robinhood:transaction-position-repair -- --from=<ISO> --through=<ISO>
+--range-seconds=3600 --concurrency=2`. O preflight consulta amostras distribuídas,
+faz RPC de full-block sem escrever, aplica margem de 25% e só aprova projeções de
+até cinco horas; amostra truncada exige reduzir `--range-seconds`. Após revisar,
+repita com `--apply`. Cada execução confirmada para após no máximo 240 minutos
+(configurável por `--max-minutes`, teto de 300) e informa `resumeFrom` quando
+pausada. O reparo é idempotente: uma retomada pode usar esse instante como novo
+`--from`; posições já gravadas são ignoradas. `RH_NODE_RPC_URL` deve apontar para
+o archive local e `DATABASE_URL` para a VPS. O comando repara somente buys de
+pools registrados dentro da janela durável e nunca usa `action_index` como
+substituto de `transaction_index`.
+
 Depois das Stages 149 e 151, planeje a carga com
 `npm run robinhood:first-buy-backfill -- --from=<ISO> --through=<ISO> --range-seconds=3600 --concurrency=2`.
 O modo padrão é somente leitura: consulta três ranges distribuídos pela janela,
