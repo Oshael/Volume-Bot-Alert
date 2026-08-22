@@ -72,6 +72,7 @@ async function main(deps = {}) {
   }, {
     write: options.write,
     concurrency: config.robinhoodPoolLiquidityWorker.concurrency,
+    headerBatchSize: config.robinhoodPoolLiquidityWorker.seedHeaderBatchSize,
     onProgress: createProgressReporter(logger, deps.now),
   });
   logger.log(JSON.stringify(result, null, 2));

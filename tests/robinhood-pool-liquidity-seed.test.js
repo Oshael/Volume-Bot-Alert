@@ -113,16 +113,21 @@ describe('Robinhood pool liquidity historical seed', () => {
       candidates: 3, distinctBlocks: 2, written: 0,
     });
     const requested = [];
-    dependencies.rpcClient = { async request(method, params) {
-      requested.push(params[0]);
-      const number = BigInt(params[0]);
-      return { number: params[0], hash: HASH, timestamp: `0x${(1000n + number).toString(16)}` };
+    let batchCalls = 0;
+    dependencies.rpcClient = { async requestBatch(requests) {
+      batchCalls += 1;
+      return requests.map(({ params }) => {
+        requested.push(params[0]);
+        const number = BigInt(params[0]);
+        return { number: params[0], hash: HASH, timestamp: `0x${(1000n + number).toString(16)}` };
+      });
     } };
     const progress = [];
     const result = await runRobinhoodPoolLiquiditySeed(dependencies, {
       write: true, onProgress: (state) => progress.push(state),
     });
     assert.deepEqual(requested.sort(), ['0x64', '0x65']);
+    assert.equal(batchCalls, 1);
     assert.equal(committed[0].rows.length, 3);
     assert.equal(committed[0].startBlock, '111');
     assert.equal(result.cursorInitialized, true);

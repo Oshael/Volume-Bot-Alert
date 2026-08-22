@@ -1336,6 +1336,9 @@ module.exports = {
     concurrency: parseIntegerInRange(
       process.env.ROBINHOOD_POOL_LIQUIDITY_CONCURRENCY, 5, 1, 20
     ),
+    seedHeaderBatchSize: parseIntegerInRange(
+      process.env.ROBINHOOD_POOL_LIQUIDITY_SEED_HEADER_BATCH_SIZE, 100, 1, 100
+    ),
     leaseHeartbeatMs: parseIntegerInRange(
       process.env.ROBINHOOD_POOL_LIQUIDITY_LEASE_HEARTBEAT_MS, 30_000, 1000, 300_000
     ),

@@ -183,7 +183,8 @@ describe('runtime worker groups config', () => {
     assert.match(env, /ROBINHOOD_POOL_LIQUIDITY_POLL_INTERVAL_MS=2000/);
     assert.match(env, /ROBINHOOD_POOL_LIQUIDITY_RANGE_SIZE=10/);
     assert.match(env, /ROBINHOOD_POOL_LIQUIDITY_REORG_DEPTH=12/);
-    assert.doesNotMatch(env, /\nPORT=|_REFRESH_MS=|_BATCH_SIZE=/);
+    assert.match(env, /ROBINHOOD_POOL_LIQUIDITY_SEED_HEADER_BATCH_SIZE=100/);
+    assert.doesNotMatch(env, /\nPORT=|_REFRESH_MS=/);
   });
 
   it('fails fast on invalid worker groups', () => {

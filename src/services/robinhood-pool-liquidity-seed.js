@@ -8,6 +8,22 @@ function concurrency(value) {
   return parsed;
 }
 
+function headerBatchSize(value) {
+  const parsed = Number(value ?? 100);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 100) {
+    throw new Error('seed header batch size must be between 1 and 100');
+  }
+  return parsed;
+}
+
+function chunks(items, size) {
+  const output = [];
+  for (let offset = 0; offset < items.length; offset += size) {
+    output.push(items.slice(offset, offset + size));
+  }
+  return output;
+}
+
 async function mapConcurrent(items, limit, operation) {
   const output = new Array(items.length);
   let next = 0;
@@ -70,18 +86,30 @@ async function runRobinhoodPoolLiquiditySeed(deps = {}, options = {}) {
     candidates: candidates.length, distinctBlocks: blockNumbers.length,
   };
   if (!write) return Object.freeze({ ...summary, written: 0 });
-  if (!deps.rpcClient?.request) throw new Error('rpcClient is required in write mode');
+  if (!deps.rpcClient?.requestBatch) throw new Error('rpcClient batch support is required in write mode');
   const headersStartedAt = (options.now || Date.now)();
   let processedHeaders = 0;
   emitProgress('headers', headersStartedAt, { processed: 0, total: blockNumbers.length });
-  const anchors = await mapConcurrent(blockNumbers, concurrency(options.concurrency), async (number) => {
-    const block = await deps.rpcClient.request('eth_getBlockByNumber', [toQuantity(number), false]);
-    processedHeaders += 1;
-    emitProgress('headers', headersStartedAt, {
-      processed: processedHeaders, total: blockNumbers.length,
-    });
-    return [number, normalizeAnchor(block, number)];
-  });
+  const batches = chunks(blockNumbers, headerBatchSize(options.headerBatchSize));
+  const anchorBatches = await mapConcurrent(
+    batches, concurrency(options.concurrency), async (numbers) => {
+      const blocks = await deps.rpcClient.requestBatch(numbers.map((number) => ({
+        method: 'eth_getBlockByNumber', params: [toQuantity(number), false],
+      })));
+      if (!Array.isArray(blocks) || blocks.length !== numbers.length) {
+        throw new Error('canonical block batch returned an invalid result count');
+      }
+      const normalized = blocks.map((block, index) => [
+        numbers[index], normalizeAnchor(block, numbers[index]),
+      ]);
+      processedHeaders += numbers.length;
+      emitProgress('headers', headersStartedAt, {
+        processed: processedHeaders, total: blockNumbers.length,
+      });
+      return normalized;
+    }
+  );
+  const anchors = anchorBatches.flat();
   const byBlock = new Map(anchors);
   const rows = candidates.map((candidate) => ({
     protocol: candidate.protocol, market_key: candidate.marketKey,
