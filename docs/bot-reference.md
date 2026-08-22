@@ -1040,6 +1040,7 @@ Stages confirmados:
 | 141 | floor durável a partir do qual a captura live bufferiza todos os `Transfer` |
 | 142 | índice parcial do journal aplicado usado no handoff do backfill global |
 | 149 | primeira compra canônica materializada por token/wallet para launch intelligence |
+| 151 | campanha e ranges retomáveis do backfill de primeiras compras |
 
 Holders RH possuem duas fontes complementares. A Stage 111 guarda o summary
 Blockscout usado como bootstrap/fallback; as Stages 116–118 mantêm o ledger local
@@ -1363,6 +1364,12 @@ em ranges temporais de no máximo 24 horas, em uma única query por range. Range
 podem terminar fora de ordem porque somente uma posição canônica anterior
 substitui o fato vigente. A ausência de `transaction_index`/`block_hash` no
 primeiro bloco de compra aborta o range sem escrita parcial.
+
+A Stage 151 congela `source_from/source_through`, divide essa janela em ranges e
+permite claims concorrentes com `FOR UPDATE SKIP LOCKED`. Leases expiradas são
+retomáveis. Progresso e ETA usam apenas ranges realmente concluídos; antes dessa
+amostra o ETA permanece indisponível. Aplicar a stage não cria campanha nem
+executa carga.
 
 Cadastros usam um manifesto JSON append-only com `entries`; cada entrada contém
 `address`, `kind`, `label`, `source`, `evidence`, `validFromBlock`,

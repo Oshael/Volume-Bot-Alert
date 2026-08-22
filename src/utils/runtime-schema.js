@@ -4031,6 +4031,64 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage151-robinhood-first-buy-backfill-control',
+    name: 'Stage 151 Robinhood first-buy backfill control',
+    repair: 'node src/utils/db-init-stage151.js',
+    tables: [{
+      table: 'robinhood_first_buy_backfill_runs',
+      columns: [
+        'id', 'chain', 'evidence_version', 'source_from', 'source_through',
+        'range_seconds', 'status', 'range_count', 'started_at', 'finished_at',
+        'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_first_buy_backfill_runs_range_check',
+        includes: ['CHECK', 'source_from', 'source_through', 'range_seconds', 'range_count'],
+      }, {
+        name: 'rh_first_buy_backfill_runs_status_check',
+        includes: ['CHECK', 'planned', 'running', 'paused', 'completed', 'failed'],
+      }, {
+        name: 'rh_first_buy_backfill_runs_lifecycle_check',
+        includes: ['CHECK', 'started_at', 'finished_at'],
+      }],
+      indexes: [{
+        name: 'idx_rh_first_buy_backfill_runs_active',
+        includes: ['chain', 'planned', 'running', 'paused'],
+      }],
+    }, {
+      table: 'robinhood_first_buy_backfill_ranges',
+      columns: [
+        'id', 'run_id', 'chain', 'range_start', 'range_end', 'status',
+        'lease_owner', 'lease_until', 'attempt_count', 'next_attempt_at',
+        'rows_scanned', 'facts_considered', 'facts_written', 'last_error_code',
+        'last_error_message', 'started_at', 'completed_at', 'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_first_buy_backfill_ranges_identity',
+        includes: ['UNIQUE', 'run_id', 'range_start', 'range_end'],
+      }, {
+        name: 'rh_first_buy_backfill_ranges_lease_check',
+        includes: ['CHECK', 'leased', 'lease_owner', 'lease_until'],
+      }, {
+        name: 'rh_first_buy_backfill_ranges_counts_check',
+        includes: ['CHECK', 'attempt_count', 'rows_scanned', 'facts_written'],
+      }, {
+        name: 'rh_first_buy_backfill_ranges_completion_check',
+        includes: ['CHECK', 'completed', 'completed_at'],
+      }],
+      indexes: [{
+        name: 'idx_rh_first_buy_backfill_ranges_claim',
+        includes: ['run_id', 'next_attempt_at', 'range_start', 'pending'],
+      }, {
+        name: 'idx_rh_first_buy_backfill_ranges_lease',
+        includes: ['run_id', 'lease_until', 'leased'],
+      }, {
+        name: 'idx_rh_first_buy_backfill_ranges_progress',
+        includes: ['run_id', 'status', 'range_start'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
