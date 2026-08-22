@@ -167,18 +167,14 @@ function createRobinhoodHolderSniperMaterializer(options = {}) {
       return Object.freeze({ status: 'deferred', reason: evidence.reason, records: 0 });
     }
     const candidates = highConfidenceCandidates(evidence, rule);
-    let recurrenceRows = [];
-    if (candidates.length) {
-      const recurrence = await recurrenceSource.loadHighConfidenceRecurrence(
-        candidates.map(({ walletAddress }) => walletAddress), evidence.coverage
-      );
-      if (!recurrence.ready) {
-        return Object.freeze({ status: 'deferred', reason: recurrence.reason, records: 0 });
-      }
-      recurrenceRows = recurrence.rows;
+    const recurrence = await recurrenceSource.loadHighConfidenceRecurrence(
+      candidates.map(({ walletAddress }) => walletAddress), evidence.coverage
+    );
+    if (!recurrence.ready) {
+      return Object.freeze({ status: 'deferred', reason: recurrence.reason, records: 0 });
     }
     return classifications.replaceClassifierSnapshot(
-      buildSniperSnapshot(evidence, recurrenceRows, now(), rule)
+      buildSniperSnapshot(evidence, recurrence.rows, now(), rule)
     );
   }
 

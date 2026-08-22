@@ -352,8 +352,12 @@ carga sem ETA confiável.
      está fechada e coberta no materializador: top 5, até 1 bloco, pelo menos
      US$50 e recorrência em 2+ lançamentos; a recorrência lê a projeção canônica
      da Stage 149 em vez de reagrupar swaps brutos e adia a classificação até o
-     cursor da Stage 152 estar alcançado. Worker/materialização em escala, shadow
-     audit e ativação da UI seguem em cortes separados.
+     cursor da Stage 152 estar alcançado. O runner shadow paginado também está
+     concluído: seleciona apenas ledgers live atrasados, só avança quando o cursor
+     de first-buy está alcançado, limita concorrência e contém falhas por token.
+     A leitura pública mantém allowlist `LP`/`CEX`, portanto snapshots SNIPER
+     persistidos pelo shadow não vazam para a UI. Loop/lease/telemetria, auditoria
+     da amostra e ativação pública seguem em cortes separados.
 4. **INSIDER direto**
    - começar por distribuição direta do token;
    - adicionar funding nativo direto somente quando a fonte estiver comprovada.

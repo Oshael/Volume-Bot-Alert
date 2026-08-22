@@ -1333,7 +1333,11 @@ O expanded chart usa `primaryTag` nos glifos e os valores materializados no pain
 de distribuição; métricas indisponíveis continuam como `—`.
 
 O materializador `SNIPER` existe, mas não pertence ao processo de holders e não
-tem worker ativo. A política pública versionada `rh_sniper_high_v1` exige compra
+tem worker ativo. O runner shadow já executa lotes limitados e retomáveis por
+`afterToken`, mas ainda não possui loop, lease ou configuração operacional. Seu
+seletor só admite ledger `live`, cursor de first-buy alcançado e classificação
+ausente ou atrasada; concorrência máxima é 4 e uma falha de token não aborta o
+lote. A política pública versionada `rh_sniper_high_v1` exige compra
 entre os 5 primeiros compradores canônicos, em até 1 bloco da âncora, notional
 de pelo menos US$50 e recorrência desse padrão em 2 ou mais lançamentos. Creator,
 pools, routers, infraestrutura conhecida e burn são excluídos. A janela ampla de
@@ -1361,6 +1365,9 @@ regra pública de alta confiança. A recorrência do materializador agora lê a
 projeção canônica indexada da Stage 149; não reagrega o histórico bruto de swaps.
 Se o cursor live da Stage 152 estiver ausente ou atrás da cobertura de swaps, o
 materializador retorna `deferred` e não substitui o snapshot vigente.
+A API de holders mantém por padrão somente `LP` e `CEX` na allowlist pública;
+registros SNIPER persistidos durante shadow não entram em `tags`, `primaryTag` ou
+no estado agregado da resposta até a ativação explícita dessa tag.
 A Stage 149 introduz
 `robinhood_wallet_token_first_buys`, fonte neutra e reutilizável para ordem por
 token e recorrência por wallet. Aplique `node src/utils/db-init-stage149.js` antes

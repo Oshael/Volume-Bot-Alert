@@ -19,6 +19,9 @@ function rowsFor(sql) {
   }, {
     classifier: 'lp', status: 'ready', through_block_number: '199',
     through_block_hash: HASH_B, observed_at: '2026-08-21T11:59:00Z',
+  }, {
+    classifier: 'sniper', status: 'reorged', through_block_number: '1',
+    through_block_hash: HASH_B, observed_at: '2026-08-21T11:58:00Z',
   }];
   if (sql.includes('holder_classifications')) return [{
     wallet_address: WALLET_A, tag: 'cex', confidence: 'deterministic',
@@ -28,10 +31,19 @@ function rowsFor(sql) {
     wallet_address: WALLET_A, tag: 'lp', confidence: 'deterministic',
     reason_code: 'registered_token_pool', observed_at: '2026-08-21T11:59:00Z',
     expires_at: null,
+  }, {
+    wallet_address: WALLET_A, tag: 'sniper', confidence: 'high',
+    reason_code: 'early_launch_buy', observed_at: '2026-08-21T11:58:00Z',
+    expires_at: null,
   }];
   return [{
     metric: 'dev_hold', classification_version: 'rh_holder_v1', status: 'ready',
     value_numerator_raw: '25', value_denominator_raw: '1000', wallet_count: '1',
+    group_count: null, through_block_number: '200', through_block_hash: HASH_A,
+    observed_at: '2026-08-21T12:00:00Z',
+  }, {
+    metric: 'snipers', classification_version: 'rh_holder_v1', status: 'ready',
+    value_numerator_raw: '2', value_denominator_raw: '100', wallet_count: '2',
     group_count: null, through_block_number: '200', through_block_hash: HASH_A,
     observed_at: '2026-08-21T12:00:00Z',
   }];
@@ -72,6 +84,24 @@ describe('Robinhood holder intelligence public read', () => {
     assert.ok(calls.every(([, params]) => params[0] === TOKEN));
     assert.match(calls.find(([sql]) => sql.includes('holder_classifications'))[0],
       /expires_at > NOW/);
+    assert.ok(calls.slice(0, 2).every(([, params]) => (
+      params.at(-1).includes('lp') && params.at(-1).includes('cex')
+        && !params.at(-1).includes('sniper')
+    )));
+  });
+
+  it('exposes a shadow tag only when explicitly admitted by the caller', async () => {
+    const repository = createRobinhoodHolderIntelligenceReadRepository({
+      publicTags: ['lp', 'cex', 'sniper'],
+      database: { query: async (sql) => ({ rows: rowsFor(sql) }) },
+    });
+    const result = await repository.loadPage({
+      tokenAddress: TOKEN, walletAddresses: [WALLET_A],
+    });
+
+    assert.deepEqual(result.holders[0].tags, ['lp', 'cex', 'sniper']);
+    assert.equal(result.holders[0].primaryTag, 'sniper');
+    assert.equal(result.distribution.find(({ metric }) => metric === 'snipers').status, 'ready');
   });
 
   it('marks a same-block hash disagreement as reorged and bounds page input', async () => {

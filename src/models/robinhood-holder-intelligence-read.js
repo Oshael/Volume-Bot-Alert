@@ -9,6 +9,11 @@ const {
 
 const STATUS_PRIORITY = Object.freeze(['reorged', 'stale', 'pending', 'unavailable', 'ready']);
 const MAX_PAGE_WALLETS = 50;
+const DEFAULT_PUBLIC_TAGS = Object.freeze(['lp', 'cex']);
+const DEFAULT_PUBLIC_METRICS = Object.freeze(['top10', 'top50', 'dev_hold', 'lp_locked']);
+const TAG_METRICS = Object.freeze({
+  sniper: 'snipers', fresh: 'fresh_wallets', insider: 'insiders',
+});
 
 function iso(value) {
   return value?.toISOString?.() || value || null;
@@ -75,6 +80,9 @@ function publicHolder(address, records, state) {
 
 function createRobinhoodHolderIntelligenceReadRepository(options = {}) {
   const database = options.database || db;
+  const publicTags = new Set(options.publicTags || DEFAULT_PUBLIC_TAGS);
+  const publicMetrics = new Set(DEFAULT_PUBLIC_METRICS);
+  for (const tag of publicTags) if (TAG_METRICS[tag]) publicMetrics.add(TAG_METRICS[tag]);
 
   async function loadPage(input = {}) {
     const tokenAddress = normalizeTokenAddress('robinhood', input.tokenAddress);
@@ -89,17 +97,19 @@ function createRobinhoodHolderIntelligenceReadRepository(options = {}) {
         `SELECT classifier, status, through_block_number, through_block_hash, observed_at
            FROM robinhood_holder_classification_states
           WHERE chain = 'robinhood' AND token_address = $1
-            AND classification_version = $2 ORDER BY classifier`,
-        [tokenAddress, HOLDER_CLASSIFICATION_VERSION]
+            AND classification_version = $2
+            AND classifier = ANY($3::varchar[]) ORDER BY classifier`,
+        [tokenAddress, HOLDER_CLASSIFICATION_VERSION, [...publicTags]]
       ),
       walletAddresses.length ? database.query(
         `SELECT wallet_address, tag, confidence, reason_code, observed_at, expires_at
            FROM robinhood_holder_classifications
           WHERE chain = 'robinhood' AND token_address = $1
             AND classification_version = $2 AND wallet_address = ANY($3::varchar[])
+            AND tag = ANY($4::varchar[])
             AND (expires_at IS NULL OR expires_at > NOW())
           ORDER BY wallet_address, tag`,
-        [tokenAddress, HOLDER_CLASSIFICATION_VERSION, walletAddresses]
+        [tokenAddress, HOLDER_CLASSIFICATION_VERSION, walletAddresses, [...publicTags]]
       ) : Promise.resolve({ rows: [] }),
       database.query(
         `SELECT metric, classification_version, status, value_numerator_raw,
@@ -107,14 +117,18 @@ function createRobinhoodHolderIntelligenceReadRepository(options = {}) {
                 through_block_number, through_block_hash, observed_at
            FROM robinhood_holder_distribution_metrics
           WHERE chain = 'robinhood' AND token_address = $1
-            AND classification_version = $2 ORDER BY metric`,
-        [tokenAddress, HOLDER_CLASSIFICATION_VERSION]
+            AND classification_version = $2
+            AND metric = ANY($3::varchar[]) ORDER BY metric`,
+        [tokenAddress, HOLDER_CLASSIFICATION_VERSION, [...publicMetrics]]
       ),
     ]);
-    const state = aggregateState(statesResult.rows);
+    const publicStates = statesResult.rows.filter(({ classifier }) => publicTags.has(classifier));
+    const publicRecords = classificationsResult.rows.filter(({ tag }) => publicTags.has(tag));
+    const state = aggregateState(publicStates);
     const recordsByWallet = new Map(walletAddresses.map((address) => [address, []]));
-    for (const row of classificationsResult.rows) recordsByWallet.get(row.wallet_address)?.push(row);
-    const metricsByName = new Map(metricsResult.rows.map((row) => [row.metric, row]));
+    for (const row of publicRecords) recordsByWallet.get(row.wallet_address)?.push(row);
+    const metricsByName = new Map(metricsResult.rows
+      .filter(({ metric }) => publicMetrics.has(metric)).map((row) => [row.metric, row]));
     return Object.freeze({
       classificationVersion: HOLDER_CLASSIFICATION_VERSION,
       classificationStatus: state.status,
@@ -133,5 +147,7 @@ function createRobinhoodHolderIntelligenceReadRepository(options = {}) {
 
 module.exports = {
   createRobinhoodHolderIntelligenceReadRepository,
-  __private: { aggregateState, publicHolder, publicMetric },
+  __private: {
+    aggregateState, DEFAULT_PUBLIC_METRICS, DEFAULT_PUBLIC_TAGS, publicHolder, publicMetric,
+  },
 };
