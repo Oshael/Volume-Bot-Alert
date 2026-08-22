@@ -165,6 +165,27 @@ describe('runtime worker groups config', () => {
     assert.match(robinhoodEnv, /ROBINHOOD_RETENTION_ENABLED=false/);
   });
 
+  it('ships the event-driven Robinhood liquidity worker deployment contract', () => {
+    const scripts = require('../package.json').scripts;
+    const systemdDir = path.join(ROOT_DIR, 'deploy', 'systemd');
+    const service = fs.readFileSync(path.join(
+      systemdDir, 'trendscope-worker@robinhood-liquidity.service.example'
+    ), 'utf8');
+    const env = fs.readFileSync(
+      path.join(systemdDir, 'robinhood-pool-liquidity.env.example'), 'utf8'
+    );
+
+    assert.match(scripts['start:worker:robinhood-liquidity'],
+      /run-robinhood-pool-liquidity-worker/);
+    assert.match(service,
+      /EnvironmentFile=\/etc\/trendscope\/robinhood-liquidity\.env/);
+    assert.doesNotMatch(service, /ExecStart|WorkingDirectory|User=/);
+    assert.match(env, /ROBINHOOD_POOL_LIQUIDITY_POLL_INTERVAL_MS=2000/);
+    assert.match(env, /ROBINHOOD_POOL_LIQUIDITY_RANGE_SIZE=10/);
+    assert.match(env, /ROBINHOOD_POOL_LIQUIDITY_REORG_DEPTH=12/);
+    assert.doesNotMatch(env, /\nPORT=|_REFRESH_MS=|_BATCH_SIZE=/);
+  });
+
   it('fails fast on invalid worker groups', () => {
     const result = spawnSync(
       process.execPath,

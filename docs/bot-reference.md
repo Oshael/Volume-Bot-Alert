@@ -538,8 +538,10 @@ Na VPS2, ele segue o padrão de `docs/new-worker-service-runbook.md`: instância
 `trendscope-worker@robinhood-liquidity.service`, env exclusivo
 `/etc/trendscope/robinhood-liquidity.env` e um drop-in contendo somente o
 `EnvironmentFile`. A unit template resolve o script npm por `%i`; como este executável não inicia
-`src/server.js`, ele não abre porta. Os exemplos em `deploy/systemd` são fallback para hosts sem
-a template compartilhada e não devem ser instalados na VPS2 atual.
+`src/server.js`, ele não abre porta. O repositório traz o env e o drop-in exatos em
+`deploy/systemd/robinhood-pool-liquidity.env.example` e
+`deploy/systemd/trendscope-worker@robinhood-liquidity.service.example`; não instale uma unit
+standalone na VPS2.
 
 O processo usa a lease `robinhood-pool-liquidity-worker` e acompanha eventos em faixas contíguas
 com o cursor durável da Stage 148. Ele consulta logs por tópicos e reavalia somente as pools
@@ -564,13 +566,19 @@ O replay é resumível e limitado ao target salvo; executá-lo novamente não am
 
 Ordem obrigatória do primeiro deploy:
 
-1. aplicar `node src/utils/db-init-stage147.js` e `node src/utils/db-init-stage148.js` na VPS2;
-2. executar `npm run db:schema-check`;
-3. verificar replay/materialização V4 e a saúde do frontier de head/processing;
-4. executar o preview e depois o seed com `--write`; guardar `startBlock` do resultado;
-5. manter o env/drop-in da instância e iniciar `trendscope-worker@robinhood-liquidity.service`;
-6. confirmar cursor sem lag e cobertura suficiente;
-7. somente então reiniciar a API/web com a leitura canônica.
+1. parar `trendscope-worker@robinhood-liquidity.service` antes de publicar o novo código;
+2. aplicar `node src/utils/db-init-stage147.js` e `node src/utils/db-init-stage148.js` na VPS2;
+3. executar `npm run db:schema-check`;
+4. verificar replay/materialização V4 e a saúde do frontier de head/processing;
+5. instalar o env e o drop-in dos exemplos, mas ainda não iniciar o processo;
+6. executar `npm run robinhood:liquidity-seed` e revisar `throughBlock`, `candidates` e
+   `distinctBlocks`;
+7. executar uma única vez `npm run robinhood:liquidity-seed -- --write` e guardar o resultado;
+8. iniciar `trendscope-worker@robinhood-liquidity.service` e confirmar cursor, lease e cobertura;
+9. somente então reiniciar a API/web com a leitura canônica.
+
+O seed com `--write` falha se o cursor já existir. Não apague o cursor para repetir o seed: depois
+do cutover, ele e os snapshots são estado operacional do worker event-driven.
 
 Cobertura inicial:
 
