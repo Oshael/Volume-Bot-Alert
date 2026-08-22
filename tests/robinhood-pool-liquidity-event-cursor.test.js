@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const stage148 = require('../src/utils/db-init-stage148');
+const stage149 = require('../src/utils/db-init-stage149');
 const {
   createRobinhoodPoolLiquidityEventCursorRepository,
 } = require('../src/models/robinhood-pool-liquidity-event-cursor');
@@ -18,6 +19,20 @@ describe('Robinhood pool liquidity event cursor', () => {
     assert.match(sql, /coverage_start_block >= 0 AND next_block >= coverage_start_block/);
     assert.match(sql, /checkpoint_block = next_block - 1/);
     assert.equal(group.repair, 'node src/utils/db-init-stage148.js');
+  });
+
+  it('indexes only unfinished captures for bounded frontier reads', () => {
+    const sql = stage149.STATEMENTS.join('\n');
+    const group = SCHEMA_GROUPS.find(({ key }) => (
+      key === 'stage149-robinhood-processing-frontier-index'
+    ));
+    assert.match(sql, /CREATE INDEX CONCURRENTLY IF NOT EXISTS/);
+    assert.match(sql, /\(chain, block_number, stream\)/);
+    assert.match(sql, /processing_status IN \('pending', 'leased', 'blocked'\)/);
+    assert.equal(group.repair, 'node src/utils/db-init-stage149.js');
+    assert.deepEqual(group.tables[0].indexes[0].includes, [
+      'chain', 'block_number', 'stream', 'pending', 'leased', 'blocked',
+    ]);
   });
 
   it('initializes once and maps the durable cursor', async () => {
