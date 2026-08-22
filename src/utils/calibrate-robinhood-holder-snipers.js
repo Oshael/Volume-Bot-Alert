@@ -5,6 +5,9 @@ const {
   createRobinhoodHolderLaunchSource,
 } = require('../models/robinhood-holder-launch-source');
 const {
+  createRobinhoodWalletTransferLiveSourceRepository,
+} = require('../models/robinhood-wallet-transfer-live-source');
+const {
   normalizeMinimumNotionalUsd,
 } = require('../services/robinhood-holder-sniper-materializer');
 const { formatDecimal, parseDecimal } = require('../services/evm-market-metrics');
@@ -139,15 +142,46 @@ async function mapConcurrent(values, concurrency, operation) {
 }
 
 async function runCalibration(runtime, options) {
+  const coverage = await runtime.coverageSource.loadBackfillFrontier();
+  if (!coverage?.ready) {
+    throw new Error(`historical swap coverage unavailable: ${coverage?.reason || 'unknown'}`);
+  }
   const { rows } = await runtime.database.query(
-    `SELECT token_address FROM robinhood_holder_token_states
-      WHERE chain = 'robinhood' AND ledger_status = 'live'
-        AND live_through_block IS NOT NULL AND live_through_hash IS NOT NULL
-      ORDER BY MD5(token_address || $1) LIMIT $2::int`,
-    [options.seed, options.limit]
+    `WITH candidates AS (
+       SELECT state.token_address,
+              state.live_through_block,
+              COALESCE(state.deployment_block, attribution.attribution_block) AS launch_block
+         FROM robinhood_holder_token_states state
+         LEFT JOIN robinhood_token_attributions attribution
+           ON attribution.chain = state.chain
+          AND attribution.token_address = state.token_address
+        WHERE state.chain = 'robinhood' AND state.ledger_status = 'live'
+          AND state.live_through_block IS NOT NULL AND state.live_through_hash IS NOT NULL
+     ), stats AS (
+       SELECT COUNT(*)::int AS live_tokens,
+              COUNT(*) FILTER (WHERE launch_block IS NULL)::int AS launch_block_unavailable,
+              COUNT(*) FILTER (WHERE launch_block < $1::bigint)::int AS before_coverage,
+              COUNT(*) FILTER (WHERE launch_block >= $1::bigint
+                AND live_through_block > $2::bigint)::int AS frontier_beyond_coverage,
+              COUNT(*) FILTER (WHERE launch_block >= $1::bigint
+                AND live_through_block <= $2::bigint)::int AS eligible_tokens
+         FROM candidates
+     ), selected AS (
+       SELECT token_address FROM candidates
+        WHERE launch_block >= $1::bigint AND live_through_block <= $2::bigint
+        ORDER BY MD5(token_address || $3) LIMIT $4::int
+     )
+     SELECT selected.token_address, stats.* FROM stats LEFT JOIN selected ON true`,
+    [
+      coverage.historicalFromBlock, coverage.completeThroughBlock,
+      options.seed, options.limit,
+    ]
   );
+  const population = rows[0] || {};
+  const tokenAddresses = rows
+    .map(({ token_address: tokenAddress }) => tokenAddress).filter(Boolean);
   const results = await mapConcurrent(
-    rows.map(({ token_address: tokenAddress }) => tokenAddress),
+    tokenAddresses,
     options.concurrency,
     (tokenAddress) => runtime.source.loadLaunchEvidence(tokenAddress)
   );
@@ -155,17 +189,44 @@ async function runCalibration(runtime, options) {
     mode: 'read-only', selection: Object.freeze({
       limit: options.limit, seed: options.seed, concurrency: options.concurrency,
     }),
+    coverage: Object.freeze({
+      historicalFromBlock: coverage.historicalFromBlock,
+      completeThroughBlock: coverage.completeThroughBlock,
+    }),
+    population: Object.freeze({
+      liveTokens: Number(population.live_tokens || 0),
+      eligibleTokens: Number(population.eligible_tokens || 0),
+      launchedBeforeCoverage: Number(population.before_coverage || 0),
+      holderFrontierBeyondCoverage: Number(population.frontier_beyond_coverage || 0),
+      launchBlockUnavailable: Number(population.launch_block_unavailable || 0),
+    }),
     ...summarizeEvidence(results, options.thresholds),
+  });
+}
+
+function createRuntime(database, deps = {}) {
+  const sourceRepository = deps.coverageSource
+    || (deps.coverageSourceFactory
+      || createRobinhoodWalletTransferLiveSourceRepository)({ database });
+  let cachedCoverage;
+  const coverageSource = Object.freeze({
+    loadBackfillFrontier() {
+      cachedCoverage ||= sourceRepository.loadBackfillFrontier();
+      return cachedCoverage;
+    },
+  });
+  return Object.freeze({
+    database, coverageSource,
+    source: (deps.sourceFactory || createRobinhoodHolderLaunchSource)({
+      database, coverageSource,
+    }),
   });
 }
 
 async function main(argv = process.argv.slice(2), deps = {}) {
   const options = parseArgs(argv);
   const database = deps.database || db;
-  const runtime = deps.runtime || Object.freeze({
-    database,
-    source: (deps.sourceFactory || createRobinhoodHolderLaunchSource)({ database }),
-  });
+  const runtime = deps.runtime || createRuntime(database, deps);
   const report = await (deps.runCalibration || runCalibration)(runtime, options);
   (deps.logger || console).log(JSON.stringify(report, null, 2));
   return report;
@@ -176,4 +237,4 @@ if (require.main === module) main().catch((error) => {
   process.exitCode = 1;
 }).finally(() => db.pool.end().catch(() => {}));
 
-module.exports = { main, parseArgs, runCalibration, summarizeEvidence };
+module.exports = { createRuntime, main, parseArgs, runCalibration, summarizeEvidence };

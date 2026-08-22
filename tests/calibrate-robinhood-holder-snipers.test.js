@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const {
-  main, parseArgs, runCalibration, summarizeEvidence,
+  createRuntime, main, parseArgs, runCalibration, summarizeEvidence,
 } = require('../src/utils/calibrate-robinhood-holder-snipers');
 
 const WALLET_A = `0x${'1'.repeat(40)}`;
@@ -59,10 +59,21 @@ describe('Robinhood SNIPER calibration command', () => {
   it('selects a seeded bounded cohort and never opens a write transaction', async () => {
     const calls = [];
     const runtime = {
+      coverageSource: { loadBackfillFrontier: async () => ({
+        ready: true, historicalFromBlock: '90', completeThroughBlock: '250',
+      }) },
       database: {
         query: async (sql, params) => {
           calls.push({ sql, params });
-          return { rows: [{ token_address: 'token-a' }, { token_address: 'token-b' }] };
+          return { rows: [{
+            token_address: 'token-a', live_tokens: 100, eligible_tokens: 20,
+            before_coverage: 65, frontier_beyond_coverage: 10,
+            launch_block_unavailable: 5,
+          }, {
+            token_address: 'token-b', live_tokens: 100, eligible_tokens: 20,
+            before_coverage: 65, frontier_beyond_coverage: 10,
+            launch_block_unavailable: 5,
+          }] };
         },
         getClient: async () => { throw new Error('calibration must not write'); },
       },
@@ -75,13 +86,47 @@ describe('Robinhood SNIPER calibration command', () => {
     const report = await runCalibration(runtime, options);
 
     assert.equal(report.mode, 'read-only');
-    assert.deepEqual(calls[0].params, ['test', 2]);
-    assert.match(calls[0].sql, /ORDER BY MD5\(token_address \|\| \$1\)/);
+    assert.deepEqual(calls[0].params, ['90', '250', 'test', 2]);
+    assert.match(calls[0].sql, /launch_block >= \$1::bigint/);
+    assert.deepEqual(report.coverage, {
+      historicalFromBlock: '90', completeThroughBlock: '250',
+    });
+    assert.deepEqual(report.population, {
+      liveTokens: 100, eligibleTokens: 20, launchedBeforeCoverage: 65,
+      holderFrontierBeyondCoverage: 10, launchBlockUnavailable: 5,
+    });
     assert.equal(report.notionalUsd.countsAtThreshold['10'], 1);
     const logs = [];
     assert.equal((await main([], {
       runtime, runCalibration: async () => report, logger: { log: (line) => logs.push(line) },
     })).mode, 'read-only');
     assert.equal(logs.length, 1);
+  });
+
+  it('fails before selecting tokens when historical coverage is not proven', async () => {
+    await assert.rejects(runCalibration({
+      coverageSource: { loadBackfillFrontier: async () => ({
+        ready: false, reason: 'swap_seed_not_complete',
+      }) },
+      database: { query: async () => { throw new Error('must not query candidates'); } },
+    }, parseArgs([])), /swap_seed_not_complete/);
+  });
+
+  it('shares one cached coverage read between population and token sources', async () => {
+    let coverageReads = 0;
+    let injectedCoverage;
+    const runtime = createRuntime({ query: async () => ({ rows: [] }) }, {
+      coverageSource: { loadBackfillFrontier: async () => {
+        coverageReads += 1;
+        return { ready: true };
+      } },
+      sourceFactory: ({ coverageSource }) => {
+        injectedCoverage = coverageSource;
+        return {};
+      },
+    });
+    assert.equal(await runtime.coverageSource.loadBackfillFrontier(),
+      await injectedCoverage.loadBackfillFrontier());
+    assert.equal(coverageReads, 1);
   });
 });

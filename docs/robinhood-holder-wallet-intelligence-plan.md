@@ -300,7 +300,8 @@ upstream no próprio runtime.
      registradas e falha fechada sem `transaction_index`. O materializador
      atômico também está concluído, mas exige notional mínimo positivo explícito
      e permanece sem worker. A ferramenta read-only de amostragem e quantis está
-     concluída; execução na VPS, decisão do notional e ativação seguem pendentes.
+     concluída e separa a população elegível sem afrouxar a cobertura; execução
+     da nova amostra na VPS, decisão do notional e ativação seguem pendentes.
 4. **INSIDER direto**
    - começar por distribuição direta do token;
    - adicionar funding nativo direto somente quando a fonte estiver comprovada.

@@ -1243,7 +1243,10 @@ routers, infraestrutura conhecida e burn. Antes de escolher esse limite, execute
 `npm run robinhood:sniper-calibrate -- --limit=25 --seed=default`; o comando é
 somente leitura e retorna quantis agregados, sem endereços. Para comparar limites
 sem classificá-los, acrescente por exemplo `--thresholds=10,25,50,100`. Limite de
-100 tokens e concorrência de 1 a 5 protegem o PostgreSQL; o default é 25/1.
+100 tokens e concorrência de 1 a 5 protegem o PostgreSQL; o default é 25/1. O
+relatório conta todos os tokens live, lançamentos anteriores à origem do seed e
+lançamentos sem bloco conhecido, além de ledgers cuja frontier está à frente dos
+swaps. A amostra usa somente tokens cobertos do lançamento à frontier atual.
 
 Cadastros usam um manifesto JSON append-only com `entries`; cada entrada contém
 `address`, `kind`, `label`, `source`, `evidence`, `validFromBlock`,
