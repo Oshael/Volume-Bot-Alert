@@ -20,6 +20,18 @@ Exemplo: `start:worker:robinhood-liquidity` é executado pela instância
 Um executável dedicado que não inicia `src/server.js` não abre HTTP e não usa
 `PORT`. Workers baseados em `src/server.js` precisam manter uma porta exclusiva.
 
+### Regra de herança de ambiente
+
+Neste repositório, processos que carregam `config/index.js` já leem o `.env`
+global do projeto por `dotenv`. O arquivo `/etc/trendscope/<nome>.env` da
+instância serve somente para flags e overrides exclusivos daquele worker.
+
+Não repita `JWT_SECRET`, `DATABASE_URL`, `DB_*`, `PG*` ou credenciais já
+presentes no `.env` global. Duplicá-las cria duas fontes de verdade e pode fazer
+um único worker apontar para configuração diferente do restante do bot. Só
+adicione banco ou segredo ao env da instância quando o entrypoint não carregar o
+config global e essa dependência estiver comprovada no código.
+
 ## Configuração na VPS2
 
 Defina o nome exatamente como aparece depois de `start:worker:` no `package.json`:
@@ -28,9 +40,10 @@ Defina o nome exatamente como aparece depois de `start:worker:` no `package.json
 WORKER_NAME=robinhood-liquidity
 ```
 
-1. Crie `/etc/trendscope/${WORKER_NAME}.env` com apenas banco, provedores e flags usados
-   pelo worker. Não copie `PORT`, `JWT_SECRET` ou flags de outros workers sem
-   necessidade. O arquivo deve permanecer `root:root` e modo `0600`:
+1. Crie `/etc/trendscope/${WORKER_NAME}.env` somente com flags, identificadores e
+   overrides próprios do worker. Não copie `PORT`, banco, segredos ou flags de
+   outros workers quando já forem fornecidos pelo script/template ou pelo `.env`
+   global. O arquivo deve permanecer `root:root` e modo `0600`:
 
    ```bash
    sudoedit "/etc/trendscope/${WORKER_NAME}.env"
