@@ -335,7 +335,9 @@ carga sem ETA confiável.
      para separar a população elegível sem afrouxar a cobertura. A calibração
      também compara perfis agregados por bloco/posição e mede as wallets
      `within1BlockTop5` da amostra contra toda a população elegível, sem expor
-     endereços; decisão da regra e ativação seguem pendentes.
+     endereços. A Stage 149 cria a fonte durável de primeira compra canônica por
+     token/wallet, sem misturar classificação ou confiança; backfill checkpointed,
+     manutenção live, decisão da regra e ativação seguem em cortes separados.
 4. **INSIDER direto**
    - começar por distribuição direta do token;
    - adicionar funding nativo direto somente quando a fonte estiver comprovada.

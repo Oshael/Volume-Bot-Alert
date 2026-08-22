@@ -3968,6 +3968,55 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage149-robinhood-wallet-token-first-buys',
+    name: 'Stage 149 Robinhood canonical wallet-token first buys',
+    repair: 'node src/utils/db-init-stage149.js',
+    tables: [{
+      table: 'robinhood_wallet_token_first_buys',
+      columns: [
+        'chain', 'token_address', 'wallet_address', 'transaction_hash',
+        'transaction_index', 'action_index', 'block_number', 'block_hash',
+        'block_time', 'protocol', 'market_key', 'volume_usd',
+        'source_parser_version', 'evidence_version', 'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_wallet_token_first_buys_pkey',
+        includes: ['PRIMARY KEY', 'chain', 'token_address', 'wallet_address'],
+      }, {
+        name: 'rh_wallet_token_first_buys_pool_fkey',
+        includes: ['FOREIGN KEY', 'robinhood_pool_registry'],
+      }, {
+        name: 'rh_wallet_token_first_buys_chain_check',
+        includes: ['CHECK', 'robinhood'],
+      }, {
+        name: 'rh_wallet_token_first_buys_address_check',
+        includes: ['CHECK', 'token_address', 'wallet_address'],
+      }, {
+        name: 'rh_wallet_token_first_buys_hash_check',
+        includes: ['CHECK', 'transaction_hash', 'block_hash'],
+      }, {
+        name: 'rh_wallet_token_first_buys_position_check',
+        includes: ['CHECK', 'transaction_index', 'action_index', 'block_number'],
+      }, {
+        name: 'rh_wallet_token_first_buys_protocol_check',
+        includes: ['CHECK', 'uniswap-v2', 'uniswap-v3', 'uniswap-v4'],
+      }, {
+        name: 'rh_wallet_token_first_buys_values_check',
+        includes: ['CHECK', 'volume_usd', 'source_parser_version', 'evidence_version'],
+      }],
+      indexes: [{
+        name: 'idx_rh_wallet_token_first_buys_token_order',
+        includes: [
+          'chain', 'token_address', 'block_number', 'transaction_index',
+          'action_index', 'transaction_hash',
+        ],
+      }, {
+        name: 'idx_rh_wallet_token_first_buys_wallet_recurrence',
+        includes: ['chain', 'wallet_address', 'block_number', 'token_address'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

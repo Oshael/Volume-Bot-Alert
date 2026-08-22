@@ -1036,6 +1036,7 @@ Stages confirmados:
 | 140 | última observação horária UTC do total de holders por token Robinhood |
 | 141 | floor durável a partir do qual a captura live bufferiza todos os `Transfer` |
 | 142 | índice parcial do journal aplicado usado no handoff do backfill global |
+| 149 | primeira compra canônica materializada por token/wallet para launch intelligence |
 
 Holders RH possuem duas fontes complementares. A Stage 111 guarda o summary
 Blockscout usado como bootstrap/fallback; as Stages 116–118 mantêm o ledger local
@@ -1348,7 +1349,13 @@ contra todos os tokens elegíveis, preservando somente contagens agregadas no
 relatório. Essa busca resolve cada wallet candidata sequencialmente por igualdade
 indexada e os anchors por token em lotes; não agrega a tabela inteira de swaps.
 Esses sinais são internos; o frontend só deverá expor `SNIPER` após uma regra de
-alta confiança ser escolhida e materializada.
+alta confiança ser escolhida e materializada. A Stage 149 introduz
+`robinhood_wallet_token_first_buys`, fonte neutra e reutilizável para ordem por
+token e recorrência por wallet. Aplique `node src/utils/db-init-stage149.js` antes
+do futuro backfill; criar a tabela não inicia escrita, worker ou classificação.
+O comando de calibração antigo não deve ser usado para recalcular recorrência
+global diretamente sobre `robinhood_wallet_swaps`; essa leitura permanece cara
+até o backfill da Stage 149 ser entregue e concluído.
 
 Cadastros usam um manifesto JSON append-only com `entries`; cada entrada contém
 `address`, `kind`, `label`, `source`, `evidence`, `validFromBlock`,
