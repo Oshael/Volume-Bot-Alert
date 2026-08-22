@@ -1,5 +1,34 @@
 import { apiFetch } from './base';
 
+export type RobinhoodHolderTag = 'lp' | 'cex' | 'sniper' | 'fresh' | 'insider';
+export type RobinhoodClassificationStatus =
+  'unavailable' | 'pending' | 'ready' | 'stale' | 'reorged';
+
+export interface RobinhoodClassificationFrontier {
+  blockNumber: string;
+  blockHash: string;
+}
+
+export interface RobinhoodHolderClassification {
+  tag: RobinhoodHolderTag;
+  confidence: 'deterministic' | 'high' | 'heuristic';
+  reasonCode: string;
+  observedAt: string;
+  expiresAt: string | null;
+}
+
+export interface RobinhoodHolderDistributionMetric {
+  metric: 'top10' | 'top50' | 'snipers' | 'fresh_wallets' | 'insiders'
+    | 'dev_hold' | 'lp_locked' | 'bundled';
+  status: RobinhoodClassificationStatus;
+  value: { numeratorRaw: string; denominatorRaw: string } | null;
+  walletCount: string | null;
+  groupCount: string | null;
+  classificationVersion: string;
+  throughBlock: RobinhoodClassificationFrontier | null;
+  observedAt: string | null;
+}
+
 export interface RobinhoodHolder {
   rank: number;
   address: string;
@@ -20,6 +49,11 @@ export interface RobinhoodHolder {
   currentValueUsd?: string | null;
   positionQuality?: string | null;
   costBasisSource?: string | null;
+  tags: RobinhoodHolderTag[];
+  primaryTag: RobinhoodHolderTag | 'unknown';
+  classificationVersion: string;
+  classificationStatus: RobinhoodClassificationStatus;
+  classifications: RobinhoodHolderClassification[];
 }
 
 export interface RobinhoodHolderSummary {
@@ -39,6 +73,10 @@ export interface RobinhoodHoldersPage {
   nextCursor: string | null;
   observedAt: string;
   refreshQueued: boolean;
+  classificationVersion: string;
+  classificationStatus: RobinhoodClassificationStatus;
+  classificationThroughBlock: RobinhoodClassificationFrontier | null;
+  distribution: RobinhoodHolderDistributionMetric[];
 }
 
 export type RobinhoodHolderInterval = '1h' | '4h' | '12h' | '24h';

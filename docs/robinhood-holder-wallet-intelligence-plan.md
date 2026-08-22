@@ -266,6 +266,8 @@ integração.
      mantém `LP`, `CEX` e `DEV HOLD` alinhados à frontier live. O contrato REST
      aditivo também expõe tags compactas, status/frontier e todas as métricas,
      preservando a página com `unavailable` quando a inteligência não pode ser lida.
+     A fatia visual consome glifos `LP`/`CEX` e métricas materializadas, mantendo
+     filtros de classificadores ainda não implementados desabilitados.
 3. **SNIPER**
    - materializar âncora de lançamento e primeira compra;
    - fechar notional mínimo com amostra real antes de ativar UI.

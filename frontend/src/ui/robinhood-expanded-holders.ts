@@ -1,5 +1,7 @@
 import {
   fetchRobinhoodHoldersPage,
+  type RobinhoodHolder,
+  type RobinhoodHolderDistributionMetric,
   type RobinhoodHoldersPage,
 } from '../services/api/robinhood-holders';
 import { subscribeRobinhoodHolderUpdates } from '../services/socket/client';
@@ -131,33 +133,63 @@ function formatSupplyPct(pct: number): string {
   return `${Number(pct.toFixed(pct >= 1 ? 2 : 3))}%`;
 }
 
-function holderGlyph(addressType: string) {
-  const lp = addressType === 'pool';
-  return `<span class="rh-holder-glyph ${lp ? 'is-lp' : 'is-unknown'}" title="${lp ? 'LP' : 'Unknown'}">${lp ? '≋' : '·'}</span>`;
-}
-
-function concentrationPct(page: RobinhoodHoldersPage, limit: number) {
-  try {
-    const supply = page.summary.totalSupplyRaw ? BigInt(page.summary.totalSupplyRaw) : 0n;
-    if (supply <= 0n) return null;
-    const held = page.holders.slice(0, limit).reduce((sum, holder) => sum + BigInt(holder.balanceRaw), 0n);
-    return Math.min(100, Number((held * 10_000n) / supply) / 100);
-  } catch { return null; }
+function holderGlyph(holder: RobinhoodHolder) {
+  const fallbackTag = holder.addressType === 'pool' ? 'lp' : 'unknown';
+  const tag = holder.primaryTag === 'unknown' ? fallbackTag : holder.primaryTag;
+  const glyphs = {
+    sniper: ['◎', 'SNIPER', 'is-sniper'], fresh: ['✦', 'FRESH', 'is-fresh'],
+    cex: ['⇄', 'CEX', 'is-cex'], lp: ['≋', 'LP', 'is-lp'],
+    unknown: ['·', 'Unknown', 'is-unknown'],
+  } as const;
+  const [glyph, label, tone] = glyphs[tag === 'insider' ? 'unknown' : tag];
+  const reasons = holder.classifications
+    .filter(({ tag: classificationTag }) => classificationTag === tag)
+    .map(({ reasonCode }) => reasonCode)
+    .join(', ');
+  const title = reasons ? `${label} · ${reasons}` : label;
+  return `<span class="rh-holder-glyph ${tone}" title="${escapeHtml(title)}">${glyph}</span>`;
 }
 
 function distributionMetric(label: string, value: number | null, tone: string, sub: string) {
   return `<div class="rh-distribution-metric"><div><span>${label}</span><strong>${value == null ? '—' : formatSupplyPct(value)}</strong><small>${sub}</small></div><i><b class="${tone}" style="width:${value == null ? 0 : value}%"></b></i></div>`;
 }
 
+function materializedPct(metric?: RobinhoodHolderDistributionMetric) {
+  if (!metric?.value || !['ready', 'stale'].includes(metric.status)) return null;
+  try {
+    const numerator = BigInt(metric.value.numeratorRaw);
+    const denominator = BigInt(metric.value.denominatorRaw);
+    if (denominator <= 0n) return null;
+    return Math.min(100, Number((numerator * 10_000n) / denominator) / 100);
+  } catch { return null; }
+}
+
+function metricSub(metric?: RobinhoodHolderDistributionMetric) {
+  if (!metric || metric.status === 'unavailable') return '—';
+  if (metric.metric === 'bundled' && metric.groupCount) return `${metric.groupCount} grp`;
+  return metric.walletCount == null ? '—' : `${metric.walletCount} wlt`;
+}
+
+function flagValue(metric?: RobinhoodHolderDistributionMetric) {
+  const pct = materializedPct(metric);
+  if (pct != null) return formatSupplyPct(pct);
+  if (metric?.metric === 'bundled' && metric.walletCount != null) return `${metric.walletCount} wlt`;
+  return '—';
+}
+
 function distributionHtml(page: RobinhoodHoldersPage) {
+  const metrics = new Map(page.distribution.map((metric) => [metric.metric, metric]));
+  const top10 = metrics.get('top10');
+  const top50 = metrics.get('top50');
   return `<aside class="rh-holder-distribution"><header>DISTRIBUIÇÃO</header><div class="rh-distribution-body">
-    ${distributionMetric('Top 10', concentrationPct(page, 10), 'is-top', '10 wlt')}
-    ${distributionMetric('Top 50', concentrationPct(page, 50), 'is-top', `${Math.min(50, page.holders.length)} wlt`)}
-    ${distributionMetric('Snipers', null, 'is-sniper', '—')}
-    ${distributionMetric('Fresh wallets', null, 'is-fresh', '—')}
+    ${distributionMetric('Top 10', materializedPct(top10), 'is-top', metricSub(top10))}
+    ${distributionMetric('Top 50', materializedPct(top50), 'is-top', metricSub(top50))}
+    ${distributionMetric('Snipers', materializedPct(metrics.get('snipers')), 'is-sniper', metricSub(metrics.get('snipers')))}
+    ${distributionMetric('Fresh wallets', materializedPct(metrics.get('fresh_wallets')), 'is-fresh', metricSub(metrics.get('fresh_wallets')))}
     <div class="rh-distribution-flags">${[
-      ['DEV HOLD', '—'], ['INSIDERS', '—'], ['LP LOCKED', '—'], ['BUNDLED', '—'],
-    ].map(([label, value]) => `<div><span>${label}</span><strong>${value}</strong></div>`).join('')}</div>
+      ['DEV HOLD', metrics.get('dev_hold')], ['INSIDERS', metrics.get('insiders')],
+      ['LP LOCKED', metrics.get('lp_locked')], ['BUNDLED', metrics.get('bundled')],
+    ].map(([label, metric]) => `<div><span>${label}</span><strong>${flagValue(metric as RobinhoodHolderDistributionMetric | undefined)}</strong></div>`).join('')}</div>
   </div></aside>`;
 }
 
@@ -182,7 +214,7 @@ function holderPageHtml(
     <td class="rh-col-rank">${holder.rank}</td>
     <td class="rh-col-holder">
       <a href="https://robinhoodchain.blockscout.com/address/${escapeHtml(holder.address)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(holder.address)}">${escapeHtml(holder.label || shortAddress(holder.address))}</a>
-      ${holderGlyph(holder.addressType)}
+      ${holderGlyph(holder)}
     </td>
     ${nativeBalanceCell(holder.nativeBalanceRaw)}
     ${positionCell(holder.buyVolumeUsd, holder.avgBuyMcapUsd, holder.buyTxCount)}

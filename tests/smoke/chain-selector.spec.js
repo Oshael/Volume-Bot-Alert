@@ -601,6 +601,30 @@ function holderSeriesBars(intervalHours, length) {
   });
 }
 
+function holderIntelligenceMetric(metric, overrides = {}) {
+  return {
+    metric, status: 'unavailable', value: null, walletCount: null, groupCount: null,
+    classificationVersion: 'rh_holder_v1', throughBlock: null, observedAt: null,
+    ...overrides,
+  };
+}
+
+function holderIntelligenceFixture(secondPage) {
+  if (secondPage) {
+    return {
+      tags: [], primaryTag: 'unknown', classificationVersion: 'rh_holder_v1',
+      classificationStatus: 'ready', classifications: [],
+    };
+  }
+  return {
+    tags: ['cex'], primaryTag: 'cex', classificationVersion: 'rh_holder_v1',
+    classificationStatus: 'ready', classifications: [{
+      tag: 'cex', confidence: 'deterministic', reasonCode: 'known_cex_address',
+      observedAt: '2026-07-15T11:55:00.000Z', expiresAt: null,
+    }],
+  };
+}
+
 const ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES = {
   ...ROBINHOOD_MARKET_API_FIXTURES,
   'GET /api/robinhood/holders': (request) => {
@@ -625,7 +649,24 @@ const ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES = {
         unrealizedPnlPct: secondPage ? null : '25',
         positionQuality: secondPage ? 'transferred_assumed_zero' : 'exact_swap_only',
         costBasisSource: secondPage ? 'transferred_assumed_zero' : 'swap_only',
+        ...holderIntelligenceFixture(secondPage),
       }],
+      classificationVersion: 'rh_holder_v1', classificationStatus: 'ready',
+      classificationThroughBlock: { blockNumber: '32653260', blockHash: `0x${'b'.repeat(64)}` },
+      distribution: [
+        holderIntelligenceMetric('top10', { status: 'ready',
+          value: { numeratorRaw: '5000000000000000000', denominatorRaw: '50000000000000000000' },
+          walletCount: '1' }),
+        holderIntelligenceMetric('top50', { status: 'ready',
+          value: { numeratorRaw: '5000000000000000000', denominatorRaw: '50000000000000000000' },
+          walletCount: '1' }),
+        holderIntelligenceMetric('snipers'), holderIntelligenceMetric('fresh_wallets'),
+        holderIntelligenceMetric('insiders'),
+        holderIntelligenceMetric('dev_hold', { status: 'ready',
+          value: { numeratorRaw: '600000000000000000', denominatorRaw: '50000000000000000000' },
+          walletCount: '1' }),
+        holderIntelligenceMetric('lp_locked'), holderIntelligenceMetric('bundled'),
+      ],
       hasMore: !secondPage, nextCursor: secondPage ? null : 'page-2',
       observedAt: '2026-07-15T11:55:00.000Z', refreshQueued: false,
     };
@@ -1846,6 +1887,11 @@ test('renders holder pages without the holder bar chart in the Robinhood expande
   await expect(panel.locator('.rh-holder-distribution')).toHaveCSS('width', '300px');
   await expect(panel.locator('.rh-holder-distribution')).toContainText('Top 10');
   await expect(panel.locator('.rh-holder-distribution')).toContainText('10%');
+  await expect(panel.locator('.rh-distribution-flags')).toContainText('DEV HOLD1.2%');
+  await expect(panel.locator('tbody .rh-holder-glyph').first()).toHaveText('⇄');
+  await expect(panel.locator('tbody .rh-holder-glyph').first()).toHaveAttribute(
+    'title', 'CEX · known_cex_address',
+  );
   await expect(panel.getByRole('button', { name: 'INSIDERS' })).toBeDisabled();
   await expect(panel.locator('.robinhood-holder-table-wrap')).toHaveCSS('overflow-y', 'auto');
   await expect(panel.locator('tbody tr').first()).toHaveCSS('height', '26px');

@@ -1224,6 +1224,8 @@ batch, concorrência e retry de métricas indisponíveis são configurados por
 Cada holder recebe `tags`, `primaryTag`, `classificationStatus` e resumos seguros
 em `classifications`; `evidence_json` não é enviado na paginação. Falha ou schema
 pendente de inteligência não derruba holders: os campos retornam `unavailable`.
+O expanded chart usa `primaryTag` nos glifos e os valores materializados no painel
+de distribuição; métricas indisponíveis continuam como `—`.
 
 Cadastros usam um manifesto JSON append-only com `entries`; cada entrada contém
 `address`, `kind`, `label`, `source`, `evidence`, `validFromBlock`,
