@@ -4,6 +4,9 @@ const { createPostgresRealtimeListener } = require('./postgres-realtime-listener
 const {
   normalizeRobinhoodHolderRealtimeEvent,
 } = require('./robinhood-holder-count-event');
+const {
+  createRobinhoodTokenHolderSummaryRepository,
+} = require('../models/robinhood-token-holder-summary');
 
 const CHANNEL = 'robinhood_holder_count_updated';
 const MAX_NOTIFY_BATCH = 500;
@@ -13,7 +16,9 @@ function createRobinhoodHolderCountRealtime(deps = {}) {
   const database = deps.database || db;
   const hub = deps.socketHub || socketHub;
   const logger = deps.logger || console;
-  const stats = { published: 0, publishFailures: 0, received: 0 };
+  const persistLiveCounts = deps.persistLiveCounts
+    || createRobinhoodTokenHolderSummaryRepository({ database }).recordLiveCountEvents;
+  const stats = { published: 0, publishFailures: 0, persistenceFailures: 0, received: 0 };
 
   async function publishUpdates(values = []) {
     const byToken = new Map();
@@ -26,6 +31,13 @@ function createRobinhoodHolderCountRealtime(deps = {}) {
       }
     }
     const notifications = [...byToken.values()];
+    const events = [...byToken.keys()].map((address) => JSON.parse(byToken.get(address)));
+    try {
+      await persistLiveCounts(events);
+    } catch (error) {
+      stats.persistenceFailures += events.length;
+      logger.warn?.('[RobinhoodHolderCountRealtime] live history persistence failed:', error.message);
+    }
     try {
       for (let offset = 0; offset < notifications.length; offset += MAX_NOTIFY_BATCH) {
         const batch = notifications.slice(offset, offset + MAX_NOTIFY_BATCH);

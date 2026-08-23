@@ -50,6 +50,7 @@ describe('Robinhood holder count realtime', () => {
     const calls = [];
     const realtime = createRobinhoodHolderCountRealtime({
       database: { query: async (...args) => calls.push(args) },
+      persistLiveCounts: async (events) => assert.equal(events.length, 1),
     });
 
     assert.equal(await realtime.publishUpdates([
@@ -67,6 +68,7 @@ describe('Robinhood holder count realtime', () => {
   it('propagates PostgreSQL publication failure for worker retry', async () => {
     const realtime = createRobinhoodHolderCountRealtime({
       database: { query: async () => { throw new Error('database offline'); } },
+      persistLiveCounts: async () => {},
       logger: { error() {} },
     });
 

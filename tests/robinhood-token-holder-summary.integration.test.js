@@ -210,4 +210,26 @@ describe('Robinhood token holder summary repository integration', () => {
       client.release();
     }
   });
+
+  it('persists live count events directly into daily and hourly history', async () => {
+    const first = await repository.recordLiveCountEvents([{
+      tokenAddress: TOKEN, holderCount: 5000, observedAt: '2026-08-10T03:10:00Z',
+    }]);
+    assert.deepEqual(first, { dailyCount: 1, bucketCount: 1 });
+
+    const second = await repository.recordLiveCountEvents([{
+      tokenAddress: TOKEN, holderCount: 5100, observedAt: '2026-08-10T03:20:00Z',
+    }, {
+      tokenAddress: TOKEN, holderCount: 4900, observedAt: '2026-08-10T03:05:00Z',
+    }]);
+    assert.deepEqual(second, { dailyCount: 1, bucketCount: 1 });
+
+    const hourly = await repository.listHourlyBuckets({
+      tokenAddress: TOKEN, asOf: '2026-08-10T04:00:00Z',
+    });
+    assert.deepEqual(hourly, [{
+      bucketStart: '2026-08-10T03:00:00.000Z', holderCount: 5100,
+      source: 'ledger_live', observedAt: '2026-08-10T03:20:00.000Z',
+    }]);
+  });
 });

@@ -3,6 +3,7 @@ const { normalizeTokenAddress } = require('../utils/token-identity');
 
 const CHAIN = 'robinhood';
 const MAX_BATCH_SIZE = 500;
+const MAX_LIVE_EVENT_BATCH_SIZE = 500;
 const MAX_HISTORY_DAYS = 90;
 
 function holderCount(value) {
@@ -85,6 +86,15 @@ function normalizeHourlyBucketRow(row) {
     holderCount: holderCount(row.holder_count),
     source: row.source,
     observedAt: timestamp(row.observed_at, 'bucket observedAt'),
+  });
+}
+
+function normalizeLiveCountEvent(value) {
+  const tokenAddress = normalizeTokenAddress(CHAIN, value?.tokenAddress || value?.address);
+  return Object.freeze({
+    tokenAddress,
+    holderCount: holderCount(value?.holderCount),
+    observedAt: timestamp(value?.observedAt, 'live observedAt'),
   });
 }
 
@@ -360,6 +370,82 @@ function createRobinhoodTokenHolderSummaryRepository(options = {}) {
     return Object.freeze({ savedCount: Number(rows[0]?.saved_count) || 0, asOf });
   }
 
+  async function recordLiveCountEvents(input = []) {
+    if (!Array.isArray(input)) throw new TypeError('live count events must be an array');
+    if (input.length > MAX_LIVE_EVENT_BATCH_SIZE) {
+      throw new RangeError(`live count events exceeds ${MAX_LIVE_EVENT_BATCH_SIZE}`);
+    }
+    const events = input.map(normalizeLiveCountEvent);
+    if (events.length === 0) return Object.freeze({ dailyCount: 0, bucketCount: 0 });
+    const { rows } = await database.query(
+      `WITH events AS MATERIALIZED (
+         SELECT token_address, holder_count, observed_at,
+                (date_trunc('hour', observed_at AT TIME ZONE 'UTC')
+                  AT TIME ZONE 'UTC') AS bucket_start,
+                (observed_at AT TIME ZONE 'UTC')::date AS snapshot_date
+           FROM jsonb_to_recordset($1::jsonb)
+             AS input(token_address varchar, holder_count bigint, observed_at timestamptz)
+       ), daily_candidates AS (
+         SELECT DISTINCT ON (token_address, snapshot_date)
+                token_address, snapshot_date, holder_count, observed_at
+           FROM events
+          ORDER BY token_address, snapshot_date, observed_at DESC
+       ), hourly_candidates AS (
+         SELECT DISTINCT ON (token_address, bucket_start)
+                token_address, bucket_start, holder_count, observed_at
+           FROM events
+          ORDER BY token_address, bucket_start, observed_at DESC
+       ), saved_daily AS (
+         INSERT INTO robinhood_token_holder_daily_snapshots (
+           chain, token_address, snapshot_date, holder_count, source, observed_at
+         )
+         SELECT '${CHAIN}', token_address, snapshot_date, holder_count,
+                'ledger_live', observed_at
+           FROM daily_candidates
+         ON CONFLICT (chain, token_address, snapshot_date) DO UPDATE SET
+           holder_count = EXCLUDED.holder_count,
+           source = EXCLUDED.source,
+           observed_at = EXCLUDED.observed_at,
+           updated_at = NOW()
+         WHERE robinhood_token_holder_daily_snapshots.source <> 'ledger_live'
+            OR EXCLUDED.observed_at >= robinhood_token_holder_daily_snapshots.observed_at
+         RETURNING 1
+       ), saved_hourly AS (
+         INSERT INTO robinhood_token_holder_buckets (
+           chain, token_address, bucket_start, holder_count, source, observed_at
+         )
+         SELECT '${CHAIN}', token_address, bucket_start, holder_count,
+                'ledger_live', observed_at
+           FROM hourly_candidates
+         ON CONFLICT (chain, token_address, bucket_start) DO UPDATE SET
+           holder_count = EXCLUDED.holder_count,
+           source = EXCLUDED.source,
+           observed_at = EXCLUDED.observed_at,
+           updated_at = NOW()
+         WHERE (
+           robinhood_token_holder_buckets.source = 'blockscout'
+           AND EXCLUDED.source = 'ledger_live'
+         ) OR (
+           robinhood_token_holder_buckets.source = EXCLUDED.source
+           AND EXCLUDED.observed_at >= robinhood_token_holder_buckets.observed_at
+         )
+         RETURNING 1
+       )
+       SELECT
+         (SELECT COUNT(*)::int FROM saved_daily) AS daily_count,
+         (SELECT COUNT(*)::int FROM saved_hourly) AS bucket_count`,
+      [JSON.stringify(events.map(({ tokenAddress, holderCount, observedAt }) => ({
+        token_address: tokenAddress,
+        holder_count: holderCount,
+        observed_at: observedAt,
+      })))]
+    );
+    return Object.freeze({
+      dailyCount: Number(rows[0]?.daily_count) || 0,
+      bucketCount: Number(rows[0]?.bucket_count) || 0,
+    });
+  }
+
   async function listDailySnapshots(input = {}) {
     const tokenAddress = normalizeTokenAddress(CHAIN, input.tokenAddress);
     const days = historyDays(input.days);
@@ -398,7 +484,8 @@ function createRobinhoodTokenHolderSummaryRepository(options = {}) {
 
   return Object.freeze({
     listRefreshCandidates, recordSuccess, recordFailure, getSummaries,
-    getPublishedSummaries, syncLiveDailySnapshots, listDailySnapshots, listHourlyBuckets,
+    getPublishedSummaries, syncLiveDailySnapshots, recordLiveCountEvents,
+    listDailySnapshots, listHourlyBuckets,
   });
 }
 
@@ -406,6 +493,7 @@ module.exports = {
   createRobinhoodTokenHolderSummaryRepository,
   __private: {
     addressBatch, errorCode, historyDays, holderCount,
-    normalizeDailySnapshotRow, normalizeHourlyBucketRow, normalizeSummaryRow,
+    normalizeDailySnapshotRow, normalizeHourlyBucketRow, normalizeLiveCountEvent,
+    normalizeSummaryRow,
   },
 };

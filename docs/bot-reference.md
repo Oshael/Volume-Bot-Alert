@@ -1073,7 +1073,10 @@ há backfill sub-diário. Aplique `node src/utils/db-init-stage140.js` antes do 
 e mantenha `ROBINHOOD_HOLDER_SNAPSHOT_ENABLED` ou
 `ROBINHOOD_HOLDER_SUMMARY_ENABLED` ativo para a série crescer. O backend publica
 `holder:count` sequenciado
-via relay PostgreSQL para as mesmas rooms por token já usadas pelo mercado.
+via relay PostgreSQL para as mesmas rooms por token já usadas pelo mercado e
+persiste esse evento live diretamente nos snapshots diário e horário. O worker de
+snapshot permanece como reconciliação para eventos perdidos e continuidade
+temporal, não como fonte primária das mudanças live.
 `ROBINHOOD_HOLDER_SNAPSHOT_BATCH_SIZE` controla quantos tokens o worker projeta por
 ciclo; o padrão operacional é `5000` (máximo permitido). O worker continua sendo
 um reconciliador por polling do PostgreSQL, não um consumidor event-driven, e pode
