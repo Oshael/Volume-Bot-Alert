@@ -1413,6 +1413,11 @@ quando uma reclassificação chega depois. A migration não reescreve arestas
 legadas; a evidência fica nula até um replay limitado e retomável, impedindo
 inferência direcional ambígua e WAL não orçado durante deploy. Aplicar a stage
 não inicia replay, worker ou classificação e não habilita `INSIDER` na API/UI.
+A Stage 154 cria somente o controle do replay direcional histórico: campanha com
+frontier de blocos/hash congelada e ranges limitados a 5.000 blocos, retomáveis
+por lease e com checkpoint canônico por range. Aplique
+`node src/utils/db-init-stage154.js` antes do futuro comando de replay. A stage
+não consulta o archive RPC, não preenche arestas e não habilita `INSIDER`.
 A Stage 149 introduz
 `robinhood_wallet_token_first_buys`, fonte neutra e reutilizável para ordem por
 token e recorrência por wallet. Aplique `node src/utils/db-init-stage149.js` antes

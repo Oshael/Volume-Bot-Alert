@@ -4132,6 +4132,72 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage154-robinhood-directional-transfer-replay-control',
+    name: 'Stage 154 Robinhood directional transfer replay control',
+    repair: 'node src/utils/db-init-stage154.js',
+    tables: [{
+      table: 'robinhood_directional_transfer_replay_runs',
+      columns: [
+        'id', 'chain', 'projection_version', 'replay_version',
+        'source_from_block', 'source_through_block', 'source_through_hash',
+        'range_blocks', 'status', 'range_count', 'started_at', 'finished_at',
+        'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_directional_replay_runs_source_check',
+        includes: [
+          'CHECK', 'source_from_block', 'source_through_block',
+          'source_through_hash', 'range_blocks', 'range_count',
+        ],
+      }, {
+        name: 'rh_directional_replay_runs_lifecycle_check',
+        includes: ['CHECK', 'planned', 'running', 'paused', 'completed', 'failed'],
+      }],
+      indexes: [{
+        name: 'idx_rh_directional_replay_runs_active',
+        includes: ['chain', 'projection_version', 'planned', 'running', 'paused'],
+      }],
+    }, {
+      table: 'robinhood_directional_transfer_replay_ranges',
+      columns: [
+        'id', 'run_id', 'chain', 'range_start_block', 'range_end_block',
+        'status', 'lease_owner', 'lease_until', 'attempt_count', 'next_attempt_at',
+        'blocks_scanned', 'transfers_scanned', 'edges_considered', 'edges_written',
+        'completed_through_block', 'completed_through_hash', 'last_error_code',
+        'last_error_message', 'started_at', 'completed_at', 'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_directional_replay_ranges_identity',
+        includes: ['UNIQUE', 'run_id', 'range_start_block', 'range_end_block'],
+      }, {
+        name: 'rh_directional_replay_ranges_lease_check',
+        includes: ['CHECK', 'leased', 'lease_owner', 'lease_until'],
+      }, {
+        name: 'rh_directional_replay_ranges_counts_check',
+        includes: [
+          'CHECK', 'attempt_count', 'blocks_scanned', 'transfers_scanned',
+          'edges_considered', 'edges_written',
+        ],
+      }, {
+        name: 'rh_directional_replay_ranges_completion_check',
+        includes: [
+          'CHECK', 'completed', 'completed_at', 'completed_through_block',
+          'completed_through_hash', 'range_end_block',
+        ],
+      }],
+      indexes: [{
+        name: 'idx_rh_directional_replay_ranges_claim',
+        includes: ['run_id', 'next_attempt_at', 'range_start_block', 'pending'],
+      }, {
+        name: 'idx_rh_directional_replay_ranges_lease',
+        includes: ['run_id', 'lease_until', 'leased'],
+      }, {
+        name: 'idx_rh_directional_replay_ranges_progress',
+        includes: ['run_id', 'status', 'range_start_block'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
