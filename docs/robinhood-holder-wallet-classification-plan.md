@@ -372,8 +372,11 @@ carga sem ETA confiável.
      Preflight e runner puros também estão concluídos, com amostra distribuída,
      teto projetado de 5 horas e recusa por checkpoint não canônico. O source/writer
      reutiliza captura/classificação histórica, atualiza só evidência direcional e
-     falha fechado para checkpoint ou aresta ausente. CLI, worker shadow e
-     publicação seguem em cortes próprios; `INSIDER` continua indisponível na API/UI.
+     falha fechado para checkpoint ou aresta ausente. A CLI operacional também
+     está concluída: congela toda a janela durável até o checkpoint live, executa
+     preflight read-only por padrão e só cria/retoma campanha com `--apply`.
+     Worker shadow e publicação seguem em cortes próprios; `INSIDER` continua
+     indisponível na API/UI.
 5. **BUNDLED**
    - construir clusters explicáveis por funder e janela;
    - publicar como `possible bundle`, nunca como identidade comum.
