@@ -63,6 +63,8 @@ test('reads population recurrence and reuses proven launch anchors', async () =>
   assert.match(calls[0].sql, /LIMIT 5/);
   assert.doesNotMatch(calls[0].sql, /candidate_buy_blocks/);
   assert.match(calls[0].sql, /robinhood_infrastructure_registry/);
+  assert.doesNotMatch(calls[0].sql, /robinhood_wallet_swaps/);
+  assert.doesNotMatch(calls[0].sql, /router_address/);
   assert.deepEqual(calls[1].params, [
     [TOKEN, TOKEN_B], ['90', '90'], ['250', '250'], 'robinhood',
   ]);

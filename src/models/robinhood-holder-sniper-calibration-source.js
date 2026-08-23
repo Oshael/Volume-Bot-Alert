@@ -67,12 +67,6 @@ SELECT buy.wallet_address, buy.token_address, buy.volume_usd::text,
         AND CASE WHEN registry.protocol = 'uniswap-v4'
           THEN registry.origin_address ELSE registry.pool_address END = buy.wallet_address
    )
-   AND NOT EXISTS (
-     SELECT 1 FROM robinhood_wallet_swaps swap
-      WHERE swap.chain = buy.chain AND swap.token_address = buy.token_address
-        AND swap.router_address = buy.wallet_address
-        AND swap.block_number <= state.live_through_block
-   )
    AND buy.wallet_address NOT IN (
      '0x0000000000000000000000000000000000000000',
      '0x000000000000000000000000000000000000dead'

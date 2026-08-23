@@ -297,11 +297,6 @@ function createRobinhoodHolderLaunchSource(options = {}) {
           WHERE chain = $1 AND token_address = $2
             AND discovery_block <= $4::bigint
          UNION ALL
-         SELECT DISTINCT router_address, 'swap_router'
-           FROM robinhood_wallet_swaps
-          WHERE chain = $1 AND token_address = $2 AND router_address IS NOT NULL
-            AND block_number <= $4::bigint
-         UNION ALL
          SELECT registry.address, 'infrastructure_' || registry.kind
            FROM robinhood_infrastructure_registry registry
            INNER JOIN candidates candidate ON candidate.wallet_address = registry.address

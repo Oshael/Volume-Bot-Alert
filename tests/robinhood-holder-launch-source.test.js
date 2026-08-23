@@ -143,6 +143,8 @@ test('reads canonical anchor and first buy evidence without classifying the wall
     }])],
   ]);
   assert.match(queries[5].sql, /valid_from_block <= candidate\.block_number/);
+  assert.doesNotMatch(queries[5].sql, /robinhood_wallet_swaps/);
+  assert.doesNotMatch(queries[5].sql, /router_address/);
   assert.match(queries[0].sql, /MIN\(discovery_block\).*first_pool_discovery_block/s);
   assert.match(queries[1].sql, /ORDER BY swap\.block_time/);
   assert.match(queries[2].sql, /DATE_TRUNC\('day'/);

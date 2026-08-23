@@ -357,6 +357,9 @@ carga sem ETA confiável.
      de first-buy está alcançado, limita concorrência e contém falhas por token.
      Tokens sem first-buy top 5 de pelo menos US$50 ou sem buy a até um bloco da
      âncora usam fast path vazio e não hidratam a transação completa do lançamento.
+     A exclusão de router usa o registry auditado: `wallet_address` já é
+     `transaction.from`, e o campo técnico `router_address` atual não é fonte de
+     identidade nem dispara varredura na tabela particionada de swaps.
      A leitura pública mantém allowlist `LP`/`CEX`, portanto snapshots SNIPER
      persistidos pelo shadow não vazam para a UI. O loop operacional opt-in roda
      no grupo `robinhood-wallet-classification`, usa lease própria, pagina todo o

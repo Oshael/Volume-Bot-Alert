@@ -1360,8 +1360,11 @@ ausente ou atrasada; concorrência máxima é 4 e uma falha de token não aborta
 lote. A política pública versionada `rh_sniper_high_v2` exige compra
 entre os 5 primeiros compradores canônicos, em até 1 bloco da âncora, notional
 de pelo menos US$50 e recorrência desse padrão em 3 ou mais lançamentos. Creator,
-pools, routers, infraestrutura conhecida e burn são excluídos. A janela ampla de
-3 blocos/90 segundos continua apenas como sinal candidato interno. Para auditar
+pools, routers registrados, infraestrutura conhecida e burn são excluídos. Como
+`wallet_address` é o `transaction.from` canônico e `router_address` é contexto
+técnico separado que o attributor atual não preenche, o SNIPER não consulta a
+tabela bruta de swaps para redescobrir routers; usa o registry auditado. A janela
+ampla de 3 blocos/90 segundos continua apenas como sinal candidato interno. Para auditar
 ou recalibrar uma futura versão sem escrever classificação, execute
 `npm run robinhood:sniper-calibrate -- --limit=25 --seed=default`; o comando é
 somente leitura e retorna quantis agregados, sem endereços. Para comparar limites
