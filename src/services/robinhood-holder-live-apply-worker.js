@@ -96,6 +96,7 @@ function createRobinhoodHolderLiveApplyWorker(deps = {}) {
     totalAppliedEvents: 0, totalDriftedTokens: 0, totalDriftSuspicions: 0,
     totalReceiptRecoveries: 0, totalTailRollbacks: 0, totalTailRollbackEvents: 0,
     totalBaselineRequeues: 0,
+    totalQuarantinedTokens: 0,
     totalShadowPromotions: 0,
     totalHolderCountUpdates: 0, totalHolderCountPublished: 0, lastCompletedAt: null,
   };
@@ -134,6 +135,7 @@ function createRobinhoodHolderLiveApplyWorker(deps = {}) {
       status.totalTailRollbacks += Number(result.tailRollbacks) || 0;
       status.totalTailRollbackEvents += Number(result.tailRollbackEvents) || 0;
       status.totalBaselineRequeues += Number(result.baselineRequeues) || 0;
+      status.totalQuarantinedTokens += Number(result.quarantinedTokens) || 0;
       status.totalShadowPromotions += Number(result.shadowPromotions) || 0;
       status.totalHolderCountUpdates += Number(result.holderCountUpdates) || 0;
       status.totalHolderCountPublished += Number(result.holderCountPublished) || 0;

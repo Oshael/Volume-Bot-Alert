@@ -50,6 +50,13 @@ function harness(
         status: 'not-requeued', reason: 'state-not-safe',
       };
     },
+    quarantineMalformedToken: async (input) => {
+      calls.push(['quarantine', input]);
+      return {
+        status: 'quarantined', tokenAddress: input.tokenAddress,
+        deletedBalances: 1, deletedJournalEvents: 2,
+      };
+    },
     promoteReadyShadowTokens: async (input) => {
       calls.push(['promote-shadows', input]);
       if (options.shadowPromotion instanceof Error) throw options.shadowPromotion;
@@ -104,6 +111,7 @@ describe('Robinhood holder live runner', () => {
       driftSuspicions: 0, receiptRecoveries: 0, driftDeferred: 0,
       tailRollbacks: 0, tailRollbackEvents: 0,
       baselineRequeues: 0,
+      quarantinedTokens: 0,
       shadowPromotions: 0,
       holderCountUpdates: 0, holderCountPublished: 0,
       applyBudgetExhausted: false, nextBlock: '106', safeHead: '105',
@@ -402,6 +410,26 @@ describe('Robinhood holder live runner', () => {
     });
   });
 
+  it('quarantines a uint256 overflow and continues draining other tokens', async () => {
+    const badToken = `0x${'a'.repeat(40)}`;
+    const goodToken = `0x${'b'.repeat(40)}`;
+    const overflow = Object.assign(new Error('projected holder balance exceeds uint256'), {
+      code: 'holder_balance_overflow', tokenAddress: badToken,
+    });
+    const context = harness({
+      status: 'idle', transfers: 0, nextBlock: '106', safeHead: '105',
+    }, [overflow, { status: 'applied', tokenAddress: goodToken }, { status: 'idle' }]);
+
+    const result = await context.runner.applyOnce({ maxApplyEvents: 5, applyBatchSize: 5 });
+
+    assert.equal(result.quarantinedTokens, 1);
+    assert.equal(result.driftedTokens, 1);
+    assert.equal(result.appliedEvents, 1);
+    assert.deepEqual(context.calls.find(([name]) => name === 'quarantine'), [
+      'quarantine', { tokenAddress: badToken, exclusionReason: 'balance_overflow_live' },
+    ]);
+  });
+
   it('annotates shadow-promotion failures without inventing a token', async () => {
     const failure = Object.assign(new Error('numeric field overflow'), { code: '22003' });
     const context = harness({
@@ -452,6 +480,9 @@ describe('Robinhood holder live runner', () => {
         repairCapturedRange: async () => ({ status: 'repaired', insertedTransfers: 0 }),
         requeueWideShadowTail: async () => ({ status: 'not-requeued' }),
         rollbackAppliedTail: async () => ({ status: 'requeued', revertedEvents: 0 }),
+        quarantineMalformedToken: async () => ({
+          status: 'quarantined', tokenAddress: `0x${'a'.repeat(40)}`,
+        }),
         promoteReadyShadowTokens: async () => ({
           status: 'idle', promotedTokens: 0, publications: [],
         }),

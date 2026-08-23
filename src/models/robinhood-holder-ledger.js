@@ -3,6 +3,7 @@ const db = require('./db');
 const CHAIN = 'robinhood';
 const STREAM = 'live';
 const ZERO_ADDRESS = `0x${'0'.repeat(40)}`;
+const MAX_UINT256 = (1n << 256n) - 1n;
 const REORG_FENCE_LOCK_ID = '8241992116082026';
 
 function decimalQuantity(value, label) {
@@ -223,6 +224,17 @@ function normalizeCursorRow(row) {
   });
 }
 
+function assertHolderBalance(value, transfer, walletAddress) {
+  if (value <= MAX_UINT256) return;
+  const error = new Error('projected holder balance exceeds uint256');
+  error.code = 'holder_balance_overflow';
+  error.tokenAddress = transfer.tokenAddress;
+  error.walletAddress = walletAddress;
+  error.balanceRaw = value.toString();
+  error.failedBlock = transfer.blockNumber;
+  throw error;
+}
+
 function deriveBalanceChanges(value, balances = {}) {
   const transfer = normalizeTransfer(value);
   const amount = BigInt(transfer.amountRaw);
@@ -238,6 +250,7 @@ function deriveBalanceChanges(value, balances = {}) {
 
   if (transfer.fromWallet !== ZERO_ADDRESS) {
     fromBefore = getBalance(transfer.fromWallet);
+    assertHolderBalance(fromBefore, transfer, transfer.fromWallet);
     if (fromBefore < amount) {
       const error = new Error('transfer amount exceeds the indexed sender balance');
       error.code = 'holder_negative_balance';
@@ -249,8 +262,10 @@ function deriveBalanceChanges(value, balances = {}) {
   if (transfer.toWallet !== ZERO_ADDRESS) {
     toBefore = transfer.toWallet === transfer.fromWallet
       ? fromBefore : getBalance(transfer.toWallet);
+    assertHolderBalance(toBefore, transfer, transfer.toWallet);
     toAfter = transfer.toWallet === transfer.fromWallet
       ? fromBefore : toBefore + amount;
+    assertHolderBalance(toAfter, transfer, transfer.toWallet);
     record(transfer.toWallet, toBefore, toAfter);
   }
   const ordered = [...transitions.values()].sort((left, right) => (
@@ -1418,6 +1433,11 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
 
   async function quarantineMalformedToken(input = {}) {
     const tokenAddress = hex(input.tokenAddress, 20, 'malformed.tokenAddress');
+    const exclusionReason = input.exclusionReason == null
+      ? 'malformed_transfer_log_live' : String(input.exclusionReason);
+    if (!['malformed_transfer_log_live', 'balance_overflow_live'].includes(exclusionReason)) {
+      throw new Error('holder quarantine exclusion reason is invalid');
+    }
     return withTransaction(database, async (client) => {
       await lockReorgFence(client, 'exclusive');
       await client.query(
@@ -1451,9 +1471,10 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
       const cohort = await client.query(
         `UPDATE robinhood_holder_global_backfill_tokens
             SET holder_count = 0, status = 'excluded',
-                exclusion_reason = 'malformed_transfer_log_live', updated_at = NOW()
+                exclusion_reason = $3, updated_at = NOW()
           WHERE chain = $1 AND token_address = $2
-            AND status IN ('active', 'materialized')`, [CHAIN, tokenAddress]
+            AND status IN ('active', 'materialized')`,
+        [CHAIN, tokenAddress, exclusionReason]
       );
       if (!states.rowCount && !cohort.rowCount) {
         const error = new Error('malformed holder token is no longer tracked');

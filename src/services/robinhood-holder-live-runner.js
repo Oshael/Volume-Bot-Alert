@@ -45,6 +45,10 @@ function applyBatchMetrics(result) {
   return Object.freeze({ appliedEvents, attemptedEvents });
 }
 
+function quarantineMetric(result) {
+  return result?.quarantinedTokens === 1 ? 1 : 0;
+}
+
 function annotateHolderError(error, stage, tokenAddress = null) {
   if (!error || typeof error !== 'object') return error;
   error.holderStage ||= stage;
@@ -65,6 +69,7 @@ function isLiveLedger(value) {
     'applyNextPendingEvent', 'listPendingTokenAddresses',
     'promoteReadyShadowTokens', 'repairCapturedRange',
     'requeueWideShadowTail', 'rollbackAppliedTail',
+    'quarantineMalformedToken',
   ].every((method) => typeof value?.[method] === 'function');
 }
 
@@ -110,6 +115,30 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     return Math.max(0, Math.round(measureMs() - startedAt));
   }
 
+  async function quarantineBalanceOverflow(error, tokenAddress) {
+    if (error?.code !== 'holder_balance_overflow') throw error;
+    if (error.tokenAddress && error.tokenAddress !== tokenAddress) {
+      const contractError = new Error('holder overflow token differs from the selected token');
+      contractError.code = 'holder_live_apply_contract_error';
+      throw contractError;
+    }
+    const quarantined = await withHolderErrorContext(
+      () => ledger.quarantineMalformedToken({
+        tokenAddress, exclusionReason: 'balance_overflow_live',
+      }),
+      'overflow_quarantine', tokenAddress
+    );
+    if (quarantined.status !== 'quarantined') {
+      const contractError = new Error('holder overflow quarantine did not isolate the token');
+      contractError.code = 'holder_live_apply_contract_error';
+      throw contractError;
+    }
+    return Object.freeze({
+      status: 'drifted', tokenAddress: quarantined.tokenAddress,
+      appliedEvents: 0, attemptedEvents: 1, quarantinedTokens: 1,
+    });
+  }
+
   async function applyWithTiming(input, timing) {
     const startedAt = measureMs();
     let result;
@@ -117,6 +146,9 @@ function createRobinhoodHolderLiveRunner(options = {}) {
       result = await withHolderErrorContext(
         () => ledger.applyNextPendingEvent(input), 'apply', input?.onlyTokenAddress
       );
+      return result;
+    } catch (error) {
+      result = await quarantineBalanceOverflow(error, input?.onlyTokenAddress);
       return result;
     } finally {
       const durationMs = elapsedMs(startedAt);
@@ -310,6 +342,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     let tailRollbacks = 0;
     let tailRollbackEvents = 0;
     let baselineRequeues = 0;
+    let quarantinedTokens = 0;
     let preferredTokenAddress = null;
     let pendingTokenAddresses = [];
     const timing = {
@@ -348,6 +381,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
       const batch = applyBatchMetrics(applied);
       applyAttempts += batch.attemptedEvents;
       appliedEvents += batch.appliedEvents;
+      quarantinedTokens += quarantineMetric(applied);
       rememberHolderCountUpdate(holderCountUpdates, applied);
       if (applied.status === 'applied') {
         driftEvidence.delete(applied.tokenAddress);
@@ -413,7 +447,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     return {
       appliedEvents, driftedTokens, applyAttempts, reachedIdle,
       driftSuspicions, receiptRecoveries, driftDeferred, holderCountUpdates,
-      tailRollbacks, tailRollbackEvents, baselineRequeues, timing,
+      tailRollbacks, tailRollbackEvents, baselineRequeues, quarantinedTokens, timing,
     };
   }
 
@@ -495,6 +529,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
       receiptRecoveries: drained.receiptRecoveries, driftDeferred: drained.driftDeferred,
       tailRollbacks: drained.tailRollbacks, tailRollbackEvents: drained.tailRollbackEvents,
       baselineRequeues: drained.baselineRequeues,
+      quarantinedTokens: drained.quarantinedTokens,
       shadowPromotions: Number(promoted.promotedTokens) || 0,
       holderCountUpdates: drained.holderCountUpdates.size, holderCountPublished,
       applyBudgetExhausted: !drained.reachedIdle && drained.applyAttempts === maxApplyEvents,

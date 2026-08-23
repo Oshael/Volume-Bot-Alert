@@ -100,6 +100,14 @@ describe('Robinhood holder ledger repository', () => {
       () => derive(transfer({ amountRaw: '11' }), { [ALICE]: '10' }),
       (error) => error.code === 'holder_negative_balance'
     );
+    const maxUint256 = (1n << 256n) - 1n;
+    assert.throws(
+      () => derive(transfer({ fromWallet: zero, amountRaw: '1' }), {
+        [BOB]: maxUint256.toString(),
+      }),
+      (error) => error.code === 'holder_balance_overflow'
+        && error.tokenAddress === TOKEN && error.walletAddress === BOB
+    );
   });
 
   it('commits matching captures and advances a bootstrap cursor atomically', async () => {

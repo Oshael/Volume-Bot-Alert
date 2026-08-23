@@ -393,4 +393,48 @@ describe('Robinhood holder global backfill scanner', () => {
     assert.deepEqual(scopes, [[TOKEN], []]);
     assert.equal(scanner.getStatus().totals.exclusions, 1);
   });
+
+  it('excludes a uint256 balance overflow without attempting receipt repair', async () => {
+    let nextBlock = '100';
+    const exclusions = [];
+    const scopes = [];
+    const scanner = createRobinhoodHolderGlobalBackfillScanner({
+      lifecycleRepository: {
+        getActiveRun: async () => runState(nextBlock), loadCohort: async () => [TOKEN],
+      },
+      commitRepository: {
+        async commitRange(input) {
+          if (input.transfers.length) {
+            throw Object.assign(new Error('overflow'), {
+              code: 'holder_balance_overflow', tokenAddress: TOKEN,
+            });
+          }
+          nextBlock = input.nextBlock;
+          return { status: 'committed', ...input, runId: '1' };
+        },
+        async excludeToken(input) {
+          exclusions.push(input);
+          return { status: 'excluded', tokenAddress: input.tokenAddress };
+        },
+      },
+      reader: {
+        getSafeHead: async () => ({ safeHead: '100' }),
+        readGlobalRange: async ({ tokenAddresses }) => {
+          scopes.push(tokenAddresses);
+          return range(100, 100, {
+            transfers: tokenAddresses.includes(TOKEN) ? [{ tokenAddress: TOKEN }] : [],
+          });
+        },
+        readReceiptRange: async () => { throw new Error('unexpected receipts'); },
+      },
+      options: { prefetch: 1 },
+    });
+
+    assert.equal((await scanner.runOnce({ throughBlock: 100 })).status, 'excluded');
+    assert.deepEqual(exclusions, [{
+      runId: '1', tokenAddress: TOKEN, reason: 'balance_overflow',
+    }]);
+    assert.equal((await scanner.runOnce({ throughBlock: 100 })).status, 'committed');
+    assert.deepEqual(scopes, [[TOKEN], []]);
+  });
 });

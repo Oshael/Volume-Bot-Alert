@@ -280,6 +280,12 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
       const committed = await committer.commitRange({ ...range, runId });
       return { committed, durationMs: Math.max(0, now() - startedAt) };
     } catch (error) {
+      if (error.code === 'holder_balance_overflow' && error.tokenAddress) {
+        const committed = await excludeCohortToken(
+          runId, error.tokenAddress, 'balance_overflow'
+        );
+        return { committed, durationMs: Math.max(0, now() - startedAt) };
+      }
       if (error.code !== 'holder_negative_balance') throw error;
       const committed = await verifyDeficit(runId, range, error);
       return { committed, durationMs: Math.max(0, now() - startedAt) };
@@ -294,7 +300,7 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
       const committed = await committer.commitRange({ ...merged, runId });
       return Object.freeze({ committed, durationMs: Math.max(0, now() - startedAt) });
     } catch (error) {
-      if (error.code === 'holder_negative_balance') return null;
+      if (['holder_negative_balance', 'holder_balance_overflow'].includes(error.code)) return null;
       throw error;
     }
   }

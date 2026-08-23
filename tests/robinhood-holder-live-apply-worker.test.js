@@ -35,6 +35,7 @@ describe('Robinhood holder live apply worker', () => {
             driftedTokens: 0, driftSuspicions: 0, receiptRecoveries: 0,
             tailRollbacks: 0, tailRollbackEvents: 0,
             baselineRequeues: 2,
+            quarantinedTokens: 1,
             shadowPromotions: 3,
             holderCountUpdates: 2, holderCountPublished: 2,
             applyBudgetExhausted: true,
@@ -53,6 +54,7 @@ describe('Robinhood holder live apply worker', () => {
     assert.equal(worker.getStatus().totalAppliedEvents, 25);
     assert.equal(worker.getStatus().totalShadowPromotions, 3);
     assert.equal(worker.getStatus().totalBaselineRequeues, 2);
+    assert.equal(worker.getStatus().totalQuarantinedTokens, 1);
     assert.equal(worker.getStatus().lastResult.applyBudgetExhausted, true);
     await worker.stop();
   });

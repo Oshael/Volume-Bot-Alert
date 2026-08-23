@@ -1531,6 +1531,12 @@ quarentenado isoladamente: balances e journal desse endereço são removidos, se
 state vira `drifted`, o cursor não avança e o mesmo range é repetido sem ele no
 tick seguinte. `quarantinedTokenAddress` e `quarantinedTokens` registram a ação
 na telemetria do worker.
+Na aplicação do journal, qualquer saldo projetado acima do limite `uint256` vira
+`holder_balance_overflow` antes do cast PostgreSQL. O apply remove balances e
+journal somente desse token, marca seu state como `drifted`, registra
+`quarantinedTokens` e continua drenando os demais. A campanha global trata a
+mesma anomalia como exclusão `balance_overflow`, sem tentar repará-la por receipts
+nem interromper a varredura.
 `scanner.lastBatch` separa `rpcWaitMs`, duração agregada/máxima dos ranges RPC,
 `commitDurationMs` e overhead do último batch, além de ranges, requests, logs,
 transfers e throughput. Compare essas medidas com o mesmo prefetch e concorrência
