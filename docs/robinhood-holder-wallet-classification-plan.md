@@ -364,8 +364,9 @@ carga sem ETA confiável.
    - começar por distribuição direta do token;
    - adicionar funding nativo direto somente quando a fonte estiver comprovada.
    - Status em 2026-08-23: a Stage 153 prepara evidência direcional da primeira
-     `wallet_transfer` em cada aresta sem reescrever o histórico na migration.
-     Writer, replay limitado, source, materializador, worker shadow e publicação
+     `wallet_transfer` em cada aresta sem reescrever o histórico na migration. O
+     writer seed/live/reclassification já mantém o primeiro evento pela posição
+     canônica. Replay limitado, source, materializador, worker shadow e publicação
      seguem em cortes próprios, portanto `INSIDER` continua indisponível na API/UI.
 5. **BUNDLED**
    - construir clusters explicáveis por funder e janela;

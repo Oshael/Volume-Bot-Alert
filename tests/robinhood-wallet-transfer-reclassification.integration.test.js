@@ -19,6 +19,7 @@ const stage131 = require('../src/utils/db-init-stage131');
 const stage132 = require('../src/utils/db-init-stage132');
 const stage135 = require('../src/utils/db-init-stage135');
 const stage136 = require('../src/utils/db-init-stage136');
+const stage153 = require('../src/utils/db-init-stage153');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const VERSION = 'test_reclassification_v1';
@@ -105,7 +106,9 @@ async function insertRole(endpoint, evidenceBlock) {
 describe('Robinhood wallet transfer reclassification persistence', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
-    for (const stage of [stage128, stage129, stage130, stage131, stage132, stage135, stage136]) {
+    for (const stage of [
+      stage128, stage129, stage130, stage131, stage132, stage135, stage136, stage153,
+    ]) {
       await stage.init({ closePool: false });
     }
     await cleanup();
@@ -163,6 +166,17 @@ describe('Robinhood wallet transfer reclassification persistence', () => {
       [TX1, VERSION]
     );
     assert.deepEqual(counts.rows[0], { audits: 1, edges: 1, daily: 1, evidence: 3 });
+    const directional = await db.query(
+      `SELECT first_wallet_transfer_block::text AS block_number,
+              first_wallet_transfer_log_index AS log_index,
+              first_wallet_transfer_transaction_hash AS transaction_hash,
+              first_wallet_transfer_amount_raw::text AS amount_raw
+         FROM robinhood_wallet_transfer_edges WHERE classification_version = $1`,
+      [VERSION]
+    );
+    assert.deepEqual(directional.rows[0], {
+      block_number: '100', log_index: 1, transaction_hash: TX1, amount_raw: '25',
+    });
     const watermark = await db.query(
       `SELECT lifecycle_state, state_reason, summary_reconciled, position_complete,
               evidence_complete, verified_at

@@ -122,7 +122,7 @@ function summarize(events, projectionVersion) {
       tokenAddress: event.tokenAddress, fromWallet: event.fromWallet,
       toWallet: event.toWallet, transferCount: 0n, totalAmountRaw: 0n,
       walletTransferCount: 0n, dexFlowCount: 0n,
-      first: event, last: event, largest: event,
+      first: event, last: event, largest: event, firstWalletTransfer: null,
     };
     edge.transferCount += 1n;
     edge.totalAmountRaw += BigInt(event.amountRaw);
@@ -131,6 +131,10 @@ function summarize(events, projectionVersion) {
     edge.first = earlier(edge.first, event);
     edge.last = later(edge.last, event);
     edge.largest = larger(edge.largest, event);
+    if (event.transferKind === 'wallet_transfer') {
+      edge.firstWalletTransfer = edge.firstWalletTransfer
+        ? earlier(edge.firstWalletTransfer, event) : event;
+    }
     edges.set(edgeKey, edge);
 
     if (event.transferKind !== 'wallet_transfer') continue;
@@ -356,6 +360,11 @@ async function persistEdges(client, projectionVersion, edges) {
     last_seen_at: edge.last.blockTime, last_transaction_hash: edge.last.transactionHash,
     largest_amount_raw: edge.largest.amountRaw, largest_log_index: edge.largest.logIndex,
     largest_transaction_hash: edge.largest.transactionHash,
+    first_wallet_transfer_block: edge.firstWalletTransfer?.block ?? null,
+    first_wallet_transfer_log_index: edge.firstWalletTransfer?.logIndex ?? null,
+    first_wallet_transfer_at: edge.firstWalletTransfer?.blockTime ?? null,
+    first_wallet_transfer_transaction_hash: edge.firstWalletTransfer?.transactionHash ?? null,
+    first_wallet_transfer_amount_raw: edge.firstWalletTransfer?.amountRaw ?? null,
   }));
   await client.query(
     `INSERT INTO robinhood_wallet_transfer_edges (
@@ -363,7 +372,10 @@ async function persistEdges(client, projectionVersion, edges) {
        transfer_count, total_amount_raw, wallet_transfer_count, dex_flow_count,
        first_block, first_log_index, first_seen_at, first_transaction_hash,
        last_block, last_log_index, last_seen_at, last_transaction_hash,
-       largest_amount_raw, largest_log_index, largest_transaction_hash
+       largest_amount_raw, largest_log_index, largest_transaction_hash,
+       first_wallet_transfer_block, first_wallet_transfer_log_index,
+       first_wallet_transfer_at, first_wallet_transfer_transaction_hash,
+       first_wallet_transfer_amount_raw
      ) SELECT $1, $2, item.token_address, item.from_wallet, item.to_wallet,
        item.transfer_count::bigint, item.total_amount_raw::numeric,
        item.wallet_transfer_count::bigint, item.dex_flow_count::bigint,
@@ -371,12 +383,20 @@ async function persistEdges(client, projectionVersion, edges) {
        item.first_transaction_hash, item.last_block::bigint, item.last_log_index::integer,
        item.last_seen_at::timestamptz, item.last_transaction_hash,
        item.largest_amount_raw::numeric, item.largest_log_index::integer,
-       item.largest_transaction_hash FROM jsonb_to_recordset($3::jsonb) AS item(
+       item.largest_transaction_hash, item.first_wallet_transfer_block::bigint,
+       item.first_wallet_transfer_log_index::integer,
+       item.first_wallet_transfer_at::timestamptz,
+       item.first_wallet_transfer_transaction_hash,
+       item.first_wallet_transfer_amount_raw::numeric
+       FROM jsonb_to_recordset($3::jsonb) AS item(
          token_address text, from_wallet text, to_wallet text, transfer_count text,
          total_amount_raw text, wallet_transfer_count text, dex_flow_count text,
          first_block text, first_log_index int, first_seen_at text, first_transaction_hash text,
          last_block text, last_log_index int, last_seen_at text, last_transaction_hash text,
-         largest_amount_raw text, largest_log_index int, largest_transaction_hash text
+         largest_amount_raw text, largest_log_index int, largest_transaction_hash text,
+         first_wallet_transfer_block text, first_wallet_transfer_log_index int,
+         first_wallet_transfer_at text, first_wallet_transfer_transaction_hash text,
+         first_wallet_transfer_amount_raw text
        ) ON CONFLICT (chain, classification_version, token_address, from_wallet, to_wallet)
      DO UPDATE SET transfer_count = robinhood_wallet_transfer_edges.transfer_count + EXCLUDED.transfer_count,
        total_amount_raw = robinhood_wallet_transfer_edges.total_amount_raw + EXCLUDED.total_amount_raw,
@@ -411,6 +431,42 @@ async function persistEdges(client, projectionVersion, edges) {
          THEN EXCLUDED.largest_log_index ELSE robinhood_wallet_transfer_edges.largest_log_index END,
        largest_transaction_hash = CASE WHEN EXCLUDED.largest_amount_raw > robinhood_wallet_transfer_edges.largest_amount_raw
          THEN EXCLUDED.largest_transaction_hash ELSE robinhood_wallet_transfer_edges.largest_transaction_hash END,
+       first_wallet_transfer_block = CASE WHEN EXCLUDED.first_wallet_transfer_block IS NOT NULL
+         AND (robinhood_wallet_transfer_edges.first_wallet_transfer_block IS NULL OR
+           (EXCLUDED.first_wallet_transfer_block, EXCLUDED.first_wallet_transfer_log_index) <
+           (robinhood_wallet_transfer_edges.first_wallet_transfer_block,
+            robinhood_wallet_transfer_edges.first_wallet_transfer_log_index))
+         THEN EXCLUDED.first_wallet_transfer_block
+         ELSE robinhood_wallet_transfer_edges.first_wallet_transfer_block END,
+       first_wallet_transfer_log_index = CASE WHEN EXCLUDED.first_wallet_transfer_block IS NOT NULL
+         AND (robinhood_wallet_transfer_edges.first_wallet_transfer_block IS NULL OR
+           (EXCLUDED.first_wallet_transfer_block, EXCLUDED.first_wallet_transfer_log_index) <
+           (robinhood_wallet_transfer_edges.first_wallet_transfer_block,
+            robinhood_wallet_transfer_edges.first_wallet_transfer_log_index))
+         THEN EXCLUDED.first_wallet_transfer_log_index
+         ELSE robinhood_wallet_transfer_edges.first_wallet_transfer_log_index END,
+       first_wallet_transfer_at = CASE WHEN EXCLUDED.first_wallet_transfer_block IS NOT NULL
+         AND (robinhood_wallet_transfer_edges.first_wallet_transfer_block IS NULL OR
+           (EXCLUDED.first_wallet_transfer_block, EXCLUDED.first_wallet_transfer_log_index) <
+           (robinhood_wallet_transfer_edges.first_wallet_transfer_block,
+            robinhood_wallet_transfer_edges.first_wallet_transfer_log_index))
+         THEN EXCLUDED.first_wallet_transfer_at
+         ELSE robinhood_wallet_transfer_edges.first_wallet_transfer_at END,
+       first_wallet_transfer_transaction_hash = CASE
+         WHEN EXCLUDED.first_wallet_transfer_block IS NOT NULL
+         AND (robinhood_wallet_transfer_edges.first_wallet_transfer_block IS NULL OR
+           (EXCLUDED.first_wallet_transfer_block, EXCLUDED.first_wallet_transfer_log_index) <
+           (robinhood_wallet_transfer_edges.first_wallet_transfer_block,
+            robinhood_wallet_transfer_edges.first_wallet_transfer_log_index))
+         THEN EXCLUDED.first_wallet_transfer_transaction_hash
+         ELSE robinhood_wallet_transfer_edges.first_wallet_transfer_transaction_hash END,
+       first_wallet_transfer_amount_raw = CASE WHEN EXCLUDED.first_wallet_transfer_block IS NOT NULL
+         AND (robinhood_wallet_transfer_edges.first_wallet_transfer_block IS NULL OR
+           (EXCLUDED.first_wallet_transfer_block, EXCLUDED.first_wallet_transfer_log_index) <
+           (robinhood_wallet_transfer_edges.first_wallet_transfer_block,
+            robinhood_wallet_transfer_edges.first_wallet_transfer_log_index))
+         THEN EXCLUDED.first_wallet_transfer_amount_raw
+         ELSE robinhood_wallet_transfer_edges.first_wallet_transfer_amount_raw END,
        updated_at = NOW()`,
     [CHAIN, projectionVersion, JSON.stringify(rows)]
   );
