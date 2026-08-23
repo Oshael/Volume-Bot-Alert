@@ -97,7 +97,7 @@ async function resolveRun(repository, options) {
       throw new Error('failed-run retry requires an explicit failed run');
     }
     const recovery = await repository.resumeFailed(run.id);
-    return { ...run, status: 'running', requeued: recovery.requeued };
+    return { ...run, status: 'running', ...recovery };
   }
   return run;
 }
@@ -143,6 +143,7 @@ async function executeBackfill(deps = {}, options = {}) {
   }
   options.onRun?.(Object.freeze({
     runId: run.id, status: run.status, requeued: run.requeued || 0,
+    subdivided: run.subdivided || 0, addedRanges: run.addedRanges || 0,
   }));
   if (run.status === 'completed') {
     const progress = await repository.getProgress({ runId: run.id, concurrency });

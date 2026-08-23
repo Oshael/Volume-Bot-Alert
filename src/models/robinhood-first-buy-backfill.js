@@ -1,6 +1,8 @@
 const db = require('./db');
 
 const CHAIN = 'robinhood';
+const TIMEOUT_ERROR_CODE = '57014';
+const TIMEOUT_SLICE_SECONDS = 900;
 
 function positiveInteger(value, label, maximum = Number.MAX_SAFE_INTEGER) {
   const number = Number(value);
@@ -127,6 +129,47 @@ function createRobinhoodFirstBuyBackfillRepository(options = {}) {
       if (run.rows[0]?.status !== 'failed') {
         throw new Error('first-buy backfill run is not failed');
       }
+      const failed = await client.query(
+        `SELECT id, range_start, range_end, last_error_code
+           FROM robinhood_first_buy_backfill_ranges
+          WHERE run_id = $1 AND chain = $2 AND status = 'failed'
+          ORDER BY range_start FOR UPDATE`, [runId, CHAIN]
+      );
+      if (!failed.rowCount) throw new Error('failed run has no failed ranges');
+
+      let subdivided = 0;
+      let addedRanges = 0;
+      for (const range of failed.rows) {
+        const durationMs = range.range_end.getTime() - range.range_start.getTime();
+        if (range.last_error_code !== TIMEOUT_ERROR_CODE
+          || durationMs <= TIMEOUT_SLICE_SECONDS * 1000) continue;
+        const boundaries = [];
+        for (let start = range.range_start.getTime(); start < range.range_end.getTime();
+          start += TIMEOUT_SLICE_SECONDS * 1000) {
+          boundaries.push([
+            new Date(start),
+            new Date(Math.min(start + TIMEOUT_SLICE_SECONDS * 1000, range.range_end.getTime())),
+          ]);
+        }
+        await client.query(
+          `UPDATE robinhood_first_buy_backfill_ranges SET
+             range_end = $3, status = 'pending', lease_owner = NULL, lease_until = NULL,
+             attempt_count = 0, next_attempt_at = NOW(),
+             last_error_code = NULL, last_error_message = NULL,
+             started_at = NULL, updated_at = NOW()
+           WHERE id = $1 AND run_id = $2`, [range.id, runId, boundaries[0][1]]
+        );
+        for (const [rangeStart, rangeEnd] of boundaries.slice(1)) {
+          await client.query(
+            `INSERT INTO robinhood_first_buy_backfill_ranges (
+               run_id, chain, range_start, range_end
+             ) VALUES ($1, $2, $3, $4)`, [runId, CHAIN, rangeStart, rangeEnd]
+          );
+        }
+        subdivided += 1;
+        addedRanges += boundaries.length - 1;
+      }
+
       const ranges = await client.query(
         `UPDATE robinhood_first_buy_backfill_ranges SET
            status = 'pending', lease_owner = NULL, lease_until = NULL,
@@ -136,14 +179,20 @@ function createRobinhoodFirstBuyBackfillRepository(options = {}) {
          WHERE run_id = $1 AND chain = $2 AND status = 'failed'
          RETURNING id`, [runId, CHAIN]
       );
-      if (!ranges.rowCount) throw new Error('failed run has no failed ranges');
       await client.query(
         `UPDATE robinhood_first_buy_backfill_runs
-            SET status = 'running', finished_at = NULL, updated_at = NOW()
+            SET status = 'running', finished_at = NULL,
+                range_count = (
+                  SELECT COUNT(*) FROM robinhood_first_buy_backfill_ranges
+                   WHERE run_id = $1
+                ), updated_at = NOW()
           WHERE id = $1 AND chain = $2`, [runId, CHAIN]
       );
       await client.query('COMMIT');
-      return Object.freeze({ runId: String(runId), requeued: ranges.rowCount });
+      return Object.freeze({
+        runId: String(runId), requeued: ranges.rowCount + subdivided + addedRanges,
+        subdivided, addedRanges,
+      });
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
       throw error;

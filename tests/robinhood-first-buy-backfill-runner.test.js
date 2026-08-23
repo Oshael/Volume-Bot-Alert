@@ -94,7 +94,9 @@ describe('Robinhood first-buy backfill runner', () => {
     const calls = [];
     const backfillRepository = {
       async getRun() { return { id: '7', status: 'failed', ...SOURCE }; },
-      async resumeFailed(id) { calls.push(['resume', id]); return { runId: id, requeued: 2 }; },
+      async resumeFailed(id) { calls.push(['resume', id]); return {
+        runId: id, requeued: 4, subdivided: 1, addedRanges: 3,
+      }; },
       async reclaimExpired(id) { calls.push(['reclaim', id]); return 0; },
       async claimRange() { return null; },
       async getProgress() { return { status: 'completed', total: 4, completed: 4 }; },
@@ -105,10 +107,16 @@ describe('Robinhood first-buy backfill runner', () => {
     }, {
       preflight: { ...SOURCE, approved: true, concurrency: 1 },
       runId: '7', retryFailed: true,
+      onRun(value) { calls.push(['run', value]); },
     });
 
     assert.equal(result.status, 'completed');
-    assert.deepEqual(calls, [['resume', '7'], ['reclaim', '7']]);
+    assert.deepEqual(calls, [
+      ['resume', '7'],
+      ['run', { runId: '7', status: 'running', requeued: 4,
+        subdivided: 1, addedRanges: 3 }],
+      ['reclaim', '7'],
+    ]);
   });
 
   it('keeps CLI writes opt-in and supports run-id resume preflight', () => {

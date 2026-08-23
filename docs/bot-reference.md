@@ -1460,11 +1460,15 @@ expiradas. Reduza `--range-seconds` se uma amostra atingir o timeout de 120s.
 Se ranges isolados esgotarem as cinco tentativas por timeout, retome a mesma
 campanha com `--run-id=<id> --apply --retry-failed
 --statement-timeout-ms=600000`. A recuperação transacional reabre somente ranges
-`failed`, zera suas tentativas/erros e preserva ranges `completed`; o timeout
-configurável aceita 120.000–900.000 ms. `--retry-failed` é recusado sem run-id e
-confirmação explícitos ou quando a campanha não está `failed`. A lease do range é
-derivada automaticamente desse timeout com 60 segundos de margem; assim queries
-longas continuam protegidas contra ownership obsoleto sem expirar antes do SQL.
+`failed`, zera suas tentativas/erros e preserva ranges `completed`. Um range maior
+que 15 minutos que esgotou tentativas com SQLSTATE `57014` é subdividido
+automaticamente em janelas de até 15 minutos dentro da mesma campanha; outras
+falhas são apenas reabertas. O `range_count` é atualizado atomicamente e nenhum
+intervalo concluído é repetido. O timeout configurável aceita 120.000–900.000 ms.
+`--retry-failed` é recusado sem run-id e confirmação explícitos ou quando a
+campanha não está `failed`. A lease do range é derivada automaticamente desse
+timeout com 60 segundos de margem; assim queries longas continuam protegidas
+contra ownership obsoleto sem expirar antes do SQL.
 O preflight também exige seed de wallet-swap realmente `complete` (não apenas
 terminal/abandonado) e que `sourceThrough` não ultrapasse sua frontier durável;
 isso impede declarar como coberto um intervalo cujos swaps ainda não foram

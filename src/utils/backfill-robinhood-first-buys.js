@@ -140,9 +140,10 @@ async function main(deps = {}) {
     preflight, runId: options.runId, retryFailed: options.retryFailed,
     leaseMs: leaseMsForStatementTimeout(options.statementTimeoutMs),
     onProgress: progressReporter(logger),
-    onRun: ({ runId, status, requeued }) => (logger.error || logger.log).call(
-      logger, `[FirstBuyBackfill] run-id=${runId} status=${status} requeued=${requeued}`
-    ),
+    onRun: ({ runId, status, requeued, subdivided, addedRanges }) => (
+      logger.error || logger.log
+    ).call(logger, `[FirstBuyBackfill] run-id=${runId} status=${status} requeued=${requeued}`
+      + ` subdivided=${subdivided} added-ranges=${addedRanges}`),
   });
   logger.log(JSON.stringify({ mode: 'apply', ...result }, null, 2));
   return result;

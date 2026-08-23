@@ -117,10 +117,11 @@ describe('Robinhood first-buy backfill control integration', () => {
     }), null);
   });
 
-  it('atomically requeues failed ranges without touching completed work', async () => {
+  it('subdivides timed-out ranges and requeues other failures without touching completed work',
+    async () => {
     const repository = createRobinhoodFirstBuyBackfillRepository({ database: db });
     const run = await repository.createRun({
-      sourceFrom: '2026-08-23T00:00:00Z', sourceThrough: '2026-08-23T02:00:00Z',
+      sourceFrom: '2026-08-23T00:00:00Z', sourceThrough: '2026-08-23T03:00:00Z',
       rangeSeconds: 3600,
     });
     await repository.startRun(run.id);
@@ -139,20 +140,42 @@ describe('Robinhood first-buy backfill control integration', () => {
        WHERE id = $1`, [ranges.rows[1].id]
     );
     await db.query(
+      `UPDATE robinhood_first_buy_backfill_ranges SET
+         status = 'failed', attempt_count = 5,
+         last_error_code = 'source_failed', last_error_message = 'retry source'
+       WHERE id = $1`, [ranges.rows[2].id]
+    );
+    await db.query(
       `UPDATE robinhood_first_buy_backfill_runs
           SET status = 'failed', finished_at = NOW() WHERE id = $1`, [run.id]
     );
 
-    assert.deepEqual(await repository.resumeFailed(run.id), { runId: run.id, requeued: 1 });
+    assert.deepEqual(await repository.resumeFailed(run.id), {
+      runId: run.id, requeued: 5, subdivided: 1, addedRanges: 3,
+    });
     const state = await db.query(
-      `SELECT status, attempt_count, last_error_code
+      `SELECT range_start, range_end, status, attempt_count, last_error_code
          FROM robinhood_first_buy_backfill_ranges
         WHERE run_id = $1 ORDER BY range_start`, [run.id]
     );
-    assert.deepEqual(state.rows, [
-      { status: 'completed', attempt_count: 0, last_error_code: null },
-      { status: 'pending', attempt_count: 0, last_error_code: null },
+    assert.deepEqual(state.rows.map((row) => ({
+      rangeStart: row.range_start.toISOString(), rangeEnd: row.range_end.toISOString(),
+      status: row.status, attemptCount: row.attempt_count, lastErrorCode: row.last_error_code,
+    })), [
+      { rangeStart: '2026-08-23T00:00:00.000Z', rangeEnd: '2026-08-23T01:00:00.000Z',
+        status: 'completed', attemptCount: 0, lastErrorCode: null },
+      ...Array.from({ length: 4 }, (_, index) => ({
+        rangeStart: new Date(Date.UTC(2026, 7, 23, 1, index * 15)).toISOString(),
+        rangeEnd: new Date(Date.UTC(2026, 7, 23, 1, (index + 1) * 15)).toISOString(),
+        status: 'pending', attemptCount: 0, lastErrorCode: null,
+      })),
+      { rangeStart: '2026-08-23T02:00:00.000Z', rangeEnd: '2026-08-23T03:00:00.000Z',
+        status: 'pending', attemptCount: 0, lastErrorCode: null },
     ]);
-    assert.equal((await repository.getRun(run.id)).status, 'running');
+    assert.deepEqual(await repository.getRun(run.id), {
+      id: run.id, status: 'running',
+      sourceFrom: '2026-08-23T00:00:00.000Z', sourceThrough: '2026-08-23T03:00:00.000Z',
+      rangeSeconds: 3600, rangeCount: 6,
+    });
   });
 });
