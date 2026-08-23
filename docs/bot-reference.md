@@ -1076,11 +1076,10 @@ e mantenha `ROBINHOOD_HOLDER_SNAPSHOT_ENABLED` ou
 via relay PostgreSQL para as mesmas rooms por token já usadas pelo mercado e
 persiste esse evento live diretamente nos snapshots diário e horário. O worker de
 snapshot permanece como reconciliação para eventos perdidos e continuidade
-temporal, não como fonte primária das mudanças live.
-`ROBINHOOD_HOLDER_SNAPSHOT_BATCH_SIZE` controla quantos tokens o worker projeta por
-ciclo; o padrão operacional é `5000` (máximo permitido). O worker continua sendo
-um reconciliador por polling do PostgreSQL, não um consumidor event-driven, e pode
-acumular backlog quando a quantidade de tokens live excede sua cadência. O endpoint
+temporal, não como fonte primária das mudanças live. A continuidade é materializada
+por uma operação SQL set-based por hora; `ROBINHOOD_HOLDER_SNAPSHOT_INTERVAL_MS`
+fica fixado em 1 hora. `ROBINHOOD_HOLDER_SNAPSHOT_BATCH_SIZE=5000` permanece apenas
+como limite de compatibilidade para o fallback legado do worker. O endpoint
 `GET /api/robinhood/holder-count-series` é uma leitura PostgreSQL isolada da lista
 paginada: devolve séries selecionáveis de 1h/4h/12h/24h alinhadas em UTC, cada uma
 desde o primeiro bucket disponível e com sua barra corrente aberta, além de deltas

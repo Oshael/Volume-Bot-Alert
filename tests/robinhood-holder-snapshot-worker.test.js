@@ -22,6 +22,25 @@ function scheduler() {
 }
 
 describe('Robinhood holder snapshot worker', () => {
+  it('prefers the set-based temporal projector when available', async () => {
+    const clock = scheduler();
+    const calls = [];
+    const worker = createRobinhoodHolderSnapshotWorker({
+      ...clock, now: () => NOW,
+      repository: { materializeLiveTemporalSnapshots: async (input) => {
+        calls.push(input);
+        return { savedCount: 3, asOf: input.asOf };
+      } },
+    });
+
+    worker.start({ enabled: true, isLiveReady: () => true });
+    await clock.scheduled[0].callback();
+
+    assert.deepEqual(calls, [{ asOf: '2026-08-10T12:00:00.000Z' }]);
+    assert.equal(worker.getStatus().totalSaved, 3);
+    await worker.stop();
+  });
+
   it('stays opt-in and projects one bounded batch per tick', async () => {
     const clock = scheduler();
     const calls = [];
@@ -36,12 +55,12 @@ describe('Robinhood holder snapshot worker', () => {
     assert.equal(worker.start(), false);
     assert.equal(clock.scheduled.length, 0);
     assert.equal(worker.start({
-      enabled: true, intervalMs: 90_000, batchSize: 250, isLiveReady: () => true,
+      enabled: true, intervalMs: 3_600_000, batchSize: 250, isLiveReady: () => true,
     }), true);
     await clock.scheduled[0].callback();
 
     assert.deepEqual(calls, [{ asOf: '2026-08-10T12:00:00.000Z', limit: 250 }]);
-    assert.equal(clock.scheduled[1].delayMs, 90_000);
+    assert.equal(clock.scheduled[1].delayMs, 3_600_000);
     assert.equal(worker.getStatus().totalSaved, 3);
     await worker.stop();
     assert.equal(clock.cancelled.length, 1);
@@ -67,15 +86,15 @@ describe('Robinhood holder snapshot worker', () => {
     await Promise.all([first, duplicate]);
     assert.equal(calls, 1);
     worker.start({
-      enabled: true, intervalMs: 10_000, maxErrorBackoffMs: 100_000,
+      enabled: true, intervalMs: 3_600_000, maxErrorBackoffMs: 100_000,
       isLiveReady: () => true,
     });
     await clock.scheduled[0].callback();
 
-    assert.equal(clock.scheduled[1].delayMs, 20_000);
+    assert.equal(clock.scheduled[1].delayMs, 100_000);
     assert.equal(worker.getStatus().totalErrors, 1);
     await clock.scheduled[1].callback();
-    assert.equal(clock.scheduled[2].delayMs, 10_000);
+    assert.equal(clock.scheduled[2].delayMs, 3_600_000);
     await worker.stop();
   });
 

@@ -446,6 +446,58 @@ function createRobinhoodTokenHolderSummaryRepository(options = {}) {
     });
   }
 
+  async function materializeLiveTemporalSnapshots(input = {}) {
+    const asOf = timestamp(input.asOf || new Date(), 'snapshot asOf');
+    const { rows } = await database.query(
+      `WITH candidates AS MATERIALIZED (
+         SELECT published.chain, published.token_address, published.holder_count
+           FROM robinhood_published_holder_summaries published
+          WHERE published.source = 'ledger_live'
+            AND published.holder_count IS NOT NULL
+            AND published.observed_at <= $1::timestamptz
+       ), saved_daily AS (
+         INSERT INTO robinhood_token_holder_daily_snapshots (
+           chain, token_address, snapshot_date, holder_count, source, observed_at
+         )
+         SELECT chain, token_address, ($1::timestamptz AT TIME ZONE 'UTC')::date,
+                holder_count, 'ledger_live', $1::timestamptz
+           FROM candidates
+         ON CONFLICT (chain, token_address, snapshot_date) DO UPDATE SET
+           holder_count = EXCLUDED.holder_count,
+           source = EXCLUDED.source,
+           observed_at = EXCLUDED.observed_at,
+           updated_at = NOW()
+         WHERE robinhood_token_holder_daily_snapshots.source <> 'ledger_live'
+            OR EXCLUDED.observed_at >= robinhood_token_holder_daily_snapshots.observed_at
+         RETURNING 1
+       ), saved_hourly AS (
+         INSERT INTO robinhood_token_holder_buckets (
+           chain, token_address, bucket_start, holder_count, source, observed_at
+         )
+         SELECT chain, token_address,
+                date_trunc('hour', $1::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC',
+                holder_count, 'ledger_live', $1::timestamptz
+           FROM candidates
+         ON CONFLICT (chain, token_address, bucket_start) DO UPDATE SET
+           holder_count = EXCLUDED.holder_count,
+           source = EXCLUDED.source,
+           observed_at = EXCLUDED.observed_at,
+           updated_at = NOW()
+         WHERE (
+           robinhood_token_holder_buckets.source = 'blockscout'
+           AND EXCLUDED.source = 'ledger_live'
+         ) OR (
+           robinhood_token_holder_buckets.source = EXCLUDED.source
+           AND EXCLUDED.observed_at >= robinhood_token_holder_buckets.observed_at
+         )
+         RETURNING 1
+       )
+       SELECT COUNT(*)::int AS saved_count FROM saved_hourly`,
+      [asOf]
+    );
+    return Object.freeze({ savedCount: Number(rows[0]?.saved_count) || 0, asOf });
+  }
+
   async function listDailySnapshots(input = {}) {
     const tokenAddress = normalizeTokenAddress(CHAIN, input.tokenAddress);
     const days = historyDays(input.days);
@@ -485,6 +537,7 @@ function createRobinhoodTokenHolderSummaryRepository(options = {}) {
   return Object.freeze({
     listRefreshCandidates, recordSuccess, recordFailure, getSummaries,
     getPublishedSummaries, syncLiveDailySnapshots, recordLiveCountEvents,
+    materializeLiveTemporalSnapshots,
     listDailySnapshots, listHourlyBuckets,
   });
 }

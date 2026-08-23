@@ -232,4 +232,39 @@ describe('Robinhood token holder summary repository integration', () => {
       source: 'ledger_live', observedAt: '2026-08-10T03:20:00.000Z',
     }]);
   });
+
+  it('materializes current live continuity in one set-based projection', async () => {
+    const client = await db.getClient();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        `INSERT INTO robinhood_holder_cursors (chain, stream, next_block)
+         VALUES ('robinhood', 'live', 1)
+         ON CONFLICT (chain, stream) DO NOTHING`
+      );
+      await client.query(
+        `INSERT INTO robinhood_holder_token_states (
+           chain, token_address, holder_count, ledger_status, version, updated_at
+         ) VALUES ('robinhood', $1, 5100, 'live', 7, '2026-08-10T23:58:00Z')`, [TOKEN]
+      );
+      const transactionRepository = createRobinhoodTokenHolderSummaryRepository({
+        database: { query: client.query.bind(client) },
+      });
+      assert.deepEqual(await transactionRepository.materializeLiveTemporalSnapshots({
+        asOf: '2026-08-10T23:59:00Z',
+      }), { savedCount: 1, asOf: '2026-08-10T23:59:00.000Z' });
+      assert.deepEqual(await transactionRepository.listHourlyBuckets({
+        tokenAddress: TOKEN, asOf: '2026-08-10T23:59:00Z',
+      }), [{
+        bucketStart: '2026-08-10T23:00:00.000Z', holderCount: 5100,
+        source: 'ledger_live', observedAt: '2026-08-10T23:59:00.000Z',
+      }]);
+      await client.query('ROLLBACK');
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch (_) {}
+      throw error;
+    } finally {
+      client.release();
+    }
+  });
 });

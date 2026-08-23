@@ -16,7 +16,9 @@ function boundedInteger(value, fallback, minimum, maximum, label) {
 function normalizeOptions(input = {}) {
   return Object.freeze({
     enabled: input.enabled === true,
-    intervalMs: boundedInteger(input.intervalMs, 60_000, 10_000, 3_600_000, 'intervalMs'),
+    intervalMs: boundedInteger(
+      input.intervalMs, 3_600_000, 3_600_000, 3_600_000, 'intervalMs'
+    ),
     maxErrorBackoffMs: boundedInteger(
       input.maxErrorBackoffMs, 300_000, 10_000, 3_600_000, 'maxErrorBackoffMs'
     ),
@@ -65,9 +67,10 @@ function createRobinhoodHolderSnapshotWorker(deps = {}) {
         status.consecutiveErrors = 0;
         return result;
       }
-      const result = await repository.syncLiveDailySnapshots({
-        asOf: new Date(now()).toISOString(), limit: options.batchSize,
-      });
+      const asOf = new Date(now()).toISOString();
+      const result = typeof repository.materializeLiveTemporalSnapshots === 'function'
+        ? await repository.materializeLiveTemporalSnapshots({ asOf })
+        : await repository.syncLiveDailySnapshots({ asOf, limit: options.batchSize });
       status.lastResult = result;
       status.totalSaved += result.savedCount;
       status.lastError = null;

@@ -598,6 +598,7 @@ describe('runtime worker groups config', () => {
       assert.equal(config.robinhoodHolderJournalPruneWorker.enabled, false);
       assert.equal(config.robinhoodHolderSnapshotWorker.enabled, false);
       assert.equal(config.robinhoodHolderSnapshotWorker.batchSize, 5000);
+      assert.equal(config.robinhoodHolderSnapshotWorker.intervalMs, 3_600_000);
     });
     withEnv({
       ROBINHOOD_RPC_URL: 'http://127.0.0.1:8547',
@@ -730,7 +731,7 @@ describe('runtime worker groups config', () => {
         maxBatches: 50,
       });
       assert.deepEqual(config.robinhoodHolderSnapshotWorker, {
-        enabled: true, intervalMs: 10_000,
+        enabled: true, intervalMs: 3_600_000,
         maxErrorBackoffMs: 3_600_000, batchSize: 5000,
       });
     });

@@ -1302,7 +1302,7 @@ module.exports = {
   robinhoodHolderSnapshotWorker: {
     enabled: robinhoodHolderSnapshotEnabled,
     intervalMs: parseIntegerInRange(
-      process.env.ROBINHOOD_HOLDER_SNAPSHOT_INTERVAL_MS, 60_000, 10_000, 3_600_000
+      process.env.ROBINHOOD_HOLDER_SNAPSHOT_INTERVAL_MS, 3_600_000, 3_600_000, 3_600_000
     ),
     maxErrorBackoffMs: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_SNAPSHOT_MAX_ERROR_BACKOFF_MS,
