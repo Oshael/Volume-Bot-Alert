@@ -60,7 +60,7 @@ function sourceFixture(input = {}) {
       if (sql.includes('WITH registered_swaps')) {
         return { rows: input.launchRows ?? [swapRow()] };
       }
-      if (sql.includes('WITH registered_buys')) {
+      if (sql.includes('FROM robinhood_wallet_token_first_buys buy')) {
         return { rows: input.buyRows ?? [swapRow()] };
       }
       if (sql.includes('SELECT address, reason FROM')) {
@@ -76,7 +76,9 @@ function sourceFixture(input = {}) {
   };
   return {
     queries,
-    source: createRobinhoodHolderLaunchSource({ database, coverageSource }),
+    source: createRobinhoodHolderLaunchSource({
+      database, coverageSource, firstBuyLimit: input.firstBuyLimit,
+    }),
   };
 }
 
@@ -120,7 +122,7 @@ test('reads canonical anchor and first buy evidence without classifying the wall
   assert.deepEqual(queries.map(({ params }) => params), [
     ['robinhood', TOKEN],
     ['robinhood', TOKEN, '100', '200'],
-    ['robinhood', TOKEN, '100', '200'],
+    ['robinhood', TOKEN, '100', '200', null],
     ['robinhood', TOKEN, null, '200', JSON.stringify([{
       wallet_address: WALLET, block_number: '101',
     }])],
@@ -128,7 +130,16 @@ test('reads canonical anchor and first buy evidence without classifying the wall
   assert.match(queries[3].sql, /valid_from_block <= candidate\.block_number/);
   assert.match(queries[0].sql, /MIN\(discovery_block\).*first_pool_discovery_block/s);
   assert.match(queries[1].sql, /registry\.discovery_block <= swap\.block_number/);
-  assert.match(queries[2].sql, /MIN\(block_number\).*GROUP BY wallet_address/s);
+  assert.match(queries[2].sql, /robinhood_wallet_token_first_buys/);
+  assert.match(queries[2].sql, /LIMIT \$5::int/);
+  assert.doesNotMatch(queries[2].sql, /robinhood_wallet_swaps/);
+});
+
+test('limits high-confidence first-buy reads to canonical buyer rank', async () => {
+  const { source, queries } = sourceFixture({ firstBuyLimit: 5 });
+  assert.equal((await source.loadLaunchEvidence(TOKEN)).ready, true);
+  assert.equal(queries[2].params[4], 5);
+  assert.throws(() => sourceFixture({ firstBuyLimit: 0 }), /firstBuyLimit/);
 });
 
 test('fails closed before swap reads when complete history does not cover launch', async () => {

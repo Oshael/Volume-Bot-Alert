@@ -147,6 +147,15 @@ describe('Robinhood holder classification schema integration', () => {
     assert.equal(stored.records.length, 1);
     assert.deepEqual(stored.records[0].evidence, { deltaBlocks: 1 });
 
+    assert.deepEqual(await repository.replaceClassifierSnapshot({
+      ...input, records: [{
+        ...input.records[0], evidence: { deltaBlocks: 2 },
+      }],
+    }, { allowSameFrontierReplacement: true }), { status: 'published', records: 1 });
+    assert.deepEqual((await repository.loadClassifierSnapshot({
+      tokenAddress: TOKEN, classifier: 'sniper',
+    })).records[0].evidence, { deltaBlocks: 2 });
+
     const reorged = {
       tokenAddress: TOKEN, classifier: 'sniper', status: 'reorged',
       statusReason: 'frontier_fork', throughBlockNumber: '200',

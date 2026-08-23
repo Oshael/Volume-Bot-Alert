@@ -2,6 +2,9 @@ const db = require('./db');
 const {
   HOLDER_CLASSIFICATION_VERSION,
 } = require('../services/robinhood-holder-classification-domain');
+const {
+  SNIPER_HIGH_CONFIDENCE_RULE,
+} = require('../services/robinhood-holder-sniper-policy');
 const { normalizeTokenAddress } = require('../utils/token-identity');
 
 function boundedInteger(value, fallback, minimum, maximum, label) {
@@ -42,9 +45,20 @@ function createRobinhoodSniperShadowCandidateRepository(options = {}) {
                   IS DISTINCT FROM (state.live_through_block, state.live_through_hash))
             OR (sniper.status <> 'ready'
                 AND sniper.updated_at <= NOW() - ($2::int * INTERVAL '1 millisecond'))
+            OR EXISTS (
+              SELECT 1 FROM robinhood_holder_classifications legacy
+               WHERE legacy.chain = state.chain
+                 AND legacy.token_address = state.token_address
+                 AND legacy.tag = 'sniper' AND legacy.classification_version = $1
+                 AND legacy.evidence_json #>> '{rule,evidenceVersion}'
+                   IS DISTINCT FROM $5
+            )
           )
         ORDER BY state.token_address LIMIT $4::int`,
-      [HOLDER_CLASSIFICATION_VERSION, retryMs, afterToken, limit]
+      [
+        HOLDER_CLASSIFICATION_VERSION, retryMs, afterToken, limit,
+        SNIPER_HIGH_CONFIDENCE_RULE.evidenceVersion,
+      ]
     );
     return Object.freeze(rows.map(({ token_address: tokenAddress }) => tokenAddress));
   }

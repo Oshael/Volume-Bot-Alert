@@ -277,10 +277,12 @@ function createRobinhoodHolderClassificationRepository(options = {}) {
         && compareClassificationFrontiers(
           stateFrontier(snapshot.state), stateFrontier(stored.state)
         ) === 'same';
-      if (sameReadyFrontier && !equalRecords(stored.records, snapshot.records)) {
+      if (sameReadyFrontier && !equalRecords(stored.records, snapshot.records)
+          && options.allowSameFrontierReplacement !== true) {
         throw new Error('Conflicting ready snapshot at the same classifier frontier');
       }
-      const replaceRecords = snapshot.state.status === 'ready' && !sameReadyFrontier;
+      const replaceRecords = snapshot.state.status === 'ready'
+        && (!sameReadyFrontier || options.allowSameFrontierReplacement === true);
       if (replaceRecords) {
         await client.query(
           `DELETE FROM robinhood_holder_classifications

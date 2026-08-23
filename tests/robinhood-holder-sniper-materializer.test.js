@@ -48,8 +48,8 @@ function recurrence(walletAddress, tokenAddress, overrides = {}) {
 describe('Robinhood holder SNIPER materializer', () => {
   it('closes the calibrated high-confidence rule as a versioned policy', () => {
     assert.deepEqual(SNIPER_HIGH_CONFIDENCE_RULE, {
-      evidenceVersion: 'rh_sniper_high_v1', maxBlocks: 1, maxBuyerRank: 5,
-      minimumNotionalUsd: '50', minimumRecurringLaunches: 2,
+      evidenceVersion: 'rh_sniper_high_v2', maxBlocks: 1, maxBuyerRank: 5,
+      minimumNotionalUsd: '50', minimumRecurringLaunches: 3,
     });
     assert.doesNotThrow(() => createRobinhoodHolderSniperMaterializer({
       source: {}, recurrenceSource: {}, classifications: {},
@@ -64,6 +64,7 @@ describe('Robinhood holder SNIPER materializer', () => {
       ],
     }), [
       recurrence(WALLET_A, TOKEN), recurrence(WALLET_A, `0x${'6'.repeat(40)}`),
+      recurrence(WALLET_A, `0x${'8'.repeat(40)}`),
       recurrence(WALLET_B, TOKEN), recurrence(WALLET_B, `0x${'7'.repeat(40)}`),
     ], '2026-08-21T13:00:00Z');
 
@@ -71,13 +72,25 @@ describe('Robinhood holder SNIPER materializer', () => {
     assert.deepEqual(snapshot.records.map(({ walletAddress }) => walletAddress), [WALLET_A]);
     assert.equal(snapshot.records[0].confidence, 'high');
     assert.deepEqual(snapshot.records[0].evidence.rule, {
-      evidenceVersion: 'rh_sniper_high_v1', maxBlocks: 1, maxBuyerRank: 5,
-      minimumNotionalUsd: '50', minimumRecurringLaunches: 2,
+      evidenceVersion: 'rh_sniper_high_v2', maxBlocks: 1, maxBuyerRank: 5,
+      minimumNotionalUsd: '50', minimumRecurringLaunches: 3,
     });
     assert.deepEqual(snapshot.records[0].evidence.recurrence, {
       source: 'robinhood_wallet_token_first_buys',
-      qualifyingLaunches: 2, completeThroughBlock: '200',
+      qualifyingLaunches: 3, completeThroughBlock: '200',
     });
+  });
+
+  it('configures the live evidence source to read only top-five buyers', () => {
+    let received;
+    createRobinhoodHolderSniperMaterializer({
+      sourceFactory: (options) => {
+        received = options;
+        return {};
+      },
+      recurrenceSource: {}, classifications: {},
+    });
+    assert.equal(received.firstBuyLimit, 5);
   });
 
   it('keeps one-off, late, low-notional and excluded candidates internal', () => {

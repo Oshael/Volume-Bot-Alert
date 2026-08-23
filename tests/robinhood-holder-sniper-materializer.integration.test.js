@@ -61,6 +61,9 @@ describe('Robinhood holder SNIPER materializer integration', () => {
       }, {
         walletAddress: WALLET, tokenAddress: `0x${'a'.repeat(40)}`, volumeUsd: '50',
         anchorReady: true, withinOneBlock: true, buyerRank: 1, positionReady: true,
+      }, {
+        walletAddress: WALLET, tokenAddress: `0x${'b'.repeat(40)}`, volumeUsd: '50',
+        anchorReady: true, withinOneBlock: true, buyerRank: 1, positionReady: true,
       }] }) },
       database: db,
       now: () => '2026-08-21T13:00:00Z',
@@ -83,7 +86,7 @@ describe('Robinhood holder SNIPER materializer integration', () => {
     assert.equal(rows[0].reason_code, 'early_launch_buy');
     assert.equal(rows[0].through_block_number, '200');
     assert.equal(rows[0].evidence_json.rule.minimumNotionalUsd, '50');
-    assert.equal(rows[0].evidence_json.rule.evidenceVersion, 'rh_sniper_high_v1');
-    assert.equal(rows[0].evidence_json.recurrence.qualifyingLaunches, 2);
+    assert.equal(rows[0].evidence_json.rule.evidenceVersion, 'rh_sniper_high_v2');
+    assert.equal(rows[0].evidence_json.recurrence.qualifyingLaunches, 3);
   });
 });

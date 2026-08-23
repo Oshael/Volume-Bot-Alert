@@ -1356,9 +1356,9 @@ retry são limitados por `ROBINHOOD_SNIPER_SHADOW_INTERVAL_MS`,
 telemetria da lease e em `GET /api/admin/ws-status`. Seu
 seletor só admite ledger `live`, cursor de first-buy alcançado e classificação
 ausente ou atrasada; concorrência máxima é 4 e uma falha de token não aborta o
-lote. A política pública versionada `rh_sniper_high_v1` exige compra
+lote. A política pública versionada `rh_sniper_high_v2` exige compra
 entre os 5 primeiros compradores canônicos, em até 1 bloco da âncora, notional
-de pelo menos US$50 e recorrência desse padrão em 2 ou mais lançamentos. Creator,
+de pelo menos US$50 e recorrência desse padrão em 3 ou mais lançamentos. Creator,
 pools, routers, infraestrutura conhecida e burn são excluídos. A janela ampla de
 3 blocos/90 segundos continua apenas como sinal candidato interno. Para auditar
 ou recalibrar uma futura versão sem escrever classificação, execute
@@ -1381,8 +1381,13 @@ indexada, limita a contagem de predecessores canônicos a 5 e resolve anchors po
 token em lotes; não agrega a tabela inteira de swaps.
 Esses sinais são internos; mesmo com o worker ativo, a allowlist pública continua
 ocultando tags, estado e métrica SNIPER. O frontend só deverá expor `SNIPER`
-produzido pela regra pública de alta confiança. A recorrência do materializador agora lê a
-projeção canônica indexada da Stage 149; não reagrega o histórico bruto de swaps.
+produzido pela regra pública de alta confiança. A evidência local de primeiros
+buys e a recorrência do materializador leem a projeção canônica indexada da Stage
+149; não reagregam buys no histórico bruto de swaps. O worker limita a leitura
+local aos cinco ranks aceitos pela política; o comando de calibração permanece
+sem limite. Snapshots positivos de políticas SNIPER anteriores retornam
+automaticamente à fila e podem ser substituídos na mesma frontier; snapshots
+vazios permanecem válidos porque a v2 é mais restritiva.
 A Stage 155 adiciona `robinhood_token_launch_anchors`, cache durável e lazy do
 primeiro swap registrado por token. O primeiro miss ainda resolve o anchor exato
 em `robinhood_wallet_swaps` e persiste somente resultado comprovado; recorrências

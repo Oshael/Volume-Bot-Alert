@@ -16,6 +16,14 @@ const BURN_ADDRESSES = Object.freeze([
   '0x000000000000000000000000000000000000dead',
 ]);
 
+function optionalLimit(value) {
+  if (value == null) return null;
+  if (!Number.isSafeInteger(value) || value < 1 || value > 10_000) {
+    throw new Error('firstBuyLimit must be between 1 and 10000');
+  }
+  return value;
+}
+
 function unavailable(reason, details = {}) {
   return Object.freeze({ ready: false, reason, ...details });
 }
@@ -72,6 +80,7 @@ function createRobinhoodHolderLaunchSource(options = {}) {
     || createRobinhoodWalletTransferLiveSourceRepository({ database });
   const maxBlocks = options.maxBlocks ?? DEFAULT_MAX_BLOCKS;
   const maxSeconds = options.maxSeconds ?? DEFAULT_MAX_SECONDS;
+  const firstBuyLimit = optionalLimit(options.firstBuyLimit);
 
   async function loadState(tokenAddress) {
     const { rows } = await database.query(
@@ -129,35 +138,21 @@ function createRobinhoodHolderLaunchSource(options = {}) {
 
   async function loadFirstBuyRows(state) {
     const { rows } = await database.query(
-      `WITH registered_buys AS MATERIALIZED (
-         SELECT swap.*
-           FROM robinhood_wallet_swaps swap
-           INNER JOIN robinhood_pool_registry registry
-             ON registry.chain = swap.chain
-            AND registry.protocol = swap.protocol
-            AND registry.market_key = swap.market_key
-            AND registry.token_address = swap.token_address
-            AND registry.discovery_block <= swap.block_number
-          WHERE swap.chain = $1 AND swap.token_address = $2 AND swap.side = 'buy'
-            AND swap.block_number >= $3::bigint
-            AND swap.block_number <= $4::bigint
-       ), first_buy_blocks AS (
-         SELECT wallet_address, MIN(block_number) AS block_number
-           FROM registered_buys GROUP BY wallet_address
-       )
-       SELECT buy.wallet_address, buy.transaction_hash, buy.action_index::text,
-              position.transaction_index::text, buy.block_number::text,
-              position.block_hash, buy.block_time, buy.side, buy.volume_usd::text
-         FROM registered_buys buy
-         INNER JOIN first_buy_blocks first
-           ON first.wallet_address = buy.wallet_address
-          AND first.block_number = buy.block_number
-         LEFT JOIN robinhood_transaction_positions position
-           ON position.chain = buy.chain
-          AND position.transaction_hash = buy.transaction_hash
-          AND position.block_number = buy.block_number
-        ORDER BY buy.wallet_address, buy.action_index, buy.transaction_hash`,
-      [CHAIN, state.tokenAddress, state.launchFromBlock, state.frontier.blockNumber]
+      `SELECT buy.wallet_address, buy.transaction_hash, buy.action_index::text,
+              buy.transaction_index::text, buy.block_number::text,
+              buy.block_hash, buy.block_time, 'buy'::text AS side,
+              buy.volume_usd::text
+         FROM robinhood_wallet_token_first_buys buy
+        WHERE buy.chain = $1 AND buy.token_address = $2
+          AND buy.block_number >= $3::bigint
+          AND buy.block_number <= $4::bigint
+        ORDER BY buy.block_number, buy.transaction_index,
+                 buy.action_index, buy.transaction_hash
+        LIMIT $5::int`,
+      [
+        CHAIN, state.tokenAddress, state.launchFromBlock,
+        state.frontier.blockNumber, firstBuyLimit,
+      ]
     );
     return rows;
   }

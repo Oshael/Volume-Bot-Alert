@@ -7,15 +7,10 @@ const {
 const {
   createRobinhoodHolderSniperCalibrationSource,
 } = require('../models/robinhood-holder-sniper-calibration-source');
+const {
+  SNIPER_HIGH_CONFIDENCE_RULE,
+} = require('./robinhood-holder-sniper-policy');
 const { parseDecimal } = require('./evm-market-metrics');
-
-const SNIPER_HIGH_CONFIDENCE_RULE = Object.freeze({
-  evidenceVersion: 'rh_sniper_high_v1',
-  maxBlocks: 1,
-  maxBuyerRank: 5,
-  minimumNotionalUsd: '50',
-  minimumRecurringLaunches: 2,
-});
 
 function normalizeMinimumNotionalUsd(value) {
   if (value == null || String(value).trim() === '') {
@@ -154,7 +149,10 @@ function buildSniperSnapshot(input, recurrenceRows, observedAt, ruleInput) {
 
 function createRobinhoodHolderSniperMaterializer(options = {}) {
   const rule = normalizeRule(options.rule);
-  const source = options.source || createRobinhoodHolderLaunchSource(options);
+  const sourceFactory = options.sourceFactory || createRobinhoodHolderLaunchSource;
+  const source = options.source || sourceFactory({
+    ...options, firstBuyLimit: rule.maxBuyerRank,
+  });
   const recurrenceSource = options.recurrenceSource
     || createRobinhoodHolderSniperCalibrationSource(options);
   const classifications = options.classifications
@@ -174,7 +172,8 @@ function createRobinhoodHolderSniperMaterializer(options = {}) {
       return Object.freeze({ status: 'deferred', reason: recurrence.reason, records: 0 });
     }
     return classifications.replaceClassifierSnapshot(
-      buildSniperSnapshot(evidence, recurrence.rows, now(), rule)
+      buildSniperSnapshot(evidence, recurrence.rows, now(), rule),
+      { allowSameFrontierReplacement: true }
     );
   }
 
