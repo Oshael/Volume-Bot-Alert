@@ -383,7 +383,10 @@ carga sem ETA confiável.
      no grupo isolado `robinhood-wallet-classification`: só seleciona ledgers live
      após criador confirmado, replay direcional completo e cursor live de
      transfers alcançando a frontier; limita concorrência, contém falhas por token
-     e expõe telemetria sob lease própria. Publicação segue em corte separado e
+     e expõe telemetria sob lease própria. A auditoria read-only também está
+     concluída: compara snapshots com arestas diretas elegíveis, distingue catálogo
+     pendente/frontier stale de divergência real e prioriza achados numa amostra
+     limitada para revisão manual. Publicação segue em corte separado e
      `INSIDER` continua indisponível na API/UI.
 5. **BUNDLED**
    - construir clusters explicáveis por funder e janela;

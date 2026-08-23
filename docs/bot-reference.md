@@ -1436,6 +1436,12 @@ O worker `robinhood-insider-shadow-worker` materializa essa regra apenas no grup
 e retry limitados. Ele permanece opt-in por `ROBINHOOD_INSIDER_SHADOW_ENABLED` e
 só seleciona ledgers live quando criador, replay direcional e cursor live de
 transfers estão prontos. Mesmo ativo, não habilita `INSIDER` na API/UI.
+Para auditar o shadow sem escrever dados, execute
+`npm run robinhood:insider-shadow-audit -- --limit=20 --seed=default`. O relatório
+compara classificações com distribuição direta elegível, separa `pending`/`stale`
+de `missing`/`invalid`, não declara `clean` sem snapshots e prioriza divergências
+na amostra. Limite de 1–100 e
+timeout de 100–30.000 ms protegem o PostgreSQL; o default é 20/10.000 ms.
 A Stage 149 introduz
 `robinhood_wallet_token_first_buys`, fonte neutra e reutilizável para ordem por
 token e recorrência por wallet. Aplique `node src/utils/db-init-stage149.js` antes

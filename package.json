@@ -83,6 +83,7 @@
     "robinhood:infrastructure-import": "node src/utils/import-robinhood-infrastructure-registry.js",
     "robinhood:infrastructure-close": "node src/utils/close-robinhood-infrastructure-registry.js",
     "robinhood:sniper-calibrate": "node src/utils/calibrate-robinhood-holder-snipers.js",
+    "robinhood:insider-shadow-audit": "node src/utils/audit-robinhood-holder-insiders.js",
     "robinhood:transaction-position-repair": "node src/utils/repair-robinhood-transaction-positions.js",
     "robinhood:first-buy-backfill": "node src/utils/backfill-robinhood-first-buys.js",
     "robinhood:v2-dry-run": "node src/utils/robinhood-v2-fixture-dry-run.js",
