@@ -98,6 +98,10 @@ describe('Robinhood first-buy backfill runner', () => {
         runId: id, requeued: 4, subdivided: 1, addedRanges: 3,
       }; },
       async reclaimExpired(id) { calls.push(['reclaim', id]); return 0; },
+      async subdividePendingRanges(id, seconds) {
+        calls.push(['subdivide', id, seconds]);
+        return { runId: id, subdivided: 3, addedRanges: 9, rangeSeconds: seconds };
+      },
       async claimRange() { return null; },
       async getProgress() { return { status: 'completed', total: 4, completed: 4 }; },
     };
@@ -107,7 +111,9 @@ describe('Robinhood first-buy backfill runner', () => {
     }, {
       preflight: { ...SOURCE, approved: true, concurrency: 1 },
       runId: '7', retryFailed: true,
+      splitPendingSeconds: 900,
       onRun(value) { calls.push(['run', value]); },
+      onSubdivision(value) { calls.push(['subdivision', value]); },
     });
 
     assert.equal(result.status, 'completed');
@@ -116,6 +122,9 @@ describe('Robinhood first-buy backfill runner', () => {
       ['run', { runId: '7', status: 'running', requeued: 4,
         subdivided: 1, addedRanges: 3 }],
       ['reclaim', '7'],
+      ['subdivide', '7', 900],
+      ['subdivision', { runId: '7', subdivided: 3, addedRanges: 9,
+        rangeSeconds: 900 }],
     ]);
   });
 
@@ -125,14 +134,19 @@ describe('Robinhood first-buy backfill runner', () => {
     assert.deepEqual(parseArgs(['--run-id=12', '--apply']).runId, '12');
     assert.deepEqual(parseArgs([
       '--run-id=12', '--apply', '--retry-failed', '--statement-timeout-ms=600000',
+      '--split-pending-seconds=900',
     ]), {
       apply: true, retryFailed: true, runId: '12', statementTimeoutMs: 600000,
+      splitPendingSeconds: '900',
       sourceFrom: undefined, sourceThrough: undefined, rangeSeconds: 3600,
       concurrency: 2, sampleCount: 3, maxHours: 5,
     });
     assert.throws(() => parseArgs(['--apply']), /--from and --through/);
     assert.throws(() => parseArgs(['--run-id=12', '--from=x']), /cannot be combined/);
     assert.throws(() => parseArgs(['--run-id=12', '--retry-failed']), /requires/);
+    assert.throws(() => parseArgs([
+      '--run-id=12', '--split-pending-seconds=900',
+    ]), /requires/);
     assert.throws(() => parseArgs([
       '--run-id=12', '--apply', '--statement-timeout-ms=999999',
     ]), /between 120000 and 900000/);

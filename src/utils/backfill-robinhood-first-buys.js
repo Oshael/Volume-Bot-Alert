@@ -17,7 +17,7 @@ const {
 
 const VALUE_ARGUMENTS = new Set([
   'from', 'through', 'range-seconds', 'concurrency', 'samples', 'max-hours', 'run-id',
-  'statement-timeout-ms',
+  'statement-timeout-ms', 'split-pending-seconds',
 ]);
 const DEFAULT_LEASE_MS = 180_000;
 const LEASE_MARGIN_MS = 60_000;
@@ -46,6 +46,9 @@ function validateCombination(values) {
   if (values.retryFailed && (!values['run-id'] || !values.apply)) {
     throw new Error('--retry-failed requires --run-id and --apply');
   }
+  if (values['split-pending-seconds'] && (!values['run-id'] || !values.apply)) {
+    throw new Error('--split-pending-seconds requires --run-id and --apply');
+  }
 }
 
 function parseStatementTimeout(value) {
@@ -69,6 +72,7 @@ function parseArgs(argv = process.argv.slice(2)) {
   return Object.freeze({
     apply: values.apply === true, retryFailed: values.retryFailed === true,
     runId: values['run-id'], statementTimeoutMs,
+    splitPendingSeconds: values['split-pending-seconds'],
     sourceFrom: values.from, sourceThrough: values.through,
     rangeSeconds: values['range-seconds'] ?? 3600,
     concurrency: values.concurrency ?? 2, sampleCount: values.samples ?? 3,
@@ -138,12 +142,17 @@ async function main(deps = {}) {
     backfillRepository, firstBuyRepository, sleep: deps.sleep,
   }, {
     preflight, runId: options.runId, retryFailed: options.retryFailed,
+    splitPendingSeconds: options.splitPendingSeconds,
     leaseMs: leaseMsForStatementTimeout(options.statementTimeoutMs),
     onProgress: progressReporter(logger),
     onRun: ({ runId, status, requeued, subdivided, addedRanges }) => (
       logger.error || logger.log
     ).call(logger, `[FirstBuyBackfill] run-id=${runId} status=${status} requeued=${requeued}`
       + ` subdivided=${subdivided} added-ranges=${addedRanges}`),
+    onSubdivision: ({ subdivided, addedRanges, rangeSeconds }) => (
+      logger.error || logger.log
+    ).call(logger, `[FirstBuyBackfill] pending-ranges subdivided=${subdivided}`
+      + ` added-ranges=${addedRanges} range-seconds=${rangeSeconds}`),
   });
   logger.log(JSON.stringify({ mode: 'apply', ...result }, null, 2));
   return result;

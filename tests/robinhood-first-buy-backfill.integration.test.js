@@ -172,10 +172,22 @@ describe('Robinhood first-buy backfill control integration', () => {
       { rangeStart: '2026-08-23T02:00:00.000Z', rangeEnd: '2026-08-23T03:00:00.000Z',
         status: 'pending', attemptCount: 0, lastErrorCode: null },
     ]);
+    assert.deepEqual(await repository.subdividePendingRanges(run.id, 900), {
+      runId: run.id, subdivided: 1, addedRanges: 3, rangeSeconds: 900,
+    });
+    const pendingDurations = await db.query(
+      `SELECT EXTRACT(EPOCH FROM range_end - range_start)::integer AS duration_seconds
+         FROM robinhood_first_buy_backfill_ranges
+        WHERE run_id = $1 AND status = 'pending'`, [run.id]
+    );
+    assert.equal(pendingDurations.rowCount, 8);
+    assert.equal(pendingDurations.rows.every(({ duration_seconds: duration }) => (
+      duration <= 900
+    )), true);
     assert.deepEqual(await repository.getRun(run.id), {
       id: run.id, status: 'running',
       sourceFrom: '2026-08-23T00:00:00.000Z', sourceThrough: '2026-08-23T03:00:00.000Z',
-      rangeSeconds: 3600, rangeCount: 6,
+      rangeSeconds: 3600, rangeCount: 9,
     });
   });
 });

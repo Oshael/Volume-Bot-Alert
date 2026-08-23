@@ -1487,6 +1487,13 @@ intervalo concluído é repetido. O timeout configurável aceita 120.000–900.0
 campanha não está `failed`. A lease do range é derivada automaticamente desse
 timeout com 60 segundos de margem; assim queries longas continuam protegidas
 contra ownership obsoleto sem expirar antes do SQL.
+Quando a densidade real tornar os ranges pendentes maiores que o orçamento, pare
+o processo e retome a campanha com `--run-id=<id> --apply
+--split-pending-seconds=900 --statement-timeout-ms=600000`. Após recuperar leases
+expiradas, essa opção subdivide atomicamente apenas ranges `pending` maiores que
+15 minutos, preserva todos os `completed`, atualiza `range_count` e registra no
+log quantos ranges foram subdivididos/adicionados. A opção exige `run-id` e
+`--apply`; repeti-la é idempotente quando nenhum range pendente excede o alvo.
 O preflight também exige seed de wallet-swap realmente `complete` (não apenas
 terminal/abandonado) e que `sourceThrough` não ultrapasse sua frontier durável;
 isso impede declarar como coberto um intervalo cujos swaps ainda não foram

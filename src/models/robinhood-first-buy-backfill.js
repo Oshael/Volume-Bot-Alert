@@ -234,6 +234,71 @@ function createRobinhoodFirstBuyBackfillRepository(options = {}) {
     return result.rowCount;
   }
 
+  async function subdividePendingRanges(runIdValue, rangeSecondsValue) {
+    const runId = positiveInteger(runIdValue, 'runId');
+    const rangeSeconds = positiveInteger(rangeSecondsValue, 'rangeSeconds', 86_400);
+    if (rangeSeconds < 60) throw new Error('rangeSeconds must be at least 60');
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      const run = await client.query(
+        `SELECT status FROM robinhood_first_buy_backfill_runs
+          WHERE id = $1 AND chain = $2 FOR UPDATE`, [runId, CHAIN]
+      );
+      if (run.rows[0]?.status !== 'running') {
+        throw new Error('first-buy backfill run is not running');
+      }
+      const result = await client.query(
+        `WITH candidates AS MATERIALIZED (
+           SELECT id, range_start, range_end
+             FROM robinhood_first_buy_backfill_ranges
+            WHERE run_id = $1 AND chain = $2 AND status = 'pending'
+              AND range_end - range_start > $3::bigint * INTERVAL '1 second'
+            ORDER BY range_start FOR UPDATE
+         ), shortened AS (
+           UPDATE robinhood_first_buy_backfill_ranges range SET
+             range_end = candidate.range_start + ($3::bigint * INTERVAL '1 second'),
+             attempt_count = 0, next_attempt_at = NOW(),
+             last_error_code = NULL, last_error_message = NULL,
+             started_at = NULL, updated_at = NOW()
+           FROM candidates candidate WHERE range.id = candidate.id RETURNING range.id
+         ), inserted AS (
+           INSERT INTO robinhood_first_buy_backfill_ranges (
+             run_id, chain, range_start, range_end
+           ) SELECT $1, $2, point,
+                    LEAST(point + ($3::bigint * INTERVAL '1 second'), candidate.range_end)
+               FROM candidates candidate
+               CROSS JOIN LATERAL generate_series(
+                 candidate.range_start + ($3::bigint * INTERVAL '1 second'),
+                 candidate.range_end - INTERVAL '1 microsecond',
+                 $3::bigint * INTERVAL '1 second'
+               ) point
+           RETURNING id
+         )
+         SELECT (SELECT COUNT(*) FROM shortened)::integer AS subdivided,
+                (SELECT COUNT(*) FROM inserted)::integer AS added_ranges`,
+        [runId, CHAIN, rangeSeconds]
+      );
+      await client.query(
+        `UPDATE robinhood_first_buy_backfill_runs SET
+           range_count = (
+             SELECT COUNT(*) FROM robinhood_first_buy_backfill_ranges WHERE run_id = $1
+           ), updated_at = NOW()
+         WHERE id = $1 AND chain = $2`, [runId, CHAIN]
+      );
+      await client.query('COMMIT');
+      return Object.freeze({
+        runId: String(runId), subdivided: Number(result.rows[0].subdivided),
+        addedRanges: Number(result.rows[0].added_ranges), rangeSeconds,
+      });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async function retryRange(input = {}) {
     const runId = positiveInteger(input.runId, 'runId');
     const rangeId = positiveInteger(input.rangeId, 'rangeId');
@@ -335,7 +400,7 @@ function createRobinhoodFirstBuyBackfillRepository(options = {}) {
 
   return Object.freeze({
     createRun, getRun, startRun, resumeFailed, claimRange, reclaimExpired,
-    retryRange, completeRange, getProgress,
+    subdividePendingRanges, retryRange, completeRange, getProgress,
   });
 }
 

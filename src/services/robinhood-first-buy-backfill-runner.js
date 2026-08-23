@@ -131,6 +131,18 @@ async function drainWorker(context, index) {
   }
 }
 
+async function subdividePending(repository, runId, options) {
+  if (!options.splitPendingSeconds) return;
+  if (!repository.subdividePendingRanges) {
+    throw new Error('pending-range subdivision is unavailable');
+  }
+  const subdivision = await repository.subdividePendingRanges(
+    runId,
+    integer(options.splitPendingSeconds, 'splitPendingSeconds', 60, 86_400)
+  );
+  options.onSubdivision?.(subdivision);
+}
+
 async function executeBackfill(deps = {}, options = {}) {
   assertApproved(options.preflight);
   const repository = deps.backfillRepository;
@@ -150,6 +162,7 @@ async function executeBackfill(deps = {}, options = {}) {
     return Object.freeze({ runId: run.id, ...progress });
   }
   await repository.reclaimExpired(run.id);
+  await subdividePending(repository, run.id, options);
   const sleep = deps.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const leaseMs = integer(options.leaseMs ?? 180_000, 'leaseMs', 120_001, 1_200_000);
   const maxAttempts = integer(options.maxAttempts ?? 5, 'maxAttempts', 1, 20);
