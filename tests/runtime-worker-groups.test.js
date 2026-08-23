@@ -597,6 +597,7 @@ describe('runtime worker groups config', () => {
       assert.equal(config.robinhoodHolderReconciliationWorker.enabled, false);
       assert.equal(config.robinhoodHolderJournalPruneWorker.enabled, false);
       assert.equal(config.robinhoodHolderSnapshotWorker.enabled, false);
+      assert.equal(config.robinhoodHolderSnapshotWorker.batchSize, 5000);
     });
     withEnv({
       ROBINHOOD_RPC_URL: 'http://127.0.0.1:8547',

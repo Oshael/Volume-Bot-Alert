@@ -1311,7 +1311,7 @@ module.exports = {
       3_600_000
     ),
     batchSize: parseIntegerInRange(
-      process.env.ROBINHOOD_HOLDER_SNAPSHOT_BATCH_SIZE, 500, 1, 5000
+      process.env.ROBINHOOD_HOLDER_SNAPSHOT_BATCH_SIZE, 5000, 1, 5000
     ),
   },
 
