@@ -98,16 +98,28 @@ describe('Robinhood holder snapshot worker', () => {
     await worker.stop();
   });
 
-  it('waits without writing while live capture is unhealthy', async () => {
+  it('retries readiness promptly without writing while live capture starts', async () => {
+    const clock = scheduler();
     let writes = 0;
+    let liveReady = false;
     const worker = createRobinhoodHolderSnapshotWorker({
-      repository: { syncLiveDailySnapshots: async () => { writes += 1; } },
+      ...clock,
+      repository: { syncLiveDailySnapshots: async () => {
+        writes += 1;
+        return { savedCount: 1 };
+      } },
     });
-    worker.start({ enabled: true, isLiveReady: () => false });
+    worker.start({ enabled: true, isLiveReady: () => liveReady });
 
-    assert.deepEqual(await worker.runOnce(), { status: 'waiting-live', savedCount: 0 });
+    await clock.scheduled[0].callback();
     assert.equal(writes, 0);
     assert.equal(worker.getStatus().totalWaitingLive, 1);
+    assert.equal(clock.scheduled[1].delayMs, 10_000);
+
+    liveReady = true;
+    await clock.scheduled[1].callback();
+    assert.equal(writes, 1);
+    assert.equal(clock.scheduled[2].delayMs, 3_600_000);
     await worker.stop();
   });
 });

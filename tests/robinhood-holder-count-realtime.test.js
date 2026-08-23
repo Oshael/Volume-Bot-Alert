@@ -76,6 +76,28 @@ describe('Robinhood holder count realtime', () => {
     assert.equal(realtime.getStatus().publishFailures, 1);
   });
 
+  it('persists count events in bounded batches without treating invalidations as counts', async () => {
+    const persisted = [];
+    const notifications = [];
+    const realtime = createRobinhoodHolderCountRealtime({
+      database: { query: async (...args) => notifications.push(args) },
+      persistLiveCounts: async (events) => persisted.push(events),
+    });
+    const counts = Array.from({ length: 501 }, (_, index) => update({
+      tokenAddress: `0x${index.toString(16).padStart(40, '0')}`,
+      holderCount: String(index), ledgerVersion: String(index + 1),
+    }));
+    const invalidation = update({
+      tokenAddress: `0x${'f'.repeat(40)}`, invalidated: true,
+      holderCount: undefined, ledgerVersion: '999',
+    });
+
+    assert.equal(await realtime.publishUpdates([...counts, invalidation]), 502);
+    assert.deepEqual(persisted.map((events) => events.length), [500, 1]);
+    assert.equal(persisted.flat().every((event) => event.type === 'holder:count'), true);
+    assert.deepEqual(notifications.map((call) => call[1][1].length), [500, 2]);
+  });
+
   it('forwards valid LISTEN notifications to the local socket hub', async () => {
     const client = new EventEmitter();
     const queries = [];

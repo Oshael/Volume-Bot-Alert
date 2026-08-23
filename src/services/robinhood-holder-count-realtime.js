@@ -31,11 +31,15 @@ function createRobinhoodHolderCountRealtime(deps = {}) {
       }
     }
     const notifications = [...byToken.values()];
-    const events = [...byToken.keys()].map((address) => JSON.parse(byToken.get(address)));
+    const countEvents = notifications
+      .map((notification) => JSON.parse(notification))
+      .filter((event) => event.type === 'holder:count');
     try {
-      await persistLiveCounts(events);
+      for (let offset = 0; offset < countEvents.length; offset += MAX_NOTIFY_BATCH) {
+        await persistLiveCounts(countEvents.slice(offset, offset + MAX_NOTIFY_BATCH));
+      }
     } catch (error) {
-      stats.persistenceFailures += events.length;
+      stats.persistenceFailures += countEvents.length;
       logger.warn?.('[RobinhoodHolderCountRealtime] live history persistence failed:', error.message);
     }
     try {

@@ -1078,7 +1078,9 @@ persiste esse evento live diretamente nos snapshots diário e horário. O worker
 snapshot permanece como reconciliação para eventos perdidos e continuidade
 temporal, não como fonte primária das mudanças live. A continuidade é materializada
 por uma operação SQL set-based por hora; `ROBINHOOD_HOLDER_SNAPSHOT_INTERVAL_MS`
-fica fixado em 1 hora. `ROBINHOOD_HOLDER_SNAPSHOT_BATCH_SIZE=5000` permanece apenas
+fica fixado em 1 hora. Enquanto a captura live ainda inicializa, o worker repete a
+verificação de readiness a cada 10 segundos e só adota a cadência horária após a
+primeira projeção. `ROBINHOOD_HOLDER_SNAPSHOT_BATCH_SIZE=5000` permanece apenas
 como limite de compatibilidade para o fallback legado do worker. O endpoint
 `GET /api/robinhood/holder-count-series` é uma leitura PostgreSQL isolada da lista
 paginada: devolve séries selecionáveis de 1h/4h/12h/24h alinhadas em UTC, cada uma

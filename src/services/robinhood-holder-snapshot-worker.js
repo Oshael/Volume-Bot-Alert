@@ -3,6 +3,8 @@ const {
   createRobinhoodTokenHolderSummaryRepository,
 } = require('../models/robinhood-token-holder-summary');
 
+const LIVE_READINESS_RETRY_MS = 10_000;
+
 function boundedInteger(value, fallback, minimum, maximum, label) {
   const parsed = value == null ? fallback : Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
@@ -101,7 +103,9 @@ function createRobinhoodHolderSnapshotWorker(deps = {}) {
       const delay = status.consecutiveErrors
         ? Math.min(options.maxErrorBackoffMs,
           options.intervalMs * (2 ** Math.min(status.consecutiveErrors, 8)))
-        : options.intervalMs;
+        : status.lastResult?.status === 'waiting-live'
+          ? Math.min(LIVE_READINESS_RETRY_MS, options.intervalMs)
+          : options.intervalMs;
       queueNext(delay);
     }, delayMs);
     timer?.unref?.();
