@@ -5,22 +5,14 @@ const CHAIN = 'robinhood';
 const ANCHOR_BATCH_SIZE = 250;
 const LAUNCH_ANCHOR_VERSION = 'rh_launch_anchor_v1';
 
-const FIRST_BUYS_SQL = `WITH pool_origins AS MATERIALIZED (
-  SELECT token_address, MIN(discovery_block) AS first_pool_block
-    FROM robinhood_pool_registry WHERE chain = $2 GROUP BY token_address
-), eligible_tokens AS MATERIALIZED (
-  SELECT state.token_address, state.live_through_block, pool.first_pool_block
-    FROM robinhood_holder_token_states state
-    INNER JOIN pool_origins pool ON pool.token_address = state.token_address
-   WHERE state.chain = $2 AND state.ledger_status = 'live'
-     AND state.live_through_block IS NOT NULL AND state.live_through_hash IS NOT NULL
-     AND pool.first_pool_block >= $3::bigint
-     AND pool.first_pool_block <= state.live_through_block
-     AND state.live_through_block <= $4::bigint
+const FIRST_BUYS_SQL = `WITH wallet_buys AS MATERIALIZED (
+  SELECT * FROM robinhood_wallet_token_first_buys
+   WHERE chain = $2 AND wallet_address = $1
+     AND block_number BETWEEN $3::bigint AND $4::bigint
 )
 SELECT buy.wallet_address, buy.token_address, buy.volume_usd::text,
        buy.block_number::text AS first_buy_block,
-       token.first_pool_block::text, token.live_through_block::text,
+       pool.first_pool_block::text, state.live_through_block::text,
        true AS position_ready,
        (SELECT COUNT(*) + 1 FROM (
           SELECT 1 FROM robinhood_wallet_token_first_buys earlier
@@ -34,12 +26,25 @@ SELECT buy.wallet_address, buy.token_address, buy.volume_usd::text,
                     earlier.action_index, earlier.transaction_hash
            LIMIT 5
         ) preceding)::int AS buyer_rank
-  FROM robinhood_wallet_token_first_buys buy
-  INNER JOIN eligible_tokens token ON token.token_address = buy.token_address
+  FROM wallet_buys buy
+  INNER JOIN robinhood_holder_token_states state
+    ON state.chain = buy.chain AND state.token_address = buy.token_address
+  INNER JOIN LATERAL (
+    SELECT registry.discovery_block AS first_pool_block
+      FROM robinhood_pool_registry registry
+     WHERE registry.chain = buy.chain
+       AND registry.token_address = buy.token_address
+     ORDER BY registry.discovery_block
+     LIMIT 1
+  ) pool ON true
   LEFT JOIN robinhood_token_attributions attribution
     ON attribution.chain = $2 AND attribution.token_address = buy.token_address
- WHERE buy.chain = $2 AND buy.wallet_address = $1
-   AND buy.block_number BETWEEN token.first_pool_block AND token.live_through_block
+ WHERE state.ledger_status = 'live'
+   AND state.live_through_block IS NOT NULL AND state.live_through_hash IS NOT NULL
+   AND pool.first_pool_block >= $3::bigint
+   AND pool.first_pool_block <= state.live_through_block
+   AND state.live_through_block <= $4::bigint
+   AND buy.block_number BETWEEN pool.first_pool_block AND state.live_through_block
    AND (attribution.creator_address IS NULL
      OR attribution.creator_address <> buy.wallet_address)
    AND NOT EXISTS (
@@ -60,7 +65,7 @@ SELECT buy.wallet_address, buy.token_address, buy.volume_usd::text,
      SELECT 1 FROM robinhood_wallet_swaps swap
       WHERE swap.chain = buy.chain AND swap.token_address = buy.token_address
         AND swap.router_address = buy.wallet_address
-        AND swap.block_number <= token.live_through_block
+        AND swap.block_number <= state.live_through_block
    )
    AND buy.wallet_address NOT IN (
      '0x0000000000000000000000000000000000000000',

@@ -51,7 +51,11 @@ test('reads population recurrence and reuses proven launch anchors', async () =>
   })));
   assert.deepEqual(calls[0].params, [WALLET, 'robinhood', '90', '250']);
   assert.deepEqual(calls[1].params, [WALLET_B, 'robinhood', '90', '250']);
-  assert.match(calls[0].sql, /buy\.wallet_address = \$1/);
+  assert.match(calls[0].sql, /WITH wallet_buys AS MATERIALIZED/);
+  assert.match(calls[0].sql, /wallet_address = \$1/);
+  assert.match(calls[0].sql, /INNER JOIN LATERAL/);
+  assert.match(calls[0].sql, /ORDER BY registry\.discovery_block\s+LIMIT 1/);
+  assert.doesNotMatch(calls[0].sql, /pool_origins/);
   assert.match(calls[0].sql, /LIMIT 5/);
   assert.doesNotMatch(calls[0].sql, /candidate_buy_blocks/);
   assert.match(calls[0].sql, /robinhood_infrastructure_registry/);

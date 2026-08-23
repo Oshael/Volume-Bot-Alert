@@ -1389,6 +1389,10 @@ em `robinhood_wallet_swaps` e persiste somente resultado comprovado; recorrênci
 posteriores usam a PK `(chain, token_address)`. Mudança no primeiro pool invalida
 o cache por comparação de `first_pool_block`, e ausência de anchor nunca é
 persistida. A migration não consulta swaps, não inicia backfill e não publica tag.
+A Stage 156 adiciona o índice concorrente `(chain, token_address, discovery_block)`
+ao registry. A recorrência começa pelas compras da wallet e consulta a origem
+somente dos tokens encontrados, sem reagregar todas as pools por wallet candidata;
+a migration não exige backfill e não interrompe o ingestion durante a criação.
 Se o cursor live da Stage 152 estiver ausente ou atrás da cobertura de swaps, o
 materializador retorna `deferred` e não substitui o snapshot vigente.
 
@@ -1402,7 +1406,7 @@ com `systemctl edit`. O env específico contém somente flags e o `run-id`; banc
 segredos continuam vindo do `.env` global já carregado pelo processo. O script
 não força nenhum subworker: first-buy, SNIPER,
 posição e transfers obedecem exclusivamente às respectivas flags do env. Antes
-do primeiro start, aplique as Stages 149, 151, 152 e 155, confirme o seed concluído e
+do primeiro start, aplique as Stages 149, 151, 152, 155 e 156, confirme o seed concluído e
 execute `npm run db:schema-check`. Processo `active` não basta: confirme as leases
 `robinhood-first-buy-live-worker` e `robinhood-sniper-shadow-worker`, heartbeat
 recente, `metadata.telemetry.running=true`, `totalRuns` crescente e

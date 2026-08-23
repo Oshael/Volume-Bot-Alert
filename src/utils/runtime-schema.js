@@ -4222,6 +4222,18 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage156-robinhood-pool-token-origin-index',
+    name: 'Stage 156 Robinhood pool token-origin index',
+    repair: 'node src/utils/db-init-stage156.js',
+    tables: [{
+      table: 'robinhood_pool_registry',
+      indexes: [{
+        name: 'idx_rh_pool_registry_token_origin',
+        includes: ['chain', 'token_address', 'discovery_block'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

@@ -15,6 +15,7 @@ const stage139 = require('../src/utils/db-init-stage139');
 const stage145 = require('../src/utils/db-init-stage145');
 const stage149 = require('../src/utils/db-init-stage149');
 const stage155 = require('../src/utils/db-init-stage155');
+const stage156 = require('../src/utils/db-init-stage156');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const WALLET = `0x${'d'.repeat(40)}`;
@@ -25,6 +26,7 @@ describe('Robinhood SNIPER population calibration source integration', () => {
     await assertUsingTestDatabase(db);
     for (const stage of [
       stage63, stage90, stage110, stage116, stage139, stage145, stage149, stage155,
+      stage156,
     ]) {
       await stage.init({ closePool: false });
     }
