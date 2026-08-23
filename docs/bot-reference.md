@@ -1383,6 +1383,12 @@ Esses sinais são internos; mesmo com o worker ativo, a allowlist pública conti
 ocultando tags, estado e métrica SNIPER. O frontend só deverá expor `SNIPER`
 produzido pela regra pública de alta confiança. A recorrência do materializador agora lê a
 projeção canônica indexada da Stage 149; não reagrega o histórico bruto de swaps.
+A Stage 155 adiciona `robinhood_token_launch_anchors`, cache durável e lazy do
+primeiro swap registrado por token. O primeiro miss ainda resolve o anchor exato
+em `robinhood_wallet_swaps` e persiste somente resultado comprovado; recorrências
+posteriores usam a PK `(chain, token_address)`. Mudança no primeiro pool invalida
+o cache por comparação de `first_pool_block`, e ausência de anchor nunca é
+persistida. A migration não consulta swaps, não inicia backfill e não publica tag.
 Se o cursor live da Stage 152 estiver ausente ou atrás da cobertura de swaps, o
 materializador retorna `deferred` e não substitui o snapshot vigente.
 
@@ -1396,7 +1402,7 @@ com `systemctl edit`. O env específico contém somente flags e o `run-id`; banc
 segredos continuam vindo do `.env` global já carregado pelo processo. O script
 não força nenhum subworker: first-buy, SNIPER,
 posição e transfers obedecem exclusivamente às respectivas flags do env. Antes
-do primeiro start, aplique as Stages 149, 151 e 152, confirme o seed concluído e
+do primeiro start, aplique as Stages 149, 151, 152 e 155, confirme o seed concluído e
 execute `npm run db:schema-check`. Processo `active` não basta: confirme as leases
 `robinhood-first-buy-live-worker` e `robinhood-sniper-shadow-worker`, heartbeat
 recente, `metadata.telemetry.running=true`, `totalRuns` crescente e

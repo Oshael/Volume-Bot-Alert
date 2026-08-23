@@ -3,6 +3,7 @@ const { normalizeTokenAddress } = require('../utils/token-identity');
 
 const CHAIN = 'robinhood';
 const ANCHOR_BATCH_SIZE = 250;
+const LAUNCH_ANCHOR_VERSION = 'rh_launch_anchor_v1';
 
 const FIRST_BUYS_SQL = `WITH pool_origins AS MATERIALIZED (
   SELECT token_address, MIN(discovery_block) AS first_pool_block
@@ -88,6 +89,40 @@ SELECT token.token_address, anchor.block_number::text AS launch_block
   ) anchor ON true
  ORDER BY token.token_address`;
 
+const CACHED_ANCHORS_SQL = `WITH requested_anchors AS (
+  SELECT * FROM UNNEST($1::varchar[], $2::bigint[], $3::bigint[])
+    AS item(token_address, first_pool_block, live_through_block)
+)
+SELECT cache.token_address, cache.launch_block::text
+  FROM requested_anchors requested
+  INNER JOIN robinhood_token_launch_anchors cache
+    ON cache.chain = $4 AND cache.token_address = requested.token_address
+   AND cache.first_pool_block = requested.first_pool_block
+   AND cache.launch_block <= requested.live_through_block
+ ORDER BY cache.token_address`;
+
+const UPSERT_ANCHORS_SQL = `INSERT INTO robinhood_token_launch_anchors (
+  chain, token_address, first_pool_block, launch_block,
+  source_through_block, evidence_version
+)
+SELECT $1, item.token_address, item.first_pool_block,
+       item.launch_block, item.source_through_block, $6
+  FROM UNNEST($2::varchar[], $3::bigint[], $4::bigint[], $5::bigint[])
+    AS item(token_address, first_pool_block, launch_block, source_through_block)
+ON CONFLICT (chain, token_address) DO UPDATE SET
+  first_pool_block = EXCLUDED.first_pool_block,
+  launch_block = EXCLUDED.launch_block,
+  source_through_block = GREATEST(
+    robinhood_token_launch_anchors.source_through_block,
+    EXCLUDED.source_through_block
+  ),
+  evidence_version = EXCLUDED.evidence_version,
+  updated_at = NOW()
+WHERE robinhood_token_launch_anchors.first_pool_block <> EXCLUDED.first_pool_block
+   OR robinhood_token_launch_anchors.launch_block <> EXCLUDED.launch_block
+   OR robinhood_token_launch_anchors.source_through_block < EXCLUDED.source_through_block
+   OR robinhood_token_launch_anchors.evidence_version <> EXCLUDED.evidence_version`;
+
 function block(value, label) {
   const normalized = String(value ?? '').trim();
   if (!/^\d+$/.test(normalized)) throw new Error(`${label} must be a block number`);
@@ -130,7 +165,18 @@ function createRobinhoodHolderSniperCalibrationSource(options = {}) {
     const tokens = uniqueTokens(firstBuys);
     const anchors = new Map();
     for (let offset = 0; offset < tokens.length; offset += ANCHOR_BATCH_SIZE) {
-      const batch = tokens.slice(offset, offset + ANCHOR_BATCH_SIZE);
+      const requested = tokens.slice(offset, offset + ANCHOR_BATCH_SIZE);
+      const cached = await database.query(CACHED_ANCHORS_SQL, [
+        requested.map((row) => row.token_address),
+        requested.map((row) => row.first_pool_block),
+        requested.map((row) => row.live_through_block),
+        CHAIN,
+      ]);
+      for (const row of cached.rows) anchors.set(row.token_address, row.launch_block);
+      const batch = requested.filter(({ token_address: tokenAddress }) => (
+        !anchors.has(tokenAddress)
+      ));
+      if (!batch.length) continue;
       const { rows } = await database.query(ANCHORS_SQL, [
         batch.map((row) => row.token_address),
         batch.map((row) => row.first_pool_block),
@@ -138,6 +184,18 @@ function createRobinhoodHolderSniperCalibrationSource(options = {}) {
         CHAIN,
       ]);
       for (const row of rows) anchors.set(row.token_address, row.launch_block);
+      const proven = rows.filter(({ launch_block: launchBlock }) => launchBlock != null);
+      if (proven.length) {
+        const frontierByToken = new Map(batch.map((row) => [row.token_address, row]));
+        await database.query(UPSERT_ANCHORS_SQL, [
+          CHAIN,
+          proven.map((row) => row.token_address),
+          proven.map((row) => frontierByToken.get(row.token_address).first_pool_block),
+          proven.map((row) => row.launch_block),
+          proven.map((row) => frontierByToken.get(row.token_address).live_through_block),
+          LAUNCH_ANCHOR_VERSION,
+        ]);
+      }
     }
     return anchors;
   }
@@ -194,5 +252,7 @@ function unavailable(reason) {
 
 module.exports = {
   createRobinhoodHolderSniperCalibrationSource,
-  __private: { ANCHORS_SQL, FIRST_BUYS_SQL },
+  __private: {
+    ANCHORS_SQL, CACHED_ANCHORS_SQL, FIRST_BUYS_SQL, UPSERT_ANCHORS_SQL,
+  },
 };

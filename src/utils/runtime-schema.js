@@ -4198,6 +4198,30 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage155-robinhood-token-launch-anchor-cache',
+    name: 'Stage 155 Robinhood token launch-anchor cache',
+    repair: 'node src/utils/db-init-stage155.js',
+    tables: [{
+      table: 'robinhood_token_launch_anchors',
+      columns: [
+        'chain', 'token_address', 'first_pool_block', 'launch_block',
+        'source_through_block', 'evidence_version', 'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_token_launch_anchors_pkey',
+        includes: ['PRIMARY KEY', 'chain', 'token_address'],
+      }, {
+        name: 'rh_token_launch_anchors_blocks_check',
+        includes: [
+          'CHECK', 'first_pool_block', 'launch_block', 'source_through_block',
+        ],
+      }, {
+        name: 'rh_token_launch_anchors_evidence_check',
+        includes: ['CHECK', 'evidence_version', 'rh_launch_anchor_v'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
