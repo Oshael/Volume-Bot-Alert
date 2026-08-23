@@ -322,6 +322,7 @@ describe('Admin panel auth and management', () => {
       assert.ok(res.body.robinhoodIngestionWorker);
       assert.equal(res.body.robinhoodSniperShadowWorker.mode, 'shadow');
       assert.equal(typeof res.body.robinhoodSniperShadowWorker.running, 'boolean');
+      assert.equal(res.body.robinhoodInsiderShadowWorker.mode, 'shadow');
       assert.ok(Object.hasOwn(res.body.robinhoodIngestionWorker, 'sharedLease'));
       assert.ok(res.body.robinhoodCatalogStagingWorker);
       assert.ok(Object.hasOwn(res.body.robinhoodCatalogStagingWorker, 'sharedLease'));

@@ -379,7 +379,11 @@ carga sem ETA confiável.
      concluído: aceita somente distribuição positiva e direta do criador para
      wallet comprovada, após replay completo e com transfers alcançando a
      frontier do holder; pools e infraestrutura registrada são excluídos no
-     bloco da evidência. Worker shadow e publicação seguem em cortes próprios;
+     bloco da evidência. O runner shadow paginado e opt-in também está concluído
+     no grupo isolado `robinhood-wallet-classification`: só seleciona ledgers live
+     após criador confirmado, replay direcional completo e cursor live de
+     transfers alcançando a frontier; limita concorrência, contém falhas por token
+     e expõe telemetria sob lease própria. Publicação segue em corte separado e
      `INSIDER` continua indisponível na API/UI.
 5. **BUNDLED**
    - construir clusters explicáveis por funder e janela;

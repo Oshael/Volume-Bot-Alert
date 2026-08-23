@@ -357,6 +357,7 @@ describe('runtime worker groups config', () => {
     assert.doesNotMatch(dropIn, /ExecStart|WorkingDirectory|User=/);
     assert.match(env, /ROBINHOOD_FIRST_BUY_SEED_RUN_ID=REPLACE_WITH_COMPLETED_RUN_ID/);
     assert.match(env, /ROBINHOOD_SNIPER_SHADOW_ENABLED=true/);
+    assert.match(env, /ROBINHOOD_INSIDER_SHADOW_ENABLED=false/);
     assert.match(env, /ROBINHOOD_WALLET_POSITION_LIVE_ENABLED=false/);
     assert.doesNotMatch(env, /JWT_SECRET|DATABASE_URL|DB_PASSWORD/);
   });
@@ -939,6 +940,25 @@ describe('runtime worker groups config', () => {
     });
     withEnv({ ROBINHOOD_SNIPER_SHADOW_ENABLED: undefined }, (config) => {
       assert.equal(config.robinhoodSniperShadowWorker.enabled, false);
+    });
+  });
+
+  it('keeps the INSIDER classifier shadow worker opt-in and bounded', () => {
+    withEnv({
+      ROBINHOOD_INSIDER_SHADOW_ENABLED: 'true',
+      ROBINHOOD_INSIDER_SHADOW_INTERVAL_MS: '1',
+      ROBINHOOD_INSIDER_SHADOW_MAX_ERROR_BACKOFF_MS: '99999999',
+      ROBINHOOD_INSIDER_SHADOW_BATCH_SIZE: '999',
+      ROBINHOOD_INSIDER_SHADOW_CONCURRENCY: '99',
+      ROBINHOOD_INSIDER_SHADOW_RETRY_MS: '1',
+    }, (config) => {
+      assert.deepEqual(config.robinhoodInsiderShadowWorker, {
+        enabled: true, intervalMs: 1000, maxErrorBackoffMs: 3_600_000,
+        batchSize: 100, concurrency: 4, retryMs: 60_000,
+      });
+    });
+    withEnv({ ROBINHOOD_INSIDER_SHADOW_ENABLED: undefined }, (config) => {
+      assert.equal(config.robinhoodInsiderShadowWorker.enabled, false);
     });
   });
 
