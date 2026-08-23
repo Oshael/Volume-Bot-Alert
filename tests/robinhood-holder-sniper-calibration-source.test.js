@@ -38,6 +38,7 @@ test('reads population recurrence and reuses proven launch anchors', async () =>
       rawAnchorQueries += 1;
       return { rows: params[0].map((token_address) => ({
         token_address, launch_block: '100',
+        launch_block_time: '2026-08-21T12:00:00.000Z',
       })) };
     } },
   });
@@ -67,6 +68,11 @@ test('reads population recurrence and reuses proven launch anchors', async () =>
   ]);
   assert.match(calls[3].sql, /LEFT JOIN LATERAL/);
   assert.match(calls[3].sql, /ORDER BY swap\.block_time/);
+  assert.deepEqual(calls[4].params, [
+    'robinhood', [TOKEN, TOKEN_B], ['90', '90'], ['100', '100'],
+    ['2026-08-21T12:00:00.000Z', '2026-08-21T12:00:00.000Z'],
+    ['250', '250'], 'rh_launch_anchor_v1',
+  ]);
   assert.equal(anchorCache.size, 2);
   assert.equal(rawAnchorQueries, 1);
 

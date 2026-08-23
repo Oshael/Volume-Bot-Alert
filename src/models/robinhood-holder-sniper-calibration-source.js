@@ -77,10 +77,11 @@ const ANCHORS_SQL = `WITH token_frontiers AS MATERIALIZED (
   SELECT * FROM UNNEST($1::varchar[], $2::bigint[], $3::bigint[])
     AS item(token_address, first_pool_block, live_through_block)
 )
-SELECT token.token_address, anchor.block_number::text AS launch_block
+SELECT token.token_address, anchor.block_number::text AS launch_block,
+       anchor.block_time AS launch_block_time
   FROM token_frontiers token
   LEFT JOIN LATERAL (
-    SELECT swap.block_number
+    SELECT swap.block_number, swap.block_time
       FROM robinhood_wallet_swaps swap
       INNER JOIN robinhood_pool_registry registry
         ON registry.chain = swap.chain AND registry.protocol = swap.protocol
@@ -107,24 +108,73 @@ SELECT cache.token_address, cache.launch_block::text
  ORDER BY cache.token_address`;
 
 const UPSERT_ANCHORS_SQL = `INSERT INTO robinhood_token_launch_anchors (
-  chain, token_address, first_pool_block, launch_block,
+  chain, token_address, first_pool_block, launch_block, launch_block_time,
   source_through_block, evidence_version
 )
 SELECT $1, item.token_address, item.first_pool_block,
-       item.launch_block, item.source_through_block, $6
-  FROM UNNEST($2::varchar[], $3::bigint[], $4::bigint[], $5::bigint[])
-    AS item(token_address, first_pool_block, launch_block, source_through_block)
+       item.launch_block, item.launch_block_time, item.source_through_block, $7
+  FROM UNNEST(
+    $2::varchar[], $3::bigint[], $4::bigint[], $5::timestamptz[], $6::bigint[]
+  ) AS item(
+    token_address, first_pool_block, launch_block, launch_block_time,
+    source_through_block
+  )
 ON CONFLICT (chain, token_address) DO UPDATE SET
   first_pool_block = EXCLUDED.first_pool_block,
   launch_block = EXCLUDED.launch_block,
+  launch_block_time = EXCLUDED.launch_block_time,
   source_through_block = GREATEST(
     robinhood_token_launch_anchors.source_through_block,
     EXCLUDED.source_through_block
   ),
   evidence_version = EXCLUDED.evidence_version,
+  anchor_wallet_address = CASE WHEN
+    robinhood_token_launch_anchors.first_pool_block = EXCLUDED.first_pool_block
+    AND robinhood_token_launch_anchors.launch_block = EXCLUDED.launch_block
+    AND robinhood_token_launch_anchors.launch_block_time
+      IS NOT DISTINCT FROM EXCLUDED.launch_block_time
+    THEN robinhood_token_launch_anchors.anchor_wallet_address END,
+  anchor_transaction_hash = CASE WHEN
+    robinhood_token_launch_anchors.first_pool_block = EXCLUDED.first_pool_block
+    AND robinhood_token_launch_anchors.launch_block = EXCLUDED.launch_block
+    AND robinhood_token_launch_anchors.launch_block_time
+      IS NOT DISTINCT FROM EXCLUDED.launch_block_time
+    THEN robinhood_token_launch_anchors.anchor_transaction_hash END,
+  anchor_transaction_index = CASE WHEN
+    robinhood_token_launch_anchors.first_pool_block = EXCLUDED.first_pool_block
+    AND robinhood_token_launch_anchors.launch_block = EXCLUDED.launch_block
+    AND robinhood_token_launch_anchors.launch_block_time
+      IS NOT DISTINCT FROM EXCLUDED.launch_block_time
+    THEN robinhood_token_launch_anchors.anchor_transaction_index END,
+  anchor_action_index = CASE WHEN
+    robinhood_token_launch_anchors.first_pool_block = EXCLUDED.first_pool_block
+    AND robinhood_token_launch_anchors.launch_block = EXCLUDED.launch_block
+    AND robinhood_token_launch_anchors.launch_block_time
+      IS NOT DISTINCT FROM EXCLUDED.launch_block_time
+    THEN robinhood_token_launch_anchors.anchor_action_index END,
+  anchor_block_hash = CASE WHEN
+    robinhood_token_launch_anchors.first_pool_block = EXCLUDED.first_pool_block
+    AND robinhood_token_launch_anchors.launch_block = EXCLUDED.launch_block
+    AND robinhood_token_launch_anchors.launch_block_time
+      IS NOT DISTINCT FROM EXCLUDED.launch_block_time
+    THEN robinhood_token_launch_anchors.anchor_block_hash END,
+  anchor_side = CASE WHEN
+    robinhood_token_launch_anchors.first_pool_block = EXCLUDED.first_pool_block
+    AND robinhood_token_launch_anchors.launch_block = EXCLUDED.launch_block
+    AND robinhood_token_launch_anchors.launch_block_time
+      IS NOT DISTINCT FROM EXCLUDED.launch_block_time
+    THEN robinhood_token_launch_anchors.anchor_side END,
+  anchor_volume_usd = CASE WHEN
+    robinhood_token_launch_anchors.first_pool_block = EXCLUDED.first_pool_block
+    AND robinhood_token_launch_anchors.launch_block = EXCLUDED.launch_block
+    AND robinhood_token_launch_anchors.launch_block_time
+      IS NOT DISTINCT FROM EXCLUDED.launch_block_time
+    THEN robinhood_token_launch_anchors.anchor_volume_usd END,
   updated_at = NOW()
 WHERE robinhood_token_launch_anchors.first_pool_block <> EXCLUDED.first_pool_block
    OR robinhood_token_launch_anchors.launch_block <> EXCLUDED.launch_block
+   OR robinhood_token_launch_anchors.launch_block_time
+        IS DISTINCT FROM EXCLUDED.launch_block_time
    OR robinhood_token_launch_anchors.source_through_block < EXCLUDED.source_through_block
    OR robinhood_token_launch_anchors.evidence_version <> EXCLUDED.evidence_version`;
 
@@ -197,6 +247,7 @@ function createRobinhoodHolderSniperCalibrationSource(options = {}) {
           proven.map((row) => row.token_address),
           proven.map((row) => frontierByToken.get(row.token_address).first_pool_block),
           proven.map((row) => row.launch_block),
+          proven.map((row) => row.launch_block_time),
           proven.map((row) => frontierByToken.get(row.token_address).live_through_block),
           LAUNCH_ANCHOR_VERSION,
         ]);

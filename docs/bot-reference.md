@@ -1389,11 +1389,14 @@ sem limite. Snapshots positivos de políticas SNIPER anteriores retornam
 automaticamente à fila e podem ser substituídos na mesma frontier; snapshots
 vazios permanecem válidos porque a v2 é mais restritiva.
 A Stage 155 adiciona `robinhood_token_launch_anchors`, cache durável e lazy do
-primeiro swap registrado por token. O primeiro miss ainda resolve o anchor exato
-em `robinhood_wallet_swaps` e persiste somente resultado comprovado; recorrências
-posteriores usam a PK `(chain, token_address)`. Mudança no primeiro pool invalida
-o cache por comparação de `first_pool_block`, e ausência de anchor nunca é
-persistida. A migration não consulta swaps, não inicia backfill e não publica tag.
+primeiro swap registrado por token. A Stage 157 acrescenta horário, identidade e
+posição canônica tipados ao mesmo cache. Entradas antigas são enriquecidas lazy;
+um miss primeiro localiza o bloco/horário e lê somente a partição diária e o bloco
+do anchor. Depois disso, evidência local e recorrências usam a PK
+`(chain, token_address)` sem reconstruir o lançamento. Mudança no primeiro pool
+ou no ponto de lançamento invalida os detalhes, e ausência de anchor nunca é
+persistida. As migrations não consultam swaps, não iniciam backfill e não publicam
+tag.
 A Stage 156 adiciona o índice concorrente `(chain, token_address, discovery_block)`
 ao registry. A recorrência começa pelas compras da wallet e consulta a origem
 somente dos tokens encontrados, sem reagregar todas as pools por wallet candidata;
@@ -1411,7 +1414,7 @@ com `systemctl edit`. O env específico contém somente flags e o `run-id`; banc
 segredos continuam vindo do `.env` global já carregado pelo processo. O script
 não força nenhum subworker: first-buy, SNIPER,
 posição e transfers obedecem exclusivamente às respectivas flags do env. Antes
-do primeiro start, aplique as Stages 149, 151, 152, 155 e 156, confirme o seed concluído e
+do primeiro start, aplique as Stages 149, 151, 152, 155, 156 e 157, confirme o seed concluído e
 execute `npm run db:schema-check`. Processo `active` não basta: confirme as leases
 `robinhood-first-buy-live-worker` e `robinhood-sniper-shadow-worker`, heartbeat
 recente, `metadata.telemetry.running=true`, `totalRuns` crescente e

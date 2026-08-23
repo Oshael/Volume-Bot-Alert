@@ -4234,6 +4234,27 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage157-robinhood-token-launch-anchor-evidence',
+    name: 'Stage 157 Robinhood typed token launch-anchor evidence',
+    repair: 'node src/utils/db-init-stage157.js',
+    tables: [{
+      table: 'robinhood_token_launch_anchors',
+      columns: [
+        'launch_block_time', 'anchor_wallet_address', 'anchor_transaction_hash',
+        'anchor_transaction_index', 'anchor_action_index', 'anchor_block_hash',
+        'anchor_side', 'anchor_volume_usd',
+      ],
+      constraints: [{
+        name: 'rh_token_launch_anchors_detail_check',
+        includes: [
+          'CHECK', 'launch_block_time', 'anchor_wallet_address',
+          'anchor_transaction_hash', 'anchor_transaction_index',
+          'anchor_action_index', 'anchor_block_hash', 'anchor_side',
+        ],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

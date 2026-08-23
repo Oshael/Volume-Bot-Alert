@@ -7,6 +7,9 @@ const db = require('../src/models/db');
 const {
   createRobinhoodHolderSniperCalibrationSource, __private,
 } = require('../src/models/robinhood-holder-sniper-calibration-source');
+const {
+  __private: launchPrivate,
+} = require('../src/models/robinhood-holder-launch-source');
 const stage63 = require('../src/utils/db-init-stage63');
 const stage90 = require('../src/utils/db-init-stage90');
 const stage110 = require('../src/utils/db-init-stage110');
@@ -16,6 +19,7 @@ const stage145 = require('../src/utils/db-init-stage145');
 const stage149 = require('../src/utils/db-init-stage149');
 const stage155 = require('../src/utils/db-init-stage155');
 const stage156 = require('../src/utils/db-init-stage156');
+const stage157 = require('../src/utils/db-init-stage157');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const WALLET = `0x${'d'.repeat(40)}`;
@@ -26,7 +30,7 @@ describe('Robinhood SNIPER population calibration source integration', () => {
     await assertUsingTestDatabase(db);
     for (const stage of [
       stage63, stage90, stage110, stage116, stage139, stage145, stage149, stage155,
-      stage156,
+      stage156, stage157,
     ]) {
       await stage.init({ closePool: false });
     }
@@ -55,7 +59,8 @@ describe('Robinhood SNIPER population calibration source integration', () => {
 
   it('persists and reads a proven launch anchor by token and pool frontier', async () => {
     await db.query(__private.UPSERT_ANCHORS_SQL, [
-      'robinhood', [TOKEN], ['90'], ['100'], ['250'], 'rh_launch_anchor_v1',
+      'robinhood', [TOKEN], ['90'], ['100'], ['2026-08-21T12:00:00Z'],
+      ['250'], 'rh_launch_anchor_v1',
     ]);
     assert.deepEqual((await db.query(__private.CACHED_ANCHORS_SQL, [
       [TOKEN], ['90'], ['250'], 'robinhood',
@@ -63,5 +68,44 @@ describe('Robinhood SNIPER population calibration source integration', () => {
     assert.deepEqual((await db.query(__private.CACHED_ANCHORS_SQL, [
       [TOKEN], ['91'], ['250'], 'robinhood',
     ])).rows, []);
+  });
+
+  it('atomically enriches a block cache with typed canonical evidence', async () => {
+    const tx = `0x${'a'.repeat(64)}`;
+    const hash = `0x${'b'.repeat(64)}`;
+    await db.query(launchPrivate.UPSERT_ANCHOR_EVIDENCE_SQL, [
+      'robinhood', TOKEN, '90', '100', '2026-08-21T12:00:00Z', '250',
+      'rh_launch_anchor_v1', WALLET, tx, '1', '2', hash, 'buy', '50.25',
+    ]);
+    const { rows } = await db.query(
+      `SELECT launch_block_time, anchor_wallet_address, anchor_transaction_hash,
+              anchor_transaction_index, anchor_action_index, anchor_block_hash,
+              anchor_side, anchor_volume_usd::text
+         FROM robinhood_token_launch_anchors
+        WHERE chain = 'robinhood' AND token_address = $1`,
+      [TOKEN]
+    );
+    assert.deepEqual({
+      ...rows[0], launch_block_time: rows[0].launch_block_time.toISOString(),
+    }, {
+      launch_block_time: '2026-08-21T12:00:00.000Z',
+      anchor_wallet_address: WALLET,
+      anchor_transaction_hash: tx,
+      anchor_transaction_index: 1,
+      anchor_action_index: '2',
+      anchor_block_hash: hash,
+      anchor_side: 'buy',
+      anchor_volume_usd: '50.25',
+    });
+
+    await db.query(__private.UPSERT_ANCHORS_SQL, [
+      'robinhood', [TOKEN], ['90'], ['101'], ['2026-08-21T12:01:00Z'],
+      ['250'], 'rh_launch_anchor_v1',
+    ]);
+    assert.deepEqual((await db.query(
+      `SELECT launch_block::text, anchor_transaction_hash
+         FROM robinhood_token_launch_anchors WHERE token_address = $1`,
+      [TOKEN]
+    )).rows[0], { launch_block: '101', anchor_transaction_hash: null });
   });
 });

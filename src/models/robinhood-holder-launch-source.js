@@ -9,12 +9,39 @@ const {
 const { normalizeTokenAddress } = require('../utils/token-identity');
 
 const CHAIN = 'robinhood';
+const LAUNCH_ANCHOR_CACHE_VERSION = 'rh_launch_anchor_v1';
 const DEFAULT_MAX_BLOCKS = 3;
 const DEFAULT_MAX_SECONDS = 90;
 const BURN_ADDRESSES = Object.freeze([
   '0x0000000000000000000000000000000000000000',
   '0x000000000000000000000000000000000000dead',
 ]);
+
+const UPSERT_ANCHOR_EVIDENCE_SQL = `INSERT INTO robinhood_token_launch_anchors (
+  chain, token_address, first_pool_block, launch_block, launch_block_time,
+  source_through_block, evidence_version, anchor_wallet_address,
+  anchor_transaction_hash, anchor_transaction_index, anchor_action_index,
+  anchor_block_hash, anchor_side, anchor_volume_usd
+) VALUES (
+  $1, $2, $3::bigint, $4::bigint, $5::timestamptz, $6::bigint, $7,
+  $8, $9, $10::int, $11::bigint, $12, $13, $14::numeric
+) ON CONFLICT (chain, token_address) DO UPDATE SET
+  first_pool_block = EXCLUDED.first_pool_block,
+  launch_block = EXCLUDED.launch_block,
+  launch_block_time = EXCLUDED.launch_block_time,
+  source_through_block = GREATEST(
+    robinhood_token_launch_anchors.source_through_block,
+    EXCLUDED.source_through_block
+  ),
+  evidence_version = EXCLUDED.evidence_version,
+  anchor_wallet_address = EXCLUDED.anchor_wallet_address,
+  anchor_transaction_hash = EXCLUDED.anchor_transaction_hash,
+  anchor_transaction_index = EXCLUDED.anchor_transaction_index,
+  anchor_action_index = EXCLUDED.anchor_action_index,
+  anchor_block_hash = EXCLUDED.anchor_block_hash,
+  anchor_side = EXCLUDED.anchor_side,
+  anchor_volume_usd = EXCLUDED.anchor_volume_usd,
+  updated_at = NOW()`;
 
 function optionalLimit(value) {
   if (value == null) return null;
@@ -26,6 +53,26 @@ function optionalLimit(value) {
 
 function unavailable(reason, details = {}) {
   return Object.freeze({ ready: false, reason, ...details });
+}
+
+function cachedAnchor(row) {
+  const required = [
+    'cached_launch_block', 'cached_launch_block_time', 'anchor_wallet_address',
+    'anchor_transaction_hash', 'anchor_transaction_index', 'anchor_action_index',
+    'anchor_block_hash', 'anchor_side',
+  ];
+  if (required.some((field) => row[field] == null)) return null;
+  return Object.freeze({
+    wallet_address: row.anchor_wallet_address,
+    transaction_hash: row.anchor_transaction_hash,
+    transaction_index: String(row.anchor_transaction_index),
+    action_index: String(row.anchor_action_index),
+    block_number: String(row.cached_launch_block),
+    block_hash: row.anchor_block_hash,
+    block_time: row.cached_launch_block_time,
+    side: row.anchor_side,
+    volume_usd: row.anchor_volume_usd == null ? null : String(row.anchor_volume_usd),
+  });
 }
 
 function normalizeState(row, tokenAddress) {
@@ -46,6 +93,12 @@ function normalizeState(row, tokenAddress) {
     tokenAddress,
     creatorAddress: row.creator_address || null,
     launchFromBlock: String(launchFromBlock),
+    launchPoint: row.cached_launch_block == null || row.cached_launch_block_time == null
+      ? null : Object.freeze({
+        blockNumber: String(row.cached_launch_block),
+        blockTime: row.cached_launch_block_time,
+      }),
+    cachedAnchor: cachedAnchor(row),
     frontier: Object.freeze({
       blockNumber: String(row.live_through_block),
       blockHash: row.live_through_hash,
@@ -86,54 +139,94 @@ function createRobinhoodHolderLaunchSource(options = {}) {
     const { rows } = await database.query(
       `SELECT state.ledger_status, state.live_through_block::text,
               state.live_through_hash, attribution.creator_address,
-              pool.first_pool_discovery_block
+              pool.first_pool_discovery_block,
+              anchor.launch_block::text AS cached_launch_block,
+              anchor.launch_block_time AS cached_launch_block_time,
+              anchor.anchor_wallet_address, anchor.anchor_transaction_hash,
+              anchor.anchor_transaction_index, anchor.anchor_action_index,
+              anchor.anchor_block_hash, anchor.anchor_side,
+              anchor.anchor_volume_usd::text AS anchor_volume_usd
          FROM robinhood_holder_token_states state
          LEFT JOIN robinhood_token_attributions attribution
            ON attribution.chain = state.chain
           AND attribution.token_address = state.token_address
          LEFT JOIN LATERAL (
-           SELECT MIN(discovery_block)::text AS first_pool_discovery_block
+           SELECT MIN(discovery_block) AS first_pool_discovery_block
              FROM robinhood_pool_registry registry
             WHERE registry.chain = state.chain
               AND registry.token_address = state.token_address
          ) pool ON true
+         LEFT JOIN robinhood_token_launch_anchors anchor
+           ON anchor.chain = state.chain
+          AND anchor.token_address = state.token_address
+          AND anchor.first_pool_block = pool.first_pool_discovery_block
+          AND anchor.launch_block <= state.live_through_block
         WHERE state.chain = $1 AND state.token_address = $2`,
       [CHAIN, tokenAddress]
     );
     return normalizeState(rows[0], tokenAddress);
   }
 
-  async function loadLaunchRows(state) {
+  async function loadLaunchPoint(state) {
+    if (state.launchPoint) return state.launchPoint;
     const { rows } = await database.query(
-      `WITH registered_swaps AS MATERIALIZED (
-         SELECT swap.*
-           FROM robinhood_wallet_swaps swap
-           INNER JOIN robinhood_pool_registry registry
-             ON registry.chain = swap.chain
-            AND registry.protocol = swap.protocol
-            AND registry.market_key = swap.market_key
-            AND registry.token_address = swap.token_address
-            AND registry.discovery_block <= swap.block_number
-          WHERE swap.chain = $1 AND swap.token_address = $2
-            AND swap.block_number >= $3::bigint
-            AND swap.block_number <= $4::bigint
-       ), launch_block AS (
-         SELECT MIN(block_number) AS block_number FROM registered_swaps
-       )
-       SELECT swap.wallet_address, swap.transaction_hash,
+      `SELECT swap.block_number::text, swap.block_time
+         FROM robinhood_wallet_swaps swap
+         INNER JOIN robinhood_pool_registry registry
+           ON registry.chain = swap.chain AND registry.protocol = swap.protocol
+          AND registry.market_key = swap.market_key
+          AND registry.token_address = swap.token_address
+          AND registry.discovery_block <= swap.block_number
+        WHERE swap.chain = $1 AND swap.token_address = $2
+          AND swap.block_number BETWEEN $3::bigint AND $4::bigint
+        ORDER BY swap.block_time, swap.block_number,
+                 swap.action_index, swap.transaction_hash
+        LIMIT 1`,
+      [CHAIN, state.tokenAddress, state.launchFromBlock, state.frontier.blockNumber]
+    );
+    return rows[0] ? Object.freeze({
+      blockNumber: rows[0].block_number,
+      blockTime: rows[0].block_time,
+    }) : null;
+  }
+
+  async function loadLaunchRows(state, point) {
+    if (!point) return [];
+    const { rows } = await database.query(
+      `SELECT swap.wallet_address, swap.transaction_hash,
               swap.action_index::text, position.transaction_index::text,
               swap.block_number::text, position.block_hash, swap.block_time,
               swap.side, swap.volume_usd::text
-         FROM registered_swaps swap
-         INNER JOIN launch_block launch ON launch.block_number = swap.block_number
+         FROM robinhood_wallet_swaps swap
+         INNER JOIN robinhood_pool_registry registry
+           ON registry.chain = swap.chain AND registry.protocol = swap.protocol
+          AND registry.market_key = swap.market_key
+          AND registry.token_address = swap.token_address
+          AND registry.discovery_block <= swap.block_number
          LEFT JOIN robinhood_transaction_positions position
            ON position.chain = swap.chain
           AND position.transaction_hash = swap.transaction_hash
           AND position.block_number = swap.block_number
-        ORDER BY swap.action_index, swap.transaction_hash`,
-      [CHAIN, state.tokenAddress, state.launchFromBlock, state.frontier.blockNumber]
+        WHERE swap.chain = $1 AND swap.token_address = $2
+          AND swap.block_number = $3::bigint
+          AND swap.block_time >= DATE_TRUNC('day', $4::timestamptz)
+          AND swap.block_time < DATE_TRUNC('day', $4::timestamptz) + INTERVAL '1 day'
+        ORDER BY position.transaction_index, swap.action_index, swap.transaction_hash`,
+      [CHAIN, state.tokenAddress, point.blockNumber, point.blockTime]
     );
     return rows;
+  }
+
+  async function persistAnchor(state, anchor) {
+    await database.query(
+      UPSERT_ANCHOR_EVIDENCE_SQL,
+      [
+        CHAIN, state.tokenAddress, state.launchFromBlock, anchor.blockNumber,
+        anchor.blockTime, state.frontier.blockNumber, LAUNCH_ANCHOR_CACHE_VERSION,
+        anchor.walletAddress, anchor.transactionHash, anchor.transactionIndex,
+        anchor.actionIndex, anchor.blockHash, anchor.side, anchor.volumeUsd,
+      ]
+    );
   }
 
   async function loadFirstBuyRows(state) {
@@ -209,7 +302,8 @@ function createRobinhoodHolderLaunchSource(options = {}) {
     const coverage = validateCoverage(state, sourceCoverage);
     if (!coverage.ready) return unavailable(coverage.reason, { tokenAddress });
 
-    const launchRows = await loadLaunchRows(state);
+    const launchRows = state.cachedAnchor
+      ? [state.cachedAnchor] : await loadLaunchRows(state, await loadLaunchPoint(state));
     if (missingPosition(launchRows)) {
       return unavailable('transaction_position_unavailable', { tokenAddress });
     }
@@ -217,6 +311,7 @@ function createRobinhoodHolderLaunchSource(options = {}) {
       coverageReady: true, frontier: state.frontier, swaps: launchRows,
     });
     if (!anchorResult.ready) return unavailable(anchorResult.reason, { tokenAddress });
+    if (!state.cachedAnchor) await persistAnchor(state, anchorResult.anchor);
 
     const firstBuyRows = await loadFirstBuyRows(state);
     if (missingPosition(firstBuyRows)) {
@@ -241,5 +336,7 @@ function createRobinhoodHolderLaunchSource(options = {}) {
 module.exports = {
   BURN_ADDRESSES,
   createRobinhoodHolderLaunchSource,
-  __private: { normalizeState, validateCoverage },
+  __private: {
+    cachedAnchor, normalizeState, UPSERT_ANCHOR_EVIDENCE_SQL, validateCoverage,
+  },
 };
