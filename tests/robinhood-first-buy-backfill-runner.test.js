@@ -90,12 +90,44 @@ describe('Robinhood first-buy backfill runner', () => {
     assert.deepEqual(calls.map(([name]) => name), ['create', 'start', 'reclaim', 'complete']);
   });
 
+  it('requeues only an explicitly failed campaign before resuming', async () => {
+    const calls = [];
+    const backfillRepository = {
+      async getRun() { return { id: '7', status: 'failed', ...SOURCE }; },
+      async resumeFailed(id) { calls.push(['resume', id]); return { runId: id, requeued: 2 }; },
+      async reclaimExpired(id) { calls.push(['reclaim', id]); return 0; },
+      async claimRange() { return null; },
+      async getProgress() { return { status: 'completed', total: 4, completed: 4 }; },
+    };
+    const result = await executeBackfill({
+      backfillRepository,
+      firstBuyRepository: { async materializeRange() {} },
+    }, {
+      preflight: { ...SOURCE, approved: true, concurrency: 1 },
+      runId: '7', retryFailed: true,
+    });
+
+    assert.equal(result.status, 'completed');
+    assert.deepEqual(calls, [['resume', '7'], ['reclaim', '7']]);
+  });
+
   it('keeps CLI writes opt-in and supports run-id resume preflight', () => {
     assert.equal(parseArgs(['--from=2026-08-22T00:00:00Z',
       '--through=2026-08-22T01:00:00Z']).apply, false);
     assert.deepEqual(parseArgs(['--run-id=12', '--apply']).runId, '12');
+    assert.deepEqual(parseArgs([
+      '--run-id=12', '--apply', '--retry-failed', '--statement-timeout-ms=600000',
+    ]), {
+      apply: true, retryFailed: true, runId: '12', statementTimeoutMs: 600000,
+      sourceFrom: undefined, sourceThrough: undefined, rangeSeconds: 3600,
+      concurrency: 2, sampleCount: 3, maxHours: 5,
+    });
     assert.throws(() => parseArgs(['--apply']), /--from and --through/);
     assert.throws(() => parseArgs(['--run-id=12', '--from=x']), /cannot be combined/);
+    assert.throws(() => parseArgs(['--run-id=12', '--retry-failed']), /requires/);
+    assert.throws(() => parseArgs([
+      '--run-id=12', '--apply', '--statement-timeout-ms=999999',
+    ]), /between 120000 and 900000/);
   });
 
   it('refuses a backfill beyond the durable wallet-swap frontier', async () => {

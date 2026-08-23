@@ -92,6 +92,13 @@ async function resolveRun(repository, options) {
     await repository.startRun(run.id);
     return { ...run, status: 'running' };
   }
+  if (options.retryFailed) {
+    if (!options.runId || run.status !== 'failed') {
+      throw new Error('failed-run retry requires an explicit failed run');
+    }
+    const recovery = await repository.resumeFailed(run.id);
+    return { ...run, status: 'running', requeued: recovery.requeued };
+  }
   return run;
 }
 
@@ -134,7 +141,9 @@ async function executeBackfill(deps = {}, options = {}) {
   if (!['running', 'completed'].includes(run.status)) {
     throw new Error(`first-buy backfill run cannot resume from ${run.status}`);
   }
-  options.onRun?.(Object.freeze({ runId: run.id, status: run.status }));
+  options.onRun?.(Object.freeze({
+    runId: run.id, status: run.status, requeued: run.requeued || 0,
+  }));
   if (run.status === 'completed') {
     const progress = await repository.getProgress({ runId: run.id, concurrency });
     return Object.freeze({ runId: run.id, ...progress });

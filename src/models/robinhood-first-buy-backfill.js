@@ -115,6 +115,43 @@ function createRobinhoodFirstBuyBackfillRepository(options = {}) {
     if (!result.rowCount) throw new Error('first-buy backfill run is not planned');
   }
 
+  async function resumeFailed(runIdValue) {
+    const runId = positiveInteger(runIdValue, 'runId');
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      const run = await client.query(
+        `SELECT status FROM robinhood_first_buy_backfill_runs
+          WHERE id = $1 AND chain = $2 FOR UPDATE`, [runId, CHAIN]
+      );
+      if (run.rows[0]?.status !== 'failed') {
+        throw new Error('first-buy backfill run is not failed');
+      }
+      const ranges = await client.query(
+        `UPDATE robinhood_first_buy_backfill_ranges SET
+           status = 'pending', lease_owner = NULL, lease_until = NULL,
+           attempt_count = 0, next_attempt_at = NOW(),
+           last_error_code = NULL, last_error_message = NULL,
+           started_at = NULL, updated_at = NOW()
+         WHERE run_id = $1 AND chain = $2 AND status = 'failed'
+         RETURNING id`, [runId, CHAIN]
+      );
+      if (!ranges.rowCount) throw new Error('failed run has no failed ranges');
+      await client.query(
+        `UPDATE robinhood_first_buy_backfill_runs
+            SET status = 'running', finished_at = NULL, updated_at = NOW()
+          WHERE id = $1 AND chain = $2`, [runId, CHAIN]
+      );
+      await client.query('COMMIT');
+      return Object.freeze({ runId: String(runId), requeued: ranges.rowCount });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async function claimRange(input = {}) {
     const runId = positiveInteger(input.runId, 'runId');
     const leaseOwner = owner(input.owner);
@@ -248,7 +285,7 @@ function createRobinhoodFirstBuyBackfillRepository(options = {}) {
   }
 
   return Object.freeze({
-    createRun, getRun, startRun, claimRange, reclaimExpired,
+    createRun, getRun, startRun, resumeFailed, claimRange, reclaimExpired,
     retryRange, completeRange, getProgress,
   });
 }

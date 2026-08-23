@@ -1444,6 +1444,12 @@ impresso antes do primeiro range e uma interrupção pode ser retomada com
 `npm run robinhood:first-buy-backfill -- --run-id=<id> --apply`. A retomada repete
 o preflight contra a janela congelada antes de escrever e recupera leases
 expiradas. Reduza `--range-seconds` se uma amostra atingir o timeout de 120s.
+Se ranges isolados esgotarem as cinco tentativas por timeout, retome a mesma
+campanha com `--run-id=<id> --apply --retry-failed
+--statement-timeout-ms=600000`. A recuperação transacional reabre somente ranges
+`failed`, zera suas tentativas/erros e preserva ranges `completed`; o timeout
+configurável aceita 120.000–900.000 ms. `--retry-failed` é recusado sem run-id e
+confirmação explícitos ou quando a campanha não está `failed`.
 O preflight também exige seed de wallet-swap realmente `complete` (não apenas
 terminal/abandonado) e que `sourceThrough` não ultrapasse sua frontier durável;
 isso impede declarar como coberto um intervalo cujos swaps ainda não foram

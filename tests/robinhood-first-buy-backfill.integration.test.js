@@ -116,4 +116,43 @@ describe('Robinhood first-buy backfill control integration', () => {
       sourceNextBlock: '100', expectedVersion: initialized.version,
     }), null);
   });
+
+  it('atomically requeues failed ranges without touching completed work', async () => {
+    const repository = createRobinhoodFirstBuyBackfillRepository({ database: db });
+    const run = await repository.createRun({
+      sourceFrom: '2026-08-23T00:00:00Z', sourceThrough: '2026-08-23T02:00:00Z',
+      rangeSeconds: 3600,
+    });
+    await repository.startRun(run.id);
+    const ranges = await db.query(
+      `SELECT id FROM robinhood_first_buy_backfill_ranges
+        WHERE run_id = $1 ORDER BY range_start`, [run.id]
+    );
+    await db.query(
+      `UPDATE robinhood_first_buy_backfill_ranges
+          SET status = 'completed', completed_at = NOW() WHERE id = $1`, [ranges.rows[0].id]
+    );
+    await db.query(
+      `UPDATE robinhood_first_buy_backfill_ranges SET
+         status = 'failed', attempt_count = 5,
+         last_error_code = '57014', last_error_message = 'statement timeout'
+       WHERE id = $1`, [ranges.rows[1].id]
+    );
+    await db.query(
+      `UPDATE robinhood_first_buy_backfill_runs
+          SET status = 'failed', finished_at = NOW() WHERE id = $1`, [run.id]
+    );
+
+    assert.deepEqual(await repository.resumeFailed(run.id), { runId: run.id, requeued: 1 });
+    const state = await db.query(
+      `SELECT status, attempt_count, last_error_code
+         FROM robinhood_first_buy_backfill_ranges
+        WHERE run_id = $1 ORDER BY range_start`, [run.id]
+    );
+    assert.deepEqual(state.rows, [
+      { status: 'completed', attempt_count: 0, last_error_code: null },
+      { status: 'pending', attempt_count: 0, last_error_code: null },
+    ]);
+    assert.equal((await repository.getRun(run.id)).status, 'running');
+  });
 });

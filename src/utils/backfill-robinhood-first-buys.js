@@ -15,26 +15,53 @@ const {
   __private: { exclusiveCheckpointTime },
 } = require('../services/robinhood-first-buy-live-runner');
 
-function parseArgs(argv = process.argv.slice(2)) {
+const VALUE_ARGUMENTS = new Set([
+  'from', 'through', 'range-seconds', 'concurrency', 'samples', 'max-hours', 'run-id',
+  'statement-timeout-ms',
+]);
+
+function argumentValues(argv) {
   const values = {};
   for (const argument of argv) {
     if (argument === '--apply') values.apply = true;
+    else if (argument === '--retry-failed') values.retryFailed = true;
     else {
       const match = argument.match(/^--([a-z-]+)=(.+)$/);
-      if (!match || ![
-        'from', 'through', 'range-seconds', 'concurrency', 'samples', 'max-hours', 'run-id',
-      ].includes(match[1])) throw new Error(`unknown argument: ${argument}`);
+      if (!match || !VALUE_ARGUMENTS.has(match[1])) throw new Error(`unknown argument: ${argument}`);
       values[match[1]] = match[2];
     }
   }
+  return values;
+}
+
+function validateCombination(values) {
   if (!values['run-id'] && (!values.from || !values.through)) {
     throw new Error('--from and --through are required unless --run-id is provided');
   }
   if (values['run-id'] && (values.from || values.through || values['range-seconds'])) {
     throw new Error('--run-id cannot be combined with source range arguments');
   }
+  if (values.retryFailed && (!values['run-id'] || !values.apply)) {
+    throw new Error('--retry-failed requires --run-id and --apply');
+  }
+}
+
+function parseStatementTimeout(value) {
+  const statementTimeoutMs = Number(value ?? 120_000);
+  if (!Number.isSafeInteger(statementTimeoutMs)
+    || statementTimeoutMs < 120_000 || statementTimeoutMs > 900_000) {
+    throw new Error('--statement-timeout-ms must be between 120000 and 900000');
+  }
+  return statementTimeoutMs;
+}
+
+function parseArgs(argv = process.argv.slice(2)) {
+  const values = argumentValues(argv);
+  validateCombination(values);
+  const statementTimeoutMs = parseStatementTimeout(values['statement-timeout-ms']);
   return Object.freeze({
-    apply: values.apply === true, runId: values['run-id'],
+    apply: values.apply === true, retryFailed: values.retryFailed === true,
+    runId: values['run-id'], statementTimeoutMs,
     sourceFrom: values.from, sourceThrough: values.through,
     rangeSeconds: values['range-seconds'] ?? 3600,
     concurrency: values.concurrency ?? 2, sampleCount: values.samples ?? 3,
@@ -79,7 +106,9 @@ async function main(deps = {}) {
   const backfillRepository = deps.backfillRepository
     || createRobinhoodFirstBuyBackfillRepository({ database });
   const firstBuyRepository = deps.firstBuyRepository
-    || createRobinhoodWalletTokenFirstBuyRepository({ database });
+    || createRobinhoodWalletTokenFirstBuyRepository({
+      database, statementTimeoutMs: options.statementTimeoutMs,
+    });
   const sourceCursors = deps.sourceCursors
     || createRobinhoodWalletSwapCursorRepository({ database });
   let source = options;
@@ -101,9 +130,10 @@ async function main(deps = {}) {
   const result = await executeBackfill({
     backfillRepository, firstBuyRepository, sleep: deps.sleep,
   }, {
-    preflight, runId: options.runId, onProgress: progressReporter(logger),
-    onRun: ({ runId, status }) => (logger.error || logger.log).call(
-      logger, `[FirstBuyBackfill] run-id=${runId} status=${status}`
+    preflight, runId: options.runId, retryFailed: options.retryFailed,
+    onProgress: progressReporter(logger),
+    onRun: ({ runId, status, requeued }) => (logger.error || logger.log).call(
+      logger, `[FirstBuyBackfill] run-id=${runId} status=${status} requeued=${requeued}`
     ),
   });
   logger.log(JSON.stringify({ mode: 'apply', ...result }, null, 2));
