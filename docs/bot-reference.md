@@ -1352,7 +1352,8 @@ retry são limitados por `ROBINHOOD_SNIPER_SHADOW_INTERVAL_MS`,
 `ROBINHOOD_SNIPER_SHADOW_MAX_ERROR_BACKOFF_MS`,
 `ROBINHOOD_SNIPER_SHADOW_BATCH_SIZE`, `ROBINHOOD_SNIPER_SHADOW_CONCURRENCY` e
 `ROBINHOOD_SNIPER_SHADOW_RETRY_MS`. O runner executa lotes retomáveis por
-`afterToken`, reinicia a varredura ao esgotar o catálogo e expõe contadores na
+`afterToken`, envia cada página ao materializador como um único lote, reinicia a
+varredura ao esgotar o catálogo e expõe contadores na
 telemetria da lease e em `GET /api/admin/ws-status`. Seu
 seletor só admite ledger `live`, cursor de first-buy alcançado e classificação
 ausente ou atrasada; concorrência máxima é 4 e uma falha de token não aborta o
@@ -1376,16 +1377,17 @@ O mesmo relatório compara perfis de posição (`sameBlockTop5`,
 somente de forma agregada, quantas wallets repetiram o padrão em 2+ ou 3+ tokens
 da amostra. As wallets que passam `within1BlockTop5` na amostra também são medidas
 contra todos os tokens elegíveis, preservando somente contagens agregadas no
-relatório. Essa busca resolve cada wallet candidata sequencialmente por igualdade
-indexada, limita a contagem de predecessores canônicos a 5 e resolve anchors por
-token em lotes; não agrega a tabela inteira de swaps.
+relatório. Essa busca resolve as wallets candidatas juntas por igualdade indexada,
+limita a contagem de predecessores canônicos a 5 e resolve anchors por token em
+lotes; não agrega a tabela inteira de swaps.
 Esses sinais são internos; mesmo com o worker ativo, a allowlist pública continua
 ocultando tags, estado e métrica SNIPER. O frontend só deverá expor `SNIPER`
 produzido pela regra pública de alta confiança. A evidência local de primeiros
 buys e a recorrência do materializador leem a projeção canônica indexada da Stage
-149; não reagregam buys no histórico bruto de swaps. O worker limita a leitura
-local aos cinco ranks aceitos pela política; o comando de calibração permanece
-sem limite. Snapshots positivos de políticas SNIPER anteriores retornam
+149; não reagregam buys no histórico bruto de swaps. Cada página agrupa as wallets
+dos tokens com a mesma cobertura em uma única leitura de recorrência; o runtime
+empurra notional mínimo e top 5 para o SQL, enquanto o comando de calibração
+permanece sem esses filtros. Snapshots positivos de políticas SNIPER anteriores retornam
 automaticamente à fila e podem ser substituídos na mesma frontier; snapshots
 vazios permanecem válidos porque a v2 é mais restritiva.
 A Stage 155 adiciona `robinhood_token_launch_anchors`, cache durável e lazy do

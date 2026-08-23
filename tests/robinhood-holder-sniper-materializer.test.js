@@ -8,6 +8,7 @@ const {
 } = require('../src/services/robinhood-holder-sniper-materializer');
 
 const TOKEN = `0x${'1'.repeat(40)}`;
+const TOKEN_B = `0x${'6'.repeat(40)}`;
 const HASH = `0x${'2'.repeat(64)}`;
 const TX = `0x${'3'.repeat(64)}`;
 const WALLET_A = `0x${'4'.repeat(40)}`;
@@ -91,6 +92,65 @@ describe('Robinhood holder SNIPER materializer', () => {
       recurrenceSource: {}, classifications: {},
     });
     assert.equal(received.firstBuyLimit, 5);
+  });
+
+  it('shares one set-based recurrence read across a bounded token batch', async () => {
+    const recurrenceCalls = [];
+    const writes = [];
+    const materializer = createRobinhoodHolderSniperMaterializer({
+      source: { loadLaunchEvidence: async (tokenAddress) => evidence({
+        tokenAddress,
+        firstBuys: [buy(tokenAddress === TOKEN ? WALLET_A : WALLET_B, {
+          volumeUsd: '50',
+        })],
+      }) },
+      recurrenceSource: { loadHighConfidenceRecurrence: async (...args) => {
+        recurrenceCalls.push(args);
+        return { ready: true, rows: [WALLET_A, WALLET_B].flatMap((wallet) => [
+          recurrence(wallet, TOKEN), recurrence(wallet, TOKEN_B),
+          recurrence(wallet, `0x${'8'.repeat(40)}`),
+        ]) };
+      } },
+      classifications: { replaceClassifierSnapshot: async (snapshot) => {
+        writes.push(snapshot.tokenAddress);
+        return { status: 'published', records: snapshot.records.length };
+      } },
+    });
+
+    assert.deepEqual(await materializer.materializeTokens([TOKEN, TOKEN_B], {
+      concurrency: 2,
+    }), [
+      { tokenAddress: TOKEN, status: 'completed', value: { status: 'published', records: 1 } },
+      { tokenAddress: TOKEN_B, status: 'completed', value: { status: 'published', records: 1 } },
+    ]);
+    assert.equal(recurrenceCalls.length, 1);
+    assert.deepEqual(recurrenceCalls[0][0], [WALLET_A, WALLET_B]);
+    assert.deepEqual(recurrenceCalls[0][2], {
+      minimumNotionalUsd: '50', maxBuyerRank: 5,
+    });
+    assert.deepEqual(writes.sort(), [TOKEN, TOKEN_B].sort());
+  });
+
+  it('contains a token-local evidence failure inside the set-based batch', async () => {
+    const materializer = createRobinhoodHolderSniperMaterializer({
+      source: { loadLaunchEvidence: async (tokenAddress) => {
+        if (tokenAddress === TOKEN_B) throw new Error('broken token');
+        return evidence({ tokenAddress, firstBuys: [] });
+      } },
+      recurrenceSource: { loadHighConfidenceRecurrence: async () => ({
+        ready: true, rows: [],
+      }) },
+      classifications: { replaceClassifierSnapshot: async () => ({
+        status: 'published', records: 0,
+      }) },
+    });
+
+    const outcomes = await materializer.materializeTokens([TOKEN, TOKEN_B], {
+      concurrency: 2,
+    });
+    assert.equal(outcomes[0].status, 'completed');
+    assert.equal(outcomes[1].status, 'failed');
+    assert.match(outcomes[1].error.message, /broken token/);
   });
 
   it('keeps one-off, late, low-notional and excluded candidates internal', () => {

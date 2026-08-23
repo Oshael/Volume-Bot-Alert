@@ -147,6 +147,20 @@ function buildSniperSnapshot(input, recurrenceRows, observedAt, ruleInput) {
   });
 }
 
+async function settleBounded(items, concurrency, operation) {
+  const settled = [];
+  for (let offset = 0; offset < items.length; offset += concurrency) {
+    settled.push(...await Promise.allSettled(
+      items.slice(offset, offset + concurrency).map(operation)
+    ));
+  }
+  return settled;
+}
+
+function coverageKey(evidence) {
+  return `${evidence.coverage.historicalFromBlock}:${evidence.coverage.completeThroughBlock}`;
+}
+
 function createRobinhoodHolderSniperMaterializer(options = {}) {
   const rule = normalizeRule(options.rule);
   const sourceFactory = options.sourceFactory || createRobinhoodHolderLaunchSource;
@@ -159,25 +173,90 @@ function createRobinhoodHolderSniperMaterializer(options = {}) {
     || createRobinhoodHolderClassificationRepository(options);
   const now = options.now || (() => new Date().toISOString());
 
-  async function materializeToken(tokenAddress) {
-    const evidence = await source.loadLaunchEvidence(tokenAddress);
-    if (!evidence.ready) {
-      return Object.freeze({ status: 'deferred', reason: evidence.reason, records: 0 });
+  async function materializeTokens(tokenAddresses, input = {}) {
+    const concurrency = input.concurrency == null ? 1 : Number(input.concurrency);
+    if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 4) {
+      throw new Error('SNIPER materializer concurrency must be between 1 and 4');
     }
-    const candidates = highConfidenceCandidates(evidence, rule);
-    const recurrence = await recurrenceSource.loadHighConfidenceRecurrence(
-      candidates.map(({ walletAddress }) => walletAddress), evidence.coverage
+    const tokens = [...new Set(tokenAddresses || [])];
+    const outcomes = new Map();
+    const groups = new Map();
+    const loaded = await settleBounded(
+      tokens, concurrency, (tokenAddress) => source.loadLaunchEvidence(tokenAddress)
     );
-    if (!recurrence.ready) {
-      return Object.freeze({ status: 'deferred', reason: recurrence.reason, records: 0 });
+    loaded.forEach((result, index) => {
+      const tokenAddress = tokens[index];
+      if (result.status === 'rejected') {
+        outcomes.set(tokenAddress, Object.freeze({
+          tokenAddress, status: 'failed', error: result.reason,
+        }));
+        return;
+      }
+      const evidence = result.value;
+      if (!evidence.ready) {
+        outcomes.set(tokenAddress, Object.freeze({
+          tokenAddress, status: 'deferred', reason: evidence.reason, records: 0,
+        }));
+        return;
+      }
+      const key = coverageKey(evidence);
+      const group = groups.get(key) || [];
+      group.push(evidence);
+      groups.set(key, group);
+    });
+
+    for (const evidences of groups.values()) {
+      const candidates = evidences.flatMap((evidence) => (
+        highConfidenceCandidates(evidence, rule)
+      ));
+      let recurrence;
+      try {
+        recurrence = await recurrenceSource.loadHighConfidenceRecurrence(
+          candidates.map(({ walletAddress }) => walletAddress),
+          evidences[0].coverage,
+          {
+            minimumNotionalUsd: rule.minimumNotionalUsd,
+            maxBuyerRank: rule.maxBuyerRank,
+          }
+        );
+      } catch (error) {
+        for (const evidence of evidences) outcomes.set(evidence.tokenAddress, Object.freeze({
+          tokenAddress: evidence.tokenAddress, status: 'failed', error,
+        }));
+        continue;
+      }
+      if (!recurrence.ready) {
+        for (const evidence of evidences) outcomes.set(evidence.tokenAddress, Object.freeze({
+          tokenAddress: evidence.tokenAddress, status: 'deferred',
+          reason: recurrence.reason, records: 0,
+        }));
+        continue;
+      }
+      const writes = await settleBounded(evidences, concurrency, async (evidence) => (
+        classifications.replaceClassifierSnapshot(
+          buildSniperSnapshot(evidence, recurrence.rows, now(), rule),
+          { allowSameFrontierReplacement: true }
+        )
+      ));
+      writes.forEach((result, index) => {
+        const tokenAddress = evidences[index].tokenAddress;
+        outcomes.set(tokenAddress, result.status === 'fulfilled'
+          ? Object.freeze({ tokenAddress, status: 'completed', value: result.value })
+          : Object.freeze({ tokenAddress, status: 'failed', error: result.reason }));
+      });
     }
-    return classifications.replaceClassifierSnapshot(
-      buildSniperSnapshot(evidence, recurrence.rows, now(), rule),
-      { allowSameFrontierReplacement: true }
-    );
+    return Object.freeze(tokens.map((tokenAddress) => outcomes.get(tokenAddress)));
   }
 
-  return Object.freeze({ materializeToken });
+  async function materializeToken(tokenAddress) {
+    const [outcome] = await materializeTokens([tokenAddress]);
+    if (outcome.status === 'failed') throw outcome.error;
+    if (outcome.status === 'completed') return outcome.value;
+    const { tokenAddress: _tokenAddress, ...result } = outcome;
+    return Object.freeze(result);
+  }
+
+  return Object.freeze({ materializeToken, materializeTokens });
 }
 
 module.exports = {

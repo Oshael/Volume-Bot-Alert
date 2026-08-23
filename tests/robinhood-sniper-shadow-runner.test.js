@@ -24,7 +24,9 @@ describe('Robinhood SNIPER shadow candidates', () => {
     assert.deepEqual(await repository.listCandidates({
       limit: 5, retryMs: 60_000, afterToken: TOKEN_A.toUpperCase(),
     }), [TOKEN_B]);
-    assert.deepEqual(calls[0][1], ['rh_holder_v1', 60_000, TOKEN_A, 5]);
+    assert.deepEqual(calls[0][1], [
+      'rh_holder_v1', 60_000, TOKEN_A, 5, 'rh_sniper_high_v2',
+    ]);
     assert.match(calls[0][0], /robinhood_first_buy_live_cursors/);
     assert.match(calls[0][0], /cursor\.next_time = cursor\.source_through/);
     assert.match(calls[0][0], /state\.token_address > \$3/);
@@ -41,9 +43,12 @@ describe('Robinhood SNIPER shadow runner', () => {
         calls.push(['candidates', input]);
         return [TOKEN_A, TOKEN_B];
       } },
-      materializer: { materializeToken: async (tokenAddress) => {
-        calls.push(['materialize', tokenAddress]);
-        return tokenAddress === TOKEN_A ? { status: 'published' } : { status: 'deferred' };
+      materializer: { materializeTokens: async (tokenAddresses, options) => {
+        calls.push(['materialize-batch', tokenAddresses, options]);
+        return [
+          { tokenAddress: TOKEN_A, status: 'completed' },
+          { tokenAddress: TOKEN_B, status: 'deferred' },
+        ];
       } },
     });
 
@@ -56,6 +61,9 @@ describe('Robinhood SNIPER shadow runner', () => {
     assert.deepEqual(calls[0], ['candidates', {
       limit: 2, retryMs: 60_000, afterToken: TOKEN_A,
     }]);
+    assert.deepEqual(calls[1], [
+      'materialize-batch', [TOKEN_A, TOKEN_B], { concurrency: 2 },
+    ]);
   });
 
   it('contains per-token failures and bounds controls', async () => {

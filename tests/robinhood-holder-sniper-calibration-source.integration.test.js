@@ -46,7 +46,7 @@ describe('Robinhood SNIPER population calibration source integration', () => {
     const source = createRobinhoodHolderSniperCalibrationSource({ database: db });
     const rows = await source.loadPopulationRecurrence([WALLET], {
       historicalFromBlock: '48954', completeThroughBlock: '48954',
-    });
+    }, { minimumNotionalUsd: '50', maxBuyerRank: 5 });
 
     assert.deepEqual(rows, []);
     assert.deepEqual((await db.query(__private.ANCHORS_SQL, [

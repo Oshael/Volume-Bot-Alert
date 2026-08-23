@@ -18,13 +18,20 @@ function bucket(settled) {
   return settled.value?.status === 'deferred' ? 'deferred' : 'completed';
 }
 
+function outcomeBucket(outcome) {
+  if (outcome?.status === 'deferred') return 'deferred';
+  if (outcome?.status === 'failed') return 'failed';
+  return 'completed';
+}
+
 function createRobinhoodSniperShadowRunner(deps = {}) {
   const candidates = deps.candidates
     || (deps.candidateFactory || createRobinhoodSniperShadowCandidateRepository)();
   const materializer = deps.materializer
     || (deps.materializerFactory || createRobinhoodHolderSniperMaterializer)();
   if (typeof candidates?.listCandidates !== 'function'
-      || typeof materializer?.materializeToken !== 'function') {
+      || (typeof materializer?.materializeTokens !== 'function'
+        && typeof materializer?.materializeToken !== 'function')) {
     throw new TypeError('SNIPER shadow runner dependencies are invalid');
   }
 
@@ -38,6 +45,15 @@ function createRobinhoodSniperShadowRunner(deps = {}) {
       limit, retryMs, afterToken: input.afterToken || null,
     });
     const counts = { completed: 0, deferred: 0, failed: 0 };
+    if (typeof materializer.materializeTokens === 'function') {
+      const outcomes = await materializer.materializeTokens(tokenAddresses, { concurrency });
+      for (const outcome of outcomes) counts[outcomeBucket(outcome)] += 1;
+      return Object.freeze({
+        mode: 'shadow', candidates: tokenAddresses.length, ...counts,
+        nextToken: tokenAddresses.at(-1) || null,
+        exhausted: tokenAddresses.length < limit,
+      });
+    }
     for (let offset = 0; offset < tokenAddresses.length; offset += concurrency) {
       const batch = tokenAddresses.slice(offset, offset + concurrency);
       const settled = await Promise.allSettled(
@@ -57,5 +73,5 @@ function createRobinhoodSniperShadowRunner(deps = {}) {
 
 module.exports = {
   createRobinhoodSniperShadowRunner,
-  __private: { bucket },
+  __private: { bucket, outcomeBucket },
 };

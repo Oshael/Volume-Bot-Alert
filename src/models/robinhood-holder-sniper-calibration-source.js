@@ -5,11 +5,17 @@ const CHAIN = 'robinhood';
 const ANCHOR_BATCH_SIZE = 250;
 const LAUNCH_ANCHOR_VERSION = 'rh_launch_anchor_v1';
 
-const FIRST_BUYS_SQL = `WITH wallet_buys AS MATERIALIZED (
-  SELECT * FROM robinhood_wallet_token_first_buys
-   WHERE chain = $2 AND wallet_address = $1
+const FIRST_BUYS_SQL = `WITH requested_wallets AS MATERIALIZED (
+  SELECT DISTINCT wallet_address
+    FROM UNNEST($1::varchar[]) AS item(wallet_address)
+), wallet_buys AS MATERIALIZED (
+  SELECT buy.* FROM robinhood_wallet_token_first_buys buy
+  INNER JOIN requested_wallets requested USING (wallet_address)
+   WHERE buy.chain = $2
      AND block_number BETWEEN $3::bigint AND $4::bigint
+     AND ($5::numeric IS NULL OR buy.volume_usd >= $5::numeric)
 )
+SELECT * FROM (
 SELECT buy.wallet_address, buy.token_address, buy.volume_usd::text,
        buy.block_number::text AS first_buy_block,
        pool.first_pool_block::text, state.live_through_block::text,
@@ -71,7 +77,9 @@ SELECT buy.wallet_address, buy.token_address, buy.volume_usd::text,
      '0x0000000000000000000000000000000000000000',
      '0x000000000000000000000000000000000000dead'
    )
- ORDER BY buy.wallet_address, buy.token_address`;
+) ranked
+ WHERE ($6::int IS NULL OR ranked.buyer_rank <= $6::int)
+ ORDER BY ranked.wallet_address, ranked.token_address`;
 
 const ANCHORS_SQL = `WITH token_frontiers AS MATERIALIZED (
   SELECT * FROM UNNEST($1::varchar[], $2::bigint[], $3::bigint[])
@@ -256,20 +264,26 @@ function createRobinhoodHolderSniperCalibrationSource(options = {}) {
     return anchors;
   }
 
-  async function loadPopulationRecurrence(walletAddresses, coverage) {
+  async function loadPopulationRecurrence(walletAddresses, coverage, filters = {}) {
     const wallets = [...new Set((walletAddresses || []).map((address) => (
       normalizeTokenAddress(CHAIN, address)
     )))].sort();
     if (!wallets.length) return Object.freeze([]);
     const fromBlock = block(coverage?.historicalFromBlock, 'historicalFromBlock');
     const throughBlock = block(coverage?.completeThroughBlock, 'completeThroughBlock');
-    const firstBuys = [];
-    for (const wallet of wallets) {
-      const { rows } = await database.query(FIRST_BUYS_SQL, [
-        wallet, CHAIN, fromBlock, throughBlock,
-      ]);
-      firstBuys.push(...rows);
+    const minimumNotionalUsd = filters.minimumNotionalUsd == null
+      ? null : String(filters.minimumNotionalUsd);
+    const maxBuyerRank = filters.maxBuyerRank == null ? null : Number(filters.maxBuyerRank);
+    if (minimumNotionalUsd != null && !/^\d+(?:\.\d+)?$/.test(minimumNotionalUsd)) {
+      throw new Error('minimumNotionalUsd must be a non-negative decimal');
     }
+    if (maxBuyerRank != null && (!Number.isSafeInteger(maxBuyerRank)
+        || maxBuyerRank < 1 || maxBuyerRank > 5)) {
+      throw new Error('maxBuyerRank must be between 1 and 5');
+    }
+    const { rows: firstBuys } = await database.query(FIRST_BUYS_SQL, [
+      wallets, CHAIN, fromBlock, throughBlock, minimumNotionalUsd, maxBuyerRank,
+    ]);
     const anchors = await loadAnchors(firstBuys);
     return Object.freeze(firstBuys.map((row) => {
       const launchBlock = anchors.get(row.token_address);
@@ -289,13 +303,16 @@ function createRobinhoodHolderSniperCalibrationSource(options = {}) {
     }));
   }
 
-  async function loadHighConfidenceRecurrence(walletAddresses, coverage) {
+  async function loadHighConfidenceRecurrence(walletAddresses, coverage, rule = {}) {
     const projection = await loadProjectionCoverage(coverage);
     if (!projection.ready) return projection;
     return Object.freeze({
       ready: true,
       completeThroughBlock: projection.completeThroughBlock,
-      rows: await loadPopulationRecurrence(walletAddresses, coverage),
+      rows: await loadPopulationRecurrence(walletAddresses, coverage, {
+        minimumNotionalUsd: rule.minimumNotionalUsd,
+        maxBuyerRank: rule.maxBuyerRank,
+      }),
     });
   }
 
