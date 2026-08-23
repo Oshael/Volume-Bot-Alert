@@ -1,6 +1,6 @@
 # Plano de Classificação de Wallets na Robinhood Chain
 
-Atualizado em 2026-08-21. Este documento consolida as decisões de produto, o
+Atualizado em 2026-08-23. Este documento consolida as decisões de produto, o
 estado confirmado no código e o plano de implementação para enriquecer a lista
 de holders da Robinhood Chain com saldo nativo, médias de entrada/saída, PnL,
 transfers e classificações explicáveis de wallets.
@@ -363,6 +363,10 @@ carga sem ETA confiável.
 4. **INSIDER direto**
    - começar por distribuição direta do token;
    - adicionar funding nativo direto somente quando a fonte estiver comprovada.
+   - Status em 2026-08-23: a Stage 153 prepara evidência direcional da primeira
+     `wallet_transfer` em cada aresta sem reescrever o histórico na migration.
+     Writer, replay limitado, source, materializador, worker shadow e publicação
+     seguem em cortes próprios, portanto `INSIDER` continua indisponível na API/UI.
 5. **BUNDLED**
    - construir clusters explicáveis por funder e janela;
    - publicar como `possible bundle`, nunca como identidade comum.

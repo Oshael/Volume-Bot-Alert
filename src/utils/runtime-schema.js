@@ -4111,6 +4111,27 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage153-robinhood-directional-wallet-transfer-evidence',
+    name: 'Stage 153 Robinhood directional wallet-transfer evidence',
+    repair: 'node src/utils/db-init-stage153.js',
+    tables: [{
+      table: 'robinhood_wallet_transfer_edges',
+      columns: [
+        'first_wallet_transfer_block', 'first_wallet_transfer_log_index',
+        'first_wallet_transfer_at', 'first_wallet_transfer_transaction_hash',
+        'first_wallet_transfer_amount_raw',
+      ],
+      constraints: [{
+        name: 'rh_wallet_transfer_edges_first_wallet_transfer_check',
+        includes: [
+          'CHECK', 'first_wallet_transfer_block', 'first_wallet_transfer_log_index',
+          'first_wallet_transfer_at', 'first_wallet_transfer_transaction_hash',
+          'first_wallet_transfer_amount_raw',
+        ],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

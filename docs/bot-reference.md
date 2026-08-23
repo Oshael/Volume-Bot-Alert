@@ -1404,6 +1404,13 @@ recente, `metadata.telemetry.running=true`, `totalRuns` crescente e
 A API de holders mantém por padrão somente `LP` e `CEX` na allowlist pública;
 registros SNIPER persistidos durante shadow não entram em `tags`, `primaryTag` ou
 no estado agregado da resposta até a ativação explícita dessa tag.
+A Stage 153 vem depois dessas migrations e é obrigatória somente antes do futuro
+writer/source de `INSIDER`: aplique `node src/utils/db-init-stage153.js`. Ela
+acrescenta à aresta direcionada o primeiro evento comprovado como
+`wallet_transfer`. A migration não reescreve arestas legadas; a evidência fica
+nula até um replay limitado e retomável, impedindo inferência direcional ambígua
+e WAL não orçado durante deploy. Aplicar a stage não inicia replay, worker ou
+classificação e não habilita `INSIDER` na API/UI.
 A Stage 149 introduz
 `robinhood_wallet_token_first_buys`, fonte neutra e reutilizável para ordem por
 token e recorrência por wallet. Aplique `node src/utils/db-init-stage149.js` antes
