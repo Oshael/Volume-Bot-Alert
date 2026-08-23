@@ -1387,7 +1387,11 @@ buys e a recorrência do materializador leem a projeção canônica indexada da 
 149; não reagregam buys no histórico bruto de swaps. Cada página agrupa as wallets
 dos tokens com a mesma cobertura em uma única leitura de recorrência; o runtime
 empurra notional mínimo e top 5 para o SQL, enquanto o comando de calibração
-permanece sem esses filtros. Snapshots positivos de políticas SNIPER anteriores retornam
+permanece sem esses filtros. Antes de hidratar a transação completa do anchor, o
+runtime consulta no máximo os cinco first-buys projetados: sem wallet fora de
+creator/burn com notional mínimo e distância de até um bloco, grava snapshot vazio sem ler
+swaps brutos nem routers. Um candidato plausível continua exigindo anchor,
+posição e exclusões completos. Snapshots positivos de políticas SNIPER anteriores retornam
 automaticamente à fila e podem ser substituídos na mesma frontier; snapshots
 vazios permanecem válidos porque a v2 é mais restritiva.
 A Stage 155 adiciona `robinhood_token_launch_anchors`, cache durável e lazy do

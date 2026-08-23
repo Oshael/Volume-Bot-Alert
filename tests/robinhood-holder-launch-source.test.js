@@ -84,6 +84,8 @@ function sourceFixture(input = {}) {
     queries,
     source: createRobinhoodHolderLaunchSource({
       database, coverageSource, firstBuyLimit: input.firstBuyLimit,
+      minimumFirstBuyNotionalUsd: input.minimumFirstBuyNotionalUsd,
+      candidateMaxBlocks: input.candidateMaxBlocks,
     }),
   };
 }
@@ -154,6 +156,58 @@ test('limits high-confidence first-buy reads to canonical buyer rank', async () 
   assert.equal((await source.loadLaunchEvidence(TOKEN)).ready, true);
   assert.equal(queries[4].params[4], 5);
   assert.throws(() => sourceFixture({ firstBuyLimit: 0 }), /firstBuyLimit/);
+});
+
+test('skips raw launch and router reads when top-five buys miss the notional floor', async () => {
+  const { source, queries } = sourceFixture({
+    firstBuyLimit: 5, minimumFirstBuyNotionalUsd: '50', candidateMaxBlocks: 1,
+    buyRows: [swapRow({ volume_usd: '49.99' })],
+  });
+  const result = await source.loadLaunchEvidence(TOKEN);
+
+  assert.equal(result.ready, true);
+  assert.equal(result.anchor, null);
+  assert.deepEqual(result.firstBuys, []);
+  assert.deepEqual(queries.map(({ params }) => params), [
+    ['robinhood', TOKEN], ['robinhood', TOKEN, '100', '200', 5],
+  ]);
+  assert.equal(queries.some(({ sql }) => /robinhood_wallet_swaps/.test(sql)), false);
+  assert.throws(() => sourceFixture({
+    minimumFirstBuyNotionalUsd: '50',
+  }), /requires firstBuyLimit/);
+});
+
+test('hydrates the canonical anchor only for a plausible high-confidence buy', async () => {
+  const { source, queries } = sourceFixture({
+    firstBuyLimit: 5, minimumFirstBuyNotionalUsd: '50', candidateMaxBlocks: 1,
+    buyRows: [swapRow({ volume_usd: '50' })],
+  });
+  const result = await source.loadLaunchEvidence(TOKEN);
+
+  assert.equal(result.ready, true);
+  assert.equal(result.anchor.transactionHash, TX);
+  assert.equal(queries[1].params[4], 5);
+  assert.match(queries[2].sql, /ORDER BY swap\.block_time/);
+  assert.match(queries[3].sql, /DATE_TRUNC\('day'/);
+});
+
+test('skips typed anchor hydration when cached launch distance exceeds one block', async () => {
+  const { source, queries } = sourceFixture({
+    firstBuyLimit: 5, minimumFirstBuyNotionalUsd: '50', candidateMaxBlocks: 1,
+    stateRows: [stateRow({
+      cached_launch_block: '101',
+      cached_launch_block_time: '2026-08-21T12:00:00.000Z',
+    })],
+    buyRows: [swapRow({ block_number: '103', volume_usd: '100' })],
+  });
+  const result = await source.loadLaunchEvidence(TOKEN);
+
+  assert.equal(result.ready, true);
+  assert.equal(result.anchor, null);
+  assert.deepEqual(queries.map(({ params }) => params), [
+    ['robinhood', TOKEN], ['robinhood', TOKEN, '100', '200', 5],
+  ]);
+  assert.equal(queries.some(({ sql }) => /DATE_TRUNC\('day'/.test(sql)), false);
 });
 
 test('reuses complete cached anchor evidence without reading raw launch swaps', async () => {

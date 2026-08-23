@@ -6,6 +6,7 @@ const {
   deriveFirstBuyEvidence,
   deriveLaunchAnchor,
 } = require('../services/robinhood-holder-launch-domain');
+const { parseDecimal } = require('../services/evm-market-metrics');
 const { normalizeTokenAddress } = require('../utils/token-identity');
 
 const CHAIN = 'robinhood';
@@ -49,6 +50,23 @@ function optionalLimit(value) {
     throw new Error('firstBuyLimit must be between 1 and 10000');
   }
   return value;
+}
+
+function optionalMinimumNotional(value) {
+  if (value == null || String(value).trim() === '') return null;
+  const normalized = String(value).trim();
+  const parsed = parseDecimal(normalized, 'minimumFirstBuyNotionalUsd');
+  if (parsed.numerator <= 0n) {
+    throw new Error('minimumFirstBuyNotionalUsd must be positive');
+  }
+  return Object.freeze({ normalized, parsed });
+}
+
+function atLeastNotional(value, minimum) {
+  if (!minimum || value == null) return minimum == null;
+  const actual = parseDecimal(value, 'first buy volumeUsd');
+  return actual.numerator * minimum.parsed.denominator
+    >= minimum.parsed.numerator * actual.denominator;
 }
 
 function unavailable(reason, details = {}) {
@@ -134,6 +152,16 @@ function createRobinhoodHolderLaunchSource(options = {}) {
   const maxBlocks = options.maxBlocks ?? DEFAULT_MAX_BLOCKS;
   const maxSeconds = options.maxSeconds ?? DEFAULT_MAX_SECONDS;
   const firstBuyLimit = optionalLimit(options.firstBuyLimit);
+  const minimumFirstBuyNotional = optionalMinimumNotional(
+    options.minimumFirstBuyNotionalUsd
+  );
+  const candidateMaxBlocks = options.candidateMaxBlocks ?? maxBlocks;
+  if (!Number.isSafeInteger(candidateMaxBlocks) || candidateMaxBlocks < 0) {
+    throw new Error('candidateMaxBlocks must be a non-negative integer');
+  }
+  if (minimumFirstBuyNotional && firstBuyLimit == null) {
+    throw new Error('minimumFirstBuyNotionalUsd requires firstBuyLimit');
+  }
 
   async function loadState(tokenAddress) {
     const { rows } = await database.query(
@@ -293,6 +321,26 @@ function createRobinhoodHolderLaunchSource(options = {}) {
       .map(([walletAddress, reason]) => Object.freeze({ walletAddress, reason })));
   }
 
+  function emptyEvidence(state, coverage) {
+    return Object.freeze({
+      ready: true, reason: null, tokenAddress: state.tokenAddress,
+      frontier: state.frontier, coverage, anchor: null,
+      window: Object.freeze({ maxBlocks, maxSeconds }),
+      firstBuys: Object.freeze([]), exclusions: Object.freeze([]),
+    });
+  }
+
+  function plausibleRows(rows, state, launchPoint = null) {
+    return rows.filter((row) => {
+      if (!atLeastNotional(row.volume_usd, minimumFirstBuyNotional)) return false;
+      if (row.wallet_address === state.creatorAddress
+          || BURN_ADDRESSES.includes(row.wallet_address)) return false;
+      if (!launchPoint) return true;
+      const delta = BigInt(row.block_number) - BigInt(launchPoint.blockNumber);
+      return delta >= 0n && delta <= BigInt(candidateMaxBlocks);
+    });
+  }
+
   async function loadLaunchEvidence(inputTokenAddress) {
     const tokenAddress = normalizeTokenAddress(CHAIN, inputTokenAddress);
     const [state, sourceCoverage] = await Promise.all([
@@ -302,8 +350,24 @@ function createRobinhoodHolderLaunchSource(options = {}) {
     const coverage = validateCoverage(state, sourceCoverage);
     if (!coverage.ready) return unavailable(coverage.reason, { tokenAddress });
 
+    let firstBuyRows = null;
+    let launchPoint = state.launchPoint;
+    if (minimumFirstBuyNotional) {
+      firstBuyRows = await loadFirstBuyRows(state);
+      if (missingPosition(firstBuyRows)) {
+        return unavailable('transaction_position_unavailable', { tokenAddress });
+      }
+      if (!plausibleRows(firstBuyRows, state).length) return emptyEvidence(state, coverage);
+      launchPoint ||= await loadLaunchPoint(state);
+      if (!launchPoint) return unavailable('launch_swap_unavailable', { tokenAddress });
+      if (!plausibleRows(firstBuyRows, state, launchPoint).length) {
+        return emptyEvidence(state, coverage);
+      }
+    }
     const launchRows = state.cachedAnchor
-      ? [state.cachedAnchor] : await loadLaunchRows(state, await loadLaunchPoint(state));
+      ? [state.cachedAnchor] : await loadLaunchRows(
+        state, launchPoint || await loadLaunchPoint(state)
+      );
     if (missingPosition(launchRows)) {
       return unavailable('transaction_position_unavailable', { tokenAddress });
     }
@@ -313,7 +377,7 @@ function createRobinhoodHolderLaunchSource(options = {}) {
     if (!anchorResult.ready) return unavailable(anchorResult.reason, { tokenAddress });
     if (!state.cachedAnchor) await persistAnchor(state, anchorResult.anchor);
 
-    const firstBuyRows = await loadFirstBuyRows(state);
+    firstBuyRows ||= await loadFirstBuyRows(state);
     if (missingPosition(firstBuyRows)) {
       return unavailable('transaction_position_unavailable', { tokenAddress });
     }
@@ -321,7 +385,12 @@ function createRobinhoodHolderLaunchSource(options = {}) {
       anchorResult, swaps: firstBuyRows, maxBlocks, maxSeconds,
     });
     if (!firstBuys.ready) return unavailable(firstBuys.reason, { tokenAddress });
-    const exclusions = await loadExclusions(state, firstBuys.records);
+    const exclusionCandidates = minimumFirstBuyNotional
+      ? firstBuys.records.filter((row) => (
+        atLeastNotional(row.volumeUsd, minimumFirstBuyNotional)
+        && BigInt(row.deltaBlocks) <= BigInt(candidateMaxBlocks)
+      )) : firstBuys.records;
+    const exclusions = await loadExclusions(state, exclusionCandidates);
     return Object.freeze({
       ready: true, reason: null, tokenAddress,
       frontier: state.frontier, coverage, anchor: anchorResult.anchor,
@@ -337,6 +406,7 @@ module.exports = {
   BURN_ADDRESSES,
   createRobinhoodHolderLaunchSource,
   __private: {
-    cachedAnchor, normalizeState, UPSERT_ANCHOR_EVIDENCE_SQL, validateCoverage,
+    atLeastNotional, cachedAnchor, normalizeState, optionalMinimumNotional,
+    UPSERT_ANCHOR_EVIDENCE_SQL, validateCoverage,
   },
 };

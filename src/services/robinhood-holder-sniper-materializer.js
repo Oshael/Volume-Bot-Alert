@@ -87,13 +87,17 @@ function qualifyingLaunchCounts(rows, rule) {
 }
 
 function buildSniperSnapshot(input, recurrenceRows, observedAt, ruleInput) {
-  if (!input?.ready || !input.frontier || !input.anchor || !input.window
+  if (!input?.ready || !input.frontier || !input.window
       || !input.coverage?.completeThroughBlock) {
     throw new Error('SNIPER snapshot requires ready launch evidence');
   }
   const rule = normalizeRule(ruleInput);
   const recurrence = qualifyingLaunchCounts(recurrenceRows, rule);
-  const records = highConfidenceCandidates(input, rule).filter((buy) => (
+  const candidates = highConfidenceCandidates(input, rule);
+  if (candidates.length && !input.anchor) {
+    throw new Error('SNIPER candidates require a canonical launch anchor');
+  }
+  const records = candidates.filter((buy) => (
     (recurrence.get(buy.walletAddress) || 0) >= rule.minimumRecurringLaunches
   )).map((buy) => ({
     walletAddress: buy.walletAddress,
@@ -166,6 +170,8 @@ function createRobinhoodHolderSniperMaterializer(options = {}) {
   const sourceFactory = options.sourceFactory || createRobinhoodHolderLaunchSource;
   const source = options.source || sourceFactory({
     ...options, firstBuyLimit: rule.maxBuyerRank,
+    minimumFirstBuyNotionalUsd: rule.minimumNotionalUsd,
+    candidateMaxBlocks: rule.maxBlocks,
   });
   const recurrenceSource = options.recurrenceSource
     || createRobinhoodHolderSniperCalibrationSource(options);

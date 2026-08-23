@@ -355,6 +355,8 @@ carga sem ETA confiável.
      até o cursor da Stage 152 estar alcançado. O runner shadow paginado também está
      concluído: seleciona apenas ledgers live atrasados, só avança quando o cursor
      de first-buy está alcançado, limita concorrência e contém falhas por token.
+     Tokens sem first-buy top 5 de pelo menos US$50 ou sem buy a até um bloco da
+     âncora usam fast path vazio e não hidratam a transação completa do lançamento.
      A leitura pública mantém allowlist `LP`/`CEX`, portanto snapshots SNIPER
      persistidos pelo shadow não vazam para a UI. O loop operacional opt-in roda
      no grupo `robinhood-wallet-classification`, usa lease própria, pagina todo o

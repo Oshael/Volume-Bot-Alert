@@ -92,6 +92,15 @@ describe('Robinhood holder SNIPER materializer', () => {
       recurrenceSource: {}, classifications: {},
     });
     assert.equal(received.firstBuyLimit, 5);
+    assert.equal(received.minimumFirstBuyNotionalUsd, '50');
+    assert.equal(received.candidateMaxBlocks, 1);
+  });
+
+  it('materializes an empty fast-path snapshot without a hydrated anchor', () => {
+    const snapshot = buildSniperSnapshot(evidence({
+      anchor: null, firstBuys: [],
+    }), [], '2026-08-21T13:00:00Z');
+    assert.deepEqual(snapshot.records, []);
   });
 
   it('shares one set-based recurrence read across a bounded token batch', async () => {
