@@ -375,8 +375,12 @@ carga sem ETA confiável.
      falha fechado para checkpoint ou aresta ausente. A CLI operacional também
      está concluída: congela toda a janela durável até o checkpoint live, executa
      preflight read-only por padrão e só cria/retoma campanha com `--apply`.
-     Worker shadow e publicação seguem em cortes próprios; `INSIDER` continua
-     indisponível na API/UI.
+     O source/materializador da regra `rh_insider_direct_v1` também está
+     concluído: aceita somente distribuição positiva e direta do criador para
+     wallet comprovada, após replay completo e com transfers alcançando a
+     frontier do holder; pools e infraestrutura registrada são excluídos no
+     bloco da evidência. Worker shadow e publicação seguem em cortes próprios;
+     `INSIDER` continua indisponível na API/UI.
 5. **BUNDLED**
    - construir clusters explicáveis por funder e janela;
    - publicar como `possible bundle`, nunca como identidade comum.

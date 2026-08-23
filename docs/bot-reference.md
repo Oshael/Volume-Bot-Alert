@@ -1424,6 +1424,13 @@ checkpoint divergente ou projeção acima de cinco horas. Revise o relatório e
 use `-- --apply`; retomadas usam `-- --run-id=<id> --apply`, e uma campanha
 `failed` exige também `--retry-failed`. A stage isolada não consulta o archive
 RPC, não preenche arestas e não habilita `INSIDER`.
+O materializador `rh_insider_direct_v1` permanece desacoplado de worker e aceita
+somente `creator_token_distribution`: transferência positiva, direta (um hop),
+do criador atribuído para uma wallet comprovada. Ele falha fechado enquanto o
+replay não estiver `completed` ou a projeção live de transfers estiver atrás da
+frontier do holder, e exclui burn, pools e infraestrutura registrada no bloco
+da transferência. Funding nativo e expansão para múltiplos hops não fazem parte
+dessa regra.
 A Stage 149 introduz
 `robinhood_wallet_token_first_buys`, fonte neutra e reutilizável para ordem por
 token e recorrência por wallet. Aplique `node src/utils/db-init-stage149.js` antes
