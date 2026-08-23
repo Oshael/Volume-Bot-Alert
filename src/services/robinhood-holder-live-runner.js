@@ -45,6 +45,21 @@ function applyBatchMetrics(result) {
   return Object.freeze({ appliedEvents, attemptedEvents });
 }
 
+function annotateHolderError(error, stage, tokenAddress = null) {
+  if (!error || typeof error !== 'object') return error;
+  error.holderStage ||= stage;
+  if (tokenAddress) error.holderTokenAddress ||= tokenAddress;
+  return error;
+}
+
+async function withHolderErrorContext(action, stage, tokenAddress = null) {
+  try {
+    return await action();
+  } catch (error) {
+    throw annotateHolderError(error, stage, tokenAddress);
+  }
+}
+
 function isLiveLedger(value) {
   return [
     'applyNextPendingEvent', 'listPendingTokenAddresses',
@@ -99,7 +114,9 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     const startedAt = measureMs();
     let result;
     try {
-      result = await ledger.applyNextPendingEvent(input);
+      result = await withHolderErrorContext(
+        () => ledger.applyNextPendingEvent(input), 'apply', input?.onlyTokenAddress
+      );
       return result;
     } finally {
       const durationMs = elapsedMs(startedAt);
@@ -122,7 +139,9 @@ function createRobinhoodHolderLiveRunner(options = {}) {
   async function listPendingTokens(input, timing) {
     const startedAt = measureMs();
     try {
-      return await ledger.listPendingTokenAddresses(input);
+      return await withHolderErrorContext(
+        () => ledger.listPendingTokenAddresses(input), 'pending_selection'
+      );
     } finally {
       timing.selectionCalls += 1;
       timing.selectionDurationMs += elapsedMs(startedAt);
@@ -344,7 +363,9 @@ function createRobinhoodHolderLiveRunner(options = {}) {
         const repairStartedAt = measureMs();
         let repair;
         try {
-          repair = await repairDrift(applied);
+          repair = await withHolderErrorContext(
+            () => repairDrift(applied), 'drift_repair', applied.tokenAddress
+          );
         } finally {
           timing.driftRepairDurationMs += elapsedMs(repairStartedAt);
         }
@@ -427,14 +448,20 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     const drained = await drainPendingEvents(maxApplyEvents, applyBatchSize);
     const drainDurationMs = elapsedMs(drainStartedAt);
     const promotionStartedAt = measureMs();
-    const promoted = await ledger.promoteReadyShadowTokens({ limit: maxApplyEvents });
+    const promoted = await withHolderErrorContext(
+      () => ledger.promoteReadyShadowTokens({ limit: maxApplyEvents }),
+      'shadow_promotion'
+    );
     const shadowPromotionDurationMs = elapsedMs(promotionStartedAt);
     for (const publication of promoted.publications) {
       rememberHolderCountUpdate(drained.holderCountUpdates, { publication });
     }
     const publicationStartedAt = measureMs();
-    const holderCountPublished = await publishCountUpdates(
-      publishHolderCounts, drained.holderCountUpdates
+    const holderCountPublished = await withHolderErrorContext(
+      () => publishCountUpdates(
+        publishHolderCounts, drained.holderCountUpdates
+      ),
+      'holder_publication'
     );
     const publicationDurationMs = elapsedMs(publicationStartedAt);
     const totalDurationMs = elapsedMs(totalStartedAt);

@@ -26,7 +26,9 @@ function harness(
     },
     applyNextPendingEvent: async (input) => {
       calls.push(input ? ['apply', input] : ['apply']);
-      return applyResults.shift() || { status: 'idle' };
+      const result = applyResults.shift();
+      if (result instanceof Error) throw result;
+      return result || { status: 'idle' };
     },
     repairCapturedRange: async (range) => {
       calls.push(['repair', range]);
@@ -50,6 +52,7 @@ function harness(
     },
     promoteReadyShadowTokens: async (input) => {
       calls.push(['promote-shadows', input]);
+      if (options.shadowPromotion instanceof Error) throw options.shadowPromotion;
       return options.shadowPromotion || {
         status: 'idle', promotedTokens: 0, publications: [],
       };
@@ -384,6 +387,36 @@ describe('Robinhood holder live runner', () => {
     ]);
   });
 
+  it('annotates apply failures with the selected token and stage', async () => {
+    const tokenAddress = `0x${'a'.repeat(40)}`;
+    const failure = Object.assign(new Error('numeric field overflow'), { code: '22003' });
+    const context = harness({
+      status: 'idle', transfers: 0, nextBlock: '106', safeHead: '105',
+    }, [Object.assign(failure, { tokenAddress })]);
+
+    await assert.rejects(context.runner.applyOnce(), (error) => {
+      assert.equal(error, failure);
+      assert.equal(error.holderStage, 'apply');
+      assert.equal(error.holderTokenAddress, tokenAddress);
+      return true;
+    });
+  });
+
+  it('annotates shadow-promotion failures without inventing a token', async () => {
+    const failure = Object.assign(new Error('numeric field overflow'), { code: '22003' });
+    const context = harness({
+      status: 'idle', transfers: 0, nextBlock: '106', safeHead: '105',
+    }, [{ status: 'idle' }], { status: 'idle' }, async () => 0, {
+      shadowPromotion: failure,
+    });
+
+    await assert.rejects(context.runner.applyOnce(), (error) => {
+      assert.equal(error.holderStage, 'shadow_promotion');
+      assert.equal(error.holderTokenAddress, undefined);
+      return true;
+    });
+  });
+
   it('stops exactly at the apply budget without starting another capture', async () => {
     const context = harness({
       status: 'idle', transfers: 0, nextBlock: '106', safeHead: '105',
@@ -531,7 +564,11 @@ describe('Robinhood holder live runner', () => {
       { status: 'applied', publication }, { status: 'idle' },
     ], { status: 'idle' }, async () => { throw new Error('relay offline'); });
 
-    await assert.rejects(context.runner.runOnce(), /relay offline/);
+    await assert.rejects(context.runner.runOnce(), (error) => {
+      assert.match(error.message, /relay offline/);
+      assert.equal(error.holderStage, 'holder_publication');
+      return true;
+    });
     assert.equal(context.calls.filter(([name]) => name === 'apply').length, 1);
   });
 

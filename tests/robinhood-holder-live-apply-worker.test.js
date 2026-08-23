@@ -104,4 +104,33 @@ describe('Robinhood holder live apply worker', () => {
     assert.deepEqual(await worker.runOnce(), { status: 'completed' });
     assert.equal(attempts, 2);
   });
+
+  it('retains holder stage, token, and structured PostgreSQL diagnostics', async () => {
+    const tokenAddress = `0x${'a'.repeat(40)}`;
+    const failure = Object.assign(new Error('numeric field overflow'), {
+      code: '22003', holderStage: 'apply', holderTokenAddress: tokenAddress,
+      severity: 'ERROR', detail: 'precision 78 overflow', schema: 'public',
+      table: 'robinhood_holder_balances', column: 'balance_raw',
+      constraint: 'balance_precision', dataType: 'numeric', routine: 'apply_typmod',
+    });
+    const worker = createRobinhoodHolderLiveApplyWorker({
+      logger: { warn() {}, error() {} },
+      runtimeFactory: async () => ({
+        providerName: 'robinhood-holder-live-apply',
+        runner: { applyOnce: async () => { throw failure; } },
+      }),
+    });
+
+    assert.equal(await worker.runOnce(), null);
+    assert.deepEqual(worker.getStatus().lastError, {
+      code: '22003', message: 'numeric field overflow',
+      at: worker.getStatus().lastError.at,
+      stage: 'apply', tokenAddress,
+      postgres: {
+        severity: 'ERROR', detail: 'precision 78 overflow', schema: 'public',
+        table: 'robinhood_holder_balances', column: 'balance_raw',
+        constraint: 'balance_precision', dataType: 'numeric', routine: 'apply_typmod',
+      },
+    });
+  });
 });

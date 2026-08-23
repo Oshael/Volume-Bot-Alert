@@ -1137,6 +1137,10 @@ separa duração total, drain, chamadas do ledger, reparo de drift, promoção s
 publicação e overhead; também expõe quantidade/duração máxima das chamadas, tamanho
 médio/máximo efetivo dos lotes e EPS interno. Essas métricas permitem distinguir
 fragmentação por token, PostgreSQL lento e fases auxiliares sem alterar o workload.
+Quando um tick falha, `lastError` preserva a etapa (`apply`, seleção, reparo,
+promoção ou publicação), o token quando conhecido e os campos estruturados seguros
+do PostgreSQL (`detail`, schema, tabela, coluna, constraint, tipo e rotina). O
+diagnóstico não inclui SQL, parâmetros, payloads nem stack trace.
 No deploy, execute
 `node src/utils/db-init-stage121.js`, `node src/utils/db-init-stage141.js` e
 `node src/utils/db-init-stage142.js` antes do restart; os índices são criados

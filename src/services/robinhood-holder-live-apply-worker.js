@@ -50,10 +50,31 @@ async function buildRuntime(options, deps = {}) {
 }
 
 function publicError(error) {
-  return error ? Object.freeze({
+  if (!error) return null;
+  const optionalText = (value, limit = 500) => {
+    if (value == null || value === '') return null;
+    return String(value).slice(0, limit);
+  };
+  const postgres = Object.fromEntries([
+    ['severity', optionalText(error.severity, 32)],
+    ['detail', optionalText(error.detail)],
+    ['schema', optionalText(error.schema, 128)],
+    ['table', optionalText(error.table, 128)],
+    ['column', optionalText(error.column, 128)],
+    ['constraint', optionalText(error.constraint, 128)],
+    ['dataType', optionalText(error.dataType, 128)],
+    ['routine', optionalText(error.routine, 128)],
+  ].filter(([, value]) => value !== null));
+  const stage = optionalText(error.holderStage, 64);
+  const tokenAddress = optionalText(error.holderTokenAddress, 42);
+  return Object.freeze({
     code: error.code || 'holder_live_apply_error',
-    message: String(error.message || error).slice(0, 500), at: new Date().toISOString(),
-  }) : null;
+    message: String(error.message || error).slice(0, 500),
+    at: new Date().toISOString(),
+    ...(stage ? { stage } : {}),
+    ...(tokenAddress ? { tokenAddress } : {}),
+    ...(Object.keys(postgres).length ? { postgres: Object.freeze(postgres) } : {}),
+  });
 }
 
 function createRobinhoodHolderLiveApplyWorker(deps = {}) {
