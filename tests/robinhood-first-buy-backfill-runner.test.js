@@ -5,7 +5,7 @@ const {
   executeBackfill, plan, runPreflight,
 } = require('../src/services/robinhood-first-buy-backfill-runner');
 const {
-  assertDurableSourceCoverage, parseArgs,
+  assertDurableSourceCoverage, leaseMsForStatementTimeout, parseArgs,
 } = require('../src/utils/backfill-robinhood-first-buys');
 
 const SOURCE = {
@@ -128,6 +128,10 @@ describe('Robinhood first-buy backfill runner', () => {
     assert.throws(() => parseArgs([
       '--run-id=12', '--apply', '--statement-timeout-ms=999999',
     ]), /between 120000 and 900000/);
+    assert.equal(leaseMsForStatementTimeout(), 180_000);
+    assert.equal(leaseMsForStatementTimeout(120_000), 180_000);
+    assert.equal(leaseMsForStatementTimeout(600_000), 660_000);
+    assert.equal(leaseMsForStatementTimeout(900_000), 960_000);
   });
 
   it('refuses a backfill beyond the durable wallet-swap frontier', async () => {

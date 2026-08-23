@@ -1453,7 +1453,9 @@ campanha com `--run-id=<id> --apply --retry-failed
 --statement-timeout-ms=600000`. A recuperação transacional reabre somente ranges
 `failed`, zera suas tentativas/erros e preserva ranges `completed`; o timeout
 configurável aceita 120.000–900.000 ms. `--retry-failed` é recusado sem run-id e
-confirmação explícitos ou quando a campanha não está `failed`.
+confirmação explícitos ou quando a campanha não está `failed`. A lease do range é
+derivada automaticamente desse timeout com 60 segundos de margem; assim queries
+longas continuam protegidas contra ownership obsoleto sem expirar antes do SQL.
 O preflight também exige seed de wallet-swap realmente `complete` (não apenas
 terminal/abandonado) e que `sourceThrough` não ultrapasse sua frontier durável;
 isso impede declarar como coberto um intervalo cujos swaps ainda não foram

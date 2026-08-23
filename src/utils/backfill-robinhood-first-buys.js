@@ -19,6 +19,8 @@ const VALUE_ARGUMENTS = new Set([
   'from', 'through', 'range-seconds', 'concurrency', 'samples', 'max-hours', 'run-id',
   'statement-timeout-ms',
 ]);
+const DEFAULT_LEASE_MS = 180_000;
+const LEASE_MARGIN_MS = 60_000;
 
 function argumentValues(argv) {
   const values = {};
@@ -53,6 +55,11 @@ function parseStatementTimeout(value) {
     throw new Error('--statement-timeout-ms must be between 120000 and 900000');
   }
   return statementTimeoutMs;
+}
+
+function leaseMsForStatementTimeout(statementTimeoutMs) {
+  const timeoutMs = Number(statementTimeoutMs ?? 120_000);
+  return Math.max(DEFAULT_LEASE_MS, timeoutMs + LEASE_MARGIN_MS);
 }
 
 function parseArgs(argv = process.argv.slice(2)) {
@@ -131,6 +138,7 @@ async function main(deps = {}) {
     backfillRepository, firstBuyRepository, sleep: deps.sleep,
   }, {
     preflight, runId: options.runId, retryFailed: options.retryFailed,
+    leaseMs: leaseMsForStatementTimeout(options.statementTimeoutMs),
     onProgress: progressReporter(logger),
     onRun: ({ runId, status, requeued }) => (logger.error || logger.log).call(
       logger, `[FirstBuyBackfill] run-id=${runId} status=${status} requeued=${requeued}`
@@ -145,4 +153,6 @@ if (require.main === module) main().catch((error) => {
   process.exitCode = 1;
 }).finally(() => db.pool.end());
 
-module.exports = { assertDurableSourceCoverage, main, parseArgs, progressReporter };
+module.exports = {
+  assertDurableSourceCoverage, leaseMsForStatementTimeout, main, parseArgs, progressReporter,
+};

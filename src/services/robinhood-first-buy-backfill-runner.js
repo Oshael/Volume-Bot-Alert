@@ -150,7 +150,7 @@ async function executeBackfill(deps = {}, options = {}) {
   }
   await repository.reclaimExpired(run.id);
   const sleep = deps.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
-  const leaseMs = integer(options.leaseMs ?? 180_000, 'leaseMs', 120_001, 900_000);
+  const leaseMs = integer(options.leaseMs ?? 180_000, 'leaseMs', 120_001, 1_200_000);
   const maxAttempts = integer(options.maxAttempts ?? 5, 'maxAttempts', 1, 20);
   const ownerPrefix = options.owner || `${os.hostname()}:${process.pid}`;
   const context = {
