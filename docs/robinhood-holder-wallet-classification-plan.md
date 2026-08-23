@@ -367,9 +367,10 @@ carga sem ETA confiável.
      `wallet_transfer` em cada aresta sem reescrever o histórico na migration. O
      writer seed/live/reclassification já mantém o primeiro evento pela posição
      canônica. A Stage 154 prepara campanhas block-based congeladas e ranges com
-     lease/checkpoint para o replay histórico no archive RPC. Repository/runner,
-     source, materializador, worker shadow e publicação seguem em cortes próprios,
-     portanto `INSIDER` continua indisponível na API/UI.
+     lease/checkpoint para o replay histórico no archive RPC; o repository já
+     implementa criação atômica, claims concorrentes, retry, retomada e ETA.
+     Runner/preflight, source, materializador, worker shadow e publicação seguem em
+     cortes próprios, portanto `INSIDER` continua indisponível na API/UI.
 5. **BUNDLED**
    - construir clusters explicáveis por funder e janela;
    - publicar como `possible bundle`, nunca como identidade comum.
