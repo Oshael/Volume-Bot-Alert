@@ -1459,6 +1459,15 @@ checkpoint divergente ou projeção acima de cinco horas. Revise o relatório e
 use `-- --apply`; retomadas usam `-- --run-id=<id> --apply`, e uma campanha
 `failed` exige também `--retry-failed`. A stage isolada não consulta o archive
 RPC, não preenche arestas e não habilita `INSIDER`.
+
+A Stage 158 adiciona `robinhood_wallet_transfer_token_coverage`, cursor histórico
+retomável e versionado por token, e `robinhood_directional_transfer_replay_tokens`,
+snapshot do escopo aceito por campanha. Aplique
+`node src/utils/db-init-stage158.js` antes do repair token-scoped e do replay com
+escopo congelado. A migration é aditiva: não cria cobertura retroativa, não
+preenche automaticamente campanhas existentes e não altera o replay da Stage 154
+até o writer correspondente ser implantado.
+
 O materializador `rh_insider_direct_v1` aceita
 somente `creator_token_distribution`: transferência positiva, direta (um hop),
 do criador atribuído para uma wallet comprovada. Ele falha fechado enquanto o

@@ -4255,6 +4255,66 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage158-robinhood-token-scoped-transfer-coverage',
+    name: 'Stage 158 Robinhood token-scoped transfer coverage',
+    repair: 'node src/utils/db-init-stage158.js',
+    tables: [{
+      table: 'robinhood_wallet_transfer_token_coverage',
+      columns: [
+        'chain', 'projection_version', 'token_address', 'source_from_block',
+        'next_block', 'source_through_block', 'source_through_hash', 'status',
+        'lease_owner', 'lease_until', 'attempt_count', 'next_attempt_at',
+        'last_error_code', 'last_error_message', 'completed_at', 'version',
+        'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_wallet_transfer_token_coverage_pkey',
+        includes: ['PRIMARY KEY', 'chain', 'projection_version', 'token_address'],
+      }, {
+        name: 'rh_wallet_transfer_token_coverage_bounds_check',
+        includes: [
+          'CHECK', 'source_from_block', 'next_block', 'source_through_block',
+          'source_through_hash', 'attempt_count', 'version',
+        ],
+      }, {
+        name: 'rh_wallet_transfer_token_coverage_lease_check',
+        includes: ['CHECK', 'leased', 'lease_owner', 'lease_until'],
+      }, {
+        name: 'rh_wallet_transfer_token_coverage_completion_check',
+        includes: ['CHECK', 'complete', 'next_block', 'source_through_block', 'completed_at'],
+      }],
+      indexes: [{
+        name: 'idx_rh_wallet_transfer_token_coverage_claim',
+        includes: [
+          'chain', 'projection_version', 'next_attempt_at',
+          'source_from_block', 'token_address', 'pending',
+        ],
+      }, {
+        name: 'idx_rh_wallet_transfer_token_coverage_lease',
+        includes: ['chain', 'projection_version', 'lease_until', 'leased'],
+      }],
+    }, {
+      table: 'robinhood_directional_transfer_replay_tokens',
+      columns: [
+        'run_id', 'token_address', 'coverage_from_block',
+        'coverage_through_block', 'coverage_through_hash', 'created_at',
+      ],
+      constraints: [{
+        name: 'rh_directional_replay_tokens_pkey',
+        includes: ['PRIMARY KEY', 'run_id', 'token_address'],
+      }, {
+        name: 'rh_directional_replay_tokens_coverage_check',
+        includes: [
+          'CHECK', 'coverage_from_block', 'coverage_through_block', 'coverage_through_hash',
+        ],
+      }],
+      indexes: [{
+        name: 'idx_rh_directional_replay_tokens_token',
+        includes: ['token_address', 'run_id'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
