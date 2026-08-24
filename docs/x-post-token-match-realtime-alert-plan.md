@@ -64,11 +64,14 @@ Nao usar X API paga nem comprar o feed de outro provedor que faça scraping.
     extensao de browser continua pendente.
 - 1 conta X descartavel em uso para os probes (home IP, sem proxy). Nenhum proxy
   contratado ainda.
-- Experimento push 2026-08-23: `src/utils/x-push-latency-probe.js` instrumenta
-  dois perfis Chrome descartaveis via CDP, sem publicar nem consultar o X. Mede
-  `inicio CreateTweet -> Push Messaging/Notification` com gate default de 200ms
-  (registrando tambem o delta contra o ACK) e
-  denuncia qualquer timeline polling observado. Resultado real ainda pendente.
+- Experimento push 2026-08-23/24: `src/utils/x-push-latency-probe.js` instrumenta
+  dois perfis Chrome descartaveis via CDP, sem publicar nem consultar o X. O
+  canal entregou **posts e reposts**, com autor, texto e `postId` no payload;
+  replies controladas nao foram entregues. No primeiro post, ACK -> push foi
+  `125,8ms`, timestamp do payload -> Chrome foi `~198ms` e submit -> push foi
+  `442ms`. Decisao do MVP: usar Web Push somente para posts/reposts, sem replies
+  nem follow/unfollow. Proximo gate e cobertura/confiabilidade ao ampliar o
+  numero de contas com `All posts`, medindo perdas, duplicatas e p50/p95.
 - Ja existe em producao, de trabalho anterior desta mesma sessao: card de perfil
   do X (`src/services/x-profile-card.js`, `src/routes/x-profile.js`,
   `frontend/src/ui/x-profile-card.ts`), que usa `api.fxtwitter.com` sem
@@ -857,6 +860,31 @@ conteudo e latencia do canal. O recorder remove endpoints/tokens de registro do
 push antes de escrever no terminal ou JSONL, abre o arquivo sem seguir symlink e
 forca permissao `0600`. No worker continuo, preferir que o Playwright inicie um
 perfil dedicado com `launchPersistentContext`, sem expor porta CDP TCP.
+
+### Alternativa futura - Nitter local para gaps [ADIADA DO MVP 2026-08-24]
+
+Uma instancia local do Nitter e uma hipotese valida para simplificar o acesso a
+replies e ao grafo social, mas **nao cria uma fonte event-driven**. O Nitter atual
+usa a API GraphQL nao oficial do X e exige sessoes de contas X reais; hospedar
+localmente remove o limite artificial de instancias publicas, nao os rate limits
+upstream nem o risco das sessoes.
+
+- Replies: `/usuario/with_replies` e o RSS correspondente existem. A rota tambem
+  aceita nomes separados por virgula e cai em `SearchTimeline`, portanto pode
+  permitir batching de pequenos grupos. Fazer um probe futuro com 10-25 contas
+  para medir cobertura, ordenacao, tamanho maximo da query, latencia e budget.
+- RSS nao serve com a configuracao default de baixa latencia: `rssMinutes` e
+  `10`. Para o probe, zerar o cache ou consultar a rota diretamente.
+- Following/followers: `/usuario/following` e `/usuario/followers` existem, mas
+  cada leitura chama o endpoint GraphQL correspondente. Detectar mudanca ainda
+  exige polling e diff; nao ha webhook/push agregado.
+- Decisao: nao instalar nem integrar Nitter no MVP. Primeiro validar escala do
+  Web Push para posts/reposts. Reabrir Nitter somente se replies voltarem ao
+  escopo depois desse gate.
+
+Referencias: <https://github.com/zedeus/nitter/blob/master/src/routes/timeline.nim>,
+<https://github.com/zedeus/nitter/blob/master/src/config.nim> e
+<https://github.com/zedeus/nitter>.
 
 ### Bloco 3 - Ingestao continua
 
