@@ -49,7 +49,8 @@ describe('Robinhood directional transfer replay CLI', () => {
 
   it('requires the frozen-scope publication schema before archive work', async () => {
     await assert.rejects(assertSchema({ async query() { return { rows: [{
-      runs: 'runs', ranges: 'ranges', tokens: 'tokens', evidence: true, publication: false,
+      runs: 'runs', ranges: 'ranges', tokens: 'tokens', deployment_gaps: 'gaps',
+      evidence: true, publication: false,
     }] }; } }), /159/);
   });
 

@@ -143,8 +143,12 @@ describe('Robinhood directional transfer replay runner', () => {
         }
         return null;
       },
-      async stageTokenRepairCandidates(input) { calls.push(['stage', input]); },
-      async deferRangeForTokenRepair(input) { calls.push(['defer', input.rangeId]); },
+      async stageTokenRepairCandidates(input) {
+        calls.push(['stage', input]); return { unresolved: 1 };
+      },
+      async deferRangeForTokenRepair(input) {
+        calls.push(['defer', input.rangeId, input.error.code]);
+      },
       async completeRange(input) { calls.push(['complete', input.rangeId]); },
       async retryRange() { throw new Error('unexpected retry'); },
       async settleTokenRepairDiscovery(id) {
@@ -169,8 +173,8 @@ describe('Robinhood directional transfer replay runner', () => {
       } },
     }, { preflight: { ...SOURCE, approved: true, concurrency: 1 } });
     assert.deepEqual(calls, [
-      ['stage', { runId: '9', tokenAddresses: [token] }],
-      ['defer', '10'],
+      ['stage', { runId: '9', rangeId: '10', tokenAddresses: [token] }],
+      ['defer', '10', 'directional_repair_deployment_unavailable'],
       ['complete', '11'],
       ['settle', '9'],
     ]);

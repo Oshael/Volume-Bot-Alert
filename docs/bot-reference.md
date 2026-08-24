@@ -1486,7 +1486,10 @@ tokens ausentes são inseridos como candidatos. Cada candidato começa em
 `GREATEST(run.source_from_block, holder_state.deployment_block)`. Estados legados
 sem esse campo usam somente uma atribuição exata `rpc_direct` ou
 `launchpad_event`; sem nenhuma dessas provas, deployment ausente ou zero falha
-fechado com `directional_repair_deployment_unavailable`.
+fechado para o repair, mas não interrompe a descoberta. A Stage 160 persiste o
+par range/token em `robinhood_directional_transfer_deployment_gaps`; o progresso
+expõe `deploymentGaps`, e esses tokens não entram na fila executável até obterem
+prova exata. Aplique `node src/utils/db-init-stage160.js` antes de retomar o replay.
 Cada token é reconstruído em shadow e promovido em uma única
 transação que trava o cursor LIVE; se a frontier avançou, somente o delta volta
 a `pending`, sem apagar uma projeção oficial ainda válida. `published_at` é a

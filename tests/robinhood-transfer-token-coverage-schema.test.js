@@ -3,6 +3,7 @@ const { describe, it } = require('node:test');
 
 const stage158 = require('../src/utils/db-init-stage158');
 const stage159 = require('../src/utils/db-init-stage159');
+const stage160 = require('../src/utils/db-init-stage160');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 
 describe('Robinhood token-scoped transfer coverage schema', () => {
@@ -33,5 +34,18 @@ describe('Robinhood token-scoped transfer coverage schema', () => {
     assert.match(sql, /next_block = source_through_block \+ 1/);
     assert.match(sql, /attempt_count > 0/);
     assert.equal(group.repair, 'node src/utils/db-init-stage159.js');
+  });
+
+  it('persists unresolved deployments without making them executable repairs', () => {
+    const sql = stage160.STATEMENTS.join('\n');
+    const group = SCHEMA_GROUPS.find(({ key }) => (
+      key === 'stage160-robinhood-directional-deployment-gaps'
+    ));
+
+    assert.match(sql, /robinhood_directional_transfer_deployment_gaps/);
+    assert.match(sql, /PRIMARY KEY \(range_id, token_address\)/);
+    assert.match(sql, /directional_repair_deployment_unavailable/);
+    assert.doesNotMatch(sql, /robinhood_wallet_transfer_token_coverage/);
+    assert.equal(group.repair, 'node src/utils/db-init-stage160.js');
   });
 });

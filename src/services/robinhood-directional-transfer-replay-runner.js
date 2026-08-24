@@ -136,6 +136,37 @@ async function resolveRun(repository, options) {
   return run;
 }
 
+async function handleRangeFailure(repository, run, range, owner, error, maxAttempts) {
+  let failure = error;
+  let repairCandidateStaged = false;
+  if (error.code === 'directional_replay_edge_missing') {
+    try {
+      const staged = await repository.stageTokenRepairCandidates({
+        runId: run.id, rangeId: range.id, tokenAddresses: error.tokenAddresses,
+      });
+      repairCandidateStaged = true;
+      if (staged?.unresolved > 0) {
+        failure = Object.assign(
+          new Error('directional repair candidate has no exact deployment block'),
+          { code: 'directional_repair_deployment_unavailable' }
+        );
+      }
+    } catch (candidateError) {
+      failure = candidateError;
+    }
+  }
+  if (repairCandidateStaged) {
+    await repository.deferRangeForTokenRepair({
+      runId: run.id, rangeId: range.id, owner, error: failure,
+    });
+    return;
+  }
+  await repository.retryRange({
+    runId: run.id, rangeId: range.id, owner, error: failure, maxAttempts,
+    backoffMs: Math.min(60_000, 1000 * (2 ** Math.max(0, range.attemptCount - 1))),
+  });
+}
+
 async function drainWorker(context, index) {
   const { repository, writer, run, concurrency, options, sleep, leaseMs, maxAttempts } = context;
   const owner = `${context.ownerPrefix}:${index}`;
@@ -163,28 +194,7 @@ async function drainWorker(context, index) {
         edgesConsidered: result.edgesConsidered, edgesWritten: result.edgesWritten,
       });
     } catch (error) {
-      let failure = error;
-      let repairCandidateStaged = false;
-      if (error.code === 'directional_replay_edge_missing') {
-        try {
-          await repository.stageTokenRepairCandidates({
-            runId: run.id, tokenAddresses: error.tokenAddresses,
-          });
-          repairCandidateStaged = true;
-        } catch (candidateError) {
-          failure = candidateError;
-        }
-      }
-      if (repairCandidateStaged) {
-        await repository.deferRangeForTokenRepair({
-          runId: run.id, rangeId: range.id, owner, error,
-        });
-      } else {
-        await repository.retryRange({
-          runId: run.id, rangeId: range.id, owner, error: failure, maxAttempts,
-          backoffMs: Math.min(60_000, 1000 * (2 ** Math.max(0, range.attemptCount - 1))),
-        });
-      }
+      await handleRangeFailure(repository, run, range, owner, error, maxAttempts);
     }
     options.onProgress?.(await repository.getProgress({ runId: run.id, concurrency }));
   }

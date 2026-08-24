@@ -4335,6 +4335,29 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage160-robinhood-directional-deployment-gaps',
+    name: 'Stage 160 Robinhood directional deployment gaps',
+    repair: 'node src/utils/db-init-stage160.js',
+    tables: [{
+      table: 'robinhood_directional_transfer_deployment_gaps',
+      columns: [
+        'range_id', 'token_address', 'last_error_code', 'last_error_message',
+        'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_directional_transfer_deployment_gaps_pkey',
+        includes: ['PRIMARY KEY', 'range_id', 'token_address'],
+      }, {
+        name: 'rh_directional_transfer_deployment_gaps_error_check',
+        includes: ['CHECK', 'directional_repair_deployment_unavailable'],
+      }],
+      indexes: [{
+        name: 'idx_rh_directional_transfer_deployment_gaps_token',
+        includes: ['token_address', 'range_id'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

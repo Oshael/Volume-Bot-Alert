@@ -244,6 +244,7 @@ function createRobinhoodDirectionalTransferReplayRepository(options = {}) {
 
   async function stageTokenRepairCandidates(input = {}) {
     const runId = uint(input.runId, 'runId');
+    const rangeId = uint(input.rangeId, 'rangeId');
     const tokenAddresses = addresses(input.tokenAddresses);
     const client = await database.getClient();
     try {
@@ -253,12 +254,14 @@ function createRobinhoodDirectionalTransferReplayRepository(options = {}) {
                 live.checkpoint_block AS source_through_block,
                 live.checkpoint_hash AS source_through_hash
            FROM robinhood_directional_transfer_replay_runs run
+           JOIN robinhood_directional_transfer_replay_ranges range
+             ON range.run_id = run.id AND range.id = $3::bigint AND range.chain = run.chain
            JOIN robinhood_wallet_transfer_cursors live
              ON live.chain = run.chain AND live.projection_version = run.projection_version
             AND live.stream = 'live' AND live.lifecycle_state = 'running'
           WHERE run.id = $1::bigint AND run.chain = $2
             AND live.checkpoint_block IS NOT NULL FOR UPDATE OF live`,
-        [runId, CHAIN]
+        [runId, CHAIN, rangeId]
       );
       if (!context.rows[0]) throw new Error('directional repair frontier is unavailable');
       const deployments = await client.query(
@@ -283,12 +286,7 @@ function createRobinhoodDirectionalTransferReplayRepository(options = {}) {
           ['rpc_direct', 'launchpad_event']]
       );
       const unavailable = deployments.rows.filter((row) => row.deployment_block == null);
-      if (unavailable.length > 0) {
-        const error = new Error('directional repair candidate has no exact deployment block');
-        error.code = 'directional_repair_deployment_unavailable';
-        error.tokenAddresses = unavailable.map((row) => row.token_address);
-        throw error;
-      }
+      const available = deployments.rows.filter((row) => row.deployment_block != null);
       const frontier = context.rows[0];
       const inserted = await client.query(
         `INSERT INTO robinhood_wallet_transfer_token_coverage (
@@ -303,11 +301,26 @@ function createRobinhoodDirectionalTransferReplayRepository(options = {}) {
          RETURNING token_address`,
         [CHAIN, frontier.projection_version, String(frontier.source_from_block),
           String(frontier.source_through_block), frontier.source_through_hash,
-          deployments.rows.map((row) => row.token_address),
-          deployments.rows.map((row) => row.deployment_block)]
+          available.map((row) => row.token_address),
+          available.map((row) => row.deployment_block)]
+      );
+      await client.query(
+        `DELETE FROM robinhood_directional_transfer_deployment_gaps
+          WHERE range_id = $1::bigint AND token_address = ANY($2::varchar[])`,
+        [rangeId, available.map((row) => row.token_address)]
+      );
+      await client.query(
+        `INSERT INTO robinhood_directional_transfer_deployment_gaps (
+           range_id, token_address
+         ) SELECT $1::bigint, token_address FROM UNNEST($2::varchar[]) AS item(token_address)
+         ON CONFLICT (range_id, token_address) DO UPDATE SET updated_at = NOW()`,
+        [rangeId, unavailable.map((row) => row.token_address)]
       );
       await client.query('COMMIT');
-      return Object.freeze({ requested: tokenAddresses.length, inserted: inserted.rowCount });
+      return Object.freeze({
+        requested: tokenAddresses.length, inserted: inserted.rowCount,
+        unresolved: unavailable.length,
+      });
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
       throw error;
@@ -525,7 +538,12 @@ function createRobinhoodDirectionalTransferReplayRepository(options = {}) {
          COALESCE(SUM(range.transfers_scanned), 0)::text AS transfers_scanned,
          COALESCE(SUM(range.edges_written), 0)::text AS edges_written,
          AVG(EXTRACT(EPOCH FROM range.completed_at - range.started_at))
-           FILTER (WHERE range.status = 'completed') AS average_seconds
+           FILTER (WHERE range.status = 'completed') AS average_seconds,
+         (SELECT COUNT(DISTINCT gap.token_address)
+            FROM robinhood_directional_transfer_deployment_gaps gap
+            JOIN robinhood_directional_transfer_replay_ranges gap_range
+              ON gap_range.id = gap.range_id
+           WHERE gap_range.run_id = run.id)::integer AS deployment_gaps
        FROM robinhood_directional_transfer_replay_runs run
        LEFT JOIN robinhood_directional_transfer_replay_ranges range ON range.run_id = run.id
        WHERE run.id = $1::bigint AND run.chain = $2 GROUP BY run.id`, [runId, CHAIN]
@@ -538,6 +556,7 @@ function createRobinhoodDirectionalTransferReplayRepository(options = {}) {
     return Object.freeze({
       status: row.status, total, completed, pending: Number(row.pending),
       leased: Number(row.leased), failed: Number(row.failed),
+      deploymentGaps: Number(row.deployment_gaps),
       blocksScanned: row.blocks_scanned, transfersScanned: row.transfers_scanned,
       edgesWritten: row.edges_written,
       progressPct: total ? Number(((completed / total) * 100).toFixed(2)) : 0,

@@ -130,6 +130,7 @@ async function assertSchema(database) {
        to_regclass('robinhood_directional_transfer_replay_runs') AS runs,
        to_regclass('robinhood_directional_transfer_replay_ranges') AS ranges,
        to_regclass('robinhood_directional_transfer_replay_tokens') AS tokens,
+       to_regclass('robinhood_directional_transfer_deployment_gaps') AS deployment_gaps,
        EXISTS (
          SELECT 1 FROM information_schema.columns
           WHERE table_schema = 'public'
@@ -145,8 +146,8 @@ async function assertSchema(database) {
   );
   const schema = result.rows[0] || {};
   if (!schema.evidence || !schema.runs || !schema.ranges
-      || !schema.tokens || !schema.publication) {
-    throw new Error('schema not ready: apply Stages 153, 154, 158 and 159 on the VPS');
+      || !schema.tokens || !schema.deployment_gaps || !schema.publication) {
+    throw new Error('schema not ready: apply Stages 153, 154, 158, 159 and 160 on the VPS');
   }
 }
 

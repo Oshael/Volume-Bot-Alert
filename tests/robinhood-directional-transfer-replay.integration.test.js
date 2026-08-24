@@ -16,6 +16,7 @@ const stage114 = require('../src/utils/db-init-stage114');
 const stage154 = require('../src/utils/db-init-stage154');
 const stage158 = require('../src/utils/db-init-stage158');
 const stage159 = require('../src/utils/db-init-stage159');
+const stage160 = require('../src/utils/db-init-stage160');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const HASH = `0x${'a'.repeat(64)}`;
@@ -26,6 +27,7 @@ const REPAIR_TOKEN = `0x${'e'.repeat(40)}`;
 const UNKNOWN_DEPLOYMENT_TOKEN = `0x${'f'.repeat(40)}`;
 
 async function cleanup() {
+  await db.query('DELETE FROM robinhood_directional_transfer_deployment_gaps');
   await db.query('DELETE FROM robinhood_directional_transfer_replay_tokens');
   await db.query('DELETE FROM robinhood_directional_transfer_replay_ranges');
   await db.query('DELETE FROM robinhood_directional_transfer_replay_runs');
@@ -86,7 +88,8 @@ describe('Robinhood directional transfer replay persistence', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
     for (const stage of [
-      stage110, stage113, stage114, stage116, stage129, stage134, stage154, stage158, stage159,
+      stage110, stage113, stage114, stage116, stage129, stage134,
+      stage154, stage158, stage159, stage160,
     ]) {
       await stage.init({ closePool: false });
     }
@@ -205,6 +208,11 @@ describe('Robinhood directional transfer replay persistence', () => {
     );
     const repository = createRobinhoodDirectionalTransferReplayRepository({ database: db });
     const created = await repository.createRun(runInput());
+    const replayRange = await db.query(
+      `SELECT id::text FROM robinhood_directional_transfer_replay_ranges
+        WHERE run_id = $1 ORDER BY range_start_block LIMIT 1`, [created.id]
+    );
+    const rangeId = replayRange.rows[0].id;
     await db.query(
       `INSERT INTO robinhood_wallet_transfer_cursors (
          projection_version, stream, origin_block, next_block, next_block_time,
@@ -213,8 +221,8 @@ describe('Robinhood directional transfer replay persistence', () => {
       [HASH]
     );
     assert.deepEqual(await repository.stageTokenRepairCandidates({
-      runId: created.id, tokenAddresses: [REPAIR_TOKEN, REPAIR_TOKEN],
-    }), { requested: 1, inserted: 1 });
+      runId: created.id, rangeId, tokenAddresses: [REPAIR_TOKEN, REPAIR_TOKEN],
+    }), { requested: 1, inserted: 1, unresolved: 0 });
     const coverage = await db.query(
       `SELECT source_from_block::text, next_block::text, source_through_block::text, status
          FROM robinhood_wallet_transfer_token_coverage WHERE token_address = $1`, [REPAIR_TOKEN]
@@ -234,8 +242,8 @@ describe('Robinhood directional transfer replay persistence', () => {
       [ATTRIBUTED_TOKEN, `0x${'1'.repeat(40)}`, HASH]
     );
     assert.deepEqual(await repository.stageTokenRepairCandidates({
-      runId: created.id, tokenAddresses: [ATTRIBUTED_TOKEN],
-    }), { requested: 1, inserted: 1 });
+      runId: created.id, rangeId, tokenAddresses: [ATTRIBUTED_TOKEN],
+    }), { requested: 1, inserted: 1, unresolved: 0 });
     const attributedCoverage = await db.query(
       `SELECT source_from_block::text FROM robinhood_wallet_transfer_token_coverage
         WHERE token_address = $1`, [ATTRIBUTED_TOKEN]
@@ -245,9 +253,18 @@ describe('Robinhood directional transfer replay persistence', () => {
       `INSERT INTO robinhood_holder_token_states (token_address, ledger_status)
        VALUES ($1, 'live')`, [UNKNOWN_DEPLOYMENT_TOKEN]
     );
-    await assert.rejects(repository.stageTokenRepairCandidates({
-      runId: created.id, tokenAddresses: [UNKNOWN_DEPLOYMENT_TOKEN],
-    }), (error) => error.code === 'directional_repair_deployment_unavailable');
+    assert.deepEqual(await repository.stageTokenRepairCandidates({
+      runId: created.id, rangeId, tokenAddresses: [UNKNOWN_DEPLOYMENT_TOKEN],
+    }), { requested: 1, inserted: 0, unresolved: 1 });
+    const gap = await db.query(
+      `SELECT token_address, last_error_code
+         FROM robinhood_directional_transfer_deployment_gaps WHERE range_id = $1`, [rangeId]
+    );
+    assert.deepEqual(gap.rows[0], {
+      token_address: UNKNOWN_DEPLOYMENT_TOKEN,
+      last_error_code: 'directional_repair_deployment_unavailable',
+    });
+    assert.equal((await repository.getProgress({ runId: created.id })).deploymentGaps, 1);
     await deleteRun(created.id);
   });
 
