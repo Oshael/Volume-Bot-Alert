@@ -1,6 +1,6 @@
 # Plano de Classificação de Wallets na Robinhood Chain
 
-Atualizado em 2026-08-23. Este documento consolida as decisões de produto, o
+Atualizado em 2026-08-24. Este documento consolida as decisões de produto, o
 estado confirmado no código e o plano de implementação para enriquecer a lista
 de holders da Robinhood Chain com saldo nativo, médias de entrada/saída, PnL,
 transfers e classificações explicáveis de wallets.
@@ -142,15 +142,23 @@ em configuração versionada.
 
 #### BUNDLED
 
-- Sinal mínimo: grupo com pelo menos 2 wallets que compartilham o mesmo funder
-  não-CEX e compram na janela de lançamento no mesmo bloco ou em até 2 blocos.
-- Exigir funding anterior às compras e evidência econômica não-dust.
-- Excluir pools, routers, bridges, CEX, lockers e fan-out técnico conhecido.
+- Sinal mínimo: grupo com pelo menos 2 wallets cuja primeira compra ocorre entre
+  a âncora de lançamento e `launch_block + 3`, inclusive, e que estão conectadas
+  por funding nativo anterior às compras.
+- A relação pode ser funding direto entre membros, funder comum ou ancestral
+  comum/conectado em no máximo 2 hops. Não exigir topologia em estrela.
+- Exigir valor econômico não-dust. Lookback e threshold são versionados e devem
+  ser calibrados com o universo real antes do backfill.
+- CEX conhecida não forma grupo apenas por financiar vários destinatários: esse
+  fan-out é sinal fraco. Arestas posteriores entre as wallets continuam válidas.
+- Pools, routers, bridges, CEX, lockers, burn e fan-out técnico são barreiras de
+  travessia e não unem componentes por si próprios.
 - O resultado pertence ao grupo; cada membro recebe o identificador do bundle e
   as evidências comuns.
-- Se o funding relevante for nativo, a fase exige ingestão/RPC de transfers
-  nativos; arestas ERC-20 não são substituto silencioso.
-- Motivo público: `common_funder_launch_cluster`.
+- A única fonte de funding é o RPC Archive configurado em `RH_NODE_RPC_URL`.
+  Blocos completos comprovam transfers nativos diretos; explorer/provider
+  externo e arestas ERC-20 não são substitutos silenciosos.
+- Motivo público: `connected_funding_launch_cluster`.
 
 #### LP LOCKED
 
@@ -431,7 +439,8 @@ Uma fase só pode habilitar UI quando:
    infraestrutura, sem substituir a métrica bruta atual.
 2. Processo e fonte de manutenção do registro `CEX`.
 3. Quais AMMs e lockers entram primeiro em `LP LOCKED`.
-4. Fonte de transfers nativos para `INSIDER` e `BUNDLED`.
+4. Lookback e threshold econômico do funding nativo de `BUNDLED`, condicionados
+   ao benchmark do RPC Archive e ao teto de cinco horas.
 5. Provider externo de `FRESH`, orçamento, taxa, cobertura histórica e TTL.
 
 ### 0.12 Definição de concluído
@@ -1150,7 +1159,10 @@ O primeiro rollout deve produzir componentes explicáveis, não um score mágico
 
 - `direct_token_transfer`: A enviou o token diretamente para B;
 - `common_token_source`: A enviou o mesmo token para B e C;
-- `pre_buy_funding`: B recebeu o token antes da primeira compra;
+- `pre_buy_native_funding`: B recebeu moeda nativa antes da primeira compra;
+- `direct_member_funding`: uma wallet candidata financiou outra diretamente;
+- `connected_funding_ancestor`: candidatas possuem ancestral econômico comum ou
+  conectado em até 2 hops;
 - `same_block_buy`: wallets relacionadas compraram no mesmo bloco;
 - `short_window_buy`: wallets relacionadas compraram dentro de uma janela curta;
 - `deployer_distribution`: origem coincide com criador atribuído;
@@ -1165,6 +1177,8 @@ O primeiro rollout deve produzir componentes explicáveis, não um score mágico
 - não contar mint como financiamento;
 - não contar `dex_flow` como transfer entre wallets;
 - limitar fan-out técnico de contratos;
+- não usar origem CEX comum, isoladamente, para conectar destinatários;
+- não usar aresta ERC-20 como substituto de funding nativo;
 - exigir evidência temporal e/ou econômica adicional para `possible_bundle`.
 
 ### 11.3 Resultado público
@@ -1175,7 +1189,7 @@ Exemplo conceitual:
 {
   "kind": "possible_bundle",
   "score": 0.82,
-  "signals": ["common_token_source", "short_window_buy"],
+  "signals": ["connected_funding_ancestor", "short_window_buy"],
   "evidence": [
     { "transactionHash": "0x...", "blockNumber": 123 }
   ],
@@ -1193,7 +1207,8 @@ ETH para várias compradoras.
 
 ### 12.1 Transfers nativos diretos
 
-Blocos completos permitem observar transações com:
+Somente o RPC Archive configurado em `RH_NODE_RPC_URL` pode alimentar esta fase.
+Blocos completos, lidos com transações, permitem observar:
 
 - `from`;
 - `to`;
@@ -1201,8 +1216,14 @@ Blocos completos permitem observar transações com:
 - transaction index;
 - bloco e timestamp.
 
+O backfill parte das wallets cuja primeira compra ocorre até `launch_block + 3`,
+cria janelas pré-compra com lookback explícito e lê a união dos ranges. Não se
+autoriza varrer a chain inteira nem consultar histórico por endereço em explorer.
+O preflight deve medir blocos únicos, payload, throughput e ETA antes de escrita.
+
 Uma fase posterior pode manter raw de 30 dias e resumo permanente de arestas
-nativas, seguindo a mesma política de retenção.
+nativas, seguindo a mesma política de retenção. Funding no mesmo bloco da compra
+é elegível somente quando a posição da transação prova que ocorreu antes.
 
 ### 12.2 Transfers internos
 
@@ -1918,22 +1939,48 @@ Objetivo:
 - distinção raw versus summary;
 - linguagem que não afirma identidade.
 
-### Corte D1 — sinais de possible bundle
+### Corte D1 — candidatos e plano de scan de funding
 
 Objetivo:
 
-- componentes de score explicáveis;
-- thresholds versionados;
-- auditoria offline;
-- nenhuma ação automática.
+- selecionar primeiras compras de `launch_block` a `launch_block + 3`;
+- exigir pelo menos 2 wallets candidatas por token;
+- planejar e unir janelas pré-compra sem RPC ou escrita;
+- manter lookback explícito para benchmark, sem default silencioso.
 
-### Corte D2 — funding ETH direto
+### Corte D2 — reader e preflight do RPC Archive
 
 Objetivo:
 
-- capturar `from/to/value` de transações nativas diretas;
-- raw 30 dias e resumo permanente;
-- incorporar `common funder` com evidência.
+- ler blocos completos apenas nos ranges planejados;
+- capturar `from/to/value`, posição, bloco/hash e timestamp;
+- medir payload, throughput e ETA representativos;
+- recusar backfill projetado acima de cinco horas.
+
+### Corte D3 — projeção seed/live de funding nativo
+
+Objetivo:
+
+- raw de 30 dias e resumo permanente de arestas nativas diretas;
+- cursor, checkpoint, lease, retry e retomada idempotente;
+- preservar frontier e ausência explícita de traces.
+
+### Corte D4 — possible bundle shadow
+
+Objetivo:
+
+- formar componentes por funding direto, funder/ancestral comum em até 2 hops;
+- impedir CEX e infraestrutura de conectar destinatários por fan-out;
+- componentes e evidências explicáveis com thresholds versionados;
+- auditoria offline e nenhuma ação automática.
+
+### Corte D5 — publicação
+
+Objetivo:
+
+- publicar somente políticas e frontiers auditadas;
+- expor wallets e grupos sem afirmar propriedade comum;
+- manter alertas e bloqueios automáticos fora do rollout inicial.
 
 Transfers internos permanecem fora do escopo até RPC com traces.
 
@@ -2033,8 +2080,8 @@ unitário.
 11. Validar compactação em shadow sem remover partições.
 12. Habilitar drop somente após duas janelas completas reconciliadas.
 13. Publicar relações agregadas.
-14. Auditar possible bundle offline antes de expor score.
-15. Considerar funding ETH direto em rollout separado.
+14. Medir e materializar funding nativo direto pelo RPC Archive.
+15. Auditar possible bundle offline antes de expor grupos.
 
 Ordem de deploy por corte com schema:
 
@@ -2093,6 +2140,10 @@ A entrega de transfers só é considerada concluída quando:
 A entrega de bundle intelligence só é considerada concluída quando:
 
 - sinais são explicáveis e versionados;
+- primeiras compras respeitam a janela inclusiva `launch_block + 3`;
+- conexões usam funding nativo direto do RPC Archive e no máximo 2 hops;
+- CEX/infraestrutura não conectam componentes apenas por fan-out;
+- o backfill completo respeita o teto projetado de cinco horas;
 - pools/routers/mint/burn não geram falsos positivos óbvios;
 - resultados foram auditados offline;
 - a linguagem não afirma propriedade comum;
