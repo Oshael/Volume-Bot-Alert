@@ -1521,6 +1521,16 @@ materialização está em andamento. O heartbeat termina antes de `completeRange
 ou do registro de falha; operações legítimas acima dos 180 segundos padrão não
 podem perder ownership apenas por duração.
 
+O replay limita a oito as operações PostgreSQL simultâneas do plano de dados,
+independentemente da concorrência de ranges, deixando capacidade do pool para
+claim, heartbeat, progresso e conclusão. Timeout ao adquirir conexão é
+transitório: o runner repete somente esse erro, tanto na materialização quanto
+no controle, com backoff limitado a cinco segundos e registra
+`DB acquisition retry`; statement timeout, conflito canônico e demais erros
+continuam seguindo retry/falha do range e nunca são mascarados pelo mecanismo.
+Se o processo cair, o primeiro worker também recupera leases que expirarem
+depois do startup; não é necessário aguardar o prazo antes de retomar o comando.
+
 Antes de retomar uma campanha direcional que falhou por `edge_missing`, execute
 na VPS `npm run robinhood:wallet-position-coverage-audit`. O comando é somente
 PostgreSQL/read-only e não consulta o archive RPC. Ele exige que os cursores

@@ -32,6 +32,40 @@ function observedCount(value, label) {
   return parsed;
 }
 
+function isConnectionAcquisitionTimeout(error) {
+  return /(?:connection terminated due to connection timeout|timeout exceeded when trying to connect)/i
+    .test(String(error?.message || ''));
+}
+
+async function retryConnectionAcquisition(operation, execute, context) {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await execute();
+    } catch (error) {
+      if (!isConnectionAcquisitionTimeout(error)) throw error;
+      attempt += 1;
+      const delayMs = Math.min(5_000, 250 * (2 ** Math.min(attempt - 1, 5)));
+      context.options.onControlRetry?.(Object.freeze({
+        operation, attempt, delayMs, error,
+      }));
+      await context.sleep(delayMs);
+    }
+  }
+}
+
+function resilientControlRepository(repository, options, sleep) {
+  return new Proxy(repository, {
+    get(target, property) {
+      const operation = target[property];
+      if (typeof operation !== 'function') return operation;
+      return (...args) => retryConnectionAcquisition(
+        String(property), () => operation.apply(target, args), { options, sleep }
+      );
+    },
+  });
+}
+
 function plan(input = {}) {
   const sourceFrom = block(input.sourceFromBlock, 'sourceFromBlock');
   const sourceThrough = block(input.sourceThroughBlock, 'sourceThroughBlock');
@@ -201,7 +235,9 @@ async function materializeWithLeaseHeartbeat(context, range, owner) {
     }
   })();
   try {
-    result = await writer.materializeRange(range);
+    result = await retryConnectionAcquisition(
+      'materializeRange', () => writer.materializeRange(range), context
+    );
   } catch (error) {
     operationError = error;
   } finally {
@@ -213,6 +249,11 @@ async function materializeWithLeaseHeartbeat(context, range, owner) {
   return result;
 }
 
+async function reclaimExpiredAfterRestart(repository, run, progress, workerIndex) {
+  if (workerIndex !== 1 || progress?.status !== 'running' || progress.leased <= 0) return false;
+  return await repository.reclaimExpired(run.id) > 0;
+}
+
 async function drainWorker(context, index) {
   const { repository, run, concurrency, options, sleep, leaseMs, maxAttempts } = context;
   const owner = `${context.ownerPrefix}:${index}`;
@@ -220,6 +261,9 @@ async function drainWorker(context, index) {
     const range = await repository.claimRange({ runId: run.id, owner, leaseMs });
     if (!range) {
       let progress = await repository.getProgress({ runId: run.id, concurrency });
+      if (await reclaimExpiredAfterRestart(repository, run, progress, index)) {
+        continue;
+      }
       if (progress?.status === 'running' && progress.failed > 0
           && progress.pending === 0 && progress.leased === 0) {
         await repository.settleTokenRepairDiscovery(run.id);
@@ -248,11 +292,13 @@ async function drainWorker(context, index) {
 
 async function executeReplay(deps = {}, options = {}) {
   assertApproved(options.preflight);
-  const repository = deps.repository;
+  const baseRepository = deps.repository;
   const writer = deps.writer;
-  if (!repository || typeof writer?.materializeRange !== 'function') {
+  if (!baseRepository || typeof writer?.materializeRange !== 'function') {
     throw new Error('directional replay repository and writer are required');
   }
+  const sleep = deps.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const repository = resilientControlRepository(baseRepository, options, sleep);
   const concurrency = integer(options.preflight.concurrency, 'concurrency', 1, 16);
   const run = await resolveRun(repository, options);
   if (!['running', 'completed'].includes(run.status)) {
@@ -269,7 +315,7 @@ async function executeReplay(deps = {}, options = {}) {
   await repository.reclaimExpired(run.id);
   const context = {
     repository, writer, run, concurrency, options,
-    sleep: deps.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
+    sleep,
     leaseMs: integer(options.leaseMs ?? 180_000, 'leaseMs', 120_001, 1_200_000),
     heartbeatMs: integer(
       deps.heartbeatMs ?? Math.floor((options.leaseMs ?? 180_000) / 3),
@@ -286,4 +332,10 @@ async function executeReplay(deps = {}, options = {}) {
   });
 }
 
-module.exports = { executeReplay, plan, runPreflight };
+module.exports = {
+  executeReplay, plan, runPreflight,
+  __private: {
+    isConnectionAcquisitionTimeout, reclaimExpiredAfterRestart,
+    resilientControlRepository, retryConnectionAcquisition,
+  },
+};

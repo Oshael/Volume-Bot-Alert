@@ -215,4 +215,101 @@ describe('Robinhood directional transfer replay runner', () => {
     }, { preflight: { ...SOURCE, approved: true, concurrency: 1 } });
     assert.deepEqual(calls, [['renew', '13'], ['complete', '13']]);
   });
+
+  it('retries transient control connection acquisition without aborting the campaign', async () => {
+    const retries = [];
+    let claims = 0;
+    const repository = {
+      async createRun() { return { id: '14', status: 'planned' }; },
+      async ensureTokenScope() {}, async startRun() {}, async reclaimExpired() {},
+      async claimRange() {
+        claims += 1;
+        if (claims === 1) throw new Error('Connection terminated due to connection timeout');
+        return null;
+      },
+      async getProgress() { return { status: 'completed', total: 0, completed: 0 }; },
+    };
+    const result = await executeReplay({
+      repository, writer: { async materializeRange() {} }, sleep: async () => {},
+    }, {
+      preflight: { ...SOURCE, approved: true, concurrency: 1 },
+      onControlRetry(value) { retries.push(value); },
+    });
+    assert.equal(result.status, 'completed');
+    assert.equal(claims, 2);
+    assert.deepEqual(retries.map(({ operation, attempt, delayMs }) => (
+      { operation, attempt, delayMs }
+    )), [{ operation: 'claimRange', attempt: 1, delayMs: 250 }]);
+  });
+
+  it('retries data connection acquisition without consuming a range attempt', async () => {
+    let claimed = false;
+    let materializations = 0;
+    let completed = false;
+    const retries = [];
+    const repository = {
+      async createRun() { return { id: '15', status: 'planned' }; },
+      async ensureTokenScope() {}, async startRun() {}, async reclaimExpired() {},
+      async claimRange() {
+        if (claimed) return null;
+        claimed = true;
+        return { id: '16', rangeStartBlock: '100', rangeEndBlock: '199', attemptCount: 1 };
+      },
+      async completeRange() { completed = true; },
+      async getProgress() {
+        return { status: completed ? 'completed' : 'running', total: 1,
+          completed: completed ? 1 : 0, failed: 0, pending: 0, leased: completed ? 0 : 1 };
+      },
+    };
+    await executeReplay({
+      repository, sleep: async () => {}, writer: { async materializeRange() {
+        materializations += 1;
+        if (materializations === 1) {
+          throw new Error('Connection terminated due to connection timeout');
+        }
+        return {
+          completedThroughBlock: '199', completedThroughHash: HASH,
+          blocksScanned: 100, transfersScanned: 10, edgesConsidered: 4, edgesWritten: 3,
+        };
+      } },
+    }, {
+      preflight: { ...SOURCE, approved: true, concurrency: 1 },
+      onControlRetry(value) { retries.push(value); },
+    });
+    assert.equal(materializations, 2);
+    assert.deepEqual(retries.map(({ operation }) => operation), ['materializeRange']);
+  });
+
+  it('reclaims leases that expire after a crashed replay was restarted', async () => {
+    let initialReclaim = true;
+    let reclaimed = false;
+    let completed = false;
+    const repository = {
+      async createRun() { return { id: '17', status: 'planned' }; },
+      async ensureTokenScope() {}, async startRun() {},
+      async reclaimExpired() {
+        if (initialReclaim) { initialReclaim = false; return 0; }
+        reclaimed = true;
+        return 1;
+      },
+      async claimRange() {
+        if (!reclaimed || completed) return null;
+        return { id: '18', rangeStartBlock: '100', rangeEndBlock: '199', attemptCount: 1 };
+      },
+      async completeRange() { completed = true; },
+      async getProgress() {
+        return { status: completed ? 'completed' : 'running', total: 1,
+          completed: completed ? 1 : 0, failed: 0, pending: 0,
+          leased: completed ? 0 : 1 };
+      },
+    };
+    const result = await executeReplay({
+      repository, writer: { async materializeRange() { return {
+        completedThroughBlock: '199', completedThroughHash: HASH,
+        blocksScanned: 100, transfersScanned: 10, edgesConsidered: 4, edgesWritten: 3,
+      }; } },
+    }, { preflight: { ...SOURCE, approved: true, concurrency: 1 } });
+    assert.equal(result.status, 'completed');
+    assert.equal(reclaimed, true);
+  });
 });

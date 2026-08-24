@@ -3,6 +3,7 @@ const { describe, it } = require('node:test');
 
 const {
   assertSchema, frozenSourceFromPlan, main, parseArgs,
+  __private: { createReplayDataDatabase },
 } = require('../src/utils/replay-robinhood-directional-transfer-evidence');
 
 const HASH = `0x${'a'.repeat(64)}`;
@@ -33,6 +34,50 @@ function runtime(overrides = {}) {
 }
 
 describe('Robinhood directional transfer replay CLI', () => {
+  it('reserves PostgreSQL capacity by bounding replay data operations', async () => {
+    let active = 0;
+    let maximum = 0;
+    const releases = [];
+    const database = createReplayDataDatabase({
+      async query(value) {
+        active += 1;
+        maximum = Math.max(maximum, active);
+        await new Promise((resolve) => releases.push(resolve));
+        active -= 1;
+        return { rows: [value] };
+      },
+      async getClient() { throw new Error('unexpected client'); },
+    }, 2);
+    const queries = [1, 2, 3, 4].map((value) => database.query(value));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(active, 2);
+    releases.splice(0).forEach((release) => release());
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(active, 2);
+    releases.splice(0).forEach((release) => release());
+    assert.deepEqual((await Promise.all(queries)).map(({ rows }) => rows[0]), [1, 2, 3, 4]);
+    assert.equal(maximum, 2);
+  });
+
+  it('holds a replay data permit for the full database transaction', async () => {
+    let queries = 0;
+    let releases = 0;
+    const database = createReplayDataDatabase({
+      async query() { queries += 1; return { rows: [] }; },
+      async getClient() {
+        return { async query() { return { rows: [] }; }, release() { releases += 1; } };
+      },
+    }, 1);
+    const client = await database.getClient();
+    const queued = database.query('SELECT 1');
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(queries, 0);
+    client.release();
+    await queued;
+    assert.equal(queries, 1);
+    assert.equal(releases, 1);
+  });
+
   it('parses bounded dry-run defaults and guarded retry options', () => {
     assert.deepEqual(parseArgs([]), {
       apply: false, retryFailed: false, runId: undefined,

@@ -25,6 +25,55 @@ const VALUE_ARGUMENTS = new Set([
   'run-id', 'range-blocks', 'concurrency', 'samples', 'max-hours',
   'lease-ms', 'max-attempts',
 ]);
+const REPLAY_DATA_DB_CONCURRENCY = 8;
+
+function createGate(limit) {
+  let active = 0;
+  const waiting = [];
+  function release() {
+    const next = waiting.shift();
+    if (next) next(release);
+    else active -= 1;
+  }
+  async function acquire() {
+    if (active >= limit) return new Promise((resolve) => waiting.push(resolve));
+    active += 1;
+    return release;
+  }
+  return { acquire };
+}
+
+function createReplayDataDatabase(database, concurrency = REPLAY_DATA_DB_CONCURRENCY) {
+  const gate = createGate(concurrency);
+  async function query(...args) {
+    const release = await gate.acquire();
+    try {
+      return await database.query(...args);
+    } finally {
+      release();
+    }
+  }
+  async function getClient() {
+    const release = await gate.acquire();
+    try {
+      const client = await database.getClient();
+      let released = false;
+      return {
+        query: client.query.bind(client),
+        release() {
+          if (released) return;
+          released = true;
+          client.release();
+          release();
+        },
+      };
+    } catch (error) {
+      release();
+      throw error;
+    }
+  }
+  return Object.freeze({ query, getClient });
+}
 
 function bounded(value, fallback, minimum, maximum, label) {
   const parsed = Number(value ?? fallback);
@@ -153,14 +202,15 @@ async function assertSchema(database) {
 
 async function buildRuntime(options = {}, deps = {}) {
   const database = deps.database || db;
+  const dataDatabase = createReplayDataDatabase(database);
   await assertSchema(database);
   const transfer = await (deps.archiveRuntimeFactory || buildArchiveTransferRuntime)(
-    options, { ...deps, database }
+    options, { ...deps, database: dataDatabase }
   );
   const repository = (deps.replayRepositoryFactory
     || createRobinhoodDirectionalTransferReplayRepository)({ database });
   const evidenceRepository = (deps.evidenceRepositoryFactory
-    || createRobinhoodDirectionalTransferEvidenceRepository)({ database });
+    || createRobinhoodDirectionalTransferEvidenceRepository)({ database: dataDatabase });
   const writer = (deps.writerFactory || createRobinhoodDirectionalTransferReplayWriter)({
     rangeDeps: transfer.tickDeps,
     repository: evidenceRepository,
@@ -207,6 +257,10 @@ async function main(argv = process.argv.slice(2), deps = {}) {
     preflight, runId: options.runId, retryFailed: options.retryFailed,
     leaseMs: options.leaseMs, maxAttempts: options.maxAttempts,
     onProgress: progressReporter(logger),
+    onControlRetry: ({ operation, attempt, delayMs, error }) => (
+      logger.error || logger.log
+    ).call(logger, `[DirectionalReplay] DB acquisition retry operation=${operation}`
+      + ` attempt=${attempt} delay=${delayMs}ms error=${error.message}`),
     onRun: ({ runId, status, requeued }) => (logger.error || logger.log).call(
       logger, `[DirectionalReplay] run-id=${runId} status=${status} requeued=${requeued}`
     ),
@@ -222,4 +276,5 @@ if (require.main === module) main().catch((error) => {
 
 module.exports = {
   assertSchema, buildRuntime, frozenSourceFromPlan, main, parseArgs, progressReporter, resolveSource,
+  __private: { createReplayDataDatabase },
 };
