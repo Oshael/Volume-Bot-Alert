@@ -261,18 +261,32 @@ function createRobinhoodDirectionalTransferReplayRepository(options = {}) {
         [runId, CHAIN]
       );
       if (!context.rows[0]) throw new Error('directional repair frontier is unavailable');
-      const scope = await client.query(
-        `SELECT COUNT(*)::integer AS matched,
-                COUNT(*) FILTER (WHERE deployment_block IS NULL
-                  OR deployment_block <= 0
-                  OR deployment_block > $3::bigint)::integer AS unavailable
-           FROM robinhood_holder_token_states
-          WHERE chain = $1::varchar AND token_address = ANY($2::varchar[])`,
-        [CHAIN, tokenAddresses, String(context.rows[0].source_through_block)]
+      const deployments = await client.query(
+        `SELECT item.token_address,
+                CASE
+                  WHEN state.token_address IS NULL THEN NULL
+                  WHEN state.deployment_block IS NOT NULL THEN
+                    CASE WHEN state.deployment_block > 0
+                           AND state.deployment_block <= $3::bigint
+                         THEN state.deployment_block END
+                  WHEN attribution.source = ANY($4::varchar[])
+                       AND attribution.attribution_block > 0
+                       AND attribution.attribution_block <= $3::bigint
+                    THEN attribution.attribution_block
+                END::text AS deployment_block
+           FROM UNNEST($1::varchar[]) AS item(token_address)
+           LEFT JOIN robinhood_holder_token_states state
+             ON state.chain = $2 AND state.token_address = item.token_address
+           LEFT JOIN robinhood_token_attributions attribution
+             ON attribution.chain = $2 AND attribution.token_address = item.token_address`,
+        [tokenAddresses, CHAIN, String(context.rows[0].source_through_block),
+          ['rpc_direct', 'launchpad_event']]
       );
-      if (scope.rows[0].matched !== tokenAddresses.length || scope.rows[0].unavailable > 0) {
+      const unavailable = deployments.rows.filter((row) => row.deployment_block == null);
+      if (unavailable.length > 0) {
         const error = new Error('directional repair candidate has no exact deployment block');
         error.code = 'directional_repair_deployment_unavailable';
+        error.tokenAddresses = unavailable.map((row) => row.token_address);
         throw error;
       }
       const frontier = context.rows[0];
@@ -280,15 +294,17 @@ function createRobinhoodDirectionalTransferReplayRepository(options = {}) {
         `INSERT INTO robinhood_wallet_transfer_token_coverage (
            chain, projection_version, token_address, source_from_block, next_block,
            source_through_block, source_through_hash
-         ) SELECT state.chain, $2::varchar, state.token_address,
-                  GREATEST($3::bigint, state.deployment_block),
-                  GREATEST($3::bigint, state.deployment_block), $4::bigint, $5
-             FROM robinhood_holder_token_states state
-            WHERE state.chain = $1::varchar AND state.token_address = ANY($6::varchar[])
+         ) SELECT $1::varchar, $2::varchar, item.token_address,
+                  GREATEST($3::bigint, item.deployment_block),
+                  GREATEST($3::bigint, item.deployment_block), $4::bigint, $5
+             FROM UNNEST($6::varchar[], $7::bigint[])
+               AS item(token_address, deployment_block)
          ON CONFLICT (chain, projection_version, token_address) DO NOTHING
          RETURNING token_address`,
         [CHAIN, frontier.projection_version, String(frontier.source_from_block),
-          String(frontier.source_through_block), frontier.source_through_hash, tokenAddresses]
+          String(frontier.source_through_block), frontier.source_through_hash,
+          deployments.rows.map((row) => row.token_address),
+          deployments.rows.map((row) => row.deployment_block)]
       );
       await client.query('COMMIT');
       return Object.freeze({ requested: tokenAddresses.length, inserted: inserted.rowCount });

@@ -10,6 +10,9 @@ const {
 const stage116 = require('../src/utils/db-init-stage116');
 const stage129 = require('../src/utils/db-init-stage129');
 const stage134 = require('../src/utils/db-init-stage134');
+const stage110 = require('../src/utils/db-init-stage110');
+const stage113 = require('../src/utils/db-init-stage113');
+const stage114 = require('../src/utils/db-init-stage114');
 const stage154 = require('../src/utils/db-init-stage154');
 const stage158 = require('../src/utils/db-init-stage158');
 const stage159 = require('../src/utils/db-init-stage159');
@@ -18,6 +21,7 @@ const { assertUsingTestDatabase } = require('./helpers/test-db');
 const HASH = `0x${'a'.repeat(64)}`;
 const COVERAGE_HASH = `0x${'b'.repeat(64)}`;
 const TOKEN = `0x${'d'.repeat(40)}`;
+const ATTRIBUTED_TOKEN = `0x${'c'.repeat(40)}`;
 const REPAIR_TOKEN = `0x${'e'.repeat(40)}`;
 const UNKNOWN_DEPLOYMENT_TOKEN = `0x${'f'.repeat(40)}`;
 
@@ -26,6 +30,10 @@ async function cleanup() {
   await db.query('DELETE FROM robinhood_directional_transfer_replay_ranges');
   await db.query('DELETE FROM robinhood_directional_transfer_replay_runs');
   await db.query('DELETE FROM robinhood_wallet_transfer_token_coverage');
+  await db.query(
+    'DELETE FROM robinhood_token_attributions WHERE token_address = ANY($1::varchar[])',
+    [[ATTRIBUTED_TOKEN, REPAIR_TOKEN, UNKNOWN_DEPLOYMENT_TOKEN]]
+  );
   await db.query(
     "DELETE FROM robinhood_wallet_transfer_cursors WHERE projection_version = 'test_directional_v1'"
   );
@@ -77,7 +85,9 @@ async function complete(repository, runId, range, ownerName, stats = {}) {
 describe('Robinhood directional transfer replay persistence', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
-    for (const stage of [stage116, stage129, stage134, stage154, stage158, stage159]) {
+    for (const stage of [
+      stage110, stage113, stage114, stage116, stage129, stage134, stage154, stage158, stage159,
+    ]) {
       await stage.init({ closePool: false });
     }
     await cleanup();
@@ -212,6 +222,25 @@ describe('Robinhood directional transfer replay persistence', () => {
     assert.deepEqual(coverage.rows[0], {
       source_from_block: '120', next_block: '120', source_through_block: '250', status: 'pending',
     });
+    await db.query(
+      `INSERT INTO robinhood_holder_token_states (token_address, ledger_status)
+       VALUES ($1, 'live')`, [ATTRIBUTED_TOKEN]
+    );
+    await db.query(
+      `INSERT INTO robinhood_token_attributions (
+         token_address, creator_address, source, attribution_block, attribution_tx_hash,
+         last_resolved_at
+       ) VALUES ($1, $2, 'rpc_direct', 130, $3, NOW())`,
+      [ATTRIBUTED_TOKEN, `0x${'1'.repeat(40)}`, HASH]
+    );
+    assert.deepEqual(await repository.stageTokenRepairCandidates({
+      runId: created.id, tokenAddresses: [ATTRIBUTED_TOKEN],
+    }), { requested: 1, inserted: 1 });
+    const attributedCoverage = await db.query(
+      `SELECT source_from_block::text FROM robinhood_wallet_transfer_token_coverage
+        WHERE token_address = $1`, [ATTRIBUTED_TOKEN]
+    );
+    assert.equal(attributedCoverage.rows[0].source_from_block, '130');
     await db.query(
       `INSERT INTO robinhood_holder_token_states (token_address, ledger_status)
        VALUES ($1, 'live')`, [UNKNOWN_DEPLOYMENT_TOKEN]

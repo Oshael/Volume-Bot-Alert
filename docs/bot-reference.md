@@ -1483,8 +1483,10 @@ campanha limitada, acrescente `--confirm-repair-robinhood-wallet-transfer-tokens
 processar ranges. O comando nunca inicializa o catálogo inteiro: quando o replay
 encontra `directional_replay_edge_missing`, o range sofre rollback e somente os
 tokens ausentes são inseridos como candidatos. Cada candidato começa em
-`GREATEST(run.source_from_block, holder_state.deployment_block)`; deployment
-ausente ou zero falha fechado com `directional_repair_deployment_unavailable`.
+`GREATEST(run.source_from_block, holder_state.deployment_block)`. Estados legados
+sem esse campo usam somente uma atribuição exata `rpc_direct` ou
+`launchpad_event`; sem nenhuma dessas provas, deployment ausente ou zero falha
+fechado com `directional_repair_deployment_unavailable`.
 Cada token é reconstruído em shadow e promovido em uma única
 transação que trava o cursor LIVE; se a frontier avançou, somente o delta volta
 a `pending`, sem apagar uma projeção oficial ainda válida. `published_at` é a
