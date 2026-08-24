@@ -79,8 +79,10 @@ async function main(argv = process.argv.slice(2), deps = {}) {
   const report = Object.freeze({
     mode: 'read-only', source: 'postgresql-first-buy-launch-anchor',
     completeThroughBlock: loaded.completeThroughBlock,
+    liveTokens: loaded.liveTokens,
     firstBuyTokens: loaded.firstBuyTokens,
     anchoredTokens: loaded.anchoredTokens,
+    tokensWithoutFirstBuy: loaded.tokensWithoutFirstBuy,
     missingAnchorTokens: loaded.missingAnchorTokens,
     anchorCoverageComplete: loaded.anchorCoverageComplete,
     sourceCandidateRows: loaded.candidates.length,

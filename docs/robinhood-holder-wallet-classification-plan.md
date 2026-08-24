@@ -1950,8 +1950,11 @@ Objetivo:
 
 O planejador puro e o comando read-only usam exclusivamente as projeções
 canônicas de first-buy/launch, falham fechado sem frontier completa de first-buy
-e não expõem endereços no relatório. Tokens sem âncora ficam explicitamente fora
-da cobertura, sem bloquear os demais. Lookbacks são informados pelo operador.
+e não expõem endereços no relatório. A população é restrita a holder ledgers
+`live` dentro dessa frontier; tokens live sem first-buy ou âncora ficam explícitos
+no relatório. Ausência de first-buy torna o token inelegível; ausência de âncora
+torna a regra indisponível só para aquele token. Lookbacks são informados pelo
+operador.
 
 ### Corte D2 — reader e preflight do RPC Archive
 

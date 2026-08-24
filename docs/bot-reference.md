@@ -1480,9 +1480,10 @@ timeout de 100–30.000 ms protegem o PostgreSQL; o default é 20/10.000 ms.
 O planejamento inicial de funding para `BUNDLED` também é estritamente read-only:
 `npm run robinhood:bundle-funding-plan -- --lookback-blocks=100,1000,5000` lê
 somente first-buys e âncoras materializadas no PostgreSQL, exige seed/cursor de
-first-buy completos, reporta separadamente tokens sem launch anchor e compara
-ranges/blocos únicos para cada lookback. Tokens sem âncora ficam indisponíveis
-sem bloquear os cobertos. O comando
+first-buy completos e restringe a população a holder ledgers `live` cuja frontier
+está coberta. O relatório separa tokens live sem first-buy ou launch anchor e
+compara ranges/blocos únicos para cada lookback. Sem first-buy o token é
+inelegível; sem âncora, fica indisponível sem bloquear os cobertos. O comando
 não chama RPC, não grava banco e não imprime wallets ou ranges individuais;
 `--source-from-block` e `--statement-timeout-ms` são opcionais. Ainda não existe
 reader, backfill, worker ou publicação de `BUNDLED`. A leitura recusa universos

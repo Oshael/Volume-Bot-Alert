@@ -11,13 +11,23 @@ const COVERAGE_SQL = `SELECT cursor.source_next_block::text,
     ON seed.id = cursor.seed_run_id AND seed.chain = cursor.chain
  WHERE cursor.chain = $1`;
 
-const ANCHOR_COVERAGE_SQL = `SELECT
+const ANCHOR_COVERAGE_SQL = `WITH live_tokens AS MATERIALIZED (
+  SELECT state.chain, state.token_address, state.live_through_block
+    FROM robinhood_holder_token_states state
+   WHERE state.chain = $1 AND state.ledger_status = 'live'
+     AND state.live_through_block IS NOT NULL AND state.live_through_hash IS NOT NULL
+     AND state.live_through_block <= $2::bigint
+) SELECT COUNT(DISTINCT live.token_address)::text AS live_tokens,
        COUNT(DISTINCT buy.token_address)::text AS first_buy_tokens,
-       COUNT(DISTINCT anchor.token_address)::text AS anchored_tokens
-  FROM robinhood_wallet_token_first_buys buy
+       COUNT(DISTINCT anchor.token_address)
+         FILTER (WHERE buy.token_address IS NOT NULL)::text AS anchored_tokens
+  FROM live_tokens live
+  LEFT JOIN robinhood_wallet_token_first_buys buy
+    ON buy.chain = live.chain AND buy.token_address = live.token_address
+   AND buy.block_number <= live.live_through_block
   LEFT JOIN robinhood_token_launch_anchors anchor
-    ON anchor.chain = buy.chain AND anchor.token_address = buy.token_address
- WHERE buy.chain = $1 AND buy.block_number <= $2::bigint`;
+    ON anchor.chain = live.chain AND anchor.token_address = live.token_address
+   AND anchor.launch_block <= live.live_through_block`;
 
 const CANDIDATES_SQL = `WITH early AS MATERIALIZED (
 SELECT anchor.token_address, buy.wallet_address,
@@ -27,9 +37,15 @@ SELECT anchor.token_address, buy.wallet_address,
   FROM robinhood_token_launch_anchors anchor
   INNER JOIN robinhood_wallet_token_first_buys buy
     ON buy.chain = anchor.chain AND buy.token_address = anchor.token_address
+  INNER JOIN robinhood_holder_token_states state
+    ON state.chain = buy.chain AND state.token_address = buy.token_address
  WHERE anchor.chain = $1
+   AND state.ledger_status = 'live'
+   AND state.live_through_block IS NOT NULL AND state.live_through_hash IS NOT NULL
+   AND state.live_through_block <= $2::bigint
+   AND anchor.launch_block <= state.live_through_block
    AND buy.block_number BETWEEN anchor.launch_block AND anchor.launch_block + 3
-   AND buy.block_number <= $2::bigint
+   AND buy.block_number <= state.live_through_block
    AND buy.wallet_address NOT IN (
      '0x0000000000000000000000000000000000000000',
      '0x000000000000000000000000000000000000dead'
@@ -99,8 +115,10 @@ function createRobinhoodBundleFundingCandidateSource(options = {}) {
     const anchorCoverage = (await query(
       ANCHOR_COVERAGE_SQL, [CHAIN, completeThroughBlock]
     )).rows[0];
+    const liveTokens = String(anchorCoverage?.live_tokens ?? '0');
     const firstBuyTokens = String(anchorCoverage?.first_buy_tokens ?? '0');
     const anchoredTokens = String(anchorCoverage?.anchored_tokens ?? '0');
+    const tokensWithoutFirstBuy = (BigInt(liveTokens) - BigInt(firstBuyTokens)).toString();
     const missingAnchorTokens = (BigInt(firstBuyTokens) - BigInt(anchoredTokens)).toString();
     const result = await query(CANDIDATES_SQL, [
       CHAIN, completeThroughBlock, maxCandidateRows + 1,
@@ -114,8 +132,10 @@ function createRobinhoodBundleFundingCandidateSource(options = {}) {
       ready: true,
       reason: null,
       completeThroughBlock,
+      liveTokens,
       firstBuyTokens,
       anchoredTokens,
+      tokensWithoutFirstBuy,
       missingAnchorTokens,
       anchorCoverageComplete: missingAnchorTokens === '0',
       candidates: Object.freeze(result.rows.map(normalizeCandidate)),

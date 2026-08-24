@@ -13,7 +13,7 @@ const TOKEN = `0x${'1'.repeat(40)}`;
 const WALLET = `0x${'2'.repeat(40)}`;
 
 function database(coverage, candidates = [], anchorCoverage = {
-  first_buy_tokens: '10', anchored_tokens: '10',
+  live_tokens: '12', first_buy_tokens: '10', anchored_tokens: '10',
 }) {
   const calls = [];
   return {
@@ -47,11 +47,20 @@ describe('Robinhood bundle funding candidate source', () => {
       firstBuyBlock: '103', firstBuyTransactionIndex: '4',
     });
     assert.equal(result.firstBuyTokens, '10');
+    assert.equal(result.liveTokens, '12');
+    assert.equal(result.tokensWithoutFirstBuy, '2');
     assert.equal(result.anchorCoverageComplete, true);
     assert.equal(db.calls.length, 3);
     assert.equal(db.calls.every(({ timeout }) => timeout === 5_000), true);
+    assert.match(db.calls[1].sql, /robinhood_holder_token_states/);
+    assert.match(db.calls[1].sql, /COUNT\(DISTINCT live\.token_address\)/);
+    assert.match(db.calls[1].sql, /state\.ledger_status = 'live'/);
+    assert.match(db.calls[1].sql, /state\.live_through_block <= \$2::bigint/);
     assert.equal(db.calls[2].params[2], 500_001);
     assert.match(db.calls[2].sql, /anchor\.launch_block \+ 3/);
+    assert.match(db.calls[2].sql, /robinhood_holder_token_states/);
+    assert.match(db.calls[2].sql, /state\.ledger_status = 'live'/);
+    assert.match(db.calls[2].sql, /buy\.block_number <= state\.live_through_block/);
     assert.match(db.calls[2].sql, /robinhood_infrastructure_registry/);
     assert.match(db.calls[2].sql, /token_wallets >= 2/);
   });
@@ -59,7 +68,7 @@ describe('Robinhood bundle funding candidate source', () => {
   it('reports missing anchors without blocking covered tokens', async () => {
     const db = database({
       source_next_block: '201', caught_up: true, seed_status: 'completed',
-    }, [], { first_buy_tokens: '10', anchored_tokens: '9' });
+    }, [], { live_tokens: '12', first_buy_tokens: '10', anchored_tokens: '9' });
     const result = await createRobinhoodBundleFundingCandidateSource({ database: db }).load();
 
     assert.equal(result.ready, true);
@@ -118,8 +127,9 @@ describe('Robinhood bundle funding workload command', () => {
     const report = await main([], {
       options: { lookbackBlocks: [10, 100], sourceFromBlock: '0', statementTimeoutMs: 5_000 },
       source: { load: async () => ({
-        ready: true, completeThroughBlock: '200', firstBuyTokens: '10',
-        anchoredTokens: '9', missingAnchorTokens: '1', anchorCoverageComplete: false,
+        ready: true, completeThroughBlock: '200', liveTokens: '12',
+        firstBuyTokens: '10', anchoredTokens: '9', tokensWithoutFirstBuy: '2',
+        missingAnchorTokens: '1', anchorCoverageComplete: false,
         candidates: [{ secret: WALLET }],
       }) },
       planner: ({ lookbackBlocks }) => ({
@@ -132,6 +142,8 @@ describe('Robinhood bundle funding workload command', () => {
 
     assert.equal(report.mode, 'read-only');
     assert.equal(report.sourceCandidateRows, 1);
+    assert.equal(report.liveTokens, '12');
+    assert.equal(report.tokensWithoutFirstBuy, '2');
     assert.equal(report.missingAnchorTokens, '1');
     assert.deepEqual(report.plans.map(({ lookbackBlocks }) => lookbackBlocks), ['10', '100']);
     assert.equal(JSON.stringify(report).includes(WALLET), false);
