@@ -219,7 +219,7 @@ describe('Robinhood directional transfer replay runner', () => {
   it('retries transient control connection acquisition without aborting the campaign', async () => {
     const retries = [];
     let claims = 0;
-    const repository = {
+    const repository = Object.freeze({
       async createRun() { return { id: '14', status: 'planned' }; },
       async ensureTokenScope() {}, async startRun() {}, async reclaimExpired() {},
       async claimRange() {
@@ -228,7 +228,7 @@ describe('Robinhood directional transfer replay runner', () => {
         return null;
       },
       async getProgress() { return { status: 'completed', total: 0, completed: 0 }; },
-    };
+    });
     const result = await executeReplay({
       repository, writer: { async materializeRange() {} }, sleep: async () => {},
     }, {

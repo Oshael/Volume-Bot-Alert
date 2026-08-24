@@ -55,15 +55,13 @@ async function retryConnectionAcquisition(operation, execute, context) {
 }
 
 function resilientControlRepository(repository, options, sleep) {
-  return new Proxy(repository, {
-    get(target, property) {
-      const operation = target[property];
-      if (typeof operation !== 'function') return operation;
-      return (...args) => retryConnectionAcquisition(
-        String(property), () => operation.apply(target, args), { options, sleep }
-      );
-    },
-  });
+  return Object.freeze(Object.fromEntries(Object.entries(repository).map(([property, value]) => (
+    typeof value !== 'function' ? [property, value] : [property, (...args) => (
+      retryConnectionAcquisition(
+        property, () => value.apply(repository, args), { options, sleep }
+      )
+    )]
+  ))));
 }
 
 function plan(input = {}) {
