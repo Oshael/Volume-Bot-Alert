@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  graphqlOperation, isCreatePostUrl, isTimelinePollUrl, summarize,
+  graphqlOperation, isCreatePostUrl, isTimelinePollUrl, safeMetadata, summarize,
 } = require('../src/utils/x-push-latency-probe');
 
 test('classifies the publisher acknowledgement without treating it as polling', () => {
@@ -37,4 +37,19 @@ test('summarizes the 200ms gate and fails closed on a missing push', () => {
   const failing = summarize([{ latencyMs: 80 }, { latencyMs: null }], 200);
   assert.equal(failing.missed, 1);
   assert.equal(failing.verdict, 'fail');
+});
+
+test('redacts push registration credentials without dropping useful post data', () => {
+  const payload = JSON.stringify({
+    registration_ids: ['https://fcm.googleapis.com/fcm/send/device-secret'],
+    title: 'Publisher',
+    body: 'Post body',
+    tag: 'tweet-123',
+  });
+  const [metadata] = safeMetadata([{ key: 'Payload', value: payload }]);
+
+  assert.doesNotMatch(metadata.value, /device-secret|fcm\/send\//);
+  assert.match(metadata.value, /Publisher/);
+  assert.match(metadata.value, /Post body/);
+  assert.match(metadata.value, /tweet-123/);
 });

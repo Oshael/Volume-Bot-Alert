@@ -853,7 +853,10 @@ Preparacao manual, sempre com contas descartaveis:
 
 CDP da controle integral do perfil: bind somente em localhost e nunca usar conta
 valiosa. O probe nao prova escala de 500 contas; primeiro decide existencia,
-conteudo e latencia do canal.
+conteudo e latencia do canal. O recorder remove endpoints/tokens de registro do
+push antes de escrever no terminal ou JSONL, abre o arquivo sem seguir symlink e
+forca permissao `0600`. No worker continuo, preferir que o Playwright inicie um
+perfil dedicado com `launchPersistentContext`, sem expor porta CDP TCP.
 
 ### Bloco 3 - Ingestao continua
 

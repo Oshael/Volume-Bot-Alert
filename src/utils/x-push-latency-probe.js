@@ -72,13 +72,51 @@ function summarize(acks, targetMs) {
   };
 }
 
+const SENSITIVE_METADATA_KEY = /auth|cookie|token|secret|registration|subscription|endpoint|p256dh/i;
+const FCM_ENDPOINT = /https:\/\/fcm\.googleapis\.com\/(?:fcm\/send|wp)\/[^\s"'\\]+/gi;
+
+function redactSensitiveValue(value) {
+  if (Array.isArray(value)) return value.map(redactSensitiveValue);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, nested]) => [
+      key,
+      SENSITIVE_METADATA_KEY.test(key) ? '[redacted]' : redactSensitiveValue(nested),
+    ]));
+  }
+  return value;
+}
+
+function redactSensitiveText(value) {
+  const text = String(value);
+  try {
+    return JSON.stringify(redactSensitiveValue(JSON.parse(text)), null, 2);
+  } catch {
+    return text
+      .replace(FCM_ENDPOINT, (endpoint) => `${endpoint.slice(0, endpoint.lastIndexOf('/') + 1)}[redacted]`)
+      .replace(/("registration_ids?"\s*:\s*)\[[^\]]*\]/gi, '$1["[redacted]"]')
+      .replace(/("(?:registration_ids?|endpoint|auth|cookie|token|secret|p256dh)"\s*:\s*)"[^"]*"/gi, '$1"[redacted]"');
+  }
+}
+
 function safeMetadata(items) {
   return (items || []).slice(0, 30).map(({ key, value }) => ({
     key: String(key).slice(0, 120),
-    value: /auth|cookie|token|secret/i.test(String(key))
+    value: SENSITIVE_METADATA_KEY.test(String(key))
       ? '[redacted]'
-      : String(value).slice(0, 500),
+      : redactSensitiveText(value).slice(0, 500),
   }));
+}
+
+function secureAppend(outputPath, line) {
+  const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_APPEND
+    | (fs.constants.O_NOFOLLOW || 0);
+  const descriptor = fs.openSync(outputPath, flags, 0o600);
+  try {
+    fs.fchmodSync(descriptor, 0o600);
+    fs.writeSync(descriptor, `${line}\n`, null, 'utf8');
+  } finally {
+    fs.closeSync(descriptor);
+  }
 }
 
 function createRecorder({ outputPath, targetMs }) {
@@ -98,7 +136,7 @@ function createRecorder({ outputPath, targetMs }) {
     };
     const line = JSON.stringify(record);
     console.log(line);
-    if (outputPath) fs.appendFileSync(outputPath, `${line}\n`, { encoding: 'utf8', mode: 0o600 });
+    if (outputPath) secureAppend(outputPath, line);
     return record;
   }
 
@@ -292,4 +330,6 @@ if (require.main === module) {
   });
 }
 
-module.exports = { graphqlOperation, isCreatePostUrl, isTimelinePollUrl, summarize };
+module.exports = {
+  graphqlOperation, isCreatePostUrl, isTimelinePollUrl, redactSensitiveText, safeMetadata, summarize,
+};
