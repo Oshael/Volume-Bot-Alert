@@ -373,6 +373,23 @@ function createRobinhoodDirectionalTransferReplayRepository(options = {}) {
     return result.rowCount;
   }
 
+  async function renewRangeLease(input = {}) {
+    const runId = uint(input.runId, 'runId');
+    const rangeId = uint(input.rangeId, 'rangeId');
+    const leaseOwner = owner(input.owner);
+    const leaseMs = boundedInteger(input.leaseMs, 'leaseMs', 5000, 1_200_000);
+    const result = await database.query(
+      `UPDATE robinhood_directional_transfer_replay_ranges SET
+         lease_until = NOW() + ($4::bigint * INTERVAL '1 millisecond'), updated_at = NOW()
+       WHERE id = $1::bigint AND run_id = $2::bigint AND chain = $5
+         AND status = 'leased' AND lease_owner = $3 AND lease_until > NOW()
+       RETURNING lease_until`,
+      [rangeId, runId, leaseOwner, leaseMs, CHAIN]
+    );
+    if (!result.rowCount) throw new Error('directional replay range lease is stale');
+    return result.rows[0].lease_until;
+  }
+
   async function retryRange(input = {}) {
     const runId = uint(input.runId, 'runId');
     const rangeId = uint(input.rangeId, 'rangeId');
@@ -568,7 +585,7 @@ function createRobinhoodDirectionalTransferReplayRepository(options = {}) {
   return Object.freeze({
     createRun, getRun, ensureTokenScope, getTokenScopeReadiness, listRunTokenAddresses,
     stageTokenRepairCandidates,
-    startRun, claimRange, reclaimExpired,
+    startRun, claimRange, reclaimExpired, renewRangeLease,
     retryRange, deferRangeForTokenRepair, settleTokenRepairDiscovery,
     resumeFailed, completeRange, getProgress,
   });

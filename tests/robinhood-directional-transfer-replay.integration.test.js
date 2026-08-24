@@ -162,6 +162,9 @@ describe('Robinhood directional transfer replay persistence', () => {
       [first.rangeStartBlock, first.rangeEndBlock, second.rangeStartBlock, second.rangeEndBlock],
       ['100', '149', '150', '199']
     );
+    assert.ok(await repository.renewRangeLease({
+      runId: created.id, rangeId: first.id, owner: 'worker-a', leaseMs: 60_000,
+    }));
     await complete(repository, created.id, first, 'worker-a');
 
     await db.query(

@@ -179,4 +179,40 @@ describe('Robinhood directional transfer replay runner', () => {
       ['settle', '9'],
     ]);
   });
+
+  it('renews a range lease while materialization is still running', async () => {
+    const calls = [];
+    let claimed = false;
+    let completed = false;
+    let releaseMaterialization;
+    const repository = {
+      async createRun() { return { id: '12', status: 'planned' }; },
+      async ensureTokenScope() {}, async startRun() {}, async reclaimExpired() {},
+      async claimRange() {
+        if (claimed) return null;
+        claimed = true;
+        return { id: '13', rangeStartBlock: '100', rangeEndBlock: '199', attemptCount: 1 };
+      },
+      async renewRangeLease(input) {
+        calls.push(['renew', input.rangeId]);
+        releaseMaterialization();
+      },
+      async completeRange(input) { calls.push(['complete', input.rangeId]); completed = true; },
+      async getProgress() {
+        return { status: completed ? 'completed' : 'running', total: 1,
+          completed: completed ? 1 : 0, failed: 0, pending: 0, leased: completed ? 0 : 1 };
+      },
+    };
+    const result = {
+      completedThroughBlock: '199', completedThroughHash: HASH,
+      blocksScanned: 100, transfersScanned: 10, edgesConsidered: 4, edgesWritten: 3,
+    };
+    await executeReplay({
+      repository, heartbeatMs: 1,
+      writer: { async materializeRange() {
+        return new Promise((resolve) => { releaseMaterialization = () => resolve(result); });
+      } },
+    }, { preflight: { ...SOURCE, approved: true, concurrency: 1 } });
+    assert.deepEqual(calls, [['renew', '13'], ['complete', '13']]);
+  });
 });

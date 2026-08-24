@@ -1516,6 +1516,11 @@ adaptativos do provider: o leitor divide o intervalo internamente até uma folha
 aceita, preservando cobertura contígua e a identidade do range da campanha. Elas
 não devem consumir cinco tentativas idênticas nem encerrar o replay.
 
+Cada range alugado renova seu lease a cada um terço de `leaseMs` enquanto a
+materialização está em andamento. O heartbeat termina antes de `completeRange`
+ou do registro de falha; operações legítimas acima dos 180 segundos padrão não
+podem perder ownership apenas por duração.
+
 Antes de retomar uma campanha direcional que falhou por `edge_missing`, execute
 na VPS `npm run robinhood:wallet-position-coverage-audit`. O comando é somente
 PostgreSQL/read-only e não consulta o archive RPC. Ele exige que os cursores

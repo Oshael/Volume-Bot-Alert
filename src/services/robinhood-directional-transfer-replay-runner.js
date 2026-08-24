@@ -167,8 +167,54 @@ async function handleRangeFailure(repository, run, range, owner, error, maxAttem
   });
 }
 
+function waitForHeartbeat(stopped, heartbeatMs) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish(false), heartbeatMs);
+    stopped.then(() => finish(true));
+  });
+}
+
+async function materializeWithLeaseHeartbeat(context, range, owner) {
+  const { repository, writer, run, leaseMs, heartbeatMs } = context;
+  let stopHeartbeat;
+  let heartbeatError;
+  let operationError;
+  let result;
+  const stopped = new Promise((resolve) => { stopHeartbeat = resolve; });
+  const heartbeat = (async () => {
+    while (true) {
+      const shouldStop = await waitForHeartbeat(stopped, heartbeatMs);
+      if (shouldStop) return;
+      try {
+        await repository.renewRangeLease({ runId: run.id, rangeId: range.id, owner, leaseMs });
+      } catch (error) {
+        heartbeatError = error;
+        return;
+      }
+    }
+  })();
+  try {
+    result = await writer.materializeRange(range);
+  } catch (error) {
+    operationError = error;
+  } finally {
+    stopHeartbeat();
+    await heartbeat;
+  }
+  if (heartbeatError) throw heartbeatError;
+  if (operationError) throw operationError;
+  return result;
+}
+
 async function drainWorker(context, index) {
-  const { repository, writer, run, concurrency, options, sleep, leaseMs, maxAttempts } = context;
+  const { repository, run, concurrency, options, sleep, leaseMs, maxAttempts } = context;
   const owner = `${context.ownerPrefix}:${index}`;
   while (true) {
     const range = await repository.claimRange({ runId: run.id, owner, leaseMs });
@@ -185,7 +231,7 @@ async function drainWorker(context, index) {
       continue;
     }
     try {
-      const result = await writer.materializeRange(range);
+      const result = await materializeWithLeaseHeartbeat(context, range, owner);
       await repository.completeRange({
         runId: run.id, rangeId: range.id, owner,
         completedThroughBlock: result.completedThroughBlock,
@@ -225,6 +271,10 @@ async function executeReplay(deps = {}, options = {}) {
     repository, writer, run, concurrency, options,
     sleep: deps.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
     leaseMs: integer(options.leaseMs ?? 180_000, 'leaseMs', 120_001, 1_200_000),
+    heartbeatMs: integer(
+      deps.heartbeatMs ?? Math.floor((options.leaseMs ?? 180_000) / 3),
+      'heartbeatMs', 1, 400_000
+    ),
     maxAttempts: integer(options.maxAttempts ?? 5, 'maxAttempts', 1, 20),
     ownerPrefix: options.owner || `${os.hostname()}:${process.pid}`,
   };
