@@ -1428,9 +1428,13 @@ execute `npm run db:schema-check`. Processo `active` não basta: confirme as lea
 `robinhood-first-buy-live-worker` e `robinhood-sniper-shadow-worker`, heartbeat
 recente, `metadata.telemetry.running=true`, `totalRuns` crescente e
 `lastError=null`.
-A API de holders mantém por padrão somente `LP` e `CEX` na allowlist pública;
-registros SNIPER persistidos durante shadow não entram em `tags`, `primaryTag` ou
-no estado agregado da resposta até a ativação explícita dessa tag.
+A API de holders mantém por padrão `LP`, `CEX` e `SNIPER` na allowlist pública.
+`SNIPER` só é publicado quando possui confiança `high` e evidência
+`rh_sniper_high_v2`; sinais candidatos e políticas anteriores permanecem privados.
+A métrica `snipers` usa primeiro um snapshot persistido, quando houver, e de outro
+modo deriva a participação atual dos registros materializados contra o supply
+aceito mais recente, sem novo backfill ou reclassificação. O filtro dedicado
+continua desabilitado até a API oferecer paginação por tag.
 A Stage 153 vem depois dessas migrations e é obrigatória antes do writer/source
 de `INSIDER`: aplique `node src/utils/db-init-stage153.js` antes de iniciar ou
 atualizar os processos seed/live/reclassification de transfers. Ela

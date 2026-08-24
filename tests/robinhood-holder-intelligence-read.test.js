@@ -13,6 +13,17 @@ const HASH_A = `0x${'a'.repeat(64)}`;
 const HASH_B = `0x${'b'.repeat(64)}`;
 
 function rowsFor(sql) {
+  if (sql.includes('WITH stored_metrics')) return [{
+    metric: 'dev_hold', classification_version: 'rh_holder_v1', status: 'ready',
+    value_numerator_raw: '25', value_denominator_raw: '1000', wallet_count: '1',
+    group_count: null, through_block_number: '200', through_block_hash: HASH_A,
+    observed_at: '2026-08-21T12:00:00Z',
+  }, {
+    metric: 'snipers', classification_version: 'rh_holder_v1', status: 'ready',
+    value_numerator_raw: '2', value_denominator_raw: '100', wallet_count: '2',
+    group_count: null, through_block_number: '200', through_block_hash: HASH_A,
+    observed_at: '2026-08-21T12:00:00Z',
+  }];
   if (sql.includes('classification_states')) return [{
     classifier: 'cex', status: 'ready', through_block_number: '200',
     through_block_hash: HASH_A, observed_at: '2026-08-21T12:00:00Z',
@@ -36,17 +47,7 @@ function rowsFor(sql) {
     reason_code: 'early_launch_buy', observed_at: '2026-08-21T11:58:00Z',
     expires_at: null,
   }];
-  return [{
-    metric: 'dev_hold', classification_version: 'rh_holder_v1', status: 'ready',
-    value_numerator_raw: '25', value_denominator_raw: '1000', wallet_count: '1',
-    group_count: null, through_block_number: '200', through_block_hash: HASH_A,
-    observed_at: '2026-08-21T12:00:00Z',
-  }, {
-    metric: 'snipers', classification_version: 'rh_holder_v1', status: 'ready',
-    value_numerator_raw: '2', value_denominator_raw: '100', wallet_count: '2',
-    group_count: null, through_block_number: '200', through_block_hash: HASH_A,
-    observed_at: '2026-08-21T12:00:00Z',
-  }];
+  return [];
 }
 
 describe('Robinhood holder intelligence public read', () => {
@@ -64,44 +65,51 @@ describe('Robinhood holder intelligence public read', () => {
     });
 
     assert.equal(result.classificationVersion, 'rh_holder_v1');
-    assert.equal(result.classificationStatus, 'stale');
+    assert.equal(result.classificationStatus, 'reorged');
     assert.deepEqual(result.classificationThroughBlock, {
-      blockNumber: '199', blockHash: HASH_B,
+      blockNumber: '1', blockHash: HASH_B,
     });
-    assert.deepEqual(result.holders[0].tags, ['lp', 'cex']);
-    assert.equal(result.holders[0].primaryTag, 'cex');
+    assert.deepEqual(result.holders[0].tags, ['lp', 'cex', 'sniper']);
+    assert.equal(result.holders[0].primaryTag, 'sniper');
     assert.deepEqual(result.holders[0].classifications.map(({ reasonCode }) => reasonCode), [
-      'known_cex_address', 'registered_token_pool',
+      'known_cex_address', 'registered_token_pool', 'early_launch_buy',
     ]);
     assert.equal(result.holders[1].primaryTag, 'unknown');
     assert.equal(result.distribution.length, 8);
     assert.deepEqual(result.distribution.find(({ metric }) => metric === 'dev_hold').value, {
       numeratorRaw: '25', denominatorRaw: '1000',
     });
-    assert.equal(result.distribution.find(({ metric }) => metric === 'snipers').status,
-      'unavailable');
+    assert.equal(result.distribution.find(({ metric }) => metric === 'snipers').status, 'ready');
     assert.equal(calls.length, 3);
     assert.ok(calls.every(([, params]) => params[0] === TOKEN));
     assert.match(calls.find(([sql]) => sql.includes('holder_classifications'))[0],
       /expires_at > NOW/);
-    assert.ok(calls.slice(0, 2).every(([, params]) => (
-      params.at(-1).includes('lp') && params.at(-1).includes('cex')
-        && !params.at(-1).includes('sniper')
-    )));
+    assert.ok(calls.slice(0, 2).every(([, params]) => params.some((value) => (
+      Array.isArray(value) && value.includes('lp') && value.includes('cex')
+        && value.includes('sniper')
+    ))));
+    const classificationCall = calls.find(([sql]) => sql.startsWith('SELECT wallet_address'));
+    assert.equal(classificationCall[1].at(-1), 'rh_sniper_high_v2');
+    assert.match(classificationCall[0], /confidence = 'high'/);
+    const metricCall = calls.find(([sql]) => sql.includes('WITH stored_metrics'));
+    assert.equal(metricCall[1][3], true);
+    assert.equal(metricCall[1].at(-1), 'rh_sniper_high_v2');
+    assert.match(metricCall[0], /current_snipers AS MATERIALIZED/);
   });
 
-  it('exposes a shadow tag only when explicitly admitted by the caller', async () => {
+  it('keeps SNIPER private when explicitly removed from the public allowlist', async () => {
     const repository = createRobinhoodHolderIntelligenceReadRepository({
-      publicTags: ['lp', 'cex', 'sniper'],
+      publicTags: ['lp', 'cex'],
       database: { query: async (sql) => ({ rows: rowsFor(sql) }) },
     });
     const result = await repository.loadPage({
       tokenAddress: TOKEN, walletAddresses: [WALLET_A],
     });
 
-    assert.deepEqual(result.holders[0].tags, ['lp', 'cex', 'sniper']);
-    assert.equal(result.holders[0].primaryTag, 'sniper');
-    assert.equal(result.distribution.find(({ metric }) => metric === 'snipers').status, 'ready');
+    assert.deepEqual(result.holders[0].tags, ['lp', 'cex']);
+    assert.equal(result.holders[0].primaryTag, 'cex');
+    assert.equal(result.distribution.find(({ metric }) => metric === 'snipers').status,
+      'unavailable');
   });
 
   it('marks a same-block hash disagreement as reorged and bounds page input', async () => {

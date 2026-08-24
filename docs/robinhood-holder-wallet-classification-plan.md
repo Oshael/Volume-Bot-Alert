@@ -360,11 +360,15 @@ carga sem ETA confiável.
      A exclusão de router usa o registry auditado: `wallet_address` já é
      `transaction.from`, e o campo técnico `router_address` atual não é fonte de
      identidade nem dispara varredura na tabela particionada de swaps.
-     A leitura pública mantém allowlist `LP`/`CEX`, portanto snapshots SNIPER
-     persistidos pelo shadow não vazam para a UI. O loop operacional opt-in roda
-     no grupo `robinhood-wallet-classification`, usa lease própria, pagina todo o
-     catálogo e publica telemetria sem pertencer ao worker de holders. Auditoria
-     da amostra e ativação pública seguem em cortes separados.
+     Após o catch-up auditado de 126.281 tokens, a leitura pública admite somente
+     registros SNIPER `high` da política `rh_sniper_high_v2`; candidatos internos
+     e políticas anteriores continuam privados. A métrica pública deriva os
+     saldos atuais desses snapshots contra o supply aceito mais recente, sem novo
+     backfill. O loop operacional opt-in roda no grupo
+     `robinhood-wallet-classification`, usa lease própria, pagina todo o catálogo
+     e publica telemetria sem pertencer ao worker de holders. Glifo e métrica já
+     podem ser consumidos pelo expanded chart; filtro com paginação por tag segue
+     em corte separado.
 4. **INSIDER direto**
    - começar por distribuição direta do token;
    - adicionar funding nativo direto somente quando a fonte estiver comprovada.

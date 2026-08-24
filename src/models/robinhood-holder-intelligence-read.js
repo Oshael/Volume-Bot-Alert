@@ -6,10 +6,13 @@ const {
   normalizeHolderTags,
   primaryHolderTag,
 } = require('../services/robinhood-holder-classification-domain');
+const {
+  SNIPER_HIGH_CONFIDENCE_RULE,
+} = require('../services/robinhood-holder-sniper-policy');
 
 const STATUS_PRIORITY = Object.freeze(['reorged', 'stale', 'pending', 'unavailable', 'ready']);
 const MAX_PAGE_WALLETS = 50;
-const DEFAULT_PUBLIC_TAGS = Object.freeze(['lp', 'cex']);
+const DEFAULT_PUBLIC_TAGS = Object.freeze(['lp', 'cex', 'sniper']);
 const DEFAULT_PUBLIC_METRICS = Object.freeze(['top10', 'top50', 'dev_hold', 'lp_locked']);
 const TAG_METRICS = Object.freeze({
   sniper: 'snipers', fresh: 'fresh_wallets', insider: 'insiders',
@@ -107,19 +110,83 @@ function createRobinhoodHolderIntelligenceReadRepository(options = {}) {
           WHERE chain = 'robinhood' AND token_address = $1
             AND classification_version = $2 AND wallet_address = ANY($3::varchar[])
             AND tag = ANY($4::varchar[])
+            AND (tag <> 'sniper' OR (
+              confidence = 'high'
+              AND evidence_json #>> '{rule,evidenceVersion}' = $5
+            ))
             AND (expires_at IS NULL OR expires_at > NOW())
           ORDER BY wallet_address, tag`,
-        [tokenAddress, HOLDER_CLASSIFICATION_VERSION, walletAddresses, [...publicTags]]
+        [
+          tokenAddress, HOLDER_CLASSIFICATION_VERSION, walletAddresses, [...publicTags],
+          SNIPER_HIGH_CONFIDENCE_RULE.evidenceVersion,
+        ]
       ) : Promise.resolve({ rows: [] }),
       database.query(
-        `SELECT metric, classification_version, status, value_numerator_raw,
-                value_denominator_raw, wallet_count, group_count,
-                through_block_number, through_block_hash, observed_at
-           FROM robinhood_holder_distribution_metrics
-          WHERE chain = 'robinhood' AND token_address = $1
-            AND classification_version = $2
-            AND metric = ANY($3::varchar[]) ORDER BY metric`,
-        [tokenAddress, HOLDER_CLASSIFICATION_VERSION, [...publicMetrics]]
+        `WITH stored_metrics AS MATERIALIZED (
+           SELECT metric, classification_version, status, value_numerator_raw,
+                  value_denominator_raw, wallet_count, group_count,
+                  through_block_number, through_block_hash, observed_at
+             FROM robinhood_holder_distribution_metrics
+            WHERE chain = 'robinhood' AND token_address = $1
+              AND classification_version = $2
+              AND metric = ANY($3::varchar[])
+              AND (metric <> 'snipers'
+                OR evidence_json #>> '{rule,evidenceVersion}' = $5)
+         ), current_snipers AS MATERIALIZED (
+           SELECT COALESCE(SUM(balance.balance_raw), 0) AS balance_raw,
+                  COUNT(balance.wallet_address)::bigint AS wallet_count
+             FROM robinhood_holder_classifications classification
+             LEFT JOIN robinhood_holder_balances balance
+               ON balance.chain = classification.chain
+              AND balance.token_address = classification.token_address
+              AND balance.wallet_address = classification.wallet_address
+            WHERE $4::boolean
+              AND classification.chain = 'robinhood'
+              AND classification.token_address = $1
+              AND classification.classification_version = $2
+              AND classification.tag = 'sniper'
+              AND classification.confidence = 'high'
+              AND classification.evidence_json #>> '{rule,evidenceVersion}' = $5
+              AND (classification.expires_at IS NULL OR classification.expires_at > NOW())
+         ), current_supply AS MATERIALIZED (
+           SELECT observation.token_total_supply_raw
+             FROM robinhood_market_observations observation
+            WHERE $4::boolean AND observation.chain = 'robinhood'
+              AND observation.token_address = $1 AND observation.status = 'accepted'
+              AND observation.token_total_supply_raw > 0
+            ORDER BY observation.observed_at DESC LIMIT 1
+         ), derived_snipers AS (
+           SELECT 'snipers'::varchar AS metric, state.classification_version,
+                  CASE WHEN supply.token_total_supply_raw IS NULL
+                       THEN 'unavailable' ELSE state.status END AS status,
+                  CASE WHEN supply.token_total_supply_raw IS NULL THEN NULL
+                       ELSE LEAST(snipers.balance_raw, supply.token_total_supply_raw) END
+                    AS value_numerator_raw,
+                  supply.token_total_supply_raw AS value_denominator_raw,
+                  CASE WHEN supply.token_total_supply_raw IS NULL
+                       THEN NULL ELSE snipers.wallet_count END AS wallet_count,
+                  NULL::bigint AS group_count,
+                  CASE WHEN supply.token_total_supply_raw IS NULL THEN NULL
+                       ELSE state.through_block_number END AS through_block_number,
+                  CASE WHEN supply.token_total_supply_raw IS NULL THEN NULL
+                       ELSE state.through_block_hash END AS through_block_hash,
+                  state.observed_at
+             FROM robinhood_holder_classification_states state
+             CROSS JOIN current_snipers snipers
+             LEFT JOIN current_supply supply ON TRUE
+            WHERE $4::boolean AND state.chain = 'robinhood'
+              AND state.token_address = $1 AND state.classifier = 'sniper'
+              AND state.classification_version = $2
+              AND state.status IN ('ready', 'stale', 'reorged')
+              AND NOT EXISTS (SELECT 1 FROM stored_metrics WHERE metric = 'snipers')
+         )
+         SELECT * FROM stored_metrics
+         UNION ALL SELECT * FROM derived_snipers
+         ORDER BY metric`,
+        [
+          tokenAddress, HOLDER_CLASSIFICATION_VERSION, [...publicMetrics],
+          publicTags.has('sniper'), SNIPER_HIGH_CONFIDENCE_RULE.evidenceVersion,
+        ]
       ),
     ]);
     const publicStates = statesResult.rows.filter(({ classifier }) => publicTags.has(classifier));
