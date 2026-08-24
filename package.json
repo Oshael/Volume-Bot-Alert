@@ -66,6 +66,7 @@
     "quicknode:continuous-dry-run": "node src/utils/quicknode-onchain-continuous-dry-run.js",
     "quicknode:logs-dry-run": "QUICKNODE_CONTINUOUS_TRANSPORT=logs node src/utils/quicknode-onchain-continuous-dry-run.js",
     "jupiter:probe": "node src/utils/jupiter-api-probe.js",
+    "pump:callout-probe": "node src/utils/pump-callout-probe.js",
     "x:following-overlap": "node src/utils/x-following-overlap-probe.js",
     "x:push-probe": "node src/utils/x-push-latency-probe.js",
     "x:push-scale-probe": "node src/utils/x-push-scale-probe.js",
