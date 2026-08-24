@@ -1495,6 +1495,28 @@ ranges são idempotentes e retomáveis; não reinicie o seed global nem apague o
 ranges concluídos. Leases expiradas são retomadas automaticamente; use
 `--retry-failed` junto da confirmação somente após corrigir a causa da falha.
 
+Antes de retomar uma campanha direcional que falhou por `edge_missing`, execute
+na VPS `npm run robinhood:wallet-position-coverage-audit`. O comando é somente
+PostgreSQL/read-only e não consulta o archive RPC. Ele exige que os cursores
+`rh_transfer_v1` e `unified_transfer_v1` tenham seed completo, LIVE rodando,
+origens/handoffs iguais e frontiers LIVE idênticas. Também exige todos os repairs
+token-scoped publicados. A cobertura financeira histórica só é considerada
+provada quando cada token reparado já existia em
+`robinhood_holder_token_states` antes da criação do cursor seed
+`unified_transfer_v1`; isso prova que ele participou de todas as faixas do
+catch-up. O resultado saudável tem `ready=true`, `repairRequired=false` e
+`reasons=[]`.
+
+Se o auditor retornar `position_token_repair_required` ou
+`repaired_token_catalog_state_missing`, pare: não resete cursores globais e não
+retome o replay, pois será necessário um repair financeiro token-scoped
+explicitamente projetado. Se retornar somente frontier desalinhada, deixe o
+writer LIVE unificado alcançar o mesmo bloco e repita a auditoria. Com o gate
+saudável, retome no PC/archive com
+`npm run robinhood:directional-transfer-replay -- --run-id=1 --retry-failed
+--apply`. A retomada usa o escopo congelado do `run_id` e não incorpora tokens
+descobertos posteriormente.
+
 O materializador `rh_insider_direct_v1` aceita
 somente `creator_token_distribution`: transferência positiva, direta (um hop),
 do criador atribuído para uma wallet comprovada. Ele falha fechado enquanto o

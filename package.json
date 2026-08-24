@@ -74,6 +74,7 @@
     "robinhood:holder-catalog-transfer-probe": "ROBINHOOD_HOLDER_TRANSFER_PROBE_SCOPE=catalog node src/utils/robinhood-holder-transfer-probe.js",
     "robinhood:wallet-position-backfill": "node src/utils/backfill-robinhood-wallet-positions.js",
     "robinhood:wallet-position-catch-up": "node src/utils/catch-up-robinhood-wallet-positions.js",
+    "robinhood:wallet-position-coverage-audit": "node src/utils/audit-robinhood-wallet-position-coverage.js",
     "robinhood:holder-drift-probe": "node src/utils/robinhood-holder-drift-probe.js",
     "robinhood:holder-drift-recovery": "node src/utils/robinhood-holder-drift-recovery.js",
     "robinhood:holder-checkpoint-repair": "node src/utils/repair-robinhood-holder-backfill-checkpoints.js",
