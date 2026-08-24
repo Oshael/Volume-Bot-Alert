@@ -1948,6 +1948,11 @@ Objetivo:
 - planejar e unir janelas pré-compra sem RPC ou escrita;
 - manter lookback explícito para benchmark, sem default silencioso.
 
+O planejador puro e o comando read-only usam exclusivamente as projeções
+canônicas de first-buy/launch, falham fechado sem frontier completa de first-buy
+e não expõem endereços no relatório. Tokens sem âncora ficam explicitamente fora
+da cobertura, sem bloquear os demais. Lookbacks são informados pelo operador.
+
 ### Corte D2 — reader e preflight do RPC Archive
 
 Objetivo:

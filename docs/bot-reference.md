@@ -1477,6 +1477,17 @@ compara classificações com distribuição direta elegível, separa `pending`/`
 de `missing`/`invalid`, não declara `clean` sem snapshots e prioriza divergências
 na amostra. Limite de 1–100 e
 timeout de 100–30.000 ms protegem o PostgreSQL; o default é 20/10.000 ms.
+O planejamento inicial de funding para `BUNDLED` também é estritamente read-only:
+`npm run robinhood:bundle-funding-plan -- --lookback-blocks=100,1000,5000` lê
+somente first-buys e âncoras materializadas no PostgreSQL, exige seed/cursor de
+first-buy completos, reporta separadamente tokens sem launch anchor e compara
+ranges/blocos únicos para cada lookback. Tokens sem âncora ficam indisponíveis
+sem bloquear os cobertos. O comando
+não chama RPC, não grava banco e não imprime wallets ou ranges individuais;
+`--source-from-block` e `--statement-timeout-ms` são opcionais. Ainda não existe
+reader, backfill, worker ou publicação de `BUNDLED`. A leitura recusa universos
+acima de 500 mil candidatos para não exceder a memória; esse caso exige um
+planejador paginado antes de continuar.
 A Stage 149 introduz
 `robinhood_wallet_token_first_buys`, fonte neutra e reutilizável para ordem por
 token e recorrência por wallet. Aplique `node src/utils/db-init-stage149.js` antes
