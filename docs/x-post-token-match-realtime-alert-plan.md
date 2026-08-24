@@ -896,6 +896,29 @@ O poll de 5s nao participa da deteccao e nao sera levado ao worker de producao.
 Ele e deliberadamente lento, limitado e existe apenas durante o experimento para
 reconciliar o que o push deveria ter entregue.
 
+### Auditoria de followings entre sessoes [UTILITARIO PRONTO 2026-08-24]
+
+`src/utils/x-following-overlap-probe.js` compara por `rest_id` as listas completas
+de Following de duas contas, usando os Chromiums ja logados. Ele abre e fecha uma
+aba temporaria em cada perfil, captura a query web vigente e pagina em modo
+read-only. Nao executa follow/unfollow e nao persiste cookies ou headers.
+
+```bash
+X_FOLLOWING_A_HANDLE=conta_x \
+X_FOLLOWING_A_CDP=http://127.0.0.1:9222 \
+X_FOLLOWING_B_HANDLE=conta_y \
+X_FOLLOWING_B_CDP=http://127.0.0.1:9223 \
+X_FOLLOWING_CANDIDATES=alvo1,alvo2 \
+npm run x:following-overlap
+```
+
+`overlap` lista quem ambas ja seguem. Depois do snapshot, `WATCHING` confirma que
+o processo esta ouvindo os follows das duas sessoes. Cada novo follow gera um
+alerta sonoro e imprime `[DUPLICATE]` se o mesmo ID ja estiver na outra conta, ou
+`[OK]` caso contrario. Nao ha polling depois da carga inicial. `complete: false`
+significa que o limite default de 50 paginas foi atingido; aumentar
+`X_FOLLOWING_MAX_PAGES` e repetir.
+
 ### Alternativa futura - Nitter local para gaps [ADIADA DO MVP 2026-08-24]
 
 Uma instancia local do Nitter e uma hipotese valida para simplificar o acesso a
