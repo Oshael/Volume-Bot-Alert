@@ -1468,6 +1468,12 @@ escopo congelado. A migration é aditiva: não cria cobertura retroativa, não
 preenche automaticamente campanhas existentes e não altera o replay da Stage 154
 até o writer correspondente ser implantado.
 
+O engine token-scoped já reconstrói ranges limitados sob
+`rh_transfer_token_repair_v1`, com lease, retry, checkpoint canônico e cursor por
+token. Esse shadow não altera `rh_transfer_v1`; até existir a promoção atômica,
+estado `complete` significa somente que a reconstrução isolada terminou e não
+autoriza retry do replay direcional.
+
 O materializador `rh_insider_direct_v1` aceita
 somente `creator_token_distribution`: transferência positiva, direta (um hop),
 do criador atribuído para uma wallet comprovada. Ele falha fechado enquanto o
