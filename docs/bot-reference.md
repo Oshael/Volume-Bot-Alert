@@ -1511,6 +1511,11 @@ read-only, processe até `pending=0`, `leased=0`, `failed=0` e
 `shadow_complete=0`, audite posições e retome o mesmo `run_id`; não pause a cada
 novo token e não reinicie ranges concluídos.
 
+Falhas `eth_getLogs` com código RPC `-32000` reconhecido ou `-32002` são limites
+adaptativos do provider: o leitor divide o intervalo internamente até uma folha
+aceita, preservando cobertura contígua e a identidade do range da campanha. Elas
+não devem consumir cinco tentativas idênticas nem encerrar o replay.
+
 Antes de retomar uma campanha direcional que falhou por `edge_missing`, execute
 na VPS `npm run robinhood:wallet-position-coverage-audit`. O comando é somente
 PostgreSQL/read-only e não consulta o archive RPC. Ele exige que os cursores

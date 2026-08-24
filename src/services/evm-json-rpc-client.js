@@ -119,7 +119,9 @@ function createAbortContext(signal, timeoutMs) {
 }
 
 function isLogRangeRpcError(method, rpcCode, message) {
-  if (method !== 'eth_getLogs' || rpcCode !== -32000) return false;
+  if (method !== 'eth_getLogs') return false;
+  if (rpcCode === -32002) return true;
+  if (rpcCode !== -32000) return false;
   const normalized = String(message || '').trim().toLowerCase();
   return [
     /log query timed out/,
