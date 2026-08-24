@@ -36,6 +36,19 @@ function owner(value) {
   return result;
 }
 
+function addresses(values) {
+  if (!Array.isArray(values) || values.length === 0) {
+    throw new Error('tokenAddresses must be a non-empty list');
+  }
+  return [...new Set(values.map((value) => {
+    const result = String(value ?? '').trim().toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(result) || /^0x0{40}$/.test(result)) {
+      throw new Error('tokenAddress is invalid');
+    }
+    return result;
+  }))];
+}
+
 function runRow(row) {
   if (!row) return null;
   return Object.freeze({
@@ -78,26 +91,16 @@ function createRobinhoodDirectionalTransferReplayRepository(options = {}) {
       });
     }
     const counts = await queryable.query(
-      `SELECT COUNT(*)::integer AS tracked,
-              COUNT(coverage.token_address)::integer AS eligible
+      `SELECT COUNT(*)::integer AS tracked
          FROM robinhood_holder_token_states state
-         LEFT JOIN robinhood_wallet_transfer_token_coverage coverage
-           ON coverage.chain = state.chain AND coverage.projection_version = $2
-          AND coverage.token_address = state.token_address
-          AND coverage.source_from_block <= $3::bigint
-          AND coverage.source_through_block >= $4::bigint
-          AND coverage.status = 'complete'
-          AND coverage.next_block = coverage.source_through_block + 1
-          AND coverage.published_at IS NOT NULL
         WHERE state.chain = $1
-          AND state.ledger_status IN ('backfilling', 'shadow', 'live')`,
-      [CHAIN, run.projection_version, String(run.source_from_block),
-        String(run.source_through_block)]
+          AND state.ledger_status IN ('backfilling', 'shadow', 'live')
+          AND state.created_at <= $2::timestamptz`,
+      [CHAIN, run.created_at]
     );
-    const { tracked, eligible } = counts.rows[0];
+    const { tracked } = counts.rows[0];
     return Object.freeze({
-      ready: tracked > 0 && eligible === tracked, tokenCount: eligible,
-      unavailable: tracked - eligible, alreadyFrozen: false,
+      ready: tracked > 0, tokenCount: tracked, unavailable: 0, alreadyFrozen: false,
     });
   }
 
@@ -109,35 +112,19 @@ function createRobinhoodDirectionalTransferReplayRepository(options = {}) {
       error.code = 'directional_replay_token_scope_missing';
       throw error;
     }
-    if (!readiness.ready) {
-      const error = new Error(
-        `directional replay token coverage incomplete: ${readiness.tokenCount}`
-        + ` eligible, ${readiness.unavailable} unavailable`
-      );
-      error.code = 'directional_replay_token_coverage_incomplete';
-      throw error;
-    }
+    if (!readiness.ready) throw new Error('directional replay token scope is empty');
     const frozen = await client.query(
       `INSERT INTO robinhood_directional_transfer_replay_tokens (
          run_id, token_address, coverage_from_block,
          coverage_through_block, coverage_through_hash
-       ) SELECT $1, state.token_address, coverage.source_from_block,
-                coverage.source_through_block, coverage.source_through_hash
+       ) SELECT $1, state.token_address, $2::bigint, $3::bigint, $4
            FROM robinhood_holder_token_states state
-           JOIN robinhood_wallet_transfer_token_coverage coverage
-             ON coverage.chain = state.chain
-            AND coverage.projection_version = $2
-            AND coverage.token_address = state.token_address
-            AND coverage.source_from_block <= $3::bigint
-            AND coverage.source_through_block >= $4::bigint
-            AND coverage.status = 'complete'
-            AND coverage.next_block = coverage.source_through_block + 1
-            AND coverage.published_at IS NOT NULL
           WHERE state.chain = $5
             AND state.ledger_status IN ('backfilling', 'shadow', 'live')
+            AND state.created_at <= $6::timestamptz
        ON CONFLICT (run_id, token_address) DO NOTHING RETURNING token_address`,
-      [run.id, run.projection_version, String(run.source_from_block),
-        String(run.source_through_block), CHAIN]
+      [run.id, String(run.source_from_block), String(run.source_through_block),
+        run.source_through_hash, CHAIN, run.created_at]
     );
     if (frozen.rowCount !== readiness.tokenCount) {
       throw new Error('directional replay token scope changed while it was frozen');
@@ -253,6 +240,64 @@ function createRobinhoodDirectionalTransferReplayRepository(options = {}) {
     );
     if (!result.rows[0]) throw new Error('directional replay run was not found');
     return tokenScopeReadiness(database, result.rows[0]);
+  }
+
+  async function stageTokenRepairCandidates(input = {}) {
+    const runId = uint(input.runId, 'runId');
+    const tokenAddresses = addresses(input.tokenAddresses);
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      const context = await client.query(
+        `SELECT run.projection_version, run.source_from_block,
+                live.checkpoint_block AS source_through_block,
+                live.checkpoint_hash AS source_through_hash
+           FROM robinhood_directional_transfer_replay_runs run
+           JOIN robinhood_wallet_transfer_cursors live
+             ON live.chain = run.chain AND live.projection_version = run.projection_version
+            AND live.stream = 'live' AND live.lifecycle_state = 'running'
+          WHERE run.id = $1::bigint AND run.chain = $2
+            AND live.checkpoint_block IS NOT NULL FOR UPDATE OF live`,
+        [runId, CHAIN]
+      );
+      if (!context.rows[0]) throw new Error('directional repair frontier is unavailable');
+      const scope = await client.query(
+        `SELECT COUNT(*)::integer AS matched,
+                COUNT(*) FILTER (WHERE deployment_block IS NULL
+                  OR deployment_block <= 0
+                  OR deployment_block > $3::bigint)::integer AS unavailable
+           FROM robinhood_holder_token_states
+          WHERE chain = $1::varchar AND token_address = ANY($2::varchar[])`,
+        [CHAIN, tokenAddresses, String(context.rows[0].source_through_block)]
+      );
+      if (scope.rows[0].matched !== tokenAddresses.length || scope.rows[0].unavailable > 0) {
+        const error = new Error('directional repair candidate has no exact deployment block');
+        error.code = 'directional_repair_deployment_unavailable';
+        throw error;
+      }
+      const frontier = context.rows[0];
+      const inserted = await client.query(
+        `INSERT INTO robinhood_wallet_transfer_token_coverage (
+           chain, projection_version, token_address, source_from_block, next_block,
+           source_through_block, source_through_hash
+         ) SELECT state.chain, $2::varchar, state.token_address,
+                  GREATEST($3::bigint, state.deployment_block),
+                  GREATEST($3::bigint, state.deployment_block), $4::bigint, $5
+             FROM robinhood_holder_token_states state
+            WHERE state.chain = $1::varchar AND state.token_address = ANY($6::varchar[])
+         ON CONFLICT (chain, projection_version, token_address) DO NOTHING
+         RETURNING token_address`,
+        [CHAIN, frontier.projection_version, String(frontier.source_from_block),
+          String(frontier.source_through_block), frontier.source_through_hash, tokenAddresses]
+      );
+      await client.query('COMMIT');
+      return Object.freeze({ requested: tokenAddresses.length, inserted: inserted.rowCount });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async function startRun(runIdValue) {
@@ -440,6 +485,7 @@ function createRobinhoodDirectionalTransferReplayRepository(options = {}) {
 
   return Object.freeze({
     createRun, getRun, ensureTokenScope, getTokenScopeReadiness, listRunTokenAddresses,
+    stageTokenRepairCandidates,
     startRun, claimRange, reclaimExpired,
     retryRange, resumeFailed, completeRange, getProgress,
   });

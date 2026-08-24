@@ -76,6 +76,14 @@ function createRobinhoodDirectionalTransferEvidenceRepository(options = {}) {
              ON edge.chain = $1 AND edge.classification_version = $2
             AND edge.token_address = candidate.token_address
             AND edge.from_wallet = candidate.from_wallet AND edge.to_wallet = candidate.to_wallet
+         ), unmatched AS MATERIALIZED (
+           SELECT candidate.* FROM candidates candidate
+           WHERE NOT EXISTS (
+             SELECT 1 FROM matched
+              WHERE matched.token_address = candidate.token_address
+                AND matched.from_wallet = candidate.from_wallet
+                AND matched.to_wallet = candidate.to_wallet
+           )
          ), updated AS (
            UPDATE robinhood_wallet_transfer_edges edge SET
              first_wallet_transfer_block = matched.block_number,
@@ -95,6 +103,8 @@ function createRobinhoodDirectionalTransferEvidenceRepository(options = {}) {
            (SELECT COUNT(*)::integer FROM candidates) AS considered,
            (SELECT COUNT(*)::integer FROM matched) AS matched,
            (SELECT COUNT(*)::integer FROM updated) AS written,
+           (SELECT ARRAY_AGG(DISTINCT token_address ORDER BY token_address)
+              FROM unmatched) AS missing_tokens,
            (SELECT COUNT(*)::integer FROM matched WHERE current_block = block_number
              AND current_log = log_index
              AND (current_at <> block_time OR current_hash <> transaction_hash
@@ -108,6 +118,7 @@ function createRobinhoodDirectionalTransferEvidenceRepository(options = {}) {
           : 'directional evidence has no matching historical edge');
         error.code = outcome.conflicts
           ? 'directional_replay_evidence_conflict' : 'directional_replay_edge_missing';
+        if (!outcome.conflicts) error.tokenAddresses = Object.freeze(outcome.missing_tokens || []);
         throw error;
       }
       await client.query('COMMIT');

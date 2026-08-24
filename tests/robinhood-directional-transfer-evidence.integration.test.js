@@ -66,7 +66,8 @@ describe('Robinhood directional transfer evidence persistence', () => {
     await assert.rejects(repository.applyEvidence({
       projectionVersion: VERSION,
       events: [event(100, 1), { ...event(100, 1), toWallet: `0x${'4'.repeat(40)}` }],
-    }), (error) => error.code === 'directional_replay_edge_missing');
+    }), (error) => error.code === 'directional_replay_edge_missing'
+      && error.tokenAddresses.length === 1 && error.tokenAddresses[0] === TOKEN);
     let stored = await db.query(
       `SELECT first_wallet_transfer_block::text AS block_number
          FROM robinhood_wallet_transfer_edges WHERE classification_version = $1`, [VERSION]

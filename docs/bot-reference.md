@@ -1466,14 +1466,12 @@ snapshot do escopo aceito por campanha. Aplique
 `node src/utils/db-init-stage158.js` antes do repair token-scoped e do replay com
 escopo congelado. A migration é aditiva e não cria cobertura retroativa.
 Ao criar uma campanha — ou retomar pela primeira vez uma campanha legada sem
-snapshot — o replay exige cobertura publicada de todos os tokens rastreados na
-janela inteira congelada e congela o conjunto na mesma transação. Uma cobertura
-publicada posterior é aceita quando contém integralmente a janela do replay; o
-hash final da campanha continua revalidado no archive RPC. Cobertura ausente
-falha com `directional_replay_token_coverage_incomplete`, sem criar uma campanha
-parcial. O preflight continua usando o catálogo atual somente para
-estimar custo; qualquer escrita lê exclusivamente o snapshot persistido do
-`run_id`, portanto resumes não incorporam tokens novos silenciosamente.
+snapshot — o replay congela somente os holder states que já existiam em
+`run.created_at`. O snapshot guarda a janela/hash da campanha, e qualquer escrita
+lê exclusivamente esse conjunto; tokens descobertos depois não entram em um
+resume e pertencem a uma campanha futura. O preflight pode usar o catálogo atual
+somente para estimar custo. Assim, uma campanha legada deixa de crescer entre
+retomadas sem declarar cobertura histórica inexistente.
 
 O engine token-scoped já reconstrói ranges limitados sob
 `rh_transfer_token_repair_v1`, com lease, retry, checkpoint canônico e cursor por
@@ -1482,7 +1480,12 @@ token. A Stage 159 adiciona a frontier publicada: aplique
 `npm run robinhood:wallet-transfer-token-repair` é read-only por padrão; para a
 campanha limitada, acrescente `--confirm-repair-robinhood-wallet-transfer-tokens`,
 `--max-blocks=500` e `--max-operations=<N>`. O archive RPC é exigido somente ao
-processar ranges. Cada token é reconstruído em shadow e promovido em uma única
+processar ranges. O comando nunca inicializa o catálogo inteiro: quando o replay
+encontra `directional_replay_edge_missing`, o range sofre rollback e somente os
+tokens ausentes são inseridos como candidatos. Cada candidato começa em
+`GREATEST(run.source_from_block, holder_state.deployment_block)`; deployment
+ausente ou zero falha fechado com `directional_repair_deployment_unavailable`.
+Cada token é reconstruído em shadow e promovido em uma única
 transação que trava o cursor LIVE; se a frontier avançou, somente o delta volta
 a `pending`, sem apagar uma projeção oficial ainda válida. `published_at` é a
 prova de cobertura utilizável pelo replay, enquanto `complete` sem publicação
@@ -1494,6 +1497,10 @@ Para uma campanha com ETA limitado, pause temporariamente somente
 ranges são idempotentes e retomáveis; não reinicie o seed global nem apague os
 ranges concluídos. Leases expiradas são retomadas automaticamente; use
 `--retry-failed` junto da confirmação somente após corrigir a causa da falha.
+Para uma campanha já falha, a ordem é: retomar uma vez para materializar os
+candidatos exatos; inspecionar o repair read-only; processar até os quatro
+contadores zerarem; auditar posições; e retomar o mesmo `run_id`. Se outra faixa
+revelar um token novo, repita o ciclo sem reiniciar ranges concluídos.
 
 Antes de retomar uma campanha direcional que falhou por `edge_missing`, execute
 na VPS `npm run robinhood:wallet-position-coverage-audit`. O comando é somente

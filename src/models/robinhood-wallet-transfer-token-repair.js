@@ -74,56 +74,31 @@ function createRobinhoodWalletTransferTokenRepairRepository(options = {}) {
   }
 
   async function plan() {
-    const { seed, live } = await loadFrontier();
+    const { live } = await loadFrontier();
     const result = await database.query(
-      `SELECT COUNT(*)::integer AS tracked,
-              COUNT(*) FILTER (WHERE created_at <= $2::timestamptz)::integer AS inferred_complete,
-              COUNT(*) FILTER (WHERE created_at > $2::timestamptz)::integer AS repair_required
-         FROM robinhood_holder_token_states
-        WHERE chain = $1 AND ledger_status IN ('backfilling', 'shadow', 'live')`,
-      [CHAIN, seed.created_at]
+      `SELECT COUNT(*)::integer AS candidates,
+              COUNT(*) FILTER (WHERE status = 'pending')::integer AS pending,
+              COUNT(*) FILTER (WHERE status = 'leased')::integer AS leased,
+              COUNT(*) FILTER (WHERE status = 'failed')::integer AS failed,
+              COUNT(*) FILTER (WHERE status = 'complete'
+                AND published_at IS NULL)::integer AS shadow_complete,
+              COUNT(*) FILTER (WHERE published_at IS NOT NULL)::integer AS published,
+              MIN(source_from_block)::text AS earliest_source_block,
+              MAX(source_through_block)::text AS latest_source_block,
+              COALESCE(SUM(source_through_block - source_from_block + 1)
+                FILTER (WHERE published_at IS NULL), 0)::text AS remaining_block_span
+         FROM robinhood_wallet_transfer_token_coverage
+        WHERE chain = $1 AND projection_version = $2`,
+      [CHAIN, targetVersion]
     );
     return Object.freeze({
-      ...result.rows[0], sourceFromBlock: String(seed.origin_block),
+      ...result.rows[0],
       sourceThroughBlock: String(live.checkpoint_block), sourceThroughHash: live.checkpoint_hash,
     });
   }
 
   async function initialize() {
-    const { seed, live } = await loadFrontier();
-    const result = await database.query(
-      `INSERT INTO robinhood_wallet_transfer_token_coverage (
-         chain, projection_version, token_address, source_from_block, next_block,
-         source_through_block, source_through_hash, status, completed_at, published_at
-       ) SELECT $1, $2, state.token_address, $3::bigint,
-           CASE WHEN state.created_at <= $6::timestamptz
-             THEN $4::bigint + 1 ELSE $3::bigint END,
-           $4::bigint, $5,
-           CASE WHEN state.created_at <= $6::timestamptz THEN 'complete' ELSE 'pending' END,
-           CASE WHEN state.created_at <= $6::timestamptz THEN NOW() ELSE NULL END,
-           CASE WHEN state.created_at <= $6::timestamptz THEN NOW() ELSE NULL END
-         FROM robinhood_holder_token_states state
-        WHERE state.chain = $1 AND state.ledger_status IN ('backfilling', 'shadow', 'live')
-       ON CONFLICT (chain, projection_version, token_address) DO NOTHING
-       RETURNING status`,
-      [CHAIN, targetVersion, String(seed.origin_block), String(live.checkpoint_block),
-        live.checkpoint_hash, seed.created_at]
-    );
-    await database.query(
-      `UPDATE robinhood_wallet_transfer_token_coverage SET
-         published_at = COALESCE(published_at, completed_at), updated_at = NOW()
-       WHERE chain = $1 AND projection_version = $2 AND status = 'complete'
-         AND attempt_count = 0 AND published_at IS NULL`,
-      [CHAIN, targetVersion]
-    );
-    return Object.freeze({
-      inserted: result.rowCount,
-      complete: result.rows.filter((row) => row.status === 'complete').length,
-      pending: result.rows.filter((row) => row.status === 'pending').length,
-      sourceFromBlock: String(seed.origin_block),
-      sourceThroughBlock: String(live.checkpoint_block),
-      sourceThroughHash: live.checkpoint_hash,
-    });
+    return Object.freeze({ inserted: 0, source: 'directional_replay_edge_missing' });
   }
 
   async function claim(input = {}) {

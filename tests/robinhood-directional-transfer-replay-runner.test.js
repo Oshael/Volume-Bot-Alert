@@ -124,4 +124,32 @@ describe('Robinhood directional transfer replay runner', () => {
       runId: '8', retryFailed: true,
     }), /does not match the frozen/);
   });
+
+  it('stages exact missing-edge tokens before retrying the range', async () => {
+    const token = `0x${'1'.repeat(40)}`;
+    const calls = [];
+    let claimed = false;
+    const repository = {
+      async createRun() { return { id: '9', status: 'planned' }; },
+      async ensureTokenScope() {}, async startRun() {}, async reclaimExpired() {},
+      async claimRange() {
+        if (claimed) return null;
+        claimed = true;
+        return { id: '10', rangeStartBlock: '100', rangeEndBlock: '199', attemptCount: 1 };
+      },
+      async stageTokenRepairCandidates(input) { calls.push(['stage', input]); },
+      async retryRange(input) { calls.push(['retry', input.error.code]); },
+      async getProgress() { return { status: 'completed', total: 1, completed: 0 }; },
+    };
+    const error = Object.assign(new Error('missing edge'), {
+      code: 'directional_replay_edge_missing', tokenAddresses: [token],
+    });
+    await executeReplay({
+      repository, writer: { async materializeRange() { throw error; } },
+    }, { preflight: { ...SOURCE, approved: true, concurrency: 1 } });
+    assert.deepEqual(calls, [
+      ['stage', { runId: '9', tokenAddresses: [token] }],
+      ['retry', 'directional_replay_edge_missing'],
+    ]);
+  });
 });

@@ -158,8 +158,18 @@ async function drainWorker(context, index) {
         edgesConsidered: result.edgesConsidered, edgesWritten: result.edgesWritten,
       });
     } catch (error) {
+      let failure = error;
+      if (error.code === 'directional_replay_edge_missing') {
+        try {
+          await repository.stageTokenRepairCandidates({
+            runId: run.id, tokenAddresses: error.tokenAddresses,
+          });
+        } catch (candidateError) {
+          failure = candidateError;
+        }
+      }
       await repository.retryRange({
-        runId: run.id, rangeId: range.id, owner, error, maxAttempts,
+        runId: run.id, rangeId: range.id, owner, error: failure, maxAttempts,
         backoffMs: Math.min(60_000, 1000 * (2 ** Math.max(0, range.attemptCount - 1))),
       });
     }

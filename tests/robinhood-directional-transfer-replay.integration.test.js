@@ -8,6 +8,8 @@ const {
   createRobinhoodDirectionalTransferReplayRepository,
 } = require('../src/models/robinhood-directional-transfer-replay');
 const stage116 = require('../src/utils/db-init-stage116');
+const stage129 = require('../src/utils/db-init-stage129');
+const stage134 = require('../src/utils/db-init-stage134');
 const stage154 = require('../src/utils/db-init-stage154');
 const stage158 = require('../src/utils/db-init-stage158');
 const stage159 = require('../src/utils/db-init-stage159');
@@ -16,13 +18,24 @@ const { assertUsingTestDatabase } = require('./helpers/test-db');
 const HASH = `0x${'a'.repeat(64)}`;
 const COVERAGE_HASH = `0x${'b'.repeat(64)}`;
 const TOKEN = `0x${'d'.repeat(40)}`;
+const REPAIR_TOKEN = `0x${'e'.repeat(40)}`;
+const UNKNOWN_DEPLOYMENT_TOKEN = `0x${'f'.repeat(40)}`;
 
 async function cleanup() {
   await db.query('DELETE FROM robinhood_directional_transfer_replay_tokens');
   await db.query('DELETE FROM robinhood_directional_transfer_replay_ranges');
   await db.query('DELETE FROM robinhood_directional_transfer_replay_runs');
   await db.query('DELETE FROM robinhood_wallet_transfer_token_coverage');
+  await db.query(
+    "DELETE FROM robinhood_wallet_transfer_cursors WHERE projection_version = 'test_directional_v1'"
+  );
   await db.query('DELETE FROM robinhood_holder_token_states');
+}
+
+async function deleteRun(runId) {
+  await db.query('DELETE FROM robinhood_directional_transfer_replay_tokens WHERE run_id = $1', [runId]);
+  await db.query('DELETE FROM robinhood_directional_transfer_replay_ranges WHERE run_id = $1', [runId]);
+  await db.query('DELETE FROM robinhood_directional_transfer_replay_runs WHERE id = $1', [runId]);
 }
 
 function runInput() {
@@ -64,7 +77,7 @@ async function complete(repository, runId, range, ownerName, stats = {}) {
 describe('Robinhood directional transfer replay persistence', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
-    for (const stage of [stage116, stage154, stage158, stage159]) {
+    for (const stage of [stage116, stage129, stage134, stage154, stage158, stage159]) {
       await stage.init({ closePool: false });
     }
     await cleanup();
@@ -75,16 +88,22 @@ describe('Robinhood directional transfer replay persistence', () => {
     await db.pool.end();
   });
 
-  it('refuses a campaign until every tracked token has published covering data', async () => {
+  it('freezes the tracked catalog at campaign creation without requiring broad repair', async () => {
     await db.query(
-      `INSERT INTO robinhood_holder_token_states (token_address, ledger_status)
-       VALUES ($1, 'live')`, [TOKEN]
+      `INSERT INTO robinhood_holder_token_states (
+         token_address, ledger_status, deployment_block
+       ) VALUES ($1, 'live', 110)`, [TOKEN]
     );
     const repository = createRobinhoodDirectionalTransferReplayRepository({ database: db });
-    await assert.rejects(repository.createRun(runInput()),
-      (error) => error.code === 'directional_replay_token_coverage_incomplete');
-    const runs = await db.query('SELECT COUNT(*)::integer AS count FROM robinhood_directional_transfer_replay_runs');
-    assert.equal(runs.rows[0].count, 0);
+    const created = await repository.createRun(runInput());
+    const snapshot = await db.query(
+      `SELECT coverage_from_block::text, coverage_through_block::text, coverage_through_hash
+         FROM robinhood_directional_transfer_replay_tokens WHERE run_id = $1`, [created.id]
+    );
+    assert.deepEqual(snapshot.rows[0], {
+      coverage_from_block: '100', coverage_through_block: '219', coverage_through_hash: HASH,
+    });
+    await deleteRun(created.id);
   });
 
   it('creates disjoint ranges, resumes leases and completes with progress', async () => {
@@ -109,7 +128,7 @@ describe('Robinhood directional transfer replay persistence', () => {
          FROM robinhood_directional_transfer_replay_tokens WHERE run_id = $1`, [created.id]
     );
     assert.deepEqual(snapshot.rows[0], {
-      coverage_through_block: '250', coverage_through_hash: COVERAGE_HASH,
+      coverage_through_block: '219', coverage_through_hash: HASH,
     });
     assert.deepEqual(await repository.getRun(created.id), {
       id: created.id, status: 'planned', projectionVersion: 'test_directional_v1',
@@ -166,6 +185,41 @@ describe('Robinhood directional transfer replay persistence', () => {
       blocksScanned: '120', transfersScanned: '30', edgesWritten: '12',
       progressPct: 100, etaSeconds: 0,
     });
+  });
+
+  it('stages only a missing token from its exact deployment block', async () => {
+    await db.query(
+      `INSERT INTO robinhood_holder_token_states (
+         token_address, ledger_status, deployment_block
+       ) VALUES ($1, 'live', 120)`, [REPAIR_TOKEN]
+    );
+    const repository = createRobinhoodDirectionalTransferReplayRepository({ database: db });
+    const created = await repository.createRun(runInput());
+    await db.query(
+      `INSERT INTO robinhood_wallet_transfer_cursors (
+         projection_version, stream, origin_block, next_block, next_block_time,
+         safe_head, checkpoint_block, checkpoint_hash, lifecycle_state
+       ) VALUES ('test_directional_v1', 'live', 100, 251, NOW(), 250, 250, $1, 'running')`,
+      [HASH]
+    );
+    assert.deepEqual(await repository.stageTokenRepairCandidates({
+      runId: created.id, tokenAddresses: [REPAIR_TOKEN, REPAIR_TOKEN],
+    }), { requested: 1, inserted: 1 });
+    const coverage = await db.query(
+      `SELECT source_from_block::text, next_block::text, source_through_block::text, status
+         FROM robinhood_wallet_transfer_token_coverage WHERE token_address = $1`, [REPAIR_TOKEN]
+    );
+    assert.deepEqual(coverage.rows[0], {
+      source_from_block: '120', next_block: '120', source_through_block: '250', status: 'pending',
+    });
+    await db.query(
+      `INSERT INTO robinhood_holder_token_states (token_address, ledger_status)
+       VALUES ($1, 'live')`, [UNKNOWN_DEPLOYMENT_TOKEN]
+    );
+    await assert.rejects(repository.stageTokenRepairCandidates({
+      runId: created.id, tokenAddresses: [UNKNOWN_DEPLOYMENT_TOKEN],
+    }), (error) => error.code === 'directional_repair_deployment_unavailable');
+    await deleteRun(created.id);
   });
 
   it('fails after the attempt budget and resumes only failed ranges', async () => {

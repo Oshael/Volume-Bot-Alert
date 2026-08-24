@@ -11,13 +11,13 @@ describe('Robinhood token-scoped transfer repair CLI', () => {
     const report = await main([], {
       database: {}, logger: { log: (message) => messages.push(message) },
       repositoryFactory: () => ({
-        plan: async () => ({ repair_required: 3 }),
+        plan: async () => ({ candidates: 3, remaining_block_span: '900' }),
         getProgress: async () => ({ pending: 3 }),
       }),
       runtimeFactory: async () => { throw new Error('runtime must stay lazy'); },
     });
     assert.equal(report.mode, 'read-only');
-    assert.equal(report.plan.repair_required, 3);
+    assert.equal(report.plan.candidates, 3);
     assert.equal(messages.length, 1);
   });
 
