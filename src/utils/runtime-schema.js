@@ -4315,6 +4315,26 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage159-robinhood-token-repair-publication-frontier',
+    name: 'Stage 159 Robinhood token repair publication frontier',
+    repair: 'node src/utils/db-init-stage159.js',
+    tables: [{
+      table: 'robinhood_wallet_transfer_token_coverage',
+      columns: ['published_at'],
+      constraints: [{
+        name: 'rh_wallet_transfer_token_coverage_published_check',
+        includes: ['CHECK', 'published_at', 'complete', 'next_block', 'source_through_block'],
+      }],
+      indexes: [{
+        name: 'idx_rh_wallet_transfer_token_coverage_publish',
+        includes: [
+          'chain', 'projection_version', 'source_through_block',
+          'token_address', 'complete', 'published_at', 'attempt_count',
+        ],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

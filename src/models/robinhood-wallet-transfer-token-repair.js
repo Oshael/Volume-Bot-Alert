@@ -37,6 +37,7 @@ function task(row) {
     nextBlock: String(row.next_block), sourceThroughBlock: String(row.source_through_block),
     sourceThroughHash: row.source_through_hash, status: row.status,
     attemptCount: Number(row.attempt_count), leaseOwner: row.lease_owner || null,
+    publishedAt: row.published_at == null ? null : new Date(row.published_at).toISOString(),
   }) : null;
 }
 
@@ -58,32 +59,62 @@ function validateFrontier(rows) {
 function createRobinhoodWalletTransferTokenRepairRepository(options = {}) {
   const database = options.database || db;
   const persistProjection = options.persistProjection || persistTransferProjection;
+  const targetVersion = options.targetVersion || TARGET_VERSION;
+  const shadowVersion = options.shadowVersion || SHADOW_VERSION;
 
-  async function initialize() {
+  async function loadFrontier() {
     const cursors = await database.query(
       `SELECT stream, origin_block, next_block, checkpoint_block, checkpoint_hash,
               lifecycle_state, created_at
          FROM robinhood_wallet_transfer_cursors
         WHERE chain = $1 AND projection_version = $2 AND stream IN ('seed', 'live')`,
-      [CHAIN, TARGET_VERSION]
+      [CHAIN, targetVersion]
     );
-    const { seed, live } = validateFrontier(cursors.rows);
+    return validateFrontier(cursors.rows);
+  }
+
+  async function plan() {
+    const { seed, live } = await loadFrontier();
+    const result = await database.query(
+      `SELECT COUNT(*)::integer AS tracked,
+              COUNT(*) FILTER (WHERE created_at <= $2::timestamptz)::integer AS inferred_complete,
+              COUNT(*) FILTER (WHERE created_at > $2::timestamptz)::integer AS repair_required
+         FROM robinhood_holder_token_states
+        WHERE chain = $1 AND ledger_status IN ('backfilling', 'shadow', 'live')`,
+      [CHAIN, seed.created_at]
+    );
+    return Object.freeze({
+      ...result.rows[0], sourceFromBlock: String(seed.origin_block),
+      sourceThroughBlock: String(live.checkpoint_block), sourceThroughHash: live.checkpoint_hash,
+    });
+  }
+
+  async function initialize() {
+    const { seed, live } = await loadFrontier();
     const result = await database.query(
       `INSERT INTO robinhood_wallet_transfer_token_coverage (
          chain, projection_version, token_address, source_from_block, next_block,
-         source_through_block, source_through_hash, status, completed_at
+         source_through_block, source_through_hash, status, completed_at, published_at
        ) SELECT $1, $2, state.token_address, $3::bigint,
            CASE WHEN state.created_at <= $6::timestamptz
              THEN $4::bigint + 1 ELSE $3::bigint END,
            $4::bigint, $5,
            CASE WHEN state.created_at <= $6::timestamptz THEN 'complete' ELSE 'pending' END,
+           CASE WHEN state.created_at <= $6::timestamptz THEN NOW() ELSE NULL END,
            CASE WHEN state.created_at <= $6::timestamptz THEN NOW() ELSE NULL END
          FROM robinhood_holder_token_states state
         WHERE state.chain = $1 AND state.ledger_status IN ('backfilling', 'shadow', 'live')
        ON CONFLICT (chain, projection_version, token_address) DO NOTHING
        RETURNING status`,
-      [CHAIN, TARGET_VERSION, String(seed.origin_block), String(live.checkpoint_block),
+      [CHAIN, targetVersion, String(seed.origin_block), String(live.checkpoint_block),
         live.checkpoint_hash, seed.created_at]
+    );
+    await database.query(
+      `UPDATE robinhood_wallet_transfer_token_coverage SET
+         published_at = COALESCE(published_at, completed_at), updated_at = NOW()
+       WHERE chain = $1 AND projection_version = $2 AND status = 'complete'
+         AND attempt_count = 0 AND published_at IS NULL`,
+      [CHAIN, targetVersion]
     );
     return Object.freeze({
       inserted: result.rowCount,
@@ -110,7 +141,7 @@ function createRobinhoodWalletTransferTokenRepairRepository(options = {}) {
            attempt_count = attempt_count + 1, version = version + 1, updated_at = NOW()
          FROM candidate WHERE coverage.chain = $1 AND coverage.projection_version = $2
            AND coverage.token_address = candidate.token_address RETURNING coverage.*`,
-      [CHAIN, TARGET_VERSION, leaseOwner, leaseMs]
+      [CHAIN, targetVersion, leaseOwner, leaseMs]
     );
     return task(result.rows[0]);
   }
@@ -130,7 +161,7 @@ function createRobinhoodWalletTransferTokenRepairRepository(options = {}) {
           WHERE chain = $1 AND projection_version = $2 AND token_address = $3
             AND status = 'leased' AND lease_owner = $4 AND lease_until > NOW()
           FOR UPDATE`,
-        [CHAIN, TARGET_VERSION, tokenAddress, leaseOwner]
+        [CHAIN, targetVersion, tokenAddress, leaseOwner]
       );
       const current = locked.rows[0];
       if (!current) throw new Error('token repair lease is stale');
@@ -139,9 +170,9 @@ function createRobinhoodWalletTransferTokenRepairRepository(options = {}) {
         throw new Error('token repair range conflicts with coverage cursor');
       }
       const events = input.events.map((event) => ({
-        ...event, tokenAddress, classificationVersion: SHADOW_VERSION,
+        ...event, tokenAddress, classificationVersion: shadowVersion,
       }));
-      const projected = await persistProjection(client, SHADOW_VERSION, events);
+      const projected = await persistProjection(client, shadowVersion, events);
       const nextBlock = (BigInt(toBlock) + 1n).toString();
       const complete = BigInt(nextBlock) > BigInt(current.source_through_block);
       const advanced = await client.query(
@@ -153,7 +184,7 @@ function createRobinhoodWalletTransferTokenRepairRepository(options = {}) {
            version = version + 1, updated_at = NOW()
          WHERE chain = $1 AND projection_version = $2 AND token_address = $3
            AND status = 'leased' AND lease_owner = $4 RETURNING *`,
-        [CHAIN, TARGET_VERSION, tokenAddress, leaseOwner, nextBlock, complete]
+        [CHAIN, targetVersion, tokenAddress, leaseOwner, nextBlock, complete]
       );
       await client.query('COMMIT');
       return Object.freeze({ task: task(advanced.rows[0]), projected, complete });
@@ -181,13 +212,138 @@ function createRobinhoodWalletTransferTokenRepairRepository(options = {}) {
        WHERE chain = $1 AND projection_version = $2 AND token_address = $3
          AND status = 'leased' AND lease_owner = $4 AND lease_until > NOW()
        RETURNING status`,
-      [CHAIN, TARGET_VERSION, tokenAddress, leaseOwner, maxAttempts, code, message]
+      [CHAIN, targetVersion, tokenAddress, leaseOwner, maxAttempts, code, message]
     );
     if (!result.rowCount) throw new Error('token repair lease is stale');
     return result.rows[0].status;
   }
 
-  return Object.freeze({ initialize, claim, commitShadowRange, retry });
+  async function recover(input = {}) {
+    const result = await database.query(
+      `WITH recoverable AS (
+         SELECT token_address, status AS previous_status
+           FROM robinhood_wallet_transfer_token_coverage
+          WHERE chain = $1 AND projection_version = $2
+            AND ((status = 'leased' AND lease_until <= NOW())
+              OR ($3::boolean AND status = 'failed'))
+          FOR UPDATE SKIP LOCKED
+       ) UPDATE robinhood_wallet_transfer_token_coverage coverage SET
+           status = 'pending', lease_owner = NULL, lease_until = NULL,
+           attempt_count = CASE WHEN recoverable.previous_status = 'failed'
+             THEN 0 ELSE coverage.attempt_count END,
+           next_attempt_at = NOW(), last_error_code = NULL, last_error_message = NULL,
+           version = version + 1, updated_at = NOW()
+         FROM recoverable WHERE coverage.chain = $1 AND coverage.projection_version = $2
+           AND coverage.token_address = recoverable.token_address
+       RETURNING recoverable.previous_status`,
+      [CHAIN, targetVersion, input.retryFailed === true]
+    );
+    return Object.freeze({
+      staleLeases: result.rows.filter((row) => row.previous_status === 'leased').length,
+      failed: result.rows.filter((row) => row.previous_status === 'failed').length,
+    });
+  }
+
+  async function promoteNext() {
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      const selected = await client.query(
+        `SELECT * FROM robinhood_wallet_transfer_token_coverage
+          WHERE chain = $1 AND projection_version = $2 AND status = 'complete'
+            AND published_at IS NULL AND attempt_count > 0
+          ORDER BY source_through_block, token_address LIMIT 1 FOR UPDATE SKIP LOCKED`,
+        [CHAIN, targetVersion]
+      );
+      const current = selected.rows[0];
+      if (!current) {
+        await client.query('ROLLBACK');
+        return null;
+      }
+      const cursor = await client.query(
+        `SELECT next_block, checkpoint_block, checkpoint_hash, lifecycle_state
+           FROM robinhood_wallet_transfer_cursors
+          WHERE chain = $1 AND projection_version = $2 AND stream = 'live' FOR UPDATE`,
+        [CHAIN, targetVersion]
+      );
+      const live = cursor.rows[0];
+      if (!live || live.lifecycle_state !== 'running' || live.checkpoint_block == null
+          || BigInt(live.next_block) !== BigInt(live.checkpoint_block) + 1n) {
+        throw new Error('transfer LIVE publication frontier is unavailable');
+      }
+      const covered = BigInt(current.source_through_block);
+      const frontier = BigInt(live.checkpoint_block);
+      if (frontier < covered || (frontier === covered
+          && live.checkpoint_hash !== current.source_through_hash)) {
+        throw new Error('transfer LIVE publication frontier regressed');
+      }
+      if (frontier > covered) {
+        const extended = await client.query(
+          `UPDATE robinhood_wallet_transfer_token_coverage SET
+             source_through_block = $4::bigint, source_through_hash = $5,
+             status = 'pending', completed_at = NULL, published_at = NULL,
+             version = version + 1, updated_at = NOW()
+           WHERE chain = $1 AND projection_version = $2 AND token_address = $3 RETURNING *`,
+          [CHAIN, targetVersion, current.token_address,
+            String(live.checkpoint_block), live.checkpoint_hash]
+        );
+        await client.query('COMMIT');
+        return Object.freeze({ status: 'extended', task: task(extended.rows[0]) });
+      }
+      const tables = [
+        ['robinhood_wallet_relationship_evidence', 'algorithm_version'],
+        ['robinhood_wallet_transfer_daily_summaries', 'projection_version'],
+        ['robinhood_wallet_transfer_edges', 'classification_version'],
+      ];
+      const promoted = {};
+      for (const [table, column] of tables) {
+        await client.query(
+          `DELETE FROM ${table} WHERE chain = $1 AND ${column} = $2 AND token_address = $3`,
+          [CHAIN, targetVersion, current.token_address]
+        );
+        const moved = await client.query(
+          `UPDATE ${table} SET ${column} = $2 WHERE chain = $1 AND ${column} = $4
+            AND token_address = $3`,
+          [CHAIN, targetVersion, current.token_address, shadowVersion]
+        );
+        promoted[table] = moved.rowCount;
+      }
+      const published = await client.query(
+        `UPDATE robinhood_wallet_transfer_token_coverage SET
+           published_at = NOW(), version = version + 1, updated_at = NOW()
+         WHERE chain = $1 AND projection_version = $2 AND token_address = $3 RETURNING *`,
+        [CHAIN, targetVersion, current.token_address]
+      );
+      await client.query('COMMIT');
+      return Object.freeze({
+        status: 'published', task: task(published.rows[0]), promoted: Object.freeze(promoted),
+      });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async function getProgress() {
+    const result = await database.query(
+      `SELECT COUNT(*)::integer AS total,
+              COUNT(*) FILTER (WHERE status = 'pending')::integer AS pending,
+              COUNT(*) FILTER (WHERE status = 'leased')::integer AS leased,
+              COUNT(*) FILTER (WHERE status = 'failed')::integer AS failed,
+              COUNT(*) FILTER (WHERE status = 'complete' AND published_at IS NULL)::integer AS shadow_complete,
+              COUNT(*) FILTER (WHERE published_at IS NOT NULL)::integer AS published
+         FROM robinhood_wallet_transfer_token_coverage
+        WHERE chain = $1 AND projection_version = $2`,
+      [CHAIN, targetVersion]
+    );
+    return Object.freeze(result.rows[0]);
+  }
+
+  return Object.freeze({
+    plan, initialize, claim, commitShadowRange, retry, recover, promoteNext, getProgress,
+  });
 }
 
 module.exports = {

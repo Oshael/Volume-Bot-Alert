@@ -104,6 +104,7 @@
     "robinhood:wallet-swap-origin-repair": "node src/utils/repair-robinhood-wallet-swap-origins.js",
     "robinhood:wallet-transfer-live-origin-repair": "node src/utils/repair-robinhood-wallet-transfer-live-origin.js",
     "robinhood:wallet-transfer-backfill": "node src/utils/backfill-robinhood-wallet-transfers.js",
+    "robinhood:wallet-transfer-token-repair": "node src/utils/repair-robinhood-wallet-transfer-tokens.js",
     "robinhood:directional-transfer-replay": "node src/utils/replay-robinhood-directional-transfer-evidence.js",
     "robinhood:wallet-endpoint-role-backfill": "node src/utils/backfill-robinhood-wallet-endpoint-roles.js",
     "robinhood:wallet-transfer-reclassification": "node src/utils/reclassify-robinhood-wallet-transfers.js",

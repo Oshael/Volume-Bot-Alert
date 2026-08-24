@@ -1470,9 +1470,23 @@ até o writer correspondente ser implantado.
 
 O engine token-scoped já reconstrói ranges limitados sob
 `rh_transfer_token_repair_v1`, com lease, retry, checkpoint canônico e cursor por
-token. Esse shadow não altera `rh_transfer_v1`; até existir a promoção atômica,
-estado `complete` significa somente que a reconstrução isolada terminou e não
-autoriza retry do replay direcional.
+token. A Stage 159 adiciona a frontier publicada: aplique
+`node src/utils/db-init-stage159.js`. O comando
+`npm run robinhood:wallet-transfer-token-repair` é read-only por padrão; para a
+campanha limitada, acrescente `--confirm-repair-robinhood-wallet-transfer-tokens`,
+`--max-blocks=500` e `--max-operations=<N>`. O archive RPC é exigido somente ao
+processar ranges. Cada token é reconstruído em shadow e promovido em uma única
+transação que trava o cursor LIVE; se a frontier avançou, somente o delta volta
+a `pending`, sem apagar uma projeção oficial ainda válida. `published_at` é a
+prova de cobertura utilizável pelo replay, enquanto `complete` sem publicação
+continua privado.
+
+Para uma campanha com ETA limitado, pause temporariamente somente
+`ROBINHOOD_WALLET_TRANSFER_LIVE_ENABLED`, rode o repair até `pending=0`,
+`leased=0`, `failed=0` e `shadow_complete=0`, e então reative o writer LIVE. Os
+ranges são idempotentes e retomáveis; não reinicie o seed global nem apague os
+ranges concluídos. Leases expiradas são retomadas automaticamente; use
+`--retry-failed` junto da confirmação somente após corrigir a causa da falha.
 
 O materializador `rh_insider_direct_v1` aceita
 somente `creator_token_distribution`: transferência positiva, direta (um hop),
