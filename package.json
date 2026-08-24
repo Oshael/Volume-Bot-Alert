@@ -67,6 +67,7 @@
     "quicknode:logs-dry-run": "QUICKNODE_CONTINUOUS_TRANSPORT=logs node src/utils/quicknode-onchain-continuous-dry-run.js",
     "jupiter:probe": "node src/utils/jupiter-api-probe.js",
     "x:push-probe": "node src/utils/x-push-latency-probe.js",
+    "x:push-scale-probe": "node src/utils/x-push-scale-probe.js",
     "robinhood:probe": "node src/utils/robinhood-rpc-probe.js",
     "robinhood:public-backfill-probe": "node src/utils/robinhood-public-backfill-probe.js",
     "robinhood:backfill-provider-probe": "node src/utils/robinhood-backfill-provider-probe.js",

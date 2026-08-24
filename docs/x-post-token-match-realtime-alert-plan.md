@@ -861,6 +861,41 @@ push antes de escrever no terminal ou JSONL, abre o arquivo sem seguir symlink e
 forca permissao `0600`. No worker continuo, preferir que o Playwright inicie um
 perfil dedicado com `launchPersistentContext`, sem expor porta CDP TCP.
 
+### Probe de escala do Web Push [PRONTO 2026-08-24]
+
+`src/utils/x-push-scale-probe.js` conecta somente ao Chrome observador. Push
+continua sendo o caminho ao vivo; uma leitura lenta de uma Lista privada serve
+apenas como ground truth para medir perda, duplicata e latencia. O probe registra
+somente campos normalizados e nunca persiste o payload cru nem o registration ID
+do FCM.
+
+1. Criar uma Lista privada com o coorte exato, seguir essas contas e ativar
+   manualmente o sino `All posts` em cada uma. Deixar aberta no observador a aba
+   `https://x.com/i/lists/<id>`.
+2. Executar:
+
+   ```bash
+   X_PUSH_OBSERVER_CDP=http://127.0.0.1:9223 \
+   X_PUSH_SCALE_OUTPUT=/tmp/x-push-scale-probe.jsonl \
+   X_PUSH_GROUND_TRUTH_MS=5000 \
+   npm run x:push-scale-probe
+   ```
+
+3. Publicar posts/reposts normalmente nas contas do coorte. Aguardar ao menos
+   10s depois do ultimo evento e usar `Ctrl+C`; o `summary` traz cobertura, IDs
+   ausentes, pushes sem par, duplicatas e p50/p95/p99.
+   `transportLatency` usa o timestamp em milissegundos do payload; a metrica
+   `endToEndLatency` e auxiliar porque `created_at` da timeline tem resolucao
+   mais grosseira.
+4. Escalar em degraus `25 -> 100 -> 250 -> 500`, mantendo cada degrau por tempo
+   suficiente para produzir amostra real. O gate continua: zero perda e p95 de
+   `transportLatency <= 200ms`; `groundTruthErrors > 0` invalida a conclusao de
+   cobertura daquele run.
+
+O poll de 5s nao participa da deteccao e nao sera levado ao worker de producao.
+Ele e deliberadamente lento, limitado e existe apenas durante o experimento para
+reconciliar o que o push deveria ter entregue.
+
 ### Alternativa futura - Nitter local para gaps [ADIADA DO MVP 2026-08-24]
 
 Uma instancia local do Nitter e uma hipotese valida para simplificar o acesso a

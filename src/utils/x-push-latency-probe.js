@@ -331,5 +331,6 @@ if (require.main === module) {
 }
 
 module.exports = {
-  graphqlOperation, isCreatePostUrl, isTimelinePollUrl, redactSensitiveText, safeMetadata, summarize,
+  graphqlOperation, isCreatePostUrl, isTimelinePollUrl, redactSensitiveText, safeMetadata,
+  secureAppend, summarize,
 };
