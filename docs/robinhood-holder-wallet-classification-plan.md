@@ -367,8 +367,9 @@ carga sem ETA confiável.
      backfill. O loop operacional opt-in roda no grupo
      `robinhood-wallet-classification`, usa lease própria, pagina todo o catálogo
      e publica telemetria sem pertencer ao worker de holders. Glifo e métrica já
-     podem ser consumidos pelo expanded chart; filtro com paginação por tag segue
-     em corte separado.
+     são consumidos pelo expanded chart. O filtro `SNIPERS` também está concluído:
+     a API pagina pelo ledger completo, restringe a política pública v2 e vincula
+     o filtro ao cursor; o frontend mantém navegação e cache separados de `TOP`.
 4. **INSIDER direto**
    - começar por distribuição direta do token;
    - adicionar funding nativo direto somente quando a fonte estiver comprovada.

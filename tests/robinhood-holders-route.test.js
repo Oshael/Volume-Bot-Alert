@@ -257,6 +257,7 @@ describe('Robinhood holders route', () => {
 
     assert.equal(response.status, 200);
     assert.equal(response.body.token, TOKEN);
+    assert.equal(response.body.filter, 'top');
     assert.equal(response.body.summary.holderCount, 4424);
     assert.equal(response.body.summary.freshness, 'fresh');
     assert.equal(response.body.holders[0].rank, 1);
@@ -277,7 +278,7 @@ describe('Robinhood holders route', () => {
       },
       holderPageRepository: {
         listPublishedPage: async (input) => {
-          assert.deepEqual(input, { tokenAddress: TOKEN, cursor: null });
+          assert.deepEqual(input, { tokenAddress: TOKEN, cursor: null, filter: 'top' });
           return {
             holderCount: 1, source: 'ledger_live', totalSupplyRaw: '10000',
             observedAt: '2026-08-10T04:59:59.000Z',
@@ -313,6 +314,7 @@ describe('Robinhood holders route', () => {
 
     assert.equal(response.status, 200);
     assert.equal(response.body.summary.source, 'ledger_live');
+    assert.equal(response.body.filter, 'top');
     assert.equal(response.body.summary.holderCount, 1);
     assert.equal(response.body.summary.totalSupplyRaw, '10000');
     assert.equal(response.body.holders[0].balanceRaw, '5000');
@@ -327,6 +329,37 @@ describe('Robinhood holders route', () => {
     assert.equal(response.body.nextCursor, 'ledger_v1.next');
     assert.equal(response.body.refreshQueued, false);
     assert.equal(scheduled, 0);
+  });
+
+  it('routes the SNIPERS filter exclusively through the published ledger', async () => {
+    let scheduled = 0;
+    const response = await request(appWith({
+      holderPageRepository: {
+        listPublishedPage: async (input) => {
+          assert.deepEqual(input, { tokenAddress: TOKEN, cursor: null, filter: 'snipers' });
+          return {
+            holderCount: 0, source: 'ledger_live', totalSupplyRaw: '10000',
+            observedAt: '2026-08-10T04:59:59.000Z',
+            checkedAt: '2026-08-10T05:00:00.000Z', items: [],
+            hasMore: false, nextCursor: null,
+          };
+        },
+      },
+      scheduler: { schedule: () => { scheduled += 1; return Promise.resolve(); } },
+    })).get(`/api/robinhood/holders?token=${TOKEN}&filter=snipers`);
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.filter, 'snipers');
+    assert.equal(response.body.summary.holderCount, 0);
+    assert.deepEqual(response.body.holders, []);
+    assert.equal(scheduled, 0);
+  });
+
+  it('rejects unknown filters before reading holder data', async () => {
+    const response = await request(appWith())
+      .get(`/api/robinhood/holders?token=${TOKEN}&filter=fresh`);
+    assert.equal(response.status, 400);
+    assert.equal(response.body.code, 'INVALID_REQUEST');
   });
 
   it('fails closed when a ledger cursor becomes unavailable', async () => {

@@ -1433,8 +1433,12 @@ A API de holders mantém por padrão `LP`, `CEX` e `SNIPER` na allowlist públic
 `rh_sniper_high_v2`; sinais candidatos e políticas anteriores permanecem privados.
 A métrica `snipers` usa primeiro um snapshot persistido, quando houver, e de outro
 modo deriva a participação atual dos registros materializados contra o supply
-aceito mais recente, sem novo backfill ou reclassificação. O filtro dedicado
-continua desabilitado até a API oferecer paginação por tag.
+aceito mais recente, sem novo backfill ou reclassificação. O endpoint aceita
+`filter=snipers` somente sobre o ledger publicado e pagina por saldo entre todas
+as wallets SNIPER atuais; não filtra localmente a página TOP nem recorre ao
+Blockscout. Cursores carregam o filtro e são rejeitados se reutilizados em outra
+visão. O expanded chart mantém caches e stacks de paginação independentes para
+`TOP` e `SNIPERS`.
 A Stage 153 vem depois dessas migrations e é obrigatória antes do writer/source
 de `INSIDER`: aplique `node src/utils/db-init-stage153.js` antes de iniciar ou
 atualizar os processos seed/live/reclassification de transfers. Ela

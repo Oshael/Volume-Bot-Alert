@@ -3,11 +3,18 @@ const { normalizeTokenAddress } = require('../utils/token-identity');
 const {
   deriveWalletPositionMetrics,
 } = require('../services/robinhood-wallet-position-domain');
+const {
+  HOLDER_CLASSIFICATION_VERSION,
+} = require('../services/robinhood-holder-classification-domain');
+const {
+  SNIPER_HIGH_CONFIDENCE_RULE,
+} = require('../services/robinhood-holder-sniper-policy');
 
 const PAGE_SIZE = 50;
 const CURSOR_PREFIX = 'ledger_v1.';
 const MAX_CURSOR_LENGTH = 512;
 const DEAD_ADDRESS = '0x000000000000000000000000000000000000dead';
+const HOLDER_FILTERS = Object.freeze(['top', 'snipers']);
 
 function invalidCursor() {
   const error = new Error('Holder ledger cursor is invalid');
@@ -15,20 +22,32 @@ function invalidCursor() {
   return error;
 }
 
-function decodeCursor(value) {
+function normalizeFilter(value) {
+  const normalized = String(value ?? 'top').trim().toLowerCase();
+  if (!HOLDER_FILTERS.includes(normalized)) throw invalidCursor();
+  return normalized;
+}
+
+function normalizeCursorPayload(payload, expectedFilter) {
+  const balanceRaw = String(payload?.balanceRaw ?? '');
+  const rank = Number(payload?.rank);
+  const filter = normalizeFilter(payload?.filter);
+  const walletAddress = normalizeTokenAddress('robinhood', payload?.walletAddress);
+  const validBalance = /^\d{1,78}$/.test(balanceRaw) && balanceRaw !== '0';
+  const validRank = Number.isSafeInteger(rank) && rank >= 1 && rank <= 10_000_000;
+  if (!validBalance || !validRank || filter !== normalizeFilter(expectedFilter)) {
+    throw invalidCursor();
+  }
+  return Object.freeze({ balanceRaw, walletAddress, rank, filter });
+}
+
+function decodeCursor(value, expectedFilter = 'top') {
   if (value == null) return null;
   const raw = String(value);
   if (!raw.startsWith(CURSOR_PREFIX) || raw.length > MAX_CURSOR_LENGTH) throw invalidCursor();
   try {
     const payload = JSON.parse(Buffer.from(raw.slice(CURSOR_PREFIX.length), 'base64url'));
-    const balanceRaw = String(payload?.balanceRaw ?? '');
-    const rank = Number(payload?.rank);
-    const walletAddress = normalizeTokenAddress('robinhood', payload?.walletAddress);
-    if (!/^\d{1,78}$/.test(balanceRaw) || balanceRaw === '0'
-        || !Number.isSafeInteger(rank) || rank < 1 || rank > 10_000_000) {
-      throw invalidCursor();
-    }
-    return Object.freeze({ balanceRaw, walletAddress, rank });
+    return normalizeCursorPayload(payload, expectedFilter);
   } catch (error) {
     if (error?.code === 'invalid_cursor') throw error;
     throw invalidCursor();
@@ -43,8 +62,8 @@ function isLedgerCursor(value) {
   return typeof value === 'string' && value.startsWith(CURSOR_PREFIX);
 }
 
-function validateLedgerCursor(value) {
-  decodeCursor(value);
+function validateLedgerCursor(value, filter = 'top') {
+  decodeCursor(value, filter);
   return String(value);
 }
 
@@ -90,7 +109,7 @@ function financialMetrics(row, totalSupplyRaw, currentFdvUsd) {
   });
 }
 
-function mapPage(tokenAddress, cursor, rows) {
+function mapPage(tokenAddress, cursor, rows, filter = 'top') {
   if (!rows.length) return null;
   const holderCount = Number(rows[0].holder_count);
   if (!Number.isSafeInteger(holderCount) || holderCount < 0) {
@@ -121,7 +140,7 @@ function mapPage(tokenAddress, cursor, rows) {
     items: Object.freeze(items),
     hasMore,
     nextCursor: hasMore ? encodeCursor({
-      balanceRaw: last.balanceRaw, walletAddress: last.address, rank: last.rank,
+      balanceRaw: last.balanceRaw, walletAddress: last.address, rank: last.rank, filter,
     }) : null,
     source: 'ledger_live',
     observedAt: rows[0].observed_at?.toISOString?.() || rows[0].observed_at,
@@ -134,10 +153,27 @@ function createRobinhoodHolderPageRepository(options = {}) {
 
   async function listPublishedPage(input = {}) {
     const tokenAddress = normalizeTokenAddress('robinhood', input.tokenAddress);
-    const cursor = decodeCursor(input.cursor);
+    const filter = normalizeFilter(input.filter);
+    const cursor = decodeCursor(input.cursor, filter);
     const result = await database.query(
-      `WITH published_state AS MATERIALIZED (
-         SELECT state.holder_count, state.updated_at AS observed_at,
+      `WITH sniper_wallets AS MATERIALIZED (
+         SELECT classification.wallet_address
+           FROM robinhood_holder_classifications classification
+           INNER JOIN robinhood_holder_balances balance
+             ON balance.chain = classification.chain
+            AND balance.token_address = classification.token_address
+            AND balance.wallet_address = classification.wallet_address
+          WHERE $4::varchar = 'snipers' AND classification.chain = 'robinhood'
+            AND classification.token_address = $1
+            AND classification.classification_version = $5
+            AND classification.tag = 'sniper' AND classification.confidence = 'high'
+            AND classification.evidence_json #>> '{rule,evidenceVersion}' = $6
+            AND (classification.expires_at IS NULL OR classification.expires_at > NOW())
+       ), published_state AS MATERIALIZED (
+         SELECT CASE WHEN $4::varchar = 'snipers'
+                     THEN (SELECT COUNT(*) FROM sniper_wallets)
+                     ELSE state.holder_count END AS holder_count,
+                state.updated_at AS observed_at,
                 cursor.updated_at AS checked_at
            FROM robinhood_holder_token_states state
            INNER JOIN robinhood_holder_cursors cursor
@@ -166,6 +202,10 @@ function createRobinhoodHolderPageRepository(options = {}) {
            FROM robinhood_holder_balances balance
           WHERE balance.chain = 'robinhood' AND balance.token_address = $1
             AND EXISTS (SELECT 1 FROM published_state)
+            AND ($4::varchar = 'top' OR EXISTS (
+              SELECT 1 FROM sniper_wallets sniper
+               WHERE sniper.wallet_address = balance.wallet_address
+            ))
             AND ($2::numeric IS NULL OR balance.balance_raw < $2::numeric
               OR (balance.balance_raw = $2::numeric AND balance.wallet_address > $3))
           ORDER BY balance.balance_raw DESC, balance.wallet_address ASC
@@ -191,9 +231,12 @@ function createRobinhoodHolderPageRepository(options = {}) {
           AND position.token_address = $1
           AND position.wallet_address = page.wallet_address
         ORDER BY page.balance_raw DESC NULLS LAST, page.wallet_address ASC`,
-      [tokenAddress, cursor?.balanceRaw || null, cursor?.walletAddress || null]
+      [
+        tokenAddress, cursor?.balanceRaw || null, cursor?.walletAddress || null, filter,
+        HOLDER_CLASSIFICATION_VERSION, SNIPER_HIGH_CONFIDENCE_RULE.evidenceVersion,
+      ]
     );
-    return mapPage(tokenAddress, cursor, result.rows);
+    return mapPage(tokenAddress, cursor, result.rows, filter);
   }
 
   return Object.freeze({ listPublishedPage });
@@ -203,5 +246,7 @@ module.exports = {
   createRobinhoodHolderPageRepository,
   isLedgerCursor,
   validateLedgerCursor,
-  __private: { decodeCursor, encodeCursor, mapPage, PAGE_SIZE },
+  __private: {
+    decodeCursor, encodeCursor, mapPage, normalizeCursorPayload, normalizeFilter, PAGE_SIZE,
+  },
 };

@@ -49,6 +49,14 @@ function parseHistoryDays(value) {
   return parsed;
 }
 
+function parseHolderFilter(value) {
+  const normalized = String(value ?? 'top').trim().toLowerCase();
+  if (!['top', 'snipers'].includes(normalized)) {
+    throw new RangeError('holder filter is invalid');
+  }
+  return normalized;
+}
+
 function publicSummary(row, nowMs, refreshMs) {
   if (!row) return Object.freeze({
     holderCount: null,
@@ -87,11 +95,15 @@ function safeErrorCode(error) {
   return normalized.replace(/[^a-z0-9_:-]+/g, '_').slice(0, 64) || 'provider_error';
 }
 
-function parsePageCursor(value) {
+function parsePageCursor(value, filter = 'top') {
   if (isLedgerCursor(value)) {
     return Object.freeze({
-      source: 'ledger', ledgerCursor: validateLedgerCursor(value), blockscoutCursor: null,
+      source: 'ledger', ledgerCursor: validateLedgerCursor(value, filter), blockscoutCursor: null,
     });
+  }
+  if (filter !== 'top') {
+    if (value != null && value !== '') throw new RangeError('filtered cursor is invalid');
+    return Object.freeze({ source: 'ledger', ledgerCursor: null, blockscoutCursor: null });
   }
   const blockscoutCursor = validateHoldersCursor(value);
   return Object.freeze({
@@ -104,7 +116,7 @@ async function sendPublishedLedgerPage(input) {
   if (input.cursor.source === 'blockscout') return false;
   try {
     const page = await input.repository.listPublishedPage({
-      tokenAddress: input.tokenAddress, cursor: input.cursor.ledgerCursor,
+      tokenAddress: input.tokenAddress, cursor: input.cursor.ledgerCursor, filter: input.filter,
     });
     if (page) {
       const nativeItems = await enrichNativeBalances(
@@ -114,7 +126,7 @@ async function sendPublishedLedgerPage(input) {
         nativeItems, input.intelligence, input.tokenAddress, input.logger
       );
       input.response.json({
-        token: input.tokenAddress,
+        token: input.tokenAddress, filter: input.filter,
         summary: publicSummary({
           holderCount: page.holderCount, totalSupplyRaw: page.totalSupplyRaw,
           source: page.source, observedAt: page.observedAt, checkedAt: page.checkedAt,
@@ -335,15 +347,18 @@ function createRobinhoodHoldersRouter(options = {}) {
   router.get('/holders', auth, visibility, async (req, res) => {
     let tokenAddress;
     let pageCursor;
+    let holderFilter;
     try {
       tokenAddress = normalizeTokenAddress('robinhood', req.query?.token);
-      pageCursor = parsePageCursor(req.query?.cursor);
+      holderFilter = parseHolderFilter(req.query?.filter);
+      pageCursor = parsePageCursor(req.query?.cursor, holderFilter);
     } catch (_) {
       return res.status(400).json({ error: 'token or cursor is invalid', code: 'INVALID_REQUEST' });
     }
 
     if (await sendPublishedLedgerPage({
       repository: holderPageRepository, tokenAddress, cursor: pageCursor,
+      filter: holderFilter,
       intelligence: holderIntelligenceRepository,
       response: res, logger, nativeBalances, nowMs: now(), refreshMs,
     })) return undefined;
@@ -371,7 +386,7 @@ function createRobinhoodHoldersRouter(options = {}) {
         nativeItems, holderIntelligenceRepository, tokenAddress, logger
       );
       return res.json({
-        token: tokenAddress,
+        token: tokenAddress, filter: holderFilter,
         summary: publicSummary(cached, nowMs, refreshMs),
         holders: intelligence.holders,
         classificationVersion: intelligence.classificationVersion,
@@ -405,7 +420,7 @@ function createRobinhoodHoldersRouter(options = {}) {
 const router = createRobinhoodHoldersRouter();
 router.createRobinhoodHoldersRouter = createRobinhoodHoldersRouter;
 router.__private = {
-  enrichIntelligence, enrichNativeBalances, parseHistoryDays, publicSummary,
+  enrichIntelligence, enrichNativeBalances, parseHistoryDays, parseHolderFilter, publicSummary,
   resolveNativeBalanceProvider,
   safeErrorCode, shouldQueueRefresh,
 };

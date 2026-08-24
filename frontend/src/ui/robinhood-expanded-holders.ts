@@ -2,6 +2,7 @@ import {
   fetchRobinhoodHoldersPage,
   type RobinhoodHolder,
   type RobinhoodHolderDistributionMetric,
+  type RobinhoodHolderFilter,
   type RobinhoodHoldersPage,
 } from '../services/api/robinhood-holders';
 import { subscribeRobinhoodHolderUpdates } from '../services/socket/client';
@@ -21,7 +22,7 @@ const MIN_CHART_AREA_HEIGHT = 250;
 interface HolderDataCache {
   pages: Map<string, RobinhoodHoldersPage>;
   pageRequests: Map<string, Promise<RobinhoodHoldersPage>>;
-  cursorStack: Array<string | null>;
+  cursorStacks: Map<RobinhoodHolderFilter, Array<string | null>>;
 }
 
 const holderDataCacheByToken = new Map<string, HolderDataCache>();
@@ -32,7 +33,7 @@ function getHolderDataCache(token: string): HolderDataCache {
   const created: HolderDataCache = {
     pages: new Map(),
     pageRequests: new Map(),
-    cursorStack: [null],
+    cursorStacks: new Map([['top', [null]]]),
   };
   holderDataCacheByToken.set(token, created);
   return created;
@@ -44,6 +45,10 @@ function count(value: number | null) {
 
 function displayedHolderCount(live: number | null, fallback: number | null) {
   return live == null ? fallback : live;
+}
+
+function pageCacheKey(filter: RobinhoodHolderFilter, cursor: string | null) {
+  return `${filter}:${cursor || 'first'}`;
 }
 
 function shortAddress(value: string) {
@@ -194,12 +199,16 @@ function distributionHtml(page: RobinhoodHoldersPage) {
 }
 
 function holderToolbarHtml(page: RobinhoodHoldersPage, pageNumber: number, hasPrevious: boolean,
-  holderCount: number | null) {
+  holderCount: number | null, activeFilter: RobinhoodHolderFilter) {
   const observed = new Date(page.observedAt).toLocaleTimeString([], { hour12: false });
   const pages = Math.max(pageNumber, Math.ceil((holderCount || 0) / 50));
   const glyphs = [['◎', 'SNIPER', 'is-sniper'], ['✦', 'FRESH', 'is-fresh'], ['⇄', 'CEX', 'is-cex'], ['≋', 'LP', 'is-lp']];
   return `<header class="rh-holder-toolbar"><strong>TOP HOLDERS</strong><span data-holder-panel-count>${count(holderCount)}</span><i></i>
-    <div class="rh-holder-filters"><button class="active">TOP</button>${['INSIDERS', 'SNIPERS', 'FRESH'].map((label) => `<button disabled title="Classification unavailable">${label}</button>`).join('')}</div>
+    <div class="rh-holder-filters">
+      <button data-holder-filter="top" class="${activeFilter === 'top' ? 'active' : ''}">TOP</button>
+      <button data-holder-filter="snipers" class="${activeFilter === 'snipers' ? 'active' : ''}">SNIPERS</button>
+      ${['INSIDERS', 'FRESH'].map((label) => `<button disabled title="Classification unavailable">${label}</button>`).join('')}
+    </div>
     <div class="rh-holder-legend">${glyphs.map(([glyph, label, tone]) => `<span><b class="${tone}">${glyph}</b>${label}</span>`).join('')}</div>
     <span class="holder-freshness is-${page.summary.freshness}">${escapeHtml(page.summary.freshness)} · ${escapeHtml(observed)}</span>
     <nav><button aria-label="Previous" data-holder-page-action="previous" ${hasPrevious ? '' : 'disabled'}>‹</button><span>${pageNumber}/${Math.max(1, pages)}</span><button aria-label="Next" data-holder-page-action="next" ${page.hasMore ? '' : 'disabled'}>›</button></nav>
@@ -209,6 +218,7 @@ function holderToolbarHtml(page: RobinhoodHoldersPage, pageNumber: number, hasPr
 function holderPageHtml(
   page: RobinhoodHoldersPage, pageNumber: number, hasPrevious: boolean,
   holderCount: number | null, distributionPage: RobinhoodHoldersPage,
+  activeFilter: RobinhoodHolderFilter,
 ) {
   const rows = page.holders.map((holder) => `<tr>
     <td class="rh-col-rank">${holder.rank}</td>
@@ -221,7 +231,7 @@ function holderPageHtml(
     ${positionCell(holder.sellProceedsUsd, holder.avgSellMcapUsd, holder.sellTxCount)}
     ${pnlRemainingCell(holder.unrealizedPnlUsd, holder.balanceRaw, page.summary.totalSupplyRaw)}
   </tr>`).join('');
-  return `${holderToolbarHtml(page, pageNumber, hasPrevious, holderCount)}<div class="rh-holder-content">
+  return `${holderToolbarHtml(page, pageNumber, hasPrevious, holderCount, activeFilter)}<div class="rh-holder-content">
     <div class="rh-holder-list"><div class="robinhood-holder-table-wrap"><table><thead><tr>
         <th class="rh-col-rank">#</th><th class="rh-col-holder">Holder</th>
         <th class="rh-col-num">BAL</th><th class="rh-col-num">AVG BUY <small>· MC</small></th>
@@ -251,9 +261,10 @@ export function mountRobinhoodExpandedHolders(section: ParentNode, options: Moun
   let requestId = 0;
   let currentPage: RobinhoodHoldersPage | null = null;
   const cache = getHolderDataCache(options.token);
-  let distributionPage = cache.pages.get('first') || null;
+  let activeFilter: RobinhoodHolderFilter = 'top';
+  let distributionPage = cache.pages.get(pageCacheKey('top', null)) || null;
   let liveHolderCount: number | null = null;
-  const cursors = [...cache.cursorStack];
+  let cursors = [...(cache.cursorStacks.get(activeFilter) || [null])];
   let dragStartY = 0;
   let dragStartHeight = 0;
   let dragging = false;
@@ -313,28 +324,34 @@ export function mountRobinhoodExpandedHolders(section: ParentNode, options: Moun
   const loadPage = async () => {
     const id = ++requestId;
     const cursor = cursors.at(-1) || null;
+    const cacheKey = pageCacheKey(activeFilter, cursor);
     pageContainer.innerHTML = '<p>Loading holders…</p>';
     try {
-      let pageRequest = cache.pageRequests.get(cursor || 'first');
-      if (!pageRequest && !cache.pages.has(cursor || 'first')) {
-        pageRequest = fetchRobinhoodHoldersPage(options.token, cursor, options.authToken)
+      let pageRequest = cache.pageRequests.get(cacheKey);
+      if (!pageRequest && !cache.pages.has(cacheKey)) {
+        pageRequest = fetchRobinhoodHoldersPage(
+          options.token, cursor, options.authToken, activeFilter,
+        )
           .then((result) => {
-            cache.pages.set(cursor || 'first', result);
+            cache.pages.set(cacheKey, result);
             return result;
           })
-          .finally(() => { cache.pageRequests.delete(cursor || 'first'); });
-        cache.pageRequests.set(cursor || 'first', pageRequest);
+          .finally(() => { cache.pageRequests.delete(cacheKey); });
+        cache.pageRequests.set(cacheKey, pageRequest);
       }
-      const result = cache.pages.get(cursor || 'first') || await pageRequest!;
+      const result = cache.pages.get(cacheKey) || await pageRequest!;
       if (disposed || id !== requestId) return;
       currentPage = result;
-      distributionPage = cache.pages.get('first') || result;
-      if (liveHolderCount == null) {
+      distributionPage = cache.pages.get(pageCacheKey('top', null)) || result;
+      if (activeFilter === 'top' && liveHolderCount == null) {
         if (holderCount) holderCount.textContent = count(result.summary.holderCount);
       }
+      const panelHolderCount = activeFilter === 'top'
+        ? displayedHolderCount(liveHolderCount, result.summary.holderCount)
+        : result.summary.holderCount;
       pageContainer.innerHTML = holderPageHtml(
         result, cursors.length, cursors.length > 1,
-        displayedHolderCount(liveHolderCount, result.summary.holderCount), distributionPage,
+        panelHolderCount, distributionPage, activeFilter,
       );
     } catch { if (!disposed && id === requestId) pageContainer.innerHTML = errorHtml(); }
   };
@@ -347,18 +364,27 @@ export function mountRobinhoodExpandedHolders(section: ParentNode, options: Moun
   const recoverPage = () => {
     if (disposed) return;
     liveHolderCount = null;
-    cache.pages.delete(cursors.at(-1) || 'first');
+    cache.pages.delete(pageCacheKey(activeFilter, cursors.at(-1) || null));
     void loadPage();
   };
   const onClick = (event: Event) => {
     const target = event.target as Element | null;
     const retry = target?.closest<HTMLButtonElement>('[data-holder-retry]')?.dataset.holderRetry;
     if (retry === 'page') return void loadPage();
+    const requestedFilter = target?.closest<HTMLButtonElement>('[data-holder-filter]')
+      ?.dataset.holderFilter as RobinhoodHolderFilter | undefined;
+    if (requestedFilter && requestedFilter !== activeFilter) {
+      activeFilter = requestedFilter;
+      cursors = [...(cache.cursorStacks.get(activeFilter) || [null])];
+      currentPage = null;
+      void loadPage();
+      return;
+    }
     const action = target?.closest<HTMLButtonElement>('[data-holder-page-action]')?.dataset.holderPageAction;
     if (action === 'next' && currentPage?.nextCursor) cursors.push(currentPage.nextCursor);
     else if (action === 'previous' && cursors.length > 1) cursors.pop();
     else return;
-    cache.cursorStack = [...cursors];
+    cache.cursorStacks.set(activeFilter, [...cursors]);
     void loadPage();
   };
   const onResize = () => {

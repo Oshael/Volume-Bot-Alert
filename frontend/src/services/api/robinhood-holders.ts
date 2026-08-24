@@ -1,6 +1,7 @@
 import { apiFetch } from './base';
 
 export type RobinhoodHolderTag = 'lp' | 'cex' | 'sniper' | 'fresh' | 'insider';
+export type RobinhoodHolderFilter = 'top' | 'snipers';
 export type RobinhoodClassificationStatus =
   'unavailable' | 'pending' | 'ready' | 'stale' | 'reorged';
 
@@ -67,6 +68,7 @@ export interface RobinhoodHolderSummary {
 
 export interface RobinhoodHoldersPage {
   token: string;
+  filter: RobinhoodHolderFilter;
   summary: RobinhoodHolderSummary;
   holders: RobinhoodHolder[];
   hasMore: boolean;
@@ -109,9 +111,15 @@ export interface RobinhoodHolderCountSeries {
   series: Record<RobinhoodHolderInterval, RobinhoodHolderBar[]>;
 }
 
-export function fetchRobinhoodHoldersPage(token: string, cursor?: string | null, authToken?: string | null) {
+export function fetchRobinhoodHoldersPage(
+  token: string,
+  cursor?: string | null,
+  authToken?: string | null,
+  filter: RobinhoodHolderFilter = 'top',
+) {
   const query = new URLSearchParams({ token });
   if (cursor) query.set('cursor', cursor);
+  if (filter !== 'top') query.set('filter', filter);
   return apiFetch<RobinhoodHoldersPage>(`/api/robinhood/holders?${query}`, {
     method: 'GET', token: authToken ?? null,
   });

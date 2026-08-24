@@ -23,6 +23,8 @@ describe('Robinhood published holder page persistence', () => {
         (LIKE public.robinhood_holder_token_states INCLUDING ALL)`);
       await client.query(`CREATE TEMP TABLE robinhood_holder_balances
         (LIKE public.robinhood_holder_balances INCLUDING ALL)`);
+      await client.query(`CREATE TEMP TABLE robinhood_holder_classifications
+        (LIKE public.robinhood_holder_classifications INCLUDING ALL)`);
       await client.query(`CREATE TEMP TABLE robinhood_holder_cursors
         (LIKE public.robinhood_holder_cursors INCLUDING ALL)`);
       await client.query(`CREATE TEMP TABLE robinhood_pool_registry (
@@ -54,6 +56,20 @@ describe('Robinhood published holder page persistence', () => {
              FROM unnest($2::varchar[], $3::varchar[])
                   WITH ORDINALITY AS item(wallet, balance, ordinality)`,
         [TOKEN, wallets, wallets.map((_, index) => String(10_000 - Math.floor(index / 2)))]
+      );
+      await client.query(
+        `INSERT INTO robinhood_holder_classifications (
+           token_address, wallet_address, tag, classification_version, confidence,
+           reason_code, evidence_json, through_block_number, through_block_hash, observed_at
+         ) VALUES
+           ($1, $2, 'sniper', 'rh_holder_v1', 'high', 'early_launch_buy',
+            $4::jsonb, 100, '0x${'1'.repeat(64)}', '2026-08-24T01:00:00Z'),
+           ($1, $3, 'sniper', 'rh_holder_v1', 'high', 'early_launch_buy',
+            $4::jsonb, 100, '0x${'1'.repeat(64)}', '2026-08-24T01:00:00Z')`,
+        [
+          TOKEN, wallets[2], wallets.at(-1),
+          JSON.stringify({ rule: { evidenceVersion: 'rh_sniper_high_v2' } }),
+        ]
       );
       await client.query(
         `INSERT INTO robinhood_holder_balances (
@@ -127,6 +143,12 @@ describe('Robinhood published holder page persistence', () => {
       assert.deepEqual(second.items.map((item) => item.rank), [51, 52]);
       assert.equal(second.hasMore, false);
       assert.equal(second.nextCursor, null);
+      const snipers = await repository.listPublishedPage({
+        tokenAddress: TOKEN, filter: 'snipers',
+      });
+      assert.equal(snipers.holderCount, 2);
+      assert.deepEqual(snipers.items.map(({ address }) => address), [wallets[2], wallets.at(-1)]);
+      assert.throws(() => __private.decodeCursor(first.nextCursor, 'snipers'), /cursor is invalid/);
       assert.equal(await repository.listPublishedPage({ tokenAddress: SHADOW_TOKEN }), null);
     } finally {
       await client.query('ROLLBACK').catch(() => {});

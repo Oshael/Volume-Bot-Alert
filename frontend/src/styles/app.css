@@ -3916,6 +3916,7 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   color: #7c8480; font-size: 10px; line-height: 1; cursor: default;
 }
 .rh-holder-filters button.active { background: rgba(12, 69, 105, 0.62); color: #55c7ff; }
+.rh-holder-filters button:not(:disabled) { cursor: pointer; }
 .rh-holder-filters button:disabled { opacity: 0.48; }
 .rh-holder-legend { display: flex; flex: 1 1 auto; gap: 9px; min-width: 0; overflow: hidden; }
 .rh-holder-legend > span { display: inline-flex; align-items: center; gap: 3px; color: #5c6461; font-size: 9px; letter-spacing: 0.07em; }
