@@ -82,9 +82,12 @@ function headRequestUrl(rawUrl, count) {
 }
 
 function buildScaleSummary(state) {
+  const groundTruthEnabled = state.groundTruthEnabled !== false;
   const groundTruthIds = [...state.groundTruth.keys()];
   const missingIds = groundTruthIds.filter((id) => !state.pushes.has(id));
-  const unmatchedPushIds = [...state.pushes.keys()].filter((id) => !state.groundTruth.has(id));
+  const unmatchedPushIds = groundTruthEnabled
+    ? [...state.pushes.keys()].filter((id) => !state.groundTruth.has(id))
+    : [];
   const duplicateIds = [...state.pushCounts].filter(([, count]) => count > 1).map(([id]) => id);
   const matchedIds = groundTruthIds.filter((id) => state.pushes.has(id));
   const endToEnd = matchedIds.map((id) => {
@@ -94,6 +97,7 @@ function buildScaleSummary(state) {
   });
   const transport = [...state.pushes.values()].map((push) => push.transportLatencyMs);
   return {
+    groundTruthEnabled,
     groundTruthEvents: groundTruthIds.length,
     matched: matchedIds.length,
     missing: missingIds.length,
@@ -176,39 +180,45 @@ async function main() {
   const intervalMs = readPositiveInt('X_PUSH_GROUND_TRUTH_MS', 5000, 2000);
   const count = readPositiveInt('X_PUSH_GROUND_TRUTH_COUNT', 100);
   const browser = await chromium.connectOverCDP(endpoint);
-  const page = browser.contexts().flatMap((context) => context.pages())
-    .find((candidate) => /^https:\/\/x\.com\/i\/lists\/\d+/i.test(candidate.url()));
-  if (!page) throw new Error('Observer Chrome must keep the private cohort list page open');
+  const pages = browser.contexts().flatMap((context) => context.pages());
+  const listPage = pages.find((candidate) => /^https:\/\/x\.com\/i\/lists\/\d+/i.test(candidate.url()));
+  const page = listPage || pages.find((candidate) => /^https:\/\/x\.com(?:\/|$)/i.test(candidate.url()));
+  if (!page) throw new Error('Observer Chrome must keep one logged-in x.com tab open');
 
   const emit = createRecorder(outputPath);
   const state = {
     pushes: new Map(), pushCounts: new Map(), groundTruth: new Map(), seenTimeline: new Set(),
-    groundTruthErrors: 0,
+    groundTruthErrors: 0, groundTruthEnabled: Boolean(listPage),
   };
   const startedEpochMs = Date.now();
   await observePush(page, startedEpochMs, state, emit);
-  const template = await captureListTemplate(page, count);
-  addGroundTruth(state, normalizeTimeline(template.initialBody), emit, true);
 
   let polling = false;
-  const poll = async () => {
-    if (polling) return;
-    polling = true;
-    try {
-      const response = await page.context().request.get(template.url, { headers: template.headers });
-      if (!response.ok()) throw new Error(`HTTP ${response.status()}`);
-      addGroundTruth(state, normalizeTimeline(await response.json()), emit);
-    } catch (error) {
-      state.groundTruthErrors += 1;
-      emit('ground_truth_error', { message: error.message });
-    } finally {
-      polling = false;
-    }
-  };
-  const pollTimer = setInterval(poll, intervalMs);
+  let pollTimer = null;
+  if (listPage) {
+    const template = await captureListTemplate(listPage, count);
+    addGroundTruth(state, normalizeTimeline(template.initialBody), emit, true);
+    const poll = async () => {
+      if (polling) return;
+      polling = true;
+      try {
+        const response = await listPage.context().request.get(template.url, { headers: template.headers });
+        if (!response.ok()) throw new Error(`HTTP ${response.status()}`);
+        addGroundTruth(state, normalizeTimeline(await response.json()), emit);
+      } catch (error) {
+        state.groundTruthErrors += 1;
+        emit('ground_truth_error', { message: error.message });
+      } finally {
+        polling = false;
+      }
+    };
+    pollTimer = setInterval(poll, intervalMs);
+  }
   const progressTimer = setInterval(() => emit('progress', buildScaleSummary(state)), 60000);
   emit('armed', {
-    outputPath, groundTruthIntervalMs: intervalMs, groundTruthCount: count,
+    outputPath, groundTruthEnabled: state.groundTruthEnabled,
+    groundTruthIntervalMs: state.groundTruthEnabled ? intervalMs : null,
+    groundTruthCount: state.groundTruthEnabled ? count : null,
     instruction: 'Publish normally from cohort accounts; Ctrl+C emits the final summary.',
   });
 
@@ -216,7 +226,7 @@ async function main() {
   const stop = (signal) => {
     if (stopping) return;
     stopping = true;
-    clearInterval(pollTimer);
+    if (pollTimer) clearInterval(pollTimer);
     clearInterval(progressTimer);
     emit('summary', { signal, ...buildScaleSummary(state) });
     setImmediate(() => process.exit(0));

@@ -61,3 +61,18 @@ test('buildScaleSummary reports loss, duplicates and both latency clocks', () =>
   assert.equal(summary.transportLatency.p95Ms, 600);
   assert.equal(summary.endToEndLatency.p95Ms, 300);
 });
+
+test('buildScaleSummary does not label pushes unmatched when ground truth is disabled', () => {
+  const summary = buildScaleSummary({
+    groundTruthEnabled: false,
+    groundTruth: new Map(),
+    pushes: new Map([['1', { observedAt: '2026-08-24T07:29:42.300Z', transportLatencyMs: 150 }]]),
+    pushCounts: new Map([['1', 1]]),
+    groundTruthErrors: 0,
+  });
+
+  assert.equal(summary.groundTruthEnabled, false);
+  assert.equal(summary.pushes, 1);
+  assert.equal(summary.coveragePct, null);
+  assert.equal(summary.unmatchedPushes, 0);
+});

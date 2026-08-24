@@ -869,9 +869,10 @@ apenas como ground truth para medir perda, duplicata e latencia. O probe registr
 somente campos normalizados e nunca persiste o payload cru nem o registration ID
 do FCM.
 
-1. Criar uma Lista privada com o coorte exato, seguir essas contas e ativar
-   manualmente o sino `All posts` em cada uma. Deixar aberta no observador a aba
-   `https://x.com/i/lists/<id>`.
+1. Seguir as contas e ativar manualmente o sino `All posts` em cada uma. Qualquer
+   aba logada em `x.com` basta para coletar pushes. Opcionalmente, criar uma Lista
+   privada com o coorte exato e deixar `https://x.com/i/lists/<id>` aberta para
+   tambem medir perdas contra ground truth.
 2. Executar:
 
    ```bash
@@ -892,9 +893,10 @@ do FCM.
    `transportLatency <= 200ms`; `groundTruthErrors > 0` invalida a conclusao de
    cobertura daquele run.
 
-O poll de 5s nao participa da deteccao e nao sera levado ao worker de producao.
-Ele e deliberadamente lento, limitado e existe apenas durante o experimento para
-reconciliar o que o push deveria ter entregue.
+Sem Lista, `groundTruthEnabled=false`: o probe mede volume, duplicatas e latencia,
+mas nao consegue concluir cobertura/perda. Com Lista, o poll de 5s nao participa
+da deteccao e existe apenas durante o experimento para reconciliar o que o push
+deveria ter entregue.
 
 ### Auditoria de followings entre sessoes [UTILITARIO PRONTO 2026-08-24]
 
