@@ -373,6 +373,53 @@ function createRobinhoodDirectionalTransferReplayRepository(options = {}) {
     return result.rows[0].status;
   }
 
+  async function deferRangeForTokenRepair(input = {}) {
+    const runId = uint(input.runId, 'runId');
+    const rangeId = uint(input.rangeId, 'rangeId');
+    const leaseOwner = owner(input.owner);
+    const failure = errorDetails(input.error);
+    const result = await database.query(
+      `UPDATE robinhood_directional_transfer_replay_ranges SET
+         status = 'failed', lease_owner = NULL, lease_until = NULL,
+         last_error_code = $4, last_error_message = $5, updated_at = NOW()
+       WHERE id = $1::bigint AND run_id = $2::bigint AND chain = $6
+         AND status = 'leased' AND lease_owner = $3 AND lease_until > NOW()
+       RETURNING status`,
+      [rangeId, runId, leaseOwner, failure.code, failure.message, CHAIN]
+    );
+    if (!result.rowCount) throw new Error('directional replay range lease is stale');
+    return result.rows[0].status;
+  }
+
+  async function settleTokenRepairDiscovery(runIdValue) {
+    const runId = uint(runIdValue, 'runId');
+    const result = await database.query(
+      `WITH settled AS (
+         UPDATE robinhood_directional_transfer_replay_runs run SET
+           status = 'failed', finished_at = NOW(), updated_at = NOW()
+         WHERE run.id = $1::bigint AND run.chain = $2 AND run.status = 'running'
+           AND EXISTS (
+             SELECT 1 FROM robinhood_directional_transfer_replay_ranges range
+              WHERE range.run_id = run.id AND range.status = 'failed'
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM robinhood_directional_transfer_replay_ranges range
+              WHERE range.run_id = run.id AND range.status IN ('pending', 'leased')
+           )
+         RETURNING status
+       )
+       SELECT status, true AS settled FROM settled
+       UNION ALL
+       SELECT status, false AS settled
+         FROM robinhood_directional_transfer_replay_runs
+        WHERE id = $1::bigint AND chain = $2 AND NOT EXISTS (SELECT 1 FROM settled)
+       LIMIT 1`,
+      [runId, CHAIN]
+    );
+    if (!result.rowCount) throw new Error('directional replay run was not found');
+    return Object.freeze({ status: result.rows[0].status, settled: result.rows[0].settled });
+  }
+
   async function resumeFailed(runIdValue) {
     const runId = uint(runIdValue, 'runId');
     const client = await database.getClient();
@@ -487,7 +534,8 @@ function createRobinhoodDirectionalTransferReplayRepository(options = {}) {
     createRun, getRun, ensureTokenScope, getTokenScopeReadiness, listRunTokenAddresses,
     stageTokenRepairCandidates,
     startRun, claimRange, reclaimExpired,
-    retryRange, resumeFailed, completeRange, getProgress,
+    retryRange, deferRangeForTokenRepair, settleTokenRepairDiscovery,
+    resumeFailed, completeRange, getProgress,
   });
 }
 

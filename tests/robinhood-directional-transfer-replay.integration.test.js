@@ -245,5 +245,43 @@ describe('Robinhood directional transfer replay persistence', () => {
       runId: created.id, owner: 'worker-b', leaseMs: 60_000,
     });
     assert.equal(resumed.attemptCount, 1);
+    await deleteRun(created.id);
+  });
+
+  it('defers missing-edge ranges and settles only after remaining work drains', async () => {
+    const repository = createRobinhoodDirectionalTransferReplayRepository({ database: db });
+    const input = {
+      ...runInput(), sourceFromBlock: '400', sourceThroughBlock: '401', rangeBlocks: 1,
+    };
+    await prepareCoverage(input);
+    const created = await repository.createRun(input);
+    await repository.startRun(created.id);
+    const deferred = await repository.claimRange({
+      runId: created.id, owner: 'worker-a', leaseMs: 60_000,
+    });
+    assert.equal(await repository.deferRangeForTokenRepair({
+      runId: created.id, rangeId: deferred.id, owner: 'worker-a',
+      error: { code: 'directional_replay_edge_missing', message: 'repair required' },
+    }), 'failed');
+    assert.equal((await repository.getRun(created.id)).status, 'running');
+    assert.deepEqual(await repository.settleTokenRepairDiscovery(created.id), {
+      status: 'running', settled: false,
+    });
+
+    const remaining = await repository.claimRange({
+      runId: created.id, owner: 'worker-b', leaseMs: 60_000,
+    });
+    await complete(repository, created.id, remaining, 'worker-b', { blocksScanned: '1' });
+    assert.deepEqual(await repository.settleTokenRepairDiscovery(created.id), {
+      status: 'failed', settled: true,
+    });
+    const progress = await repository.getProgress({ runId: created.id });
+    assert.deepEqual({
+      status: progress.status, completed: progress.completed, failed: progress.failed,
+      pending: progress.pending, leased: progress.leased,
+    }, { status: 'failed', completed: 1, failed: 1, pending: 0, leased: 0 });
+    assert.deepEqual(await repository.resumeFailed(created.id), {
+      runId: created.id, requeued: 1,
+    });
   });
 });

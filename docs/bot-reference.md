@@ -1497,10 +1497,14 @@ Para uma campanha com ETA limitado, pause temporariamente somente
 ranges são idempotentes e retomáveis; não reinicie o seed global nem apague os
 ranges concluídos. Leases expiradas são retomadas automaticamente; use
 `--retry-failed` junto da confirmação somente após corrigir a causa da falha.
-Para uma campanha já falha, a ordem é: retomar uma vez para materializar os
-candidatos exatos; inspecionar o repair read-only; processar até os quatro
-contadores zerarem; auditar posições; e retomar o mesmo `run_id`. Se outra faixa
-revelar um token novo, repita o ciclo sem reiniciar ranges concluídos.
+Para uma campanha já falha, uma única retomada percorre todos os ranges restantes.
+Quando encontra `edge_missing`, ela materializa os candidatos exatos, deixa o
+range como falho adiado e continua; ranges saudáveis são concluídos normalmente.
+Somente quando não restarem ranges `pending` ou `leased` a campanha volta para
+`failed`, agora com o lote consolidado de candidatos. Então inspecione o repair
+read-only, processe até `pending=0`, `leased=0`, `failed=0` e
+`shadow_complete=0`, audite posições e retome o mesmo `run_id`; não pause a cada
+novo token e não reinicie ranges concluídos.
 
 Antes de retomar uma campanha direcional que falhou por `edge_missing`, execute
 na VPS `npm run robinhood:wallet-position-coverage-audit`. O comando é somente

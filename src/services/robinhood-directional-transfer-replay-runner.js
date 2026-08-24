@@ -142,7 +142,12 @@ async function drainWorker(context, index) {
   while (true) {
     const range = await repository.claimRange({ runId: run.id, owner, leaseMs });
     if (!range) {
-      const progress = await repository.getProgress({ runId: run.id, concurrency });
+      let progress = await repository.getProgress({ runId: run.id, concurrency });
+      if (progress?.status === 'running' && progress.failed > 0
+          && progress.pending === 0 && progress.leased === 0) {
+        await repository.settleTokenRepairDiscovery(run.id);
+        progress = await repository.getProgress({ runId: run.id, concurrency });
+      }
       options.onProgress?.(progress);
       if (!progress || progress.status !== 'running') return;
       await sleep(options.pollMs ?? 1000);
@@ -159,19 +164,27 @@ async function drainWorker(context, index) {
       });
     } catch (error) {
       let failure = error;
+      let repairCandidateStaged = false;
       if (error.code === 'directional_replay_edge_missing') {
         try {
           await repository.stageTokenRepairCandidates({
             runId: run.id, tokenAddresses: error.tokenAddresses,
           });
+          repairCandidateStaged = true;
         } catch (candidateError) {
           failure = candidateError;
         }
       }
-      await repository.retryRange({
-        runId: run.id, rangeId: range.id, owner, error: failure, maxAttempts,
-        backoffMs: Math.min(60_000, 1000 * (2 ** Math.max(0, range.attemptCount - 1))),
-      });
+      if (repairCandidateStaged) {
+        await repository.deferRangeForTokenRepair({
+          runId: run.id, rangeId: range.id, owner, error,
+        });
+      } else {
+        await repository.retryRange({
+          runId: run.id, rangeId: range.id, owner, error: failure, maxAttempts,
+          backoffMs: Math.min(60_000, 1000 * (2 ** Math.max(0, range.attemptCount - 1))),
+        });
+      }
     }
     options.onProgress?.(await repository.getProgress({ runId: run.id, concurrency }));
   }
