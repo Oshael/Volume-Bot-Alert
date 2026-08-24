@@ -66,6 +66,85 @@ function errorDetails(error) {
 function createRobinhoodDirectionalTransferReplayRepository(options = {}) {
   const database = options.database || db;
 
+  async function tokenScopeReadiness(queryable, run) {
+    const existing = await queryable.query(
+      `SELECT COUNT(*)::integer AS count
+         FROM robinhood_directional_transfer_replay_tokens WHERE run_id = $1`, [run.id]
+    );
+    if (existing.rows[0].count > 0) {
+      return Object.freeze({
+        ready: true, tokenCount: existing.rows[0].count,
+        unavailable: 0, alreadyFrozen: true,
+      });
+    }
+    const counts = await queryable.query(
+      `SELECT COUNT(*)::integer AS tracked,
+              COUNT(coverage.token_address)::integer AS eligible
+         FROM robinhood_holder_token_states state
+         LEFT JOIN robinhood_wallet_transfer_token_coverage coverage
+           ON coverage.chain = state.chain AND coverage.projection_version = $2
+          AND coverage.token_address = state.token_address
+          AND coverage.source_from_block <= $3::bigint
+          AND coverage.source_through_block >= $4::bigint
+          AND coverage.status = 'complete'
+          AND coverage.next_block = coverage.source_through_block + 1
+          AND coverage.published_at IS NOT NULL
+        WHERE state.chain = $1
+          AND state.ledger_status IN ('backfilling', 'shadow', 'live')`,
+      [CHAIN, run.projection_version, String(run.source_from_block),
+        String(run.source_through_block)]
+    );
+    const { tracked, eligible } = counts.rows[0];
+    return Object.freeze({
+      ready: tracked > 0 && eligible === tracked, tokenCount: eligible,
+      unavailable: tracked - eligible, alreadyFrozen: false,
+    });
+  }
+
+  async function freezeTokenScope(client, run) {
+    const readiness = await tokenScopeReadiness(client, run);
+    if (readiness.alreadyFrozen) return readiness;
+    if (run.status === 'completed') {
+      const error = new Error('completed directional replay has no frozen token scope');
+      error.code = 'directional_replay_token_scope_missing';
+      throw error;
+    }
+    if (!readiness.ready) {
+      const error = new Error(
+        `directional replay token coverage incomplete: ${readiness.tokenCount}`
+        + ` eligible, ${readiness.unavailable} unavailable`
+      );
+      error.code = 'directional_replay_token_coverage_incomplete';
+      throw error;
+    }
+    const frozen = await client.query(
+      `INSERT INTO robinhood_directional_transfer_replay_tokens (
+         run_id, token_address, coverage_from_block,
+         coverage_through_block, coverage_through_hash
+       ) SELECT $1, state.token_address, coverage.source_from_block,
+                coverage.source_through_block, coverage.source_through_hash
+           FROM robinhood_holder_token_states state
+           JOIN robinhood_wallet_transfer_token_coverage coverage
+             ON coverage.chain = state.chain
+            AND coverage.projection_version = $2
+            AND coverage.token_address = state.token_address
+            AND coverage.source_from_block <= $3::bigint
+            AND coverage.source_through_block >= $4::bigint
+            AND coverage.status = 'complete'
+            AND coverage.next_block = coverage.source_through_block + 1
+            AND coverage.published_at IS NOT NULL
+          WHERE state.chain = $5
+            AND state.ledger_status IN ('backfilling', 'shadow', 'live')
+       ON CONFLICT (run_id, token_address) DO NOTHING RETURNING token_address`,
+      [run.id, run.projection_version, String(run.source_from_block),
+        String(run.source_through_block), CHAIN]
+    );
+    if (frozen.rowCount !== readiness.tokenCount) {
+      throw new Error('directional replay token scope changed while it was frozen');
+    }
+    return Object.freeze({ ...readiness, tokenCount: frozen.rowCount });
+  }
+
   async function createRun(input = {}) {
     const projectionVersion = identifier(
       input.projectionVersion ?? DEFAULT_PROJECTION_VERSION, 'projectionVersion'
@@ -85,7 +164,7 @@ function createRobinhoodDirectionalTransferReplayRepository(options = {}) {
     const rangeBlocks = boundedInteger(input.rangeBlocks ?? 1000, 'rangeBlocks', 1, 5000);
     const client = await database.getClient();
     try {
-      await client.query('BEGIN');
+      await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
       await client.query(
         'LOCK TABLE robinhood_directional_transfer_replay_runs IN SHARE ROW EXCLUSIVE MODE'
       );
@@ -107,13 +186,17 @@ function createRobinhoodDirectionalTransferReplayRepository(options = {}) {
          RETURNING id`,
         [run.id, CHAIN, sourceFromBlock, sourceThroughBlock, rangeBlocks]
       );
+      const scope = await freezeTokenScope(client, run);
       await client.query(
         `UPDATE robinhood_directional_transfer_replay_runs
             SET range_count = $2, updated_at = NOW() WHERE id = $1`,
         [run.id, ranges.rowCount]
       );
       await client.query('COMMIT');
-      return Object.freeze({ id: String(run.id), status: 'planned', rangeCount: ranges.rowCount });
+      return Object.freeze({
+        id: String(run.id), status: 'planned', rangeCount: ranges.rowCount,
+        tokenCount: scope.tokenCount,
+      });
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
       throw error;
@@ -129,6 +212,47 @@ function createRobinhoodDirectionalTransferReplayRepository(options = {}) {
         WHERE id = $1::bigint AND chain = $2`, [runId, CHAIN]
     );
     return runRow(result.rows[0]);
+  }
+
+  async function ensureTokenScope(runIdValue) {
+    const runId = uint(runIdValue, 'runId');
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
+      const result = await client.query(
+        `SELECT * FROM robinhood_directional_transfer_replay_runs
+          WHERE id = $1::bigint AND chain = $2 FOR UPDATE`, [runId, CHAIN]
+      );
+      if (!result.rows[0]) throw new Error('directional replay run was not found');
+      const scope = await freezeTokenScope(client, result.rows[0]);
+      await client.query('COMMIT');
+      return scope;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async function listRunTokenAddresses(runIdValue) {
+    const runId = uint(runIdValue, 'runId');
+    const result = await database.query(
+      `SELECT token_address FROM robinhood_directional_transfer_replay_tokens
+        WHERE run_id = $1::bigint ORDER BY token_address`, [runId]
+    );
+    if (!result.rowCount) throw new Error('directional replay token scope is empty');
+    return Object.freeze(result.rows.map((row) => row.token_address));
+  }
+
+  async function getTokenScopeReadiness(runIdValue) {
+    const runId = uint(runIdValue, 'runId');
+    const result = await database.query(
+      `SELECT * FROM robinhood_directional_transfer_replay_runs
+        WHERE id = $1::bigint AND chain = $2`, [runId, CHAIN]
+    );
+    if (!result.rows[0]) throw new Error('directional replay run was not found');
+    return tokenScopeReadiness(database, result.rows[0]);
   }
 
   async function startRun(runIdValue) {
@@ -315,7 +439,8 @@ function createRobinhoodDirectionalTransferReplayRepository(options = {}) {
   }
 
   return Object.freeze({
-    createRun, getRun, startRun, claimRange, reclaimExpired,
+    createRun, getRun, ensureTokenScope, getTokenScopeReadiness, listRunTokenAddresses,
+    startRun, claimRange, reclaimExpired,
     retryRange, resumeFailed, completeRange, getProgress,
   });
 }

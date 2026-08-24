@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const {
-  frozenSourceFromPlan, main, parseArgs,
+  assertSchema, frozenSourceFromPlan, main, parseArgs,
 } = require('../src/utils/replay-robinhood-directional-transfer-evidence');
 
 const HASH = `0x${'a'.repeat(64)}`;
@@ -16,7 +16,10 @@ function options(overrides = {}) {
 function runtime(overrides = {}) {
   return {
     providerChainIds: { 'robinhood-pc-archive': 46630 },
-    repository: { async getRun() { return null; } },
+    repository: {
+      async getRun() { return null; },
+      async getTokenScopeReadiness() { return { ready: true }; },
+    },
     writer: {},
     tickDeps: {
       source: { async loadBackfillPlan() { return {
@@ -42,6 +45,12 @@ describe('Robinhood directional transfer replay CLI', () => {
     assert.throws(() => parseArgs(['--retry-failed', '--run-id=7']),
       /requires --run-id and --apply/);
     assert.throws(() => parseArgs(['--max-hours=6']), /between 1 and 5/);
+  });
+
+  it('requires the frozen-scope publication schema before archive work', async () => {
+    await assert.rejects(assertSchema({ async query() { return { rows: [{
+      runs: 'runs', ranges: 'ranges', tokens: 'tokens', evidence: true, publication: false,
+    }] }; } }), /159/);
   });
 
   it('freezes the entire durable transfer window through the live checkpoint', () => {
@@ -83,7 +92,12 @@ describe('Robinhood directional transfer replay CLI', () => {
       sourceThroughBlock: '999', sourceThroughHash: HASH, rangeBlocks: 250,
     };
     const existing = runtime({
-      repository: { async getRun(id) { calls.push(['get', id]); return source; } },
+      repository: {
+        async getRun(id) { calls.push(['get', id]); return source; },
+        async getTokenScopeReadiness(id) {
+          calls.push(['readiness', id]); return { ready: true };
+        },
+      },
       tickDeps: {
         source: { async loadBackfillPlan() { throw new Error('unexpected plan'); } },
         evidence: { async matchesCheckpoint(checkpoint) {
@@ -98,8 +112,27 @@ describe('Robinhood directional transfer replay CLI', () => {
       replay: async (_deps, input) => { calls.push(['replay', input]); return { status: 'completed' }; },
     });
     assert.equal(result.status, 'completed');
-    assert.deepEqual(calls.map(([name]) => name), ['get', 'checkpoint', 'replay']);
-    assert.equal(calls[2][1].retryFailed, true);
+    assert.deepEqual(calls.map(([name]) => name),
+      ['get', 'readiness', 'checkpoint', 'replay']);
+    assert.equal(calls[3][1].retryFailed, true);
+  });
+
+  it('refuses uncovered frozen scope before probing the archive', async () => {
+    const source = {
+      id: '7', status: 'failed', projectionVersion: 'rh_transfer_v1',
+      replayVersion: 'rh_directional_transfer_replay_v1', sourceFromBlock: '100',
+      sourceThroughBlock: '999', sourceThroughHash: HASH, rangeBlocks: 250,
+    };
+    const invalid = runtime({ repository: {
+      async getRun() { return source; },
+      async getTokenScopeReadiness() { return { ready: false, unavailable: 1 }; },
+    } });
+    await assert.rejects(main([], {
+      runtime: invalid, logger: { log() {}, error() {} },
+      options: options({ runId: '7' }),
+      preflight: async () => { throw new Error('unexpected preflight'); },
+    }), (error) => error.code === 'directional_replay_source_unavailable'
+      && error.details.unavailable === 1);
   });
 
   it('fails closed when the frozen target is no longer canonical', async () => {

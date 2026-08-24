@@ -21,11 +21,14 @@ function event(blockNumber, logIndex, transferKind = 'wallet_transfer') {
 function setup(overrides = {}) {
   const calls = [];
   const rangeDeps = {
-    source: { async listTrackedTokenAddresses() { calls.push('tokens'); return [TOKEN]; } },
+    source: { async listTrackedTokenAddresses() { calls.push('tracked'); return [TOKEN]; } },
     evidence: { async matchesCheckpoint() { return overrides.canonical !== false; } },
   };
   const writer = createRobinhoodDirectionalTransferReplayWriter({
     rangeDeps,
+    tokenScope: { async listRunTokenAddresses(runId) {
+      calls.push(['frozen', runId]); return [TOKEN];
+    } },
     repository: { async applyEvidence(input) {
       calls.push(input);
       return { edgesConsidered: input.events.length, edgesWritten: input.events.length };
@@ -50,7 +53,7 @@ function setup(overrides = {}) {
 describe('Robinhood directional transfer replay writer', () => {
   it('probes without writing and materializes only the earliest direct event', async () => {
     const { calls, writer } = setup();
-    const range = { rangeStartBlock: '100', rangeEndBlock: '101' };
+    const range = { runId: '7', rangeStartBlock: '100', rangeEndBlock: '101' };
     assert.deepEqual(await writer.probeRange(range), {
       checkpointCanonical: true, rpcRequests: 3, transfersScanned: 3, edgesConsidered: 1,
     });
@@ -62,11 +65,16 @@ describe('Robinhood directional transfer replay writer', () => {
       completedThroughBlock: '101', completedThroughHash: HASH,
       blocksScanned: '2', transfersScanned: '3', edgesConsidered: '1', edgesWritten: '1',
     });
-    assert.equal(calls.filter((item) => item === 'tokens').length, 1);
+    assert.equal(calls.filter((item) => item === 'tracked').length, 1);
+    assert.deepEqual(calls.find((item) => Array.isArray(item) && item[0] === 'frozen'),
+      ['frozen', '7']);
   });
 
   it('fails closed for unavailable context and a non-canonical checkpoint', async () => {
-    const range = { rangeStartBlock: '100', rangeEndBlock: '101' };
+    const range = { runId: '7', rangeStartBlock: '100', rangeEndBlock: '101' };
+    await assert.rejects(setup().writer.materializeRange({
+      rangeStartBlock: '100', rangeEndBlock: '101',
+    }), /no frozen run scope/);
     await assert.rejects(
       setup({ outcome: { status: 'awaiting-context', reason: 'swap_gap' } }).writer.probeRange(range),
       (error) => error.code === 'directional_replay_source_unavailable'

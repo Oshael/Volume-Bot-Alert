@@ -122,6 +122,7 @@ async function resolveRun(repository, options) {
     throw new Error('preflight does not match the frozen directional replay run');
   }
   if (!run) run = await repository.createRun(options.preflight);
+  await repository.ensureTokenScope(run.id);
   if (run.status === 'planned') {
     await repository.startRun(run.id);
     return { ...run, status: 'running' };

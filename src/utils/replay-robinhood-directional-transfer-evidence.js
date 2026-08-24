@@ -105,6 +105,13 @@ async function resolveSource(runtime, options) {
   if (options.runId) {
     source = await runtime.repository.getRun(options.runId);
     if (!source) throw new Error('directional replay run was not found');
+    const readiness = await runtime.repository.getTokenScopeReadiness(options.runId);
+    if (!readiness.ready) {
+      const error = unavailable('token_coverage_incomplete');
+      error.message += ` (${readiness.tokenCount} eligible, ${readiness.unavailable} unavailable)`;
+      error.details = readiness;
+      throw error;
+    }
   } else {
     const plan = await runtime.tickDeps.source.loadBackfillPlan(DEFAULT_PROJECTION_VERSION);
     source = frozenSourceFromPlan(plan, options.rangeBlocks);
@@ -122,6 +129,13 @@ async function assertSchema(database) {
     `SELECT
        to_regclass('robinhood_directional_transfer_replay_runs') AS runs,
        to_regclass('robinhood_directional_transfer_replay_ranges') AS ranges,
+       to_regclass('robinhood_directional_transfer_replay_tokens') AS tokens,
+       EXISTS (
+         SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'robinhood_wallet_transfer_token_coverage'
+            AND column_name = 'published_at'
+       ) AS publication,
        EXISTS (
          SELECT 1 FROM information_schema.columns
           WHERE table_schema = 'public'
@@ -130,8 +144,9 @@ async function assertSchema(database) {
        ) AS evidence`
   );
   const schema = result.rows[0] || {};
-  if (!schema.evidence || !schema.runs || !schema.ranges) {
-    throw new Error('schema not ready: apply Stages 153 and 154 on the VPS');
+  if (!schema.evidence || !schema.runs || !schema.ranges
+      || !schema.tokens || !schema.publication) {
+    throw new Error('schema not ready: apply Stages 153, 154, 158 and 159 on the VPS');
   }
 }
 
@@ -148,6 +163,7 @@ async function buildRuntime(options = {}, deps = {}) {
   const writer = (deps.writerFactory || createRobinhoodDirectionalTransferReplayWriter)({
     rangeDeps: transfer.tickDeps,
     repository: evidenceRepository,
+    tokenScope: repository,
   });
   return Object.freeze({
     ...transfer, repository, writer,

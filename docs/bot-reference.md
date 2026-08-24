@@ -1464,9 +1464,16 @@ A Stage 158 adiciona `robinhood_wallet_transfer_token_coverage`, cursor históri
 retomável e versionado por token, e `robinhood_directional_transfer_replay_tokens`,
 snapshot do escopo aceito por campanha. Aplique
 `node src/utils/db-init-stage158.js` antes do repair token-scoped e do replay com
-escopo congelado. A migration é aditiva: não cria cobertura retroativa, não
-preenche automaticamente campanhas existentes e não altera o replay da Stage 154
-até o writer correspondente ser implantado.
+escopo congelado. A migration é aditiva e não cria cobertura retroativa.
+Ao criar uma campanha — ou retomar pela primeira vez uma campanha legada sem
+snapshot — o replay exige cobertura publicada de todos os tokens rastreados na
+janela inteira congelada e congela o conjunto na mesma transação. Uma cobertura
+publicada posterior é aceita quando contém integralmente a janela do replay; o
+hash final da campanha continua revalidado no archive RPC. Cobertura ausente
+falha com `directional_replay_token_coverage_incomplete`, sem criar uma campanha
+parcial. O preflight continua usando o catálogo atual somente para
+estimar custo; qualquer escrita lê exclusivamente o snapshot persistido do
+`run_id`, portanto resumes não incorporam tokens novos silenciosamente.
 
 O engine token-scoped já reconstrói ranges limitados sob
 `rh_transfer_token_repair_v1`, com lease, retry, checkpoint canônico e cursor por

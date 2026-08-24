@@ -61,6 +61,7 @@ describe('Robinhood directional transfer replay runner', () => {
     const calls = [];
     const repository = {
       async createRun(input) { calls.push(['create', input]); return { id: '7', status: 'planned' }; },
+      async ensureTokenScope(id) { calls.push(['scope', id]); },
       async startRun(id) { calls.push(['start', id]); },
       async reclaimExpired(id) { calls.push(['reclaim', id]); return 0; },
       async claimRange() {
@@ -85,14 +86,16 @@ describe('Robinhood directional transfer replay runner', () => {
     }, { preflight });
     assert.equal(result.status, 'completed');
     assert.equal(result.runId, '7');
-    assert.deepEqual(calls.map(([name]) => name), ['create', 'start', 'reclaim', 'complete']);
-    assert.equal(calls[3][1].completedThroughBlock, '199');
+    assert.deepEqual(calls.map(([name]) => name),
+      ['create', 'scope', 'start', 'reclaim', 'complete']);
+    assert.equal(calls[4][1].completedThroughBlock, '199');
   });
 
   it('resumes only an explicit failed campaign with the same frozen source', async () => {
     const calls = [];
     const repository = {
       async getRun() { return { id: '7', status: 'failed', ...SOURCE }; },
+      async ensureTokenScope(id) { calls.push(['scope', id]); },
       async resumeFailed(id) { calls.push(['resume', id]); return { runId: id, requeued: 2 }; },
       async reclaimExpired(id) { calls.push(['reclaim', id]); return 0; },
       async claimRange() { return null; },
@@ -106,6 +109,7 @@ describe('Robinhood directional transfer replay runner', () => {
     });
     assert.equal(result.status, 'completed');
     assert.deepEqual(calls, [
+      ['scope', '7'],
       ['resume', '7'],
       ['run', { runId: '7', status: 'running', requeued: 2 }],
       ['reclaim', '7'],

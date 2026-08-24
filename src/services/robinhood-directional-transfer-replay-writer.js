@@ -30,6 +30,7 @@ function unavailable(outcome) {
 function createRobinhoodDirectionalTransferReplayWriter(options = {}) {
   const rangeDeps = options.rangeDeps;
   const repository = options.repository;
+  const tokenScope = options.tokenScope;
   const prepareRange = options.prepareRange || prepareRobinhoodWalletTransferRange;
   if (typeof repository?.applyEvidence !== 'function') {
     throw new TypeError('directional evidence repository is required');
@@ -37,16 +38,25 @@ function createRobinhoodDirectionalTransferReplayWriter(options = {}) {
   if (typeof rangeDeps?.evidence?.matchesCheckpoint !== 'function') {
     throw new TypeError('directional replay checkpoint reader is required');
   }
-  let tokenAddressesPromise;
-  function tokenAddresses() {
-    tokenAddressesPromise ||= rangeDeps.source.listTrackedTokenAddresses();
-    return tokenAddressesPromise;
+  if (typeof tokenScope?.listRunTokenAddresses !== 'function') {
+    throw new TypeError('directional replay frozen token scope is required');
+  }
+  const tokenAddressPromises = new Map();
+  function tokenAddresses(range, commit) {
+    const key = commit ? String(range.runId || '') : 'preflight';
+    if (commit && !key) throw new Error('directional replay range has no frozen run scope');
+    if (!tokenAddressPromises.has(key)) {
+      tokenAddressPromises.set(key, commit
+        ? tokenScope.listRunTokenAddresses(key)
+        : rangeDeps.source.listTrackedTokenAddresses());
+    }
+    return tokenAddressPromises.get(key);
   }
 
   async function load(range, commit) {
     const prepared = await prepareRange(rangeDeps, {
       fromBlock: range.rangeStartBlock, toBlock: range.rangeEndBlock,
-      tokenAddresses: await tokenAddresses(), commit,
+      tokenAddresses: await tokenAddresses(range, commit), commit,
     });
     if (prepared.outcome) throw unavailable(prepared.outcome);
     const { captured, classified } = prepared;
