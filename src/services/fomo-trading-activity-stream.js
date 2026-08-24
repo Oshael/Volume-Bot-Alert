@@ -1,0 +1,127 @@
+'use strict';
+
+const WebSocket = require('ws');
+const { normalizeFomoFrame } = require('./fomo-frame-normalizer');
+
+const DEFAULT_WS_URL = 'wss://prod-api.fomo.family/ws';
+const DEFAULT_RECONNECT_MS = 1_000;
+const MAX_RECONNECT_MS = 60_000;
+
+function positiveInteger(value, fallback, max) {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  return Number.isInteger(parsed) && parsed > 0 ? Math.min(parsed, max) : fallback;
+}
+
+function normalizeWsUrl(value) {
+  const url = new URL(String(value || DEFAULT_WS_URL).trim());
+  if (url.protocol !== 'wss:' && url.protocol !== 'ws:') throw new TypeError('Fomo endpoint must use WS(S)');
+  if (url.username || url.password) throw new TypeError('Fomo endpoint must not contain credentials');
+  url.hash = '';
+  return url.toString();
+}
+
+function safeError(error, fallbackCode = 'FOMO_WS_ERROR') {
+  const safe = new Error('Fomo WebSocket transport failed');
+  safe.code = String(error?.code || fallbackCode);
+  safe.statusCode = Number(error?.statusCode) || null;
+  return safe;
+}
+
+function createFomoTradingActivityStream(options = {}) {
+  const wsUrl = normalizeWsUrl(options.wsUrl);
+  const headers = { ...(options.headers || {}) };
+  const subscribePayload = options.subscribePayload;
+  const wsFactory = options.wsFactory || ((url, clientOptions) => new WebSocket(url, clientOptions));
+  const schedule = options.schedule || setTimeout;
+  const cancelSchedule = options.cancelSchedule || clearTimeout;
+  const random = options.random || Math.random;
+  const onEvidence = options.onEvidence || (() => {});
+  const onStatus = options.onStatus || (() => {});
+  const onError = options.onError || (() => {});
+  const baseReconnectMs = positiveInteger(options.reconnectMs, DEFAULT_RECONNECT_MS, MAX_RECONNECT_MS);
+  const maxPayload = positiveInteger(options.maxPayloadBytes, 256 * 1024, 10 * 1024 * 1024);
+
+  let socket = null;
+  let running = false;
+  let reconnectTimer = null;
+  let reconnectMs = baseReconnectMs;
+  const status = { connected: false, connects: 0, reconnects: 0, frames: 0, bytes: 0, jsonFrames: 0, candidates: 0, opaqueFrames: 0 };
+
+  function emitStatus(state, extra = {}) {
+    onStatus({ state, ...extra, metrics: { ...status } });
+  }
+
+  function scheduleReconnect() {
+    if (!running || reconnectTimer) return;
+    const jitteredMs = Math.round(reconnectMs * (0.8 + (random() * 0.4)));
+    status.reconnects += 1;
+    emitStatus('reconnecting', { delayMs: jitteredMs });
+    reconnectTimer = schedule(() => {
+      reconnectTimer = null;
+      connect();
+    }, jitteredMs);
+    reconnectMs = Math.min(reconnectMs * 2, MAX_RECONNECT_MS);
+  }
+
+  function handleFrame(raw, binary) {
+    const evidence = normalizeFomoFrame(raw, { binary });
+    status.frames += 1;
+    status.bytes += evidence.byteLength;
+    if (evidence.frameKind === 'json') status.jsonFrames += 1;
+    if (evidence.frameKind === 'opaque' || evidence.frameKind === 'binary') status.opaqueFrames += 1;
+    if (evidence.tradingActivityCandidate) status.candidates += 1;
+    onEvidence(evidence);
+  }
+
+  function connect() {
+    if (!running) return;
+    try {
+      socket = wsFactory(wsUrl, { headers, maxPayload });
+    } catch (error) {
+      onError(safeError(error, 'FOMO_WS_CREATE'));
+      scheduleReconnect();
+      return;
+    }
+    status.connects += 1;
+    emitStatus('connecting');
+    socket.on('open', () => {
+      status.connected = true;
+      reconnectMs = baseReconnectMs;
+      emitStatus('connected');
+      if (subscribePayload !== undefined && subscribePayload !== null) {
+        try {
+          socket.send(typeof subscribePayload === 'string' ? subscribePayload : JSON.stringify(subscribePayload));
+          emitStatus('subscribe_sent');
+        } catch (error) {
+          onError(safeError(error, 'FOMO_WS_SUBSCRIBE'));
+          socket.close();
+        }
+      }
+    });
+    socket.on('message', handleFrame);
+    socket.on('error', (error) => onError(safeError(error)));
+    socket.on('close', (code) => {
+      status.connected = false;
+      emitStatus('closed', { code: Number(code) || null });
+      scheduleReconnect();
+    });
+  }
+
+  function start() {
+    if (running) return;
+    running = true;
+    connect();
+  }
+
+  function stop() {
+    running = false;
+    status.connected = false;
+    if (reconnectTimer) cancelSchedule(reconnectTimer);
+    reconnectTimer = null;
+    try { socket?.close(); } catch (error) { onError(safeError(error)); }
+  }
+
+  return { start, stop, getStatus: () => ({ running, ...status }) };
+}
+
+module.exports = { createFomoTradingActivityStream, normalizeWsUrl };
