@@ -64,6 +64,11 @@ Nao usar X API paga nem comprar o feed de outro provedor que faça scraping.
     extensao de browser continua pendente.
 - 1 conta X descartavel em uso para os probes (home IP, sem proxy). Nenhum proxy
   contratado ainda.
+- Experimento push 2026-08-23: `src/utils/x-push-latency-probe.js` instrumenta
+  dois perfis Chrome descartaveis via CDP, sem publicar nem consultar o X. Mede
+  `inicio CreateTweet -> Push Messaging/Notification` com gate default de 200ms
+  (registrando tambem o delta contra o ACK) e
+  denuncia qualquer timeline polling observado. Resultado real ainda pendente.
 - Ja existe em producao, de trabalho anterior desta mesma sessao: card de perfil
   do X (`src/services/x-profile-card.js`, `src/routes/x-profile.js`,
   `frontend/src/ui/x-profile-card.ts`), que usa `api.fxtwitter.com` sem
@@ -818,6 +823,37 @@ producao: aplicar a stage123 no DB e subir o worker no grupo `x-match`.
 - O `queryId` foi obtido do Network tab (o scrape do bundle no probe e best-effort
   e falhou; a extracao robusta foi concluida no corte corretivo 3.3 de
   2026-08-14). `features` default aceitas sem 400.
+
+### Experimento paralelo - Web Push sem API [PROBE PRONTO 2026-08-23]
+
+`src/utils/x-push-latency-probe.js` nao publica e nao consulta o X. Ele conecta
+via CDP a dois Chromes ja abertos, mede no mesmo relogio monotonicamente
+`inicio do CreateTweet -> primeiro Push Messaging/Notification` e registra
+separadamente o delta contra o ACK. O gate default e p95 <= 200ms, sem perda.
+
+Preparacao manual, sempre com contas descartaveis:
+
+1. Iniciar dois Chromes com `--remote-debugging-address=127.0.0.1`, portas
+   distintas (ex. 9222/9223) e `--user-data-dir` nao-default distintos.
+2. Logar a conta publicadora no primeiro perfil. No segundo, logar a observadora,
+   seguir a primeira, ativar `All posts` e permitir notificacoes do browser.
+3. Manter uma aba `x.com` aberta em cada perfil e executar:
+
+   ```bash
+   X_PUSH_PUBLISHER_CDP=http://127.0.0.1:9222 \
+   X_PUSH_OBSERVER_CDP=http://127.0.0.1:9223 \
+   X_PUSH_OUTPUT=/tmp/x-push-probe.jsonl \
+   npm run x:push-probe
+   ```
+
+4. Esperar `armed`, publicar manualmente um post e aguardar `push_match` antes
+   do seguinte. `Ctrl+C` emite o resumo. `observer_poll_detected` prova consulta
+   de timeline concorrente; os metadados do push mostram se o evento identifica
+   o post ou e apenas um tickle que exige hidratacao.
+
+CDP da controle integral do perfil: bind somente em localhost e nunca usar conta
+valiosa. O probe nao prova escala de 500 contas; primeiro decide existencia,
+conteudo e latencia do canal.
 
 ### Bloco 3 - Ingestao continua
 
