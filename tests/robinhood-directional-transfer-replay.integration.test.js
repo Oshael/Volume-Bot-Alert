@@ -7,6 +7,9 @@ const db = require('../src/models/db');
 const {
   createRobinhoodDirectionalTransferReplayRepository,
 } = require('../src/models/robinhood-directional-transfer-replay');
+const {
+  createRobinhoodDirectionalDeploymentGapRepository,
+} = require('../src/models/robinhood-directional-deployment-gap');
 const stage116 = require('../src/utils/db-init-stage116');
 const stage129 = require('../src/utils/db-init-stage129');
 const stage134 = require('../src/utils/db-init-stage134');
@@ -315,15 +318,28 @@ describe('Robinhood directional transfer replay persistence', () => {
     });
     assert.equal((await repository.getProgress({ runId: created.id })).deploymentGaps, 1);
     await db.query(
+      `INSERT INTO robinhood_token_attributions (
+         token_address, creator_address, source, last_attempted_at, last_resolved_at
+       ) VALUES ($1, $2, 'blockscout', NOW(), NOW())`,
+      [UNKNOWN_DEPLOYMENT_TOKEN, `0x${'3'.repeat(40)}`]
+    );
+    const deploymentGaps = createRobinhoodDirectionalDeploymentGapRepository({ database: db });
+    assert.deepEqual(await deploymentGaps.plan(created.id), {
+      unresolved: 1, verifiable: 1, unsupported: 0,
+    });
+    assert.deepEqual(await deploymentGaps.listVerificationCandidates({
+      runId: created.id, limit: 10,
+    }), [{
+      tokenAddress: UNKNOWN_DEPLOYMENT_TOKEN, creatorAddress: `0x${'3'.repeat(40)}`,
+    }]);
+    await db.query(
       `UPDATE robinhood_holder_token_states SET deployment_block = 0
         WHERE token_address = $1`, [UNKNOWN_DEPLOYMENT_TOKEN]
     );
     await db.query(
-      `INSERT INTO robinhood_token_attributions (
-         token_address, creator_address, source, attribution_block, attribution_tx_hash,
-         last_resolved_at
-       ) VALUES ($1, $2, 'rpc_direct', 150, $3, NOW())`,
-      [UNKNOWN_DEPLOYMENT_TOKEN, `0x${'3'.repeat(40)}`, HASH]
+      `UPDATE robinhood_token_attributions SET source = 'rpc_direct',
+         attribution_block = 150, attribution_tx_hash = $2, last_resolved_at = NOW()
+       WHERE token_address = $1`, [UNKNOWN_DEPLOYMENT_TOKEN, HASH]
     );
     assert.deepEqual(await repository.planDeploymentGapReconciliation(created.id), {
       total: 1, exact: 1, unresolved: 0, ready: 1, leased: 0, published: 0,

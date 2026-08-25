@@ -1660,6 +1660,17 @@ associações de gaps resolvidas e cria/renova a cobertura token-scoped sem rele
 ranges do archive. Cobertura já publicada não é reconstruída e cobertura leased
 é preservada. Depois, execute o repair token-scoped antes de retomar as ranges
 falhas do replay.
+Se o plano ainda expuser gaps `unresolved` com creator Blockscout, execute no PC
+com `RH_NODE_RPC_URL` apontando para o archive
+`npm run robinhood:directional-deployment-resolve -- --run-id=<id>`. O modo
+padrão consulta somente PostgreSQL. A confirmação
+`--confirm-resolve-robinhood-directional-deployments` busca hints Blockscout em
+batches de até 10, exige que o creator coincida e valida transação, receipt,
+contract address, bloco/hash canônico e chain id pelo archive antes de promover
+`rpc_direct`. O comando aceita `--limit`, `--batch-size`, `--concurrency` e
+`--timeout-ms`; sucessos persistidos deixam de ser selecionados numa retomada e
+falhas individuais são registradas sem invalidar o restante. Depois da resolução,
+rode novamente o reconciler PostgreSQL para enviar as novas provas ao repair.
 Cada token é reconstruído em shadow e promovido em uma única
 transação que trava o cursor LIVE; se a frontier avançou, somente o delta volta
 a `pending`, sem apagar uma projeção oficial ainda válida. `published_at` é a
