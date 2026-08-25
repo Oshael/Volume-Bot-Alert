@@ -598,6 +598,10 @@ if (calloutCaptureEnabled) {
       && !String(process.env.FOMO_WS_JWT_FILE || '').trim()) {
     missing.push('FOMO_WS_JWT_FILE when FOMO_PRIVY_REFRESH_TOKEN_FILE is enabled');
   }
+  if (String(process.env.FOMO_PRIVY_REFRESH_TOKEN_FILE || '').trim()
+      && !String(process.env.FOMO_PRIVY_CA_ID || '').trim()) {
+    missing.push('FOMO_PRIVY_CA_ID when FOMO_PRIVY_REFRESH_TOKEN_FILE is enabled');
+  }
 }
 if ((robinhoodHolderBackfillEnabled || robinhoodHolderLiveEnabled)
     && !robinhoodHolderBackfillAdmittedAfter) {

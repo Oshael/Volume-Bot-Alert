@@ -61,6 +61,7 @@ describe('Fomo Privy customer token provider', () => {
     assert.equal(requests[0].options.method, 'POST');
     assert.equal(requests[0].options.headers.origin, 'https://fomo.family');
     assert.equal(requests[0].options.headers['privy-ca-id'], 'ca-test');
+    assert.equal(requests[0].options.headers.authorization, `Bearer ${expired}`);
     assert.deepEqual(JSON.parse(requests[0].options.body), { refresh_token: 'old-refresh-secret' });
     assert.deepEqual(jwtStore.writes, [renewed]);
     assert.deepEqual(refreshStore.writes, ['new-refresh-secret']);
@@ -120,5 +121,21 @@ describe('Fomo Privy customer token provider', () => {
     const serializedStatus = JSON.stringify(provider.getStatus());
     assert.equal(serializedStatus.includes(jwtSecret) || serializedStatus.includes(refreshSecret), false);
     assert.equal(provider.getStatus().requiresReauth, true);
+  });
+
+  it('does not call Privy when the customer credential is unavailable', async () => {
+    const refreshSecret = 'private-refresh-value';
+    let requests = 0;
+    const provider = createFomoPrivyJwtProvider({
+      jwtStore: store('not-a-customer-jwt'), refreshTokenStore: store(refreshSecret),
+      now: () => NOW, fetchImpl: async () => { requests += 1; },
+    });
+
+    await assert.rejects(provider.getJwt(), (error) => {
+      assert.equal(error.code, 'FOMO_PRIVY_CUSTOMER_TOKEN');
+      assert.equal(error.message.includes(refreshSecret), false);
+      return true;
+    });
+    assert.equal(requests, 0);
   });
 });

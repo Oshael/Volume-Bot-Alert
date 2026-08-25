@@ -134,6 +134,7 @@ describe('runtime worker groups config', () => {
     assert.match(env, /PUMP_AUTH_TOKEN_FILE=\/etc\/trendscope\/secrets\//);
     assert.match(env, /FOMO_WS_JWT_FILE=\/var\/lib\/trendscope\/callouts\//);
     assert.match(env, /FOMO_PRIVY_REFRESH_TOKEN_FILE=\/var\/lib\/trendscope\/callouts\//);
+    assert.match(env, /FOMO_PRIVY_CA_ID=REPLACE_WITH_PRIVY_CAID_FROM_LOCAL_STORAGE/);
     assert.match(env, /CALLOUT_RETENTION_ENABLED=true/);
     assert.match(env, /CALLOUT_RETENTION_BATCH_LIMIT=1000/);
     assert.doesNotMatch(env, /^(?:DATABASE_URL|JWT_SECRET|PUMP_AUTH_TOKEN)=/m);
@@ -153,6 +154,21 @@ describe('runtime worker groups config', () => {
     assert.match(result.stderr, /PUMP_AUTH_TOKEN or PUMP_AUTH_TOKEN_FILE/);
     assert.match(result.stderr, /FOMO_WS_TOPIC_ID/);
     assert.match(result.stderr, /FOMO_WS_JWT or FOMO_WS_JWT_FILE/);
+  });
+
+  it('requires the measured Privy client analytics id for autonomous rotation', () => {
+    const result = spawnSync(process.execPath, ['-e', "require('./config')"], {
+      cwd: ROOT_DIR,
+      env: {
+        ...process.env, BACKGROUND_WORKER_GROUPS: 'callouts', CALLOUT_CAPTURE_ENABLED: 'true',
+        PUMP_AUTH_TOKEN: 'pump-test', FOMO_WS_TOPIC_ID: 'topic-test',
+        FOMO_WS_JWT_FILE: '/state/customer-token',
+        FOMO_PRIVY_REFRESH_TOKEN_FILE: '/state/refresh-token', FOMO_PRIVY_CA_ID: '',
+      },
+      encoding: 'utf8',
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /FOMO_PRIVY_CA_ID/);
   });
 
   it('rejects combining Robinhood maintenance with Solana maintenance', () => {

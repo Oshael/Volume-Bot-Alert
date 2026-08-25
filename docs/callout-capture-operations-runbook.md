@@ -42,16 +42,18 @@ sudoedit /var/lib/trendscope/callouts/fomo-customer-token
 sudoedit /var/lib/trendscope/callouts/fomo-refresh-token
 ```
 
-No navegador autenticado, obtenha `privy:token` e `privy:refresh_token` em
-Application → Local Storage → `https://fomo.family`. Grave um valor por arquivo;
-o formato JSON entre aspas usado pelo Local Storage também é aceito. Não
-registre o conteúdo em shell history, journal ou comandos de diagnóstico.
+No navegador autenticado, obtenha `privy:token`, `privy:refresh_token` e
+`privy:caid` em Application → Local Storage → `https://fomo.family`. Grave os
+dois tokens nos respectivos arquivos; o formato JSON entre aspas usado pelo
+Local Storage também é aceito. O CA ID vai no env da etapa seguinte. Não
+registre tokens em shell history, journal ou comandos de diagnóstico.
 
 ## 2. Instalar env e drop-in
 
 Use `deploy/systemd/callouts.env.example` como base para
-`/etc/trendscope/callouts.env`. Preencha somente o `FOMO_WS_TOPIC_ID`; os segredos
-continuam nos arquivos acima.
+`/etc/trendscope/callouts.env`. Preencha `FOMO_WS_TOPIC_ID` e
+`FOMO_PRIVY_CA_ID` com o `privy:caid` medido; os segredos continuam nos arquivos
+acima.
 
 ```bash
 sudoedit /etc/trendscope/callouts.env
@@ -138,7 +140,8 @@ mostra erros e totais. Processo `active (running)` sem avanço não é saudável
 
 O token Pump é relido em cada request. Na Fomo, o worker usa o customer JWT até
 30 segundos antes de `exp`, chama `POST /api/v1/sessions` com o refresh token e
-grava atomicamente ambos os valores retornados. A telemetria
+o customer JWT no header `Authorization`, replica o `privy:caid` estável do
+navegador e grava atomicamente ambos os valores retornados. A telemetria
 `fomoAuthentication` expõe somente expiração, totais e códigos seguros.
 
 `FOMO_PRIVY_REAUTH_REQUIRED` significa que a sessão foi revogada ou deixou de

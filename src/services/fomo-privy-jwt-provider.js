@@ -51,6 +51,13 @@ function safeError(code, message) {
   return error;
 }
 
+async function requiredStoredSecret(store, code, message, validate = Boolean) {
+  let value = null;
+  try { value = await store.read(); } catch { /* normalized below */ }
+  if (!validate(value)) throw safeError(code, message);
+  return value;
+}
+
 function requireSecretStores(options) {
   const { jwtStore, refreshTokenStore } = options;
   if (!jwtStore?.read || !jwtStore?.write || !refreshTokenStore?.read || !refreshTokenStore?.write) {
@@ -99,17 +106,19 @@ function createFomoPrivyJwtProvider(options = {}) {
   }
 
   async function refresh() {
-    let refreshToken;
-    try { refreshToken = await refreshTokenStore.read(); } catch {
-      throw safeError('FOMO_PRIVY_REFRESH_TOKEN', 'Fomo Privy refresh credential is unavailable');
-    }
-    if (!refreshToken) {
-      throw safeError('FOMO_PRIVY_REFRESH_TOKEN', 'Fomo Privy refresh credential is unavailable');
-    }
+    const customerToken = await requiredStoredSecret(
+      jwtStore, 'FOMO_PRIVY_CUSTOMER_TOKEN',
+      'Fomo Privy customer credential is unavailable', jwtMetadata
+    );
+    const refreshToken = await requiredStoredSecret(
+      refreshTokenStore, 'FOMO_PRIVY_REFRESH_TOKEN',
+      'Fomo Privy refresh credential is unavailable'
+    );
     let response;
     try {
       response = await fetchImpl(sessionUrl, {
-        method: 'POST', headers, body: JSON.stringify({ refresh_token: refreshToken }),
+        method: 'POST', headers: { ...headers, authorization: `Bearer ${customerToken}` },
+        body: JSON.stringify({ refresh_token: refreshToken }),
         signal: AbortSignal.timeout(Number(options.timeoutMs) || 10_000),
       });
     } catch {
