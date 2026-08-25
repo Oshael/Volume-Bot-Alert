@@ -44,10 +44,14 @@ sudoedit /var/lib/trendscope/callouts/fomo-refresh-token
 
 No navegador autenticado, capture o `jwt` enviado em `challengeResponse`, o
 `refresh_token` e o header `privy-ca-id` da mesma sessão. Grave o JWT do
-WebSocket em `fomo-customer-token` e o refresh no arquivo correspondente. O
-campo `privy_access_token` não é intercambiável com o JWT do WebSocket. O formato
-JSON entre aspas usado pelo storage também é aceito. O CA ID vai no env da
-etapa seguinte. Não registre tokens em shell history, journal ou diagnósticos.
+WebSocket em `fomo-customer-token` e o refresh no arquivo correspondente. Esse
+JWT é o access token Privy; na resposta de renovação, seu campo é
+`privy_access_token`, enquanto `token` pode ser nulo e não o substitui. O formato
+JSON entre aspas usado pelo storage também é aceito. O CA ID vai no env da etapa
+seguinte. Como o refresh token Privy é de uso único e rotacionado, feche essa aba
+sem fazer logout depois da captura e não deixe o SDK do navegador competir com o
+worker pela mesma sessão. Não registre tokens em shell history, journal ou
+diagnósticos.
 
 ## 2. Instalar env e drop-in
 

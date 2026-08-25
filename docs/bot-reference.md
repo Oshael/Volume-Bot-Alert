@@ -1042,15 +1042,17 @@ e `lastErrorPhase` na telemetria da lease; a mensagem vem apenas dos erros
 sanitizados do client ou da persistência e nunca inclui credenciais.
 Quando `FOMO_PRIVY_REFRESH_TOKEN_FILE` está configurado, renova o customer JWT
 do WebSocket pela sessão Privy até 30 segundos antes da expiração e persiste
-JWT e refresh token por troca atômica. Somente o campo `token` da resposta pode
-substituir esse JWT; `privy_access_token` nunca é enviado no `challengeResponse`.
+JWT e refresh token por troca atômica. O JWT do `challengeResponse` é o access
+token Privy retornado como `privy_access_token`; o campo `token` da resposta é
+outro contrato, pode ser nulo e nunca o substitui.
 A rotação exige
 `FOMO_PRIVY_CA_ID=privy:caid` medido e
 envia apenas o refresh token no corpo da chamada Privy, sem `Authorization`.
 Os dois arquivos Fomo devem ser `0600`, graváveis
 somente pelo usuário do serviço. `FOMO_PRIVY_REAUTH_REQUIRED` exige novo login e
 troca manual dos dois valores; segredos nunca entram na telemetria
-`fomoAuthentication`.
+`fomoAuthentication`. O refresh token é de uso único e rotacionado; a sessão
+dedicada ao worker não deve permanecer ativa no SDK do navegador após a captura.
 O endpoint autenticado
 `GET /api/callouts/events?chain=<chain>&token=<address>` lê callouts brutos para
 o gráfico. A resposta é ordenada por `occurredAt` decrescente e inclui tese,

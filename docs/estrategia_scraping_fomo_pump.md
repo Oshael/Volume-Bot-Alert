@@ -71,8 +71,8 @@ Depois da autenticação, o client envia:
 
 Frames `data/trading_activity` com `payload.type=thesis` incluem profile, tese,
 token, network, `tradeId` e métricas. O customer JWT usado pelo WebSocket expira
-em uma hora; o worker renova a sessão sob demanda e persiste as credenciais
-rotacionadas sem confundi-lo com `privy_access_token`.
+em uma hora; ele é o access token Privy retornado como `privy_access_token`, e o
+worker renova a sessão sob demanda e persiste as credenciais rotacionadas.
 
 Também foram confirmados endpoints HTTP públicos, sem cookie ou Authorization:
 

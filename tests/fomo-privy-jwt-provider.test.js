@@ -51,9 +51,10 @@ describe('Fomo Privy customer token provider', () => {
         return {
           ok: true, status: 200,
           json: async () => ({
-            token: renewed,
-            privy_access_token: jwt((NOW / 1000) + 7200),
+            token: null,
+            privy_access_token: renewed,
             refresh_token: 'new-refresh-secret',
+            session_update_action: 'ignore',
           }),
         };
       },
@@ -76,14 +77,14 @@ describe('Fomo Privy customer token provider', () => {
     });
   });
 
-  it('never substitutes a Privy access token for the WebSocket customer token', async () => {
-    const privyAccessToken = jwt((NOW / 1000) + 3600);
+  it('never substitutes the unrelated token field for the Privy WebSocket credential', async () => {
+    const unrelatedToken = jwt((NOW / 1000) + 3600);
     const jwtStore = store(jwt(1));
     const provider = createFomoPrivyJwtProvider({
       jwtStore, refreshTokenStore: store('refresh-secret'), now: () => NOW,
       fetchImpl: async () => ({
         ok: true, status: 200,
-        json: async () => ({ token: null, privy_access_token: privyAccessToken }),
+        json: async () => ({ token: unrelatedToken, privy_access_token: null }),
       }),
     });
 
@@ -100,7 +101,7 @@ describe('Fomo Privy customer token provider', () => {
       fetchImpl: async () => {
         requests += 1;
         await new Promise((resolve) => setImmediate(resolve));
-        return { ok: true, status: 200, json: async () => ({ token: renewed }) };
+        return { ok: true, status: 200, json: async () => ({ privy_access_token: renewed }) };
       },
     });
 
@@ -114,7 +115,7 @@ describe('Fomo Privy customer token provider', () => {
       jwtStore: store(current), refreshTokenStore: store('refresh-secret'), now: () => NOW,
       fetchImpl: async () => ({
         ok: true, status: 200,
-        json: async () => ({ token: null, session_update_action: 'ignore' }),
+        json: async () => ({ privy_access_token: null, session_update_action: 'ignore' }),
       }),
     });
     assert.equal(await provider.getJwt(), current);
@@ -128,7 +129,7 @@ describe('Fomo Privy customer token provider', () => {
       jwtStore: store(jwtSecret), refreshTokenStore: store(refreshSecret), now: () => NOW,
       fetchImpl: async () => ({
         ok: true, status: 200,
-        json: async () => ({ token: null, session_update_action: 'ignore' }),
+        json: async () => ({ privy_access_token: null, session_update_action: 'ignore' }),
       }),
     });
 
@@ -152,7 +153,7 @@ describe('Fomo Privy customer token provider', () => {
       jwtStore, refreshTokenStore: store(refreshSecret), now: () => NOW,
       fetchImpl: async () => {
         requests += 1;
-        return { ok: true, status: 200, json: async () => ({ token: renewed }) };
+        return { ok: true, status: 200, json: async () => ({ privy_access_token: renewed }) };
       },
     });
 
