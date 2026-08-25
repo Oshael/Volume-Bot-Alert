@@ -1009,8 +1009,10 @@ proveniência sem alterar a expiração de 72 horas de `callout_events` nem expo
 uma nova rota. `callout_summary_versions` guarda somente gerações concluídas,
 com mínimo de quatro fontes, snapshot imutável, idioma/provider/model/prompt e
 cadeia explícita de versões sem exclusão em cascata. A política de agrupamento
-não é fixada pelo schema. O stage é inerte até o writer de arquivo e o gerador
-serem ligados em cortes posteriores.
+não é fixada pelo schema. A captura escreve evento bruto, arquivo permanente e
+checkpoint na mesma transação; conflito no arquivo também impede o avanço do
+cursor. O SHA-256 do texto permite detectar mudanças sem expor seu conteúdo em
+telemetria. O gerador permanece desligado até um corte posterior.
 
 O grupo isolado `callouts` (porta default `3017`) é opt-in por
 `CALLOUT_CAPTURE_ENABLED=true` e inicia Pump e Fomo sob a lease única

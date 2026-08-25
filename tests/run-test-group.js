@@ -13,6 +13,7 @@ const INTEGRATION_TESTS = [
   'mock-trading-routes.test.js',
   'telegram-routes.test.js',
   'telegram-alert-delivery.integration.test.js',
+  'callout-capture.integration.test.js',
   'robinhood-alert-publication.integration.test.js',
   'robinhood-backfill-capture.integration.test.js',
   'robinhood-head-capture.integration.test.js',

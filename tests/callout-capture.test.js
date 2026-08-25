@@ -41,6 +41,10 @@ function fakeDatabase(options = {}) {
         const count = JSON.parse(params[0]).length;
         return { rowCount: options.calloutRowCount ?? count, rows: [] };
       }
+      if (sql === __private.ARCHIVE_UPSERT) {
+        const count = JSON.parse(params[0]).length;
+        return { rowCount: options.archiveRowCount ?? count, rows: [] };
+      }
       if (sql === __private.CHECKPOINT_UPSERT) {
         return { rowCount: options.checkpointRowCount ?? 1, rows: [] };
       }
@@ -56,7 +60,7 @@ function fakeDatabase(options = {}) {
 }
 
 describe('callout capture repository', () => {
-  it('commits profiles, multichain wallet evidence, callouts and checkpoint atomically', async () => {
+  it('commits profiles, wallets, raw and archived callouts, and checkpoint atomically', async () => {
     const data = fixture();
     const fake = fakeDatabase();
     const repository = createCalloutCaptureRepository({ database: fake.database });
@@ -71,14 +75,16 @@ describe('callout capture repository', () => {
       if (sql === __private.PROFILE_UPSERT) return 'profiles';
       if (sql === __private.WALLET_UPSERT) return 'wallets';
       if (sql === __private.CALLOUT_UPSERT) return 'callouts';
+      if (sql === __private.ARCHIVE_UPSERT) return 'archive';
       return 'checkpoint';
-    }), ['BEGIN', 'profiles', 'wallets', 'callouts', 'checkpoint', 'COMMIT']);
+    }), ['BEGIN', 'profiles', 'wallets', 'callouts', 'archive', 'checkpoint', 'COMMIT']);
     const wallet = JSON.parse(fake.calls[2].params[0])[0];
     assert.deepEqual([wallet.rawChainId, wallet.chainKey, wallet.resolutionStatus],
       ['999999', null, 'unsupported_chain']);
     const event = JSON.parse(fake.calls[3].params[0])[0];
     assert.equal(event.expiresAt, '2026-08-28T12:00:00.000Z');
-    assert.equal(JSON.parse(fake.calls[4].params[1]).marker, 'event-1');
+    assert.equal(event.thesisSha256, '4f8ad2bfea9bdd0ba71d9bcbb20992830365d9e6c4abaddaad8ce96233d9f06d');
+    assert.equal(JSON.parse(fake.calls[5].params[1]).marker, 'event-1');
     assert.equal(fake.released(), true);
   });
 
@@ -109,6 +115,24 @@ describe('callout capture repository', () => {
       /EXCLUDED\.source_metadata <@ callout_events\.source_metadata/);
     assert.match(__private.CALLOUT_UPSERT,
       /callout_events\.thesis IS NOT DISTINCT FROM EXCLUDED\.thesis/);
+    assert.match(__private.ARCHIVE_UPSERT,
+      /WHEN archived\.source_metadata <@ EXCLUDED\.source_metadata/);
+    assert.match(__private.ARCHIVE_UPSERT,
+      /archived\.thesis_sha256 IS NOT DISTINCT FROM EXCLUDED\.thesis_sha256/);
+    assert.doesNotMatch(__private.ARCHIVE_UPSERT, /expires_at|ON DELETE CASCADE/);
+  });
+
+  it('rolls back raw persistence when permanent archival conflicts', async () => {
+    const data = fixture();
+    const fake = fakeDatabase({ archiveRowCount: 0 });
+    const repository = createCalloutCaptureRepository({ database: fake.database });
+
+    await assert.rejects(repository.commitCapture({
+      calloutEnvelopes: [data.calloutEnvelope], checkpointKey: 'pump:live',
+      checkpointState: { marker: 'event-1' }, committedAt: CAPTURED_AT,
+    }), /archive replay conflicts/);
+    assert.equal(fake.calls.some(({ sql }) => sql === __private.CHECKPOINT_UPSERT), false);
+    assert.equal(fake.calls.at(-1).sql, 'ROLLBACK');
   });
 
   it('rolls back the whole batch rather than overwrite a newer checkpoint', async () => {
@@ -170,7 +194,8 @@ describe('callout capture repository', () => {
     assert.deepEqual(calls[0].params, [50]);
     assert.match(calls[0].sql, /expires_at <= NOW\(\)/);
     assert.match(calls[0].sql, /FOR UPDATE SKIP LOCKED/);
-    assert.doesNotMatch(calls[0].sql, /callout_profiles|callout_wallet_observations/);
+    assert.doesNotMatch(calls[0].sql,
+      /callout_profiles|callout_wallet_observations|callout_thesis_archive/);
     await assert.rejects(
       repository.pruneExpiredCallouts({ batchLimit: 10_001 }),
       /batchLimit must be between 1 and 10000/

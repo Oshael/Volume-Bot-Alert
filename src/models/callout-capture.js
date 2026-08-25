@@ -1,5 +1,6 @@
 'use strict';
 
+const { createHash } = require('node:crypto');
 const db = require('./db');
 const { walletObservationKey } = require('../services/profile-wallet-domain');
 
@@ -90,7 +91,11 @@ function calloutRow(envelope) {
     assetChainFamily: payload.asset?.chainFamily,
     assetResolutionStatus: payload.asset?.resolutionStatus || 'unknown_chain',
     thesis: payload.thesis, marketCap: payload.marketCap,
+    thesisSha256: payload.thesis == null
+      ? null
+      : createHash('sha256').update(String(payload.thesis)).digest('hex'),
     sourceMetadata: payload.sourceMetadata || {},
+    schemaVersion: 1,
     expiresAt: new Date(Date.parse(capturedAt) + 72 * 60 * 60 * 1000).toISOString(),
   };
 }
@@ -180,6 +185,42 @@ ON CONFLICT (dedupe_key) DO UPDATE SET
     )
 RETURNING dedupe_key`;
 
+const ARCHIVE_UPSERT = `INSERT INTO callout_thesis_archive AS archived (
+  dedupe_key, platform, platform_event_id, platform_user_id, occurred_at, captured_at,
+  asset_address_original, asset_address_normalized, asset_raw_chain_id, asset_chain_key,
+  asset_chain_family, asset_resolution_status, thesis, thesis_sha256, market_cap,
+  source_metadata, schema_version
+) SELECT "dedupeKey", platform, "platformEventId", "platformUserId", "occurredAt", "capturedAt",
+  "assetAddressOriginal", "assetAddressNormalized", "assetRawChainId", "assetChainKey",
+  "assetChainFamily", "assetResolutionStatus", thesis, "thesisSha256", "marketCap",
+  "sourceMetadata", "schemaVersion"
+  FROM jsonb_to_recordset($1::jsonb) AS row(
+    "dedupeKey" text, platform text, "platformEventId" text, "platformUserId" text,
+    "occurredAt" timestamptz, "capturedAt" timestamptz, "assetAddressOriginal" text,
+    "assetAddressNormalized" text, "assetRawChainId" text, "assetChainKey" text,
+    "assetChainFamily" text, "assetResolutionStatus" text, thesis text,
+    "thesisSha256" text, "marketCap" numeric, "sourceMetadata" jsonb,
+    "schemaVersion" integer)
+ON CONFLICT (dedupe_key) DO UPDATE SET
+  source_metadata = CASE
+    WHEN archived.source_metadata <@ EXCLUDED.source_metadata
+      THEN archived.source_metadata || EXCLUDED.source_metadata
+    ELSE archived.source_metadata
+  END
+  WHERE archived.platform = EXCLUDED.platform
+    AND archived.platform_event_id IS NOT DISTINCT FROM EXCLUDED.platform_event_id
+    AND archived.platform_user_id IS NOT DISTINCT FROM EXCLUDED.platform_user_id
+    AND archived.occurred_at IS NOT DISTINCT FROM EXCLUDED.occurred_at
+    AND archived.asset_address_original IS NOT DISTINCT FROM EXCLUDED.asset_address_original
+    AND archived.thesis IS NOT DISTINCT FROM EXCLUDED.thesis
+    AND archived.thesis_sha256 IS NOT DISTINCT FROM EXCLUDED.thesis_sha256
+    AND (
+      archived.source_metadata = EXCLUDED.source_metadata
+      OR archived.source_metadata <@ EXCLUDED.source_metadata
+      OR EXCLUDED.source_metadata <@ archived.source_metadata
+    )
+RETURNING dedupe_key`;
+
 const CHECKPOINT_UPSERT = `INSERT INTO callout_collector_checkpoints (
   collector_key, state, last_committed_at
 ) VALUES ($1, $2::jsonb, $3)
@@ -201,6 +242,19 @@ DELETE FROM callout_events AS event
 USING expired
 WHERE event.dedupe_key = expired.dedupe_key
 RETURNING event.dedupe_key`;
+
+async function persistCallouts(client, callouts) {
+  if (!callouts.length) return;
+  const serialized = JSON.stringify(callouts);
+  const persisted = await client.query(CALLOUT_UPSERT, [serialized]);
+  if (persisted.rowCount !== callouts.length) {
+    throw new Error('Callout replay conflicts with persisted event');
+  }
+  const archived = await client.query(ARCHIVE_UPSERT, [serialized]);
+  if (archived.rowCount !== callouts.length) {
+    throw new Error('Callout archive replay conflicts with persisted event');
+  }
+}
 
 function createCalloutCaptureRepository(options = {}) {
   const database = options.database || db;
@@ -233,10 +287,7 @@ function createCalloutCaptureRepository(options = {}) {
       await client.query('BEGIN');
       if (profiles.length) await client.query(PROFILE_UPSERT, [JSON.stringify(profiles)]);
       if (wallets.length) await client.query(WALLET_UPSERT, [JSON.stringify(wallets)]);
-      if (callouts.length) {
-        const persisted = await client.query(CALLOUT_UPSERT, [JSON.stringify(callouts)]);
-        if (persisted.rowCount !== callouts.length) throw new Error('Callout replay conflicts with persisted event');
-      }
+      await persistCallouts(client, callouts);
       const checkpoint = await client.query(CHECKPOINT_UPSERT,
         [checkpointKey, JSON.stringify(input.checkpointState), committedAt]);
       if (checkpoint.rowCount !== 1) throw new Error('Capture checkpoint is newer than this batch');
@@ -266,8 +317,8 @@ function createCalloutCaptureRepository(options = {}) {
 module.exports = {
   createCalloutCaptureRepository,
   __private: {
-    CALLOUT_UPSERT, CHECKPOINT_UPSERT, PROFILE_UPSERT, PRUNE_EXPIRED_CALLOUTS,
+    ARCHIVE_UPSERT, CALLOUT_UPSERT, CHECKPOINT_UPSERT, PROFILE_UPSERT, PRUNE_EXPIRED_CALLOUTS,
     WALLET_UPSERT,
-    calloutRows, profileRows, walletRows,
+    calloutRows, persistCallouts, profileRows, walletRows,
   },
 };

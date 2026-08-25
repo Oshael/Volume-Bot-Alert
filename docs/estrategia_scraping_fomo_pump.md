@@ -991,7 +991,8 @@ Um resumo exige ao menos quatro calls do mesmo par `chain + token` e pode combin
 fontes PUMP e FOMO. A primeira versão canônica é em inglês; idioma, provider,
 modelo e prompt são versionados. A política temporal/semântica da janela não é
 constraint de banco e será calibrada com amostras reais. O primeiro provider de
-teste será Gemini 2.5 Flash-Lite, substituível sem migrar o schema.
+teste será escolhido por comparação cega entre GLM 4.7 Flash e Gemini 2.5
+Flash-Lite nos respectivos free tiers, substituível sem migrar o schema.
 
 JWT, cookies, CSRF, headers de autenticação e sessão nunca entram em payload ou
 logs.
