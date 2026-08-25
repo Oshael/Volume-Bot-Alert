@@ -64,6 +64,30 @@ test('Pump client errors never expose the JWT or echoed response body', async ()
     assert.equal(error.message.includes(token), false);
     return true;
   });
+  const unauthorized = createPumpCalloutClient({
+    authToken: token,
+    fetchImpl: async () => response({}, { status: 401 }),
+  });
+  await assert.rejects(unauthorized.getLeaderboard(), (error) => error.code === 'PUMP_AUTH');
+});
+
+test('Pump client rereads a token provider and classifies unavailable credentials as auth', async () => {
+  const cookies = [];
+  let token = 'first';
+  const client = createPumpCalloutClient({
+    authTokenProvider: async () => token,
+    fetchImpl: async (_url, options) => {
+      cookies.push(options.headers.cookie);
+      return response({ callouts: [] });
+    },
+  });
+  await client.getLeaderboard();
+  token = 'second';
+  await client.getLeaderboard();
+  assert.deepEqual(cookies, ['auth_token=first', 'auth_token=second']);
+
+  const unavailable = createPumpCalloutClient({ authTokenProvider: async () => '' });
+  await assert.rejects(unavailable.getLeaderboard(), (error) => error.code === 'PUMP_AUTH');
 });
 
 test('profile normalization preserves profile to wallet observations without guessing chain', () => {
@@ -71,6 +95,7 @@ test('profile normalization preserves profile to wallet observations without gue
     userId: 'user-1',
     userName: 'caller',
     xUsername: 'caller_x',
+    profileImage: 'https://example.test/profile.png',
     primaryWallet: 'PrimaryWallet',
     chainId: 'solana',
     wallets: [
@@ -80,6 +105,8 @@ test('profile normalization preserves profile to wallet observations without gue
   });
 
   assert.equal(profile.platformUserId, 'user-1');
+  assert.equal(profile.xUsername, 'caller_x');
+  assert.equal(profile.profilePictureUrl, 'https://example.test/profile.png');
   assert.deepEqual(profile.wallets, [
     { address: 'PrimaryWallet', rawChainId: 'solana', sourceField: 'primaryWallet' },
     { address: '0xabc', rawChainId: 'robinhood', sourceField: null },
@@ -110,6 +137,8 @@ test('activity normalization keeps thesis and distinguishes platform evidence', 
   assert.equal(event.amountUsd, null);
   assert.equal(event.calloutPrice, null);
   assert.equal(event.rawPayload.auth_token, undefined);
+  assert.equal(normalizePumpActivity({ calloutId: 'epoch', userId: 'u', coinMint: 'm', thesis: 't', createdAt: 1787622930460 })
+    .sourceCreatedAt, '2026-08-25T01:55:30.460Z');
 });
 
 test('payload sanitization redacts nested session material but preserves token data', () => {

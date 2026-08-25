@@ -18,7 +18,7 @@ function argument(name, fallback = null) {
 
 function items(body) {
   if (Array.isArray(body)) return body;
-  for (const key of ['data', 'items', 'alerts', 'leaderboard']) {
+  for (const key of ['data', 'items', 'alerts', 'leaderboard', 'callouts']) {
     if (Array.isArray(body?.[key])) return body[key];
   }
   return [];

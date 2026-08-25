@@ -49,8 +49,9 @@ function commonCalloutFromPump(activity = {}) {
     profile: {
       platformUserId: text(activity.platformUserId),
       username: text(activity.username),
+      xUsername: text(activity.xUsername),
       displayName: null,
-      profilePictureUrl: null,
+      profilePictureUrl: text(activity.profilePictureUrl),
     },
     wallet: activity.walletAddress
       ? resolveCalloutAddress(activity.rawChainId, activity.walletAddress) : null,
@@ -77,6 +78,7 @@ function commonCalloutFromFomo(callout = {}) {
     profile: {
       platformUserId: text(callout.profile?.platformUserId),
       username: text(callout.profile?.handle),
+      xUsername: null,
       displayName: text(callout.profile?.displayName),
       profilePictureUrl: text(callout.profile?.profilePictureUrl),
     },

@@ -29,6 +29,17 @@ function firstFinite(...values) {
   return null;
 }
 
+function timestamp(value) {
+  const raw = text(value);
+  if (!raw) return null;
+  const numeric = Number(raw);
+  const milliseconds = Number.isFinite(numeric)
+    ? (numeric < 10_000_000_000 ? numeric * 1000 : numeric)
+    : Date.parse(raw);
+  const date = new Date(milliseconds);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
 function sanitizePumpPayload(value) {
   if (Array.isArray(value)) return value.map(sanitizePumpPayload);
   if (!value || typeof value !== 'object') return value;
@@ -66,6 +77,7 @@ function normalizePumpProfile(item = {}) {
     username: text(item.userName || item.username),
     displayName: text(item.displayName || item.name),
     xUsername: text(item.xUsername),
+    profilePictureUrl: text(item.profileImage || item.profilePictureUrl),
     wallets: uniqueWallets,
     rawProfileMetadata: sanitizePumpPayload(item),
   };
@@ -82,6 +94,8 @@ function normalizePumpActivity(item = {}) {
     eventKind: firstText(item.kind, callout.calloutId ? 'callout' : null),
     platformUserId: firstText(item.userId, author.userId, callout.userId),
     username: firstText(item.userName, author.userName, author.username),
+    xUsername: firstText(item.xUsername, author.xUsername),
+    profilePictureUrl: firstText(item.profileImage, author.profileImage),
     walletAddress: firstText(item.walletAddress, author.walletAddress, callout.walletAddress),
     rawChainId: firstText(item.chainId, callout.chainId, trade.chainId),
     tokenAddress: firstText(item.coinMint, callout.coinMint, trade.coinMint, trade.mint),
@@ -90,7 +104,7 @@ function normalizePumpActivity(item = {}) {
     amountUsd: firstFinite(trade.amountUsd, item.amountUsd),
     marketCap: firstFinite(callout.calledOutAtMcap, item.marketCap),
     thesis: firstText(callout.thesis, item.thesis),
-    sourceCreatedAt: firstText(callout.calloutTimestamp, callout.createdAt, item.createdAt, item.timestamp),
+    sourceCreatedAt: timestamp(firstText(callout.calloutTimestamp, callout.createdAt, item.createdAt, item.timestamp)),
     calloutPrice: finite(callout.calloutPrice),
     multiple: firstFinite(callout.multiple, item.multiple),
     maxMultiple: firstFinite(callout.maxMultiplier, callout.maxMultiple),

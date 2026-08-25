@@ -970,6 +970,31 @@ Esse comando ainda não pertence a worker group, não está implantado na VPS e
 seus spools não são fonte de verdade. O limite cheio falha fechado; importação e
 retenção de 72 horas pertencem ao estágio PostgreSQL posterior.
 
+### 11.7 Captura local Pump
+
+`npm run pump:capture` executa captura local opt-in, sem PostgreSQL ou Follow
+externo. O leaderboard alimenta uma watchlist cumulativa; cada rodada consulta
+um conjunto limitado de perfis via `/callout/list/{userId}` e complementa com
+`/following-positions/alerts`. Eventos e identidades usam spools separados em
+`PUMP_CAPTURE_SPOOL_DIR`; `state.json` guarda watchlist, markers, cursores e
+offset de retomada por escrita atômica.
+
+Configuração mínima:
+
+```text
+PUMP_AUTH_TOKEN ou PUMP_AUTH_TOKEN_FILE
+PUMP_CAPTURE_SPOOL_DIR
+```
+
+O arquivo de token é relido a cada request. HTTP 401/403 pausa o collector e
+exige intervenção; HTTP 429 respeita `Retry-After`. Discovery roda por default a
+cada 15 minutos, atividade a cada 60 segundos, cinco perfis por rodada e até
+duas páginas por perfil, sempre sob deadline.
+
+Esse comando não pertence a worker group e não está implantado na VPS. Seus
+spools continuam temporários, com limite fail-closed; importação e retenção de
+72 horas pertencem ao estágio PostgreSQL posterior.
+
 ## 12. Solana
 
 Solana continua sendo a chain funcional original.

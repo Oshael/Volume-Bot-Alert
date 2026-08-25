@@ -67,6 +67,7 @@
     "quicknode:logs-dry-run": "QUICKNODE_CONTINUOUS_TRANSPORT=logs node src/utils/quicknode-onchain-continuous-dry-run.js",
     "jupiter:probe": "node src/utils/jupiter-api-probe.js",
     "pump:callout-probe": "node src/utils/pump-callout-probe.js",
+    "pump:capture": "node src/utils/pump-continuous-capture.js",
     "fomo:ws-probe": "node src/utils/fomo-ws-probe.js",
     "fomo:capture": "node src/utils/fomo-continuous-capture.js",
     "x:following-overlap": "node src/utils/x-following-overlap-probe.js",

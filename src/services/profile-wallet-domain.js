@@ -58,6 +58,7 @@ function createProfileObservation(input = {}) {
     platform,
     platformUserId,
     username: text(input.username),
+    xUsername: text(input.xUsername),
     displayName: text(input.displayName),
     profilePictureUrl: text(input.profilePictureUrl),
     observedAt: text(input.observedAt) || new Date().toISOString(),

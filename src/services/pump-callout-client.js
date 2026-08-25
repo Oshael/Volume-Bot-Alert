@@ -48,7 +48,11 @@ function required(value, label) {
 }
 
 function createPumpCalloutClient(options = {}) {
-  const authToken = required(options.authToken || process.env.PUMP_AUTH_TOKEN, 'Pump auth token');
+  const authTokenProvider = options.authTokenProvider;
+  if (authTokenProvider !== undefined && typeof authTokenProvider !== 'function') {
+    throw new TypeError('Pump auth token provider must be a function');
+  }
+  const authToken = authTokenProvider ? null : required(options.authToken || process.env.PUMP_AUTH_TOKEN, 'Pump auth token');
   const baseUrl = String(options.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '');
   const fetchImpl = options.fetchImpl || globalThis.fetch;
   const timeoutMs = positiveInteger(options.timeoutMs, DEFAULT_TIMEOUT_MS, 60_000);
@@ -63,12 +67,19 @@ function createPumpCalloutClient(options = {}) {
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     let response;
     try {
+      let requestToken = authToken;
+      if (authTokenProvider) {
+        try { requestToken = required(await authTokenProvider(), 'Pump auth token'); } catch (_error) {
+          throw Object.assign(new Error('Pump auth token is unavailable'), { code: 'PUMP_AUTH' });
+        }
+      }
       response = await fetchImpl(url, {
         method: 'GET',
-        headers: { accept: 'application/json', cookie: `auth_token=${authToken}` },
+        headers: { accept: 'application/json', cookie: `auth_token=${requestToken}` },
         signal: controller.signal,
       });
     } catch (error) {
+      if (error?.code === 'PUMP_AUTH') throw error;
       const safe = new Error(error?.name === 'AbortError' ? 'Pump callout API timed out' : 'Pump callout API request failed');
       safe.code = error?.name === 'AbortError' ? 'PUMP_TIMEOUT' : 'PUMP_NETWORK';
       throw safe;
