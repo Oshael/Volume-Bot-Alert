@@ -133,6 +133,8 @@ describe('runtime worker groups config', () => {
     assert.match(env, /CALLOUT_CAPTURE_ENABLED=true/);
     assert.match(env, /PUMP_AUTH_TOKEN_FILE=\/etc\/trendscope\/secrets\//);
     assert.match(env, /FOMO_WS_JWT_FILE=\/etc\/trendscope\/secrets\//);
+    assert.match(env, /CALLOUT_RETENTION_ENABLED=true/);
+    assert.match(env, /CALLOUT_RETENTION_BATCH_LIMIT=1000/);
     assert.doesNotMatch(env, /^(?:DATABASE_URL|JWT_SECRET|PUMP_AUTH_TOKEN)=/m);
   });
 

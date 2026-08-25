@@ -750,6 +750,7 @@ src/
 - client e endpoints read-only confirmados;
 - normalização de perfil, wallets e callouts implementada;
 - captura contínua local por watchlist, cursor e spool comum implementada;
+- persistência direta e retenção limitada de 72 horas implementadas;
 - Follow externo não faz parte do caminho crítico.
 
 ## Fomo
@@ -758,6 +759,7 @@ src/
 - leaderboards, feed HTTP recente e trade detail confirmados no HAR;
 - wallets Solana/EVM do perfil e wallet usada no trade estão disponíveis;
 - captura contínua local, lifecycle do JWT e spool comum implementados.
+- persistência direta e retenção limitada de 72 horas implementadas.
 
 ---
 

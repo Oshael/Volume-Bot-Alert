@@ -138,4 +138,27 @@ describe('callout capture repository', () => {
     assert.equal(first, walletObservationKey({ ...profile, observedAt: '2026-08-26T00:00:00Z' }, profile.wallets[0]));
     assert.notEqual(first, walletObservationKey(profile, { ...profile.wallets[0], sourceRecordId: 'trade-2' }));
   });
+
+  it('prunes only expired callout rows through a bounded non-blocking query', async () => {
+    const calls = [];
+    const repository = createCalloutCaptureRepository({
+      database: { query: async (sql, params) => {
+        calls.push({ sql, params });
+        return { rowCount: 50, rows: [] };
+      } },
+    });
+
+    assert.deepEqual(await repository.pruneExpiredCallouts({ batchLimit: 50 }), {
+      deletedCallouts: 50, hasMore: true,
+    });
+    assert.equal(calls[0].sql, __private.PRUNE_EXPIRED_CALLOUTS);
+    assert.deepEqual(calls[0].params, [50]);
+    assert.match(calls[0].sql, /expires_at <= NOW\(\)/);
+    assert.match(calls[0].sql, /FOR UPDATE SKIP LOCKED/);
+    assert.doesNotMatch(calls[0].sql, /callout_profiles|callout_wallet_observations/);
+    await assert.rejects(
+      repository.pruneExpiredCallouts({ batchLimit: 10_001 }),
+      /batchLimit must be between 1 and 10000/
+    );
+  });
 });

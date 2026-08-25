@@ -9,6 +9,7 @@ const { createPumpLocalCollector } = require('./pump-local-collector');
 const {
   createImmediateCalloutPersistence, createPumpCalloutPersistence,
 } = require('./callout-capture-persistence');
+const { createCalloutRetentionWorker } = require('./callout-retention-worker');
 
 function fileProvider(filePath) {
   const resolved = String(filePath || '').trim();
@@ -20,6 +21,7 @@ function createCalloutCaptureWorker(deps = {}) {
   let fomo = null;
   let pumpPersistence = null;
   let fomoPersistence = null;
+  let retention = null;
   let running = false;
 
   async function start(config = {}) {
@@ -29,6 +31,7 @@ function createCalloutCaptureWorker(deps = {}) {
     const fomoJwtProvider = fileProvider(config.fomo?.jwtFile);
     pumpPersistence = createPumpCalloutPersistence({ repository, checkpointKey: 'pump:live' });
     fomoPersistence = createImmediateCalloutPersistence({ repository, checkpointKey: 'fomo:live' });
+    retention = (deps.createRetentionWorker || createCalloutRetentionWorker)({ repository });
     pump = (deps.createPumpCollector || createPumpLocalCollector)({
       client: (deps.createPumpClient || createPumpCalloutClient)({
         authToken: pumpTokenProvider ? undefined : config.pump?.authToken,
@@ -54,18 +57,19 @@ function createCalloutCaptureWorker(deps = {}) {
     });
     running = true;
     try {
+      retention.start(config.retention);
       fomo.start();
       await pump.start();
     } catch (error) {
       running = false;
-      await Promise.allSettled([pump?.stop?.(), fomo?.stop?.()]);
+      await Promise.allSettled([pump?.stop?.(), fomo?.stop?.(), retention?.stop?.()]);
       throw error;
     }
   }
 
   async function stop() {
     running = false;
-    await Promise.allSettled([pump?.stop?.(), fomo?.stop?.()]);
+    await Promise.allSettled([pump?.stop?.(), fomo?.stop?.(), retention?.stop?.()]);
     await fomoPersistence?.flush?.();
   }
 
@@ -79,6 +83,7 @@ function createCalloutCaptureWorker(deps = {}) {
         pump: pumpPersistence?.getStatus?.() || null,
         fomo: fomoPersistence?.getStatus?.() || null,
       },
+      retention: retention?.getStatus?.() || null,
     }),
   };
 }

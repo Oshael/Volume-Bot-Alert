@@ -738,6 +738,13 @@ module.exports = {
       tradeLookupLimit: parseIntegerInRange(process.env.FOMO_CAPTURE_TRADE_LOOKUP_LIMIT, 10, 0, 50),
       threshold: parseIntegerInRange(process.env.FOMO_CAPTURE_THRESHOLD, 1000, 0, 1000000000),
     },
+    retention: {
+      enabled: parseBoolean(process.env.CALLOUT_RETENTION_ENABLED, true),
+      intervalMs: parseIntegerInRange(process.env.CALLOUT_RETENTION_INTERVAL_SECONDS, 300, 10, 3600) * 1000,
+      maxErrorBackoffMs: parseIntegerInRange(process.env.CALLOUT_RETENTION_MAX_BACKOFF_SECONDS, 1800, 10, 3600) * 1000,
+      batchLimit: parseIntegerInRange(process.env.CALLOUT_RETENTION_BATCH_LIMIT, 1000, 1, 10000),
+      maxBatches: parseIntegerInRange(process.env.CALLOUT_RETENTION_MAX_BATCHES, 5, 1, 20),
+    },
   },
 
   db: {

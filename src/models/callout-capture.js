@@ -180,6 +180,19 @@ ON CONFLICT (collector_key) DO UPDATE SET state = EXCLUDED.state,
      OR EXCLUDED.last_committed_at >= callout_collector_checkpoints.last_committed_at
 RETURNING collector_key`;
 
+const PRUNE_EXPIRED_CALLOUTS = `WITH expired AS MATERIALIZED (
+  SELECT dedupe_key
+  FROM callout_events
+  WHERE expires_at <= NOW()
+  ORDER BY expires_at, dedupe_key
+  LIMIT $1::int
+  FOR UPDATE SKIP LOCKED
+)
+DELETE FROM callout_events AS event
+USING expired
+WHERE event.dedupe_key = expired.dedupe_key
+RETURNING event.dedupe_key`;
+
 function createCalloutCaptureRepository(options = {}) {
   const database = options.database || db;
   async function loadCheckpoint(checkpointKey) {
@@ -225,13 +238,27 @@ function createCalloutCaptureRepository(options = {}) {
       throw error;
     } finally { client.release(); }
   }
-  return Object.freeze({ commitCapture, loadCheckpoint });
+
+  async function pruneExpiredCallouts(input = {}) {
+    const batchLimit = Number(input.batchLimit);
+    if (!Number.isSafeInteger(batchLimit) || batchLimit < 1 || batchLimit > 10_000) {
+      throw new TypeError('Callout retention batchLimit must be between 1 and 10000');
+    }
+    const result = await database.query(PRUNE_EXPIRED_CALLOUTS, [batchLimit]);
+    return Object.freeze({
+      deletedCallouts: result.rowCount,
+      hasMore: result.rowCount === batchLimit,
+    });
+  }
+
+  return Object.freeze({ commitCapture, loadCheckpoint, pruneExpiredCallouts });
 }
 
 module.exports = {
   createCalloutCaptureRepository,
   __private: {
-    CALLOUT_UPSERT, CHECKPOINT_UPSERT, PROFILE_UPSERT, WALLET_UPSERT,
+    CALLOUT_UPSERT, CHECKPOINT_UPSERT, PROFILE_UPSERT, PRUNE_EXPIRED_CALLOUTS,
+    WALLET_UPSERT,
     calloutRows, profileRows, walletRows,
   },
 };

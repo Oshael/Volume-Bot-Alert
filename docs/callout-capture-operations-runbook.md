@@ -10,8 +10,7 @@ resumos ou dados no gráfico.
 - template compartilhado `/etc/systemd/system/trendscope-worker@.service` ativo;
 - PostgreSQL fora de uma janela crítica de backfill;
 - token Pump, JWT Fomo e `topicId` válidos;
-- retention de 72 horas operacional antes de ultrapassar o primeiro período de
-  retenção. Até esse corte existir, o soak deve ser curto e supervisionado.
+- `CALLOUT_RETENTION_ENABLED=true` no env exclusivo da instância.
 
 O processo carrega banco e `JWT_SECRET` do `.env` global do projeto. Não os
 duplique em `/etc/trendscope/callouts.env`.
@@ -115,10 +114,17 @@ GROUP BY platform;
 SELECT platform, COUNT(*) AS callouts, MAX(captured_at) AS newest
 FROM callout_events
 GROUP BY platform;
+
+SELECT COUNT(*) AS overdue
+FROM callout_events
+WHERE expires_at <= NOW();
 ```
 
 Esperado: uma lease ativa, checkpoints `pump:live` e `fomo:live` avançando e
-timestamps recentes. Processo `active (running)` sem avanço não é saudável.
+timestamps recentes. Em volume normal, `overdue` retorna a zero; durante backlog,
+ele pode permanecer positivo enquanto `retention.lastResult.status` estiver em
+`draining`, limitado a 5.000 deleções por ciclo. A telemetria da lease também
+mostra erros e totais. Processo `active (running)` sem avanço não é saudável.
 
 ## Rotação de credenciais
 
@@ -138,6 +144,8 @@ Após rotação, confirme novamente lease e freshness; não imprima os arquivos.
 - `429` Pump respeita `Retry-After`;
 - falha de commit Pump mantém o batch em memória e não avança checkpoint;
 - Fomo reconecta com backoff e usa o feed HTTP para reconciliação limitada;
+- retenção apaga somente `callout_events` vencidos, em até cinco lotes de 1.000
+  por ciclo; erro aplica backoff sem apagar perfis ou observações de wallets;
 - perda da lease encerra o processo para impedir captura duplicada.
 
 Rollback operacional:

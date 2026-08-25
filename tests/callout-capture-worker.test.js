@@ -84,13 +84,18 @@ describe('callout capture production persistence', () => {
       createPumpClient: () => ({}),
       createPumpCollector: () => fakeCollector('pump'),
       createFomoCollector: () => fakeCollector('fomo'),
+      createRetentionWorker: () => fakeCollector('retention'),
     });
 
     await worker.start({ pump: {}, fomo: {} });
-    assert.deepEqual(lifecycle, ['start:fomo', 'start:pump']);
+    assert.deepEqual(lifecycle, ['start:retention', 'start:fomo', 'start:pump']);
     assert.equal(worker.getStatus().running, true);
+    assert.deepEqual(worker.getStatus().retention, { running: true, secret: undefined });
     await worker.stop();
-    assert.deepEqual(lifecycle, ['start:fomo', 'start:pump', 'stop:pump', 'stop:fomo']);
+    assert.deepEqual(lifecycle, [
+      'start:retention', 'start:fomo', 'start:pump',
+      'stop:pump', 'stop:fomo', 'stop:retention',
+    ]);
     assert.equal(worker.getStatus().running, false);
   });
 });

@@ -1008,6 +1008,10 @@ O grupo isolado `callouts` (porta default `3017`) é opt-in por
 `callout-capture-worker`. Execute com `npm run start:worker:callouts`. Pump
 commita cada rodada junto do seu checkpoint; Fomo serializa cada evidência live
 diretamente. O grupo exige as credenciais Pump e Fomo e não publica downstream.
+O mesmo processo executa retenção temporal incremental: por padrão, a cada cinco
+minutos remove até cinco lotes de 1.000 `callout_events` cujo `expires_at` venceu,
+usando `SKIP LOCKED` e backoff. Perfis, observações de wallets e checkpoints não
+são removidos. A telemetria `retention` integra a lease do grupo.
 Instalação, soak, rotação e rollback estão em
 `docs/callout-capture-operations-runbook.md`; o drop-in e env de referência ficam
 em `deploy/systemd/trendscope-worker@callouts.service.example` e
