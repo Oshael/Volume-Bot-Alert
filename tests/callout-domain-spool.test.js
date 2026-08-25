@@ -11,6 +11,7 @@ const {
   commonCalloutFromPump,
   createCalloutEnvelope,
   resolveCalloutAddress,
+  resolvePumpCalloutAsset,
 } = require('../src/services/callout-domain');
 const { createCalloutSpool, readCalloutSpoolBatch } = require('../src/services/callout-spool');
 
@@ -46,6 +47,20 @@ test('common callout domain preserves chain evidence and normalizes known addres
   assert.equal(resolveCalloutAddress('999999', EVM).resolutionStatus, 'unsupported_chain');
   assert.equal(resolveCalloutAddress(null, EVM).resolutionStatus, 'unknown_chain');
   assert.equal(resolveCalloutAddress('4663', 'bad').resolutionStatus, 'invalid_address');
+});
+
+test('Pump infers only unambiguous Solana token addresses when chain evidence is absent', () => {
+  const solana = resolvePumpCalloutAsset(null, SOLANA);
+  assert.deepEqual(solana, {
+    addressOriginal: SOLANA,
+    address: SOLANA,
+    rawChainId: null,
+    chainKey: 'solana',
+    chainFamily: 'solana',
+    resolutionStatus: 'inferred_solana_address',
+  });
+  assert.equal(resolvePumpCalloutAsset(null, EVM).resolutionStatus, 'unknown_chain');
+  assert.equal(resolvePumpCalloutAsset('4663', EVM).chainKey, 'robinhood');
 });
 
 test('callout envelope deduplicates by platform event ID and stable fallback', () => {

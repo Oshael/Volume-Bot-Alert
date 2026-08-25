@@ -1021,6 +1021,12 @@ menos quatro teses e permitindo mistura PUMP/FOMO. Ele gera chaves e fingerprint
 determinísticos para os cortes de comparação/geração seguintes, aplica timeout
 curto e falha se o limite configurado produzir uma leitura parcial. Não escolhe
 janelas, chama provider de IA nem persiste resumos.
+Como os endpoints históricos Pump omitem `chainId`, o domínio infere `solana`
+somente para `coinMint` com formato Base58 válido e marca a resolução como
+`inferred_solana_address`; endereços EVM sem rede permanecem não resolvidos.
+`npm run callouts:repair-pump-solana` audita registros antigos sem escrever;
+`-- --mode write` repara arquivo permanente e eventos ainda retidos em uma única
+transação.
 Para comparação manual, `npm run callouts:summaries:compare -- --from=<ISO>
 --to=<ISO> --candidate=0 --output=/tmp/callout-summary-ab.json` exige
 `GEMINI_API_KEY` e `ZAI_API_KEY`. Modelos default: `gemini-2.5-flash-lite` e

@@ -38,6 +38,22 @@ function resolveCalloutAddress(rawChainId, rawAddress) {
   }
 }
 
+function resolvePumpCalloutAsset(rawChainId, rawAddress) {
+  const resolved = resolveCalloutAddress(rawChainId, rawAddress);
+  if (resolved.rawChainId || resolved.resolutionStatus !== 'unknown_chain') return resolved;
+  try {
+    return {
+      ...resolved,
+      address: normalizeTokenAddress('solana', resolved.addressOriginal),
+      chainKey: 'solana',
+      chainFamily: 'solana',
+      resolutionStatus: 'inferred_solana_address',
+    };
+  } catch (_error) {
+    return resolved;
+  }
+}
+
 function commonCalloutFromPump(activity = {}) {
   if (activity.eventKind !== 'callout' && !text(activity.thesis)) return null;
   return {
@@ -55,7 +71,7 @@ function commonCalloutFromPump(activity = {}) {
     },
     wallet: activity.walletAddress
       ? resolveCalloutAddress(activity.rawChainId, activity.walletAddress) : null,
-    asset: resolveCalloutAddress(activity.rawChainId, activity.tokenAddress),
+    asset: resolvePumpCalloutAsset(activity.rawChainId, activity.tokenAddress),
     thesis: text(activity.thesis),
     marketCap: Number.isFinite(activity.marketCap) ? activity.marketCap : null,
     sourceMetadata: {
@@ -140,4 +156,5 @@ module.exports = {
   commonCalloutFromPump,
   createCalloutEnvelope,
   resolveCalloutAddress,
+  resolvePumpCalloutAsset,
 };

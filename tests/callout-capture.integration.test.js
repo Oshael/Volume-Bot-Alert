@@ -8,9 +8,13 @@ const { createCalloutCaptureRepository } = require('../src/models/callout-captur
 const { commonCalloutFromPump, createCalloutEnvelope } = require('../src/services/callout-domain');
 const stage161 = require('../src/utils/db-init-stage161');
 const stage162 = require('../src/utils/db-init-stage162');
+const {
+  repairPumpSolanaCalloutChains,
+} = require('../src/utils/repair-pump-callout-solana-chains');
 
 const CAPTURED_AT = '2026-08-25T12:00:00.000Z';
 const ADDRESS = '0xabcdef0123456789abcdef0123456789abcdef01';
+const SOLANA = 'Ai66LHZG9MCzg1WKdawwqduVAXpNDUuV8M3uyq5ppump';
 
 after(() => db.pool.end());
 
@@ -78,6 +82,25 @@ describe('callout permanent archive persistence', () => {
         archive_thesis: initial.payload.thesis,
         archive_metadata: { archiveOnly: true },
         checkpoint_state: { sequence: 2 },
+      });
+
+      for (const table of ['callout_events', 'callout_thesis_archive']) {
+        await client.query(`UPDATE ${table} SET
+          asset_address_original = $1, asset_address_normalized = NULL,
+          asset_raw_chain_id = NULL, asset_chain_key = NULL, asset_chain_family = NULL,
+          asset_resolution_status = 'unknown_chain'`, [SOLANA]);
+      }
+      const repairDatabase = {
+        query: client.query.bind(client),
+        getClient: async () => ({ query: client.query.bind(client), release() {} }),
+      };
+      const repaired = await repairPumpSolanaCalloutChains(repairDatabase, { mode: 'write' });
+      assert.deepEqual(repaired.repaired, { archive: 1, live: 1 });
+      const repairedRows = await client.query(`SELECT asset_chain_key, asset_address_normalized,
+        asset_resolution_status FROM callout_thesis_archive`);
+      assert.deepEqual(repairedRows.rows[0], {
+        asset_chain_key: 'solana', asset_address_normalized: SOLANA,
+        asset_resolution_status: 'inferred_solana_address',
       });
 
       const collision = {

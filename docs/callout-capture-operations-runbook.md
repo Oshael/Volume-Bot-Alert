@@ -141,6 +141,21 @@ ele pode permanecer positivo enquanto `retention.lastResult.status` estiver em
 `draining`, limitado a 5.000 deleções por ciclo. A telemetria da lease também
 mostra erros e totais. Processo `active (running)` sem avanço não é saudável.
 
+## Reparar chain ausente nos callouts Pump históricos
+
+Os endpoints históricos da Pump podem omitir `chainId`. O runtime infere Solana
+somente quando `coinMint` tem formato Base58 válido de endereço Solana; endereços
+EVM sem rede permanecem `unknown_chain`. Audite e aplique o mesmo reparo no
+arquivo permanente e nos eventos ainda retidos:
+
+```bash
+npm run callouts:repair-pump-solana
+npm run callouts:repair-pump-solana -- --mode write
+```
+
+O primeiro comando é sempre dry-run. O write é idempotente, transacional e altera
+somente linhas Pump sem evidência de chain e com formato Solana inequívoco.
+
 ## Rotação de credenciais
 
 O token Pump é relido em cada request. Na Fomo, o worker usa o customer JWT até

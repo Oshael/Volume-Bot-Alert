@@ -240,6 +240,11 @@ thesis
 peakTimestamp
 ```
 
+Esses endpoints históricos não incluem `chainId`. Quando `coinMint` tem formato
+Base58 válido de endereço Solana, o coletor registra `chain_key=solana` com status
+`inferred_solana_address`. Endereços `0x...` não são inferidos, pois o formato não
+distingue Ethereum, Base, BSC e Robinhood.
+
 ### Callouts de um usuário
 
 ```text
