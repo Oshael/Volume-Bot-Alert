@@ -141,8 +141,9 @@ mostra erros e totais. Processo `active (running)` sem avanço não é saudável
 
 O token Pump é relido em cada request. Na Fomo, o worker usa o customer JWT até
 30 segundos antes de `exp`, chama `POST /api/v1/sessions` com o refresh token e
-o customer JWT no header `Authorization`, replica o `privy:caid` estável do
-navegador e grava atomicamente ambos os valores retornados. A telemetria
+os headers públicos da sessão Privy, sem `Authorization`, replica o
+`privy:caid` estável do navegador e grava atomicamente ambos os valores
+retornados. A telemetria
 `fomoAuthentication` expõe somente expiração, totais e códigos seguros.
 
 `FOMO_PRIVY_REAUTH_REQUIRED` significa que a sessão foi revogada ou deixou de

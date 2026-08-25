@@ -1046,8 +1046,8 @@ JWT e refresh token por troca atômica. Somente o campo `token` da resposta pode
 substituir esse JWT; `privy_access_token` nunca é enviado no `challengeResponse`.
 A rotação exige
 `FOMO_PRIVY_CA_ID=privy:caid` medido e
-envia o customer JWT somente no header seguro da chamada Privy. Os dois arquivos
-Fomo devem ser `0600`, graváveis
+envia apenas o refresh token no corpo da chamada Privy, sem `Authorization`.
+Os dois arquivos Fomo devem ser `0600`, graváveis
 somente pelo usuário do serviço. `FOMO_PRIVY_REAUTH_REQUIRED` exige novo login e
 troca manual dos dois valores; segredos nunca entram na telemetria
 `fomoAuthentication`.

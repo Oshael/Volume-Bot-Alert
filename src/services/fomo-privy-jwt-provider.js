@@ -106,10 +106,6 @@ function createFomoPrivyJwtProvider(options = {}) {
   }
 
   async function refresh() {
-    const accessToken = await requiredStoredSecret(
-      jwtStore, 'FOMO_PRIVY_CUSTOMER_TOKEN',
-      'Fomo Privy access credential is unavailable', jwtMetadata
-    );
     const refreshToken = await requiredStoredSecret(
       refreshTokenStore, 'FOMO_PRIVY_REFRESH_TOKEN',
       'Fomo Privy refresh credential is unavailable'
@@ -117,7 +113,7 @@ function createFomoPrivyJwtProvider(options = {}) {
     let response;
     try {
       response = await fetchImpl(sessionUrl, {
-        method: 'POST', headers: { ...headers, authorization: `Bearer ${accessToken}` },
+        method: 'POST', headers,
         body: JSON.stringify({ refresh_token: refreshToken }),
         signal: AbortSignal.timeout(Number(options.timeoutMs) || 10_000),
       });
