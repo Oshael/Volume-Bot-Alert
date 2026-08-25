@@ -1670,7 +1670,9 @@ batches de até 10, exige que o creator coincida e valida transação, receipt,
 contract address, bloco/hash canônico e chain id pelo archive antes de promover
 `rpc_direct`. O comando aceita `--limit`, `--batch-size`, `--concurrency` e
 `--timeout-ms`; sucessos persistidos deixam de ser selecionados numa retomada e
-falhas individuais são registradas sem invalidar o restante. Depois da resolução,
+falhas individuais são registradas sem invalidar o restante. Timeout transitório
+divide adaptativamente o batch Blockscout até um único token; falha isolada é
+contabilizada em `providerFailures` e não encerra a campanha. Depois da resolução,
 rode novamente o reconciler PostgreSQL para enviar as novas provas ao repair.
 Cada token é reconstruído em shadow e promovido em uma única
 transação que trava o cursor LIVE; se a frontier avançou, somente o delta volta

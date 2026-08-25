@@ -68,10 +68,36 @@ async function mapConcurrent(items, concurrency, operation) {
 }
 
 async function resolveBatch(deps, candidates, options) {
-  const response = await requestWithRetry(
-    () => deps.blockscout.getContractCreators(candidates.map((item) => item.tokenAddress)),
-    { requestRetries: 2, retryDelayMs: 500 }, deps.sleep,
-  );
+  let response;
+  try {
+    response = await requestWithRetry(
+      () => deps.blockscout.getContractCreators(candidates.map((item) => item.tokenAddress)),
+      { requestRetries: candidates.length > 1 ? 0 : 2, retryDelayMs: 500 }, deps.sleep,
+    );
+  } catch (error) {
+    if (error.retryable === true && candidates.length > 1) {
+      const middle = Math.ceil(candidates.length / 2);
+      const parts = [];
+      parts.push(await resolveBatch(deps, candidates.slice(0, middle), options));
+      parts.push(await resolveBatch(deps, candidates.slice(middle), options));
+      return parts.reduce((total, part) => ({
+        verified: total.verified + part.verified,
+        failed: total.failed + part.failed,
+        retries: total.retries + part.retries,
+        splits: total.splits + part.splits,
+        providerFailures: total.providerFailures + part.providerFailures,
+      }), { verified: 0, failed: 0, retries: 0, splits: 1, providerFailures: 0 });
+    }
+    if (error.retryable !== true) throw error;
+    await deps.attributions.recordDirectVerificationFailure({
+      tokenAddress: candidates[0].tokenAddress,
+      error: String(error.code || 'blockscout_provider_failure'),
+    });
+    return {
+      verified: 0, failed: 1, retries: error.requestRetriesUsed || 0,
+      splits: 0, providerFailures: 1,
+    };
+  }
   const hints = new Map(response.value.map((item) => [item.tokenAddress, item]));
   const outcomes = await mapConcurrent(candidates, options.concurrency, async (candidate) => {
     const hint = hints.get(candidate.tokenAddress);
@@ -92,7 +118,10 @@ async function resolveBatch(deps, candidates, options) {
       tokenAddress: outcome.candidate.tokenAddress, error: outcome.error,
     });
   }
-  return { verified: verified.length, failed: failed.length, retries: response.retries };
+  return {
+    verified: verified.length, failed: failed.length, retries: response.retries,
+    splits: 0, providerFailures: 0,
+  };
 }
 
 function buildRuntime(options, deps = {}) {
@@ -132,12 +161,17 @@ async function main(argv = process.argv.slice(2), deps = {}) {
   const candidates = await runtime.gaps.listVerificationCandidates({
     runId: options.runId, limit: options.limit,
   });
-  const summary = { candidates: candidates.length, verified: 0, failed: 0, retries: 0 };
+  const summary = {
+    candidates: candidates.length, verified: 0, failed: 0, retries: 0,
+    splits: 0, providerFailures: 0,
+  };
   for (const batch of chunks(candidates, options.batchSize)) {
     const result = await resolveBatch(runtime, batch, options);
     summary.verified += result.verified;
     summary.failed += result.failed;
     summary.retries += result.retries;
+    summary.splits += result.splits;
+    summary.providerFailures += result.providerFailures;
   }
   const report = { mode: 'apply', runId: options.runId, plan, summary };
   (deps.logger || console).log(JSON.stringify(report, null, 2));

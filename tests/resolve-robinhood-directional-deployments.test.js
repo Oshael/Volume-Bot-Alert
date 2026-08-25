@@ -53,7 +53,9 @@ describe('Robinhood directional deployment resolver', () => {
       { tokenAddress: TOKEN_A, creatorAddress: CREATOR },
       { tokenAddress: TOKEN_B, creatorAddress: CREATOR },
     ], { concurrency: 2 });
-    assert.deepEqual(result, { verified: 1, failed: 1, retries: 0 });
+    assert.deepEqual(result, {
+      verified: 1, failed: 1, retries: 0, splits: 0, providerFailures: 0,
+    });
     assert.equal(calls.verified[0].blockNumber, '100');
     assert.deepEqual(calls.failed, [{
       tokenAddress: TOKEN_B, error: 'blockscout_deployment_hint_incomplete',
@@ -87,6 +89,41 @@ describe('Robinhood directional deployment resolver', () => {
     const report = await main(['--run-id=1', CONFIRM_FLAG], {
       runtime, logger: { log() {} },
     });
-    assert.deepEqual(report.summary, { candidates: 1, verified: 1, failed: 0, retries: 0 });
+    assert.deepEqual(report.summary, {
+      candidates: 1, verified: 1, failed: 0, retries: 0,
+      splits: 0, providerFailures: 0,
+    });
+  });
+
+  it('splits timed-out batches and isolates a provider failure to one token', async () => {
+    const failed = [];
+    const error = Object.assign(new Error('timed out'), {
+      code: 'timeout', retryable: true, requestRetriesUsed: 2,
+    });
+    const result = await resolveBatch({
+      sleep: async () => {},
+      blockscout: {
+        async getContractCreators(tokens) {
+          if (tokens.length > 1 || tokens[0] === TOKEN_B) throw error;
+          return [{ tokenAddress: TOKEN_A, creatorAddress: CREATOR, transactionHash: HASH }];
+        },
+      },
+      verifier: {
+        async verifyDirectDeployment(hint) {
+          return { ...hint, source: 'rpc_direct', factoryAddress: null, blockNumber: '100' };
+        },
+      },
+      attributions: {
+        async recordVerifiedDirectDeployments() {},
+        async recordDirectVerificationFailure(item) { failed.push(item); },
+      },
+    }, [
+      { tokenAddress: TOKEN_A, creatorAddress: CREATOR },
+      { tokenAddress: TOKEN_B, creatorAddress: CREATOR },
+    ], { concurrency: 2 });
+    assert.deepEqual(result, {
+      verified: 1, failed: 1, retries: 2, splits: 1, providerFailures: 1,
+    });
+    assert.deepEqual(failed, [{ tokenAddress: TOKEN_B, error: 'timeout' }]);
   });
 });
