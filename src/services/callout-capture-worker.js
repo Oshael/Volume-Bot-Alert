@@ -10,10 +10,62 @@ const {
   createImmediateCalloutPersistence, createPumpCalloutPersistence,
 } = require('./callout-capture-persistence');
 const { createCalloutRetentionWorker } = require('./callout-retention-worker');
+const {
+  createAtomicSecretFileStore, createFomoPrivyJwtProvider,
+} = require('./fomo-privy-jwt-provider');
 
 function fileProvider(filePath) {
   const resolved = String(filePath || '').trim();
   return resolved ? async () => (await fs.readFile(path.resolve(resolved), 'utf8')).trim() : undefined;
+}
+
+function createFomoAuthentication(deps, config) {
+  if (!config.privyRefreshTokenFile) return null;
+  return (deps.createFomoAuthentication || createFomoPrivyJwtProvider)({
+    jwtStore: createAtomicSecretFileStore(config.jwtFile),
+    refreshTokenStore: createAtomicSecretFileStore(config.privyRefreshTokenFile),
+    sessionUrl: config.privySessionUrl,
+    appId: config.privyAppId,
+    clientId: config.privyClientId,
+    privyClient: config.privyClient,
+    clientAnalyticsId: config.privyClientAnalyticsId,
+    origin: config.origin,
+  });
+}
+
+function componentStatus(component) {
+  return typeof component?.getStatus === 'function' ? component.getStatus() : null;
+}
+
+function buildPumpCollector(deps, config, persistence) {
+  const tokenProvider = fileProvider(config.authTokenFile);
+  const client = (deps.createPumpClient || createPumpCalloutClient)({
+    authToken: tokenProvider ? undefined : config.authToken,
+    authTokenProvider: tokenProvider,
+  });
+  return (deps.createPumpCollector || createPumpLocalCollector)({
+    client, ...persistence,
+    activityIntervalMs: config.activityIntervalMs,
+    leaderboardIntervalMs: config.leaderboardIntervalMs,
+    usersPerRound: config.usersPerRound,
+    userPages: config.userPages,
+    roundDeadlineMs: config.roundDeadlineMs,
+  });
+}
+
+function buildFomoCollector(deps, config, persistence, authentication) {
+  const jwtProvider = fileProvider(config.jwtFile);
+  return (deps.createFomoCollector || createFomoLocalCollector)({
+    ...persistence,
+    wsUrl: config.wsUrl,
+    headers: config.origin ? { Origin: config.origin } : undefined,
+    topicId: config.topicId,
+    authenticationJwt: jwtProvider ? undefined : config.jwt,
+    authenticationJwtProvider: authentication?.getJwt || jwtProvider,
+    reconcileIntervalMs: config.reconcileIntervalMs,
+    tradeLookupLimit: config.tradeLookupLimit,
+    threshold: config.threshold,
+  });
 }
 
 function createCalloutCaptureWorker(deps = {}) {
@@ -22,39 +74,20 @@ function createCalloutCaptureWorker(deps = {}) {
   let pumpPersistence = null;
   let fomoPersistence = null;
   let retention = null;
+  let fomoAuthentication = null;
   let running = false;
 
   async function start(config = {}) {
     if (running) return;
+    const pumpConfig = config.pump || {};
+    const fomoConfig = config.fomo || {};
     const repository = deps.repository || createCalloutCaptureRepository();
-    const pumpTokenProvider = fileProvider(config.pump?.authTokenFile);
-    const fomoJwtProvider = fileProvider(config.fomo?.jwtFile);
+    fomoAuthentication = createFomoAuthentication(deps, fomoConfig);
     pumpPersistence = createPumpCalloutPersistence({ repository, checkpointKey: 'pump:live' });
     fomoPersistence = createImmediateCalloutPersistence({ repository, checkpointKey: 'fomo:live' });
     retention = (deps.createRetentionWorker || createCalloutRetentionWorker)({ repository });
-    pump = (deps.createPumpCollector || createPumpLocalCollector)({
-      client: (deps.createPumpClient || createPumpCalloutClient)({
-        authToken: pumpTokenProvider ? undefined : config.pump?.authToken,
-        authTokenProvider: pumpTokenProvider,
-      }),
-      ...pumpPersistence,
-      activityIntervalMs: config.pump?.activityIntervalMs,
-      leaderboardIntervalMs: config.pump?.leaderboardIntervalMs,
-      usersPerRound: config.pump?.usersPerRound,
-      userPages: config.pump?.userPages,
-      roundDeadlineMs: config.pump?.roundDeadlineMs,
-    });
-    fomo = (deps.createFomoCollector || createFomoLocalCollector)({
-      ...fomoPersistence,
-      wsUrl: config.fomo?.wsUrl,
-      headers: config.fomo?.origin ? { Origin: config.fomo.origin } : undefined,
-      topicId: config.fomo?.topicId,
-      authenticationJwt: fomoJwtProvider ? undefined : config.fomo?.jwt,
-      authenticationJwtProvider: fomoJwtProvider,
-      reconcileIntervalMs: config.fomo?.reconcileIntervalMs,
-      tradeLookupLimit: config.fomo?.tradeLookupLimit,
-      threshold: config.fomo?.threshold,
-    });
+    pump = buildPumpCollector(deps, pumpConfig, pumpPersistence);
+    fomo = buildFomoCollector(deps, fomoConfig, fomoPersistence, fomoAuthentication);
     running = true;
     try {
       retention.start(config.retention);
@@ -77,13 +110,14 @@ function createCalloutCaptureWorker(deps = {}) {
     start, stop,
     getStatus: () => ({
       running,
-      pump: pump?.getStatus?.() || null,
-      fomo: fomo?.getStatus?.() || null,
+      pump: componentStatus(pump),
+      fomo: componentStatus(fomo),
+      fomoAuthentication: componentStatus(fomoAuthentication),
       persistence: {
-        pump: pumpPersistence?.getStatus?.() || null,
-        fomo: fomoPersistence?.getStatus?.() || null,
+        pump: componentStatus(pumpPersistence),
+        fomo: componentStatus(fomoPersistence),
       },
-      retention: retention?.getStatus?.() || null,
+      retention: componentStatus(retention),
     }),
   };
 }

@@ -594,6 +594,10 @@ if (calloutCaptureEnabled) {
   if (!String(process.env.FOMO_WS_JWT || process.env.FOMO_WS_JWT_FILE || '').trim()) {
     missing.push('FOMO_WS_JWT or FOMO_WS_JWT_FILE for callout capture');
   }
+  if (String(process.env.FOMO_PRIVY_REFRESH_TOKEN_FILE || '').trim()
+      && !String(process.env.FOMO_WS_JWT_FILE || '').trim()) {
+    missing.push('FOMO_WS_JWT_FILE when FOMO_PRIVY_REFRESH_TOKEN_FILE is enabled');
+  }
 }
 if ((robinhoodHolderBackfillEnabled || robinhoodHolderLiveEnabled)
     && !robinhoodHolderBackfillAdmittedAfter) {
@@ -733,6 +737,12 @@ module.exports = {
       origin: String(process.env.FOMO_WS_ORIGIN || 'https://fomo.family').trim(),
       jwt: String(process.env.FOMO_WS_JWT || '').trim(),
       jwtFile: String(process.env.FOMO_WS_JWT_FILE || '').trim(),
+      privyRefreshTokenFile: String(process.env.FOMO_PRIVY_REFRESH_TOKEN_FILE || '').trim(),
+      privySessionUrl: String(process.env.FOMO_PRIVY_SESSION_URL || 'https://auth.privy.io/api/v1/sessions').trim(),
+      privyAppId: String(process.env.FOMO_PRIVY_APP_ID || 'cm6h485o300n3zj9yl6vpedq7').trim(),
+      privyClientId: String(process.env.FOMO_PRIVY_CLIENT_ID || 'client-WY5gFSayQjxnQhG4rP6SnwPAyPZWZpNRhJ6b9rzMnYwqH').trim(),
+      privyClient: String(process.env.FOMO_PRIVY_CLIENT || 'react-auth:3.34.0').trim(),
+      privyClientAnalyticsId: String(process.env.FOMO_PRIVY_CA_ID || '').trim(),
       topicId: String(process.env.FOMO_WS_TOPIC_ID || '').trim(),
       reconcileIntervalMs: parseIntegerInRange(process.env.FOMO_CAPTURE_RECONCILE_SECONDS, 900, 10, 86400) * 1000,
       tradeLookupLimit: parseIntegerInRange(process.env.FOMO_CAPTURE_TRADE_LOOKUP_LIMIT, 10, 0, 50),

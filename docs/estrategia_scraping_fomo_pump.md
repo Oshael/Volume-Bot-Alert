@@ -70,8 +70,8 @@ Depois da autenticação, o client envia:
 ```
 
 Frames `data/trading_activity` com `payload.type=thesis` incluem profile, tese,
-token, network, `tradeId` e métricas. O JWT expira e seu lifecycle ainda precisa
-ser resolvido para operação autônoma na VPS.
+token, network, `tradeId` e métricas. O customer JWT expira em uma hora; o worker
+renova a sessão Privy sob demanda e persiste as credenciais rotacionadas.
 
 Também foram confirmados endpoints HTTP públicos, sem cookie ou Authorization:
 

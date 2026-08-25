@@ -132,7 +132,8 @@ describe('runtime worker groups config', () => {
     assert.match(service, /EnvironmentFile=\/etc\/trendscope\/callouts\.env/);
     assert.match(env, /CALLOUT_CAPTURE_ENABLED=true/);
     assert.match(env, /PUMP_AUTH_TOKEN_FILE=\/etc\/trendscope\/secrets\//);
-    assert.match(env, /FOMO_WS_JWT_FILE=\/etc\/trendscope\/secrets\//);
+    assert.match(env, /FOMO_WS_JWT_FILE=\/var\/lib\/trendscope\/callouts\//);
+    assert.match(env, /FOMO_PRIVY_REFRESH_TOKEN_FILE=\/var\/lib\/trendscope\/callouts\//);
     assert.match(env, /CALLOUT_RETENTION_ENABLED=true/);
     assert.match(env, /CALLOUT_RETENTION_BATCH_LIMIT=1000/);
     assert.doesNotMatch(env, /^(?:DATABASE_URL|JWT_SECRET|PUMP_AUTH_TOKEN)=/m);
@@ -144,7 +145,7 @@ describe('runtime worker groups config', () => {
       env: {
         ...process.env, BACKGROUND_WORKER_GROUPS: 'callouts', CALLOUT_CAPTURE_ENABLED: 'true',
         PUMP_AUTH_TOKEN: '', PUMP_AUTH_TOKEN_FILE: '', FOMO_WS_TOPIC_ID: '',
-        FOMO_WS_JWT: '', FOMO_WS_JWT_FILE: '',
+        FOMO_WS_JWT: '', FOMO_WS_JWT_FILE: '', FOMO_PRIVY_REFRESH_TOKEN_FILE: '',
       },
       encoding: 'utf8',
     });

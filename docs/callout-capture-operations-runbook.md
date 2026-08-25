@@ -9,7 +9,7 @@ resumos ou dados no gráfico.
 - código contendo o Stage 161 e o worker `callouts` já publicado na VPS;
 - template compartilhado `/etc/systemd/system/trendscope-worker@.service` ativo;
 - PostgreSQL fora de uma janela crítica de backfill;
-- token Pump, JWT Fomo e `topicId` válidos;
+- token Pump, customer JWT e refresh token Privy da Fomo, e `topicId` válidos;
 - `CALLOUT_RETENTION_ENABLED=true` no env exclusivo da instância.
 
 O processo carrega banco e `JWT_SECRET` do `.env` global do projeto. Não os
@@ -23,21 +23,29 @@ Descubra o grupo Unix usado pela template:
 systemctl show trendscope-worker@callouts.service -p User -p Group
 ```
 
-Substitua `REPLACE_APP_GROUP` abaixo pelo grupo retornado. Os arquivos precisam
-ser legíveis pelo processo, mas não por outros usuários:
+Substitua `REPLACE_APP_USER` e `REPLACE_APP_GROUP` pelos valores retornados. O
+token Pump é somente leitura; os dois segredos Fomo pertencem ao usuário do
+serviço porque são substituídos atomicamente após uma renovação:
 
 ```bash
 sudo install -d -o root -g REPLACE_APP_GROUP -m 0750 /etc/trendscope/secrets
 sudo install -o root -g REPLACE_APP_GROUP -m 0640 /dev/null \
   /etc/trendscope/secrets/callouts-pump-token
-sudo install -o root -g REPLACE_APP_GROUP -m 0640 /dev/null \
-  /etc/trendscope/secrets/callouts-fomo-jwt
+sudo install -d -o REPLACE_APP_USER -g REPLACE_APP_GROUP -m 0700 \
+  /var/lib/trendscope/callouts
+sudo install -o REPLACE_APP_USER -g REPLACE_APP_GROUP -m 0600 /dev/null \
+  /var/lib/trendscope/callouts/fomo-customer-token
+sudo install -o REPLACE_APP_USER -g REPLACE_APP_GROUP -m 0600 /dev/null \
+  /var/lib/trendscope/callouts/fomo-refresh-token
 sudoedit /etc/trendscope/secrets/callouts-pump-token
-sudoedit /etc/trendscope/secrets/callouts-fomo-jwt
+sudoedit /var/lib/trendscope/callouts/fomo-customer-token
+sudoedit /var/lib/trendscope/callouts/fomo-refresh-token
 ```
 
-Cada arquivo contém somente o valor da credencial, com newline final opcional.
-Não registre o conteúdo em shell history, journal ou comandos de diagnóstico.
+No navegador autenticado, obtenha `privy:token` e `privy:refresh_token` em
+Application → Local Storage → `https://fomo.family`. Grave um valor por arquivo;
+o formato JSON entre aspas usado pelo Local Storage também é aceito. Não
+registre o conteúdo em shell history, journal ou comandos de diagnóstico.
 
 ## 2. Instalar env e drop-in
 
@@ -128,9 +136,14 @@ mostra erros e totais. Processo `active (running)` sem avanço não é saudável
 
 ## Rotação de credenciais
 
-O token Pump é relido em cada request. O JWT Fomo é relido no próximo challenge.
-Substitua o arquivo preservando dono/modo e nunca edite o valor no repositório.
-Para forçar um novo challenge imediatamente, reinicie somente esta instância:
+O token Pump é relido em cada request. Na Fomo, o worker usa o customer JWT até
+30 segundos antes de `exp`, chama `POST /api/v1/sessions` com o refresh token e
+grava atomicamente ambos os valores retornados. A telemetria
+`fomoAuthentication` expõe somente expiração, totais e códigos seguros.
+
+`FOMO_PRIVY_REAUTH_REQUIRED` significa que a sessão foi revogada ou deixou de
+ser renovável. Faça login novamente, substitua os dois arquivos preservando
+dono/modo e reinicie somente esta instância:
 
 ```bash
 sudo systemctl restart trendscope-worker@callouts.service
@@ -143,7 +156,8 @@ Após rotação, confirme novamente lease e freshness; não imprima os arquivos.
 - `401/403` Pump pausa aquele collector até a credencial ser corrigida;
 - `429` Pump respeita `Retry-After`;
 - falha de commit Pump mantém o batch em memória e não avança checkpoint;
-- Fomo reconecta com backoff e usa o feed HTTP para reconciliação limitada;
+- Fomo renova a sessão sob demanda; falha transitória reconecta com backoff e
+  `FOMO_PRIVY_REAUTH_REQUIRED` exige novo login;
 - retenção apaga somente `callout_events` vencidos, em até cinco lotes de 1.000
   por ciclo; erro aplica backoff sem apagar perfis ou observações de wallets;
 - perda da lease encerra o processo para impedir captura duplicada.

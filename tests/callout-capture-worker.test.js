@@ -98,4 +98,33 @@ describe('callout capture production persistence', () => {
     ]);
     assert.equal(worker.getStatus().running, false);
   });
+
+  it('wires autonomous Fomo authentication without exposing its stores', async () => {
+    let fomoOptions;
+    const repository = { loadCheckpoint: async () => null, commitCapture: async () => {} };
+    const worker = createCalloutCaptureWorker({
+      repository,
+      createPumpClient: () => ({}),
+      createPumpCollector: () => ({ start: async () => {}, stop: async () => {} }),
+      createFomoCollector: (options) => {
+        fomoOptions = options;
+        return { start: () => {}, stop: async () => {} };
+      },
+      createRetentionWorker: () => ({ start: () => {}, stop: async () => {} }),
+      createFomoAuthentication: ({ jwtStore, refreshTokenStore }) => {
+        assert.equal(typeof jwtStore.read, 'function');
+        assert.equal(typeof refreshTokenStore.write, 'function');
+        return { getJwt: async () => 'renewed.jwt.value', getStatus: () => ({ refreshes: 2 }) };
+      },
+    });
+
+    await worker.start({
+      pump: {},
+      fomo: { jwtFile: '/state/customer-token', privyRefreshTokenFile: '/state/refresh-token' },
+    });
+    assert.equal(await fomoOptions.authenticationJwtProvider(), 'renewed.jwt.value');
+    assert.deepEqual(worker.getStatus().fomoAuthentication, { refreshes: 2 });
+    assert.equal(JSON.stringify(worker.getStatus()).includes('/state/'), false);
+    await worker.stop();
+  });
 });

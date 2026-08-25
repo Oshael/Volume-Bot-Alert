@@ -962,8 +962,8 @@ FOMO_CAPTURE_SPOOL_DIR
 ```
 
 `FOMO_WS_JWT_FILE` é preferível para execuções longas: o arquivo é relido em
-cada challenge e pode ser substituído fora do processo. Credencial ausente ou
-inválida entra em backoff exponencial; o collector não gera nem renova o JWT.
+cada challenge e pode ser substituído fora do processo. Esse collector local
+não gera nem renova o JWT; credencial ausente ou inválida entra em backoff.
 Leaderboard e feed HTTP continuam independentes da autenticação do socket.
 
 Esse comando ainda não pertence a worker group, não está implantado na VPS e
@@ -1008,6 +1008,12 @@ O grupo isolado `callouts` (porta default `3017`) é opt-in por
 `callout-capture-worker`. Execute com `npm run start:worker:callouts`. Pump
 commita cada rodada junto do seu checkpoint; Fomo serializa cada evidência live
 diretamente. O grupo exige as credenciais Pump e Fomo e não publica downstream.
+Quando `FOMO_PRIVY_REFRESH_TOKEN_FILE` está configurado, renova o customer JWT
+pela sessão Privy até 30 segundos antes da expiração e persiste JWT e refresh
+token por troca atômica. Os dois arquivos Fomo devem ser `0600`, graváveis
+somente pelo usuário do serviço. `FOMO_PRIVY_REAUTH_REQUIRED` exige novo login e
+troca manual dos dois valores; segredos nunca entram na telemetria
+`fomoAuthentication`.
 O mesmo processo executa retenção temporal incremental: por padrão, a cada cinco
 minutos remove até cinco lotes de 1.000 `callout_events` cujo `expires_at` venceu,
 usando `SKIP LOCKED` e backoff. Perfis, observações de wallets e checkpoints não
