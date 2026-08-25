@@ -43,9 +43,11 @@ function createPumpLocalCollector(options = {}) {
   let timer = null;
   let failures = 0;
   let sequence = 0;
+  let phase = 'idle';
   const metrics = {
     rounds: 0, profiles: 0, wallets: 0, callouts: 0, duplicates: 0, truncatedUsers: 0, errors: 0,
-    lastRoundAt: null, lastEventAt: null, lastErrorCode: null, pauseReason: null,
+    lastRoundAt: null, lastEventAt: null, lastErrorCode: null, lastErrorMessage: null,
+    lastErrorPhase: null, pauseReason: null,
   };
 
   async function ensureState() {
@@ -55,7 +57,13 @@ function createPumpLocalCollector(options = {}) {
   function reportError(error) {
     metrics.errors += 1;
     metrics.lastErrorCode = String(error?.code || error?.name || 'PUMP_COLLECTOR_ERROR');
-    options.onError?.({ code: metrics.lastErrorCode });
+    metrics.lastErrorMessage = String(error?.message || 'Pump collector failed').slice(0, 300);
+    metrics.lastErrorPhase = phase;
+    options.onError?.({
+      code: metrics.lastErrorCode,
+      message: metrics.lastErrorMessage,
+      phase: metrics.lastErrorPhase,
+    });
   }
 
   async function appendProfile(normalized, capturedAt, source) {
@@ -156,15 +164,23 @@ function createPumpLocalCollector(options = {}) {
   }
 
   async function runOnce() {
+    phase = 'load_state';
     await ensureState();
     const capturedAt = new Date(now()).toISOString();
     const deadlineAt = now() + roundDeadlineMs;
-    if (now() - state.lastLeaderboardAt >= leaderboardIntervalMs) await discover(capturedAt);
+    if (now() - state.lastLeaderboardAt >= leaderboardIntervalMs) {
+      phase = 'leaderboard';
+      await discover(capturedAt);
+    }
+    phase = 'following_alerts';
     await captureFollowing(capturedAt);
+    phase = 'user_callouts';
     await captureWatchlist(capturedAt, deadlineAt);
+    phase = 'persistence';
     await options.stateStore.save(state);
     metrics.rounds += 1;
     metrics.lastRoundAt = capturedAt;
+    phase = 'idle';
     return { ...metrics };
   }
 
@@ -185,7 +201,7 @@ function createPumpLocalCollector(options = {}) {
     async start() { if (!running) { running = true; await tick(); } },
     stop() { running = false; if (timer) cancelSchedule(timer); timer = null; },
     runOnce,
-    getStatus: () => ({ running, paused, watchlistSize: state?.watchlist.length || 0, ...metrics }),
+    getStatus: () => ({ running, paused, phase, watchlistSize: state?.watchlist.length || 0, ...metrics }),
   };
 }
 

@@ -83,6 +83,8 @@ test('Pump collector pauses on auth and honors rate-limit retry delay', async ()
   });
   await auth.start();
   assert.equal(auth.getStatus().paused, true);
+  assert.equal(auth.getStatus().lastErrorMessage, 'auth');
+  assert.equal(auth.getStatus().lastErrorPhase, 'leaderboard');
   assert.deepEqual(authSchedules, []);
 
   const rateSchedules = [];
@@ -96,6 +98,8 @@ test('Pump collector pauses on auth and honors rate-limit retry delay', async ()
   });
   await rate.start();
   assert.equal(rate.getStatus().paused, false);
+  assert.equal(rate.getStatus().lastErrorMessage, 'rate');
+  assert.equal(rate.getStatus().lastErrorPhase, 'leaderboard');
   assert.deepEqual(rateSchedules, [3000]);
   rate.stop();
 });
