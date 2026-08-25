@@ -1024,10 +1024,12 @@ diretamente. O grupo exige as credenciais Pump e Fomo e não publica downstream.
 Falhas Pump expõem `lastErrorCode`, `lastErrorMessage` limitada a 300 caracteres
 e `lastErrorPhase` na telemetria da lease; a mensagem vem apenas dos erros
 sanitizados do client ou da persistência e nunca inclui credenciais.
-Quando `FOMO_PRIVY_REFRESH_TOKEN_FILE` está configurado, renova o customer JWT
+Quando `FOMO_PRIVY_REFRESH_TOKEN_FILE` está configurado, renova o access JWT
 pela sessão Privy até 30 segundos antes da expiração e persiste JWT e refresh
-token por troca atômica. A rotação exige `FOMO_PRIVY_CA_ID=privy:caid` medido e
-envia o customer JWT somente no header seguro da chamada Privy. Os dois arquivos
+token por troca atômica. O JWT efetivo é `privy_access_token`, com fallback para
+o `token` legado quando este não for nulo. A rotação exige
+`FOMO_PRIVY_CA_ID=privy:caid` medido e
+envia o access JWT somente no header seguro da chamada Privy. Os dois arquivos
 Fomo devem ser `0600`, graváveis
 somente pelo usuário do serviço. `FOMO_PRIVY_REAUTH_REQUIRED` exige novo login e
 troca manual dos dois valores; segredos nunca entram na telemetria

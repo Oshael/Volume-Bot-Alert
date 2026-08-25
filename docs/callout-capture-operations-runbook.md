@@ -42,11 +42,13 @@ sudoedit /var/lib/trendscope/callouts/fomo-customer-token
 sudoedit /var/lib/trendscope/callouts/fomo-refresh-token
 ```
 
-No navegador autenticado, obtenha `privy:token`, `privy:refresh_token` e
-`privy:caid` em Application → Local Storage → `https://fomo.family`. Grave os
-dois tokens nos respectivos arquivos; o formato JSON entre aspas usado pelo
-Local Storage também é aceito. O CA ID vai no env da etapa seguinte. Não
-registre tokens em shell history, journal ou comandos de diagnóstico.
+No navegador autenticado, capture `privy_access_token`, `refresh_token` e o
+header `privy-ca-id` na resposta/requisição de autenticação da Privy. Grave
+`privy_access_token` em `fomo-customer-token` e `refresh_token` no arquivo
+correspondente. Em sessões antigas, `token` pode substituir
+`privy_access_token` quando não for nulo. O formato JSON entre aspas usado pelo
+storage também é aceito. O CA ID vai no env da etapa seguinte. Não registre
+tokens em shell history, journal ou comandos de diagnóstico.
 
 ## 2. Instalar env e drop-in
 

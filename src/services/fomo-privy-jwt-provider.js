@@ -106,9 +106,9 @@ function createFomoPrivyJwtProvider(options = {}) {
   }
 
   async function refresh() {
-    const customerToken = await requiredStoredSecret(
+    const accessToken = await requiredStoredSecret(
       jwtStore, 'FOMO_PRIVY_CUSTOMER_TOKEN',
-      'Fomo Privy customer credential is unavailable', jwtMetadata
+      'Fomo Privy access credential is unavailable', jwtMetadata
     );
     const refreshToken = await requiredStoredSecret(
       refreshTokenStore, 'FOMO_PRIVY_REFRESH_TOKEN',
@@ -117,7 +117,7 @@ function createFomoPrivyJwtProvider(options = {}) {
     let response;
     try {
       response = await fetchImpl(sessionUrl, {
-        method: 'POST', headers: { ...headers, authorization: `Bearer ${customerToken}` },
+        method: 'POST', headers: { ...headers, authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({ refresh_token: refreshToken }),
         signal: AbortSignal.timeout(Number(options.timeoutMs) || 10_000),
       });
@@ -137,13 +137,13 @@ function createFomoPrivyJwtProvider(options = {}) {
     try { payload = await response.json(); } catch {
       throw safeError('FOMO_PRIVY_SESSION_RESPONSE', 'Fomo Privy session response was invalid');
     }
-    const next = jwtMetadata(payload?.token);
+    const next = jwtMetadata(payload?.privy_access_token || payload?.token);
     if (!active(next)) {
       if (payload?.session_update_action === 'ignore' && unexpired(cached)) return cached.jwt;
       throw safeError(
         payload?.session_update_action === 'ignore'
           ? 'FOMO_PRIVY_REAUTH_REQUIRED' : 'FOMO_PRIVY_SESSION_RESPONSE',
-        'Fomo Privy session did not return a usable customer token'
+        'Fomo Privy session did not return a usable access token'
       );
     }
     await jwtStore.write(next.jwt);

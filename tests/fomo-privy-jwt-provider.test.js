@@ -72,6 +72,21 @@ describe('Fomo Privy customer token provider', () => {
     });
   });
 
+  it('accepts the Privy access token when the customer token is null', async () => {
+    const renewed = jwt((NOW / 1000) + 3600);
+    const jwtStore = store(jwt(1));
+    const provider = createFomoPrivyJwtProvider({
+      jwtStore, refreshTokenStore: store('refresh-secret'), now: () => NOW,
+      fetchImpl: async () => ({
+        ok: true, status: 200,
+        json: async () => ({ token: null, privy_access_token: renewed }),
+      }),
+    });
+
+    assert.equal(await provider.getJwt(), renewed);
+    assert.deepEqual(jwtStore.writes, [renewed]);
+  });
+
   it('coalesces concurrent refreshes into one session request', async () => {
     const renewed = jwt((NOW / 1000) + 3600);
     let requests = 0;

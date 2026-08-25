@@ -70,8 +70,8 @@ Depois da autenticação, o client envia:
 ```
 
 Frames `data/trading_activity` com `payload.type=thesis` incluem profile, tese,
-token, network, `tradeId` e métricas. O customer JWT expira em uma hora; o worker
-renova a sessão Privy sob demanda e persiste as credenciais rotacionadas.
+token, network, `tradeId` e métricas. O access JWT da Privy expira em uma hora;
+o worker renova a sessão sob demanda e persiste as credenciais rotacionadas.
 
 Também foram confirmados endpoints HTTP públicos, sem cookie ou Authorization:
 
