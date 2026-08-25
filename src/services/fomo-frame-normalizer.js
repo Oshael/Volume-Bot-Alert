@@ -47,6 +47,34 @@ function normalizeTimestamp(value) {
   return text && Number.isFinite(Date.parse(text)) ? new Date(text).toISOString() : null;
 }
 
+function normalizeHttpLink(value) {
+  const raw = firstText(value);
+  if (!raw || raw.length > 2048) return null;
+  try {
+    const url = new URL(raw);
+    if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.username || url.password) {
+      return null;
+    }
+    return url.toString();
+  } catch { return null; }
+}
+
+function normalizeSourceLinks(value) {
+  const links = [];
+  const seen = new Set();
+  for (const segment of (Array.isArray(value) ? value : []).slice(0, 32)) {
+    const link = normalizeHttpLink(segment?.link);
+    if (!link || seen.has(link)) continue;
+    seen.add(link);
+    links.push({
+      link,
+      text: firstText(segment?.text)?.slice(0, 500) || null,
+      provider: firstText(segment?.provider)?.slice(0, 100) || null,
+    });
+  }
+  return links;
+}
+
 function isTradingActivityThesis(frame) {
   return frame?.type === 'data'
     && frame?.topicType === 'trading_activity'
@@ -61,6 +89,7 @@ function normalizeFomoCallout(frame) {
   const address = firstText(event.tokenAddress, comment.tokenAddress);
   const platformEventId = firstText(event.id, comment.id);
   const platformUserId = firstText(event.userId, comment.userId);
+  const sourceLinks = normalizeSourceLinks(comment.shortCommentSegments);
   if (!platformEventId || !platformUserId || !address || !text) return null;
 
   return {
@@ -86,6 +115,7 @@ function normalizeFomoCallout(frame) {
       text,
       numReplies: finiteNumber(event.numReplies),
       numLikes: finiteNumber(comment.numLikes ?? comment.reactions?.counts?.likeCount),
+      ...(sourceLinks.length ? { links: sourceLinks } : {}),
     },
     platformMetrics: {
       threshold: finiteNumber(event.threshold),
@@ -128,4 +158,7 @@ function normalizeFomoFrame(raw, options = {}) {
   };
 }
 
-module.exports = { normalizeFomoActivityItem, normalizeFomoCallout, normalizeFomoFrame, sanitizeFomoPayload };
+module.exports = {
+  normalizeFomoActivityItem, normalizeFomoCallout, normalizeFomoFrame,
+  normalizeSourceLinks, sanitizeFomoPayload,
+};

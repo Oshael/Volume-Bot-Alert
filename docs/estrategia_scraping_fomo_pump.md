@@ -1180,6 +1180,11 @@ Escopo estimado: múltiplos slices backend/frontend de até 500 linhas.
   `npm run lint` e `npm --prefix frontend run build`. Sai quando nenhum callout
   é exibido como compra sem evidência on-chain.
 
+Estado: o sub-slice 11A preserva links HTTP(S) estruturados realmente fornecidos
+pela Fomo em `source_metadata.sourceLinks`, sem fabricar URLs quando a fonte não
+as entrega. O merge de metadata em replay aceita somente enriquecimento por
+contenção JSON; diferenças reais continuam sendo conflito de idempotência.
+
 ## Slice 12 — Scoring
 
 Escopo estimado: múltiplos slices de até 500 linhas, definidos depois da amostra.

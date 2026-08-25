@@ -33,6 +33,16 @@ test('common callout domain preserves chain evidence and normalizes known addres
   assert.equal(pump.asset.address, EVM.toLowerCase());
   assert.equal(fomo.asset.chainKey, 'solana');
   assert.equal(fomo.asset.address, SOLANA);
+  assert.equal(Object.hasOwn(fomo.sourceMetadata, 'sourceLinks'), false);
+  const linked = commonCalloutFromFomo({
+    eventType: 'callout', platformEventId: 'fomo-linked',
+    profile: { platformUserId: 'profile-f' },
+    asset: { address: SOLANA, rawNetworkId: 1399811149 },
+    thesis: { text: 'linked', links: [{ link: 'https://x.com/caller/status/123' }] },
+    platformMetrics: {},
+  });
+  assert.deepEqual(linked.sourceMetadata.sourceLinks,
+    [{ link: 'https://x.com/caller/status/123' }]);
   assert.equal(resolveCalloutAddress('999999', EVM).resolutionStatus, 'unsupported_chain');
   assert.equal(resolveCalloutAddress(null, EVM).resolutionStatus, 'unknown_chain');
   assert.equal(resolveCalloutAddress('4663', 'bad').resolutionStatus, 'invalid_address');

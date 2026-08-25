@@ -67,6 +67,19 @@ function commonCalloutFromPump(activity = {}) {
   };
 }
 
+function fomoSourceMetadata(callout) {
+  const metadata = {
+    tradeId: text(callout.tradeId),
+    ticker: text(callout.asset?.ticker),
+    threshold: callout.platformMetrics?.threshold ?? null,
+    equity: callout.platformMetrics?.equity ?? null,
+  };
+  if (Array.isArray(callout.thesis?.links) && callout.thesis.links.length) {
+    metadata.sourceLinks = callout.thesis.links;
+  }
+  return metadata;
+}
+
 function commonCalloutFromFomo(callout = {}) {
   if (!callout || callout.eventType !== 'callout') return null;
   return {
@@ -86,12 +99,7 @@ function commonCalloutFromFomo(callout = {}) {
     asset: resolveCalloutAddress(callout.asset?.rawNetworkId, callout.asset?.address),
     thesis: text(callout.thesis?.text),
     marketCap: null,
-    sourceMetadata: {
-      tradeId: text(callout.tradeId),
-      ticker: text(callout.asset?.ticker),
-      threshold: callout.platformMetrics?.threshold ?? null,
-      equity: callout.platformMetrics?.equity ?? null,
-    },
+    sourceMetadata: fomoSourceMetadata(callout),
   };
 }
 

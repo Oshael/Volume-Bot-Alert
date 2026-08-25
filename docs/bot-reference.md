@@ -1021,6 +1021,10 @@ plataforma, `profilePictureUrl`, vínculo da wallet e proveniência separada;
 chains sem adapter retornam `status=pending`. `from`/`to` aceitam no máximo 72
 horas e `limit` no máximo 200. O contrato usa `wallet_action` e
 `correlationStatus=not_evaluated`: ele não afirma correlação com um callout.
+Quando a Fomo fornece `shortCommentSegments[].link`, somente URLs HTTP(S)
+válidas entram em `source_metadata.sourceLinks`; links ausentes nunca são
+fabricados. Replay pode adicionar ou preservar metadata por contenção JSON, mas
+continua rejeitando valores conflitantes nos campos já conhecidos.
 O mesmo processo executa retenção temporal incremental: por padrão, a cada cinco
 minutos remove até cinco lotes de 1.000 `callout_events` cujo `expires_at` venceu,
 usando `SKIP LOCKED` e backoff. Perfis, observações de wallets e checkpoints não

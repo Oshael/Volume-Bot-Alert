@@ -161,14 +161,23 @@ const CALLOUT_UPSERT = `INSERT INTO callout_events (
     "assetAddressNormalized" text, "assetRawChainId" text, "assetChainKey" text,
     "assetChainFamily" text, "assetResolutionStatus" text, thesis text, "marketCap" numeric,
     "sourceMetadata" jsonb, "expiresAt" timestamptz)
-ON CONFLICT (dedupe_key) DO UPDATE SET dedupe_key = EXCLUDED.dedupe_key
+ON CONFLICT (dedupe_key) DO UPDATE SET
+  source_metadata = CASE
+    WHEN callout_events.source_metadata <@ EXCLUDED.source_metadata
+      THEN callout_events.source_metadata || EXCLUDED.source_metadata
+    ELSE callout_events.source_metadata
+  END
   WHERE callout_events.platform = EXCLUDED.platform
     AND callout_events.platform_event_id IS NOT DISTINCT FROM EXCLUDED.platform_event_id
     AND callout_events.platform_user_id IS NOT DISTINCT FROM EXCLUDED.platform_user_id
     AND callout_events.occurred_at IS NOT DISTINCT FROM EXCLUDED.occurred_at
     AND callout_events.asset_address_original IS NOT DISTINCT FROM EXCLUDED.asset_address_original
     AND callout_events.thesis IS NOT DISTINCT FROM EXCLUDED.thesis
-    AND callout_events.source_metadata = EXCLUDED.source_metadata
+    AND (
+      callout_events.source_metadata = EXCLUDED.source_metadata
+      OR callout_events.source_metadata <@ EXCLUDED.source_metadata
+      OR EXCLUDED.source_metadata <@ callout_events.source_metadata
+    )
 RETURNING dedupe_key`;
 
 const CHECKPOINT_UPSERT = `INSERT INTO callout_collector_checkpoints (

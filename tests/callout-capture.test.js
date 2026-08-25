@@ -96,6 +96,21 @@ describe('callout capture repository', () => {
     assert.equal(fake.released(), true);
   });
 
+  it('accepts only monotonic source metadata enrichment during database replay', () => {
+    assert.match(__private.CALLOUT_UPSERT,
+      /WHEN callout_events\.source_metadata <@ EXCLUDED\.source_metadata/);
+    assert.match(__private.CALLOUT_UPSERT,
+      /THEN callout_events\.source_metadata \|\| EXCLUDED\.source_metadata/);
+    assert.match(__private.CALLOUT_UPSERT,
+      /ELSE callout_events\.source_metadata/);
+    assert.match(__private.CALLOUT_UPSERT,
+      /callout_events\.source_metadata <@ EXCLUDED\.source_metadata/);
+    assert.match(__private.CALLOUT_UPSERT,
+      /EXCLUDED\.source_metadata <@ callout_events\.source_metadata/);
+    assert.match(__private.CALLOUT_UPSERT,
+      /callout_events\.thesis IS NOT DISTINCT FROM EXCLUDED\.thesis/);
+  });
+
   it('rolls back the whole batch rather than overwrite a newer checkpoint', async () => {
     const data = fixture();
     const fake = fakeDatabase({ checkpointRowCount: 0 });

@@ -111,6 +111,25 @@ test('measured Fomo thesis frame normalizes into a callout', () => {
   });
 });
 
+test('Fomo thesis keeps only bounded HTTP source links supplied by the platform', () => {
+  const evidence = normalizeFomoFrame(JSON.stringify({
+    type: 'data', topicType: 'trading_activity',
+    payload: {
+      type: 'thesis', id: 'callout-link', userId: 'profile-1', thesis: 'linked thesis',
+      tokenAddress: 'Ai66LHZG9MCzg1WKdawwqduVAXpNDUuV8M3uyq5ppump', networkId: 1399811149,
+      comment: { shortCommentSegments: [
+        { text: 'source', link: 'https://x.com/caller/status/123', provider: 'x' },
+        { text: 'duplicate', link: 'https://x.com/caller/status/123', provider: 'x' },
+        { text: 'unsafe', link: 'javascript:alert(1)', provider: 'other' },
+      ] },
+    },
+  }));
+
+  assert.deepEqual(evidence.callout.thesis.links, [{
+    link: 'https://x.com/caller/status/123', text: 'source', provider: 'x',
+  }]);
+});
+
 test('trading activity subscribe payload matches the measured contract', () => {
   const topicId = 'ea1bc7f5-e349-5c6d-ab41-740c237a792d';
   assert.deepEqual(createTradingActivitySubscribePayload(topicId), {
