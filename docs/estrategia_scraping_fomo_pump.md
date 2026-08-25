@@ -1216,6 +1216,10 @@ por `chain + token`, combina PUMP e FOMO e retorna apenas grupos com quatro ou
 mais teses. Cluster e snapshot possuem fingerprints determinísticos; estouro do
 limite de fontes falha sem produzir amostra parcial. A política que escolhe e
 fecha janelas automaticamente continua fora deste contrato até a calibração.
+O sub-slice 11F adiciona o comparador manual `comparison-v1`: ele envia o mesmo
+prompt protegido e a mesma amostra a Gemini 2.5 Flash-Lite e GLM 4.7 Flash,
+grava resultado A/B separado da chave de providers e nunca persiste resumo no
+banco. O prompt de produção permanece sujeito a aprovação após a avaliação.
 
 ### Contrato visual inicial dos callouts
 

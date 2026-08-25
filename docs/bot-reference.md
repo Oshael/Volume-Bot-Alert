@@ -1021,6 +1021,12 @@ menos quatro teses e permitindo mistura PUMP/FOMO. Ele gera chaves e fingerprint
 determinísticos para os cortes de comparação/geração seguintes, aplica timeout
 curto e falha se o limite configurado produzir uma leitura parcial. Não escolhe
 janelas, chama provider de IA nem persiste resumos.
+Para comparação manual, `npm run callouts:summaries:compare -- --from=<ISO>
+--to=<ISO> --candidate=0 --output=/tmp/callout-summary-ab.json` exige
+`GEMINI_API_KEY` e `ZAI_API_KEY`. Modelos default: `gemini-2.5-flash-lite` e
+`glm-4.7-flash`, substituíveis por `CALLOUT_GEMINI_MODEL` e
+`CALLOUT_GLM_MODEL`. O report A/B e o arquivo `.key.json` são criados `0600`,
+sem overwrite; nenhuma saída é gravada no PostgreSQL.
 
 O grupo isolado `callouts` (porta default `3017`) é opt-in por
 `CALLOUT_CAPTURE_ENABLED=true` e inicia Pump e Fomo sob a lease única
