@@ -38,6 +38,7 @@ async function main() {
   const stream = createFomoTradingActivityStream({
     wsUrl: process.env.FOMO_WS_URL,
     headers: sessionHeaders(),
+    authenticationJwt: process.env.FOMO_WS_JWT,
     subscribePayload: optionalSubscribePayload(),
     onEvidence: (frame) => {
       evidence.push(frame);

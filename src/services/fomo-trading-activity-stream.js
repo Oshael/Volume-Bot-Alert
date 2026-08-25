@@ -27,9 +27,20 @@ function safeError(error, fallbackCode = 'FOMO_WS_ERROR') {
   return safe;
 }
 
+function normalizeAuthenticationJwt(value) {
+  const jwt = String(value || '').trim();
+  if (!jwt) return '';
+  const segments = jwt.split('.');
+  if (segments.length !== 3 || segments.some((segment) => !/^[A-Za-z0-9_-]+$/.test(segment))) {
+    throw new TypeError('Fomo authentication JWT must contain three base64url segments');
+  }
+  return jwt;
+}
+
 function createFomoTradingActivityStream(options = {}) {
   const wsUrl = normalizeWsUrl(options.wsUrl);
   const headers = { ...(options.headers || {}) };
+  const authenticationJwt = normalizeAuthenticationJwt(options.authenticationJwt);
   const subscribePayload = options.subscribePayload;
   const wsFactory = options.wsFactory || ((url, clientOptions) => new WebSocket(url, clientOptions));
   const schedule = options.schedule || setTimeout;
@@ -45,7 +56,21 @@ function createFomoTradingActivityStream(options = {}) {
   let running = false;
   let reconnectTimer = null;
   let reconnectMs = baseReconnectMs;
-  const status = { connected: false, connects: 0, reconnects: 0, frames: 0, bytes: 0, jsonFrames: 0, candidates: 0, opaqueFrames: 0 };
+  let subscribeSent = false;
+  const status = {
+    connected: false,
+    authenticated: false,
+    connects: 0,
+    reconnects: 0,
+    frames: 0,
+    bytes: 0,
+    jsonFrames: 0,
+    candidates: 0,
+    opaqueFrames: 0,
+    challenges: 0,
+    authResponses: 0,
+    authAcceptances: 0,
+  };
 
   function emitStatus(state, extra = {}) {
     onStatus({ state, ...extra, metrics: { ...status } });
@@ -63,6 +88,42 @@ function createFomoTradingActivityStream(options = {}) {
     reconnectMs = Math.min(reconnectMs * 2, MAX_RECONNECT_MS);
   }
 
+  function sendSubscribe() {
+    if (subscribeSent || subscribePayload === undefined || subscribePayload === null) return;
+    try {
+      socket.send(typeof subscribePayload === 'string' ? subscribePayload : JSON.stringify(subscribePayload));
+      subscribeSent = true;
+      emitStatus('subscribe_sent');
+    } catch (error) {
+      onError(safeError(error, 'FOMO_WS_SUBSCRIBE'));
+      socket.close();
+    }
+  }
+
+  function handleControlFrame(evidence) {
+    if (evidence.frameKind !== 'json') return;
+    if (evidence.eventType === 'challenge') {
+      status.challenges += 1;
+      emitStatus('challenge_received');
+      if (!authenticationJwt) return;
+      try {
+        socket.send(JSON.stringify({ type: 'challengeResponse', jwt: authenticationJwt }));
+        status.authResponses += 1;
+        emitStatus('challenge_response_sent');
+      } catch (error) {
+        onError(safeError(error, 'FOMO_WS_AUTHENTICATION'));
+        socket.close();
+      }
+      return;
+    }
+    if (evidence.eventType === 'challengeAccepted') {
+      status.authAcceptances += 1;
+      status.authenticated = true;
+      emitStatus('challenge_accepted');
+      sendSubscribe();
+    }
+  }
+
   function handleFrame(raw, binary) {
     const evidence = normalizeFomoFrame(raw, { binary });
     status.frames += 1;
@@ -70,6 +131,7 @@ function createFomoTradingActivityStream(options = {}) {
     if (evidence.frameKind === 'json') status.jsonFrames += 1;
     if (evidence.frameKind === 'opaque' || evidence.frameKind === 'binary') status.opaqueFrames += 1;
     if (evidence.tradingActivityCandidate) status.candidates += 1;
+    handleControlFrame(evidence);
     onEvidence(evidence);
   }
 
@@ -86,22 +148,17 @@ function createFomoTradingActivityStream(options = {}) {
     emitStatus('connecting');
     socket.on('open', () => {
       status.connected = true;
+      status.authenticated = false;
+      subscribeSent = false;
       reconnectMs = baseReconnectMs;
       emitStatus('connected');
-      if (subscribePayload !== undefined && subscribePayload !== null) {
-        try {
-          socket.send(typeof subscribePayload === 'string' ? subscribePayload : JSON.stringify(subscribePayload));
-          emitStatus('subscribe_sent');
-        } catch (error) {
-          onError(safeError(error, 'FOMO_WS_SUBSCRIBE'));
-          socket.close();
-        }
-      }
+      if (!authenticationJwt) sendSubscribe();
     });
     socket.on('message', handleFrame);
     socket.on('error', (error) => onError(safeError(error)));
     socket.on('close', (code) => {
       status.connected = false;
+      status.authenticated = false;
       emitStatus('closed', { code: Number(code) || null });
       scheduleReconnect();
     });
@@ -116,6 +173,7 @@ function createFomoTradingActivityStream(options = {}) {
   function stop() {
     running = false;
     status.connected = false;
+    status.authenticated = false;
     if (reconnectTimer) cancelSchedule(reconnectTimer);
     reconnectTimer = null;
     try { socket?.close(); } catch (error) { onError(safeError(error)); }
@@ -124,4 +182,4 @@ function createFomoTradingActivityStream(options = {}) {
   return { start, stop, getStatus: () => ({ running, ...status }) };
 }
 
-module.exports = { createFomoTradingActivityStream, normalizeWsUrl };
+module.exports = { createFomoTradingActivityStream, normalizeAuthenticationJwt, normalizeWsUrl };

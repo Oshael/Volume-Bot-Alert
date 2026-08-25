@@ -86,6 +86,46 @@ test('stream sends only the supplied subscribe payload and emits sanitized evide
   stream.stop();
 });
 
+test('stream authenticates a challenge before subscribing without exposing JWT evidence', () => {
+  const socket = new FakeWebSocket();
+  const frames = [];
+  const states = [];
+  const jwt = 'eyJ0ZXN0.secret.signature';
+  const stream = createFomoTradingActivityStream({
+    wsUrl: 'wss://example.test/ws',
+    authenticationJwt: jwt,
+    subscribePayload: { type: 'subscribe', topic: 'measured-contract' },
+    wsFactory: () => socket,
+    onEvidence: (frame) => frames.push(frame),
+    onStatus: (status) => states.push(status),
+  });
+
+  stream.start();
+  socket.open();
+  assert.deepEqual(socket.sent, []);
+
+  socket.receive(JSON.stringify({ type: 'challenge' }));
+  assert.deepEqual(socket.sent, [JSON.stringify({ type: 'challengeResponse', jwt })]);
+
+  socket.receive(JSON.stringify({ type: 'challengeAccepted' }));
+  assert.deepEqual(socket.sent, [
+    JSON.stringify({ type: 'challengeResponse', jwt }),
+    '{"type":"subscribe","topic":"measured-contract"}',
+  ]);
+  assert.equal(stream.getStatus().authenticated, true);
+  assert.equal(stream.getStatus().authResponses, 1);
+  assert.equal(stream.getStatus().authAcceptances, 1);
+  assert.equal(JSON.stringify({ frames, states }).includes(jwt), false);
+  stream.stop();
+});
+
+test('stream rejects an incomplete authentication JWT before connecting', () => {
+  assert.throws(() => createFomoTradingActivityStream({
+    wsUrl: 'wss://example.test/ws',
+    authenticationJwt: 'eyJ0ZXN0',
+  }), /three base64url segments/);
+});
+
 test('unexpected closes reconnect with bounded exponential backoff', () => {
   const sockets = [];
   const scheduled = [];
