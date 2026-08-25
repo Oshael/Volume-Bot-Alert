@@ -979,6 +979,12 @@ sem ele, usar fingerprint determinístico de campos estáveis, nunca só timesta
 Tese original e resumo derivado são campos distintos. O resumo mantém IDs dos
 callouts de origem, intervalo temporal, versão do summarizer e atribuição aos
 perfis/plataformas. O chart nunca apresenta resumo derivado como texto original.
+Callouts brutos expiram após 72 horas; resumos derivados não possuem expiração
+automática e são preservados permanentemente. Cada versão do resumo carrega uma
+cópia imutável da proveniência necessária para continuar auditável após a poda
+dos brutos: IDs das calls, perfis, plataformas, timestamps e links de origem.
+Essa relação não usa exclusão em cascata a partir de `callout_events`; uma nova
+geração cria versão adicional ou marca a anterior como substituída, sem apagá-la.
 
 JWT, cookies, CSRF, headers de autenticação e sessão nunca entram em payload ou
 logs.
@@ -1205,8 +1211,10 @@ contenção JSON; diferenças reais continuam sendo conflito de idempotência.
   desenho do resumo de 10–30 minutos será aprovado separadamente após existir
   amostra suficiente, sem apagar acesso aos eventos e links de origem;
 - a superfície respeita a retenção vigente: callouts brutos expirados após 72
-  horas não aparecem em ranges históricos mais antigos. Perfis e observações de
-  wallet continuam permanentes conforme a política definida anteriormente.
+  horas não aparecem em ranges históricos mais antigos. Resumos já produzidos
+  permanecem consultáveis no chart sem prazo de expiração, mesmo depois da poda
+  das calls que os originaram. Perfis e observações de wallet também continuam
+  permanentes conforme a política definida anteriormente.
 
 ## Slice 12 — Scoring
 
