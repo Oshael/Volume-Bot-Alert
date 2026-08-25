@@ -58,6 +58,11 @@ function createFomoTradingActivityStream(options = {}) {
   const wsUrl = normalizeWsUrl(options.wsUrl);
   const headers = { ...(options.headers || {}) };
   const authenticationJwt = normalizeAuthenticationJwt(options.authenticationJwt);
+  const authenticationJwtProvider = options.authenticationJwtProvider;
+  if (authenticationJwtProvider !== undefined && typeof authenticationJwtProvider !== 'function') {
+    throw new TypeError('Fomo authentication JWT provider must be a function');
+  }
+  const usesAuthentication = Boolean(authenticationJwt || authenticationJwtProvider);
   const subscribePayload = options.subscribePayload;
   const wsFactory = options.wsFactory || ((url, clientOptions) => new WebSocket(url, clientOptions));
   const schedule = options.schedule || setTimeout;
@@ -87,6 +92,7 @@ function createFomoTradingActivityStream(options = {}) {
     challenges: 0,
     authResponses: 0,
     authAcceptances: 0,
+    authFailures: 0,
     callouts: 0,
   };
 
@@ -118,25 +124,42 @@ function createFomoTradingActivityStream(options = {}) {
     }
   }
 
+  function failCredential(error, challengedSocket) {
+    status.authFailures += 1;
+    onError(safeError(error, 'FOMO_WS_CREDENTIAL'));
+    challengedSocket.close(4001);
+  }
+
+  function sendChallengeResponse(value, challengedSocket) {
+    try {
+      const jwt = normalizeAuthenticationJwt(value);
+      if (!jwt) throw new TypeError('Fomo authentication JWT is required');
+      if (!running || challengedSocket !== socket) return;
+      challengedSocket.send(JSON.stringify({ type: 'challengeResponse', jwt }));
+      status.authResponses += 1;
+      emitStatus('challenge_response_sent');
+    } catch (error) {
+      failCredential(error, challengedSocket);
+    }
+  }
+
   function handleControlFrame(evidence) {
     if (evidence.frameKind !== 'json') return;
     if (evidence.eventType === 'challenge') {
       status.challenges += 1;
       emitStatus('challenge_received');
-      if (!authenticationJwt) return;
-      try {
-        socket.send(JSON.stringify({ type: 'challengeResponse', jwt: authenticationJwt }));
-        status.authResponses += 1;
-        emitStatus('challenge_response_sent');
-      } catch (error) {
-        onError(safeError(error, 'FOMO_WS_AUTHENTICATION'));
-        socket.close();
-      }
+      const challengedSocket = socket;
+      if (authenticationJwtProvider) {
+        Promise.resolve().then(authenticationJwtProvider)
+          .then((jwt) => sendChallengeResponse(jwt, challengedSocket))
+          .catch((error) => failCredential(error, challengedSocket));
+      } else if (authenticationJwt) sendChallengeResponse(authenticationJwt, challengedSocket);
       return;
     }
     if (evidence.eventType === 'challengeAccepted') {
       status.authAcceptances += 1;
       status.authenticated = true;
+      reconnectMs = baseReconnectMs;
       emitStatus('challenge_accepted');
       sendSubscribe();
     }
@@ -169,9 +192,11 @@ function createFomoTradingActivityStream(options = {}) {
       status.connected = true;
       status.authenticated = false;
       subscribeSent = false;
-      reconnectMs = baseReconnectMs;
       emitStatus('connected');
-      if (!authenticationJwt) sendSubscribe();
+      if (!usesAuthentication) {
+        reconnectMs = baseReconnectMs;
+        sendSubscribe();
+      }
     });
     socket.on('message', handleFrame);
     socket.on('error', (error) => onError(safeError(error)));

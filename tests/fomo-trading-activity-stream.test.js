@@ -196,6 +196,48 @@ test('stream rejects an expired authentication JWT before reconnecting', () => {
   }), /has expired/);
 });
 
+test('credential provider is reread and authentication failures keep reconnect backoff', async () => {
+  const sockets = [];
+  const scheduled = [];
+  let attempts = 0;
+  const validJwt = 'header.payload.signature';
+  const stream = createFomoTradingActivityStream({
+    wsUrl: 'wss://example.test/ws',
+    authenticationJwtProvider: () => {
+      attempts += 1;
+      if (attempts < 3) throw new Error('credential unavailable');
+      return validJwt;
+    },
+    random: () => 0.5,
+    wsFactory: () => {
+      const socket = new FakeWebSocket();
+      sockets.push(socket);
+      return socket;
+    },
+    schedule: (callback, delayMs) => {
+      scheduled.push({ callback, delayMs });
+      return scheduled.length;
+    },
+    cancelSchedule: () => {},
+  });
+
+  stream.start();
+  for (let index = 0; index < 2; index += 1) {
+    sockets[index].open();
+    sockets[index].receive(JSON.stringify({ type: 'challenge' }));
+    await new Promise((resolve) => setImmediate(resolve));
+    scheduled[index].callback();
+  }
+  sockets[2].open();
+  sockets[2].receive(JSON.stringify({ type: 'challenge' }));
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(scheduled.map(({ delayMs }) => delayMs), [1000, 2000]);
+  assert.deepEqual(sockets[2].sent, [JSON.stringify({ type: 'challengeResponse', jwt: validJwt })]);
+  assert.equal(stream.getStatus().authFailures, 2);
+  stream.stop();
+});
+
 test('unexpected closes reconnect with bounded exponential backoff', () => {
   const sockets = [];
   const scheduled = [];

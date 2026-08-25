@@ -944,6 +944,32 @@ Scripts de probe não são automaticamente infraestrutura de produção.
 SHYFT/Yellowstone gRPC continua planejado. Não confundir o plano de firehose com
 uma integração já implantada.
 
+### 11.6 Captura local Fomo
+
+`npm run fomo:capture` executa um collector local opt-in, sem PostgreSQL e sem
+downstream. O WebSocket `trading_activity` é o caminho live; leaderboard 24h e
+`/feed/tradingActivity` fazem bootstrap/reconciliação limitada. Theses vão para
+`<FOMO_CAPTURE_SPOOL_DIR>/events` e perfis/wallet observations para
+`<FOMO_CAPTURE_SPOOL_DIR>/identities`, em arquivos NDJSON rotacionados e com
+limites de disco independentes.
+
+Configuração mínima:
+
+```text
+FOMO_WS_TOPIC_ID
+FOMO_WS_JWT ou FOMO_WS_JWT_FILE
+FOMO_CAPTURE_SPOOL_DIR
+```
+
+`FOMO_WS_JWT_FILE` é preferível para execuções longas: o arquivo é relido em
+cada challenge e pode ser substituído fora do processo. Credencial ausente ou
+inválida entra em backoff exponencial; o collector não gera nem renova o JWT.
+Leaderboard e feed HTTP continuam independentes da autenticação do socket.
+
+Esse comando ainda não pertence a worker group, não está implantado na VPS e
+seus spools não são fonte de verdade. O limite cheio falha fechado; importação e
+retenção de 72 horas pertencem ao estágio PostgreSQL posterior.
+
 ## 12. Solana
 
 Solana continua sendo a chain funcional original.

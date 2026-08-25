@@ -1,5 +1,6 @@
 'use strict';
 
+const { createHash } = require('node:crypto');
 const { resolveCalloutAddress } = require('./callout-domain');
 
 const EVM_ADDRESS = /^0x[0-9a-f]{40}$/i;
@@ -67,4 +68,23 @@ function createProfileObservation(input = {}) {
   };
 }
 
-module.exports = { createProfileObservation, resolveWalletObservation };
+function createProfileObservationEnvelope(observation, options = {}) {
+  if (!observation?.platform || !observation.platformUserId) throw new TypeError('Valid profile observation is required');
+  const capturedAt = text(options.capturedAt) || observation.observedAt || new Date().toISOString();
+  const wallets = Array.isArray(observation.wallets) ? observation.wallets : [];
+  const fingerprint = createHash('sha256').update(JSON.stringify([
+    observation.platform, observation.platformUserId, observation.source, observation.observedAt,
+    wallets.map((wallet) => [wallet.addressOriginal, wallet.rawChainId, wallet.sourceType, wallet.sourceRecordId]),
+  ])).digest('hex');
+  return {
+    spoolVersion: 1,
+    platform: observation.platform,
+    stream: text(options.stream) || 'profile_observations',
+    capturedAt,
+    sequence: Number.isSafeInteger(options.sequence) ? options.sequence : Date.now(),
+    dedupeKey: `${observation.platform}:profile_observation:sha256:${fingerprint}`,
+    payload: observation,
+  };
+}
+
+module.exports = { createProfileObservation, createProfileObservationEnvelope, resolveWalletObservation };
