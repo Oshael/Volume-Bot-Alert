@@ -65,6 +65,10 @@ test('Fomo local collector reconciles identities/theses and deduplicates the liv
   assert.equal(identities[2].payload.wallets[0].sourceType, 'activity_used');
   assert.equal(identities[2].payload.wallets[0].chainKey, 'robinhood');
 
+  streamOptions.onEvidence({ eventType: 'challengeAccepted', callout: null });
+  assert.equal(events.length, 1);
+  assert.equal(collector.getStatus().errors, 0);
+
   streamOptions.onEvidence({ callout: require('../src/services/fomo-frame-normalizer').normalizeFomoActivityItem(thesis()) });
   await collector.flush();
   assert.equal(events.length, 1);

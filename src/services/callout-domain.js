@@ -68,7 +68,7 @@ function commonCalloutFromPump(activity = {}) {
 }
 
 function commonCalloutFromFomo(callout = {}) {
-  if (callout.eventType !== 'callout') return null;
+  if (!callout || callout.eventType !== 'callout') return null;
   return {
     schemaVersion: 1,
     platform: 'fomo',
