@@ -1198,6 +1198,10 @@ O sub-slice 11C implementa a camada visual independente no gráfico expandido:
 avatares agrupados pelo candle ativo, contador de excedentes e hover/foco com
 scroll, origem e links. O cache curto permite reagrupar localmente ao trocar de
 timeframe sem transformar o agrupamento em dado persistido.
+O sub-slice 11D adiciona no gráfico Robinhood os wallet buys comprovados, abaixo
+do candle e em verde, com perfil/avatar, origem, wallet observada e scope do
+vínculo. A superfície mantém `wallet_action` e `not_evaluated` explícitos; não
+infere correlação com nenhuma tese e revela quando a página de 200 foi truncada.
 
 ### Contrato visual inicial dos callouts
 

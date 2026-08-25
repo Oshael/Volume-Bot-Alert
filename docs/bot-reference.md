@@ -1034,6 +1034,12 @@ plataforma, `profilePictureUrl`, vínculo da wallet e proveniência separada;
 chains sem adapter retornam `status=pending`. `from`/`to` aceitam no máximo 72
 horas e `limit` no máximo 200. O contrato usa `wallet_action` e
 `correlationStatus=not_evaluated`: ele não afirma correlação com um callout.
+No gráfico expandido Robinhood, essa leitura gera markers verdes abaixo do
+candle da compra. O hover/foco mostra avatar, perfil e origem Pump/Fomo, wallet
+observada, `networkScope`, horário e valor on-chain. Ele declara explicitamente
+que a ação ainda não foi ligada a uma tese. A leitura visual usa no máximo as
+200 ações mais recentes e informa no painel quando `hasMore=true`; outras chains
+não montam essa camada enquanto não possuírem adapter.
 Quando a Fomo fornece `shortCommentSegments[].link`, somente URLs HTTP(S)
 válidas entram em `source_metadata.sourceLinks`; links ausentes nunca são
 fabricados. Replay pode adicionar ou preservar metadata por contenção JSON, mas

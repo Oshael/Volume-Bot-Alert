@@ -29,6 +29,7 @@ import { resolveTokenValuation } from '../../utils/token-valuation';
 import { buildTokenChainIcon, getTokenChainTitle } from '../token-chain-badge';
 import { destroyRobinhoodExpandedTrades, mountRobinhoodExpandedTrades } from '../robinhood-expanded-trades';
 import { mountExpandedChartCalloutOverlay } from '../chart-callout-overlay';
+import { mountExpandedChartWalletBuyOverlay } from '../chart-wallet-buy-overlay';
 import {
   destroyRobinhoodExpandedHolders,
   mountRobinhoodExpandedHolders,
@@ -3055,7 +3056,7 @@ function bindExpandedMacTrackpadDrag(
       return;
     }
     const target = event.target as Element | null;
-    if (target?.closest('.expanded-chart-alert-marker, .expanded-chart-alert-tooltip, .expanded-chart-alert-recap-layer, .expanded-chart-callout-marker, .expanded-chart-callout-tooltip')) {
+    if (target?.closest('.expanded-chart-alert-marker, .expanded-chart-alert-tooltip, .expanded-chart-alert-recap-layer, .expanded-chart-callout-marker, .expanded-chart-callout-tooltip, .expanded-chart-wallet-marker, .expanded-chart-wallet-tooltip')) {
       return;
     }
     const rect = container.getBoundingClientRect();
@@ -3982,6 +3983,10 @@ async function mountExpandedCandlestickChart(
     container, chart, series: candleSeries, candles: data, granularityMinutes,
     chain, address, token: state.session.token,
   });
+  const chartWalletBuyOverlay = chain === 'robinhood' ? mountExpandedChartWalletBuyOverlay({
+    container, chart, series: candleSeries, candles: data, granularityMinutes,
+    address, token: state.session.token,
+  }) : null;
   if (legend) {
     legend.textContent = formatExpandedChartLegend(
       latest,
@@ -4061,6 +4066,7 @@ async function mountExpandedCandlestickChart(
     debug.count('liveUpdates');
     chartAlertOverlay.upsertCandle(liveCandle);
     chartCalloutOverlay.scheduleRender();
+    chartWalletBuyOverlay?.scheduleRender();
     if (legend) {
       legend.textContent = formatExpandedChartLegend(
         liveCandle,
@@ -4077,6 +4083,7 @@ async function mountExpandedCandlestickChart(
     window.removeEventListener('trendscope:expanded-chart-live-candle', onLiveCandle);
     chartAlertOverlay.cleanup();
     chartCalloutOverlay.cleanup();
+    chartWalletBuyOverlay?.cleanup();
     removePriceScaleWheel();
     removeMacTrackpadDrag();
     chart.remove();
