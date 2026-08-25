@@ -31,9 +31,12 @@ function row(overrides = {}) {
 describe('callout chain enrichment boundary', () => {
   it('returns explicit pending state when a chain has no adapter', async () => {
     const service = createCalloutChainEnrichment({ adapters: {} });
-    assert.deepEqual(await service.listProfileWalletBuys({ chainKey: 'solana' }), {
+    assert.deepEqual(await service.listProfileWalletBuys({
+      chainKey: 'solana', tokenAddress: 'So11111111111111111111111111111111111111112',
+    }), {
       status: 'pending', reason: 'adapter_unavailable', chainKey: 'solana',
-      tokenAddress: null, evidenceVersion: null, from: null, to: null,
+      tokenAddress: 'So11111111111111111111111111111111111111112',
+      evidenceVersion: null, from: null, to: null,
       actions: [], hasMore: false,
     });
     assert.deepEqual(service.availableChains, []);

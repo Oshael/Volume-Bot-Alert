@@ -10,10 +10,10 @@ function chainKey(value) {
   return normalized;
 }
 
-function pendingResult(key) {
+function pendingResult(key, tokenAddress = null) {
   return Object.freeze({
     status: 'pending', reason: 'adapter_unavailable', chainKey: key,
-    tokenAddress: null, evidenceVersion: null, from: null, to: null,
+    tokenAddress, evidenceVersion: null, from: null, to: null,
     actions: Object.freeze([]), hasMore: false,
   });
 }
@@ -34,7 +34,7 @@ function createCalloutChainEnrichment(options = {}) {
   async function listProfileWalletBuys(input = {}) {
     const key = chainKey(input.chainKey);
     const adapter = adapters.get(key);
-    if (!adapter) return pendingResult(key);
+    if (!adapter) return pendingResult(key, input.tokenAddress || null);
     return validateAdapterResult(await adapter.listProfileWalletBuys(input), key);
   }
 

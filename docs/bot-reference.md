@@ -1014,6 +1014,13 @@ token por troca atômica. Os dois arquivos Fomo devem ser `0600`, graváveis
 somente pelo usuário do serviço. `FOMO_PRIVY_REAUTH_REQUIRED` exige novo login e
 troca manual dos dois valores; segredos nunca entram na telemetria
 `fomoAuthentication`.
+O endpoint autenticado
+`GET /api/callouts/profile-wallet-buys?chain=<chain>&token=<address>` expõe a
+leitura bounded do enrichment. Robinhood retorna compras on-chain com perfil,
+plataforma, `profilePictureUrl`, vínculo da wallet e proveniência separada;
+chains sem adapter retornam `status=pending`. `from`/`to` aceitam no máximo 72
+horas e `limit` no máximo 200. O contrato usa `wallet_action` e
+`correlationStatus=not_evaluated`: ele não afirma correlação com um callout.
 O mesmo processo executa retenção temporal incremental: por padrão, a cada cinco
 minutos remove até cinco lotes de 1.000 `callout_events` cujo `expires_at` venceu,
 usando `SKIP LOCKED` e backoff. Perfis, observações de wallets e checkpoints não

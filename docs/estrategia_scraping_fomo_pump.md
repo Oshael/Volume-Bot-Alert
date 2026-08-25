@@ -1161,8 +1161,10 @@ Escopo estimado: 6–10 arquivos, 350–500 linhas por adapter.
 Estado: o sub-slice 10A implementa a fronteira read-only e o adapter Robinhood
 para compras comprovadas em `robinhood_wallet_swaps`, limitado por token e janela
 de até 72 horas. O resultado mantém `wallet_action` separado de `correlated` e
-marca wallets EVM sem rede declarada como `evm_address_candidate`. Persistência,
-worker de enrichment, API e correlação temporal ficam nos próximos sub-slices.
+marca wallets EVM sem rede declarada como `evm_address_candidate`. O sub-slice
+10B expõe o reader em API autenticada, incluindo avatar, identidade e plataforma
+do perfil. Não há persistência duplicada nem worker: as fontes duráveis existentes
+cobrem a janela do produto. Correlação temporal fica para um sub-slice posterior.
 
 ## Slice 11 — Resumos, alertas e superfícies do produto
 
