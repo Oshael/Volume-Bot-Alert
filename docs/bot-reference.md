@@ -1027,6 +1027,10 @@ Para comparação manual, `npm run callouts:summaries:compare -- --from=<ISO>
 `glm-4.7-flash`, substituíveis por `CALLOUT_GEMINI_MODEL` e
 `CALLOUT_GLM_MODEL`. O report A/B e o arquivo `.key.json` são criados `0600`,
 sem overwrite; nenhuma saída é gravada no PostgreSQL.
+Antes de usar IA, acrescente `--preview` e escolha outro `--output`: o arquivo
+lista todos os candidatos da janela por `candidateIndex`, `chain + token` e suas
+teses individuais com autor, plataforma, horário e links. Preview não exige
+chaves e não chama nenhum provider.
 
 O grupo isolado `callouts` (porta default `3017`) é opt-in por
 `CALLOUT_CAPTURE_ENABLED=true` e inicia Pump e Fomo sob a lease única

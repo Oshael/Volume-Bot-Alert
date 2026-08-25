@@ -1219,7 +1219,9 @@ fecha janelas automaticamente continua fora deste contrato até a calibração.
 O sub-slice 11F adiciona o comparador manual `comparison-v1`: ele envia o mesmo
 prompt protegido e a mesma amostra a Gemini 2.5 Flash-Lite e GLM 4.7 Flash,
 grava resultado A/B separado da chave de providers e nunca persiste resumo no
-banco. O prompt de produção permanece sujeito a aprovação após a avaliação.
+banco. Seu modo preview lista por token todas as teses, autores, origens, tempos
+e links antes de qualquer request externo. O prompt de produção permanece
+sujeito a aprovação após a avaliação.
 
 ### Contrato visual inicial dos callouts
 

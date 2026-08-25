@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const { compareCandidate, __private } = require('../src/services/callout-summary-comparison');
-const { blindReport } = require('../src/utils/compare-callout-summaries');
+const { blindReport, previewReport } = require('../src/utils/compare-callout-summaries');
 
 function candidate() {
   return {
@@ -12,6 +12,8 @@ function candidate() {
     sources: [1, 2, 3, 4].map((id) => ({
       id: `call-${id}`, platform: id % 2 ? 'fomo' : 'pump',
       occurredAt: `2026-08-25T14:0${id}:00Z`, thesis: `Thesis ${id}`,
+      profile: { platformUserId: `profile-${id}`, username: `user-${id}`, displayName: `User ${id}` },
+      links: [{ link: `https://x.com/post/${id}` }],
     })),
   };
 }
@@ -73,5 +75,18 @@ describe('callout summary provider comparison', () => {
     assert.equal(JSON.stringify(blind.report).includes('gemini'), false);
     assert.equal(JSON.stringify(blind.report).includes('glm'), false);
     assert.deepEqual(blind.key.mapping.map(({ provider }) => provider).sort(), ['gemini', 'glm']);
+    assert.equal(blind.report.sources[0].profile.displayName, 'User 1');
+  });
+
+  it('previews every eligible token with its individual theses before any API call', () => {
+    const first = candidate();
+    const second = { ...candidate(), asset: { chainKey: 'solana', address: 'SoToken' } };
+    const preview = previewReport({
+      window: first.window, candidates: [first, second],
+    });
+    assert.deepEqual(preview.candidates.map(({ candidateIndex }) => candidateIndex), [0, 1]);
+    assert.equal(preview.candidates[0].asset.address, '0xtoken');
+    assert.equal(preview.candidates[0].sources[0].thesis, 'Thesis 1');
+    assert.equal(preview.candidates[0].sources[0].profile.username, 'user-1');
   });
 });

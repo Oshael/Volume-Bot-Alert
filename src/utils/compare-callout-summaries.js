@@ -15,6 +15,10 @@ function argument(name, fallback = null) {
   return match ? match.slice(prefix.length) : fallback;
 }
 
+function flag(name) {
+  return process.argv.slice(2).includes(`--${name}`);
+}
+
 function absoluteOutput(value) {
   const output = String(value || '').trim();
   if (!output || !path.isAbsolute(output) || path.extname(output) !== '.json') {
@@ -25,6 +29,32 @@ function absoluteOutput(value) {
   return output;
 }
 
+function reportSources(candidate) {
+  return candidate.sources.map(({ id, platform, occurredAt, profile, thesis, links }) => ({
+    id, platform, occurredAt,
+    profile: {
+      platformUserId: profile?.platformUserId || null,
+      username: profile?.username || null,
+      displayName: profile?.displayName || null,
+    },
+    thesis,
+    links: links || [],
+  }));
+}
+
+function previewReport(selection) {
+  return {
+    window: selection.window,
+    candidates: selection.candidates.map((candidate, candidateIndex) => ({
+      candidateIndex,
+      asset: candidate.asset,
+      sourceCount: candidate.sourceCount,
+      platforms: candidate.platforms,
+      sources: reportSources(candidate),
+    })),
+  };
+}
+
 function blindReport(candidate, results) {
   const labels = crypto.randomInt(2) ? ['A', 'B'] : ['B', 'A'];
   const entries = results.map((result, index) => ({ label: labels[index], ...result }));
@@ -32,9 +62,7 @@ function blindReport(candidate, results) {
     report: {
       promptVersion: __private.PROMPT_VERSION,
       asset: candidate.asset, window: candidate.window,
-      sources: candidate.sources.map(({ id, platform, occurredAt, thesis }) => (
-        { id, platform, occurredAt, thesis }
-      )),
+      sources: reportSources(candidate),
       outputs: entries.map(({ label, text }) => ({ label, text })).sort((a, b) => a.label.localeCompare(b.label)),
     },
     key: {
@@ -57,6 +85,15 @@ async function main() {
   const selection = await createCalloutSummaryCandidateRead().listCandidates({
     from: argument('from'), to: argument('to'),
   });
+  if (flag('preview')) {
+    await fs.writeFile(outputPath, `${JSON.stringify(previewReport(selection), null, 2)}\n`, {
+      mode: 0o600, flag: 'wx',
+    });
+    console.log(JSON.stringify({
+      previewed: true, outputPath, candidates: selection.candidates.length,
+    }));
+    return;
+  }
   const candidate = selection.candidates[candidateIndex];
   if (!candidate) throw Object.assign(new Error('Requested candidate was not found'), {
     code: 'CALLOUT_SUMMARY_CANDIDATE', available: selection.candidates.length,
@@ -83,4 +120,4 @@ if (require.main === module) main().catch((error) => {
   process.exitCode = 1;
 }).finally(() => db.pool.end().catch(() => {}));
 
-module.exports = { absoluteOutput, blindReport };
+module.exports = { absoluteOutput, blindReport, previewReport, reportSources };
