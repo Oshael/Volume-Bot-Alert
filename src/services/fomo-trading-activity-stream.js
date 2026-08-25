@@ -34,7 +34,24 @@ function normalizeAuthenticationJwt(value) {
   if (segments.length !== 3 || segments.some((segment) => !/^[A-Za-z0-9_-]+$/.test(segment))) {
     throw new TypeError('Fomo authentication JWT must contain three base64url segments');
   }
+  try {
+    const payload = JSON.parse(Buffer.from(segments[1], 'base64url').toString('utf8'));
+    if (Number.isFinite(payload.exp) && payload.exp <= Math.floor(Date.now() / 1000)) {
+      throw new TypeError('Fomo authentication JWT has expired');
+    }
+  } catch (error) {
+    if (error instanceof TypeError) throw error;
+  }
   return jwt;
+}
+
+function createTradingActivitySubscribePayload(value) {
+  const topicId = String(value || '').trim();
+  if (!topicId) return undefined;
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(topicId)) {
+    throw new TypeError('Fomo trading activity topic ID must be a UUID');
+  }
+  return { type: 'subscribe', topicType: 'trading_activity', topicId };
 }
 
 function createFomoTradingActivityStream(options = {}) {
@@ -70,6 +87,7 @@ function createFomoTradingActivityStream(options = {}) {
     challenges: 0,
     authResponses: 0,
     authAcceptances: 0,
+    callouts: 0,
   };
 
   function emitStatus(state, extra = {}) {
@@ -131,6 +149,7 @@ function createFomoTradingActivityStream(options = {}) {
     if (evidence.frameKind === 'json') status.jsonFrames += 1;
     if (evidence.frameKind === 'opaque' || evidence.frameKind === 'binary') status.opaqueFrames += 1;
     if (evidence.tradingActivityCandidate) status.candidates += 1;
+    if (evidence.callout) status.callouts += 1;
     handleControlFrame(evidence);
     onEvidence(evidence);
   }
@@ -182,4 +201,9 @@ function createFomoTradingActivityStream(options = {}) {
   return { start, stop, getStatus: () => ({ running, ...status }) };
 }
 
-module.exports = { createFomoTradingActivityStream, normalizeAuthenticationJwt, normalizeWsUrl };
+module.exports = {
+  createFomoTradingActivityStream,
+  createTradingActivitySubscribePayload,
+  normalizeAuthenticationJwt,
+  normalizeWsUrl,
+};

@@ -4,7 +4,10 @@ const { EventEmitter } = require('node:events');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { normalizeFomoFrame } = require('../src/services/fomo-frame-normalizer');
-const { createFomoTradingActivityStream } = require('../src/services/fomo-trading-activity-stream');
+const {
+  createFomoTradingActivityStream,
+  createTradingActivitySubscribePayload,
+} = require('../src/services/fomo-trading-activity-stream');
 
 class FakeWebSocket extends EventEmitter {
   constructor() {
@@ -57,6 +60,65 @@ test('Socket.IO-prefixed JSON remains inspectable without exposing secrets', () 
   assert.equal(evidence.protocolPrefix, '42');
   assert.equal(evidence.tradingActivityCandidate, true);
   assert.deepEqual(evidence.payload, ['trading_activity', { id: 'event-1' }]);
+});
+
+test('measured Fomo thesis frame normalizes into a callout', () => {
+  const evidence = normalizeFomoFrame(JSON.stringify({
+    type: 'data',
+    topicType: 'trading_activity',
+    topicId: 'viewer-id',
+    payload: {
+      type: 'thesis',
+      id: 'callout-1',
+      tradeId: 'trade-1',
+      createdAt: '2026-08-25T01:04:23.221Z',
+      userId: 'profile-1',
+      displayName: 'Trader',
+      userHandle: 'trader',
+      comment: { comment: 'measured thesis', numLikes: 2 },
+      tokenAddress: 'Ai66LHZG9MCzg1WKdawwqduVAXpNDUuV8M3uyq5ppump',
+      networkId: 1399811149,
+      ticker: 'CATE',
+      threshold: 359277.28,
+      equity: 360712.64,
+      isDev: false,
+    },
+  }));
+
+  assert.equal(evidence.tradingActivityCandidate, true);
+  assert.equal(evidence.topic, 'trading_activity');
+  assert.deepEqual(evidence.callout, {
+    platform: 'fomo',
+    eventType: 'callout',
+    sourceType: 'thesis',
+    platformEventId: 'callout-1',
+    tradeId: 'trade-1',
+    occurredAt: '2026-08-25T01:04:23.221Z',
+    profile: {
+      platformUserId: 'profile-1',
+      handle: 'trader',
+      displayName: 'Trader',
+      profilePictureUrl: null,
+    },
+    asset: {
+      address: 'Ai66LHZG9MCzg1WKdawwqduVAXpNDUuV8M3uyq5ppump',
+      rawNetworkId: 1399811149,
+      ticker: 'CATE',
+      imageUrl: null,
+    },
+    thesis: { text: 'measured thesis', numReplies: null, numLikes: 2 },
+    platformMetrics: { threshold: 359277.28, equity: 360712.64, isDev: false },
+  });
+});
+
+test('trading activity subscribe payload matches the measured contract', () => {
+  const topicId = 'ea1bc7f5-e349-5c6d-ab41-740c237a792d';
+  assert.deepEqual(createTradingActivitySubscribePayload(topicId), {
+    type: 'subscribe',
+    topicType: 'trading_activity',
+    topicId,
+  });
+  assert.throws(() => createTradingActivitySubscribePayload('not-a-uuid'), /must be a UUID/);
 });
 
 test('stream sends only the supplied subscribe payload and emits sanitized evidence', () => {
@@ -124,6 +186,14 @@ test('stream rejects an incomplete authentication JWT before connecting', () => 
     wsUrl: 'wss://example.test/ws',
     authenticationJwt: 'eyJ0ZXN0',
   }), /three base64url segments/);
+});
+
+test('stream rejects an expired authentication JWT before reconnecting', () => {
+  const payload = Buffer.from(JSON.stringify({ exp: 1 })).toString('base64url');
+  assert.throws(() => createFomoTradingActivityStream({
+    wsUrl: 'wss://example.test/ws',
+    authenticationJwt: `header.${payload}.signature`,
+  }), /has expired/);
 });
 
 test('unexpected closes reconnect with bounded exponential backoff', () => {

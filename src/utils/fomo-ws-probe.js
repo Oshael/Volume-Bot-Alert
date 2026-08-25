@@ -3,7 +3,10 @@
 require('dotenv').config();
 
 const { appendFile } = require('node:fs/promises');
-const { createFomoTradingActivityStream } = require('../services/fomo-trading-activity-stream');
+const {
+  createFomoTradingActivityStream,
+  createTradingActivitySubscribePayload,
+} = require('../services/fomo-trading-activity-stream');
 
 function boundedInteger(value, fallback, max) {
   const parsed = Number.parseInt(String(value ?? ''), 10);
@@ -14,6 +17,10 @@ function optionalSubscribePayload() {
   const raw = String(process.env.FOMO_WS_SUBSCRIBE_JSON || '').trim();
   if (!raw) return undefined;
   try { return JSON.parse(raw); } catch (_error) { throw new TypeError('FOMO_WS_SUBSCRIBE_JSON must be valid JSON'); }
+}
+
+function resolvedSubscribePayload() {
+  return createTradingActivitySubscribePayload(process.env.FOMO_WS_TOPIC_ID) || optionalSubscribePayload();
 }
 
 function sessionHeaders() {
@@ -39,7 +46,7 @@ async function main() {
     wsUrl: process.env.FOMO_WS_URL,
     headers: sessionHeaders(),
     authenticationJwt: process.env.FOMO_WS_JWT,
-    subscribePayload: optionalSubscribePayload(),
+    subscribePayload: resolvedSubscribePayload(),
     onEvidence: (frame) => {
       evidence.push(frame);
       if (evidence.length >= maxFrames) finish('max_frames');
@@ -86,4 +93,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { optionalSubscribePayload, sessionHeaders };
+module.exports = { optionalSubscribePayload, resolvedSubscribePayload, sessionHeaders };

@@ -36,6 +36,65 @@ function parseStructuredText(value) {
   try { return { payload: JSON.parse(encoded), protocolPrefix: prefix }; } catch (_error) { return null; }
 }
 
+function finiteNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function normalizeTimestamp(value) {
+  const text = firstText(value);
+  return text && Number.isFinite(Date.parse(text)) ? new Date(text).toISOString() : null;
+}
+
+function isTradingActivityThesis(frame) {
+  return frame?.type === 'data'
+    && frame?.topicType === 'trading_activity'
+    && frame?.payload?.type === 'thesis';
+}
+
+function normalizeFomoCallout(frame) {
+  if (!isTradingActivityThesis(frame)) return null;
+  const event = frame?.payload;
+  const comment = event.comment || {};
+  const text = firstText(comment.comment, event.thesis);
+  const address = firstText(event.tokenAddress, comment.tokenAddress);
+  const platformEventId = firstText(event.id, comment.id);
+  const platformUserId = firstText(event.userId, comment.userId);
+  if (!platformEventId || !platformUserId || !address || !text) return null;
+
+  return {
+    platform: 'fomo',
+    eventType: 'callout',
+    sourceType: 'thesis',
+    platformEventId,
+    tradeId: firstText(event.tradeId, comment.tradeId),
+    occurredAt: normalizeTimestamp(event.createdAt || comment.createdAt),
+    profile: {
+      platformUserId,
+      handle: firstText(event.userHandle),
+      displayName: firstText(event.displayName),
+      profilePictureUrl: firstText(event.profilePictureLink),
+    },
+    asset: {
+      address,
+      rawNetworkId: event.networkId ?? comment.networkId ?? null,
+      ticker: firstText(event.ticker),
+      imageUrl: firstText(event.tokenImageUrl),
+    },
+    thesis: {
+      text,
+      numReplies: finiteNumber(event.numReplies),
+      numLikes: finiteNumber(comment.numLikes ?? comment.reactions?.counts?.likeCount),
+    },
+    platformMetrics: {
+      threshold: finiteNumber(event.threshold),
+      equity: finiteNumber(event.equity),
+      isDev: typeof event.isDev === 'boolean' ? event.isDev : null,
+    },
+  };
+}
+
 function normalizeFomoFrame(raw, options = {}) {
   const bytes = Buffer.isBuffer(raw) ? raw : Buffer.from(String(raw ?? ''), 'utf8');
   const fingerprint = createHash('sha256').update(bytes).digest('hex');
@@ -49,7 +108,7 @@ function normalizeFomoFrame(raw, options = {}) {
   }
 
   const safe = sanitizeFomoPayload(structured.payload);
-  const topic = firstText(Array.isArray(safe) ? safe[0] : null, safe?.topic, safe?.channel, safe?.stream);
+  const topic = firstText(Array.isArray(safe) ? safe[0] : null, safe?.topicType, safe?.topic, safe?.channel, safe?.stream);
   const eventType = firstText(safe?.eventType, safe?.event, safe?.kind, safe?.type);
   const labels = [topic, eventType].filter(Boolean).map((value) => value.toLowerCase());
   return {
@@ -60,8 +119,9 @@ function normalizeFomoFrame(raw, options = {}) {
     topic,
     eventType,
     tradingActivityCandidate: labels.some((value) => value.includes('trading_activity')),
+    callout: normalizeFomoCallout(safe),
     payload: safe,
   };
 }
 
-module.exports = { normalizeFomoFrame, sanitizeFomoPayload };
+module.exports = { normalizeFomoCallout, normalizeFomoFrame, sanitizeFomoPayload };
