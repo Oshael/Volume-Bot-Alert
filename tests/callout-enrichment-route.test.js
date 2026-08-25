@@ -32,12 +32,30 @@ function result() {
   };
 }
 
+function eventResult() {
+  return {
+    chainKey: 'robinhood', tokenAddress: TOKEN,
+    from: '2026-08-25T12:00:00.000Z', to: '2026-08-25T15:00:00.000Z',
+    events: [{
+      id: 'fomo:callout:id:event-1', eventType: 'callout', platform: 'fomo',
+      occurredAt: '2026-08-25T14:00:00.000Z', thesis: 'Call thesis',
+      profile: {
+        platformUserId: 'profile-1', username: 'caller', displayName: 'Caller',
+        profilePictureUrl: 'https://images.example/caller.png',
+      },
+      source: { platform: 'fomo', links: [{ link: 'https://x.com/caller/status/1' }] },
+    }],
+    hasMore: false, nextCursor: null,
+  };
+}
+
 function appWith(options = {}) {
   const app = express();
   app.use('/api/callouts', calloutEnrichmentRouter.createCalloutEnrichmentRouter({
     authenticate: options.authenticate || ((_req, _res, next) => next()),
     visibility: options.visibility || ((_req, _res, next) => next()),
     enrichment: options.enrichment || { listProfileWalletBuys: async () => result() },
+    eventRead: options.eventRead || { listEvents: async () => eventResult() },
     logger: options.logger || { error() {} },
   }));
   return app;
@@ -64,6 +82,27 @@ describe('callout enrichment route', () => {
 
     assert.equal(response.status, 400);
     assert.equal(response.body.code, 'CHAIN_NOT_AVAILABLE');
+  });
+
+  it('returns raw chart callouts with profile avatar, origin and source links', async () => {
+    const calls = [];
+    const response = await request(appWith({
+      eventRead: { listEvents: async (input) => { calls.push(input); return eventResult(); } },
+    })).get(
+      `/api/callouts/events?chain=ROBINHOOD&token=${TOKEN.toUpperCase()}&from=2026-08-25T12:00:00Z&to=2026-08-25T15:00:00Z&limit=25`
+    );
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(calls[0], {
+      chainKey: 'robinhood', tokenAddress: TOKEN,
+      from: '2026-08-25T12:00:00Z', to: '2026-08-25T15:00:00Z',
+      limit: '25', cursor: undefined,
+    });
+    assert.equal(response.body.events[0].profile.profilePictureUrl,
+      'https://images.example/caller.png');
+    assert.equal(response.body.events[0].source.platform, 'fomo');
+    assert.equal(response.body.events[0].source.links[0].link,
+      'https://x.com/caller/status/1');
   });
 
   it('returns platform identity and avatar with wallet and action provenance', async () => {
@@ -110,6 +149,23 @@ describe('callout enrichment route', () => {
     assert.equal(badInput.status, 400);
     assert.equal(badInput.body.code, 'INVALID_ENRICHMENT_RANGE');
     assert.equal(failed.status, 500);
+    assert.equal(JSON.stringify(failed.body).includes('db secret'), false);
+  });
+
+  it('maps invalid event cursors to 400 and hides event reader failures', async () => {
+    const invalidCursor = new Error('cursor is invalid for this callout query');
+    invalidCursor.code = 'INVALID_CALLOUT_CURSOR';
+    const badInput = await request(appWith({
+      eventRead: { listEvents: async () => { throw invalidCursor; } },
+    })).get(`/api/callouts/events?chain=robinhood&token=${TOKEN}&cursor=bad`);
+    const failed = await request(appWith({
+      eventRead: { listEvents: async () => { throw new Error('db secret'); } },
+    })).get(`/api/callouts/events?chain=robinhood&token=${TOKEN}`);
+
+    assert.equal(badInput.status, 400);
+    assert.equal(badInput.body.code, 'INVALID_CALLOUT_CURSOR');
+    assert.equal(failed.status, 500);
+    assert.equal(failed.body.code, 'CALLOUT_EVENT_READ_FAILED');
     assert.equal(JSON.stringify(failed.body).includes('db secret'), false);
   });
 });

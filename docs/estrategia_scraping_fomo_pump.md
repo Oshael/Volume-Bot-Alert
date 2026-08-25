@@ -1190,6 +1190,10 @@ Estado: o sub-slice 11A preserva links HTTP(S) estruturados realmente fornecidos
 pela Fomo em `source_metadata.sourceLinks`, sem fabricar URLs quando a fonte não
 as entrega. O merge de metadata em replay aceita somente enriquecimento por
 contenção JSON; diferenças reais continuam sendo conflito de idempotência.
+O sub-slice 11B expõe os eventos brutos em API autenticada por token/range, com
+paginação keyset estável, perfil/avatar, origem e links permitidos. A leitura é
+limitada a 72 horas e 200 itens por página, exclui eventos vencidos e deixa o
+agrupamento por candle exclusivamente para o frontend.
 
 ### Contrato visual inicial dos callouts
 

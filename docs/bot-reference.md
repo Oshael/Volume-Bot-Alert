@@ -1015,6 +1015,14 @@ somente pelo usuário do serviço. `FOMO_PRIVY_REAUTH_REQUIRED` exige novo login
 troca manual dos dois valores; segredos nunca entram na telemetria
 `fomoAuthentication`.
 O endpoint autenticado
+`GET /api/callouts/events?chain=<chain>&token=<address>` lê callouts brutos para
+o gráfico. A resposta é ordenada por `occurredAt` decrescente e inclui tese,
+origem `pump`/`fomo`, identidade/avatar do perfil e somente links HTTP(S)
+estruturados. `from`/`to` cobrem no máximo 72 horas, `limit` no máximo 200 e
+`nextCursor` é vinculado à chain, token e range da primeira página. Eventos já
+expirados são excluídos mesmo antes da próxima rodada física de retenção. A rota
+não agrupa candles nem expõe o JSON interno de `source_metadata`.
+O endpoint autenticado
 `GET /api/callouts/profile-wallet-buys?chain=<chain>&token=<address>` expõe a
 leitura bounded do enrichment. Robinhood retorna compras on-chain com perfil,
 plataforma, `profilePictureUrl`, vínculo da wallet e proveniência separada;
