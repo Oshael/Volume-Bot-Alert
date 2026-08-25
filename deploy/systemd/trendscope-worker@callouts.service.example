@@ -1,0 +1,5 @@
+# Install through: systemctl edit trendscope-worker@callouts.service
+# The shared trendscope-worker@.service supplies every other Service directive.
+
+[Service]
+EnvironmentFile=/etc/trendscope/callouts.env

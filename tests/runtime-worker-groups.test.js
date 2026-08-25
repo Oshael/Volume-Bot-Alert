@@ -124,6 +124,16 @@ describe('runtime worker groups config', () => {
     });
     assert.match(require('../package.json').scripts['start:worker:callouts'],
       /BACKGROUND_WORKER_GROUPS=callouts CALLOUT_CAPTURE_ENABLED=true/);
+    const systemdDir = path.join(ROOT_DIR, 'deploy', 'systemd');
+    const service = fs.readFileSync(
+      path.join(systemdDir, 'trendscope-worker@callouts.service.example'), 'utf8'
+    );
+    const env = fs.readFileSync(path.join(systemdDir, 'callouts.env.example'), 'utf8');
+    assert.match(service, /EnvironmentFile=\/etc\/trendscope\/callouts\.env/);
+    assert.match(env, /CALLOUT_CAPTURE_ENABLED=true/);
+    assert.match(env, /PUMP_AUTH_TOKEN_FILE=\/etc\/trendscope\/secrets\//);
+    assert.match(env, /FOMO_WS_JWT_FILE=\/etc\/trendscope\/secrets\//);
+    assert.doesNotMatch(env, /^(?:DATABASE_URL|JWT_SECRET|PUMP_AUTH_TOKEN)=/m);
   });
 
   it('fails fast when callout capture credentials are incomplete', () => {

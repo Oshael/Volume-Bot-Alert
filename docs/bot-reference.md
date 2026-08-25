@@ -1008,6 +1008,10 @@ O grupo isolado `callouts` (porta default `3017`) é opt-in por
 `callout-capture-worker`. Execute com `npm run start:worker:callouts`. Pump
 commita cada rodada junto do seu checkpoint; Fomo serializa cada evidência live
 diretamente. O grupo exige as credenciais Pump e Fomo e não publica downstream.
+Instalação, soak, rotação e rollback estão em
+`docs/callout-capture-operations-runbook.md`; o drop-in e env de referência ficam
+em `deploy/systemd/trendscope-worker@callouts.service.example` e
+`deploy/systemd/callouts.env.example`.
 
 ## 12. Solana
 
