@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const stage161 = require('../src/utils/db-init-stage161');
-const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
+const { SCHEMA_GROUPS, __private } = require('../src/utils/runtime-schema');
 
 describe('Pump/Fomo callout capture schema', () => {
   it('keeps identities while giving raw callouts an exact 72-hour lifetime', () => {
@@ -39,5 +39,32 @@ describe('Pump/Fomo callout capture schema', () => {
     assert.match(sql, /CREATE TABLE IF NOT EXISTS callout_collector_checkpoints/);
     assert.match(sql, /state JSONB NOT NULL/);
     assert.doesNotMatch(sql, /\bUPDATE\b|DELETE\s+FROM|DROP\s+/i);
+  });
+
+  it('accepts PostgreSQL interval renderings without weakening the 72-hour invariant', () => {
+    const group = SCHEMA_GROUPS.find(({ key }) => key === 'stage161-callout-capture-foundation');
+    const requirement = group.tables.find(({ table }) => table === 'callout_events');
+    const retentionRequirement = {
+      ...requirement,
+      constraints: requirement.constraints.filter(({ name }) => (
+        name === 'callout_events_retention_check'
+      )),
+    };
+    const base = 'CHECK ((expires_at = (captured_at + ';
+
+    for (const interval of ["'72:00:00'::interval", "'3 days'::interval", "'P3D'::interval"]) {
+      const constraints = new Map([[
+        'callout_events_retention_check', `${base}${interval})))`,
+      ]]);
+      assert.deepEqual(__private.collectMissingConstraints(retentionRequirement, constraints), []);
+    }
+
+    const wrong = new Map([[
+      'callout_events_retention_check', `${base}'48:00:00'::interval)))`,
+    ]]);
+    assert.match(
+      __private.collectMissingConstraints(retentionRequirement, wrong)[0],
+      /missing one of/
+    );
   });
 });

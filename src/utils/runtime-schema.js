@@ -4417,7 +4417,10 @@ const SCHEMA_GROUPS = [
         includes: ['PRIMARY KEY', 'dedupe_key'],
       }, {
         name: 'callout_events_retention_check',
-        includes: ['CHECK', 'expires_at', 'captured_at', '72 hours'],
+        includes: ['CHECK', 'expires_at', 'captured_at'],
+        includesOneOf: [[
+          '72 hours', '72:00:00', '3 days', 'P3D', '3 0:00:00',
+        ]],
       }],
       indexes: [{
         name: 'idx_callout_events_platform_event',
@@ -4544,8 +4547,14 @@ function collectMissingConstraints(requirement, tableConstraints) {
 
     const missingParts = (constraint.includes || [])
       .filter((part) => !actualDefinition.includes(String(part)));
-    if (missingParts.length > 0) {
-      missingConstraints.push(`${requirement.table}.${constraintName} missing ${missingParts.join('/')}`);
+    const missingAlternatives = (constraint.includesOneOf || [])
+      .filter((alternatives) => !alternatives.some((part) => (
+        actualDefinition.includes(String(part))
+      )))
+      .map((alternatives) => `one of (${alternatives.join('|')})`);
+    const missing = [...missingParts, ...missingAlternatives];
+    if (missing.length > 0) {
+      missingConstraints.push(`${requirement.table}.${constraintName} missing ${missing.join('/')}`);
     }
   }
   return missingConstraints;
@@ -4787,4 +4796,5 @@ module.exports = {
   inspectRuntimeSchema,
   assertRuntimeSchema,
   createRuntimeSchemaError,
+  __private: { collectMissingConstraints },
 };
