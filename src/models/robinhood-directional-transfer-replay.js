@@ -3,6 +3,7 @@ const db = require('./db');
 const CHAIN = 'robinhood';
 const DEFAULT_PROJECTION_VERSION = 'rh_transfer_v1';
 const DEFAULT_REPLAY_VERSION = 'rh_directional_transfer_replay_v1';
+const TOKEN_REPAIR_SHADOW_VERSION = 'rh_transfer_token_repair_v1';
 
 function identifier(value, label) {
   const result = String(value ?? '').trim().toLowerCase();
@@ -297,13 +298,36 @@ function createRobinhoodDirectionalTransferReplayRepository(options = {}) {
                   GREATEST($3::bigint, item.deployment_block), $4::bigint, $5
              FROM UNNEST($6::varchar[], $7::bigint[])
                AS item(token_address, deployment_block)
-         ON CONFLICT (chain, projection_version, token_address) DO NOTHING
+         ON CONFLICT (chain, projection_version, token_address) DO UPDATE SET
+           source_from_block = EXCLUDED.source_from_block,
+           next_block = EXCLUDED.source_from_block,
+           source_through_block = EXCLUDED.source_through_block,
+           source_through_hash = EXCLUDED.source_through_hash,
+           status = 'pending', lease_owner = NULL, lease_until = NULL,
+           attempt_count = 0, next_attempt_at = NOW(),
+           last_error_code = NULL, last_error_message = NULL,
+           completed_at = NULL, published_at = NULL,
+           version = robinhood_wallet_transfer_token_coverage.version + 1,
+           updated_at = NOW()
+         WHERE robinhood_wallet_transfer_token_coverage.status <> 'leased'
          RETURNING token_address`,
         [CHAIN, frontier.projection_version, String(frontier.source_from_block),
           String(frontier.source_through_block), frontier.source_through_hash,
           available.map((row) => row.token_address),
           available.map((row) => row.deployment_block)]
       );
+      const stagedTokens = inserted.rows.map((row) => row.token_address);
+      for (const [table, versionColumn] of [
+        ['robinhood_wallet_relationship_evidence', 'algorithm_version'],
+        ['robinhood_wallet_transfer_daily_summaries', 'projection_version'],
+        ['robinhood_wallet_transfer_edges', 'classification_version'],
+      ]) {
+        await client.query(
+          `DELETE FROM ${table} WHERE chain = $1 AND ${versionColumn} = $2
+             AND token_address = ANY($3::varchar[])`,
+          [CHAIN, TOKEN_REPAIR_SHADOW_VERSION, stagedTokens]
+        );
+      }
       await client.query(
         `DELETE FROM robinhood_directional_transfer_deployment_gaps
           WHERE range_id = $1::bigint AND token_address = ANY($2::varchar[])`,

@@ -1505,6 +1505,10 @@ ranges concluídos. Leases expiradas são retomadas automaticamente; use
 Para uma campanha já falha, uma única retomada percorre todos os ranges restantes.
 Quando encontra `edge_missing`, ela materializa os candidatos exatos, deixa o
 range como falho adiado e continua; ranges saudáveis são concluídos normalmente.
+Uma edge existente cuja contagem ou envelope histórico não comporta o primeiro
+`wallet_transfer` também é `edge_missing`: a constraint permanece fechada e a
+cobertura token-scoped anterior é reaberta desde o deployment exato, limpando o
+shadow antigo antes do rebuild. Somente os tokens inconsistentes voltam ao repair.
 Somente quando não restarem ranges `pending` ou `leased` a campanha volta para
 `failed`, agora com o lote consolidado de candidatos. Então inspecione o repair
 read-only, processe até `pending=0`, `leased=0`, `failed=0` e

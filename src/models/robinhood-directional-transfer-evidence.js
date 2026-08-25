@@ -76,6 +76,11 @@ function createRobinhoodDirectionalTransferEvidenceRepository(options = {}) {
              ON edge.chain = $1 AND edge.classification_version = $2
             AND edge.token_address = candidate.token_address
             AND edge.from_wallet = candidate.from_wallet AND edge.to_wallet = candidate.to_wallet
+            AND edge.wallet_transfer_count > 0
+            AND (candidate.block_number, candidate.log_index)
+              BETWEEN (edge.first_block, edge.first_log_index)
+                  AND (edge.last_block, edge.last_log_index)
+            AND candidate.block_time BETWEEN edge.first_seen_at AND edge.last_seen_at
          ), unmatched AS MATERIALIZED (
            SELECT candidate.* FROM candidates candidate
            WHERE NOT EXISTS (

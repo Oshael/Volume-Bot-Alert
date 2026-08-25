@@ -223,16 +223,40 @@ describe('Robinhood directional transfer replay persistence', () => {
        ) VALUES ('test_directional_v1', 'live', 100, 251, NOW(), 250, 250, $1, 'running')`,
       [HASH]
     );
+    await db.query(
+      `INSERT INTO robinhood_wallet_transfer_token_coverage (
+         projection_version, token_address, source_from_block, next_block,
+         source_through_block, source_through_hash, status, completed_at, published_at
+       ) VALUES ('test_directional_v1', $1, 120, 251, 250, $2,
+                 'complete', NOW(), NOW())`,
+      [REPAIR_TOKEN, HASH]
+    );
+    await db.query(
+      `INSERT INTO robinhood_wallet_relationship_evidence (
+         token_address, left_wallet, right_wallet, relationship_kind, evidence_role,
+         evidence_transaction_hash, evidence_block, evidence_log_index, evidence_at,
+         amount_raw, score_component, algorithm_version
+       ) VALUES ($1, $2, $3, 'direct_transfer', 'first', $4,
+                 120, 1, NOW(), 1, 'test', 'rh_transfer_token_repair_v1')`,
+      [REPAIR_TOKEN, `0x${'1'.repeat(40)}`, `0x${'2'.repeat(40)}`, HASH]
+    );
     assert.deepEqual(await repository.stageTokenRepairCandidates({
       runId: created.id, rangeId, tokenAddresses: [REPAIR_TOKEN, REPAIR_TOKEN],
     }), { requested: 1, inserted: 1, unresolved: 0 });
     const coverage = await db.query(
-      `SELECT source_from_block::text, next_block::text, source_through_block::text, status
+      `SELECT source_from_block::text, next_block::text, source_through_block::text,
+              status, attempt_count, published_at
          FROM robinhood_wallet_transfer_token_coverage WHERE token_address = $1`, [REPAIR_TOKEN]
     );
     assert.deepEqual(coverage.rows[0], {
-      source_from_block: '120', next_block: '120', source_through_block: '250', status: 'pending',
+      source_from_block: '120', next_block: '120', source_through_block: '250',
+      status: 'pending', attempt_count: 0, published_at: null,
     });
+    assert.equal((await db.query(
+      `SELECT COUNT(*)::integer AS count FROM robinhood_wallet_relationship_evidence
+        WHERE algorithm_version = 'rh_transfer_token_repair_v1' AND token_address = $1`,
+      [REPAIR_TOKEN]
+    )).rows[0].count, 0);
     await db.query(
       `INSERT INTO robinhood_holder_token_states (token_address, ledger_status)
        VALUES ($1, 'live')`, [ATTRIBUTED_TOKEN]

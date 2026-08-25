@@ -60,6 +60,10 @@ describe('Robinhood directional transfer evidence persistence', () => {
 
   it('writes the canonical first event idempotently and rolls back missing edges', async () => {
     const repository = createRobinhoodDirectionalTransferEvidenceRepository({ database: db });
+    await assert.rejects(repository.applyEvidence({
+      projectionVersion: VERSION, events: [event(99, 1)],
+    }), (error) => error.code === 'directional_replay_edge_missing'
+      && error.tokenAddresses[0] === TOKEN);
     assert.deepEqual(await repository.applyEvidence({
       projectionVersion: VERSION, events: [event(101, 2)],
     }), { edgesConsidered: 1, edgesWritten: 1 });
