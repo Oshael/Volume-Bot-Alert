@@ -137,7 +137,7 @@ function createFomoPrivyJwtProvider(options = {}) {
     try { payload = await response.json(); } catch {
       throw safeError('FOMO_PRIVY_SESSION_RESPONSE', 'Fomo Privy session response was invalid');
     }
-    const next = jwtMetadata(payload?.privy_access_token || payload?.token);
+    const next = jwtMetadata(payload?.token);
     if (!active(next)) {
       if (payload?.session_update_action === 'ignore' && unexpired(cached)) return cached.jwt;
       throw safeError(

@@ -50,7 +50,11 @@ describe('Fomo Privy customer token provider', () => {
         requests.push({ url: String(url), options });
         return {
           ok: true, status: 200,
-          json: async () => ({ token: renewed, refresh_token: 'new-refresh-secret' }),
+          json: async () => ({
+            token: renewed,
+            privy_access_token: jwt((NOW / 1000) + 7200),
+            refresh_token: 'new-refresh-secret',
+          }),
         };
       },
     });
@@ -72,19 +76,20 @@ describe('Fomo Privy customer token provider', () => {
     });
   });
 
-  it('accepts the Privy access token when the customer token is null', async () => {
-    const renewed = jwt((NOW / 1000) + 3600);
+  it('never substitutes a Privy access token for the WebSocket customer token', async () => {
+    const privyAccessToken = jwt((NOW / 1000) + 3600);
     const jwtStore = store(jwt(1));
     const provider = createFomoPrivyJwtProvider({
       jwtStore, refreshTokenStore: store('refresh-secret'), now: () => NOW,
       fetchImpl: async () => ({
         ok: true, status: 200,
-        json: async () => ({ token: null, privy_access_token: renewed }),
+        json: async () => ({ token: null, privy_access_token: privyAccessToken }),
       }),
     });
 
-    assert.equal(await provider.getJwt(), renewed);
-    assert.deepEqual(jwtStore.writes, [renewed]);
+    await assert.rejects(provider.getJwt(),
+      (error) => error.code === 'FOMO_PRIVY_SESSION_RESPONSE');
+    assert.deepEqual(jwtStore.writes, []);
   });
 
   it('coalesces concurrent refreshes into one session request', async () => {
