@@ -174,15 +174,6 @@ ON CONFLICT (dedupe_key) DO UPDATE SET
   END
   WHERE callout_events.platform = EXCLUDED.platform
     AND callout_events.platform_event_id IS NOT DISTINCT FROM EXCLUDED.platform_event_id
-    AND callout_events.platform_user_id IS NOT DISTINCT FROM EXCLUDED.platform_user_id
-    AND callout_events.occurred_at IS NOT DISTINCT FROM EXCLUDED.occurred_at
-    AND callout_events.asset_address_original IS NOT DISTINCT FROM EXCLUDED.asset_address_original
-    AND callout_events.thesis IS NOT DISTINCT FROM EXCLUDED.thesis
-    AND (
-      callout_events.source_metadata = EXCLUDED.source_metadata
-      OR callout_events.source_metadata <@ EXCLUDED.source_metadata
-      OR EXCLUDED.source_metadata <@ callout_events.source_metadata
-    )
 RETURNING dedupe_key`;
 
 const ARCHIVE_UPSERT = `INSERT INTO callout_thesis_archive AS archived (
@@ -209,16 +200,6 @@ ON CONFLICT (dedupe_key) DO UPDATE SET
   END
   WHERE archived.platform = EXCLUDED.platform
     AND archived.platform_event_id IS NOT DISTINCT FROM EXCLUDED.platform_event_id
-    AND archived.platform_user_id IS NOT DISTINCT FROM EXCLUDED.platform_user_id
-    AND archived.occurred_at IS NOT DISTINCT FROM EXCLUDED.occurred_at
-    AND archived.asset_address_original IS NOT DISTINCT FROM EXCLUDED.asset_address_original
-    AND archived.thesis IS NOT DISTINCT FROM EXCLUDED.thesis
-    AND archived.thesis_sha256 IS NOT DISTINCT FROM EXCLUDED.thesis_sha256
-    AND (
-      archived.source_metadata = EXCLUDED.source_metadata
-      OR archived.source_metadata <@ EXCLUDED.source_metadata
-      OR EXCLUDED.source_metadata <@ archived.source_metadata
-    )
 RETURNING dedupe_key`;
 
 const CHECKPOINT_UPSERT = `INSERT INTO callout_collector_checkpoints (

@@ -998,8 +998,9 @@ O Stage 161 (`node src/utils/db-init-stage161.js`) define a fundação durável 
 Pump/Fomo: perfis permanentes, observações versionadas de wallets, callouts com
 expiração exata de 72 horas e checkpoints dos collectors. O repository
 `callout-capture` grava perfis, wallets, callouts e checkpoint na mesma transação,
-rejeita conflito de replay e impede checkpoint mais antigo de sobrescrever um
-mais novo. Redes desconhecidas preservam `rawChainId` e endereço original.
+trata replay do mesmo par plataforma/evento como primeira observação vence,
+rejeita colisão de identidade e impede checkpoint mais antigo de sobrescrever
+um mais novo. Redes desconhecidas preservam `rawChainId` e endereço original.
 O stage permanece inerte até ser aplicado; os spools locais não serão importados
 nem serão fonte de verdade.
 
@@ -1010,8 +1011,9 @@ uma nova rota. `callout_summary_versions` guarda somente gerações concluídas,
 com mínimo de quatro fontes, snapshot imutável, idioma/provider/model/prompt e
 cadeia explícita de versões sem exclusão em cascata. A política de agrupamento
 não é fixada pelo schema. A captura escreve evento bruto, arquivo permanente e
-checkpoint na mesma transação; conflito no arquivo também impede o avanço do
-cursor. O SHA-256 do texto permite detectar mudanças sem expor seu conteúdo em
+checkpoint na mesma transação. Replays preservam a primeira tese e metadados
+incompatíveis já arquivados; colisões de identidade impedem o avanço do cursor.
+O SHA-256 do texto permite detectar mudanças sem expor seu conteúdo em
 telemetria. O gerador permanece desligado até um corte posterior.
 
 O grupo isolado `callouts` (porta default `3017`) é opt-in por

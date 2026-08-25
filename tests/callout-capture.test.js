@@ -102,7 +102,7 @@ describe('callout capture repository', () => {
     assert.equal(fake.released(), true);
   });
 
-  it('accepts only monotonic source metadata enrichment during database replay', () => {
+  it('keeps first-write data for the same platform event during database replay', () => {
     assert.match(__private.CALLOUT_UPSERT,
       /WHEN callout_events\.source_metadata <@ EXCLUDED\.source_metadata/);
     assert.match(__private.CALLOUT_UPSERT,
@@ -110,14 +110,14 @@ describe('callout capture repository', () => {
     assert.match(__private.CALLOUT_UPSERT,
       /ELSE callout_events\.source_metadata/);
     assert.match(__private.CALLOUT_UPSERT,
-      /callout_events\.source_metadata <@ EXCLUDED\.source_metadata/);
-    assert.match(__private.CALLOUT_UPSERT,
-      /EXCLUDED\.source_metadata <@ callout_events\.source_metadata/);
-    assert.match(__private.CALLOUT_UPSERT,
+      /callout_events\.platform_event_id IS NOT DISTINCT FROM EXCLUDED\.platform_event_id/);
+    assert.doesNotMatch(__private.CALLOUT_UPSERT,
       /callout_events\.thesis IS NOT DISTINCT FROM EXCLUDED\.thesis/);
     assert.match(__private.ARCHIVE_UPSERT,
       /WHEN archived\.source_metadata <@ EXCLUDED\.source_metadata/);
     assert.match(__private.ARCHIVE_UPSERT,
+      /archived\.platform_event_id IS NOT DISTINCT FROM EXCLUDED\.platform_event_id/);
+    assert.doesNotMatch(__private.ARCHIVE_UPSERT,
       /archived\.thesis_sha256 IS NOT DISTINCT FROM EXCLUDED\.thesis_sha256/);
     assert.doesNotMatch(__private.ARCHIVE_UPSERT, /expires_at|ON DELETE CASCADE/);
   });

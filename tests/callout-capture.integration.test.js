@@ -24,7 +24,7 @@ function envelope() {
 }
 
 describe('callout permanent archive persistence', () => {
-  it('commits archive with raw event and rolls both back on archive conflict', async () => {
+  it('commits archive, accepts an identity replay and rejects an identity collision', async () => {
     const client = await db.pool.connect();
     try {
       await client.query('SET search_path TO pg_temp');
@@ -59,23 +59,39 @@ describe('callout permanent archive persistence', () => {
         ...initial,
         payload: {
           ...initial.payload,
+          thesis: 'edited replay thesis must not replace the first observation',
           sourceMetadata: { ...initial.payload.sourceMetadata, added: 'value' },
         },
       };
-      await assert.rejects(repository.commitCapture({
+      await repository.commitCapture({
         calloutEnvelopes: [enriched], checkpointKey: 'integration:callouts',
         checkpointState: { sequence: 2 }, committedAt: CAPTURED_AT,
-      }), /archive replay conflicts/);
+      });
 
-      const rolledBack = await client.query(`SELECT
-        (SELECT source_metadata FROM callout_events LIMIT 1) AS raw_metadata,
+      const replayed = await client.query(`SELECT
+        (SELECT thesis FROM callout_events LIMIT 1) AS raw_thesis,
+        (SELECT thesis FROM callout_thesis_archive LIMIT 1) AS archive_thesis,
         (SELECT source_metadata FROM callout_thesis_archive LIMIT 1) AS archive_metadata,
         (SELECT state FROM callout_collector_checkpoints LIMIT 1) AS checkpoint_state`);
-      assert.deepEqual(rolledBack.rows[0], {
-        raw_metadata: initial.payload.sourceMetadata,
+      assert.deepEqual(replayed.rows[0], {
+        raw_thesis: initial.payload.thesis,
+        archive_thesis: initial.payload.thesis,
         archive_metadata: { archiveOnly: true },
-        checkpoint_state: { sequence: 1 },
+        checkpoint_state: { sequence: 2 },
       });
+
+      const collision = {
+        ...initial,
+        payload: { ...initial.payload, platformEventId: 'different-event-id' },
+      };
+      await assert.rejects(repository.commitCapture({
+        calloutEnvelopes: [collision], checkpointKey: 'integration:callouts',
+        checkpointState: { sequence: 3 }, committedAt: CAPTURED_AT,
+      }), /Callout replay conflicts with persisted event/);
+      const checkpoint = await client.query(
+        'SELECT state FROM callout_collector_checkpoints LIMIT 1'
+      );
+      assert.deepEqual(checkpoint.rows[0].state, { sequence: 2 });
     } finally {
       client.release();
     }
