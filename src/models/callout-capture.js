@@ -182,6 +182,20 @@ RETURNING collector_key`;
 
 function createCalloutCaptureRepository(options = {}) {
   const database = options.database || db;
+  async function loadCheckpoint(checkpointKey) {
+    const key = String(checkpointKey || '').trim();
+    if (!key) throw new TypeError('Capture checkpoint key is required');
+    const result = await database.query(
+      `SELECT state, last_committed_at FROM callout_collector_checkpoints
+       WHERE collector_key = $1`, [key]
+    );
+    const row = result.rows[0];
+    return row ? {
+      state: row.state || {},
+      lastCommittedAt: row.last_committed_at ? new Date(row.last_committed_at).toISOString() : null,
+    } : null;
+  }
+
   async function commitCapture(input = {}) {
     const profiles = profileRows(input.profileEnvelopes || [], input.calloutEnvelopes || []);
     const wallets = walletRows(input.profileEnvelopes || []);
@@ -211,7 +225,7 @@ function createCalloutCaptureRepository(options = {}) {
       throw error;
     } finally { client.release(); }
   }
-  return Object.freeze({ commitCapture });
+  return Object.freeze({ commitCapture, loadCheckpoint });
 }
 
 module.exports = {

@@ -115,6 +115,7 @@ const dexscreener = require('./services/dexscreener');
 const solUsdPrice = require('./services/sol-usd-price-service');
 const { createWorkerLeaseManager } = require('./services/worker-lease-manager');
 const workerLease = require('./models/worker-lease');
+const calloutCaptureWorker = require('./services/callout-capture-worker');
 
 const ROBINHOOD_INGESTION_LEASE_KEY = 'robinhood-ingestion-worker';
 const ROBINHOOD_HEAD_CAPTURE_LEASE_KEY = 'robinhood-head-capture-worker';
@@ -146,6 +147,7 @@ const ROBINHOOD_BACKFILL_AGGREGATION_LEASE_KEY = 'robinhood-backfill-aggregation
 const ROBINHOOD_CATALOG_STAGING_LEASE_KEY = 'robinhood-catalog-staging-worker';
 const ROBINHOOD_CATALOG_PROJECTION_LEASE_KEY = 'robinhood-catalog-projection-worker';
 const TELEGRAM_ALERT_RUNTIME_LEASE_KEY = 'telegram-alert-runtime';
+const CALLOUT_CAPTURE_LEASE_KEY = 'callout-capture-worker';
 const app = express();
 let server = null;
 let bootstrapped = false;
@@ -1021,6 +1023,13 @@ function startWorkerSet() {
   startRobinhoodHolderGlobalBackfillWorkerGroup();
   startTokenImageFingerprintWorkerGroup();
   startXIngestionWorkerGroup();
+  if (hasWorkerGroup('callouts') && config.calloutCaptureWorker.enabled) {
+    startLockedWorker(
+      'callouts', CALLOUT_CAPTURE_LEASE_KEY, 'Pump/Fomo callout capture worker',
+      () => calloutCaptureWorker.start(config.calloutCaptureWorker),
+      { metadataProvider: () => ({ telemetry: calloutCaptureWorker.getStatus() }) }
+    );
+  }
 }
 
 function startTokenImageFingerprintWorkerGroup() {
@@ -1209,6 +1218,7 @@ async function shutdownGracefully(signal = 'SIGTERM') {
       robinhoodMarketAggregateWorker.stop(),
       robinhoodDerivedWorker.stop(),
       telegramAlertRuntime.stop(),
+      calloutCaptureWorker.stop(),
       backendAlertRealtime.stop(),
       marketBucketRealtime.stop(),
       marketTradeRealtime.stop(),

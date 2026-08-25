@@ -249,6 +249,7 @@ const ISOLATED_WORKER_GROUPS = Object.freeze([
   'robinhood-maintenance', 'robinhood', 'robinhood-head', 'robinhood-processing',
   'robinhood-derived', 'robinhood-wallet', 'robinhood-backfill', 'robinhood-holders',
   'robinhood-holder-global', 'robinhood-wallet-classification', 'x-match', 'x-ingest',
+  'callouts',
 ]);
 const WORKER_GROUPS = Object.freeze([
   ...SHARED_WORKER_GROUPS,
@@ -480,6 +481,7 @@ function validateTestDbTarget(dbConfig) {
 
 const db = getDbConfig(nodeEnv);
 const workerGroups = normalizeWorkerGroups(process.env.BACKGROUND_WORKER_GROUPS);
+const calloutCaptureEnabled = parseBoolean(process.env.CALLOUT_CAPTURE_ENABLED, false);
 const robinhoodHolderGlobalIsolated = workerGroups.active.includes('robinhood-holder-global');
 const robinhoodHolderBackfillEnabled = parseBoolean(
   process.env.ROBINHOOD_HOLDER_BACKFILL_ENABLED, false
@@ -583,6 +585,15 @@ if (workerGroups.isolationConflict) {
 }
 if (workerGroups.legacyConflict) {
   missing.push('BACKGROUND_WORKER_GROUPS cannot combine legacy maintenance with other groups or all');
+}
+if (calloutCaptureEnabled) {
+  if (!String(process.env.PUMP_AUTH_TOKEN || process.env.PUMP_AUTH_TOKEN_FILE || '').trim()) {
+    missing.push('PUMP_AUTH_TOKEN or PUMP_AUTH_TOKEN_FILE for callout capture');
+  }
+  if (!String(process.env.FOMO_WS_TOPIC_ID || '').trim()) missing.push('FOMO_WS_TOPIC_ID for callout capture');
+  if (!String(process.env.FOMO_WS_JWT || process.env.FOMO_WS_JWT_FILE || '').trim()) {
+    missing.push('FOMO_WS_JWT or FOMO_WS_JWT_FILE for callout capture');
+  }
 }
 if ((robinhoodHolderBackfillEnabled || robinhoodHolderLiveEnabled)
     && !robinhoodHolderBackfillAdmittedAfter) {
@@ -705,6 +716,29 @@ module.exports = {
     ),
   },
   telegram,
+
+  calloutCaptureWorker: {
+    enabled: calloutCaptureEnabled,
+    pump: {
+      authToken: String(process.env.PUMP_AUTH_TOKEN || '').trim(),
+      authTokenFile: String(process.env.PUMP_AUTH_TOKEN_FILE || '').trim(),
+      activityIntervalMs: parseIntegerInRange(process.env.PUMP_CAPTURE_ACTIVITY_SECONDS, 60, 1, 3600) * 1000,
+      leaderboardIntervalMs: parseIntegerInRange(process.env.PUMP_CAPTURE_LEADERBOARD_SECONDS, 900, 10, 86400) * 1000,
+      usersPerRound: parseIntegerInRange(process.env.PUMP_CAPTURE_USERS_PER_ROUND, 5, 1, 50),
+      userPages: parseIntegerInRange(process.env.PUMP_CAPTURE_USER_PAGES, 2, 1, 5),
+      roundDeadlineMs: parseIntegerInRange(process.env.PUMP_CAPTURE_DEADLINE_SECONDS, 45, 1, 300) * 1000,
+    },
+    fomo: {
+      wsUrl: String(process.env.FOMO_WS_URL || 'wss://prod-api.fomo.family/ws').trim(),
+      origin: String(process.env.FOMO_WS_ORIGIN || 'https://fomo.family').trim(),
+      jwt: String(process.env.FOMO_WS_JWT || '').trim(),
+      jwtFile: String(process.env.FOMO_WS_JWT_FILE || '').trim(),
+      topicId: String(process.env.FOMO_WS_TOPIC_ID || '').trim(),
+      reconcileIntervalMs: parseIntegerInRange(process.env.FOMO_CAPTURE_RECONCILE_SECONDS, 900, 10, 86400) * 1000,
+      tradeLookupLimit: parseIntegerInRange(process.env.FOMO_CAPTURE_TRADE_LOOKUP_LIMIT, 10, 0, 50),
+      threshold: parseIntegerInRange(process.env.FOMO_CAPTURE_THRESHOLD, 1000, 0, 1000000000),
+    },
+  },
 
   db: {
     ...db,

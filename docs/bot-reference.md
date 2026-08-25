@@ -1000,8 +1000,14 @@ expiração exata de 72 horas e checkpoints dos collectors. O repository
 `callout-capture` grava perfis, wallets, callouts e checkpoint na mesma transação,
 rejeita conflito de replay e impede checkpoint mais antigo de sobrescrever um
 mais novo. Redes desconhecidas preservam `rawChainId` e endereço original.
-O stage permanece inerte até ser aplicado e ainda não existe worker de produção;
-os spools locais não serão importados nem serão fonte de verdade.
+O stage permanece inerte até ser aplicado; os spools locais não serão importados
+nem serão fonte de verdade.
+
+O grupo isolado `callouts` (porta default `3017`) é opt-in por
+`CALLOUT_CAPTURE_ENABLED=true` e inicia Pump e Fomo sob a lease única
+`callout-capture-worker`. Execute com `npm run start:worker:callouts`. Pump
+commita cada rodada junto do seu checkpoint; Fomo serializa cada evidência live
+diretamente. O grupo exige as credenciais Pump e Fomo e não publica downstream.
 
 ## 12. Solana
 

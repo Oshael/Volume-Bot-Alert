@@ -11,6 +11,7 @@ const WORKER_GROUPS = [
   'robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-derived',
   'robinhood-wallet', 'robinhood-backfill', 'robinhood-holders',
   'robinhood-holder-global', 'robinhood-wallet-classification', 'x-match', 'x-ingest',
+  'callouts',
 ];
 
 function skippedExcept(...active) {
@@ -114,6 +115,31 @@ describe('runtime worker groups config', () => {
         mockTradingTakeProfit: null,
       });
     });
+  });
+
+  it('ships callout capture as an isolated opt-in worker', () => {
+    withEnv({ BACKGROUND_WORKER_GROUPS: 'callouts' }, (config) => {
+      assert.deepEqual(config.runtime.workerGroupsActive, ['callouts']);
+      assert.equal(config.calloutCaptureWorker.enabled, false);
+    });
+    assert.match(require('../package.json').scripts['start:worker:callouts'],
+      /BACKGROUND_WORKER_GROUPS=callouts CALLOUT_CAPTURE_ENABLED=true/);
+  });
+
+  it('fails fast when callout capture credentials are incomplete', () => {
+    const result = spawnSync(process.execPath, ['-e', "require('./config')"], {
+      cwd: ROOT_DIR,
+      env: {
+        ...process.env, BACKGROUND_WORKER_GROUPS: 'callouts', CALLOUT_CAPTURE_ENABLED: 'true',
+        PUMP_AUTH_TOKEN: '', PUMP_AUTH_TOKEN_FILE: '', FOMO_WS_TOPIC_ID: '',
+        FOMO_WS_JWT: '', FOMO_WS_JWT_FILE: '',
+      },
+      encoding: 'utf8',
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /PUMP_AUTH_TOKEN or PUMP_AUTH_TOKEN_FILE/);
+    assert.match(result.stderr, /FOMO_WS_TOPIC_ID/);
+    assert.match(result.stderr, /FOMO_WS_JWT or FOMO_WS_JWT_FILE/);
   });
 
   it('rejects combining Robinhood maintenance with Solana maintenance', () => {
