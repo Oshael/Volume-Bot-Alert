@@ -88,4 +88,19 @@ function createProfileObservationEnvelope(observation, options = {}) {
   };
 }
 
-module.exports = { createProfileObservation, createProfileObservationEnvelope, resolveWalletObservation };
+function walletObservationKey(observation, wallet) {
+  if (!observation?.platform || !observation.platformUserId || !wallet?.addressOriginal) {
+    throw new TypeError('Wallet observation key requires profile and wallet identity');
+  }
+  const fingerprint = createHash('sha256').update(JSON.stringify([
+    observation.platform, observation.platformUserId,
+    wallet.chainKey, wallet.rawChainId, wallet.address || wallet.addressOriginal,
+    wallet.relationType, wallet.sourceType, wallet.sourceField, wallet.sourceRecordId,
+  ])).digest('hex');
+  return `${observation.platform}:wallet_observation:sha256:${fingerprint}`;
+}
+
+module.exports = {
+  createProfileObservation, createProfileObservationEnvelope, resolveWalletObservation,
+  walletObservationKey,
+};

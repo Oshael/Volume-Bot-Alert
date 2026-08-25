@@ -996,10 +996,12 @@ spools continuam temporários e com limite fail-closed.
 
 O Stage 161 (`node src/utils/db-init-stage161.js`) define a fundação durável de
 Pump/Fomo: perfis permanentes, observações versionadas de wallets, callouts com
-expiração exata de 72 horas e checkpoints dos collectors. O stage é inerte até
-ser aplicado e ainda não existe worker de produção. Na VPS, o fluxo planejado é
-persistência direta pelo worker; os spools locais não serão importados nem serão
-fonte de verdade.
+expiração exata de 72 horas e checkpoints dos collectors. O repository
+`callout-capture` grava perfis, wallets, callouts e checkpoint na mesma transação,
+rejeita conflito de replay e impede checkpoint mais antigo de sobrescrever um
+mais novo. Redes desconhecidas preservam `rawChainId` e endereço original.
+O stage permanece inerte até ser aplicado e ainda não existe worker de produção;
+os spools locais não serão importados nem serão fonte de verdade.
 
 ## 12. Solana
 
