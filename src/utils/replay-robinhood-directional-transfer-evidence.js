@@ -232,6 +232,13 @@ function progressReporter(logger) {
   };
 }
 
+function applyResumePreflightPolicy(preflight, runId) {
+  if (!runId || preflight.approved || preflight.nonCanonicalRanges !== 0) return preflight;
+  return Object.freeze({
+    ...preflight, approved: true, projectionCapBypassed: 'existing_campaign',
+  });
+}
+
 async function main(argv = process.argv.slice(2), deps = {}) {
   const options = deps.options || parseArgs(argv);
   const logger = deps.logger || console;
@@ -240,7 +247,7 @@ async function main(argv = process.argv.slice(2), deps = {}) {
   );
   const source = await resolveSource(runtime, options);
   (logger.error || logger.log).call(logger, '[DirectionalReplay] mandatory read-only preflight...');
-  const preflight = await (deps.preflight || runPreflight)({
+  const measuredPreflight = await (deps.preflight || runPreflight)({
     writer: runtime.writer, now: deps.now,
   }, {
     ...source,
@@ -248,6 +255,7 @@ async function main(argv = process.argv.slice(2), deps = {}) {
     sampleCount: options.sampleCount,
     maxHours: options.maxHours,
   });
+  const preflight = applyResumePreflightPolicy(measuredPreflight, options.runId);
   logger.log(JSON.stringify({ mode: 'preflight', providerChainIds: runtime.providerChainIds,
     ...preflight }, null, 2));
   if (!options.apply) return preflight;
@@ -275,6 +283,7 @@ if (require.main === module) main().catch((error) => {
 }).finally(() => db.pool.end());
 
 module.exports = {
-  assertSchema, buildRuntime, frozenSourceFromPlan, main, parseArgs, progressReporter, resolveSource,
+  applyResumePreflightPolicy, assertSchema, buildRuntime, frozenSourceFromPlan,
+  main, parseArgs, progressReporter, resolveSource,
   __private: { createReplayDataDatabase },
 };

@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const {
-  assertSchema, frozenSourceFromPlan, main, parseArgs,
+  applyResumePreflightPolicy, assertSchema, frozenSourceFromPlan, main, parseArgs,
   __private: { createReplayDataDatabase },
 } = require('../src/utils/replay-robinhood-directional-transfer-evidence');
 
@@ -92,6 +92,18 @@ describe('Robinhood directional transfer replay CLI', () => {
     assert.throws(() => parseArgs(['--max-hours=6']), /between 1 and 5/);
   });
 
+  it('keeps canonical validation but does not reapply the full ETA cap to a resume', () => {
+    assert.deepEqual(applyResumePreflightPolicy({
+      approved: false, nonCanonicalRanges: 0, projectedHours: 8.4,
+    }, '7'), {
+      approved: true, nonCanonicalRanges: 0, projectedHours: 8.4,
+      projectionCapBypassed: 'existing_campaign',
+    });
+    assert.equal(applyResumePreflightPolicy({
+      approved: false, nonCanonicalRanges: 1, projectedHours: 8.4,
+    }, '7').approved, false);
+  });
+
   it('requires the frozen-scope publication schema before archive work', async () => {
     await assert.rejects(assertSchema({ async query() { return { rows: [{
       runs: 'runs', ranges: 'ranges', tokens: 'tokens', deployment_gaps: 'gaps',
@@ -154,13 +166,17 @@ describe('Robinhood directional transfer replay CLI', () => {
     const result = await main([], {
       runtime: existing, logger: { log() {}, error() {} },
       options: options({ apply: true, retryFailed: true, runId: '7' }),
-      preflight: async (_deps, input) => ({ ...input, approved: true }),
+      preflight: async (_deps, input) => ({
+        ...input, approved: false, nonCanonicalRanges: 0, projectedHours: 8.4,
+      }),
       replay: async (_deps, input) => { calls.push(['replay', input]); return { status: 'completed' }; },
     });
     assert.equal(result.status, 'completed');
     assert.deepEqual(calls.map(([name]) => name),
       ['get', 'readiness', 'checkpoint', 'replay']);
     assert.equal(calls[3][1].retryFailed, true);
+    assert.equal(calls[3][1].preflight.approved, true);
+    assert.equal(calls[3][1].preflight.projectionCapBypassed, 'existing_campaign');
   });
 
   it('refuses uncovered frozen scope before probing the archive', async () => {

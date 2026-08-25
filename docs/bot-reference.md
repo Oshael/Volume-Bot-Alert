@@ -1459,6 +1459,10 @@ checkpoint divergente ou projeção acima de cinco horas. Revise o relatório e
 use `-- --apply`; retomadas usam `-- --run-id=<id> --apply`, e uma campanha
 `failed` exige também `--retry-failed`. A stage isolada não consulta o archive
 RPC, não preenche arestas e não habilita `INSIDER`.
+Em `--run-id`, o preflight continua revalidando amostras e checkpoint canônico,
+mas não reaplica às ranges originais o teto de cinco horas já aprovado na criação
+da campanha; o relatório marca `projectionCapBypassed=existing_campaign`. Campanha
+nova continua recusada quando a projeção integral ultrapassa cinco horas.
 
 A Stage 158 adiciona `robinhood_wallet_transfer_token_coverage`, cursor histórico
 retomável e versionado por token, e `robinhood_directional_transfer_replay_tokens`,
