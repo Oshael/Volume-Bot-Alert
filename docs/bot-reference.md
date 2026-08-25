@@ -1022,6 +1022,11 @@ estruturados. `from`/`to` cobrem no máximo 72 horas, `limit` no máximo 200 e
 `nextCursor` é vinculado à chain, token e range da primeira página. Eventos já
 expirados são excluídos mesmo antes da próxima rodada física de retenção. A rota
 não agrupa candles nem expõe o JSON interno de `source_metadata`.
+O gráfico expandido consome todas as páginas desse endpoint, mantém cache local
+curto por token e agrupa os eventos pelo candle da granularidade ativa. Cada
+grupo renderiza avatares acima do candle e um hover/foco com scroll, teses em
+ordem decrescente, origem `PUMP`/`FOMO` e links seguros. A camada é independente
+dos markers de alertas e não produz resumos.
 O endpoint autenticado
 `GET /api/callouts/profile-wallet-buys?chain=<chain>&token=<address>` expõe a
 leitura bounded do enrichment. Robinhood retorna compras on-chain com perfil,

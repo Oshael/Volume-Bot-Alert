@@ -28,6 +28,7 @@ import { buildTokenChartViewportKey, getTokenChartValuationLabel, normalizeToken
 import { resolveTokenValuation } from '../../utils/token-valuation';
 import { buildTokenChainIcon, getTokenChainTitle } from '../token-chain-badge';
 import { destroyRobinhoodExpandedTrades, mountRobinhoodExpandedTrades } from '../robinhood-expanded-trades';
+import { mountExpandedChartCalloutOverlay } from '../chart-callout-overlay';
 import {
   destroyRobinhoodExpandedHolders,
   mountRobinhoodExpandedHolders,
@@ -3054,7 +3055,7 @@ function bindExpandedMacTrackpadDrag(
       return;
     }
     const target = event.target as Element | null;
-    if (target?.closest('.expanded-chart-alert-marker, .expanded-chart-alert-tooltip, .expanded-chart-alert-recap-layer')) {
+    if (target?.closest('.expanded-chart-alert-marker, .expanded-chart-alert-tooltip, .expanded-chart-alert-recap-layer, .expanded-chart-callout-marker, .expanded-chart-callout-tooltip')) {
       return;
     }
     const rect = container.getBoundingClientRect();
@@ -3977,6 +3978,10 @@ async function mountExpandedCandlestickChart(
     state.ui.expandedSparklineTimeZone, state.session.token, debug,
   );
   const chartAlertOverlay = createChartAlertOverlay();
+  const chartCalloutOverlay = mountExpandedChartCalloutOverlay({
+    container, chart, series: candleSeries, candles: data, granularityMinutes,
+    chain, address, token: state.session.token,
+  });
   if (legend) {
     legend.textContent = formatExpandedChartLegend(
       latest,
@@ -4055,6 +4060,7 @@ async function mountExpandedCandlestickChart(
     }
     debug.count('liveUpdates');
     chartAlertOverlay.upsertCandle(liveCandle);
+    chartCalloutOverlay.scheduleRender();
     if (legend) {
       legend.textContent = formatExpandedChartLegend(
         liveCandle,
@@ -4070,6 +4076,7 @@ async function mountExpandedCandlestickChart(
   expandedCandlestickChartCleanup = () => {
     window.removeEventListener('trendscope:expanded-chart-live-candle', onLiveCandle);
     chartAlertOverlay.cleanup();
+    chartCalloutOverlay.cleanup();
     removePriceScaleWheel();
     removeMacTrackpadDrag();
     chart.remove();
