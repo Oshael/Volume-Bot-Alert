@@ -75,8 +75,26 @@ async function prepareWindow(deps, input) {
   return prepared.classified.events.filter(isEdgeEligibleTransfer);
 }
 
+function withSerializedRoleHydration(deps) {
+  const endpointRoles = deps.tickDeps?.endpointRoles;
+  if (typeof endpointRoles?.hydrate !== 'function') return deps;
+  let tail = Promise.resolve();
+  const serialized = Object.freeze({
+    ...endpointRoles,
+    hydrate(input) {
+      const operation = tail.catch(() => {}).then(() => endpointRoles.hydrate(input));
+      tail = operation;
+      return operation;
+    },
+  });
+  return Object.freeze({
+    ...deps, tickDeps: Object.freeze({ ...deps.tickDeps, endpointRoles: serialized }),
+  });
+}
+
 async function prepareWindows(deps, input) {
-  const settled = await Promise.allSettled(input.ranges.map((range) => prepareWindow(deps, {
+  const windowDeps = withSerializedRoleHydration(deps);
+  const settled = await Promise.allSettled(input.ranges.map((range) => prepareWindow(windowDeps, {
     tokenAddresses: input.tokenAddresses, range,
   })));
   const failed = settled.filter(({ status }) => status === 'rejected');

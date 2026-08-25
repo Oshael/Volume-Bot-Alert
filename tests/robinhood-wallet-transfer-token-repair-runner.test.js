@@ -71,6 +71,8 @@ describe('Robinhood wallet-transfer token repair runner', () => {
     const calls = [];
     let active = 0;
     let maxActive = 0;
+    let activeHydrations = 0;
+    let maxActiveHydrations = 0;
     const coverage = {
       async claimBatch(input) {
         calls.push(['claimBatch', input]);
@@ -87,12 +89,21 @@ describe('Robinhood wallet-transfer token repair runner', () => {
     };
     const result = await runRobinhoodWalletTransferTokenRepairRange({
       coverage,
-      tickDeps: { evidence: { async matchesCheckpoint() { return true; } } },
-      prepareRange: async (_deps, input) => {
+      tickDeps: {
+        evidence: { async matchesCheckpoint() { return true; } },
+        endpointRoles: { async hydrate() {
+          activeHydrations += 1;
+          maxActiveHydrations = Math.max(maxActiveHydrations, activeHydrations);
+          await new Promise((resolve) => setImmediate(resolve));
+          activeHydrations -= 1;
+        } },
+      },
+      prepareRange: async (tickDeps, input) => {
         calls.push(['prepare', input]);
         active += 1;
         maxActive = Math.max(maxActive, active);
         await new Promise((resolve) => setImmediate(resolve));
+        await tickDeps.endpointRoles.hydrate();
         active -= 1;
         return {
           captured: { checkpoint: { number: input.toBlock, hash: HASH } },
@@ -112,6 +123,7 @@ describe('Robinhood wallet-transfer token repair runner', () => {
     ]);
     const prepared = calls.filter(([name]) => name === 'prepare').map(([, input]) => input);
     assert.equal(maxActive, 3);
+    assert.equal(maxActiveHydrations, 1);
     assert.deepEqual(prepared.map(({ fromBlock, toBlock }) => [fromBlock, toBlock]), [
       ['100', '149'], ['150', '199'], ['200', '249'],
     ]);

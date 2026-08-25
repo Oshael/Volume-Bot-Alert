@@ -1560,9 +1560,10 @@ campanha limitada, acrescente `--confirm-repair-robinhood-wallet-transfer-tokens
 `--address-filter-limit=500` e `--max-operations=<N>`. Cada operação pode avançar
 até 16 janelas históricas simultâneas para até 500 tokens; o leitor tenta a
 allowlist em um único filtro e a divide adaptativamente se o archive a rejeitar,
-enquanto
-cursor, retry, shadow e publicação continuam independentes por token. O archive
-RPC é exigido somente ao processar ranges. O preflight read-only expõe
+enquanto as leituras históricas permanecem paralelas. A hidratação gravável de
+roles é serializada dentro da operação para impedir deadlocks entre endereços
+sobrepostos; cursor, retry, shadow e publicação continuam independentes por
+token. O archive RPC é exigido somente ao processar ranges. O preflight read-only expõe
 `sharedWindowBlockSpan`, `estimatedScanOperations`,
 `estimatedConcurrentScanBatches` e `estimatedTotalOperations` conforme o
 `--max-blocks` e `--window-concurrency` informados; o total inclui extensões até a
