@@ -269,10 +269,9 @@ function createRobinhoodDirectionalTransferReplayRepository(options = {}) {
         `SELECT item.token_address,
                 CASE
                   WHEN state.token_address IS NULL THEN NULL
-                  WHEN state.deployment_block IS NOT NULL THEN
-                    CASE WHEN state.deployment_block > 0
-                           AND state.deployment_block <= $3::bigint
-                         THEN state.deployment_block END
+                  WHEN state.deployment_block > 0
+                       AND state.deployment_block <= $3::bigint
+                    THEN state.deployment_block
                   WHEN attribution.source = ANY($4::varchar[])
                        AND attribution.attribution_block > 0
                        AND attribution.attribution_block <= $3::bigint

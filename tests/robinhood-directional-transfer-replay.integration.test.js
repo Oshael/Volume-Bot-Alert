@@ -23,6 +23,7 @@ const HASH = `0x${'a'.repeat(64)}`;
 const COVERAGE_HASH = `0x${'b'.repeat(64)}`;
 const TOKEN = `0x${'d'.repeat(40)}`;
 const ATTRIBUTED_TOKEN = `0x${'c'.repeat(40)}`;
+const ZERO_DEPLOYMENT_ATTRIBUTED_TOKEN = `0x${'9'.repeat(40)}`;
 const REPAIR_TOKEN = `0x${'e'.repeat(40)}`;
 const UNKNOWN_DEPLOYMENT_TOKEN = `0x${'f'.repeat(40)}`;
 
@@ -34,7 +35,8 @@ async function cleanup() {
   await db.query('DELETE FROM robinhood_wallet_transfer_token_coverage');
   await db.query(
     'DELETE FROM robinhood_token_attributions WHERE token_address = ANY($1::varchar[])',
-    [[ATTRIBUTED_TOKEN, REPAIR_TOKEN, UNKNOWN_DEPLOYMENT_TOKEN]]
+    [[ATTRIBUTED_TOKEN, ZERO_DEPLOYMENT_ATTRIBUTED_TOKEN,
+      REPAIR_TOKEN, UNKNOWN_DEPLOYMENT_TOKEN]]
   );
   await db.query(
     "DELETE FROM robinhood_wallet_transfer_cursors WHERE projection_version = 'test_directional_v1'"
@@ -276,6 +278,26 @@ describe('Robinhood directional transfer replay persistence', () => {
         WHERE token_address = $1`, [ATTRIBUTED_TOKEN]
     );
     assert.equal(attributedCoverage.rows[0].source_from_block, '130');
+    await db.query(
+      `INSERT INTO robinhood_holder_token_states (
+         token_address, ledger_status, deployment_block
+       ) VALUES ($1, 'live', 0)`, [ZERO_DEPLOYMENT_ATTRIBUTED_TOKEN]
+    );
+    await db.query(
+      `INSERT INTO robinhood_token_attributions (
+         token_address, creator_address, source, attribution_block, attribution_tx_hash,
+         last_resolved_at
+       ) VALUES ($1, $2, 'launchpad_event', 140, $3, NOW())`,
+      [ZERO_DEPLOYMENT_ATTRIBUTED_TOKEN, `0x${'2'.repeat(40)}`, HASH]
+    );
+    assert.deepEqual(await repository.stageTokenRepairCandidates({
+      runId: created.id, rangeId, tokenAddresses: [ZERO_DEPLOYMENT_ATTRIBUTED_TOKEN],
+    }), { requested: 1, inserted: 1, unresolved: 0 });
+    const zeroDeploymentCoverage = await db.query(
+      `SELECT source_from_block::text FROM robinhood_wallet_transfer_token_coverage
+        WHERE token_address = $1`, [ZERO_DEPLOYMENT_ATTRIBUTED_TOKEN]
+    );
+    assert.equal(zeroDeploymentCoverage.rows[0].source_from_block, '140');
     await db.query(
       `INSERT INTO robinhood_holder_token_states (token_address, ledger_status)
        VALUES ($1, 'live')`, [UNKNOWN_DEPLOYMENT_TOKEN]
