@@ -1210,6 +1210,12 @@ O sub-slice 11D adiciona no gráfico Robinhood os wallet buys comprovados, abaix
 do candle e em verde, com perfil/avatar, origem, wallet observada e scope do
 vínculo. A superfície mantém `wallet_action` e `not_evaluated` explícitos; não
 infere correlação com nenhuma tese e revela quando a página de 200 foi truncada.
+O sub-slice 11E adiciona o reader backend de candidatos a resumo. Ele recebe uma
+janela explícita de 10–30 minutos, lê o arquivo permanente, agrupa exclusivamente
+por `chain + token`, combina PUMP e FOMO e retorna apenas grupos com quatro ou
+mais teses. Cluster e snapshot possuem fingerprints determinísticos; estouro do
+limite de fontes falha sem produzir amostra parcial. A política que escolhe e
+fecha janelas automaticamente continua fora deste contrato até a calibração.
 
 ### Contrato visual inicial dos callouts
 

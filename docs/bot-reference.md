@@ -1015,6 +1015,12 @@ checkpoint na mesma transação. Replays preservam a primeira tese e metadados
 incompatíveis já arquivados; colisões de identidade impedem o avanço do cursor.
 O SHA-256 do texto permite detectar mudanças sem expor seu conteúdo em
 telemetria. O gerador permanece desligado até um corte posterior.
+O reader interno `callout-summary-candidate-read` aceita somente janelas
+explícitas de 10–30 minutos e agrupa o arquivo por `chain + token`, exigindo ao
+menos quatro teses e permitindo mistura PUMP/FOMO. Ele gera chaves e fingerprint
+determinísticos para os cortes de comparação/geração seguintes, aplica timeout
+curto e falha se o limite configurado produzir uma leitura parcial. Não escolhe
+janelas, chama provider de IA nem persiste resumos.
 
 O grupo isolado `callouts` (porta default `3017`) é opt-in por
 `CALLOUT_CAPTURE_ENABLED=true` e inicia Pump e Fomo sob a lease única
