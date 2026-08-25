@@ -1158,6 +1158,12 @@ Escopo estimado: 6–10 arquivos, 350–500 linhas por adapter.
 - **Validação:** casos Robinhood, limites/timeout, reprocessamento idempotente,
   teste backend e lint. Sai quando adapter ausente não bloqueia captura.
 
+Estado: o sub-slice 10A implementa a fronteira read-only e o adapter Robinhood
+para compras comprovadas em `robinhood_wallet_swaps`, limitado por token e janela
+de até 72 horas. O resultado mantém `wallet_action` separado de `correlated` e
+marca wallets EVM sem rede declarada como `evm_address_candidate`. Persistência,
+worker de enrichment, API e correlação temporal ficam nos próximos sub-slices.
+
 ## Slice 11 — Resumos, alertas e superfícies do produto
 
 Escopo estimado: múltiplos slices backend/frontend de até 500 linhas.
@@ -1281,16 +1287,12 @@ plano, sozinho, não altera o estado operacional atual.
 
 # 21. Ordem imediata de trabalho
 
-1. Slices 1–3 concluídos: probes Pump/Fomo, contrato de thesis e spool comum;
-2. executar Slice 4, identidades e discovery público da Fomo;
-3. executar Slice 5, captura contínua local da Fomo;
-4. executar Slice 6, captura contínua local da Pump;
-5. executar Slice 7 em subslices de schema e persistência direta, aplicando o
-   stage somente em janela segura;
-6. executar Slice 8 e fazer soak na VPS sem downstream;
-7. medir amostra e retenção antes de resumos, alertas, enrichment em massa ou
-   scoring;
-8. manter follows externos adiados até autorização específica de escrita.
+1. Slices 1–8 concluídos e worker em soak na VPS sem downstream;
+2. Slice 9 de follows externos adiado até autorização específica de escrita;
+3. executar Slice 10 em sub-slices: reader Robinhood, persistência/worker e API;
+4. medir amostra e retenção antes de resumos, alertas ou scoring;
+5. executar Slice 11 em contratos backend antes das superfícies frontend;
+6. definir pesos do Slice 12 somente depois de auditar a amostra.
 
 Essa ordem permite usar tempo de engenharia enquanto os backfills Robinhood
 continuam, sem adicionar carga relevante ao PostgreSQL e sem descartar dados de
