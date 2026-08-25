@@ -26,7 +26,9 @@ function boundedArg(argv, prefix, fallback, min, max) {
 }
 
 function parseArgs(argv = []) {
-  const prefixes = ['--max-blocks=', '--max-operations=', '--pause-ms='];
+  const prefixes = [
+    '--max-blocks=', '--max-operations=', '--pause-ms=', '--token-batch-size=',
+  ];
   const unknown = argv.filter((arg) => ![CONFIRM_FLAG, RETRY_FLAG].includes(arg)
     && !prefixes.some((prefix) => arg.startsWith(prefix)));
   if (unknown.length) throw new Error(`unknown argument: ${unknown[0]}`);
@@ -36,9 +38,28 @@ function parseArgs(argv = []) {
     maxBlocks: boundedArg(argv, prefixes[0], 500, 1, 5000),
     maxOperations: boundedArg(argv, prefixes[1], 1, 1, 10_000),
     pauseMs: boundedArg(argv, prefixes[2], 250, 0, 60_000),
+    tokenBatchSize: boundedArg(argv, prefixes[3], 500, 1, 500),
   });
   if (parsed.retryFailed && !parsed.confirm) throw new Error(`${RETRY_FLAG} requires confirmation`);
   return parsed;
+}
+
+function withSharedWindowEstimate(plan, maxBlocks) {
+  const earliest = String(plan.earliest_pending_block ?? plan.earliest_source_block ?? '');
+  const latest = String(plan.latest_pending_block ?? plan.latest_source_block ?? '');
+  if (!/^\d+$/.test(earliest) || !/^\d+$/.test(latest) || BigInt(latest) < BigInt(earliest)) {
+    return plan;
+  }
+  const span = BigInt(latest) - BigInt(earliest) + 1n;
+  const window = BigInt(maxBlocks);
+  const scans = (span + window - 1n) / window;
+  const promotions = BigInt(plan.shadow_complete ?? 0) + BigInt(plan.pending ?? 0)
+    + BigInt(plan.leased ?? 0) + BigInt(plan.failed ?? 0);
+  return Object.freeze({
+    ...plan, sharedWindowBlockSpan: span.toString(),
+    estimatedScanOperations: scans.toString(),
+    estimatedTotalOperations: (scans + promotions).toString(),
+  });
 }
 
 async function runOperations(args, coverage, deps) {
@@ -52,7 +73,9 @@ async function runOperations(args, coverage, deps) {
         deps.options || runtimeOptions(), deps
       );
       const repair = await (deps.runRange || runRobinhoodWalletTransferTokenRepairRange)(
-        { coverage, tickDeps: runtime.tickDeps }, { maxBlocks: args.maxBlocks }
+        { coverage, tickDeps: runtime.tickDeps }, {
+          maxBlocks: args.maxBlocks, tokenBatchSize: args.tokenBatchSize,
+        }
       );
       operations.push(repair);
       if (repair.status === 'caught-up') break;
@@ -75,7 +98,7 @@ async function main(argv = process.argv.slice(2), deps = {}) {
   const database = deps.database || db;
   const coverage = (deps.repositoryFactory
     || createRobinhoodWalletTransferTokenRepairRepository)({ database });
-  const plan = await coverage.plan();
+  const plan = withSharedWindowEstimate(await coverage.plan(), args.maxBlocks);
   if (!args.confirm) {
     const report = { mode: 'read-only', plan, progress: await coverage.getProgress() };
     (deps.logger || console).log(JSON.stringify(report, null, 2));

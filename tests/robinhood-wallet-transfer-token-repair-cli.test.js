@@ -11,19 +11,26 @@ describe('Robinhood token-scoped transfer repair CLI', () => {
     const report = await main([], {
       database: {}, logger: { log: (message) => messages.push(message) },
       repositoryFactory: () => ({
-        plan: async () => ({ candidates: 3, remaining_block_span: '900' }),
+        plan: async () => ({
+          candidates: 3, pending: 3, shadow_complete: 0, leased: 0, failed: 0,
+          remaining_block_span: '900', earliest_source_block: '100', latest_source_block: '999',
+        }),
         getProgress: async () => ({ pending: 3 }),
       }),
       runtimeFactory: async () => { throw new Error('runtime must stay lazy'); },
     });
     assert.equal(report.mode, 'read-only');
     assert.equal(report.plan.candidates, 3);
+    assert.equal(report.plan.sharedWindowBlockSpan, '900');
+    assert.equal(report.plan.estimatedScanOperations, '2');
+    assert.equal(report.plan.estimatedTotalOperations, '5');
     assert.equal(messages.length, 1);
   });
 
   it('bounds apply arguments and requires confirmation to retry failures', () => {
     assert.deepEqual(parseArgs([CONFIRM_FLAG, '--max-blocks=250', '--max-operations=8']), {
       confirm: true, retryFailed: false, maxBlocks: 250, maxOperations: 8, pauseMs: 250,
+      tokenBatchSize: 500,
     });
     assert.throws(() => parseArgs(['--retry-failed']), /requires confirmation/);
     assert.throws(() => parseArgs(['--max-blocks=0']), /must be between/);

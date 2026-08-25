@@ -204,7 +204,7 @@ function createRobinhoodHolderTransferReader(options = {}) {
   }
 
   async function readAddressFilteredLogs(fromBlock, toBlock, addresses, telemetry) {
-    const limit = learnedAddressLimit || addresses.length;
+    const limit = Math.min(learnedAddressLimit || addressFilterLimit, addresses.length);
     const logs = [];
     const batchWidth = limit * addressShardConcurrency;
     for (let offset = 0; offset < addresses.length; offset += batchWidth) {
@@ -335,11 +335,13 @@ function createRobinhoodHolderTransferReader(options = {}) {
     }
     await assertChain();
     const telemetry = { requests: 0, splits: 0, addressSplits: 0 };
+    const forceAddressFiltered = input.forceAddressFiltered === true;
     const filterMode = captureAllTransfers
       ? 'topics-only-buffered'
       : allowed.size === 0
       ? 'empty-scope'
-      : (allowed.size <= addressFilterLimit ? 'address-filtered' : 'topics-only');
+      : (forceAddressFiltered || allowed.size <= addressFilterLimit
+        ? 'address-filtered' : 'topics-only');
     const [observedLogs, checkpoint] = await Promise.all([
       filterMode === 'address-filtered'
         ? readAddressFilteredLogs(fromBlock, toBlock, [...allowed], telemetry)

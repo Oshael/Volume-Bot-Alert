@@ -85,6 +85,9 @@ function createRobinhoodWalletTransferTokenRepairRepository(options = {}) {
               COUNT(*) FILTER (WHERE published_at IS NOT NULL)::integer AS published,
               MIN(source_from_block)::text AS earliest_source_block,
               MAX(source_through_block)::text AS latest_source_block,
+              MIN(next_block) FILTER (WHERE published_at IS NULL)::text AS earliest_pending_block,
+              MAX(source_through_block) FILTER (WHERE published_at IS NULL)::text
+                AS latest_pending_block,
               COALESCE(SUM(source_through_block - source_from_block + 1)
                 FILTER (WHERE published_at IS NULL), 0)::text AS remaining_block_span
          FROM robinhood_wallet_transfer_token_coverage
@@ -119,6 +122,44 @@ function createRobinhoodWalletTransferTokenRepairRepository(options = {}) {
       [CHAIN, targetVersion, leaseOwner, leaseMs]
     );
     return task(result.rows[0]);
+  }
+
+  async function claimBatch(input = {}) {
+    const leaseOwner = owner(input.owner);
+    const leaseMs = bounded(input.leaseMs, 1_200_000, 120_001, 1_200_000, 'leaseMs');
+    const maxBlocks = bounded(input.maxBlocks, 500, 1, 5000, 'maxBlocks');
+    const limit = bounded(input.limit, 500, 1, 500, 'limit');
+    const result = await database.query(
+      `WITH frontier AS MATERIALIZED (
+         SELECT next_block,
+                LEAST(source_through_block, next_block + $5::bigint - 1) AS upper_block
+           FROM robinhood_wallet_transfer_token_coverage
+          WHERE chain = $1 AND projection_version = $2 AND status = 'pending'
+            AND next_attempt_at <= NOW()
+          ORDER BY next_block, token_address LIMIT 1
+       ), candidates AS MATERIALIZED (
+         SELECT coverage.token_address
+           FROM robinhood_wallet_transfer_token_coverage coverage
+           CROSS JOIN frontier
+          WHERE coverage.chain = $1 AND coverage.projection_version = $2
+            AND coverage.status = 'pending' AND coverage.next_attempt_at <= NOW()
+            AND coverage.next_block <= frontier.upper_block
+            AND coverage.source_through_block >= frontier.upper_block
+          ORDER BY coverage.next_block, coverage.token_address
+          LIMIT $6 FOR UPDATE OF coverage SKIP LOCKED
+       ) UPDATE robinhood_wallet_transfer_token_coverage coverage SET
+           status = 'leased', lease_owner = $3,
+           lease_until = NOW() + ($4::bigint * INTERVAL '1 millisecond'),
+           attempt_count = attempt_count + 1, version = version + 1, updated_at = NOW()
+         FROM candidates WHERE coverage.chain = $1 AND coverage.projection_version = $2
+           AND coverage.token_address = candidates.token_address RETURNING coverage.*`,
+      [CHAIN, targetVersion, leaseOwner, leaseMs, maxBlocks, limit]
+    );
+    return Object.freeze(result.rows.map(task).sort((left, right) => (
+      BigInt(left.nextBlock) < BigInt(right.nextBlock) ? -1
+        : BigInt(left.nextBlock) > BigInt(right.nextBlock) ? 1
+          : left.tokenAddress.localeCompare(right.tokenAddress)
+    )));
   }
 
   async function commitShadowRange(input = {}) {
@@ -163,6 +204,79 @@ function createRobinhoodWalletTransferTokenRepairRepository(options = {}) {
       );
       await client.query('COMMIT');
       return Object.freeze({ task: task(advanced.rows[0]), projected, complete });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async function commitShadowBatch(input = {}) {
+    const leaseOwner = owner(input.owner);
+    const toBlock = uint(input.toBlock, 'toBlock');
+    if (!Array.isArray(input.tasks) || !input.tasks.length) {
+      throw new Error('tasks must be a non-empty list');
+    }
+    if (!Array.isArray(input.events)) throw new Error('events must be a list');
+    const tasks = input.tasks.map((item) => ({
+      tokenAddress: address(item.tokenAddress),
+      fromBlock: uint(item.nextBlock, 'nextBlock'),
+    }));
+    if (new Set(tasks.map(({ tokenAddress }) => tokenAddress)).size !== tasks.length) {
+      throw new Error('tasks contain duplicate tokens');
+    }
+    const tokenAddresses = tasks.map(({ tokenAddress }) => tokenAddress);
+    const expectedCursors = new Map(tasks.map((item) => [item.tokenAddress, item.fromBlock]));
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      const locked = await client.query(
+        `SELECT token_address, next_block, source_through_block
+           FROM robinhood_wallet_transfer_token_coverage
+          WHERE chain = $1 AND projection_version = $2
+            AND token_address = ANY($3::varchar[]) AND status = 'leased'
+            AND lease_owner = $4 AND lease_until > NOW() FOR UPDATE`,
+        [CHAIN, targetVersion, tokenAddresses, leaseOwner]
+      );
+      if (locked.rowCount !== tasks.length) throw new Error('token repair batch lease is stale');
+      for (const current of locked.rows) {
+        if (String(current.next_block) !== expectedCursors.get(current.token_address)
+            || BigInt(toBlock) > BigInt(current.source_through_block)) {
+          throw new Error('token repair batch conflicts with coverage cursor');
+        }
+      }
+      const allowed = new Set(tokenAddresses);
+      const events = input.events.map((event) => {
+        const tokenAddress = address(event.tokenAddress);
+        if (!allowed.has(tokenAddress)) throw new Error('event is outside token repair batch');
+        if (BigInt(event.blockNumber) < BigInt(expectedCursors.get(tokenAddress))) {
+          throw new Error('event precedes token repair cursor');
+        }
+        return { ...event, tokenAddress, classificationVersion: shadowVersion };
+      });
+      const projected = await persistProjection(client, shadowVersion, events);
+      const nextBlock = (BigInt(toBlock) + 1n).toString();
+      const advanced = await client.query(
+        `UPDATE robinhood_wallet_transfer_token_coverage SET
+           next_block = $5::bigint,
+           status = CASE WHEN source_through_block < $5::bigint THEN 'complete' ELSE 'pending' END,
+           lease_owner = NULL, lease_until = NULL,
+           completed_at = CASE WHEN source_through_block < $5::bigint THEN NOW() ELSE NULL END,
+           last_error_code = NULL, last_error_message = NULL,
+           version = version + 1, updated_at = NOW()
+         WHERE chain = $1 AND projection_version = $2
+           AND token_address = ANY($3::varchar[]) AND status = 'leased' AND lease_owner = $4
+         RETURNING status`,
+        [CHAIN, targetVersion, tokenAddresses, leaseOwner, nextBlock]
+      );
+      if (advanced.rowCount !== tasks.length) throw new Error('token repair batch advance is stale');
+      await client.query('COMMIT');
+      return Object.freeze({
+        projected, tokens: advanced.rowCount,
+        complete: advanced.rows.filter(({ status }) => status === 'complete').length,
+        pending: advanced.rows.filter(({ status }) => status === 'pending').length,
+      });
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
       throw error;
@@ -317,7 +431,8 @@ function createRobinhoodWalletTransferTokenRepairRepository(options = {}) {
   }
 
   return Object.freeze({
-    plan, initialize, claim, commitShadowRange, retry, recover, promoteNext, getProgress,
+    plan, initialize, claim, claimBatch,
+    commitShadowRange, commitShadowBatch, retry, recover, promoteNext, getProgress,
   });
 }
 

@@ -110,6 +110,7 @@ async function prepareRobinhoodWalletTransferRange(deps, input = {}) {
     || await deps.source.listTrackedTokenAddresses();
   const captured = await deps.evidence.readRange({
     tokenAddresses, fromBlock: input.fromBlock, toBlock: input.toBlock,
+    forceAddressFiltered: input.forceAddressFiltered === true,
   });
   const baseContext = await deps.source.loadBackfillRangeContext(classificationInput(
     captured, captured.fromBlockTime

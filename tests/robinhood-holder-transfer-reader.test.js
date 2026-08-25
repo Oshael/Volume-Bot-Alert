@@ -167,6 +167,26 @@ describe('Robinhood holder Transfer reader', () => {
     });
   });
 
+  it('shards an oversized allowlist when address filtering is forced', async () => {
+    const token2 = `0x${'8'.repeat(40)}`;
+    const filters = [];
+    const source = rpc(async (method, params) => {
+      if (method === 'eth_getBlockByNumber') return { number: '0x64', hash: HASH_A };
+      filters.push(params[0].address);
+      return params[0].address[0] === TOKEN ? [log()] : [];
+    });
+    const result = await createRobinhoodHolderTransferReader({
+      rpcClient: source.client, addressFilterLimit: 1,
+    }).readGlobalRange({
+      tokenAddresses: [TOKEN, token2], forceAddressFiltered: true,
+      fromBlock: 100, toBlock: 100,
+    });
+
+    assert.deepEqual(filters, [[TOKEN], [token2]]);
+    assert.equal(result.transfers.length, 1);
+    assert.equal(result.telemetry.filterMode, 'address-filtered');
+  });
+
   it('buffers valid Transfers for tokens that are not tracked yet', async () => {
     const untracked = `0x${'9'.repeat(40)}`;
     const source = rpc(async (method, params) => {
