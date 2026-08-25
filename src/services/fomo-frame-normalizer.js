@@ -95,6 +95,10 @@ function normalizeFomoCallout(frame) {
   };
 }
 
+function normalizeFomoActivityItem(item) {
+  return normalizeFomoCallout({ type: 'data', topicType: 'trading_activity', payload: item });
+}
+
 function normalizeFomoFrame(raw, options = {}) {
   const bytes = Buffer.isBuffer(raw) ? raw : Buffer.from(String(raw ?? ''), 'utf8');
   const fingerprint = createHash('sha256').update(bytes).digest('hex');
@@ -124,4 +128,4 @@ function normalizeFomoFrame(raw, options = {}) {
   };
 }
 
-module.exports = { normalizeFomoCallout, normalizeFomoFrame, sanitizeFomoPayload };
+module.exports = { normalizeFomoActivityItem, normalizeFomoCallout, normalizeFomoFrame, sanitizeFomoPayload };
