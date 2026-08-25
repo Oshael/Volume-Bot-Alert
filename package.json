@@ -116,6 +116,7 @@
     "robinhood:wallet-transfer-backfill": "node src/utils/backfill-robinhood-wallet-transfers.js",
     "robinhood:wallet-transfer-token-repair": "node src/utils/repair-robinhood-wallet-transfer-tokens.js",
     "robinhood:directional-transfer-replay": "node src/utils/replay-robinhood-directional-transfer-evidence.js",
+    "robinhood:directional-deployment-gap-reconcile": "node src/utils/reconcile-robinhood-directional-deployment-gaps.js",
     "robinhood:wallet-endpoint-role-backfill": "node src/utils/backfill-robinhood-wallet-endpoint-roles.js",
     "robinhood:wallet-transfer-reclassification": "node src/utils/reclassify-robinhood-wallet-transfers.js",
     "robinhood:signal-dry-run": "node src/utils/robinhood-signal-dry-run.js",

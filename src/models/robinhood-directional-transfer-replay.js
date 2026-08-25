@@ -352,6 +352,188 @@ function createRobinhoodDirectionalTransferReplayRepository(options = {}) {
     }
   }
 
+  async function planDeploymentGapReconciliation(runIdValue) {
+    const runId = uint(runIdValue, 'runId');
+    const result = await database.query(
+      `WITH context AS MATERIALIZED (
+         SELECT live.checkpoint_block AS source_through_block
+           FROM robinhood_directional_transfer_replay_runs run
+           JOIN robinhood_wallet_transfer_cursors live
+             ON live.chain = run.chain AND live.projection_version = run.projection_version
+            AND live.stream = 'live' AND live.lifecycle_state = 'running'
+          WHERE run.id = $1::bigint AND run.chain = $2
+            AND live.checkpoint_block IS NOT NULL
+       ), gap_tokens AS MATERIALIZED (
+         SELECT DISTINCT gap.token_address
+           FROM robinhood_directional_transfer_deployment_gaps gap
+           JOIN robinhood_directional_transfer_replay_ranges range ON range.id = gap.range_id
+          WHERE range.run_id = $1::bigint
+       ), classified AS MATERIALIZED (
+         SELECT gap.token_address,
+                state.token_address IS NOT NULL AND (
+                  (state.deployment_block > 0
+                    AND state.deployment_block <= context.source_through_block)
+                  OR (attribution.source = ANY($3::varchar[])
+                    AND attribution.attribution_block > 0
+                    AND attribution.attribution_block <= context.source_through_block)
+                ) AS exact,
+                COALESCE(coverage.status = 'leased', false) AS leased,
+                COALESCE(coverage.status = 'complete'
+                  AND coverage.published_at IS NOT NULL, false) AS published
+           FROM gap_tokens gap CROSS JOIN context
+           LEFT JOIN robinhood_holder_token_states state
+             ON state.chain = $2 AND state.token_address = gap.token_address
+           LEFT JOIN robinhood_token_attributions attribution
+             ON attribution.chain = $2 AND attribution.token_address = gap.token_address
+           LEFT JOIN robinhood_wallet_transfer_token_coverage coverage
+             ON coverage.chain = $2 AND coverage.projection_version = (
+               SELECT projection_version FROM robinhood_directional_transfer_replay_runs
+                WHERE id = $1::bigint AND chain = $2
+             ) AND coverage.token_address = gap.token_address
+       )
+       SELECT EXISTS(SELECT 1 FROM context) AS frontier_available,
+              COUNT(*)::integer AS total,
+              COUNT(*) FILTER (WHERE exact)::integer AS exact,
+              COUNT(*) FILTER (WHERE exact AND NOT leased)::integer AS ready,
+              COUNT(*) FILTER (WHERE exact AND leased)::integer AS leased,
+              COUNT(*) FILTER (WHERE exact AND published)::integer AS published
+         FROM classified`,
+      [runId, CHAIN, ['rpc_direct', 'launchpad_event']]
+    );
+    const row = result.rows[0];
+    if (!row?.frontier_available) {
+      const run = await getRun(runId);
+      if (!run) throw new Error('directional replay run was not found');
+      throw new Error('directional repair frontier is unavailable');
+    }
+    const total = Number(row?.total || 0);
+    const exact = Number(row?.exact || 0);
+    return Object.freeze({
+      total, exact, unresolved: total - exact, ready: Number(row?.ready || 0),
+      leased: Number(row?.leased || 0), published: Number(row?.published || 0),
+    });
+  }
+
+  async function reconcileDeploymentGaps(input = {}) {
+    const runId = uint(input.runId, 'runId');
+    const limit = boundedInteger(input.limit ?? 500, 'limit', 1, 500);
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      const context = await client.query(
+        `SELECT run.projection_version, run.source_from_block,
+                live.checkpoint_block AS source_through_block,
+                live.checkpoint_hash AS source_through_hash
+           FROM robinhood_directional_transfer_replay_runs run
+           JOIN robinhood_wallet_transfer_cursors live
+             ON live.chain = run.chain AND live.projection_version = run.projection_version
+            AND live.stream = 'live' AND live.lifecycle_state = 'running'
+          WHERE run.id = $1::bigint AND run.chain = $2
+            AND live.checkpoint_block IS NOT NULL FOR UPDATE OF live`,
+        [runId, CHAIN]
+      );
+      if (!context.rows[0]) throw new Error('directional repair frontier is unavailable');
+      const frontier = context.rows[0];
+      const candidates = await client.query(
+        `WITH gap_tokens AS MATERIALIZED (
+           SELECT DISTINCT gap.token_address
+             FROM robinhood_directional_transfer_deployment_gaps gap
+             JOIN robinhood_directional_transfer_replay_ranges range ON range.id = gap.range_id
+            WHERE range.run_id = $1::bigint
+         )
+         SELECT gap.token_address,
+                CASE
+                  WHEN state.token_address IS NULL THEN NULL
+                  WHEN state.deployment_block > 0
+                       AND state.deployment_block <= $3::bigint
+                    THEN state.deployment_block
+                  WHEN attribution.source = ANY($4::varchar[])
+                       AND attribution.attribution_block > 0
+                       AND attribution.attribution_block <= $3::bigint
+                    THEN attribution.attribution_block
+                END::text AS deployment_block,
+                coverage.status = 'complete' AND coverage.published_at IS NOT NULL AS published
+           FROM gap_tokens gap
+           LEFT JOIN robinhood_holder_token_states state
+             ON state.chain = $2 AND state.token_address = gap.token_address
+           LEFT JOIN robinhood_token_attributions attribution
+             ON attribution.chain = $2 AND attribution.token_address = gap.token_address
+           LEFT JOIN robinhood_wallet_transfer_token_coverage coverage
+             ON coverage.chain = $2 AND coverage.projection_version = $5
+            AND coverage.token_address = gap.token_address
+          WHERE coverage.status IS DISTINCT FROM 'leased'
+          ORDER BY deployment_block NULLS LAST, gap.token_address LIMIT $6::int`,
+        [runId, CHAIN, String(frontier.source_through_block),
+          ['rpc_direct', 'launchpad_event'], frontier.projection_version, limit]
+      );
+      const resolved = candidates.rows.filter((row) => row.deployment_block != null);
+      const stageable = resolved.filter((row) => row.published !== true);
+      if (stageable.length) {
+        const staged = await client.query(
+          `INSERT INTO robinhood_wallet_transfer_token_coverage (
+             chain, projection_version, token_address, source_from_block, next_block,
+             source_through_block, source_through_hash
+           ) SELECT $1, $2, item.token_address,
+                    GREATEST($3::bigint, item.deployment_block),
+                    GREATEST($3::bigint, item.deployment_block), $4::bigint, $5
+               FROM UNNEST($6::varchar[], $7::bigint[])
+                 AS item(token_address, deployment_block)
+           ON CONFLICT (chain, projection_version, token_address) DO UPDATE SET
+             source_from_block = EXCLUDED.source_from_block,
+             next_block = EXCLUDED.source_from_block,
+             source_through_block = EXCLUDED.source_through_block,
+             source_through_hash = EXCLUDED.source_through_hash,
+             status = 'pending', lease_owner = NULL, lease_until = NULL,
+             attempt_count = 0, next_attempt_at = NOW(), last_error_code = NULL,
+             last_error_message = NULL, completed_at = NULL, published_at = NULL,
+             version = robinhood_wallet_transfer_token_coverage.version + 1,
+             updated_at = NOW()
+           WHERE robinhood_wallet_transfer_token_coverage.status <> 'leased'
+           RETURNING token_address`,
+          [CHAIN, frontier.projection_version, String(frontier.source_from_block),
+            String(frontier.source_through_block), frontier.source_through_hash,
+            stageable.map((row) => row.token_address),
+            stageable.map((row) => row.deployment_block)]
+        );
+        if (staged.rowCount !== stageable.length) {
+          throw new Error('directional deployment gap reconciliation raced with token repair');
+        }
+        for (const [table, versionColumn] of [
+          ['robinhood_wallet_relationship_evidence', 'algorithm_version'],
+          ['robinhood_wallet_transfer_daily_summaries', 'projection_version'],
+          ['robinhood_wallet_transfer_edges', 'classification_version'],
+        ]) {
+          await client.query(
+            `DELETE FROM ${table} WHERE chain = $1 AND ${versionColumn} = $2
+               AND token_address = ANY($3::varchar[])`,
+            [CHAIN, TOKEN_REPAIR_SHADOW_VERSION, stageable.map((row) => row.token_address)]
+          );
+        }
+      }
+      let cleared = 0;
+      if (resolved.length) {
+        const removed = await client.query(
+          `DELETE FROM robinhood_directional_transfer_deployment_gaps gap
+            USING robinhood_directional_transfer_replay_ranges range
+            WHERE gap.range_id = range.id AND range.run_id = $1::bigint
+              AND gap.token_address = ANY($2::varchar[])`,
+          [runId, resolved.map((row) => row.token_address)]
+        );
+        cleared = removed.rowCount;
+      }
+      await client.query('COMMIT');
+      return Object.freeze({
+        selected: candidates.rowCount, resolved: resolved.length, staged: stageable.length,
+        alreadyPublished: resolved.length - stageable.length, gapAssociationsCleared: cleared,
+      });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async function startRun(runIdValue) {
     const runId = uint(runIdValue, 'runId');
     const result = await database.query(
@@ -607,7 +789,7 @@ function createRobinhoodDirectionalTransferReplayRepository(options = {}) {
 
   return Object.freeze({
     createRun, getRun, ensureTokenScope, getTokenScopeReadiness, listRunTokenAddresses,
-    stageTokenRepairCandidates,
+    stageTokenRepairCandidates, planDeploymentGapReconciliation, reconcileDeploymentGaps,
     startRun, claimRange, reclaimExpired, renewRangeLease,
     retryRange, deferRangeForTokenRepair, settleTokenRepairDiscovery,
     resumeFailed, completeRange, getProgress,

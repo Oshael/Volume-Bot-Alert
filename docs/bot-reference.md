@@ -1645,12 +1645,21 @@ catálogo inteiro: quando o replay
 encontra `directional_replay_edge_missing`, o range sofre rollback e somente os
 tokens ausentes são inseridos como candidatos. Cada candidato começa em
 `GREATEST(run.source_from_block, holder_state.deployment_block)`. Estados legados
-sem esse campo usam somente uma atribuição exata `rpc_direct` ou
-`launchpad_event`; sem nenhuma dessas provas, deployment ausente ou zero falha
+com deployment ausente ou zero usam somente uma atribuição exata `rpc_direct` ou
+`launchpad_event`; sem nenhuma dessas provas, o candidato falha
 fechado para o repair, mas não interrompe a descoberta. A Stage 160 persiste o
 par range/token em `robinhood_directional_transfer_deployment_gaps`; o progresso
 expõe `deploymentGaps`, e esses tokens não entram na fila executável até obterem
 prova exata. Aplique `node src/utils/db-init-stage160.js` antes de retomar o replay.
+Depois que novas provas exatas forem materializadas, use
+`npm run robinhood:directional-deployment-gap-reconcile -- --run-id=<id>` para o
+plano PostgreSQL/read-only. Confirme com
+`--confirm-reconcile-robinhood-directional-deployment-gaps`; o comando processa
+até 500 tokens por batch, aceita `--batch-size` e `--max-batches`, remove somente
+associações de gaps resolvidas e cria/renova a cobertura token-scoped sem reler
+ranges do archive. Cobertura já publicada não é reconstruída e cobertura leased
+é preservada. Depois, execute o repair token-scoped antes de retomar as ranges
+falhas do replay.
 Cada token é reconstruído em shadow e promovido em uma única
 transação que trava o cursor LIVE; se a frontier avançou, somente o delta volta
 a `pending`, sem apagar uma projeção oficial ainda válida. `published_at` é a

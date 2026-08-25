@@ -314,6 +314,37 @@ describe('Robinhood directional transfer replay persistence', () => {
       last_error_code: 'directional_repair_deployment_unavailable',
     });
     assert.equal((await repository.getProgress({ runId: created.id })).deploymentGaps, 1);
+    await db.query(
+      `UPDATE robinhood_holder_token_states SET deployment_block = 0
+        WHERE token_address = $1`, [UNKNOWN_DEPLOYMENT_TOKEN]
+    );
+    await db.query(
+      `INSERT INTO robinhood_token_attributions (
+         token_address, creator_address, source, attribution_block, attribution_tx_hash,
+         last_resolved_at
+       ) VALUES ($1, $2, 'rpc_direct', 150, $3, NOW())`,
+      [UNKNOWN_DEPLOYMENT_TOKEN, `0x${'3'.repeat(40)}`, HASH]
+    );
+    assert.deepEqual(await repository.planDeploymentGapReconciliation(created.id), {
+      total: 1, exact: 1, unresolved: 0, ready: 1, leased: 0, published: 0,
+    });
+    assert.deepEqual(await repository.reconcileDeploymentGaps({
+      runId: created.id, limit: 10,
+    }), {
+      selected: 1, resolved: 1, staged: 1,
+      alreadyPublished: 0, gapAssociationsCleared: 1,
+    });
+    const reconciledCoverage = await db.query(
+      `SELECT source_from_block::text, status, attempt_count
+         FROM robinhood_wallet_transfer_token_coverage WHERE token_address = $1`,
+      [UNKNOWN_DEPLOYMENT_TOKEN]
+    );
+    assert.deepEqual(reconciledCoverage.rows[0], {
+      source_from_block: '150', status: 'pending', attempt_count: 0,
+    });
+    assert.deepEqual(await repository.planDeploymentGapReconciliation(created.id), {
+      total: 0, exact: 0, unresolved: 0, ready: 0, leased: 0, published: 0,
+    });
     await deleteRun(created.id);
   });
 
