@@ -896,7 +896,9 @@ do FCM.
 Sem Lista, `groundTruthEnabled=false`: o probe mede volume, duplicatas e latencia,
 mas nao consegue concluir cobertura/perda. Com Lista, o poll de 5s nao participa
 da deteccao e existe apenas durante o experimento para reconciliar o que o push
-deveria ter entregue.
+deveria ter entregue. O baseline inicial usa a mesma leitura head de 100 itens do
+poll e um cutoff em `groundTruthSince`; itens anteriores ao `armed` nunca contam
+como perdas.
 
 ### Auditoria de followings entre sessoes [UTILITARIO PRONTO 2026-08-24]
 

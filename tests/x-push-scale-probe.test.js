@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const {
-  buildScaleSummary, headRequestUrl, parsePushEvent,
+  buildScaleSummary, headRequestUrl, isWithinGroundTruthWindow, parsePushEvent,
 } = require('../src/utils/x-push-scale-probe');
 
 test('parsePushEvent keeps useful fields without leaking the FCM registration id', () => {
@@ -36,6 +36,13 @@ test('headRequestUrl removes pagination and sets the reconciliation batch size',
   const variables = encodeURIComponent(JSON.stringify({ listId: '42', count: 20, cursor: 'next' }));
   const result = new URL(headRequestUrl(`https://x.com/i/api/graphql/id/ListLatestTweetsTimeline?variables=${variables}`, 100));
   assert.deepEqual(JSON.parse(result.searchParams.get('variables')), { listId: '42', count: 100 });
+});
+
+test('ground truth window excludes posts older than the armed baseline', () => {
+  const since = Date.parse('2026-08-24T22:44:30.000Z');
+  assert.equal(isWithinGroundTruthWindow('2026-08-24T20:31:07.000Z', since), false);
+  assert.equal(isWithinGroundTruthWindow('2026-08-24T22:44:31.000Z', since), true);
+  assert.equal(isWithinGroundTruthWindow(null, since), true);
 });
 
 test('buildScaleSummary reports loss, duplicates and both latency clocks', () => {

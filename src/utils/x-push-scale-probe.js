@@ -136,7 +136,18 @@ async function captureListTemplate(page, count) {
   const response = await pending;
   const allHeaders = await response.request().allHeaders();
   const headers = Object.fromEntries(Object.entries(allHeaders).filter(([key]) => SAFE_HEADERS.has(key)));
-  return { url: headRequestUrl(response.url(), count), headers, initialBody: await response.json() };
+  return { url: headRequestUrl(response.url(), count), headers };
+}
+
+function isWithinGroundTruthWindow(postedAt, sinceMs) {
+  const postedMs = Date.parse(postedAt);
+  return !Number.isFinite(postedMs) || !Number.isFinite(sinceMs) || postedMs >= sinceMs;
+}
+
+async function readGroundTruth(context, template) {
+  const response = await context.request.get(template.url, { headers: template.headers });
+  if (!response.ok()) throw new Error(`HTTP ${response.status()}`);
+  return normalizeTimeline(await response.json());
 }
 
 function addGroundTruth(state, normalized, emit, baseline = false) {
@@ -145,6 +156,7 @@ function addGroundTruth(state, normalized, emit, baseline = false) {
     if (!post.postId || state.seenTimeline.has(post.postId)) continue;
     state.seenTimeline.add(post.postId);
     if (baseline) continue;
+    if (!isWithinGroundTruthWindow(post.postedAt, state.groundTruthSinceMs)) continue;
     state.groundTruth.set(post.postId, post);
     emit('ground_truth', {
       postId: post.postId,
@@ -188,23 +200,20 @@ async function main() {
   const emit = createRecorder(outputPath);
   const state = {
     pushes: new Map(), pushCounts: new Map(), groundTruth: new Map(), seenTimeline: new Set(),
-    groundTruthErrors: 0, groundTruthEnabled: Boolean(listPage),
+    groundTruthErrors: 0, groundTruthEnabled: Boolean(listPage), groundTruthSinceMs: null,
   };
-  const startedEpochMs = Date.now();
-  await observePush(page, startedEpochMs, state, emit);
 
   let polling = false;
   let pollTimer = null;
   if (listPage) {
     const template = await captureListTemplate(listPage, count);
-    addGroundTruth(state, normalizeTimeline(template.initialBody), emit, true);
+    addGroundTruth(state, await readGroundTruth(listPage.context(), template), emit, true);
+    state.groundTruthSinceMs = Date.now() - 1000;
     const poll = async () => {
       if (polling) return;
       polling = true;
       try {
-        const response = await listPage.context().request.get(template.url, { headers: template.headers });
-        if (!response.ok()) throw new Error(`HTTP ${response.status()}`);
-        addGroundTruth(state, normalizeTimeline(await response.json()), emit);
+        addGroundTruth(state, await readGroundTruth(listPage.context(), template), emit);
       } catch (error) {
         state.groundTruthErrors += 1;
         emit('ground_truth_error', { message: error.message });
@@ -214,11 +223,14 @@ async function main() {
     };
     pollTimer = setInterval(poll, intervalMs);
   }
+  const startedEpochMs = Date.now();
+  await observePush(page, startedEpochMs, state, emit);
   const progressTimer = setInterval(() => emit('progress', buildScaleSummary(state)), 60000);
   emit('armed', {
     outputPath, groundTruthEnabled: state.groundTruthEnabled,
     groundTruthIntervalMs: state.groundTruthEnabled ? intervalMs : null,
     groundTruthCount: state.groundTruthEnabled ? count : null,
+    groundTruthSince: state.groundTruthSinceMs ? new Date(state.groundTruthSinceMs).toISOString() : null,
     instruction: 'Publish normally from cohort accounts; Ctrl+C emits the final summary.',
   });
 
@@ -243,4 +255,6 @@ if (require.main === module) {
   });
 }
 
-module.exports = { buildScaleSummary, headRequestUrl, parsePushEvent };
+module.exports = {
+  buildScaleSummary, headRequestUrl, isWithinGroundTruthWindow, parsePushEvent,
+};
