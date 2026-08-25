@@ -1548,14 +1548,18 @@ token. A Stage 159 adiciona a frontier publicada: aplique
 `node src/utils/db-init-stage159.js`. O comando
 `npm run robinhood:wallet-transfer-token-repair` é read-only por padrão; para a
 campanha limitada, acrescente `--confirm-repair-robinhood-wallet-transfer-tokens`,
-`--max-blocks=5000`, `--token-batch-size=500` e `--max-operations=<N>`. Cada
-operação avança uma janela histórica compartilhada para até 500 tokens; o leitor
-divide a allowlist em shards de endereços aceitos pelo archive RPC, enquanto
+`--max-blocks=5000`, `--token-batch-size=500`, `--window-concurrency=16`,
+`--address-filter-limit=500` e `--max-operations=<N>`. Cada operação pode avançar
+até 16 janelas históricas simultâneas para até 500 tokens; o leitor tenta a
+allowlist em um único filtro e a divide adaptativamente se o archive a rejeitar,
+enquanto
 cursor, retry, shadow e publicação continuam independentes por token. O archive
 RPC é exigido somente ao processar ranges. O preflight read-only expõe
-`sharedWindowBlockSpan`, `estimatedScanOperations` e `estimatedTotalOperations`
-conforme o `--max-blocks` informado; dimensione `--max-operations` acima do total
-estimado para permitir também todas as publicações. O comando nunca inicializa o
+`sharedWindowBlockSpan`, `estimatedScanOperations`,
+`estimatedConcurrentScanBatches` e `estimatedTotalOperations` conforme o
+`--max-blocks` e `--window-concurrency` informados; o total inclui extensões até a
+frontier LIVE congelada e publicações. Dimensione `--max-operations` acima dele.
+O comando nunca inicializa o
 catálogo inteiro: quando o replay
 encontra `directional_replay_edge_missing`, o range sofre rollback e somente os
 tokens ausentes são inseridos como candidatos. Cada candidato começa em

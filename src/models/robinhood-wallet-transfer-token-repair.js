@@ -127,7 +127,7 @@ function createRobinhoodWalletTransferTokenRepairRepository(options = {}) {
   async function claimBatch(input = {}) {
     const leaseOwner = owner(input.owner);
     const leaseMs = bounded(input.leaseMs, 1_200_000, 120_001, 1_200_000, 'leaseMs');
-    const maxBlocks = bounded(input.maxBlocks, 500, 1, 5000, 'maxBlocks');
+    const maxBlocks = bounded(input.maxBlocks, 500, 1, 80_000, 'maxBlocks');
     const limit = bounded(input.limit, 500, 1, 500, 'limit');
     const result = await database.query(
       `WITH frontier AS MATERIALIZED (

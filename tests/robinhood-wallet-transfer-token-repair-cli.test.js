@@ -8,7 +8,7 @@ const {
 describe('Robinhood token-scoped transfer repair CLI', () => {
   it('is read-only by default and does not construct the archive runtime', async () => {
     const messages = [];
-    const report = await main([], {
+    const report = await main(['--max-blocks=250', '--window-concurrency=2'], {
       database: {}, logger: { log: (message) => messages.push(message) },
       repositoryFactory: () => ({
         plan: async () => ({
@@ -22,7 +22,8 @@ describe('Robinhood token-scoped transfer repair CLI', () => {
     assert.equal(report.mode, 'read-only');
     assert.equal(report.plan.candidates, 3);
     assert.equal(report.plan.sharedWindowBlockSpan, '900');
-    assert.equal(report.plan.estimatedScanOperations, '2');
+    assert.equal(report.plan.estimatedScanOperations, '4');
+    assert.equal(report.plan.estimatedConcurrentScanBatches, '2');
     assert.equal(report.plan.estimatedTotalOperations, '5');
     assert.equal(messages.length, 1);
   });
@@ -30,7 +31,7 @@ describe('Robinhood token-scoped transfer repair CLI', () => {
   it('bounds apply arguments and requires confirmation to retry failures', () => {
     assert.deepEqual(parseArgs([CONFIRM_FLAG, '--max-blocks=250', '--max-operations=8']), {
       confirm: true, retryFailed: false, maxBlocks: 250, maxOperations: 8, pauseMs: 250,
-      tokenBatchSize: 500,
+      tokenBatchSize: 500, windowConcurrency: 1, addressFilterLimit: 100,
     });
     assert.throws(() => parseArgs(['--retry-failed']), /requires confirmation/);
     assert.throws(() => parseArgs(['--max-blocks=0']), /must be between/);

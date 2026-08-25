@@ -37,6 +37,7 @@ async function buildRobinhoodWalletTransferRuntime(options = {}, deps = {}) {
   )(rpcClient);
   const transferReader = (deps.transferReaderFactory || createRobinhoodHolderTransferReader)({
     rpcClient, addressShardConcurrency: options.addressShardConcurrency,
+    addressFilterLimit: options.addressFilterLimit,
   });
   const positions = (deps.positionFactory || createRobinhoodWalletPositionRepository)({ database });
   const transactionPositionRepository = (deps.transactionPositionRepositoryFactory

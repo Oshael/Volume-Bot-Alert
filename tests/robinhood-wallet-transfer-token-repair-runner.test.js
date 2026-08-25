@@ -69,12 +69,14 @@ describe('Robinhood wallet-transfer token repair runner', () => {
 
   it('captures and commits one shared window for tokens with different cursors', async () => {
     const calls = [];
+    let active = 0;
+    let maxActive = 0;
     const coverage = {
       async claimBatch(input) {
         calls.push(['claimBatch', input]);
         return [
-          { tokenAddress: TOKEN, nextBlock: '100', sourceThroughBlock: '199' },
-          { tokenAddress: TOKEN_TWO, nextBlock: '120', sourceThroughBlock: '199' },
+          { tokenAddress: TOKEN, nextBlock: '100', sourceThroughBlock: '299' },
+          { tokenAddress: TOKEN_TWO, nextBlock: '120', sourceThroughBlock: '299' },
         ];
       },
       async commitShadowBatch(input) {
@@ -88,23 +90,33 @@ describe('Robinhood wallet-transfer token repair runner', () => {
       tickDeps: { evidence: { async matchesCheckpoint() { return true; } } },
       prepareRange: async (_deps, input) => {
         calls.push(['prepare', input]);
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((resolve) => setImmediate(resolve));
+        active -= 1;
         return {
           captured: { checkpoint: { number: input.toBlock, hash: HASH } },
-          classified: { events: [
+          classified: { events: input.fromBlock === '100' ? [
             event('wallet_transfer', TOKEN, '110'),
             event('wallet_transfer', TOKEN_TWO, '119'),
             event('wallet_transfer', TOKEN_TWO, '125'),
-          ] },
+          ] : [] },
         };
       },
-    }, { owner: 'batch-owner', maxBlocks: 50, tokenBatchSize: 500 });
+    }, {
+      owner: 'batch-owner', maxBlocks: 50, tokenBatchSize: 500, windowConcurrency: 3,
+    });
 
-    assert.deepEqual([result.fromBlock, result.toBlock, result.tokens, result.events], [
-      '100', '149', 2, 2,
+    assert.deepEqual([result.fromBlock, result.toBlock, result.windows, result.events], [
+      '100', '249', 3, 2,
     ]);
-    const prepared = calls.find(([name]) => name === 'prepare')[1];
-    assert.equal(prepared.forceAddressFiltered, true);
-    assert.deepEqual(prepared.tokenAddresses, [TOKEN, TOKEN_TWO]);
+    const prepared = calls.filter(([name]) => name === 'prepare').map(([, input]) => input);
+    assert.equal(maxActive, 3);
+    assert.deepEqual(prepared.map(({ fromBlock, toBlock }) => [fromBlock, toBlock]), [
+      ['100', '149'], ['150', '199'], ['200', '249'],
+    ]);
+    assert.equal(prepared[0].forceAddressFiltered, true);
+    assert.deepEqual(prepared[0].tokenAddresses, [TOKEN, TOKEN_TWO]);
     const committed = calls.find(([name]) => name === 'commitShadowBatch')[1];
     assert.deepEqual(committed.events.map(({ blockNumber }) => blockNumber), ['110', '125']);
   });
