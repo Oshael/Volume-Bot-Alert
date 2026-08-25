@@ -1171,11 +1171,11 @@ cobrem a janela do produto. Correlação temporal fica para um sub-slice posteri
 Escopo estimado: múltiplos slices backend/frontend de até 500 linhas.
 
 - **Pré-condições:** captura persistente estável e contrato de leitura aprovado.
-- **Entrega:** agrupamento adaptativo de teses em janelas de 10–30 minutos;
-  resumo derivado com links/IDs das fontes; alertas idempotentes; API por
-  token/período; markers no gráfico expandido; lista de perfis/wallets com
-  compra Robinhood comprovada; estados visuais distintos para `callout`,
-  `wallet action` e `correlated`.
+- **Entrega:** API de callouts brutos por token/período; markers no gráfico
+  expandido; agrupamento visual por candle; lista de perfis/wallets com compra
+  Robinhood comprovada; estados visuais distintos para `callout`, `wallet
+  action` e `correlated`. Em etapa posterior, agrupamento semântico adaptativo de
+  teses em janelas de 10–30 minutos e resumo derivado com links/IDs das fontes.
 - **Validação:** testes backend do contrato, menor teste frontend afetado,
   `npm run lint` e `npm --prefix frontend run build`. Sai quando nenhum callout
   é exibido como compra sem evidência on-chain.
@@ -1184,6 +1184,29 @@ Estado: o sub-slice 11A preserva links HTTP(S) estruturados realmente fornecidos
 pela Fomo em `source_metadata.sourceLinks`, sem fabricar URLs quando a fonte não
 as entrega. O merge de metadata em replay aceita somente enriquecimento por
 contenção JSON; diferenças reais continuam sendo conflito de idempotência.
+
+### Contrato visual inicial dos callouts
+
+- cada callout é ancorado pelo `occurred_at` ao candle correspondente e aparece
+  acima do candle como avatar do perfil que publicou a tese;
+- quando mais de um callout cai no mesmo candle da granularidade ativa, o marker
+  representa o grupo. Pode exibir avatares empilhados e um contador de excedentes,
+  mas não cria vários hovers concorrentes sobre o mesmo candle;
+- hover/foco abre um único painel com todas as teses daquele candle. Cada item
+  mostra avatar, nome do perfil, horário, texto integral disponível, origem
+  explícita `PUMP` ou `FOMO` e os links reais fornecidos pela origem;
+- o painel agrupado possui altura limitada e scroll interno. A ordem é
+  determinística, da tese mais recente para a mais antiga; nenhuma tese é
+  descartada por causa do espaço;
+- o backend entrega eventos brutos, paginados e ordenados. O frontend calcula o
+  bucket pelo intervalo do candle exibido, pois trocar de 5m para 1h deve
+  reagrupar imediatamente os mesmos eventos sem nova semântica de persistência;
+- esta primeira versão não chama IA e não substitui as teses por resumos. O
+  desenho do resumo de 10–30 minutos será aprovado separadamente após existir
+  amostra suficiente, sem apagar acesso aos eventos e links de origem;
+- a superfície respeita a retenção vigente: callouts brutos expirados após 72
+  horas não aparecem em ranges históricos mais antigos. Perfis e observações de
+  wallet continuam permanentes conforme a política definida anteriormente.
 
 ## Slice 12 — Scoring
 
