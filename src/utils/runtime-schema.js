@@ -4358,6 +4358,86 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage161-callout-capture-foundation',
+    name: 'Stage 161 Pump/Fomo callout capture foundation',
+    repair: 'node src/utils/db-init-stage161.js',
+    tables: [{
+      table: 'callout_profiles',
+      columns: [
+        'platform', 'platform_user_id', 'username', 'x_username', 'display_name',
+        'profile_picture_url', 'latest_source', 'first_observed_at', 'last_observed_at',
+        'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'callout_profiles_pkey',
+        includes: ['PRIMARY KEY', 'platform', 'platform_user_id'],
+      }, {
+        name: 'callout_profiles_observed_check',
+        includes: ['CHECK', 'last_observed_at', 'first_observed_at'],
+      }],
+      indexes: [{
+        name: 'idx_callout_profiles_last_observed',
+        includes: ['last_observed_at'],
+      }],
+    }, {
+      table: 'callout_wallet_observations',
+      columns: [
+        'observation_key', 'platform', 'platform_user_id', 'address_original',
+        'address_normalized', 'raw_chain_id', 'chain_key', 'chain_family',
+        'resolution_status', 'relation_type', 'source_type', 'source_field',
+        'source_record_id', 'confidence', 'evidence_at', 'first_observed_at',
+        'last_observed_at', 'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'callout_wallet_observations_profile_fkey',
+        includes: ['FOREIGN KEY', 'platform', 'platform_user_id', 'callout_profiles'],
+      }, {
+        name: 'callout_wallet_observations_observed_check',
+        includes: ['CHECK', 'last_observed_at', 'first_observed_at'],
+      }],
+      indexes: [{
+        name: 'idx_callout_wallet_observations_profile',
+        includes: ['platform', 'platform_user_id', 'last_observed_at'],
+      }, {
+        name: 'idx_callout_wallet_observations_address',
+        includes: ['chain_key', 'address_normalized'],
+      }],
+    }, {
+      table: 'callout_events',
+      columns: [
+        'dedupe_key', 'platform', 'platform_event_id', 'platform_user_id', 'occurred_at',
+        'captured_at', 'asset_address_original', 'asset_address_normalized',
+        'asset_raw_chain_id', 'asset_chain_key', 'asset_chain_family',
+        'asset_resolution_status', 'thesis', 'market_cap', 'source_metadata',
+        'expires_at', 'created_at',
+      ],
+      constraints: [{
+        name: 'callout_events_pkey',
+        includes: ['PRIMARY KEY', 'dedupe_key'],
+      }, {
+        name: 'callout_events_retention_check',
+        includes: ['CHECK', 'expires_at', 'captured_at', '72 hours'],
+      }],
+      indexes: [{
+        name: 'idx_callout_events_platform_event',
+        includes: ['platform', 'platform_event_id'],
+      }, {
+        name: 'idx_callout_events_asset_time',
+        includes: ['asset_chain_key', 'asset_address_normalized', 'occurred_at'],
+      }, {
+        name: 'idx_callout_events_expiry',
+        includes: ['expires_at'],
+      }],
+    }, {
+      table: 'callout_collector_checkpoints',
+      columns: ['collector_key', 'state', 'last_committed_at', 'updated_at'],
+      constraints: [{
+        name: 'callout_collector_checkpoints_state_check',
+        includes: ['CHECK', 'jsonb_typeof', 'state'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

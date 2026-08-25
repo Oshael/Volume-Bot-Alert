@@ -749,7 +749,7 @@ src/
 
 - client e endpoints read-only confirmados;
 - normalização de perfil, wallets e callouts implementada;
-- falta captura contínua por watchlist, cursor e spool comum;
+- captura contínua local por watchlist, cursor e spool comum implementada;
 - Follow externo não faz parte do caminho crítico.
 
 ## Fomo
@@ -757,7 +757,7 @@ src/
 - handshake, challenge, subscribe e thesis do WebSocket confirmados;
 - leaderboards, feed HTTP recente e trade detail confirmados no HAR;
 - wallets Solana/EVM do perfil e wallet usada no trade estão disponíveis;
-- falta captura contínua, lifecycle do JWT e spool comum.
+- captura contínua local, lifecycle do JWT e spool comum implementados.
 
 ---
 
@@ -771,8 +771,8 @@ Não tentar resolver tudo de uma vez.
 leaderboard
 → watchlist interna
 → callouts por perfil + following alerts
-→ spool
-→ PostgreSQL quando disponível
+→ worker da VPS
+→ commit direto no PostgreSQL
 ```
 
 ### Fomo MVP
@@ -782,8 +782,8 @@ leaderboard
 → WebSocket trading_activity
 → feed HTTP de reconciliação
 → trade detail para side wallets
-→ spool
-→ PostgreSQL quando disponível
+→ worker da VPS
+→ commit direto no PostgreSQL
 ```
 
 Depois:
@@ -1004,7 +1004,7 @@ Cada stream mantém separadamente cursor, watermark, última tentativa/sucesso,
 - redaction de segredos;
 - contrato do schema sem aplicar migrations.
 
-## 17.2 Spool NDJSON temporário
+## 17.2 Spool NDJSON local
 
 O envelope do spool deve conter:
 
@@ -1027,17 +1027,17 @@ Requisitos:
 - recuperação que ignore somente a última linha parcial;
 - permissões locais restritas;
 - payload sanitizado;
-- importação paginada e idempotente;
-- arquivo só pode ser arquivado depois de o import confirmar o commit.
+- uso restrito a probes, desenvolvimento e diagnóstico;
+- não participa do caminho normal do worker na VPS.
 
-Downstream, scoring e alertas não consomem diretamente o spool. Eles começam
-somente depois da importação e do commit no PostgreSQL.
+Na VPS, collectors e repositories gravam diretamente no PostgreSQL. O avanço de
+checkpoint deve ocorrer na mesma transação dos eventos e identidades aceitos.
+Downstream, scoring e alertas consomem somente dados já commitados.
 
 ## 17.3 Trabalho adiado até o banco ter folga
 
 - aplicar migrations no PostgreSQL compartilhado;
 - executar testes de integração contra o schema;
-- importar histórico capturado;
 - ligar workers persistentes;
 - criar índices sobre tabelas já volumosas;
 - executar queries analíticas ou scoring histórico;
@@ -1114,24 +1114,25 @@ Escopo estimado: 6–9 arquivos, 350–500 linhas.
   mais lint. Sai quando não depender somente dos perfis seguidos pela conta e
   não repetir callouts após restart.
 
-## Slice 7 — Schema, importador e retenção PostgreSQL
+## Slice 7 — Schema, persistência direta e retenção PostgreSQL
 
 Escopo estimado: múltiplos slices de até 500 linhas.
 
 - **Pré-condição:** janela segura e database de teste isolado.
 - **Entrega:** stage inerte; tabelas/constraints/índices; repositories
-  idempotentes; importador paginado; perfis e wallet observations permanentes;
-  theses/callouts brutos com retenção de 72 horas.
+  idempotentes; perfis e wallet observations permanentes; theses/callouts brutos
+  com retenção de 72 horas; checkpoint transacional para os collectors.
 - **Validação:** integração de replay/conflito/expiração,
-  `db:schema-check:test` e lint. Sai quando reimportar não duplica, falha parcial
-  não confirma spool e retenção não remove identidade histórica.
+  `db:schema-check:test` e lint. Sai quando replay não duplica, falha parcial não
+  avança checkpoint e retenção não remove identidade histórica.
 
 ## Slice 8 — Workers opt-in e operação na VPS
 
 Escopo estimado: múltiplos slices de até 500 linhas.
 
-- **Entrega:** worker group isolado; leases; cursores duráveis; importer;
-  health/freshness; flags; supervisão e runbook de recuperação, sem downstream.
+- **Entrega:** worker group isolado; leases; collectors gravando diretamente via
+  repositories; cursores duráveis; health/freshness; flags; supervisão e runbook
+  de recuperação, sem downstream.
 - **Validação:** worker/lease/commit-cursor, restart e soak. Sai quando Pump e
   Fomo acumulam identidades e teses continuamente após reinício.
 
@@ -1234,7 +1235,6 @@ fixtures
 → probe read-only
 → captura local
 → schema inerte
-→ import controlado
 → worker dry-run
 → worker persistindo sem downstream
 → soak
@@ -1255,7 +1255,7 @@ O plano estará integralmente aplicado quando:
 - perfis e wallet observations forem preservados multichain;
 - redes não suportadas permanecerem consultáveis para enriquecimento futuro;
 - follow externo estiver isolado, limitado e auditável;
-- PostgreSQL for a fonte de verdade depois da importação;
+- PostgreSQL for a fonte de verdade do worker desde o primeiro commit;
 - Robinhood tiver enriquecimento sem acoplar o domínio comum à chain;
 - alertas de callout forem idempotentes e atribuídos à fonte;
 - o gráfico expandido mostrar tese/resumo no ponto temporal correto;
@@ -1283,7 +1283,8 @@ plano, sozinho, não altera o estado operacional atual.
 2. executar Slice 4, identidades e discovery público da Fomo;
 3. executar Slice 5, captura contínua local da Fomo;
 4. executar Slice 6, captura contínua local da Pump;
-5. aguardar janela segura e executar Slice 7 em subslices de schema/importação;
+5. executar Slice 7 em subslices de schema e persistência direta, aplicando o
+   stage somente em janela segura;
 6. executar Slice 8 e fazer soak na VPS sem downstream;
 7. medir amostra e retenção antes de resumos, alertas, enrichment em massa ou
    scoring;

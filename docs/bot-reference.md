@@ -967,8 +967,8 @@ inválida entra em backoff exponencial; o collector não gera nem renova o JWT.
 Leaderboard e feed HTTP continuam independentes da autenticação do socket.
 
 Esse comando ainda não pertence a worker group, não está implantado na VPS e
-seus spools não são fonte de verdade. O limite cheio falha fechado; importação e
-retenção de 72 horas pertencem ao estágio PostgreSQL posterior.
+seus spools não são fonte de verdade. O limite cheio falha fechado; persistência
+direta e retenção de 72 horas pertencem ao worker PostgreSQL posterior.
 
 ### 11.7 Captura local Pump
 
@@ -992,8 +992,14 @@ cada 15 minutos, atividade a cada 60 segundos, cinco perfis por rodada e até
 duas páginas por perfil, sempre sob deadline.
 
 Esse comando não pertence a worker group e não está implantado na VPS. Seus
-spools continuam temporários, com limite fail-closed; importação e retenção de
-72 horas pertencem ao estágio PostgreSQL posterior.
+spools continuam temporários e com limite fail-closed.
+
+O Stage 161 (`node src/utils/db-init-stage161.js`) define a fundação durável de
+Pump/Fomo: perfis permanentes, observações versionadas de wallets, callouts com
+expiração exata de 72 horas e checkpoints dos collectors. O stage é inerte até
+ser aplicado e ainda não existe worker de produção. Na VPS, o fluxo planejado é
+persistência direta pelo worker; os spools locais não serão importados nem serão
+fonte de verdade.
 
 ## 12. Solana
 
