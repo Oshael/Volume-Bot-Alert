@@ -1003,6 +1003,15 @@ mais novo. Redes desconhecidas preservam `rawChainId` e endereço original.
 O stage permanece inerte até ser aplicado; os spools locais não serão importados
 nem serão fonte de verdade.
 
+O Stage 162 (`node src/utils/db-init-stage162.js`) adiciona duas superfícies
+backend permanentes. `callout_thesis_archive` preserva o texto normalizado e sua
+proveniência sem alterar a expiração de 72 horas de `callout_events` nem expor
+uma nova rota. `callout_summary_versions` guarda somente gerações concluídas,
+com mínimo de quatro fontes, snapshot imutável, idioma/provider/model/prompt e
+cadeia explícita de versões sem exclusão em cascata. A política de agrupamento
+não é fixada pelo schema. O stage é inerte até o writer de arquivo e o gerador
+serem ligados em cortes posteriores.
+
 O grupo isolado `callouts` (porta default `3017`) é opt-in por
 `CALLOUT_CAPTURE_ENABLED=true` e inicia Pump e Fomo sob a lease única
 `callout-capture-worker`. Execute com `npm run start:worker:callouts`. Pump

@@ -4441,6 +4441,80 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage162-callout-archive-summaries',
+    name: 'Stage 162 permanent callout archive and summaries',
+    repair: 'node src/utils/db-init-stage162.js',
+    tables: [{
+      table: 'callout_thesis_archive',
+      columns: [
+        'dedupe_key', 'platform', 'platform_event_id', 'platform_user_id',
+        'occurred_at', 'captured_at', 'asset_address_original',
+        'asset_address_normalized', 'asset_raw_chain_id', 'asset_chain_key',
+        'asset_chain_family', 'asset_resolution_status', 'thesis', 'thesis_sha256',
+        'market_cap', 'source_metadata', 'schema_version', 'archived_at',
+      ],
+      constraints: [{
+        name: 'callout_thesis_archive_pkey',
+        includes: ['PRIMARY KEY', 'dedupe_key'],
+      }, {
+        name: 'callout_thesis_archive_profile_fkey',
+        includes: ['FOREIGN KEY', 'platform', 'platform_user_id', 'callout_profiles'],
+      }, {
+        name: 'callout_thesis_archive_hash_check',
+        includes: ['CHECK', 'thesis', 'thesis_sha256'],
+      }],
+      indexes: [{
+        name: 'idx_callout_thesis_archive_platform_event',
+        includes: ['platform', 'platform_event_id'],
+      }, {
+        name: 'idx_callout_thesis_archive_asset_time',
+        includes: [
+          'asset_chain_key', 'asset_address_normalized', 'occurred_at', 'dedupe_key',
+        ],
+      }, {
+        name: 'idx_callout_thesis_archive_profile_time',
+        includes: ['platform', 'platform_user_id', 'occurred_at'],
+      }],
+    }, {
+      table: 'callout_summary_versions',
+      columns: [
+        'summary_key', 'cluster_key', 'version', 'asset_chain_key',
+        'asset_address_normalized', 'window_started_at', 'window_ended_at',
+        'canonical_language', 'summary_text', 'source_count', 'source_fingerprint',
+        'source_snapshot', 'provider', 'model', 'prompt_version',
+        'generation_metadata', 'supersedes_summary_key', 'generated_at', 'created_at',
+      ],
+      constraints: [{
+        name: 'callout_summary_versions_pkey',
+        includes: ['PRIMARY KEY', 'summary_key'],
+      }, {
+        name: 'callout_summary_versions_cluster_version_key',
+        includes: ['UNIQUE', 'cluster_key', 'version'],
+      }, {
+        name: 'callout_summary_versions_supersedes_fkey',
+        includes: ['FOREIGN KEY', 'supersedes_summary_key', 'callout_summary_versions'],
+      }, {
+        name: 'callout_summary_versions_source_count_check',
+        includes: ['CHECK', 'source_count', '4'],
+      }, {
+        name: 'callout_summary_versions_sources_check',
+        includes: ['CHECK', 'jsonb_typeof', 'source_snapshot', 'jsonb_array_length'],
+      }],
+      indexes: [{
+        name: 'idx_callout_summary_versions_successor',
+        includes: ['supersedes_summary_key'],
+      }, {
+        name: 'idx_callout_summary_versions_generation',
+        includes: [
+          'cluster_key', 'source_fingerprint', 'provider', 'model', 'prompt_version',
+        ],
+      }, {
+        name: 'idx_callout_summary_versions_asset_time',
+        includes: ['asset_chain_key', 'asset_address_normalized', 'window_started_at'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

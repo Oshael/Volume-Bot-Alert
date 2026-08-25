@@ -979,12 +979,19 @@ sem ele, usar fingerprint determinístico de campos estáveis, nunca só timesta
 Tese original e resumo derivado são campos distintos. O resumo mantém IDs dos
 callouts de origem, intervalo temporal, versão do summarizer e atribuição aos
 perfis/plataformas. O chart nunca apresenta resumo derivado como texto original.
-Callouts brutos expiram após 72 horas; resumos derivados não possuem expiração
-automática e são preservados permanentemente. Cada versão do resumo carrega uma
+Callouts brutos deixam as superfícies do produto após 72 horas; uma cópia
+normalizada das teses e de sua proveniência permanece em arquivo exclusivamente
+backend para pesquisa, filtros e sinais futuros. Resumos derivados não possuem
+expiração automática e são preservados permanentemente. Cada versão carrega uma
 cópia imutável da proveniência necessária para continuar auditável após a poda
 dos brutos: IDs das calls, perfis, plataformas, timestamps e links de origem.
 Essa relação não usa exclusão em cascata a partir de `callout_events`; uma nova
 geração cria versão adicional ou marca a anterior como substituída, sem apagá-la.
+Um resumo exige ao menos quatro calls do mesmo par `chain + token` e pode combinar
+fontes PUMP e FOMO. A primeira versão canônica é em inglês; idioma, provider,
+modelo e prompt são versionados. A política temporal/semântica da janela não é
+constraint de banco e será calibrada com amostras reais. O primeiro provider de
+teste será Gemini 2.5 Flash-Lite, substituível sem migrar o schema.
 
 JWT, cookies, CSRF, headers de autenticação e sessão nunca entram em payload ou
 logs.
