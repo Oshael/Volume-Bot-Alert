@@ -993,7 +993,9 @@ combinadas em no máximo 100 candidatos. A fila observa o ID do usuário na resp
 seguidos e executa `POST /follows` com concorrência 1, jitter e limite default de
 uma escrita por início do worker. `401`, `403` ou `429` pausam a rodada. Não há
 unfollow automático; autorização Privy observada pelo CDP fica somente em
-memória e nunca entra em status ou log.
+memória e nunca entra em status ou log. Se o reload não emitir a leitura HTTP do
+perfil, a fila obtém a mesma credencial e o UUID da conta exclusivamente dos
+frames WebSocket enviados de `challengeResponse` e `subscribe/trading_activity`.
 
 ### 11.7 Captura local Pump
 

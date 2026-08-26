@@ -104,17 +104,29 @@ async function createFomoBrowserApi(options = {}) {
     if (authSettled && userSettled) clearTimeout(timeout);
   }
 
-  function inspectHeaders(headers) {
+  function settleAuthorization(authorization, supportedChains) {
     if (authSettled) return;
-    const entries = Object.entries(headers || {});
-    const authorization = entries
-      .find(([name]) => name.toLowerCase() === 'authorization')?.[1];
     if (typeof authorization !== 'string' || !/^Bearer\s+\S+$/i.test(authorization)) return;
-    const supportedChains = entries
-      .find(([name]) => name.toLowerCase() === 'x-supported-chains')?.[1];
     authSettled = true;
     resolveAuthContext({ authorization, supportedChains });
     clearCaptureTimeout();
+  }
+
+  function settleCurrentUserId(userId) {
+    const normalized = String(userId || '').trim();
+    if (userSettled || !UUID.test(normalized)) return;
+    userSettled = true;
+    resolveCurrentUserId(normalized);
+    clearCaptureTimeout();
+  }
+
+  function inspectHeaders(headers) {
+    const entries = Object.entries(headers || {});
+    const authorization = entries
+      .find(([name]) => name.toLowerCase() === 'authorization')?.[1];
+    const supportedChains = entries
+      .find(([name]) => name.toLowerCase() === 'x-supported-chains')?.[1];
+    settleAuthorization(authorization, supportedChains);
   }
 
   function inspectRequest(event) {
@@ -132,6 +144,17 @@ async function createFomoBrowserApi(options = {}) {
     if (apiRequestIds.has(event?.requestId)) inspectHeaders(event.headers);
   }
 
+  function inspectWebSocketFrame(event) {
+    let frame;
+    try { frame = JSON.parse(event?.response?.payloadData); } catch { return; }
+    if (frame?.type === 'challengeResponse' && typeof frame.jwt === 'string') {
+      settleAuthorization(`Bearer ${frame.jwt}`);
+    }
+    if (frame?.type === 'subscribe' && frame.topicType === 'trading_activity') {
+      settleCurrentUserId(frame.topicId);
+    }
+  }
+
   async function inspectLoadingFinished(event) {
     if (userSettled || !userRequestIds.delete(event?.requestId)) return;
     try {
@@ -139,17 +162,14 @@ async function createFomoBrowserApi(options = {}) {
       const text = result.base64Encoded
         ? Buffer.from(result.body, 'base64').toString('utf8') : result.body;
       const body = JSON.parse(text);
-      const userId = String(body?.responseObject?.id || '').trim();
-      if (!UUID.test(userId)) return;
-      userSettled = true;
-      resolveCurrentUserId(userId);
-      clearCaptureTimeout();
+      settleCurrentUserId(body?.responseObject?.id);
     } catch {}
   }
 
   cdp.on('Network.requestWillBeSent', inspectRequest);
   cdp.on('Network.requestWillBeSentExtraInfo', inspectExtraInfo);
   cdp.on('Network.loadingFinished', inspectLoadingFinished);
+  cdp.on('Network.webSocketFrameSent', inspectWebSocketFrame);
   await cdp.send('Network.enable');
   timeout = setTimeout(() => {
     if (!authSettled) {
@@ -177,12 +197,14 @@ async function createFomoBrowserApi(options = {}) {
     cdp.off('Network.requestWillBeSent', inspectRequest);
     cdp.off('Network.requestWillBeSentExtraInfo', inspectExtraInfo);
     cdp.off('Network.loadingFinished', inspectLoadingFinished);
+    cdp.off('Network.webSocketFrameSent', inspectWebSocketFrame);
     try { await cdp.detach(); } catch {}
     throw error;
   }
   cdp.off('Network.requestWillBeSent', inspectRequest);
   cdp.off('Network.requestWillBeSentExtraInfo', inspectExtraInfo);
   cdp.off('Network.loadingFinished', inspectLoadingFinished);
+  cdp.off('Network.webSocketFrameSent', inspectWebSocketFrame);
 
   return {
     currentUserId,

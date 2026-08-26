@@ -87,6 +87,36 @@ test('Fomo browser API reuses observed auth and detaches without closing Chrome'
   assert.equal(browserClosed, 0);
 });
 
+test('Fomo browser API falls back to outbound WebSocket auth and account identity', async () => {
+  const cdp = new EventEmitter();
+  cdp.send = async () => ({});
+  cdp.detach = async () => {};
+  let evaluation;
+  const page = new EventEmitter();
+  page.url = () => 'https://fomo.family/alerts';
+  const context = { pages: () => [page], newCDPSession: async () => cdp };
+  page.context = () => context;
+  page.reload = async () => {
+    cdp.emit('Network.webSocketFrameSent', {
+      response: { payloadData: JSON.stringify({ type: 'challengeResponse', jwt: 'ws-token' }) },
+    });
+    cdp.emit('Network.webSocketFrameSent', {
+      response: { payloadData: JSON.stringify({
+        type: 'subscribe', topicType: 'trading_activity', topicId: USER,
+      }) },
+    });
+  };
+  page.evaluate = async (_callback, input) => { evaluation = input; return ok({}); };
+  const browser = { contexts: () => [context] };
+
+  const api = await createFomoBrowserApi({ connectOverCDP: async () => browser });
+  await api.request('/v2/users/current/followingIds');
+  assert.equal(api.currentUserId, USER);
+  assert.equal(evaluation.auth.authorization, 'Bearer ws-token');
+  assert.equal(evaluation.auth.supportedChains, undefined);
+  await api.close();
+});
+
 test('Fomo follow queue plans a dry-run without writing to the account', async () => {
   const fixture = apiFixture({ following: [A] });
   const queue = createFomoBrowserFollowQueue({
