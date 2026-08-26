@@ -1989,6 +1989,11 @@ Objetivo:
 - cursor, checkpoint, lease, retry e retomada idempotente;
 - preservar frontier e ausência explícita de traces.
 
+A Stage 167 estabelece o raw particionado, arestas diretas permanentes e o
+controle retomável do seed. Campanhas congelam candidatos, posições de primeira
+compra, ranges e checkpoint; aplicar a migration não cria partição diária, não
+inicia campanha e não lê o RPC. O cursor LIVE permanece para um corte posterior.
+
 ### Corte D4 — possible bundle shadow
 
 Objetivo:

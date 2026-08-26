@@ -1891,6 +1891,13 @@ continuam fora do escopo. Ainda não existe backfill, worker ou publicação de
 `BUNDLED`. A leitura recusa universos
 acima de 500 mil candidatos para não exceder a memória; esse caso exige um
 planejador paginado antes de continuar.
+Aplique `node src/utils/db-init-stage167.js` antes do futuro writer de funding.
+A migration cria o raw diário `robinhood_native_funding_events`, o resumo
+permanente de arestas diretas e campanhas seed com candidatos/ranges congelados,
+lease e checkpoint. Ela é somente DDL: não cria partições filhas, não inicia
+campanha e não chama RPC. O raw destina-se à retenção de 30 dias; histórico mais
+antigo deve conservar apenas arestas/evidências relevantes. O cursor LIVE e o
+writer ainda não existem nesta etapa.
 A Stage 166 (`node src/utils/db-init-stage166.js`) cria o controle durável do
 catch-up de launch anchors: uma campanha ativa por chain e uma fila por token com
 frontier/hash congelados, lease, retry e resultados terminais. A migration é

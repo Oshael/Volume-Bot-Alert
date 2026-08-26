@@ -4645,6 +4645,109 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage167-robinhood-native-funding-persistence',
+    name: 'Stage 167 Robinhood native funding persistence',
+    repair: 'node src/utils/db-init-stage167.js',
+    tables: [{
+      table: 'robinhood_native_funding_events',
+      columns: [
+        'chain', 'block_number', 'block_hash', 'block_time', 'transaction_hash',
+        'transaction_index', 'from_wallet', 'to_wallet', 'value_wei',
+        'evidence_version', 'created_at',
+      ],
+      constraints: [{
+        name: 'rh_native_funding_events_pkey',
+        includes: ['PRIMARY KEY', 'chain', 'transaction_hash', 'transaction_index', 'block_time'],
+      }, {
+        name: 'rh_native_funding_events_value_check', includes: ['CHECK', 'value_wei'],
+      }],
+      indexes: [{
+        name: 'idx_rh_native_funding_from_time', includes: ['chain', 'from_wallet', 'block_time'],
+      }, {
+        name: 'idx_rh_native_funding_to_time', includes: ['chain', 'to_wallet', 'block_time'],
+      }],
+    }, {
+      table: 'robinhood_native_funding_edges',
+      columns: [
+        'chain', 'from_wallet', 'to_wallet', 'evidence_version',
+        'first_block_number', 'first_block_hash', 'first_block_time',
+        'first_transaction_hash', 'first_transaction_index', 'last_block_number',
+        'last_block_hash', 'last_block_time', 'last_transaction_hash',
+        'last_transaction_index', 'transfer_count', 'total_value_wei', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_native_funding_edges_pkey',
+        includes: ['PRIMARY KEY', 'chain', 'from_wallet', 'to_wallet', 'evidence_version'],
+      }, {
+        name: 'rh_native_funding_edges_value_check',
+        includes: ['CHECK', 'transfer_count', 'total_value_wei'],
+      }],
+      indexes: [{
+        name: 'idx_rh_native_funding_edges_to',
+        includes: ['chain', 'to_wallet', 'evidence_version'],
+      }],
+    }, {
+      table: 'robinhood_bundle_funding_backfill_runs',
+      columns: [
+        'id', 'chain', 'rule_version', 'evidence_version', 'source_from_block',
+        'source_through_block', 'source_through_hash', 'lookback_blocks',
+        'batch_blocks', 'concurrency', 'candidate_count', 'range_count',
+        'blocks_total', 'status', 'started_at', 'finished_at', 'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_bundle_funding_runs_bounds_check',
+        includes: ['source_from_block', 'source_through_block', 'source_through_hash'],
+      }, {
+        name: 'rh_bundle_funding_runs_lifecycle_check',
+        includes: ['planned', 'running', 'completed', 'failed'],
+      }],
+      indexes: [{
+        name: 'idx_rh_bundle_funding_runs_active', includes: ['chain', 'planned', 'running'],
+      }],
+    }, {
+      table: 'robinhood_bundle_funding_backfill_candidates',
+      columns: [
+        'run_id', 'token_address', 'wallet_address', 'launch_block',
+        'first_buy_block', 'first_buy_transaction_index', 'created_at',
+      ],
+      constraints: [{
+        name: 'rh_bundle_funding_candidates_pkey',
+        includes: ['PRIMARY KEY', 'run_id', 'token_address', 'wallet_address'],
+      }, {
+        name: 'rh_bundle_funding_candidates_position_check',
+        includes: ['launch_block', 'first_buy_block', 'first_buy_transaction_index'],
+      }],
+      indexes: [{
+        name: 'idx_rh_bundle_funding_candidates_buy',
+        includes: ['run_id', 'first_buy_block', 'first_buy_transaction_index'],
+      }],
+    }, {
+      table: 'robinhood_bundle_funding_backfill_ranges',
+      columns: [
+        'run_id', 'range_index', 'from_block', 'through_block', 'status',
+        'lease_owner', 'lease_until', 'attempt_count', 'next_attempt_at',
+        'completed_through_hash', 'blocks_scanned', 'native_transfers_scanned',
+        'raw_events_written', 'edges_written', 'last_error_code',
+        'last_error_message', 'started_at', 'completed_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_bundle_funding_ranges_pkey', includes: ['PRIMARY KEY', 'run_id', 'range_index'],
+      }, {
+        name: 'rh_bundle_funding_ranges_lease_check',
+        includes: ['CHECK', 'leased', 'lease_owner', 'lease_until'],
+      }, {
+        name: 'rh_bundle_funding_ranges_terminal_check',
+        includes: ['CHECK', 'completed', 'failed', 'completed_through_hash', 'last_error_code'],
+      }],
+      indexes: [{
+        name: 'idx_rh_bundle_funding_ranges_claim',
+        includes: ['run_id', 'next_attempt_at', 'range_index', 'pending'],
+      }, {
+        name: 'idx_rh_bundle_funding_ranges_lease', includes: ['run_id', 'lease_until', 'leased'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
