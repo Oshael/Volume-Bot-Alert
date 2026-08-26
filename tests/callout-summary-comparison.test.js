@@ -63,6 +63,30 @@ describe('callout summary provider comparison', () => {
       (error) => error.code === 'CALLOUT_SUMMARY_COMPARISON_LIMIT');
   });
 
+  it('keeps every source while marking only clear reactions as sentiment', () => {
+    const input = candidate();
+    input.sources[0].thesis = '👀';
+    input.sources[1].thesis = 'damn this is a runner';
+    input.sources[2].thesis = 'New animal on Tesla site LOL';
+    input.sources[3].thesis = 'If Elon interacts this goes to 10m';
+    const prompt = __private.buildPrompt(input);
+    const encoded = prompt.split('UNTRUSTED_SOURCES_JSON\n')[1]
+      .split('\nEND_UNTRUSTED_SOURCES')[0];
+    const sources = JSON.parse(encoded);
+    assert.equal(sources.length, 4);
+    assert.deepEqual(sources.map(({ signalType }) => signalType), [
+      'reaction', 'reaction', 'informational', 'informational',
+    ]);
+    assert.equal(sources[2].thesis, 'New animal on Tesla site LOL');
+  });
+
+  it('requires neutral attribution without turning claims into facts', () => {
+    assert.match(__private.SYSTEM_PROMPT, /attribute every factual assertion/);
+    assert.match(__private.SYSTEM_PROMPT, /appearance on a website into a company release/);
+    assert.match(__private.SYSTEM_PROMPT, /likely, unlikely/);
+    assert.match(__private.buildPrompt(candidate()), /reaction\s+signals only as aggregate/);
+  });
+
   it('requires both credentials before starting either request', () => {
     let requests = 0;
     assert.throws(() => compareCandidate(candidate(), {
