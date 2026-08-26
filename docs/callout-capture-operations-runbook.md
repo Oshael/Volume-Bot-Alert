@@ -61,11 +61,11 @@ Privy e os frames enviados ao WebSocket, valida customer JWT, refresh e CA ID
 pela identidade da sessão e grava o JWT efetivamente enviado em
 `challengeResponse`. O `topicId` continua sendo coletado manualmente do
 `subscribe` da mesma conta e configurado separadamente.
-Depois fecha o Chrome sem logout. A saída é um
-diretório `0700` temporário contendo os
-dois arquivos de segredo e `callouts.env.fragment` com o CA ID, todos `0600`; nenhum segredo
-é impresso no terminal. O diretório não é instalado nem enviado à VPS
-automaticamente.
+Depois de salvar os três valores, o comando mantém o Chrome aberto para essa
+coleta manual e só o fecha sem logout quando o operador pressiona Enter. A saída
+é um diretório `0700` temporário contendo os dois arquivos de segredo e
+`callouts.env.fragment` com o CA ID, todos `0600`; nenhum segredo é impresso no
+terminal. O diretório não é instalado nem enviado à VPS automaticamente.
 
 ## 2. Instalar env e drop-in
 

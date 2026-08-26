@@ -242,13 +242,22 @@ function progressReporter() {
   };
 }
 
-async function promptForGoogleLogin() {
+async function terminalPrompt(message) {
   const terminal = readline.createInterface({ input: process.stdin, output: process.stdout });
   try {
-    await terminal.question('Faça login no Gmail no Chrome aberto. Quando terminar, pressione Enter aqui... ');
+    await terminal.question(message);
   } finally {
     terminal.close();
   }
+}
+
+async function promptForGoogleLogin() {
+  await terminalPrompt('Faça login no Gmail no Chrome aberto. Quando terminar, pressione Enter aqui... ');
+}
+
+async function waitForManualTopic(question = terminalPrompt) {
+  await question('Os três valores foram salvos. Copie agora o topicId no Chrome; '
+    + 'quando terminar, pressione Enter para fechar sem logout... ');
 }
 
 async function main(argv = process.argv.slice(2)) {
@@ -276,11 +285,12 @@ async function main(argv = process.argv.slice(2)) {
     if (!fomoPage) throw new Error('Chrome did not expose its initial page');
     attachCapture(fomoPage, accumulator, reportProgress);
     await fomoPage.goto(FOMO_URL, { waitUntil: 'domcontentloaded' });
-    console.log('Agora faça login na Fomo com o Google. A captura terminará automaticamente.');
+    console.log('Agora faça login na Fomo com o Google. Os três valores serão capturados automaticamente.');
 
     const capture = await accumulator.wait(options.timeoutMs || DEFAULT_TIMEOUT_MS);
     const outputDir = await writeBundle(options.outputDir, capture);
     console.log(`Captura concluída e validada: ${outputDir}`);
+    await waitForManualTopic();
     console.log('O Chrome isolado será fechado sem logout; nenhum segredo foi impresso.');
   } finally {
     try { await browser?.close(); } catch (_error) {}
@@ -307,5 +317,6 @@ module.exports = {
   parseArgs,
   sessionCapture,
   socketCapture,
+  waitForManualTopic,
   writeBundle,
 };

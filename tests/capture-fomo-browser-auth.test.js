@@ -10,6 +10,7 @@ const {
   createCaptureAccumulator,
   sessionCapture,
   socketCapture,
+  waitForManualTopic,
   writeBundle,
 } = require('../src/utils/capture-fomo-browser-auth');
 
@@ -80,5 +81,13 @@ describe('Fomo browser authentication capture', () => {
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
+  });
+
+  it('waits for manual topic collection before allowing the browser to close', async () => {
+    const prompts = [];
+    await waitForManualTopic(async (message) => { prompts.push(message); });
+    assert.equal(prompts.length, 1);
+    assert.match(prompts[0], /topicId/);
+    assert.match(prompts[0], /pressione Enter/);
   });
 });
