@@ -47,6 +47,11 @@ describe('callout summary provider comparison', () => {
     ]);
     assert.equal(requests[0].options.headers['x-goog-api-key'], 'gemini-secret');
     assert.equal(requests[1].options.headers.authorization, 'Bearer glm-secret');
+    assert.equal(requests[0].url,
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent');
+    assert.equal(requests[1].url, 'https://api.z.ai/api/paas/v4/chat/completions');
+    assert.equal(requests[0].body.generationConfig.maxOutputTokens, 400);
+    assert.equal(requests[1].body.model, 'glm-4.7-flash');
   });
 
   it('rejects undersized and oversized comparisons before calling a provider', () => {

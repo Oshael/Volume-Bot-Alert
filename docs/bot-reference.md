@@ -1097,9 +1097,10 @@ somente para `coinMint` com formato Base58 válido e marca a resolução como
 transação.
 Para comparação manual, `npm run callouts:summaries:compare -- --from=<ISO>
 --to=<ISO> --candidate=0 --output=/tmp/callout-summary-ab.json` exige
-`GEMINI_API_KEY` e `ZAI_API_KEY`. Modelos default: `gemini-2.5-flash-lite` e
+`GEMINI_API_KEY` e `ZAI_API_KEY`. Modelos default: `gemini-3.5-flash-lite` e
 `glm-4.7-flash`, substituíveis por `CALLOUT_GEMINI_MODEL` e
-`CALLOUT_GLM_MODEL`. O report A/B e o arquivo `.key.json` são criados `0600`,
+`CALLOUT_GLM_MODEL`. A GLM usa a API internacional `api.z.ai`; cada provider
+tem timeout de 15 segundos. O report A/B e o arquivo `.key.json` são criados `0600`,
 sem overwrite; nenhuma saída é gravada no PostgreSQL.
 Antes de usar IA, acrescente `--preview` e escolha outro `--output`: o arquivo
 lista todos os candidatos da janela por `candidateIndex`, `chain + token` e suas

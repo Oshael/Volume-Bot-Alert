@@ -1,8 +1,8 @@
 'use strict';
 
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
-const GLM_URL = 'https://open.bigmodel.cn/api/paas/v4/chat/completions';
-const DEFAULT_TIMEOUT_MS = 60_000;
+const GLM_URL = 'https://api.z.ai/api/paas/v4/chat/completions';
+const DEFAULT_TIMEOUT_MS = 15_000;
 const PROMPT_VERSION = 'comparison-v1';
 const MAX_SOURCES = 100;
 const MAX_THESIS_CHARS = 2_000;
@@ -84,7 +84,7 @@ function compareCandidate(candidate, options = {}) {
   const fetchImpl = options.fetchImpl || global.fetch;
   const timeoutMs = options.timeoutMs || DEFAULT_TIMEOUT_MS;
   const prompt = buildPrompt(candidate);
-  const geminiModel = options.geminiModel || 'gemini-2.5-flash-lite';
+  const geminiModel = options.geminiModel || 'gemini-3.5-flash-lite';
   const glmModel = options.glmModel || 'glm-4.7-flash';
   const geminiApiKey = required(
     options.geminiApiKey, 'GEMINI_API_KEY', 'GEMINI_API_KEY is required');
