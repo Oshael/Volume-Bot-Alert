@@ -167,7 +167,11 @@ describe('callout capture production persistence', () => {
     let followOptions;
     let followStarted = 0;
     let followStopped = 0;
-    const repository = { loadCheckpoint: async () => null, commitCapture: async () => {} };
+    const commits = [];
+    const repository = {
+      loadCheckpoint: async (key) => (key === 'fomo:follow' ? { state: { paused: false } } : null),
+      commitCapture: async (input) => commits.push(input),
+    };
     const worker = createCalloutCaptureWorker({
       repository,
       createPumpClient: () => ({}),
@@ -191,6 +195,10 @@ describe('callout capture production persistence', () => {
     });
     assert.equal(followStarted, 1);
     assert.equal(followOptions.cdpEndpoint, 'http://127.0.0.1:9222');
+    assert.deepEqual(await followOptions.stateStore.load(), { paused: false });
+    await followOptions.stateStore.save({ paused: true });
+    assert.equal(commits[0].checkpointKey, 'fomo:follow');
+    assert.deepEqual(commits[0].checkpointState, { paused: true });
     assert.deepEqual(worker.getStatus().fomoFollow, { running: true });
     await worker.stop();
     assert.equal(followStopped, 1);

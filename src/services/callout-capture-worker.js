@@ -77,10 +77,26 @@ function buildFomoCollector(deps, config, persistence, authentication) {
   });
 }
 
-function buildFomoFollowQueue(deps, config) {
+function createFomoFollowStateStore(repository) {
+  const checkpointKey = 'fomo:follow';
+  return {
+    async load() {
+      return (await repository.loadCheckpoint(checkpointKey))?.state || null;
+    },
+    async save(state) {
+      await repository.commitCapture({
+        profileEnvelopes: [], calloutEnvelopes: [], checkpointKey,
+        checkpointState: state, committedAt: new Date(),
+      });
+    },
+  };
+}
+
+function buildFomoFollowQueue(deps, config, repository) {
   if (config.transport !== 'browser_cdp' || !config.follow?.enabled) return null;
   return (deps.createFomoFollowQueue || createFomoBrowserFollowQueue)({
     ...config.follow, cdpEndpoint: config.cdpEndpoint,
+    stateStore: createFomoFollowStateStore(repository),
   });
 }
 
@@ -110,7 +126,7 @@ function createCalloutCaptureWorker(deps = {}) {
     retention = (deps.createRetentionWorker || createCalloutRetentionWorker)({ repository });
     pump = buildPumpCollector(deps, pumpConfig, pumpPersistence);
     fomo = buildFomoCollector(deps, fomoConfig, fomoPersistence, fomoAuthentication);
-    fomoFollow = buildFomoFollowQueue(deps, fomoConfig);
+    fomoFollow = buildFomoFollowQueue(deps, fomoConfig, repository);
     running = true;
     try {
       retention.start(config.retention);

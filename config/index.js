@@ -786,6 +786,9 @@ module.exports = {
         maxFollowsPerRun: parseIntegerInRange(process.env.FOMO_FOLLOW_MAX_PER_RUN, 1, 1, 10),
         delayMs: parseIntegerInRange(process.env.FOMO_FOLLOW_DELAY_SECONDS, 8, 3, 60) * 1000,
         authWaitMs: parseIntegerInRange(process.env.FOMO_FOLLOW_AUTH_WAIT_SECONDS, 60, 10, 300) * 1000,
+        requestTimeoutMs: parseIntegerInRange(
+          process.env.FOMO_FOLLOW_REQUEST_TIMEOUT_SECONDS, 15, 5, 60
+        ) * 1000,
       },
     },
     retention: {

@@ -82,6 +82,7 @@ test('Fomo browser API reuses observed auth and detaches without closing Chrome'
   assert.equal(evaluation.requestPath, '/follows');
   assert.equal(evaluation.auth.authorization, 'Bearer fixture-token');
   assert.equal(evaluation.auth.supportedChains, 'solana');
+  assert.equal(evaluation.timeoutMs, 15_000);
   await api.close();
   assert.equal(detached, 1);
   assert.equal(browserClosed, 0);
@@ -92,6 +93,7 @@ test('Fomo browser API falls back to outbound WebSocket auth and account identit
   cdp.send = async () => ({});
   cdp.detach = async () => {};
   let evaluation;
+  let evaluationError = null;
   const page = new EventEmitter();
   page.url = () => 'https://fomo.family/alerts';
   const context = { pages: () => [page], newCDPSession: async () => cdp };
@@ -106,7 +108,11 @@ test('Fomo browser API falls back to outbound WebSocket auth and account identit
       }) },
     });
   };
-  page.evaluate = async (_callback, input) => { evaluation = input; return ok({}); };
+  page.evaluate = async (_callback, input) => {
+    if (evaluationError) throw evaluationError;
+    evaluation = input;
+    return ok({});
+  };
   const browser = { contexts: () => [context] };
 
   const api = await createFomoBrowserApi({ connectOverCDP: async () => browser });
@@ -114,6 +120,10 @@ test('Fomo browser API falls back to outbound WebSocket auth and account identit
   assert.equal(api.currentUserId, USER);
   assert.equal(evaluation.auth.authorization, 'Bearer ws-token');
   assert.equal(evaluation.auth.supportedChains, undefined);
+  evaluationError = Object.assign(new Error('signal timed out'), { name: 'TimeoutError' });
+  await assert.rejects(api.request('/follows'), (error) => (
+    error.code === 'FOMO_FOLLOW_REQUEST_TIMEOUT'
+  ));
   await api.close();
 });
 
@@ -150,7 +160,7 @@ test('Fomo follow queue discovers Top Profits candidates in dry-run without writ
   assert.deepEqual(queue.getStatus(), {
     enabled: true, dryRun: true, discoveryEnabled: true, running: false,
     discovered: 3, planned: 2, followed: 0, alreadyFollowed: 1,
-    errors: 0, paused: false, lastErrorCode: null,
+    errors: 0, paused: false, pausePersisted: false, pausedAt: null, lastErrorCode: null,
     completedAt: queue.getStatus().completedAt,
   });
 });
@@ -192,16 +202,58 @@ test('Fomo follow queue writes one allowlisted follow sequentially and idempoten
   assert.equal(queue.getStatus().planned, 2);
 });
 
-test('Fomo follow queue pauses immediately when account writes receive 403', async () => {
-  const fixture = apiFixture({ followStatus: 403 });
+test('Fomo follow queue durably pauses immediately on any failed account write', async () => {
+  const fixture = apiFixture({ followStatus: 500 });
+  const saved = [];
   const queue = createFomoBrowserFollowQueue({
     enabled: true, dryRun: false, profileIds: [A, B], maxFollowsPerRun: 10,
     wait: async () => {}, createBrowserApi: async () => fixture.api,
+    stateStore: { load: async () => null, save: async (state) => saved.push(state) },
   });
 
   queue.start();
   await queue.stop();
   assert.equal(fixture.calls.filter((call) => call.path === '/follows').length, 1);
   assert.equal(queue.getStatus().paused, true);
-  assert.equal(queue.getStatus().lastErrorCode, 'FOMO_FOLLOW_HTTP_403');
+  assert.equal(queue.getStatus().pausePersisted, true);
+  assert.equal(queue.getStatus().lastErrorCode, 'FOMO_FOLLOW_HTTP_500');
+  assert.deepEqual(saved[0], {
+    paused: true, pausedAt: queue.getStatus().pausedAt,
+    lastErrorCode: 'FOMO_FOLLOW_HTTP_500',
+  });
+});
+
+test('Fomo follow queue persists timeouts and does not attempt a write', async () => {
+  const saved = [];
+  const timeout = Object.assign(new Error('timeout'), { code: 'FOMO_FOLLOW_AUTH_TIMEOUT' });
+  const queue = createFomoBrowserFollowQueue({
+    enabled: true, dryRun: false, profileIds: [A],
+    createBrowserApi: async () => { throw timeout; },
+    stateStore: { load: async () => null, save: async (state) => saved.push(state) },
+  });
+
+  queue.start();
+  await queue.stop();
+  assert.equal(queue.getStatus().paused, true);
+  assert.equal(queue.getStatus().lastErrorCode, 'FOMO_FOLLOW_AUTH_TIMEOUT');
+  assert.equal(saved.length, 1);
+});
+
+test('Fomo follow queue honors a durable pause without opening the browser', async () => {
+  let browserCreations = 0;
+  const queue = createFomoBrowserFollowQueue({
+    enabled: true, dryRun: false, profileIds: [A],
+    createBrowserApi: async () => { browserCreations += 1; },
+    stateStore: { load: async () => ({
+      paused: true, pausedAt: '2026-08-26T18:00:00.000Z',
+      lastErrorCode: 'FOMO_FOLLOW_HTTP_429',
+    }), save: async () => {} },
+  });
+
+  queue.start();
+  await queue.stop();
+  assert.equal(browserCreations, 0);
+  assert.equal(queue.getStatus().paused, true);
+  assert.equal(queue.getStatus().pausePersisted, true);
+  assert.equal(queue.getStatus().lastErrorCode, 'FOMO_FOLLOW_HTTP_429');
 });

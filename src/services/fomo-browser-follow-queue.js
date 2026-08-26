@@ -5,7 +5,6 @@ const { isFomoPage, normalizeCdpEndpoint } = require('./fomo-browser-activity-st
 
 const API_ORIGIN = 'https://prod-api.fomo.family';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const PAUSE_STATUSES = new Set([401, 403, 429]);
 
 function normalizeProfileIds(values, max = 100) {
   const unique = [...new Set((Array.isArray(values) ? values : [])
@@ -33,7 +32,6 @@ function requireSuccess(response, phase) {
   if (status === 200) return responseObject(response);
   const error = new Error(`Fomo follow ${phase} failed`);
   error.code = `FOMO_FOLLOW_HTTP_${status || 'UNKNOWN'}`;
-  error.pause = PAUSE_STATUSES.has(status);
   throw error;
 }
 
@@ -77,6 +75,7 @@ async function createFomoBrowserApi(options = {}) {
   const endpoint = normalizeCdpEndpoint(options.cdpEndpoint);
   const connectOverCDP = options.connectOverCDP || ((url) => chromium.connectOverCDP(url));
   const authWaitMs = positiveInteger(options.authWaitMs, 60_000, 5 * 60_000);
+  const requestTimeoutMs = positiveInteger(options.requestTimeoutMs, 15_000, 60_000);
   const browser = await connectOverCDP(endpoint);
   const pages = browser.contexts().flatMap((context) => context.pages());
   const page = pages.find(isFomoPage);
@@ -209,20 +208,31 @@ async function createFomoBrowserApi(options = {}) {
   return {
     currentUserId,
     async request(path, init = {}) {
-      return page.evaluate(async ({ apiOrigin, auth, requestPath, requestInit }) => {
-        const headers = { 'Content-Type': 'application/json', Authorization: auth.authorization };
-        if (auth.supportedChains) headers['X-Supported-Chains'] = auth.supportedChains;
-        const response = await fetch(`${apiOrigin}${requestPath}`, {
-          method: requestInit.method || 'GET',
-          credentials: 'include',
-          headers,
-          body: requestInit.body ? JSON.stringify(requestInit.body) : undefined,
+      try {
+        return await page.evaluate(async ({ apiOrigin, auth, requestPath, requestInit, timeoutMs }) => {
+          const headers = { 'Content-Type': 'application/json', Authorization: auth.authorization };
+          if (auth.supportedChains) headers['X-Supported-Chains'] = auth.supportedChains;
+          const response = await fetch(`${apiOrigin}${requestPath}`, {
+            method: requestInit.method || 'GET',
+            credentials: 'include',
+            headers,
+            body: requestInit.body ? JSON.stringify(requestInit.body) : undefined,
+            signal: AbortSignal.timeout(timeoutMs),
+          });
+          const text = await response.text();
+          let body = null;
+          try { body = JSON.parse(text); } catch {}
+          return { status: response.status, body };
+        }, {
+          apiOrigin: API_ORIGIN, auth: authContext, requestPath: path,
+          requestInit: init, timeoutMs: requestTimeoutMs,
         });
-        const text = await response.text();
-        let body = null;
-        try { body = JSON.parse(text); } catch {}
-        return { status: response.status, body };
-      }, { apiOrigin: API_ORIGIN, auth: authContext, requestPath: path, requestInit: init });
+      } catch (error) {
+        const requestError = new Error('Fomo browser request failed');
+        requestError.code = /timeout|timed out/i.test(String(error?.name || error?.message))
+          ? 'FOMO_FOLLOW_REQUEST_TIMEOUT' : 'FOMO_FOLLOW_REQUEST';
+        throw requestError;
+      }
     },
     async close() {
       try { await cdp.detach(); } catch {}
@@ -241,17 +251,34 @@ function createFomoBrowserFollowQueue(options = {}) {
   const random = options.random || Math.random;
   const wait = options.wait || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const createBrowserApi = options.createBrowserApi || createFomoBrowserApi;
+  const stateStore = options.stateStore || { load: async () => null, save: async () => {} };
   let running = false;
   let work = null;
   const status = {
     enabled, dryRun, discoveryEnabled, running: false, discovered: 0,
     planned: 0, followed: 0, alreadyFollowed: 0,
-    errors: 0, paused: false, lastErrorCode: null, completedAt: null,
+    errors: 0, paused: false, pausePersisted: false, pausedAt: null,
+    lastErrorCode: null, completedAt: null,
   };
 
   function fail(error, code) {
     status.errors += 1;
     status.lastErrorCode = String(error?.code || code || 'FOMO_FOLLOW_ERROR');
+  }
+
+  async function pause(error, code) {
+    if (!status.paused) fail(error, code);
+    status.paused = true;
+    status.pausedAt ||= new Date().toISOString();
+    try {
+      await stateStore.save({
+        paused: true, pausedAt: status.pausedAt, lastErrorCode: status.lastErrorCode,
+      });
+      status.pausePersisted = true;
+    } catch {
+      status.errors += 1;
+      status.pausePersisted = false;
+    }
   }
 
   async function writePending(api, userId, pending) {
@@ -262,8 +289,8 @@ function createFomoBrowserFollowQueue(options = {}) {
       });
       const code = responseStatus(response);
       if (code === 200) { status.followed += 1; continue; }
-      fail(null, `FOMO_FOLLOW_HTTP_${code || 'UNKNOWN'}`);
-      if (PAUSE_STATUSES.has(code)) { status.paused = true; break; }
+      await pause(null, `FOMO_FOLLOW_HTTP_${code || 'UNKNOWN'}`);
+      break;
     }
   }
 
@@ -271,7 +298,19 @@ function createFomoBrowserFollowQueue(options = {}) {
     if (!enabled || (profileIds.length === 0 && !discoveryEnabled)) return;
     let api;
     try {
-      api = await createBrowserApi({ cdpEndpoint: options.cdpEndpoint, authWaitMs: options.authWaitMs });
+      const saved = await stateStore.load();
+      if (saved?.paused === true) {
+        status.paused = true;
+        status.pausePersisted = true;
+        status.pausedAt = saved.pausedAt || null;
+        status.lastErrorCode = saved.lastErrorCode || 'FOMO_FOLLOW_PAUSED';
+        return;
+      }
+      api = await createBrowserApi({
+        cdpEndpoint: options.cdpEndpoint,
+        authWaitMs: options.authWaitMs,
+        requestTimeoutMs: options.requestTimeoutMs,
+      });
       const plan = await readFollowPlan(api, profileIds, { discoveryEnabled, discoveryLimit });
       status.discovered = plan.discovered;
       status.alreadyFollowed = plan.alreadyFollowed;
@@ -279,8 +318,7 @@ function createFomoBrowserFollowQueue(options = {}) {
       if (dryRun) return;
       await writePending(api, plan.userId, plan.pending);
     } catch (error) {
-      status.paused = status.paused || error?.pause === true;
-      fail(error);
+      await pause(error);
     } finally {
       await api?.close?.();
       status.completedAt = new Date().toISOString();

@@ -996,6 +996,18 @@ unfollow automático; autorização Privy observada pelo CDP fica somente em
 memória e nunca entra em status ou log. Se o reload não emitir a leitura HTTP do
 perfil, a fila obtém a mesma credencial e o UUID da conta exclusivamente dos
 frames WebSocket enviados de `challengeResponse` e `subscribe/trading_activity`.
+Toda chamada da fila possui timeout configurável por
+`FOMO_FOLLOW_REQUEST_TIMEOUT_SECONDS` (default 15). Qualquer timeout, exceção ou
+status diferente de 200 pausa a fila imediatamente e persiste o circuito aberto
+no checkpoint `fomo:follow`; reiniciar o worker não libera novos follows. A
+captura de callouts permanece independente. Depois de diagnosticar a causa, a
+retomada exige desabilitar o follow e remover explicitamente somente esse
+checkpoint antes de reabilitá-lo.
+
+Para retomar: configure `FOMO_FOLLOW_ENABLED=false`, reinicie o worker, investigue
+`lastErrorCode` e então execute
+`DELETE FROM callout_collector_checkpoints WHERE collector_key = 'fomo:follow';`.
+Somente depois reabilite o follow. Não remova outros checkpoints.
 
 ### 11.7 Captura local Pump
 

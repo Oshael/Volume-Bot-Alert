@@ -188,6 +188,7 @@ describe('runtime worker groups config', () => {
     assert.equal(config.transport, 'browser_cdp');
     assert.equal(config.cdpEndpoint, 'http://127.0.0.1:9222');
     assert.equal(config.follow.dryRun, true);
+    assert.equal(config.follow.requestTimeoutMs, 15_000);
   });
 
   it('requires an allowlist before enabling live Fomo follow writes', () => {
