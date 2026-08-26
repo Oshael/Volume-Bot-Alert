@@ -29,15 +29,19 @@ function jwtSessionIdentity(value) {
   }
 }
 
-function sessionCapture(body, headers = {}) {
+function sessionCapture(body) {
   const privyAccessToken = body?.privy_access_token;
   const appToken = isJwt(body?.token) ? body.token : null;
   const refreshToken = body?.refresh_token;
+  if (!isJwt(privyAccessToken)
+    || typeof refreshToken !== 'string' || !refreshToken.trim()) return null;
+  return { privyAccessToken, appToken, refreshToken: refreshToken.trim() };
+}
+
+function caIdCapture(headers = {}) {
   const caId = Object.entries(headers)
     .find(([key]) => key.toLowerCase() === 'privy-ca-id')?.[1];
-  if (!isJwt(privyAccessToken) || typeof refreshToken !== 'string' || !refreshToken.trim()
-    || typeof caId !== 'string' || !caId.trim()) return null;
-  return { privyAccessToken, appToken, refreshToken: refreshToken.trim(), caId: caId.trim() };
+  return typeof caId === 'string' && caId.trim() ? caId.trim() : null;
 }
 
 function socketCapture(raw) {
@@ -56,10 +60,11 @@ function socketCapture(raw) {
 function createCaptureAccumulator() {
   let session = null;
   let socketAccessToken = null;
+  let caId = null;
   const waiters = new Set();
 
   function snapshot() {
-    if (!session || !socketAccessToken) return null;
+    if (!session || !socketAccessToken || !caId) return null;
     const privyIdentity = jwtSessionIdentity(session.privyAccessToken);
     const socketIdentity = jwtSessionIdentity(socketAccessToken);
     const sameSession = session.appToken
@@ -70,7 +75,7 @@ function createCaptureAccumulator() {
     return {
       accessToken: socketAccessToken,
       refreshToken: session.refreshToken,
-      caId: session.caId,
+      caId,
     };
   }
 
@@ -90,9 +95,14 @@ function createCaptureAccumulator() {
       if (value?.accessToken) socketAccessToken = value.accessToken;
       notify();
     },
+    acceptCaId(value) {
+      if (value) caId = value;
+      notify();
+    },
     getSnapshot: snapshot,
     getStatus: () => ({
       privySession: Boolean(session),
+      caId: Boolean(caId),
       websocketJwt: Boolean(socketAccessToken),
       sessionMatched: Boolean(snapshot()),
     }),
@@ -212,12 +222,23 @@ async function writeBundle(outputDir, capture) {
 }
 
 function attachCapture(page, accumulator, onProgress = () => {}) {
+  page.on('request', async (request) => {
+    let url;
+    try { url = new URL(request.url()); } catch (_error) { return; }
+    if (url.origin !== 'https://auth.privy.io') return;
+    try {
+      accumulator.acceptCaId(caIdCapture(await request.allHeaders()));
+      onProgress(accumulator.getStatus());
+    } catch (_error) {}
+  });
   page.on('response', async (response) => {
-    if (response.url() !== SESSION_URL || response.request().method() !== 'POST') return;
+    let url;
+    try { url = new URL(response.url()); } catch (_error) { return; }
+    if (`${url.origin}${url.pathname}` !== SESSION_URL
+      || response.request().method() !== 'POST') return;
     try {
       const body = await response.json();
-      const headers = await response.request().allHeaders();
-      accumulator.acceptSession(sessionCapture(body, headers));
+      accumulator.acceptSession(sessionCapture(body));
       onProgress(accumulator.getStatus());
     } catch (_error) {}
   });
@@ -237,6 +258,7 @@ function progressReporter() {
     if (current === last) return;
     last = current;
     console.log(`[captura] Privy=${status.privySession ? 'ok' : '...'} `
+      + `CA=${status.caId ? 'ok' : '...'} `
       + `JWT-WS=${status.websocketJwt ? 'ok' : '...'} `
       + `sessão=${status.sessionMatched ? 'validada' : 'aguardando'}`);
   };
@@ -310,6 +332,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  caIdCapture,
   chromeArgs,
   createCaptureAccumulator,
   isJwt,

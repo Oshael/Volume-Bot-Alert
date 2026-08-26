@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { describe, it } = require('node:test');
 const {
+  caIdCapture,
   chromeArgs,
   createCaptureAccumulator,
   sessionCapture,
@@ -29,9 +30,10 @@ describe('Fomo browser authentication capture', () => {
     const appToken = jwt('fomo-app');
     assert.deepEqual(sessionCapture({
       token: appToken, privy_access_token: privyAccessToken, refresh_token: 'refresh',
-    }, { 'privy-ca-id': 'privy:caid' }), {
-      privyAccessToken, appToken, refreshToken: 'refresh', caId: 'privy:caid',
+    }), {
+      privyAccessToken, appToken, refreshToken: 'refresh',
     });
+    assert.equal(caIdCapture({ 'Privy-Ca-Id': 'privy:caid' }), 'privy:caid');
   });
 
   it('completes only when the session and WebSocket JWT belong together', async () => {
@@ -39,8 +41,9 @@ describe('Fomo browser authentication capture', () => {
     const accumulator = createCaptureAccumulator();
     accumulator.acceptSession({
       privyAccessToken: jwt('privy-access'), appToken: accessToken,
-      refreshToken: 'refresh', caId: 'ca-id',
+      refreshToken: 'refresh',
     });
+    accumulator.acceptCaId('ca-id');
     accumulator.acceptSocket(socketCapture(JSON.stringify({
       type: 'challengeResponse', jwt: jwt('stale'),
     })));
@@ -59,8 +62,9 @@ describe('Fomo browser authentication capture', () => {
     const accumulator = createCaptureAccumulator();
     accumulator.acceptSession({
       privyAccessToken: jwt('privy-access'), appToken: null,
-      refreshToken: 'refresh', caId: 'ca-id',
+      refreshToken: 'refresh',
     });
+    accumulator.acceptCaId('ca-id');
     accumulator.acceptSocket({ accessToken: jwt('fomo-app') });
     assert.equal(accumulator.getSnapshot().accessToken, jwt('fomo-app'));
   });

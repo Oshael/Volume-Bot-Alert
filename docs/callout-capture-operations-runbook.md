@@ -57,7 +57,8 @@ No Mac, `npm run fomo:auth-capture` automatiza essa coleta. O comando abre um
 perfil temporário isolado em Chrome normal para o Google; após concluir o login
 do Gmail, confirme no terminal. O processo fecha essa primeira janela e reabre o
 mesmo perfil instrumentado somente para o login Fomo. Ele observa a resposta
-Privy e os frames enviados ao WebSocket, valida customer JWT, refresh e CA ID
+Privy e os frames enviados ao WebSocket, captura o CA ID separadamente dos
+headers das requisições Privy e valida customer JWT, refresh e CA ID
 pela identidade da sessão e grava o JWT efetivamente enviado em
 `challengeResponse`. O `topicId` continua sendo coletado manualmente do
 `subscribe` da mesma conta e configurado separadamente.
