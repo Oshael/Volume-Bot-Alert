@@ -184,6 +184,65 @@ function createRobinhoodLaunchAnchorBackfillRepository(options = {}) {
     }
   }
 
+  async function loadRunPlan(runIdValue) {
+    const runId = integer(runIdValue, 'runId');
+    const run = (await query(
+      `SELECT id, status, source_through_block::text, target_count
+         FROM robinhood_launch_anchor_backfill_runs
+        WHERE id = $1 AND chain = $2`, [runId, CHAIN]
+    )).rows[0];
+    if (!run) throw new Error('launch-anchor backfill run was not found');
+    if (!['running', 'completed'].includes(run.status)) {
+      throw new Error(`launch-anchor backfill run cannot resume from ${run.status}`);
+    }
+    const rows = (await query(
+      `SELECT token_address, first_pool_block::text, source_through_block::text,
+              source_through_hash
+         FROM robinhood_launch_anchor_backfill_targets
+        WHERE run_id = $1 AND chain = $2 AND status = 'pending'
+        ORDER BY token_address`, [runId, CHAIN]
+    )).rows;
+    return Object.freeze({
+      ready: true, reason: null, runId: String(run.id), status: run.status,
+      sourceThroughBlock: run.source_through_block, unavailableWithoutPool: 0,
+      targets: Object.freeze(rows.map(normalizeTarget)),
+    });
+  }
+
+  async function getProgress(runIdValue) {
+    const runId = integer(runIdValue, 'runId');
+    const row = (await query(
+      `SELECT run.status, run.target_count, run.started_at, run.finished_at,
+              COUNT(*) FILTER (WHERE target.status = 'pending') AS pending,
+              COUNT(*) FILTER (WHERE target.status = 'leased') AS leased,
+              COUNT(*) FILTER (WHERE target.status = 'completed') AS completed,
+              COUNT(*) FILTER (WHERE target.status = 'unavailable') AS unavailable,
+              COUNT(*) FILTER (WHERE target.status = 'failed') AS failed,
+              COALESCE(SUM(target.anchors_written), 0) AS anchors_written
+         FROM robinhood_launch_anchor_backfill_runs run
+         LEFT JOIN robinhood_launch_anchor_backfill_targets target
+           ON target.run_id = run.id
+        WHERE run.id = $1 AND run.chain = $2 GROUP BY run.id`, [runId, CHAIN]
+    )).rows[0];
+    if (!row) return null;
+    const total = Number(row.target_count);
+    const completed = Number(row.completed);
+    const unavailable = Number(row.unavailable);
+    const failed = Number(row.failed);
+    const terminal = completed + unavailable + failed;
+    const elapsedSeconds = row.started_at ? Math.max(0.001, (
+      new Date(row.finished_at || Date.now()) - new Date(row.started_at)
+    ) / 1000) : 0.001;
+    const remaining = Math.max(0, total - terminal);
+    return Object.freeze({
+      status: row.status, total, pending: Number(row.pending), leased: Number(row.leased),
+      completed, unavailable, failed, anchorsWritten: Number(row.anchors_written),
+      progressPct: total ? Number(((terminal / total) * 100).toFixed(2)) : 100,
+      elapsedSeconds: Math.ceil(elapsedSeconds),
+      etaSeconds: terminal ? Math.ceil((elapsedSeconds * remaining) / terminal) : null,
+    });
+  }
+
   async function materializeBatch(input = {}) {
     const runId = integer(input.runId, 'runId');
     const limit = integer(input.limit ?? 500, 'limit', 1, 5_000);
@@ -282,7 +341,9 @@ function createRobinhoodLaunchAnchorBackfillRepository(options = {}) {
     }
   }
 
-  return Object.freeze({ loadPlan, probeTargets, createRun, materializeBatch });
+  return Object.freeze({
+    loadPlan, loadRunPlan, probeTargets, createRun, materializeBatch, getProgress,
+  });
 }
 
 module.exports = {

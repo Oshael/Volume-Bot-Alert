@@ -1890,7 +1890,12 @@ somente DDL; não seleciona tokens, não lê swaps e não inicia o backfill. O r
 PostgreSQL já seleciona somente gaps live cobertos, amostra batches distribuídos
 pela população e recusa projeção acima de cinco horas. A materialização reclama
 tokens com `SKIP LOCKED` e commita anchors, targets e conclusão atomicamente. O
-comando operacional ainda precisa ser entregue antes de usar a fila em produção.
+comando `npm run robinhood:launch-anchor-backfill` é read-only por padrão; repita
+o mesmo comando com `-- --apply` somente após `approved=true`. Use
+`--run-id=<id> --apply` para retomar a campanha impressa no início da execução.
+Os limites ajustáveis são `--batch-size`, `--concurrency`, `--samples`,
+`--max-hours` (máximo 5) e `--statement-timeout-ms`; timeout PostgreSQL reduz o
+batch automaticamente até 10 tokens, e cada batch permanece atômico.
 A Stage 149 introduz
 `robinhood_wallet_token_first_buys`, fonte neutra e reutilizável para ordem por
 token e recorrência por wallet. Aplique `node src/utils/db-init-stage149.js` antes

@@ -1963,7 +1963,9 @@ queries de backfill.
 O repository seleciona somente gaps live cobertos pela projeção de first-buy,
 amostra o mesmo lookup PostgreSQL usado na escrita e recusa planos acima de cinco
 horas. Cada batch reclama tokens com `SKIP LOCKED`, materializa anchors em conjunto
-e fecha targets e campanha atomicamente; o comando operacional permanece pendente.
+e fecha targets e campanha atomicamente. O comando operacional é read-only por
+padrão, exige `--apply`, imprime o `run-id`, permite retomada e reduz batches que
+excedam o statement timeout sem relaxar o teto aprovado de cinco horas.
 
 ### Corte D2 — reader e preflight do RPC Archive
 

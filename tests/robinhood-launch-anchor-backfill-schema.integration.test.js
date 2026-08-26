@@ -144,6 +144,7 @@ describe('Robinhood launch-anchor backfill control schema integration', () => {
         targets: [{ tokenAddress: BACKFILL_TOKEN, firstPoolBlock: '100',
           sourceThroughBlock: '200', sourceThroughHash: HASH }] },
     });
+    assert.equal((await repository.loadRunPlan(run.id)).targets.length, 1);
     const result = await repository.materializeBatch({
       runId: run.id, owner: 'integration', limit: 10, leaseMs: 10_000,
     });
@@ -154,5 +155,6 @@ describe('Robinhood launch-anchor backfill control schema integration', () => {
       `SELECT launch_block::text FROM robinhood_token_launch_anchors
         WHERE token_address = $1`, [BACKFILL_TOKEN]
     )).rows, [{ launch_block: '101' }]);
+    assert.equal((await repository.getProgress(run.id)).progressPct, 100);
   });
 });
