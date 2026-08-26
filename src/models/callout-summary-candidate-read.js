@@ -4,7 +4,7 @@ const crypto = require('node:crypto');
 const db = require('./db');
 
 const MIN_WINDOW_MS = 10 * 60 * 1000;
-const MAX_WINDOW_MS = 30 * 60 * 1000;
+const MAX_WINDOW_MS = 20 * 60 * 1000;
 const MIN_SOURCE_COUNT = 4;
 const DEFAULT_SOURCE_LIMIT = 5_000;
 const MAX_SOURCE_LIMIT = 10_000;
@@ -60,7 +60,7 @@ function normalizeWindow(input = {}) {
   const durationMs = to.getTime() - from.getTime();
   if (durationMs < MIN_WINDOW_MS || durationMs > MAX_WINDOW_MS) {
     throw taggedError('INVALID_CALLOUT_SUMMARY_WINDOW',
-      'summary window must be between 10 and 30 minutes');
+      'summary window must be between 10 and 20 minutes');
   }
   return Object.freeze({
     from: from.toISOString(), to: to.toISOString(), durationMs,

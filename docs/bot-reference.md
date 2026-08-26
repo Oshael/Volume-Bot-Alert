@@ -1084,7 +1084,7 @@ incompatíveis já arquivados; colisões de identidade impedem o avanço do curs
 O SHA-256 do texto permite detectar mudanças sem expor seu conteúdo em
 telemetria. O gerador permanece desligado até um corte posterior.
 O reader interno `callout-summary-candidate-read` aceita somente janelas
-explícitas de 10–30 minutos e agrupa o arquivo por `chain + token`, exigindo ao
+explícitas de 10–20 minutos e agrupa o arquivo por `chain + token`, exigindo ao
 menos quatro teses e permitindo mistura PUMP/FOMO. Ele gera chaves e fingerprint
 determinísticos para os cortes de comparação/geração seguintes, aplica timeout
 curto e falha se o limite configurado produzir uma leitura parcial. Não escolhe
@@ -1100,7 +1100,12 @@ Para comparação manual, `npm run callouts:summaries:compare -- --from=<ISO>
 `GEMINI_API_KEY` e `ZAI_API_KEY`. Modelos default: `gemini-3.5-flash-lite` e
 `glm-4.7-flash`, substituíveis por `CALLOUT_GEMINI_MODEL` e
 `CALLOUT_GLM_MODEL`. A GLM usa a API internacional `api.z.ai`; cada provider
-tem timeout de 15 segundos. O report A/B e o arquivo `.key.json` são criados `0600`,
+tem timeout de 30 segundos. O prompt `comparison-v2` conserva todas as fontes,
+marca somente reações inequívocas como `reaction` e permite que elas expressem
+sentimento agregado, mas não evidência factual. Toda alegação, projeção,
+condição, target, catalisador e risco deve permanecer atribuído aos callers,
+sem o modelo julgar veracidade ou probabilidade nem ampliar o sentido original.
+O report A/B e o arquivo `.key.json` são criados `0600`,
 sem overwrite; nenhuma saída é gravada no PostgreSQL.
 Antes de usar IA, acrescente `--preview` e escolha outro `--output`: o arquivo
 lista todos os candidatos da janela por `candidateIndex`, `chain + token` e suas

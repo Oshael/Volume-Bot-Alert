@@ -1207,7 +1207,7 @@ Escopo estimado: múltiplos slices backend/frontend de até 500 linhas.
   expandido; agrupamento visual por candle; lista de perfis/wallets com compra
   Robinhood comprovada; estados visuais distintos para `callout`, `wallet
   action` e `correlated`. Em etapa posterior, agrupamento semântico adaptativo de
-  teses em janelas de 10–30 minutos e resumo derivado com links/IDs das fontes.
+  teses em janelas de 10–20 minutos e resumo derivado com links/IDs das fontes.
 - **Validação:** testes backend do contrato, menor teste frontend afetado,
   `npm run lint` e `npm --prefix frontend run build`. Sai quando nenhum callout
   é exibido como compra sem evidência on-chain.
@@ -1229,7 +1229,7 @@ do candle e em verde, com perfil/avatar, origem, wallet observada e scope do
 vínculo. A superfície mantém `wallet_action` e `not_evaluated` explícitos; não
 infere correlação com nenhuma tese e revela quando a página de 200 foi truncada.
 O sub-slice 11E adiciona o reader backend de candidatos a resumo. Ele recebe uma
-janela explícita de 10–30 minutos, lê o arquivo permanente, agrupa exclusivamente
+janela explícita de 10–20 minutos, lê o arquivo permanente, agrupa exclusivamente
 por `chain + token`, combina PUMP e FOMO e retorna apenas grupos com quatro ou
 mais teses. Cluster e snapshot possuem fingerprints determinísticos; estouro do
 limite de fontes falha sem produzir amostra parcial. A política que escolhe e
@@ -1258,7 +1258,7 @@ sujeito a aprovação após a avaliação.
   bucket pelo intervalo do candle exibido, pois trocar de 5m para 1h deve
   reagrupar imediatamente os mesmos eventos sem nova semântica de persistência;
 - esta primeira versão não chama IA e não substitui as teses por resumos. O
-  desenho do resumo de 10–30 minutos será aprovado separadamente após existir
+  desenho do resumo de 10–20 minutos será aprovado separadamente após existir
   amostra suficiente, sem apagar acesso aos eventos e links de origem;
 - a superfície respeita a retenção vigente: callouts brutos expirados após 72
   horas não aparecem em ranges históricos mais antigos. Resumos já produzidos

@@ -26,13 +26,13 @@ function row(index, overrides = {}) {
 }
 
 describe('callout summary candidate reader', () => {
-  it('requires an explicit window between 10 and 30 minutes', () => {
+  it('requires an explicit window between 10 and 20 minutes', () => {
     assert.equal(__private.normalizeWindow({ from: FROM, to: TO }).durationMs, 20 * 60_000);
     assert.throws(() => __private.normalizeWindow({
       from: FROM, to: '2026-08-25T14:09:59.000Z',
     }), (error) => error.code === 'INVALID_CALLOUT_SUMMARY_WINDOW');
     assert.throws(() => __private.normalizeWindow({
-      from: FROM, to: '2026-08-25T14:30:01.000Z',
+      from: FROM, to: '2026-08-25T14:20:00.001Z',
     }), (error) => error.code === 'INVALID_CALLOUT_SUMMARY_WINDOW');
   });
 
