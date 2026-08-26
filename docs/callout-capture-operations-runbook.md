@@ -44,22 +44,23 @@ sudoedit /var/lib/trendscope/callouts/fomo-refresh-token
 
 No navegador autenticado, capture o `jwt` enviado em `challengeResponse`, o
 `refresh_token` e o header `privy-ca-id` da mesma sessão. Grave o JWT do
-WebSocket em `fomo-customer-token` e o refresh no arquivo correspondente. Esse
-JWT é o access token Privy; na resposta de renovação, seu campo é
-`privy_access_token`, enquanto `token` pode ser nulo e não o substitui. O formato
-JSON entre aspas usado pelo storage também é aceito. O CA ID vai no env da etapa
-seguinte. Como o refresh token Privy é de uso único e rotacionado, feche essa aba
-sem fazer logout depois da captura e não deixe o SDK do navegador competir com o
-worker pela mesma sessão. Não registre tokens em shell history, journal ou
-diagnósticos.
+WebSocket em `fomo-customer-token` e o refresh no arquivo correspondente. Na
+resposta Privy, esse JWT de aplicação ocupa o campo `token`; o
+`privy_access_token` tem audiência `auth.privy.io`, é uma credencial distinta e
+não deve ser enviado ao WebSocket. O formato JSON entre aspas usado pelo storage
+também é aceito. O CA ID vai no env da etapa seguinte. Como o refresh token Privy
+é de uso único e rotacionado, feche essa aba sem fazer logout depois da captura e
+não deixe o SDK do navegador competir com o worker pela mesma sessão. Não
+registre tokens em shell history, journal ou diagnósticos.
 
 No Mac, `npm run fomo:auth-capture` automatiza essa coleta. O comando abre um
 perfil temporário isolado em Chrome normal para o Google; após concluir o login
 do Gmail, confirme no terminal. O processo fecha essa primeira janela e reabre o
 mesmo perfil instrumentado somente para o login Fomo. Ele observa a resposta
-Privy e os frames enviados ao WebSocket, exige que `privy_access_token`, refresh,
-CA ID e `topicId` pertençam à mesma sessão, ignora o campo genérico `token` e
-fecha o Chrome sem logout. A saída é um diretório `0700` temporário contendo os
+Privy e os frames enviados ao WebSocket, valida `token`, `privy_access_token`,
+refresh, CA ID e `topicId` pela identidade da sessão e grava o JWT efetivamente
+enviado em `challengeResponse`. Depois fecha o Chrome sem logout. A saída é um
+diretório `0700` temporário contendo os
 dois arquivos de segredo e `callouts.env.fragment`, todos `0600`; nenhum segredo
 é impresso no terminal. O diretório não é instalado nem enviado à VPS
 automaticamente.

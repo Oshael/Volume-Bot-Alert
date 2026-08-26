@@ -18,14 +18,27 @@ function isJwt(value) {
     && value.split('.').every((segment) => /^[A-Za-z0-9_-]+$/.test(segment));
 }
 
+function jwtSessionIdentity(value) {
+  if (!isJwt(value)) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(value.split('.')[1], 'base64url').toString('utf8'));
+    if (typeof payload.sub !== 'string' || !payload.sub
+      || typeof payload.sid !== 'string' || !payload.sid) return null;
+    return { sub: payload.sub, sid: payload.sid };
+  } catch (_error) {
+    return null;
+  }
+}
+
 function sessionCapture(body, headers = {}) {
-  const accessToken = body?.privy_access_token;
+  const privyAccessToken = body?.privy_access_token;
+  const appToken = isJwt(body?.token) ? body.token : null;
   const refreshToken = body?.refresh_token;
   const caId = Object.entries(headers)
     .find(([key]) => key.toLowerCase() === 'privy-ca-id')?.[1];
-  if (!isJwt(accessToken) || typeof refreshToken !== 'string' || !refreshToken.trim()
+  if (!isJwt(privyAccessToken) || typeof refreshToken !== 'string' || !refreshToken.trim()
     || typeof caId !== 'string' || !caId.trim()) return null;
-  return { accessToken, refreshToken: refreshToken.trim(), caId: caId.trim() };
+  return { privyAccessToken, appToken, refreshToken: refreshToken.trim(), caId: caId.trim() };
 }
 
 function socketCapture(raw) {
@@ -52,10 +65,20 @@ function createCaptureAccumulator() {
   const waiters = new Set();
 
   function snapshot() {
-    if (!session || !socketAccessToken || !topicId || session.accessToken !== socketAccessToken) {
-      return null;
-    }
-    return { ...session, topicId };
+    if (!session || !socketAccessToken || !topicId) return null;
+    const privyIdentity = jwtSessionIdentity(session.privyAccessToken);
+    const socketIdentity = jwtSessionIdentity(socketAccessToken);
+    const sameSession = session.appToken
+      ? session.appToken === socketAccessToken
+      : privyIdentity && socketIdentity
+        && privyIdentity.sub === socketIdentity.sub && privyIdentity.sid === socketIdentity.sid;
+    if (!sameSession) return null;
+    return {
+      accessToken: socketAccessToken,
+      refreshToken: session.refreshToken,
+      caId: session.caId,
+      topicId,
+    };
   }
 
   function notify() {
@@ -76,6 +99,12 @@ function createCaptureAccumulator() {
       notify();
     },
     getSnapshot: snapshot,
+    getStatus: () => ({
+      privySession: Boolean(session),
+      websocketJwt: Boolean(socketAccessToken),
+      topicId: Boolean(topicId),
+      sessionMatched: Boolean(snapshot()),
+    }),
     wait(timeoutMs = DEFAULT_TIMEOUT_MS) {
       const current = snapshot();
       if (current) return Promise.resolve(current);
@@ -192,7 +221,7 @@ async function writeBundle(outputDir, capture) {
   return outputDir;
 }
 
-function attachCapture(page, accumulator) {
+function attachCapture(page, accumulator, onProgress = () => {}) {
   page.on('response', async (response) => {
     if (response.url() !== SESSION_URL || response.request().method() !== 'POST') return;
     try {
@@ -200,12 +229,29 @@ function attachCapture(page, accumulator) {
         response.json(), response.request().allHeaders(),
       ]);
       accumulator.acceptSession(sessionCapture(body, headers));
+      onProgress(accumulator.getStatus());
     } catch (_error) {}
   });
   page.on('websocket', (socket) => {
     if (!socket.url().includes('prod-api.fomo.family/ws')) return;
-    socket.on('framesent', ({ payload }) => accumulator.acceptSocket(socketCapture(payload)));
+    socket.on('framesent', ({ payload }) => {
+      accumulator.acceptSocket(socketCapture(payload));
+      onProgress(accumulator.getStatus());
+    });
   });
+}
+
+function progressReporter() {
+  let last = '';
+  return (status) => {
+    const current = JSON.stringify(status);
+    if (current === last) return;
+    last = current;
+    console.log(`[captura] Privy=${status.privySession ? 'ok' : '...'} `
+      + `JWT-WS=${status.websocketJwt ? 'ok' : '...'} `
+      + `topicId=${status.topicId ? 'ok' : '...'} `
+      + `sessão=${status.sessionMatched ? 'validada' : 'aguardando'}`);
+  };
 }
 
 async function promptForGoogleLogin() {
@@ -236,10 +282,11 @@ async function main(argv = process.argv.slice(2)) {
 
     const context = browser.contexts()[0];
     const accumulator = createCaptureAccumulator();
-    context.on('page', (page) => attachCapture(page, accumulator));
+    const reportProgress = progressReporter();
+    context.on('page', (page) => attachCapture(page, accumulator, reportProgress));
     const [fomoPage] = context.pages();
     if (!fomoPage) throw new Error('Chrome did not expose its initial page');
-    attachCapture(fomoPage, accumulator);
+    attachCapture(fomoPage, accumulator, reportProgress);
     await fomoPage.goto(FOMO_URL, { waitUntil: 'domcontentloaded' });
     console.log('Agora faça login na Fomo com o Google. A captura terminará automaticamente.');
 
@@ -268,6 +315,7 @@ module.exports = {
   chromeArgs,
   createCaptureAccumulator,
   isJwt,
+  jwtSessionIdentity,
   parseArgs,
   sessionCapture,
   socketCapture,

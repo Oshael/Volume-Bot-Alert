@@ -51,8 +51,8 @@ describe('Fomo Privy customer token provider', () => {
         return {
           ok: true, status: 200,
           json: async () => ({
-            token: null,
-            privy_access_token: renewed,
+            token: renewed,
+            privy_access_token: jwt((NOW / 1000) + 3600),
             refresh_token: 'new-refresh-secret',
             session_update_action: 'ignore',
           }),
@@ -77,14 +77,14 @@ describe('Fomo Privy customer token provider', () => {
     });
   });
 
-  it('never substitutes the unrelated token field for the Privy WebSocket credential', async () => {
-    const unrelatedToken = jwt((NOW / 1000) + 3600);
+  it('never substitutes the Privy infrastructure token for the Fomo WebSocket credential', async () => {
+    const infrastructureToken = jwt((NOW / 1000) + 3600);
     const jwtStore = store(jwt(1));
     const provider = createFomoPrivyJwtProvider({
       jwtStore, refreshTokenStore: store('refresh-secret'), now: () => NOW,
       fetchImpl: async () => ({
         ok: true, status: 200,
-        json: async () => ({ token: unrelatedToken, privy_access_token: null }),
+        json: async () => ({ token: null, privy_access_token: infrastructureToken }),
       }),
     });
 
@@ -101,7 +101,7 @@ describe('Fomo Privy customer token provider', () => {
       fetchImpl: async () => {
         requests += 1;
         await new Promise((resolve) => setImmediate(resolve));
-        return { ok: true, status: 200, json: async () => ({ privy_access_token: renewed }) };
+        return { ok: true, status: 200, json: async () => ({ token: renewed }) };
       },
     });
 
@@ -111,15 +111,21 @@ describe('Fomo Privy customer token provider', () => {
 
   it('keeps a still-valid JWT when Privy ignores an early refresh', async () => {
     const current = jwt((NOW / 1000) + 10);
+    const refreshStore = store('refresh-secret');
     const provider = createFomoPrivyJwtProvider({
-      jwtStore: store(current), refreshTokenStore: store('refresh-secret'), now: () => NOW,
+      jwtStore: store(current), refreshTokenStore: refreshStore, now: () => NOW,
       fetchImpl: async () => ({
         ok: true, status: 200,
-        json: async () => ({ privy_access_token: null, session_update_action: 'ignore' }),
+        json: async () => ({
+          token: null, privy_access_token: jwt((NOW / 1000) + 3600),
+          refresh_token: 'rotated-refresh', session_update_action: 'ignore',
+        }),
       }),
     });
     assert.equal(await provider.getJwt(), current);
     assert.equal(provider.getStatus().requiresReauth, false);
+    assert.deepEqual(provider.getStatus().refreshes, 0);
+    assert.deepEqual(refreshStore.writes, ['rotated-refresh']);
   });
 
   it('reports reauthentication without exposing either credential', async () => {
@@ -129,7 +135,7 @@ describe('Fomo Privy customer token provider', () => {
       jwtStore: store(jwtSecret), refreshTokenStore: store(refreshSecret), now: () => NOW,
       fetchImpl: async () => ({
         ok: true, status: 200,
-        json: async () => ({ privy_access_token: null, session_update_action: 'ignore' }),
+        json: async () => ({ token: null, session_update_action: 'ignore' }),
       }),
     });
 
@@ -153,7 +159,7 @@ describe('Fomo Privy customer token provider', () => {
       jwtStore, refreshTokenStore: store(refreshSecret), now: () => NOW,
       fetchImpl: async () => {
         requests += 1;
-        return { ok: true, status: 200, json: async () => ({ privy_access_token: renewed }) };
+        return { ok: true, status: 200, json: async () => ({ token: renewed }) };
       },
     });
 

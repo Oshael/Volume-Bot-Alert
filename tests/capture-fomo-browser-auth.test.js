@@ -13,7 +13,7 @@ const {
   writeBundle,
 } = require('../src/utils/capture-fomo-browser-auth');
 
-const jwt = (label) => `${Buffer.from('{"alg":"none"}').toString('base64url')}.${Buffer.from(JSON.stringify({ label })).toString('base64url')}.signature`;
+const jwt = (label, identity = { sub: 'did:privy:user', sid: 'session-1' }) => `${Buffer.from('{"alg":"none"}').toString('base64url')}.${Buffer.from(JSON.stringify({ label, ...identity })).toString('base64url')}.signature`;
 
 describe('Fomo browser authentication capture', () => {
   it('keeps remote debugging disabled during the Google login phase', () => {
@@ -23,19 +23,23 @@ describe('Fomo browser authentication capture', () => {
       .some((value) => value.startsWith('--remote-debugging')), true);
   });
 
-  it('uses privy_access_token and ignores the generic token field', () => {
-    const accessToken = jwt('access');
+  it('keeps the Privy infrastructure token separate from the Fomo app token', () => {
+    const privyAccessToken = jwt('privy-access');
+    const appToken = jwt('fomo-app');
     assert.deepEqual(sessionCapture({
-      token: jwt('wrong'), privy_access_token: accessToken, refresh_token: 'refresh',
+      token: appToken, privy_access_token: privyAccessToken, refresh_token: 'refresh',
     }, { 'privy-ca-id': 'privy:caid' }), {
-      accessToken, refreshToken: 'refresh', caId: 'privy:caid',
+      privyAccessToken, appToken, refreshToken: 'refresh', caId: 'privy:caid',
     });
   });
 
   it('completes only when the session and WebSocket JWT belong together', async () => {
     const accessToken = jwt('current');
     const accumulator = createCaptureAccumulator();
-    accumulator.acceptSession({ accessToken, refreshToken: 'refresh', caId: 'ca-id' });
+    accumulator.acceptSession({
+      privyAccessToken: jwt('privy-access'), appToken: accessToken,
+      refreshToken: 'refresh', caId: 'ca-id',
+    });
     accumulator.acceptSocket(socketCapture(JSON.stringify({
       type: 'subscribe', topicType: 'trading_activity',
       topicId: 'ea1bc7f5-e349-5c6d-ab41-740c237a792d',
@@ -53,6 +57,17 @@ describe('Fomo browser authentication capture', () => {
       caId: 'ca-id',
       topicId: 'ea1bc7f5-e349-5c6d-ab41-740c237a792d',
     });
+  });
+
+  it('matches a session by Privy sub and sid when the response omits the app token', () => {
+    const accumulator = createCaptureAccumulator();
+    accumulator.acceptSession({
+      privyAccessToken: jwt('privy-access'), appToken: null,
+      refreshToken: 'refresh', caId: 'ca-id',
+    });
+    accumulator.acceptSocket({ accessToken: jwt('fomo-app') });
+    accumulator.acceptSocket({ topicId: 'ea1bc7f5-e349-5c6d-ab41-740c237a792d' });
+    assert.equal(accumulator.getSnapshot().accessToken, jwt('fomo-app'));
   });
 
   it('writes secrets separately with restrictive permissions', async () => {

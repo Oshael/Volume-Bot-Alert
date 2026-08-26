@@ -1055,12 +1055,15 @@ e `lastErrorPhase` na telemetria da lease; a mensagem vem apenas dos erros
 sanitizados do client ou da persistência e nunca inclui credenciais.
 Quando `FOMO_PRIVY_REFRESH_TOKEN_FILE` está configurado, renova o customer JWT
 do WebSocket pela sessão Privy até 30 segundos antes da expiração e persiste
-JWT e refresh token por troca atômica. O JWT do `challengeResponse` é o access
-token Privy retornado como `privy_access_token`; o campo `token` da resposta é
-outro contrato, pode ser nulo e nunca o substitui.
+JWT e refresh token por troca atômica. O JWT do `challengeResponse` é a
+credencial da aplicação Fomo retornada como `token`. O `privy_access_token` possui
+audiência `auth.privy.io`, identifica a mesma sessão por `sub`/`sid`, mas não é
+aceito como substituto pelo WebSocket. Uma renovação antecipada com
+`session_update_action=ignore` pode omitir `token`; nesse caso o worker preserva
+o customer JWT ainda válido e persiste qualquer refresh token rotacionado.
 No Mac, `npm run fomo:auth-capture` abre um perfil temporário em Chrome normal
 para autenticar primeiro o Gmail, reinicia esse mesmo perfil com instrumentação
-apenas na etapa Fomo e captura automaticamente access token, refresh token, CA
+apenas na etapa Fomo e captura automaticamente customer JWT, refresh token, CA
 ID e `topicId` da mesma sessão. A saída local `0700`
 contém os dois segredos e um fragmento de env em arquivos `0600`; o comando
 fecha a sessão sem logout, não imprime segredos e não altera a VPS.

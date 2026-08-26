@@ -133,13 +133,18 @@ function createFomoPrivyJwtProvider(options = {}) {
     try { payload = await response.json(); } catch {
       throw safeError('FOMO_PRIVY_SESSION_RESPONSE', 'Fomo Privy session response was invalid');
     }
-    const next = jwtMetadata(payload?.privy_access_token);
+    const next = jwtMetadata(payload?.token);
     if (!active(next)) {
-      if (payload?.session_update_action === 'ignore' && unexpired(cached)) return cached.jwt;
+      if (payload?.session_update_action === 'ignore' && unexpired(cached)) {
+        if (payload.refresh_token && payload.refresh_token !== refreshToken) {
+          await refreshTokenStore.write(payload.refresh_token);
+        }
+        return cached.jwt;
+      }
       throw safeError(
         payload?.session_update_action === 'ignore'
           ? 'FOMO_PRIVY_REAUTH_REQUIRED' : 'FOMO_PRIVY_SESSION_RESPONSE',
-        'Fomo Privy session did not return a usable access token'
+        'Fomo Privy session did not return a usable customer token'
       );
     }
     await jwtStore.write(next.jwt);
