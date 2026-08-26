@@ -1572,6 +1572,16 @@ pendente de inteligência não derruba holders: os campos retornam `unavailable`
 O expanded chart usa `primaryTag` nos glifos e os valores materializados no painel
 de distribuição; métricas indisponíveis continuam como `—`.
 
+Tokens Robinhood novos geram uma tarefa durável em
+`robinhood_token_deployment_outbox` no mesmo commit de admissão ao catálogo. Após
+aplicar Stage 165 (`node src/utils/db-init-stage165.js`), o worker independente
+`robinhood-token-deployment-worker`, no grupo `robinhood-wallet-classification`,
+é ativado por `ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_ENABLED=true`. `LISTEN/NOTIFY`
+acorda o consumidor imediatamente; polling de 1s preserva recuperação. Ele valida
+Blockscout contra receipt/bloco canônicos, materializa `rpc_direct` ou
+`blockscout_internal` e remove a tarefa. Evidência ainda não indexada volta à fila
+com backoff limitado. O fluxo cobre somente novas admissões e não cria backfill.
+
 O materializador `SNIPER` não pertence ao processo de holders. Seu worker shadow
 fica no grupo isolado `robinhood-wallet-classification`, usa a lease própria
 `robinhood-sniper-shadow-worker` e permanece desligado por padrão. Ative com
@@ -1582,8 +1592,8 @@ retry são limitados por `ROBINHOOD_SNIPER_SHADOW_INTERVAL_MS`,
 `ROBINHOOD_SNIPER_SHADOW_RETRY_MS`. O runner executa lotes retomáveis por
 `afterToken`, envia cada página ao materializador como um único lote, reinicia a
 varredura ao esgotar o catálogo e expõe contadores na
-telemetria da lease e em `GET /api/admin/ws-status`. Seu
-seletor só admite ledger `live`, cursor de first-buy alcançado e classificação
+telemetria da lease e em `GET /api/admin/ws-status`. Seu seletor só admite ledger
+`live`, cursor de first-buy alcançado e classificação
 ausente ou atrasada; concorrência máxima é 4 e uma falha de token não aborta o
 lote. A política pública versionada `rh_sniper_high_v2` exige compra
 entre os 5 primeiros compradores canônicos, em até 1 bloco da âncora, notional

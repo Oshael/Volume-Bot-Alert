@@ -4547,6 +4547,26 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage165-robinhood-token-deployment-outbox',
+    name: 'Stage 165 Robinhood token deployment live outbox',
+    repair: 'node src/utils/db-init-stage165.js',
+    tables: [{
+      table: 'robinhood_token_deployment_outbox',
+      columns: [
+        'chain', 'token_address', 'status', 'attempt_count', 'next_attempt_at',
+        'lease_owner', 'lease_until', 'last_error', 'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_token_deployment_outbox_pkey', includes: ['PRIMARY KEY', 'chain', 'token_address'],
+      }, {
+        name: 'rh_token_deployment_outbox_lease_check', includes: ['status', 'lease_owner', 'lease_until'],
+      }],
+      indexes: [{
+        name: 'idx_rh_token_deployment_outbox_claim', includes: ['status', 'next_attempt_at', 'created_at'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

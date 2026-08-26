@@ -1091,6 +1091,17 @@ describe('runtime worker groups config', () => {
     });
   });
 
+  it('keeps live token deployment resolution opt-in and bounded', () => {
+    withEnv({
+      ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_ENABLED: 'true',
+      ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_INTERVAL_MS: '1',
+      ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_RETRY_MS: '99999999',
+    }, (config) => assert.deepEqual(config.robinhoodTokenDeploymentWorker, {
+      enabled: true, intervalMs: 100, leaseMs: 300_000,
+      retryMs: 3_600_000, maxRetryMs: 3_600_000, timeoutMs: 30_000,
+    }));
+  });
+
   it('keeps the INSIDER classifier shadow worker opt-in and bounded', () => {
     withEnv({
       ROBINHOOD_INSIDER_SHADOW_ENABLED: 'true',

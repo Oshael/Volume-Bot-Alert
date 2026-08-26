@@ -1626,6 +1626,25 @@ module.exports = {
     ),
   },
 
+  robinhoodTokenDeploymentWorker: {
+    enabled: parseBoolean(process.env.ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_ENABLED, false),
+    intervalMs: parseIntegerInRange(
+      process.env.ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_INTERVAL_MS, 1000, 100, 60_000
+    ),
+    leaseMs: parseIntegerInRange(
+      process.env.ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_LEASE_MS, 300_000, 10_000, 900_000
+    ),
+    retryMs: parseIntegerInRange(
+      process.env.ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_RETRY_MS, 15_000, 1000, 3_600_000
+    ),
+    maxRetryMs: parseIntegerInRange(
+      process.env.ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_MAX_RETRY_MS, 3_600_000, 60_000, 86_400_000
+    ),
+    timeoutMs: parseIntegerInRange(
+      process.env.ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_TIMEOUT_MS, 30_000, 1000, 60_000
+    ),
+  },
+
   robinhoodInsiderShadowWorker: {
     enabled: parseBoolean(process.env.ROBINHOOD_INSIDER_SHADOW_ENABLED, false),
     intervalMs: parseIntegerInRange(

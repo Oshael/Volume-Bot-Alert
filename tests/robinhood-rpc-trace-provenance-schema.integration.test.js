@@ -9,6 +9,7 @@ const stage113 = require('../src/utils/db-init-stage113');
 const stage114 = require('../src/utils/db-init-stage114');
 const stage163 = require('../src/utils/db-init-stage163');
 const stage164 = require('../src/utils/db-init-stage164');
+const stage165 = require('../src/utils/db-init-stage165');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const TOKEN = `0x${'6'.repeat(40)}`;
@@ -25,6 +26,7 @@ describe('Robinhood RPC trace provenance schema integration', () => {
     await stage114.init({ closePool: false });
     await stage163.init({ closePool: false });
     await stage164.init({ closePool: false });
+    await stage165.init({ closePool: false });
     await stage164.init({ closePool: false });
     await db.query(
       'DELETE FROM robinhood_token_attributions WHERE token_address = ANY($1::varchar[])',
@@ -79,5 +81,19 @@ describe('Robinhood RPC trace provenance schema integration', () => {
       ),
       /robinhood_token_attributions_provenance_check/
     );
+  });
+
+  it('atomically enqueues newly admitted Robinhood tokens', async () => {
+    const address = `0x${'d'.repeat(40)}`;
+    await db.query('DELETE FROM token_catalog WHERE chain = $1 AND address = $2', ['robinhood', address]);
+    await db.query(
+      `INSERT INTO token_catalog (chain, address, source) VALUES ('robinhood', $1, 'test')`, [address]
+    );
+    const result = await db.query(
+      'SELECT status FROM robinhood_token_deployment_outbox WHERE token_address = $1', [address]
+    );
+    assert.equal(result.rows[0].status, 'pending');
+    await db.query('DELETE FROM token_catalog WHERE chain = $1 AND address = $2', ['robinhood', address]);
+    await db.query('DELETE FROM robinhood_token_deployment_outbox WHERE token_address = $1', [address]);
   });
 });

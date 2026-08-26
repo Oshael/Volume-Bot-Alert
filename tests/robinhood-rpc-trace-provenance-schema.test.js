@@ -3,6 +3,7 @@ const { it } = require('node:test');
 
 const stage163 = require('../src/utils/db-init-stage163');
 const stage164 = require('../src/utils/db-init-stage164');
+const stage165 = require('../src/utils/db-init-stage165');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 
 it('registers exact RPC trace provenance and requires a factory address', () => {
@@ -27,4 +28,12 @@ it('registers exact Blockscout internal creation provenance', () => {
   assert.match(sql, /'blockscout_internal'/);
   assert.match(sql, /source IN \('blockscout_internal', 'rpc_trace', 'launchpad_event'\)/);
   assert.equal(group.repair, 'node src/utils/db-init-stage164.js');
+});
+
+it('registers the live catalog deployment outbox and trigger', () => {
+  const sql = stage165.STATEMENTS.join('\n');
+  const group = SCHEMA_GROUPS.find(({ key }) => key === 'stage165-robinhood-token-deployment-outbox');
+  assert.match(sql, /AFTER INSERT ON token_catalog/);
+  assert.match(sql, /pg_notify\('robinhood_token_deployment_outbox'/);
+  assert.equal(group.repair, 'node src/utils/db-init-stage165.js');
 });
