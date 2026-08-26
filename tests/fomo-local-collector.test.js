@@ -110,6 +110,36 @@ test('Fomo local collector can run browser live transport without direct HTTP re
   await collector.stop();
 });
 
+test('Fomo local collector forwards browser transport health events', async () => {
+  let streamOptions;
+  const events = [];
+  const collector = createFomoLocalCollector({
+    eventSpool: { append: async () => {} },
+    identitySpool: { append: async () => {} },
+    reconciliationEnabled: false,
+    lookupLiveTrades: false,
+    onStreamFrame: (event) => events.push(['frame', event.at]),
+    onStreamStatus: (event) => events.push(['status', event.state]),
+    onStreamError: (error) => events.push(['error', error.code]),
+    streamFactory: (options) => {
+      streamOptions = options;
+      return { start: () => {}, stop: async () => {}, getStatus: () => ({}) };
+    },
+  });
+
+  collector.start();
+  streamOptions.onStatus({ state: 'connected' });
+  streamOptions.onFrame({ at: '2026-08-26T20:00:00.000Z' });
+  streamOptions.onError({ code: 'FOMO_BROWSER_DISCONNECTED' });
+  assert.deepEqual(events, [
+    ['status', 'connected'],
+    ['frame', '2026-08-26T20:00:00.000Z'],
+    ['error', 'FOMO_BROWSER_DISCONNECTED'],
+  ]);
+  assert.equal(collector.getStatus().errors, 1);
+  await collector.stop();
+});
+
 test('Fomo reconciliation keeps activity when leaderboard discovery fails', async () => {
   const events = [];
   const collector = createFomoLocalCollector({

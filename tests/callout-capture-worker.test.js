@@ -166,8 +166,11 @@ describe('callout capture production persistence', () => {
   it('starts the separately gated browser follow queue', async () => {
     let followOptions;
     let notifierOptions;
+    let healthOptions;
     let followStarted = 0;
     let followStopped = 0;
+    let healthStarted = 0;
+    let healthStopped = 0;
     const commits = [];
     const repository = {
       loadCheckpoint: async (key) => (key === 'fomo:follow' ? { state: { paused: false } } : null),
@@ -178,9 +181,21 @@ describe('callout capture production persistence', () => {
       createPumpClient: () => ({}),
       createPumpCollector: () => ({ start: async () => {}, stop: async () => {} }),
       createFomoCollector: () => ({ start: () => {}, stop: async () => {} }),
-      createFomoFollowNotifier: (options) => {
+      createFomoNotifier: (options) => {
         notifierOptions = options;
-        return { sendPauseAlert: async () => {} };
+        return {
+          sendPauseAlert: async () => {},
+          sendStreamIncident: async () => {},
+          sendStreamRecovery: async () => {},
+        };
+      },
+      createFomoHealthMonitor: (options) => {
+        healthOptions = options;
+        return {
+          start: () => { healthStarted += 1; }, stop: async () => { healthStopped += 1; },
+          onFrame: () => {}, onError: () => {}, onStatus: () => {},
+          getStatus: () => ({ healthy: true }),
+        };
       },
       createFomoFollowQueue: (options) => {
         followOptions = options;
@@ -195,9 +210,10 @@ describe('callout capture production persistence', () => {
     await worker.start({
       pump: {}, fomo: {
         transport: 'browser_cdp', cdpEndpoint: 'http://127.0.0.1:9222',
+        telegramAlerts: { enabled: true, botToken: 'secret-token', chatId: '123' },
+        browserHealth: { enabled: true, staleMs: 90_000 },
         follow: {
           enabled: true, dryRun: true, profileIds: [FOMO_PROFILE],
-          telegramAlert: { enabled: true, botToken: 'secret-token', chatId: '123' },
         },
       },
     });
@@ -206,13 +222,18 @@ describe('callout capture production persistence', () => {
     assert.deepEqual(notifierOptions, {
       enabled: true, botToken: 'secret-token', chatId: '123',
     });
+    assert.equal(healthOptions.staleMs, 90_000);
+    assert.equal(healthOptions.notifier, followOptions.pauseNotifier);
+    assert.equal(healthStarted, 1);
     assert.equal(typeof followOptions.pauseNotifier.sendPauseAlert, 'function');
     assert.deepEqual(await followOptions.stateStore.load(), { paused: false });
     await followOptions.stateStore.save({ paused: true });
     assert.equal(commits[0].checkpointKey, 'fomo:follow');
     assert.deepEqual(commits[0].checkpointState, { paused: true });
     assert.deepEqual(worker.getStatus().fomoFollow, { running: true });
+    assert.deepEqual(worker.getStatus().fomoHealth, { healthy: true });
     await worker.stop();
     assert.equal(followStopped, 1);
+    assert.equal(healthStopped, 1);
   });
 });

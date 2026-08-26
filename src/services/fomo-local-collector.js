@@ -59,6 +59,10 @@ function createFomoLocalCollector(options = {}) {
     options.onError?.({ code: metrics.lastErrorCode });
   }
 
+  function reportHealth(callback, event) {
+    try { callback?.(event); } catch {}
+  }
+
   function enqueue(task) {
     work = work.then(task).catch(reportError);
     return work;
@@ -144,8 +148,14 @@ function createFomoLocalCollector(options = {}) {
     onEvidence: (evidence) => captureCallout(
       evidence.callout, 'trading_activity_ws', lookupLiveTrades,
     ),
-    onError: reportError,
-    onStatus: ({ state }) => {
+    onFrame: (event) => reportHealth(options.onStreamFrame, event),
+    onError: (error) => {
+      reportError(error);
+      reportHealth(options.onStreamError, error);
+    },
+    onStatus: (event) => {
+      reportHealth(options.onStreamStatus, event);
+      const { state } = event;
       if (state !== liveReadyState) return;
       liveReadyCount += 1;
       if (reconciliationEnabled && liveReadyCount > 1) reconcile('reconnect');

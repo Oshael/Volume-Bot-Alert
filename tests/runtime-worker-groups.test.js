@@ -189,24 +189,46 @@ describe('runtime worker groups config', () => {
     assert.equal(config.cdpEndpoint, 'http://127.0.0.1:9222');
     assert.equal(config.follow.dryRun, true);
     assert.equal(config.follow.requestTimeoutMs, 15_000);
-    assert.equal(config.follow.telegramAlert.enabled, false);
+    assert.equal(config.telegramAlerts.enabled, false);
+    assert.equal(config.browserHealth.staleMs, 90_000);
   });
 
-  it('requires complete private Telegram settings for Fomo follow alerts', () => {
+  it('requires complete private Telegram settings for Fomo operational alerts', () => {
     const result = spawnSync(process.execPath, ['-e', "require('./config')"], {
       cwd: ROOT_DIR,
       env: {
         ...process.env, BACKGROUND_WORKER_GROUPS: 'callouts', CALLOUT_CAPTURE_ENABLED: 'true',
         PUMP_AUTH_TOKEN: 'pump-test', FOMO_CAPTURE_TRANSPORT: 'browser_cdp',
-        FOMO_FOLLOW_ENABLED: 'true', FOMO_FOLLOW_TELEGRAM_ALERTS_ENABLED: 'true',
-        FOMO_FOLLOW_TELEGRAM_BOT_TOKEN: '', FOMO_FOLLOW_TELEGRAM_CHAT_ID: '',
+        FOMO_FOLLOW_ENABLED: 'true', FOMO_TELEGRAM_ALERTS_ENABLED: 'true',
+        FOMO_TELEGRAM_BOT_TOKEN: '', FOMO_TELEGRAM_CHAT_ID: '',
         FOMO_WS_TOPIC_ID: '', FOMO_WS_JWT: '', FOMO_WS_JWT_FILE: '',
       },
       encoding: 'utf8',
     });
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /FOMO_FOLLOW_TELEGRAM_BOT_TOKEN/);
-    assert.match(result.stderr, /FOMO_FOLLOW_TELEGRAM_CHAT_ID/);
+    assert.match(result.stderr, /FOMO_TELEGRAM_BOT_TOKEN/);
+    assert.match(result.stderr, /FOMO_TELEGRAM_CHAT_ID/);
+  });
+
+  it('enables independent Fomo browser health alerts without live follows', () => {
+    const result = spawnSync(process.execPath, ['-e', "const c=require('./config'); console.log(JSON.stringify(c.calloutCaptureWorker.fomo))"], {
+      cwd: ROOT_DIR,
+      env: {
+        ...process.env, BACKGROUND_WORKER_GROUPS: 'callouts', CALLOUT_CAPTURE_ENABLED: 'true',
+        PUMP_AUTH_TOKEN: 'pump-test', FOMO_CAPTURE_TRANSPORT: 'browser_cdp',
+        FOMO_FOLLOW_ENABLED: 'false', FOMO_TELEGRAM_ALERTS_ENABLED: 'true',
+        FOMO_TELEGRAM_BOT_TOKEN: 'test-token', FOMO_TELEGRAM_CHAT_ID: '123456',
+        FOMO_BROWSER_STALE_SECONDS: '120', FOMO_WS_TOPIC_ID: '', FOMO_WS_JWT: '',
+        FOMO_WS_JWT_FILE: '',
+      },
+      encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const fomo = JSON.parse(result.stdout);
+    assert.equal(fomo.telegramAlerts.enabled, true);
+    assert.equal(fomo.browserHealth.enabled, true);
+    assert.equal(fomo.browserHealth.staleMs, 120_000);
+    assert.equal(fomo.follow.enabled, false);
   });
 
   it('requires an allowlist before enabling live Fomo follow writes', () => {

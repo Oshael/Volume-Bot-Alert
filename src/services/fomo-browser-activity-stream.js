@@ -46,6 +46,7 @@ function createFomoBrowserActivityStream(options = {}) {
   const cancelSchedule = options.cancelSchedule || clearTimeout;
   const random = options.random || Math.random;
   const onEvidence = options.onEvidence || (() => {});
+  const onFrame = options.onFrame || (() => {});
   const onStatus = options.onStatus || (() => {});
   const onError = options.onError || (() => {});
   const baseReconnectMs = positiveInteger(options.reconnectMs, DEFAULT_RECONNECT_MS, MAX_RECONNECT_MS);
@@ -96,6 +97,7 @@ function createFomoBrowserActivityStream(options = {}) {
     status.frames += 1;
     status.bytes += evidence.byteLength;
     status.lastFrameAt = new Date().toISOString();
+    onFrame({ at: status.lastFrameAt });
     if (evidence.frameKind === 'json') status.jsonFrames += 1;
     if (!evidence.tradingActivityCandidate && !evidence.callout) return;
     status.candidates += 1;

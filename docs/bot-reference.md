@@ -1004,16 +1004,27 @@ captura de callouts permanece independente. Depois de diagnosticar a causa, a
 retomada exige desabilitar o follow e remover explicitamente somente esse
 checkpoint antes de reabilitá-lo.
 
-O alerta operacional privado de pausa é opt-in por
-`FOMO_FOLLOW_TELEGRAM_ALERTS_ENABLED=true`. Ele usa somente chamadas outbound
-`sendMessage` e não exige webhook, username público nem ativar
-`TELEGRAM_ALERTS_ENABLED`. Requer `FOMO_FOLLOW_TELEGRAM_BOT_TOKEN` e
-`FOMO_FOLLOW_TELEGRAM_CHAT_ID`; o timeout default é 10 segundos, configurável por
-`FOMO_FOLLOW_TELEGRAM_TIMEOUT_SECONDS`. A entrega bem-sucedida grava
+Os alertas operacionais privados são opt-in por
+`FOMO_TELEGRAM_ALERTS_ENABLED=true`. Eles usam somente chamadas outbound
+`sendMessage` e não exigem webhook, username público nem ativar
+`TELEGRAM_ALERTS_ENABLED`. Requerem `FOMO_TELEGRAM_BOT_TOKEN` e
+`FOMO_TELEGRAM_CHAT_ID`; o timeout default é 10 segundos, configurável por
+`FOMO_TELEGRAM_TIMEOUT_SECONDS`. Os nomes antigos com prefixo
+`FOMO_FOLLOW_TELEGRAM_` continuam aceitos como fallback. Para pausas de follow, a
+entrega bem-sucedida grava
 `alertSentAt` no mesmo checkpoint, impedindo repetição após restart. Falha no
 Telegram nunca libera o circuito nem interrompe a captura; `alertErrors` e
 `lastAlertErrorCode` ficam disponíveis na telemetria, e um restart tenta novamente
 quando a pausa ainda não possui `alertSentAt`.
+
+No transporte `browser_cdp`, o mesmo canal também observa os eventos do stream
+sem fazer requests adicionais à Fomo. Erro de conexão, fechamento do browser/aba
+ou ausência total de frames por `FOMO_BROWSER_STALE_SECONDS` (default 90, mínimo
+30) gera somente um alerta por incidente contínuo. O primeiro frame posterior
+gera a mensagem de recuperação e rearma o watchdog. A telemetria `fomoHealth`
+expõe conexão, saúde, incidente atual, último frame, alerta, recuperação e erros
+do próprio Telegram, sem expor token ou chat ID. Essa deduplicação de saúde é por
+processo; reiniciar durante um incidente pode gerar um novo alerta.
 
 Para retomar: configure `FOMO_FOLLOW_ENABLED=false`, reinicie o worker, investigue
 `lastErrorCode` e então execute

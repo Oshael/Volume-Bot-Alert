@@ -5,8 +5,9 @@ const path = require('node:path');
 const { createCalloutCaptureRepository } = require('../models/callout-capture');
 const { createFomoLocalCollector } = require('./fomo-local-collector');
 const { createFomoBrowserActivityStream } = require('./fomo-browser-activity-stream');
+const { createFomoBrowserHealthMonitor } = require('./fomo-browser-health-monitor');
 const { createFomoBrowserFollowQueue } = require('./fomo-browser-follow-queue');
-const { createFomoFollowTelegramNotifier } = require('./fomo-follow-telegram-notifier');
+const { createFomoTelegramOpsNotifier } = require('./fomo-follow-telegram-notifier');
 const { createPumpCalloutClient } = require('./pump-callout-client');
 const { createPumpLocalCollector } = require('./pump-local-collector');
 const {
@@ -56,7 +57,7 @@ function buildPumpCollector(deps, config, persistence) {
   });
 }
 
-function buildFomoCollector(deps, config, persistence, authentication) {
+function buildFomoCollector(deps, config, persistence, authentication, healthMonitor) {
   const browserMode = config.transport === 'browser_cdp';
   const jwtProvider = fileProvider(config.jwtFile);
   return (deps.createFomoCollector || createFomoLocalCollector)({
@@ -65,6 +66,9 @@ function buildFomoCollector(deps, config, persistence, authentication) {
       ? (deps.createFomoBrowserStream || createFomoBrowserActivityStream)
       : undefined,
     streamOptions: browserMode ? { cdpEndpoint: config.cdpEndpoint } : undefined,
+    onStreamFrame: healthMonitor?.onFrame,
+    onStreamError: healthMonitor?.onError,
+    onStreamStatus: healthMonitor?.onStatus,
     reconciliationEnabled: !browserMode,
     lookupLiveTrades: !browserMode,
     wsUrl: config.wsUrl,
@@ -93,16 +97,24 @@ function createFomoFollowStateStore(repository) {
   };
 }
 
-function buildFomoFollowQueue(deps, config, repository) {
+function buildFomoFollowQueue(deps, config, repository, pauseNotifier) {
   if (config.transport !== 'browser_cdp' || !config.follow?.enabled) return null;
-  const alertConfig = config.follow.telegramAlert || {};
-  const pauseNotifier = alertConfig.enabled
-    ? (deps.createFomoFollowNotifier || createFomoFollowTelegramNotifier)(alertConfig)
-    : null;
   return (deps.createFomoFollowQueue || createFomoBrowserFollowQueue)({
     ...config.follow, cdpEndpoint: config.cdpEndpoint,
     stateStore: createFomoFollowStateStore(repository),
     pauseNotifier,
+  });
+}
+
+function buildFomoNotifier(deps, config) {
+  if (!config.telegramAlerts?.enabled) return null;
+  return (deps.createFomoNotifier || createFomoTelegramOpsNotifier)(config.telegramAlerts);
+}
+
+function buildFomoHealthMonitor(deps, config, notifier) {
+  if (config.transport !== 'browser_cdp' || !config.browserHealth?.enabled || !notifier) return null;
+  return (deps.createFomoHealthMonitor || createFomoBrowserHealthMonitor)({
+    ...config.browserHealth, notifier,
   });
 }
 
@@ -118,6 +130,7 @@ function createCalloutCaptureWorker(deps = {}) {
   let retention = null;
   let fomoAuthentication = null;
   let fomoFollow = null;
+  let fomoHealth = null;
   let running = false;
 
   async function start(config = {}) {
@@ -131,24 +144,29 @@ function createCalloutCaptureWorker(deps = {}) {
     fomoPersistence = createImmediateCalloutPersistence({ repository, checkpointKey: 'fomo:live' });
     retention = (deps.createRetentionWorker || createCalloutRetentionWorker)({ repository });
     pump = buildPumpCollector(deps, pumpConfig, pumpPersistence);
-    fomo = buildFomoCollector(deps, fomoConfig, fomoPersistence, fomoAuthentication);
-    fomoFollow = buildFomoFollowQueue(deps, fomoConfig, repository);
+    const fomoNotifier = buildFomoNotifier(deps, fomoConfig);
+    fomoHealth = buildFomoHealthMonitor(deps, fomoConfig, fomoNotifier);
+    fomo = buildFomoCollector(
+      deps, fomoConfig, fomoPersistence, fomoAuthentication, fomoHealth,
+    );
+    fomoFollow = buildFomoFollowQueue(deps, fomoConfig, repository, fomoNotifier);
     running = true;
     try {
       retention.start(config.retention);
+      fomoHealth?.start();
       fomo.start();
       fomoFollow?.start();
       await pump.start();
     } catch (error) {
       running = false;
-      await stopComponents([pump, fomo, fomoFollow, retention]);
+      await stopComponents([pump, fomo, fomoFollow, fomoHealth, retention]);
       throw error;
     }
   }
 
   async function stop() {
     running = false;
-    await stopComponents([pump, fomo, fomoFollow, retention]);
+    await stopComponents([pump, fomo, fomoFollow, fomoHealth, retention]);
     await fomoPersistence?.flush?.();
   }
 
@@ -160,6 +178,7 @@ function createCalloutCaptureWorker(deps = {}) {
       fomo: componentStatus(fomo),
       fomoAuthentication: componentStatus(fomoAuthentication),
       fomoFollow: componentStatus(fomoFollow),
+      fomoHealth: componentStatus(fomoHealth),
       persistence: {
         pump: componentStatus(pumpPersistence),
         fomo: componentStatus(fomoPersistence),

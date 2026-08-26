@@ -42,12 +42,14 @@ test('Fomo browser stream accepts only loopback CDP endpoints', () => {
 test('Fomo browser stream captures thesis frames without closing the external Chrome', async () => {
   const fixture = fakeBrowser();
   const evidence = [];
+  const frames = [];
   const states = [];
   let browserCloseCalls = 0;
   fixture.browser.close = async () => { browserCloseCalls += 1; };
   const stream = createFomoBrowserActivityStream({
     connectOverCDP: async () => fixture.browser,
     onEvidence: (item) => evidence.push(item),
+    onFrame: (item) => frames.push(item),
     onStatus: ({ state }) => states.push(state),
   });
 
@@ -75,6 +77,8 @@ test('Fomo browser stream captures thesis frames without closing the external Ch
   assert.equal(evidence.length, 1);
   assert.equal(evidence[0].callout.platformEventId, 'event-1');
   assert.equal(stream.getStatus().frames, 2);
+  assert.equal(frames.length, 2);
+  assert.equal(frames[1].at, stream.getStatus().lastFrameAt);
   assert.equal(stream.getStatus().callouts, 1);
   await stream.stop();
   assert.equal(browserCloseCalls, 0);

@@ -486,9 +486,17 @@ const fomoCaptureTransport = String(process.env.FOMO_CAPTURE_TRANSPORT || 'direc
 const fomoFollowEnabled = parseBoolean(process.env.FOMO_FOLLOW_ENABLED, false);
 const fomoFollowDryRun = parseBoolean(process.env.FOMO_FOLLOW_DRY_RUN, true);
 const fomoFollowDiscoveryEnabled = parseBoolean(process.env.FOMO_FOLLOW_DISCOVERY_ENABLED, false);
-const fomoFollowTelegramAlertsEnabled = parseBoolean(
-  process.env.FOMO_FOLLOW_TELEGRAM_ALERTS_ENABLED, false
+const fomoTelegramAlertsEnabled = parseBoolean(
+  process.env.FOMO_TELEGRAM_ALERTS_ENABLED
+    ?? process.env.FOMO_FOLLOW_TELEGRAM_ALERTS_ENABLED,
+  false
 );
+const fomoTelegramBotToken = String(
+  process.env.FOMO_TELEGRAM_BOT_TOKEN ?? process.env.FOMO_FOLLOW_TELEGRAM_BOT_TOKEN ?? ''
+).trim();
+const fomoTelegramChatId = String(
+  process.env.FOMO_TELEGRAM_CHAT_ID ?? process.env.FOMO_FOLLOW_TELEGRAM_CHAT_ID ?? ''
+).trim();
 const fomoFollowProfileIds = [...new Set(String(process.env.FOMO_FOLLOW_PROFILE_IDS || '')
   .split(',').map((value) => value.trim()).filter(Boolean))];
 const robinhoodHolderGlobalIsolated = workerGroups.active.includes('robinhood-holder-global');
@@ -611,16 +619,14 @@ if (calloutCaptureEnabled) {
   if (fomoFollowEnabled && fomoCaptureTransport !== 'browser_cdp') {
     missing.push('FOMO_FOLLOW_ENABLED requires FOMO_CAPTURE_TRANSPORT=browser_cdp');
   }
-  if (fomoFollowTelegramAlertsEnabled && !fomoFollowEnabled) {
-    missing.push('FOMO_FOLLOW_TELEGRAM_ALERTS_ENABLED requires FOMO_FOLLOW_ENABLED=true');
+  if (fomoTelegramAlertsEnabled && fomoCaptureTransport !== 'browser_cdp') {
+    missing.push('FOMO_TELEGRAM_ALERTS_ENABLED requires FOMO_CAPTURE_TRANSPORT=browser_cdp');
   }
-  if (fomoFollowTelegramAlertsEnabled
-      && !String(process.env.FOMO_FOLLOW_TELEGRAM_BOT_TOKEN || '').trim()) {
-    missing.push('FOMO_FOLLOW_TELEGRAM_BOT_TOKEN for Fomo follow alerts');
+  if (fomoTelegramAlertsEnabled && !fomoTelegramBotToken) {
+    missing.push('FOMO_TELEGRAM_BOT_TOKEN for Fomo operational alerts');
   }
-  if (fomoFollowTelegramAlertsEnabled
-      && !String(process.env.FOMO_FOLLOW_TELEGRAM_CHAT_ID || '').trim()) {
-    missing.push('FOMO_FOLLOW_TELEGRAM_CHAT_ID for Fomo follow alerts');
+  if (fomoTelegramAlertsEnabled && !fomoTelegramChatId) {
+    missing.push('FOMO_TELEGRAM_CHAT_ID for Fomo operational alerts');
   }
   if (fomoFollowEnabled && !fomoFollowDryRun && fomoFollowProfileIds.length === 0
       && !fomoFollowDiscoveryEnabled) {
@@ -791,6 +797,22 @@ module.exports = {
       reconcileIntervalMs: parseIntegerInRange(process.env.FOMO_CAPTURE_RECONCILE_SECONDS, 900, 10, 86400) * 1000,
       tradeLookupLimit: parseIntegerInRange(process.env.FOMO_CAPTURE_TRADE_LOOKUP_LIMIT, 10, 0, 50),
       threshold: parseIntegerInRange(process.env.FOMO_CAPTURE_THRESHOLD, 1000, 0, 1000000000),
+      telegramAlerts: {
+        enabled: fomoTelegramAlertsEnabled,
+        botToken: fomoTelegramBotToken,
+        chatId: fomoTelegramChatId,
+        timeoutMs: parseIntegerInRange(
+          process.env.FOMO_TELEGRAM_TIMEOUT_SECONDS
+            ?? process.env.FOMO_FOLLOW_TELEGRAM_TIMEOUT_SECONDS,
+          10, 3, 60
+        ) * 1000,
+      },
+      browserHealth: {
+        enabled: fomoTelegramAlertsEnabled,
+        staleMs: parseIntegerInRange(
+          process.env.FOMO_BROWSER_STALE_SECONDS, 90, 30, 3600
+        ) * 1000,
+      },
       follow: {
         enabled: fomoFollowEnabled,
         dryRun: fomoFollowDryRun,
@@ -803,14 +825,6 @@ module.exports = {
         requestTimeoutMs: parseIntegerInRange(
           process.env.FOMO_FOLLOW_REQUEST_TIMEOUT_SECONDS, 15, 5, 60
         ) * 1000,
-        telegramAlert: {
-          enabled: fomoFollowTelegramAlertsEnabled,
-          botToken: String(process.env.FOMO_FOLLOW_TELEGRAM_BOT_TOKEN || '').trim(),
-          chatId: String(process.env.FOMO_FOLLOW_TELEGRAM_CHAT_ID || '').trim(),
-          timeoutMs: parseIntegerInRange(
-            process.env.FOMO_FOLLOW_TELEGRAM_TIMEOUT_SECONDS, 10, 3, 60
-          ) * 1000,
-        },
       },
     },
     retention: {
