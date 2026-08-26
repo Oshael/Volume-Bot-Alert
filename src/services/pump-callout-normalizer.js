@@ -1,6 +1,7 @@
 'use strict';
 
 const REDACTED_KEYS = /^(authorization|proxy-authorization|cookie|set-cookie|auth[-_]?token|access[-_]?token|refresh[-_]?token|jwt|csrf|csrf[-_]?token|x-csrf-token|ct0|session[-_]?token)$/i;
+const SOLANA_ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
 function text(value) {
   const normalized = String(value ?? '').trim();
@@ -52,15 +53,18 @@ function walletObservation(value, fallbackChainId = null) {
   const item = typeof value === 'string' ? { address: value } : (value || {});
   const address = text(item.address || item.walletAddress || item.wallet);
   if (!address) return null;
+  const rawChainId = text(item.chainId || item.chain || fallbackChainId)
+    || (SOLANA_ADDRESS.test(address) ? 'solana' : null);
   return {
     address,
-    rawChainId: text(item.chainId || item.chain || fallbackChainId),
+    rawChainId,
     sourceField: item.sourceField || null,
   };
 }
 
 function normalizePumpProfile(item = {}) {
   const observations = [
+    walletObservation({ address: item.address, chainId: item.chainId, sourceField: 'address' }),
     walletObservation({ address: item.primaryWallet, chainId: item.chainId, sourceField: 'primaryWallet' }),
     ...(Array.isArray(item.wallets) ? item.wallets.map((wallet) => walletObservation(wallet, item.chainId)) : []),
   ].filter(Boolean);
@@ -73,11 +77,11 @@ function normalizePumpProfile(item = {}) {
   }
   return {
     platform: 'pump',
-    platformUserId: text(item.userId || item.user_uuid || item.id),
+    platformUserId: text(item.platformUserId || item.userId || item.user_uuid || item.id),
     username: text(item.userName || item.username),
     displayName: text(item.displayName || item.name),
-    xUsername: text(item.xUsername),
-    profilePictureUrl: text(item.profileImage || item.profilePictureUrl),
+    xUsername: text(item.xUsername || item.x_username),
+    profilePictureUrl: text(item.profileImage || item.profilePictureUrl || item.profile_image),
     wallets: uniqueWallets,
     rawProfileMetadata: sanitizePumpPayload(item),
   };

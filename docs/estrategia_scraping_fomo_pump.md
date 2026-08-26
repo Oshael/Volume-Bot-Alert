@@ -251,6 +251,16 @@ distingue Ethereum, Base, BSC e Robinhood.
 GET /callout/list/{userId}
 ```
 
+### Perfil público de um usuário
+
+```text
+GET /users/{userIdentifier}
+```
+
+O endpoint não exige cookie e fornece `username`, `profile_image`, `x_username`,
+`bio`, `address` e `userId`. O enriquecimento mantém como chave o identificador
+observado no callout; o `userId` retornado não substitui essa identidade.
+
 Parâmetros:
 
 ```text

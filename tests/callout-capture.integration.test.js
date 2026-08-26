@@ -6,6 +6,9 @@ const { after, describe, it } = require('node:test');
 const db = require('../src/models/db');
 const { createCalloutCaptureRepository } = require('../src/models/callout-capture');
 const { commonCalloutFromPump, createCalloutEnvelope } = require('../src/services/callout-domain');
+const {
+  createProfileObservation, createProfileObservationEnvelope,
+} = require('../src/services/profile-wallet-domain');
 const stage161 = require('../src/utils/db-init-stage161');
 const stage162 = require('../src/utils/db-init-stage162');
 const {
@@ -101,6 +104,29 @@ describe('callout permanent archive persistence', () => {
       assert.deepEqual(repairedRows.rows[0], {
         asset_chain_key: 'solana', asset_address_normalized: SOLANA,
         asset_resolution_status: 'inferred_solana_address',
+      });
+
+      const enrichedAt = '2026-08-25T12:05:00.000Z';
+      const profile = createProfileObservation({
+        platform: 'pump', platformUserId: 'profile-integration', username: 'enriched-user',
+        xUsername: 'enriched-x', profilePictureUrl: 'https://example.test/avatar.png',
+        observedAt: enrichedAt, source: 'user_profile_backfill',
+        wallets: [{
+          address: SOLANA, rawChainId: 'solana', relationType: 'profile_wallet',
+          sourceType: 'platform_reported', sourceField: 'address', confidence: 'high',
+        }],
+      });
+      await repository.commitCapture({
+        profileEnvelopes: [createProfileObservationEnvelope(profile)], calloutEnvelopes: [],
+        checkpointKey: 'pump:profile-enrichment', checkpointState: { version: 1 },
+        committedAt: enrichedAt,
+      });
+      const enrichedProfile = await client.query(`SELECT p.username, p.profile_picture_url,
+        w.address_normalized FROM callout_profiles p
+        JOIN callout_wallet_observations w USING (platform, platform_user_id)`);
+      assert.deepEqual(enrichedProfile.rows[0], {
+        username: 'enriched-user', profile_picture_url: 'https://example.test/avatar.png',
+        address_normalized: SOLANA,
       });
 
       const collision = {

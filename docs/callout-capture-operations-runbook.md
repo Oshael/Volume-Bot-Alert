@@ -156,6 +156,23 @@ npm run callouts:repair-pump-solana -- --mode write
 O primeiro comando é sempre dry-run. O write é idempotente, transacional e altera
 somente linhas Pump sem evidência de chain e com formato Solana inequívoco.
 
+## Enriquecer perfis Pump incompletos
+
+O endpoint público `GET /users/{userIdentifier}` fornece `username`, avatar e X.
+O collector consulta gradualmente os usuários da watchlist, sem cookie, atualiza
+cada perfil no máximo uma vez por 24 horas e tenta falhas novamente após 15
+minutos. Para perfis já persistidos sem username, use o backfill bounded:
+
+```bash
+npm run callouts:backfill-pump-profiles
+npm run callouts:backfill-pump-profiles -- --mode write --limit 100 --concurrency 3
+```
+
+O dry-run não chama a Pump nem escreve no banco. O write preserva o
+`platform_user_id` original do callout e persiste perfil, avatar, X e wallet na
+mesma transação. Repita lotes até `candidates` chegar a zero; falhas são agregadas
+somente por código seguro.
+
 ## Rotação de credenciais
 
 O token Pump é relido em cada request. Na Fomo, o worker usa o customer JWT até

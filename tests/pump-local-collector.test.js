@@ -33,6 +33,10 @@ test('Pump collector persists cumulative watchlist/cursors and skips replay afte
         walletAddress: SOLANA, chainId: 'solana', coinMint: SOLANA, callout: callout('call-1') }],
       nextCursor: 'cursor-2',
     } }),
+    getUserProfile: async (userId) => ({ body: {
+      userId: 'api-user-id', address: SOLANA, username: `${userId}-name`,
+      profile_image: 'https://example.test/profile.png', x_username: 'caller_x',
+    } }),
     listUserCallouts: async (_userId, options) => {
       userPageTokens.push(options.pageToken);
       return options.pageToken === 'page-2'
@@ -52,16 +56,21 @@ test('Pump collector persists cumulative watchlist/cursors and skips replay afte
   await firstCollector.runOnce();
   assert.deepEqual(events.map((record) => record.payload.platformEventId), ['call-1', 'call-2']);
   assert.equal(firstCollector.getStatus().lastEventAt, '2026-08-25T02:00:00.000Z');
-  assert.equal(identities.length, 3);
+  assert.equal(identities.length, 4);
   assert.equal(identities[1].payload.wallets[0].sourceType, 'activity_used');
+  assert.equal(identities[2].payload.platformUserId, 'user-1');
+  assert.equal(identities[2].payload.username, 'user-1-name');
+  assert.equal(identities[2].payload.profilePictureUrl, 'https://example.test/profile.png');
   const saved = await stateStore.load();
   assert.deepEqual(saved.watchlist, ['user-1']);
   assert.equal(saved.markers['user-1'], 'call-2');
   assert.equal(saved.followingCursor, 'cursor-2');
+  assert.equal(saved.profileRefreshedAt['user-1'], Date.parse('2026-08-25T02:05:00.000Z'));
   assert.deepEqual(userPageTokens, [null, 'page-2']);
 
   await createPumpLocalCollector(options).runOnce();
   assert.equal(events.length, 2);
+  assert.equal(identities.length, 4);
   assert.deepEqual(userPageTokens, [null, 'page-2', null]);
   assert.deepEqual((await stateStore.load()).watchlist, ['user-1']);
 });

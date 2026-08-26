@@ -74,6 +74,7 @@
     "fomo:capture": "node src/utils/fomo-continuous-capture.js",
     "callouts:summaries:compare": "node src/utils/compare-callout-summaries.js",
     "callouts:repair-pump-solana": "node src/utils/repair-pump-callout-solana-chains.js",
+    "callouts:backfill-pump-profiles": "node src/utils/backfill-pump-callout-profiles.js",
     "x:following-overlap": "node src/utils/x-following-overlap-probe.js",
     "x:push-probe": "node src/utils/x-push-latency-probe.js",
     "x:push-scale-probe": "node src/utils/x-push-scale-probe.js",

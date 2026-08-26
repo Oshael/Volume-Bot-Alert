@@ -52,12 +52,12 @@ function createPumpCalloutClient(options = {}) {
   if (authTokenProvider !== undefined && typeof authTokenProvider !== 'function') {
     throw new TypeError('Pump auth token provider must be a function');
   }
-  const authToken = authTokenProvider ? null : required(options.authToken || process.env.PUMP_AUTH_TOKEN, 'Pump auth token');
+  const authToken = authTokenProvider ? null : String(options.authToken || process.env.PUMP_AUTH_TOKEN || '').trim();
   const baseUrl = String(options.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '');
   const fetchImpl = options.fetchImpl || globalThis.fetch;
   const timeoutMs = positiveInteger(options.timeoutMs, DEFAULT_TIMEOUT_MS, 60_000);
 
-  async function request(path, query = {}) {
+  async function request(path, query = {}, requestOptions = {}) {
     const url = new URL(path, `${baseUrl}/`);
     for (const [key, value] of Object.entries(query)) {
       if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, String(value));
@@ -67,15 +67,20 @@ function createPumpCalloutClient(options = {}) {
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     let response;
     try {
-      let requestToken = authToken;
-      if (authTokenProvider) {
-        try { requestToken = required(await authTokenProvider(), 'Pump auth token'); } catch (_error) {
-          throw Object.assign(new Error('Pump auth token is unavailable'), { code: 'PUMP_AUTH' });
+      const headers = { accept: 'application/json' };
+      if (requestOptions.authenticated !== false) {
+        let requestToken = authToken;
+        if (authTokenProvider) {
+          try { requestToken = required(await authTokenProvider(), 'Pump auth token'); } catch (_error) {
+            throw Object.assign(new Error('Pump auth token is unavailable'), { code: 'PUMP_AUTH' });
+          }
         }
+        if (!requestToken) throw Object.assign(new Error('Pump auth token is unavailable'), { code: 'PUMP_AUTH' });
+        headers.cookie = `auth_token=${requestToken}`;
       }
       response = await fetchImpl(url, {
         method: 'GET',
-        headers: { accept: 'application/json', cookie: `auth_token=${requestToken}` },
+        headers,
         signal: controller.signal,
       });
     } catch (error) {
@@ -101,6 +106,10 @@ function createPumpCalloutClient(options = {}) {
 
   return {
     getMyProfile: () => request('/auth/my-profile'),
+    getUserProfile: (userIdentifier) => request(
+      `/users/${encodeURIComponent(required(userIdentifier, 'userIdentifier'))}`,
+      {}, { authenticated: false }
+    ),
     getLeaderboard: ({ limit = 50 } = {}) => request('/callout/leaderboard', {
       limit: positiveInteger(limit, 50),
     }),

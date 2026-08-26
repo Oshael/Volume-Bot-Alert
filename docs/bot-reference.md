@@ -1001,6 +1001,13 @@ expiração exata de 72 horas e checkpoints dos collectors. O repository
 trata replay do mesmo par plataforma/evento como primeira observação vence,
 rejeita colisão de identidade e impede checkpoint mais antigo de sobrescrever
 um mais novo. Redes desconhecidas preservam `rawChainId` e endereço original.
+Perfis Pump incompletos são enriquecidos pelo endpoint público
+`GET /users/{userIdentifier}` conforme a watchlist é processada, sem transmitir o
+cookie Pump. O identificador original do callout continua sendo a chave; username,
+avatar e X são atualizados a cada 24 horas, com retry de falha após 15 minutos.
+`npm run callouts:backfill-pump-profiles` apenas audita perfis antigos sem username;
+`-- --mode write --limit 100 --concurrency 3` faz o preenchimento bounded pelo
+mesmo writer transacional de perfis e wallets.
 O stage permanece inerte até ser aplicado; os spools locais não serão importados
 nem serão fonte de verdade.
 

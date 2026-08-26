@@ -9,6 +9,8 @@ const {
   sanitizePumpPayload,
 } = require('../src/services/pump-callout-normalizer');
 
+const SOLANA = 'Ai66LHZG9MCzg1WKdawwqduVAXpNDUuV8M3uyq5ppump';
+
 function response(body, options = {}) {
   return {
     ok: options.status ? options.status >= 200 && options.status < 300 : true,
@@ -90,6 +92,21 @@ test('Pump client rereads a token provider and classifies unavailable credential
   await assert.rejects(unavailable.getLeaderboard(), (error) => error.code === 'PUMP_AUTH');
 });
 
+test('Pump user profile lookup is public and never sends the auth cookie', async () => {
+  const requests = [];
+  const client = createPumpCalloutClient({
+    fetchImpl: async (url, options) => {
+      requests.push({ url: String(url), options });
+      return response({ username: 'caller', profile_image: 'https://example.test/avatar.png' });
+    },
+  });
+
+  const result = await client.getUserProfile('wallet/address');
+  assert.equal(new URL(requests[0].url).pathname, '/users/wallet%2Faddress');
+  assert.equal(requests[0].options.headers.cookie, undefined);
+  assert.equal(result.body.username, 'caller');
+});
+
 test('profile normalization preserves profile to wallet observations without guessing chain', () => {
   const profile = normalizePumpProfile({
     userId: 'user-1',
@@ -110,6 +127,21 @@ test('profile normalization preserves profile to wallet observations without gue
   assert.deepEqual(profile.wallets, [
     { address: 'PrimaryWallet', rawChainId: 'solana', sourceField: 'primaryWallet' },
     { address: '0xabc', rawChainId: 'robinhood', sourceField: null },
+  ]);
+});
+
+test('profile API aliases enrich the existing callout identity and infer a Solana wallet', () => {
+  const profile = normalizePumpProfile({
+    platformUserId: 'callout-identity', userId: 'different-api-id', address: SOLANA,
+    username: 'caller', x_username: 'caller_x', profile_image: 'https://example.test/avatar.png',
+  });
+
+  assert.equal(profile.platformUserId, 'callout-identity');
+  assert.equal(profile.username, 'caller');
+  assert.equal(profile.xUsername, 'caller_x');
+  assert.equal(profile.profilePictureUrl, 'https://example.test/avatar.png');
+  assert.deepEqual(profile.wallets, [
+    { address: SOLANA, rawChainId: 'solana', sourceField: 'address' },
   ]);
 });
 

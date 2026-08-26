@@ -22,6 +22,8 @@ function initialState(value = {}) {
     followingCursor: value.followingCursor || null,
     watchlistOffset: Number.isSafeInteger(value.watchlistOffset) ? value.watchlistOffset : 0,
     lastLeaderboardAt: Number.isFinite(value.lastLeaderboardAt) ? value.lastLeaderboardAt : 0,
+    profileRefreshedAt: value.profileRefreshedAt && typeof value.profileRefreshedAt === 'object'
+      ? { ...value.profileRefreshedAt } : {},
   };
 }
 
@@ -37,6 +39,8 @@ function createPumpLocalCollector(options = {}) {
   const roundDeadlineMs = positiveInteger(options.roundDeadlineMs, 45_000);
   const usersPerRound = positiveInteger(options.usersPerRound, 5, 50);
   const userPages = positiveInteger(options.userPages, 2, 5);
+  const profileRefreshIntervalMs = positiveInteger(options.profileRefreshIntervalMs, 24 * 60 * 60_000);
+  const profileRetryIntervalMs = positiveInteger(options.profileRetryIntervalMs, 15 * 60_000);
   let state = null;
   let running = false;
   let paused = false;
@@ -48,6 +52,8 @@ function createPumpLocalCollector(options = {}) {
     rounds: 0, profiles: 0, wallets: 0, callouts: 0, duplicates: 0, truncatedUsers: 0, errors: 0,
     lastRoundAt: null, lastEventAt: null, lastErrorCode: null, lastErrorMessage: null,
     lastErrorPhase: null, pauseReason: null,
+    profileEnrichments: 0, profileEnrichmentErrors: 0,
+    lastProfileEnrichmentAt: null, lastProfileErrorCode: null,
   };
 
   async function ensureState() {
@@ -85,6 +91,25 @@ function createPumpLocalCollector(options = {}) {
     }));
     metrics.profiles += 1;
     metrics.wallets += profile.wallets.length;
+  }
+
+  async function refreshProfile(userId, capturedAt) {
+    if (!userId || typeof options.client.getUserProfile !== 'function') return;
+    const refreshedAt = Number(state.profileRefreshedAt[userId]) || 0;
+    if (now() - refreshedAt < profileRefreshIntervalMs) return;
+    try {
+      const result = await options.client.getUserProfile(userId);
+      await appendProfile(normalizePumpProfile({ ...(result.body || {}), platformUserId: userId }),
+        capturedAt, 'user_profile');
+      state.profileRefreshedAt[userId] = now();
+      metrics.profileEnrichments += 1;
+      metrics.lastProfileEnrichmentAt = capturedAt;
+      metrics.lastProfileErrorCode = null;
+    } catch (error) {
+      state.profileRefreshedAt[userId] = now() - profileRefreshIntervalMs + profileRetryIntervalMs;
+      metrics.profileEnrichmentErrors += 1;
+      metrics.lastProfileErrorCode = String(error?.code || error?.name || 'PUMP_PROFILE_ERROR');
+    }
   }
 
   async function capture(item, source, capturedAt) {
@@ -136,6 +161,7 @@ function createPumpLocalCollector(options = {}) {
     for (let index = 0; index < count && now() < deadlineAt; index += 1) {
       const userId = state.watchlist[(state.watchlistOffset + index) % state.watchlist.length];
       try {
+        await refreshProfile(userId, capturedAt);
         const marker = state.markers[userId];
         let newest = null;
         let pageToken = null;
