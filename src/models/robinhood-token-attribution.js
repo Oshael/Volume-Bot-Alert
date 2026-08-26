@@ -2,7 +2,7 @@ const db = require('./db');
 const { normalizeTokenAddress } = require('../utils/token-identity');
 
 const CHAIN = 'robinhood';
-const LIVE_SOURCES = new Set(['rpc_direct', 'launchpad_event']);
+const LIVE_SOURCES = new Set(['rpc_direct', 'rpc_trace', 'launchpad_event']);
 const LIVE_STREAM = 'live';
 const BACKFILL_STREAM = 'launchpad_backfill';
 
@@ -188,8 +188,9 @@ function createRobinhoodTokenAttributionRepository(options = {}) {
     }));
     for (const item of deployments) {
       if (!LIVE_SOURCES.has(item.source)) throw new Error('live creator source is unsupported');
-      if ((item.source === 'launchpad_event') !== (item.factoryAddress !== null)) {
-        throw new Error('launchpad creator source requires its factory address');
+      const requiresFactory = ['rpc_trace', 'launchpad_event'].includes(item.source);
+      if (requiresFactory !== (item.factoryAddress !== null)) {
+        throw new Error('factory deployment source requires its factory address');
       }
     }
     return deployments;
@@ -217,8 +218,10 @@ function createRobinhoodTokenAttributionRepository(options = {}) {
          last_attempted_at = NOW(), last_resolved_at = NOW(), last_error = NULL,
          updated_at = NOW()
        WHERE CASE robinhood_token_attributions.source
-               WHEN 'blockscout' THEN 0 WHEN 'rpc_direct' THEN 1 ELSE 2 END
-             <= CASE EXCLUDED.source WHEN 'rpc_direct' THEN 1 ELSE 2 END`,
+               WHEN 'blockscout' THEN 0
+               WHEN 'rpc_direct' THEN 1 WHEN 'rpc_trace' THEN 1 ELSE 2 END
+             <= CASE EXCLUDED.source
+                  WHEN 'rpc_direct' THEN 1 WHEN 'rpc_trace' THEN 1 ELSE 2 END`,
       [
         deployments.map((item) => item.tokenAddress),
         deployments.map((item) => item.creatorAddress),
@@ -263,8 +266,11 @@ function createRobinhoodTokenAttributionRepository(options = {}) {
 
   async function recordVerifiedDirectDeployments(inputs = []) {
     const deployments = normalizeDeployments(inputs);
-    if (deployments.some((item) => item.source !== 'rpc_direct' || item.factoryAddress !== null)) {
-      throw new Error('verified direct deployment evidence must use rpc_direct');
+    if (deployments.some((item) => (
+      !['rpc_direct', 'rpc_trace'].includes(item.source)
+      || ((item.source === 'rpc_trace') !== (item.factoryAddress !== null))
+    ))) {
+      throw new Error('verified RPC deployment evidence has invalid provenance');
     }
     if (!deployments.length) return Object.freeze({ attributed: 0 });
     const client = await database.getClient();

@@ -1,7 +1,7 @@
 const db = require('./db');
 
 const CHAIN = 'robinhood';
-const EXACT_SOURCES = Object.freeze(['rpc_direct', 'launchpad_event']);
+const EXACT_SOURCES = Object.freeze(['rpc_direct', 'rpc_trace', 'launchpad_event']);
 function candidatesSql(options) {
   const scopes = [];
   if (options.includeUnseeded) scopes.push('state.token_address IS NULL');

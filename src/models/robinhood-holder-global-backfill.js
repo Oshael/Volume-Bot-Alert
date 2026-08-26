@@ -164,7 +164,7 @@ function createRobinhoodHolderGlobalBackfillRepository(options = {}) {
       [runId, CHAIN]
     );
     const unavailable = result.rows.find((row) => (
-      !['rpc_direct', 'launchpad_event'].includes(row.attribution_source)
+      !['rpc_direct', 'rpc_trace', 'launchpad_event'].includes(row.attribution_source)
         || !/^\d+$/.test(String(row.deployment_block ?? ''))
     ));
     if (unavailable) {

@@ -33,6 +33,12 @@ function blockTag(value) {
   return `0x${BigInt(value).toString(16)}`;
 }
 
+function optionalAddress(value) {
+  if (value == null) return null;
+  try { return normalizeTokenAddress('robinhood', value); }
+  catch (_) { return null; }
+}
+
 function normalizeHint(input = {}) {
   return Object.freeze({
     tokenAddress: address(input.tokenAddress, 'tokenAddress'),
@@ -46,20 +52,71 @@ function validateTransaction(hint, transaction, receipt) {
   const transactionHash = fixedHex(transaction.hash, 32, 'transaction.hash');
   const receiptHash = fixedHex(receipt.transactionHash, 32, 'receipt.transactionHash');
   const creatorAddress = address(transaction.from, 'transaction.from');
-  const contractAddress = address(receipt.contractAddress, 'receipt.contractAddress');
+  const contractAddress = receipt.contractAddress == null
+    ? null : address(receipt.contractAddress, 'receipt.contractAddress');
+  const transactionTo = transaction.to == null
+    ? null : address(transaction.to, 'transaction.to');
   const transactionBlock = quantity(transaction.blockNumber, 'transaction.blockNumber');
   const receiptBlock = quantity(receipt.blockNumber, 'receipt.blockNumber');
   const transactionBlockHash = fixedHex(transaction.blockHash, 32, 'transaction.blockHash');
   const receiptBlockHash = fixedHex(receipt.blockHash, 32, 'receipt.blockHash');
   if (transactionHash !== hint.transactionHash || receiptHash !== hint.transactionHash
-      || creatorAddress !== hint.creatorAddress || contractAddress !== hint.tokenAddress
-      || transaction.to !== null || quantity(receipt.status, 'receipt.status') !== 1n
+      || quantity(receipt.status, 'receipt.status') !== 1n
       || transactionBlock !== receiptBlock || transactionBlockHash !== receiptBlockHash) {
     throw evidenceError('deployment transaction diverged from its Blockscout hint');
   }
   return Object.freeze({
     blockNumber: receiptBlock.toString(), blockHash: receiptBlockHash,
+    contractAddress, creatorAddress, direct: transactionTo === null,
   });
+}
+
+function parityCreation(entries, tokenAddress) {
+  if (!Array.isArray(entries)) return null;
+  for (const entry of entries) {
+    if (!['create', 'create2'].includes(String(entry?.type || '').toLowerCase())) continue;
+    if (optionalAddress(entry?.result?.address) !== tokenAddress) continue;
+    const factoryAddress = optionalAddress(entry?.action?.from);
+    if (factoryAddress) return factoryAddress;
+  }
+  return null;
+}
+
+function callTracerCreation(frame, tokenAddress) {
+  if (!frame || typeof frame !== 'object') return null;
+  const type = String(frame.type || '').toLowerCase();
+  if (['create', 'create2'].includes(type) && optionalAddress(frame.to) === tokenAddress) {
+    const factoryAddress = optionalAddress(frame.from);
+    if (factoryAddress) return factoryAddress;
+  }
+  for (const child of Array.isArray(frame.calls) ? frame.calls : []) {
+    const factoryAddress = callTracerCreation(child, tokenAddress);
+    if (factoryAddress) return factoryAddress;
+  }
+  return null;
+}
+
+async function resolveTraceFactory(rpcClient, hint) {
+  let parityError = null;
+  try {
+    const traces = await rpcClient.request('trace_transaction', [hint.transactionHash]);
+    const factoryAddress = parityCreation(traces, hint.tokenAddress);
+    if (factoryAddress) return factoryAddress;
+  } catch (error) { parityError = error; }
+  let debugError = null;
+  try {
+    const trace = await rpcClient.request('debug_traceTransaction', [
+      hint.transactionHash, { tracer: 'callTracer' },
+    ]);
+    const factoryAddress = callTracerCreation(trace, hint.tokenAddress);
+    if (factoryAddress) return factoryAddress;
+  } catch (error) { debugError = error; }
+  if (parityError && debugError) {
+    const parityCode = String(parityError.rpcCode ?? parityError.code ?? 'failed');
+    const debugCode = String(debugError.rpcCode ?? debugError.code ?? 'failed');
+    throw evidenceError(`deployment trace RPC is unavailable (${parityCode}/${debugCode})`);
+  }
+  throw evidenceError('deployment trace does not create the token contract');
 }
 
 function createRobinhoodHolderDeploymentVerifier(options = {}) {
@@ -91,13 +148,27 @@ function createRobinhoodHolderDeploymentVerifier(options = {}) {
       rpcClient.request('eth_getTransactionReceipt', [hint.transactionHash]),
     ]);
     const evidence = validateTransaction(hint, transaction, receipt);
+    let source = 'rpc_direct';
+    let creatorAddress = hint.creatorAddress;
+    let factoryAddress = null;
+    if (evidence.contractAddress === hint.tokenAddress && evidence.direct) {
+      if (evidence.creatorAddress !== hint.creatorAddress) {
+        throw evidenceError('direct deployment creator diverged from its Blockscout hint');
+      }
+    } else if (evidence.contractAddress === null) {
+      source = 'rpc_trace';
+      creatorAddress = evidence.creatorAddress;
+      factoryAddress = await resolveTraceFactory(rpcClient, hint);
+    } else {
+      throw evidenceError('deployment transaction does not create the token contract');
+    }
     const block = await rpcClient.request('eth_getBlockByNumber', [blockTag(evidence.blockNumber), false]);
     if (quantity(block?.number, 'block.number').toString() !== evidence.blockNumber
         || fixedHex(block?.hash, 32, 'block.hash') !== evidence.blockHash) {
       throw evidenceError('deployment receipt block is not canonical');
     }
     return Object.freeze({
-      ...hint, source: 'rpc_direct', factoryAddress: null,
+      ...hint, creatorAddress, source, factoryAddress,
       blockNumber: evidence.blockNumber,
     });
   }
@@ -107,5 +178,7 @@ function createRobinhoodHolderDeploymentVerifier(options = {}) {
 
 module.exports = {
   createRobinhoodHolderDeploymentVerifier,
-  __private: { normalizeHint, validateTransaction },
+  __private: {
+    callTracerCreation, normalizeHint, parityCreation, validateTransaction,
+  },
 };

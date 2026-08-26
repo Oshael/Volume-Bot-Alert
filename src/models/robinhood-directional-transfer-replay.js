@@ -283,7 +283,7 @@ function createRobinhoodDirectionalTransferReplayRepository(options = {}) {
            LEFT JOIN robinhood_token_attributions attribution
              ON attribution.chain = $2 AND attribution.token_address = item.token_address`,
         [tokenAddresses, CHAIN, String(context.rows[0].source_through_block),
-          ['rpc_direct', 'launchpad_event']]
+          ['rpc_direct', 'rpc_trace', 'launchpad_event']]
       );
       const unavailable = deployments.rows.filter((row) => row.deployment_block == null);
       const available = deployments.rows.filter((row) => row.deployment_block != null);
@@ -398,7 +398,7 @@ function createRobinhoodDirectionalTransferReplayRepository(options = {}) {
               COUNT(*) FILTER (WHERE exact AND leased)::integer AS leased,
               COUNT(*) FILTER (WHERE exact AND published)::integer AS published
          FROM classified`,
-      [runId, CHAIN, ['rpc_direct', 'launchpad_event']]
+      [runId, CHAIN, ['rpc_direct', 'rpc_trace', 'launchpad_event']]
     );
     const row = result.rows[0];
     if (!row?.frontier_available) {
@@ -464,7 +464,7 @@ function createRobinhoodDirectionalTransferReplayRepository(options = {}) {
           WHERE coverage.status IS DISTINCT FROM 'leased'
           ORDER BY deployment_block NULLS LAST, gap.token_address LIMIT $6::int`,
         [runId, CHAIN, String(frontier.source_through_block),
-          ['rpc_direct', 'launchpad_event'], frontier.projection_version, limit]
+          ['rpc_direct', 'rpc_trace', 'launchpad_event'], frontier.projection_version, limit]
       );
       const resolved = candidates.rows.filter((row) => row.deployment_block != null);
       const stageable = resolved.filter((row) => row.published !== true);

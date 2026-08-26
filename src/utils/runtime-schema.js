@@ -4515,6 +4515,22 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage163-robinhood-rpc-trace-provenance',
+    name: 'Stage 163 Robinhood RPC trace deployment provenance',
+    repair: 'node src/utils/db-init-stage163.js',
+    tables: [{
+      table: 'robinhood_token_attributions',
+      columns: ['source', 'attribution_block', 'attribution_tx_hash', 'attribution_factory_address'],
+      constraints: [{
+        name: 'robinhood_token_attributions_source_check',
+        includes: ['rpc_trace'],
+      }, {
+        name: 'robinhood_token_attributions_provenance_check',
+        includes: ['rpc_trace', 'attribution_factory_address'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

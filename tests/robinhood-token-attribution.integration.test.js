@@ -13,7 +13,7 @@ const TRANSACTION_HASH = `0x${'c'.repeat(64)}`;
 after(() => db.pool.end());
 
 describe('Robinhood token attribution persistence', () => {
-  it('upgrades a Blockscout hint to verified direct provenance atomically', async () => {
+  it('upgrades a Blockscout hint to verified direct or trace provenance atomically', async () => {
     const client = await db.getClient();
     try {
       await client.query(`CREATE TEMP TABLE robinhood_token_attributions (
@@ -62,6 +62,20 @@ describe('Robinhood token attribution persistence', () => {
         attribution_tx_hash: TRANSACTION_HASH,
         attribution_factory_address: null, last_error: null,
       }]);
+      const factoryAddress = `0x${'d'.repeat(40)}`;
+      assert.deepEqual(await repository.recordVerifiedDirectDeployments([{
+        tokenAddress: TOKEN, creatorAddress: CREATOR,
+        transactionHash: TRANSACTION_HASH, blockNumber: '124',
+        source: 'rpc_trace', factoryAddress,
+      }]), { attributed: 1 });
+      const traced = await client.query(
+        `SELECT source, attribution_block::text, attribution_factory_address
+           FROM robinhood_token_attributions WHERE token_address = $1`, [TOKEN]
+      );
+      assert.deepEqual(traced.rows[0], {
+        source: 'rpc_trace', attribution_block: '124',
+        attribution_factory_address: factoryAddress,
+      });
     } finally {
       await client.query('DROP TABLE IF EXISTS robinhood_token_attributions').catch(() => {});
       client.release();

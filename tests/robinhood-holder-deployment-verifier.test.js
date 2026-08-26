@@ -9,6 +9,7 @@ const TOKEN = `0x${'a'.repeat(40)}`;
 const CREATOR = `0x${'b'.repeat(40)}`;
 const TX_HASH = `0x${'c'.repeat(64)}`;
 const BLOCK_HASH = `0x${'d'.repeat(64)}`;
+const FACTORY = `0x${'e'.repeat(40)}`;
 
 function evidence(overrides = {}) {
   return {
@@ -34,6 +35,8 @@ function rpcFor(values, calls = []) {
       if (method === 'eth_getTransactionByHash') return values.transaction;
       if (method === 'eth_getTransactionReceipt') return values.receipt;
       if (method === 'eth_getBlockByNumber') return values.block;
+      if (method === 'trace_transaction') return values.trace;
+      if (method === 'debug_traceTransaction') return values.debugTrace;
       throw new Error(`unexpected method ${method}`);
     },
   };
@@ -54,6 +57,44 @@ describe('Robinhood holder deployment verifier', () => {
 
     assert.equal(calls.filter(([method]) => method === 'eth_chainId').length, 1);
     assert.deepEqual(calls[3], ['eth_getBlockByNumber', ['0x64', false]]);
+  });
+
+  it('promotes an internal factory creation only after RPC trace evidence', async () => {
+    const calls = [];
+    const values = evidence({
+      transaction: { to: FACTORY },
+      receipt: { contractAddress: null },
+    });
+    values.trace = [{
+      type: 'create', action: { from: FACTORY }, result: { address: TOKEN },
+    }];
+    const verifier = createRobinhoodHolderDeploymentVerifier({
+      rpcClient: rpcFor(values, calls),
+    });
+
+    assert.deepEqual(await verifier.verifyDirectDeployment({
+      tokenAddress: TOKEN, creatorAddress: FACTORY, transactionHash: TX_HASH,
+    }), {
+      tokenAddress: TOKEN, creatorAddress: CREATOR, transactionHash: TX_HASH,
+      source: 'rpc_trace', factoryAddress: FACTORY, blockNumber: '100',
+    });
+    assert.ok(calls.some(([method]) => method === 'trace_transaction'));
+  });
+
+  it('falls back to recursive callTracer evidence for CREATE2', async () => {
+    const values = evidence({
+      transaction: { to: FACTORY }, receipt: { contractAddress: null },
+    });
+    values.trace = [];
+    values.debugTrace = {
+      type: 'CALL', calls: [{ type: 'CREATE2', from: FACTORY, to: TOKEN }],
+    };
+    const verifier = createRobinhoodHolderDeploymentVerifier({ rpcClient: rpcFor(values) });
+    const result = await verifier.verifyDirectDeployment({
+      tokenAddress: TOKEN, creatorAddress: FACTORY, transactionHash: TX_HASH,
+    });
+    assert.equal(result.source, 'rpc_trace');
+    assert.equal(result.factoryAddress, FACTORY);
   });
 
   it('rejects failed, indirect, mismatched, and non-canonical evidence', async () => {
