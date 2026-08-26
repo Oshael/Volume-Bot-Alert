@@ -483,6 +483,10 @@ const db = getDbConfig(nodeEnv);
 const workerGroups = normalizeWorkerGroups(process.env.BACKGROUND_WORKER_GROUPS);
 const calloutCaptureEnabled = parseBoolean(process.env.CALLOUT_CAPTURE_ENABLED, false);
 const fomoCaptureTransport = String(process.env.FOMO_CAPTURE_TRANSPORT || 'direct_ws').trim().toLowerCase();
+const fomoFollowEnabled = parseBoolean(process.env.FOMO_FOLLOW_ENABLED, false);
+const fomoFollowDryRun = parseBoolean(process.env.FOMO_FOLLOW_DRY_RUN, true);
+const fomoFollowProfileIds = [...new Set(String(process.env.FOMO_FOLLOW_PROFILE_IDS || '')
+  .split(',').map((value) => value.trim()).filter(Boolean))];
 const robinhoodHolderGlobalIsolated = workerGroups.active.includes('robinhood-holder-global');
 const robinhoodHolderBackfillEnabled = parseBoolean(
   process.env.ROBINHOOD_HOLDER_BACKFILL_ENABLED, false
@@ -599,6 +603,16 @@ if (calloutCaptureEnabled) {
     if (!String(process.env.FOMO_WS_JWT || process.env.FOMO_WS_JWT_FILE || '').trim()) {
       missing.push('FOMO_WS_JWT or FOMO_WS_JWT_FILE for callout capture');
     }
+  }
+  if (fomoFollowEnabled && fomoCaptureTransport !== 'browser_cdp') {
+    missing.push('FOMO_FOLLOW_ENABLED requires FOMO_CAPTURE_TRANSPORT=browser_cdp');
+  }
+  if (fomoFollowEnabled && !fomoFollowDryRun && fomoFollowProfileIds.length === 0) {
+    missing.push('FOMO_FOLLOW_PROFILE_IDS when live Fomo follows are enabled');
+  }
+  if (fomoFollowProfileIds.length > 100
+      || fomoFollowProfileIds.some((id) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))) {
+    missing.push('FOMO_FOLLOW_PROFILE_IDS must contain at most 100 UUIDs');
   }
   if (fomoCaptureTransport === 'direct_ws'
       && String(process.env.FOMO_PRIVY_REFRESH_TOKEN_FILE || '').trim()
@@ -761,6 +775,14 @@ module.exports = {
       reconcileIntervalMs: parseIntegerInRange(process.env.FOMO_CAPTURE_RECONCILE_SECONDS, 900, 10, 86400) * 1000,
       tradeLookupLimit: parseIntegerInRange(process.env.FOMO_CAPTURE_TRADE_LOOKUP_LIMIT, 10, 0, 50),
       threshold: parseIntegerInRange(process.env.FOMO_CAPTURE_THRESHOLD, 1000, 0, 1000000000),
+      follow: {
+        enabled: fomoFollowEnabled,
+        dryRun: fomoFollowDryRun,
+        profileIds: fomoFollowProfileIds,
+        maxFollowsPerRun: parseIntegerInRange(process.env.FOMO_FOLLOW_MAX_PER_RUN, 1, 1, 10),
+        delayMs: parseIntegerInRange(process.env.FOMO_FOLLOW_DELAY_SECONDS, 8, 3, 60) * 1000,
+        authWaitMs: parseIntegerInRange(process.env.FOMO_FOLLOW_AUTH_WAIT_SECONDS, 60, 10, 300) * 1000,
+      },
     },
     retention: {
       enabled: parseBoolean(process.env.CALLOUT_RETENTION_ENABLED, true),

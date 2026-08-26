@@ -1,0 +1,124 @@
+'use strict';
+
+const assert = require('node:assert/strict');
+const { EventEmitter } = require('node:events');
+const test = require('node:test');
+const {
+  createFomoBrowserApi,
+  createFomoBrowserFollowQueue,
+  normalizeProfileIds,
+} = require('../src/services/fomo-browser-follow-queue');
+
+const USER = '00000000-0000-4000-8000-000000000001';
+const A = '00000000-0000-4000-8000-00000000000a';
+const B = '00000000-0000-4000-8000-00000000000b';
+const C = '00000000-0000-4000-8000-00000000000c';
+
+function ok(responseObject) {
+  return { status: 200, body: { statusCode: 200, responseObject } };
+}
+
+function apiFixture({ following = [], followStatus = 200 } = {}) {
+  const calls = [];
+  return {
+    calls,
+    api: {
+      async request(path, init) {
+        calls.push({ path, init });
+        if (path === '/auth/my-profile') return ok({ id: USER });
+        if (path === '/v2/users/current/followingIds') return ok({ followingIds: following });
+        return { status: followStatus, body: { statusCode: followStatus } };
+      },
+      async close() {},
+    },
+  };
+}
+
+test('Fomo follow allowlist accepts unique UUIDs only', () => {
+  assert.deepEqual(normalizeProfileIds([A, A, B]), [A, B]);
+  assert.throws(() => normalizeProfileIds(['not-an-id']), /UUIDs/);
+});
+
+test('Fomo browser API reuses observed auth and detaches without closing Chrome', async () => {
+  const cdp = new EventEmitter();
+  let detached = 0;
+  cdp.send = async () => {};
+  cdp.detach = async () => { detached += 1; };
+  let evaluation;
+  const page = new EventEmitter();
+  page.url = () => 'https://fomo.family/alerts';
+  const context = { pages: () => [page], newCDPSession: async () => cdp };
+  page.context = () => context;
+  page.reload = async () => {
+    cdp.emit('Network.requestWillBeSent', {
+      requestId: 'api-1', request: {
+        url: 'https://prod-api.fomo.family/feed/tradingActivity',
+        headers: { Authorization: 'Bearer fixture-token', 'X-Supported-Chains': 'solana' },
+      },
+    });
+  };
+  page.evaluate = async (_callback, input) => { evaluation = input; return ok({}); };
+  let browserClosed = 0;
+  const browser = { contexts: () => [context], close: () => { browserClosed += 1; } };
+
+  const api = await createFomoBrowserApi({ connectOverCDP: async () => browser });
+  await api.request('/follows', { method: 'POST', body: { following_id: A } });
+  assert.equal(evaluation.requestPath, '/follows');
+  assert.equal(evaluation.auth.authorization, 'Bearer fixture-token');
+  assert.equal(evaluation.auth.supportedChains, 'solana');
+  await api.close();
+  assert.equal(detached, 1);
+  assert.equal(browserClosed, 0);
+});
+
+test('Fomo follow queue plans a dry-run without writing to the account', async () => {
+  const fixture = apiFixture({ following: [A] });
+  const queue = createFomoBrowserFollowQueue({
+    enabled: true, dryRun: true, profileIds: [A, B],
+    createBrowserApi: async () => fixture.api,
+  });
+
+  queue.start();
+  await queue.stop();
+  assert.deepEqual(fixture.calls.map((call) => call.path), [
+    '/auth/my-profile', '/v2/users/current/followingIds',
+  ]);
+  assert.equal(queue.getStatus().alreadyFollowed, 1);
+  assert.equal(queue.getStatus().planned, 1);
+  assert.equal(queue.getStatus().followed, 0);
+});
+
+test('Fomo follow queue writes one allowlisted follow sequentially and idempotently', async () => {
+  const fixture = apiFixture({ following: [A] });
+  const delays = [];
+  const queue = createFomoBrowserFollowQueue({
+    enabled: true, dryRun: false, profileIds: [A, B, C], maxFollowsPerRun: 1,
+    delayMs: 5_000, random: () => 0.5,
+    wait: async (delayMs) => { delays.push(delayMs); },
+    createBrowserApi: async () => fixture.api,
+  });
+
+  queue.start();
+  await queue.stop();
+  const write = fixture.calls.find((call) => call.path === '/follows');
+  assert.deepEqual(delays, [5_000]);
+  assert.deepEqual(write.init, {
+    method: 'POST', body: { user_id: USER, following_id: B },
+  });
+  assert.equal(queue.getStatus().followed, 1);
+  assert.equal(queue.getStatus().planned, 2);
+});
+
+test('Fomo follow queue pauses immediately when account writes receive 403', async () => {
+  const fixture = apiFixture({ followStatus: 403 });
+  const queue = createFomoBrowserFollowQueue({
+    enabled: true, dryRun: false, profileIds: [A, B], maxFollowsPerRun: 10,
+    wait: async () => {}, createBrowserApi: async () => fixture.api,
+  });
+
+  queue.start();
+  await queue.stop();
+  assert.equal(fixture.calls.filter((call) => call.path === '/follows').length, 1);
+  assert.equal(queue.getStatus().paused, true);
+  assert.equal(queue.getStatus().lastErrorCode, 'FOMO_FOLLOW_HTTP_403');
+});

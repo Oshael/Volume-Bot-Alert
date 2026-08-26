@@ -5,6 +5,7 @@ const path = require('node:path');
 const { createCalloutCaptureRepository } = require('../models/callout-capture');
 const { createFomoLocalCollector } = require('./fomo-local-collector');
 const { createFomoBrowserActivityStream } = require('./fomo-browser-activity-stream');
+const { createFomoBrowserFollowQueue } = require('./fomo-browser-follow-queue');
 const { createPumpCalloutClient } = require('./pump-callout-client');
 const { createPumpLocalCollector } = require('./pump-local-collector');
 const {
@@ -75,6 +76,17 @@ function buildFomoCollector(deps, config, persistence, authentication) {
   });
 }
 
+function buildFomoFollowQueue(deps, config) {
+  if (config.transport !== 'browser_cdp' || !config.follow?.enabled) return null;
+  return (deps.createFomoFollowQueue || createFomoBrowserFollowQueue)({
+    ...config.follow, cdpEndpoint: config.cdpEndpoint,
+  });
+}
+
+function stopComponents(components) {
+  return Promise.allSettled(components.map((component) => component?.stop?.()));
+}
+
 function createCalloutCaptureWorker(deps = {}) {
   let pump = null;
   let fomo = null;
@@ -82,6 +94,7 @@ function createCalloutCaptureWorker(deps = {}) {
   let fomoPersistence = null;
   let retention = null;
   let fomoAuthentication = null;
+  let fomoFollow = null;
   let running = false;
 
   async function start(config = {}) {
@@ -96,21 +109,23 @@ function createCalloutCaptureWorker(deps = {}) {
     retention = (deps.createRetentionWorker || createCalloutRetentionWorker)({ repository });
     pump = buildPumpCollector(deps, pumpConfig, pumpPersistence);
     fomo = buildFomoCollector(deps, fomoConfig, fomoPersistence, fomoAuthentication);
+    fomoFollow = buildFomoFollowQueue(deps, fomoConfig);
     running = true;
     try {
       retention.start(config.retention);
       fomo.start();
+      fomoFollow?.start();
       await pump.start();
     } catch (error) {
       running = false;
-      await Promise.allSettled([pump?.stop?.(), fomo?.stop?.(), retention?.stop?.()]);
+      await stopComponents([pump, fomo, fomoFollow, retention]);
       throw error;
     }
   }
 
   async function stop() {
     running = false;
-    await Promise.allSettled([pump?.stop?.(), fomo?.stop?.(), retention?.stop?.()]);
+    await stopComponents([pump, fomo, fomoFollow, retention]);
     await fomoPersistence?.flush?.();
   }
 
@@ -121,6 +136,7 @@ function createCalloutCaptureWorker(deps = {}) {
       pump: componentStatus(pump),
       fomo: componentStatus(fomo),
       fomoAuthentication: componentStatus(fomoAuthentication),
+      fomoFollow: componentStatus(fomoFollow),
       persistence: {
         pump: componentStatus(pumpPersistence),
         fomo: componentStatus(fomoPersistence),

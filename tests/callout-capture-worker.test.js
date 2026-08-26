@@ -8,6 +8,7 @@ const {
 const { createCalloutCaptureWorker } = require('../src/services/callout-capture-worker');
 
 const NOW = Date.parse('2026-08-25T15:00:00.000Z');
+const FOMO_PROFILE = '00000000-0000-4000-8000-00000000000a';
 
 function envelope(kind, key) {
   return {
@@ -159,5 +160,38 @@ describe('callout capture production persistence', () => {
     assert.equal(fomoOptions.reconciliationEnabled, false);
     assert.equal(fomoOptions.tradeLookupLimit, 0);
     await worker.stop();
+  });
+
+  it('starts the separately gated browser follow queue', async () => {
+    let followOptions;
+    let followStarted = 0;
+    let followStopped = 0;
+    const repository = { loadCheckpoint: async () => null, commitCapture: async () => {} };
+    const worker = createCalloutCaptureWorker({
+      repository,
+      createPumpClient: () => ({}),
+      createPumpCollector: () => ({ start: async () => {}, stop: async () => {} }),
+      createFomoCollector: () => ({ start: () => {}, stop: async () => {} }),
+      createFomoFollowQueue: (options) => {
+        followOptions = options;
+        return {
+          start: () => { followStarted += 1; }, stop: async () => { followStopped += 1; },
+          getStatus: () => ({ running: true }),
+        };
+      },
+      createRetentionWorker: () => ({ start: () => {}, stop: async () => {} }),
+    });
+
+    await worker.start({
+      pump: {}, fomo: {
+        transport: 'browser_cdp', cdpEndpoint: 'http://127.0.0.1:9222',
+        follow: { enabled: true, dryRun: true, profileIds: [FOMO_PROFILE] },
+      },
+    });
+    assert.equal(followStarted, 1);
+    assert.equal(followOptions.cdpEndpoint, 'http://127.0.0.1:9222');
+    assert.deepEqual(worker.getStatus().fomoFollow, { running: true });
+    await worker.stop();
+    assert.equal(followStopped, 1);
   });
 });

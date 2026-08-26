@@ -981,6 +981,15 @@ direto, lookup de trade e reconciliação periódica Fomo ficam desativados ness
 modo; o navegador é o dono exclusivo da sessão. O transporte `direct_ws`
 continua disponível como fallback.
 
+Follows externos usam uma fila separada, exclusiva de `browser_cdp`. A fila só
+existe com `FOMO_FOLLOW_ENABLED=true`, permanece read-only enquanto
+`FOMO_FOLLOW_DRY_RUN=true` e aceita no máximo 100 UUIDs explícitos em
+`FOMO_FOLLOW_PROFILE_IDS`. Ela lê o perfil atual e `followingIds`, remove os já
+seguidos e executa `POST /follows` com concorrência 1, jitter e limite default de
+uma escrita por início do worker. `401`, `403` ou `429` pausam a rodada. Não há
+unfollow automático; autorização Privy observada pelo CDP fica somente em
+memória e nunca entra em status ou log.
+
 ### 11.7 Captura local Pump
 
 `npm run pump:capture` executa captura local opt-in, sem PostgreSQL ou Follow

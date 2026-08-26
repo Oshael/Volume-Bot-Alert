@@ -187,6 +187,22 @@ describe('runtime worker groups config', () => {
     const config = JSON.parse(result.stdout);
     assert.equal(config.transport, 'browser_cdp');
     assert.equal(config.cdpEndpoint, 'http://127.0.0.1:9222');
+    assert.equal(config.follow.dryRun, true);
+  });
+
+  it('requires an allowlist before enabling live Fomo follow writes', () => {
+    const result = spawnSync(process.execPath, ['-e', "require('./config')"], {
+      cwd: ROOT_DIR,
+      env: {
+        ...process.env, BACKGROUND_WORKER_GROUPS: 'callouts', CALLOUT_CAPTURE_ENABLED: 'true',
+        PUMP_AUTH_TOKEN: 'pump-test', FOMO_CAPTURE_TRANSPORT: 'browser_cdp',
+        FOMO_FOLLOW_ENABLED: 'true', FOMO_FOLLOW_DRY_RUN: 'false', FOMO_FOLLOW_PROFILE_IDS: '',
+        FOMO_WS_TOPIC_ID: '', FOMO_WS_JWT: '', FOMO_WS_JWT_FILE: '',
+      },
+      encoding: 'utf8',
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /FOMO_FOLLOW_PROFILE_IDS/);
   });
 
   it('rejects combining Robinhood maintenance with Solana maintenance', () => {
