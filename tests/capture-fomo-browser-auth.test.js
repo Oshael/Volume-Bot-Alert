@@ -8,7 +8,6 @@ const { describe, it } = require('node:test');
 const {
   chromeArgs,
   createCaptureAccumulator,
-  profileTopicCapture,
   sessionCapture,
   socketCapture,
   writeBundle,
@@ -42,10 +41,6 @@ describe('Fomo browser authentication capture', () => {
       refreshToken: 'refresh', caId: 'ca-id',
     });
     accumulator.acceptSocket(socketCapture(JSON.stringify({
-      type: 'subscribe', topicType: 'trading_activity',
-      topicId: 'ea1bc7f5-e349-5c6d-ab41-740c237a792d',
-    })));
-    accumulator.acceptSocket(socketCapture(JSON.stringify({
       type: 'challengeResponse', jwt: jwt('stale'),
     })));
     assert.equal(accumulator.getSnapshot(), null);
@@ -56,7 +51,6 @@ describe('Fomo browser authentication capture', () => {
       accessToken,
       refreshToken: 'refresh',
       caId: 'ca-id',
-      topicId: 'ea1bc7f5-e349-5c6d-ab41-740c237a792d',
     });
   });
 
@@ -67,17 +61,7 @@ describe('Fomo browser authentication capture', () => {
       refreshToken: 'refresh', caId: 'ca-id',
     });
     accumulator.acceptSocket({ accessToken: jwt('fomo-app') });
-    accumulator.acceptSocket({ topicId: 'ea1bc7f5-e349-5c6d-ab41-740c237a792d' });
     assert.equal(accumulator.getSnapshot().accessToken, jwt('fomo-app'));
-  });
-
-  it('accepts the authenticated profile and subscribed ACK as topic ID sources', () => {
-    const topicId = 'ea1bc7f5-e349-5c6d-ab41-740c237a792d';
-    assert.deepEqual(profileTopicCapture({ responseObject: { id: topicId } }), { topicId });
-    assert.deepEqual(socketCapture(JSON.stringify({
-      type: 'subscribed', topicType: 'trading_activity', topicId,
-    })), { topicId });
-    assert.equal(profileTopicCapture({ responseObject: { id: 'not-a-uuid' } }), null);
   });
 
   it('writes secrets separately with restrictive permissions', async () => {
@@ -86,14 +70,13 @@ describe('Fomo browser authentication capture', () => {
     try {
       await writeBundle(output, {
         accessToken: jwt('access'), refreshToken: 'refresh', caId: 'ca-id',
-        topicId: 'ea1bc7f5-e349-5c6d-ab41-740c237a792d',
       });
       for (const name of ['fomo-customer-token', 'fomo-refresh-token', 'callouts.env.fragment']) {
         const mode = (await fs.stat(path.join(output, name))).mode & 0o777;
         assert.equal(mode, 0o600);
       }
-      assert.match(await fs.readFile(path.join(output, 'callouts.env.fragment'), 'utf8'),
-        /FOMO_WS_TOPIC_ID=ea1bc7f5/);
+      assert.equal(await fs.readFile(path.join(output, 'callouts.env.fragment'), 'utf8'),
+        'FOMO_PRIVY_CA_ID=ca-id\n');
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

@@ -8,10 +8,8 @@ const readline = require('node:readline/promises');
 const { chromium } = require('@playwright/test');
 
 const SESSION_URL = 'https://auth.privy.io/api/v1/sessions';
-const CURRENT_USER_URL = 'https://prod-api.fomo.family/v2/users';
 const FOMO_URL = 'https://fomo.family/';
 const DEFAULT_TIMEOUT_MS = 15 * 60_000;
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function isJwt(value) {
   return typeof value === 'string'
@@ -52,27 +50,16 @@ function socketCapture(raw) {
   if (payload?.type === 'challengeResponse' && isJwt(payload.jwt)) {
     return { accessToken: payload.jwt };
   }
-  if ((payload?.type === 'subscribe' || payload?.type === 'subscribed')
-    && payload.topicType === 'trading_activity'
-    && UUID.test(String(payload.topicId || ''))) {
-    return { topicId: payload.topicId };
-  }
   return null;
-}
-
-function profileTopicCapture(body) {
-  const topicId = body?.responseObject?.id;
-  return UUID.test(String(topicId || '')) ? { topicId } : null;
 }
 
 function createCaptureAccumulator() {
   let session = null;
   let socketAccessToken = null;
-  let topicId = null;
   const waiters = new Set();
 
   function snapshot() {
-    if (!session || !socketAccessToken || !topicId) return null;
+    if (!session || !socketAccessToken) return null;
     const privyIdentity = jwtSessionIdentity(session.privyAccessToken);
     const socketIdentity = jwtSessionIdentity(socketAccessToken);
     const sameSession = session.appToken
@@ -84,7 +71,6 @@ function createCaptureAccumulator() {
       accessToken: socketAccessToken,
       refreshToken: session.refreshToken,
       caId: session.caId,
-      topicId,
     };
   }
 
@@ -102,14 +88,12 @@ function createCaptureAccumulator() {
     },
     acceptSocket(value) {
       if (value?.accessToken) socketAccessToken = value.accessToken;
-      if (value?.topicId) topicId = value.topicId;
       notify();
     },
     getSnapshot: snapshot,
     getStatus: () => ({
       privySession: Boolean(session),
       websocketJwt: Boolean(socketAccessToken),
-      topicId: Boolean(topicId),
       sessionMatched: Boolean(snapshot()),
     }),
     wait(timeoutMs = DEFAULT_TIMEOUT_MS) {
@@ -216,7 +200,6 @@ async function writeBundle(outputDir, capture) {
     'fomo-customer-token': `${capture.accessToken}\n`,
     'fomo-refresh-token': `${capture.refreshToken}\n`,
     'callouts.env.fragment': [
-      `FOMO_WS_TOPIC_ID=${capture.topicId}`,
       `FOMO_PRIVY_CA_ID=${capture.caId}`,
       '',
     ].join('\n'),
@@ -230,29 +213,17 @@ async function writeBundle(outputDir, capture) {
 
 function attachCapture(page, accumulator, onProgress = () => {}) {
   page.on('response', async (response) => {
-    const isPrivySession = response.url() === SESSION_URL
-      && response.request().method() === 'POST';
-    const isCurrentUser = response.url() === CURRENT_USER_URL
-      && response.request().method() === 'GET';
-    if (!isPrivySession && !isCurrentUser) return;
+    if (response.url() !== SESSION_URL || response.request().method() !== 'POST') return;
     try {
       const body = await response.json();
-      if (isPrivySession) {
-        const headers = await response.request().allHeaders();
-        accumulator.acceptSession(sessionCapture(body, headers));
-      } else {
-        accumulator.acceptSocket(profileTopicCapture(body));
-      }
+      const headers = await response.request().allHeaders();
+      accumulator.acceptSession(sessionCapture(body, headers));
       onProgress(accumulator.getStatus());
     } catch (_error) {}
   });
   page.on('websocket', (socket) => {
     if (!socket.url().includes('prod-api.fomo.family/ws')) return;
     socket.on('framesent', ({ payload }) => {
-      accumulator.acceptSocket(socketCapture(payload));
-      onProgress(accumulator.getStatus());
-    });
-    socket.on('framereceived', ({ payload }) => {
       accumulator.acceptSocket(socketCapture(payload));
       onProgress(accumulator.getStatus());
     });
@@ -267,7 +238,6 @@ function progressReporter() {
     last = current;
     console.log(`[captura] Privy=${status.privySession ? 'ok' : '...'} `
       + `JWT-WS=${status.websocketJwt ? 'ok' : '...'} `
-      + `topicId=${status.topicId ? 'ok' : '...'} `
       + `sessão=${status.sessionMatched ? 'validada' : 'aguardando'}`);
   };
 }
@@ -335,7 +305,6 @@ module.exports = {
   isJwt,
   jwtSessionIdentity,
   parseArgs,
-  profileTopicCapture,
   sessionCapture,
   socketCapture,
   writeBundle,

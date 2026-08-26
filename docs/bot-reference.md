@@ -1064,8 +1064,8 @@ o customer JWT ainda válido e persiste qualquer refresh token rotacionado.
 No Mac, `npm run fomo:auth-capture` abre um perfil temporário em Chrome normal
 para autenticar primeiro o Gmail, reinicia esse mesmo perfil com instrumentação
 apenas na etapa Fomo e captura automaticamente customer JWT, refresh token, CA
-ID e `topicId` da mesma sessão. O UUID é aceito do `subscribe`, do ACK
-`subscribed` ou do current-user `GET /v2/users`. A saída local `0700`
+ID da mesma sessão. O `topicId` permanece uma coleta manual do `subscribe` da
+mesma conta. A saída local `0700`
 contém os dois segredos e um fragmento de env em arquivos `0600`; o comando
 fecha a sessão sem logout, não imprime segredos e não altera a VPS.
 A rotação exige
