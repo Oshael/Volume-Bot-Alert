@@ -53,21 +53,6 @@ também é aceito. O CA ID vai no env da etapa seguinte. Como o refresh token Pr
 não deixe o SDK do navegador competir com o worker pela mesma sessão. Não
 registre tokens em shell history, journal ou diagnósticos.
 
-No Mac, `npm run fomo:auth-capture` automatiza essa coleta. O comando abre um
-perfil temporário isolado em Chrome normal para o Google; após concluir o login
-do Gmail, confirme no terminal. O processo fecha essa primeira janela e reabre o
-mesmo perfil instrumentado somente para o login Fomo. Ele observa a resposta
-Privy e os frames enviados ao WebSocket, captura o CA ID separadamente dos
-headers das requisições Privy e valida customer JWT, refresh e CA ID
-pela identidade da sessão e grava o JWT efetivamente enviado em
-`challengeResponse`. O `topicId` continua sendo coletado manualmente do
-`subscribe` da mesma conta e configurado separadamente.
-Depois de salvar os três valores, o comando mantém o Chrome aberto para essa
-coleta manual e só o fecha sem logout quando o operador pressiona Enter. A saída
-é um diretório `0700` temporário contendo os dois arquivos de segredo e
-`callouts.env.fragment` com o CA ID, todos `0600`; nenhum segredo é impresso no
-terminal. O diretório não é instalado nem enviado à VPS automaticamente.
-
 ## 2. Instalar env e drop-in
 
 Use `deploy/systemd/callouts.env.example` como base para

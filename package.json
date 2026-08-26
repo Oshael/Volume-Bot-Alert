@@ -72,7 +72,6 @@
     "pump:capture": "node src/utils/pump-continuous-capture.js",
     "fomo:ws-probe": "node src/utils/fomo-ws-probe.js",
     "fomo:capture": "node src/utils/fomo-continuous-capture.js",
-    "fomo:auth-capture": "node src/utils/capture-fomo-browser-auth.js",
     "callouts:summaries:compare": "node src/utils/compare-callout-summaries.js",
     "callouts:repair-pump-solana": "node src/utils/repair-pump-callout-solana-chains.js",
     "callouts:backfill-pump-profiles": "node src/utils/backfill-pump-callout-profiles.js",

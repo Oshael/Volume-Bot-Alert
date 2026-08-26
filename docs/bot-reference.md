@@ -1061,16 +1061,6 @@ audiência `auth.privy.io`, identifica a mesma sessão por `sub`/`sid`, mas não
 aceito como substituto pelo WebSocket. Uma renovação antecipada com
 `session_update_action=ignore` pode omitir `token`; nesse caso o worker preserva
 o customer JWT ainda válido e persiste qualquer refresh token rotacionado.
-No Mac, `npm run fomo:auth-capture` abre um perfil temporário em Chrome normal
-para autenticar primeiro o Gmail, reinicia esse mesmo perfil com instrumentação
-apenas na etapa Fomo e captura automaticamente customer JWT, refresh token, CA
-ID da mesma sessão. O CA ID é observado separadamente nos headers Privy, sem
-depender de sua presença no evento da resposta `/sessions`. O `topicId` permanece
-uma coleta manual do `subscribe` da mesma conta; depois de salvar os três valores,
-o comando mantém o Chrome aberto
-até o operador confirmar essa etapa no terminal. A saída local `0700`
-contém os dois segredos e um fragmento de env em arquivos `0600`; o comando
-fecha a sessão sem logout, não imprime segredos e não altera a VPS.
 A rotação exige
 `FOMO_PRIVY_CA_ID=privy:caid` medido e
 envia apenas o refresh token no corpo da chamada Privy, sem `Authorization`.
