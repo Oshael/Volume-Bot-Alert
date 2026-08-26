@@ -1956,6 +1956,11 @@ no relatório. Ausência de first-buy torna o token inelegível; ausência de â
 torna a regra indisponível só para aquele token. Lookbacks são informados pelo
 operador.
 
+A Stage 166 prepara campanhas congeladas e uma fila por token para recuperar
+launch anchors ausentes em lotes concorrentes, com lease, retry, resultados
+terminais e progresso durável. Aplicar a migration não cria campanha nem executa
+queries de backfill.
+
 ### Corte D2 — reader e preflight do RPC Archive
 
 Objetivo:

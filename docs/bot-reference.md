@@ -1878,6 +1878,12 @@ não chama RPC, não grava banco e não imprime wallets ou ranges individuais;
 reader, backfill, worker ou publicação de `BUNDLED`. A leitura recusa universos
 acima de 500 mil candidatos para não exceder a memória; esse caso exige um
 planejador paginado antes de continuar.
+A Stage 166 (`node src/utils/db-init-stage166.js`) cria o controle durável do
+catch-up de launch anchors: uma campanha ativa por chain e uma fila por token com
+frontier/hash congelados, lease, retry e resultados terminais. A migration é
+somente DDL; não seleciona tokens, não lê swaps e não inicia o backfill. O runner
+e seu preflight com teto de cinco horas ainda precisam ser entregues antes de
+usar essa fila em produção.
 A Stage 149 introduz
 `robinhood_wallet_token_first_buys`, fonte neutra e reutilizável para ordem por
 token e recorrência por wallet. Aplique `node src/utils/db-init-stage149.js` antes

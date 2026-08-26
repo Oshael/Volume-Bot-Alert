@@ -4567,6 +4567,84 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage166-robinhood-launch-anchor-backfill-control',
+    name: 'Stage 166 Robinhood launch-anchor backfill control',
+    repair: 'node src/utils/db-init-stage166.js',
+    tables: [{
+      table: 'robinhood_launch_anchor_backfill_runs',
+      columns: [
+        'id', 'chain', 'evidence_version', 'source_through_block', 'status',
+        'target_count', 'started_at', 'finished_at', 'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_launch_anchor_backfill_runs_chain_check',
+        includes: ['CHECK', 'chain', 'robinhood'],
+      }, {
+        name: 'rh_launch_anchor_backfill_runs_evidence_check',
+        includes: ['CHECK', 'evidence_version', 'rh_launch_anchor_v'],
+      }, {
+        name: 'rh_launch_anchor_backfill_runs_values_check',
+        includes: ['CHECK', 'source_through_block', 'target_count'],
+      }, {
+        name: 'rh_launch_anchor_backfill_runs_status_check',
+        includes: ['CHECK', 'planned', 'running', 'completed', 'failed'],
+      }, {
+        name: 'rh_launch_anchor_backfill_runs_lifecycle_check',
+        includes: ['CHECK', 'planned', 'running', 'completed', 'failed'],
+      }],
+      indexes: [{
+        name: 'idx_rh_launch_anchor_backfill_runs_active',
+        includes: ['chain', 'planned', 'running'],
+      }],
+    }, {
+      table: 'robinhood_launch_anchor_backfill_targets',
+      columns: [
+        'run_id', 'chain', 'token_address', 'first_pool_block',
+        'source_through_block', 'source_through_hash', 'status', 'lease_owner',
+        'lease_until', 'attempt_count', 'next_attempt_at', 'anchor_block',
+        'swaps_considered', 'anchors_written', 'last_error_code',
+        'last_error_message', 'started_at', 'completed_at', 'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_launch_anchor_backfill_targets_pkey',
+        includes: ['PRIMARY KEY', 'run_id', 'token_address'],
+      }, {
+        name: 'rh_launch_anchor_backfill_targets_source_check',
+        includes: [
+          'CHECK', 'first_pool_block', 'source_through_block', 'source_through_hash',
+        ],
+      }, {
+        name: 'rh_launch_anchor_backfill_targets_status_check',
+        includes: ['CHECK', 'pending', 'leased', 'completed', 'unavailable', 'failed'],
+      }, {
+        name: 'rh_launch_anchor_backfill_targets_lease_check',
+        includes: ['CHECK', 'leased', 'lease_owner', 'lease_until'],
+      }, {
+        name: 'rh_launch_anchor_backfill_targets_counts_check',
+        includes: ['CHECK', 'attempt_count', 'swaps_considered', 'anchors_written'],
+      }, {
+        name: 'rh_launch_anchor_backfill_targets_error_check',
+        includes: ['CHECK', 'last_error_code', 'last_error_message'],
+      }, {
+        name: 'rh_launch_anchor_backfill_targets_completion_check',
+        includes: [
+          'CHECK', 'completed', 'unavailable', 'failed', 'completed_at',
+          'anchor_block', 'anchors_written', 'last_error_code',
+        ],
+      }],
+      indexes: [{
+        name: 'idx_rh_launch_anchor_backfill_targets_claim',
+        includes: ['run_id', 'next_attempt_at', 'token_address', 'pending'],
+      }, {
+        name: 'idx_rh_launch_anchor_backfill_targets_lease',
+        includes: ['run_id', 'lease_until', 'leased'],
+      }, {
+        name: 'idx_rh_launch_anchor_backfill_targets_progress',
+        includes: ['run_id', 'status', 'token_address'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
