@@ -1879,8 +1879,16 @@ está coberta. O relatório separa tokens live sem first-buy ou launch anchor e
 compara ranges/blocos únicos para cada lookback. Sem first-buy o token é
 inelegível; sem âncora, fica indisponível sem bloquear os cobertos. O comando
 não chama RPC, não grava banco e não imprime wallets ou ranges individuais;
-`--source-from-block` e `--statement-timeout-ms` são opcionais. Ainda não existe
-reader, backfill, worker ou publicação de `BUNDLED`. A leitura recusa universos
+`--source-from-block` e `--statement-timeout-ms` são opcionais. O segundo passo,
+`npm run robinhood:bundle-funding-preflight -- --lookback-blocks=1000`, roda no
+PC com `RH_NODE_RPC_URL` apontando para o archive local e `DATABASE_URL` para a
+VPS. Ele lê full-blocks top-level em amostras distribuídas pelos ranges reais,
+mede payload/throughput sob concorrência e recusa chain incorreta, checkpoint
+instável ou ETA acima de cinco horas. `--batch-blocks` (1–100), `--concurrency`
+(1–16), `--samples` (até 64 e nunca menor que a concorrência) e `--max-hours`
+(máximo 5) ajustam o probe; não há escrita nem fallback de RPC. Transfers internos
+continuam fora do escopo. Ainda não existe backfill, worker ou publicação de
+`BUNDLED`. A leitura recusa universos
 acima de 500 mil candidatos para não exceder a memória; esse caso exige um
 planejador paginado antes de continuar.
 A Stage 166 (`node src/utils/db-init-stage166.js`) cria o controle durável do

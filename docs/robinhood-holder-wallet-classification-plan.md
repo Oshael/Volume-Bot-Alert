@@ -1976,6 +1976,11 @@ Objetivo:
 - medir payload, throughput e ETA representativos;
 - recusar backfill projetado acima de cinco horas.
 
+O preflight lê full-blocks top-level somente no `RH_NODE_RPC_URL`, amostra batches
+distribuídos pelos ranges realmente planejados sob a concorrência configurada e
+falha fechado por chain ID, mudança do checkpoint ou ETA acima de cinco horas.
+Transfers internos permanecem fora do escopo por ausência de traces.
+
 ### Corte D3 — projeção seed/live de funding nativo
 
 Objetivo:
