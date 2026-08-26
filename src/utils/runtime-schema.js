@@ -4531,6 +4531,22 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage164-robinhood-blockscout-internal-provenance',
+    name: 'Stage 164 Robinhood Blockscout internal deployment provenance',
+    repair: 'node src/utils/db-init-stage164.js',
+    tables: [{
+      table: 'robinhood_token_attributions',
+      columns: ['source', 'attribution_block', 'attribution_tx_hash', 'attribution_factory_address'],
+      constraints: [{
+        name: 'robinhood_token_attributions_source_check',
+        includes: ['blockscout_internal'],
+      }, {
+        name: 'robinhood_token_attributions_provenance_check',
+        includes: ['blockscout_internal', 'attribution_factory_address'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

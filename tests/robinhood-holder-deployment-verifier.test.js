@@ -81,6 +81,24 @@ describe('Robinhood holder deployment verifier', () => {
     assert.ok(calls.some(([method]) => method === 'trace_transaction'));
   });
 
+  it('prefers exact Blockscout internal creation evidence over RPC tracing', async () => {
+    const calls = [];
+    const values = evidence({
+      transaction: { to: FACTORY }, receipt: { contractAddress: null },
+    });
+    const verifier = createRobinhoodHolderDeploymentVerifier({
+      rpcClient: rpcFor(values, calls),
+      internalCreationLookup: async () => ({ factoryAddress: FACTORY }),
+    });
+    const result = await verifier.verifyDirectDeployment({
+      tokenAddress: TOKEN, creatorAddress: FACTORY, transactionHash: TX_HASH,
+    });
+    assert.equal(result.source, 'blockscout_internal');
+    assert.equal(result.creatorAddress, CREATOR);
+    assert.equal(result.factoryAddress, FACTORY);
+    assert.equal(calls.some(([method]) => method.includes('trace')), false);
+  });
+
   it('falls back to recursive callTracer evidence for CREATE2', async () => {
     const values = evidence({
       transaction: { to: FACTORY }, receipt: { contractAddress: null },

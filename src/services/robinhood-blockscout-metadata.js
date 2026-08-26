@@ -3,6 +3,7 @@ const { normalizeText, sanitizeAssetUrl } = require('../utils/url-safety');
 
 const DEFAULT_BASE_URL = 'https://robinhoodchain.blockscout.com/api/v2/tokens/';
 const DEFAULT_ADDRESS_BASE_URL = 'https://robinhoodchain.blockscout.com/api/v2/addresses/';
+const DEFAULT_TRANSACTION_BASE_URL = 'https://robinhoodchain.blockscout.com/api/v2/transactions/';
 const DEFAULT_API_URL = 'https://robinhoodchain.blockscout.com/api';
 const DEFAULT_PRO_API_URL = 'https://api.blockscout.com/v2/api?chain_id=4663';
 const DEFAULT_TIMEOUT_MS = 5000;
@@ -73,10 +74,16 @@ function createRobinhoodBlockscoutMetadataClient(options = {}) {
   if (typeof fetchImpl !== 'function') throw new TypeError('A fetch implementation is required');
   const baseUrl = new URL(String(options.baseUrl || DEFAULT_BASE_URL));
   const addressBaseUrl = new URL(String(options.addressBaseUrl || DEFAULT_ADDRESS_BASE_URL));
+  const transactionBaseUrl = new URL(String(
+    options.transactionBaseUrl || DEFAULT_TRANSACTION_BASE_URL
+  ));
   const apiUrl = new URL(String(options.apiUrl || DEFAULT_API_URL));
   const apiKey = String(options.apiKey || '').trim();
   if (baseUrl.protocol !== 'https:') throw new TypeError('Blockscout metadata URL must use HTTPS');
   if (addressBaseUrl.protocol !== 'https:') throw new TypeError('Blockscout address URL must use HTTPS');
+  if (transactionBaseUrl.protocol !== 'https:') {
+    throw new TypeError('Blockscout transaction URL must use HTTPS');
+  }
   if (apiUrl.protocol !== 'https:') throw new TypeError('Blockscout API URL must use HTTPS');
   const timeoutMs = boundedTimeout(options.timeoutMs);
   let minimumCreditsRemaining = null;
@@ -164,6 +171,51 @@ function createRobinhoodBlockscoutMetadataClient(options = {}) {
     return (await getContractCreation(tokenAddress))?.creatorAddress || null;
   }
 
+  async function getInternalContractCreation(transactionHash, tokenAddress) {
+    const hash = String(transactionHash ?? '').trim().toLowerCase();
+    if (!/^0x[0-9a-f]{64}$/.test(hash)) throw new TypeError('transaction hash is invalid');
+    const address = normalizeTokenAddress('robinhood', tokenAddress);
+    let url = new URL(`${hash}/internal-transactions`, transactionBaseUrl);
+    for (let page = 0; page < 20; page += 1) {
+      const payload = await requestUrl(url, 'transaction internal trace');
+      if (payload == null) return null;
+      if (!Array.isArray(payload.items)) {
+        throw new RobinhoodBlockscoutMetadataError(
+          'Blockscout internal transaction response is invalid', 'invalid_response'
+        );
+      }
+      for (const item of payload.items) {
+        if (!['create', 'create2'].includes(String(item?.type || '').toLowerCase())) continue;
+        if (item?.success === false) continue;
+        let createdAddress;
+        try { createdAddress = normalizeTokenAddress('robinhood', item?.created_contract?.hash); }
+        catch (_) { continue; }
+        if (createdAddress !== address) continue;
+        let factoryAddress;
+        try { factoryAddress = normalizeTokenAddress('robinhood', item?.from?.hash || item?.from); }
+        catch (_) {
+          throw new RobinhoodBlockscoutMetadataError(
+            'Blockscout internal creation factory is invalid', 'invalid_response'
+          );
+        }
+        const itemHash = String(item?.transaction_hash ?? '').trim().toLowerCase();
+        if (itemHash && itemHash !== hash) {
+          throw new RobinhoodBlockscoutMetadataError(
+            'Blockscout internal transaction hash mismatch', 'transaction_mismatch'
+          );
+        }
+        return Object.freeze({ tokenAddress: address, transactionHash: hash, factoryAddress });
+      }
+      const next = payload.next_page_params;
+      if (!next || typeof next !== 'object') return null;
+      url = new URL(url);
+      for (const [key, value] of Object.entries(next)) url.searchParams.set(key, value);
+    }
+    throw new RobinhoodBlockscoutMetadataError(
+      'Blockscout internal transaction pagination exceeded its bound', 'invalid_response'
+    );
+  }
+
   async function getContractCreators(tokenAddresses) {
     if (!Array.isArray(tokenAddresses) || tokenAddresses.length < 1 || tokenAddresses.length > 10) {
       throw new TypeError('Blockscout creator batch must contain 1..10 token addresses');
@@ -206,13 +258,14 @@ function createRobinhoodBlockscoutMetadataClient(options = {}) {
   const getCreditsRemaining = () => minimumCreditsRemaining;
   return Object.freeze({
     getContractCreation, getContractCreator, getContractCreators,
-    getCreditsRemaining, getTokenMetadata,
+    getCreditsRemaining, getInternalContractCreation, getTokenMetadata,
   });
 }
 
 module.exports = {
   DEFAULT_BASE_URL,
   DEFAULT_ADDRESS_BASE_URL,
+  DEFAULT_TRANSACTION_BASE_URL,
   DEFAULT_API_URL,
   DEFAULT_PRO_API_URL,
   DEFAULT_TIMEOUT_MS,

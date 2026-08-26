@@ -1344,7 +1344,8 @@ são opt-in e permanecem desligados por default; pull ou presença de
 `ROBINHOOD_RPC_URL` não os inicia. O live deve ser ligado antes dos backfills. Os
 workers live e incremental compartilham o cutoff obrigatório
 `ROBINHOOD_HOLDER_BACKFILL_ADMITTED_AFTER`; os backfills exigem deployment exato
-`rpc_direct`, `rpc_trace` ou `launchpad_event`; Blockscout sozinho fornece apenas hint para deployments
+`rpc_direct`, `blockscout_internal`, `rpc_trace` ou `launchpad_event`; a rota de endereço
+do Blockscout sozinha fornece apenas hint para deployments
 diretos antigos, que precisam ser confirmados pelo RPC principal. A fila de
 replay conclui primeiro estados que já possuem checkpoint live e, dentro de cada
 classe, prioriza o menor trabalho restante até a barreira; assim novas admissões
@@ -1692,7 +1693,7 @@ encontra `directional_replay_edge_missing`, o range sofre rollback e somente os
 tokens ausentes são inseridos como candidatos. Cada candidato começa em
 `GREATEST(run.source_from_block, holder_state.deployment_block)`. Estados legados
 com deployment ausente ou zero usam somente uma atribuição exata `rpc_direct`,
-`rpc_trace` ou `launchpad_event`; sem nenhuma dessas provas, o candidato falha
+`blockscout_internal`, `rpc_trace` ou `launchpad_event`; sem nenhuma dessas provas, o candidato falha
 fechado para o repair, mas não interrompe a descoberta. A Stage 160 persiste o
 par range/token em `robinhood_directional_transfer_deployment_gaps`; o progresso
 expõe `deploymentGaps`, e esses tokens não entram na fila executável até obterem
@@ -1718,12 +1719,14 @@ O creator Blockscout armazenado anteriormente é apenas um hint: divergência co
 o creator retornado pela rota nativa não bloqueia promoção quando transaction e
 receipt canônicos do archive comprovam o deployment. Falhas registram ausência
 de creator/transaction, status HTTP ou a razão detalhada de rejeição RPC.
-Factory deployments com `receipt.contractAddress = null` exigem prova
-`trace_transaction` ou `debug_traceTransaction`: uma operação interna
-`CREATE/CREATE2` deve produzir exatamente o token. A atribuição resultante usa
-`rpc_trace`, transaction sender como creator e o executor interno como factory.
-Essa fonte exige o Stage 163 (`node src/utils/db-init-stage163.js`) e é considerada
-deployment exato pelos fluxos de holders e directional repair.
+Factory deployments com `receipt.contractAddress = null` consultam primeiro
+`/api/v2/transactions/{txHash}/internal-transactions`: uma operação interna
+`CREATE/CREATE2` deve produzir exatamente o token, enquanto receipt e bloco canônico
+continuam validados pelo RPC. A atribuição usa `blockscout_internal`, transaction
+sender como creator e executor interno como factory. Aplique a Stage 164
+(`node src/utils/db-init-stage164.js`) antes do resolver. Se a evidência interna não
+existir, o fallback continua sendo `trace_transaction`/`debug_traceTransaction` e
+usa `rpc_trace` (Stage 163). Ambas são provas exatas para holders e directional repair.
 O comando aceita `--limit`, `--batch-size`, `--concurrency` e
 `--timeout-ms` (respeitado integralmente entre 1s e 60s); sucessos persistidos
 deixam de ser selecionados numa retomada e
@@ -2294,7 +2297,8 @@ enable explícito.
 DEV-L2 também está construído localmente: o mesmo cursor consulta logs por bloco
 e aceita somente assinaturas comprovadas de Pons/NOXA e LaunchHood, persistindo a
 factory como evidência. RobinPad segue excluído por falta de ABI/logs verificáveis;
-Blockscout, `rpc_direct` e `rpc_trace` não podem sobrescrever um `launchpad_event`.
+Blockscout, `blockscout_internal`, `rpc_direct` e `rpc_trace` não podem sobrescrever
+um `launchpad_event`.
 O hotfix pós-rollout usa o contrato real `db.getClient()` para a transação atômica;
 o cursor permanece parado quando a conexão ou qualquer escrita falha.
 O backfill histórico L2 usa `npm run robinhood:launchpad-creator-backfill`, é

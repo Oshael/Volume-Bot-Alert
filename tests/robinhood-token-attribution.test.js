@@ -142,7 +142,7 @@ describe('Robinhood token creator attribution', () => {
     assert.equal(result.attributed, 1);
     assert.deepEqual(calls.map((sql) => sql.split(/\s+/)[0]), ['BEGIN', 'INSERT', 'UPDATE', 'COMMIT']);
     assert.match(calls[1], /attribution_factory_address/);
-    assert.match(calls[1], /WHEN 'rpc_direct' THEN 1 WHEN 'rpc_trace' THEN 1 ELSE 2/);
+    assert.match(calls[1], /WHEN 'blockscout_internal' THEN 1 ELSE 2/);
   });
 
   it('persists verified historical direct evidence without advancing a live cursor', async () => {

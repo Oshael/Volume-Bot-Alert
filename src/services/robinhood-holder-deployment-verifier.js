@@ -121,6 +121,7 @@ async function resolveTraceFactory(rpcClient, hint) {
 
 function createRobinhoodHolderDeploymentVerifier(options = {}) {
   const rpcClient = options.rpcClient;
+  const internalCreationLookup = options.internalCreationLookup;
   if (typeof rpcClient?.request !== 'function') {
     throw new TypeError('holder deployment verifier RPC client is required');
   }
@@ -156,9 +157,20 @@ function createRobinhoodHolderDeploymentVerifier(options = {}) {
         throw evidenceError('direct deployment creator diverged from its Blockscout hint');
       }
     } else if (evidence.contractAddress === null) {
-      source = 'rpc_trace';
       creatorAddress = evidence.creatorAddress;
-      factoryAddress = await resolveTraceFactory(rpcClient, hint);
+      let internalLookupError = null;
+      if (typeof internalCreationLookup === 'function') {
+        try {
+          const internal = await internalCreationLookup(hint);
+          factoryAddress = optionalAddress(internal?.factoryAddress);
+          if (factoryAddress) source = 'blockscout_internal';
+        } catch (error) { internalLookupError = error; }
+      }
+      if (!factoryAddress) {
+        source = 'rpc_trace';
+        try { factoryAddress = await resolveTraceFactory(rpcClient, hint); }
+        catch (error) { throw internalLookupError || error; }
+      }
     } else {
       throw evidenceError('deployment transaction does not create the token contract');
     }

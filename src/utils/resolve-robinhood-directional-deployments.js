@@ -182,18 +182,26 @@ function buildRuntime(options, deps = {}) {
   const apiUrl = String(env.ROBINHOOD_BLOCKSCOUT_API_URL
     || (apiKey ? DEFAULT_PRO_API_URL : DEFAULT_API_URL)).trim();
   const database = deps.database || db;
+  const sleep = deps.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const rpcClient = (deps.rpcClientFactory || createEvmJsonRpcClient)({
     providers: [{ name: 'robinhood-pc-archive', url: rpcUrl }],
     timeoutMs: options.timeoutMs, maxRetries: 1,
   });
+  const blockscout = (deps.blockscoutFactory || createRobinhoodBlockscoutMetadataClient)({
+    apiKey, apiUrl, timeoutMs: options.timeoutMs,
+  });
   return Object.freeze({
     gaps: createRobinhoodDirectionalDeploymentGapRepository({ database }),
     attributions: createRobinhoodTokenAttributionRepository({ database }),
-    blockscout: (deps.blockscoutFactory || createRobinhoodBlockscoutMetadataClient)({
-      apiKey, apiUrl, timeoutMs: options.timeoutMs,
+    blockscout,
+    verifier: createRobinhoodHolderDeploymentVerifier({
+      rpcClient,
+      internalCreationLookup: async (hint) => (await requestWithRetry(
+        () => blockscout.getInternalContractCreation(hint.transactionHash, hint.tokenAddress),
+        { requestRetries: 2, retryDelayMs: 500 }, sleep,
+      )).value,
     }),
-    verifier: createRobinhoodHolderDeploymentVerifier({ rpcClient }),
-    sleep: deps.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
+    sleep,
   });
 }
 

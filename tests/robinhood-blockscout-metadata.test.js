@@ -79,6 +79,29 @@ describe('Robinhood Blockscout metadata client', () => {
     });
   });
 
+  it('resolves exact internal CREATE2 evidence from a transaction trace', async () => {
+    const creator = `0x${'2'.repeat(40)}`;
+    const transactionHash = `0x${'4'.repeat(64)}`;
+    let requestedUrl;
+    const client = createRobinhoodBlockscoutMetadataClient({
+      fetchImpl: async (url) => {
+        requestedUrl = String(url);
+        return response(200, {
+          items: [{
+            type: 'create2', success: true, transaction_hash: transactionHash.toUpperCase(),
+            from: { hash: creator.toUpperCase() }, created_contract: { hash: TOKEN.toUpperCase() },
+          }],
+          next_page_params: null,
+        });
+      },
+    });
+
+    assert.deepEqual(await client.getInternalContractCreation(transactionHash, TOKEN), {
+      tokenAddress: TOKEN, transactionHash, factoryAddress: creator,
+    });
+    assert.match(requestedUrl, new RegExp(`${transactionHash}/internal-transactions$`));
+  });
+
   it('resolves up to ten contract creators in one Blockscout request', async () => {
     const creator = `0x${'2'.repeat(40)}`;
     const transactionHash = `0x${'4'.repeat(64)}`;

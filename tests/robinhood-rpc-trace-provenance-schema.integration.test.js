@@ -8,12 +8,14 @@ const stage110 = require('../src/utils/db-init-stage110');
 const stage113 = require('../src/utils/db-init-stage113');
 const stage114 = require('../src/utils/db-init-stage114');
 const stage163 = require('../src/utils/db-init-stage163');
+const stage164 = require('../src/utils/db-init-stage164');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const TOKEN = `0x${'6'.repeat(40)}`;
 const CREATOR = `0x${'7'.repeat(40)}`;
 const FACTORY = `0x${'8'.repeat(40)}`;
 const HASH = `0x${'9'.repeat(64)}`;
+const INTERNAL_TOKEN = `0x${'a'.repeat(40)}`;
 
 describe('Robinhood RPC trace provenance schema integration', () => {
   before(async () => {
@@ -22,12 +24,19 @@ describe('Robinhood RPC trace provenance schema integration', () => {
     await stage113.init({ closePool: false });
     await stage114.init({ closePool: false });
     await stage163.init({ closePool: false });
-    await stage163.init({ closePool: false });
-    await db.query('DELETE FROM robinhood_token_attributions WHERE token_address = $1', [TOKEN]);
+    await stage164.init({ closePool: false });
+    await stage164.init({ closePool: false });
+    await db.query(
+      'DELETE FROM robinhood_token_attributions WHERE token_address = ANY($1::varchar[])',
+      [[TOKEN, INTERNAL_TOKEN]]
+    );
   });
 
   after(async () => {
-    await db.query('DELETE FROM robinhood_token_attributions WHERE token_address = $1', [TOKEN]);
+    await db.query(
+      'DELETE FROM robinhood_token_attributions WHERE token_address = ANY($1::varchar[])',
+      [[TOKEN, INTERNAL_TOKEN]]
+    );
     await db.pool.end();
   });
 
@@ -50,6 +59,23 @@ describe('Robinhood RPC trace provenance schema integration', () => {
       db.query(
         `UPDATE robinhood_token_attributions
             SET attribution_factory_address = NULL WHERE token_address = $1`, [TOKEN]
+      ),
+      /robinhood_token_attributions_provenance_check/
+    );
+  });
+
+  it('accepts Blockscout internal creation only with exact factory provenance', async () => {
+    await db.query(
+      `INSERT INTO robinhood_token_attributions (
+         token_address, creator_address, source, attribution_block,
+         attribution_tx_hash, attribution_factory_address, last_resolved_at
+       ) VALUES ($1, $2, 'blockscout_internal', 101, $3, $4, NOW())`,
+      [INTERNAL_TOKEN, CREATOR, HASH, FACTORY]
+    );
+    await assert.rejects(
+      db.query(
+        `UPDATE robinhood_token_attributions
+            SET attribution_factory_address = NULL WHERE token_address = $1`, [INTERNAL_TOKEN]
       ),
       /robinhood_token_attributions_provenance_check/
     );

@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const { it } = require('node:test');
 
 const stage163 = require('../src/utils/db-init-stage163');
+const stage164 = require('../src/utils/db-init-stage164');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 
 it('registers exact RPC trace provenance and requires a factory address', () => {
@@ -16,4 +17,14 @@ it('registers exact RPC trace provenance and requires a factory address', () => 
     'robinhood_token_attributions_source_check',
     'robinhood_token_attributions_provenance_check',
   ]);
+});
+
+it('registers exact Blockscout internal creation provenance', () => {
+  const sql = stage164.STATEMENTS.join('\n');
+  const group = SCHEMA_GROUPS.find(({ key }) => (
+    key === 'stage164-robinhood-blockscout-internal-provenance'
+  ));
+  assert.match(sql, /'blockscout_internal'/);
+  assert.match(sql, /source IN \('blockscout_internal', 'rpc_trace', 'launchpad_event'\)/);
+  assert.equal(group.repair, 'node src/utils/db-init-stage164.js');
 });
