@@ -38,15 +38,11 @@ function requireSuccess(response, phase) {
 }
 
 async function readFollowPlan(api, profileIds) {
-  const [profileResponse, followingResponse] = await Promise.all([
-    api.request('/auth/my-profile'),
-    api.request('/v2/users/current/followingIds'),
-  ]);
-  const profile = requireSuccess(profileResponse, 'profile read');
+  const followingResponse = await api.request('/v2/users/current/followingIds');
   const followingResult = requireSuccess(followingResponse, 'following read');
-  const userId = String(profile?.id || profile?.user?.id || profile?.profile?.id || '').trim();
+  const userId = String(api.currentUserId || '').trim();
   if (!UUID.test(userId)) {
-    throw Object.assign(new Error('Fomo profile response is invalid'), { code: 'FOMO_FOLLOW_PROFILE' });
+    throw Object.assign(new Error('Fomo browser user identity is invalid'), { code: 'FOMO_FOLLOW_PROFILE' });
   }
   const following = new Set(followingResult?.followingIds || []);
   return {
@@ -65,27 +61,39 @@ async function createFomoBrowserApi(options = {}) {
   const page = pages.find(isFomoPage);
   if (!page) throw Object.assign(new Error('Fomo app page is not open'), { code: 'FOMO_FOLLOW_PAGE_MISSING' });
   const cdp = await page.context().newCDPSession(page);
-  let settled = false;
+  let authSettled = false;
+  let userSettled = false;
   let timeout;
   let resolveAuthContext;
   let rejectAuthContext;
+  let resolveCurrentUserId;
+  let rejectCurrentUserId;
   const apiRequestIds = new Set();
+  const userRequestIds = new Set();
   const authContextPromise = new Promise((resolve, reject) => {
     resolveAuthContext = resolve;
     rejectAuthContext = reject;
   });
+  const currentUserIdPromise = new Promise((resolve, reject) => {
+    resolveCurrentUserId = resolve;
+    rejectCurrentUserId = reject;
+  });
+
+  function clearCaptureTimeout() {
+    if (authSettled && userSettled) clearTimeout(timeout);
+  }
 
   function inspectHeaders(headers) {
-    if (settled) return;
+    if (authSettled) return;
     const entries = Object.entries(headers || {});
     const authorization = entries
       .find(([name]) => name.toLowerCase() === 'authorization')?.[1];
     if (typeof authorization !== 'string' || !/^Bearer\s+\S+$/i.test(authorization)) return;
     const supportedChains = entries
       .find(([name]) => name.toLowerCase() === 'x-supported-chains')?.[1];
-    settled = true;
-    clearTimeout(timeout);
+    authSettled = true;
     resolveAuthContext({ authorization, supportedChains });
+    clearCaptureTimeout();
   }
 
   function inspectRequest(event) {
@@ -93,6 +101,9 @@ async function createFomoBrowserApi(options = {}) {
     try { url = new URL(event?.request?.url); } catch { return; }
     if (url.origin !== API_ORIGIN) return;
     apiRequestIds.add(event.requestId);
+    if (event.request.method === 'POST' && url.pathname === '/v2/users') {
+      userRequestIds.add(event.requestId);
+    }
     inspectHeaders(event.request.headers);
   }
 
@@ -100,32 +111,60 @@ async function createFomoBrowserApi(options = {}) {
     if (apiRequestIds.has(event?.requestId)) inspectHeaders(event.headers);
   }
 
+  async function inspectLoadingFinished(event) {
+    if (userSettled || !userRequestIds.delete(event?.requestId)) return;
+    try {
+      const result = await cdp.send('Network.getResponseBody', { requestId: event.requestId });
+      const text = result.base64Encoded
+        ? Buffer.from(result.body, 'base64').toString('utf8') : result.body;
+      const body = JSON.parse(text);
+      const userId = String(body?.responseObject?.id || '').trim();
+      if (!UUID.test(userId)) return;
+      userSettled = true;
+      resolveCurrentUserId(userId);
+      clearCaptureTimeout();
+    } catch {}
+  }
+
   cdp.on('Network.requestWillBeSent', inspectRequest);
   cdp.on('Network.requestWillBeSentExtraInfo', inspectExtraInfo);
+  cdp.on('Network.loadingFinished', inspectLoadingFinished);
   await cdp.send('Network.enable');
   timeout = setTimeout(() => {
-    if (settled) return;
-    settled = true;
-    rejectAuthContext(Object.assign(new Error('Timed out waiting for browser auth'), {
-      code: 'FOMO_FOLLOW_AUTH_TIMEOUT',
-    }));
+    if (!authSettled) {
+      authSettled = true;
+      rejectAuthContext(Object.assign(new Error('Timed out waiting for browser auth'), {
+        code: 'FOMO_FOLLOW_AUTH_TIMEOUT',
+      }));
+    }
+    if (!userSettled) {
+      userSettled = true;
+      rejectCurrentUserId(Object.assign(new Error('Timed out waiting for Fomo user identity'), {
+        code: 'FOMO_FOLLOW_PROFILE_TIMEOUT',
+      }));
+    }
   }, authWaitMs);
   let authContext;
+  let currentUserId;
   try {
     await page.reload({ waitUntil: 'domcontentloaded' });
-    authContext = await authContextPromise;
+    [authContext, currentUserId] = await Promise.all([authContextPromise, currentUserIdPromise]);
   } catch (error) {
     clearTimeout(timeout);
-    settled = true;
+    authSettled = true;
+    userSettled = true;
     cdp.off('Network.requestWillBeSent', inspectRequest);
     cdp.off('Network.requestWillBeSentExtraInfo', inspectExtraInfo);
+    cdp.off('Network.loadingFinished', inspectLoadingFinished);
     try { await cdp.detach(); } catch {}
     throw error;
   }
   cdp.off('Network.requestWillBeSent', inspectRequest);
   cdp.off('Network.requestWillBeSentExtraInfo', inspectExtraInfo);
+  cdp.off('Network.loadingFinished', inspectLoadingFinished);
 
   return {
+    currentUserId,
     async request(path, init = {}) {
       return page.evaluate(async ({ apiOrigin, auth, requestPath, requestInit }) => {
         const headers = { 'Content-Type': 'application/json', Authorization: auth.authorization };

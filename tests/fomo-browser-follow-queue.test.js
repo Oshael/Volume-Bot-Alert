@@ -23,9 +23,9 @@ function apiFixture({ following = [], followStatus = 200 } = {}) {
   return {
     calls,
     api: {
+      currentUserId: USER,
       async request(path, init) {
         calls.push({ path, init });
-        if (path === '/auth/my-profile') return ok({ id: USER });
         if (path === '/v2/users/current/followingIds') return ok({ followingIds: following });
         return { status: followStatus, body: { statusCode: followStatus } };
       },
@@ -42,7 +42,12 @@ test('Fomo follow allowlist accepts unique UUIDs only', () => {
 test('Fomo browser API reuses observed auth and detaches without closing Chrome', async () => {
   const cdp = new EventEmitter();
   let detached = 0;
-  cdp.send = async () => {};
+  cdp.send = async (method) => {
+    if (method === 'Network.getResponseBody') {
+      return { body: JSON.stringify({ responseObject: { id: USER } }), base64Encoded: false };
+    }
+    return {};
+  };
   cdp.detach = async () => { detached += 1; };
   let evaluation;
   const page = new EventEmitter();
@@ -52,16 +57,18 @@ test('Fomo browser API reuses observed auth and detaches without closing Chrome'
   page.reload = async () => {
     cdp.emit('Network.requestWillBeSent', {
       requestId: 'api-1', request: {
-        url: 'https://prod-api.fomo.family/feed/tradingActivity',
+        url: 'https://prod-api.fomo.family/v2/users', method: 'POST',
         headers: { Authorization: 'Bearer fixture-token', 'X-Supported-Chains': 'solana' },
       },
     });
+    cdp.emit('Network.loadingFinished', { requestId: 'api-1' });
   };
   page.evaluate = async (_callback, input) => { evaluation = input; return ok({}); };
   let browserClosed = 0;
   const browser = { contexts: () => [context], close: () => { browserClosed += 1; } };
 
   const api = await createFomoBrowserApi({ connectOverCDP: async () => browser });
+  assert.equal(api.currentUserId, USER);
   await api.request('/follows', { method: 'POST', body: { following_id: A } });
   assert.equal(evaluation.requestPath, '/follows');
   assert.equal(evaluation.auth.authorization, 'Bearer fixture-token');
@@ -81,7 +88,7 @@ test('Fomo follow queue plans a dry-run without writing to the account', async (
   queue.start();
   await queue.stop();
   assert.deepEqual(fixture.calls.map((call) => call.path), [
-    '/auth/my-profile', '/v2/users/current/followingIds',
+    '/v2/users/current/followingIds',
   ]);
   assert.equal(queue.getStatus().alreadyFollowed, 1);
   assert.equal(queue.getStatus().planned, 1);
