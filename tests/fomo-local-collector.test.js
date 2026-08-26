@@ -77,6 +77,31 @@ test('Fomo local collector reconciles identities/theses and deduplicates the liv
   await collector.stop();
 });
 
+test('Fomo local collector can run browser live transport without direct HTTP reconciliation', async () => {
+  let streamOptions;
+  let directCalls = 0;
+  const collector = createFomoLocalCollector({
+    eventSpool: { append: async () => {} },
+    identitySpool: { append: async () => {} },
+    publicClient: {
+      getLeaderboard: async () => { directCalls += 1; },
+      getTradingActivity: async () => { directCalls += 1; },
+    },
+    reconciliationEnabled: false,
+    streamOptions: { cdpEndpoint: 'http://127.0.0.1:9222' },
+    streamFactory: (options) => {
+      streamOptions = options;
+      return { start: () => {}, stop: async () => {}, getStatus: () => ({ running: true }) };
+    },
+  });
+
+  collector.start();
+  await collector.flush();
+  assert.equal(directCalls, 0);
+  assert.equal(streamOptions.cdpEndpoint, 'http://127.0.0.1:9222');
+  await collector.stop();
+});
+
 test('Fomo reconciliation keeps activity when leaderboard discovery fails', async () => {
   const events = [];
   const collector = createFomoLocalCollector({

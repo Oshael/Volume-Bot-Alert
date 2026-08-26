@@ -24,6 +24,7 @@ function createFomoLocalCollector(options = {}) {
   const schedule = options.schedule || setTimeout;
   const cancelSchedule = options.cancelSchedule || clearTimeout;
   const intervalMs = positiveInteger(options.reconcileIntervalMs, 15 * 60_000);
+  const reconciliationEnabled = options.reconciliationEnabled !== false;
   const tradeLookupLimit = positiveInteger(options.tradeLookupLimit, 10, 50);
   const maxSeen = positiveInteger(options.maxSeen, 10_000);
   const liveReadyState = options.authenticationJwt || options.authenticationJwtProvider
@@ -129,6 +130,7 @@ function createFomoLocalCollector(options = {}) {
   }
 
   const stream = streamFactory({
+    ...(options.streamOptions || {}),
     wsUrl: options.wsUrl,
     headers: options.headers,
     authenticationJwt: options.authenticationJwt,
@@ -139,7 +141,7 @@ function createFomoLocalCollector(options = {}) {
     onStatus: ({ state }) => {
       if (state !== liveReadyState) return;
       liveReadyCount += 1;
-      if (liveReadyCount > 1) reconcile('reconnect');
+      if (reconciliationEnabled && liveReadyCount > 1) reconcile('reconnect');
     },
   });
 
@@ -154,14 +156,16 @@ function createFomoLocalCollector(options = {}) {
     start() {
       if (running) return;
       running = true;
-      reconcile('bootstrap').finally(() => { if (running) scheduleReconciliation(); });
+      if (reconciliationEnabled) {
+        reconcile('bootstrap').finally(() => { if (running) scheduleReconciliation(); });
+      }
       stream.start();
     },
     async stop() {
       running = false;
       if (timer) cancelSchedule(timer);
       timer = null;
-      stream.stop();
+      await stream.stop();
       await reconciliation;
       await work;
     },

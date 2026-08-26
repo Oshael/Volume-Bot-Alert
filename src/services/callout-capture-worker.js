@@ -4,6 +4,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { createCalloutCaptureRepository } = require('../models/callout-capture');
 const { createFomoLocalCollector } = require('./fomo-local-collector');
+const { createFomoBrowserActivityStream } = require('./fomo-browser-activity-stream');
 const { createPumpCalloutClient } = require('./pump-callout-client');
 const { createPumpLocalCollector } = require('./pump-local-collector');
 const {
@@ -54,16 +55,22 @@ function buildPumpCollector(deps, config, persistence) {
 }
 
 function buildFomoCollector(deps, config, persistence, authentication) {
+  const browserMode = config.transport === 'browser_cdp';
   const jwtProvider = fileProvider(config.jwtFile);
   return (deps.createFomoCollector || createFomoLocalCollector)({
     ...persistence,
+    streamFactory: browserMode
+      ? (deps.createFomoBrowserStream || createFomoBrowserActivityStream)
+      : undefined,
+    streamOptions: browserMode ? { cdpEndpoint: config.cdpEndpoint } : undefined,
+    reconciliationEnabled: !browserMode,
     wsUrl: config.wsUrl,
     headers: config.origin ? { Origin: config.origin } : undefined,
     topicId: config.topicId,
     authenticationJwt: jwtProvider ? undefined : config.jwt,
     authenticationJwtProvider: authentication?.getJwt || jwtProvider,
     reconcileIntervalMs: config.reconcileIntervalMs,
-    tradeLookupLimit: config.tradeLookupLimit,
+    tradeLookupLimit: browserMode ? 0 : config.tradeLookupLimit,
     threshold: config.threshold,
   });
 }
@@ -82,7 +89,8 @@ function createCalloutCaptureWorker(deps = {}) {
     const pumpConfig = config.pump || {};
     const fomoConfig = config.fomo || {};
     const repository = deps.repository || createCalloutCaptureRepository();
-    fomoAuthentication = createFomoAuthentication(deps, fomoConfig);
+    fomoAuthentication = fomoConfig.transport === 'browser_cdp'
+      ? null : createFomoAuthentication(deps, fomoConfig);
     pumpPersistence = createPumpCalloutPersistence({ repository, checkpointKey: 'pump:live' });
     fomoPersistence = createImmediateCalloutPersistence({ repository, checkpointKey: 'fomo:live' });
     retention = (deps.createRetentionWorker || createCalloutRetentionWorker)({ repository });

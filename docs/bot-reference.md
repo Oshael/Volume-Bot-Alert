@@ -947,8 +947,9 @@ uma integração já implantada.
 ### 11.6 Captura local Fomo
 
 `npm run fomo:capture` executa um collector local opt-in, sem PostgreSQL e sem
-downstream. O WebSocket `trading_activity` é o caminho live; leaderboard 24h e
-`/feed/tradingActivity` fazem bootstrap/reconciliação limitada. Theses vão para
+downstream. No transporte direto, o WebSocket `trading_activity` é o caminho
+live; leaderboard 24h e `/feed/tradingActivity` fazem bootstrap/reconciliação
+limitada. Theses vão para
 `<FOMO_CAPTURE_SPOOL_DIR>/events` e perfis/wallet observations para
 `<FOMO_CAPTURE_SPOOL_DIR>/identities`, em arquivos NDJSON rotacionados e com
 limites de disco independentes.
@@ -969,6 +970,16 @@ Leaderboard e feed HTTP continuam independentes da autenticação do socket.
 Esse comando ainda não pertence a worker group, não está implantado na VPS e
 seus spools não são fonte de verdade. O limite cheio falha fechado; persistência
 direta e retenção de 72 horas pertencem ao worker PostgreSQL posterior.
+
+O worker PostgreSQL também suporta `FOMO_CAPTURE_TRANSPORT=browser_cdp`. Nesse
+modo, `FOMO_BROWSER_CDP_ENDPOINT` deve apontar para CDP HTTP(S) em localhost
+(default `http://127.0.0.1:9222`). O Chrome externo deve permanecer aberto,
+autenticado e com uma página `fomo.family` na aba Alerts. O worker anexa uma
+sessão CDP somente para observar frames WebSocket, filtra e persiste apenas
+teses, e nunca fecha o Chrome. JWT, refresh token, `FOMO_WS_TOPIC_ID`, HTTP
+direto, lookup de trade e reconciliação periódica Fomo ficam desativados nesse
+modo; o navegador é o dono exclusivo da sessão. O transporte `direct_ws`
+continua disponível como fallback.
 
 ### 11.7 Captura local Pump
 
@@ -1069,6 +1080,8 @@ somente pelo usuário do serviço. `FOMO_PRIVY_REAUTH_REQUIRED` exige novo login
 troca manual dos dois valores; segredos nunca entram na telemetria
 `fomoAuthentication`. O refresh token é de uso único e rotacionado; a sessão
 dedicada ao worker não deve permanecer ativa no SDK do navegador após a captura.
+Essa rotação vale somente para `FOMO_CAPTURE_TRANSPORT=direct_ws`; não combine
+credenciais Privy do worker com `browser_cdp`.
 O endpoint autenticado
 `GET /api/callouts/events?chain=<chain>&token=<address>` lê callouts brutos para
 o gráfico. A resposta é ordenada por `occurredAt` decrescente e inclui tese,

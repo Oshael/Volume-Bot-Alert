@@ -171,6 +171,24 @@ describe('runtime worker groups config', () => {
     assert.match(result.stderr, /FOMO_PRIVY_CA_ID/);
   });
 
+  it('accepts browser CDP Fomo capture without direct WebSocket credentials', () => {
+    const result = spawnSync(process.execPath, ['-e', "const c=require('./config'); console.log(JSON.stringify(c.calloutCaptureWorker.fomo))"], {
+      cwd: ROOT_DIR,
+      env: {
+        ...process.env, BACKGROUND_WORKER_GROUPS: 'callouts', CALLOUT_CAPTURE_ENABLED: 'true',
+        PUMP_AUTH_TOKEN: 'pump-test', FOMO_CAPTURE_TRANSPORT: 'browser_cdp',
+        FOMO_BROWSER_CDP_ENDPOINT: 'http://127.0.0.1:9222',
+        FOMO_WS_TOPIC_ID: '', FOMO_WS_JWT: '', FOMO_WS_JWT_FILE: '',
+        FOMO_PRIVY_REFRESH_TOKEN_FILE: '',
+      },
+      encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const config = JSON.parse(result.stdout);
+    assert.equal(config.transport, 'browser_cdp');
+    assert.equal(config.cdpEndpoint, 'http://127.0.0.1:9222');
+  });
+
   it('rejects combining Robinhood maintenance with Solana maintenance', () => {
     const result = spawnSync(process.execPath, ['-e', "require('./config')"], {
       cwd: ROOT_DIR,

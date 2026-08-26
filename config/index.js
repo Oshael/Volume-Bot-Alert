@@ -482,6 +482,7 @@ function validateTestDbTarget(dbConfig) {
 const db = getDbConfig(nodeEnv);
 const workerGroups = normalizeWorkerGroups(process.env.BACKGROUND_WORKER_GROUPS);
 const calloutCaptureEnabled = parseBoolean(process.env.CALLOUT_CAPTURE_ENABLED, false);
+const fomoCaptureTransport = String(process.env.FOMO_CAPTURE_TRANSPORT || 'direct_ws').trim().toLowerCase();
 const robinhoodHolderGlobalIsolated = workerGroups.active.includes('robinhood-holder-global');
 const robinhoodHolderBackfillEnabled = parseBoolean(
   process.env.ROBINHOOD_HOLDER_BACKFILL_ENABLED, false
@@ -590,15 +591,22 @@ if (calloutCaptureEnabled) {
   if (!String(process.env.PUMP_AUTH_TOKEN || process.env.PUMP_AUTH_TOKEN_FILE || '').trim()) {
     missing.push('PUMP_AUTH_TOKEN or PUMP_AUTH_TOKEN_FILE for callout capture');
   }
-  if (!String(process.env.FOMO_WS_TOPIC_ID || '').trim()) missing.push('FOMO_WS_TOPIC_ID for callout capture');
-  if (!String(process.env.FOMO_WS_JWT || process.env.FOMO_WS_JWT_FILE || '').trim()) {
-    missing.push('FOMO_WS_JWT or FOMO_WS_JWT_FILE for callout capture');
+  if (!['direct_ws', 'browser_cdp'].includes(fomoCaptureTransport)) {
+    missing.push('FOMO_CAPTURE_TRANSPORT must be direct_ws or browser_cdp');
   }
-  if (String(process.env.FOMO_PRIVY_REFRESH_TOKEN_FILE || '').trim()
+  if (fomoCaptureTransport === 'direct_ws') {
+    if (!String(process.env.FOMO_WS_TOPIC_ID || '').trim()) missing.push('FOMO_WS_TOPIC_ID for callout capture');
+    if (!String(process.env.FOMO_WS_JWT || process.env.FOMO_WS_JWT_FILE || '').trim()) {
+      missing.push('FOMO_WS_JWT or FOMO_WS_JWT_FILE for callout capture');
+    }
+  }
+  if (fomoCaptureTransport === 'direct_ws'
+      && String(process.env.FOMO_PRIVY_REFRESH_TOKEN_FILE || '').trim()
       && !String(process.env.FOMO_WS_JWT_FILE || '').trim()) {
     missing.push('FOMO_WS_JWT_FILE when FOMO_PRIVY_REFRESH_TOKEN_FILE is enabled');
   }
-  if (String(process.env.FOMO_PRIVY_REFRESH_TOKEN_FILE || '').trim()
+  if (fomoCaptureTransport === 'direct_ws'
+      && String(process.env.FOMO_PRIVY_REFRESH_TOKEN_FILE || '').trim()
       && !String(process.env.FOMO_PRIVY_CA_ID || '').trim()) {
     missing.push('FOMO_PRIVY_CA_ID when FOMO_PRIVY_REFRESH_TOKEN_FILE is enabled');
   }
@@ -737,6 +745,8 @@ module.exports = {
       roundDeadlineMs: parseIntegerInRange(process.env.PUMP_CAPTURE_DEADLINE_SECONDS, 45, 1, 300) * 1000,
     },
     fomo: {
+      transport: fomoCaptureTransport,
+      cdpEndpoint: String(process.env.FOMO_BROWSER_CDP_ENDPOINT || 'http://127.0.0.1:9222').trim(),
       wsUrl: String(process.env.FOMO_WS_URL || 'wss://prod-api.fomo.family/ws').trim(),
       origin: String(process.env.FOMO_WS_ORIGIN || 'https://fomo.family').trim(),
       jwt: String(process.env.FOMO_WS_JWT || '').trim(),

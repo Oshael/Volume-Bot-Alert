@@ -127,4 +127,37 @@ describe('callout capture production persistence', () => {
     assert.equal(JSON.stringify(worker.getStatus()).includes('/state/'), false);
     await worker.stop();
   });
+
+  it('uses browser CDP transport without autonomous JWT refresh or reconciliation', async () => {
+    let fomoOptions;
+    let authenticationCreations = 0;
+    const repository = { loadCheckpoint: async () => null, commitCapture: async () => {} };
+    const browserStream = () => ({ start: () => {}, stop: async () => {} });
+    const worker = createCalloutCaptureWorker({
+      repository,
+      createPumpClient: () => ({}),
+      createPumpCollector: () => ({ start: async () => {}, stop: async () => {} }),
+      createFomoCollector: (options) => {
+        fomoOptions = options;
+        return { start: () => {}, stop: async () => {} };
+      },
+      createFomoBrowserStream: browserStream,
+      createRetentionWorker: () => ({ start: () => {}, stop: async () => {} }),
+      createFomoAuthentication: () => { authenticationCreations += 1; },
+    });
+
+    await worker.start({
+      pump: {},
+      fomo: {
+        transport: 'browser_cdp', cdpEndpoint: 'http://127.0.0.1:9222',
+        jwtFile: '/state/customer-token', privyRefreshTokenFile: '/state/refresh-token',
+      },
+    });
+    assert.equal(authenticationCreations, 0);
+    assert.equal(fomoOptions.streamFactory, browserStream);
+    assert.deepEqual(fomoOptions.streamOptions, { cdpEndpoint: 'http://127.0.0.1:9222' });
+    assert.equal(fomoOptions.reconciliationEnabled, false);
+    assert.equal(fomoOptions.tradeLookupLimit, 0);
+    await worker.stop();
+  });
 });
