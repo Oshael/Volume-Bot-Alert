@@ -205,6 +205,24 @@ describe('runtime worker groups config', () => {
     assert.match(result.stderr, /FOMO_FOLLOW_PROFILE_IDS/);
   });
 
+  it('allows gated leaderboard discovery instead of an explicit live follow allowlist', () => {
+    const result = spawnSync(process.execPath, ['-e', "const c=require('./config'); console.log(JSON.stringify(c.calloutCaptureWorker.fomo.follow))"], {
+      cwd: ROOT_DIR,
+      env: {
+        ...process.env, BACKGROUND_WORKER_GROUPS: 'callouts', CALLOUT_CAPTURE_ENABLED: 'true',
+        PUMP_AUTH_TOKEN: 'pump-test', FOMO_CAPTURE_TRANSPORT: 'browser_cdp',
+        FOMO_FOLLOW_ENABLED: 'true', FOMO_FOLLOW_DRY_RUN: 'false',
+        FOMO_FOLLOW_DISCOVERY_ENABLED: 'true', FOMO_FOLLOW_DISCOVERY_LIMIT: '20',
+        FOMO_FOLLOW_PROFILE_IDS: '', FOMO_WS_TOPIC_ID: '', FOMO_WS_JWT: '', FOMO_WS_JWT_FILE: '',
+      },
+      encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const follow = JSON.parse(result.stdout);
+    assert.equal(follow.discoveryEnabled, true);
+    assert.equal(follow.discoveryLimit, 20);
+  });
+
   it('rejects combining Robinhood maintenance with Solana maintenance', () => {
     const result = spawnSync(process.execPath, ['-e', "require('./config')"], {
       cwd: ROOT_DIR,

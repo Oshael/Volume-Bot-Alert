@@ -6,6 +6,7 @@ const test = require('node:test');
 const {
   createFomoBrowserApi,
   createFomoBrowserFollowQueue,
+  leaderboardProfileIds,
   normalizeProfileIds,
 } = require('../src/services/fomo-browser-follow-queue');
 
@@ -18,7 +19,7 @@ function ok(responseObject) {
   return { status: 200, body: { statusCode: 200, responseObject } };
 }
 
-function apiFixture({ following = [], followStatus = 200 } = {}) {
+function apiFixture({ following = [], followStatus = 200, leaderboard = [] } = {}) {
   const calls = [];
   return {
     calls,
@@ -26,6 +27,7 @@ function apiFixture({ following = [], followStatus = 200 } = {}) {
       currentUserId: USER,
       async request(path, init) {
         calls.push({ path, init });
+        if (path.startsWith('/v2/leaderboard/24h?')) return ok({ leaderboard });
         if (path === '/v2/users/current/followingIds') return ok({ followingIds: following });
         return { status: followStatus, body: { statusCode: followStatus } };
       },
@@ -37,6 +39,13 @@ function apiFixture({ following = [], followStatus = 200 } = {}) {
 test('Fomo follow allowlist accepts unique UUIDs only', () => {
   assert.deepEqual(normalizeProfileIds([A, A, B]), [A, B]);
   assert.throws(() => normalizeProfileIds(['not-an-id']), /UUIDs/);
+});
+
+test('Fomo leaderboard discovery keeps eligible unique profiles in rank order', () => {
+  assert.deepEqual(leaderboardProfileIds({ leaderboard: [
+    { id: USER }, { id: A, private: true }, { id: B },
+    { id: B }, { id: C, isRestricted: true }, { id: 'invalid' },
+  ] }, USER, 10), [B]);
 });
 
 test('Fomo browser API reuses observed auth and detaches without closing Chrome', async () => {
@@ -93,6 +102,43 @@ test('Fomo follow queue plans a dry-run without writing to the account', async (
   assert.equal(queue.getStatus().alreadyFollowed, 1);
   assert.equal(queue.getStatus().planned, 1);
   assert.equal(queue.getStatus().followed, 0);
+});
+
+test('Fomo follow queue discovers Top Profits candidates in dry-run without writes', async () => {
+  const fixture = apiFixture({ following: [A], leaderboard: [{ id: A }, { id: B }, { id: C }] });
+  const queue = createFomoBrowserFollowQueue({
+    enabled: true, dryRun: true, discoveryEnabled: true, discoveryLimit: 3,
+    profileIds: [], createBrowserApi: async () => fixture.api,
+  });
+
+  queue.start();
+  await queue.stop();
+  assert.deepEqual(fixture.calls.map((call) => call.path), [
+    '/v2/leaderboard/24h?limit=3', '/v2/users/current/followingIds',
+  ]);
+  assert.equal(fixture.calls.some((call) => call.path === '/follows'), false);
+  assert.deepEqual(queue.getStatus(), {
+    enabled: true, dryRun: true, discoveryEnabled: true, running: false,
+    discovered: 3, planned: 2, followed: 0, alreadyFollowed: 1,
+    errors: 0, paused: false, lastErrorCode: null,
+    completedAt: queue.getStatus().completedAt,
+  });
+});
+
+test('Fomo live discovery writes only the highest-ranked pending candidate', async () => {
+  const fixture = apiFixture({ following: [A], leaderboard: [{ id: A }, { id: B }, { id: C }] });
+  const queue = createFomoBrowserFollowQueue({
+    enabled: true, dryRun: false, discoveryEnabled: true, discoveryLimit: 3,
+    profileIds: [], maxFollowsPerRun: 1, wait: async () => {},
+    createBrowserApi: async () => fixture.api,
+  });
+
+  queue.start();
+  await queue.stop();
+  const writes = fixture.calls.filter((call) => call.path === '/follows');
+  assert.equal(writes.length, 1);
+  assert.deepEqual(writes[0].init.body, { user_id: USER, following_id: B });
+  assert.equal(queue.getStatus().followed, 1);
 });
 
 test('Fomo follow queue writes one allowlisted follow sequentially and idempotently', async () => {

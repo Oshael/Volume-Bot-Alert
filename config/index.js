@@ -485,6 +485,7 @@ const calloutCaptureEnabled = parseBoolean(process.env.CALLOUT_CAPTURE_ENABLED, 
 const fomoCaptureTransport = String(process.env.FOMO_CAPTURE_TRANSPORT || 'direct_ws').trim().toLowerCase();
 const fomoFollowEnabled = parseBoolean(process.env.FOMO_FOLLOW_ENABLED, false);
 const fomoFollowDryRun = parseBoolean(process.env.FOMO_FOLLOW_DRY_RUN, true);
+const fomoFollowDiscoveryEnabled = parseBoolean(process.env.FOMO_FOLLOW_DISCOVERY_ENABLED, false);
 const fomoFollowProfileIds = [...new Set(String(process.env.FOMO_FOLLOW_PROFILE_IDS || '')
   .split(',').map((value) => value.trim()).filter(Boolean))];
 const robinhoodHolderGlobalIsolated = workerGroups.active.includes('robinhood-holder-global');
@@ -607,8 +608,9 @@ if (calloutCaptureEnabled) {
   if (fomoFollowEnabled && fomoCaptureTransport !== 'browser_cdp') {
     missing.push('FOMO_FOLLOW_ENABLED requires FOMO_CAPTURE_TRANSPORT=browser_cdp');
   }
-  if (fomoFollowEnabled && !fomoFollowDryRun && fomoFollowProfileIds.length === 0) {
-    missing.push('FOMO_FOLLOW_PROFILE_IDS when live Fomo follows are enabled');
+  if (fomoFollowEnabled && !fomoFollowDryRun && fomoFollowProfileIds.length === 0
+      && !fomoFollowDiscoveryEnabled) {
+    missing.push('FOMO_FOLLOW_PROFILE_IDS or FOMO_FOLLOW_DISCOVERY_ENABLED when live Fomo follows are enabled');
   }
   if (fomoFollowProfileIds.length > 100
       || fomoFollowProfileIds.some((id) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))) {
@@ -778,6 +780,8 @@ module.exports = {
       follow: {
         enabled: fomoFollowEnabled,
         dryRun: fomoFollowDryRun,
+        discoveryEnabled: fomoFollowDiscoveryEnabled,
+        discoveryLimit: parseIntegerInRange(process.env.FOMO_FOLLOW_DISCOVERY_LIMIT, 25, 1, 100),
         profileIds: fomoFollowProfileIds,
         maxFollowsPerRun: parseIntegerInRange(process.env.FOMO_FOLLOW_MAX_PER_RUN, 1, 1, 10),
         delayMs: parseIntegerInRange(process.env.FOMO_FOLLOW_DELAY_SECONDS, 8, 3, 60) * 1000,

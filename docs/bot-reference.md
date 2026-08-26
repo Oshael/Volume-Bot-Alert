@@ -984,7 +984,11 @@ continua disponível como fallback.
 Follows externos usam uma fila separada, exclusiva de `browser_cdp`. A fila só
 existe com `FOMO_FOLLOW_ENABLED=true`, permanece read-only enquanto
 `FOMO_FOLLOW_DRY_RUN=true` e aceita no máximo 100 UUIDs explícitos em
-`FOMO_FOLLOW_PROFILE_IDS`. Ela observa o ID do usuário na resposta de
+`FOMO_FOLLOW_PROFILE_IDS`. Discovery opt-in usa o Top Profits 24h via
+`FOMO_FOLLOW_DISCOVERY_ENABLED=true`, limitado por
+`FOMO_FOLLOW_DISCOVERY_LIMIT` (default 25, máximo 100), e ignora o próprio
+usuário e perfis privados, restritos ou desativados. Allowlist e discovery são
+combinadas em no máximo 100 candidatos. A fila observa o ID do usuário na resposta de
 `POST /v2/users` carregada pelo próprio navegador, lê `followingIds`, remove os já
 seguidos e executa `POST /follows` com concorrência 1, jitter e limite default de
 uma escrita por início do worker. `401`, `403` ou `429` pausam a rodada. Não há

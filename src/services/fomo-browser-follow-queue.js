@@ -37,16 +37,37 @@ function requireSuccess(response, phase) {
   throw error;
 }
 
-async function readFollowPlan(api, profileIds) {
-  const followingResponse = await api.request('/v2/users/current/followingIds');
-  const followingResult = requireSuccess(followingResponse, 'following read');
+function leaderboardProfileIds(result, currentUserId, limit) {
+  const profiles = Array.isArray(result?.leaderboard) ? result.leaderboard : [];
+  const candidates = profiles
+    .filter((profile) => profile?.private !== true
+      && profile?.isRestricted !== true
+      && profile?.activated !== false)
+    .map((profile) => String(profile?.id || '').trim())
+    .filter((id) => id !== currentUserId && UUID.test(id));
+  return [...new Set(candidates)].slice(0, limit);
+}
+
+async function readFollowPlan(api, allowlistedIds, options = {}) {
   const userId = String(api.currentUserId || '').trim();
   if (!UUID.test(userId)) {
     throw Object.assign(new Error('Fomo browser user identity is invalid'), { code: 'FOMO_FOLLOW_PROFILE' });
   }
+  let discoveredIds = [];
+  if (options.discoveryEnabled) {
+    const discoveryResponse = await api.request(
+      `/v2/leaderboard/24h?limit=${options.discoveryLimit}`,
+    );
+    const discoveryResult = requireSuccess(discoveryResponse, 'leaderboard discovery');
+    discoveredIds = leaderboardProfileIds(discoveryResult, userId, options.discoveryLimit);
+  }
+  const profileIds = [...new Set([...allowlistedIds, ...discoveredIds])].slice(0, 100);
+  const followingResponse = await api.request('/v2/users/current/followingIds');
+  const followingResult = requireSuccess(followingResponse, 'following read');
   const following = new Set(followingResult?.followingIds || []);
   return {
     userId,
+    discovered: discoveredIds.length,
     pending: profileIds.filter((id) => !following.has(id)),
     alreadyFollowed: profileIds.filter((id) => following.has(id)).length,
   };
@@ -191,6 +212,8 @@ function createFomoBrowserFollowQueue(options = {}) {
   const enabled = options.enabled === true;
   const dryRun = options.dryRun !== false;
   const profileIds = normalizeProfileIds(options.profileIds);
+  const discoveryEnabled = options.discoveryEnabled === true;
+  const discoveryLimit = positiveInteger(options.discoveryLimit, 25, 100);
   const maxFollows = positiveInteger(options.maxFollowsPerRun, 1, 10);
   const delayMs = positiveInteger(options.delayMs, 7_500, 60_000);
   const random = options.random || Math.random;
@@ -199,7 +222,8 @@ function createFomoBrowserFollowQueue(options = {}) {
   let running = false;
   let work = null;
   const status = {
-    enabled, dryRun, running: false, planned: 0, followed: 0, alreadyFollowed: 0,
+    enabled, dryRun, discoveryEnabled, running: false, discovered: 0,
+    planned: 0, followed: 0, alreadyFollowed: 0,
     errors: 0, paused: false, lastErrorCode: null, completedAt: null,
   };
 
@@ -222,11 +246,12 @@ function createFomoBrowserFollowQueue(options = {}) {
   }
 
   async function run() {
-    if (!enabled || profileIds.length === 0) return;
+    if (!enabled || (profileIds.length === 0 && !discoveryEnabled)) return;
     let api;
     try {
       api = await createBrowserApi({ cdpEndpoint: options.cdpEndpoint, authWaitMs: options.authWaitMs });
-      const plan = await readFollowPlan(api, profileIds);
+      const plan = await readFollowPlan(api, profileIds, { discoveryEnabled, discoveryLimit });
+      status.discovered = plan.discovered;
       status.alreadyFollowed = plan.alreadyFollowed;
       status.planned = plan.pending.length;
       if (dryRun) return;
@@ -255,6 +280,7 @@ function createFomoBrowserFollowQueue(options = {}) {
 module.exports = {
   createFomoBrowserApi,
   createFomoBrowserFollowQueue,
+  leaderboardProfileIds,
   normalizeProfileIds,
   responseStatus,
 };
