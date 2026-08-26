@@ -252,13 +252,15 @@ function createFomoBrowserFollowQueue(options = {}) {
   const wait = options.wait || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const createBrowserApi = options.createBrowserApi || createFomoBrowserApi;
   const stateStore = options.stateStore || { load: async () => null, save: async () => {} };
+  const pauseNotifier = options.pauseNotifier;
   let running = false;
   let work = null;
   const status = {
     enabled, dryRun, discoveryEnabled, running: false, discovered: 0,
     planned: 0, followed: 0, alreadyFollowed: 0,
     errors: 0, paused: false, pausePersisted: false, pausedAt: null,
-    lastErrorCode: null, completedAt: null,
+    lastErrorCode: null, alertSentAt: null, alertErrors: 0,
+    lastAlertErrorCode: null, completedAt: null,
   };
 
   function fail(error, code) {
@@ -266,19 +268,40 @@ function createFomoBrowserFollowQueue(options = {}) {
     status.lastErrorCode = String(error?.code || code || 'FOMO_FOLLOW_ERROR');
   }
 
+  function pauseState() {
+    return {
+      paused: true, pausedAt: status.pausedAt,
+      lastErrorCode: status.lastErrorCode, alertSentAt: status.alertSentAt,
+    };
+  }
+
+  async function notifyPause() {
+    if (!pauseNotifier || status.alertSentAt) return;
+    try {
+      await pauseNotifier.sendPauseAlert({
+        pausedAt: status.pausedAt, lastErrorCode: status.lastErrorCode,
+      });
+      status.alertSentAt = new Date().toISOString();
+      await stateStore.save(pauseState());
+      status.pausePersisted = true;
+    } catch (error) {
+      status.alertErrors += 1;
+      status.lastAlertErrorCode = String(error?.code || 'FOMO_FOLLOW_ALERT_ERROR');
+    }
+  }
+
   async function pause(error, code) {
     if (!status.paused) fail(error, code);
     status.paused = true;
     status.pausedAt ||= new Date().toISOString();
     try {
-      await stateStore.save({
-        paused: true, pausedAt: status.pausedAt, lastErrorCode: status.lastErrorCode,
-      });
+      await stateStore.save(pauseState());
       status.pausePersisted = true;
     } catch {
       status.errors += 1;
       status.pausePersisted = false;
     }
+    await notifyPause();
   }
 
   async function writePending(api, userId, pending) {
@@ -304,6 +327,8 @@ function createFomoBrowserFollowQueue(options = {}) {
         status.pausePersisted = true;
         status.pausedAt = saved.pausedAt || null;
         status.lastErrorCode = saved.lastErrorCode || 'FOMO_FOLLOW_PAUSED';
+        status.alertSentAt = saved.alertSentAt || null;
+        await notifyPause();
         return;
       }
       api = await createBrowserApi({

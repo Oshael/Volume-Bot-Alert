@@ -165,6 +165,7 @@ describe('callout capture production persistence', () => {
 
   it('starts the separately gated browser follow queue', async () => {
     let followOptions;
+    let notifierOptions;
     let followStarted = 0;
     let followStopped = 0;
     const commits = [];
@@ -177,6 +178,10 @@ describe('callout capture production persistence', () => {
       createPumpClient: () => ({}),
       createPumpCollector: () => ({ start: async () => {}, stop: async () => {} }),
       createFomoCollector: () => ({ start: () => {}, stop: async () => {} }),
+      createFomoFollowNotifier: (options) => {
+        notifierOptions = options;
+        return { sendPauseAlert: async () => {} };
+      },
       createFomoFollowQueue: (options) => {
         followOptions = options;
         return {
@@ -190,11 +195,18 @@ describe('callout capture production persistence', () => {
     await worker.start({
       pump: {}, fomo: {
         transport: 'browser_cdp', cdpEndpoint: 'http://127.0.0.1:9222',
-        follow: { enabled: true, dryRun: true, profileIds: [FOMO_PROFILE] },
+        follow: {
+          enabled: true, dryRun: true, profileIds: [FOMO_PROFILE],
+          telegramAlert: { enabled: true, botToken: 'secret-token', chatId: '123' },
+        },
       },
     });
     assert.equal(followStarted, 1);
     assert.equal(followOptions.cdpEndpoint, 'http://127.0.0.1:9222');
+    assert.deepEqual(notifierOptions, {
+      enabled: true, botToken: 'secret-token', chatId: '123',
+    });
+    assert.equal(typeof followOptions.pauseNotifier.sendPauseAlert, 'function');
     assert.deepEqual(await followOptions.stateStore.load(), { paused: false });
     await followOptions.stateStore.save({ paused: true });
     assert.equal(commits[0].checkpointKey, 'fomo:follow');

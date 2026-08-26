@@ -1004,6 +1004,17 @@ captura de callouts permanece independente. Depois de diagnosticar a causa, a
 retomada exige desabilitar o follow e remover explicitamente somente esse
 checkpoint antes de reabilitá-lo.
 
+O alerta operacional privado de pausa é opt-in por
+`FOMO_FOLLOW_TELEGRAM_ALERTS_ENABLED=true`. Ele usa somente chamadas outbound
+`sendMessage` e não exige webhook, username público nem ativar
+`TELEGRAM_ALERTS_ENABLED`. Requer `FOMO_FOLLOW_TELEGRAM_BOT_TOKEN` e
+`FOMO_FOLLOW_TELEGRAM_CHAT_ID`; o timeout default é 10 segundos, configurável por
+`FOMO_FOLLOW_TELEGRAM_TIMEOUT_SECONDS`. A entrega bem-sucedida grava
+`alertSentAt` no mesmo checkpoint, impedindo repetição após restart. Falha no
+Telegram nunca libera o circuito nem interrompe a captura; `alertErrors` e
+`lastAlertErrorCode` ficam disponíveis na telemetria, e um restart tenta novamente
+quando a pausa ainda não possui `alertSentAt`.
+
 Para retomar: configure `FOMO_FOLLOW_ENABLED=false`, reinicie o worker, investigue
 `lastErrorCode` e então execute
 `DELETE FROM callout_collector_checkpoints WHERE collector_key = 'fomo:follow';`.

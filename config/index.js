@@ -486,6 +486,9 @@ const fomoCaptureTransport = String(process.env.FOMO_CAPTURE_TRANSPORT || 'direc
 const fomoFollowEnabled = parseBoolean(process.env.FOMO_FOLLOW_ENABLED, false);
 const fomoFollowDryRun = parseBoolean(process.env.FOMO_FOLLOW_DRY_RUN, true);
 const fomoFollowDiscoveryEnabled = parseBoolean(process.env.FOMO_FOLLOW_DISCOVERY_ENABLED, false);
+const fomoFollowTelegramAlertsEnabled = parseBoolean(
+  process.env.FOMO_FOLLOW_TELEGRAM_ALERTS_ENABLED, false
+);
 const fomoFollowProfileIds = [...new Set(String(process.env.FOMO_FOLLOW_PROFILE_IDS || '')
   .split(',').map((value) => value.trim()).filter(Boolean))];
 const robinhoodHolderGlobalIsolated = workerGroups.active.includes('robinhood-holder-global');
@@ -607,6 +610,17 @@ if (calloutCaptureEnabled) {
   }
   if (fomoFollowEnabled && fomoCaptureTransport !== 'browser_cdp') {
     missing.push('FOMO_FOLLOW_ENABLED requires FOMO_CAPTURE_TRANSPORT=browser_cdp');
+  }
+  if (fomoFollowTelegramAlertsEnabled && !fomoFollowEnabled) {
+    missing.push('FOMO_FOLLOW_TELEGRAM_ALERTS_ENABLED requires FOMO_FOLLOW_ENABLED=true');
+  }
+  if (fomoFollowTelegramAlertsEnabled
+      && !String(process.env.FOMO_FOLLOW_TELEGRAM_BOT_TOKEN || '').trim()) {
+    missing.push('FOMO_FOLLOW_TELEGRAM_BOT_TOKEN for Fomo follow alerts');
+  }
+  if (fomoFollowTelegramAlertsEnabled
+      && !String(process.env.FOMO_FOLLOW_TELEGRAM_CHAT_ID || '').trim()) {
+    missing.push('FOMO_FOLLOW_TELEGRAM_CHAT_ID for Fomo follow alerts');
   }
   if (fomoFollowEnabled && !fomoFollowDryRun && fomoFollowProfileIds.length === 0
       && !fomoFollowDiscoveryEnabled) {
@@ -789,6 +803,14 @@ module.exports = {
         requestTimeoutMs: parseIntegerInRange(
           process.env.FOMO_FOLLOW_REQUEST_TIMEOUT_SECONDS, 15, 5, 60
         ) * 1000,
+        telegramAlert: {
+          enabled: fomoFollowTelegramAlertsEnabled,
+          botToken: String(process.env.FOMO_FOLLOW_TELEGRAM_BOT_TOKEN || '').trim(),
+          chatId: String(process.env.FOMO_FOLLOW_TELEGRAM_CHAT_ID || '').trim(),
+          timeoutMs: parseIntegerInRange(
+            process.env.FOMO_FOLLOW_TELEGRAM_TIMEOUT_SECONDS, 10, 3, 60
+          ) * 1000,
+        },
       },
     },
     retention: {

@@ -189,6 +189,24 @@ describe('runtime worker groups config', () => {
     assert.equal(config.cdpEndpoint, 'http://127.0.0.1:9222');
     assert.equal(config.follow.dryRun, true);
     assert.equal(config.follow.requestTimeoutMs, 15_000);
+    assert.equal(config.follow.telegramAlert.enabled, false);
+  });
+
+  it('requires complete private Telegram settings for Fomo follow alerts', () => {
+    const result = spawnSync(process.execPath, ['-e', "require('./config')"], {
+      cwd: ROOT_DIR,
+      env: {
+        ...process.env, BACKGROUND_WORKER_GROUPS: 'callouts', CALLOUT_CAPTURE_ENABLED: 'true',
+        PUMP_AUTH_TOKEN: 'pump-test', FOMO_CAPTURE_TRANSPORT: 'browser_cdp',
+        FOMO_FOLLOW_ENABLED: 'true', FOMO_FOLLOW_TELEGRAM_ALERTS_ENABLED: 'true',
+        FOMO_FOLLOW_TELEGRAM_BOT_TOKEN: '', FOMO_FOLLOW_TELEGRAM_CHAT_ID: '',
+        FOMO_WS_TOPIC_ID: '', FOMO_WS_JWT: '', FOMO_WS_JWT_FILE: '',
+      },
+      encoding: 'utf8',
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /FOMO_FOLLOW_TELEGRAM_BOT_TOKEN/);
+    assert.match(result.stderr, /FOMO_FOLLOW_TELEGRAM_CHAT_ID/);
   });
 
   it('requires an allowlist before enabling live Fomo follow writes', () => {

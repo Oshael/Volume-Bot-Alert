@@ -161,6 +161,7 @@ test('Fomo follow queue discovers Top Profits candidates in dry-run without writ
     enabled: true, dryRun: true, discoveryEnabled: true, running: false,
     discovered: 3, planned: 2, followed: 0, alreadyFollowed: 1,
     errors: 0, paused: false, pausePersisted: false, pausedAt: null, lastErrorCode: null,
+    alertSentAt: null, alertErrors: 0, lastAlertErrorCode: null,
     completedAt: queue.getStatus().completedAt,
   });
 });
@@ -219,8 +220,88 @@ test('Fomo follow queue durably pauses immediately on any failed account write',
   assert.equal(queue.getStatus().lastErrorCode, 'FOMO_FOLLOW_HTTP_500');
   assert.deepEqual(saved[0], {
     paused: true, pausedAt: queue.getStatus().pausedAt,
-    lastErrorCode: 'FOMO_FOLLOW_HTTP_500',
+    lastErrorCode: 'FOMO_FOLLOW_HTTP_500', alertSentAt: null,
   });
+});
+
+test('Fomo follow pause sends one alert and durably records its delivery', async () => {
+  const fixture = apiFixture({ followStatus: 429 });
+  const saved = [];
+  const alerts = [];
+  const queue = createFomoBrowserFollowQueue({
+    enabled: true, dryRun: false, profileIds: [A], wait: async () => {},
+    createBrowserApi: async () => fixture.api,
+    stateStore: { load: async () => null, save: async (state) => saved.push(state) },
+    pauseNotifier: { sendPauseAlert: async (event) => alerts.push(event) },
+  });
+
+  queue.start();
+  await queue.stop();
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0].lastErrorCode, 'FOMO_FOLLOW_HTTP_429');
+  assert.equal(saved.length, 2);
+  assert.equal(saved[0].alertSentAt, null);
+  assert.equal(saved[1].alertSentAt, queue.getStatus().alertSentAt);
+  assert.equal(queue.getStatus().alertErrors, 0);
+});
+
+test('Fomo follow durable pause does not resend an acknowledged alert', async () => {
+  let alertAttempts = 0;
+  const queue = createFomoBrowserFollowQueue({
+    enabled: true, dryRun: false, profileIds: [A],
+    createBrowserApi: async () => { throw new Error('browser must not open'); },
+    stateStore: { load: async () => ({
+      paused: true, pausedAt: '2026-08-26T19:00:00.000Z',
+      lastErrorCode: 'FOMO_FOLLOW_HTTP_429', alertSentAt: '2026-08-26T19:00:01.000Z',
+    }), save: async () => {} },
+    pauseNotifier: { sendPauseAlert: async () => { alertAttempts += 1; } },
+  });
+
+  queue.start();
+  await queue.stop();
+  assert.equal(alertAttempts, 0);
+  assert.equal(queue.getStatus().alertSentAt, '2026-08-26T19:00:01.000Z');
+});
+
+test('Fomo follow retries an unacknowledged pause alert after restart', async () => {
+  const saved = [];
+  let alertAttempts = 0;
+  const queue = createFomoBrowserFollowQueue({
+    enabled: true, dryRun: false, profileIds: [A],
+    createBrowserApi: async () => { throw new Error('browser must not open'); },
+    stateStore: { load: async () => ({
+      paused: true, pausedAt: '2026-08-26T19:00:00.000Z',
+      lastErrorCode: 'FOMO_FOLLOW_HTTP_429', alertSentAt: null,
+    }), save: async (state) => saved.push(state) },
+    pauseNotifier: { sendPauseAlert: async () => { alertAttempts += 1; } },
+  });
+
+  queue.start();
+  await queue.stop();
+  assert.equal(alertAttempts, 1);
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].alertSentAt, queue.getStatus().alertSentAt);
+});
+
+test('Fomo follow keeps its durable pause when Telegram delivery fails', async () => {
+  const saved = [];
+  const timeout = Object.assign(new Error('timeout'), { code: 'FOMO_FOLLOW_AUTH_TIMEOUT' });
+  const queue = createFomoBrowserFollowQueue({
+    enabled: true, dryRun: false, profileIds: [A],
+    createBrowserApi: async () => { throw timeout; },
+    stateStore: { load: async () => null, save: async (state) => saved.push(state) },
+    pauseNotifier: { sendPauseAlert: async () => {
+      throw Object.assign(new Error('telegram down'), { code: 'telegram_timeout' });
+    } },
+  });
+
+  queue.start();
+  await queue.stop();
+  assert.equal(queue.getStatus().paused, true);
+  assert.equal(queue.getStatus().pausePersisted, true);
+  assert.equal(queue.getStatus().alertErrors, 1);
+  assert.equal(queue.getStatus().lastAlertErrorCode, 'telegram_timeout');
+  assert.equal(saved.length, 1);
 });
 
 test('Fomo follow queue persists timeouts and does not attempt a write', async () => {

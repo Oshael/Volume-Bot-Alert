@@ -6,6 +6,7 @@ const { createCalloutCaptureRepository } = require('../models/callout-capture');
 const { createFomoLocalCollector } = require('./fomo-local-collector');
 const { createFomoBrowserActivityStream } = require('./fomo-browser-activity-stream');
 const { createFomoBrowserFollowQueue } = require('./fomo-browser-follow-queue');
+const { createFomoFollowTelegramNotifier } = require('./fomo-follow-telegram-notifier');
 const { createPumpCalloutClient } = require('./pump-callout-client');
 const { createPumpLocalCollector } = require('./pump-local-collector');
 const {
@@ -94,9 +95,14 @@ function createFomoFollowStateStore(repository) {
 
 function buildFomoFollowQueue(deps, config, repository) {
   if (config.transport !== 'browser_cdp' || !config.follow?.enabled) return null;
+  const alertConfig = config.follow.telegramAlert || {};
+  const pauseNotifier = alertConfig.enabled
+    ? (deps.createFomoFollowNotifier || createFomoFollowTelegramNotifier)(alertConfig)
+    : null;
   return (deps.createFomoFollowQueue || createFomoBrowserFollowQueue)({
     ...config.follow, cdpEndpoint: config.cdpEndpoint,
     stateStore: createFomoFollowStateStore(repository),
+    pauseNotifier,
   });
 }
 
