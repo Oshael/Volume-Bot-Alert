@@ -8,6 +8,7 @@ const readline = require('node:readline/promises');
 const { chromium } = require('@playwright/test');
 
 const SESSION_URL = 'https://auth.privy.io/api/v1/sessions';
+const CURRENT_USER_URL = 'https://prod-api.fomo.family/v2/users';
 const FOMO_URL = 'https://fomo.family/';
 const DEFAULT_TIMEOUT_MS = 15 * 60_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -51,11 +52,17 @@ function socketCapture(raw) {
   if (payload?.type === 'challengeResponse' && isJwt(payload.jwt)) {
     return { accessToken: payload.jwt };
   }
-  if (payload?.type === 'subscribe' && payload.topicType === 'trading_activity'
+  if ((payload?.type === 'subscribe' || payload?.type === 'subscribed')
+    && payload.topicType === 'trading_activity'
     && UUID.test(String(payload.topicId || ''))) {
     return { topicId: payload.topicId };
   }
   return null;
+}
+
+function profileTopicCapture(body) {
+  const topicId = body?.responseObject?.id;
+  return UUID.test(String(topicId || '')) ? { topicId } : null;
 }
 
 function createCaptureAccumulator() {
@@ -223,18 +230,29 @@ async function writeBundle(outputDir, capture) {
 
 function attachCapture(page, accumulator, onProgress = () => {}) {
   page.on('response', async (response) => {
-    if (response.url() !== SESSION_URL || response.request().method() !== 'POST') return;
+    const isPrivySession = response.url() === SESSION_URL
+      && response.request().method() === 'POST';
+    const isCurrentUser = response.url() === CURRENT_USER_URL
+      && response.request().method() === 'GET';
+    if (!isPrivySession && !isCurrentUser) return;
     try {
-      const [body, headers] = await Promise.all([
-        response.json(), response.request().allHeaders(),
-      ]);
-      accumulator.acceptSession(sessionCapture(body, headers));
+      const body = await response.json();
+      if (isPrivySession) {
+        const headers = await response.request().allHeaders();
+        accumulator.acceptSession(sessionCapture(body, headers));
+      } else {
+        accumulator.acceptSocket(profileTopicCapture(body));
+      }
       onProgress(accumulator.getStatus());
     } catch (_error) {}
   });
   page.on('websocket', (socket) => {
     if (!socket.url().includes('prod-api.fomo.family/ws')) return;
     socket.on('framesent', ({ payload }) => {
+      accumulator.acceptSocket(socketCapture(payload));
+      onProgress(accumulator.getStatus());
+    });
+    socket.on('framereceived', ({ payload }) => {
       accumulator.acceptSocket(socketCapture(payload));
       onProgress(accumulator.getStatus());
     });
@@ -317,6 +335,7 @@ module.exports = {
   isJwt,
   jwtSessionIdentity,
   parseArgs,
+  profileTopicCapture,
   sessionCapture,
   socketCapture,
   writeBundle,

@@ -8,6 +8,7 @@ const { describe, it } = require('node:test');
 const {
   chromeArgs,
   createCaptureAccumulator,
+  profileTopicCapture,
   sessionCapture,
   socketCapture,
   writeBundle,
@@ -68,6 +69,15 @@ describe('Fomo browser authentication capture', () => {
     accumulator.acceptSocket({ accessToken: jwt('fomo-app') });
     accumulator.acceptSocket({ topicId: 'ea1bc7f5-e349-5c6d-ab41-740c237a792d' });
     assert.equal(accumulator.getSnapshot().accessToken, jwt('fomo-app'));
+  });
+
+  it('accepts the authenticated profile and subscribed ACK as topic ID sources', () => {
+    const topicId = 'ea1bc7f5-e349-5c6d-ab41-740c237a792d';
+    assert.deepEqual(profileTopicCapture({ responseObject: { id: topicId } }), { topicId });
+    assert.deepEqual(socketCapture(JSON.stringify({
+      type: 'subscribed', topicType: 'trading_activity', topicId,
+    })), { topicId });
+    assert.equal(profileTopicCapture({ responseObject: { id: 'not-a-uuid' } }), null);
   });
 
   it('writes secrets separately with restrictive permissions', async () => {

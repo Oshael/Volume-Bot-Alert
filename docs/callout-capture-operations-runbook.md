@@ -59,7 +59,9 @@ do Gmail, confirme no terminal. O processo fecha essa primeira janela e reabre o
 mesmo perfil instrumentado somente para o login Fomo. Ele observa a resposta
 Privy e os frames enviados ao WebSocket, valida `token`, `privy_access_token`,
 refresh, CA ID e `topicId` pela identidade da sessão e grava o JWT efetivamente
-enviado em `challengeResponse`. Depois fecha o Chrome sem logout. A saída é um
+enviado em `challengeResponse`. O `topicId` pode vir do `subscribe`, do ACK
+`subscribed` ou do `id` retornado por `GET /v2/users` para o perfil autenticado.
+Depois fecha o Chrome sem logout. A saída é um
 diretório `0700` temporário contendo os
 dois arquivos de segredo e `callouts.env.fragment`, todos `0600`; nenhum segredo
 é impresso no terminal. O diretório não é instalado nem enviado à VPS
