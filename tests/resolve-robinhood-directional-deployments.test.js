@@ -68,7 +68,7 @@ describe('Robinhood directional deployment resolver', () => {
         async recordDirectVerificationFailure(item) { calls.failed.push(item); },
       },
     }, [
-      { tokenAddress: TOKEN_A, creatorAddress: CREATOR },
+      { tokenAddress: TOKEN_A, creatorAddress: `0x${'e'.repeat(40)}` },
       { tokenAddress: TOKEN_B, creatorAddress: CREATOR },
     ], { concurrency: 2 });
     assert.deepEqual(result, {
@@ -76,14 +76,14 @@ describe('Robinhood directional deployment resolver', () => {
     });
     assert.equal(calls.verified[0].blockNumber, '100');
     assert.deepEqual(calls.failed, [{
-      tokenAddress: TOKEN_B, error: 'blockscout_deployment_hint_incomplete',
+      tokenAddress: TOKEN_B, error: 'blockscout_creator_missing',
     }]);
   });
 
   it('uses native address lookups concurrently and isolates provider failures', async () => {
     const calls = { verified: [], failed: [] };
-    const timeout = Object.assign(new Error('timed out'), {
-      code: 'timeout', retryable: true, requestRetriesUsed: 2,
+    const timeout = Object.assign(new Error('unavailable'), {
+      code: 'http_error', httpStatus: 503, retryable: true, requestRetriesUsed: 2,
     });
     const result = await resolveBatch({
       sleep: async () => {},
@@ -111,7 +111,32 @@ describe('Robinhood directional deployment resolver', () => {
       verified: 1, failed: 1, retries: 2, splits: 0, providerFailures: 1,
     });
     assert.equal(calls.verified.length, 1);
-    assert.deepEqual(calls.failed, [{ tokenAddress: TOKEN_B, error: 'timeout' }]);
+    assert.deepEqual(calls.failed, [{ tokenAddress: TOKEN_B, error: 'http_error:503' }]);
+  });
+
+  it('records the precise archive evidence rejection', async () => {
+    const failed = [];
+    const evidenceError = Object.assign(new Error('receipt contract address diverged'), {
+      code: 'holder_deployment_evidence_invalid',
+    });
+    const result = await resolveBatch({
+      sleep: async () => {},
+      blockscout: {
+        async getContractCreation(tokenAddress) {
+          return { tokenAddress, creatorAddress: CREATOR, transactionHash: HASH };
+        },
+      },
+      verifier: { async verifyDirectDeployment() { throw evidenceError; } },
+      attributions: {
+        async recordVerifiedDirectDeployments() {},
+        async recordDirectVerificationFailure(item) { failed.push(item); },
+      },
+    }, [{ tokenAddress: TOKEN_A, creatorAddress: CREATOR }], { concurrency: 1 });
+    assert.equal(result.failed, 1);
+    assert.deepEqual(failed, [{
+      tokenAddress: TOKEN_A,
+      error: 'holder_deployment_evidence_invalid:receipt contract address diverged',
+    }]);
   });
 
   it('runs a confirmed bounded selection through the supplied runtime', async () => {
@@ -176,6 +201,6 @@ describe('Robinhood directional deployment resolver', () => {
     assert.deepEqual(result, {
       verified: 1, failed: 1, retries: 2, splits: 1, providerFailures: 1,
     });
-    assert.deepEqual(failed, [{ tokenAddress: TOKEN_B, error: 'timeout' }]);
+    assert.deepEqual(failed, [{ tokenAddress: TOKEN_B, error: 'timeout:timed out' }]);
   });
 });

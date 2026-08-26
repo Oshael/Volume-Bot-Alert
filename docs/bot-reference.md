@@ -1683,11 +1683,14 @@ Se o plano ainda expuser gaps `unresolved` com creator Blockscout, execute no PC
 com `RH_NODE_RPC_URL` apontando para o archive
 `npm run robinhood:directional-deployment-resolve -- --run-id=<id>`. O modo
 padrão consulta somente PostgreSQL. A confirmação
-`--confirm-resolve-robinhood-directional-deployments` busca hints Blockscout em
-batches de até 10, exige que o creator coincida e valida transação, receipt,
-contract address, bloco/hash canônico e chain id pelo archive antes de promover
-`rpc_direct`. Neste repair, a origem primária é a rota nativa individual
+`--confirm-resolve-robinhood-directional-deployments` busca hints Blockscout e
+valida transação, receipt, contract address, bloco/hash canônico e chain id pelo
+archive antes de promover `rpc_direct`. Neste repair, a origem primária é a rota nativa individual
 `/api/v2/addresses/{token}`; a rota PRO agregada não participa da resolução.
+O creator Blockscout armazenado anteriormente é apenas um hint: divergência com
+o creator retornado pela rota nativa não bloqueia promoção quando transaction e
+receipt canônicos do archive comprovam o deployment. Falhas registram ausência
+de creator/transaction, status HTTP ou a razão detalhada de rejeição RPC.
 O comando aceita `--limit`, `--batch-size`, `--concurrency` e
 `--timeout-ms` (respeitado integralmente entre 1s e 60s); sucessos persistidos
 deixam de ser selecionados numa retomada e

@@ -67,16 +67,23 @@ async function mapConcurrent(items, concurrency, operation) {
   return results;
 }
 
+function failureReason(error, fallback = 'verification_failed') {
+  const code = String(error?.code || fallback);
+  if (error?.httpStatus != null) return `${code}:${error.httpStatus}`;
+  const message = String(error?.message || '').trim();
+  return message && message !== code ? `${code}:${message}` : code;
+}
+
 async function verifyHints(deps, candidates, options, hints) {
   const outcomes = await mapConcurrent(candidates, options.concurrency, async (candidate) => {
     const hint = hints.get(candidate.tokenAddress);
-    if (!hint?.transactionHash || hint.creatorAddress !== candidate.creatorAddress) {
-      return { candidate, error: 'blockscout_deployment_hint_incomplete' };
-    }
+    if (!hint) return { candidate, error: 'blockscout_address_not_found' };
+    if (!hint.creatorAddress) return { candidate, error: 'blockscout_creator_missing' };
+    if (!hint.transactionHash) return { candidate, error: 'blockscout_creation_transaction_missing' };
     try {
       return { candidate, deployment: await deps.verifier.verifyDirectDeployment(hint) };
     } catch (error) {
-      return { candidate, error: String(error.code || error.message || 'verification_failed') };
+      return { candidate, error: failureReason(error) };
     }
   });
   const verified = outcomes.flatMap((outcome) => outcome.deployment ? [outcome.deployment] : []);
@@ -101,7 +108,7 @@ async function resolveNativeBatch(deps, candidates, options) {
     } catch (error) {
       await deps.attributions.recordDirectVerificationFailure({
         tokenAddress: candidate.tokenAddress,
-        error: String(error.code || 'blockscout_provider_failure'),
+        error: failureReason(error, 'blockscout_provider_failure'),
       });
       return {
         candidate, hint: null, retries: error.requestRetriesUsed || 0, providerFailure: true,
@@ -150,7 +157,7 @@ async function resolveBatch(deps, candidates, options) {
     if (error.retryable !== true) throw error;
     await deps.attributions.recordDirectVerificationFailure({
       tokenAddress: candidates[0].tokenAddress,
-      error: String(error.code || 'blockscout_provider_failure'),
+      error: failureReason(error, 'blockscout_provider_failure'),
     });
     return {
       verified: 0, failed: 1, retries: error.requestRetriesUsed || 0,
