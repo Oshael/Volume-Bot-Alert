@@ -1058,9 +1058,10 @@ do WebSocket pela sessão Privy até 30 segundos antes da expiração e persiste
 JWT e refresh token por troca atômica. O JWT do `challengeResponse` é o access
 token Privy retornado como `privy_access_token`; o campo `token` da resposta é
 outro contrato, pode ser nulo e nunca o substitui.
-No Mac, `npm run fomo:auth-capture` abre um perfil temporário isolado do Chrome,
-permite autenticar primeiro o Gmail e captura automaticamente access token,
-refresh token, CA ID e `topicId` da mesma sessão Fomo. A saída local `0700`
+No Mac, `npm run fomo:auth-capture` abre um perfil temporário em Chrome normal
+para autenticar primeiro o Gmail, reinicia esse mesmo perfil com instrumentação
+apenas na etapa Fomo e captura automaticamente access token, refresh token, CA
+ID e `topicId` da mesma sessão. A saída local `0700`
 contém os dois segredos e um fragmento de env em arquivos `0600`; o comando
 fecha a sessão sem logout, não imprime segredos e não altera a VPS.
 A rotação exige

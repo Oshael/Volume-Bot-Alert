@@ -133,6 +133,33 @@ async function findChrome(explicitPath) {
   throw new Error('Google Chrome was not found; pass --chrome-path=/absolute/path');
 }
 
+function chromeArgs(profileDir, url, remoteDebugging = false) {
+  return [
+    ...(remoteDebugging ? ['--remote-debugging-port=0'] : []),
+    `--user-data-dir=${profileDir}`,
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--new-window',
+    url,
+  ];
+}
+
+async function stopChrome(child) {
+  if (!child || child.exitCode !== null) return;
+  const exited = new Promise((resolve) => child.once('exit', resolve));
+  child.kill('SIGTERM');
+  const timedOut = await Promise.race([
+    exited.then(() => false),
+    new Promise((resolve) => setTimeout(() => resolve(true), 5_000)),
+  ]);
+  if (!timedOut || child.exitCode !== null) return;
+  child.kill('SIGKILL');
+  await Promise.race([
+    exited,
+    new Promise((resolve) => setTimeout(resolve, 2_000)),
+  ]);
+}
+
 async function waitForDevTools(profileDir, child, timeoutMs = 15_000) {
   const activePort = path.join(profileDir, 'DevToolsActivePort');
   const deadline = Date.now() + timeoutMs;
@@ -198,17 +225,14 @@ async function main(argv = process.argv.slice(2)) {
   let browser;
   let child;
   try {
-    child = spawn(chromePath, [
-      '--remote-debugging-port=0',
-      `--user-data-dir=${profileDir}`,
-      '--no-first-run',
-      '--no-default-browser-check',
-      '--new-window',
-      'https://accounts.google.com/',
-    ], { stdio: 'ignore' });
+    child = spawn(chromePath, chromeArgs(profileDir, 'https://accounts.google.com/'),
+      { stdio: 'ignore' });
+    await promptForGoogleLogin();
+    await stopChrome(child);
+
+    child = spawn(chromePath, chromeArgs(profileDir, 'about:blank', true), { stdio: 'ignore' });
     const cdpUrl = await waitForDevTools(profileDir, child);
     browser = await chromium.connectOverCDP(cdpUrl);
-    await promptForGoogleLogin();
 
     const context = browser.contexts()[0];
     const accumulator = createCaptureAccumulator();
@@ -225,7 +249,7 @@ async function main(argv = process.argv.slice(2)) {
     console.log('O Chrome isolado será fechado sem logout; nenhum segredo foi impresso.');
   } finally {
     try { await browser?.close(); } catch (_error) {}
-    if (child?.exitCode === null) child.kill('SIGTERM');
+    await stopChrome(child);
     const expectedPrefix = path.join(os.tmpdir(), 'trendscope-fomo-browser-');
     if (profileDir.startsWith(expectedPrefix)) {
       try { await fs.rm(profileDir, { recursive: true, force: true }); } catch (_error) {}
@@ -241,6 +265,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  chromeArgs,
   createCaptureAccumulator,
   isJwt,
   parseArgs,

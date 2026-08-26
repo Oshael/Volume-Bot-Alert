@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { describe, it } = require('node:test');
 const {
+  chromeArgs,
   createCaptureAccumulator,
   sessionCapture,
   socketCapture,
@@ -15,6 +16,13 @@ const {
 const jwt = (label) => `${Buffer.from('{"alg":"none"}').toString('base64url')}.${Buffer.from(JSON.stringify({ label })).toString('base64url')}.signature`;
 
 describe('Fomo browser authentication capture', () => {
+  it('keeps remote debugging disabled during the Google login phase', () => {
+    assert.equal(chromeArgs('/tmp/profile', 'https://accounts.google.com/')
+      .some((value) => value.startsWith('--remote-debugging')), false);
+    assert.equal(chromeArgs('/tmp/profile', 'about:blank', true)
+      .some((value) => value.startsWith('--remote-debugging')), true);
+  });
+
   it('uses privy_access_token and ignores the generic token field', () => {
     const accessToken = jwt('access');
     assert.deepEqual(sessionCapture({

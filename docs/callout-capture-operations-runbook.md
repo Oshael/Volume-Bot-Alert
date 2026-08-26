@@ -54,8 +54,9 @@ worker pela mesma sessão. Não registre tokens em shell history, journal ou
 diagnósticos.
 
 No Mac, `npm run fomo:auth-capture` automatiza essa coleta. O comando abre um
-perfil temporário isolado do Chrome primeiro no Google; após concluir o login do
-Gmail, confirme no terminal e faça login na Fomo. Ele observa somente a resposta
+perfil temporário isolado em Chrome normal para o Google; após concluir o login
+do Gmail, confirme no terminal. O processo fecha essa primeira janela e reabre o
+mesmo perfil instrumentado somente para o login Fomo. Ele observa a resposta
 Privy e os frames enviados ao WebSocket, exige que `privy_access_token`, refresh,
 CA ID e `topicId` pertençam à mesma sessão, ignora o campo genérico `token` e
 fecha o Chrome sem logout. A saída é um diretório `0700` temporário contendo os
