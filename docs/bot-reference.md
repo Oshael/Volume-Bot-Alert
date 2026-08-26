@@ -1882,8 +1882,10 @@ A Stage 166 (`node src/utils/db-init-stage166.js`) cria o controle durável do
 catch-up de launch anchors: uma campanha ativa por chain e uma fila por token com
 frontier/hash congelados, lease, retry e resultados terminais. A migration é
 somente DDL; não seleciona tokens, não lê swaps e não inicia o backfill. O runner
-e seu preflight com teto de cinco horas ainda precisam ser entregues antes de
-usar essa fila em produção.
+PostgreSQL já seleciona somente gaps live cobertos, amostra batches distribuídos
+pela população e recusa projeção acima de cinco horas. A materialização reclama
+tokens com `SKIP LOCKED` e commita anchors, targets e conclusão atomicamente. O
+comando operacional ainda precisa ser entregue antes de usar a fila em produção.
 A Stage 149 introduz
 `robinhood_wallet_token_first_buys`, fonte neutra e reutilizável para ordem por
 token e recorrência por wallet. Aplique `node src/utils/db-init-stage149.js` antes

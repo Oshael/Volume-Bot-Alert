@@ -1960,6 +1960,10 @@ A Stage 166 prepara campanhas congeladas e uma fila por token para recuperar
 launch anchors ausentes em lotes concorrentes, com lease, retry, resultados
 terminais e progresso durável. Aplicar a migration não cria campanha nem executa
 queries de backfill.
+O repository seleciona somente gaps live cobertos pela projeção de first-buy,
+amostra o mesmo lookup PostgreSQL usado na escrita e recusa planos acima de cinco
+horas. Cada batch reclama tokens com `SKIP LOCKED`, materializa anchors em conjunto
+e fecha targets e campanha atomicamente; o comando operacional permanece pendente.
 
 ### Corte D2 — reader e preflight do RPC Archive
 
