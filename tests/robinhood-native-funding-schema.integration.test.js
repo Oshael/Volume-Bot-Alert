@@ -25,7 +25,8 @@ describe('Robinhood native funding schema integration', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
     await stage167.init({ closePool: false });
-    await db.query(`CREATE TABLE IF NOT EXISTS robinhood_native_funding_events_stage167_test
+    await db.query('DROP TABLE IF EXISTS robinhood_native_funding_events_stage167_test');
+    await db.query(`CREATE TABLE IF NOT EXISTS robinhood_native_funding_events_2026_08_26
       PARTITION OF robinhood_native_funding_events
       FOR VALUES FROM ('2026-08-26') TO ('2026-08-27')`);
     await cleanup();
