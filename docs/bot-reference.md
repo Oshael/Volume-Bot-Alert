@@ -1684,7 +1684,8 @@ padrão consulta somente PostgreSQL. A confirmação
 batches de até 10, exige que o creator coincida e valida transação, receipt,
 contract address, bloco/hash canônico e chain id pelo archive antes de promover
 `rpc_direct`. O comando aceita `--limit`, `--batch-size`, `--concurrency` e
-`--timeout-ms`; sucessos persistidos deixam de ser selecionados numa retomada e
+`--timeout-ms` (respeitado integralmente entre 1s e 60s); sucessos persistidos
+deixam de ser selecionados numa retomada e
 falhas individuais são registradas sem invalidar o restante. Timeout transitório
 divide adaptativamente o batch Blockscout até um único token; falha isolada é
 contabilizada em `providerFailures` e não encerra a campanha. Depois da resolução,

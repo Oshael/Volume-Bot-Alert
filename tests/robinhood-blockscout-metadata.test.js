@@ -3,6 +3,7 @@ const { describe, it } = require('node:test');
 
 const {
   createRobinhoodBlockscoutMetadataClient,
+  __private: { boundedTimeout },
 } = require('../src/services/robinhood-blockscout-metadata');
 
 const TOKEN = `0x${'1'.repeat(40)}`;
@@ -18,6 +19,11 @@ function response(status, payload, headers = {}) {
 }
 
 describe('Robinhood Blockscout metadata client', () => {
+  it('honors long bounded timeouts required by slow contract creation lookups', () => {
+    assert.equal(boundedTimeout(30_000), 30_000);
+    assert.equal(boundedTimeout(90_000), 60_000);
+  });
+
   it('normalizes token metadata and sanitizes its image', async () => {
     const calls = [];
     const client = createRobinhoodBlockscoutMetadataClient({

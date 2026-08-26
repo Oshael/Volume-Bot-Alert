@@ -20,7 +20,7 @@ class RobinhoodBlockscoutMetadataError extends Error {
 
 function boundedTimeout(value) {
   const parsed = Number(value);
-  return Number.isSafeInteger(parsed) ? Math.max(1000, Math.min(parsed, 15_000)) : DEFAULT_TIMEOUT_MS;
+  return Number.isSafeInteger(parsed) ? Math.max(1000, Math.min(parsed, 60_000)) : DEFAULT_TIMEOUT_MS;
 }
 
 function isRetryableProviderError(error) {

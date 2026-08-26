@@ -140,7 +140,7 @@ function buildRuntime(options, deps = {}) {
     gaps: createRobinhoodDirectionalDeploymentGapRepository({ database }),
     attributions: createRobinhoodTokenAttributionRepository({ database }),
     blockscout: (deps.blockscoutFactory || createRobinhoodBlockscoutMetadataClient)({
-      apiKey, apiUrl, timeoutMs: Math.min(options.timeoutMs, 15_000),
+      apiKey, apiUrl, timeoutMs: options.timeoutMs,
     }),
     verifier: createRobinhoodHolderDeploymentVerifier({ rpcClient }),
     sleep: deps.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
@@ -183,4 +183,7 @@ if (require.main === module) main().catch((error) => {
   process.exitCode = 1;
 }).finally(() => db.pool.end().catch(() => {}));
 
-module.exports = { CONFIRM_FLAG, main, parseArgs, resolveBatch };
+module.exports = {
+  CONFIRM_FLAG, main, parseArgs, resolveBatch,
+  __private: { buildRuntime },
+};

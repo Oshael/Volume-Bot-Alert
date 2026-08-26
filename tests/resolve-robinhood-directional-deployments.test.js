@@ -5,6 +5,7 @@ const { describe, it } = require('node:test');
 
 const {
   CONFIRM_FLAG, main, parseArgs, resolveBatch,
+  __private: { buildRuntime },
 } = require('../src/utils/resolve-robinhood-directional-deployments');
 
 const TOKEN_A = `0x${'a'.repeat(40)}`;
@@ -13,6 +14,23 @@ const CREATOR = `0x${'c'.repeat(40)}`;
 const HASH = `0x${'d'.repeat(64)}`;
 
 describe('Robinhood directional deployment resolver', () => {
+  it('passes the requested timeout to the Blockscout client without truncating it', () => {
+    let clientOptions;
+    buildRuntime({ timeoutMs: 30_000 }, {
+      env: {
+        RH_NODE_RPC_URL: 'https://rpc.example',
+        ROBINHOOD_BLOCKSCOUT_API_KEY: 'proapi_test',
+      },
+      database: {},
+      rpcClientFactory: () => ({ async request() {} }),
+      blockscoutFactory: (options) => {
+        clientOptions = options;
+        return {};
+      },
+    });
+    assert.equal(clientOptions.timeoutMs, 30_000);
+  });
+
   it('plans without requiring RPC configuration and validates bounds', async () => {
     assert.deepEqual(parseArgs(['--run-id=1']), {
       confirm: false, runId: '1', limit: 1000, batchSize: 10,
