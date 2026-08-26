@@ -1,0 +1,68 @@
+'use strict';
+
+const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
+const { describe, it } = require('node:test');
+const {
+  createCaptureAccumulator,
+  sessionCapture,
+  socketCapture,
+  writeBundle,
+} = require('../src/utils/capture-fomo-browser-auth');
+
+const jwt = (label) => `${Buffer.from('{"alg":"none"}').toString('base64url')}.${Buffer.from(JSON.stringify({ label })).toString('base64url')}.signature`;
+
+describe('Fomo browser authentication capture', () => {
+  it('uses privy_access_token and ignores the generic token field', () => {
+    const accessToken = jwt('access');
+    assert.deepEqual(sessionCapture({
+      token: jwt('wrong'), privy_access_token: accessToken, refresh_token: 'refresh',
+    }, { 'privy-ca-id': 'privy:caid' }), {
+      accessToken, refreshToken: 'refresh', caId: 'privy:caid',
+    });
+  });
+
+  it('completes only when the session and WebSocket JWT belong together', async () => {
+    const accessToken = jwt('current');
+    const accumulator = createCaptureAccumulator();
+    accumulator.acceptSession({ accessToken, refreshToken: 'refresh', caId: 'ca-id' });
+    accumulator.acceptSocket(socketCapture(JSON.stringify({
+      type: 'subscribe', topicType: 'trading_activity',
+      topicId: 'ea1bc7f5-e349-5c6d-ab41-740c237a792d',
+    })));
+    accumulator.acceptSocket(socketCapture(JSON.stringify({
+      type: 'challengeResponse', jwt: jwt('stale'),
+    })));
+    assert.equal(accumulator.getSnapshot(), null);
+    accumulator.acceptSocket(socketCapture(JSON.stringify({
+      type: 'challengeResponse', jwt: accessToken,
+    })));
+    assert.deepEqual(await accumulator.wait(10), {
+      accessToken,
+      refreshToken: 'refresh',
+      caId: 'ca-id',
+      topicId: 'ea1bc7f5-e349-5c6d-ab41-740c237a792d',
+    });
+  });
+
+  it('writes secrets separately with restrictive permissions', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'fomo-auth-test-'));
+    const output = path.join(root, 'bundle');
+    try {
+      await writeBundle(output, {
+        accessToken: jwt('access'), refreshToken: 'refresh', caId: 'ca-id',
+        topicId: 'ea1bc7f5-e349-5c6d-ab41-740c237a792d',
+      });
+      for (const name of ['fomo-customer-token', 'fomo-refresh-token', 'callouts.env.fragment']) {
+        const mode = (await fs.stat(path.join(output, name))).mode & 0o777;
+        assert.equal(mode, 0o600);
+      }
+      assert.match(await fs.readFile(path.join(output, 'callouts.env.fragment'), 'utf8'),
+        /FOMO_WS_TOPIC_ID=ea1bc7f5/);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+});

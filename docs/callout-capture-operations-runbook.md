@@ -53,6 +53,16 @@ sem fazer logout depois da captura e não deixe o SDK do navegador competir com 
 worker pela mesma sessão. Não registre tokens em shell history, journal ou
 diagnósticos.
 
+No Mac, `npm run fomo:auth-capture` automatiza essa coleta. O comando abre um
+perfil temporário isolado do Chrome primeiro no Google; após concluir o login do
+Gmail, confirme no terminal e faça login na Fomo. Ele observa somente a resposta
+Privy e os frames enviados ao WebSocket, exige que `privy_access_token`, refresh,
+CA ID e `topicId` pertençam à mesma sessão, ignora o campo genérico `token` e
+fecha o Chrome sem logout. A saída é um diretório `0700` temporário contendo os
+dois arquivos de segredo e `callouts.env.fragment`, todos `0600`; nenhum segredo
+é impresso no terminal. O diretório não é instalado nem enviado à VPS
+automaticamente.
+
 ## 2. Instalar env e drop-in
 
 Use `deploy/systemd/callouts.env.example` como base para
