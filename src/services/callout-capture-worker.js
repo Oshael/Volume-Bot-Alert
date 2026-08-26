@@ -65,6 +65,7 @@ function buildFomoCollector(deps, config, persistence, authentication) {
       : undefined,
     streamOptions: browserMode ? { cdpEndpoint: config.cdpEndpoint } : undefined,
     reconciliationEnabled: !browserMode,
+    lookupLiveTrades: !browserMode,
     wsUrl: config.wsUrl,
     headers: config.origin ? { Origin: config.origin } : undefined,
     topicId: config.topicId,

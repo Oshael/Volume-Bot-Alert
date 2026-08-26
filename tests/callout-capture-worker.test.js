@@ -158,6 +158,7 @@ describe('callout capture production persistence', () => {
     assert.equal(fomoOptions.streamFactory, browserStream);
     assert.deepEqual(fomoOptions.streamOptions, { cdpEndpoint: 'http://127.0.0.1:9222' });
     assert.equal(fomoOptions.reconciliationEnabled, false);
+    assert.equal(fomoOptions.lookupLiveTrades, false);
     assert.equal(fomoOptions.tradeLookupLimit, 0);
     await worker.stop();
   });

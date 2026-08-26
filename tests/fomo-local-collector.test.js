@@ -86,8 +86,11 @@ test('Fomo local collector can run browser live transport without direct HTTP re
     publicClient: {
       getLeaderboard: async () => { directCalls += 1; },
       getTradingActivity: async () => { directCalls += 1; },
+      getTrade: async () => { directCalls += 1; },
     },
     reconciliationEnabled: false,
+    lookupLiveTrades: false,
+    tradeLookupLimit: 0,
     streamOptions: { cdpEndpoint: 'http://127.0.0.1:9222' },
     streamFactory: (options) => {
       streamOptions = options;
@@ -96,8 +99,13 @@ test('Fomo local collector can run browser live transport without direct HTTP re
   });
 
   collector.start();
+  streamOptions.onEvidence({
+    callout: require('../src/services/fomo-frame-normalizer').normalizeFomoActivityItem(thesis()),
+  });
   await collector.flush();
   assert.equal(directCalls, 0);
+  assert.equal(collector.getStatus().callouts, 1);
+  assert.equal(collector.getStatus().errors, 0);
   assert.equal(streamOptions.cdpEndpoint, 'http://127.0.0.1:9222');
   await collector.stop();
 });

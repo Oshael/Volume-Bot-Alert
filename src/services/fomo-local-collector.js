@@ -11,6 +11,10 @@ function positiveInteger(value, fallback, max = Number.MAX_SAFE_INTEGER) {
   return Number.isSafeInteger(value) && value > 0 ? Math.min(value, max) : fallback;
 }
 
+function nonNegativeInteger(value, fallback, max = Number.MAX_SAFE_INTEGER) {
+  return Number.isSafeInteger(value) && value >= 0 ? Math.min(value, max) : fallback;
+}
+
 function responseItems(body, key) {
   const value = body?.responseObject?.[key] ?? body?.[key];
   return Array.isArray(value) ? value : [];
@@ -25,7 +29,8 @@ function createFomoLocalCollector(options = {}) {
   const cancelSchedule = options.cancelSchedule || clearTimeout;
   const intervalMs = positiveInteger(options.reconcileIntervalMs, 15 * 60_000);
   const reconciliationEnabled = options.reconciliationEnabled !== false;
-  const tradeLookupLimit = positiveInteger(options.tradeLookupLimit, 10, 50);
+  const lookupLiveTrades = options.lookupLiveTrades !== false;
+  const tradeLookupLimit = nonNegativeInteger(options.tradeLookupLimit, 10, 50);
   const maxSeen = positiveInteger(options.maxSeen, 10_000);
   const liveReadyState = options.authenticationJwt || options.authenticationJwtProvider
     ? 'challenge_accepted' : 'connected';
@@ -136,7 +141,9 @@ function createFomoLocalCollector(options = {}) {
     authenticationJwt: options.authenticationJwt,
     authenticationJwtProvider: options.authenticationJwtProvider,
     subscribePayload: createTradingActivitySubscribePayload(options.topicId),
-    onEvidence: (evidence) => captureCallout(evidence.callout, 'trading_activity_ws'),
+    onEvidence: (evidence) => captureCallout(
+      evidence.callout, 'trading_activity_ws', lookupLiveTrades,
+    ),
     onError: reportError,
     onStatus: ({ state }) => {
       if (state !== liveReadyState) return;
