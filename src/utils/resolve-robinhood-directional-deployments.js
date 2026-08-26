@@ -67,7 +67,66 @@ async function mapConcurrent(items, concurrency, operation) {
   return results;
 }
 
+async function verifyHints(deps, candidates, options, hints) {
+  const outcomes = await mapConcurrent(candidates, options.concurrency, async (candidate) => {
+    const hint = hints.get(candidate.tokenAddress);
+    if (!hint?.transactionHash || hint.creatorAddress !== candidate.creatorAddress) {
+      return { candidate, error: 'blockscout_deployment_hint_incomplete' };
+    }
+    try {
+      return { candidate, deployment: await deps.verifier.verifyDirectDeployment(hint) };
+    } catch (error) {
+      return { candidate, error: String(error.code || error.message || 'verification_failed') };
+    }
+  });
+  const verified = outcomes.flatMap((outcome) => outcome.deployment ? [outcome.deployment] : []);
+  if (verified.length) await deps.attributions.recordVerifiedDirectDeployments(verified);
+  const failed = outcomes.filter((outcome) => outcome.error);
+  for (const outcome of failed) {
+    await deps.attributions.recordDirectVerificationFailure({
+      tokenAddress: outcome.candidate.tokenAddress, error: outcome.error,
+    });
+  }
+  return { verified: verified.length, failed: failed.length };
+}
+
+async function resolveNativeBatch(deps, candidates, options) {
+  const lookups = await mapConcurrent(candidates, options.concurrency, async (candidate) => {
+    try {
+      const response = await requestWithRetry(
+        () => deps.blockscout.getContractCreation(candidate.tokenAddress),
+        { requestRetries: 2, retryDelayMs: 500 }, deps.sleep,
+      );
+      return { candidate, hint: response.value, retries: response.retries, providerFailure: false };
+    } catch (error) {
+      await deps.attributions.recordDirectVerificationFailure({
+        tokenAddress: candidate.tokenAddress,
+        error: String(error.code || 'blockscout_provider_failure'),
+      });
+      return {
+        candidate, hint: null, retries: error.requestRetriesUsed || 0, providerFailure: true,
+      };
+    }
+  });
+  const available = lookups.filter((lookup) => !lookup.providerFailure);
+  const hints = new Map(available.map((lookup) => [lookup.candidate.tokenAddress, lookup.hint]));
+  const verified = await verifyHints(
+    deps, available.map((lookup) => lookup.candidate), options, hints,
+  );
+  const providerFailures = lookups.length - available.length;
+  return {
+    verified: verified.verified,
+    failed: verified.failed + providerFailures,
+    retries: lookups.reduce((total, lookup) => total + lookup.retries, 0),
+    splits: 0,
+    providerFailures,
+  };
+}
+
 async function resolveBatch(deps, candidates, options) {
+  if (typeof deps.blockscout.getContractCreation === 'function') {
+    return resolveNativeBatch(deps, candidates, options);
+  }
   let response;
   try {
     response = await requestWithRetry(
@@ -98,28 +157,12 @@ async function resolveBatch(deps, candidates, options) {
       splits: 0, providerFailures: 1,
     };
   }
-  const hints = new Map(response.value.map((item) => [item.tokenAddress, item]));
-  const outcomes = await mapConcurrent(candidates, options.concurrency, async (candidate) => {
-    const hint = hints.get(candidate.tokenAddress);
-    if (!hint?.transactionHash || hint.creatorAddress !== candidate.creatorAddress) {
-      return { candidate, error: 'blockscout_deployment_hint_incomplete' };
-    }
-    try {
-      return { candidate, deployment: await deps.verifier.verifyDirectDeployment(hint) };
-    } catch (error) {
-      return { candidate, error: String(error.code || error.message || 'verification_failed') };
-    }
-  });
-  const verified = outcomes.flatMap((outcome) => outcome.deployment ? [outcome.deployment] : []);
-  if (verified.length) await deps.attributions.recordVerifiedDirectDeployments(verified);
-  const failed = outcomes.filter((outcome) => outcome.error);
-  for (const outcome of failed) {
-    await deps.attributions.recordDirectVerificationFailure({
-      tokenAddress: outcome.candidate.tokenAddress, error: outcome.error,
-    });
-  }
+  const verified = await verifyHints(
+    deps, candidates, options,
+    new Map(response.value.map((item) => [item.tokenAddress, item])),
+  );
   return {
-    verified: verified.length, failed: failed.length, retries: response.retries,
+    verified: verified.verified, failed: verified.failed, retries: response.retries,
     splits: 0, providerFailures: 0,
   };
 }

@@ -1686,7 +1686,9 @@ padrão consulta somente PostgreSQL. A confirmação
 `--confirm-resolve-robinhood-directional-deployments` busca hints Blockscout em
 batches de até 10, exige que o creator coincida e valida transação, receipt,
 contract address, bloco/hash canônico e chain id pelo archive antes de promover
-`rpc_direct`. O comando aceita `--limit`, `--batch-size`, `--concurrency` e
+`rpc_direct`. Neste repair, a origem primária é a rota nativa individual
+`/api/v2/addresses/{token}`; a rota PRO agregada não participa da resolução.
+O comando aceita `--limit`, `--batch-size`, `--concurrency` e
 `--timeout-ms` (respeitado integralmente entre 1s e 60s); sucessos persistidos
 deixam de ser selecionados numa retomada e
 falhas individuais são registradas sem invalidar o restante. Timeout transitório

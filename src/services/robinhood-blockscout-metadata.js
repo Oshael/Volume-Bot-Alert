@@ -140,7 +140,7 @@ function createRobinhoodBlockscoutMetadataClient(options = {}) {
     return normalizePayload(address, payload);
   }
 
-  async function getContractCreator(tokenAddress) {
+  async function getContractCreation(tokenAddress) {
     const address = normalizeTokenAddress('robinhood', tokenAddress);
     const payload = await request(address, addressBaseUrl, 'address');
     if (!payload) return null;
@@ -150,11 +150,18 @@ function createRobinhoodBlockscoutMetadataClient(options = {}) {
         'Blockscout address response mismatch', 'address_mismatch'
       );
     }
-    try {
-      return normalizeTokenAddress('robinhood', payload.creator_address_hash);
-    } catch (_) {
-      return null;
-    }
+    let creatorAddress = null;
+    try { creatorAddress = normalizeTokenAddress('robinhood', payload.creator_address_hash); }
+    catch (_) {}
+    const rawTransactionHash = String(payload.creation_transaction_hash ?? '').trim().toLowerCase();
+    const transactionHash = /^0x[0-9a-f]{64}$/.test(rawTransactionHash)
+      ? rawTransactionHash
+      : null;
+    return Object.freeze({ tokenAddress: address, creatorAddress, transactionHash });
+  }
+
+  async function getContractCreator(tokenAddress) {
+    return (await getContractCreation(tokenAddress))?.creatorAddress || null;
   }
 
   async function getContractCreators(tokenAddresses) {
@@ -198,7 +205,8 @@ function createRobinhoodBlockscoutMetadataClient(options = {}) {
 
   const getCreditsRemaining = () => minimumCreditsRemaining;
   return Object.freeze({
-    getContractCreator, getContractCreators, getCreditsRemaining, getTokenMetadata,
+    getContractCreation, getContractCreator, getContractCreators,
+    getCreditsRemaining, getTokenMetadata,
   });
 }
 

@@ -64,14 +64,19 @@ describe('Robinhood Blockscout metadata client', () => {
 
   it('reads and validates the contract creator from the address endpoint', async () => {
     const creator = `0x${'2'.repeat(40)}`;
+    const transactionHash = `0x${'4'.repeat(64)}`;
     const client = createRobinhoodBlockscoutMetadataClient({
       fetchImpl: async () => response(200, {
         hash: TOKEN,
         creator_address_hash: creator.toUpperCase(),
+        creation_transaction_hash: transactionHash.toUpperCase(),
       }),
     });
 
     assert.equal(await client.getContractCreator(TOKEN), creator);
+    assert.deepEqual(await client.getContractCreation(TOKEN), {
+      tokenAddress: TOKEN, creatorAddress: creator, transactionHash,
+    });
   });
 
   it('resolves up to ten contract creators in one Blockscout request', async () => {

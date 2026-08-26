@@ -80,6 +80,40 @@ describe('Robinhood directional deployment resolver', () => {
     }]);
   });
 
+  it('uses native address lookups concurrently and isolates provider failures', async () => {
+    const calls = { verified: [], failed: [] };
+    const timeout = Object.assign(new Error('timed out'), {
+      code: 'timeout', retryable: true, requestRetriesUsed: 2,
+    });
+    const result = await resolveBatch({
+      sleep: async () => {},
+      blockscout: {
+        async getContractCreation(tokenAddress) {
+          if (tokenAddress === TOKEN_B) throw timeout;
+          return { tokenAddress, creatorAddress: CREATOR, transactionHash: HASH };
+        },
+        async getContractCreators() { throw new Error('PRO route must not be used'); },
+      },
+      verifier: {
+        async verifyDirectDeployment(hint) {
+          return { ...hint, source: 'rpc_direct', factoryAddress: null, blockNumber: '100' };
+        },
+      },
+      attributions: {
+        async recordVerifiedDirectDeployments(items) { calls.verified.push(...items); },
+        async recordDirectVerificationFailure(item) { calls.failed.push(item); },
+      },
+    }, [
+      { tokenAddress: TOKEN_A, creatorAddress: CREATOR },
+      { tokenAddress: TOKEN_B, creatorAddress: CREATOR },
+    ], { concurrency: 2 });
+    assert.deepEqual(result, {
+      verified: 1, failed: 1, retries: 2, splits: 0, providerFailures: 1,
+    });
+    assert.equal(calls.verified.length, 1);
+    assert.deepEqual(calls.failed, [{ tokenAddress: TOKEN_B, error: 'timeout' }]);
+  });
+
   it('runs a confirmed bounded selection through the supplied runtime', async () => {
     const runtime = {
       gaps: {
