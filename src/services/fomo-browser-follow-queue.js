@@ -245,19 +245,26 @@ function createFomoBrowserFollowQueue(options = {}) {
   const dryRun = options.dryRun !== false;
   const profileIds = normalizeProfileIds(options.profileIds);
   const discoveryEnabled = options.discoveryEnabled === true;
-  const discoveryLimit = positiveInteger(options.discoveryLimit, 25, 100);
+  const discoveryLimit = positiveInteger(options.discoveryLimit, 100, 100);
   const maxFollows = positiveInteger(options.maxFollowsPerRun, 1, 10);
+  const intervalMs = positiveInteger(options.intervalMs, 5 * 60_000, 24 * 60 * 60_000);
   const delayMs = positiveInteger(options.delayMs, 7_500, 60_000);
   const random = options.random || Math.random;
   const wait = options.wait || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const schedule = options.schedule || setTimeout;
+  const cancelSchedule = options.cancelSchedule || clearTimeout;
+  const now = options.now || Date.now;
   const createBrowserApi = options.createBrowserApi || createFomoBrowserApi;
   const stateStore = options.stateStore || { load: async () => null, save: async () => {} };
   const pauseNotifier = options.pauseNotifier;
+  let started = false;
   let running = false;
   let work = null;
+  let timer = null;
   const status = {
     enabled, dryRun, discoveryEnabled, running: false, discovered: 0,
     planned: 0, followed: 0, alreadyFollowed: 0,
+    cycles: 0, intervalMs, lastStartedAt: null, nextRunAt: null,
     errors: 0, paused: false, pausePersisted: false, pausedAt: null,
     lastErrorCode: null, alertSentAt: null, alertErrors: 0,
     lastAlertErrorCode: null, completedAt: null,
@@ -350,14 +357,42 @@ function createFomoBrowserFollowQueue(options = {}) {
     }
   }
 
+  function scheduleNext() {
+    if (!started || status.paused || timer) return;
+    status.nextRunAt = new Date(now() + intervalMs).toISOString();
+    timer = schedule(() => {
+      timer = null;
+      status.nextRunAt = null;
+      startCycle();
+    }, intervalMs);
+  }
+
+  function startCycle() {
+    if (!started || running || status.paused) return;
+    running = true;
+    status.running = true;
+    status.cycles += 1;
+    status.lastStartedAt = new Date(now()).toISOString();
+    work = run().finally(() => {
+      running = false;
+      status.running = false;
+      scheduleNext();
+    });
+  }
+
   return {
     start() {
-      if (running || !enabled) return;
-      running = true;
-      status.running = true;
-      work = run().finally(() => { running = false; status.running = false; });
+      if (started || !enabled) return;
+      started = true;
+      startCycle();
     },
-    async stop() { await work; },
+    async stop() {
+      started = false;
+      status.nextRunAt = null;
+      if (timer) cancelSchedule(timer);
+      timer = null;
+      await work;
+    },
     getStatus: () => ({ ...status }),
   };
 }

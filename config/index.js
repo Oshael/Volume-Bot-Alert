@@ -817,9 +817,12 @@ module.exports = {
         enabled: fomoFollowEnabled,
         dryRun: fomoFollowDryRun,
         discoveryEnabled: fomoFollowDiscoveryEnabled,
-        discoveryLimit: parseIntegerInRange(process.env.FOMO_FOLLOW_DISCOVERY_LIMIT, 25, 1, 100),
+        discoveryLimit: parseIntegerInRange(process.env.FOMO_FOLLOW_DISCOVERY_LIMIT, 100, 1, 100),
         profileIds: fomoFollowProfileIds,
         maxFollowsPerRun: parseIntegerInRange(process.env.FOMO_FOLLOW_MAX_PER_RUN, 1, 1, 10),
+        intervalMs: parseIntegerInRange(
+          process.env.FOMO_FOLLOW_INTERVAL_SECONDS, 300, 30, 86400
+        ) * 1000,
         delayMs: parseIntegerInRange(process.env.FOMO_FOLLOW_DELAY_SECONDS, 8, 3, 60) * 1000,
         authWaitMs: parseIntegerInRange(process.env.FOMO_FOLLOW_AUTH_WAIT_SECONDS, 60, 10, 300) * 1000,
         requestTimeoutMs: parseIntegerInRange(

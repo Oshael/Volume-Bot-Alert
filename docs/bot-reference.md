@@ -986,12 +986,18 @@ existe com `FOMO_FOLLOW_ENABLED=true`, permanece read-only enquanto
 `FOMO_FOLLOW_DRY_RUN=true` e aceita no máximo 100 UUIDs explícitos em
 `FOMO_FOLLOW_PROFILE_IDS`. Discovery opt-in usa o Top Profits 24h via
 `FOMO_FOLLOW_DISCOVERY_ENABLED=true`, limitado por
-`FOMO_FOLLOW_DISCOVERY_LIMIT` (default 25, máximo 100), e ignora o próprio
+`FOMO_FOLLOW_DISCOVERY_LIMIT` (default e máximo 100), e ignora o próprio
 usuário e perfis privados, restritos ou desativados. Allowlist e discovery são
 combinadas em no máximo 100 candidatos. A fila observa o ID do usuário na resposta de
 `POST /v2/users` carregada pelo próprio navegador, lê `followingIds`, remove os já
 seguidos e executa `POST /follows` com concorrência 1, jitter e limite default de
-uma escrita por início do worker. `401`, `403` ou `429` pausam a rodada. Não há
+uma escrita por ciclo. Enquanto o circuito estiver fechado, relê leaderboard e
+`followingIds` a cada `FOMO_FOLLOW_INTERVAL_SECONDS` (default 300, faixa 30–86400)
+e agenda o próximo ciclo somente depois de concluir o atual; `cycles`,
+`lastStartedAt`, `completedAt` e `nextRunAt` expõem progresso sem polling
+concorrente. O snapshot atual de `followingIds` torna cada ciclo idempotente; não
+há cursor porque o leaderboard é um ranking snapshot limitado a 100. Qualquer
+timeout, exceção ou status diferente de 200 pausa todos os ciclos seguintes. Não há
 unfollow automático; autorização Privy observada pelo CDP fica somente em
 memória e nunca entra em status ou log. Se o reload não emitir a leitura HTTP do
 perfil, a fila obtém a mesma credencial e o UUID da conta exclusivamente dos

@@ -15,6 +15,15 @@ const A = '00000000-0000-4000-8000-00000000000a';
 const B = '00000000-0000-4000-8000-00000000000b';
 const C = '00000000-0000-4000-8000-00000000000c';
 
+async function waitForCycles(queue, count) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const status = queue.getStatus();
+    if (status.cycles >= count && !status.running) return;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  throw new Error(`Fomo follow queue did not complete ${count} cycles`);
+}
+
 function ok(responseObject) {
   return { status: 200, body: { statusCode: 200, responseObject } };
 }
@@ -160,10 +169,65 @@ test('Fomo follow queue discovers Top Profits candidates in dry-run without writ
   assert.deepEqual(queue.getStatus(), {
     enabled: true, dryRun: true, discoveryEnabled: true, running: false,
     discovered: 3, planned: 2, followed: 0, alreadyFollowed: 1,
+    cycles: 1, intervalMs: 300_000, lastStartedAt: queue.getStatus().lastStartedAt,
+    nextRunAt: null,
     errors: 0, paused: false, pausePersisted: false, pausedAt: null, lastErrorCode: null,
     alertSentAt: null, alertErrors: 0, lastAlertErrorCode: null,
     completedAt: queue.getStatus().completedAt,
   });
+});
+
+test('Fomo follow discovery covers the Top 100 by default', async () => {
+  const fixture = apiFixture();
+  const queue = createFomoBrowserFollowQueue({
+    enabled: true, dryRun: true, discoveryEnabled: true,
+    profileIds: [], createBrowserApi: async () => fixture.api,
+  });
+
+  queue.start();
+  await queue.stop();
+  assert.equal(fixture.calls[0].path, '/v2/leaderboard/24h?limit=100');
+});
+
+test('Fomo follow queue keeps discovering and following on bounded recurring cycles', async () => {
+  const following = new Set();
+  const writes = [];
+  const scheduled = [];
+  const queue = createFomoBrowserFollowQueue({
+    enabled: true, dryRun: false, discoveryEnabled: true, discoveryLimit: 3,
+    profileIds: [], maxFollowsPerRun: 1, intervalMs: 300_000,
+    wait: async () => {}, now: () => Date.parse('2026-08-27T00:00:00.000Z'),
+    schedule: (callback, delayMs) => {
+      scheduled.push({ callback, delayMs });
+      return scheduled.length;
+    },
+    cancelSchedule: () => {},
+    createBrowserApi: async () => ({
+      currentUserId: USER,
+      async request(path, init) {
+        if (path.startsWith('/v2/leaderboard/24h?')) {
+          return ok({ leaderboard: [{ id: A }, { id: B }, { id: C }] });
+        }
+        if (path === '/v2/users/current/followingIds') {
+          return ok({ followingIds: [...following] });
+        }
+        writes.push(init.body.following_id);
+        following.add(init.body.following_id);
+        return ok({});
+      },
+      async close() {},
+    }),
+  });
+
+  queue.start();
+  await waitForCycles(queue, 1);
+  assert.deepEqual(writes, [A]);
+  assert.equal(scheduled[0].delayMs, 300_000);
+  scheduled.shift().callback();
+  await waitForCycles(queue, 2);
+  assert.deepEqual(writes, [A, B]);
+  assert.equal(queue.getStatus().nextRunAt, '2026-08-27T00:05:00.000Z');
+  await queue.stop();
 });
 
 test('Fomo live discovery writes only the highest-ranked pending candidate', async () => {
@@ -206,18 +270,22 @@ test('Fomo follow queue writes one allowlisted follow sequentially and idempoten
 test('Fomo follow queue durably pauses immediately on any failed account write', async () => {
   const fixture = apiFixture({ followStatus: 500 });
   const saved = [];
+  const scheduled = [];
   const queue = createFomoBrowserFollowQueue({
     enabled: true, dryRun: false, profileIds: [A, B], maxFollowsPerRun: 10,
     wait: async () => {}, createBrowserApi: async () => fixture.api,
+    schedule: (callback) => { scheduled.push(callback); return scheduled.length; },
     stateStore: { load: async () => null, save: async (state) => saved.push(state) },
   });
 
   queue.start();
+  await waitForCycles(queue, 1);
   await queue.stop();
   assert.equal(fixture.calls.filter((call) => call.path === '/follows').length, 1);
   assert.equal(queue.getStatus().paused, true);
   assert.equal(queue.getStatus().pausePersisted, true);
   assert.equal(queue.getStatus().lastErrorCode, 'FOMO_FOLLOW_HTTP_500');
+  assert.equal(scheduled.length, 0);
   assert.deepEqual(saved[0], {
     paused: true, pausedAt: queue.getStatus().pausedAt,
     lastErrorCode: 'FOMO_FOLLOW_HTTP_500', alertSentAt: null,

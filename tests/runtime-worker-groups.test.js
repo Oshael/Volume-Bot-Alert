@@ -254,6 +254,7 @@ describe('runtime worker groups config', () => {
         PUMP_AUTH_TOKEN: 'pump-test', FOMO_CAPTURE_TRANSPORT: 'browser_cdp',
         FOMO_FOLLOW_ENABLED: 'true', FOMO_FOLLOW_DRY_RUN: 'false',
         FOMO_FOLLOW_DISCOVERY_ENABLED: 'true', FOMO_FOLLOW_DISCOVERY_LIMIT: '20',
+        FOMO_FOLLOW_INTERVAL_SECONDS: '600',
         FOMO_FOLLOW_PROFILE_IDS: '', FOMO_WS_TOPIC_ID: '', FOMO_WS_JWT: '', FOMO_WS_JWT_FILE: '',
       },
       encoding: 'utf8',
@@ -262,6 +263,7 @@ describe('runtime worker groups config', () => {
     const follow = JSON.parse(result.stdout);
     assert.equal(follow.discoveryEnabled, true);
     assert.equal(follow.discoveryLimit, 20);
+    assert.equal(follow.intervalMs, 600_000);
   });
 
   it('rejects combining Robinhood maintenance with Solana maintenance', () => {
