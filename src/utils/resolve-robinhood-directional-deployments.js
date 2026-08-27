@@ -83,7 +83,7 @@ async function verifyHints(deps, candidates, options, hints) {
     try {
       return { candidate, deployment: await deps.verifier.verifyDirectDeployment(hint) };
     } catch (error) {
-      return { candidate, error: failureReason(error) };
+      return { candidate, error: `deployment_verification:${failureReason(error)}` };
     }
   });
   const verified = outcomes.flatMap((outcome) => outcome.deployment ? [outcome.deployment] : []);
@@ -108,7 +108,7 @@ async function resolveNativeBatch(deps, candidates, options) {
     } catch (error) {
       await deps.attributions.recordDirectVerificationFailure({
         tokenAddress: candidate.tokenAddress,
-        error: failureReason(error, 'blockscout_provider_failure'),
+        error: `contract_creation_lookup:${failureReason(error, 'blockscout_provider_failure')}`,
       });
       return {
         candidate, hint: null, retries: error.requestRetriesUsed || 0, providerFailure: true,

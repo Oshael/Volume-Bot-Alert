@@ -111,7 +111,9 @@ describe('Robinhood directional deployment resolver', () => {
       verified: 1, failed: 1, retries: 2, splits: 0, providerFailures: 1,
     });
     assert.equal(calls.verified.length, 1);
-    assert.deepEqual(calls.failed, [{ tokenAddress: TOKEN_B, error: 'http_error:503' }]);
+    assert.deepEqual(calls.failed, [{
+      tokenAddress: TOKEN_B, error: 'contract_creation_lookup:http_error:503',
+    }]);
   });
 
   it('records the precise archive evidence rejection', async () => {
@@ -135,7 +137,7 @@ describe('Robinhood directional deployment resolver', () => {
     assert.equal(result.failed, 1);
     assert.deepEqual(failed, [{
       tokenAddress: TOKEN_A,
-      error: 'holder_deployment_evidence_invalid:receipt contract address diverged',
+      error: 'deployment_verification:holder_deployment_evidence_invalid:receipt contract address diverged',
     }]);
   });
 

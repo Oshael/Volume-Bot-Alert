@@ -84,6 +84,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
   async function execute() {
     status.inFlight = true; status.totalRuns += 1;
     let task;
+    let stage = 'runtime';
     try {
       const current = await runtime();
       task = await current.outbox.claim({ owner, leaseMs: options.leaseMs });
@@ -93,12 +94,14 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
         status.totalSkipped += 1;
         return { status: 'already-attributed', tokenAddress: task.tokenAddress };
       }
+      stage = 'contract_creation_lookup';
       const hint = await current.blockscout.getContractCreation(task.tokenAddress);
       if (!hint?.creatorAddress || !hint?.transactionHash) {
         throw Object.assign(new Error('Blockscout creation evidence is not indexed yet'), {
           code: 'blockscout_creation_pending',
         });
       }
+      stage = 'deployment_verification';
       const deployment = await current.verifier.verifyDirectDeployment(hint);
       await current.attributions.recordVerifiedDirectDeployments([deployment]);
       await current.outbox.complete({ owner, tokenAddress: task.tokenAddress });
@@ -108,7 +111,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
       if (task) {
         await (await runtime()).outbox.retry({
           owner, tokenAddress: task.tokenAddress, retryMs: retryDelay(task.attemptCount),
-          error: `${error.code || 'deployment_resolution_failed'}:${error.message}`,
+          error: `${stage}:${error.code || 'deployment_resolution_failed'}:${error.message}`,
         }).catch(() => {});
         status.totalDeferred += 1;
       }

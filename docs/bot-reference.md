@@ -1585,8 +1585,11 @@ aplicar Stage 165 (`node src/utils/db-init-stage165.js`), o worker independente
 é ativado por `ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_ENABLED=true`. `LISTEN/NOTIFY`
 acorda o consumidor imediatamente; polling de 1s preserva recuperação. Ele valida
 Blockscout contra receipt/bloco canônicos, materializa `rpc_direct` ou
-`blockscout_internal` e remove a tarefa. Evidência ainda não indexada volta à fila
-com backoff limitado. O fluxo cobre somente novas admissões e não cria backfill.
+`blockscout_internal` e remove a tarefa. Se a rota v2 de internal transactions
+responder com erro transitório, usa `txlistinternal` público como fallback; a
+prova encontrada continua sujeita à validação RPC canônica. Evidência ainda não
+indexada volta à fila com backoff limitado. O fluxo cobre somente novas admissões
+e não cria backfill.
 
 O materializador `SNIPER` não pertence ao processo de holders. Seu worker shadow
 fica no grupo isolado `robinhood-wallet-classification`, usa a lease própria

@@ -102,6 +102,29 @@ describe('Robinhood Blockscout metadata client', () => {
     assert.match(requestedUrl, new RegExp(`${transactionHash}/internal-transactions$`));
   });
 
+  it('falls back to legacy internal traces when the native endpoint is unavailable', async () => {
+    const factory = `0x${'2'.repeat(40)}`;
+    const transactionHash = `0x${'4'.repeat(64)}`;
+    const calls = [];
+    const client = createRobinhoodBlockscoutMetadataClient({
+      fetchImpl: async (url) => {
+        calls.push(String(url));
+        if (calls.length === 1) return response(503, null);
+        return response(200, { status: '1', message: 'OK', result: [{
+          type: 'create2', isError: '0', transactionHash,
+          contractAddress: TOKEN, from: factory,
+        }] });
+      },
+    });
+
+    assert.deepEqual(await client.getInternalContractCreation(transactionHash, TOKEN), {
+      tokenAddress: TOKEN, transactionHash, factoryAddress: factory,
+    });
+    const fallback = new URL(calls[1]);
+    assert.equal(fallback.searchParams.get('action'), 'txlistinternal');
+    assert.equal(fallback.searchParams.get('txhash'), transactionHash);
+  });
+
   it('resolves up to ten contract creators in one Blockscout request', async () => {
     const creator = `0x${'2'.repeat(40)}`;
     const transactionHash = `0x${'4'.repeat(64)}`;

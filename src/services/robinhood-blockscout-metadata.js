@@ -69,6 +69,57 @@ function normalizePayload(address, payload) {
   });
 }
 
+const INTERNAL_TRACE_ADAPTERS = Object.freeze({
+  native: Object.freeze({
+    failed: (item) => item?.success === false,
+    created: (item) => item?.created_contract?.hash,
+    hash: (item) => item?.transaction_hash,
+    factory: (item) => item?.from?.hash || item?.from,
+    hashRequired: false,
+    label: '',
+  }),
+  legacy: Object.freeze({
+    failed: (item) => String(item?.isError ?? '0') !== '0',
+    created: (item) => item?.contractAddress,
+    hash: (item) => item?.transactionHash,
+    factory: (item) => item?.from,
+    hashRequired: true,
+    label: 'legacy ',
+  }),
+});
+
+function normalizeCreatedAddress(value) {
+  try { return normalizeTokenAddress('robinhood', value); }
+  catch (_) { return null; }
+}
+
+function internalCreationFromItem(item, hint, adapter) {
+  if (!['create', 'create2'].includes(String(item?.type || '').toLowerCase())) return null;
+  if (adapter.failed(item)) return null;
+  if (normalizeCreatedAddress(adapter.created(item)) !== hint.tokenAddress) return null;
+  const itemHash = String(adapter.hash(item) ?? '').trim().toLowerCase();
+  if ((adapter.hashRequired || itemHash) && itemHash !== hint.transactionHash) {
+    throw new RobinhoodBlockscoutMetadataError(
+      `Blockscout ${adapter.label}internal transaction hash mismatch`, 'transaction_mismatch'
+    );
+  }
+  let factoryAddress;
+  try { factoryAddress = normalizeTokenAddress('robinhood', adapter.factory(item)); }
+  catch (_) { throw new RobinhoodBlockscoutMetadataError(
+    'Blockscout internal creation factory is invalid', 'invalid_response'
+  ); }
+  return Object.freeze({ ...hint, factoryAddress });
+}
+
+function findInternalCreation(items, hint, legacy = false) {
+  const adapter = legacy ? INTERNAL_TRACE_ADAPTERS.legacy : INTERNAL_TRACE_ADAPTERS.native;
+  for (const item of items) {
+    const creation = internalCreationFromItem(item, hint, adapter);
+    if (creation) return creation;
+  }
+  return null;
+}
+
 function createRobinhoodBlockscoutMetadataClient(options = {}) {
   const fetchImpl = options.fetchImpl || global.fetch;
   if (typeof fetchImpl !== 'function') throw new TypeError('A fetch implementation is required');
@@ -78,6 +129,7 @@ function createRobinhoodBlockscoutMetadataClient(options = {}) {
     options.transactionBaseUrl || DEFAULT_TRANSACTION_BASE_URL
   ));
   const apiUrl = new URL(String(options.apiUrl || DEFAULT_API_URL));
+  const legacyApiUrl = new URL(String(options.legacyApiUrl || DEFAULT_API_URL));
   const apiKey = String(options.apiKey || '').trim();
   if (baseUrl.protocol !== 'https:') throw new TypeError('Blockscout metadata URL must use HTTPS');
   if (addressBaseUrl.protocol !== 'https:') throw new TypeError('Blockscout address URL must use HTTPS');
@@ -85,6 +137,7 @@ function createRobinhoodBlockscoutMetadataClient(options = {}) {
     throw new TypeError('Blockscout transaction URL must use HTTPS');
   }
   if (apiUrl.protocol !== 'https:') throw new TypeError('Blockscout API URL must use HTTPS');
+  if (legacyApiUrl.protocol !== 'https:') throw new TypeError('Blockscout legacy API URL must use HTTPS');
   const timeoutMs = boundedTimeout(options.timeoutMs);
   let minimumCreditsRemaining = null;
 
@@ -171,41 +224,16 @@ function createRobinhoodBlockscoutMetadataClient(options = {}) {
     return (await getContractCreation(tokenAddress))?.creatorAddress || null;
   }
 
-  async function getInternalContractCreation(transactionHash, tokenAddress) {
-    const hash = String(transactionHash ?? '').trim().toLowerCase();
-    if (!/^0x[0-9a-f]{64}$/.test(hash)) throw new TypeError('transaction hash is invalid');
-    const address = normalizeTokenAddress('robinhood', tokenAddress);
-    let url = new URL(`${hash}/internal-transactions`, transactionBaseUrl);
+  async function getNativeInternalCreation(hint) {
+    let url = new URL(`${hint.transactionHash}/internal-transactions`, transactionBaseUrl);
     for (let page = 0; page < 20; page += 1) {
       const payload = await requestUrl(url, 'transaction internal trace');
       if (payload == null) return null;
-      if (!Array.isArray(payload.items)) {
-        throw new RobinhoodBlockscoutMetadataError(
-          'Blockscout internal transaction response is invalid', 'invalid_response'
-        );
-      }
-      for (const item of payload.items) {
-        if (!['create', 'create2'].includes(String(item?.type || '').toLowerCase())) continue;
-        if (item?.success === false) continue;
-        let createdAddress;
-        try { createdAddress = normalizeTokenAddress('robinhood', item?.created_contract?.hash); }
-        catch (_) { continue; }
-        if (createdAddress !== address) continue;
-        let factoryAddress;
-        try { factoryAddress = normalizeTokenAddress('robinhood', item?.from?.hash || item?.from); }
-        catch (_) {
-          throw new RobinhoodBlockscoutMetadataError(
-            'Blockscout internal creation factory is invalid', 'invalid_response'
-          );
-        }
-        const itemHash = String(item?.transaction_hash ?? '').trim().toLowerCase();
-        if (itemHash && itemHash !== hash) {
-          throw new RobinhoodBlockscoutMetadataError(
-            'Blockscout internal transaction hash mismatch', 'transaction_mismatch'
-          );
-        }
-        return Object.freeze({ tokenAddress: address, transactionHash: hash, factoryAddress });
-      }
+      if (!Array.isArray(payload.items)) throw new RobinhoodBlockscoutMetadataError(
+        'Blockscout internal transaction response is invalid', 'invalid_response'
+      );
+      const creation = findInternalCreation(payload.items, hint);
+      if (creation) return creation;
       const next = payload.next_page_params;
       if (!next || typeof next !== 'object') return null;
       url = new URL(url);
@@ -214,6 +242,31 @@ function createRobinhoodBlockscoutMetadataClient(options = {}) {
     throw new RobinhoodBlockscoutMetadataError(
       'Blockscout internal transaction pagination exceeded its bound', 'invalid_response'
     );
+  }
+
+  async function getLegacyInternalCreation(hint) {
+    const url = new URL(legacyApiUrl);
+    url.searchParams.set('module', 'account');
+    url.searchParams.set('action', 'txlistinternal');
+    url.searchParams.set('txhash', hint.transactionHash);
+    const payload = await requestUrl(url, 'legacy transaction internal trace');
+    if (!payload || !Array.isArray(payload.result)) throw new RobinhoodBlockscoutMetadataError(
+      'Blockscout legacy internal transaction response is invalid', 'invalid_response'
+    );
+    return findInternalCreation(payload.result, hint, true);
+  }
+
+  async function getInternalContractCreation(transactionHash, tokenAddress) {
+    const hash = String(transactionHash ?? '').trim().toLowerCase();
+    if (!/^0x[0-9a-f]{64}$/.test(hash)) throw new TypeError('transaction hash is invalid');
+    const hint = Object.freeze({
+      tokenAddress: normalizeTokenAddress('robinhood', tokenAddress), transactionHash: hash,
+    });
+    try { return await getNativeInternalCreation(hint); }
+    catch (error) {
+      if (!isRetryableProviderError(error)) throw error;
+      return getLegacyInternalCreation(hint);
+    }
   }
 
   async function getContractCreators(tokenAddresses) {
