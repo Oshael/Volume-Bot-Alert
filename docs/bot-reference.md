@@ -1747,6 +1747,11 @@ token. O archive RPC é exigido somente ao processar ranges. O preflight read-on
 `estimatedConcurrentScanBatches` e `estimatedTotalOperations` conforme o
 `--max-blocks` e `--window-concurrency` informados; o total inclui extensões até a
 frontier LIVE congelada e publicações. Dimensione `--max-operations` acima dele.
+Timeout de aquisição de conexão PostgreSQL ao construir o runtime ou nas operações
+de controle (`plan`, `claim`, `retry`, `commit`, `promote` e progresso) não encerra a campanha: a CLI
+repete somente essa operação com backoff exponencial de 250ms limitado a 5s e
+emite `[TokenRepair] DB acquisition retry`. Erros funcionais e de evidência não
+entram nesse retry.
 O comando nunca inicializa o
 catálogo inteiro: quando o replay
 encontra `directional_replay_edge_missing`, o range sofre rollback e somente os

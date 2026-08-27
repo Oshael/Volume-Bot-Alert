@@ -14,6 +14,38 @@ const {
 const CONFIRM_FLAG = '--confirm-repair-robinhood-wallet-transfer-tokens';
 const RETRY_FLAG = '--retry-failed';
 
+function isConnectionAcquisitionTimeout(error) {
+  return /(?:connection terminated due to connection timeout|timeout exceeded when trying to connect)/i
+    .test(String(error?.message || ''));
+}
+
+async function retryConnectionAcquisition(operation, execute, deps = {}) {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await execute();
+    } catch (error) {
+      if (!isConnectionAcquisitionTimeout(error)) throw error;
+      attempt += 1;
+      const delayMs = Math.min(5_000, 250 * (2 ** Math.min(attempt - 1, 5)));
+      (deps.logger?.error || deps.logger?.log || console.error).call(
+        deps.logger || console,
+        `[TokenRepair] DB acquisition retry operation=${operation}`
+          + ` attempt=${attempt} delay=${delayMs}ms error=${error.message}`
+      );
+      await (deps.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms))))(delayMs);
+    }
+  }
+}
+
+function resilientCoverageRepository(repository, deps = {}) {
+  return Object.freeze(Object.fromEntries(Object.entries(repository).map(([property, value]) => (
+    typeof value !== 'function' ? [property, value] : [property, (...args) => (
+      retryConnectionAcquisition(property, () => value.apply(repository, args), deps)
+    )]
+  ))));
+}
+
 function boundedArg(argv, prefix, fallback, min, max) {
   const matches = argv.filter((arg) => arg.startsWith(prefix));
   if (matches.length > 1) throw new Error(`${prefix.slice(0, -1)} cannot be repeated`);
@@ -77,11 +109,13 @@ async function runOperations(args, coverage, deps) {
     const pendingPromotion = await coverage.promoteNext();
     if (pendingPromotion) operations.push(pendingPromotion);
     else {
-      runtime ||= await (deps.runtimeFactory || buildRuntime)(
-        {
-          ...(deps.options || runtimeOptions()),
-          addressFilterLimit: args.addressFilterLimit,
-        }, deps
+      runtime ||= await retryConnectionAcquisition(
+        'buildRuntime', () => (deps.runtimeFactory || buildRuntime)(
+          {
+            ...(deps.options || runtimeOptions()),
+            addressFilterLimit: args.addressFilterLimit,
+          }, deps
+        ), deps
       );
       const repair = await (deps.runRange || runRobinhoodWalletTransferTokenRepairRange)(
         { coverage, tickDeps: runtime.tickDeps }, {
@@ -108,8 +142,9 @@ async function runOperations(args, coverage, deps) {
 async function main(argv = process.argv.slice(2), deps = {}) {
   const args = parseArgs(argv);
   const database = deps.database || db;
-  const coverage = (deps.repositoryFactory
+  const baseCoverage = (deps.repositoryFactory
     || createRobinhoodWalletTransferTokenRepairRepository)({ database });
+  const coverage = resilientCoverageRepository(baseCoverage, deps);
   const plan = withSharedWindowEstimate(
     await coverage.plan(), args.maxBlocks, args.windowConcurrency
   );
