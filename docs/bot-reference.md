@@ -1953,14 +1953,19 @@ concluída, limita candidatas/evidências por token e resolve CEX, infraestrutur
 pools apenas entre os atores do grafo no bloco observado. O writer substitui estado,
 grupos e membros na mesma transação, serializa por token/regra, valida a lineage do
 run concluído e recusa frontier atrasada, fork ou mudança de threshold/lookback sem
-nova versão da regra. O runner seed processa uma página limitada a 100 tokens, com
+nova versão da regra. O runner seed processa páginas limitadas a 100 tokens, com
 concorrência máxima 4 e isolamento de falha por token. Use
 `npm run robinhood:possible-bundle-shadow -- --run-id=<id>
 --minimum-value-wei=<valor>` para inspecionar a próxima página sem escrita; `--apply`
 materializa somente essa página e `--after-token=<nextToken>` retoma da seguinte.
 Páginas com falha ou deferimento retornam `nextToken=null` e os tokens bloqueadores;
 repita a mesma página usando `pageAfterToken` até ela concluir sem gaps.
-Não existe threshold default, loop automático, publicação na API/UI ou writer live.
+Para uma campanha completa, combine `--apply --limit=100 --concurrency=4
+--max-pages=<n> --checkpoint-file=<path>`. O loop retoma apenas quando run,
+threshold, paginação e universo congelado coincidem; substitui o checkpoint
+atomicamente após cada página inteira e imprime progresso/ETA em `stderr`. Queda no
+meio da página repete substituições idempotentes; falha ou deferimento não avança o
+cursor. Não existe threshold default, publicação na API/UI ou writer live.
 Antes de materializar, compare uma grade explícita com
 `npm run robinhood:possible-bundle-calibrate -- --run-id=<id>
 --thresholds-wei=<v1>,<v2> --max-pages=<n>`. O auditor é somente leitura, carrega

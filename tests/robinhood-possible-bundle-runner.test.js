@@ -56,12 +56,78 @@ describe('Robinhood possible-bundle shadow runner', () => {
       runId: 1, minimumValueWei: '1', concurrency: 5,
     }), /concurrency/);
   });
+
+  it('runs and resumes a complete campaign only from successful page checkpoints', async () => {
+    const progress = [];
+    const source = {
+      async countSeedTokens() { return 3; },
+      async listSeedTokens({ afterToken }) { return afterToken ? [C] : [A, B]; },
+      async loadSeedToken({ tokenAddress }) { return { ready: true, tokenAddress }; },
+    };
+    const runner = createRobinhoodPossibleBundleRunner({
+      source,
+      materialize: ({ tokenAddress }) => ({ token: tokenAddress,
+        groups: [{}], members: [{}, {}] }),
+      snapshots: { async replaceSnapshot() { return { status: 'published' }; } },
+    });
+    const first = await runner.runCampaign({ runId: 1, minimumValueWei: '10',
+      limit: 2, concurrency: 1, maxPages: 1,
+      onProgress: (value) => progress.push(value) });
+    assert.equal(first.pages, 1);
+    assert.equal(first.completed, 2);
+    assert.equal(first.nextToken, B);
+    assert.equal(first.exhausted, false);
+    const resumed = await runner.runCampaign({ runId: 1, minimumValueWei: '10',
+      limit: 2, concurrency: 1, maxPages: 5, resume: first });
+    assert.equal(progress.length, 1);
+    assert.equal(resumed.pages, 2);
+    assert.equal(resumed.completed, 3);
+    assert.equal(resumed.groups, 3);
+    assert.equal(resumed.members, 6);
+    assert.equal(resumed.progressBps, 10_000);
+    assert.equal(resumed.exhausted, true);
+    await assert.rejects(runner.runCampaign({ runId: 1, minimumValueWei: '11',
+      limit: 2, concurrency: 1, maxPages: 5, resume: first }), /checkpoint does not match/);
+  });
+
+  it('does not advance a campaign cursor across a blocked page', async () => {
+    const progress = [];
+    const runner = createRobinhoodPossibleBundleRunner({
+      source: {
+        async countSeedTokens() { return 2; },
+        async listSeedTokens() { return [A, B]; },
+        async loadSeedToken({ tokenAddress }) {
+          return tokenAddress === B ? { ready: false, reason: 'missing evidence' }
+            : { ready: true, tokenAddress };
+        },
+      },
+      materialize: ({ tokenAddress }) => ({ token: tokenAddress, groups: [], members: [] }),
+      snapshots: { async replaceSnapshot() { return { status: 'published' }; } },
+    });
+    const report = await runner.runCampaign({ runId: 1, minimumValueWei: '10',
+      limit: 2, concurrency: 2, maxPages: 2,
+      onProgress: (value) => progress.push(value) });
+    assert.equal(report.blocked, true);
+    assert.equal(report.pages, 0);
+    assert.equal(report.candidates, 0);
+    assert.equal(report.nextToken, null);
+    assert.equal(report.retryAfterToken, null);
+    assert.deepEqual(report.deferredTokens,
+      [{ tokenAddress: B, reason: 'missing evidence' }]);
+    assert.equal(progress.length, 0);
+  });
 });
 
 describe('Robinhood possible-bundle shadow command', () => {
   it('accepts central database variants and is read-only by default', async () => {
     assert.throws(() => parseArgs([]), /run-id is required/);
     assert.throws(() => parseArgs(['--run-id=1']), /minimum-value-wei must be positive/);
+    assert.throws(() => parseArgs([
+      '--run-id=1', '--minimum-value-wei=10', '--max-pages=2',
+    ]), /requires --apply/);
+    assert.throws(() => parseArgs([
+      '--run-id=1', '--minimum-value-wei=10', '--max-pages=2', '--apply',
+    ]), /checkpoint-file is required/);
     const options = parseArgs(['--run-id=1', '--minimum-value-wei=10']);
     assert.equal(options.apply, false);
     let ran = false;
@@ -88,5 +154,34 @@ describe('Robinhood possible-bundle shadow command', () => {
     assert.equal(report, expected);
     assert.equal(received.apply, true);
     assert.equal(received.minimumValueWei, '10');
+  });
+
+  it('persists progress while applying a resumable campaign', async () => {
+    const options = parseArgs([
+      '--run-id=1', '--minimum-value-wei=10', '--limit=100', '--concurrency=4',
+      '--max-pages=100', '--checkpoint-file=/tmp/possible-bundle-shadow-test.json',
+      '--apply',
+    ]);
+    const writes = [];
+    let received;
+    const expected = { mode: 'shadow', blocked: false, exhausted: true };
+    const report = await main([], {
+      options, logger: { log() {}, error() {} }, readCheckpoint: () => ({ pages: 1 }),
+      writeCheckpoint: (_, value) => writes.push(value),
+      runner: { async runCampaign(input) {
+        received = input;
+        await input.onProgress({ pages: 2, completed: 200, totalCandidateTokens: 300,
+          progressBps: 6666, elapsedMs: 10, estimatedRemainingMs: 5 });
+        return expected;
+      } },
+    });
+    assert.equal(report, expected);
+    assert.deepEqual(received.resume, { pages: 1 });
+    assert.equal(received.minimumValueWei, '10');
+    assert.deepEqual(writes, [
+      { pages: 2, completed: 200, totalCandidateTokens: 300,
+        progressBps: 6666, elapsedMs: 10, estimatedRemainingMs: 5 },
+      expected,
+    ]);
   });
 });
