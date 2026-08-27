@@ -1381,7 +1381,9 @@ No deploy, execute
 `node src/utils/db-init-stage142.js` antes do restart; os índices são criados
 concorrentemente para não bloquear writes do journal. A Stage 142 evita que o
 handoff global reescaneie todo o journal ao verificar evidência já aplicada por
-token antes da barreira. A unit template usa
+token antes da barreira. O handoff prova essa ausência pelo índice parcial de
+eventos aplicados e remove o overlap pendente com um `DELETE` set-based; ele não
+materializa nem bloqueia todo o histórico do token. A unit template usa
 `start:worker:robinhood-holders`, com porta default
 3010 e sem socket no processo worker. Todos
 são opt-in e permanecem desligados por default; pull ou presença de

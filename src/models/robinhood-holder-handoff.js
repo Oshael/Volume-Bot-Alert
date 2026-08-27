@@ -100,19 +100,16 @@ function validateVerifiedCheckpoint(state, value) {
   }
 }
 
-async function lockBackfilledOverlap(client, token, backfillNextBlock) {
+async function hasAppliedBackfilledOverlap(client, token, backfillNextBlock) {
   const result = await client.query(
-    `SELECT block_number, transaction_hash, log_index, applied
+    `SELECT 1
        FROM robinhood_holder_transfer_journal
-      WHERE chain = 'robinhood' AND token_address = $1 AND block_number < $2
-      ORDER BY block_number, transaction_index, log_index
-      FOR UPDATE`,
+      WHERE chain = 'robinhood' AND token_address = $1
+        AND block_number < $2 AND applied = true
+      LIMIT 1`,
     [token, backfillNextBlock]
   );
-  if (result.rows.some((row) => row.applied)) {
-    throw codedError('backfilling token already has applied live events', 'holder_handoff_applied_overlap');
-  }
-  return result.rows;
+  return result.rowCount > 0;
 }
 
 async function deleteBackfilledOverlap(client, token, backfillNextBlock) {
@@ -203,13 +200,14 @@ function createRobinhoodHolderHandoffRepository(options = {}) {
       const state = await lockBackfillState(client, token);
       validateVerifiedCheckpoint(state, input.verifiedCheckpoint);
       validateCoverage(cursor, state);
-      const journal = await lockBackfilledOverlap(client, token, state.backfill_next_block);
+      if (await hasAppliedBackfilledOverlap(client, token, state.backfill_next_block)) {
+        throw codedError(
+          'backfilling token already has applied live events', 'holder_handoff_applied_overlap'
+        );
+      }
       const discardedOverlapEvents = await deleteBackfilledOverlap(
         client, token, state.backfill_next_block
       );
-      if (discardedOverlapEvents !== journal.length) {
-        throw codedError('holder handoff overlap changed while locked', 'holder_handoff_stale');
-      }
       const promoted = await promoteState(client, token, state);
       await client.query('COMMIT');
       return Object.freeze({

@@ -110,6 +110,40 @@ describe('Robinhood holder live handoff persistence', () => {
         status: 'applied', tokenAddress: TOKEN, holderCount: '2', holderDelta: 0,
         appliedEvents: 1, attemptedEvents: 1,
       });
+      await client.query(
+        `UPDATE robinhood_holder_token_states
+            SET backfill_next_block = 105, live_through_block = 104
+          WHERE token_address = $1`,
+        [OTHER_TOKEN]
+      );
+      await client.query(
+        `UPDATE robinhood_holder_transfer_journal
+            SET applied = true, applied_at = NOW(), holder_delta = 1,
+                from_balance_before = 10, from_balance_after = 6,
+                to_balance_before = 0, to_balance_after = 4
+          WHERE token_address = $1`,
+        [OTHER_TOKEN]
+      );
+      await assert.rejects(
+        handoff.promoteAtLiveBarrier({
+          tokenAddress: OTHER_TOKEN, verifiedCheckpoint: { number: '104', hash: HASH_A },
+        }),
+        (error) => error.code === 'holder_handoff_applied_overlap'
+      );
+      await client.query(
+        `UPDATE robinhood_holder_token_states
+            SET backfill_next_block = 99, live_through_block = 98
+          WHERE token_address = $1`,
+        [OTHER_TOKEN]
+      );
+      await client.query(
+        `UPDATE robinhood_holder_transfer_journal
+            SET applied = false, applied_at = NULL, holder_delta = NULL,
+                from_balance_before = NULL, from_balance_after = NULL,
+                to_balance_before = NULL, to_balance_after = NULL
+          WHERE token_address = $1`,
+        [OTHER_TOKEN]
+      );
       const balances = await client.query(
         `SELECT wallet_address, balance_raw FROM robinhood_holder_balances
           WHERE token_address = $1 ORDER BY wallet_address`, [TOKEN]
