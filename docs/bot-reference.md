@@ -1952,7 +1952,9 @@ cada grafo uma vez e reporta, por threshold, tokens com grupos, grupos, membros,
 tamanhos e tipos de conexão. `--page-size` limita a página a 100,
 `--concurrency` a 4 e `--max-pages` a 1000; `--after-token` retoma outra faixa.
 Falha ou deferimento bloqueia o cursor. O comando não recomenda nem persiste uma
-política: a escolha continua sendo uma decisão auditada de domínio.
+política: a escolha continua sendo uma decisão auditada de domínio. Tanto o auditor
+quanto o materializador usam o contrato central de banco (`DATABASE_URL`,
+`POSTGRES_URL`, `DB_*` ou `PG*`); nenhum deles exige uma variante específica.
 A Stage 169 (`node src/utils/db-init-stage169.js`) preserva permanentemente a
 associação causal que o agregado global não representa: `run`, token, candidata,
 hop 1/2 e a transferência nativa exata. Ela depende da Stage 167, é somente DDL

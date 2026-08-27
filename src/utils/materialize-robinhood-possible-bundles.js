@@ -56,9 +56,7 @@ function parseArgs(argv = []) {
 async function main(argv = process.argv.slice(2), deps = {}) {
   const options = deps.options || parseArgs(argv);
   const database = deps.database || db;
-  const env = deps.env || process.env;
   const logger = deps.logger || console;
-  if (!String(env.DATABASE_URL || '').trim()) throw new Error('missing required env DATABASE_URL');
   if (options.apply) {
     const runner = deps.runner || createRobinhoodPossibleBundleRunner({
       database, statementTimeoutMs: options.statementTimeoutMs,

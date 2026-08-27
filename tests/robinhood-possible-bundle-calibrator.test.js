@@ -104,7 +104,7 @@ describe('Robinhood possible-bundle threshold calibrator', () => {
 });
 
 describe('Robinhood possible-bundle calibration command', () => {
-  it('parses an explicit threshold grid and remains read-only', async () => {
+  it('accepts central database variants and remains read-only', async () => {
     assert.throws(() => parseArgs([]), /run-id is required/);
     assert.throws(() => parseArgs(['--run-id=1']), /thresholds-wei is required/);
     const options = parseArgs([
@@ -113,7 +113,7 @@ describe('Robinhood possible-bundle calibration command', () => {
     let received;
     const expected = { mode: 'read-only', candidateTokens: 2 };
     const report = await main([], {
-      options, env: { DATABASE_URL: 'postgres://test' }, logger: { log() {} },
+      options, env: { POSTGRES_URL: 'postgres://test' }, logger: { log() {} },
       calibrator: { async audit(input) { received = input; return expected; } },
     });
     assert.equal(report, expected);

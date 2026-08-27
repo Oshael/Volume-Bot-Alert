@@ -59,14 +59,14 @@ describe('Robinhood possible-bundle shadow runner', () => {
 });
 
 describe('Robinhood possible-bundle shadow command', () => {
-  it('is read-only by default and requires explicit run and threshold', async () => {
+  it('accepts central database variants and is read-only by default', async () => {
     assert.throws(() => parseArgs([]), /run-id is required/);
     assert.throws(() => parseArgs(['--run-id=1']), /minimum-value-wei must be positive/);
     const options = parseArgs(['--run-id=1', '--minimum-value-wei=10']);
     assert.equal(options.apply, false);
     let ran = false;
     const report = await main([], {
-      options, env: { DATABASE_URL: 'postgres://test' }, logger: { log() {} },
+      options, env: { POSTGRES_URL: 'postgres://test' }, logger: { log() {} },
       source: { async listSeedTokens() { return [A, B]; } },
       runner: { async runPage() { ran = true; } },
     });
@@ -82,7 +82,7 @@ describe('Robinhood possible-bundle shadow command', () => {
     let received;
     const expected = { mode: 'shadow', completed: 3 };
     const report = await main([], {
-      options, env: { DATABASE_URL: 'postgres://test' }, logger: { log() {} },
+      options, env: { DB_HOST: 'test' }, logger: { log() {} },
       runner: { async runPage(input) { received = input; return expected; } },
     });
     assert.equal(report, expected);
