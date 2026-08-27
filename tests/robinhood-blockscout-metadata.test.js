@@ -79,6 +79,45 @@ describe('Robinhood Blockscout metadata client', () => {
     });
   });
 
+  it('recovers a creation transaction from the first mint when address lookup fails', async () => {
+    const creator = `0x${'2'.repeat(40)}`;
+    const transactionHash = `0x${'4'.repeat(64)}`;
+    const calls = [];
+    const client = createRobinhoodBlockscoutMetadataClient({
+      fetchImpl: async (url) => {
+        calls.push(String(url));
+        if (calls.length === 1) return response(503, null);
+        return response(200, { status: '1', result: [{
+          contractAddress: TOKEN, from: `0x${'0'.repeat(40)}`,
+          to: creator, hash: transactionHash,
+        }] });
+      },
+    });
+
+    assert.deepEqual(await client.getContractCreation(TOKEN), {
+      tokenAddress: TOKEN, creatorAddress: creator, transactionHash,
+    });
+    const fallback = new URL(calls[1]);
+    assert.equal(fallback.searchParams.get('action'), 'tokentx');
+    assert.equal(fallback.searchParams.get('sort'), 'asc');
+  });
+
+  it('does not treat an ordinary token transfer as a contract creation hint', async () => {
+    let calls = 0;
+    const client = createRobinhoodBlockscoutMetadataClient({
+      fetchImpl: async () => {
+        calls += 1;
+        if (calls === 1) return response(503, null);
+        return response(200, { result: [{
+          contractAddress: TOKEN, from: `0x${'5'.repeat(40)}`,
+          to: `0x${'2'.repeat(40)}`, hash: `0x${'4'.repeat(64)}`,
+        }] });
+      },
+    });
+
+    assert.equal(await client.getContractCreation(TOKEN), null);
+  });
+
   it('resolves exact internal CREATE2 evidence from a transaction trace', async () => {
     const creator = `0x${'2'.repeat(40)}`;
     const transactionHash = `0x${'4'.repeat(64)}`;

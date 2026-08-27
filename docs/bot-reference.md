@@ -1587,7 +1587,9 @@ acorda o consumidor imediatamente; polling de 1s preserva recuperação. Ele val
 Blockscout contra receipt/bloco canônicos, materializa `rpc_direct` ou
 `blockscout_internal` e remove a tarefa. Se a rota v2 de internal transactions
 responder com erro transitório, usa `txlistinternal` público como fallback; a
-prova encontrada continua sujeita à validação RPC canônica. Evidência ainda não
+rota de endereço também recupera o transaction hash pelo primeiro mint ERC-20
+(`tokentx`, ordem ascendente) quando necessário. Essas respostas são apenas hints:
+a prova encontrada continua sujeita à validação RPC canônica. Evidência ainda não
 indexada volta à fila com backoff limitado. O fluxo cobre somente novas admissões
 e não cria backfill.
 

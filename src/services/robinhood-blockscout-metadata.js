@@ -7,6 +7,7 @@ const DEFAULT_TRANSACTION_BASE_URL = 'https://robinhoodchain.blockscout.com/api/
 const DEFAULT_API_URL = 'https://robinhoodchain.blockscout.com/api';
 const DEFAULT_PRO_API_URL = 'https://api.blockscout.com/v2/api?chain_id=4663';
 const DEFAULT_TIMEOUT_MS = 5000;
+const ZERO_ADDRESS = `0x${'0'.repeat(40)}`;
 
 class RobinhoodBlockscoutMetadataError extends Error {
   constructor(message, code, details = {}) {
@@ -120,6 +121,19 @@ function findInternalCreation(items, hint, legacy = false) {
   return null;
 }
 
+function findMintCreation(items, tokenAddress) {
+  for (const item of items) {
+    if (normalizeCreatedAddress(item?.contractAddress) !== tokenAddress) continue;
+    if (normalizeCreatedAddress(item?.from) !== ZERO_ADDRESS) continue;
+    const transactionHash = String(item?.hash ?? '').trim().toLowerCase();
+    if (!/^0x[0-9a-f]{64}$/.test(transactionHash)) continue;
+    const creatorAddress = normalizeCreatedAddress(item?.to);
+    if (!creatorAddress || creatorAddress === ZERO_ADDRESS) continue;
+    return Object.freeze({ tokenAddress, creatorAddress, transactionHash });
+  }
+  return null;
+}
+
 function createRobinhoodBlockscoutMetadataClient(options = {}) {
   const fetchImpl = options.fetchImpl || global.fetch;
   if (typeof fetchImpl !== 'function') throw new TypeError('A fetch implementation is required');
@@ -202,7 +216,25 @@ function createRobinhoodBlockscoutMetadataClient(options = {}) {
 
   async function getContractCreation(tokenAddress) {
     const address = normalizeTokenAddress('robinhood', tokenAddress);
-    const payload = await request(address, addressBaseUrl, 'address');
+    let payload;
+    try { payload = await request(address, addressBaseUrl, 'address'); }
+    catch (error) {
+      if (!isRetryableProviderError(error)) throw error;
+      const url = new URL(legacyApiUrl);
+      url.searchParams.set('module', 'account');
+      url.searchParams.set('action', 'tokentx');
+      url.searchParams.set('contractaddress', address);
+      url.searchParams.set('page', '1');
+      url.searchParams.set('offset', '10');
+      url.searchParams.set('sort', 'asc');
+      const fallback = await requestUrl(url, 'legacy creation mint');
+      if (!fallback || !Array.isArray(fallback.result)) {
+        throw new RobinhoodBlockscoutMetadataError(
+          'Blockscout legacy creation mint response is invalid', 'invalid_response'
+        );
+      }
+      return findMintCreation(fallback.result, address);
+    }
     if (!payload) return null;
     const responseAddress = normalizeTokenAddress('robinhood', payload.hash);
     if (responseAddress !== address) {
