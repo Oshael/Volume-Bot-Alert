@@ -2028,8 +2028,13 @@ chamador são barreiras de candidatura e travessia. Ele só produz shadow explic
 o reader PostgreSQL seed já falha fechado sem campanha v2 concluída, limita a
 população por token e resolve CEX, infraestrutura e pools no bloco observado.
 O writer PostgreSQL substitui estado, grupos e membros atomicamente, serializa por
-token/regra e recusa lineage incompleta, frontier atrasada ou fork. Runner e
-paginação permanecem em corte separado.
+token/regra e recusa lineage incompleta, frontier atrasada ou fork. O runner seed
+pagina tokens da campanha congelada, limita cada execução a 100 tokens e isola
+falhas sob concorrência máxima 4. O comando é read-only por padrão; `--apply`
+materializa uma página e o cursor `nextToken` permite retomada explícita. Páginas
+com falha ou deferimento não avançam o cursor e reportam os tokens bloqueadores para
+retry idempotente da mesma página. Calibração do threshold, loop operacional, writer
+live e publicação permanecem pendentes.
 
 ### Corte D5 — publicação
 

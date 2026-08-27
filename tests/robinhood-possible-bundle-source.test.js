@@ -3,7 +3,7 @@ const { describe, it } = require('node:test');
 
 const {
   createRobinhoodPossibleBundleSource,
-  __private: { BARRIERS_SQL, CANDIDATES_SQL, EVIDENCE_SQL, RUN_SQL },
+  __private: { BARRIERS_SQL, CANDIDATES_SQL, EVIDENCE_SQL, RUN_SQL, TOKENS_SQL },
 } = require('../src/models/robinhood-possible-bundle-source');
 
 const TOKEN = `0x${'1'.repeat(40)}`;
@@ -36,6 +36,21 @@ function database(rows = {}) {
 }
 
 describe('Robinhood possible-bundle PostgreSQL source', () => {
+  it('paginates only frozen tokens from a completed v2 run', async () => {
+    const db = database({ [RUN_SQL]: [run()], [TOKENS_SQL]: [
+      { token_address: TOKEN },
+    ] });
+    const source = createRobinhoodPossibleBundleSource({ database: db });
+    assert.deepEqual(await source.listSeedTokens({
+      runId: 7, afterToken: WALLET_A, limit: 10,
+    }), [TOKEN]);
+    assert.deepEqual(db.calls[1].params, ['7', WALLET_A, 10]);
+    assert.match(TOKENS_SQL, /GROUP BY token_address HAVING COUNT\(\*\) >= 2/);
+    const unavailable = database({ [RUN_SQL]: [run({ status: 'running' })] });
+    await assert.rejects(createRobinhoodPossibleBundleSource({ database: unavailable })
+      .listSeedTokens({ runId: 7 }), /seed run is not ready/);
+  });
+
   it('loads one bounded token scope in the pure materializer contract', async () => {
     const db = database({
       [RUN_SQL]: [run()],

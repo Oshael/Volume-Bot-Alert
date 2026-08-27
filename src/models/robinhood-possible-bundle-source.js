@@ -6,6 +6,7 @@ const RULE_VERSION = 'rh_possible_bundle_v1';
 const EVIDENCE_VERSION = 'rh_native_funding_v2';
 const MAX_CANDIDATES_PER_TOKEN = 10_000;
 const MAX_EVIDENCE_ROWS_PER_TOKEN = 100_000;
+const MAX_TOKEN_PAGE = 100;
 
 const RUN_SQL = `SELECT id::text, status, rule_version, evidence_version,
        source_through_block::text, source_through_hash, lookback_blocks::text
@@ -28,6 +29,12 @@ const EVIDENCE_SQL = `SELECT token_address, candidate_wallet, hop,
    AND evidence_version = $4
  ORDER BY candidate_wallet, block_number, transaction_index, transaction_hash, hop
  LIMIT $5::int`;
+
+const TOKENS_SQL = `SELECT token_address
+  FROM robinhood_bundle_funding_backfill_candidates
+ WHERE run_id = $1::bigint AND token_address > $2
+ GROUP BY token_address HAVING COUNT(*) >= 2
+ ORDER BY token_address LIMIT $3::int`;
 
 const BARRIERS_SQL = `WITH actors AS MATERIALIZED (
   SELECT candidate.wallet_address AS address,
@@ -108,6 +115,22 @@ function createRobinhoodPossibleBundleSource(options = {}) {
     ? database.queryWithStatementTimeout(sql, params, statementTimeoutMs)
     : database.query(sql, params));
 
+  async function listSeedTokens(input = {}) {
+    const sourceRunId = String(boundedInteger(
+      input.runId, null, Number.MAX_SAFE_INTEGER, 'runId'
+    ));
+    const limit = boundedInteger(input.limit, 25, MAX_TOKEN_PAGE, 'limit');
+    const afterToken = input.afterToken == null
+      ? `0x${'0'.repeat(40)}` : normalizeTokenAddress(CHAIN, input.afterToken);
+    const run = (await query(RUN_SQL, [CHAIN, sourceRunId])).rows[0];
+    if (!run || run.status !== 'completed' || run.rule_version !== RULE_VERSION
+        || run.evidence_version !== EVIDENCE_VERSION || BigInt(run.lookback_blocks) <= 0n) {
+      throw new Error('possible bundle seed run is not ready');
+    }
+    const result = await query(TOKENS_SQL, [sourceRunId, afterToken, limit]);
+    return Object.freeze(result.rows.map(({ token_address: tokenAddress }) => tokenAddress));
+  }
+
   async function loadSeedToken(input = {}) {
     const sourceRunId = String(boundedInteger(
       input.runId, null, Number.MAX_SAFE_INTEGER, 'runId'
@@ -154,13 +177,13 @@ function createRobinhoodPossibleBundleSource(options = {}) {
     });
   }
 
-  return Object.freeze({ loadSeedToken });
+  return Object.freeze({ listSeedTokens, loadSeedToken });
 }
 
 module.exports = {
   createRobinhoodPossibleBundleSource,
   __private: {
-    BARRIERS_SQL, CANDIDATES_SQL, EVIDENCE_SQL, RUN_SQL,
-    MAX_CANDIDATES_PER_TOKEN, MAX_EVIDENCE_ROWS_PER_TOKEN,
+    BARRIERS_SQL, CANDIDATES_SQL, EVIDENCE_SQL, RUN_SQL, TOKENS_SQL,
+    MAX_CANDIDATES_PER_TOKEN, MAX_EVIDENCE_ROWS_PER_TOKEN, MAX_TOKEN_PAGE,
   },
 };
