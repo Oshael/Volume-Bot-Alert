@@ -122,6 +122,36 @@ function createRobinhoodBundleFundingBackfillRepository(options = {}) {
     );
     return runRow(result.rows[0]);
   }
+  async function resumeFailed(runIdValue) {
+    const runId = integer(runIdValue, 'runId', 1);
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      const run = await client.query(
+        `SELECT status FROM robinhood_bundle_funding_backfill_runs
+          WHERE id = $1 AND chain = $2 FOR UPDATE`, [runId, CHAIN]
+      );
+      if (run.rows[0]?.status !== 'failed') throw new Error('bundle funding run is not failed');
+      const ranges = await client.query(
+        `UPDATE robinhood_bundle_funding_backfill_ranges SET
+           status = 'pending', lease_owner = NULL, lease_until = NULL,
+           attempt_count = 0, next_attempt_at = NOW(), completed_at = NULL,
+           last_error_code = NULL, last_error_message = NULL, updated_at = NOW()
+          WHERE run_id = $1 AND status = 'failed' RETURNING range_index`, [runId]
+      );
+      if (!ranges.rowCount) throw new Error('failed bundle funding run has no failed ranges');
+      await client.query(
+        `UPDATE robinhood_bundle_funding_backfill_runs SET
+           status = 'running', finished_at = NULL, updated_at = NOW()
+          WHERE id = $1 AND chain = $2`, [runId, CHAIN]
+      );
+      await client.query('COMMIT');
+      return Object.freeze({ runId: String(runId), requeued: ranges.rowCount });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally { client.release(); }
+  }
   async function claimRange(input = {}) {
     const runId = integer(input.runId, 'runId', 1);
     const leaseOwner = owner(input.owner);
@@ -391,7 +421,7 @@ function createRobinhoodBundleFundingBackfillRepository(options = {}) {
       pending: row.pending, leased: row.leased, completed: row.completed, failed: row.failed });
   }
   return Object.freeze({ claimRange, completeRange, createRun, getProgress, getRun,
-    reclaimExpired, renewRangeLease, retryRange });
+    reclaimExpired, renewRangeLease, resumeFailed, retryRange });
 }
 
 module.exports = { createRobinhoodBundleFundingBackfillRepository, __private: { dayBounds } };

@@ -1887,11 +1887,18 @@ mede payload/throughput sob concorrência e recusa chain incorreta, checkpoint
 instável ou ETA acima de cinco horas. `--batch-blocks` (1–100), `--concurrency`
 (1–16), `--samples` (até 64 e nunca menor que a concorrência) e `--max-hours`
 (máximo 5) ajustam o probe; não há escrita nem fallback de RPC. Transfers internos
-continuam fora do escopo. Ainda não existe backfill, worker ou publicação de
-`BUNDLED`. A leitura recusa universos
+continuam fora do escopo. O writer seed usa
+`npm run robinhood:bundle-funding-backfill -- --lookback-blocks=1000`; sem
+`--apply`, apenas repete o preflight. Com `--apply`, congela a campanha e processa
+ranges com concorrência, leases renováveis, retry e checkpoint canônico. Ele
+para de reclamar ranges após `--max-minutes` (285 por padrão, máximo 300) e retoma
+com `--run-id=<id> --apply`; campanhas falhas exigem também `--retry-failed`.
+O comando roda no PC, exige `DATABASE_URL` da VPS, `RH_NODE_RPC_URL` do archive
+local e Stage 167 aplicada. Não existe fallback de RPC, worker automático ou
+publicação de `BUNDLED`. A leitura recusa universos
 acima de 500 mil candidatos para não exceder a memória; esse caso exige um
 planejador paginado antes de continuar.
-Aplique `node src/utils/db-init-stage167.js` antes do futuro writer de funding.
+Aplique `node src/utils/db-init-stage167.js` antes do writer de funding.
 A migration cria o raw diário `robinhood_native_funding_events`, o resumo
 permanente de arestas diretas e campanhas seed com candidatos/ranges congelados,
 lease e checkpoint. Ela é somente DDL: não cria partições filhas, não inicia

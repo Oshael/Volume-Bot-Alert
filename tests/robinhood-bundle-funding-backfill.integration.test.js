@@ -92,5 +92,11 @@ describe('Robinhood bundle funding backfill repository', () => {
         error: Object.assign(new Error('archive unavailable'), { code: 'rpc_failed' }) }), 'failed');
     }
     assert.equal((await repository.getRun(failedRun.id)).status, 'failed');
+    assert.deepEqual(await repository.resumeFailed(failedRun.id), {
+      runId: failedRun.id, requeued: 2,
+    });
+    assert.deepEqual(await repository.getProgress(failedRun.id), {
+      status: 'running', total: 2, pending: 2, leased: 0, completed: 0, failed: 0,
+    });
   });
 });
