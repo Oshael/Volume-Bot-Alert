@@ -208,7 +208,7 @@ function buildRuntime(options, deps = {}) {
     rpcClient,
     blockCreationLookup: async (tokenAddress, blockNumber) => (await requestWithRetry(
       () => blockscout.getContractCreationAtBlock(tokenAddress, blockNumber),
-      { requestRetries: 2, retryDelayMs: 500 }, sleep,
+      { requestRetries: 4, retryDelayMs: 2000 }, sleep,
     )).value,
   });
   return Object.freeze({

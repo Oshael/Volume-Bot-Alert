@@ -3,7 +3,8 @@ const { describe, it } = require('node:test');
 
 const {
   createRobinhoodBlockscoutMetadataClient,
-  __private: { boundedTimeout },
+  requestWithRetry,
+  __private: { boundedTimeout, parseRetryAfterMs },
 } = require('../src/services/robinhood-blockscout-metadata');
 
 const TOKEN = `0x${'1'.repeat(40)}`;
@@ -22,6 +23,7 @@ describe('Robinhood Blockscout metadata client', () => {
   it('honors long bounded timeouts required by slow contract creation lookups', () => {
     assert.equal(boundedTimeout(30_000), 30_000);
     assert.equal(boundedTimeout(90_000), 60_000);
+    assert.equal(parseRetryAfterMs('3'), 3000);
   });
 
   it('normalizes token metadata and sanitizes its image', async () => {
@@ -184,6 +186,22 @@ describe('Robinhood Blockscout metadata client', () => {
     assert.equal(requestedUrl.searchParams.get('action'), 'txlistinternal');
     assert.equal(requestedUrl.searchParams.get('startblock'), '40');
     assert.equal(requestedUrl.searchParams.get('endblock'), '40');
+    assert.equal(requestedUrl.searchParams.get('include_zero_value'), 'true');
+  });
+
+  it('honors Blockscout Retry-After when retrying a shared rate limit', async () => {
+    const waits = [];
+    let attempts = 0;
+    const result = await requestWithRetry(async () => {
+      attempts += 1;
+      if (attempts === 1) throw Object.assign(new Error('limited'), {
+        code: 'http_error', httpStatus: 429, retryAfterMs: 4000,
+      });
+      return 'ok';
+    }, { requestRetries: 1, retryDelayMs: 500 }, async (ms) => { waits.push(ms); });
+
+    assert.deepEqual(result, { value: 'ok', retries: 1 });
+    assert.deepEqual(waits, [4000]);
   });
 
   it('resolves up to ten contract creators in one Blockscout request', async () => {
@@ -226,6 +244,21 @@ describe('Robinhood Blockscout metadata client', () => {
       assert.equal(error.code, 'credits_exhausted');
       assert.equal(error.creditsRemaining, 0);
       assert.equal(error.retryable, false);
+      return true;
+    });
+  });
+
+  it('exposes the provider retry delay on a shared 429 response', async () => {
+    const client = createRobinhoodBlockscoutMetadataClient({
+      fetchImpl: async () => response(429, null, {
+        'retry-after': '4', 'x-credits-remaining': '100',
+      }),
+    });
+
+    await assert.rejects(() => client.getTokenMetadata(TOKEN), (error) => {
+      assert.equal(error.code, 'http_error');
+      assert.equal(error.retryAfterMs, 4000);
+      assert.equal(error.retryable, true);
       return true;
     });
   });

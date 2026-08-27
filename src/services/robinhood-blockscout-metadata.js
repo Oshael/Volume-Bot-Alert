@@ -16,6 +16,7 @@ class RobinhoodBlockscoutMetadataError extends Error {
     this.code = code;
     this.httpStatus = details.httpStatus ?? null;
     this.creditsRemaining = details.creditsRemaining ?? null;
+    this.retryAfterMs = details.retryAfterMs ?? null;
     this.retryable = isRetryableProviderError(this);
   }
 }
@@ -33,6 +34,15 @@ function isRetryableProviderError(error) {
 
 const delay = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
+function parseRetryAfterMs(value, now = Date.now()) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return null;
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.round(seconds * 1000);
+  const at = Date.parse(raw);
+  return Number.isFinite(at) ? Math.max(0, at - now) : null;
+}
+
 async function requestWithRetry(operation, options = {}, wait = delay) {
   const requestRetries = Number.isSafeInteger(options.requestRetries) ? options.requestRetries : 2;
   const retryDelayMs = Number.isSafeInteger(options.retryDelayMs) ? options.retryDelayMs : 500;
@@ -45,7 +55,9 @@ async function requestWithRetry(operation, options = {}, wait = delay) {
         error.requestRetriesUsed = retries;
         throw error;
       }
-      await wait(Math.min(60_000, retryDelayMs * (2 ** retries)));
+      const backoffMs = retryDelayMs * (2 ** retries);
+      const retryAfterMs = Number.isFinite(error.retryAfterMs) ? error.retryAfterMs : 0;
+      await wait(Math.min(60_000, Math.max(backoffMs, retryAfterMs)));
       retries += 1;
     }
   }
@@ -198,6 +210,7 @@ function createRobinhoodBlockscoutMetadataClient(options = {}) {
       clearTimeout(timeout);
     }
     const creditsRemaining = trackCredits(response);
+    const retryAfterMs = parseRetryAfterMs(response.headers?.get?.('retry-after'));
     if (response.status === 404) {
       return null;
     }
@@ -205,13 +218,13 @@ function createRobinhoodBlockscoutMetadataClient(options = {}) {
       if (creditsRemaining === 0) {
         throw new RobinhoodBlockscoutMetadataError(
           'Blockscout daily API credits exhausted', 'credits_exhausted',
-          { httpStatus: response.status, creditsRemaining }
+          { httpStatus: response.status, creditsRemaining, retryAfterMs }
         );
       }
       throw new RobinhoodBlockscoutMetadataError(
         `Blockscout ${resource} returned HTTP ${response.status}`,
         'http_error',
-        { httpStatus: response.status, creditsRemaining }
+        { httpStatus: response.status, creditsRemaining, retryAfterMs }
       );
     }
     return response.json();
@@ -327,6 +340,7 @@ function createRobinhoodBlockscoutMetadataClient(options = {}) {
     url.searchParams.set('page', '1');
     url.searchParams.set('offset', '100');
     url.searchParams.set('sort', 'asc');
+    url.searchParams.set('include_zero_value', 'true');
     const payload = await requestUrl(url, 'deployment block internal transactions');
     if (!payload || !Array.isArray(payload.result)) throw new RobinhoodBlockscoutMetadataError(
       'Blockscout deployment block internal transaction response is invalid', 'invalid_response'
@@ -390,5 +404,7 @@ module.exports = {
   RobinhoodBlockscoutMetadataError,
   createRobinhoodBlockscoutMetadataClient,
   requestWithRetry,
-  __private: { boundedTimeout, isRetryableProviderError, normalizePayload },
+  __private: {
+    boundedTimeout, isRetryableProviderError, normalizePayload, parseRetryAfterMs,
+  },
 };
