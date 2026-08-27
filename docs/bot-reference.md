@@ -1287,7 +1287,9 @@ o avanço atômico do cursor. A partir da Stage 141, ela consulta o tópico glob
 bufferiza também `Transfer` válidos de tokens ainda fora do catálogo. Quando um
 deployment novo está dentro de `max(journal_floor_block, buffer_floor_block)`, o
 bootstrap o admite direto em `shadow` e aplica o journal preservado, sem replay
-RPC. Cobertura incompleta continua fail-closed em `backfilling`; eventos antigos
+RPC. Essa admissão não invalida um range live em voo, pois o tópico global já
+inclui transfers de tokens ainda não admitidos. Cobertura incompleta continua
+fail-closed em `backfilling`; eventos antigos
 de tokens nunca admitidos são descartados pela retenção depois de 20.000 blocos.
 
 `monitored`, `recent`, `old-week`, pins, tokens manuais e o summary de

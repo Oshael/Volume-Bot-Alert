@@ -52,8 +52,8 @@ describe('Robinhood holder bootstrap repository', () => {
     assert.match(calls[0].sql, /cursor\.safe_head - \$5::bigint/);
     assert.match(calls[0].sql, /cursor\.buffer_floor_block IS NOT NULL/);
     assert.match(calls[0].sql, /candidate\.attribution_block >= GREATEST\([\s\S]*journal_floor_block/);
-    assert.match(calls[0].sql, /ledger_status = 'shadow'/);
-    assert.match(calls[0].sql, /SET version = live\.version \+ 1/);
+    assert.match(calls[0].sql, /THEN 'shadow' ELSE 'backfilling' END/);
+    assert.doesNotMatch(calls[0].sql, /UPDATE robinhood_holder_cursors/);
     assert.match(calls[0].sql, /state\.token_address IS NULL/);
     assert.match(calls[0].sql, /robinhood_holder_global_backfill_tokens cohort/);
     assert.doesNotMatch(calls[0].sql, /run\.barrier_block IS NOT NULL/);

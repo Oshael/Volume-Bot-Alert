@@ -101,15 +101,8 @@ function createRobinhoodHolderBootstrapRepository(options = {}) {
            FROM candidates candidate CROSS JOIN cursor
          ON CONFLICT (chain, token_address) DO NOTHING
          RETURNING token_address, deployment_block, backfill_next_block, ledger_status
-       ), fenced AS (
-         UPDATE robinhood_holder_cursors live
-            SET version = live.version + 1, updated_at = NOW()
-          WHERE live.chain = $1 AND live.stream = 'live'
-            AND EXISTS (SELECT 1 FROM inserted WHERE ledger_status = 'shadow')
-         RETURNING live.version
        )
-       SELECT token_address, deployment_block, backfill_next_block, ledger_status,
-              (SELECT COUNT(*)::int FROM fenced) AS cursor_fenced
+       SELECT token_address, deployment_block, backfill_next_block, ledger_status
          FROM inserted`,
       [
         CHAIN, normalized.admittedAfter,
