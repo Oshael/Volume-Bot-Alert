@@ -1502,9 +1502,9 @@ com o percentual remaining (`balanceRaw / totalSupplyRaw`) e mostra saldo nativo
 volume financeiro comprado/vendido e market cap médio. No caminho ledger, os
 itens de `GET /api/robinhood/holders` expõem `buyVolumeUsd`, `sellProceedsUsd`,
 `avgBuyMcapUsd` e `avgSellMcapUsd` a partir da projeção financeira publicada.
-A distribuição Top 10/Top 50 é calculada somente com balances/supply reais da
-primeira página; classificações sniper/fresh/insider/CEX e flags de risco ficam
-indisponíveis até existir fonte comprovada. A lista mostra 50 endereços por
+A distribuição Top 10/Top 50 vem dos snapshots materializados do ledger live;
+classificações sniper/fresh/insider/CEX e flags de risco ficam indisponíveis até
+existir fonte comprovada. A lista mostra 50 endereços por
 página, preserva a pilha de cursores para voltar e expõe loading/error/retry.
 A lista começa a carregar na abertura do modal; fechá-lo cancela respostas
 atrasadas.
@@ -1526,11 +1526,11 @@ versionados de métricas agregadas. Percentuais são persistidos como
 numerador/denominador raw; `BUNDLED` usa `wallet_count` e `group_count`.
 Estados sem evidência pronta não podem armazenar valores ou fingir zero. Aplique
 `node src/utils/db-init-stage144.js` antes de iniciar código que contenha esse
-grupo no runtime schema. Ainda não existe repositório, worker ou endpoint para a
-tabela no runtime. O repositório e materializador `DEV HOLD` já existem, mas não
-são agendados: usam o criador atribuído e calculam saldo/supply diretamente do
-ledger na mesma frontier; criador ou supply ausente publica `unavailable`, nunca
-zero inventado.
+grupo no runtime schema. O materializador de Top 10/Top 50 ordena os balances
+positivos por saldo e endereço, soma os primeiros 10/50 e usa a soma de todos os
+balances como denominador na mesma frontier live. O materializador `DEV HOLD`
+usa o criador atribuído e calcula saldo/supply diretamente do ledger; criador ou
+supply ausente publica `unavailable`, nunca zero inventado.
 
 O Stage 145 cria `robinhood_infrastructure_registry`, registro histórico e
 chain-scoped para CEX, routers, bridges, lockers e burn addresses. Cada entrada
@@ -1551,8 +1551,8 @@ live adia a publicação; matches publicam `known_cex_address` com a evidência
 auditada completa. Nenhuma inferência comportamental ou chamada externa ocorre.
 
 O `robinhood-holder-intelligence-worker`, no grupo `robinhood-holders`, mantém
-`LP`, `CEX` e `DEV HOLD` alinhados à frontier live. Ele não é chamado pela API e
-fica desligado por padrão. Para ativá-lo, use
+Top 10/Top 50, `LP`, `CEX` e `DEV HOLD` alinhados à frontier live. Ele não é
+chamado pela API e fica desligado por padrão. Para ativá-lo, use
 `ROBINHOOD_HOLDER_INTELLIGENCE_ENABLED=true` junto de
 `ROBINHOOD_HOLDER_LIVE_ENABLED=true`; a execução usa lease própria. Intervalo,
 batch, concorrência e retry de métricas indisponíveis são configurados por

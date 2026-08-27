@@ -107,6 +107,8 @@ describe('Robinhood holder intelligence candidates', () => {
     assert.equal(Object.isFrozen(result), true);
     assert.deepEqual(calls[0][1], ['rh_holder_v1', 60_000, 2]);
     assert.match(calls[0][0], /ledger_status = 'live'/);
+    assert.match(calls[0][0], /top10\.metric = 'top10'/);
+    assert.match(calls[0][0], /top50\.metric = 'top50'/);
     await assert.rejects(repository.listCandidates({ limit: 101 }), /candidate limit/);
   });
 });

@@ -32,6 +32,12 @@ function createRobinhoodHolderIntelligenceCandidateRepository(options = {}) {
          LEFT JOIN robinhood_holder_distribution_metrics dev
            ON dev.chain = state.chain AND dev.token_address = state.token_address
           AND dev.metric = 'dev_hold' AND dev.classification_version = $1
+         LEFT JOIN robinhood_holder_distribution_metrics top10
+           ON top10.chain = state.chain AND top10.token_address = state.token_address
+          AND top10.metric = 'top10' AND top10.classification_version = $1
+         LEFT JOIN robinhood_holder_distribution_metrics top50
+           ON top50.chain = state.chain AND top50.token_address = state.token_address
+          AND top50.metric = 'top50' AND top50.classification_version = $1
         WHERE state.chain = 'robinhood' AND state.ledger_status = 'live'
           AND state.live_through_block IS NOT NULL AND state.live_through_hash IS NOT NULL
           AND (
@@ -47,11 +53,25 @@ function createRobinhoodHolderIntelligenceCandidateRepository(options = {}) {
                   IS DISTINCT FROM (state.live_through_block, state.live_through_hash))
             OR (dev.status NOT IN ('ready', 'stale', 'reorged')
                 AND dev.updated_at <= NOW() - ($2::int * INTERVAL '1 millisecond'))
+            OR top10.token_address IS NULL
+            OR (top10.status IN ('ready', 'stale', 'reorged') AND
+                (top10.through_block_number, top10.through_block_hash)
+                  IS DISTINCT FROM (state.live_through_block, state.live_through_hash))
+            OR (top10.status NOT IN ('ready', 'stale', 'reorged')
+                AND top10.updated_at <= NOW() - ($2::int * INTERVAL '1 millisecond'))
+            OR top50.token_address IS NULL
+            OR (top50.status IN ('ready', 'stale', 'reorged') AND
+                (top50.through_block_number, top50.through_block_hash)
+                  IS DISTINCT FROM (state.live_through_block, state.live_through_hash))
+            OR (top50.status NOT IN ('ready', 'stale', 'reorged')
+                AND top50.updated_at <= NOW() - ($2::int * INTERVAL '1 millisecond'))
           )
         ORDER BY LEAST(
           COALESCE(lp.updated_at, '-infinity'::timestamptz),
           COALESCE(cex.updated_at, '-infinity'::timestamptz),
-          COALESCE(dev.updated_at, '-infinity'::timestamptz)
+          COALESCE(dev.updated_at, '-infinity'::timestamptz),
+          COALESCE(top10.updated_at, '-infinity'::timestamptz),
+          COALESCE(top50.updated_at, '-infinity'::timestamptz)
         ), state.token_address
         LIMIT $3::int`,
       [HOLDER_CLASSIFICATION_VERSION, unavailableRetryMs, limit]

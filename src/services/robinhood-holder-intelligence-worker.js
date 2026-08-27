@@ -10,6 +10,9 @@ const {
 const {
   createRobinhoodHolderLpMaterializer,
 } = require('./robinhood-holder-lp-materializer');
+const {
+  createRobinhoodHolderTopDistributionMaterializer,
+} = require('./robinhood-holder-top-distribution-materializer');
 
 function boundedInteger(value, fallback, minimum, maximum, label) {
   const parsed = value == null ? fallback : Number(value);
@@ -46,6 +49,7 @@ function createRobinhoodHolderIntelligenceWorker(deps = {}) {
   const candidates = deps.candidates
     || (deps.candidateFactory || createRobinhoodHolderIntelligenceCandidateRepository)();
   const materializers = deps.materializers || Object.freeze([
+    (deps.topDistributionFactory || createRobinhoodHolderTopDistributionMaterializer)(),
     (deps.lpFactory || createRobinhoodHolderLpMaterializer)(),
     (deps.cexFactory || createRobinhoodHolderCexMaterializer)(),
     (deps.devHoldFactory || createRobinhoodHolderDevHoldMaterializer)(),
