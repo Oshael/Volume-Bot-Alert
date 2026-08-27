@@ -157,19 +157,19 @@ function createRobinhoodHolderHandoffRepository(options = {}) {
             AND state.backfill_next_block BETWEEN cursor.journal_floor_block AND cursor.next_block
             AND state.live_through_block + 1 = state.backfill_next_block
             AND state.live_through_hash IS NOT NULL
+            AND state.backfill_next_block >= COALESCE((
+              SELECT journal.block_number
+                FROM robinhood_holder_transfer_journal journal
+               WHERE journal.chain = state.chain
+                 AND journal.token_address = state.token_address
+                 AND journal.applied = false
+               ORDER BY journal.block_number, journal.transaction_index, journal.log_index
+               LIMIT 1
+            ), state.backfill_next_block)
           ORDER BY state.backfill_next_block DESC, state.token_address
           LIMIT 1
        )
-       SELECT candidate.* FROM candidate
-        WHERE candidate.backfill_next_block >= COALESCE((
-          SELECT journal.block_number
-            FROM robinhood_holder_transfer_journal journal
-           WHERE journal.chain = 'robinhood'
-             AND journal.token_address = candidate.token_address
-             AND journal.applied = false
-           ORDER BY journal.block_number, journal.transaction_index, journal.log_index
-           LIMIT 1
-        ), candidate.backfill_next_block)`
+       SELECT candidate.* FROM candidate`
     );
     return candidateRow(result.rows[0]);
   }

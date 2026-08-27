@@ -1481,6 +1481,8 @@ novo replay. Se o handoff vencer a corrida depois da seleção, o executor retor
 `superseded`: a trava otimista continua rejeitando o commit antigo, mas o tick
 não conta erro nem aplica backoff. `supersededTokens` no último resultado e
 `totalSupersededTokens` no status tornam essas disputas observáveis.
+Candidatos ainda aquém do primeiro evento retido não bloqueiam outros tokens já
+prontos: a prontidão é filtrada antes da ordenação e do limite do handoff.
 No runtime global do PC, habilite também
 `ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ROLLING_ENABLED=true`; rolling exige auto-start.
 Depois que o run anterior completa, o worker verifica a cada 5 minutos tokens

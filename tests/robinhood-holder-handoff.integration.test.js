@@ -140,7 +140,7 @@ describe('Robinhood holder live handoff persistence', () => {
     }
   });
 
-  it('keeps a requeued token in backfill until its first pending event is covered', async () => {
+  it('skips an unready high cursor without starving a ready handoff candidate', async () => {
     const client = await db.getClient();
     try {
       for (const table of [
@@ -183,7 +183,10 @@ describe('Robinhood holder live handoff persistence', () => {
           ]
         );
       }
-      assert.equal(await handoff.getNextCandidate(), null);
+      assert.deepEqual(await handoff.getNextCandidate(), {
+        tokenAddress: TOKEN, backfillNextBlock: '105',
+        checkpoint: { number: '104', hash: HASH_A }, version: 0,
+      });
       await client.query(
         `UPDATE robinhood_holder_token_states
             SET backfill_next_block = 108, live_through_block = 107,
