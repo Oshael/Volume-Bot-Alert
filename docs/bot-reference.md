@@ -1971,6 +1971,13 @@ Falha ou deferimento bloqueia o cursor. O comando não recomenda nem persiste um
 política: a escolha continua sendo uma decisão auditada de domínio. Tanto o auditor
 quanto o materializador usam o contrato central de banco (`DATABASE_URL`,
 `POSTGRES_URL`, `DB_*` ou `PG*`); nenhum deles exige uma variante específica.
+Auditorias com mais de uma página exigem `--checkpoint-file=<path>`; o arquivo é
+substituído atomicamente após cada página concluída e retomado somente quando run,
+thresholds, page size, concorrência e universo ainda coincidem. O progresso em
+`stderr` informa tokens processados/total, basis points, tempo e ETA, enquanto o
+JSON final permanece sozinho em `stdout`. A leitura cacheia a campanha terminal e
+origens V4; a resolução de barreiras recebe os atores já carregados, sem revarrer as
+tabelas de candidatos/evidências por token.
 A Stage 169 (`node src/utils/db-init-stage169.js`) preserva permanentemente a
 associação causal que o agregado global não representa: `run`, token, candidata,
 hop 1/2 e a transferência nativa exata. Ela depende da Stage 167, é somente DDL

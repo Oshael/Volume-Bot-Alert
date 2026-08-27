@@ -36,21 +36,17 @@ const TOKENS_SQL = `SELECT token_address
  GROUP BY token_address HAVING COUNT(*) >= 2
  ORDER BY token_address LIMIT $3::int`;
 
+const TOKEN_COUNT_SQL = `SELECT COUNT(*)::text AS token_count FROM (
+  SELECT token_address
+    FROM robinhood_bundle_funding_backfill_candidates
+   WHERE run_id = $1::bigint AND token_address > $2
+   GROUP BY token_address HAVING COUNT(*) >= 2
+) tokens`;
+
 const BARRIERS_SQL = `WITH actors AS MATERIALIZED (
-  SELECT candidate.wallet_address AS address,
-         candidate.first_buy_block AS observed_block
-    FROM robinhood_bundle_funding_backfill_candidates candidate
-   WHERE candidate.run_id = $2::bigint AND candidate.token_address = $3
-  UNION ALL
-  SELECT evidence.from_wallet, evidence.block_number
-    FROM robinhood_bundle_funding_evidence evidence
-   WHERE evidence.chain = $1 AND evidence.run_id = $2::bigint
-     AND evidence.token_address = $3 AND evidence.evidence_version = $4
-  UNION ALL
-  SELECT evidence.to_wallet, evidence.block_number
-    FROM robinhood_bundle_funding_evidence evidence
-   WHERE evidence.chain = $1 AND evidence.run_id = $2::bigint
-     AND evidence.token_address = $3 AND evidence.evidence_version = $4
+  SELECT DISTINCT actor.address, actor.observed_block::bigint AS observed_block
+    FROM jsonb_to_recordset($2::jsonb)
+      AS actor(address text, observed_block text)
 ), barriers AS (
   SELECT actor.address
     FROM actors actor
@@ -63,10 +59,16 @@ const BARRIERS_SQL = `WITH actors AS MATERIALIZED (
   SELECT actor.address
     FROM actors actor
     INNER JOIN robinhood_pool_registry pool
-      ON pool.chain = $1 AND pool.discovery_block <= actor.observed_block
-     AND (pool.pool_address = actor.address
-       OR (pool.protocol = 'uniswap-v4' AND pool.origin_address = actor.address))
+      ON pool.chain = $1 AND pool.protocol IN ('uniswap-v2', 'uniswap-v3')
+     AND pool.discovery_block <= actor.observed_block
+     AND pool.pool_address = actor.address
 ) SELECT DISTINCT address FROM barriers ORDER BY address`;
+
+const V4_ORIGINS_SQL = `SELECT origin_address AS address,
+       MIN(discovery_block)::text AS discovery_block
+  FROM robinhood_pool_registry
+ WHERE chain = $1 AND protocol = 'uniswap-v4' AND origin_address IS NOT NULL
+ GROUP BY origin_address`;
 
 function boundedInteger(value, fallback, maximum, label) {
   const parsed = value == null ? fallback : Number(value);
@@ -98,6 +100,20 @@ function evidence(row) {
   });
 }
 
+function barrierActors(candidateRows, evidenceRows) {
+  const actors = new Map();
+  function add(address, observedBlock) {
+    const item = { address, observed_block: String(observedBlock) };
+    actors.set(`${item.address}:${item.observed_block}`, item);
+  }
+  for (const item of candidateRows) add(item.wallet_address, item.first_buy_block);
+  for (const item of evidenceRows) {
+    add(item.from_wallet, item.block_number);
+    add(item.to_wallet, item.block_number);
+  }
+  return [...actors.values()];
+}
+
 function createRobinhoodPossibleBundleSource(options = {}) {
   const database = options.database || db;
   const statementTimeoutMs = boundedInteger(
@@ -114,6 +130,27 @@ function createRobinhoodPossibleBundleSource(options = {}) {
   const query = (sql, params) => (typeof database.queryWithStatementTimeout === 'function'
     ? database.queryWithStatementTimeout(sql, params, statementTimeoutMs)
     : database.query(sql, params));
+  const completedRuns = new Map();
+  let v4OriginsPromise;
+
+  async function loadRun(sourceRunId) {
+    if (completedRuns.has(sourceRunId)) return completedRuns.get(sourceRunId);
+    const run = (await query(RUN_SQL, [CHAIN, sourceRunId])).rows[0];
+    if (run?.status === 'completed') completedRuns.set(sourceRunId, run);
+    return run;
+  }
+
+  async function loadV4Origins() {
+    v4OriginsPromise ||= query(V4_ORIGINS_SQL, [CHAIN]).then(({ rows }) => rows);
+    return v4OriginsPromise.catch((error) => { v4OriginsPromise = null; throw error; });
+  }
+
+  function assertReadyRun(run) {
+    if (!run || run.status !== 'completed' || run.rule_version !== RULE_VERSION
+        || run.evidence_version !== EVIDENCE_VERSION || BigInt(run.lookback_blocks) <= 0n) {
+      throw new Error('possible bundle seed run is not ready');
+    }
+  }
 
   async function listSeedTokens(input = {}) {
     const sourceRunId = String(boundedInteger(
@@ -122,13 +159,21 @@ function createRobinhoodPossibleBundleSource(options = {}) {
     const limit = boundedInteger(input.limit, 25, MAX_TOKEN_PAGE, 'limit');
     const afterToken = input.afterToken == null
       ? `0x${'0'.repeat(40)}` : normalizeTokenAddress(CHAIN, input.afterToken);
-    const run = (await query(RUN_SQL, [CHAIN, sourceRunId])).rows[0];
-    if (!run || run.status !== 'completed' || run.rule_version !== RULE_VERSION
-        || run.evidence_version !== EVIDENCE_VERSION || BigInt(run.lookback_blocks) <= 0n) {
-      throw new Error('possible bundle seed run is not ready');
-    }
+    const run = await loadRun(sourceRunId);
+    assertReadyRun(run);
     const result = await query(TOKENS_SQL, [sourceRunId, afterToken, limit]);
     return Object.freeze(result.rows.map(({ token_address: tokenAddress }) => tokenAddress));
+  }
+
+  async function countSeedTokens(input = {}) {
+    const sourceRunId = String(boundedInteger(
+      input.runId, null, Number.MAX_SAFE_INTEGER, 'runId'
+    ));
+    const afterToken = input.afterToken == null
+      ? `0x${'0'.repeat(40)}` : normalizeTokenAddress(CHAIN, input.afterToken);
+    assertReadyRun(await loadRun(sourceRunId));
+    const result = await query(TOKEN_COUNT_SQL, [sourceRunId, afterToken]);
+    return Number(result.rows[0]?.token_count || 0);
   }
 
   async function loadSeedToken(input = {}) {
@@ -136,7 +181,7 @@ function createRobinhoodPossibleBundleSource(options = {}) {
       input.runId, null, Number.MAX_SAFE_INTEGER, 'runId'
     ));
     const tokenAddress = normalizeTokenAddress(CHAIN, input.tokenAddress);
-    const run = (await query(RUN_SQL, [CHAIN, sourceRunId])).rows[0];
+    const run = await loadRun(sourceRunId);
     if (!run) return unavailable('funding_run_missing', tokenAddress, sourceRunId);
     if (run.status !== 'completed') {
       return unavailable('funding_run_incomplete', tokenAddress, sourceRunId);
@@ -162,9 +207,17 @@ function createRobinhoodPossibleBundleSource(options = {}) {
     if (evidenceRows.rows.length > maxEvidenceRows) {
       return unavailable('bundle_token_evidence_cap_exceeded', tokenAddress, sourceRunId);
     }
-    const barriers = await query(BARRIERS_SQL, [
-      CHAIN, sourceRunId, tokenAddress, EVIDENCE_VERSION,
+    const actors = barrierActors(candidates.rows, evidenceRows.rows);
+    const [barriers, v4Origins] = await Promise.all([
+      query(BARRIERS_SQL, [CHAIN, JSON.stringify(actors)]), loadV4Origins(),
     ]);
+    const barrierAddresses = new Set(barriers.rows.map(({ address }) => address));
+    for (const origin of v4Origins) {
+      if (actors.some((actor) => actor.address === origin.address
+          && BigInt(actor.observed_block) >= BigInt(origin.discovery_block))) {
+        barrierAddresses.add(origin.address);
+      }
+    }
     return Object.freeze({
       ready: true, reason: null, tokenAddress, ruleVersion: RULE_VERSION,
       evidenceVersion: EVIDENCE_VERSION, sourceKind: 'seed', sourceRunId,
@@ -173,17 +226,18 @@ function createRobinhoodPossibleBundleSource(options = {}) {
       throughBlockHash: run.source_through_hash,
       candidates: Object.freeze(candidates.rows.map(candidate)),
       evidence: Object.freeze(evidenceRows.rows.map(evidence)),
-      barrierAddresses: Object.freeze(barriers.rows.map(({ address }) => address)),
+      barrierAddresses: Object.freeze([...barrierAddresses].sort()),
     });
   }
 
-  return Object.freeze({ listSeedTokens, loadSeedToken });
+  return Object.freeze({ countSeedTokens, listSeedTokens, loadSeedToken });
 }
 
 module.exports = {
   createRobinhoodPossibleBundleSource,
   __private: {
-    BARRIERS_SQL, CANDIDATES_SQL, EVIDENCE_SQL, RUN_SQL, TOKENS_SQL,
+    BARRIERS_SQL, CANDIDATES_SQL, EVIDENCE_SQL, RUN_SQL, TOKEN_COUNT_SQL,
+    TOKENS_SQL, V4_ORIGINS_SQL, barrierActors,
     MAX_CANDIDATES_PER_TOKEN, MAX_EVIDENCE_ROWS_PER_TOKEN, MAX_TOKEN_PAGE,
   },
 };

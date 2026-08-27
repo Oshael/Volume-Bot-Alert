@@ -2036,6 +2036,9 @@ com falha ou deferimento não avançam o cursor e reportam os tokens bloqueadore
 retry idempotente da mesma página. O auditor offline compara até 12 thresholds
 explícitos sobre o mesmo grafo carregado e agrega grupos, membros, tamanhos e tipos
 de conexão em até 1000 páginas; ele é read-only e não recomenda uma política.
+Execuções multipágina exigem checkpoint local atômico, retomam apenas a mesma
+política/universo e emitem progresso com total e ETA. A leitura reutiliza a campanha
+terminal e os atores já carregados para não revarrer funding ao resolver barreiras.
 A escolha auditada do threshold, loop operacional, writer live e publicação
 permanecem pendentes.
 

@@ -3,7 +3,8 @@ const { describe, it } = require('node:test');
 
 const {
   createRobinhoodPossibleBundleSource,
-  __private: { BARRIERS_SQL, CANDIDATES_SQL, EVIDENCE_SQL, RUN_SQL, TOKENS_SQL },
+  __private: { BARRIERS_SQL, CANDIDATES_SQL, EVIDENCE_SQL, RUN_SQL,
+    TOKEN_COUNT_SQL, TOKENS_SQL, V4_ORIGINS_SQL },
 } = require('../src/models/robinhood-possible-bundle-source');
 
 const TOKEN = `0x${'1'.repeat(40)}`;
@@ -37,14 +38,16 @@ function database(rows = {}) {
 
 describe('Robinhood possible-bundle PostgreSQL source', () => {
   it('paginates only frozen tokens from a completed v2 run', async () => {
-    const db = database({ [RUN_SQL]: [run()], [TOKENS_SQL]: [
-      { token_address: TOKEN },
-    ] });
+    const db = database({ [RUN_SQL]: [run()],
+      [TOKENS_SQL]: [{ token_address: TOKEN }],
+      [TOKEN_COUNT_SQL]: [{ token_count: '1' }] });
     const source = createRobinhoodPossibleBundleSource({ database: db });
     assert.deepEqual(await source.listSeedTokens({
       runId: 7, afterToken: WALLET_A, limit: 10,
     }), [TOKEN]);
+    assert.equal(await source.countSeedTokens({ runId: 7 }), 1);
     assert.deepEqual(db.calls[1].params, ['7', WALLET_A, 10]);
+    assert.equal(db.calls.filter(({ sql }) => sql === RUN_SQL).length, 1);
     assert.match(TOKENS_SQL, /GROUP BY token_address HAVING COUNT\(\*\) >= 2/);
     const unavailable = database({ [RUN_SQL]: [run({ status: 'running' })] });
     await assert.rejects(createRobinhoodPossibleBundleSource({ database: unavailable })
@@ -59,6 +62,7 @@ describe('Robinhood possible-bundle PostgreSQL source', () => {
         block_number: '99', transaction_index: '2', transaction_hash: TX,
         from_wallet: FUNDER, to_wallet: WALLET_A, value_wei: '50' }],
       [BARRIERS_SQL]: [{ address: FUNDER }],
+      [V4_ORIGINS_SQL]: [{ address: WALLET_B, discovery_block: '90' }],
     });
     const result = await createRobinhoodPossibleBundleSource({
       database: db, statementTimeoutMs: 5_000,
@@ -77,12 +81,18 @@ describe('Robinhood possible-bundle PostgreSQL source', () => {
       blockNumber: '99', transactionIndex: '2', transactionHash: TX,
       fromAddress: FUNDER, toAddress: WALLET_A, valueWei: '50',
     });
-    assert.deepEqual(result.barrierAddresses, [FUNDER]);
-    assert.equal(db.calls.length, 4);
+    assert.deepEqual(result.barrierAddresses, [WALLET_B, FUNDER]);
+    assert.equal(db.calls.length, 5);
     assert.equal(db.calls.every(({ timeout }) => timeout === 5_000), true);
     assert.match(BARRIERS_SQL, /robinhood_infrastructure_registry/);
     assert.match(BARRIERS_SQL, /robinhood_pool_registry/);
+    assert.match(BARRIERS_SQL, /jsonb_to_recordset/);
+    assert.doesNotMatch(BARRIERS_SQL, /robinhood_bundle_funding_/);
     assert.match(BARRIERS_SQL, /valid_from_block <= actor\.observed_block/);
+    const actors = JSON.parse(db.calls.find(({ sql }) => sql === BARRIERS_SQL).params[1]);
+    assert.ok(actors.some(({ address, observed_block: block }) => (
+      address === FUNDER && block === '99'
+    )));
   });
 
   it('fails closed before graph reads when the frozen run is unusable', async () => {
