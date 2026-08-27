@@ -109,6 +109,23 @@ describe('Robinhood archive deployment discovery', () => {
     });
   });
 
+  it('returns exact block evidence when creator discovery remains unavailable', async () => {
+    const rpcClient = rpcForBlock([]);
+    const throttled = Object.assign(new Error('rate limited'), {
+      code: 'http_error', httpStatus: 429,
+    });
+    const discovery = createRobinhoodArchiveDeploymentDiscovery({
+      rpcClient,
+      blockCreationLookup: async () => { throw throttled; },
+    });
+
+    assert.deepEqual(await discovery.discover({ tokenAddress: TOKEN, upperBlock: '100' }), {
+      tokenAddress: TOKEN, blockNumber: '40', source: 'rpc_code_transition',
+    });
+    assert.ok(rpcClient.codeBlocks.includes(39n));
+    assert.ok(rpcClient.codeBlocks.includes(40n));
+  });
+
   it('fails closed when the hint predates the contract bytecode', async () => {
     const rpcClient = {
       async request(method) {

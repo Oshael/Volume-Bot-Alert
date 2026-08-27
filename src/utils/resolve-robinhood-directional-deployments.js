@@ -79,8 +79,11 @@ function failureReason(error, fallback = 'verification_failed') {
 
 async function verifyDiscoveredDeployment(deps, input) {
   const discovered = await deps.deploymentDiscovery.discover(input);
-  if (discovered.source === 'launchpad_event') return discovered;
-  return deps.verifier.verifyDirectDeployment(discovered);
+  if (discovered.source === 'rpc_code_transition') {
+    return { deploymentBlock: discovered };
+  }
+  if (discovered.source === 'launchpad_event') return { deployment: discovered };
+  return { deployment: await deps.verifier.verifyDirectDeployment(discovered) };
 }
 
 async function verifyHints(deps, candidates, options, hints, lookupErrors = new Map()) {
@@ -91,7 +94,7 @@ async function verifyHints(deps, candidates, options, hints, lookupErrors = new 
         try {
           return {
             candidate,
-            deployment: await verifyDiscoveredDeployment(deps, candidate),
+            ...await verifyDiscoveredDeployment(deps, candidate),
           };
         } catch (error) {
           const lookupError = lookupErrors.get(candidate.tokenAddress);
@@ -121,7 +124,7 @@ async function verifyHints(deps, candidates, options, hints, lookupErrors = new 
         try {
           return {
             candidate,
-            deployment: await verifyDiscoveredDeployment(deps, { ...hint, ...candidate }),
+            ...await verifyDiscoveredDeployment(deps, { ...hint, ...candidate }),
           };
         } catch (discoveryFailure) {
           return { candidate, error: `deployment_discovery:${failureReason(discoveryFailure)}` };
@@ -131,14 +134,20 @@ async function verifyHints(deps, candidates, options, hints, lookupErrors = new 
     }
   });
   const verified = outcomes.flatMap((outcome) => outcome.deployment ? [outcome.deployment] : []);
+  const deploymentBlocks = outcomes.flatMap((outcome) => (
+    outcome.deploymentBlock ? [outcome.deploymentBlock] : []
+  ));
   if (verified.length) await deps.attributions.recordVerifiedDirectDeployments(verified);
+  if (deploymentBlocks.length) await deps.gaps.recordExactDeploymentBlocks(deploymentBlocks);
   const failed = outcomes.filter((outcome) => outcome.error);
   for (const outcome of failed) {
     await deps.attributions.recordDirectVerificationFailure({
       tokenAddress: outcome.candidate.tokenAddress, error: outcome.error,
     });
   }
-  return { verified: verified.length, failed: failed.length };
+  return {
+    verified: verified.length, deploymentBlocks: deploymentBlocks.length, failed: failed.length,
+  };
 }
 
 async function resolveNativeBatch(deps, candidates, options) {
@@ -166,6 +175,7 @@ async function resolveNativeBatch(deps, candidates, options) {
   const providerFailures = lookupErrors.size;
   return {
     verified: verified.verified,
+    deploymentBlocks: verified.deploymentBlocks,
     failed: verified.failed,
     retries: lookups.reduce((total, lookup) => total + lookup.retries, 0),
     splits: 0,
@@ -191,11 +201,15 @@ async function resolveBatch(deps, candidates, options) {
       parts.push(await resolveBatch(deps, candidates.slice(middle), options));
       return parts.reduce((total, part) => ({
         verified: total.verified + part.verified,
+        deploymentBlocks: total.deploymentBlocks + part.deploymentBlocks,
         failed: total.failed + part.failed,
         retries: total.retries + part.retries,
         splits: total.splits + part.splits,
         providerFailures: total.providerFailures + part.providerFailures,
-      }), { verified: 0, failed: 0, retries: 0, splits: 1, providerFailures: 0 });
+      }), {
+        verified: 0, deploymentBlocks: 0, failed: 0,
+        retries: 0, splits: 1, providerFailures: 0,
+      });
     }
     if (error.retryable !== true) throw error;
     await deps.attributions.recordDirectVerificationFailure({
@@ -203,7 +217,7 @@ async function resolveBatch(deps, candidates, options) {
       error: failureReason(error, 'blockscout_provider_failure'),
     });
     return {
-      verified: 0, failed: 1, retries: error.requestRetriesUsed || 0,
+      verified: 0, deploymentBlocks: 0, failed: 1, retries: error.requestRetriesUsed || 0,
       splits: 0, providerFailures: 1,
     };
   }
@@ -212,7 +226,8 @@ async function resolveBatch(deps, candidates, options) {
     new Map(response.value.map((item) => [item.tokenAddress, item])),
   );
   return {
-    verified: verified.verified, failed: verified.failed, retries: response.retries,
+    verified: verified.verified, deploymentBlocks: verified.deploymentBlocks,
+    failed: verified.failed, retries: response.retries,
     splits: 0, providerFailures: 0,
   };
 }
@@ -271,12 +286,13 @@ async function main(argv = process.argv.slice(2), deps = {}) {
     runId: options.runId, limit: options.limit,
   });
   const summary = {
-    candidates: candidates.length, verified: 0, failed: 0, retries: 0,
+    candidates: candidates.length, verified: 0, deploymentBlocks: 0, failed: 0, retries: 0,
     splits: 0, providerFailures: 0,
   };
   for (const batch of chunks(candidates, options.batchSize)) {
     const result = await resolveBatch(runtime, batch, options);
     summary.verified += result.verified;
+    summary.deploymentBlocks += result.deploymentBlocks;
     summary.failed += result.failed;
     summary.retries += result.retries;
     summary.splits += result.splits;

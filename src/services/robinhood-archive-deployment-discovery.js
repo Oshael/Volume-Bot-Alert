@@ -39,6 +39,11 @@ async function findFirstCodeBlock(rpcClient, tokenAddress, upperBlock) {
       low = middle + 1n;
     }
   }
+  if (low > 0n && hasCode(await rpcClient.request(
+    'eth_getCode', [tokenAddress, blockTag(low - 1n)]
+  ))) {
+    throw discoveryError('first bytecode block has no empty-code predecessor');
+  }
   return low;
 }
 
@@ -150,9 +155,13 @@ function createRobinhoodArchiveDeploymentDiscovery(options = {}) {
     if (direct) return direct;
     const launchpad = await findLaunchpadCreation(rpcClient, tokenAddress, deploymentBlock);
     if (launchpad) return launchpad;
-    const internal = await blockCreationLookup(tokenAddress, deploymentBlock.toString());
-    if (!internal) throw discoveryError('exact deployment block has no contract creation evidence');
-    return internal;
+    try {
+      const internal = await blockCreationLookup(tokenAddress, deploymentBlock.toString());
+      if (internal) return internal;
+    } catch (_) {}
+    return Object.freeze({
+      tokenAddress, blockNumber: deploymentBlock.toString(), source: 'rpc_code_transition',
+    });
   }
 
   return Object.freeze({ discover });

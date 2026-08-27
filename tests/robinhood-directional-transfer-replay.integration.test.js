@@ -333,6 +333,23 @@ describe('Robinhood directional transfer replay persistence', () => {
       tokenAddress: UNKNOWN_DEPLOYMENT_TOKEN, creatorAddress: `0x${'3'.repeat(40)}`,
       upperBlock: '149',
     }]);
+    assert.deepEqual(await deploymentGaps.recordExactDeploymentBlocks([{
+      tokenAddress: UNKNOWN_DEPLOYMENT_TOKEN, blockNumber: '145',
+    }]), { recorded: 1 });
+    assert.equal((await db.query(
+      `SELECT deployment_block::text AS deployment_block
+         FROM robinhood_holder_token_states WHERE token_address = $1`,
+      [UNKNOWN_DEPLOYMENT_TOKEN]
+    )).rows[0].deployment_block, '145');
+    assert.deepEqual(await deploymentGaps.plan(created.id), {
+      unresolved: 0, verifiable: 0, unsupported: 0,
+    });
+    await assert.rejects(
+      () => deploymentGaps.recordExactDeploymentBlocks([{
+        tokenAddress: UNKNOWN_DEPLOYMENT_TOKEN, blockNumber: '146',
+      }]),
+      /conflicts with holder state/
+    );
     await db.query(
       `UPDATE robinhood_holder_token_states SET deployment_block = 0
         WHERE token_address = $1`, [UNKNOWN_DEPLOYMENT_TOKEN]

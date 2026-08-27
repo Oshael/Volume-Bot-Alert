@@ -1,4 +1,5 @@
 const db = require('./db');
+const { normalizeTokenAddress } = require('../utils/token-identity');
 
 const CHAIN = 'robinhood';
 const EXACT_SOURCES = Object.freeze([
@@ -90,7 +91,36 @@ function createRobinhoodDirectionalDeploymentGapRepository(options = {}) {
     })));
   }
 
-  return Object.freeze({ listVerificationCandidates, plan });
+  async function recordExactDeploymentBlocks(inputs = []) {
+    if (!Array.isArray(inputs) || inputs.length === 0) return Object.freeze({ recorded: 0 });
+    const normalized = inputs.map((input) => {
+      const blockNumber = BigInt(String(input.blockNumber));
+      if (blockNumber <= 0n) throw new Error('deployment block must be positive');
+      return Object.freeze({
+        tokenAddress: normalizeTokenAddress(CHAIN, input.tokenAddress),
+        blockNumber: blockNumber.toString(),
+      });
+    });
+    const result = await database.query(
+      `UPDATE robinhood_holder_token_states state
+          SET deployment_block = input.block_number,
+              version = state.version + 1, updated_at = NOW()
+         FROM UNNEST($1::varchar[], $2::bigint[])
+           AS input(token_address, block_number)
+        WHERE state.chain = $3 AND state.token_address = input.token_address
+          AND (state.deployment_block IS NULL OR state.deployment_block = 0
+            OR state.deployment_block = input.block_number)
+        RETURNING state.token_address`,
+      [normalized.map((item) => item.tokenAddress),
+        normalized.map((item) => item.blockNumber), CHAIN]
+    );
+    if (result.rowCount !== normalized.length) {
+      throw new Error('exact deployment block conflicts with holder state');
+    }
+    return Object.freeze({ recorded: result.rowCount });
+  }
+
+  return Object.freeze({ listVerificationCandidates, plan, recordExactDeploymentBlocks });
 }
 
 module.exports = { createRobinhoodDirectionalDeploymentGapRepository };

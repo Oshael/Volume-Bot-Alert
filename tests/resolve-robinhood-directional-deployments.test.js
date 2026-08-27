@@ -72,7 +72,8 @@ describe('Robinhood directional deployment resolver', () => {
       { tokenAddress: TOKEN_B, creatorAddress: CREATOR },
     ], { concurrency: 2 });
     assert.deepEqual(result, {
-      verified: 1, failed: 1, retries: 0, splits: 0, providerFailures: 0,
+      verified: 1, deploymentBlocks: 0, failed: 1,
+      retries: 0, splits: 0, providerFailures: 0,
     });
     assert.equal(calls.verified[0].blockNumber, '100');
     assert.deepEqual(calls.failed, [{
@@ -108,7 +109,8 @@ describe('Robinhood directional deployment resolver', () => {
       { tokenAddress: TOKEN_B, creatorAddress: CREATOR },
     ], { concurrency: 2 });
     assert.deepEqual(result, {
-      verified: 1, failed: 1, retries: 2, splits: 0, providerFailures: 1,
+      verified: 1, deploymentBlocks: 0, failed: 1,
+      retries: 2, splits: 0, providerFailures: 1,
     });
     assert.equal(calls.verified.length, 1);
     assert.deepEqual(calls.failed, [{
@@ -144,9 +146,48 @@ describe('Robinhood directional deployment resolver', () => {
     });
 
     assert.deepEqual(result, {
-      verified: 1, failed: 0, retries: 2, splits: 0, providerFailures: 1,
+      verified: 1, deploymentBlocks: 0, failed: 0,
+      retries: 2, splits: 0, providerFailures: 1,
     });
     assert.deepEqual(verified, [launchpadDeployment]);
+  });
+
+  it('persists an exact code-transition block without promoting its creator hint', async () => {
+    const blocks = [];
+    const evidenceError = Object.assign(new Error('not a direct deployment'), {
+      code: 'holder_deployment_evidence_invalid',
+    });
+    const result = await resolveBatch({
+      sleep: async () => {},
+      blockscout: {
+        async getContractCreation(tokenAddress) {
+          return { tokenAddress, creatorAddress: CREATOR, transactionHash: HASH };
+        },
+      },
+      verifier: { async verifyDirectDeployment() { throw evidenceError; } },
+      deploymentDiscovery: {
+        async discover() {
+          return { tokenAddress: TOKEN_A, blockNumber: '40', source: 'rpc_code_transition' };
+        },
+      },
+      gaps: {
+        async recordExactDeploymentBlocks(items) { blocks.push(...items); },
+      },
+      attributions: {
+        async recordVerifiedDirectDeployments() { throw new Error('must not promote creator'); },
+        async recordDirectVerificationFailure() {},
+      },
+    }, [{ tokenAddress: TOKEN_A, creatorAddress: CREATOR, upperBlock: '100' }], {
+      concurrency: 1,
+    });
+
+    assert.deepEqual(result, {
+      verified: 0, deploymentBlocks: 1, failed: 0,
+      retries: 0, splits: 0, providerFailures: 0,
+    });
+    assert.deepEqual(blocks, [{
+      tokenAddress: TOKEN_A, blockNumber: '40', source: 'rpc_code_transition',
+    }]);
   });
 
   it('records the precise archive evidence rejection', async () => {
@@ -237,7 +278,7 @@ describe('Robinhood directional deployment resolver', () => {
       runtime, logger: { log() {} },
     });
     assert.deepEqual(report.summary, {
-      candidates: 1, verified: 1, failed: 0, retries: 0,
+      candidates: 1, verified: 1, deploymentBlocks: 0, failed: 0, retries: 0,
       splits: 0, providerFailures: 0,
     });
   });
@@ -269,7 +310,8 @@ describe('Robinhood directional deployment resolver', () => {
       { tokenAddress: TOKEN_B, creatorAddress: CREATOR },
     ], { concurrency: 2 });
     assert.deepEqual(result, {
-      verified: 1, failed: 1, retries: 2, splits: 1, providerFailures: 1,
+      verified: 1, deploymentBlocks: 0, failed: 1,
+      retries: 2, splits: 1, providerFailures: 1,
     });
     assert.deepEqual(failed, [{ tokenAddress: TOKEN_B, error: 'timeout:timed out' }]);
   });

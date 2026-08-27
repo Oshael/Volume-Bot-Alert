@@ -1778,9 +1778,14 @@ do range histórico onde o token apareceu. Se o Blockscout falhar ou seu hint n�
 for o deployment, o resolver localiza por busca binária o primeiro bloco com
 bytecode e consulta nesse bloco os eventos canônicos das factories Pons, NOXA e
 LaunchHood; uma correspondência exata é promovida como `launchpad_event` sem
-depender de trace ou Blockscout. Neste repair, a origem Blockscout primária é a
-rota nativa individual `/api/v2/addresses/{token}`; a rota PRO agregada não
-participa da resolução e o lookup de criação interna é apenas o último fallback.
+depender de trace ou Blockscout. Quando nenhuma prova de creator/factory existe,
+a transição canônica de bytecode entre os blocos `N-1` e `N` ainda materializa
+somente `holder_token_states.deployment_block = N`; ela desbloqueia o repair sem
+promover ou alterar o creator Blockscout. O resumo separa esse resultado em
+`deploymentBlocks`, enquanto `verified` continua reservado para atribuições
+completas. Neste repair, a origem Blockscout primária é a rota nativa individual
+`/api/v2/addresses/{token}`; a rota PRO agregada não participa da resolução e o
+lookup de criação interna é apenas o último fallback opcional.
 O creator Blockscout armazenado anteriormente é apenas um hint: divergência com
 o creator retornado pela rota nativa não bloqueia promoção quando transaction e
 receipt canônicos do archive comprovam o deployment. Falhas registram ausência
