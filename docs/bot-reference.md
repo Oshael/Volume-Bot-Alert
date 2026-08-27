@@ -1931,8 +1931,10 @@ membros, funder comum ou ancestral em até dois hops. Ele exige threshold explí
 usa a menor capacidade causal como valor qualificante conservador e trata CEX/infra
 fornecida pelo chamador como barreira. O reader seed aceita somente campanha v2
 concluída, limita candidatas/evidências por token e resolve CEX, infraestrutura e
-pools apenas entre os atores do grafo no bloco observado. Ainda não há writer desse
-shadow.
+pools apenas entre os atores do grafo no bloco observado. O writer substitui estado,
+grupos e membros na mesma transação, serializa por token/regra, valida a lineage do
+run concluído e recusa frontier atrasada, fork ou mudança de threshold/lookback sem
+nova versão da regra. Ainda não há runner desse shadow.
 A Stage 169 (`node src/utils/db-init-stage169.js`) preserva permanentemente a
 associação causal que o agregado global não representa: `run`, token, candidata,
 hop 1/2 e a transferência nativa exata. Ela depende da Stage 167, é somente DDL

@@ -2027,7 +2027,9 @@ sem somar fluxos possivelmente reutilizados. Endereços CEX/infra recebidos do
 chamador são barreiras de candidatura e travessia. Ele só produz shadow explicável;
 o reader PostgreSQL seed já falha fechado sem campanha v2 concluída, limita a
 população por token e resolve CEX, infraestrutura e pools no bloco observado.
-O writer PostgreSQL permanece em corte separado.
+O writer PostgreSQL substitui estado, grupos e membros atomicamente, serializa por
+token/regra e recusa lineage incompleta, frontier atrasada ou fork. Runner e
+paginação permanecem em corte separado.
 
 ### Corte D5 — publicação
 
