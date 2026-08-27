@@ -78,11 +78,45 @@ function createRobinhoodHolderBackfillExecutor(options = {}) {
     return evidence;
   }
 
+  async function retryNarrowedRange(suspicion, state) {
+    const fromBlock = BigInt(state.backfillNextBlock);
+    const toBlock = fromBlock + BigInt(receiptBlockLimit - 1);
+    let narrowedRange;
+    try {
+      narrowedRange = await reader.readRange({
+        tokenAddress: state.tokenAddress,
+        fromBlock: fromBlock.toString(),
+        toBlock: toBlock.toString(),
+      });
+    } catch (error) {
+      const evidence = deferDrift(state, clockMs());
+      return Object.freeze({
+        status: 'drift-unverified', tokenAddress: state.tokenAddress,
+        reason: 'holder_narrowed_range_unavailable',
+        originalFailedBlock: suspicion.failedBlock,
+        error: String(error?.code || error?.message || error).slice(0, 160),
+        nextObservationAt: new Date(evidence.nextObservationAtMs).toISOString(),
+      });
+    }
+    const narrowed = await repository.commitRange(narrowedRange);
+    if (narrowed.status === 'drift-suspected') {
+      return verifyDriftWithReceipts(narrowed, state);
+    }
+    driftEvidence.delete(state.tokenAddress);
+    return Object.freeze({
+      ...narrowed, recoverySource: 'adaptive-range',
+      originalFailedBlock: suspicion.failedBlock,
+    });
+  }
+
   async function verifyDriftWithReceipts(suspicion, state) {
     const fromBlock = BigInt(state.backfillNextBlock);
     const failedBlock = BigInt(suspicion.failedBlock);
     const receiptBlocks = failedBlock - fromBlock + 1n;
     if (receiptBlocks < 1n || receiptBlocks > BigInt(receiptBlockLimit)) {
+      if (receiptBlocks > BigInt(receiptBlockLimit)) {
+        return retryNarrowedRange(suspicion, state);
+      }
       const evidence = deferDrift(state, clockMs());
       return Object.freeze({
         status: 'drift-unverified', tokenAddress: state.tokenAddress,

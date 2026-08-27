@@ -188,43 +188,48 @@ describe('Robinhood holder backfill executor', () => {
     assert.equal(commits[1].toBlock, '104');
   });
 
-  it('defers an unverified deficit that exceeds the receipt safety limit', async () => {
-    let nowMs = Date.parse('2026-08-11T00:00:00.000Z');
+  it('narrows a wide deficit to the receipt-safe range instead of entering cooldown', async () => {
     const commits = [];
+    const reads = [];
     const repository = {
-      getNextToken: async ({ excludeTokenAddresses }) => (
-        excludeTokenAddresses.includes(TOKEN) ? null : state()
-      ),
+      getNextToken: async () => state(),
       markResyncing: async () => { throw new Error('must not resync'); },
       commitRange: async (range) => {
         commits.push(range);
-        return {
+        if (commits.length === 1) return {
           status: 'drift-suspected', tokenAddress: TOKEN,
           reason: 'holder_negative_balance', fingerprint: 'wide-deficit', failedBlock: '400',
+        };
+        return {
+          status: 'committed', tokenAddress: TOKEN, holderCount: '4',
+          backfillNextBlock: '353', liveThroughBlock: '352', liveThroughHash: HASH,
+          version: 3,
         };
       },
     };
     const reader = {
       getSafeHead: async () => ({ safeHead: '500' }),
       matchesCheckpoint: async () => true,
-      readRange: async (range) => ({
-        ...range, checkpoint: { number: range.toBlock, hash: HASH }, transfers: [],
-      }),
+      readRange: async (range) => {
+        reads.push(range);
+        return { ...range, checkpoint: { number: range.toBlock, hash: HASH }, transfers: [] };
+      },
       readReceiptRange: async () => { throw new Error('must not read oversized receipt range'); },
     };
     const executor = createRobinhoodHolderBackfillExecutor({
-      repository, reader, now: () => nowMs, receiptBlockLimit: 250,
+      repository, reader, receiptBlockLimit: 250,
     });
 
-    const result = await executor.runOnce();
-    nowMs += 1000;
-    const waiting = await executor.runOnce();
+    const result = await executor.runOnce({ rangeSize: 500 });
 
-    assert.equal(result.status, 'drift-unverified');
-    assert.equal(result.reason, 'holder_receipt_range_too_wide');
-    assert.equal(result.receiptBlocks, '298');
-    assert.equal(waiting.status, 'idle');
-    assert.equal(commits.length, 1);
+    assert.equal(result.status, 'committed');
+    assert.equal(result.recoverySource, 'adaptive-range');
+    assert.equal(result.originalFailedBlock, '400');
+    assert.deepEqual(reads, [
+      { tokenAddress: TOKEN, fromBlock: '103', toBlock: '500' },
+      { tokenAddress: TOKEN, fromBlock: '103', toBlock: '352' },
+    ]);
+    assert.equal(commits.length, 2);
   });
 
   it('requires three identical receipt deficits before isolating drift', async () => {

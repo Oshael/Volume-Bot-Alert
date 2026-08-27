@@ -1470,6 +1470,12 @@ evitando RPC e commit duplicados. `concurrency` no status informa o valor ativo;
 `activeExecutors` e `committedRanges` no último resultado mostram quantas
 partições trabalharam e quantos ranges foram confirmados no tick. Aumente o
 valor gradualmente enquanto live lag e pressão do RPC permanecerem saudáveis.
+`ROBINHOOD_HOLDER_BACKFILL_RANGE_SIZE` pode permanecer largo para acelerar
+trechos saudáveis. Se um range largo encontrar déficit além da janela segura de
+receipts, o executor confirma primeiro um prefixo limitado por
+`ROBINHOOD_HOLDER_RECEIPT_BLOCK_LIMIT` (250 por default) e volta a ampliar nos
+ticks seguintes; ele não coloca mais o token inteiro em cooldown somente porque
+o ponto suspeito está distante do início do range.
 States que já satisfazem o contrato de handoff deixam de ser selecionados para
 novo replay. Se o handoff vencer a corrida depois da seleção, o executor retorna
 `superseded`: a trava otimista continua rejeitando o commit antigo, mas o tick
