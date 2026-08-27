@@ -2020,7 +2020,9 @@ funder comum ou ancestral conectado em dois hops. Threshold é obrigatório por
 caminho; o valor qualificante do grupo é a menor capacidade causal do componente,
 sem somar fluxos possivelmente reutilizados. Endereços CEX/infra recebidos do
 chamador são barreiras de candidatura e travessia. Ele só produz shadow explicável;
-reader e writer PostgreSQL permanecem em cortes separados.
+o reader PostgreSQL seed já falha fechado sem campanha v2 concluída, limita a
+população por token e resolve CEX, infraestrutura e pools no bloco observado.
+O writer PostgreSQL permanece em corte separado.
 
 ### Corte D5 — publicação
 
