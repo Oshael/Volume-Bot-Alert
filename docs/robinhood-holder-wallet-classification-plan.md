@@ -2007,6 +2007,11 @@ Objetivo:
 - componentes e evidências explicáveis com thresholds versionados;
 - auditoria offline e nenhuma ação automática.
 
+A Stage 168 prepara o contrato persistente desse shadow: estado versionado por
+token, grupos e membros, lineage seed/live e política explícita de lookback e
+threshold positivo. Ela não escolhe threshold, não materializa e não transforma
+`BUNDLED` em tag de endereço; esses passos permanecem em cortes posteriores.
+
 ### Corte D5 — publicação
 
 Objetivo:

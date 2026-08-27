@@ -1905,6 +1905,13 @@ lease e checkpoint. Ela é somente DDL: não cria partições filhas, não inici
 campanha e não chama RPC. O raw destina-se à retenção de 30 dias; histórico mais
 antigo deve conservar apenas arestas/evidências relevantes. O cursor LIVE e o
 writer ainda não existem nesta etapa.
+A Stage 168 (`node src/utils/db-init-stage168.js`) prepara snapshots shadow de
+`possible bundle`: estado versionado por token, grupos explicáveis e membros com
+posição da primeira compra até `launch_block + 3`. Cada estado guarda lookback,
+threshold econômico positivo e lineage `seed`/`live`; grupos exigem pelo menos
+duas wallets, conexão comprovada, valor qualificante e evidência JSON. A migration
+é somente DDL, depende da Stage 167 e não materializa, publica ou adiciona uma tag
+de wallet. Threshold sem calibração não recebe default operacional.
 A Stage 166 (`node src/utils/db-init-stage166.js`) cria o controle durável do
 catch-up de launch anchors: uma campanha ativa por chain e uma fila por token com
 frontier/hash congelados, lease, retry e resultados terminais. A migration é

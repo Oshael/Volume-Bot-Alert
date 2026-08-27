@@ -4748,6 +4748,87 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage168-robinhood-possible-bundle-snapshots',
+    name: 'Stage 168 Robinhood possible-bundle snapshots',
+    repair: 'node src/utils/db-init-stage168.js',
+    tables: [{
+      table: 'robinhood_possible_bundle_states',
+      columns: [
+        'chain', 'token_address', 'rule_version', 'evidence_version', 'status',
+        'status_reason', 'source_kind', 'source_run_id', 'lookback_blocks',
+        'minimum_value_wei', 'through_block_number', 'through_block_hash',
+        'observed_at', 'created_at', 'updated_at',
+      ],
+      columnTypes: {
+        minimum_value_wei: { dataType: 'numeric', numericPrecision: 78, numericScale: 0 },
+      },
+      constraints: [{
+        name: 'rh_possible_bundle_states_pkey',
+        includes: ['PRIMARY KEY', 'chain', 'token_address', 'rule_version'],
+      }, {
+        name: 'rh_possible_bundle_states_source_check',
+        includes: ['source_kind', 'source_run_id', 'seed', 'live'],
+      }, {
+        name: 'rh_possible_bundle_states_policy_check',
+        includes: ['lookback_blocks', 'minimum_value_wei'],
+      }, {
+        name: 'rh_possible_bundle_states_frontier_check',
+        includes: ['through_block_number', 'through_block_hash', 'ready', 'stale', 'reorged'],
+      }],
+      indexes: [{
+        name: 'idx_rh_possible_bundle_states_status',
+        includes: ['chain', 'rule_version', 'status', 'token_address'],
+      }],
+    }, {
+      table: 'robinhood_possible_bundle_groups',
+      columns: [
+        'chain', 'token_address', 'rule_version', 'bundle_id', 'member_count',
+        'connection_count', 'qualifying_value_wei', 'evidence_json',
+        'created_at', 'updated_at',
+      ],
+      columnTypes: {
+        qualifying_value_wei: { dataType: 'numeric', numericPrecision: 78, numericScale: 0 },
+      },
+      constraints: [{
+        name: 'rh_possible_bundle_groups_pkey',
+        includes: ['PRIMARY KEY', 'chain', 'token_address', 'rule_version', 'bundle_id'],
+      }, {
+        name: 'rh_possible_bundle_groups_counts_check',
+        includes: ['member_count', 'connection_count', 'qualifying_value_wei'],
+      }, {
+        name: 'rh_possible_bundle_groups_evidence_check',
+        includes: ['CHECK', 'jsonb_typeof', 'evidence_json'],
+      }],
+    }, {
+      table: 'robinhood_possible_bundle_members',
+      columns: [
+        'chain', 'token_address', 'rule_version', 'bundle_id', 'wallet_address',
+        'launch_block', 'first_buy_block', 'first_buy_transaction_index',
+        'connection_kind', 'evidence_json', 'created_at',
+      ],
+      constraints: [{
+        name: 'rh_possible_bundle_members_pkey',
+        includes: ['PRIMARY KEY', 'chain', 'token_address', 'rule_version', 'wallet_address'],
+      }, {
+        name: 'rh_possible_bundle_members_position_check',
+        includes: ['launch_block', 'first_buy_block', 'first_buy_transaction_index'],
+      }, {
+        name: 'rh_possible_bundle_members_connection_check',
+        includes: ['direct_member_funding', 'connected_funding_ancestor', 'mixed'],
+      }, {
+        name: 'rh_possible_bundle_members_evidence_check',
+        includes: ['CHECK', 'jsonb_typeof', 'evidence_json'],
+      }],
+      indexes: [{
+        name: 'idx_rh_possible_bundle_members_group',
+        includes: ['chain', 'token_address', 'rule_version', 'bundle_id', 'wallet_address'],
+      }, {
+        name: 'idx_rh_possible_bundle_members_wallet',
+        includes: ['chain', 'wallet_address', 'rule_version'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
