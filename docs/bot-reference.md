@@ -1914,6 +1914,10 @@ threshold econômico positivo e lineage `seed`/`live`; grupos exigem pelo menos
 duas wallets, conexão comprovada, valor qualificante e evidência JSON. A migration
 é somente DDL, depende da Stage 167 e não materializa, publica ou adiciona uma tag
 de wallet. Threshold sem calibração não recebe default operacional.
+O materializador puro já forma componentes transitivos por funding direto entre
+membros, funder comum ou ancestral em até dois hops. Ele exige threshold explícito,
+usa a menor capacidade causal como valor qualificante conservador e trata CEX/infra
+fornecida pelo chamador como barreira. Ainda não há reader/writer desse shadow.
 A Stage 169 (`node src/utils/db-init-stage169.js`) preserva permanentemente a
 associação causal que o agregado global não representa: `run`, token, candidata,
 hop 1/2 e a transferência nativa exata. Ela depende da Stage 167, é somente DDL

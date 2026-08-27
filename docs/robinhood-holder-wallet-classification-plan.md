@@ -2015,6 +2015,12 @@ A Stage 169 corrige a lineage do seed antes da execução completa: o resumo glo
 `from -> to` continua reutilizável, mas cada evidência selecionada também fica
 associada permanentemente ao token, wallet candidata e hop causal. Assim, raw
 expirado não obriga o classificador a inferir relação a partir de outro lançamento.
+O materializador puro de D4 forma componentes transitivos por funder de membro,
+funder comum ou ancestral conectado em dois hops. Threshold é obrigatório por
+caminho; o valor qualificante do grupo é a menor capacidade causal do componente,
+sem somar fluxos possivelmente reutilizados. Endereços CEX/infra recebidos do
+chamador são barreiras de candidatura e travessia. Ele só produz shadow explicável;
+reader e writer PostgreSQL permanecem em cortes separados.
 
 ### Corte D5 — publicação
 
