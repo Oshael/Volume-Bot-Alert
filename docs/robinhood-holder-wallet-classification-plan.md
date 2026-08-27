@@ -2033,8 +2033,11 @@ pagina tokens da campanha congelada, limita cada execução a 100 tokens e isola
 falhas sob concorrência máxima 4. O comando é read-only por padrão; `--apply`
 materializa uma página e o cursor `nextToken` permite retomada explícita. Páginas
 com falha ou deferimento não avançam o cursor e reportam os tokens bloqueadores para
-retry idempotente da mesma página. Calibração do threshold, loop operacional, writer
-live e publicação permanecem pendentes.
+retry idempotente da mesma página. O auditor offline compara até 12 thresholds
+explícitos sobre o mesmo grafo carregado e agrega grupos, membros, tamanhos e tipos
+de conexão em até 1000 páginas; ele é read-only e não recomenda uma política.
+A escolha auditada do threshold, loop operacional, writer live e publicação
+permanecem pendentes.
 
 ### Corte D5 — publicação
 
