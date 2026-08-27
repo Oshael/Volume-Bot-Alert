@@ -218,6 +218,7 @@ describe('callout capture production persistence', () => {
       },
     });
     assert.equal(followStarted, 1);
+    assert.equal(followOptions.followEnabled, true);
     assert.equal(followOptions.cdpEndpoint, 'http://127.0.0.1:9222');
     assert.deepEqual(notifierOptions, {
       enabled: true, botToken: 'secret-token', chatId: '123',
@@ -235,5 +236,41 @@ describe('callout capture production persistence', () => {
     await worker.stop();
     assert.equal(followStopped, 1);
     assert.equal(healthStopped, 1);
+  });
+
+  it('starts read-only Fomo profile discovery when follow writes are disabled', async () => {
+    let followOptions;
+    let persistenceOptions;
+    const repository = { loadCheckpoint: async () => null, commitCapture: async () => {} };
+    const profilePersistence = { persist: async () => ({}) };
+    const worker = createCalloutCaptureWorker({
+      repository,
+      createPumpClient: () => ({}),
+      createPumpCollector: () => ({ start: async () => {}, stop: async () => {} }),
+      createFomoCollector: () => ({ start: () => {}, stop: async () => {} }),
+      createFomoProfileDiscoveryPersistence: (options) => {
+        persistenceOptions = options;
+        return profilePersistence;
+      },
+      createFomoFollowQueue: (options) => {
+        followOptions = options;
+        return { start: () => {}, stop: async () => {} };
+      },
+      createRetentionWorker: () => ({ start: () => {}, stop: async () => {} }),
+    });
+
+    await worker.start({
+      pump: {},
+      fomo: {
+        transport: 'browser_cdp', profileDiscovery: { enabled: true },
+        follow: { enabled: false, discoveryEnabled: false },
+      },
+    });
+    assert.equal(persistenceOptions.repository, repository);
+    assert.equal(followOptions.enabled, true);
+    assert.equal(followOptions.followEnabled, false);
+    assert.equal(followOptions.discoveryEnabled, true);
+    assert.equal(followOptions.profilePersistence, profilePersistence);
+    await worker.stop();
   });
 });

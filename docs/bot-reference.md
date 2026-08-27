@@ -981,14 +981,24 @@ direto, lookup de trade e reconciliação periódica Fomo ficam desativados ness
 modo; o navegador é o dono exclusivo da sessão. O transporte `direct_ws`
 continua disponível como fallback.
 
-Follows externos usam uma fila separada, exclusiva de `browser_cdp`. A fila só
-existe com `FOMO_FOLLOW_ENABLED=true`, permanece read-only enquanto
+Discovery read-only de perfis também é exclusiva de `browser_cdp` e é ativada
+por `FOMO_PROFILE_DISCOVERY_ENABLED=true`. A cada ciclo ela lê os rankings
+disponíveis de 24h, 7d e 30d, cada um limitado por
+`FOMO_FOLLOW_DISCOVERY_LIMIT` (default e máximo
+100), e persiste `userHandle`, nome, foto e as wallets Solana/EVM informadas pela
+plataforma. Essas wallets usam `relation_type=profile_wallet` e
+`source_type=platform_reported`: são vínculos declarados pelo perfil, não prova
+de uso em uma call. O checkpoint independente é `fomo:profile-discovery`. A
+sincronização continua funcionando com follow desabilitado ou com o circuito de
+follow pausado e nunca lê `followingIds` nem escreve `/follows` nesses casos.
+
+Follows externos usam a mesma fila de descoberta, exclusiva de `browser_cdp`.
+O follow é ativado com `FOMO_FOLLOW_ENABLED=true`, permanece read-only enquanto
 `FOMO_FOLLOW_DRY_RUN=true` e aceita no máximo 100 UUIDs explícitos em
-`FOMO_FOLLOW_PROFILE_IDS`. Discovery opt-in usa o Top Profits 24h via
-`FOMO_FOLLOW_DISCOVERY_ENABLED=true`, limitado por
-`FOMO_FOLLOW_DISCOVERY_LIMIT` (default e máximo 100), e ignora o próprio
-usuário e perfis privados, restritos ou desativados. Allowlist e discovery são
-combinadas em no máximo 100 candidatos. A fila observa o ID do usuário na resposta de
+`FOMO_FOLLOW_PROFILE_IDS`. Discovery opt-in para follow usa os rankings 24h, 7d
+e 30d via `FOMO_FOLLOW_DISCOVERY_ENABLED=true`; o limite é por ranking, não um
+teto cumulativo de contas seguidas. Ela ignora o próprio usuário e perfis
+privados, restritos ou desativados. A fila observa o ID do usuário na resposta de
 `POST /v2/users` carregada pelo próprio navegador, lê `followingIds`, remove os já
 seguidos e executa `POST /follows` com concorrência 1, jitter e limite default de
 uma escrita por ciclo. Enquanto o circuito estiver fechado, relê leaderboard e
@@ -996,7 +1006,7 @@ uma escrita por ciclo. Enquanto o circuito estiver fechado, relê leaderboard e
 e agenda o próximo ciclo somente depois de concluir o atual; `cycles`,
 `lastStartedAt`, `completedAt` e `nextRunAt` expõem progresso sem polling
 concorrente. O snapshot atual de `followingIds` torna cada ciclo idempotente; não
-há cursor porque o leaderboard é um ranking snapshot limitado a 100. Qualquer
+há cursor porque cada leaderboard é um ranking snapshot limitado. Qualquer
 timeout, exceção ou status diferente de 200 pausa todos os ciclos seguintes. Não há
 unfollow automático; autorização Privy observada pelo CDP fica somente em
 memória e nunca entra em status ou log. Se o reload não emitir a leitura HTTP do

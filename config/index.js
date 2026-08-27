@@ -486,6 +486,7 @@ const fomoCaptureTransport = String(process.env.FOMO_CAPTURE_TRANSPORT || 'direc
 const fomoFollowEnabled = parseBoolean(process.env.FOMO_FOLLOW_ENABLED, false);
 const fomoFollowDryRun = parseBoolean(process.env.FOMO_FOLLOW_DRY_RUN, true);
 const fomoFollowDiscoveryEnabled = parseBoolean(process.env.FOMO_FOLLOW_DISCOVERY_ENABLED, false);
+const fomoProfileDiscoveryEnabled = parseBoolean(process.env.FOMO_PROFILE_DISCOVERY_ENABLED, false);
 const fomoTelegramAlertsEnabled = parseBoolean(
   process.env.FOMO_TELEGRAM_ALERTS_ENABLED
     ?? process.env.FOMO_FOLLOW_TELEGRAM_ALERTS_ENABLED,
@@ -618,6 +619,9 @@ if (calloutCaptureEnabled) {
   }
   if (fomoFollowEnabled && fomoCaptureTransport !== 'browser_cdp') {
     missing.push('FOMO_FOLLOW_ENABLED requires FOMO_CAPTURE_TRANSPORT=browser_cdp');
+  }
+  if (fomoProfileDiscoveryEnabled && fomoCaptureTransport !== 'browser_cdp') {
+    missing.push('FOMO_PROFILE_DISCOVERY_ENABLED requires FOMO_CAPTURE_TRANSPORT=browser_cdp');
   }
   if (fomoTelegramAlertsEnabled && fomoCaptureTransport !== 'browser_cdp') {
     missing.push('FOMO_TELEGRAM_ALERTS_ENABLED requires FOMO_CAPTURE_TRANSPORT=browser_cdp');
@@ -813,6 +817,7 @@ module.exports = {
           process.env.FOMO_BROWSER_STALE_SECONDS, 90, 30, 3600
         ) * 1000,
       },
+      profileDiscovery: { enabled: fomoProfileDiscoveryEnabled },
       follow: {
         enabled: fomoFollowEnabled,
         dryRun: fomoFollowDryRun,

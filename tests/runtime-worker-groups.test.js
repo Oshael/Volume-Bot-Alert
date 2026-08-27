@@ -266,6 +266,23 @@ describe('runtime worker groups config', () => {
     assert.equal(follow.intervalMs, 600_000);
   });
 
+  it('enables Fomo profile discovery independently from account follows', () => {
+    const result = spawnSync(process.execPath, ['-e', "const c=require('./config'); console.log(JSON.stringify(c.calloutCaptureWorker.fomo))"], {
+      cwd: ROOT_DIR,
+      env: {
+        ...process.env, BACKGROUND_WORKER_GROUPS: 'callouts', CALLOUT_CAPTURE_ENABLED: 'true',
+        PUMP_AUTH_TOKEN: 'pump-test', FOMO_CAPTURE_TRANSPORT: 'browser_cdp',
+        FOMO_PROFILE_DISCOVERY_ENABLED: 'true', FOMO_FOLLOW_ENABLED: 'false',
+        FOMO_WS_TOPIC_ID: '', FOMO_WS_JWT: '', FOMO_WS_JWT_FILE: '',
+      },
+      encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const fomo = JSON.parse(result.stdout);
+    assert.equal(fomo.profileDiscovery.enabled, true);
+    assert.equal(fomo.follow.enabled, false);
+  });
+
   it('rejects combining Robinhood maintenance with Solana maintenance', () => {
     const result = spawnSync(process.execPath, ['-e', "require('./config')"], {
       cwd: ROOT_DIR,

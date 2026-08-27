@@ -5,6 +5,7 @@ const { isFomoPage, normalizeCdpEndpoint } = require('./fomo-browser-activity-st
 
 const API_ORIGIN = 'https://prod-api.fomo.family';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const DISCOVERY_TIMEFRAMES = ['24h', '7d', '30d'];
 
 function normalizeProfileIds(values, max = 100) {
   const unique = [...new Set((Array.isArray(values) ? values : [])
@@ -52,20 +53,34 @@ async function readFollowPlan(api, allowlistedIds, options = {}) {
     throw Object.assign(new Error('Fomo browser user identity is invalid'), { code: 'FOMO_FOLLOW_PROFILE' });
   }
   let discoveredIds = [];
+  const discoveredProfiles = [];
   if (options.discoveryEnabled) {
-    const discoveryResponse = await api.request(
-      `/v2/leaderboard/24h?limit=${options.discoveryLimit}`,
-    );
-    const discoveryResult = requireSuccess(discoveryResponse, 'leaderboard discovery');
-    discoveredIds = leaderboardProfileIds(discoveryResult, userId, options.discoveryLimit);
+    for (const timeframe of DISCOVERY_TIMEFRAMES) {
+      const discoveryResponse = await api.request(
+        `/v2/leaderboard/${timeframe}?limit=${options.discoveryLimit}`,
+      );
+      if (responseStatus(discoveryResponse) === 404) continue;
+      const discoveryResult = requireSuccess(discoveryResponse, `leaderboard ${timeframe} discovery`);
+      const leaderboard = Array.isArray(discoveryResult?.leaderboard)
+        ? discoveryResult.leaderboard : [];
+      discoveredProfiles.push(...leaderboard.map((profile) => ({ timeframe, profile })));
+      discoveredIds.push(...leaderboardProfileIds(discoveryResult, userId, options.discoveryLimit));
+    }
+    discoveredIds = [...new Set(discoveredIds)];
   }
-  const profileIds = [...new Set([...allowlistedIds, ...discoveredIds])].slice(0, 100);
+  const profileIds = [...new Set([...allowlistedIds, ...discoveredIds])];
+  if (options.followEnabled === false) {
+    return {
+      userId, discovered: discoveredIds.length, discoveredProfiles,
+      pending: [], alreadyFollowed: 0,
+    };
+  }
   const followingResponse = await api.request('/v2/users/current/followingIds');
   const followingResult = requireSuccess(followingResponse, 'following read');
   const following = new Set(followingResult?.followingIds || []);
   return {
     userId,
-    discovered: discoveredIds.length,
+    discovered: discoveredIds.length, discoveredProfiles,
     pending: profileIds.filter((id) => !following.has(id)),
     alreadyFollowed: profileIds.filter((id) => following.has(id)).length,
   };
@@ -242,6 +257,7 @@ async function createFomoBrowserApi(options = {}) {
 
 function createFomoBrowserFollowQueue(options = {}) {
   const enabled = options.enabled === true;
+  const followEnabled = options.followEnabled !== false;
   const dryRun = options.dryRun !== false;
   const profileIds = normalizeProfileIds(options.profileIds);
   const discoveryEnabled = options.discoveryEnabled === true;
@@ -256,14 +272,16 @@ function createFomoBrowserFollowQueue(options = {}) {
   const now = options.now || Date.now;
   const createBrowserApi = options.createBrowserApi || createFomoBrowserApi;
   const stateStore = options.stateStore || { load: async () => null, save: async () => {} };
+  const profilePersistence = options.profilePersistence;
   const pauseNotifier = options.pauseNotifier;
   let started = false;
   let running = false;
   let work = null;
   let timer = null;
   const status = {
-    enabled, dryRun, discoveryEnabled, running: false, discovered: 0,
+    enabled, followEnabled, dryRun, discoveryEnabled, running: false, discovered: 0,
     planned: 0, followed: 0, alreadyFollowed: 0,
+    persistedProfiles: 0, persistedWallets: 0, lastDiscoveryPersistedAt: null,
     cycles: 0, intervalMs, lastStartedAt: null, nextRunAt: null,
     errors: 0, paused: false, pausePersisted: false, pausedAt: null,
     lastErrorCode: null, alertSentAt: null, alertErrors: 0,
@@ -324,33 +342,53 @@ function createFomoBrowserFollowQueue(options = {}) {
     }
   }
 
+  async function restorePause() {
+    if (!followEnabled) return false;
+    const saved = await stateStore.load();
+    if (saved?.paused !== true) return false;
+    status.paused = true;
+    status.pausePersisted = true;
+    status.pausedAt = saved.pausedAt || null;
+    status.lastErrorCode = saved.lastErrorCode || 'FOMO_FOLLOW_PAUSED';
+    status.alertSentAt = saved.alertSentAt || null;
+    await notifyPause();
+    return !profilePersistence;
+  }
+
+  async function persistDiscoveredProfiles(entries) {
+    if (!profilePersistence) return;
+    const persisted = await profilePersistence.persist(entries);
+    status.persistedProfiles = persisted.profiles;
+    status.persistedWallets = persisted.wallets;
+    status.lastDiscoveryPersistedAt = persisted.persistedAt;
+  }
+
+  async function handleRunError(error) {
+    if (followEnabled && !status.paused) await pause(error);
+    else fail(error, 'FOMO_PROFILE_DISCOVERY_ERROR');
+  }
+
   async function run() {
-    if (!enabled || (profileIds.length === 0 && !discoveryEnabled)) return;
+    if (!enabled || (profileIds.length === 0 && !discoveryEnabled && !profilePersistence)) return;
     let api;
     try {
-      const saved = await stateStore.load();
-      if (saved?.paused === true) {
-        status.paused = true;
-        status.pausePersisted = true;
-        status.pausedAt = saved.pausedAt || null;
-        status.lastErrorCode = saved.lastErrorCode || 'FOMO_FOLLOW_PAUSED';
-        status.alertSentAt = saved.alertSentAt || null;
-        await notifyPause();
-        return;
-      }
+      if (await restorePause()) return;
       api = await createBrowserApi({
         cdpEndpoint: options.cdpEndpoint,
         authWaitMs: options.authWaitMs,
         requestTimeoutMs: options.requestTimeoutMs,
       });
-      const plan = await readFollowPlan(api, profileIds, { discoveryEnabled, discoveryLimit });
+      const plan = await readFollowPlan(api, profileIds, {
+        discoveryEnabled, discoveryLimit, followEnabled: followEnabled && !status.paused,
+      });
       status.discovered = plan.discovered;
       status.alreadyFollowed = plan.alreadyFollowed;
       status.planned = plan.pending.length;
-      if (dryRun) return;
+      await persistDiscoveredProfiles(plan.discoveredProfiles);
+      if (!followEnabled || status.paused || dryRun) return;
       await writePending(api, plan.userId, plan.pending);
     } catch (error) {
-      await pause(error);
+      await handleRunError(error);
     } finally {
       await api?.close?.();
       status.completedAt = new Date().toISOString();
@@ -358,7 +396,7 @@ function createFomoBrowserFollowQueue(options = {}) {
   }
 
   function scheduleNext() {
-    if (!started || status.paused || timer) return;
+    if (!started || (status.paused && !profilePersistence) || timer) return;
     status.nextRunAt = new Date(now() + intervalMs).toISOString();
     timer = schedule(() => {
       timer = null;
@@ -368,7 +406,7 @@ function createFomoBrowserFollowQueue(options = {}) {
   }
 
   function startCycle() {
-    if (!started || running || status.paused) return;
+    if (!started || running || (status.paused && !profilePersistence)) return;
     running = true;
     status.running = true;
     status.cycles += 1;

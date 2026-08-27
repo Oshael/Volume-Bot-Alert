@@ -7,6 +7,9 @@ const { createFomoLocalCollector } = require('./fomo-local-collector');
 const { createFomoBrowserActivityStream } = require('./fomo-browser-activity-stream');
 const { createFomoBrowserHealthMonitor } = require('./fomo-browser-health-monitor');
 const { createFomoBrowserFollowQueue } = require('./fomo-browser-follow-queue');
+const {
+  createFomoProfileDiscoveryPersistence,
+} = require('./fomo-profile-discovery-persistence');
 const { createFomoTelegramOpsNotifier } = require('./fomo-follow-telegram-notifier');
 const { createPumpCalloutClient } = require('./pump-callout-client');
 const { createPumpLocalCollector } = require('./pump-local-collector');
@@ -98,9 +101,16 @@ function createFomoFollowStateStore(repository) {
 }
 
 function buildFomoFollowQueue(deps, config, repository, pauseNotifier) {
-  if (config.transport !== 'browser_cdp' || !config.follow?.enabled) return null;
+  const followEnabled = config.follow?.enabled === true;
+  const profileDiscoveryEnabled = config.profileDiscovery?.enabled === true;
+  if (config.transport !== 'browser_cdp' || (!followEnabled && !profileDiscoveryEnabled)) return null;
+  const profilePersistence = profileDiscoveryEnabled
+    ? (deps.createFomoProfileDiscoveryPersistence || createFomoProfileDiscoveryPersistence)({ repository })
+    : null;
   return (deps.createFomoFollowQueue || createFomoBrowserFollowQueue)({
-    ...config.follow, cdpEndpoint: config.cdpEndpoint,
+    ...config.follow, enabled: true, followEnabled,
+    discoveryEnabled: config.follow?.discoveryEnabled === true || profileDiscoveryEnabled,
+    cdpEndpoint: config.cdpEndpoint, profilePersistence,
     stateStore: createFomoFollowStateStore(repository),
     pauseNotifier,
   });
