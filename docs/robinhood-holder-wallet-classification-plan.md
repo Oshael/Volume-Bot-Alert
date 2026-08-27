@@ -1993,6 +1993,10 @@ A Stage 167 estabelece o raw particionado, arestas diretas permanentes e o
 controle retomável do seed. Campanhas congelam candidatos, posições de primeira
 compra, ranges e checkpoint; aplicar a migration não cria partição diária, não
 inicia campanha e não lê o RPC. O cursor LIVE permanece para um corte posterior.
+O materializador do seed mantém uma janela móvel limitada ao lookback e seleciona
+somente funding anterior à posição da primeira compra: aresta direta e um
+ancestral causal, no máximo dois hops. Terceiro hop e transfers não relacionados
+não são persistidos; o threshold econômico continua reservado à calibração.
 
 ### Corte D4 — possible bundle shadow
 
