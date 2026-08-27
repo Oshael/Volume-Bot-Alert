@@ -142,9 +142,6 @@ async function main(argv = process.argv.slice(2), deps = {}) {
   const options = parseArgs(argv);
   const database = deps.database || db;
   const logger = deps.logger || console;
-  if (!String((deps.env || process.env).DATABASE_URL || '').trim()) {
-    throw new Error('missing required env DATABASE_URL');
-  }
   const result = options.apply
     ? await resetRun(database, options.runId)
     : await inspectRecovery(database, options.runId);

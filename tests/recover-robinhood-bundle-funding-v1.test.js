@@ -55,7 +55,7 @@ describe('Robinhood bundle funding v1 recovery', () => {
     };
     const messages = [];
     const report = await main(['--run-id=1'], {
-      database, env: { DATABASE_URL: 'postgres://test' },
+      database,
       logger: { log(message) { messages.push(message); } },
     });
     assert.equal(report.mode, 'read-only');
