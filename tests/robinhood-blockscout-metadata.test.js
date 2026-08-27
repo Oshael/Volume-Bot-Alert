@@ -86,6 +86,7 @@ describe('Robinhood Blockscout metadata client', () => {
     const transactionHash = `0x${'4'.repeat(64)}`;
     const calls = [];
     const client = createRobinhoodBlockscoutMetadataClient({
+      apiKey: 'proapi_test',
       fetchImpl: async (url) => {
         calls.push(String(url));
         if (calls.length === 1) return response(503, null);
@@ -102,6 +103,7 @@ describe('Robinhood Blockscout metadata client', () => {
     const fallback = new URL(calls[1]);
     assert.equal(fallback.searchParams.get('action'), 'tokentx');
     assert.equal(fallback.searchParams.get('sort'), 'asc');
+    assert.equal(fallback.searchParams.get('apikey'), 'proapi_test');
   });
 
   it('does not treat an ordinary token transfer as a contract creation hint', async () => {
@@ -125,6 +127,7 @@ describe('Robinhood Blockscout metadata client', () => {
     const transactionHash = `0x${'4'.repeat(64)}`;
     let requestedUrl;
     const client = createRobinhoodBlockscoutMetadataClient({
+      apiKey: 'proapi_test',
       fetchImpl: async (url) => {
         requestedUrl = String(url);
         return response(200, {
@@ -148,6 +151,7 @@ describe('Robinhood Blockscout metadata client', () => {
     const transactionHash = `0x${'4'.repeat(64)}`;
     const calls = [];
     const client = createRobinhoodBlockscoutMetadataClient({
+      apiKey: 'proapi_test',
       fetchImpl: async (url) => {
         calls.push(String(url));
         if (calls.length === 1) return response(503, null);
@@ -164,6 +168,7 @@ describe('Robinhood Blockscout metadata client', () => {
     const fallback = new URL(calls[1]);
     assert.equal(fallback.searchParams.get('action'), 'txlistinternal');
     assert.equal(fallback.searchParams.get('txhash'), transactionHash);
+    assert.equal(fallback.searchParams.get('apikey'), 'proapi_test');
   });
 
   it('finds contract creation evidence inside one exact deployment block', async () => {
@@ -171,6 +176,7 @@ describe('Robinhood Blockscout metadata client', () => {
     const transactionHash = `0x${'4'.repeat(64)}`;
     let requestedUrl;
     const client = createRobinhoodBlockscoutMetadataClient({
+      apiKey: 'proapi_test',
       fetchImpl: async (url) => {
         requestedUrl = new URL(url);
         return response(200, { result: [{
@@ -187,6 +193,7 @@ describe('Robinhood Blockscout metadata client', () => {
     assert.equal(requestedUrl.searchParams.get('startblock'), '40');
     assert.equal(requestedUrl.searchParams.get('endblock'), '40');
     assert.equal(requestedUrl.searchParams.get('include_zero_value'), 'true');
+    assert.equal(requestedUrl.searchParams.get('apikey'), 'proapi_test');
   });
 
   it('honors Blockscout Retry-After when retrying a shared rate limit', async () => {

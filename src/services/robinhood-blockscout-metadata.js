@@ -231,6 +231,11 @@ function createRobinhoodBlockscoutMetadataClient(options = {}) {
   }
 
   const request = (address, url, resource) => requestUrl(new URL(address, url), resource);
+  const legacyUrl = () => {
+    const url = new URL(legacyApiUrl);
+    if (apiKey) url.searchParams.set('apikey', apiKey);
+    return url;
+  };
 
   async function getTokenMetadata(tokenAddress) {
     const address = normalizeTokenAddress('robinhood', tokenAddress);
@@ -247,7 +252,7 @@ function createRobinhoodBlockscoutMetadataClient(options = {}) {
     try { payload = await request(address, addressBaseUrl, 'address'); }
     catch (error) {
       if (!isRetryableProviderError(error)) throw error;
-      const url = new URL(legacyApiUrl);
+      const url = legacyUrl();
       url.searchParams.set('module', 'account');
       url.searchParams.set('action', 'tokentx');
       url.searchParams.set('contractaddress', address);
@@ -304,7 +309,7 @@ function createRobinhoodBlockscoutMetadataClient(options = {}) {
   }
 
   async function getLegacyInternalCreation(hint) {
-    const url = new URL(legacyApiUrl);
+    const url = legacyUrl();
     url.searchParams.set('module', 'account');
     url.searchParams.set('action', 'txlistinternal');
     url.searchParams.set('txhash', hint.transactionHash);
@@ -331,7 +336,7 @@ function createRobinhoodBlockscoutMetadataClient(options = {}) {
   async function getContractCreationAtBlock(tokenAddress, blockNumber) {
     const address = normalizeTokenAddress('robinhood', tokenAddress);
     const block = BigInt(String(blockNumber)).toString();
-    const url = new URL(legacyApiUrl);
+    const url = legacyUrl();
     url.searchParams.set('module', 'account');
     url.searchParams.set('action', 'txlistinternal');
     url.searchParams.set('address', address);
