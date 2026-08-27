@@ -116,6 +116,39 @@ describe('Robinhood directional deployment resolver', () => {
     }]);
   });
 
+  it('recovers a provider failure through bounded canonical RPC discovery', async () => {
+    const verified = [];
+    const timeout = Object.assign(new Error('unavailable'), {
+      code: 'http_error', httpStatus: 503, retryable: true, requestRetriesUsed: 2,
+    });
+    const launchpadDeployment = {
+      tokenAddress: TOKEN_A, creatorAddress: CREATOR, transactionHash: HASH,
+      source: 'launchpad_event', factoryAddress: `0x${'e'.repeat(40)}`, blockNumber: '40',
+    };
+    const result = await resolveBatch({
+      sleep: async () => {},
+      blockscout: { async getContractCreation() { throw timeout; } },
+      deploymentDiscovery: {
+        async discover(input) {
+          assert.equal(input.upperBlock, '100');
+          return launchpadDeployment;
+        },
+      },
+      verifier: { async verifyDirectDeployment() { throw new Error('must not trace an event'); } },
+      attributions: {
+        async recordVerifiedDirectDeployments(items) { verified.push(...items); },
+        async recordDirectVerificationFailure() {},
+      },
+    }, [{ tokenAddress: TOKEN_A, creatorAddress: CREATOR, upperBlock: '100' }], {
+      concurrency: 1,
+    });
+
+    assert.deepEqual(result, {
+      verified: 1, failed: 0, retries: 2, splits: 0, providerFailures: 1,
+    });
+    assert.deepEqual(verified, [launchpadDeployment]);
+  });
+
   it('records the precise archive evidence rejection', async () => {
     const failed = [];
     const evidenceError = Object.assign(new Error('receipt contract address diverged'), {

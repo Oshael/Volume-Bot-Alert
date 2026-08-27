@@ -77,10 +77,41 @@ function failureReason(error, fallback = 'verification_failed') {
   return message && message !== code ? `${code}:${message}` : code;
 }
 
-async function verifyHints(deps, candidates, options, hints) {
+async function verifyDiscoveredDeployment(deps, input) {
+  const discovered = await deps.deploymentDiscovery.discover(input);
+  if (discovered.source === 'launchpad_event') return discovered;
+  return deps.verifier.verifyDirectDeployment(discovered);
+}
+
+async function verifyHints(deps, candidates, options, hints, lookupErrors = new Map()) {
   const outcomes = await mapConcurrent(candidates, options.concurrency, async (candidate) => {
     const hint = hints.get(candidate.tokenAddress);
-    if (!hint) return { candidate, error: 'blockscout_address_not_found' };
+    if (!hint) {
+      if (deps.deploymentDiscovery && candidate.upperBlock != null) {
+        try {
+          return {
+            candidate,
+            deployment: await verifyDiscoveredDeployment(deps, candidate),
+          };
+        } catch (error) {
+          const lookupError = lookupErrors.get(candidate.tokenAddress);
+          const prefix = lookupError
+            ? `contract_creation_lookup:${failureReason(lookupError, 'blockscout_provider_failure')};`
+            : '';
+          return { candidate, error: `${prefix}deployment_discovery:${failureReason(error)}` };
+        }
+      }
+      const lookupError = lookupErrors.get(candidate.tokenAddress);
+      if (lookupError) {
+        return {
+          candidate,
+          error: `contract_creation_lookup:${failureReason(
+            lookupError, 'blockscout_provider_failure'
+          )}`,
+        };
+      }
+      return { candidate, error: 'blockscout_address_not_found' };
+    }
     if (!hint.creatorAddress) return { candidate, error: 'blockscout_creator_missing' };
     if (!hint.transactionHash) return { candidate, error: 'blockscout_creation_transaction_missing' };
     try {
@@ -88,10 +119,9 @@ async function verifyHints(deps, candidates, options, hints) {
     } catch (error) {
       if (error?.code === 'holder_deployment_evidence_invalid' && deps.deploymentDiscovery) {
         try {
-          const discovered = await deps.deploymentDiscovery.discover(hint);
           return {
             candidate,
-            deployment: await deps.verifier.verifyDirectDeployment(discovered),
+            deployment: await verifyDiscoveredDeployment(deps, { ...hint, ...candidate }),
           };
         } catch (discoveryFailure) {
           return { candidate, error: `deployment_discovery:${failureReason(discoveryFailure)}` };
@@ -120,24 +150,23 @@ async function resolveNativeBatch(deps, candidates, options) {
       );
       return { candidate, hint: response.value, retries: response.retries, providerFailure: false };
     } catch (error) {
-      await deps.attributions.recordDirectVerificationFailure({
-        tokenAddress: candidate.tokenAddress,
-        error: `contract_creation_lookup:${failureReason(error, 'blockscout_provider_failure')}`,
-      });
       return {
-        candidate, hint: null, retries: error.requestRetriesUsed || 0, providerFailure: true,
+        candidate, hint: null, lookupError: error,
+        retries: error.requestRetriesUsed || 0, providerFailure: true,
       };
     }
   });
   const available = lookups.filter((lookup) => !lookup.providerFailure);
   const hints = new Map(available.map((lookup) => [lookup.candidate.tokenAddress, lookup.hint]));
+  const lookupErrors = new Map(lookups.filter((lookup) => lookup.lookupError)
+    .map((lookup) => [lookup.candidate.tokenAddress, lookup.lookupError]));
   const verified = await verifyHints(
-    deps, available.map((lookup) => lookup.candidate), options, hints,
+    deps, candidates, options, hints, lookupErrors,
   );
-  const providerFailures = lookups.length - available.length;
+  const providerFailures = lookupErrors.size;
   return {
     verified: verified.verified,
-    failed: verified.failed + providerFailures,
+    failed: verified.failed,
     retries: lookups.reduce((total, lookup) => total + lookup.retries, 0),
     splits: 0,
     providerFailures,

@@ -1,4 +1,9 @@
 const { normalizeTokenAddress } = require('../utils/token-identity');
+const {
+  buildLaunchpadCreatorFilter, decodeLaunchpadCreatorLog,
+} = require('./robinhood-launchpad-creator-adapter');
+
+const ROBINHOOD_CHAIN_ID = 4663n;
 
 function quantity(value, label) {
   const raw = String(value ?? '').trim();
@@ -78,6 +83,31 @@ async function findDirectCreation(rpcClient, tokenAddress, deploymentBlock) {
   return null;
 }
 
+async function findLaunchpadCreation(rpcClient, tokenAddress, deploymentBlock) {
+  const [block, logs] = await Promise.all([
+    rpcClient.request('eth_getBlockByNumber', [blockTag(deploymentBlock), false]),
+    rpcClient.request('eth_getLogs', [buildLaunchpadCreatorFilter(deploymentBlock)]),
+  ]);
+  if (quantity(block?.number, 'block.number') !== deploymentBlock
+      || !/^0x[0-9a-f]{64}$/i.test(String(block?.hash ?? ''))
+      || !Array.isArray(logs)) {
+    throw discoveryError('launchpad deployment block response is incomplete');
+  }
+  const blockHash = String(block.hash).toLowerCase();
+  const matches = logs.map((log) => {
+    try { return decodeLaunchpadCreatorLog(log); }
+    catch (cause) { throw discoveryError(`launchpad creator evidence is invalid: ${cause.message}`); }
+  }).filter((deployment) => deployment.tokenAddress === tokenAddress);
+  if (matches.length > 1) throw discoveryError('launchpad deployment evidence is ambiguous');
+  if (!matches.length) return null;
+  const deployment = matches[0];
+  if (BigInt(deployment.blockNumber) !== deploymentBlock
+      || deployment.blockHash !== blockHash) {
+    throw discoveryError('launchpad creator evidence diverged from its canonical block');
+  }
+  return deployment;
+}
+
 function createRobinhoodArchiveDeploymentDiscovery(options = {}) {
   const rpcClient = options.rpcClient;
   const blockCreationLookup = options.blockCreationLookup;
@@ -87,18 +117,39 @@ function createRobinhoodArchiveDeploymentDiscovery(options = {}) {
   if (typeof blockCreationLookup !== 'function') {
     throw new TypeError('archive deployment block creation lookup is required');
   }
+  let chainValidation = null;
+
+  async function validateChain() {
+    chainValidation ||= Promise.resolve(rpcClient.request('eth_chainId')).then((value) => {
+      if (quantity(value, 'chainId') !== ROBINHOOD_CHAIN_ID) {
+        throw discoveryError('archive deployment discovery RPC is not Robinhood Chain');
+      }
+    }).catch((error) => {
+      chainValidation = null;
+      throw error;
+    });
+    return chainValidation;
+  }
 
   async function discover(input = {}) {
     const tokenAddress = normalizeTokenAddress('robinhood', input.tokenAddress);
-    const transactionHash = String(input.transactionHash ?? '').trim().toLowerCase();
-    if (!/^0x[0-9a-f]{64}$/.test(transactionHash)) {
-      throw discoveryError('creation hint transaction hash is invalid');
+    await validateChain();
+    let upperBlock;
+    if (input.upperBlock != null) {
+      upperBlock = quantity(input.upperBlock, 'upperBlock');
+    } else {
+      const transactionHash = String(input.transactionHash ?? '').trim().toLowerCase();
+      if (!/^0x[0-9a-f]{64}$/.test(transactionHash)) {
+        throw discoveryError('creation hint transaction hash is invalid');
+      }
+      const receipt = await rpcClient.request('eth_getTransactionReceipt', [transactionHash]);
+      upperBlock = quantity(receipt?.blockNumber, 'creation hint receipt.blockNumber');
     }
-    const receipt = await rpcClient.request('eth_getTransactionReceipt', [transactionHash]);
-    const upperBlock = quantity(receipt?.blockNumber, 'creation hint receipt.blockNumber');
     const deploymentBlock = await findFirstCodeBlock(rpcClient, tokenAddress, upperBlock);
     const direct = await findDirectCreation(rpcClient, tokenAddress, deploymentBlock);
     if (direct) return direct;
+    const launchpad = await findLaunchpadCreation(rpcClient, tokenAddress, deploymentBlock);
+    if (launchpad) return launchpad;
     const internal = await blockCreationLookup(tokenAddress, deploymentBlock.toString());
     if (!internal) throw discoveryError('exact deployment block has no contract creation evidence');
     return internal;
@@ -109,5 +160,5 @@ function createRobinhoodArchiveDeploymentDiscovery(options = {}) {
 
 module.exports = {
   createRobinhoodArchiveDeploymentDiscovery,
-  __private: { findDirectCreation, findFirstCodeBlock, hasCode },
+  __private: { findDirectCreation, findFirstCodeBlock, findLaunchpadCreation, hasCode },
 };

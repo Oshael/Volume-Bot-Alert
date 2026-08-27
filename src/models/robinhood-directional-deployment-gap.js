@@ -64,12 +64,13 @@ function createRobinhoodDirectionalDeploymentGapRepository(options = {}) {
     const id = runId(input.runId);
     const result = await database.query(
       `WITH gap_tokens AS MATERIALIZED (
-         SELECT DISTINCT gap.token_address
+         SELECT gap.token_address, MAX(range.range_end_block) AS upper_block
            FROM robinhood_directional_transfer_deployment_gaps gap
            JOIN robinhood_directional_transfer_replay_ranges range ON range.id = gap.range_id
           WHERE range.run_id = $1::bigint
+          GROUP BY gap.token_address
        )
-       SELECT gap.token_address, attribution.creator_address
+       SELECT gap.token_address, attribution.creator_address, gap.upper_block
          FROM gap_tokens gap
          JOIN robinhood_holder_token_states state
            ON state.chain = $2 AND state.token_address = gap.token_address
@@ -85,6 +86,7 @@ function createRobinhoodDirectionalDeploymentGapRepository(options = {}) {
     );
     return Object.freeze(result.rows.map((row) => Object.freeze({
       tokenAddress: row.token_address, creatorAddress: row.creator_address,
+      upperBlock: String(row.upper_block),
     })));
   }
 

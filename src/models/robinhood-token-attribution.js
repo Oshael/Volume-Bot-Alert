@@ -273,8 +273,8 @@ function createRobinhoodTokenAttributionRepository(options = {}) {
   async function recordVerifiedDirectDeployments(inputs = []) {
     const deployments = normalizeDeployments(inputs);
     if (deployments.some((item) => (
-      !['blockscout_internal', 'rpc_direct', 'rpc_trace'].includes(item.source)
-      || (['blockscout_internal', 'rpc_trace'].includes(item.source)
+      !['blockscout_internal', 'rpc_direct', 'rpc_trace', 'launchpad_event'].includes(item.source)
+      || (['blockscout_internal', 'rpc_trace', 'launchpad_event'].includes(item.source)
         !== (item.factoryAddress !== null))
     ))) {
       throw new Error('verified deployment evidence has invalid provenance');

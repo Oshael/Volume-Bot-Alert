@@ -1773,8 +1773,14 @@ com `RH_NODE_RPC_URL` apontando para o archive
 padrão consulta somente PostgreSQL. A confirmação
 `--confirm-resolve-robinhood-directional-deployments` busca hints Blockscout e
 valida transação, receipt, contract address, bloco/hash canônico e chain id pelo
-archive antes de promover `rpc_direct`. Neste repair, a origem primária é a rota nativa individual
-`/api/v2/addresses/{token}`; a rota PRO agregada não participa da resolução.
+archive antes de promover `rpc_direct`. Cada gap também fornece como teto o final
+do range histórico onde o token apareceu. Se o Blockscout falhar ou seu hint não
+for o deployment, o resolver localiza por busca binária o primeiro bloco com
+bytecode e consulta nesse bloco os eventos canônicos das factories Pons, NOXA e
+LaunchHood; uma correspondência exata é promovida como `launchpad_event` sem
+depender de trace ou Blockscout. Neste repair, a origem Blockscout primária é a
+rota nativa individual `/api/v2/addresses/{token}`; a rota PRO agregada não
+participa da resolução e o lookup de criação interna é apenas o último fallback.
 O creator Blockscout armazenado anteriormente é apenas um hint: divergência com
 o creator retornado pela rota nativa não bloqueia promoção quando transaction e
 receipt canônicos do archive comprovam o deployment. Falhas registram ausência

@@ -76,6 +76,19 @@ describe('Robinhood token attribution persistence', () => {
         source: 'rpc_trace', attribution_block: '124',
         attribution_factory_address: factoryAddress,
       });
+      assert.deepEqual(await repository.recordVerifiedDirectDeployments([{
+        tokenAddress: TOKEN, creatorAddress: CREATOR,
+        transactionHash: TRANSACTION_HASH, blockNumber: '125',
+        source: 'launchpad_event', factoryAddress,
+      }]), { attributed: 1 });
+      const launchpad = await client.query(
+        `SELECT source, attribution_block::text, attribution_factory_address
+           FROM robinhood_token_attributions WHERE token_address = $1`, [TOKEN]
+      );
+      assert.deepEqual(launchpad.rows[0], {
+        source: 'launchpad_event', attribution_block: '125',
+        attribution_factory_address: factoryAddress,
+      });
     } finally {
       await client.query('DROP TABLE IF EXISTS robinhood_token_attributions').catch(() => {});
       client.release();

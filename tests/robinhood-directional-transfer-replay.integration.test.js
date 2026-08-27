@@ -331,6 +331,7 @@ describe('Robinhood directional transfer replay persistence', () => {
       runId: created.id, limit: 10,
     }), [{
       tokenAddress: UNKNOWN_DEPLOYMENT_TOKEN, creatorAddress: `0x${'3'.repeat(40)}`,
+      upperBlock: '149',
     }]);
     await db.query(
       `UPDATE robinhood_holder_token_states SET deployment_block = 0
