@@ -43,6 +43,30 @@ function evidence(block, value, suffix) {
   };
 }
 
+function concurrentDatabase(expectedCompletions) {
+  let completedUpdates = 0;
+  let release;
+  const allUpdated = new Promise((resolve) => { release = resolve; });
+  return {
+    query: (...args) => db.query(...args),
+    async getClient() {
+      const client = await db.getClient();
+      return {
+        release: () => client.release(),
+        async query(sql, params) {
+          const result = await client.query(sql, params);
+          if (/UPDATE robinhood_bundle_funding_backfill_ranges SET\s+status = 'completed'/.test(sql)) {
+            completedUpdates += 1;
+            if (completedUpdates === expectedCompletions) release();
+            await allUpdated;
+          }
+          return result;
+        },
+      };
+    },
+  };
+}
+
 describe('Robinhood bundle funding backfill repository', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
@@ -113,6 +137,39 @@ describe('Robinhood bundle funding backfill repository', () => {
     });
     assert.deepEqual(await repository.getProgress(failedRun.id), {
       status: 'running', total: 2, pending: 2, leased: 0, completed: 0, failed: 0,
+    });
+  });
+
+  it('settles the parent run when final ranges commit concurrently', async () => {
+    await cleanup();
+    const repository = createRobinhoodBundleFundingBackfillRepository({ database: db });
+    const campaign = {
+      plan: { ruleVersion: 'rh_possible_bundle_v1', sourceFromBlock: '0',
+        sourceThroughBlock: '200', lookbackBlocks: '1000', blocksToScan: '2',
+        candidates: [TO, FROM].map((walletAddress, index) => ({
+          tokenAddress: TOKEN, walletAddress, launchBlock: '100',
+          firstBuyBlock: String(101 + index), firstBuyTransactionIndex: '0',
+        })),
+        ranges: [{ fromBlock: '100', toBlock: '100' },
+          { fromBlock: '200', toBlock: '200' }] },
+      preflight: { approved: true, checkpointCanonical: true, sourceThroughBlock: '200',
+        sourceThroughHash: HASH, batchBlocks: 50, concurrency: 2 },
+    };
+    const run = await repository.createRun(campaign);
+    const ranges = await Promise.all(['concurrent-1', 'concurrent-2'].map((leaseOwner) => (
+      repository.claimRange({ runId: run.id, owner: leaseOwner })
+        .then((range) => ({ leaseOwner, range }))
+    )));
+    const concurrent = createRobinhoodBundleFundingBackfillRepository({
+      database: concurrentDatabase(2),
+    });
+    await Promise.all(ranges.map(({ leaseOwner, range }) => concurrent.completeRange({
+      runId: run.id, rangeIndex: range.rangeIndex, owner: leaseOwner,
+      completedThroughHash: HASH, causalEvidence: [],
+    })));
+
+    assert.deepEqual(await repository.getProgress(run.id), {
+      status: 'completed', total: 2, pending: 0, leased: 0, completed: 2, failed: 0,
     });
   });
 });

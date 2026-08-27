@@ -2000,6 +2000,8 @@ O materializador do seed mantém uma janela móvel limitada ao lookback e seleci
 somente funding anterior à posição da primeira compra: aresta direta e um
 ancestral causal, no máximo dois hops. Terceiro hop e transfers não relacionados
 não são persistidos; o threshold econômico continua reservado à calibração.
+A finalização concorrente serializa a decisão terminal pelo run pai, evitando
+campanha `running` quando seus últimos ranges já foram commitados.
 
 ### Corte D4 — possible bundle shadow
 

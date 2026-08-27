@@ -388,6 +388,10 @@ function createRobinhoodBundleFundingBackfillRepository(options = {}) {
           rawWritten, edgesWritten]
       );
       await client.query(
+        `SELECT id FROM robinhood_bundle_funding_backfill_runs
+          WHERE id = $1 AND chain = $2 FOR UPDATE`, [runId, CHAIN]
+      );
+      await client.query(
         `UPDATE robinhood_bundle_funding_backfill_runs run SET
            status = CASE WHEN EXISTS (
              SELECT 1 FROM robinhood_bundle_funding_backfill_ranges range

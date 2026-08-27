@@ -1898,6 +1898,9 @@ continuam fora do escopo. O writer seed usa
 ranges com concorrência, leases renováveis, retry e checkpoint canônico. Ele
 para de reclamar ranges após `--max-minutes` (285 por padrão, máximo 300) e retoma
 com `--run-id=<id> --apply`; campanhas falhas exigem também `--retry-failed`.
+Ao concluir ranges concorrentes, a checagem terminal serializa pelo run pai para
+garantir que a campanha não permaneça `running` depois de todos os ranges terem
+sido commitados.
 O comando roda no PC, exige `DATABASE_URL` da VPS, `RH_NODE_RPC_URL` do archive
 local e Stages 167 e 169 aplicadas. Novas campanhas usam
 `rh_native_funding_v2`; o runner recusa campanhas v1 para impedir que evidência
