@@ -100,6 +100,7 @@
     "robinhood:bundle-funding-plan": "node src/utils/plan-robinhood-bundle-funding.js",
     "robinhood:bundle-funding-preflight": "node src/utils/preflight-robinhood-bundle-funding.js",
     "robinhood:bundle-funding-backfill": "node src/utils/backfill-robinhood-bundle-funding.js",
+    "robinhood:bundle-funding-recover-v1": "node src/utils/recover-robinhood-bundle-funding-v1.js",
     "robinhood:launch-anchor-backfill": "node src/utils/backfill-robinhood-launch-anchors.js",
     "robinhood:transaction-position-repair": "node src/utils/repair-robinhood-transaction-positions.js",
     "robinhood:first-buy-backfill": "node src/utils/backfill-robinhood-first-buys.js",

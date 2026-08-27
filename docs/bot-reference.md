@@ -1921,6 +1921,15 @@ e deve ser aplicada antes de executar ou recuperar o seed de funding. Eventos de
 hop 1 terminam na candidata; hop 2 termina no funder direto e não pode partir da
 própria candidata. A evidência token-scoped é persistida atomicamente com a
 conclusão de cada range e não segue a retenção de 30 dias do raw.
+Campanhas v1 interrompidas não podem ser retomadas diretamente. Depois de aplicar
+a Stage 169 atualizada, audite na VPS com
+`npm run robinhood:bundle-funding-recover-v1 -- --run-id=<id>`; o comando é
+PostgreSQL-only e read-only por padrão. Com leases ativos, evidência scoped ou
+arestas v2 preexistentes, ele falha fechado. Após revisar `ready=true`, o reset
+exige `--apply --confirm-reset-all-ranges`, muda a campanha para v2 e deixa todos
+os ranges em `failed`. Retome no PC/archive com
+`npm run robinhood:bundle-funding-backfill -- --run-id=<id> --retry-failed --apply`.
+Todo range é reprocessado; agregados v1 permanecem apenas como legado isolado.
 A Stage 166 (`node src/utils/db-init-stage166.js`) cria o controle durável do
 catch-up de launch anchors: uma campanha ativa por chain e uma fila por token com
 frontier/hash congelados, lease, retry e resultados terminais. A migration é
