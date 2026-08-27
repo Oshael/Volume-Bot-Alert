@@ -58,5 +58,9 @@ describe('Robinhood token-scoped funding evidence schema', () => {
     assert.equal((await db.query(
       'SELECT COUNT(*)::integer count FROM robinhood_bundle_funding_evidence'
     )).rows[0].count, 2);
+    assert.deepEqual((await db.query(`SELECT DISTINCT evidence_version
+      FROM robinhood_bundle_funding_evidence`)).rows, [{
+      evidence_version: 'rh_native_funding_v2',
+    }]);
   });
 });

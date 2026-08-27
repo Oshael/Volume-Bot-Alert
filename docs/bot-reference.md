@@ -1894,7 +1894,9 @@ ranges com concorrência, leases renováveis, retry e checkpoint canônico. Ele
 para de reclamar ranges após `--max-minutes` (285 por padrão, máximo 300) e retoma
 com `--run-id=<id> --apply`; campanhas falhas exigem também `--retry-failed`.
 O comando roda no PC, exige `DATABASE_URL` da VPS, `RH_NODE_RPC_URL` do archive
-local e Stage 167 aplicada. Não existe fallback de RPC, worker automático ou
+local e Stages 167 e 169 aplicadas. Novas campanhas usam
+`rh_native_funding_v2`; o runner recusa campanhas v1 para impedir que evidência
+global sem associação causal seja tratada como completa. Não existe fallback de RPC, worker automático ou
 publicação de `BUNDLED`. A leitura recusa universos
 acima de 500 mil candidatos para não exceder a memória; esse caso exige um
 planejador paginado antes de continuar.
@@ -1917,7 +1919,8 @@ associação causal que o agregado global não representa: `run`, token, candida
 hop 1/2 e a transferência nativa exata. Ela depende da Stage 167, é somente DDL
 e deve ser aplicada antes de executar ou recuperar o seed de funding. Eventos de
 hop 1 terminam na candidata; hop 2 termina no funder direto e não pode partir da
-própria candidata.
+própria candidata. A evidência token-scoped é persistida atomicamente com a
+conclusão de cada range e não segue a retenção de 30 dias do raw.
 A Stage 166 (`node src/utils/db-init-stage166.js`) cria o controle durável do
 catch-up de launch anchors: uma campanha ativa por chain e uma fila por token com
 frontier/hash congelados, lease, retry e resultados terminais. A migration é

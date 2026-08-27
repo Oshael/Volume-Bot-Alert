@@ -4695,6 +4695,7 @@ const SCHEMA_GROUPS = [
         'batch_blocks', 'concurrency', 'candidate_count', 'range_count',
         'blocks_total', 'status', 'started_at', 'finished_at', 'created_at', 'updated_at',
       ],
+      defaults: { evidence_version: "'rh_native_funding_v2'::character varying" },
       constraints: [{
         name: 'rh_bundle_funding_runs_bounds_check',
         includes: ['source_from_block', 'source_through_block', 'source_through_hash'],
@@ -4844,6 +4845,7 @@ const SCHEMA_GROUPS = [
       columnTypes: {
         value_wei: { dataType: 'numeric', numericPrecision: 78, numericScale: 0 },
       },
+      defaults: { evidence_version: "'rh_native_funding_v2'::character varying" },
       constraints: [{
         name: 'rh_bundle_funding_evidence_pkey',
         includes: [

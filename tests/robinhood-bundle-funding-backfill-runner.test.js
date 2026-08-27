@@ -4,12 +4,13 @@ const { describe, it } = require('node:test');
 const { executeBundleFundingBackfill } = require(
   '../src/services/robinhood-bundle-funding-backfill-runner'
 );
-const { main, parseArgs } = require('../src/utils/backfill-robinhood-bundle-funding');
+const { assertSchema, main, parseArgs } = require('../src/utils/backfill-robinhood-bundle-funding');
 
 const HASH = `0x${'a'.repeat(64)}`;
 function run(status = 'running') {
   return { id: '7', status, sourceThroughBlock: '20', sourceThroughHash: HASH,
-    lookbackBlocks: '1000', batchBlocks: 50, concurrency: 1 };
+    evidenceVersion: 'rh_native_funding_v2', lookbackBlocks: '1000',
+    batchBlocks: 50, concurrency: 1 };
 }
 
 describe('Robinhood bundle funding backfill runner', () => {
@@ -28,7 +29,10 @@ describe('Robinhood bundle funding backfill runner', () => {
           candidates: [{}] };
       },
       async renewRangeLease(input) { calls.push(['renew', input.rangeIndex]); },
-      async completeRange(input) { complete = true; calls.push(['complete', input.rawEvents.length]); },
+      async completeRange(input) {
+        complete = true;
+        calls.push(['complete', input.rawEvents.length, input.causalEvidence.length]);
+      },
       async retryRange() { throw new Error('unexpected retry'); },
       async getProgress() { return { status: complete ? 'completed' : 'running',
         total: 1, pending: 0, leased: complete ? 0 : 1,
@@ -40,12 +44,12 @@ describe('Robinhood bundle funding backfill runner', () => {
       async materialize() {
         await new Promise((resolve) => setTimeout(resolve, 8));
         return { completedThroughHash: HASH, nativeTransfersScanned: 3,
-          rawEvents: [{}], edges: [{}] };
+          rawEvents: [{}], edges: [{}], causalEvidence: [{ hop: 1 }] };
       },
     }, { plan: {}, preflight: { approved: true }, maxMinutes: 1 });
     assert.equal(result.status, 'completed');
     assert.ok(calls.some(([name]) => name === 'renew'));
-    assert.deepEqual(calls.find(([name]) => name === 'complete'), ['complete', 1]);
+    assert.deepEqual(calls.find(([name]) => name === 'complete'), ['complete', 1, 1]);
   });
 
   it('resumes only an explicit failed run and verifies its frozen checkpoint', async () => {
@@ -63,6 +67,17 @@ describe('Robinhood bundle funding backfill runner', () => {
     } }, { runId: '7', retryFailed: true });
     assert.equal(resumed, true);
     assert.equal(result.status, 'completed');
+  });
+
+  it('rejects legacy evidence runs before accessing the archive', async () => {
+    let archiveRead = false;
+    await assert.rejects(executeBundleFundingBackfill({
+      repository: { async getRun() {
+        return { ...run(), evidenceVersion: 'rh_native_funding_v1' };
+      } },
+      reader: { async assertChain() { archiveRead = true; } },
+    }, { runId: '1' }), /must be rh_native_funding_v2/);
+    assert.equal(archiveRead, false);
   });
 });
 
@@ -85,5 +100,12 @@ describe('Robinhood bundle funding backfill command', () => {
     });
     assert.equal(report.mode, 'resume-read-only');
     assert.equal(executed, false);
+  });
+
+  it('requires the token-scoped Stage 169 table before writes', async () => {
+    await assert.rejects(assertSchema({ async query() { return { rows: [{
+      runs: 'robinhood_bundle_funding_backfill_runs',
+      events: 'robinhood_native_funding_events', evidence: null,
+    }] }; } }), /Stages 167 and 169/);
   });
 });

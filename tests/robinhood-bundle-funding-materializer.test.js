@@ -49,6 +49,7 @@ describe('Robinhood bundle funding materializer', () => {
     const transfers = [
       transfer(98, 0, THIRD, ANCESTOR, 1, '8'),
       transfer(99, 0, ANCESTOR, FUNDER, 2, '9'),
+      transfer(99, 1, WALLET, FUNDER, 3, 'a'),
       transfer(100, 1, FUNDER, WALLET, 10, 'c'),
       transfer(101, 2, FUNDER, WALLET, 20, 'd'),
       transfer(101, 3, UNRELATED, THIRD, 30, 'e'),
@@ -61,10 +62,16 @@ describe('Robinhood bundle funding materializer', () => {
       range: range(98, 102), lookbackBlocks: 4, batchBlocks: 2,
     }, { reader: archive, now: () => NOW });
     assert.equal(result.blocksScanned, 5);
-    assert.equal(result.nativeTransfersScanned, 8);
+    assert.equal(result.nativeTransfersScanned, 9);
     assert.equal(result.relevantTransfers, 5);
     assert.equal(result.rawEvents.length, 5);
     assert.equal(result.edges.length, 4);
+    assert.equal(result.causalEvidence.length, 5);
+    assert.equal(result.causalEvidence.filter(({ hop }) => hop === 1).length, 3);
+    assert.equal(result.causalEvidence.filter(({ hop }) => hop === 2).length, 2);
+    assert.ok(result.causalEvidence.every(({ tokenAddress, candidateWallet }) => (
+      tokenAddress === `0x${'9'.repeat(40)}` && candidateWallet === WALLET
+    )));
     assert.deepEqual(archive.calls.filter(([type]) => type === 'blocks').map(([, blocks]) => blocks),
       [['98', '99'], ['100', '101'], ['102']]);
     const repeated = result.edges.find((edge) => (
@@ -75,6 +82,7 @@ describe('Robinhood bundle funding materializer', () => {
     { count: '2', total: '30', first: '100', last: '101' });
     const selectedHashes = new Set(result.rawEvents.map(({ transactionHash }) => transactionHash));
     assert.equal(selectedHashes.has(`0x${'8'.repeat(64)}`), false, 'third hop excluded');
+    assert.equal(selectedHashes.has(`0x${'a'.repeat(64)}`), false, 'candidate cycle excluded');
     assert.equal(selectedHashes.has(`0x${'2'.repeat(64)}`), false, 'same tx as buy excluded');
   });
 
@@ -86,6 +94,7 @@ describe('Robinhood bundle funding materializer', () => {
     }, { reader: archive, now: () => NOW });
     assert.equal(result.edges.length, 1);
     assert.equal(result.rawEvents.length, 0);
+    assert.equal(result.causalEvidence.length, 1);
   });
 
   it('fails closed on checkpoint drift, incomplete coverage, or empty frozen scope', async () => {

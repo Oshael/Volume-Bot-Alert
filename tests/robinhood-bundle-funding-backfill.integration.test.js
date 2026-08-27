@@ -7,6 +7,7 @@ const { createRobinhoodBundleFundingBackfillRepository } = require(
   '../src/models/robinhood-bundle-funding-backfill'
 );
 const stage167 = require('../src/utils/db-init-stage167');
+const stage169 = require('../src/utils/db-init-stage169');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const HASH = `0x${'a'.repeat(64)}`;
@@ -15,6 +16,7 @@ const FROM = `0x${'2'.repeat(40)}`;
 const TO = `0x${'3'.repeat(40)}`;
 
 async function cleanup() {
+  await db.query('DELETE FROM robinhood_bundle_funding_evidence');
   await db.query('DELETE FROM robinhood_native_funding_events');
   await db.query('DELETE FROM robinhood_native_funding_edges');
   await db.query('DELETE FROM robinhood_bundle_funding_backfill_ranges');
@@ -34,6 +36,10 @@ function evidence(block, value, suffix) {
       firstTransactionIndex: '0', lastBlockNumber: String(block), lastBlockHash: HASH,
       lastBlockTime: blockTime, lastTransactionHash: transactionHash,
       lastTransactionIndex: '0', transferCount: '1', totalValueWei: String(value) },
+    causal: { tokenAddress: TOKEN, candidateWallet: TO, hop: 1,
+      blockNumber: String(block), blockHash: HASH, blockTime,
+      transactionHash, transactionIndex: '0', fromAddress: FROM,
+      toAddress: TO, valueWei: String(value) },
   };
 }
 
@@ -41,6 +47,7 @@ describe('Robinhood bundle funding backfill repository', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
     await stage167.init({ closePool: false });
+    await stage169.init({ closePool: false });
     await cleanup();
   });
   after(async () => { await cleanup(); await db.pool.end(); });
@@ -61,18 +68,22 @@ describe('Robinhood bundle funding backfill repository', () => {
     };
     const run = await repository.createRun(campaign);
     assert.equal(run.candidateCount, 2);
+    assert.equal(run.evidenceVersion, 'rh_native_funding_v2');
     const first = await repository.claimRange({ runId: run.id, owner: 'first' });
     const second = await repository.claimRange({ runId: run.id, owner: 'second' });
     assert.equal(first.candidates.length, 2);
     assert.equal(second.rangeIndex, 1);
     await assert.rejects(repository.completeRange({ runId: run.id, rangeIndex: 0,
-      owner: 'wrong', completedThroughHash: HASH }), /lease was lost/);
+      owner: 'first', completedThroughHash: HASH }), /causal evidence is required/);
+    await assert.rejects(repository.completeRange({ runId: run.id, rangeIndex: 0,
+      owner: 'wrong', completedThroughHash: HASH, causalEvidence: [] }), /lease was lost/);
     for (const [range, ownerName, item] of [
       [second, 'second', evidence(200, 20, 'c')],
       [first, 'first', evidence(100, 10, 'b')],
     ]) await repository.completeRange({ runId: run.id, rangeIndex: range.rangeIndex,
       owner: ownerName, completedThroughHash: HASH, nativeTransfersScanned: 1,
-      rawEvents: [item.raw], edges: [item.edge] });
+      rawEvents: [item.raw], edges: [item.edge],
+      causalEvidence: ownerName === 'first' ? [item.causal] : [] });
     assert.deepEqual((await db.query(`SELECT transfer_count::text, total_value_wei::text,
       first_block_number::text, last_block_number::text
       FROM robinhood_native_funding_edges`)).rows[0], {
@@ -81,6 +92,11 @@ describe('Robinhood bundle funding backfill repository', () => {
     });
     assert.equal((await db.query('SELECT COUNT(*)::integer count FROM robinhood_native_funding_events'))
       .rows[0].count, 2);
+    assert.deepEqual((await db.query(`SELECT token_address, candidate_wallet,
+      hop, value_wei::text, evidence_version FROM robinhood_bundle_funding_evidence`)).rows[0], {
+      token_address: TOKEN, candidate_wallet: TO, hop: 1,
+      value_wei: '10', evidence_version: 'rh_native_funding_v2',
+    });
     assert.deepEqual(await repository.getProgress(run.id), {
       status: 'completed', total: 2, pending: 0, leased: 0, completed: 2, failed: 0,
     });

@@ -1,5 +1,6 @@
 const os = require('node:os');
 const { materializeBundleFundingRange } = require('./robinhood-bundle-funding-materializer');
+const EVIDENCE_VERSION = 'rh_native_funding_v2';
 
 function integer(value, label, minimum, maximum) {
   const parsed = Number(value);
@@ -86,6 +87,7 @@ async function drainWorker(context, index) {
         completedThroughHash: result.completedThroughHash,
         nativeTransfersScanned: result.nativeTransfersScanned,
         rawEvents: result.rawEvents, edges: result.edges,
+        causalEvidence: result.causalEvidence,
       });
     } catch (error) {
       await context.repository.retryRange({
@@ -115,6 +117,9 @@ async function executeBundleFundingBackfill(deps = {}, options = {}) {
   const { repository, reader } = deps;
   assertDependencies(repository, reader);
   let run = await resolveRun(repository, options);
+  if (run.evidenceVersion !== EVIDENCE_VERSION) {
+    throw new Error(`bundle funding run evidence version must be ${EVIDENCE_VERSION}`);
+  }
   options.onRun?.({ runId: run.id, status: run.status, requeued: run.requeued || 0 });
   if (run.status === 'completed') return { runId: run.id, ...await repository.getProgress(run.id) };
   await assertFrozenArchive(reader, run);

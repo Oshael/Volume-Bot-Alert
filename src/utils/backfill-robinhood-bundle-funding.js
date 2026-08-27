@@ -96,9 +96,10 @@ function parseArgs(argv = process.argv.slice(2)) {
 async function assertSchema(database) {
   const result = await database.query(`SELECT
     to_regclass('robinhood_bundle_funding_backfill_runs') AS runs,
-    to_regclass('robinhood_native_funding_events') AS events`);
-  if (!result.rows[0]?.runs || !result.rows[0]?.events) {
-    throw new Error('Stage 167 is required; run node src/utils/db-init-stage167.js');
+    to_regclass('robinhood_native_funding_events') AS events,
+    to_regclass('robinhood_bundle_funding_evidence') AS evidence`);
+  if (!result.rows[0]?.runs || !result.rows[0]?.events || !result.rows[0]?.evidence) {
+    throw new Error('Stages 167 and 169 are required; apply both schema initializers');
   }
 }
 

@@ -16,7 +16,7 @@ const STATEMENTS = Object.freeze([
      from_wallet VARCHAR(42) NOT NULL,
      to_wallet VARCHAR(42) NOT NULL,
      value_wei NUMERIC(78,0) NOT NULL,
-     evidence_version VARCHAR(64) NOT NULL DEFAULT 'rh_native_funding_v1',
+     evidence_version VARCHAR(64) NOT NULL DEFAULT 'rh_native_funding_v2',
      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
      CONSTRAINT rh_bundle_funding_evidence_pkey PRIMARY KEY (
        chain, run_id, token_address, candidate_wallet, transaction_hash, hop
@@ -51,6 +51,10 @@ const STATEMENTS = Object.freeze([
        evidence_version ~ '^rh_native_funding_v[1-9][0-9]*$'
      )
    )`,
+  `ALTER TABLE robinhood_bundle_funding_evidence
+     ALTER COLUMN evidence_version SET DEFAULT 'rh_native_funding_v2'`,
+  `ALTER TABLE robinhood_bundle_funding_backfill_runs
+     ALTER COLUMN evidence_version SET DEFAULT 'rh_native_funding_v2'`,
   `CREATE INDEX IF NOT EXISTS idx_rh_bundle_funding_evidence_token
      ON robinhood_bundle_funding_evidence(
        token_address, run_id, candidate_wallet, hop, block_number, transaction_index

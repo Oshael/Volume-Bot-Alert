@@ -1,5 +1,6 @@
 const db = require('./db');
 const CHAIN = 'robinhood';
+const EVIDENCE_VERSION = 'rh_native_funding_v2';
 function integer(value, label, min = 0, max = Number.MAX_SAFE_INTEGER) {
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < min || parsed > max) {
@@ -66,15 +67,15 @@ function createRobinhoodBundleFundingBackfillRepository(options = {}) {
       await client.query('LOCK TABLE robinhood_bundle_funding_backfill_runs IN SHARE ROW EXCLUSIVE MODE');
       const inserted = await client.query(
         `INSERT INTO robinhood_bundle_funding_backfill_runs (
-           chain, rule_version, source_from_block, source_through_block,
+           chain, rule_version, evidence_version, source_from_block, source_through_block,
            source_through_hash, lookback_blocks, batch_blocks, concurrency,
            candidate_count, range_count, blocks_total, status, started_at
-         ) VALUES ($1, $2, $3::bigint, $4::bigint, $5, $6::bigint, $7, $8,
-                   $9, $10, $11::bigint, 'running', NOW()) RETURNING *`,
-        [CHAIN, plan.ruleVersion, plan.sourceFromBlock, plan.sourceThroughBlock,
-          preflight.sourceThroughHash, plan.lookbackBlocks, preflight.batchBlocks,
-          preflight.concurrency, plan.candidates.length, plan.ranges.length,
-          plan.blocksToScan]
+         ) VALUES ($1, $2, $3, $4::bigint, $5::bigint, $6, $7::bigint, $8, $9,
+                   $10, $11, $12::bigint, 'running', NOW()) RETURNING *`,
+        [CHAIN, plan.ruleVersion, EVIDENCE_VERSION,
+          plan.sourceFromBlock, plan.sourceThroughBlock, preflight.sourceThroughHash,
+          plan.lookbackBlocks, preflight.batchBlocks, preflight.concurrency,
+          plan.candidates.length, plan.ranges.length, plan.blocksToScan]
       );
       const run = inserted.rows[0];
       const candidates = plan.candidates;
@@ -315,12 +316,47 @@ function createRobinhoodBundleFundingBackfillRepository(options = {}) {
     );
     return result.rowCount;
   }
+  async function persistCausalEvidence(client, evidence, runId, evidenceVersion) {
+    if (!evidence.length) return 0;
+    const payload = evidence.map((item) => ({
+      token_address: item.tokenAddress, candidate_wallet: item.candidateWallet,
+      hop: item.hop, block_number: item.blockNumber, block_hash: item.blockHash,
+      block_time: item.blockTime, transaction_hash: item.transactionHash,
+      transaction_index: item.transactionIndex, from_address: item.fromAddress,
+      to_address: item.toAddress, value_wei: item.valueWei,
+    }));
+    const result = await client.query(
+      `INSERT INTO robinhood_bundle_funding_evidence (
+         chain, run_id, token_address, candidate_wallet, hop, block_number,
+         block_hash, block_time, transaction_hash, transaction_index,
+         from_wallet, to_wallet, value_wei, evidence_version
+       ) SELECT $2, $3, item.token_address, item.candidate_wallet,
+                item.hop::smallint, item.block_number::bigint, item.block_hash,
+                item.block_time::timestamptz, item.transaction_hash,
+                item.transaction_index::integer, item.from_address,
+                item.to_address, item.value_wei::numeric, $4
+           FROM jsonb_to_recordset($1::jsonb) AS item(
+             token_address text, candidate_wallet text, hop integer,
+             block_number text, block_hash text, block_time text,
+             transaction_hash text, transaction_index text,
+             from_address text, to_address text, value_wei text)
+       ON CONFLICT (
+         chain, run_id, token_address, candidate_wallet, transaction_hash, hop
+       ) DO NOTHING`,
+      [JSON.stringify(payload), CHAIN, runId, evidenceVersion]
+    );
+    return result.rowCount;
+  }
   async function completeRange(input = {}) {
     const runId = integer(input.runId, 'runId', 1);
     const rangeIndex = integer(input.rangeIndex, 'rangeIndex');
     const leaseOwner = owner(input.owner);
     const events = Array.isArray(input.rawEvents) ? input.rawEvents : [];
     const edges = Array.isArray(input.edges) ? input.edges : [];
+    if (!Array.isArray(input.causalEvidence)) {
+      throw new Error('bundle funding causal evidence is required');
+    }
+    const causalEvidence = input.causalEvidence;
     const client = await database.getClient();
     try {
       await ensurePartitions(client, events);
@@ -336,6 +372,9 @@ function createRobinhoodBundleFundingBackfillRepository(options = {}) {
       if (!context.rows[0]) throw new Error('bundle funding range lease was lost');
       const rawWritten = await persistEvents(client, events, context.rows[0].evidence_version);
       const edgesWritten = await persistEdges(client, edges, context.rows[0].evidence_version);
+      await persistCausalEvidence(
+        client, causalEvidence, runId, context.rows[0].evidence_version
+      );
       const completed = await client.query(
         `UPDATE robinhood_bundle_funding_backfill_ranges SET
            status = 'completed', lease_owner = NULL, lease_until = NULL,

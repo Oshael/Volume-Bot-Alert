@@ -72,7 +72,17 @@ function createRollingInboundIndex() {
   return Object.freeze({ add, evict, to });
 }
 
-function selectCandidateEvidence(candidate, index, lookbackBlocks, selected) {
+function scopedEvidence(candidate, event, hop) {
+  return Object.freeze({
+    tokenAddress: candidate.tokenAddress, candidateWallet: candidate.walletAddress, hop,
+    blockNumber: event.blockNumber, blockHash: event.blockHash,
+    blockTime: isoBlockTime(event), transactionHash: event.transactionHash,
+    transactionIndex: event.transactionIndex, fromAddress: event.fromAddress,
+    toAddress: event.toAddress, valueWei: event.valueWei,
+  });
+}
+
+function selectCandidateEvidence(candidate, index, lookbackBlocks, selected, causalEvidence) {
   const buy = candidatePosition(candidate);
   const buyBlock = BigInt(candidate.firstBuyBlock);
   const fromBlock = buyBlock > BigInt(lookbackBlocks)
@@ -82,15 +92,28 @@ function selectCandidateEvidence(candidate, index, lookbackBlocks, selected) {
   ));
   for (const event of direct) {
     selected.set(event.transactionHash, event);
+    causalEvidence.set(
+      `${candidate.tokenAddress}:${candidate.walletAddress}:${event.transactionHash}:1`,
+      scopedEvidence(candidate, event, 1)
+    );
     const ancestors = index.to(event.fromAddress).filter((ancestor) => (
       BigInt(ancestor.blockNumber) >= fromBlock && comparePosition(ancestor, event) < 0
+      && ancestor.fromAddress !== candidate.walletAddress
     ));
-    for (const ancestor of ancestors) selected.set(ancestor.transactionHash, ancestor);
+    for (const ancestor of ancestors) {
+      selected.set(ancestor.transactionHash, ancestor);
+      causalEvidence.set(
+        `${candidate.tokenAddress}:${candidate.walletAddress}:${ancestor.transactionHash}:2`,
+        scopedEvidence(candidate, ancestor, 2)
+      );
+    }
   }
 }
 
 function processBlock(input) {
-  const { blockNumber, candidates, transfers, index, lookbackBlocks, selected } = input;
+  const {
+    blockNumber, candidates, transfers, index, lookbackBlocks, selected, causalEvidence,
+  } = input;
   const fromBlock = BigInt(blockNumber) > BigInt(lookbackBlocks)
     ? BigInt(blockNumber) - BigInt(lookbackBlocks) : 0n;
   index.evict(fromBlock);
@@ -104,7 +127,7 @@ function processBlock(input) {
       index.add(ordered[transferIndex]);
       transferIndex += 1;
     }
-    selectCandidateEvidence(candidate, index, lookbackBlocks, selected);
+    selectCandidateEvidence(candidate, index, lookbackBlocks, selected, causalEvidence);
   }
   while (transferIndex < ordered.length) {
     index.add(ordered[transferIndex]);
@@ -188,6 +211,7 @@ async function scanBlocks(options, reader) {
   const { fromBlock, throughBlock, lookbackBlocks, batchBlocks, candidates } = options;
   const candidatesByBlock = groupedByBlock(candidates, 'firstBuyBlock');
   const selected = new Map();
+  const causalEvidence = new Map();
   const index = createRollingInboundIndex();
   let blocksScanned = 0;
   let nativeTransfersScanned = 0;
@@ -204,9 +228,10 @@ async function scanBlocks(options, reader) {
     for (const blockNumber of numbers) processBlock({
       blockNumber, candidates: candidatesByBlock.get(blockNumber) || [],
       transfers: transfersByBlock.get(blockNumber) || [], index, lookbackBlocks, selected,
+      causalEvidence,
     });
   }
-  return { blocksScanned, nativeTransfersScanned, selected };
+  return { blocksScanned, nativeTransfersScanned, selected, causalEvidence };
 }
 
 async function materializeBundleFundingRange(input = {}, deps = {}) {
@@ -215,7 +240,7 @@ async function materializeBundleFundingRange(input = {}, deps = {}) {
   const options = materializerOptions(input);
   const initialHash = await reader.checkpoint(options.throughBlock.toString());
   const scanned = await scanBlocks(options, reader);
-  const { blocksScanned, nativeTransfersScanned, selected } = scanned;
+  const { blocksScanned, nativeTransfersScanned, selected, causalEvidence } = scanned;
   const { fromBlock, throughBlock } = options;
   if (blocksScanned !== Number(throughBlock - fromBlock + 1n)) {
     throw new Error('funding reader returned incomplete block coverage');
@@ -236,6 +261,7 @@ async function materializeBundleFundingRange(input = {}, deps = {}) {
       Number(BigInt(event.blockTimestamp) * 1000n) >= rawCutoff
     )).map(rawEvent)),
     edges: aggregateEdges(events),
+    causalEvidence: Object.freeze([...causalEvidence.values()]),
   });
 }
 

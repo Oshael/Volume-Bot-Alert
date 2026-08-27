@@ -14,6 +14,14 @@ test('adds permanent token-scoped causal funding evidence', () => {
   assert.match(sql, /hop = 1 AND to_wallet = candidate_wallet/);
   assert.match(sql, /hop = 2/);
   assert.match(sql, /value_wei > 0/);
+  assert.match(sql, /ALTER COLUMN evidence_version SET DEFAULT 'rh_native_funding_v2'/);
+  assert.match(sql, /ALTER TABLE robinhood_bundle_funding_backfill_runs/);
   assert.doesNotMatch(sql, /INSERT INTO|\bUPDATE\b|DELETE FROM/i);
   assert.equal(group.repair, 'node src/utils/db-init-stage169.js');
+  assert.equal(group.tables[0].defaults.evidence_version,
+    "'rh_native_funding_v2'::character varying");
+  const runTable = SCHEMA_GROUPS.flatMap(({ tables }) => tables).find(({ table }) => (
+    table === 'robinhood_bundle_funding_backfill_runs'
+  ));
+  assert.equal(runTable.defaults.evidence_version, "'rh_native_funding_v2'::character varying");
 });
