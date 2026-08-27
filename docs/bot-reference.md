@@ -1590,7 +1590,10 @@ responder com erro transitório, usa `txlistinternal` público como fallback; a
 rota de endereço também recupera o transaction hash pelo primeiro mint ERC-20
 (`tokentx`, ordem ascendente) quando necessário. Essas respostas são apenas hints:
 a prova encontrada continua sujeita à validação RPC canônica. Evidência ainda não
-indexada volta à fila com backoff limitado. O fluxo cobre somente novas admissões
+indexada volta à fila com backoff limitado. Se a primeira mint não for o deployment,
+o repair localiza por busca binária via `eth_getCode` o primeiro bloco com bytecode
+e consulta `txlistinternal` somente nesse bloco; a atribuição descoberta volta ao
+mesmo verificador canônico. O fluxo cobre somente novas admissões
 e não cria backfill.
 
 O materializador `SNIPER` não pertence ao processo de holders. Seu worker shadow

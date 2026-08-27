@@ -82,7 +82,7 @@ const INTERNAL_TRACE_ADAPTERS = Object.freeze({
   legacy: Object.freeze({
     failed: (item) => String(item?.isError ?? '0') !== '0',
     created: (item) => item?.contractAddress,
-    hash: (item) => item?.transactionHash,
+    hash: (item) => item?.transactionHash || item?.hash,
     factory: (item) => item?.from,
     hashRequired: true,
     label: 'legacy ',
@@ -129,6 +129,20 @@ function findMintCreation(items, tokenAddress) {
     if (!/^0x[0-9a-f]{64}$/.test(transactionHash)) continue;
     const creatorAddress = normalizeCreatedAddress(item?.to);
     if (!creatorAddress || creatorAddress === ZERO_ADDRESS) continue;
+    return Object.freeze({ tokenAddress, creatorAddress, transactionHash });
+  }
+  return null;
+}
+
+function findBlockCreation(items, tokenAddress) {
+  for (const item of items) {
+    if (!['create', 'create2'].includes(String(item?.type || '').toLowerCase())) continue;
+    if (String(item?.isError ?? '0') !== '0') continue;
+    if (normalizeCreatedAddress(item?.contractAddress) !== tokenAddress) continue;
+    const transactionHash = String(item?.transactionHash || item?.hash || '').trim().toLowerCase();
+    if (!/^0x[0-9a-f]{64}$/.test(transactionHash)) continue;
+    const creatorAddress = normalizeCreatedAddress(item?.from);
+    if (!creatorAddress) continue;
     return Object.freeze({ tokenAddress, creatorAddress, transactionHash });
   }
   return null;
@@ -301,6 +315,25 @@ function createRobinhoodBlockscoutMetadataClient(options = {}) {
     }
   }
 
+  async function getContractCreationAtBlock(tokenAddress, blockNumber) {
+    const address = normalizeTokenAddress('robinhood', tokenAddress);
+    const block = BigInt(String(blockNumber)).toString();
+    const url = new URL(legacyApiUrl);
+    url.searchParams.set('module', 'account');
+    url.searchParams.set('action', 'txlistinternal');
+    url.searchParams.set('address', address);
+    url.searchParams.set('startblock', block);
+    url.searchParams.set('endblock', block);
+    url.searchParams.set('page', '1');
+    url.searchParams.set('offset', '100');
+    url.searchParams.set('sort', 'asc');
+    const payload = await requestUrl(url, 'deployment block internal transactions');
+    if (!payload || !Array.isArray(payload.result)) throw new RobinhoodBlockscoutMetadataError(
+      'Blockscout deployment block internal transaction response is invalid', 'invalid_response'
+    );
+    return findBlockCreation(payload.result, address);
+  }
+
   async function getContractCreators(tokenAddresses) {
     if (!Array.isArray(tokenAddresses) || tokenAddresses.length < 1 || tokenAddresses.length > 10) {
       throw new TypeError('Blockscout creator batch must contain 1..10 token addresses');
@@ -342,7 +375,7 @@ function createRobinhoodBlockscoutMetadataClient(options = {}) {
 
   const getCreditsRemaining = () => minimumCreditsRemaining;
   return Object.freeze({
-    getContractCreation, getContractCreator, getContractCreators,
+    getContractCreation, getContractCreationAtBlock, getContractCreator, getContractCreators,
     getCreditsRemaining, getInternalContractCreation, getTokenMetadata,
   });
 }

@@ -141,6 +141,41 @@ describe('Robinhood directional deployment resolver', () => {
     }]);
   });
 
+  it('rediscovers the deployment when the Blockscout creation hint is not the deployment', async () => {
+    const verified = [];
+    let verificationAttempts = 0;
+    const discoveredHint = {
+      tokenAddress: TOKEN_A, creatorAddress: CREATOR, transactionHash: HASH,
+    };
+    const result = await resolveBatch({
+      sleep: async () => {},
+      blockscout: {
+        async getContractCreation(tokenAddress) {
+          return { tokenAddress, creatorAddress: CREATOR, transactionHash: `0x${'e'.repeat(64)}` };
+        },
+      },
+      deploymentDiscovery: { async discover() { return discoveredHint; } },
+      verifier: {
+        async verifyDirectDeployment(hint) {
+          verificationAttempts += 1;
+          if (verificationAttempts === 1) throw Object.assign(
+            new Error('deployment transaction does not create the token contract'),
+            { code: 'holder_deployment_evidence_invalid' }
+          );
+          return { ...hint, source: 'rpc_direct', factoryAddress: null, blockNumber: '40' };
+        },
+      },
+      attributions: {
+        async recordVerifiedDirectDeployments(items) { verified.push(...items); },
+        async recordDirectVerificationFailure() {},
+      },
+    }, [{ tokenAddress: TOKEN_A, creatorAddress: CREATOR }], { concurrency: 1 });
+
+    assert.equal(result.verified, 1);
+    assert.equal(result.failed, 0);
+    assert.equal(verified[0].blockNumber, '40');
+  });
+
   it('runs a confirmed bounded selection through the supplied runtime', async () => {
     const runtime = {
       gaps: {

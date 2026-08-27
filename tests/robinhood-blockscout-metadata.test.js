@@ -164,6 +164,28 @@ describe('Robinhood Blockscout metadata client', () => {
     assert.equal(fallback.searchParams.get('txhash'), transactionHash);
   });
 
+  it('finds contract creation evidence inside one exact deployment block', async () => {
+    const creator = `0x${'2'.repeat(40)}`;
+    const transactionHash = `0x${'4'.repeat(64)}`;
+    let requestedUrl;
+    const client = createRobinhoodBlockscoutMetadataClient({
+      fetchImpl: async (url) => {
+        requestedUrl = new URL(url);
+        return response(200, { result: [{
+          type: 'create2', isError: '0', hash: transactionHash,
+          contractAddress: TOKEN, from: creator,
+        }] });
+      },
+    });
+
+    assert.deepEqual(await client.getContractCreationAtBlock(TOKEN, '40'), {
+      tokenAddress: TOKEN, creatorAddress: creator, transactionHash,
+    });
+    assert.equal(requestedUrl.searchParams.get('action'), 'txlistinternal');
+    assert.equal(requestedUrl.searchParams.get('startblock'), '40');
+    assert.equal(requestedUrl.searchParams.get('endblock'), '40');
+  });
+
   it('resolves up to ten contract creators in one Blockscout request', async () => {
     const creator = `0x${'2'.repeat(40)}`;
     const transactionHash = `0x${'4'.repeat(64)}`;

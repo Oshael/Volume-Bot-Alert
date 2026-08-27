@@ -13,6 +13,9 @@ const { createEvmJsonRpcClient } = require('../services/evm-json-rpc-client');
 const {
   createRobinhoodHolderDeploymentVerifier,
 } = require('../services/robinhood-holder-deployment-verifier');
+const {
+  createRobinhoodArchiveDeploymentDiscovery,
+} = require('../services/robinhood-archive-deployment-discovery');
 
 const CONFIRM_FLAG = '--confirm-resolve-robinhood-directional-deployments';
 
@@ -83,6 +86,17 @@ async function verifyHints(deps, candidates, options, hints) {
     try {
       return { candidate, deployment: await deps.verifier.verifyDirectDeployment(hint) };
     } catch (error) {
+      if (error?.code === 'holder_deployment_evidence_invalid' && deps.deploymentDiscovery) {
+        try {
+          const discovered = await deps.deploymentDiscovery.discover(hint);
+          return {
+            candidate,
+            deployment: await deps.verifier.verifyDirectDeployment(discovered),
+          };
+        } catch (discoveryFailure) {
+          return { candidate, error: `deployment_discovery:${failureReason(discoveryFailure)}` };
+        }
+      }
       return { candidate, error: `deployment_verification:${failureReason(error)}` };
     }
   });
@@ -190,6 +204,13 @@ function buildRuntime(options, deps = {}) {
   const blockscout = (deps.blockscoutFactory || createRobinhoodBlockscoutMetadataClient)({
     apiKey, apiUrl, timeoutMs: options.timeoutMs,
   });
+  const deploymentDiscovery = createRobinhoodArchiveDeploymentDiscovery({
+    rpcClient,
+    blockCreationLookup: async (tokenAddress, blockNumber) => (await requestWithRetry(
+      () => blockscout.getContractCreationAtBlock(tokenAddress, blockNumber),
+      { requestRetries: 2, retryDelayMs: 500 }, sleep,
+    )).value,
+  });
   return Object.freeze({
     gaps: createRobinhoodDirectionalDeploymentGapRepository({ database }),
     attributions: createRobinhoodTokenAttributionRepository({ database }),
@@ -201,6 +222,7 @@ function buildRuntime(options, deps = {}) {
         { requestRetries: 2, retryDelayMs: 500 }, sleep,
       )).value,
     }),
+    deploymentDiscovery,
     sleep,
   });
 }
