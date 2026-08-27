@@ -1899,8 +1899,12 @@ com `--run-id=<id> --apply`; campanhas falhas exigem também `--retry-failed`.
 O comando roda no PC, exige `DATABASE_URL` da VPS, `RH_NODE_RPC_URL` do archive
 local e Stages 167 e 169 aplicadas. Novas campanhas usam
 `rh_native_funding_v2`; o runner recusa campanhas v1 para impedir que evidência
-global sem associação causal seja tratada como completa. Não existe fallback de RPC, worker automático ou
-publicação de `BUNDLED`. A leitura recusa universos
+global sem associação causal seja tratada como completa. Não existe fallback para
+outro RPC, worker automático ou publicação de `BUNDLED`. Quando o archive retorna
+`-32003` para um full-block grande demais, o reader repete somente o batch afetado,
+tenta cada bloco isoladamente e, se necessário, hidrata o bloco por hashes com
+`eth_getTransactionByHash` em lotes de 25. A hidratação valida número/hash do bloco
+e de cada transação no mesmo archive. A leitura recusa universos
 acima de 500 mil candidatos para não exceder a memória; esse caso exige um
 planejador paginado antes de continuar.
 Aplique `node src/utils/db-init-stage167.js` antes do writer de funding.

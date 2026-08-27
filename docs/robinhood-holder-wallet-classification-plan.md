@@ -1980,6 +1980,9 @@ O preflight lê full-blocks top-level somente no `RH_NODE_RPC_URL`, amostra batc
 distribuídos pelos ranges realmente planejados sob a concorrência configurada e
 falha fechado por chain ID, mudança do checkpoint ou ETA acima de cinco horas.
 Transfers internos permanecem fora do escopo por ausência de traces.
+Full-blocks que excedem o limite de resposta do archive são hidratados pelo mesmo
+endpoint a partir do cabeçalho e dos hashes de transação, com validação de
+block number/hash antes da seleção causal.
 
 ### Corte D3 — projeção seed/live de funding nativo
 

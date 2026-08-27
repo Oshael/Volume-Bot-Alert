@@ -1,6 +1,8 @@
 const EXPECTED_CHAIN_ID = 4663n;
 const SAFETY_FACTOR = 1.25;
 const MAX_HOURS = 5;
+const RESPONSE_TOO_LARGE_RPC_CODE = -32003;
+const TRANSACTION_BATCH_SIZE = 25;
 
 function quantity(value, label) {
   const normalized = String(value ?? '').trim().toLowerCase();
@@ -53,6 +55,23 @@ function parseBlock(block, expectedNumber, candidateWallets) {
   return { transfers, candidateInboundTransfers, candidateOutboundTransfers };
 }
 
+function responseTooLarge(error) {
+  return error?.code === 'rpc_error' && error.rpcCode === RESPONSE_TOO_LARGE_RPC_CODE;
+}
+
+function validateHydratedTransaction(transaction, transactionHash, block) {
+  if (!transaction || hash(transaction.hash, 'transaction.hash') !== transactionHash) {
+    throw new Error(`archive omitted transaction ${transactionHash}`);
+  }
+  if (quantity(transaction.blockNumber, 'transaction.blockNumber')
+      !== quantity(block.number, 'block.number')
+      || hash(transaction.blockHash, 'transaction.blockHash')
+        !== hash(block.hash, 'block.hash')) {
+    throw new Error(`archive returned transaction ${transactionHash} from the wrong block`);
+  }
+  return transaction;
+}
+
 function createRobinhoodBundleFundingReader(options = {}) {
   const rpcClient = options.rpcClient;
   if (typeof rpcClient?.request !== 'function' || typeof rpcClient?.requestBatch !== 'function') {
@@ -78,10 +97,55 @@ function createRobinhoodBundleFundingReader(options = {}) {
     return hash(block.hash, 'checkpoint.hash');
   }
 
+  async function hydrateOversizedBlock(blockNumber) {
+    const block = await rpcClient.request(
+      'eth_getBlockByNumber', [blockTag(blockNumber), false]
+    );
+    if (quantity(block?.number, 'block.number') !== BigInt(blockNumber)) {
+      throw new Error(`archive returned the wrong block for ${blockNumber}`);
+    }
+    hash(block.hash, 'block.hash');
+    if (!Array.isArray(block.transactions)) {
+      throw new Error('block transaction hashes are unavailable');
+    }
+    const transactionHashes = block.transactions.map((value) => hash(
+      value, 'block transaction hash'
+    ));
+    const transactions = [];
+    for (let offset = 0; offset < transactionHashes.length; offset += TRANSACTION_BATCH_SIZE) {
+      const batch = transactionHashes.slice(offset, offset + TRANSACTION_BATCH_SIZE);
+      const hydrated = await rpcClient.requestBatch(batch.map((transactionHash) => ({
+        method: 'eth_getTransactionByHash', params: [transactionHash],
+      })));
+      transactions.push(...hydrated.map((transaction, index) => (
+        validateHydratedTransaction(transaction, batch[index], block)
+      )));
+    }
+    return { ...block, transactions };
+  }
+
+  async function readFullBlock(blockNumber) {
+    try {
+      return await rpcClient.request(
+        'eth_getBlockByNumber', [blockTag(blockNumber), true]
+      );
+    } catch (error) {
+      if (!responseTooLarge(error)) throw error;
+      return hydrateOversizedBlock(blockNumber);
+    }
+  }
+
   async function readBlocks(blockNumbers) {
-    const blocks = await rpcClient.requestBatch(blockNumbers.map((number) => ({
-      method: 'eth_getBlockByNumber', params: [blockTag(number), true],
-    })));
+    let blocks;
+    try {
+      blocks = await rpcClient.requestBatch(blockNumbers.map((number) => ({
+        method: 'eth_getBlockByNumber', params: [blockTag(number), true],
+      })));
+    } catch (error) {
+      if (!responseTooLarge(error)) throw error;
+      blocks = [];
+      for (const blockNumber of blockNumbers) blocks.push(await readFullBlock(blockNumber));
+    }
     const parsed = blocks.map((block, index) => (
       parseBlock(block, blockNumbers[index], candidateWallets)
     ));
@@ -193,5 +257,5 @@ async function preflightBundleFunding(input = {}, deps = {}) {
 
 module.exports = {
   EXPECTED_CHAIN_ID, createRobinhoodBundleFundingReader, preflightBundleFunding,
-  __private: { parseBlock, sampleBatches },
+  __private: { parseBlock, responseTooLarge, sampleBatches },
 };

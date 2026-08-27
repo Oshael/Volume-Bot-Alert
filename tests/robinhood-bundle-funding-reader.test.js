@@ -60,6 +60,72 @@ describe('Robinhood bundle funding archive reader', () => {
     });
   });
 
+  it('hydrates oversized full blocks from archive transaction hashes', async () => {
+    const calls = [];
+    const tooLarge = () => Object.assign(new Error('RPC error -32003'), {
+      code: 'rpc_error', rpcCode: -32003,
+    });
+    const transactionHashes = Array.from({ length: 26 }, (_, index) => (
+      `0x${String(index + 1).padStart(64, '0')}`
+    ));
+    const reader = createRobinhoodBundleFundingReader({
+      candidateWallets: [WALLET],
+      rpcClient: {
+        async request(method, params) {
+          calls.push([method, params]);
+          if (params[0] === '0xb' && params[1] === true) throw tooLarge();
+          if (params[0] === '0xb') return {
+            number: '0xb', hash: HASH_A, timestamp: '0x64', transactions: transactionHashes,
+          };
+          return fullBlock(BigInt(params[0]));
+        },
+        async requestBatch(requests) {
+          calls.push(['batch', requests]);
+          if (requests[0].method === 'eth_getBlockByNumber') throw tooLarge();
+          return requests.map(({ params }) => ({
+            hash: params[0], transactionIndex: `0x${transactionHashes.indexOf(params[0]).toString(16)}`,
+            from: FUNDER, to: WALLET, value: '0x1', blockNumber: '0xb', blockHash: HASH_A,
+          }));
+        },
+      },
+    });
+
+    const result = await reader.readBlocks(['10', '11']);
+    assert.equal(result.blocksScanned, 2);
+    assert.equal(result.transfers.length, 27);
+    assert.deepEqual(calls.map(([kind]) => kind), [
+      'batch', 'eth_getBlockByNumber', 'eth_getBlockByNumber',
+      'eth_getBlockByNumber', 'batch', 'batch',
+    ]);
+    assert.equal(calls[4][1].length, 25);
+    assert.equal(calls[5][1].length, 1);
+  });
+
+  it('does not mask unrelated RPC failures or incoherent hydrated transactions', async () => {
+    const unrelated = Object.assign(new Error('timeout'), {
+      code: 'timeout', rpcCode: null,
+    });
+    const failing = createRobinhoodBundleFundingReader({ candidateWallets: [], rpcClient: {
+      async request() {}, async requestBatch() { throw unrelated; },
+    } });
+    await assert.rejects(failing.readBlocks(['10']), (error) => error === unrelated);
+
+    const tooLarge = Object.assign(new Error('RPC error -32003'), {
+      code: 'rpc_error', rpcCode: -32003,
+    });
+    const incoherent = createRobinhoodBundleFundingReader({ candidateWallets: [], rpcClient: {
+      async request(_method, params) {
+        if (params[1] === true) throw tooLarge;
+        return { number: '0xa', hash: HASH_A, timestamp: '0x64', transactions: [TX_HASH] };
+      },
+      async requestBatch(requests) {
+        if (requests[0].method === 'eth_getBlockByNumber') throw tooLarge;
+        return [{ ...fullBlock(11).transactions[0], blockNumber: '0xb', blockHash: HASH_B }];
+      },
+    } });
+    await assert.rejects(incoherent.readBlocks(['10']), /from the wrong block/);
+  });
+
   it('samples batches across every merged range and projects concurrent wall time', async () => {
     const workload = sampleBatches([
       { fromBlock: '10', toBlock: '15' }, { fromBlock: '100', toBlock: '101' },
