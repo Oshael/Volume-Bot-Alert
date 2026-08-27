@@ -2011,6 +2011,10 @@ A Stage 168 prepara o contrato persistente desse shadow: estado versionado por
 token, grupos e membros, lineage seed/live e política explícita de lookback e
 threshold positivo. Ela não escolhe threshold, não materializa e não transforma
 `BUNDLED` em tag de endereço; esses passos permanecem em cortes posteriores.
+A Stage 169 corrige a lineage do seed antes da execução completa: o resumo global
+`from -> to` continua reutilizável, mas cada evidência selecionada também fica
+associada permanentemente ao token, wallet candidata e hop causal. Assim, raw
+expirado não obriga o classificador a inferir relação a partir de outro lançamento.
 
 ### Corte D5 — publicação
 

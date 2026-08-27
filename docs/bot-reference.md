@@ -1912,6 +1912,12 @@ threshold econômico positivo e lineage `seed`/`live`; grupos exigem pelo menos
 duas wallets, conexão comprovada, valor qualificante e evidência JSON. A migration
 é somente DDL, depende da Stage 167 e não materializa, publica ou adiciona uma tag
 de wallet. Threshold sem calibração não recebe default operacional.
+A Stage 169 (`node src/utils/db-init-stage169.js`) preserva permanentemente a
+associação causal que o agregado global não representa: `run`, token, candidata,
+hop 1/2 e a transferência nativa exata. Ela depende da Stage 167, é somente DDL
+e deve ser aplicada antes de executar ou recuperar o seed de funding. Eventos de
+hop 1 terminam na candidata; hop 2 termina no funder direto e não pode partir da
+própria candidata.
 A Stage 166 (`node src/utils/db-init-stage166.js`) cria o controle durável do
 catch-up de launch anchors: uma campanha ativa por chain e uma fila por token com
 frontier/hash congelados, lease, retry e resultados terminais. A migration é

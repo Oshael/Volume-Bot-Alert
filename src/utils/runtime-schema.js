@@ -4829,6 +4829,48 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage169-robinhood-token-scoped-funding-evidence',
+    name: 'Stage 169 Robinhood token-scoped funding evidence',
+    repair: 'node src/utils/db-init-stage169.js',
+    tables: [{
+      table: 'robinhood_bundle_funding_evidence',
+      columns: [
+        'chain', 'run_id', 'token_address', 'candidate_wallet', 'hop',
+        'block_number', 'block_hash', 'block_time', 'transaction_hash',
+        'transaction_index', 'from_wallet', 'to_wallet', 'value_wei',
+        'evidence_version', 'created_at',
+      ],
+      columnTypes: {
+        value_wei: { dataType: 'numeric', numericPrecision: 78, numericScale: 0 },
+      },
+      constraints: [{
+        name: 'rh_bundle_funding_evidence_pkey',
+        includes: [
+          'PRIMARY KEY', 'chain', 'run_id', 'token_address', 'candidate_wallet',
+          'transaction_hash', 'hop',
+        ],
+      }, {
+        name: 'rh_bundle_funding_evidence_candidate_fkey',
+        includes: ['FOREIGN KEY', 'run_id', 'token_address', 'candidate_wallet'],
+      }, {
+        name: 'rh_bundle_funding_evidence_hop_check',
+        includes: ['CHECK', 'hop', 'candidate_wallet', 'from_wallet', 'to_wallet'],
+      }, {
+        name: 'rh_bundle_funding_evidence_value_check', includes: ['CHECK', 'value_wei'],
+      }],
+      indexes: [{
+        name: 'idx_rh_bundle_funding_evidence_token',
+        includes: [
+          'token_address', 'run_id', 'candidate_wallet', 'hop',
+          'block_number', 'transaction_index',
+        ],
+      }, {
+        name: 'idx_rh_bundle_funding_evidence_path',
+        includes: ['run_id', 'token_address', 'to_wallet', 'from_wallet', 'block_number'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
