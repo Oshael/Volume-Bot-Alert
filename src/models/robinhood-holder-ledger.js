@@ -526,6 +526,22 @@ function tailWalletSnapshots(rows) {
   return [...snapshots.values()];
 }
 
+function driftTailIneligibility(row, backfillNextBlock) {
+  if (!row) return 'state-stale';
+  if (row.journal_floor_block == null
+      || BigInt(backfillNextBlock) < BigInt(row.journal_floor_block)) {
+    return 'below-journal-floor';
+  }
+  if (row.live_through_block == null
+      || BigInt(row.live_through_block) < BigInt(backfillNextBlock)) {
+    return 'tail-not-applied';
+  }
+  if (Number(row.applied_events) < 1) return 'applied-evidence-missing';
+  if (Number(row.pending_events) < 1) return 'pending-event-missing';
+  if (row.evidence_complete !== true) return 'applied-evidence-incomplete';
+  return null;
+}
+
 function assertTailBalances(snapshots, currentRows) {
   const current = new Map(currentRows.map((row) => [row.wallet_address, row]));
   for (const snapshot of snapshots) {
@@ -1168,36 +1184,102 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     });
   }
 
-  async function rollbackAppliedTail(input = {}) {
+  async function inspectDriftedAppliedTail(input = {}) {
+    const tokenAddress = hex(input.tokenAddress, 20, 'driftTail.tokenAddress');
+    const backfillNextBlock = decimalQuantity(
+      input.backfillNextBlock, 'driftTail.backfillNextBlock'
+    );
+    const expectedVersion = decimalQuantity(input.expectedVersion, 'driftTail.expectedVersion');
+    const result = await database.query(
+      `SELECT state.live_through_block, cursor.journal_floor_block,
+              (SELECT COUNT(*)::int FROM robinhood_holder_transfer_journal journal
+                WHERE journal.chain = state.chain
+                  AND journal.token_address = state.token_address
+                  AND journal.applied = true
+                  AND journal.block_number >= state.backfill_next_block) AS applied_events,
+              (SELECT COUNT(*)::int FROM robinhood_holder_transfer_journal journal
+                WHERE journal.chain = state.chain
+                  AND journal.token_address = state.token_address
+                  AND journal.applied = false
+                  AND journal.block_number >= state.backfill_next_block) AS pending_events,
+              COALESCE((SELECT BOOL_AND(
+                       journal.holder_delta IS NOT NULL
+                       AND (journal.from_wallet = $4
+                         OR (journal.from_balance_before IS NOT NULL
+                           AND journal.from_balance_after IS NOT NULL
+                           AND (journal.from_balance_before = 0
+                             OR journal.from_last_block_before IS NOT NULL)))
+                       AND (journal.to_wallet = $4
+                         OR (journal.to_balance_before IS NOT NULL
+                           AND journal.to_balance_after IS NOT NULL
+                           AND (journal.to_balance_before = 0
+                             OR journal.to_last_block_before IS NOT NULL))))
+                  FROM robinhood_holder_transfer_journal journal
+                 WHERE journal.chain = state.chain
+                   AND journal.token_address = state.token_address
+                   AND journal.applied = true
+                   AND journal.block_number >= state.backfill_next_block), false)
+                AS evidence_complete
+         FROM robinhood_holder_token_states state
+         INNER JOIN robinhood_holder_cursors cursor
+           ON cursor.chain = state.chain AND cursor.stream = 'live'
+        WHERE state.chain = 'robinhood' AND state.token_address = $1
+          AND state.ledger_status = 'drifted' AND state.version = $2::bigint
+          AND state.backfill_next_block = $3::bigint`,
+      [tokenAddress, expectedVersion, backfillNextBlock, ZERO_ADDRESS]
+    );
+    const row = result.rows[0];
+    const reason = driftTailIneligibility(row, backfillNextBlock);
+    return Object.freeze({
+      eligible: reason == null, reason, tokenAddress,
+      appliedEvents: Number(row?.applied_events) || 0,
+      pendingEvents: Number(row?.pending_events) || 0,
+    });
+  }
+
+  async function rollbackAppliedTailInternal(input, driftRecovery) {
     const tokenAddress = hex(input.tokenAddress, 20, 'tailRollback.tokenAddress');
     const backfillNextBlock = decimalQuantity(
       input.backfillNextBlock, 'tailRollback.backfillNextBlock'
     );
-    const failedBlock = decimalQuantity(input.failedBlock, 'tailRollback.failedBlock');
-    const failedTransactionHash = hex(
+    const expectedVersion = driftRecovery
+      ? decimalQuantity(input.expectedVersion, 'tailRollback.expectedVersion') : null;
+    const failedBlock = driftRecovery ? null
+      : decimalQuantity(input.failedBlock, 'tailRollback.failedBlock');
+    const failedTransactionHash = driftRecovery ? null : hex(
       input.failedTransactionHash, 32, 'tailRollback.failedTransactionHash'
     );
-    const failedLogIndex = nonNegativeInteger(
+    const failedLogIndex = driftRecovery ? null : nonNegativeInteger(
       input.failedLogIndex, 'tailRollback.failedLogIndex'
     );
     return withTransaction(database, async (client) => {
       await lockReorgFence(client, 'exclusive');
-      await client.query(
-        `SELECT next_block FROM robinhood_holder_cursors
-          WHERE chain = 'robinhood' AND stream = 'live'`
+      const cursorResult = await client.query(
+        `SELECT next_block, journal_floor_block FROM robinhood_holder_cursors
+          WHERE chain = 'robinhood' AND stream = 'live' FOR UPDATE`
       );
       const stateResult = await client.query(
         `SELECT holder_count, ledger_status, backfill_next_block,
                 live_through_block, live_through_hash, version
            FROM robinhood_holder_token_states
-          WHERE chain = 'robinhood' AND token_address = $1
-            AND ledger_status IN ('shadow', 'live') FOR UPDATE`,
+          WHERE chain = 'robinhood' AND token_address = $1 FOR UPDATE`,
         [tokenAddress]
       );
       const state = stateResult.rows[0];
-      if (!state || String(state.backfill_next_block) !== backfillNextBlock) {
+      const allowedStatus = driftRecovery
+        ? state?.ledger_status === 'drifted'
+        : ['shadow', 'live'].includes(state?.ledger_status);
+      if (!state || !allowedStatus || String(state.backfill_next_block) !== backfillNextBlock
+          || (driftRecovery && String(state.version) !== expectedVersion)) {
         const error = new Error('holder tail rollback state is stale');
         error.code = 'holder_tail_rollback_stale';
+        throw error;
+      }
+      const journalFloorBlock = cursorResult.rows[0]?.journal_floor_block;
+      if (driftRecovery && (journalFloorBlock == null
+          || BigInt(backfillNextBlock) < BigInt(journalFloorBlock))) {
+        const error = new Error('holder tail rollback is below retained evidence');
+        error.code = 'holder_tail_rollback_unavailable';
         throw error;
       }
       const pending = await client.query(
@@ -1209,9 +1291,9 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
         [tokenAddress]
       );
       const failed = pending.rows[0];
-      if (!failed || String(failed.block_number) !== failedBlock
+      if (!failed || (!driftRecovery && (String(failed.block_number) !== failedBlock
           || failed.transaction_hash !== failedTransactionHash
-          || Number(failed.log_index) !== failedLogIndex) {
+          || Number(failed.log_index) !== failedLogIndex))) {
         const error = new Error('holder tail rollback pending event is stale');
         error.code = 'holder_tail_rollback_stale';
         throw error;
@@ -1259,10 +1341,11 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
                 ledger_status = 'backfilling', live_through_block = NULL,
                 live_through_hash = NULL, version = version + 1, updated_at = NOW()
           WHERE chain = 'robinhood' AND token_address = $1 AND version = $2::bigint
-            AND ledger_status IN ('shadow', 'live')
+            AND ledger_status = ANY($4::varchar[])
             AND holder_count - $3::bigint >= 0
           RETURNING version, updated_at`,
-        [tokenAddress, state.version, holderDelta.toString()]
+        [tokenAddress, state.version, holderDelta.toString(),
+          driftRecovery ? ['drifted'] : ['shadow', 'live']]
       );
       if (!reset.rowCount) throw new Error('holder tail rollback state changed while locked');
       const publication = state.ledger_status === 'live' ? Object.freeze({
@@ -1277,6 +1360,14 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
         ...(publication ? { publication } : {}),
       });
     });
+  }
+
+  async function rollbackAppliedTail(input = {}) {
+    return rollbackAppliedTailInternal(input, false);
+  }
+
+  async function rollbackDriftedAppliedTail(input = {}) {
+    return rollbackAppliedTailInternal(input, true);
   }
 
   async function requeueWideShadowTail(input = {}) {
@@ -1518,7 +1609,8 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
 
   return Object.freeze({
     appendCapturedRange, applyNextPendingEvent, promoteReadyShadowTokens,
-    repairCapturedRange, requeueWideShadowTail, rollbackAppliedTail,
+    inspectDriftedAppliedTail, repairCapturedRange, requeueWideShadowTail,
+    rollbackAppliedTail, rollbackDriftedAppliedTail,
     rewindOrphanedRange,
     getCursor, listJournalBlockCheckpoints, listPendingTokenAddresses,
     listTrackedTokenAddresses,

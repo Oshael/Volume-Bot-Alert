@@ -17,6 +17,7 @@ const HASH_E = `0x${'e'.repeat(64)}`;
 const HASH_F = `0x${'f'.repeat(64)}`;
 const HASH_6 = `0x${'6'.repeat(64)}`;
 const HASH_8 = `0x${'8'.repeat(64)}`;
+const HASH_0 = `0x${'0'.repeat(64)}`;
 const TOKEN = `0x${'3'.repeat(40)}`;
 const TOKEN_2 = `0x${'6'.repeat(40)}`;
 const TOKEN_3 = `0x${'8'.repeat(40)}`;
@@ -25,6 +26,7 @@ const TOKEN_5 = `0x${'9'.repeat(40)}`;
 const TOKEN_BATCH = `0x${'b'.repeat(40)}`;
 const TOKEN_NO_TAIL = `0x${'c'.repeat(40)}`;
 const TOKEN_WIDE_TAIL = `0x${'d'.repeat(40)}`;
+const TOKEN_DRIFT_TAIL = `0x${'e'.repeat(40)}`;
 const ALICE = `0x${'4'.repeat(40)}`;
 const BOB = `0x${'5'.repeat(40)}`;
 const ZERO_ADDRESS = `0x${'0'.repeat(40)}`;
@@ -431,6 +433,72 @@ describe('Robinhood holder ledger persistence', () => {
       assert.deepEqual(restoredTailBalances.rows.map((row) => [
         row.wallet_address, String(row.balance_raw),
       ]), [[ALICE, '1']]);
+
+      await client.query(
+        `INSERT INTO robinhood_holder_token_states
+          (token_address, holder_count, ledger_status, deployment_block,
+           backfill_next_block, live_through_block, live_through_hash, version)
+         VALUES ($1, 1, 'drifted', 50, 101, 101, $2, 7)`,
+        [TOKEN_DRIFT_TAIL, HASH_B]
+      );
+      await client.query(
+        `INSERT INTO robinhood_holder_balances (
+           token_address, wallet_address, balance_raw, last_block_number,
+           last_transaction_hash, last_log_index
+         ) VALUES ($1, $2, 1, 101, $3, 0)`,
+        [TOKEN_DRIFT_TAIL, BOB, HASH_0]
+      );
+      await client.query(
+        `INSERT INTO robinhood_holder_transfer_journal (
+           block_number, block_hash, transaction_hash, transaction_index, log_index,
+           token_address, from_wallet, to_wallet, amount_raw, applied,
+           from_balance_before, from_balance_after, to_balance_before, to_balance_after,
+           holder_delta, from_last_block_before, from_last_transaction_hash_before,
+           from_last_log_index_before, applied_at
+         ) VALUES
+           (101, $1, $2, 0, 0, $3, $4, $5, 1, true,
+            1, 0, 0, 1, 0, 100, $6, 0, NOW()),
+           (101, $1, $2, 0, 1, $3, $5, $4, 2, false,
+            NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)`,
+        [HASH_B, HASH_0, TOKEN_DRIFT_TAIL, ALICE, BOB, HASH_E]
+      );
+      assert.deepEqual(await repository.inspectDriftedAppliedTail({
+        tokenAddress: TOKEN_DRIFT_TAIL, backfillNextBlock: '101', expectedVersion: '7',
+      }), {
+        eligible: true, reason: null, tokenAddress: TOKEN_DRIFT_TAIL,
+        appliedEvents: 1, pendingEvents: 1,
+      });
+      assert.deepEqual(await repository.rollbackDriftedAppliedTail({
+        tokenAddress: TOKEN_DRIFT_TAIL, backfillNextBlock: '101', expectedVersion: '7',
+      }), {
+        status: 'requeued', tokenAddress: TOKEN_DRIFT_TAIL, priorStatus: 'drifted',
+        backfillNextBlock: '101', revertedEvents: 1,
+      });
+      const restoredDrift = await client.query(
+        `SELECT state.holder_count, state.ledger_status, state.live_through_block,
+                (SELECT COUNT(*) FROM robinhood_holder_transfer_journal journal
+                  WHERE journal.token_address = state.token_address
+                    AND journal.applied = true)::int AS applied,
+                (SELECT balance_raw FROM robinhood_holder_balances balance
+                  WHERE balance.token_address = state.token_address
+                    AND balance.wallet_address = $2) AS alice_balance
+           FROM robinhood_holder_token_states state WHERE state.token_address = $1`,
+        [TOKEN_DRIFT_TAIL, ALICE]
+      );
+      assert.deepEqual(restoredDrift.rows, [{
+        holder_count: '1', ledger_status: 'backfilling', live_through_block: null,
+        applied: 0, alice_balance: '1',
+      }]);
+      await client.query(
+        `DELETE FROM robinhood_holder_transfer_journal WHERE token_address = $1`,
+        [TOKEN_DRIFT_TAIL]
+      );
+      await client.query(
+        `DELETE FROM robinhood_holder_balances WHERE token_address = $1`, [TOKEN_DRIFT_TAIL]
+      );
+      await client.query(
+        `DELETE FROM robinhood_holder_token_states WHERE token_address = $1`, [TOKEN_DRIFT_TAIL]
+      );
 
       await client.query(
         `INSERT INTO robinhood_holder_token_states

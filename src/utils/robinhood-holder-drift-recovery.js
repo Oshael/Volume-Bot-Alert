@@ -1,6 +1,9 @@
 require('dotenv').config();
 
 const db = require('../models/db');
+const {
+  createRobinhoodHolderLedgerRepository,
+} = require('../models/robinhood-holder-ledger');
 const { runDriftProbe } = require('./robinhood-holder-drift-probe');
 
 function boundedInteger(value, fallback, minimum, maximum, label) {
@@ -65,7 +68,32 @@ async function processPage(results, context) {
     context.diagnostics.push(diagnostic(result));
     if (result.status !== 'not-reproduced') continue;
     if (!hasReplayCheckpoint(result)) {
-      context.unsafeTokens.push(result.tokenAddress);
+      const preview = await context.tailRecovery.inspectDriftedAppliedTail({
+        tokenAddress: result.tokenAddress,
+        backfillNextBlock: result.backfillNextBlock,
+        expectedVersion: result.version,
+      });
+      if (!preview.eligible) {
+        context.unsafeTokens.push(result.tokenAddress);
+        context.unsafeDiagnostics.push(Object.freeze({
+          tokenAddress: result.tokenAddress, reason: preview.reason,
+        }));
+        continue;
+      }
+      context.tailRollbackTokens.push(result.tokenAddress);
+      if (!context.confirm) continue;
+      try {
+        await context.tailRecovery.rollbackDriftedAppliedTail({
+          tokenAddress: result.tokenAddress,
+          backfillNextBlock: result.backfillNextBlock,
+          expectedVersion: result.version,
+        });
+        context.rolledBackTailTokens.push(result.tokenAddress);
+      } catch (error) {
+        if (!['holder_tail_rollback_stale', 'holder_tail_rollback_unavailable']
+          .includes(error?.code)) throw error;
+        context.staleTokens.push(result.tokenAddress);
+      }
       continue;
     }
     context.eligibleTokens.push(result.tokenAddress);
@@ -91,11 +119,16 @@ async function runDriftRecovery(input = {}) {
   const options = normalizeOptions(input);
   const database = input.database || db;
   const probe = input.probe || runDriftProbe;
+  const tailRecovery = input.tailRecovery
+    || createRobinhoodHolderLedgerRepository({ database });
   const diagnostics = [];
   const eligibleTokens = [];
+  const tailRollbackTokens = [];
+  const rolledBackTailTokens = [];
   const requeuedTokens = [];
   const staleTokens = [];
   const unsafeTokens = [];
+  const unsafeDiagnostics = [];
   let afterTokenAddress = null;
   let provider = null;
   let safeHead = null;
@@ -112,7 +145,8 @@ async function runDriftRecovery(input = {}) {
     safeHead = page.safeHead ?? safeHead;
     await processPage(page.results, {
       database, confirm: options.confirm, diagnostics, eligibleTokens,
-      requeuedTokens, staleTokens, unsafeTokens,
+      tailRecovery, tailRollbackTokens, rolledBackTailTokens,
+      requeuedTokens, staleTokens, unsafeTokens, unsafeDiagnostics,
     });
     const nextCursor = nextPageCursor(page.results, options.batchSize, afterTokenAddress);
     if (nextCursor == null) break;
@@ -122,7 +156,10 @@ async function runDriftRecovery(input = {}) {
   return Object.freeze({
     mode: options.confirm ? 'confirmed' : 'dry-run', provider, safeHead,
     inspectedTokens: diagnostics.length, eligibleTokens: Object.freeze(eligibleTokens),
+    tailRollbackTokens: Object.freeze(tailRollbackTokens),
+    rolledBackTailTokens: Object.freeze(rolledBackTailTokens),
     unsafeTokens: Object.freeze(unsafeTokens),
+    unsafeDiagnostics: Object.freeze(unsafeDiagnostics),
     requeuedTokens: Object.freeze(requeuedTokens), staleTokens: Object.freeze(staleTokens),
     remainingDrifted: await countRemaining(database),
     diagnostics: Object.freeze(diagnostics),

@@ -2243,9 +2243,17 @@ cortes e a ordem detalhada de rollout ficam apenas em
 `npm run robinhood:holder-drift-recovery` pagina todos os `drifted` atuais e e
 dry-run por default. `-- --confirm-requeue` reencaminha somente deficits que nao
 se reproduzem na releitura e cujo checkpoint precede imediatamente o cursor de
-backfill; candidatos vindos de tail live aparecem em `unsafeTokens` e não são
-alterados. O UPDATE exige `version` e cursor inalterados, preserva balances e
-deixa a validacao canonica do checkpoint para o executor de backfill.
+backfill. Deficits nao reproduzidos vindos de tail live entram em
+`tailRollbackTokens` somente quando o journal ainda retem eventos aplicados desde
+o cursor de backfill, a evidencia de balances esta completa e existe evento
+pendente. Na confirmacao, o recovery toma o fence exclusivo, restaura balances e
+holder count pela evidencia aplicada, devolve esses eventos a `pending` e muda o
+token `drifted -> backfilling` no mesmo commit. Evidencia abaixo de
+`journal_floor_block`, incompleta ou concorrente falha fechada em `unsafeTokens`,
+com o motivo em `unsafeDiagnostics`. Os updates exigem `version` e cursor
+inalterados; a validacao canonica seguinte continua a cargo do executor de
+backfill. O worker nao precisa ser parado, mas executar depois de drenar o shadow
+evita competir por I/O com a recuperacao corrente.
 
 `npm run robinhood:holder-checkpoint-repair` lista, sem writes, estados
 `backfilling` cujo checkpoint não precede o cursor. Depois de revisar a lista,

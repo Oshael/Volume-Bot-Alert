@@ -8,6 +8,7 @@ const {
 const TOKEN_A = `0x${'1'.repeat(40)}`;
 const TOKEN_B = `0x${'2'.repeat(40)}`;
 const TOKEN_C = `0x${'3'.repeat(40)}`;
+const TOKEN_D = `0x${'4'.repeat(40)}`;
 
 function result(tokenAddress, status, overrides = {}) {
   return {
@@ -40,7 +41,10 @@ describe('Robinhood holder drift recovery', () => {
     assert.deepEqual(cursors, [null, TOKEN_B]);
     assert.equal(recovered.mode, 'dry-run');
     assert.deepEqual(recovered.eligibleTokens, [TOKEN_A, TOKEN_C]);
+    assert.deepEqual(recovered.tailRollbackTokens, []);
+    assert.deepEqual(recovered.rolledBackTailTokens, []);
     assert.deepEqual(recovered.unsafeTokens, []);
+    assert.deepEqual(recovered.unsafeDiagnostics, []);
     assert.deepEqual(recovered.requeuedTokens, []);
     assert.equal(recovered.remainingDrifted, 3);
     assert.equal(queries.every((sql) => /^\s*SELECT/.test(sql)), true);
@@ -56,17 +60,39 @@ describe('Robinhood holder drift recovery', () => {
     const probe = async () => ({ provider: 'node', safeHead: '500', results: [
       result(TOKEN_A, 'not-reproduced'),
       result(TOKEN_C, 'not-reproduced', { liveThroughBlock: '250' }),
+      result(TOKEN_D, 'not-reproduced', { liveThroughBlock: '250' }),
       result(TOKEN_B, 'deficit-found', { classification: 'archive-state-unavailable' }),
     ] });
+    const tailCalls = [];
+    const tailRecovery = {
+      async inspectDriftedAppliedTail(input) {
+        tailCalls.push(['inspect', input.tokenAddress]);
+        return input.tokenAddress === TOKEN_C
+          ? { eligible: true, reason: null }
+          : { eligible: false, reason: 'below-journal-floor' };
+      },
+      async rollbackDriftedAppliedTail(input) {
+        tailCalls.push(['rollback', input.tokenAddress]);
+        return { status: 'requeued' };
+      },
+    };
 
     const recovered = await runDriftRecovery({
-      database, probe, batchSize: 25, confirm: true,
+      database, probe, tailRecovery, batchSize: 25, confirm: true,
     });
 
     assert.equal(recovered.mode, 'confirmed');
     assert.deepEqual(recovered.requeuedTokens, [TOKEN_A]);
-    assert.deepEqual(recovered.unsafeTokens, [TOKEN_C]);
+    assert.deepEqual(recovered.tailRollbackTokens, [TOKEN_C]);
+    assert.deepEqual(recovered.rolledBackTailTokens, [TOKEN_C]);
+    assert.deepEqual(recovered.unsafeTokens, [TOKEN_D]);
+    assert.deepEqual(recovered.unsafeDiagnostics, [{
+      tokenAddress: TOKEN_D, reason: 'below-journal-floor',
+    }]);
     assert.deepEqual(recovered.staleTokens, []);
+    assert.deepEqual(tailCalls, [
+      ['inspect', TOKEN_C], ['rollback', TOKEN_C], ['inspect', TOKEN_D],
+    ]);
     assert.equal(recovered.remainingDrifted, 1);
     const update = queries.find(([sql]) => /^\s*UPDATE/.test(sql));
     assert.deepEqual(update[1], [TOKEN_A, '7', '200']);
