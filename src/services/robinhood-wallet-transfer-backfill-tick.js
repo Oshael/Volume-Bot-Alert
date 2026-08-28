@@ -101,7 +101,11 @@ function mergeHydratedRoles(context, hydration) {
 }
 
 function knownContextAddresses(context) {
-  return [...new Set(context.rpcExemptAddresses || [])];
+  return [...new Set([
+    ...(context.rpcExemptAddresses || []),
+    ...(context.contractAddresses || []),
+    ...(context.walletAddresses || []),
+  ])];
 }
 
 async function prepareRobinhoodWalletTransferRange(deps, input = {}) {
@@ -130,6 +134,67 @@ async function prepareRobinhoodWalletTransferRange(deps, input = {}) {
     captured.transfers, context, deps.classifierFactory
   );
   return { tokenAddresses, captured, classified, context, hydration };
+}
+
+function combineCapturedRanges(capturedRanges) {
+  if (!Array.isArray(capturedRanges) || !capturedRanges.length) {
+    throw new TypeError('capturedRanges must be a non-empty list');
+  }
+  const first = capturedRanges[0];
+  const last = capturedRanges[capturedRanges.length - 1];
+  return Object.freeze({
+    fromBlock: first.fromBlock,
+    fromBlockTime: first.fromBlockTime,
+    toBlock: last.toBlock,
+    checkpoint: last.checkpoint,
+    transfers: Object.freeze(capturedRanges.flatMap(({ transfers }) => transfers)),
+  });
+}
+
+async function prepareRobinhoodWalletTransferRanges(deps, input = {}) {
+  assertRangeDependencies(deps);
+  if (!Array.isArray(input.ranges) || !input.ranges.length) {
+    throw new TypeError('ranges must be a non-empty list');
+  }
+  const tokenAddresses = input.tokenAddresses
+    || await deps.source.listTrackedTokenAddresses();
+  const capturedRanges = await Promise.all(input.ranges.map((range) => (
+    deps.evidence.readRange({
+      tokenAddresses, fromBlock: range.fromBlock, toBlock: range.toBlock,
+      forceAddressFiltered: input.forceAddressFiltered === true,
+    })
+  )));
+  const captured = combineCapturedRanges(capturedRanges);
+  const baseContext = await deps.source.loadBackfillRangeContext(classificationInput(
+    captured, captured.fromBlockTime
+  ));
+  if (!baseContext.ready) {
+    return { outcome: Object.freeze({
+      status: 'awaiting-context', reason: baseContext.reason,
+      fromBlock: captured.fromBlock, toBlock: captured.toBlock,
+    }) };
+  }
+  let context = baseContext;
+  const knownAddresses = new Set(knownContextAddresses(baseContext));
+  const hydrations = [];
+  for (const range of capturedRanges) {
+    const hydration = await deps.endpointRoles.hydrate({
+      transfers: range.transfers, commit: input.commit === true,
+      knownAddresses: [...knownAddresses],
+    });
+    hydrations.push(hydration);
+    for (const endpoint of [
+      ...hydration.contractAddresses, ...hydration.walletAddresses,
+    ]) knownAddresses.add(endpoint);
+    context = mergeHydratedRoles(context, hydration);
+  }
+  const classified = classifyTransfers(
+    captured.transfers, context, deps.classifierFactory
+  );
+  return {
+    tokenAddresses, captured, capturedRanges: Object.freeze(capturedRanges),
+    classified, context, hydrations: Object.freeze(hydrations),
+  };
 }
 
 async function prepareBackfillRange(deps, input = {}) {
@@ -221,10 +286,11 @@ async function runRobinhoodWalletTransferBackfillCommit(deps, input = {}) {
 }
 
 module.exports = {
-  prepareRobinhoodWalletTransferRange,
+  prepareRobinhoodWalletTransferRange, prepareRobinhoodWalletTransferRanges,
   runRobinhoodWalletTransferBackfillCommit,
   runRobinhoodWalletTransferBackfillDryRun,
   __private: {
-    knownContextAddresses, mergeHydratedRoles, rangeForPlan, retentionCutoff, summarizeThroughDay,
+    combineCapturedRanges, knownContextAddresses, mergeHydratedRoles,
+    rangeForPlan, retentionCutoff, summarizeThroughDay,
   },
 };

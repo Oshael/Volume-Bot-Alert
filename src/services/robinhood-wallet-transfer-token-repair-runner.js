@@ -1,6 +1,9 @@
 const { randomUUID } = require('node:crypto');
 const { isEdgeEligibleTransfer } = require('./robinhood-wallet-transfer-batch');
-const { prepareRobinhoodWalletTransferRange } = require('./robinhood-wallet-transfer-backfill-tick');
+const {
+  prepareRobinhoodWalletTransferRange,
+  prepareRobinhoodWalletTransferRanges,
+} = require('./robinhood-wallet-transfer-backfill-tick');
 
 function blocks(value) {
   const parsed = Number(value ?? 500);
@@ -93,6 +96,30 @@ function withSerializedRoleHydration(deps) {
 }
 
 async function prepareWindows(deps, input) {
+  if (!deps.prepareRange) {
+    const prepared = await (deps.prepareRanges || prepareRobinhoodWalletTransferRanges)(
+      deps.tickDeps, {
+        tokenAddresses: input.tokenAddresses, ranges: input.ranges,
+        commit: true, forceAddressFiltered: true,
+      }
+    );
+    if (prepared.outcome) {
+      const error = new Error(prepared.outcome.reason || prepared.outcome.status);
+      error.code = 'token_repair_source_unavailable';
+      throw error;
+    }
+    const canonical = await Promise.all(prepared.capturedRanges.map(({ checkpoint }) => (
+      deps.tickDeps.evidence.matchesCheckpoint({
+        number: checkpoint.number, hash: checkpoint.hash,
+      })
+    )));
+    if (canonical.some((matches) => !matches)) {
+      const error = new Error('token repair range checkpoint is not canonical');
+      error.code = 'token_repair_checkpoint_mismatch';
+      throw error;
+    }
+    return prepared.classified.events.filter(isEdgeEligibleTransfer);
+  }
   const windowDeps = withSerializedRoleHydration(deps);
   const settled = await Promise.allSettled(input.ranges.map((range) => prepareWindow(windowDeps, {
     tokenAddresses: input.tokenAddresses, range,

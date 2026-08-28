@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const {
+  prepareRobinhoodWalletTransferRanges,
   runRobinhoodWalletTransferBackfillCommit,
   runRobinhoodWalletTransferBackfillDryRun,
   __private: { rangeForPlan, retentionCutoff, summarizeThroughDay },
@@ -106,6 +107,46 @@ function dependencies(overrides = {}) {
 }
 
 describe('Robinhood wallet-transfer backfill dry-run tick', () => {
+  it('loads one shared classification context for concurrent repair ranges', async () => {
+    const deps = dependencies({
+      classifierFactory: () => ({ classify: () => ({
+        kind: 'wallet_transfer', classificationVersion: 'rh_transfer_v1',
+      }) }),
+    });
+    deps.evidence.readRange = async (input) => {
+      deps.calls.evidence.push(input);
+      const fromBlock = Number(input.fromBlock);
+      const toBlock = Number(input.toBlock);
+      return {
+        fromBlock: input.fromBlock,
+        fromBlockTime: `2026-07-14T00:0${fromBlock === 90 ? 0 : 1}:00.000Z`,
+        toBlock: input.toBlock,
+        checkpoint: {
+          number: input.toBlock, hash: HASH,
+          blockTime: `2026-07-14T00:0${fromBlock === 90 ? 0 : 1}:59.000Z`,
+        },
+        transfers: [transfer(toBlock, '2026-07-14T00:00:30.000Z', fromBlock)],
+      };
+    };
+
+    const prepared = await prepareRobinhoodWalletTransferRanges(deps, {
+      tokenAddresses: [TOKEN], commit: true, forceAddressFiltered: true,
+      ranges: [
+        { fromBlock: '90', toBlock: '99' },
+        { fromBlock: '100', toBlock: '109' },
+      ],
+    });
+
+    assert.equal(deps.calls.evidence.length, 2);
+    assert.equal(deps.calls.contexts.length, 1);
+    assert.equal(deps.calls.hydration.length, 2);
+    assert.equal(prepared.classified.events.length, 2);
+    assert.deepEqual([
+      deps.calls.contexts[0].fromBlock, deps.calls.contexts[0].toBlock,
+    ], ['90', '109']);
+    assert.equal(deps.calls.contexts[0].transactionHashes.length, 2);
+  });
+
   it('classifies one bounded range and reports raw versus summary-only writes', async () => {
     let classifierOptions;
     const deps = dependencies({
@@ -136,6 +177,7 @@ describe('Robinhood wallet-transfer backfill dry-run tick', () => {
     assert.equal(result.edgeEligible, 2);
     assert.deepEqual(deps.calls.evidence[0], {
       tokenAddresses: [TOKEN], fromBlock: '90', toBlock: '200',
+      forceAddressFiltered: false,
     });
     assert.equal(deps.calls.contexts[0].fromTime, '2026-07-14T00:00:00.000Z');
     assert.equal(deps.calls.hydration[0].commit, false);

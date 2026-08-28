@@ -44,6 +44,40 @@ function setup(canonical = true) {
 }
 
 describe('Robinhood wallet-transfer token repair runner', () => {
+  it('prepares concurrent windows through one shared batch context', async () => {
+    const calls = [];
+    const coverage = {
+      async claimBatch() {
+        return [{ tokenAddress: TOKEN, nextBlock: '100', sourceThroughBlock: '249' }];
+      },
+      async commitShadowBatch(input) {
+        calls.push(['commitShadowBatch', input]);
+        return { complete: 1, pending: 0 };
+      },
+      async retry() { throw new Error('unexpected retry'); },
+    };
+    const result = await runRobinhoodWalletTransferTokenRepairRange({
+      coverage,
+      tickDeps: { evidence: { async matchesCheckpoint() { return true; } } },
+      prepareRanges: async (_deps, input) => {
+        calls.push(['prepareRanges', input]);
+        return {
+          capturedRanges: input.ranges.map((range) => ({
+            checkpoint: { number: range.toBlock, hash: HASH },
+          })),
+          classified: { events: [event()] },
+        };
+      },
+    }, {
+      owner: 'batch-context-owner', maxBlocks: 50,
+      tokenBatchSize: 500, windowConcurrency: 3,
+    });
+
+    assert.equal(result.status, 'batch-projected');
+    assert.equal(calls.filter(([name]) => name === 'prepareRanges').length, 1);
+    assert.equal(calls[0][1].ranges.length, 3);
+  });
+
   it('processes one bounded canonical range and persists only edge-eligible events', async () => {
     const deps = setup();
     const result = await runRobinhoodWalletTransferTokenRepairRange(deps, {
