@@ -62,6 +62,7 @@ async function hasOldPendingEvent(client, cutoffBlock) {
         AND (EXISTS (
           SELECT 1 FROM robinhood_holder_token_states state
            WHERE state.chain = journal.chain AND state.token_address = journal.token_address
+             AND state.ledger_status <> 'drifted'
         ) OR EXISTS (
           SELECT 1 FROM robinhood_holder_global_backfill_tokens token
           INNER JOIN robinhood_holder_global_backfill_runs run
@@ -86,6 +87,7 @@ async function deleteExpiredBufferedBatch(client, cutoffBlock, batchLimit) {
           AND NOT EXISTS (
             SELECT 1 FROM robinhood_holder_token_states state
              WHERE state.chain = journal.chain AND state.token_address = journal.token_address
+               AND state.ledger_status <> 'drifted'
           )
           AND NOT EXISTS (
             SELECT 1 FROM robinhood_holder_global_backfill_tokens token

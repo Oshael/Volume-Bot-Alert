@@ -679,6 +679,12 @@ describe('Robinhood holder ledger persistence', () => {
           WHERE chain = 'robinhood' AND stream = 'live'`, [HASH_A]
       );
       await client.query(
+        `INSERT INTO robinhood_holder_token_states (
+           token_address, holder_count, ledger_status, deployment_block,
+           backfill_next_block
+         ) VALUES ($1, 0, 'drifted', 50, 100)`, [TOKEN_5]
+      );
+      await client.query(
         `INSERT INTO robinhood_holder_transfer_journal (
            block_number, block_hash, transaction_hash, transaction_index,
            log_index, token_address, from_wallet, to_wallet, amount_raw,
@@ -700,6 +706,11 @@ describe('Robinhood holder ledger persistence', () => {
         discardedBufferedEvents: 1,
         cutoffBlock: '150', journalFloorBlock: '100',
       });
+      const protectedPending = await client.query(
+        `SELECT token_address FROM robinhood_holder_transfer_journal
+          WHERE applied = false ORDER BY token_address`
+      );
+      assert.deepEqual(protectedPending.rows, [{ token_address: TOKEN }]);
       await client.query(
         `DELETE FROM robinhood_holder_transfer_journal WHERE applied = false`
       );

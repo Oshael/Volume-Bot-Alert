@@ -1307,6 +1307,11 @@ RPC. Essa admissão não invalida um range live em voo, pois o tópico global j�
 inclui transfers de tokens ainda não admitidos. Cobertura incompleta continua
 fail-closed em `backfilling`; eventos antigos
 de tokens nunca admitidos são descartados pela retenção depois de 20.000 blocos.
+Pendencias de tokens `drifted` seguem a mesma politica: nenhum worker local volta
+a consumi-las, então somente eventos abaixo do cutoff são descartados em batches.
+Qualquer estado diferente de `drifted` e qualquer membro de campanha global ativa
+continua protegendo seu journal e bloqueia o avanço do floor enquanto houver
+pendencia anterior ao cutoff.
 
 `monitored`, `recent`, `old-week`, pins, tokens manuais e o summary de
 `GET /api/robinhood/holders` consultam essa view em lote, sem RPC ou Blockscout por
