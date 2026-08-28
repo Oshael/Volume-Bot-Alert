@@ -12,6 +12,7 @@ const {
 const { resolveRobinhoodHolderRpcProvider } = require('../services/robinhood-holder-rpc');
 
 const ZERO_ADDRESS = `0x${'0'.repeat(40)}`;
+const MAX_UINT256 = (1n << 256n) - 1n;
 const ADDRESS_PATTERN = /^0x[0-9a-f]{40}$/;
 
 function boundedInteger(value, fallback, minimum, maximum, label) {
@@ -166,12 +167,17 @@ function findFirstDeficit(transfers, initialBalances = {}) {
     try {
       changes = deriveHolderBalanceChanges(transfer, balances);
     } catch (error) {
-      if (error.code !== 'holder_negative_balance') throw error;
+      if (!['holder_negative_balance', 'holder_balance_overflow'].includes(error.code)) {
+        throw error;
+      }
+      const walletAddress = error.code === 'holder_balance_overflow'
+        ? error.walletAddress : transfer.fromWallet;
       return Object.freeze({
-        transfer,
-        localBalanceBefore: String(balances[transfer.fromWallet] ?? 0),
+        transfer, reason: error.code, walletAddress,
+        projectedBalanceRaw: error.balanceRaw || null,
+        localBalanceBefore: String(balances[walletAddress] ?? 0),
         localBalanceAtBlockStart: blockStarts.get(
-          `${transfer.blockNumber}:${transfer.fromWallet}`
+          `${transfer.blockNumber}:${walletAddress}`
         ) || '0',
       });
     }
@@ -180,6 +186,27 @@ function findFirstDeficit(transfers, initialBalances = {}) {
     }
   }
   return null;
+}
+
+function classifyOverflow(overflow, historicalBalance) {
+  if (BigInt(overflow.localBalanceBefore) > MAX_UINT256) return Object.freeze({
+    classification: 'invalid-persisted-balance',
+    recommendedAction: 'full-replay-candidate',
+  });
+  if (historicalBalance == null) return Object.freeze({
+    classification: 'archive-state-unavailable',
+    recommendedAction: 'fallback-required',
+  });
+  if (BigInt(historicalBalance) !== BigInt(overflow.localBalanceAtBlockStart)) {
+    return Object.freeze({
+      classification: 'historical-state-diverged-from-ledger',
+      recommendedAction: 'fallback-required',
+    });
+  }
+  return Object.freeze({
+    classification: 'same-block-or-nonstandard-transfer-semantics',
+    recommendedAction: 'fallback-required',
+  });
 }
 
 function classifyDivergence(localBalanceAtBlockStart, historicalBalance) {
@@ -236,6 +263,20 @@ async function historicalBalanceOf(rpcClient, tokenAddress, walletAddress, block
   return decimalResult(value);
 }
 
+async function optionalHistoricalBalance(rpcClient, tokenAddress, walletAddress, blockNumber) {
+  try {
+    return Object.freeze({
+      balance: await historicalBalanceOf(rpcClient, tokenAddress, walletAddress, blockNumber),
+      error: null,
+    });
+  } catch (error) {
+    return Object.freeze({
+      balance: null,
+      error: String(error?.code || error?.message || error).slice(0, 160),
+    });
+  }
+}
+
 async function inspectState(state, context) {
   const fromBlock = BigInt(state.backfillNextBlock);
   const safeHead = BigInt(context.safeHead);
@@ -250,38 +291,59 @@ async function inspectState(state, context) {
   const balances = await loadBalances(
     context.database, state.tokenAddress, touchedWallets(range.transfers)
   );
-  const deficit = findFirstDeficit(range.transfers, balances);
-  if (!deficit) return Object.freeze({
+  const divergence = findFirstDeficit(range.transfers, balances);
+  if (!divergence) return Object.freeze({
     ...state, status: 'not-reproduced', inspectedThroughBlock: toBlock.toString(),
     transfers: range.transfers.length,
   });
 
-  const precedingBlock = BigInt(deficit.transfer.blockNumber) - 1n;
-  let historicalBalance = null;
-  let archiveError = null;
-  try {
-    historicalBalance = await historicalBalanceOf(
-      context.rpcClient, state.tokenAddress, deficit.transfer.fromWallet, precedingBlock
+  const failedBlock = BigInt(divergence.transfer.blockNumber);
+  const precedingBlock = failedBlock - 1n;
+  const preceding = await optionalHistoricalBalance(
+    context.rpcClient, state.tokenAddress, divergence.walletAddress, precedingBlock
+  );
+  const receiptEvidence = await readReceiptEvidence(range, divergence, context);
+  if (divergence.reason === 'holder_balance_overflow') {
+    const failed = await optionalHistoricalBalance(
+      context.rpcClient, state.tokenAddress, divergence.walletAddress, failedBlock
     );
-  } catch (error) {
-    archiveError = String(error?.code || error?.message || error).slice(0, 160);
+    return Object.freeze({
+      ...state, status: 'overflow-found',
+      ...classifyOverflow(divergence, preceding.balance),
+      failedBlock: divergence.transfer.blockNumber,
+      precedingBlock: precedingBlock.toString(),
+      transactionHash: divergence.transfer.transactionHash,
+      logIndex: divergence.transfer.logIndex,
+      walletAddress: divergence.walletAddress,
+      sender: divergence.transfer.fromWallet,
+      recipient: divergence.transfer.toWallet,
+      amountRaw: divergence.transfer.amountRaw,
+      localBalanceBefore: divergence.localBalanceBefore,
+      localBalanceAtBlockStart: divergence.localBalanceAtBlockStart,
+      projectedBalanceRaw: divergence.projectedBalanceRaw,
+      historicalBalanceAtPrecedingBlock: preceding.balance,
+      historicalBalanceAtFailedBlock: failed.balance,
+      archiveErrors: Object.freeze({
+        precedingBlock: preceding.error, failedBlock: failed.error,
+      }),
+      receiptEvidence,
+    });
   }
-  const receiptEvidence = await readReceiptEvidence(range, deficit, context);
   return Object.freeze({
     ...state,
     status: 'deficit-found',
-    classification: classifyDivergence(deficit.localBalanceAtBlockStart, historicalBalance),
-    failedBlock: deficit.transfer.blockNumber,
+    classification: classifyDivergence(divergence.localBalanceAtBlockStart, preceding.balance),
+    failedBlock: divergence.transfer.blockNumber,
     precedingBlock: precedingBlock.toString(),
-    transactionHash: deficit.transfer.transactionHash,
-    logIndex: deficit.transfer.logIndex,
-    sender: deficit.transfer.fromWallet,
-    recipient: deficit.transfer.toWallet,
-    amountRaw: deficit.transfer.amountRaw,
-    localBalanceBefore: deficit.localBalanceBefore,
-    localBalanceAtBlockStart: deficit.localBalanceAtBlockStart,
-    historicalBalanceAtPrecedingBlock: historicalBalance,
-    archiveError, receiptEvidence,
+    transactionHash: divergence.transfer.transactionHash,
+    logIndex: divergence.transfer.logIndex,
+    sender: divergence.transfer.fromWallet,
+    recipient: divergence.transfer.toWallet,
+    amountRaw: divergence.transfer.amountRaw,
+    localBalanceBefore: divergence.localBalanceBefore,
+    localBalanceAtBlockStart: divergence.localBalanceAtBlockStart,
+    historicalBalanceAtPrecedingBlock: preceding.balance,
+    archiveError: preceding.error, receiptEvidence,
   });
 }
 
@@ -347,7 +409,7 @@ if (require.main === module) main().catch((error) => {
 module.exports = {
   runDriftProbe,
   __private: {
-    balanceOfData, classifyDivergence, findFirstDeficit, normalizeOptions,
+    balanceOfData, classifyDivergence, classifyOverflow, findFirstDeficit, normalizeOptions,
     readReceiptEvidence, receiptTransferIdentity,
   },
 };

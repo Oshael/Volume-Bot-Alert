@@ -2240,6 +2240,15 @@ por `ROBINHOOD_HOLDER_DRIFT_PROBE_TOKEN`, `_LIMIT` e `_RANGE_SIZE`. O histórico
 cortes e a ordem detalhada de rollout ficam apenas em
 `docs/robinhood-token-holders-plan.md`.
 
+Overflow de balance deixa de aparecer como `probe-error`: o probe retorna
+`overflow-found` com wallet, evento, saldo local, valor projetado, `balanceOf`
+archive antes e ao fim do bloco e evidencia de receipts. Somente saldo ja
+persistido acima de `uint256` recebe `recommendedAction=full-replay-candidate`;
+ele e impossivel como estado ERC-20 canonico e ainda exige uma ferramenta de reset
+separada antes de qualquer write. Overflow produzido pelos proprios logs,
+divergencia historica ou archive indisponivel recebe `fallback-required` e
+permanece `drifted`, porque repetir o mesmo replay nao corrige a semantica do token.
+
 `npm run robinhood:holder-drift-recovery` pagina todos os `drifted` atuais e e
 dry-run por default. `-- --confirm-requeue` reencaminha somente deficits que nao
 se reproduzem na releitura e cujo checkpoint precede imediatamente o cursor de

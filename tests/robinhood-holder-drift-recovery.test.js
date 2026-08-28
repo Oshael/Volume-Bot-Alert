@@ -9,6 +9,7 @@ const TOKEN_A = `0x${'1'.repeat(40)}`;
 const TOKEN_B = `0x${'2'.repeat(40)}`;
 const TOKEN_C = `0x${'3'.repeat(40)}`;
 const TOKEN_D = `0x${'4'.repeat(40)}`;
+const TOKEN_E = `0x${'5'.repeat(40)}`;
 
 function result(tokenAddress, status, overrides = {}) {
   return {
@@ -61,6 +62,10 @@ describe('Robinhood holder drift recovery', () => {
       result(TOKEN_A, 'not-reproduced'),
       result(TOKEN_C, 'not-reproduced', { liveThroughBlock: '250' }),
       result(TOKEN_D, 'not-reproduced', { liveThroughBlock: '250' }),
+      result(TOKEN_E, 'overflow-found', {
+        classification: 'invalid-persisted-balance',
+        recommendedAction: 'full-replay-candidate',
+      }),
       result(TOKEN_B, 'deficit-found', { classification: 'archive-state-unavailable' }),
     ] });
     const tailCalls = [];
@@ -93,6 +98,9 @@ describe('Robinhood holder drift recovery', () => {
     assert.deepEqual(tailCalls, [
       ['inspect', TOKEN_C], ['rollback', TOKEN_C], ['inspect', TOKEN_D],
     ]);
+    assert.equal(recovered.diagnostics.find(
+      ({ tokenAddress }) => tokenAddress === TOKEN_E
+    ).status, 'overflow-found');
     assert.equal(recovered.remainingDrifted, 1);
     const update = queries.find(([sql]) => /^\s*UPDATE/.test(sql));
     assert.deepEqual(update[1], [TOKEN_A, '7', '200']);

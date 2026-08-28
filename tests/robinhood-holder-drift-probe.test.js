@@ -3,7 +3,7 @@ const { describe, it } = require('node:test');
 
 const {
   runDriftProbe,
-  __private: { balanceOfData, findFirstDeficit },
+  __private: { balanceOfData, classifyOverflow, findFirstDeficit },
 } = require('../src/utils/robinhood-holder-drift-probe');
 const { TRANSFER_TOPIC } = require('../src/services/evm-erc20-supply-delta');
 
@@ -12,6 +12,7 @@ const TOKEN = `0x${'1'.repeat(40)}`;
 const ALICE = `0x${'2'.repeat(40)}`;
 const BOB = `0x${'3'.repeat(40)}`;
 const HASH = `0x${'a'.repeat(64)}`;
+const MAX_UINT256 = (1n << 256n) - 1n;
 
 function transfer(overrides = {}) {
   return {
@@ -42,6 +43,27 @@ describe('Robinhood holder drift probe', () => {
     assert.equal(deficit.localBalanceAtBlockStart, '10');
     assert.equal(deficit.transfer.logIndex, 1);
     assert.deepEqual(balances, { [ALICE]: '10' });
+  });
+
+  it('distinguishes an invalid persisted balance from an overflow produced by logs', () => {
+    const overflow = findFirstDeficit([
+      transfer({ fromWallet: ALICE, toWallet: BOB, amountRaw: '1' }),
+    ], { [ALICE]: '1', [BOB]: MAX_UINT256.toString() });
+
+    assert.equal(overflow.reason, 'holder_balance_overflow');
+    assert.equal(overflow.walletAddress, BOB);
+    assert.equal(overflow.localBalanceBefore, MAX_UINT256.toString());
+    assert.equal(overflow.projectedBalanceRaw, (MAX_UINT256 + 1n).toString());
+    assert.deepEqual(classifyOverflow(overflow, MAX_UINT256.toString()), {
+      classification: 'same-block-or-nonstandard-transfer-semantics',
+      recommendedAction: 'fallback-required',
+    });
+    assert.deepEqual(classifyOverflow({
+      ...overflow, localBalanceBefore: (MAX_UINT256 + 1n).toString(),
+    }, '5'), {
+      classification: 'invalid-persisted-balance',
+      recommendedAction: 'full-replay-candidate',
+    });
   });
 
   it('reads one drifted range and compares block-start state through historical eth_call', async () => {
@@ -104,5 +126,52 @@ describe('Robinhood holder drift probe', () => {
       { method: 'eth_getBlockReceipts', params: ['0x6e'] },
     ]]);
     assert.equal(queries.every((sql) => /^\s*SELECT/.test(sql)), true);
+  });
+
+  it('reports uint256 overflow evidence and a fail-closed recovery recommendation', async () => {
+    const database = { async query(sql) {
+      if (sql.includes('FROM robinhood_holder_token_states')) return { rows: [{
+        token_address: TOKEN, deployment_block: '100', backfill_next_block: '110',
+        holder_count: '1', version: '8',
+      }] };
+      if (sql.includes('FROM robinhood_holder_balances')) return { rows: [{
+        wallet_address: BOB, balance_raw: (MAX_UINT256 + 1n).toString(),
+      }] };
+      throw new Error('unexpected query');
+    } };
+    const calls = [];
+    const rpcClient = {
+      async request(method, params) {
+        calls.push([method, params]);
+        return params[1] === '0x6d' ? '0x05' : '0x04';
+      },
+      async requestBatch(requests) {
+        calls.push(['receipt-batch', requests]);
+        return [[{ logs: [receiptLog(0)] }]];
+      },
+    };
+    const reader = {
+      getSafeHead: async () => ({ safeHead: '200' }),
+      readRange: async (range) => ({ ...range, transfers: [
+        transfer({ fromWallet: BOB, toWallet: ALICE, amountRaw: '1' }),
+      ] }),
+    };
+
+    const result = await runDriftProbe({
+      database, rpcClient, reader, provider: { name: 'archive', url: 'http://node' },
+      limit: 1, now: () => 1000,
+    });
+    const inspected = result.results[0];
+
+    assert.equal(inspected.status, 'overflow-found');
+    assert.equal(inspected.classification, 'invalid-persisted-balance');
+    assert.equal(inspected.recommendedAction, 'full-replay-candidate');
+    assert.equal(inspected.walletAddress, BOB);
+    assert.equal(inspected.projectedBalanceRaw, (MAX_UINT256 + 1n).toString());
+    assert.equal(inspected.historicalBalanceAtPrecedingBlock, '5');
+    assert.equal(inspected.historicalBalanceAtFailedBlock, '4');
+    assert.equal(inspected.receiptEvidence.status, 'match');
+    assert.deepEqual(inspected.archiveErrors, { precedingBlock: null, failedBlock: null });
+    assert.equal(calls.filter(([method]) => method === 'eth_call').length, 2);
   });
 });
