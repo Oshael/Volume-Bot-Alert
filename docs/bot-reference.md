@@ -1773,8 +1773,9 @@ campanha limitada, acrescente `--confirm-repair-robinhood-wallet-transfer-tokens
 até 16 janelas históricas simultâneas para até 500 tokens; o leitor tenta a
 allowlist em um único filtro e a divide adaptativamente se o archive a rejeitar,
 enquanto as leituras históricas permanecem paralelas. A hidratação gravável de
-roles é serializada dentro da operação para impedir deadlocks entre endereços
-sobrepostos. As janelas compartilham uma única leitura PostgreSQL de frontier,
+roles é consolidada em um único plano por operação, evitando consultas e probes
+repetidos entre janelas sem reintroduzir concorrência de escrita sobre endereços
+compartilhados. As janelas compartilham uma única leitura PostgreSQL de frontier,
 swaps, pools e roles por operação; somente captura RPC e validação canônica
 continuam independentes por janela, e a hidratação consulta somente endpoints
 ainda ausentes desse contexto. Cursor, retry, shadow e publicação continuam

@@ -174,26 +174,17 @@ async function prepareRobinhoodWalletTransferRanges(deps, input = {}) {
       fromBlock: captured.fromBlock, toBlock: captured.toBlock,
     }) };
   }
-  let context = baseContext;
-  const knownAddresses = new Set(knownContextAddresses(baseContext));
-  const hydrations = [];
-  for (const range of capturedRanges) {
-    const hydration = await deps.endpointRoles.hydrate({
-      transfers: range.transfers, commit: input.commit === true,
-      knownAddresses: [...knownAddresses],
-    });
-    hydrations.push(hydration);
-    for (const endpoint of [
-      ...hydration.contractAddresses, ...hydration.walletAddresses,
-    ]) knownAddresses.add(endpoint);
-    context = mergeHydratedRoles(context, hydration);
-  }
+  const hydration = await deps.endpointRoles.hydrate({
+    transfers: captured.transfers, commit: input.commit === true,
+    knownAddresses: knownContextAddresses(baseContext),
+  });
+  const context = mergeHydratedRoles(baseContext, hydration);
   const classified = classifyTransfers(
     captured.transfers, context, deps.classifierFactory
   );
   return {
     tokenAddresses, captured, capturedRanges: Object.freeze(capturedRanges),
-    classified, context, hydrations: Object.freeze(hydrations),
+    classified, context, hydrations: Object.freeze([hydration]),
   };
 }
 

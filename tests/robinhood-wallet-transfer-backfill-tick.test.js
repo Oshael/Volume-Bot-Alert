@@ -139,7 +139,8 @@ describe('Robinhood wallet-transfer backfill dry-run tick', () => {
 
     assert.equal(deps.calls.evidence.length, 2);
     assert.equal(deps.calls.contexts.length, 1);
-    assert.equal(deps.calls.hydration.length, 2);
+    assert.equal(deps.calls.hydration.length, 1);
+    assert.equal(deps.calls.hydration[0].transfers.length, 2);
     assert.equal(prepared.classified.events.length, 2);
     assert.deepEqual([
       deps.calls.contexts[0].fromBlock, deps.calls.contexts[0].toBlock,
