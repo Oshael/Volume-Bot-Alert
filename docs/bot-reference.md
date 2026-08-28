@@ -2204,6 +2204,10 @@ journal; o backfill relê a lacuna desde `backfill_next_block` e a telemetria so
 deferido sem falso `drifted`.
 O deferimento e isolado por token: os demais tails elegiveis continuam drenando
 enquanto o token suspeito aguarda o proximo recheck.
+O drain tambem evita starvation por volume: quando a selecao encontra mais de um
+token pendente, aplica um batch por token antes de repetir o primeiro. Assim que
+resta apenas um token, ele conserva a preferencia e usa todo o budget restante sem
+consultas de selecao entre batches.
 Deficit sem eventos ausentes so vira `drifted` apos tres fingerprints identicos
 confirmados por receipts e espacados em 60s. Cauda insegura sem qualquer evidencia
 aplicada para rollback segue as mesmas tres observacoes e confirmacao transacional,

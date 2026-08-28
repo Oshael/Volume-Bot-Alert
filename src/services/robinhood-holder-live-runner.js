@@ -180,12 +180,16 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     }
   }
 
-  async function selectPendingToken(preferred, queued, input, timing) {
-    if (preferred) return { preferred, queued };
-    const candidates = queued.length
-      ? queued : [...await listPendingTokens(input, timing)];
-    if (candidates !== queued) timing.selectedTokens += candidates.length;
-    return { preferred: candidates.shift() || null, queued: candidates };
+  async function selectPendingToken(preferred, queued, roundHasMultiple, input, timing) {
+    if (preferred) return { preferred, queued, roundHasMultiple };
+    const refresh = queued.length === 0;
+    const candidates = refresh ? [...await listPendingTokens(input, timing)] : queued;
+    if (refresh) timing.selectedTokens += candidates.length;
+    return {
+      preferred: candidates.shift() || null,
+      queued: candidates,
+      roundHasMultiple: refresh ? candidates.length > 0 : roundHasMultiple,
+    };
   }
 
   function deferDrift(suspicion) {
@@ -345,6 +349,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     let quarantinedTokens = 0;
     let preferredTokenAddress = null;
     let pendingTokenAddresses = [];
+    let pendingRoundHasMultiple = false;
     const timing = {
       applyCalls: 0, nonIdleApplyCalls: 0, attemptedEvents: 0,
       applyCallDurationMs: 0, maxApplyCallDurationMs: 0,
@@ -355,13 +360,14 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     while (applyAttempts < maxApplyEvents) {
       const excluded = deferredTokenAddresses();
       const selected = await selectPendingToken(
-        preferredTokenAddress, pendingTokenAddresses, {
+        preferredTokenAddress, pendingTokenAddresses, pendingRoundHasMultiple, {
           excludeTokenAddresses: excluded,
           limit: maxApplyEvents - applyAttempts,
         }, timing
       );
       preferredTokenAddress = selected.preferred;
       pendingTokenAddresses = selected.queued;
+      pendingRoundHasMultiple = selected.roundHasMultiple;
       if (!preferredTokenAddress) {
         reachedIdle = excluded.length === 0;
         driftDeferred = Math.max(driftDeferred, excluded.length);
@@ -386,6 +392,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
       if (applied.status === 'applied') {
         driftEvidence.delete(applied.tokenAddress);
         preferredTokenAddress = batch.attemptedEvents >= requestedEvents
+          && !pendingRoundHasMultiple
           ? applied.tokenAddress || null : null;
       } else if (applied.status === 'drifted') {
         preferredTokenAddress = null;

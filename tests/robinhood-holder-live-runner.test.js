@@ -19,6 +19,7 @@ function harness(
   const ledger = {
     listPendingTokenAddresses: async (input) => {
       calls.push(['list-pending-tokens', input]);
+      if (options.pendingTokenLists?.length) return options.pendingTokenLists.shift();
       const next = applyResults[0];
       const tokenAddress = next?.tokenAddress || `0x${'f'.repeat(40)}`;
       return next && next.status !== 'idle'
@@ -367,6 +368,32 @@ describe('Robinhood holder live runner', () => {
       ['list-pending-tokens', { excludeTokenAddresses: [], limit: 7 }],
       ['promote-shadows', { limit: 10 }],
     ]);
+  });
+
+  it('rotates one batch per token before giving the sole remaining token full capacity', async () => {
+    const tokenA = `0x${'a'.repeat(40)}`;
+    const tokenB = `0x${'b'.repeat(40)}`;
+    const context = harness({
+      status: 'idle', transfers: 0, nextBlock: '106', safeHead: '105',
+    }, [
+      { status: 'applied', tokenAddress: tokenA },
+      { status: 'applied', tokenAddress: tokenB },
+      { status: 'applied', tokenAddress: tokenA },
+      { status: 'applied', tokenAddress: tokenA },
+    ], { status: 'idle' }, async () => 0, {
+      pendingTokenLists: [[tokenA, tokenB], [tokenA]],
+    });
+
+    const result = await context.runner.applyOnce({
+      maxApplyEvents: 4, applyBatchSize: 1,
+    });
+
+    assert.equal(result.appliedEvents, 4);
+    assert.equal(result.applyBudgetExhausted, true);
+    assert.deepEqual(context.calls.filter(([name]) => name === 'apply').map(
+      ([, input]) => input.onlyTokenAddress
+    ), [tokenA, tokenB, tokenA, tokenA]);
+    assert.equal(context.calls.filter(([name]) => name === 'list-pending-tokens').length, 2);
   });
 
   it('accounts for a transactional event batch against the apply budget', async () => {
