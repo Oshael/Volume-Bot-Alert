@@ -10,6 +10,7 @@ const {
 
 const PREFIXES = Object.freeze([
   '--lookback-blocks=', '--source-from-block=', '--statement-timeout-ms=',
+  '--baseline-run-id=',
 ]);
 
 function one(argv, prefix) {
@@ -52,6 +53,9 @@ function parseArgs(argv = []) {
       one(argv, '--statement-timeout-ms='), 120_000,
       1_000, 900_000, '--statement-timeout-ms'
     ),
+    baselineRunId: one(argv, '--baseline-run-id=') == null ? null : String(integer(
+      one(argv, '--baseline-run-id='), null, 1, Number.MAX_SAFE_INTEGER, '--baseline-run-id'
+    )),
   });
 }
 
@@ -66,7 +70,7 @@ async function main(argv = process.argv.slice(2), deps = {}) {
     database: deps.database || db,
     statementTimeoutMs: options.statementTimeoutMs,
   });
-  const loaded = await source.load();
+  const loaded = await source.load({ baselineRunId: options.baselineRunId });
   if (!loaded.ready) throw new Error(`bundle funding source unavailable: ${loaded.reason}`);
   const plans = options.lookbackBlocks.map((lookbackBlocks) => summarize(
     (deps.planner || planBundleFundingScan)({
@@ -85,6 +89,9 @@ async function main(argv = process.argv.slice(2), deps = {}) {
     tokensWithoutFirstBuy: loaded.tokensWithoutFirstBuy,
     missingAnchorTokens: loaded.missingAnchorTokens,
     anchorCoverageComplete: loaded.anchorCoverageComplete,
+    candidateScope: loaded.candidateScope,
+    baseline: loaded.baseline,
+    fullCandidateRows: loaded.fullCandidateRows,
     sourceCandidateRows: loaded.candidates.length,
     plans: Object.freeze(plans),
   });

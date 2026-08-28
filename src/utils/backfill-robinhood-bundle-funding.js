@@ -19,6 +19,7 @@ const { archiveClient } = require('./preflight-robinhood-bundle-funding');
 const VALUE_ARGUMENTS = new Set([
   'lookback-blocks', 'source-from-block', 'statement-timeout-ms', 'batch-blocks',
   'concurrency', 'samples', 'max-hours', 'max-minutes', 'run-id', 'max-attempts',
+  'baseline-run-id',
 ]);
 
 function bounded(value, fallback, minimum, maximum, label) {
@@ -52,7 +53,8 @@ function validateCombination(values) {
     throw new Error('--lookback-blocks is required unless --run-id is provided');
   }
   if (values['run-id'] && (values['lookback-blocks'] || values['source-from-block']
-      || values['batch-blocks'] || values.concurrency || values.samples)) {
+      || values['batch-blocks'] || values.concurrency || values.samples
+      || values['baseline-run-id'])) {
     throw new Error('--run-id cannot be combined with planning arguments');
   }
   if (values.retryFailed && (!values['run-id'] || !values.apply)) {
@@ -86,6 +88,9 @@ function parseArgs(argv = process.argv.slice(2)) {
     sampleCount: bounded(values.samples, 32, 1, 64, '--samples'), maxHours,
     maxMinutes: bounded(values['max-minutes'], 285, 1, 300, '--max-minutes'),
     maxAttempts: bounded(values['max-attempts'], 5, 1, 20, '--max-attempts'),
+    baselineRunId: values['baseline-run-id'] == null ? null : String(bounded(
+      values['baseline-run-id'], null, 1, Number.MAX_SAFE_INTEGER, '--baseline-run-id'
+    )),
   });
   if (!parsed.runId && parsed.sampleCount < parsed.concurrency) {
     throw new Error('--samples must be greater than or equal to --concurrency');
@@ -118,8 +123,11 @@ async function prepare(options, deps, database, rpcClient) {
   const source = deps.source || createRobinhoodBundleFundingCandidateSource({
     database, statementTimeoutMs: options.statementTimeoutMs,
   });
-  const loaded = await source.load();
+  const loaded = await source.load({ baselineRunId: options.baselineRunId });
   if (!loaded.ready) throw new Error(`bundle funding source unavailable: ${loaded.reason}`);
+  if (loaded.baseline && loaded.baseline.lookbackBlocks !== String(options.lookbackBlocks)) {
+    throw new Error('incremental lookback must match the baseline run');
+  }
   const plan = (deps.planner || planBundleFundingScan)({
     sourceFromBlock: options.sourceFromBlock,
     sourceThroughBlock: loaded.completeThroughBlock,
@@ -145,6 +153,9 @@ function readOnlyReport(existingRun, prepared) {
     mode: 'preflight-read-only', approved: prepared.preflight.approved,
     anchorCoverageComplete: prepared.loaded.anchorCoverageComplete,
     missingAnchorTokens: prepared.loaded.missingAnchorTokens,
+    candidateScope: prepared.loaded.candidateScope,
+    baseline: prepared.loaded.baseline,
+    fullCandidateRows: prepared.loaded.fullCandidateRows,
     ruleVersion: prepared.plan.ruleVersion, lookbackBlocks: prepared.plan.lookbackBlocks,
     candidateTokens: prepared.plan.candidateTokens,
     candidateWallets: prepared.plan.candidateWallets,

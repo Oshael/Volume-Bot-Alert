@@ -13,6 +13,7 @@ const {
 const PREFIXES = Object.freeze([
   '--lookback-blocks=', '--source-from-block=', '--statement-timeout-ms=',
   '--batch-blocks=', '--concurrency=', '--samples=', '--max-hours=',
+  '--baseline-run-id=',
 ]);
 
 function one(argv, prefix) {
@@ -53,6 +54,9 @@ function parseArgs(argv = []) {
     concurrency: integer(one(argv, '--concurrency='), 8, 1, 16, '--concurrency'),
     sampleCount: integer(one(argv, '--samples='), 16, 1, 64, '--samples'),
     maxHours,
+    baselineRunId: one(argv, '--baseline-run-id=') == null ? null : String(integer(
+      one(argv, '--baseline-run-id='), null, 1, Number.MAX_SAFE_INTEGER, '--baseline-run-id'
+    )),
   });
   if (parsed.sampleCount < parsed.concurrency) {
     throw new Error('--samples must be greater than or equal to --concurrency');
@@ -80,8 +84,11 @@ async function main(argv = process.argv.slice(2), deps = {}) {
   const source = deps.source || createRobinhoodBundleFundingCandidateSource({
     database, statementTimeoutMs: options.statementTimeoutMs,
   });
-  const loaded = await source.load();
+  const loaded = await source.load({ baselineRunId: options.baselineRunId });
   if (!loaded.ready) throw new Error(`bundle funding source unavailable: ${loaded.reason}`);
+  if (loaded.baseline && loaded.baseline.lookbackBlocks !== String(options.lookbackBlocks)) {
+    throw new Error('incremental lookback must match the baseline run');
+  }
   const plan = (deps.planner || planBundleFundingScan)({
     sourceFromBlock: options.sourceFromBlock,
     sourceThroughBlock: loaded.completeThroughBlock,
@@ -101,6 +108,8 @@ async function main(argv = process.argv.slice(2), deps = {}) {
     mode: 'preflight-read-only', source: 'postgresql-candidates+rpc-archive-full-block',
     approved: preflight.approved, anchorCoverageComplete: loaded.anchorCoverageComplete,
     missingAnchorTokens: loaded.missingAnchorTokens,
+    candidateScope: loaded.candidateScope, baseline: loaded.baseline,
+    fullCandidateRows: loaded.fullCandidateRows,
     ruleVersion: plan.ruleVersion, lookbackBlocks: plan.lookbackBlocks,
     candidateTokens: plan.candidateTokens, candidateWallets: plan.candidateWallets,
     mergedRanges: plan.mergedRanges, blocksToScan: plan.blocksToScan,

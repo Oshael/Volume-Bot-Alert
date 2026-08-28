@@ -89,6 +89,12 @@ describe('Robinhood bundle funding backfill command', () => {
     assert.throws(() => parseArgs(['--run-id=7', '--lookback-blocks=1000']), /cannot be combined/);
     assert.throws(() => parseArgs(['--run-id=7', '--retry-failed']), /requires/);
     assert.throws(() => parseArgs(['--lookback-blocks=1000', '--max-minutes=301']), /1 and 300/);
+    assert.equal(parseArgs([
+      '--lookback-blocks=1000', '--baseline-run-id=1',
+    ]).baselineRunId, '1');
+    assert.throws(() => parseArgs([
+      '--run-id=7', '--baseline-run-id=1',
+    ]), /cannot be combined/);
   });
 
   it('does not execute a resumable campaign without apply', async () => {

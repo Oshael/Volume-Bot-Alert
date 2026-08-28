@@ -186,6 +186,9 @@ describe('Robinhood bundle funding preflight command', () => {
     ]), /greater than or equal/);
     const options = parseArgs(['--lookback-blocks=1000', '--concurrency=16', '--samples=16']);
     assert.equal(options.lookbackBlocks, 1000);
+    assert.equal(parseArgs([
+      '--lookback-blocks=1000', '--baseline-run-id=7',
+    ]).baselineRunId, '7');
     let captured;
     archiveClient({ RH_NODE_RPC_URL: 'http://127.0.0.1:8547' }, (value) => {
       captured = value; return {};
@@ -202,7 +205,8 @@ describe('Robinhood bundle funding preflight command', () => {
           firstBuyBlock: '101', firstBuyTransactionIndex: '0' },
         { tokenAddress: TOKEN, walletAddress: FUNDER, launchBlock: '100',
           firstBuyBlock: '102', firstBuyTransactionIndex: '0' },
-      ] };
+      ], candidateScope: 'incremental', fullCandidateRows: 10,
+      baseline: { runId: '1', lookbackBlocks: '10' } };
     const report = await main([], {
       options: { lookbackBlocks: 10, sourceFromBlock: '0', statementTimeoutMs: 1000,
         batchBlocks: 2, concurrency: 1, sampleCount: 1, maxHours: 5 },
@@ -214,6 +218,8 @@ describe('Robinhood bundle funding preflight command', () => {
     assert.equal(report.mode, 'preflight-read-only');
     assert.equal(report.candidateTokens, 1);
     assert.equal(report.candidateWallets, 2);
+    assert.equal(report.candidateScope, 'incremental');
+    assert.equal(report.baseline.runId, '1');
     assert.equal(report.missingAnchorTokens, '5');
     assert.equal(report.approved, true);
   });

@@ -1953,6 +1953,12 @@ continuam fora do escopo. O writer seed usa
 ranges com concorrência, leases renováveis, retry e checkpoint canônico. Ele
 para de reclamar ranges após `--max-minutes` (285 por padrão, máximo 300) e retoma
 com `--run-id=<id> --apply`; campanhas falhas exigem também `--retry-failed`.
+Depois de uma campanha v2 concluída, `--baseline-run-id=<id>` em plan, preflight
+ou backfill seleciona somente tokens cuja composição atual ganhou wallets desde
+o baseline e inclui todos os membros atuais desses tokens. O delta exige o mesmo
+lookback do baseline e falha fechado se a frontier regredir, o run não estiver
+concluído/v2 ou o universo anterior deixar de ser subconjunto do atual; catch-ups
+não repetem as janelas dos tokens inalterados.
 Ao concluir ranges concorrentes, a checagem terminal serializa pelo run pai para
 garantir que a campanha não permaneça `running` depois de todos os ranges terem
 sido commitados.

@@ -3,7 +3,8 @@ const { describe, it } = require('node:test');
 
 const {
   createRobinhoodBundleFundingCandidateSource,
-  __private: { ANCHOR_COVERAGE_SQL, CANDIDATES_SQL },
+  __private: { ANCHOR_COVERAGE_SQL, BASELINE_CANDIDATES_SQL,
+    BASELINE_RUN_SQL, CANDIDATES_SQL },
 } = require('../src/models/robinhood-bundle-funding-candidate-source');
 const {
   main, parseArgs,
@@ -11,10 +12,13 @@ const {
 
 const TOKEN = `0x${'1'.repeat(40)}`;
 const WALLET = `0x${'2'.repeat(40)}`;
+const TOKEN_B = `0x${'3'.repeat(40)}`;
+const WALLET_B = `0x${'4'.repeat(40)}`;
+const WALLET_C = `0x${'5'.repeat(40)}`;
 
 function database(coverage, candidates = [], anchorCoverage = {
   live_tokens: '12', first_buy_tokens: '10', anchored_tokens: '10',
-}) {
+}, baseline = {}) {
   const calls = [];
   return {
     calls,
@@ -22,6 +26,8 @@ function database(coverage, candidates = [], anchorCoverage = {
       calls.push({ sql, params, timeout });
       if (sql === CANDIDATES_SQL) return { rows: candidates };
       if (sql === ANCHOR_COVERAGE_SQL) return { rows: [anchorCoverage] };
+      if (sql === BASELINE_RUN_SQL) return { rows: baseline.run ? [baseline.run] : [] };
+      if (sql === BASELINE_CANDIDATES_SQL) return { rows: baseline.candidates || [] };
       return { rows: coverage ? [coverage] : [] };
     },
   };
@@ -77,6 +83,49 @@ describe('Robinhood bundle funding candidate source', () => {
     assert.equal(db.calls.some(({ sql }) => sql === CANDIDATES_SQL), true);
   });
 
+  it('selects every current member of tokens changed since a completed baseline', async () => {
+    const row = (token_address, wallet_address) => ({ token_address, wallet_address,
+      launch_block: '100', first_buy_block: '101', first_buy_transaction_index: '0' });
+    const current = [row(TOKEN, WALLET), row(TOKEN, WALLET_B),
+      row(TOKEN_B, WALLET), row(TOKEN_B, WALLET_C)];
+    const db = database({
+      source_next_block: '301', caught_up: true, seed_status: 'completed',
+    }, current, undefined, {
+      run: { status: 'completed', rule_version: 'rh_possible_bundle_v1',
+        evidence_version: 'rh_native_funding_v2', source_through_block: '200',
+        lookback_blocks: '1000' },
+      candidates: [{ token_address: TOKEN, wallet_address: WALLET },
+        { token_address: TOKEN, wallet_address: WALLET_B },
+        { token_address: TOKEN_B, wallet_address: WALLET }],
+    });
+    const result = await createRobinhoodBundleFundingCandidateSource({ database: db })
+      .load({ baselineRunId: '1' });
+
+    assert.equal(result.ready, true);
+    assert.equal(result.candidateScope, 'incremental');
+    assert.equal(result.fullCandidateRows, 4);
+    assert.deepEqual(result.baseline, { runId: '1', sourceThroughBlock: '200',
+      lookbackBlocks: '1000', candidateRows: 3 });
+    assert.deepEqual(result.candidates.map(({ tokenAddress, walletAddress }) => (
+      [tokenAddress, walletAddress]
+    )), [[TOKEN_B, WALLET], [TOKEN_B, WALLET_C]]);
+  });
+
+  it('fails closed when the current candidate universe is not additive', async () => {
+    const db = database({
+      source_next_block: '301', caught_up: true, seed_status: 'completed',
+    }, [], undefined, {
+      run: { status: 'completed', rule_version: 'rh_possible_bundle_v1',
+        evidence_version: 'rh_native_funding_v2', source_through_block: '200',
+        lookback_blocks: '1000' },
+      candidates: [{ token_address: TOKEN, wallet_address: WALLET }],
+    });
+    const result = await createRobinhoodBundleFundingCandidateSource({ database: db })
+      .load({ baselineRunId: '1' });
+    assert.equal(result.ready, false);
+    assert.equal(result.reason, 'bundle_baseline_candidates_not_monotonic');
+  });
+
   it('fails closed when the bounded candidate read reaches its memory cap', async () => {
     const db = database({
       source_next_block: '201', caught_up: true, seed_status: 'completed',
@@ -115,8 +164,11 @@ describe('Robinhood bundle funding workload command', () => {
   it('requires explicit bounded lookbacks and rejects write flags', () => {
     assert.deepEqual(parseArgs(['--lookback-blocks=1000,0,1000,5000']), {
       lookbackBlocks: [0, 1000, 5000], sourceFromBlock: '0',
-      statementTimeoutMs: 120_000,
+      statementTimeoutMs: 120_000, baselineRunId: null,
     });
+    assert.equal(parseArgs([
+      '--lookback-blocks=1000', '--baseline-run-id=7',
+    ]).baselineRunId, '7');
     assert.throws(() => parseArgs([]), /lookback-blocks is required/);
     assert.throws(() => parseArgs(['--lookback-blocks=1', '--apply']), /unknown argument/);
     assert.throws(() => parseArgs(['--lookback-blocks=1,2,3,4,5,6,7,8,9']), /between 1 and 8/);
@@ -130,6 +182,7 @@ describe('Robinhood bundle funding workload command', () => {
         ready: true, completeThroughBlock: '200', liveTokens: '12',
         firstBuyTokens: '10', anchoredTokens: '9', tokensWithoutFirstBuy: '2',
         missingAnchorTokens: '1', anchorCoverageComplete: false,
+        candidateScope: 'full', baseline: null, fullCandidateRows: 1,
         candidates: [{ secret: WALLET }],
       }) },
       planner: ({ lookbackBlocks }) => ({

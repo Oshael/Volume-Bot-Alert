@@ -3,6 +3,16 @@ const db = require('./db');
 const CHAIN = 'robinhood';
 const MAX_CANDIDATE_ROWS = 500_000;
 
+const BASELINE_RUN_SQL = `SELECT id::text, status, rule_version, evidence_version,
+       source_through_block::text, lookback_blocks::text
+  FROM robinhood_bundle_funding_backfill_runs
+ WHERE chain = $1 AND id = $2::bigint`;
+
+const BASELINE_CANDIDATES_SQL = `SELECT token_address, wallet_address
+  FROM robinhood_bundle_funding_backfill_candidates
+ WHERE run_id = $1::bigint
+ ORDER BY token_address, wallet_address`;
+
 const COVERAGE_SQL = `SELECT cursor.source_next_block::text,
        cursor.next_time = cursor.source_through AS caught_up,
        seed.status AS seed_status
@@ -88,6 +98,46 @@ function normalizeCandidate(row) {
   });
 }
 
+function incrementalCandidates(currentRows, baselineRows) {
+  const currentKeys = new Set(currentRows.map((row) => (
+    `${row.token_address}:${row.wallet_address}`
+  )));
+  if (baselineRows.some((row) => !currentKeys.has(
+    `${row.token_address}:${row.wallet_address}`
+  ))) return null;
+  const baselineKeys = new Set(baselineRows.map((row) => (
+    `${row.token_address}:${row.wallet_address}`
+  )));
+  const affectedTokens = new Set(currentRows.filter((row) => !baselineKeys.has(
+    `${row.token_address}:${row.wallet_address}`
+  )).map((row) => row.token_address));
+  return currentRows.filter((row) => affectedTokens.has(row.token_address));
+}
+
+async function resolveCandidateScope(input, query, currentRows, completeThroughBlock) {
+  if (input.baselineRunId == null) return { rows: currentRows, baseline: null };
+  const baselineRunId = String(input.baselineRunId);
+  if (!/^\d+$/.test(baselineRunId) || BigInt(baselineRunId) < 1n) {
+    throw new Error('baselineRunId must be positive');
+  }
+  const baselineRun = (await query(BASELINE_RUN_SQL, [CHAIN, baselineRunId])).rows[0];
+  if (baselineRun?.status !== 'completed'
+      || baselineRun.rule_version !== 'rh_possible_bundle_v1'
+      || baselineRun.evidence_version !== 'rh_native_funding_v2') {
+    return unavailable('bundle_baseline_run_unavailable');
+  }
+  if (BigInt(baselineRun.source_through_block) > BigInt(completeThroughBlock)) {
+    return unavailable('bundle_baseline_frontier_ahead');
+  }
+  const baselineRows = (await query(BASELINE_CANDIDATES_SQL, [baselineRunId])).rows;
+  const rows = incrementalCandidates(currentRows, baselineRows);
+  if (rows == null) return unavailable('bundle_baseline_candidates_not_monotonic');
+  return { rows, baseline: Object.freeze({ runId: baselineRunId,
+    sourceThroughBlock: String(baselineRun.source_through_block),
+    lookbackBlocks: String(baselineRun.lookback_blocks),
+    candidateRows: baselineRows.length }) };
+}
+
 function createRobinhoodBundleFundingCandidateSource(options = {}) {
   const database = options.database || db;
   const timeoutMs = Number(options.statementTimeoutMs ?? 120_000);
@@ -103,7 +153,7 @@ function createRobinhoodBundleFundingCandidateSource(options = {}) {
     ? database.queryWithStatementTimeout(sql, params, timeoutMs)
     : database.query(sql, params));
 
-  async function load() {
+  async function load(input = {}) {
     const coverage = (await query(COVERAGE_SQL, [CHAIN])).rows[0];
     if (!coverage) return unavailable('first_buy_cursor_unavailable');
     if (coverage.seed_status !== 'completed') return unavailable('first_buy_seed_incomplete');
@@ -128,6 +178,11 @@ function createRobinhoodBundleFundingCandidateSource(options = {}) {
         observedCandidateRows: String(result.rows.length),
       });
     }
+    const scope = await resolveCandidateScope(
+      input, query, result.rows, completeThroughBlock
+    );
+    if (scope.ready === false) return scope;
+    const { rows: candidateRows, baseline } = scope;
     return Object.freeze({
       ready: true,
       reason: null,
@@ -138,7 +193,10 @@ function createRobinhoodBundleFundingCandidateSource(options = {}) {
       tokensWithoutFirstBuy,
       missingAnchorTokens,
       anchorCoverageComplete: missingAnchorTokens === '0',
-      candidates: Object.freeze(result.rows.map(normalizeCandidate)),
+      candidateScope: baseline ? 'incremental' : 'full',
+      baseline,
+      fullCandidateRows: result.rows.length,
+      candidates: Object.freeze(candidateRows.map(normalizeCandidate)),
     });
   }
 
@@ -148,7 +206,8 @@ function createRobinhoodBundleFundingCandidateSource(options = {}) {
 module.exports = {
   createRobinhoodBundleFundingCandidateSource,
   __private: {
-    ANCHOR_COVERAGE_SQL, CANDIDATES_SQL, COVERAGE_SQL,
-    MAX_CANDIDATE_ROWS, normalizeCandidate,
+    ANCHOR_COVERAGE_SQL, BASELINE_CANDIDATES_SQL, BASELINE_RUN_SQL,
+    CANDIDATES_SQL, COVERAGE_SQL, MAX_CANDIDATE_ROWS,
+    incrementalCandidates, normalizeCandidate, resolveCandidateScope,
   },
 };
