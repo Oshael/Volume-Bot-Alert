@@ -725,6 +725,9 @@ O notifier usa `WORKER_HEALTH_TELEGRAM_BOT_TOKEN` e
 dos callouts. Intervalo, observações mínimas, cooldown, retry e timeout são
 limitados pelas variáveis `WORKER_HEALTH_*` documentadas em `.env.example`.
 Incidentes resolvidos geram uma única recuperação persistida.
+Os avisos de incidente e recuperação identificam o componente interno, o grupo
+de processo e a unit systemd. Quando a lease informa um único grupo concreto, o
+Telegram também inclui o comando `journalctl` pronto para os logs daquela unit.
 
 Esse monitor não substitui um watchdog externo: se o próprio processo
 `worker-health`, o PostgreSQL ou a conectividade com o Telegram cair

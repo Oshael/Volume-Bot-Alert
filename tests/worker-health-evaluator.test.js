@@ -95,6 +95,16 @@ describe('worker health evaluator', () => {
     ]);
   });
 
+  it('records the concrete process group reported by the lease', () => {
+    const tokenRisk = getWorkerHealthDefinition('token-risk-enrichment-worker');
+    const issues = evaluateWorkerHealth(tokenRisk, lease({
+      group: 'core',
+      telemetry: { running: true, consecutiveErrors: 1, lastError: 'provider failed' },
+    }), { nowMs: NOW });
+
+    assert.equal(issues.find(({ code }) => code === 'active_error').runtimeGroup, 'core');
+  });
+
   it('detects stale progress and startup without a first successful cycle', () => {
     const stale = evaluateWorkerHealth(definition, lease({ telemetry: {
       running: true, lastCompletedAt: '2026-08-29T11:56:00.000Z',

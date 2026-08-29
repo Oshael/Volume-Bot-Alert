@@ -176,7 +176,10 @@ it('sends customized worker incident and recovery messages through the ops chat'
     componentKey: 'catalog-worker', code: 'component_stopped', severity: 'critical',
     path: 'telemetry', openedAt: '2026-08-29T12:00:00.000Z',
     resolvedAt: '2026-08-29T12:02:00.000Z',
-    details: { componentLabel: 'Catalog worker', observedValue: false },
+    details: {
+      componentLabel: 'Catalog worker', observedValue: false,
+      runtimeGroup: 'core', allowedGroups: ['core'],
+    },
   };
   await notifier.sendIncident(incident);
   await notifier.sendRecovery(incident);
@@ -187,7 +190,13 @@ it('sends customized worker incident and recovery messages through the ops chat'
 
   assert.equal(messages[0].chat_id, '123456');
   assert.match(messages[0].text, /Catalog worker/);
+  assert.match(messages[0].text, /Chave: catalog-worker/);
+  assert.match(messages[0].text, /Processo: core/);
+  assert.match(messages[0].text, /Unit: trendscope-worker@core\.service/);
+  assert.match(messages[0].text,
+    /journalctl -u trendscope-worker@core\.service -n 100 --no-pager/);
   assert.match(messages[0].text, /Se foi você, tudo bem/);
   assert.match(messages[1].text, /worker recuperado/);
+  assert.match(messages[1].text, /Unit: trendscope-worker@core\.service/);
   assert.doesNotMatch(messages[2].text, /secret/);
 });

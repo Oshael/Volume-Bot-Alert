@@ -45,6 +45,41 @@ function printable(value, code) {
   return String(value).slice(0, 200);
 }
 
+function runtimeLocation(details = {}) {
+  const concreteGroup = String(details.runtimeGroup || '').trim();
+  const candidates = concreteGroup
+    ? [concreteGroup]
+    : [
+      ...(Array.isArray(details.allowedGroups) ? details.allowedGroups : []),
+      details.group,
+    ];
+  const groups = [...new Set(candidates.map((value) => String(value || '').trim()).filter(Boolean))];
+  if (!groups.length) return null;
+  const units = groups.map((group) => group === 'web'
+    ? 'trendscope-web.service'
+    : `trendscope-worker@${group}.service`);
+  return {
+    group: groups.join(' ou '),
+    unit: units.join(' ou '),
+    logs: units.length === 1
+      ? `journalctl -u ${units[0]} -n 100 --no-pager`
+      : null,
+  };
+}
+
+function locationLines(location, includeLogs = false) {
+  if (!location) return [];
+  const lines = [`Processo: ${location.group}`, `Unit: ${location.unit}`];
+  if (includeLogs && location.logs) lines.push(`Logs: ${location.logs}`);
+  return lines;
+}
+
+function stopGuidance(code) {
+  return AMBIGUOUS_STOP_CODES.has(code)
+    ? ['Worker desligado. Se foi você, tudo bem; caso contrário, averigue a situação.']
+    : [];
+}
+
 function createWorkerHealthTelegramNotifier(options = {}) {
   const bot = options.botClient || createTelegramBotClient({
     enabled: true, botToken: options.botToken, timeoutMs: options.timeoutMs,
@@ -54,18 +89,19 @@ function createWorkerHealthTelegramNotifier(options = {}) {
   async function sendIncident(incident = {}) {
     const details = incident.details || {};
     const code = String(incident.code || details.code || 'worker_health_incident');
+    const location = runtimeLocation(details);
     const lines = [
       `${incident.severity === 'critical' ? '🚨' : '⚠️'} TrendScope: problema em worker`,
       `Worker: ${details.componentLabel || incident.componentKey || 'desconhecido'}`,
+      `Chave: ${incident.componentKey || details.componentKey || 'desconhecida'}`,
+      ...locationLines(location, true),
       `Problema: ${DESCRIPTIONS[code] || code}`,
       `Código: ${code}`,
       `Local: ${incident.path || details.path || 'não informado'}`,
       `Valor observado: ${printable(details.observedValue, code)}`,
       `Detectado em: ${incident.openedAt || incident.firstObservedAt || new Date().toISOString()}`,
+      ...stopGuidance(code),
     ];
-    if (AMBIGUOUS_STOP_CODES.has(code)) {
-      lines.push('Worker desligado. Se foi você, tudo bem; caso contrário, averigue a situação.');
-    }
     await bot.sendMessage({
       chat_id: chatId, disable_web_page_preview: true, text: lines.join('\n'),
     });
@@ -73,12 +109,15 @@ function createWorkerHealthTelegramNotifier(options = {}) {
 
   async function sendRecovery(incident = {}) {
     const details = incident.details || {};
+    const location = runtimeLocation(details);
     await bot.sendMessage({
       chat_id: chatId,
       disable_web_page_preview: true,
       text: [
         '✅ TrendScope: worker recuperado',
         `Worker: ${details.componentLabel || incident.componentKey || 'desconhecido'}`,
+        `Chave: ${incident.componentKey || details.componentKey || 'desconhecida'}`,
+        ...locationLines(location),
         `Problema resolvido: ${DESCRIPTIONS[incident.code] || incident.code || 'desconhecido'}`,
         `Recuperado em: ${incident.resolvedAt || new Date().toISOString()}`,
       ].join('\n'),
@@ -88,4 +127,4 @@ function createWorkerHealthTelegramNotifier(options = {}) {
   return { sendIncident, sendRecovery };
 }
 
-module.exports = { createWorkerHealthTelegramNotifier };
+module.exports = { createWorkerHealthTelegramNotifier, runtimeLocation };

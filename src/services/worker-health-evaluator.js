@@ -174,6 +174,12 @@ function evaluateRuntimeIssues(definition, lease, options) {
   return issues;
 }
 
+function attachRuntimeGroup(issues, lease) {
+  const runtimeGroup = String(lease?.metadata?.group || '').trim();
+  if (!runtimeGroup) return issues;
+  return issues.map((item) => Object.freeze({ ...item, runtimeGroup }));
+}
+
 function evaluateWorkerHealth(definition, lease, options = {}) {
   if (!definition?.key || !definition.thresholds) {
     throw new TypeError('Worker health definition is required');
@@ -201,7 +207,7 @@ function evaluateWorkerHealth(definition, lease, options = {}) {
   const telemetry = leaseTelemetry(lease);
   if (!telemetry) {
     issues.push(issue(definition, 'telemetry_missing', 'warning', 'telemetry', null));
-    return issues;
+    return attachRuntimeGroup(issues, lease);
   }
   const acquiredAt = validTime(lease.acquiredAt);
   const nodes = statusNodes(telemetry);
@@ -212,7 +218,7 @@ function evaluateWorkerHealth(definition, lease, options = {}) {
     addTimingIssues(issues, definition, node, definition.thresholds, nowMs, acquiredAt);
     addPressureIssues(issues, definition, node, definition.thresholds);
   }
-  return issues;
+  return attachRuntimeGroup(issues, lease);
 }
 
 module.exports = { addRuntimeIssues, evaluateWorkerHealth, leaseTelemetry, statusNodes };
