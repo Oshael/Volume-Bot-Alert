@@ -4966,6 +4966,31 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage173-robinhood-bundle-funding-live-evidence',
+    name: 'Stage 173 Robinhood BUNDLED live evidence',
+    repair: 'node src/utils/db-init-stage173.js',
+    tables: [{
+      table: 'robinhood_bundle_funding_live_evidence',
+      columns: [
+        'chain', 'token_address', 'queue_version', 'candidate_wallet', 'hop',
+        'block_number', 'block_hash', 'block_time', 'transaction_hash',
+        'transaction_index', 'from_wallet', 'to_wallet', 'value_wei',
+        'evidence_version', 'created_at',
+      ],
+      constraints: [{
+        name: 'rh_bundle_funding_live_evidence_pkey',
+        includes: ['PRIMARY KEY', 'chain', 'token_address', 'queue_version'],
+      }, {
+        name: 'rh_bundle_funding_live_evidence_queue_fkey',
+        includes: ['FOREIGN KEY', 'chain', 'token_address'],
+      }],
+      indexes: [{
+        name: 'idx_rh_bundle_funding_live_evidence_token',
+        includes: ['token_address', 'queue_version', 'candidate_wallet', 'hop'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

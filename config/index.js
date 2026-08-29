@@ -1639,6 +1639,28 @@ module.exports = {
     ),
   },
 
+  robinhoodBundleFundingLiveWorker: {
+    enabled: parseBoolean(process.env.ROBINHOOD_BUNDLE_FUNDING_LIVE_ENABLED, false),
+    intervalMs: parseIntegerInRange(
+      process.env.ROBINHOOD_BUNDLE_FUNDING_LIVE_INTERVAL_MS, 1000, 100, 60_000
+    ),
+    leaseMs: parseIntegerInRange(
+      process.env.ROBINHOOD_BUNDLE_FUNDING_LIVE_LEASE_MS, 900_000, 120_000, 1_200_000
+    ),
+    retryMs: parseIntegerInRange(
+      process.env.ROBINHOOD_BUNDLE_FUNDING_LIVE_RETRY_MS, 15_000, 1000, 3_600_000
+    ),
+    maxRetryMs: parseIntegerInRange(
+      process.env.ROBINHOOD_BUNDLE_FUNDING_LIVE_MAX_RETRY_MS, 3_600_000, 60_000, 86_400_000
+    ),
+    batchBlocks: parseIntegerInRange(
+      process.env.ROBINHOOD_BUNDLE_FUNDING_LIVE_BATCH_BLOCKS, 50, 1, 100
+    ),
+    timeoutMs: parseIntegerInRange(
+      process.env.ROBINHOOD_BUNDLE_FUNDING_LIVE_TIMEOUT_MS, 60_000, 1000, 300_000
+    ),
+  },
+
   robinhoodSniperShadowWorker: {
     enabled: parseBoolean(process.env.ROBINHOOD_SNIPER_SHADOW_ENABLED, false),
     intervalMs: parseIntegerInRange(

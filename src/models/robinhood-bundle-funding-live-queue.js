@@ -60,7 +60,55 @@ function createRobinhoodBundleFundingLiveQueueRepository(options = {}) {
     return result.rowCount === 1;
   }
 
-  return Object.freeze({ claim, complete, retry });
+  async function replaceEvidenceAndComplete(input = {}) {
+    if (!Array.isArray(input.evidence)) throw new Error('live funding evidence is required');
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      const locked = await client.query(`SELECT 1 FROM robinhood_bundle_funding_live_queue
+        WHERE chain = $1 AND token_address = $2 AND status = 'leased'
+          AND lease_owner = $3 AND requested_version = $4::bigint FOR UPDATE`,
+      [CHAIN, token(input.tokenAddress), input.owner, input.requestedVersion]);
+      if (!locked.rowCount) { await client.query('ROLLBACK'); return false; }
+      await client.query(`DELETE FROM robinhood_bundle_funding_live_evidence
+        WHERE chain = $1 AND token_address = $2`, [CHAIN, token(input.tokenAddress)]);
+      if (input.evidence.length) {
+        await client.query(`INSERT INTO robinhood_bundle_funding_live_evidence(
+          chain, token_address, queue_version, candidate_wallet, hop, block_number,
+          block_hash, block_time, transaction_hash, transaction_index,
+          from_wallet, to_wallet, value_wei
+        ) SELECT $1, $2, $3::bigint, item.candidate_wallet, item.hop::smallint,
+                 item.block_number::bigint, item.block_hash, item.block_time::timestamptz,
+                 item.transaction_hash, item.transaction_index::integer,
+                 item.from_wallet, item.to_wallet, item.value_wei::numeric
+            FROM jsonb_to_recordset($4::jsonb) AS item(
+              candidate_wallet text, hop integer, block_number text, block_hash text,
+              block_time text, transaction_hash text, transaction_index text,
+              from_wallet text, to_wallet text, value_wei text)`, [
+          CHAIN, token(input.tokenAddress), input.requestedVersion,
+          JSON.stringify(input.evidence.map((item) => ({
+            candidate_wallet: item.candidateWallet, hop: item.hop,
+            block_number: item.blockNumber, block_hash: item.blockHash,
+            block_time: item.blockTime, transaction_hash: item.transactionHash,
+            transaction_index: item.transactionIndex, from_wallet: item.fromAddress,
+            to_wallet: item.toAddress, value_wei: item.valueWei,
+          }))),
+        ]);
+      }
+      await client.query(`UPDATE robinhood_bundle_funding_live_queue SET
+        status = 'complete', completed_version = requested_version,
+        lease_owner = NULL, lease_until = NULL, completed_at = NOW(),
+        last_error_code = NULL, last_error_message = NULL, updated_at = NOW()
+        WHERE chain = $1 AND token_address = $2`, [CHAIN, token(input.tokenAddress)]);
+      await client.query('COMMIT');
+      return true;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally { client.release(); }
+  }
+
+  return Object.freeze({ claim, complete, retry, replaceEvidenceAndComplete });
 }
 
 module.exports = { createRobinhoodBundleFundingLiveQueueRepository };

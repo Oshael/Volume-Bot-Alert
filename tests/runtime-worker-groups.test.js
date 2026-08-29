@@ -1134,6 +1134,16 @@ describe('runtime worker groups config', () => {
     }));
   });
 
+  it('keeps VPS Archive funding live opt-in and bounded', () => {
+    withEnv({ ROBINHOOD_BUNDLE_FUNDING_LIVE_ENABLED: 'true',
+      ROBINHOOD_BUNDLE_FUNDING_LIVE_BATCH_BLOCKS: '999',
+      ROBINHOOD_BUNDLE_FUNDING_LIVE_TIMEOUT_MS: '999999',
+    }, (config) => assert.deepEqual(config.robinhoodBundleFundingLiveWorker, {
+      enabled: true, intervalMs: 1000, leaseMs: 900_000, retryMs: 15_000,
+      maxRetryMs: 3_600_000, batchBlocks: 100, timeoutMs: 300_000,
+    }));
+  });
+
   it('keeps the INSIDER classifier shadow worker opt-in and bounded', () => {
     withEnv({
       ROBINHOOD_INSIDER_SHADOW_ENABLED: 'true',

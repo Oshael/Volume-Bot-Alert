@@ -1715,6 +1715,12 @@ PostgreSQL da VPS e não chama RPC. Seu consumidor também deve rodar na VPS,
 exigir `RH_NODE_RPC_URL` Archive e recusar qualquer fallback público. A migration
 não enfileira o histórico: aplique-a antes da última campanha incremental usada
 como seed do live.
+A Stage 173 persiste a evidência causal atual e o worker
+`ROBINHOOD_BUNDLE_FUNDING_LIVE_ENABLED` drena a fila exclusivamente na VPS. Ele
+congela as early wallets do token, valida chain `4663`, lê full blocks somente do
+`RH_NODE_RPC_URL` Archive e substitui evidência + ACK na mesma transação. Tokens
+com menos de duas candidatas concluem com evidência vazia; erros usam backoff e
+leases expiradas são recuperáveis. Sem Archive na VPS, o start falha fechado.
 A Stage 156 adiciona o índice concorrente `(chain, token_address, discovery_block)`
 ao registry. A recorrência começa pelas compras da wallet e consulta a origem
 somente dos tokens encontrados, sem reagregar todas as pools por wallet candidata;

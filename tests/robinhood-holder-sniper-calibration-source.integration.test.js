@@ -21,6 +21,7 @@ const stage155 = require('../src/utils/db-init-stage155');
 const stage156 = require('../src/utils/db-init-stage156');
 const stage157 = require('../src/utils/db-init-stage157');
 const stage172 = require('../src/utils/db-init-stage172');
+const stage173 = require('../src/utils/db-init-stage173');
 const {
   createRobinhoodBundleFundingLiveQueueRepository,
 } = require('../src/models/robinhood-bundle-funding-live-queue');
@@ -36,6 +37,7 @@ describe('Robinhood SNIPER population calibration source integration', () => {
       stage63, stage90, stage110, stage116, stage139, stage145, stage149, stage155,
       stage156, stage157,
       stage172,
+      stage173,
     ]) {
       await stage.init({ closePool: false });
     }
@@ -44,6 +46,7 @@ describe('Robinhood SNIPER population calibration source integration', () => {
   });
 
   after(async () => {
+    await db.query('DELETE FROM robinhood_bundle_funding_live_evidence');
     await db.query('DELETE FROM robinhood_bundle_funding_live_queue');
     await db.query('DELETE FROM robinhood_token_launch_anchors');
     await db.pool.end();
@@ -86,9 +89,16 @@ describe('Robinhood SNIPER population calibration source integration', () => {
     assert.equal(await queue.complete({ ...task, owner: 'integration' }), false);
     const latest = await queue.claim({ owner: 'integration', leaseMs: 60_000 });
     assert.equal(latest.requestedVersion, '2');
-    assert.equal(await queue.complete({ ...latest, owner: 'integration' }), true);
+    assert.equal(await queue.replaceEvidenceAndComplete({
+      ...latest, owner: 'integration', evidence: [{ candidateWallet: WALLET, hop: 1,
+        blockNumber: '99', blockHash: `0x${'b'.repeat(64)}`,
+        blockTime: '2026-08-21T11:59:00Z', transactionHash: `0x${'c'.repeat(64)}`,
+        transactionIndex: '0', fromAddress: TOKEN, toAddress: WALLET, valueWei: '1' }],
+    }), true);
     assert.equal((await db.query(`SELECT status FROM robinhood_bundle_funding_live_queue
       WHERE token_address = $1`, [TOKEN])).rows[0].status, 'complete');
+    assert.equal((await db.query(`SELECT COUNT(*)::integer count
+      FROM robinhood_bundle_funding_live_evidence WHERE token_address = $1`, [TOKEN])).rows[0].count, 1);
   });
 
   it('atomically enriches a block cache with typed canonical evidence', async () => {
