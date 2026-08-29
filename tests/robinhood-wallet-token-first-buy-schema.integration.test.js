@@ -12,9 +12,11 @@ const {
 } = require('../src/models/robinhood-transaction-position-repair');
 const stage63 = require('../src/utils/db-init-stage63');
 const stage90 = require('../src/utils/db-init-stage90');
+const stage116 = require('../src/utils/db-init-stage116');
 const stage139 = require('../src/utils/db-init-stage139');
 const stage149 = require('../src/utils/db-init-stage149');
 const stage171 = require('../src/utils/db-init-stage171');
+const stage177 = require('../src/utils/db-init-stage177');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const TOKEN = `0x${'1'.repeat(40)}`;
@@ -30,6 +32,7 @@ const SWAP_HASHES = [7, 8, 9, 11].map((digit) => `0x${digit.toString(16).repeat(
 async function cleanup() {
   await db.query('DELETE FROM robinhood_launch_anchor_outbox WHERE token_address = $1', [TOKEN]);
   await db.query('DELETE FROM robinhood_wallet_token_first_buys WHERE token_address = $1', [TOKEN]);
+  await db.query('DELETE FROM robinhood_holder_token_states WHERE token_address = $1', [TOKEN]);
   await db.query(`DELETE FROM ${PARTITION}`);
   await db.query(
     `DELETE FROM robinhood_transaction_positions
@@ -43,9 +46,11 @@ describe('Robinhood wallet-token first buy schema integration', () => {
     await assertUsingTestDatabase(db);
     await stage63.init({ closePool: false });
     await stage90.init({ closePool: false });
+    await stage116.init({ closePool: false });
     await stage139.init({ closePool: false });
     await stage149.init({ closePool: false });
     await stage171.init({ closePool: false });
+    await stage177.init({ closePool: false });
     await stage149.init({ closePool: false });
     await db.query(
       `CREATE TABLE IF NOT EXISTS ${PARTITION}
@@ -89,8 +94,16 @@ describe('Robinhood wallet-token first buy schema integration', () => {
       block_number: '20', volume_usd: '25.5', evidence_version: 'rh_first_buy_v1',
     });
     assert.equal((await db.query(
-      'SELECT status FROM robinhood_launch_anchor_outbox WHERE token_address = $1', [TOKEN]
-    )).rows[0].status, 'pending');
+      'SELECT COUNT(*)::integer count FROM robinhood_launch_anchor_outbox WHERE token_address = $1',
+      [TOKEN]
+    )).rows[0].count, 0);
+    await db.query(`INSERT INTO robinhood_holder_token_states(
+      token_address, ledger_status, live_through_block, live_through_hash
+    ) VALUES ($1, 'live', 30, $2)`, [TOKEN, HASH]);
+    assert.deepEqual((await db.query(
+      `SELECT status, eligibility_version FROM robinhood_launch_anchor_outbox
+        WHERE token_address = $1`, [TOKEN]
+    )).rows[0], { status: 'pending', eligibility_version: 'rh_holder_live_v1' });
     await assert.rejects(db.query(
       `UPDATE robinhood_wallet_token_first_buys SET volume_usd = -1
         WHERE token_address = $1`, [TOKEN]

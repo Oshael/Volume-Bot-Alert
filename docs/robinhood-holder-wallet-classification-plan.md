@@ -1229,6 +1229,13 @@ Funding no mesmo bloco da compra é elegível somente quando a posição da tran
 prova que ocorreu antes. O Archive permanece ferramenta de backfill/repair, não
 dependência permanente do runtime live.
 
+A continuidade de launch anchors é condicionada ao holder ledger `live`. Um
+first-buy anterior a essa prontidão não é perdido: a transição posterior do token
+para `live` emite o mesmo trabalho durável. Itens ainda inelegíveis não permanecem
+em retry infinito e voltam a ser criados quando a condição se torna verdadeira.
+Os triggers compartilham um advisory lock transacional por token para fechar a
+corrida entre commits concorrentes sem introduzir polling de catálogo.
+
 ### 12.2 Transfers internos
 
 Transfers internos exigem traces. O RPC público Robinhood validado anteriormente

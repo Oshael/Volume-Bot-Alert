@@ -1814,6 +1814,14 @@ o primeiro swap registrado somente para o token reclamado e mantém a escrita
 idempotente. Ative com `ROBINHOOD_LAUNCH_ANCHOR_LIVE_ENABLED=true` somente após
 aplicar a Stage 171. Isso mantém anchors novos automaticamente, mas não substitui
 o catch-up Stage 166 para lacunas anteriores à instalação da outbox.
+A Stage 177 restringe essa emissão a tokens cujo holder ledger já esteja `live` e
+com frontier materializada. Se o first-buy chegar antes, a própria transição
+posterior do holder para `live` enfileira o token; portanto a limpeza dos itens
+inelegíveis não perde trabalho futuro. A migration remove o backlog inelegível,
+reativa os itens elegíveis e versiona a fila como `rh_holder_live_v1`, eliminando
+retry permanente de tokens que ainda não podem produzir anchor. Os dois triggers
+usam o mesmo advisory lock transacional por token: commits simultâneos de first-buy
+e holder são serializados, e o segundo sempre enxerga o primeiro sem polling.
 A Stage 172 encadeia anchors commitados à fila token-scoped
 `robinhood_bundle_funding_live_queue`. Cada nova versão do anchor invalida uma
 lease antiga e incrementa `requested_version`; a conclusão só é aceita para essa
@@ -1854,7 +1862,7 @@ segredos continuam vindo do `.env` global já carregado pelo processo. O script
 não força nenhum subworker: first-buy, SNIPER,
 posição e transfers obedecem exclusivamente às respectivas flags do env. Antes
 do primeiro start, aplique as Stages 149, 151, 152, 155, 156, 157 e, para BUNDLED
-live, 171–174; confirme o seed concluído e
+live, 171–174 e 177; confirme o seed concluído e
 execute `npm run db:schema-check`. Processo `active` não basta: confirme as leases
 `robinhood-first-buy-live-worker` e `robinhood-sniper-shadow-worker`, heartbeat
 recente, `metadata.telemetry.running=true`, `totalRuns` crescente e

@@ -5057,6 +5057,19 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage177-robinhood-launch-anchor-eligibility',
+    name: 'Stage 177 Robinhood launch-anchor eligibility',
+    repair: 'node src/utils/db-init-stage177.js',
+    tables: [{
+      table: 'robinhood_launch_anchor_outbox',
+      columns: ['eligibility_version'],
+      constraints: [{
+        name: 'rh_launch_anchor_outbox_eligibility_check',
+        includes: ['eligibility_version', 'rh_holder_live_v1'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
