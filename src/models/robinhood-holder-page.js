@@ -9,12 +9,15 @@ const {
 const {
   SNIPER_HIGH_CONFIDENCE_RULE,
 } = require('../services/robinhood-holder-sniper-policy');
+const {
+  INSIDER_DIRECT_RULE,
+} = require('../services/robinhood-holder-insider-materializer');
 
 const PAGE_SIZE = 50;
 const CURSOR_PREFIX = 'ledger_v1.';
 const MAX_CURSOR_LENGTH = 512;
 const DEAD_ADDRESS = '0x000000000000000000000000000000000000dead';
-const HOLDER_FILTERS = Object.freeze(['top', 'snipers', 'bundled']);
+const HOLDER_FILTERS = Object.freeze(['top', 'snipers', 'bundled', 'insiders']);
 const BUNDLE_RULE_VERSION = 'rh_possible_bundle_v1';
 
 function invalidCursor() {
@@ -182,10 +185,25 @@ function createRobinhoodHolderPageRepository(options = {}) {
           WHERE $4::varchar = 'bundled' AND member.chain = 'robinhood'
             AND member.token_address = $1 AND member.rule_version = $7
             AND state.status = 'ready'
+       ), insider_wallets AS MATERIALIZED (
+         SELECT classification.wallet_address
+           FROM robinhood_holder_classifications classification
+           INNER JOIN robinhood_holder_balances balance
+             ON balance.chain = classification.chain
+            AND balance.token_address = classification.token_address
+            AND balance.wallet_address = classification.wallet_address
+          WHERE $4::varchar = 'insiders' AND classification.chain = 'robinhood'
+            AND classification.token_address = $1
+            AND classification.classification_version = $5
+            AND classification.tag = 'insider' AND classification.confidence = 'high'
+            AND classification.reason_code = 'creator_token_distribution'
+            AND classification.evidence_json #>> '{rule,evidenceVersion}' = $8
+            AND (classification.expires_at IS NULL OR classification.expires_at > NOW())
        ), published_state AS MATERIALIZED (
          SELECT CASE $4::varchar
                   WHEN 'snipers' THEN (SELECT COUNT(*) FROM sniper_wallets)
                   WHEN 'bundled' THEN (SELECT COUNT(*) FROM bundled_wallets)
+                  WHEN 'insiders' THEN (SELECT COUNT(*) FROM insider_wallets)
                   ELSE state.holder_count END AS holder_count,
                 state.updated_at AS observed_at,
                 cursor.updated_at AS checked_at
@@ -223,6 +241,9 @@ function createRobinhoodHolderPageRepository(options = {}) {
               )) OR ($4::varchar = 'bundled' AND EXISTS (
                 SELECT 1 FROM bundled_wallets bundled
                  WHERE bundled.wallet_address = balance.wallet_address
+              )) OR ($4::varchar = 'insiders' AND EXISTS (
+                SELECT 1 FROM insider_wallets insider
+                 WHERE insider.wallet_address = balance.wallet_address
               )))
             AND ($2::numeric IS NULL OR balance.balance_raw < $2::numeric
               OR (balance.balance_raw = $2::numeric AND balance.wallet_address > $3))
@@ -253,6 +274,7 @@ function createRobinhoodHolderPageRepository(options = {}) {
         tokenAddress, cursor?.balanceRaw || null, cursor?.walletAddress || null, filter,
         HOLDER_CLASSIFICATION_VERSION, SNIPER_HIGH_CONFIDENCE_RULE.evidenceVersion,
         BUNDLE_RULE_VERSION,
+        INSIDER_DIRECT_RULE.evidenceVersion,
       ]
     );
     return mapPage(tokenAddress, cursor, result.rows, filter);

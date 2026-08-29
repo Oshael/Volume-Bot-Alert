@@ -8,7 +8,7 @@ const HOLDER_DISTRIBUTION_METRICS = Object.freeze([
 const CLASSIFICATION_STATUSES = Object.freeze([
   'unavailable', 'pending', 'ready', 'stale', 'reorged',
 ]);
-const PRIMARY_TAG_PRIORITY = Object.freeze(['sniper', 'bundled', 'fresh', 'cex', 'lp']);
+const PRIMARY_TAG_PRIORITY = Object.freeze(['sniper', 'insider', 'bundled', 'fresh', 'cex', 'lp']);
 const CONFIDENCE_LEVELS = new Set(['deterministic', 'high', 'heuristic']);
 const REASON_CODES_BY_TAG = Object.freeze({
   lp: Object.freeze(['registered_token_pool', 'registered_v4_pool_manager']),

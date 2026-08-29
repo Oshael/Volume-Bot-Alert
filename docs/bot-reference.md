@@ -1751,10 +1751,14 @@ execute `npm run db:schema-check`. Processo `active` não basta: confirme as lea
 recente, `metadata.telemetry.running=true`, `totalRuns` crescente e
 `lastError=null`.
 A Stage 175 habilita o contrato público token-scoped de `BUNDLED`; aplique-a após
-a Stage 174. A API de holders mantém por padrão `LP`, `CEX`, `SNIPER` e `BUNDLED`
-na allowlist pública.
+a Stage 174. A API de holders mantém por padrão `LP`, `CEX`, `SNIPER`, `BUNDLED`
+e `INSIDER` na allowlist pública.
 `SNIPER` só é publicado quando possui confiança `high` e evidência
 `rh_sniper_high_v2`; sinais candidatos e políticas anteriores permanecem privados.
+`INSIDER` também falha fechado: publica somente confiança `high`, motivo
+`creator_token_distribution` e evidência `rh_insider_direct_v1`. O filtro
+`filter=insiders` pagina somente essas wallets no ledger publicado, e a métrica
+deriva sua participação atual contra o supply aceito mais recente.
 A tag `BUNDLED` é sintetizada somente de membros `rh_possible_bundle_v1` cujo
 snapshot do mesmo token está `ready`, com confiança `heuristic` e motivo
 `connected_funding_launch_cluster`; ela não acompanha a wallet em outros tokens.
@@ -1767,7 +1771,7 @@ aceito mais recente, sem novo backfill ou reclassificação. O endpoint aceita
 as wallets SNIPER atuais; não filtra localmente a página TOP nem recorre ao
 Blockscout. Cursores carregam o filtro e são rejeitados se reutilizados em outra
 visão. O expanded chart mantém caches e stacks de paginação independentes para
-`TOP` e `SNIPERS`.
+`TOP`, `SNIPERS`, `BUNDLED` e `INSIDERS`.
 A Stage 153 vem depois dessas migrations e é obrigatória antes do writer/source
 de `INSIDER`: aplique `node src/utils/db-init-stage153.js` antes de iniciar ou
 atualizar os processos seed/live/reclassification de transfers. Ela
@@ -1776,7 +1780,7 @@ acrescenta à aresta direcionada o primeiro evento comprovado como
 quando uma reclassificação chega depois. A migration não reescreve arestas
 legadas; a evidência fica nula até um replay limitado e retomável, impedindo
 inferência direcional ambígua e WAL não orçado durante deploy. Aplicar a stage
-não inicia replay, worker ou classificação e não habilita `INSIDER` na API/UI.
+não inicia replay, worker ou classificação e não publica `INSIDER` por si só.
 A Stage 154 cria o controle do replay direcional histórico: campanha com
 frontier de blocos/hash congelada e ranges limitados a 5.000 blocos, retomáveis
 por lease e com checkpoint canônico por range. Aplique

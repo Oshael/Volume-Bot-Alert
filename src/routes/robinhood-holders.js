@@ -51,7 +51,7 @@ function parseHistoryDays(value) {
 
 function parseHolderFilter(value) {
   const normalized = String(value ?? 'top').trim().toLowerCase();
-  if (!['top', 'snipers', 'bundled'].includes(normalized)) {
+  if (!['top', 'snipers', 'bundled', 'insiders'].includes(normalized)) {
     throw new RangeError('holder filter is invalid');
   }
   return normalized;

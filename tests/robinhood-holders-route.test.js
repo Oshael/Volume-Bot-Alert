@@ -371,6 +371,22 @@ describe('Robinhood holders route', () => {
     assert.equal(response.body.filter, 'bundled');
   });
 
+  it('routes the INSIDERS filter exclusively through published classifications', async () => {
+    const response = await request(appWith({
+      holderPageRepository: {
+        listPublishedPage: async (input) => {
+          assert.deepEqual(input, { tokenAddress: TOKEN, cursor: null, filter: 'insiders' });
+          return { holderCount: 0, source: 'ledger_live', totalSupplyRaw: '10000',
+            observedAt: '2026-08-10T04:59:59.000Z', checkedAt: '2026-08-10T05:00:00.000Z',
+            items: [], hasMore: false, nextCursor: null };
+        },
+      },
+    })).get(`/api/robinhood/holders?token=${TOKEN}&filter=insiders`);
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.filter, 'insiders');
+  });
+
   it('rejects unknown filters before reading holder data', async () => {
     const response = await request(appWith())
       .get(`/api/robinhood/holders?token=${TOKEN}&filter=fresh`);

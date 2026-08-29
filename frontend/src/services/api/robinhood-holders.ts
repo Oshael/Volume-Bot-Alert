@@ -1,7 +1,7 @@
 import { apiFetch } from './base';
 
 export type RobinhoodHolderTag = 'lp' | 'cex' | 'sniper' | 'bundled' | 'fresh' | 'insider';
-export type RobinhoodHolderFilter = 'top' | 'snipers' | 'bundled';
+export type RobinhoodHolderFilter = 'top' | 'snipers' | 'bundled' | 'insiders';
 export type RobinhoodClassificationStatus =
   'unavailable' | 'pending' | 'ready' | 'stale' | 'reorged';
 

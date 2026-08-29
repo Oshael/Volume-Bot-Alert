@@ -41,6 +41,9 @@ function rowsFor(sql) {
   }, {
     classifier: 'bundled', status: 'ready', through_block_number: '200',
     through_block_hash: HASH_A, observed_at: '2026-08-21T12:00:00Z',
+  }, {
+    classifier: 'insider', status: 'ready', through_block_number: '200',
+    through_block_hash: HASH_A, observed_at: '2026-08-21T12:00:00Z',
   }];
   if (sql.includes('holder_classifications')) return [{
     wallet_address: WALLET_A, tag: 'cex', confidence: 'deterministic',
@@ -57,6 +60,10 @@ function rowsFor(sql) {
   }, {
     wallet_address: WALLET_A, tag: 'bundled', confidence: 'heuristic',
     reason_code: 'connected_funding_launch_cluster',
+    observed_at: '2026-08-21T12:00:00Z', expires_at: null,
+  }, {
+    wallet_address: WALLET_A, tag: 'insider', confidence: 'high',
+    reason_code: 'creator_token_distribution',
     observed_at: '2026-08-21T12:00:00Z', expires_at: null,
   }];
   return [];
@@ -81,11 +88,12 @@ describe('Robinhood holder intelligence public read', () => {
     assert.deepEqual(result.classificationThroughBlock, {
       blockNumber: '1', blockHash: HASH_B,
     });
-    assert.deepEqual(result.holders[0].tags, ['lp', 'cex', 'sniper', 'bundled']);
+    assert.deepEqual(result.holders[0].tags, ['lp', 'cex', 'sniper', 'bundled', 'insider']);
     assert.equal(result.holders[0].primaryTag, 'sniper');
     assert.deepEqual(result.holders[0].classifications.map(({ reasonCode }) => reasonCode), [
       'known_cex_address', 'registered_token_pool', 'early_launch_buy',
       'connected_funding_launch_cluster',
+      'creator_token_distribution',
     ]);
     assert.equal(result.holders[1].primaryTag, 'unknown');
     assert.equal(result.distribution.length, 8);
@@ -102,16 +110,19 @@ describe('Robinhood holder intelligence public read', () => {
       Array.isArray(value) && value.includes('lp') && value.includes('cex')
         && value.includes('sniper')
         && value.includes('bundled')
+        && value.includes('insider')
     ))));
     const classificationCall = calls.find(([sql]) => sql.startsWith('SELECT wallet_address'));
     assert.equal(classificationCall[1][4], 'rh_sniper_high_v2');
-    assert.equal(classificationCall[1].at(-1), 'rh_possible_bundle_v1');
+    assert.equal(classificationCall[1].at(-1), 'rh_insider_direct_v1');
     assert.match(classificationCall[0], /confidence = 'high'/);
+    assert.match(classificationCall[0], /reason_code = 'creator_token_distribution'/);
     const metricCall = calls.find(([sql]) => sql.includes('WITH stored_metrics'));
     assert.equal(metricCall[1][3], true);
     assert.equal(metricCall[1][4], 'rh_sniper_high_v2');
-    assert.equal(metricCall[1].at(-1), 'rh_possible_bundle_v1');
+    assert.equal(metricCall[1].at(-1), 'rh_insider_direct_v1');
     assert.match(metricCall[0], /current_snipers AS MATERIALIZED/);
+    assert.match(metricCall[0], /current_insiders AS MATERIALIZED/);
   });
 
   it('keeps SNIPER private when explicitly removed from the public allowlist', async () => {

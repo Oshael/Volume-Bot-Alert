@@ -12,13 +12,14 @@ const { assertUsingTestDatabase } = require('./helpers/test-db');
 const TOKEN = `0x${'1'.repeat(40)}`;
 const HIGH_WALLET = `0x${'2'.repeat(40)}`;
 const LEGACY_WALLET = `0x${'3'.repeat(40)}`;
+const INSIDER_WALLET = `0x${'6'.repeat(40)}`;
 const HASH = `0x${'4'.repeat(64)}`;
 const TX = `0x${'5'.repeat(64)}`;
 
 after(() => db.pool.end());
 
-describe('Robinhood public SNIPER intelligence read integration', () => {
-  it('derives the live ratio and rejects non-public SNIPER evidence', async () => {
+describe('Robinhood public holder intelligence read integration', () => {
+  it('derives public live ratios and rejects non-public evidence', async () => {
     await assertUsingTestDatabase(db);
     const client = await db.pool.connect();
     try {
@@ -49,8 +50,11 @@ describe('Robinhood public SNIPER intelligence read integration', () => {
         `INSERT INTO robinhood_holder_classification_states (
            token_address, classifier, classification_version, status, status_reason,
            through_block_number, through_block_hash, observed_at
-         ) VALUES ($1, 'sniper', 'rh_holder_v1', 'ready', 'materialized',
-           100, $2, '2026-08-24T01:00:00Z')`,
+         ) VALUES
+           ($1, 'sniper', 'rh_holder_v1', 'ready', 'materialized',
+            100, $2, '2026-08-24T01:00:00Z'),
+           ($1, 'insider', 'rh_holder_v1', 'ready', 'materialized',
+            100, $2, '2026-08-24T01:00:00Z')`,
         [TOKEN, HASH]
       );
       await client.query(
@@ -61,19 +65,24 @@ describe('Robinhood public SNIPER intelligence read integration', () => {
            ($1, $2, 'sniper', 'rh_holder_v1', 'high', 'early_launch_buy',
             $4::jsonb, 100, $5, '2026-08-24T01:00:00Z'),
            ($1, $3, 'sniper', 'rh_holder_v1', 'heuristic', 'early_launch_buy',
-            $6::jsonb, 100, $5, '2026-08-24T01:00:00Z')`,
+            $6::jsonb, 100, $5, '2026-08-24T01:00:00Z'),
+           ($1, $7, 'insider', 'rh_holder_v1', 'high', 'creator_token_distribution',
+            $8::jsonb, 100, $5, '2026-08-24T01:00:00Z')`,
         [
           TOKEN, HIGH_WALLET, LEGACY_WALLET,
           JSON.stringify({ rule: { evidenceVersion: 'rh_sniper_high_v2' } }), HASH,
           JSON.stringify({ rule: { evidenceVersion: 'rh_sniper_high_v1' } }),
+          INSIDER_WALLET, JSON.stringify({ rule: { evidenceVersion: 'rh_insider_direct_v1' } }),
         ]
       );
       await client.query(
         `INSERT INTO robinhood_holder_balances (
            token_address, wallet_address, balance_raw, last_block_number,
            last_transaction_hash, last_log_index
-         ) VALUES ($1, $2, 25, 100, $4, 1), ($1, $3, 75, 100, $4, 2)`,
-        [TOKEN, HIGH_WALLET, LEGACY_WALLET, TX]
+         ) VALUES
+           ($1, $2, 25, 100, $5, 1), ($1, $3, 75, 100, $5, 2),
+           ($1, $4, 15, 100, $5, 3)`,
+        [TOKEN, HIGH_WALLET, LEGACY_WALLET, INSIDER_WALLET, TX]
       );
       await client.query(
         `INSERT INTO robinhood_market_observations VALUES
@@ -101,17 +110,23 @@ describe('Robinhood public SNIPER intelligence read integration', () => {
       } };
       const repository = createRobinhoodHolderIntelligenceReadRepository({ database });
       const result = await repository.loadPage({
-        tokenAddress: TOKEN, walletAddresses: [HIGH_WALLET, LEGACY_WALLET],
+        tokenAddress: TOKEN, walletAddresses: [HIGH_WALLET, LEGACY_WALLET, INSIDER_WALLET],
       });
 
       assert.deepEqual(result.holders[0].tags, ['sniper']);
       assert.equal(result.holders[0].primaryTag, 'sniper');
       assert.deepEqual(result.holders[1].tags, []);
       assert.equal(result.holders[1].primaryTag, 'unknown');
+      assert.deepEqual(result.holders[2].tags, ['insider']);
+      assert.equal(result.holders[2].primaryTag, 'insider');
       const metric = result.distribution.find(({ metric: name }) => name === 'snipers');
       assert.equal(metric.status, 'ready');
       assert.deepEqual(metric.value, { numeratorRaw: '25', denominatorRaw: '100' });
       assert.equal(metric.walletCount, '1');
+      const insiderMetric = result.distribution.find(({ metric: name }) => name === 'insiders');
+      assert.equal(insiderMetric.status, 'ready');
+      assert.deepEqual(insiderMetric.value, { numeratorRaw: '15', denominatorRaw: '100' });
+      assert.equal(insiderMetric.walletCount, '1');
     } finally {
       await client.query('ROLLBACK').catch(() => {});
       client.release();

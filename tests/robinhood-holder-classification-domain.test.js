@@ -84,7 +84,7 @@ describe('Robinhood holder classification domain', () => {
     assert.deepEqual(tags, ['lp', 'sniper', 'bundled', 'fresh', 'insider']);
     assert.equal(primaryHolderTag(tags), 'sniper');
     assert.equal(primaryHolderTag(['cex', 'bundled']), 'bundled');
-    assert.equal(primaryHolderTag(['insider']), 'unknown');
+    assert.equal(primaryHolderTag(['insider']), 'insider');
     assert.equal(primaryHolderTag([]), 'unknown');
   });
 

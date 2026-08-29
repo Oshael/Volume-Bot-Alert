@@ -9,10 +9,13 @@ const {
 const {
   SNIPER_HIGH_CONFIDENCE_RULE,
 } = require('../services/robinhood-holder-sniper-policy');
+const {
+  INSIDER_DIRECT_RULE,
+} = require('../services/robinhood-holder-insider-materializer');
 
 const STATUS_PRIORITY = Object.freeze(['reorged', 'stale', 'pending', 'unavailable', 'ready']);
 const MAX_PAGE_WALLETS = 50;
-const DEFAULT_PUBLIC_TAGS = Object.freeze(['lp', 'cex', 'sniper', 'bundled']);
+const DEFAULT_PUBLIC_TAGS = Object.freeze(['lp', 'cex', 'sniper', 'bundled', 'insider']);
 const DEFAULT_PUBLIC_METRICS = Object.freeze([
   'top10', 'top50', 'dev_hold', 'lp_locked', 'bundled',
 ]);
@@ -123,6 +126,10 @@ function createRobinhoodHolderIntelligenceReadRepository(options = {}) {
               confidence = 'high'
               AND evidence_json #>> '{rule,evidenceVersion}' = $5
             ))
+            AND (tag <> 'insider' OR (
+              confidence = 'high' AND reason_code = 'creator_token_distribution'
+              AND evidence_json #>> '{rule,evidenceVersion}' = $8
+            ))
             AND (expires_at IS NULL OR expires_at > NOW())
          UNION ALL
          SELECT member.wallet_address, 'bundled', 'heuristic',
@@ -138,7 +145,7 @@ function createRobinhoodHolderIntelligenceReadRepository(options = {}) {
         [
           tokenAddress, HOLDER_CLASSIFICATION_VERSION, walletAddresses, [...publicTags],
           SNIPER_HIGH_CONFIDENCE_RULE.evidenceVersion, publicTags.has('bundled'),
-          BUNDLE_RULE_VERSION,
+          BUNDLE_RULE_VERSION, INSIDER_DIRECT_RULE.evidenceVersion,
         ]
       ) : Promise.resolve({ rows: [] }),
       database.query(
@@ -153,6 +160,8 @@ function createRobinhoodHolderIntelligenceReadRepository(options = {}) {
               AND metric <> 'bundled'
               AND (metric <> 'snipers'
                 OR evidence_json #>> '{rule,evidenceVersion}' = $5)
+              AND (metric <> 'insiders'
+                OR evidence_json #>> '{rule,evidenceVersion}' = $9)
          ), current_snipers AS MATERIALIZED (
            SELECT COALESCE(SUM(balance.balance_raw), 0) AS balance_raw,
                   COUNT(balance.wallet_address)::bigint AS wallet_count
@@ -172,7 +181,8 @@ function createRobinhoodHolderIntelligenceReadRepository(options = {}) {
          ), current_supply AS MATERIALIZED (
            SELECT observation.token_total_supply_raw
              FROM robinhood_market_observations observation
-            WHERE ($4::boolean OR $6::boolean) AND observation.chain = 'robinhood'
+            WHERE ($4::boolean OR $6::boolean OR $8::boolean)
+              AND observation.chain = 'robinhood'
               AND observation.token_address = $1 AND observation.status = 'accepted'
               AND observation.token_total_supply_raw > 0
             ORDER BY observation.observed_at DESC LIMIT 1
@@ -200,6 +210,44 @@ function createRobinhoodHolderIntelligenceReadRepository(options = {}) {
               AND state.classification_version = $2
               AND state.status IN ('ready', 'stale', 'reorged')
               AND NOT EXISTS (SELECT 1 FROM stored_metrics WHERE metric = 'snipers')
+         ), current_insiders AS MATERIALIZED (
+           SELECT COALESCE(SUM(balance.balance_raw), 0) AS balance_raw,
+                  COUNT(balance.wallet_address)::bigint AS wallet_count
+             FROM robinhood_holder_classifications classification
+             LEFT JOIN robinhood_holder_balances balance
+               ON balance.chain = classification.chain
+              AND balance.token_address = classification.token_address
+              AND balance.wallet_address = classification.wallet_address
+            WHERE $8::boolean AND classification.chain = 'robinhood'
+              AND classification.token_address = $1
+              AND classification.classification_version = $2
+              AND classification.tag = 'insider' AND classification.confidence = 'high'
+              AND classification.reason_code = 'creator_token_distribution'
+              AND classification.evidence_json #>> '{rule,evidenceVersion}' = $9
+              AND (classification.expires_at IS NULL OR classification.expires_at > NOW())
+         ), derived_insiders AS (
+           SELECT 'insiders'::varchar AS metric, state.classification_version,
+                  CASE WHEN supply.token_total_supply_raw IS NULL
+                       THEN 'unavailable' ELSE state.status END AS status,
+                  CASE WHEN supply.token_total_supply_raw IS NULL THEN NULL
+                       ELSE LEAST(insiders.balance_raw, supply.token_total_supply_raw) END
+                    AS value_numerator_raw,
+                  supply.token_total_supply_raw AS value_denominator_raw,
+                  CASE WHEN supply.token_total_supply_raw IS NULL
+                       THEN NULL ELSE insiders.wallet_count END AS wallet_count,
+                  NULL::bigint AS group_count,
+                  CASE WHEN supply.token_total_supply_raw IS NULL THEN NULL
+                       ELSE state.through_block_number END AS through_block_number,
+                  CASE WHEN supply.token_total_supply_raw IS NULL THEN NULL
+                       ELSE state.through_block_hash END AS through_block_hash,
+                  state.observed_at
+             FROM robinhood_holder_classification_states state
+             CROSS JOIN current_insiders insiders LEFT JOIN current_supply supply ON TRUE
+            WHERE $8::boolean AND state.chain = 'robinhood'
+              AND state.token_address = $1 AND state.classifier = 'insider'
+              AND state.classification_version = $2
+              AND state.status IN ('ready', 'stale', 'reorged')
+              AND NOT EXISTS (SELECT 1 FROM stored_metrics WHERE metric = 'insiders')
          ), current_bundled AS MATERIALIZED (
            SELECT COALESCE(SUM(balance.balance_raw), 0) AS balance_raw,
                   COUNT(balance.wallet_address)::bigint AS wallet_count,
@@ -238,12 +286,14 @@ function createRobinhoodHolderIntelligenceReadRepository(options = {}) {
          )
          SELECT * FROM stored_metrics
          UNION ALL SELECT * FROM derived_snipers
+         UNION ALL SELECT * FROM derived_insiders
          UNION ALL SELECT * FROM derived_bundled
          ORDER BY metric`,
         [
           tokenAddress, HOLDER_CLASSIFICATION_VERSION, [...publicMetrics],
           publicTags.has('sniper'), SNIPER_HIGH_CONFIDENCE_RULE.evidenceVersion,
           publicTags.has('bundled'), BUNDLE_RULE_VERSION,
+          publicTags.has('insider'), INSIDER_DIRECT_RULE.evidenceVersion,
         ]
       ),
     ]);

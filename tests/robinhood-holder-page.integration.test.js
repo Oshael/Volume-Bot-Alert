@@ -77,10 +77,13 @@ describe('Robinhood published holder page persistence', () => {
            ($1, $2, 'sniper', 'rh_holder_v1', 'high', 'early_launch_buy',
             $4::jsonb, 100, '0x${'1'.repeat(64)}', '2026-08-24T01:00:00Z'),
            ($1, $3, 'sniper', 'rh_holder_v1', 'high', 'early_launch_buy',
-            $4::jsonb, 100, '0x${'1'.repeat(64)}', '2026-08-24T01:00:00Z')`,
+            $4::jsonb, 100, '0x${'1'.repeat(64)}', '2026-08-24T01:00:00Z'),
+           ($1, $5, 'insider', 'rh_holder_v1', 'high', 'creator_token_distribution',
+            $6::jsonb, 100, '0x${'1'.repeat(64)}', '2026-08-24T01:00:00Z')`,
         [
           TOKEN, wallets[2], wallets.at(-1),
           JSON.stringify({ rule: { evidenceVersion: 'rh_sniper_high_v2' } }),
+          wallets[4], JSON.stringify({ rule: { evidenceVersion: 'rh_insider_direct_v1' } }),
         ]
       );
       await client.query(
@@ -163,6 +166,11 @@ describe('Robinhood published holder page persistence', () => {
       const bundled = await repository.listPublishedPage({ tokenAddress: TOKEN, filter: 'bundled' });
       assert.equal(bundled.holderCount, 1);
       assert.deepEqual(bundled.items.map(({ address }) => address), [wallets[3]]);
+      const insiders = await repository.listPublishedPage({
+        tokenAddress: TOKEN, filter: 'insiders',
+      });
+      assert.equal(insiders.holderCount, 1);
+      assert.deepEqual(insiders.items.map(({ address }) => address), [wallets[4]]);
       assert.throws(() => __private.decodeCursor(first.nextCursor, 'snipers'), /cursor is invalid/);
       assert.equal(await repository.listPublishedPage({ tokenAddress: SHADOW_TOKEN }), null);
     } finally {

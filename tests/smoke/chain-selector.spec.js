@@ -1902,7 +1902,15 @@ test('renders holder pages without the holder bar chart in the Robinhood expande
     'title', 'BUNDLED · connected_funding_launch_cluster',
   );
   await expect(panel.getByRole('button', { name: 'BUNDLED' })).toBeEnabled();
-  await expect(panel.getByRole('button', { name: 'INSIDERS' })).toBeDisabled();
+  const insidersFilter = panel.getByRole('button', { name: 'INSIDERS' });
+  await expect(insidersFilter).toBeEnabled();
+  const insiderRequest = page.waitForRequest((request) => (
+    request.url().includes('/api/robinhood/holders')
+      && new URL(request.url()).searchParams.get('filter') === 'insiders'
+  ));
+  await insidersFilter.click();
+  await insiderRequest;
+  await expect(insidersFilter).toHaveClass(/active/);
   await expect(panel.locator('.robinhood-holder-table-wrap')).toHaveCSS('overflow-y', 'auto');
   await expect(panel.locator('tbody tr').first()).toHaveCSS('height', '26px');
   expect(await panel.locator('tbody .rh-col-holder').first().evaluate((cell) => (

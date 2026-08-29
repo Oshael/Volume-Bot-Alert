@@ -143,11 +143,12 @@ function holderGlyph(holder: RobinhoodHolder) {
   const tag = holder.primaryTag === 'unknown' ? fallbackTag : holder.primaryTag;
   const glyphs = {
     sniper: ['◎', 'SNIPER', 'is-sniper'], fresh: ['✦', 'FRESH', 'is-fresh'],
+    insider: ['◆', 'INSIDER', 'is-insider'],
     bundled: ['◈', 'BUNDLED', 'is-bundled'],
     cex: ['⇄', 'CEX', 'is-cex'], lp: ['≋', 'LP', 'is-lp'],
     unknown: ['·', 'Unknown', 'is-unknown'],
   } as const;
-  const [glyph, label, tone] = glyphs[tag === 'insider' ? 'unknown' : tag];
+  const [glyph, label, tone] = glyphs[tag];
   const reasons = holder.classifications
     .filter(({ tag: classificationTag }) => classificationTag === tag)
     .map(({ reasonCode }) => reasonCode)
@@ -203,14 +204,16 @@ function holderToolbarHtml(page: RobinhoodHoldersPage, pageNumber: number, hasPr
   holderCount: number | null, activeFilter: RobinhoodHolderFilter) {
   const observed = new Date(page.observedAt).toLocaleTimeString([], { hour12: false });
   const pages = Math.max(pageNumber, Math.ceil((holderCount || 0) / 50));
-  const glyphs = [['◎', 'SNIPER', 'is-sniper'], ['◈', 'BUNDLED', 'is-bundled'],
+  const glyphs = [['◎', 'SNIPER', 'is-sniper'], ['◆', 'INSIDER', 'is-insider'],
+    ['◈', 'BUNDLED', 'is-bundled'],
     ['✦', 'FRESH', 'is-fresh'], ['⇄', 'CEX', 'is-cex'], ['≋', 'LP', 'is-lp']];
   return `<header class="rh-holder-toolbar"><strong>TOP HOLDERS</strong><span data-holder-panel-count>${count(holderCount)}</span><i></i>
     <div class="rh-holder-filters">
       <button data-holder-filter="top" class="${activeFilter === 'top' ? 'active' : ''}">TOP</button>
       <button data-holder-filter="snipers" class="${activeFilter === 'snipers' ? 'active' : ''}">SNIPERS</button>
       <button data-holder-filter="bundled" class="${activeFilter === 'bundled' ? 'active' : ''}">BUNDLED</button>
-      ${['INSIDERS', 'FRESH'].map((label) => `<button disabled title="Classification unavailable">${label}</button>`).join('')}
+      <button data-holder-filter="insiders" class="${activeFilter === 'insiders' ? 'active' : ''}">INSIDERS</button>
+      <button disabled title="Classification unavailable">FRESH</button>
     </div>
     <div class="rh-holder-legend">${glyphs.map(([glyph, label, tone]) => `<span><b class="${tone}">${glyph}</b>${label}</span>`).join('')}</div>
     <span class="holder-freshness is-${page.summary.freshness}">${escapeHtml(page.summary.freshness)} · ${escapeHtml(observed)}</span>

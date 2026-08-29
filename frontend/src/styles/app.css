@@ -3930,7 +3930,7 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 .rh-holder-toolbar nav button:not(:disabled):hover { background: rgba(22, 62, 92, 0.55); color: #d6ecff; }
 .rh-holder-toolbar nav button:disabled { color: #35414a; }
 .rh-holder-toolbar nav span { min-width: 24px; color: #8a918d; font: 10px "JetBrains Mono", monospace; text-align: center; }
-.is-sniper { color: #f2555a; } .is-bundled { color: #b58cff; } .is-fresh { color: #e0b451; } .is-cex { color: #7fa8f0; } .is-lp { color: #7fd694; }
+.is-sniper { color: #f2555a; } .is-insider { color: #38bdf8; } .is-bundled { color: #b58cff; } .is-fresh { color: #e0b451; } .is-cex { color: #7fa8f0; } .is-lp { color: #7fd694; }
 
 .rh-holder-content { display: flex; flex: 1 1 auto; min-height: 0; overflow: hidden; }
 .rh-holder-list { flex: 1 1 auto; min-width: 0; border-right: 1px solid rgba(31, 102, 158, 0.28); }
