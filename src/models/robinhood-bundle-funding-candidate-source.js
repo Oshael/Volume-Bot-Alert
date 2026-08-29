@@ -8,7 +8,9 @@ const BASELINE_RUN_SQL = `SELECT id::text, status, rule_version, evidence_versio
   FROM robinhood_bundle_funding_backfill_runs
  WHERE chain = $1 AND id = $2::bigint`;
 
-const BASELINE_CANDIDATES_SQL = `SELECT token_address, wallet_address
+const BASELINE_CANDIDATES_SQL = `SELECT token_address, wallet_address,
+       launch_block::text, first_buy_block::text,
+       first_buy_transaction_index::text
   FROM robinhood_bundle_funding_backfill_candidates
  WHERE run_id = $1::bigint
  ORDER BY token_address, wallet_address`;
@@ -27,17 +29,23 @@ const ANCHOR_COVERAGE_SQL = `WITH live_tokens AS MATERIALIZED (
    WHERE state.chain = $1 AND state.ledger_status = 'live'
      AND state.live_through_block IS NOT NULL AND state.live_through_hash IS NOT NULL
      AND state.live_through_block <= $2::bigint
-) SELECT COUNT(DISTINCT live.token_address)::text AS live_tokens,
-       COUNT(DISTINCT buy.token_address)::text AS first_buy_tokens,
-       COUNT(DISTINCT anchor.token_address)
-         FILTER (WHERE buy.token_address IS NOT NULL)::text AS anchored_tokens
-  FROM live_tokens live
-  LEFT JOIN robinhood_wallet_token_first_buys buy
-    ON buy.chain = live.chain AND buy.token_address = live.token_address
-   AND buy.block_number <= live.live_through_block
-  LEFT JOIN robinhood_token_launch_anchors anchor
-    ON anchor.chain = live.chain AND anchor.token_address = live.token_address
-   AND anchor.launch_block <= live.live_through_block`;
+), covered AS MATERIALIZED (
+  SELECT live.*,
+         EXISTS (
+           SELECT 1 FROM robinhood_wallet_token_first_buys buy
+            WHERE buy.chain = live.chain AND buy.token_address = live.token_address
+              AND buy.block_number <= live.live_through_block
+         ) AS has_first_buy
+    FROM live_tokens live
+) SELECT COUNT(*)::text AS live_tokens,
+       COUNT(*) FILTER (WHERE covered.has_first_buy)::text AS first_buy_tokens,
+       COUNT(*) FILTER (WHERE covered.has_first_buy AND EXISTS (
+         SELECT 1 FROM robinhood_token_launch_anchors anchor
+          WHERE anchor.chain = covered.chain
+            AND anchor.token_address = covered.token_address
+            AND anchor.launch_block <= covered.live_through_block
+       ))::text AS anchored_tokens
+  FROM covered`;
 
 const CANDIDATES_SQL = `WITH early AS MATERIALIZED (
 SELECT anchor.token_address, buy.wallet_address,
@@ -98,20 +106,33 @@ function normalizeCandidate(row) {
   });
 }
 
+function candidateKey(row) {
+  return `${row.token_address}:${row.wallet_address}`;
+}
+
+function candidateEvidence(row) {
+  return `${row.launch_block}:${row.first_buy_block}:${row.first_buy_transaction_index}`;
+}
+
 function incrementalCandidates(currentRows, baselineRows) {
-  const currentKeys = new Set(currentRows.map((row) => (
-    `${row.token_address}:${row.wallet_address}`
-  )));
-  if (baselineRows.some((row) => !currentKeys.has(
-    `${row.token_address}:${row.wallet_address}`
-  ))) return null;
-  const baselineKeys = new Set(baselineRows.map((row) => (
-    `${row.token_address}:${row.wallet_address}`
-  )));
-  const affectedTokens = new Set(currentRows.filter((row) => !baselineKeys.has(
-    `${row.token_address}:${row.wallet_address}`
-  )).map((row) => row.token_address));
-  return currentRows.filter((row) => affectedTokens.has(row.token_address));
+  const current = new Map(currentRows.map((row) => [candidateKey(row), row]));
+  const baseline = new Map(baselineRows.map((row) => [candidateKey(row), row]));
+  const addedOrChanged = currentRows.filter((row) => {
+    const previous = baseline.get(candidateKey(row));
+    return !previous || candidateEvidence(previous) !== candidateEvidence(row);
+  });
+  const scanTokens = new Set(addedOrChanged.map((row) => row.token_address));
+  const removedOrChanged = baselineRows.filter((row) => {
+    const latest = current.get(candidateKey(row));
+    return !latest || candidateEvidence(latest) !== candidateEvidence(row);
+  });
+  return Object.freeze({
+    rows: currentRows.filter((row) => scanTokens.has(row.token_address)),
+    scanTokens: scanTokens.size,
+    addedOrChangedCandidateRows: addedOrChanged.length,
+    removedOrChangedCandidateRows: removedOrChanged.length,
+    reconciliationTokens: new Set(removedOrChanged.map((row) => row.token_address)).size,
+  });
 }
 
 async function resolveCandidateScope(input, query, currentRows, completeThroughBlock) {
@@ -130,12 +151,14 @@ async function resolveCandidateScope(input, query, currentRows, completeThroughB
     return unavailable('bundle_baseline_frontier_ahead');
   }
   const baselineRows = (await query(BASELINE_CANDIDATES_SQL, [baselineRunId])).rows;
-  const rows = incrementalCandidates(currentRows, baselineRows);
-  if (rows == null) return unavailable('bundle_baseline_candidates_not_monotonic');
-  return { rows, baseline: Object.freeze({ runId: baselineRunId,
+  const delta = incrementalCandidates(currentRows, baselineRows);
+  return { rows: delta.rows, baseline: Object.freeze({ runId: baselineRunId,
     sourceThroughBlock: String(baselineRun.source_through_block),
     lookbackBlocks: String(baselineRun.lookback_blocks),
-    candidateRows: baselineRows.length }) };
+    candidateRows: baselineRows.length, scanTokens: delta.scanTokens,
+    addedOrChangedCandidateRows: delta.addedOrChangedCandidateRows,
+    removedOrChangedCandidateRows: delta.removedOrChangedCandidateRows,
+    reconciliationTokens: delta.reconciliationTokens }) };
 }
 
 function createRobinhoodBundleFundingCandidateSource(options = {}) {

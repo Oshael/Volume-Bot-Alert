@@ -4,7 +4,7 @@ const { describe, it } = require('node:test');
 const {
   createRobinhoodBundleFundingCandidateSource,
   __private: { ANCHOR_COVERAGE_SQL, BASELINE_CANDIDATES_SQL,
-    BASELINE_RUN_SQL, CANDIDATES_SQL },
+    BASELINE_RUN_SQL, CANDIDATES_SQL, incrementalCandidates },
 } = require('../src/models/robinhood-bundle-funding-candidate-source');
 const {
   main, parseArgs,
@@ -15,6 +15,11 @@ const WALLET = `0x${'2'.repeat(40)}`;
 const TOKEN_B = `0x${'3'.repeat(40)}`;
 const WALLET_B = `0x${'4'.repeat(40)}`;
 const WALLET_C = `0x${'5'.repeat(40)}`;
+
+function candidateRow(token_address, wallet_address, first_buy_block = '101') {
+  return { token_address, wallet_address, launch_block: '100', first_buy_block,
+    first_buy_transaction_index: '0' };
+}
 
 function database(coverage, candidates = [], anchorCoverage = {
   live_tokens: '12', first_buy_tokens: '10', anchored_tokens: '10',
@@ -59,7 +64,9 @@ describe('Robinhood bundle funding candidate source', () => {
     assert.equal(db.calls.length, 3);
     assert.equal(db.calls.every(({ timeout }) => timeout === 5_000), true);
     assert.match(db.calls[1].sql, /robinhood_holder_token_states/);
-    assert.match(db.calls[1].sql, /COUNT\(DISTINCT live\.token_address\)/);
+    assert.match(db.calls[1].sql, /EXISTS \(/);
+    assert.doesNotMatch(db.calls[1].sql,
+      /LEFT JOIN robinhood_wallet_token_first_buys/);
     assert.match(db.calls[1].sql, /state\.ledger_status = 'live'/);
     assert.match(db.calls[1].sql, /state\.live_through_block <= \$2::bigint/);
     assert.equal(db.calls[2].params[2], 500_001);
@@ -84,19 +91,16 @@ describe('Robinhood bundle funding candidate source', () => {
   });
 
   it('selects every current member of tokens changed since a completed baseline', async () => {
-    const row = (token_address, wallet_address) => ({ token_address, wallet_address,
-      launch_block: '100', first_buy_block: '101', first_buy_transaction_index: '0' });
-    const current = [row(TOKEN, WALLET), row(TOKEN, WALLET_B),
-      row(TOKEN_B, WALLET), row(TOKEN_B, WALLET_C)];
+    const current = [candidateRow(TOKEN, WALLET), candidateRow(TOKEN, WALLET_B),
+      candidateRow(TOKEN_B, WALLET), candidateRow(TOKEN_B, WALLET_C)];
     const db = database({
       source_next_block: '301', caught_up: true, seed_status: 'completed',
     }, current, undefined, {
       run: { status: 'completed', rule_version: 'rh_possible_bundle_v1',
         evidence_version: 'rh_native_funding_v2', source_through_block: '200',
         lookback_blocks: '1000' },
-      candidates: [{ token_address: TOKEN, wallet_address: WALLET },
-        { token_address: TOKEN, wallet_address: WALLET_B },
-        { token_address: TOKEN_B, wallet_address: WALLET }],
+      candidates: [candidateRow(TOKEN, WALLET), candidateRow(TOKEN, WALLET_B),
+        candidateRow(TOKEN_B, WALLET)],
     });
     const result = await createRobinhoodBundleFundingCandidateSource({ database: db })
       .load({ baselineRunId: '1' });
@@ -105,25 +109,39 @@ describe('Robinhood bundle funding candidate source', () => {
     assert.equal(result.candidateScope, 'incremental');
     assert.equal(result.fullCandidateRows, 4);
     assert.deepEqual(result.baseline, { runId: '1', sourceThroughBlock: '200',
-      lookbackBlocks: '1000', candidateRows: 3 });
+      lookbackBlocks: '1000', candidateRows: 3, scanTokens: 1,
+      addedOrChangedCandidateRows: 1, removedOrChangedCandidateRows: 0,
+      reconciliationTokens: 0 });
     assert.deepEqual(result.candidates.map(({ tokenAddress, walletAddress }) => (
       [tokenAddress, walletAddress]
     )), [[TOKEN_B, WALLET], [TOKEN_B, WALLET_C]]);
   });
 
-  it('fails closed when the current candidate universe is not additive', async () => {
+  it('reports removed candidates for later reconciliation without archive work', async () => {
     const db = database({
       source_next_block: '301', caught_up: true, seed_status: 'completed',
     }, [], undefined, {
       run: { status: 'completed', rule_version: 'rh_possible_bundle_v1',
         evidence_version: 'rh_native_funding_v2', source_through_block: '200',
         lookback_blocks: '1000' },
-      candidates: [{ token_address: TOKEN, wallet_address: WALLET }],
+      candidates: [candidateRow(TOKEN, WALLET)],
     });
     const result = await createRobinhoodBundleFundingCandidateSource({ database: db })
       .load({ baselineRunId: '1' });
-    assert.equal(result.ready, false);
-    assert.equal(result.reason, 'bundle_baseline_candidates_not_monotonic');
+    assert.equal(result.ready, true);
+    assert.deepEqual(result.candidates, []);
+    assert.equal(result.baseline.removedOrChangedCandidateRows, 1);
+    assert.equal(result.baseline.reconciliationTokens, 1);
+  });
+
+  it('rescans every current member when canonical first-buy evidence changes', () => {
+    const delta = incrementalCandidates([
+      candidateRow(TOKEN, WALLET, '102'), candidateRow(TOKEN, WALLET_B),
+    ], [candidateRow(TOKEN, WALLET), candidateRow(TOKEN, WALLET_B)]);
+    assert.equal(delta.scanTokens, 1);
+    assert.equal(delta.rows.length, 2);
+    assert.equal(delta.addedOrChangedCandidateRows, 1);
+    assert.equal(delta.removedOrChangedCandidateRows, 1);
   });
 
   it('fails closed when the bounded candidate read reaches its memory cap', async () => {
