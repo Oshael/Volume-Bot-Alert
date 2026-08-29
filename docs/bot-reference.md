@@ -1937,6 +1937,12 @@ saudável, retome no PC/archive com
 --apply`. A retomada usa o escopo congelado do `run_id` e não incorpora tokens
 descobertos posteriormente.
 
+A Stage 170 (`node src/utils/db-init-stage170.js`) cria o controle durável desse
+repair financeiro token-scoped. A inicialização inclui somente repairs de
+transfer publicados cujos tokens entraram no catálogo depois do início do seed
+`unified_transfer_v1`; cursores, leases, frontier canônica e publicação ficam
+persistidos por token. Aplicar a stage não inicia replay nem altera posições.
+
 O materializador `rh_insider_direct_v1` aceita
 somente `creator_token_distribution`: transferência positiva, direta (um hop),
 do criador atribuído para uma wallet comprovada. Ele falha fechado enquanto o

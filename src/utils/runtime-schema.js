@@ -4873,6 +4873,48 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage170-robinhood-position-token-repair-coverage',
+    name: 'Stage 170 Robinhood position token repair coverage',
+    repair: 'node src/utils/db-init-stage170.js',
+    tables: [{
+      table: 'robinhood_wallet_position_token_coverage',
+      columns: [
+        'chain', 'projection_version', 'shadow_projection_version',
+        'source_transfer_version', 'token_address', 'source_from_block', 'next_block',
+        'source_through_block', 'source_through_hash', 'status', 'lease_owner',
+        'lease_until', 'attempt_count', 'next_attempt_at', 'last_error_code',
+        'last_error_message', 'completed_at', 'published_at', 'version',
+        'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_wallet_position_token_coverage_pkey',
+        includes: ['PRIMARY KEY', 'chain', 'projection_version', 'token_address'],
+      }, {
+        name: 'rh_wallet_position_token_coverage_bounds_check',
+        includes: ['source_from_block', 'next_block', 'source_through_block'],
+      }, {
+        name: 'rh_wallet_position_token_coverage_lease_check',
+        includes: ['status', 'leased', 'lease_owner', 'lease_until'],
+      }, {
+        name: 'rh_wallet_position_token_coverage_completion_check',
+        includes: ['complete', 'next_block', 'source_through_block', 'completed_at'],
+      }, {
+        name: 'rh_wallet_position_token_coverage_publication_check',
+        includes: ['published_at', 'complete'],
+      }],
+      indexes: [{
+        name: 'idx_rh_wallet_position_token_coverage_claim',
+        includes: ['next_attempt_at', 'next_block', 'token_address'],
+      }, {
+        name: 'idx_rh_wallet_position_token_coverage_lease',
+        includes: ['lease_until'],
+      }, {
+        name: 'idx_rh_wallet_position_token_coverage_publish',
+        includes: ['source_through_block', 'token_address'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
