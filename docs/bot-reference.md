@@ -1035,9 +1035,17 @@ quando a pausa ainda não possui `alertSentAt`.
 
 No transporte `browser_cdp`, o mesmo canal também observa os eventos do stream
 sem fazer requests adicionais à Fomo. Erro de conexão, fechamento do browser/aba
-ou ausência total de frames por `FOMO_BROWSER_STALE_SECONDS` (default 90, mínimo
-30) gera somente um alerta por incidente contínuo. O primeiro frame posterior
-gera a mensagem de recuperação e rearma o watchdog. A telemetria `fomoHealth`
+gera somente um alerta por incidente contínuo. A ausência total de frames por
+`FOMO_BROWSER_STALE_SECONDS` (default 90, mínimo 30) inicia a recuperação antes
+do alerta: o transporte recarrega automaticamente a página Fomo uma vez e aguarda
+novos frames por `FOMO_BROWSER_STALE_RECOVERY_GRACE_SECONDS` (default 30, faixa
+5–300). Uma recuperação dentro dessa janela não gera alerta de incidente; reloads
+adicionais respeitam
+`FOMO_BROWSER_STALE_RECOVERY_COOLDOWN_SECONDS` (default 300, faixa 60–3600). Se
+o reload falhar, a sessão CDP é descartada e entra no backoff normal de reconnect.
+O primeiro frame posterior gera a mensagem de recuperação e rearma o watchdog.
+`staleReloads`, `staleReloadErrors` e `lastStaleReloadAt` expõem o auto-heal na
+telemetria do stream. A telemetria `fomoHealth`
 expõe conexão, saúde, incidente atual, último frame, alerta, recuperação e erros
 do próprio Telegram, sem expor token ou chat ID. Essa deduplicação de saúde é por
 processo; reiniciar durante um incidente pode gerar um novo alerta.

@@ -152,11 +152,16 @@ describe('callout capture production persistence', () => {
       fomo: {
         transport: 'browser_cdp', cdpEndpoint: 'http://127.0.0.1:9222',
         jwtFile: '/state/customer-token', privyRefreshTokenFile: '/state/refresh-token',
+        browserHealth: { staleMs: 90_000, recoveryCooldownMs: 300_000 },
       },
     });
     assert.equal(authenticationCreations, 0);
     assert.equal(fomoOptions.streamFactory, browserStream);
-    assert.deepEqual(fomoOptions.streamOptions, { cdpEndpoint: 'http://127.0.0.1:9222' });
+    assert.deepEqual(fomoOptions.streamOptions, {
+      cdpEndpoint: 'http://127.0.0.1:9222',
+      staleRecoveryMs: 90_000,
+      staleRecoveryCooldownMs: 300_000,
+    });
     assert.equal(fomoOptions.reconciliationEnabled, false);
     assert.equal(fomoOptions.lookupLiveTrades, false);
     assert.equal(fomoOptions.tradeLookupLimit, 0);

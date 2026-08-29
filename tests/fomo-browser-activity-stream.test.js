@@ -105,3 +105,81 @@ test('Fomo browser stream reports a missing app tab without leaking the page URL
   assert.equal(schedules[0].delayMs, 1000);
   await stream.stop();
 });
+
+test('Fomo browser stream reloads a stale page once and enforces its cooldown', async () => {
+  const fixture = fakeBrowser();
+  const timers = new Map();
+  const states = [];
+  let timerId = 0;
+  let currentMs = Date.parse('2026-08-29T06:00:00.000Z');
+  let reloads = 0;
+  fixture.page.reload = async (options) => {
+    reloads += 1;
+    assert.deepEqual(options, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+  };
+  const stream = createFomoBrowserActivityStream({
+    connectOverCDP: async () => fixture.browser,
+    now: () => currentMs,
+    schedule: (callback, delayMs) => {
+      timerId += 1;
+      timers.set(timerId, { callback, delayMs });
+      return timerId;
+    },
+    cancelSchedule: (id) => timers.delete(id),
+    onStatus: ({ state }) => states.push(state),
+  });
+
+  stream.start();
+  await nextTurn();
+  const stale = [...timers.entries()][0];
+  assert.equal(stale[1].delayMs, 90_000);
+  timers.delete(stale[0]);
+  stale[1].callback();
+  await nextTurn();
+  assert.equal(reloads, 1);
+  assert.equal(stream.getStatus().staleReloads, 1);
+  assert.equal(stream.getStatus().lastStaleReloadAt, '2026-08-29T06:00:00.000Z');
+  assert.equal(states.includes('stale_reloading'), true);
+
+  const duringCooldown = [...timers.entries()][0];
+  timers.delete(duringCooldown[0]);
+  duringCooldown[1].callback();
+  await nextTurn();
+  assert.equal(reloads, 1);
+  assert.equal([...timers.values()][0].delayMs, 300_000);
+
+  currentMs += 300_000;
+  await stream.stop();
+  assert.equal(timers.size, 0);
+});
+
+test('Fomo browser stream reconnects when automatic stale reload fails', async () => {
+  const fixture = fakeBrowser();
+  const timers = new Map();
+  const errors = [];
+  let timerId = 0;
+  fixture.page.reload = async () => { throw new Error('renderer crashed'); };
+  const stream = createFomoBrowserActivityStream({
+    connectOverCDP: async () => fixture.browser,
+    random: () => 0.5,
+    schedule: (callback, delayMs) => {
+      timerId += 1;
+      timers.set(timerId, { callback, delayMs });
+      return timerId;
+    },
+    cancelSchedule: (id) => timers.delete(id),
+    onError: (error) => errors.push(error),
+  });
+
+  stream.start();
+  await nextTurn();
+  const stale = [...timers.entries()][0];
+  timers.delete(stale[0]);
+  stale[1].callback();
+  await nextTurn();
+  assert.equal(errors[0].code, 'FOMO_BROWSER_STALE_RELOAD');
+  assert.equal(stream.getStatus().staleReloadErrors, 1);
+  assert.equal(stream.getStatus().connected, false);
+  assert.equal([...timers.values()][0].delayMs, 1_000);
+  await stream.stop();
+});

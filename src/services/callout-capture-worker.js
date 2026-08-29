@@ -68,7 +68,13 @@ function buildFomoCollector(deps, config, persistence, authentication, healthMon
     streamFactory: browserMode
       ? (deps.createFomoBrowserStream || createFomoBrowserActivityStream)
       : undefined,
-    streamOptions: browserMode ? { cdpEndpoint: config.cdpEndpoint } : undefined,
+    streamOptions: browserMode ? {
+      cdpEndpoint: config.cdpEndpoint,
+      ...(config.browserHealth?.staleMs
+        ? { staleRecoveryMs: config.browserHealth.staleMs } : {}),
+      ...(config.browserHealth?.recoveryCooldownMs
+        ? { staleRecoveryCooldownMs: config.browserHealth.recoveryCooldownMs } : {}),
+    } : undefined,
     onStreamFrame: healthMonitor?.onFrame,
     onStreamError: healthMonitor?.onError,
     onStreamStatus: healthMonitor?.onStatus,

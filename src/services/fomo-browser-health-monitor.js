@@ -7,6 +7,7 @@ function positiveInteger(value, fallback) {
 function createFomoBrowserHealthMonitor(options = {}) {
   const enabled = options.enabled === true;
   const staleMs = positiveInteger(options.staleMs, 90_000);
+  const recoveryGraceMs = positiveInteger(options.recoveryGraceMs, 30_000);
   const notifier = options.notifier;
   const now = options.now || Date.now;
   const schedule = options.schedule || setTimeout;
@@ -62,6 +63,15 @@ function createFomoBrowserHealthMonitor(options = {}) {
     }, staleMs);
   }
 
+  function armRecoveryGraceTimer() {
+    clearStaleTimer();
+    if (!running || !enabled || !connected) return;
+    staleTimer = schedule(() => {
+      staleTimer = null;
+      reportIncident('stale', 'FOMO_BROWSER_STREAM_STALE');
+    }, recoveryGraceMs);
+  }
+
   function reportRecovery() {
     if (!incident) return;
     const recovered = incident;
@@ -91,6 +101,8 @@ function createFomoBrowserHealthMonitor(options = {}) {
         status.connected = true;
         if (!incident) status.healthy = true;
         armStaleTimer();
+      } else if (event.state === 'stale_reloading') {
+        armRecoveryGraceTimer();
       } else if (event.state === 'closed' || event.state === 'reconnecting') {
         connected = false;
         status.connected = false;

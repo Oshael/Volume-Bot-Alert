@@ -6,6 +6,9 @@ const { normalizeFomoFrame } = require('./fomo-frame-normalizer');
 const DEFAULT_CDP_ENDPOINT = 'http://127.0.0.1:9222';
 const DEFAULT_RECONNECT_MS = 1_000;
 const MAX_RECONNECT_MS = 60_000;
+const DEFAULT_STALE_RECOVERY_MS = 90_000;
+const DEFAULT_STALE_RECOVERY_COOLDOWN_MS = 5 * 60_000;
+const DEFAULT_RELOAD_TIMEOUT_MS = 30_000;
 
 function positiveInteger(value, fallback, max) {
   const parsed = Number.parseInt(String(value ?? ''), 10);
@@ -50,6 +53,16 @@ function createFomoBrowserActivityStream(options = {}) {
   const onStatus = options.onStatus || (() => {});
   const onError = options.onError || (() => {});
   const baseReconnectMs = positiveInteger(options.reconnectMs, DEFAULT_RECONNECT_MS, MAX_RECONNECT_MS);
+  const staleRecoveryMs = positiveInteger(
+    options.staleRecoveryMs, DEFAULT_STALE_RECOVERY_MS, 60 * 60_000,
+  );
+  const staleRecoveryCooldownMs = positiveInteger(
+    options.staleRecoveryCooldownMs, DEFAULT_STALE_RECOVERY_COOLDOWN_MS, 60 * 60_000,
+  );
+  const reloadTimeoutMs = positiveInteger(
+    options.reloadTimeoutMs, DEFAULT_RELOAD_TIMEOUT_MS, 60_000,
+  );
+  const now = options.now || Date.now;
 
   let running = false;
   let connecting = false;
@@ -57,6 +70,9 @@ function createFomoBrowserActivityStream(options = {}) {
   let page = null;
   let session = null;
   let reconnectTimer = null;
+  let staleTimer = null;
+  let staleReloadRunning = false;
+  let lastStaleReloadMs = null;
   let reconnectMs = baseReconnectMs;
   const status = {
     connected: false,
@@ -68,6 +84,9 @@ function createFomoBrowserActivityStream(options = {}) {
     candidates: 0,
     callouts: 0,
     lastFrameAt: null,
+    staleReloads: 0,
+    staleReloadErrors: 0,
+    lastStaleReloadAt: null,
   };
 
   function emitStatus(state, extra = {}) {
@@ -76,6 +95,20 @@ function createFomoBrowserActivityStream(options = {}) {
 
   function reportError(error, code) {
     onError(safeError(error, code));
+  }
+
+  function clearStaleTimer() {
+    if (staleTimer) cancelSchedule(staleTimer);
+    staleTimer = null;
+  }
+
+  function armStaleRecovery(delayMs = staleRecoveryMs) {
+    clearStaleTimer();
+    if (!running || !status.connected || !page) return;
+    staleTimer = schedule(() => {
+      staleTimer = null;
+      void reloadStalePage();
+    }, delayMs);
   }
 
   function scheduleReconnect() {
@@ -97,6 +130,7 @@ function createFomoBrowserActivityStream(options = {}) {
     status.frames += 1;
     status.bytes += evidence.byteLength;
     status.lastFrameAt = new Date().toISOString();
+    armStaleRecovery();
     onFrame({ at: status.lastFrameAt });
     if (evidence.frameKind === 'json') status.jsonFrames += 1;
     if (!evidence.tradingActivityCandidate && !evidence.callout) return;
@@ -107,12 +141,14 @@ function createFomoBrowserActivityStream(options = {}) {
 
   function handleDisconnect() {
     if (!status.connected) return;
+    clearStaleTimer();
     status.connected = false;
     emitStatus('closed');
     scheduleReconnect();
   }
 
   async function detach() {
+    clearStaleTimer();
     page?.off?.('close', handleDisconnect);
     browser?.off?.('disconnected', handleDisconnect);
     if (session) {
@@ -122,6 +158,32 @@ function createFomoBrowserActivityStream(options = {}) {
     session = null;
     page = null;
     browser = null;
+  }
+
+  async function reloadStalePage() {
+    if (!running || !status.connected || !page || staleReloadRunning) return;
+    const elapsedMs = lastStaleReloadMs == null ? Infinity : now() - lastStaleReloadMs;
+    if (elapsedMs < staleRecoveryCooldownMs) {
+      armStaleRecovery(staleRecoveryCooldownMs - elapsedMs);
+      return;
+    }
+    staleReloadRunning = true;
+    lastStaleReloadMs = now();
+    status.staleReloads += 1;
+    status.lastStaleReloadAt = new Date(lastStaleReloadMs).toISOString();
+    emitStatus('stale_reloading');
+    try {
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: reloadTimeoutMs });
+      armStaleRecovery();
+    } catch (error) {
+      status.staleReloadErrors += 1;
+      reportError(error, 'FOMO_BROWSER_STALE_RELOAD');
+      status.connected = false;
+      await detach();
+      scheduleReconnect();
+    } finally {
+      staleReloadRunning = false;
+    }
   }
 
   async function connect() {
@@ -154,6 +216,7 @@ function createFomoBrowserActivityStream(options = {}) {
       browser.on('disconnected', handleDisconnect);
       status.connected = true;
       reconnectMs = baseReconnectMs;
+      armStaleRecovery();
       emitStatus('connected');
     } catch (error) {
       reportError(error, 'FOMO_BROWSER_CONNECT');
@@ -175,6 +238,7 @@ function createFomoBrowserActivityStream(options = {}) {
     status.connected = false;
     if (reconnectTimer) cancelSchedule(reconnectTimer);
     reconnectTimer = null;
+    clearStaleTimer();
     await detach();
   }
 

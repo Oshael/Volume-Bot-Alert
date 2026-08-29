@@ -191,6 +191,8 @@ describe('runtime worker groups config', () => {
     assert.equal(config.follow.requestTimeoutMs, 15_000);
     assert.equal(config.telegramAlerts.enabled, false);
     assert.equal(config.browserHealth.staleMs, 90_000);
+    assert.equal(config.browserHealth.recoveryCooldownMs, 300_000);
+    assert.equal(config.browserHealth.recoveryGraceMs, 30_000);
   });
 
   it('requires complete private Telegram settings for Fomo operational alerts', () => {

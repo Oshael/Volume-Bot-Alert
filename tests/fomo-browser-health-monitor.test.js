@@ -60,3 +60,32 @@ test('Fomo browser watchdog isolates Telegram delivery failures', async () => {
   assert.equal(monitor.getStatus().lastNotificationErrorCode, 'telegram_timeout');
   await monitor.stop();
 });
+
+test('Fomo browser watchdog gives automatic stale reload time to recover before alerting', async () => {
+  const timers = new Map();
+  const incidents = [];
+  let timerId = 0;
+  const monitor = createFomoBrowserHealthMonitor({
+    enabled: true, staleMs: 90_000, recoveryGraceMs: 30_000,
+    schedule: (callback, delayMs) => {
+      timerId += 1;
+      timers.set(timerId, { callback, delayMs });
+      return timerId;
+    },
+    cancelSchedule: (id) => timers.delete(id),
+    notifier: {
+      sendStreamIncident: async (event) => incidents.push(event),
+      sendStreamRecovery: async () => {},
+    },
+  });
+
+  monitor.start();
+  monitor.onStatus({ state: 'connected' });
+  monitor.onStatus({ state: 'stale_reloading' });
+  assert.equal([...timers.values()][0].delayMs, 30_000);
+  monitor.onFrame({ at: '2026-08-29T06:01:20.000Z' });
+  await monitor.flush();
+  assert.equal(incidents.length, 0);
+  assert.equal([...timers.values()][0].delayMs, 90_000);
+  await monitor.stop();
+});

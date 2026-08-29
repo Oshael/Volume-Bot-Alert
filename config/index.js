@@ -816,6 +816,12 @@ module.exports = {
         staleMs: parseIntegerInRange(
           process.env.FOMO_BROWSER_STALE_SECONDS, 90, 30, 3600
         ) * 1000,
+        recoveryCooldownMs: parseIntegerInRange(
+          process.env.FOMO_BROWSER_STALE_RECOVERY_COOLDOWN_SECONDS, 300, 60, 3600
+        ) * 1000,
+        recoveryGraceMs: parseIntegerInRange(
+          process.env.FOMO_BROWSER_STALE_RECOVERY_GRACE_SECONDS, 30, 5, 300
+        ) * 1000,
       },
       profileDiscovery: { enabled: fomoProfileDiscoveryEnabled },
       follow: {
