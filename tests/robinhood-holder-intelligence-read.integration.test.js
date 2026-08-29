@@ -36,6 +36,15 @@ describe('Robinhood public SNIPER intelligence read integration', () => {
         status varchar(16) NOT NULL, token_total_supply_raw numeric(78, 0),
         observed_at timestamptz NOT NULL
       )`);
+      await client.query(`CREATE TEMP TABLE robinhood_possible_bundle_states (
+        chain varchar(16), token_address varchar(42), rule_version varchar(64),
+        status varchar(16), through_block_number bigint, through_block_hash varchar(66),
+        observed_at timestamptz
+      )`);
+      await client.query(`CREATE TEMP TABLE robinhood_possible_bundle_members (
+        chain varchar(16), token_address varchar(42), rule_version varchar(64),
+        bundle_id varchar(66), wallet_address varchar(42)
+      )`);
       await client.query(
         `INSERT INTO robinhood_holder_classification_states (
            token_address, classifier, classification_version, status, status_reason,

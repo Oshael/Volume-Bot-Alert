@@ -143,6 +143,7 @@ function holderGlyph(holder: RobinhoodHolder) {
   const tag = holder.primaryTag === 'unknown' ? fallbackTag : holder.primaryTag;
   const glyphs = {
     sniper: ['◎', 'SNIPER', 'is-sniper'], fresh: ['✦', 'FRESH', 'is-fresh'],
+    bundled: ['◈', 'BUNDLED', 'is-bundled'],
     cex: ['⇄', 'CEX', 'is-cex'], lp: ['≋', 'LP', 'is-lp'],
     unknown: ['·', 'Unknown', 'is-unknown'],
   } as const;
@@ -202,11 +203,13 @@ function holderToolbarHtml(page: RobinhoodHoldersPage, pageNumber: number, hasPr
   holderCount: number | null, activeFilter: RobinhoodHolderFilter) {
   const observed = new Date(page.observedAt).toLocaleTimeString([], { hour12: false });
   const pages = Math.max(pageNumber, Math.ceil((holderCount || 0) / 50));
-  const glyphs = [['◎', 'SNIPER', 'is-sniper'], ['✦', 'FRESH', 'is-fresh'], ['⇄', 'CEX', 'is-cex'], ['≋', 'LP', 'is-lp']];
+  const glyphs = [['◎', 'SNIPER', 'is-sniper'], ['◈', 'BUNDLED', 'is-bundled'],
+    ['✦', 'FRESH', 'is-fresh'], ['⇄', 'CEX', 'is-cex'], ['≋', 'LP', 'is-lp']];
   return `<header class="rh-holder-toolbar"><strong>TOP HOLDERS</strong><span data-holder-panel-count>${count(holderCount)}</span><i></i>
     <div class="rh-holder-filters">
       <button data-holder-filter="top" class="${activeFilter === 'top' ? 'active' : ''}">TOP</button>
       <button data-holder-filter="snipers" class="${activeFilter === 'snipers' ? 'active' : ''}">SNIPERS</button>
+      <button data-holder-filter="bundled" class="${activeFilter === 'bundled' ? 'active' : ''}">BUNDLED</button>
       ${['INSIDERS', 'FRESH'].map((label) => `<button disabled title="Classification unavailable">${label}</button>`).join('')}
     </div>
     <div class="rh-holder-legend">${glyphs.map(([glyph, label, tone]) => `<span><b class="${tone}">${glyph}</b>${label}</span>`).join('')}</div>

@@ -14,7 +14,8 @@ const PAGE_SIZE = 50;
 const CURSOR_PREFIX = 'ledger_v1.';
 const MAX_CURSOR_LENGTH = 512;
 const DEAD_ADDRESS = '0x000000000000000000000000000000000000dead';
-const HOLDER_FILTERS = Object.freeze(['top', 'snipers']);
+const HOLDER_FILTERS = Object.freeze(['top', 'snipers', 'bundled']);
+const BUNDLE_RULE_VERSION = 'rh_possible_bundle_v1';
 
 function invalidCursor() {
   const error = new Error('Holder ledger cursor is invalid');
@@ -169,10 +170,23 @@ function createRobinhoodHolderPageRepository(options = {}) {
             AND classification.tag = 'sniper' AND classification.confidence = 'high'
             AND classification.evidence_json #>> '{rule,evidenceVersion}' = $6
             AND (classification.expires_at IS NULL OR classification.expires_at > NOW())
+       ), bundled_wallets AS MATERIALIZED (
+         SELECT member.wallet_address
+           FROM robinhood_possible_bundle_members member
+           INNER JOIN robinhood_possible_bundle_states state
+             ON state.chain = member.chain AND state.token_address = member.token_address
+            AND state.rule_version = member.rule_version
+           INNER JOIN robinhood_holder_balances balance
+             ON balance.chain = member.chain AND balance.token_address = member.token_address
+            AND balance.wallet_address = member.wallet_address
+          WHERE $4::varchar = 'bundled' AND member.chain = 'robinhood'
+            AND member.token_address = $1 AND member.rule_version = $7
+            AND state.status = 'ready'
        ), published_state AS MATERIALIZED (
-         SELECT CASE WHEN $4::varchar = 'snipers'
-                     THEN (SELECT COUNT(*) FROM sniper_wallets)
-                     ELSE state.holder_count END AS holder_count,
+         SELECT CASE $4::varchar
+                  WHEN 'snipers' THEN (SELECT COUNT(*) FROM sniper_wallets)
+                  WHEN 'bundled' THEN (SELECT COUNT(*) FROM bundled_wallets)
+                  ELSE state.holder_count END AS holder_count,
                 state.updated_at AS observed_at,
                 cursor.updated_at AS checked_at
            FROM robinhood_holder_token_states state
@@ -202,10 +216,14 @@ function createRobinhoodHolderPageRepository(options = {}) {
            FROM robinhood_holder_balances balance
           WHERE balance.chain = 'robinhood' AND balance.token_address = $1
             AND EXISTS (SELECT 1 FROM published_state)
-            AND ($4::varchar = 'top' OR EXISTS (
-              SELECT 1 FROM sniper_wallets sniper
-               WHERE sniper.wallet_address = balance.wallet_address
-            ))
+            AND ($4::varchar = 'top'
+              OR ($4::varchar = 'snipers' AND EXISTS (
+                SELECT 1 FROM sniper_wallets sniper
+                 WHERE sniper.wallet_address = balance.wallet_address
+              )) OR ($4::varchar = 'bundled' AND EXISTS (
+                SELECT 1 FROM bundled_wallets bundled
+                 WHERE bundled.wallet_address = balance.wallet_address
+              )))
             AND ($2::numeric IS NULL OR balance.balance_raw < $2::numeric
               OR (balance.balance_raw = $2::numeric AND balance.wallet_address > $3))
           ORDER BY balance.balance_raw DESC, balance.wallet_address ASC
@@ -234,6 +252,7 @@ function createRobinhoodHolderPageRepository(options = {}) {
       [
         tokenAddress, cursor?.balanceRaw || null, cursor?.walletAddress || null, filter,
         HOLDER_CLASSIFICATION_VERSION, SNIPER_HIGH_CONFIDENCE_RULE.evidenceVersion,
+        BUNDLE_RULE_VERSION,
       ]
     );
     return mapPage(tokenAddress, cursor, result.rows, filter);

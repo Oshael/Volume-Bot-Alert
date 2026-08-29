@@ -23,6 +23,11 @@ function rowsFor(sql) {
     value_numerator_raw: '2', value_denominator_raw: '100', wallet_count: '2',
     group_count: null, through_block_number: '200', through_block_hash: HASH_A,
     observed_at: '2026-08-21T12:00:00Z',
+  }, {
+    metric: 'bundled', classification_version: 'rh_holder_v1', status: 'ready',
+    value_numerator_raw: '4', value_denominator_raw: '100', wallet_count: '2',
+    group_count: '1', through_block_number: '200', through_block_hash: HASH_A,
+    observed_at: '2026-08-21T12:00:00Z',
   }];
   if (sql.includes('classification_states')) return [{
     classifier: 'cex', status: 'ready', through_block_number: '200',
@@ -33,6 +38,9 @@ function rowsFor(sql) {
   }, {
     classifier: 'sniper', status: 'reorged', through_block_number: '1',
     through_block_hash: HASH_B, observed_at: '2026-08-21T11:58:00Z',
+  }, {
+    classifier: 'bundled', status: 'ready', through_block_number: '200',
+    through_block_hash: HASH_A, observed_at: '2026-08-21T12:00:00Z',
   }];
   if (sql.includes('holder_classifications')) return [{
     wallet_address: WALLET_A, tag: 'cex', confidence: 'deterministic',
@@ -46,6 +54,10 @@ function rowsFor(sql) {
     wallet_address: WALLET_A, tag: 'sniper', confidence: 'high',
     reason_code: 'early_launch_buy', observed_at: '2026-08-21T11:58:00Z',
     expires_at: null,
+  }, {
+    wallet_address: WALLET_A, tag: 'bundled', confidence: 'heuristic',
+    reason_code: 'connected_funding_launch_cluster',
+    observed_at: '2026-08-21T12:00:00Z', expires_at: null,
   }];
   return [];
 }
@@ -69,10 +81,11 @@ describe('Robinhood holder intelligence public read', () => {
     assert.deepEqual(result.classificationThroughBlock, {
       blockNumber: '1', blockHash: HASH_B,
     });
-    assert.deepEqual(result.holders[0].tags, ['lp', 'cex', 'sniper']);
+    assert.deepEqual(result.holders[0].tags, ['lp', 'cex', 'sniper', 'bundled']);
     assert.equal(result.holders[0].primaryTag, 'sniper');
     assert.deepEqual(result.holders[0].classifications.map(({ reasonCode }) => reasonCode), [
       'known_cex_address', 'registered_token_pool', 'early_launch_buy',
+      'connected_funding_launch_cluster',
     ]);
     assert.equal(result.holders[1].primaryTag, 'unknown');
     assert.equal(result.distribution.length, 8);
@@ -80,6 +93,7 @@ describe('Robinhood holder intelligence public read', () => {
       numeratorRaw: '25', denominatorRaw: '1000',
     });
     assert.equal(result.distribution.find(({ metric }) => metric === 'snipers').status, 'ready');
+    assert.equal(result.distribution.find(({ metric }) => metric === 'bundled').groupCount, '1');
     assert.equal(calls.length, 3);
     assert.ok(calls.every(([, params]) => params[0] === TOKEN));
     assert.match(calls.find(([sql]) => sql.includes('holder_classifications'))[0],
@@ -87,13 +101,16 @@ describe('Robinhood holder intelligence public read', () => {
     assert.ok(calls.slice(0, 2).every(([, params]) => params.some((value) => (
       Array.isArray(value) && value.includes('lp') && value.includes('cex')
         && value.includes('sniper')
+        && value.includes('bundled')
     ))));
     const classificationCall = calls.find(([sql]) => sql.startsWith('SELECT wallet_address'));
-    assert.equal(classificationCall[1].at(-1), 'rh_sniper_high_v2');
+    assert.equal(classificationCall[1][4], 'rh_sniper_high_v2');
+    assert.equal(classificationCall[1].at(-1), 'rh_possible_bundle_v1');
     assert.match(classificationCall[0], /confidence = 'high'/);
     const metricCall = calls.find(([sql]) => sql.includes('WITH stored_metrics'));
     assert.equal(metricCall[1][3], true);
-    assert.equal(metricCall[1].at(-1), 'rh_sniper_high_v2');
+    assert.equal(metricCall[1][4], 'rh_sniper_high_v2');
+    assert.equal(metricCall[1].at(-1), 'rh_possible_bundle_v1');
     assert.match(metricCall[0], /current_snipers AS MATERIALIZED/);
   });
 

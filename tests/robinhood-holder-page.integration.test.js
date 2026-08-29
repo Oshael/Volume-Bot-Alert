@@ -32,6 +32,13 @@ describe('Robinhood published holder page persistence', () => {
       )`);
       await client.query(`CREATE TEMP TABLE robinhood_wallet_token_positions
         (LIKE public.robinhood_wallet_token_positions INCLUDING ALL)`);
+      await client.query(`CREATE TEMP TABLE robinhood_possible_bundle_states (
+        chain varchar(16), token_address varchar(42), rule_version varchar(64), status varchar(16)
+      )`);
+      await client.query(`CREATE TEMP TABLE robinhood_possible_bundle_members (
+        chain varchar(16), token_address varchar(42), rule_version varchar(64),
+        bundle_id varchar(66), wallet_address varchar(42)
+      )`);
       await client.query(
         `INSERT INTO robinhood_holder_token_states (
            token_address, holder_count, ledger_status, updated_at
@@ -47,6 +54,11 @@ describe('Robinhood published holder page persistence', () => {
       const wallets = [DEAD, POOL, ...Array.from({ length: 50 }, (_, index) => (
         `0x${(index + 1).toString(16).padStart(40, '0')}`
       ))];
+      await client.query(`INSERT INTO robinhood_possible_bundle_states
+        VALUES ('robinhood', $1, 'rh_possible_bundle_v1', 'ready')`, [TOKEN]);
+      await client.query(`INSERT INTO robinhood_possible_bundle_members
+        VALUES ('robinhood', $1, 'rh_possible_bundle_v1', $2, $3)`,
+      [TOKEN, `0x${'f'.repeat(64)}`, wallets[3]]);
       await client.query(
         `INSERT INTO robinhood_holder_balances (
            token_address, wallet_address, balance_raw, last_block_number,
@@ -148,6 +160,9 @@ describe('Robinhood published holder page persistence', () => {
       });
       assert.equal(snipers.holderCount, 2);
       assert.deepEqual(snipers.items.map(({ address }) => address), [wallets[2], wallets.at(-1)]);
+      const bundled = await repository.listPublishedPage({ tokenAddress: TOKEN, filter: 'bundled' });
+      assert.equal(bundled.holderCount, 1);
+      assert.deepEqual(bundled.items.map(({ address }) => address), [wallets[3]]);
       assert.throws(() => __private.decodeCursor(first.nextCursor, 'snipers'), /cursor is invalid/);
       assert.equal(await repository.listPublishedPage({ tokenAddress: SHADOW_TOKEN }), null);
     } finally {

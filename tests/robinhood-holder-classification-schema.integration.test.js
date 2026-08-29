@@ -8,6 +8,7 @@ const {
   createRobinhoodHolderClassificationRepository,
 } = require('../src/models/robinhood-holder-classification');
 const stage143 = require('../src/utils/db-init-stage143');
+const stage175 = require('../src/utils/db-init-stage175');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const TOKEN = `0x${'7'.repeat(40)}`;
@@ -51,6 +52,7 @@ describe('Robinhood holder classification schema integration', () => {
     await assertUsingTestDatabase(db);
     await stage143.init({ closePool: false });
     await stage143.init({ closePool: false });
+    await stage175.init({ closePool: false });
     await cleanup();
   });
 
@@ -79,6 +81,23 @@ describe('Robinhood holder classification schema integration', () => {
       tag: 'sniper', confidence: 'high', reason_code: 'early_launch_buy',
       evidence_json: { deltaBlocks: 1, deltaSeconds: 12 }, through_block_number: '100',
     }]);
+  });
+
+  it('accepts the token-scoped BUNDLED public contract', async () => {
+    await cleanup();
+    await insertClassification(classification({
+      tag: 'bundled', confidence: 'heuristic',
+      reasonCode: 'connected_funding_launch_cluster',
+    }));
+    await db.query(`INSERT INTO robinhood_holder_classification_states (
+      chain, token_address, classifier, classification_version, status,
+      status_reason, through_block_number, through_block_hash, observed_at
+    ) VALUES ('robinhood', $1, 'bundled', $2, 'ready', 'materialized', 100, $3, NOW())`,
+    [TOKEN, VERSION, BLOCK_HASH]);
+    assert.equal((await db.query(`SELECT COUNT(*)::integer count
+      FROM robinhood_holder_classifications WHERE token_address = $1 AND tag = 'bundled'`,
+    [TOKEN])).rows[0].count, 1);
+    await cleanup();
   });
 
   it('rejects false tags, empty evidence and incoherent frontier state', async () => {

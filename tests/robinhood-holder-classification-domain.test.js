@@ -66,6 +66,7 @@ describe('Robinhood holder classification domain', () => {
       ['lp', 'registered_v4_pool_manager', 'deterministic'],
       ['cex', 'known_cex_address', 'deterministic'],
       ['sniper', 'early_launch_buy', 'high'],
+      ['bundled', 'connected_funding_launch_cluster', 'heuristic'],
       ['fresh', 'new_wallet_at_first_buy', 'high'],
       ['insider', 'creator_token_distribution', 'high'],
       ['insider', 'creator_direct_funding', 'high'],
@@ -78,10 +79,11 @@ describe('Robinhood holder classification domain', () => {
   });
 
   it('keeps all tags while deriving the documented primary glyph', () => {
-    const tags = normalizeHolderTags(['insider', 'lp', 'sniper', 'lp', 'fresh']);
+    const tags = normalizeHolderTags(['insider', 'lp', 'sniper', 'bundled', 'lp', 'fresh']);
 
-    assert.deepEqual(tags, ['lp', 'sniper', 'fresh', 'insider']);
+    assert.deepEqual(tags, ['lp', 'sniper', 'bundled', 'fresh', 'insider']);
     assert.equal(primaryHolderTag(tags), 'sniper');
+    assert.equal(primaryHolderTag(['cex', 'bundled']), 'bundled');
     assert.equal(primaryHolderTag(['insider']), 'unknown');
     assert.equal(primaryHolderTag([]), 'unknown');
   });

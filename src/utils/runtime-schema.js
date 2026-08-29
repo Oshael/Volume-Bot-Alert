@@ -5004,6 +5004,21 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage175-robinhood-public-bundled-contract',
+    name: 'Stage 175 Robinhood public BUNDLED contract',
+    repair: 'node src/utils/db-init-stage175.js',
+    tables: [{
+      table: 'robinhood_holder_classifications', columns: [], constraints: [{
+        name: 'rh_holder_classifications_reason_check',
+        includes: ['bundled', 'connected_funding_launch_cluster'],
+      }],
+    }, {
+      table: 'robinhood_holder_classification_states', columns: [], constraints: [{
+        name: 'rh_holder_classification_states_classifier_check', includes: ['bundled'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

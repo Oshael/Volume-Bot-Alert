@@ -1750,9 +1750,16 @@ execute `npm run db:schema-check`. Processo `active` não basta: confirme as lea
 `robinhood-first-buy-live-worker` e `robinhood-sniper-shadow-worker`, heartbeat
 recente, `metadata.telemetry.running=true`, `totalRuns` crescente e
 `lastError=null`.
-A API de holders mantém por padrão `LP`, `CEX` e `SNIPER` na allowlist pública.
+A Stage 175 habilita o contrato público token-scoped de `BUNDLED`; aplique-a após
+a Stage 174. A API de holders mantém por padrão `LP`, `CEX`, `SNIPER` e `BUNDLED`
+na allowlist pública.
 `SNIPER` só é publicado quando possui confiança `high` e evidência
 `rh_sniper_high_v2`; sinais candidatos e políticas anteriores permanecem privados.
+A tag `BUNDLED` é sintetizada somente de membros `rh_possible_bundle_v1` cujo
+snapshot do mesmo token está `ready`, com confiança `heuristic` e motivo
+`connected_funding_launch_cluster`; ela não acompanha a wallet em outros tokens.
+O filtro `filter=bundled` pagina esses holders no ledger live e a métrica `bundled`
+deriva saldo, wallets e grupos atuais sem publicar o JSON causal completo.
 A métrica `snipers` usa primeiro um snapshot persistido, quando houver, e de outro
 modo deriva a participação atual dos registros materializados contra o supply
 aceito mais recente, sem novo backfill ou reclassificação. O endpoint aceita

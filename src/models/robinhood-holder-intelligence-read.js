@@ -12,11 +12,14 @@ const {
 
 const STATUS_PRIORITY = Object.freeze(['reorged', 'stale', 'pending', 'unavailable', 'ready']);
 const MAX_PAGE_WALLETS = 50;
-const DEFAULT_PUBLIC_TAGS = Object.freeze(['lp', 'cex', 'sniper']);
-const DEFAULT_PUBLIC_METRICS = Object.freeze(['top10', 'top50', 'dev_hold', 'lp_locked']);
+const DEFAULT_PUBLIC_TAGS = Object.freeze(['lp', 'cex', 'sniper', 'bundled']);
+const DEFAULT_PUBLIC_METRICS = Object.freeze([
+  'top10', 'top50', 'dev_hold', 'lp_locked', 'bundled',
+]);
 const TAG_METRICS = Object.freeze({
-  sniper: 'snipers', fresh: 'fresh_wallets', insider: 'insiders',
+  sniper: 'snipers', bundled: 'bundled', fresh: 'fresh_wallets', insider: 'insiders',
 });
+const BUNDLE_RULE_VERSION = 'rh_possible_bundle_v1';
 
 function iso(value) {
   return value?.toISOString?.() || value || null;
@@ -100,9 +103,15 @@ function createRobinhoodHolderIntelligenceReadRepository(options = {}) {
         `SELECT classifier, status, through_block_number, through_block_hash, observed_at
            FROM robinhood_holder_classification_states
           WHERE chain = 'robinhood' AND token_address = $1
-            AND classification_version = $2
-            AND classifier = ANY($3::varchar[]) ORDER BY classifier`,
-        [tokenAddress, HOLDER_CLASSIFICATION_VERSION, [...publicTags]]
+            AND classification_version = $2 AND classifier = ANY($3::varchar[])
+         UNION ALL
+         SELECT 'bundled', status, through_block_number, through_block_hash, observed_at
+           FROM robinhood_possible_bundle_states
+          WHERE $4::boolean AND chain = 'robinhood' AND token_address = $1
+            AND rule_version = $5
+          ORDER BY classifier`,
+        [tokenAddress, HOLDER_CLASSIFICATION_VERSION, [...publicTags],
+          publicTags.has('bundled'), BUNDLE_RULE_VERSION]
       ),
       walletAddresses.length ? database.query(
         `SELECT wallet_address, tag, confidence, reason_code, observed_at, expires_at
@@ -115,10 +124,21 @@ function createRobinhoodHolderIntelligenceReadRepository(options = {}) {
               AND evidence_json #>> '{rule,evidenceVersion}' = $5
             ))
             AND (expires_at IS NULL OR expires_at > NOW())
+         UNION ALL
+         SELECT member.wallet_address, 'bundled', 'heuristic',
+                'connected_funding_launch_cluster', state.observed_at, NULL::timestamptz
+           FROM robinhood_possible_bundle_members member
+           INNER JOIN robinhood_possible_bundle_states state
+             ON state.chain = member.chain AND state.token_address = member.token_address
+            AND state.rule_version = member.rule_version
+          WHERE $6::boolean AND member.chain = 'robinhood' AND member.token_address = $1
+            AND member.rule_version = $7 AND member.wallet_address = ANY($3::varchar[])
+            AND state.status = 'ready'
           ORDER BY wallet_address, tag`,
         [
           tokenAddress, HOLDER_CLASSIFICATION_VERSION, walletAddresses, [...publicTags],
-          SNIPER_HIGH_CONFIDENCE_RULE.evidenceVersion,
+          SNIPER_HIGH_CONFIDENCE_RULE.evidenceVersion, publicTags.has('bundled'),
+          BUNDLE_RULE_VERSION,
         ]
       ) : Promise.resolve({ rows: [] }),
       database.query(
@@ -130,6 +150,7 @@ function createRobinhoodHolderIntelligenceReadRepository(options = {}) {
             WHERE chain = 'robinhood' AND token_address = $1
               AND classification_version = $2
               AND metric = ANY($3::varchar[])
+              AND metric <> 'bundled'
               AND (metric <> 'snipers'
                 OR evidence_json #>> '{rule,evidenceVersion}' = $5)
          ), current_snipers AS MATERIALIZED (
@@ -151,7 +172,7 @@ function createRobinhoodHolderIntelligenceReadRepository(options = {}) {
          ), current_supply AS MATERIALIZED (
            SELECT observation.token_total_supply_raw
              FROM robinhood_market_observations observation
-            WHERE $4::boolean AND observation.chain = 'robinhood'
+            WHERE ($4::boolean OR $6::boolean) AND observation.chain = 'robinhood'
               AND observation.token_address = $1 AND observation.status = 'accepted'
               AND observation.token_total_supply_raw > 0
             ORDER BY observation.observed_at DESC LIMIT 1
@@ -179,13 +200,50 @@ function createRobinhoodHolderIntelligenceReadRepository(options = {}) {
               AND state.classification_version = $2
               AND state.status IN ('ready', 'stale', 'reorged')
               AND NOT EXISTS (SELECT 1 FROM stored_metrics WHERE metric = 'snipers')
+         ), current_bundled AS MATERIALIZED (
+           SELECT COALESCE(SUM(balance.balance_raw), 0) AS balance_raw,
+                  COUNT(balance.wallet_address)::bigint AS wallet_count,
+                  COUNT(DISTINCT member.bundle_id)
+                    FILTER (WHERE balance.wallet_address IS NOT NULL)::bigint AS group_count
+             FROM robinhood_possible_bundle_members member
+             INNER JOIN robinhood_possible_bundle_states state
+               ON state.chain = member.chain AND state.token_address = member.token_address
+              AND state.rule_version = member.rule_version
+             LEFT JOIN robinhood_holder_balances balance
+               ON balance.chain = member.chain AND balance.token_address = member.token_address
+              AND balance.wallet_address = member.wallet_address
+            WHERE $6::boolean AND member.chain = 'robinhood' AND member.token_address = $1
+              AND member.rule_version = $7 AND state.status = 'ready'
+         ), derived_bundled AS (
+           SELECT 'bundled'::varchar AS metric, $2::varchar AS classification_version,
+                  CASE WHEN supply.token_total_supply_raw IS NULL
+                       THEN 'unavailable' ELSE state.status END AS status,
+                  CASE WHEN supply.token_total_supply_raw IS NULL THEN NULL
+                       ELSE LEAST(bundle.balance_raw, supply.token_total_supply_raw) END
+                    AS value_numerator_raw,
+                  supply.token_total_supply_raw AS value_denominator_raw,
+                  CASE WHEN supply.token_total_supply_raw IS NULL
+                       THEN NULL ELSE bundle.wallet_count END AS wallet_count,
+                  CASE WHEN supply.token_total_supply_raw IS NULL
+                       THEN NULL ELSE bundle.group_count END AS group_count,
+                  CASE WHEN supply.token_total_supply_raw IS NULL
+                       THEN NULL ELSE state.through_block_number END AS through_block_number,
+                  CASE WHEN supply.token_total_supply_raw IS NULL
+                       THEN NULL ELSE state.through_block_hash END AS through_block_hash,
+                  state.observed_at
+             FROM robinhood_possible_bundle_states state
+             CROSS JOIN current_bundled bundle LEFT JOIN current_supply supply ON TRUE
+            WHERE $6::boolean AND state.chain = 'robinhood' AND state.token_address = $1
+              AND state.rule_version = $7 AND state.status = 'ready'
          )
          SELECT * FROM stored_metrics
          UNION ALL SELECT * FROM derived_snipers
+         UNION ALL SELECT * FROM derived_bundled
          ORDER BY metric`,
         [
           tokenAddress, HOLDER_CLASSIFICATION_VERSION, [...publicMetrics],
           publicTags.has('sniper'), SNIPER_HIGH_CONFIDENCE_RULE.evidenceVersion,
+          publicTags.has('bundled'), BUNDLE_RULE_VERSION,
         ]
       ),
     ]);

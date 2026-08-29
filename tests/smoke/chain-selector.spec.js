@@ -617,9 +617,13 @@ function holderIntelligenceFixture(secondPage) {
     };
   }
   return {
-    tags: ['cex'], primaryTag: 'cex', classificationVersion: 'rh_holder_v1',
+    tags: ['cex', 'bundled'], primaryTag: 'bundled', classificationVersion: 'rh_holder_v1',
     classificationStatus: 'ready', classifications: [{
       tag: 'cex', confidence: 'deterministic', reasonCode: 'known_cex_address',
+      observedAt: '2026-07-15T11:55:00.000Z', expiresAt: null,
+    }, {
+      tag: 'bundled', confidence: 'heuristic',
+      reasonCode: 'connected_funding_launch_cluster',
       observedAt: '2026-07-15T11:55:00.000Z', expiresAt: null,
     }],
   };
@@ -665,7 +669,11 @@ const ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES = {
         holderIntelligenceMetric('dev_hold', { status: 'ready',
           value: { numeratorRaw: '600000000000000000', denominatorRaw: '50000000000000000000' },
           walletCount: '1' }),
-        holderIntelligenceMetric('lp_locked'), holderIntelligenceMetric('bundled'),
+        holderIntelligenceMetric('lp_locked'), holderIntelligenceMetric('bundled', {
+          status: 'ready',
+          value: { numeratorRaw: '5000000000000000000', denominatorRaw: '50000000000000000000' },
+          walletCount: '1', groupCount: '1',
+        }),
       ],
       hasMore: !secondPage, nextCursor: secondPage ? null : 'page-2',
       observedAt: '2026-07-15T11:55:00.000Z', refreshQueued: false,
@@ -1888,10 +1896,12 @@ test('renders holder pages without the holder bar chart in the Robinhood expande
   await expect(panel.locator('.rh-holder-distribution')).toContainText('Top 10');
   await expect(panel.locator('.rh-holder-distribution')).toContainText('10%');
   await expect(panel.locator('.rh-distribution-flags')).toContainText('DEV HOLD1.2%');
-  await expect(panel.locator('tbody .rh-holder-glyph').first()).toHaveText('⇄');
+  await expect(panel.locator('.rh-distribution-flags')).toContainText('BUNDLED10%');
+  await expect(panel.locator('tbody .rh-holder-glyph').first()).toHaveText('◈');
   await expect(panel.locator('tbody .rh-holder-glyph').first()).toHaveAttribute(
-    'title', 'CEX · known_cex_address',
+    'title', 'BUNDLED · connected_funding_launch_cluster',
   );
+  await expect(panel.getByRole('button', { name: 'BUNDLED' })).toBeEnabled();
   await expect(panel.getByRole('button', { name: 'INSIDERS' })).toBeDisabled();
   await expect(panel.locator('.robinhood-holder-table-wrap')).toHaveCSS('overflow-y', 'auto');
   await expect(panel.locator('tbody tr').first()).toHaveCSS('height', '26px');
