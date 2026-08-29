@@ -1793,6 +1793,16 @@ representa tentativas consecutivas desde o último avanço bem-sucedido e volta 
 `1` a cada commit, preservando o marcador exigido pela publicação sem transformar
 centenas de ranges válidos em falha definitiva após um único timeout tardio.
 Erros funcionais e de evidência não entram nesse retry.
+Para acompanhamento, `npm run robinhood:wallet-transfer-token-repair-monitor`
+consulta somente PostgreSQL a cada 60 segundos e usa a frontier LIVE diretamente:
+para cada token ainda não publicado, `effective_remaining` é
+`checkpoint_block - next_block + 1`. Assim, mover trabalho oculto para
+`source_through_block` não faz o total oscilar. `net_drain` e `eta` usam uma
+janela móvel de 15 minutos e já descontam crescimento real da frontier; enquanto
+a janela ainda não drena trabalho, o ETA aparece como `sampling`. Use
+`-- --interval-seconds=<5..3600> --window-minutes=<1..120>` para ajustar a
+cadência, ou `-- --once` para uma leitura. O monitor encerra sozinho quando todos
+os candidatos estão publicados e nunca altera leases, cursores ou projeções.
 O comando nunca inicializa o
 catálogo inteiro: quando o replay
 encontra `directional_replay_edge_missing`, o range sofre rollback e somente os
