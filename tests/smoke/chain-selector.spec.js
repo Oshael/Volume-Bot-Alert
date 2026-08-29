@@ -632,7 +632,9 @@ function holderIntelligenceFixture(secondPage) {
 const ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES = {
   ...ROBINHOOD_MARKET_API_FIXTURES,
   'GET /api/robinhood/holders': (request) => {
-    const secondPage = new URL(request.url()).searchParams.has('cursor');
+    const url = new URL(request.url());
+    const secondPage = url.searchParams.has('cursor');
+    const filter = url.searchParams.get('filter');
     return {
       token: ROBINHOOD_TOKEN,
       summary: { holderCount: 4424, totalSupplyRaw: '50000000000000000000', source: 'ledger_live', observedAt: '2026-07-15T11:55:00.000Z', checkedAt: '2026-07-15T11:55:00.000Z', freshness: 'fresh' },
@@ -654,7 +656,7 @@ const ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES = {
         positionQuality: secondPage ? 'transferred_assumed_zero' : 'exact_swap_only',
         costBasisSource: secondPage ? 'transferred_assumed_zero' : 'swap_only',
         ...holderIntelligenceFixture(secondPage),
-      }],
+      }].filter(() => filter == null),
       classificationVersion: 'rh_holder_v1', classificationStatus: 'ready',
       classificationThroughBlock: { blockNumber: '32653260', blockHash: `0x${'b'.repeat(64)}` },
       distribution: [
@@ -1830,6 +1832,30 @@ test('renders and switches Robinhood holder hover bars', async ({ page }) => {
   expect(diagnostics.pageErrors).toEqual([]);
 });
 
+test('renders explicit empty states for classified Robinhood holder filters', async ({ page }) => {
+  const diagnostics = await openAuthenticatedWorkspace(
+    page, ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES, '/alerts',
+  );
+  await page.getByRole('group', { name: 'Filter workspace by blockchain' })
+    .locator('[data-chain="robinhood"]').click();
+  const row = page.locator(`article.monitored-token-row[data-address="${ROBINHOOD_TOKEN}"]`);
+  await expect(row).toBeVisible();
+  await row.locator('.monitored-mini-chart .sparkline-wrap').click();
+  const panel = page.locator('[data-auth-modal="expanded-sparkline"] [data-holder-panel]');
+  await expect(panel).toContainText('Main whale');
+
+  for (const [filter, message] of [
+    ['BUNDLED', "There's no bundled wallet in this token."],
+    ['SNIPERS', "There's no sniper in this token."],
+    ['INSIDERS', "There's no insider in this token."],
+  ]) {
+    await panel.getByRole('button', { name: filter, exact: true }).click();
+    await expect(panel.locator('.rh-holder-empty')).toHaveText(message);
+    await expect(panel.locator('.rh-holder-empty')).toHaveAttribute('colspan', '6');
+  }
+  expect(diagnostics.pageErrors).toEqual([]);
+});
+
 test('renders holder pages without the holder bar chart in the Robinhood expanded chart', async ({ page }) => {
   const socketScenario = { socket: null, clientFrames: [] };
   const diagnostics = await openAuthenticatedWorkspace(
@@ -1911,6 +1937,8 @@ test('renders holder pages without the holder bar chart in the Robinhood expande
   await insidersFilter.click();
   await insiderRequest;
   await expect(insidersFilter).toHaveClass(/active/);
+  await panel.getByRole('button', { name: 'TOP', exact: true }).click();
+  await expect(panel).toContainText('Main whale');
   await expect(panel.locator('.robinhood-holder-table-wrap')).toHaveCSS('overflow-y', 'auto');
   await expect(panel.locator('tbody tr').first()).toHaveCSS('height', '26px');
   expect(await panel.locator('tbody .rh-col-holder').first().evaluate((cell) => (

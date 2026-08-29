@@ -226,6 +226,12 @@ function holderPageHtml(
   holderCount: number | null, distributionPage: RobinhoodHoldersPage,
   activeFilter: RobinhoodHolderFilter,
 ) {
+  const emptyMessages: Record<RobinhoodHolderFilter, string> = {
+    top: 'No holders returned.',
+    snipers: "There's no sniper in this token.",
+    bundled: "There's no bundled wallet in this token.",
+    insiders: "There's no insider in this token.",
+  };
   const rows = page.holders.map((holder) => `<tr>
     <td class="rh-col-rank">${holder.rank}</td>
     <td class="rh-col-holder">
@@ -242,7 +248,7 @@ function holderPageHtml(
         <th class="rh-col-rank">#</th><th class="rh-col-holder">Holder</th>
         <th class="rh-col-num">BAL</th><th class="rh-col-num">AVG BUY <small>· MC</small></th>
         <th class="rh-col-num">AVG SELL <small>· MC</small></th><th class="rh-col-num">U. PNL <small>· REM</small></th></tr></thead>
-      <tbody>${rows || '<tr><td>No holders returned.</td></tr>'}</tbody></table></div></div>
+      <tbody>${rows || `<tr><td colspan="6" class="rh-holder-empty">${emptyMessages[activeFilter]}</td></tr>`}</tbody></table></div></div>
     ${distributionHtml(distributionPage)}</div>`;
 }
 

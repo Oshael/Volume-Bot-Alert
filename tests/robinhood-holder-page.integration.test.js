@@ -15,6 +15,13 @@ const POOL = `0x${'c'.repeat(40)}`;
 after(() => db.pool.end());
 
 describe('Robinhood published holder page persistence', () => {
+  it('accepts filtered pagination cursors at zero token balance', () => {
+    const payload = {
+      balanceRaw: '0', walletAddress: `0x${'1'.repeat(40)}`, rank: 50, filter: 'snipers',
+    };
+    assert.deepEqual(__private.decodeCursor(__private.encodeCursor(payload), 'snipers'), payload);
+  });
+
   it('paginates the live ledger by balance and refuses unpublished states', async () => {
     const client = await db.pool.connect();
     try {
@@ -54,11 +61,17 @@ describe('Robinhood published holder page persistence', () => {
       const wallets = [DEAD, POOL, ...Array.from({ length: 50 }, (_, index) => (
         `0x${(index + 1).toString(16).padStart(40, '0')}`
       ))];
+      const classifiedWithoutBalance = {
+        sniper: `0x${'d'.repeat(40)}`,
+        bundled: `0x${'e'.repeat(40)}`,
+        insider: `0x${'f'.repeat(40)}`,
+      };
       await client.query(`INSERT INTO robinhood_possible_bundle_states
         VALUES ('robinhood', $1, 'rh_possible_bundle_v1', 'ready')`, [TOKEN]);
       await client.query(`INSERT INTO robinhood_possible_bundle_members
-        VALUES ('robinhood', $1, 'rh_possible_bundle_v1', $2, $3)`,
-      [TOKEN, `0x${'f'.repeat(64)}`, wallets[3]]);
+        VALUES ('robinhood', $1, 'rh_possible_bundle_v1', $2, $3),
+               ('robinhood', $1, 'rh_possible_bundle_v1', $2, $4)`,
+      [TOKEN, `0x${'f'.repeat(64)}`, wallets[3], classifiedWithoutBalance.bundled]);
       await client.query(
         `INSERT INTO robinhood_holder_balances (
            token_address, wallet_address, balance_raw, last_block_number,
@@ -79,11 +92,16 @@ describe('Robinhood published holder page persistence', () => {
            ($1, $3, 'sniper', 'rh_holder_v1', 'high', 'early_launch_buy',
             $4::jsonb, 100, '0x${'1'.repeat(64)}', '2026-08-24T01:00:00Z'),
            ($1, $5, 'insider', 'rh_holder_v1', 'high', 'creator_token_distribution',
+            $6::jsonb, 100, '0x${'1'.repeat(64)}', '2026-08-24T01:00:00Z'),
+           ($1, $7, 'sniper', 'rh_holder_v1', 'high', 'early_launch_buy',
+            $4::jsonb, 100, '0x${'1'.repeat(64)}', '2026-08-24T01:00:00Z'),
+           ($1, $8, 'insider', 'rh_holder_v1', 'high', 'creator_token_distribution',
             $6::jsonb, 100, '0x${'1'.repeat(64)}', '2026-08-24T01:00:00Z')`,
         [
           TOKEN, wallets[2], wallets.at(-1),
           JSON.stringify({ rule: { evidenceVersion: 'rh_sniper_high_v2' } }),
           wallets[4], JSON.stringify({ rule: { evidenceVersion: 'rh_insider_direct_v1' } }),
+          classifiedWithoutBalance.sniper, classifiedWithoutBalance.insider,
         ]
       );
       await client.query(
@@ -161,16 +179,25 @@ describe('Robinhood published holder page persistence', () => {
       const snipers = await repository.listPublishedPage({
         tokenAddress: TOKEN, filter: 'snipers',
       });
-      assert.equal(snipers.holderCount, 2);
-      assert.deepEqual(snipers.items.map(({ address }) => address), [wallets[2], wallets.at(-1)]);
+      assert.equal(snipers.holderCount, 3);
+      assert.deepEqual(snipers.items.map(({ address }) => address), [
+        wallets[2], wallets.at(-1), classifiedWithoutBalance.sniper,
+      ]);
+      assert.equal(snipers.items.at(-1).balanceRaw, '0');
       const bundled = await repository.listPublishedPage({ tokenAddress: TOKEN, filter: 'bundled' });
-      assert.equal(bundled.holderCount, 1);
-      assert.deepEqual(bundled.items.map(({ address }) => address), [wallets[3]]);
+      assert.equal(bundled.holderCount, 2);
+      assert.deepEqual(bundled.items.map(({ address }) => address), [
+        wallets[3], classifiedWithoutBalance.bundled,
+      ]);
+      assert.equal(bundled.items.at(-1).balanceRaw, '0');
       const insiders = await repository.listPublishedPage({
         tokenAddress: TOKEN, filter: 'insiders',
       });
-      assert.equal(insiders.holderCount, 1);
-      assert.deepEqual(insiders.items.map(({ address }) => address), [wallets[4]]);
+      assert.equal(insiders.holderCount, 2);
+      assert.deepEqual(insiders.items.map(({ address }) => address), [
+        wallets[4], classifiedWithoutBalance.insider,
+      ]);
+      assert.equal(insiders.items.at(-1).balanceRaw, '0');
       assert.throws(() => __private.decodeCursor(first.nextCursor, 'snipers'), /cursor is invalid/);
       assert.equal(await repository.listPublishedPage({ tokenAddress: SHADOW_TOKEN }), null);
     } finally {

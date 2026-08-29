@@ -1889,6 +1889,10 @@ as wallets SNIPER atuais; não filtra localmente a página TOP nem recorre ao
 Blockscout. Cursores carregam o filtro e são rejeitados se reutilizados em outra
 visão. O expanded chart mantém caches e stacks de paginação independentes para
 `TOP`, `SNIPERS`, `BUNDLED` e `INSIDERS`.
+As três visões classificadas partem da classificação token-scoped, não da presença
+de saldo atual: uma wallet válida continua listada com `balanceRaw=0` quando não há
+linha no ledger de balances. Uma visão sem wallets exibe uma mensagem explícita do
+filtro em vez de uma tabela vazia genérica.
 A Stage 153 vem depois dessas migrations e é obrigatória antes do writer/source
 de `INSIDER`: aplique `node src/utils/db-init-stage153.js` antes de iniciar ou
 atualizar os processos seed/live/reclassification de transfers. Ela

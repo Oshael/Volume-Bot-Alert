@@ -37,7 +37,7 @@ function normalizeCursorPayload(payload, expectedFilter) {
   const rank = Number(payload?.rank);
   const filter = normalizeFilter(payload?.filter);
   const walletAddress = normalizeTokenAddress('robinhood', payload?.walletAddress);
-  const validBalance = /^\d{1,78}$/.test(balanceRaw) && balanceRaw !== '0';
+  const validBalance = /^\d{1,78}$/.test(balanceRaw);
   const validRank = Number.isSafeInteger(rank) && rank >= 1 && rank <= 10_000_000;
   if (!validBalance || !validRank || filter !== normalizeFilter(expectedFilter)) {
     throw invalidCursor();
@@ -161,12 +161,8 @@ function createRobinhoodHolderPageRepository(options = {}) {
     const cursor = decodeCursor(input.cursor, filter);
     const result = await database.query(
       `WITH sniper_wallets AS MATERIALIZED (
-         SELECT classification.wallet_address
+         SELECT DISTINCT classification.wallet_address
            FROM robinhood_holder_classifications classification
-           INNER JOIN robinhood_holder_balances balance
-             ON balance.chain = classification.chain
-            AND balance.token_address = classification.token_address
-            AND balance.wallet_address = classification.wallet_address
           WHERE $4::varchar = 'snipers' AND classification.chain = 'robinhood'
             AND classification.token_address = $1
             AND classification.classification_version = $5
@@ -174,24 +170,17 @@ function createRobinhoodHolderPageRepository(options = {}) {
             AND classification.evidence_json #>> '{rule,evidenceVersion}' = $6
             AND (classification.expires_at IS NULL OR classification.expires_at > NOW())
        ), bundled_wallets AS MATERIALIZED (
-         SELECT member.wallet_address
+         SELECT DISTINCT member.wallet_address
            FROM robinhood_possible_bundle_members member
            INNER JOIN robinhood_possible_bundle_states state
              ON state.chain = member.chain AND state.token_address = member.token_address
             AND state.rule_version = member.rule_version
-           INNER JOIN robinhood_holder_balances balance
-             ON balance.chain = member.chain AND balance.token_address = member.token_address
-            AND balance.wallet_address = member.wallet_address
           WHERE $4::varchar = 'bundled' AND member.chain = 'robinhood'
             AND member.token_address = $1 AND member.rule_version = $7
             AND state.status = 'ready'
        ), insider_wallets AS MATERIALIZED (
-         SELECT classification.wallet_address
+         SELECT DISTINCT classification.wallet_address
            FROM robinhood_holder_classifications classification
-           INNER JOIN robinhood_holder_balances balance
-             ON balance.chain = classification.chain
-            AND balance.token_address = classification.token_address
-            AND balance.wallet_address = classification.wallet_address
           WHERE $4::varchar = 'insiders' AND classification.chain = 'robinhood'
             AND classification.token_address = $1
             AND classification.classification_version = $5
@@ -199,6 +188,29 @@ function createRobinhoodHolderPageRepository(options = {}) {
             AND classification.reason_code = 'creator_token_distribution'
             AND classification.evidence_json #>> '{rule,evidenceVersion}' = $8
             AND (classification.expires_at IS NULL OR classification.expires_at > NOW())
+       ), candidate_wallets AS MATERIALIZED (
+         SELECT balance.wallet_address, balance.balance_raw
+           FROM robinhood_holder_balances balance
+          WHERE $4::varchar = 'top' AND balance.chain = 'robinhood'
+            AND balance.token_address = $1
+         UNION ALL
+         SELECT sniper.wallet_address, COALESCE(balance.balance_raw, 0::numeric)
+           FROM sniper_wallets sniper
+           LEFT JOIN robinhood_holder_balances balance
+             ON balance.chain = 'robinhood' AND balance.token_address = $1
+            AND balance.wallet_address = sniper.wallet_address
+         UNION ALL
+         SELECT bundled.wallet_address, COALESCE(balance.balance_raw, 0::numeric)
+           FROM bundled_wallets bundled
+           LEFT JOIN robinhood_holder_balances balance
+             ON balance.chain = 'robinhood' AND balance.token_address = $1
+            AND balance.wallet_address = bundled.wallet_address
+         UNION ALL
+         SELECT insider.wallet_address, COALESCE(balance.balance_raw, 0::numeric)
+           FROM insider_wallets insider
+           LEFT JOIN robinhood_holder_balances balance
+             ON balance.chain = 'robinhood' AND balance.token_address = $1
+            AND balance.wallet_address = insider.wallet_address
        ), published_state AS MATERIALIZED (
          SELECT CASE $4::varchar
                   WHEN 'snipers' THEN (SELECT COUNT(*) FROM sniper_wallets)
@@ -221,33 +233,21 @@ function createRobinhoodHolderPageRepository(options = {}) {
           ORDER BY observation.observed_at DESC
           LIMIT 1
        ), page AS MATERIALIZED (
-         SELECT balance.wallet_address, balance.balance_raw,
+         SELECT candidate.wallet_address, candidate.balance_raw,
                 CASE
-                  WHEN balance.wallet_address = '${DEAD_ADDRESS}' THEN 'burn'
+                  WHEN candidate.wallet_address = '${DEAD_ADDRESS}' THEN 'burn'
                   WHEN EXISTS (
                     SELECT 1 FROM robinhood_pool_registry registry
                      WHERE registry.chain = 'robinhood'
-                       AND registry.pool_address = balance.wallet_address
+                       AND registry.pool_address = candidate.wallet_address
                   ) THEN 'pool'
                   ELSE 'unknown'
                 END AS address_type
-           FROM robinhood_holder_balances balance
-          WHERE balance.chain = 'robinhood' AND balance.token_address = $1
-            AND EXISTS (SELECT 1 FROM published_state)
-            AND ($4::varchar = 'top'
-              OR ($4::varchar = 'snipers' AND EXISTS (
-                SELECT 1 FROM sniper_wallets sniper
-                 WHERE sniper.wallet_address = balance.wallet_address
-              )) OR ($4::varchar = 'bundled' AND EXISTS (
-                SELECT 1 FROM bundled_wallets bundled
-                 WHERE bundled.wallet_address = balance.wallet_address
-              )) OR ($4::varchar = 'insiders' AND EXISTS (
-                SELECT 1 FROM insider_wallets insider
-                 WHERE insider.wallet_address = balance.wallet_address
-              )))
-            AND ($2::numeric IS NULL OR balance.balance_raw < $2::numeric
-              OR (balance.balance_raw = $2::numeric AND balance.wallet_address > $3))
-          ORDER BY balance.balance_raw DESC, balance.wallet_address ASC
+           FROM candidate_wallets candidate
+          WHERE EXISTS (SELECT 1 FROM published_state)
+            AND ($2::numeric IS NULL OR candidate.balance_raw < $2::numeric
+              OR (candidate.balance_raw = $2::numeric AND candidate.wallet_address > $3))
+          ORDER BY candidate.balance_raw DESC, candidate.wallet_address ASC
           LIMIT ${PAGE_SIZE + 1}
        )
        SELECT state.holder_count, state.observed_at, state.checked_at,
