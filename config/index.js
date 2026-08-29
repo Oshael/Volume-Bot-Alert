@@ -800,6 +800,9 @@ module.exports = {
     expectedComponents: workerHealthExpectedComponents,
     intervalMs: parseIntegerInRange(process.env.WORKER_HEALTH_INTERVAL_SECONDS, 30, 10, 300) * 1000,
     minimumObservations: parseIntegerInRange(process.env.WORKER_HEALTH_MIN_OBSERVATIONS, 2, 1, 10),
+    recoveryGraceMs: parseIntegerInRange(
+      process.env.WORKER_HEALTH_RECOVERY_SECONDS, 180, 30, 3600
+    ) * 1000,
     retryMs: parseIntegerInRange(process.env.WORKER_HEALTH_RETRY_SECONDS, 30, 5, 600) * 1000,
     maxDatabaseLatencyMs: parseIntegerInRange(process.env.WORKER_HEALTH_DB_LATENCY_MS, 2000, 100, 30000),
     maxPoolWaiting: parseIntegerInRange(process.env.WORKER_HEALTH_DB_POOL_WAITING, 2, 1, 100),

@@ -39,7 +39,8 @@ const DEFINITIONS = [
   ['robinhood-derived-worker', 'Robinhood derived worker', 'robinhood-derived', 'live'],
   ['robinhood-catalog-staging-worker', 'Robinhood catalog staging worker', 'robinhood', 'live'],
   ['robinhood-catalog-projection-worker', 'Robinhood catalog projection worker', 'robinhood-derived|robinhood', 'polling'],
-  ['robinhood-wallet-swap-live-worker', 'Robinhood wallet-swap LIVE worker', 'robinhood-wallet', 'live'],
+  ['robinhood-wallet-swap-live-worker', 'Robinhood wallet-swap LIVE worker',
+    'robinhood-wallet', 'live', { maxInFlightMs: 600_000 }],
   ['robinhood-direct-creator-live-worker', 'Robinhood direct creator LIVE worker', 'robinhood-wallet', 'live'],
   ['robinhood-token-deployment-worker', 'Robinhood token deployment LIVE worker', 'robinhood-wallet-classification', 'live'],
   ['robinhood-sniper-shadow-worker', 'Robinhood SNIPER shadow worker', 'robinhood-wallet-classification', 'polling'],
@@ -49,8 +50,10 @@ const DEFINITIONS = [
   ['robinhood-bundle-funding-live-worker', 'Robinhood BUNDLED funding LIVE worker', 'robinhood-wallet-classification', 'live'],
   ['robinhood-wallet-position-live-worker', 'Robinhood wallet-position LIVE worker', 'robinhood-wallet-classification', 'live'],
   ['robinhood-wallet-transfer-live-worker', 'Robinhood wallet-transfer LIVE worker', 'robinhood-wallet-classification', 'live'],
-  ['robinhood-holder-live-worker', 'Robinhood holder LIVE worker', 'robinhood-holders', 'live'],
-  ['robinhood-holder-live-apply-worker', 'Robinhood holder LIVE apply worker', 'robinhood-holders', 'live'],
+  ['robinhood-holder-live-worker', 'Robinhood holder LIVE worker',
+    'robinhood-holders', 'live', { maxInFlightMs: 600_000 }],
+  ['robinhood-holder-live-apply-worker', 'Robinhood holder LIVE apply worker',
+    'robinhood-holders', 'live', { maxInFlightMs: 600_000 }],
   ['robinhood-holder-intelligence-worker', 'Robinhood holder intelligence worker', 'robinhood-holders', 'polling'],
   ['robinhood-holder-backfill-worker', 'Robinhood holder backfill worker', 'robinhood-holders', 'polling'],
   ['robinhood-holder-cold-worker', 'Robinhood holder cold worker', 'robinhood-holders', 'maintenance'],
@@ -70,9 +73,9 @@ const DEFINITIONS = [
   ['x-ingestion-worker', 'X ingestion worker', 'x-ingest', 'live'],
   ['robinhood-pool-liquidity-worker', 'Robinhood pool liquidity worker', 'robinhood-liquidity', 'live'],
   ['robinhood-wallet-transfer-backfill-worker', 'Robinhood wallet-transfer backfill worker', 'robinhood-wallet-classification', 'maintenance'],
-].map(([key, label, groupList, profile]) => Object.freeze({
+].map(([key, label, groupList, profile, overrides = {}]) => Object.freeze({
   key, label, group: groupList.split('|')[0], groups: Object.freeze(groupList.split('|')),
-  profile, thresholds: PROFILES[profile],
+  profile, thresholds: Object.freeze({ ...PROFILES[profile], ...overrides }),
 }));
 
 const BY_KEY = new Map(DEFINITIONS.map((definition) => [definition.key, definition]));

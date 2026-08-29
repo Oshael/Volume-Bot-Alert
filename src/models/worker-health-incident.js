@@ -74,6 +74,9 @@ async function reconcile(input = {}, runner) {
   const components = uniqueComponents(input.evaluatedComponents || []);
   const observedAt = timestamp(input.observedAt ?? new Date(), 'observedAt');
   const minimum = integer(input.minimumObservations, 'minimum observations', 2, 1, 10);
+  const recoveryGraceMs = integer(
+    input.recoveryGraceMs, 'recovery grace', 0, 0, 3_600_000
+  );
   const { rows } = await database(runner).query(
     `WITH observed AS MATERIALIZED (
        SELECT value.*
@@ -143,6 +146,8 @@ async function reconcile(input = {}, runner) {
            notification_claim_until = NULL
        WHERE incidents.status = 'open' AND incidents.component_key = ANY($2::varchar[])
          AND NOT EXISTS (SELECT 1 FROM observed WHERE incident_key = incidents.incident_key)
+         AND incidents.last_observed_at <= $3::timestamptz
+           - ($5::int * INTERVAL '1 millisecond')
          AND NOT EXISTS (SELECT 1 FROM worker_health_maintenance maintenance
            WHERE maintenance.cancelled_at IS NULL AND maintenance.starts_at <= $3
              AND maintenance.ends_at > $3
@@ -152,7 +157,7 @@ async function reconcile(input = {}, runner) {
     [JSON.stringify(issues.map((issue) => ({
       incident_key: issue.incidentKey, component_key: issue.componentKey,
       code: issue.code, severity: issue.severity, path: issue.path, details: issue.details,
-    }))), components, observedAt, minimum]
+    }))), components, observedAt, minimum, recoveryGraceMs]
   );
   return rows.map(mapIncident);
 }

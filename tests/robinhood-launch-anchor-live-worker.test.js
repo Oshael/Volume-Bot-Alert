@@ -30,9 +30,12 @@ it('defers tokens whose PostgreSQL launch inputs are not ready', async () => {
     retry: async (input) => calls.push(input),
   };
   const worker = createRobinhoodLaunchAnchorLiveWorker({ repository, owner: 'test' });
-  assert.equal(await worker.runOnce(), null);
+  assert.deepEqual(await worker.runOnce(), {
+    status: 'deferred', reason: 'anchor_not_ready', tokenAddress: TOKEN,
+  });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].retryMs, 30_000);
   assert.match(calls[0].error, /anchor_not_ready/);
   assert.equal(worker.getStatus().totalDeferred, 1);
+  assert.equal(worker.getStatus().lastError, null);
 });

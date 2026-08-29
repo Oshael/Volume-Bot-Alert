@@ -52,7 +52,7 @@ function leaseTelemetry(lease) {
   return Object.keys(metadata).some((key) => STATUS_FIELDS.has(key)) ? metadata : null;
 }
 
-function addLifecycleIssues(issues, definition, node, required) {
+function addLifecycleIssues(issues, definition, node, required, nowMs) {
   const { path, value } = node;
   if (required && value.enabled === false) {
     issues.push(issue(definition, 'component_disabled', 'critical', path, false, true));
@@ -60,7 +60,9 @@ function addLifecycleIssues(issues, definition, node, required) {
   if (value.halted === true) {
     issues.push(issue(definition, 'component_halted', 'critical', path, true, false));
   }
-  if (required && value.running === false && value.enabled !== false) {
+  const scheduled = validTime(value.nextRunAt);
+  if (required && value.running === false && value.enabled !== false
+    && (scheduled == null || scheduled <= nowMs)) {
     issues.push(issue(definition, 'component_stopped', 'critical', path, false, true));
   }
   if (value.healthy === false) {
@@ -73,13 +75,17 @@ function addLifecycleIssues(issues, definition, node, required) {
 
 function addErrorIssues(issues, definition, node, thresholds) {
   const errors = Number(node.value.consecutiveErrors);
-  if (Number.isFinite(errors) && errors >= thresholds.maxConsecutiveErrors) {
-    issues.push(issue(
-      definition, 'consecutive_errors', 'high', node.path, errors,
-      thresholds.maxConsecutiveErrors,
-    ));
+  if (Number.isFinite(errors)) {
+    if (errors < thresholds.maxConsecutiveErrors) return;
+    if (!node.value.lastError) {
+      issues.push(issue(
+        definition, 'consecutive_errors', 'high', node.path, errors,
+        thresholds.maxConsecutiveErrors,
+      ));
+      return;
+    }
   }
-  if (node.value.lastError && (!Number.isFinite(errors) || errors > 0)) {
+  if (node.value.lastError) {
     issues.push(issue(definition, 'active_error', 'warning', node.path, node.value.lastError));
   }
 }
@@ -91,8 +97,15 @@ function freshestTimestamp(value) {
     .sort((left, right) => right - left)[0] ?? null;
 }
 
+function freshnessThreshold(value, fallback) {
+  const declared = Number(value.intervalMs || value.lastScheduledDelayMs);
+  if (!Number.isFinite(declared) || declared <= 0) return fallback;
+  return Math.max(fallback, declared * 2);
+}
+
 function addTimingIssues(issues, definition, node, thresholds, nowMs, leaseAcquiredAt) {
   const freshest = freshestTimestamp(node.value);
+  const freshnessMs = freshnessThreshold(node.value, thresholds.freshnessMs);
   if (node.value.inFlight === true) {
     const startedAt = validTime(node.value.lastRunAt) ?? freshest;
     if (startedAt != null && nowMs - startedAt > thresholds.maxInFlightMs) {
@@ -102,10 +115,10 @@ function addTimingIssues(issues, definition, node, thresholds, nowMs, leaseAcqui
       ));
     }
   } else if (node.value.running === true && freshest != null
-    && nowMs - freshest > thresholds.freshnessMs) {
+    && nowMs - freshest > freshnessMs) {
     issues.push(issue(
       definition, 'progress_stale', 'high', node.path,
-      nowMs - freshest, thresholds.freshnessMs,
+      nowMs - freshest, freshnessMs,
     ));
   } else if ((node.path === 'telemetry' || node.path === 'telemetry.worker')
     && (FRESHNESS_FIELDS.some((field) => Object.hasOwn(node.value, field))
@@ -183,6 +196,43 @@ function attachRuntimeGroup(issues, lease) {
   return issues.map((item) => Object.freeze({ ...item, runtimeGroup }));
 }
 
+function leaseStateIssues(definition, lease, expected, nowMs) {
+  const issues = [];
+  const leaseUntil = validTime(lease.leaseUntil);
+  if (leaseUntil == null || leaseUntil <= nowMs) {
+    if (!expected) return null;
+    issues.push(issue(definition, 'lease_expired', 'critical', 'lease.leaseUntil',
+      lease.leaseUntil || null, new Date(nowMs).toISOString()));
+  }
+  if (lease.metadata?.state === 'halted') {
+    issues.push(issue(definition, 'lease_halted', 'critical', 'lease.metadata.state', 'halted'));
+  }
+  if (lease.metadata?.metadataProviderError) {
+    issues.push(issue(definition, 'telemetry_error', 'warning',
+      'lease.metadata.metadataProviderError', lease.metadata.metadataProviderError));
+  }
+  return issues;
+}
+
+function addTelemetryMissingIssue(issues, definition, lease, nowMs) {
+  const acquiredAt = validTime(lease.acquiredAt);
+  if (acquiredAt != null && nowMs - acquiredAt <= definition.thresholds.startupGraceMs) return;
+  issues.push(issue(definition, 'telemetry_missing', 'warning', 'telemetry', null));
+}
+
+function addTelemetryIssues(issues, definition, lease, telemetry, expected, nowMs) {
+  const acquiredAt = validTime(lease.acquiredAt);
+  const nodes = statusNodes(telemetry);
+  const requiredTree = expected || nodes.some(({ value }) => value.running === true);
+  for (const node of nodes) {
+    const required = requiredTree || node.value.enabled === true || node.value.running === true;
+    addLifecycleIssues(issues, definition, node, required, nowMs);
+    addErrorIssues(issues, definition, node, definition.thresholds);
+    addTimingIssues(issues, definition, node, definition.thresholds, nowMs, acquiredAt);
+    addPressureIssues(issues, definition, node, definition.thresholds);
+  }
+}
+
 function evaluateWorkerHealth(definition, lease, options = {}) {
   if (!definition?.key || !definition.thresholds) {
     throw new TypeError('Worker health definition is required');
@@ -194,33 +244,15 @@ function evaluateWorkerHealth(definition, lease, options = {}) {
       ? [issue(definition, 'lease_missing', 'critical', 'lease', null, 'active lease')]
       : [];
   }
-  const issues = evaluateRuntimeIssues(definition, lease, options);
-  const leaseUntil = validTime(lease.leaseUntil);
-  if (leaseUntil == null || leaseUntil <= nowMs) {
-    issues.push(issue(definition, 'lease_expired', 'critical', 'lease.leaseUntil',
-      lease.leaseUntil || null, new Date(nowMs).toISOString()));
-  }
-  if (lease.metadata?.state === 'halted') {
-    issues.push(issue(definition, 'lease_halted', 'critical', 'lease.metadata.state', 'halted'));
-  }
-  if (lease.metadata?.metadataProviderError) {
-    issues.push(issue(definition, 'telemetry_error', 'warning',
-      'lease.metadata.metadataProviderError', lease.metadata.metadataProviderError));
-  }
+  const stateIssues = leaseStateIssues(definition, lease, expected, nowMs);
+  if (stateIssues === null) return [];
+  const issues = [...evaluateRuntimeIssues(definition, lease, options), ...stateIssues];
   const telemetry = leaseTelemetry(lease);
   if (!telemetry) {
-    issues.push(issue(definition, 'telemetry_missing', 'warning', 'telemetry', null));
+    addTelemetryMissingIssue(issues, definition, lease, nowMs);
     return attachRuntimeGroup(issues, lease);
   }
-  const acquiredAt = validTime(lease.acquiredAt);
-  const nodes = statusNodes(telemetry);
-  const required = expected || nodes.some(({ value }) => value.running === true);
-  for (const node of nodes) {
-    addLifecycleIssues(issues, definition, node, required);
-    addErrorIssues(issues, definition, node, definition.thresholds);
-    addTimingIssues(issues, definition, node, definition.thresholds, nowMs, acquiredAt);
-    addPressureIssues(issues, definition, node, definition.thresholds);
-  }
+  addTelemetryIssues(issues, definition, lease, telemetry, expected, nowMs);
   return attachRuntimeGroup(issues, lease);
 }
 

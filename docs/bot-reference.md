@@ -726,7 +726,9 @@ dos callouts. Intervalo, observações mínimas, retry e timeout são
 limitados pelas variáveis `WORKER_HEALTH_*` documentadas em `.env.example`.
 Cada ocorrência gera um único aviso enquanto permanecer aberta; falhas de envio
 continuam sendo tentadas até a entrega. Depois da recuperação persistida, uma
-nova ocorrência do mesmo problema rearma um novo aviso.
+nova ocorrência do mesmo problema rearma um novo aviso. A recuperação exige uma
+janela saudável contínua de `WORKER_HEALTH_RECOVERY_SECONDS` (180 segundos por
+padrão); uma leitura boa isolada não fecha nem rearma o incidente.
 Para pressão de fila, o avaliador considera apenas gauges de trabalho atualmente
 pendente (`backlog`, `pending`, `depth`, `queueDepth` e `queuedCount`). O campo
 `queued` é tratado como contador acumulado de throughput e nunca como tamanho da
@@ -737,6 +739,10 @@ Telegram também inclui o comando `journalctl` pronto para os logs daquela unit.
 Incidentes `active_error` e `telemetry_error` incluem o `code` e a `message`
 sanitizados do erro observado; credenciais e valores sensíveis em URLs são
 redigidos antes do envio.
+Leases expiradas de componentes fora de `WORKER_HEALTH_EXPECTED_COMPONENTS` são
+ignoradas até que o worker volte a renovar a lease. Telemetria ausente respeita
+o `startupGraceMs` do perfil, e componentes agendados usam sua cadência declarada
+para não confundir espera normal entre ciclos com paralisação.
 
 Esse monitor não substitui um watchdog externo: se o próprio processo
 `worker-health`, o PostgreSQL ou a conectividade com o Telegram cair

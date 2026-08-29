@@ -51,6 +51,9 @@ function createRobinhoodLaunchAnchorLiveWorker(deps = {}) {
         }).catch(() => {});
         status.totalDeferred += 1;
       }
+      if (error.code === 'anchor_not_ready') {
+        return { status: 'deferred', reason: error.code, tokenAddress: task?.tokenAddress || null };
+      }
       status.lastError = { code: error.code || 'anchor_error', message: error.message };
       return null;
     } finally { status.inFlight = false; status.lastCompletedAt = new Date().toISOString(); }

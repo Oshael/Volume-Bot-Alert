@@ -113,4 +113,29 @@ describe('worker health incident persistence', () => {
     ]);
     assert.equal(claims.flat().length, 1);
   });
+
+  it('requires a stable healthy window before resolving an open incident', async () => {
+    const flap = {
+      ...incident,
+      id: `${componentKey}:telemetry:progress_stale`,
+      code: 'progress_stale',
+    };
+    const openedAt = Date.parse('2026-08-29T12:00:00.000Z');
+    const [opened] = await incidents.reconcile({
+      issues: [flap], evaluatedComponents: [componentKey], minimumObservations: 1,
+      observedAt: new Date(openedAt), recoveryGraceMs: 180_000,
+    });
+    assert.equal(opened.status, 'open');
+
+    assert.deepEqual(await incidents.reconcile({
+      issues: [], evaluatedComponents: [componentKey], minimumObservations: 1,
+      observedAt: new Date(openedAt + 30_000), recoveryGraceMs: 180_000,
+    }), []);
+
+    const [resolved] = await incidents.reconcile({
+      issues: [], evaluatedComponents: [componentKey], minimumObservations: 1,
+      observedAt: new Date(openedAt + 180_001), recoveryGraceMs: 180_000,
+    });
+    assert.equal(resolved.status, 'resolved');
+  });
 });

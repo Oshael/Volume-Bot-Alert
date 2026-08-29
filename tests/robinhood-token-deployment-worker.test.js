@@ -37,8 +37,14 @@ it('materializes exact deployment evidence before completing the outbox task', a
 
 it('defers missing Blockscout evidence and skips already attributed tokens', async () => {
   const deferred = runtime({ blockscout: { getContractCreation: async () => null } });
-  await createRobinhoodTokenDeploymentWorker({ runtime: deferred.value, owner: 'test' }).runOnce();
+  const deferredWorker = createRobinhoodTokenDeploymentWorker({
+    runtime: deferred.value, owner: 'test',
+  });
+  assert.deepEqual(await deferredWorker.runOnce(), {
+    status: 'deferred', reason: 'blockscout_creation_pending', tokenAddress: TOKEN,
+  });
   assert.equal(deferred.calls[0][0], 'retry');
+  assert.equal(deferredWorker.getStatus().lastError, null);
   const exact = runtime();
   exact.value.outbox.isExact = async () => true;
   const result = await createRobinhoodTokenDeploymentWorker({ runtime: exact.value, owner: 'test' }).runOnce();

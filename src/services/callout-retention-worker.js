@@ -49,6 +49,7 @@ function createCalloutRetentionWorker(deps = {}) {
   let activeRun = null;
   const status = {
     enabled: false, running: false, inFlight: false,
+    intervalMs: options.intervalMs,
     totalRuns: 0, totalErrors: 0, consecutiveErrors: 0,
     totalBatches: 0, totalDeletedCallouts: 0,
     lastResult: null, lastErrorCode: null, lastCompletedAt: null,
@@ -99,6 +100,7 @@ function createCalloutRetentionWorker(deps = {}) {
     if (running) return false;
     options = normalizeOptions(input);
     status.enabled = options.enabled;
+    status.intervalMs = options.intervalMs;
     if (!options.enabled) return false;
     running = true;
     status.running = true;

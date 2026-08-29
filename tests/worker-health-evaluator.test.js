@@ -34,6 +34,8 @@ describe('worker health registry', () => {
     assert.equal(getWorkerHealthDefinition('robinhood-pool-liquidity-worker').profile, 'live');
     assert.equal(getWorkerHealthDefinition('web-realtime-runtime').group, 'web');
     assert.equal(getWorkerHealthDefinition('core-support-runtime').profile, 'maintenance');
+    assert.equal(getWorkerHealthDefinition('robinhood-holder-live-worker')
+      .thresholds.maxInFlightMs, 600_000);
     assert.equal(getWorkerHealthDefinition('robinhood-wallet-transfer-backfill-worker').profile,
       'maintenance');
     assert.equal(getWorkerHealthDefinition('unknown-worker'), null);
@@ -55,7 +57,7 @@ describe('worker health evaluator', () => {
       state: 'halted',
       metadataProviderError: { message: 'snapshot failed' },
       telemetry: { running: true, lastCompletedAt: '2026-08-29T11:59:30.000Z' },
-    }, { leaseUntil: '2026-08-29T11:59:59.000Z' }), { nowMs: NOW });
+    }, { leaseUntil: '2026-08-29T11:59:59.000Z' }), { nowMs: NOW, expected: true });
     assert.deepEqual(codes(issues), ['lease_expired', 'lease_halted', 'telemetry_error']);
   });
 
@@ -90,7 +92,7 @@ describe('worker health evaluator', () => {
       lagBlocks: 51, lagMs: 60_001, lastLoopOverrunMs: 30_001, depth: 1_001,
     } }), { nowMs: NOW });
     assert.deepEqual(codes(issues), [
-      'consecutive_errors', 'active_error', 'execution_stalled', 'lag_blocks_high',
+      'active_error', 'execution_stalled', 'lag_blocks_high',
       'lag_time_high', 'loop_overrun', 'queue_backlog',
     ]);
   });
@@ -108,7 +110,7 @@ describe('worker health evaluator', () => {
     const tokenRisk = getWorkerHealthDefinition('token-risk-enrichment-worker');
     const issues = evaluateWorkerHealth(tokenRisk, lease({
       group: 'core',
-      telemetry: { running: true, consecutiveErrors: 1, lastError: 'provider failed' },
+      telemetry: { running: true, consecutiveErrors: 3, lastError: 'provider failed' },
     }), { nowMs: NOW });
 
     assert.equal(issues.find(({ code }) => code === 'active_error').runtimeGroup, 'core');
@@ -126,6 +128,31 @@ describe('worker health evaluator', () => {
       acquiredAt: '2026-08-29T11:55:00.000Z',
     }), { nowMs: NOW });
     assert.deepEqual(codes(startup), ['startup_stalled']);
+  });
+
+  it('ignores stale optional leases and telemetry gaps during startup grace', () => {
+    const staleOptional = evaluateWorkerHealth(definition, lease({ telemetry: null }, {
+      leaseUntil: '2026-08-29T11:00:00.000Z',
+    }), { nowMs: NOW, expected: false });
+    assert.deepEqual(staleOptional, []);
+
+    const starting = evaluateWorkerHealth(definition, lease({}, {
+      acquiredAt: '2026-08-29T11:59:00.000Z',
+    }), { nowMs: NOW, expected: true });
+    assert.deepEqual(starting, []);
+  });
+
+  it('accepts scheduled idle components and their declared cadence', () => {
+    const callouts = getWorkerHealthDefinition('callout-capture-worker');
+    const issues = evaluateWorkerHealth(callouts, lease({ telemetry: {
+      running: true,
+      fomoFollow: { enabled: true, running: false, nextRunAt: '2026-08-29T12:03:00.000Z' },
+      retention: {
+        enabled: true, running: true, intervalMs: 300_000,
+        lastCompletedAt: '2026-08-29T11:56:00.000Z',
+      },
+    } }), { nowMs: NOW, expected: true });
+    assert.deepEqual(issues, []);
   });
 
   it('supports the dedicated liquidity worker metadata shape', () => {

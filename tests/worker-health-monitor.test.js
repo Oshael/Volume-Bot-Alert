@@ -67,6 +67,7 @@ describe('worker health monitor', () => {
     await harness.monitor.flush();
 
     assert.equal(harness.reconciliations[0].issues[0].code, 'lease_missing');
+    assert.equal(harness.reconciliations[0].recoveryGraceMs, 180_000);
     assert.deepEqual(harness.reconciliations[0].evaluatedComponents,
       ['test-worker', 'worker-health-monitor']);
     assert.equal(harness.notified.length, 1);

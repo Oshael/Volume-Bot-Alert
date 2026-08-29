@@ -44,6 +44,7 @@ describe('callout retention worker', () => {
       batchBudgetExhausted: false,
     });
     assert.equal(worker.getStatus().totalDeletedCallouts, 1007);
+    assert.equal(worker.getStatus().intervalMs, 60_000);
     assert.equal(clock.scheduled[1].delayMs, 60_000);
     await worker.stop();
     assert.equal(clock.cancelled.length, 1);

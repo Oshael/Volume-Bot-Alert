@@ -78,12 +78,14 @@ describe('runtime worker groups config', () => {
       WORKER_HEALTH_TELEGRAM_BOT_TOKEN: '', WORKER_HEALTH_TELEGRAM_CHAT_ID: '',
       FOMO_TELEGRAM_BOT_TOKEN: 'shared-ops-token', FOMO_TELEGRAM_CHAT_ID: '123456',
       WORKER_HEALTH_EXPECTED_COMPONENTS: 'catalog-worker,callout-capture-worker',
+      WORKER_HEALTH_RECOVERY_SECONDS: '240',
     }, (config) => {
       assert.equal(config.workerHealthMonitor.enabled, true);
       assert.equal(config.workerHealthMonitor.telegram.botToken, 'shared-ops-token');
       assert.equal(config.workerHealthMonitor.telegram.chatId, '123456');
       assert.deepEqual(config.workerHealthMonitor.expectedComponents,
         ['catalog-worker', 'callout-capture-worker']);
+      assert.equal(config.workerHealthMonitor.recoveryGraceMs, 240_000);
     });
   });
 

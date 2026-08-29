@@ -121,6 +121,9 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
         }).catch(() => {});
         status.totalDeferred += 1;
       }
+      if (error.code === 'blockscout_creation_pending') {
+        return { status: 'deferred', reason: error.code, tokenAddress: task?.tokenAddress || null };
+      }
       status.lastError = { code: error.code || 'deployment_resolution_failed', message: error.message };
       return null;
     } finally {
