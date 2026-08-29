@@ -106,6 +106,30 @@ describe('Robinhood Blockscout metadata client', () => {
     assert.equal(fallback.searchParams.get('apikey'), 'proapi_test');
   });
 
+  it('uses the PRO creation endpoint when the public address endpoint returns 403', async () => {
+    const creator = `0x${'2'.repeat(40)}`;
+    const transactionHash = `0x${'4'.repeat(64)}`;
+    const calls = [];
+    const client = createRobinhoodBlockscoutMetadataClient({
+      apiUrl: 'https://api.blockscout.com/v2/api?chain_id=4663',
+      apiKey: 'proapi_test',
+      fetchImpl: async (url) => {
+        calls.push(new URL(url));
+        if (calls.length === 1) return response(403, null);
+        return response(200, { status: '1', result: [{
+          contractAddress: TOKEN, contractCreator: creator, txHash: transactionHash,
+        }] });
+      },
+    });
+
+    assert.deepEqual(await client.getContractCreation(TOKEN), {
+      tokenAddress: TOKEN, creatorAddress: creator, transactionHash,
+    });
+    assert.equal(calls[1].origin, 'https://api.blockscout.com');
+    assert.equal(calls[1].searchParams.get('action'), 'getcontractcreation');
+    assert.equal(calls[1].searchParams.get('apikey'), 'proapi_test');
+  });
+
   it('does not treat an ordinary token transfer as a contract creation hint', async () => {
     let calls = 0;
     const client = createRobinhoodBlockscoutMetadataClient({
@@ -151,10 +175,11 @@ describe('Robinhood Blockscout metadata client', () => {
     const transactionHash = `0x${'4'.repeat(64)}`;
     const calls = [];
     const client = createRobinhoodBlockscoutMetadataClient({
+      apiUrl: 'https://api.blockscout.com/v2/api?chain_id=4663',
       apiKey: 'proapi_test',
       fetchImpl: async (url) => {
         calls.push(String(url));
-        if (calls.length === 1) return response(503, null);
+        if (calls.length === 1) return response(403, null);
         return response(200, { status: '1', message: 'OK', result: [{
           type: 'create2', isError: '0', transactionHash,
           contractAddress: TOKEN, from: factory,
@@ -168,6 +193,7 @@ describe('Robinhood Blockscout metadata client', () => {
     const fallback = new URL(calls[1]);
     assert.equal(fallback.searchParams.get('action'), 'txlistinternal');
     assert.equal(fallback.searchParams.get('txhash'), transactionHash);
+    assert.equal(fallback.origin, 'https://api.blockscout.com');
     assert.equal(fallback.searchParams.get('apikey'), 'proapi_test');
   });
 

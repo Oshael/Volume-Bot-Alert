@@ -169,7 +169,7 @@ function createRobinhoodBlockscoutMetadataClient(options = {}) {
     options.transactionBaseUrl || DEFAULT_TRANSACTION_BASE_URL
   ));
   const apiUrl = new URL(String(options.apiUrl || DEFAULT_API_URL));
-  const legacyApiUrl = new URL(String(options.legacyApiUrl || DEFAULT_API_URL));
+  const legacyApiUrl = new URL(String(options.legacyApiUrl || options.apiUrl || DEFAULT_API_URL));
   const apiKey = String(options.apiKey || '').trim();
   if (baseUrl.protocol !== 'https:') throw new TypeError('Blockscout metadata URL must use HTTPS');
   if (addressBaseUrl.protocol !== 'https:') throw new TypeError('Blockscout address URL must use HTTPS');
@@ -251,6 +251,9 @@ function createRobinhoodBlockscoutMetadataClient(options = {}) {
     let payload;
     try { payload = await request(address, addressBaseUrl, 'address'); }
     catch (error) {
+      if (apiKey && error?.httpStatus === 403) {
+        return (await getContractCreators([address]))[0];
+      }
       if (!isRetryableProviderError(error)) throw error;
       const url = legacyUrl();
       url.searchParams.set('module', 'account');
@@ -328,7 +331,8 @@ function createRobinhoodBlockscoutMetadataClient(options = {}) {
     });
     try { return await getNativeInternalCreation(hint); }
     catch (error) {
-      if (!isRetryableProviderError(error)) throw error;
+      const proFallback = apiKey && error?.httpStatus === 403;
+      if (!proFallback && !isRetryableProviderError(error)) throw error;
       return getLegacyInternalCreation(hint);
     }
   }

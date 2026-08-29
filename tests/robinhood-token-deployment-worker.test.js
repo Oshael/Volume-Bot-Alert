@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const { it } = require('node:test');
 const {
   createRobinhoodTokenDeploymentWorker,
+  __private: { buildRuntime },
 } = require('../src/services/robinhood-token-deployment-worker');
 
 const TOKEN = `0x${'a'.repeat(40)}`;
@@ -43,4 +44,27 @@ it('defers missing Blockscout evidence and skips already attributed tokens', asy
   const result = await createRobinhoodTokenDeploymentWorker({ runtime: exact.value, owner: 'test' }).runOnce();
   assert.equal(result.status, 'already-attributed');
   assert.deepEqual(exact.calls, ['complete']);
+});
+
+it('configures the Blockscout PRO API when the live worker has an API key', () => {
+  let blockscoutOptions;
+  buildRuntime({
+    env: {
+      RH_NODE_RPC_URL: 'http://127.0.0.1:8547',
+      ROBINHOOD_BLOCKSCOUT_API_KEY: 'proapi_test',
+    },
+    database: {},
+    rpcClientFactory: () => ({ request: async () => '0x1237' }),
+    blockscoutFactory: (options) => {
+      blockscoutOptions = options;
+      return { getContractCreation() {}, getInternalContractCreation() {} };
+    },
+    outboxFactory: () => ({}),
+    attributionFactory: () => ({}),
+    verifierFactory: () => ({}),
+  }, { timeoutMs: 30_000 });
+
+  assert.equal(blockscoutOptions.apiKey, 'proapi_test');
+  assert.equal(blockscoutOptions.apiUrl,
+    'https://api.blockscout.com/v2/api?chain_id=4663');
 });

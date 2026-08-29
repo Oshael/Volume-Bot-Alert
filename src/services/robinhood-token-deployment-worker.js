@@ -6,7 +6,7 @@ const {
 const { createRobinhoodTokenAttributionRepository } = require('../models/robinhood-token-attribution');
 const { createEvmJsonRpcClient } = require('./evm-json-rpc-client');
 const {
-  createRobinhoodBlockscoutMetadataClient, requestWithRetry,
+  createRobinhoodBlockscoutMetadataClient, DEFAULT_PRO_API_URL, requestWithRetry,
 } = require('./robinhood-blockscout-metadata');
 const { createRobinhoodHolderDeploymentVerifier } = require('./robinhood-holder-deployment-verifier');
 const { createPostgresRealtimeListener } = require('./postgres-realtime-listener');
@@ -40,9 +40,15 @@ function buildRuntime(deps, options) {
     providers: [{ name: 'robinhood-deployment-live', url: rpcUrl }],
     timeoutMs: options.timeoutMs, maxRetries: 1,
   });
-  const blockscout = (deps.blockscoutFactory || createRobinhoodBlockscoutMetadataClient)({
-    timeoutMs: options.timeoutMs,
-  });
+  const apiKey = String(env.ROBINHOOD_BLOCKSCOUT_API_KEY || '').trim();
+  const apiUrl = String(env.ROBINHOOD_BLOCKSCOUT_API_URL
+    || (apiKey ? DEFAULT_PRO_API_URL : '')).trim();
+  const blockscoutOptions = { timeoutMs: options.timeoutMs };
+  if (apiKey) blockscoutOptions.apiKey = apiKey;
+  if (apiUrl) blockscoutOptions.apiUrl = apiUrl;
+  const blockscout = (deps.blockscoutFactory || createRobinhoodBlockscoutMetadataClient)(
+    blockscoutOptions
+  );
   const sleep = deps.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   return Object.freeze({
     outbox: (deps.outboxFactory || createRobinhoodTokenDeploymentOutboxRepository)({ database }),
