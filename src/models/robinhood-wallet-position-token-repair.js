@@ -154,11 +154,41 @@ function createRobinhoodWalletPositionTokenRepairRepository(options = {}) {
               COUNT(*) FILTER (WHERE status = 'complete'
                 AND published_at IS NULL)::integer AS shadow_complete,
               COUNT(*) FILTER (WHERE published_at IS NOT NULL)::integer AS published,
+              MIN(source_from_block)::text AS earliest_source_block,
+              MAX(source_through_block)::text AS latest_source_block,
+              MIN(next_block) FILTER (WHERE published_at IS NULL)::text
+                AS earliest_pending_block,
+              MAX(source_through_block) FILTER (WHERE published_at IS NULL)::text
+                AS latest_pending_block,
               COALESCE(SUM(source_through_block - next_block + 1)
                 FILTER (WHERE published_at IS NULL), 0)::text AS remaining_block_span
          FROM robinhood_wallet_position_token_coverage
         WHERE chain = $1 AND projection_version = $2`,
       [CHAIN, targetVersion]
+    );
+    return Object.freeze(result.rows[0]);
+  }
+
+  async function preview() {
+    const result = await database.query(
+      `SELECT COUNT(*)::integer AS eligible,
+              COUNT(coverage.token_address)::integer AS initialized,
+              (COUNT(*) - COUNT(coverage.token_address))::integer AS missing,
+              MIN(transfer.source_from_block)::text AS earliest_source_block,
+              MAX(transfer.source_through_block)::text AS latest_source_block
+         FROM robinhood_wallet_transfer_token_coverage transfer
+         JOIN robinhood_holder_token_states state
+           ON state.chain = transfer.chain AND state.token_address = transfer.token_address
+         JOIN robinhood_wallet_position_cursors seed
+           ON seed.chain = transfer.chain AND seed.projection_version = $2
+          AND seed.stream = 'seed' AND seed.lifecycle_state = 'complete'
+         LEFT JOIN robinhood_wallet_position_token_coverage coverage
+           ON coverage.chain = transfer.chain AND coverage.projection_version = $2
+          AND coverage.token_address = transfer.token_address
+        WHERE transfer.chain = $1 AND transfer.projection_version = $3
+          AND transfer.status = 'complete' AND transfer.published_at IS NOT NULL
+          AND state.created_at > seed.created_at`,
+      [CHAIN, targetVersion, sourceVersion]
     );
     return Object.freeze(result.rows[0]);
   }
@@ -389,8 +419,9 @@ function createRobinhoodWalletPositionTokenRepairRepository(options = {}) {
     const tokenAddress = address(input.tokenAddress, 'tokenAddress');
     const maxAttempts = bounded(input.maxAttempts, 5, 1, 100, 'maxAttempts');
     const retryMs = bounded(input.retryMs, 60_000, 1_000, 86_400_000, 'retryMs');
-    const code = String(input.error?.code || 'position_token_repair_failed').slice(0, 128);
-    const message = String(input.error?.message || input.error || code).slice(0, 2_000);
+    const code = String(input.error?.code || 'position_token_repair_failed').toLowerCase()
+      .replace(/[^a-z0-9_:-]/g, '_').slice(0, 64);
+    const message = String(input.error?.message || input.error || code).slice(0, 500);
     const result = await database.query(
       `UPDATE robinhood_wallet_position_token_coverage SET
          status = CASE WHEN attempt_count >= $5::integer THEN 'failed' ELSE 'pending' END,
@@ -407,7 +438,8 @@ function createRobinhoodWalletPositionTokenRepairRepository(options = {}) {
   }
 
   return Object.freeze({
-    claim, claimBatch, commitShadowBatch, commitShadowRange, initialize, plan, recover, retry,
+    claim, claimBatch, commitShadowBatch, commitShadowRange,
+    initialize, plan, preview, recover, retry,
   });
 }
 

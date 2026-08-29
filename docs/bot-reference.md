@@ -1954,6 +1954,16 @@ O engine agrupa até 500 tokens que cruzam a mesma janela, captura até 16
 subfaixas em paralelo e grava posição shadow mais avanço dos cursores na mesma
 transação. Eventos anteriores ao cursor individual do token são descartados;
 essa etapa não promove a versão shadow para produção.
+`npm run robinhood:wallet-position-token-repair` é PostgreSQL/read-only por
+padrão e mostra elegíveis, inicializados, pendentes e a estimativa de janelas
+compartilhadas. No PC com `DATABASE_URL` e `RH_NODE_RPC_URL`, use
+`-- --confirm-repair-robinhood-wallet-positions --max-blocks=5000
+--window-concurrency=8 --token-batch-size=500 --max-operations=<N>` para gravar
+somente `unified_transfer_token_repair_v1`. Retomadas reutilizam os cursores;
+adicione `--retry-failed` apenas para reabrir falhas definitivas. O transfer LIVE
+pode permanecer ligado nesta fase porque cada candidato conserva sua frontier
+histórica congelada. A CLI informa progresso a cada 25 operações e nunca promove
+automaticamente a versão shadow.
 
 O materializador `rh_insider_direct_v1` aceita
 somente `creator_token_distribution`: transferência positiva, direta (um hop),

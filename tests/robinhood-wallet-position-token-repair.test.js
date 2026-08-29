@@ -32,6 +32,22 @@ test('initializes only published transfer repairs added after the position seed 
   ]);
 });
 
+test('normalizes retry errors to the durable schema contract', async () => {
+  let parameters;
+  const repository = createRobinhoodWalletPositionTokenRepairRepository({
+    database: { async query(_sql, params) {
+      parameters = params;
+      return { rows: [{ status: 'pending' }] };
+    } },
+  });
+  assert.equal(await repository.retry({
+    tokenAddress: TOKEN, owner: 'owner',
+    error: { code: 'POSITION REPAIR/CONFLICT', message: 'x'.repeat(600) },
+  }), 'pending');
+  assert.equal(parameters[6], 'position_repair_conflict');
+  assert.equal(parameters[7].length, 500);
+});
+
 test('replays a bounded range into shadow positions and advances token coverage', async () => {
   let committed;
   const coverage = {
