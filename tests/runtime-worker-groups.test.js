@@ -11,7 +11,7 @@ const WORKER_GROUPS = [
   'robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-derived',
   'robinhood-wallet', 'robinhood-backfill', 'robinhood-holders',
   'robinhood-holder-global', 'robinhood-wallet-classification', 'x-match', 'x-ingest',
-  'callouts',
+  'callouts', 'worker-health',
 ];
 
 function skippedExcept(...active) {
@@ -87,11 +87,11 @@ describe('runtime worker groups config', () => {
     });
   });
 
-  it('requires a complete ops Telegram path when the core monitor is enabled', () => {
+  it('requires a complete ops Telegram path in the dedicated monitor process', () => {
     const result = spawnSync(process.execPath, ['-e', "require('./config')"], {
       cwd: ROOT_DIR,
       env: {
-        ...process.env, BACKGROUND_WORKER_GROUPS: 'core',
+        ...process.env, BACKGROUND_WORKER_GROUPS: 'worker-health',
         WORKER_HEALTH_MONITOR_ENABLED: 'true',
         WORKER_HEALTH_TELEGRAM_BOT_TOKEN: '', WORKER_HEALTH_TELEGRAM_CHAT_ID: '',
         FOMO_TELEGRAM_BOT_TOKEN: '', FOMO_TELEGRAM_CHAT_ID: '',
@@ -101,6 +101,34 @@ describe('runtime worker groups config', () => {
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /WORKER_HEALTH_TELEGRAM_BOT_TOKEN/);
     assert.match(result.stderr, /WORKER_HEALTH_TELEGRAM_CHAT_ID/);
+  });
+
+  it('runs worker health only in its isolated group', () => {
+    withEnv({
+      BACKGROUND_WORKER_GROUPS: 'core', WORKER_HEALTH_MONITOR_ENABLED: 'true',
+    }, (config) => assert.equal(config.workerHealthMonitor.runsHere, false));
+    withEnv({
+      BACKGROUND_WORKER_GROUPS: 'worker-health', WORKER_HEALTH_MONITOR_ENABLED: 'true',
+      WORKER_HEALTH_TELEGRAM_BOT_TOKEN: 'token', WORKER_HEALTH_TELEGRAM_CHAT_ID: '123',
+    }, (config) => {
+      assert.equal(config.workerHealthMonitor.runsHere, true);
+      assert.deepEqual(config.runtime.workerGroupsActive, ['worker-health']);
+      assert.deepEqual(config.runtime.workerGroupsSkipped, skippedExcept('worker-health'));
+    });
+  });
+
+  it('ships the dedicated worker health runner and systemd configuration', () => {
+    assert.match(require('../package.json').scripts['start:worker:worker-health'],
+      /BACKGROUND_WORKER_GROUPS=worker-health node src\/utils\/run-worker-health-monitor/);
+    const systemdDir = path.join(ROOT_DIR, 'deploy', 'systemd');
+    const service = fs.readFileSync(
+      path.join(systemdDir, 'trendscope-worker@worker-health.service.example'), 'utf8'
+    );
+    const env = fs.readFileSync(path.join(systemdDir, 'worker-health.env.example'), 'utf8');
+    assert.match(service, /EnvironmentFile=\/etc\/trendscope\/worker-health\.env/);
+    assert.match(env, /WORKER_HEALTH_MONITOR_ENABLED=true/);
+    assert.match(env, /DB_POOL_MAX=3/);
+    assert.doesNotMatch(env, /^(?:DATABASE_URL|JWT_SECRET|DB_PASSWORD)=/m);
   });
 
   it('rejects combining the legacy maintenance alias with all', () => {

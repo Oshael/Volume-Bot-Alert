@@ -249,7 +249,7 @@ const ISOLATED_WORKER_GROUPS = Object.freeze([
   'robinhood-maintenance', 'robinhood', 'robinhood-head', 'robinhood-processing',
   'robinhood-derived', 'robinhood-wallet', 'robinhood-backfill', 'robinhood-holders',
   'robinhood-holder-global', 'robinhood-wallet-classification', 'x-match', 'x-ingest',
-  'callouts',
+  'callouts', 'worker-health',
 ]);
 const WORKER_GROUPS = Object.freeze([
   ...SHARED_WORKER_GROUPS,
@@ -500,7 +500,7 @@ const fomoTelegramChatId = String(
 ).trim();
 const workerHealthMonitorEnabled = parseBoolean(process.env.WORKER_HEALTH_MONITOR_ENABLED, false);
 const workerHealthMonitorRunsHere = workerHealthMonitorEnabled
-  && workerGroups.active.includes('core');
+  && workerGroups.active.includes('worker-health');
 const workerHealthTelegramBotToken = String(
   process.env.WORKER_HEALTH_TELEGRAM_BOT_TOKEN || fomoTelegramBotToken
 ).trim();

@@ -331,6 +331,7 @@ Grupos existentes:
 | Grupo | Responsabilidades principais |
 |---|---|
 | `core` | catálogo, descoberta DEX, risco/enrichment e review sync |
+| `worker-health` | monitor operacional isolado; somente leases, probes PostgreSQL, incidentes e Telegram |
 | `market` | Meteora, bid zone, GMGN discovery e claim signals |
 | `solana-maintenance` | catalog cleanup Solana; compartilhado e incluído por `all` |
 | `robinhood-maintenance` | Robinhood retention; isolado, destrutivo e sempre opt-in |
@@ -697,22 +698,26 @@ logs antes de escalar.
 
 ### 6.2 Monitor operacional de workers
 
-O monitor durável é opt-in por `WORKER_HEALTH_MONITOR_ENABLED=true` e roda apenas
-em processos cujo `BACKGROUND_WORKER_GROUPS` inclui `core`. Antes de habilitá-lo,
+O monitor durável é opt-in e roda somente no processo isolado
+`BACKGROUND_WORKER_GROUPS=worker-health`, iniciado por
+`npm run start:worker:worker-health`; o processo `core` não instancia o monitor.
+Na VPS2, use `trendscope-worker@worker-health.service`, o drop-in de
+`deploy/systemd/trendscope-worker@worker-health.service.example` e o env exclusivo
+baseado em `deploy/systemd/worker-health.env.example`. Antes de habilitá-lo,
 aplique `node src/utils/db-init-stage176.js` e confirme o runtime schema. A cada
-30 segundos por padrão, cada réplica lê `worker_leases` uma vez, avalia os sinais
+30 segundos por padrão, o processo lê `worker_leases` uma vez, avalia os sinais
 em memória e reconcilia incidentes no PostgreSQL. Claims com `SKIP LOCKED`,
-debounce, cooldown e retry impedem que réplicas enviem o mesmo aviso em paralelo.
+debounce, cooldown e retry impedem notificações duplicadas.
 
-Workers registrados pelo próprio processo são esperados automaticamente.
+Como o processo isolado não hospeda outros workers,
 `WORKER_HEALTH_EXPECTED_COMPONENTS` deve listar, por chave de lease e separado
-por vírgula, qualquer worker de outro processo/VPS que o monitor central também
-deve considerar obrigatório. Uma chave ausente dessa intenção não gera incidente
-por lease ausente; leases existentes continuam sendo avaliadas mesmo sem estarem
-na lista. Para desligamento planejado, remova a chave esperada ou registre uma
-janela em `worker_health_maintenance` (`component_key='*'` suspende tudo). Sem
-declaração explícita, o Telegram informa que o worker está desligado e pede para
-ignorar somente se a ação foi intencional.
+por vírgula, todos os workers permanentes que devem ser obrigatórios, inclusive
+`core-support-runtime` e `web-realtime-runtime`. Uma chave ausente dessa intenção
+não gera incidente depois que sua lease desaparece; leases existentes continuam
+sendo avaliadas enquanto presentes. Para desligamento planejado, remova a chave
+esperada ou registre uma janela em `worker_health_maintenance`
+(`component_key='*'` suspende tudo). Sem declaração explícita, o Telegram informa
+que o worker está desligado e pede para ignorar somente se a ação foi intencional.
 
 O notifier usa `WORKER_HEALTH_TELEGRAM_BOT_TOKEN` e
 `WORKER_HEALTH_TELEGRAM_CHAT_ID`; quando vazios, reutiliza
@@ -721,16 +726,17 @@ dos callouts. Intervalo, observações mínimas, cooldown, retry e timeout são
 limitados pelas variáveis `WORKER_HEALTH_*` documentadas em `.env.example`.
 Incidentes resolvidos geram uma única recuperação persistida.
 
-Esse monitor não substitui um watchdog externo: se o único processo `core`, o
-PostgreSQL ou a conectividade com o Telegram cair completamente, nenhum código
-dentro do bot consegue enviar o aviso. Systemd e um health check externo devem
-cobrir essa falha total.
+Esse monitor não substitui um watchdog externo: se o próprio processo
+`worker-health`, o PostgreSQL ou a conectividade com o Telegram cair
+completamente, nenhum código dentro do bot consegue enviar o aviso. Systemd e um
+health check externo devem cobrir essa falha total. Por estar separado, ele
+continua capaz de alertar quando o processo `core` desaparece.
 
 Cada processo publica no heartbeat já existente da lease um snapshot cacheado de
 RSS, uso do heap, atraso p99/máximo do event loop e espaço livre no filesystem da
 aplicação. O monitor avalia esse snapshot apenas uma vez por processo, mesmo que
-ele hospede vários workers. No processo `core`, também mede a latência da leitura
-de leases e a pressão do pool PostgreSQL. Se o banco impedir leitura ou
+ele hospede vários workers. No processo isolado, também mede a latência da leitura
+de leases e a pressão do seu pool PostgreSQL. Se o banco impedir leitura ou
 persistência, envia um fallback direto e deduplicado em memória ao Telegram, com
 recuperação quando o controle durável voltar. Os limites são configurados pelas
 variáveis `WORKER_HEALTH_DB_*`, `WORKER_HEALTH_WAL_*`, `WORKER_HEALTH_MAX_*` e
@@ -753,11 +759,11 @@ Para ativar em produção sem alarmes de rollout:
 1. aplique a Stage 176 e execute `npm run db:schema-check`;
 2. publique primeiro todos os processos ainda com o monitor desabilitado;
 3. confirme em `worker_leases` que as leases esperadas estão renovando;
-4. no processo `core`, configure `WORKER_HEALTH_EXPECTED_COMPONENTS` com as
-   chaves dos processos remotos obrigatórios — inclua `web-realtime-runtime`
-   quando web e core são processos separados;
-5. configure/teste o destino Telegram e só então habilite
-   `WORKER_HEALTH_MONITOR_ENABLED=true` no core.
+4. instale `/etc/trendscope/worker-health.env` com todas as leases permanentes em
+   `WORKER_HEALTH_EXPECTED_COMPONENTS` e o destino Telegram;
+5. instale o drop-in da unit e execute `systemctl daemon-reload`;
+6. habilite `trendscope-worker@worker-health.service` e valide logs, incidentes e
+   uma notificação controlada. Não reinicie o core para alterar o monitor.
 
 Antes de uma parada planejada, retire temporariamente a chave da lista esperada
 ou crie uma janela explícita. Exemplo SQL para uma janela de 30 minutos:

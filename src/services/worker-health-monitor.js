@@ -15,7 +15,7 @@ function positiveInteger(value, fallback) {
 
 const CONTROL_PLANE = Object.freeze({
   key: 'worker-health-monitor', label: 'Worker health monitor',
-  group: 'core', groups: ['core'], thresholds: {},
+  group: 'worker-health', groups: ['worker-health'], thresholds: {},
 });
 
 function healthIssue(code, severity, path, observedValue, threshold) {

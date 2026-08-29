@@ -148,6 +148,7 @@ npm run start:worker:robinhood-maintenance
 npm run start:worker:maintenance
 npm run start:worker:robinhood
 npm run start:worker:robinhood-backfill
+npm run start:worker:worker-health
 npm run dev
 npm run dev:web
 npm run dev:worker
