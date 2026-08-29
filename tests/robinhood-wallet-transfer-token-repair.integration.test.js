@@ -20,7 +20,9 @@ const { assertUsingTestDatabase } = require('./helpers/test-db');
 const TOKEN = `0x${'8'.repeat(40)}`;
 const TOKEN_TWO = `0x${'4'.repeat(40)}`;
 const TOKEN_THREE = `0x${'5'.repeat(40)}`;
-const TEST_TOKENS = [TOKEN, TOKEN_TWO, TOKEN_THREE];
+const TOKEN_FOUR = `0x${'1'.repeat(40)}`;
+const TOKEN_FIVE = `0x${'2'.repeat(40)}`;
+const TEST_TOKENS = [TOKEN, TOKEN_TWO, TOKEN_THREE, TOKEN_FOUR, TOKEN_FIVE];
 const FROM = `0x${'6'.repeat(40)}`;
 const TO = `0x${'7'.repeat(40)}`;
 const HASH = `0x${'a'.repeat(64)}`;
@@ -190,5 +192,26 @@ describe('Robinhood wallet-transfer token repair persistence', () => {
     ]);
     const plan = await repository.plan();
     assert.deepEqual([plan.earliest_pending_block, plan.latest_pending_block], ['150', '199']);
+  });
+
+  it('finishes the nearest frontier cohort before advancing distant cursors', async () => {
+    await db.query(
+      `INSERT INTO robinhood_wallet_transfer_token_coverage (
+         projection_version, token_address, source_from_block, next_block,
+         source_through_block, source_through_hash
+       ) VALUES ($1, $2, 100, 100, 999, $4), ($1, $3, 100, 950, 999, $4)`,
+      [TARGET_TEST_VERSION, TOKEN_FOUR, TOKEN_FIVE, HASH]
+    );
+    const repository = createRobinhoodWalletTransferTokenRepairRepository({
+      targetVersion: TARGET_TEST_VERSION, shadowVersion: SHADOW_TEST_VERSION,
+    });
+
+    const claimed = await repository.claimBatch({
+      owner: 'finish-first-owner', maxBlocks: 50, limit: 10,
+    });
+
+    assert.deepEqual(claimed.map(({ tokenAddress, nextBlock }) => (
+      [tokenAddress, nextBlock]
+    )), [[TOKEN_FIVE, '950']]);
   });
 });

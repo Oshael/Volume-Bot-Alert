@@ -132,20 +132,23 @@ function createRobinhoodWalletTransferTokenRepairRepository(options = {}) {
     const result = await database.query(
       `WITH frontier AS MATERIALIZED (
          SELECT next_block,
+                GREATEST(0, next_block - $5::bigint + 1) AS lower_block,
                 LEAST(source_through_block, next_block + $5::bigint - 1) AS upper_block
            FROM robinhood_wallet_transfer_token_coverage
           WHERE chain = $1 AND projection_version = $2 AND status = 'pending'
             AND next_attempt_at <= NOW()
-          ORDER BY next_block, token_address LIMIT 1
+          ORDER BY source_through_block - next_block, token_address LIMIT 1
        ), candidates AS MATERIALIZED (
          SELECT coverage.token_address
            FROM robinhood_wallet_transfer_token_coverage coverage
            CROSS JOIN frontier
           WHERE coverage.chain = $1 AND coverage.projection_version = $2
             AND coverage.status = 'pending' AND coverage.next_attempt_at <= NOW()
+            AND coverage.next_block >= frontier.lower_block
             AND coverage.next_block <= frontier.upper_block
             AND coverage.source_through_block >= frontier.upper_block
-          ORDER BY coverage.next_block, coverage.token_address
+          ORDER BY coverage.source_through_block - coverage.next_block,
+                   coverage.next_block DESC, coverage.token_address
           LIMIT $6 FOR UPDATE OF coverage SKIP LOCKED
        ) UPDATE robinhood_wallet_transfer_token_coverage coverage SET
            status = 'leased', lease_owner = $3,
