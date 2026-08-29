@@ -1874,6 +1874,11 @@ continua privado.
 Para uma campanha com ETA limitado, pause temporariamente somente
 `ROBINHOOD_WALLET_TRANSFER_LIVE_ENABLED`, rode o repair até `pending=0`,
 `leased=0`, `failed=0` e `shadow_complete=0`, e então reative o writer LIVE. Os
+runs confirmados recusam iniciar enquanto a lease
+`robinhood-wallet-transfer-live-worker` estiver ativa, congelam bloco/hash `F`
+do cursor e os revalidam antes de cada operação; religar o LIVE antecipadamente
+encerra o repair antes da próxima promoção. Depois da publicação até `F`, o
+writer LIVE retoma do `next_block` persistido (`F+1`) e alcança o head.
 ranges são idempotentes e retomáveis; não reinicie o seed global nem apague os
 ranges concluídos. Leases expiradas são retomadas automaticamente; use
 `--retry-failed` junto da confirmação somente após corrigir a causa da falha.

@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const {
-  CONFIRM_FLAG, main, parseArgs,
+  CONFIRM_FLAG, main, parseArgs, requirePausedLiveFrontier,
 } = require('../src/utils/repair-robinhood-wallet-transfer-tokens');
 
 describe('Robinhood token-scoped transfer repair CLI', () => {
@@ -42,10 +42,16 @@ describe('Robinhood token-scoped transfer repair CLI', () => {
     const logs = [];
     let promotionAttempts = 0;
     let runtimeAttempts = 0;
+    let guardCalls = 0;
     const report = await main([CONFIRM_FLAG, '--max-operations=1'], {
       database: {},
       logger: { log() {}, error: (message) => logs.push(message) },
       sleep: async (ms) => { waits.push(ms); },
+      frontierGuard: async (_database, expected) => {
+        guardCalls += 1;
+        if (expected) assert.deepEqual(expected, { block: '100', hash: '0xabc' });
+        return { block: '100', hash: '0xabc' };
+      },
       repositoryFactory: () => ({
         async plan() { return { candidates: 1, pending: 1 }; },
         async initialize() { return { inserted: 0 }; },
@@ -72,8 +78,50 @@ describe('Robinhood token-scoped transfer repair CLI', () => {
     assert.equal(report.mode, 'apply');
     assert.equal(promotionAttempts, 2);
     assert.equal(runtimeAttempts, 2);
+    assert.equal(guardCalls, 2);
+    assert.deepEqual(report.pausedFrontier, { block: '100', hash: '0xabc' });
     assert.deepEqual(waits, [250, 250]);
     assert.match(logs[0], /DB acquisition retry operation=promoteNext attempt=1/);
     assert.match(logs[1], /DB acquisition retry operation=buildRuntime attempt=1/);
+  });
+
+  it('requires a paused LIVE lease and preserves one fixed frontier', async () => {
+    const rows = [{
+      next_block: '101', checkpoint_block: '100', checkpoint_hash: '0xabc',
+      lifecycle_state: 'running', live_worker_active: false,
+    }];
+    const database = { async query() { return { rows }; } };
+
+    const frontier = await requirePausedLiveFrontier(database);
+    assert.deepEqual(frontier, { block: '100', hash: '0xabc' });
+    await assert.rejects(
+      requirePausedLiveFrontier(database, { block: '99', hash: '0xdef' }),
+      (error) => error.code === 'token_repair_live_frontier_moved'
+    );
+
+    rows[0] = { ...rows[0], live_worker_active: true };
+    await assert.rejects(
+      requirePausedLiveFrontier(database),
+      (error) => error.code === 'token_repair_live_worker_active'
+    );
+  });
+
+  it('refuses apply before recovery when the LIVE worker is active', async () => {
+    let mutations = 0;
+    await assert.rejects(main([CONFIRM_FLAG], {
+      database: {}, logger: { log() {} },
+      frontierGuard: async () => {
+        const error = new Error('LIVE worker active');
+        error.code = 'token_repair_live_worker_active';
+        throw error;
+      },
+      repositoryFactory: () => ({
+        async plan() { return { candidates: 1, pending: 1 }; },
+        async initialize() { mutations += 1; },
+        async recover() { mutations += 1; },
+        async getProgress() { return { pending: 1 }; },
+      }),
+    }), (error) => error.code === 'token_repair_live_worker_active');
+    assert.equal(mutations, 0);
   });
 });
