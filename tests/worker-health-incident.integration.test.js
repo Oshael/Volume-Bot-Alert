@@ -48,21 +48,15 @@ describe('worker health incident persistence', () => {
     assert.equal(second[0].status, 'open');
     assert.equal(second[0].consecutiveObservations, 2);
 
-    const [claimed] = await incidents.claimNotifications({
-      owner: 'health-integration-a', cooldownMs: 60_000,
-    });
+    const [claimed] = await incidents.claimNotifications({ owner: 'health-integration-a' });
     assert.equal(claimed.notificationKind, 'incident');
     await incidents.releaseNotificationClaim({
       incidentKey: incident.id, owner: 'health-integration-a', kind: 'incident', retryMs: 60_000,
     });
-    assert.deepEqual(await incidents.claimNotifications({
-      owner: 'health-integration-retry', cooldownMs: 60_000,
-    }), []);
+    assert.deepEqual(await incidents.claimNotifications({ owner: 'health-integration-retry' }), []);
     await db.query(`UPDATE worker_health_incidents SET notification_next_attempt_at = NOW()
       WHERE incident_key = $1`, [incident.id]);
-    const [reclaimed] = await incidents.claimNotifications({
-      owner: 'health-integration-a', cooldownMs: 60_000,
-    });
+    const [reclaimed] = await incidents.claimNotifications({ owner: 'health-integration-a' });
     assert.equal(reclaimed.notificationKind, 'incident');
     const stale = await incidents.markNotificationSent({
       incidentKey: incident.id, owner: 'stale-owner', kind: 'incident',
@@ -72,32 +66,28 @@ describe('worker health incident persistence', () => {
       incidentKey: incident.id, owner: 'health-integration-a', kind: 'incident',
     });
     assert.equal(sent.notificationCount, 1);
-    assert.deepEqual(await incidents.claimNotifications({
-      owner: 'health-integration-b', cooldownMs: 60_000,
-    }), []);
+    assert.deepEqual(await incidents.claimNotifications({ owner: 'health-integration-b' }), []);
+    await db.query(`UPDATE worker_health_incidents
+      SET last_notified_at = NOW() - INTERVAL '30 days', notification_next_attempt_at = NOW()
+      WHERE incident_key = $1`, [incident.id]);
+    assert.deepEqual(await incidents.claimNotifications({ owner: 'health-integration-old' }), []);
 
     const [resolved] = await incidents.reconcile({
       issues: [], evaluatedComponents: [componentKey], minimumObservations: 2,
     });
     assert.equal(resolved.status, 'resolved');
-    const [recovery] = await incidents.claimNotifications({
-      owner: 'health-integration-b', cooldownMs: 60_000,
-    });
+    const [recovery] = await incidents.claimNotifications({ owner: 'health-integration-b' });
     assert.equal(recovery.notificationKind, 'recovery');
     await incidents.markNotificationSent({
       incidentKey: incident.id, owner: 'health-integration-b', kind: 'recovery',
     });
-    assert.deepEqual(await incidents.claimNotifications({
-      owner: 'health-integration-c', cooldownMs: 60_000,
-    }), []);
+    assert.deepEqual(await incidents.claimNotifications({ owner: 'health-integration-c' }), []);
     await db.query(`UPDATE worker_health_incidents
       SET notification_next_attempt_at = NOW() + INTERVAL '1 hour' WHERE incident_key = $1`,
     [incident.id]);
     await incidents.reconcile({ issues: [incident], evaluatedComponents: [componentKey] });
     await incidents.reconcile({ issues: [incident], evaluatedComponents: [componentKey] });
-    const [reopened] = await incidents.claimNotifications({
-      owner: 'health-integration-reopen', cooldownMs: 60_000,
-    });
+    const [reopened] = await incidents.claimNotifications({ owner: 'health-integration-reopen' });
     assert.equal(reopened.notificationKind, 'incident');
   });
 
@@ -110,9 +100,7 @@ describe('worker health incident persistence', () => {
       issues: [incident], evaluatedComponents: [componentKey], minimumObservations: 1,
     });
     assert.deepEqual(suppressed, []);
-    assert.deepEqual(await incidents.claimNotifications({
-      owner: 'health-maintenance-a', cooldownMs: 60_000,
-    }), []);
+    assert.deepEqual(await incidents.claimNotifications({ owner: 'health-maintenance-a' }), []);
 
     await incidents.cancelMaintenance(maintenance.id);
     const [opened] = await incidents.reconcile({
@@ -120,8 +108,8 @@ describe('worker health incident persistence', () => {
     });
     assert.equal(opened.status, 'open');
     const claims = await Promise.all([
-      incidents.claimNotifications({ owner: 'health-maintenance-a', cooldownMs: 60_000 }),
-      incidents.claimNotifications({ owner: 'health-maintenance-b', cooldownMs: 60_000 }),
+      incidents.claimNotifications({ owner: 'health-maintenance-a' }),
+      incidents.claimNotifications({ owner: 'health-maintenance-b' }),
     ]);
     assert.equal(claims.flat().length, 1);
   });

@@ -161,7 +161,6 @@ async function claimNotifications(input = {}, runner) {
   const owner = text(input.owner, 'notification owner', 128);
   const limit = integer(input.limit, 'notification claim limit', 25, 1, 100);
   const leaseMs = integer(input.leaseMs, 'notification lease', 60_000, 1_000, 600_000);
-  const cooldownMs = integer(input.cooldownMs, 'notification cooldown', 3_600_000, 1_000, 86_400_000);
   const { rows } = await database(runner).query(
     `WITH claimable AS MATERIALIZED (
        SELECT incidents.incident_key,
@@ -170,8 +169,7 @@ async function claimNotifications(input = {}, runner) {
        WHERE (incidents.notification_claim_until IS NULL
            OR incidents.notification_claim_until <= NOW())
          AND incidents.notification_next_attempt_at <= NOW()
-         AND ((incidents.status = 'open' AND (incidents.last_notified_at IS NULL
-              OR incidents.last_notified_at <= NOW() - ($4::int * INTERVAL '1 millisecond')))
+         AND ((incidents.status = 'open' AND incidents.last_notified_at IS NULL)
            OR (incidents.status = 'resolved' AND incidents.opened_at IS NOT NULL
               AND incidents.recovery_notified_at IS NULL))
          AND NOT EXISTS (SELECT 1 FROM worker_health_maintenance maintenance
@@ -187,7 +185,7 @@ async function claimNotifications(input = {}, runner) {
            updated_at = NOW()
        FROM claimable WHERE incidents.incident_key = claimable.incident_key
        RETURNING incidents.*, claimable.kind AS notification_kind`,
-    [limit, owner, leaseMs, cooldownMs]
+    [limit, owner, leaseMs]
   );
   return rows.map(mapIncident);
 }

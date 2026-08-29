@@ -722,9 +722,11 @@ que o worker está desligado e pede para ignorar somente se a ação foi intenci
 O notifier usa `WORKER_HEALTH_TELEGRAM_BOT_TOKEN` e
 `WORKER_HEALTH_TELEGRAM_CHAT_ID`; quando vazios, reutiliza
 `FOMO_TELEGRAM_BOT_TOKEN` e `FOMO_TELEGRAM_CHAT_ID`, o mesmo canal operacional
-dos callouts. Intervalo, observações mínimas, cooldown, retry e timeout são
+dos callouts. Intervalo, observações mínimas, retry e timeout são
 limitados pelas variáveis `WORKER_HEALTH_*` documentadas em `.env.example`.
-Incidentes resolvidos geram uma única recuperação persistida.
+Cada ocorrência gera um único aviso enquanto permanecer aberta; falhas de envio
+continuam sendo tentadas até a entrega. Depois da recuperação persistida, uma
+nova ocorrência do mesmo problema rearma um novo aviso.
 Os avisos de incidente e recuperação identificam o componente interno, o grupo
 de processo e a unit systemd. Quando a lease informa um único grupo concreto, o
 Telegram também inclui o comando `journalctl` pronto para os logs daquela unit.

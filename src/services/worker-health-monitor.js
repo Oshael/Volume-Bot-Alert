@@ -45,7 +45,6 @@ function createWorkerHealthMonitor(options = {}, deps = {}) {
   const localExpected = options.expectedComponentsProvider || (() => []);
   const intervalMs = positiveInteger(options.intervalMs, 30_000);
   const minimumObservations = positiveInteger(options.minimumObservations, 2);
-  const cooldownMs = positiveInteger(options.cooldownMs, 3_600_000);
   const retryMs = positiveInteger(options.retryMs, 30_000);
   const runtimeThresholds = options.runtimeThresholds || {};
   const maxDatabaseLatencyMs = positiveInteger(options.maxDatabaseLatencyMs, 2_000);
@@ -190,7 +189,7 @@ function createWorkerHealthMonitor(options = {}, deps = {}) {
         ],
         minimumObservations, observedAt: new Date(now()),
       });
-      const claims = await incidents.claimNotifications({ owner, cooldownMs });
+      const claims = await incidents.claimNotifications({ owner });
       persistenceReady = true;
       await reportControlPlaneRecovery();
       const deliveries = await Promise.allSettled(claims.map(deliver));
