@@ -1,6 +1,27 @@
 const db = require('./db');
 
 const CHAIN = 'robinhood';
+const BARRIERS_SQL = `WITH actors AS MATERIALIZED (
+  SELECT DISTINCT actor.address, actor.observed_block::bigint AS observed_block
+    FROM jsonb_to_recordset($2::jsonb) AS actor(address text, observed_block text)
+) SELECT DISTINCT actor.address
+  FROM actors actor
+  WHERE EXISTS (
+    SELECT 1 FROM robinhood_infrastructure_registry infrastructure
+     WHERE infrastructure.chain = $1 AND infrastructure.address = actor.address
+       AND infrastructure.valid_from_block <= actor.observed_block
+       AND (infrastructure.valid_through_block IS NULL
+         OR infrastructure.valid_through_block >= actor.observed_block)
+  ) OR EXISTS (
+    SELECT 1 FROM robinhood_pool_registry pool
+     WHERE pool.chain = $1 AND pool.protocol IN ('uniswap-v2', 'uniswap-v3')
+       AND pool.discovery_block <= actor.observed_block AND pool.pool_address = actor.address
+  ) ORDER BY actor.address`;
+const V4_ORIGINS_SQL = `SELECT origin_address AS address,
+       MIN(discovery_block)::text AS discovery_block
+  FROM robinhood_pool_registry
+ WHERE chain = $1 AND protocol = 'uniswap-v4' AND origin_address IS NOT NULL
+ GROUP BY origin_address`;
 const CANDIDATES_SQL = `SELECT buy.token_address, buy.wallet_address,
        anchor.launch_block::text, buy.block_number::text AS first_buy_block,
        buy.transaction_index::text AS first_buy_transaction_index
@@ -36,6 +57,11 @@ const CANDIDATES_SQL = `SELECT buy.token_address, buy.wallet_address,
 
 function createRobinhoodBundleFundingLiveSource(options = {}) {
   const database = options.database || db;
+  let v4OriginsPromise;
+  async function loadV4Origins() {
+    v4OriginsPromise ||= database.query(V4_ORIGINS_SQL, [CHAIN]).then(({ rows }) => rows);
+    return v4OriginsPromise.catch((error) => { v4OriginsPromise = null; throw error; });
+  }
   async function loadCandidates(task) {
     const { rows } = await database.query(CANDIDATES_SQL, [
       CHAIN, task.tokenAddress, task.anchorBlock, task.sourceThroughBlock,
@@ -47,9 +73,33 @@ function createRobinhoodBundleFundingLiveSource(options = {}) {
       firstBuyTransactionIndex: row.first_buy_transaction_index,
     })));
   }
-  return Object.freeze({ loadCandidates });
+  async function loadBarrierAddresses(candidates, evidence) {
+    const actors = new Map();
+    const add = (address, observedBlock) => actors.set(`${address}:${observedBlock}`, {
+      address, observed_block: String(observedBlock),
+    });
+    for (const item of candidates) add(item.walletAddress, item.firstBuyBlock);
+    for (const item of evidence) {
+      add(item.fromAddress, item.blockNumber); add(item.toAddress, item.blockNumber);
+    }
+    const actorRows = [...actors.values()];
+    const [barriers, v4Origins] = await Promise.all([
+      database.query(BARRIERS_SQL, [CHAIN, JSON.stringify(actorRows)]),
+      loadV4Origins(),
+    ]);
+    const addresses = new Set(barriers.rows.map(({ address }) => address));
+    for (const origin of v4Origins) {
+      if (actorRows.some((actor) => actor.address === origin.address
+          && BigInt(actor.observed_block) >= BigInt(origin.discovery_block))) {
+        addresses.add(origin.address);
+      }
+    }
+    return Object.freeze([...addresses].sort());
+  }
+  return Object.freeze({ loadCandidates, loadBarrierAddresses });
 }
 
 module.exports = {
-  createRobinhoodBundleFundingLiveSource, __private: { CANDIDATES_SQL },
+  createRobinhoodBundleFundingLiveSource,
+  __private: { BARRIERS_SQL, CANDIDATES_SQL, V4_ORIGINS_SQL },
 };

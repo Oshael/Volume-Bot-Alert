@@ -4991,6 +4991,19 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage174-robinhood-possible-bundle-live-lineage',
+    name: 'Stage 174 Robinhood BUNDLED live lineage',
+    repair: 'node src/utils/db-init-stage174.js',
+    tables: [{
+      table: 'robinhood_possible_bundle_states',
+      columns: ['source_version'],
+      constraints: [{
+        name: 'rh_possible_bundle_states_source_check',
+        includes: ['source_kind', 'source_run_id', 'source_version', 'seed', 'live'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

@@ -1721,6 +1721,12 @@ congela as early wallets do token, valida chain `4663`, lê full blocks somente 
 `RH_NODE_RPC_URL` Archive e substitui evidência + ACK na mesma transação. Tokens
 com menos de duas candidatas concluem com evidência vazia; erros usam backoff e
 leases expiradas são recuperáveis. Sem Archive na VPS, o start falha fechado.
+A Stage 174 acrescenta `source_version` aos snapshots BUNDLED. O mesmo worker
+materializa `rh_possible_bundle_v1` com lookback de 1.000 blocos e threshold fixo
+de `25000000000000000` wei (0,025 moeda nativa), resolvendo barreiras no
+PostgreSQL. Evidência, grupos/membros live e ACK da versão exata são commitados
+na mesma transação; uma versão invalidada durante a leitura não substitui o
+snapshot. O fluxo permanece shadow e não aparece na API/UI.
 A Stage 156 adiciona o índice concorrente `(chain, token_address, discovery_block)`
 ao registry. A recorrência começa pelas compras da wallet e consulta a origem
 somente dos tokens encontrados, sem reagregar todas as pools por wallet candidata;
@@ -1738,7 +1744,8 @@ com `systemctl edit`. O env específico contém somente flags e o `run-id`; banc
 segredos continuam vindo do `.env` global já carregado pelo processo. O script
 não força nenhum subworker: first-buy, SNIPER,
 posição e transfers obedecem exclusivamente às respectivas flags do env. Antes
-do primeiro start, aplique as Stages 149, 151, 152, 155, 156 e 157, confirme o seed concluído e
+do primeiro start, aplique as Stages 149, 151, 152, 155, 156, 157 e, para BUNDLED
+live, 171–174; confirme o seed concluído e
 execute `npm run db:schema-check`. Processo `active` não basta: confirme as leases
 `robinhood-first-buy-live-worker` e `robinhood-sniper-shadow-worker`, heartbeat
 recente, `metadata.telemetry.running=true`, `totalRuns` crescente e

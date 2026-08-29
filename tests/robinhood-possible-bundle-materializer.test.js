@@ -97,4 +97,14 @@ describe('Robinhood possible bundle materializer', () => {
       evidence(A, 3, F, A, 10),
     ]), /hop must be 1 or 2/);
   });
+
+  it('records a versioned live lineage without a seed run', () => {
+    const result = materialize([candidate(A), candidate(B)], [], {
+      sourceKind: 'live', sourceRunId: null, sourceVersion: '7',
+    });
+    assert.deepEqual({ sourceKind: result.state.sourceKind,
+      sourceRunId: result.state.sourceRunId, sourceVersion: result.state.sourceVersion }, {
+      sourceKind: 'live', sourceRunId: null, sourceVersion: '7',
+    });
+  });
 });

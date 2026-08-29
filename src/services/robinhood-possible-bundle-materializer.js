@@ -16,6 +16,21 @@ function unsigned(value, label) {
   return BigInt(normalized);
 }
 
+function sourceLineage(input) {
+  const sourceKind = String(input.sourceKind || '');
+  if (sourceKind === 'seed') {
+    const sourceRunId = unsigned(input.sourceRunId, 'sourceRunId');
+    if (sourceRunId < 1n) throw new Error('possible bundle source is invalid');
+    return { sourceKind, sourceRunId: sourceRunId.toString(), sourceVersion: null };
+  }
+  if (sourceKind === 'live') {
+    const sourceVersion = unsigned(input.sourceVersion, 'sourceVersion');
+    if (sourceVersion < 1n) throw new Error('possible bundle source is invalid');
+    return { sourceKind, sourceRunId: null, sourceVersion: sourceVersion.toString() };
+  }
+  throw new Error('possible bundle source is invalid');
+}
+
 function candidateRow(item, tokenAddress) {
   if (address(item.tokenAddress, 'candidate tokenAddress') !== tokenAddress) {
     throw new Error('candidate token does not match materialization token');
@@ -229,9 +244,7 @@ function materializePossibleBundles(input = {}) {
   if (input.evidenceVersion !== EVIDENCE_VERSION) {
     throw new Error(`possible bundle evidence version must be ${EVIDENCE_VERSION}`);
   }
-  if (input.sourceKind !== 'seed' || unsigned(input.sourceRunId, 'sourceRunId') < 1n) {
-    throw new Error('possible bundle seed source is invalid');
-  }
+  const { sourceKind, sourceRunId, sourceVersion } = sourceLineage(input);
   const throughBlockNumber = unsigned(input.throughBlockNumber, 'throughBlockNumber');
   const throughBlockHash = String(input.throughBlockHash || '').toLowerCase();
   if (!/^0x[0-9a-f]{64}$/.test(throughBlockHash)) throw new Error('throughBlockHash is invalid');
@@ -278,7 +291,7 @@ function materializePossibleBundles(input = {}) {
     state: Object.freeze({ tokenAddress, ruleVersion: RULE_VERSION,
       evidenceVersion: EVIDENCE_VERSION, status: 'ready',
       statusReason: groups.length ? 'groups_found' : 'no_groups',
-      sourceKind: input.sourceKind, sourceRunId: String(input.sourceRunId),
+      sourceKind, sourceRunId, sourceVersion,
       lookbackBlocks: lookbackBlocks.toString(), minimumValueWei: minimumValueWei.toString(),
       throughBlockNumber: throughBlockNumber.toString(), throughBlockHash }),
     groups: Object.freeze(groups),

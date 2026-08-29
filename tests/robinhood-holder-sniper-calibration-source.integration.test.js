@@ -20,11 +20,17 @@ const stage149 = require('../src/utils/db-init-stage149');
 const stage155 = require('../src/utils/db-init-stage155');
 const stage156 = require('../src/utils/db-init-stage156');
 const stage157 = require('../src/utils/db-init-stage157');
+const stage167 = require('../src/utils/db-init-stage167');
+const stage168 = require('../src/utils/db-init-stage168');
 const stage172 = require('../src/utils/db-init-stage172');
 const stage173 = require('../src/utils/db-init-stage173');
+const stage174 = require('../src/utils/db-init-stage174');
 const {
   createRobinhoodBundleFundingLiveQueueRepository,
 } = require('../src/models/robinhood-bundle-funding-live-queue');
+const {
+  createRobinhoodBundleFundingLiveSource,
+} = require('../src/models/robinhood-bundle-funding-live-source');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const WALLET = `0x${'d'.repeat(40)}`;
@@ -36,16 +42,21 @@ describe('Robinhood SNIPER population calibration source integration', () => {
     for (const stage of [
       stage63, stage90, stage110, stage116, stage139, stage145, stage149, stage155,
       stage156, stage157,
-      stage172,
-      stage173,
+      stage167, stage168, stage172, stage173, stage174,
     ]) {
       await stage.init({ closePool: false });
     }
+    await db.query('DELETE FROM robinhood_possible_bundle_members');
+    await db.query('DELETE FROM robinhood_possible_bundle_groups');
+    await db.query('DELETE FROM robinhood_possible_bundle_states');
     await db.query('DELETE FROM robinhood_token_launch_anchors');
     await db.query('DELETE FROM robinhood_bundle_funding_live_queue');
   });
 
   after(async () => {
+    await db.query('DELETE FROM robinhood_possible_bundle_members');
+    await db.query('DELETE FROM robinhood_possible_bundle_groups');
+    await db.query('DELETE FROM robinhood_possible_bundle_states');
     await db.query('DELETE FROM robinhood_bundle_funding_live_evidence');
     await db.query('DELETE FROM robinhood_bundle_funding_live_queue');
     await db.query('DELETE FROM robinhood_token_launch_anchors');
@@ -89,16 +100,29 @@ describe('Robinhood SNIPER population calibration source integration', () => {
     assert.equal(await queue.complete({ ...task, owner: 'integration' }), false);
     const latest = await queue.claim({ owner: 'integration', leaseMs: 60_000 });
     assert.equal(latest.requestedVersion, '2');
-    assert.equal(await queue.replaceEvidenceAndComplete({
+    const snapshot = { state: { tokenAddress: TOKEN,
+      ruleVersion: 'rh_possible_bundle_v1', evidenceVersion: 'rh_native_funding_v2',
+      status: 'ready', statusReason: 'no_groups', sourceKind: 'live',
+      sourceRunId: null, sourceVersion: latest.requestedVersion,
+      lookbackBlocks: latest.lookbackBlocks, minimumValueWei: '25000000000000000',
+      throughBlockNumber: latest.sourceThroughBlock, throughBlockHash: `0x${'b'.repeat(64)}` },
+    groups: [], members: [] };
+    assert.deepEqual(await queue.replaceEvidenceAndComplete({
       ...latest, owner: 'integration', evidence: [{ candidateWallet: WALLET, hop: 1,
         blockNumber: '99', blockHash: `0x${'b'.repeat(64)}`,
         blockTime: '2026-08-21T11:59:00Z', transactionHash: `0x${'c'.repeat(64)}`,
-        transactionIndex: '0', fromAddress: TOKEN, toAddress: WALLET, valueWei: '1' }],
-    }), true);
+        transactionIndex: '0', fromAddress: TOKEN, toAddress: WALLET, valueWei: '1' }], snapshot,
+    }), { completed: true, snapshot: { status: 'published', groups: 0, members: 0 } });
     assert.equal((await db.query(`SELECT status FROM robinhood_bundle_funding_live_queue
       WHERE token_address = $1`, [TOKEN])).rows[0].status, 'complete');
     assert.equal((await db.query(`SELECT COUNT(*)::integer count
       FROM robinhood_bundle_funding_live_evidence WHERE token_address = $1`, [TOKEN])).rows[0].count, 1);
+    assert.deepEqual((await db.query(`SELECT source_kind, source_version::text
+      FROM robinhood_possible_bundle_states WHERE token_address = $1`, [TOKEN])).rows[0], {
+      source_kind: 'live', source_version: '2',
+    });
+    assert.deepEqual(await createRobinhoodBundleFundingLiveSource({ database: db })
+      .loadBarrierAddresses([], []), []);
   });
 
   it('atomically enriches a block cache with typed canonical evidence', async () => {

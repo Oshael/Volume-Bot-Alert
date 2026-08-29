@@ -10,9 +10,11 @@ const { createEvmJsonRpcClient } = require('./evm-json-rpc-client');
 const { createRobinhoodBundleFundingReader } = require('./robinhood-bundle-funding-reader');
 const { planBundleFundingScan } = require('./robinhood-bundle-funding-scan-plan');
 const { materializeBundleFundingRange } = require('./robinhood-bundle-funding-materializer');
+const { materializePossibleBundles } = require('./robinhood-possible-bundle-materializer');
 const { createPostgresRealtimeListener } = require('./postgres-realtime-listener');
 
 const NOTIFY_CHANNEL = 'robinhood_bundle_funding_live_queue';
+const MINIMUM_VALUE_WEI = '25000000000000000';
 const bounded = (value, fallback, min, max) => {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) ? Math.max(min, Math.min(parsed, max)) : fallback;
@@ -49,12 +51,12 @@ async function processTask(runtime, task, options, deps = {}) {
   const plan = (deps.planner || planBundleFundingScan)({ sourceFromBlock: '0',
     sourceThroughBlock: task.sourceThroughBlock, lookbackBlocks: task.lookbackBlocks, candidates });
   const evidence = new Map();
+  const reader = (deps.readerFactory || createRobinhoodBundleFundingReader)({
+    rpcClient: runtime.rpcClient,
+    candidateWallets: plan.candidates.map(({ walletAddress }) => walletAddress),
+  });
+  await reader.assertChain();
   if (plan.ranges.length) {
-    const reader = (deps.readerFactory || createRobinhoodBundleFundingReader)({
-      rpcClient: runtime.rpcClient,
-      candidateWallets: plan.candidates.map(({ walletAddress }) => walletAddress),
-    });
-    await reader.assertChain();
     for (const range of plan.ranges) {
       const rangeCandidates = plan.candidates.filter(({ firstBuyBlock }) => (
         BigInt(firstBuyBlock) >= BigInt(range.fromBlock)
@@ -69,12 +71,24 @@ async function processTask(runtime, task, options, deps = {}) {
       );
     }
   }
+  const causalEvidence = [...evidence.values()];
+  const [throughBlockHash, barrierAddresses] = await Promise.all([
+    reader.checkpoint(task.sourceThroughBlock),
+    runtime.source.loadBarrierAddresses(candidates, causalEvidence),
+  ]);
+  const snapshot = (deps.classify || materializePossibleBundles)({
+    tokenAddress: task.tokenAddress, candidates, evidence: causalEvidence,
+    evidenceVersion: 'rh_native_funding_v2', sourceKind: 'live',
+    sourceVersion: task.requestedVersion, lookbackBlocks: task.lookbackBlocks,
+    minimumValueWei: MINIMUM_VALUE_WEI, throughBlockNumber: task.sourceThroughBlock,
+    throughBlockHash, barrierAddresses,
+  });
   const completed = await runtime.queue.replaceEvidenceAndComplete({
-    ...task, evidence: [...evidence.values()],
+    ...task, evidence: causalEvidence, snapshot,
   });
   return Object.freeze({ status: completed ? 'materialized' : 'stale',
-    tokenAddress: task.tokenAddress, candidates: plan.candidateWallets,
-    evidence: evidence.size });
+    tokenAddress: task.tokenAddress, candidates: candidates.length,
+    evidence: evidence.size, groups: snapshot.groups.length, members: snapshot.members.length });
 }
 
 function createRobinhoodBundleFundingLiveWorker(deps = {}) {
@@ -128,4 +142,4 @@ function createRobinhoodBundleFundingLiveWorker(deps = {}) {
 const worker = createRobinhoodBundleFundingLiveWorker();
 module.exports = { createRobinhoodBundleFundingLiveWorker, processTask,
   getStatus: worker.getStatus, start: worker.start, stop: worker.stop,
-  __private: { buildRuntime, normalizeOptions } };
+  __private: { buildRuntime, MINIMUM_VALUE_WEI, normalizeOptions } };

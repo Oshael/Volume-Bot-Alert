@@ -12,6 +12,7 @@ const { materializePossibleBundles } = require(
 );
 const stage167 = require('../src/utils/db-init-stage167');
 const stage168 = require('../src/utils/db-init-stage168');
+const stage174 = require('../src/utils/db-init-stage174');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const TOKEN = `0x${'9'.repeat(40)}`;
@@ -77,6 +78,7 @@ describe('Robinhood possible-bundle snapshot writer', () => {
     await assertUsingTestDatabase(db);
     await stage167.init({ closePool: false });
     await stage168.init({ closePool: false });
+    await stage174.init({ closePool: false });
     await cleanup();
   });
   after(async () => { await cleanup(); await db.pool.end(); });

@@ -1,5 +1,6 @@
 const db = require('./db');
 const { normalizeTokenAddress } = require('../utils/token-identity');
+const { replaceSnapshotWithClient } = require('./robinhood-possible-bundle-snapshot');
 
 const CHAIN = 'robinhood';
 const token = (value) => normalizeTokenAddress(CHAIN, value);
@@ -62,10 +63,13 @@ function createRobinhoodBundleFundingLiveQueueRepository(options = {}) {
 
   async function replaceEvidenceAndComplete(input = {}) {
     if (!Array.isArray(input.evidence)) throw new Error('live funding evidence is required');
+    if (!input.snapshot) throw new Error('live possible bundle snapshot is required');
     const client = await database.getClient();
     try {
       await client.query('BEGIN');
-      const locked = await client.query(`SELECT 1 FROM robinhood_bundle_funding_live_queue
+      const locked = await client.query(`SELECT token_address, rule_version, evidence_version,
+               requested_version::text, source_through_block::text, lookback_blocks::text
+          FROM robinhood_bundle_funding_live_queue
         WHERE chain = $1 AND token_address = $2 AND status = 'leased'
           AND lease_owner = $3 AND requested_version = $4::bigint FOR UPDATE`,
       [CHAIN, token(input.tokenAddress), input.owner, input.requestedVersion]);
@@ -95,13 +99,16 @@ function createRobinhoodBundleFundingLiveQueueRepository(options = {}) {
           }))),
         ]);
       }
+      const snapshotResult = await replaceSnapshotWithClient(
+        client, input.snapshot, locked.rows[0], new Date().toISOString()
+      );
       await client.query(`UPDATE robinhood_bundle_funding_live_queue SET
         status = 'complete', completed_version = requested_version,
         lease_owner = NULL, lease_until = NULL, completed_at = NOW(),
         last_error_code = NULL, last_error_message = NULL, updated_at = NOW()
         WHERE chain = $1 AND token_address = $2`, [CHAIN, token(input.tokenAddress)]);
       await client.query('COMMIT');
-      return true;
+      return Object.freeze({ completed: true, snapshot: snapshotResult });
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
       throw error;
