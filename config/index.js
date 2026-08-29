@@ -498,6 +498,19 @@ const fomoTelegramBotToken = String(
 const fomoTelegramChatId = String(
   process.env.FOMO_TELEGRAM_CHAT_ID ?? process.env.FOMO_FOLLOW_TELEGRAM_CHAT_ID ?? ''
 ).trim();
+const workerHealthMonitorEnabled = parseBoolean(process.env.WORKER_HEALTH_MONITOR_ENABLED, false);
+const workerHealthMonitorRunsHere = workerHealthMonitorEnabled
+  && workerGroups.active.includes('core');
+const workerHealthTelegramBotToken = String(
+  process.env.WORKER_HEALTH_TELEGRAM_BOT_TOKEN || fomoTelegramBotToken
+).trim();
+const workerHealthTelegramChatId = String(
+  process.env.WORKER_HEALTH_TELEGRAM_CHAT_ID || fomoTelegramChatId
+).trim();
+const workerHealthExpectedComponents = [...new Set(
+  String(process.env.WORKER_HEALTH_EXPECTED_COMPONENTS || '')
+    .split(',').map((value) => value.trim()).filter(Boolean)
+)];
 const fomoFollowProfileIds = [...new Set(String(process.env.FOMO_FOLLOW_PROFILE_IDS || '')
   .split(',').map((value) => value.trim()).filter(Boolean))];
 const robinhoodHolderGlobalIsolated = workerGroups.active.includes('robinhood-holder-global');
@@ -603,6 +616,15 @@ if (workerGroups.isolationConflict) {
 }
 if (workerGroups.legacyConflict) {
   missing.push('BACKGROUND_WORKER_GROUPS cannot combine legacy maintenance with other groups or all');
+}
+if (workerHealthMonitorRunsHere && !workerHealthTelegramBotToken) {
+  missing.push('WORKER_HEALTH_TELEGRAM_BOT_TOKEN or FOMO_TELEGRAM_BOT_TOKEN');
+}
+if (workerHealthMonitorRunsHere && !workerHealthTelegramChatId) {
+  missing.push('WORKER_HEALTH_TELEGRAM_CHAT_ID or FOMO_TELEGRAM_CHAT_ID');
+}
+if (workerHealthExpectedComponents.length > 100) {
+  missing.push('WORKER_HEALTH_EXPECTED_COMPONENTS supports at most 100 component keys');
 }
 if (calloutCaptureEnabled) {
   if (!String(process.env.PUMP_AUTH_TOKEN || process.env.PUMP_AUTH_TOKEN_FILE || '').trim()) {
@@ -772,6 +794,20 @@ module.exports = {
     ),
   },
   telegram,
+  workerHealthMonitor: {
+    enabled: workerHealthMonitorEnabled,
+    runsHere: workerHealthMonitorRunsHere,
+    expectedComponents: workerHealthExpectedComponents,
+    intervalMs: parseIntegerInRange(process.env.WORKER_HEALTH_INTERVAL_SECONDS, 30, 10, 300) * 1000,
+    minimumObservations: parseIntegerInRange(process.env.WORKER_HEALTH_MIN_OBSERVATIONS, 2, 1, 10),
+    cooldownMs: parseIntegerInRange(process.env.WORKER_HEALTH_COOLDOWN_MINUTES, 60, 1, 1440) * 60_000,
+    retryMs: parseIntegerInRange(process.env.WORKER_HEALTH_RETRY_SECONDS, 30, 5, 600) * 1000,
+    telegram: {
+      botToken: workerHealthTelegramBotToken,
+      chatId: workerHealthTelegramChatId,
+      timeoutMs: parseIntegerInRange(process.env.WORKER_HEALTH_TELEGRAM_TIMEOUT_SECONDS, 10, 3, 60) * 1000,
+    },
+  },
 
   calloutCaptureWorker: {
     enabled: calloutCaptureEnabled,

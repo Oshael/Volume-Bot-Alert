@@ -695,6 +695,37 @@ Worker leases no PostgreSQL evitam dois donos ativos para loops protegidos. Eles
 não autorizam iniciar processos arbitrários: sempre verifique as leases e os
 logs antes de escalar.
 
+### 6.2 Monitor operacional de workers
+
+O monitor durável é opt-in por `WORKER_HEALTH_MONITOR_ENABLED=true` e roda apenas
+em processos cujo `BACKGROUND_WORKER_GROUPS` inclui `core`. Antes de habilitá-lo,
+aplique `node src/utils/db-init-stage176.js` e confirme o runtime schema. A cada
+30 segundos por padrão, cada réplica lê `worker_leases` uma vez, avalia os sinais
+em memória e reconcilia incidentes no PostgreSQL. Claims com `SKIP LOCKED`,
+debounce, cooldown e retry impedem que réplicas enviem o mesmo aviso em paralelo.
+
+Workers registrados pelo próprio processo são esperados automaticamente.
+`WORKER_HEALTH_EXPECTED_COMPONENTS` deve listar, por chave de lease e separado
+por vírgula, qualquer worker de outro processo/VPS que o monitor central também
+deve considerar obrigatório. Uma chave ausente dessa intenção não gera incidente
+por lease ausente; leases existentes continuam sendo avaliadas mesmo sem estarem
+na lista. Para desligamento planejado, remova a chave esperada ou registre uma
+janela em `worker_health_maintenance` (`component_key='*'` suspende tudo). Sem
+declaração explícita, o Telegram informa que o worker está desligado e pede para
+ignorar somente se a ação foi intencional.
+
+O notifier usa `WORKER_HEALTH_TELEGRAM_BOT_TOKEN` e
+`WORKER_HEALTH_TELEGRAM_CHAT_ID`; quando vazios, reutiliza
+`FOMO_TELEGRAM_BOT_TOKEN` e `FOMO_TELEGRAM_CHAT_ID`, o mesmo canal operacional
+dos callouts. Intervalo, observações mínimas, cooldown, retry e timeout são
+limitados pelas variáveis `WORKER_HEALTH_*` documentadas em `.env.example`.
+Incidentes resolvidos geram uma única recuperação persistida.
+
+Esse monitor não substitui um watchdog externo: se o único processo `core`, o
+PostgreSQL ou a conectividade com o Telegram cair completamente, nenhum código
+dentro do bot consegue enviar o aviso. Systemd e um health check externo devem
+cobrir essa falha total.
+
 ## 7. Superfícies do produto
 
 Rotas web principais:

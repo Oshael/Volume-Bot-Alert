@@ -72,6 +72,37 @@ describe('runtime worker groups config', () => {
     });
   });
 
+  it('reuses the callout ops Telegram path for worker health alerts', () => {
+    withEnv({
+      WORKER_HEALTH_MONITOR_ENABLED: 'true',
+      WORKER_HEALTH_TELEGRAM_BOT_TOKEN: '', WORKER_HEALTH_TELEGRAM_CHAT_ID: '',
+      FOMO_TELEGRAM_BOT_TOKEN: 'shared-ops-token', FOMO_TELEGRAM_CHAT_ID: '123456',
+      WORKER_HEALTH_EXPECTED_COMPONENTS: 'catalog-worker,callout-capture-worker',
+    }, (config) => {
+      assert.equal(config.workerHealthMonitor.enabled, true);
+      assert.equal(config.workerHealthMonitor.telegram.botToken, 'shared-ops-token');
+      assert.equal(config.workerHealthMonitor.telegram.chatId, '123456');
+      assert.deepEqual(config.workerHealthMonitor.expectedComponents,
+        ['catalog-worker', 'callout-capture-worker']);
+    });
+  });
+
+  it('requires a complete ops Telegram path when the core monitor is enabled', () => {
+    const result = spawnSync(process.execPath, ['-e', "require('./config')"], {
+      cwd: ROOT_DIR,
+      env: {
+        ...process.env, BACKGROUND_WORKER_GROUPS: 'core',
+        WORKER_HEALTH_MONITOR_ENABLED: 'true',
+        WORKER_HEALTH_TELEGRAM_BOT_TOKEN: '', WORKER_HEALTH_TELEGRAM_CHAT_ID: '',
+        FOMO_TELEGRAM_BOT_TOKEN: '', FOMO_TELEGRAM_CHAT_ID: '',
+      },
+      encoding: 'utf8',
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /WORKER_HEALTH_TELEGRAM_BOT_TOKEN/);
+    assert.match(result.stderr, /WORKER_HEALTH_TELEGRAM_CHAT_ID/);
+  });
+
   it('rejects combining the legacy maintenance alias with all', () => {
     const result = spawnSync(process.execPath, ['-e', "require('./config')"], {
       cwd: ROOT_DIR,

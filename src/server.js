@@ -118,6 +118,7 @@ const gmgnClient = require('./services/gmgn-client');
 const dexscreener = require('./services/dexscreener');
 const solUsdPrice = require('./services/sol-usd-price-service');
 const { createWorkerLeaseManager } = require('./services/worker-lease-manager');
+const { createWorkerHealthMonitor } = require('./services/worker-health-monitor');
 const workerLease = require('./models/worker-lease');
 const calloutCaptureWorker = require('./services/callout-capture-worker');
 
@@ -160,6 +161,12 @@ let server = null;
 let bootstrapped = false;
 let startupInFlight = false;
 const workerLeaseManager = createWorkerLeaseManager();
+const workerHealthMonitor = config.workerHealthMonitor.runsHere
+  ? createWorkerHealthMonitor({
+      ...config.workerHealthMonitor,
+      expectedComponentsProvider: () => workerLeaseManager.getStatus().map(({ key }) => key),
+    })
+  : { start() {}, async stop() {} };
 const robinhoodStandardAlertPublication = createRobinhoodStandardAlertPublication();
 const telegramAlertOperationalStatus = createTelegramAlertOperationalStatus();
 const exposedResponseHeaders = [
@@ -1065,6 +1072,7 @@ function startWorkerSet() {
       { metadataProvider: () => ({ telemetry: calloutCaptureWorker.getStatus() }) }
     );
   }
+  workerHealthMonitor.start();
 }
 
 function startTokenImageFingerprintWorkerGroup() {
@@ -1262,6 +1270,7 @@ async function shutdownGracefully(signal = 'SIGTERM') {
       marketTradeRealtime.stop(),
       robinhoodHolderCountRealtime.stop(),
       userConfigSync.stop(),
+      workerHealthMonitor.stop(),
     ]);
     const releaseResult = await workerLeaseManager.stop({ releaseLeases: true });
     console.log(`[Shutdown] Worker leases released=${releaseResult.released} missed=${releaseResult.missed} errors=${releaseResult.errors}`);
