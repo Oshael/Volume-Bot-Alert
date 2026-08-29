@@ -19,6 +19,10 @@ function harness(results = []) {
     calls, leaseStore,
     deps: {
       tickDeps: { marker: 'tick' }, leaseStore,
+      runtimeTelemetry: {
+        snapshot: () => ({ pid: 123, rssBytes: 456 }),
+        stop: () => calls.push(['runtime-stop']),
+      },
       setInterval: () => ({ unref() {} }), clearInterval: () => {},
       sleep: async (ms) => calls.push(['sleep', ms]),
       runCommit: async (tickDeps, input) => {
@@ -46,6 +50,10 @@ describe('Robinhood wallet-transfer backfill runner', () => {
     assert.equal(test.calls[0][0], 'acquire');
     assert.equal(test.calls[0][1], LEASE_KEY);
     assert.equal(test.calls.at(-1)[0], 'release');
+    const acquiredMetadata = test.calls[0][3].metadata;
+    assert.equal(acquiredMetadata.telemetry.running, true);
+    assert.equal(acquiredMetadata.runtime.pid, 123);
+    assert.equal(test.calls.some(([method]) => method === 'runtime-stop'), true);
   });
 
   it('does no work without the lease and stops on a terminal result', async () => {
@@ -54,6 +62,7 @@ describe('Robinhood wallet-transfer backfill runner', () => {
     const skipped = await runRobinhoodWalletTransferBackfill({}, unavailable.deps);
     assert.equal(skipped.status, 'lease-unavailable');
     assert.equal(unavailable.calls.some(([method]) => method === 'commit'), false);
+    assert.equal(unavailable.calls.some(([method]) => method === 'runtime-stop'), true);
 
     const terminal = harness([{ status: 'blocked', reason: 'checkpoint_mismatch' }]);
     const stopped = await runRobinhoodWalletTransferBackfill({

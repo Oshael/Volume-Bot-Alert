@@ -19,6 +19,8 @@ const PROFILES = Object.freeze({
 });
 
 const DEFINITIONS = [
+  ['core-support-runtime', 'Core support runtime', 'core', 'maintenance'],
+  ['web-realtime-runtime', 'Web realtime runtime', 'web', 'live'],
   ['telegram-alert-runtime', 'Telegram alert runtime', 'core', 'live'],
   ['catalog-worker', 'Catalog worker', 'core', 'polling'],
   ['dex-discovery-worker', 'Dex discovery worker', 'core', 'polling'],
@@ -67,6 +69,7 @@ const DEFINITIONS = [
   ['token-image-fingerprint-worker', 'Token image fingerprint worker', 'x-match', 'polling'],
   ['x-ingestion-worker', 'X ingestion worker', 'x-ingest', 'live'],
   ['robinhood-pool-liquidity-worker', 'Robinhood pool liquidity worker', 'robinhood-liquidity', 'live'],
+  ['robinhood-wallet-transfer-backfill-worker', 'Robinhood wallet-transfer backfill worker', 'robinhood-wallet-classification', 'maintenance'],
 ].map(([key, label, groupList, profile]) => Object.freeze({
   key, label, group: groupList.split('|')[0], groups: Object.freeze(groupList.split('|')),
   profile, thresholds: PROFILES[profile],

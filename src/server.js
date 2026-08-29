@@ -156,10 +156,20 @@ const ROBINHOOD_CATALOG_STAGING_LEASE_KEY = 'robinhood-catalog-staging-worker';
 const ROBINHOOD_CATALOG_PROJECTION_LEASE_KEY = 'robinhood-catalog-projection-worker';
 const TELEGRAM_ALERT_RUNTIME_LEASE_KEY = 'telegram-alert-runtime';
 const CALLOUT_CAPTURE_LEASE_KEY = 'callout-capture-worker';
+const CORE_SUPPORT_RUNTIME_LEASE_KEY = 'core-support-runtime';
+const WEB_REALTIME_RUNTIME_LEASE_KEY = 'web-realtime-runtime';
 const app = express();
 let server = null;
 let bootstrapped = false;
 let startupInFlight = false;
+const cleanupTelemetry = {
+  running: false,
+  inFlight: false,
+  lastRunAt: null,
+  lastCompletedAt: null,
+  consecutiveErrors: 0,
+  lastError: null,
+};
 const workerLeaseManager = createWorkerLeaseManager();
 const workerHealthMonitor = config.workerHealthMonitor.runsHere
   ? createWorkerHealthMonitor({
@@ -462,11 +472,21 @@ function shouldStartWorkerSet() {
 }
 
 function startBackgroundCleanup() {
+  cleanupTelemetry.running = true;
   setInterval(async () => {
+    cleanupTelemetry.inFlight = true;
+    cleanupTelemetry.lastRunAt = new Date().toISOString();
     try {
       await runCleanupCycle();
+      cleanupTelemetry.lastCompletedAt = new Date().toISOString();
+      cleanupTelemetry.consecutiveErrors = 0;
+      cleanupTelemetry.lastError = null;
     } catch (err) {
+      cleanupTelemetry.consecutiveErrors += 1;
+      cleanupTelemetry.lastError = String(err?.message || err).slice(0, 500);
       console.error('Cleanup error:', err.message);
+    } finally {
+      cleanupTelemetry.inFlight = false;
     }
   }, 3600000);
 }
@@ -1132,6 +1152,23 @@ function bootstrapWebRuntime(httpServer) {
   robinhoodHolderCountRealtime.start().catch((err) => {
     console.error('[RobinhoodHolderCountRealtime] Failed to start listener:', err.message);
   });
+  startLockedWorker(
+    'web',
+    WEB_REALTIME_RUNTIME_LEASE_KEY,
+    'Web realtime runtime',
+    () => {},
+    {
+      metadataProvider: () => ({ telemetry: {
+        running: Boolean(socketHub.getIO()),
+        backendAlerts: backendAlertRealtime.getStatus(),
+        marketBuckets: marketBucketRealtime.getStatus(),
+        marketTrades: marketTradeRealtime.getStatus(),
+        robinhoodHolderCounts: robinhoodHolderCountRealtime.getStatus(),
+        ...(shouldBootstrapBackgroundRuntime() && hasWorkerGroup('core')
+          ? {} : { solUsdPrice: solUsdPrice.getStatus() }),
+      } }),
+    }
+  );
 }
 
 function bootstrapBackgroundRuntime() {
@@ -1147,6 +1184,21 @@ function bootstrapBackgroundRuntime() {
     userConfigSync.start().catch((err) => {
       console.error('[UserConfigSync] Failed to start distributed listener:', err.message);
     });
+  }
+
+  if (config.nodeEnv !== 'test' && hasWorkerGroup('core')) {
+    startLockedWorker(
+      'core',
+      CORE_SUPPORT_RUNTIME_LEASE_KEY,
+      'Core support runtime',
+      () => {},
+      { metadataProvider: () => ({ telemetry: {
+        running: true,
+        cleanup: cleanupTelemetry,
+        userConfigSync: userConfigSync.getStatus(),
+        solUsdPrice: solUsdPrice.getStatus(),
+      } }) }
+    );
   }
 
   if (shouldStartWorkerSet()) {

@@ -737,6 +737,43 @@ variáveis `WORKER_HEALTH_DB_*`, `WORKER_HEALTH_WAL_*`, `WORKER_HEALTH_MAX_*` e
 `WORKER_HEALTH_MIN_DISK_*`; o disco observado não representa o volume do banco
 quando o PostgreSQL está em outro host.
 
+O registro operacional contém 51 leases. Além dos workers duráveis, duas leases
+agregadas cobrem funções que vivem no processo: `core-support-runtime` observa o
+cleanup horário, o listener distribuído de configuração e o serviço SOL/USD;
+`web-realtime-runtime` observa o Socket.IO e os listeners realtime de alertas,
+buckets, trades e holders. SOL/USD fica na lease core quando core e web convivem,
+ou na lease web em um processo somente web, evitando incidentes duplicados. O
+backfill manual de transferências publica
+`robinhood-wallet-transfer-backfill-worker` somente enquanto o comando está
+executando. A ausência desse backfill fora de uma execução não é falha e a chave
+não deve permanecer em `WORKER_HEALTH_EXPECTED_COMPONENTS`.
+
+Para ativar em produção sem alarmes de rollout:
+
+1. aplique a Stage 176 e execute `npm run db:schema-check`;
+2. publique primeiro todos os processos ainda com o monitor desabilitado;
+3. confirme em `worker_leases` que as leases esperadas estão renovando;
+4. no processo `core`, configure `WORKER_HEALTH_EXPECTED_COMPONENTS` com as
+   chaves dos processos remotos obrigatórios — inclua `web-realtime-runtime`
+   quando web e core são processos separados;
+5. configure/teste o destino Telegram e só então habilite
+   `WORKER_HEALTH_MONITOR_ENABLED=true` no core.
+
+Antes de uma parada planejada, retire temporariamente a chave da lista esperada
+ou crie uma janela explícita. Exemplo SQL para uma janela de 30 minutos:
+
+```sql
+INSERT INTO worker_health_maintenance
+  (component_key, reason, created_by, starts_at, ends_at)
+VALUES
+  ('web-realtime-runtime', 'deploy planejado', 'operador', NOW(),
+   NOW() + INTERVAL '30 minutes');
+```
+
+Use `component_key='*'` apenas quando todo o monitor precisar ficar silencioso.
+Cancelar a janela exige preencher `cancelled_at`; não apague incidentes para
+silenciar alertas, pois isso elimina o histórico e pode gerar reabertura imediata.
+
 ## 7. Superfícies do produto
 
 Rotas web principais:

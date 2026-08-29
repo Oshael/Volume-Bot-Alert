@@ -1,5 +1,6 @@
 const { randomUUID } = require('crypto');
 const workerLease = require('../models/worker-lease');
+const { createWorkerRuntimeTelemetry } = require('./worker-runtime-telemetry');
 const {
   runRobinhoodWalletTransferBackfillCommit,
 } = require('./robinhood-wallet-transfer-backfill-tick');
@@ -29,7 +30,7 @@ function ownerId(input) {
   return value;
 }
 
-function leaseMetadata(input, rangesCompleted, lastResult) {
+function leaseMetadata(input, rangesCompleted, lastResult, telemetry = null, runtime = null) {
   return {
     worker: 'robinhood-wallet-transfer-backfill',
     maxBlocks: input.maxBlocks,
@@ -37,6 +38,8 @@ function leaseMetadata(input, rangesCompleted, lastResult) {
     rangesCompleted,
     nextBlock: lastResult?.nextBlock ?? null,
     lastStatus: lastResult?.status ?? null,
+    telemetry,
+    runtime,
   };
 }
 
@@ -70,11 +73,23 @@ async function runRobinhoodWalletTransferBackfill(input = {}, deps = {}) {
   let lastResult = null;
   let leaseLost = false;
   let heartbeatTimer = null;
+  const runtimeTelemetry = deps.runtimeTelemetry || createWorkerRuntimeTelemetry();
+  const telemetry = {
+    running: true,
+    inFlight: false,
+    lastRunAt: null,
+    lastCompletedAt: null,
+    consecutiveErrors: 0,
+    lastError: null,
+  };
   const acquired = await leaseStore.acquire(LEASE_KEY, options.ownerId, {
     ttlMs: options.leaseTtlMs,
-    metadata: leaseMetadata(options, rangesCompleted, lastResult),
+    metadata: leaseMetadata(
+      options, rangesCompleted, lastResult, telemetry, runtimeTelemetry.snapshot()
+    ),
   });
   if (!acquired) {
+    runtimeTelemetry.stop();
     return Object.freeze({
       status: 'lease-unavailable', rangesCompleted, lastResult,
     });
@@ -84,7 +99,9 @@ async function runRobinhoodWalletTransferBackfill(input = {}, deps = {}) {
     try {
       const lease = await leaseStore.heartbeat(LEASE_KEY, options.ownerId, {
         ttlMs: options.leaseTtlMs,
-        metadata: leaseMetadata(options, rangesCompleted, lastResult),
+        metadata: leaseMetadata(
+          options, rangesCompleted, lastResult, telemetry, runtimeTelemetry.snapshot()
+        ),
       });
       if (!lease) leaseLost = true;
     } catch {
@@ -100,9 +117,22 @@ async function runRobinhoodWalletTransferBackfill(input = {}, deps = {}) {
       if (leaseLost) {
         return Object.freeze({ status: 'lease-lost', rangesCompleted, lastResult });
       }
-      lastResult = await runCommit(deps.tickDeps, {
-        maxBlocks: options.maxBlocks, now: input.now, tokenAddresses,
-      });
+      telemetry.inFlight = true;
+      telemetry.lastRunAt = new Date().toISOString();
+      try {
+        lastResult = await runCommit(deps.tickDeps, {
+          maxBlocks: options.maxBlocks, now: input.now, tokenAddresses,
+        });
+        telemetry.lastCompletedAt = new Date().toISOString();
+        telemetry.consecutiveErrors = 0;
+        telemetry.lastError = null;
+      } catch (error) {
+        telemetry.consecutiveErrors += 1;
+        telemetry.lastError = String(error?.message || error).slice(0, 500);
+        throw error;
+      } finally {
+        telemetry.inFlight = false;
+      }
       rangesCompleted += 1;
       if (TERMINAL_STATUSES.has(lastResult.status)) {
         return Object.freeze({ status: lastResult.status, rangesCompleted, lastResult });
@@ -119,6 +149,7 @@ async function runRobinhoodWalletTransferBackfill(input = {}, deps = {}) {
     return Object.freeze({ status: 'range-limit', rangesCompleted, lastResult });
   } finally {
     (deps.clearInterval || clearInterval)(heartbeatTimer);
+    runtimeTelemetry.stop();
     await leaseStore.release(LEASE_KEY, options.ownerId).catch(() => false);
   }
 }
