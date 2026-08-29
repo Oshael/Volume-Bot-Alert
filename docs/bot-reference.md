@@ -726,6 +726,17 @@ PostgreSQL ou a conectividade com o Telegram cair completamente, nenhum código
 dentro do bot consegue enviar o aviso. Systemd e um health check externo devem
 cobrir essa falha total.
 
+Cada processo publica no heartbeat já existente da lease um snapshot cacheado de
+RSS, uso do heap, atraso p99/máximo do event loop e espaço livre no filesystem da
+aplicação. O monitor avalia esse snapshot apenas uma vez por processo, mesmo que
+ele hospede vários workers. No processo `core`, também mede a latência da leitura
+de leases e a pressão do pool PostgreSQL. Se o banco impedir leitura ou
+persistência, envia um fallback direto e deduplicado em memória ao Telegram, com
+recuperação quando o controle durável voltar. Os limites são configurados pelas
+variáveis `WORKER_HEALTH_DB_*`, `WORKER_HEALTH_WAL_*`, `WORKER_HEALTH_MAX_*` e
+`WORKER_HEALTH_MIN_DISK_*`; o disco observado não representa o volume do banco
+quando o PostgreSQL está em outro host.
+
 ## 7. Superfícies do produto
 
 Rotas web principais:

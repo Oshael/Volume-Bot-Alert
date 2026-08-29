@@ -802,6 +802,18 @@ module.exports = {
     minimumObservations: parseIntegerInRange(process.env.WORKER_HEALTH_MIN_OBSERVATIONS, 2, 1, 10),
     cooldownMs: parseIntegerInRange(process.env.WORKER_HEALTH_COOLDOWN_MINUTES, 60, 1, 1440) * 60_000,
     retryMs: parseIntegerInRange(process.env.WORKER_HEALTH_RETRY_SECONDS, 30, 5, 600) * 1000,
+    maxDatabaseLatencyMs: parseIntegerInRange(process.env.WORKER_HEALTH_DB_LATENCY_MS, 2000, 100, 30000),
+    maxPoolWaiting: parseIntegerInRange(process.env.WORKER_HEALTH_DB_POOL_WAITING, 2, 1, 100),
+    maxPoolSaturationPercent: parseIntegerInRange(process.env.WORKER_HEALTH_DB_POOL_PERCENT, 90, 50, 100),
+    maxLongTransactionMs: parseIntegerInRange(process.env.WORKER_HEALTH_DB_LONG_TX_SECONDS, 300, 30, 86400) * 1000,
+    maxWalBytesPerMinute: parseIntegerInRange(process.env.WORKER_HEALTH_WAL_MB_PER_MINUTE, 1024, 10, 1048576) * 1024 * 1024,
+    runtimeThresholds: {
+      maxRssBytes: parseIntegerInRange(process.env.WORKER_HEALTH_MAX_RSS_MB, 1536, 128, 65536) * 1024 * 1024,
+      maxHeapPercent: parseIntegerInRange(process.env.WORKER_HEALTH_MAX_HEAP_PERCENT, 90, 50, 100),
+      maxEventLoopP99Ms: parseIntegerInRange(process.env.WORKER_HEALTH_EVENT_LOOP_P99_MS, 500, 50, 10000),
+      minDiskFreePercent: parseIntegerInRange(process.env.WORKER_HEALTH_MIN_DISK_FREE_PERCENT, 5, 1, 50),
+      minDiskFreeBytes: parseIntegerInRange(process.env.WORKER_HEALTH_MIN_DISK_FREE_GB, 5, 1, 1000) * 1024 ** 3,
+    },
     telegram: {
       botToken: workerHealthTelegramBotToken,
       chatId: workerHealthTelegramChatId,

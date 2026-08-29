@@ -141,6 +141,39 @@ function addPressureIssues(issues, definition, node, thresholds) {
   }
 }
 
+function addRuntimeIssues(issues, definition, runtime, thresholds = {}) {
+  if (!runtime || typeof runtime !== 'object') return;
+  const fields = [
+    ['rssBytes', 'process_memory_high', thresholds.maxRssBytes, 'high'],
+    ['heapUsedPercent', 'process_heap_high', thresholds.maxHeapPercent, 'high'],
+    ['eventLoopP99Ms', 'event_loop_lag_high', thresholds.maxEventLoopP99Ms, 'high'],
+  ];
+  for (const [field, code, limit, severity] of fields) {
+    const observed = Number(runtime[field]);
+    if (Number.isFinite(observed) && Number.isFinite(limit) && observed > limit) {
+      issues.push(issue(definition, code, severity, `runtime.${field}`, observed, limit));
+    }
+  }
+  const freePercent = Number(runtime.disk?.freePercent);
+  const freeBytes = Number(runtime.disk?.freeBytes);
+  if ((Number.isFinite(freePercent) && freePercent < thresholds.minDiskFreePercent)
+    || (Number.isFinite(freeBytes) && freeBytes < thresholds.minDiskFreeBytes)) {
+    issues.push(issue(definition, 'disk_space_low', 'critical', 'runtime.disk',
+      { freePercent, freeBytes }, {
+        minFreePercent: thresholds.minDiskFreePercent,
+        minFreeBytes: thresholds.minDiskFreeBytes,
+      }));
+  }
+}
+
+function evaluateRuntimeIssues(definition, lease, options) {
+  const issues = [];
+  if (options.evaluateRuntime === true) {
+    addRuntimeIssues(issues, definition, lease.metadata?.runtime, options.runtimeThresholds);
+  }
+  return issues;
+}
+
 function evaluateWorkerHealth(definition, lease, options = {}) {
   if (!definition?.key || !definition.thresholds) {
     throw new TypeError('Worker health definition is required');
@@ -152,7 +185,7 @@ function evaluateWorkerHealth(definition, lease, options = {}) {
       ? [issue(definition, 'lease_missing', 'critical', 'lease', null, 'active lease')]
       : [];
   }
-  const issues = [];
+  const issues = evaluateRuntimeIssues(definition, lease, options);
   const leaseUntil = validTime(lease.leaseUntil);
   if (leaseUntil == null || leaseUntil <= nowMs) {
     issues.push(issue(definition, 'lease_expired', 'critical', 'lease.leaseUntil',
@@ -182,4 +215,4 @@ function evaluateWorkerHealth(definition, lease, options = {}) {
   return issues;
 }
 
-module.exports = { evaluateWorkerHealth, leaseTelemetry, statusNodes };
+module.exports = { addRuntimeIssues, evaluateWorkerHealth, leaseTelemetry, statusNodes };

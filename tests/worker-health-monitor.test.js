@@ -32,19 +32,26 @@ function monitorHarness(overrides = {}) {
     releaseNotificationClaim: async (input) => released.push(input),
   };
   const notified = [];
+  const recoveries = [];
   const monitor = createWorkerHealthMonitor({
     expectedComponents: [], minimumObservations: 1,
     expectedComponentsProvider: () => ['test-worker'],
   }, {
-    definitions: [definition], leaseStore: { list: async () => [] }, incidentStore,
+    definitions: [definition], leaseStore: overrides.leaseStore || { list: async () => [] },
+    incidentStore: { ...incidentStore, ...overrides.incidentStore },
+    database: overrides.database || {
+      pool: { waitingCount: 0, totalCount: 0, idleCount: 0 },
+      query: async () => ({ rows: [{ wal_bytes: '0', oldest_idle_ms: 0, blocked_queries: 0 }] }),
+    },
     notifier: {
       sendIncident: overrides.sendIncident || (async (input) => notified.push(input)),
-      sendRecovery: async () => {},
+      sendRecovery: async (input) => recoveries.push(input),
     },
     schedule: () => ({ unref() {} }), cancelSchedule: () => {},
-    now: () => Date.parse('2026-08-29T12:00:00.000Z'),
+    now: overrides.now || (() => Date.parse('2026-08-29T12:00:00.000Z')),
+    monotonicNow: overrides.monotonicNow,
   });
-  return { monitor, reconciliations, marked, released, notified };
+  return { monitor, reconciliations, marked, released, notified, recoveries };
 }
 
 describe('worker health monitor', () => {
@@ -60,7 +67,8 @@ describe('worker health monitor', () => {
     await harness.monitor.flush();
 
     assert.equal(harness.reconciliations[0].issues[0].code, 'lease_missing');
-    assert.deepEqual(harness.reconciliations[0].evaluatedComponents, ['test-worker']);
+    assert.deepEqual(harness.reconciliations[0].evaluatedComponents,
+      ['test-worker', 'worker-health-monitor']);
     assert.equal(harness.notified.length, 1);
     assert.equal(harness.marked[0].kind, 'incident');
     assert.equal(harness.monitor.getStatus().lastError, null);
@@ -75,6 +83,87 @@ describe('worker health monitor', () => {
     assert.equal(harness.released[0].kind, 'incident');
     assert.equal(harness.monitor.getStatus().lastError, 'offline');
     await harness.monitor.stop();
+  });
+
+  it('persists database latency and pool pressure as health incidents', async () => {
+    const ticks = [0, 2_500];
+    const harness = monitorHarness({
+      monotonicNow: () => ticks.shift(),
+      database: {
+        pool: { waitingCount: 3, totalCount: 10, idleCount: 0, options: { max: 10 } },
+        query: async () => ({ rows: [{ wal_bytes: '0', oldest_idle_ms: 0, blocked_queries: 0 }] }),
+      },
+    });
+    harness.monitor.start();
+    await harness.monitor.flush();
+    const codes = harness.reconciliations[0].issues.map(({ code }) => code);
+    assert.ok(codes.includes('database_latency_high'));
+    assert.ok(codes.includes('database_pool_pressure'));
+    await harness.monitor.stop();
+  });
+
+  it('detects blocked work, long transactions and abnormal WAL growth', async () => {
+    let nowMs = Date.parse('2026-08-29T12:00:00.000Z');
+    let walBytes = 1_000;
+    const harness = monitorHarness({
+      now: () => nowMs,
+      database: {
+        pool: { waitingCount: 0, totalCount: 1, idleCount: 1 },
+        query: async () => ({ rows: [{
+          wal_bytes: String(walBytes), oldest_idle_ms: 400_000, blocked_queries: 2,
+        }] }),
+      },
+    });
+    harness.monitor.start();
+    await harness.monitor.flush();
+    nowMs += 60_000;
+    walBytes += 2 * 1024 ** 3;
+    await harness.monitor.__private.runOnce();
+    const codes = harness.reconciliations[1].issues.map(({ code }) => code);
+    assert.ok(codes.includes('database_long_transaction'));
+    assert.ok(codes.includes('database_blocked_queries'));
+    assert.ok(codes.includes('wal_growth_high'));
+    await harness.monitor.stop();
+  });
+
+  it('uses direct Telegram fallback while persistence is unavailable and reports recovery', async () => {
+    let offline = true;
+    const harness = monitorHarness({
+      leaseStore: { list: async () => { if (offline) throw new Error('database offline'); return []; } },
+    });
+    harness.monitor.start();
+    await harness.monitor.flush();
+    assert.equal(harness.notified[0].code, 'health_control_plane_unavailable');
+
+    offline = false;
+    await harness.monitor.__private.runOnce();
+    assert.equal(harness.recoveries[0].code, 'health_control_plane_unavailable');
+    await harness.monitor.stop();
+  });
+
+  it('evaluates shared process pressure only once per lease owner', async () => {
+    const runtimeFlags = [];
+    const monitor = createWorkerHealthMonitor({}, {
+      definitions: [definition, { ...definition, key: 'test-worker-2' }],
+      leaseStore: { list: async () => [
+        { key: 'test-worker', ownerId: 'shared-owner', metadata: {} },
+        { key: 'test-worker-2', ownerId: 'shared-owner', metadata: {} },
+      ] },
+      evaluate: (_definition, _lease, options) => { runtimeFlags.push(options.evaluateRuntime); return []; },
+      incidentStore: {
+        reconcile: async () => {}, claimNotifications: async () => [],
+      },
+      database: {
+        pool: {},
+        query: async () => ({ rows: [{ wal_bytes: '0', oldest_idle_ms: 0, blocked_queries: 0 }] }),
+      },
+      notifier: { sendIncident: async () => {}, sendRecovery: async () => {} },
+      schedule: () => ({ unref() {} }), cancelSchedule: () => {},
+    });
+    monitor.start();
+    await monitor.flush();
+    assert.deepEqual(runtimeFlags, [true, false]);
+    await monitor.stop();
   });
 });
 

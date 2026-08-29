@@ -229,10 +229,9 @@ describe('worker lease manager', () => {
     telemetryFails = true;
     await manager.__private.renew(manager.getStatus()[0]);
 
-    assert.deepEqual(heartbeatOptions[0].metadata, {
-      group: 'core',
-      telemetry: { version: 1 },
-    });
+    assert.equal(heartbeatOptions[0].metadata.group, 'core');
+    assert.deepEqual(heartbeatOptions[0].metadata.telemetry, { version: 1 });
+    assert.equal(typeof heartbeatOptions[0].metadata.runtime.rssBytes, 'number');
     assert.equal(heartbeatOptions[1].metadata.group, 'core');
     assert.match(heartbeatOptions[1].metadata.metadataProviderError.message, /snapshot failed/);
     assert.equal(manager.getStatus()[0].state, 'running');

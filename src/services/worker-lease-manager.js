@@ -1,6 +1,7 @@
 const { randomUUID } = require('crypto');
 const os = require('os');
 const workerLease = require('../models/worker-lease');
+const { createWorkerRuntimeTelemetry } = require('./worker-runtime-telemetry');
 
 const DEFAULT_RETRY_MS = 5000;
 const DEFAULT_HEARTBEAT_MS = 30000;
@@ -22,6 +23,7 @@ function createWorkerLeaseManager(options = {}) {
   const retryMs = Math.max(1000, Math.trunc(Number(options.retryMs) || DEFAULT_RETRY_MS));
   const heartbeatMs = Math.max(1000, Math.trunc(Number(options.heartbeatMs) || DEFAULT_HEARTBEAT_MS));
   const ttlMs = Math.max(heartbeatMs * 2, Math.trunc(Number(options.ttlMs) || DEFAULT_TTL_MS));
+  let runtimeTelemetry = options.runtimeTelemetry || null;
   const onLeaseLost = typeof options.onLeaseLost === 'function'
     ? options.onLeaseLost
     : (entry) => {
@@ -90,18 +92,21 @@ function createWorkerLeaseManager(options = {}) {
   }
 
   async function heartbeatMetadata(entry) {
-    if (!entry.metadataProvider) return { ...entry.baseMetadata };
+    runtimeTelemetry ||= createWorkerRuntimeTelemetry();
+    const runtime = runtimeTelemetry.snapshot();
+    if (!entry.metadataProvider) return { ...entry.baseMetadata, runtime };
     try {
       const dynamicMetadata = await entry.metadataProvider();
       if (!dynamicMetadata || typeof dynamicMetadata !== 'object' || Array.isArray(dynamicMetadata)) {
         throw new TypeError('Worker lease metadata provider must return an object');
       }
       entry.lastMetadataError = null;
-      return { ...entry.baseMetadata, ...dynamicMetadata };
+      return { ...entry.baseMetadata, ...dynamicMetadata, runtime };
     } catch (error) {
       entry.lastMetadataError = String(error?.message || error).slice(0, 500);
       return {
         ...entry.baseMetadata,
+        runtime,
         metadataProviderError: {
           message: entry.lastMetadataError,
           capturedAt: toIso(new Date()),
@@ -292,6 +297,7 @@ function createWorkerLeaseManager(options = {}) {
 
   async function stop(options = {}) {
     stopping = true;
+    runtimeTelemetry?.stop?.();
     const releaseLeases = options.releaseLeases !== false;
     const releasePromises = [];
     let releasedCount = 0;

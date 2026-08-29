@@ -22,6 +22,17 @@ const DESCRIPTIONS = Object.freeze({
   lag_time_high: 'Worker está atrasado no tempo',
   loop_overrun: 'Ciclo do worker excedeu o tempo esperado',
   queue_backlog: 'Fila do worker está acumulando trabalho',
+  process_memory_high: 'Processo usando memória RSS acima do limite',
+  process_heap_high: 'Heap do processo próximo do limite',
+  event_loop_lag_high: 'Event loop do processo com atraso excessivo',
+  disk_space_low: 'Pouco espaço livre no disco do worker',
+  database_latency_high: 'Leitura do PostgreSQL está lenta',
+  database_pool_pressure: 'Pool do PostgreSQL está saturado',
+  database_long_transaction: 'Transação ociosa está aberta por tempo excessivo',
+  database_blocked_queries: 'Consultas do PostgreSQL estão bloqueadas',
+  database_probe_failed: 'Probe avançado do PostgreSQL falhou',
+  wal_growth_high: 'PostgreSQL está gerando WAL em ritmo anormal',
+  health_control_plane_unavailable: 'Monitor não consegue ler ou persistir sua própria saúde',
 });
 const AMBIGUOUS_STOP_CODES = new Set([
   'lease_missing', 'component_disabled', 'component_stopped',

@@ -475,6 +475,20 @@ function hasWorkerGroup(group) {
   return (config.runtime.workerGroupsActive || []).includes(group);
 }
 
+const WORKER_STATUS_PROVIDERS = Object.freeze({
+  'catalog-worker': () => catalogWorker.getStatus(),
+  'dex-discovery-worker': () => dexDiscoveryWorker.getStatus(),
+  'token-risk-enrichment-worker': () => tokenRiskEnrichmentWorker.getStatus(),
+  'token-risk-review-sync-worker': () => tokenRiskReviewSyncWorker.getStatus(),
+  'meteora-snapshot-worker': () => meteoraSnapshotWorker.getStatus(),
+  'bid-zone-worker': () => bidZoneWorker.getStatus(),
+  'gmgn-discovery-worker': () => gmgnDiscoveryWorker.getStatus(),
+  'gmgn-claim-signal-worker': () => gmgnClaimSignalWorker.getStatus(),
+  'catalog-cleanup-worker': () => catalogCleanupWorker.getStatus(),
+  'robinhood-retention-worker': () => robinhoodRetentionWorker.getStatus(),
+  'mock-trading-take-profit-worker': () => mockTradingTakeProfitWorker.getStatus(),
+});
+
 function startLockedWorker(group, key, label, start, options = {}) {
   workerLeaseManager.start({
     key,
@@ -483,7 +497,8 @@ function startLockedWorker(group, key, label, start, options = {}) {
       group,
       runtimeRole: config.runtime.role,
     },
-    metadataProvider: options.metadataProvider,
+    metadataProvider: options.metadataProvider || (WORKER_STATUS_PROVIDERS[key]
+      ? () => ({ telemetry: WORKER_STATUS_PROVIDERS[key]() }) : null),
     start,
   });
 }

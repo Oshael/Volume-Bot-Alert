@@ -112,4 +112,23 @@ describe('worker health evaluator', () => {
     }), { nowMs: NOW });
     assert.deepEqual(issues, []);
   });
+
+  it('detects process memory, event-loop and disk pressure once requested', () => {
+    const issues = evaluateWorkerHealth(definition, lease({
+      telemetry: { running: true, lastCompletedAt: '2026-08-29T11:59:30.000Z' },
+      runtime: {
+        rssBytes: 2_000, heapUsedPercent: 95, eventLoopP99Ms: 700,
+        disk: { freePercent: 4, freeBytes: 400 },
+      },
+    }), {
+      nowMs: NOW, evaluateRuntime: true,
+      runtimeThresholds: {
+        maxRssBytes: 1_000, maxHeapPercent: 90, maxEventLoopP99Ms: 500,
+        minDiskFreePercent: 5, minDiskFreeBytes: 500,
+      },
+    });
+    assert.deepEqual(codes(issues), [
+      'process_memory_high', 'process_heap_high', 'event_loop_lag_high', 'disk_space_low',
+    ]);
+  });
 });
