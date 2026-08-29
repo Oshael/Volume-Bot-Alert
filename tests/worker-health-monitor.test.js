@@ -185,6 +185,17 @@ it('sends customized worker incident and recovery messages through the ops chat'
   await notifier.sendRecovery(incident);
   await notifier.sendIncident({
     ...incident, code: 'active_error',
+    details: {
+      ...incident.details,
+      observedValue: {
+        code: 'http_error',
+        message: 'Blockscout address returned HTTP 403',
+        apiKey: 'secret',
+      },
+    },
+  });
+  await notifier.sendIncident({
+    ...incident, code: 'telemetry_error',
     details: { ...incident.details, observedValue: 'https://service.invalid/?token=secret' },
   });
 
@@ -198,5 +209,9 @@ it('sends customized worker incident and recovery messages through the ops chat'
   assert.match(messages[0].text, /Se foi você, tudo bem/);
   assert.match(messages[1].text, /worker recuperado/);
   assert.match(messages[1].text, /Unit: trendscope-worker@core\.service/);
+  assert.match(messages[2].text,
+    /Valor observado: http_error: Blockscout address returned HTTP 403/);
   assert.doesNotMatch(messages[2].text, /secret/);
+  assert.match(messages[3].text, /token=\[redacted\]/);
+  assert.doesNotMatch(messages[3].text, /token=secret/);
 });

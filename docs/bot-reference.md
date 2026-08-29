@@ -734,6 +734,9 @@ fila, evitando que o total desde o boot produza falso backlog.
 Os avisos de incidente e recuperação identificam o componente interno, o grupo
 de processo e a unit systemd. Quando a lease informa um único grupo concreto, o
 Telegram também inclui o comando `journalctl` pronto para os logs daquela unit.
+Incidentes `active_error` e `telemetry_error` incluem o `code` e a `message`
+sanitizados do erro observado; credenciais e valores sensíveis em URLs são
+redigidos antes do envio.
 
 Esse monitor não substitui um watchdog externo: se o próprio processo
 `worker-health`, o PostgreSQL ou a conectividade com o Telegram cair

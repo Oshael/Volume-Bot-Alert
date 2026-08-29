@@ -38,9 +38,27 @@ const AMBIGUOUS_STOP_CODES = new Set([
   'lease_missing', 'component_disabled', 'component_stopped',
 ]);
 
+function sanitizedText(value, maxLength = 300) {
+  return String(value)
+    .replace(/\bBearer\s+[^\s,;]+/gi, 'Bearer [redacted]')
+    .replace(/([?&](?:api[_-]?key|apikey|token|secret|password|authorization)=)[^&#\s]*/gi,
+      '$1[redacted]')
+    .replace(/\b(api[_-]?key|apikey|token|secret|password|authorization)\s*[:=]\s*["']?[^"',;\s}]+/gi,
+      '$1=[redacted]')
+    .slice(0, maxLength);
+}
+
+function errorSummary(value) {
+  if (!value || typeof value !== 'object') return sanitizedText(value);
+  const errorCode = value.code ? sanitizedText(value.code, 80) : '';
+  const message = value.message ? sanitizedText(value.message) : '';
+  if (errorCode && message) return `${errorCode}: ${message}`;
+  return errorCode || message || 'presente (consulte os logs)';
+}
+
 function printable(value, code) {
   if (value === undefined || value === null || value === '') return 'não informado';
-  if (code === 'active_error' || code === 'telemetry_error') return 'presente (consulte os logs)';
+  if (code === 'active_error' || code === 'telemetry_error') return errorSummary(value);
   if (typeof value === 'object') return 'dados estruturados (consulte os logs)';
   return String(value).slice(0, 200);
 }
