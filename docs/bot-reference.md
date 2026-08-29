@@ -1787,8 +1787,12 @@ frontier LIVE congelada e publicações. Dimensione `--max-operations` acima del
 Timeout de aquisição de conexão PostgreSQL ao construir o runtime ou nas operações
 de controle (`plan`, `claim`, `retry`, `commit`, `promote` e progresso) não encerra a campanha: a CLI
 repete somente essa operação com backoff exponencial de 250ms limitado a 5s e
-emite `[TokenRepair] DB acquisition retry`. Erros funcionais e de evidência não
-entram nesse retry.
+emite `[TokenRepair] DB acquisition retry`. A preparação de ranges repete até
+cinco aquisições transitórias antes de devolver o lote à fila. `attempt_count`
+representa tentativas consecutivas desde o último avanço bem-sucedido e volta a
+`1` a cada commit, preservando o marcador exigido pela publicação sem transformar
+centenas de ranges válidos em falha definitiva após um único timeout tardio.
+Erros funcionais e de evidência não entram nesse retry.
 O comando nunca inicializa o
 catálogo inteiro: quando o replay
 encontra `directional_replay_edge_missing`, o range sofre rollback e somente os

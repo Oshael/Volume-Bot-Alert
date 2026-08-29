@@ -195,6 +195,7 @@ function createRobinhoodWalletTransferTokenRepairRepository(options = {}) {
         `UPDATE robinhood_wallet_transfer_token_coverage SET
            next_block = $5::bigint, status = CASE WHEN $6 THEN 'complete' ELSE 'pending' END,
            lease_owner = NULL, lease_until = NULL,
+           attempt_count = 1,
            completed_at = CASE WHEN $6 THEN NOW() ELSE NULL END,
            last_error_code = NULL, last_error_message = NULL,
            version = version + 1, updated_at = NOW()
@@ -262,6 +263,7 @@ function createRobinhoodWalletTransferTokenRepairRepository(options = {}) {
            next_block = $5::bigint,
            status = CASE WHEN source_through_block < $5::bigint THEN 'complete' ELSE 'pending' END,
            lease_owner = NULL, lease_until = NULL,
+           attempt_count = 1,
            completed_at = CASE WHEN source_through_block < $5::bigint THEN NOW() ELSE NULL END,
            last_error_code = NULL, last_error_message = NULL,
            version = version + 1, updated_at = NOW()

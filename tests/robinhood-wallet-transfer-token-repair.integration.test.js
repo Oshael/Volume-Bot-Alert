@@ -154,8 +154,13 @@ describe('Robinhood wallet-transfer token repair persistence', () => {
       `INSERT INTO robinhood_wallet_transfer_token_coverage (
          projection_version, token_address, source_from_block, next_block,
          source_through_block, source_through_hash
-       ) VALUES ($1, $2, 100, 100, 199, $4), ($1, $3, 120, 120, 199, $4)`,
+      ) VALUES ($1, $2, 100, 100, 199, $4), ($1, $3, 120, 120, 199, $4)`,
       [TARGET_TEST_VERSION, TOKEN_TWO, TOKEN_THREE, HASH]
+    );
+    await db.query(
+      `UPDATE robinhood_wallet_transfer_token_coverage SET attempt_count = 360
+        WHERE projection_version = $1 AND token_address = ANY($2)`,
+      [TARGET_TEST_VERSION, [TOKEN_TWO, TOKEN_THREE]]
     );
     const repository = createRobinhoodWalletTransferTokenRepairRepository({
       targetVersion: TARGET_TEST_VERSION, shadowVersion: SHADOW_TEST_VERSION,
@@ -173,15 +178,15 @@ describe('Robinhood wallet-transfer token repair persistence', () => {
     assert.deepEqual({ tokens: committed.tokens, complete: committed.complete,
       pending: committed.pending }, { tokens: 2, complete: 0, pending: 2 });
     const cursors = await db.query(
-      `SELECT token_address, next_block::text, status
+      `SELECT token_address, next_block::text, status, attempt_count
          FROM robinhood_wallet_transfer_token_coverage
         WHERE projection_version = $1 AND token_address = ANY($2)
         ORDER BY token_address`,
       [TARGET_TEST_VERSION, [TOKEN_TWO, TOKEN_THREE]]
     );
     assert.deepEqual(cursors.rows, [
-      { token_address: TOKEN_TWO, next_block: '150', status: 'pending' },
-      { token_address: TOKEN_THREE, next_block: '150', status: 'pending' },
+      { token_address: TOKEN_TWO, next_block: '150', status: 'pending', attempt_count: 1 },
+      { token_address: TOKEN_THREE, next_block: '150', status: 'pending', attempt_count: 1 },
     ]);
     const plan = await repository.plan();
     assert.deepEqual([plan.earliest_pending_block, plan.latest_pending_block], ['150', '199']);

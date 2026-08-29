@@ -29,6 +29,30 @@ function windowConcurrency(value) {
   return parsed;
 }
 
+function isConnectionAcquisitionTimeout(error) {
+  return /(?:connection terminated due to connection timeout|timeout exceeded when trying to connect)/i
+    .test(String(error?.message || ''));
+}
+
+async function prepareWindowsWithRetry(deps, input) {
+  let attempt = 0;
+  for (;;) {
+    try {
+      return await prepareWindows(deps, input);
+    } catch (error) {
+      if (!isConnectionAcquisitionTimeout(error) || attempt >= 5) throw error;
+      attempt += 1;
+      const delayMs = Math.min(5_000, 250 * (2 ** (attempt - 1)));
+      (deps.logger?.error || deps.logger?.log || console.error).call(
+        deps.logger || console,
+        `[TokenRepair] DB acquisition retry operation=prepareWindows`
+          + ` attempt=${attempt} delay=${delayMs}ms error=${error.message}`
+      );
+      await (deps.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms))))(delayMs);
+    }
+  }
+}
+
 async function claimTasks(coverage, input, owner) {
   if (typeof coverage.claimBatch === 'function') {
     const span = blocks(input.maxBlocks) * windowConcurrency(input.windowConcurrency);
@@ -205,7 +229,7 @@ async function runRobinhoodWalletTransferTokenRepairRange(deps = {}, input = {})
   const toBlock = (candidate < through ? candidate : through).toString();
   try {
     const windows = ranges(fromBlock, toBlock, maxBlocks);
-    const events = await prepareWindows(deps, {
+    const events = await prepareWindowsWithRetry(deps, {
       tokenAddresses: claimed.map(({ tokenAddress }) => tokenAddress), ranges: windows,
     });
     const cursors = new Map(claimed.map((item) => [item.tokenAddress, BigInt(item.nextBlock)]));

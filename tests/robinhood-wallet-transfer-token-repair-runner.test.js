@@ -101,6 +101,40 @@ describe('Robinhood wallet-transfer token repair runner', () => {
     assert.equal(deps.calls.some(([name]) => name === 'retry'), true);
   });
 
+  it('retries transient database acquisition during range preparation', async () => {
+    const waits = [];
+    const logs = [];
+    let attempts = 0;
+    const coverage = {
+      async claimBatch() {
+        return [{ tokenAddress: TOKEN, nextBlock: '100', sourceThroughBlock: '149' }];
+      },
+      async commitShadowBatch() { return { complete: 1, pending: 0 }; },
+      async retry() { throw new Error('transient acquisition must not requeue the token'); },
+    };
+    const result = await runRobinhoodWalletTransferTokenRepairRange({
+      coverage,
+      tickDeps: { evidence: { async matchesCheckpoint() { return true; } } },
+      logger: { error: (message) => logs.push(message) },
+      sleep: async (ms) => { waits.push(ms); },
+      prepareRanges: async (_deps, input) => {
+        attempts += 1;
+        if (attempts === 1) throw new Error('timeout exceeded when trying to connect');
+        return {
+          capturedRanges: input.ranges.map((range) => ({
+            checkpoint: { number: range.toBlock, hash: HASH },
+          })),
+          classified: { events: [] },
+        };
+      },
+    }, { owner: 'retry-owner', maxBlocks: 50, windowConcurrency: 1 });
+
+    assert.equal(result.status, 'batch-projected');
+    assert.equal(attempts, 2);
+    assert.deepEqual(waits, [250]);
+    assert.match(logs[0], /DB acquisition retry operation=prepareWindows attempt=1/);
+  });
+
   it('captures and commits one shared window for tokens with different cursors', async () => {
     const calls = [];
     let active = 0;

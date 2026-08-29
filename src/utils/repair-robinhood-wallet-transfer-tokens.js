@@ -118,7 +118,7 @@ async function runOperations(args, coverage, deps) {
         ), deps
       );
       const repair = await (deps.runRange || runRobinhoodWalletTransferTokenRepairRange)(
-        { coverage, tickDeps: runtime.tickDeps }, {
+        { coverage, tickDeps: runtime.tickDeps, logger: deps.logger, sleep: deps.sleep }, {
           maxBlocks: args.maxBlocks, tokenBatchSize: args.tokenBatchSize,
           windowConcurrency: args.windowConcurrency,
         }
