@@ -1195,7 +1195,7 @@ describe('runtime worker groups config', () => {
     }));
   });
 
-  it('keeps VPS Archive funding live opt-in and bounded', () => {
+  it('keeps standard-RPC funding live opt-in and bounded', () => {
     withEnv({ ROBINHOOD_BUNDLE_FUNDING_LIVE_ENABLED: 'true',
       ROBINHOOD_BUNDLE_FUNDING_LIVE_BATCH_BLOCKS: '999',
       ROBINHOOD_BUNDLE_FUNDING_LIVE_TIMEOUT_MS: '999999',

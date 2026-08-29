@@ -698,7 +698,10 @@ function startRobinhoodWalletClassificationWorkerGroup() {
     startLockedWorker(
       'robinhood-wallet-classification', ROBINHOOD_BUNDLE_FUNDING_LIVE_LEASE_KEY,
       'Robinhood BUNDLED funding LIVE worker',
-      () => robinhoodBundleFundingLiveWorker.start(config.robinhoodBundleFundingLiveWorker),
+      () => robinhoodBundleFundingLiveWorker.start({
+        ...config.robinhoodBundleFundingLiveWorker,
+        rpcOptions: config.robinhoodIngestionWorker,
+      }),
       { metadataProvider: () => ({ telemetry: robinhoodBundleFundingLiveWorker.getStatus() }) }
     );
   }

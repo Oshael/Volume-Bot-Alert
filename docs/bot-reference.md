@@ -1819,15 +1819,17 @@ A Stage 172 encadeia anchors commitados à fila token-scoped
 lease antiga e incrementa `requested_version`; a conclusão só é aceita para essa
 mesma versão, evitando que first-buys tardios sejam perdidos. A fila vive no
 PostgreSQL da VPS e não chama RPC. Seu consumidor também deve rodar na VPS,
-exigir `RH_NODE_RPC_URL` Archive e recusar qualquer fallback público. A migration
-não enfileira o histórico: aplique-a antes da última campanha incremental usada
-como seed do live.
+mas reutiliza a lane pública do roteador RPC live padrão de Robinhood
+(`ROBINHOOD_RPC_URL`); não exige `RH_NODE_RPC_URL` nem um node Archive e não envia
+full-blocks para fallbacks de estado histórico. A migration não enfileira o
+histórico: aplique-a antes da última campanha incremental usada como seed do live.
 A Stage 173 persiste a evidência causal atual e o worker
 `ROBINHOOD_BUNDLE_FUNDING_LIVE_ENABLED` drena a fila exclusivamente na VPS. Ele
-congela as early wallets do token, valida chain `4663`, lê full blocks somente do
-`RH_NODE_RPC_URL` Archive e substitui evidência + ACK na mesma transação. Tokens
-com menos de duas candidatas concluem com evidência vazia; erros usam backoff e
-leases expiradas são recuperáveis. Sem Archive na VPS, o start falha fechado.
+congela as early wallets do token, valida chain `4663`, lê somente os full blocks
+recentes das janelas token-scoped pelo RPC live padrão e substitui evidência + ACK
+na mesma transação. Tokens com menos de duas candidatas concluem com evidência
+vazia; erros usam backoff e leases expiradas são recuperáveis. O Archive continua
+obrigatório apenas para backfill/repair histórico executado manualmente.
 A Stage 174 acrescenta `source_version` aos snapshots BUNDLED. O mesmo worker
 materializa `rh_possible_bundle_v1` com lookback de 1.000 blocos e threshold fixo
 de `25000000000000000` wei (0,025 moeda nativa), resolvendo barreiras no

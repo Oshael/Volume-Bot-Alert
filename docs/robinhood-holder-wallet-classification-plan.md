@@ -155,9 +155,11 @@ em configuração versionada.
   travessia e não unem componentes por si próprios.
 - O resultado pertence ao grupo; cada membro recebe o identificador do bundle e
   as evidências comuns.
-- A única fonte de funding é o RPC Archive configurado em `RH_NODE_RPC_URL`.
-  Blocos completos comprovam transfers nativos diretos; explorer/provider
-  externo e arestas ERC-20 não são substitutos silenciosos.
+- Backfill e repair históricos usam exclusivamente o RPC Archive configurado em
+  `RH_NODE_RPC_URL`. A continuidade live usa o roteador RPC Robinhood padrão para
+  ler somente as janelas recentes token-scoped; não depende de Archive na VPS.
+  Blocos completos comprovam transfers nativos diretos; explorer e arestas ERC-20
+  não são substitutos silenciosos.
 - Motivo público: `connected_funding_launch_cluster`.
 
 #### LP LOCKED
@@ -1207,8 +1209,10 @@ ETH para várias compradoras.
 
 ### 12.1 Transfers nativos diretos
 
-Somente o RPC Archive configurado em `RH_NODE_RPC_URL` pode alimentar esta fase.
-Blocos completos, lidos com transações, permitem observar:
+O histórico desta fase só pode ser preenchido pelo RPC Archive configurado em
+`RH_NODE_RPC_URL`. Depois da frontier congelada, a continuidade live lê blocos
+recentes pelo roteador RPC Robinhood padrão, sem exigir Archive. Blocos completos,
+lidos com transações, permitem observar:
 
 - `from`;
 - `to`;
@@ -1221,9 +1225,9 @@ cria janelas pré-compra com lookback explícito e lê a união dos ranges. Não
 autoriza varrer a chain inteira nem consultar histórico por endereço em explorer.
 O preflight deve medir blocos únicos, payload, throughput e ETA antes de escrita.
 
-Uma fase posterior pode manter raw de 30 dias e resumo permanente de arestas
-nativas, seguindo a mesma política de retenção. Funding no mesmo bloco da compra
-é elegível somente quando a posição da transação prova que ocorreu antes.
+Funding no mesmo bloco da compra é elegível somente quando a posição da transação
+prova que ocorreu antes. O Archive permanece ferramenta de backfill/repair, não
+dependência permanente do runtime live.
 
 ### 12.2 Transfers internos
 

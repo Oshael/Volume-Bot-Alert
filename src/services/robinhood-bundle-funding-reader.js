@@ -30,7 +30,7 @@ function blockTag(value) {
 
 function parseBlock(block, expectedNumber, candidateWallets) {
   if (quantity(block?.number, 'block.number') !== BigInt(expectedNumber)) {
-    throw new Error(`archive returned the wrong block for ${expectedNumber}`);
+    throw new Error(`funding RPC returned the wrong block for ${expectedNumber}`);
   }
   const blockHash = hash(block.hash, 'block.hash');
   const blockTimestamp = quantity(block.timestamp, 'block.timestamp').toString();
@@ -61,13 +61,15 @@ function responseTooLarge(error) {
 
 function validateHydratedTransaction(transaction, transactionHash, block) {
   if (!transaction || hash(transaction.hash, 'transaction.hash') !== transactionHash) {
-    throw new Error(`archive omitted transaction ${transactionHash}`);
+    throw new Error(`funding RPC omitted transaction ${transactionHash}`);
   }
   if (quantity(transaction.blockNumber, 'transaction.blockNumber')
       !== quantity(block.number, 'block.number')
       || hash(transaction.blockHash, 'transaction.blockHash')
         !== hash(block.hash, 'block.hash')) {
-    throw new Error(`archive returned transaction ${transactionHash} from the wrong block`);
+    throw new Error(
+      `funding RPC returned transaction ${transactionHash} from the wrong block`
+    );
   }
   return transaction;
 }
@@ -75,7 +77,7 @@ function validateHydratedTransaction(transaction, transactionHash, block) {
 function createRobinhoodBundleFundingReader(options = {}) {
   const rpcClient = options.rpcClient;
   if (typeof rpcClient?.request !== 'function' || typeof rpcClient?.requestBatch !== 'function') {
-    throw new Error('archive RPC client with batch support is required');
+    throw new Error('funding RPC client with batch support is required');
   }
   const candidateWallets = new Set((options.candidateWallets || []).map((value) => (
     address(value, 'candidateWallet')
@@ -84,7 +86,9 @@ function createRobinhoodBundleFundingReader(options = {}) {
   async function assertChain() {
     const chainId = quantity(await rpcClient.request('eth_chainId'), 'eth_chainId');
     if (chainId !== EXPECTED_CHAIN_ID) {
-      throw new Error(`archive chain ID ${chainId} does not match Robinhood ${EXPECTED_CHAIN_ID}`);
+      throw new Error(
+        `funding RPC chain ID ${chainId} does not match Robinhood ${EXPECTED_CHAIN_ID}`
+      );
     }
     return chainId.toString();
   }
@@ -92,7 +96,7 @@ function createRobinhoodBundleFundingReader(options = {}) {
   async function checkpoint(blockNumber) {
     const block = await rpcClient.request('eth_getBlockByNumber', [blockTag(blockNumber), false]);
     if (quantity(block?.number, 'checkpoint.number') !== BigInt(blockNumber)) {
-      throw new Error('archive checkpoint block mismatch');
+      throw new Error('funding RPC checkpoint block mismatch');
     }
     return hash(block.hash, 'checkpoint.hash');
   }
@@ -102,7 +106,7 @@ function createRobinhoodBundleFundingReader(options = {}) {
       'eth_getBlockByNumber', [blockTag(blockNumber), false]
     );
     if (quantity(block?.number, 'block.number') !== BigInt(blockNumber)) {
-      throw new Error(`archive returned the wrong block for ${blockNumber}`);
+      throw new Error(`funding RPC returned the wrong block for ${blockNumber}`);
     }
     hash(block.hash, 'block.hash');
     if (!Array.isArray(block.transactions)) {

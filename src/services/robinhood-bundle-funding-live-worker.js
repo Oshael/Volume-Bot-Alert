@@ -6,7 +6,7 @@ const {
 const {
   createRobinhoodBundleFundingLiveSource,
 } = require('../models/robinhood-bundle-funding-live-source');
-const { createEvmJsonRpcClient } = require('./evm-json-rpc-client');
+const { createRobinhoodRpcClient } = require('./robinhood-ingestion-worker');
 const { createRobinhoodBundleFundingReader } = require('./robinhood-bundle-funding-reader');
 const { planBundleFundingScan } = require('./robinhood-bundle-funding-scan-plan');
 const { materializeBundleFundingRange } = require('./robinhood-bundle-funding-materializer');
@@ -27,18 +27,14 @@ const normalizeOptions = (input = {}) => Object.freeze({
   maxRetryMs: bounded(input.maxRetryMs, 3_600_000, 60_000, 86_400_000),
   batchBlocks: bounded(input.batchBlocks, 50, 1, 100),
   timeoutMs: bounded(input.timeoutMs, 60_000, 1000, 300_000),
+  rpcOptions: input.rpcOptions || {},
 });
 
 function buildRuntime(deps, options) {
-  const env = deps.env || process.env;
-  const url = String(env.RH_NODE_RPC_URL || '').trim();
-  if (!url) throw Object.assign(new Error('RH_NODE_RPC_URL Archive is required on the VPS'), {
-    code: 'configuration_error',
-  });
   const database = deps.database || db;
-  const rpcClient = (deps.rpcClientFactory || createEvmJsonRpcClient)({
-    providers: [{ name: 'robinhood-vps-archive', url }],
-    timeoutMs: options.timeoutMs, maxRetries: 1,
+  const rpcClient = (deps.rpcClientFactory || createRobinhoodRpcClient)({
+    ...options.rpcOptions,
+    rpcTimeoutMs: options.timeoutMs,
   });
   return Object.freeze({
     queue: (deps.queueFactory || createRobinhoodBundleFundingLiveQueueRepository)({ database }),

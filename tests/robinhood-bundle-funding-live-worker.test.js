@@ -1,13 +1,13 @@
 const assert = require('node:assert/strict');
 const { it } = require('node:test');
 const {
-  processTask, __private: { buildRuntime },
+  processTask, __private: { buildRuntime, normalizeOptions },
 } = require('../src/services/robinhood-bundle-funding-live-worker');
 
 const TOKEN = `0x${'a'.repeat(40)}`;
 const WALLETS = [`0x${'1'.repeat(40)}`, `0x${'2'.repeat(40)}`];
 
-it('scans a token with one VPS Archive provider and atomically replaces evidence', async () => {
+it('scans a token with the standard live provider and atomically replaces evidence', async () => {
   let persisted; let classificationInput;
   const candidates = WALLETS.map((walletAddress, index) => ({
     tokenAddress: TOKEN, walletAddress, launchBlock: '100',
@@ -40,13 +40,18 @@ it('scans a token with one VPS Archive provider and atomically replaces evidence
   });
 });
 
-it('requires exactly one VPS Archive endpoint', () => {
-  assert.throws(() => buildRuntime({ env: {} }, {}), /RH_NODE_RPC_URL Archive/);
-  let providers;
-  buildRuntime({ env: { RH_NODE_RPC_URL: 'http://127.0.0.1:8545' },
-    rpcClientFactory(options) { providers = options.providers; return {}; },
+it('reuses the standard Robinhood live RPC configuration without an Archive env', () => {
+  let receivedOptions;
+  const options = normalizeOptions({ timeoutMs: 60_000, rpcOptions: {
+    publicRpcUrl: 'https://rpc.mainnet.chain.robinhood.com', rpcMaxRetries: 3,
+  } });
+  buildRuntime({
+    rpcClientFactory(options) { receivedOptions = options; return {}; },
     queueFactory: () => ({}), sourceFactory: () => ({}), database: {},
-  }, { timeoutMs: 60_000 });
-  assert.deepEqual(providers, [{ name: 'robinhood-vps-archive',
-    url: 'http://127.0.0.1:8545' }]);
+  }, options);
+  assert.deepEqual(receivedOptions, {
+    publicRpcUrl: 'https://rpc.mainnet.chain.robinhood.com',
+    rpcMaxRetries: 3,
+    rpcTimeoutMs: 60_000,
+  });
 });
