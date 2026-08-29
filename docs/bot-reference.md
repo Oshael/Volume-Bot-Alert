@@ -1707,6 +1707,14 @@ o primeiro swap registrado somente para o token reclamado e mantém a escrita
 idempotente. Ative com `ROBINHOOD_LAUNCH_ANCHOR_LIVE_ENABLED=true` somente após
 aplicar a Stage 171. Isso mantém anchors novos automaticamente, mas não substitui
 o catch-up Stage 166 para lacunas anteriores à instalação da outbox.
+A Stage 172 encadeia anchors commitados à fila token-scoped
+`robinhood_bundle_funding_live_queue`. Cada nova versão do anchor invalida uma
+lease antiga e incrementa `requested_version`; a conclusão só é aceita para essa
+mesma versão, evitando que first-buys tardios sejam perdidos. A fila vive no
+PostgreSQL da VPS e não chama RPC. Seu consumidor também deve rodar na VPS,
+exigir `RH_NODE_RPC_URL` Archive e recusar qualquer fallback público. A migration
+não enfileira o histórico: aplique-a antes da última campanha incremental usada
+como seed do live.
 A Stage 156 adiciona o índice concorrente `(chain, token_address, discovery_block)`
 ao registry. A recorrência começa pelas compras da wallet e consulta a origem
 somente dos tokens encontrados, sem reagregar todas as pools por wallet candidata;

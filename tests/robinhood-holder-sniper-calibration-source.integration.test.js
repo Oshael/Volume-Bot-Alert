@@ -20,6 +20,10 @@ const stage149 = require('../src/utils/db-init-stage149');
 const stage155 = require('../src/utils/db-init-stage155');
 const stage156 = require('../src/utils/db-init-stage156');
 const stage157 = require('../src/utils/db-init-stage157');
+const stage172 = require('../src/utils/db-init-stage172');
+const {
+  createRobinhoodBundleFundingLiveQueueRepository,
+} = require('../src/models/robinhood-bundle-funding-live-queue');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const WALLET = `0x${'d'.repeat(40)}`;
@@ -31,13 +35,16 @@ describe('Robinhood SNIPER population calibration source integration', () => {
     for (const stage of [
       stage63, stage90, stage110, stage116, stage139, stage145, stage149, stage155,
       stage156, stage157,
+      stage172,
     ]) {
       await stage.init({ closePool: false });
     }
     await db.query('DELETE FROM robinhood_token_launch_anchors');
+    await db.query('DELETE FROM robinhood_bundle_funding_live_queue');
   });
 
   after(async () => {
+    await db.query('DELETE FROM robinhood_bundle_funding_live_queue');
     await db.query('DELETE FROM robinhood_token_launch_anchors');
     await db.pool.end();
   });
@@ -68,6 +75,20 @@ describe('Robinhood SNIPER population calibration source integration', () => {
     assert.deepEqual((await db.query(__private.CACHED_ANCHORS_SQL, [
       [TOKEN], ['91'], ['250'], 'robinhood',
     ])).rows, []);
+    const queue = createRobinhoodBundleFundingLiveQueueRepository({ database: db });
+    const task = await queue.claim({ owner: 'integration', leaseMs: 60_000 });
+    assert.deepEqual({ tokenAddress: task.tokenAddress, requestedVersion: task.requestedVersion,
+      anchorBlock: task.anchorBlock }, {
+      tokenAddress: TOKEN, requestedVersion: '1', anchorBlock: '100',
+    });
+    await db.query(`UPDATE robinhood_token_launch_anchors
+      SET source_through_block = 251 WHERE token_address = $1`, [TOKEN]);
+    assert.equal(await queue.complete({ ...task, owner: 'integration' }), false);
+    const latest = await queue.claim({ owner: 'integration', leaseMs: 60_000 });
+    assert.equal(latest.requestedVersion, '2');
+    assert.equal(await queue.complete({ ...latest, owner: 'integration' }), true);
+    assert.equal((await db.query(`SELECT status FROM robinhood_bundle_funding_live_queue
+      WHERE token_address = $1`, [TOKEN])).rows[0].status, 'complete');
   });
 
   it('atomically enriches a block cache with typed canonical evidence', async () => {

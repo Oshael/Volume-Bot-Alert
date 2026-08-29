@@ -4938,6 +4938,34 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage172-robinhood-bundle-funding-live-queue',
+    name: 'Stage 172 Robinhood BUNDLED live funding queue',
+    repair: 'node src/utils/db-init-stage172.js',
+    tables: [{
+      table: 'robinhood_bundle_funding_live_queue',
+      columns: [
+        'chain', 'token_address', 'rule_version', 'evidence_version',
+        'lookback_blocks', 'anchor_block', 'source_through_block',
+        'requested_version', 'completed_version', 'status', 'lease_owner',
+        'lease_until', 'attempt_count', 'next_attempt_at', 'last_error_code',
+        'last_error_message', 'completed_at', 'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_bundle_funding_live_queue_pkey',
+        includes: ['PRIMARY KEY', 'chain', 'token_address'],
+      }, {
+        name: 'rh_bundle_funding_live_queue_lifecycle_check',
+        includes: ['status', 'leased', 'complete', 'lease_owner', 'completed_version'],
+      }],
+      indexes: [{
+        name: 'idx_rh_bundle_funding_live_queue_claim',
+        includes: ['next_attempt_at', 'updated_at'],
+      }, {
+        name: 'idx_rh_bundle_funding_live_queue_lease', includes: ['lease_until'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
