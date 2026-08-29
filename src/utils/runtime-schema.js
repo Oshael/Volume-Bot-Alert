@@ -5019,6 +5019,44 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage176-worker-health-control-plane',
+    name: 'Stage 176 worker-health incidents and maintenance',
+    repair: 'node src/utils/db-init-stage176.js',
+    tables: [{
+      table: 'worker_health_incidents',
+      columns: [
+        'incident_key', 'component_key', 'code', 'severity', 'path', 'status',
+        'first_observed_at', 'last_observed_at', 'consecutive_observations',
+        'opened_at', 'resolved_at', 'last_notified_at', 'recovery_notified_at',
+        'notification_count', 'notification_next_attempt_at', 'notification_claim_kind',
+        'notification_claim_owner', 'notification_claim_until', 'details',
+        'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'worker_health_incidents_pkey', includes: ['PRIMARY KEY', 'incident_key'],
+      }, {
+        name: 'worker_health_incidents_claim_check',
+        includes: ['notification_claim_kind', 'notification_claim_owner'],
+      }],
+      indexes: [{
+        name: 'idx_worker_health_incidents_notify', includes: ['status', 'last_notified_at'],
+      }],
+    }, {
+      table: 'worker_health_maintenance',
+      columns: [
+        'id', 'component_key', 'reason', 'created_by', 'starts_at', 'ends_at',
+        'cancelled_at', 'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'worker_health_maintenance_window_check', includes: ['ends_at', 'starts_at'],
+      }],
+      indexes: [{
+        name: 'idx_worker_health_maintenance_active',
+        includes: ['component_key', 'starts_at', 'ends_at'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
