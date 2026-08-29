@@ -63,6 +63,7 @@ describe('Robinhood realtime alert worker', () => {
     assert.equal(worker.enqueue(update(TOKEN_TWO, '2026-07-18T18:00:00.800Z')), true);
     assert.equal(scheduler.callbacks.length, 1);
     assert.equal(scheduler.callbacks[0].delayMs, 25);
+    assert.equal(worker.getStatus().pending, 2);
     await worker.flush();
 
     assert.deepEqual(reads[0].addresses, [TOKEN, TOKEN_TWO]);
@@ -72,6 +73,7 @@ describe('Robinhood realtime alert worker', () => {
     assert.equal(publications[0].input.asOf.toISOString(), '2026-07-18T18:00:00.800Z');
     assert.equal(worker.getStatus().queued, 3);
     assert.equal(worker.getStatus().processed, 2);
+    assert.equal(worker.getStatus().pending, 0);
     await worker.stop();
   });
 

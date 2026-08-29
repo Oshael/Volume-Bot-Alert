@@ -87,12 +87,21 @@ describe('worker health evaluator', () => {
       enabled: true, running: true, inFlight: true,
       lastRunAt: '2026-08-29T11:55:00.000Z',
       consecutiveErrors: 3, lastError: { code: 'timeout' },
-      lagBlocks: 51, lagMs: 60_001, lastLoopOverrunMs: 30_001, queued: 1_001,
+      lagBlocks: 51, lagMs: 60_001, lastLoopOverrunMs: 30_001, depth: 1_001,
     } }), { nowMs: NOW });
     assert.deepEqual(codes(issues), [
       'consecutive_errors', 'active_error', 'execution_stalled', 'lag_blocks_high',
       'lag_time_high', 'loop_overrun', 'queue_backlog',
     ]);
+  });
+
+  it('does not mistake a cumulative queued counter for current backlog', () => {
+    const issues = evaluateWorkerHealth(definition, lease({ telemetry: {
+      running: true, lastCompletedAt: '2026-08-29T11:59:30.000Z',
+      queued: 50_000, processed: 49_999, pending: 1,
+    } }), { nowMs: NOW });
+
+    assert.deepEqual(issues, []);
   });
 
   it('records the concrete process group reported by the lease', () => {

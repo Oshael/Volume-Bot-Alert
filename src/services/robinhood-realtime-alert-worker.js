@@ -160,7 +160,13 @@ function createRobinhoodRealtimeAlertWorker(deps = {}) {
     if (activeRun) await activeRun.catch(() => {});
   }
 
-  return Object.freeze({ enqueue, flush, getStatus: () => ({ ...status }), start, stop });
+  return Object.freeze({
+    enqueue,
+    flush,
+    getStatus: () => ({ ...status, pending: pending.size }),
+    start,
+    stop,
+  });
 }
 
 const worker = createRobinhoodRealtimeAlertWorker();

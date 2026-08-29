@@ -727,6 +727,10 @@ limitados pelas variáveis `WORKER_HEALTH_*` documentadas em `.env.example`.
 Cada ocorrência gera um único aviso enquanto permanecer aberta; falhas de envio
 continuam sendo tentadas até a entrega. Depois da recuperação persistida, uma
 nova ocorrência do mesmo problema rearma um novo aviso.
+Para pressão de fila, o avaliador considera apenas gauges de trabalho atualmente
+pendente (`backlog`, `pending`, `depth`, `queueDepth` e `queuedCount`). O campo
+`queued` é tratado como contador acumulado de throughput e nunca como tamanho da
+fila, evitando que o total desde o boot produza falso backlog.
 Os avisos de incidente e recuperação identificam o componente interno, o grupo
 de processo e a unit systemd. Quando a lease informa um único grupo concreto, o
 Telegram também inclui o comando `journalctl` pronto para os logs daquela unit.

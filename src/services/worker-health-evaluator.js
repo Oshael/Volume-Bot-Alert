@@ -132,7 +132,10 @@ function addPressureIssues(issues, definition, node, thresholds) {
         `${node.path}.${field}`, observed, limit));
     }
   }
-  for (const field of ['backlog', 'pending', 'queued']) {
+  // Only evaluate gauges that represent work currently waiting. `queued` is
+  // commonly a cumulative throughput counter in worker telemetry and must not
+  // be interpreted as the current queue depth.
+  for (const field of ['backlog', 'pending', 'depth', 'queueDepth', 'queuedCount']) {
     const observed = Number(node.value[field]);
     if (Number.isFinite(observed) && observed > thresholds.maxQueue) {
       issues.push(issue(definition, 'queue_backlog', 'warning', `${node.path}.${field}`,
