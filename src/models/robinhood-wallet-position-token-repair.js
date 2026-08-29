@@ -5,6 +5,9 @@ const CHAIN = 'robinhood';
 const TARGET_VERSION = 'unified_transfer_v1';
 const SHADOW_VERSION = 'unified_transfer_token_repair_v1';
 const SOURCE_VERSION = 'rh_transfer_v1';
+const LIVE_LEASE_KEYS = Object.freeze([
+  'robinhood-wallet-position-live-worker', 'robinhood-wallet-transfer-live-worker',
+]);
 
 function bounded(value, fallback, minimum, maximum, label) {
   const parsed = Number(value ?? fallback);
@@ -113,6 +116,55 @@ function task(row) {
   }) : null;
 }
 
+function promotionFrontier(row) {
+  const transferNext = row.transfer_next_block == null ? null : String(row.transfer_next_block);
+  const positionNext = row.position_next_block == null ? null : String(row.position_next_block);
+  const frontierBlock = row.position_checkpoint_block == null
+    ? null : String(row.position_checkpoint_block);
+  const aligned = Boolean(transferNext && positionNext && frontierBlock != null
+    && transferNext === positionNext
+    && BigInt(positionNext) === BigInt(frontierBlock) + 1n
+    && row.transfer_checkpoint_hash === row.position_checkpoint_hash);
+  return Object.freeze({
+    aligned, block: frontierBlock, hash: row.position_checkpoint_hash,
+  });
+}
+
+function shadowIsIncomplete(row) {
+  return [row.pending, row.leased, row.failed].some((value) => Number(value) > 0);
+}
+
+function promotionReport(row) {
+  const frontier = promotionFrontier(row);
+  const behind = Number(row.behind_frontier || 0);
+  const blockers = [
+    [Number(row.active_writers) > 0, 'live_position_writers_active'],
+    [!frontier.aligned, 'live_position_transfer_frontier_mismatch'],
+    [shadowIsIncomplete(row), 'position_shadow_incomplete'],
+    [Number(row.candidates || 0) === 0, 'position_shadow_not_found'],
+    [behind > 0, 'position_shadow_tail_required'],
+    [Number(row.ahead_frontier || 0) > 0, 'position_shadow_ahead_of_live'],
+    [Number(row.hash_mismatch || 0) > 0, 'position_shadow_hash_mismatch'],
+  ];
+  const reasons = blockers.filter(([blocked]) => blocked).map(([, reason]) => reason);
+  return Object.freeze({
+    candidates: Number(row.candidates || 0), pending: Number(row.pending || 0),
+    leased: Number(row.leased || 0), failed: Number(row.failed || 0),
+    shadowComplete: Number(row.shadow_complete || 0), published: Number(row.published || 0),
+    behindFrontier: behind, aheadFrontier: Number(row.ahead_frontier || 0),
+    hashMismatch: Number(row.hash_mismatch || 0),
+    activeWriters: Number(row.active_writers || 0),
+    shadowPositions: Number(row.shadow_positions || 0),
+    targetPositions: Number(row.target_positions || 0),
+    frontier: frontier.block == null ? null : Object.freeze({
+      block: frontier.block, hash: frontier.hash,
+    }),
+    readyToPrepare: reasons.every((reason) => reason === 'position_shadow_tail_required'),
+    readyToPromote: reasons.length === 0,
+    reasons: Object.freeze(reasons),
+  });
+}
+
 function createRobinhoodWalletPositionTokenRepairRepository(options = {}) {
   const database = options.database || db;
   const targetVersion = options.targetVersion || TARGET_VERSION;
@@ -191,6 +243,162 @@ function createRobinhoodWalletPositionTokenRepairRepository(options = {}) {
       [CHAIN, targetVersion, sourceVersion]
     );
     return Object.freeze(result.rows[0]);
+  }
+
+  async function promotionPlan(runner = database) {
+    const result = await runner.query(
+      `WITH transfer AS MATERIALIZED (
+         SELECT next_block, checkpoint_block, checkpoint_hash
+           FROM robinhood_wallet_transfer_cursors
+          WHERE chain = $1 AND projection_version = $4 AND stream = 'live'
+            AND lifecycle_state = 'running'
+       ), position AS MATERIALIZED (
+         SELECT next_block, checkpoint_block, checkpoint_hash
+           FROM robinhood_wallet_position_cursors
+          WHERE chain = $1 AND projection_version = $2 AND stream = 'live'
+            AND lifecycle_state = 'running'
+       ), coverage AS MATERIALIZED (
+         SELECT COUNT(*)::integer AS candidates,
+                COUNT(*) FILTER (WHERE status = 'pending')::integer AS pending,
+                COUNT(*) FILTER (WHERE status = 'leased')::integer AS leased,
+                COUNT(*) FILTER (WHERE status = 'failed')::integer AS failed,
+                COUNT(*) FILTER (WHERE status = 'complete'
+                  AND published_at IS NULL)::integer AS shadow_complete,
+                COUNT(*) FILTER (WHERE published_at IS NOT NULL)::integer AS published,
+                COUNT(*) FILTER (WHERE published_at IS NULL AND position.checkpoint_block IS NOT NULL
+                  AND source_through_block < position.checkpoint_block)::integer AS behind_frontier,
+                COUNT(*) FILTER (WHERE published_at IS NULL AND position.checkpoint_block IS NOT NULL
+                  AND source_through_block > position.checkpoint_block)::integer AS ahead_frontier,
+                COUNT(*) FILTER (WHERE published_at IS NULL AND position.checkpoint_block IS NOT NULL
+                  AND source_through_block = position.checkpoint_block
+                  AND LOWER(source_through_hash) <> LOWER(position.checkpoint_hash))::integer
+                  AS hash_mismatch
+           FROM robinhood_wallet_position_token_coverage CROSS JOIN position
+          WHERE chain = $1 AND projection_version = $2
+       ) SELECT coverage.*,
+                transfer.next_block AS transfer_next_block,
+                transfer.checkpoint_hash AS transfer_checkpoint_hash,
+                position.next_block AS position_next_block,
+                position.checkpoint_block AS position_checkpoint_block,
+                position.checkpoint_hash AS position_checkpoint_hash,
+                (SELECT COUNT(*)::integer FROM worker_leases
+                  WHERE lease_key = ANY($5::varchar[]) AND lease_until > NOW()) AS active_writers,
+                (SELECT COUNT(*)::integer FROM robinhood_wallet_token_positions
+                  WHERE chain = $1 AND projection_version = $3) AS shadow_positions,
+                (SELECT COUNT(*)::integer FROM robinhood_wallet_token_positions target
+                  JOIN robinhood_wallet_position_token_coverage item
+                    ON item.chain = target.chain AND item.token_address = target.token_address
+                   AND item.projection_version = $2
+                 WHERE target.chain = $1 AND target.projection_version = $2) AS target_positions
+           FROM transfer CROSS JOIN position CROSS JOIN coverage`,
+      [CHAIN, targetVersion, shadowVersion, sourceVersion, LIVE_LEASE_KEYS]
+    );
+    return promotionReport(result.rows[0] || {});
+  }
+
+  async function preparePromotion() {
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        `SELECT lease_key FROM worker_leases
+          WHERE lease_key = ANY($1::varchar[]) FOR UPDATE`, [LIVE_LEASE_KEYS]
+      );
+      const before = await promotionPlan(client);
+      if (!before.readyToPrepare && !before.readyToPromote) {
+        const error = new Error(`position promotion blocked: ${before.reasons.join(',')}`);
+        error.code = 'POSITION_PROMOTION_BLOCKED';
+        throw error;
+      }
+      const extended = await client.query(
+        `UPDATE robinhood_wallet_position_token_coverage SET
+           source_through_block = $3::bigint, source_through_hash = $4,
+           status = 'pending', completed_at = NULL, next_attempt_at = NOW(),
+           version = version + 1, updated_at = NOW()
+         WHERE chain = $1 AND projection_version = $2 AND published_at IS NULL
+           AND status = 'complete' AND source_through_block < $3::bigint`,
+        [CHAIN, targetVersion, before.frontier.block, before.frontier.hash]
+      );
+      await client.query('COMMIT');
+      return Object.freeze({ extended: extended.rowCount, frontier: before.frontier });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async function promoteNext(input = {}) {
+    const expectedBlock = uint(input.frontier?.block, 'frontier.block');
+    const expectedHash = String(input.frontier?.hash || '').toLowerCase();
+    if (!/^0x[0-9a-f]{64}$/.test(expectedHash)) throw new Error('frontier.hash is invalid');
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        `SELECT lease_key FROM worker_leases
+          WHERE lease_key = ANY($1::varchar[]) FOR UPDATE`, [LIVE_LEASE_KEYS]
+      );
+      const plan = await promotionPlan(client);
+      if (!plan.readyToPromote || plan.frontier?.block !== expectedBlock
+          || plan.frontier?.hash !== expectedHash) {
+        const error = new Error(`position promotion frontier changed: ${plan.reasons.join(',')}`);
+        error.code = 'POSITION_PROMOTION_FRONTIER_CHANGED';
+        throw error;
+      }
+      const selected = await client.query(
+        `SELECT * FROM robinhood_wallet_position_token_coverage
+          WHERE chain = $1 AND projection_version = $2 AND status = 'complete'
+            AND published_at IS NULL AND source_through_block = $3::bigint
+            AND source_through_hash = $4
+          ORDER BY token_address LIMIT 1 FOR UPDATE SKIP LOCKED`,
+        [CHAIN, targetVersion, expectedBlock, expectedHash]
+      );
+      const current = selected.rows[0];
+      if (!current) {
+        await client.query('ROLLBACK');
+        return null;
+      }
+      const counts = await client.query(
+        `SELECT COUNT(*) FILTER (WHERE projection_version = $2)::integer AS target,
+                COUNT(*) FILTER (WHERE projection_version = $3)::integer AS shadow
+           FROM robinhood_wallet_token_positions
+          WHERE chain = $1 AND token_address = $4
+            AND projection_version IN ($2, $3)`,
+        [CHAIN, targetVersion, shadowVersion, current.token_address]
+      );
+      if (counts.rows[0].target > 0 && counts.rows[0].shadow === 0) {
+        throw new Error('position shadow is empty while target positions exist');
+      }
+      const removed = await client.query(
+        `DELETE FROM robinhood_wallet_token_positions
+          WHERE chain = $1 AND projection_version = $2 AND token_address = $3`,
+        [CHAIN, targetVersion, current.token_address]
+      );
+      const promoted = await client.query(
+        `UPDATE robinhood_wallet_token_positions SET
+           projection_version = $2, updated_at = NOW()
+         WHERE chain = $1 AND projection_version = $3 AND token_address = $4`,
+        [CHAIN, targetVersion, shadowVersion, current.token_address]
+      );
+      await client.query(
+        `UPDATE robinhood_wallet_position_token_coverage SET
+           published_at = NOW(), version = version + 1, updated_at = NOW()
+         WHERE chain = $1 AND projection_version = $2 AND token_address = $3`,
+        [CHAIN, targetVersion, current.token_address]
+      );
+      await client.query('COMMIT');
+      return Object.freeze({
+        tokenAddress: current.token_address, removed: removed.rowCount,
+        promoted: promoted.rowCount,
+      });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async function claim(input = {}) {
@@ -439,11 +647,11 @@ function createRobinhoodWalletPositionTokenRepairRepository(options = {}) {
 
   return Object.freeze({
     claim, claimBatch, commitShadowBatch, commitShadowRange,
-    initialize, plan, preview, recover, retry,
+    initialize, plan, preparePromotion, preview, promoteNext, promotionPlan, recover, retry,
   });
 }
 
 module.exports = {
-  SHADOW_VERSION, SOURCE_VERSION, TARGET_VERSION,
+  LIVE_LEASE_KEYS, SHADOW_VERSION, SOURCE_VERSION, TARGET_VERSION,
   createRobinhoodWalletPositionTokenRepairRepository,
 };

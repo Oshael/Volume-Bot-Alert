@@ -125,6 +125,7 @@
     "robinhood:wallet-transfer-token-repair": "node src/utils/repair-robinhood-wallet-transfer-tokens.js",
     "robinhood:wallet-transfer-token-repair-monitor": "node src/utils/monitor-robinhood-wallet-transfer-token-repair.js",
     "robinhood:wallet-position-token-repair": "node src/utils/repair-robinhood-wallet-positions.js",
+    "robinhood:wallet-position-token-promote": "node src/utils/promote-robinhood-wallet-positions.js",
     "robinhood:directional-transfer-replay": "node src/utils/replay-robinhood-directional-transfer-evidence.js",
     "robinhood:directional-deployment-gap-reconcile": "node src/utils/reconcile-robinhood-directional-deployment-gaps.js",
     "robinhood:directional-deployment-resolve": "node src/utils/resolve-robinhood-directional-deployments.js",

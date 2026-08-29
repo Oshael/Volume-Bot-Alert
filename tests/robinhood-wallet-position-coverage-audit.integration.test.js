@@ -15,6 +15,7 @@ const stage137 = require('../src/utils/db-init-stage137');
 const stage154 = require('../src/utils/db-init-stage154');
 const stage158 = require('../src/utils/db-init-stage158');
 const stage159 = require('../src/utils/db-init-stage159');
+const stage170 = require('../src/utils/db-init-stage170');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const TRANSFER_VERSION = 'position_coverage_transfer_it';
@@ -23,6 +24,10 @@ const TOKEN = `0x${'e'.repeat(40)}`;
 const HASH = `0x${'f'.repeat(64)}`;
 
 async function cleanup() {
+  await db.query(
+    'DELETE FROM robinhood_wallet_position_token_coverage WHERE projection_version = $1',
+    [POSITION_VERSION]
+  );
   await db.query(
     'DELETE FROM robinhood_wallet_transfer_token_coverage WHERE projection_version = $1',
     [TRANSFER_VERSION]
@@ -81,7 +86,7 @@ describe('Robinhood wallet-position coverage audit', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
     for (const stage of [
-      stage116, stage126, stage129, stage134, stage137, stage154, stage158, stage159,
+      stage116, stage126, stage129, stage134, stage137, stage154, stage158, stage159, stage170,
     ]) await stage.init({ closePool: false });
     await cleanup();
     await seedFrontiers();
@@ -117,5 +122,24 @@ describe('Robinhood wallet-position coverage audit', () => {
     assert.equal(result.ready, false);
     assert.equal(result.repairRequired, true);
     assert.deepEqual(result.reasons, ['position_token_repair_required']);
+  });
+
+  it('accepts a late token after its financial shadow is published', async () => {
+    await db.query(
+      `INSERT INTO robinhood_wallet_position_token_coverage (
+         projection_version, shadow_projection_version, source_transfer_version,
+         token_address, source_from_block, next_block, source_through_block,
+         source_through_hash, status, completed_at, published_at
+       ) VALUES ($1, 'position_coverage_shadow_it', $2, $3, 100, 300, 299,
+         $4, 'complete', NOW(), NOW())`,
+      [POSITION_VERSION, TRANSFER_VERSION, TOKEN, HASH]
+    );
+    const auditor = createRobinhoodWalletPositionCoverageAuditor({
+      database: db, transferVersion: TRANSFER_VERSION, positionVersion: POSITION_VERSION,
+    });
+    const result = await auditor.audit();
+    assert.equal(result.ready, true);
+    assert.equal(result.repair.positionRepairedTokens, 1);
+    assert.deepEqual(result.reasons, []);
   });
 });

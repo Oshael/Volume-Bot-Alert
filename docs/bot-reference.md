@@ -1965,6 +1965,18 @@ pode permanecer ligado nesta fase porque cada candidato conserva sua frontier
 histórica congelada. A CLI informa progresso a cada 25 operações e nunca promove
 automaticamente a versão shadow.
 
+A promoção final usa `npm run robinhood:wallet-position-token-promote` e é
+read-only por padrão. Pare os writers LIVE de transfer e posição antes de usar
+`-- --confirm-promote-robinhood-wallet-positions`; a CLI recusa leases ativas e
+frontiers desalinhadas. A primeira aplicação congela a frontier corrente e, se o
+LIVE avançou durante o repair, retorna `shadow-catchup-required` sem publicar.
+Nesse caso, mantenha os writers parados, execute novamente o repair financeiro
+até `caughtUp=true` e reaplique a promoção. Cada token é trocado e marcado como
+publicado na mesma transação; `--max-tokens` limita a passada e permite retomada.
+Somente depois de `status=completed`, `published=candidates` e auditoria com
+`ready=true` os writers devem ser reiniciados. O cursor persistido retoma do
+bloco seguinte, portanto a pausa atrasa o LIVE mas não perde eventos.
+
 O materializador `rh_insider_direct_v1` aceita
 somente `creator_token_distribution`: transferência positiva, direta (um hop),
 do criador atribuído para uma wallet comprovada. Ele falha fechado enquanto o

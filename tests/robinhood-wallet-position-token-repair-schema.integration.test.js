@@ -20,11 +20,17 @@ const HASH = `0x${'a'.repeat(64)}`;
 async function cleanup() {
   await db.query(
     `DELETE FROM robinhood_wallet_token_positions
-      WHERE projection_version = $1`, [SHADOW]
+      WHERE projection_version IN ($1, $2)`, [SHADOW, TARGET]
   );
   await db.query(
     `DELETE FROM robinhood_wallet_position_token_coverage
       WHERE projection_version = $1`, [TARGET]
+  );
+  await db.query(
+    'DELETE FROM robinhood_wallet_position_cursors WHERE projection_version = $1', [TARGET]
+  );
+  await db.query(
+    'DELETE FROM robinhood_wallet_transfer_cursors WHERE projection_version = $1', [SOURCE]
   );
 }
 
@@ -118,5 +124,43 @@ describe('Robinhood wallet-position token repair coverage', () => {
         WHERE projection_version = $1`, [TARGET]
     );
     assert.deepEqual(frontiers.rows, [{ next_block: '170' }]);
+
+    await db.query(
+      `UPDATE robinhood_wallet_position_token_coverage SET
+         source_through_block = 169, source_through_hash = $2,
+         status = 'complete', completed_at = NOW()
+       WHERE projection_version = $1`, [TARGET, HASH]
+    );
+    await db.query(
+      `INSERT INTO robinhood_wallet_transfer_cursors (
+         projection_version, stream, origin_block, next_block, next_block_time,
+         safe_head, checkpoint_block, checkpoint_hash, lifecycle_state
+       ) VALUES ($1, 'live', 100, 170, NOW(), 169, 169, $2, 'running')`,
+      [SOURCE, HASH]
+    );
+    await db.query(
+      `INSERT INTO robinhood_wallet_position_cursors (
+         projection_version, stream, origin_block, next_block, safe_head,
+         checkpoint_block, checkpoint_hash, lifecycle_state
+       ) VALUES ($1, 'live', 100, 170, 169, 169, $2, 'running')`,
+      [TARGET, HASH]
+    );
+    await db.query(
+      `INSERT INTO robinhood_wallet_token_positions (
+         projection_version, token_address, wallet_address, quantity_raw,
+         through_block, through_log_index
+       ) VALUES ($1, $2, $3, 1, 100, 0)`, [TARGET, TOKEN_ONE, TOKEN_TWO]
+    );
+    assert.equal((await repository.promotionPlan()).readyToPromote, true);
+    const prepared = await repository.preparePromotion();
+    assert.equal(prepared.extended, 0);
+    assert.deepEqual(await repository.promoteNext({ frontier: prepared.frontier }), {
+      tokenAddress: TOKEN_ONE, removed: 1, promoted: 1,
+    });
+    const promoted = await db.query(
+      `SELECT quantity_raw::text FROM robinhood_wallet_token_positions
+        WHERE projection_version = $1 AND token_address = $2`, [TARGET, TOKEN_ONE]
+    );
+    assert.deepEqual(promoted.rows, [{ quantity_raw: '10' }]);
   });
 });

@@ -73,6 +73,7 @@ function report(row, versions) {
     unpublishedTokens: Number(row.unpublished_tokens || 0),
     missingCatalogState: Number(row.missing_catalog_state || 0),
     addedAfterPositionSeed: Number(row.added_after_position_seed || 0),
+    positionRepairedTokens: Number(row.position_repaired_tokens || 0),
   });
   const cursors = Object.freeze({ transferSeed, transferLive, positionSeed, positionLive });
   const frontiersAligned = areFrontiersAligned(cursors);
@@ -128,12 +129,20 @@ function createRobinhoodWalletPositionCoverageAuditor(options = {}) {
            COUNT(*) FILTER (WHERE coverage.published_at IS NOT NULL
              AND state.token_address IS NULL)::integer AS missing_catalog_state,
            COUNT(*) FILTER (WHERE coverage.published_at IS NOT NULL
-             AND state.created_at > position.position_seed_created_at)::integer
-             AS added_after_position_seed
+             AND state.created_at > position.position_seed_created_at
+             AND position_repair.token_address IS NULL)::integer AS added_after_position_seed,
+           COUNT(*) FILTER (WHERE position_repair.token_address IS NOT NULL)::integer
+             AS position_repaired_tokens
          FROM robinhood_wallet_transfer_token_coverage coverage
          CROSS JOIN position
          LEFT JOIN robinhood_holder_token_states state
            ON state.chain = coverage.chain AND state.token_address = coverage.token_address
+         LEFT JOIN robinhood_wallet_position_token_coverage position_repair
+           ON position_repair.chain = coverage.chain
+          AND position_repair.projection_version = $3
+          AND position_repair.token_address = coverage.token_address
+          AND position_repair.status = 'complete'
+          AND position_repair.published_at IS NOT NULL
          WHERE coverage.chain = $1 AND coverage.projection_version = $2
            AND coverage.attempt_count > 0
        )
