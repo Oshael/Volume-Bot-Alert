@@ -1942,6 +1942,10 @@ repair financeiro token-scoped. A inicialização inclui somente repairs de
 transfer publicados cujos tokens entraram no catálogo depois do início do seed
 `unified_transfer_v1`; cursores, leases, frontier canônica e publicação ficam
 persistidos por token. Aplicar a stage não inicia replay nem altera posições.
+O engine agrupa até 500 tokens que cruzam a mesma janela, captura até 16
+subfaixas em paralelo e grava posição shadow mais avanço dos cursores na mesma
+transação. Eventos anteriores ao cursor individual do token são descartados;
+essa etapa não promove a versão shadow para produção.
 
 O materializador `rh_insider_direct_v1` aceita
 somente `creator_token_distribution`: transferência positiva, direta (um hop),

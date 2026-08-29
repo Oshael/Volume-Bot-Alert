@@ -184,6 +184,45 @@ function createRobinhoodWalletPositionTokenRepairRepository(options = {}) {
     return task(result.rows[0]);
   }
 
+  async function claimBatch(input = {}) {
+    const owner = String(input.owner || '').trim();
+    if (!owner || owner.length > 128) throw new Error('owner is invalid');
+    const leaseMs = bounded(input.leaseMs, 1_200_000, 120_001, 1_200_000, 'leaseMs');
+    const maxBlocks = bounded(input.maxBlocks, 2_000, 1, 80_000, 'maxBlocks');
+    const limit = bounded(input.limit, 100, 1, 500, 'limit');
+    const result = await database.query(
+      `WITH frontier AS MATERIALIZED (
+         SELECT next_block,
+                LEAST(source_through_block, next_block + $5::bigint - 1) AS upper_block
+           FROM robinhood_wallet_position_token_coverage
+          WHERE chain = $1 AND projection_version = $2 AND status = 'pending'
+            AND next_attempt_at <= NOW()
+          ORDER BY next_block, token_address LIMIT 1
+       ), candidates AS MATERIALIZED (
+         SELECT coverage.token_address
+           FROM robinhood_wallet_position_token_coverage coverage
+           CROSS JOIN frontier
+          WHERE coverage.chain = $1 AND coverage.projection_version = $2
+            AND coverage.status = 'pending' AND coverage.next_attempt_at <= NOW()
+            AND coverage.next_block <= frontier.upper_block
+            AND coverage.source_through_block >= frontier.upper_block
+          ORDER BY coverage.next_block, coverage.token_address
+          LIMIT $6 FOR UPDATE OF coverage SKIP LOCKED
+       ) UPDATE robinhood_wallet_position_token_coverage coverage SET
+           status = 'leased', lease_owner = $3,
+           lease_until = NOW() + ($4::bigint * INTERVAL '1 millisecond'),
+           attempt_count = attempt_count + 1, version = version + 1, updated_at = NOW()
+         FROM candidates WHERE coverage.chain = $1 AND coverage.projection_version = $2
+           AND coverage.token_address = candidates.token_address RETURNING coverage.*`,
+      [CHAIN, targetVersion, owner, leaseMs, maxBlocks, limit]
+    );
+    return Object.freeze(result.rows.map(task).sort((left, right) => (
+      BigInt(left.nextBlock) < BigInt(right.nextBlock) ? -1
+        : BigInt(left.nextBlock) > BigInt(right.nextBlock) ? 1
+          : left.tokenAddress.localeCompare(right.tokenAddress)
+    )));
+  }
+
   async function recover(input = {}) {
     const result = await database.query(
       `WITH recoverable AS (
@@ -266,6 +305,85 @@ function createRobinhoodWalletPositionTokenRepairRepository(options = {}) {
     }
   }
 
+  async function commitShadowBatch(input = {}) {
+    const owner = String(input.owner || '').trim();
+    if (!owner || owner.length > 128) throw new Error('owner is invalid');
+    if (!Array.isArray(input.tasks) || !input.tasks.length) {
+      throw new Error('tasks must be a non-empty list');
+    }
+    const toBlock = uint(input.toBlock, 'toBlock');
+    const nextBlock = (BigInt(toBlock) + 1n).toString();
+    const tasks = input.tasks.map((item) => ({
+      tokenAddress: address(item.tokenAddress, 'tokenAddress'),
+      nextBlock: uint(item.nextBlock, 'nextBlock'),
+    }));
+    const expected = new Map(tasks.map((item) => [item.tokenAddress, item.nextBlock]));
+    if (expected.size !== tasks.length) throw new Error('tasks contain duplicate tokens');
+    const rows = (input.positions || []).map((item) => {
+      const tokenAddress = address(item.tokenAddress, 'position tokenAddress');
+      if (!expected.has(tokenAddress)) throw new Error('position is outside repair batch');
+      if (BigInt(item.throughBlock) < BigInt(expected.get(tokenAddress))) {
+        throw new Error('position precedes token repair cursor');
+      }
+      return positionRow(item, shadowVersion, nextBlock, tokenAddress);
+    });
+    const identities = new Set(rows.map((row) => (
+      `${row.token_address}:${row.wallet_address}`
+    )));
+    if (identities.size !== rows.length) throw new Error('positions must be unique');
+    const tokenAddresses = [...expected.keys()];
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      const locked = await client.query(
+        `SELECT token_address, next_block, source_through_block
+           FROM robinhood_wallet_position_token_coverage
+          WHERE chain = $1 AND projection_version = $2
+            AND token_address = ANY($3::varchar[]) AND status = 'leased'
+            AND lease_owner = $4 FOR UPDATE`,
+        [CHAIN, targetVersion, tokenAddresses, owner]
+      );
+      if (locked.rowCount !== tasks.length) {
+        throw new Error('position token repair batch lease changed');
+      }
+      for (const current of locked.rows) {
+        if (String(current.next_block) !== expected.get(current.token_address)
+          || BigInt(toBlock) > BigInt(current.source_through_block)) {
+          throw new Error('position token repair batch frontier changed');
+        }
+      }
+      await writePositions(client, rows);
+      const advanced = await client.query(
+        `UPDATE robinhood_wallet_position_token_coverage SET
+           next_block = $5::bigint,
+           status = CASE WHEN $5::bigint > source_through_block
+             THEN 'complete' ELSE 'pending' END,
+           lease_owner = NULL, lease_until = NULL, attempt_count = 0,
+           next_attempt_at = NOW(), last_error_code = NULL, last_error_message = NULL,
+           completed_at = CASE WHEN $5::bigint > source_through_block THEN NOW() ELSE NULL END,
+           version = version + 1, updated_at = NOW()
+         WHERE chain = $1 AND projection_version = $2
+           AND token_address = ANY($3::varchar[]) AND status = 'leased'
+           AND lease_owner = $4 RETURNING status`,
+        [CHAIN, targetVersion, tokenAddresses, owner, nextBlock]
+      );
+      if (advanced.rowCount !== tasks.length) {
+        throw new Error('position token repair batch advance changed');
+      }
+      await client.query('COMMIT');
+      return Object.freeze({
+        tokens: advanced.rowCount, positions: rows.length,
+        complete: advanced.rows.filter(({ status }) => status === 'complete').length,
+        pending: advanced.rows.filter(({ status }) => status === 'pending').length,
+      });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async function retry(input = {}) {
     const owner = String(input.owner || '').trim();
     const tokenAddress = address(input.tokenAddress, 'tokenAddress');
@@ -288,7 +406,9 @@ function createRobinhoodWalletPositionTokenRepairRepository(options = {}) {
     return result.rows[0]?.status || 'lease-lost';
   }
 
-  return Object.freeze({ claim, commitShadowRange, initialize, plan, recover, retry });
+  return Object.freeze({
+    claim, claimBatch, commitShadowBatch, commitShadowRange, initialize, plan, recover, retry,
+  });
 }
 
 module.exports = {

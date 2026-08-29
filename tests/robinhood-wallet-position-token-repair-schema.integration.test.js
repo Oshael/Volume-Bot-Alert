@@ -101,5 +101,22 @@ describe('Robinhood wallet-position token repair coverage', () => {
     assert.deepEqual(stored.rows, [{
       quantity_raw: '10', cost_basis_usd: '5', through_block: '120',
     }]);
+
+    const batch = await repository.claimBatch({
+      owner: 'batch-owner', maxBlocks: 50, limit: 10,
+    });
+    assert.deepEqual(batch.map(({ tokenAddress, nextBlock }) => [tokenAddress, nextBlock]), [
+      [TOKEN_TWO, '120'], [TOKEN_ONE, '150'],
+    ]);
+    const advanced = await repository.commitShadowBatch({
+      owner: 'batch-owner', tasks: batch, toBlock: '169', positions: [],
+    });
+    assert.deepEqual(advanced, { tokens: 2, positions: 0, complete: 0, pending: 2 });
+    const frontiers = await db.query(
+      `SELECT DISTINCT next_block::text
+         FROM robinhood_wallet_position_token_coverage
+        WHERE projection_version = $1`, [TARGET]
+    );
+    assert.deepEqual(frontiers.rows, [{ next_block: '170' }]);
   });
 });
