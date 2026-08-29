@@ -1123,6 +1123,17 @@ describe('runtime worker groups config', () => {
     }));
   });
 
+  it('keeps live launch-anchor projection opt-in and bounded', () => {
+    withEnv({
+      ROBINHOOD_LAUNCH_ANCHOR_LIVE_ENABLED: 'true',
+      ROBINHOOD_LAUNCH_ANCHOR_LIVE_INTERVAL_MS: '1',
+      ROBINHOOD_LAUNCH_ANCHOR_LIVE_TIMEOUT_MS: '9999999',
+    }, (config) => assert.deepEqual(config.robinhoodLaunchAnchorLiveWorker, {
+      enabled: true, intervalMs: 100, leaseMs: 180_000,
+      retryMs: 15_000, maxRetryMs: 3_600_000, timeoutMs: 900_000,
+    }));
+  });
+
   it('keeps the INSIDER classifier shadow worker opt-in and bounded', () => {
     withEnv({
       ROBINHOOD_INSIDER_SHADOW_ENABLED: 'true',

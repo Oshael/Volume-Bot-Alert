@@ -14,6 +14,7 @@ const stage63 = require('../src/utils/db-init-stage63');
 const stage90 = require('../src/utils/db-init-stage90');
 const stage139 = require('../src/utils/db-init-stage139');
 const stage149 = require('../src/utils/db-init-stage149');
+const stage171 = require('../src/utils/db-init-stage171');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const TOKEN = `0x${'1'.repeat(40)}`;
@@ -27,6 +28,7 @@ const PARTITION = 'robinhood_wallet_swaps_first_buy_test';
 const SWAP_HASHES = [7, 8, 9, 11].map((digit) => `0x${digit.toString(16).repeat(64)}`);
 
 async function cleanup() {
+  await db.query('DELETE FROM robinhood_launch_anchor_outbox WHERE token_address = $1', [TOKEN]);
   await db.query('DELETE FROM robinhood_wallet_token_first_buys WHERE token_address = $1', [TOKEN]);
   await db.query(`DELETE FROM ${PARTITION}`);
   await db.query(
@@ -43,6 +45,7 @@ describe('Robinhood wallet-token first buy schema integration', () => {
     await stage90.init({ closePool: false });
     await stage139.init({ closePool: false });
     await stage149.init({ closePool: false });
+    await stage171.init({ closePool: false });
     await stage149.init({ closePool: false });
     await db.query(
       `CREATE TABLE IF NOT EXISTS ${PARTITION}
@@ -85,6 +88,9 @@ describe('Robinhood wallet-token first buy schema integration', () => {
     assert.deepEqual(rows[0], {
       block_number: '20', volume_usd: '25.5', evidence_version: 'rh_first_buy_v1',
     });
+    assert.equal((await db.query(
+      'SELECT status FROM robinhood_launch_anchor_outbox WHERE token_address = $1', [TOKEN]
+    )).rows[0].status, 'pending');
     await assert.rejects(db.query(
       `UPDATE robinhood_wallet_token_first_buys SET volume_usd = -1
         WHERE token_address = $1`, [TOKEN]

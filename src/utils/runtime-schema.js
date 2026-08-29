@@ -4915,6 +4915,29 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage171-robinhood-launch-anchor-live-outbox',
+    name: 'Stage 171 Robinhood launch-anchor live outbox',
+    repair: 'node src/utils/db-init-stage171.js',
+    tables: [{
+      table: 'robinhood_launch_anchor_outbox',
+      columns: [
+        'chain', 'token_address', 'status', 'attempt_count', 'next_attempt_at',
+        'lease_owner', 'lease_until', 'last_error', 'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_launch_anchor_outbox_pkey',
+        includes: ['PRIMARY KEY', 'chain', 'token_address'],
+      }, {
+        name: 'rh_launch_anchor_outbox_lease_check',
+        includes: ['status', 'pending', 'leased', 'lease_owner', 'lease_until'],
+      }],
+      indexes: [{
+        name: 'idx_rh_launch_anchor_outbox_claim',
+        includes: ['next_attempt_at', 'created_at'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

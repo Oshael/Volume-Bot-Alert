@@ -1699,6 +1699,14 @@ do anchor. Depois disso, evidência local e recorrências usam a PK
 ou no ponto de lançamento invalida os detalhes, e ausência de anchor nunca é
 persistida. As migrations não consultam swaps, não iniciam backfill e não publicam
 tag.
+A Stage 171 torna a manutenção desse cache event-driven: inserts e updates
+commitados em `robinhood_wallet_token_first_buys` enfileiram o token em
+`robinhood_launch_anchor_outbox` e acordam o worker PostgreSQL-only por `LISTEN`.
+O worker usa lease, retry exponencial e polling bounded de reconciliação; recalcula
+o primeiro swap registrado somente para o token reclamado e mantém a escrita
+idempotente. Ative com `ROBINHOOD_LAUNCH_ANCHOR_LIVE_ENABLED=true` somente após
+aplicar a Stage 171. Isso mantém anchors novos automaticamente, mas não substitui
+o catch-up Stage 166 para lacunas anteriores à instalação da outbox.
 A Stage 156 adiciona o índice concorrente `(chain, token_address, discovery_block)`
 ao registry. A recorrência começa pelas compras da wallet e consulta a origem
 somente dos tokens encontrados, sem reagregar todas as pools por wallet candidata;

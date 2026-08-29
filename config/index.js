@@ -1620,6 +1620,25 @@ module.exports = {
     ),
   },
 
+  robinhoodLaunchAnchorLiveWorker: {
+    enabled: parseBoolean(process.env.ROBINHOOD_LAUNCH_ANCHOR_LIVE_ENABLED, false),
+    intervalMs: parseIntegerInRange(
+      process.env.ROBINHOOD_LAUNCH_ANCHOR_LIVE_INTERVAL_MS, 1000, 100, 60_000
+    ),
+    leaseMs: parseIntegerInRange(
+      process.env.ROBINHOOD_LAUNCH_ANCHOR_LIVE_LEASE_MS, 180_000, 10_000, 900_000
+    ),
+    retryMs: parseIntegerInRange(
+      process.env.ROBINHOOD_LAUNCH_ANCHOR_LIVE_RETRY_MS, 15_000, 1000, 3_600_000
+    ),
+    maxRetryMs: parseIntegerInRange(
+      process.env.ROBINHOOD_LAUNCH_ANCHOR_LIVE_MAX_RETRY_MS, 3_600_000, 60_000, 86_400_000
+    ),
+    timeoutMs: parseIntegerInRange(
+      process.env.ROBINHOOD_LAUNCH_ANCHOR_LIVE_TIMEOUT_MS, 120_000, 1000, 900_000
+    ),
+  },
+
   robinhoodSniperShadowWorker: {
     enabled: parseBoolean(process.env.ROBINHOOD_SNIPER_SHADOW_ENABLED, false),
     intervalMs: parseIntegerInRange(
