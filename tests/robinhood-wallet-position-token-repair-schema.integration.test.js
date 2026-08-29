@@ -19,6 +19,10 @@ const HASH = `0x${'a'.repeat(64)}`;
 
 async function cleanup() {
   await db.query(
+    `DELETE FROM robinhood_wallet_token_positions
+      WHERE projection_version = $1`, [SHADOW]
+  );
+  await db.query(
     `DELETE FROM robinhood_wallet_position_token_coverage
       WHERE projection_version = $1`, [TARGET]
   );
@@ -75,5 +79,27 @@ describe('Robinhood wallet-position token repair coverage', () => {
     assert.equal(plan.leased, 1);
     assert.equal(plan.pending, 1);
     assert.equal(plan.remaining_block_span, '182');
+
+    const committed = await repository.commitShadowRange({
+      tokenAddress: TOKEN_ONE, owner: 'integration-owner', fromBlock: '100', toBlock: '149',
+      positions: [{
+        tokenAddress: TOKEN_ONE, walletAddress: TOKEN_TWO,
+        quantityRaw: '10', costBasisUsd: '5', buyVolumeUsd: '5',
+        buyMcapWeightedSum: '500', buyMcapWeightUsd: '5', buyTxCount: 1,
+        throughBlock: '120', throughLogIndex: '0',
+      }],
+    });
+    assert.equal(committed.complete, false);
+    assert.equal(committed.task.nextBlock, '150');
+    assert.equal(committed.task.status, 'pending');
+    const stored = await db.query(
+      `SELECT quantity_raw::text, cost_basis_usd::text, through_block::text
+         FROM robinhood_wallet_token_positions
+        WHERE projection_version = $1 AND token_address = $2`,
+      [SHADOW, TOKEN_ONE]
+    );
+    assert.deepEqual(stored.rows, [{
+      quantity_raw: '10', cost_basis_usd: '5', through_block: '120',
+    }]);
   });
 });
