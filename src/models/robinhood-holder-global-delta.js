@@ -2,7 +2,7 @@ const db = require('./db');
 
 const CHAIN = 'robinhood';
 const EXACT_SOURCES = Object.freeze([
-  'blockscout_internal', 'rpc_direct', 'rpc_trace', 'launchpad_event',
+  'blockscout_internal', 'rpc_code_transition', 'rpc_direct', 'rpc_trace', 'launchpad_event',
 ]);
 function candidatesSql(options) {
   const scopes = [];

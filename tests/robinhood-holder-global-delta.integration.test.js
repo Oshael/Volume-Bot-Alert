@@ -13,7 +13,7 @@ const HASH = `0x${'f'.repeat(64)}`;
 after(() => db.pool.end());
 
 describe('Robinhood holder global delta persistence', () => {
-  it('atomically adopts eligible partial and stateless tokens into a new run', async () => {
+  it('atomically adopts partial and stateless tokens with exact deployment evidence', async () => {
     const client = await db.getClient();
     try {
       await client.query(`CREATE TEMP TABLE token_catalog (
@@ -42,7 +42,7 @@ describe('Robinhood holder global delta persistence', () => {
       await client.query(
         `INSERT INTO robinhood_token_attributions VALUES
           ('robinhood', $1, 'rpc_direct', 100),
-          ('robinhood', $2, 'launchpad_event', 200),
+          ('robinhood', $2, 'rpc_code_transition', 200),
           ('robinhood', $3, 'rpc_direct', 300),
           ('robinhood', $4, 'rpc_direct', 400)`, TOKENS
       );

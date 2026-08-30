@@ -1609,7 +1609,8 @@ ser provado recebem somente `rpc_code_transition`, suficiente para habilitar o
 ledger sem inventar provenance. O live pode continuar ativo; os upserts mantêm
 evidência de maior precedência. Deployments recuperados com gap superior ao
 limite incremental de 20.000 blocos ainda devem entrar em uma coorte delta do
-backfill global abaixo.
+backfill global abaixo; essa seleção aceita `rpc_code_transition` como deployment
+exato mesmo sem provenance de creator.
 
 O backfill global do catálogo antigo usa a lease
 `robinhood-holder-global-backfill-worker` e permanece desligado por default via
