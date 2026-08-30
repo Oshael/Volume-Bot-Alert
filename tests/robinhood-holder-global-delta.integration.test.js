@@ -75,9 +75,20 @@ describe('Robinhood holder global delta persistence', () => {
            status, catalog_cutoff, completed_at
          ) VALUES ('completed', '2026-08-10T00:00:00Z', NOW())`
       );
+      const previewQueries = [];
+      const transactionQueries = [];
       const database = {
-        getClient: async () => ({ query: client.query.bind(client), release() {} }),
-        query: client.query.bind(client),
+        getClient: async () => ({
+          query: async (sql, params) => {
+            transactionQueries.push(sql);
+            return client.query(sql, params);
+          },
+          release() {},
+        }),
+        query: async (sql, params) => {
+          previewQueries.push(sql);
+          return client.query(sql, params);
+        },
       };
       const repository = createRobinhoodHolderGlobalDeltaRepository({ database });
       const preview = await repository.previewRun({
@@ -88,6 +99,9 @@ describe('Robinhood holder global delta persistence', () => {
         startBlock: '100', safeHead: '1000', scanBlocks: '901',
         balanceRows: 1, journalEvents: 1,
       });
+      assert.match(previewQueries[0], /journal\.applied = FALSE/);
+      assert.match(previewQueries[0], /journal\.applied = TRUE/);
+      assert.doesNotMatch(previewQueries[0], /INNER JOIN candidates item/);
       assert.deepEqual(await repository.previewRun({
         catalogCutoff: '2026-08-12T00:00:00Z', includeUnseeded: false,
       }), {
@@ -128,6 +142,12 @@ describe('Robinhood holder global delta persistence', () => {
       assert.equal(created.startBlock, '100');
       assert.equal(created.deletedBalances, 1);
       assert.equal(created.deletedJournalEvents, 1);
+      const journalDeletes = transactionQueries.filter(
+        (sql) => sql.includes('DELETE FROM robinhood_holder_transfer_journal')
+      );
+      assert.equal(journalDeletes.length, 2);
+      assert.match(journalDeletes[0], /applied = FALSE/);
+      assert.match(journalDeletes[1], /applied = TRUE/);
       assert.deepEqual(await client.query(
         `SELECT token_address FROM robinhood_holder_global_backfill_tokens
           WHERE run_id = $1 ORDER BY token_address`, [created.runId]

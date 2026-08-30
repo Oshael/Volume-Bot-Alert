@@ -108,23 +108,34 @@ function createRobinhoodHolderGlobalDeltaRepository(options = {}) {
     const normalized = candidateOptions(input);
     const result = await database.query(
       `WITH candidates AS MATERIALIZED (${candidatesSql(normalized)})
-       SELECT COUNT(*)::int AS candidate_tokens,
-              COUNT(*) FILTER (WHERE NOT adopted)::int AS unseeded_tokens,
-              COUNT(*) FILTER (WHERE adopted)::int AS adopted_backfilling_tokens,
-              MIN(deployment_block) AS start_block,
+       , impact AS MATERIALIZED (
+         SELECT COUNT(*)::int AS candidate_tokens,
+                COUNT(*) FILTER (WHERE NOT adopted)::int AS unseeded_tokens,
+                COUNT(*) FILTER (WHERE adopted)::int AS adopted_backfilling_tokens,
+                MIN(deployment_block) AS start_block
+           FROM candidates
+       )
+       SELECT impact.candidate_tokens, impact.unseeded_tokens,
+              impact.adopted_backfilling_tokens, impact.start_block,
               cursor.safe_head,
-              CASE WHEN MIN(deployment_block) IS NULL OR cursor.safe_head IS NULL THEN NULL
-                ELSE GREATEST(cursor.safe_head - MIN(deployment_block) + 1, 0) END AS scan_blocks,
-              (SELECT COUNT(*) FROM robinhood_holder_balances balance
-                INNER JOIN candidates item ON item.token_address = balance.token_address
-               WHERE balance.chain = $1)::int AS balance_rows,
-              (SELECT COUNT(*) FROM robinhood_holder_transfer_journal journal
-                INNER JOIN candidates item ON item.token_address = journal.token_address
-               WHERE journal.chain = $1)::int AS journal_events
-         FROM candidates
+              CASE WHEN impact.start_block IS NULL OR cursor.safe_head IS NULL THEN NULL
+                ELSE GREATEST(cursor.safe_head - impact.start_block + 1, 0) END AS scan_blocks,
+              (SELECT COALESCE(SUM((
+                 SELECT COUNT(*) FROM robinhood_holder_balances balance
+                  WHERE balance.chain = $1 AND balance.token_address = item.token_address
+               )), 0) FROM candidates item)::bigint AS balance_rows,
+              (SELECT COALESCE(SUM(
+                 (SELECT COUNT(*) FROM robinhood_holder_transfer_journal journal
+                   WHERE journal.chain = $1 AND journal.token_address = item.token_address
+                     AND journal.applied = FALSE)
+                 +
+                 (SELECT COUNT(*) FROM robinhood_holder_transfer_journal journal
+                   WHERE journal.chain = $1 AND journal.token_address = item.token_address
+                     AND journal.applied = TRUE)
+               ), 0) FROM candidates item)::bigint AS journal_events
+         FROM impact
          LEFT JOIN robinhood_holder_cursors cursor
-           ON cursor.chain = $1 AND cursor.stream = 'live'
-        GROUP BY cursor.safe_head`,
+           ON cursor.chain = $1 AND cursor.stream = 'live'`,
       [CHAIN, normalized.cutoff, [...EXACT_SOURCES], normalized.minimumGapBlocks,
         normalized.catalogFloor, normalized.maximumGapBlocks]
     );
@@ -190,9 +201,15 @@ function createRobinhoodHolderGlobalDeltaRepository(options = {}) {
         `INSERT INTO robinhood_holder_global_backfill_tokens (run_id, chain, token_address)
          SELECT $1, $2, unnest($3::varchar[])`, [runId, CHAIN, addresses]
       );
-      const journal = await client.query(
+      const pendingJournal = await client.query(
         `DELETE FROM robinhood_holder_transfer_journal
-          WHERE chain = $1 AND token_address = ANY($2::varchar[])`, [CHAIN, addresses]
+          WHERE chain = $1 AND token_address = ANY($2::varchar[])
+            AND applied = FALSE`, [CHAIN, addresses]
+      );
+      const appliedJournal = await client.query(
+        `DELETE FROM robinhood_holder_transfer_journal
+          WHERE chain = $1 AND token_address = ANY($2::varchar[])
+            AND applied = TRUE`, [CHAIN, addresses]
       );
       const balances = await client.query(
         `DELETE FROM robinhood_holder_balances
@@ -220,7 +237,8 @@ function createRobinhoodHolderGlobalDeltaRepository(options = {}) {
         cohortTokens: addresses.length, adoptedBackfillingTokens: adopted,
         unseededTokens: addresses.length - adopted, startBlock,
         safeHead: cursor.rows[0].safe_head == null ? null : String(cursor.rows[0].safe_head),
-        deletedBalances: balances.rowCount, deletedJournalEvents: journal.rowCount,
+        deletedBalances: balances.rowCount,
+        deletedJournalEvents: pendingJournal.rowCount + appliedJournal.rowCount,
       });
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});

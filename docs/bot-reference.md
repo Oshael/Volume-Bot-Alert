@@ -1657,7 +1657,9 @@ tokens vistos desde a última run global concluída, combine também
 efetivamente usado. `--max-scan-blocks=N` limita a coorte a candidatos cujo
 deployment esteja no máximo `N` blocos atrás do safe head; use-o para isolar
 deployments históricos que ampliariam o scan comum. O dry-run informa o limite
-em `maxScanBlocks`. Use exatamente os mesmos flags na confirmação.
+em `maxScanBlocks`. A estimativa e a confirmação separam journal pendente e
+aplicado para usar seus índices parciais, evitando full scan da tabela. Use
+exatamente os mesmos flags na confirmação.
 
 Para operação contínua, `ROBINHOOD_HOLDER_BACKFILL_MAX_INITIAL_GAP_BLOCKS`
 (20.000 por default) limita o incremental da VPS a deployments próximos do head.
