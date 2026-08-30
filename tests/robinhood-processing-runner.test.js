@@ -93,12 +93,21 @@ function fakeRepo(rows) {
   };
 }
 
-function fakePersistence({ ranges = null, failCommit = false } = {}) {
-  const calls = { commit: [], rangesFor: [], frontierFor: [] };
+function fakePersistence({
+  ranges = null,
+  failCommit = false,
+  failTransactionHash = null,
+  failMessage = 'V4 liquidity range update conflicted or became negative',
+} = {}) {
+  const calls = { attempts: [], commit: [], rangesFor: [], frontierFor: [] };
   return {
     _calls: calls,
     commitHeadProcessingBatch: async (input) => {
+      calls.attempts.push(input);
       if (failCommit) throw new Error('v4 materialization constraint');
+      if (input.entries.some((entry) => entry.log.transactionHash === failTransactionHash)) {
+        throw new Error(failMessage);
+      }
       calls.commit.push(input);
       return { insertedLogs: input.entries.length, insertedObservations: 0, touchedBuckets: 0, insertedLiquidityDeltas: 0 };
     },
@@ -126,6 +135,7 @@ describe('robinhood processing runner', () => {
     assert.equal(persistence._calls.commit.length, 1);
     const observations = persistence._calls.commit[0].entries.map((entry) => entry.observation);
     assert.deepEqual(observations.map((obs) => obs.priceUsd), ['200', '2000']);
+    assert.equal(persistence._calls.attempts.length, 1);
     assert.deepEqual(persistence._calls.rangesFor, []); // V2/V3 never touch the ledger, let alone RPC
     assert.deepEqual([result.processed, result.rejected, result.retried], [2, 0, 0]);
   });
@@ -166,7 +176,42 @@ describe('robinhood processing runner', () => {
     assert.equal(result.processed, 0);
     assert.equal(result.retried, 1);
     assert.equal(persistence._calls.commit.length, 0);
+    assert.equal(persistence._calls.attempts.length, 1);
     assert.equal(repository._calls.settle.retry[0].backoffMs, 2000); // 1000 * 2^(2-1)
+  });
+
+  it('isolates a deterministic V4 range failure without retrying healthy claims', async () => {
+    const healthyBefore = v2Row({ n: '1' });
+    const poison = v4Row({ n: '2' });
+    const healthyAfter = v3Row({ n: '3' });
+    const persistence = fakePersistence({ failTransactionHash: poison.transaction_hash });
+    const repository = fakeRepo([healthyBefore, poison, healthyAfter]);
+    const theRunner = createRobinhoodProcessingRunner({
+      repository,
+      persistence,
+      logger: { error: () => {} },
+      options: { owner: 'test-worker' },
+    });
+
+    const result = await theRunner.runOnce();
+
+    assert.deepEqual(
+      [result.processed, result.retried, result.blocked],
+      [2, 1, 0]
+    );
+    assert.deepEqual(
+      repository._calls.settle.processed.map((entry) => entry.transactionHash),
+      [healthyBefore.transaction_hash, healthyAfter.transaction_hash]
+    );
+    assert.deepEqual(repository._calls.settle.retry.map((entry) => entry.transactionHash), [
+      poison.transaction_hash,
+    ]);
+    assert.deepEqual(
+      persistence._calls.commit.flatMap((input) => (
+        input.entries.map((entry) => entry.log.transactionHash)
+      )),
+      [healthyBefore.transaction_hash, healthyAfter.transaction_hash]
+    );
   });
 
   it('settles head rejections and unknown evidence as terminals without persisting', async () => {

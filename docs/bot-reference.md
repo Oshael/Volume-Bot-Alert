@@ -396,6 +396,14 @@ ordem `(block_number, transaction_index, log_index, next_attempt_at)` e predicat
 retomado depois que `pg_index` confirmar `indisvalid/indisready` e `EXPLAIN (ANALYZE,
 BUFFERS)` provar que a claim usa esse índice sem sort/scan massivo.
 
+O isolamento de persistência mantém o batch saudável como caminho único. Se a materialização
+de ranges V4 retorna o erro determinístico de conflito/liquidez negativa, o runner bisecta o
+batch em ordem on-chain e commita os subconjuntos saudáveis; somente a claim mínima que ainda
+reproduz o erro recebe retry/backoff e pode chegar a `blocked`. Falhas não classificadas, como
+indisponibilidade de banco, não disparam a bisseção e retentam o subconjunto inteiro. Antes de
+reabrir dead-letters V4, esse isolamento deve estar implantado; a recuperação recoloca as claims
+em ordem on-chain para que adições válidas reconstruam as ranges antes das remoções dependentes.
+
 No mesmo processo do `robinhood-processing`, o `robinhood-discovery-processing-runner`
 consome `stream='discovery'`. O cutover do isolamento do head tinha deixado o stream de
 discovery **sem consumidor**: o head só enfileira o evento (`commitDiscoveryRange` do

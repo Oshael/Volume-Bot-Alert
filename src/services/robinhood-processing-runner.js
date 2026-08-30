@@ -21,6 +21,9 @@ const DEFAULT_RETENTION_MS = 86_400_000;
 const DEFAULT_MAX_ATTEMPTS = 5;
 const DEFAULT_BASE_BACKOFF_MS = 1_000;
 const DEFAULT_MAX_BACKOFF_MS = 300_000;
+const ISOLATABLE_COMMIT_ERRORS = Object.freeze([
+  'V4 liquidity range update conflicted or became negative',
+]);
 
 function identityOf(row) {
   return { transactionHash: row.transaction_hash, logIndex: String(row.log_index) };
@@ -29,6 +32,37 @@ function identityOf(row) {
 function backoffFor(attempt, baseMs, maxMs) {
   const exponential = baseMs * 2 ** Math.max(0, Number(attempt) - 1);
   return Math.max(1, Math.min(maxMs, exponential));
+}
+
+function commitErrorMessage(error) {
+  return String(error?.message || error).slice(0, 200);
+}
+
+function isIsolatableCommitError(error) {
+  const message = commitErrorMessage(error);
+  return ISOLATABLE_COMMIT_ERRORS.some((candidate) => message.includes(candidate));
+}
+
+async function persistWithFailureIsolation(items, commit) {
+  if (!items.length) return { processed: [], failed: [] };
+  try {
+    await commit(items);
+    return { processed: items, failed: [] };
+  } catch (error) {
+    if (items.length === 1 || !isIsolatableCommitError(error)) {
+      return {
+        processed: [],
+        failed: items.map((item) => ({ item, error })),
+      };
+    }
+    const middle = Math.floor(items.length / 2);
+    const left = await persistWithFailureIsolation(items.slice(0, middle), commit);
+    const right = await persistWithFailureIsolation(items.slice(middle), commit);
+    return {
+      processed: [...left.processed, ...right.processed],
+      failed: [...left.failed, ...right.failed],
+    };
+  }
 }
 
 // Dead-pool guard applier: reject an accepted observation whose fdv is a per-token
@@ -174,19 +208,24 @@ function createRobinhoodProcessingRunner(deps = {}) {
     let processed = [];
     let retry = [];
     if (buckets.persist.length) {
-      try {
-        const emit = emitOutbox ? await resolveDerivedEmit() : null;
-        await persistence.commitHeadProcessingBatch({
-          entries: buckets.persist.map((item) => item.entry), emit,
-        });
-        processed = buckets.persist.map((item) => identityOf(item.row));
-      } catch (error) {
-        logger.error?.('[robinhood-processing] batch commit failed, retrying claims', error?.message || error);
-        retry = buckets.persist.map((item) => ({
-          ...identityOf(item.row),
-          error: String(error?.message || error).slice(0, 200),
-          backoffMs: backoffFor(item.row.attempt_count, baseBackoffMs, maxBackoffMs),
-        }));
+      const emit = emitOutbox ? await resolveDerivedEmit() : null;
+      const outcome = await persistWithFailureIsolation(
+        buckets.persist,
+        (items) => persistence.commitHeadProcessingBatch({
+          entries: items.map((item) => item.entry), emit,
+        })
+      );
+      processed = outcome.processed.map((item) => identityOf(item.row));
+      retry = outcome.failed.map(({ item, error }) => ({
+        ...identityOf(item.row),
+        error: commitErrorMessage(error),
+        backoffMs: backoffFor(item.row.attempt_count, baseBackoffMs, maxBackoffMs),
+      }));
+      if (retry.length) {
+        logger.error?.(
+          '[robinhood-processing] commit failure isolated for retry',
+          { failed: retry.length, processed: processed.length, error: retry[0].error }
+        );
       }
     }
 
