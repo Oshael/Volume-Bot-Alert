@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const { it } = require('node:test');
 const stage178 = require('../src/utils/db-init-stage178');
+const stage179 = require('../src/utils/db-init-stage179');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 
 it('registers a frozen 14-day FRESH activation and event-driven work queue', () => {
@@ -20,4 +21,16 @@ it('registers a frozen 14-day FRESH activation and event-driven work queue', () 
   assert.match(sql, /GET DIAGNOSTICS queued_count = ROW_COUNT/);
   assert.doesNotMatch(sql, /eth_get|RH_NODE_RPC_URL|ROBINHOOD_RPC_URL/);
   assert.equal(group.repair, 'node src/utils/db-init-stage178.js');
+});
+
+it('registers terminal FRESH shadow evidence without a public classifier state', () => {
+  const sql = stage179.STATEMENTS.join('\n');
+  const group = SCHEMA_GROUPS.find(({ key }) => (
+    key === 'stage179-robinhood-fresh-wallet-shadow'
+  ));
+  assert.match(sql, /status IN \('pending', 'ready', 'unavailable', 'stale', 'reorged'\)/);
+  assert.match(sql, /outcome IN \('fresh', 'not_fresh'\)/);
+  assert.match(sql, /REFERENCES robinhood_fresh_wallet_queue/);
+  assert.doesNotMatch(sql, /robinhood_holder_classification_states/);
+  assert.equal(group.repair, 'node src/utils/db-init-stage179.js');
 });

@@ -8,16 +8,21 @@ const {
   createRobinhoodWalletTokenFirstBuyRepository,
 } = require('../src/models/robinhood-wallet-token-first-buy');
 const {
+  createRobinhoodFreshWalletShadowRepository,
+} = require('../src/models/robinhood-fresh-wallet-shadow');
+const {
   createRobinhoodTransactionPositionRepairRepository,
 } = require('../src/models/robinhood-transaction-position-repair');
 const stage63 = require('../src/utils/db-init-stage63');
 const stage90 = require('../src/utils/db-init-stage90');
 const stage116 = require('../src/utils/db-init-stage116');
 const stage139 = require('../src/utils/db-init-stage139');
+const stage143 = require('../src/utils/db-init-stage143');
 const stage149 = require('../src/utils/db-init-stage149');
 const stage171 = require('../src/utils/db-init-stage171');
 const stage177 = require('../src/utils/db-init-stage177');
 const stage178 = require('../src/utils/db-init-stage178');
+const stage179 = require('../src/utils/db-init-stage179');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const TOKEN = `0x${'1'.repeat(40)}`;
@@ -34,8 +39,11 @@ const PARTITION = 'robinhood_wallet_swaps_first_buy_test';
 const SWAP_HASHES = [7, 8, 9, 11].map((digit) => `0x${digit.toString(16).repeat(64)}`);
 
 async function cleanup() {
+  await db.query('DELETE FROM robinhood_fresh_wallet_evaluations WHERE token_address = $1', [TOKEN]);
   await db.query('DELETE FROM robinhood_fresh_wallet_token_coverage WHERE token_address = $1', [TOKEN]);
   await db.query('DELETE FROM robinhood_fresh_wallet_queue WHERE token_address = $1', [TOKEN]);
+  await db.query(`DELETE FROM robinhood_holder_classifications
+    WHERE token_address = $1 AND tag = 'fresh'`, [TOKEN]);
   await db.query("DELETE FROM robinhood_fresh_wallet_seed_runs WHERE chain = 'robinhood'");
   await db.query("DELETE FROM robinhood_fresh_wallet_activations WHERE chain = 'robinhood'");
   await db.query('DELETE FROM robinhood_launch_anchor_outbox WHERE token_address = $1', [TOKEN]);
@@ -56,10 +64,12 @@ describe('Robinhood wallet-token first buy schema integration', () => {
     await stage90.init({ closePool: false });
     await stage116.init({ closePool: false });
     await stage139.init({ closePool: false });
+    await stage143.init({ closePool: false });
     await stage149.init({ closePool: false });
     await stage171.init({ closePool: false });
     await stage177.init({ closePool: false });
     await stage178.init({ closePool: false });
+    await stage179.init({ closePool: false });
     await stage149.init({ closePool: false });
     await db.query(
       `CREATE TABLE IF NOT EXISTS ${PARTITION}
@@ -241,5 +251,98 @@ describe('Robinhood wallet-token first buy schema integration', () => {
     await assert.rejects(repository.materializeRange({
       rangeStart: '2099-01-03T00:00:00Z', rangeEnd: '2099-01-04T00:00:00Z',
     }), (error) => error.code === 'first_buy_position_unavailable');
+  });
+
+  it('materializes shadow evidence atomically and removes FRESH after a reorg', async () => {
+    const repository = createRobinhoodFreshWalletShadowRepository({ database: db });
+    const lease = async () => (await db.query(`UPDATE robinhood_fresh_wallet_queue SET
+      status = 'leased', lease_owner = 'shadow-test', lease_until = NOW() + INTERVAL '1 minute',
+      completed_at = NULL WHERE token_address = $1 AND wallet_address = $2
+      RETURNING requested_version::text`, [TOKEN, WALLET])).rows[0].requested_version;
+    const evidence = (blockNumber, blockHash) => ({
+      ruleVersion: 'rh_fresh_signed_v1', source: 'test',
+      observedAt: '2026-08-22T12:03:00Z',
+      firstBuy: {
+        walletAddress: WALLET, transactionHash: SWAP_HASHES[3],
+        blockNumber: String(blockNumber), blockHash,
+        blockTime: '2026-08-22T12:02:00Z', nonce: '5',
+      },
+      cutoff: { targetAt: '2026-08-21T12:02:00Z', number: '10', hash: HASH,
+        blockTime: '2026-08-21T12:01:59Z', nonce: '0' },
+      nextBlock: { number: '11', hash: FORK_HASH, blockTime: '2026-08-21T12:02:00Z' },
+    });
+    const decision = {
+      ruleVersion: 'rh_fresh_signed_v1', outcome: 'fresh',
+      outcomeReason: 'new_wallet_at_first_buy', reasonCode: 'new_wallet_at_first_buy',
+      confidence: 'high',
+    };
+    await db.query(`UPDATE robinhood_wallet_token_first_buys SET
+      block_number = 21, block_hash = $3, block_time = '2026-08-22T12:02:00Z'
+      WHERE token_address = $1 AND wallet_address = $2`, [TOKEN, WALLET, HASH]);
+    const version = await lease();
+    const input = {
+      tokenAddress: TOKEN, walletAddress: WALLET, owner: 'shadow-test',
+      requestedVersion: version, status: 'ready', evidence: evidence(21, HASH), decision,
+    };
+    assert.deepEqual(await repository.replaceAndComplete(input), {
+      completed: true, status: 'replace',
+    });
+    await lease();
+    assert.deepEqual(await repository.replaceAndComplete(input), {
+      completed: true, status: 'unchanged',
+    });
+    assert.equal((await db.query(`SELECT COUNT(*)::integer count
+      FROM robinhood_holder_classifications WHERE token_address = $1
+        AND wallet_address = $2 AND tag = 'fresh'`, [TOKEN, WALLET])).rows[0].count, 1);
+
+    await db.query(`UPDATE robinhood_wallet_token_first_buys SET block_number = 22
+      WHERE token_address = $1 AND wallet_address = $2`, [TOKEN, WALLET]);
+    const staleVersion = await lease();
+    assert.equal((await repository.replaceAndComplete({
+      ...input, requestedVersion: staleVersion, status: 'stale',
+      statusReason: 'behind_canonical_frontier', evidence: evidence(20, HASH),
+      throughBlockNumber: 20, decision: undefined,
+    })).status, 'ignore');
+    assert.equal((await db.query(`SELECT through_block_number::text value
+      FROM robinhood_fresh_wallet_evaluations WHERE token_address = $1
+        AND wallet_address = $2`, [TOKEN, WALLET])).rows[0].value, '21');
+
+    await db.query(`UPDATE robinhood_wallet_token_first_buys SET
+      block_number = 21, block_hash = $3 WHERE token_address = $1 AND wallet_address = $2`,
+    [TOKEN, WALLET, FORK_HASH]);
+    const reorgVersion = await lease();
+    const reorg = {
+      ...input, requestedVersion: reorgVersion, status: 'reorged',
+      statusReason: 'canonical_reorg', evidence: evidence(21, FORK_HASH), decision: undefined,
+    };
+    await assert.rejects(repository.replaceAndComplete(reorg), /fork requires explicit/);
+    assert.deepEqual(await repository.replaceAndComplete(reorg, {
+      allowForkReplacement: true,
+    }), { completed: true, status: 'replace' });
+    const result = await db.query(`SELECT evaluation.status,
+      classification.wallet_address FROM robinhood_fresh_wallet_evaluations evaluation
+      LEFT JOIN robinhood_holder_classifications classification
+        ON classification.token_address = evaluation.token_address
+       AND classification.wallet_address = evaluation.wallet_address
+       AND classification.tag = 'fresh'
+      WHERE evaluation.token_address = $1 AND evaluation.wallet_address = $2`, [TOKEN, WALLET]);
+    assert.deepEqual(result.rows[0], { status: 'reorged', wallet_address: null });
+
+    await db.query(`UPDATE robinhood_wallet_token_first_buys SET
+      block_number = 22, block_hash = $3 WHERE token_address = $1 AND wallet_address = $2`,
+    [TOKEN, WALLET, HASH]);
+    assert.equal((await db.query(`SELECT status FROM robinhood_fresh_wallet_queue
+      WHERE token_address = $1 AND wallet_address = $2`, [TOKEN, WALLET])).rows[0].status,
+    'pending');
+    const unavailableVersion = await lease();
+    await repository.replaceAndComplete({
+      ...input, requestedVersion: unavailableVersion, status: 'unavailable',
+      statusReason: 'rpc_unavailable', decision: undefined,
+      evidence: { source: 'test', observedAt: '2026-08-22T12:04:00Z',
+        error: { code: 'archive_unavailable' } },
+    }, { allowReset: true });
+    assert.equal((await db.query(`SELECT status FROM robinhood_fresh_wallet_evaluations
+      WHERE token_address = $1 AND wallet_address = $2`, [TOKEN, WALLET])).rows[0].status,
+    'unavailable');
   });
 });

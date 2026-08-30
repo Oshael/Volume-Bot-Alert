@@ -5150,6 +5150,34 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage179-robinhood-fresh-wallet-shadow',
+    name: 'Stage 179 Robinhood FRESH wallet shadow evaluations',
+    repair: 'node src/utils/db-init-stage179.js',
+    tables: [{
+      table: 'robinhood_fresh_wallet_evaluations',
+      columns: [
+        'chain', 'token_address', 'wallet_address', 'rule_version',
+        'classification_version', 'queue_version', 'status', 'outcome',
+        'status_reason', 'evidence_json', 'through_block_number',
+        'through_block_hash', 'observed_at', 'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_fresh_wallet_evaluations_pkey',
+        includes: ['PRIMARY KEY', 'chain', 'token_address', 'wallet_address', 'rule_version'],
+      }, {
+        name: 'rh_fresh_wallet_evaluations_contract_check',
+        includes: ['CHECK', 'pending', 'ready', 'unavailable', 'stale', 'reorged'],
+      }, {
+        name: 'rh_fresh_wallet_evaluations_frontier_check',
+        includes: ['CHECK', 'through_block_number', 'through_block_hash'],
+      }],
+      indexes: [{
+        name: 'idx_rh_fresh_wallet_evaluations_status',
+        includes: ['chain', 'rule_version', 'status', 'token_address'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

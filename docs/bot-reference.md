@@ -1872,6 +1872,16 @@ resolve o cutoff por busca binária com cache limitado e chama
 seleciona `RH_NODE_RPC_URL` (`robinhood-pc-archive`); o futuro live somente poderá
 selecionar `ROBINHOOD_RPC_URL` depois do preflight histórico. Evidência ausente,
 malformada, incoerente ou não canônica falha fechada e nunca produz `not_fresh`.
+A Stage 179 persiste cada decisão em
+`robinhood_fresh_wallet_evaluations` e conclui a versão correspondente da fila
+na mesma transação. Resultado `fresh` cria ou atualiza somente a classificação
+shadow; `not_fresh`, `unavailable`, `stale` e `reorged`, quando aceitos, removem
+essa linha. Uma
+frontier anterior é ignorada, troca de hash no mesmo bloco exige autorização
+explícita de reorg e reset para estado sem frontier também exige autorização.
+O materializador não escreve `robinhood_holder_classification_states`; além
+disso, `fresh` segue fora do allowlist público padrão, portanto esse estado não é
+exposto pela API antes do corte de publicação.
 A Stage 172 encadeia anchors commitados à fila token-scoped
 `robinhood_bundle_funding_live_queue`. Cada nova versão do anchor invalida uma
 lease antiga e incrementa `requested_version`; a conclusão só é aceita para essa
