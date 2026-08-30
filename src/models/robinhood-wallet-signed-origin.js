@@ -67,13 +67,14 @@ function dedupe(values) {
 function createRobinhoodWalletSignedOriginRepository(options = {}) {
   const database = options.database || db;
 
-  async function persistOrigins(values = []) {
+  async function persistOrigins(values = [], context = {}) {
     if (!Array.isArray(values)) throw new TypeError('origins must be a list');
     const rows = dedupe(values);
     if (!rows.length) return Object.freeze({ originsConsidered: 0, originsWritten: 0 });
-    const client = await database.getClient();
+    const ownsClient = !context.client;
+    const client = context.client || await database.getClient();
     try {
-      await client.query('BEGIN');
+      if (ownsClient) await client.query('BEGIN');
       const written = await client.query(`INSERT INTO robinhood_wallet_signed_origins (
         chain, wallet_address, first_block_number, first_block_hash, first_block_time,
         first_transaction_hash, first_transaction_index, first_nonce,
@@ -130,12 +131,12 @@ function createRobinhoodWalletSignedOriginRepository(options = {}) {
           });
         }
       }
-      await client.query('COMMIT');
+      if (ownsClient) await client.query('COMMIT');
       return Object.freeze({ originsConsidered: rows.length, originsWritten: written.rowCount });
     } catch (error) {
-      await client.query('ROLLBACK').catch(() => {});
+      if (ownsClient) await client.query('ROLLBACK').catch(() => {});
       throw error;
-    } finally { client.release(); }
+    } finally { if (ownsClient) client.release(); }
   }
 
   return Object.freeze({ persistOrigins });

@@ -5250,6 +5250,19 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage182-robinhood-signed-origin-frozen-frontiers',
+    name: 'Stage 182 Robinhood signed-origin frozen frontiers',
+    repair: 'node src/utils/db-init-stage182.js',
+    tables: [{
+      table: 'robinhood_wallet_signed_origin_cursors',
+      columns: ['origin_block_hash', 'safe_head_hash'],
+      constraints: [{
+        name: 'rh_wallet_signed_origin_cursors_frozen_check',
+        includes: ['CHECK', 'origin_block_hash', 'safe_head_hash', 'safe_head', 'origin_block'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

@@ -1902,6 +1902,12 @@ todas as transações antes de devolver evidência. O repository
 `robinhood-wallet-signed-origin` grava transacionalmente apenas a menor posição
 por wallet; replay é idempotente e identidade canônica conflitante causa rollback.
 Esses módulos ainda não movem o cursor nem executam varredura automaticamente.
+A Stage 182 torna `origin_block_hash` e `safe_head_hash` obrigatórios no cursor.
+O repository de cursor congela essas fronteiras na primeira execução e recusa
+resume divergente. Cada lote exige blocos explícitos e contíguos e grava origens,
+checkpoint e avanço na mesma transação; falha ou conflito otimista deixa o cursor
+inalterado. Aplique com `node src/utils/db-init-stage182.js`. Ainda não há CLI ou
+execução automática do bootstrap.
 A Stage 179 persiste cada decisão em
 `robinhood_fresh_wallet_evaluations` e conclui a versão correspondente da fila
 na mesma transação. Resultado `fresh` cria ou atualiza somente a classificação

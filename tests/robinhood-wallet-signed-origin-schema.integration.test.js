@@ -7,7 +7,11 @@ const db = require('../src/models/db');
 const {
   createRobinhoodWalletSignedOriginRepository,
 } = require('../src/models/robinhood-wallet-signed-origin');
+const {
+  createRobinhoodWalletSignedOriginCursorRepository,
+} = require('../src/models/robinhood-wallet-signed-origin-cursor');
 const stage181 = require('../src/utils/db-init-stage181');
+const stage182 = require('../src/utils/db-init-stage182');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
@@ -15,6 +19,8 @@ const WALLET = `0x${'9'.repeat(40)}`;
 const HASH = `0x${'a'.repeat(64)}`;
 const TX = `0x${'b'.repeat(64)}`;
 const REPOSITORY_WALLET = `0x${'7'.repeat(40)}`;
+const BOOTSTRAP_WALLET = `0x${'6'.repeat(40)}`;
+const SAFE_HASH = `0x${'e'.repeat(64)}`;
 
 function origin(blockNumber, transactionHash, overrides = {}) {
   return {
@@ -35,6 +41,8 @@ describe('Robinhood wallet signed origin schema', () => {
     await assertUsingTestDatabase(db);
     await stage181.init({ closePool: false });
     await stage181.init({ closePool: false });
+    await stage182.init({ closePool: false });
+    await stage182.init({ closePool: false });
     await cleanup();
   });
 
@@ -52,14 +60,18 @@ describe('Robinhood wallet signed origin schema', () => {
       'robinhood_wallet_signed_origins',
       'robinhood_wallet_signed_origin_cursors',
     ]);
+    const frozen = SCHEMA_GROUPS.find(({ key }) => (
+      key === 'stage182-robinhood-signed-origin-frozen-frontiers'
+    ));
+    assert.equal(frozen.repair, 'node src/utils/db-init-stage182.js');
   });
 
   it('persists a canonical origin and an ordered cursor', async () => {
     await db.query(`INSERT INTO robinhood_wallet_signed_origin_cursors (
-      stream, origin_block, next_block, safe_head, checkpoint_block,
+      stream, origin_block, origin_block_hash, next_block, safe_head, safe_head_hash, checkpoint_block,
       checkpoint_hash, checkpoint_timestamp, lifecycle_state
-    ) VALUES ('live', 100, 111, 120, 110, $1, '2026-08-30T12:00:00Z', 'running')`,
-    [HASH]);
+    ) VALUES ('live', 100, $1, 111, 120, $1, 110, $1,
+      '2026-08-30T12:00:00Z', 'running')`, [HASH]);
     await db.query(`INSERT INTO robinhood_wallet_signed_origins (
       wallet_address, first_block_number, first_block_hash, first_block_time,
       first_transaction_hash, first_transaction_index, first_nonce,
@@ -89,13 +101,14 @@ describe('Robinhood wallet signed origin schema', () => {
     [`0x${'8'.repeat(40)}`, HASH, `0x${'d'.repeat(64)}`]),
     /rh_wallet_signed_origins_contract_check/);
     await assert.rejects(db.query(`INSERT INTO robinhood_wallet_signed_origin_cursors (
-      stream, origin_block, next_block, checkpoint_block, checkpoint_timestamp
-    ) VALUES ('seed', 100, 110, 109, NOW())`),
+      stream, origin_block, origin_block_hash, next_block, safe_head, safe_head_hash,
+      checkpoint_block, checkpoint_timestamp
+    ) VALUES ('seed', 100, $1, 110, 120, $1, 109, NOW())`, [HASH]),
     /rh_wallet_signed_origin_cursors_checkpoint_check/);
     await assert.rejects(db.query(`INSERT INTO robinhood_wallet_signed_origin_cursors (
-      stream, origin_block, next_block, safe_head, checkpoint_block,
+      stream, origin_block, origin_block_hash, next_block, safe_head, safe_head_hash, checkpoint_block,
       checkpoint_hash, checkpoint_timestamp, lifecycle_state
-    ) VALUES ('seed', 100, 110, 120, 109, $1, NOW(), 'completed')`, [HASH]),
+    ) VALUES ('seed', 100, $1, 110, 120, $1, 109, $1, NOW(), 'completed')`, [HASH]),
     /rh_wallet_signed_origin_cursors_frontier_check/);
   });
 
@@ -121,5 +134,42 @@ describe('Robinhood wallet signed origin schema', () => {
       WHERE wallet_address = $1`, [REPOSITORY_WALLET])).rows[0], {
       first_block_number: '110', first_transaction_hash: earlier.transactionHash,
     });
+  });
+
+  it('freezes frontiers and commits origins with the cursor atomically', async () => {
+    const repository = createRobinhoodWalletSignedOriginCursorRepository({ database: db });
+    const plan = { stream: 'seed', originBlock: '100', originBlockHash: HASH,
+      safeHead: '102', safeHeadHash: SAFE_HASH };
+    const initial = await repository.createOrResume(plan);
+    assert.deepEqual([initial.nextBlock, initial.version], ['100', 0]);
+    assert.equal((await repository.createOrResume(plan)).nextBlock, '100');
+    await assert.rejects(repository.createOrResume({ ...plan, originBlockHash: SAFE_HASH }),
+      (error) => error.code === 'signed_origin_cursor_conflict');
+    const firstOrigin = origin(100, `0x${'5'.repeat(64)}`, {
+      walletAddress: BOOTSTRAP_WALLET, transactionIndex: '0', sourceStream: 'seed',
+    });
+    const advanced = await repository.commitBatch({
+      stream: 'seed', expectedVersion: 0, expectedNextBlock: '100', origins: [firstOrigin],
+      blocks: [{ number: '100', hash: HASH, blockTime: firstOrigin.blockTime },
+        { number: '101', hash: HASH, blockTime: firstOrigin.blockTime }],
+    });
+    assert.deepEqual([advanced.cursor.nextBlock, advanced.cursor.version,
+      advanced.cursor.lifecycleState], ['102', 1, 'running']);
+    await assert.rejects(repository.commitBatch({
+      stream: 'seed', expectedVersion: 0, expectedNextBlock: '102', origins: [],
+      blocks: [{ number: '102', hash: SAFE_HASH, blockTime: firstOrigin.blockTime }],
+    }), (error) => error.code === 'signed_origin_cursor_conflict');
+    await assert.rejects(repository.commitBatch({
+      stream: 'seed', expectedVersion: 1, expectedNextBlock: '102',
+      origins: [{ ...firstOrigin, blockNumber: '102', blockHash: SAFE_HASH }],
+      blocks: [{ number: '102', hash: SAFE_HASH, blockTime: firstOrigin.blockTime }],
+    }), (error) => error.code === 'signed_origin_reorg_conflict');
+    assert.equal((await repository.loadCursor()).nextBlock, '102');
+    const completed = await repository.commitBatch({
+      stream: 'seed', expectedVersion: 1, expectedNextBlock: '102', origins: [],
+      blocks: [{ number: '102', hash: SAFE_HASH, blockTime: firstOrigin.blockTime }],
+    });
+    assert.deepEqual([completed.cursor.nextBlock, completed.cursor.lifecycleState],
+      ['103', 'completed']);
   });
 });
