@@ -13,6 +13,9 @@ const db = require('./db');
 const CHAIN = 'robinhood';
 const STREAMS = new Set(['discovery', 'market']);
 const DEFAULT_MAX_ATTEMPTS = 5;
+const PROCESSING_LEASE_KEY = 'robinhood-processing-worker';
+const BLOCKED_RECOVERY_ERROR = 'V4 liquidity range update conflicted or became negative';
+const BLOCKED_RECOVERY_LOCK_KEY = 'robinhood-processing-blocked-recovery';
 
 function requireOwner(value) {
   const owner = String(value || '').trim();
@@ -31,6 +34,25 @@ function optionalStream(value) {
   const stream = String(value).trim().toLowerCase();
   if (!STREAMS.has(stream)) throw new Error('stream must be discovery or market');
   return stream;
+}
+
+function optionalBlock(value, label = 'throughBlock') {
+  if (value == null || value === '') return null;
+  const block = String(value).trim();
+  if (!/^\d+$/.test(block)) throw new Error(`${label} must be a non-negative integer`);
+  return block;
+}
+
+function recoverySummary(rows, limit, workerActive = false) {
+  const selected = rows.slice(0, limit);
+  return {
+    workerActive,
+    candidates: selected.length,
+    oldestBlock: selected[0]?.block_number == null ? null : String(selected[0].block_number),
+    newestBlock: selected.at(-1)?.block_number == null
+      ? null : String(selected.at(-1).block_number),
+    hasMore: rows.length > limit,
+  };
 }
 
 function hexWord(value, label) {
@@ -301,6 +323,96 @@ function createRobinhoodHeadProcessingRepository(options = {}) {
     return result.rowCount;
   }
 
+  async function previewBlockedRecovery(input = {}) {
+    const limit = requirePositiveInt(input.limit, 'limit');
+    const throughBlock = optionalBlock(input.throughBlock);
+    const [lease, candidates] = await Promise.all([
+      database.query(
+        `SELECT EXISTS (
+           SELECT 1 FROM worker_leases
+           WHERE lease_key = $1 AND lease_until > NOW()
+         ) AS active`,
+        [PROCESSING_LEASE_KEY]
+      ),
+      database.query(
+        `SELECT block_number
+         FROM robinhood_head_captures
+         WHERE chain = $1
+           AND stream = 'market'
+           AND processing_status = 'blocked'
+           AND last_error = $2
+           AND ($3::bigint IS NULL OR block_number <= $3::bigint)
+         ORDER BY block_number, transaction_index, log_index
+         LIMIT ($4::int + 1)`,
+        [CHAIN, BLOCKED_RECOVERY_ERROR, throughBlock, limit]
+      ),
+    ]);
+    return recoverySummary(candidates.rows, limit, lease.rows[0]?.active === true);
+  }
+
+  async function requeueBlockedRecoveryBatch(input = {}) {
+    const limit = requirePositiveInt(input.limit, 'limit');
+    const throughBlock = optionalBlock(input.throughBlock);
+    if (throughBlock == null) throw new Error('throughBlock is required for blocked recovery');
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [BLOCKED_RECOVERY_LOCK_KEY]);
+      const lease = await client.query(
+        `SELECT lease_until > NOW() AS active
+         FROM worker_leases WHERE lease_key = $1 FOR UPDATE`,
+        [PROCESSING_LEASE_KEY]
+      );
+      if (lease.rows[0]?.active === true) {
+        const error = new Error('Robinhood processing worker must be stopped');
+        error.code = 'robinhood_processing_worker_active';
+        throw error;
+      }
+      const result = await client.query(
+        `WITH targets AS MATERIALIZED (
+           SELECT chain, transaction_hash, log_index
+           FROM robinhood_head_captures
+           WHERE chain = $1
+             AND stream = 'market'
+             AND processing_status = 'blocked'
+             AND last_error = $2
+             AND block_number <= $3::bigint
+           ORDER BY block_number, transaction_index, log_index
+           LIMIT $4::int
+           FOR UPDATE SKIP LOCKED
+         ), requeued AS (
+           UPDATE robinhood_head_captures capture
+           SET processing_status = 'pending',
+               attempt_count = 0,
+               next_attempt_at = NOW(),
+               updated_at = NOW()
+           FROM targets
+           WHERE capture.chain = targets.chain
+             AND capture.transaction_hash = targets.transaction_hash
+             AND capture.log_index = targets.log_index
+           RETURNING capture.block_number
+         )
+         SELECT COUNT(*)::int AS requeued,
+                MIN(block_number) AS oldest_block,
+                MAX(block_number) AS newest_block
+         FROM requeued`,
+        [CHAIN, BLOCKED_RECOVERY_ERROR, throughBlock, limit]
+      );
+      await client.query('COMMIT');
+      const row = result.rows[0] || {};
+      return {
+        requeued: Number(row.requeued || 0),
+        oldestBlock: row.oldest_block == null ? null : String(row.oldest_block),
+        newestBlock: row.newest_block == null ? null : String(row.newest_block),
+      };
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch (_) {}
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   return Object.freeze({
     claimCaptures,
     settleClaims,
@@ -308,7 +420,13 @@ function createRobinhoodHeadProcessingRepository(options = {}) {
     getOldestActiveCapture,
     getProcessingWatermark,
     pruneExpiredCaptures,
+    previewBlockedRecovery,
+    requeueBlockedRecoveryBatch,
   });
 }
 
-module.exports = { createRobinhoodHeadProcessingRepository, DEFAULT_MAX_ATTEMPTS };
+module.exports = {
+  BLOCKED_RECOVERY_ERROR,
+  createRobinhoodHeadProcessingRepository,
+  DEFAULT_MAX_ATTEMPTS,
+};

@@ -15,6 +15,7 @@ const ADDRESS = `0x${'c'.repeat(40)}`;
 const TOPIC = `0x${'d'.repeat(64)}`;
 const LEASE_MS = 60_000;
 const RETENTION_MS = 86_400_000;
+const RANGE_ERROR = 'V4 liquidity range update conflicted or became negative';
 
 const repository = createRobinhoodHeadProcessingRepository({ database: db });
 
@@ -60,6 +61,7 @@ describe('Robinhood head processing repository integration', () => {
 
   beforeEach(async () => {
     await db.query('DELETE FROM robinhood_head_captures');
+    await db.query("DELETE FROM worker_leases WHERE lease_key = 'robinhood-processing-worker'");
   });
 
   after(async () => {
@@ -227,5 +229,47 @@ describe('Robinhood head processing repository integration', () => {
     assert.equal(await statusOf(expired), undefined);
     assert.equal((await statusOf(fresh)).processing_status, 'processed'); // retention still in the future
     assert.equal((await statusOf(pending)).processing_status, 'pending'); // never terminal
+  });
+
+  it('previews and requeues only bounded V4-contaminated dead-letters in chain order', async () => {
+    const unrelated = await seedPending({ block: 99, attemptCount: 4 });
+    const first = await seedPending({ block: 100, logIndex: 1, attemptCount: 4 });
+    const second = await seedPending({ block: 102, logIndex: 2, attemptCount: 4 });
+    await repository.claimCaptures({ owner: 'worker-a', limit: 3, leaseMs: LEASE_MS });
+    await repository.settleClaims({
+      owner: 'worker-a', retentionMs: RETENTION_MS, maxAttempts: 5,
+      retry: [
+        { ...unrelated, error: 'different permanent failure', backoffMs: 1000 },
+        { ...first, error: RANGE_ERROR, backoffMs: 1000 },
+        { ...second, error: RANGE_ERROR, backoffMs: 1000 },
+      ],
+    });
+
+    const preview = await repository.previewBlockedRecovery({ limit: 1, throughBlock: '102' });
+    assert.deepEqual(preview, {
+      workerActive: false, candidates: 1,
+      oldestBlock: '100', newestBlock: '100', hasMore: true,
+    });
+    assert.deepEqual(
+      await repository.requeueBlockedRecoveryBatch({ limit: 1, throughBlock: '102' }),
+      { requeued: 1, oldestBlock: '100', newestBlock: '100' }
+    );
+    assert.equal((await statusOf(first)).processing_status, 'pending');
+    assert.equal((await statusOf(first)).attempt_count, 0);
+    assert.equal((await statusOf(second)).processing_status, 'blocked');
+    assert.equal((await statusOf(unrelated)).processing_status, 'blocked');
+  });
+
+  it('refuses blocked recovery while the processing worker lease is active', async () => {
+    await db.query(
+      `INSERT INTO worker_leases (
+         lease_key, owner_id, lease_until
+       ) VALUES ('robinhood-processing-worker', 'test-owner', NOW() + INTERVAL '1 minute')`
+    );
+
+    await assert.rejects(
+      repository.requeueBlockedRecoveryBatch({ limit: 1, throughBlock: '100' }),
+      (error) => error.code === 'robinhood_processing_worker_active'
+    );
   });
 });

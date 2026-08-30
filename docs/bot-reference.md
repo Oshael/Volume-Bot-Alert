@@ -404,6 +404,15 @@ indisponibilidade de banco, não disparam a bisseção e retentam o subconjunto 
 reabrir dead-letters V4, esse isolamento deve estar implantado; a recuperação recoloca as claims
 em ordem on-chain para que adições válidas reconstruam as ranges antes das remoções dependentes.
 
+`npm run robinhood:processing-blocked-requeue` faz apenas preview indexado do primeiro batch de
+dead-letters cujo `last_error` é o conflito de range V4. A escrita exige o worker parado e os três
+limites explícitos, por exemplo `-- --apply --through-block=<frontier-revisada>
+--batch-size=10000 --max-batches=1`; se a lease `robinhood-processing-worker` estiver ativa, cada
+batch aborta antes do `UPDATE`. O comando preserva `last_error`, zera `attempt_count` e volta as
+claims para `pending` em ordem `(block, transaction, log)`. O `through-block` congela o escopo
+revisado; primeiro conclua o requeue bounded com o serviço parado, depois inicie o worker já com
+o isolamento implantado. Dead-letters de outras causas não entram nessa recuperação.
+
 No mesmo processo do `robinhood-processing`, o `robinhood-discovery-processing-runner`
 consome `stream='discovery'`. O cutover do isolamento do head tinha deixado o stream de
 discovery **sem consumidor**: o head só enfileira o evento (`commitDiscoveryRange` do
