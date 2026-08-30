@@ -1231,12 +1231,14 @@ describe('runtime worker groups config', () => {
 
   it('keeps FRESH wallet live shadow opt-in with bounded isolation controls', () => {
     withEnv({ ROBINHOOD_FRESH_WALLET_LIVE_ENABLED: 'true',
+      ROBINHOOD_FRESH_WALLET_SIGNED_ORIGIN_APPROVED: 'true',
       ROBINHOOD_FRESH_WALLET_LIVE_BATCH_SIZE: '999',
       ROBINHOOD_FRESH_WALLET_LIVE_CONCURRENCY: '99',
       ROBINHOOD_FRESH_WALLET_LIVE_CIRCUIT_FAILURE_THRESHOLD: '0',
       ROBINHOOD_FRESH_WALLET_LIVE_CIRCUIT_RESET_MS: '99999999',
     }, (config) => assert.deepEqual(config.robinhoodFreshWalletLiveWorker, {
-      enabled: true, intervalMs: 1000, leaseMs: 300_000, retryMs: 15_000,
+      enabled: true, signedOriginApproved: true,
+      intervalMs: 1000, leaseMs: 300_000, retryMs: 15_000,
       maxRetryMs: 3_600_000, batchSize: 100, concurrency: 4, timeoutMs: 30_000,
       circuitFailureThreshold: 1, circuitResetMs: 3_600_000,
     }));

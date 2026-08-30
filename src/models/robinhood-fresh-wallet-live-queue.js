@@ -41,9 +41,10 @@ function createRobinhoodFreshWalletLiveQueueRepository(options = {}) {
         AND queue.wallet_address = candidates.wallet_address
         AND queue.rule_version = candidates.rule_version
       RETURNING queue.*
-    ) SELECT claimed.token_address, claimed.wallet_address,
+    ) SELECT claimed.token_address, claimed.wallet_address, claimed.source_kind,
              claimed.requested_version::text, claimed.attempt_count,
-             first_buy.transaction_hash, first_buy.block_number::text,
+             first_buy.transaction_hash, first_buy.transaction_index::text,
+             first_buy.block_number::text,
              first_buy.block_hash, first_buy.block_time
         FROM claimed INNER JOIN robinhood_wallet_token_first_buys first_buy USING (
           chain, token_address, wallet_address
@@ -52,6 +53,7 @@ function createRobinhoodFreshWalletLiveQueueRepository(options = {}) {
     ]);
     return Object.freeze(rows.map((row) => Object.freeze({
       tokenAddress: row.token_address, walletAddress: row.wallet_address,
+      sourceKind: row.source_kind, transactionIndex: row.transaction_index,
       requestedVersion: row.requested_version, attemptCount: Number(row.attempt_count),
       transactionHash: row.transaction_hash, blockNumber: row.block_number,
       blockHash: row.block_hash,

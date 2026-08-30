@@ -3,6 +3,7 @@ const { describe, it } = require('node:test');
 
 const {
   RULE_VERSION,
+  compareRobinhoodFreshWalletEvidence,
   evaluateRobinhoodFreshWallet,
 } = require('../src/services/robinhood-fresh-wallet-rule');
 const {
@@ -72,7 +73,7 @@ function firstBuy(overrides = {}) {
 
 function ruleEvidence(overrides = {}) {
   return {
-    ruleVersion: RULE_VERSION,
+    ruleVersion: RULE_VERSION, sourceKind: 'seed',
     firstBuy: { nonce: '5', blockTime: '2026-08-30T12:00:00.000Z' },
     cutoff: {
       number: '50', nonce: '0', targetAt: '2026-08-29T12:00:00.000Z',
@@ -114,6 +115,25 @@ describe('Robinhood FRESH signed-activity rule', () => {
     assert.throws(() => evaluateRobinhoodFreshWallet(ruleEvidence({
       cutoff: { ...ruleEvidence().cutoff, blockTime: '2026-08-29T12:00:00.000Z' },
     })), /strict 24-hour boundary/);
+    assert.throws(() => evaluateRobinhoodFreshWallet({
+      ...ruleEvidence(), sourceKind: undefined,
+    }), /explicitly select seed or live/);
+  });
+
+  it('uses signed-origin activity without inventing a historical nonce', () => {
+    const seed = ruleEvidence();
+    const live = { ...seed, sourceKind: 'live',
+      cutoff: Object.fromEntries(Object.entries(seed.cutoff).filter(([key]) => key !== 'nonce')),
+      signedActivity: { priorSignedActivity: false,
+        reason: 'no_signed_activity_before_cutoff' },
+    };
+    assert.equal(evaluateRobinhoodFreshWallet(live).outcome, 'fresh');
+    assert.deepEqual(compareRobinhoodFreshWalletEvidence(seed, live), {
+      equivalent: true, seedPriorSignedActivity: false, livePriorSignedActivity: false,
+      sameFirstBuyNonce: true, seedOutcome: 'fresh', liveOutcome: 'fresh',
+    });
+    assert.equal(compareRobinhoodFreshWalletEvidence(seed, { ...live,
+      signedActivity: { priorSignedActivity: true } }).equivalent, false);
   });
 });
 
@@ -122,10 +142,12 @@ describe('Robinhood FRESH historical RPC source', () => {
     const fake = rpc();
     const source = createRobinhoodFreshWalletRpcSource({
       rpcClient: fake.client, source: 'robinhood-pc-archive',
+      sourceKind: 'seed',
       now: () => new Date('2026-08-30T12:05:00.000Z'),
     });
     const evidence = await source.readEvidence(firstBuy());
     assert.equal(evidence.cutoff.number, '50');
+    assert.equal(evidence.sourceKind, 'seed');
     assert.equal(evidence.cutoff.nonce, '0');
     assert.equal(evidence.nextBlock.number, '51');
     assert.equal(evaluateRobinhoodFreshWallet(evidence).outcome, 'fresh');
@@ -150,14 +172,14 @@ describe('Robinhood FRESH historical RPC source', () => {
     ];
     for (const fake of cases) {
       const source = createRobinhoodFreshWalletRpcSource({
-        rpcClient: fake.client, source: 'robinhood-pc-archive',
+        rpcClient: fake.client, source: 'robinhood-pc-archive', sourceKind: 'seed',
       });
       await assert.rejects(() => source.readEvidence(firstBuy()),
         (error) => error.code === 'fresh_evidence_invalid');
     }
     const wrongChain = rpc({ chainId: '0x1' });
     await assert.rejects(() => createRobinhoodFreshWalletRpcSource({
-      rpcClient: wrongChain.client, source: 'robinhood-live',
+      rpcClient: wrongChain.client, source: 'robinhood-live', sourceKind: 'live',
     }).readEvidence(firstBuy()), (error) => error.code === 'configuration_error');
   });
 

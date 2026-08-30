@@ -10,6 +10,9 @@ const { createRobinhoodRpcClient } = require('./robinhood-ingestion-worker');
 const {
   createRobinhoodFreshWalletRpcSource, resolveRobinhoodFreshWalletRpcProvider,
 } = require('./robinhood-fresh-wallet-rpc-source');
+const {
+  createRobinhoodFreshWalletSignedOriginSource,
+} = require('./robinhood-fresh-wallet-signed-origin-source');
 const { evaluateRobinhoodFreshWallet } = require('./robinhood-fresh-wallet-rule');
 const { createPostgresRealtimeListener } = require('./postgres-realtime-listener');
 
@@ -29,6 +32,7 @@ const normalizeOptions = (input = {}) => Object.freeze({
   timeoutMs: bounded(input.timeoutMs, 30_000, 1000, 300_000),
   circuitFailureThreshold: bounded(input.circuitFailureThreshold, 5, 1, 100),
   circuitResetMs: bounded(input.circuitResetMs, 60_000, 1000, 3_600_000),
+  signedOriginApproved: input.signedOriginApproved === true,
   rpcOptions: input.rpcOptions || {},
 });
 
@@ -40,16 +44,26 @@ function buildRuntime(deps, options) {
   const rpcClient = (deps.rpcClientFactory || createRobinhoodRpcClient)({
     ...options.rpcOptions, publicRpcUrl: provider.url, rpcTimeoutMs: options.timeoutMs,
   });
-  return Object.freeze({
+  const canonicalSource = (deps.canonicalSourceFactory || createRobinhoodFreshWalletRpcSource)({
+    rpcClient, source: provider.name, sourceKind: 'live',
+  });
+  return Object.freeze({ sourceKind: 'live',
     queue: (deps.queueFactory || createRobinhoodFreshWalletLiveQueueRepository)({ database }),
     shadow: (deps.shadowFactory || createRobinhoodFreshWalletShadowRepository)({ database }),
-    source: (deps.sourceFactory || createRobinhoodFreshWalletRpcSource)({
-      rpcClient, source: provider.name,
+    source: (deps.sourceFactory || createRobinhoodFreshWalletSignedOriginSource)({
+      database, canonicalSource,
     }),
   });
 }
 
 async function processTask(runtime, task) {
+  if (!['seed', 'live'].includes(task.sourceKind)
+      || runtime.sourceKind !== task.sourceKind
+      || runtime.source?.sourceKind !== task.sourceKind) {
+    throw Object.assign(new Error('FRESH task source_kind does not match its adapter'), {
+      code: 'fresh_source_kind_mismatch',
+    });
+  }
   const evidence = await runtime.source.readEvidence(task);
   const decision = evaluateRobinhoodFreshWallet(evidence);
   const result = await runtime.shadow.replaceAndComplete({
@@ -138,7 +152,13 @@ function createRobinhoodFreshWalletLiveWorker(deps = {}) {
   function wake() { if (running && !active) { if (timer) cancel(timer); timer = null; queue(0); } }
   function start(input = {}) {
     if (running) return false; options = normalizeOptions(input); status.enabled = options.enabled;
-    if (!options.enabled) return false; getRuntime(); running = true; status.running = true;
+    if (!options.enabled) return false;
+    if (!options.signedOriginApproved) {
+      status.lastError = { code: 'fresh_signed_origin_not_approved',
+        message: 'FRESH signed-origin equivalence is not approved' };
+      return false;
+    }
+    getRuntime(); running = true; status.running = true;
     listener = (deps.listenerFactory || createPostgresRealtimeListener)({
       channel: NOTIFY_CHANNEL, label: 'RobinhoodFreshWalletLiveWorker',
       pool: deps.pool || db.pool, onNotification: wake,

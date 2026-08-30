@@ -15,10 +15,8 @@ function instant(value, label) {
   return new Date(parsed).toISOString();
 }
 
-function evaluateRobinhoodFreshWallet(input = {}) {
-  if (input.ruleVersion !== RULE_VERSION) throw new Error(`ruleVersion must be ${RULE_VERSION}`);
+function validateBoundary(input) {
   const firstBuyNonce = unsigned(input.firstBuy?.nonce, 'firstBuy.nonce');
-  const cutoffNonce = unsigned(input.cutoff?.nonce, 'cutoff.nonce');
   const firstBuyAt = instant(input.firstBuy?.blockTime, 'firstBuy.blockTime');
   const cutoffAt = instant(input.cutoff?.targetAt, 'cutoff.targetAt');
   const cutoffBlockTime = instant(input.cutoff?.blockTime, 'cutoff.blockTime');
@@ -31,8 +29,26 @@ function evaluateRobinhoodFreshWallet(input = {}) {
       || Date.parse(nextBlockTime) < Date.parse(cutoffAt)) {
     throw new Error('cutoff blocks do not prove the strict 24-hour boundary');
   }
-  const fresh = cutoffNonce === 0n && firstBuyNonce <= MAX_PRIOR_SIGNED_TRANSACTIONS;
-  const outcomeReason = cutoffNonce > 0n
+  return firstBuyNonce;
+}
+
+function resolvePriorSignedActivity(input) {
+  if (input.sourceKind !== 'live') return unsigned(input.cutoff?.nonce, 'cutoff.nonce') > 0n;
+  if (typeof input.signedActivity?.priorSignedActivity !== 'boolean') {
+    throw new Error('live FRESH evidence requires signedActivity');
+  }
+  return input.signedActivity.priorSignedActivity;
+}
+
+function evaluateRobinhoodFreshWallet(input = {}) {
+  if (input.ruleVersion !== RULE_VERSION) throw new Error(`ruleVersion must be ${RULE_VERSION}`);
+  if (!['seed', 'live'].includes(input.sourceKind)) {
+    throw new Error('sourceKind must explicitly select seed or live');
+  }
+  const firstBuyNonce = validateBoundary(input);
+  const priorSignedActivity = resolvePriorSignedActivity(input);
+  const fresh = !priorSignedActivity && firstBuyNonce <= MAX_PRIOR_SIGNED_TRANSACTIONS;
+  const outcomeReason = priorSignedActivity
     ? 'signed_activity_before_window'
     : firstBuyNonce > MAX_PRIOR_SIGNED_TRANSACTIONS
       ? 'too_many_prior_signed_transactions'
@@ -46,9 +62,25 @@ function evaluateRobinhoodFreshWallet(input = {}) {
   });
 }
 
+function compareRobinhoodFreshWalletEvidence(seedEvidence, liveEvidence) {
+  const seed = evaluateRobinhoodFreshWallet(seedEvidence);
+  const live = evaluateRobinhoodFreshWallet(liveEvidence);
+  const seedPriorSignedActivity = unsigned(seedEvidence.cutoff?.nonce, 'cutoff.nonce') > 0n;
+  const livePriorSignedActivity = liveEvidence.signedActivity?.priorSignedActivity;
+  const sameFirstBuyNonce = unsigned(seedEvidence.firstBuy?.nonce, 'firstBuy.nonce')
+    === unsigned(liveEvidence.firstBuy?.nonce, 'firstBuy.nonce');
+  return Object.freeze({
+    equivalent: seedPriorSignedActivity === livePriorSignedActivity
+      && sameFirstBuyNonce && seed.outcome === live.outcome,
+    seedPriorSignedActivity, livePriorSignedActivity, sameFirstBuyNonce,
+    seedOutcome: seed.outcome, liveOutcome: live.outcome,
+  });
+}
+
 module.exports = {
   MAX_PRIOR_SIGNED_TRANSACTIONS,
   REASON_CODE,
   RULE_VERSION,
+  compareRobinhoodFreshWalletEvidence,
   evaluateRobinhoodFreshWallet,
 };

@@ -12,7 +12,8 @@ const wallet = (digit) => `0x${digit.repeat(40)}`;
 
 function evidence(walletAddress, nonce = '6') {
   return {
-    ruleVersion: 'rh_fresh_signed_v1', source: 'robinhood-live',
+    ruleVersion: 'rh_fresh_signed_v1', source: 'robinhood-signed-origin-index',
+    sourceKind: 'live', signedActivity: { priorSignedActivity: false },
     observedAt: '2026-08-22T12:03:00Z',
     firstBuy: { walletAddress, transactionHash: TX, blockNumber: '21', blockHash: HASH,
       blockTime: '2026-08-22T12:02:00Z', nonce },
@@ -25,9 +26,10 @@ function evidence(walletAddress, nonce = '6') {
 it('evaluates RPC evidence and atomically completes a not-fresh shadow task', async () => {
   let persisted;
   const task = { tokenAddress: TOKEN, walletAddress: wallet('1'), requestedVersion: '2',
-    owner: 'test' };
+    sourceKind: 'live', owner: 'test' };
   const result = await processTask({
-    source: { readEvidence: async () => evidence(task.walletAddress) },
+    sourceKind: 'live', source: { sourceKind: 'live',
+      readEvidence: async () => evidence(task.walletAddress) },
     shadow: { replaceAndComplete: async (...args) => { persisted = args; return { completed: true }; } },
   }, task);
   assert.deepEqual(result, { status: 'materialized', tokenAddress: TOKEN,
@@ -38,12 +40,12 @@ it('evaluates RPC evidence and atomically completes a not-fresh shadow task', as
 
 it('bounds concurrency, retries independently and opens its RPC circuit', async () => {
   const tasks = ['1', '2', '3'].map((digit) => ({ tokenAddress: TOKEN,
-    walletAddress: wallet(digit), requestedVersion: '1', attemptCount: 1 }));
+    walletAddress: wallet(digit), sourceKind: 'live', requestedVersion: '1', attemptCount: 1 }));
   let claims = 0; let active = 0; let maxActive = 0; const retries = [];
-  const runtime = {
+  const runtime = { sourceKind: 'live',
     queue: { async claimBatch() { claims += 1; return tasks; },
       async retry(input) { retries.push(input); } },
-    source: { async readEvidence() {
+    source: { sourceKind: 'live', async readEvidence() {
       active += 1; maxActive = Math.max(maxActive, active);
       await new Promise((resolve) => setImmediate(resolve)); active -= 1;
       throw Object.assign(new Error('RPC down'), { code: 'rpc_unavailable' });
@@ -55,7 +57,7 @@ it('bounds concurrency, retries independently and opens its RPC circuit', async 
     schedule(fn, delay) { const item = { fn, delay }; scheduled.push(item); return item; },
     cancelSchedule() {}, listenerFactory: () => ({ start() {}, stop() {} }),
   });
-  worker.start({ enabled: true, batchSize: 3, concurrency: 2,
+  worker.start({ enabled: true, signedOriginApproved: true, batchSize: 3, concurrency: 2,
     circuitFailureThreshold: 2, circuitResetMs: 60_000 });
   assert.equal((await worker.runOnce()).status, 'partial');
   await worker.runOnce();
@@ -82,4 +84,14 @@ it('builds only against the configured live provider', () => {
   assert.deepEqual(rpcOptions, {
     rpcMaxRetries: 2, publicRpcUrl: 'https://live.example', rpcTimeoutMs: 12_000,
   });
+});
+
+it('does not start before signed-origin equivalence is explicitly approved', () => {
+  let claims = 0;
+  const worker = createRobinhoodFreshWalletLiveWorker({ runtime: {
+    queue: { claimBatch: async () => { claims += 1; return []; } },
+  } });
+  assert.equal(worker.start({ enabled: true, signedOriginApproved: false }), false);
+  assert.equal(worker.getStatus().lastError.code, 'fresh_signed_origin_not_approved');
+  assert.equal(claims, 0);
 });

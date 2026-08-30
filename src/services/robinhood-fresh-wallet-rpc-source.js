@@ -83,6 +83,8 @@ function createRobinhoodFreshWalletRpcSource(options = {}) {
   if (typeof rpcClient?.request !== 'function') throw new TypeError('FRESH RPC client is required');
   const source = String(options.source || '').trim();
   if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(source)) throw new TypeError('FRESH RPC source is invalid');
+  const sourceKind = options.sourceKind;
+  if (!['seed', 'live'].includes(sourceKind)) throw new TypeError('FRESH sourceKind is invalid');
   const now = options.now || (() => new Date());
   const maxCacheBlocks = Number(options.maxCacheBlocks ?? DEFAULT_CACHE_BLOCKS);
   if (!Number.isSafeInteger(maxCacheBlocks) || maxCacheBlocks < 16 || maxCacheBlocks > 65536) {
@@ -137,7 +139,7 @@ function createRobinhoodFreshWalletRpcSource(options = {}) {
     return { cutoff, nextBlock };
   }
 
-  async function readEvidence(input = {}) {
+  async function readCanonicalEvidence(input = {}) {
     const firstBuy = normalizeFirstBuy(input);
     await validateChain();
     const [transaction, firstBuyBlock] = await Promise.all([
@@ -159,22 +161,31 @@ function createRobinhoodFreshWalletRpcSource(options = {}) {
     }
     const cutoffAt = new Date(Date.parse(firstBuy.blockTime) - DAY_MS).toISOString();
     const { cutoff, nextBlock } = await resolveCutoff(cutoffAt, firstBuyBlock);
-    const cutoffNonce = quantity(await rpcClient.request('eth_getTransactionCount', [
-      firstBuy.walletAddress, { blockHash: cutoff.hash, requireCanonical: true },
-    ]), 'cutoffNonce');
     const firstBuyNonce = quantity(transaction.nonce, 'transaction.nonce');
-    if (cutoffNonce > firstBuyNonce) throw invalid('historical nonce exceeds first-buy nonce');
     return Object.freeze({
       ruleVersion: RULE_VERSION,
-      source,
+      source, sourceKind,
       observedAt: instant(now(), 'observedAt'),
       firstBuy: Object.freeze({ ...firstBuy, nonce: firstBuyNonce.toString() }),
-      cutoff: Object.freeze({ targetAt: cutoffAt, ...cutoff, nonce: cutoffNonce.toString() }),
+      cutoff: Object.freeze({ targetAt: cutoffAt, ...cutoff }),
       nextBlock,
     });
   }
 
-  return Object.freeze({ readEvidence });
+  async function readEvidence(input = {}) {
+    const canonical = await readCanonicalEvidence(input);
+    const cutoffNonce = quantity(await rpcClient.request('eth_getTransactionCount', [
+      canonical.firstBuy.walletAddress,
+      { blockHash: canonical.cutoff.hash, requireCanonical: true },
+    ]), 'cutoffNonce');
+    const firstBuyNonce = BigInt(canonical.firstBuy.nonce);
+    if (cutoffNonce > firstBuyNonce) throw invalid('historical nonce exceeds first-buy nonce');
+    return Object.freeze({ ...canonical,
+      cutoff: Object.freeze({ ...canonical.cutoff, nonce: cutoffNonce.toString() }),
+    });
+  }
+
+  return Object.freeze({ sourceKind, readCanonicalEvidence, readEvidence });
 }
 
 module.exports = {

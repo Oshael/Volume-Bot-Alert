@@ -26,7 +26,7 @@ function createArchiveSource(options = {}, deps = {}) {
     useAlchemy: false, useDrpc: false,
   });
   return (deps.sourceFactory || createRobinhoodFreshWalletRpcSource)({
-    rpcClient, source: provider.name,
+    rpcClient, source: provider.name, sourceKind: 'seed',
   });
 }
 
@@ -66,7 +66,8 @@ function assertApproved(preflight) {
 
 async function drainBatch(context, tasks) {
   await mapConcurrent(tasks, context.concurrency, async (task) => {
-    try { await processTask({ source: context.source, shadow: context.shadow }, {
+    try { await processTask({ sourceKind: 'seed', source: context.source,
+      shadow: context.shadow }, {
       ...task, owner: context.owner,
     }); } catch (error) {
       await context.queue.retry({ ...task, owner: context.owner,

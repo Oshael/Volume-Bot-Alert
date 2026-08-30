@@ -1883,10 +1883,12 @@ zero no último bloco estritamente anterior a 24 horas antes da compra. O source
 valida chain `4663`, transação, wallet, bloco/hash e timestamp da first-buy;
 resolve o cutoff por busca binária com cache limitado e chama
 `eth_getTransactionCount` usando `{ blockHash, requireCanonical: true }`. O seed
-seleciona `RH_NODE_RPC_URL` (`robinhood-pc-archive`). O consumidor LIVE legado
-ainda tenta essa consulta no `ROBINHOOD_RPC_URL` pruned e deve permanecer
-desabilitado até a troca de adapter. Evidência ausente, malformada, incoerente ou
-não canônica falha fechada e nunca produz `not_fresh`.
+seleciona `RH_NODE_RPC_URL` (`robinhood-pc-archive`). O LIVE usa o
+`ROBINHOOD_RPC_URL` apenas para validar a transação e resolver os blocos do cutoff;
+`prior_signed_activity` vem de `robinhood_wallet_signed_origins` e da frontier
+`live` no PostgreSQL, sem fabricar nonce histórico. Evidência ausente, malformada,
+incoerente, não canônica ou fora da coverage falha fechada e nunca produz
+`not_fresh`.
 A Stage 181 cria `robinhood_wallet_signed_origins`, que guarda somente a primeira
 transação assinada canônica observada por wallet, e o cursor independente
 `robinhood_wallet_signed_origin_cursors` para streams `seed|live`. A inferência
@@ -1939,7 +1941,10 @@ o worker; polling bounded de um segundo serve apenas para reconciliação. Claim
 live usam lease em lote, concorrência máxima quatro, retry exponencial e retomada
 de lease expirada. Cinco rodadas totalmente falhas abrem por padrão um circuit
 breaker de 60 segundos antes de novo claim. O worker exige `ROBINHOOD_RPC_URL`,
-nunca seleciona `RH_NODE_RPC_URL`, e continua shadow-only.
+nunca seleciona `RH_NODE_RPC_URL`, continua shadow-only e só inicia quando
+`ROBINHOOD_FRESH_WALLET_SIGNED_ORIGIN_APPROVED=true`. Esse gate deve permanecer
+falso até a comparação Archive versus índice interno provar equivalência de
+`prior_signed_activity` e da decisão final na amostra operacional.
 O seed único usa `npm run robinhood:fresh-wallet-seed`: sem `--apply`, faz
 preflight read-only no Archive de `RH_NODE_RPC_URL`, amostra evidência real,
 aplica margem de 25% e recusa ETA acima de cinco horas. `--apply` congela na

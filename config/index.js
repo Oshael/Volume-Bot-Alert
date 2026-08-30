@@ -1752,6 +1752,9 @@ module.exports = {
 
   robinhoodFreshWalletLiveWorker: {
     enabled: parseBoolean(process.env.ROBINHOOD_FRESH_WALLET_LIVE_ENABLED, false),
+    signedOriginApproved: parseBoolean(
+      process.env.ROBINHOOD_FRESH_WALLET_SIGNED_ORIGIN_APPROVED, false
+    ),
     intervalMs: parseIntegerInRange(
       process.env.ROBINHOOD_FRESH_WALLET_LIVE_INTERVAL_MS, 1000, 100, 60_000
     ),

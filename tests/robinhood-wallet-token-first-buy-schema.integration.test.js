@@ -373,8 +373,10 @@ describe('Robinhood wallet-token first buy schema integration', () => {
       WHERE token_address = $1 AND wallet_address = $2`, [TOKEN, WALLET]);
     const [task] = await queue.claimBatch({ owner: 'live-a', leaseMs: 10_000, limit: 10 });
     assert.deepEqual({ tokenAddress: task.tokenAddress, walletAddress: task.walletAddress,
-      blockNumber: task.blockNumber, attemptCount: task.attemptCount }, {
-      tokenAddress: TOKEN, walletAddress: WALLET, blockNumber: '23', attemptCount: 1,
+      blockNumber: task.blockNumber, sourceKind: task.sourceKind,
+      transactionIndex: task.transactionIndex, attemptCount: task.attemptCount }, {
+      tokenAddress: TOKEN, walletAddress: WALLET, blockNumber: '23', sourceKind: 'live',
+      transactionIndex: '0', attemptCount: 1,
     });
     assert.equal(await queue.retry({ ...task, owner: 'wrong', retryMs: 1000,
       error: new Error('retry') }), false);
