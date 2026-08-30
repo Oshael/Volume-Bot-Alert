@@ -2885,6 +2885,15 @@ Execute `npm run robinhood:wallet-transfer-compaction-audit -- --day=YYYY-MM-DD
 um único dia sem escrita. Acrescente `--commit` somente para persistir o
 watermark revisado; o comando valida chain ID/hash e nunca remove partições.
 
+Quando a auditoria bloquear somente por `summary_mismatch`, execute primeiro
+`npm run robinhood:wallet-transfer-summary-repair -- --day=YYYY-MM-DD
+--projection-version=VERSAO`. O comando é dry-run e aceita somente partições já
+fora da retenção. Para substituir atomicamente apenas o resumo daquele dia pelo
+raw classificado, acrescente `--apply
+--confirm-rebuild-robinhood-transfer-summary`; a partição fica bloqueada contra
+mutações durante a transação e qualquer watermark volta a `pending`. Repita a
+auditoria canônica antes de considerar retenção ou drop.
+
 Execute `npm run robinhood:wallet-transfer-retention-plan --
 --projection-version=VERSAO --limit=10` para listar candidatos antigos. O limite
 aceito é 1–100; o relatório apenas confere catálogo/bounds, declara

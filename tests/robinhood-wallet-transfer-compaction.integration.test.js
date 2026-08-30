@@ -6,6 +6,9 @@ const { after, before, describe, it } = require('node:test');
 const db = require('../src/models/db');
 const { createRobinhoodTokenTransferRepository } = require('../src/models/robinhood-token-transfer-persistence');
 const { createRobinhoodWalletTransferCompactionAuditor } = require('../src/models/robinhood-wallet-transfer-compaction');
+const {
+  createRobinhoodWalletTransferSummaryRepair,
+} = require('../src/models/robinhood-wallet-transfer-summary-repair');
 const stage126 = require('../src/utils/db-init-stage126');
 const stage127 = require('../src/utils/db-init-stage127');
 const stage128 = require('../src/utils/db-init-stage128');
@@ -126,5 +129,37 @@ describe('Robinhood wallet transfer compaction audit', () => {
       }),
       /cannot prove transfer-adjusted positions/
     );
+  });
+
+  it('rebuilds a cold daily summary and requires a fresh audit', async () => {
+    const raw = createRobinhoodTokenTransferRepository({ database: db });
+    await raw.insertTransferEvents([event(4, 'dex_flow', 40)]);
+    const repair = createRobinhoodWalletTransferSummaryRepair({ database: db });
+    const inspected = await repair.inspectDay({
+      projectionVersion: VERSION, partitionDay: DAY, now: new Date('2100-02-03T00:00:00Z'),
+    });
+    assert.equal(inspected.eligible_transfer_count, '2');
+    assert.equal(inspected.summary_transfer_count, '1');
+
+    const rebuilt = await repair.rebuildDay({
+      projectionVersion: VERSION, partitionDay: DAY, now: new Date('2100-02-03T00:00:00Z'),
+    });
+    assert.equal(rebuilt.summariesWritten, 1);
+    assert.equal(rebuilt.after.summary_transfer_count, '2');
+    assert.equal(rebuilt.after.summary_amount_raw, '50');
+    const watermark = await db.query(
+      `SELECT lifecycle_state, summary_reconciled, evidence_complete
+         FROM robinhood_wallet_transfer_compaction_watermarks
+        WHERE projection_version = $1 AND partition_day = $2::date`,
+      [VERSION, DAY]
+    );
+    assert.deepEqual(watermark.rows[0], {
+      lifecycle_state: 'pending', summary_reconciled: false, evidence_complete: false,
+    });
+    const repeated = await repair.rebuildDay({
+      projectionVersion: VERSION, partitionDay: DAY, now: new Date('2100-02-03T00:00:00Z'),
+    });
+    assert.equal(repeated.after.summary_transfer_count, '2');
+    assert.equal(repeated.after.summary_amount_raw, '50');
   });
 });
