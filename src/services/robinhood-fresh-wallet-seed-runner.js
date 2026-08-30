@@ -7,7 +7,8 @@ const { processTask, __private: { mapConcurrent } } = require('./robinhood-fresh
 
 const MAX_HOURS = 5;
 const SAFETY_FACTOR = 1.25;
-const isRunnablePlan = (plan) => plan?.ready && plan.pairCount;
+const isRunnablePlan = (plan) => plan?.ready
+  && Number(plan.tokenCount) > 0 && Number(plan.pairCount) > 0;
 const bounded = (value, fallback, min, max) => {
   const parsed = Number(value ?? fallback);
   if (!Number.isSafeInteger(parsed) || parsed < min || parsed > max) {

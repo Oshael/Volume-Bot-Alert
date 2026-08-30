@@ -46,6 +46,8 @@ const LIVE_TX = `0x${'c'.repeat(64)}`;
 const FORK_HASH = `0x${'d'.repeat(64)}`;
 const MARKET = `robinhood:uniswap-v3:${POOL}`;
 const PARTITION = 'robinhood_wallet_swaps_first_buy_test';
+const LAUNCH_PARTITION = 'robinhood_wallet_swaps_fresh_seed_test';
+const LAUNCH_TX = `0x${'e'.repeat(64)}`;
 const SWAP_HASHES = [7, 8, 9, 11].map((digit) => `0x${digit.toString(16).repeat(64)}`);
 
 async function cleanup() {
@@ -64,9 +66,10 @@ async function cleanup() {
   await db.query('DELETE FROM robinhood_wallet_token_first_buys WHERE token_address = $1', [TOKEN]);
   await db.query('DELETE FROM robinhood_holder_token_states WHERE token_address = $1', [TOKEN]);
   await db.query(`DELETE FROM ${PARTITION}`);
+  await db.query(`DELETE FROM ${LAUNCH_PARTITION}`);
   await db.query(
     `DELETE FROM robinhood_transaction_positions
-      WHERE transaction_hash IN ($1, $2, $3, $4)`, SWAP_HASHES
+      WHERE transaction_hash = ANY($1::varchar[])`, [[...SWAP_HASHES, LAUNCH_TX]]
   );
   await db.query('DELETE FROM robinhood_pool_registry WHERE market_key = $1', [MARKET]);
 }
@@ -93,6 +96,11 @@ describe('Robinhood wallet-token first buy schema integration', () => {
       `CREATE TABLE IF NOT EXISTS ${PARTITION}
        PARTITION OF robinhood_wallet_swaps
        FOR VALUES FROM ('2099-01-01T00:00:00Z') TO ('2099-01-04T00:00:00Z')`
+    );
+    await db.query(
+      `CREATE TABLE IF NOT EXISTS ${LAUNCH_PARTITION}
+       PARTITION OF robinhood_wallet_swaps
+       FOR VALUES FROM ('2026-08-22T00:00:00Z') TO ('2026-08-23T00:00:00Z')`
     );
     await cleanup();
     await db.query(
@@ -407,12 +415,23 @@ describe('Robinhood wallet-token first buy schema integration', () => {
     ) VALUES ($1, '2026-08-22T12:05:00Z', '2026-08-22T12:05:00Z', 21)`,
     [sourceRun.id]);
     await db.query(`INSERT INTO robinhood_token_launch_anchors(
-      token_address, first_pool_block, launch_block, launch_block_time,
-      source_through_block, anchor_wallet_address, anchor_transaction_hash,
-      anchor_transaction_index, anchor_action_index, anchor_block_hash, anchor_side
-    ) VALUES ($1, 10, 10, '2026-08-22T12:00:00Z', 20, $2, $3, 0, 0, $4, 'buy')`,
-    [TOKEN, WALLET, SWAP_HASHES[3], HASH]);
+      token_address, first_pool_block, launch_block, launch_block_time, source_through_block
+    ) VALUES ($1, 10, 10, '2026-08-22T12:00:00Z', 10)`, [TOKEN]);
+    await db.query(`INSERT INTO ${LAUNCH_PARTITION} (
+      wallet_address, transaction_hash, action_index, block_number, block_time,
+      protocol, market_key, token_address, quote_address, side,
+      token_amount_raw, quote_amount_raw, volume_usd, parser_version
+    ) VALUES ($1, $2, 0, 10, '2026-08-22T12:00:00Z', 'uniswap-v3', $3, $4, $5,
+      'buy', 1, 1, 1, 'swap_only_v1')`, [WALLET, LAUNCH_TX, MARKET, TOKEN, QUOTE]);
     const repository = createRobinhoodFreshWalletSeedRepository({ database: db });
+    assert.deepEqual(await repository.loadPlan(), {
+      ready: false, reason: 'launch_anchor_position_incomplete', incompleteTokenCount: 1,
+      missingPositionCount: 1, missingPositionFrom: '2026-08-22T12:00:00.000Z',
+      missingPositionThrough: '2026-08-22T12:00:01.000Z',
+    });
+    await db.query(`INSERT INTO robinhood_transaction_positions(
+      transaction_hash, block_number, block_hash, transaction_index
+    ) VALUES ($1, 10, $2, 0)`, [LAUNCH_TX, HASH]);
     const plan = await repository.loadPlan();
     assert.deepEqual({ frozen: plan.frozen, tokenCount: plan.tokenCount,
       pairCount: plan.pairCount }, { frozen: false, tokenCount: 1, pairCount: 1 });

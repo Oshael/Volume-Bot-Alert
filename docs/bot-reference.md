@@ -1949,8 +1949,13 @@ O seed único usa `npm run robinhood:fresh-wallet-seed`: sem `--apply`, faz
 preflight read-only no Archive de `RH_NODE_RPC_URL`, amostra evidência real,
 aplica margem de 25% e recusa ETA acima de cinco horas. `--apply` congela na
 fila todos os first-buys até o bloco de ativação dos tokens cujo launch canônico
-está nos 14 dias fixos anteriores, processa com a mesma regra/materializador e
-atualiza cobertura por token. Campanhas `paused` retomam o mesmo snapshot; novas
+está nos 14 dias fixos anteriores. O cohort usa a frontier global de first-buy
+congelada na ativação e recompõe hash/posição da âncora pelos swaps e
+`robinhood_transaction_positions`; `source_through_block` do cache não é gate.
+Posição ausente bloqueia o preflight com a janela exata para
+`npm run robinhood:transaction-position-repair`, que usa Archive somente para os
+buracos. O seed processa com a mesma regra/materializador e atualiza cobertura
+por token. Campanhas `paused` retomam o mesmo snapshot; novas
 âncoras ou mudanças no catálogo não ampliam o cohort. A execução para após 285
 minutos por padrão (`--max-minutes`, máximo 300), preservando checkpoints.
 O cursor first-buy persiste também avanços exclusivos de bloco quando a frontier

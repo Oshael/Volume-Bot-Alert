@@ -26,6 +26,12 @@ it('samples Archive evidence and refuses a seed projected above five hours', asy
   }, { sampleCount: 1 });
   assert.equal(unavailable.sampledUnavailable, 1);
   assert.equal(unavailable.approved, false);
+
+  const empty = await runPreflight({ repository: {
+    loadPlan: async () => ({ ready: true, tokenCount: 0, pairCount: 0 }),
+    samplePairs: async () => { throw new Error('empty cohort must not sample'); },
+  } });
+  assert.equal(empty.approved, false);
 });
 
 it('drains the frozen queue with the shared rule and pauses resumable failures', async () => {
