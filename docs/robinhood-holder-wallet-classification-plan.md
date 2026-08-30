@@ -1,6 +1,6 @@
 # Plano de Classificação de Wallets na Robinhood Chain
 
-Atualizado em 2026-08-24. Este documento consolida as decisões de produto, o
+Atualizado em 2026-08-30. Este documento consolida as decisões de produto, o
 estado confirmado no código e o plano de implementação para enriquecer a lista
 de holders da Robinhood Chain com saldo nativo, médias de entrada/saída, PnL,
 transfers e classificações explicáveis de wallets.
@@ -54,6 +54,32 @@ Ainda não existe fonte comprovada para preencher `SNIPER`, `INSIDER`, `CEX`,
 - somente `LP` determinístico pelo registro de pools e `UNKNOWN` podem aparecer
   como glifos hoje.
 
+### 0.2.1 Decisão FRESH e auditoria de capacidade em 2026-08-30
+
+`FRESH` passa a ser a prioridade desta iniciativa. `LP LOCKED` fica adiado e não
+bloqueia nenhum corte de freshness.
+
+A auditoria em produção encontrou 2.138.369 pares elegíveis de primeira compra,
+679.780 wallets distintas, 2.136.526 transações distintas e 1.963.014 blocos
+distintos. Somente nos sete dias mais recentes havia 205.719 pares e 205.518
+transações. Como quase não há deduplicação por transação, um backfill total
+foi rejeitado.
+
+O escopo aprovado é:
+
+- continuidade live a partir de uma ativação canônica congelada;
+- uma única campanha seed para tokens lançados nos 14 dias anteriores à
+  ativação;
+- nenhum backfill histórico total e nenhum backfill móvel diário;
+- processamento de todas as primeiras compras elegíveis do cohort, e não
+  somente de wallets que ainda possuem saldo, para preservar a classificação
+  caso a wallet volte a ser holder.
+
+Os 14 dias são um recorte fixo de produto, não um alvo que o runner possa
+reduzir silenciosamente. Se o preflight projetar mais de cinco horas, a execução
+deve ser recusada e o acesso deve ser otimizado ou redesenhado; reduzir o cohort
+exige nova decisão explícita.
+
 ### 0.3 Invariantes
 
 1. Classificação é materializada de forma assíncrona; abrir o modal nunca dispara
@@ -67,8 +93,9 @@ Ainda não existe fonte comprovada para preencher `SNIPER`, `INSIDER`, `CEX`,
    reutilizados implicitamente entre redes.
 6. Uma wallet pode ter múltiplas tags. O glifo é apenas uma representação visual
    de prioridade, não perda de informação.
-7. `FRESH` é a última fase e a única que depende de enriquecimento externo de
-   histórico da wallet em runtime/worker.
+7. `FRESH` depende de enriquecimento histórico de estado da conta em worker
+   isolado. API externa de terceiros não é requisito: RPC com estado histórico é
+   a fonte primária e provider externo é apenas fallback ou auditoria opcional.
 8. Regras e thresholds são versionados; uma mudança de threshold não reescreve
    silenciosamente o significado de classificações antigas.
 
@@ -172,17 +199,54 @@ em configuração versionada.
 
 #### FRESH
 
-- Implementar somente depois de todas as fases internas estarem estáveis.
-- Default v1: no instante da primeira compra do token, wallet com até 24 horas
-  desde a primeira atividade on-chain e no máximo 5 transações anteriores.
-- Exige histórico anterior da wallet por RPC/explorer/provider externo, porque o
-  banco local começa a observar apenas o recorte do produto.
-- O worker consulta, normaliza e cacheia a evidência; a API do modal nunca chama
-  o provider diretamente.
-- Falha, rate limit ou histórico incompleto resulta em `unavailable`, não em
-  `not_fresh`.
-- Motivo público: `new_wallet_at_first_buy`, incluindo provider, primeira
-  atividade observada, contagem anterior e horário da consulta.
+- Regra pública proposta: `rh_fresh_signed_v1`.
+- A regra mede atividade **assinada pela wallet**, não qualquer atividade que a
+  wallet recebeu. Dust, transfer ERC-20/NFT recebido e funding nativo recebido
+  não envelhecem a wallet por si próprios.
+- No instante da primeira compra canônica do token, a transação deve ter
+  `nonce <= 5`; o nonce da transação representa quantas transações a wallet
+  assinou antes dela.
+- Deve ser resolvido o último bloco canônico com timestamp estritamente anterior
+  a `first_buy_time - 24 hours`. Nesse bloco,
+  `eth_getTransactionCount(wallet, cutoff_block)` deve retornar `0`.
+- As duas condições são obrigatórias. `nonce > 5` ou nonce histórico maior que
+  zero tornam a wallet não fresh; falha, bloco não canônico ou histórico
+  incompleto tornam o resultado `unavailable`, nunca `not_fresh`.
+- A primeira compra vem de `robinhood_wallet_token_first_buys`. O nonce da
+  compra vem de `eth_getTransactionByHash`; o nonce no cutoff vem de
+  `eth_getTransactionCount` com block tag explícito.
+- O seed de 14 dias e repair usam o RPC Archive de `RH_NODE_RPC_URL` na máquina
+  operacional. O live pode usar `ROBINHOOD_RPC_URL` somente depois de um
+  preflight provar suporte confiável a estado histórico de pelo menos 24 horas.
+  Se esse preflight falhar, o live deve usar a rota Archive ou um índice interno
+  incremental; não deve trocar silenciosamente para estado `latest`.
+- Resolver timestamp para bloco é uma operação canônica cacheada por janela. A
+  evidência persiste bloco/hash do cutoff, nonce no cutoff, nonce e hash da
+  primeira compra, fonte RPC, horário da consulta e frontier observada.
+- O worker consulta, normaliza e materializa a evidência. API, modal, filtro e
+  tooltip nunca chamam RPC ou provider diretamente.
+- Motivo público: `new_wallet_at_first_buy`. A UI deve explicar explicitamente
+  que `fresh` significa sem transação assinada antes da janela, e não ausência
+  de transfers recebidos ou idade civil da conta.
+
+#### Cobertura e publicação de FRESH
+
+Na ativação, congelar `activation_at`, `activation_block`,
+`activation_block_hash` e `seed_cutoff_at = activation_at - 14 days`. Entram na
+campanha seed somente tokens cuja `launch_block_time` canônica esteja entre o
+cutoff e a ativação, inclusive, e cujas fontes de launch/first-buy estejam
+completas até a frontier congelada.
+
+Depois da ativação, toda primeira compra nova é enfileirada pelo commit durável
+da fonte. Eventos duplicados, fora de ordem e replay devem ser idempotentes.
+Primeiras compras históricas com bloco anterior à ativação não entram como
+live; somente a campanha seed congelada pode admiti-las.
+
+Para tokens do cohort seed concluído e tokens lançados depois da ativação, tag,
+filtro e métrica podem ficar `ready` quando o worker alcançar a frontier exigida.
+Para tokens mais antigos que o cutoff, uma compra ocorrida depois da ativação
+pode receber tag individual válida, mas filtro e métrica do token permanecem
+`unavailable`, pois a população anterior não foi classificada.
 
 ### 0.6 Tags simultâneas e prioridade visual
 
@@ -211,6 +275,10 @@ Percentuais usam valores inteiros/raw antes da formatação. Uma wallet com tags
 múltiplas pode participar de mais de uma métrica; as categorias não são parcelas
 mutuamente exclusivas.
 
+`Fresh wallets` só pode ser publicado quando a cobertura do token estiver
+`ready` segundo a seção 0.5. Cobertura parcial nunca é arredondada para zero nem
+apresentada como percentual completo.
+
 ### 0.8 Contratos conceituais
 
 Registro materializado por wallet/tag:
@@ -229,6 +297,11 @@ through_block_hash
 observed_at
 expires_at                 # opcional para evidência temporal/registry
 ```
+
+Para `FRESH`, `evidence_json` deve incluir pelo menos a versão da regra, hash e
+nonce da primeira compra, horário da primeira compra, timestamp alvo de 24h,
+bloco/hash canônico do cutoff, nonce histórico, fonte RPC, horário da consulta e
+frontier. A ausência de qualquer prova obrigatória impede status `ready`.
 
 Registro de infraestrutura:
 
@@ -274,8 +347,9 @@ Para evitar um processo por tag, a divisão aprovada é por fonte e workload:
    cada classificador mantém estado, métricas e circuit breaker independentes.
 2. **Liquidity custody intelligence** — `LP LOCKED`. Isola adapters de AMM,
    lockers, NFTs/LP tokens e expiração de locks do caminho de lançamento.
-3. **Wallet freshness enrichment** — `FRESH`. Isola provider externo, rate
-   limits, orçamento, cache, retry e backfill dos classificadores on-chain.
+3. **Wallet freshness enrichment** — `FRESH`. Isola chamadas RPC históricas,
+   rate limits, orçamento, cache, retry, campanha seed e continuidade live dos
+   demais classificadores on-chain.
 
 Nenhum desses processos exige que outro classificador esteja ativo. Eles podem
 exigir uma frontier materializada mínima como entrada, mas devem aguardar ou
@@ -306,9 +380,9 @@ Todo backfill deve ainda:
   repetir a carga histórica quando thresholds ou regras forem recalibrados.
 
 O requisito se aplica às fontes históricas de primeira compra, transfer/funding,
-custódia/lock de liquidez e freshness externo. Uma exceção futura exige medição
-documentada e aprovação explícita antes da execução, nunca depois de iniciar uma
-carga sem ETA confiável.
+custódia/lock de liquidez e estado histórico usado por freshness. Uma exceção
+futura exige medição documentada e aprovação explícita antes da execução,
+nunca depois de iniciar uma carga sem ETA confiável.
 
 1. **Fundação de classificação**
    - fechar schema/contrato, versionamento, estados e reason codes;
@@ -414,9 +488,141 @@ carga sem ETA confiável.
 6. **LP LOCKED**
    - escolher tipos de pool e lockers prioritários;
    - implementar um adapter por vez, com fixtures reais.
-7. **FRESH — última fase**
-   - escolher provider externo, orçamento, limites, cache e política de retry;
-   - executar backfill assíncrono e shadow mode antes de habilitar filtro/métrica.
+7. **FRESH — prioridade atual**
+   - seguir os oito cortes independentes da seção 0.9.3;
+   - não iniciar `LP LOCKED` antes da conclusão ou pausa explícita deste plano.
+
+#### 0.9.3 Oito cortes aprovados para FRESH
+
+Cada corte termina com diff completo revisado e commit próprio. Nenhum corte
+deve ultrapassar 500 linhas alteradas.
+
+1. **Schema, ativação e fila durável**
+   - persistir campanha seed, fronteiras de ativação, estado de cobertura por
+     token e outbox de primeiras compras;
+   - emitir trabalho somente depois do commit da fonte e separar `seed` de
+     `live` pelo bloco de ativação;
+   - validar com schema-check e integration tests de constraints, atomicidade,
+     deduplicação e reorg.
+2. **Regra pura e fonte RPC**
+   - implementar `rh_fresh_signed_v1`, busca da transação, resolução
+     timestamp-bloco e nonce histórico;
+   - cachear resolução do cutoff e falhar fechado para prova ausente;
+   - cobrir boundaries `nonce = 0`, `5` e `6`, janela de 24h, erro RPC e hash
+     não canônico com unit tests.
+3. **Materialização shadow**
+   - gravar tag/evidência e estado `ready`, `pending`, `unavailable`, `stale` ou
+     `reorged` sem publicar na API;
+   - provar idempotência, precedência de frontier e remoção segura após reorg em
+     integration tests.
+4. **Worker live isolado**
+   - ligar o consumidor event-driven no grupo
+     `robinhood-wallet-classification`, com lease, lote, concorrência, retry,
+     backoff, circuit breaker e telemetria próprios;
+   - garantir que atraso ou queda do RPC não bloqueie first-buy, holders ou API;
+   - validar wiring/configuração, retomada e contenção de falhas.
+5. **Seed congelado de 14 dias**
+   - congelar o cohort pela âncora canônica e executar a mesma fila/regra do
+     live usando `RH_NODE_RPC_URL`;
+   - runner checkpointed, retomável e idempotente, com preflight read-only,
+     throughput, ETA e recusa acima de cinco horas;
+   - validar limites do cohort, resume e nenhuma admissão fora da janela.
+6. **Auditoria shadow**
+   - comparar amostra estratificada de `fresh`, `not_fresh` e `unavailable` com
+     as respostas RPC brutas e medir taxas, latência e custo;
+   - registrar divergências por motivo antes de autorizar publicação.
+7. **Publicação backend**
+   - habilitar tag, filtro e métrica somente com cobertura completa; preservar
+     `unavailable` para tokens antigos ou frontier atrasada;
+   - validar paginação no ledger completo, contrato REST e cálculo sobre saldos
+     atuais em integration tests.
+8. **Frontend e rollout**
+   - habilitar filtro, glifo, tooltip e métrica com a semântica de atividade
+     assinada e estados honestos;
+   - validar build, teste visual/funcional afetado e smoke do fluxo montado;
+   - ativar primeiro em shadow/canary, com kill switch independente.
+
+Estimativa arquitetural: 15–18 arquivos de produção e 2.100–2.700 linhas no
+total, distribuídos nos oito cortes. Isso é um checkpoint de arquitetura: hubs
+recebem apenas wiring; regra, RPC, campanha e materialização ficam em módulos
+dedicados e testados.
+
+Antes do corte 1, executar estes preflights:
+
+```sql
+-- População prospectiva. No rollout, substituir NOW() pelo activation_at
+-- congelado e persistir exatamente o mesmo cutoff na campanha.
+WITH boundary AS (
+  SELECT NOW() AS activation_at, NOW() - INTERVAL '14 days' AS seed_cutoff_at
+), cohort AS MATERIALIZED (
+  SELECT anchor.token_address
+  FROM robinhood_token_launch_anchors anchor, boundary
+  WHERE anchor.chain = 'robinhood'
+    AND anchor.launch_block_time >= boundary.seed_cutoff_at
+    AND anchor.launch_block_time <= boundary.activation_at
+), buys AS MATERIALIZED (
+  SELECT buy.*
+  FROM robinhood_wallet_token_first_buys buy
+  INNER JOIN cohort USING (token_address)
+  CROSS JOIN boundary
+  WHERE buy.chain = 'robinhood' AND buy.block_time <= boundary.activation_at
+)
+SELECT COUNT(DISTINCT token_address) AS seed_tokens,
+       COUNT(*) AS seed_first_buy_pairs,
+       COUNT(DISTINCT wallet_address) AS seed_wallets,
+       COUNT(DISTINCT transaction_hash) AS seed_transactions,
+       COUNT(DISTINCT block_number) AS seed_blocks,
+       MIN(block_time) AS oldest_first_buy,
+       MAX(block_time) AS newest_first_buy
+FROM buys;
+```
+
+```sql
+-- Prontidão das fontes do mesmo cohort.
+WITH boundary AS (
+  SELECT NOW() AS activation_at, NOW() - INTERVAL '14 days' AS seed_cutoff_at
+), cohort AS MATERIALIZED (
+  SELECT anchor.token_address
+  FROM robinhood_token_launch_anchors anchor, boundary
+  WHERE anchor.chain = 'robinhood'
+    AND anchor.launch_block_time >= boundary.seed_cutoff_at
+    AND anchor.launch_block_time <= boundary.activation_at
+)
+SELECT COUNT(*) AS seed_tokens,
+       COUNT(*) FILTER (WHERE state.ledger_status = 'live'
+                         AND state.live_through_block IS NOT NULL)
+         AS seed_tokens_with_live_ledger,
+       COUNT(*) FILTER (WHERE EXISTS (
+         SELECT 1 FROM robinhood_wallet_token_first_buys buy
+         WHERE buy.chain = 'robinhood' AND buy.token_address = cohort.token_address
+       )) AS seed_tokens_with_first_buys
+FROM cohort
+LEFT JOIN robinhood_holder_token_states state
+  ON state.chain = 'robinhood' AND state.token_address = cohort.token_address;
+```
+
+```sql
+-- Continuidade da projeção canônica de primeira compra.
+SELECT cursor.chain,
+       cursor.seed_run_id,
+       seed.status AS seed_status,
+       seed.evidence_version,
+       seed.source_from,
+       seed.source_through AS seed_source_through,
+       cursor.next_time,
+       cursor.source_through AS live_source_through,
+       cursor.source_next_block,
+       cursor.version,
+       cursor.updated_at
+FROM robinhood_first_buy_live_cursors cursor
+INNER JOIN robinhood_first_buy_backfill_runs seed ON seed.id = cursor.seed_run_id
+WHERE cursor.chain = 'robinhood';
+```
+
+Também é obrigatório provar no RPC live que
+`eth_getTransactionCount(wallet, historical_block)` funciona para um bloco de
+pelo menos 24 horas atrás e comparar o retorno com o Archive. O teste usa uma
+wallet/transação conhecida da amostra; sem essa prova, o corte 4 não ativa live.
 
 ### 0.10 Critério de aceite por fase
 
@@ -443,14 +649,18 @@ Uma fase só pode habilitar UI quando:
 3. Quais AMMs e lockers entram primeiro em `LP LOCKED`.
 4. Lookback e threshold econômico do funding nativo de `BUNDLED`, condicionados
    ao benchmark do RPC Archive e ao teto de cinco horas.
-5. Provider externo de `FRESH`, orçamento, taxa, cobertura histórica e TTL.
+5. Se `ROBINHOOD_RPC_URL` não servir estado histórico confiável de 24 horas,
+   escolher entre rota Archive no live e índice interno incremental. API externa
+   de terceiros continua opcional e não pode ser requisito oculto.
 
 ### 0.12 Definição de concluído
 
 O roteiro termina quando todas as tags habilitadas são materializadas,
 versionadas, explicáveis e fail-closed; filtros e métricas exibem somente dados
 com fonte comprovada; o modal não depende de chamadas externas; e `FRESH`, após
-shadow mode, alcança cobertura e custo aceitos sem degradar os workers críticos.
+shadow mode, cobre integralmente o seed fixo de 14 dias e todas as primeiras
+compras posteriores à ativação sem degradar os workers críticos. Tokens fora
+dessa cobertura permanecem explicitamente `unavailable` na métrica e no filtro.
 
 Até lá, a UI deve continuar honesta: funcionalidade indisponível fica
 desabilitada ou marcada com `—`.
@@ -462,7 +672,14 @@ Pontos de entrada confirmados, para o próximo corte não depender desta convers
 - leitura/paginação de holders: `src/models/robinhood-holder-page.js`;
 - rota pública: `src/routes/robinhood-holders.js`;
 - swaps e primeira compra: `src/models/robinhood-wallet-swap-read.js` e tabela
-  `robinhood_wallet_swaps`;
+  `robinhood_wallet_swaps`; a projeção canônica usada por FRESH é
+  `robinhood_wallet_token_first_buys`;
+- âncoras e corte por idade do token: tabela
+  `robinhood_token_launch_anchors`, coluna `launch_block_time`;
+- continuidade da primeira compra: tabela `robinhood_first_buy_live_cursors`;
+- fronteiras novas previstas para FRESH: módulos dedicados de regra/RPC,
+  materialização, fila live e campanha seed sob o grupo
+  `robinhood-wallet-classification`;
 - criador/deployer: `src/models/robinhood-token-attribution.js` e tabela
   `robinhood_token_attributions`;
 - pools/LP: `src/models/robinhood-persistence.js` e tabela
@@ -479,6 +696,14 @@ Pontos de entrada confirmados, para o próximo corte não depender desta convers
 Antes do primeiro corte, conferir `docs/bot-reference.md`, `git status` e o
 schema efetivamente implantado. Este documento define intenção e contratos; a
 referência operacional continua sendo a fonte do estado em produção.
+
+### 0.14 Ponto importante
+
+Os 14 dias são uma campanha seed única e congelada. Não significam reprocessar
+diariamente os últimos 14 dias. O caminho live passa a ser a fonte de continuidade
+depois da ativação, e qualquer buraco é tratado como repair/reconciliação
+delimitada. Além disso, `FRESH` nesta v1 significa atividade assinada: transfers
+recebidos não contam e a interface deve deixar essa limitação evidente.
 
 ## 1. Resumo executivo da fundação financeira
 
