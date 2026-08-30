@@ -1596,8 +1596,10 @@ Para recuperar deployments que o node pruned já não consegue provar, execute n
 PC com acesso ao mesmo PostgreSQL o comando
 `npm run robinhood:holder-deployment-recover`. Ele é read-only por default,
 seleciona da outbox somente tokens sem `attribution_block`, procura seu primeiro
-mint pendente no journal e mostra no máximo 100 candidatos. Itens sem esse mint
-falham isoladamente como `mint_hint_missing`. O apply exige
+mint pendente no journal e mostra no máximo 100 candidatos. Quando o mint não
+está disponível, o apply consulta `eth_blockNumber` uma vez e usa o head do
+archive como limite superior da busca; `headFallbackCandidates` mede esse caso.
+O apply exige
 `ROBINHOOD_ARCHIVE_RPC_URL` e a confirmação explícita
 `-- --confirm-recover-robinhood-holder-deployments`; `--limit`, `--concurrency`
 e `--timeout-ms` são limitados. A descoberta faz busca binária da primeira

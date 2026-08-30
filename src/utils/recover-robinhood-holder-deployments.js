@@ -20,6 +20,14 @@ function bounded(value, fallback, minimum, maximum, label) {
   return parsed;
 }
 
+function quantity(value, label) {
+  const raw = String(value ?? '').trim();
+  if (!/^0x[0-9a-f]+$/i.test(raw) && !/^\d+$/.test(raw)) {
+    throw new Error(`${label} is invalid`);
+  }
+  return BigInt(raw).toString();
+}
+
 function parseArgs(argv = []) {
   const values = {};
   for (const argument of argv) {
@@ -103,6 +111,13 @@ function buildRuntime(options, deps = {}) {
     providers: [{ name: 'robinhood-holder-deployment-archive', url: rpcUrl }],
     timeoutMs: options.timeoutMs, maxRetries: 1,
   });
+  let archiveHeadPromise = null;
+  const getArchiveHead = () => {
+    archiveHeadPromise ||= Promise.resolve(rpcClient.request('eth_blockNumber'))
+      .then((value) => quantity(value, 'archive head'))
+      .catch((error) => { archiveHeadPromise = null; throw error; });
+    return archiveHeadPromise;
+  };
   return Object.freeze({
     attributions: (deps.attributionFactory || createRobinhoodTokenAttributionRepository)({
       database,
@@ -115,16 +130,13 @@ function buildRuntime(options, deps = {}) {
       rpcClient,
       internalCreationLookup: async () => null,
     }),
+    getArchiveHead,
   });
 }
 
 async function recoverCandidate(runtime, candidate) {
-  if (candidate.upperBlock == null) {
-    throw Object.assign(new Error('pending mint evidence is unavailable'), {
-      code: 'mint_hint_missing',
-    });
-  }
-  const discovered = await runtime.discovery.discover(candidate);
+  const upperBlock = candidate.upperBlock ?? await runtime.getArchiveHead();
+  const discovered = await runtime.discovery.discover({ ...candidate, upperBlock });
   if (discovered.source === 'rpc_code_transition') {
     const result = await runtime.attributions.recordCodeTransitions([discovered]);
     return Object.freeze({
@@ -155,7 +167,11 @@ async function main(argv = process.argv.slice(2), deps = {}) {
   const database = deps.database || db;
   const candidates = await (deps.listCandidates || listCandidates)(database, options.limit);
   if (!options.confirm) {
-    const report = { mode: 'read-only', candidates: candidates.length, selection: candidates };
+    const report = {
+      mode: 'read-only', candidates: candidates.length,
+      headFallbackCandidates: candidates.filter(({ upperBlock }) => upperBlock == null).length,
+      selection: candidates,
+    };
     (deps.logger || console).log(JSON.stringify(report, null, 2));
     return report;
   }
@@ -166,6 +182,7 @@ async function main(argv = process.argv.slice(2), deps = {}) {
   });
   const report = {
     mode: 'apply', candidates: candidates.length,
+    headFallbackCandidates: candidates.filter(({ upperBlock }) => upperBlock == null).length,
     recovered: outcomes.filter(({ status }) => status === 'recovered').length,
     unchanged: outcomes.filter(({ status }) => status === 'unchanged').length,
     failed: outcomes.filter(({ status }) => status === 'failed').length,

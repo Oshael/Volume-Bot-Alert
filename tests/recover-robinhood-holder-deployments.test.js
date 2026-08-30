@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const {
-  CONFIRM_FLAG, listCandidates, main, parseArgs,
+  CONFIRM_FLAG, listCandidates, main, parseArgs, recoverCandidate,
   __private: { buildRuntime },
 } = require('../src/utils/recover-robinhood-holder-deployments');
 
@@ -75,6 +75,38 @@ describe('Robinhood holder archive deployment recovery', () => {
     });
   });
 
+  it('uses the cached archive head when pending mint evidence is absent', async () => {
+    let headRequests = 0;
+    const runtime = buildRuntime({ timeoutMs: 5000 }, {
+      env: { ROBINHOOD_ARCHIVE_RPC_URL: 'http://archive.example' },
+      database: {},
+      rpcClientFactory: () => ({
+        async request(method) {
+          assert.equal(method, 'eth_blockNumber');
+          headRequests += 1;
+          return '0xc8';
+        },
+      }),
+      attributionFactory: () => ({
+        async recordCodeTransitions() { return { attributed: 1 }; },
+      }),
+      discoveryFactory: () => ({
+        async discover(input) {
+          assert.equal(input.upperBlock, '200');
+          return { tokenAddress: input.tokenAddress, blockNumber: '40', source: 'rpc_code_transition' };
+        },
+      }),
+      verifierFactory: () => ({}),
+    });
+
+    const first = await recoverCandidate(runtime, candidate(TOKEN_A, null));
+    const second = await recoverCandidate(runtime, candidate(TOKEN_B, null));
+
+    assert.equal(first.status, 'recovered');
+    assert.equal(second.status, 'recovered');
+    assert.equal(headRequests, 1);
+  });
+
   it('persists exact archive evidence and isolates individual failures', async () => {
     const saved = { transitions: [], deployments: [] };
     const report = await main([], {
@@ -112,7 +144,8 @@ describe('Robinhood holder archive deployment recovery', () => {
     });
 
     assert.deepEqual(report, {
-      mode: 'apply', candidates: 3, recovered: 2, unchanged: 0, failed: 1,
+      mode: 'apply', candidates: 3, headFallbackCandidates: 0,
+      recovered: 2, unchanged: 0, failed: 1,
       bySource: { rpc_code_transition: 1, rpc_direct: 1 },
       failures: [{
         status: 'failed', tokenAddress: TOKEN_C,
