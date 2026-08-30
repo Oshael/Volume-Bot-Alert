@@ -5279,6 +5279,24 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage184-robinhood-holder-delta-selection-indexes',
+    name: 'Stage 184 Robinhood holder delta selection indexes',
+    repair: 'node src/utils/db-init-stage184.js',
+    tables: [{
+      table: 'token_catalog',
+      indexes: [{
+        name: 'idx_token_catalog_robinhood_first_seen_address',
+        includes: ['first_seen_at', 'address', 'chain', 'robinhood'],
+      }],
+    }, {
+      table: 'robinhood_holder_global_backfill_tokens',
+      indexes: [{
+        name: 'idx_rh_holder_global_excluded_token',
+        includes: ['chain', 'token_address', 'status', 'excluded'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

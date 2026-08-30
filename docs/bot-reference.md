@@ -1639,6 +1639,9 @@ não pode preceder o cutoff global.
 Depois de uma campanha concluída, uma coorte delta explícita pode adotar tokens
 `backfilling` e tokens ainda sem state que tenham deployment exato. Defina um
 cutoff imutável em `ROBINHOOD_HOLDER_GLOBAL_DELTA_CATALOG_CUTOFF` e execute
+`node src/utils/db-init-stage184.js` antes do primeiro dry-run; seus índices
+parciais são criados concorrentemente e evitam o scan integral do catálogo e das
+coortes globais anteriores, sem exigir a parada dos workers. Execute então
 `npm run robinhood:holder-global-delta` para o dry-run. Antes de confirmar,
 desligue o backfill incremental e aguarde sua lease expirar; o comando recusa
 `-- --confirm-create` enquanto a lease estiver ativa. A confirmação cria um novo
