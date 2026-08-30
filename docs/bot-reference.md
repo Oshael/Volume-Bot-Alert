@@ -1896,6 +1896,14 @@ live usam lease em lote, concorrência máxima quatro, retry exponencial e retom
 de lease expirada. Cinco rodadas totalmente falhas abrem por padrão um circuit
 breaker de 60 segundos antes de novo claim. O worker exige `ROBINHOOD_RPC_URL`,
 nunca seleciona `RH_NODE_RPC_URL`, e continua shadow-only.
+O seed único usa `npm run robinhood:fresh-wallet-seed`: sem `--apply`, faz
+preflight read-only no Archive de `RH_NODE_RPC_URL`, amostra evidência real,
+aplica margem de 25% e recusa ETA acima de cinco horas. `--apply` congela na
+fila todos os first-buys até o bloco de ativação dos tokens cujo launch canônico
+está nos 14 dias fixos anteriores, processa com a mesma regra/materializador e
+atualiza cobertura por token. Campanhas `paused` retomam o mesmo snapshot; novas
+âncoras ou mudanças no catálogo não ampliam o cohort. A execução para após 285
+minutos por padrão (`--max-minutes`, máximo 300), preservando checkpoints.
 A Stage 172 encadeia anchors commitados à fila token-scoped
 `robinhood_bundle_funding_live_queue`. Cada nova versão do anchor invalida uma
 lease antiga e incrementa `requested_version`; a conclusão só é aceita para essa

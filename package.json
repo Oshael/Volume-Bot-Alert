@@ -107,6 +107,7 @@
     "robinhood:launch-anchor-backfill": "node src/utils/backfill-robinhood-launch-anchors.js",
     "robinhood:transaction-position-repair": "node src/utils/repair-robinhood-transaction-positions.js",
     "robinhood:first-buy-backfill": "node src/utils/backfill-robinhood-first-buys.js",
+    "robinhood:fresh-wallet-seed": "node src/utils/backfill-robinhood-fresh-wallets.js",
     "robinhood:v2-dry-run": "node src/utils/robinhood-v2-fixture-dry-run.js",
     "robinhood:v3-dry-run": "node src/utils/robinhood-v3-fixture-dry-run.js",
     "robinhood:noxa-dry-run": "node src/utils/robinhood-noxa-fixture-dry-run.js",

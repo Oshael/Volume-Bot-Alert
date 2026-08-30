@@ -16,12 +16,16 @@ function createRobinhoodFreshWalletLiveQueueRepository(options = {}) {
     if (!owner || owner.length > 128) throw new Error('FRESH queue owner is invalid');
     const leaseMs = bounded(input.leaseMs, 300_000, 10_000, 1_200_000);
     const limit = bounded(input.limit, 10, 1, 100);
+    const sourceKind = input.sourceKind === 'seed' ? 'seed' : 'live';
+    const seedRunId = sourceKind === 'seed' ? String(input.seedRunId || '') : null;
+    if (sourceKind === 'seed' && !/^\d+$/.test(seedRunId)) throw new Error('seedRunId is required');
     const { rows } = await database.query(`WITH candidates AS MATERIALIZED (
       SELECT queue.chain, queue.token_address, queue.wallet_address, queue.rule_version
         FROM robinhood_fresh_wallet_queue queue
         INNER JOIN robinhood_fresh_wallet_activations activation USING (chain, rule_version)
        WHERE queue.chain = $1 AND queue.rule_version = $2
-         AND queue.source_kind = 'live' AND activation.status = 'active'
+         AND queue.source_kind = $6 AND activation.status = 'active'
+         AND ($7::bigint IS NULL OR queue.seed_run_id = $7::bigint)
          AND (queue.status = 'pending'
            OR (queue.status = 'leased' AND queue.lease_until <= NOW()))
          AND queue.next_attempt_at <= NOW()
@@ -43,7 +47,9 @@ function createRobinhoodFreshWalletLiveQueueRepository(options = {}) {
              first_buy.block_hash, first_buy.block_time
         FROM claimed INNER JOIN robinhood_wallet_token_first_buys first_buy USING (
           chain, token_address, wallet_address
-        ) ORDER BY claimed.updated_at`, [CHAIN, RULE_VERSION, limit, owner, leaseMs]);
+        ) ORDER BY claimed.updated_at`, [
+      CHAIN, RULE_VERSION, limit, owner, leaseMs, sourceKind, seedRunId,
+    ]);
     return Object.freeze(rows.map((row) => Object.freeze({
       tokenAddress: row.token_address, walletAddress: row.wallet_address,
       requestedVersion: row.requested_version, attemptCount: Number(row.attempt_count),

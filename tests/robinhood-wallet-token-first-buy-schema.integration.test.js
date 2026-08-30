@@ -14,6 +14,9 @@ const {
   createRobinhoodFreshWalletLiveQueueRepository,
 } = require('../src/models/robinhood-fresh-wallet-live-queue');
 const {
+  createRobinhoodFreshWalletSeedRepository,
+} = require('../src/models/robinhood-fresh-wallet-seed');
+const {
   createRobinhoodTransactionPositionRepairRepository,
 } = require('../src/models/robinhood-transaction-position-repair');
 const stage63 = require('../src/utils/db-init-stage63');
@@ -22,6 +25,10 @@ const stage116 = require('../src/utils/db-init-stage116');
 const stage139 = require('../src/utils/db-init-stage139');
 const stage143 = require('../src/utils/db-init-stage143');
 const stage149 = require('../src/utils/db-init-stage149');
+const stage151 = require('../src/utils/db-init-stage151');
+const stage152 = require('../src/utils/db-init-stage152');
+const stage155 = require('../src/utils/db-init-stage155');
+const stage157 = require('../src/utils/db-init-stage157');
 const stage171 = require('../src/utils/db-init-stage171');
 const stage177 = require('../src/utils/db-init-stage177');
 const stage178 = require('../src/utils/db-init-stage178');
@@ -49,6 +56,10 @@ async function cleanup() {
     WHERE token_address = $1 AND tag = 'fresh'`, [TOKEN]);
   await db.query("DELETE FROM robinhood_fresh_wallet_seed_runs WHERE chain = 'robinhood'");
   await db.query("DELETE FROM robinhood_fresh_wallet_activations WHERE chain = 'robinhood'");
+  await db.query("DELETE FROM robinhood_first_buy_live_cursors WHERE chain = 'robinhood'");
+  await db.query("DELETE FROM robinhood_first_buy_backfill_ranges WHERE chain = 'robinhood'");
+  await db.query("DELETE FROM robinhood_first_buy_backfill_runs WHERE chain = 'robinhood'");
+  await db.query('DELETE FROM robinhood_token_launch_anchors WHERE token_address = $1', [TOKEN]);
   await db.query('DELETE FROM robinhood_launch_anchor_outbox WHERE token_address = $1', [TOKEN]);
   await db.query('DELETE FROM robinhood_wallet_token_first_buys WHERE token_address = $1', [TOKEN]);
   await db.query('DELETE FROM robinhood_holder_token_states WHERE token_address = $1', [TOKEN]);
@@ -69,6 +80,10 @@ describe('Robinhood wallet-token first buy schema integration', () => {
     await stage139.init({ closePool: false });
     await stage143.init({ closePool: false });
     await stage149.init({ closePool: false });
+    await stage151.init({ closePool: false });
+    await stage152.init({ closePool: false });
+    await stage155.init({ closePool: false });
+    await stage157.init({ closePool: false });
     await stage171.init({ closePool: false });
     await stage177.init({ closePool: false });
     await stage178.init({ closePool: false });
@@ -203,6 +218,9 @@ describe('Robinhood wallet-token first buy schema integration', () => {
       through_block_number = 20, through_block_hash = $2
       WHERE token_address = $1`, [TOKEN, HASH]),
     /rh_fresh_wallet_token_coverage_contract_check/);
+    await db.query('DELETE FROM robinhood_fresh_wallet_token_coverage WHERE token_address = $1',
+      [TOKEN]);
+    await db.query('DELETE FROM robinhood_fresh_wallet_seed_runs WHERE id = $1', [run.rows[0].id]);
   });
 
   it('replaces out-of-order facts and fails closed on missing positions', async () => {
@@ -372,5 +390,48 @@ describe('Robinhood wallet-token first buy schema integration', () => {
       WHERE token_address = $1 AND wallet_address = $2`, [TOKEN, WALLET]);
     const [expired] = await queue.claimBatch({ owner: 'live-c', leaseMs: 10_000 });
     assert.equal(expired.attemptCount, reclaimed.attemptCount + 1);
+  });
+
+  it('freezes the complete 14-day token cohort and resumes from its seed queue', async () => {
+    await db.query(`UPDATE robinhood_wallet_token_first_buys SET block_number = 20,
+      block_hash = $3, block_time = '2026-08-22T12:00:00Z'
+      WHERE token_address = $1 AND wallet_address = $2`, [TOKEN, WALLET, HASH]);
+    const sourceRun = (await db.query(`INSERT INTO robinhood_first_buy_backfill_runs(
+      source_from, source_through, range_seconds, status, started_at, finished_at
+    ) VALUES ('2026-08-08T12:00:00Z', '2026-08-22T12:05:00Z', 3600,
+      'completed', NOW(), NOW()) RETURNING id`)).rows[0];
+    await db.query(`INSERT INTO robinhood_first_buy_live_cursors(
+      seed_run_id, next_time, source_through, source_next_block
+    ) VALUES ($1, '2026-08-22T12:05:00Z', '2026-08-22T12:05:00Z', 21)`,
+    [sourceRun.id]);
+    await db.query(`INSERT INTO robinhood_token_launch_anchors(
+      token_address, first_pool_block, launch_block, launch_block_time,
+      source_through_block, anchor_wallet_address, anchor_transaction_hash,
+      anchor_transaction_index, anchor_action_index, anchor_block_hash, anchor_side
+    ) VALUES ($1, 10, 10, '2026-08-22T12:00:00Z', 20, $2, $3, 0, 0, $4, 'buy')`,
+    [TOKEN, WALLET, SWAP_HASHES[3], HASH]);
+    const repository = createRobinhoodFreshWalletSeedRepository({ database: db });
+    const plan = await repository.loadPlan();
+    assert.deepEqual({ frozen: plan.frozen, tokenCount: plan.tokenCount,
+      pairCount: plan.pairCount }, { frozen: false, tokenCount: 1, pairCount: 1 });
+    const run = await repository.createOrResume(plan);
+    await db.query(`UPDATE robinhood_token_launch_anchors
+      SET launch_block_time = '2026-08-01T00:00:00Z' WHERE token_address = $1`, [TOKEN]);
+    assert.deepEqual(await repository.loadPlan(), {
+      ready: true, frozen: true, runId: run.runId, status: 'running',
+      tokenCount: 1, pairCount: 1,
+    });
+    const queue = createRobinhoodFreshWalletLiveQueueRepository({ database: db });
+    const [task] = await queue.claimBatch({ owner: 'seed-test', sourceKind: 'seed',
+      seedRunId: run.runId });
+    assert.equal(task.walletAddress, WALLET);
+    await db.query(`UPDATE robinhood_fresh_wallet_queue SET status = 'complete',
+      completed_version = requested_version, lease_owner = NULL, lease_until = NULL,
+      completed_at = NOW() WHERE seed_run_id = $1`, [run.runId]);
+    const progress = await repository.syncProgress(run.runId);
+    assert.deepEqual({ runId: progress.runId, status: progress.status,
+      total: progress.total, completed: progress.completed },
+    { runId: run.runId, status: 'completed', total: 1, completed: 1 });
+    assert.equal(progress.etaSeconds, 0);
   });
 });
