@@ -40,6 +40,12 @@ async function loadCursor(liveCursor, seedRunId) {
   return (await liveCursor.loadCursor()) || liveCursor.initializeFromRun(seedRunId);
 }
 
+async function persistCaughtUpFrontier(liveCursor, cursor, sourceThrough, sourceNextBlock) {
+  if (cursor.sourceNextBlock === sourceNextBlock) return cursor;
+  return liveCursor.advance({ nextTime: sourceThrough, sourceThrough, sourceNextBlock,
+    expectedVersion: cursor.version });
+}
+
 async function runFirstBuyLiveTick(deps = {}, options = {}) {
   assertDependencies(deps);
   const seedRunId = String(options.seedRunId || '').trim();
@@ -57,9 +63,14 @@ async function runFirstBuyLiveTick(deps = {}, options = {}) {
   const sourceThrough = exclusiveCheckpointTime(gate.live.checkpointTimestamp);
   assertFrontier(cursor, gate.live, sourceThrough);
   if (cursor.nextTime === sourceThrough) {
+    const sourceNextBlock = String(gate.live.nextBlock);
+    const persisted = await persistCaughtUpFrontier(
+      deps.liveCursor, cursor, sourceThrough, sourceNextBlock
+    );
+    if (!persisted) return Object.freeze({ status: 'cursor-conflict' });
     return Object.freeze({
       status: 'caught-up', nextTime: cursor.nextTime,
-      sourceThrough, sourceNextBlock: gate.live.nextBlock,
+      sourceThrough, sourceNextBlock,
     });
   }
   const rangeEnd = new Date(Math.min(

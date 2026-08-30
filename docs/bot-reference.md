@@ -1912,6 +1912,9 @@ está nos 14 dias fixos anteriores, processa com a mesma regra/materializador e
 atualiza cobertura por token. Campanhas `paused` retomam o mesmo snapshot; novas
 âncoras ou mudanças no catálogo não ampliam o cohort. A execução para após 285
 minutos por padrão (`--max-minutes`, máximo 300), preservando checkpoints.
+O cursor first-buy persiste também avanços exclusivos de bloco quando a frontier
+temporal já está caught-up; a telemetria nunca pode anunciar uma frontier de
+bloco que ainda não foi gravada no handoff durável.
 A Stage 172 encadeia anchors commitados à fila token-scoped
 `robinhood_bundle_funding_live_queue`. Cada nova versão do anchor invalida uma
 lease antiga e incrementa `requested_version`; a conclusão só é aceita para essa

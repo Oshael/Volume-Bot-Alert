@@ -61,6 +61,21 @@ describe('Robinhood first-buy LIVE runner', () => {
     assert.deepEqual(context.calls, [['initialize', '9']]);
   });
 
+  it('persists a newer block frontier when the time frontier is already caught up', async () => {
+    const context = runtime();
+    context.liveCursor.loadCursor = async () => ({
+      seedRunId: '7', nextTime: '2026-08-22T01:00:00.001Z',
+      sourceThrough: '2026-08-22T01:00:00.001Z', sourceNextBlock: '100', version: 4,
+    });
+    const result = await runFirstBuyLiveTick(context, { seedRunId: 7 });
+    assert.equal(result.status, 'caught-up');
+    assert.equal(result.sourceNextBlock, '200');
+    assert.deepEqual(context.calls, [['advance', {
+      nextTime: '2026-08-22T01:00:00.001Z', sourceThrough: '2026-08-22T01:00:00.001Z',
+      sourceNextBlock: '200', expectedVersion: 4,
+    }]]);
+  });
+
   it('waits for durable source coverage and fails closed on regression', async () => {
     const waiting = runtime({ sourceCursors: { async loadRetentionGate() {
       return { valid: false, reason: 'seed_incomplete' };
