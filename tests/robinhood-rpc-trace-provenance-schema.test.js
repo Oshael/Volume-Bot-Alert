@@ -39,13 +39,14 @@ it('registers the live catalog deployment outbox and trigger', () => {
   assert.equal(group.repair, 'node src/utils/db-init-stage165.js');
 });
 
-it('registers exact pruned-RPC code transition evidence and mint wakeups', () => {
+it('registers exact pruned-RPC evidence without locking the live journal', () => {
   const sql = stage183.STATEMENTS.join('\n');
   const group = SCHEMA_GROUPS.find(({ key }) => (
     key === 'stage183-robinhood-pruned-rpc-deployment-evidence'
   ));
   assert.match(sql, /source = 'rpc_code_transition'.*creator_address IS NULL/s);
-  assert.match(sql, /REFERENCING NEW TABLE AS inserted_holder_transfers/);
-  assert.match(sql, /pg_notify\('robinhood_token_deployment_outbox'/);
+  assert.match(sql, /set_config\('lock_timeout', '2s', true\)/);
+  assert.match(sql, /NOT VALID/);
+  assert.doesNotMatch(sql, /robinhood_holder_transfer_journal|CREATE TRIGGER/);
   assert.equal(group.repair, 'node src/utils/db-init-stage183.js');
 });

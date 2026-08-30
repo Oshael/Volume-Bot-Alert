@@ -1770,9 +1770,10 @@ Tokens Robinhood novos geram uma tarefa durável em
 aplicar Stage 165 (`node src/utils/db-init-stage165.js`), o worker independente
 `robinhood-token-deployment-worker`, no grupo `robinhood-wallet-classification`,
 é ativado por `ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_ENABLED=true`. `LISTEN/NOTIFY`
-acorda o consumidor imediatamente; polling de 1s preserva recuperação. A Stage
-183 (`node src/utils/db-init-stage183.js`) também acorda o worker quando um mint
-entra no holder journal. Tarefas admitidas nos últimos dez minutos precedem o
+acorda o consumidor imediatamente; polling de 1s também percebe quando o mint
+chega ao holder journal, sem instalar trigger ou obter lock nele. A Stage 183
+(`node src/utils/db-init-stage183.js`) adiciona apenas a provenance necessária,
+com `lock_timeout` curto. Tarefas admitidas nos últimos dez minutos precedem o
 backlog histórico. O caminho primário lê o primeiro mint já capturado e usa o
 `RH_NODE_RPC_URL` da VPS para provar que o bytecode era vazio em `N-1`, existe em
 `N` e que bloco/receipt permanecem canônicos. Essa prova

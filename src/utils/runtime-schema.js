@@ -5277,9 +5277,6 @@ const SCHEMA_GROUPS = [
         name: 'robinhood_token_attributions_provenance_check',
         includes: ['rpc_code_transition', 'creator_address IS NULL'],
       }],
-    }, {
-      table: 'robinhood_holder_transfer_journal',
-      columns: ['token_address', 'from_wallet'],
     }],
   },
 ];
