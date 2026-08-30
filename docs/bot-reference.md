@@ -1883,9 +1883,19 @@ zero no último bloco estritamente anterior a 24 horas antes da compra. O source
 valida chain `4663`, transação, wallet, bloco/hash e timestamp da first-buy;
 resolve o cutoff por busca binária com cache limitado e chama
 `eth_getTransactionCount` usando `{ blockHash, requireCanonical: true }`. O seed
-seleciona `RH_NODE_RPC_URL` (`robinhood-pc-archive`); o futuro live somente poderá
-selecionar `ROBINHOOD_RPC_URL` depois do preflight histórico. Evidência ausente,
-malformada, incoerente ou não canônica falha fechada e nunca produz `not_fresh`.
+seleciona `RH_NODE_RPC_URL` (`robinhood-pc-archive`). O consumidor LIVE legado
+ainda tenta essa consulta no `ROBINHOOD_RPC_URL` pruned e deve permanecer
+desabilitado até a troca de adapter. Evidência ausente, malformada, incoerente ou
+não canônica falha fechada e nunca produz `not_fresh`.
+A Stage 181 cria `robinhood_wallet_signed_origins`, que guarda somente a primeira
+transação assinada canônica observada por wallet, e o cursor independente
+`robinhood_wallet_signed_origin_cursors` para streams `seed|live`. A inferência
+pura usa coverage completa desde antes do cutoff: nonce inicial positivo prova
+atividade prévia; nonce zero usa a posição da primeira transação. Coverage
+incompleta, origem ausente ou posterior à first-buy retorna `unavailable`. Esta
+stage não lê blocos, não inicia bootstrap e não habilita FRESH LIVE. Aplique com
+`node src/utils/db-init-stage181.js`; o reader, bootstrap e worker entram nos
+cortes seguintes.
 A Stage 179 persiste cada decisão em
 `robinhood_fresh_wallet_evaluations` e conclui a versão correspondente da fila
 na mesma transação. Resultado `fresh` cria ou atualiza somente a classificação

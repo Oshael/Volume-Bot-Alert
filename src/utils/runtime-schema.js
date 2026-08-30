@@ -5201,6 +5201,55 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage181-robinhood-wallet-signed-origins',
+    name: 'Stage 181 Robinhood wallet signed origins',
+    repair: 'node src/utils/db-init-stage181.js',
+    tables: [{
+      table: 'robinhood_wallet_signed_origins',
+      columns: [
+        'chain', 'wallet_address', 'first_block_number', 'first_block_hash',
+        'first_block_time', 'first_transaction_hash', 'first_transaction_index',
+        'first_nonce', 'coverage_origin_block', 'source_stream', 'evidence_version',
+        'observed_at', 'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_wallet_signed_origins_pkey',
+        includes: ['PRIMARY KEY', 'chain', 'wallet_address'],
+      }, {
+        name: 'rh_wallet_signed_origins_tx_unique',
+        includes: ['UNIQUE', 'chain', 'first_transaction_hash'],
+      }, {
+        name: 'rh_wallet_signed_origins_contract_check',
+        includes: ['CHECK', 'first_block_number', 'coverage_origin_block', 'first_nonce'],
+      }],
+      indexes: [{
+        name: 'idx_rh_wallet_signed_origins_position',
+        includes: ['chain', 'first_block_number', 'first_transaction_index'],
+      }],
+    }, {
+      table: 'robinhood_wallet_signed_origin_cursors',
+      columns: [
+        'chain', 'stream', 'origin_block', 'next_block', 'safe_head',
+        'checkpoint_block', 'checkpoint_hash', 'checkpoint_timestamp',
+        'lifecycle_state', 'last_error_code', 'last_error_message', 'version',
+        'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_wallet_signed_origin_cursors_pkey',
+        includes: ['PRIMARY KEY', 'chain', 'stream'],
+      }, {
+        name: 'rh_wallet_signed_origin_cursors_contract_check',
+        includes: ['CHECK', 'planned', 'running', 'caught_up', 'completed', 'halted'],
+      }, {
+        name: 'rh_wallet_signed_origin_cursors_checkpoint_check',
+        includes: ['CHECK', 'checkpoint_block', 'checkpoint_hash', 'next_block'],
+      }, {
+        name: 'rh_wallet_signed_origin_cursors_frontier_check',
+        includes: ['CHECK', 'safe_head', 'caught_up', 'completed'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
