@@ -1906,8 +1906,13 @@ A Stage 182 torna `origin_block_hash` e `safe_head_hash` obrigatórios no cursor
 O repository de cursor congela essas fronteiras na primeira execução e recusa
 resume divergente. Cada lote exige blocos explícitos e contíguos e grava origens,
 checkpoint e avanço na mesma transação; falha ou conflito otimista deixa o cursor
-inalterado. Aplique com `node src/utils/db-init-stage182.js`. Ainda não há CLI ou
-execução automática do bootstrap.
+inalterado. Aplique com `node src/utils/db-init-stage182.js`.
+`npm run robinhood:signed-origin-bootstrap` executa um preflight read-only no
+`ROBINHOOD_RPC_URL`: revalida ativação/checkpoint, resolve o último bloco anterior
+a `activation_at - 24 hours`, congela `head - confirmations`, mede full-blocks e
+recusa ETA acima de cinco horas. `-- --apply` cria ou retoma o cursor e processa
+todos os blocos em ordem, inclusive vazios; `--max-minutes` limita cada sessão.
+O comando não inicia worker LIVE nem habilita a classificação FRESH.
 A Stage 179 persiste cada decisão em
 `robinhood_fresh_wallet_evaluations` e conclui a versão correspondente da fila
 na mesma transação. Resultado `fresh` cria ou atualiza somente a classificação
