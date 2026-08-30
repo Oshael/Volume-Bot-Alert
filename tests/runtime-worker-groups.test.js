@@ -578,6 +578,7 @@ describe('runtime worker groups config', () => {
     const env = fs.readFileSync(path.join(
       systemdDir, 'robinhood-wallet-classification.env.example'
     ), 'utf8');
+    const server = fs.readFileSync(path.join(ROOT_DIR, 'src', 'server.js'), 'utf8');
 
     assert.match(command, /PORT=\$\{PORT:-3015\}/);
     assert.match(command, /BACKGROUND_WORKER_GROUPS=robinhood-wallet-classification/);
@@ -587,6 +588,9 @@ describe('runtime worker groups config', () => {
     assert.doesNotMatch(dropIn, /ExecStart|WorkingDirectory|User=/);
     assert.match(env, /ROBINHOOD_FIRST_BUY_SEED_RUN_ID=REPLACE_WITH_COMPLETED_RUN_ID/);
     assert.match(env, /ROBINHOOD_SNIPER_SHADOW_ENABLED=true/);
+    assert.match(env, /ROBINHOOD_FRESH_WALLET_LIVE_ENABLED=false/);
+    assert.match(server, /ROBINHOOD_FRESH_WALLET_LIVE_LEASE_KEY/);
+    assert.match(server, /robinhoodFreshWalletLiveWorker\.getStatus\(\)/);
     assert.match(env, /ROBINHOOD_INSIDER_SHADOW_ENABLED=false/);
     assert.match(env, /ROBINHOOD_WALLET_POSITION_LIVE_ENABLED=false/);
     assert.doesNotMatch(env, /JWT_SECRET|DATABASE_URL|DB_PASSWORD/);
@@ -1202,6 +1206,19 @@ describe('runtime worker groups config', () => {
     }, (config) => assert.deepEqual(config.robinhoodBundleFundingLiveWorker, {
       enabled: true, intervalMs: 1000, leaseMs: 900_000, retryMs: 15_000,
       maxRetryMs: 3_600_000, batchBlocks: 100, timeoutMs: 300_000,
+    }));
+  });
+
+  it('keeps FRESH wallet live shadow opt-in with bounded isolation controls', () => {
+    withEnv({ ROBINHOOD_FRESH_WALLET_LIVE_ENABLED: 'true',
+      ROBINHOOD_FRESH_WALLET_LIVE_BATCH_SIZE: '999',
+      ROBINHOOD_FRESH_WALLET_LIVE_CONCURRENCY: '99',
+      ROBINHOOD_FRESH_WALLET_LIVE_CIRCUIT_FAILURE_THRESHOLD: '0',
+      ROBINHOOD_FRESH_WALLET_LIVE_CIRCUIT_RESET_MS: '99999999',
+    }, (config) => assert.deepEqual(config.robinhoodFreshWalletLiveWorker, {
+      enabled: true, intervalMs: 1000, leaseMs: 300_000, retryMs: 15_000,
+      maxRetryMs: 3_600_000, batchSize: 100, concurrency: 4, timeoutMs: 30_000,
+      circuitFailureThreshold: 1, circuitResetMs: 3_600_000,
     }));
   });
 

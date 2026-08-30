@@ -73,6 +73,7 @@ const robinhoodWalletPositionLiveWorker = require('./services/robinhood-wallet-p
 const robinhoodFirstBuyLiveWorker = require('./services/robinhood-first-buy-live-worker');
 const robinhoodLaunchAnchorLiveWorker = require('./services/robinhood-launch-anchor-live-worker');
 const robinhoodBundleFundingLiveWorker = require('./services/robinhood-bundle-funding-live-worker');
+const robinhoodFreshWalletLiveWorker = require('./services/robinhood-fresh-wallet-live-worker');
 const robinhoodSniperShadowWorker = require('./services/robinhood-sniper-shadow-worker');
 const robinhoodTokenDeploymentWorker = require('./services/robinhood-token-deployment-worker');
 const robinhoodInsiderShadowWorker = require('./services/robinhood-insider-shadow-worker');
@@ -140,6 +141,7 @@ const ROBINHOOD_WALLET_POSITION_LIVE_LEASE_KEY = 'robinhood-wallet-position-live
 const ROBINHOOD_FIRST_BUY_LIVE_LEASE_KEY = 'robinhood-first-buy-live-worker';
 const ROBINHOOD_LAUNCH_ANCHOR_LIVE_LEASE_KEY = 'robinhood-launch-anchor-live-worker';
 const ROBINHOOD_BUNDLE_FUNDING_LIVE_LEASE_KEY = 'robinhood-bundle-funding-live-worker';
+const ROBINHOOD_FRESH_WALLET_LIVE_LEASE_KEY = 'robinhood-fresh-wallet-live-worker';
 const ROBINHOOD_SNIPER_SHADOW_LEASE_KEY = 'robinhood-sniper-shadow-worker';
 const ROBINHOOD_TOKEN_DEPLOYMENT_LEASE_KEY = 'robinhood-token-deployment-worker';
 const ROBINHOOD_INSIDER_SHADOW_LEASE_KEY = 'robinhood-insider-shadow-worker';
@@ -356,6 +358,7 @@ app.get('/api/admin/ws-status', authenticate, requireAdmin, async (req, res) => 
     robinhoodFirstBuyLiveWorker: robinhoodFirstBuyLiveWorker.getStatus(),
     robinhoodLaunchAnchorLiveWorker: robinhoodLaunchAnchorLiveWorker.getStatus(),
     robinhoodBundleFundingLiveWorker: robinhoodBundleFundingLiveWorker.getStatus(),
+    robinhoodFreshWalletLiveWorker: robinhoodFreshWalletLiveWorker.getStatus(),
     robinhoodSniperShadowWorker: robinhoodSniperShadowWorker.getStatus(),
     robinhoodTokenDeploymentWorker: robinhoodTokenDeploymentWorker.getStatus(),
     robinhoodInsiderShadowWorker: robinhoodInsiderShadowWorker.getStatus(),
@@ -703,6 +706,15 @@ function startRobinhoodWalletClassificationWorkerGroup() {
         rpcOptions: config.robinhoodIngestionWorker,
       }),
       { metadataProvider: () => ({ telemetry: robinhoodBundleFundingLiveWorker.getStatus() }) }
+    );
+  }
+  if (config.robinhoodFreshWalletLiveWorker.enabled) {
+    startLockedWorker(
+      'robinhood-wallet-classification', ROBINHOOD_FRESH_WALLET_LIVE_LEASE_KEY,
+      'Robinhood FRESH wallet LIVE worker', () => robinhoodFreshWalletLiveWorker.start({
+        ...config.robinhoodFreshWalletLiveWorker,
+        rpcOptions: config.robinhoodIngestionWorker,
+      }), { metadataProvider: () => ({ telemetry: robinhoodFreshWalletLiveWorker.getStatus() }) }
     );
   }
   if (config.robinhoodWalletPositionLiveWorker.enabled) {
@@ -1298,6 +1310,7 @@ async function shutdownGracefully(signal = 'SIGTERM') {
       robinhoodFirstBuyLiveWorker.stop(),
       robinhoodLaunchAnchorLiveWorker.stop(),
       robinhoodBundleFundingLiveWorker.stop(),
+      robinhoodFreshWalletLiveWorker.stop(),
       robinhoodSniperShadowWorker.stop(),
       robinhoodTokenDeploymentWorker.stop(),
       robinhoodInsiderShadowWorker.stop(),

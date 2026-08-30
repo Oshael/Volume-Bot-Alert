@@ -1888,6 +1888,14 @@ explícita de reorg e reset para estado sem frontier também exige autorização
 O materializador não escreve `robinhood_holder_classification_states`; além
 disso, `fresh` segue fora do allowlist público padrão, portanto esse estado não é
 exposto pela API antes do corte de publicação.
+O consumidor live é `robinhood-fresh-wallet-live-worker`, opt-in por
+`ROBINHOOD_FRESH_WALLET_LIVE_ENABLED` dentro do grupo isolado
+`robinhood-wallet-classification`. `LISTEN robinhood_fresh_wallet_queue` acorda
+o worker; polling bounded de um segundo serve apenas para reconciliação. Claims
+live usam lease em lote, concorrência máxima quatro, retry exponencial e retomada
+de lease expirada. Cinco rodadas totalmente falhas abrem por padrão um circuit
+breaker de 60 segundos antes de novo claim. O worker exige `ROBINHOOD_RPC_URL`,
+nunca seleciona `RH_NODE_RPC_URL`, e continua shadow-only.
 A Stage 172 encadeia anchors commitados à fila token-scoped
 `robinhood_bundle_funding_live_queue`. Cada nova versão do anchor invalida uma
 lease antiga e incrementa `requested_version`; a conclusão só é aceita para essa

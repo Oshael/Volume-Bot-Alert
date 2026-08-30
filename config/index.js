@@ -1711,6 +1711,37 @@ module.exports = {
     ),
   },
 
+  robinhoodFreshWalletLiveWorker: {
+    enabled: parseBoolean(process.env.ROBINHOOD_FRESH_WALLET_LIVE_ENABLED, false),
+    intervalMs: parseIntegerInRange(
+      process.env.ROBINHOOD_FRESH_WALLET_LIVE_INTERVAL_MS, 1000, 100, 60_000
+    ),
+    leaseMs: parseIntegerInRange(
+      process.env.ROBINHOOD_FRESH_WALLET_LIVE_LEASE_MS, 300_000, 10_000, 1_200_000
+    ),
+    retryMs: parseIntegerInRange(
+      process.env.ROBINHOOD_FRESH_WALLET_LIVE_RETRY_MS, 15_000, 1000, 3_600_000
+    ),
+    maxRetryMs: parseIntegerInRange(
+      process.env.ROBINHOOD_FRESH_WALLET_LIVE_MAX_RETRY_MS, 3_600_000, 60_000, 86_400_000
+    ),
+    batchSize: parseIntegerInRange(
+      process.env.ROBINHOOD_FRESH_WALLET_LIVE_BATCH_SIZE, 10, 1, 100
+    ),
+    concurrency: parseIntegerInRange(
+      process.env.ROBINHOOD_FRESH_WALLET_LIVE_CONCURRENCY, 2, 1, 4
+    ),
+    timeoutMs: parseIntegerInRange(
+      process.env.ROBINHOOD_FRESH_WALLET_LIVE_TIMEOUT_MS, 30_000, 1000, 300_000
+    ),
+    circuitFailureThreshold: parseIntegerInRange(
+      process.env.ROBINHOOD_FRESH_WALLET_LIVE_CIRCUIT_FAILURE_THRESHOLD, 5, 1, 100
+    ),
+    circuitResetMs: parseIntegerInRange(
+      process.env.ROBINHOOD_FRESH_WALLET_LIVE_CIRCUIT_RESET_MS, 60_000, 1000, 3_600_000
+    ),
+  },
+
   robinhoodSniperShadowWorker: {
     enabled: parseBoolean(process.env.ROBINHOOD_SNIPER_SHADOW_ENABLED, false),
     intervalMs: parseIntegerInRange(

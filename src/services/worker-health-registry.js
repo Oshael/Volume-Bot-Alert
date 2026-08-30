@@ -48,6 +48,7 @@ const DEFINITIONS = [
   ['robinhood-first-buy-live-worker', 'Robinhood first-buy LIVE worker', 'robinhood-wallet-classification', 'live'],
   ['robinhood-launch-anchor-live-worker', 'Robinhood launch-anchor LIVE worker', 'robinhood-wallet-classification', 'live'],
   ['robinhood-bundle-funding-live-worker', 'Robinhood BUNDLED funding LIVE worker', 'robinhood-wallet-classification', 'live'],
+  ['robinhood-fresh-wallet-live-worker', 'Robinhood FRESH wallet LIVE worker', 'robinhood-wallet-classification', 'live'],
   ['robinhood-wallet-position-live-worker', 'Robinhood wallet-position LIVE worker', 'robinhood-wallet-classification', 'live'],
   ['robinhood-wallet-transfer-live-worker', 'Robinhood wallet-transfer LIVE worker', 'robinhood-wallet-classification', 'live'],
   ['robinhood-holder-live-worker', 'Robinhood holder LIVE worker',

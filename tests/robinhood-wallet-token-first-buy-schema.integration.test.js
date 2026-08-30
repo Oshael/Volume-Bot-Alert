@@ -11,6 +11,9 @@ const {
   createRobinhoodFreshWalletShadowRepository,
 } = require('../src/models/robinhood-fresh-wallet-shadow');
 const {
+  createRobinhoodFreshWalletLiveQueueRepository,
+} = require('../src/models/robinhood-fresh-wallet-live-queue');
+const {
   createRobinhoodTransactionPositionRepairRepository,
 } = require('../src/models/robinhood-transaction-position-repair');
 const stage63 = require('../src/utils/db-init-stage63');
@@ -344,5 +347,30 @@ describe('Robinhood wallet-token first buy schema integration', () => {
     assert.equal((await db.query(`SELECT status FROM robinhood_fresh_wallet_evaluations
       WHERE token_address = $1 AND wallet_address = $2`, [TOKEN, WALLET])).rows[0].status,
     'unavailable');
+  });
+
+  it('retries exact FRESH live leases and resumes expired work', async () => {
+    const queue = createRobinhoodFreshWalletLiveQueueRepository({ database: db });
+    await db.query(`UPDATE robinhood_wallet_token_first_buys SET block_number = 23
+      WHERE token_address = $1 AND wallet_address = $2`, [TOKEN, WALLET]);
+    const [task] = await queue.claimBatch({ owner: 'live-a', leaseMs: 10_000, limit: 10 });
+    assert.deepEqual({ tokenAddress: task.tokenAddress, walletAddress: task.walletAddress,
+      blockNumber: task.blockNumber, attemptCount: task.attemptCount }, {
+      tokenAddress: TOKEN, walletAddress: WALLET, blockNumber: '23', attemptCount: 1,
+    });
+    assert.equal(await queue.retry({ ...task, owner: 'wrong', retryMs: 1000,
+      error: new Error('retry') }), false);
+    assert.equal(await queue.retry({ ...task, owner: 'live-a', retryMs: 1000,
+      error: Object.assign(new Error('RPC down'), { code: 'rpc_unavailable' }) }), true);
+    assert.deepEqual((await db.query(`SELECT status, last_error_code
+      FROM robinhood_fresh_wallet_queue WHERE token_address = $1 AND wallet_address = $2`,
+    [TOKEN, WALLET])).rows[0], { status: 'pending', last_error_code: 'rpc_unavailable' });
+    await db.query(`UPDATE robinhood_fresh_wallet_queue SET next_attempt_at = NOW()
+      WHERE token_address = $1 AND wallet_address = $2`, [TOKEN, WALLET]);
+    const [reclaimed] = await queue.claimBatch({ owner: 'live-b', leaseMs: 10_000 });
+    await db.query(`UPDATE robinhood_fresh_wallet_queue SET lease_until = NOW() - INTERVAL '1 second'
+      WHERE token_address = $1 AND wallet_address = $2`, [TOKEN, WALLET]);
+    const [expired] = await queue.claimBatch({ owner: 'live-c', leaseMs: 10_000 });
+    assert.equal(expired.attemptCount, reclaimed.attemptCount + 1);
   });
 });
