@@ -5,6 +5,8 @@ const STREAM = 'live';
 const ZERO_ADDRESS = `0x${'0'.repeat(40)}`;
 const MAX_UINT256 = (1n << 256n) - 1n;
 const REORG_FENCE_LOCK_ID = '8241992116082026';
+const HOT_FRESH_BLOCK_WINDOW = 200;
+const HOT_PRIORITY_CLASSES = new Set(['fresh-live', 'recent-shadow', 'stale-live']);
 
 function decimalQuantity(value, label) {
   const raw = String(value ?? '').trim();
@@ -1574,6 +1576,10 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     const excluded = tokenFilter(input.excludeTokenAddresses, 'excluded hot token');
     const limit = nonNegativeInteger(input.limit ?? 25, 'hotPendingTokens.limit');
     if (limit < 1 || limit > 1000) throw new Error('hotPendingTokens.limit is invalid');
+    const priorityClass = input.priorityClass == null ? null : String(input.priorityClass);
+    if (priorityClass != null && !HOT_PRIORITY_CLASSES.has(priorityClass)) {
+      throw new Error('hotPendingTokens.priorityClass is invalid');
+    }
     const result = await database.query(
       `SELECT queue.token_address
          FROM robinhood_holder_hot_queue queue
@@ -1584,12 +1590,24 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
         WHERE queue.chain = 'robinhood'
           AND state.ledger_status IN ('shadow', 'live')
           AND NOT (queue.token_address = ANY($1::varchar[]))
-          AND (state.ledger_status = 'live'
-            OR queue.first_pending_block >= GREATEST(cursor.next_block - 20000, 0))
+          AND (
+            ($3::varchar IS NULL AND (state.ledger_status = 'live'
+              OR queue.first_pending_block >= GREATEST(cursor.next_block - 20000, 0)))
+            OR ($3 = 'fresh-live' AND state.ledger_status = 'live'
+              AND queue.first_pending_block >= GREATEST(
+                cursor.next_block - ${HOT_FRESH_BLOCK_WINDOW}, 0
+              ))
+            OR ($3 = 'recent-shadow' AND state.ledger_status = 'shadow'
+              AND queue.first_pending_block >= GREATEST(cursor.next_block - 20000, 0))
+            OR ($3 = 'stale-live' AND state.ledger_status = 'live'
+              AND queue.first_pending_block < GREATEST(
+                cursor.next_block - ${HOT_FRESH_BLOCK_WINDOW}, 0
+              ))
+          )
         ORDER BY (state.ledger_status = 'live') DESC, queue.updated_at,
                  queue.last_pending_block DESC, queue.token_address
         LIMIT $2::int`,
-      [excluded, limit]
+      [excluded, limit, priorityClass]
     );
     return Object.freeze(result.rows.map((row) => row.token_address));
   }
@@ -1598,7 +1616,7 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     const result = await database.query(
       `WITH hot AS (
          SELECT queue.token_address, queue.first_pending_block, queue.first_enqueued_at,
-                cursor.safe_head
+                state.ledger_status, cursor.safe_head, cursor.next_block
            FROM robinhood_holder_hot_queue queue
            INNER JOIN robinhood_holder_token_states state
              ON state.chain = queue.chain AND state.token_address = queue.token_address
@@ -1609,6 +1627,15 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
               OR queue.first_pending_block >= GREATEST(cursor.next_block - 20000, 0))
        )
        SELECT COUNT(token_address)::int AS pending_tokens,
+              COUNT(*) FILTER (WHERE ledger_status = 'live'
+                AND first_pending_block >= GREATEST(
+                  next_block - ${HOT_FRESH_BLOCK_WINDOW}, 0
+                ))::int AS fresh_live_tokens,
+              COUNT(*) FILTER (WHERE ledger_status = 'shadow')::int AS recent_shadow_tokens,
+              COUNT(*) FILTER (WHERE ledger_status = 'live'
+                AND first_pending_block < GREATEST(
+                  next_block - ${HOT_FRESH_BLOCK_WINDOW}, 0
+                ))::int AS stale_live_tokens,
               COALESCE(MAX(GREATEST(safe_head - first_pending_block, 0)), 0)
                 AS worst_lag_blocks,
               COALESCE(EXTRACT(EPOCH FROM (NOW() - MIN(first_enqueued_at))) * 1000, 0)
@@ -1618,6 +1645,9 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     const row = result.rows[0] || {};
     return Object.freeze({
       pendingTokens: Number(row.pending_tokens) || 0,
+      freshLiveTokens: Number(row.fresh_live_tokens) || 0,
+      recentShadowTokens: Number(row.recent_shadow_tokens) || 0,
+      staleLiveTokens: Number(row.stale_live_tokens) || 0,
       worstLagBlocks: Number(row.worst_lag_blocks) || 0,
       oldestAgeMs: Math.round(Number(row.oldest_age_ms) || 0),
     });

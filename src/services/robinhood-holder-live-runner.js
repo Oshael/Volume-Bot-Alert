@@ -1,3 +1,8 @@
+const HOT_PRIORITY_CLASSES = Object.freeze(['fresh-live', 'recent-shadow', 'stale-live']);
+const HOT_PRIORITY_CYCLE = Object.freeze([
+  'fresh-live', 'fresh-live', 'fresh-live', 'recent-shadow', 'stale-live',
+]);
+
 function boundedInteger(value, fallback, minimum, maximum, label) {
   const parsed = value == null ? fallback : Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
@@ -91,6 +96,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     options.receiptBatchSize, 25, 1, 100, 'receiptBatchSize'
   );
   const driftEvidence = new Map();
+  let hotPriorityOffset = 0;
   const publishHolderCounts = typeof options.publishHolderCounts === 'function'
     ? options.publishHolderCounts : async () => 0;
   if (!isLiveLedger(ledger)) {
@@ -182,17 +188,31 @@ function createRobinhoodHolderLiveRunner(options = {}) {
   }
 
   async function nextHotToken(input, timing) {
-    const startedAt = measureMs();
-    try {
-      const tokens = await withHolderErrorContext(
-        () => ledger.listHotPendingTokenAddresses({ ...input, limit: 1 }),
-        'hot_selection'
-      );
-      return tokens[0] || null;
-    } finally {
-      timing.hotSelectionCalls += 1;
-      timing.hotSelectionDurationMs += elapsedMs(startedAt);
+    const desiredClass = HOT_PRIORITY_CYCLE[hotPriorityOffset];
+    hotPriorityOffset = (hotPriorityOffset + 1) % HOT_PRIORITY_CYCLE.length;
+    const classes = [desiredClass, ...HOT_PRIORITY_CLASSES.filter(
+      (priorityClass) => priorityClass !== desiredClass
+    )];
+    for (const priorityClass of classes) {
+      const startedAt = measureMs();
+      let tokens;
+      try {
+        tokens = await withHolderErrorContext(
+          () => ledger.listHotPendingTokenAddresses({
+            ...input, limit: 1, priorityClass,
+          }),
+          'hot_selection'
+        );
+      } finally {
+        timing.hotSelectionCalls += 1;
+        timing.hotSelectionDurationMs += elapsedMs(startedAt);
+      }
+      if (tokens[0]) {
+        timing.hotSelectionsByClass[priorityClass] += 1;
+        return { tokenAddress: tokens[0], priorityClass };
+      }
     }
+    return { tokenAddress: null, priorityClass: null };
   }
 
   async function selectPendingToken(preferred, queued, roundHasMultiple, input, timing) {
@@ -427,13 +447,17 @@ function createRobinhoodHolderLiveRunner(options = {}) {
       maxAttemptedEventsPerCall: 0, driftRepairDurationMs: 0,
       selectionCalls: 0, selectionDurationMs: 0, selectedTokens: 0,
       hotSelectionCalls: 0, hotSelectionDurationMs: 0,
+      hotSelectionsByClass: {
+        'fresh-live': 0, 'recent-shadow': 0, 'stale-live': 0,
+      },
       shadowPromotionDurationMs: 0, publicationDurationMs: 0,
     };
     const holderCountUpdates = new Map();
     const deadlineMs = measureMs() + maxDurationMs;
     while (applyAttempts < maxApplyEvents && measureMs() < deadlineMs) {
       const excluded = deferredTokenAddresses();
-      const hotTokenAddress = await nextHotToken({ excludeTokenAddresses: excluded }, timing);
+      const hotSelection = await nextHotToken({ excludeTokenAddresses: excluded }, timing);
+      const hotTokenAddress = hotSelection.tokenAddress;
       if (hotTokenAddress) {
         preferredTokenAddress = hotTokenAddress;
       } else {

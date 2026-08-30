@@ -1533,11 +1533,14 @@ residuais.
 Assim eventos `missing/backfilling` não são reescaneados para escolher cada token.
 Depois da Stage 180, cada INSERT commitado no journal também faz upsert de um ticket
 por token em `robinhood_holder_hot_queue` e emite `NOTIFY` para acordar o apply.
-A tabela, não a notificação, é a garantia durável. Antes de cada lote, tickets de
-tokens `live` ou com a primeira pendência dentro dos 20.000 blocos recentes
-preemptam o catch-up; lotes hot têm no máximo 25 eventos e cada tick dura por
-default até 2s. O polling de 100ms permanece somente como recuperação. A telemetria
-`freshness` expõe `pendingTokens`, `worstLagBlocks` e `oldestAgeMs`.
+A tabela, não a notificação, é a garantia durável. O scheduler separa tickets em
+`fresh-live` (até 200 blocos), `recent-shadow` (até 20.000 blocos) e `stale-live`.
+A rotação persiste entre ticks e reserva três lotes para live recente, um para
+shadow recente e um para catch-up live; se uma classe estiver vazia, sua vez é
+usada imediatamente por outra. Assim backlog live não bloqueia a publicação de
+tokens novos. Lotes hot têm no máximo 25 eventos e cada tick dura por default até
+2s. O polling de 100ms permanece somente como recuperação. A telemetria `freshness`
+expõe a contagem de cada classe, `pendingTokens`, `worstLagBlocks` e `oldestAgeMs`.
 O `lastResult.timing` da lease do apply
 separa duração total, drain, chamadas do ledger, reparo de drift, promoção shadow,
 publicação e overhead; também expõe quantidade/duração máxima das chamadas, tamanho
