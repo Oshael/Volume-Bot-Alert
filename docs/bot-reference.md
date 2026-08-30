@@ -1861,6 +1861,17 @@ live e pertencem exclusivamente ao seed congelado. A fila é idempotente para
 updates sem mudança, versiona mudança canônica e remove trabalho live se uma
 first-buy fora de ordem recuar para antes da ativação. A migration não cria a
 ativação, não popula o seed, não chama RPC e não publica tag, filtro ou métrica.
+O corte seguinte implementa a regra pura em
+`src/services/robinhood-fresh-wallet-rule.js` e a leitura histórica em
+`src/services/robinhood-fresh-wallet-rpc-source.js`, ainda sem consumidor da
+fila. `FRESH` exige simultaneamente nonce da first-buy menor ou igual a 5 e nonce
+zero no último bloco estritamente anterior a 24 horas antes da compra. O source
+valida chain `4663`, transação, wallet, bloco/hash e timestamp da first-buy;
+resolve o cutoff por busca binária com cache limitado e chama
+`eth_getTransactionCount` usando `{ blockHash, requireCanonical: true }`. O seed
+seleciona `RH_NODE_RPC_URL` (`robinhood-pc-archive`); o futuro live somente poderá
+selecionar `ROBINHOOD_RPC_URL` depois do preflight histórico. Evidência ausente,
+malformada, incoerente ou não canônica falha fechada e nunca produz `not_fresh`.
 A Stage 172 encadeia anchors commitados à fila token-scoped
 `robinhood_bundle_funding_live_queue`. Cada nova versão do anchor invalida uma
 lease antiga e incrementa `requested_version`; a conclusão só é aceita para essa
