@@ -248,7 +248,8 @@ const LEGACY_WORKER_GROUPS = Object.freeze(['maintenance']);
 const ISOLATED_WORKER_GROUPS = Object.freeze([
   'robinhood-maintenance', 'robinhood', 'robinhood-head', 'robinhood-processing',
   'robinhood-derived', 'robinhood-wallet', 'robinhood-backfill', 'robinhood-holders',
-  'robinhood-holder-global', 'robinhood-wallet-classification', 'x-match', 'x-ingest',
+  'robinhood-holder-global', 'robinhood-wallet-classification', 'robinhood-signed-origin',
+  'x-match', 'x-ingest',
   'callouts', 'worker-health',
 ]);
 const WORKER_GROUPS = Object.freeze([
@@ -710,6 +711,10 @@ if ((robinhoodHolderBackfillEnabled || robinhoodHolderColdEnabled || robinhoodHo
       || robinhoodHolderGlobalBackfillEnabled)
     && !String(process.env.ROBINHOOD_RPC_URL || '').trim()) {
   missing.push('ROBINHOOD_RPC_URL for Robinhood holder workers');
+}
+if (parseBoolean(process.env.ROBINHOOD_SIGNED_ORIGIN_LIVE_ENABLED, false)
+    && !String(process.env.ROBINHOOD_RPC_URL || '').trim()) {
+  missing.push('ROBINHOOD_RPC_URL for Robinhood signed-origin LIVE');
 }
 if (robinhoodHolderNativeBalanceEnabled
     && !String(process.env.ROBINHOOD_RPC_URL || '').trim()) {
@@ -1643,6 +1648,34 @@ module.exports = {
     ),
     maxConsecutiveFailures: parseIntegerInRange(
       process.env.ROBINHOOD_WALLET_SWAP_LIVE_MAX_CONSECUTIVE_FAILURES, 5, 1, 100
+    ),
+  },
+
+  robinhoodWalletSignedOriginLiveWorker: {
+    enabled: parseBoolean(process.env.ROBINHOOD_SIGNED_ORIGIN_LIVE_ENABLED, false),
+    intervalMs: parseIntegerInRange(
+      process.env.ROBINHOOD_SIGNED_ORIGIN_LIVE_INTERVAL_MS, 2000, 250, 300_000
+    ),
+    maxErrorBackoffMs: parseIntegerInRange(
+      process.env.ROBINHOOD_SIGNED_ORIGIN_LIVE_MAX_ERROR_BACKOFF_MS, 60_000, 1000, 300_000
+    ),
+    maxBlocks: parseIntegerInRange(
+      process.env.ROBINHOOD_SIGNED_ORIGIN_LIVE_MAX_BLOCKS_PER_TICK, 100, 1, 200
+    ),
+    rpcBatchSize: parseIntegerInRange(
+      process.env.ROBINHOOD_SIGNED_ORIGIN_LIVE_RPC_BATCH_SIZE, 20, 1, 50
+    ),
+    concurrency: parseIntegerInRange(
+      process.env.ROBINHOOD_SIGNED_ORIGIN_LIVE_CONCURRENCY, 2, 1, 4
+    ),
+    timeoutMs: parseIntegerInRange(
+      process.env.ROBINHOOD_SIGNED_ORIGIN_LIVE_TIMEOUT_MS, 15_000, 1000, 60_000
+    ),
+    circuitFailureThreshold: parseIntegerInRange(
+      process.env.ROBINHOOD_SIGNED_ORIGIN_LIVE_CIRCUIT_FAILURE_THRESHOLD, 5, 1, 100
+    ),
+    circuitResetMs: parseIntegerInRange(
+      process.env.ROBINHOOD_SIGNED_ORIGIN_LIVE_CIRCUIT_RESET_MS, 60_000, 1000, 3_600_000
     ),
   },
 

@@ -1916,7 +1916,12 @@ O comando não inicia worker LIVE nem habilita a classificação FRESH.
 Após o seed chegar a `completed`, o repository cria o cursor `live` exatamente
 em `seed.safe_head + 1`. O runner LIVE revalida checkpoint e regressão da frontier,
 lê no máximo 200 blocos contíguos por tick e move frontier/origens atomicamente.
-Ainda não há processo, lease ou listener que execute esse runner automaticamente.
+O processo isolado `npm run start:worker:robinhood-signed-origin`, habilitado por
+`ROBINHOOD_SIGNED_ORIGIN_LIVE_ENABLED=true`, mantém lease própria e usa somente
+o `ROBINHOOD_RPC_URL`. O commit do cursor de head emite
+`robinhood_head_capture_cursor`; o listener acorda o scanner imediatamente e o
+tick de dois segundos é apenas reconciliação. Reorg persistente interrompe a
+lease; falhas transitórias usam backoff e circuit breaker observáveis.
 A Stage 179 persiste cada decisão em
 `robinhood_fresh_wallet_evaluations` e conclui a versão correspondente da fila
 na mesma transação. Resultado `fresh` cria ou atualiza somente a classificação

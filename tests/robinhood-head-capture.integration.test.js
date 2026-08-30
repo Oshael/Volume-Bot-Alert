@@ -5,7 +5,7 @@ const { after, before, beforeEach, describe, it } = require('node:test');
 
 const db = require('../src/models/db');
 const {
-  createRobinhoodHeadCaptureRepository,
+  CURSOR_NOTIFY_CHANNEL, createRobinhoodHeadCaptureRepository,
 } = require('../src/models/robinhood-head-capture');
 const stage103 = require('../src/utils/db-init-stage103');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
@@ -77,6 +77,28 @@ describe('Robinhood head capture repository integration', () => {
     assert.equal(cursor.nextBlock, '109');
     assert.equal(cursor.checkpointBlock, '108');
     assert.equal(cursor.version, 0);
+  });
+
+  it('publishes the cursor wake only after its transaction commits', async () => {
+    const listener = await db.getClient();
+    try {
+      await listener.query(`LISTEN ${CURSOR_NOTIFY_CHANNEL}`);
+      const notification = new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('head cursor notification timed out')), 2000);
+        listener.once('notification', (value) => { clearTimeout(timer); resolve(value); });
+      });
+      await createRobinhoodHeadCaptureRepository().appendCaptures({
+        entries: [], cursor: buildCursor('109', '108'),
+      });
+      const value = await notification;
+      assert.equal(value.channel, CURSOR_NOTIFY_CHANNEL);
+      assert.equal(value.payload, 'market');
+      assert.equal((await createRobinhoodHeadCaptureRepository()
+        .getCaptureCursor('market')).nextBlock, '109');
+    } finally {
+      await listener.query(`UNLISTEN ${CURSOR_NOTIFY_CHANNEL}`).catch(() => {});
+      listener.release();
+    }
   });
 
   it('treats a replayed range as an idempotent duplicate and bumps only the cursor version', async () => {

@@ -1,6 +1,7 @@
 const db = require('./db');
 
 const CHAIN = 'robinhood';
+const CURSOR_NOTIFY_CHANNEL = 'robinhood_head_capture_cursor';
 const STREAMS = new Set(['discovery', 'market']);
 const PROTOCOLS = new Set(['uniswap-v2', 'uniswap-v3', 'uniswap-v4']);
 
@@ -149,6 +150,7 @@ function createRobinhoodHeadCaptureRepository(options = {}) {
         if (inserted.rowCount) insertedCaptures += 1;
       }
       await upsertCaptureCursor(client, cursor);
+      await client.query('SELECT pg_notify($1, $2)', [CURSOR_NOTIFY_CHANNEL, cursor.stream]);
       await client.query('COMMIT');
       return {
         insertedCaptures,
@@ -187,4 +189,4 @@ function createRobinhoodHeadCaptureRepository(options = {}) {
   return Object.freeze({ appendCaptures, getCaptureCursor });
 }
 
-module.exports = { createRobinhoodHeadCaptureRepository };
+module.exports = { CURSOR_NOTIFY_CHANNEL, createRobinhoodHeadCaptureRepository };

@@ -10,7 +10,8 @@ const WORKER_GROUPS = [
   'core', 'market', 'solana-maintenance', 'maintenance', 'robinhood-maintenance',
   'robinhood', 'robinhood-head', 'robinhood-processing', 'robinhood-derived',
   'robinhood-wallet', 'robinhood-backfill', 'robinhood-holders',
-  'robinhood-holder-global', 'robinhood-wallet-classification', 'x-match', 'x-ingest',
+  'robinhood-holder-global', 'robinhood-wallet-classification', 'robinhood-signed-origin',
+  'x-match', 'x-ingest',
   'callouts', 'worker-health',
 ];
 
@@ -565,6 +566,25 @@ describe('runtime worker groups config', () => {
       assert.deepEqual(config.runtime.workerGroupsActive, ['robinhood-wallet-classification']);
       assert.deepEqual(config.runtime.workerGroupsSkipped, skippedExcept('robinhood-wallet-classification'));
     });
+  });
+
+  it('isolates the Robinhood signed-origin scanner and ships its runner', () => {
+    withEnv({ BACKGROUND_WORKER_GROUPS: 'robinhood-signed-origin',
+      ROBINHOOD_SIGNED_ORIGIN_LIVE_ENABLED: 'true', ROBINHOOD_RPC_URL: 'http://node',
+      ROBINHOOD_SIGNED_ORIGIN_LIVE_MAX_BLOCKS_PER_TICK: '999',
+      ROBINHOOD_SIGNED_ORIGIN_LIVE_CONCURRENCY: '99' }, (config) => {
+      assert.deepEqual(config.runtime.workerGroupsActive, ['robinhood-signed-origin']);
+      assert.deepEqual(config.runtime.workerGroupsSkipped, skippedExcept('robinhood-signed-origin'));
+      assert.deepEqual({ enabled: config.robinhoodWalletSignedOriginLiveWorker.enabled,
+        maxBlocks: config.robinhoodWalletSignedOriginLiveWorker.maxBlocks,
+        concurrency: config.robinhoodWalletSignedOriginLiveWorker.concurrency }, {
+        enabled: true, maxBlocks: 200, concurrency: 4,
+      });
+    });
+    assert.match(require('../package.json').scripts['start:worker:robinhood-signed-origin'],
+      /BACKGROUND_WORKER_GROUPS=robinhood-signed-origin/);
+    assert.match(fs.readFileSync(path.join(ROOT_DIR, 'src', 'server.js'), 'utf8'),
+      /ROBINHOOD_SIGNED_ORIGIN_LIVE_LEASE_KEY/);
   });
 
   it('ships the systemd-compatible Robinhood wallet-classification service', () => {
