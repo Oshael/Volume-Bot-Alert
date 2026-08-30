@@ -1896,6 +1896,12 @@ incompleta, origem ausente ou posterior à first-buy retorna `unavailable`. Esta
 stage não lê blocos, não inicia bootstrap e não habilita FRESH LIVE. Aplique com
 `node src/utils/db-init-stage181.js`; o reader, bootstrap e worker entram nos
 cortes seguintes.
+O reader `robinhood-wallet-signed-origin-reader` exige blocos completos,
+contíguos e abaixo do safe head, limita batch/concurrency/timeout/payload e valida
+todas as transações antes de devolver evidência. O repository
+`robinhood-wallet-signed-origin` grava transacionalmente apenas a menor posição
+por wallet; replay é idempotente e identidade canônica conflitante causa rollback.
+Esses módulos ainda não movem o cursor nem executam varredura automaticamente.
 A Stage 179 persiste cada decisão em
 `robinhood_fresh_wallet_evaluations` e conclui a versão correspondente da fila
 na mesma transação. Resultado `fresh` cria ou atualiza somente a classificação
