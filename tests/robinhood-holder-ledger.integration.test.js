@@ -119,13 +119,35 @@ describe('Robinhood holder ledger persistence', () => {
       assert.deepEqual(first, {
         insertedTransfers: 2, duplicateTransfers: 1, cursorVersion: 0,
       });
+      await client.query(
+        `UPDATE robinhood_holder_token_states SET ledger_status = 'live'
+          WHERE token_address = $1`, [TOKEN_3]
+      );
+      await client.query(
+        `INSERT INTO robinhood_holder_transfer_journal (
+           block_number, block_hash, transaction_hash, transaction_index, log_index,
+           token_address, from_wallet, to_wallet, amount_raw
+         ) VALUES (101, $1, $2, 0, 0, $3, $4, $5, 1)`,
+        [HASH_A, HASH_8, TOKEN_3, ZERO_ADDRESS, BOB]
+      );
+      assert.deepEqual(
+        await repository.listPendingTokenAddresses({ limit: 10 }),
+        [TOKEN_3, TOKEN]
+      );
+      await client.query(
+        `DELETE FROM robinhood_holder_transfer_journal WHERE transaction_hash = $1`, [HASH_8]
+      );
+      await client.query(
+        `UPDATE robinhood_holder_token_states SET ledger_status = 'shadow'
+          WHERE token_address = $1`, [TOKEN_3]
+      );
       assert.deepEqual(await repository.listPendingTokenAddresses({ limit: 10 }), [TOKEN]);
       assert.deepEqual(await repository.listPendingTokenAddresses({
         limit: 10, excludeTokenAddresses: [TOKEN],
       }), []);
-      assert.deepEqual(await repository.applyNextPendingEvent({ maxEvents: 2 }), {
+      assert.deepEqual(await repository.applyNextPendingEvent({ maxEvents: 3 }), {
         status: 'applied', tokenAddress: TOKEN, holderCount: '2', holderDelta: 0,
-        appliedEvents: 2, attemptedEvents: 2,
+        appliedEvents: 2, attemptedEvents: 2, tokenDrained: true,
       });
       await client.query(
         `INSERT INTO robinhood_holder_token_states
@@ -140,7 +162,9 @@ describe('Robinhood holder ledger persistence', () => {
          ) VALUES (100, $1, $2, 2, 0, $3, $4, $5, 1)`,
         [HASH_A, HASH_D, TOKEN_5, ALICE, BOB]
       );
-      const localPromotion = await repository.promoteReadyShadowTokens({ limit: 10 });
+      const localPromotion = await repository.promoteReadyShadowTokens({
+        limit: 10, tokenAddress: TOKEN_4,
+      });
       assert.equal(localPromotion.promotedTokens, 1);
       assert.equal(localPromotion.publications[0].tokenAddress, TOKEN_4);
       assert.equal(localPromotion.publications[0].holderCount, '7');

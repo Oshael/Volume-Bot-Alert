@@ -32,7 +32,7 @@ function pendingEventFilter(excluded, preferredTokenAddress) {
   if (preferredTokenAddress && !excluded.includes(preferredTokenAddress)) {
     filter.onlyTokenAddress = preferredTokenAddress;
   }
-  return Object.keys(filter).length ? filter : undefined;
+  return filter;
 }
 
 function applyBatchMetrics(result) {
@@ -192,6 +192,58 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     };
   }
 
+  async function publishCommittedUpdates(updates, timing, tokenAddress = null) {
+    if (updates.size === 0) return 0;
+    const startedAt = measureMs();
+    try {
+      return await withHolderErrorContext(
+        () => publishCountUpdates(publishHolderCounts, updates),
+        'holder_publication', tokenAddress
+      );
+    } finally {
+      timing.publicationDurationMs += elapsedMs(startedAt);
+    }
+  }
+
+  async function promoteReadyShadows(input, timing) {
+    const startedAt = measureMs();
+    try {
+      return await withHolderErrorContext(
+        () => ledger.promoteReadyShadowTokens(input),
+        'shadow_promotion', input.tokenAddress
+      );
+    } finally {
+      timing.shadowPromotionDurationMs += elapsedMs(startedAt);
+    }
+  }
+
+  async function publishResult(result, updates, timing, tokenAddress = null) {
+    rememberHolderCountUpdate(updates, result);
+    const publication = result?.publication;
+    const publications = publication
+      ? new Map([[publication.tokenAddress, publication]]) : new Map();
+    return publishCommittedUpdates(
+      publications, timing, tokenAddress || result?.tokenAddress || null
+    );
+  }
+
+  async function deliverAppliedResult(applied, updates, timing) {
+    let shadowPromotions = 0;
+    let holderCountPublished = await publishResult(applied, updates, timing);
+    if (applied.status === 'applied' && applied.tokenDrained === true) {
+      const promoted = await promoteReadyShadows({
+        limit: 1, tokenAddress: applied.tokenAddress,
+      }, timing);
+      shadowPromotions = Number(promoted.promotedTokens) || 0;
+      for (const publication of promoted.publications) {
+        holderCountPublished += await publishResult(
+          { publication }, updates, timing, applied.tokenAddress
+        );
+      }
+    }
+    return { holderCountPublished, shadowPromotions };
+  }
+
   function deferDrift(suspicion) {
     driftEvidence.set(suspicion.tokenAddress, Object.freeze({
       fingerprint: null, tokenAddress: suspicion.tokenAddress, observations: 0,
@@ -347,6 +399,8 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     let tailRollbackEvents = 0;
     let baselineRequeues = 0;
     let quarantinedTokens = 0;
+    let shadowPromotions = 0;
+    let holderCountPublished = 0;
     let preferredTokenAddress = null;
     let pendingTokenAddresses = [];
     let pendingRoundHasMultiple = false;
@@ -355,6 +409,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
       applyCallDurationMs: 0, maxApplyCallDurationMs: 0,
       maxAttemptedEventsPerCall: 0, driftRepairDurationMs: 0,
       selectionCalls: 0, selectionDurationMs: 0, selectedTokens: 0,
+      shadowPromotionDurationMs: 0, publicationDurationMs: 0,
     };
     const holderCountUpdates = new Map();
     while (applyAttempts < maxApplyEvents) {
@@ -373,7 +428,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
         driftDeferred = Math.max(driftDeferred, excluded.length);
         break;
       }
-      const filter = pendingEventFilter(excluded, preferredTokenAddress) || {};
+      const filter = pendingEventFilter(excluded, preferredTokenAddress);
       const requestedEvents = Math.min(
         applyBatchSize, maxApplyEvents - applyAttempts
       );
@@ -388,7 +443,9 @@ function createRobinhoodHolderLiveRunner(options = {}) {
       applyAttempts += batch.attemptedEvents;
       appliedEvents += batch.appliedEvents;
       quarantinedTokens += quarantineMetric(applied);
-      rememberHolderCountUpdate(holderCountUpdates, applied);
+      const delivery = await deliverAppliedResult(applied, holderCountUpdates, timing);
+      holderCountPublished += delivery.holderCountPublished;
+      shadowPromotions += delivery.shadowPromotions;
       if (applied.status === 'applied') {
         driftEvidence.delete(applied.tokenAddress);
         preferredTokenAddress = batch.attemptedEvents >= requestedEvents
@@ -415,7 +472,9 @@ function createRobinhoodHolderLiveRunner(options = {}) {
           else tailRollbacks += 1;
           tailRollbackEvents += Number(repair.revertedEvents) || 0;
           driftEvidence.delete(applied.tokenAddress);
-          rememberHolderCountUpdate(holderCountUpdates, repair);
+          holderCountPublished += await publishResult(
+            repair, holderCountUpdates, timing
+          );
           break;
         }
         if (repair.status === 'repaired' && repair.insertedTransfers > 0) {
@@ -455,6 +514,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
       appliedEvents, driftedTokens, applyAttempts, reachedIdle,
       driftSuspicions, receiptRecoveries, driftDeferred, holderCountUpdates,
       tailRollbacks, tailRollbackEvents, baselineRequeues, quarantinedTokens, timing,
+      shadowPromotions, holderCountPublished,
     };
   }
 
@@ -488,23 +548,18 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     const drainStartedAt = measureMs();
     const drained = await drainPendingEvents(maxApplyEvents, applyBatchSize);
     const drainDurationMs = elapsedMs(drainStartedAt);
-    const promotionStartedAt = measureMs();
-    const promoted = await withHolderErrorContext(
-      () => ledger.promoteReadyShadowTokens({ limit: maxApplyEvents }),
-      'shadow_promotion'
-    );
-    const shadowPromotionDurationMs = elapsedMs(promotionStartedAt);
+    const promoted = await promoteReadyShadows({ limit: maxApplyEvents }, drained.timing);
+    const promotedUpdates = new Map();
     for (const publication of promoted.publications) {
       rememberHolderCountUpdate(drained.holderCountUpdates, { publication });
+      promotedUpdates.set(publication.tokenAddress, publication);
     }
-    const publicationStartedAt = measureMs();
-    const holderCountPublished = await withHolderErrorContext(
-      () => publishCountUpdates(
-        publishHolderCounts, drained.holderCountUpdates
-      ),
-      'holder_publication'
-    );
-    const publicationDurationMs = elapsedMs(publicationStartedAt);
+    const holderCountPublished = drained.holderCountPublished
+      + await publishCommittedUpdates(
+        promotedUpdates, drained.timing
+      );
+    const shadowPromotions = drained.shadowPromotions
+      + (Number(promoted.promotedTokens) || 0);
     const totalDurationMs = elapsedMs(totalStartedAt);
     const applyTiming = drained.timing;
     const timing = Object.freeze({
@@ -523,8 +578,10 @@ function createRobinhoodHolderLiveRunner(options = {}) {
       drainOverheadDurationMs: Math.max(
         0, drainDurationMs - applyTiming.applyCallDurationMs
           - applyTiming.driftRepairDurationMs - applyTiming.selectionDurationMs
+          - applyTiming.shadowPromotionDurationMs - applyTiming.publicationDurationMs
       ),
-      shadowPromotionDurationMs, publicationDurationMs,
+      shadowPromotionDurationMs: applyTiming.shadowPromotionDurationMs,
+      publicationDurationMs: applyTiming.publicationDurationMs,
       appliedEventsPerSecond: totalDurationMs > 0
         ? Number((drained.appliedEvents * 1000 / totalDurationMs).toFixed(2)) : 0,
       configuredBatchSize: applyBatchSize, maxApplyEvents,
@@ -537,7 +594,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
       tailRollbacks: drained.tailRollbacks, tailRollbackEvents: drained.tailRollbackEvents,
       baselineRequeues: drained.baselineRequeues,
       quarantinedTokens: drained.quarantinedTokens,
-      shadowPromotions: Number(promoted.promotedTokens) || 0,
+      shadowPromotions,
       holderCountUpdates: drained.holderCountUpdates.size, holderCountPublished,
       applyBudgetExhausted: !drained.reachedIdle && drained.applyAttempts === maxApplyEvents,
       timing,

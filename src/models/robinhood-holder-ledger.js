@@ -1114,7 +1114,12 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
         throw stale;
       }
       const applied = await commitAppliedPrefix(client, computed);
-      if (!computed.suspicion) return applied;
+      if (!computed.suspicion) {
+        return Object.freeze({
+          ...applied,
+          tokenDrained: rows.length < maxEvents,
+        });
+      }
       const result = {
         ...computed.suspicion,
         appliedEvents: computed.journalRows.length,
@@ -1130,6 +1135,8 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
   async function promoteReadyShadowTokens(input = {}) {
     const limit = nonNegativeInteger(input.limit ?? 5000, 'shadowPromotion.limit');
     if (limit < 1 || limit > 50_000) throw new Error('shadowPromotion.limit is invalid');
+    const tokenAddress = input.tokenAddress == null
+      ? null : hex(input.tokenAddress, 20, 'shadowPromotion.tokenAddress');
     return withTransaction(database, async (client) => {
       await lockReorgFence(client, 'shared');
       const cursorResult = await client.query(
@@ -1149,6 +1156,7 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
            SELECT state.token_address
              FROM robinhood_holder_token_states state
             WHERE state.chain = 'robinhood' AND state.ledger_status = 'shadow'
+              AND ($5::varchar IS NULL OR state.token_address = $5)
               AND state.deployment_block IS NOT NULL
               AND state.deployment_block < $1::bigint
               AND NOT EXISTS (
@@ -1169,7 +1177,7 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
             AND state.ledger_status = 'shadow'
           RETURNING state.token_address, state.holder_count, state.version,
                     state.updated_at, state.live_through_block, state.live_through_hash`,
-        [cursor.next_block, cursor.checkpoint_block, cursor.checkpoint_hash, limit]
+        [cursor.next_block, cursor.checkpoint_block, cursor.checkpoint_hash, limit, tokenAddress]
       );
       return Object.freeze({
         status: result.rowCount ? 'promoted' : 'idle',
@@ -1514,8 +1522,9 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
         WHERE state.chain = 'robinhood'
           AND state.ledger_status IN ('shadow', 'live')
           AND NOT (state.token_address = ANY($1::varchar[]))
-        ORDER BY pending.block_number, pending.transaction_index, pending.log_index,
-                 state.token_address
+        ORDER BY pending.block_number DESC, pending.transaction_index DESC,
+                 pending.log_index DESC,
+                 (state.ledger_status = 'live') DESC, state.token_address
         LIMIT $2::int`,
       [excluded, limit]
     );

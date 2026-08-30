@@ -61,6 +61,11 @@ function harness(
     promoteReadyShadowTokens: async (input) => {
       calls.push(['promote-shadows', input]);
       if (options.shadowPromotion instanceof Error) throw options.shadowPromotion;
+      if (input.tokenAddress) {
+        return options.targetedShadowPromotions?.shift() || {
+          status: 'idle', promotedTokens: 0, publications: [],
+        };
+      }
       return options.shadowPromotion || {
         status: 'idle', promotedTokens: 0, publications: [],
       };
@@ -566,29 +571,63 @@ describe('Robinhood holder live runner', () => {
     assert.equal(blocked.calls.some(([name]) => name === 'handoff'), false);
   });
 
-  it('coalesces committed live count changes per token before publishing', async () => {
+  it('publishes each committed live batch without waiting for the drain to finish', async () => {
     const published = [];
     const first = { tokenAddress: `0x${'a'.repeat(40)}`, holderCount: '10' };
     const latest = { ...first, holderCount: '11', ledgerVersion: '2' };
     const other = { tokenAddress: `0x${'b'.repeat(40)}`, holderCount: '4' };
-    const context = harness({
-      status: 'captured', transfers: 3, nextBlock: '106', safeHead: '105',
-    }, [
+    const applyResults = [
       { status: 'applied', publication: first },
       { status: 'applied', publication: latest },
       { status: 'applied', publication: other },
       { status: 'idle' },
-    ], { status: 'idle' }, async (updates) => {
+    ];
+    const context = harness({
+      status: 'captured', transfers: 3, nextBlock: '106', safeHead: '105',
+    }, applyResults, { status: 'idle' }, async (updates) => {
+      assert.equal(applyResults.length > 0, true);
       published.push(updates);
       return updates.length;
     });
 
     const result = await context.runner.runOnce();
 
-    assert.deepEqual(published, [[latest, other]]);
+    assert.deepEqual(published, [[first], [latest], [other]]);
     assert.equal(result.holderCountUpdates, 2);
-    assert.equal(result.holderCountPublished, 2);
+    assert.equal(result.holderCountPublished, 3);
     assert.equal(context.calls.at(-1)[0], 'promote-shadows');
+  });
+
+  it('promotes and publishes a newly drained shadow token immediately', async () => {
+    const tokenAddress = `0x${'c'.repeat(40)}`;
+    const publication = {
+      tokenAddress, holderCount: '17', ledgerVersion: '4',
+      observedAt: '2026-08-30T10:00:00.000Z', liveThroughBlock: '200',
+      liveThroughHash: `0x${'d'.repeat(64)}`,
+    };
+    const published = [];
+    const context = harness({
+      status: 'idle', transfers: 0, nextBlock: '201', safeHead: '200',
+    }, [{
+      status: 'applied', tokenAddress, appliedEvents: 3, attemptedEvents: 3,
+      tokenDrained: true,
+    }, { status: 'idle' }], { status: 'idle' }, async (updates) => {
+      published.push(updates);
+      return updates.length;
+    }, { targetedShadowPromotions: [{
+      status: 'promoted', promotedTokens: 1, publications: [publication],
+    }] });
+
+    const result = await context.runner.applyOnce({
+      maxApplyEvents: 10, applyBatchSize: 10,
+    });
+
+    assert.equal(result.shadowPromotions, 1);
+    assert.equal(result.holderCountPublished, 1);
+    assert.deepEqual(published, [[publication]]);
+    assert.deepEqual(context.calls.find(([name, input]) => (
+      name === 'promote-shadows' && input.tokenAddress
+    )), ['promote-shadows', { limit: 1, tokenAddress }]);
   });
 
   it('publishes locally verified shadow promotions without Blockscout', async () => {

@@ -1520,10 +1520,16 @@ portanto o cursor live pode avançar enquanto um lote é aplicado. Rewind de reo
 recuperações de drift e quarentena usam o mesmo fence exclusivo e esperam operações
 normais terminarem antes de alterar journal ou balances; o apply não mantém mais
 `FOR UPDATE` no cursor durante o lote. Antes do drain, o apply lista os tokens
-`shadow/live` que possuem pendência por probes no índice parcial da stage 121,
-ordenados pela primeira posição canônica de cada token. O drain usa então somente
+`shadow/live` que possuem pendência por probes no índice parcial da stage 121.
+Tokens cuja primeira pendência está mais próxima do head vêm primeiro; assim um
+catch-up histórico volumoso não segura as atualizações correntes dos demais. A
+ordem canônica continua obrigatória dentro de cada token. O drain usa então somente
 o caminho indexado por token e mantém afinidade enquanto o lote vier cheio; lote
-parcial já prova que aquele token foi drenado e evita uma consulta vazia adicional.
+parcial prova que aquele token foi drenado, promove imediatamente um `shadow`
+e evita uma consulta vazia adicional. Cada lote live commitado publica o novo
+holder count imediatamente, sem aguardar o budget inteiro do tick; o mapa do tick
+continua coalescendo somente a contabilidade e a publicação final de promoções
+residuais.
 Assim eventos `missing/backfilling` não são reescaneados para escolher cada token.
 O `lastResult.timing` da lease do apply
 separa duração total, drain, chamadas do ledger, reparo de drift, promoção shadow,
