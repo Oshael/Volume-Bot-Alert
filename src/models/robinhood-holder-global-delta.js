@@ -96,8 +96,6 @@ function summary(row) {
     startBlock: row.start_block == null ? null : String(row.start_block),
     safeHead: row.safe_head == null ? null : String(row.safe_head),
     scanBlocks: row.scan_blocks == null ? null : String(row.scan_blocks),
-    balanceRows: Number(row.balance_rows),
-    journalEvents: Number(row.journal_events),
   });
 }
 
@@ -119,20 +117,7 @@ function createRobinhoodHolderGlobalDeltaRepository(options = {}) {
               impact.adopted_backfilling_tokens, impact.start_block,
               cursor.safe_head,
               CASE WHEN impact.start_block IS NULL OR cursor.safe_head IS NULL THEN NULL
-                ELSE GREATEST(cursor.safe_head - impact.start_block + 1, 0) END AS scan_blocks,
-              (SELECT COALESCE(SUM((
-                 SELECT COUNT(*) FROM robinhood_holder_balances balance
-                  WHERE balance.chain = $1 AND balance.token_address = item.token_address
-               )), 0) FROM candidates item)::bigint AS balance_rows,
-              (SELECT COALESCE(SUM(
-                 (SELECT COUNT(*) FROM robinhood_holder_transfer_journal journal
-                   WHERE journal.chain = $1 AND journal.token_address = item.token_address
-                     AND journal.applied = FALSE)
-                 +
-                 (SELECT COUNT(*) FROM robinhood_holder_transfer_journal journal
-                   WHERE journal.chain = $1 AND journal.token_address = item.token_address
-                     AND journal.applied = TRUE)
-               ), 0) FROM candidates item)::bigint AS journal_events
+                ELSE GREATEST(cursor.safe_head - impact.start_block + 1, 0) END AS scan_blocks
          FROM impact
          LEFT JOIN robinhood_holder_cursors cursor
            ON cursor.chain = $1 AND cursor.stream = 'live'`,

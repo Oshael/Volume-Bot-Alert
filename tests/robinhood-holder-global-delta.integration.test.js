@@ -97,17 +97,14 @@ describe('Robinhood holder global delta persistence', () => {
       assert.deepEqual(preview, {
         candidateTokens: 2, unseededTokens: 1, adoptedBackfillingTokens: 1,
         startBlock: '100', safeHead: '1000', scanBlocks: '901',
-        balanceRows: 1, journalEvents: 1,
       });
-      assert.match(previewQueries[0], /journal\.applied = FALSE/);
-      assert.match(previewQueries[0], /journal\.applied = TRUE/);
-      assert.doesNotMatch(previewQueries[0], /INNER JOIN candidates item/);
+      assert.doesNotMatch(previewQueries[0], /robinhood_holder_balances/);
+      assert.doesNotMatch(previewQueries[0], /robinhood_holder_transfer_journal/);
       assert.deepEqual(await repository.previewRun({
         catalogCutoff: '2026-08-12T00:00:00Z', includeUnseeded: false,
       }), {
         candidateTokens: 1, unseededTokens: 0, adoptedBackfillingTokens: 1,
         startBlock: '100', safeHead: '1000', scanBlocks: '901',
-        balanceRows: 1, journalEvents: 1,
       });
       assert.deepEqual(await repository.previewRun({
         catalogCutoff: '2026-08-12T00:00:00Z',
@@ -115,14 +112,12 @@ describe('Robinhood holder global delta persistence', () => {
       }), {
         candidateTokens: 1, unseededTokens: 1, adoptedBackfillingTokens: 0,
         startBlock: '200', safeHead: '1000', scanBlocks: '801',
-        balanceRows: 0, journalEvents: 0,
       });
       assert.deepEqual(await repository.previewRun({
         catalogCutoff: '2026-08-12T00:00:00Z', maximumGapBlocks: 850,
       }), {
         candidateTokens: 1, unseededTokens: 1, adoptedBackfillingTokens: 0,
         startBlock: '200', safeHead: '1000', scanBlocks: '801',
-        balanceRows: 0, journalEvents: 0,
       });
       assert.deepEqual(await repository.previewRun({
         catalogCutoff: '2026-08-14T00:00:00Z',
@@ -130,7 +125,6 @@ describe('Robinhood holder global delta persistence', () => {
       }), {
         candidateTokens: 1, unseededTokens: 1, adoptedBackfillingTokens: 0,
         startBlock: '200', safeHead: '1000', scanBlocks: '801',
-        balanceRows: 0, journalEvents: 0,
       });
 
       const created = await repository.createRun({
