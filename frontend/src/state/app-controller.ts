@@ -121,7 +121,7 @@ import {
   validateRegisterInput,
 } from './auth-flow-utils';
 import { validateInviteCode, type InviteValidationResponse } from '../services/api/invites';
-import { resolveApiBase } from '../services/api/base';
+import { isTransientApiError, resolveApiBase } from '../services/api/base';
 import {
   getApiRateLimitBackoffRemainingMs,
   isApiRateLimitBackoffError,
@@ -6839,6 +6839,7 @@ export function createAppController(): AppController {
 
   async function refreshAuthoritativeBackendAlertHistory(reason = 'manual') {
     const token = state.session.token;
+    const sessionEmail = state.session.email;
     if (!token || !isAuthenticatedSession()) {
       return;
     }
@@ -6848,6 +6849,13 @@ export function createAppController(): AppController {
         mode: 'all',
         limit: ALERTS_MAX_ENTRIES,
       });
+      if (
+        state.session.token !== token
+        || state.session.email !== sessionEmail
+        || !isAuthenticatedSession()
+      ) {
+        return;
+      }
       const events = payload.feeds.flatMap((feed) => feed.events || []);
       const backendAlerts = buildAuthoritativeBackendAlertEntries(events);
       const localOnlyAlerts = state.data.alerts.filter(isLocalOnlyAlertEntry);
@@ -12736,9 +12744,24 @@ export function createAppController(): AppController {
   }) {
     const session = await fetchCurrentSession();
     applySession(session.user, { deferWorkspaceSync: true });
-    await refreshAuthenticatedBootstrapState();
+    let bootstrapError: unknown = null;
+    try {
+      await refreshAuthenticatedBootstrapState();
+    } catch (error) {
+      if (!isTransientApiError(error)) {
+        throw error;
+      }
+      bootstrapError = error;
+      console.warn('[AppController] Authenticated session restored with deferred workspace sync:',
+        error instanceof Error ? error.message : error);
+    }
     applyAuthenticatedRestoreIntents(options);
-    setNotice(getAuthenticatedRestoreNotice(options));
+    if (bootstrapError) {
+      setNotice(AUTH_NOTICE_SESSION_RESTORED);
+      setError('Your session is still active, but workspace sync is temporarily rate-limited. It will retry when the API is available.');
+    } else {
+      setNotice(getAuthenticatedRestoreNotice(options));
+    }
   }
 
   async function handlePreAccessRestore(options: {

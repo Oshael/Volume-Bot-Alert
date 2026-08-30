@@ -928,7 +928,10 @@ async function installApiFixtures(page, unexpectedRequests, fixtures = API_FIXTU
       await route.fulfill({ status: 404, json: { error: `Missing smoke fixture for ${key}` } });
       return;
     }
-    await route.fulfill({ status: 200, json: fixture });
+    const status = Number(fixture.__status || 200);
+    const json = { ...fixture };
+    delete json.__status;
+    await route.fulfill({ status, json });
   });
 }
 
@@ -983,6 +986,92 @@ test('links login support directly to the official Discord', async ({ page }) =>
   await expect(supportLink).toBeVisible();
   await expect(supportLink).toHaveAttribute('href', 'https://discord.gg/2pjQ5BVgNP');
   await expect(page.getByRole('button', { name: /access help/i })).toHaveCount(0);
+});
+
+test('keeps an authenticated session when workspace bootstrap is rate-limited', async ({ page }) => {
+  const fixtures = {
+    ...API_FIXTURES,
+    'GET /api/config': {
+      __status: 429,
+      error: 'Too many requests, please try again later',
+    },
+  };
+  const diagnostics = await openAuthenticatedWorkspace(page, fixtures);
+
+  await expect(page.locator('.workspace-userbar')).toContainText('smoke_user');
+  await expect(page.locator('.legacy-login-submit')).toHaveCount(0);
+  await expect(page.getByText(/session is still active, but workspace sync is temporarily rate-limited/i))
+    .toBeVisible();
+  expect(diagnostics.apiRequests.some((url) => (
+    new URL(url).pathname === '/api/billing/plans'
+  ))).toBe(false);
+  expect(diagnostics.pageErrors).toEqual([]);
+});
+
+test('does not play late alert history after session restore falls back to login', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__alertAudioStarts = 0;
+    class FakeAudioContext {
+      constructor() {
+        this.currentTime = 0;
+        this.destination = {};
+        this.state = 'running';
+      }
+
+      createOscillator() {
+        return {
+          connect() {}, frequency: { setValueAtTime() {} },
+          start() { window.__alertAudioStarts += 1; }, stop() {}, type: 'sine',
+        };
+      }
+
+      createGain() {
+        return {
+          connect() {},
+          gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} },
+        };
+      }
+
+      async close() { this.state = 'closed'; }
+      async resume() { this.state = 'running'; }
+    }
+    window.AudioContext = FakeAudioContext;
+  });
+
+  const fixtures = {
+    ...API_FIXTURES,
+    'GET /api/config': { __status: 401, error: 'Authentication required' },
+    'GET /api/pre-access/me': { __status: 401, error: 'Invalid pre-access session' },
+    'GET /api/pre-access/billing/state': { __status: 401, error: 'Invalid pre-access session' },
+    'GET /api/billing/plans': {
+      enabled: false, provider: 'none', providerReady: false, providerMocked: false, plans: [],
+    },
+    'GET /api/dashboard/alert-feeds': async () => {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      return {
+        generatedAt: '2026-08-30T02:00:00.000Z', mode: 'all', count: 1,
+        feeds: [{
+          ruleKey: 'monitored-vol', kind: 'monitored-vol', count: 1,
+          events: [{
+            id: 999, chain: 'solana', kind: 'monitored-vol', ruleKey: 'monitored-vol',
+            address: 'So11111111111111111111111111111111111111112', symbol: 'LATE',
+            label: 'Late alert', triggeredAt: '2026-08-30T01:59:59.000Z',
+          }],
+        }],
+      };
+    },
+  };
+  const unexpectedRequests = [];
+  const pageErrors = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  await installSocketFixture(page, null);
+  await installApiFixtures(page, unexpectedRequests, fixtures);
+  await page.goto('/alerts');
+
+  await expect(page.locator('.legacy-login-submit')).toBeVisible();
+  await page.waitForTimeout(400);
+  expect(await page.evaluate(() => window.__alertAudioStarts)).toBe(0);
+  expect(pageErrors).toEqual([]);
 });
 
 test('shows shared workspace chrome in Alerts and Radar', async ({ page }) => {

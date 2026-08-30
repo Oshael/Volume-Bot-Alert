@@ -88,6 +88,26 @@ export interface ApiFetchOptions extends RequestInit {
   rateLimitScope?: ApiRateLimitScope;
 }
 
+export class ApiResponseError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'ApiResponseError';
+    this.status = status;
+  }
+}
+
+export function isTransientApiError(error: unknown) {
+  if (error instanceof ApiRateLimitBackoffError) {
+    return true;
+  }
+  if (error instanceof ApiResponseError) {
+    return error.status === 408 || error.status === 429 || error.status >= 500;
+  }
+  return error instanceof Error && error.message.startsWith('Network error:');
+}
+
 function emitApiResponseDebug(path: string, init: RequestInit | undefined, metadata: ApiResponseMetadata) {
   if (typeof window === 'undefined' || !shouldEmitApiResponseDebug(metadata)) {
     return;
@@ -160,7 +180,7 @@ async function throwApiResponseError(
   if (response.status === 429 && rateLimitScope) {
     throw new ApiRateLimitBackoffError(rateLimitScope, rateLimitBackoffMs, message);
   }
-  throw new Error(message);
+  throw new ApiResponseError(response.status, message);
 }
 
 export async function apiFetch<T>(path: string, init?: ApiFetchOptions): Promise<T> {

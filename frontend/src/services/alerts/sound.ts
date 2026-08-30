@@ -286,3 +286,18 @@ export async function primeAlertAudio() {
     // Ignore autoplay unlock failures; playback can retry later.
   }
 }
+
+export function stopAlertSoundPlayback() {
+  for (const audio of activeCustomAudioElements) {
+    audio.pause();
+    audio.removeAttribute('src');
+    audio.load();
+  }
+  activeCustomAudioElements.clear();
+
+  const context = audioContext;
+  audioContext = null;
+  if (context && context.state !== 'closed') {
+    void context.close().catch(() => {});
+  }
+}

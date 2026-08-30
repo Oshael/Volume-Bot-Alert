@@ -895,6 +895,15 @@ https://api.trendscope.pro/api/auth/social/discord/login/callback
 Esses endereços precisam coincidir exatamente com os cadastrados nos consoles
 Google e Discord.
 
+No refresh do frontend, `/api/auth/me` é a autoridade para restaurar a sessão.
+Depois que ele confirma o cookie, falhas transitórias de rede ou HTTP 408/429/5xx
+no carregamento de config/workspace não convertem a sessão em anônima: a UI mantém
+o usuário autenticado, informa que o sync foi adiado e tenta novamente no refresh
+de foreground. Somente falha real de autenticação segue para pre-access/login.
+Respostas tardias do histórico de alertas são descartadas se a sessão mudou; áudio
+roda apenas com sessão autenticada e runtime ativo, e é interrompido ao sair desse
+estado.
+
 ## 10. Token gate
 
 O lançamento atual não depende de assinatura. O acesso será token-gated.

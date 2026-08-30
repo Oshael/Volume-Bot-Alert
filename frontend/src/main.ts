@@ -1,6 +1,6 @@
 import './styles/local-fonts.css';
 import './styles/app.css';
-import { playAlertSound, playMigrateSound, primeAlertAudio } from './services/alerts/sound';
+import { playAlertSound, playMigrateSound, primeAlertAudio, stopAlertSoundPlayback } from './services/alerts/sound';
 import { maybeNotifyAlert, resetBrowserNotificationSession } from './services/alerts/browser-notifications';
 import { updateLivePresence } from './services/socket/client';
 import { isChainSelectedForSurface, isProfileAuthPanel, type AppState } from './state/app-state';
@@ -244,6 +244,13 @@ function syncAudioSideEffects(state: AppState) {
       playedPumpToastIds.delete(id);
     }
   }
+}
+
+function syncAuthenticatedAudioSideEffects(state: AppState) {
+  if (state.session.status !== 'authenticated' || state.runtime.mode !== 'active') {
+    return;
+  }
+  syncAudioSideEffects(state);
 }
 
 function syncBrowserNotificationSideEffects(state: AppState) {
@@ -905,9 +912,14 @@ controller.subscribe((state, dirtyRegions) => {
   const currentRouteKey = getCurrentRouteKey();
   const previous = syncObservedState(state, currentRouteKey);
   const sessionJustBecameAuthenticated = previous.sessionStatus !== 'authenticated' && state.session.status === 'authenticated';
+  const sessionJustBecameInactive = previous.sessionStatus === 'authenticated'
+    && state.session.status !== 'authenticated';
   syncLivePresence(state);
+  if (sessionJustBecameInactive) {
+    stopAlertSoundPlayback();
+  }
   primePlayedAlertsOnAuthentication(state, sessionJustBecameAuthenticated);
-  syncAudioSideEffects(state);
+  syncAuthenticatedAudioSideEffects(state);
   syncBrowserNotificationSideEffects(state);
 
   if (isDocumentHidden) {
@@ -997,7 +1009,7 @@ document.addEventListener('visibilitychange', () => {
   activeRootPointerGesture = false;
   suppressNextFocusFlush = false;
   if (latestState) {
-    syncAudioSideEffects(latestState);
+    syncAuthenticatedAudioSideEffects(latestState);
   }
   syncLivePresence(latestState, { force: true });
   refreshForegroundState({ force: hiddenDurationMs >= 5_000 });
