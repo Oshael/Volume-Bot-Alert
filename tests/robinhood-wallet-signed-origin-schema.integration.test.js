@@ -21,6 +21,7 @@ const TX = `0x${'b'.repeat(64)}`;
 const REPOSITORY_WALLET = `0x${'7'.repeat(40)}`;
 const BOOTSTRAP_WALLET = `0x${'6'.repeat(40)}`;
 const SAFE_HASH = `0x${'e'.repeat(64)}`;
+const LIVE_HASH = `0x${'f'.repeat(64)}`;
 
 function origin(blockNumber, transactionHash, overrides = {}) {
   return {
@@ -171,5 +172,35 @@ describe('Robinhood wallet signed origin schema', () => {
     });
     assert.deepEqual([completed.cursor.nextBlock, completed.cursor.lifecycleState],
       ['103', 'completed']);
+  });
+
+  it('hands completed seed coverage to LIVE and advances its moving frontier', async () => {
+    await cleanup();
+    const repository = createRobinhoodWalletSignedOriginCursorRepository({ database: db });
+    const plan = { stream: 'seed', originBlock: '100', originBlockHash: HASH,
+      safeHead: '101', safeHeadHash: SAFE_HASH };
+    await repository.createOrResume(plan);
+    const seed = await repository.commitBatch({ stream: 'seed', expectedVersion: 0,
+      expectedNextBlock: '100', origins: [], blocks: [
+        { number: '100', hash: HASH, blockTime: '2026-08-30T12:00:00Z' },
+        { number: '101', hash: SAFE_HASH, blockTime: '2026-08-30T12:00:01Z' },
+      ] });
+    assert.equal(seed.cursor.lifecycleState, 'completed');
+    const live = await repository.initializeLiveFromSeed();
+    assert.deepEqual([live.nextBlock, live.safeHead, live.lifecycleState],
+      ['102', '101', 'caught_up']);
+    const advanced = await repository.commitLiveBatch({ expectedVersion: 0,
+      expectedNextBlock: '102', safeHead: '103', safeHeadHash: LIVE_HASH, origins: [],
+      blocks: [
+        { number: '102', hash: HASH, blockTime: '2026-08-30T12:00:02Z' },
+        { number: '103', hash: LIVE_HASH, blockTime: '2026-08-30T12:00:03Z' },
+      ] });
+    assert.deepEqual([advanced.cursor.nextBlock, advanced.cursor.safeHead,
+      advanced.cursor.lifecycleState], ['104', '103', 'caught_up']);
+    await assert.rejects(repository.commitLiveBatch({ expectedVersion: 1,
+      expectedNextBlock: '104', safeHead: '102', safeHeadHash: HASH, origins: [],
+      blocks: [{ number: '104', hash: HASH, blockTime: '2026-08-30T12:00:04Z' }],
+    }), (error) => error.code === 'persistent_reorg' && error.fatal === true);
+    assert.equal((await repository.loadCursor('live')).nextBlock, '104');
   });
 });

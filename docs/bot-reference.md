@@ -1913,6 +1913,10 @@ a `activation_at - 24 hours`, congela `head - confirmations`, mede full-blocks e
 recusa ETA acima de cinco horas. `-- --apply` cria ou retoma o cursor e processa
 todos os blocos em ordem, inclusive vazios; `--max-minutes` limita cada sessão.
 O comando não inicia worker LIVE nem habilita a classificação FRESH.
+Após o seed chegar a `completed`, o repository cria o cursor `live` exatamente
+em `seed.safe_head + 1`. O runner LIVE revalida checkpoint e regressão da frontier,
+lê no máximo 200 blocos contíguos por tick e move frontier/origens atomicamente.
+Ainda não há processo, lease ou listener que execute esse runner automaticamente.
 A Stage 179 persiste cada decisão em
 `robinhood_fresh_wallet_evaluations` e conclui a versão correspondente da fila
 na mesma transação. Resultado `fresh` cria ou atualiza somente a classificação

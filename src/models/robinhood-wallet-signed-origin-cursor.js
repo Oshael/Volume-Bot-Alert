@@ -49,6 +49,10 @@ function cursorConflict(message) {
   return Object.assign(new Error(message), { code: 'signed_origin_cursor_conflict' });
 }
 
+function reorgConflict(message) {
+  return Object.assign(new Error(message), { code: 'persistent_reorg', fatal: true });
+}
+
 function blocks(input, cursor) {
   if (!Array.isArray(input.blocks) || !input.blocks.length) {
     throw new Error('signed-origin batch must contain explicit blocks');
@@ -77,6 +81,24 @@ function assertFrozen(cursor, plan) {
       || cursor.safeHeadHash !== plan.safeHeadHash) {
     throw cursorConflict('signed-origin bootstrap frozen frontier diverged');
   }
+}
+
+function assertOrigins(values, cursor, acceptedBlocks) {
+  for (const origin of values || []) {
+    const block = BigInt(uint(origin.blockNumber, 'origin.blockNumber'));
+    const sourceBlock = acceptedBlocks.find((item) => BigInt(item.number) === block);
+    if (origin.sourceStream !== cursor.stream
+        || String(origin.coverageOriginBlock) !== cursor.originBlock
+        || !sourceBlock || hash(origin.blockHash, 'origin.blockHash') !== sourceBlock.hash
+        || new Date(origin.blockTime).toISOString() !== sourceBlock.blockTime) {
+      throw new Error('signed-origin evidence is outside the committed batch');
+    }
+  }
+}
+
+function liveBlocks(input, cursor, safeHead) {
+  const liveCursor = { ...cursor, safeHead, safeHeadHash: input.safeHeadHash };
+  return blocks(input, liveCursor);
 }
 
 function createRobinhoodWalletSignedOriginCursorRepository(options = {}) {
@@ -113,6 +135,43 @@ function createRobinhoodWalletSignedOriginCursorRepository(options = {}) {
     } finally { client.release(); }
   }
 
+  async function initializeLiveFromSeed() {
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      const seed = normalizeCursor((await client.query(`SELECT *
+        FROM robinhood_wallet_signed_origin_cursors
+        WHERE chain = $1 AND stream = 'seed' FOR UPDATE`, [CHAIN])).rows[0]);
+      if (!seed || seed.lifecycleState !== 'completed') {
+        throw Object.assign(new Error('signed-origin seed coverage is incomplete'), {
+          code: 'signed_origin_seed_incomplete',
+        });
+      }
+      await client.query(`INSERT INTO robinhood_wallet_signed_origin_cursors(
+        chain, stream, origin_block, origin_block_hash, next_block,
+        safe_head, safe_head_hash, checkpoint_block, checkpoint_hash,
+        checkpoint_timestamp, lifecycle_state
+      ) VALUES ($1, 'live', $2::bigint, $3, $4::bigint, $5::bigint, $6,
+        $7::bigint, $8, $9::timestamptz, 'caught_up')
+      ON CONFLICT (chain, stream) DO NOTHING`, [CHAIN, seed.originBlock,
+        seed.originBlockHash, seed.nextBlock, seed.safeHead, seed.safeHeadHash,
+        seed.checkpointBlock, seed.checkpointHash, seed.checkpointTimestamp]);
+      const live = normalizeCursor((await client.query(`SELECT *
+        FROM robinhood_wallet_signed_origin_cursors
+        WHERE chain = $1 AND stream = 'live' FOR UPDATE`, [CHAIN])).rows[0]);
+      if (!live || live.originBlock !== seed.originBlock
+          || live.originBlockHash !== seed.originBlockHash
+          || BigInt(live.nextBlock) < BigInt(seed.nextBlock)
+          || BigInt(live.safeHead) < BigInt(seed.safeHead)) {
+        throw cursorConflict('signed-origin LIVE cursor diverged from seed handoff');
+      }
+      await client.query('COMMIT');
+      return live;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {}); throw error;
+    } finally { client.release(); }
+  }
+
   async function commitBatch(input = {}) {
     const client = await database.getClient();
     try {
@@ -124,16 +183,7 @@ function createRobinhoodWalletSignedOriginCursorRepository(options = {}) {
         throw cursorConflict('signed-origin cursor changed before batch commit');
       }
       const acceptedBlocks = blocks(input, cursor);
-      for (const origin of input.origins || []) {
-        const block = BigInt(uint(origin.blockNumber, 'origin.blockNumber'));
-        const sourceBlock = acceptedBlocks.find((item) => BigInt(item.number) === block);
-        if (origin.sourceStream !== cursor.stream
-            || String(origin.coverageOriginBlock) !== cursor.originBlock
-            || !sourceBlock || hash(origin.blockHash, 'origin.blockHash') !== sourceBlock.hash
-            || new Date(origin.blockTime).toISOString() !== sourceBlock.blockTime) {
-          throw new Error('signed-origin evidence is outside the committed batch');
-        }
-      }
+      assertOrigins(input.origins, cursor, acceptedBlocks);
       const persisted = await origins.persistOrigins(input.origins || [], { client });
       const checkpoint = acceptedBlocks.at(-1);
       const nextBlock = (BigInt(checkpoint.number) + 1n).toString();
@@ -155,7 +205,49 @@ function createRobinhoodWalletSignedOriginCursorRepository(options = {}) {
     } finally { client.release(); }
   }
 
-  return Object.freeze({ commitBatch, createOrResume, loadCursor });
+
+  async function commitLiveBatch(input = {}) {
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      const cursor = await loadCursor('live', client, true);
+      if (!cursor || cursor.version !== Number(input.expectedVersion)
+          || cursor.nextBlock !== String(input.expectedNextBlock)
+          || !['running', 'caught_up'].includes(cursor.lifecycleState)) {
+        throw cursorConflict('signed-origin LIVE cursor changed before batch commit');
+      }
+      const safeHead = uint(input.safeHead, 'safeHead');
+      const safeHeadHash = hash(input.safeHeadHash, 'safeHeadHash');
+      if (BigInt(safeHead) < BigInt(cursor.safeHead)) {
+        throw reorgConflict('signed-origin LIVE safe frontier regressed');
+      }
+      const acceptedBlocks = liveBlocks(input, cursor, safeHead);
+      assertOrigins(input.origins, cursor, acceptedBlocks);
+      const persisted = await origins.persistOrigins(input.origins || [], { client });
+      const checkpoint = acceptedBlocks.at(-1);
+      const nextBlock = (BigInt(checkpoint.number) + 1n).toString();
+      const lifecycle = BigInt(nextBlock) > BigInt(safeHead) ? 'caught_up' : 'running';
+      const updated = (await client.query(`UPDATE robinhood_wallet_signed_origin_cursors SET
+        next_block = $3::bigint, safe_head = $4::bigint, safe_head_hash = $5,
+        checkpoint_block = $6::bigint, checkpoint_hash = $7,
+        checkpoint_timestamp = $8::timestamptz, lifecycle_state = $9,
+        last_error_code = NULL, last_error_message = NULL,
+        version = version + 1, updated_at = NOW()
+        WHERE chain = $1 AND stream = 'live' AND version = $2 RETURNING *`, [
+        CHAIN, cursor.version, nextBlock, safeHead, safeHeadHash, checkpoint.number,
+        checkpoint.hash, checkpoint.blockTime, lifecycle,
+      ])).rows[0];
+      if (!updated) throw cursorConflict('signed-origin LIVE cursor lost optimistic lock');
+      await client.query('COMMIT');
+      return Object.freeze({ cursor: normalizeCursor(updated), ...persisted,
+        blocksCommitted: acceptedBlocks.length });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {}); throw error;
+    } finally { client.release(); }
+  }
+
+  return Object.freeze({ commitBatch, commitLiveBatch, createOrResume,
+    initializeLiveFromSeed, loadCursor });
 }
 
 module.exports = { createRobinhoodWalletSignedOriginCursorRepository };
