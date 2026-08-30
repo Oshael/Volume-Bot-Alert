@@ -5070,6 +5070,86 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage178-robinhood-fresh-wallet-foundation',
+    name: 'Stage 178 Robinhood FRESH wallet foundation',
+    repair: 'node src/utils/db-init-stage178.js',
+    tables: [{
+      table: 'robinhood_fresh_wallet_activations',
+      columns: [
+        'chain', 'rule_version', 'classification_version', 'status', 'activation_at',
+        'activation_block', 'activation_block_hash', 'seed_cutoff_at',
+        'first_buy_source_through', 'first_buy_source_next_block', 'activated_at',
+        'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_fresh_wallet_activations_pkey',
+        includes: ['PRIMARY KEY', 'chain', 'rule_version'],
+      }, {
+        name: 'rh_fresh_wallet_activations_boundary_check',
+        includes: ['CHECK', '14 days', 'first_buy_source_next_block'],
+      }],
+    }, {
+      table: 'robinhood_fresh_wallet_seed_runs',
+      columns: [
+        'id', 'chain', 'rule_version', 'status', 'expected_token_count',
+        'expected_pair_count', 'completed_pair_count', 'started_at', 'finished_at',
+        'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_fresh_wallet_seed_runs_unique',
+        includes: ['UNIQUE', 'chain', 'rule_version'],
+      }, {
+        name: 'rh_fresh_wallet_seed_runs_lifecycle_check',
+        includes: ['CHECK', 'planned', 'running', 'completed', 'completed_pair_count'],
+      }],
+    }, {
+      table: 'robinhood_fresh_wallet_queue',
+      columns: [
+        'chain', 'token_address', 'wallet_address', 'rule_version', 'source_kind',
+        'seed_run_id', 'requested_version', 'completed_version', 'status',
+        'lease_owner', 'lease_until', 'attempt_count', 'next_attempt_at',
+        'last_error_code', 'last_error_message', 'completed_at', 'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_fresh_wallet_queue_pkey',
+        includes: ['PRIMARY KEY', 'chain', 'token_address', 'wallet_address', 'rule_version'],
+      }, {
+        name: 'rh_fresh_wallet_queue_source_check', includes: ['CHECK', 'seed', 'live'],
+      }, {
+        name: 'rh_fresh_wallet_queue_lifecycle_check',
+        includes: ['CHECK', 'pending', 'leased', 'complete', 'requested_version'],
+      }],
+      indexes: [{
+        name: 'idx_rh_fresh_wallet_queue_claim',
+        includes: ['next_attempt_at', 'updated_at'],
+      }, {
+        name: 'idx_rh_fresh_wallet_queue_lease', includes: ['lease_until', 'leased'],
+      }],
+    }, {
+      table: 'robinhood_fresh_wallet_token_coverage',
+      columns: [
+        'chain', 'token_address', 'rule_version', 'coverage_scope', 'status',
+        'status_reason', 'seed_run_id', 'required_pair_count', 'completed_pair_count',
+        'through_block_number', 'through_block_hash', 'observed_at', 'created_at',
+        'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_fresh_wallet_token_coverage_pkey',
+        includes: ['PRIMARY KEY', 'chain', 'token_address', 'rule_version'],
+      }, {
+        name: 'rh_fresh_wallet_token_coverage_contract_check',
+        includes: ['CHECK', 'seed', 'live', 'partial', 'ready', 'completed_pair_count'],
+      }, {
+        name: 'rh_fresh_wallet_token_coverage_frontier_check',
+        includes: ['CHECK', 'through_block_number', 'through_block_hash'],
+      }],
+      indexes: [{
+        name: 'idx_rh_fresh_wallet_token_coverage_status',
+        includes: ['chain', 'rule_version', 'status', 'coverage_scope', 'token_address'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

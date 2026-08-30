@@ -1848,6 +1848,19 @@ reativa os itens elegíveis e versiona a fila como `rh_holder_live_v1`, eliminan
 retry permanente de tokens que ainda não podem produzir anchor. Os dois triggers
 usam o mesmo advisory lock transacional por token: commits simultâneos de first-buy
 e holder são serializados, e o segundo sempre enxerga o primeiro sem polling.
+A Stage 178 prepara, sem ativar classificação ou RPC, a fundação durável de
+`FRESH` para a regra `rh_fresh_signed_v1`. A tabela
+`robinhood_fresh_wallet_activations` congela bloco/hash/horário da ativação,
+frontier da fonte de first-buy e `seed_cutoff_at` exatamente 14 dias antes; esses
+limites não podem ser editados depois do insert. Uma campanha única em
+`robinhood_fresh_wallet_seed_runs` contabiliza o seed, enquanto
+`robinhood_fresh_wallet_token_coverage` impede que cohort parcial seja marcado
+`ready`. First-buys commitados depois do bloco de ativação entram de forma
+event-driven em `robinhood_fresh_wallet_queue`; inserts anteriores não entram no
+live e pertencem exclusivamente ao seed congelado. A fila é idempotente para
+updates sem mudança, versiona mudança canônica e remove trabalho live se uma
+first-buy fora de ordem recuar para antes da ativação. A migration não cria a
+ativação, não popula o seed, não chama RPC e não publica tag, filtro ou métrica.
 A Stage 172 encadeia anchors commitados à fila token-scoped
 `robinhood_bundle_funding_live_queue`. Cada nova versão do anchor invalida uma
 lease antiga e incrementa `requested_version`; a conclusão só é aceita para essa

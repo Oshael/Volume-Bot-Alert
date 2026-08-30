@@ -17,19 +17,27 @@ const stage139 = require('../src/utils/db-init-stage139');
 const stage149 = require('../src/utils/db-init-stage149');
 const stage171 = require('../src/utils/db-init-stage171');
 const stage177 = require('../src/utils/db-init-stage177');
+const stage178 = require('../src/utils/db-init-stage178');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const TOKEN = `0x${'1'.repeat(40)}`;
 const WALLET = `0x${'2'.repeat(40)}`;
+const LIVE_WALLET = `0x${'b'.repeat(40)}`;
 const POOL = `0x${'3'.repeat(40)}`;
 const QUOTE = `0x${'4'.repeat(40)}`;
 const HASH = `0x${'5'.repeat(64)}`;
 const TX = `0x${'6'.repeat(64)}`;
+const LIVE_TX = `0x${'c'.repeat(64)}`;
+const FORK_HASH = `0x${'d'.repeat(64)}`;
 const MARKET = `robinhood:uniswap-v3:${POOL}`;
 const PARTITION = 'robinhood_wallet_swaps_first_buy_test';
 const SWAP_HASHES = [7, 8, 9, 11].map((digit) => `0x${digit.toString(16).repeat(64)}`);
 
 async function cleanup() {
+  await db.query('DELETE FROM robinhood_fresh_wallet_token_coverage WHERE token_address = $1', [TOKEN]);
+  await db.query('DELETE FROM robinhood_fresh_wallet_queue WHERE token_address = $1', [TOKEN]);
+  await db.query("DELETE FROM robinhood_fresh_wallet_seed_runs WHERE chain = 'robinhood'");
+  await db.query("DELETE FROM robinhood_fresh_wallet_activations WHERE chain = 'robinhood'");
   await db.query('DELETE FROM robinhood_launch_anchor_outbox WHERE token_address = $1', [TOKEN]);
   await db.query('DELETE FROM robinhood_wallet_token_first_buys WHERE token_address = $1', [TOKEN]);
   await db.query('DELETE FROM robinhood_holder_token_states WHERE token_address = $1', [TOKEN]);
@@ -51,6 +59,7 @@ describe('Robinhood wallet-token first buy schema integration', () => {
     await stage149.init({ closePool: false });
     await stage171.init({ closePool: false });
     await stage177.init({ closePool: false });
+    await stage178.init({ closePool: false });
     await stage149.init({ closePool: false });
     await db.query(
       `CREATE TABLE IF NOT EXISTS ${PARTITION}
@@ -117,6 +126,70 @@ describe('Robinhood wallet-token first buy schema integration', () => {
          'uniswap-v3', 'unknown-market', 'swap_only_v1')`,
       [TOKEN, `0x${'7'.repeat(40)}`, TX, HASH]
     ), /rh_wallet_token_first_buys_pool_fkey/);
+  });
+
+  it('freezes activation and queues only idempotent post-activation work', async () => {
+    await db.query(`INSERT INTO robinhood_fresh_wallet_activations (
+      status, activation_at, activation_block, activation_block_hash,
+      seed_cutoff_at, first_buy_source_through, first_buy_source_next_block, activated_at
+    ) VALUES ('active', '2026-08-22T12:01:00Z', 20, $1,
+      '2026-08-08T12:01:00Z', '2026-08-22T12:01:00Z', 21, NOW())`, [HASH]);
+    assert.equal((await db.query(
+      'SELECT COUNT(*)::integer count FROM robinhood_fresh_wallet_queue'
+    )).rows[0].count, 0);
+
+    await db.query(`INSERT INTO robinhood_wallet_token_first_buys (
+      token_address, wallet_address, transaction_hash, transaction_index,
+      action_index, block_number, block_hash, block_time, protocol,
+      market_key, volume_usd, source_parser_version
+    ) VALUES ($1, $2, $3, 2, 0, 21, $4, '2026-08-22T12:02:00Z',
+      'uniswap-v3', $5, 10, 'swap_only_v1')`,
+    [TOKEN, LIVE_WALLET, LIVE_TX, HASH, MARKET]);
+    assert.deepEqual((await db.query(`SELECT source_kind, requested_version::integer
+      FROM robinhood_fresh_wallet_queue WHERE token_address = $1 AND wallet_address = $2`,
+    [TOKEN, LIVE_WALLET])).rows[0], { source_kind: 'live', requested_version: 1 });
+
+    await db.query(`UPDATE robinhood_wallet_token_first_buys SET block_hash = block_hash
+      WHERE token_address = $1 AND wallet_address = $2`, [TOKEN, LIVE_WALLET]);
+    assert.equal((await db.query(`SELECT requested_version::integer value
+      FROM robinhood_fresh_wallet_queue WHERE token_address = $1 AND wallet_address = $2`,
+    [TOKEN, LIVE_WALLET])).rows[0].value, 1);
+    await db.query(`UPDATE robinhood_wallet_token_first_buys SET block_hash = $3
+      WHERE token_address = $1 AND wallet_address = $2`, [TOKEN, LIVE_WALLET, FORK_HASH]);
+    assert.equal((await db.query(`SELECT requested_version::integer value
+      FROM robinhood_fresh_wallet_queue WHERE token_address = $1 AND wallet_address = $2`,
+    [TOKEN, LIVE_WALLET])).rows[0].value, 2);
+
+    await db.query(`UPDATE robinhood_wallet_token_first_buys
+      SET block_number = 19, block_time = '2026-08-22T12:00:00Z'
+      WHERE token_address = $1 AND wallet_address = $2`, [TOKEN, LIVE_WALLET]);
+    assert.equal((await db.query(`SELECT COUNT(*)::integer count
+      FROM robinhood_fresh_wallet_queue WHERE token_address = $1 AND wallet_address = $2`,
+    [TOKEN, LIVE_WALLET])).rows[0].count, 0);
+    await assert.rejects(db.query(`UPDATE robinhood_fresh_wallet_activations
+      SET activation_block = 19 WHERE chain = 'robinhood'`),
+    /FRESH activation boundary is immutable/);
+  });
+
+  it('refuses complete seed and ready partial coverage without complete counts', async () => {
+    const run = await db.query(`INSERT INTO robinhood_fresh_wallet_seed_runs (
+      expected_token_count, expected_pair_count
+    ) VALUES (1, 1) RETURNING id`);
+    await assert.rejects(db.query(`UPDATE robinhood_fresh_wallet_seed_runs
+      SET expected_pair_count = 2 WHERE id = $1`, [run.rows[0].id]),
+    /FRESH seed cohort is immutable/);
+    await assert.rejects(db.query(`UPDATE robinhood_fresh_wallet_seed_runs SET
+      status = 'completed', started_at = NOW(), finished_at = NOW() WHERE id = $1`,
+    [run.rows[0].id]), /rh_fresh_wallet_seed_runs_lifecycle_check/);
+    await db.query(`INSERT INTO robinhood_fresh_wallet_token_coverage (
+      token_address, coverage_scope, status, status_reason,
+      required_pair_count, completed_pair_count
+    ) VALUES ($1, 'partial', 'pending', 'outside_seed_window', 1, 0)`, [TOKEN]);
+    await assert.rejects(db.query(`UPDATE robinhood_fresh_wallet_token_coverage SET
+      status = 'ready', completed_pair_count = 1,
+      through_block_number = 20, through_block_hash = $2
+      WHERE token_address = $1`, [TOKEN, HASH]),
+    /rh_fresh_wallet_token_coverage_contract_check/);
   });
 
   it('replaces out-of-order facts and fails closed on missing positions', async () => {
