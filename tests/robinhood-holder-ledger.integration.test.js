@@ -68,6 +68,12 @@ describe('Robinhood holder ledger persistence', () => {
     try {
       await client.query(`CREATE TEMP TABLE robinhood_holder_transfer_journal
         (LIKE public.robinhood_holder_transfer_journal INCLUDING ALL)`);
+      await client.query(`CREATE TEMP TABLE robinhood_holder_hot_queue
+        (LIKE public.robinhood_holder_hot_queue INCLUDING ALL)`);
+      await client.query(`CREATE TRIGGER rh_holder_journal_hot_enqueue_temp
+        AFTER INSERT ON robinhood_holder_transfer_journal
+        REFERENCING NEW TABLE AS inserted_holder_transfers
+        FOR EACH STATEMENT EXECUTE FUNCTION public.enqueue_robinhood_holder_hot()`);
       await client.query(`CREATE TEMP TABLE robinhood_holder_cursors
         (LIKE public.robinhood_holder_cursors INCLUDING ALL)`);
       await client.query(`CREATE TEMP TABLE robinhood_holder_balances
@@ -131,11 +137,17 @@ describe('Robinhood holder ledger persistence', () => {
         [HASH_A, HASH_8, TOKEN_3, ZERO_ADDRESS, BOB]
       );
       assert.deepEqual(
+        await repository.listHotPendingTokenAddresses({ limit: 10 }), [TOKEN_3, TOKEN]
+      );
+      assert.deepEqual(
         await repository.listPendingTokenAddresses({ limit: 10 }),
         [TOKEN_3, TOKEN]
       );
       await client.query(
         `DELETE FROM robinhood_holder_transfer_journal WHERE transaction_hash = $1`, [HASH_8]
+      );
+      await client.query(
+        `DELETE FROM robinhood_holder_hot_queue WHERE token_address = $1`, [TOKEN_3]
       );
       await client.query(
         `UPDATE robinhood_holder_token_states SET ledger_status = 'shadow'
@@ -148,6 +160,9 @@ describe('Robinhood holder ledger persistence', () => {
       assert.deepEqual(await repository.applyNextPendingEvent({ maxEvents: 3 }), {
         status: 'applied', tokenAddress: TOKEN, holderCount: '2', holderDelta: 0,
         appliedEvents: 2, attemptedEvents: 2, tokenDrained: true,
+      });
+      assert.deepEqual(await repository.getHotQueueFreshness(), {
+        pendingTokens: 0, worstLagBlocks: 0, oldestAgeMs: 0,
       });
       await client.query(
         `INSERT INTO robinhood_holder_token_states

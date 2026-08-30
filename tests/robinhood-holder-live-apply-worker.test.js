@@ -23,8 +23,13 @@ describe('Robinhood holder live apply worker', () => {
   it('drains independently on its own bounded schedule', async () => {
     const clock = scheduler();
     const calls = [];
+    const listenerCalls = [];
     const worker = createRobinhoodHolderLiveApplyWorker({
       ...clock,
+      listenerFactory: (input) => ({
+        start: async () => listenerCalls.push(['start', input.channel]),
+        stop: async () => listenerCalls.push(['stop']),
+      }),
       env: { ROBINHOOD_RPC_URL: 'http://127.0.0.1:8547' },
       runtimeFactory: async () => ({
         providerName: 'robinhood-holder-live-apply',
@@ -46,16 +51,45 @@ describe('Robinhood holder live apply worker', () => {
 
     assert.equal(worker.start({
       enabled: true, intervalMs: 75, maxApplyEvents: 25, applyBatchSize: 20,
+      hotApplyBatchSize: 10, maxDurationMs: 1500,
     }), true);
     await clock.scheduled[0].callback();
     assert.equal(clock.scheduled[1].delayMs, 75);
     assert.equal(calls[0].maxApplyEvents, 25);
     assert.equal(calls[0].applyBatchSize, 20);
+    assert.equal(calls[0].hotApplyBatchSize, 10);
+    assert.equal(calls[0].maxDurationMs, 1500);
+    assert.deepEqual(listenerCalls[0], ['start', 'robinhood_holder_hot_queue']);
     assert.equal(worker.getStatus().totalAppliedEvents, 25);
     assert.equal(worker.getStatus().totalShadowPromotions, 3);
     assert.equal(worker.getStatus().totalBaselineRequeues, 2);
     assert.equal(worker.getStatus().totalQuarantinedTokens, 1);
     assert.equal(worker.getStatus().lastResult.applyBudgetExhausted, true);
+    await worker.stop();
+    assert.deepEqual(listenerCalls.at(-1), ['stop']);
+  });
+
+  it('wakes the apply loop immediately when a hot token is committed', async () => {
+    const clock = scheduler();
+    let notify;
+    const worker = createRobinhoodHolderLiveApplyWorker({
+      ...clock,
+      listenerFactory: (input) => {
+        notify = input.onNotification;
+        return { start: async () => {}, stop: async () => {} };
+      },
+      runtimeFactory: async () => ({
+        providerName: 'robinhood-holder-live-apply',
+        runner: { applyOnce: async () => ({ status: 'completed' }) },
+      }),
+    });
+
+    worker.start({ enabled: true, intervalMs: 100 });
+    await clock.scheduled[0].callback();
+    assert.equal(clock.scheduled.at(-1).delayMs, 100);
+    notify();
+    assert.equal(clock.scheduled.at(-1).delayMs, 0);
+    assert.equal(worker.getStatus().totalWakeups, 1);
     await worker.stop();
   });
 

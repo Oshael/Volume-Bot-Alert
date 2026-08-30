@@ -5178,6 +5178,29 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage180-robinhood-holder-hot-queue',
+    name: 'Stage 180 Robinhood holder hot queue',
+    repair: 'node src/utils/db-init-stage180.js',
+    tables: [{
+      table: 'robinhood_holder_hot_queue',
+      columns: [
+        'chain', 'token_address', 'first_pending_block', 'last_pending_block',
+        'first_enqueued_at', 'last_enqueued_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_holder_hot_queue_pkey',
+        includes: ['PRIMARY KEY', 'chain', 'token_address'],
+      }, {
+        name: 'rh_holder_hot_queue_bounds_check',
+        includes: ['CHECK', 'first_pending_block', 'last_pending_block'],
+      }],
+      indexes: [{
+        name: 'idx_rh_holder_hot_queue_priority',
+        includes: ['updated_at', 'last_pending_block'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

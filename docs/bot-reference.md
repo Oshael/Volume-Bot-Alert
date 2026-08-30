@@ -1531,6 +1531,13 @@ holder count imediatamente, sem aguardar o budget inteiro do tick; o mapa do tic
 continua coalescendo somente a contabilidade e a publicação final de promoções
 residuais.
 Assim eventos `missing/backfilling` não são reescaneados para escolher cada token.
+Depois da Stage 180, cada INSERT commitado no journal também faz upsert de um ticket
+por token em `robinhood_holder_hot_queue` e emite `NOTIFY` para acordar o apply.
+A tabela, não a notificação, é a garantia durável. Antes de cada lote, tickets de
+tokens `live` ou com a primeira pendência dentro dos 20.000 blocos recentes
+preemptam o catch-up; lotes hot têm no máximo 25 eventos e cada tick dura por
+default até 2s. O polling de 100ms permanece somente como recuperação. A telemetria
+`freshness` expõe `pendingTokens`, `worstLagBlocks` e `oldestAgeMs`.
 O `lastResult.timing` da lease do apply
 separa duração total, drain, chamadas do ledger, reparo de drift, promoção shadow,
 publicação e overhead; também expõe quantidade/duração máxima das chamadas, tamanho
@@ -1541,9 +1548,10 @@ promoção ou publicação), o token quando conhecido e os campos estruturados s
 do PostgreSQL (`detail`, schema, tabela, coluna, constraint, tipo e rotina). O
 diagnóstico não inclui SQL, parâmetros, payloads nem stack trace.
 No deploy, execute
-`node src/utils/db-init-stage121.js`, `node src/utils/db-init-stage141.js` e
-`node src/utils/db-init-stage142.js` antes do restart; os índices são criados
-concorrentemente para não bloquear writes do journal. A Stage 142 evita que o
+`node src/utils/db-init-stage121.js`, `node src/utils/db-init-stage141.js`,
+`node src/utils/db-init-stage142.js` e `node src/utils/db-init-stage180.js`
+antes do restart. Os índices históricos são criados concorrentemente para não
+bloquear writes do journal. A Stage 142 evita que o
 handoff global reescaneie todo o journal ao verificar evidência já aplicada por
 token antes da barreira. O handoff prova essa ausência pelo índice parcial de
 eventos aplicados e remove o overlap pendente com um `DELETE` set-based; ele não

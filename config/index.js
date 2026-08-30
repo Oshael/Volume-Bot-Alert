@@ -1426,6 +1426,12 @@ module.exports = {
     applyBatchSize: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_LIVE_APPLY_BATCH_SIZE, 100, 1, 1000
     ),
+    hotApplyBatchSize: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_LIVE_HOT_APPLY_BATCH_SIZE, 25, 1, 100
+    ),
+    maxDurationMs: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_LIVE_APPLY_MAX_DURATION_MS, 2000, 250, 60_000
+    ),
     rpcTimeoutMs: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_LIVE_RPC_TIMEOUT_MS,
       parseIntegerInRange(process.env.ROBINHOOD_RPC_TIMEOUT_MS, 15_000, 1000, 60_000),

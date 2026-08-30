@@ -746,11 +746,41 @@ async function persistJournalEvidence(client, journalRows) {
   }
 }
 
+async function syncHotQueue(client, tokenAddress) {
+  await client.query(
+    `WITH bounds AS MATERIALIZED (
+       SELECT MIN(block_number) AS first_block, MAX(block_number) AS last_block,
+              MIN(captured_at) AS first_at, MAX(captured_at) AS last_at
+         FROM robinhood_holder_transfer_journal
+        WHERE chain = 'robinhood' AND token_address = $1 AND applied = FALSE
+     ), refreshed AS (
+       INSERT INTO robinhood_holder_hot_queue (
+         chain, token_address, first_pending_block, last_pending_block,
+         first_enqueued_at, last_enqueued_at, updated_at
+       )
+       SELECT 'robinhood', $1, first_block, last_block, first_at, last_at, NOW()
+         FROM bounds WHERE first_block IS NOT NULL
+       ON CONFLICT (chain, token_address) DO UPDATE SET
+         first_pending_block = EXCLUDED.first_pending_block,
+         last_pending_block = EXCLUDED.last_pending_block,
+         first_enqueued_at = EXCLUDED.first_enqueued_at,
+         last_enqueued_at = EXCLUDED.last_enqueued_at,
+         updated_at = EXCLUDED.updated_at
+       RETURNING token_address
+     )
+     DELETE FROM robinhood_holder_hot_queue queue
+      WHERE queue.chain = 'robinhood' AND queue.token_address = $1
+        AND NOT EXISTS (SELECT 1 FROM bounds WHERE first_block IS NOT NULL)`,
+    [tokenAddress]
+  );
+}
+
 async function commitAppliedPrefix(client, computed) {
   if (!computed.journalRows.length) return null;
   await persistBatchBalances(client, computed.tokenAddress, computed.finalRows);
   const row = await advanceAppliedState(client, computed);
   await persistJournalEvidence(client, computed.journalRows);
+  await syncHotQueue(client, computed.tokenAddress);
   const latest = computed.latestChanges;
   const publication = row.ledger_status === 'live' && computed.holderCountChanged
     ? Object.freeze({
@@ -997,6 +1027,14 @@ async function commitRewind(client, rewind, affectedTokens) {
     `DELETE FROM robinhood_holder_transfer_journal
       WHERE chain = 'robinhood' AND block_number >= $1`,
     [rewind.nextBlock]
+  );
+  await client.query(
+    `DELETE FROM robinhood_holder_hot_queue queue
+      WHERE queue.chain = 'robinhood' AND NOT EXISTS (
+        SELECT 1 FROM robinhood_holder_transfer_journal journal
+         WHERE journal.chain = queue.chain AND journal.token_address = queue.token_address
+           AND journal.applied = FALSE
+      )`
   );
   const cursor = await client.query(
     `UPDATE robinhood_holder_cursors
@@ -1356,6 +1394,7 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
           driftRecovery ? ['drifted'] : ['shadow', 'live']]
       );
       if (!reset.rowCount) throw new Error('holder tail rollback state changed while locked');
+      await syncHotQueue(client, tokenAddress);
       const publication = state.ledger_status === 'live' ? Object.freeze({
         tokenAddress, invalidated: true, ledgerVersion: String(reset.rows[0].version),
         observedAt: reset.rows[0].updated_at,
@@ -1531,6 +1570,59 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     return Object.freeze(result.rows.map((row) => row.token_address));
   }
 
+  async function listHotPendingTokenAddresses(input = {}) {
+    const excluded = tokenFilter(input.excludeTokenAddresses, 'excluded hot token');
+    const limit = nonNegativeInteger(input.limit ?? 25, 'hotPendingTokens.limit');
+    if (limit < 1 || limit > 1000) throw new Error('hotPendingTokens.limit is invalid');
+    const result = await database.query(
+      `SELECT queue.token_address
+         FROM robinhood_holder_hot_queue queue
+         INNER JOIN robinhood_holder_token_states state
+           ON state.chain = queue.chain AND state.token_address = queue.token_address
+         INNER JOIN robinhood_holder_cursors cursor
+           ON cursor.chain = queue.chain AND cursor.stream = 'live'
+        WHERE queue.chain = 'robinhood'
+          AND state.ledger_status IN ('shadow', 'live')
+          AND NOT (queue.token_address = ANY($1::varchar[]))
+          AND (state.ledger_status = 'live'
+            OR queue.first_pending_block >= GREATEST(cursor.next_block - 20000, 0))
+        ORDER BY (state.ledger_status = 'live') DESC, queue.updated_at,
+                 queue.last_pending_block DESC, queue.token_address
+        LIMIT $2::int`,
+      [excluded, limit]
+    );
+    return Object.freeze(result.rows.map((row) => row.token_address));
+  }
+
+  async function getHotQueueFreshness() {
+    const result = await database.query(
+      `WITH hot AS (
+         SELECT queue.token_address, queue.first_pending_block, queue.first_enqueued_at,
+                cursor.safe_head
+           FROM robinhood_holder_hot_queue queue
+           INNER JOIN robinhood_holder_token_states state
+             ON state.chain = queue.chain AND state.token_address = queue.token_address
+           INNER JOIN robinhood_holder_cursors cursor
+             ON cursor.chain = queue.chain AND cursor.stream = 'live'
+          WHERE queue.chain = 'robinhood' AND state.ledger_status IN ('shadow', 'live')
+            AND (state.ledger_status = 'live'
+              OR queue.first_pending_block >= GREATEST(cursor.next_block - 20000, 0))
+       )
+       SELECT COUNT(token_address)::int AS pending_tokens,
+              COALESCE(MAX(GREATEST(safe_head - first_pending_block, 0)), 0)
+                AS worst_lag_blocks,
+              COALESCE(EXTRACT(EPOCH FROM (NOW() - MIN(first_enqueued_at))) * 1000, 0)
+                AS oldest_age_ms
+         FROM hot`
+    );
+    const row = result.rows[0] || {};
+    return Object.freeze({
+      pendingTokens: Number(row.pending_tokens) || 0,
+      worstLagBlocks: Number(row.worst_lag_blocks) || 0,
+      oldestAgeMs: Math.round(Number(row.oldest_age_ms) || 0),
+    });
+  }
+
   async function quarantineMalformedToken(input = {}) {
     const tokenAddress = hex(input.tokenAddress, 20, 'malformed.tokenAddress');
     const exclusionReason = input.exclusionReason == null
@@ -1557,6 +1649,10 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
       const journal = await client.query(
         `DELETE FROM robinhood_holder_transfer_journal
           WHERE chain = $1 AND token_address = $2`, [CHAIN, tokenAddress]
+      );
+      await client.query(
+        `DELETE FROM robinhood_holder_hot_queue WHERE chain = $1 AND token_address = $2`,
+        [CHAIN, tokenAddress]
       );
       const states = await client.query(
         `UPDATE robinhood_holder_token_states
@@ -1621,7 +1717,8 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     inspectDriftedAppliedTail, repairCapturedRange, requeueWideShadowTail,
     rollbackAppliedTail, rollbackDriftedAppliedTail,
     rewindOrphanedRange,
-    getCursor, listJournalBlockCheckpoints, listPendingTokenAddresses,
+    getCursor, getHotQueueFreshness, listHotPendingTokenAddresses,
+    listJournalBlockCheckpoints, listPendingTokenAddresses,
     listTrackedTokenAddresses,
     quarantineMalformedToken,
   });

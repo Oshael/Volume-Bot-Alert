@@ -2,11 +2,13 @@ const db = require('../models/db');
 const { createRobinhoodHolderLedgerRepository } = require('../models/robinhood-holder-ledger');
 const { createEvmJsonRpcClient } = require('./evm-json-rpc-client');
 const holderCountRealtime = require('./robinhood-holder-count-realtime');
+const { createPostgresRealtimeListener } = require('./postgres-realtime-listener');
 const { createRobinhoodHolderLiveRunner } = require('./robinhood-holder-live-runner');
 const { resolveRobinhoodHolderRpcProvider } = require('./robinhood-holder-rpc');
 const { createRobinhoodHolderTransferReader } = require('./robinhood-holder-transfer-reader');
 
 const FATAL_CODES = new Set(['configuration_error', 'holder_live_apply_contract_error']);
+const HOT_QUEUE_CHANNEL = 'robinhood_holder_hot_queue';
 
 function boundedInteger(value, fallback, minimum, maximum) {
   const parsed = value == null ? fallback : Number(value);
@@ -21,6 +23,8 @@ function normalizeOptions(options = {}, env = process.env) {
     maxErrorBackoffMs: boundedInteger(options.maxErrorBackoffMs, 30_000, 1000, 300_000),
     maxApplyEvents: boundedInteger(options.maxApplyEvents, 5000, 1, 50_000),
     applyBatchSize: boundedInteger(options.applyBatchSize, 100, 1, 1000),
+    hotApplyBatchSize: boundedInteger(options.hotApplyBatchSize, 25, 1, 100),
+    maxDurationMs: boundedInteger(options.maxDurationMs, 2000, 250, 60_000),
     rpcTimeoutMs: boundedInteger(
       options.rpcTimeoutMs ?? env.ROBINHOOD_RPC_TIMEOUT_MS, 15_000, 1000, 60_000
     ),
@@ -87,6 +91,8 @@ function createRobinhoodHolderLiveApplyWorker(deps = {}) {
   let runtimePromise = null;
   let timer = null;
   let activeRunPromise = null;
+  let hotListener = null;
+  let wakePending = false;
   let running = false;
   let onFatal = null;
   const status = {
@@ -99,6 +105,7 @@ function createRobinhoodHolderLiveApplyWorker(deps = {}) {
     totalQuarantinedTokens: 0,
     totalShadowPromotions: 0,
     totalHolderCountUpdates: 0, totalHolderCountPublished: 0, lastCompletedAt: null,
+    totalWakeups: 0, listenerError: null,
   };
 
   async function getRuntime() {
@@ -116,6 +123,8 @@ function createRobinhoodHolderLiveApplyWorker(deps = {}) {
     status.lastError = publicError(error);
     if (timer) cancelSchedule(timer);
     timer = null;
+    await hotListener?.stop().catch(() => {});
+    hotListener = null;
     try { await onFatal?.(error); } catch (fatalError) {
       logger.error('[RobinhoodHolderLiveApplyWorker] Fatal propagation failed:', fatalError.message);
     }
@@ -160,14 +169,41 @@ function createRobinhoodHolderLiveApplyWorker(deps = {}) {
   function queueNext(delayMs) {
     if (!running || status.halted) return;
     timer = schedule(async () => {
+      timer = null;
       await runOnce();
-      const delay = status.consecutiveErrors
+      const delay = wakePending ? 0 : status.consecutiveErrors
         ? Math.min(options.maxErrorBackoffMs,
           options.intervalMs * (2 ** Math.min(status.consecutiveErrors, 8)))
         : options.intervalMs;
+      wakePending = false;
       queueNext(delay);
     }, delayMs);
     timer?.unref?.();
+  }
+
+  function wake() {
+    if (!running || status.halted) return;
+    status.totalWakeups += 1;
+    if (activeRunPromise) {
+      wakePending = true;
+      return;
+    }
+    if (timer) cancelSchedule(timer);
+    timer = null;
+    queueNext(0);
+  }
+
+  function startHotListener() {
+    const factory = deps.listenerFactory || createPostgresRealtimeListener;
+    hotListener = factory({
+      channel: HOT_QUEUE_CHANNEL, label: 'RobinhoodHolderHotQueueListener',
+      pool: (deps.database || db).pool, logger, onNotification: wake,
+      onConnected: () => { status.listenerError = null; },
+    });
+    void hotListener.start().catch((error) => {
+      status.listenerError = publicError(error);
+      logger.warn('[RobinhoodHolderLiveApplyWorker] Hot listener unavailable:', error.message);
+    });
   }
 
   function start(input = {}) {
@@ -176,7 +212,8 @@ function createRobinhoodHolderLiveApplyWorker(deps = {}) {
     onFatal = typeof input.onFatal === 'function' ? input.onFatal : null;
     status.enabled = options.enabled;
     if (!options.enabled) return false;
-    status.halted = false; running = true; status.running = true; queueNext(0);
+    status.halted = false; wakePending = false; running = true; status.running = true;
+    startHotListener(); queueNext(0);
     return true;
   }
 
@@ -185,6 +222,8 @@ function createRobinhoodHolderLiveApplyWorker(deps = {}) {
     if (timer) cancelSchedule(timer);
     timer = null;
     if (activeRunPromise) await activeRunPromise.catch(() => {});
+    await hotListener?.stop().catch(() => {});
+    hotListener = null;
   }
 
   return Object.freeze({ getStatus: () => ({ ...status }), runOnce, start, stop });

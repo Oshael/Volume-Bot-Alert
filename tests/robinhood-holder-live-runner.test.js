@@ -17,6 +17,14 @@ function harness(
     },
   };
   const ledger = {
+    listHotPendingTokenAddresses: async (input) => {
+      if (!options.hotTokenLists?.length) return [];
+      calls.push(['list-hot-tokens', input]);
+      return options.hotTokenLists.shift();
+    },
+    getHotQueueFreshness: async () => options.freshness || {
+      pendingTokens: 0, worstLagBlocks: 0, oldestAgeMs: 0,
+    },
     listPendingTokenAddresses: async (input) => {
       calls.push(['list-pending-tokens', input]);
       if (options.pendingTokenLists?.length) return options.pendingTokenLists.shift();
@@ -120,6 +128,7 @@ describe('Robinhood holder live runner', () => {
       quarantinedTokens: 0,
       shadowPromotions: 0,
       holderCountUpdates: 0, holderCountPublished: 0,
+      freshness: { pendingTokens: 0, worstLagBlocks: 0, oldestAgeMs: 0 },
       applyBudgetExhausted: false, nextBlock: '106', safeHead: '105',
     });
     assert.equal(timing.applyCalls, 3);
@@ -401,6 +410,26 @@ describe('Robinhood holder live runner', () => {
     assert.equal(context.calls.filter(([name]) => name === 'list-pending-tokens').length, 2);
   });
 
+  it('preempts catch-up with a bounded hot token batch and reports freshness', async () => {
+    const hotToken = `0x${'1'.repeat(40)}`;
+    const coldToken = `0x${'2'.repeat(40)}`;
+    const freshness = { pendingTokens: 2, worstLagBlocks: 3, oldestAgeMs: 450 };
+    const context = harness({ status: 'idle', transfers: 0 }, [
+      { status: 'applied', tokenAddress: hotToken, appliedEvents: 10, attemptedEvents: 10 },
+      { status: 'applied', tokenAddress: coldToken, appliedEvents: 1, attemptedEvents: 1 },
+      { status: 'idle' },
+    ], { status: 'idle' }, async () => 0, {
+      hotTokenLists: [[hotToken]], freshness,
+    });
+
+    const result = await context.runner.applyOnce({
+      maxApplyEvents: 20, applyBatchSize: 20, hotApplyBatchSize: 10,
+    });
+
+    assert.equal(context.calls.find(([name]) => name === 'apply')[1].maxEvents, 10);
+    assert.deepEqual(result.freshness, freshness);
+  });
+
   it('accounts for a transactional event batch against the apply budget', async () => {
     const tokenAddress = `0x${'a'.repeat(40)}`;
     const context = harness({
@@ -504,6 +533,10 @@ describe('Robinhood holder live runner', () => {
       },
       handoff: { runOnce: async () => ({ status: 'idle' }) },
       ledger: {
+        listHotPendingTokenAddresses: async () => [],
+        getHotQueueFreshness: async () => ({
+          pendingTokens: 0, worstLagBlocks: 0, oldestAgeMs: 0,
+        }),
         listPendingTokenAddresses: async () => [`0x${'a'.repeat(40)}`],
         applyNextPendingEvent: async () => {
           await applyGate;
