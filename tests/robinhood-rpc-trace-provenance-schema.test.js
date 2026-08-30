@@ -4,6 +4,7 @@ const { it } = require('node:test');
 const stage163 = require('../src/utils/db-init-stage163');
 const stage164 = require('../src/utils/db-init-stage164');
 const stage165 = require('../src/utils/db-init-stage165');
+const stage183 = require('../src/utils/db-init-stage183');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 
 it('registers exact RPC trace provenance and requires a factory address', () => {
@@ -36,4 +37,15 @@ it('registers the live catalog deployment outbox and trigger', () => {
   assert.match(sql, /AFTER INSERT ON token_catalog/);
   assert.match(sql, /pg_notify\('robinhood_token_deployment_outbox'/);
   assert.equal(group.repair, 'node src/utils/db-init-stage165.js');
+});
+
+it('registers exact pruned-RPC code transition evidence and mint wakeups', () => {
+  const sql = stage183.STATEMENTS.join('\n');
+  const group = SCHEMA_GROUPS.find(({ key }) => (
+    key === 'stage183-robinhood-pruned-rpc-deployment-evidence'
+  ));
+  assert.match(sql, /source = 'rpc_code_transition'.*creator_address IS NULL/s);
+  assert.match(sql, /REFERENCING NEW TABLE AS inserted_holder_transfers/);
+  assert.match(sql, /pg_notify\('robinhood_token_deployment_outbox'/);
+  assert.equal(group.repair, 'node src/utils/db-init-stage183.js');
 });

@@ -222,7 +222,7 @@ function createRobinhoodTokenAttributionRepository(options = {}) {
          last_attempted_at = NOW(), last_resolved_at = NOW(), last_error = NULL,
          updated_at = NOW()
        WHERE CASE robinhood_token_attributions.source
-               WHEN 'blockscout' THEN 0
+               WHEN 'blockscout' THEN 0 WHEN 'rpc_code_transition' THEN 0
                WHEN 'rpc_direct' THEN 1
                WHEN 'rpc_trace' THEN 1 WHEN 'blockscout_internal' THEN 1 ELSE 2 END
              <= CASE EXCLUDED.source
@@ -237,6 +237,35 @@ function createRobinhoodTokenAttributionRepository(options = {}) {
         deployments.map((item) => item.blockNumber),
       ]
     );
+  }
+
+  async function recordCodeTransitions(inputs = []) {
+    if (!Array.isArray(inputs) || inputs.length === 0) return Object.freeze({ attributed: 0 });
+    const transitions = inputs.map((input) => ({
+      tokenAddress: normalizeTokenAddress(CHAIN, input.tokenAddress),
+      blockNumber: BigInt(String(input.blockNumber)).toString(),
+    }));
+    const result = await database.query(
+      `INSERT INTO robinhood_token_attributions (
+         chain, token_address, creator_address, source, attribution_block,
+         attribution_tx_hash, attribution_factory_address,
+         last_attempted_at, last_resolved_at, last_error
+       ) SELECT '${CHAIN}', item.token_address, NULL, 'rpc_code_transition',
+                item.block_number, NULL, NULL, NOW(), NULL, NULL
+           FROM UNNEST($1::varchar[], $2::bigint[]) AS item(token_address, block_number)
+       ON CONFLICT (chain, token_address) DO UPDATE SET
+         creator_address = NULL, source = EXCLUDED.source,
+         attribution_block = EXCLUDED.attribution_block,
+         attribution_tx_hash = NULL, attribution_factory_address = NULL,
+         last_attempted_at = NOW(), last_resolved_at = NULL,
+         last_error = NULL, updated_at = NOW()
+       WHERE robinhood_token_attributions.source IN ('blockscout', 'rpc_code_transition')
+         AND (robinhood_token_attributions.attribution_block IS NULL
+           OR robinhood_token_attributions.attribution_block = EXCLUDED.attribution_block)
+       RETURNING token_address`,
+      [transitions.map((item) => item.tokenAddress), transitions.map((item) => item.blockNumber)]
+    );
+    return Object.freeze({ attributed: result.rowCount });
   }
 
   async function recordCreatorBlock(input = {}) {
@@ -329,7 +358,8 @@ function createRobinhoodTokenAttributionRepository(options = {}) {
     initializeDirectCursor, initializeLaunchpadBackfillCursor,
     listCreatorCandidates, listHolderDirectVerificationCandidates,
     loadDirectCursor, loadLaunchpadBackfillCursor,
-    recordAttempt, recordAttempts, recordCreatorBlock, recordDirectVerificationFailure,
+    recordAttempt, recordAttempts, recordCodeTransitions, recordCreatorBlock,
+    recordDirectVerificationFailure,
     recordLaunchpadBackfillRange,
     recordVerifiedDirectDeployments,
   });

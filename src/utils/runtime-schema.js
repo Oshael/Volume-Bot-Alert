@@ -5263,6 +5263,25 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage183-robinhood-pruned-rpc-deployment-evidence',
+    name: 'Stage 183 Robinhood pruned-RPC deployment evidence',
+    repair: 'node src/utils/db-init-stage183.js',
+    tables: [{
+      table: 'robinhood_token_attributions',
+      columns: ['source', 'attribution_block'],
+      constraints: [{
+        name: 'robinhood_token_attributions_source_check',
+        includes: ['rpc_code_transition'],
+      }, {
+        name: 'robinhood_token_attributions_provenance_check',
+        includes: ['rpc_code_transition', 'creator_address IS NULL'],
+      }],
+    }, {
+      table: 'robinhood_holder_transfer_journal',
+      columns: ['token_address', 'from_wallet'],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

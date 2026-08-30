@@ -10,6 +10,7 @@ const stage114 = require('../src/utils/db-init-stage114');
 const stage163 = require('../src/utils/db-init-stage163');
 const stage164 = require('../src/utils/db-init-stage164');
 const stage165 = require('../src/utils/db-init-stage165');
+const stage183 = require('../src/utils/db-init-stage183');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const TOKEN = `0x${'6'.repeat(40)}`;
@@ -17,6 +18,7 @@ const CREATOR = `0x${'7'.repeat(40)}`;
 const FACTORY = `0x${'8'.repeat(40)}`;
 const HASH = `0x${'9'.repeat(64)}`;
 const INTERNAL_TOKEN = `0x${'a'.repeat(40)}`;
+const CODE_TOKEN = `0x${'b'.repeat(40)}`;
 
 describe('Robinhood RPC trace provenance schema integration', () => {
   before(async () => {
@@ -27,17 +29,17 @@ describe('Robinhood RPC trace provenance schema integration', () => {
     await stage163.init({ closePool: false });
     await stage164.init({ closePool: false });
     await stage165.init({ closePool: false });
-    await stage164.init({ closePool: false });
+    await stage183.init({ closePool: false });
     await db.query(
       'DELETE FROM robinhood_token_attributions WHERE token_address = ANY($1::varchar[])',
-      [[TOKEN, INTERNAL_TOKEN]]
+      [[TOKEN, INTERNAL_TOKEN, CODE_TOKEN]]
     );
   });
 
   after(async () => {
     await db.query(
       'DELETE FROM robinhood_token_attributions WHERE token_address = ANY($1::varchar[])',
-      [[TOKEN, INTERNAL_TOKEN]]
+      [[TOKEN, INTERNAL_TOKEN, CODE_TOKEN]]
     );
     await db.pool.end();
   });
@@ -81,6 +83,19 @@ describe('Robinhood RPC trace provenance schema integration', () => {
       ),
       /robinhood_token_attributions_provenance_check/
     );
+  });
+
+  it('accepts exact code-transition evidence without creator provenance', async () => {
+    await db.query(
+      `INSERT INTO robinhood_token_attributions (
+         token_address, source, attribution_block
+       ) VALUES ($1, 'rpc_code_transition', 102)`, [CODE_TOKEN]
+    );
+    const result = await db.query(
+      'SELECT source, attribution_block FROM robinhood_token_attributions WHERE token_address = $1',
+      [CODE_TOKEN]
+    );
+    assert.equal(result.rows[0].source, 'rpc_code_transition');
   });
 
   it('atomically enqueues newly admitted Robinhood tokens', async () => {

@@ -163,6 +163,24 @@ describe('Robinhood token creator attribution', () => {
     assert.doesNotMatch(calls.join('\n'), /UPDATE robinhood_direct_creator_cursors/);
   });
 
+  it('persists an exact code transition without inventing creator provenance', async () => {
+    const calls = [];
+    const repository = createRobinhoodTokenAttributionRepository({
+      database: { query: async (sql, params) => {
+        calls.push({ sql, params });
+        return { rowCount: 1, rows: [{ token_address: TOKEN }] };
+      } },
+    });
+    assert.deepEqual(await repository.recordCodeTransitions([{
+      tokenAddress: TOKEN, blockNumber: '100',
+    }]), { attributed: 1 });
+    assert.match(calls[0].sql, /'rpc_code_transition'/);
+    assert.match(calls[0].sql, /creator_address, source, attribution_block/);
+    assert.match(calls[0].sql, /creator_address = NULL/);
+    assert.match(calls[0].sql, /last_resolved_at = NULL/);
+    assert.deepEqual(calls[0].params, [[TOKEN], ['100']]);
+  });
+
   it('registers an additive, retryable attribution table in the runtime guard', () => {
     const sql = stage110.STATEMENTS.join('\n');
     const group = SCHEMA_GROUPS.find((entry) => (

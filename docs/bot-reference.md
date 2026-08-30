@@ -1770,15 +1770,26 @@ Tokens Robinhood novos geram uma tarefa durável em
 aplicar Stage 165 (`node src/utils/db-init-stage165.js`), o worker independente
 `robinhood-token-deployment-worker`, no grupo `robinhood-wallet-classification`,
 é ativado por `ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_ENABLED=true`. `LISTEN/NOTIFY`
-acorda o consumidor imediatamente; polling de 1s preserva recuperação. Ele valida
-Blockscout contra receipt/bloco canônicos, materializa `rpc_direct` ou
-`blockscout_internal` e remove a tarefa. Se a rota v2 de internal transactions
+acorda o consumidor imediatamente; polling de 1s preserva recuperação. A Stage
+183 (`node src/utils/db-init-stage183.js`) também acorda o worker quando um mint
+entra no holder journal. Tarefas admitidas nos últimos dez minutos precedem o
+backlog histórico. O caminho primário lê o primeiro mint já capturado e usa o
+`RH_NODE_RPC_URL` da VPS para provar que o bytecode era vazio em `N-1`, existe em
+`N` e que bloco/receipt permanecem canônicos. Essa prova
+`rpc_code_transition` materializa o deployment block e libera o bootstrap de
+holders sem depender de creator, trace, archive ou Blockscout.
+
+Quando a transição local não pode ser comprovada, Blockscout permanece fallback:
+seu hint é validado contra receipt/bloco canônicos e materializa `rpc_direct` ou
+`blockscout_internal`. Crédito esgotado abre um circuit breaker em memória; novas
+provas RPC continuam sendo tentadas, sem chamadas repetidas ao provedor. Se a
+rota v2 de internal transactions
 responder com erro transitório, usa `txlistinternal` público como fallback; a
 rota de endereço também recupera o transaction hash pelo primeiro mint ERC-20
 (`tokentx`, ordem ascendente) quando necessário. Essas respostas são apenas hints:
 a prova encontrada continua sujeita à validação RPC canônica. Evidência ainda não
 indexada volta à fila com backoff limitado.
-`ROBINHOOD_BLOCKSCOUT_API_KEY` faz o worker live usar automaticamente a API PRO
+`ROBINHOOD_BLOCKSCOUT_API_KEY` faz o fallback usar automaticamente a API PRO
 com `chain_id=4663` quando a rota pública de endereço retorna HTTP 403;
 `ROBINHOOD_BLOCKSCOUT_API_URL` permite substituir somente esse endpoint.
 Se a primeira mint não for o deployment,
