@@ -1592,6 +1592,23 @@ cauda atomicamente pela evidência de balances/proveniência do journal, devolve
 os eventos a `pending` e muda o token para `backfilling`. Tokens antes `live`
 publicam invalidação; `tailRollbacks` e `tailRollbackEvents` expõem a recuperação.
 
+Para recuperar deployments que o node pruned já não consegue provar, execute no
+PC com acesso ao mesmo PostgreSQL o comando
+`npm run robinhood:holder-deployment-recover`. Ele é read-only por default,
+seleciona da outbox somente tokens sem `attribution_block`, procura seu primeiro
+mint pendente no journal e mostra no máximo 100 candidatos. Itens sem esse mint
+falham isoladamente como `mint_hint_missing`. O apply exige
+`ROBINHOOD_ARCHIVE_RPC_URL` e a confirmação explícita
+`-- --confirm-recover-robinhood-holder-deployments`; `--limit`, `--concurrency`
+e `--timeout-ms` são limitados. A descoberta faz busca binária da primeira
+aparição do bytecode, valida a chain e persiste evidência canônica sem consultar
+Blockscout nem usar o RPC pruned como fallback. Criações cujo creator não possa
+ser provado recebem somente `rpc_code_transition`, suficiente para habilitar o
+ledger sem inventar provenance. O live pode continuar ativo; os upserts mantêm
+evidência de maior precedência. Deployments recuperados com gap superior ao
+limite incremental de 20.000 blocos ainda devem entrar em uma coorte delta do
+backfill global abaixo.
+
 O backfill global do catálogo antigo usa a lease
 `robinhood-holder-global-backfill-worker` e permanece desligado por default via
 `ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ENABLED=false`. Ao habilitar, exige
