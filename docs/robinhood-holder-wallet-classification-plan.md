@@ -80,6 +80,43 @@ reduzir silenciosamente. Se o preflight projetar mais de cinco horas, a execuç�
 deve ser recusada e o acesso deve ser otimizado ou redesenhado; reduzir o cohort
 exige nova decisão explícita.
 
+### 0.2.2 Decisão FRESH LIVE sem Archive permanente
+
+O preflight real do Nitro `v3.11.3` na VPS provou três capacidades diferentes:
+
+- `eth_getBlockByNumber` entrega header e transações completas de blocos antigos,
+  incluindo `from` e `nonce`;
+- `eth_getTransactionCount(wallet, old_block)` falha tanto por número quanto por
+  EIP-1898 `{ blockHash, requireCanonical }`, com `metadata is not found`;
+- portanto, o node pruned preserva corpos de bloco, mas não o estado histórico
+  necessário para consultar diretamente o nonce no cutoff de 24 horas.
+
+O Nitro oferece retenção numérica de estado somente no state scheme `path`. A
+instalação corrente se comporta como o padrão `hash`; trocar scheme exige banco
+novo, snapshot ou resync e não é um ajuste seguro no volume atual, que tinha
+somente cerca de 122 GB livres durante a auditoria. O rollout FRESH não altera o
+modo de estado do Nitro.
+
+A fonte LIVE aprovada passa a ser um índice mínimo de primeira atividade assinada,
+construído a partir de todos os blocos completos e confirmados da VPS. Para cada
+wallet, persistir somente sua primeira transação observada na cobertura canônica:
+bloco/hash/tempo, hash e índice da transação e nonce. Se o primeiro nonce observado
+for maior que zero, existe atividade anterior ao início da cobertura. Se for zero,
+a posição dessa transação prova exatamente quando a wallet começou a assinar.
+
+Essa prova é suficiente para `rh_fresh_signed_v1`: o cutoff possui atividade
+anterior se a primeira transação assinada é canonicamente anterior ou igual ao
+`cutoff_block`, ou se a primeira transação dentro da cobertura já possui nonce
+maior que zero. Não persistir um nonce exato inventado para o cutoff; a evidência
+deve carregar `prior_signed_activity`, a primeira transação observada e a frontier
+completa que sustenta a inferência.
+
+O Archive do PC continua temporariamente responsável pelo seed congelado de 14
+dias e por auditoria. Ele pode ser desligado depois que o índice da VPS tiver
+cobertura contínua desde o cutoff LIVE mais antigo, estiver alcançado e a
+equivalência de decisões tiver sido auditada. O produto não depende de API
+externa nem de Archive permanente depois desse handoff.
+
 ### 0.3 Invariantes
 
 1. Classificação é materializada de forma assíncrona; abrir o modal nunca dispara
@@ -93,9 +130,9 @@ exige nova decisão explícita.
    reutilizados implicitamente entre redes.
 6. Uma wallet pode ter múltiplas tags. O glifo é apenas uma representação visual
    de prioridade, não perda de informação.
-7. `FRESH` depende de enriquecimento histórico de estado da conta em worker
-   isolado. API externa de terceiros não é requisito: RPC com estado histórico é
-   a fonte primária e provider externo é apenas fallback ou auditoria opcional.
+7. `FRESH` seed usa estado histórico Archive; `FRESH` LIVE usa o índice interno
+   de primeira atividade assinada depois que sua cobertura estiver pronta. API
+   externa de terceiros e Archive permanente não são requisitos do caminho LIVE.
 8. Regras e thresholds são versionados; uma mudança de threshold não reescreve
    silenciosamente o significado de classificações antigas.
 
@@ -207,22 +244,28 @@ em configuração versionada.
   `nonce <= 5`; o nonce da transação representa quantas transações a wallet
   assinou antes dela.
 - Deve ser resolvido o último bloco canônico com timestamp estritamente anterior
-  a `first_buy_time - 24 hours`. Nesse bloco,
-  `eth_getTransactionCount(wallet, cutoff_block)` deve retornar `0`.
+  a `first_buy_time - 24 hours`. O seed prova ausência de atividade com
+  `eth_getTransactionCount(wallet, cutoff_block) = 0`; o LIVE prova o mesmo
+  predicado pelo índice interno de primeira atividade assinada com coverage
+  completa desde antes do cutoff.
 - As duas condições são obrigatórias. `nonce > 5` ou nonce histórico maior que
   zero tornam a wallet não fresh; falha, bloco não canônico ou histórico
   incompleto tornam o resultado `unavailable`, nunca `not_fresh`.
 - A primeira compra vem de `robinhood_wallet_token_first_buys`. O nonce da
-  compra vem de `eth_getTransactionByHash`; o nonce no cutoff vem de
-  `eth_getTransactionCount` com block tag explícito.
-- O seed de 14 dias e repair usam o RPC Archive de `RH_NODE_RPC_URL` na máquina
-  operacional. O live pode usar `ROBINHOOD_RPC_URL` somente depois de um
-  preflight provar suporte confiável a estado histórico de pelo menos 24 horas.
-  Se esse preflight falhar, o live deve usar a rota Archive ou um índice interno
-  incremental; não deve trocar silenciosamente para estado `latest`.
+  compra pode vir de `eth_getTransactionByHash` ou do corpo canônico já indexado;
+  nenhuma decisão usa estado `latest` como substituto do cutoff.
+- O seed de 14 dias e repair históricos usam o RPC Archive de `RH_NODE_RPC_URL`
+  na máquina operacional. O live usa a primeira atividade assinada materializada
+  a partir de blocos completos de `ROBINHOOD_RPC_URL`.
+- A fonte Archive persiste o nonce exato do cutoff. A fonte LIVE persiste a prova
+  booleana `prior_signed_activity`, a primeira transação observada e sua coverage
+  frontier. Ambas alimentam a mesma semântica de `rh_fresh_signed_v1`, mas com
+  versões de evidência distintas e sem fabricar equivalência de payload.
 - Resolver timestamp para bloco é uma operação canônica cacheada por janela. A
-  evidência persiste bloco/hash do cutoff, nonce no cutoff, nonce e hash da
-  primeira compra, fonte RPC, horário da consulta e frontier observada.
+  evidência Archive persiste bloco/hash e nonce do cutoff; a evidência LIVE
+  persiste bloco/hash do cutoff, `prior_signed_activity`, primeira transação
+  observada e coverage frontier. Ambas incluem nonce e hash da primeira compra,
+  fonte, horário da avaliação e frontier observada.
 - O worker consulta, normaliza e materializa a evidência. API, modal, filtro e
   tooltip nunca chamam RPC ou provider diretamente.
 - Motivo público: `new_wallet_at_first_buy`. A UI deve explicar explicitamente
@@ -547,6 +590,101 @@ total, distribuídos nos oito cortes. Isso é um checkpoint de arquitetura: hubs
 recebem apenas wiring; regra, RPC, campanha e materialização ficam em módulos
 dedicados e testados.
 
+#### 0.9.4 Sete cortes incrementais para retirar Archive do FRESH LIVE
+
+Os cortes 1–5 acima já deixaram ativação, fila, regra, materialização, worker e
+seed runner disponíveis. A falha do preflight de estado histórico na VPS exige
+os cortes incrementais abaixo antes do rollout. Cada corte termina em commit
+próprio, altera no máximo 500 linhas e não habilita automaticamente o próximo.
+
+1. **Domínio e schema da primeira atividade assinada**
+   - criar `robinhood_wallet_signed_origins`, chaveada por chain/wallet, com a
+     primeira transação canônica observada, seu nonce e a origem da cobertura;
+   - criar cursor `seed|live` com `origin_block`, `next_block`, `safe_head`,
+     checkpoint bloco/hash/tempo, lifecycle e versão otimista;
+   - definir em função pura a inferência `prior_signed_activity`, inclusive
+     nonce inicial `0`, nonce inicial positivo, cutoff antes/depois da origem,
+     coverage incompleta e ausência impossível da primeira compra;
+   - validar constraints, idempotência e boundaries em unit/integration tests.
+
+2. **Reader Nitro e persistência ordenada**
+   - ler `eth_getBlockByNumber(block, true)` somente para blocos confirmados;
+   - validar número/hash, `from`, nonce, hash e `transactionIndex` de todas as
+     transações antes de escrever qualquer linha do lote;
+   - persistir apenas o menor ponto canônico por wallet, mantendo a operação
+     idempotente para retry e replay;
+   - limitar batch RPC, concorrência, bytes de resposta e timeout; medir taxa de
+     blocos/s sem executar backfill.
+
+3. **Bootstrap retomável da cobertura LIVE**
+   - congelar `origin_block` no primeiro bloco necessário para cobrir
+     `activation_at - 24 hours`, sem mover essa origem durante o run;
+   - escanear sequencialmente até um `safe_head` congelado, com checkpoint local
+     durável, ETA, teto operacional e comando read-only por padrão;
+   - separar preflight de `--apply`, recusar origem/hash divergente e nunca pular
+     bloco vazio, timeout ou resposta parcial;
+   - provar resume, lote atômico, conflito de cursor e nenhum avanço em falha.
+
+4. **Worker LIVE isolado e event-driven**
+   - criar grupo/lease próprios para não disputar o processo de wallet-swap ou
+     classificação;
+   - acordar por notificação emitida depois do commit do head cursor e manter um
+     tick periódico apenas como reconciliação bounded;
+   - processar em ordem até o safe head com batch/concurrency, retry, backoff,
+     circuit breaker, lag e throughput observáveis;
+   - revalidar checkpoint antes de avançar; regressão ou reorg além da janela
+     confirmada interrompe o worker e exige repair explícito.
+
+5. **Fonte FRESH LIVE pelo índice interno**
+   - manter Archive como adapter do seed e adicionar adapter PostgreSQL para o
+     live, escolhidos explicitamente por `source_kind`;
+   - exigir coverage `origin <= cutoff_block` e `through >= first_buy_block`;
+   - materializar evidência da origem assinada sem fingir nonce histórico exato;
+   - comparar decisões dos dois adapters sobre amostra estratificada antes de
+     permitir que o índice conclua a fila LIVE.
+
+6. **Correção do cohort seed de 14 dias**
+   - substituir o gate incorreto `anchor.source_through_block >= activation_block`
+     pela frontier global de first-buy congelada na ativação;
+   - reconstruir bloco/hash e posição da âncora a partir de
+     `robinhood_wallet_swaps` + `robinhood_transaction_positions`;
+   - usar Archive somente para posições realmente ausentes e recusar qualquer
+     token sem âncora canônica completa;
+   - exigir no preflight `tokenCount > 0`, `pairCount > 0`, amostra disponível e
+     ETA máximo de cinco horas antes de `--apply`.
+
+7. **Handoff e rollout**
+   - manter `ROBINHOOD_FRESH_WALLET_LIVE_ENABLED=false` enquanto a coverage
+     interna estiver incompleta;
+   - executar schema, bootstrap, worker LIVE e auditoria nessa ordem;
+   - provar cursor assinado alcançado, fila sem erros e decisões equivalentes;
+   - habilitar o consumidor FRESH, drenar a fila LIVE acumulada e somente então
+     executar o seed Archive no PC;
+   - desligar o Archive após seed terminal, coverage LIVE contínua e uma janela
+     de observação sem regressão, erro ou crescimento sustentado da fila.
+
+Estimativa incremental: 10–12 arquivos de produção, 8–10 arquivos de teste e
+1.900–2.500 linhas, distribuídos nos sete cortes. `config/index.js` e
+`src/server.js` recebem somente wiring; domínio, RPC, persistência, bootstrap e
+worker permanecem em módulos dedicados. O trabalho cruza schema, captura de
+blocos, classificação e operação, portanto esta seção é o checkpoint de
+arquitetura antes de qualquer código.
+
+Critérios de aceitação do handoff:
+
+- o cursor cobre todos os blocos desde a origem congelada, inclusive vazios;
+- a primeira compra de toda avaliação está dentro da coverage pronta;
+- `nonce > 0` na primeira transação observada implica atividade pré-origem e
+  falha fechado se a origem não anteceder o cutoff;
+- nenhum resultado `fresh` depende de `latest`, ausência de linha ou suposição
+  sobre idade da conta;
+- o adapter interno concorda com Archive em 100% da amostra sobre o booleano
+  `prior_signed_activity`; divergência bloqueia o rollout;
+- lag LIVE não cresce por duas janelas consecutivas e o scanner sustenta taxa
+  superior à produção de blocos com margem operacional;
+- pausa, retry e restart não mudam a decisão nem avançam cursor sobre lacuna;
+- o Archive pode ficar offline sem impedir novas avaliações LIVE.
+
 Antes do corte 1, executar estes preflights:
 
 ```sql
@@ -619,10 +757,12 @@ INNER JOIN robinhood_first_buy_backfill_runs seed ON seed.id = cursor.seed_run_i
 WHERE cursor.chain = 'robinhood';
 ```
 
-Também é obrigatório provar no RPC live que
-`eth_getTransactionCount(wallet, historical_block)` funciona para um bloco de
-pelo menos 24 horas atrás e comparar o retorno com o Archive. O teste usa uma
-wallet/transação conhecida da amostra; sem essa prova, o corte 4 não ativa live.
+O preflight real já provou que o RPC live entrega corpos completos antigos, mas
+não oferece `eth_getTransactionCount(wallet, historical_block)`. Antes de ativar
+o FRESH LIVE, é obrigatório provar que o índice interno possui coverage completa
+desde antes do cutoff mais antigo e comparar seu `prior_signed_activity` com o
+Archive em uma amostra estratificada. Sem essa prova, o consumidor permanece
+desabilitado.
 
 ### 0.10 Critério de aceite por fase
 
@@ -649,9 +789,10 @@ Uma fase só pode habilitar UI quando:
 3. Quais AMMs e lockers entram primeiro em `LP LOCKED`.
 4. Lookback e threshold econômico do funding nativo de `BUNDLED`, condicionados
    ao benchmark do RPC Archive e ao teto de cinco horas.
-5. Se `ROBINHOOD_RPC_URL` não servir estado histórico confiável de 24 horas,
-   escolher entre rota Archive no live e índice interno incremental. API externa
-   de terceiros continua opcional e não pode ser requisito oculto.
+5. Calibrar throughput, batch e concorrência do índice interno incremental no
+   hardware da VPS sem permitir que ele dispute recursos com captura e
+   processamento críticos. API externa de terceiros continua opcional e não
+   pode ser requisito oculto.
 
 ### 0.12 Definição de concluído
 
