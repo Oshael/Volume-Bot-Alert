@@ -76,6 +76,50 @@ function assertLiveCoverage(run, cursor) {
 function createRobinhoodHolderGlobalBackfillRepository(options = {}) {
   const database = options.database || db;
 
+  async function refreshHotQueue(client, tokenAddresses) {
+    if (!tokenAddresses.length) return;
+    await client.query(
+      `WITH bounds AS MATERIALIZED (
+         SELECT state.chain, state.token_address,
+                MIN(journal.block_number) AS first_block,
+                MAX(journal.block_number) AS last_block,
+                MIN(journal.captured_at) AS first_at,
+                MAX(journal.captured_at) AS last_at
+           FROM robinhood_holder_token_states state
+           LEFT JOIN robinhood_holder_transfer_journal journal
+             ON journal.chain = state.chain
+            AND journal.token_address = state.token_address
+            AND journal.applied = FALSE
+          WHERE state.chain = $1 AND state.token_address = ANY($2::varchar[])
+          GROUP BY state.chain, state.token_address
+       ), refreshed AS (
+         INSERT INTO robinhood_holder_hot_queue (
+           chain, token_address, first_pending_block, last_pending_block,
+           first_enqueued_at, last_enqueued_at, updated_at
+         )
+         SELECT chain, token_address, first_block, last_block,
+                first_at, last_at, NOW()
+           FROM bounds WHERE first_block IS NOT NULL
+         ON CONFLICT (chain, token_address) DO UPDATE SET
+           first_pending_block = EXCLUDED.first_pending_block,
+           last_pending_block = EXCLUDED.last_pending_block,
+           first_enqueued_at = EXCLUDED.first_enqueued_at,
+           last_enqueued_at = EXCLUDED.last_enqueued_at,
+           updated_at = EXCLUDED.updated_at
+         RETURNING token_address
+       )
+       DELETE FROM robinhood_holder_hot_queue queue
+        WHERE queue.chain = $1 AND queue.token_address = ANY($2::varchar[])
+          AND NOT EXISTS (
+            SELECT 1 FROM bounds
+             WHERE bounds.chain = queue.chain
+               AND bounds.token_address = queue.token_address
+               AND bounds.first_block IS NOT NULL
+          )`,
+      [CHAIN, tokenAddresses]
+    );
+  }
+
   async function createRun(input = {}) {
     const catalogCutoff = timestamp(input.catalogCutoff, 'catalogCutoff');
     const client = await database.getClient();
@@ -434,6 +478,7 @@ function createRobinhoodHolderGlobalBackfillRepository(options = {}) {
         if (promoted.rowCount !== addresses.length) {
           throw new Error('Global holder handoff batch changed while locked');
         }
+        await refreshHotQueue(client, addresses);
       }
       const updated = await client.query(
         `UPDATE robinhood_holder_global_backfill_runs

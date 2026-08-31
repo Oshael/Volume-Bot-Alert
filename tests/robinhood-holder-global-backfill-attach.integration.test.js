@@ -29,6 +29,7 @@ describe('Robinhood holder global backfill live attach', () => {
         'robinhood_holder_global_backfill_runs',
         'robinhood_holder_global_backfill_tokens', 'robinhood_holder_cursors',
         'robinhood_holder_token_states', 'robinhood_holder_transfer_journal',
+        'robinhood_holder_hot_queue',
       ]) {
         await client.query(`CREATE TEMP TABLE ${table} (LIKE public.${table} INCLUDING ALL)`);
       }
@@ -174,6 +175,16 @@ describe('Robinhood holder global backfill live attach', () => {
       assert.equal((await client.query(
         'SELECT 1 FROM robinhood_holder_transfer_journal WHERE applied = false'
       )).rowCount, 1);
+      assert.deepEqual((await client.query(
+        `SELECT token_address, first_pending_block, last_pending_block
+           FROM robinhood_holder_hot_queue ORDER BY token_address`
+      )).rows.map((row) => ({
+        ...row,
+        first_pending_block: String(row.first_pending_block),
+        last_pending_block: String(row.last_pending_block),
+      })), [{
+        token_address: TOKEN, first_pending_block: '105', last_pending_block: '105',
+      }]);
       const completed = await global.syncCompletion({ runId });
       assert.equal(completed.status, 'completed');
       assert.equal(completed.promotedTokens, 2);
