@@ -15,7 +15,8 @@ const { createRobinhoodRpcClient } = require('../services/robinhood-ingestion-wo
 
 function parseArgs(argv = process.argv.slice(2)) {
   const allowed = new Set(['batch-size', 'confirmations', 'concurrency', 'max-hours',
-    'max-minutes', 'rpc-batch-size', 'sample-blocks', 'samples', 'timeout-ms']);
+    'max-minutes', 'rpc-batch-size', 'rpc-min-interval-ms', 'sample-blocks', 'samples',
+    'timeout-ms']);
   if (argv.some((arg) => arg !== '--apply' && (!arg.startsWith('--')
       || !arg.includes('=') || !allowed.has(arg.slice(2, arg.indexOf('=')))))) {
     throw new Error('unexpected argument');
@@ -28,6 +29,7 @@ function parseArgs(argv = process.argv.slice(2)) {
     batchSize: number('batch-size', 50), confirmations: number('confirmations', 12),
     concurrency: number('concurrency', 2), maxHours: number('max-hours', 5),
     maxMinutes: number('max-minutes', 1440), rpcBatchSize: number('rpc-batch-size', 20),
+    rpcMinIntervalMs: number('rpc-min-interval-ms', 0),
     sampleBlocks: number('sample-blocks', 10), sampleCount: number('samples', 3),
     timeoutMs: number('timeout-ms', 15_000) });
 }
@@ -40,6 +42,7 @@ function createRuntime(options, deps = {}) {
   const rpcClient = deps.rpcClient || (deps.rpcClientFactory || createRobinhoodRpcClient)({
     ...config.robinhoodIngestionWorker, publicRpcUrl: rpcUrl,
     useAlchemy: false, useDrpc: false, rpcTimeoutMs: options.timeoutMs,
+    rpcMinIntervalMs: options.rpcMinIntervalMs,
   });
   const repository = deps.repository || createRobinhoodWalletSignedOriginCursorRepository({
     database: deps.database || db,

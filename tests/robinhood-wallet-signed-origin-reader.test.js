@@ -82,6 +82,19 @@ describe('Robinhood signed-origin full-block reader', () => {
     }), (error) => error.code === 'signed_origin_rpc_invalid');
   });
 
+  it('uses up to eight concurrent RPC batches for a dedicated Archive node', async () => {
+    const blocks = new Map(Array.from({ length: 8 }, (_, index) => {
+      const number = 200 + index; return [String(number), block(number)];
+    }));
+    const rpc = fakeRpc(blocks);
+    await createRobinhoodWalletSignedOriginReader({ rpcClient: rpc.client,
+      rpcBatchSize: 1, concurrency: 8, maxBlocks: 8 }).readBlocks({
+      blockNumbers: [...blocks.keys()], coverageOriginBlock: '200',
+      safeHead: '207', stream: 'seed',
+    });
+    assert.equal(rpc.state.maxActive, 8);
+  });
+
   it('enforces contiguity, safe head, payload, and Robinhood chain', async () => {
     const blocks = new Map([['100', block(100)], ['101', block(101)], ['102', block(102)]]);
     const rpc = fakeRpc(blocks);

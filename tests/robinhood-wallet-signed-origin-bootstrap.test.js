@@ -4,7 +4,9 @@ const { describe, it } = require('node:test');
 const {
   executeBootstrap, runPreflight,
 } = require('../src/services/robinhood-wallet-signed-origin-bootstrap');
-const { parseArgs } = require('../src/utils/bootstrap-robinhood-wallet-signed-origins');
+const {
+  createRuntime, parseArgs,
+} = require('../src/utils/bootstrap-robinhood-wallet-signed-origins');
 
 const TARGET_SECONDS = 1_788_000_000n;
 const hash = (number) => `0x${BigInt(number).toString(16).padStart(64, '0')}`;
@@ -124,7 +126,17 @@ describe('Robinhood signed-origin bootstrap', () => {
   it('keeps the command dry-run by default and rejects unknown arguments', () => {
     assert.deepEqual(parseArgs([]), { apply: false, batchSize: 50, confirmations: 12,
       concurrency: 2, maxHours: 5, maxMinutes: 1440, rpcBatchSize: 20,
+      rpcMinIntervalMs: 0,
       sampleBlocks: 10, sampleCount: 3, timeoutMs: 15_000 });
     assert.throws(() => parseArgs(['--force']), /unexpected argument/);
+  });
+
+  it('does not inherit the public RPC throttle for the local Archive bootstrap', () => {
+    let rpcOptions;
+    createRuntime(parseArgs([]), { env: { ROBINHOOD_RPC_URL: 'http://archive.test' },
+      database: {}, repository: {}, reader: {}, rpcClientFactory: (options) => {
+        rpcOptions = options; return {};
+      } });
+    assert.equal(rpcOptions.rpcMinIntervalMs, 0);
   });
 });

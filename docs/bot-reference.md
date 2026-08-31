@@ -1965,6 +1965,9 @@ O bootstrap aceita lotes de até 500 blocos. Como o cursor avança estritamente 
 ordem, a persistência forward-only consulta origins já conhecidas e grava somente
 wallets novas; uma posição anterior ou identidade conflitante continua causando
 rollback. O progresso separa tempo de RPC, persistência e throughput end-to-end.
+No bootstrap dedicado, `--rpc-min-interval-ms` usa zero por padrão para não
+herdar o throttle do RPC público ao acessar o Archive local; `--concurrency`
+aceita até 8. O worker LIVE mantém seus próprios limites conservadores.
 O comando não inicia worker LIVE nem habilita a classificação FRESH.
 Após o seed chegar a `completed`, o repository cria o cursor `live` exatamente
 em `seed.safe_head + 1`. O runner LIVE revalida checkpoint e regressão da frontier,

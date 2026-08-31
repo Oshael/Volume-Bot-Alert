@@ -87,7 +87,7 @@ function readerLimits(options) {
   const rpcBatchSize = boundedInteger(options.rpcBatchSize ?? 20, 'rpcBatchSize', 1, 50);
   return {
     rpcBatchSize,
-    concurrency: boundedInteger(options.concurrency ?? 2, 'concurrency', 1, 4),
+    concurrency: boundedInteger(options.concurrency ?? 2, 'concurrency', 1, 8),
     maxBlocks: boundedInteger(options.maxBlocks ?? 100, 'maxBlocks', rpcBatchSize, 500),
     timeoutMs: boundedInteger(options.timeoutMs ?? 15_000, 'timeoutMs', 100, 60_000),
     maxPayloadBytes: boundedInteger(
