@@ -300,7 +300,7 @@ SELECT s.stream,
 FROM streams s
 LEFT JOIN robinhood_head_capture_cursors h
   ON h.chain = 'robinhood' AND h.stream = s.stream
-LEFT JOIN queue q USING (stream)
+LEFT JOIN queue q ON q.stream = s.stream
 LEFT JOIN lease l ON TRUE
 ORDER BY s.stream;
 ```
@@ -491,10 +491,6 @@ Interpretação especial:
 O seed precisa estar `completed`; o worker automático só move o cursor `live`:
 
 ```sql
-WITH lease AS (
-  SELECT heartbeat_at, lease_until, metadata
-  FROM worker_leases WHERE lease_key = 'robinhood-signed-origin-live-worker'
-)
 SELECT c.stream,
        CASE
          WHEN c.stream = 'seed' AND c.lifecycle_state <> 'completed' THEN 'SEED INCOMPLETO'
@@ -517,14 +513,15 @@ SELECT c.stream,
        LEFT(COALESCE(c.last_error_code || ':' || c.last_error_message,
                      l.metadata->'telemetry'->>'lastError'), 180) AS detalhe
 FROM robinhood_wallet_signed_origin_cursors c
-LEFT JOIN lease l ON TRUE
+LEFT JOIN worker_leases l
+  ON l.lease_key = 'robinhood-signed-origin-live-worker'
 WHERE c.chain = 'robinhood'
 ORDER BY CASE c.stream WHEN 'seed' THEN 1 ELSE 2 END;
 ```
 
 ## 9. Robinhood holders — captura, apply, shadow/live e manutenção
 
-Esta é a consulta principal do processo `robinhood-holders`. Ela evita contar toda a journal: o backlog live usa a hot queue, que tem uma linha por token pendente.
+Esta é a consulta principal do processo `robinhood-holders`. Ela lê apenas leases, a telemetria já calculada pelos workers e a única linha do cursor live. Não agrega a journal, a hot queue, os estados por token nem o histórico de snapshots.
 
 ```sql
 WITH workers(component_key, papel) AS (
@@ -537,15 +534,6 @@ WITH workers(component_key, papel) AS (
     ('robinhood-holder-reconciliation-worker', 'reconciliacao'),
     ('robinhood-holder-journal-prune-worker', 'prune'),
     ('robinhood-holder-snapshot-worker', 'snapshots')
-), state_summary AS (
-  SELECT JSONB_OBJECT_AGG(ledger_status, qty) AS states
-  FROM (SELECT ledger_status, COUNT(*) AS qty
-        FROM robinhood_holder_token_states WHERE chain = 'robinhood'
-        GROUP BY ledger_status) s
-), hot AS (
-  SELECT COUNT(*) AS tokens, MIN(first_pending_block) AS first_block,
-         MAX(last_pending_block) AS last_block, MIN(first_enqueued_at) AS oldest_at
-  FROM robinhood_holder_hot_queue WHERE chain = 'robinhood'
 ), cursor_metric AS (
   SELECT JSONB_BUILD_OBJECT(
     'next_block', c.next_block, 'safe_head', c.safe_head,
@@ -554,58 +542,52 @@ WITH workers(component_key, papel) AS (
     'journal_floor', c.journal_floor_block,
     'updated_at', c.updated_at) AS value
   FROM robinhood_holder_cursors c WHERE c.chain = 'robinhood' AND c.stream = 'live'
-), metrics(component_key, metrica) AS (
-  SELECT 'robinhood-holder-live-worker', COALESCE((SELECT value FROM cursor_metric), '{}'::jsonb)
-  UNION ALL
-  SELECT 'robinhood-holder-live-apply-worker', JSONB_BUILD_OBJECT(
-    'hot_tokens', hot.tokens, 'first_pending_block', hot.first_block,
-    'last_pending_block', hot.last_block,
-    'oldest_s', EXTRACT(EPOCH FROM NOW() - hot.oldest_at)::bigint) FROM hot
-  UNION ALL
-  SELECT 'robinhood-holder-intelligence-worker', COALESCE((SELECT states FROM state_summary), '{}'::jsonb)
-  UNION ALL
-  SELECT 'robinhood-holder-backfill-worker', COALESCE((SELECT states FROM state_summary), '{}'::jsonb)
-  UNION ALL
-  SELECT 'robinhood-holder-cold-worker', COALESCE((SELECT states FROM state_summary), '{}'::jsonb)
-  UNION ALL
-  SELECT 'robinhood-holder-reconciliation-worker', COALESCE((SELECT states FROM state_summary), '{}'::jsonb)
-  UNION ALL
-  SELECT 'robinhood-holder-journal-prune-worker', COALESCE((SELECT value FROM cursor_metric), '{}'::jsonb)
-  UNION ALL
-  SELECT 'robinhood-holder-snapshot-worker', JSONB_BUILD_OBJECT(
-    'latest_hour', (SELECT MAX(bucket_start) FROM robinhood_token_holder_buckets
-                    WHERE chain = 'robinhood' AND source = 'ledger_live'))
+), observed AS (
+  SELECT w.component_key, w.papel, l.heartbeat_at, l.lease_until, l.metadata,
+         CASE
+           WHEN w.component_key = 'robinhood-holder-live-worker'
+             THEN COALESCE((SELECT value FROM cursor_metric), '{}'::jsonb)
+           WHEN w.component_key = 'robinhood-holder-live-apply-worker'
+             THEN COALESCE(l.metadata->'telemetry'->'lastResult'->'freshness', '{}'::jsonb)
+           ELSE JSONB_STRIP_NULLS(JSONB_BUILD_OBJECT(
+             'lastCompletedAt', l.metadata->'telemetry'->>'lastCompletedAt',
+             'lastResult', l.metadata->'telemetry'->'lastResult'
+           ))
+         END AS metrica
+  FROM workers w
+  LEFT JOIN worker_leases l ON l.lease_key = w.component_key
 )
-SELECT w.component_key AS worker, w.papel,
+SELECT o.component_key AS worker, o.papel,
        CASE
-         WHEN l.heartbeat_at IS NULL THEN 'INATIVO/CONFIRA FLAG'
-         WHEN l.metadata->>'state' = 'halted' THEN 'HALTED'
-         WHEN l.lease_until <= NOW() THEN 'LEASE ATRASADA'
-         WHEN NULLIF(m.metrica->>'lag_blocks', '')::bigint > 50 THEN 'ATRASADO'
-         WHEN NULLIF(m.metrica->>'oldest_s', '')::bigint > 180 THEN 'FILA ANTIGA'
-         WHEN COALESCE(NULLIF(m.metrica->>'drifted', '')::bigint, 0) > 0 THEN 'ATENCAO: DRIFTED'
+         WHEN o.heartbeat_at IS NULL THEN 'INATIVO/CONFIRA FLAG'
+         WHEN o.metadata->>'state' = 'halted' THEN 'HALTED'
+         WHEN o.lease_until <= NOW() THEN 'LEASE ATRASADA'
+         WHEN NULLIF(o.metrica->>'lag_blocks', '')::bigint > 50 THEN 'ATRASADO'
+         WHEN NULLIF(o.metrica->>'worstLagBlocks', '')::bigint > 50 THEN 'APPLY ATRASADO'
+         WHEN NULLIF(o.metrica->>'oldestAgeMs', '')::bigint > 180000 THEN 'FILA ANTIGA'
          WHEN EXISTS (SELECT 1 FROM worker_health_incidents i
-                      WHERE i.component_key = w.component_key AND i.status = 'open') THEN 'INCIDENTE'
+                      WHERE i.component_key = o.component_key AND i.status = 'open') THEN 'INCIDENTE'
          ELSE 'OK'
        END AS estado,
-       ROUND(EXTRACT(EPOCH FROM (NOW() - l.heartbeat_at)))::bigint AS heartbeat_s,
-       m.metrica,
-       LEFT(l.metadata->'telemetry'->>'lastError', 180) AS last_error
-FROM workers w
-LEFT JOIN worker_leases l ON l.lease_key = w.component_key
-LEFT JOIN metrics m USING (component_key)
-ORDER BY w.component_key;
+       ROUND(EXTRACT(EPOCH FROM (NOW() - o.heartbeat_at)))::bigint AS heartbeat_s,
+       o.metrica,
+       LEFT(o.metadata->'telemetry'->>'lastError', 180) AS last_error
+FROM observed o
+ORDER BY o.component_key;
 ```
 
-Leia os estados do ledger assim:
+Na linha de `live-apply`, a métrica `freshness` mostra `pendingTokens`, `recentShadowTokens`, `staleLiveTokens`, `worstLagBlocks` e `oldestAgeMs`. Nos demais workers de manutenção, `lastCompletedAt` e `lastResult` mostram o último ciclo. O cursor direto continua sendo usado para `holder-live`.
 
-- `pending`/`backfilling`: trabalho inicial ainda não concluído;
-- `shadow`: baseline pronto, ainda não publicado como live; pode ser normal durante handoff;
-- `live`: publicado e elegível para leitura local;
-- `drifted`: inconsistência detectada; exige investigação/recovery;
-- `resyncing`: reparo em andamento.
+O runbook configura `statement_timeout = '5s'` no começo. A query revisada deve caber nesse limite. Se ainda precisar aumentar apenas para a sessão atual do `psql`, use:
 
-Para o apply, `hot_tokens > 0` é normal durante fluxo, mas `oldest_s > 180`, crescimento contínuo ou diferença grande entre `first_pending_block` e o cursor indicam atraso.
+```sql
+SHOW statement_timeout;
+SET statement_timeout = '30s';
+-- execute aqui a consulta desejada
+SET statement_timeout = '5s';
+```
+
+Esse `SET` afeta somente a conexão atual; não altera o PostgreSQL globalmente. Para o apply, `pendingTokens > 0` pode ser normal, mas `oldestAgeMs > 180000`, `worstLagBlocks > 50` ou crescimento contínuo indicam atraso. `recentShadowTokens` é o shadow recente elegível; `staleLiveTokens` indica trabalho live antigo acumulado.
 
 ## 10. Robinhood holder global backfill
 
