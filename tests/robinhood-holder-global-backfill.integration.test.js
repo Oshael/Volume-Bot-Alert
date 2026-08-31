@@ -22,6 +22,11 @@ describe('Robinhood holder global backfill lifecycle', () => {
         chain varchar(16) NOT NULL, token_address varchar(42) NOT NULL,
         PRIMARY KEY (chain, token_address)
       )`);
+      await client.query(`CREATE TEMP TABLE robinhood_token_attributions (
+        chain varchar(16) NOT NULL, token_address varchar(42) NOT NULL,
+        source varchar(32) NOT NULL, attribution_block bigint,
+        PRIMARY KEY (chain, token_address)
+      )`);
       await client.query(`CREATE TEMP TABLE robinhood_holder_global_backfill_runs
         (LIKE public.robinhood_holder_global_backfill_runs INCLUDING ALL)`);
       await client.query(`CREATE TEMP TABLE robinhood_holder_global_backfill_tokens
@@ -36,6 +41,10 @@ describe('Robinhood holder global backfill lifecycle', () => {
       await client.query(
         `INSERT INTO robinhood_holder_token_states VALUES ('robinhood', $1)`, [TOKENS[1]]
       );
+      await client.query(
+        `INSERT INTO robinhood_token_attributions VALUES
+          ('robinhood', $1, 'rpc_code_transition', 100)`, [TOKENS[0]]
+      );
       const database = {
         getClient: async () => ({ query: client.query.bind(client), release() {} }),
         query: client.query.bind(client),
@@ -46,6 +55,9 @@ describe('Robinhood holder global backfill lifecycle', () => {
       assert.equal(frozen.nextBlock, '0');
       assert.equal(frozen.cohortTokenCount, '1');
       assert.deepEqual(await repository.loadCohort({ runId: frozen.id }), [TOKENS[0]]);
+      assert.deepEqual(await repository.loadCohortSchedule({ runId: frozen.id }), [{
+        tokenAddress: TOKENS[0], deploymentBlock: '100',
+      }]);
       assert.deepEqual(await repository.getActiveRun(), frozen);
 
       await assert.rejects(
