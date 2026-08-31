@@ -4,6 +4,7 @@ const ROBINHOOD_CHAIN_ID = 4663n;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_CACHE_BLOCKS = 65536;
 const RPC_BATCH_SIZE = 100;
+const RPC_SUB_BATCH_SIZE = 10;
 const MAX_DATE_MS = 8_640_000_000_000_000n;
 
 function invalid(message) {
@@ -89,6 +90,14 @@ function canonicalEvidence(firstBuy, transaction, rawBlock, metadata) {
   });
 }
 
+async function requestBatches(requests, requestBatch, size = RPC_SUB_BATCH_SIZE) {
+  const batches = [];
+  for (let offset = 0; offset < requests.length; offset += size) {
+    batches.push(requests.slice(offset, offset + size));
+  }
+  return (await Promise.all(batches.map(requestBatch))).flat();
+}
+
 function resolveRobinhoodFreshWalletRpcProvider(env = process.env, kind = 'archive') {
   const archive = kind === 'archive';
   if (!archive && kind !== 'live') throw new Error('FRESH RPC kind must be archive or live');
@@ -120,11 +129,7 @@ function createRobinhoodFreshWalletRpcSource(options = {}) {
     if (typeof rpcClient.requestBatch !== 'function') {
       return Promise.all(requests.map(({ method, params }) => rpcClient.request(method, params)));
     }
-    const results = [];
-    for (let offset = 0; offset < requests.length; offset += RPC_BATCH_SIZE) {
-      results.push(...await rpcClient.requestBatch(requests.slice(offset, offset + RPC_BATCH_SIZE)));
-    }
-    return results;
+    return requestBatches(requests, (batch) => rpcClient.requestBatch(batch));
   }
 
   async function validateChain() {
@@ -296,5 +301,5 @@ function createRobinhoodFreshWalletRpcSource(options = {}) {
 module.exports = {
   createRobinhoodFreshWalletRpcSource,
   resolveRobinhoodFreshWalletRpcProvider,
-  __private: { parseBlock },
+  __private: { parseBlock, requestBatches },
 };

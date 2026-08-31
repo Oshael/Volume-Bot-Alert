@@ -9,6 +9,7 @@ const {
 const {
   createRobinhoodFreshWalletRpcSource,
   resolveRobinhoodFreshWalletRpcProvider,
+  __private: { requestBatches },
 } = require('../src/services/robinhood-fresh-wallet-rpc-source');
 
 const WALLET = `0x${'1'.repeat(40)}`;
@@ -143,6 +144,18 @@ describe('Robinhood FRESH signed-activity rule', () => {
 });
 
 describe('Robinhood FRESH historical RPC source', () => {
+  it('runs bounded RPC sub-batches concurrently and preserves result order', async () => {
+    let active = 0; let maxActive = 0; const sizes = [];
+    const requests = Array.from({ length: 25 }, (_, index) => index);
+    const results = await requestBatches(requests, async (batch) => {
+      sizes.push(batch.length); active += 1; maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setImmediate(resolve)); active -= 1; return batch;
+    });
+    assert.deepEqual(sizes, [10, 10, 5]);
+    assert.equal(maxActive, 3);
+    assert.deepEqual(results, requests);
+  });
+
   it('resolves the strict cutoff, anchors nonce by hash, and reuses block cache', async () => {
     const fake = rpc();
     const source = createRobinhoodFreshWalletRpcSource({
@@ -184,7 +197,7 @@ describe('Robinhood FRESH historical RPC source', () => {
     assert.deepEqual(results[0], individual);
     assert.equal(evaluateRobinhoodFreshWallet(results[0]).outcome, 'fresh');
     assert.ok(fake.batches.length > 0);
-    assert.ok(fake.batches.every((batch) => batch.length <= 100));
+    assert.ok(fake.batches.every((batch) => batch.length <= 10));
     assert.equal(fake.calls.filter(([method]) => method === 'eth_getTransactionByHash').length, 1);
     assert.equal(fake.calls.filter(([method]) => method === 'eth_getTransactionCount').length, 1);
   });
