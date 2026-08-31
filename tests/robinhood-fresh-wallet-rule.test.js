@@ -180,6 +180,39 @@ describe('Robinhood FRESH historical RPC source', () => {
     assert.equal(fake.calls.filter(([method]) => method === 'eth_chainId').length, 1);
   });
 
+  it('interpolates a realistic 24-hour cutoff with exact adjacent blocks', async () => {
+    const firstBlock = 50_000_000n;
+    const firstTime = Date.parse('2026-08-30T12:00:00.000Z');
+    const calls = [];
+    const client = { async request(method, params = []) {
+      calls.push([method, params]);
+      if (method === 'eth_chainId') return '0x1237';
+      if (method === 'eth_getTransactionByHash') return {
+        hash: TX_HASH, from: WALLET, nonce: '0x5', blockNumber: quantity(firstBlock),
+        blockHash: hash(firstBlock),
+      };
+      if (method === 'eth_getBlockByNumber') {
+        const number = BigInt(params[0]);
+        const timestamp = firstTime - (Number(firstBlock - number) * 13_000);
+        return { number: quantity(number), hash: hash(number),
+          timestamp: quantity(Math.floor(timestamp / 1000)) };
+      }
+      if (method === 'eth_getTransactionCount') return '0x0';
+      throw new Error(`unexpected RPC method ${method}`);
+    } };
+    client.requestBatch = (requests) => Promise.all(
+      requests.map(({ method, params }) => client.request(method, params))
+    );
+    const evidence = await createRobinhoodFreshWalletRpcSource({ rpcClient: client,
+      source: 'robinhood-pc-archive', sourceKind: 'seed' }).readEvidence({
+      ...firstBuy(), blockNumber: firstBlock.toString(), blockHash: hash(firstBlock),
+      blockTime: new Date(firstTime).toISOString(),
+    });
+    assert.equal(evidence.cutoff.number, (firstBlock - 6647n).toString());
+    assert.equal(evidence.nextBlock.number, (firstBlock - 6646n).toString());
+    assert.ok(calls.filter(([method]) => method === 'eth_getBlockByNumber').length <= 6);
+  });
+
   it('batches identical canonical evidence without changing the result', async () => {
     const fake = rpc();
     const source = createRobinhoodFreshWalletRpcSource({

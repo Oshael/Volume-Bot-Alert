@@ -5,6 +5,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_CACHE_BLOCKS = 65536;
 const RPC_BATCH_SIZE = 100;
 const RPC_SUB_BATCH_SIZE = 10;
+const INITIAL_CUTOFF_STEP = 8192n;
 const MAX_DATE_MS = 8_640_000_000_000_000n;
 
 function invalid(message) {
@@ -143,22 +144,6 @@ function createRobinhoodFreshWalletRpcSource(options = {}) {
     return chainValidation;
   }
 
-  async function cachedBlock(number) {
-    const key = BigInt(number).toString();
-    if (cache.has(key)) return cache.get(key);
-    const pending = rpcClient.request('eth_getBlockByNumber', [blockTag(key), false])
-      .then((block) => parseBlock(block, key));
-    cache.set(key, pending);
-    try {
-      const block = await pending;
-      while (cache.size > maxCacheBlocks) cache.delete(cache.keys().next().value);
-      return block;
-    } catch (error) {
-      cache.delete(key);
-      throw error;
-    }
-  }
-
   async function cachedBlocks(numbers) {
     const keys = [...new Set(numbers.map((number) => BigInt(number).toString()))];
     const missing = keys.filter((key) => !cache.has(key));
@@ -173,23 +158,75 @@ function createRobinhoodFreshWalletRpcSource(options = {}) {
     return new Map(keys.map((key, index) => [key, blocks[index]]));
   }
 
-  async function resolveCutoff(targetAt, upperBlock) {
-    const targetMs = Date.parse(targetAt);
-    let low = 0n;
-    let high = BigInt(upperBlock.number) - 1n;
-    let cutoff = null;
-    while (low <= high) {
-      const middle = (low + high) / 2n;
-      const block = await cachedBlock(middle);
-      if (Date.parse(block.blockTime) < targetMs) {
-        cutoff = block;
-        low = middle + 1n;
-      } else high = middle - 1n;
+  function interpolationProbe(state) {
+    const lowNumber = BigInt(state.low.number);
+    const highNumber = BigInt(state.high.number);
+    const span = highNumber - lowNumber;
+    const lowMs = BigInt(Date.parse(state.low.blockTime));
+    const highMs = BigInt(Date.parse(state.high.blockTime));
+    let probe = lowNumber + ((highNumber - lowNumber)
+      * (BigInt(state.targetMs) - lowMs) / (highMs - lowMs));
+    let edge = null;
+    if (probe <= lowNumber) { probe = lowNumber + 1n; edge = 'low'; }
+    if (probe >= highNumber) { probe = highNumber - 1n; edge = 'high'; }
+    if (edge && state.previousEdge === edge) {
+      probe = lowNumber + (span / 2n); edge = null;
     }
-    if (!cutoff) throw invalid('24-hour cutoff predates the canonical chain');
-    const nextBlock = await cachedBlock(BigInt(cutoff.number) + 1n);
-    if (Date.parse(nextBlock.blockTime) < targetMs) throw invalid('cutoff resolution is incomplete');
-    return { cutoff, nextBlock };
+    state.previousEdge = edge;
+    return probe;
+  }
+
+  async function resolveCutoffBounds(entries) {
+    const states = entries.map(({ targetAt, upperBlock }) => {
+      const targetMs = Date.parse(targetAt);
+      if (Date.parse(upperBlock.blockTime) < targetMs || BigInt(upperBlock.number) < 1n) {
+        throw invalid('cutoff upper bound is invalid');
+      }
+      return { targetAt, targetMs, anchor: BigInt(upperBlock.number), upper: upperBlock,
+        step: INITIAL_CUTOFF_STEP, low: null, high: null, previousEdge: null };
+    });
+    while (states.some(({ low }) => !low)) {
+      const active = states.filter(({ low }) => !low);
+      active.forEach((state) => {
+        state.probe = state.anchor > state.step ? state.anchor - state.step : 0n;
+      });
+      const blocks = await cachedBlocks(active.map(({ probe }) => probe));
+      for (const state of active) {
+        const block = blocks.get(state.probe.toString());
+        if (Date.parse(block.blockTime) < state.targetMs) {
+          state.low = block; state.high = state.upper;
+        } else {
+          if (state.probe === 0n) throw invalid('24-hour cutoff predates the canonical chain');
+          state.upper = block; state.step *= 2n;
+        }
+      }
+    }
+    while (states.some(({ low, high }) => BigInt(high.number) - BigInt(low.number) > 1n)) {
+      const active = states.filter(({ low, high }) => BigInt(high.number) - BigInt(low.number) > 1n);
+      active.forEach((state) => { state.probe = interpolationProbe(state); });
+      const blocks = await cachedBlocks(active.flatMap(({ probe, high }) => [
+        probe, probe + 1n < BigInt(high.number) ? probe + 1n : BigInt(high.number),
+      ]));
+      for (const state of active) {
+        const block = blocks.get(state.probe.toString());
+        const nextBlock = blocks.get((state.probe + 1n).toString());
+        if (Date.parse(block.blockTime) >= state.targetMs) state.high = block;
+        else if (Date.parse(nextBlock.blockTime) < state.targetMs) state.low = nextBlock;
+        else { state.low = block; state.high = nextBlock; }
+      }
+    }
+    return states.map(({ targetAt, targetMs, low, high }) => {
+      if (BigInt(high.number) !== BigInt(low.number) + 1n
+          || Date.parse(low.blockTime) >= targetMs || Date.parse(high.blockTime) < targetMs) {
+        throw invalid('cutoff resolution is incomplete');
+      }
+      return { targetAt, cutoff: low, nextBlock: high };
+    });
+  }
+
+  async function resolveCutoff(targetAt, upperBlock) {
+    const [resolved] = await resolveCutoffBounds([{ targetAt, upperBlock }]);
+    return resolved;
   }
 
   async function readCanonicalEvidence(input = {}) {
@@ -228,33 +265,12 @@ function createRobinhoodFreshWalletRpcSource(options = {}) {
   }
 
   async function resolveCutoffsBatch(canonicals) {
-    const states = canonicals.map((canonical) => ({ canonical,
-      targetAt: new Date(Date.parse(canonical.firstBuy.blockTime) - DAY_MS).toISOString(),
-      low: 0n, high: BigInt(canonical.firstBuy.blockNumber) - 1n, cutoff: null,
-    }));
-    while (states.some(({ low, high }) => low <= high)) {
-      const active = states.filter(({ low, high }) => low <= high);
-      active.forEach((state) => { state.middle = (state.low + state.high) / 2n; });
-      const blocks = await cachedBlocks(active.map(({ middle }) => middle));
-      for (const state of active) {
-        const block = blocks.get(state.middle.toString());
-        if (Date.parse(block.blockTime) < Date.parse(state.targetAt)) {
-          state.cutoff = block; state.low = state.middle + 1n;
-        } else state.high = state.middle - 1n;
-      }
-    }
-    if (states.some(({ cutoff }) => !cutoff)) {
-      throw invalid('24-hour cutoff predates the canonical chain');
-    }
-    const nextBlocks = await cachedBlocks(states.map(({ cutoff }) => BigInt(cutoff.number) + 1n));
-    return states.map((state) => {
-      const nextBlock = nextBlocks.get((BigInt(state.cutoff.number) + 1n).toString());
-      if (Date.parse(nextBlock.blockTime) < Date.parse(state.targetAt)) {
-        throw invalid('cutoff resolution is incomplete');
-      }
-      return { canonical: state.canonical, targetAt: state.targetAt,
-        cutoff: state.cutoff, nextBlock };
-    });
+    const bounds = await resolveCutoffBounds(canonicals.map(({ firstBuy }) => ({
+      targetAt: new Date(Date.parse(firstBuy.blockTime) - DAY_MS).toISOString(),
+      upperBlock: { number: firstBuy.blockNumber, hash: firstBuy.blockHash,
+        blockTime: firstBuy.blockTime },
+    })));
+    return bounds.map((bound, index) => ({ canonical: canonicals[index], ...bound }));
   }
 
   async function readEvidenceBatch(inputs = []) {

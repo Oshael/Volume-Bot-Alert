@@ -2001,8 +2001,11 @@ congelada na ativação e recompõe hash/posição da âncora pelos swaps e
 Preflight e execução agrupam até 100 pares por rodada e enviam transações,
 headers e nonces em sub-batches JSON-RPC de até 10 itens concorrentes; a fila
 seed é congelada em ordem cronológica e o cache local retém
-até 65.536 headers para reutilizar cutoffs, enquanto a busca binária continua
-exata e valida os mesmos hashes, timestamps e nonces do caminho individual. Use
+até 65.536 headers para reutilizar cutoffs, enquanto a busca da fronteira continua
+exata e valida os mesmos hashes, timestamps e nonces do caminho individual. A
+resolução primeiro fecha um bracket canônico a partir da first-buy e então usa
+interpolação por timestamp com fallback bounded, sempre confirmando os dois
+blocos adjacentes da fronteira estrita. Use
 `--batch-size=100` no Archive com capacidade disponível. Durante a carga, o sync
 completo de coverage ocorre a cada
 10.000 pares e no encerramento, evitando recontar todo o cohort a cada claim sem
