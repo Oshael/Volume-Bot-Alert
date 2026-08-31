@@ -12,16 +12,15 @@ const TASK = { tokenAddress: `0x${'a'.repeat(40)}`, walletAddress: `0x${'b'.repe
   transactionHash: `0x${'c'.repeat(64)}`, blockNumber: '20',
   blockHash: `0x${'d'.repeat(64)}`, blockTime: '2026-08-22T12:00:00Z' };
 
-it('samples Archive evidence and refuses a seed projected above five hours', async () => {
+it('keeps projected duration advisory and refuses only unavailable Archive evidence', async () => {
   const repository = { loadPlan: async () => ({ ready: true, pairCount: 100_000,
     tokenCount: 10 }), samplePairs: async () => [TASK] };
   const slow = await runPreflight({ repository, source: { readEvidence: async () => ({}) },
     now: (() => { const values = [0, 200]; return () => values.shift(); })(),
   }, { sampleCount: 1, concurrency: 1 });
   assert.equal(slow.projectedMs, 25_000_000);
-  assert.equal(slow.approved, false);
-  await assert.rejects(executeSeed({}, { preflight: slow }),
-    (error) => error.code === 'fresh_seed_preflight_refused');
+  assert.equal(slow.durationAdvisoryExceeded, true);
+  assert.equal(slow.approved, true);
 
   const unavailable = await runPreflight({ repository,
     source: { readEvidence: async () => { throw new Error('no archive'); } },
@@ -29,6 +28,8 @@ it('samples Archive evidence and refuses a seed projected above five hours', asy
   }, { sampleCount: 1 });
   assert.equal(unavailable.sampledUnavailable, 1);
   assert.equal(unavailable.approved, false);
+  await assert.rejects(executeSeed({}, { preflight: unavailable }),
+    (error) => error.code === 'fresh_seed_preflight_refused');
 
   const empty = await runPreflight({ repository: {
     loadPlan: async () => ({ ready: true, tokenCount: 0, pairCount: 0 }),

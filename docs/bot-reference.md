@@ -1993,9 +1993,9 @@ interrompida. O seed único usa `npm run robinhood:fresh-wallet-seed`: sem
 `--apply`, faz
 preflight read-only no Archive de `RH_NODE_RPC_URL`, amostra evidência real,
 usando no mínimo um batch completo de execução (até 100 pares), aplica margem de
-25% e recusa ETA acima de cinco horas por padrão. Uma operação supervisionada
-pode autorizar explicitamente até 24 horas com `--max-hours`; `--max-minutes`
-aceita até 1.440 para manter a mesma sessão, sem relaxar validações. `--apply` congela na
+25% e informa quando o ETA excede `--max-hours`, sem bloquear a campanha por
+duração. Evidência Archive indisponível ainda falha fechada. `--max-minutes`
+aceita até 1.440 para manter a mesma sessão. `--apply` congela na
 fila todos os first-buys até o bloco de ativação dos tokens cujo launch canônico
 está nos 14 dias fixos anteriores. O cohort usa a frontier global de first-buy
 congelada na ativação e recompõe hash/posição da âncora pelos swaps e

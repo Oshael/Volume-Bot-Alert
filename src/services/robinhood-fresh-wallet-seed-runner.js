@@ -69,15 +69,15 @@ async function runPreflight(deps = {}, options = {}) {
   const elapsedMs = Math.max(1, now() - startedAt);
   const projectedMs = Math.ceil((elapsedMs / Math.max(1, samples.length))
     * plan.pairCount * SAFETY_FACTOR);
-  return Object.freeze({ ...plan, approved: sampledUnavailable === 0
-    && projectedMs <= maxHours * 3_600_000, sampleCount: samples.length,
+  return Object.freeze({ ...plan, approved: sampledUnavailable === 0,
+    durationAdvisoryExceeded: projectedMs > maxHours * 3_600_000, sampleCount: samples.length,
   sampledUnavailable, batchSize, concurrency, safetyFactor: SAFETY_FACTOR, projectedMs,
   projectedHours: Number((projectedMs / 3_600_000).toFixed(2)), maxHours });
 }
 
 function assertApproved(preflight) {
   if (!preflight?.approved) throw Object.assign(
-    new Error('FRESH seed refused: archive evidence or projected capacity is insufficient'),
+    new Error('FRESH seed refused: Archive evidence is unavailable'),
     { code: 'fresh_seed_preflight_refused' }
   );
 }
