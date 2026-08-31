@@ -184,7 +184,8 @@ function createRobinhoodWalletSignedOriginCursorRepository(options = {}) {
       }
       const acceptedBlocks = blocks(input, cursor);
       assertOrigins(input.origins, cursor, acceptedBlocks);
-      const persisted = await origins.persistOrigins(input.origins || [], { client });
+      const persist = origins.persistForwardOrigins || origins.persistOrigins;
+      const persisted = await persist.call(origins, input.origins || [], { client });
       const checkpoint = acceptedBlocks.at(-1);
       const nextBlock = (BigInt(checkpoint.number) + 1n).toString();
       const completed = nextBlock === (BigInt(cursor.safeHead) + 1n).toString();
@@ -223,7 +224,8 @@ function createRobinhoodWalletSignedOriginCursorRepository(options = {}) {
       }
       const acceptedBlocks = liveBlocks(input, cursor, safeHead);
       assertOrigins(input.origins, cursor, acceptedBlocks);
-      const persisted = await origins.persistOrigins(input.origins || [], { client });
+      const persist = origins.persistForwardOrigins || origins.persistOrigins;
+      const persisted = await persist.call(origins, input.origins || [], { client });
       const checkpoint = acceptedBlocks.at(-1);
       const nextBlock = (BigInt(checkpoint.number) + 1n).toString();
       const lifecycle = BigInt(nextBlock) > BigInt(safeHead) ? 'caught_up' : 'running';

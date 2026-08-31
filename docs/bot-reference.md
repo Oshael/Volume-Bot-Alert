@@ -1961,6 +1961,10 @@ a `activation_at - 24 hours`, congela `head - confirmations`, mede full-blocks e
 informa quando o ETA excede `--max-hours`, sem recusar uma leitura canônica
 saudável. `-- --apply` cria ou retoma o cursor e processa todos os blocos em
 ordem, inclusive vazios; `--max-minutes` limita cada sessão e aceita até 1.440.
+O bootstrap aceita lotes de até 500 blocos. Como o cursor avança estritamente em
+ordem, a persistência forward-only consulta origins já conhecidas e grava somente
+wallets novas; uma posição anterior ou identidade conflitante continua causando
+rollback. O progresso separa tempo de RPC, persistência e throughput end-to-end.
 O comando não inicia worker LIVE nem habilita a classificação FRESH.
 Após o seed chegar a `completed`, o repository cria o cursor `live` exatamente
 em `seed.safe_head + 1`. O runner LIVE revalida checkpoint e regressão da frontier,

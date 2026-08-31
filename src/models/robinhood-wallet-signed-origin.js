@@ -40,6 +40,22 @@ function sameIdentity(left, right) {
     && left.first_nonce === right.first_nonce;
 }
 
+function selectMissingForwardRows(rows, current) {
+  const stored = new Map(current.map((row) => [row.wallet_address, row]));
+  return rows.filter((row) => {
+    const actual = stored.get(row.wallet_address);
+    if (!actual) return true;
+    if (compare(actual, row) > 0 || (compare(actual, row) === 0 && !sameIdentity(actual, row))
+        || (actual.first_transaction_hash === row.first_transaction_hash
+          && !sameIdentity(actual, row))) {
+      throw Object.assign(new Error('signed origin conflicts with forward-only storage'), {
+        code: 'signed_origin_reorg_conflict',
+      });
+    }
+    return false;
+  });
+}
+
 function dedupe(values) {
   const rows = new Map();
   for (const value of values.map(normalize)) {
@@ -66,6 +82,48 @@ function dedupe(values) {
 
 function createRobinhoodWalletSignedOriginRepository(options = {}) {
   const database = options.database || db;
+
+  async function persistForwardOrigins(values = [], context = {}) {
+    if (!Array.isArray(values)) throw new TypeError('origins must be a list');
+    const rows = dedupe(values);
+    if (!rows.length) return Object.freeze({ originsConsidered: 0, originsWritten: 0 });
+    const ownsClient = !context.client;
+    const client = context.client || await database.getClient();
+    try {
+      if (ownsClient) await client.query('BEGIN');
+      const current = (await client.query(`WITH input AS (
+        SELECT * FROM jsonb_to_recordset($2::jsonb) AS item(wallet_address text)
+      ) SELECT stored.wallet_address, stored.first_block_number::text,
+          stored.first_block_hash, stored.first_transaction_hash,
+          stored.first_transaction_index::text, stored.first_nonce::text
+        FROM input INNER JOIN robinhood_wallet_signed_origins stored
+          ON stored.chain = $1 AND stored.wallet_address = input.wallet_address`, [
+        CHAIN, JSON.stringify(rows.map(({ wallet_address }) => ({ wallet_address }))),
+      ])).rows;
+      const missing = selectMissingForwardRows(rows, current);
+      let written = { rowCount: 0 };
+      if (missing.length) written = await client.query(`INSERT INTO robinhood_wallet_signed_origins (
+        chain, wallet_address, first_block_number, first_block_hash, first_block_time,
+        first_transaction_hash, first_transaction_index, first_nonce,
+        coverage_origin_block, source_stream, observed_at
+      ) SELECT $1, item.* FROM jsonb_to_recordset($2::jsonb) AS item(
+        wallet_address text, first_block_number bigint, first_block_hash text,
+        first_block_time timestamptz, first_transaction_hash text,
+        first_transaction_index integer, first_nonce numeric,
+        coverage_origin_block bigint, source_stream text, observed_at timestamptz
+      ) ON CONFLICT DO NOTHING RETURNING wallet_address`, [CHAIN, JSON.stringify(missing)]);
+      if (written.rowCount !== missing.length) {
+        throw Object.assign(new Error('signed origin changed during forward-only storage'), {
+          code: 'signed_origin_reorg_conflict',
+        });
+      }
+      if (ownsClient) await client.query('COMMIT');
+      return Object.freeze({ originsConsidered: rows.length, originsWritten: written.rowCount });
+    } catch (error) {
+      if (ownsClient) await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally { if (ownsClient) client.release(); }
+  }
 
   async function persistOrigins(values = [], context = {}) {
     if (!Array.isArray(values)) throw new TypeError('origins must be a list');
@@ -139,7 +197,7 @@ function createRobinhoodWalletSignedOriginRepository(options = {}) {
     } finally { if (ownsClient) client.release(); }
   }
 
-  return Object.freeze({ persistOrigins });
+  return Object.freeze({ persistForwardOrigins, persistOrigins });
 }
 
 module.exports = { createRobinhoodWalletSignedOriginRepository };

@@ -192,12 +192,13 @@ async function runPreflight(deps = {}, options = {}) {
 async function executeBootstrap(deps = {}, options = {}) {
   const preflight = options.preflight;
   if (!preflight?.approved) throw failure('signed-origin bootstrap preflight was not approved');
-  const batchSize = bounded(options.batchSize, 50, 1, 200, 'batchSize');
+  const batchSize = bounded(options.batchSize, 50, 1, 500, 'batchSize');
   const maxMinutes = bounded(options.maxMinutes, 1440, 1, MAX_SESSION_MINUTES, 'maxMinutes');
   let cursor = await deps.repository.createOrResume(preflight);
   const deadline = (deps.now || Date.now)() + maxMinutes * 60_000;
   let blocksCommitted = 0; let originsWritten = 0;
   while (cursor.lifecycleState !== 'completed' && (deps.now || Date.now)() < deadline) {
+    const batchStartedAt = (deps.now || Date.now)();
     const remaining = BigInt(cursor.safeHead) - BigInt(cursor.nextBlock) + 1n;
     const count = Number(remaining < BigInt(batchSize) ? remaining : BigInt(batchSize));
     const blockNumbers = Array.from({ length: count }, (_, index) => (
@@ -205,12 +206,21 @@ async function executeBootstrap(deps = {}, options = {}) {
     ).toString());
     const evidence = await deps.reader.readBlocks({ blockNumbers,
       coverageOriginBlock: cursor.originBlock, safeHead: cursor.safeHead, stream: 'seed' });
+    const readCompletedAt = (deps.now || Date.now)();
     const committed = await deps.repository.commitBatch({ stream: 'seed',
       expectedVersion: cursor.version, expectedNextBlock: cursor.nextBlock,
       blocks: evidence.blocks, origins: evidence.origins });
     cursor = committed.cursor; blocksCommitted += committed.blocksCommitted;
     originsWritten += committed.originsWritten;
-    options.onProgress?.({ cursor, blocksCommitted, originsWritten, metrics: evidence.metrics });
+    const completedAt = (deps.now || Date.now)();
+    const totalElapsedMs = Math.max(1, completedAt - batchStartedAt);
+    options.onProgress?.({ cursor, blocksCommitted, originsWritten,
+      metrics: { ...evidence.metrics,
+        persistenceElapsedMs: Math.max(0, completedAt - readCompletedAt), totalElapsedMs,
+        endToEndBlocksPerSecond: Number(
+          ((committed.blocksCommitted * 1000) / totalElapsedMs).toFixed(2)
+        ),
+      } });
   }
   return Object.freeze({ status: cursor.lifecycleState === 'completed' ? 'completed' : 'time_limit',
     cursor, blocksCommitted, originsWritten });

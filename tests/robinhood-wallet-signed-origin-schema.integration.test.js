@@ -135,6 +135,15 @@ describe('Robinhood wallet signed origin schema', () => {
       WHERE wallet_address = $1`, [REPOSITORY_WALLET])).rows[0], {
       first_block_number: '110', first_transaction_hash: earlier.transactionHash,
     });
+    assert.deepEqual(await repository.persistForwardOrigins([
+      origin(121, `0x${'5'.repeat(64)}`),
+    ]), { originsConsidered: 1, originsWritten: 0 });
+    await assert.rejects(repository.persistForwardOrigins([
+      origin(109, `0x${'6'.repeat(64)}`),
+    ]), (error) => error.code === 'signed_origin_reorg_conflict');
+    assert.deepEqual(await repository.persistForwardOrigins([origin(122,
+      `0x${'7'.repeat(64)}`, { walletAddress: `0x${'5'.repeat(40)}` })]),
+    { originsConsidered: 1, originsWritten: 1 });
   });
 
   it('freezes frontiers and commits origins with the cursor atomically', async () => {

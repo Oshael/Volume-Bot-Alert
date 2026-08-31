@@ -88,7 +88,7 @@ function readerLimits(options) {
   return {
     rpcBatchSize,
     concurrency: boundedInteger(options.concurrency ?? 2, 'concurrency', 1, 4),
-    maxBlocks: boundedInteger(options.maxBlocks ?? 100, 'maxBlocks', rpcBatchSize, 200),
+    maxBlocks: boundedInteger(options.maxBlocks ?? 100, 'maxBlocks', rpcBatchSize, 500),
     timeoutMs: boundedInteger(options.timeoutMs ?? 15_000, 'timeoutMs', 100, 60_000),
     maxPayloadBytes: boundedInteger(
       options.maxPayloadBytes ?? 64 * 1024 * 1024,

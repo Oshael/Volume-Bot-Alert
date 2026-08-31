@@ -83,7 +83,7 @@ describe('Robinhood signed-origin bootstrap', () => {
   });
 
   it('commits every block in order, including empty batches, and resumes atomically', async () => {
-    const reader = samplingReader(); const commits = [];
+    const reader = samplingReader(); const commits = []; const progress = [];
     let cursor = { stream: 'seed', originBlock: '4', originBlockHash: hash(4),
       nextBlock: '4', safeHead: '8', safeHeadHash: hash(8), lifecycleState: 'running', version: 0 };
     const repository = {
@@ -98,12 +98,15 @@ describe('Robinhood signed-origin bootstrap', () => {
     };
     const result = await executeBootstrap({ repository, reader }, {
       preflight: { approved: true }, batchSize: 2, maxMinutes: 1,
+      onProgress: (value) => progress.push(value),
     });
     assert.equal(result.status, 'completed');
     assert.deepEqual(commits.map(({ blocks }) => blocks.map(({ number }) => number)),
       [['4', '5'], ['6', '7'], ['8']]);
     assert.deepEqual(commits.map(({ expectedVersion }) => expectedVersion), [0, 1, 2]);
     assert.equal(result.blocksCommitted, 5);
+    assert.ok(progress.every(({ metrics }) => metrics.totalElapsedMs >= 1
+      && metrics.persistenceElapsedMs >= 0 && metrics.endToEndBlocksPerSecond > 0));
   });
 
   it('does not commit or advance when a block read fails', async () => {
