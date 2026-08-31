@@ -1986,7 +1986,11 @@ nunca seleciona `RH_NODE_RPC_URL`, continua shadow-only e só inicia quando
 `ROBINHOOD_FRESH_WALLET_SIGNED_ORIGIN_APPROVED=true`. Esse gate deve permanecer
 falso até a comparação Archive versus índice interno provar equivalência de
 `prior_signed_activity` e da decisão final na amostra operacional.
-O seed único usa `npm run robinhood:fresh-wallet-seed`: sem `--apply`, faz
+Antes do primeiro seed, aplique `node src/utils/db-init-stage185.js`. A migration
+indexa concorrentemente a janela dos anchors e cada partição diária de swaps,
+anexando os índices ao pai sem parar o writer live; ela pode ser retomada se for
+interrompida. O seed único usa `npm run robinhood:fresh-wallet-seed`: sem
+`--apply`, faz
 preflight read-only no Archive de `RH_NODE_RPC_URL`, amostra evidência real,
 aplica margem de 25% e recusa ETA acima de cinco horas. `--apply` congela na
 fila todos os first-buys até o bloco de ativação dos tokens cujo launch canônico

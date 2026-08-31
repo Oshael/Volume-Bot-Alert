@@ -5297,6 +5297,24 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage185-robinhood-fresh-seed-indexes',
+    name: 'Stage 185 Robinhood FRESH seed indexes',
+    repair: 'node src/utils/db-init-stage185.js',
+    tables: [{
+      table: 'robinhood_token_launch_anchors',
+      indexes: [{
+        name: 'idx_rh_launch_anchors_fresh_seed_window',
+        includes: ['chain', 'launch_block_time', 'token_address', 'first_pool_block'],
+      }],
+    }, {
+      table: 'robinhood_wallet_swaps',
+      indexes: [{
+        name: 'idx_rh_wallet_swaps_token_block',
+        includes: ['chain', 'token_address', 'block_number'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
