@@ -46,10 +46,21 @@ function createRobinhoodTokenDeploymentOutboxRepository(options = {}) {
   async function findMintHint(tokenAddress) {
     const { rows } = await database.query(
       `SELECT block_number, block_hash, transaction_hash
-         FROM robinhood_holder_transfer_journal
-        WHERE chain = '${CHAIN}' AND token_address = $1
-          AND applied = false
-          AND from_wallet = '0x0000000000000000000000000000000000000000'
+         FROM (
+           SELECT block_number, block_hash, transaction_hash,
+                  transaction_index, log_index
+             FROM robinhood_holder_transfer_journal
+            WHERE chain = '${CHAIN}' AND token_address = $1
+              AND applied = false
+              AND from_wallet = '0x0000000000000000000000000000000000000000'
+           UNION ALL
+           SELECT block_number, block_hash, transaction_hash,
+                  transaction_index, log_index
+             FROM robinhood_holder_transfer_journal
+            WHERE chain = '${CHAIN}' AND token_address = $1
+              AND applied = true
+              AND from_wallet = '0x0000000000000000000000000000000000000000'
+         ) mint
         ORDER BY block_number, transaction_index, log_index LIMIT 1`,
       [normalizeTokenAddress(CHAIN, tokenAddress)]
     );

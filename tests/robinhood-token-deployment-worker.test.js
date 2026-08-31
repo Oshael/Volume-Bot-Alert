@@ -132,6 +132,9 @@ it('prioritizes recent outbox tasks and loads their earliest captured mint', asy
     transactionHash: TRANSACTION_HASH,
   });
   assert.match(calls[1].sql, /from_wallet = '0x0{40}'/);
+  assert.match(calls[1].sql, /applied = false/);
+  assert.match(calls[1].sql, /UNION ALL/);
+  assert.match(calls[1].sql, /applied = true/);
 });
 
 it('defers missing Blockscout evidence and skips already attributed tokens', async () => {

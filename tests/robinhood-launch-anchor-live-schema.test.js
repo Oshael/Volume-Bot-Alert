@@ -15,6 +15,7 @@ it('registers durable first-buy launch-anchor work without scanning history', ()
   assert.match(sql, /pg_notify\('robinhood_launch_anchor_outbox'/);
   assert.doesNotMatch(sql, /robinhood_wallet_swaps/);
   assert.match(MATERIALIZE_SQL, /ledger_status = 'live'/);
-  assert.match(MATERIALIZE_SQL, /ORDER BY source\.block_time, source\.block_number/);
+  assert.match(MATERIALIZE_SQL, /source\.block_time >= target\.first_pool_time/);
+  assert.match(MATERIALIZE_SQL, /ORDER BY source\.block_number LIMIT 1/);
   assert.equal(group.repair, 'node src/utils/db-init-stage171.js');
 });

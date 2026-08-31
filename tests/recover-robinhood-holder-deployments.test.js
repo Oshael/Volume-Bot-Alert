@@ -30,6 +30,7 @@ describe('Robinhood holder archive deployment recovery', () => {
     }, 20);
     assert.match(query.sql, /WITH queued AS MATERIALIZED/);
     assert.match(query.sql, /LIMIT \$1::int[\s\S]+LEFT JOIN LATERAL/);
+    assert.match(query.sql, /applied = FALSE[\s\S]+UNION ALL[\s\S]+applied = TRUE/);
     assert.deepEqual(query.params, [20]);
     assert.equal(rows[0].upperBlock, null);
   });

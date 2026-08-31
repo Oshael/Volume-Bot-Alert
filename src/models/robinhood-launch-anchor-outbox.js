@@ -4,12 +4,18 @@ const { normalizeTokenAddress } = require('../utils/token-identity');
 const CHAIN = 'robinhood';
 const MATERIALIZE_SQL = `WITH target AS MATERIALIZED (
   SELECT state.token_address, state.live_through_block,
-         (SELECT MIN(registry.discovery_block)
-            FROM robinhood_pool_registry registry
-           WHERE registry.chain = state.chain
-             AND registry.token_address = state.token_address
-             AND registry.discovery_block <= state.live_through_block) AS first_pool_block
+         origin.discovery_block AS first_pool_block,
+         origin.discovered_at AS first_pool_time
     FROM robinhood_holder_token_states state
+    LEFT JOIN LATERAL (
+      SELECT registry.discovery_block, registry.discovered_at
+        FROM robinhood_pool_registry registry
+       WHERE registry.chain = state.chain
+         AND registry.token_address = state.token_address
+         AND registry.discovery_block <= state.live_through_block
+       ORDER BY registry.discovery_block, registry.protocol, registry.market_key
+       LIMIT 1
+    ) origin ON TRUE
    WHERE state.chain = $1 AND state.token_address = $2
      AND state.ledger_status = 'live' AND state.live_through_block IS NOT NULL
 ), anchor AS MATERIALIZED (
@@ -25,8 +31,8 @@ const MATERIALIZE_SQL = `WITH target AS MATERIALIZED (
          AND registry.discovery_block <= source.block_number
        WHERE source.chain = $1 AND source.token_address = target.token_address
          AND source.block_number BETWEEN target.first_pool_block AND target.live_through_block
-       ORDER BY source.block_time, source.block_number, source.action_index,
-                source.transaction_hash LIMIT 1
+         AND source.block_time >= target.first_pool_time
+       ORDER BY source.block_number LIMIT 1
     ) swap ON target.first_pool_block IS NOT NULL
 )
 INSERT INTO robinhood_token_launch_anchors(

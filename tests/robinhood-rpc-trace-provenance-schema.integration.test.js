@@ -7,10 +7,14 @@ const db = require('../src/models/db');
 const stage110 = require('../src/utils/db-init-stage110');
 const stage113 = require('../src/utils/db-init-stage113');
 const stage114 = require('../src/utils/db-init-stage114');
+const stage116 = require('../src/utils/db-init-stage116');
 const stage163 = require('../src/utils/db-init-stage163');
 const stage164 = require('../src/utils/db-init-stage164');
 const stage165 = require('../src/utils/db-init-stage165');
 const stage183 = require('../src/utils/db-init-stage183');
+const {
+  createRobinhoodTokenDeploymentOutboxRepository,
+} = require('../src/models/robinhood-token-deployment-outbox');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const TOKEN = `0x${'6'.repeat(40)}`;
@@ -19,6 +23,8 @@ const FACTORY = `0x${'8'.repeat(40)}`;
 const HASH = `0x${'9'.repeat(64)}`;
 const INTERNAL_TOKEN = `0x${'a'.repeat(40)}`;
 const CODE_TOKEN = `0x${'b'.repeat(40)}`;
+const APPLIED_MINT_TOKEN = `0x${'c'.repeat(40)}`;
+const APPLIED_MINT_HASH = `0x${'e'.repeat(64)}`;
 
 describe('Robinhood RPC trace provenance schema integration', () => {
   before(async () => {
@@ -26,6 +32,7 @@ describe('Robinhood RPC trace provenance schema integration', () => {
     await stage110.init({ closePool: false });
     await stage113.init({ closePool: false });
     await stage114.init({ closePool: false });
+    await stage116.init({ closePool: false });
     await stage163.init({ closePool: false });
     await stage164.init({ closePool: false });
     await stage165.init({ closePool: false });
@@ -37,6 +44,10 @@ describe('Robinhood RPC trace provenance schema integration', () => {
   });
 
   after(async () => {
+    await db.query(
+      'DELETE FROM robinhood_holder_transfer_journal WHERE token_address = $1',
+      [APPLIED_MINT_TOKEN]
+    );
     await db.query(
       'DELETE FROM robinhood_token_attributions WHERE token_address = ANY($1::varchar[])',
       [[TOKEN, INTERNAL_TOKEN, CODE_TOKEN]]
@@ -110,5 +121,27 @@ describe('Robinhood RPC trace provenance schema integration', () => {
     assert.equal(result.rows[0].status, 'pending');
     await db.query('DELETE FROM token_catalog WHERE chain = $1 AND address = $2', ['robinhood', address]);
     await db.query('DELETE FROM robinhood_token_deployment_outbox WHERE token_address = $1', [address]);
+  });
+
+  it('reuses retained mint evidence after the holder journal applies it', async () => {
+    await db.query(
+      `INSERT INTO robinhood_holder_transfer_journal (
+         block_number, block_hash, transaction_hash, transaction_index, log_index,
+         token_address, from_wallet, to_wallet, amount_raw,
+         to_balance_before, to_balance_after, holder_delta, applied, applied_at
+       ) VALUES (
+         200, $1, $2, 0, 0, $3,
+         '0x0000000000000000000000000000000000000000', $4, 1,
+         0, 1, 1, true, NOW()
+       )`,
+      [HASH, APPLIED_MINT_HASH, APPLIED_MINT_TOKEN, CREATOR]
+    );
+    const repository = createRobinhoodTokenDeploymentOutboxRepository({ database: db });
+    assert.deepEqual(await repository.findMintHint(APPLIED_MINT_TOKEN), {
+      tokenAddress: APPLIED_MINT_TOKEN,
+      blockNumber: '200',
+      blockHash: HASH,
+      transactionHash: APPLIED_MINT_HASH,
+    });
   });
 });

@@ -68,13 +68,23 @@ async function listCandidates(database, limit) {
             mint.block_number AS upper_block
        FROM queued
        LEFT JOIN LATERAL (
-         SELECT journal.block_number
-           FROM robinhood_holder_transfer_journal journal
-          WHERE journal.chain = 'robinhood'
-            AND journal.token_address = queued.token_address
-            AND journal.applied = FALSE
-            AND journal.from_wallet = '0x0000000000000000000000000000000000000000'
-          ORDER BY journal.block_number, journal.transaction_index, journal.log_index
+         SELECT mint.block_number
+           FROM (
+             SELECT journal.block_number, journal.transaction_index, journal.log_index
+               FROM robinhood_holder_transfer_journal journal
+              WHERE journal.chain = 'robinhood'
+                AND journal.token_address = queued.token_address
+                AND journal.applied = FALSE
+                AND journal.from_wallet = '0x0000000000000000000000000000000000000000'
+             UNION ALL
+             SELECT journal.block_number, journal.transaction_index, journal.log_index
+               FROM robinhood_holder_transfer_journal journal
+              WHERE journal.chain = 'robinhood'
+                AND journal.token_address = queued.token_address
+                AND journal.applied = TRUE
+                AND journal.from_wallet = '0x0000000000000000000000000000000000000000'
+           ) mint
+          ORDER BY mint.block_number, mint.transaction_index, mint.log_index
           LIMIT 1
        ) mint ON TRUE
       ORDER BY queued.created_at DESC, queued.token_address`,
