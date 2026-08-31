@@ -1992,7 +1992,8 @@ anexando os índices ao pai sem parar o writer live; ela pode ser retomada se fo
 interrompida. O seed único usa `npm run robinhood:fresh-wallet-seed`: sem
 `--apply`, faz
 preflight read-only no Archive de `RH_NODE_RPC_URL`, amostra evidência real,
-aplica margem de 25% e recusa ETA acima de cinco horas. `--apply` congela na
+usando no mínimo um batch completo de execução (até 100 pares), aplica margem de
+25% e recusa ETA acima de cinco horas. `--apply` congela na
 fila todos os first-buys até o bloco de ativação dos tokens cujo launch canônico
 está nos 14 dias fixos anteriores. O cohort usa a frontier global de first-buy
 congelada na ativação e recompõe hash/posição da âncora pelos swaps e

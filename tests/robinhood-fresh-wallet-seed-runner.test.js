@@ -48,6 +48,22 @@ it('measures batched Archive throughput when the source supports it', async () =
   assert.equal(result.projectedMs, 625);
 });
 
+it('samples at least one complete execution batch for a representative projection', async () => {
+  let requestedSamples;
+  const samples = Array.from({ length: 100 }, () => TASK);
+  const repository = { loadPlan: async () => ({ ready: true, pairCount: 100,
+    tokenCount: 10 }), samplePairs: async (limit) => {
+    requestedSamples = limit; return samples;
+  } };
+  const result = await runPreflight({ repository, source: {
+    readEvidenceBatch: async (items) => items.map(() => ({})),
+  }, now: (() => { const values = [0, 10]; return () => values.shift(); })() },
+  { sampleCount: 64, batchSize: 100, concurrency: 16 });
+  assert.equal(requestedSamples, 100);
+  assert.equal(result.sampleCount, 100);
+  assert.equal(result.batchSize, 100);
+});
+
 it('drains the frozen queue with the shared rule and pauses resumable failures', async () => {
   let claimed = false; const retries = []; const sync = [];
   const repository = { createOrResume: async () => ({ runId: '7', status: 'running' }),

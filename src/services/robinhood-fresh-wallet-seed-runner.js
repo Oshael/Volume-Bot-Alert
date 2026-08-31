@@ -50,7 +50,9 @@ async function sampleEvidence(source, samples, concurrency) {
 async function runPreflight(deps = {}, options = {}) {
   const repository = deps.repository;
   if (!repository?.loadPlan || !repository?.samplePairs) throw new Error('FRESH seed repository required');
-  const sampleCount = bounded(options.sampleCount ?? 3, 3, 1, 64);
+  const batchSize = bounded(options.batchSize ?? 10, 10, 1, 100);
+  const requestedSampleCount = bounded(options.sampleCount ?? 3, 3, 1, 100);
+  const sampleCount = Math.max(requestedSampleCount, batchSize);
   const concurrency = bounded(options.concurrency ?? 2, 2, 1, 16);
   const maxHours = Number(options.maxHours ?? MAX_HOURS);
   if (!Number.isFinite(maxHours) || maxHours <= 0 || maxHours > MAX_HOURS) {
@@ -67,7 +69,7 @@ async function runPreflight(deps = {}, options = {}) {
     * plan.pairCount * SAFETY_FACTOR);
   return Object.freeze({ ...plan, approved: sampledUnavailable === 0
     && projectedMs <= maxHours * 3_600_000, sampleCount: samples.length,
-  sampledUnavailable, concurrency, safetyFactor: SAFETY_FACTOR, projectedMs,
+  sampledUnavailable, batchSize, concurrency, safetyFactor: SAFETY_FACTOR, projectedMs,
   projectedHours: Number((projectedMs / 3_600_000).toFixed(2)), maxHours });
 }
 
