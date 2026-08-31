@@ -3,6 +3,9 @@ const { it } = require('node:test');
 const {
   createArchiveSource, executeSeed, runPreflight,
 } = require('../src/services/robinhood-fresh-wallet-seed-runner');
+const {
+  createRobinhoodFreshWalletSeedRepository,
+} = require('../src/models/robinhood-fresh-wallet-seed');
 const { parseArgs } = require('../src/utils/backfill-robinhood-fresh-wallets');
 
 const TASK = { tokenAddress: `0x${'a'.repeat(40)}`, walletAddress: `0x${'b'.repeat(40)}`,
@@ -62,6 +65,20 @@ it('samples at least one complete execution batch for a representative projectio
   assert.equal(requestedSamples, 100);
   assert.equal(result.sampleCount, 100);
   assert.equal(result.batchSize, 100);
+});
+
+it('allows the seed repository to return a complete 100-pair sample', async () => {
+  const limits = [];
+  const database = { async query(sql, params) {
+    if (sql.includes('SELECT id, status FROM robinhood_fresh_wallet_seed_runs')) {
+      return { rows: [] };
+    }
+    limits.push(params[2]);
+    return { rows: [] };
+  } };
+  const repository = createRobinhoodFreshWalletSeedRepository({ database });
+  await repository.samplePairs(100);
+  assert.deepEqual(limits, [100]);
 });
 
 it('drains the frozen queue with the shared rule and pauses resumable failures', async () => {

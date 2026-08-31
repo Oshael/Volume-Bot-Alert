@@ -172,7 +172,7 @@ function createRobinhoodFreshWalletSeedRepository(options = {}) {
   }
 
   async function samplePairs(limit = 3) {
-    const sampleLimit = Math.max(1, Math.min(Number(limit) || 3, 64));
+    const sampleLimit = Math.max(1, Math.min(Number(limit) || 3, 100));
     const existing = (await database.query(`SELECT id, status FROM robinhood_fresh_wallet_seed_runs
       WHERE chain = $1 AND rule_version = $2`, [CHAIN, RULE_VERSION])).rows[0];
     const sql = existing && existing.status !== 'planned'
