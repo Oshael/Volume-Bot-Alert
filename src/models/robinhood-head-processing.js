@@ -101,15 +101,36 @@ function createRobinhoodHeadProcessingRepository(options = {}) {
     const leaseMs = requirePositiveInt(input.leaseMs, 'leaseMs');
     const stream = optionalStream(input.stream);
     const result = await database.query(
-      `WITH claimable AS (
-         SELECT chain, transaction_hash, log_index
+      `WITH first_v4_by_pool AS MATERIALIZED (
+         SELECT DISTINCT ON (market_key)
+                chain, market_key, transaction_hash, log_index
          FROM robinhood_head_captures
-         WHERE processing_status = 'pending'
-           AND next_attempt_at <= NOW()
-           AND ($4::text IS NULL OR stream = $4)
-         ORDER BY block_number, transaction_index, log_index
+         WHERE chain = '${CHAIN}'
+           AND stream = 'market'
+           AND protocol = 'uniswap-v4'
+           AND processing_status IN ('pending', 'leased', 'blocked')
+           AND ($4::text IS NULL OR $4 = 'market')
+         ORDER BY market_key, block_number, transaction_index, log_index
+       ), claimable AS (
+         SELECT capture.chain, capture.transaction_hash, capture.log_index
+         FROM robinhood_head_captures capture
+         LEFT JOIN first_v4_by_pool first_v4
+           ON first_v4.chain = capture.chain
+          AND first_v4.market_key = capture.market_key
+         WHERE capture.processing_status = 'pending'
+           AND capture.next_attempt_at <= NOW()
+           AND ($4::text IS NULL OR capture.stream = $4)
+           AND (
+             capture.stream <> 'market'
+             OR capture.protocol IS DISTINCT FROM 'uniswap-v4'
+             OR (
+               first_v4.transaction_hash = capture.transaction_hash
+               AND first_v4.log_index = capture.log_index
+             )
+           )
+         ORDER BY capture.block_number, capture.transaction_index, capture.log_index
          LIMIT $2
-         FOR UPDATE SKIP LOCKED
+         FOR UPDATE OF capture SKIP LOCKED
        )
        UPDATE robinhood_head_captures capture
        SET processing_status = 'leased',

@@ -25,7 +25,8 @@ function hashFor(block, logIndex) {
 
 async function seedPending({
   block, logIndex = 0, stream = 'market', attemptCount = 0, dueInMs = 0,
-  timestampMs = Date.now(),
+  timestampMs = Date.now(), protocol = 'uniswap-v3',
+  marketKey = 'robinhood:uniswap-v3:test',
 }) {
   await db.query(
     `INSERT INTO robinhood_head_captures (
@@ -33,12 +34,12 @@ async function seedPending({
        transaction_index, address, topics, data, protocol, market_key,
        evidence_version, evidence, attempt_count, next_attempt_at
      ) VALUES (
-       $1, $2, $3, $4, $5, 0, $6, $7::jsonb, '0x', 'uniswap-v3', 'robinhood:uniswap-v3:test',
-       1, $8::jsonb, $9, NOW() + ($10::bigint * INTERVAL '1 millisecond')
+       $1, $2, $3, $4, $5, 0, $6, $7::jsonb, '0x', $8, $9,
+       1, $10::jsonb, $11, NOW() + ($12::bigint * INTERVAL '1 millisecond')
      )`,
     [stream, hashFor(block, logIndex), logIndex, block, BLOCK_HASH, ADDRESS,
-      JSON.stringify([TOPIC]), JSON.stringify({ timestampMs: String(timestampMs) }),
-      attemptCount, dueInMs]
+      JSON.stringify([TOPIC]), protocol, marketKey,
+      JSON.stringify({ timestampMs: String(timestampMs) }), attemptCount, dueInMs]
   );
   return { transactionHash: hashFor(block, logIndex), logIndex };
 }
@@ -87,6 +88,62 @@ describe('Robinhood head processing repository integration', () => {
     await seedPending({ block: 100, dueInMs: 3_600_000 });
     const claimed = await repository.claimCaptures({ owner: 'worker-a', limit: 5, leaseMs: LEASE_MS });
     assert.equal(claimed.length, 0);
+  });
+
+  it('does not let V4 captures overtake an earlier retry or dead-letter in the same pool', async () => {
+    const poolA = 'robinhood:uniswap-v4:pool-a';
+    const poolB = 'robinhood:uniswap-v4:pool-b';
+    const stalled = await seedPending({
+      block: 100, protocol: 'uniswap-v4', marketKey: poolA, dueInMs: 3_600_000,
+    });
+    const laterSamePool = await seedPending({
+      block: 101, protocol: 'uniswap-v4', marketKey: poolA,
+    });
+    await seedPending({ block: 102, protocol: 'uniswap-v4', marketKey: poolB });
+    await seedPending({ block: 103 });
+
+    const independent = await repository.claimCaptures({
+      owner: 'worker-a', limit: 10, leaseMs: LEASE_MS,
+    });
+    assert.deepEqual(independent.map((row) => Number(row.block_number)), [102, 103]);
+    assert.equal((await statusOf(laterSamePool)).processing_status, 'pending');
+
+    await db.query(
+      `UPDATE robinhood_head_captures SET next_attempt_at = NOW()
+       WHERE transaction_hash = $1 AND log_index = $2`,
+      [stalled.transactionHash, stalled.logIndex]
+    );
+    const first = await repository.claimCaptures({
+      owner: 'worker-b', limit: 10, leaseMs: LEASE_MS,
+    });
+    assert.deepEqual(first.map((row) => Number(row.block_number)), [100]);
+    await repository.settleClaims({
+      owner: 'worker-b', retentionMs: RETENTION_MS, maxAttempts: 1,
+      retry: [{ ...stalled, error: RANGE_ERROR, backoffMs: 1000 }],
+    });
+    assert.equal((await statusOf(stalled)).processing_status, 'blocked');
+
+    const blocked = await repository.claimCaptures({
+      owner: 'worker-c', limit: 10, leaseMs: LEASE_MS,
+    });
+    assert.deepEqual(blocked, []);
+    assert.equal((await statusOf(laterSamePool)).processing_status, 'pending');
+
+    assert.deepEqual(
+      await repository.requeueBlockedRecoveryBatch({ limit: 1, throughBlock: '100' }),
+      { requeued: 1, oldestBlock: '100', newestBlock: '100' }
+    );
+    const recovered = await repository.claimCaptures({
+      owner: 'worker-d', limit: 10, leaseMs: LEASE_MS,
+    });
+    assert.deepEqual(recovered.map((row) => Number(row.block_number)), [100]);
+    await repository.settleClaims({
+      owner: 'worker-d', retentionMs: RETENTION_MS, processed: [stalled],
+    });
+    const resumed = await repository.claimCaptures({
+      owner: 'worker-e', limit: 10, leaseMs: LEASE_MS,
+    });
+    assert.deepEqual(resumed.map((row) => Number(row.block_number)), [101]);
   });
 
   it('never hands the same leased capture to a second consumer', async () => {

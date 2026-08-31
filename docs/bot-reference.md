@@ -403,6 +403,11 @@ reproduz o erro recebe retry/backoff e pode chegar a `blocked`. Falhas não clas
 indisponibilidade de banco, não disparam a bisseção e retentam o subconjunto inteiro. Antes de
 reabrir dead-letters V4, esse isolamento deve estar implantado; a recuperação recoloca as claims
 em ordem on-chain para que adições válidas reconstruam as ranges antes das remoções dependentes.
+O claim mantém ainda uma frontier independente por `market_key` V4: somente o primeiro capture
+não terminal de cada pool pode ser leased. Um retry em backoff, lease em voo ou dead-letter
+impede swaps e deltas posteriores daquela pool de ultrapassá-lo, enquanto outras pools e os
+protocolos V2/V3 continuam fluindo. Assim o ledger materializado e as observações V4 preservam a
+ordem da chain; recuperar o primeiro dead-letter libera a pool a partir do evento seguinte.
 
 `npm run robinhood:processing-blocked-requeue` faz apenas preview indexado do primeiro batch de
 dead-letters cujo `last_error` é o conflito de range V4. A escrita exige o worker parado e os três
