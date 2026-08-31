@@ -40,7 +40,8 @@ function samplingReader(overrides = {}) {
     return { blocks: input.blockNumbers.map((number) => ({ number, hash: hash(number),
       blockTime: new Date(Number(seconds(BigInt(number)) * 1000n)).toISOString(),
       transactionCount: 0 })), origins: [], metrics: { blocksScanned: input.blockNumbers.length,
-      transactionsScanned: 0, payloadBytes: input.blockNumbers.length * 100, elapsedMs: 100 } };
+      transactionsScanned: 0, payloadBytes: input.blockNumbers.length * 100,
+      elapsedMs: overrides.elapsedMs ?? 100 } };
   } };
 }
 
@@ -66,6 +67,19 @@ describe('Robinhood signed-origin bootstrap', () => {
     await assert.rejects(runPreflight({ database: activationDatabase(), repository,
       reader: samplingReader(), rpcClient: rpc() }, { confirmations: 1 }),
     (error) => error.code === 'signed_origin_cursor_conflict');
+  });
+
+  it('keeps a slow but valid preflight runnable and reports the duration advisory', async () => {
+    const result = await runPreflight({ database: activationDatabase(),
+      repository: { loadCursor: async () => null },
+      reader: samplingReader({ elapsedMs: 3_600_000 }), rpcClient: rpc(),
+    }, { confirmations: 1, sampleCount: 1, sampleBlocks: 1, maxHours: 5 });
+    assert.equal(result.approved, true);
+    assert.equal(result.durationAdvisoryExceeded, true);
+    assert.ok(result.projectedHours > 5);
+    await assert.rejects(runPreflight({ database: activationDatabase(),
+      repository: { loadCursor: async () => null }, reader: samplingReader(), rpcClient: rpc(),
+    }, { confirmations: 1, maxHours: 25 }), /at most 24/);
   });
 
   it('commits every block in order, including empty batches, and resumes atomically', async () => {
@@ -106,7 +120,7 @@ describe('Robinhood signed-origin bootstrap', () => {
 
   it('keeps the command dry-run by default and rejects unknown arguments', () => {
     assert.deepEqual(parseArgs([]), { apply: false, batchSize: 50, confirmations: 12,
-      concurrency: 2, maxHours: 5, maxMinutes: 285, rpcBatchSize: 20,
+      concurrency: 2, maxHours: 5, maxMinutes: 1440, rpcBatchSize: 20,
       sampleBlocks: 10, sampleCount: 3, timeoutMs: 15_000 });
     assert.throws(() => parseArgs(['--force']), /unexpected argument/);
   });

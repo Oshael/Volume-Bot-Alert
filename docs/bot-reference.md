@@ -1958,8 +1958,9 @@ inalterado. Aplique com `node src/utils/db-init-stage182.js`.
 `npm run robinhood:signed-origin-bootstrap` executa um preflight read-only no
 `ROBINHOOD_RPC_URL`: revalida ativação/checkpoint, resolve o último bloco anterior
 a `activation_at - 24 hours`, congela `head - confirmations`, mede full-blocks e
-recusa ETA acima de cinco horas. `-- --apply` cria ou retoma o cursor e processa
-todos os blocos em ordem, inclusive vazios; `--max-minutes` limita cada sessão.
+informa quando o ETA excede `--max-hours`, sem recusar uma leitura canônica
+saudável. `-- --apply` cria ou retoma o cursor e processa todos os blocos em
+ordem, inclusive vazios; `--max-minutes` limita cada sessão e aceita até 1.440.
 O comando não inicia worker LIVE nem habilita a classificação FRESH.
 Após o seed chegar a `completed`, o repository cria o cursor `live` exatamente
 em `seed.safe_head + 1`. O runner LIVE revalida checkpoint e regressão da frontier,

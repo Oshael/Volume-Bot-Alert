@@ -1,5 +1,7 @@
 const DAY_MS = 24 * 60 * 60 * 1000;
-const MAX_HOURS = 5;
+const DEFAULT_MAX_HOURS = 5;
+const MAX_HOURS = 24;
+const MAX_SESSION_MINUTES = 1440;
 const SAFETY_FACTOR = 1.25;
 
 function failure(message, code = 'signed_origin_bootstrap_refused') {
@@ -99,7 +101,7 @@ function preflightOptions(options) {
   const confirmations = bounded(options.confirmations, 12, 0, 1000, 'confirmations');
   const sampleCount = bounded(options.sampleCount, 3, 1, 16, 'sampleCount');
   const sampleBlocks = bounded(options.sampleBlocks, 10, 1, 200, 'sampleBlocks');
-  const maxHours = Number(options.maxHours ?? MAX_HOURS);
+  const maxHours = Number(options.maxHours ?? DEFAULT_MAX_HOURS);
   if (!Number.isFinite(maxHours) || maxHours <= 0 || maxHours > MAX_HOURS) {
     throw new TypeError(`maxHours must be greater than 0 and at most ${MAX_HOURS}`);
   }
@@ -182,14 +184,16 @@ async function runPreflight(deps = {}, options = {}) {
     nodeHead: nodeHead.toString(), confirmations: limits.confirmations,
     remainingBlocks: remainingBlocks.toString(), ...metrics, safetyFactor: SAFETY_FACTOR,
     projectedMs, projectedHours: Number((projectedMs / 3_600_000).toFixed(2)),
-    maxHours: limits.maxHours, approved: projectedMs <= limits.maxHours * 3_600_000 });
+    maxHours: limits.maxHours,
+    durationAdvisoryExceeded: projectedMs > limits.maxHours * 3_600_000,
+    approved: true });
 }
 
 async function executeBootstrap(deps = {}, options = {}) {
   const preflight = options.preflight;
   if (!preflight?.approved) throw failure('signed-origin bootstrap preflight was not approved');
   const batchSize = bounded(options.batchSize, 50, 1, 200, 'batchSize');
-  const maxMinutes = bounded(options.maxMinutes, 285, 1, 300, 'maxMinutes');
+  const maxMinutes = bounded(options.maxMinutes, 1440, 1, MAX_SESSION_MINUTES, 'maxMinutes');
   let cursor = await deps.repository.createOrResume(preflight);
   const deadline = (deps.now || Date.now)() + maxMinutes * 60_000;
   let blocksCommitted = 0; let originsWritten = 0;

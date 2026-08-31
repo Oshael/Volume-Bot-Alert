@@ -27,7 +27,7 @@ function parseArgs(argv = process.argv.slice(2)) {
   return Object.freeze({ apply: argv.includes('--apply'),
     batchSize: number('batch-size', 50), confirmations: number('confirmations', 12),
     concurrency: number('concurrency', 2), maxHours: number('max-hours', 5),
-    maxMinutes: number('max-minutes', 285), rpcBatchSize: number('rpc-batch-size', 20),
+    maxMinutes: number('max-minutes', 1440), rpcBatchSize: number('rpc-batch-size', 20),
     sampleBlocks: number('sample-blocks', 10), sampleCount: number('samples', 3),
     timeoutMs: number('timeout-ms', 15_000) });
 }
