@@ -1595,6 +1595,15 @@ Funding no mesmo bloco da compra é elegível somente quando a posição da tran
 prova que ocorreu antes. O Archive permanece ferramenta de backfill/repair, não
 dependência permanente do runtime live.
 
+Uma segunda família BUNDLED, ainda sem política publicada, considera a
+redistribuição do próprio token por uma wallet compradora para múltiplos
+destinatários. Antes de fixar janelas, o auditor PostgreSQL-only mede launch até
+compra, compra até primeira distribuição, fan-out, cobertura aproximada da compra
+pelas primeiras arestas e quantos destinatários venderam depois. O primeiro
+levantamento usa somente a primeira aresta permanente estritamente em bloco
+posterior à compra e, portanto, é um limite inferior: não autoriza classificação,
+worker, backfill ou remoção do raw necessário para uma materialização exata.
+
 A continuidade de launch anchors é condicionada ao holder ledger `live`. Um
 first-buy anterior a essa prontidão não é perdido: a transição posterior do token
 para `live` emite o mesmo trabalho durável. Itens ainda inelegíveis não permanecem

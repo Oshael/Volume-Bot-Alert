@@ -106,6 +106,7 @@
     "robinhood:bundle-funding-backfill": "node src/utils/backfill-robinhood-bundle-funding.js",
     "robinhood:bundle-funding-recover-v1": "node src/utils/recover-robinhood-bundle-funding-v1.js",
     "robinhood:possible-bundle-calibrate": "node src/utils/calibrate-robinhood-possible-bundles.js",
+    "robinhood:bundle-redistribution-calibrate": "node src/utils/calibrate-robinhood-bundle-redistribution.js",
     "robinhood:possible-bundle-shadow": "node src/utils/materialize-robinhood-possible-bundles.js",
     "robinhood:launch-anchor-backfill": "node src/utils/backfill-robinhood-launch-anchors.js",
     "robinhood:transaction-position-repair": "node src/utils/repair-robinhood-transaction-positions.js",

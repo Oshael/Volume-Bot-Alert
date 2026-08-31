@@ -3096,6 +3096,14 @@ raw classificado, acrescente `--apply
 mutações durante a transação e qualquer watermark volta a `pending`. Repita a
 auditoria canônica antes de considerar retenção ou drop.
 
+`npm run robinhood:bundle-redistribution-calibrate -- --page-size=50
+--max-pages=1` audita, sem RPC ou escrita, possíveis clusters em que uma wallet
+compradora redistribuiu o token diretamente para pelo menos dois destinatários.
+`--after-token`, `--statement-timeout-ms` e `--sample-limit` limitam a execução.
+O relatório mede tempos, fan-out, cobertura aproximada e vendas posteriores, mas
+é deliberadamente um limite inferior baseado na primeira aresta permanente em
+bloco posterior à compra; ele não classifica wallets nem autoriza apagar raw.
+
 Execute `npm run robinhood:wallet-transfer-retention-plan --
 --projection-version=VERSAO --limit=10` para listar candidatos antigos. O limite
 aceito é 1–100; o relatório apenas confere catálogo/bounds, declara
