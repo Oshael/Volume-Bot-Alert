@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const { it } = require('node:test');
 const {
-  createRobinhoodFreshWalletLiveWorker, processTask,
+  createRobinhoodFreshWalletLiveWorker, processTask, processTaskBatch,
   __private: { buildRuntime },
 } = require('../src/services/robinhood-fresh-wallet-live-worker');
 
@@ -36,6 +36,20 @@ it('evaluates RPC evidence and atomically completes a not-fresh shadow task', as
     walletAddress: task.walletAddress, outcome: 'not_fresh' });
   assert.equal(persisted[0].decision.outcomeReason, 'too_many_prior_signed_transactions');
   assert.equal(persisted[1].allowForkReplacement, true);
+});
+
+it('materializes an evidence batch with one persistence call', async () => {
+  const tasks = ['1', '2'].map((digit) => ({ tokenAddress: TOKEN,
+    walletAddress: wallet(digit), requestedVersion: '2', sourceKind: 'live', owner: 'test' }));
+  let persisted;
+  const results = await processTaskBatch({ sourceKind: 'live', source: { sourceKind: 'live' },
+    shadow: { replaceAndCompleteBatch: async (items) => {
+      persisted = items; return items.map(() => ({ completed: true }));
+    } },
+  }, tasks, [evidence(tasks[0].walletAddress, '5'), evidence(tasks[1].walletAddress)]);
+  assert.equal(persisted.length, 2);
+  assert.deepEqual(persisted.map(({ decision }) => decision.outcome), ['fresh', 'not_fresh']);
+  assert.deepEqual(results.map(({ status }) => status), ['materialized', 'materialized']);
 });
 
 it('bounds concurrency, retries independently and opens its RPC circuit', async () => {

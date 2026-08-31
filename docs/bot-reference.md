@@ -2012,12 +2012,17 @@ blocos adjacentes da fronteira estrita. Use
 completo de coverage ocorre a cada
 10.000 pares e no encerramento, evitando recontar todo o cohort a cada claim sem
 alterar a fila durável ou o resultado materializado.
+A materialização seed persiste até 100 avaliações por transação com operações
+set-based para locks, avaliações, classificações e conclusão da fila. Cada item
+mantém a mesma validação de first-buy, frontier e versão; conflito ou falha do
+lote provoca rollback e fallback para o caminho individual, isolando o item sem
+perder o progresso commitado por lotes anteriores.
 Posição ausente bloqueia o preflight com a janela exata para
 `npm run robinhood:transaction-position-repair`, que usa Archive somente para os
 buracos. O seed processa com a mesma regra/materializador e atualiza cobertura
 por token. Campanhas `paused` retomam o mesmo snapshot; novas
 âncoras ou mudanças no catálogo não ampliam o cohort. A execução para após 285
-minutos por padrão (`--max-minutes`, máximo 300), preservando checkpoints.
+minutos por padrão (`--max-minutes`, máximo 1.440), preservando checkpoints.
 O cursor first-buy persiste também avanços exclusivos de bloco quando a frontier
 temporal já está caught-up; a telemetria nunca pode anunciar uma frontier de
 bloco que ainda não foi gravada no handoff durável.

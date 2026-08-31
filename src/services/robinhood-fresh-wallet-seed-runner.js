@@ -3,7 +3,9 @@ const {
   createRobinhoodFreshWalletRpcSource, resolveRobinhoodFreshWalletRpcProvider,
 } = require('./robinhood-fresh-wallet-rpc-source');
 const { createRobinhoodRpcClient } = require('./robinhood-ingestion-worker');
-const { processTask, __private: { mapConcurrent } } = require('./robinhood-fresh-wallet-live-worker');
+const {
+  processTask, processTaskBatch, __private: { mapConcurrent },
+} = require('./robinhood-fresh-wallet-live-worker');
 
 const DEFAULT_MAX_HOURS = 5;
 const MAX_HOURS = 24;
@@ -87,6 +89,11 @@ async function drainBatch(context, tasks) {
   if (typeof context.source.readEvidenceBatch === 'function') {
     try { evidence = await context.source.readEvidenceBatch(tasks); }
     catch (_) { evidence = null; }
+  }
+  if (evidence && typeof context.shadow.replaceAndCompleteBatch === 'function') {
+    try { await processTaskBatch({ sourceKind: 'seed', source: context.source,
+      shadow: context.shadow }, tasks.map((task) => ({ ...task, owner: context.owner })), evidence);
+    return; } catch (_) { /* Fall back per item to isolate malformed or conflicting work. */ }
   }
   await mapConcurrent(tasks, context.concurrency, async (task, index) => {
     try { await processTask({ sourceKind: 'seed', source: context.source,

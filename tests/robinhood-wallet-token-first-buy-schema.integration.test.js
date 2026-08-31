@@ -375,6 +375,60 @@ describe('Robinhood wallet-token first buy schema integration', () => {
     'unavailable');
   });
 
+  it('materializes multiple FRESH evaluations in one atomic batch', async () => {
+    await db.query(`UPDATE robinhood_wallet_token_first_buys SET
+      block_number = 21, block_hash = $3, block_time = '2026-08-22T12:02:00Z'
+      WHERE token_address = $1 AND wallet_address = ANY($2::varchar[])`,
+    [TOKEN, [WALLET, LIVE_WALLET], HASH]);
+    await db.query(`INSERT INTO robinhood_wallet_token_first_buys(
+      token_address, wallet_address, transaction_hash, transaction_index,
+      action_index, block_number, block_hash, block_time, protocol,
+      market_key, source_parser_version
+    ) VALUES ($1, $2, $3, 2, 0, 21, $4, '2026-08-22T12:02:00Z',
+      'uniswap-v3', $5, 'swap_only_v1')
+      ON CONFLICT (chain, token_address, wallet_address) DO UPDATE SET
+        transaction_hash = EXCLUDED.transaction_hash,
+        transaction_index = EXCLUDED.transaction_index,
+        block_number = EXCLUDED.block_number, block_hash = EXCLUDED.block_hash,
+        block_time = EXCLUDED.block_time`, [TOKEN, LIVE_WALLET, LIVE_TX, HASH, MARKET]);
+    await db.query(`DELETE FROM robinhood_fresh_wallet_queue
+      WHERE token_address = $1 AND wallet_address = ANY($2::varchar[])`,
+    [TOKEN, [WALLET, LIVE_WALLET]]);
+    await db.query(`INSERT INTO robinhood_fresh_wallet_queue(
+      token_address, wallet_address, source_kind, status, lease_owner, lease_until
+    ) SELECT $1, wallet, 'live', 'leased', 'batch-test', NOW() + INTERVAL '1 minute'
+      FROM UNNEST($2::varchar[]) wallet`, [TOKEN, [WALLET, LIVE_WALLET]]);
+    const queue = await db.query(`SELECT wallet_address, requested_version::text
+      FROM robinhood_fresh_wallet_queue
+      WHERE token_address = $1 AND wallet_address = ANY($2::varchar[])
+      ORDER BY wallet_address`, [TOKEN, [WALLET, LIVE_WALLET]]);
+    assert.equal(queue.rowCount, 2);
+    const transactionByWallet = new Map([[WALLET, SWAP_HASHES[3]], [LIVE_WALLET, LIVE_TX]]);
+    const inputs = queue.rows.map((row) => ({
+      tokenAddress: TOKEN, walletAddress: row.wallet_address, owner: 'batch-test',
+      requestedVersion: row.requested_version, status: 'ready',
+      evidence: { ruleVersion: 'rh_fresh_signed_v1', source: 'test', sourceKind: 'seed',
+        observedAt: '2026-08-22T12:03:00Z', firstBuy: {
+          walletAddress: row.wallet_address, transactionHash: transactionByWallet.get(row.wallet_address),
+          blockNumber: '21', blockHash: HASH, blockTime: '2026-08-22T12:02:00Z', nonce: '5',
+        }, cutoff: { targetAt: '2026-08-21T12:02:00Z', number: '10', hash: HASH,
+          blockTime: '2026-08-21T12:01:59Z', nonce: '0' },
+        nextBlock: { number: '11', hash: FORK_HASH, blockTime: '2026-08-21T12:02:00Z' } },
+      decision: { ruleVersion: 'rh_fresh_signed_v1', outcome: 'fresh',
+        outcomeReason: 'new_wallet_at_first_buy', reasonCode: 'new_wallet_at_first_buy',
+        confidence: 'high' },
+    }));
+    const repository = createRobinhoodFreshWalletShadowRepository({ database: db });
+    assert.deepEqual(await repository.replaceAndCompleteBatch(inputs,
+      { allowForkReplacement: true }), [
+      { completed: true, status: 'replace' }, { completed: true, status: 'replace' },
+    ]);
+    assert.equal((await db.query(`SELECT COUNT(*)::integer count
+      FROM robinhood_fresh_wallet_queue WHERE token_address = $1
+        AND wallet_address = ANY($2::varchar[]) AND status = 'complete'`,
+    [TOKEN, [WALLET, LIVE_WALLET]])).rows[0].count, 2);
+  });
+
   it('retries exact FRESH live leases and resumes expired work', async () => {
     const queue = createRobinhoodFreshWalletLiveQueueRepository({ database: db });
     await db.query(`UPDATE robinhood_wallet_token_first_buys SET block_number = 23

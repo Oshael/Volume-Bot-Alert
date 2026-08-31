@@ -156,46 +156,93 @@ function matchesCanonicalFirstBuy(evaluation, row) {
     && Date.parse(firstBuy.blockTime) === Date.parse(row.block_time);
 }
 
+const evaluationKey = (value) => `${value.tokenAddress || value.token_address}:`;
+const pairKey = (value) => `${evaluationKey(value)}${value.walletAddress || value.wallet_address}`;
+
 function createRobinhoodFreshWalletShadowRepository(options = {}) {
   const database = options.database || db;
 
-  async function replaceAndComplete(input = {}, transitionOptions = {}) {
-    const evaluation = normalizeEvaluation(input);
-    const owner = String(input.owner ?? '').trim();
-    if (!owner || owner.length > 128) throw new Error('FRESH queue owner is invalid');
+  async function replaceAndCompleteBatch(inputs = [], transitionOptions = {}) {
+    if (!Array.isArray(inputs) || !inputs.length || inputs.length > 100) {
+      throw new Error('FRESH materialization batch must contain between 1 and 100 items');
+    }
+    const prepared = inputs.map((input) => {
+      const evaluation = normalizeEvaluation(input);
+      const owner = String(input.owner ?? '').trim();
+      if (!owner || owner.length > 128) throw new Error('FRESH queue owner is invalid');
+      return { evaluation, owner };
+    });
+    const leaseRows = prepared.map(({ evaluation, owner }) => ({
+      token_address: evaluation.tokenAddress, wallet_address: evaluation.walletAddress,
+      queue_version: evaluation.queueVersion, owner,
+    }));
     const client = await database.getClient();
     try {
       await client.query('BEGIN');
-      const locked = await client.query(`SELECT queue.requested_version::text,
+      const locked = await client.query(`WITH input AS (
+        SELECT * FROM jsonb_to_recordset($1::jsonb) AS item(
+          token_address varchar, wallet_address varchar, queue_version bigint, owner varchar
+        )
+      ) SELECT input.token_address, input.wallet_address, queue.requested_version::text,
           first_buy.transaction_hash, first_buy.block_number::text,
           first_buy.block_hash, first_buy.block_time
-        FROM robinhood_fresh_wallet_queue queue
-        INNER JOIN robinhood_wallet_token_first_buys first_buy USING (
-          chain, token_address, wallet_address
-        )
-        WHERE chain = $1 AND token_address = $2 AND wallet_address = $3
-          AND rule_version = $4 AND queue.status = 'leased' AND lease_owner = $5
-          AND requested_version = $6::bigint FOR UPDATE OF queue`, [
-        CHAIN, evaluation.tokenAddress, evaluation.walletAddress, RULE_VERSION,
-        owner, evaluation.queueVersion,
-      ]);
-      if (!locked.rowCount) { await client.query('ROLLBACK'); return { completed: false }; }
-      if (!matchesCanonicalFirstBuy(evaluation, locked.rows[0])) {
-        throw new Error('FRESH evidence no longer matches the canonical first-buy');
+        FROM input INNER JOIN robinhood_fresh_wallet_queue queue
+          ON queue.chain = $2 AND queue.token_address = input.token_address
+         AND queue.wallet_address = input.wallet_address AND queue.rule_version = $3
+         AND queue.requested_version = input.queue_version
+         AND queue.status = 'leased' AND queue.lease_owner = input.owner
+        INNER JOIN robinhood_wallet_token_first_buys first_buy
+          ON first_buy.chain = queue.chain AND first_buy.token_address = queue.token_address
+         AND first_buy.wallet_address = queue.wallet_address
+        FOR UPDATE OF queue`, [JSON.stringify(leaseRows), CHAIN, RULE_VERSION]);
+      const lockedByKey = new Map(locked.rows.map((row) => [pairKey(row), row]));
+      const active = prepared.filter(({ evaluation }) => lockedByKey.has(pairKey(evaluation)));
+      for (const { evaluation } of active) {
+        if (!matchesCanonicalFirstBuy(evaluation, lockedByKey.get(pairKey(evaluation)))) {
+          throw new Error('FRESH evidence no longer matches the canonical first-buy');
+        }
       }
-      const stored = await client.query(`SELECT * FROM robinhood_fresh_wallet_evaluations
-        WHERE chain = $1 AND token_address = $2 AND wallet_address = $3
-          AND rule_version = $4 FOR UPDATE`, [
-        CHAIN, evaluation.tokenAddress, evaluation.walletAddress, RULE_VERSION,
-      ]);
-      const action = planReplacement(stored.rows[0], evaluation, transitionOptions);
-      if (action === 'replace') {
-        await client.query(`INSERT INTO robinhood_fresh_wallet_evaluations (
+      const activePairs = active.map(({ evaluation }) => ({
+        token_address: evaluation.tokenAddress, wallet_address: evaluation.walletAddress,
+      }));
+      const stored = active.length ? await client.query(`WITH input AS (
+        SELECT * FROM jsonb_to_recordset($1::jsonb) AS item(
+          token_address varchar, wallet_address varchar
+        )
+      ) SELECT evaluation.* FROM input
+        INNER JOIN robinhood_fresh_wallet_evaluations evaluation
+          ON evaluation.chain = $2 AND evaluation.token_address = input.token_address
+         AND evaluation.wallet_address = input.wallet_address AND evaluation.rule_version = $3
+        FOR UPDATE OF evaluation`, [JSON.stringify(activePairs), CHAIN, RULE_VERSION]) : { rows: [] };
+      const storedByKey = new Map(stored.rows.map((row) => [pairKey(row), row]));
+      const planned = active.map((item) => ({ ...item,
+        action: planReplacement(storedByKey.get(pairKey(item.evaluation)),
+          item.evaluation, transitionOptions),
+      }));
+      const replacements = planned.filter(({ action }) => action === 'replace');
+      if (replacements.length) {
+        const rows = replacements.map(({ evaluation }) => ({
+          token_address: evaluation.tokenAddress, wallet_address: evaluation.walletAddress,
+          queue_version: evaluation.queueVersion, status: evaluation.status,
+          outcome: evaluation.outcome, status_reason: evaluation.statusReason,
+          evidence_json: evaluation.evidence,
+          through_block_number: evaluation.frontier?.blockNumber ?? null,
+          through_block_hash: evaluation.frontier?.blockHash ?? null,
+          observed_at: evaluation.observedAt,
+        }));
+        await client.query(`WITH input AS (
+          SELECT * FROM jsonb_to_recordset($1::jsonb) AS item(
+            token_address varchar, wallet_address varchar, queue_version bigint,
+            status varchar, outcome varchar, status_reason varchar, evidence_json jsonb,
+            through_block_number bigint, through_block_hash varchar, observed_at timestamptz
+          )
+        ) INSERT INTO robinhood_fresh_wallet_evaluations (
           chain, token_address, wallet_address, rule_version, classification_version,
           queue_version, status, outcome, status_reason, evidence_json,
           through_block_number, through_block_hash, observed_at
-        ) VALUES ($1, $2, $3, $4, $5, $6::bigint, $7, $8, $9, $10::jsonb,
-          $11::bigint, $12, $13::timestamptz)
+        ) SELECT $2, token_address, wallet_address, $3, $4, queue_version, status,
+          outcome, status_reason, evidence_json, through_block_number,
+          through_block_hash, observed_at FROM input
         ON CONFLICT (chain, token_address, wallet_address, rule_version) DO UPDATE SET
           classification_version = EXCLUDED.classification_version,
           queue_version = EXCLUDED.queue_version, status = EXCLUDED.status,
@@ -203,64 +250,94 @@ function createRobinhoodFreshWalletShadowRepository(options = {}) {
           evidence_json = EXCLUDED.evidence_json,
           through_block_number = EXCLUDED.through_block_number,
           through_block_hash = EXCLUDED.through_block_hash,
-          observed_at = EXCLUDED.observed_at, updated_at = NOW()`, [
-          CHAIN, evaluation.tokenAddress, evaluation.walletAddress, RULE_VERSION,
-          HOLDER_CLASSIFICATION_VERSION, evaluation.queueVersion, evaluation.status,
-          evaluation.outcome, evaluation.statusReason, JSON.stringify(evaluation.evidence),
-          evaluation.frontier?.blockNumber ?? null,
-          evaluation.frontier?.blockHash ?? null, evaluation.observedAt,
-        ]);
-        if (evaluation.classification) {
-          const record = evaluation.classification;
-          await client.query(`INSERT INTO robinhood_holder_classifications (
+          observed_at = EXCLUDED.observed_at, updated_at = NOW()`, [JSON.stringify(rows),
+          CHAIN, RULE_VERSION, HOLDER_CLASSIFICATION_VERSION]);
+        const classified = replacements.map(({ evaluation }) => evaluation.classification)
+          .filter(Boolean);
+        if (classified.length) {
+          const classifications = classified.map((record) => ({
+            token_address: record.tokenAddress, wallet_address: record.walletAddress,
+            confidence: record.confidence, reason_code: record.reasonCode,
+            evidence_json: record.evidence, through_block_number: record.throughBlockNumber,
+            through_block_hash: record.throughBlockHash, observed_at: record.observedAt,
+          }));
+          await client.query(`WITH input AS (
+            SELECT * FROM jsonb_to_recordset($1::jsonb) AS item(
+              token_address varchar, wallet_address varchar, confidence varchar,
+              reason_code varchar, evidence_json jsonb, through_block_number bigint,
+              through_block_hash varchar, observed_at timestamptz
+            )
+          ) INSERT INTO robinhood_holder_classifications (
             chain, token_address, wallet_address, tag, classification_version,
             confidence, reason_code, evidence_json, through_block_number,
             through_block_hash, observed_at
-          ) VALUES ($1, $2, $3, 'fresh', $4, $5, $6, $7::jsonb, $8::bigint, $9, $10)
+          ) SELECT $2, token_address, wallet_address, 'fresh', $3, confidence,
+            reason_code, evidence_json, through_block_number, through_block_hash,
+            observed_at FROM input
           ON CONFLICT (chain, token_address, wallet_address, tag, classification_version)
           DO UPDATE SET confidence = EXCLUDED.confidence, reason_code = EXCLUDED.reason_code,
             evidence_json = EXCLUDED.evidence_json,
             through_block_number = EXCLUDED.through_block_number,
             through_block_hash = EXCLUDED.through_block_hash,
             observed_at = EXCLUDED.observed_at, updated_at = NOW()`, [
-            CHAIN, record.tokenAddress, record.walletAddress, record.classificationVersion,
-            record.confidence, record.reasonCode, JSON.stringify(record.evidence),
-            record.throughBlockNumber, record.throughBlockHash, record.observedAt,
-          ]);
-        } else {
-          await client.query(`DELETE FROM robinhood_holder_classifications
-            WHERE chain = $1 AND token_address = $2 AND wallet_address = $3
-              AND tag = 'fresh' AND classification_version = $4`, [
-            CHAIN, evaluation.tokenAddress, evaluation.walletAddress,
-            HOLDER_CLASSIFICATION_VERSION,
-          ]);
+            JSON.stringify(classifications), CHAIN, HOLDER_CLASSIFICATION_VERSION]);
         }
-      } else if (action === 'ignore') {
-        await client.query(`UPDATE robinhood_fresh_wallet_evaluations
-          SET queue_version = GREATEST(queue_version, $5::bigint), updated_at = NOW()
-          WHERE chain = $1 AND token_address = $2 AND wallet_address = $3
-            AND rule_version = $4`, [
-          CHAIN, evaluation.tokenAddress, evaluation.walletAddress, RULE_VERSION,
-          evaluation.queueVersion,
-        ]);
+        const removals = replacements.filter(({ evaluation }) => !evaluation.classification)
+          .map(({ evaluation }) => ({ token_address: evaluation.tokenAddress,
+            wallet_address: evaluation.walletAddress }));
+        if (removals.length) await client.query(`WITH input AS (
+          SELECT * FROM jsonb_to_recordset($1::jsonb) AS item(
+            token_address varchar, wallet_address varchar
+          )
+        ) DELETE FROM robinhood_holder_classifications classification USING input
+          WHERE classification.chain = $2 AND classification.token_address = input.token_address
+            AND classification.wallet_address = input.wallet_address AND classification.tag = 'fresh'
+            AND classification.classification_version = $3`, [JSON.stringify(removals),
+          CHAIN, HOLDER_CLASSIFICATION_VERSION]);
       }
-      await client.query(`UPDATE robinhood_fresh_wallet_queue SET
+      const ignored = planned.filter(({ action }) => action === 'ignore')
+        .map(({ evaluation }) => ({ token_address: evaluation.tokenAddress,
+          wallet_address: evaluation.walletAddress, queue_version: evaluation.queueVersion }));
+      if (ignored.length) await client.query(`WITH input AS (
+        SELECT * FROM jsonb_to_recordset($1::jsonb) AS item(
+          token_address varchar, wallet_address varchar, queue_version bigint
+        )
+      ) UPDATE robinhood_fresh_wallet_evaluations evaluation
+        SET queue_version = GREATEST(evaluation.queue_version, input.queue_version), updated_at = NOW()
+        FROM input WHERE evaluation.chain = $2 AND evaluation.token_address = input.token_address
+          AND evaluation.wallet_address = input.wallet_address AND evaluation.rule_version = $3`, [
+        JSON.stringify(ignored), CHAIN, RULE_VERSION]);
+      if (active.length) await client.query(`WITH input AS (
+        SELECT * FROM jsonb_to_recordset($1::jsonb) AS item(
+          token_address varchar, wallet_address varchar, queue_version bigint, owner varchar
+        )
+      ) UPDATE robinhood_fresh_wallet_queue queue SET
         status = 'complete', completed_version = requested_version,
         lease_owner = NULL, lease_until = NULL, completed_at = NOW(),
         last_error_code = NULL, last_error_message = NULL, updated_at = NOW()
-        WHERE chain = $1 AND token_address = $2 AND wallet_address = $3
-          AND rule_version = $4`, [
-        CHAIN, evaluation.tokenAddress, evaluation.walletAddress, RULE_VERSION,
-      ]);
+        FROM input WHERE queue.chain = $2 AND queue.token_address = input.token_address
+          AND queue.wallet_address = input.wallet_address AND queue.rule_version = $3
+          AND queue.status = 'leased' AND queue.lease_owner = input.owner
+          AND queue.requested_version = input.queue_version`, [JSON.stringify(leaseRows),
+        CHAIN, RULE_VERSION]);
       await client.query('COMMIT');
-      return Object.freeze({ completed: true, status: action });
+      const plannedByKey = new Map(planned.map((item) => [pairKey(item.evaluation), item.action]));
+      return Object.freeze(prepared.map(({ evaluation }) => Object.freeze(
+        plannedByKey.has(pairKey(evaluation))
+          ? { completed: true, status: plannedByKey.get(pairKey(evaluation)) }
+          : { completed: false }
+      )));
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
       throw error;
     } finally { client.release(); }
   }
 
-  return Object.freeze({ replaceAndComplete });
+  async function replaceAndComplete(input = {}, transitionOptions = {}) {
+    return (await replaceAndCompleteBatch([input], transitionOptions))[0];
+  }
+
+  return Object.freeze({ replaceAndComplete, replaceAndCompleteBatch });
 }
 
 module.exports = {

@@ -56,7 +56,7 @@ function buildRuntime(deps, options) {
   });
 }
 
-async function processTask(runtime, task, suppliedEvidence = null) {
+function prepareTask(runtime, task, evidence) {
   if (!['seed', 'live'].includes(task.sourceKind)
       || runtime.sourceKind !== task.sourceKind
       || runtime.source?.sourceKind !== task.sourceKind) {
@@ -64,16 +64,36 @@ async function processTask(runtime, task, suppliedEvidence = null) {
       code: 'fresh_source_kind_mismatch',
     });
   }
-  const evidence = suppliedEvidence || await runtime.source.readEvidence(task);
   const decision = evaluateRobinhoodFreshWallet(evidence);
+  return { ...task, status: 'ready', evidence, decision };
+}
+
+async function processTask(runtime, task, suppliedEvidence = null) {
+  const evidence = suppliedEvidence || await runtime.source.readEvidence(task);
+  const prepared = prepareTask(runtime, task, evidence);
   const result = await runtime.shadow.replaceAndComplete({
-    ...task, status: 'ready', evidence, decision,
+    ...prepared,
   }, { allowForkReplacement: true });
   return Object.freeze({
     status: result.completed ? 'materialized' : 'stale',
     tokenAddress: task.tokenAddress, walletAddress: task.walletAddress,
-    outcome: result.completed ? decision.outcome : null,
+    outcome: result.completed ? prepared.decision.outcome : null,
   });
+}
+
+async function processTaskBatch(runtime, tasks, evidence) {
+  if (typeof runtime.shadow?.replaceAndCompleteBatch !== 'function'
+      || !Array.isArray(evidence) || evidence.length !== tasks.length) {
+    throw new Error('FRESH batch materializer is unavailable');
+  }
+  const prepared = tasks.map((task, index) => prepareTask(runtime, task, evidence[index]));
+  const stored = await runtime.shadow.replaceAndCompleteBatch(prepared,
+    { allowForkReplacement: true });
+  return Object.freeze(stored.map((result, index) => Object.freeze({
+    status: result.completed ? 'materialized' : 'stale',
+    tokenAddress: tasks[index].tokenAddress, walletAddress: tasks[index].walletAddress,
+    outcome: result.completed ? prepared[index].decision.outcome : null,
+  })));
 }
 
 async function mapConcurrent(items, concurrency, operation) {
@@ -174,5 +194,6 @@ function createRobinhoodFreshWalletLiveWorker(deps = {}) {
 
 const worker = createRobinhoodFreshWalletLiveWorker();
 module.exports = { NOTIFY_CHANNEL, createRobinhoodFreshWalletLiveWorker, processTask,
+  processTaskBatch,
   getStatus: worker.getStatus, start: worker.start, stop: worker.stop,
-  __private: { buildRuntime, mapConcurrent, normalizeOptions } };
+  __private: { buildRuntime, mapConcurrent, normalizeOptions, prepareTask } };

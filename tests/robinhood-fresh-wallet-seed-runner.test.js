@@ -11,6 +11,14 @@ const { parseArgs } = require('../src/utils/backfill-robinhood-fresh-wallets');
 const TASK = { tokenAddress: `0x${'a'.repeat(40)}`, walletAddress: `0x${'b'.repeat(40)}`,
   transactionHash: `0x${'c'.repeat(64)}`, blockNumber: '20',
   blockHash: `0x${'d'.repeat(64)}`, blockTime: '2026-08-22T12:00:00Z' };
+const SEED_EVIDENCE = { ruleVersion: 'rh_fresh_signed_v1', sourceKind: 'seed',
+  source: 'archive', observedAt: '2026-08-22T12:03:00Z', firstBuy: {
+    walletAddress: TASK.walletAddress, transactionHash: TASK.transactionHash,
+    blockNumber: TASK.blockNumber, blockHash: TASK.blockHash,
+    blockTime: TASK.blockTime, nonce: '5',
+  }, cutoff: { targetAt: '2026-08-21T12:00:00Z', number: '10',
+    hash: TASK.blockHash, blockTime: '2026-08-21T11:59:59Z', nonce: '0' },
+  nextBlock: { number: '11', hash: TASK.blockHash, blockTime: '2026-08-21T12:00:00Z' } };
 
 it('keeps projected duration advisory and refuses only unavailable Archive evidence', async () => {
   const repository = { loadPlan: async () => ({ ready: true, pairCount: 100_000,
@@ -123,6 +131,24 @@ it('drains the frozen queue with the shared rule and pauses resumable failures',
   assert.equal(progress.status, 'paused');
   assert.equal(retries.length, 1);
   assert.deepEqual(sync, [['7', true]]);
+});
+
+it('drains successful seed evidence through the set-based materializer', async () => {
+  let claimed = false; let batchCalls = 0;
+  const repository = { createOrResume: async () => ({ runId: '8', status: 'running' }),
+    syncProgress: async () => ({ runId: '8', status: 'completed', total: 1, completed: 1 }) };
+  const queue = { async claimBatch() {
+    if (claimed) return []; claimed = true;
+    return [{ ...TASK, sourceKind: 'seed', requestedVersion: '1' }];
+  }, async retry() { throw new Error('successful batch must not retry'); } };
+  const shadow = { async replaceAndCompleteBatch(inputs) {
+    batchCalls += 1; assert.equal(inputs.length, 1); return [{ completed: true, status: 'replace' }];
+  } };
+  const result = await executeSeed({ repository, queue, shadow,
+    source: { sourceKind: 'seed', readEvidenceBatch: async () => [SEED_EVIDENCE] }, now: () => 0,
+  }, { preflight: { approved: true, concurrency: 1 }, batchSize: 100, maxMinutes: 1 });
+  assert.equal(result.status, 'completed');
+  assert.equal(batchCalls, 1);
 });
 
 it('uses only RH_NODE_RPC_URL and keeps CLI writes explicit', () => {
