@@ -5,7 +5,9 @@ const {
 const { createRobinhoodRpcClient } = require('./robinhood-ingestion-worker');
 const { processTask, __private: { mapConcurrent } } = require('./robinhood-fresh-wallet-live-worker');
 
-const MAX_HOURS = 5;
+const DEFAULT_MAX_HOURS = 5;
+const MAX_HOURS = 24;
+const MAX_SESSION_MINUTES = 1440;
 const SAFETY_FACTOR = 1.25;
 const PROGRESS_PAIR_INTERVAL = 10_000;
 const isRunnablePlan = (plan) => plan?.ready
@@ -54,7 +56,7 @@ async function runPreflight(deps = {}, options = {}) {
   const requestedSampleCount = bounded(options.sampleCount ?? 3, 3, 1, 100);
   const sampleCount = Math.max(requestedSampleCount, batchSize);
   const concurrency = bounded(options.concurrency ?? 2, 2, 1, 16);
-  const maxHours = Number(options.maxHours ?? MAX_HOURS);
+  const maxHours = Number(options.maxHours ?? DEFAULT_MAX_HOURS);
   if (!Number.isFinite(maxHours) || maxHours <= 0 || maxHours > MAX_HOURS) {
     throw new Error(`maxHours must be greater than 0 and at most ${MAX_HOURS}`);
   }
@@ -110,7 +112,7 @@ async function executeSeed(deps = {}, options = {}) {
   assertSeedRuntime(repository, queue, shadow);
   const concurrency = bounded(options.preflight.concurrency, 2, 1, 16);
   const batchSize = bounded(options.batchSize ?? 10, 10, 1, 100);
-  const maxMinutes = bounded(options.maxMinutes ?? 285, 285, 1, 300);
+  const maxMinutes = bounded(options.maxMinutes ?? 285, 285, 1, MAX_SESSION_MINUTES);
   const owner = options.owner || `${os.hostname()}:${process.pid}:fresh-seed`;
   const run = await repository.createOrResume(options.preflight);
   if (run.status === 'completed') return repository.syncProgress(run.runId);

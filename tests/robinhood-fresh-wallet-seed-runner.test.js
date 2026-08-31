@@ -37,6 +37,28 @@ it('samples Archive evidence and refuses a seed projected above five hours', asy
   assert.equal(empty.approved, false);
 });
 
+it('allows an explicit 24-hour preflight without changing the five-hour default', async () => {
+  const repository = { loadPlan: async () => ({ ready: true, pairCount: 100_000,
+    tokenCount: 10 }), samplePairs: async () => [TASK] };
+  const timed = (elapsedMs, maxHours = 24) => runPreflight({ repository,
+    source: { readEvidence: async () => ({}) },
+    now: (() => { const values = [0, elapsedMs]; return () => values.shift(); })(),
+  }, { sampleCount: 1, batchSize: 1, concurrency: 1, maxHours });
+  assert.equal((await timed(200)).approved, true);
+  await assert.rejects(() => timed(200, 25), /at most 24/);
+});
+
+it('allows one explicit 24-hour execution session', async () => {
+  const deps = { repository: {
+    createOrResume: async () => ({ runId: '9', status: 'completed' }),
+    syncProgress: async () => ({ runId: '9', status: 'completed' }),
+  }, queue: { claimBatch() {} }, shadow: {} };
+  const options = { preflight: { approved: true, concurrency: 1 }, maxMinutes: 1440 };
+  assert.equal((await executeSeed(deps, options)).status, 'completed');
+  await assert.rejects(() => executeSeed(deps, { ...options, maxMinutes: 1441 }),
+    /between 1 and 1440/);
+});
+
 it('measures batched Archive throughput when the source supports it', async () => {
   let batchCalls = 0;
   const repository = { loadPlan: async () => ({ ready: true, pairCount: 100,
