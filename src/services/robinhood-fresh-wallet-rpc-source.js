@@ -2,7 +2,8 @@ const { RULE_VERSION } = require('./robinhood-fresh-wallet-rule');
 
 const ROBINHOOD_CHAIN_ID = 4663n;
 const DAY_MS = 24 * 60 * 60 * 1000;
-const DEFAULT_CACHE_BLOCKS = 4096;
+const DEFAULT_CACHE_BLOCKS = 65536;
+const RPC_BATCH_SIZE = 100;
 const MAX_DATE_MS = 8_640_000_000_000_000n;
 
 function invalid(message) {
@@ -67,6 +68,27 @@ function normalizeFirstBuy(input = {}) {
   });
 }
 
+function canonicalEvidence(firstBuy, transaction, rawBlock, metadata) {
+  if (!transaction) throw invalid('first-buy transaction is unavailable');
+  const firstBuyBlock = rawBlock;
+  const transactionHash = fixedHex(transaction.hash, 32, 'transaction.hash');
+  const transactionFrom = address(transaction.from, 'transaction.from');
+  const transactionBlock = quantity(transaction.blockNumber, 'transaction.blockNumber');
+  const transactionBlockHash = fixedHex(transaction.blockHash, 32, 'transaction.blockHash');
+  if (transactionHash !== firstBuy.transactionHash || transactionFrom !== firstBuy.walletAddress
+      || transactionBlock.toString() !== firstBuy.blockNumber
+      || transactionBlockHash !== firstBuy.blockHash
+      || firstBuyBlock.hash !== firstBuy.blockHash
+      || firstBuyBlock.blockTime !== firstBuy.blockTime) {
+    throw invalid('first-buy evidence is not canonical');
+  }
+  const firstBuyNonce = quantity(transaction.nonce, 'transaction.nonce');
+  return Object.freeze({
+    ruleVersion: RULE_VERSION, ...metadata,
+    firstBuy: Object.freeze({ ...firstBuy, nonce: firstBuyNonce.toString() }),
+  });
+}
+
 function resolveRobinhoodFreshWalletRpcProvider(env = process.env, kind = 'archive') {
   const archive = kind === 'archive';
   if (!archive && kind !== 'live') throw new Error('FRESH RPC kind must be archive or live');
@@ -93,6 +115,18 @@ function createRobinhoodFreshWalletRpcSource(options = {}) {
   const cache = new Map();
   let chainValidation = null;
 
+  async function batchedRequests(requests) {
+    if (!requests.length) return [];
+    if (typeof rpcClient.requestBatch !== 'function') {
+      return Promise.all(requests.map(({ method, params }) => rpcClient.request(method, params)));
+    }
+    const results = [];
+    for (let offset = 0; offset < requests.length; offset += RPC_BATCH_SIZE) {
+      results.push(...await rpcClient.requestBatch(requests.slice(offset, offset + RPC_BATCH_SIZE)));
+    }
+    return results;
+  }
+
   async function validateChain() {
     chainValidation ||= Promise.resolve(rpcClient.request('eth_chainId')).then((value) => {
       if (quantity(value, 'eth_chainId') !== ROBINHOOD_CHAIN_ID) {
@@ -118,6 +152,20 @@ function createRobinhoodFreshWalletRpcSource(options = {}) {
       cache.delete(key);
       throw error;
     }
+  }
+
+  async function cachedBlocks(numbers) {
+    const keys = [...new Set(numbers.map((number) => BigInt(number).toString()))];
+    const missing = keys.filter((key) => !cache.has(key));
+    if (missing.length) {
+      const values = await batchedRequests(missing.map((key) => ({
+        method: 'eth_getBlockByNumber', params: [blockTag(key), false],
+      })));
+      missing.forEach((key, index) => cache.set(key, Promise.resolve(parseBlock(values[index], key))));
+    }
+    const blocks = await Promise.all(keys.map((key) => cache.get(key)));
+    while (cache.size > maxCacheBlocks) cache.delete(cache.keys().next().value);
+    return new Map(keys.map((key, index) => [key, blocks[index]]));
   }
 
   async function resolveCutoff(targetAt, upperBlock) {
@@ -147,28 +195,85 @@ function createRobinhoodFreshWalletRpcSource(options = {}) {
       rpcClient.request('eth_getBlockByNumber', [blockTag(firstBuy.blockNumber), false])
         .then((block) => parseBlock(block, firstBuy.blockNumber)),
     ]);
-    if (!transaction) throw invalid('first-buy transaction is unavailable');
-    const transactionHash = fixedHex(transaction.hash, 32, 'transaction.hash');
-    const transactionFrom = address(transaction.from, 'transaction.from');
-    const transactionBlock = quantity(transaction.blockNumber, 'transaction.blockNumber');
-    const transactionBlockHash = fixedHex(transaction.blockHash, 32, 'transaction.blockHash');
-    if (transactionHash !== firstBuy.transactionHash || transactionFrom !== firstBuy.walletAddress
-        || transactionBlock.toString() !== firstBuy.blockNumber
-        || transactionBlockHash !== firstBuy.blockHash
-        || firstBuyBlock.hash !== firstBuy.blockHash
-        || firstBuyBlock.blockTime !== firstBuy.blockTime) {
-      throw invalid('first-buy evidence is not canonical');
+    const canonical = canonicalEvidence(firstBuy, transaction, firstBuyBlock, {
+      source, sourceKind, observedAt: instant(now(), 'observedAt'),
+    });
+    const targetAt = new Date(Date.parse(firstBuy.blockTime) - DAY_MS).toISOString();
+    const { cutoff, nextBlock } = await resolveCutoff(targetAt, firstBuyBlock);
+    return Object.freeze({ ...canonical,
+      cutoff: Object.freeze({ targetAt, ...cutoff }), nextBlock });
+  }
+
+  async function canonicalEvidenceBatch(inputs) {
+    const firstBuys = inputs.map(normalizeFirstBuy);
+    await validateChain();
+    const transactionKeys = [...new Set(firstBuys.map(({ transactionHash }) => transactionHash))];
+    const [transactions, blocks] = await Promise.all([
+      batchedRequests(transactionKeys.map((transactionHash) => ({
+        method: 'eth_getTransactionByHash', params: [transactionHash],
+      }))),
+      cachedBlocks(firstBuys.map(({ blockNumber }) => blockNumber)),
+    ]);
+    const transactionByHash = new Map(transactionKeys.map((key, index) => [key, transactions[index]]));
+    const observedAt = instant(now(), 'observedAt');
+    return firstBuys.map((firstBuy) => canonicalEvidence(
+      firstBuy, transactionByHash.get(firstBuy.transactionHash), blocks.get(firstBuy.blockNumber),
+      { source, sourceKind, observedAt }
+    ));
+  }
+
+  async function resolveCutoffsBatch(canonicals) {
+    const states = canonicals.map((canonical) => ({ canonical,
+      targetAt: new Date(Date.parse(canonical.firstBuy.blockTime) - DAY_MS).toISOString(),
+      low: 0n, high: BigInt(canonical.firstBuy.blockNumber) - 1n, cutoff: null,
+    }));
+    while (states.some(({ low, high }) => low <= high)) {
+      const active = states.filter(({ low, high }) => low <= high);
+      active.forEach((state) => { state.middle = (state.low + state.high) / 2n; });
+      const blocks = await cachedBlocks(active.map(({ middle }) => middle));
+      for (const state of active) {
+        const block = blocks.get(state.middle.toString());
+        if (Date.parse(block.blockTime) < Date.parse(state.targetAt)) {
+          state.cutoff = block; state.low = state.middle + 1n;
+        } else state.high = state.middle - 1n;
+      }
     }
-    const cutoffAt = new Date(Date.parse(firstBuy.blockTime) - DAY_MS).toISOString();
-    const { cutoff, nextBlock } = await resolveCutoff(cutoffAt, firstBuyBlock);
-    const firstBuyNonce = quantity(transaction.nonce, 'transaction.nonce');
-    return Object.freeze({
-      ruleVersion: RULE_VERSION,
-      source, sourceKind,
-      observedAt: instant(now(), 'observedAt'),
-      firstBuy: Object.freeze({ ...firstBuy, nonce: firstBuyNonce.toString() }),
-      cutoff: Object.freeze({ targetAt: cutoffAt, ...cutoff }),
-      nextBlock,
+    if (states.some(({ cutoff }) => !cutoff)) {
+      throw invalid('24-hour cutoff predates the canonical chain');
+    }
+    const nextBlocks = await cachedBlocks(states.map(({ cutoff }) => BigInt(cutoff.number) + 1n));
+    return states.map((state) => {
+      const nextBlock = nextBlocks.get((BigInt(state.cutoff.number) + 1n).toString());
+      if (Date.parse(nextBlock.blockTime) < Date.parse(state.targetAt)) {
+        throw invalid('cutoff resolution is incomplete');
+      }
+      return { canonical: state.canonical, targetAt: state.targetAt,
+        cutoff: state.cutoff, nextBlock };
+    });
+  }
+
+  async function readEvidenceBatch(inputs = []) {
+    if (!Array.isArray(inputs) || !inputs.length || inputs.length > RPC_BATCH_SIZE) {
+      throw new TypeError(`FRESH evidence batch must contain between 1 and ${RPC_BATCH_SIZE} items`);
+    }
+    const cutoffs = await resolveCutoffsBatch(await canonicalEvidenceBatch(inputs));
+    const nonceKeys = [...new Map(cutoffs.map(({ canonical, cutoff }) => [
+      `${canonical.firstBuy.walletAddress}:${cutoff.hash}`, { canonical, cutoff },
+    ])).entries()];
+    const nonces = await batchedRequests(nonceKeys.map(([, { canonical, cutoff }]) => ({
+      method: 'eth_getTransactionCount', params: [canonical.firstBuy.walletAddress,
+        { blockHash: cutoff.hash, requireCanonical: true }],
+    })));
+    const nonceByKey = new Map(nonceKeys.map(([key], index) => [key, nonces[index]]));
+    return cutoffs.map(({ canonical, targetAt, cutoff, nextBlock }) => {
+      const cutoffNonce = quantity(nonceByKey.get(
+        `${canonical.firstBuy.walletAddress}:${cutoff.hash}`
+      ), 'cutoffNonce');
+      if (cutoffNonce > BigInt(canonical.firstBuy.nonce)) {
+        throw invalid('historical nonce exceeds first-buy nonce');
+      }
+      return Object.freeze({ ...canonical,
+        cutoff: Object.freeze({ targetAt, ...cutoff, nonce: cutoffNonce.toString() }), nextBlock });
     });
   }
 
@@ -185,7 +290,7 @@ function createRobinhoodFreshWalletRpcSource(options = {}) {
     });
   }
 
-  return Object.freeze({ sourceKind, readCanonicalEvidence, readEvidence });
+  return Object.freeze({ sourceKind, readCanonicalEvidence, readEvidence, readEvidenceBatch });
 }
 
 module.exports = {

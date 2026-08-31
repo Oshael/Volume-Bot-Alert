@@ -39,6 +39,7 @@ function block(number, overrides = {}) {
 
 function rpc(options = {}) {
   const calls = [];
+  const batches = [];
   const client = {
     async request(method, params = []) {
       calls.push([method, params]);
@@ -57,7 +58,11 @@ function rpc(options = {}) {
       throw new Error(`unexpected RPC method ${method}`);
     },
   };
-  return { calls, client };
+  client.requestBatch = async (requests) => {
+    batches.push(requests);
+    return Promise.all(requests.map(({ method, params }) => client.request(method, params)));
+  };
+  return { calls, batches, client };
 }
 
 function firstBuy(overrides = {}) {
@@ -160,6 +165,28 @@ describe('Robinhood FRESH historical RPC source', () => {
     const blocksAfter = fake.calls.filter(([method]) => method === 'eth_getBlockByNumber').length;
     assert.equal(blocksAfter - blocksBefore, 1);
     assert.equal(fake.calls.filter(([method]) => method === 'eth_chainId').length, 1);
+  });
+
+  it('batches identical canonical evidence without changing the result', async () => {
+    const fake = rpc();
+    const source = createRobinhoodFreshWalletRpcSource({
+      rpcClient: fake.client, source: 'robinhood-pc-archive', sourceKind: 'seed',
+      now: () => new Date('2026-08-30T12:05:00.000Z'),
+    });
+    const results = await source.readEvidenceBatch([firstBuy(), firstBuy()]);
+    const control = rpc();
+    const individual = await createRobinhoodFreshWalletRpcSource({
+      rpcClient: control.client, source: 'robinhood-pc-archive', sourceKind: 'seed',
+      now: () => new Date('2026-08-30T12:05:00.000Z'),
+    }).readEvidence(firstBuy());
+    assert.equal(results.length, 2);
+    assert.deepEqual(results[0], results[1]);
+    assert.deepEqual(results[0], individual);
+    assert.equal(evaluateRobinhoodFreshWallet(results[0]).outcome, 'fresh');
+    assert.ok(fake.batches.length > 0);
+    assert.ok(fake.batches.every((batch) => batch.length <= 100));
+    assert.equal(fake.calls.filter(([method]) => method === 'eth_getTransactionByHash').length, 1);
+    assert.equal(fake.calls.filter(([method]) => method === 'eth_getTransactionCount').length, 1);
   });
 
   it('fails closed for missing, mismatched, malformed, and wrong-chain evidence', async () => {

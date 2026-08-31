@@ -7,6 +7,7 @@ const { processTask, __private: { mapConcurrent } } = require('./robinhood-fresh
 
 const MAX_HOURS = 5;
 const SAFETY_FACTOR = 1.25;
+const PROGRESS_PAIR_INTERVAL = 10_000;
 const isRunnablePlan = (plan) => plan?.ready
   && Number(plan.tokenCount) > 0 && Number(plan.pairCount) > 0;
 const bounded = (value, fallback, min, max) => {
@@ -31,6 +32,21 @@ function createArchiveSource(options = {}, deps = {}) {
   });
 }
 
+async function sampleEvidence(source, samples, concurrency) {
+  if (!samples.length) return 1;
+  if (typeof source.readEvidenceBatch === 'function') {
+    try {
+      const evidence = await source.readEvidenceBatch(samples);
+      return Array.isArray(evidence) && evidence.length === samples.length ? 0 : samples.length;
+    } catch (_) { return samples.length; }
+  }
+  let unavailable = 0;
+  await mapConcurrent(samples, concurrency, async (item) => {
+    try { await source.readEvidence(item); } catch (_) { unavailable += 1; }
+  });
+  return unavailable;
+}
+
 async function runPreflight(deps = {}, options = {}) {
   const repository = deps.repository;
   if (!repository?.loadPlan || !repository?.samplePairs) throw new Error('FRESH seed repository required');
@@ -45,10 +61,7 @@ async function runPreflight(deps = {}, options = {}) {
   const samples = await repository.samplePairs(sampleCount);
   const source = deps.source || createArchiveSource(options, deps);
   const now = deps.now || Date.now; const startedAt = now();
-  let sampledUnavailable = samples.length ? 0 : 1;
-  await mapConcurrent(samples, concurrency, async (item) => {
-    try { await source.readEvidence(item); } catch (_) { sampledUnavailable += 1; }
-  });
+  const sampledUnavailable = await sampleEvidence(source, samples, concurrency);
   const elapsedMs = Math.max(1, now() - startedAt);
   const projectedMs = Math.ceil((elapsedMs / Math.max(1, samples.length))
     * plan.pairCount * SAFETY_FACTOR);
@@ -66,11 +79,15 @@ function assertApproved(preflight) {
 }
 
 async function drainBatch(context, tasks) {
-  await mapConcurrent(tasks, context.concurrency, async (task) => {
+  let evidence;
+  if (typeof context.source.readEvidenceBatch === 'function') {
+    try { evidence = await context.source.readEvidenceBatch(tasks); }
+    catch (_) { evidence = null; }
+  }
+  await mapConcurrent(tasks, context.concurrency, async (task, index) => {
     try { await processTask({ sourceKind: 'seed', source: context.source,
-      shadow: context.shadow }, {
-      ...task, owner: context.owner,
-    }); } catch (error) {
+      shadow: context.shadow }, { ...task, owner: context.owner }, evidence?.[index]); }
+    catch (error) {
       await context.queue.retry({ ...task, owner: context.owner,
         retryMs: context.retryMs, error }).catch(() => {});
     }
@@ -99,15 +116,19 @@ async function executeSeed(deps = {}, options = {}) {
   const deadline = (deps.now || Date.now)() + maxMinutes * 60_000;
   const context = { source, shadow, queue, concurrency, owner,
     retryMs: options.retryMs ?? 15_000 };
+  let pairsSinceProgress = 0;
   while ((deps.now || Date.now)() < deadline) {
     const tasks = await queue.claimBatch({ owner, sourceKind: 'seed', seedRunId: run.runId,
       leaseMs: options.leaseMs ?? 300_000, limit: batchSize });
     if (!tasks.length) break;
     await drainBatch(context, tasks);
-    options.onProgress?.(await repository.syncProgress(run.runId));
+    pairsSinceProgress += tasks.length;
+    if (pairsSinceProgress >= PROGRESS_PAIR_INTERVAL) {
+      options.onProgress?.(await repository.syncProgress(run.runId));
+      pairsSinceProgress = 0;
+    }
   }
-  const progress = await repository.syncProgress(run.runId);
-  return progress.status === 'completed' ? progress : repository.syncProgress(run.runId, true);
+  return repository.syncProgress(run.runId, true);
 }
 
 module.exports = { createArchiveSource, executeSeed, runPreflight };

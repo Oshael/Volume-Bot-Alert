@@ -34,6 +34,20 @@ it('samples Archive evidence and refuses a seed projected above five hours', asy
   assert.equal(empty.approved, false);
 });
 
+it('measures batched Archive throughput when the source supports it', async () => {
+  let batchCalls = 0;
+  const repository = { loadPlan: async () => ({ ready: true, pairCount: 100,
+    tokenCount: 10 }), samplePairs: async () => [TASK, TASK] };
+  const result = await runPreflight({ repository, source: {
+    async readEvidenceBatch(items) { batchCalls += 1; return items.map(() => ({})); },
+    async readEvidence() { throw new Error('individual RPC path must not run'); },
+  }, now: (() => { const values = [0, 10]; return () => values.shift(); })() },
+  { sampleCount: 2, concurrency: 2 });
+  assert.equal(batchCalls, 1);
+  assert.equal(result.sampledUnavailable, 0);
+  assert.equal(result.projectedMs, 625);
+});
+
 it('drains the frozen queue with the shared rule and pauses resumable failures', async () => {
   let claimed = false; const retries = []; const sync = [];
   const repository = { createOrResume: async () => ({ runId: '7', status: 'running' }),
@@ -44,14 +58,15 @@ it('drains the frozen queue with the shared rule and pauses resumable failures',
     if (claimed) return []; claimed = true; assert.equal(input.sourceKind, 'seed'); return [TASK];
   }, async retry(input) { retries.push(input); } };
   const progress = await executeSeed({ repository, queue, shadow: {},
-    source: { readEvidence: async () => { throw Object.assign(new Error('RPC down'), {
+    source: { readEvidence: async () => { throw new Error('individual RPC path must not run'); },
+      readEvidenceBatch: async () => { throw Object.assign(new Error('RPC down'), {
       code: 'rpc_unavailable',
     }); } }, now: () => 0,
   }, { preflight: { approved: true, concurrency: 1, pairCount: 1, tokenCount: 1 },
     maxMinutes: 1 });
   assert.equal(progress.status, 'paused');
   assert.equal(retries.length, 1);
-  assert.deepEqual(sync, [['7', undefined], ['7', true]]);
+  assert.deepEqual(sync, [['7', true]]);
 });
 
 it('uses only RH_NODE_RPC_URL and keeps CLI writes explicit', () => {

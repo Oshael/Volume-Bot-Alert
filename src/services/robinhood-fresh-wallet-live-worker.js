@@ -56,7 +56,7 @@ function buildRuntime(deps, options) {
   });
 }
 
-async function processTask(runtime, task) {
+async function processTask(runtime, task, suppliedEvidence = null) {
   if (!['seed', 'live'].includes(task.sourceKind)
       || runtime.sourceKind !== task.sourceKind
       || runtime.source?.sourceKind !== task.sourceKind) {
@@ -64,7 +64,7 @@ async function processTask(runtime, task) {
       code: 'fresh_source_kind_mismatch',
     });
   }
-  const evidence = await runtime.source.readEvidence(task);
+  const evidence = suppliedEvidence || await runtime.source.readEvidence(task);
   const decision = evaluateRobinhoodFreshWallet(evidence);
   const result = await runtime.shadow.replaceAndComplete({
     ...task, status: 'ready', evidence, decision,
@@ -80,7 +80,7 @@ async function mapConcurrent(items, concurrency, operation) {
   const results = new Array(items.length); let cursor = 0;
   const next = async () => {
     while (cursor < items.length) {
-      const index = cursor; cursor += 1; results[index] = await operation(items[index]);
+      const index = cursor; cursor += 1; results[index] = await operation(items[index], index);
     }
   };
   await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, next));

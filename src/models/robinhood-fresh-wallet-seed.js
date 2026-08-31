@@ -74,7 +74,7 @@ const COHORT_CTES_SQL = `WITH activation AS MATERIALIZED (
     AND anchor.block_time BETWEEN activation.seed_cutoff_at AND activation.activation_at
 )`;
 
-const COHORT_SELECT_SQL = `SELECT buy.token_address, buy.wallet_address
+const COHORT_SELECT_SQL = `SELECT buy.token_address, buy.wallet_address, buy.block_time
   FROM robinhood_wallet_token_first_buys buy
   INNER JOIN eligible_tokens eligible USING (token_address)
   CROSS JOIN activation
@@ -133,8 +133,9 @@ function createRobinhoodFreshWalletSeedRepository(options = {}) {
   async function seedQueue(client, runId) {
     await client.query(`WITH cohort AS MATERIALIZED (${COHORT_SQL})
       INSERT INTO robinhood_fresh_wallet_queue(
-        chain, token_address, wallet_address, rule_version, source_kind, seed_run_id
-      ) SELECT $1, token_address, wallet_address, $2, 'seed', $3 FROM cohort`,
+        chain, token_address, wallet_address, rule_version, source_kind, seed_run_id,
+        next_attempt_at
+      ) SELECT $1, token_address, wallet_address, $2, 'seed', $3, block_time FROM cohort`,
     [CHAIN, RULE_VERSION, runId]);
     await client.query(`WITH counts AS (SELECT token_address, COUNT(*)::bigint pair_count
       FROM robinhood_fresh_wallet_queue WHERE seed_run_id = $1 GROUP BY token_address)

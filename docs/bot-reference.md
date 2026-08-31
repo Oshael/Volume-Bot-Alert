@@ -1997,6 +1997,14 @@ fila todos os first-buys até o bloco de ativação dos tokens cujo launch canô
 está nos 14 dias fixos anteriores. O cohort usa a frontier global de first-buy
 congelada na ativação e recompõe hash/posição da âncora pelos swaps e
 `robinhood_transaction_positions`; `source_through_block` do cache não é gate.
+Preflight e execução agrupam transações, headers e nonces em JSON-RPC batches de
+até 100 itens; a fila seed é congelada em ordem cronológica e o cache local retém
+até 65.536 headers para reutilizar cutoffs, enquanto a busca binária continua
+exata e valida os mesmos hashes, timestamps e nonces do caminho individual. Use
+`--batch-size=100` no Archive com capacidade disponível. Durante a carga, o sync
+completo de coverage ocorre a cada
+10.000 pares e no encerramento, evitando recontar todo o cohort a cada claim sem
+alterar a fila durável ou o resultado materializado.
 Posição ausente bloqueia o preflight com a janela exata para
 `npm run robinhood:transaction-position-repair`, que usa Archive somente para os
 buracos. O seed processa com a mesma regra/materializador e atualiza cobertura

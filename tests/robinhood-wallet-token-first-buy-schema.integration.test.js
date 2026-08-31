@@ -436,6 +436,9 @@ describe('Robinhood wallet-token first buy schema integration', () => {
     assert.deepEqual({ frozen: plan.frozen, tokenCount: plan.tokenCount,
       pairCount: plan.pairCount }, { frozen: false, tokenCount: 1, pairCount: 1 });
     const run = await repository.createOrResume(plan);
+    const queued = (await db.query(`SELECT next_attempt_at
+      FROM robinhood_fresh_wallet_queue WHERE seed_run_id = $1`, [run.runId])).rows[0];
+    assert.equal(queued.next_attempt_at.toISOString(), '2026-08-22T12:00:00.000Z');
     await db.query(`UPDATE robinhood_token_launch_anchors
       SET launch_block_time = '2026-08-01T00:00:00Z' WHERE token_address = $1`, [TOKEN]);
     assert.deepEqual(await repository.loadPlan(), {
