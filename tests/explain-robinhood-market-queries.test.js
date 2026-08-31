@@ -59,18 +59,16 @@ describe('Robinhood EXPLAIN collector', () => {
     assert.throws(() => parseCliArgs(['--token', 'bad']), /token is invalid/);
   });
 
-  it('covers write, audit, history, and retention plans with real repository SQL', async () => {
+  it('covers write, audit, and history plans with real repository SQL', async () => {
     const specs = await buildPlanSpecs(options(), TOKEN);
     const byName = new Map(specs.map((spec) => [spec.name, spec]));
 
-    assert.equal(specs.length, 12);
+    assert.equal(specs.length, 11);
     assert.match(byName.get('backfill-hourly-upsert').sql, /INSERT INTO/);
     assert.match(byName.get('backfill-fine-upsert').sql, /robinhood_market_buckets_1m/);
     assert.match(byName.get('backfill-coarse-upsert').sql, /robinhood_market_buckets_1h/);
     assert.match(byName.get('audit-hourly').sql, /FULL JOIN actual/);
     assert.match(byName.get('history-legacy-5m').sql, /robinhood_market_buckets_1m/);
-    assert.match(byName.get('retention-delete-1m').sql, /DELETE FROM/);
-    assert.equal(byName.get('retention-delete-1m').readOnly, false);
   });
 
   it('never adds ANALYZE to mutating statements', () => {

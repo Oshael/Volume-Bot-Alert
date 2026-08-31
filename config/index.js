@@ -1096,10 +1096,6 @@ module.exports = {
       1000,
       60 * 1000
     ),
-    verifiedCoverage: {
-      from: process.env.ROBINHOOD_MARKET_AGGREGATE_VERIFIED_FROM || null,
-      through: process.env.ROBINHOOD_MARKET_AGGREGATE_VERIFIED_THROUGH || null,
-    },
   },
   robinhoodProcessingWorker: {
     enabled: parseBoolean(process.env.ROBINHOOD_PROCESSING_ENABLED, true),

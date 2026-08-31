@@ -6,7 +6,6 @@ const db = require('../models/db');
 const aggregate = require('../models/robinhood-market-aggregate').__private;
 const history = require('../models/robinhood-market-history-read').__private;
 const auditor = require('./audit-robinhood-market-aggregate-coverage').__private;
-const retention = require('../services/robinhood-retention-worker').__private;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_DAYS = 3;
@@ -104,24 +103,6 @@ async function runSql(database, sql, params, options) {
   }
 }
 
-async function captureMinuteDeleteSpec(options) {
-  let captured = null;
-  await retention.deleteExpiredMinuteBuckets({
-    async queryWithStatementTimeout(sql, params) {
-      captured = { sql, params };
-      return { rows: [{ examined_buckets: 0, minute_buckets: 0 }] };
-    },
-  }, {
-    batchLimit: 100,
-    statementTimeoutMs: options.statementTimeoutMs,
-    verifiedCoverage: { from: options.from, through: options.to },
-  });
-  return {
-    name: 'retention-delete-1m', readOnly: false,
-    sql: captured.sql, params: captured.params,
-  };
-}
-
 async function buildPlanSpecs(options, token) {
   const addresses = [token];
   const minuteStartsAt = new Date(options.to);
@@ -182,7 +163,6 @@ async function buildPlanSpecs(options, token) {
       sql: history.LEGACY_HISTORY_SQL,
       params: [addresses, ...range, 240, minuteStartsAt, 1001, null, null],
     },
-    await captureMinuteDeleteSpec(options),
   ];
   if (!options.only) return specs;
   const selected = specs.filter((spec) => options.only.has(spec.name));

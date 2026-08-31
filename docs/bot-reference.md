@@ -2798,11 +2798,13 @@ leases expiradas e watermarks persistidos. Não resete cursores ou ranges para
 
 Quando observations corrigidas precisam substituir buckets históricos, o recovery
 segue a dependência `_observations -> _1m -> _agg 5/15/30m -> _1h -> _agg 1h/4h/1d`.
-O `_1m` antigo pode já ter expirado; durante o recovery ele é recriado temporariamente
-em janelas de blocos e volta a ser elegível para retenção somente depois de os pais
-permanentes serem validados. `--from-block` representa o último bloco já comprometido
-(limite exclusivo), write exige `--to-block`, e o backfill de agregados usa checkpoint
-com cutoff fixo. Maintenance/retention permanece parado durante a cadeia completa.
+O `_1m` é histórico durável do produto e não participa da retenção destrutiva; durante
+o recovery ele é reconstruído em janelas de blocos antes da validação dos pais.
+`--from-block` representa o último bloco já comprometido (limite exclusivo), write
+exige `--to-block`, e o backfill de agregados usa checkpoint com cutoff fixo.
+Maintenance/retention permanece parado durante a cadeia completa.
+O campo e o índice legados de `expires_at` em `robinhood_market_buckets_1m`
+permanecem apenas por compatibilidade de schema; o retention worker não os consome.
 
 Produtores sobrepostos também precisam executar a mesma versão antes do recovery.
 Observations são inseridas com `ON CONFLICT ... DO NOTHING`; portanto um monólito antigo
@@ -2907,7 +2909,7 @@ desabilitar as units antigas. O archive do PC é o último componente a ser desl
 
 Princípio:
 
-- buckets consolidados são históricos de longo prazo;
+- buckets de 1 minuto e consolidados são históricos de longo prazo;
 - swaps/eventos normalizados sustentam wallet tracking e evidência detalhada;
 - dados brutos não devem crescer indefinidamente.
 

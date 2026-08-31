@@ -528,7 +528,7 @@ No inicio, verificar pelo menos diariamente:
 - erros consecutivos do worker;
 - tamanho das tabelas RH;
 - espaco livre em disco;
-- quantidade de buckets protegidos pela retention;
+- continuidade integral dos buckets de 1 minuto;
 - cobertura de 5m/15m/30m/1h/4h/1d;
 - uso de CPU, memoria e conexoes PostgreSQL;
 - impacto nos workers Solana.
@@ -557,7 +557,7 @@ range, aguardar e continuar.
 - cursores avancando;
 - retries sem perda de cursor;
 - agregados sendo produzidos;
-- retention preservando buckets ainda nao consolidados;
+- historico de 1 minuto preservado integralmente;
 - disco com margem operacional definida.
 
 ### No-go
@@ -566,7 +566,7 @@ range, aguardar e continuar.
 - cotacao WETH atual aplicada silenciosamente ao passado;
 - cursor avancando depois de falha de persistencia;
 - gaps depois de retry/range shrink;
-- minute buckets apagados antes da compactacao;
+- historico de 1 minuto incompleto ou regressivo;
 - RH acessivel por rota publica;
 - alertas RH publicados;
 - degradacao relevante dos workers Solana;

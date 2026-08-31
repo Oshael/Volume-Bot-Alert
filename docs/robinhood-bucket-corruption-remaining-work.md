@@ -108,9 +108,9 @@ fixes committed; historical cleanup still pending.
    - Idempotent while its source observations remain available; excludes the current
      live minute (won't race ingestion). Write mode now requires `--to-block`, so the
      accidental single ~11.2M-bucket transaction is rejected.
-   - Historical `_1m` rows are a temporary rebuild layer. Keep maintenance/retention
-     paused through 3b; after the permanent parents are verified, normal expiry may
-     remove old `_1m` again.
+   - Historical `_1m` rows are durable product history. Keep maintenance paused
+     through 3b so recovery does not overlap the rebuild; normal retention preserves
+     `_1m` after the permanent parents are verified.
 
    **3b — `_1h`/`_agg` from the corrected `_1m`** —
    `backfill-robinhood-market-aggregates.js`. Timestamp-windowed, `--mode write` needs

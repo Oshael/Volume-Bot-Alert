@@ -7,7 +7,6 @@ const DEFAULT_INTERVAL_MS = 60 * 1000;
 const DEFAULT_BATCH_LIMIT = 2000;
 const DEFAULT_MAX_BATCHES = 5;
 const DEFAULT_STATEMENT_TIMEOUT_MS = 10 * 1000;
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 let timer = null;
 let running = false;
@@ -34,14 +33,10 @@ let status = {
   lastWalletWatermarkAgeMs: null,
   lastWalletLagBlocks: null,
   lastDeletedObservations: 0,
-  lastDeletedMinuteBuckets: 0,
-  lastProtectedMinuteBuckets: 0,
-  lastMinuteDeletionBlockedByCoverage: false,
   lastDeletedHourlyBuckets: 0,
   lastProtectedHourlyBuckets: 0,
   totalDeletedProcessedLogs: 0,
   totalDeletedObservations: 0,
-  totalDeletedMinuteBuckets: 0,
   totalDeletedHourlyBuckets: 0,
   totalErrors: 0,
   lastError: null,
@@ -50,22 +45,6 @@ let status = {
 function boundedInteger(value, fallback, min, max) {
   const parsed = Math.trunc(Number(value));
   return Number.isFinite(parsed) ? Math.max(min, Math.min(parsed, max)) : fallback;
-}
-
-function normalizeVerifiedCoverage(input) {
-  if (input?.from == null && input?.through == null) return null;
-  if (input?.from == null || input?.through == null) {
-    throw new Error('Robinhood retention verified coverage requires from and through');
-  }
-  const from = new Date(input.from);
-  const through = new Date(input.through);
-  if (!Number.isFinite(from.getTime()) || !Number.isFinite(through.getTime()) || from >= through) {
-    throw new Error('Robinhood retention verified coverage is invalid');
-  }
-  if (from.getTime() % DAY_MS || through.getTime() % DAY_MS) {
-    throw new Error('Robinhood retention verified coverage must align to UTC days');
-  }
-  return Object.freeze({ from: from.toISOString(), through: through.toISOString() });
 }
 
 function normalizeOptions(options = {}) {
@@ -80,7 +59,6 @@ function normalizeOptions(options = {}) {
       1000,
       60 * 1000
     ),
-    verifiedCoverage: normalizeVerifiedCoverage(options.verifiedCoverage),
   };
 }
 
@@ -219,86 +197,6 @@ async function deleteExpiredProcessedLogs(database, options) {
   };
 }
 
-async function deleteExpiredMinuteBuckets(database, options) {
-  const result = await queryWithTimeout(
-    database,
-    `WITH expired AS MATERIALIZED (
-       SELECT
-         minute.chain, minute.protocol, minute.market_key, minute.token_address, minute.bucket_ts,
-         minute.first_block_number, minute.last_block_number, minute.updated_at
-       FROM robinhood_market_buckets_1m minute
-       WHERE minute.expires_at <= NOW()
-         AND minute.bucket_ts >= $2::timestamptz
-         AND minute.bucket_ts < $3::timestamptz
-         AND minute.bucket_ts <
-           date_trunc('hour', NOW() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
-       ORDER BY minute.expires_at ASC
-       LIMIT $1::int
-       FOR UPDATE OF minute SKIP LOCKED
-     ),
-     candidates AS (
-       SELECT expired.chain, expired.protocol, expired.market_key, expired.bucket_ts
-       FROM expired
-       WHERE EXISTS (
-         SELECT 1
-         FROM robinhood_market_buckets_1h hourly
-         WHERE hourly.chain = expired.chain
-           AND hourly.protocol = expired.protocol
-           AND hourly.market_key = expired.market_key
-           AND hourly.bucket_ts =
-             date_trunc('hour', expired.bucket_ts AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
-           AND hourly.first_block_number <= expired.first_block_number
-           AND hourly.last_block_number >= expired.last_block_number
-           AND hourly.updated_at >= expired.updated_at
-       )
-         AND NOT EXISTS (
-           SELECT 1
-           FROM (VALUES (5), (15), (30)) required(granularity_minutes)
-           WHERE NOT EXISTS (
-             SELECT 1
-             FROM robinhood_market_buckets_agg aggregate
-             WHERE aggregate.chain = expired.chain
-               AND aggregate.token_address = expired.token_address
-               AND aggregate.granularity_minutes = required.granularity_minutes
-               AND aggregate.bucket_ts = to_timestamp(
-                 FLOOR(EXTRACT(EPOCH FROM expired.bucket_ts)
-                   / (required.granularity_minutes * 60))
-                 * (required.granularity_minutes * 60)
-               )
-               AND aggregate.first_block_number <= expired.first_block_number
-               AND aggregate.last_block_number >= expired.last_block_number
-               AND aggregate.updated_at >= expired.updated_at
-           )
-         )
-     ),
-     deleted AS (
-       DELETE FROM robinhood_market_buckets_1m minute
-       USING candidates
-       WHERE minute.chain = candidates.chain
-         AND minute.protocol = candidates.protocol
-         AND minute.market_key = candidates.market_key
-         AND minute.bucket_ts = candidates.bucket_ts
-       RETURNING 1
-     )
-     SELECT
-       (SELECT COUNT(*)::int FROM expired) AS examined_buckets,
-       (SELECT COUNT(*)::int FROM deleted) AS minute_buckets`,
-    [
-      options.batchLimit,
-      options.verifiedCoverage.from,
-      options.verifiedCoverage.through,
-    ],
-    options.statementTimeoutMs
-  );
-  const examined = Number(result.rows[0]?.examined_buckets || 0);
-  const deleted = Number(result.rows[0]?.minute_buckets || 0);
-  return {
-    deleted,
-    examined,
-    protected: Math.max(0, examined - deleted),
-  };
-}
-
 function emptySummary(wallet = {}) {
   return {
     batches: 0,
@@ -316,9 +214,6 @@ function emptySummary(wallet = {}) {
     walletWatermarkAgeMs: wallet.ageMs ?? null,
     walletLagBlocks: wallet.lagBlocks ?? null,
     observations: 0,
-    minuteBuckets: 0,
-    protectedMinuteBuckets: 0,
-    minuteDeletionBlockedByCoverage: false,
     hourlyBuckets: 0,
     protectedHourlyBuckets: 0,
   };
@@ -367,6 +262,8 @@ async function loadWalletGate(database, deps) {
 
 async function runCleanupBatches(database, options, wallet) {
   const summary = emptySummary(wallet);
+  // Minute buckets are durable chart history. Retention is limited to raw logs
+  // and their gated observation children.
   for (let index = 0; index < options.maxBatches; index += 1) {
     const raw = await deleteExpiredProcessedLogs(database, options);
     summary.batches += 1;
@@ -385,17 +282,7 @@ async function runCleanupBatches(database, options, wallet) {
     );
     summary.observations += raw.observations;
     if (raw.protected > 0) break;
-    if (!options.verifiedCoverage) {
-      summary.minuteDeletionBlockedByCoverage = true;
-      break;
-    }
-
-    const minute = await deleteExpiredMinuteBuckets(database, options);
-    summary.minuteBuckets += minute.deleted;
-    summary.protectedMinuteBuckets += minute.protected;
-    if (minute.protected > 0) break;
-
-    if (raw.examined < options.batchLimit && minute.examined < options.batchLimit) break;
+    if (raw.examined < options.batchLimit) break;
   }
   return summary;
 }
@@ -440,14 +327,10 @@ async function runOnce(options = {}, meta = {}, deps = {}) {
       status.lastWalletWatermarkAgeMs = summary.walletWatermarkAgeMs;
       status.lastWalletLagBlocks = summary.walletLagBlocks;
       status.lastDeletedObservations = summary.observations;
-      status.lastDeletedMinuteBuckets = summary.minuteBuckets;
-      status.lastProtectedMinuteBuckets = summary.protectedMinuteBuckets;
-      status.lastMinuteDeletionBlockedByCoverage = summary.minuteDeletionBlockedByCoverage;
       status.lastDeletedHourlyBuckets = summary.hourlyBuckets;
       status.lastProtectedHourlyBuckets = summary.protectedHourlyBuckets;
       status.totalDeletedProcessedLogs += summary.processedLogs;
       status.totalDeletedObservations += summary.observations;
-      status.totalDeletedMinuteBuckets += summary.minuteBuckets;
       status.totalDeletedHourlyBuckets += summary.hourlyBuckets;
       status.lastCompletedAt = new Date().toISOString();
       status.lastRunDurationMs = Date.now() - startedAtMs;
@@ -469,7 +352,7 @@ function schedule(options, delayMs) {
   timer = setTimeout(async () => {
     try {
       const summary = await runOnce(options, { ifRunning: 'join' });
-      if (summary.examinedProcessedLogs || summary.minuteBuckets || summary.hourlyBuckets) {
+      if (summary.examinedProcessedLogs || summary.hourlyBuckets) {
         console.log(
           '[RobinhoodRetentionWorker]',
           `logs=${summary.processedLogs}/${summary.examinedProcessedLogs}`,
@@ -478,8 +361,6 @@ function schedule(options, delayMs) {
           `bucketProtected=${summary.candidatesProtectedByBucketCoverage}`,
           `walletGate=${summary.walletGateValid ? 'valid' : summary.walletGateReason}`,
           `observations=${summary.observations}`,
-          `minuteBuckets=${summary.minuteBuckets}`,
-          `protectedMinuteBuckets=${summary.protectedMinuteBuckets}`,
           `hourlyBuckets=${summary.hourlyBuckets}`,
           `protectedHourlyBuckets=${summary.protectedHourlyBuckets}`,
           `batches=${summary.batches}`
@@ -521,9 +402,7 @@ module.exports = {
   start,
   stop,
   __private: {
-    deleteExpiredMinuteBuckets,
     deleteExpiredProcessedLogs,
-    normalizeVerifiedCoverage,
     normalizeOptions,
   },
 };
