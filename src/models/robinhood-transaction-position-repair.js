@@ -42,7 +42,7 @@ function createRobinhoodTransactionPositionRepairRepository(options = {}) {
            ON position.chain = swap.chain
           AND position.transaction_hash = swap.transaction_hash
           AND position.block_number = swap.block_number
-        WHERE swap.chain = $1 AND swap.side = 'buy'
+        WHERE swap.chain = $1
           AND swap.block_time >= $2::timestamptz
           AND swap.block_time < $3::timestamptz
           AND position.transaction_hash IS NULL

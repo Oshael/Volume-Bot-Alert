@@ -2494,9 +2494,10 @@ repita com `--apply`. Cada execução confirmada para após no máximo 240 minut
 (configurável por `--max-minutes`, teto de 300) e informa `resumeFrom` quando
 pausada. O reparo é idempotente: uma retomada pode usar esse instante como novo
 `--from`; posições já gravadas são ignoradas. `RH_NODE_RPC_URL` deve apontar para
-o archive local e `DATABASE_URL` para a VPS. O comando repara somente buys de
-pools registrados dentro da janela durável e nunca usa `action_index` como
-substituto de `transaction_index`.
+o archive local e `DATABASE_URL` para a VPS. O comando repara swaps de ambos os
+lados em pools registrados dentro da janela durável, pois a âncora FRESH exige a
+ordem completa do bloco; ele nunca usa `action_index` como substituto de
+`transaction_index`.
 
 Depois das Stages 149 e 151, planeje a carga com
 `npm run robinhood:first-buy-backfill -- --from=<ISO> --through=<ISO> --range-seconds=3600 --concurrency=2`.

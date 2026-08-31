@@ -18,7 +18,7 @@ function row(range) {
 }
 
 describe('Robinhood transaction-position repair', () => {
-  it('selects only bounded missing registered buys', async () => {
+  it('selects bounded missing registered swaps from either side', async () => {
     const calls = [];
     const repository = createRobinhoodTransactionPositionRepairRepository({
       database: { queryWithStatementTimeout: async (...args) => {
@@ -35,6 +35,7 @@ describe('Robinhood transaction-position repair', () => {
     }]);
     assert.match(calls[0][0], /registry\.discovery_block <= swap\.block_number/);
     assert.match(calls[0][0], /position\.transaction_hash IS NULL/);
+    assert.doesNotMatch(calls[0][0], /swap\.side\s*=\s*'buy'/);
     assert.deepEqual(calls[0][1], [
       'robinhood', '2026-01-01T00:00:00.000Z', '2026-01-01T01:00:00.000Z', 50,
     ]);
