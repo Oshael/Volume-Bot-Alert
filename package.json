@@ -111,6 +111,7 @@
     "robinhood:transaction-position-repair": "node src/utils/repair-robinhood-transaction-positions.js",
     "robinhood:first-buy-backfill": "node src/utils/backfill-robinhood-first-buys.js",
     "robinhood:fresh-wallet-seed": "node src/utils/backfill-robinhood-fresh-wallets.js",
+    "robinhood:fresh-wallet-signed-origin-audit": "node src/utils/audit-robinhood-fresh-wallet-signed-origins.js",
     "robinhood:signed-origin-bootstrap": "node src/utils/bootstrap-robinhood-wallet-signed-origins.js",
     "robinhood:v2-dry-run": "node src/utils/robinhood-v2-fixture-dry-run.js",
     "robinhood:v3-dry-run": "node src/utils/robinhood-v3-fixture-dry-run.js",

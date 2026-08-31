@@ -1991,6 +1991,14 @@ nunca seleciona `RH_NODE_RPC_URL`, continua shadow-only e só inicia quando
 `ROBINHOOD_FRESH_WALLET_SIGNED_ORIGIN_APPROVED=true`. Esse gate deve permanecer
 falso até a comparação Archive versus índice interno provar equivalência de
 `prior_signed_activity` e da decisão final na amostra operacional.
+Depois que o bootstrap `seed` de signed-origin chegar a `completed`, rode no PC
+Archive `npm run robinhood:fresh-wallet-signed-origin-audit -- --samples=500
+--minimum-samples=100 --batch-size=100`. O comando é read-only, usa
+`RH_NODE_RPC_URL`, seleciona somente first-buys LIVE posteriores à ativação e já
+cobertos pelo cursor congelado, e compara o nonce histórico do Archive com a
+inferência do índice interno. `approved=true` exige amostra mínima, zero
+evidência indisponível e zero divergência; somente esse resultado autoriza mudar
+`ROBINHOOD_FRESH_WALLET_SIGNED_ORIGIN_APPROVED=true`.
 Antes do primeiro seed, aplique `node src/utils/db-init-stage185.js`. A migration
 indexa concorrentemente a janela dos anchors e cada partição diária de swaps,
 anexando os índices ao pai sem parar o writer live; ela pode ser retomada se for
