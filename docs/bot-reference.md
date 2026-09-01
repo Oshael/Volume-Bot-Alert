@@ -3157,10 +3157,15 @@ demais tempos são contexto, não gates. A Stage 187 cria snapshots shadow isola
 de estado, grupos e membros com lineage seed/live e causalidade buy → transfer →
 sell; aplique `node src/utils/db-init-stage187.js` e valide com
 `npm run db:schema-check`. A migration não enfileira histórico e o contrato ainda
-não possui reader, worker ou exposição pública. O writer transacional aceita
+não possui fila, worker ou exposição pública. O writer transacional aceita
 somente a policy v1 exata, deriva membros da prova causal e rejeita frontier fork,
 retrocesso e drift sem nova versão. Ele não altera `rh_possible_bundle_v1` nem
-autoriza apagar raw.
+autoriza apagar raw. O source PostgreSQL token-scoped falha fechado até holder,
+first-buy, swaps e transfer projection cobrirem a mesma frontier, exigindo posições
+canônicas de transfer e sell. O caller deve informar `observationFromBlock`; o
+source rejeita sua ausência e ignora distribuições anteriores para impedir backfill
+indireto. Esta família não terá backfill: a futura ativação live define o início da
+observação shadow.
 
 Execute `npm run robinhood:wallet-transfer-retention-plan --
 --projection-version=VERSAO --limit=10` para listar candidatos antigos. O limite

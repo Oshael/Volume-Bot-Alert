@@ -1623,8 +1623,12 @@ secundária na calibração. A Stage 187 reserva snapshots shadow próprios de e
 grupos e membros, preservando posições causais, FDV opcional e lineage seed/live
 sem reutilizar as restrições de funding. O writer valida integralmente o output da
 policy, deriva os membros da evidência e substitui o snapshot sob lock e transação,
-recusando policy drift e fork na mesma frontier. Ainda não há reader de candidatos,
-worker, backfill, publicação ou autorização para remover raw.
+recusando policy drift e fork na mesma frontier. O reader live token-scoped exige
+as frontiers duráveis de holder, creator, first-buy, swaps e transfers, além das
+posições canônicas. Ele exige a frontier de ativação e ignora distribuições
+anteriores a ela, impedindo backfill indireto. Ainda não há fila, worker ou
+publicação. Não haverá backfill dessa família: o rollout começa nessa frontier e
+acumula somente fatos live em shadow.
 
 A continuidade de launch anchors é condicionada ao holder ledger `live`. Um
 first-buy anterior a essa prontidão não é perdido: a transição posterior do token
