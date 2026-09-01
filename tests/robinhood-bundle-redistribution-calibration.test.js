@@ -12,6 +12,8 @@ function cluster(overrides = {}) {
     lastFirstTransferTime: '2026-01-01T00:24:00.000Z', recipientCount: 4,
     sellingRecipientCount: 2, firstRecipientSellTime: '2026-01-01T00:30:00.000Z',
     recipientSellCountsWithin: { lte_1m: 1, lte_5m: 2, lte_30m: 2, lte_2h: 2 },
+    sourceBuyFdvUsd: 15000, recipientSellFdvWithin5mUsd: [5000, 60000],
+    bundleConfirmationFdvUsd: 60000,
     firstDistributedAmountRaw: '250', boughtBeforeDistributionRaw: '1000',
     firstDistributionCoverageBps: 2500, ...overrides,
   };
@@ -23,6 +25,8 @@ it('defines a bounded lower-bound query without RPC or writes', () => {
   assert.match(sql, /COUNT\(DISTINCT recipient_wallet\).*>= 2/s);
   assert.match(sql, /swap\.side = 'sell'/);
   assert.match(sql, /first_sell_time <= sell_after\.transfer_time \+ INTERVAL '5 minutes'/);
+  assert.match(sql, /LEFT JOIN robinhood_swap_mc buy_mc/);
+  assert.match(sql, /AS bundle_confirmation_fdv_usd/);
   assert.match(sql, /robinhood_infrastructure_registry/);
   assert.doesNotMatch(sql, /INSERT|UPDATE|DELETE/);
 });
@@ -37,11 +41,28 @@ it('normalizes cumulative recipient sell-window counts', () => {
     selling_recipient_count: 3, first_recipient_sell_time: '2026-01-01T00:25:00.000Z',
     recipient_sells_within_1m: '1', recipient_sells_within_5m: '2',
     recipient_sells_within_30m: '3', recipient_sells_within_2h: '3',
+    source_buy_fdv_usd: '15000',
+    recipient_sell_fdv_within_5m_usd: ['5000', null, '60000'],
+    bundle_confirmation_fdv_usd: '60000',
     first_distributed_amount_raw: '250', bought_before_distribution_raw: '1000',
   });
   assert.deepEqual(normalized.recipientSellCountsWithin, {
     lte_1m: 1, lte_5m: 2, lte_30m: 3, lte_2h: 3,
   });
+  assert.equal(normalized.sourceBuyFdvUsd, 15000);
+  assert.deepEqual(normalized.recipientSellFdvWithin5mUsd, [5000, null, 60000]);
+  assert.equal(normalized.bundleConfirmationFdvUsd, 60000);
+});
+
+it('buckets durable FDV at explicit USD boundaries', () => {
+  const { fdvBucket } = command.__private;
+  const cases = [
+    [null, 'unavailable'], [9999, 'lt_10k'], [10000, 'gte_10k_lt_25k'],
+    [25000, 'gte_25k_lt_50k'], [50000, 'gte_50k_lt_100k'],
+    [100000, 'gte_100k_lt_250k'], [250000, 'gte_250k_lt_500k'],
+    [500000, 'gte_500k_lt_1m'], [1000000, 'gte_1m'],
+  ];
+  for (const [value, expected] of cases) assert.equal(fdvBucket(value), expected);
 });
 
 it('aggregates timing, recipient, seller and coverage calibration buckets', async () => {
@@ -70,6 +91,18 @@ it('aggregates timing, recipient, seller and coverage calibration buckets', asyn
   assert.equal(report.recipientSellsWithin.lte_1m, 2);
   assert.equal(report.recipientSellsWithin.lte_5m, 4);
   assert.equal(report.clustersWithAtLeastTwoRecipientSellsWithin.lte_5m, 2);
+  assert.equal(report.fdvUsd.metric, 'fdv_usd');
+  assert.equal(report.fdvUsd.source, 'robinhood_swap_mc');
+  assert.deepEqual(report.fdvUsd.sourceFirstBuy, {
+    population: 2, available: 2, unavailable: 0, buckets: { gte_10k_lt_25k: 2 },
+  });
+  assert.equal(report.fdvUsd.recipientSellsWithin5m.buckets.lt_10k, 2);
+  assert.equal(report.fdvUsd.recipientSellsWithin5m.buckets.gte_50k_lt_100k, 2);
+  assert.equal(
+    report.fdvUsd.bundleConfirmationAtSecondRecipientSellWithin5m
+      .buckets.gte_50k_lt_100k,
+    2
+  );
   assert.equal(report.buckets.launchToBuy.gt_1m_lte_5m, 2);
   assert.equal(report.buckets.buyToFirstDistribution.gt_5m_lte_30m, 2);
   assert.equal(report.buckets.firstDistributionSpan.lte_1m, 2);
@@ -104,6 +137,7 @@ it('omits sell latency when no recipient sold and separates seller confirmation'
         clusters: [cluster({
           sellingRecipientCount: 0, firstRecipientSellTime: null,
           recipientSellCountsWithin: { lte_1m: 0, lte_5m: 0, lte_30m: 0, lte_2h: 0 },
+          recipientSellFdvWithin5mUsd: [], bundleConfirmationFdvUsd: null,
         })],
         nextToken: `0x${'1'.repeat(40)}`, exhausted: true,
       }),
@@ -112,6 +146,10 @@ it('omits sell latency when no recipient sold and separates seller confirmation'
   });
   assert.deepEqual(report.buckets.firstDistributionToFirstRecipientSell, {});
   assert.equal(report.clustersWithAtLeastTwoRecipientSellsWithin.lte_2h, 0);
+  assert.equal(
+    report.fdvUsd.bundleConfirmationAtSecondRecipientSellWithin5m.population,
+    0
+  );
   assert.equal(
     report.crossTabs.buyToFirstDistributionBySellerConfirmation.fewerThanTwoSellers
       .gt_5m_lte_30m,

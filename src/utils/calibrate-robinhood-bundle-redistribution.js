@@ -81,6 +81,29 @@ function coverageBucket(value) {
   return 'gt_100pct';
 }
 
+function fdvBucket(value) {
+  if (value == null || !Number.isFinite(value)) return 'unavailable';
+  if (value < 10_000) return 'lt_10k';
+  if (value < 25_000) return 'gte_10k_lt_25k';
+  if (value < 50_000) return 'gte_25k_lt_50k';
+  if (value < 100_000) return 'gte_50k_lt_100k';
+  if (value < 250_000) return 'gte_100k_lt_250k';
+  if (value < 500_000) return 'gte_250k_lt_500k';
+  if (value < 1_000_000) return 'gte_500k_lt_1m';
+  return 'gte_1m';
+}
+
+function fdvAccumulator() {
+  return { population: 0, available: 0, unavailable: 0, buckets: {} };
+}
+
+function addFdv(target, value) {
+  target.population += 1;
+  const bucket = fdvBucket(value);
+  target[bucket === 'unavailable' ? 'unavailable' : 'available'] += 1;
+  increment(target.buckets, bucket);
+}
+
 function createAccumulator() {
   return {
     clusters: 0, tokens: new Set(), sources: new Set(), recipientLinks: 0,
@@ -91,6 +114,10 @@ function createAccumulator() {
     },
     recipientCounts: {}, sellingRecipients: {}, firstDistributionCoverage: {},
     recipientSellsWithin: sellWindows(), clustersWithTwoRecipientSellsWithin: sellWindows(),
+    fdv: {
+      sourceFirstBuy: fdvAccumulator(), recipientSellsWithin5m: fdvAccumulator(),
+      bundleConfirmation: fdvAccumulator(),
+    },
     tokenStats: new Map(), samples: [],
   };
 }
@@ -124,6 +151,13 @@ function addCluster(result, cluster, sampleLimit) {
   result.sellingRecipientLinks += cluster.sellingRecipientCount;
   if (cluster.sellingRecipientCount >= 2) result.confirmedByTwoSellers += 1;
   addRecipientSellWindows(result, cluster);
+  addFdv(result.fdv.sourceFirstBuy, cluster.sourceBuyFdvUsd);
+  for (const value of cluster.recipientSellFdvWithin5mUsd) {
+    addFdv(result.fdv.recipientSellsWithin5m, value);
+  }
+  if (cluster.recipientSellCountsWithin.lte_5m >= 2) {
+    addFdv(result.fdv.bundleConfirmation, cluster.bundleConfirmationFdvUsd);
+  }
   increment(result.launchToBuy, durationBucket(
     new Date(cluster.buyTime) - new Date(cluster.launchTime)
   ));
@@ -174,6 +208,13 @@ function reportAccumulator(result) {
     recipientSellsWithin: result.recipientSellsWithin,
     clustersWithAtLeastTwoRecipientSellsWithin:
       result.clustersWithTwoRecipientSellsWithin,
+    fdvUsd: {
+      metric: 'fdv_usd', source: 'robinhood_swap_mc',
+      sourceFirstBuy: result.fdv.sourceFirstBuy,
+      recipientSellsWithin5m: result.fdv.recipientSellsWithin5m,
+      bundleConfirmationAtSecondRecipientSellWithin5m:
+        result.fdv.bundleConfirmation,
+    },
     buckets: {
       launchToBuy: result.launchToBuy, buyToFirstDistribution: result.buyToDistribution,
       firstDistributionSpan: result.distributionSpan,
@@ -216,7 +257,8 @@ async function main(argv = process.argv.slice(2), deps = {}) {
     })}`);
   }
   const report = Object.freeze({
-    mode: 'read-only', source: 'postgresql-permanent-first-transfer-edges+swaps',
+    mode: 'read-only',
+    source: 'postgresql-permanent-first-transfer-edges+swaps+swap-mc',
     evidenceScope: 'lower_bound_first_transfer_strictly_after_buy_block',
     pageSize: options.pageSize, maxPages: options.maxPages, pages, tokensScanned,
     startAfterToken: options.afterToken, nextToken: afterToken, exhausted,
@@ -233,5 +275,5 @@ if (require.main === module) main().catch((error) => {
 
 module.exports = {
   main, parseArgs,
-  __private: { coverageBucket, durationBucket, recipientBucket, sellingBucket },
+  __private: { coverageBucket, durationBucket, fdvBucket, recipientBucket, sellingBucket },
 };

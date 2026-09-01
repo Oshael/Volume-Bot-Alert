@@ -3129,8 +3129,11 @@ latência compra/distribuição conforme existam menos de dois ou pelo menos doi
 destinatários vendedores. O relatório conta vendedores por janelas de 1 minuto,
 5 minutos, 30 minutos e 2 horas relativas ao recebimento individual, destaca
 clusters com pelo menos dois vendedores nessas janelas e lista os tokens que mais
-concentram clusters. Ele é deliberadamente um limite inferior baseado na
-primeira aresta permanente em bloco posterior à compra; ele não classifica
+concentram clusters. `fdvUsd` usa exclusivamente o sidecar durável
+`robinhood_swap_mc` e mostra buckets/cobertura no primeiro buy da fonte, nas
+vendas até 5 minutos e no segundo sell rápido que confirma o cluster; não se
+apresenta FDV ausente como zero. Ele é deliberadamente um limite inferior baseado
+na primeira aresta permanente em bloco posterior à compra; ele não classifica
 wallets nem autoriza apagar raw.
 
 Execute `npm run robinhood:wallet-transfer-retention-plan --

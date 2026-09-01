@@ -1606,7 +1606,9 @@ destinatários vendedores. Para não confundir uma primeira venda isolada com
 coordenação do grupo, o relatório conta também quantos destinatários venderam em
 até 1 minuto, 5 minutos, 30 minutos ou 2 horas após o próprio recebimento, quantos
 clusters têm pelo menos dois desses vendedores e quais tokens concentram os
-clusters. O primeiro
+clusters. O FDV histórico durável de `robinhood_swap_mc` é agregado no primeiro
+buy da fonte, em cada venda até 5 minutos e no segundo sell rápido que confirma o
+cluster; ausência de FDV permanece explícita. O primeiro
 levantamento usa somente a primeira aresta permanente estritamente em bloco
 posterior à compra e, portanto, é um limite inferior: não autoriza classificação,
 worker, backfill ou remoção do raw necessário para uma materialização exata.

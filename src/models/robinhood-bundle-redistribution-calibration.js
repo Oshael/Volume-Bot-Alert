@@ -20,6 +20,7 @@ const CLUSTERS_SQL = `WITH requested(token_address) AS (
          edge.to_wallet AS recipient_wallet,
          anchor.launch_block, anchor.launch_block_time,
          buy.block_number AS buy_block, buy.block_time AS buy_time,
+         buy_mc.fdv_usd AS source_buy_fdv_usd,
          edge.first_wallet_transfer_block AS transfer_block,
          edge.first_wallet_transfer_at AS transfer_time,
          edge.first_wallet_transfer_amount_raw AS transfer_amount_raw
@@ -31,6 +32,9 @@ const CLUSTERS_SQL = `WITH requested(token_address) AS (
     JOIN robinhood_wallet_transfer_edges edge
       ON edge.chain = buy.chain AND edge.classification_version = $2
      AND edge.token_address = buy.token_address AND edge.from_wallet = buy.wallet_address
+    LEFT JOIN robinhood_swap_mc buy_mc
+      ON buy_mc.chain = buy.chain AND buy_mc.transaction_hash = buy.transaction_hash
+     AND buy_mc.log_index = buy.action_index
     LEFT JOIN robinhood_token_attributions attribution
       ON attribution.chain = edge.chain AND attribution.token_address = edge.token_address
    WHERE edge.first_wallet_transfer_block > buy.block_number
@@ -59,24 +63,32 @@ const CLUSTERS_SQL = `WITH requested(token_address) AS (
 ), qualified AS MATERIALIZED (
   SELECT token_address, source_wallet, MIN(launch_block) AS launch_block,
          MIN(launch_block_time) AS launch_time, MIN(buy_block) AS buy_block,
-         MIN(buy_time) AS buy_time, MIN(transfer_block) AS first_transfer_block,
+         MIN(buy_time) AS buy_time, MIN(source_buy_fdv_usd) AS source_buy_fdv_usd,
+         MIN(transfer_block) AS first_transfer_block,
          MIN(transfer_time) AS first_transfer_time,
          MAX(transfer_time) AS last_first_transfer_time,
          COUNT(DISTINCT recipient_wallet)::integer AS recipient_count,
          SUM(transfer_amount_raw)::text AS first_distributed_amount_raw
     FROM edges GROUP BY token_address, source_wallet HAVING COUNT(DISTINCT recipient_wallet) >= 2
-), sell_after AS MATERIALIZED (
-  SELECT edge.token_address, edge.source_wallet, edge.recipient_wallet,
-         MIN(edge.transfer_time) AS transfer_time,
-         MIN(swap.block_number) AS first_sell_block,
-         MIN(swap.block_time) AS first_sell_time
+), first_sells AS MATERIALIZED (
+  SELECT DISTINCT ON (edge.token_address, edge.source_wallet, edge.recipient_wallet)
+         edge.token_address, edge.source_wallet, edge.recipient_wallet,
+         edge.transfer_time, swap.transaction_hash, swap.action_index,
+         swap.block_number AS first_sell_block, swap.block_time AS first_sell_time
     FROM edges edge
     JOIN qualified cluster USING (token_address, source_wallet)
     JOIN robinhood_wallet_swaps swap
       ON swap.chain = $1 AND swap.token_address = edge.token_address
      AND swap.wallet_address = edge.recipient_wallet AND swap.side = 'sell'
      AND swap.block_number > edge.transfer_block
-   GROUP BY edge.token_address, edge.source_wallet, edge.recipient_wallet
+   ORDER BY edge.token_address, edge.source_wallet, edge.recipient_wallet,
+            swap.block_number, swap.action_index, swap.transaction_hash
+), sell_after AS MATERIALIZED (
+  SELECT first_sells.*, sell_mc.fdv_usd AS first_sell_fdv_usd
+    FROM first_sells
+    LEFT JOIN robinhood_swap_mc sell_mc
+      ON sell_mc.chain = $1 AND sell_mc.transaction_hash = first_sells.transaction_hash
+     AND sell_mc.log_index = first_sells.action_index
 ), bought AS MATERIALIZED (
   SELECT cluster.token_address, cluster.source_wallet,
          COALESCE(SUM(swap.token_amount_raw), 0)::text AS bought_before_distribution_raw
@@ -89,7 +101,7 @@ const CLUSTERS_SQL = `WITH requested(token_address) AS (
 )
 SELECT cluster.token_address, cluster.source_wallet,
        cluster.launch_block::text, cluster.launch_time,
-       cluster.buy_block::text, cluster.buy_time,
+       cluster.buy_block::text, cluster.buy_time, cluster.source_buy_fdv_usd,
        cluster.first_transfer_block::text, cluster.first_transfer_time,
        cluster.last_first_transfer_time, cluster.recipient_count,
        cluster.first_distributed_amount_raw,
@@ -107,12 +119,21 @@ SELECT cluster.token_address, cluster.source_wallet,
          AS recipient_sells_within_30m,
        (COUNT(sell_after.recipient_wallet) FILTER (WHERE
           sell_after.first_sell_time <= sell_after.transfer_time + INTERVAL '2 hours'))::integer
-         AS recipient_sells_within_2h
+         AS recipient_sells_within_2h,
+       ARRAY_AGG(sell_after.first_sell_fdv_usd ORDER BY
+         sell_after.first_sell_time, sell_after.recipient_wallet) FILTER (WHERE
+           sell_after.first_sell_time <= sell_after.transfer_time + INTERVAL '5 minutes')
+         AS recipient_sell_fdv_within_5m_usd,
+       (ARRAY_AGG(sell_after.first_sell_fdv_usd ORDER BY
+         sell_after.first_sell_time, sell_after.recipient_wallet) FILTER (WHERE
+           sell_after.first_sell_time <= sell_after.transfer_time + INTERVAL '5 minutes'))[2]
+         AS bundle_confirmation_fdv_usd
   FROM qualified cluster
   JOIN bought USING (token_address, source_wallet)
   LEFT JOIN sell_after USING (token_address, source_wallet)
  GROUP BY cluster.token_address, cluster.source_wallet, cluster.launch_block,
           cluster.launch_time, cluster.buy_block, cluster.buy_time,
+          cluster.source_buy_fdv_usd,
           cluster.first_transfer_block, cluster.first_transfer_time,
           cluster.last_first_transfer_time, cluster.recipient_count,
           cluster.first_distributed_amount_raw, bought.bought_before_distribution_raw
@@ -140,6 +161,7 @@ function row(item) {
     tokenAddress: item.token_address, sourceWallet: item.source_wallet,
     launchBlock: String(item.launch_block), launchTime: new Date(item.launch_time).toISOString(),
     buyBlock: String(item.buy_block), buyTime: new Date(item.buy_time).toISOString(),
+    sourceBuyFdvUsd: item.source_buy_fdv_usd == null ? null : Number(item.source_buy_fdv_usd),
     firstTransferBlock: String(item.first_transfer_block),
     firstTransferTime: new Date(item.first_transfer_time).toISOString(),
     lastFirstTransferTime: new Date(item.last_first_transfer_time).toISOString(),
@@ -153,6 +175,12 @@ function row(item) {
       lte_30m: Number(item.recipient_sells_within_30m),
       lte_2h: Number(item.recipient_sells_within_2h),
     }),
+    recipientSellFdvWithin5mUsd: Object.freeze(
+      (item.recipient_sell_fdv_within_5m_usd || [])
+        .map((value) => (value == null ? null : Number(value)))
+    ),
+    bundleConfirmationFdvUsd: item.bundle_confirmation_fdv_usd == null
+      ? null : Number(item.bundle_confirmation_fdv_usd),
     firstDistributedAmountRaw: distributed.toString(),
     boughtBeforeDistributionRaw: bought.toString(),
     firstDistributionCoverageBps: coverage == null ? null
