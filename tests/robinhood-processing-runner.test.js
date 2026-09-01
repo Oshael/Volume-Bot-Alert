@@ -1,7 +1,9 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
-const { createRobinhoodProcessingRunner, backoffFor } = require('../src/services/robinhood-processing-runner');
+const {
+  createRobinhoodProcessingRunner, backoffFor, __private,
+} = require('../src/services/robinhood-processing-runner');
 const {
   createRobinhoodProcessingShadowAuditor,
 } = require('../src/services/robinhood-processing-shadow-auditor');
@@ -77,11 +79,12 @@ function v4Row(extra) {
 }
 
 function fakeRepo(rows) {
+  const batches = Array.isArray(rows[0]) ? rows : [rows];
   const calls = { reclaimed: 0, settle: null, claims: 0, frontier: 0 };
   return {
     _calls: calls,
     reclaimExpiredLeases: async () => { calls.reclaimed += 1; return 0; },
-    claimCaptures: async () => { calls.claims += 1; return calls.claims === 1 ? rows : []; },
+    claimCaptures: async () => { calls.claims += 1; return batches[calls.claims - 1] || []; },
     getOldestActiveCapture: async () => {
       calls.frontier += 1;
       return { blockNumber: '100', observedAt: '2026-07-13T00:00:00.000Z' };
@@ -182,6 +185,57 @@ describe('robinhood processing runner', () => {
     assert.deepEqual(persistence._calls.rangesFor, []);
     assert.deepEqual(persistence._calls.referencesFor, []);
     assert.equal(result.processed, 2);
+  });
+
+  it('reuses FDV references until TTL expiry while guarding every observation', async () => {
+    let now = 1000;
+    const persistence = fakePersistence({ reference: '100000' });
+    const repository = fakeRepo([
+      [v3Row({ n: '1' })], [v3Row({ n: '2' })], [v3Row({ n: '3' })],
+    ]);
+    const theRunner = createRobinhoodProcessingRunner({
+      repository, persistence, logger: { error: () => {} }, now: () => now,
+      options: {
+        owner: 'test-worker',
+        deadPoolGuard: {
+          sampleSize: 50, cacheTtlMs: 60_000, cacheMaxEntries: 100,
+          maxMultiple: 2, minVolumeUsd: 1_000_000,
+        },
+      },
+    });
+
+    const first = await theRunner.runOnce();
+    now += 59_000;
+    const cached = await theRunner.runOnce();
+    now += 2_000;
+    const refreshed = await theRunner.runOnce();
+
+    assert.deepEqual(persistence._calls.referenceBatches, [[TOKEN], [TOKEN]]);
+    assert.deepEqual(
+      [first.timing.fdvCacheMisses, cached.timing.fdvCacheHits,
+        refreshed.timing.fdvCacheMisses],
+      [1, 1, 1]
+    );
+    assert.equal(persistence._calls.commit.length, 3);
+    assert.equal(persistence._calls.commit.every(({ entries }) => (
+      entries[0].observation.accepted === false
+        && entries[0].observation.reason === 'dead_pool_price'
+    )), true);
+  });
+
+  it('bounds the FDV cache and evicts the least recently used token', () => {
+    const cache = __private.createFdvReferenceCache({
+      ttlMs: 60_000, maxEntries: 2, now: () => 1000,
+    });
+    cache.set('token-a', '1');
+    cache.set('token-b', '2');
+    cache.get('token-a');
+    cache.set('token-c', '3');
+
+    assert.equal(cache.size, 2);
+    assert.equal(cache.get('token-a').hit, true);
+    assert.equal(cache.get('token-b').hit, false);
+    assert.equal(cache.get('token-c').hit, true);
   });
 
   it('retries the batch with backoff and never marks it processed when persistence fails', async () => {

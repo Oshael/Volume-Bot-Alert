@@ -106,6 +106,53 @@ async function loadBatchFdvReferences(persistence, tokenAddresses, sampleSize) {
   ])));
 }
 
+function createFdvReferenceCache(options = {}) {
+  const ttlMs = Math.max(1000, Number(options.ttlMs) || 60_000);
+  const maxEntries = Math.max(1, Number(options.maxEntries) || 5000);
+  const now = typeof options.now === 'function' ? options.now : Date.now;
+  const entries = new Map();
+  return Object.freeze({
+    get(address) {
+      const cached = entries.get(address);
+      if (!cached || cached.expiresAt <= now()) {
+        entries.delete(address);
+        return { hit: false, value: null };
+      }
+      entries.delete(address);
+      entries.set(address, cached);
+      return { hit: true, value: cached.value };
+    },
+    set(address, value) {
+      entries.delete(address);
+      entries.set(address, { value, expiresAt: now() + ttlMs });
+      while (entries.size > maxEntries) entries.delete(entries.keys().next().value);
+    },
+    get size() { return entries.size; },
+  });
+}
+
+async function loadCachedFdvReferences(persistence, addresses, sampleSize, cache) {
+  const values = new Map();
+  const misses = [];
+  let hits = 0;
+  for (const address of addresses) {
+    const cached = cache.get(address);
+    if (cached.hit) {
+      hits += 1;
+      values.set(address, cached.value);
+    } else {
+      misses.push(address);
+    }
+  }
+  const loaded = await loadBatchFdvReferences(persistence, misses, sampleSize);
+  for (const address of misses) {
+    const value = loaded.has(address) ? loaded.get(address) : null;
+    cache.set(address, value);
+    values.set(address, value);
+  }
+  return { values, hits, misses: misses.length };
+}
+
 async function loadBatchV4Ranges(persistence, poolIds) {
   if (!poolIds.length) return new Map();
   if (typeof persistence.listCurrentV4LiquidityRangesByPoolIds === 'function') {
@@ -136,6 +183,11 @@ function createRobinhoodProcessingRunner(deps = {}) {
   const logger = deps.logger || console;
   const deadPoolGuardConfig = options.deadPoolGuard || config.robinhoodDeadPoolGuard || {};
   const applyDeadPoolGuard = createDeadPoolGuardApplier(persistence, deadPoolGuardConfig);
+  const fdvReferenceCache = createFdvReferenceCache({
+    ttlMs: deadPoolGuardConfig.cacheTtlMs,
+    maxEntries: deadPoolGuardConfig.cacheMaxEntries,
+    now: deps.now,
+  });
 
   // Coverage window end for the derived emit (Corte 5, option A): the processing
   // frontier just below the queue's pending block. Returns null until there is a
@@ -202,13 +254,19 @@ function createRobinhoodProcessingRunner(deps = {}) {
         poolIds.add(decoded.swap.poolId);
       }
     }
-    const [tokenRefByAddress, v4RangesByPool] = await Promise.all([
-      loadBatchFdvReferences(
-        persistence, [...tokenAddresses], Number(deadPoolGuardConfig.sampleSize) || 500
+    const [fdvReferences, v4RangesByPool] = await Promise.all([
+      loadCachedFdvReferences(
+        persistence, [...tokenAddresses], Number(deadPoolGuardConfig.sampleSize) || 500,
+        fdvReferenceCache
       ),
       loadBatchV4Ranges(persistence, [...poolIds]),
     ]);
-    return { tokenRefByAddress, v4RangesByPool };
+    return {
+      tokenRefByAddress: fdvReferences.values,
+      v4RangesByPool,
+      fdvCacheHits: fdvReferences.hits,
+      fdvCacheMisses: fdvReferences.misses,
+    };
   }
 
   async function classifyDecoded(row, decoded, buckets, batchState) {
@@ -251,7 +309,8 @@ function createRobinhoodProcessingRunner(deps = {}) {
       return {
         reclaimed, claimed: 0, processed: 0, rejected: 0, retried: 0, blocked: 0,
         timing: { totalMs, reclaimMs, claimMs, prepareMs: 0, shadowMs: 0,
-          frontierMs: 0, persistMs: 0, settleMs: 0, claimedPerSecond: 0 },
+          frontierMs: 0, persistMs: 0, settleMs: 0, claimedPerSecond: 0,
+          fdvCacheHits: 0, fdvCacheMisses: 0, fdvCacheSize: fdvReferenceCache.size },
       };
     }
 
@@ -314,6 +373,9 @@ function createRobinhoodProcessingRunner(deps = {}) {
       timing: {
         totalMs, reclaimMs, claimMs, prepareMs, shadowMs, frontierMs, persistMs, settleMs,
         claimedPerSecond: totalMs > 0 ? Math.round((rows.length * 1000) / totalMs) : rows.length,
+        fdvCacheHits: batchState.fdvCacheHits,
+        fdvCacheMisses: batchState.fdvCacheMisses,
+        fdvCacheSize: fdvReferenceCache.size,
       },
     };
   }
@@ -321,4 +383,8 @@ function createRobinhoodProcessingRunner(deps = {}) {
   return Object.freeze({ runOnce, owner });
 }
 
-module.exports = { createRobinhoodProcessingRunner, backoffFor };
+module.exports = {
+  createRobinhoodProcessingRunner,
+  backoffFor,
+  __private: { createFdvReferenceCache },
+};

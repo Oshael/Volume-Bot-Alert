@@ -5473,20 +5473,6 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
-  {
-    key: 'stage189-robinhood-fdv-reference-index',
-    name: 'Stage 189 Robinhood FDV reference index',
-    repair: 'node src/utils/db-init-stage189.js',
-    tables: [{
-      table: 'robinhood_market_observations',
-      indexes: [{
-        name: 'idx_rh_market_observations_fdv_reference',
-        includes: [
-          'token_address', 'observed_at', 'fdv_usd', 'robinhood', 'accepted',
-        ],
-      }],
-    }],
-  },
 ];
 
 const PROFILE_GROUP_KEYS = {

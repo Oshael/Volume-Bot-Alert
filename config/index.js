@@ -1135,7 +1135,13 @@ module.exports = {
     // (band [ref/maxMultiple, ref*maxMultiple]). See robinhood-price-spike-guard.js.
     enabled: parseBoolean(process.env.ROBINHOOD_DEAD_POOL_GUARD_ENABLED, true),
     maxMultiple: parseFloatInRange(process.env.ROBINHOOD_DEAD_POOL_GUARD_MAX_MULTIPLE, 2.5, 1.5, 1000),
-    sampleSize: parseIntegerInRange(process.env.ROBINHOOD_DEAD_POOL_GUARD_SAMPLE_SIZE, 500, 20, 5000),
+    sampleSize: parseIntegerInRange(process.env.ROBINHOOD_DEAD_POOL_GUARD_SAMPLE_SIZE, 50, 20, 5000),
+    cacheTtlMs: parseIntegerInRange(
+      process.env.ROBINHOOD_DEAD_POOL_GUARD_CACHE_TTL_MS, 60_000, 1000, 3_600_000
+    ),
+    cacheMaxEntries: parseIntegerInRange(
+      process.env.ROBINHOOD_DEAD_POOL_GUARD_CACHE_MAX_ENTRIES, 5000, 100, 100_000
+    ),
     // Out-of-band fdv is only rejected when the swap volume is below this floor (dead
     // pool). A real fast pump/dump has volume above it and is kept.
     minVolumeUsd: parseIntegerInRange(process.env.ROBINHOOD_DEAD_POOL_GUARD_MIN_VOLUME_USD, 100, 0, 1_000_000),
