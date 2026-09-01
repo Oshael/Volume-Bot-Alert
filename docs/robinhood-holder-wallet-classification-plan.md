@@ -1621,7 +1621,9 @@ latência compra/distribuição e cobertura não são gates. O grupo inclui a fo
 somente os destinatários confirmados. A faixa de 5–30 minutos continua apenas
 secundária na calibração. A Stage 187 reserva snapshots shadow próprios de estado,
 grupos e membros, preservando posições causais, FDV opcional e lineage seed/live
-sem reutilizar as restrições de funding. A migration não cria reader, writer,
+sem reutilizar as restrições de funding. O writer valida integralmente o output da
+policy, deriva os membros da evidência e substitui o snapshot sob lock e transação,
+recusando policy drift e fork na mesma frontier. Ainda não há reader de candidatos,
 worker, backfill, publicação ou autorização para remover raw.
 
 A continuidade de launch anchors é condicionada ao holder ledger `live`. Um
