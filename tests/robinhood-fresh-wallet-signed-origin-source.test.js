@@ -59,4 +59,11 @@ describe('Robinhood FRESH signed-origin PostgreSQL source', () => {
       (error) => error.code === 'fresh_signed_origin_unavailable');
     }
   });
+
+  it('does not turn an unobserved nonce predecessor into prior signed activity', async () => {
+    await assert.rejects(() => source([row({ first_nonce: '1' })]).value.readEvidence({
+      walletAddress: WALLET, transactionIndex: '4',
+    }), (error) => error.code === 'fresh_signed_origin_unavailable'
+      && error.reason === 'positive_nonce_without_observed_predecessor');
+  });
 });

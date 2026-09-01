@@ -52,7 +52,9 @@ describe('Robinhood FRESH signed-origin operational audit', () => {
     }, { sampleCount: 2, minimumSamples: 2, batchSize: 1,
       onProgress: (value) => progress.push(value) });
     assert.deepEqual(result, { approved: true, requestedSamples: 2, minimumSamples: 2,
-      auditedSamples: 2, equivalent: 2, mismatched: 0, unavailable: 0,
+      auditedSamples: 2, comparableSamples: 2, equivalent: 2, mismatched: 0,
+      unavailable: 0, safeUnavailable: 0, blockingUnavailable: 0,
+      safeUnavailableBps: 0, maxSafeUnavailableBps: 100,
       coverage: { originBlock: '0', throughBlock: '200' }, details: [] });
     assert.deepEqual(progress, [{ audited: 1, requested: 2 }, { audited: 2, requested: 2 }]);
   });
@@ -73,14 +75,37 @@ describe('Robinhood FRESH signed-origin operational audit', () => {
     assert.equal(result.equivalent, 1);
     assert.equal(result.mismatched, 1);
     assert.equal(result.unavailable, 1);
+    assert.equal(result.safeUnavailable, 0);
+    assert.equal(result.blockingUnavailable, 1);
     assert.equal(result.details[0].status, 'mismatched');
     assert.equal(result.details[1].reason, 'signed_origin_missing');
+  });
+
+  it('approves a bounded fail-closed positive-nonce anomaly without calling it equivalent', async () => {
+    const items = [candidate(1), candidate(2)];
+    const origins = {
+      [items[0].walletAddress]: { blockNumber: '100', transactionIndex: '5', nonce: '1' },
+      [items[1].walletAddress]: { blockNumber: '100', transactionIndex: '5', nonce: '0' },
+    };
+    const result = await runRobinhoodFreshWalletSignedOriginAudit({
+      repository: repository(items, origins),
+      archiveSource: { async readEvidenceBatch(batch) {
+        return batch.map((item) => evidence(item));
+      } },
+    }, { sampleCount: 2, minimumSamples: 1, batchSize: 2,
+      maxSafeUnavailableBps: 5000 });
+    assert.equal(result.approved, true);
+    assert.equal(result.equivalent, 1);
+    assert.equal(result.safeUnavailable, 1);
+    assert.equal(result.blockingUnavailable, 0);
+    assert.equal(result.details[0].status, 'safe_unavailable');
   });
 
   it('validates bounded CLI arguments', () => {
     assert.deepEqual(parseArgs(['--samples=250', '--minimum-samples=50',
       '--batch-size=25', '--timeout-ms=30000']), {
       sampleCount: 250, minimumSamples: 50, batchSize: 25, timeoutMs: 30000,
+      maxSafeUnavailableBps: 100,
     });
     assert.throws(() => parseArgs(['--apply']), /unexpected argument/);
   });

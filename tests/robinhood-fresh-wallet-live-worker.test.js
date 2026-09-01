@@ -52,6 +52,26 @@ it('materializes an evidence batch with one persistence call', async () => {
   assert.deepEqual(results.map(({ status }) => status), ['materialized', 'materialized']);
 });
 
+it('materializes a deterministic signed-origin ambiguity as fail-closed unavailable', async () => {
+  const task = { tokenAddress: TOKEN, walletAddress: wallet('1'), requestedVersion: '2',
+    sourceKind: 'live', owner: 'test' };
+  let stored;
+  const error = Object.assign(new Error('ambiguous positive nonce'), {
+    code: 'fresh_signed_origin_unavailable',
+    reason: 'positive_nonce_without_observed_predecessor',
+  });
+  const result = await processTask({ sourceKind: 'live',
+    source: { sourceKind: 'live', readEvidence: async () => { throw error; } },
+    shadow: { replaceAndComplete: async (...args) => {
+      stored = args; return { completed: true };
+    } },
+  }, task);
+  assert.equal(result.outcome, null);
+  assert.equal(stored[0].status, 'unavailable');
+  assert.equal(stored[0].statusReason, error.reason);
+  assert.equal(stored[1].allowReset, true);
+});
+
 it('bounds concurrency, retries independently and opens its RPC circuit', async () => {
   const tasks = ['1', '2', '3'].map((digit) => ({ tokenAddress: TOKEN,
     walletAddress: wallet(digit), sourceKind: 'live', requestedVersion: '1', attemptCount: 1 }));

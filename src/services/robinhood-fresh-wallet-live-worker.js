@@ -14,6 +14,9 @@ const {
   createRobinhoodFreshWalletSignedOriginSource,
 } = require('./robinhood-fresh-wallet-signed-origin-source');
 const { evaluateRobinhoodFreshWallet } = require('./robinhood-fresh-wallet-rule');
+const {
+  isSafeSignedOriginUnavailableReason,
+} = require('./robinhood-wallet-signed-origin-domain');
 const { createPostgresRealtimeListener } = require('./postgres-realtime-listener');
 
 const NOTIFY_CHANNEL = 'robinhood_fresh_wallet_queue';
@@ -69,7 +72,19 @@ function prepareTask(runtime, task, evidence) {
 }
 
 async function processTask(runtime, task, suppliedEvidence = null) {
-  const evidence = suppliedEvidence || await runtime.source.readEvidence(task);
+  let evidence;
+  try { evidence = suppliedEvidence || await runtime.source.readEvidence(task); }
+  catch (error) {
+    if (error.code !== 'fresh_signed_origin_unavailable'
+        || !isSafeSignedOriginUnavailableReason(error.reason)) throw error;
+    const result = await runtime.shadow.replaceAndComplete({ ...task, status: 'unavailable',
+      statusReason: error.reason, evidence: { source: 'robinhood-signed-origin-index',
+        sourceKind: 'live', observedAt: new Date().toISOString(),
+        error: { code: error.code, reason: error.reason } },
+    }, { allowReset: true });
+    return Object.freeze({ status: result.completed ? 'materialized' : 'stale',
+      tokenAddress: task.tokenAddress, walletAddress: task.walletAddress, outcome: null });
+  }
   const prepared = prepareTask(runtime, task, evidence);
   const result = await runtime.shadow.replaceAndComplete({
     ...prepared,

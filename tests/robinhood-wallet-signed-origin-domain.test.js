@@ -40,11 +40,12 @@ describe('Robinhood wallet signed origin domain', () => {
     });
   });
 
-  it('treats a positive first observed nonce as activity before coverage origin', () => {
+  it('fails closed when a positive nonce has no observed signed predecessor', () => {
     assert.deepEqual(inferPriorSignedActivity(input({
       signedOrigin: { blockNumber: '120', transactionIndex: '4', nonce: '7' },
     })), {
-      status: 'ready', priorSignedActivity: true, reason: 'positive_initial_nonce',
+      status: 'unavailable', priorSignedActivity: null,
+      reason: 'positive_nonce_without_observed_predecessor',
     });
   });
 

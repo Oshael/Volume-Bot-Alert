@@ -2004,9 +2004,12 @@ Archive `npm run robinhood:fresh-wallet-signed-origin-audit -- --samples=500
 --minimum-samples=100 --batch-size=100`. O comando é read-only, usa
 `RH_NODE_RPC_URL`, seleciona somente first-buys LIVE posteriores à ativação e já
 cobertos pelo cursor congelado, e compara o nonce histórico do Archive com a
-inferência do índice interno. `approved=true` exige amostra mínima, zero
-evidência indisponível e zero divergência; somente esse resultado autoriza mudar
-`ROBINHOOD_FRESH_WALLET_SIGNED_ORIGIN_APPROVED=true`.
+inferência do índice interno. Um nonce inicial positivo sem predecessor assinado
+observado é inconclusivo, não prova atividade anterior, e materializa
+`unavailable` sem tag FRESH. `approved=true` exige amostra comparável mínima,
+zero divergência, zero indisponibilidade bloqueante e no máximo 1% dessas
+inconclusões fail-closed (`--max-safe-unavailable-bps`, padrão 100); somente esse
+resultado autoriza mudar `ROBINHOOD_FRESH_WALLET_SIGNED_ORIGIN_APPROVED=true`.
 Antes do primeiro seed, aplique `node src/utils/db-init-stage185.js`. A migration
 indexa concorrentemente a janela dos anchors e cada partição diária de swaps,
 anexando os índices ao pai sem parar o writer live; ela pode ser retomada se for

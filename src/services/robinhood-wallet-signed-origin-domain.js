@@ -23,6 +23,14 @@ function unavailable(reason) {
   return Object.freeze({ status: 'unavailable', priorSignedActivity: null, reason });
 }
 
+const SAFE_UNAVAILABLE_REASONS = new Set([
+  'positive_nonce_without_observed_predecessor',
+]);
+
+function isSafeSignedOriginUnavailableReason(reason) {
+  return SAFE_UNAVAILABLE_REASONS.has(String(reason || ''));
+}
+
 function inferPriorSignedActivity(input = {}) {
   const cutoffBlock = unsigned(input.cutoffBlock, 'cutoffBlock');
   const coverageOrigin = unsigned(input.coverage?.originBlock, 'coverage.originBlock');
@@ -46,17 +54,19 @@ function inferPriorSignedActivity(input = {}) {
     return unavailable('signed_origin_after_first_buy');
   }
 
-  const positiveInitialNonce = nonce > 0n;
   const signedByCutoff = signedOrigin.blockNumber <= cutoffBlock;
+  if (!signedByCutoff && nonce > 0n) {
+    return unavailable('positive_nonce_without_observed_predecessor');
+  }
   return Object.freeze({
     status: 'ready',
-    priorSignedActivity: positiveInitialNonce || signedByCutoff,
-    reason: positiveInitialNonce
-      ? 'positive_initial_nonce'
-      : signedByCutoff
-        ? 'signed_at_or_before_cutoff'
-        : 'no_signed_activity_before_cutoff',
+    priorSignedActivity: signedByCutoff,
+    reason: signedByCutoff
+      ? 'signed_at_or_before_cutoff'
+      : 'no_signed_activity_before_cutoff',
   });
 }
 
-module.exports = { comparePosition, inferPriorSignedActivity };
+module.exports = {
+  comparePosition, inferPriorSignedActivity, isSafeSignedOriginUnavailableReason,
+};

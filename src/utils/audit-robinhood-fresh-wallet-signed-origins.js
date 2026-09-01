@@ -10,7 +10,8 @@ const {
 } = require('../services/robinhood-fresh-wallet-signed-origin-audit');
 
 function parseArgs(argv = process.argv.slice(2)) {
-  const allowed = new Set(['samples', 'minimum-samples', 'batch-size', 'timeout-ms']);
+  const allowed = new Set(['samples', 'minimum-samples', 'batch-size',
+    'max-safe-unavailable-bps', 'timeout-ms']);
   if (argv.some((arg) => !arg.startsWith('--') || !arg.includes('=')
       || !allowed.has(arg.slice(2, arg.indexOf('='))))) throw new Error('unexpected argument');
   const raw = Object.fromEntries(argv.map((arg) => {
@@ -19,6 +20,7 @@ function parseArgs(argv = process.argv.slice(2)) {
   const number = (key, fallback) => raw[key] == null ? fallback : Number(raw[key]);
   return Object.freeze({ sampleCount: number('samples', 500),
     minimumSamples: number('minimum-samples', 100), batchSize: number('batch-size', 100),
+    maxSafeUnavailableBps: number('max-safe-unavailable-bps', 100),
     timeoutMs: number('timeout-ms', 60_000) });
 }
 
