@@ -629,6 +629,15 @@ function holderIntelligenceFixture(secondPage) {
   };
 }
 
+function holderProfileFixture(secondPage) {
+  if (secondPage) return null;
+  return {
+    platform: 'fomo', platformUserId: 'profile-main', username: 'mainwhale',
+    xUsername: null, displayName: 'Main Whale Owner',
+    profilePictureUrl: 'https://example.com/main-whale.png',
+  };
+}
+
 const ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES = {
   ...ROBINHOOD_MARKET_API_FIXTURES,
   'GET /api/robinhood/holders': (request) => {
@@ -643,6 +652,7 @@ const ROBINHOOD_ONE_MINUTE_MARKET_API_FIXTURES = {
         address: secondPage ? `0x${'7'.repeat(40)}` : ROBINHOOD_DEV,
         balanceRaw: secondPage ? '2500000000000000000' : '5000000000000000000',
         addressType: 'unknown', label: secondPage ? 'Second page whale' : 'Main whale',
+        profile: holderProfileFixture(secondPage),
         isVerifiedContract: false,
         nativeBalanceRaw: secondPage ? '0' : '3400000000000000000',
         buyVolumeUsd: secondPage ? '0' : '18400',
@@ -1931,7 +1941,11 @@ test('renders explicit empty states for classified Robinhood holder filters', as
   await expect(row).toBeVisible();
   await row.locator('.monitored-mini-chart .sparkline-wrap').click();
   const panel = page.locator('[data-auth-modal="expanded-sparkline"] [data-holder-panel]');
-  await expect(panel).toContainText('Main whale');
+  await expect(panel).toContainText('Main Whale Owner');
+  await expect(panel.locator('.rh-holder-identity small').first())
+    .toHaveText(`${ROBINHOOD_DEV.slice(0, 6)}...${ROBINHOOD_DEV.slice(-4)}`);
+  await expect(panel.locator('.rh-holder-avatar img').first())
+    .toHaveAttribute('src', 'https://example.com/main-whale.png');
 
   for (const [filter, message] of [
     ['BUNDLED', "There's no bundled wallet in this token."],
@@ -2000,7 +2014,7 @@ test('renders holder pages without the holder bar chart in the Robinhood expande
   expect(diagnostics.apiRequests.filter((requestUrl) => (
     new URL(requestUrl).pathname === '/api/robinhood/holder-count-series'
   ))).toHaveLength(holderReads);
-  await expect(panel).toContainText('Main whale');
+  await expect(panel).toContainText('Main Whale Owner');
   await expect(panel.locator('.rh-remaining-pct').first()).toHaveText('10%');
   await expect(panel.locator('.rh-native-balance').first()).toHaveText('3.4 Ξ');
   await expect(panel.locator('.rh-financial-cell').nth(0)).toContainText('$18.4K@125K');
@@ -2027,9 +2041,9 @@ test('renders holder pages without the holder bar chart in the Robinhood expande
   await insiderRequest;
   await expect(insidersFilter).toHaveClass(/active/);
   await panel.getByRole('button', { name: 'TOP', exact: true }).click();
-  await expect(panel).toContainText('Main whale');
+  await expect(panel).toContainText('Main Whale Owner');
   await expect(panel.locator('.robinhood-holder-table-wrap')).toHaveCSS('overflow-y', 'auto');
-  await expect(panel.locator('tbody tr').first()).toHaveCSS('height', '26px');
+  await expect(panel.locator('tbody tr').first()).toHaveCSS('height', '42px');
   expect(await panel.locator('tbody .rh-col-holder').first().evaluate((cell) => (
     cell.lastElementChild?.classList.contains('rh-holder-glyph')
   ))).toBe(true);
@@ -2053,7 +2067,7 @@ test('renders holder pages without the holder bar chart in the Robinhood expande
   await panel.getByRole('button', { name: 'Next' }).click();
   await expect(panel).toContainText('Second page whale');
   await panel.getByRole('button', { name: 'Previous' }).click();
-  await expect(panel).toContainText('Main whale');
+  await expect(panel).toContainText('Main Whale Owner');
   await expect(dialog.locator('[data-holder-chart-view]')).toBeVisible();
   await dialog.getByRole('button', { name: 'Close dialog' }).click();
   await holderTrigger.focus();

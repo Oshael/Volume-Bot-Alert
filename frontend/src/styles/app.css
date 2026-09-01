@@ -3937,11 +3937,11 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 .robinhood-holder-table-wrap { height: 100%; margin: 0; overflow: auto; scrollbar-width: thin; scrollbar-color: #17486c #02060a; }
 .robinhood-holder-page table { width: 100%; border-collapse: collapse; table-layout: fixed; font: 11px "JetBrains Mono", monospace; }
 .robinhood-holder-page thead tr, .robinhood-holder-page tbody tr {
-  display: grid; grid-template-columns: 22px minmax(120px, 1fr) 104px 120px 120px 132px; gap: 10px; padding: 0 10px;
+  display: grid; grid-template-columns: 22px minmax(190px, 1fr) 104px 120px 120px 132px; gap: 10px; padding: 0 10px;
 }
 .robinhood-holder-page thead { position: sticky; top: 0; z-index: 2; background: #02060a; }
 .robinhood-holder-page thead tr { height: 26px; border-bottom: 1px solid rgba(31, 102, 158, 0.24); }
-.robinhood-holder-page tbody tr { height: 26px; border-bottom: 1px solid rgba(255, 255, 255, 0.03); }
+.robinhood-holder-page tbody tr { height: 42px; border-bottom: 1px solid rgba(255, 255, 255, 0.03); }
 .robinhood-holder-page tbody tr:hover { background: #050b10; }
 .robinhood-holder-page th, .robinhood-holder-page td {
   display: flex; align-items: center; justify-content: flex-end; min-width: 0; padding: 0; border: 0; overflow: hidden;
@@ -3950,7 +3950,17 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
 .robinhood-holder-page th small { margin-left: 3px; color: #3f5666; font: inherit; }
 .robinhood-holder-page .rh-col-rank { justify-content: flex-start; color: #4c5450; }
 .robinhood-holder-page .rh-col-holder { justify-content: flex-start; gap: 5px; }
-.rh-col-holder a { overflow: hidden; color: #8ab4f8; font-size: 11px; line-height: 1; text-overflow: ellipsis; white-space: nowrap; }
+.rh-holder-identity { display: flex; flex: 1 1 auto; align-items: center; gap: 8px; min-width: 0; }
+.rh-holder-avatar {
+  display: grid; flex: 0 0 28px; width: 28px; height: 28px; place-items: center; overflow: hidden;
+  border: 1px solid rgba(86, 145, 190, 0.28); border-radius: 50%; background: #0a1721;
+  color: #7aa8c8; font: 600 11px "JetBrains Mono", monospace;
+}
+.rh-holder-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.rh-holder-identity a { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; overflow: hidden; line-height: 1.15; }
+.rh-holder-identity strong, .rh-holder-identity small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rh-holder-identity strong { color: #dce9f2; font-size: 11px; font-weight: 600; }
+.rh-holder-identity small { margin-top: 3px; color: #5d7789; font-size: 9px; }
 .rh-holder-glyph { flex: 0 0 13px; width: 13px; font-size: 11px; line-height: 1; text-align: center; }
 .rh-holder-glyph.is-unknown { color: #3f4744; }
 .rh-native-balance { color: #b9c0bc; }

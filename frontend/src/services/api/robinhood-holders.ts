@@ -30,12 +30,22 @@ export interface RobinhoodHolderDistributionMetric {
   observedAt: string | null;
 }
 
+export interface RobinhoodHolderProfile {
+  platform: 'fomo' | 'pump';
+  platformUserId: string;
+  username: string | null;
+  xUsername: string | null;
+  displayName: string | null;
+  profilePictureUrl: string | null;
+}
+
 export interface RobinhoodHolder {
   rank: number;
   address: string;
   balanceRaw: string;
   addressType: 'wallet' | 'contract' | 'pool' | 'burn' | 'unknown';
   label: string | null;
+  profile: RobinhoodHolderProfile | null;
   isVerifiedContract: boolean;
   nativeBalanceRaw?: string | null;
   buyVolumeUsd?: string | null;

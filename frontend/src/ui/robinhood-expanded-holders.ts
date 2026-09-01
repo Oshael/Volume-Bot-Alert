@@ -52,7 +52,35 @@ function pageCacheKey(filter: RobinhoodHolderFilter, cursor: string | null) {
 }
 
 function shortAddress(value: string) {
-  return `${value.slice(0, 8)}…${value.slice(-6)}`;
+  const start = value.startsWith('0x') ? value.slice(0, 6) : value.slice(0, 4);
+  return `${start}...${value.slice(-4)}`;
+}
+
+function safeProfilePictureUrl(value?: string | null) {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return ['http:', 'https:'].includes(url.protocol) ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function holderIdentity(holder: RobinhoodHolder) {
+  const profile = holder.profile;
+  const name = profile?.displayName || profile?.username || profile?.xUsername
+    || holder.label || shortAddress(holder.address);
+  const picture = safeProfilePictureUrl(profile?.profilePictureUrl);
+  const fallback = name.trim().slice(0, 1).toUpperCase() || '?';
+  const avatar = picture
+    ? `<img src="${escapeHtml(picture)}" alt="" loading="lazy" referrerpolicy="no-referrer">`
+    : `<span aria-hidden="true">${escapeHtml(fallback)}</span>`;
+  return `<div class="rh-holder-identity">
+    <span class="rh-holder-avatar">${avatar}</span>
+    <a href="https://robinhoodchain.blockscout.com/address/${escapeHtml(holder.address)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(holder.address)}">
+      <strong>${escapeHtml(name)}</strong><small>${escapeHtml(shortAddress(holder.address))}</small>
+    </a>
+  </div>`;
 }
 
 export function renderRobinhoodExpandedHolderViews(
@@ -235,7 +263,7 @@ function holderPageHtml(
   const rows = page.holders.map((holder) => `<tr>
     <td class="rh-col-rank">${holder.rank}</td>
     <td class="rh-col-holder">
-      <a href="https://robinhoodchain.blockscout.com/address/${escapeHtml(holder.address)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(holder.address)}">${escapeHtml(holder.label || shortAddress(holder.address))}</a>
+      ${holderIdentity(holder)}
       ${holderGlyph(holder)}
     </td>
     ${nativeBalanceCell(holder.nativeBalanceRaw)}

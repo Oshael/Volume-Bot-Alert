@@ -1740,6 +1740,15 @@ com o percentual remaining (`balanceRaw / totalSupplyRaw`) e mostra saldo nativo
 volume financeiro comprado/vendido e market cap médio. No caminho ledger, os
 itens de `GET /api/robinhood/holders` expõem `buyVolumeUsd`, `sellProceedsUsd`,
 `avgBuyMcapUsd` e `avgSellMcapUsd` a partir da projeção financeira publicada.
+Cada item também expõe `profile` quando seu endereço EVM corresponde a uma
+wallet observada em `callout_wallet_observations` pela Fomo ou Pump. A escolha é
+determinística quando mais de um perfil declara o mesmo endereço, priorizando
+foto e nome disponíveis, vínculo `platform_reported` e observação mais recente.
+O frontend mostra foto, nome e endereço abreviado (quatro dígitos de cada lado,
+mantendo `0x`); o link e seu tooltip preservam o endereço completo. Sem
+correspondência, preserva o label/endereço e retorna `profile: null`. Falha nesse
+lookup não derruba a paginação de holders. O campo `platform` já preserva a origem para uso futuro,
+embora a interface ainda não diferencie Fomo de Pump.
 A distribuição Top 10/Top 50 vem dos snapshots materializados do ledger live;
 classificações sniper/fresh/insider/CEX e flags de risco ficam indisponíveis até
 existir fonte comprovada. A lista mostra 50 endereços por

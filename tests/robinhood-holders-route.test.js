@@ -93,6 +93,9 @@ function appWith(options = {}) {
         })),
       }),
     },
+    holderProfileRepository: options.holderProfileRepository || {
+      findByWalletAddresses: async () => [],
+    },
     client,
     scheduler,
     logger: options.logger || { warn() {} },
@@ -261,9 +264,24 @@ describe('Robinhood holders route', () => {
     assert.equal(response.body.summary.holderCount, 4424);
     assert.equal(response.body.summary.freshness, 'fresh');
     assert.equal(response.body.holders[0].rank, 1);
+    assert.equal(response.body.holders[0].profile, null);
     assert.equal(response.body.hasMore, true);
     assert.equal(response.body.nextCursor, 'opaque_cursor');
     assert.equal(response.body.refreshQueued, false);
+  });
+
+  it('keeps holders available when profile identity lookup fails', async () => {
+    const warnings = [];
+    const response = await request(appWith({
+      holderProfileRepository: {
+        findByWalletAddresses: async () => { throw new Error('identity database offline'); },
+      },
+      logger: { warn: (...args) => warnings.push(args) },
+    })).get(`/api/robinhood/holders?token=${TOKEN}`);
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.holders[0].profile, null);
+    assert.match(warnings[0][0], /holder profiles unavailable/);
   });
 
   it('prefers a published ledger page without occupying the external scheduler', async () => {
@@ -309,6 +327,16 @@ describe('Robinhood holders route', () => {
           };
         },
       },
+      holderProfileRepository: {
+        findByWalletAddresses: async (addresses) => {
+          assert.deepEqual(addresses, [wallet]);
+          return [{
+            address: wallet, platform: 'pump', platformUserId: 'pump-profile',
+            username: 'pumpcaller', xUsername: null, displayName: 'Pump Caller',
+            profilePictureUrl: 'https://img.test/pump.png',
+          }];
+        },
+      },
       scheduler: { schedule: () => { scheduled += 1; return Promise.resolve(); } },
     })).get(`/api/robinhood/holders?token=${TOKEN}`);
 
@@ -323,6 +351,11 @@ describe('Robinhood holders route', () => {
     assert.equal(response.body.holders[0].nativeBalanceRaw, '2500000000000000000');
     assert.deepEqual(response.body.holders[0].tags, ['cex']);
     assert.equal(response.body.holders[0].primaryTag, 'cex');
+    assert.deepEqual(response.body.holders[0].profile, {
+      platform: 'pump', platformUserId: 'pump-profile', username: 'pumpcaller',
+      xUsername: null, displayName: 'Pump Caller',
+      profilePictureUrl: 'https://img.test/pump.png',
+    });
     assert.equal(response.body.classificationStatus, 'ready');
     assert.equal(response.body.classificationThroughBlock.blockNumber, '199');
     assert.equal(response.body.distribution[0].metric, 'dev_hold');

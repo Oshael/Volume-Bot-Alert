@@ -16,6 +16,9 @@ const {
   createRobinhoodHolderIntelligenceReadRepository,
 } = require('../models/robinhood-holder-intelligence-read');
 const {
+  createCalloutWalletProfileReadRepository,
+} = require('../models/callout-wallet-profile-read');
+const {
   HOLDER_CLASSIFICATION_VERSION,
   HOLDER_DISTRIBUTION_METRICS,
 } = require('../services/robinhood-holder-classification-domain');
@@ -125,13 +128,16 @@ async function sendPublishedLedgerPage(input) {
       const intelligence = await enrichIntelligence(
         nativeItems, input.intelligence, input.tokenAddress, input.logger
       );
+      const holders = await enrichHolderProfiles(
+        intelligence.holders, input.holderProfiles, input.logger
+      );
       input.response.json({
         token: input.tokenAddress, filter: input.filter,
         summary: publicSummary({
           holderCount: page.holderCount, totalSupplyRaw: page.totalSupplyRaw,
           source: page.source, observedAt: page.observedAt, checkedAt: page.checkedAt,
         }, input.nowMs, input.refreshMs),
-        holders: intelligence.holders,
+        holders,
         classificationVersion: intelligence.classificationVersion,
         classificationStatus: intelligence.classificationStatus,
         classificationThroughBlock: intelligence.classificationThroughBlock,
@@ -218,6 +224,36 @@ async function enrichNativeBalances(items, provider, logger) {
   }
 }
 
+async function enrichHolderProfiles(items, repository, logger) {
+  const withoutProfile = () => items.map((item) => Object.freeze({
+    ...item, profile: null,
+  }));
+  if (!repository || items.length === 0) return withoutProfile();
+  try {
+    const profiles = await repository.findByWalletAddresses(
+      items.map(({ address }) => address),
+    );
+    const byAddress = new Map(profiles.map((profile) => [profile.address, profile]));
+    return items.map((item) => {
+      const match = byAddress.get(item.address.toLowerCase());
+      const profile = match ? Object.freeze({
+        platform: match.platform,
+        platformUserId: match.platformUserId,
+        username: match.username,
+        xUsername: match.xUsername,
+        displayName: match.displayName,
+        profilePictureUrl: match.profilePictureUrl,
+      }) : null;
+      return Object.freeze({ ...item, profile });
+    });
+  } catch (error) {
+    logger.warn?.('[RobinhoodHoldersRoute] holder profiles unavailable', {
+      code: safeErrorCode(error),
+    });
+    return withoutProfile();
+  }
+}
+
 function resolveNativeBalanceProvider(options) {
   if (options.nativeBalanceProvider !== undefined) return options.nativeBalanceProvider;
   if (!config.robinhoodHolderNativeBalance.enabled) return null;
@@ -229,6 +265,11 @@ function resolveHolderIntelligenceRepository(options) {
     || createRobinhoodHolderIntelligenceReadRepository();
 }
 
+function resolveHolderProfileRepository(options) {
+  if (options.holderProfileRepository !== undefined) return options.holderProfileRepository;
+  return createCalloutWalletProfileReadRepository();
+}
+
 function createRobinhoodHoldersRouter(options = {}) {
   const router = express.Router();
   const auth = options.authenticate || authenticate;
@@ -237,6 +278,7 @@ function createRobinhoodHoldersRouter(options = {}) {
   const holderPageRepository = options.holderPageRepository
     || createRobinhoodHolderPageRepository();
   const holderIntelligenceRepository = resolveHolderIntelligenceRepository(options);
+  const holderProfileRepository = resolveHolderProfileRepository(options);
   const client = options.client || createRobinhoodBlockscoutHoldersClient();
   const scheduler = options.scheduler || createRobinhoodHolderRequestScheduler(
     options.requestOptions || config.robinhoodHolderRequests
@@ -360,6 +402,7 @@ function createRobinhoodHoldersRouter(options = {}) {
       repository: holderPageRepository, tokenAddress, cursor: pageCursor,
       filter: holderFilter,
       intelligence: holderIntelligenceRepository,
+      holderProfiles: holderProfileRepository,
       response: res, logger, nativeBalances, nowMs: now(), refreshMs,
     })) return undefined;
     const cursor = pageCursor.blockscoutCursor;
@@ -385,10 +428,13 @@ function createRobinhoodHoldersRouter(options = {}) {
       const intelligence = await enrichIntelligence(
         nativeItems, holderIntelligenceRepository, tokenAddress, logger
       );
+      const holders = await enrichHolderProfiles(
+        intelligence.holders, holderProfileRepository, logger
+      );
       return res.json({
         token: tokenAddress, filter: holderFilter,
         summary: publicSummary(cached, nowMs, refreshMs),
-        holders: intelligence.holders,
+        holders,
         classificationVersion: intelligence.classificationVersion,
         classificationStatus: intelligence.classificationStatus,
         classificationThroughBlock: intelligence.classificationThroughBlock,
