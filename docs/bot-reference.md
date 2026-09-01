@@ -3145,6 +3145,15 @@ apresenta FDV ausente como zero. Ele é deliberadamente um limite inferior basea
 na primeira aresta permanente em bloco posterior à compra; ele não classifica
 wallets nem autoriza apagar raw.
 
+`rh_possible_bundle_redistribution_v1` é a política shadow pura para essa segunda
+família: uma fonte compradora distribui diretamente para wallets distintas e ao
+menos dois destinatários vendem em até 5 minutos do próprio recebimento. DEV,
+zero/dead, pools, CEX e infraestrutura são barreiras em ambos os lados. O grupo
+exige creator resolvido e contém a fonte e apenas os vendedores rápidos; FDV e
+demais tempos são contexto, não gates. O contrato ainda não possui reader,
+writer, schema, worker ou exposição pública e não altera
+`rh_possible_bundle_v1`.
+
 Execute `npm run robinhood:wallet-transfer-retention-plan --
 --projection-version=VERSAO --limit=10` para listar candidatos antigos. O limite
 aceito é 1–100; o relatório apenas confere catálogo/bounds, declara

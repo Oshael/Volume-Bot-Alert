@@ -1595,7 +1595,7 @@ Funding no mesmo bloco da compra é elegível somente quando a posição da tran
 prova que ocorreu antes. O Archive permanece ferramenta de backfill/repair, não
 dependência permanente do runtime live.
 
-Uma segunda família BUNDLED, ainda sem política publicada, considera a
+Uma segunda família BUNDLED considera a
 redistribuição do próprio token por uma wallet compradora para múltiplos
 destinatários. Antes de fixar janelas, o auditor PostgreSQL-only mede launch até
 compra, compra até primeira distribuição, fan-out, cobertura aproximada da compra
@@ -1610,8 +1610,17 @@ clusters. O FDV histórico durável de `robinhood_swap_mc` é agregado no primei
 buy da fonte, em cada venda até 5 minutos e no segundo sell rápido que confirma o
 cluster; ausência de FDV permanece explícita. O primeiro
 levantamento usa somente a primeira aresta permanente estritamente em bloco
-posterior à compra e, portanto, é um limite inferior: não autoriza classificação,
-worker, backfill ou remoção do raw necessário para uma materialização exata.
+posterior à compra e, portanto, é um limite inferior.
+
+A política shadow versionada `rh_possible_bundle_redistribution_v1` exige fonte
+compradora, distribuição direta posterior para wallets distintas e pelo menos
+dois destinatários vendendo em até 5 minutos do próprio recebimento. Fonte e
+destinatários DEV/creator, zero/dead, pools, CEX ou infraestrutura conhecida são
+barreiras, e creator não resolvido falha fechado; FDV, distância do launch,
+latência compra/distribuição e cobertura não são gates. O grupo inclui a fonte e
+somente os destinatários confirmados. A faixa de 5–30 minutos continua apenas
+secundária na calibração. A política pura ainda não autoriza persistência,
+publicação, worker, backfill ou remoção do raw.
 
 A continuidade de launch anchors é condicionada ao holder ledger `live`. Um
 first-buy anterior a essa prontidão não é perdido: a transição posterior do token
