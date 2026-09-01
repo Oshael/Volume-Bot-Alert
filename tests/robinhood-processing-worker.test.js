@@ -5,6 +5,7 @@ const worker = require('../src/services/robinhood-processing-worker');
 
 const RESULT = {
   reclaimed: 1, claimed: 4, processed: 3, rejected: 1, retried: 0, blocked: 0,
+  timing: { totalMs: 40, prepareMs: 10, persistMs: 20, claimedPerSecond: 100 },
   shadowAudit: { compared: 3, matched: 2, mismatched: 1, missing: 0, errors: 0 },
 };
 
@@ -29,9 +30,12 @@ function fakeRepo() {
 
 describe('robinhood processing worker', () => {
   it('bounds its runtime options and honours the enabled flag', () => {
-    const bounded = worker.__private.normalizeOptions({ intervalMs: 5, pruneIntervalMs: 10 });
+    const bounded = worker.__private.normalizeOptions({
+      intervalMs: 5, pruneIntervalMs: 10, pruneLimit: 99_999,
+    });
     assert.equal(bounded.intervalMs, 100); // clamped up to the floor
     assert.equal(bounded.pruneIntervalMs, 30_000); // clamped up to the floor
+    assert.equal(bounded.pruneLimit, 50_000);
     assert.equal(bounded.enabled, true);
     assert.equal(worker.__private.normalizeOptions({ enabled: false }).enabled, false);
   });
@@ -51,6 +55,7 @@ describe('robinhood processing worker', () => {
     const status = worker.getStatus();
     assert.equal(status.lastProcessed, 3);
     assert.equal(status.totalProcessed, 3);
+    assert.deepEqual(status.lastTiming, RESULT.timing);
     assert.equal(status.totalShadowCompared, 3);
     assert.equal(status.discovery.lastClaimed, 2);
     assert.equal(status.discovery.totalProcessed, 2);

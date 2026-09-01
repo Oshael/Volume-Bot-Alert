@@ -95,11 +95,15 @@ function fakeRepo(rows) {
 
 function fakePersistence({
   ranges = null,
+  reference = null,
   failCommit = false,
   failTransactionHash = null,
   failMessage = 'V4 liquidity range update conflicted or became negative',
 } = {}) {
-  const calls = { attempts: [], commit: [], rangesFor: [], frontierFor: [] };
+  const calls = {
+    attempts: [], commit: [], rangesFor: [], rangeBatches: [],
+    referencesFor: [], referenceBatches: [], frontierFor: [],
+  };
   return {
     _calls: calls,
     commitHeadProcessingBatch: async (input) => {
@@ -115,7 +119,19 @@ function fakePersistence({
       calls.frontierFor.push(pendingBlock);
       return { nextBlock: pendingBlock, checkpointTimestamp: new Date('2026-07-13T00:00:00.000Z') };
     },
+    loadTokenFdvReference: async (address) => {
+      calls.referencesFor.push(address);
+      return reference;
+    },
+    loadTokenFdvReferences: async (addresses) => {
+      calls.referenceBatches.push(addresses);
+      return new Map(addresses.map((address) => [address, reference]));
+    },
     listCurrentV4LiquidityRanges: async (poolId) => { calls.rangesFor.push(poolId); return ranges; },
+    listCurrentV4LiquidityRangesByPoolIds: async (poolIds) => {
+      calls.rangeBatches.push(poolIds);
+      return new Map(poolIds.map((poolId) => [poolId, ranges]));
+    },
   };
 }
 
@@ -144,13 +160,14 @@ describe('robinhood processing runner', () => {
     const persistence = fakePersistence({ ranges: [{ tick_lower: -60, tick_upper: 60, liquidity_gross: ONE.toString() }] });
     const result = await runner([v4Row()], persistence).runOnce();
 
-    assert.deepEqual(persistence._calls.rangesFor, [POOL_ID]);
+    assert.deepEqual(persistence._calls.rangeBatches, [[POOL_ID]]);
+    assert.deepEqual(persistence._calls.rangesFor, []);
     const [entry] = persistence._calls.commit[0].entries;
     assert.equal(entry.observation.liquidityStatus, 'spot_tvl_from_v4_tick_ranges');
     assert.equal(result.processed, 1);
   });
 
-  it('reads V4 materialized ranges once per pool within a processing batch', async () => {
+  it('reads FDV references and V4 ranges in one batch query per resource', async () => {
     const persistence = fakePersistence({
       ranges: [{ tick_lower: -60, tick_upper: 60, liquidity_gross: ONE.toString() }],
     });
@@ -160,7 +177,10 @@ describe('robinhood processing runner', () => {
       v4Row({ n: '2', log_index: '2' }),
     ], persistence).runOnce();
 
-    assert.deepEqual(persistence._calls.rangesFor, [POOL_ID]);
+    assert.deepEqual(persistence._calls.rangeBatches, [[POOL_ID]]);
+    assert.deepEqual(persistence._calls.referenceBatches, [[TOKEN]]);
+    assert.deepEqual(persistence._calls.rangesFor, []);
+    assert.deepEqual(persistence._calls.referencesFor, []);
     assert.equal(result.processed, 2);
   });
 

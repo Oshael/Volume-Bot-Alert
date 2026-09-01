@@ -38,6 +38,7 @@ let status = {
   lastRetried: 0,
   lastBlocked: 0,
   lastReclaimed: 0,
+  lastTiming: null,
   totalProcessed: 0,
   totalRejected: 0,
   totalBlocked: 0,
@@ -132,6 +133,7 @@ async function runOnce(normalized) {
   status.lastRetried = result.retried;
   status.lastBlocked = result.blocked;
   status.lastReclaimed = result.reclaimed;
+  status.lastTiming = result.timing || null;
   status.totalProcessed += result.processed;
   status.totalRejected += result.rejected;
   status.totalBlocked += result.blocked;

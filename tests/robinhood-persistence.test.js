@@ -1399,3 +1399,39 @@ describe('resolveMarketFrontier', () => {
     assert.equal(call.params[0], '9223372036854775807'); // unbounded sentinel
   });
 });
+
+describe('Robinhood processing batch reference reads', () => {
+  it('returns FDV medians and V4 ranges keyed for the whole requested batch', async () => {
+    const calls = [];
+    const database = {
+      async query(sql, params) {
+        calls.push({ sql, params });
+        if (/percentile_cont/.test(sql)) {
+          return { rows: [
+            { token_address: TOKEN, median: '123.45' },
+            { token_address: ADDRESS, median: null },
+          ] };
+        }
+        return { rows: [
+          { pool_id: POOL_ID, materialized: true, tick_lower: '-60',
+            tick_upper: '60', liquidity_gross: '1000' },
+          { pool_id: POOL, materialized: false, tick_lower: null,
+            tick_upper: null, liquidity_gross: null },
+        ] };
+      },
+    };
+    const repository = createRobinhoodPersistenceRepository({ database });
+
+    const references = await repository.loadTokenFdvReferences([TOKEN, ADDRESS], 250);
+    const ranges = await repository.listCurrentV4LiquidityRangesByPoolIds([POOL_ID, POOL]);
+
+    assert.deepEqual([...references], [[TOKEN, '123.45'], [ADDRESS, null]]);
+    assert.deepEqual(ranges.get(POOL_ID), [
+      { tick_lower: '-60', tick_upper: '60', liquidity_gross: '1000' },
+    ]);
+    assert.equal(ranges.get(POOL), null);
+    assert.deepEqual(calls.map((call) => call.params), [
+      [[TOKEN, ADDRESS], 250], [[POOL_ID, POOL]],
+    ]);
+  });
+});

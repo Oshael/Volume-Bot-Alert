@@ -76,11 +76,14 @@ function createDeadPoolGuardApplier(persistence, guardConfig = {}) {
   const minVolumeUsd = Number(guardConfig.minVolumeUsd) || 100;
   return async function applyDeadPoolGuard(observation, batchState) {
     if (!enabled || observation.fdvUsd == null
-      || typeof persistence.loadTokenFdvReference !== 'function') return observation;
-    const token = observation.tokenAddress;
+      || (typeof persistence.loadTokenFdvReference !== 'function'
+        && typeof persistence.loadTokenFdvReferences !== 'function')) return observation;
+    const token = String(observation.tokenAddress).toLowerCase();
     if (!batchState.tokenRefByAddress.has(token)) {
       batchState.tokenRefByAddress.set(
-        token, Promise.resolve(persistence.loadTokenFdvReference(token, sampleSize))
+        token, typeof persistence.loadTokenFdvReference === 'function'
+          ? Promise.resolve(persistence.loadTokenFdvReference(token, sampleSize))
+          : null
       );
     }
     const reference = await batchState.tokenRefByAddress.get(token);
@@ -90,6 +93,27 @@ function createDeadPoolGuardApplier(persistence, guardConfig = {}) {
     });
     return verdict.outlier ? { ...observation, accepted: false, reason: verdict.reason } : observation;
   };
+}
+
+async function loadBatchFdvReferences(persistence, tokenAddresses, sampleSize) {
+  if (!tokenAddresses.length) return new Map();
+  if (typeof persistence.loadTokenFdvReferences === 'function') {
+    return persistence.loadTokenFdvReferences(tokenAddresses, sampleSize);
+  }
+  if (typeof persistence.loadTokenFdvReference !== 'function') return new Map();
+  return new Map(await Promise.all(tokenAddresses.map(async (address) => [
+    address, await persistence.loadTokenFdvReference(address, sampleSize),
+  ])));
+}
+
+async function loadBatchV4Ranges(persistence, poolIds) {
+  if (!poolIds.length) return new Map();
+  if (typeof persistence.listCurrentV4LiquidityRangesByPoolIds === 'function') {
+    return persistence.listCurrentV4LiquidityRangesByPoolIds(poolIds);
+  }
+  return new Map(await Promise.all(poolIds.map(async (poolId) => [
+    poolId, await persistence.listCurrentV4LiquidityRanges(poolId),
+  ])));
 }
 
 function createRobinhoodProcessingRunner(deps = {}) {
@@ -110,9 +134,8 @@ function createRobinhoodProcessingRunner(deps = {}) {
   const maxBackoffMs = Number(options.maxBackoffMs) || DEFAULT_MAX_BACKOFF_MS;
   const emitOutbox = options.emitOutbox === true;
   const logger = deps.logger || console;
-  const applyDeadPoolGuard = createDeadPoolGuardApplier(
-    persistence, options.deadPoolGuard || config.robinhoodDeadPoolGuard || {}
-  );
+  const deadPoolGuardConfig = options.deadPoolGuard || config.robinhoodDeadPoolGuard || {};
+  const applyDeadPoolGuard = createDeadPoolGuardApplier(persistence, deadPoolGuardConfig);
 
   // Coverage window end for the derived emit (Corte 5, option A): the processing
   // frontier just below the queue's pending block. Returns null until there is a
@@ -148,21 +171,47 @@ function createRobinhoodProcessingRunner(deps = {}) {
   // terminal rejection. A terminal decode error (unknown version, bad protocol)
   // is auditable and non-retryable; anything else propagates so the whole batch
   // retries and the capture cursor stays untouched.
-  async function classify(row, buckets, batchState) {
+  function decode(row, buckets) {
     let decoded;
     try {
       decoded = decoder.decodeCapture(row);
     } catch (error) {
       if (error?.terminal === true) {
         buckets.rejected.push({ ...identityOf(row), reason: String(error.message).slice(0, 200) });
-        return;
+        return null;
       }
       throw error;
     }
     if (decoded.kind === 'rejected') {
       buckets.rejected.push({ ...identityOf(row), reason: decoded.reason });
-      return;
+      return null;
     }
+    return decoded;
+  }
+
+  async function preloadBatchState(decodedRows) {
+    const tokenAddresses = new Set();
+    const poolIds = new Set();
+    const guardEnabled = deadPoolGuardConfig.enabled !== false;
+    for (const { decoded } of decodedRows) {
+      if (decoded.kind !== 'observation') continue;
+      if (guardEnabled && decoded.observation?.accepted && decoded.observation.fdvUsd != null) {
+        tokenAddresses.add(String(decoded.observation.tokenAddress).toLowerCase());
+      }
+      if (decoded.liquidityInputs?.requiresRanges && decoded.swap?.poolId) {
+        poolIds.add(decoded.swap.poolId);
+      }
+    }
+    const [tokenRefByAddress, v4RangesByPool] = await Promise.all([
+      loadBatchFdvReferences(
+        persistence, [...tokenAddresses], Number(deadPoolGuardConfig.sampleSize) || 500
+      ),
+      loadBatchV4Ranges(persistence, [...poolIds]),
+    ]);
+    return { tokenRefByAddress, v4RangesByPool };
+  }
+
+  async function classifyDecoded(row, decoded, buckets, batchState) {
     if (decoded.kind === 'liquidity-delta') {
       buckets.persist.push({ row, entry: { log: decoded.log, event: decoded.event } });
       return;
@@ -190,31 +239,55 @@ function createRobinhoodProcessingRunner(deps = {}) {
   }
 
   async function runOnce() {
+    const tickStartedAt = Date.now();
+    let phaseStartedAt = tickStartedAt;
     const reclaimed = await repository.reclaimExpiredLeases();
+    const reclaimMs = Date.now() - phaseStartedAt;
+    phaseStartedAt = Date.now();
     const rows = await repository.claimCaptures({ owner, limit: batchSize, leaseMs, stream: 'market' });
+    const claimMs = Date.now() - phaseStartedAt;
     if (!rows.length) {
-      return { reclaimed, claimed: 0, processed: 0, rejected: 0, retried: 0, blocked: 0 };
+      const totalMs = Date.now() - tickStartedAt;
+      return {
+        reclaimed, claimed: 0, processed: 0, rejected: 0, retried: 0, blocked: 0,
+        timing: { totalMs, reclaimMs, claimMs, prepareMs: 0, shadowMs: 0,
+          frontierMs: 0, persistMs: 0, settleMs: 0, claimedPerSecond: 0 },
+      };
     }
 
+    phaseStartedAt = Date.now();
     const buckets = { persist: [], rejected: [] };
-    // Every V4 swap in this phase reads the same pre-commit materialized ledger.
-    // Reuse that snapshot per pool instead of repeating an identical DB query.
-    const batchState = { v4RangesByPool: new Map(), tokenRefByAddress: new Map() };
-    for (const row of rows) {
-      await classify(row, buckets, batchState);
+    const decodedRows = rows.flatMap((row) => {
+      const decoded = decode(row, buckets);
+      return decoded ? [{ row, decoded }] : [];
+    });
+    // Read every token reference and V4 pool ledger in two set-based round trips.
+    // All rows in this phase intentionally see the same pre-commit snapshot.
+    const batchState = await preloadBatchState(decodedRows);
+    for (const { row, decoded } of decodedRows) {
+      await classifyDecoded(row, decoded, buckets, batchState);
     }
+    const prepareMs = Date.now() - phaseStartedAt;
+    phaseStartedAt = Date.now();
     const shadowAudit = await runShadowAudit(buckets.persist);
+    const shadowMs = Date.now() - phaseStartedAt;
 
     let processed = [];
     let retry = [];
+    let frontierMs = 0;
+    let persistMs = 0;
     if (buckets.persist.length) {
+      phaseStartedAt = Date.now();
       const emit = emitOutbox ? await resolveDerivedEmit() : null;
+      frontierMs = Date.now() - phaseStartedAt;
+      phaseStartedAt = Date.now();
       const outcome = await persistWithFailureIsolation(
         buckets.persist,
         (items) => persistence.commitHeadProcessingBatch({
           entries: items.map((item) => item.entry), emit,
         })
       );
+      persistMs = Date.now() - phaseStartedAt;
       processed = outcome.processed.map((item) => identityOf(item.row));
       retry = outcome.failed.map(({ item, error }) => ({
         ...identityOf(item.row),
@@ -229,11 +302,20 @@ function createRobinhoodProcessingRunner(deps = {}) {
       }
     }
 
+    phaseStartedAt = Date.now();
     const settlement = await repository.settleClaims({
       owner, retentionMs, maxAttempts,
       processed, rejected: buckets.rejected, retry,
     });
-    return { reclaimed, claimed: rows.length, ...settlement, shadowAudit };
+    const settleMs = Date.now() - phaseStartedAt;
+    const totalMs = Date.now() - tickStartedAt;
+    return {
+      reclaimed, claimed: rows.length, ...settlement, shadowAudit,
+      timing: {
+        totalMs, reclaimMs, claimMs, prepareMs, shadowMs, frontierMs, persistMs, settleMs,
+        claimedPerSecond: totalMs > 0 ? Math.round((rows.length * 1000) / totalMs) : rows.length,
+      },
+    };
   }
 
   return Object.freeze({ runOnce, owner });

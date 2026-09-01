@@ -2073,6 +2073,37 @@ function createRobinhoodPersistenceRepository(options = {}) {
     return median == null ? null : String(median);
   }
 
+  async function loadTokenFdvReferences(tokenAddresses, sampleSize = 500) {
+    const addresses = [...new Set((Array.isArray(tokenAddresses) ? tokenAddresses : [])
+      .map((address) => String(address || '').toLowerCase()).filter(Boolean))];
+    if (!addresses.length) return new Map();
+    const limit = Math.max(1, Math.min(5000, Number(sampleSize) || 500));
+    const result = await database.query(
+      `WITH requested AS MATERIALIZED (
+         SELECT DISTINCT UNNEST($1::text[]) AS token_address
+       )
+       SELECT requested.token_address, reference.median
+       FROM requested
+       LEFT JOIN LATERAL (
+         SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY recent.fdv_usd) AS median
+         FROM (
+           SELECT observation.fdv_usd
+           FROM robinhood_market_observations observation
+           WHERE observation.chain = 'robinhood'
+             AND observation.token_address = requested.token_address
+             AND observation.status = 'accepted'
+             AND observation.fdv_usd IS NOT NULL
+           ORDER BY observation.observed_at DESC
+           LIMIT $2::int
+         ) recent
+       ) reference ON TRUE`,
+      [addresses, limit]
+    );
+    return new Map(result.rows.map((row) => [
+      String(row.token_address).toLowerCase(), row.median == null ? null : String(row.median),
+    ]));
+  }
+
   async function listCurrentV4LiquidityRanges(poolId) {
     const result = await database.query(
       `SELECT ranges.tick_lower, ranges.tick_upper, ranges.liquidity_gross
@@ -2084,6 +2115,38 @@ function createRobinhoodPersistenceRepository(options = {}) {
     );
     if (!result.rowCount) return null;
     return result.rows.filter((row) => row.tick_lower != null);
+  }
+
+  async function listCurrentV4LiquidityRangesByPoolIds(poolIds) {
+    const ids = [...new Set((Array.isArray(poolIds) ? poolIds : [])
+      .map((poolId) => String(poolId || '')).filter(Boolean))];
+    if (!ids.length) return new Map();
+    const result = await database.query(
+      `WITH requested AS MATERIALIZED (
+         SELECT DISTINCT UNNEST($1::text[]) AS pool_id
+       )
+       SELECT requested.pool_id, state.chain IS NOT NULL AS materialized,
+         ranges.tick_lower, ranges.tick_upper, ranges.liquidity_gross
+       FROM requested
+       LEFT JOIN robinhood_v4_liquidity_materialization_state state
+         ON state.chain = 'robinhood'
+       LEFT JOIN robinhood_v4_liquidity_ranges ranges
+         ON ranges.chain = state.chain AND ranges.pool_id = requested.pool_id
+       ORDER BY requested.pool_id, ranges.tick_lower, ranges.tick_upper`,
+      [ids]
+    );
+    const byPool = new Map(ids.map((poolId) => [poolId, null]));
+    for (const row of result.rows) {
+      if (row.materialized && byPool.get(row.pool_id) == null) byPool.set(row.pool_id, []);
+      if (row.tick_lower != null) {
+        byPool.get(row.pool_id).push({
+          tick_lower: row.tick_lower,
+          tick_upper: row.tick_upper,
+          liquidity_gross: row.liquidity_gross,
+        });
+      }
+    }
+    return byPool;
   }
 
   async function listHistoricalV4LiquidityRanges(poolId, blockNumber, logIndex) {
@@ -2186,11 +2249,13 @@ function createRobinhoodPersistenceRepository(options = {}) {
     commitMarketRange,
     listActivePools,
     listCurrentV4LiquidityRanges,
+    listCurrentV4LiquidityRangesByPoolIds,
     listHistoricalV4LiquidityRanges,
     listSignalDryRunCandidates,
     loadCursor,
     resolveMarketFrontier,
     loadTokenFdvReference,
+    loadTokenFdvReferences,
   });
 }
 

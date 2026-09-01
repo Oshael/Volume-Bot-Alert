@@ -1106,6 +1106,7 @@ module.exports = {
     retentionMs: parseIntegerInRange(process.env.ROBINHOOD_PROCESSING_RETENTION_MS, 86_400_000, 60_000, 604_800_000),
     maxAttempts: parseIntegerInRange(process.env.ROBINHOOD_PROCESSING_MAX_ATTEMPTS, 5, 1, 50),
     pruneIntervalMs: parseIntegerInRange(process.env.ROBINHOOD_PROCESSING_PRUNE_INTERVAL_MS, 5 * 60 * 1000, 30_000, 3_600_000),
+    pruneLimit: parseIntegerInRange(process.env.ROBINHOOD_PROCESSING_PRUNE_LIMIT, 5000, 100, 50_000),
     emitOutbox: parseBoolean(process.env.ROBINHOOD_DERIVED_OUTBOX_ENABLED, false),
     shadowAuditEnabled: parseBoolean(process.env.ROBINHOOD_PROCESSING_SHADOW_AUDIT_ENABLED, false),
     shadowAuditSampleLimit: parseIntegerInRange(
