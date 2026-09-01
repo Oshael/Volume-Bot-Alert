@@ -1561,8 +1561,14 @@ holder count imediatamente, sem aguardar o budget inteiro do tick; o mapa do tic
 continua coalescendo somente a contabilidade e a publicação final de promoções
 residuais.
 Assim eventos `missing/backfilling` não são reescaneados para escolher cada token.
-Depois da Stage 180, cada INSERT commitado no journal também faz upsert de um ticket
-por token em `robinhood_holder_hot_queue` e emite `NOTIFY` para acordar o apply.
+Depois da Stage 180, cada INSERT commitado no journal de um token rastreado
+(`backfilling`, `shadow` ou `live`) também faz upsert de um ticket por token em
+`robinhood_holder_hot_queue` e emite `NOTIFY` para acordar o apply. A Stage 189
+remove tickets sem `robinhood_holder_token_states`, restringe o trigger aos mesmos
+estados rastreados e adiciona uma FK com cascade para preservar esse invariante.
+O journal topics-only continua capturando transferências de tokens ainda não
+admitidos para a proteção de descoberta tardia; apenas o cache hot deixa de carregar
+esses endereços inelegíveis.
 A tabela, não a notificação, é a garantia durável. O scheduler separa tickets em
 `fresh-live` (até 200 blocos), `recent-shadow` (até 20.000 blocos) e `stale-live`.
 A rotação persiste entre ticks e reserva três lotes para live recente, um para
@@ -1582,7 +1588,8 @@ do PostgreSQL (`detail`, schema, tabela, coluna, constraint, tipo e rotina). O
 diagnóstico não inclui SQL, parâmetros, payloads nem stack trace.
 No deploy, execute
 `node src/utils/db-init-stage121.js`, `node src/utils/db-init-stage141.js`,
-`node src/utils/db-init-stage142.js` e `node src/utils/db-init-stage180.js`
+`node src/utils/db-init-stage142.js`, `node src/utils/db-init-stage180.js` e
+`node src/utils/db-init-stage189.js`
 antes do restart. Os índices históricos são criados concorrentemente para não
 bloquear writes do journal. A Stage 142 evita que o
 handoff global reescaneie todo o journal ao verificar evidência já aplicada por

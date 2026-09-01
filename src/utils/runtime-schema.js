@@ -5194,6 +5194,12 @@ const SCHEMA_GROUPS = [
       }, {
         name: 'rh_holder_hot_queue_bounds_check',
         includes: ['CHECK', 'first_pending_block', 'last_pending_block'],
+      }, {
+        name: 'rh_holder_hot_queue_state_fkey',
+        includes: [
+          'FOREIGN KEY', 'chain', 'token_address',
+          'robinhood_holder_token_states', 'ON DELETE CASCADE',
+        ],
       }],
       indexes: [{
         name: 'idx_rh_holder_hot_queue_priority',

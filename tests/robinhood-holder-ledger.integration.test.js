@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const { after, describe, it } = require('node:test');
 
 const db = require('../src/models/db');
+const { HOT_QUEUE_REPAIR_STATEMENTS } = require('../src/utils/db-init-stage180');
 const {
   createRobinhoodHolderLedgerRepository, __private,
 } = require('../src/models/robinhood-holder-ledger');
@@ -27,6 +28,8 @@ const TOKEN_BATCH = `0x${'b'.repeat(40)}`;
 const TOKEN_NO_TAIL = `0x${'c'.repeat(40)}`;
 const TOKEN_WIDE_TAIL = `0x${'d'.repeat(40)}`;
 const TOKEN_DRIFT_TAIL = `0x${'e'.repeat(40)}`;
+const TOKEN_UNTRACKED = `0x${'7'.repeat(40)}`;
+const HASH_9 = `0x${'9'.repeat(64)}`;
 const ALICE = `0x${'4'.repeat(40)}`;
 const BOB = `0x${'5'.repeat(40)}`;
 const ZERO_ADDRESS = `0x${'0'.repeat(40)}`;
@@ -70,10 +73,6 @@ describe('Robinhood holder ledger persistence', () => {
         (LIKE public.robinhood_holder_transfer_journal INCLUDING ALL)`);
       await client.query(`CREATE TEMP TABLE robinhood_holder_hot_queue
         (LIKE public.robinhood_holder_hot_queue INCLUDING ALL)`);
-      await client.query(`CREATE TRIGGER rh_holder_journal_hot_enqueue_temp
-        AFTER INSERT ON robinhood_holder_transfer_journal
-        REFERENCING NEW TABLE AS inserted_holder_transfers
-        FOR EACH STATEMENT EXECUTE FUNCTION public.enqueue_robinhood_holder_hot()`);
       await client.query(`CREATE TEMP TABLE robinhood_holder_cursors
         (LIKE public.robinhood_holder_cursors INCLUDING ALL)`);
       await client.query(`CREATE TEMP TABLE robinhood_holder_balances
@@ -84,6 +83,11 @@ describe('Robinhood holder ledger persistence', () => {
         (LIKE public.robinhood_holder_global_backfill_runs INCLUDING ALL)`);
       await client.query(`CREATE TEMP TABLE robinhood_holder_global_backfill_tokens
         (LIKE public.robinhood_holder_global_backfill_tokens INCLUDING ALL)`);
+      await client.query(HOT_QUEUE_REPAIR_STATEMENTS[0]);
+      await client.query(`CREATE TRIGGER rh_holder_journal_hot_enqueue_temp
+        AFTER INSERT ON robinhood_holder_transfer_journal
+        REFERENCING NEW TABLE AS inserted_holder_transfers
+        FOR EACH STATEMENT EXECUTE FUNCTION public.enqueue_robinhood_holder_hot()`);
       const database = {
         query: client.query.bind(client),
         getClient: async () => ({
@@ -95,6 +99,22 @@ describe('Robinhood holder ledger persistence', () => {
       const retention = createRobinhoodHolderJournalRetention({ database });
       assert.deepEqual(await observeReorgFenceMode(client, 'shared'), ['ShareLock']);
       assert.deepEqual(await observeReorgFenceMode(client, 'exclusive'), ['ExclusiveLock']);
+      await client.query(
+        `INSERT INTO robinhood_holder_transfer_journal (
+           block_number, block_hash, transaction_hash, transaction_index, log_index,
+           token_address, from_wallet, to_wallet, amount_raw
+         ) VALUES (99, $1, $2, 0, 0, $3, $4, $5, 1)`,
+        [HASH_A, HASH_9, TOKEN_UNTRACKED, ZERO_ADDRESS, BOB]
+      );
+      const untrackedQueue = await client.query(
+        `SELECT 1 FROM robinhood_holder_hot_queue WHERE token_address = $1`,
+        [TOKEN_UNTRACKED]
+      );
+      assert.equal(untrackedQueue.rowCount, 0);
+      await client.query(
+        `DELETE FROM robinhood_holder_transfer_journal WHERE token_address = $1`,
+        [TOKEN_UNTRACKED]
+      );
       await client.query(
         `INSERT INTO robinhood_holder_token_states
           (token_address, holder_count, ledger_status, backfill_next_block)
