@@ -365,15 +365,20 @@ async function replaceWithClient(client, snapshot) {
   return Object.freeze({ status: 'published', groups: groups.length, members: members.length });
 }
 
+async function replaceRedistributionSnapshotWithClient(client, input, observedAt) {
+  return replaceWithClient(client, normalizeSnapshot(
+    input, observedAt || new Date().toISOString()
+  ));
+}
+
 function createRobinhoodBundleRedistributionSnapshotRepository(options = {}) {
   const database = options.database || db;
   const now = options.now || (() => new Date().toISOString());
   async function replaceSnapshot(input) {
-    const snapshot = normalizeSnapshot(input, now());
     const client = await database.getClient();
     try {
       await client.query('BEGIN');
-      const result = await replaceWithClient(client, snapshot);
+      const result = await replaceRedistributionSnapshotWithClient(client, input, now());
       await client.query('COMMIT');
       return result;
     } catch (error) {
@@ -385,4 +390,5 @@ function createRobinhoodBundleRedistributionSnapshotRepository(options = {}) {
 }
 
 module.exports = { createRobinhoodBundleRedistributionSnapshotRepository,
+  replaceRedistributionSnapshotWithClient,
   __private: { frontierDecision, normalizeSnapshot, replaceWithClient } };

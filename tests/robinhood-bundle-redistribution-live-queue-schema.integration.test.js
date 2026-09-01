@@ -4,6 +4,13 @@ const assert = require('node:assert/strict');
 const { after, before, describe, it } = require('node:test');
 
 const db = require('../src/models/db');
+const {
+  createRobinhoodBundleRedistributionLiveQueueRepository,
+} = require('../src/models/robinhood-bundle-redistribution-live-queue');
+const { EVIDENCE_VERSION, POLICY, RULE_VERSION } = require(
+  '../src/services/robinhood-bundle-redistribution-policy'
+);
+const stage187 = require('../src/utils/db-init-stage187');
 const stage188 = require('../src/utils/db-init-stage188');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
@@ -14,6 +21,7 @@ const HASH = `0x${'a'.repeat(64)}`;
 async function cleanup() {
   await db.query('DELETE FROM robinhood_bundle_redistribution_queue');
   await db.query('DELETE FROM robinhood_bundle_redistribution_activations');
+  await db.query('DELETE FROM robinhood_bundle_redistribution_states');
 }
 
 describe('Robinhood BUNDLED redistribution live queue schema', () => {
@@ -21,6 +29,7 @@ describe('Robinhood BUNDLED redistribution live queue schema', () => {
     await assertUsingTestDatabase(db);
     await db.query(`DROP TABLE IF EXISTS robinhood_bundle_redistribution_queue,
       robinhood_bundle_redistribution_activations CASCADE`);
+    await stage187.init({ closePool: false });
     await stage188.init({ closePool: false });
     await cleanup();
   });
@@ -79,6 +88,22 @@ describe('Robinhood BUNDLED redistribution live queue schema', () => {
         [TOKEN_TWO]);
       assert.equal((await client.query(`SELECT requested_version::text
         FROM robinhood_bundle_redistribution_queue`)).rows[0].requested_version, '3');
+
+      const queue = createRobinhoodBundleRedistributionLiveQueueRepository({ database: db });
+      const [task] = await queue.claimBatch({ owner: 'shadow-test', limit: 1 });
+      const stored = await queue.replaceSnapshotAndComplete({ ...task, owner: 'shadow-test',
+        snapshot: { state: { tokenAddress: TOKEN_TWO, ruleVersion: RULE_VERSION,
+          evidenceVersion: EVIDENCE_VERSION, status: 'ready', statusReason: 'no_groups',
+          sourceKind: 'live', sourceVersion: task.requestedVersion,
+          throughBlockNumber: '102', throughBlockHash: HASH, policyJson: POLICY },
+        groups: [] } });
+      assert.equal(stored.completed, true);
+      assert.deepEqual((await client.query(`SELECT status, completed_version::text
+        FROM robinhood_bundle_redistribution_queue`)).rows[0], {
+        status: 'complete', completed_version: '3',
+      });
+      assert.equal((await client.query(`SELECT source_kind
+        FROM robinhood_bundle_redistribution_states`)).rows[0].source_kind, 'live');
 
       await assert.rejects(client.query(`UPDATE robinhood_bundle_redistribution_activations
         SET activation_block = 99`), /activation boundary is immutable/);

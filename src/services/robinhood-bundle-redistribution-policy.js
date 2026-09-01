@@ -9,6 +9,12 @@ const ADDRESS = /^0x[0-9a-f]{40}$/;
 const HASH = /^0x[0-9a-f]{64}$/;
 const ZERO_ADDRESS = `0x${'0'.repeat(40)}`;
 const DEAD_ADDRESS = '0x000000000000000000000000000000000000dead';
+const POLICY = Object.freeze({
+  minimumDistinctRecipients: MIN_FAST_SELLERS,
+  minimumRapidSellingRecipients: MIN_FAST_SELLERS,
+  maximumRecipientSellDelayMs: MAX_SELL_DELAY_MS,
+  fdvIsClassificationGate: false,
+});
 
 function address(value, label) {
   const normalized = String(value || '').trim().toLowerCase();
@@ -138,12 +144,7 @@ function evaluateBundleRedistribution(input = {}) {
   }
   const rapid = eligible.filter(({ sell }) => sell && sell.delayMs <= MAX_SELL_DELAY_MS)
     .sort(compareSell);
-  const policy = Object.freeze({
-    minimumDistinctRecipients: MIN_FAST_SELLERS,
-    minimumRapidSellingRecipients: MIN_FAST_SELLERS,
-    maximumRecipientSellDelayMs: MAX_SELL_DELAY_MS,
-    fdvIsClassificationGate: false,
-  });
+  const policy = POLICY;
   if (barriers.has(sourceWallet)) return Object.freeze({
     tokenAddress, sourceWallet, ruleVersion: RULE_VERSION, evidenceVersion: EVIDENCE_VERSION,
     statusReason: 'source_excluded', eligibleRecipientCount: eligible.length,
@@ -188,6 +189,6 @@ function evaluateBundleRedistribution(input = {}) {
 }
 
 module.exports = {
-  EVIDENCE_VERSION, MAX_SELL_DELAY_MS, MIN_FAST_SELLERS, RULE_VERSION,
+  EVIDENCE_VERSION, MAX_SELL_DELAY_MS, MIN_FAST_SELLERS, POLICY, RULE_VERSION,
   evaluateBundleRedistribution,
 };

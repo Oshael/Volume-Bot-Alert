@@ -3186,8 +3186,11 @@ read-only. Após revisar, rode `npm run robinhood:bundle-redistribution-activate
 --apply`; a primeira execução reserva uma frontier 1.000 blocos à frente por padrão.
 Quando ambos os cursores a atravessarem, repita `--apply` para promovê-la. O lead é
 ajustável com `--lead-blocks=100..100000`. O comando usa somente PostgreSQL, não
-varre histórico e pode ser repetido com segurança. Ainda não há worker. Esta família
-não terá backfill; a ativação live definirá o início da observação shadow.
+varre histórico e pode ser repetido com segurança. O worker shadow PostgreSQL-only
+consome a fila em lotes e concorrência limitados, adia tokens cujas frontiers ainda
+não estejam prontas e publica snapshot + conclusão da versão na mesma transação.
+Ele ainda não está ligado ao runtime/configuração. Esta família não terá backfill;
+a ativação live definirá o início da observação shadow.
 
 Execute `npm run robinhood:wallet-transfer-retention-plan --
 --projection-version=VERSAO --limit=10` para listar candidatos antigos. O limite

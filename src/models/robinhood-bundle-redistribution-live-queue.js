@@ -1,6 +1,9 @@
 const db = require('./db');
 const { normalizeTokenAddress } = require('../utils/token-identity');
 const { RULE_VERSION } = require('../utils/db-init-stage188');
+const {
+  replaceRedistributionSnapshotWithClient,
+} = require('./robinhood-bundle-redistribution-snapshot');
 
 const CHAIN = 'robinhood';
 const bounded = (value, fallback, minimum, maximum) => {
@@ -63,7 +66,49 @@ function createRobinhoodBundleRedistributionLiveQueueRepository(options = {}) {
     return result.rowCount === 1;
   }
 
-  return Object.freeze({ claimBatch, retry });
+  async function replaceSnapshotAndComplete(input = {}) {
+    const tokenAddress = normalizeTokenAddress(CHAIN, input.tokenAddress);
+    if (input.snapshot?.state?.sourceKind !== 'live'
+        || input.snapshot.state.tokenAddress !== tokenAddress
+        || String(input.snapshot.state.sourceVersion) !== String(input.requestedVersion)) {
+      throw new Error('redistribution LIVE snapshot lineage is invalid');
+    }
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      const locked = await client.query(`SELECT requested_version::text
+        FROM robinhood_bundle_redistribution_queue
+        WHERE chain = $1 AND token_address = $2 AND rule_version = $3
+          AND status = 'leased' AND lease_owner = $4
+          AND requested_version = $5::bigint FOR UPDATE`, [
+        CHAIN, tokenAddress, RULE_VERSION, input.owner, input.requestedVersion,
+      ]);
+      if (!locked.rowCount) {
+        await client.query('ROLLBACK');
+        return Object.freeze({ completed: false, snapshot: null });
+      }
+      const snapshot = await replaceRedistributionSnapshotWithClient(
+        client, input.snapshot, new Date().toISOString()
+      );
+      const completed = await client.query(`UPDATE robinhood_bundle_redistribution_queue SET
+        status = 'complete', completed_version = requested_version,
+        lease_owner = NULL, lease_until = NULL, completed_at = NOW(),
+        last_error_code = NULL, last_error_message = NULL, updated_at = NOW()
+        WHERE chain = $1 AND token_address = $2 AND rule_version = $3
+          AND status = 'leased' AND lease_owner = $4
+          AND requested_version = $5::bigint`, [
+        CHAIN, tokenAddress, RULE_VERSION, input.owner, input.requestedVersion,
+      ]);
+      if (completed.rowCount !== 1) throw new Error('redistribution queue lease changed');
+      await client.query('COMMIT');
+      return Object.freeze({ completed: true, snapshot });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally { client.release(); }
+  }
+
+  return Object.freeze({ claimBatch, replaceSnapshotAndComplete, retry });
 }
 
 module.exports = { createRobinhoodBundleRedistributionLiveQueueRepository };
