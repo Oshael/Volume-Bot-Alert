@@ -12,6 +12,8 @@ it('registers a live-only activation and event-driven redistribution queue', () 
 
   assert.match(sql, /BUNDLED redistribution activation boundary is immutable/);
   assert.match(sql, /BUNDLED redistribution activation must start planned/);
+  assert.match(sql, /activation_checkpoint_block >= activation_block/);
+  assert.match(sql, /RENAME COLUMN activation_block_hash TO activation_checkpoint_hash/);
   assert.match(sql, /requested_block > activation\.activation_block/);
   assert.match(sql, /activation\.activation_block \+ 1/);
   assert.match(sql, /activation\.status IN \('planned', 'active'\)/);

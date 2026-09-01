@@ -58,7 +58,8 @@ describe('Robinhood BUNDLED redistribution live queue schema', () => {
       assert.deepEqual(queued, [{ token_address: TOKEN_TWO, observation_from_block: '101',
         event_through_block: '101', requested_version: '1' }]);
       await client.query(`UPDATE robinhood_bundle_redistribution_activations SET
-        status = 'active', activation_block_hash = $1, activated_at = NOW()`, [HASH]);
+        status = 'active', activation_checkpoint_block = 101,
+        activation_checkpoint_hash = $1, activated_at = NOW()`, [HASH]);
 
       await client.query(`CREATE TEMP TABLE redistribution_sell_probe (
         chain TEXT, token_address TEXT, side TEXT, block_number BIGINT

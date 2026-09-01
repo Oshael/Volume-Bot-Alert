@@ -3177,9 +3177,12 @@ indireto. Aplique `node src/utils/db-init-stage188.js` para criar a ativação
 imutável e a fila event-driven. A migration não cria uma ativação nem enfileira
 dados: primeiras arestas posteriores à futura frontier admitem tokens, e sells só
 reabrem tokens já admitidos. A frontier deve ser reservada como `planned`; os
-triggers já acumulam eventos posteriores, e sua promoção `active` fixa o hash
-canônico antes do consumo. Ainda não há comando de ativação ou worker. Esta família
-não terá backfill; a ativação live definirá o início da observação shadow.
+triggers já acumulam eventos posteriores. A promoção `active` só ocorre após os
+cursores de swaps e transfers atravessarem a frontier e fixa um checkpoint canônico
+PostgreSQL em ou depois dela; isso evita depender de um hash de bloco vazio que não
+foi persistido. Claims são limitados à ativação ativa, usam lease/version e retry
+idempotente. Ainda não há comando de ativação ou worker. Esta família não terá
+backfill; a ativação live definirá o início da observação shadow.
 
 Execute `npm run robinhood:wallet-transfer-retention-plan --
 --projection-version=VERSAO --limit=10` para listar candidatos antigos. O limite

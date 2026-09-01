@@ -16,7 +16,8 @@ const STATEMENTS = Object.freeze([
      status VARCHAR(16) NOT NULL DEFAULT 'planned',
      activation_at TIMESTAMPTZ NOT NULL,
      activation_block BIGINT NOT NULL,
-     activation_block_hash VARCHAR(66),
+     activation_checkpoint_block BIGINT,
+     activation_checkpoint_hash VARCHAR(66),
      activated_at TIMESTAMPTZ,
      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -28,20 +29,65 @@ const STATEMENTS = Object.freeze([
        AND evidence_version = '${EVIDENCE_VERSION}'
        AND status IN ('planned', 'active', 'retired')
        AND activation_block >= 0
-       AND (activation_block_hash IS NULL
-         OR activation_block_hash ~ '^0x[0-9a-f]{64}$')
+       AND (activation_checkpoint_hash IS NULL
+         OR activation_checkpoint_hash ~ '^0x[0-9a-f]{64}$')
      ),
      CONSTRAINT rh_bundle_redistribution_activations_lifecycle_check CHECK (
-       (status = 'planned' AND activation_block_hash IS NULL AND activated_at IS NULL)
+       (status = 'planned' AND activation_checkpoint_block IS NULL
+         AND activation_checkpoint_hash IS NULL AND activated_at IS NULL)
        OR (status IN ('active', 'retired')
-         AND activation_block_hash IS NOT NULL AND activated_at IS NOT NULL)
+         AND activation_checkpoint_block >= activation_block
+         AND activation_checkpoint_hash IS NOT NULL AND activated_at IS NOT NULL)
      )
    )`,
+  `DO $migration$
+   BEGIN
+     IF EXISTS (SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = 'robinhood_bundle_redistribution_activations'
+         AND column_name = 'activation_block_hash')
+       AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = 'robinhood_bundle_redistribution_activations'
+         AND column_name = 'activation_checkpoint_hash') THEN
+       ALTER TABLE robinhood_bundle_redistribution_activations
+         RENAME COLUMN activation_block_hash TO activation_checkpoint_hash;
+     END IF;
+   END
+   $migration$`,
+  `ALTER TABLE robinhood_bundle_redistribution_activations
+     ADD COLUMN IF NOT EXISTS activation_checkpoint_block BIGINT`,
+  `DROP TRIGGER IF EXISTS rh_bundle_redistribution_activation_immutable
+     ON robinhood_bundle_redistribution_activations`,
+  `UPDATE robinhood_bundle_redistribution_activations
+     SET activation_checkpoint_block = activation_block
+   WHERE status IN ('active', 'retired') AND activation_checkpoint_block IS NULL`,
+  `ALTER TABLE robinhood_bundle_redistribution_activations
+     DROP CONSTRAINT IF EXISTS rh_bundle_redistribution_activations_contract_check`,
+  `ALTER TABLE robinhood_bundle_redistribution_activations
+     ADD CONSTRAINT rh_bundle_redistribution_activations_contract_check CHECK (
+       chain = 'robinhood' AND rule_version = '${RULE_VERSION}'
+       AND evidence_version = '${EVIDENCE_VERSION}'
+       AND status IN ('planned', 'active', 'retired') AND activation_block >= 0
+       AND (activation_checkpoint_hash IS NULL
+         OR activation_checkpoint_hash ~ '^0x[0-9a-f]{64}$')
+     )`,
+  `ALTER TABLE robinhood_bundle_redistribution_activations
+     DROP CONSTRAINT IF EXISTS rh_bundle_redistribution_activations_lifecycle_check`,
+  `ALTER TABLE robinhood_bundle_redistribution_activations
+     ADD CONSTRAINT rh_bundle_redistribution_activations_lifecycle_check CHECK (
+       (status = 'planned' AND activation_checkpoint_block IS NULL
+         AND activation_checkpoint_hash IS NULL AND activated_at IS NULL)
+       OR (status IN ('active', 'retired')
+         AND activation_checkpoint_block >= activation_block
+         AND activation_checkpoint_hash IS NOT NULL AND activated_at IS NOT NULL)
+     )`,
   `CREATE OR REPLACE FUNCTION protect_robinhood_bundle_redistribution_activation()
    RETURNS TRIGGER LANGUAGE plpgsql AS $trigger$
    BEGIN
      IF TG_OP = 'INSERT' THEN
-       IF NEW.status <> 'planned' OR NEW.activation_block_hash IS NOT NULL
+       IF NEW.status <> 'planned' OR NEW.activation_checkpoint_block IS NOT NULL
+          OR NEW.activation_checkpoint_hash IS NOT NULL
           OR NEW.activated_at IS NOT NULL THEN
          RAISE EXCEPTION 'BUNDLED redistribution activation must start planned';
        END IF;
@@ -58,8 +104,10 @@ const STATEMENTS = Object.freeze([
         OR (OLD.status = 'retired' AND NEW.status <> 'retired')
         OR (OLD.activated_at IS NOT NULL
           AND OLD.activated_at IS DISTINCT FROM NEW.activated_at)
-        OR (OLD.activation_block_hash IS NOT NULL
-          AND OLD.activation_block_hash IS DISTINCT FROM NEW.activation_block_hash) THEN
+        OR (OLD.activation_checkpoint_block IS NOT NULL
+          AND OLD.activation_checkpoint_block IS DISTINCT FROM NEW.activation_checkpoint_block)
+        OR (OLD.activation_checkpoint_hash IS NOT NULL
+          AND OLD.activation_checkpoint_hash IS DISTINCT FROM NEW.activation_checkpoint_hash) THEN
        RAISE EXCEPTION 'BUNDLED redistribution activation cannot move backwards';
      END IF;
      RETURN NEW;

@@ -5431,8 +5431,8 @@ const SCHEMA_GROUPS = [
       table: 'robinhood_bundle_redistribution_activations',
       columns: [
         'chain', 'rule_version', 'evidence_version', 'status', 'activation_at',
-        'activation_block', 'activation_block_hash', 'activated_at', 'created_at',
-        'updated_at',
+        'activation_block', 'activation_checkpoint_block',
+        'activation_checkpoint_hash', 'activated_at', 'created_at', 'updated_at',
       ],
       constraints: [{
         name: 'rh_bundle_redistribution_activations_pkey',
