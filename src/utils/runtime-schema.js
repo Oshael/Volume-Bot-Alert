@@ -5423,6 +5423,51 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage188-robinhood-bundle-redistribution-live-queue',
+    name: 'Stage 188 Robinhood BUNDLED redistribution live queue',
+    repair: 'node src/utils/db-init-stage188.js',
+    tables: [{
+      table: 'robinhood_bundle_redistribution_activations',
+      columns: [
+        'chain', 'rule_version', 'evidence_version', 'status', 'activation_at',
+        'activation_block', 'activation_block_hash', 'activated_at', 'created_at',
+        'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_bundle_redistribution_activations_pkey',
+        includes: ['PRIMARY KEY', 'chain', 'rule_version'],
+      }, {
+        name: 'rh_bundle_redistribution_activations_lifecycle_check',
+        includes: ['planned', 'active', 'retired', 'activated_at'],
+      }],
+    }, {
+      table: 'robinhood_bundle_redistribution_queue',
+      columns: [
+        'chain', 'token_address', 'rule_version', 'evidence_version',
+        'observation_from_block', 'event_through_block', 'requested_version',
+        'completed_version', 'status', 'lease_owner', 'lease_until', 'attempt_count',
+        'next_attempt_at', 'last_error_code', 'last_error_message', 'completed_at',
+        'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_bundle_redistribution_queue_pkey',
+        includes: ['PRIMARY KEY', 'chain', 'token_address', 'rule_version'],
+      }, {
+        name: 'rh_bundle_redistribution_queue_activation_fkey',
+        includes: ['FOREIGN KEY', 'chain', 'rule_version'],
+      }, {
+        name: 'rh_bundle_redistribution_queue_lifecycle_check',
+        includes: ['pending', 'leased', 'complete', 'lease_owner', 'completed_version'],
+      }],
+      indexes: [{
+        name: 'idx_rh_bundle_redistribution_queue_claim',
+        includes: ['next_attempt_at', 'updated_at'],
+      }, {
+        name: 'idx_rh_bundle_redistribution_queue_lease', includes: ['lease_until'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

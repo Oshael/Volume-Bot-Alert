@@ -3173,8 +3173,13 @@ autoriza apagar raw. O source PostgreSQL token-scoped falha fechado até holder,
 first-buy, swaps e transfer projection cobrirem a mesma frontier, exigindo posições
 canônicas de transfer e sell. O caller deve informar `observationFromBlock`; o
 source rejeita sua ausência e ignora distribuições anteriores para impedir backfill
-indireto. Esta família não terá backfill: a futura ativação live define o início da
-observação shadow.
+indireto. Aplique `node src/utils/db-init-stage188.js` para criar a ativação
+imutável e a fila event-driven. A migration não cria uma ativação nem enfileira
+dados: primeiras arestas posteriores à futura frontier admitem tokens, e sells só
+reabrem tokens já admitidos. A frontier deve ser reservada como `planned`; os
+triggers já acumulam eventos posteriores, e sua promoção `active` fixa o hash
+canônico antes do consumo. Ainda não há comando de ativação ou worker. Esta família
+não terá backfill; a ativação live definirá o início da observação shadow.
 
 Execute `npm run robinhood:wallet-transfer-retention-plan --
 --projection-version=VERSAO --limit=10` para listar candidatos antigos. O limite

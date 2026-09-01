@@ -1626,9 +1626,14 @@ policy, deriva os membros da evidência e substitui o snapshot sob lock e transa
 recusando policy drift e fork na mesma frontier. O reader live token-scoped exige
 as frontiers duráveis de holder, creator, first-buy, swaps e transfers, além das
 posições canônicas. Ele exige a frontier de ativação e ignora distribuições
-anteriores a ela, impedindo backfill indireto. Ainda não há fila, worker ou
-publicação. Não haverá backfill dessa família: o rollout começa nessa frontier e
-acumula somente fatos live em shadow.
+anteriores a ela, impedindo backfill indireto. A Stage 188 cria a ativação imutável
+e a fila durável: primeiras arestas posteriores à frontier admitem o token, e sells
+apenas reabrem tokens já admitidos. A frontier é primeiro reservada como `planned`;
+os triggers acumulam eventos posteriores sem corrida, e a promoção `active` fixa
+seu hash canônico antes do consumo. A migration não cria ativação nem semeia
+histórico. Ainda não há comando de ativação, worker ou publicação. Não haverá
+backfill dessa família: o rollout começa nessa frontier e acumula somente fatos
+live em shadow.
 
 A continuidade de launch anchors é condicionada ao holder ledger `live`. Um
 first-buy anterior a essa prontidão não é perdido: a transição posterior do token
