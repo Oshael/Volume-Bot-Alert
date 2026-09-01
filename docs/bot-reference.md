@@ -1978,6 +1978,14 @@ o `ROBINHOOD_RPC_URL`. O commit do cursor de head emite
 `robinhood_head_capture_cursor`; o listener acorda o scanner imediatamente e o
 tick de dois segundos é apenas reconciliação. Reorg persistente interrompe a
 lease; falhas transitórias usam backoff e circuit breaker observáveis.
+Na VPS, provisione-o como
+`trendscope-worker@robinhood-signed-origin.service`: instale
+`deploy/systemd/robinhood-signed-origin.env.example` em
+`/etc/trendscope/robinhood-signed-origin.env` e aplique o drop-in
+`deploy/systemd/trendscope-worker@robinhood-signed-origin.service.example` com
+`systemctl edit`. O RPC permanece no `.env` global; antes de habilitar FRESH,
+confirme a lease `robinhood-signed-origin-live-worker` e o cursor `live` em
+`caught_up` com `next_block = safe_head + 1`.
 A Stage 179 persiste cada decisão em
 `robinhood_fresh_wallet_evaluations` e conclui a versão correspondente da fila
 na mesma transação. Resultado `fresh` cria ou atualiza somente a classificação
