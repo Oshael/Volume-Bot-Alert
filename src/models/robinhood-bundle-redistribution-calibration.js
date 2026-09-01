@@ -67,6 +67,7 @@ const CLUSTERS_SQL = `WITH requested(token_address) AS (
     FROM edges GROUP BY token_address, source_wallet HAVING COUNT(DISTINCT recipient_wallet) >= 2
 ), sell_after AS MATERIALIZED (
   SELECT edge.token_address, edge.source_wallet, edge.recipient_wallet,
+         MIN(edge.transfer_time) AS transfer_time,
          MIN(swap.block_number) AS first_sell_block,
          MIN(swap.block_time) AS first_sell_time
     FROM edges edge
@@ -94,7 +95,19 @@ SELECT cluster.token_address, cluster.source_wallet,
        cluster.first_distributed_amount_raw,
        bought.bought_before_distribution_raw,
        COUNT(sell_after.recipient_wallet)::integer AS selling_recipient_count,
-       MIN(sell_after.first_sell_time) AS first_recipient_sell_time
+       MIN(sell_after.first_sell_time) AS first_recipient_sell_time,
+       (COUNT(sell_after.recipient_wallet) FILTER (WHERE
+          sell_after.first_sell_time <= sell_after.transfer_time + INTERVAL '1 minute'))::integer
+         AS recipient_sells_within_1m,
+       (COUNT(sell_after.recipient_wallet) FILTER (WHERE
+          sell_after.first_sell_time <= sell_after.transfer_time + INTERVAL '5 minutes'))::integer
+         AS recipient_sells_within_5m,
+       (COUNT(sell_after.recipient_wallet) FILTER (WHERE
+          sell_after.first_sell_time <= sell_after.transfer_time + INTERVAL '30 minutes'))::integer
+         AS recipient_sells_within_30m,
+       (COUNT(sell_after.recipient_wallet) FILTER (WHERE
+          sell_after.first_sell_time <= sell_after.transfer_time + INTERVAL '2 hours'))::integer
+         AS recipient_sells_within_2h
   FROM qualified cluster
   JOIN bought USING (token_address, source_wallet)
   LEFT JOIN sell_after USING (token_address, source_wallet)
@@ -134,6 +147,12 @@ function row(item) {
     sellingRecipientCount: Number(item.selling_recipient_count),
     firstRecipientSellTime: item.first_recipient_sell_time
       ? new Date(item.first_recipient_sell_time).toISOString() : null,
+    recipientSellCountsWithin: Object.freeze({
+      lte_1m: Number(item.recipient_sells_within_1m),
+      lte_5m: Number(item.recipient_sells_within_5m),
+      lte_30m: Number(item.recipient_sells_within_30m),
+      lte_2h: Number(item.recipient_sells_within_2h),
+    }),
     firstDistributedAmountRaw: distributed.toString(),
     boughtBeforeDistributionRaw: bought.toString(),
     firstDistributionCoverageBps: coverage == null ? null

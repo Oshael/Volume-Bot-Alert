@@ -8,6 +8,8 @@ const {
 const VALUE_ARGUMENTS = new Set([
   'page-size', 'max-pages', 'after-token', 'statement-timeout-ms', 'sample-limit',
 ]);
+const SELL_WINDOWS = Object.freeze(['lte_1m', 'lte_5m', 'lte_30m', 'lte_2h']);
+const TOP_TOKEN_LIMIT = 20;
 
 function integer(value, fallback, min, max, label) {
   const parsed = value == null ? fallback : Number(value);
@@ -39,6 +41,10 @@ function parseArgs(argv = []) {
 
 function increment(target, key) {
   target[key] = (target[key] || 0) + 1;
+}
+
+function sellWindows() {
+  return Object.fromEntries(SELL_WINDOWS.map((key) => [key, 0]));
 }
 
 function durationBucket(milliseconds) {
@@ -83,8 +89,31 @@ function createAccumulator() {
     distributionToFirstSell: {}, buyToDistributionBySellerConfirmation: {
       fewerThanTwoSellers: {}, twoPlusSellers: {},
     },
-    recipientCounts: {}, sellingRecipients: {}, firstDistributionCoverage: {}, samples: [],
+    recipientCounts: {}, sellingRecipients: {}, firstDistributionCoverage: {},
+    recipientSellsWithin: sellWindows(), clustersWithTwoRecipientSellsWithin: sellWindows(),
+    tokenStats: new Map(), samples: [],
   };
+}
+
+function addRecipientSellWindows(result, cluster) {
+  let token = result.tokenStats.get(cluster.tokenAddress);
+  if (!token) {
+    token = {
+      tokenAddress: cluster.tokenAddress, clusters: 0, clustersWithTwoSellers: 0,
+      clustersWithTwoRecipientSellsWithin: sellWindows(),
+    };
+    result.tokenStats.set(cluster.tokenAddress, token);
+  }
+  token.clusters += 1;
+  if (cluster.sellingRecipientCount >= 2) token.clustersWithTwoSellers += 1;
+  for (const window of SELL_WINDOWS) {
+    const count = cluster.recipientSellCountsWithin[window];
+    result.recipientSellsWithin[window] += count;
+    if (count >= 2) {
+      result.clustersWithTwoRecipientSellsWithin[window] += 1;
+      token.clustersWithTwoRecipientSellsWithin[window] += 1;
+    }
+  }
 }
 
 function addCluster(result, cluster, sampleLimit) {
@@ -94,6 +123,7 @@ function addCluster(result, cluster, sampleLimit) {
   result.recipientLinks += cluster.recipientCount;
   result.sellingRecipientLinks += cluster.sellingRecipientCount;
   if (cluster.sellingRecipientCount >= 2) result.confirmedByTwoSellers += 1;
+  addRecipientSellWindows(result, cluster);
   increment(result.launchToBuy, durationBucket(
     new Date(cluster.buyTime) - new Date(cluster.launchTime)
   ));
@@ -123,12 +153,27 @@ function addCluster(result, cluster, sampleLimit) {
   if (result.samples.length < sampleLimit) result.samples.push(cluster);
 }
 
+function topTokens(result) {
+  return [...result.tokenStats.values()]
+    .sort((left, right) => right.clusters - left.clusters
+      || left.tokenAddress.localeCompare(right.tokenAddress))
+    .slice(0, TOP_TOKEN_LIMIT)
+    .map((token) => ({
+      ...token,
+      clusterShareBps: result.clusters > 0
+        ? Math.floor((token.clusters * 10_000) / result.clusters) : 0,
+    }));
+}
+
 function reportAccumulator(result) {
   return {
     clusters: result.clusters, tokensWithClusters: result.tokens.size,
     distinctSources: result.sources.size, recipientLinks: result.recipientLinks,
     sellingRecipientLinks: result.sellingRecipientLinks,
     clustersConfirmedByTwoSellers: result.confirmedByTwoSellers,
+    recipientSellsWithin: result.recipientSellsWithin,
+    clustersWithAtLeastTwoRecipientSellsWithin:
+      result.clustersWithTwoRecipientSellsWithin,
     buckets: {
       launchToBuy: result.launchToBuy, buyToFirstDistribution: result.buyToDistribution,
       firstDistributionSpan: result.distributionSpan,
@@ -139,6 +184,10 @@ function reportAccumulator(result) {
     crossTabs: {
       buyToFirstDistributionBySellerConfirmation:
         result.buyToDistributionBySellerConfirmation,
+    },
+    concentration: {
+      topTokenLimit: TOP_TOKEN_LIMIT,
+      topTokensByClusterCount: topTokens(result),
     },
     samples: result.samples,
   };

@@ -1602,7 +1602,11 @@ compra, compra até primeira distribuição, fan-out, cobertura aproximada da co
 pelas primeiras arestas, duração do fan-out, tempo até a primeira venda posterior
 e quantos destinatários venderam depois. A calibração também separa a latência de
 compra até distribuição entre clusters com menos de dois ou pelo menos dois
-destinatários vendedores. O primeiro
+destinatários vendedores. Para não confundir uma primeira venda isolada com
+coordenação do grupo, o relatório conta também quantos destinatários venderam em
+até 1 minuto, 5 minutos, 30 minutos ou 2 horas após o próprio recebimento, quantos
+clusters têm pelo menos dois desses vendedores e quais tokens concentram os
+clusters. O primeiro
 levantamento usa somente a primeira aresta permanente estritamente em bloco
 posterior à compra e, portanto, é um limite inferior: não autoriza classificação,
 worker, backfill ou remoção do raw necessário para uma materialização exata.

@@ -11,6 +11,7 @@ function cluster(overrides = {}) {
     firstTransferBlock: '30', firstTransferTime: '2026-01-01T00:23:00.000Z',
     lastFirstTransferTime: '2026-01-01T00:24:00.000Z', recipientCount: 4,
     sellingRecipientCount: 2, firstRecipientSellTime: '2026-01-01T00:30:00.000Z',
+    recipientSellCountsWithin: { lte_1m: 1, lte_5m: 2, lte_30m: 2, lte_2h: 2 },
     firstDistributedAmountRaw: '250', boughtBeforeDistributionRaw: '1000',
     firstDistributionCoverageBps: 2500, ...overrides,
   };
@@ -21,8 +22,26 @@ it('defines a bounded lower-bound query without RPC or writes', () => {
   assert.match(sql, /first_wallet_transfer_block > buy\.block_number/);
   assert.match(sql, /COUNT\(DISTINCT recipient_wallet\).*>= 2/s);
   assert.match(sql, /swap\.side = 'sell'/);
+  assert.match(sql, /first_sell_time <= sell_after\.transfer_time \+ INTERVAL '5 minutes'/);
   assert.match(sql, /robinhood_infrastructure_registry/);
   assert.doesNotMatch(sql, /INSERT|UPDATE|DELETE/);
+});
+
+it('normalizes cumulative recipient sell-window counts', () => {
+  const normalized = model.__private.row({
+    token_address: `0x${'1'.repeat(40)}`, source_wallet: `0x${'2'.repeat(40)}`,
+    launch_block: '10', launch_time: '2026-01-01T00:00:00.000Z',
+    buy_block: '20', buy_time: '2026-01-01T00:03:00.000Z',
+    first_transfer_block: '30', first_transfer_time: '2026-01-01T00:23:00.000Z',
+    last_first_transfer_time: '2026-01-01T00:24:00.000Z', recipient_count: 4,
+    selling_recipient_count: 3, first_recipient_sell_time: '2026-01-01T00:25:00.000Z',
+    recipient_sells_within_1m: '1', recipient_sells_within_5m: '2',
+    recipient_sells_within_30m: '3', recipient_sells_within_2h: '3',
+    first_distributed_amount_raw: '250', bought_before_distribution_raw: '1000',
+  });
+  assert.deepEqual(normalized.recipientSellCountsWithin, {
+    lte_1m: 1, lte_5m: 2, lte_30m: 3, lte_2h: 3,
+  });
 });
 
 it('aggregates timing, recipient, seller and coverage calibration buckets', async () => {
@@ -48,6 +67,9 @@ it('aggregates timing, recipient, seller and coverage calibration buckets', asyn
   assert.equal(report.mode, 'read-only');
   assert.equal(report.clusters, 2);
   assert.equal(report.clustersConfirmedByTwoSellers, 2);
+  assert.equal(report.recipientSellsWithin.lte_1m, 2);
+  assert.equal(report.recipientSellsWithin.lte_5m, 4);
+  assert.equal(report.clustersWithAtLeastTwoRecipientSellsWithin.lte_5m, 2);
   assert.equal(report.buckets.launchToBuy.gt_1m_lte_5m, 2);
   assert.equal(report.buckets.buyToFirstDistribution.gt_5m_lte_30m, 2);
   assert.equal(report.buckets.firstDistributionSpan.lte_1m, 2);
@@ -64,6 +86,9 @@ it('aggregates timing, recipient, seller and coverage calibration buckets', asyn
     report.crossTabs.buyToFirstDistributionBySellerConfirmation.fewerThanTwoSellers,
     {}
   );
+  assert.equal(report.concentration.topTokensByClusterCount.length, 2);
+  assert.equal(report.concentration.topTokensByClusterCount[0].clusters, 1);
+  assert.equal(report.concentration.topTokensByClusterCount[0].clusterShareBps, 5000);
   assert.equal(messages.length, 1);
 });
 
@@ -76,13 +101,17 @@ it('omits sell latency when no recipient sold and separates seller confirmation'
     source: {
       loadPage: async () => ({
         tokens: [`0x${'1'.repeat(40)}`],
-        clusters: [cluster({ sellingRecipientCount: 0, firstRecipientSellTime: null })],
+        clusters: [cluster({
+          sellingRecipientCount: 0, firstRecipientSellTime: null,
+          recipientSellCountsWithin: { lte_1m: 0, lte_5m: 0, lte_30m: 0, lte_2h: 0 },
+        })],
         nextToken: `0x${'1'.repeat(40)}`, exhausted: true,
       }),
     },
     logger: { log: () => {}, error: () => {} },
   });
   assert.deepEqual(report.buckets.firstDistributionToFirstRecipientSell, {});
+  assert.equal(report.clustersWithAtLeastTwoRecipientSellsWithin.lte_2h, 0);
   assert.equal(
     report.crossTabs.buyToFirstDistributionBySellerConfirmation.fewerThanTwoSellers
       .gt_5m_lte_30m,

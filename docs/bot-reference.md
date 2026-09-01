@@ -3118,7 +3118,10 @@ compradora redistribuiu o token diretamente para pelo menos dois destinatários.
 O relatório mede tempos, fan-out, cobertura aproximada e vendas posteriores, mas
 também agrega a duração do fan-out, a latência até a primeira venda e separa a
 latência compra/distribuição conforme existam menos de dois ou pelo menos dois
-destinatários vendedores. Ele é deliberadamente um limite inferior baseado na
+destinatários vendedores. O relatório conta vendedores por janelas de 1 minuto,
+5 minutos, 30 minutos e 2 horas relativas ao recebimento individual, destaca
+clusters com pelo menos dois vendedores nessas janelas e lista os tokens que mais
+concentram clusters. Ele é deliberadamente um limite inferior baseado na
 primeira aresta permanente em bloco posterior à compra; ele não classifica
 wallets nem autoriza apagar raw.
 
