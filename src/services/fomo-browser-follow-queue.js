@@ -309,6 +309,7 @@ function createFomoBrowserFollowQueue(options = {}) {
   const activityTradeLookupLimit = nonNegativeInteger(options.activityTradeLookupLimit, 5, 10);
   const maxFollows = positiveInteger(options.maxFollowsPerRun, 1, 10);
   const intervalMs = positiveInteger(options.intervalMs, 5 * 60_000, 24 * 60 * 60_000);
+  const autoResumeMs = positiveInteger(options.autoResumeMs, 5 * 60_000, 24 * 60 * 60_000);
   const delayMs = positiveInteger(options.delayMs, 7_500, 60_000);
   const random = options.random || Math.random;
   const wait = options.wait || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -333,6 +334,7 @@ function createFomoBrowserFollowQueue(options = {}) {
     profilePersistenceErrors: 0, lastProfilePersistenceErrorCode: null,
     cycles: 0, intervalMs, lastStartedAt: null, nextRunAt: null,
     errors: 0, paused: false, pausePersisted: false, pausedAt: null,
+    autoResumeMs, resumeAt: null, autoResumes: 0, lastAutoResumedAt: null,
     lastErrorCode: null, alertSentAt: null, alertErrors: 0,
     lastAlertErrorCode: null, completedAt: null,
   };
@@ -345,7 +347,8 @@ function createFomoBrowserFollowQueue(options = {}) {
   function pauseState() {
     return {
       paused: true, pausedAt: status.pausedAt,
-      lastErrorCode: status.lastErrorCode, alertSentAt: status.alertSentAt,
+      resumeAt: status.resumeAt, lastErrorCode: status.lastErrorCode,
+      alertSentAt: status.alertSentAt,
     };
   }
 
@@ -353,9 +356,10 @@ function createFomoBrowserFollowQueue(options = {}) {
     if (!pauseNotifier || status.alertSentAt) return;
     try {
       await pauseNotifier.sendPauseAlert({
-        pausedAt: status.pausedAt, lastErrorCode: status.lastErrorCode,
+        pausedAt: status.pausedAt, resumeAt: status.resumeAt,
+        lastErrorCode: status.lastErrorCode,
       });
-      status.alertSentAt = new Date().toISOString();
+      status.alertSentAt = new Date(now()).toISOString();
       await stateStore.save(pauseState());
       status.pausePersisted = true;
     } catch (error) {
@@ -367,7 +371,8 @@ function createFomoBrowserFollowQueue(options = {}) {
   async function pause(error, code) {
     if (!status.paused) fail(error, code);
     status.paused = true;
-    status.pausedAt ||= new Date().toISOString();
+    status.pausedAt ||= new Date(now()).toISOString();
+    status.resumeAt ||= new Date(Date.parse(status.pausedAt) + autoResumeMs).toISOString();
     try {
       await stateStore.save(pauseState());
       status.pausePersisted = true;
@@ -398,8 +403,30 @@ function createFomoBrowserFollowQueue(options = {}) {
     status.paused = true;
     status.pausePersisted = true;
     status.pausedAt = saved.pausedAt || null;
+    const pausedAtMs = Date.parse(status.pausedAt);
+    status.resumeAt = saved.resumeAt || (Number.isFinite(pausedAtMs)
+      ? new Date(pausedAtMs + autoResumeMs).toISOString() : null);
     status.lastErrorCode = saved.lastErrorCode || 'FOMO_FOLLOW_PAUSED';
     status.alertSentAt = saved.alertSentAt || null;
+    const resumeAtMs = Date.parse(status.resumeAt);
+    if (Number.isFinite(resumeAtMs) && now() >= resumeAtMs) {
+      const resumedAt = new Date(now()).toISOString();
+      try {
+        await stateStore.save({ paused: false, lastAutoResumedAt: resumedAt });
+      } catch {
+        status.errors += 1;
+        return true;
+      }
+      status.paused = false;
+      status.pausePersisted = false;
+      status.pausedAt = null;
+      status.resumeAt = null;
+      status.lastErrorCode = null;
+      status.alertSentAt = null;
+      status.autoResumes += 1;
+      status.lastAutoResumedAt = resumedAt;
+      return false;
+    }
     await notifyPause();
     return !profilePersistence;
   }
@@ -476,7 +503,7 @@ function createFomoBrowserFollowQueue(options = {}) {
   }
 
   function scheduleNext() {
-    if (!started || (status.paused && !profilePersistence) || timer) return;
+    if (!started || timer) return;
     status.nextRunAt = new Date(now() + intervalMs).toISOString();
     timer = schedule(() => {
       timer = null;
@@ -486,7 +513,7 @@ function createFomoBrowserFollowQueue(options = {}) {
   }
 
   function startCycle() {
-    if (!started || running || (status.paused && !profilePersistence)) return;
+    if (!started || running) return;
     running = true;
     status.running = true;
     status.cycles += 1;

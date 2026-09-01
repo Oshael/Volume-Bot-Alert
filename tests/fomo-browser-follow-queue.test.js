@@ -179,6 +179,7 @@ test('Fomo follow queue discovers Top Profits candidates in dry-run without writ
     cycles: 1, intervalMs: 300_000, lastStartedAt: queue.getStatus().lastStartedAt,
     nextRunAt: null,
     errors: 0, paused: false, pausePersisted: false, pausedAt: null, lastErrorCode: null,
+    autoResumeMs: 300_000, resumeAt: null, autoResumes: 0, lastAutoResumedAt: null,
     alertSentAt: null, alertErrors: 0, lastAlertErrorCode: null,
     completedAt: queue.getStatus().completedAt,
   });
@@ -420,9 +421,10 @@ test('Fomo follow queue durably pauses immediately on any failed account write',
   assert.equal(queue.getStatus().paused, true);
   assert.equal(queue.getStatus().pausePersisted, true);
   assert.equal(queue.getStatus().lastErrorCode, 'FOMO_FOLLOW_HTTP_500');
-  assert.equal(scheduled.length, 0);
+  assert.equal(scheduled.length, 1);
   assert.deepEqual(saved[0], {
     paused: true, pausedAt: queue.getStatus().pausedAt,
+    resumeAt: queue.getStatus().resumeAt,
     lastErrorCode: 'FOMO_FOLLOW_HTTP_500', alertSentAt: null,
   });
 });
@@ -452,6 +454,7 @@ test('Fomo follow durable pause does not resend an acknowledged alert', async ()
   let alertAttempts = 0;
   const queue = createFomoBrowserFollowQueue({
     enabled: true, dryRun: false, profileIds: [A],
+    now: () => Date.parse('2026-08-26T19:01:00.000Z'),
     createBrowserApi: async () => { throw new Error('browser must not open'); },
     stateStore: { load: async () => ({
       paused: true, pausedAt: '2026-08-26T19:00:00.000Z',
@@ -471,6 +474,7 @@ test('Fomo follow retries an unacknowledged pause alert after restart', async ()
   let alertAttempts = 0;
   const queue = createFomoBrowserFollowQueue({
     enabled: true, dryRun: false, profileIds: [A],
+    now: () => Date.parse('2026-08-26T19:01:00.000Z'),
     createBrowserApi: async () => { throw new Error('browser must not open'); },
     stateStore: { load: async () => ({
       paused: true, pausedAt: '2026-08-26T19:00:00.000Z',
@@ -527,6 +531,7 @@ test('Fomo follow queue honors a durable pause without opening the browser', asy
   let browserCreations = 0;
   const queue = createFomoBrowserFollowQueue({
     enabled: true, dryRun: false, profileIds: [A],
+    now: () => Date.parse('2026-08-26T18:01:00.000Z'),
     createBrowserApi: async () => { browserCreations += 1; },
     stateStore: { load: async () => ({
       paused: true, pausedAt: '2026-08-26T18:00:00.000Z',
@@ -540,4 +545,28 @@ test('Fomo follow queue honors a durable pause without opening the browser', asy
   assert.equal(queue.getStatus().paused, true);
   assert.equal(queue.getStatus().pausePersisted, true);
   assert.equal(queue.getStatus().lastErrorCode, 'FOMO_FOLLOW_HTTP_429');
+});
+
+test('Fomo follow queue automatically resumes an expired durable pause', async () => {
+  const fixture = apiFixture();
+  const saved = [];
+  const queue = createFomoBrowserFollowQueue({
+    enabled: true, dryRun: false, profileIds: [A], autoResumeMs: 300_000,
+    now: () => Date.parse('2026-08-26T19:10:00.000Z'), wait: async () => {},
+    createBrowserApi: async () => fixture.api,
+    stateStore: { load: async () => ({
+      paused: true, pausedAt: '2026-08-26T19:00:00.000Z',
+      resumeAt: '2026-08-26T19:05:00.000Z', lastErrorCode: 'FOMO_FOLLOW_HTTP_429',
+    }), save: async (state) => saved.push(state) },
+  });
+
+  queue.start();
+  await queue.stop();
+  assert.deepEqual(saved, [{
+    paused: false, lastAutoResumedAt: '2026-08-26T19:10:00.000Z',
+  }]);
+  assert.equal(fixture.calls.some((call) => call.path === '/follows'), true);
+  assert.equal(queue.getStatus().paused, false);
+  assert.equal(queue.getStatus().autoResumes, 1);
+  assert.equal(queue.getStatus().lastAutoResumedAt, '2026-08-26T19:10:00.000Z');
 });

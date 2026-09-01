@@ -251,6 +251,7 @@ describe('runtime worker groups config', () => {
     assert.equal(config.cdpEndpoint, 'http://127.0.0.1:9222');
     assert.equal(config.follow.dryRun, true);
     assert.equal(config.follow.requestTimeoutMs, 15_000);
+    assert.equal(config.follow.autoResumeMs, 300_000);
     assert.equal(config.telegramAlerts.enabled, false);
     assert.equal(config.browserHealth.staleMs, 90_000);
     assert.equal(config.browserHealth.recoveryCooldownMs, 300_000);

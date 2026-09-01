@@ -900,6 +900,9 @@ module.exports = {
         intervalMs: parseIntegerInRange(
           process.env.FOMO_FOLLOW_INTERVAL_SECONDS, 300, 30, 86400
         ) * 1000,
+        autoResumeMs: parseIntegerInRange(
+          process.env.FOMO_FOLLOW_AUTO_RESUME_SECONDS, 300, 30, 86400
+        ) * 1000,
         delayMs: parseIntegerInRange(process.env.FOMO_FOLLOW_DELAY_SECONDS, 8, 3, 60) * 1000,
         authWaitMs: parseIntegerInRange(process.env.FOMO_FOLLOW_AUTH_WAIT_SECONDS, 60, 10, 300) * 1000,
         requestTimeoutMs: parseIntegerInRange(

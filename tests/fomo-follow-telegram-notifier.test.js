@@ -16,12 +16,14 @@ test('Fomo follow pause notifier sends a private operational Telegram message', 
   await notifier.sendPauseAlert({
     lastErrorCode: 'FOMO_FOLLOW_HTTP_429',
     pausedAt: '2026-08-26T19:00:00.000Z',
+    resumeAt: '2026-08-26T19:05:00.000Z',
   });
 
   assert.equal(messages.length, 1);
   assert.equal(messages[0].chat_id, '123456');
   assert.match(messages[0].text, /FOMO_FOLLOW_HTTP_429/);
   assert.match(messages[0].text, /captura de callouts continua ativa/);
+  assert.match(messages[0].text, /Nova tentativa automática: 2026-08-26T19:05:00.000Z/);
   assert.equal(JSON.stringify(messages[0]).includes('bot-token'), false);
 });
 

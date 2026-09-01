@@ -13,6 +13,7 @@ function createFomoTelegramOpsNotifier(options = {}) {
   async function sendPauseAlert(event = {}) {
     const errorCode = String(event.lastErrorCode || 'FOMO_FOLLOW_ERROR');
     const pausedAt = String(event.pausedAt || new Date().toISOString());
+    const resumeAt = String(event.resumeAt || 'próximo ciclo após o cooldown');
     await bot.sendMessage({
       chat_id: chatId,
       disable_web_page_preview: true,
@@ -21,7 +22,7 @@ function createFomoTelegramOpsNotifier(options = {}) {
         `Erro: ${errorCode}`,
         `Horário: ${pausedAt}`,
         'A captura de callouts continua ativa.',
-        'A retomada exige intervenção manual.',
+        `Nova tentativa automática: ${resumeAt}`,
       ].join('\n'),
     });
   }

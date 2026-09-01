@@ -1166,10 +1166,13 @@ frames WebSocket enviados de `challengeResponse` e `subscribe/trading_activity`.
 Toda chamada da fila possui timeout configurável por
 `FOMO_FOLLOW_REQUEST_TIMEOUT_SECONDS` (default 15). Qualquer timeout, exceção ou
 status diferente de 200 pausa a fila imediatamente e persiste o circuito aberto
-no checkpoint `fomo:follow`; reiniciar o worker não libera novos follows. A
-captura de callouts permanece independente. Depois de diagnosticar a causa, a
-retomada exige desabilitar o follow e remover explicitamente somente esse
-checkpoint antes de reabilitá-lo.
+no checkpoint `fomo:follow`. O cooldown durável é configurado por
+`FOMO_FOLLOW_AUTO_RESUME_SECONDS` (default 300, faixa 30–86400); ao vencer, o
+próprio worker persiste `paused=false`, limpa o alerta anterior e tenta novamente
+sem exigir remoção manual do checkpoint. Uma nova falha abre outro cooldown, sem
+loop de escrita dentro do mesmo ciclo. `resumeAt`, `autoResumes` e
+`lastAutoResumedAt` expõem essa recuperação. A captura de callouts permanece
+independente.
 
 Os alertas operacionais privados são opt-in por
 `FOMO_TELEGRAM_ALERTS_ENABLED=true`. Eles usam somente chamadas outbound
