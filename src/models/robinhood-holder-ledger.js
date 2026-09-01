@@ -6,7 +6,10 @@ const ZERO_ADDRESS = `0x${'0'.repeat(40)}`;
 const MAX_UINT256 = (1n << 256n) - 1n;
 const REORG_FENCE_LOCK_ID = '8241992116082026';
 const HOT_FRESH_BLOCK_WINDOW = 200;
-const HOT_PRIORITY_CLASSES = new Set(['fresh-live', 'recent-shadow', 'stale-live']);
+const HOT_RECENT_SHADOW_BLOCK_WINDOW = 20000;
+const HOT_PRIORITY_CLASSES = new Set([
+  'fresh-live', 'recent-shadow', 'stale-live', 'stale-shadow',
+]);
 
 function decimalQuantity(value, label) {
   const raw = String(value ?? '').trim();
@@ -1591,17 +1594,22 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
           AND state.ledger_status IN ('shadow', 'live')
           AND NOT (queue.token_address = ANY($1::varchar[]))
           AND (
-            ($3::varchar IS NULL AND (state.ledger_status = 'live'
-              OR queue.first_pending_block >= GREATEST(cursor.next_block - 20000, 0)))
+            $3::varchar IS NULL
             OR ($3 = 'fresh-live' AND state.ledger_status = 'live'
               AND queue.first_pending_block >= GREATEST(
                 cursor.next_block - ${HOT_FRESH_BLOCK_WINDOW}, 0
               ))
             OR ($3 = 'recent-shadow' AND state.ledger_status = 'shadow'
-              AND queue.first_pending_block >= GREATEST(cursor.next_block - 20000, 0))
+              AND queue.first_pending_block >= GREATEST(
+                cursor.next_block - ${HOT_RECENT_SHADOW_BLOCK_WINDOW}, 0
+              ))
             OR ($3 = 'stale-live' AND state.ledger_status = 'live'
               AND queue.first_pending_block < GREATEST(
                 cursor.next_block - ${HOT_FRESH_BLOCK_WINDOW}, 0
+              ))
+            OR ($3 = 'stale-shadow' AND state.ledger_status = 'shadow'
+              AND queue.first_pending_block < GREATEST(
+                cursor.next_block - ${HOT_RECENT_SHADOW_BLOCK_WINDOW}, 0
               ))
           )
         ORDER BY (state.ledger_status = 'live') DESC, queue.updated_at,
@@ -1623,15 +1631,20 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
            INNER JOIN robinhood_holder_cursors cursor
              ON cursor.chain = queue.chain AND cursor.stream = 'live'
           WHERE queue.chain = 'robinhood' AND state.ledger_status IN ('shadow', 'live')
-            AND (state.ledger_status = 'live'
-              OR queue.first_pending_block >= GREATEST(cursor.next_block - 20000, 0))
        )
        SELECT COUNT(token_address)::int AS pending_tokens,
               COUNT(*) FILTER (WHERE ledger_status = 'live'
                 AND first_pending_block >= GREATEST(
                   next_block - ${HOT_FRESH_BLOCK_WINDOW}, 0
                 ))::int AS fresh_live_tokens,
-              COUNT(*) FILTER (WHERE ledger_status = 'shadow')::int AS recent_shadow_tokens,
+              COUNT(*) FILTER (WHERE ledger_status = 'shadow'
+                AND first_pending_block >= GREATEST(
+                  next_block - ${HOT_RECENT_SHADOW_BLOCK_WINDOW}, 0
+                ))::int AS recent_shadow_tokens,
+              COUNT(*) FILTER (WHERE ledger_status = 'shadow'
+                AND first_pending_block < GREATEST(
+                  next_block - ${HOT_RECENT_SHADOW_BLOCK_WINDOW}, 0
+                ))::int AS stale_shadow_tokens,
               COUNT(*) FILTER (WHERE ledger_status = 'live'
                 AND first_pending_block < GREATEST(
                   next_block - ${HOT_FRESH_BLOCK_WINDOW}, 0
@@ -1647,6 +1660,7 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
       pendingTokens: Number(row.pending_tokens) || 0,
       freshLiveTokens: Number(row.fresh_live_tokens) || 0,
       recentShadowTokens: Number(row.recent_shadow_tokens) || 0,
+      staleShadowTokens: Number(row.stale_shadow_tokens) || 0,
       staleLiveTokens: Number(row.stale_live_tokens) || 0,
       worstLagBlocks: Number(row.worst_lag_blocks) || 0,
       oldestAgeMs: Math.round(Number(row.oldest_age_ms) || 0),

@@ -29,7 +29,7 @@ function harness(
     },
     getHotQueueFreshness: async () => options.freshness || {
       pendingTokens: 0, freshLiveTokens: 0, recentShadowTokens: 0,
-      staleLiveTokens: 0, worstLagBlocks: 0, oldestAgeMs: 0,
+      staleShadowTokens: 0, staleLiveTokens: 0, worstLagBlocks: 0, oldestAgeMs: 0,
     },
     listPendingTokenAddresses: async (input) => {
       calls.push(['list-pending-tokens', input]);
@@ -136,7 +136,7 @@ describe('Robinhood holder live runner', () => {
       holderCountUpdates: 0, holderCountPublished: 0,
       freshness: {
         pendingTokens: 0, freshLiveTokens: 0, recentShadowTokens: 0,
-        staleLiveTokens: 0, worstLagBlocks: 0, oldestAgeMs: 0,
+        staleShadowTokens: 0, staleLiveTokens: 0, worstLagBlocks: 0, oldestAgeMs: 0,
       },
       applyBudgetExhausted: false, nextBlock: '106', safeHead: '105',
     });
@@ -439,12 +439,14 @@ describe('Robinhood holder live runner', () => {
     assert.deepEqual(result.freshness, freshness);
   });
 
-  it('reserves hot capacity for recent shadows and stale live catch-up', async () => {
+  it('reserves hot capacity for recent and stale shadows plus stale live catch-up', async () => {
     const freshLive = `0x${'1'.repeat(40)}`;
     const recentShadow = `0x${'2'.repeat(40)}`;
     const staleLive = `0x${'3'.repeat(40)}`;
+    const staleShadow = `0x${'4'.repeat(40)}`;
     const expected = [
-      freshLive, freshLive, freshLive, recentShadow, staleLive,
+      freshLive, freshLive, freshLive,
+      recentShadow, recentShadow, staleShadow, staleLive,
     ];
     const context = harness({ status: 'idle', transfers: 0 }, expected.map(
       (tokenAddress) => ({
@@ -455,6 +457,7 @@ describe('Robinhood holder live runner', () => {
         'fresh-live': freshLive,
         'recent-shadow': recentShadow,
         'stale-live': staleLive,
+        'stale-shadow': staleShadow,
       },
     });
 
@@ -470,7 +473,8 @@ describe('Robinhood holder live runner', () => {
     assert.deepEqual(context.calls.filter(([name]) => name === 'list-hot-tokens').map(
       ([, input]) => input.priorityClass
     ), [
-      'fresh-live', 'fresh-live', 'fresh-live', 'recent-shadow', 'stale-live',
+      'fresh-live', 'fresh-live', 'fresh-live',
+      'recent-shadow', 'recent-shadow', 'stale-shadow', 'stale-live',
     ]);
   });
 
@@ -580,7 +584,7 @@ describe('Robinhood holder live runner', () => {
         listHotPendingTokenAddresses: async () => [],
         getHotQueueFreshness: async () => ({
           pendingTokens: 0, freshLiveTokens: 0, recentShadowTokens: 0,
-          staleLiveTokens: 0, worstLagBlocks: 0, oldestAgeMs: 0,
+          staleShadowTokens: 0, staleLiveTokens: 0, worstLagBlocks: 0, oldestAgeMs: 0,
         }),
         listPendingTokenAddresses: async () => [`0x${'a'.repeat(40)}`],
         applyNextPendingEvent: async () => {

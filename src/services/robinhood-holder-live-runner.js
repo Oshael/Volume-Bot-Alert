@@ -1,6 +1,9 @@
-const HOT_PRIORITY_CLASSES = Object.freeze(['fresh-live', 'recent-shadow', 'stale-live']);
+const HOT_PRIORITY_CLASSES = Object.freeze([
+  'fresh-live', 'recent-shadow', 'stale-live', 'stale-shadow',
+]);
 const HOT_PRIORITY_CYCLE = Object.freeze([
-  'fresh-live', 'fresh-live', 'fresh-live', 'recent-shadow', 'stale-live',
+  'fresh-live', 'fresh-live', 'fresh-live',
+  'recent-shadow', 'recent-shadow', 'stale-shadow', 'stale-live',
 ]);
 
 function boundedInteger(value, fallback, minimum, maximum, label) {
@@ -448,7 +451,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
       selectionCalls: 0, selectionDurationMs: 0, selectedTokens: 0,
       hotSelectionCalls: 0, hotSelectionDurationMs: 0,
       hotSelectionsByClass: {
-        'fresh-live': 0, 'recent-shadow': 0, 'stale-live': 0,
+        'fresh-live': 0, 'recent-shadow': 0, 'stale-live': 0, 'stale-shadow': 0,
       },
       shadowPromotionDurationMs: 0, publicationDurationMs: 0,
     };

@@ -168,6 +168,20 @@ describe('Robinhood holder ledger persistence', () => {
       assert.deepEqual(await repository.listHotPendingTokenAddresses({
         limit: 10, priorityClass: 'stale-live',
       }), []);
+      await client.query(
+        `UPDATE robinhood_holder_cursors SET next_block = 20101
+          WHERE chain = 'robinhood' AND stream = 'live'`
+      );
+      assert.deepEqual(await repository.listHotPendingTokenAddresses({
+        limit: 10, priorityClass: 'recent-shadow',
+      }), []);
+      assert.deepEqual(await repository.listHotPendingTokenAddresses({
+        limit: 10, priorityClass: 'stale-shadow',
+      }), [TOKEN]);
+      await client.query(
+        `UPDATE robinhood_holder_cursors SET next_block = 101
+          WHERE chain = 'robinhood' AND stream = 'live'`
+      );
       assert.deepEqual(
         await repository.listPendingTokenAddresses({ limit: 10 }),
         [TOKEN_3, TOKEN]
@@ -192,7 +206,7 @@ describe('Robinhood holder ledger persistence', () => {
       });
       assert.deepEqual(await repository.getHotQueueFreshness(), {
         pendingTokens: 0, freshLiveTokens: 0, recentShadowTokens: 0,
-        staleLiveTokens: 0, worstLagBlocks: 0, oldestAgeMs: 0,
+        staleShadowTokens: 0, staleLiveTokens: 0, worstLagBlocks: 0, oldestAgeMs: 0,
       });
       await client.query(
         `INSERT INTO robinhood_holder_token_states

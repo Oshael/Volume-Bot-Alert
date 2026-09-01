@@ -1570,13 +1570,15 @@ O journal topics-only continua capturando transferências de tokens ainda não
 admitidos para a proteção de descoberta tardia; apenas o cache hot deixa de carregar
 esses endereços inelegíveis.
 A tabela, não a notificação, é a garantia durável. O scheduler separa tickets em
-`fresh-live` (até 200 blocos), `recent-shadow` (até 20.000 blocos) e `stale-live`.
-A rotação persiste entre ticks e reserva três lotes para live recente, um para
-shadow recente e um para catch-up live; se uma classe estiver vazia, sua vez é
-usada imediatamente por outra. Assim backlog live não bloqueia a publicação de
-tokens novos. Lotes hot têm no máximo 25 eventos e cada tick dura por default até
-2s. O polling de 100ms permanece somente como recuperação. A telemetria `freshness`
-expõe a contagem de cada classe, `pendingTokens`, `worstLagBlocks` e `oldestAgeMs`.
+`fresh-live` (até 200 blocos), `recent-shadow` (até 20.000 blocos), `stale-shadow`
+e `stale-live`. A rotação persiste entre ticks e reserva três lotes para live
+recente, dois para shadow recente, um para shadow antigo e um para catch-up live;
+se uma classe estiver vazia, sua vez é usada imediatamente por outra. Assim backlog
+live não bloqueia tokens novos e nenhum shadow antigo fica invisível ao scheduler.
+Lotes hot têm no máximo 25 eventos e cada tick dura por default até 2s. O polling
+de 100ms permanece somente como recuperação. A telemetria `freshness` expõe a
+contagem de cada classe, incluindo `staleShadowTokens`, além de `pendingTokens`,
+`worstLagBlocks` e `oldestAgeMs`.
 O `lastResult.timing` da lease do apply
 separa duração total, drain, chamadas do ledger, reparo de drift, promoção shadow,
 publicação e overhead; também expõe quantidade/duração máxima das chamadas, tamanho
