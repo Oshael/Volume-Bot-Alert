@@ -113,6 +113,24 @@ describe('Robinhood holder global backfill worker', () => {
     assert.equal(inputs[0].includeBackfilling, false);
     assert.equal(inputs[0].minimumGapBlocks, 20_000);
   });
+  it('does not strand a single eligible rolling token by default', async () => {
+    const inputs = [];
+    const runtime = {
+      lifecycle: { getLatestRun: async () => campaign('completed') },
+      delta: {
+        previewRun: async (input) => { inputs.push(input); return { candidateTokens: 1 }; },
+        createRun: async (input) => {
+          inputs.push(input); return { runId: '2', cohortTokens: 1 };
+        },
+      },
+    };
+    const result = await runCampaignTick(runtime, normalizeOptions({
+      enabled: true, autoStart: true, catalogCutoff: CUTOFF, rollingEnabled: true,
+    }));
+    assert.equal(result.status, 'frozen-preview');
+    assert.equal(result.cohortTokens, 1);
+    assert.equal(inputs.length, 2);
+  });
   it('keeps a sub-threshold rolling cohort pending without creating a run', async () => {
     const runtime = {
       lifecycle: { getLatestRun: async () => campaign('completed') },

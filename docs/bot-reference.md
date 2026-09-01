@@ -1730,7 +1730,10 @@ prontos: a prontidão é filtrada antes da ordenação e do limite do handoff.
 No runtime global do PC, habilite também
 `ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ROLLING_ENABLED=true`; rolling exige auto-start.
 Depois que o run anterior completa, o worker verifica a cada 5 minutos tokens
-largos vistos há pelo menos 1 hora e cria uma nova coorte quando acumular 100.
+largos vistos há pelo menos 1 hora e cria uma nova coorte assim que existir um
+candidato. Isso garante que uma cauda pequena não permaneça sem owner
+indefinidamente. Um valor maior de `_ROLLING_MIN_TOKENS` troca essa garantia por
+coortes menos frequentes e só deve ser usado com monitoramento explícito da fila.
 `_ROLLING_CHECK_INTERVAL_MS`, `_ROLLING_DELAY_MS` e `_ROLLING_MIN_TOKENS`
 ajustam esses limites. VPS e PC devem usar o mesmo
 `ROBINHOOD_HOLDER_BACKFILL_MAX_INITIAL_GAP_BLOCKS`. Se o PC ficar offline, somente

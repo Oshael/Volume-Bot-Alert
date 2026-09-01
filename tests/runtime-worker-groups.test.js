@@ -848,6 +848,7 @@ describe('runtime worker groups config', () => {
       assert.equal(config.robinhoodHolderGlobalBackfillWorker.enabled, false);
       assert.equal(config.robinhoodHolderGlobalBackfillWorker.autoStart, false);
       assert.equal(config.robinhoodHolderGlobalBackfillWorker.rollingEnabled, false);
+      assert.equal(config.robinhoodHolderGlobalBackfillWorker.rollingMinTokens, 1);
       assert.equal(config.robinhoodHolderLiveWorker.enabled, false);
       assert.equal(config.robinhoodHolderIntelligenceWorker.enabled, false);
       assert.equal(config.robinhoodHolderReconciliationWorker.enabled, false);

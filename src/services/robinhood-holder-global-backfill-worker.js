@@ -57,7 +57,7 @@ function normalizeOptions(input = {}) {
       input.rollingCheckIntervalMs, 300_000, 60_000, 3_600_000, 'rollingCheckIntervalMs'
     ),
     rollingMinTokens: boundedInteger(
-      input.rollingMinTokens, 100, 1, 100_000, 'rollingMinTokens'
+      input.rollingMinTokens, 1, 1, 100_000, 'rollingMinTokens'
     ),
     rollingMinGapBlocks: boundedInteger(
       input.rollingMinGapBlocks, 20_000, 1, 100_000_000, 'rollingMinGapBlocks'

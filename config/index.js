@@ -1401,7 +1401,7 @@ module.exports = {
     ),
     rollingMinTokens: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ROLLING_MIN_TOKENS,
-      100, 1, 100_000
+      1, 1, 100_000
     ),
     rollingMinGapBlocks: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_BACKFILL_MAX_INITIAL_GAP_BLOCKS,
