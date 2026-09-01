@@ -4,6 +4,7 @@ const CHAIN = 'robinhood';
 const EXACT_SOURCES = Object.freeze([
   'blockscout_internal', 'rpc_code_transition', 'rpc_direct', 'rpc_trace', 'launchpad_event',
 ]);
+const MAX_ADOPTED_TOKENS_PER_RUN = 1000;
 function candidatesSql(options) {
   const scopes = [];
   if (options.includeUnseeded) scopes.push('state.token_address IS NULL');
@@ -164,16 +165,30 @@ function createRobinhoodHolderGlobalDeltaRepository(options = {}) {
         throw error;
       }
       const addresses = candidates.rows.map((row) => row.token_address);
-      const adopted = candidates.rows.filter((row) => row.adopted).length;
+      const adoptedAddresses = candidates.rows
+        .filter((row) => row.adopted)
+        .map((row) => row.token_address);
+      const adopted = adoptedAddresses.length;
+      if (adopted > MAX_ADOPTED_TOKENS_PER_RUN) {
+        const error = new Error(
+          `Robinhood holder global delta adoption exceeds ${MAX_ADOPTED_TOKENS_PER_RUN} tokens`
+        );
+        error.code = 'holder_global_delta_adoption_too_large';
+        throw error;
+      }
       const startBlock = candidates.rows.reduce((minimum, row) => (
         minimum === null || BigInt(row.deployment_block) < minimum
           ? BigInt(row.deployment_block) : minimum
       ), null).toString();
-      await client.query(
-        `SELECT token_address FROM robinhood_holder_token_states
-          WHERE chain = $1 AND token_address = ANY($2::varchar[]) FOR UPDATE`,
-        [CHAIN, addresses]
-      );
+      if (adopted) {
+        await client.query("SET LOCAL lock_timeout = '2s'");
+        await client.query("SET LOCAL statement_timeout = '30s'");
+        await client.query(
+          `SELECT token_address FROM robinhood_holder_token_states
+            WHERE chain = $1 AND token_address = ANY($2::varchar[]) FOR UPDATE`,
+          [CHAIN, adoptedAddresses]
+        );
+      }
       const inserted = await client.query(
          `INSERT INTO robinhood_holder_global_backfill_runs (
            chain, catalog_cutoff, next_block, telemetry
@@ -186,24 +201,32 @@ function createRobinhoodHolderGlobalDeltaRepository(options = {}) {
         `INSERT INTO robinhood_holder_global_backfill_tokens (run_id, chain, token_address)
          SELECT $1, $2, unnest($3::varchar[])`, [runId, CHAIN, addresses]
       );
-      const pendingJournal = await client.query(
-        `DELETE FROM robinhood_holder_transfer_journal
-          WHERE chain = $1 AND token_address = ANY($2::varchar[])
-            AND applied = FALSE`, [CHAIN, addresses]
-      );
-      const appliedJournal = await client.query(
-        `DELETE FROM robinhood_holder_transfer_journal
-          WHERE chain = $1 AND token_address = ANY($2::varchar[])
-            AND applied = TRUE`, [CHAIN, addresses]
-      );
-      const balances = await client.query(
-        `DELETE FROM robinhood_holder_balances
-          WHERE chain = $1 AND token_address = ANY($2::varchar[])`, [CHAIN, addresses]
-      );
-      const states = await client.query(
-        `DELETE FROM robinhood_holder_token_states
-          WHERE chain = $1 AND token_address = ANY($2::varchar[])`, [CHAIN, addresses]
-      );
+      let pendingJournal = { rowCount: 0 };
+      let appliedJournal = { rowCount: 0 };
+      let balances = { rowCount: 0 };
+      let states = { rowCount: 0 };
+      if (adopted) {
+        pendingJournal = await client.query(
+          `DELETE FROM robinhood_holder_transfer_journal
+            WHERE chain = $1 AND token_address = ANY($2::varchar[])
+              AND applied = FALSE`, [CHAIN, adoptedAddresses]
+        );
+        appliedJournal = await client.query(
+          `DELETE FROM robinhood_holder_transfer_journal
+            WHERE chain = $1 AND token_address = ANY($2::varchar[])
+              AND applied = TRUE`, [CHAIN, adoptedAddresses]
+        );
+        balances = await client.query(
+          `DELETE FROM robinhood_holder_balances
+            WHERE chain = $1 AND token_address = ANY($2::varchar[])`,
+          [CHAIN, adoptedAddresses]
+        );
+        states = await client.query(
+          `DELETE FROM robinhood_holder_token_states
+            WHERE chain = $1 AND token_address = ANY($2::varchar[])`,
+          [CHAIN, adoptedAddresses]
+        );
+      }
       if (states.rowCount !== adopted) throw new Error('Delta holder state adoption changed while locked');
       await client.query(
         `UPDATE robinhood_holder_global_backfill_runs

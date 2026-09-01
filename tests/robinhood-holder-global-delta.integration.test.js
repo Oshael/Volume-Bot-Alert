@@ -62,8 +62,9 @@ describe('Robinhood holder global delta persistence', () => {
         `INSERT INTO robinhood_holder_transfer_journal (
            block_number, block_hash, transaction_hash, transaction_index,
            log_index, token_address, from_wallet, to_wallet, amount_raw
-         ) VALUES (600, $1, $1, 0, 0, $2, $3, $4, 1)`,
-        [HASH, TOKENS[0], `0x${'0'.repeat(40)}`, WALLET]
+         ) VALUES (600, $1, $1, 0, 0, $2, $4, $5, 1),
+                  (601, $1, $1, 0, 1, $3, $4, $5, 1)`,
+        [HASH, TOKENS[0], TOKENS[1], `0x${'0'.repeat(40)}`, WALLET]
       );
       await client.query(
         `INSERT INTO robinhood_holder_cursors (
@@ -151,6 +152,10 @@ describe('Robinhood holder global delta persistence', () => {
           WHERE token_address = $1`, [TOKENS[0]]
       )).rows[0].count, 0);
       assert.equal((await client.query(
+        `SELECT COUNT(*)::int AS count FROM robinhood_holder_transfer_journal
+          WHERE token_address = $1`, [TOKENS[1]]
+      )).rows[0].count, 1);
+      assert.equal((await client.query(
         `SELECT version FROM robinhood_holder_cursors WHERE stream = 'live'`
       )).rows[0].version, '1');
       await assert.rejects(
@@ -160,5 +165,33 @@ describe('Robinhood holder global delta persistence', () => {
     } finally {
       client.release();
     }
+  });
+
+  it('rejects an oversized partial-state adoption before destructive cleanup', async () => {
+    let rolledBack = false;
+    const candidates = Array.from({ length: 1001 }, (_, index) => ({
+      token_address: `token-${index}`, deployment_block: '100', adopted: true,
+    }));
+    const client = {
+      async query(sql) {
+        if (sql === 'ROLLBACK') rolledBack = true;
+        if (/SELECT safe_head FROM robinhood_holder_cursors/.test(sql)) {
+          return { rowCount: 1, rows: [{ safe_head: '1000' }] };
+        }
+        if (/SELECT catalog\.address AS token_address/.test(sql)) {
+          return { rowCount: candidates.length, rows: candidates };
+        }
+        return { rowCount: 0, rows: [] };
+      },
+      release() {},
+    };
+    const repository = createRobinhoodHolderGlobalDeltaRepository({
+      database: { getClient: async () => client },
+    });
+
+    await assert.rejects(repository.createRun({
+      catalogCutoff: '2026-08-12T00:00:00Z',
+    }), { code: 'holder_global_delta_adoption_too_large' });
+    assert.equal(rolledBack, true);
   });
 });

@@ -1690,6 +1690,12 @@ ignora qualquer coorte global ativa mesmo antes do attach. Depois disso, o worke
 global isolado pode ser iniciado no PC e segue o mesmo scan, materialização e
 handoff da campanha original. Essa operação é reconstruível pela chain, mas deixa
 os tokens adotados sem publicação local até a nova baseline ser materializada.
+Tokens ainda sem state não sofrem limpeza antecipada: seu journal pendente é
+preservado e o overlap anterior à barreira é removido somente no handoff em lote.
+Uma confirmação recusa mais de 1.000 states adotados, e a limpeza usa
+`lock_timeout` de 2s e `statement_timeout` de 30s para falhar com rollback em vez
+de monopolizar o PostgreSQL. O rolling automático seleciona somente tokens sem
+state, portanto nunca executa essa limpeza destrutiva de adoção.
 Quando a intenção for limpar somente states incrementais já `backfilling`, use
 `-- --backfilling-only` tanto no dry-run quanto junto de `--confirm-create`.
 Esse modo exclui tokens sem state e impede que um deployment histórico recém
