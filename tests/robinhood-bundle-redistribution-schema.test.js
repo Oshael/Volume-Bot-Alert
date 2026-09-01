@@ -2,7 +2,14 @@ const assert = require('node:assert/strict');
 const { it } = require('node:test');
 
 const stage187 = require('../src/utils/db-init-stage187');
-const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
+const { SCHEMA_GROUPS, __private } = require('../src/utils/runtime-schema');
+
+function constraintSql(sql, name) {
+  const start = sql.indexOf(`CONSTRAINT ${name}`);
+  assert.notEqual(start, -1, `${name} must exist in Stage 187`);
+  const next = sql.indexOf('\n     CONSTRAINT ', start + 1);
+  return sql.slice(start, next === -1 ? sql.length : next);
+}
 
 it('registers isolated causal snapshots for BUNDLED redistribution', () => {
   const sql = stage187.STATEMENTS.join('\n');
@@ -27,4 +34,17 @@ it('registers isolated causal snapshots for BUNDLED redistribution', () => {
     'robinhood_bundle_redistribution_groups',
     'robinhood_bundle_redistribution_members',
   ]);
+
+  const members = group.tables.find(({ table }) => (
+    table === 'robinhood_bundle_redistribution_members'
+  ));
+  const constraintNames = [
+    'rh_bundle_redistribution_members_buy_check',
+    'rh_bundle_redistribution_members_causality_check',
+  ];
+  const definitions = new Map(constraintNames.map((name) => [name, constraintSql(sql, name)]));
+  assert.deepEqual(__private.collectMissingConstraints({
+    ...members,
+    constraints: members.constraints.filter(({ name }) => constraintNames.includes(name)),
+  }, definitions), []);
 });

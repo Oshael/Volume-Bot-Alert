@@ -5409,12 +5409,17 @@ const SCHEMA_GROUPS = [
           'wallet_address',
         ],
       }, {
+        name: 'rh_bundle_redistribution_members_buy_check',
+        includes: [
+          'source_buy_block', 'source_buy_transaction_index',
+          'source_buy_action_index', 'source_buy_transaction_hash',
+        ],
+      }, {
         name: 'rh_bundle_redistribution_members_causality_check',
         includes: [
           'redistribution_source', 'rapid_sell_recipient', 'source_buy_block',
-          'source_buy_transaction_hash', 'transfer_block',
-          'transfer_transaction_hash', 'sell_block', 'sell_transaction_hash',
-          'sell_delay_ms', '300000',
+          'transfer_block', 'transfer_transaction_hash', 'sell_block',
+          'sell_transaction_hash', 'sell_delay_ms', '300000',
         ],
       }],
       indexes: [{
