@@ -37,6 +37,19 @@ function normalizeFomoLeaderboardProfile(item = {}, options = {}) {
   });
 }
 
+function normalizeFomoActivityProfile(item = {}, options = {}) {
+  if (!item.userId) return null;
+  return createProfileObservation({
+    platform: 'fomo',
+    platformUserId: item.userId,
+    username: item.userHandle,
+    displayName: item.displayName,
+    profilePictureUrl: item.profilePictureLink,
+    observedAt: options.observedAt,
+    source: options.source || 'trading_activity',
+  });
+}
+
 function normalizeFomoTradeIdentity(body = {}, options = {}) {
   const record = payload(body);
   const trade = record.trade || {};
@@ -62,4 +75,6 @@ function normalizeFomoTradeIdentity(body = {}, options = {}) {
   });
 }
 
-module.exports = { normalizeFomoLeaderboardProfile, normalizeFomoTradeIdentity };
+module.exports = {
+  normalizeFomoActivityProfile, normalizeFomoLeaderboardProfile, normalizeFomoTradeIdentity,
+};

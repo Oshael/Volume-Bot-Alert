@@ -878,7 +878,18 @@ module.exports = {
           process.env.FOMO_BROWSER_STALE_RECOVERY_GRACE_SECONDS, 30, 5, 300
         ) * 1000,
       },
-      profileDiscovery: { enabled: fomoProfileDiscoveryEnabled },
+      profileDiscovery: {
+        enabled: fomoProfileDiscoveryEnabled,
+        activityLimit: parseIntegerInRange(
+          process.env.FOMO_PROFILE_ACTIVITY_LIMIT, 50, 1, 50
+        ),
+        activityThreshold: parseIntegerInRange(
+          process.env.FOMO_PROFILE_ACTIVITY_THRESHOLD, 0, 0, 1000000000
+        ),
+        activityTradeLookupLimit: parseIntegerInRange(
+          process.env.FOMO_PROFILE_ACTIVITY_TRADE_LOOKUPS_PER_CYCLE, 5, 0, 10
+        ),
+      },
       follow: {
         enabled: fomoFollowEnabled,
         dryRun: fomoFollowDryRun,

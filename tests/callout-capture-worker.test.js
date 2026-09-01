@@ -275,6 +275,7 @@ describe('callout capture production persistence', () => {
     assert.equal(followOptions.enabled, true);
     assert.equal(followOptions.followEnabled, false);
     assert.equal(followOptions.discoveryEnabled, true);
+    assert.equal(followOptions.activityDiscoveryEnabled, true);
     assert.equal(followOptions.profilePersistence, profilePersistence);
     await worker.stop();
   });

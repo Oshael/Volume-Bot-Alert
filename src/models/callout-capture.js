@@ -224,6 +224,18 @@ USING expired
 WHERE event.dedupe_key = expired.dedupe_key
 RETURNING event.dedupe_key`;
 
+const FIND_PROFILES_WITHOUT_WALLET = `WITH requested(platform_user_id, ordinal) AS (
+  SELECT profile_id, ordinal
+  FROM unnest($2::text[]) WITH ORDINALITY AS input(profile_id, ordinal)
+)
+SELECT requested.platform_user_id
+FROM requested
+WHERE NOT EXISTS (
+  SELECT 1 FROM callout_wallet_observations AS wallet
+  WHERE wallet.platform = $1 AND wallet.platform_user_id = requested.platform_user_id
+)
+ORDER BY requested.ordinal`;
+
 async function persistCallouts(client, callouts) {
   if (!callouts.length) return;
   const serialized = JSON.stringify(callouts);
@@ -239,6 +251,17 @@ async function persistCallouts(client, callouts) {
 
 function createCalloutCaptureRepository(options = {}) {
   const database = options.database || db;
+  async function findProfilesWithoutWallet(platform, profileIds = []) {
+    const normalizedPlatform = String(platform || '').trim();
+    const ids = [...new Set((Array.isArray(profileIds) ? profileIds : [])
+      .map((value) => String(value || '').trim()).filter(Boolean))];
+    if (!normalizedPlatform) throw new TypeError('Profile platform is required');
+    if (ids.length > 100) throw new TypeError('Profile wallet lookup supports at most 100 IDs');
+    if (ids.length === 0) return [];
+    const result = await database.query(FIND_PROFILES_WITHOUT_WALLET, [normalizedPlatform, ids]);
+    return result.rows.map((row) => row.platform_user_id);
+  }
+
   async function loadCheckpoint(checkpointKey) {
     const key = String(checkpointKey || '').trim();
     if (!key) throw new TypeError('Capture checkpoint key is required');
@@ -292,13 +315,16 @@ function createCalloutCaptureRepository(options = {}) {
     });
   }
 
-  return Object.freeze({ commitCapture, loadCheckpoint, pruneExpiredCallouts });
+  return Object.freeze({
+    commitCapture, findProfilesWithoutWallet, loadCheckpoint, pruneExpiredCallouts,
+  });
 }
 
 module.exports = {
   createCalloutCaptureRepository,
   __private: {
-    ARCHIVE_UPSERT, CALLOUT_UPSERT, CHECKPOINT_UPSERT, PROFILE_UPSERT, PRUNE_EXPIRED_CALLOUTS,
+    ARCHIVE_UPSERT, CALLOUT_UPSERT, CHECKPOINT_UPSERT, FIND_PROFILES_WITHOUT_WALLET,
+    PROFILE_UPSERT, PRUNE_EXPIRED_CALLOUTS,
     WALLET_UPSERT,
     calloutRows, persistCallouts, profileRows, walletRows,
   },

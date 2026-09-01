@@ -1130,9 +1130,18 @@ disponíveis de 24h, 7d e 30d, cada um limitado por
 100), e persiste `userHandle`, nome, foto e as wallets Solana/EVM informadas pela
 plataforma. Essas wallets usam `relation_type=profile_wallet` e
 `source_type=platform_reported`: são vínculos declarados pelo perfil, não prova
-de uso em uma call. O checkpoint independente é `fomo:profile-discovery`. A
-sincronização continua funcionando com follow desabilitado ou com o circuito de
-follow pausado e nunca lê `followingIds` nem escreve `/follows` nesses casos.
+de uso em uma call. No mesmo ciclo, uma leitura do feed global recente (default
+50 itens, `FOMO_PROFILE_ACTIVITY_LIMIT`) descobre traders fora dos rankings e
+persiste ID, handle, nome e foto sem transformar trades em callouts nem adicionar
+o perfil à fila de follow. Para perfis ainda sem nenhuma wallet observada, até
+`FOMO_PROFILE_ACTIVITY_TRADE_LOOKUPS_PER_CYCLE` detalhes de trade (default 5,
+máximo 10) registram a wallet efetivamente usada como `relation_type=activity_wallet`
+e `source_type=activity_used`; o threshold do feed é configurável por
+`FOMO_PROFILE_ACTIVITY_THRESHOLD` (default 0). Falha nesse feed, em um lookup ou
+na persistência é isolada e não abre o circuito de follow. O checkpoint
+independente é `fomo:profile-discovery`. A sincronização continua funcionando com
+follow desabilitado ou com o circuito de follow pausado e nunca lê `followingIds`
+nem escreve `/follows` nesses casos.
 
 Follows externos usam a mesma fila de descoberta, exclusiva de `browser_cdp`.
 O follow é ativado com `FOMO_FOLLOW_ENABLED=true`, permanece read-only enquanto

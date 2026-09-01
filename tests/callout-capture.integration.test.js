@@ -40,6 +40,7 @@ describe('callout permanent archive persistence', () => {
       }
       const repository = createCalloutCaptureRepository({
         database: {
+          query: client.query.bind(client),
           getClient: async () => ({ query: client.query.bind(client), release() {} }),
         },
       });
@@ -48,6 +49,9 @@ describe('callout permanent archive persistence', () => {
         calloutEnvelopes: [initial], checkpointKey: 'integration:callouts',
         checkpointState: { sequence: 1 }, committedAt: CAPTURED_AT,
       });
+      assert.deepEqual(await repository.findProfilesWithoutWallet(
+        'pump', ['profile-integration'],
+      ), ['profile-integration']);
 
       const committed = await client.query(`SELECT
         (SELECT COUNT(*)::int FROM callout_events) AS raw_count,
@@ -128,6 +132,9 @@ describe('callout permanent archive persistence', () => {
         username: 'enriched-user', profile_picture_url: 'https://example.test/avatar.png',
         address_normalized: SOLANA,
       });
+      assert.deepEqual(await repository.findProfilesWithoutWallet(
+        'pump', ['profile-integration'],
+      ), []);
 
       const collision = {
         ...initial,

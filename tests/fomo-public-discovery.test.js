@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const { createFomoPublicClient } = require('../src/services/fomo-public-client');
 const {
+  normalizeFomoActivityProfile,
   normalizeFomoLeaderboardProfile,
   normalizeFomoTradeIdentity,
 } = require('../src/services/fomo-identity-normalizer');
@@ -93,6 +94,20 @@ test('Fomo leaderboard profile preserves reported Solana and chain-agnostic EVM 
   assert.equal(profile.wallets[1].sourceType, 'platform_reported');
   assert.equal(normalizeFomoLeaderboardProfile({ id: 'profile-2', evmAddress: 'bad' })
     .wallets[0].resolutionStatus, 'invalid_address');
+});
+
+test('Fomo trading activity exposes profile metadata without inventing a wallet', () => {
+  const profile = normalizeFomoActivityProfile({
+    userId: 'profile-1', userHandle: 'active-caller', displayName: 'Active Caller',
+    profilePictureLink: 'https://img.test/active.png',
+  }, { observedAt: '2026-08-25T02:00:00.000Z' });
+
+  assert.equal(profile.platformUserId, 'profile-1');
+  assert.equal(profile.username, 'active-caller');
+  assert.equal(profile.profilePictureUrl, 'https://img.test/active.png');
+  assert.equal(profile.source, 'trading_activity');
+  assert.deepEqual(profile.wallets, []);
+  assert.equal(normalizeFomoActivityProfile({}), null);
 });
 
 test('Fomo trade detail adds event-specific side-wallet evidence without replacing profile wallets', () => {

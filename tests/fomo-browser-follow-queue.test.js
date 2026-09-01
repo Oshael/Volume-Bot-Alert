@@ -168,9 +168,14 @@ test('Fomo follow queue discovers Top Profits candidates in dry-run without writ
   ]);
   assert.equal(fixture.calls.some((call) => call.path === '/follows'), false);
   assert.deepEqual(queue.getStatus(), {
-    enabled: true, followEnabled: true, dryRun: true, discoveryEnabled: true, running: false,
+    enabled: true, followEnabled: true, dryRun: true, discoveryEnabled: true,
+    activityDiscoveryEnabled: false, running: false,
     discovered: 3, planned: 2, followed: 0, alreadyFollowed: 1,
+    activityProfiles: 0, activityTradeLookups: 0, activityTradeLookupErrors: 0,
+    activityDiscoveryErrors: 0, lastActivityDiscoveryAt: null,
+    lastActivityDiscoveryErrorCode: null,
     persistedProfiles: 0, persistedWallets: 0, lastDiscoveryPersistedAt: null,
+    profilePersistenceErrors: 0, lastProfilePersistenceErrorCode: null,
     cycles: 1, intervalMs: 300_000, lastStartedAt: queue.getStatus().lastStartedAt,
     nextRunAt: null,
     errors: 0, paused: false, pausePersisted: false, pausedAt: null, lastErrorCode: null,
@@ -301,6 +306,79 @@ test('Fomo profile discovery persists rankings without reading or writing follow
   assert.equal(queue.getStatus().persistedProfiles, 2);
   assert.equal(queue.getStatus().persistedWallets, 3);
   assert.equal(queue.getStatus().planned, 0);
+});
+
+test('Fomo activity discovery persists profiles and only enriches missing wallets', async () => {
+  const calls = [];
+  const persistenceCalls = [];
+  const profilePersistence = {
+    findMissingWalletProfileIds: async (ids) => ids.filter((id) => id === B),
+    persist: async (entries, activity) => {
+      persistenceCalls.push({ entries, activity });
+      return { profiles: 2, wallets: 1, persistedAt: '2026-08-27T12:00:00.000Z' };
+    },
+  };
+  const queue = createFomoBrowserFollowQueue({
+    enabled: true, followEnabled: false, dryRun: true, profileIds: [],
+    activityDiscoveryEnabled: true, activityLimit: 50, activityThreshold: 0,
+    activityTradeLookupLimit: 5, profilePersistence,
+    createBrowserApi: async () => ({
+      currentUserId: USER,
+      async request(path) {
+        calls.push(path);
+        if (path.startsWith('/feed/tradingActivity')) return ok({ items: [
+          { userId: A, tradeId: 'trade-a', userHandle: 'a' },
+          { userId: B, tradeId: 'trade-b', userHandle: 'b' },
+          { userId: B, tradeId: 'trade-b-duplicate', userHandle: 'b' },
+        ] });
+        if (path === '/trades/trade-b') return ok({
+          userId: B, trade: { id: 'trade-b', userAddress: 'wallet-b', networkId: 4663 },
+        });
+        throw new Error(`Unexpected request ${path}`);
+      },
+      async close() {},
+    }),
+  });
+
+  queue.start();
+  await queue.stop();
+  assert.deepEqual(calls, [
+    '/feed/tradingActivity?limit=50&threshold=0', '/trades/trade-b',
+  ]);
+  assert.equal(persistenceCalls[0].entries.length, 0);
+  assert.equal(persistenceCalls[0].activity.activityItems.length, 3);
+  assert.equal(persistenceCalls[0].activity.tradeDetails.length, 1);
+  assert.equal(queue.getStatus().activityProfiles, 2);
+  assert.equal(queue.getStatus().activityTradeLookups, 1);
+  assert.equal(queue.getStatus().paused, false);
+});
+
+test('Fomo activity discovery failure neither pauses follow nor blocks leaderboard persistence', async () => {
+  const fixture = apiFixture({ following: [], leaderboard: [{ id: A }] });
+  const persisted = [];
+  const originalRequest = fixture.api.request;
+  fixture.api.request = async (path, init) => {
+    if (path.startsWith('/feed/tradingActivity')) return { status: 503, body: { statusCode: 503 } };
+    return originalRequest(path, init);
+  };
+  const queue = createFomoBrowserFollowQueue({
+    enabled: true, dryRun: true, discoveryEnabled: true, activityDiscoveryEnabled: true,
+    profileIds: [], profilePersistence: {
+      findMissingWalletProfileIds: async (ids) => ids,
+      persist: async (entries) => {
+        persisted.push(entries);
+        return { profiles: 1, wallets: 0, persistedAt: '2026-08-27T12:00:00.000Z' };
+      },
+    },
+    createBrowserApi: async () => fixture.api,
+  });
+
+  queue.start();
+  await queue.stop();
+  assert.equal(queue.getStatus().activityDiscoveryErrors, 1);
+  assert.equal(queue.getStatus().lastActivityDiscoveryErrorCode, 'FOMO_PROFILE_ACTIVITY_HTTP_503');
+  assert.equal(queue.getStatus().paused, false);
+  assert.equal(persisted[0].length, 3);
 });
 
 test('Fomo follow queue writes one allowlisted follow sequentially and idempotently', async () => {

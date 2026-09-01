@@ -178,6 +178,25 @@ describe('callout capture repository', () => {
     assert.notEqual(first, walletObservationKey(profile, { ...profile.wallets[0], sourceRecordId: 'trade-2' }));
   });
 
+  it('finds requested profiles without wallet evidence in input order', async () => {
+    const calls = [];
+    const repository = createCalloutCaptureRepository({
+      database: { query: async (sql, params) => {
+        calls.push({ sql, params });
+        return { rows: [{ platform_user_id: 'profile-b' }] };
+      } },
+    });
+
+    assert.deepEqual(await repository.findProfilesWithoutWallet(
+      'fomo', ['profile-a', 'profile-b', 'profile-a'],
+    ), ['profile-b']);
+    assert.equal(calls[0].sql, __private.FIND_PROFILES_WITHOUT_WALLET);
+    assert.deepEqual(calls[0].params, ['fomo', ['profile-a', 'profile-b']]);
+    assert.match(calls[0].sql, /WITH ORDINALITY/);
+    assert.match(calls[0].sql, /NOT EXISTS/);
+    assert.deepEqual(await repository.findProfilesWithoutWallet('fomo', []), []);
+  });
+
   it('prunes only expired callout rows through a bounded non-blocking query', async () => {
     const calls = [];
     const repository = createCalloutCaptureRepository({

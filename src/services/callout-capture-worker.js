@@ -116,6 +116,10 @@ function buildFomoFollowQueue(deps, config, repository, pauseNotifier) {
   return (deps.createFomoFollowQueue || createFomoBrowserFollowQueue)({
     ...config.follow, enabled: true, followEnabled,
     discoveryEnabled: config.follow?.discoveryEnabled === true || profileDiscoveryEnabled,
+    activityDiscoveryEnabled: profileDiscoveryEnabled,
+    activityLimit: config.profileDiscovery?.activityLimit,
+    activityThreshold: config.profileDiscovery?.activityThreshold,
+    activityTradeLookupLimit: config.profileDiscovery?.activityTradeLookupLimit,
     cdpEndpoint: config.cdpEndpoint, profilePersistence,
     stateStore: createFomoFollowStateStore(repository),
     pauseNotifier,

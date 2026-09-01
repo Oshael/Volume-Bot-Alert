@@ -344,6 +344,9 @@ describe('runtime worker groups config', () => {
     assert.equal(result.status, 0, result.stderr);
     const fomo = JSON.parse(result.stdout);
     assert.equal(fomo.profileDiscovery.enabled, true);
+    assert.equal(fomo.profileDiscovery.activityLimit, 50);
+    assert.equal(fomo.profileDiscovery.activityThreshold, 0);
+    assert.equal(fomo.profileDiscovery.activityTradeLookupLimit, 5);
     assert.equal(fomo.follow.enabled, false);
   });
 

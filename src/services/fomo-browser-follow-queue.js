@@ -20,6 +20,10 @@ function positiveInteger(value, fallback, max) {
   return Number.isSafeInteger(value) && value > 0 ? Math.min(value, max) : fallback;
 }
 
+function nonNegativeInteger(value, fallback, max) {
+  return Number.isSafeInteger(value) && value >= 0 ? Math.min(value, max) : fallback;
+}
+
 function responseStatus(response) {
   return Number(response?.body?.statusCode ?? response?.status) || 0;
 }
@@ -83,6 +87,43 @@ async function readFollowPlan(api, allowlistedIds, options = {}) {
     discovered: discoveredIds.length, discoveredProfiles,
     pending: profileIds.filter((id) => !following.has(id)),
     alreadyFollowed: profileIds.filter((id) => following.has(id)).length,
+  };
+}
+
+async function readActivityProfiles(api, persistence, options = {}) {
+  const response = await api.request(
+    `/feed/tradingActivity?limit=${options.limit}&threshold=${options.threshold}`,
+  );
+  const status = responseStatus(response);
+  if (status !== 200) {
+    const error = new Error('Fomo trading activity profile discovery failed');
+    error.code = `FOMO_PROFILE_ACTIVITY_HTTP_${status || 'UNKNOWN'}`;
+    throw error;
+  }
+  const result = responseObject(response);
+  const activityItems = Array.isArray(result?.items) ? result.items : [];
+  const byProfile = new Map();
+  for (const item of activityItems) {
+    const profileId = String(item?.userId || '').trim();
+    if (profileId && !byProfile.has(profileId)) byProfile.set(profileId, item);
+  }
+  const missingWalletIds = await persistence.findMissingWalletProfileIds([...byProfile.keys()]);
+  const tradeDetails = [];
+  let lookupErrors = 0;
+  const lookupCandidates = missingWalletIds.map((profileId) => ({
+    profileId, tradeId: String(byProfile.get(profileId)?.tradeId || '').trim(),
+  })).filter((entry) => entry.tradeId).slice(0, options.tradeLookupLimit);
+  for (const { tradeId } of lookupCandidates) {
+    try {
+      const tradeResponse = await api.request(`/trades/${encodeURIComponent(tradeId)}`);
+      if (responseStatus(tradeResponse) === 200) {
+        tradeDetails.push({ tradeId, body: tradeResponse.body });
+      } else lookupErrors += 1;
+    } catch { lookupErrors += 1; }
+  }
+  return {
+    activityItems, tradeDetails, lookupErrors, lookups: lookupCandidates.length,
+    profiles: byProfile.size,
   };
 }
 
@@ -262,6 +303,10 @@ function createFomoBrowserFollowQueue(options = {}) {
   const profileIds = normalizeProfileIds(options.profileIds);
   const discoveryEnabled = options.discoveryEnabled === true;
   const discoveryLimit = positiveInteger(options.discoveryLimit, 100, 100);
+  const activityDiscoveryEnabled = options.activityDiscoveryEnabled === true;
+  const activityLimit = positiveInteger(options.activityLimit, 50, 50);
+  const activityThreshold = nonNegativeInteger(options.activityThreshold, 0, 1_000_000_000);
+  const activityTradeLookupLimit = nonNegativeInteger(options.activityTradeLookupLimit, 5, 10);
   const maxFollows = positiveInteger(options.maxFollowsPerRun, 1, 10);
   const intervalMs = positiveInteger(options.intervalMs, 5 * 60_000, 24 * 60 * 60_000);
   const delayMs = positiveInteger(options.delayMs, 7_500, 60_000);
@@ -279,9 +324,13 @@ function createFomoBrowserFollowQueue(options = {}) {
   let work = null;
   let timer = null;
   const status = {
-    enabled, followEnabled, dryRun, discoveryEnabled, running: false, discovered: 0,
+    enabled, followEnabled, dryRun, discoveryEnabled, activityDiscoveryEnabled,
+    running: false, discovered: 0, activityProfiles: 0, activityTradeLookups: 0,
+    activityTradeLookupErrors: 0, activityDiscoveryErrors: 0,
+    lastActivityDiscoveryAt: null, lastActivityDiscoveryErrorCode: null,
     planned: 0, followed: 0, alreadyFollowed: 0,
     persistedProfiles: 0, persistedWallets: 0, lastDiscoveryPersistedAt: null,
+    profilePersistenceErrors: 0, lastProfilePersistenceErrorCode: null,
     cycles: 0, intervalMs, lastStartedAt: null, nextRunAt: null,
     errors: 0, paused: false, pausePersisted: false, pausedAt: null,
     lastErrorCode: null, alertSentAt: null, alertErrors: 0,
@@ -355,12 +404,42 @@ function createFomoBrowserFollowQueue(options = {}) {
     return !profilePersistence;
   }
 
-  async function persistDiscoveredProfiles(entries) {
+  async function persistDiscoveredProfiles(entries, activity) {
     if (!profilePersistence) return;
-    const persisted = await profilePersistence.persist(entries);
-    status.persistedProfiles = persisted.profiles;
-    status.persistedWallets = persisted.wallets;
-    status.lastDiscoveryPersistedAt = persisted.persistedAt;
+    try {
+      const persisted = await profilePersistence.persist(entries, activity);
+      status.persistedProfiles = persisted.profiles;
+      status.persistedWallets = persisted.wallets;
+      status.lastDiscoveryPersistedAt = persisted.persistedAt;
+      status.lastProfilePersistenceErrorCode = null;
+    } catch (error) {
+      status.profilePersistenceErrors += 1;
+      status.lastProfilePersistenceErrorCode = String(
+        error?.code || 'FOMO_PROFILE_PERSISTENCE_ERROR',
+      );
+    }
+  }
+
+  async function discoverActivityProfiles(api) {
+    if (!activityDiscoveryEnabled || !profilePersistence) return {};
+    try {
+      const activity = await readActivityProfiles(api, profilePersistence, {
+        limit: activityLimit, threshold: activityThreshold,
+        tradeLookupLimit: activityTradeLookupLimit,
+      });
+      status.activityProfiles = activity.profiles;
+      status.activityTradeLookups = activity.lookups;
+      status.activityTradeLookupErrors += activity.lookupErrors;
+      status.lastActivityDiscoveryAt = new Date().toISOString();
+      status.lastActivityDiscoveryErrorCode = null;
+      return activity;
+    } catch (error) {
+      status.activityDiscoveryErrors += 1;
+      status.lastActivityDiscoveryErrorCode = String(
+        error?.code || 'FOMO_PROFILE_ACTIVITY_DISCOVERY_ERROR',
+      );
+      return {};
+    }
   }
 
   async function handleRunError(error) {
@@ -384,7 +463,8 @@ function createFomoBrowserFollowQueue(options = {}) {
       status.discovered = plan.discovered;
       status.alreadyFollowed = plan.alreadyFollowed;
       status.planned = plan.pending.length;
-      await persistDiscoveredProfiles(plan.discoveredProfiles);
+      const activity = await discoverActivityProfiles(api);
+      await persistDiscoveredProfiles(plan.discoveredProfiles, activity);
       if (!followEnabled || status.paused || dryRun) return;
       await writePending(api, plan.userId, plan.pending);
     } catch (error) {
@@ -440,5 +520,6 @@ module.exports = {
   createFomoBrowserFollowQueue,
   leaderboardProfileIds,
   normalizeProfileIds,
+  readActivityProfiles,
   responseStatus,
 };
