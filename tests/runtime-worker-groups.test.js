@@ -613,6 +613,9 @@ describe('runtime worker groups config', () => {
     assert.match(env, /ROBINHOOD_FIRST_BUY_SEED_RUN_ID=REPLACE_WITH_COMPLETED_RUN_ID/);
     assert.match(env, /ROBINHOOD_SNIPER_SHADOW_ENABLED=true/);
     assert.match(env, /ROBINHOOD_FRESH_WALLET_LIVE_ENABLED=false/);
+    assert.match(env, /ROBINHOOD_BUNDLE_REDISTRIBUTION_LIVE_ENABLED=false/);
+    assert.match(server, /ROBINHOOD_BUNDLE_REDISTRIBUTION_LIVE_LEASE_KEY/);
+    assert.match(server, /robinhoodBundleRedistributionLiveWorker\.getStatus\(\)/);
     assert.match(server, /ROBINHOOD_FRESH_WALLET_LIVE_LEASE_KEY/);
     assert.match(server, /robinhoodFreshWalletLiveWorker\.getStatus\(\)/);
     assert.match(env, /ROBINHOOD_INSIDER_SHADOW_ENABLED=false/);
@@ -1225,6 +1228,22 @@ describe('runtime worker groups config', () => {
       enabled: true, intervalMs: 1000, leaseMs: 900_000, retryMs: 15_000,
       maxRetryMs: 3_600_000, batchBlocks: 100, timeoutMs: 300_000,
     }));
+  });
+
+  it('keeps PostgreSQL-only redistribution shadow opt-in and bounded', () => {
+    withEnv({ ROBINHOOD_BUNDLE_REDISTRIBUTION_LIVE_ENABLED: 'true',
+      ROBINHOOD_BUNDLE_REDISTRIBUTION_LIVE_LEASE_MS: '1',
+      ROBINHOOD_BUNDLE_REDISTRIBUTION_LIVE_BATCH_SIZE: '999',
+      ROBINHOOD_BUNDLE_REDISTRIBUTION_LIVE_CONCURRENCY: '99',
+      ROBINHOOD_BUNDLE_REDISTRIBUTION_LIVE_STATEMENT_TIMEOUT_MS: '9999999',
+    }, (config) => assert.deepEqual(config.robinhoodBundleRedistributionLiveWorker, {
+      enabled: true, intervalMs: 1000, leaseMs: 10_000, retryMs: 15_000,
+      maxRetryMs: 3_600_000, batchSize: 100, concurrency: 4,
+      statementTimeoutMs: 900_000,
+    }));
+    withEnv({ ROBINHOOD_BUNDLE_REDISTRIBUTION_LIVE_ENABLED: undefined }, (config) => {
+      assert.equal(config.robinhoodBundleRedistributionLiveWorker.enabled, false);
+    });
   });
 
   it('keeps FRESH wallet live shadow opt-in with bounded isolation controls', () => {

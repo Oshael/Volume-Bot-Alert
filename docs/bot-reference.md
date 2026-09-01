@@ -3189,8 +3189,12 @@ ajustável com `--lead-blocks=100..100000`. O comando usa somente PostgreSQL, n�
 varre histórico e pode ser repetido com segurança. O worker shadow PostgreSQL-only
 consome a fila em lotes e concorrência limitados, adia tokens cujas frontiers ainda
 não estejam prontas e publica snapshot + conclusão da versão na mesma transação.
-Ele ainda não está ligado ao runtime/configuração. Esta família não terá backfill;
-a ativação live definirá o início da observação shadow.
+No grupo `robinhood-wallet-classification`, habilite-o explicitamente com
+`ROBINHOOD_BUNDLE_REDISTRIBUTION_LIVE_ENABLED=true`; batch, concorrência, lease,
+retry e statement timeout têm knobs próprios documentados nos env examples. O
+runtime usa lease distribuído, expõe health telemetry e encerra o listener no
+shutdown. Esta família não terá backfill; a ativação live definirá o início da
+observação shadow.
 
 Execute `npm run robinhood:wallet-transfer-retention-plan --
 --projection-version=VERSAO --limit=10` para listar candidatos antigos. O limite
