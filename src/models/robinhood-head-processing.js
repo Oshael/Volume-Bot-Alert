@@ -73,6 +73,41 @@ WHERE capture.chain = claimable.chain
   AND capture.log_index = claimable.log_index
 RETURNING capture.*`;
 
+const V4_CONTINUATION_CLAIM_SQL = `WITH first_v4_by_pool AS MATERIALIZED (
+  SELECT DISTINCT ON (market_key)
+         market_key, transaction_hash, log_index
+  FROM robinhood_head_captures
+  WHERE chain = '${CHAIN}'
+    AND stream = 'market'
+    AND protocol = 'uniswap-v4'
+    AND market_key = ANY($4::text[])
+    AND processing_status IN ('pending', 'leased', 'blocked')
+  ORDER BY market_key, block_number, transaction_index, log_index
+), claimable AS (
+  SELECT capture.chain, capture.transaction_hash, capture.log_index
+  FROM first_v4_by_pool first_v4
+  INNER JOIN robinhood_head_captures capture
+    ON capture.chain = '${CHAIN}'
+   AND capture.transaction_hash = first_v4.transaction_hash
+   AND capture.log_index = first_v4.log_index
+  WHERE capture.processing_status = 'pending'
+    AND capture.next_attempt_at <= NOW()
+  ORDER BY capture.block_number, capture.transaction_index, capture.log_index
+  LIMIT $2
+  FOR UPDATE OF capture SKIP LOCKED
+)
+UPDATE robinhood_head_captures capture
+SET processing_status = 'leased',
+    lease_owner = $1,
+    lease_until = NOW() + ($3::bigint * INTERVAL '1 millisecond'),
+    attempt_count = capture.attempt_count + 1,
+    updated_at = NOW()
+FROM claimable
+WHERE capture.chain = claimable.chain
+  AND capture.transaction_hash = claimable.transaction_hash
+  AND capture.log_index = claimable.log_index
+RETURNING capture.*`;
+
 function requireOwner(value) {
   const owner = String(value || '').trim();
   if (!owner || owner.length > 128) throw new Error('processing owner is required');
@@ -213,6 +248,23 @@ function createRobinhoodHeadProcessingRepository(options = {}) {
        RETURNING capture.*`,
         [owner, limit, leaseMs, stream]
       );
+    return result.rows.sort(compareCaptureOrder);
+  }
+
+  // Claims only the next V4 capture for pools whose previous capture was just
+  // committed and settled by this runner. Each call returns at most one row per
+  // pool, so the runner must persist a round before requesting another one.
+  async function claimV4Continuations(input = {}) {
+    const owner = requireOwner(input.owner);
+    const limit = requirePositiveInt(input.limit, 'limit');
+    const leaseMs = requirePositiveInt(input.leaseMs, 'leaseMs');
+    const marketKeys = [...new Set((Array.isArray(input.marketKeys) ? input.marketKeys : [])
+      .map((value) => String(value || '').trim().toLowerCase())
+      .filter(Boolean))];
+    if (!marketKeys.length) return [];
+    const result = await database.query(
+      V4_CONTINUATION_CLAIM_SQL, [owner, Math.min(limit, marketKeys.length), leaseMs, marketKeys]
+    );
     return result.rows.sort(compareCaptureOrder);
   }
 
@@ -504,6 +556,7 @@ function createRobinhoodHeadProcessingRepository(options = {}) {
 
   return Object.freeze({
     claimCaptures,
+    claimV4Continuations,
     settleClaims,
     reclaimExpiredLeases,
     getOldestActiveCapture,

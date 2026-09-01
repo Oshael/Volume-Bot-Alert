@@ -21,6 +21,7 @@ const DEFAULT_RETENTION_MS = 86_400_000;
 const DEFAULT_MAX_ATTEMPTS = 5;
 const DEFAULT_BASE_BACKOFF_MS = 1_000;
 const DEFAULT_MAX_BACKOFF_MS = 300_000;
+const DEFAULT_V4_CONTINUATION_ROUNDS = 8;
 const ISOLATABLE_COMMIT_ERRORS = Object.freeze([
   'V4 liquidity range update conflicted or became negative',
 ]);
@@ -36,6 +37,13 @@ function backoffFor(attempt, baseMs, maxMs) {
 
 function commitErrorMessage(error) {
   return String(error?.message || error).slice(0, 200);
+}
+
+function normalizeV4ContinuationRounds(value) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed)
+    ? Math.max(0, Math.min(parsed, 100))
+    : DEFAULT_V4_CONTINUATION_ROUNDS;
 }
 
 function isIsolatableCommitError(error) {
@@ -179,6 +187,7 @@ function createRobinhoodProcessingRunner(deps = {}) {
   const maxAttempts = Number(options.maxAttempts) || DEFAULT_MAX_ATTEMPTS;
   const baseBackoffMs = Number(options.baseBackoffMs) || DEFAULT_BASE_BACKOFF_MS;
   const maxBackoffMs = Number(options.maxBackoffMs) || DEFAULT_MAX_BACKOFF_MS;
+  const v4ContinuationRounds = normalizeV4ContinuationRounds(options.v4ContinuationRounds);
   const emitOutbox = options.emitOutbox === true;
   const logger = deps.logger || console;
   const deadPoolGuardConfig = options.deadPoolGuard || config.robinhoodDeadPoolGuard || {};
@@ -296,25 +305,8 @@ function createRobinhoodProcessingRunner(deps = {}) {
     }
   }
 
-  async function runOnce() {
-    const tickStartedAt = Date.now();
-    let phaseStartedAt = tickStartedAt;
-    const reclaimed = await repository.reclaimExpiredLeases();
-    const reclaimMs = Date.now() - phaseStartedAt;
-    phaseStartedAt = Date.now();
-    const rows = await repository.claimCaptures({ owner, limit: batchSize, leaseMs, stream: 'market' });
-    const claimMs = Date.now() - phaseStartedAt;
-    if (!rows.length) {
-      const totalMs = Date.now() - tickStartedAt;
-      return {
-        reclaimed, claimed: 0, processed: 0, rejected: 0, retried: 0, blocked: 0,
-        timing: { totalMs, reclaimMs, claimMs, prepareMs: 0, shadowMs: 0,
-          frontierMs: 0, persistMs: 0, settleMs: 0, claimedPerSecond: 0,
-          fdvCacheHits: 0, fdvCacheMisses: 0, fdvCacheSize: fdvReferenceCache.size },
-      };
-    }
-
-    phaseStartedAt = Date.now();
+  async function processClaimedRows(rows) {
+    let phaseStartedAt = Date.now();
     const buckets = { persist: [], rejected: [] };
     const decodedRows = rows.flatMap((row) => {
       const decoded = decode(row, buckets);
@@ -367,14 +359,84 @@ function createRobinhoodProcessingRunner(deps = {}) {
       processed, rejected: buckets.rejected, retry,
     });
     const settleMs = Date.now() - phaseStartedAt;
-    const totalMs = Date.now() - tickStartedAt;
+    const settlementComplete = settlement.processed === processed.length
+      && settlement.rejected === buckets.rejected.length;
+    const failed = new Set(retry.map((item) => `${item.transactionHash}:${item.logIndex}`));
+    const continuationMarketKeys = settlementComplete ? [...new Set(rows
+      .filter((row) => row.protocol === 'uniswap-v4'
+        && row.market_key && !failed.has(`${row.transaction_hash}:${row.log_index}`))
+      .map((row) => row.market_key))] : [];
     return {
-      reclaimed, claimed: rows.length, ...settlement, shadowAudit,
+      claimed: rows.length, ...settlement, shadowAudit, continuationMarketKeys,
       timing: {
-        totalMs, reclaimMs, claimMs, prepareMs, shadowMs, frontierMs, persistMs, settleMs,
-        claimedPerSecond: totalMs > 0 ? Math.round((rows.length * 1000) / totalMs) : rows.length,
+        prepareMs, shadowMs, frontierMs, persistMs, settleMs,
         fdvCacheHits: batchState.fdvCacheHits,
         fdvCacheMisses: batchState.fdvCacheMisses,
+      },
+    };
+  }
+
+  function mergeShadowAudit(current, next) {
+    if (!next) return current;
+    if (!current) return next;
+    const merged = { ...current };
+    for (const field of ['attempted', 'compared', 'matched', 'mismatched', 'missing', 'errors']) {
+      merged[field] = Number(current[field] || 0) + Number(next[field] || 0);
+    }
+    merged.lastError = next.lastError || current.lastError || null;
+    merged.samples = [...(current.samples || []), ...(next.samples || [])].slice(0, 20);
+    return merged;
+  }
+
+  async function runOnce() {
+    const tickStartedAt = Date.now();
+    let phaseStartedAt = tickStartedAt;
+    const reclaimed = await repository.reclaimExpiredLeases();
+    const timing = {
+      reclaimMs: Date.now() - phaseStartedAt,
+      claimMs: 0, prepareMs: 0, shadowMs: 0, frontierMs: 0, persistMs: 0,
+      settleMs: 0, fdvCacheHits: 0, fdvCacheMisses: 0,
+    };
+    phaseStartedAt = Date.now();
+    let rows = await repository.claimCaptures({ owner, limit: batchSize, leaseMs, stream: 'market' });
+    timing.claimMs += Date.now() - phaseStartedAt;
+    const totals = {
+      claimed: 0, processed: 0, rejected: 0, retried: 0, blocked: 0,
+      continuationRounds: 0, continuationClaimed: 0,
+    };
+    let shadowAudit = null;
+
+    while (rows.length) {
+      const round = await processClaimedRows(rows);
+      for (const field of ['claimed', 'processed', 'rejected', 'retried', 'blocked']) {
+        totals[field] += Number(round[field] || 0);
+      }
+      for (const field of [
+        'prepareMs', 'shadowMs', 'frontierMs', 'persistMs', 'settleMs',
+        'fdvCacheHits', 'fdvCacheMisses',
+      ]) timing[field] += Number(round.timing[field] || 0);
+      shadowAudit = mergeShadowAudit(shadowAudit, round.shadowAudit);
+      if (totals.continuationRounds >= v4ContinuationRounds
+          || !round.continuationMarketKeys.length
+          || typeof repository.claimV4Continuations !== 'function') break;
+      phaseStartedAt = Date.now();
+      rows = await repository.claimV4Continuations({
+        owner, marketKeys: round.continuationMarketKeys,
+        limit: Math.min(batchSize, round.continuationMarketKeys.length), leaseMs,
+      });
+      timing.claimMs += Date.now() - phaseStartedAt;
+      if (!rows.length) break;
+      totals.continuationRounds += 1;
+      totals.continuationClaimed += rows.length;
+    }
+
+    const totalMs = Date.now() - tickStartedAt;
+    return {
+      reclaimed, ...totals, shadowAudit,
+      timing: {
+        totalMs, ...timing,
+        claimedPerSecond: totalMs > 0
+          ? Math.round((totals.claimed * 1000) / totalMs) : totals.claimed,
         fdvCacheSize: fdvReferenceCache.size,
       },
     };
@@ -384,7 +446,8 @@ function createRobinhoodProcessingRunner(deps = {}) {
 }
 
 module.exports = {
+  DEFAULT_V4_CONTINUATION_ROUNDS,
   createRobinhoodProcessingRunner,
   backoffFor,
-  __private: { createFdvReferenceCache },
+  __private: { createFdvReferenceCache, normalizeV4ContinuationRounds },
 };

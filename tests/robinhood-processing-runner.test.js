@@ -80,7 +80,7 @@ function v4Row(extra) {
 
 function fakeRepo(rows) {
   const batches = Array.isArray(rows[0]) ? rows : [rows];
-  const calls = { reclaimed: 0, settle: null, claims: 0, frontier: 0 };
+  const calls = { reclaimed: 0, settle: null, settlements: [], claims: 0, frontier: 0 };
   return {
     _calls: calls,
     reclaimExpiredLeases: async () => { calls.reclaimed += 1; return 0; },
@@ -91,6 +91,7 @@ function fakeRepo(rows) {
     },
     settleClaims: async (args) => {
       calls.settle = args;
+      calls.settlements.push(args);
       return { processed: args.processed.length, rejected: args.rejected.length, retried: args.retry.length, blocked: 0 };
     },
   };
@@ -185,6 +186,37 @@ describe('robinhood processing runner', () => {
     assert.deepEqual(persistence._calls.rangesFor, []);
     assert.deepEqual(persistence._calls.referencesFor, []);
     assert.equal(result.processed, 2);
+  });
+
+  it('drains a hot V4 pool in sequential rounds with a fresh ledger read per commit', async () => {
+    const first = v4Row({ n: '1', block_number: '100', log_index: '1' });
+    const second = v4Row({ n: '2', block_number: '101', log_index: '2' });
+    const repository = fakeRepo([first]);
+    let continuationCalls = 0;
+    repository.claimV4Continuations = async ({ marketKeys }) => {
+      assert.deepEqual(marketKeys, [first.market_key]);
+      continuationCalls += 1;
+      return continuationCalls === 1 ? [second] : [];
+    };
+    const persistence = fakePersistence({
+      ranges: [{ tick_lower: -60, tick_upper: 60, liquidity_gross: ONE.toString() }],
+    });
+    const theRunner = createRobinhoodProcessingRunner({
+      repository, persistence, logger: { error: () => {} },
+      options: { owner: 'test-worker', v4ContinuationRounds: 2 },
+    });
+
+    const result = await theRunner.runOnce();
+
+    assert.deepEqual(persistence._calls.commit.map(({ entries }) => (
+      entries.map((entry) => entry.log.transactionHash)
+    )), [[first.transaction_hash], [second.transaction_hash]]);
+    assert.deepEqual(persistence._calls.rangeBatches, [[POOL_ID], [POOL_ID]]);
+    assert.equal(repository._calls.settlements.length, 2);
+    assert.deepEqual(
+      [result.claimed, result.processed, result.continuationRounds, result.continuationClaimed],
+      [2, 2, 1, 1]
+    );
   });
 
   it('reuses FDV references until TTL expiry while guarding every observation', async () => {

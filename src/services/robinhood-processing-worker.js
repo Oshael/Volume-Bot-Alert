@@ -38,6 +38,8 @@ let status = {
   lastRetried: 0,
   lastBlocked: 0,
   lastReclaimed: 0,
+  lastV4ContinuationRounds: 0,
+  lastV4ContinuationClaimed: 0,
   lastTiming: null,
   totalProcessed: 0,
   totalRejected: 0,
@@ -74,6 +76,7 @@ function normalizeOptions(options = {}) {
       maxAttempts: options.maxAttempts,
       baseBackoffMs: options.baseBackoffMs,
       maxBackoffMs: options.maxBackoffMs,
+      v4ContinuationRounds: boundedInteger(options.v4ContinuationRounds, 8, 0, 100),
       emitOutbox: options.emitOutbox,
     },
     pruneLimit: boundedInteger(options.pruneLimit, 5000, 100, 50_000),
@@ -133,6 +136,8 @@ async function runOnce(normalized) {
   status.lastRetried = result.retried;
   status.lastBlocked = result.blocked;
   status.lastReclaimed = result.reclaimed;
+  status.lastV4ContinuationRounds = result.continuationRounds || 0;
+  status.lastV4ContinuationClaimed = result.continuationClaimed || 0;
   status.lastTiming = result.timing || null;
   status.totalProcessed += result.processed;
   status.totalRejected += result.rejected;

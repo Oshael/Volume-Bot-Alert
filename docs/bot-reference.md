@@ -411,6 +411,13 @@ não terminal de cada pool pode ser leased. Um retry em backoff, lease em voo ou
 impede swaps e deltas posteriores daquela pool de ultrapassá-lo, enquanto outras pools e os
 protocolos V2/V3 continuam fluindo. Assim o ledger materializado e as observações V4 preservam a
 ordem da chain; recuperar o primeiro dead-letter libera a pool a partir do evento seguinte.
+Depois do commit e settlement desse primeiro capture, o mesmo tick pode reclamar o próximo
+capture de cada pool V4 que avançou, em até
+`ROBINHOOD_PROCESSING_V4_CONTINUATION_ROUNDS` rounds adicionais (8 por default,
+0–100). Cada round recarrega o ledger materializado e commita antes de reclamar o seguinte;
+portanto acelera pools quentes sem valorar vários eventos contra o mesmo snapshot nem permitir
+overtake de retry, lease ou dead-letter. `lastV4ContinuationRounds` e
+`lastV4ContinuationClaimed` expõem o drain efetivamente usado na lease do processing.
 
 `npm run robinhood:processing-blocked-requeue` faz apenas preview indexado do primeiro batch de
 dead-letters cujo `last_error` é o conflito de range V4. A escrita exige o worker parado e os três

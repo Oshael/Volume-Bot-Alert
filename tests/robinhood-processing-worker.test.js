@@ -5,6 +5,7 @@ const worker = require('../src/services/robinhood-processing-worker');
 
 const RESULT = {
   reclaimed: 1, claimed: 4, processed: 3, rejected: 1, retried: 0, blocked: 0,
+  continuationRounds: 2, continuationClaimed: 2,
   timing: { totalMs: 40, prepareMs: 10, persistMs: 20, claimedPerSecond: 100 },
   shadowAudit: { compared: 3, matched: 2, mismatched: 1, missing: 0, errors: 0 },
 };
@@ -36,6 +37,10 @@ describe('robinhood processing worker', () => {
     assert.equal(bounded.intervalMs, 100); // clamped up to the floor
     assert.equal(bounded.pruneIntervalMs, 30_000); // clamped up to the floor
     assert.equal(bounded.pruneLimit, 50_000);
+    assert.equal(bounded.runner.v4ContinuationRounds, 8);
+    assert.equal(worker.__private.normalizeOptions({
+      v4ContinuationRounds: 999,
+    }).runner.v4ContinuationRounds, 100);
     assert.equal(bounded.enabled, true);
     assert.equal(worker.__private.normalizeOptions({ enabled: false }).enabled, false);
   });
@@ -55,6 +60,8 @@ describe('robinhood processing worker', () => {
     const status = worker.getStatus();
     assert.equal(status.lastProcessed, 3);
     assert.equal(status.totalProcessed, 3);
+    assert.equal(status.lastV4ContinuationRounds, 2);
+    assert.equal(status.lastV4ContinuationClaimed, 2);
     assert.deepEqual(status.lastTiming, RESULT.timing);
     assert.equal(status.totalShadowCompared, 3);
     assert.equal(status.discovery.lastClaimed, 2);
