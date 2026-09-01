@@ -8,6 +8,7 @@ const {
   createRobinhoodHeadProcessingRepository,
 } = require('../src/models/robinhood-head-processing');
 const stage103 = require('../src/utils/db-init-stage103');
+const stage186 = require('../src/utils/db-init-stage186');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const BLOCK_HASH = `0x${'b'.repeat(64)}`;
@@ -58,6 +59,7 @@ describe('Robinhood head processing repository integration', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
     await stage103.init({ closePool: false });
+    await stage186.init({ closePool: false });
   });
 
   beforeEach(async () => {
@@ -74,7 +76,9 @@ describe('Robinhood head processing repository integration', () => {
     await seedPending({ block: 100 });
     await seedPending({ block: 101 });
 
-    const claimed = await repository.claimCaptures({ owner: 'worker-a', limit: 2, leaseMs: LEASE_MS });
+    const claimed = await repository.claimCaptures({
+      owner: 'worker-a', limit: 2, leaseMs: LEASE_MS, stream: 'market',
+    });
 
     assert.deepEqual(claimed.map((row) => Number(row.block_number)), [100, 101]);
     const first = await statusOf({ transactionHash: claimed[0].transaction_hash, logIndex: 0 });
@@ -103,7 +107,7 @@ describe('Robinhood head processing repository integration', () => {
     await seedPending({ block: 103 });
 
     const independent = await repository.claimCaptures({
-      owner: 'worker-a', limit: 10, leaseMs: LEASE_MS,
+      owner: 'worker-a', limit: 10, leaseMs: LEASE_MS, stream: 'market',
     });
     assert.deepEqual(independent.map((row) => Number(row.block_number)), [102, 103]);
     assert.equal((await statusOf(laterSamePool)).processing_status, 'pending');
@@ -114,7 +118,7 @@ describe('Robinhood head processing repository integration', () => {
       [stalled.transactionHash, stalled.logIndex]
     );
     const first = await repository.claimCaptures({
-      owner: 'worker-b', limit: 10, leaseMs: LEASE_MS,
+      owner: 'worker-b', limit: 10, leaseMs: LEASE_MS, stream: 'market',
     });
     assert.deepEqual(first.map((row) => Number(row.block_number)), [100]);
     await repository.settleClaims({
@@ -124,7 +128,7 @@ describe('Robinhood head processing repository integration', () => {
     assert.equal((await statusOf(stalled)).processing_status, 'blocked');
 
     const blocked = await repository.claimCaptures({
-      owner: 'worker-c', limit: 10, leaseMs: LEASE_MS,
+      owner: 'worker-c', limit: 10, leaseMs: LEASE_MS, stream: 'market',
     });
     assert.deepEqual(blocked, []);
     assert.equal((await statusOf(laterSamePool)).processing_status, 'pending');
@@ -134,14 +138,14 @@ describe('Robinhood head processing repository integration', () => {
       { requeued: 1, oldestBlock: '100', newestBlock: '100' }
     );
     const recovered = await repository.claimCaptures({
-      owner: 'worker-d', limit: 10, leaseMs: LEASE_MS,
+      owner: 'worker-d', limit: 10, leaseMs: LEASE_MS, stream: 'market',
     });
     assert.deepEqual(recovered.map((row) => Number(row.block_number)), [100]);
     await repository.settleClaims({
       owner: 'worker-d', retentionMs: RETENTION_MS, processed: [stalled],
     });
     const resumed = await repository.claimCaptures({
-      owner: 'worker-e', limit: 10, leaseMs: LEASE_MS,
+      owner: 'worker-e', limit: 10, leaseMs: LEASE_MS, stream: 'market',
     });
     assert.deepEqual(resumed.map((row) => Number(row.block_number)), [101]);
   });
@@ -155,6 +159,31 @@ describe('Robinhood head processing repository integration', () => {
 
     assert.deepEqual(first.map((row) => Number(row.block_number)), [100]);
     assert.deepEqual(second.map((row) => Number(row.block_number)), [101]);
+  });
+
+  it('claims disjoint ordered market batches for concurrent consumers', async () => {
+    await Promise.all(Array.from({ length: 20 }, (_, index) => (
+      seedPending({ block: 100 + index })
+    )));
+
+    const [first, second] = await Promise.all([
+      repository.claimCaptures({
+        owner: 'worker-a', limit: 5, leaseMs: LEASE_MS, stream: 'market',
+      }),
+      repository.claimCaptures({
+        owner: 'worker-b', limit: 5, leaseMs: LEASE_MS, stream: 'market',
+      }),
+    ]);
+
+    const identities = [...first, ...second]
+      .map((row) => `${row.transaction_hash}:${row.log_index}`);
+    assert.equal(first.length, 5);
+    assert.equal(second.length, 5);
+    assert.equal(new Set(identities).size, 10);
+    assert.deepEqual(first.map((row) => Number(row.block_number)).toSorted((a, b) => a - b),
+      first.map((row) => Number(row.block_number)));
+    assert.deepEqual(second.map((row) => Number(row.block_number)).toSorted((a, b) => a - b),
+      second.map((row) => Number(row.block_number)));
   });
 
   it('settles processed and rejected claims as terminal with retention', async () => {

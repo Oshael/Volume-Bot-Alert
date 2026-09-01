@@ -17,6 +17,62 @@ const PROCESSING_LEASE_KEY = 'robinhood-processing-worker';
 const BLOCKED_RECOVERY_ERROR = 'V4 liquidity range update conflicted or became negative';
 const BLOCKED_RECOVERY_LOCK_KEY = 'robinhood-processing-blocked-recovery';
 
+const MARKET_CLAIM_SQL = `WITH first_v4_by_pool AS MATERIALIZED (
+  SELECT DISTINCT ON (market_key)
+         market_key, transaction_hash, log_index
+  FROM robinhood_head_captures
+  WHERE chain = '${CHAIN}'
+    AND stream = 'market'
+    AND protocol = 'uniswap-v4'
+    AND processing_status IN ('pending', 'leased', 'blocked')
+  ORDER BY market_key, block_number, transaction_index, log_index
+), v4_claimable AS MATERIALIZED (
+  SELECT capture.chain, capture.transaction_hash, capture.log_index,
+         capture.block_number, capture.transaction_index
+  FROM first_v4_by_pool first_v4
+  INNER JOIN robinhood_head_captures capture
+    ON capture.chain = '${CHAIN}'
+   AND capture.transaction_hash = first_v4.transaction_hash
+   AND capture.log_index = first_v4.log_index
+  WHERE capture.processing_status = 'pending'
+    AND capture.next_attempt_at <= NOW()
+  ORDER BY capture.block_number, capture.transaction_index, capture.log_index
+  LIMIT $2
+  FOR UPDATE OF capture SKIP LOCKED
+), independent_claimable AS MATERIALIZED (
+  SELECT capture.chain, capture.transaction_hash, capture.log_index,
+         capture.block_number, capture.transaction_index
+  FROM robinhood_head_captures capture
+  WHERE capture.chain = '${CHAIN}'
+    AND capture.stream = 'market'
+    AND capture.protocol IS DISTINCT FROM 'uniswap-v4'
+    AND capture.processing_status = 'pending'
+    AND capture.next_attempt_at <= NOW()
+  ORDER BY capture.block_number, capture.transaction_index, capture.log_index
+  LIMIT $2
+  FOR UPDATE OF capture SKIP LOCKED
+), claimable AS (
+  SELECT candidate.chain, candidate.transaction_hash, candidate.log_index
+  FROM (
+    SELECT * FROM v4_claimable
+    UNION ALL
+    SELECT * FROM independent_claimable
+  ) candidate
+  ORDER BY candidate.block_number, candidate.transaction_index, candidate.log_index
+  LIMIT $2
+)
+UPDATE robinhood_head_captures capture
+SET processing_status = 'leased',
+    lease_owner = $1,
+    lease_until = NOW() + ($3::bigint * INTERVAL '1 millisecond'),
+    attempt_count = capture.attempt_count + 1,
+    updated_at = NOW()
+FROM claimable
+WHERE capture.chain = claimable.chain
+  AND capture.transaction_hash = claimable.transaction_hash
+  AND capture.log_index = claimable.log_index
+RETURNING capture.*`;
+
 function requireOwner(value) {
   const owner = String(value || '').trim();
   if (!owner || owner.length > 128) throw new Error('processing owner is required');
@@ -34,6 +90,16 @@ function optionalStream(value) {
   const stream = String(value).trim().toLowerCase();
   if (!STREAMS.has(stream)) throw new Error('stream must be discovery or market');
   return stream;
+}
+
+function compareCaptureOrder(left, right) {
+  for (const field of ['block_number', 'transaction_index', 'log_index']) {
+    const leftValue = BigInt(left[field]);
+    const rightValue = BigInt(right[field]);
+    if (leftValue < rightValue) return -1;
+    if (leftValue > rightValue) return 1;
+  }
+  return 0;
 }
 
 function optionalBlock(value, label = 'throughBlock') {
@@ -100,8 +166,10 @@ function createRobinhoodHeadProcessingRepository(options = {}) {
     const limit = requirePositiveInt(input.limit, 'limit');
     const leaseMs = requirePositiveInt(input.leaseMs, 'leaseMs');
     const stream = optionalStream(input.stream);
-    const result = await database.query(
-      `WITH first_v4_by_pool AS MATERIALIZED (
+    const result = stream === 'market'
+      ? await database.query(MARKET_CLAIM_SQL, [owner, limit, leaseMs])
+      : await database.query(
+        `WITH first_v4_by_pool AS MATERIALIZED (
          SELECT DISTINCT ON (market_key)
                 chain, market_key, transaction_hash, log_index
          FROM robinhood_head_captures
@@ -143,9 +211,9 @@ function createRobinhoodHeadProcessingRepository(options = {}) {
          AND capture.transaction_hash = claimable.transaction_hash
          AND capture.log_index = claimable.log_index
        RETURNING capture.*`,
-      [owner, limit, leaseMs, stream]
-    );
-    return result.rows;
+        [owner, limit, leaseMs, stream]
+      );
+    return result.rows.sort(compareCaptureOrder);
   }
 
   // Reschedules failed captures with backoff, or dead-letters them as `blocked`

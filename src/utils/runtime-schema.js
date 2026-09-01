@@ -5315,6 +5315,27 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage186-robinhood-market-claim-indexes',
+    name: 'Stage 186 Robinhood market claim indexes',
+    repair: 'node src/utils/db-init-stage186.js',
+    tables: [{
+      table: 'robinhood_head_captures',
+      indexes: [{
+        name: 'idx_rh_head_captures_v4_active_frontier',
+        includes: [
+          'market_key', 'block_number', 'transaction_index', 'log_index',
+          'transaction_hash', 'uniswap-v4', 'pending', 'leased', 'blocked',
+        ],
+      }, {
+        name: 'idx_rh_head_captures_market_independent_claim',
+        includes: [
+          'block_number', 'transaction_index', 'log_index', 'next_attempt_at',
+          'transaction_hash', 'uniswap-v4', 'pending',
+        ],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
@@ -5354,6 +5375,7 @@ const PROFILE_GROUP_KEYS = {
     'stage104-robinhood-derived-outbox',
     'stage107-robinhood-market-claim-index',
     'stage108-robinhood-blocked-frontier-index',
+    'stage186-robinhood-market-claim-indexes',
   ],
   runtime: SCHEMA_GROUPS.map((group) => group.key),
 };

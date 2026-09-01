@@ -390,11 +390,14 @@ cursor de captura. Poda a fila 1 dia após o terminal (`retention_eligible_at`).
 processamento independente do cursor de captura. A unit foi implantada em shadow, mas
 ficou pausada em `2026-08-05` até a correção online do índice de claim market: o plano
 vigente lia milhões de entradas do índice de reorg para reclamar lotes de 200. A Stage 107
-adiciona `idx_robinhood_head_captures_market_claim` com `CREATE INDEX CONCURRENTLY`, na
-ordem `(block_number, transaction_index, log_index, next_attempt_at)` e predicate parcial
-`pending + market`; o índice antigo permanece para discovery. O processing só deve ser
-retomado depois que `pg_index` confirmar `indisvalid/indisready` e `EXPLAIN (ANALYZE,
-BUFFERS)` provar que a claim usa esse índice sem sort/scan massivo.
+mantém o índice geral de claim market, enquanto a Stage 186 separa o hot path em dois índices
+parciais online: `idx_rh_head_captures_v4_active_frontier`, para obter o primeiro não terminal
+de cada `market_key` V4 sem sort externo, e
+`idx_rh_head_captures_market_independent_claim`, para V2/V3. A claim market bloqueia lotes
+limitados de cada ramo com `FOR UPDATE SKIP LOCKED`, une os candidatos em ordem on-chain e
+aplica o limite global; discovery preserva a consulta anterior. No deploy, execute
+`node src/utils/db-init-stage186.js` antes de reiniciar o processing e confirme os dois índices
+com `indisvalid/indisready`; o estágio remove e reconstrói índices concorrentes interrompidos.
 
 O isolamento de persistência mantém o batch saudável como caminho único. Se a materialização
 de ranges V4 retorna o erro determinístico de conflito/liquidez negativa, o runner bisecta o
