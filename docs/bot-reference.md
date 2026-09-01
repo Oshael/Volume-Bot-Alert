@@ -3181,8 +3181,13 @@ triggers já acumulam eventos posteriores. A promoção `active` só ocorre apó
 cursores de swaps e transfers atravessarem a frontier e fixa um checkpoint canônico
 PostgreSQL em ou depois dela; isso evita depender de um hash de bloco vazio que não
 foi persistido. Claims são limitados à ativação ativa, usam lease/version e retry
-idempotente. Ainda não há comando de ativação ou worker. Esta família não terá
-backfill; a ativação live definirá o início da observação shadow.
+idempotente. Rode `npm run robinhood:bundle-redistribution-activate` para inspeção
+read-only. Após revisar, rode `npm run robinhood:bundle-redistribution-activate --
+--apply`; a primeira execução reserva uma frontier 1.000 blocos à frente por padrão.
+Quando ambos os cursores a atravessarem, repita `--apply` para promovê-la. O lead é
+ajustável com `--lead-blocks=100..100000`. O comando usa somente PostgreSQL, não
+varre histórico e pode ser repetido com segurança. Ainda não há worker. Esta família
+não terá backfill; a ativação live definirá o início da observação shadow.
 
 Execute `npm run robinhood:wallet-transfer-retention-plan --
 --projection-version=VERSAO --limit=10` para listar candidatos antigos. O limite

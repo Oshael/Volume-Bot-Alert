@@ -120,10 +120,11 @@ function createRobinhoodBundleRedistributionControlPlane(options = {}) {
           RETURNING status, activation_at, activation_block,
             activation_checkpoint_block, activation_checkpoint_hash, activated_at`,
         [CHAIN, RULE_VERSION, EVIDENCE_VERSION, activationBlock.toString()]);
-        if (!rows[0]) throw new Error('redistribution activation changed concurrently');
-        current = activation(rows[0]);
+        current = activation(rows[0]) || await loadActivation(client, true);
+        if (!current) throw new Error('redistribution activation changed concurrently');
         await client.query('COMMIT');
-        return Object.freeze({ mode: 'apply', action: 'reserved', activation: current,
+        return Object.freeze({ mode: 'apply', action: rows[0] ? 'reserved' : 'none',
+          activation: current,
           frontiers, ready: false, reasons: ['frontiers_have_not_crossed_activation'] });
       }
       if (current.status !== 'planned' || !assessment.ready) {
