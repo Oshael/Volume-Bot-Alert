@@ -1599,7 +1599,10 @@ Uma segunda família BUNDLED, ainda sem política publicada, considera a
 redistribuição do próprio token por uma wallet compradora para múltiplos
 destinatários. Antes de fixar janelas, o auditor PostgreSQL-only mede launch até
 compra, compra até primeira distribuição, fan-out, cobertura aproximada da compra
-pelas primeiras arestas e quantos destinatários venderam depois. O primeiro
+pelas primeiras arestas, duração do fan-out, tempo até a primeira venda posterior
+e quantos destinatários venderam depois. A calibração também separa a latência de
+compra até distribuição entre clusters com menos de dois ou pelo menos dois
+destinatários vendedores. O primeiro
 levantamento usa somente a primeira aresta permanente estritamente em bloco
 posterior à compra e, portanto, é um limite inferior: não autoriza classificação,
 worker, backfill ou remoção do raw necessário para uma materialização exata.

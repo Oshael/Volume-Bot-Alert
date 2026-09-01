@@ -50,10 +50,48 @@ it('aggregates timing, recipient, seller and coverage calibration buckets', asyn
   assert.equal(report.clustersConfirmedByTwoSellers, 2);
   assert.equal(report.buckets.launchToBuy.gt_1m_lte_5m, 2);
   assert.equal(report.buckets.buyToFirstDistribution.gt_5m_lte_30m, 2);
+  assert.equal(report.buckets.firstDistributionSpan.lte_1m, 2);
+  assert.equal(report.buckets.firstDistributionToFirstRecipientSell.gt_5m_lte_30m, 2);
   assert.equal(report.buckets.recipientCounts.three_to_five, 1);
   assert.equal(report.buckets.sellingRecipients.all, 1);
   assert.equal(report.buckets.firstDistributionCoverageBps.gt_100pct, 1);
+  assert.equal(
+    report.crossTabs.buyToFirstDistributionBySellerConfirmation.twoPlusSellers
+      .gt_5m_lte_30m,
+    2
+  );
+  assert.deepEqual(
+    report.crossTabs.buyToFirstDistributionBySellerConfirmation.fewerThanTwoSellers,
+    {}
+  );
   assert.equal(messages.length, 1);
+});
+
+it('omits sell latency when no recipient sold and separates seller confirmation', async () => {
+  const report = await command.main([], {
+    options: {
+      pageSize: 1, maxPages: 1, afterToken: null,
+      statementTimeoutMs: 1000, sampleLimit: 0,
+    },
+    source: {
+      loadPage: async () => ({
+        tokens: [`0x${'1'.repeat(40)}`],
+        clusters: [cluster({ sellingRecipientCount: 0, firstRecipientSellTime: null })],
+        nextToken: `0x${'1'.repeat(40)}`, exhausted: true,
+      }),
+    },
+    logger: { log: () => {}, error: () => {} },
+  });
+  assert.deepEqual(report.buckets.firstDistributionToFirstRecipientSell, {});
+  assert.equal(
+    report.crossTabs.buyToFirstDistributionBySellerConfirmation.fewerThanTwoSellers
+      .gt_5m_lte_30m,
+    1
+  );
+  assert.deepEqual(
+    report.crossTabs.buyToFirstDistributionBySellerConfirmation.twoPlusSellers,
+    {}
+  );
 });
 
 it('rejects mutation-like flags and bounds page sizes', () => {

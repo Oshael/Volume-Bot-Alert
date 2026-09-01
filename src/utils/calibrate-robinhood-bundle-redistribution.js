@@ -79,8 +79,11 @@ function createAccumulator() {
   return {
     clusters: 0, tokens: new Set(), sources: new Set(), recipientLinks: 0,
     sellingRecipientLinks: 0, confirmedByTwoSellers: 0,
-    launchToBuy: {}, buyToDistribution: {}, recipientCounts: {},
-    sellingRecipients: {}, firstDistributionCoverage: {}, samples: [],
+    launchToBuy: {}, buyToDistribution: {}, distributionSpan: {},
+    distributionToFirstSell: {}, buyToDistributionBySellerConfirmation: {
+      fewerThanTwoSellers: {}, twoPlusSellers: {},
+    },
+    recipientCounts: {}, sellingRecipients: {}, firstDistributionCoverage: {}, samples: [],
   };
 }
 
@@ -94,9 +97,24 @@ function addCluster(result, cluster, sampleLimit) {
   increment(result.launchToBuy, durationBucket(
     new Date(cluster.buyTime) - new Date(cluster.launchTime)
   ));
-  increment(result.buyToDistribution, durationBucket(
+  const buyToDistributionBucket = durationBucket(
     new Date(cluster.firstTransferTime) - new Date(cluster.buyTime)
+  );
+  increment(result.buyToDistribution, buyToDistributionBucket);
+  increment(
+    cluster.sellingRecipientCount >= 2
+      ? result.buyToDistributionBySellerConfirmation.twoPlusSellers
+      : result.buyToDistributionBySellerConfirmation.fewerThanTwoSellers,
+    buyToDistributionBucket
+  );
+  increment(result.distributionSpan, durationBucket(
+    new Date(cluster.lastFirstTransferTime) - new Date(cluster.firstTransferTime)
   ));
+  if (cluster.firstRecipientSellTime) {
+    increment(result.distributionToFirstSell, durationBucket(
+      new Date(cluster.firstRecipientSellTime) - new Date(cluster.firstTransferTime)
+    ));
+  }
   increment(result.recipientCounts, recipientBucket(cluster.recipientCount));
   increment(result.sellingRecipients, sellingBucket(cluster));
   increment(result.firstDistributionCoverage, coverageBucket(
@@ -113,8 +131,14 @@ function reportAccumulator(result) {
     clustersConfirmedByTwoSellers: result.confirmedByTwoSellers,
     buckets: {
       launchToBuy: result.launchToBuy, buyToFirstDistribution: result.buyToDistribution,
+      firstDistributionSpan: result.distributionSpan,
+      firstDistributionToFirstRecipientSell: result.distributionToFirstSell,
       recipientCounts: result.recipientCounts, sellingRecipients: result.sellingRecipients,
       firstDistributionCoverageBps: result.firstDistributionCoverage,
+    },
+    crossTabs: {
+      buyToFirstDistributionBySellerConfirmation:
+        result.buyToDistributionBySellerConfirmation,
     },
     samples: result.samples,
   };
