@@ -24,11 +24,7 @@ const STATEMENTS = [
   `ALTER TABLE token_market_buckets_1m
      ADD COLUMN IF NOT EXISTS pair_address VARCHAR(64)`,
   `CREATE INDEX IF NOT EXISTS idx_token_market_buckets_1m_bucket_ts
-     ON token_market_buckets_1m(bucket_ts DESC)`,
-  `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_token_market_buckets_1m_chain_sparkline_cover
-     ON token_market_buckets_1m(chain, token_address, bucket_ts DESC)
-     INCLUDE (pair_address, close_mcap)
-     WHERE close_mcap IS NOT NULL`
+     ON token_market_buckets_1m(bucket_ts DESC)`
 ];
 
 async function init() {
@@ -46,4 +42,6 @@ async function init() {
   }
 }
 
-init();
+if (require.main === module) init();
+
+module.exports = { STATEMENTS, init };

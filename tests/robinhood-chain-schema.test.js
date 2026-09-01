@@ -13,6 +13,7 @@ const stage58 = require('../src/utils/db-init-stage58');
 const stage59 = require('../src/utils/db-init-stage59');
 const stage60 = require('../src/utils/db-init-stage60');
 const stage61 = require('../src/utils/db-init-stage61');
+const stage11 = require('../src/utils/db-init-stage11');
 const stage62 = require('../src/utils/db-init-stage62');
 const stage63 = require('../src/utils/db-init-stage63');
 const stage64 = require('../src/utils/db-init-stage64');
@@ -38,6 +39,7 @@ const stage106 = require('../src/utils/db-init-stage106');
 const stage107 = require('../src/utils/db-init-stage107');
 const stage108 = require('../src/utils/db-init-stage108');
 const stage122 = require('../src/utils/db-init-stage122');
+const stage190 = require('../src/utils/db-init-stage190');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 
 describe('Robinhood additive chain schema', () => {
@@ -203,13 +205,14 @@ describe('Robinhood additive chain schema', () => {
     assert.equal(group.tables.length, 1);
   });
 
-  it('replaces the address-only OHLC sparkline index with a chain-aware cover', () => {
+  it('does not recreate retired OHLC sparkline covering indexes', () => {
+    const baseSql = stage11.STATEMENTS.join('\n');
     const sql = stage61.STATEMENTS.join('\n');
 
-    assert.match(sql, /CREATE INDEX CONCURRENTLY IF NOT EXISTS/);
-    assert.match(sql, /token_market_buckets_1m\(chain, token_address, bucket_ts DESC\)/);
-    assert.match(sql, /INCLUDE \(pair_address, close_mcap\)/);
+    assert.doesNotMatch(baseSql, /sparkline_cover/);
+    assert.doesNotMatch(sql, /CREATE INDEX/);
     assert.match(sql, /DROP INDEX CONCURRENTLY IF EXISTS idx_token_market_buckets_1m_sparkline_cover/);
+    assert.match(sql, /DROP INDEX CONCURRENTLY IF EXISTS idx_token_market_buckets_1m_chain_sparkline_cover/);
   });
 
   it('promotes aggregate OHLC buckets and their lookup indexes to chain-aware identity', () => {
@@ -266,9 +269,32 @@ describe('Robinhood additive chain schema', () => {
     assert.match(sql, /CREATE TABLE IF NOT EXISTS robinhood_processed_logs/);
     assert.match(sql, /PRIMARY KEY \(chain, transaction_hash, log_index\)/);
     assert.match(sql, /DEFAULT NOW\(\) \+ INTERVAL '3 days'/);
+    assert.match(sql, /idx_robinhood_processed_logs_expiry/);
+    assert.doesNotMatch(sql, /idx_robinhood_processed_logs_(?:market|block)/);
     assert.doesNotMatch(sql, /raw_(?:log|payload)|payload JSONB/);
     assert.equal(group.repair, 'node src/utils/db-init-stage63.js');
     assert.equal(group.tables.length, 3);
+  });
+
+  it('retires only the four measured-unused market indexes', async () => {
+    assert.deepEqual(stage190.INDEX_NAMES, [
+      'idx_token_market_buckets_1m_sparkline_cover',
+      'idx_token_market_buckets_1m_chain_sparkline_cover',
+      'idx_robinhood_processed_logs_market',
+      'idx_robinhood_processed_logs_block',
+    ]);
+    assert.equal(stage190.STATEMENTS.length, 4);
+    for (const statement of stage190.STATEMENTS) {
+      assert.match(statement, /^DROP INDEX CONCURRENTLY IF EXISTS /);
+    }
+
+    const calls = [];
+    const database = {
+      query: async (sql) => { calls.push(sql); },
+      pool: { end: async () => {} },
+    };
+    await stage190.init({ database, closePool: false });
+    assert.deepEqual(calls, stage190.STATEMENTS);
   });
 
   it('creates exact three-day Robinhood observations without bounded decimal precision', () => {

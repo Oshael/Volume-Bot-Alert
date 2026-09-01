@@ -115,11 +115,6 @@ const STATEMENTS = [
    )`,
   `CREATE INDEX IF NOT EXISTS idx_robinhood_processed_logs_expiry
      ON robinhood_processed_logs(expires_at ASC)`,
-  `CREATE INDEX IF NOT EXISTS idx_robinhood_processed_logs_block
-     ON robinhood_processed_logs(chain, stream, block_number DESC)`,
-  `CREATE INDEX IF NOT EXISTS idx_robinhood_processed_logs_market
-     ON robinhood_processed_logs(chain, market_key, block_number DESC)
-     WHERE market_key IS NOT NULL`,
 ];
 
 async function init(options = {}) {

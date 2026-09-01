@@ -2995,6 +2995,14 @@ Estado atual:
   mas não deve ser tratada como totalmente implantada sem schema, jobs e
   métricas correspondentes em produção.
 
+A Stage 190 remove, de forma online e idempotente, os covers de sparkline `_1m`
+que o planner não usa e os índices `market`/`block` de
+`robinhood_processed_logs` que não possuem leitores runtime. Aplique com
+`node src/utils/db-init-stage190.js`, fora de transação; cada índice é removido
+separadamente com `DROP INDEX CONCURRENTLY`. As PKs chain-aware e
+`idx_robinhood_processed_logs_expiry` permanecem como suporte aos reads,
+deduplicação e eventual reativação da retenção.
+
 ## 15. Wallet tracking multichain
 
 Wallet tracking de produto ainda é roadmap, mas a fundação Robinhood está ativa:
