@@ -1619,8 +1619,10 @@ destinatários DEV/creator, zero/dead, pools, CEX ou infraestrutura conhecida s�
 barreiras, e creator não resolvido falha fechado; FDV, distância do launch,
 latência compra/distribuição e cobertura não são gates. O grupo inclui a fonte e
 somente os destinatários confirmados. A faixa de 5–30 minutos continua apenas
-secundária na calibração. A política pura ainda não autoriza persistência,
-publicação, worker, backfill ou remoção do raw.
+secundária na calibração. A Stage 187 reserva snapshots shadow próprios de estado,
+grupos e membros, preservando posições causais, FDV opcional e lineage seed/live
+sem reutilizar as restrições de funding. A migration não cria reader, writer,
+worker, backfill, publicação ou autorização para remover raw.
 
 A continuidade de launch anchors é condicionada ao holder ledger `live`. Um
 first-buy anterior a essa prontidão não é perdido: a transição posterior do token

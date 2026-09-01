@@ -3153,9 +3153,12 @@ família: uma fonte compradora distribui diretamente para wallets distintas e ao
 menos dois destinatários vendem em até 5 minutos do próprio recebimento. DEV,
 zero/dead, pools, CEX e infraestrutura são barreiras em ambos os lados. O grupo
 exige creator resolvido e contém a fonte e apenas os vendedores rápidos; FDV e
-demais tempos são contexto, não gates. O contrato ainda não possui reader,
-writer, schema, worker ou exposição pública e não altera
-`rh_possible_bundle_v1`.
+demais tempos são contexto, não gates. A Stage 187 cria snapshots shadow isolados
+de estado, grupos e membros com lineage seed/live e causalidade buy → transfer →
+sell; aplique `node src/utils/db-init-stage187.js` e valide com
+`npm run db:schema-check`. A migration não enfileira histórico e o contrato ainda
+não possui reader, writer, worker ou exposição pública. Ele não altera
+`rh_possible_bundle_v1` nem autoriza apagar raw.
 
 Execute `npm run robinhood:wallet-transfer-retention-plan --
 --projection-version=VERSAO --limit=10` para listar candidatos antigos. O limite

@@ -5336,6 +5336,93 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage187-robinhood-bundle-redistribution-snapshots',
+    name: 'Stage 187 Robinhood BUNDLED redistribution snapshots',
+    repair: 'node src/utils/db-init-stage187.js',
+    tables: [{
+      table: 'robinhood_bundle_redistribution_states',
+      columns: [
+        'chain', 'token_address', 'rule_version', 'evidence_version', 'status',
+        'status_reason', 'source_kind', 'source_run_id', 'source_version',
+        'through_block_number', 'through_block_hash', 'policy_json', 'observed_at',
+        'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_bundle_redistribution_states_pkey',
+        includes: ['PRIMARY KEY', 'chain', 'token_address', 'rule_version'],
+      }, {
+        name: 'rh_bundle_redistribution_states_source_check',
+        includes: ['source_kind', 'source_run_id', 'source_version', 'seed', 'live'],
+      }, {
+        name: 'rh_bundle_redistribution_states_frontier_check',
+        includes: ['through_block_number', 'through_block_hash', 'ready', 'stale', 'reorged'],
+      }, {
+        name: 'rh_bundle_redistribution_states_policy_check',
+        includes: ['jsonb_typeof', 'policy_json'],
+      }],
+      indexes: [{
+        name: 'idx_rh_bundle_redistribution_states_status',
+        includes: ['chain', 'rule_version', 'status', 'token_address'],
+      }],
+    }, {
+      table: 'robinhood_bundle_redistribution_groups',
+      columns: [
+        'chain', 'token_address', 'rule_version', 'bundle_id', 'source_wallet',
+        'member_count', 'connection_count', 'confirmation_block',
+        'confirmation_transaction_index', 'confirmation_action_index',
+        'confirmation_transaction_hash', 'confirmation_fdv_usd', 'evidence_json',
+        'created_at', 'updated_at',
+      ],
+      constraints: [{
+        name: 'rh_bundle_redistribution_groups_pkey',
+        includes: ['PRIMARY KEY', 'chain', 'token_address', 'rule_version', 'bundle_id'],
+      }, {
+        name: 'rh_bundle_redistribution_groups_counts_check',
+        includes: ['member_count', 'connection_count'],
+      }, {
+        name: 'rh_bundle_redistribution_groups_confirmation_check',
+        includes: ['confirmation_block', 'confirmation_transaction_hash', 'confirmation_fdv_usd'],
+      }],
+      indexes: [{
+        name: 'idx_rh_bundle_redistribution_groups_source',
+        includes: ['chain', 'token_address', 'rule_version', 'source_wallet'],
+      }],
+    }, {
+      table: 'robinhood_bundle_redistribution_members',
+      columns: [
+        'chain', 'token_address', 'rule_version', 'bundle_id', 'wallet_address',
+        'connection_kind', 'source_buy_block', 'source_buy_transaction_index',
+        'source_buy_action_index', 'source_buy_transaction_hash', 'transfer_block',
+        'transfer_transaction_index', 'transfer_log_index',
+        'transfer_transaction_hash', 'transfer_amount_raw', 'sell_block',
+        'sell_transaction_index', 'sell_action_index', 'sell_transaction_hash',
+        'sell_delay_ms', 'evidence_json', 'created_at',
+      ],
+      columnTypes: {
+        transfer_amount_raw: { dataType: 'numeric', numericPrecision: 78, numericScale: 0 },
+      },
+      constraints: [{
+        name: 'rh_bundle_redistribution_members_pkey',
+        includes: [
+          'PRIMARY KEY', 'chain', 'token_address', 'rule_version', 'bundle_id',
+          'wallet_address',
+        ],
+      }, {
+        name: 'rh_bundle_redistribution_members_causality_check',
+        includes: [
+          'redistribution_source', 'rapid_sell_recipient', 'source_buy_block',
+          'source_buy_transaction_hash', 'transfer_block',
+          'transfer_transaction_hash', 'sell_block', 'sell_transaction_hash',
+          'sell_delay_ms', '300000',
+        ],
+      }],
+      indexes: [{
+        name: 'idx_rh_bundle_redistribution_members_wallet',
+        includes: ['chain', 'wallet_address', 'rule_version', 'token_address'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
