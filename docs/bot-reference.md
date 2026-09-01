@@ -454,7 +454,11 @@ estritamente read-only/fail-open e não liga outbox ou derived.
 No processing, as referências medianas de FDV e os ledgers materializados V4 são carregados em
 lote por `tokenAddress`/`poolId`, em dois round-trips paralelos antes da classificação. Todos os
 swaps dessa fase enxergam o mesmo estado anterior ao commit, sem mudar ordem, valuation ou a
-aplicação posterior dos deltas de liquidez. A lease publica `lastTiming` com duração de claim,
+aplicação posterior dos deltas de liquidez. A Stage 189 cria, de forma concorrente, o índice
+parcial coberto `idx_rh_market_observations_fdv_reference` sobre as observações aceitas com FDV;
+ele limita cada mediana às 500 amostras recentes sem filtrar rejeições no heap. Execute
+`node src/utils/db-init-stage189.js` antes de reiniciar o processing. A lease publica
+`lastTiming` com duração de claim,
 preparo, frontier, persistência e settlement, além de `claimedPerSecond`; use esses campos para
 distinguir custo de leitura do custo da transação. A limpeza da fila de captures roda fora da
 transação do batch, limitada por `ROBINHOOD_PROCESSING_PRUNE_LIMIT` (default 5000, máximo 50000)
