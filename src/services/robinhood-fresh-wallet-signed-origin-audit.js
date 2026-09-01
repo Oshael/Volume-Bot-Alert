@@ -1,7 +1,9 @@
 const {
   inferPriorSignedActivity, isSafeSignedOriginUnavailableReason,
 } = require('./robinhood-wallet-signed-origin-domain');
-const { compareRobinhoodFreshWalletEvidence } = require('./robinhood-fresh-wallet-rule');
+const {
+  compareRobinhoodFreshWalletEvidence, evaluateRobinhoodFreshWallet,
+} = require('./robinhood-fresh-wallet-rule');
 
 const MAX_DETAILS = 20;
 
@@ -31,9 +33,15 @@ function auditCandidate(candidate, archive, origin, coverage) {
   });
   if (inference.status !== 'ready') {
     const safe = isSafeSignedOriginUnavailableReason(inference.reason);
+    const archiveOutcome = evaluateRobinhoodFreshWallet(archive).outcome;
+    const failClosedEquivalent = safe && archiveOutcome === 'not_fresh';
     return { kind: safe ? 'safeUnavailable' : 'blockingUnavailable',
+      behaviorKind: failClosedEquivalent ? 'failClosedEquivalent'
+        : safe ? 'freshUnavailable' : null,
       detail: { tokenAddress: candidate.tokenAddress, walletAddress: candidate.walletAddress,
-        status: safe ? 'safe_unavailable' : 'unavailable', reason: inference.reason } };
+        status: failClosedEquivalent ? 'fail_closed_equivalent'
+          : safe ? 'safe_unavailable' : 'unavailable',
+        reason: inference.reason, archiveOutcome } };
   }
   const comparison = compareRobinhoodFreshWalletEvidence(archive,
     liveEvidence(archive, inference));
@@ -57,12 +65,12 @@ async function runRobinhoodFreshWalletSignedOriginAudit(deps = {}, options = {})
   const minimumSamples = bounded(options.minimumSamples, 100, 1, sampleCount,
     'minimumSamples');
   const batchSize = bounded(options.batchSize, 100, 1, 100, 'batchSize');
-  const maxSafeUnavailableBps = bounded(options.maxSafeUnavailableBps, 100, 0, 10_000,
-    'maxSafeUnavailableBps');
+  const maxFreshUnavailableBps = bounded(options.maxFreshUnavailableBps, 100, 0, 10_000,
+    'maxFreshUnavailableBps');
   const coverage = await repository.loadCoverage();
   const candidates = await repository.sampleCandidates(sampleCount);
   const counts = { equivalent: 0, mismatched: 0, safeUnavailable: 0,
-    blockingUnavailable: 0 };
+    blockingUnavailable: 0, failClosedEquivalent: 0, freshUnavailable: 0 };
   const details = [];
   for (let offset = 0; offset < candidates.length; offset += batchSize) {
     const batch = candidates.slice(offset, offset + batchSize);
@@ -77,21 +85,26 @@ async function runRobinhoodFreshWalletSignedOriginAudit(deps = {}, options = {})
       const result = auditCandidate(candidate, archives[index],
         origins.get(candidate.walletAddress), coverage);
       counts[result.kind] += 1;
+      if (result.behaviorKind) counts[result.behaviorKind] += 1;
       if (result.detail && details.length < MAX_DETAILS) details.push(result.detail);
     });
     options.onProgress?.({ audited: offset + batch.length, requested: sampleCount });
   }
-  const { equivalent, mismatched, safeUnavailable, blockingUnavailable } = counts;
+  const { equivalent, mismatched, safeUnavailable, blockingUnavailable,
+    failClosedEquivalent, freshUnavailable } = counts;
   const unavailable = safeUnavailable + blockingUnavailable;
-  const comparableSamples = equivalent + mismatched;
+  const comparableSamples = equivalent + failClosedEquivalent + mismatched;
   const safeUnavailableBps = candidates.length
     ? Math.ceil((safeUnavailable * 10_000) / candidates.length) : 0;
+  const freshUnavailableBps = candidates.length
+    ? Math.ceil((freshUnavailable * 10_000) / candidates.length) : 0;
   const approved = comparableSamples >= minimumSamples && mismatched === 0
-    && blockingUnavailable === 0 && safeUnavailableBps <= maxSafeUnavailableBps;
+    && blockingUnavailable === 0 && freshUnavailableBps <= maxFreshUnavailableBps;
   return Object.freeze({ approved, requestedSamples: sampleCount,
     minimumSamples, auditedSamples: candidates.length, comparableSamples,
     equivalent, mismatched, unavailable, safeUnavailable, blockingUnavailable,
-    safeUnavailableBps, maxSafeUnavailableBps, coverage, details });
+    failClosedEquivalent, freshUnavailable, safeUnavailableBps,
+    freshUnavailableBps, maxFreshUnavailableBps, coverage, details });
 }
 
 module.exports = { runRobinhoodFreshWalletSignedOriginAudit };

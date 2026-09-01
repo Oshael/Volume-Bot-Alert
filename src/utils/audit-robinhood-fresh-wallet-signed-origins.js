@@ -11,16 +11,21 @@ const {
 
 function parseArgs(argv = process.argv.slice(2)) {
   const allowed = new Set(['samples', 'minimum-samples', 'batch-size',
-    'max-safe-unavailable-bps', 'timeout-ms']);
+    'max-fresh-unavailable-bps', 'max-safe-unavailable-bps', 'timeout-ms']);
   if (argv.some((arg) => !arg.startsWith('--') || !arg.includes('=')
       || !allowed.has(arg.slice(2, arg.indexOf('='))))) throw new Error('unexpected argument');
   const raw = Object.fromEntries(argv.map((arg) => {
     const index = arg.indexOf('='); return [arg.slice(2, index), arg.slice(index + 1)];
   }));
   const number = (key, fallback) => raw[key] == null ? fallback : Number(raw[key]);
+  if (raw['max-fresh-unavailable-bps'] != null
+      && raw['max-safe-unavailable-bps'] != null) {
+    throw new Error('choose only one unavailable threshold argument');
+  }
   return Object.freeze({ sampleCount: number('samples', 500),
     minimumSamples: number('minimum-samples', 100), batchSize: number('batch-size', 100),
-    maxSafeUnavailableBps: number('max-safe-unavailable-bps', 100),
+    maxFreshUnavailableBps: number('max-fresh-unavailable-bps',
+      number('max-safe-unavailable-bps', 100)),
     timeoutMs: number('timeout-ms', 60_000) });
 }
 

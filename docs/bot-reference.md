@@ -1933,14 +1933,14 @@ seleciona `RH_NODE_RPC_URL` (`robinhood-pc-archive`). O LIVE usa o
 `ROBINHOOD_RPC_URL` apenas para validar a transação e resolver os blocos do cutoff;
 `prior_signed_activity` vem de `robinhood_wallet_signed_origins` e da frontier
 `live` no PostgreSQL, sem fabricar nonce histórico. Evidência ausente, malformada,
-incoerente, não canônica ou fora da coverage falha fechada e nunca produz
-`not_fresh`.
+incoerente, não canônica ou fora da coverage falha fechada e nunca produz FRESH.
 A Stage 181 cria `robinhood_wallet_signed_origins`, que guarda somente a primeira
 transação assinada canônica observada por wallet, e o cursor independente
 `robinhood_wallet_signed_origin_cursors` para streams `seed|live`. A inferência
-pura usa coverage completa desde antes do cutoff: nonce inicial positivo prova
-atividade prévia; nonce zero usa a posição da primeira transação. Coverage
-incompleta, origem ausente ou posterior à first-buy retorna `unavailable`. Esta
+pura usa coverage completa desde antes do cutoff: nonce zero usa a posição da
+primeira transação; nonce inicial positivo sem predecessor observado é ambíguo e
+retorna `unavailable`. Coverage incompleta, origem ausente ou posterior à
+first-buy também retorna `unavailable`. Esta
 stage não lê blocos, não inicia bootstrap e não habilita FRESH LIVE. Aplique com
 `node src/utils/db-init-stage181.js`; o reader, bootstrap e worker entram nos
 cortes seguintes.
@@ -2006,10 +2006,14 @@ Archive `npm run robinhood:fresh-wallet-signed-origin-audit -- --samples=500
 cobertos pelo cursor congelado, e compara o nonce histórico do Archive com a
 inferência do índice interno. Um nonce inicial positivo sem predecessor assinado
 observado é inconclusivo, não prova atividade anterior, e materializa
-`unavailable` sem tag FRESH. `approved=true` exige amostra comparável mínima,
-zero divergência, zero indisponibilidade bloqueante e no máximo 1% dessas
-inconclusões fail-closed (`--max-safe-unavailable-bps`, padrão 100); somente esse
-resultado autoriza mudar `ROBINHOOD_FRESH_WALLET_SIGNED_ORIGIN_APPROVED=true`.
+`unavailable` sem tag FRESH. O audit separa esses casos entre
+`failClosedEquivalent`, quando o Archive também produziria `not_fresh`, e
+`freshUnavailable`, quando a indisponibilidade omite uma classificação FRESH.
+`approved=true` exige amostra comparável mínima, zero divergência, zero
+indisponibilidade bloqueante e no máximo 1% de `freshUnavailable`
+(`--max-fresh-unavailable-bps`, padrão 100; o nome anterior continua aceito);
+somente esse resultado autoriza mudar
+`ROBINHOOD_FRESH_WALLET_SIGNED_ORIGIN_APPROVED=true`.
 Antes do primeiro seed, aplique `node src/utils/db-init-stage185.js`. A migration
 indexa concorrentemente a janela dos anchors e cada partição diária de swaps,
 anexando os índices ao pai sem parar o writer live; ela pode ser retomada se for

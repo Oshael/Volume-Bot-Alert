@@ -54,7 +54,8 @@ describe('Robinhood FRESH signed-origin operational audit', () => {
     assert.deepEqual(result, { approved: true, requestedSamples: 2, minimumSamples: 2,
       auditedSamples: 2, comparableSamples: 2, equivalent: 2, mismatched: 0,
       unavailable: 0, safeUnavailable: 0, blockingUnavailable: 0,
-      safeUnavailableBps: 0, maxSafeUnavailableBps: 100,
+      failClosedEquivalent: 0, freshUnavailable: 0, safeUnavailableBps: 0,
+      freshUnavailableBps: 0, maxFreshUnavailableBps: 100,
       coverage: { originBlock: '0', throughBlock: '200' }, details: [] });
     assert.deepEqual(progress, [{ audited: 1, requested: 2 }, { audited: 2, requested: 2 }]);
   });
@@ -81,32 +82,51 @@ describe('Robinhood FRESH signed-origin operational audit', () => {
     assert.equal(result.details[1].reason, 'signed_origin_missing');
   });
 
-  it('approves a bounded fail-closed positive-nonce anomaly without calling it equivalent', async () => {
-    const items = [candidate(1), candidate(2)];
+  it('separates behaviorally equivalent fail-closed negatives from lost fresh outcomes', async () => {
+    const items = [candidate(1), candidate(2), candidate(3)];
     const origins = {
       [items[0].walletAddress]: { blockNumber: '100', transactionIndex: '5', nonce: '1' },
-      [items[1].walletAddress]: { blockNumber: '100', transactionIndex: '5', nonce: '0' },
+      [items[1].walletAddress]: { blockNumber: '100', transactionIndex: '5', nonce: '1' },
+      [items[2].walletAddress]: { blockNumber: '100', transactionIndex: '5', nonce: '0' },
     };
     const result = await runRobinhoodFreshWalletSignedOriginAudit({
       repository: repository(items, origins),
       archiveSource: { async readEvidenceBatch(batch) {
-        return batch.map((item) => evidence(item));
+        return batch.map((item, index) => evidence(item, index === 0 ? '1' : '0'));
       } },
-    }, { sampleCount: 2, minimumSamples: 1, batchSize: 2,
-      maxSafeUnavailableBps: 5000 });
+    }, { sampleCount: 3, minimumSamples: 1, batchSize: 3,
+      maxFreshUnavailableBps: 5000 });
     assert.equal(result.approved, true);
     assert.equal(result.equivalent, 1);
-    assert.equal(result.safeUnavailable, 1);
+    assert.equal(result.safeUnavailable, 2);
+    assert.equal(result.failClosedEquivalent, 1);
+    assert.equal(result.freshUnavailable, 1);
     assert.equal(result.blockingUnavailable, 0);
-    assert.equal(result.details[0].status, 'safe_unavailable');
+    assert.equal(result.details[0].status, 'fail_closed_equivalent');
+    assert.equal(result.details[0].archiveOutcome, 'not_fresh');
+    assert.equal(result.details[1].status, 'safe_unavailable');
+    assert.equal(result.details[1].archiveOutcome, 'fresh');
+
+    const rejected = await runRobinhoodFreshWalletSignedOriginAudit({
+      repository: repository(items, origins),
+      archiveSource: { async readEvidenceBatch(batch) {
+        return batch.map((item, index) => evidence(item, index === 0 ? '1' : '0'));
+      } },
+    }, { sampleCount: 3, minimumSamples: 1, batchSize: 3 });
+    assert.equal(rejected.approved, false);
+    assert.equal(rejected.freshUnavailableBps, 3334);
+    assert.equal(rejected.maxFreshUnavailableBps, 100);
   });
 
   it('validates bounded CLI arguments', () => {
     assert.deepEqual(parseArgs(['--samples=250', '--minimum-samples=50',
       '--batch-size=25', '--timeout-ms=30000']), {
       sampleCount: 250, minimumSamples: 50, batchSize: 25, timeoutMs: 30000,
-      maxSafeUnavailableBps: 100,
+      maxFreshUnavailableBps: 100,
     });
+    assert.equal(parseArgs(['--max-safe-unavailable-bps=25']).maxFreshUnavailableBps, 25);
+    assert.throws(() => parseArgs(['--max-safe-unavailable-bps=25',
+      '--max-fresh-unavailable-bps=25']), /choose only one/);
     assert.throws(() => parseArgs(['--apply']), /unexpected argument/);
   });
 });
