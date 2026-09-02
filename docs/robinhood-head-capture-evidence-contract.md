@@ -1,6 +1,6 @@
 # Contrato de evidência da captura de head Robinhood
 
-Status: proposta de contrato, pré-Corte 1
+Status: contrato implementado; payload atual v2
 Origem: gate §14/§16.6 de `robinhood-live-head-isolation-urgent-plan.md`
 Confiança: ancorado no código da branch `Robinhood-Implementation` (`0f089c78`)
 
@@ -14,9 +14,10 @@ por protocolo, antes de o cursor de captura avançar**.
 Este documento é esse contrato. Ele não altera código nem schema. Ele define o
 payload de evidência versionado que o `robinhood-head` deverá gravar de forma
 atômica com o avanço do `capture_cursor`, de modo que o `robinhood-processing`
-consiga reconstruir observações, liquidez e alertas **sem nenhum `eth_call`
-histórico** depois que a janela de estado do node podado (~13 s no incidente de
-2026-08-02) já tiver expirado.
+consiga reconstruir observações e alertas **sem nenhum `eth_call` histórico**
+depois que a janela de estado do node podado já tiver expirado. Liquidez V3 só é
+reconstruída quando os saldos foram observados no range live; ranges de catch-up
+preservam preço/FDV/volume e registram a liquidez como indisponível.
 
 Regra de confiança: onde este documento divergir do código, o código vence e este
 contrato deve ser corrigido antes do Corte 1.
@@ -38,11 +39,12 @@ confirma a distinção nas chamadas feitas por observação em
 | `totalSupply` | idem, proveniência `token_supply_status='latest_call'` (`robinhood-onchain-pipeline.js:225-229`) | Parcial — `latest`, muda ao longo do tempo |
 | Quote USD (WETH/USD) | `quoteReader.getCurrent()` → `{priceUsd, source}` em `latest` (`robinhood-weth-usd-quote.js`) | Parcial — `latest`, muda a cada bloco |
 
-Consequência central: **um capturador que salve apenas logs NÃO resolve o
-problema**. Os saldos V3 no bloco do swap, e os valores `latest` de
-supply/metadata/quote usados naquele instante, precisam ser congelados como
-evidência, ou a reconstrução posterior produzirá um número diferente (ou falhará)
-quando o estado não existir mais.
+Consequência central: metadata, supply e quote precisam ser congelados como
+evidência. No range live, os saldos V3 também são congelados. Durante catch-up,
+o node podado não possui esses saldos históricos: a captura não repete uma
+consulta impossível nem rejeita o swap; grava explicitamente
+`balanceStatus='unavailable_backfill'`, e o processamento publica a observação
+sem TVL.
 
 ## 2. Invariantes do contrato
 
@@ -58,8 +60,9 @@ quando o estado não existir mais.
    carrega proveniência explícita (source + block tag de ancoragem) para que o
    processamento saiba que aquilo foi observado no head, não recalculado depois.
 5. **Erro nunca vira zero silencioso**: uma leitura state-dependent que falha é
-   registrada como `retryable` ou `terminal`, jamais convertida em `0`/`null`
-   tratado como valor válido.
+   registrada como `retryable` ou `terminal`. A ausência esperada de saldo V3
+   histórico no catch-up usa status explícito e `null`, que significa
+   desconhecido — nunca saldo zero.
 6. **Reprocessamento determinístico**: dada a mesma evidência, o processamento
    produz a mesma observação/liquidez, ou falha explicitamente. Nenhuma decisão
    depende do relógio ou do estado atual do node.
@@ -94,7 +97,7 @@ e migração online (`NOT VALID` + `VALIDATE`) são decisão do Corte 1.
 
 ```jsonc
 {
-  "evidenceVersion": 1,
+  "evidenceVersion": 2,
   "timestampMs": 0,                 // timestamp do bloco (não NOW())
   "tokenAddress": "0x…",
   "quoteAddress": "0x…",
@@ -133,15 +136,16 @@ Nenhuma leitura state-dependent adicional. Reservas vêm do log `Sync`.
 
 ### 4.3 V3 (`protocol = uniswap-v3`) — evidência crítica
 
-Os dois `getBalanceOf` ancorados no bloco do swap **têm que** ser congelados aqui.
-É a única evidência da seção 1 que é `eth_call` block-anchored e desaparece com a
-poda.
+No range live, os dois `getBalanceOf` ancorados no bloco do swap são congelados.
+Em range de catch-up (`context.backfill=true`), essas chamadas históricas são
+omitidas porque o node podado não pode respondê-las.
 
 ```jsonc
 {
   "v3": {
     "poolAddress": "0x…",
     "blockTag": "0x…",              // bloco do swap
+    "balanceStatus": "observed | unavailable_backfill",
     "tokenBalanceRaw": "…",        // getBalanceOf(token, pool, blockTag)
     "quoteBalanceRaw": "…",        // getBalanceOf(quote, pool, blockTag)
     "sqrtPriceX96": "…"            // se presente no evento
@@ -149,10 +153,12 @@ poda.
 }
 ```
 
-Fonte: `robinhood-onchain-pipeline.js:261-270`. Se qualquer um dos dois
-`getBalanceOf` falhar, a captura é `retryable`/`terminal` (seção 5), **nunca**
-gravada com saldo ausente tratado como zero — hoje `buildLiquidityAssessment`
-depende desses saldos para o status `spot_tvl`.
+Com `balanceStatus='observed'`, os dois saldos são obrigatórios. Com
+`balanceStatus='unavailable_backfill'`, ambos são `null`; preço, FDV e volume
+continuam determinísticos e `buildLiquidityAssessment` produz
+`requires_tick_liquidity_distribution` com `liquidityUsd=null`. Falha transitória
+no range live continua segurando o cursor para retry; retorno nulo no range live
+continua sendo rejeição terminal, nunca zero.
 
 ### 4.4 V4 (`protocol = uniswap-v4`)
 

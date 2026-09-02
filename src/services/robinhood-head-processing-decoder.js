@@ -20,7 +20,7 @@ const { buildMarketObservation, ROBINHOOD_WETH } = require('./evm-market-metrics
 const { buildLiquidityAssessment } = require('./robinhood-market-policy');
 const { HEAD_EVIDENCE_VERSION } = require('./robinhood-head-evidence');
 
-const SUPPORTED_EVIDENCE_VERSIONS = new Set([HEAD_EVIDENCE_VERSION]);
+const SUPPORTED_EVIDENCE_VERSIONS = new Set([1, HEAD_EVIDENCE_VERSION]);
 const MARKET_PROTOCOLS = new Set(['uniswap-v2', 'uniswap-v3', 'uniswap-v4']);
 
 function terminal(message) {

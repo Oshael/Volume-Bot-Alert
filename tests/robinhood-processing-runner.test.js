@@ -368,7 +368,7 @@ describe('robinhood processing runner', () => {
     const persistence = fakePersistence();
     const rejected = v3Row({ n: '3' });
     rejected.evidence = { evidenceVersion: 1, rejected: 'v3_pool_balance_unavailable', tokenAddress: TOKEN };
-    const unknown = v3Row({ n: '4', evidence_version: 2 });
+    const unknown = v3Row({ n: '4', evidence_version: 999 });
 
     const result = await runner([rejected, unknown], persistence).runOnce();
 

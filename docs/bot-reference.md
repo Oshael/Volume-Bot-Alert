@@ -378,6 +378,14 @@ independente, sem substituir o monólito (a remoção do monólito é etapa post
 plano). A unit existe na VPS2 e, no diagnóstico de `2026-08-05`, mantinha discovery e
 market no head com lag zero. Lease: `robinhood-head-capture-worker`.
 
+Ranges de catch-up do `robinhood-head` não executam os dois `balanceOf` V3
+históricos por swap: o node podado não consegue responder esse estado e a repetição
+dessas chamadas fazia o head perder a fronteira. A evidência v2 registra
+`v3.balanceStatus='unavailable_backfill'` e saldos nulos; o processing preserva
+preço, FDV e volume e publica liquidez desconhecida. No range live
+(`backfill=false`), os saldos continuam obrigatórios e são congelados normalmente.
+O decoder aceita evidência v1 e v2 para que a fila existente continue processável.
+
 O grupo `robinhood-processing` roda um processo separado (systemd
 `trendscope-worker@robinhood-processing.service`, lease `robinhood-processing-worker`,
 `start:worker:robinhood-processing` na porta 3007). O worker reclama capturas por lease

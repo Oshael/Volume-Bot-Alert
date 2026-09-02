@@ -61,6 +61,23 @@ describe('pipeline capture mode', () => {
     assert.equal(entries[0].observation, undefined);
   });
 
+  it('marks only catch-up ranges to skip historical V3 balance reads', async () => {
+    const optionsSeen = [];
+    const pipeline = buildPipeline({
+      marketEvent: { kind: 'swap', protocol: 'uniswap-v3', tokenAddress: '0xtok', timestampMs: 1750000000000 },
+      captureBuilder: {
+        ...captureBuilderStub,
+        buildMarketCapture: async (swap, options) => {
+          optionsSeen.push(options);
+          return { protocol: swap.protocol, marketKey: 'm', evidenceVersion: 2, evidence: {} };
+        },
+      },
+    });
+    await pipeline.processMarketRange([V4_LOG], { backfill: true });
+    await pipeline.processMarketRange([V4_LOG], { backfill: false });
+    assert.deepEqual(optionsSeen, [{ skipV3Balances: true }, { skipV3Balances: false }]);
+  });
+
   it('attaches capture evidence to a non-swap market event entry', async () => {
     const pipeline = buildPipeline({
       marketEvent: { kind: 'modify-liquidity', protocol: 'uniswap-v4', poolId: '0xp' },

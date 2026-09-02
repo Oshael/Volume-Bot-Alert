@@ -8,11 +8,15 @@
  *
  * It is fail-closed: a missing state-dependent read that cannot be
  * reconstructed later from logs alone throws a terminal error instead of being
- * silently written as zero. No RPC, no database, no valuation here.
+ * silently written as zero. V3 catch-up is the explicit exception: a pruned
+ * historical balance is recorded as unavailable, never as zero, so price and
+ * volume remain processable while liquidity stays unknown. No RPC, no database,
+ * no valuation here.
  */
-const HEAD_EVIDENCE_VERSION = 1;
+const HEAD_EVIDENCE_VERSION = 2;
 const MARKET_PROTOCOLS = new Set(['uniswap-v2', 'uniswap-v3', 'uniswap-v4']);
 const QUOTE_STATUSES = new Set(['observed', 'assumed']);
+const V3_BALANCE_STATUSES = new Set(['observed', 'unavailable_backfill']);
 
 function terminal(message) {
   const error = new Error(message);
@@ -88,12 +92,19 @@ function buildProtocolEvidence(input) {
   }
   if (protocol === 'uniswap-v3') {
     const v3 = input.v3 || {};
+    const balanceStatus = requireText(v3.balanceStatus ?? 'observed', 'V3 balance status');
+    if (!V3_BALANCE_STATUSES.has(balanceStatus)) throw terminal('V3 balance status is invalid');
     return {
       v3: {
         poolAddress: requireText(v3.poolAddress, 'V3 pool address'),
         blockTag: requireText(v3.blockTag, 'V3 block tag'),
-        tokenBalanceRaw: requireUnsignedRaw(v3.tokenBalanceRaw, 'V3 token balance'),
-        quoteBalanceRaw: requireUnsignedRaw(v3.quoteBalanceRaw, 'V3 quote balance'),
+        balanceStatus,
+        tokenBalanceRaw: balanceStatus === 'observed'
+          ? requireUnsignedRaw(v3.tokenBalanceRaw, 'V3 token balance')
+          : null,
+        quoteBalanceRaw: balanceStatus === 'observed'
+          ? requireUnsignedRaw(v3.quoteBalanceRaw, 'V3 quote balance')
+          : null,
         sqrtPriceX96: optionalRaw(v3.sqrtPriceX96, 'V3 sqrtPriceX96'),
       },
     };

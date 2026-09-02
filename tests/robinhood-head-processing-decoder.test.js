@@ -6,6 +6,7 @@ const {
   assessLiquidity,
   attachLiquidity,
 } = require('../src/services/robinhood-head-processing-decoder');
+const { HEAD_EVIDENCE_VERSION } = require('../src/services/robinhood-head-evidence');
 const { ROBINHOOD_WETH } = require('../src/services/evm-market-metrics');
 const v2 = require('../src/services/uniswap-v2-decoder');
 const v3 = require('../src/services/uniswap-v3-decoder');
@@ -126,6 +127,28 @@ describe('head processing decoder — market observation from evidence (no RPC)'
     assert.equal(withLiquidity.liquidityStatus, 'spot_tvl_from_pool_balances');
   });
 
+  it('keeps V3 price and volume when catch-up balances are explicitly unavailable', () => {
+    const row = v3Row({
+      v3: {
+        poolAddress: POOL,
+        blockTag: '0x64',
+        balanceStatus: 'unavailable_backfill',
+        tokenBalanceRaw: null,
+        quoteBalanceRaw: null,
+        sqrtPriceX96: (1n << 96n).toString(),
+      },
+    });
+    row.evidence_version = HEAD_EVIDENCE_VERSION;
+    row.evidence.evidenceVersion = HEAD_EVIDENCE_VERSION;
+    const result = decodeCapture(row);
+    assert.equal(result.observation.accepted, true);
+    assert.equal(result.observation.priceUsd, '2000');
+    assert.equal(result.observation.volumeUsd, '2000');
+    const assessment = assessLiquidity(result.liquidityInputs);
+    assert.equal(assessment.liquidityUsd, null);
+    assert.equal(assessment.status, 'requires_tick_liquidity_distribution');
+  });
+
   it('rebuilds a V2 observation and values liquidity from the frozen reserve', () => {
     const row = baseRow({
       protocol: 'uniswap-v2',
@@ -239,7 +262,7 @@ describe('head processing decoder — non-valuation and guard paths', () => {
 
   it('refuses an unknown evidence version instead of guessing', () => {
     const row = v3Row();
-    row.evidence_version = 2;
+    row.evidence_version = 999;
     assert.throws(() => decodeCapture(row), (error) => error.terminal === true && /version/.test(error.message));
   });
 });

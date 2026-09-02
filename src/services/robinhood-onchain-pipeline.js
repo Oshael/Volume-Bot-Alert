@@ -390,7 +390,7 @@ function createRobinhoodOnchainPipeline(options = {}) {
     await processDiscoveryBatch(logs);
   }
 
-  async function processMarketBatch(logs) {
+  async function processMarketBatch(logs, context) {
     const accepted = [];
     const entries = [];
     let enrichedLogs;
@@ -438,7 +438,9 @@ function createRobinhoodOnchainPipeline(options = {}) {
         captures = await mapWithConcurrency(
           swaps,
           observationConcurrency,
-          ({ event }) => captureBuilder.buildMarketCapture(event)
+          ({ event }) => captureBuilder.buildMarketCapture(event, {
+            skipV3Balances: context?.backfill === true,
+          })
         );
       } catch (error) {
         metrics.errors += 1;
@@ -569,7 +571,7 @@ function createRobinhoodOnchainPipeline(options = {}) {
     getTrackedMarketAddresses,
     processDiscoveryRange: processDiscoveryBatch,
     processDiscoveryLogs,
-    processMarketRange: async (logs) => (await processMarketBatch(logs)).entries,
+    processMarketRange: async (logs, context = {}) => (await processMarketBatch(logs, context)).entries,
     processMarketLogs,
     processRemovedDiscoveryLogs,
     processRemovedLogs,

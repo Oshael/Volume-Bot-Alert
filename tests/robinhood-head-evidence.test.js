@@ -38,10 +38,24 @@ describe('buildMarketEvidence', () => {
     assert.equal(evidence.evidenceVersion, HEAD_EVIDENCE_VERSION);
     assert.deepEqual(evidence.v3, {
       poolAddress: '0xpool', blockTag: '0x1a2b',
+      balanceStatus: 'observed',
       tokenBalanceRaw: '500', quoteBalanceRaw: '700', sqrtPriceX96: '123',
     });
     assert.equal(evidence.tokenMetadata.tokenSupplyStatus, 'latest_call');
     assert.equal(evidence.quoteUsd.status, 'observed');
+  });
+
+  it('records unavailable V3 catch-up balances explicitly without inventing zero', () => {
+    const { evidence } = buildMarketEvidence(withProtocol('uniswap-v3', {
+      v3: {
+        poolAddress: '0xpool', blockTag: '0x1a2b',
+        balanceStatus: 'unavailable_backfill',
+        tokenBalanceRaw: null, quoteBalanceRaw: null, sqrtPriceX96: '123',
+      },
+    }));
+    assert.equal(evidence.v3.balanceStatus, 'unavailable_backfill');
+    assert.equal(evidence.v3.tokenBalanceRaw, null);
+    assert.equal(evidence.v3.quoteBalanceRaw, null);
   });
 
   it('captures V2 reserves from the log', () => {

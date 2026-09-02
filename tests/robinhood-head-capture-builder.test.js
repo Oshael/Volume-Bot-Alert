@@ -47,6 +47,7 @@ describe('head capture builder — market', () => {
   it('freezes V3 pool balances and the quote provenance', async () => {
     const capture = await builder().buildMarketCapture(v3Swap());
     assert.equal(capture.protocol, 'uniswap-v3');
+    assert.equal(capture.evidence.v3.balanceStatus, 'observed');
     assert.equal(capture.evidence.v3.tokenBalanceRaw, '500');
     assert.equal(capture.evidence.v3.blockTag, '0x64');
     assert.equal(capture.evidence.quoteUsd.status, 'observed');
@@ -86,6 +87,29 @@ describe('head capture builder — market', () => {
     const b = builder({ metadataReader: { getBalanceOf: async () => ({ balanceRaw: null }) } });
     const capture = await b.buildMarketCapture(v3Swap());
     assert.equal(capture.evidence.rejected, 'v3_pool_balance_unavailable');
+  });
+
+  it('preserves a catch-up V3 swap without historical pool-balance RPC reads', async () => {
+    let balanceReads = 0;
+    const b = builder({
+      metadataReader: {
+        getBalanceOf: async () => {
+          balanceReads += 1;
+          throw new Error('historical balance must not be read during catch-up');
+        },
+      },
+    });
+    const capture = await b.buildMarketCapture(v3Swap(), { skipV3Balances: true });
+    assert.equal(balanceReads, 0);
+    assert.equal(capture.evidence.rejected, undefined);
+    assert.deepEqual(capture.evidence.v3, {
+      poolAddress: '0xpool',
+      blockTag: '0x64',
+      balanceStatus: 'unavailable_backfill',
+      tokenBalanceRaw: null,
+      quoteBalanceRaw: null,
+      sqrtPriceX96: '123',
+    });
   });
 
   it('propagates a transient balance RPC failure instead of zeroing', async () => {
