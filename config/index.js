@@ -1122,6 +1122,9 @@ module.exports = {
     v4ContinuationRounds: parseIntegerInRange(
       process.env.ROBINHOOD_PROCESSING_V4_CONTINUATION_ROUNDS, 8, 0, 100
     ),
+    v4ContinuationPoolLimit: parseIntegerInRange(
+      process.env.ROBINHOOD_PROCESSING_V4_CONTINUATION_POOL_LIMIT, 8, 1, 64
+    ),
     pruneIntervalMs: parseIntegerInRange(process.env.ROBINHOOD_PROCESSING_PRUNE_INTERVAL_MS, 5 * 60 * 1000, 30_000, 3_600_000),
     pruneLimit: parseIntegerInRange(process.env.ROBINHOOD_PROCESSING_PRUNE_LIMIT, 5000, 100, 50_000),
     emitOutbox: parseBoolean(process.env.ROBINHOOD_DERIVED_OUTBOX_ENABLED, false),

@@ -22,6 +22,7 @@ const DEFAULT_MAX_ATTEMPTS = 5;
 const DEFAULT_BASE_BACKOFF_MS = 1_000;
 const DEFAULT_MAX_BACKOFF_MS = 300_000;
 const DEFAULT_V4_CONTINUATION_ROUNDS = 8;
+const DEFAULT_V4_CONTINUATION_POOL_LIMIT = 8;
 const ISOLATABLE_COMMIT_ERRORS = Object.freeze([
   'V4 liquidity range update conflicted or became negative',
 ]);
@@ -44,6 +45,13 @@ function normalizeV4ContinuationRounds(value) {
   return Number.isSafeInteger(parsed)
     ? Math.max(0, Math.min(parsed, 100))
     : DEFAULT_V4_CONTINUATION_ROUNDS;
+}
+
+function normalizeV4ContinuationPoolLimit(value) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed)
+    ? Math.max(1, Math.min(parsed, 64))
+    : DEFAULT_V4_CONTINUATION_POOL_LIMIT;
 }
 
 function isIsolatableCommitError(error) {
@@ -188,6 +196,9 @@ function createRobinhoodProcessingRunner(deps = {}) {
   const baseBackoffMs = Number(options.baseBackoffMs) || DEFAULT_BASE_BACKOFF_MS;
   const maxBackoffMs = Number(options.maxBackoffMs) || DEFAULT_MAX_BACKOFF_MS;
   const v4ContinuationRounds = normalizeV4ContinuationRounds(options.v4ContinuationRounds);
+  const v4ContinuationPoolLimit = normalizeV4ContinuationPoolLimit(
+    options.v4ContinuationPoolLimit
+  );
   const emitOutbox = options.emitOutbox === true;
   const logger = deps.logger || console;
   const deadPoolGuardConfig = options.deadPoolGuard || config.robinhoodDeadPoolGuard || {};
@@ -402,9 +413,10 @@ function createRobinhoodProcessingRunner(deps = {}) {
     timing.claimMs += Date.now() - phaseStartedAt;
     const totals = {
       claimed: 0, processed: 0, rejected: 0, retried: 0, blocked: 0,
-      continuationRounds: 0, continuationClaimed: 0,
+      continuationRounds: 0, continuationClaimed: 0, continuationPools: 0,
     };
     let shadowAudit = null;
+    let targetedMarketKeys = null;
 
     while (rows.length) {
       const round = await processClaimedRows(rows);
@@ -416,13 +428,22 @@ function createRobinhoodProcessingRunner(deps = {}) {
         'fdvCacheHits', 'fdvCacheMisses',
       ]) timing[field] += Number(round.timing[field] || 0);
       shadowAudit = mergeShadowAudit(shadowAudit, round.shadowAudit);
+      if (targetedMarketKeys === null) {
+        // rows are in on-chain order, so this freezes the oldest successfully
+        // settled V4 frontiers for the whole tick instead of rescanning every pool.
+        targetedMarketKeys = round.continuationMarketKeys.slice(0, v4ContinuationPoolLimit);
+        totals.continuationPools = targetedMarketKeys.length;
+      } else {
+        const stillEligible = new Set(round.continuationMarketKeys);
+        targetedMarketKeys = targetedMarketKeys.filter((key) => stillEligible.has(key));
+      }
       if (totals.continuationRounds >= v4ContinuationRounds
-          || !round.continuationMarketKeys.length
+          || !targetedMarketKeys.length
           || typeof repository.claimV4Continuations !== 'function') break;
       phaseStartedAt = Date.now();
       rows = await repository.claimV4Continuations({
-        owner, marketKeys: round.continuationMarketKeys,
-        limit: Math.min(batchSize, round.continuationMarketKeys.length), leaseMs,
+        owner, marketKeys: targetedMarketKeys,
+        limit: Math.min(batchSize, targetedMarketKeys.length), leaseMs,
       });
       timing.claimMs += Date.now() - phaseStartedAt;
       if (!rows.length) break;
@@ -446,8 +467,11 @@ function createRobinhoodProcessingRunner(deps = {}) {
 }
 
 module.exports = {
+  DEFAULT_V4_CONTINUATION_POOL_LIMIT,
   DEFAULT_V4_CONTINUATION_ROUNDS,
   createRobinhoodProcessingRunner,
   backoffFor,
-  __private: { createFdvReferenceCache, normalizeV4ContinuationRounds },
+  __private: {
+    createFdvReferenceCache, normalizeV4ContinuationRounds, normalizeV4ContinuationPoolLimit,
+  },
 };

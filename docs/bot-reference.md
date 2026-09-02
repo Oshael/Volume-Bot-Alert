@@ -414,10 +414,14 @@ ordem da chain; recuperar o primeiro dead-letter libera a pool a partir do event
 Depois do commit e settlement desse primeiro capture, o mesmo tick pode reclamar o próximo
 capture de cada pool V4 que avançou, em até
 `ROBINHOOD_PROCESSING_V4_CONTINUATION_ROUNDS` rounds adicionais (8 por default,
-0–100). Cada round recarrega o ledger materializado e commita antes de reclamar o seguinte;
-portanto acelera pools quentes sem valorar vários eventos contra o mesmo snapshot nem permitir
-overtake de retry, lease ou dead-letter. `lastV4ContinuationRounds` e
-`lastV4ContinuationClaimed` expõem o drain efetivamente usado na lease do processing.
+0–100). Para o custo do tick não crescer com todo o conjunto de pools, o primeiro round fixa
+somente as pools elegíveis mais antigas, limitado por
+`ROBINHOOD_PROCESSING_V4_CONTINUATION_POOL_LIMIT` (8 por default, 1–64), e os rounds seguintes
+consultam esse mesmo conjunto pelo índice de frontier. Cada round recarrega o ledger materializado
+e commita antes de reclamar o seguinte; portanto acelera as pools que seguram a frontier sem
+valorar vários eventos contra o mesmo snapshot nem permitir overtake de retry, lease ou
+dead-letter. `lastV4ContinuationRounds`, `lastV4ContinuationClaimed` e
+`lastV4ContinuationPools` expõem o drain efetivamente usado na lease do processing.
 
 `npm run robinhood:processing-blocked-requeue` faz apenas preview indexado do primeiro batch de
 dead-letters cujo `last_error` é o conflito de range V4. A escrita exige o worker parado e os três

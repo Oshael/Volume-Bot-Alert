@@ -217,6 +217,49 @@ describe('robinhood processing runner', () => {
       [result.claimed, result.processed, result.continuationRounds, result.continuationClaimed],
       [2, 2, 1, 1]
     );
+    assert.equal(result.continuationPools, 1);
+  });
+
+  it('continues only the oldest bounded V4 pool frontiers for the whole tick', async () => {
+    const first = v4Row({ n: '1', block_number: '100', log_index: '1' });
+    const secondPool = `0x${'44'.repeat(32)}`;
+    const second = v4Row({
+      n: '2', block_number: '101', log_index: '2',
+      market_key: `robinhood:uniswap-v4:${secondPool}`,
+    });
+    second.topics[1] = secondPool;
+    second.evidence.v4.poolId = secondPool;
+    const thirdPool = `0x${'55'.repeat(32)}`;
+    const third = v4Row({
+      n: '3', block_number: '102', log_index: '3',
+      market_key: `robinhood:uniswap-v4:${thirdPool}`,
+    });
+    third.topics[1] = thirdPool;
+    third.evidence.v4.poolId = thirdPool;
+    const repository = fakeRepo([first, second, third]);
+    let continuationCalls = 0;
+    repository.claimV4Continuations = async ({ marketKeys, limit }) => {
+      continuationCalls += 1;
+      assert.deepEqual(marketKeys, [first.market_key, second.market_key]);
+      assert.equal(limit, 2);
+      return continuationCalls === 1 ? [first, second] : [];
+    };
+    const theRunner = createRobinhoodProcessingRunner({
+      repository,
+      persistence: fakePersistence({ ranges: [] }),
+      logger: { error: () => {} },
+      options: {
+        owner: 'test-worker', v4ContinuationRounds: 2, v4ContinuationPoolLimit: 2,
+      },
+    });
+
+    const result = await theRunner.runOnce();
+
+    assert.equal(continuationCalls, 2);
+    assert.deepEqual(
+      [result.continuationPools, result.continuationRounds, result.continuationClaimed],
+      [2, 1, 2]
+    );
   });
 
   it('reuses FDV references until TTL expiry while guarding every observation', async () => {

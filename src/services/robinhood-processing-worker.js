@@ -40,6 +40,7 @@ let status = {
   lastReclaimed: 0,
   lastV4ContinuationRounds: 0,
   lastV4ContinuationClaimed: 0,
+  lastV4ContinuationPools: 0,
   lastTiming: null,
   totalProcessed: 0,
   totalRejected: 0,
@@ -77,6 +78,7 @@ function normalizeOptions(options = {}) {
       baseBackoffMs: options.baseBackoffMs,
       maxBackoffMs: options.maxBackoffMs,
       v4ContinuationRounds: boundedInteger(options.v4ContinuationRounds, 8, 0, 100),
+      v4ContinuationPoolLimit: boundedInteger(options.v4ContinuationPoolLimit, 8, 1, 64),
       emitOutbox: options.emitOutbox,
     },
     pruneLimit: boundedInteger(options.pruneLimit, 5000, 100, 50_000),
@@ -138,6 +140,7 @@ async function runOnce(normalized) {
   status.lastReclaimed = result.reclaimed;
   status.lastV4ContinuationRounds = result.continuationRounds || 0;
   status.lastV4ContinuationClaimed = result.continuationClaimed || 0;
+  status.lastV4ContinuationPools = result.continuationPools || 0;
   status.lastTiming = result.timing || null;
   status.totalProcessed += result.processed;
   status.totalRejected += result.rejected;
