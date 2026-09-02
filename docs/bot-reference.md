@@ -392,6 +392,16 @@ catch-up sem elevar `ROBINHOOD_OBSERVATION_CONCURRENCY` nem a simultaneidade RPC
 O range ainda pode reduzir até `ROBINHOOD_MIN_RANGE_SIZE=1` diante de resposta
 adaptativa do provider.
 
+Capturas V3 antigas já terminalizadas como `v3_pool_balance_unavailable` não são
+recuperadas pelo catch-up v2. Use `npm run robinhood:repair-v3-pruned` para o
+reparo direcionado, com `ROBINHOOD_V3_REPAIR_RPC_URL` apontando para um node
+archive. O comando é dry-run por default, limita o canário por `--max-batches`,
+seleciona apenas essa rejeição dentro de `--from-block`/`--to-block`, reconstrói
+metadata, quote, balances, observação e buckets no bloco exato e só então marca a
+captura como reparada. Após validar o chain ID do archive, ele estende por sete
+dias a retenção de toda a coorte selecionada, usa advisory lock e commits
+idempotentes e nunca altera os watermarks do backfill geral.
+
 O grupo `robinhood-processing` roda um processo separado (systemd
 `trendscope-worker@robinhood-processing.service`, lease `robinhood-processing-worker`,
 `start:worker:robinhood-processing` na porta 3007). O worker reclama capturas por lease

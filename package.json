@@ -96,6 +96,7 @@
     "robinhood:holder-quarantine": "node src/utils/quarantine-robinhood-holder-token.js",
     "robinhood:holder-global-promote": "node src/utils/promote-robinhood-global-holder-cohort.js",
     "robinhood:holder-global-delta": "node src/utils/create-robinhood-holder-global-delta.js",
+    "robinhood:repair-v3-pruned": "node src/utils/repair-robinhood-v3-pruned-captures.js",
     "robinhood:holder-deployment-recover": "node src/utils/recover-robinhood-holder-deployments.js",
     "robinhood:infrastructure-import": "node src/utils/import-robinhood-infrastructure-registry.js",
     "robinhood:infrastructure-close": "node src/utils/close-robinhood-infrastructure-registry.js",
