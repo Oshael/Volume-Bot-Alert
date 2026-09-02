@@ -76,14 +76,35 @@ function makeDeps(overrides = {}) {
       },
     },
     attributor: {
-      attributeBlock: async (blockNumber, observations) => {
-        calls.attributed.push({ blockNumber, observations });
-        if (overrides.attribute) return overrides.attribute(blockNumber, observations);
-        return {
-          blockNumber, blockHash: BLOCK_HASH, blockTime: BLOCK_TIME,
-          attributed: observations.length, inserted: observations.length,
-          unresolved: 0, missing: 0,
+      attributeGroups: async (groups) => {
+        const totals = {
+          blocks: 0, attributed: 0, inserted: 0, unresolved: 0, missing: 0,
+          failedBlock: null, results: [],
         };
+        for (const [blockNumber, observations] of groups) {
+          calls.attributed.push({ blockNumber, observations });
+          const attributed = overrides.attribute
+            ? await overrides.attribute(blockNumber, observations)
+            : {
+              blockNumber, blockHash: BLOCK_HASH, blockTime: BLOCK_TIME,
+              attributed: observations.length, inserted: observations.length,
+              unresolved: 0, missing: 0,
+            };
+          if (attributed.unresolved || attributed.missing) {
+            totals.unresolved = attributed.unresolved;
+            totals.missing = attributed.missing;
+            totals.failedBlock = String(blockNumber);
+            break;
+          }
+          totals.blocks += 1;
+          totals.attributed += attributed.attributed;
+          totals.inserted += attributed.inserted;
+          totals.results.push({
+            blockNumber: String(blockNumber), blockHash: attributed.blockHash,
+            blockTime: attributed.blockTime, attributed: attributed.attributed,
+          });
+        }
+        return totals;
       },
     },
   };
@@ -134,7 +155,7 @@ describe('Robinhood wallet-swap LIVE runner', () => {
     assert.equal(deps.cursor.advances.length, 0);
   });
 
-  it('processes groups in order, checkpoints each block and skips the proven empty tail', async () => {
+  it('processes groups in order, checkpoints once and skips the proven empty tail', async () => {
     const deps = makeDeps({ groups: [group(101, 2), group(110)], maxBlocks: 3 });
     const result = await runLiveTick(deps);
 
@@ -143,16 +164,17 @@ describe('Robinhood wallet-swap LIVE runner', () => {
     assert.equal(result.attributed, 3);
     assert.equal(result.nextBlock, '189');
     assert.equal(result.checkpointBlock, '110');
-    assert.equal(deps.cursor.advances.length, 3);
+    assert.equal(deps.cursor.advances.length, 1);
     assert.equal(deps.cursor.advances[0].checkpointHash, BLOCK_HASH);
-    assert.equal(deps.cursor.advances[2].checkpointBlock, undefined);
+    assert.equal(deps.cursor.advances[0].checkpointBlock, '110');
+    assert.equal(deps.cursor.advances[0].nextBlock, '189');
   });
 
   it('does not skip beyond a full source page', async () => {
     const deps = makeDeps({ groups: [group(101), group(110)], maxBlocks: 2 });
     const result = await runLiveTick(deps);
     assert.equal(result.nextBlock, '111');
-    assert.equal(deps.cursor.advances.length, 2);
+    assert.equal(deps.cursor.advances.length, 1);
   });
 
   it('fails closed without advancing the unresolved block', async () => {
@@ -168,6 +190,28 @@ describe('Robinhood wallet-swap LIVE runner', () => {
     assert.equal(result.failedBlock, '101');
     assert.equal(result.nextBlock, '100');
     assert.equal(deps.cursor.advances.length, 0);
+  });
+
+  it('commits one cursor advance for the successful prefix before an unresolved block', async () => {
+    const deps = makeDeps({
+      groups: [group(101), group(102), group(103)],
+      attribute: async (blockNumber) => ({
+        blockNumber, blockHash: BLOCK_HASH, blockTime: BLOCK_TIME,
+        attributed: blockNumber === '102' ? 0 : 1,
+        inserted: blockNumber === '102' ? 0 : 1,
+        unresolved: blockNumber === '102' ? 1 : 0,
+        missing: blockNumber === '102' ? 1 : 0,
+      }),
+    });
+    const result = await runLiveTick(deps);
+
+    assert.equal(result.status, 'blocked-unresolved');
+    assert.equal(result.failedBlock, '102');
+    assert.equal(result.processedBlocks, 1);
+    assert.equal(result.nextBlock, '102');
+    assert.equal(deps.calls.attributed.length, 2);
+    assert.equal(deps.cursor.advances.length, 1);
+    assert.equal(deps.cursor.advances[0].checkpointBlock, '101');
   });
 
   it('stops the tick on an optimistic cursor conflict', async () => {

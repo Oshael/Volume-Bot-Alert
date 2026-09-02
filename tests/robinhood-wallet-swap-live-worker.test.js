@@ -133,8 +133,10 @@ describe('Robinhood wallet-swap LIVE worker', () => {
         return { blockNumber: '150' };
       },
     };
-    const attributor = { attributeBlock() {} };
-    const runtime = await buildRuntime({ rpcOptions: {}, reorgDepth: 12, maxBlocks: 200 }, {
+    const attributor = { attributeGroups() {} };
+    const runtime = await buildRuntime({
+      rpcOptions: {}, reorgDepth: 12, maxBlocks: 200, blockConcurrency: 6,
+    }, {
       clientFactory: () => client,
       validateChainIds: async (value) => {
         assert.equal(value, client);
@@ -156,6 +158,7 @@ describe('Robinhood wallet-swap LIVE worker', () => {
     assert.equal(runtime.runnerDeps.reader, reader);
     assert.equal(runtime.runnerDeps.attributor, attributor);
     assert.equal(attributorInput.parserVersion, 'rh-wallet-live-1');
+    assert.equal(attributorInput.fetchConcurrency, 6);
     assert.equal(typeof attributorInput.transactionPositionRepository.upsertPositions, 'function');
     await runtime.runnerDeps.readNodeHead();
     await runtime.runnerDeps.fetchBlockHeader('10');

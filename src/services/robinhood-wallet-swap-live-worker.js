@@ -27,6 +27,7 @@ function normalizeOptions(options = {}) {
     intervalMs: boundedInteger(options.intervalMs, 2000, 250, 300_000),
     maxErrorBackoffMs: boundedInteger(options.maxErrorBackoffMs, 30_000, 1000, 300_000),
     maxBlocks: boundedInteger(options.maxBlocks, 200, 1, 2000),
+    blockConcurrency: boundedInteger(options.blockConcurrency, 8, 1, 32),
     reorgDepth: boundedInteger(options.reorgDepth, 12, 1, 1000),
     maxConsecutiveFailures: boundedInteger(options.maxConsecutiveFailures, 5, 1, 100),
     rpcOptions: options.rpcOptions || {},
@@ -61,6 +62,7 @@ async function buildRuntime(options, deps = {}) {
     repository: walletRepository,
     transactionPositionRepository,
     fetchBlock: (number) => fetchBlock(number, true),
+    fetchConcurrency: options.blockConcurrency,
     parserVersion: 'rh-wallet-live-1',
     onTradesPersisted: (rows) => (deps.marketTradeRealtime || marketTradeRealtime).publishRows(rows),
   });

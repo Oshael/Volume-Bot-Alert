@@ -84,7 +84,7 @@ function assertDependencies(deps) {
   if (typeof deps.loadMarketCursor !== 'function') throw new Error('loadMarketCursor is required');
   if (typeof deps.fetchBlockHeader !== 'function') throw new Error('fetchBlockHeader is required');
   if (typeof deps.reader?.readAcceptedBlockGroups !== 'function') throw new Error('reader is required');
-  if (typeof deps.attributor?.attributeBlock !== 'function') throw new Error('attributor is required');
+  if (typeof deps.attributor?.attributeGroups !== 'function') throw new Error('attributor is required');
   if (typeof deps.cursor?.loadCursor !== 'function'
     || typeof deps.cursor?.advanceLiveCursor !== 'function') {
     throw new Error('live cursor repository is required');
@@ -150,57 +150,82 @@ function sourceGroups(source, maxBlocks) {
   return source.groups;
 }
 
-function addAttribution(totals, result) {
-  for (const field of ['attributed', 'inserted', 'unresolved', 'missing']) {
-    totals[field] += Number(result?.[field] || 0);
+function assertOrderedResults(results, groups) {
+  for (let index = 0; index < results.length; index += 1) {
+    if (quantity(results[index].blockNumber, 'attribution.blockNumber')
+      !== quantity(groups[index][0], 'group.blockNumber')) {
+      throw runnerError('source_contract_error', 'attributor returned blocks out of order');
+    }
   }
 }
 
+function assertBatchFrontier(batch, groups, results, blocked) {
+  if (!blocked && results.length !== groups.length) {
+    throw runnerError('source_contract_error', 'attributor returned an incomplete batch');
+  }
+  if (!blocked) return;
+  const failedBlock = results.length < groups.length ? groups[results.length][0] : null;
+  if (failedBlock == null || String(batch?.failedBlock) !== String(failedBlock)) {
+    throw runnerError('source_contract_error', 'attributor returned an invalid blocked frontier');
+  }
+}
+
+function validateBatchResult(batch, groups) {
+  const results = Array.isArray(batch?.results) ? batch.results : [];
+  if (Number(batch?.blocks) !== results.length || results.length > groups.length) {
+    throw runnerError('source_contract_error', 'attributor returned an invalid batch size');
+  }
+  assertOrderedResults(results, groups);
+  const attributed = results.reduce((sum, result) => sum + Number(result.attributed || 0), 0);
+  const blocked = Number(batch?.unresolved || 0) > 0 || Number(batch?.missing || 0) > 0;
+  if (Number(batch?.attributed) !== attributed) {
+    throw runnerError('source_contract_error', 'attributor returned invalid attribution totals');
+  }
+  assertBatchFrontier(batch, groups, results, blocked);
+  return { results, blocked };
+}
+
 async function processGroups(deps, context, groups, maxBlocks) {
-  const totals = { processedBlocks: 0, attributed: 0, inserted: 0, unresolved: 0, missing: 0 };
-  let state = context.state;
-  let previousBlock = quantity(state.nextBlock, 'liveCursor.nextBlock') - 1n;
-  for (const group of groups) {
-    const { blockNumber, observations } = validateGroup(
-      group,
-      previousBlock,
-      context.frontiers.processableThrough
-    );
-    const attributed = await deps.attributor.attributeBlock(blockNumber.toString(), observations);
-    addAttribution(totals, attributed);
-    if (Number(attributed.missing || 0) > 0 || Number(attributed.unresolved || 0) > 0) {
-      return tickResult('blocked-unresolved', context.frontiers, state, {
-        ...totals, failedBlock: blockNumber.toString(),
-      });
-    }
-    const resultBlock = quantity(attributed.blockNumber, 'attribution.blockNumber');
-    if (resultBlock !== blockNumber) {
-      throw runnerError('source_contract_error', 'attributor returned the wrong block');
-    }
-    const nextBlock = (blockNumber + 1n).toString();
-    const advanced = await advance(deps.cursor, state, {
-      nextBlock,
-      safeHead: context.frontiers.processableThrough.toString(),
-      checkpointBlock: blockNumber.toString(),
-      checkpointHash: hash(attributed.blockHash, 'attribution.blockHash'),
-      checkpointTimestamp: new Date(attributed.blockTime).toISOString(),
+  let previousBlock = quantity(context.state.nextBlock, 'liveCursor.nextBlock') - 1n;
+  const validatedGroups = groups.map((group) => {
+    const validated = validateGroup(group, previousBlock, context.frontiers.processableThrough);
+    previousBlock = validated.blockNumber;
+    return [validated.blockNumber.toString(), validated.observations];
+  });
+  const batch = await deps.attributor.attributeGroups(validatedGroups);
+  const { results, blocked } = validateBatchResult(batch, validatedGroups);
+  const totals = {
+    processedBlocks: results.length,
+    attributed: Number(batch?.attributed || 0),
+    inserted: Number(batch?.inserted || 0),
+    unresolved: Number(batch?.unresolved || 0),
+    missing: Number(batch?.missing || 0),
+  };
+  if (!results.length) {
+    return tickResult('blocked-unresolved', context.frontiers, context.state, {
+      ...totals, failedBlock: String(batch.failedBlock),
     });
-    if (!advanced) return tickResult('conflict', context.frontiers, state, totals);
-    state = advanced;
-    previousBlock = blockNumber;
-    totals.processedBlocks += 1;
   }
 
-  if (groups.length < maxBlocks
-    && quantity(state.nextBlock, 'liveCursor.nextBlock') <= context.frontiers.processableThrough) {
-    const advanced = await advance(deps.cursor, state, {
-      nextBlock: (context.frontiers.processableThrough + 1n).toString(),
-      safeHead: context.frontiers.processableThrough.toString(),
-    });
-    if (!advanced) return tickResult('conflict', context.frontiers, state, totals);
-    state = advanced;
-  }
-  return tickResult('advanced', context.frontiers, state, totals);
+  const last = results.at(-1);
+  const lastBlock = quantity(last.blockNumber, 'attribution.blockNumber');
+  const nextBlock = blocked
+    ? String(batch.failedBlock)
+    : (groups.length < maxBlocks
+      ? (context.frontiers.processableThrough + 1n).toString()
+      : (lastBlock + 1n).toString());
+  const advanced = await advance(deps.cursor, context.state, {
+    nextBlock,
+    safeHead: context.frontiers.processableThrough.toString(),
+    checkpointBlock: lastBlock.toString(),
+    checkpointHash: hash(last.blockHash, 'attribution.blockHash'),
+    checkpointTimestamp: new Date(last.blockTime).toISOString(),
+  });
+  if (!advanced) return tickResult('conflict', context.frontiers, context.state, totals);
+  return tickResult(blocked ? 'blocked-unresolved' : 'advanced', context.frontiers, advanced, {
+    ...totals,
+    ...(blocked ? { failedBlock: String(batch.failedBlock) } : {}),
+  });
 }
 
 async function runLiveTick(deps = {}) {

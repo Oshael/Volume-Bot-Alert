@@ -1666,6 +1666,9 @@ module.exports = {
     maxBlocks: parseIntegerInRange(
       process.env.ROBINHOOD_WALLET_SWAP_LIVE_MAX_BLOCKS_PER_TICK, 200, 1, 2000
     ),
+    blockConcurrency: parseIntegerInRange(
+      process.env.ROBINHOOD_WALLET_SWAP_LIVE_BLOCK_CONCURRENCY, 8, 1, 32
+    ),
     reorgDepth: parseIntegerInRange(
       process.env.ROBINHOOD_WALLET_SWAP_LIVE_REORG_DEPTH, 12, 1, 1000
     ),

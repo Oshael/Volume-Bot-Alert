@@ -165,8 +165,9 @@ describe('robinhood wallet swap attributor', () => {
   });
 
   it('aggregates totals across grouped blocks', async () => {
-    const repository = fakeRepository();
-    const transactionPositionRepository = fakeTransactionPositionRepository();
+    const calls = [];
+    const repository = fakeRepository(calls);
+    const transactionPositionRepository = fakeTransactionPositionRepository(calls);
     const blocks = {
       100n: blockWith([{ hash: TX_1, from: SIGNER_A }]),
       101n: blockWith([{ hash: TX_2, from: SIGNER_B }]),
@@ -184,7 +185,76 @@ describe('robinhood wallet swap attributor', () => {
       [100n, [observation(TX_1, 1)]],
       [101n, [observation(TX_2, 2)]],
     ]);
-    assert.deepEqual(totals, { blocks: 2, attributed: 2, inserted: 2, unresolved: 0, missing: 0 });
+    assert.equal(totals.blocks, 2);
+    assert.equal(totals.attributed, 2);
+    assert.equal(totals.inserted, 2);
+    assert.equal(totals.unresolved, 0);
+    assert.equal(totals.failedBlock, null);
+    assert.deepEqual(totals.results.map((result) => result.blockNumber), ['100', '101']);
+    assert.deepEqual(calls, ['positions', 'swaps']);
+    assert.equal(transactionPositionRepository.inserted.length, 1);
+    assert.equal(repository.inserted.length, 1);
+    assert.equal(repository.inserted[0].length, 2);
+  });
+
+  it('prefetches with bounded concurrency but persists in block order', async () => {
+    let active = 0;
+    let maxActive = 0;
+    const repository = fakeRepository();
+    const transactionPositionRepository = fakeTransactionPositionRepository();
+    const fetchBlock = async (number) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setImmediate(resolve));
+      active -= 1;
+      const txHash = `0x${BigInt(number).toString(16).padStart(64, '0')}`;
+      return {
+        ...blockWith([{ hash: txHash, from: SIGNER_A }]),
+        number: `0x${BigInt(number).toString(16)}`,
+      };
+    };
+    const attributor = createRobinhoodWalletSwapAttributor({
+      repository, transactionPositionRepository, fetchBlock, fetchConcurrency: 2,
+    });
+    const groups = [100n, 101n, 102n, 103n].map((number) => {
+      const txHash = `0x${number.toString(16).padStart(64, '0')}`;
+      return [number, [observation(txHash, number, { block_number: number.toString() })]];
+    });
+
+    const totals = await attributor.attributeGroups(groups);
+
+    assert.equal(maxActive, 2);
+    assert.deepEqual(totals.results.map((result) => result.blockNumber), [
+      '100', '101', '102', '103',
+    ]);
+    assert.deepEqual(repository.inserted[0].map((row) => row.blockNumber), [
+      '100', '101', '102', '103',
+    ]);
+  });
+
+  it('persists only the ordered prefix before the first unresolved block', async () => {
+    const repository = fakeRepository();
+    const transactionPositionRepository = fakeTransactionPositionRepository();
+    const fetchBlock = async (number) => ({
+      ...blockWith([{ hash: number === 101n ? TX_1 : TX_2, from: SIGNER_A }]),
+      number: `0x${BigInt(number).toString(16)}`,
+    });
+    const attributor = createRobinhoodWalletSwapAttributor({
+      repository, transactionPositionRepository, fetchBlock, fetchConcurrency: 3,
+    });
+
+    const totals = await attributor.attributeGroups([
+      [100n, [observation(TX_2, 1)]],
+      [101n, [observation(TX_2, 2)]],
+      [102n, [observation(TX_2, 3)]],
+    ]);
+
+    assert.equal(totals.blocks, 1);
+    assert.equal(totals.failedBlock, '101');
+    assert.equal(totals.unresolved, 1);
+    assert.deepEqual(totals.results.map((result) => result.blockNumber), ['100']);
+    assert.equal(repository.inserted.length, 1);
+    assert.deepEqual(repository.inserted[0].map((row) => row.blockNumber), ['100']);
   });
 
   it('does not persist swaps or advanceable output when position persistence fails', async () => {

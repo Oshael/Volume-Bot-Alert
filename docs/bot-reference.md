@@ -3120,6 +3120,11 @@ O worker limita o trabalho pelo frontier estrito da captura/processing ativa,
 revalida checkpoint e usa RPC Robinhood com preflight de chain ID `4663`, lease,
 telemetria e backoff no grupo `robinhood-wallet`. O antigo frontier do cursor
 monolítico congelado foi removido; não usá-lo para medir lag atual.
+Cada página LIVE faz prefetch de blocos cheios com concorrência limitada por
+`ROBINHOOD_WALLET_SWAP_LIVE_BLOCK_CONCURRENCY` (default `8`, faixa `1..32`),
+persiste posições e wallet-swaps em lotes set-based e avança o cursor uma única
+vez até o último prefixo confirmado. O primeiro bloco não resolvido continua
+fail-closed: o prefixo anterior permanece idempotente e o cursor nunca o ultrapassa.
 
 As Stages 126–127 criam posições financeiras Robinhood versionadas e um cursor
 com frontier de bloco e tempo. A Stage 137 adiciona a origem durável desse cursor;

@@ -17,6 +17,34 @@
 const senderAdapterModule = require('./robinhood-transaction-sender-adapter');
 
 const DEFAULT_PARSER_VERSION = 'rh-wallet-seed-1';
+// Standalone seed callers remain sequential unless they opt in; the LIVE worker
+// supplies its separately bounded default through runtime configuration.
+const DEFAULT_FETCH_CONCURRENCY = 1;
+
+function boundedConcurrency(value) {
+  const parsed = Math.trunc(Number(value));
+  return Number.isFinite(parsed) ? Math.max(1, Math.min(parsed, 32)) : DEFAULT_FETCH_CONCURRENCY;
+}
+
+async function mapConcurrent(items, concurrency, mapper) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  async function consume() {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      try {
+        results[index] = { value: await mapper(items[index], index) };
+      } catch (error) {
+        results[index] = { error };
+      }
+    }
+  }
+  await Promise.all(Array.from(
+    { length: Math.min(concurrency, items.length) }, () => consume()
+  ));
+  return results;
+}
 
 function buildRow(observation, walletAddress, blockTime, parserVersion) {
   return {
@@ -50,6 +78,7 @@ function createRobinhoodWalletSwapAttributor(deps = {}) {
   const { repository, transactionPositionRepository, fetchBlock } = deps;
   const adapter = deps.adapter || senderAdapterModule;
   const parserVersion = deps.parserVersion || DEFAULT_PARSER_VERSION;
+  const fetchConcurrency = boundedConcurrency(deps.fetchConcurrency);
   const onTradesPersisted = typeof deps.onTradesPersisted === 'function'
     ? deps.onTradesPersisted : null;
 
@@ -64,11 +93,11 @@ function createRobinhoodWalletSwapAttributor(deps = {}) {
     throw new Error('attributor requires a transaction-position repository');
   }
 
-  async function attributeBlock(blockNumber, observations = []) {
+  async function resolveBlock(blockNumber, observations = []) {
     if (!Array.isArray(observations) || observations.length === 0) {
       return {
         blockNumber: String(blockNumber), blockHash: null, blockTime: null,
-        attributed: 0, inserted: 0, unresolved: 0, missing: 0,
+        rows: [], positions: [], missing: [],
       };
     }
     const hashes = observations.map((observation) => observation.transaction_hash);
@@ -80,7 +109,7 @@ function createRobinhoodWalletSwapAttributor(deps = {}) {
     if (missing.length > 0) {
       return {
         blockNumber: String(blockNumber), blockHash, blockTime,
-        attributed: 0, inserted: 0, unresolved: missing.length, missing: missing.length,
+        rows: [], positions: [], missing,
       };
     }
 
@@ -91,15 +120,38 @@ function createRobinhoodWalletSwapAttributor(deps = {}) {
       parserVersion
     ));
 
-    await transactionPositionRepository.upsertPositions([...resolvedPositions.values()]);
+    return {
+      blockNumber: String(blockNumber), blockHash, blockTime, rows,
+      positions: [...resolvedPositions.values()], missing: [],
+    };
+  }
+
+  async function persistResolved(resolvedBlocks) {
+    const rows = resolvedBlocks.flatMap((resolved) => resolved.rows);
+    const positions = resolvedBlocks.flatMap((resolved) => resolved.positions);
+    if (!rows.length) return 0;
+    await transactionPositionRepository.upsertPositions(positions);
     const { inserted } = await repository.insertWalletSwaps(rows);
     // Publish every persisted batch, including an idempotent retry. If NOTIFY
     // fails after the DB insert, the worker retries and clients dedupe the event;
     // the polling snapshot remains the final reconciliation path.
     await onTradesPersisted?.(rows);
+    return inserted;
+  }
+
+  async function attributeBlock(blockNumber, observations = []) {
+    const resolved = await resolveBlock(blockNumber, observations);
+    if (resolved.missing.length > 0) {
+      return {
+        blockNumber: resolved.blockNumber, blockHash: resolved.blockHash,
+        blockTime: resolved.blockTime, attributed: 0, inserted: 0,
+        unresolved: resolved.missing.length, missing: resolved.missing.length,
+      };
+    }
+    const inserted = await persistResolved([resolved]);
     return {
-      blockNumber: String(blockNumber), blockHash, blockTime,
-      attributed: rows.length,
+      blockNumber: resolved.blockNumber, blockHash: resolved.blockHash,
+      blockTime: resolved.blockTime, attributed: resolved.rows.length,
       inserted,
       unresolved: 0,
       missing: 0,
@@ -107,16 +159,40 @@ function createRobinhoodWalletSwapAttributor(deps = {}) {
   }
 
   async function attributeGroups(groups) {
-    const totals = { blocks: 0, attributed: 0, inserted: 0, unresolved: 0, missing: 0 };
-    for (const [blockNumber, observations] of groups) {
-      const result = await attributeBlock(blockNumber, observations);
-      totals.blocks += 1;
-      totals.attributed += result.attributed;
-      totals.inserted += result.inserted;
-      totals.unresolved += result.unresolved;
-      totals.missing += result.missing;
+    if (!Array.isArray(groups)) throw new TypeError('wallet swap groups must be a list');
+    const fetched = await mapConcurrent(groups, fetchConcurrency, async (group) => {
+      if (!Array.isArray(group) || group.length !== 2 || !Array.isArray(group[1])) {
+        throw new TypeError('wallet swap group must contain a block and observations');
+      }
+      return resolveBlock(group[0], group[1]);
+    });
+    const resolved = [];
+    let failed = null;
+    for (let index = 0; index < fetched.length; index += 1) {
+      if (fetched[index].error) throw fetched[index].error;
+      const current = fetched[index].value;
+      if (current.missing.length > 0) {
+        failed = current;
+        break;
+      }
+      resolved.push(current);
     }
-    return totals;
+    const inserted = await persistResolved(resolved);
+    const attributed = resolved.reduce((sum, item) => sum + item.rows.length, 0);
+    return {
+      blocks: resolved.length,
+      attributed,
+      inserted,
+      unresolved: failed?.missing.length || 0,
+      missing: failed?.missing.length || 0,
+      failedBlock: failed?.blockNumber || null,
+      results: resolved.map((item) => ({
+        blockNumber: item.blockNumber,
+        blockHash: item.blockHash,
+        blockTime: item.blockTime,
+        attributed: item.rows.length,
+      })),
+    };
   }
 
   return { attributeBlock, attributeGroups };
@@ -125,5 +201,5 @@ function createRobinhoodWalletSwapAttributor(deps = {}) {
 module.exports = {
   createRobinhoodWalletSwapAttributor,
   DEFAULT_PARSER_VERSION,
-  __private: { buildRow },
+  __private: { boundedConcurrency, buildRow, mapConcurrent },
 };
