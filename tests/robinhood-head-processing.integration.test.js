@@ -150,6 +150,24 @@ describe('Robinhood head processing repository integration', () => {
     assert.deepEqual(resumed.map((row) => Number(row.block_number)), [101]);
   });
 
+  it('skip-scans hot V4 pools without claiming more than their oldest capture', async () => {
+    const poolA = 'robinhood:uniswap-v4:pool-a';
+    const poolB = 'robinhood:uniswap-v4:pool-b';
+    await Promise.all(Array.from({ length: 100 }, (_, index) => seedPending({
+      block: 100 + index, logIndex: index,
+      protocol: 'uniswap-v4', marketKey: poolA,
+    })));
+    await seedPending({ block: 150, logIndex: 1000, protocol: 'uniswap-v4', marketKey: poolB });
+
+    const claimed = await repository.claimCaptures({
+      owner: 'worker-a', limit: 10, leaseMs: LEASE_MS, stream: 'market',
+    });
+
+    assert.deepEqual(claimed.map((row) => [row.market_key, Number(row.block_number)]), [
+      [poolA, 100], [poolB, 150],
+    ]);
+  });
+
   it('claims one continuation per V4 pool only after its previous row settles', async () => {
     const poolA = 'robinhood:uniswap-v4:pool-a';
     const poolB = 'robinhood:uniswap-v4:pool-b';

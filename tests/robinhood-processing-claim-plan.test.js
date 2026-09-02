@@ -22,10 +22,13 @@ it('uses bounded locked branches for the market claim', async () => {
 
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0].params, ['worker-a', 2000, 60_000]);
+  assert.match(calls[0].sql, /WITH RECURSIVE first_v4_by_pool/);
+  assert.match(calls[0].sql, /CROSS JOIN LATERAL/);
   assert.match(calls[0].sql, /v4_claimable AS MATERIALIZED/);
   assert.match(calls[0].sql, /independent_claimable AS MATERIALIZED/);
   assert.equal((calls[0].sql.match(/FOR UPDATE OF capture SKIP LOCKED/g) || []).length, 2);
   assert.doesNotMatch(calls[0].sql, /LEFT JOIN first_v4_by_pool/);
+  assert.doesNotMatch(calls[0].sql, /DISTINCT ON \(market_key\)/);
 });
 
 it('registers resumable partial indexes for both market claim branches', () => {

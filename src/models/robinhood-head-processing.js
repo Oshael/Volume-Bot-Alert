@@ -17,15 +17,37 @@ const PROCESSING_LEASE_KEY = 'robinhood-processing-worker';
 const BLOCKED_RECOVERY_ERROR = 'V4 liquidity range update conflicted or became negative';
 const BLOCKED_RECOVERY_LOCK_KEY = 'robinhood-processing-blocked-recovery';
 
-const MARKET_CLAIM_SQL = `WITH first_v4_by_pool AS MATERIALIZED (
-  SELECT DISTINCT ON (market_key)
-         market_key, transaction_hash, log_index
-  FROM robinhood_head_captures
-  WHERE chain = '${CHAIN}'
-    AND stream = 'market'
-    AND protocol = 'uniswap-v4'
-    AND processing_status IN ('pending', 'leased', 'blocked')
-  ORDER BY market_key, block_number, transaction_index, log_index
+const MARKET_CLAIM_SQL = `WITH RECURSIVE first_v4_by_pool AS (
+  (
+    SELECT capture.market_key, capture.transaction_hash, capture.log_index,
+           capture.block_number, capture.transaction_index
+    FROM robinhood_head_captures capture
+    WHERE capture.chain = '${CHAIN}'
+      AND capture.stream = 'market'
+      AND capture.protocol = 'uniswap-v4'
+      AND capture.market_key IS NOT NULL
+      AND capture.processing_status IN ('pending', 'leased', 'blocked')
+    ORDER BY capture.market_key, capture.block_number,
+             capture.transaction_index, capture.log_index
+    LIMIT 1
+  )
+  UNION ALL
+  SELECT next_pool.market_key, next_pool.transaction_hash, next_pool.log_index,
+         next_pool.block_number, next_pool.transaction_index
+  FROM first_v4_by_pool current_pool
+  CROSS JOIN LATERAL (
+    SELECT capture.market_key, capture.transaction_hash, capture.log_index,
+           capture.block_number, capture.transaction_index
+    FROM robinhood_head_captures capture
+    WHERE capture.chain = '${CHAIN}'
+      AND capture.stream = 'market'
+      AND capture.protocol = 'uniswap-v4'
+      AND capture.processing_status IN ('pending', 'leased', 'blocked')
+      AND capture.market_key > current_pool.market_key
+    ORDER BY capture.market_key, capture.block_number,
+             capture.transaction_index, capture.log_index
+    LIMIT 1
+  ) next_pool
 ), v4_claimable AS MATERIALIZED (
   SELECT capture.chain, capture.transaction_hash, capture.log_index,
          capture.block_number, capture.transaction_index

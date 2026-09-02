@@ -398,6 +398,10 @@ limitados de cada ramo com `FOR UPDATE SKIP LOCKED`, une os candidatos em ordem 
 aplica o limite global; discovery preserva a consulta anterior. No deploy, execute
 `node src/utils/db-init-stage186.js` antes de reiniciar o processing e confirme os dois índices
 com `indisvalid/indisready`; o estágio remove e reconstrói índices concorrentes interrompidos.
+O ramo V4 percorre esse índice por `market_key` com skip scan recursivo: faz um seek para a
+primeira captura ativa de cada pool em vez de reler todas as capturas ativas a cada tick. O custo
+do claim inicial cresce com a quantidade de pools, não com o backlog acumulado dentro delas;
+lease, retry e dead-letter continuam sendo a primeira captura retornada e preservam o no-overtake.
 
 O isolamento de persistência mantém o batch saudável como caminho único. Se a materialização
 de ranges V4 retorna o erro determinístico de conflito/liquidez negativa, o runner bisecta o
