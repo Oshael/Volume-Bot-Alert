@@ -31,6 +31,28 @@ it('uses bounded locked branches for the market claim', async () => {
   assert.doesNotMatch(calls[0].sql, /DISTINCT ON \(market_key\)/);
 });
 
+it('seeks one indexed frontier for every requested V4 continuation pool', async () => {
+  const calls = [];
+  const repository = createRobinhoodHeadProcessingRepository({
+    database: { async query(sql, params) {
+      calls.push({ sql, params });
+      return { rows: [] };
+    } },
+  });
+
+  await repository.claimV4Continuations({
+    owner: 'worker-a', marketKeys: ['pool-a', 'pool-b'], limit: 2, leaseMs: 60_000,
+  });
+
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].params, ['worker-a', 2, 60_000, ['pool-a', 'pool-b']]);
+  assert.match(calls[0].sql, /FROM unnest\(\$4::text\[\]\)/);
+  assert.match(calls[0].sql, /CROSS JOIN LATERAL/);
+  assert.match(calls[0].sql, /capture\.market_key = requested\.market_key/);
+  assert.doesNotMatch(calls[0].sql, /market_key = ANY/);
+  assert.doesNotMatch(calls[0].sql, /DISTINCT ON/);
+});
+
 it('registers resumable partial indexes for both market claim branches', () => {
   const sql = stage186.STATEMENTS.join('\n');
   const group = SCHEMA_GROUPS.find(({ key }) => (

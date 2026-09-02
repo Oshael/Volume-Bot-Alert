@@ -95,16 +95,23 @@ WHERE capture.chain = claimable.chain
   AND capture.log_index = claimable.log_index
 RETURNING capture.*`;
 
-const V4_CONTINUATION_CLAIM_SQL = `WITH first_v4_by_pool AS MATERIALIZED (
-  SELECT DISTINCT ON (market_key)
-         market_key, transaction_hash, log_index
-  FROM robinhood_head_captures
-  WHERE chain = '${CHAIN}'
-    AND stream = 'market'
-    AND protocol = 'uniswap-v4'
-    AND market_key = ANY($4::text[])
-    AND processing_status IN ('pending', 'leased', 'blocked')
-  ORDER BY market_key, block_number, transaction_index, log_index
+const V4_CONTINUATION_CLAIM_SQL = `WITH requested AS MATERIALIZED (
+  SELECT DISTINCT requested.market_key
+  FROM unnest($4::text[]) AS requested(market_key)
+), first_v4_by_pool AS MATERIALIZED (
+  SELECT next_capture.market_key, next_capture.transaction_hash, next_capture.log_index
+  FROM requested
+  CROSS JOIN LATERAL (
+    SELECT capture.market_key, capture.transaction_hash, capture.log_index
+    FROM robinhood_head_captures capture
+    WHERE capture.chain = '${CHAIN}'
+      AND capture.stream = 'market'
+      AND capture.protocol = 'uniswap-v4'
+      AND capture.market_key = requested.market_key
+      AND capture.processing_status IN ('pending', 'leased', 'blocked')
+    ORDER BY capture.block_number, capture.transaction_index, capture.log_index
+    LIMIT 1
+  ) next_capture
 ), claimable AS (
   SELECT capture.chain, capture.transaction_hash, capture.log_index
   FROM first_v4_by_pool first_v4
