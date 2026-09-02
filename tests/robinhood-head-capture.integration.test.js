@@ -119,6 +119,24 @@ describe('Robinhood head capture repository integration', () => {
     assert.equal(cursor.version, 1);
   });
 
+  it('batches a dense range without changing capture or replay counts', async () => {
+    const repository = createRobinhoodHeadCaptureRepository();
+    const entries = Array.from(
+      { length: 501 },
+      (_, index) => buildEntry(400 + index, index)
+    );
+    const input = { entries, cursor: buildCursor('901', '900') };
+
+    const first = await repository.appendCaptures(input);
+    assert.deepEqual(first, { insertedCaptures: 501, duplicateCaptures: 0 });
+
+    const replay = await repository.appendCaptures(input);
+    assert.deepEqual(replay, { insertedCaptures: 0, duplicateCaptures: 501 });
+
+    const rows = await db.query('SELECT COUNT(*)::int AS total FROM robinhood_head_captures');
+    assert.equal(rows.rows[0].total, 501);
+  });
+
   it('never regresses the capture cursor below its persisted next block', async () => {
     const repository = createRobinhoodHeadCaptureRepository();
     await repository.appendCaptures({ entries: [buildEntry(200)], cursor: buildCursor('210', '209') });

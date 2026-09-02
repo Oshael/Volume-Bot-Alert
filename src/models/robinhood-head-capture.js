@@ -4,6 +4,8 @@ const CHAIN = 'robinhood';
 const CURSOR_NOTIFY_CHANNEL = 'robinhood_head_capture_cursor';
 const STREAMS = new Set(['discovery', 'market']);
 const PROTOCOLS = new Set(['uniswap-v2', 'uniswap-v3', 'uniswap-v4']);
+const CAPTURE_INSERT_BATCH_SIZE = 500;
+const CAPTURE_PARAMETER_COUNT = 13;
 
 function decimalQuantity(value, label) {
   const raw = String(value ?? '').trim();
@@ -91,22 +93,38 @@ function normalizeCaptureCursor(cursor = {}) {
   };
 }
 
-async function insertCapture(client, entry) {
+function captureParameters(entry) {
+  return [
+    entry.stream, entry.transactionHash, entry.logIndex, entry.blockNumber,
+    entry.blockHash, entry.transactionIndex, entry.address, entry.topics,
+    entry.data, entry.protocol, entry.marketKey, entry.evidenceVersion, entry.evidence,
+  ];
+}
+
+function capturePlaceholders(rowIndex) {
+  const offset = rowIndex * CAPTURE_PARAMETER_COUNT;
+  const parameter = (position) => `$${offset + position}`;
+  return `(
+    'robinhood', ${parameter(1)}, ${parameter(2)}, ${parameter(3)}, ${parameter(4)},
+    ${parameter(5)}, ${parameter(6)}, ${parameter(7)}, ${parameter(8)}::jsonb,
+    ${parameter(9)}, ${parameter(10)}, ${parameter(11)}, ${parameter(12)},
+    ${parameter(13)}::jsonb
+  )`;
+}
+
+async function insertCaptureBatch(client, entries) {
+  if (!entries.length) return 0;
+  const placeholders = entries.map((_, index) => capturePlaceholders(index)).join(',');
+  const parameters = entries.flatMap(captureParameters);
   return client.query(
     `INSERT INTO robinhood_head_captures (
        chain, stream, transaction_hash, log_index, block_number, block_hash,
        transaction_index, address, topics, data, protocol, market_key,
        evidence_version, evidence
-     ) VALUES (
-       'robinhood', $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13::jsonb
-     )
+     ) VALUES ${placeholders}
      ON CONFLICT (chain, transaction_hash, log_index) DO NOTHING
-     RETURNING transaction_hash`,
-    [
-      entry.stream, entry.transactionHash, entry.logIndex, entry.blockNumber,
-      entry.blockHash, entry.transactionIndex, entry.address, entry.topics,
-      entry.data, entry.protocol, entry.marketKey, entry.evidenceVersion, entry.evidence,
-    ]
+     RETURNING 1`,
+    parameters
   );
 }
 
@@ -145,9 +163,10 @@ function createRobinhoodHeadCaptureRepository(options = {}) {
     try {
       await client.query('BEGIN');
       let insertedCaptures = 0;
-      for (const entry of entries) {
-        const inserted = await insertCapture(client, entry);
-        if (inserted.rowCount) insertedCaptures += 1;
+      for (let index = 0; index < entries.length; index += CAPTURE_INSERT_BATCH_SIZE) {
+        const batch = entries.slice(index, index + CAPTURE_INSERT_BATCH_SIZE);
+        const inserted = await insertCaptureBatch(client, batch);
+        insertedCaptures += inserted.rowCount;
       }
       await upsertCaptureCursor(client, cursor);
       await client.query('SELECT pg_notify($1, $2)', [CURSOR_NOTIFY_CHANNEL, cursor.stream]);
