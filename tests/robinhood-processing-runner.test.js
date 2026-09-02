@@ -364,6 +364,29 @@ describe('robinhood processing runner', () => {
     );
   });
 
+  it('never commits a V4 suffix after its predecessor fails during isolation', async () => {
+    const first = v4Row({ n: '1', log_index: '1' });
+    const poison = v4Row({ n: '2', log_index: '2' });
+    const suffix = v4Row({ n: '3', log_index: '3' });
+    const independent = v3Row({ n: '4', log_index: '4' });
+    const persistence = fakePersistence({ failTransactionHash: poison.transaction_hash });
+    const repository = fakeRepo([first, poison, suffix, independent]);
+    const theRunner = createRobinhoodProcessingRunner({
+      repository, persistence, logger: { error: () => {} },
+      options: { owner: 'test-worker' },
+    });
+
+    const result = await theRunner.runOnce();
+
+    assert.deepEqual([result.processed, result.retried], [2, 2]);
+    assert.deepEqual(persistence._calls.commit.flatMap(({ entries }) => (
+      entries.map((entry) => entry.log.transactionHash)
+    )), [first.transaction_hash, independent.transaction_hash]);
+    assert.deepEqual(repository._calls.settle.retry.map((entry) => entry.transactionHash), [
+      poison.transaction_hash, suffix.transaction_hash,
+    ]);
+  });
+
   it('settles head rejections and unknown evidence as terminals without persisting', async () => {
     const persistence = fakePersistence();
     const rejected = v3Row({ n: '3' });

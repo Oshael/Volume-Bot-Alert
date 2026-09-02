@@ -430,8 +430,10 @@ lease, retry e dead-letter continuam sendo a primeira captura retornada e preser
 
 O isolamento de persistência mantém o batch saudável como caminho único. Se a materialização
 de ranges V4 retorna o erro determinístico de conflito/liquidez negativa, o runner bisecta o
-batch em ordem on-chain e commita os subconjuntos saudáveis; somente a claim mínima que ainda
-reproduz o erro recebe retry/backoff e pode chegar a `blocked`. Falhas não classificadas, como
+batch em ordem on-chain e commita os subconjuntos saudáveis; a claim mínima que ainda
+reproduz o erro e seu sufixo posterior da mesma pool V4 recebem retry/backoff e podem chegar a
+`blocked`. O isolamento nunca aplica um delta posterior para compensar um predecessor inválido.
+Falhas não classificadas, como
 indisponibilidade de banco, não disparam a bisseção e retentam o subconjunto inteiro. Antes de
 reabrir dead-letters V4, esse isolamento deve estar implantado; a recuperação recoloca as claims
 em ordem on-chain para que adições válidas reconstruam as ranges antes das remoções dependentes.
@@ -446,12 +448,17 @@ capture de cada pool V4 que avançou, em até
 0–100). Para o custo do tick não crescer com todo o conjunto de pools, o primeiro round fixa
 somente as pools elegíveis mais antigas, limitado por
 `ROBINHOOD_PROCESSING_V4_CONTINUATION_POOL_LIMIT` (8 por default, 1–64). Os rounds seguintes
-fazem um seek lateral por pool nesse mesmo índice e podem reclamar um prefixo de swaps
-consecutivos, limitado por `ROBINHOOD_PROCESSING_V4_SWAP_PREFIX_LIMIT` (512 por default,
-1–2000) e pelo batch global. O prefixo para antes do próximo `ModifyLiquidity`; quando o delta
-é a frontier, ele é reclamado sozinho. Portanto todos os swaps do prefixo usam legitimamente o
-mesmo snapshot, e o round seguinte só recarrega o ledger depois do commit do delta. Retry,
-lease e dead-letter também interrompem o prefixo, preservando no-overtake.
+travam a frontier de cada pool e fazem um seek lateral no mesmo índice para reclamar um prefixo
+homogêneo de swaps ou de `ModifyLiquidity` consecutivos. Ambos usam o limite existente
+`ROBINHOOD_PROCESSING_V4_SWAP_PREFIX_LIMIT` (512 por default, 1–2000) e a divisão do batch global
+entre as pools solicitadas. O prefixo para antes da primeira mudança de tipo: swaps nunca são
+valorados no mesmo lote dos deltas da sua pool. Os deltas são registrados individualmente e
+materializados por faixa de ticks numa transação, validando cada saldo intermediário em ordem
+`(block_number, log_index)` antes da soma final; até lotes de soma zero falham se algum prefixo
+ficar negativo. Replays excluem os deltas já persistidos dessa validação e da aplicação.
+O próximo round só recarrega o ledger depois do commit e settlement do prefixo anterior.
+Retry, lease, lock concorrente na frontier e dead-letter também interrompem o prefixo,
+preservando no-overtake. Não exige nova flag, schema ou índice.
 `lastV4ContinuationRounds`, `lastV4ContinuationClaimed` e
 `lastV4ContinuationPools` expõem o drain efetivamente usado na lease do processing.
 

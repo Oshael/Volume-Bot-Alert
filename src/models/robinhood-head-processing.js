@@ -99,9 +99,29 @@ RETURNING capture.*`;
 const V4_CONTINUATION_CLAIM_SQL = `WITH requested AS MATERIALIZED (
   SELECT DISTINCT requested.market_key
   FROM unnest($4::text[]) AS requested(market_key)
+), first_by_pool AS MATERIALIZED (
+  SELECT first_capture.* FROM requested
+  CROSS JOIN LATERAL (
+    SELECT capture.transaction_hash, capture.log_index
+    FROM robinhood_head_captures capture
+    WHERE capture.chain = '${CHAIN}' AND capture.stream = 'market'
+      AND capture.protocol = 'uniswap-v4'
+      AND capture.market_key = requested.market_key
+      AND capture.processing_status IN ('pending', 'leased', 'blocked')
+    ORDER BY capture.block_number, capture.transaction_index, capture.log_index
+    LIMIT 1
+  ) first_capture
+), locked_pools AS MATERIALIZED (
+  SELECT capture.market_key FROM first_by_pool first_capture
+  INNER JOIN robinhood_head_captures capture
+    ON capture.chain = '${CHAIN}'
+   AND capture.transaction_hash = first_capture.transaction_hash
+   AND capture.log_index = first_capture.log_index
+  WHERE capture.processing_status = 'pending' AND capture.next_attempt_at <= NOW()
+  FOR UPDATE OF capture SKIP LOCKED
 ), bounded_by_pool AS MATERIALIZED (
   SELECT next_capture.*
-  FROM requested
+  FROM locked_pools
   CROSS JOIN LATERAL (
     SELECT capture.market_key, capture.transaction_hash, capture.log_index,
            capture.block_number, capture.transaction_index,
@@ -113,7 +133,7 @@ const V4_CONTINUATION_CLAIM_SQL = `WITH requested AS MATERIALIZED (
     WHERE capture.chain = '${CHAIN}'
       AND capture.stream = 'market'
       AND capture.protocol = 'uniswap-v4'
-      AND capture.market_key = requested.market_key
+      AND capture.market_key = locked_pools.market_key
       AND capture.processing_status IN ('pending', 'leased', 'blocked')
     ORDER BY capture.block_number, capture.transaction_index, capture.log_index
     LIMIT LEAST(
@@ -123,37 +143,25 @@ const V4_CONTINUATION_CLAIM_SQL = `WITH requested AS MATERIALIZED (
   ) next_capture
 ), marked_prefix AS MATERIALIZED (
   SELECT bounded.*,
-         ROW_NUMBER() OVER pool_order AS pool_position,
          BOOL_OR(
            bounded.processing_status <> 'pending'
            OR bounded.next_attempt_at > NOW()
          ) OVER pool_prefix AS blocked_prefix,
-         BOOL_OR(bounded.liquidity_delta) OVER pool_predecessors AS delta_before
+         BOOL_OR(bounded.liquidity_delta) OVER pool_prefix AS delta_seen,
+         BOOL_OR(NOT bounded.liquidity_delta) OVER pool_prefix AS swap_seen
   FROM bounded_by_pool bounded
   WINDOW
-    pool_order AS (
-      PARTITION BY bounded.market_key
-      ORDER BY bounded.block_number, bounded.transaction_index, bounded.log_index
-    ),
     pool_prefix AS (
       PARTITION BY bounded.market_key
       ORDER BY bounded.block_number, bounded.transaction_index, bounded.log_index
       ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-    ),
-    pool_predecessors AS (
-      PARTITION BY bounded.market_key
-      ORDER BY bounded.block_number, bounded.transaction_index, bounded.log_index
-      ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
     )
 ), prefix AS MATERIALIZED (
   SELECT market_key, transaction_hash, log_index,
          block_number, transaction_index
   FROM marked_prefix
   WHERE NOT blocked_prefix
-    AND (
-      pool_position = 1
-      OR (NOT liquidity_delta AND NOT COALESCE(delta_before, false))
-    )
+    AND NOT (delta_seen AND swap_seen)
 ), claimable AS (
   SELECT capture.chain, capture.transaction_hash, capture.log_index
   FROM prefix

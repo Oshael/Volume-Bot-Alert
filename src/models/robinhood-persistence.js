@@ -941,12 +941,30 @@ async function insertV4LiquidityDeltas(client, rows) {
       `WITH input AS (
          SELECT * FROM jsonb_to_recordset($1::jsonb) AS delta(
            "poolId" text, "marketKey" text, "tickLower" int,
-           "tickUpper" int, "liquidityDelta" text
+           "tickUpper" int, "liquidityDelta" text, "blockNumber" text, "logIndex" text
          )
-       ), grouped AS (
+       ), cumulative AS (
+         SELECT input.*,
+                SUM("liquidityDelta"::numeric) OVER (
+                  PARTITION BY "poolId", "tickLower", "tickUpper"
+                  ORDER BY "blockNumber"::bigint, "logIndex"::bigint
+                  ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                ) AS prefix_delta
+         FROM input
+       ), totals AS (
          SELECT "poolId", MIN("marketKey") AS "marketKey", "tickLower", "tickUpper",
-                SUM("liquidityDelta"::numeric) AS liquidity_delta
-         FROM input GROUP BY "poolId", "tickLower", "tickUpper"
+                SUM("liquidityDelta"::numeric) AS liquidity_delta,
+                MIN(prefix_delta) AS min_prefix_delta
+         FROM cumulative GROUP BY "poolId", "tickLower", "tickUpper"
+       ), grouped AS (
+         SELECT totals.* FROM totals
+         LEFT JOIN robinhood_v4_liquidity_ranges existing
+           ON existing.chain = 'robinhood'
+          AND existing.pool_id = totals."poolId"
+          AND existing.tick_lower = totals."tickLower"
+          AND existing.tick_upper = totals."tickUpper"
+         WHERE COALESCE(existing.liquidity_gross, 0) + totals.min_prefix_delta >= 0
+           AND (existing.market_key IS NULL OR existing.market_key = totals."marketKey")
        ), updated AS (
          UPDATE robinhood_v4_liquidity_ranges existing
          SET liquidity_gross = existing.liquidity_gross + grouped.liquidity_delta,

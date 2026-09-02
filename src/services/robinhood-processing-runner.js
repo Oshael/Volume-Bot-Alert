@@ -14,6 +14,7 @@
 const defaultDecoder = require('./robinhood-head-processing-decoder');
 const config = require('../../config');
 const { evaluateFdvBand } = require('./robinhood-price-spike-guard');
+const { commitErrorMessage, persistWithFailureIsolation } = require('./robinhood-processing-commit');
 
 const DEFAULT_BATCH_SIZE = 200;
 const DEFAULT_LEASE_MS = 60_000;
@@ -24,9 +25,6 @@ const DEFAULT_MAX_BACKOFF_MS = 300_000;
 const DEFAULT_V4_CONTINUATION_ROUNDS = 8;
 const DEFAULT_V4_CONTINUATION_POOL_LIMIT = 8;
 const DEFAULT_V4_SWAP_PREFIX_LIMIT = 512;
-const ISOLATABLE_COMMIT_ERRORS = Object.freeze([
-  'V4 liquidity range update conflicted or became negative',
-]);
 
 function identityOf(row) {
   return { transactionHash: row.transaction_hash, logIndex: String(row.log_index) };
@@ -35,10 +33,6 @@ function identityOf(row) {
 function backoffFor(attempt, baseMs, maxMs) {
   const exponential = baseMs * 2 ** Math.max(0, Number(attempt) - 1);
   return Math.max(1, Math.min(maxMs, exponential));
-}
-
-function commitErrorMessage(error) {
-  return String(error?.message || error).slice(0, 200);
 }
 
 function normalizeV4ContinuationRounds(value) {
@@ -60,33 +54,6 @@ function normalizeV4SwapPrefixLimit(value) {
   return Number.isSafeInteger(parsed)
     ? Math.max(1, Math.min(parsed, 2000))
     : DEFAULT_V4_SWAP_PREFIX_LIMIT;
-}
-
-function isIsolatableCommitError(error) {
-  const message = commitErrorMessage(error);
-  return ISOLATABLE_COMMIT_ERRORS.some((candidate) => message.includes(candidate));
-}
-
-async function persistWithFailureIsolation(items, commit) {
-  if (!items.length) return { processed: [], failed: [] };
-  try {
-    await commit(items);
-    return { processed: items, failed: [] };
-  } catch (error) {
-    if (items.length === 1 || !isIsolatableCommitError(error)) {
-      return {
-        processed: [],
-        failed: items.map((item) => ({ item, error })),
-      };
-    }
-    const middle = Math.floor(items.length / 2);
-    const left = await persistWithFailureIsolation(items.slice(0, middle), commit);
-    const right = await persistWithFailureIsolation(items.slice(middle), commit);
-    return {
-      processed: [...left.processed, ...right.processed],
-      failed: [...left.failed, ...right.failed],
-    };
-  }
 }
 
 // Dead-pool guard applier: reject an accepted observation whose fdv is a per-token
