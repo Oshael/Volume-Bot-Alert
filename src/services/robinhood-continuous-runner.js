@@ -139,7 +139,7 @@ function commonPollerOptions(options, rpcClient, confirmations) {
   return {
     client: rpcClient,
     confirmations,
-    rangeSize: options.rangeSize || 10,
+    rangeSize: options.rangeSize || 100,
     minRangeSize: options.minRangeSize || 1,
     maxRangeSize: options.maxRangeSize || 100,
     maxRangesPerPoll: options.maxRangesPerPoll || 20,

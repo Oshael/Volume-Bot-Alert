@@ -385,6 +385,12 @@ dessas chamadas fazia o head perder a fronteira. A evidência v2 registra
 preço, FDV e volume e publica liquidez desconhecida. No range live
 (`backfill=false`), os saldos continuam obrigatórios e são congelados normalmente.
 O decoder aceita evidência v1 e v2 para que a fila existente continue processável.
+Em `topics-only`, o range adaptativo recupera no máximo até o range inicial;
+portanto o padrão operacional é `ROBINHOOD_RANGE_SIZE=100`, com
+`ROBINHOOD_MAX_RANGES_PER_POLL=20`. Isso permite até 2.000 blocos por ciclo de
+catch-up sem elevar `ROBINHOOD_OBSERVATION_CONCURRENCY` nem a simultaneidade RPC.
+O range ainda pode reduzir até `ROBINHOOD_MIN_RANGE_SIZE=1` diante de resposta
+adaptativa do provider.
 
 O grupo `robinhood-processing` roda um processo separado (systemd
 `trendscope-worker@robinhood-processing.service`, lease `robinhood-processing-worker`,

@@ -1114,6 +1114,9 @@ describe('runtime worker groups config', () => {
   });
 
   it('keeps Robinhood ingestion disabled by default and bounds its runtime controls', () => {
+    withEnv({ ROBINHOOD_RANGE_SIZE: '' }, (config) => {
+      assert.equal(config.robinhoodIngestionWorker.rangeSize, 100);
+    });
     withEnv({
       ROBINHOOD_INGESTION_ENABLED: '',
       ROBINHOOD_POLL_INTERVAL_MS: '1',

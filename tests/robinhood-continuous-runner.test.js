@@ -62,6 +62,19 @@ function createClient(options = {}) {
 }
 
 describe('Robinhood continuous runner', () => {
+  it('starts both live pollers with a 100-block catch-up range by default', async () => {
+    const runner = await createRobinhoodContinuousRunner({
+      rpcClient: createClient(),
+      pipeline: createPipeline(),
+      startBlock: 100,
+      confirmations: 0,
+    });
+
+    const snapshot = runner.snapshot();
+    assert.equal(snapshot.pollers.discovery.rangeSize, 100);
+    assert.equal(snapshot.pollers.market.rangeSize, 100);
+  });
+
   it('bootstraps only discovery and persists empty ranges without starting market', async () => {
     const commits = [];
     const repository = {

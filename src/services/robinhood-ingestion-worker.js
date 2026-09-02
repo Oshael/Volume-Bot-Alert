@@ -44,7 +44,7 @@ function normalizeOptions(options = {}) {
     lookbackBlocks: boundedInteger(options.lookbackBlocks, 250, 1, 100_000),
     startBlock: options.startBlock || null,
     confirmations: boundedInteger(options.confirmations, 2, 0, 1000),
-    rangeSize: boundedInteger(options.rangeSize, 10, 1, 10_000),
+    rangeSize: boundedInteger(options.rangeSize, 100, 1, 10_000),
     minRangeSize: boundedInteger(options.minRangeSize, 1, 1, 1000),
     maxRangeSize: boundedInteger(options.maxRangeSize, 100, 1, 10_000),
     maxRangesPerPoll,

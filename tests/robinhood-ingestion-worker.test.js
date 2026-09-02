@@ -153,6 +153,7 @@ describe('Robinhood ingestion worker', () => {
     assert.equal(publicOnly.marketLogFilterMode, 'topics-only');
     assert.equal(publicOnly.rpcMinIntervalMs, 250);
     assert.equal(publicOnly.archiveRpcMinIntervalMs, 250);
+    assert.equal(publicOnly.rangeSize, 100);
     assert.equal(__private.normalizeOptions({
       rpcMinIntervalMs: 500,
       archiveRpcMinIntervalMs: 200,
