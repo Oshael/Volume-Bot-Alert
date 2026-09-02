@@ -408,7 +408,7 @@ O grupo `robinhood-processing` roda um processo separado (systemd
 `start:worker:robinhood-processing` na porta 3007). O worker reclama capturas por lease
 (`FOR UPDATE SKIP LOCKED`, ordem on-chain), re-decodifica o log congelado contra um contexto
 de pool sintetizado da evidência e lê metadata/quote/saldos da própria evidência — **nenhum
-`eth_call` histórico**. Persiste logs, deltas V4, observações e buckets numa transação
+`eth_call` histórico**. Persiste logs, deltas V4, observações e buckets em transações limitadas
 (`commitHeadProcessingBatch`) que **não** commita cursor nem emite socket/alert (derivados são
 etapa posterior); erro isola a claim (retry com backoff ou dead-letter `blocked`) sem tocar o
 cursor de captura. Poda a fila 1 dia após o terminal (`retention_eligible_at`). Watermark de
@@ -428,7 +428,18 @@ primeira captura ativa de cada pool em vez de reler todas as capturas ativas a c
 do claim inicial cresce com a quantidade de pools, não com o backlog acumulado dentro delas;
 lease, retry e dead-letter continuam sendo a primeira captura retornada e preservam o no-overtake.
 
-O isolamento de persistência mantém o batch saudável como caminho único. Se a materialização
+`ROBINHOOD_PROCESSING_BATCH_SIZE` aceita 1–8000 capturas por claim (default 200),
+tanto no claim inicial de market quanto nas continuações V4. Claims maiores que 2000
+são persistidos em sublotes sequenciais de até 2000 entradas por transação, sem aumentar
+conexões nem paralelizar escritas da mesma pool. O batch de discovery co-localizado permanece
+limitado a 2000. Preparação e settlement ainda abrangem a claim inteira: aumentar o batch
+amplia memória, duração das leases necessárias e trabalho por ciclo; não reserva CPU/RAM nem
+garante throughput. Um prefixo já commitado permanece válido se o sufixo falhar, e o replay
+continua idempotente. Falhas não determinísticas interrompem as escritas restantes da claim;
+falhas de ranges V4 isolam sua pool também entre sublotes. Os rounds de market precedem o
+consumidor de discovery: batch/rounds maiores podem espaçar esse consumidor, sem reiniciar head.
+
+O isolamento de persistência mantém cada sublote saudável como caminho único. Se a materialização
 de ranges V4 retorna o erro determinístico de conflito/liquidez negativa, o runner bisecta o
 batch em ordem on-chain e commita os subconjuntos saudáveis; a claim mínima que ainda
 reproduz o erro e seu sufixo posterior da mesma pool V4 recebem retry/backoff e podem chegar a

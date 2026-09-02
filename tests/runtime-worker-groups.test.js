@@ -46,6 +46,14 @@ function withEnv(overrides, fn) {
 }
 
 describe('runtime worker groups config', () => {
+  it('accepts larger processing claims while preserving defaults and an upper bound', () => {
+    for (const [value, expected] of [['', 200], ['2000', 2000], ['8000', 8000], ['99999', 8000]]) {
+      withEnv({ ROBINHOOD_PROCESSING_BATCH_SIZE: value }, (config) => {
+        assert.equal(config.robinhoodProcessingWorker.batchSize, expected);
+      });
+    }
+  });
+
   it('bounds the V4 processing swap-prefix limit', () => {
     withEnv({
       ROBINHOOD_PROCESSING_V4_SWAP_PREFIX_LIMIT: '9999',

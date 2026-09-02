@@ -4,7 +4,7 @@
  * One tick reclaims abandoned leases, claims a batch of pending market captures,
  * decodes each from its frozen evidence (no RPC), values V2/V3 liquidity from the
  * evidence and V4 liquidity from the materialized tick ledger, persists
- * observations/buckets/deltas in a single transaction, and settles the claims.
+ * observations/buckets/deltas in bounded transactions, and settles the claims.
  *
  * Isolation invariants (evidence contract §7, plan §5.2):
  *  - it never touches the capture cursor;
@@ -25,6 +25,13 @@ const DEFAULT_MAX_BACKOFF_MS = 300_000;
 const DEFAULT_V4_CONTINUATION_ROUNDS = 8;
 const DEFAULT_V4_CONTINUATION_POOL_LIMIT = 8;
 const DEFAULT_V4_SWAP_PREFIX_LIMIT = 512;
+
+function normalizeProcessingBatchSize(value) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed)
+    ? Math.max(1, Math.min(parsed, 8000))
+    : DEFAULT_BATCH_SIZE;
+}
 
 function identityOf(row) {
   return { transactionHash: row.transaction_hash, logIndex: String(row.log_index) };
@@ -164,7 +171,7 @@ function createRobinhoodProcessingRunner(deps = {}) {
 
   const options = deps.options || {};
   const owner = String(options.owner || `robinhood-processing:${process.pid}`);
-  const batchSize = Number(options.batchSize) || DEFAULT_BATCH_SIZE;
+  const batchSize = normalizeProcessingBatchSize(options.batchSize);
   const leaseMs = Number(options.leaseMs) || DEFAULT_LEASE_MS;
   const retentionMs = Number(options.retentionMs) || DEFAULT_RETENTION_MS;
   const maxAttempts = Number(options.maxAttempts) || DEFAULT_MAX_ATTEMPTS;
@@ -447,6 +454,7 @@ module.exports = {
   DEFAULT_V4_CONTINUATION_ROUNDS,
   DEFAULT_V4_SWAP_PREFIX_LIMIT,
   createRobinhoodProcessingRunner,
+  normalizeProcessingBatchSize,
   backoffFor,
   __private: {
     createFdvReferenceCache, normalizeV4ContinuationRounds, normalizeV4ContinuationPoolLimit,

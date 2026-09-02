@@ -148,6 +148,42 @@ function runner(rows, persistence, options = {}, deps = {}) {
 }
 
 describe('robinhood processing runner', () => {
+  it('claims 8000 captures but persists ordered transactions of at most 2000', async () => {
+    const rows = Array.from({ length: 8000 }, (_, index) => v3Row({
+      transaction_hash: `0x${BigInt(index + 1).toString(16).padStart(64, '0')}`,
+      log_index: String(index),
+    }));
+    const repository = fakeRepo(rows);
+    repository.claimCaptures = async ({ limit }) => {
+      assert.equal(limit, 8000);
+      return rows;
+    };
+    const persistence = fakePersistence();
+    const result = await runner(rows, persistence, { batchSize: 8000 }, { repository }).runOnce();
+    assert.deepEqual(persistence._calls.commit.map(({ entries }) => entries.length), [2000, 2000, 2000, 2000]);
+    assert.deepEqual(persistence._calls.commit.flatMap(({ entries }) => entries.map((entry) => (
+      entry.log.transactionHash
+    ))), rows.map((item) => item.transaction_hash));
+    assert.deepEqual([result.claimed, result.processed, result.retried], [8000, 8000, 0]);
+    assert.equal(repository._calls.settle.processed.length, 8000);
+  });
+
+  it('retries the uncommitted suffix after a transient failure without repeating writes', async () => {
+    const rows = Array.from({ length: 4001 }, (_, index) => v3Row({
+      transaction_hash: `0x${BigInt(index + 1).toString(16).padStart(64, '0')}`,
+      log_index: String(index),
+    }));
+    const persistence = fakePersistence({
+      failTransactionHash: rows[2000].transaction_hash, failMessage: 'connection lost',
+    });
+    const repository = fakeRepo(rows);
+    const result = await runner(rows, persistence, { batchSize: 8000 }, { repository }).runOnce();
+    assert.deepEqual(persistence._calls.attempts.map(({ entries }) => entries.length), [2000, 2000]);
+    assert.deepEqual([result.processed, result.retried], [2000, 2001]);
+    assert.deepEqual(repository._calls.settle.retry.map((item) => item.transactionHash),
+      rows.slice(2000).map((item) => item.transaction_hash));
+  });
+
   it('reprocesses V2/V3 captures into observations from evidence with no RPC and no ledger read', async () => {
     const persistence = fakePersistence();
     const result = await runner([v2Row({ n: '1' }), v3Row({ n: '2' })], persistence).runOnce();

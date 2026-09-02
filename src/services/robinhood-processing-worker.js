@@ -10,7 +10,9 @@
 const db = require('../models/db');
 const { createRobinhoodPersistenceRepository } = require('../models/robinhood-persistence');
 const { createRobinhoodHeadProcessingRepository } = require('../models/robinhood-head-processing');
-const { createRobinhoodProcessingRunner } = require('./robinhood-processing-runner');
+const {
+  createRobinhoodProcessingRunner, normalizeProcessingBatchSize,
+} = require('./robinhood-processing-runner');
 const {
   createRobinhoodDiscoveryProcessingRunner,
 } = require('./robinhood-discovery-processing-runner');
@@ -71,7 +73,7 @@ function normalizeOptions(options = {}) {
     pruneIntervalMs: boundedInteger(options.pruneIntervalMs, DEFAULT_PRUNE_INTERVAL_MS, 30_000, 3_600_000),
     runner: {
       owner: options.owner,
-      batchSize: options.batchSize,
+      batchSize: normalizeProcessingBatchSize(options.batchSize),
       leaseMs: options.leaseMs,
       retentionMs: options.retentionMs,
       maxAttempts: options.maxAttempts,
@@ -115,6 +117,8 @@ function build(normalized, deps = {}) {
     persistence,
     options: {
       ...normalized.runner,
+      // Enlarging market claims must not enlarge the co-located discovery batch.
+      batchSize: Math.min(normalized.runner.batchSize, 2000),
       owner: normalized.runner.owner ? `${normalized.runner.owner}:discovery` : undefined,
       emitOutbox: undefined,
     },

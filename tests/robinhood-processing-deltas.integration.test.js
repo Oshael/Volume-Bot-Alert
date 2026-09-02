@@ -5,6 +5,7 @@ const { before, beforeEach, after, describe, it } = require('node:test');
 const db = require('../src/models/db');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 const { createRobinhoodPersistenceRepository } = require('../src/models/robinhood-persistence');
+const { persistWithFailureIsolation } = require('../src/services/robinhood-processing-commit');
 const stages = [63, 99, 101].flatMap((id) => require(`../src/utils/db-init-stage${id}`).STATEMENTS);
 const HASH = `0x${'a'.repeat(64)}`;
 const POOL = `0x${'b'.repeat(64)}`;
@@ -108,5 +109,22 @@ describe('Robinhood processing consecutive V4 deltas integration', () => {
     assert.equal(replay.insertedLogs, 1);
     assert.equal(replay.insertedLiquidityDeltas, 1);
     assert.deepEqual(await ledgerState(), { logs: 2, deltas: 2, balance: '0' });
+  });
+
+  it('preserves committed prefixes and fences a failing pool across transaction boundaries and replay', async () => {
+    const items = Array.from({ length: 2001 }, (_, index) => ({
+      row: { protocol: 'uniswap-v4', market_key: MARKET },
+      entry: delta(index, index < 1999 ? 1 : index === 1999 ? -2500 : 2500),
+    }));
+    const commit = (batch) => {
+      assert.ok(batch.length <= 2000);
+      return repository.commitHeadProcessingBatch({ entries: batch.map((item) => item.entry) });
+    };
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await persistWithFailureIsolation(items, commit);
+      assert.deepEqual([result.processed.length, result.failed.length], [1999, 2]);
+      assert.deepEqual(result.failed.map(({ item }) => item), items.slice(1999));
+      assert.deepEqual(await ledgerState(), { logs: 1999, deltas: 1999, balance: '1999' });
+    }
   });
 });

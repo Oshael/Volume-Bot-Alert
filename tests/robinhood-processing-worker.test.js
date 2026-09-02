@@ -41,6 +41,8 @@ describe('robinhood processing worker', () => {
     assert.equal(bounded.runner.v4ContinuationRounds, 8);
     assert.equal(bounded.runner.v4ContinuationPoolLimit, 8);
     assert.equal(bounded.runner.v4SwapPrefixLimit, 512);
+    assert.equal(bounded.runner.batchSize, 200);
+    assert.equal(worker.__private.normalizeOptions({ batchSize: 99999 }).runner.batchSize, 8000);
     assert.equal(worker.__private.normalizeOptions({
       v4ContinuationRounds: 999,
     }).runner.v4ContinuationRounds, 100);
@@ -90,5 +92,19 @@ describe('robinhood processing worker', () => {
     await worker.runOnce(normalized);
 
     assert.equal(repository._calls.prune, 0);
+  });
+
+  it('keeps discovery claims capped at 2000 when market claims are enlarged', async () => {
+    const repository = { ...fakeRepo(), claimCaptures: async ({ stream, limit }) => {
+      assert.equal(stream, 'discovery');
+      assert.equal(limit, 2000);
+      return [];
+    } };
+    const normalized = worker.__private.normalizeOptions({ batchSize: 8000 });
+    worker.__private.build(normalized, {
+      runner: fakeRunner(), repository,
+      persistence: { commitDiscoveryProcessingBatch: async () => ({}) },
+    });
+    await worker.runOnce(normalized);
   });
 });
