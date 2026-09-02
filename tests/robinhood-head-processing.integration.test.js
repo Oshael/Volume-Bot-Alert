@@ -425,6 +425,38 @@ describe('Robinhood head processing repository integration', () => {
     assert.equal((await statusOf(pending)).processing_status, 'pending'); // never terminal
   });
 
+  it('suspends capture pruning while the targeted V3 archive repair holds its lock', async () => {
+    const expired = await seedPending({ block: 103 });
+    await repository.claimCaptures({ owner: 'worker-a', limit: 1, leaseMs: LEASE_MS });
+    await repository.settleClaims({
+      owner: 'worker-a', retentionMs: RETENTION_MS,
+      processed: [expired],
+    });
+    await db.query(
+      `UPDATE robinhood_head_captures
+          SET terminal_at = NOW() - INTERVAL '2 minutes',
+              retention_eligible_at = NOW() - INTERVAL '1 minute'
+        WHERE transaction_hash = $1 AND log_index = $2`,
+      [expired.transactionHash, expired.logIndex]
+    );
+
+    const lockClient = await db.getClient();
+    try {
+      await lockClient.query(
+        "SELECT pg_advisory_lock(hashtext('robinhood:v3-pruned-capture-repair'))"
+      );
+      assert.equal(await repository.pruneExpiredCaptures({ limit: 100 }), 0);
+      assert.equal((await statusOf(expired)).processing_status, 'processed');
+    } finally {
+      await lockClient.query(
+        "SELECT pg_advisory_unlock(hashtext('robinhood:v3-pruned-capture-repair'))"
+      );
+      lockClient.release();
+    }
+    assert.equal(await repository.pruneExpiredCaptures({ limit: 100 }), 1);
+    assert.equal(await statusOf(expired), undefined);
+  });
+
   it('previews and requeues only bounded V4-contaminated dead-letters in chain order', async () => {
     const unrelated = await seedPending({ block: 99, attemptCount: 4 });
     const first = await seedPending({ block: 100, logIndex: 1, attemptCount: 4 });

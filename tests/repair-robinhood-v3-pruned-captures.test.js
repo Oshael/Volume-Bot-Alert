@@ -32,8 +32,9 @@ describe('targeted Robinhood V3 pruned-capture repair', () => {
   it('defaults to a bounded dry-run and validates write controls', () => {
     assert.deepEqual(__private.parseArgs([], {}), {
       mode: 'dry-run', rpcUrl: '', fromBlock: '0', toBlock: '9223372036854775807',
-      batchSize: 50, rpcConcurrency: 1, maxBatches: 1, sleepMs: 250,
+      batchSize: 100, rpcConcurrency: 2, maxBatches: 1, sleepMs: 100,
     });
+    assert.throws(() => __private.parseArgs(['--batch-size=251'], {}), /between 1 and 250/);
     assert.throws(() => __private.parseArgs(['--rpc-concurrency=5'], {}), /between 1 and 4/);
     assert.throws(() => __private.parseArgs(['--mode=erase'], {}), /dry-run or write/);
   });
@@ -45,7 +46,6 @@ describe('targeted Robinhood V3 pruned-capture repair', () => {
       summarize: async () => ({ candidates: '2', first_block: '100', last_block: '101' }),
       list: async () => batches.shift(),
       withLock: async (callback) => { calls.push('lock'); return callback(); },
-      protect: async () => { calls.push('protect'); return 2; },
       markRepaired: async (rows) => { calls.push(`mark:${rows.length}`); return rows.length; },
     };
     const entries = [
@@ -64,7 +64,7 @@ describe('targeted Robinhood V3 pruned-capture repair', () => {
       },
     });
 
-    assert.deepEqual(calls, ['lock', 'protect', 'archive', 'commit:2', 'mark:2']);
+    assert.deepEqual(calls, ['lock', 'archive', 'commit:2', 'mark:2']);
     assert.deepEqual(
       [result.repaired, result.accepted, result.rejected, result.batches],
       [2, 1, 1, 1]
@@ -77,7 +77,6 @@ describe('targeted Robinhood V3 pruned-capture repair', () => {
       summarize: async () => ({ candidates: '1', first_block: '100', last_block: '100' }),
       list: async () => [row(100)],
       withLock: async (callback) => callback(),
-      protect: async () => 1,
       markRepaired: async () => { marked = true; },
     };
     await assert.rejects(runRepair(options({ maxBatches: 1 }), {

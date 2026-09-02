@@ -48,10 +48,10 @@ function parseArgs(argv = process.argv.slice(2), env = process.env) {
     rpcUrl: String(args['rpc-url'] || env.ROBINHOOD_V3_REPAIR_RPC_URL || '').trim(),
     fromBlock: block(args['from-block'], '0', 'from-block'),
     toBlock: block(args['to-block'], '9223372036854775807', 'to-block'),
-    batchSize: integer(args['batch-size'], 50, 1, 100, 'batch-size'),
-    rpcConcurrency: integer(args['rpc-concurrency'], 1, 1, 4, 'rpc-concurrency'),
+    batchSize: integer(args['batch-size'], 100, 1, 250, 'batch-size'),
+    rpcConcurrency: integer(args['rpc-concurrency'], 2, 1, 4, 'rpc-concurrency'),
     maxBatches: integer(args['max-batches'], mode === 'dry-run' ? 1 : 0, 0, 1_000_000, 'max-batches'),
-    sleepMs: integer(args['sleep-ms'], 250, 0, 60_000, 'sleep-ms'),
+    sleepMs: integer(args['sleep-ms'], 100, 0, 60_000, 'sleep-ms'),
   };
 }
 
@@ -100,20 +100,6 @@ function createCandidateRepository(database = db) {
     return result.rows;
   }
 
-  async function protect(fromBlock, toBlock) {
-    const result = await database.query(
-      `UPDATE robinhood_head_captures capture
-          SET retention_eligible_at = GREATEST(
-                COALESCE(capture.retention_eligible_at, NOW()),
-                NOW() + INTERVAL '7 days'
-              ),
-              updated_at = NOW()
-        WHERE ${filter}`,
-      [fromBlock, toBlock]
-    );
-    return result.rowCount;
-  }
-
   async function markRepaired(rows) {
     const identities = rows.map((row) => ({
       transactionHash: row.transaction_hash,
@@ -153,10 +139,7 @@ function createCandidateRepository(database = db) {
   async function withLock(callback) {
     const client = await database.getClient();
     try {
-      const locked = await client.query(
-        'SELECT pg_try_advisory_lock(hashtext($1)) AS acquired', [LOCK_KEY]
-      );
-      if (locked.rows[0]?.acquired !== true) throw new Error('Another V3 archive repair is running');
+      await client.query('SELECT pg_advisory_lock(hashtext($1))', [LOCK_KEY]);
       return await callback();
     } finally {
       try { await client.query('SELECT pg_advisory_unlock(hashtext($1))', [LOCK_KEY]); } catch (_) {}
@@ -164,7 +147,7 @@ function createCandidateRepository(database = db) {
     }
   }
 
-  return Object.freeze({ summarize, list, protect, markRepaired, withLock });
+  return Object.freeze({ summarize, list, markRepaired, withLock });
 }
 
 function claim(row) {
@@ -278,7 +261,6 @@ async function runRepair(options, deps = {}) {
   return candidates.withLock(async () => {
     const chainId = await rpcClient.request('eth_chainId');
     if (BigInt(chainId) !== CHAIN_ID) throw new Error('Archive RPC is not on Robinhood Chain');
-    summary.protected = await candidates.protect(options.fromBlock, options.toBlock);
     while (options.maxBatches === 0 || summary.batches < options.maxBatches) {
       const rows = await candidates.list(options.fromBlock, options.toBlock, options.batchSize);
       if (!rows.length) break;

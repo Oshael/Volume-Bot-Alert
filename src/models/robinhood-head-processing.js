@@ -16,6 +16,7 @@ const DEFAULT_MAX_ATTEMPTS = 5;
 const PROCESSING_LEASE_KEY = 'robinhood-processing-worker';
 const BLOCKED_RECOVERY_ERROR = 'V4 liquidity range update conflicted or became negative';
 const BLOCKED_RECOVERY_LOCK_KEY = 'robinhood-processing-blocked-recovery';
+const V3_ARCHIVE_REPAIR_LOCK_KEY = 'robinhood:v3-pruned-capture-repair';
 
 const MARKET_CLAIM_SQL = `WITH RECURSIVE first_v4_by_pool AS (
   (
@@ -518,12 +519,16 @@ function createRobinhoodHeadProcessingRepository(options = {}) {
   async function pruneExpiredCaptures(input = {}) {
     const limit = requirePositiveInt(input.limit ?? 5000, 'limit');
     const result = await database.query(
-      `DELETE FROM robinhood_head_captures
+      `WITH repair_guard AS MATERIALIZED (
+         SELECT pg_try_advisory_xact_lock(hashtext($3)) AS acquired
+       )
+       DELETE FROM robinhood_head_captures
        WHERE (chain, transaction_hash, log_index) IN (
          SELECT chain, transaction_hash, log_index
-         FROM robinhood_head_captures
+         FROM robinhood_head_captures, repair_guard
          WHERE chain = $1
            AND processing_status IN ('processed', 'rejected')
+           AND repair_guard.acquired
            AND retention_eligible_at IS NOT NULL
            AND retention_eligible_at <= NOW()
          ORDER BY retention_eligible_at
@@ -531,7 +536,7 @@ function createRobinhoodHeadProcessingRepository(options = {}) {
          FOR UPDATE SKIP LOCKED
        )
        RETURNING transaction_hash`,
-      [CHAIN, limit]
+      [CHAIN, limit, V3_ARCHIVE_REPAIR_LOCK_KEY]
     );
     return result.rowCount;
   }
