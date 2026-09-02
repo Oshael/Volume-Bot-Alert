@@ -79,6 +79,7 @@ function normalizeOptions(options = {}) {
       maxBackoffMs: options.maxBackoffMs,
       v4ContinuationRounds: boundedInteger(options.v4ContinuationRounds, 8, 0, 100),
       v4ContinuationPoolLimit: boundedInteger(options.v4ContinuationPoolLimit, 8, 1, 64),
+      v4SwapPrefixLimit: boundedInteger(options.v4SwapPrefixLimit, 512, 1, 2000),
       emitOutbox: options.emitOutbox,
     },
     pruneLimit: boundedInteger(options.pruneLimit, 5000, 100, 50_000),

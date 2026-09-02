@@ -238,10 +238,11 @@ describe('robinhood processing runner', () => {
     third.evidence.v4.poolId = thirdPool;
     const repository = fakeRepo([first, second, third]);
     let continuationCalls = 0;
-    repository.claimV4Continuations = async ({ marketKeys, limit }) => {
+    repository.claimV4Continuations = async ({ marketKeys, limit, perPoolLimit }) => {
       continuationCalls += 1;
       assert.deepEqual(marketKeys, [first.market_key, second.market_key]);
-      assert.equal(limit, 2);
+      assert.equal(limit, 200);
+      assert.equal(perPoolLimit, 512);
       return continuationCalls === 1 ? [first, second] : [];
     };
     const theRunner = createRobinhoodProcessingRunner({

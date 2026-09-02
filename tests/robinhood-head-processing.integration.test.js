@@ -27,7 +27,7 @@ function hashFor(block, logIndex) {
 async function seedPending({
   block, logIndex = 0, stream = 'market', attemptCount = 0, dueInMs = 0,
   timestampMs = Date.now(), protocol = 'uniswap-v3',
-  marketKey = 'robinhood:uniswap-v3:test',
+  marketKey = 'robinhood:uniswap-v3:test', evidence = {},
 }) {
   await db.query(
     `INSERT INTO robinhood_head_captures (
@@ -40,7 +40,7 @@ async function seedPending({
      )`,
     [stream, hashFor(block, logIndex), logIndex, block, BLOCK_HASH, ADDRESS,
       JSON.stringify([TOPIC]), protocol, marketKey,
-      JSON.stringify({ timestampMs: String(timestampMs) }), attemptCount, dueInMs]
+      JSON.stringify({ timestampMs: String(timestampMs), ...evidence }), attemptCount, dueInMs]
   );
   return { transactionHash: hashFor(block, logIndex), logIndex };
 }
@@ -168,17 +168,25 @@ describe('Robinhood head processing repository integration', () => {
     ]);
   });
 
-  it('claims one continuation per V4 pool only after its previous row settles', async () => {
+  it('claims a swap prefix, stops before a V4 delta, then resumes after it settles', async () => {
     const poolA = 'robinhood:uniswap-v4:pool-a';
     const poolB = 'robinhood:uniswap-v4:pool-b';
     const firstA = await seedPending({ block: 100, protocol: 'uniswap-v4', marketKey: poolA });
     const secondA = await seedPending({ block: 101, protocol: 'uniswap-v4', marketKey: poolA });
-    const firstB = await seedPending({ block: 102, protocol: 'uniswap-v4', marketKey: poolB });
+    const thirdA = await seedPending({ block: 102, protocol: 'uniswap-v4', marketKey: poolA });
+    const deltaA = await seedPending({
+      block: 103, protocol: 'uniswap-v4', marketKey: poolA,
+      evidence: { event: { kind: 'modify-liquidity' } },
+    });
+    const afterDeltaA = await seedPending({
+      block: 104, protocol: 'uniswap-v4', marketKey: poolA,
+    });
+    const firstB = await seedPending({ block: 105, protocol: 'uniswap-v4', marketKey: poolB });
 
     const initial = await repository.claimCaptures({
       owner: 'worker-a', limit: 10, leaseMs: LEASE_MS, stream: 'market',
     });
-    assert.deepEqual(initial.map((row) => Number(row.block_number)), [100, 102]);
+    assert.deepEqual(initial.map((row) => Number(row.block_number)), [100, 105]);
     assert.deepEqual(await repository.claimV4Continuations({
       owner: 'worker-a', marketKeys: [poolA], limit: 10, leaseMs: LEASE_MS,
     }), []);
@@ -187,10 +195,67 @@ describe('Robinhood head processing repository integration', () => {
       owner: 'worker-a', retentionMs: RETENTION_MS, processed: [firstA, firstB],
     });
     const continuation = await repository.claimV4Continuations({
-      owner: 'worker-a', marketKeys: [poolA, poolB], limit: 10, leaseMs: LEASE_MS,
+      owner: 'worker-a', marketKeys: [poolA, poolB], limit: 10,
+      perPoolLimit: 10, leaseMs: LEASE_MS,
     });
-    assert.deepEqual(continuation.map((row) => Number(row.block_number)), [101]);
-    assert.equal((await statusOf(secondA)).processing_status, 'leased');
+    assert.deepEqual(continuation.map((row) => Number(row.block_number)), [101, 102]);
+    await repository.settleClaims({
+      owner: 'worker-a', retentionMs: RETENTION_MS,
+      processed: [secondA, thirdA],
+    });
+
+    const delta = await repository.claimV4Continuations({
+      owner: 'worker-a', marketKeys: [poolA], limit: 10,
+      perPoolLimit: 10, leaseMs: LEASE_MS,
+    });
+    assert.deepEqual(delta.map((row) => Number(row.block_number)), [103]);
+    assert.equal((await statusOf(afterDeltaA)).processing_status, 'pending');
+    await repository.settleClaims({
+      owner: 'worker-a', retentionMs: RETENTION_MS, processed: [deltaA],
+    });
+
+    const resumed = await repository.claimV4Continuations({
+      owner: 'worker-a', marketKeys: [poolA], limit: 10,
+      perPoolLimit: 10, leaseMs: LEASE_MS,
+    });
+    assert.deepEqual(resumed.map((row) => Number(row.block_number)), [104]);
+  });
+
+  it('bounds each V4 swap prefix and never crosses an earlier retry barrier', async () => {
+    const pool = 'robinhood:uniswap-v4:pool-a';
+    const first = await seedPending({ block: 100, protocol: 'uniswap-v4', marketKey: pool });
+    await seedPending({ block: 101, protocol: 'uniswap-v4', marketKey: pool });
+    const deferred = await seedPending({
+      block: 102, protocol: 'uniswap-v4', marketKey: pool, dueInMs: 3_600_000,
+    });
+    const afterDeferred = await seedPending({
+      block: 103, protocol: 'uniswap-v4', marketKey: pool,
+    });
+    await repository.claimCaptures({
+      owner: 'worker-a', limit: 10, leaseMs: LEASE_MS, stream: 'market',
+    });
+    await repository.settleClaims({
+      owner: 'worker-a', retentionMs: RETENTION_MS, processed: [first],
+    });
+
+    const bounded = await repository.claimV4Continuations({
+      owner: 'worker-a', marketKeys: [pool], limit: 10,
+      perPoolLimit: 1, leaseMs: LEASE_MS,
+    });
+    assert.deepEqual(bounded.map((row) => Number(row.block_number)), [101]);
+    await repository.settleClaims({
+      owner: 'worker-a', retentionMs: RETENTION_MS,
+      processed: bounded.map((row) => ({
+        transactionHash: row.transaction_hash, logIndex: row.log_index,
+      })),
+    });
+
+    assert.deepEqual(await repository.claimV4Continuations({
+      owner: 'worker-a', marketKeys: [pool], limit: 10,
+      perPoolLimit: 10, leaseMs: LEASE_MS,
+    }), []);
+    assert.equal((await statusOf(deferred)).processing_status, 'pending');
+    assert.equal((await statusOf(afterDeferred)).processing_status, 'pending');
   });
 
   it('never hands the same leased capture to a second consumer', async () => {

@@ -40,12 +40,16 @@ describe('robinhood processing worker', () => {
     assert.equal(bounded.pruneLimit, 50_000);
     assert.equal(bounded.runner.v4ContinuationRounds, 8);
     assert.equal(bounded.runner.v4ContinuationPoolLimit, 8);
+    assert.equal(bounded.runner.v4SwapPrefixLimit, 512);
     assert.equal(worker.__private.normalizeOptions({
       v4ContinuationRounds: 999,
     }).runner.v4ContinuationRounds, 100);
     assert.equal(worker.__private.normalizeOptions({
       v4ContinuationPoolLimit: 999,
     }).runner.v4ContinuationPoolLimit, 64);
+    assert.equal(worker.__private.normalizeOptions({
+      v4SwapPrefixLimit: 9999,
+    }).runner.v4SwapPrefixLimit, 2000);
     assert.equal(bounded.enabled, true);
     assert.equal(worker.__private.normalizeOptions({ enabled: false }).enabled, false);
   });

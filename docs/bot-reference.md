@@ -420,12 +420,14 @@ capture de cada pool V4 que avançou, em até
 `ROBINHOOD_PROCESSING_V4_CONTINUATION_ROUNDS` rounds adicionais (8 por default,
 0–100). Para o custo do tick não crescer com todo o conjunto de pools, o primeiro round fixa
 somente as pools elegíveis mais antigas, limitado por
-`ROBINHOOD_PROCESSING_V4_CONTINUATION_POOL_LIMIT` (8 por default, 1–64), e os rounds seguintes
-fazem um seek lateral por pool nesse mesmo índice, sem reler o backlog interno delas. Cada round
-recarrega o ledger materializado e commita antes de reclamar o seguinte; portanto acelera as
-pools que seguram a frontier sem
-valorar vários eventos contra o mesmo snapshot nem permitir overtake de retry, lease ou
-dead-letter. `lastV4ContinuationRounds`, `lastV4ContinuationClaimed` e
+`ROBINHOOD_PROCESSING_V4_CONTINUATION_POOL_LIMIT` (8 por default, 1–64). Os rounds seguintes
+fazem um seek lateral por pool nesse mesmo índice e podem reclamar um prefixo de swaps
+consecutivos, limitado por `ROBINHOOD_PROCESSING_V4_SWAP_PREFIX_LIMIT` (512 por default,
+1–2000) e pelo batch global. O prefixo para antes do próximo `ModifyLiquidity`; quando o delta
+é a frontier, ele é reclamado sozinho. Portanto todos os swaps do prefixo usam legitimamente o
+mesmo snapshot, e o round seguinte só recarrega o ledger depois do commit do delta. Retry,
+lease e dead-letter também interrompem o prefixo, preservando no-overtake.
+`lastV4ContinuationRounds`, `lastV4ContinuationClaimed` e
 `lastV4ContinuationPools` expõem o drain efetivamente usado na lease do processing.
 
 `npm run robinhood:processing-blocked-requeue` faz apenas preview indexado do primeiro batch de

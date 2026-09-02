@@ -23,6 +23,7 @@ const DEFAULT_BASE_BACKOFF_MS = 1_000;
 const DEFAULT_MAX_BACKOFF_MS = 300_000;
 const DEFAULT_V4_CONTINUATION_ROUNDS = 8;
 const DEFAULT_V4_CONTINUATION_POOL_LIMIT = 8;
+const DEFAULT_V4_SWAP_PREFIX_LIMIT = 512;
 const ISOLATABLE_COMMIT_ERRORS = Object.freeze([
   'V4 liquidity range update conflicted or became negative',
 ]);
@@ -52,6 +53,13 @@ function normalizeV4ContinuationPoolLimit(value) {
   return Number.isSafeInteger(parsed)
     ? Math.max(1, Math.min(parsed, 64))
     : DEFAULT_V4_CONTINUATION_POOL_LIMIT;
+}
+
+function normalizeV4SwapPrefixLimit(value) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed)
+    ? Math.max(1, Math.min(parsed, 2000))
+    : DEFAULT_V4_SWAP_PREFIX_LIMIT;
 }
 
 function isIsolatableCommitError(error) {
@@ -199,6 +207,7 @@ function createRobinhoodProcessingRunner(deps = {}) {
   const v4ContinuationPoolLimit = normalizeV4ContinuationPoolLimit(
     options.v4ContinuationPoolLimit
   );
+  const v4SwapPrefixLimit = normalizeV4SwapPrefixLimit(options.v4SwapPrefixLimit);
   const emitOutbox = options.emitOutbox === true;
   const logger = deps.logger || console;
   const deadPoolGuardConfig = options.deadPoolGuard || config.robinhoodDeadPoolGuard || {};
@@ -443,7 +452,7 @@ function createRobinhoodProcessingRunner(deps = {}) {
       phaseStartedAt = Date.now();
       rows = await repository.claimV4Continuations({
         owner, marketKeys: targetedMarketKeys,
-        limit: Math.min(batchSize, targetedMarketKeys.length), leaseMs,
+        limit: batchSize, perPoolLimit: v4SwapPrefixLimit, leaseMs,
       });
       timing.claimMs += Date.now() - phaseStartedAt;
       if (!rows.length) break;
@@ -469,6 +478,7 @@ function createRobinhoodProcessingRunner(deps = {}) {
 module.exports = {
   DEFAULT_V4_CONTINUATION_POOL_LIMIT,
   DEFAULT_V4_CONTINUATION_ROUNDS,
+  DEFAULT_V4_SWAP_PREFIX_LIMIT,
   createRobinhoodProcessingRunner,
   backoffFor,
   __private: {

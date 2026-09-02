@@ -46,6 +46,14 @@ function withEnv(overrides, fn) {
 }
 
 describe('runtime worker groups config', () => {
+  it('bounds the V4 processing swap-prefix limit', () => {
+    withEnv({
+      ROBINHOOD_PROCESSING_V4_SWAP_PREFIX_LIMIT: '9999',
+    }, (config) => {
+      assert.equal(config.robinhoodProcessingWorker.v4SwapPrefixLimit, 2000);
+    });
+  });
+
   it('defaults to all worker groups', () => {
     withEnv({ BACKGROUND_WORKER_GROUPS: '' }, (config) => {
       assert.deepEqual(config.runtime.workerGroupsRequested, ['all']);
