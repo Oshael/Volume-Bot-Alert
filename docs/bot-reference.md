@@ -2421,10 +2421,6 @@ a janela ainda não drena trabalho, o ETA aparece como `sampling`. Use
 `-- --interval-seconds=<5..3600> --window-minutes=<1..120>` para ajustar a
 cadência, ou `-- --once` para uma leitura. O monitor encerra sozinho quando todos
 os candidatos estão publicados e nunca altera leases, cursores ou projeções.
-O scheduler do repair escolhe primeiro a coorte com menor distância até sua
-frontier e inclui somente cursores dentro da mesma janela compartilhada. Isso
-mantém o batching de RPC, mas conclui e publica tokens continuamente em vez de
-avançar todo o catálogo em largura e deixar `published` congelado até a cauda.
 O comando nunca inicializa o
 catálogo inteiro: quando o replay
 encontra `directional_replay_edge_missing`, o range sofre rollback e somente os
