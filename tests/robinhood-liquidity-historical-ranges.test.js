@@ -18,8 +18,11 @@ it('bounds historical range reads and preserves unavailable versus empty pools',
   assert.deepEqual([...result], [[ids[0], [row]], [ids[1], []], [ids[2], null]]);
   assert.deepEqual(calls[0].params, [ids, '20', '1']);
   assert.equal((await repository.listHistoricalV4LiquidityRangesByPoolIds([], '20', '0')).size, 0);
-  await assert.rejects(repository.listHistoricalV4LiquidityRangesByPoolIds(Array(51).fill(ids[0]), '20', '0'), /50/);
+  await assert.rejects(repository.listHistoricalV4LiquidityRangesByPoolIds(Array(101).fill(ids[0]), '20', '0'), /100/);
   await assert.rejects(repository.listHistoricalV4LiquidityRangesByPoolIds(['bad'], '20', '0'), /32 bytes/);
   await assert.rejects(repository.listHistoricalV4LiquidityRangesByPoolIds(ids, '-1', '0'), /blockNumber/);
   assert.equal(calls.length, 1);
+  const fullBatch = [...ids, ...Array.from({ length: 97 }, (_, i) => `0x${i.toString(16).padStart(64, '0')}`)];
+  assert.equal((await repository.listHistoricalV4LiquidityRangesByPoolIds(fullBatch, '20', '0')).size, 100);
+  assert.equal(calls.at(-1).params[0].length, 100);
 });

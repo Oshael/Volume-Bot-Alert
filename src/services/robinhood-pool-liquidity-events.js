@@ -1,4 +1,5 @@
 const { performance } = require('node:perf_hooks');
+const { POOL_LIQUIDITY_BATCH_SIZE } = require('../utils/robinhood-liquidity-limits');
 
 const v2 = require('./uniswap-v2-decoder');
 const v3 = require('./uniswap-v3-decoder');
@@ -22,7 +23,6 @@ const LIQUIDITY_EVENT_TOPICS = Object.freeze([
   v4.TOPICS.swap,
   V4_DONATE_TOPIC,
 ]);
-const SNAPSHOT_BATCH_SIZE = 50;
 
 function block(value, label) {
   const normalized = String(value ?? '').trim();
@@ -168,8 +168,8 @@ async function valuePoolsAtBlock(deps, pools, anchorBlock, options = {}) {
   const concurrency = Math.max(1, Math.min(Number(options.concurrency) || 5, 20));
   const totals = { saved: 0, failed: 0 };
   const batches = [];
-  for (let offset = 0; offset < pools.length; offset += SNAPSHOT_BATCH_SIZE) {
-    batches.push(pools.slice(offset, offset + SNAPSHOT_BATCH_SIZE));
+  for (let offset = 0; offset < pools.length; offset += POOL_LIQUIDITY_BATCH_SIZE) {
+    batches.push(pools.slice(offset, offset + POOL_LIQUIDITY_BATCH_SIZE));
   }
   let pendingReader = prepareBatchReader(deps, batches[0], anchor, timing);
   for (let index = 0; index < batches.length; index += 1) {

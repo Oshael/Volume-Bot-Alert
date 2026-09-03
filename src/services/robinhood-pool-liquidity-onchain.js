@@ -1,5 +1,6 @@
 const v3 = require('./uniswap-v3-decoder');
 const v4 = require('./uniswap-v4-decoder');
+const { POOL_LIQUIDITY_BATCH_SIZE } = require('../utils/robinhood-liquidity-limits');
 const {
   CANONICAL_CONTRACTS,
   buildLiquidityAssessment,
@@ -233,7 +234,9 @@ function createRobinhoodPoolLiquidityOnchainReader(deps = {}) {
   }
 
   async function forPoolsAtAnchor(pools, anchorInput) {
-    if (pools.length > 50) throw new RangeError('at most 50 pools are allowed');
+    if (pools.length > POOL_LIQUIDITY_BATCH_SIZE) {
+      throw new RangeError(`at most ${POOL_LIQUIDITY_BATCH_SIZE} pools are allowed`);
+    }
     const ids = [...new Set(pools.filter((pool) => pool.protocol === 'uniswap-v4')
       .map((pool) => String(pool.poolId || '').trim().toLowerCase())
       .filter((id) => /^0x[0-9a-f]{64}$/.test(id)))];

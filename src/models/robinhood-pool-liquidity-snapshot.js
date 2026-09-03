@@ -2,6 +2,7 @@ const db = require('./db');
 const { normalizeTokenAddress } = require('../utils/token-identity');
 const v4 = require('../services/uniswap-v4-decoder');
 const { V4_DONATE_TOPIC } = require('../services/robinhood-pool-liquidity-events');
+const { POOL_LIQUIDITY_BATCH_SIZE } = require('../utils/robinhood-liquidity-limits');
 
 const CHAIN = 'robinhood';
 const PROTOCOLS = new Set(['uniswap-v2', 'uniswap-v3', 'uniswap-v4']);
@@ -256,8 +257,8 @@ function createRobinhoodPoolLiquiditySnapshotRepository(options = {}) {
   }
 
   async function recordSnapshots(inputs = []) {
-    if (!Array.isArray(inputs) || inputs.length > 50) {
-      throw new RangeError('snapshot batch must contain at most 50 rows');
+    if (!Array.isArray(inputs) || inputs.length > POOL_LIQUIDITY_BATCH_SIZE) {
+      throw new RangeError(`snapshot batch must contain at most ${POOL_LIQUIDITY_BATCH_SIZE} rows`);
     }
     if (!inputs.length) return 0;
     let rows;

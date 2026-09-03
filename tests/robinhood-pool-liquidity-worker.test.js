@@ -84,7 +84,7 @@ describe('Robinhood event-driven pool liquidity worker', () => {
       },
       snapshotRepository: {
         async listPoolsForLiquidityEvents() {
-          return Array.from({ length: 51 }, (_, index) => ({ protocol: 'uniswap-v3', marketKey: `pool-${index}` }));
+          return Array.from({ length: 101 }, (_, index) => ({ protocol: 'uniswap-v3', marketKey: `pool-${index}` }));
         },
         async recordSnapshots(rows) {
           batches.push(rows.length);
@@ -109,10 +109,10 @@ describe('Robinhood event-driven pool liquidity worker', () => {
     assert.equal(worker.getStatus().nextBlock, '105');
     fail = false;
     await worker.pollOnce();
-    assert.deepEqual(batches, [50, 1, 50, 1]);
+    assert.deepEqual(batches, [100, 1, 100, 1]);
     assert.equal(commits[0].fromBlock, '105');
     assert.equal(worker.getStatus().nextBlock, '111');
-    assert.equal(worker.getStatus().valuation.saved, 51);
+    assert.equal(worker.getStatus().valuation.saved, 101);
   });
 
   it('requires an explicit first start and rejects a reorg below it', async () => {

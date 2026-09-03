@@ -704,7 +704,7 @@ O safe head é limitado pelo menor frontier de discovery e market, evitando usar
 ainda não processados.
 Esse frontier depende do índice parcial concorrente da Stage 150, que contém somente captures
 `pending`, `leased` ou `blocked` e evita varrer o histórico terminal da fila a cada poll.
-O liquidity valora até 50 pools por lote, respeitando a concorrência configurada, e grava os
+O liquidity valora até 100 pools por lote, respeitando a concorrência configurada, e grava os
 snapshots válidos em um único upsert por lote, ordenado por identidade. No executável do liquidity,
 as leituras históricas V4 também são agrupadas, somente para as pools V4 desse lote, com uma
 busca agregada por pool usando o índice existente. O limite histórico continua sendo o fim do
@@ -712,6 +712,8 @@ bloco âncora (`block + 1`, `logIndex = 0`), nunca o estado atual. O resultado �
 não é reutilizado entre blocos ou hashes; replay indisponível (`null`) não vira ranges vazios.
 Falha na leitura agrupada interrompe a faixa para retry sem avançar o cursor. O mesmo caminho
 mantém no máximo um prefetch do próximo lote em voo enquanto o lote atual é valorado e gravado.
+O limite de 100 é compartilhado pela divisão dos lotes, prefetch e escrita; não é uma flag de
+env. Mudar esse tamanho não muda o range de blocos nem a concorrência de valoração (máximo 20).
 Isso sobrepõe leitura, RPC e persistência sem aumentar o número de consultas históricas. O mesmo
 caminho é usado no PC e na VPS; não afeta os leitores do
 processing, auditor ou backfills externos. O upsert mantém o filtro de pools ativas e nunca substitui um snapshot

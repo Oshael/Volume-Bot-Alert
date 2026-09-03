@@ -146,7 +146,7 @@ describe('Robinhood current pool liquidity snapshots', () => {
     assert.match(calls[0].sql, /EXCLUDED\.snapshot_block_number >=/);
     assert.equal(JSON.parse(calls[0].params[0])[0].block_number, '123');
     assert.equal(await repository.recordSnapshots([]), 0);
-    await assert.rejects(repository.recordSnapshots(Array(51).fill(input)), /at most 50/);
+    await assert.rejects(repository.recordSnapshots(Array(101).fill(input)), /at most 100/);
     await assert.rejects(repository.recordSnapshots([input, input]), /duplicate pools/);
     await assert.rejects(repository.recordSnapshots([
       input, { ...input, marketKey: `${MARKET}-other`, blockHash: 'invalid' },

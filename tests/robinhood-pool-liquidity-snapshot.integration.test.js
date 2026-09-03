@@ -172,6 +172,8 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
     const repository = createRobinhoodPoolLiquiditySnapshotRepository({ database: client });
     const extra = `robinhood:uniswap-v3:0x${'c'.repeat(40)}`;
     const inactive = `robinhood:uniswap-v3:0x${'d'.repeat(40)}`;
+    const batchKeys = [MARKET, extra, ...Array.from({ length: 98 }, (_, i) =>
+      `robinhood:uniswap-v3:0x${(i + 1).toString(16).padStart(40, '0')}`)];
     const snapshot = (marketKey, blockNumber) => ({
       protocol: 'uniswap-v3', marketKey, blockNumber, blockHash: `0x${'c'.repeat(64)}`,
       observedAt: '2026-08-22T11:00:00Z', checkedAt: '2026-08-22T11:00:01Z',
@@ -180,7 +182,7 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
     });
     try {
       await client.query('BEGIN');
-      for (const key of [extra, inactive]) {
+      for (const key of [extra, inactive, ...batchKeys.slice(2)]) {
         await client.query(
           `INSERT INTO robinhood_pool_registry (
              protocol, market_key, pool_address, origin_address, token_address,
@@ -215,14 +217,13 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
       ];
       assert.deepEqual((await readRows()).rows, expected);
       await client.query('SAVEPOINT invalid_batch');
-      await assert.rejects(repository.recordSnapshots([
-        snapshot(MARKET, '32'), snapshot(extra, '9223372036854775808'),
-      ]), (error) => error.code === '22003');
+      await assert.rejects(repository.recordSnapshots(batchKeys.map((key, i) =>
+        snapshot(key, i === 99 ? '9223372036854775808' : '32'))), (error) => error.code === '22003');
       await client.query('ROLLBACK TO SAVEPOINT invalid_batch');
       assert.deepEqual((await readRows()).rows, expected);
-      const replay = [snapshot(MARKET, '32'), snapshot(extra, '32')];
-      assert.equal(await repository.recordSnapshots(replay), 2);
-      assert.equal(await repository.recordSnapshots(replay), 2);
+      const replay = batchKeys.map((key) => snapshot(key, '32'));
+      assert.equal(await repository.recordSnapshots(replay), 100);
+      assert.equal(await repository.recordSnapshots(replay), 100);
       assert.deepEqual((await readRows()).rows, expected.map((row) => ({
         ...row, block: '32', consecutive_failures: 0,
       })));
@@ -267,6 +268,10 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
       assert.equal(atTwenty.get(ids[0])[0].liquidity_gross, '90071992547409929980');
       assert.deepEqual(atTwenty.get(ids[1]), []);
       assert.deepEqual(atTwenty.get(ids[2]), []);
+      const fullBatch = [...ids, ...Array.from({ length: 97 }, (_, i) => `0x${i.toString(16).padStart(64, '0')}`)];
+      const fullResult = await batchReader.listHistoricalV4LiquidityRangesByPoolIds(fullBatch, '20', '1');
+      assert.equal(fullResult.size, 100);
+      for (const id of ids) assert.deepEqual(fullResult.get(id), atTwenty.get(id));
       await client.query("UPDATE robinhood_v4_liquidity_replay_state SET status = 'running', next_block = 200");
       assert.deepEqual([...(await batchReader.listHistoricalV4LiquidityRangesByPoolIds(ids, '20', '1')).values()],
         [null, null, null]);

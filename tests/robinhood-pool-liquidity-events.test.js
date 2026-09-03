@@ -128,7 +128,9 @@ describe('Robinhood event-driven pool liquidity core', () => {
     const batches = [];
     const prepared = [];
     let preparedBeforeFirstValuation = null;
-    const candidates = Array.from({ length: 103 }, (_, index) => pool(String(index)));
+    let inFlight = 0;
+    let peakInFlight = 0;
+    const candidates = Array.from({ length: 203 }, (_, index) => pool(String(index)));
     const result = await processLiquidityEventRange({
       repository: {
         async listPoolsForLiquidityEvents() { return candidates; },
@@ -145,18 +147,23 @@ describe('Robinhood event-driven pool liquidity core', () => {
         },
         async valuePool() {
           if (preparedBeforeFirstValuation == null) preparedBeforeFirstValuation = prepared.length;
+          inFlight += 1;
+          peakInFlight = Math.max(peakInFlight, inFlight);
+          await Promise.resolve();
+          inFlight -= 1;
           return { ...ANCHOR, liquidityUsd: '42', liquidityRaw: '9',
             status: 'spot_tvl_from_pool_balances', confidence: 'medium' };
         },
       },
-    }, { logs: [{}], toBlock: '110' });
-    assert.deepEqual(batches.map((rows) => rows.length), [50, 50, 3]);
-    assert.deepEqual(prepared.map((pools) => pools.length), [50, 50, 3]);
+    }, { logs: [{}], toBlock: '110' }, { concurrency: 20 });
+    assert.deepEqual(batches.map((rows) => rows.length), [100, 100, 3]);
+    assert.deepEqual(prepared.map((pools) => pools.length), [100, 100, 3]);
+    assert.equal(peakInFlight, 20);
     assert.equal(preparedBeforeFirstValuation, 2);
     assert.deepEqual(batches.flat().map((row) => row.marketKey), candidates.map((row) => row.marketKey));
-    assert.deepEqual(coreResult(result), { anchorBlock: '110', affected: 103, saved: 103, failed: 0 });
+    assert.deepEqual(coreResult(result), { anchorBlock: '110', affected: 203, saved: 203, failed: 0 });
     assert.equal(result.timing.chunks, 3);
-    assert.equal(result.timing.snapshots, 103);
+    assert.equal(result.timing.snapshots, 203);
   });
 
   it('isolates bad snapshot data but propagates database failures without a write storm', async () => {

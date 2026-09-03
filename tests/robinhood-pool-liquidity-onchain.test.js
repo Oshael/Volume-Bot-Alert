@@ -190,7 +190,12 @@ describe('Robinhood pool liquidity current-state reader', () => {
     assert.equal(requests.length, 3);
     await reader.forPoolsAtAnchor([pool('uniswap-v2'), pool('uniswap-v3')], ANCHOR);
     assert.equal(requests.length, 3);
-    await assert.rejects(reader.forPoolsAtAnchor(Array(51).fill(candidates[0]), ANCHOR), /50/);
+    const fullBatch = Array.from({ length: 100 }, (_, i) => pool('uniswap-v4', {
+      poolId: `0x${(i + 1).toString(16).padStart(64, '0')}`,
+    }));
+    await reader.forPoolsAtAnchor(fullBatch, ANCHOR);
+    assert.equal(requests.at(-1)[0].length, 100);
+    await assert.rejects(reader.forPoolsAtAnchor(Array(101).fill(candidates[0]), ANCHOR), /100/);
     await assert.rejects(batch.valuePool(pool('uniswap-v4', { poolId: `0x${'6'.repeat(64)}` }), ANCHOR), /outside/);
   });
 });

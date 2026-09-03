@@ -1,4 +1,5 @@
 const db = require('./db');
+const { POOL_LIQUIDITY_BATCH_SIZE } = require('../utils/robinhood-liquidity-limits');
 
 function quantity(value, label) {
   const raw = String(value ?? '').trim();
@@ -14,7 +15,9 @@ function poolId(value) {
 
 function createLiquidityHistoricalRangeRepository({ database = db } = {}) {
   async function listHistoricalV4LiquidityRangesByPoolIds(poolIds, blockNumber, logIndex) {
-    if (!Array.isArray(poolIds) || poolIds.length > 50) throw new RangeError('at most 50 pools are allowed');
+    if (!Array.isArray(poolIds) || poolIds.length > POOL_LIQUIDITY_BATCH_SIZE) {
+      throw new RangeError(`at most ${POOL_LIQUIDITY_BATCH_SIZE} pools are allowed`);
+    }
     const ids = [...new Set(poolIds.map(poolId))];
     if (!ids.length) return new Map();
     const { rows } = await database.query(
