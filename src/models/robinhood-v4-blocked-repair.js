@@ -138,7 +138,8 @@ async function repairPool(client, item, { write = false, verifyCanonical = async
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['robinhood-processing-blocked-recovery']);
     const lease = (await client.query(`SELECT lease_until > clock_timestamp() AS active
       FROM worker_leases WHERE lease_key = 'robinhood-processing-worker' FOR UPDATE`)).rows[0];
-    requireTrue(lease && !lease.active, 'Processing must be stopped with an expired/released lease');
+    // Graceful worker shutdown deletes its lease row; absence is a released lease.
+    requireTrue(!lease?.active, 'Processing must be stopped with an expired/released lease');
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['robinhood-v4-liquidity-materialization']);
     requireTrue((await client.query(`SELECT 1 FROM robinhood_v4_liquidity_materialization_state
       WHERE chain = 'robinhood'`)).rowCount === 1, 'Materialization is unavailable');

@@ -7,6 +7,7 @@ const { fixture, AMOUNT } = require('./helpers/v4-blocked-repair-fixture');
 const { repairPool } = require('../src/models/robinhood-v4-blocked-repair');
 const { BLOCKED_RECOVERY_ERROR } = require('../src/models/robinhood-head-processing');
 const { createRobinhoodPersistenceRepository } = require('../src/models/robinhood-persistence');
+const workerLease = require('../src/models/worker-lease');
 
 it('repairs atomically with exact balances, fences the worker, and retries without double application', async () => {
   await assertUsingTestDatabase(db);
@@ -20,8 +21,10 @@ it('repairs atomically with exact balances, fences the worker, and retries witho
         }
       }
     }
-    await client.query(`CREATE TEMP TABLE worker_leases (lease_key text PRIMARY KEY, lease_until timestamptz);
-      INSERT INTO worker_leases VALUES ('robinhood-processing-worker', NOW() + INTERVAL '1 minute');
+    await client.query(`CREATE TEMP TABLE worker_leases
+      (lease_key text PRIMARY KEY, lease_until timestamptz, owner_id text DEFAULT 'repair-test');
+      INSERT INTO worker_leases (lease_key, lease_until)
+        VALUES ('robinhood-processing-worker', NOW() + INTERVAL '1 minute');
       CREATE TEMP TABLE robinhood_pool_registry (chain text, protocol text, market_key text, pool_id text,
         discovery_block bigint, tick_spacing int, origin_address text)`);
     await client.query(`INSERT INTO robinhood_pool_registry VALUES ('robinhood','uniswap-v4',$1,$2,10,60,$3)`,
@@ -45,6 +48,9 @@ it('repairs atomically with exact balances, fences the worker, and retries witho
       assert.equal((await client.query('SELECT count(*)::int AS n FROM robinhood_v4_liquidity_ranges')).rows[0].n, 0);
       assert.equal((await client.query('SELECT processing_status FROM robinhood_head_captures WHERE log_index=3')).rows[0].processing_status, 'blocked');
     };
+    assert.equal((await repairPool(client, item)).status, 'validated'); await empty();
+    assert.equal(await workerLease.release('robinhood-processing-worker', 'repair-test', client), true);
+    assert.equal((await client.query('SELECT * FROM worker_leases')).rowCount, 0);
     assert.equal((await repairPool(client, item)).status, 'validated'); await empty();
     await assert.rejects(repairPool(client, item, { write: true,
       verifyCanonical: async () => { throw new Error('Canonical block mismatch'); } }), /Canonical/);

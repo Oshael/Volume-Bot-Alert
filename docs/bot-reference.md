@@ -781,7 +781,9 @@ Aplicação direcionada: `node src/utils/repair-robinhood-v4-blocked.js --output
 valida sem gravar; acrescentar `--write` aplica. Usa o mesmo RPC archive e exige checkpoint e
 report completos/compatíveis, sem conflitos, prefixos negativos ou processed sem delta.
 Durante a validação/aplicação, parar **somente** o processing e aguardar sua lease expirar/ser
-liberada; o head continua ligado. Capturas ainda leased impedem a aplicação, mesmo com lease
+liberada; linha ausente também significa lease liberada, pois o shutdown normal a remove.
+Manter o processing parado até o comando terminar; sem linha não há row lock para impedir uma
+nova aquisição concorrente da lease. O head continua ligado. Capturas ainda leased impedem a aplicação, mesmo com lease
 do worker expirada. Não limpar leases manualmente para contornar essa proteção.
 Cada pool usa uma transação, lock compartilhado com a materialização V4, timeout de lock de
 2s e de statement de 30s. Revalida registry, log bruto, identidades existentes, hash canônico
