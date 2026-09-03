@@ -423,7 +423,12 @@ direcionado próprio. Swaps que a política exclui (como ativos tokenizados ofic
 são persistidos como rejeições terminais sem solicitar metadata ou balances que não
 serão usados na observação. O scanner usa batches RPC menores, configuráveis por
 `--rpc-batch-size`, e divide adaptativamente uma falha RPC `-32000` até isolar apenas
-a identidade irrecuperável, sem descartar o restante do lote.
+a identidade irrecuperável, sem descartar o restante do lote. Para uma execução longa,
+informe `--checkpoint-file=/var/tmp/robinhood-v3-reconstruction.json`: ao concluir cada
+range, o comando grava atomicamente o próximo bloco e os contadores acumulados. Reiniciar
+o mesmo comando com o mesmo modo, intervalo e arquivo retoma desse bloco; uma queda no
+meio de um range pode repetir somente aquele range, e a persistência idempotente impede
+duplicação. Um checkpoint de outro modo ou intervalo é recusado explicitamente.
 
 O grupo `robinhood-processing` roda um processo separado (systemd
 `trendscope-worker@robinhood-processing.service`, lease `robinhood-processing-worker`,

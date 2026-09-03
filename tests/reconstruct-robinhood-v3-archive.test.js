@@ -12,7 +12,7 @@ function options(overrides = {}) {
     mode: 'write', rpcUrl: 'http://127.0.0.1:18547',
     fromBlock: '100', toBlock: '100', rangeSize: 1, minRangeSize: 1,
     batchSize: 500, rpcConcurrency: 8, maxRanges: 0, sleepMs: 0,
-    rpcBatchSize: 25,
+    rpcBatchSize: 25, checkpointFile: null,
     ...overrides,
   };
 }
@@ -47,7 +47,7 @@ describe('Robinhood V3 direct archive reconstruction', () => {
     ], { ROBINHOOD_V3_REPAIR_RPC_URL: 'http://archive' }), {
       mode: 'dry-run', rpcUrl: 'http://archive', fromBlock: '100', toBlock: '200',
       rangeSize: 500, minRangeSize: 1, batchSize: 500, rpcConcurrency: 8,
-      rpcBatchSize: 25, maxRanges: 0, sleepMs: 100,
+      rpcBatchSize: 25, maxRanges: 0, sleepMs: 100, checkpointFile: null,
     });
     assert.throws(() => __private.parseArgs([
       '--from-block=200', '--to-block=100',
@@ -161,5 +161,61 @@ describe('Robinhood V3 direct archive reconstruction', () => {
     assert.equal(built.failures.length, 1);
     assert.equal(built.failures[0].row.log_index, '2');
     assert.equal(built.rpc.splitRetries, 3);
+  });
+
+  it('resumes at the saved next block and preserves cumulative counters', async () => {
+    const saved = {
+      version: 1, mode: 'write', fromBlock: '100', toBlock: '101', nextBlock: '101',
+      summary: {
+        scannedBlocks: 1, archiveSwapLogs: 1, trackedSwapLogs: 1,
+        existingProcessed: 0, existingCaptures: 0, missing: 1,
+        repaired: 1, accepted: 1, rejected: 0, failed: 0, ranges: 1,
+      },
+    };
+    const requested = [];
+    const checkpoints = [];
+    const result = await runReconstruction(options({ toBlock: '101' }), {
+      checkpoint: {
+        load: async () => saved,
+        save: async (checkpoint) => checkpoints.push(checkpoint),
+      },
+      repository: {
+        listPools: async () => [registry()],
+        classify: async () => new Map(),
+        withLock: async (callback) => callback(),
+      },
+      rpcClient: {
+        request: async (method, [filter] = []) => {
+          if (method === 'eth_chainId') return '0x1237';
+          requested.push(filter.fromBlock);
+          return [log(101, 2)];
+        },
+      },
+      enrichBatch: async () => ({
+        entries: [{ observation: { accepted: true } }], failures: [], rpc: {},
+      }),
+      persistence: {
+        commitHeadProcessingBatch: async () => ({ insertedLogs: 1 }),
+      },
+    });
+
+    assert.deepEqual(requested, ['0x65']);
+    assert.equal(result.scannedBlocks, 2);
+    assert.equal(result.repaired, 2);
+    assert.equal(result.ranges, 2);
+    assert.equal(result.progressPct, 100);
+    assert.equal(checkpoints.length, 1);
+    assert.equal(checkpoints[0].nextBlock, '102');
+    assert.equal(checkpoints[0].completed, true);
+  });
+
+  it('rejects a checkpoint created for a different interval', () => {
+    assert.throws(() => __private.restoreCheckpoint({
+      version: 1, mode: 'write', fromBlock: '99', toBlock: '100', nextBlock: '100',
+      summary: Object.fromEntries([
+        'scannedBlocks', 'archiveSwapLogs', 'trackedSwapLogs', 'existingProcessed',
+        'existingCaptures', 'missing', 'repaired', 'accepted', 'rejected', 'failed', 'ranges',
+      ].map((key) => [key, 0])),
+    }, options()), /fromBlock does not match/);
   });
 });

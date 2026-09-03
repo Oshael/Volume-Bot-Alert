@@ -1,4 +1,6 @@
 const { setTimeout: delay } = require('node:timers/promises');
+const fs = require('node:fs/promises');
+const path = require('node:path');
 const db = require('../models/db');
 const { createRobinhoodPersistenceRepository } = require('../models/robinhood-persistence');
 const { isAdaptiveRangeError, toQuantity } = require('../services/evm-log-poller');
@@ -7,6 +9,11 @@ const repair = require('./repair-robinhood-v3-pruned-captures').__private;
 
 const CHAIN_ID = 4663n;
 const LOCK_KEY = 'robinhood:v3-archive-reconstruct';
+const CHECKPOINT_VERSION = 1;
+const SUMMARY_COUNTERS = [
+  'scannedBlocks', 'archiveSwapLogs', 'trackedSwapLogs', 'existingProcessed',
+  'existingCaptures', 'missing', 'repaired', 'accepted', 'rejected', 'failed', 'ranges',
+];
 
 function integer(value, fallback, min, max, label) {
   const parsed = Number.parseInt(String(value ?? ''), 10);
@@ -50,7 +57,92 @@ function parseArgs(argv = process.argv.slice(2), env = process.env) {
     rpcBatchSize: integer(args['rpc-batch-size'], 25, 1, 100, 'rpc-batch-size'),
     maxRanges: integer(args['max-ranges'], 0, 0, 10_000_000, 'max-ranges'),
     sleepMs: integer(args['sleep-ms'], 100, 0, 60_000, 'sleep-ms'),
+    checkpointFile: String(
+      args['checkpoint-file'] || env.ROBINHOOD_V3_RECONSTRUCTION_CHECKPOINT_FILE || ''
+    ).trim() || null,
   };
+}
+
+function emptySummary(mode) {
+  return {
+    mode, scannedBlocks: 0, archiveSwapLogs: 0, trackedSwapLogs: 0,
+    existingProcessed: 0, existingCaptures: 0, missing: 0,
+    repaired: 0, accepted: 0, rejected: 0, failed: 0, ranges: 0,
+  };
+}
+
+function restoreCheckpoint(saved, options) {
+  if (!saved || saved.version !== CHECKPOINT_VERSION) {
+    throw new Error('Checkpoint version is invalid');
+  }
+  for (const key of ['mode', 'fromBlock', 'toBlock']) {
+    if (String(saved[key]) !== String(options[key])) {
+      throw new Error(`Checkpoint ${key} does not match this execution`);
+    }
+  }
+  const nextBlock = requiredBlock(saved.nextBlock, 'checkpoint nextBlock');
+  const minimum = BigInt(options.fromBlock);
+  const maximum = BigInt(options.toBlock) + 1n;
+  if (BigInt(nextBlock) < minimum || BigInt(nextBlock) > maximum) {
+    throw new Error('Checkpoint nextBlock is outside the requested interval');
+  }
+  const summary = emptySummary(options.mode);
+  for (const key of SUMMARY_COUNTERS) {
+    const value = Number(saved.summary?.[key]);
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new Error(`Checkpoint summary.${key} is invalid`);
+    }
+    summary[key] = value;
+  }
+  return { nextBlock, summary };
+}
+
+function createCheckpointStore(filename) {
+  if (!filename) return Object.freeze({ load: async () => null, save: async () => {} });
+  const resolved = path.resolve(filename);
+  return Object.freeze({
+    load: async () => {
+      try {
+        return JSON.parse(await fs.readFile(resolved, 'utf8'));
+      } catch (error) {
+        if (error?.code === 'ENOENT') return null;
+        throw new Error(`Cannot read checkpoint ${resolved}: ${error.message}`);
+      }
+    },
+    save: async (checkpoint) => {
+      await fs.mkdir(path.dirname(resolved), { recursive: true });
+      const temporary = `${resolved}.tmp-${process.pid}`;
+      try {
+        await fs.writeFile(temporary, `${JSON.stringify(checkpoint, null, 2)}\n`, { mode: 0o600 });
+        await fs.rename(temporary, resolved);
+      } finally {
+        await fs.unlink(temporary).catch((error) => {
+          if (error?.code !== 'ENOENT') throw error;
+        });
+      }
+    },
+  });
+}
+
+function checkpointState(options, cursor, summary) {
+  return {
+    version: CHECKPOINT_VERSION,
+    mode: options.mode,
+    fromBlock: options.fromBlock,
+    toBlock: options.toBlock,
+    nextBlock: cursor.toString(),
+    completed: cursor > BigInt(options.toBlock),
+    updatedAt: new Date().toISOString(),
+    summary,
+  };
+}
+
+async function resumeState(checkpoint, options) {
+  const saved = await checkpoint.load();
+  if (!saved) {
+    return { nextBlock: options.fromBlock, summary: emptySummary(options.mode) };
+  }
+  return restoreCheckpoint(saved, options);
 }
 
 function createRepository(database = db) {
@@ -224,19 +316,18 @@ async function runReconstruction(options, deps = {}) {
   const rpcClient = deps.rpcClient || repair.createArchiveClient(options.rpcUrl);
   const persistence = deps.persistence || createRobinhoodPersistenceRepository();
   const enrichBatch = deps.enrichBatch || ((rows) => repair.enrich(rows, rpcClient, options));
+  const checkpoint = deps.checkpoint || createCheckpointStore(options.checkpointFile);
   const pools = poolIndex(await repository.listPools());
-  const summary = {
-    mode: options.mode, scannedBlocks: 0, archiveSwapLogs: 0, trackedSwapLogs: 0,
-    existingProcessed: 0, existingCaptures: 0, missing: 0,
-    repaired: 0, accepted: 0, rejected: 0, failed: 0, ranges: 0,
-  };
   return repository.withLock(async () => {
     if (BigInt(await rpcClient.request('eth_chainId')) !== CHAIN_ID) {
       throw new Error('Archive RPC is not on Robinhood Chain');
     }
-    let cursor = BigInt(options.fromBlock);
+    const resumed = await resumeState(checkpoint, options);
+    const summary = resumed.summary;
+    let cursor = BigInt(resumed.nextBlock);
     const end = BigInt(options.toBlock);
-    while (cursor <= end && (options.maxRanges === 0 || summary.ranges < options.maxRanges)) {
+    let runRanges = 0;
+    while (cursor <= end && (options.maxRanges === 0 || runRanges < options.maxRanges)) {
       const requestedEnd = cursor + BigInt(options.rangeSize) - 1n;
       const ranges = await fetchRanges(
         rpcClient, cursor, requestedEnd < end ? requestedEnd : end, options.minRangeSize
@@ -279,7 +370,9 @@ async function runReconstruction(options, deps = {}) {
           }
         }
         summary.ranges += 1;
+        runRanges += 1;
         cursor = range.toBlock + 1n;
+        await checkpoint.save(checkpointState(options, cursor, summary));
         console.log(JSON.stringify({
           event: 'v3_archive_reconstruction_progress',
           ...progress(summary, range.toBlock, options),
@@ -307,6 +400,7 @@ if (require.main === module) void run();
 module.exports = {
   runReconstruction,
   __private: {
-    createRepository, enrichResilient, fetchRanges, parseArgs, poolIndex, trackedRows,
+    createCheckpointStore, createRepository, enrichResilient, fetchRanges, parseArgs,
+    poolIndex, restoreCheckpoint, resumeState, trackedRows,
   },
 };
