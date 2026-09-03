@@ -705,8 +705,14 @@ ainda não processados.
 Esse frontier depende do índice parcial concorrente da Stage 150, que contém somente captures
 `pending`, `leased` ou `blocked` e evita varrer o histórico terminal da fila a cada poll.
 O liquidity valora até 50 pools por lote, respeitando a concorrência configurada, e grava os
-snapshots válidos em um único upsert por lote, ordenado por identidade. As leituras históricas V4
-continuam individuais. O upsert mantém o filtro de pools ativas e nunca substitui um snapshot
+snapshots válidos em um único upsert por lote, ordenado por identidade. No executável do liquidity,
+as leituras históricas V4 também são agrupadas, somente para as pools V4 desse lote, com uma
+busca agregada por pool usando o índice existente. O limite histórico continua sendo o fim do
+bloco âncora (`block + 1`, `logIndex = 0`), nunca o estado atual. O resultado é local ao lote e
+não é reutilizado entre blocos ou hashes; replay indisponível (`null`) não vira ranges vazios.
+Falha na leitura agrupada interrompe a faixa para retry sem avançar o cursor. O mesmo caminho
+é usado no PC e na VPS, sem aumentar a concorrência configurada; não afeta os leitores do
+processing, auditor ou backfills externos. O upsert mantém o filtro de pools ativas e nunca substitui um snapshot
 de bloco mais recente; `valuation.saved` conta somente as linhas efetivamente gravadas.
 Erros de dados/constraints isolam o lote por pool e registram somente as falhas individuais.
 Falhas de persistência por conexão ou transação interrompem a faixa sem avançar o cursor;

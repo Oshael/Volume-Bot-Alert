@@ -105,9 +105,11 @@ async function valuePoolsAtBlock(deps, pools, anchorBlock, options = {}) {
   const concurrency = Math.max(1, Math.min(Number(options.concurrency) || 5, 20));
   const totals = { saved: 0, failed: 0 };
   for (let offset = 0; offset < pools.length; offset += SNAPSHOT_BATCH_SIZE) {
+    const batch = pools.slice(offset, offset + SNAPSHOT_BATCH_SIZE);
+    const reader = deps.reader.forPoolsAtAnchor
+      ? await deps.reader.forPoolsAtAnchor(batch, anchor) : deps.reader;
     const outcomes = await mapConcurrent(
-      pools.slice(offset, offset + SNAPSHOT_BATCH_SIZE), concurrency,
-      (pool) => valuePool(deps, pool, anchor, checkedAt)
+      batch, concurrency, (pool) => valuePool({ ...deps, reader }, pool, anchor, checkedAt)
     );
     const persisted = await persistSnapshotBatch(
       deps.repository, outcomes.filter((item) => item.snapshot).map((item) => item.snapshot)

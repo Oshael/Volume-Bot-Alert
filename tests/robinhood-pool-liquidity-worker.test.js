@@ -64,6 +64,7 @@ describe('Robinhood event-driven pool liquidity worker', () => {
     const commits = [];
     const batches = [];
     let fail = true;
+    let failRead = true;
     const worker = await createRobinhoodPoolLiquidityWorker({
       rpcClient: { async request(method) {
         if (method === 'eth_blockNumber') return '0x70';
@@ -75,6 +76,10 @@ describe('Robinhood event-driven pool liquidity worker', () => {
       } },
       reader: {
         async readAnchor() { return { number: '110', hash: HASH, observedAt: '2026-08-22T12:00:00Z' }; },
+        async forPoolsAtAnchor() {
+          if (failRead) throw new Error('historical ranges disconnected');
+          return this;
+        },
         async valuePool(_pool, anchor) { return { ...anchor, liquidityUsd: '42', liquidityRaw: '9' }; },
       },
       snapshotRepository: {
@@ -94,6 +99,11 @@ describe('Robinhood event-driven pool liquidity worker', () => {
         async commitRange(input) { commits.push(input); return { ...CURSOR, nextBlock: input.nextBlock }; },
       },
     }, { rangeSize: 6, maxRangesPerPoll: 1 });
+    await assert.rejects(worker.pollOnce(), /historical ranges disconnected/);
+    assert.deepEqual(batches, []);
+    assert.deepEqual(commits, []);
+    assert.equal(worker.getStatus().nextBlock, '105');
+    failRead = false;
     await assert.rejects(worker.pollOnce(), /disconnected/);
     assert.deepEqual(commits, []);
     assert.equal(worker.getStatus().nextBlock, '105');

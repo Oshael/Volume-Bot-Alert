@@ -110,6 +110,7 @@ describe('Robinhood event-driven pool liquidity core', () => {
 
   it('persists bounded batches instead of issuing a write for every pool', async () => {
     const batches = [];
+    const prepared = [];
     const candidates = Array.from({ length: 103 }, (_, index) => pool(String(index)));
     const result = await processLiquidityEventRange({
       repository: {
@@ -120,6 +121,11 @@ describe('Robinhood event-driven pool liquidity core', () => {
       },
       reader: {
         async readAnchor() { return ANCHOR; },
+        async forPoolsAtAnchor(pools, anchor) {
+          assert.equal(anchor, ANCHOR);
+          prepared.push(pools);
+          return this;
+        },
         async valuePool() {
           return { ...ANCHOR, liquidityUsd: '42', liquidityRaw: '9',
             status: 'spot_tvl_from_pool_balances', confidence: 'medium' };
@@ -127,6 +133,7 @@ describe('Robinhood event-driven pool liquidity core', () => {
       },
     }, { logs: [{}], toBlock: '110' });
     assert.deepEqual(batches.map((rows) => rows.length), [50, 50, 3]);
+    assert.deepEqual(prepared.map((pools) => pools.length), [50, 50, 3]);
     assert.deepEqual(batches.flat().map((row) => row.marketKey), candidates.map((row) => row.marketKey));
     assert.deepEqual(result, { anchorBlock: '110', affected: 103, saved: 103, failed: 0 });
   });

@@ -159,4 +159,38 @@ describe('Robinhood pool liquidity current-state reader', () => {
       reader.valuePool(pool('uniswap-v3'), ANCHOR), /V3 slot0 is malformed/
     );
   });
+
+  it('uses batch-local V4 ranges without crossing anchors or replacing unavailable ranges with zero', async () => {
+    const secondId = `0x${'5'.repeat(64)}`;
+    const candidates = [pool('uniswap-v4'), pool('uniswap-v4', { poolId: secondId }),
+      pool('uniswap-v3'), pool('uniswap-v4', { poolId: 'bad' })];
+    const requests = [];
+    const seen = [];
+    const reader = createRobinhoodPoolLiquidityOnchainReader({
+      ...dependencies(async (_method, params) => (
+        params[0].data.startsWith(V4_GET_SLOT0_SELECTOR) ? words(Q96, 0, 0, 0) : words(0)
+      ), { v4RangeReader: {
+        async listHistoricalV4LiquidityRanges() { assert.fail('unexpected individual read'); },
+        async listHistoricalV4LiquidityRangesByPoolIds(...args) {
+          requests.push(args);
+          return new Map([[POOL_ID, []], [secondId, null]]);
+        },
+      } }),
+      assessLiquidity(input) { seen.push(input.v4Ranges); return { liquidityUsd: '0' }; },
+    });
+    const batch = await reader.forPoolsAtAnchor(candidates, ANCHOR);
+    await Promise.all(candidates.slice(0, 2).map((candidate) => batch.valuePool(candidate, ANCHOR)));
+    assert.deepEqual(seen, [[], null]);
+    await assert.rejects(batch.valuePool(candidates[3], ANCHOR), /poolId is invalid/);
+    assert.deepEqual(requests, [[[POOL_ID, secondId], '124', '0']]);
+    for (const changed of [{ ...ANCHOR, number: '124' }, { ...ANCHOR, hash: `0x${'b'.repeat(64)}` }]) {
+      assert.throws(() => batch.valuePool(candidates[0], changed), /anchor does not match/);
+      await reader.forPoolsAtAnchor(candidates, changed);
+    }
+    assert.equal(requests.length, 3);
+    await reader.forPoolsAtAnchor([pool('uniswap-v2'), pool('uniswap-v3')], ANCHOR);
+    assert.equal(requests.length, 3);
+    await assert.rejects(reader.forPoolsAtAnchor(Array(51).fill(candidates[0]), ANCHOR), /50/);
+    await assert.rejects(batch.valuePool(pool('uniswap-v4', { poolId: `0x${'6'.repeat(64)}` }), ANCHOR), /outside/);
+  });
 });

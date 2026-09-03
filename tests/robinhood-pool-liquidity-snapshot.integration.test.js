@@ -11,6 +11,8 @@ const stage66 = require('../src/utils/db-init-stage66');
 const stage67 = require('../src/utils/db-init-stage67');
 const stage68 = require('../src/utils/db-init-stage68');
 const stage98 = require('../src/utils/db-init-stage98');
+const stage99 = require('../src/utils/db-init-stage99');
+const stage100 = require('../src/utils/db-init-stage100');
 const stage102 = require('../src/utils/db-init-stage102');
 const stage147 = require('../src/utils/db-init-stage147');
 const stage148 = require('../src/utils/db-init-stage148');
@@ -24,6 +26,8 @@ const {
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 const { Pool } = require('pg');
 const { createLiquidityTimedDatabase } = require('../src/utils/robinhood-liquidity-db-timing');
+const { createLiquidityHistoricalRangeRepository } = require('../src/models/robinhood-liquidity-historical-ranges');
+const { createRobinhoodPersistenceRepository } = require('../src/models/robinhood-persistence');
 const v2 = require('../src/services/uniswap-v2-decoder');
 const v3 = require('../src/services/uniswap-v3-decoder');
 const v4 = require('../src/services/uniswap-v4-decoder');
@@ -51,6 +55,8 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
     await stage67.init({ closePool: false });
     await stage68.init({ closePool: false });
     await stage98.init({ closePool: false });
+    await stage99.init({ closePool: false });
+    await stage100.init({ closePool: false });
     await stage102.init({ closePool: false });
     await stage147.init({ closePool: false });
     await stage147.init({ closePool: false });
@@ -220,6 +226,53 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
       assert.deepEqual((await readRows()).rows, expected.map((row) => ({
         ...row, block: '32', consecutive_failures: 0,
       })));
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
+  });
+
+  it('matches individual historical V4 reads at exact boundaries and replay readiness', async () => {
+    const client = await db.getClient();
+    const batchReader = createLiquidityHistoricalRangeRepository({ database: client });
+    const singleReader = createRobinhoodPersistenceRepository({ database: client });
+    const ids = ['c', 'd', 'e'].map((char) => `0x${char.repeat(64)}`);
+    try {
+      await client.query('BEGIN');
+      await client.query("DELETE FROM robinhood_v4_liquidity_deltas WHERE pool_id = ANY($1::text[])", [ids]);
+      await client.query("DELETE FROM robinhood_v4_liquidity_replay_state WHERE chain = 'robinhood'");
+      await client.query(`INSERT INTO robinhood_v4_liquidity_replay_state
+        (chain, start_block, next_block, target_block, status)
+        VALUES ('robinhood', 0, 201, 200, 'completed')`);
+      const deltas = [
+        [ids[0], 10, 0, '90071992547409930000', -60], [ids[0], 20, 0, '-20', -60],
+        [ids[0], 20, 1, '500', -60], [ids[0], 21, 0, '1000', -60],
+        [ids[0], 10, 1, '-1', 0], [ids[1], 5, 0, '40', -60], [ids[1], 9, 0, '-40', -60],
+      ];
+      for (const [index, [id, block, log, delta, lower]] of deltas.entries()) {
+        await client.query(`INSERT INTO robinhood_v4_liquidity_deltas (
+          transaction_hash, log_index, block_number, block_hash, pool_id, market_key,
+          sender, tick_lower, tick_upper, liquidity_delta, salt, observed_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 60, $9, $4, NOW())`,
+        [`0x${(index + 1).toString(16).padStart(64, 'f')}`, log, block, `0x${'a'.repeat(64)}`,
+          id, `robinhood:uniswap-v4:${id}`, POOL, lower, delta]);
+      }
+      for (const [block, log] of [['20', '0'], ['20', '1'], ['20', '2'], ['21', '0'], ['22', '0']]) {
+        const actual = await batchReader.listHistoricalV4LiquidityRangesByPoolIds(ids, block, log);
+        for (const id of ids) {
+          assert.deepEqual(actual.get(id), await singleReader.listHistoricalV4LiquidityRanges(id, block, log));
+        }
+      }
+      const atTwenty = await batchReader.listHistoricalV4LiquidityRangesByPoolIds(ids, '20', '1');
+      assert.equal(atTwenty.get(ids[0])[0].liquidity_gross, '90071992547409929980');
+      assert.deepEqual(atTwenty.get(ids[1]), []);
+      assert.deepEqual(atTwenty.get(ids[2]), []);
+      await client.query("UPDATE robinhood_v4_liquidity_replay_state SET status = 'running', next_block = 200");
+      assert.deepEqual([...(await batchReader.listHistoricalV4LiquidityRangesByPoolIds(ids, '20', '1')).values()],
+        [null, null, null]);
+      await client.query("DELETE FROM robinhood_v4_liquidity_replay_state WHERE chain = 'robinhood'");
+      assert.deepEqual([...(await batchReader.listHistoricalV4LiquidityRangesByPoolIds(ids, '20', '1')).values()],
+        [null, null, null]);
     } finally {
       await client.query('ROLLBACK');
       client.release();

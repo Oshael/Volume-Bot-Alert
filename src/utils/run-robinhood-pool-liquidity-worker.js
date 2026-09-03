@@ -7,7 +7,7 @@ const {
 const {
   createRobinhoodPoolLiquidityEventCursorRepository,
 } = require('../models/robinhood-pool-liquidity-event-cursor');
-const { createRobinhoodPersistenceRepository } = require('../models/robinhood-persistence');
+const { createLiquidityHistoricalRangeRepository } = require('../models/robinhood-liquidity-historical-ranges');
 const { createWorkerLeaseManager } = require('../services/worker-lease-manager');
 const { createErc20MetadataReader } = require('../services/evm-erc20-metadata');
 const {
@@ -37,7 +37,7 @@ async function main(deps = {}) {
   const cursorRepository = deps.cursorRepository
     || createRobinhoodPoolLiquidityEventCursorRepository({ database });
   const rangeRepository = deps.rangeRepository
-    || createRobinhoodPersistenceRepository({ database });
+    || createLiquidityHistoricalRangeRepository({ database });
   const reader = (deps.readerFactory || createRobinhoodPoolLiquidityOnchainReader)({
     rpcClient,
     metadataReader: (deps.metadataReaderFactory || createErc20MetadataReader)({ rpcClient }),

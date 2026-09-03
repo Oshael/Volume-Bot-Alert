@@ -66,6 +66,13 @@ function normalizeAnchor(block) {
   });
 }
 
+function inputAnchor(anchor) {
+  return normalizeAnchor({
+    number: anchor?.number, hash: anchor?.hash,
+    timestamp: BigInt(new Date(anchor?.observedAt).getTime()) / 1000n,
+  });
+}
+
 function quoteIndex(pool) {
   const token = String(pool.tokenAddress || '').toLowerCase();
   const currency0 = String(pool.currency0 || '').toLowerCase();
@@ -174,15 +181,24 @@ function createRobinhoodPoolLiquidityOnchainReader(deps = {}) {
     };
   }
 
-  async function v4Inputs(pool, anchor, resolvedMetadata, quoteUsdPrice) {
+  function readRanges(pool, anchor, prefetched) {
+    if (prefetched) {
+      const id = String(pool.poolId).toLowerCase();
+      if (!prefetched.has(id)) throw new Error('pool is outside the prefetched liquidity batch');
+      return prefetched.get(id);
+    }
+    return v4RangeReader.listHistoricalV4LiquidityRanges(
+      pool.poolId, (BigInt(anchor.number) + 1n).toString(), '0'
+    );
+  }
+
+  async function v4Inputs(pool, anchor, resolvedMetadata, quoteUsdPrice, prefetched) {
     const [slot0, liquidity, ranges] = await Promise.all([
       rpcCall(stateViewAddress, bytes32Call(V4_GET_SLOT0_SELECTOR, pool.poolId, 'poolId'), anchor),
       rpcCall(stateViewAddress, bytes32Call(
         V4_GET_LIQUIDITY_SELECTOR, pool.poolId, 'poolId'
       ), anchor),
-      v4RangeReader.listHistoricalV4LiquidityRanges(
-        pool.poolId, (BigInt(anchor.number) + 1n).toString(), '0'
-      ),
+      readRanges(pool, anchor, prefetched),
     ]);
     const sqrtPriceX96 = decodeWord(slot0, 0, 160, 'V4 getSlot0').toString();
     return {
@@ -198,11 +214,8 @@ function createRobinhoodPoolLiquidityOnchainReader(deps = {}) {
     };
   }
 
-  async function valuePool(pool, anchorInput) {
-    const anchor = normalizeAnchor({
-      number: anchorInput?.number, hash: anchorInput?.hash,
-      timestamp: BigInt(new Date(anchorInput?.observedAt).getTime()) / 1000n,
-    });
+  async function valuePool(pool, anchorInput, prefetched) {
+    const anchor = inputAnchor(anchorInput);
     const [resolvedMetadata, quoteUsdPrice] = await Promise.all([
       metadata(pool, anchor), quoteUsd(pool, anchor),
     ]);
@@ -212,14 +225,35 @@ function createRobinhoodPoolLiquidityOnchainReader(deps = {}) {
     } else if (pool.protocol === 'uniswap-v3') {
       inputs = await v3Inputs(pool, anchor, resolvedMetadata, quoteUsdPrice);
     } else if (pool.protocol === 'uniswap-v4') {
-      inputs = await v4Inputs(pool, anchor, resolvedMetadata, quoteUsdPrice);
+      inputs = await v4Inputs(pool, anchor, resolvedMetadata, quoteUsdPrice, prefetched);
     } else {
       throw new Error('pool protocol is unsupported');
     }
     return Object.freeze({ ...anchor, ...assessLiquidity(inputs) });
   }
 
-  return Object.freeze({ readAnchor, valuePool });
+  async function forPoolsAtAnchor(pools, anchorInput) {
+    if (pools.length > 50) throw new RangeError('at most 50 pools are allowed');
+    const ids = [...new Set(pools.filter((pool) => pool.protocol === 'uniswap-v4')
+      .map((pool) => String(pool.poolId || '').trim().toLowerCase())
+      .filter((id) => /^0x[0-9a-f]{64}$/.test(id)))];
+    if (!ids.length || typeof v4RangeReader.listHistoricalV4LiquidityRangesByPoolIds !== 'function') {
+      return { valuePool };
+    }
+    const anchor = inputAnchor(anchorInput);
+    const ranges = await v4RangeReader.listHistoricalV4LiquidityRangesByPoolIds(
+      ids, (BigInt(anchor.number) + 1n).toString(), '0'
+    );
+    return { valuePool(pool, requestedAnchor) {
+      const requested = inputAnchor(requestedAnchor);
+      if (requested.number !== anchor.number || requested.hash !== anchor.hash) {
+        throw new Error('prefetched liquidity anchor does not match');
+      }
+      return valuePool(pool, requested, ranges);
+    } };
+  }
+
+  return Object.freeze({ readAnchor, valuePool, forPoolsAtAnchor });
 }
 
 module.exports = {
