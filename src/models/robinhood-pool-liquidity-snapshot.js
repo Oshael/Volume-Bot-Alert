@@ -121,6 +121,20 @@ function normalizeEventLogs(logs = []) {
   return { addresses: [...addresses], v4Pools: [...v4Pools.values()] };
 }
 
+function normalizeSnapshot(input) {
+  const resolvedProtocol = protocol(input.protocol);
+  const assessment = normalizeAssessment(input, resolvedProtocol);
+  return {
+    protocol: resolvedProtocol, market_key: marketKey(input.marketKey),
+    block_number: quantity(input.blockNumber, 'blockNumber'),
+    block_hash: blockHash(input.blockHash), observed_at: timestamp(input.observedAt, 'observedAt'),
+    liquidity_usd: assessment.liquidityUsd, liquidity_raw: assessment.liquidityRaw,
+    liquidity_status: assessment.liquidityStatus,
+    liquidity_confidence: assessment.liquidityConfidence, liquidity_warning: assessment.liquidityWarning,
+    checked_at: timestamp(input.checkedAt || new Date(), 'checkedAt'),
+  };
+}
+
 function createRobinhoodPoolLiquiditySnapshotRepository(options = {}) {
   const database = options.database || db;
 
@@ -238,27 +252,44 @@ function createRobinhoodPoolLiquiditySnapshotRepository(options = {}) {
   }
 
   async function recordSnapshot(input = {}) {
-    const resolvedProtocol = protocol(input.protocol);
-    const resolvedMarketKey = marketKey(input.marketKey);
-    const assessment = normalizeAssessment(input, resolvedProtocol);
-    const params = [
-      resolvedProtocol, resolvedMarketKey, quantity(input.blockNumber, 'blockNumber'),
-      blockHash(input.blockHash), timestamp(input.observedAt, 'observedAt'),
-      assessment.liquidityUsd, assessment.liquidityRaw, assessment.liquidityStatus,
-      assessment.liquidityConfidence, assessment.liquidityWarning,
-      timestamp(input.checkedAt || new Date(), 'checkedAt'),
-    ];
+    return await recordSnapshots([input]) === 1;
+  }
+
+  async function recordSnapshots(inputs = []) {
+    if (!Array.isArray(inputs) || inputs.length > 50) {
+      throw new RangeError('snapshot batch must contain at most 50 rows');
+    }
+    if (!inputs.length) return 0;
+    let rows;
+    try {
+      rows = inputs.map(normalizeSnapshot);
+      const keys = new Set(rows.map((row) => `${row.protocol}:${row.market_key}`));
+      if (keys.size !== rows.length) throw new Error('snapshot batch contains duplicate pools');
+    } catch (error) {
+      error.code = 'liquidity_snapshot_invalid';
+      throw error;
+    }
     const result = await database.query(
-      `INSERT INTO robinhood_pool_liquidity_snapshots (
+      `WITH input AS (
+         SELECT * FROM jsonb_to_recordset($1::jsonb) AS item(
+           protocol text, market_key text, block_number bigint, block_hash text,
+           observed_at timestamptz, liquidity_usd numeric, liquidity_raw numeric,
+           liquidity_status text, liquidity_confidence text, liquidity_warning text,
+           checked_at timestamptz
+         )
+       ) INSERT INTO robinhood_pool_liquidity_snapshots (
          chain, protocol, market_key, snapshot_block_number, snapshot_block_hash,
          snapshot_observed_at, liquidity_usd, liquidity_raw, liquidity_status,
          liquidity_confidence, liquidity_warning, checked_at
        ) SELECT registry.chain, registry.protocol, registry.market_key,
-                $3::bigint, $4, $5::timestamptz, $6::numeric, $7::numeric,
-                $8, $9, $10, $11::timestamptz
-           FROM robinhood_pool_registry registry
-          WHERE registry.chain = '${CHAIN}' AND registry.protocol = $1
-            AND registry.market_key = $2 AND registry.active = TRUE
+                input.block_number, input.block_hash, input.observed_at,
+                input.liquidity_usd, input.liquidity_raw, input.liquidity_status,
+                input.liquidity_confidence, input.liquidity_warning, input.checked_at
+           FROM input
+           JOIN robinhood_pool_registry registry
+             ON registry.chain = '${CHAIN}' AND registry.protocol = input.protocol
+            AND registry.market_key = input.market_key AND registry.active = TRUE
+          ORDER BY input.protocol, input.market_key
        ON CONFLICT (chain, protocol, market_key) DO UPDATE SET
          snapshot_block_number = EXCLUDED.snapshot_block_number,
          snapshot_block_hash = EXCLUDED.snapshot_block_hash,
@@ -276,9 +307,9 @@ function createRobinhoodPoolLiquiditySnapshotRepository(options = {}) {
           OR EXCLUDED.snapshot_block_number >=
              robinhood_pool_liquidity_snapshots.snapshot_block_number
        RETURNING market_key`,
-      params
+      [JSON.stringify(rows)]
     );
-    return result.rowCount === 1;
+    return result.rowCount;
   }
 
   async function recordFailure(input = {}) {
@@ -310,7 +341,7 @@ function createRobinhoodPoolLiquiditySnapshotRepository(options = {}) {
 
   return Object.freeze({
     invalidateSnapshotsFromBlock, listDuePools, listPoolsForLiquidityEvents,
-    recordFailure, recordSnapshot, resolveAnchorBlock,
+    recordFailure, recordSnapshot, recordSnapshots, resolveAnchorBlock,
   });
 }
 

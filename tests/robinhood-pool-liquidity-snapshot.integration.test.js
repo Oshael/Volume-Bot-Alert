@@ -159,6 +159,71 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
     }
   });
 
+  it('commits batches atomically while preserving newer snapshots and inactive pools', async () => {
+    const client = await db.getClient();
+    const repository = createRobinhoodPoolLiquiditySnapshotRepository({ database: client });
+    const extra = `robinhood:uniswap-v3:0x${'c'.repeat(40)}`;
+    const inactive = `robinhood:uniswap-v3:0x${'d'.repeat(40)}`;
+    const snapshot = (marketKey, blockNumber) => ({
+      protocol: 'uniswap-v3', marketKey, blockNumber, blockHash: `0x${'c'.repeat(64)}`,
+      observedAt: '2026-08-22T11:00:00Z', checkedAt: '2026-08-22T11:00:01Z',
+      liquidityUsd: '42', liquidityRaw: '9',
+      liquidityStatus: 'spot_tvl_from_pool_balances', liquidityConfidence: 'medium',
+    });
+    try {
+      await client.query('BEGIN');
+      for (const key of [extra, inactive]) {
+        await client.query(
+          `INSERT INTO robinhood_pool_registry (
+             protocol, market_key, pool_address, origin_address, token_address,
+             quote_address, currency0, currency1, discovery_block,
+             discovery_block_hash, discovery_tx_hash, discovery_log_index, discovered_at, active
+           ) SELECT protocol, $2, $3, origin_address, token_address,
+                    quote_address, currency0, currency1, discovery_block,
+                    discovery_block_hash, discovery_tx_hash, discovery_log_index, discovered_at, $4
+             FROM robinhood_pool_registry WHERE market_key = $1`,
+          [MARKET, key, key.split(':')[2], key !== inactive]
+        );
+      }
+      assert.equal(await repository.recordSnapshots([
+        snapshot(MARKET, '30'), snapshot(extra, '30'), snapshot(inactive, '30'),
+      ]), 2);
+      await repository.recordFailure({
+        protocol: 'uniswap-v3', marketKey: MARKET,
+        error: { code: 'rpc_error', message: 'fixture failure' },
+      });
+      assert.equal(await repository.recordSnapshots([
+        snapshot(MARKET, '29'), snapshot(extra, '31'),
+      ]), 1);
+      const readRows = () => client.query(
+        `SELECT market_key, snapshot_block_number::text AS block, consecutive_failures
+           FROM robinhood_pool_liquidity_snapshots
+          WHERE market_key = ANY($1::varchar[]) ORDER BY market_key`,
+        [[MARKET, extra, inactive]]
+      );
+      const expected = [
+        { market_key: MARKET, block: '30', consecutive_failures: 1 },
+        { market_key: extra, block: '31', consecutive_failures: 0 },
+      ];
+      assert.deepEqual((await readRows()).rows, expected);
+      await client.query('SAVEPOINT invalid_batch');
+      await assert.rejects(repository.recordSnapshots([
+        snapshot(MARKET, '32'), snapshot(extra, '9223372036854775808'),
+      ]), (error) => error.code === '22003');
+      await client.query('ROLLBACK TO SAVEPOINT invalid_batch');
+      assert.deepEqual((await readRows()).rows, expected);
+      const replay = [snapshot(MARKET, '32'), snapshot(extra, '32')];
+      assert.equal(await repository.recordSnapshots(replay), 2);
+      assert.equal(await repository.recordSnapshots(replay), 2);
+      assert.deepEqual((await readRows()).rows, expected.map((row) => ({
+        ...row, block: '32', consecutive_failures: 0,
+      })));
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
+  });
+
   it('keeps the newest successful block and resets failure state', async () => {
     const index = await db.query(
       `SELECT indisvalid, indisready

@@ -704,7 +704,15 @@ O safe head é limitado pelo menor frontier de discovery e market, evitando usar
 ainda não processados.
 Esse frontier depende do índice parcial concorrente da Stage 150, que contém somente captures
 `pending`, `leased` ou `blocked` e evita varrer o histórico terminal da fila a cada poll.
-O cursor só avança depois da valoração e do commit da faixa. Em reorg, snapshots órfãos são
+O liquidity valora até 50 pools por lote, respeitando a concorrência configurada, e grava os
+snapshots válidos em um único upsert por lote, ordenado por identidade. As leituras históricas V4
+continuam individuais. O upsert mantém o filtro de pools ativas e nunca substitui um snapshot
+de bloco mais recente; `valuation.saved` conta somente as linhas efetivamente gravadas.
+Erros de dados/constraints isolam o lote por pool e registram somente as falhas individuais.
+Falhas de persistência por conexão ou transação interrompem a faixa sem avançar o cursor;
+lotes já gravados podem ser repetidos com segurança na retomada. Falhas de valoração/RPC
+continuam registradas por pool, sem apagar seu snapshot anterior.
+O cursor só avança depois da valoração e da persistência de todos os lotes da faixa. Em reorg, snapshots órfãos são
 invalidados e reconstruídos no bloco anterior ao rewind. Resultado indisponível não é gravado como zero e uma
 falha de RPC não apaga o último snapshot válido.
 

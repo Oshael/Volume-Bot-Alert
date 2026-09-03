@@ -47,7 +47,7 @@ describe('Robinhood event-driven pool liquidity core', () => {
         assert.equal(logs.length, 3);
         return [pool('ok'), pool('failed')];
       },
-      async recordSnapshot(input) { snapshots.push(input); },
+      async recordSnapshots(rows) { snapshots.push(...rows); return rows.length; },
       async recordFailure(input) { failures.push(input); },
     };
     const result = await processLiquidityEventRange({
@@ -81,7 +81,7 @@ describe('Robinhood event-driven pool liquidity core', () => {
         assert.deepEqual(input, { rewindBlock: '100' });
         return [pool('orphaned')];
       },
-      async recordSnapshot() {},
+      async recordSnapshots(rows) { return rows.length; },
       async recordFailure() {},
     };
     const result = await repairLiquiditySnapshotsAfterReorg({
@@ -106,5 +106,62 @@ describe('Robinhood event-driven pool liquidity core', () => {
       reader: { async readAnchor() { throw new Error('unexpected anchor read'); } },
     }, { logs: [], toBlock: '123' });
     assert.deepEqual(result, { anchorBlock: '123', affected: 0, saved: 0, failed: 0 });
+  });
+
+  it('persists bounded batches instead of issuing a write for every pool', async () => {
+    const batches = [];
+    const candidates = Array.from({ length: 103 }, (_, index) => pool(String(index)));
+    const result = await processLiquidityEventRange({
+      repository: {
+        async listPoolsForLiquidityEvents() { return candidates; },
+        async recordSnapshots(rows) { batches.push(rows); return rows.length; },
+        async recordSnapshot() { assert.fail('unexpected individual write'); },
+        async recordFailure() { assert.fail('unexpected failure'); },
+      },
+      reader: {
+        async readAnchor() { return ANCHOR; },
+        async valuePool() {
+          return { ...ANCHOR, liquidityUsd: '42', liquidityRaw: '9',
+            status: 'spot_tvl_from_pool_balances', confidence: 'medium' };
+        },
+      },
+    }, { logs: [{}], toBlock: '110' });
+    assert.deepEqual(batches.map((rows) => rows.length), [50, 50, 3]);
+    assert.deepEqual(batches.flat().map((row) => row.marketKey), candidates.map((row) => row.marketKey));
+    assert.deepEqual(result, { anchorBlock: '110', affected: 103, saved: 103, failed: 0 });
+  });
+
+  it('isolates bad snapshot data but propagates database failures without a write storm', async () => {
+    for (const code of ['liquidity_snapshot_invalid', '23514', '40P01', 'ECONNRESET']) {
+      const error = Object.assign(new Error('write failed'), { code });
+      const individual = [];
+      const failures = [];
+      const dataError = ['liquidity_snapshot_invalid', '23514'].includes(code);
+      const task = processLiquidityEventRange({
+        repository: {
+          async listPoolsForLiquidityEvents() { return [pool('ok'), pool('bad')]; },
+          async recordSnapshots() { throw error; },
+          async recordSnapshot(row) {
+            individual.push(row.marketKey);
+            if (row.marketKey.endsWith('bad')) throw error;
+            return true;
+          },
+          async recordFailure(row) { failures.push(row); },
+        },
+        reader: {
+          async readAnchor() { return ANCHOR; },
+          async valuePool() { return { ...ANCHOR, liquidityUsd: '42', liquidityRaw: '9' }; },
+        },
+      }, { logs: [{}], toBlock: '110' });
+      if (dataError) {
+        assert.deepEqual(await task, { anchorBlock: '110', affected: 2, saved: 1, failed: 1 });
+        assert.equal(individual.length, 2);
+        assert.equal(failures[0].marketKey, pool('bad').marketKey);
+      } else {
+        await assert.rejects(task, (received) => received === error);
+        assert.deepEqual(individual, []);
+        assert.deepEqual(failures, []);
+      }
+    }
   });
 });

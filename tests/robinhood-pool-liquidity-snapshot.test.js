@@ -135,15 +135,23 @@ describe('Robinhood current pool liquidity snapshots', () => {
         return { rowCount: 1 };
       },
     } });
-    assert.equal(await repository.recordSnapshot({
+    const input = {
       protocol: 'uniswap-v4', marketKey: MARKET, blockNumber: '123',
       blockHash: `0x${'a'.repeat(64)}`, observedAt: '2026-08-22T11:00:00Z',
       checkedAt: '2026-08-22T11:00:01Z', liquidityUsd: '42.5', liquidityRaw: '9',
       liquidityStatus: 'spot_tvl_from_v4_tick_ranges', liquidityConfidence: 'medium',
       liquidityWarning: 'spot_price_and_tick_liquidity_are_manipulable',
-    }), true);
+    };
+    assert.equal(await repository.recordSnapshot(input), true);
     assert.match(calls[0].sql, /EXCLUDED\.snapshot_block_number >=/);
-    assert.equal(calls[0].params[2], '123');
+    assert.equal(JSON.parse(calls[0].params[0])[0].block_number, '123');
+    assert.equal(await repository.recordSnapshots([]), 0);
+    await assert.rejects(repository.recordSnapshots(Array(51).fill(input)), /at most 50/);
+    await assert.rejects(repository.recordSnapshots([input, input]), /duplicate pools/);
+    await assert.rejects(repository.recordSnapshots([
+      input, { ...input, marketKey: `${MARKET}-other`, blockHash: 'invalid' },
+    ]), (error) => error.code === 'liquidity_snapshot_invalid');
+    assert.equal(calls.length, 1);
     await assert.rejects(repository.recordSnapshot({
       protocol: 'uniswap-v4', marketKey: MARKET, blockNumber: '124',
       blockHash: `0x${'b'.repeat(64)}`, observedAt: '2026-08-22T11:01:00Z',
