@@ -214,4 +214,4 @@ async function main() {
   }
 }
 if (require.main === module) main().catch((error) => { console.error(error.message); process.exitCode = 1; });
-module.exports = { runPreview, parseArgs, matchesLedger, fetchRange };
+module.exports = { runPreview, parseArgs, matchesLedger, fetchRange, digest, save, header, initialize };

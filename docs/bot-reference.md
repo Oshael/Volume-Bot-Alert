@@ -777,6 +777,23 @@ timeouts/limites. Ctrl+C encerra após a faixa em andamento; `preview.lock` impe
 no mesmo diretório. Após kill forçado, verificar que o PID gravado não está mais rodando antes de
 remover somente esse lock. Não imprimir o JSON completo nem depender do scrollback do terminal.
 
+Aplicação direcionada: `node src/utils/repair-robinhood-v4-blocked.js --output-dir=<diretorio>`
+valida sem gravar; acrescentar `--write` aplica. Usa o mesmo RPC archive e exige checkpoint e
+report completos/compatíveis, sem conflitos, prefixos negativos ou processed sem delta.
+Durante a validação/aplicação, parar **somente** o processing e aguardar sua lease expirar/ser
+liberada; o head continua ligado. Capturas ainda leased impedem a aplicação, mesmo com lease
+do worker expirada. Não limpar leases manualmente para contornar essa proteção.
+Cada pool usa uma transação, lock compartilhado com a materialização V4, timeout de lock de
+2s e de statement de 30s. Revalida registry, log bruto, identidades existentes, hash canônico
+e igualdade dos saldos atuais com o ledger. Insere apenas deltas predecessores ausentes e
+marcadores de deduplicação, recalcula os ranges somente dessa pool e reencaminha seu bloqueio
+exato. O evento bloqueado continua sendo aplicado pelo processing normal; nenhum cursor é pulado.
+Não altera snapshots, observações ou volumes históricos, nem corrige lacunas de swaps.
+`repair-dry-run.json`/`repair-write.json` são salvos após cada pool; repetir é idempotente e não
+reaplica deltas, mesmo se a gravação do arquivo falhar após o commit. Ctrl+C encerra entre pools.
+Após sucesso **ou erro** do comando, religar o processing; corrigir a causa de uma pool abortada
+antes de tentar novamente. O liquidity continua do cursor persistido quando sua barreira avança.
+
 Ordem obrigatória do primeiro deploy:
 
 1. parar `trendscope-worker@robinhood-liquidity.service` antes de publicar o novo código;
