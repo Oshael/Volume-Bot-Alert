@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const { after, describe, it } = require('node:test');
 
 const db = require('../src/models/db');
-const { HOT_QUEUE_REPAIR_STATEMENTS } = require('../src/utils/db-init-stage180');
+const { HOT_QUEUE_REPAIR_STATEMENTS, STATEMENTS: HOT_QUEUE_DDL } = require('../src/utils/db-init-stage180');
 const {
   createRobinhoodHolderLedgerRepository, __private,
 } = require('../src/models/robinhood-holder-ledger');
@@ -71,14 +71,13 @@ describe('Robinhood holder ledger persistence', () => {
     try {
       await client.query(`CREATE TEMP TABLE robinhood_holder_transfer_journal
         (LIKE public.robinhood_holder_transfer_journal INCLUDING ALL)`);
-      await client.query(`CREATE TEMP TABLE robinhood_holder_hot_queue
-        (LIKE public.robinhood_holder_hot_queue INCLUDING ALL)`);
       await client.query(`CREATE TEMP TABLE robinhood_holder_cursors
         (LIKE public.robinhood_holder_cursors INCLUDING ALL)`);
       await client.query(`CREATE TEMP TABLE robinhood_holder_balances
         (LIKE public.robinhood_holder_balances INCLUDING ALL)`);
       await client.query(`CREATE TEMP TABLE robinhood_holder_token_states
         (LIKE public.robinhood_holder_token_states INCLUDING ALL)`);
+      await client.query(HOT_QUEUE_DDL[0].replace('CREATE TABLE IF NOT EXISTS', 'CREATE TEMP TABLE'));
       await client.query(`CREATE TEMP TABLE robinhood_holder_global_backfill_runs
         (LIKE public.robinhood_holder_global_backfill_runs INCLUDING ALL)`);
       await client.query(`CREATE TEMP TABLE robinhood_holder_global_backfill_tokens
@@ -293,16 +292,28 @@ describe('Robinhood holder ledger persistence', () => {
       await client.query(
         `INSERT INTO robinhood_holder_transfer_journal (
            block_number, block_hash, transaction_hash, transaction_index,
-           log_index, token_address, from_wallet, to_wallet, amount_raw
+           log_index, token_address, from_wallet, to_wallet, amount_raw, captured_at
          ) VALUES
-           (100, $1, $2, 10, 10, $5, $6, $7, 2),
-           (100, $1, $3, 11, 11, $5, $7, $6, 1),
-           (100, $1, $4, 12, 12, $5, $7, $6, 9)`,
+           (100, $1, $2, 10, 10, $5, $6, $7, 2, NOW() - INTERVAL '1 day'),
+           (100, $1, $3, 11, 11, $5, $7, $6, 1, NOW()),
+           (100, $1, $4, 12, 12, $5, $7, $6, 9, NOW())`,
         [HASH_A, HASH_F, HASH_6, HASH_8, TOKEN_BATCH, ALICE, BOB]
+      );
+      const queuedBefore = await client.query(
+        `SELECT first_enqueued_at FROM robinhood_holder_hot_queue WHERE token_address = $1`,
+        [TOKEN_BATCH]
       );
       const partial = await repository.applyNextPendingEvent({
         onlyTokenAddress: TOKEN_BATCH, maxEvents: 3,
       });
+      const queuedAfter = await client.query(
+        `SELECT first_pending_block, last_pending_block, first_enqueued_at
+           FROM robinhood_holder_hot_queue WHERE token_address = $1`, [TOKEN_BATCH]
+      );
+      assert.deepEqual(queuedAfter.rows, [{
+        first_pending_block: '100', last_pending_block: '100',
+        first_enqueued_at: queuedBefore.rows[0].first_enqueued_at,
+      }]);
       assert.deepEqual({
         status: partial.status, tokenAddress: partial.tokenAddress,
         appliedEvents: partial.appliedEvents, attemptedEvents: partial.attemptedEvents,

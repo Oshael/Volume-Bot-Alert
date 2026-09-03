@@ -1,4 +1,5 @@
 const db = require('./db');
+const { refreshExistingHotQueue } = require('./robinhood-holder-hot-queue');
 
 const CHAIN = 'robinhood';
 const STREAM = 'live';
@@ -785,7 +786,10 @@ async function commitAppliedPrefix(client, computed) {
   await persistBatchBalances(client, computed.tokenAddress, computed.finalRows);
   const row = await advanceAppliedState(client, computed);
   await persistJournalEvidence(client, computed.journalRows);
-  await syncHotQueue(client, computed.tokenAddress);
+  if (!await refreshExistingHotQueue(client, computed.tokenAddress)) {
+    // Repair a missing ticket; normal live batches never scan the whole tail.
+    await syncHotQueue(client, computed.tokenAddress);
+  }
   const latest = computed.latestChanges;
   const publication = row.ledger_status === 'live' && computed.holderCountChanged
     ? Object.freeze({

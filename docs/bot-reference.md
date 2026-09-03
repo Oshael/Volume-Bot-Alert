@@ -1630,6 +1630,16 @@ estados rastreados e adiciona uma FK com cascade para preservar esse invariante.
 O journal topics-only continua capturando transferências de tokens ainda não
 admitidos para a proteção de descoberta tardia; apenas o cache hot deixa de carregar
 esses endereços inelegíveis.
+Após cada lote aplicado, o ledger trava o ticket existente antes de consultar o
+journal e atualiza seus limites por duas buscas `ORDER BY ... LIMIT 1` no índice
+parcial `idx_rh_holder_journal_pending_token` (Stage 121), sem agregar toda a cauda
+pendente. O ticket só sai quando não há pendências; enqueues concorrentes são
+serializados pelo lock e continuam duráveis. Os timestamps do ticket são mantidos
+até esvaziar: `oldestAgeMs` é uma idade conservadora do período enfileirado, podendo
+superestimar a idade do evento pendente mais antigo. O lag em blocos e as classes
+fresh/stale continuam usando o primeiro bloco realmente pendente. Ticket ausente
+e rollback de cauda usam a reconstrução completa excepcional; o caminho normal
+não requer novo índice, migração ou backfill.
 A tabela, não a notificação, é a garantia durável. O scheduler separa tickets em
 `fresh-live` (até 200 blocos), `recent-shadow` (até 20.000 blocos), `stale-shadow`
 e `stale-live`. A rotação persiste entre ticks e reserva três lotes para live
