@@ -48,8 +48,8 @@ function parseArgs(argv = process.argv.slice(2), env = process.env) {
     rpcUrl: String(args['rpc-url'] || env.ROBINHOOD_V3_REPAIR_RPC_URL || '').trim(),
     fromBlock: block(args['from-block'], '0', 'from-block'),
     toBlock: block(args['to-block'], '9223372036854775807', 'to-block'),
-    batchSize: integer(args['batch-size'], 100, 1, 250, 'batch-size'),
-    rpcConcurrency: integer(args['rpc-concurrency'], 2, 1, 4, 'rpc-concurrency'),
+    batchSize: integer(args['batch-size'], 100, 1, 500, 'batch-size'),
+    rpcConcurrency: integer(args['rpc-concurrency'], 2, 1, 8, 'rpc-concurrency'),
     maxBatches: integer(args['max-batches'], mode === 'dry-run' ? 1 : 0, 0, 1_000_000, 'max-batches'),
     sleepMs: integer(args['sleep-ms'], 100, 0, 60_000, 'sleep-ms'),
   };

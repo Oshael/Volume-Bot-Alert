@@ -400,8 +400,8 @@ seleciona apenas essa rejeição dentro de `--from-block`/`--to-block`, reconstr
 metadata, quote, balances, observação e buckets no bloco exato e só então marca a
 captura como reparada. Enquanto o utilitário detém seu advisory lock, a poda das
 capturas se suspende automaticamente, mas head e processing continuam. O reparo
-usa JSON-RPC concorrente e commits limitados a 250 capturas, sem UPDATE global da
-coorte e sem alterar os watermarks do backfill geral.
+usa JSON-RPC concorrente (até 8 batches simultâneos) e commits limitados a 500
+capturas, sem UPDATE global da coorte e sem alterar os watermarks do backfill geral.
 
 O grupo `robinhood-processing` roda um processo separado (systemd
 `trendscope-worker@robinhood-processing.service`, lease `robinhood-processing-worker`,
