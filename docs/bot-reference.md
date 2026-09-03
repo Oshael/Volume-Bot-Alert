@@ -3221,9 +3221,19 @@ A Stage 191 cria a fundação ainda inativa da captura canônica por receipts:
 `robinhood_chain_events` e o cursor único `robinhood_chain_capture_cursor`.
 Bloco, contexto de transação, logs e avanço do cursor serão commitados
 atomicamente; gaps e divergência de `parentHash` falham antes do avanço. Aplique
-com `node src/utils/db-init-stage191.js` antes de habilitar o futuro capturador.
-Os workers atuais não leem essas tabelas e não mudam de comportamento nesta
-etapa.
+com `node src/utils/db-init-stage191.js` antes de habilitar o capturador.
+
+O processo isolado `npm run start:worker:robinhood-chain-capture` roda sob a
+lease `robinhood-chain-capture-worker` e permanece em modo shadow: nenhum
+worker atual lê o journal e nenhuma projeção ou publicação é alterada. Ele usa
+`ROBINHOOD_WS_URL` para `newHeads`; sem WebSocket ou durante reconexão,
+`eth_blockNumber` a cada `ROBINHOOD_CHAIN_CAPTURE_FALLBACK_POLL_MS` (default
+250 ms) garante continuidade. Cada bloco é lido por
+`eth_getBlockByNumber(..., true)` + `eth_getBlockReceipts`, nunca por
+`eth_getLogs`; a primeira execução começa no head, salvo
+`ROBINHOOD_CHAIN_CAPTURE_START_BLOCK`. O limite por drenagem é configurado por
+`ROBINHOOD_CHAIN_CAPTURE_MAX_BLOCKS_PER_DRAIN` (default 100) e a confirmação
+por `ROBINHOOD_CHAIN_CAPTURE_CONFIRMATIONS` (default 2).
 
 ## 15. Wallet tracking multichain
 

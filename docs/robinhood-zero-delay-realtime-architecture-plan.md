@@ -1,6 +1,6 @@
 # Plano — arquitetura realtime Robinhood sem `eth_getLogs` no caminho live
 
-Status: proposto; implementação ainda não iniciada
+Status: em implementação; journal canônico e capturador shadow concluídos
 
 Prioridade: crítica
 

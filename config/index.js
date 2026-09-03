@@ -1587,6 +1587,30 @@ module.exports = {
     ),
   },
 
+  robinhoodChainCaptureWorker: {
+    enabled: parseBoolean(process.env.ROBINHOOD_CHAIN_CAPTURE_ENABLED, false),
+    wsUrl: String(process.env.ROBINHOOD_WS_URL || '').trim(),
+    startBlock: parseOptionalBlock(process.env.ROBINHOOD_CHAIN_CAPTURE_START_BLOCK),
+    fallbackPollMs: parseIntegerInRange(
+      process.env.ROBINHOOD_CHAIN_CAPTURE_FALLBACK_POLL_MS, 250, 50, 300_000
+    ),
+    reconnectMs: parseIntegerInRange(
+      process.env.ROBINHOOD_CHAIN_CAPTURE_RECONNECT_MS, 1000, 100, 300_000
+    ),
+    maxBlocksPerDrain: parseIntegerInRange(
+      process.env.ROBINHOOD_CHAIN_CAPTURE_MAX_BLOCKS_PER_DRAIN, 100, 1, 2000
+    ),
+    confirmations: parseIntegerInRange(
+      process.env.ROBINHOOD_CHAIN_CAPTURE_CONFIRMATIONS, 2, 0, 1000
+    ),
+    leaseHeartbeatMs: parseIntegerInRange(
+      process.env.ROBINHOOD_CHAIN_CAPTURE_LEASE_HEARTBEAT_MS, 30_000, 1000, 300_000
+    ),
+    leaseTtlMs: parseIntegerInRange(
+      process.env.ROBINHOOD_CHAIN_CAPTURE_LEASE_TTL_MS, 120_000, 5000, 600_000
+    ),
+  },
+
   robinhoodIngestionWorker: {
     enabled: robinhoodIngestionEnabled,
     publicRpcUrl: String(
