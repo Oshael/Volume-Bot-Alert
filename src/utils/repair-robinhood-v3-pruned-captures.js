@@ -383,6 +383,7 @@ if (require.main === module) void run();
 module.exports = {
   runRepair,
   __private: {
-    buildPreparedEntries, claim, createCandidateRepository, parseArgs, poolSeeds,
+    buildPreparedEntries, claim, createArchiveClient, createCandidateRepository,
+    enrich, parseArgs, poolSeeds,
   },
 };

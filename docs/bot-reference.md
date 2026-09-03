@@ -410,6 +410,17 @@ Cada evento de progresso expõe `remaining`, `progressPct`, `blocked` e até dez
 Dentro da mesma execução, o seletor avança seu limite inferior até o último bloco
 tratado, evitando reler desde `--from-block` o prefixo que já saiu da coorte.
 
+Se a captura rejeitada já tiver sido podada, o reparador acima não consegue mais
+selecioná-la. Use `npm run robinhood:reconstruct-v3-archive` com um intervalo explícito
+e o mesmo RPC archive. O comando escaneia diretamente os eventos Swap V3, cruza cada
+identidade com `robinhood_processed_logs` e `robinhood_head_captures` e só enriquece
+o que estiver ausente de ambos. O modo default `dry-run` mede a lacuna exata sem
+escrever; `--mode=write` persiste de forma idempotente em batches de até 500. O
+progresso informa o próximo bloco, percentual do intervalo, ausentes, reparados e
+falhas. Ele não move cursores live, não emite derived outbox e não reprocessa linhas
+já duráveis; depois dele, consumidores históricos como wallet-swap exigem replay
+direcionado próprio.
+
 O grupo `robinhood-processing` roda um processo separado (systemd
 `trendscope-worker@robinhood-processing.service`, lease `robinhood-processing-worker`,
 `start:worker:robinhood-processing` na porta 3007). O worker reclama capturas por lease
