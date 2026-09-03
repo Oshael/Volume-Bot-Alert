@@ -760,6 +760,23 @@ O V4 exige que o replay histórico esteja `completed`, que a materialização in
 o processamento live tenha continuado persistindo `ModifyLiquidity` depois do target do replay.
 O replay é resumível e limitado ao target salvo; executá-lo novamente não amplia esse target.
 
+O preview direcionado `node src/utils/preview-robinhood-v4-blocked.js --through-block=<bloco>
+--output-dir=<diretorio> --range-size=10000` usa `ROBINHOOD_V4_REPLAY_RPC_URL` e a conexão
+normal do banco, forçada a read-only. Seleciona no máximo sete pools bloqueadas pelo erro de
+range V4 até o limite explícito e congela essa seleção no checkpoint. Consulta Initialize e
+ModifyLiquidity por manager/poolId, da criação até o primeiro bloqueio, incluindo seu log e
+excluindo logs posteriores no mesmo bloco. Não altera deltas, saldos, leases ou cursores.
+`checkpoint.json` contém os eventos coletados e é salvo atomicamente a cada faixa; `report.json`
+contém a comparação com ledger/captures/processed, os saldos históricos e a materialização atual.
+Esses saldos têm fronteiras diferentes e não devem ser igualados automaticamente. O relatório
+é diagnóstico, não autorização para requeue; a aplicação posterior deve revalidar todo o estado.
+Repetir o comando com o mesmo diretório retoma a coleta e atualiza a comparação do banco.
+Checkpoint incompatível/corrompido ou hash-alvo alterado interrompe a execução. A coleta usa um
+RPC por vez, no máximo 10000 blocos por faixa e 100000 eventos por pool, reduzindo a faixa em
+timeouts/limites. Ctrl+C encerra após a faixa em andamento; `preview.lock` impede dois processos
+no mesmo diretório. Após kill forçado, verificar que o PID gravado não está mais rodando antes de
+remover somente esse lock. Não imprimir o JSON completo nem depender do scrollback do terminal.
+
 Ordem obrigatória do primeiro deploy:
 
 1. parar `trendscope-worker@robinhood-liquidity.service` antes de publicar o novo código;
