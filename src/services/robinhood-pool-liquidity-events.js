@@ -1,3 +1,5 @@
+const { performance } = require('node:perf_hooks');
+
 const v2 = require('./uniswap-v2-decoder');
 const v3 = require('./uniswap-v3-decoder');
 const v4 = require('./uniswap-v4-decoder');
@@ -55,6 +57,48 @@ function isSnapshotDataError(error) {
   return error?.code === 'liquidity_snapshot_invalid' || /^(22|23)[A-Z0-9]{3}$/.test(error?.code);
 }
 
+function createRangeTiming(options = {}) {
+  const now = options.timingNow || (() => performance.now());
+  const startedAt = now();
+  const stages = {
+    poolLookupMs: 0,
+    anchorMs: 0,
+    v4PrefetchMs: 0,
+    valuationMs: 0,
+    persistMs: 0,
+  };
+  const counts = {
+    logs: 0,
+    pools: 0,
+    chunks: 0,
+    snapshots: 0,
+    failures: 0,
+  };
+  const ms = (value) => Math.round(Math.max(0, value) * 1000) / 1000;
+  return {
+    counts,
+    async measure(stage, operation) {
+      const started = now();
+      try {
+        return await operation();
+      } finally {
+        stages[stage] += now() - started;
+      }
+    },
+    snapshot() {
+      return Object.freeze({
+        totalMs: ms(now() - startedAt),
+        poolLookupMs: ms(stages.poolLookupMs),
+        anchorMs: ms(stages.anchorMs),
+        v4PrefetchMs: ms(stages.v4PrefetchMs),
+        valuationMs: ms(stages.valuationMs),
+        persistMs: ms(stages.persistMs),
+        ...counts,
+      });
+    },
+  };
+}
+
 async function persistSnapshotBatch(repository, snapshots) {
   if (!snapshots.length) return { saved: 0, failed: 0 };
   try {
@@ -97,44 +141,72 @@ async function valuePool(deps, pool, anchor, checkedAt) {
 }
 
 async function valuePoolsAtBlock(deps, pools, anchorBlock, options = {}) {
+  const timing = options.timing || createRangeTiming(options);
+  timing.counts.pools = pools.length;
   if (!pools.length) {
-    return Object.freeze({ anchorBlock: String(anchorBlock), affected: 0, saved: 0, failed: 0 });
+    return Object.freeze({
+      anchorBlock: String(anchorBlock), affected: 0, saved: 0, failed: 0,
+      timing: timing.snapshot(),
+    });
   }
-  const anchor = await deps.reader.readAnchor(`0x${block(anchorBlock, 'anchorBlock').toString(16)}`);
+  const anchor = await timing.measure('anchorMs', () => (
+    deps.reader.readAnchor(`0x${block(anchorBlock, 'anchorBlock').toString(16)}`)
+  ));
   const checkedAt = new Date((options.now || Date.now)()).toISOString();
   const concurrency = Math.max(1, Math.min(Number(options.concurrency) || 5, 20));
   const totals = { saved: 0, failed: 0 };
   for (let offset = 0; offset < pools.length; offset += SNAPSHOT_BATCH_SIZE) {
     const batch = pools.slice(offset, offset + SNAPSHOT_BATCH_SIZE);
+    timing.counts.chunks += 1;
     const reader = deps.reader.forPoolsAtAnchor
-      ? await deps.reader.forPoolsAtAnchor(batch, anchor) : deps.reader;
-    const outcomes = await mapConcurrent(
-      batch, concurrency, (pool) => valuePool({ ...deps, reader }, pool, anchor, checkedAt)
+      ? await timing.measure('v4PrefetchMs', () => deps.reader.forPoolsAtAnchor(batch, anchor))
+      : deps.reader;
+    const outcomes = await timing.measure(
+      'valuationMs',
+      () => mapConcurrent(
+        batch, concurrency, (pool) => valuePool({ ...deps, reader }, pool, anchor, checkedAt)
+      )
     );
-    const persisted = await persistSnapshotBatch(
-      deps.repository, outcomes.filter((item) => item.snapshot).map((item) => item.snapshot)
+    const snapshots = outcomes.filter((item) => item.snapshot).map((item) => item.snapshot);
+    timing.counts.snapshots += snapshots.length;
+    const persisted = await timing.measure(
+      'persistMs',
+      () => persistSnapshotBatch(deps.repository, snapshots)
     );
     totals.saved += persisted.saved;
     totals.failed += persisted.failed + outcomes.reduce((sum, item) => sum + (item.failed || 0), 0);
   }
+  timing.counts.failures = totals.failed;
   return Object.freeze({
     anchorBlock: anchor.number, affected: pools.length,
     ...totals,
+    timing: timing.snapshot(),
   });
 }
 
 async function processLiquidityEventRange(deps, input = {}, options = {}) {
-  const pools = await deps.repository.listPoolsForLiquidityEvents(input.logs || []);
-  return valuePoolsAtBlock(deps, pools, block(input.toBlock, 'toBlock').toString(), options);
+  const timing = createRangeTiming(options);
+  const logs = input.logs || [];
+  timing.counts.logs = logs.length;
+  const pools = await timing.measure(
+    'poolLookupMs',
+    () => deps.repository.listPoolsForLiquidityEvents(logs)
+  );
+  return valuePoolsAtBlock(deps, pools, block(input.toBlock, 'toBlock').toString(), {
+    ...options,
+    timing,
+  });
 }
 
 async function repairLiquiditySnapshotsAfterReorg(deps, input = {}, options = {}) {
   const rewindBlock = block(input.rewindBlock, 'rewindBlock');
-  const pools = await deps.repository.invalidateSnapshotsFromBlock({
-    rewindBlock: rewindBlock.toString(),
-  });
+  const timing = createRangeTiming(options);
+  const pools = await timing.measure(
+    'poolLookupMs',
+    () => deps.repository.invalidateSnapshotsFromBlock({ rewindBlock: rewindBlock.toString() })
+  );
   const anchorBlock = rewindBlock > 0n ? rewindBlock - 1n : 0n;
-  return valuePoolsAtBlock(deps, pools, anchorBlock.toString(), options);
+  return valuePoolsAtBlock(deps, pools, anchorBlock.toString(), { ...options, timing });
 }
 
 module.exports = {

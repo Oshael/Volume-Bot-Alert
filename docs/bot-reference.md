@@ -747,7 +747,10 @@ Os headers canônicos são buscados em JSON-RPC batches de até 100 blocos, ajus
 `ROBINHOOD_POOL_LIQUIDITY_SEED_HEADER_BATCH_SIZE`, sem relaxar a validação de hash e timestamp.
 `ROBINHOOD_POOL_LIQUIDITY_START_BLOCK` fica reservado ao bootstrap manual sem seed; depois que o
 cursor existe, ele é a fonte de verdade. O metadata da lease expõe cursor, lag, métricas do poller e
-totais de pools afetadas, salvas e com falha.
+totais de pools afetadas, salvas e com falha. `valuation.lastResult.timing` detalha o último range
+em `poolLookupMs`, `anchorMs`, `v4PrefetchMs`, `valuationMs`, `persistMs` e `totalMs`, além de
+contadores de logs, pools, lotes, snapshots e falhas; esses tempos servem para separar gargalo de
+DB, RPC/valoração e gravação sem ativar queries adicionais.
 
 O V4 exige que o replay histórico esteja `completed`, que a materialização inicial exista e que
 o processamento live tenha continuado persistindo `ModifyLiquidity` depois do target do replay.

@@ -21,6 +21,12 @@ function pool(id) {
   return { protocol: 'uniswap-v3', marketKey: `robinhood:uniswap-v3:${id}` };
 }
 
+function coreResult(result) {
+  const { timing, ...core } = result;
+  assert.equal(typeof timing.totalMs, 'number');
+  return core;
+}
+
 describe('Robinhood event-driven pool liquidity core', () => {
   it('tracks only events that can change pool state or balances', () => {
     assert.deepEqual(LIQUIDITY_EVENT_TOPICS, [
@@ -68,7 +74,14 @@ describe('Robinhood event-driven pool liquidity core', () => {
         },
       },
     }, { logs: [{}, {}, {}], toBlock: '110' }, { concurrency: 2, now: () => NOW });
-    assert.deepEqual(result, { anchorBlock: '110', affected: 2, saved: 1, failed: 1 });
+    assert.deepEqual(coreResult(result), { anchorBlock: '110', affected: 2, saved: 1, failed: 1 });
+    assert.deepEqual({
+      logs: result.timing.logs,
+      pools: result.timing.pools,
+      chunks: result.timing.chunks,
+      snapshots: result.timing.snapshots,
+      failures: result.timing.failures,
+    }, { logs: 3, pools: 2, chunks: 1, snapshots: 1, failures: 1 });
     assert.deepEqual(anchors, ['0x6e']);
     assert.equal(snapshots[0].checkedAt, '2026-08-22T12:00:00.000Z');
     assert.equal(failures[0].error.code, 'rpc_down');
@@ -97,7 +110,8 @@ describe('Robinhood event-driven pool liquidity core', () => {
       },
     }, { rewindBlock: '100' }, { now: () => NOW });
     assert.deepEqual(anchors, ['0x63']);
-    assert.deepEqual(result, { anchorBlock: '99', affected: 1, saved: 1, failed: 0 });
+    assert.deepEqual(coreResult(result), { anchorBlock: '99', affected: 1, saved: 1, failed: 0 });
+    assert.equal(result.timing.pools, 1);
   });
 
   it('does not read an anchor when a range has no tracked pools', async () => {
@@ -105,7 +119,9 @@ describe('Robinhood event-driven pool liquidity core', () => {
       repository: { async listPoolsForLiquidityEvents() { return []; } },
       reader: { async readAnchor() { throw new Error('unexpected anchor read'); } },
     }, { logs: [], toBlock: '123' });
-    assert.deepEqual(result, { anchorBlock: '123', affected: 0, saved: 0, failed: 0 });
+    assert.deepEqual(coreResult(result), { anchorBlock: '123', affected: 0, saved: 0, failed: 0 });
+    assert.equal(result.timing.anchorMs, 0);
+    assert.equal(result.timing.pools, 0);
   });
 
   it('persists bounded batches instead of issuing a write for every pool', async () => {
@@ -135,7 +151,9 @@ describe('Robinhood event-driven pool liquidity core', () => {
     assert.deepEqual(batches.map((rows) => rows.length), [50, 50, 3]);
     assert.deepEqual(prepared.map((pools) => pools.length), [50, 50, 3]);
     assert.deepEqual(batches.flat().map((row) => row.marketKey), candidates.map((row) => row.marketKey));
-    assert.deepEqual(result, { anchorBlock: '110', affected: 103, saved: 103, failed: 0 });
+    assert.deepEqual(coreResult(result), { anchorBlock: '110', affected: 103, saved: 103, failed: 0 });
+    assert.equal(result.timing.chunks, 3);
+    assert.equal(result.timing.snapshots, 103);
   });
 
   it('isolates bad snapshot data but propagates database failures without a write storm', async () => {
@@ -161,7 +179,7 @@ describe('Robinhood event-driven pool liquidity core', () => {
         },
       }, { logs: [{}], toBlock: '110' });
       if (dataError) {
-        assert.deepEqual(await task, { anchorBlock: '110', affected: 2, saved: 1, failed: 1 });
+        assert.deepEqual(coreResult(await task), { anchorBlock: '110', affected: 2, saved: 1, failed: 1 });
         assert.equal(individual.length, 2);
         assert.equal(failures[0].marketKey, pool('bad').marketKey);
       } else {
