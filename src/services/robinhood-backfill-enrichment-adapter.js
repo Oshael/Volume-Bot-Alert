@@ -113,8 +113,9 @@ function createRobinhoodBackfillEnrichmentAdapter(options = {}) {
     const enriched = enrichBlockContext(context, results.block);
     const event = enriched.event;
     if (event.kind !== 'swap') return { log: enriched.log, event };
+    const hasMetadata = event.accepted === true && context.eligibility?.eligible === true;
     let wethQuote = null;
-    if (context.needsWethQuote) {
+    if (hasMetadata && context.needsWethQuote) {
       if (!quoteReader) throw new Error('WETH quote reader is required for WETH markets');
       try {
         wethQuote = await quoteReader.getSnapshot({ blockTag: context.blockTag });
@@ -122,7 +123,6 @@ function createRobinhoodBackfillEnrichmentAdapter(options = {}) {
         if (error?.retryable === true) throw error;
       }
     }
-    const hasMetadata = event.accepted === true && context.eligibility?.eligible === true;
     const resolvedTokenMetadata = hasMetadata
       ? tokenMetadata(context, results)
       : null;
@@ -139,7 +139,7 @@ function createRobinhoodBackfillEnrichmentAdapter(options = {}) {
         wethUsdSource: wethQuote.source,
       } : {}),
     });
-    if (event.protocol === 'uniswap-v3') {
+    if (event.protocol === 'uniswap-v3' && hasMetadata) {
       event.tokenBalanceRaw = quantity(results.tokenBalance, 'tokenBalance').toString();
       event.quoteBalanceRaw = quantity(results.quoteBalance, 'quoteBalance').toString();
     }

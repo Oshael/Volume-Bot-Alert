@@ -5,6 +5,7 @@ const v4Fixture = require('../data/fixtures/robinhood-uniswap-v4.json');
 const {
   createRobinhoodBackfillEnrichmentAdapter,
 } = require('../src/services/robinhood-backfill-enrichment-adapter');
+const { ROBINHOOD_TOKENIZED_ASSETS } = require('../src/services/robinhood-market-policy');
 
 function word(value) {
   return BigInt(value).toString(16).padStart(64, '0');
@@ -206,6 +207,23 @@ describe('Robinhood backfill enrichment adapter', () => {
 
     assert.equal(entry.observation.accepted, false);
     assert.equal(entry.observation.reason, 'token_ineligible');
+  });
+
+  it('does not require V3 balances that policy deliberately did not request', async () => {
+    const deniedPool = seed(v3Fixture, 'uniswap-v3');
+    deniedPool.token_address = ROBINHOOD_TOKENIZED_ASSETS.SPY;
+    deniedPool.currency1 = ROBINHOOD_TOKENIZED_ASSETS.SPY;
+    const adapter = createRobinhoodBackfillEnrichmentAdapter({ seedPools: [deniedPool] });
+    const prepared = adapter.prepareClaim(claim(v3Fixture, 'uniswap-v3'));
+    const entry = await adapter.buildEntry({
+      context: prepared.context,
+      results: { block: resultsFor(prepared).block },
+    });
+
+    assert.equal(prepared.requests.length, 1);
+    assert.equal(entry.observation.accepted, false);
+    assert.equal(entry.observation.reason, 'token_ineligible');
+    assert.equal(Object.hasOwn(entry.event, 'tokenBalanceRaw'), false);
   });
 
   it('materializes state logs without inventing a market observation', async () => {

@@ -419,7 +419,9 @@ escrever; `--mode=write` persiste de forma idempotente em batches de até 500. O
 progresso informa o próximo bloco, percentual do intervalo, ausentes, reparados e
 falhas. Ele não move cursores live, não emite derived outbox e não reprocessa linhas
 já duráveis; depois dele, consumidores históricos como wallet-swap exigem replay
-direcionado próprio.
+direcionado próprio. Swaps que a política exclui (como ativos tokenizados oficiais)
+são persistidos como rejeições terminais sem solicitar metadata ou balances que não
+serão usados na observação.
 
 O grupo `robinhood-processing` roda um processo separado (systemd
 `trendscope-worker@robinhood-processing.service`, lease `robinhood-processing-worker`,
