@@ -327,8 +327,9 @@ async function runRepair(options, deps = {}) {
   return candidates.withLock(async () => {
     const chainId = await rpcClient.request('eth_chainId');
     if (BigInt(chainId) !== CHAIN_ID) throw new Error('Archive RPC is not on Robinhood Chain');
+    let scanFromBlock = options.fromBlock;
     while (options.maxBatches === 0 || summary.batches < options.maxBatches) {
-      const rows = await candidates.list(options.fromBlock, options.toBlock, options.batchSize);
+      const rows = await candidates.list(scanFromBlock, options.toBlock, options.batchSize);
       if (!rows.length) break;
       const built = await enrichBatch(rows);
       const repairedRows = built.repairedRows || rows;
@@ -357,6 +358,7 @@ async function runRepair(options, deps = {}) {
         marketKey: row.market_key,
         error: String(error?.message || error).slice(0, 500),
       }));
+      scanFromBlock = summary.lastBlock;
       console.log(JSON.stringify({ event: 'v3_archive_repair_progress', ...summary }));
       if (options.sleepMs) await delay(options.sleepMs);
     }

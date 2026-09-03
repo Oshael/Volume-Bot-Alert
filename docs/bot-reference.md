@@ -407,6 +407,8 @@ isola somente essa identidade como `archiveRepair.status='blocked'`, mantém a r
 original para auditoria e permite que as demais capturas do batch sejam persistidas.
 Cada evento de progresso expõe `remaining`, `progressPct`, `blocked` e até dez
 `lastFailures`; itens isolados contam como tratados, mas nunca como reparados.
+Dentro da mesma execução, o seletor avança seu limite inferior até o último bloco
+tratado, evitando reler desde `--from-block` o prefixo que já saiu da coorte.
 
 O grupo `robinhood-processing` roda um processo separado (systemd
 `trendscope-worker@robinhood-processing.service`, lease `robinhood-processing-worker`,

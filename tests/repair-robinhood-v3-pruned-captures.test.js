@@ -41,10 +41,14 @@ describe('targeted Robinhood V3 pruned-capture repair', () => {
 
   it('commits observations before marking only the repaired captures complete', async () => {
     const calls = [];
+    const scanFromBlocks = [];
     const batches = [[row(100), row(101)], []];
     const candidates = {
       summarize: async () => ({ candidates: '2', first_block: '100', last_block: '101' }),
-      list: async () => batches.shift(),
+      list: async (fromBlock) => {
+        scanFromBlocks.push(fromBlock);
+        return batches.shift();
+      },
       withLock: async (callback) => { calls.push('lock'); return callback(); },
       markRepaired: async (rows) => { calls.push(`mark:${rows.length}`); return rows.length; },
     };
@@ -65,6 +69,7 @@ describe('targeted Robinhood V3 pruned-capture repair', () => {
     });
 
     assert.deepEqual(calls, ['lock', 'archive', 'commit:2', 'mark:2']);
+    assert.deepEqual(scanFromBlocks, ['100', '101']);
     assert.deepEqual(
       [result.repaired, result.accepted, result.rejected, result.batches],
       [2, 1, 1, 1]
