@@ -50,6 +50,7 @@ function parseArgs(argv = process.argv.slice(2), env = process.env) {
     toBlock: block(args['to-block'], '9223372036854775807', 'to-block'),
     batchSize: integer(args['batch-size'], 100, 1, 500, 'batch-size'),
     rpcConcurrency: integer(args['rpc-concurrency'], 2, 1, 8, 'rpc-concurrency'),
+    rpcBatchSize: integer(args['rpc-batch-size'], 100, 1, 100, 'rpc-batch-size'),
     maxBatches: integer(args['max-batches'], mode === 'dry-run' ? 1 : 0, 0, 1_000_000, 'max-batches'),
     sleepMs: integer(args['sleep-ms'], 100, 0, 60_000, 'sleep-ms'),
   };
@@ -289,7 +290,7 @@ async function enrich(rows, rpcClient, options) {
     blockNumber: item.row.block_number,
     logIndex: item.row.log_index,
     requests: item.requests,
-  })), { providerBatchSizes: { archive: 100 } });
+  })), { providerBatchSizes: { archive: options.rpcBatchSize || 100 } });
   const executed = await executeRobinhoodBackfillEnrichmentPlan(plan, rpcClient, {
     concurrency: options.rpcConcurrency,
   });

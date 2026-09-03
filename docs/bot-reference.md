@@ -421,7 +421,9 @@ falhas. Ele não move cursores live, não emite derived outbox e não reprocessa
 já duráveis; depois dele, consumidores históricos como wallet-swap exigem replay
 direcionado próprio. Swaps que a política exclui (como ativos tokenizados oficiais)
 são persistidos como rejeições terminais sem solicitar metadata ou balances que não
-serão usados na observação.
+serão usados na observação. O scanner usa batches RPC menores, configuráveis por
+`--rpc-batch-size`, e divide adaptativamente uma falha RPC `-32000` até isolar apenas
+a identidade irrecuperável, sem descartar o restante do lote.
 
 O grupo `robinhood-processing` roda um processo separado (systemd
 `trendscope-worker@robinhood-processing.service`, lease `robinhood-processing-worker`,

@@ -12,6 +12,7 @@ function options(overrides = {}) {
     mode: 'write', rpcUrl: 'http://127.0.0.1:18547',
     fromBlock: '100', toBlock: '100', rangeSize: 1, minRangeSize: 1,
     batchSize: 500, rpcConcurrency: 8, maxRanges: 0, sleepMs: 0,
+    rpcBatchSize: 25,
     ...overrides,
   };
 }
@@ -46,7 +47,7 @@ describe('Robinhood V3 direct archive reconstruction', () => {
     ], { ROBINHOOD_V3_REPAIR_RPC_URL: 'http://archive' }), {
       mode: 'dry-run', rpcUrl: 'http://archive', fromBlock: '100', toBlock: '200',
       rangeSize: 500, minRangeSize: 1, batchSize: 500, rpcConcurrency: 8,
-      maxRanges: 0, sleepMs: 100,
+      rpcBatchSize: 25, maxRanges: 0, sleepMs: 100,
     });
     assert.throws(() => __private.parseArgs([
       '--from-block=200', '--to-block=100',
@@ -139,5 +140,26 @@ describe('Robinhood V3 direct archive reconstruction', () => {
     assert.equal(result.missing, 1);
     assert.equal(result.repaired, 0);
     assert.equal(mutated, false);
+  });
+
+  it('bisects RPC -32000 batches and isolates only irreducible identities', async () => {
+    const rows = [log(100, 1), log(100, 2), log(100, 3)].map((entry) => ({
+      transaction_hash: entry.transactionHash,
+      log_index: BigInt(entry.logIndex).toString(),
+    }));
+    const calls = [];
+    const built = await __private.enrichResilient(rows, async (batch) => {
+      calls.push(batch.length);
+      if (batch.length > 1 || batch[0].log_index === '2') {
+        throw Object.assign(new Error('RPC error -32000'), { rpcCode: -32000 });
+      }
+      return { entries: [{ log: batch[0] }], repairedRows: batch, failures: [], rpc: {} };
+    });
+
+    assert.deepEqual(calls, [3, 2, 1, 1, 1]);
+    assert.equal(built.entries.length, 2);
+    assert.equal(built.failures.length, 1);
+    assert.equal(built.failures[0].row.log_index, '2');
+    assert.equal(built.rpc.splitRetries, 3);
   });
 });

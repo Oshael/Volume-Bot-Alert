@@ -32,7 +32,7 @@ describe('targeted Robinhood V3 pruned-capture repair', () => {
   it('defaults to a bounded dry-run and validates write controls', () => {
     assert.deepEqual(__private.parseArgs([], {}), {
       mode: 'dry-run', rpcUrl: '', fromBlock: '0', toBlock: '9223372036854775807',
-      batchSize: 100, rpcConcurrency: 2, maxBatches: 1, sleepMs: 100,
+      batchSize: 100, rpcConcurrency: 2, rpcBatchSize: 100, maxBatches: 1, sleepMs: 100,
     });
     assert.throws(() => __private.parseArgs(['--batch-size=501'], {}), /between 1 and 500/);
     assert.throws(() => __private.parseArgs(['--rpc-concurrency=9'], {}), /between 1 and 8/);

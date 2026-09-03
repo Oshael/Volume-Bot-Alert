@@ -47,6 +47,7 @@ function parseArgs(argv = process.argv.slice(2), env = process.env) {
     minRangeSize: integer(args['min-range-size'], 1, 1, 10_000, 'min-range-size'),
     batchSize: integer(args['batch-size'], 500, 1, 500, 'batch-size'),
     rpcConcurrency: integer(args['rpc-concurrency'], 8, 1, 8, 'rpc-concurrency'),
+    rpcBatchSize: integer(args['rpc-batch-size'], 25, 1, 100, 'rpc-batch-size'),
     maxRanges: integer(args['max-ranges'], 0, 0, 10_000_000, 'max-ranges'),
     sleepMs: integer(args['sleep-ms'], 100, 0, 60_000, 'sleep-ms'),
   };
@@ -187,6 +188,36 @@ function progress(summary, cursor, options) {
   };
 }
 
+function mergeBuilt(left, right, splitRetries) {
+  const metrics = [left.rpc, right.rpc].filter(Boolean);
+  const keys = ['batches', 'batchItems', 'individualRequests', 'batchFallbacks'];
+  return {
+    entries: [...left.entries, ...right.entries],
+    repairedRows: [...(left.repairedRows || []), ...(right.repairedRows || [])],
+    failures: [...(left.failures || []), ...(right.failures || [])],
+    rpc: Object.fromEntries(keys.map((key) => [
+      key, metrics.reduce((total, metric) => total + Number(metric[key] || 0), 0),
+    ]).concat([['splitRetries', splitRetries]])),
+  };
+}
+
+async function enrichResilient(rows, enrichBatch) {
+  try {
+    return await enrichBatch(rows);
+  } catch (error) {
+    if (error?.rpcCode !== -32000) throw error;
+    if (rows.length === 1) return {
+      entries: [], repairedRows: [], failures: [{ row: rows[0], error }],
+      rpc: { splitRetries: 1 },
+    };
+    const midpoint = Math.ceil(rows.length / 2);
+    const left = await enrichResilient(rows.slice(0, midpoint), enrichBatch);
+    const right = await enrichResilient(rows.slice(midpoint), enrichBatch);
+    return mergeBuilt(left, right, 1 + Number(left.rpc?.splitRetries || 0)
+      + Number(right.rpc?.splitRetries || 0));
+  }
+}
+
 async function runReconstruction(options, deps = {}) {
   if (!options.rpcUrl && !deps.rpcClient) throw new Error('Archive RPC URL is required');
   const repository = deps.repository || createRepository(deps.database || db);
@@ -225,7 +256,9 @@ async function runReconstruction(options, deps = {}) {
         summary.missing += missing.length;
         if (options.mode === 'write') {
           for (let offset = 0; offset < missing.length; offset += options.batchSize) {
-            const built = await enrichBatch(missing.slice(offset, offset + options.batchSize));
+            const built = await enrichResilient(
+              missing.slice(offset, offset + options.batchSize), enrichBatch
+            );
             const committed = built.entries.length
               ? await persistence.commitHeadProcessingBatch({ entries: built.entries })
               : { insertedLogs: 0 };
@@ -273,5 +306,7 @@ if (require.main === module) void run();
 
 module.exports = {
   runReconstruction,
-  __private: { createRepository, fetchRanges, parseArgs, poolIndex, trackedRows },
+  __private: {
+    createRepository, enrichResilient, fetchRanges, parseArgs, poolIndex, trackedRows,
+  },
 };
