@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
+const { createProcessingPersistenceTiming } = require('../src/utils/robinhood-processing-persistence-timing');
 
 const {
   createRobinhoodPersistenceRepository,
@@ -1238,6 +1239,52 @@ describe('Robinhood supply provenance normalization', () => {
 describe('commitHeadProcessingBatch derived outbox', () => {
   const WINDOW_END = new Date('2026-07-13T00:00:00.000Z');
   const findCall = (calls, re) => calls.find((entry) => re.test(String(entry.sql)));
+
+  it('measures each persistence phase including failed writes and rollback without hiding the error', async () => {
+    let clock = 0;
+    const persistenceTiming = createProcessingPersistenceTiming({ now: () => clock });
+    for (const failObservation of [false, true]) {
+      const fake = createFakeDatabase({ liveBuckets: [liveBucketRow()], failObservation });
+      const database = { async getClient() {
+        clock += 3;
+        const client = await fake.database.getClient();
+        return {
+          query(sql, params) { clock += 2; return client.query(sql, params); },
+          release: () => client.release(),
+        };
+      } };
+      const repository = createRobinhoodPersistenceRepository({ database });
+      const writing = repository.commitHeadProcessingBatch({
+        entries: [marketEntry()], persistenceTiming,
+        emit: { nextBlock: '8069001', checkpointTimestamp: WINDOW_END },
+      });
+      if (failObservation) await assert.rejects(writing, /observation write failed/);
+      else assert.equal((await writing).insertedOutboxRows, 1);
+      assert.equal(fake.isReleased(), true);
+      assert.equal(fake.calls.at(-1).sql, failObservation ? 'ROLLBACK' : 'COMMIT');
+    }
+    assert.deepEqual(persistenceTiming.snapshot(), {
+      attempts: 2, commits: 1, failures: 1, totalMs: 28,
+      connectionMs: 6, beginMs: 4, logsMs: 4, v4DeltasMs: 0,
+      observationsMs: 4, hourlyMs: 2, outboxMs: 4, commitMs: 2, rollbackMs: 2,
+    });
+  });
+
+  it('accounts for failed connection acquisition without attempting a transaction', async () => {
+    let clock = 0;
+    const error = new Error('pool unavailable');
+    const persistenceTiming = createProcessingPersistenceTiming({ now: () => clock });
+    const repository = createRobinhoodPersistenceRepository({ database: {
+      async getClient() { clock += 17; throw error; },
+    } });
+    await assert.rejects(repository.commitHeadProcessingBatch({
+      entries: [marketEntry()], persistenceTiming,
+    }), (caught) => caught === error);
+    const metrics = persistenceTiming.snapshot();
+    assert.deepEqual([metrics.attempts, metrics.commits, metrics.failures], [1, 0, 1]);
+    assert.deepEqual([metrics.totalMs, metrics.connectionMs, metrics.beginMs, metrics.rollbackMs],
+      [17, 17, 0, 0]);
+  });
 
   it('appends a built market:bucket payload per live bucket in the same transaction', async () => {
     const fake = createFakeDatabase({ liveBuckets: [liveBucketRow()] });

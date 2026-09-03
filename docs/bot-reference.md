@@ -521,8 +521,17 @@ passando pelo dead-pool guard. Defaults: 50 amostras, TTL 60s e 5000 entradas, c
 `ROBINHOOD_DEAD_POOL_GUARD_SAMPLE_SIZE`, `ROBINHOOD_DEAD_POOL_GUARD_CACHE_TTL_MS` e
 `ROBINHOOD_DEAD_POOL_GUARD_CACHE_MAX_ENTRIES`. `lastTiming` expõe hits, misses e tamanho do cache,
 as durações de claim, preparo, frontier, persistência e settlement e `claimedPerSecond`; use esses
-campos para
-distinguir custo de leitura do custo da transação. A limpeza da fila de captures roda fora da
+campos para distinguir custo de leitura do custo da transação.
+`lastTiming.persistence` detalha a persistência com `connectionMs` (espera por conexão),
+`beginMs`, `logsMs`, `v4DeltasMs`, `observationsMs` (observations e buckets de minuto),
+`hourlyMs`, `outboxMs` (inclui NOTIFY), `commitMs` e `rollbackMs`. São tempos locais
+monotônicos, em ms, somados para todas as rodadas, partes de até 2000 entradas e
+tentativas de isolamento, inclusive as que falham; não são tempo exclusivo de disco
+nem uma única query. `attempts`, `commits` e `failures` contam chamadas de persistência,
+não capturas. O `totalMs` interno inclui normalização e overhead e está contido em
+`persistMs`; não some esses totais às subetapas. A medição zera por tick, chega pela
+lease após sua conclusão e não acrescenta SQL, logs por evento ou flags de ativação.
+A limpeza da fila de captures roda fora da
 transação do batch, limitada por `ROBINHOOD_PROCESSING_PRUNE_LIMIT` (default 5000, máximo 50000)
 a cada `ROBINHOOD_PROCESSING_PRUNE_INTERVAL_MS`.
 

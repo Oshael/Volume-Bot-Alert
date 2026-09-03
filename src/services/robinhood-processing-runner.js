@@ -15,6 +15,7 @@ const defaultDecoder = require('./robinhood-head-processing-decoder');
 const config = require('../../config');
 const { evaluateFdvBand } = require('./robinhood-price-spike-guard');
 const { commitErrorMessage, persistWithFailureIsolation } = require('./robinhood-processing-commit');
+const { createProcessingPersistenceTiming } = require('../utils/robinhood-processing-persistence-timing');
 
 const DEFAULT_BATCH_SIZE = 200;
 const DEFAULT_LEASE_MS = 60_000;
@@ -299,7 +300,7 @@ function createRobinhoodProcessingRunner(deps = {}) {
     }
   }
 
-  async function processClaimedRows(rows) {
+  async function processClaimedRows(rows, persistenceTiming) {
     let phaseStartedAt = Date.now();
     const buckets = { persist: [], rejected: [] };
     const decodedRows = rows.flatMap((row) => {
@@ -329,7 +330,7 @@ function createRobinhoodProcessingRunner(deps = {}) {
       const outcome = await persistWithFailureIsolation(
         buckets.persist,
         (items) => persistence.commitHeadProcessingBatch({
-          entries: items.map((item) => item.entry), emit,
+          entries: items.map((item) => item.entry), emit, persistenceTiming,
         })
       );
       persistMs = Date.now() - phaseStartedAt;
@@ -384,6 +385,7 @@ function createRobinhoodProcessingRunner(deps = {}) {
 
   async function runOnce() {
     const tickStartedAt = Date.now();
+    const persistenceTiming = createProcessingPersistenceTiming();
     let phaseStartedAt = tickStartedAt;
     const reclaimed = await repository.reclaimExpiredLeases();
     const timing = {
@@ -402,7 +404,7 @@ function createRobinhoodProcessingRunner(deps = {}) {
     let targetedMarketKeys = null;
 
     while (rows.length) {
-      const round = await processClaimedRows(rows);
+      const round = await processClaimedRows(rows, persistenceTiming);
       for (const field of ['claimed', 'processed', 'rejected', 'retried', 'blocked']) {
         totals[field] += Number(round[field] || 0);
       }
@@ -439,6 +441,7 @@ function createRobinhoodProcessingRunner(deps = {}) {
       reclaimed, ...totals, shadowAudit,
       timing: {
         totalMs, ...timing,
+        persistence: persistenceTiming.snapshot(),
         claimedPerSecond: totalMs > 0
           ? Math.round((totals.claimed * 1000) / totalMs) : totals.claimed,
         fdvCacheSize: fdvReferenceCache.size,

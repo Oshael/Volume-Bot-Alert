@@ -6,6 +6,7 @@ const db = require('../src/models/db');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 const { createRobinhoodPersistenceRepository } = require('../src/models/robinhood-persistence');
 const { persistWithFailureIsolation } = require('../src/services/robinhood-processing-commit');
+const { createProcessingPersistenceTiming } = require('../src/utils/robinhood-processing-persistence-timing');
 const stages = [63, 99, 101].flatMap((id) => require(`../src/utils/db-init-stage${id}`).STATEMENTS);
 const HASH = `0x${'a'.repeat(64)}`;
 const POOL = `0x${'b'.repeat(64)}`;
@@ -82,13 +83,17 @@ describe('Robinhood processing consecutive V4 deltas integration', () => {
     it(`commits valid prefixes from ${initial} with net balance ${balance}, exactly once`, async () => {
       await seedRange(initial);
       const entries = amounts.map((amount, index) => delta(index, amount)).reverse();
-      const first = await repository.commitHeadProcessingBatch({ entries });
+      const persistenceTiming = createProcessingPersistenceTiming();
+      const first = await repository.commitHeadProcessingBatch({ entries, persistenceTiming });
       assert.equal(first.insertedLiquidityDeltas, 2);
       assert.deepEqual(await ledgerState(), { logs: 2, deltas: 2, balance });
-      const replay = await repository.commitHeadProcessingBatch({ entries });
+      const replay = await repository.commitHeadProcessingBatch({ entries, persistenceTiming });
       assert.equal(replay.insertedLogs, 0);
       assert.equal(replay.insertedLiquidityDeltas, 0);
       assert.deepEqual(await ledgerState(), { logs: 2, deltas: 2, balance });
+      const metrics = persistenceTiming.snapshot();
+      assert.deepEqual([metrics.attempts, metrics.commits, metrics.failures], [2, 2, 0]);
+      assert.ok(metrics.v4DeltasMs > 0);
     });
   }
 

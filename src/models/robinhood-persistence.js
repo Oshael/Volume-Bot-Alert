@@ -1,6 +1,7 @@
 const db = require('./db');
 const { normalizeTokenAddress } = require('../utils/token-identity');
 const { OUTBOX_NOTIFY_CHANNEL } = require('./robinhood-derived-outbox');
+const { createProcessingPersistenceTiming } = require('../utils/robinhood-processing-persistence-timing');
 
 const CHAIN = 'robinhood';
 const PROTOCOL_BY_DISCOVERY_KIND = Object.freeze({
@@ -1959,66 +1960,73 @@ function createRobinhoodPersistenceRepository(options = {}) {
   // the batch and never touches the capture cursor, so processing errors can
   // only isolate their own claim.
   async function commitHeadProcessingBatch(input = {}) {
-    const emit = normalizeDerivedEmit(input.emit);
-    const entries = (Array.isArray(input.entries) ? input.entries : []).map((entry) => {
-      const row = normalizeLogEntry(entry, 'market');
-      return {
-        row,
-        observation: normalizeObservation(entry, row),
-        liquidityDelta: normalizeV4LiquidityDelta(entry, row),
-      };
+    const timing = input.persistenceTiming || createProcessingPersistenceTiming();
+    return timing.attempt(async () => {
+      const emit = normalizeDerivedEmit(input.emit);
+      const entries = (Array.isArray(input.entries) ? input.entries : []).map((entry) => {
+        const row = normalizeLogEntry(entry, 'market');
+        return {
+          row,
+          observation: normalizeObservation(entry, row),
+          liquidityDelta: normalizeV4LiquidityDelta(entry, row),
+        };
+      });
+      const client = await timing.measure('connectionMs', () => database.getClient());
+      try {
+        await timing.measure('beginMs', () => client.query('BEGIN'));
+        const insertedIdentities = new Set(await timing.measure('logsMs', () => insertProcessedLogs(
+          client,
+          entries.map((entry) => entry.row)
+        )));
+        const insertedObservations = entries
+          .filter((entry) => entry.observation && insertedIdentities.has(rowIdentity(entry.row)))
+          .map((entry) => entry.observation);
+        // During monolith overlap, processing commonly loses the shared log
+        // identity race. Outbox shadow still needs the canonical bucket payload,
+        // but insertMarketObservations keeps ON CONFLICT idempotency so it never
+        // counts that observation twice.
+        const observations = emit
+          ? entries.filter((entry) => entry.observation).map((entry) => entry.observation)
+          : insertedObservations;
+        const liquidityDeltas = entries
+          .filter((entry) => entry.liquidityDelta && insertedIdentities.has(rowIdentity(entry.row)))
+          .map((entry) => entry.liquidityDelta);
+        const insertedLiquidityDeltas = await timing.measure('v4DeltasMs', () => (
+          insertV4LiquidityDeltas(client, liquidityDeltas)
+        ));
+        const marketWrite = await timing.measure('observationsMs', () => insertMarketObservations(
+          client,
+          observations,
+          { checkpointTimestamp: emit?.checkpointTimestamp ?? null },
+          { includeExistingTargets: Boolean(emit) }
+        ));
+        // Roll the touched minute buckets up into buckets_1h in the same tx, the way
+        // the monolith's commitMarketRange did. Post-cutover nothing else writes
+        // buckets_1h (the aggregate worker only builds buckets_agg FROM it), so
+        // without this the hourly table freezes and liquidity/6h/24h go stale. No
+        // defer here: the current hour must stay fresh for the 15m liquidity gate.
+        await timing.measure('hourlyMs', () => refreshHourlyBuckets(client, observations));
+        const insertedOutboxRows = emit
+          ? await timing.measure('outboxMs', () => (
+            insertDerivedOutboxRows(client, marketWrite.liveBuckets, emit)
+          ))
+          : 0;
+        await timing.measure('commitMs', () => client.query('COMMIT'));
+        const { liveBuckets: _ignored, ...marketCounts } = marketWrite;
+        return {
+          insertedLogs: insertedIdentities.size,
+          duplicateLogs: entries.length - insertedIdentities.size,
+          ...marketCounts,
+          insertedLiquidityDeltas,
+          insertedOutboxRows,
+        };
+      } catch (error) {
+        try { await timing.measure('rollbackMs', () => client.query('ROLLBACK')); } catch (_) {}
+        throw error;
+      } finally {
+        client.release();
+      }
     });
-    const client = await database.getClient();
-    try {
-      await client.query('BEGIN');
-      const insertedIdentities = new Set(await insertProcessedLogs(
-        client,
-        entries.map((entry) => entry.row)
-      ));
-      const insertedObservations = entries
-        .filter((entry) => entry.observation && insertedIdentities.has(rowIdentity(entry.row)))
-        .map((entry) => entry.observation);
-      // During monolith overlap, processing commonly loses the shared log
-      // identity race. Outbox shadow still needs the canonical bucket payload,
-      // but insertMarketObservations keeps ON CONFLICT idempotency so it never
-      // counts that observation twice.
-      const observations = emit
-        ? entries.filter((entry) => entry.observation).map((entry) => entry.observation)
-        : insertedObservations;
-      const liquidityDeltas = entries
-        .filter((entry) => entry.liquidityDelta && insertedIdentities.has(rowIdentity(entry.row)))
-        .map((entry) => entry.liquidityDelta);
-      const insertedLiquidityDeltas = await insertV4LiquidityDeltas(client, liquidityDeltas);
-      const marketWrite = await insertMarketObservations(
-        client,
-        observations,
-        { checkpointTimestamp: emit?.checkpointTimestamp ?? null },
-        { includeExistingTargets: Boolean(emit) }
-      );
-      // Roll the touched minute buckets up into buckets_1h in the same tx, the way
-      // the monolith's commitMarketRange did. Post-cutover nothing else writes
-      // buckets_1h (the aggregate worker only builds buckets_agg FROM it), so
-      // without this the hourly table freezes and liquidity/6h/24h go stale. No
-      // defer here: the current hour must stay fresh for the 15m liquidity gate.
-      await refreshHourlyBuckets(client, observations);
-      const insertedOutboxRows = emit
-        ? await insertDerivedOutboxRows(client, marketWrite.liveBuckets, emit)
-        : 0;
-      await client.query('COMMIT');
-      const { liveBuckets: _ignored, ...marketCounts } = marketWrite;
-      return {
-        insertedLogs: insertedIdentities.size,
-        duplicateLogs: entries.length - insertedIdentities.size,
-        ...marketCounts,
-        insertedLiquidityDeltas,
-        insertedOutboxRows,
-      };
-    } catch (error) {
-      try { await client.query('ROLLBACK'); } catch (_) {}
-      throw error;
-    } finally {
-      client.release();
-    }
   }
 
   async function loadCursor(streamValue) {

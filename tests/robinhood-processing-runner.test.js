@@ -110,7 +110,7 @@ function fakePersistence({
   };
   return {
     _calls: calls,
-    commitHeadProcessingBatch: async (input) => {
+    commitHeadProcessingBatch: async (input) => input.persistenceTiming.attempt(async () => {
       calls.attempts.push(input);
       if (failCommit) throw new Error('v4 materialization constraint');
       if (input.entries.some((entry) => entry.log.transactionHash === failTransactionHash)) {
@@ -118,7 +118,7 @@ function fakePersistence({
       }
       calls.commit.push(input);
       return { insertedLogs: input.entries.length, insertedObservations: 0, touchedBuckets: 0, insertedLiquidityDeltas: 0 };
-    },
+    }),
     resolveMarketFrontier: async (pendingBlock) => {
       calls.frontierFor.push(pendingBlock);
       return { nextBlock: pendingBlock, checkpointTimestamp: new Date('2026-07-13T00:00:00.000Z') };
@@ -166,6 +166,10 @@ describe('robinhood processing runner', () => {
     ))), rows.map((item) => item.transaction_hash));
     assert.deepEqual([result.claimed, result.processed, result.retried], [8000, 8000, 0]);
     assert.equal(repository._calls.settle.processed.length, 8000);
+    assert.deepEqual([
+      result.timing.persistence.attempts, result.timing.persistence.commits,
+      result.timing.persistence.failures,
+    ], [4, 4, 0]);
   });
 
   it('retries the uncommitted suffix after a transient failure without repeating writes', async () => {
@@ -180,6 +184,10 @@ describe('robinhood processing runner', () => {
     const result = await runner(rows, persistence, { batchSize: 8000 }, { repository }).runOnce();
     assert.deepEqual(persistence._calls.attempts.map(({ entries }) => entries.length), [2000, 2000]);
     assert.deepEqual([result.processed, result.retried], [2000, 2001]);
+    assert.deepEqual([
+      result.timing.persistence.attempts, result.timing.persistence.commits,
+      result.timing.persistence.failures,
+    ], [2, 1, 1]);
     assert.deepEqual(repository._calls.settle.retry.map((item) => item.transactionHash),
       rows.slice(2000).map((item) => item.transaction_hash));
   });
@@ -254,6 +262,11 @@ describe('robinhood processing runner', () => {
       [2, 2, 1, 1]
     );
     assert.equal(result.continuationPools, 1);
+    assert.equal(result.timing.persistence.attempts, 2);
+    assert.equal(result.timing.persistence.commits, 2);
+    const idle = await theRunner.runOnce();
+    assert.equal(idle.timing.persistence.attempts, 0);
+    assert.equal(result.timing.persistence.attempts, 2);
   });
 
   it('continues only the oldest bounded V4 pool frontiers for the whole tick', async () => {
