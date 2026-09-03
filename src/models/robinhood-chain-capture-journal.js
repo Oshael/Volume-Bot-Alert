@@ -3,6 +3,7 @@ const { createHash } = require('node:crypto');
 const db = require('./db');
 const CHAIN = 'robinhood';
 const NOTIFY_CHANNEL = 'robinhood_chain_capture';
+const CAPTURE_VERSION = 2;
 function quantity(value, label) {
   const raw = String(value ?? '').trim();
   if (!/^(?:0x[0-9a-f]+|\d+)$/i.test(raw)) throw new Error(`${label} is invalid`);
@@ -29,7 +30,8 @@ function timestamp(value, label) {
 }
 function captureDigest(block, transactions, events) {
   const payload = {
-    block: [block.number.toString(), block.hash, block.parentHash, block.timestamp],
+    block: [block.number.toString(), block.hash, block.parentHash, block.timestamp,
+      block.captureVersion],
     transactions: [...transactions].sort((a, b) => a.transaction_index - b.transaction_index),
     events: [...events].sort((a, b) => a.log_index - b.log_index),
   };
@@ -44,6 +46,7 @@ function normalizeInput(input) {
     hash: hex(source.hash, 32, 'block.hash'),
     parentHash: hex(source.parentHash, 32, 'block.parentHash'),
     timestamp: timestamp(source.timestamp, 'block.timestamp'),
+    captureVersion: CAPTURE_VERSION,
     finality,
     headObservedAt: timestamp(source.headObservedAt, 'block.headObservedAt'),
     receiptsAvailableAt: timestamp(source.receiptsAvailableAt, 'block.receiptsAvailableAt'),
@@ -57,6 +60,8 @@ function normalizeInput(input) {
     contract_address: optionalAddress(
       entry.contractAddress, `transactions[${index}].contractAddress`
     ),
+    nonce: quantity(entry.nonce, `transactions[${index}].nonce`).toString(),
+    value_wei: quantity(entry.valueWei, `transactions[${index}].valueWei`).toString(),
   }));
   const transactionMap = new Map(transactions.map((entry) => [entry.transaction_hash, entry]));
   if (transactionMap.size !== transactions.length) throw new Error('transactions contain duplicates');
@@ -143,21 +148,22 @@ function createRobinhoodChainCaptureJournal(options = {}) {
       await client.query(
         `INSERT INTO robinhood_chain_blocks(
            chain, block_number, block_hash, parent_hash, capture_digest, block_timestamp, finality,
-           head_observed_at, receipts_available_at
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+           head_observed_at, receipts_available_at, capture_version
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
         [CHAIN, block.number.toString(), block.hash, block.parentHash, digest, block.timestamp,
-          block.finality, block.headObservedAt, block.receiptsAvailableAt]
+          block.finality, block.headObservedAt, block.receiptsAvailableAt, block.captureVersion]
       );
       const insertedTransactions = await client.query(
         `INSERT INTO robinhood_chain_transactions(
            chain, block_hash, transaction_hash, transaction_index, from_address,
-           to_address, receipt_succeeded, contract_address
+           to_address, receipt_succeeded, contract_address, nonce, value_wei
          ) SELECT $1, $2, item.transaction_hash, item.transaction_index,
                   item.from_address, item.to_address, item.receipt_succeeded,
-                  item.contract_address
+                  item.contract_address, item.nonce, item.value_wei
              FROM jsonb_to_recordset($3::jsonb) AS item(
                transaction_hash TEXT, transaction_index INTEGER, from_address TEXT,
-               to_address TEXT, receipt_succeeded BOOLEAN, contract_address TEXT
+               to_address TEXT, receipt_succeeded BOOLEAN, contract_address TEXT,
+               nonce NUMERIC, value_wei NUMERIC
              )`, [CHAIN, block.hash, JSON.stringify(transactions)]
       );
       const insertedEvents = await client.query(
@@ -198,4 +204,7 @@ function createRobinhoodChainCaptureJournal(options = {}) {
   }
   return Object.freeze({ commitBlock, getCursor });
 }
-module.exports = { NOTIFY_CHANNEL, createRobinhoodChainCaptureJournal, __private: { normalizeInput } };
+module.exports = {
+  CAPTURE_VERSION, NOTIFY_CHANNEL, createRobinhoodChainCaptureJournal,
+  __private: { normalizeInput },
+};

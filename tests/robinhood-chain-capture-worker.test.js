@@ -4,6 +4,9 @@ const test = require('node:test');
 const {
   CAPTURE_TOPICS, createRobinhoodChainCaptureWorker, __private,
 } = require('../src/services/robinhood-chain-capture-worker');
+const {
+  __private: captureProcess,
+} = require('../src/utils/run-robinhood-chain-capture-worker');
 
 const hash = (character) => `0x${character.repeat(64)}`;
 const address = (character) => `0x${character.repeat(40)}`;
@@ -15,6 +18,7 @@ function fixture(number, parent = hash('a')) {
     number: `0x${number.toString(16)}`, hash: blockHash, parentHash: parent,
     timestamp: '0x64', transactions: [{
       hash: transactionHash, transactionIndex: '0x0', from: address('1'), to: address('2'),
+      nonce: '0x7', value: '0x2a', blockNumber: `0x${number.toString(16)}`, blockHash,
     }],
   };
   const receipts = [{
@@ -38,6 +42,8 @@ test('receipt reader validates context and retains only domain topics', async ()
   const result = await __private.readReceiptBlock(rpcClient, 100);
   assert.equal(result.transactions.length, 1);
   assert.equal(result.transactions[0].from, address('1'));
+  assert.equal(result.transactions[0].nonce, '7');
+  assert.equal(result.transactions[0].valueWei, '42');
   assert.equal(result.events.length, 1);
   assert.equal(result.events[0].logIndex, '0');
 });
@@ -100,4 +106,17 @@ test('newHeads subscription wakes capture immediately', async () => {
   }));
   assert.equal(observed, 101n);
   stream.stop();
+});
+
+test('capture process requires loopback RPC and disables provider throttling', () => {
+  assert.throws(
+    () => captureProcess.captureRpcOptions({ rpcUrl: 'https://rpc.mainnet.chain.robinhood.com' }),
+    (error) => error.code === 'configuration_error'
+  );
+  const options = captureProcess.captureRpcOptions(
+    { rpcUrl: 'http://127.0.0.1:8547' }, { rpcMinIntervalMs: 250, useDrpc: true }
+  );
+  assert.equal(options.publicRpcUrl, 'http://127.0.0.1:8547/');
+  assert.equal(options.rpcMinIntervalMs, 0);
+  assert.equal(options.useDrpc, false);
 });

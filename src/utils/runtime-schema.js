@@ -5533,6 +5533,24 @@ const SCHEMA_GROUPS = [
       ],
     }],
   },
+  {
+    key: 'stage192-robinhood-complete-transaction-context',
+    name: 'Stage 192 Robinhood complete transaction context',
+    repair: 'node src/utils/db-init-stage192.js',
+    tables: [{
+      table: 'robinhood_chain_blocks',
+      columns: ['capture_version'],
+      constraints: [{
+        name: 'rh_chain_blocks_capture_version_check', includes: ['capture_version', '>= 1'],
+      }],
+    }, {
+      table: 'robinhood_chain_transactions',
+      columns: ['nonce', 'value_wei'],
+      constraints: [{
+        name: 'rh_chain_transactions_context_check', includes: ['nonce', 'value_wei', '>= 0'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

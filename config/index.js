@@ -1589,6 +1589,7 @@ module.exports = {
 
   robinhoodChainCaptureWorker: {
     enabled: parseBoolean(process.env.ROBINHOOD_CHAIN_CAPTURE_ENABLED, false),
+    rpcUrl: String(process.env.ROBINHOOD_CHAIN_CAPTURE_RPC_URL || '').trim(),
     wsUrl: String(process.env.ROBINHOOD_WS_URL || '').trim(),
     startBlock: parseOptionalBlock(process.env.ROBINHOOD_CHAIN_CAPTURE_START_BLOCK),
     fallbackPollMs: parseIntegerInRange(

@@ -1,6 +1,6 @@
 # Plano — arquitetura realtime Robinhood sem `eth_getLogs` no caminho live
 
-Status: em implementação; journal canônico e capturador shadow concluídos
+Status: em implementação; journal/capturador shadow e auditoria de cobertura concluídos
 
 Prioridade: crítica
 
@@ -370,6 +370,9 @@ que 500 linhas.
 - preservação da evidência e idempotência atuais;
 - comparação com `robinhood_head_captures` existente;
 - cutover dos dois pollers `eth_getLogs` do head.
+
+Pré-requisito concluído na Fatia 2B: auditoria de todos os workers, contexto de
+transação v2 (`nonce`/`value`) e enforcement de RPC local sem throttle.
 
 ### Fatia 4 — liquidez event-sourced
 

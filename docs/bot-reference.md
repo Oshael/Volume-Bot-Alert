@@ -3235,6 +3235,13 @@ worker atual lê o journal e nenhuma projeção ou publicação é alterada. Ele
 `ROBINHOOD_CHAIN_CAPTURE_MAX_BLOCKS_PER_DRAIN` (default 100) e a confirmação
 por `ROBINHOOD_CHAIN_CAPTURE_CONFIRMATIONS` (default 2).
 
+A Stage 192 completa o contexto de transação com `nonce`, `value_wei` e
+`capture_version`. Aplique `node src/utils/db-init-stage192.js` depois da Stage
+191. Capturas anteriores ficam explicitamente na versão 1; somente a versão 2
+pode alimentar signed-origin/FRESH e funding nativo. O processo exige
+`ROBINHOOD_CHAIN_CAPTURE_RPC_URL` em loopback e força throttle zero; ele não
+herda o endpoint público default de `ROBINHOOD_RPC_URL`.
+
 ## 15. Wallet tracking multichain
 
 Wallet tracking de produto ainda é roadmap, mas a fundação Robinhood está ativa:

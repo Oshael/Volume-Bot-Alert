@@ -37,7 +37,7 @@ function blockTimestamp(value) {
   return new Date(milliseconds).toISOString();
 }
 
-function normalizeTransaction(tx, receipt, position) {
+function normalizeTransaction(tx, receipt, position, block) {
   const hashValue = hex(tx?.hash, 32, `transactions[${position}].hash`);
   if (hex(receipt?.transactionHash, 32, `receipts[${position}].transactionHash`) !== hashValue) {
     throw new Error(`receipt ${position} does not match its transaction`);
@@ -45,6 +45,10 @@ function normalizeTransaction(tx, receipt, position) {
   const index = quantity(tx.transactionIndex, `transactions[${position}].transactionIndex`);
   if (quantity(receipt.transactionIndex, `receipts[${position}].transactionIndex`) !== index
       || index !== BigInt(position)) throw new Error(`transaction ${position} index is invalid`);
+  if (quantity(tx.blockNumber, `transactions[${position}].blockNumber`) !== block.number
+      || hex(tx.blockHash, 32, `transactions[${position}].blockHash`) !== block.hash) {
+    throw new Error(`transaction ${position} does not match its block`);
+  }
   const status = quantity(receipt.status, `receipts[${position}].status`);
   if (status > 1n) throw new Error(`receipt ${position} status is invalid`);
   return {
@@ -53,6 +57,8 @@ function normalizeTransaction(tx, receipt, position) {
     to: optionalAddress(tx.to, `transactions[${position}].to`),
     succeeded: status === 1n,
     contractAddress: optionalAddress(receipt.contractAddress, `receipts[${position}].contractAddress`),
+    nonce: quantity(tx.nonce, `transactions[${position}].nonce`).toString(),
+    valueWei: quantity(tx.value, `transactions[${position}].value`).toString(),
   };
 }
 
@@ -115,7 +121,9 @@ async function readReceiptBlock(rpcClient, blockNumber, options = {}) {
   }
   return {
     block,
-    transactions: rawBlock.transactions.map((tx, index) => normalizeTransaction(tx, receipts[index], index)),
+    transactions: rawBlock.transactions.map((tx, index) => (
+      normalizeTransaction(tx, receipts[index], index, block)
+    )),
     events: normalizeEvents(receipts, block, options.topics || new Set(CAPTURE_TOPICS)),
   };
 }

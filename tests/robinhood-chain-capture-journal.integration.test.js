@@ -8,6 +8,7 @@ const {
   createRobinhoodChainCaptureJournal,
 } = require('../src/models/robinhood-chain-capture-journal');
 const stage191 = require('../src/utils/db-init-stage191');
+const stage192 = require('../src/utils/db-init-stage192');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
@@ -30,6 +31,7 @@ function capture(number = 100, hash = HASH, parentHash = PARENT) {
     transactions: [{
       hash: TX, index: 0, from: ADDRESS, to: null,
       succeeded: true, contractAddress: ADDRESS,
+      nonce: 7, valueWei: 42,
     }],
     events: [{
       transactionHash: TX, transactionIndex: 0, logIndex: 0,
@@ -47,6 +49,7 @@ describe('Robinhood canonical chain capture journal', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
     await stage191.init({ closePool: false });
+    await stage192.init({ closePool: false });
   });
 
   beforeEach(clearTables);
@@ -65,6 +68,10 @@ describe('Robinhood canonical chain capture journal', () => {
       'robinhood_chain_blocks', 'robinhood_chain_transactions',
       'robinhood_chain_events', 'robinhood_chain_capture_cursor',
     ]);
+    const context = SCHEMA_GROUPS.find(({ key }) => (
+      key === 'stage192-robinhood-complete-transaction-context'
+    ));
+    assert.equal(context.repair, 'node src/utils/db-init-stage192.js');
   });
 
   it('commits the block envelope, transaction, event, and cursor atomically', async () => {
@@ -79,6 +86,14 @@ describe('Robinhood canonical chain capture journal', () => {
               (SELECT COUNT(*)::int FROM robinhood_chain_events) AS events`
     );
     assert.deepEqual(counts.rows[0], { blocks: 1, transactions: 1, events: 1 });
+    const transactionContext = await db.query(
+      `SELECT blocks.capture_version, tx.nonce::text, tx.value_wei::text
+         FROM robinhood_chain_blocks blocks
+         JOIN robinhood_chain_transactions tx USING (chain, block_hash)`
+    );
+    assert.deepEqual(transactionContext.rows[0], {
+      capture_version: 2, nonce: '7', value_wei: '42',
+    });
     const cursor = await journal.getCursor();
     assert.equal(cursor.next_block, '101');
     assert.equal(cursor.checkpoint_block, '100');
