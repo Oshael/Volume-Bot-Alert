@@ -707,7 +707,7 @@ Esse frontier depende do índice parcial concorrente da Stage 150, que contém s
 O liquidity valora até 50 pools por lote, respeitando a concorrência configurada, e grava os
 snapshots válidos em um único upsert por lote, ordenado por identidade. No executável do liquidity,
 as leituras históricas V4 também são agrupadas, somente para as pools V4 desse lote, com uma
-busca agregada por pool usando o índice existente. O limite histórico continua sendo o fim do
+busca agregada set-based sobre os `pool_id` requisitados usando o índice existente. O limite histórico continua sendo o fim do
 bloco âncora (`block + 1`, `logIndex = 0`), nunca o estado atual. O resultado é local ao lote e
 não é reutilizado entre blocos ou hashes; replay indisponível (`null`) não vira ranges vazios.
 Falha na leitura agrupada interrompe a faixa para retry sem avançar o cursor. O mesmo caminho

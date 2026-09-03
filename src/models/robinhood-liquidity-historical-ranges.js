@@ -19,19 +19,25 @@ function createLiquidityHistoricalRangeRepository({ database = db } = {}) {
     if (!ids.length) return new Map();
     const { rows } = await database.query(
       `WITH requested AS MATERIALIZED (SELECT DISTINCT UNNEST($1::text[]) AS pool_id)
-       SELECT requested.pool_id, state.chain IS NOT NULL AS available,
+       , replay AS MATERIALIZED (
+         SELECT chain FROM robinhood_v4_liquidity_replay_state
+         WHERE chain = 'robinhood' AND status = 'completed'
+       ), ranges AS MATERIALIZED (
+         SELECT delta.pool_id, delta.tick_lower, delta.tick_upper,
+                SUM(delta.liquidity_delta) AS liquidity_gross
+         FROM robinhood_v4_liquidity_deltas delta
+         JOIN requested ON requested.pool_id = delta.pool_id
+         JOIN replay ON replay.chain = delta.chain
+         WHERE delta.chain = 'robinhood'
+           AND (delta.block_number < $2 OR (delta.block_number = $2 AND delta.log_index < $3))
+         GROUP BY delta.pool_id, delta.tick_lower, delta.tick_upper
+         HAVING SUM(delta.liquidity_delta) > 0
+       )
+       SELECT requested.pool_id, replay.chain IS NOT NULL AS available,
               ranges.tick_lower, ranges.tick_upper, ranges.liquidity_gross
        FROM requested
-       LEFT JOIN robinhood_v4_liquidity_replay_state state
-         ON state.chain = 'robinhood' AND state.status = 'completed'
-       LEFT JOIN LATERAL (
-         SELECT tick_lower, tick_upper, SUM(liquidity_delta) AS liquidity_gross
-         FROM robinhood_v4_liquidity_deltas
-         WHERE chain = state.chain AND pool_id = requested.pool_id
-           AND (block_number < $2 OR (block_number = $2 AND log_index < $3))
-         GROUP BY tick_lower, tick_upper
-         HAVING SUM(liquidity_delta) > 0
-       ) ranges ON state.chain IS NOT NULL
+       LEFT JOIN replay ON true
+       LEFT JOIN ranges ON ranges.pool_id = requested.pool_id
        ORDER BY requested.pool_id, ranges.tick_lower, ranges.tick_upper`,
       [ids, quantity(blockNumber, 'blockNumber'), quantity(logIndex, 'logIndex')]
     );
