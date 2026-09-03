@@ -5479,6 +5479,60 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage191-robinhood-canonical-chain-journal',
+    name: 'Stage 191 canonical Robinhood chain journal',
+    repair: 'node src/utils/db-init-stage191.js',
+    tables: [{
+      table: 'robinhood_chain_blocks',
+      columns: [
+        'chain', 'block_number', 'block_hash', 'parent_hash', 'capture_digest', 'block_timestamp',
+        'finality', 'canonical', 'head_observed_at', 'receipts_available_at', 'captured_at',
+      ],
+      constraints: [{ name: 'rh_chain_blocks_pkey', includes: ['PRIMARY KEY', 'chain', 'block_hash'] },
+        { name: 'rh_chain_blocks_identity_check', includes: ['robinhood', 'block_number', 'parent_hash'] },
+        { name: 'rh_chain_blocks_finality_check', includes: ['observed', 'finalized', 'canonical'] }],
+      indexes: [{
+        name: 'idx_rh_chain_blocks_canonical_number',
+        includes: ['UNIQUE', 'chain', 'block_number', 'WHERE canonical'],
+      }],
+    }, {
+      table: 'robinhood_chain_transactions',
+      columns: [
+        'chain', 'block_hash', 'transaction_hash', 'transaction_index', 'from_address',
+        'to_address', 'receipt_succeeded', 'contract_address',
+      ],
+      constraints: [
+        { name: 'rh_chain_transactions_pkey', includes: ['PRIMARY KEY', 'chain', 'block_hash', 'transaction_hash'] },
+        { name: 'rh_chain_transactions_block_fkey', includes: ['FOREIGN KEY', 'chain', 'block_hash'] },
+        { name: 'rh_chain_transactions_values_check', includes: ['transaction_index', 'from_address', 'contract_address'] },
+      ],
+    }, {
+      table: 'robinhood_chain_events',
+      columns: [
+        'chain', 'block_hash', 'block_number', 'transaction_hash', 'transaction_index',
+        'log_index', 'address', 'topic0', 'topics', 'data', 'captured_at',
+      ],
+      constraints: [
+        { name: 'rh_chain_events_pkey', includes: ['PRIMARY KEY', 'chain', 'block_hash', 'log_index'] },
+        { name: 'rh_chain_events_transaction_fkey', includes: ['FOREIGN KEY', 'transaction_hash'] },
+        { name: 'rh_chain_events_values_check', includes: ['jsonb_typeof', 'topics', 'topic0'] },
+      ],
+      indexes: [{ name: 'idx_rh_chain_events_order', includes: ['chain', 'block_number', 'transaction_index', 'log_index'] },
+        { name: 'idx_rh_chain_events_topic', includes: ['chain', 'topic0', 'block_number'] }],
+    }, {
+      table: 'robinhood_chain_capture_cursor',
+      columns: [
+        'chain', 'next_block', 'checkpoint_block', 'checkpoint_hash', 'node_head',
+        'finalized_head', 'head_observed_at', 'receipts_available_at', 'version',
+        'created_at', 'updated_at',
+      ],
+      constraints: [
+        { name: 'rh_chain_capture_cursor_pkey', includes: ['PRIMARY KEY', 'chain'] },
+        { name: 'rh_chain_capture_cursor_values_check', includes: ['next_block', 'checkpoint_block', 'finalized_head'] },
+      ],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

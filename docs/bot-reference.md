@@ -3216,6 +3216,15 @@ separadamente com `DROP INDEX CONCURRENTLY`. As PKs chain-aware e
 `idx_robinhood_processed_logs_expiry` permanecem como suporte aos reads,
 deduplicação e eventual reativação da retenção.
 
+A Stage 191 cria a fundação ainda inativa da captura canônica por receipts:
+`robinhood_chain_blocks`, `robinhood_chain_transactions`,
+`robinhood_chain_events` e o cursor único `robinhood_chain_capture_cursor`.
+Bloco, contexto de transação, logs e avanço do cursor serão commitados
+atomicamente; gaps e divergência de `parentHash` falham antes do avanço. Aplique
+com `node src/utils/db-init-stage191.js` antes de habilitar o futuro capturador.
+Os workers atuais não leem essas tabelas e não mudam de comportamento nesta
+etapa.
+
 ## 15. Wallet tracking multichain
 
 Wallet tracking de produto ainda é roadmap, mas a fundação Robinhood está ativa:
