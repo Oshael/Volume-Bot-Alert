@@ -140,6 +140,18 @@ async function valuePool(deps, pool, anchor, checkedAt) {
   }
 }
 
+function prepareBatchReader(deps, batch, anchor, timing) {
+  if (!deps.reader.forPoolsAtAnchor) return Promise.resolve({ reader: deps.reader });
+  return timing.measure('v4PrefetchMs', () => deps.reader.forPoolsAtAnchor(batch, anchor))
+    .then((reader) => ({ reader }), (error) => ({ error }));
+}
+
+async function preparedReader(result) {
+  const prepared = await result;
+  if (prepared.error) throw prepared.error;
+  return prepared.reader;
+}
+
 async function valuePoolsAtBlock(deps, pools, anchorBlock, options = {}) {
   const timing = options.timing || createRangeTiming(options);
   timing.counts.pools = pools.length;
@@ -155,12 +167,18 @@ async function valuePoolsAtBlock(deps, pools, anchorBlock, options = {}) {
   const checkedAt = new Date((options.now || Date.now)()).toISOString();
   const concurrency = Math.max(1, Math.min(Number(options.concurrency) || 5, 20));
   const totals = { saved: 0, failed: 0 };
+  const batches = [];
   for (let offset = 0; offset < pools.length; offset += SNAPSHOT_BATCH_SIZE) {
-    const batch = pools.slice(offset, offset + SNAPSHOT_BATCH_SIZE);
+    batches.push(pools.slice(offset, offset + SNAPSHOT_BATCH_SIZE));
+  }
+  let pendingReader = prepareBatchReader(deps, batches[0], anchor, timing);
+  for (let index = 0; index < batches.length; index += 1) {
+    const batch = batches[index];
     timing.counts.chunks += 1;
-    const reader = deps.reader.forPoolsAtAnchor
-      ? await timing.measure('v4PrefetchMs', () => deps.reader.forPoolsAtAnchor(batch, anchor))
-      : deps.reader;
+    const reader = await preparedReader(pendingReader);
+    pendingReader = index + 1 < batches.length
+      ? prepareBatchReader(deps, batches[index + 1], anchor, timing)
+      : null;
     const outcomes = await timing.measure(
       'valuationMs',
       () => mapConcurrent(

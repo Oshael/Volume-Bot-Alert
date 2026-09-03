@@ -711,7 +711,9 @@ busca agregada por pool usando o índice existente. O limite histórico continua
 bloco âncora (`block + 1`, `logIndex = 0`), nunca o estado atual. O resultado é local ao lote e
 não é reutilizado entre blocos ou hashes; replay indisponível (`null`) não vira ranges vazios.
 Falha na leitura agrupada interrompe a faixa para retry sem avançar o cursor. O mesmo caminho
-é usado no PC e na VPS, sem aumentar a concorrência configurada; não afeta os leitores do
+mantém no máximo um prefetch do próximo lote em voo enquanto o lote atual é valorado e gravado.
+Isso sobrepõe leitura, RPC e persistência sem aumentar o número de consultas históricas. O mesmo
+caminho é usado no PC e na VPS; não afeta os leitores do
 processing, auditor ou backfills externos. O upsert mantém o filtro de pools ativas e nunca substitui um snapshot
 de bloco mais recente; `valuation.saved` conta somente as linhas efetivamente gravadas.
 Erros de dados/constraints isolam o lote por pool e registram somente as falhas individuais.
@@ -750,7 +752,9 @@ cursor existe, ele é a fonte de verdade. O metadata da lease expõe cursor, lag
 totais de pools afetadas, salvas e com falha. `valuation.lastResult.timing` detalha o último range
 em `poolLookupMs`, `anchorMs`, `v4PrefetchMs`, `valuationMs`, `persistMs` e `totalMs`, além de
 contadores de logs, pools, lotes, snapshots e falhas; esses tempos servem para separar gargalo de
-DB, RPC/valoração e gravação sem ativar queries adicionais.
+DB, RPC/valoração e gravação sem ativar queries adicionais. `totalMs` é tempo de parede;
+`v4PrefetchMs` soma a duração integral das consultas e pode se sobrepor a `valuationMs` e
+`persistMs`, portanto as etapas não precisam somar `totalMs`.
 
 O V4 exige que o replay histórico esteja `completed`, que a materialização inicial exista e que
 o processamento live tenha continuado persistindo `ModifyLiquidity` depois do target do replay.
