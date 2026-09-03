@@ -3263,9 +3263,14 @@ DEV-L1 já está construído localmente como worker opt-in no grupo
 `robinhood-wallet`: loteia receipts, grava atribuição e cursor na mesma transação
 e para em divergência de checkpoint. A produção ainda depende da Stage 113 e do
 enable explícito.
-DEV-L2 também está construído localmente: o mesmo cursor consulta logs por bloco
-e aceita somente assinaturas comprovadas de Pons/NOXA e LaunchHood, persistindo a
-factory como evidência. RobinPad segue excluído por falta de ABI/logs verificáveis;
+O scan LIVE lê o bloco completo e `eth_getBlockReceipts` em paralelo, valida que
+todos os receipts pertencem ao bloco canônico e extrai deles tanto contratos
+criados diretamente quanto eventos dos launchpads conhecidos. Ele não usa
+`eth_getLogs` por bloco; isso evita depender do índice de logs do Nitro no caminho
+realtime e elimina requests individuais de receipt para transações de criação.
+DEV-L2 também está construído localmente: o mesmo cursor extrai logs dos receipts
+por bloco e aceita somente assinaturas comprovadas de Pons/NOXA e LaunchHood,
+persistindo a factory como evidência. RobinPad segue excluído por falta de ABI/logs verificáveis;
 Blockscout, `blockscout_internal`, `rpc_direct` e `rpc_trace` não podem sobrescrever
 um `launchpad_event`.
 O hotfix pós-rollout usa o contrato real `db.getClient()` para a transação atômica;

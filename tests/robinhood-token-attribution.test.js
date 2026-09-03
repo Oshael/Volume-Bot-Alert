@@ -79,18 +79,25 @@ describe('Robinhood token creator attribution', () => {
       hash: `0x${digit.repeat(64)}`, from: `0x${digit.repeat(40)}`, to: null,
     });
     const direct = [tx('a'), tx('b')];
+    const regular = { ...tx('d'), to: TOKEN };
+    const transactions = [...direct, regular];
+    const receipts = transactions.map((item, index) => ({
+      transactionHash: item.hash, blockNumber: '0x64', blockHash: BLOCK_HASH,
+      contractAddress: index === 0 ? TOKEN : null,
+      logs: index === 2 ? [{
+        ...launchLog('0xa5aab3f0c6eeadf30ef1d3eb997108e976351feb'),
+        transactionHash: item.hash,
+      }] : [],
+    }));
+    const methods = [];
     let persisted;
     const client = {
       request: async (method) => {
+        methods.push(method);
         if (method === 'eth_blockNumber') return '0x66';
-        if (method === 'eth_getLogs') return [launchLog('0xa5aab3f0c6eeadf30ef1d3eb997108e976351feb')];
-        return { number: '0x64', hash: BLOCK_HASH, timestamp: '0x1', transactions: [...direct, { ...tx('d'), to: TOKEN }] };
+        if (method === 'eth_getBlockReceipts') return receipts;
+        return { number: '0x64', hash: BLOCK_HASH, timestamp: '0x1', transactions };
       },
-      requestBatch: async () => direct.map((item, index) => ({
-        transactionHash: item.hash, blockNumber: '0x64',
-        blockHash: `0x${'c'.repeat(64)}`,
-        contractAddress: index === 0 ? TOKEN : null,
-      })),
     };
     const repository = {
       loadDirectCursor: async () => null,
@@ -105,19 +112,20 @@ describe('Robinhood token creator attribution', () => {
       factoryAddress: null, source: 'rpc_direct',
     });
     assert.equal(persisted.deployments[1].source, 'launchpad_event');
+    assert.equal(methods.includes('eth_getLogs'), false);
+    assert.equal(methods.includes('eth_getBlockReceipts'), true);
   });
 
   it('fails closed when a direct-creation receipt belongs to another block', async () => {
     const txHash = `0x${'a'.repeat(64)}`;
     const client = {
-      request: async (method) => method === 'eth_getLogs' ? [] : ({
+      request: async (method) => method === 'eth_getBlockReceipts' ? [{
+        transactionHash: txHash, blockNumber: '0x63',
+        blockHash: `0x${'b'.repeat(64)}`, contractAddress: TOKEN, logs: [],
+      }] : ({
         number: '0x64', hash: `0x${'b'.repeat(64)}`, timestamp: '0x1',
         transactions: [{ hash: txHash, from: CREATOR, to: null }],
       }),
-      requestBatch: async () => [{
-        transactionHash: txHash, blockNumber: '0x63',
-        blockHash: `0x${'b'.repeat(64)}`, contractAddress: TOKEN,
-      }],
     };
     await assert.rejects(() => directPrivate.scanBlock(client, 100n), /receipt diverged/);
   });

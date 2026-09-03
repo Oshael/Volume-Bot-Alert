@@ -3,7 +3,7 @@ const {
   createRobinhoodRpcClient, validateRobinhoodProviderChainIds,
 } = require('./robinhood-ingestion-worker');
 const {
-  buildLaunchpadCreatorFilter, decodeLaunchpadCreatorLog,
+  FACTORIES, decodeLaunchpadCreatorLog,
 } = require('./robinhood-launchpad-creator-adapter');
 
 function quantity(value, label) {
@@ -30,45 +30,59 @@ function bounded(value, fallback, min, max) {
 
 function blockTag(value) { return `0x${BigInt(value).toString(16)}`; }
 
+function sourceContractError(message) {
+  return Object.assign(new Error(message), { code: 'source_contract_error', fatal: true });
+}
+
+function indexBlockReceipts(receipts, transactions, expectedBlock, blockHash) {
+  if (!Array.isArray(receipts) || receipts.length !== transactions.length) {
+    throw sourceContractError(`direct creator block ${expectedBlock} receipts are incomplete`);
+  }
+  const expectedHashes = new Set(transactions.map((tx) => hex(tx.hash, 32, 'transaction.hash')));
+  const byHash = new Map();
+  for (const receipt of receipts) {
+    const transactionHash = hex(receipt?.transactionHash, 32, 'receipt.transactionHash');
+    if (byHash.has(transactionHash) || !expectedHashes.has(transactionHash)
+      || quantity(receipt?.blockNumber, 'receipt.blockNumber') !== expectedBlock
+      || hex(receipt?.blockHash, 32, 'receipt.blockHash') !== blockHash
+      || !Array.isArray(receipt?.logs)) {
+      throw sourceContractError('direct creator receipt diverged from its block');
+    }
+    byHash.set(transactionHash, receipt);
+  }
+  return byHash;
+}
+
+function isLaunchpadCreatorLog(log) {
+  const spec = FACTORIES.get(String(log?.address || '').toLowerCase());
+  return Boolean(spec && String(log?.topics?.[0] || '').toLowerCase() === spec.topic);
+}
+
 async function scanBlock(client, expectedBlock) {
-  const [block, launchLogs] = await Promise.all([
+  const [block, receipts] = await Promise.all([
     client.request('eth_getBlockByNumber', [blockTag(expectedBlock), true]),
-    client.request('eth_getLogs', [buildLaunchpadCreatorFilter(expectedBlock)]),
+    client.request('eth_getBlockReceipts', [blockTag(expectedBlock)]),
   ]);
   const number = quantity(block?.number, 'block.number');
-  if (number !== expectedBlock || !Array.isArray(block?.transactions) || !Array.isArray(launchLogs)) {
-    throw Object.assign(new Error(`direct creator block ${expectedBlock} is incomplete`), {
-      code: 'source_contract_error', fatal: true,
-    });
+  if (number !== expectedBlock || !Array.isArray(block?.transactions)) {
+    throw sourceContractError(`direct creator block ${expectedBlock} is incomplete`);
   }
   const blockHash = hex(block.hash, 32, 'block.hash');
   const blockTimestamp = new Date(Number(quantity(block.timestamp, 'block.timestamp')) * 1000);
   if (block.transactions.some((tx) => !tx || typeof tx !== 'object'
     || !Object.prototype.hasOwnProperty.call(tx, 'to'))) {
-    throw Object.assign(new Error('direct creator RPC did not return full transactions'), {
-      code: 'source_contract_error', fatal: true,
-    });
+    throw sourceContractError('direct creator RPC did not return full transactions');
   }
+  const receiptsByHash = indexBlockReceipts(
+    receipts, block.transactions, expectedBlock, blockHash
+  );
   const direct = block.transactions.filter((tx) => tx && tx.to === null);
   for (const tx of direct) {
     hex(tx.hash, 32, 'transaction.hash');
     hex(tx.from, 20, 'transaction.from');
   }
-  const receipts = [];
-  for (let offset = 0; offset < direct.length; offset += 100) {
-    receipts.push(...await client.requestBatch(direct.slice(offset, offset + 100).map((tx) => ({
-      method: 'eth_getTransactionReceipt', params: [tx.hash],
-    }))));
-  }
-  const directDeployments = direct.flatMap((tx, index) => {
-    const receipt = receipts[index];
-    if (
-      hex(receipt?.transactionHash, 32, 'receipt.transactionHash') !== tx.hash.toLowerCase()
-      || quantity(receipt?.blockNumber, 'receipt.blockNumber') !== expectedBlock
-      || hex(receipt?.blockHash, 32, 'receipt.blockHash') !== blockHash
-    ) throw Object.assign(new Error('direct creator receipt diverged from its block'), {
-      code: 'source_contract_error', fatal: true,
-    });
+  const directDeployments = direct.flatMap((tx) => {
+    const receipt = receiptsByHash.get(tx.hash.toLowerCase());
     if (receipt.contractAddress == null) return [];
     return [{
       tokenAddress: hex(receipt.contractAddress, 20, 'receipt.contractAddress'),
@@ -80,7 +94,9 @@ async function scanBlock(client, expectedBlock) {
   });
   let launchpadDeployments;
   try {
-    launchpadDeployments = launchLogs.map(decodeLaunchpadCreatorLog);
+    launchpadDeployments = receipts.flatMap((receipt) => (
+      receipt.logs.filter(isLaunchpadCreatorLog).map(decodeLaunchpadCreatorLog)
+    ));
     if (launchpadDeployments.some((item) => (
       BigInt(item.blockNumber) !== expectedBlock || item.blockHash !== blockHash
     ))) throw new Error('launchpad event diverged from its block');
