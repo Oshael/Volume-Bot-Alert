@@ -11,8 +11,8 @@ const POOL = `0x${'b'.repeat(40)}`;
 function options(overrides = {}) {
   return {
     rpcUrl: 'http://archive', fromBlock: '100', toBlock: '100', discoveryFromBlock: '0',
-    discoveryRangeSize: 1_000_000, swapRangeSize: 5_000, minRangeSize: 1,
-    addressBatchSize: 50, identityBatchSize: 5_000, ...overrides,
+    discoveryRangeSize: 10_000_000, swapRangeSize: 100_000, minRangeSize: 1,
+    addressBatchSize: 100, identityBatchSize: 5_000, ...overrides,
   };
 }
 
@@ -34,9 +34,32 @@ describe('Robinhood V3 stock-pair archive audit', () => {
       '--from-block=100', '--to-block=200',
     ], { ROBINHOOD_V3_REPAIR_RPC_URL: 'http://archive' }), {
       rpcUrl: 'http://archive', fromBlock: '100', toBlock: '200', discoveryFromBlock: '0',
-      discoveryRangeSize: 1_000_000, swapRangeSize: 5_000, minRangeSize: 1,
-      addressBatchSize: 50, identityBatchSize: 5_000,
+      discoveryRangeSize: 10_000_000, swapRangeSize: 100_000, minRangeSize: 1,
+      addressBatchSize: 100, identityBatchSize: 5_000,
     });
+  });
+
+  it('starts at the first candidate creation and activates later pools only when born', async () => {
+    const secondPool = `0x${'c'.repeat(40)}`;
+    const filters = [];
+    await runAudit(options({ fromBlock: '0', toBlock: '299', swapRangeSize: 100 }), {
+      rpcClient: {
+        request: async (method, [filter] = []) => {
+          if (method === 'eth_chainId') return '0x1237';
+          if (filter.topics[0] === v3.TOPICS.poolCreated) return [{ id: 1 }, { id: 2 }];
+          filters.push(filter);
+          return [];
+        },
+      },
+      decodePoolCreated: (log) => pool(log.id === 1
+        ? { blockNumber: '150' }
+        : { poolAddress: secondPool, blockNumber: '260' }),
+      repository: { listRegistered: async () => [], classify: async () => new Map() },
+    });
+
+    assert.deepEqual(filters.map((filter) => [
+      filter.fromBlock, filter.toBlock, Array.isArray(filter.address) ? filter.address.length : 1,
+    ]), [['0x96', '0xf9', 1], ['0xfa', '0x12b', 2]]);
   });
 
   it('separates reference, stock-stock and meme-stock pools with meme orientation', () => {

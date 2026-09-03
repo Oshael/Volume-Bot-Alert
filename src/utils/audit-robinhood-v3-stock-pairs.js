@@ -46,11 +46,11 @@ function parseArgs(argv = process.argv.slice(2), env = process.env) {
     rpcUrl: String(args['rpc-url'] || env.ROBINHOOD_V3_REPAIR_RPC_URL || '').trim(),
     fromBlock, toBlock, discoveryFromBlock,
     discoveryRangeSize: integer(
-      args['discovery-range-size'], 1_000_000, 1, 10_000_000, 'discovery-range-size'
+      args['discovery-range-size'], 10_000_000, 1, 10_000_000, 'discovery-range-size'
     ),
-    swapRangeSize: integer(args['swap-range-size'], 5_000, 1, 100_000, 'swap-range-size'),
+    swapRangeSize: integer(args['swap-range-size'], 100_000, 1, 100_000, 'swap-range-size'),
     minRangeSize: integer(args['min-range-size'], 1, 1, 100_000, 'min-range-size'),
-    addressBatchSize: integer(args['address-batch-size'], 50, 1, 500, 'address-batch-size'),
+    addressBatchSize: integer(args['address-batch-size'], 100, 1, 500, 'address-batch-size'),
     identityBatchSize: integer(args['identity-batch-size'], 5_000, 1, 10_000, 'identity-batch-size'),
   };
 }
@@ -185,18 +185,27 @@ async function auditSwaps(options, rpcClient, repository, candidates) {
     createdBlock: pool.blockNumber, archiveSwaps: 0,
     existingProcessed: 0, existingCaptures: 0, missing: 0,
   }]));
-  const addressBatches = chunks(candidates.map((pool) => pool.poolAddress), options.addressBatchSize);
+  if (!candidates.length) return [...stats.values()];
+  const requestedStart = BigInt(options.fromBlock);
+  const firstCreation = candidates.reduce((minimum, pool) => {
+    const created = BigInt(pool.blockNumber);
+    return created < minimum ? created : minimum;
+  }, BigInt(options.toBlock));
+  const auditStart = firstCreation > requestedStart ? firstCreation : requestedStart;
   let completedRanges = 0;
-  const rangesPerBatch = Math.ceil(
-    Number(BigInt(options.toBlock) - BigInt(options.fromBlock) + 1n) / options.swapRangeSize
+  const totalRanges = Math.ceil(
+    Number(BigInt(options.toBlock) - auditStart + 1n) / options.swapRangeSize
   );
-  const totalRanges = rangesPerBatch * addressBatches.length;
-  for (const addresses of addressBatches) {
-    let cursor = BigInt(options.fromBlock);
-    const end = BigInt(options.toBlock);
-    while (cursor <= end) {
-      const requestedEnd = cursor + BigInt(options.swapRangeSize) - 1n;
-      const rangeEnd = requestedEnd < end ? requestedEnd : end;
+  let cursor = auditStart;
+  const end = BigInt(options.toBlock);
+  while (cursor <= end) {
+    const requestedEnd = cursor + BigInt(options.swapRangeSize) - 1n;
+    const rangeEnd = requestedEnd < end ? requestedEnd : end;
+    const activePools = candidates.filter((pool) => BigInt(pool.blockNumber) <= rangeEnd);
+    const addressBatches = chunks(
+      activePools.map((pool) => pool.poolAddress), options.addressBatchSize
+    );
+    for (const addresses of addressBatches) {
       const leaves = await fetchLogs(rpcClient, {
         address: addresses.length === 1 ? addresses[0] : addresses,
         topics: [v3.TOPICS.swap],
@@ -217,13 +226,15 @@ async function auditSwaps(options, rpcClient, repository, candidates) {
           }
         }
       }
-      completedRanges += 1;
-      cursor = rangeEnd + 1n;
-      console.log(JSON.stringify({
-        event: 'v3_stock_pair_audit_progress', phase: 'swaps', completedRanges, totalRanges,
-        progressPct: Number(((completedRanges / totalRanges) * 100).toFixed(2)),
-      }));
     }
+    completedRanges += 1;
+    cursor = rangeEnd + 1n;
+    console.log(JSON.stringify({
+      event: 'v3_stock_pair_audit_progress', phase: 'swaps', completedRanges, totalRanges,
+      activePools: activePools.length, addressBatches: addressBatches.length,
+      nextBlock: cursor.toString(),
+      progressPct: Number(((completedRanges / totalRanges) * 100).toFixed(2)),
+    }));
   }
   return [...stats.values()];
 }

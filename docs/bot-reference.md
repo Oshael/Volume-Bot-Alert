@@ -441,7 +441,11 @@ O auditor é estritamente read-only: varre `PoolCreated` no factory, distingue p
 referência stock/WETH-USDG, stock/stock e candidatas meme/stock, cruza as candidatas com
 o registry e classifica cada Swap do intervalo como já processado, ainda capturado ou
 ausente. O relatório lista a orientação pretendida `token=meme, quote=stock` por pool;
-ele não registra pools, não persiste logs e não altera cursores ou advisory locks.
+ele não registra pools, não persiste logs e não altera cursores ou advisory locks. A
+varredura de swaps começa automaticamente na primeira criação candidata dentro do
+intervalo e adiciona as demais pools apenas quando passam a existir. Os defaults locais
+usam ranges de 100.000 blocos e 100 endereços, com divisão adaptativa em resposta densa
+ou erro do provider, evitando consultar milhões de blocos anteriores às próprias pools.
 
 O grupo `robinhood-processing` roda um processo separado (systemd
 `trendscope-worker@robinhood-processing.service`, lease `robinhood-processing-worker`,
