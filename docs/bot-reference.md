@@ -434,6 +434,15 @@ Por padrão, até dois chunks de enriquecimento executam simultaneamente, cada u
 camada com `--enrichment-concurrency=1..4`. O progresso expõe em `lastRange` os tempos de
 classificação, enriquecimento e persistência para que o gargalo seja mensurável por range.
 
+Antes de habilitar ativos tokenizados oficiais como cotação V3, use
+`npm run robinhood:audit-v3-stock-pairs -- --from-block=<início> --to-block=<fim>
+--discovery-from-block=0`, com `ROBINHOOD_V3_REPAIR_RPC_URL` apontando para o archive.
+O auditor é estritamente read-only: varre `PoolCreated` no factory, distingue pools de
+referência stock/WETH-USDG, stock/stock e candidatas meme/stock, cruza as candidatas com
+o registry e classifica cada Swap do intervalo como já processado, ainda capturado ou
+ausente. O relatório lista a orientação pretendida `token=meme, quote=stock` por pool;
+ele não registra pools, não persiste logs e não altera cursores ou advisory locks.
+
 O grupo `robinhood-processing` roda um processo separado (systemd
 `trendscope-worker@robinhood-processing.service`, lease `robinhood-processing-worker`,
 `start:worker:robinhood-processing` na porta 3007). O worker reclama capturas por lease

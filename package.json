@@ -98,6 +98,7 @@
     "robinhood:holder-global-delta": "node src/utils/create-robinhood-holder-global-delta.js",
     "robinhood:repair-v3-pruned": "node src/utils/repair-robinhood-v3-pruned-captures.js",
     "robinhood:reconstruct-v3-archive": "node src/utils/reconstruct-robinhood-v3-archive.js",
+    "robinhood:audit-v3-stock-pairs": "node src/utils/audit-robinhood-v3-stock-pairs.js",
     "robinhood:holder-deployment-recover": "node src/utils/recover-robinhood-holder-deployments.js",
     "robinhood:infrastructure-import": "node src/utils/import-robinhood-infrastructure-registry.js",
     "robinhood:infrastructure-close": "node src/utils/close-robinhood-infrastructure-registry.js",
