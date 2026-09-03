@@ -233,7 +233,7 @@ describe('Robinhood wallet-swap LIVE runner', () => {
     assert.equal(deps.calls.reads.length, 0);
   });
 
-  it('halts on checkpoint or safe-frontier regression', async () => {
+  it('halts on checkpoint divergence but waits for a transient frontier regression', async () => {
     const checkpoint = liveCursor({
       checkpointBlock: '99', checkpointHash: BLOCK_HASH, checkpointTimestamp: BLOCK_TIME,
     });
@@ -242,9 +242,15 @@ describe('Robinhood wallet-swap LIVE runner', () => {
       (error) => error.code === 'persistent_reorg' && error.fatal === true
     );
 
-    await assert.rejects(
-      () => runLiveTick(makeDeps({ cursor: fakeCursor(liveCursor({ safeHead: '189' })) })),
-      (error) => error.code === 'persistent_reorg' && error.fatal === true
-    );
+    const cursor = fakeCursor(liveCursor({ nextBlock: '190', safeHead: '189' }));
+    const deps = makeDeps({ cursor, marketCursor: { nextBlock: '180' } });
+    const waiting = await runLiveTick(deps);
+
+    assert.equal(waiting.status, 'waiting-frontier');
+    assert.equal(waiting.safeHead, '189');
+    assert.equal(waiting.processableThrough, '179');
+    assert.equal(waiting.frontierDeficitBlocks, '10');
+    assert.equal(deps.calls.reads.length, 0);
+    assert.equal(cursor.advances.length, 0);
   });
 });

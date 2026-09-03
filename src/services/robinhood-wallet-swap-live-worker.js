@@ -103,7 +103,7 @@ function compactResult(result) {
   const fields = [
     'status', 'nodeHead', 'nodeSafeHead', 'sourceSafeHead', 'processableThrough',
     'nextBlock', 'safeHead', 'checkpointBlock', 'processedBlocks', 'attributed',
-    'inserted', 'unresolved', 'missing', 'failedBlock',
+    'inserted', 'unresolved', 'missing', 'failedBlock', 'frontierDeficitBlocks',
   ];
   return Object.fromEntries(fields.map((key) => [key, result[key] ?? null]));
 }

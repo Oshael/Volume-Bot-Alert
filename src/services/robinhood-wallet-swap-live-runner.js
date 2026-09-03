@@ -113,11 +113,10 @@ async function revalidateCheckpoint(state, fetchBlockHeader) {
   }
 }
 
-function assertNoFrontierRegression(state, frontiers) {
+function frontierDeficitBlocks(state, frontiers) {
   if (state.safeHead == null || frontiers.processableThrough == null) return;
-  if (quantity(state.safeHead, 'liveCursor.safeHead') > frontiers.processableThrough) {
-    throw runnerError('persistent_reorg', 'wallet LIVE safe frontier regressed', { fatal: true });
-  }
+  const deficit = quantity(state.safeHead, 'liveCursor.safeHead') - frontiers.processableThrough;
+  return deficit > 0n ? deficit : null;
 }
 
 async function advance(cursor, state, input) {
@@ -240,9 +239,14 @@ async function runLiveTick(deps = {}) {
   const frontiers = calculateFrontiers(quantity(rawHead, 'nodeHead'), marketCursor, reorgDepth);
   if (!state) return tickResult('awaiting-bootstrap', frontiers, null);
   await revalidateCheckpoint(state, deps.fetchBlockHeader);
-  assertNoFrontierRegression(state, frontiers);
   if (frontiers.nodeSafeHead == null) return tickResult('waiting-head', frontiers, state);
   if (frontiers.sourceSafeHead == null) return tickResult('waiting-source', frontiers, state);
+  const frontierDeficit = frontierDeficitBlocks(state, frontiers);
+  if (frontierDeficit != null) {
+    return tickResult('waiting-frontier', frontiers, state, {
+      frontierDeficitBlocks: frontierDeficit.toString(),
+    });
+  }
 
   const nextBlock = quantity(state.nextBlock, 'liveCursor.nextBlock');
   if (nextBlock > frontiers.processableThrough) {
@@ -277,5 +281,7 @@ module.exports = {
   DEFAULT_REORG_DEPTH,
   MAX_BLOCKS,
   runLiveTick,
-  __private: { calculateFrontiers, revalidateCheckpoint, sourceGroups, validateGroup },
+  __private: {
+    calculateFrontiers, frontierDeficitBlocks, revalidateCheckpoint, sourceGroups, validateGroup,
+  },
 };
