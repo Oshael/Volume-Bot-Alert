@@ -12,7 +12,7 @@ function options(overrides = {}) {
     mode: 'write', rpcUrl: 'http://127.0.0.1:18547',
     fromBlock: '100', toBlock: '100', rangeSize: 1, minRangeSize: 1,
     batchSize: 500, rpcConcurrency: 8, maxRanges: 0, sleepMs: 0,
-    rpcBatchSize: 25, checkpointFile: null,
+    rpcBatchSize: 25, enrichmentConcurrency: 2, checkpointFile: null,
     ...overrides,
   };
 }
@@ -47,7 +47,8 @@ describe('Robinhood V3 direct archive reconstruction', () => {
     ], { ROBINHOOD_V3_REPAIR_RPC_URL: 'http://archive' }), {
       mode: 'dry-run', rpcUrl: 'http://archive', fromBlock: '100', toBlock: '200',
       rangeSize: 500, minRangeSize: 1, batchSize: 500, rpcConcurrency: 8,
-      rpcBatchSize: 25, maxRanges: 0, sleepMs: 100, checkpointFile: null,
+      rpcBatchSize: 25, enrichmentConcurrency: 2, maxRanges: 0, sleepMs: 100,
+      checkpointFile: null,
     });
     assert.throws(() => __private.parseArgs([
       '--from-block=200', '--to-block=100',
@@ -217,5 +218,52 @@ describe('Robinhood V3 direct archive reconstruction', () => {
         'existingCaptures', 'missing', 'repaired', 'accepted', 'rejected', 'failed', 'ranges',
       ].map((key) => [key, 0])),
     }, options()), /fromBlock does not match/);
+  });
+
+  it('enriches chunks concurrently but persists them sequentially', async () => {
+    let activeEnrichments = 0;
+    let maximumEnrichments = 0;
+    let activeCommits = 0;
+    let maximumCommits = 0;
+    let releasePair;
+    const pairStarted = new Promise((resolve) => { releasePair = resolve; });
+    let started = 0;
+    const result = await runReconstruction(options({
+      batchSize: 1, enrichmentConcurrency: 2,
+    }), {
+      repository: {
+        listPools: async () => [registry()],
+        classify: async () => new Map(),
+        withLock: async (callback) => callback(),
+      },
+      rpcClient: {
+        request: async (method) => (
+          method === 'eth_chainId' ? '0x1237' : [log(100, 1), log(100, 2), log(100, 3)]
+        ),
+      },
+      enrichBatch: async () => {
+        started += 1;
+        activeEnrichments += 1;
+        maximumEnrichments = Math.max(maximumEnrichments, activeEnrichments);
+        if (started === 2) releasePair();
+        if (started <= 2) await pairStarted;
+        activeEnrichments -= 1;
+        return { entries: [{ observation: { accepted: true } }], failures: [], rpc: {} };
+      },
+      persistence: {
+        commitHeadProcessingBatch: async () => {
+          activeCommits += 1;
+          maximumCommits = Math.max(maximumCommits, activeCommits);
+          await Promise.resolve();
+          activeCommits -= 1;
+          return { insertedLogs: 1 };
+        },
+      },
+    });
+
+    assert.equal(maximumEnrichments, 2);
+    assert.equal(maximumCommits, 1);
+    assert.equal(result.repaired, 3);
+    assert.equal(result.lastRange.chunks, 3);
   });
 });

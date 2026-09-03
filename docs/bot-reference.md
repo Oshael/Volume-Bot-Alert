@@ -429,6 +429,10 @@ range, o comando grava atomicamente o próximo bloco e os contadores acumulados.
 o mesmo comando com o mesmo modo, intervalo e arquivo retoma desse bloco; uma queda no
 meio de um range pode repetir somente aquele range, e a persistência idempotente impede
 duplicação. Um checkpoint de outro modo ou intervalo é recusado explicitamente.
+Por padrão, até dois chunks de enriquecimento executam simultaneamente, cada um respeitando
+`--rpc-concurrency`; os commits PostgreSQL permanecem estritamente sequenciais. Ajuste essa
+camada com `--enrichment-concurrency=1..4`. O progresso expõe em `lastRange` os tempos de
+classificação, enriquecimento e persistência para que o gargalo seja mensurável por range.
 
 O grupo `robinhood-processing` roda um processo separado (systemd
 `trendscope-worker@robinhood-processing.service`, lease `robinhood-processing-worker`,

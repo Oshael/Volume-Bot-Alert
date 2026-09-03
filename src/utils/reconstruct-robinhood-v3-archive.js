@@ -1,6 +1,7 @@
 const { setTimeout: delay } = require('node:timers/promises');
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { performance } = require('node:perf_hooks');
 const db = require('../models/db');
 const { createRobinhoodPersistenceRepository } = require('../models/robinhood-persistence');
 const { isAdaptiveRangeError, toQuantity } = require('../services/evm-log-poller');
@@ -55,6 +56,9 @@ function parseArgs(argv = process.argv.slice(2), env = process.env) {
     batchSize: integer(args['batch-size'], 500, 1, 500, 'batch-size'),
     rpcConcurrency: integer(args['rpc-concurrency'], 8, 1, 8, 'rpc-concurrency'),
     rpcBatchSize: integer(args['rpc-batch-size'], 25, 1, 100, 'rpc-batch-size'),
+    enrichmentConcurrency: integer(
+      args['enrichment-concurrency'], 2, 1, 4, 'enrichment-concurrency'
+    ),
     maxRanges: integer(args['max-ranges'], 0, 0, 10_000_000, 'max-ranges'),
     sleepMs: integer(args['sleep-ms'], 100, 0, 60_000, 'sleep-ms'),
     checkpointFile: String(
@@ -293,6 +297,36 @@ function mergeBuilt(left, right, splitRetries) {
   };
 }
 
+async function mapConcurrent(items, concurrency, mapper) {
+  let index = 0;
+  const output = Array(items.length);
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (index < items.length) {
+      const current = index;
+      index += 1;
+      output[current] = await mapper(items[current], current);
+    }
+  }));
+  return output;
+}
+
+function chunks(rows, size) {
+  const output = [];
+  for (let offset = 0; offset < rows.length; offset += size) {
+    output.push(rows.slice(offset, offset + size));
+  }
+  return output;
+}
+
+function combinedRpc(builds) {
+  const keys = [
+    'batches', 'batchItems', 'individualRequests', 'batchFallbacks', 'splitRetries',
+  ];
+  return Object.fromEntries(keys.map((key) => [
+    key, builds.reduce((total, built) => total + Number(built.rpc?.[key] || 0), 0),
+  ]));
+}
+
 async function enrichResilient(rows, enrichBatch) {
   try {
     return await enrichBatch(rows);
@@ -333,8 +367,11 @@ async function runReconstruction(options, deps = {}) {
         rpcClient, cursor, requestedEnd < end ? requestedEnd : end, options.minRangeSize
       );
       for (const range of ranges) {
+        const workStarted = performance.now();
         const rows = trackedRows(range.logs, pools);
+        const classifyStarted = performance.now();
         const classified = await repository.classify(rows);
+        const classifyMs = performance.now() - classifyStarted;
         const missing = rows.filter((row) => {
           const status = entryStatus(row, classified);
           if (status.processed) summary.existingProcessed += 1;
@@ -345,11 +382,19 @@ async function runReconstruction(options, deps = {}) {
         summary.archiveSwapLogs += range.logs.length;
         summary.trackedSwapLogs += rows.length;
         summary.missing += missing.length;
+        let enrichMs = 0;
+        let persistMs = 0;
         if (options.mode === 'write') {
-          for (let offset = 0; offset < missing.length; offset += options.batchSize) {
-            const built = await enrichResilient(
-              missing.slice(offset, offset + options.batchSize), enrichBatch
-            );
+          const enrichmentStarted = performance.now();
+          const builtChunks = await mapConcurrent(
+            chunks(missing, options.batchSize),
+            options.enrichmentConcurrency || 1,
+            (chunk) => enrichResilient(chunk, enrichBatch)
+          );
+          enrichMs = performance.now() - enrichmentStarted;
+          const persistenceStarted = performance.now();
+          const rangeFailures = [];
+          for (const built of builtChunks) {
             const committed = built.entries.length
               ? await persistence.commitHeadProcessingBatch({ entries: built.entries })
               : { insertedLogs: 0 };
@@ -360,15 +405,28 @@ async function runReconstruction(options, deps = {}) {
             ).length;
             summary.failed += built.failures?.length || 0;
             summary.lastCommit = committed;
-            summary.lastRpc = built.rpc;
-            summary.lastFailures = (built.failures || []).slice(0, 10).map(({ row, error }) => ({
-              transactionHash: row.transaction_hash,
-              logIndex: row.log_index,
-              blockNumber: row.block_number,
-              error: String(error?.message || error).slice(0, 500),
-            }));
+            rangeFailures.push(...(built.failures || []));
           }
+          persistMs = performance.now() - persistenceStarted;
+          summary.lastRpc = combinedRpc(builtChunks);
+          summary.lastFailures = rangeFailures.slice(-10).map(({ row, error }) => ({
+            transactionHash: row.transaction_hash,
+            logIndex: row.log_index,
+            blockNumber: row.block_number,
+            error: String(error?.message || error).slice(0, 500),
+          }));
         }
+        summary.lastRange = {
+          blocks: Number(range.toBlock - range.fromBlock + 1n),
+          archiveSwapLogs: range.logs.length,
+          trackedSwapLogs: rows.length,
+          missing: missing.length,
+          chunks: Math.ceil(missing.length / options.batchSize),
+          classifyMs: Math.round(classifyMs),
+          enrichMs: Math.round(enrichMs),
+          persistMs: Math.round(persistMs),
+          workMs: Math.round(performance.now() - workStarted),
+        };
         summary.ranges += 1;
         runRanges += 1;
         cursor = range.toBlock + 1n;
@@ -400,7 +458,8 @@ if (require.main === module) void run();
 module.exports = {
   runReconstruction,
   __private: {
-    createCheckpointStore, createRepository, enrichResilient, fetchRanges, parseArgs,
-    poolIndex, restoreCheckpoint, resumeState, trackedRows,
+    chunks, combinedRpc, createCheckpointStore, createRepository, enrichResilient,
+    fetchRanges, mapConcurrent, parseArgs, poolIndex, restoreCheckpoint, resumeState,
+    trackedRows,
   },
 };
