@@ -716,6 +716,17 @@ O cursor só avança depois da valoração e da persistência de todos os lotes 
 invalidados e reconstruídos no bloco anterior ao rewind. Resultado indisponível não é gravado como zero e uma
 falha de RPC não apaga o último snapshot válido.
 
+Somente no executável do liquidity, consultas lentas dos repositórios emitem
+`[RobinhoodLiquidityDbTiming]` em JSON no lugar do aviso genérico. Os controles existentes
+`DB_LOG_SLOW_QUERIES` e `DB_SLOW_QUERY_LOG_MS` continuam valendo. `acquireMs` mede obtenção
+da conexão (fila e, quando necessário, abertura/autenticação); `roundTripMs` mede consulta,
+rede e tratamento da resposta no Node, não somente execução SQL. `totalMs` é a soma.
+`backendPid`, `startedAt` e `finishedAt` permitem correlacionar com `pg_stat_activity`;
+`poolAtStart`, `poolWhileAcquiring` e `poolAtEnd` mostram conexões totais, ociosas e esperas.
+Falha antes de obter conexão deixa `backendPid` e `roundTripMs` nulos. O log identifica a
+operação, sem imprimir SQL, parâmetros ou credenciais. Não executa queries de diagnóstico,
+não altera o pool global, nem instrumenta o auditor, leases ou outros workers.
+
 O bootstrap normal é `npm run robinhood:liquidity-seed` para preview e
 `npm run robinhood:liquidity-seed -- --write` para aplicar. O seed seleciona a última valoração
 válida dos buckets 1m ou 1h até o menor frontier processado. A busca parte apenas das pools ativas

@@ -22,6 +22,8 @@ const {
   createRobinhoodPoolLiquiditySnapshotRepository,
 } = require('../src/models/robinhood-pool-liquidity-snapshot');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
+const { Pool } = require('pg');
+const { createLiquidityTimedDatabase } = require('../src/utils/robinhood-liquidity-db-timing');
 const v2 = require('../src/services/uniswap-v2-decoder');
 const v3 = require('../src/services/uniswap-v3-decoder');
 const v4 = require('../src/services/uniswap-v4-decoder');
@@ -224,6 +226,39 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
     }
   });
 
+  it('observes real pool contention and releases connections after PostgreSQL errors', async () => {
+    const pool = new Pool({ ...db.pool.options, password: db.pool.options.password, max: 1 });
+    const events = [];
+    const timed = createLiquidityTimedDatabase({ pool }, {
+      slowQueryMs: 0, emit: (event) => events.push(event),
+    });
+    let held;
+    let pending;
+    try {
+      held = await pool.connect();
+      pending = timed.query('SELECT pg_backend_pid() AS pid, $1::text AS value', ['exact-value']);
+      assert.equal(pool.waitingCount, 1);
+      held.release();
+      held = null;
+      const { rows } = await pending;
+      assert.equal(rows[0].value, 'exact-value');
+      assert.equal(events[0].backendPid, rows[0].pid);
+      assert.equal(events[0].poolWhileAcquiring.waiting, 1);
+      assert.equal(pool.waitingCount, 0);
+      assert.equal(pool.idleCount, 1);
+      await assert.rejects(timed.query('SELECT 1 / 0'), (error) => error.code === '22012');
+      assert.equal(events[1].errorCode, '22012');
+      assert.equal(events[1].failed, true);
+      assert.equal((await timed.query('SELECT 42 AS value')).rows[0].value, 42);
+      assert.equal(pool.waitingCount, 0);
+      assert.equal(pool.idleCount, 1);
+    } finally {
+      held?.release();
+      await pending?.catch(() => {});
+      await pool.end();
+    }
+  });
+
   it('keeps the newest successful block and resets failure state', async () => {
     const index = await db.query(
       `SELECT indisvalid, indisready
@@ -232,7 +267,7 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
       [stage150.INDEX_NAME]
     );
     assert.deepEqual(index.rows[0], { indisvalid: true, indisready: true });
-    const repository = createRobinhoodPoolLiquiditySnapshotRepository({ database: db });
+    const repository = createRobinhoodPoolLiquiditySnapshotRepository({ database: createLiquidityTimedDatabase(db) });
     const snapshot = (blockNumber, hash) => ({
       protocol: 'uniswap-v3', marketKey: MARKET, blockNumber, blockHash: hash,
       observedAt: '2026-08-22T11:00:00Z', checkedAt: '2026-08-22T11:00:01Z',

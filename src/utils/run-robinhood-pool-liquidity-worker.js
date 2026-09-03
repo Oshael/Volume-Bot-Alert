@@ -1,5 +1,6 @@
 const config = require('../../config');
 const db = require('../models/db');
+const { createLiquidityTimedDatabase } = require('./robinhood-liquidity-db-timing');
 const {
   createRobinhoodPoolLiquiditySnapshotRepository,
 } = require('../models/robinhood-pool-liquidity-snapshot');
@@ -28,12 +29,15 @@ async function main(deps = {}) {
   const rpcClient = (deps.rpcClientFactory || createRobinhoodRpcClient)(
     deps.rpcOptions || config.robinhoodIngestionWorker
   );
+  const database = createLiquidityTimedDatabase(deps.database || db, {
+    enabled: config.db.logSlowQueries, slowQueryMs: config.db.slowQueryLogMs,
+  });
   const snapshotRepository = deps.snapshotRepository
-    || createRobinhoodPoolLiquiditySnapshotRepository({ database: deps.database || db });
+    || createRobinhoodPoolLiquiditySnapshotRepository({ database });
   const cursorRepository = deps.cursorRepository
-    || createRobinhoodPoolLiquidityEventCursorRepository({ database: deps.database || db });
+    || createRobinhoodPoolLiquidityEventCursorRepository({ database });
   const rangeRepository = deps.rangeRepository
-    || createRobinhoodPersistenceRepository({ database: deps.database || db });
+    || createRobinhoodPersistenceRepository({ database });
   const reader = (deps.readerFactory || createRobinhoodPoolLiquidityOnchainReader)({
     rpcClient,
     metadataReader: (deps.metadataReaderFactory || createErc20MetadataReader)({ rpcClient }),
