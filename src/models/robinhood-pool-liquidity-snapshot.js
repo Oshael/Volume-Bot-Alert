@@ -1,9 +1,12 @@
 const db = require('./db');
 const { normalizeTokenAddress } = require('../utils/token-identity');
+const v4 = require('../services/uniswap-v4-decoder');
+const { V4_DONATE_TOPIC } = require('../services/robinhood-pool-liquidity-events');
 
 const CHAIN = 'robinhood';
 const PROTOCOLS = new Set(['uniswap-v2', 'uniswap-v3', 'uniswap-v4']);
 const MAX_BATCH_SIZE = 500;
+const V4_EVENT_TOPICS = new Set([...Object.values(v4.TOPICS), V4_DONATE_TOPIC]);
 
 function timestamp(value, label) {
   const parsed = value instanceof Date ? value : new Date(value);
@@ -101,14 +104,21 @@ function normalizeCandidate(row) {
 }
 
 function normalizeEventLogs(logs = []) {
-  const unique = new Map();
+  const addresses = new Set();
+  const v4Pools = new Map();
   for (const log of logs) {
     const address = normalizeTokenAddress(CHAIN, log?.address);
-    const topic1 = String(log?.topics?.[1] || '').toLowerCase();
-    const poolId = /^0x[0-9a-f]{64}$/.test(topic1) ? topic1 : null;
-    unique.set(`${address}:${poolId || ''}`, { address, poolId });
+    if (!V4_EVENT_TOPICS.has(String(log?.topics?.[0] || '').toLowerCase())) {
+      // Indexed V3 senders are not pool identities.
+      addresses.add(address);
+      continue;
+    }
+    const poolId = String(log?.topics?.[1] || '').toLowerCase();
+    if (/^0x[0-9a-f]{64}$/.test(poolId)) {
+      v4Pools.set(`${address}:${poolId}`, { address, pool_id: poolId });
+    }
   }
-  return [...unique.values()];
+  return { addresses: [...addresses], v4Pools: [...v4Pools.values()] };
 }
 
 function createRobinhoodPoolLiquiditySnapshotRepository(options = {}) {
@@ -160,33 +170,38 @@ function createRobinhoodPoolLiquiditySnapshotRepository(options = {}) {
   }
 
   async function listPoolsForLiquidityEvents(logs = []) {
-    const events = normalizeEventLogs(logs);
-    if (!events.length) return Object.freeze([]);
+    const { addresses, v4Pools } = normalizeEventLogs(logs);
+    if (!addresses.length && !v4Pools.length) return Object.freeze([]);
     const { rows } = await database.query(
       `WITH events AS (
          SELECT address, pool_id
-         FROM jsonb_to_recordset($1::jsonb) AS event(address text, pool_id text)
+         FROM jsonb_to_recordset($2::jsonb) AS event(address text, pool_id text)
+       ), affected AS (
+         SELECT registry.*
+           FROM robinhood_pool_registry registry
+          WHERE registry.chain = '${CHAIN}' AND registry.active = TRUE
+            AND registry.protocol IN ('uniswap-v2', 'uniswap-v3')
+            AND registry.pool_address = ANY($1::varchar[])
+         UNION ALL
+         SELECT registry.*
+           FROM events
+           INNER JOIN robinhood_pool_registry registry
+             ON registry.chain = '${CHAIN}' AND registry.active = TRUE
+            AND registry.protocol = 'uniswap-v4'
+            AND registry.pool_id = events.pool_id
+            AND registry.origin_address = events.address
        )
-       SELECT DISTINCT registry.protocol, registry.market_key, registry.pool_address,
+       SELECT registry.protocol, registry.market_key, registry.pool_address,
               registry.pool_id, registry.origin_address, registry.token_address,
               registry.quote_address, registry.currency0, registry.currency1,
               registry.discovered_at,
               COALESCE(snapshot.consecutive_failures, 0) AS consecutive_failures
-         FROM events
-         INNER JOIN robinhood_pool_registry registry
-           ON registry.chain = '${CHAIN}' AND registry.active = TRUE
-          AND ((registry.protocol = 'uniswap-v4'
-                AND registry.origin_address = events.address
-                AND registry.pool_id = events.pool_id)
-            OR (registry.protocol <> 'uniswap-v4'
-                AND registry.pool_address = events.address))
+         FROM affected registry
          LEFT JOIN robinhood_pool_liquidity_snapshots snapshot
            ON snapshot.chain = registry.chain AND snapshot.protocol = registry.protocol
           AND snapshot.market_key = registry.market_key
         ORDER BY registry.protocol, registry.market_key`,
-      [JSON.stringify(events.map(({ address, poolId }) => ({
-        address, pool_id: poolId,
-      })))]
+      [addresses, JSON.stringify(v4Pools)]
     );
     return Object.freeze(rows.map(normalizeCandidate));
   }

@@ -6,6 +6,10 @@ const {
   createRobinhoodPoolLiquiditySnapshotRepository,
 } = require('../src/models/robinhood-pool-liquidity-snapshot');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
+const v2 = require('../src/services/uniswap-v2-decoder');
+const v3 = require('../src/services/uniswap-v3-decoder');
+const v4 = require('../src/services/uniswap-v4-decoder');
+const { V4_DONATE_TOPIC } = require('../src/services/robinhood-pool-liquidity-events');
 
 const TOKEN = `0x${'1'.repeat(40)}`;
 const QUOTE = `0x${'2'.repeat(40)}`;
@@ -76,14 +80,30 @@ describe('Robinhood current pool liquidity snapshots', () => {
       },
     } });
     const pools = await repository.listPoolsForLiquidityEvents([
-      { address: poolAddress, topics: [`0x${'a'.repeat(64)}`] },
-      { address: managerAddress, topics: [`0x${'b'.repeat(64)}`, POOL_ID] },
-      { address: managerAddress, topics: [`0x${'b'.repeat(64)}`, POOL_ID] },
+      { address: poolAddress, topics: [v2.TOPICS.sync] },
+      ...Array.from({ length: 100 }, (_, index) => ({
+        address: poolAddress,
+        topics: [v3.TOPICS.swap, `0x${index.toString(16).padStart(64, '0')}`],
+      })),
+      { address: managerAddress, topics: [v4.TOPICS.swap, POOL_ID] },
+      { address: managerAddress, topics: [v4.TOPICS.modifyLiquidity, POOL_ID] },
+      { address: managerAddress, topics: [V4_DONATE_TOPIC, POOL_ID] },
+      { address: managerAddress, topics: [v4.TOPICS.swap, `0x${'6'.repeat(64)}`] },
+      { address: managerAddress, topics: [v4.TOPICS.swap, '0x123'] },
     ]);
     assert.equal(pools[0].poolId, POOL_ID);
     assert.match(calls[0].sql, /registry\.origin_address = events\.address/);
-    assert.match(calls[0].sql, /registry\.pool_address = events\.address/);
-    assert.equal(JSON.parse(calls[0].params[0]).length, 2);
+    assert.match(calls[0].sql, /UNION ALL/);
+    assert.deepEqual(calls[0].params[0], [poolAddress]);
+    assert.deepEqual(JSON.parse(calls[0].params[1]), [
+      { address: managerAddress, pool_id: POOL_ID },
+      { address: managerAddress, pool_id: `0x${'6'.repeat(64)}` },
+    ]);
+    assert.deepEqual(await repository.listPoolsForLiquidityEvents([]), []);
+    assert.deepEqual(await repository.listPoolsForLiquidityEvents([
+      { address: managerAddress, topics: [v4.TOPICS.swap, '0x123'] },
+    ]), []);
+    assert.equal(calls.length, 1);
   });
 
   it('invalidates orphaned snapshots and returns their active pools for repair', async () => {

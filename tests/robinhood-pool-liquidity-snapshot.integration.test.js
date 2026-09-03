@@ -22,6 +22,10 @@ const {
   createRobinhoodPoolLiquiditySnapshotRepository,
 } = require('../src/models/robinhood-pool-liquidity-snapshot');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
+const v2 = require('../src/services/uniswap-v2-decoder');
+const v3 = require('../src/services/uniswap-v3-decoder');
+const v4 = require('../src/services/uniswap-v4-decoder');
+const { V4_DONATE_TOPIC } = require('../src/services/robinhood-pool-liquidity-events');
 
 const POOL = `0x${'7'.repeat(40)}`;
 const TOKEN = `0x${'8'.repeat(40)}`;
@@ -86,6 +90,73 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
   after(async () => {
     await cleanup();
     await db.pool.end();
+  });
+
+  it('selects each affected active pool once and verifies the V4 manager', async () => {
+    const client = await db.getClient();
+    const repository = createRobinhoodPoolLiquiditySnapshotRepository({ database: client });
+    const manager = `0x${'4'.repeat(40)}`;
+    const otherManager = `0x${'5'.repeat(40)}`;
+    const fixtures = [
+      { protocol: 'uniswap-v2', address: `0x${'6'.repeat(40)}`, active: true },
+      { protocol: 'uniswap-v3', address: `0x${'d'.repeat(40)}`, active: false },
+      { protocol: 'uniswap-v4', id: `0x${'1'.repeat(64)}`, active: true },
+      { protocol: 'uniswap-v4', id: `0x${'2'.repeat(64)}`, active: true },
+      { protocol: 'uniswap-v4', id: `0x${'3'.repeat(64)}`, active: false },
+      { protocol: 'uniswap-v4', id: `0x${'4'.repeat(64)}`, active: true },
+    ].map((pool) => ({ ...pool, key: `robinhood:${pool.protocol}:${pool.address || pool.id}` }));
+    try {
+      await client.query('BEGIN');
+      for (const pool of fixtures) {
+        await client.query(
+          `INSERT INTO robinhood_pool_registry (
+             protocol, market_key, pool_address, pool_id, origin_address, token_address,
+             quote_address, currency0, currency1, discovery_block, discovery_block_hash,
+             discovery_tx_hash, discovery_log_index, discovered_at, active
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $6, $7, 10, $8, $9, 0,
+             '2026-08-22T10:00:00Z', $10)`,
+          [pool.protocol, pool.key, pool.address || null, pool.id || null,
+            pool.address || manager, TOKEN, QUOTE,
+            `0x${'a'.repeat(64)}`, `0x${'b'.repeat(64)}`, pool.active]
+        );
+      }
+      await repository.recordFailure({
+        protocol: 'uniswap-v4', marketKey: fixtures[2].key,
+        error: { code: 'rpc_error', message: 'fixture failure' },
+      });
+      const addressLogs = [
+        { address: fixtures[0].address, topics: [v2.TOPICS.sync] },
+        { address: fixtures[1].address, topics: [v3.TOPICS.swap] },
+        { address: `0x${'e'.repeat(40)}`, topics: [v2.TOPICS.sync] },
+        ...['a', 'b'].map((sender) => ({
+          address: POOL, topics: [v3.TOPICS.swap, `0x${sender.repeat(64)}`],
+        })),
+      ];
+      const v4Logs = [
+        { address: manager, topics: [v4.TOPICS.swap, fixtures[2].id] },
+        { address: manager, topics: [v4.TOPICS.modifyLiquidity, fixtures[2].id] },
+        { address: manager, topics: [V4_DONATE_TOPIC, fixtures[3].id] },
+        { address: manager, topics: [v4.TOPICS.swap, fixtures[4].id] },
+        { address: otherManager, topics: [v4.TOPICS.swap, fixtures[2].id] },
+        { address: otherManager, topics: [v4.TOPICS.swap, fixtures[5].id] },
+      ];
+      const addressKeys = [fixtures[0].key, MARKET];
+      const v4Keys = [fixtures[2].key, fixtures[3].key];
+      for (const [logs, expected] of [
+        [addressLogs, addressKeys], [v4Logs, v4Keys],
+        [[...addressLogs, ...v4Logs], [...addressKeys, ...v4Keys]],
+      ]) {
+        const pools = await repository.listPoolsForLiquidityEvents(logs);
+        assert.deepEqual(pools.map(({ marketKey }) => marketKey), expected);
+        for (const pool of pools) {
+          assert.equal(pool.tokenAddress, TOKEN);
+          assert.equal(pool.consecutiveFailures, pool.marketKey === fixtures[2].key ? 1 : 0);
+        }
+      }
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
   });
 
   it('keeps the newest successful block and resets failure state', async () => {

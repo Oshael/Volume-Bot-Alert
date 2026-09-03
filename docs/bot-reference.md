@@ -695,8 +695,13 @@ standalone na VPS2.
 
 O processo usa a lease `robinhood-pool-liquidity-worker` e acompanha eventos em faixas contíguas
 com o cursor durável da Stage 148. Ele consulta logs por tópicos e reavalia somente as pools
-afetadas, uma vez por faixa; não percorre periodicamente todo o catálogo. O safe head é limitado
-pelo menor frontier de discovery e market, evitando usar pools ou ranges ainda não processados.
+afetadas, uma vez por faixa; não percorre periodicamente todo o catálogo.
+A seleção deduplica V2/V3 por endereço emissor e V4
+por `(manager, poolId)` identificado pelo tópico do evento. As buscas são separadas por protocolo,
+usando os índices de identidade existentes do registry; remetentes de swaps V3 não multiplicam
+as candidatas. Somente pools ativas são valoradas e o manager V4 deve coincidir com o registry.
+O safe head é limitado pelo menor frontier de discovery e market, evitando usar pools ou ranges
+ainda não processados.
 Esse frontier depende do índice parcial concorrente da Stage 150, que contém somente captures
 `pending`, `leased` ou `blocked` e evita varrer o histórico terminal da fila a cada poll.
 O cursor só avança depois da valoração e do commit da faixa. Em reorg, snapshots órfãos são
