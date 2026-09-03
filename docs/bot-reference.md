@@ -3242,6 +3242,13 @@ pode alimentar signed-origin/FRESH e funding nativo. O processo exige
 `ROBINHOOD_CHAIN_CAPTURE_RPC_URL` em loopback e força throttle zero; ele não
 herda o endpoint público default de `ROBINHOOD_RPC_URL`.
 
+A Stage 193 cria `robinhood_chain_domain_outbox`. Depois de aplicá-la com
+`node src/utils/db-init-stage193.js`, cada commit canônico roteia os eventos de
+`discovery` e `market` para essa fila na mesma transação do bloco e emite
+`robinhood_chain_domain_outbox` via `LISTEN/NOTIFY` como sinal de baixa latência.
+A fila é a fonte durável: perda de notificação não perde trabalho. Nesta etapa
+ela permanece shadow; nenhum consumidor ou publicador atual foi substituído.
+
 ## 15. Wallet tracking multichain
 
 Wallet tracking de produto ainda é roadmap, mas a fundação Robinhood está ativa:

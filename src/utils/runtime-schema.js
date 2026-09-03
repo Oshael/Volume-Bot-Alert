@@ -5551,6 +5551,29 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage193-robinhood-domain-outbox',
+    name: 'Stage 193 Robinhood discovery and market domain outbox',
+    repair: 'node src/utils/db-init-stage193.js',
+    tables: [{
+      table: 'robinhood_chain_domain_outbox',
+      columns: [
+        'chain', 'domain', 'block_hash', 'block_number', 'transaction_index', 'log_index',
+        'status', 'attempt_count', 'next_attempt_at', 'lease_owner', 'lease_until',
+        'last_error', 'completed_at', 'created_at', 'updated_at',
+      ],
+      constraints: [
+        { name: 'rh_chain_domain_outbox_pkey', includes: ['PRIMARY KEY', 'chain', 'domain', 'block_hash', 'log_index'] },
+        { name: 'rh_chain_domain_outbox_event_fkey', includes: ['FOREIGN KEY', 'chain', 'block_hash', 'log_index'] },
+        { name: 'rh_chain_domain_outbox_values_check', includes: ['discovery', 'market', 'attempt_count'] },
+        { name: 'rh_chain_domain_outbox_lifecycle_check', includes: ['pending', 'leased', 'complete', 'blocked'] },
+      ],
+      indexes: [
+        { name: 'idx_rh_chain_domain_outbox_claim', includes: ['domain', 'status', 'next_attempt_at', 'block_number'] },
+        { name: 'idx_rh_chain_domain_outbox_lease', includes: ['domain', 'lease_until'] },
+      ],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

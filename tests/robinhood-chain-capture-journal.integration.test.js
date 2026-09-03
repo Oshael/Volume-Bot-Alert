@@ -9,6 +9,8 @@ const {
 } = require('../src/models/robinhood-chain-capture-journal');
 const stage191 = require('../src/utils/db-init-stage191');
 const stage192 = require('../src/utils/db-init-stage192');
+const stage193 = require('../src/utils/db-init-stage193');
+const v2 = require('../src/services/uniswap-v2-decoder');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
@@ -16,8 +18,8 @@ const PARENT = `0x${'1'.repeat(64)}`;
 const HASH = `0x${'2'.repeat(64)}`;
 const NEXT_HASH = `0x${'3'.repeat(64)}`;
 const TX = `0x${'4'.repeat(64)}`;
-const ADDRESS = `0x${'5'.repeat(40)}`;
-const TOPIC = `0x${'6'.repeat(64)}`;
+const ADDRESS = v2.ROBINHOOD_V2_FACTORY;
+const TOPIC = v2.TOPICS.pairCreated;
 const OBSERVED_AT = '2026-09-03T20:00:00.000Z';
 
 function capture(number = 100, hash = HASH, parentHash = PARENT) {
@@ -50,6 +52,7 @@ describe('Robinhood canonical chain capture journal', () => {
     await assertUsingTestDatabase(db);
     await stage191.init({ closePool: false });
     await stage192.init({ closePool: false });
+    await stage193.init({ closePool: false });
   });
 
   beforeEach(clearTables);
@@ -72,20 +75,25 @@ describe('Robinhood canonical chain capture journal', () => {
       key === 'stage192-robinhood-complete-transaction-context'
     ));
     assert.equal(context.repair, 'node src/utils/db-init-stage192.js');
+    const outbox = SCHEMA_GROUPS.find(({ key }) => key === 'stage193-robinhood-domain-outbox');
+    assert.equal(outbox.repair, 'node src/utils/db-init-stage193.js');
   });
 
   it('commits the block envelope, transaction, event, and cursor atomically', async () => {
     const journal = createRobinhoodChainCaptureJournal();
     assert.deepEqual(await journal.commitBlock(capture()), {
-      status: 'committed', transactions: 1, events: 1,
+      status: 'committed', transactions: 1, events: 1, workItems: 1,
     });
 
     const counts = await db.query(
       `SELECT (SELECT COUNT(*)::int FROM robinhood_chain_blocks) AS blocks,
               (SELECT COUNT(*)::int FROM robinhood_chain_transactions) AS transactions,
-              (SELECT COUNT(*)::int FROM robinhood_chain_events) AS events`
+              (SELECT COUNT(*)::int FROM robinhood_chain_events) AS events,
+              (SELECT COUNT(*)::int FROM robinhood_chain_domain_outbox) AS work_items`
     );
-    assert.deepEqual(counts.rows[0], { blocks: 1, transactions: 1, events: 1 });
+    assert.deepEqual(counts.rows[0], {
+      blocks: 1, transactions: 1, events: 1, work_items: 1,
+    });
     const transactionContext = await db.query(
       `SELECT blocks.capture_version, tx.nonce::text, tx.value_wei::text
          FROM robinhood_chain_blocks blocks
@@ -104,7 +112,7 @@ describe('Robinhood canonical chain capture journal', () => {
     const journal = createRobinhoodChainCaptureJournal();
     await journal.commitBlock(capture());
     assert.deepEqual(await journal.commitBlock(capture()), {
-      status: 'replayed', transactions: 0, events: 0,
+      status: 'replayed', transactions: 0, events: 0, workItems: 0,
     });
     const divergent = capture();
     divergent.events[0].data = '0x01';

@@ -1,8 +1,10 @@
 'use strict';
 const { createHash } = require('node:crypto');
 const db = require('./db');
+const { routeCanonicalEvents } = require('../services/robinhood-chain-domain-router');
 const CHAIN = 'robinhood';
 const NOTIFY_CHANNEL = 'robinhood_chain_capture';
+const DOMAIN_NOTIFY_CHANNEL = 'robinhood_chain_domain_outbox';
 const CAPTURE_VERSION = 2;
 function quantity(value, label) {
   const raw = String(value ?? '').trim();
@@ -114,6 +116,7 @@ function createRobinhoodChainCaptureJournal(options = {}) {
   async function commitBlock(input = {}) {
     const normalized = normalizeInput(input);
     const { block, transactions, events, nodeHead, finalizedHead, digest } = normalized;
+    const workItems = routeCanonicalEvents(events);
     const client = await database.getClient();
     try {
       await client.query('BEGIN');
@@ -133,7 +136,7 @@ function createRobinhoodChainCaptureJournal(options = {}) {
           throw error;
         }
         await client.query('COMMIT');
-        return { status: 'replayed', transactions: 0, events: 0 };
+        return { status: 'replayed', transactions: 0, events: 0, workItems: 0 };
       }
       if (current && block.number !== BigInt(current.next_block)) {
         const error = new Error(`capture expected block ${current.next_block}, received ${block.number}`);
@@ -177,6 +180,15 @@ function createRobinhoodChainCaptureJournal(options = {}) {
                address TEXT, topic0 TEXT, topics JSONB, data TEXT
              )`, [CHAIN, block.hash, block.number.toString(), JSON.stringify(events)]
       );
+      const insertedWork = await client.query(
+        `INSERT INTO robinhood_chain_domain_outbox(
+           chain, domain, block_hash, block_number, transaction_index, log_index
+         ) SELECT $1, item.domain, $2, $3, events.transaction_index, item.log_index
+             FROM jsonb_to_recordset($4::jsonb) AS item(domain TEXT, log_index INTEGER)
+             JOIN robinhood_chain_events events
+               ON events.chain=$1 AND events.block_hash=$2 AND events.log_index=item.log_index`,
+        [CHAIN, block.hash, block.number.toString(), JSON.stringify(workItems)]
+      );
       await client.query(
         `INSERT INTO robinhood_chain_capture_cursor(
            chain, next_block, checkpoint_block, checkpoint_hash, node_head,
@@ -193,8 +205,14 @@ function createRobinhoodChainCaptureJournal(options = {}) {
           block.receiptsAvailableAt]
       );
       await client.query('SELECT pg_notify($1, $2)', [NOTIFY_CHANNEL, block.number.toString()]);
+      if (insertedWork.rowCount > 0) {
+        await client.query('SELECT pg_notify($1, $2)', [DOMAIN_NOTIFY_CHANNEL, block.number.toString()]);
+      }
       await client.query('COMMIT');
-      return { status: 'committed', transactions: insertedTransactions.rowCount, events: insertedEvents.rowCount };
+      return {
+        status: 'committed', transactions: insertedTransactions.rowCount,
+        events: insertedEvents.rowCount, workItems: insertedWork.rowCount,
+      };
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch (_) {}
       throw error;
@@ -205,6 +223,6 @@ function createRobinhoodChainCaptureJournal(options = {}) {
   return Object.freeze({ commitBlock, getCursor });
 }
 module.exports = {
-  CAPTURE_VERSION, NOTIFY_CHANNEL, createRobinhoodChainCaptureJournal,
+  CAPTURE_VERSION, DOMAIN_NOTIFY_CHANNEL, NOTIFY_CHANNEL, createRobinhoodChainCaptureJournal,
   __private: { normalizeInput },
 };
