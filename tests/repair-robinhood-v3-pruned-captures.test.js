@@ -88,6 +88,93 @@ describe('targeted Robinhood V3 pruned-capture repair', () => {
     assert.equal(marked, false);
   });
 
+  it('persists valid entries and dead-letters only non-retryable build failures', async () => {
+    const calls = [];
+    const good = row(100);
+    const bad = row(101);
+    const candidates = {
+      summarize: async () => ({ candidates: '2', first_block: '100', last_block: '101' }),
+      list: async () => (calls.includes('listed') ? [] : (calls.push('listed'), [good, bad])),
+      withLock: async (callback) => callback(),
+      markRepaired: async (rows) => { calls.push(`repaired:${rows.length}`); },
+      markBlocked: async (failures) => { calls.push(`blocked:${failures.length}`); },
+    };
+    const entry = { observation: { accepted: true } };
+    const result = await runRepair(options(), {
+      candidates,
+      rpcClient: { request: async () => '0x1237' },
+      enrichBatch: async () => ({
+        entries: [entry], repairedRows: [good],
+        failures: [{ row: bad, error: new Error('tokenBalance is invalid') }],
+        rpc: { batches: 1 },
+      }),
+      persistence: {
+        commitHeadProcessingBatch: async ({ entries }) => {
+          calls.push(`commit:${entries.length}`);
+          return { insertedObservations: entries.length };
+        },
+      },
+    });
+
+    assert.deepEqual(calls, ['listed', 'commit:1', 'repaired:1', 'blocked:1']);
+    assert.deepEqual(
+      [result.repaired, result.blocked, result.accepted, result.batches,
+        result.remaining, result.progressPct],
+      [1, 1, 1, 1, 0, 100]
+    );
+    assert.equal(result.lastFailures[0].error, 'tokenBalance is invalid');
+  });
+
+  it('isolates a non-retryable entry build error without hiding retryable failures', async () => {
+    const good = row(100);
+    const bad = row(101);
+    const prepared = [
+      { id: 'good', row: good, context: { id: 'good' } },
+      { id: 'bad', row: bad, context: { id: 'bad' } },
+    ];
+    const adapter = {
+      buildEntry: async ({ context }) => {
+        if (context.id === 'bad') throw new Error('tokenBalance is invalid');
+        return { observation: { accepted: true } };
+      },
+    };
+    const isolated = await __private.buildPreparedEntries(
+      prepared, new Map([['good', {}], ['bad', {}]]), adapter, 2
+    );
+
+    assert.equal(isolated.entries.length, 1);
+    assert.deepEqual(isolated.repairedRows, [good]);
+    assert.equal(isolated.failures[0].row, bad);
+    const retryable = Object.assign(new Error('archive timeout'), { retryable: true });
+    await assert.rejects(__private.buildPreparedEntries(
+      [prepared[0]], new Map([['good', {}]]),
+      { buildEntry: async () => { throw retryable; } }, 1
+    ), /archive timeout/);
+  });
+
+  it('persists archive dead letters and excludes them from future candidate scans', async () => {
+    const calls = [];
+    const database = {
+      query: async (sql, params) => {
+        calls.push({ sql, params });
+        if (sql.includes('UPDATE robinhood_head_captures')) {
+          return { rowCount: 1, rows: [{ transaction_hash: row(101).transaction_hash }] };
+        }
+        return { rows: [{ candidates: '0', first_block: null, last_block: null }] };
+      },
+    };
+    const repository = __private.createCandidateRepository(database);
+    await repository.markBlocked([{
+      row: row(101), error: new Error('tokenBalance is invalid'),
+    }]);
+    await repository.summarize('100', '200');
+
+    assert.match(calls[0].sql, /'status', 'blocked'/);
+    assert.match(calls[0].sql, /V3 archive repair blocked/);
+    assert.match(calls[1].sql, /archiveRepair,status/);
+    assert.match(calls[1].sql, /<> 'blocked'/);
+  });
+
   it('refuses to silently skip a capture whose pool registry entry is missing', () => {
     const candidate = row(100);
     candidate.registry_market_key = null;

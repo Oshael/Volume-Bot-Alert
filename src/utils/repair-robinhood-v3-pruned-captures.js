@@ -61,6 +61,7 @@ function createCandidateRepository(database = db) {
     AND capture.protocol = 'uniswap-v3'
     AND capture.processing_status = 'rejected'
     AND capture.evidence->>'rejected' = '${REJECTION}'
+    AND COALESCE(capture.evidence #>> '{archiveRepair,status}', '') <> 'blocked'
     AND capture.block_number BETWEEN $1::bigint AND $2::bigint`;
 
   async function summarize(fromBlock, toBlock) {
@@ -136,6 +137,44 @@ function createCandidateRepository(database = db) {
     return result.rowCount;
   }
 
+  async function markBlocked(failures) {
+    if (!failures.length) return 0;
+    const identities = failures.map(({ row, error }) => ({
+      transactionHash: row.transaction_hash,
+      logIndex: row.log_index,
+      error: String(error?.message || error || 'archive repair failed').slice(0, 1000),
+    }));
+    const result = await database.query(
+      `UPDATE robinhood_head_captures capture
+          SET evidence = capture.evidence || jsonb_build_object(
+                'archiveRepair', jsonb_build_object(
+                  'status', 'blocked',
+                  'originalReason', $2::text,
+                  'failedAt', NOW(),
+                  'error', failed.error
+                )
+              ),
+              last_error = LEFT('V3 archive repair blocked: ' || failed.error, 4000),
+              terminal_at = NOW(),
+              retention_eligible_at = NOW() + INTERVAL '7 days',
+              updated_at = NOW()
+         FROM jsonb_to_recordset($1::jsonb) AS failed(
+           "transactionHash" text, "logIndex" bigint, error text
+         )
+        WHERE capture.chain = 'robinhood'
+          AND capture.transaction_hash = failed."transactionHash"
+          AND capture.log_index = failed."logIndex"
+          AND capture.processing_status = 'rejected'
+          AND capture.evidence->>'rejected' = $2
+        RETURNING capture.transaction_hash`,
+      [JSON.stringify(identities), REJECTION]
+    );
+    if (result.rowCount !== failures.length) {
+      throw new Error(`Archive repair blocked ${result.rowCount}/${failures.length} captures`);
+    }
+    return result.rowCount;
+  }
+
   async function withLock(callback) {
     const client = await database.getClient();
     try {
@@ -147,7 +186,7 @@ function createCandidateRepository(database = db) {
     }
   }
 
-  return Object.freeze({ summarize, list, markRepaired, withLock });
+  return Object.freeze({ summarize, list, markRepaired, markBlocked, withLock });
 }
 
 function claim(row) {
@@ -202,6 +241,27 @@ async function mapConcurrent(items, concurrency, mapper) {
   return output;
 }
 
+async function buildPreparedEntries(prepared, results, adapter, concurrency) {
+  const outcomes = await mapConcurrent(prepared, concurrency, async (item) => {
+    try {
+      const entry = await adapter.buildEntry({
+        context: item.context,
+        results: results.get(item.id),
+      });
+      return { entry, row: item.row };
+    } catch (error) {
+      if (error?.retryable === true) throw error;
+      return { error, row: item.row };
+    }
+  });
+  const completed = outcomes.filter(({ entry }) => entry);
+  return {
+    entries: completed.map(({ entry }) => entry),
+    repairedRows: completed.map(({ row }) => row),
+    failures: outcomes.filter(({ error }) => error),
+  };
+}
+
 function createArchiveClient(rpcUrl) {
   if (!rpcUrl) throw new Error('ROBINHOOD_V3_REPAIR_RPC_URL is required in write mode');
   return createEvmJsonRpcClient({
@@ -234,10 +294,13 @@ async function enrich(rows, rpcClient, options) {
     concurrency: options.rpcConcurrency,
   });
   const results = new Map(executed.items.map((item) => [item.id, item.results]));
-  const entries = await mapConcurrent(prepared, options.rpcConcurrency, (item) => (
-    adapter.buildEntry({ context: item.context, results: results.get(item.id) })
-  ));
-  return { entries, rpc: executed.metrics };
+  const built = await buildPreparedEntries(
+    prepared, results, adapter, options.rpcConcurrency
+  );
+  return {
+    ...built,
+    rpc: executed.metrics,
+  };
 }
 
 async function runRepair(options, deps = {}) {
@@ -246,12 +309,15 @@ async function runRepair(options, deps = {}) {
   const summary = {
     mode: options.mode,
     candidates: Number(initial.candidates || 0),
+    remaining: Number(initial.candidates || 0),
+    progressPct: Number(initial.candidates || 0) === 0 ? 100 : 0,
     firstBlock: initial.first_block,
     lastBlock: initial.last_block,
     batches: 0,
     repaired: 0,
     accepted: 0,
     rejected: 0,
+    blocked: 0,
   };
   if (options.mode === 'dry-run' || summary.candidates === 0) return summary;
   const rpcClient = deps.rpcClient || createArchiveClient(options.rpcUrl);
@@ -265,15 +331,32 @@ async function runRepair(options, deps = {}) {
       const rows = await candidates.list(options.fromBlock, options.toBlock, options.batchSize);
       if (!rows.length) break;
       const built = await enrichBatch(rows);
-      const committed = await persistence.commitHeadProcessingBatch({ entries: built.entries });
-      await candidates.markRepaired(rows);
+      const repairedRows = built.repairedRows || rows;
+      const failures = built.failures || [];
+      const committed = built.entries.length
+        ? await persistence.commitHeadProcessingBatch({ entries: built.entries })
+        : null;
+      if (repairedRows.length) await candidates.markRepaired(repairedRows);
+      if (failures.length) await candidates.markBlocked(failures);
       summary.batches += 1;
-      summary.repaired += rows.length;
+      summary.repaired += repairedRows.length;
       summary.accepted += built.entries.filter((entry) => entry.observation?.accepted).length;
       summary.rejected += built.entries.filter((entry) => entry.observation?.accepted === false).length;
+      summary.blocked += failures.length;
+      summary.remaining = Math.max(0, summary.candidates - summary.repaired - summary.blocked);
+      summary.progressPct = Number((
+        ((summary.repaired + summary.blocked) / summary.candidates) * 100
+      ).toFixed(2));
       summary.lastBlock = rows.at(-1).block_number;
       summary.lastCommit = committed;
       summary.lastRpc = built.rpc;
+      summary.lastFailures = failures.slice(0, 10).map(({ row, error }) => ({
+        transactionHash: row.transaction_hash,
+        logIndex: row.log_index,
+        blockNumber: row.block_number,
+        marketKey: row.market_key,
+        error: String(error?.message || error).slice(0, 500),
+      }));
       console.log(JSON.stringify({ event: 'v3_archive_repair_progress', ...summary }));
       if (options.sleepMs) await delay(options.sleepMs);
     }
@@ -297,5 +380,7 @@ if (require.main === module) void run();
 
 module.exports = {
   runRepair,
-  __private: { claim, parseArgs, poolSeeds },
+  __private: {
+    buildPreparedEntries, claim, createCandidateRepository, parseArgs, poolSeeds,
+  },
 };

@@ -402,6 +402,11 @@ captura como reparada. Enquanto o utilitário detém seu advisory lock, a poda d
 capturas se suspende automaticamente, mas head e processing continuam. O reparo
 usa JSON-RPC concorrente (até 8 batches simultâneos) e commits limitados a 500
 capturas, sem UPDATE global da coorte e sem alterar os watermarks do backfill geral.
+Falha não retentável ao montar uma captura (por exemplo, `balanceOf` histórico vazio)
+isola somente essa identidade como `archiveRepair.status='blocked'`, mantém a rejeição
+original para auditoria e permite que as demais capturas do batch sejam persistidas.
+Cada evento de progresso expõe `remaining`, `progressPct`, `blocked` e até dez
+`lastFailures`; itens isolados contam como tratados, mas nunca como reparados.
 
 O grupo `robinhood-processing` roda um processo separado (systemd
 `trendscope-worker@robinhood-processing.service`, lease `robinhood-processing-worker`,
