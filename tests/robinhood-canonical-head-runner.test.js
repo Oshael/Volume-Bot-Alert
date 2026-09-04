@@ -25,12 +25,12 @@ function entry(log) {
 
 describe('Robinhood canonical head runner', () => {
   it('processes discovery before market and settles the whole block after append', async () => {
-    const calls = []; let settlement;
+    const calls = []; let settlement; let claimInput;
     const rows = [row('discovery', 2), row('market', 3), row('market', 4)];
     const runner = createRobinhoodCanonicalHeadRunner({
       outbox: {
         reclaimExpiredLeases: async () => 1,
-        claimNextBlock: async () => rows,
+        claimNextBlock: async (input) => { claimInput = input; return rows; },
         settle: async (input) => {
           calls.push('settle'); settlement = input;
           return { completed: input.complete.length, blocked: 0, retried: 0 };
@@ -46,10 +46,12 @@ describe('Robinhood canonical head runner', () => {
       } },
     });
     assert.deepEqual(await runner.runOnce(), {
-      reclaimed: 1, blockNumber: '100', claimed: 3, inserted: 2, duplicates: 0,
+      reclaimed: 1, blockNumber: '100', throughBlock: '100', blocks: 1,
+      claimed: 3, inserted: 2, duplicates: 0,
       ignored: 1, completed: 3, blocked: 0, retried: 0,
     });
     assert.deepEqual(calls, ['discovery', 'market', 'append', 'settle']);
+    assert.equal(claimInput.maxBlocks, 16);
     assert.deepEqual(settlement.complete.map((item) => item.domain), [
       'discovery', 'market', 'market',
     ]);
@@ -72,6 +74,7 @@ describe('Robinhood canonical head runner', () => {
       headRepository: { appendCaptureEntries: async () => assert.fail('must not append') },
     });
     const result = await runner.runOnce();
+    assert.equal(result.blocks, 1);
     assert.equal(result.retried, 2);
     assert.deepEqual(settlement.retry.map((item) => item.domain), ['discovery', 'market']);
   });

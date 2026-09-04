@@ -3298,6 +3298,12 @@ como `awaiting_legacy` e não são falsamente contados como ausentes. O limite d
 backlog pode ser ajustado explicitamente com `--max-queue-lag=N`. O gate só
 aprova depois que o heartbeat expõe o `rpcGuard`; telemetria ausente falha
 fechado.
+Para sustentar a taxa de blocos da chain, o consumidor canônico reclama até 16
+frontiers prontos por rodada (`ROBINHOOD_CANONICAL_HEAD_BATCH_BLOCKS`, limite 64),
+processa todas as discoveries ordenadas antes dos markets e liquida o lote como
+uma unidade retry-safe. A captura de evidência usa concorrência 16 por padrão,
+limitada por `ROBINHOOD_CANONICAL_HEAD_CONCURRENCY`. A telemetria `lastResult`
+expõe `blocks`, `blockNumber` e `throughBlock` para medir avanço real.
 
 ## 15. Wallet tracking multichain
 

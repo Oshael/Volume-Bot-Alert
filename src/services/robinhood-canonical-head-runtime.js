@@ -44,6 +44,7 @@ async function createRobinhoodCanonicalHeadRuntime(deps = {}, options = {}) {
     options: {
       owner: options.owner,
       leaseMs: options.leaseMs,
+      maxBlocks: options.maxBlocks,
       maxAttempts: options.maxAttempts,
       baseBackoffMs: options.baseBackoffMs,
       maxBackoffMs: options.maxBackoffMs,

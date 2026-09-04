@@ -1650,6 +1650,9 @@ module.exports = {
     leaseMs: parseIntegerInRange(
       process.env.ROBINHOOD_CANONICAL_HEAD_CLAIM_LEASE_MS, 60_000, 1000, 300_000
     ),
+    maxBlocks: parseIntegerInRange(
+      process.env.ROBINHOOD_CANONICAL_HEAD_BATCH_BLOCKS, 16, 1, 64
+    ),
     maxAttempts: parseIntegerInRange(
       process.env.ROBINHOOD_CANONICAL_HEAD_MAX_ATTEMPTS, 5, 1, 20
     ),
@@ -1660,7 +1663,7 @@ module.exports = {
       process.env.ROBINHOOD_CANONICAL_HEAD_MAX_BACKOFF_MS, 60_000, 1000, 300_000
     ),
     observationConcurrency: parseIntegerInRange(
-      process.env.ROBINHOOD_CANONICAL_HEAD_CONCURRENCY, 4, 1, 16
+      process.env.ROBINHOOD_CANONICAL_HEAD_CONCURRENCY, 16, 1, 16
     ),
     leaseHeartbeatMs: parseIntegerInRange(
       process.env.ROBINHOOD_CANONICAL_HEAD_LEASE_HEARTBEAT_MS, 30_000, 1000, 300_000

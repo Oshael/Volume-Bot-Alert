@@ -28,19 +28,23 @@ function createRobinhoodCanonicalHeadRunner(deps = {}) {
   const options = deps.options || {};
   const owner = String(options.owner || `robinhood-canonical-head:${process.pid}`);
   const leaseMs = Number(options.leaseMs) || 60_000;
+  const maxBlocks = Number(options.maxBlocks) || 16;
   const maxAttempts = Number(options.maxAttempts) || 5;
   const baseBackoffMs = Number(options.baseBackoffMs) || 1000;
   const maxBackoffMs = Number(options.maxBackoffMs) || 60_000;
 
   async function runOnce() {
     const reclaimed = await outbox.reclaimExpiredLeases();
-    const rows = await outbox.claimNextBlock({ owner, leaseMs });
+    const rows = await outbox.claimNextBlock({ owner, leaseMs, maxBlocks });
     if (!rows.length) return {
-      reclaimed, blockNumber: null, claimed: 0, inserted: 0, duplicates: 0,
+      reclaimed, blockNumber: null, throughBlock: null, blocks: 0,
+      claimed: 0, inserted: 0, duplicates: 0,
       ignored: 0, completed: 0, blocked: 0, retried: 0,
     };
     const discoveryRows = rows.filter((row) => row.domain === 'discovery');
     const marketRows = rows.filter((row) => row.domain === 'market');
+    const blockNumbers = [...new Set(rows.map((row) => String(row.block_number)))];
+    const throughBlock = blockNumbers.at(-1);
     try {
       const discovery = await pipeline.processDiscoveryRange(discoveryRows.map(logFromRow));
       const market = await pipeline.processMarketRange(marketRows.map(logFromRow));
@@ -53,7 +57,8 @@ function createRobinhoodCanonicalHeadRunner(deps = {}) {
         owner, complete: rows.map(identity), maxAttempts,
       });
       return {
-        reclaimed, blockNumber: String(rows[0].block_number), claimed: rows.length,
+        reclaimed, blockNumber: blockNumbers[0], throughBlock, blocks: blockNumbers.length,
+        claimed: rows.length,
         inserted: appended.insertedCaptures, duplicates: appended.duplicateCaptures,
         ignored: rows.length - entries.length, ...settled,
       };
@@ -64,7 +69,8 @@ function createRobinhoodCanonicalHeadRunner(deps = {}) {
       }));
       const settled = await outbox.settle({ owner, retry, maxAttempts });
       return {
-        reclaimed, blockNumber: String(rows[0].block_number), claimed: rows.length,
+        reclaimed, blockNumber: blockNumbers[0], throughBlock, blocks: blockNumbers.length,
+        claimed: rows.length,
         inserted: 0, duplicates: 0, ignored: 0, completed: 0, ...settled,
       };
     }

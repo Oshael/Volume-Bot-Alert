@@ -27,7 +27,7 @@ describe('Robinhood canonical head runtime', () => {
         runnerDeps = deps;
         return { owner: 'canonical-test', runOnce: async () => ({ claimed: 0 }) };
       },
-    }, { leaseMs: 30_000, observationConcurrency: 4 });
+    }, { leaseMs: 30_000, maxBlocks: 12, observationConcurrency: 4 });
 
     assert.equal(pipelineOptions.captureMode, true);
     assert.equal(pipelineOptions.retainRollbackState, false);
@@ -37,6 +37,7 @@ describe('Robinhood canonical head runtime', () => {
     assert.equal(runnerDeps.outbox, outbox);
     assert.equal(runnerDeps.headRepository, candidateRepository);
     assert.equal(runnerDeps.options.leaseMs, 30_000);
+    assert.equal(runnerDeps.options.maxBlocks, 12);
     assert.deepEqual(await runtime.runOnce(), { claimed: 0 });
     assert.deepEqual(runtime.snapshot(), {
       owner: 'canonical-test', tracked: { v2: 1, v3: 2, v4: 3 },

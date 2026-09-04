@@ -40,26 +40,28 @@ function createRobinhoodChainDomainOutboxRepository(options = {}) {
   async function claimNextBlock(input = {}) {
     const owner = ownerOf(input.owner);
     const leaseMs = positiveInt(input.leaseMs, 'leaseMs');
+    const maxBlocks = positiveInt(input.maxBlocks || 1, 'maxBlocks');
     const result = await database.query(
-      `WITH frontier AS (
-         SELECT MIN(block_number) AS block_number
+      `WITH frontiers AS (
+         SELECT block_number,
+                BOOL_AND(status='pending' AND next_attempt_at<=NOW()) AS ready
            FROM robinhood_chain_domain_outbox
           WHERE chain=$1 AND status<>'complete'
+          GROUP BY block_number ORDER BY block_number LIMIT $4
        ), ready AS (
-         SELECT frontier.block_number
-           FROM frontier
-          WHERE frontier.block_number IS NOT NULL
-            AND NOT EXISTS (
-              SELECT 1 FROM robinhood_chain_domain_outbox blocked
-               WHERE blocked.chain=$1 AND blocked.block_number=frontier.block_number
-                 AND blocked.status<>'complete'
-                 AND (blocked.status<>'pending' OR blocked.next_attempt_at>NOW())
-            )
+         SELECT block_number FROM (
+           SELECT block_number,
+                  BOOL_AND(ready) OVER (
+                    ORDER BY block_number ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                  ) AS prefix_ready
+             FROM frontiers
+         ) ordered WHERE prefix_ready
        ), claimable AS (
          SELECT outbox.chain, outbox.domain, outbox.block_hash, outbox.log_index
            FROM robinhood_chain_domain_outbox outbox JOIN ready USING (block_number)
           WHERE outbox.chain=$1 AND outbox.status='pending'
-          ORDER BY CASE outbox.domain WHEN 'discovery' THEN 0 ELSE 1 END,
+          ORDER BY outbox.block_number,
+                   CASE outbox.domain WHEN 'discovery' THEN 0 ELSE 1 END,
                    outbox.transaction_index, outbox.log_index
           FOR UPDATE OF outbox SKIP LOCKED
        ), leased AS (
@@ -77,9 +79,10 @@ function createRobinhoodChainDomainOutboxRepository(options = {}) {
          FROM leased
          JOIN robinhood_chain_events event USING (chain, block_hash, log_index)
          JOIN robinhood_chain_blocks block USING (chain, block_hash)
-        ORDER BY CASE leased.domain WHEN 'discovery' THEN 0 ELSE 1 END,
+        ORDER BY leased.block_number,
+                 CASE leased.domain WHEN 'discovery' THEN 0 ELSE 1 END,
                  leased.transaction_index, leased.log_index`,
-      [CHAIN, owner, leaseMs]
+      [CHAIN, owner, leaseMs, maxBlocks]
     );
     return result.rows;
   }

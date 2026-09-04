@@ -27,6 +27,7 @@ const PARENT = `0x${'1'.repeat(64)}`;
 const HASH = `0x${'2'.repeat(64)}`;
 const NEXT_HASH = `0x${'3'.repeat(64)}`;
 const TX = `0x${'4'.repeat(64)}`;
+const NEXT_TX = `0x${'5'.repeat(64)}`;
 const ADDRESS = v2.ROBINHOOD_V2_FACTORY;
 const TOPIC = v2.TOPICS.pairCreated;
 const OBSERVED_AT = '2026-09-03T20:00:00.000Z';
@@ -244,17 +245,23 @@ describe('Robinhood canonical chain capture journal', () => {
     assert.equal(claimed.block_timestamp.toISOString(), OBSERVED_AT);
   });
 
-  it('leases the earliest incomplete block with discovery before market', async () => {
+  it('leases a bounded ready frontier with discovery before market', async () => {
     const mixed = capture();
     mixed.events.push({
       transactionHash: TX, transactionIndex: 0, logIndex: 1,
       address: `0x${'7'.repeat(40)}`, topics: [v2.TOPICS.swap], data: '0x',
     });
     await createRobinhoodChainCaptureJournal().commitBlock(mixed);
+    const next = capture(101, NEXT_HASH, HASH);
+    next.transactions[0].hash = NEXT_TX;
+    next.events[0].transactionHash = NEXT_TX;
+    await createRobinhoodChainCaptureJournal().commitBlock(next);
     const repository = createRobinhoodChainDomainOutboxRepository({ database: db });
-    const claimed = await repository.claimNextBlock({ owner: 'canonical-head', leaseMs: 60_000 });
-    assert.deepEqual(claimed.map((row) => row.domain), ['discovery', 'market']);
-    assert.deepEqual(claimed.map((row) => row.log_index), [0, 1]);
+    const claimed = await repository.claimNextBlock({
+      owner: 'canonical-head', leaseMs: 60_000, maxBlocks: 2,
+    });
+    assert.deepEqual(claimed.map((row) => row.block_number), ['100', '100', '101']);
+    assert.deepEqual(claimed.map((row) => row.domain), ['discovery', 'market', 'discovery']);
   });
 
   it('reclaims an expired lease and blocks a retry that exhausts its attempts', async () => {
