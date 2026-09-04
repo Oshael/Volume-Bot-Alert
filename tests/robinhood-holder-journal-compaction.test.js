@@ -78,10 +78,13 @@ describe('Robinhood holder journal compaction prepare', () => {
     assert.equal(sql.findIndex((text) => text.includes('invalid_old_rows'))
       < sql.indexOf('COMMIT'), true);
     const copySql = sql.find((text) => text.includes('INSERT INTO'));
-    assert.match(copySql, /UNION ALL/);
-    assert.match(copySql, /pending\.applied = false/);
-    assert.doesNotMatch(copySql, /LEFT JOIN/);
+    assert.match(copySql, /LEFT JOIN protected_tokens/);
+    assert.match(copySql, /journal\.applied = false/);
+    assert.doesNotMatch(copySql, /UNION ALL/);
     assert.equal(sql.includes('SET LOCAL enable_mergejoin = off'), true);
+    assert.equal(sql.includes('SET LOCAL enable_nestloop = off'), true);
+    assert.equal(sql.includes('SET LOCAL enable_indexscan = off'), true);
+    assert.equal(sql.includes('SET LOCAL enable_bitmapscan = off'), true);
     assert.equal(progress.filter(({ phase }) => phase === 'index').length,
       INDEX_STATEMENTS.length);
   });
@@ -143,15 +146,18 @@ describe('Robinhood holder journal compaction prepare', () => {
     assert.deepEqual(progress.map(({ status }) => status), ['requested', 'cancelled']);
   });
 
-  it('exports recent and protected pending rows without a merge join or global sort', () => {
+  it('exports with one sequential scan and a hash join for protected tokens', () => {
     const sql = fs.readFileSync(path.join(
       __dirname, '../src/utils/export-robinhood-holder-journal-compaction.sql'
     ), 'utf8');
     assert.match(sql, /SET enable_mergejoin = off/);
-    assert.match(sql, /UNION ALL/);
-    assert.match(sql, /pending\.applied = false/);
+    assert.match(sql, /SET enable_nestloop = off/);
+    assert.match(sql, /SET enable_indexscan = off/);
+    assert.match(sql, /SET enable_bitmapscan = off/);
+    assert.match(sql, /LEFT JOIN protected_tokens/);
+    assert.match(sql, /journal\.applied = false/);
     assert.match(sql, /TO STDOUT/);
-    assert.doesNotMatch(sql, /LEFT JOIN/);
+    assert.doesNotMatch(sql, /UNION ALL/);
     assert.doesNotMatch(sql, /ORDER BY/);
   });
 });

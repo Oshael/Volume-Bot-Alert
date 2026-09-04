@@ -1726,10 +1726,11 @@ consolidação. O prepare
 mantém locks de escrita no journal e nas proteções, mas permite leituras. Cópia,
 constraints, índices e validação executam numa única transação; falha ou disco
 abaixo da margem faz rollback completo. O prepare não renomeia nem remove a tabela
-original e não libera espaço no filesystem. A seleção usa dois ramos disjuntos
-(`UNION ALL`): janela recente pelo bloco e pendências antigas pelo índice parcial
-por token; merge join fica desabilitado para impedir sort temporário do journal
-inteiro. Para staging remoto, o mesmo contrato está em
+original e não libera espaço no filesystem. A seleção faz uma única varredura
+sequencial do journal e usa um hash pequeno dos tokens protegidos. Merge join,
+nested loop e caminhos de índice ficam desabilitados nessa operação para impedir
+tanto o sort temporário do journal inteiro quanto milhões de leituras aleatórias.
+Para staging remoto, o mesmo contrato está em
 `src/utils/export-robinhood-holder-journal-compaction.sql`. `SIGINT` e `SIGTERM`
 cancelam explicitamente a query PostgreSQL e aguardam o rollback antes de o
 processo sair, para que a operação não continue ocupando disco em background.

@@ -177,6 +177,9 @@ async function runPrepare(options = {}, dependencies = {}) {
     await client.query("SET LOCAL lock_timeout = '5s'");
     await client.query("SET LOCAL statement_timeout = '0'");
     await client.query('SET LOCAL enable_mergejoin = off');
+    await client.query('SET LOCAL enable_nestloop = off');
+    await client.query('SET LOCAL enable_indexscan = off');
+    await client.query('SET LOCAL enable_bitmapscan = off');
     await client.query('SELECT pg_advisory_xact_lock($1::bigint)', [REORG_FENCE_LOCK_ID]);
     await client.query(`LOCK TABLE ${SOURCE_TABLE}, robinhood_holder_token_states,
       robinhood_holder_global_backfill_tokens, robinhood_holder_global_backfill_runs,
@@ -197,15 +200,15 @@ async function runPrepare(options = {}, dependencies = {}) {
     const copied = await client.query(
       `WITH ${PROTECTED_CTE}
        INSERT INTO ${TARGET_TABLE}
-       SELECT recent.* FROM ${SOURCE_TABLE} recent
-        WHERE recent.chain = 'robinhood'
-          AND recent.block_number >= $1::bigint
-       UNION ALL
-       SELECT pending.* FROM ${SOURCE_TABLE} pending
-       INNER JOIN protected_tokens protected
-          ON protected.token_address = pending.token_address
-        WHERE pending.chain = 'robinhood' AND pending.applied = false
-          AND pending.block_number < $1::bigint`,
+       SELECT journal.* FROM ${SOURCE_TABLE} journal
+       LEFT JOIN protected_tokens protected
+         ON protected.token_address = journal.token_address
+        WHERE journal.chain = 'robinhood' AND (
+          journal.block_number >= $1::bigint OR (
+            journal.block_number < $1::bigint AND journal.applied = false
+            AND protected.token_address IS NOT NULL
+          )
+        )`,
       [cutoffBlock.toString()]
     );
     assertFreeSpace(freeBytes, minFreeGiB, 'copy');

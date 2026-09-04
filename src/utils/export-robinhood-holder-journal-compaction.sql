@@ -2,6 +2,10 @@
 \set ON_ERROR_STOP 1
 
 SET enable_mergejoin = off;
+SET enable_nestloop = off;
+SET enable_indexscan = off;
+SET enable_bitmapscan = off;
+SET work_mem = '256MB';
 
 COPY (
   WITH protected_tokens AS MATERIALIZED (
@@ -20,17 +24,15 @@ COPY (
       FROM robinhood_holder_cursors
      WHERE chain = 'robinhood' AND stream = 'live'
   )
-  SELECT recent.*
-    FROM robinhood_holder_transfer_journal recent
+  SELECT journal.*
+    FROM robinhood_holder_transfer_journal journal
     CROSS JOIN bounds
-   WHERE recent.chain = 'robinhood'
-     AND recent.block_number >= bounds.cutoff_block
-  UNION ALL
-  SELECT pending.*
-    FROM robinhood_holder_transfer_journal pending
-    INNER JOIN protected_tokens protected
-      ON protected.token_address = pending.token_address
-    CROSS JOIN bounds
-   WHERE pending.chain = 'robinhood' AND pending.applied = false
-     AND pending.block_number < bounds.cutoff_block
+    LEFT JOIN protected_tokens protected
+      ON protected.token_address = journal.token_address
+   WHERE journal.chain = 'robinhood' AND (
+     journal.block_number >= bounds.cutoff_block OR (
+       journal.block_number < bounds.cutoff_block AND journal.applied = false
+       AND protected.token_address IS NOT NULL
+     )
+   )
 ) TO STDOUT;
