@@ -4,6 +4,7 @@ const { spawnSync } = require('node:child_process');
 
 const TEST_DIR = __dirname;
 const INTEGRATION_TESTS = [
+  'robinhood-holder-journal-receiver.integration.test.js',
   'robinhood-holder-journal-pilot.integration.test.js',
   'admin.test.js',
   'auth.test.js',

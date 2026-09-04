@@ -1808,6 +1808,41 @@ medição. Recuperação degradada também causa saída com erro. Este polling �
 diagnóstico isolado, sem alteração do caminho live; medições não provam causalidade
 nem a capacidade da transferência real para outro servidor.
 
+O receptor isolado `node src/utils/receive-robinhood-holder-journal.js
+--database=holder_compaction [--write]` exige `HOLDER_JOURNAL_RECEIVER_DATABASE_URL`,
+não carrega `.env` e recebe exatamente um JSON completo por stdin (até 16 MiB,
+prazo de 30 s). Somente `init`/`batch` exigem `--write`; `status` é read-only.
+O CLI aceita apenas `holder_compaction` e recusa outra identidade de banco.
+Nenhuma operação do receptor acessa a VPS2 ou modifica tabelas fora de seu schema.
+
+O protocolo usa `op` (`init`, `batch`, `status`) e `runId` (UUID lowercase).
+`init` recebe `manifest` imutável com `version:1`, `sourceIdentity` (SHA-256 do
+contrato da origem, fornecido pelo emissor), `schemaHash`, `fromPage`, `endPage`
+exclusivo e `pages:512`. `schemaHash` é calculado por `describeJournal`: SHA-256
+do JSON de colunas ordenadas e CHECKs ordenados. A tabela existente
+`public.robinhood_holder_transfer_journal` serve somente de modelo estrutural;
+o fingerprint precisa coincidir. O destino novo é `holder_rx_<uuid_sem_hifens>`
+com `journal`, `run` e `batches`. Não copia dados, defaults, triggers ou índices
+da tabela antiga. Esta inicialização não é uma migration do runtime do bot.
+
+`batch` informa `sourceIdentity`, `fromPage`, `toPage`, `rows` e `checksum`
+(SHA-256 UTF-8 de `JSON.stringify(rows)`, preservando ordem). Aceita até 20000
+linhas, todas as colunas explicitamente presentes e somente strings, booleanos
+ou null como valores; números e timestamps devem ser strings para preservar
+precisão. A faixa deve ser a próxima do manifesto, com 512 páginas ou o resto
+final. Dados, recibo e checkpoint são gravados na mesma transação com commit
+síncrono. Um reenvio idêntico retorna `already_committed`, mesmo se a confirmação
+anterior foi perdida; checksum/faixa divergentes são recusados. Não há retry
+automático. Timeout SQL é 5 s e lock timeout 500 ms; interrupções aguardam a query
+limitada e rollback. Se o resultado do commit for incerto, consulte `status` ou
+reenvie exatamente o mesmo lote, sem avançar o cursor por conta própria.
+
+Deduplicação é por lote, não por evento entre lotes distintos. Índices, auditoria
+de completude e consistência da origem pertencem ao emissor/validação posterior.
+Mesmo ao chegar a `endPage`, o receptor retorna `sourceConsistencyVerified:false`
+e `readyForSwap:false`: não autoriza retomar por CTID com origem alterada, trocar
+tabelas, apagar a cópia antiga ou liberar espaço na VPS2.
+
 `monitored`, `recent`, `old-week`, pins, tokens manuais e o summary de
 `GET /api/robinhood/holders` consultam essa view em lote, sem RPC ou Blockscout por
 linha. Para `ledger_live`, freshness acompanha o avanço do cursor (`checked_at`);
