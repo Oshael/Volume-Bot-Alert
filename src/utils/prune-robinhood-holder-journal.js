@@ -1,6 +1,8 @@
 const { createRobinhoodHolderJournalRetention, __private } = require('../models/robinhood-holder-journal-retention');
 const { __private: ledger } = require('../models/robinhood-holder-ledger');
 
+const MANUAL_MAX_BATCH_LIMIT = 5_000;
+
 function parseArgs(args) {
   const before = args.filter((arg) => arg.startsWith('--before-block='));
   const batch = args.filter((arg) => arg.startsWith('--batch-limit='));
@@ -17,7 +19,9 @@ function parseArgs(args) {
     beforeBlock: before[0].slice('--before-block='.length),
     batchLimit: batch.length ? Number(batch[0].slice('--batch-limit='.length)) : 1000,
   });
-  if (options.batchLimit > 1000) throw new Error('Manual batch-limit must not exceed 1000 total events');
+  if (options.batchLimit > MANUAL_MAX_BATCH_LIMIT) {
+    throw new Error(`Manual batch-limit must not exceed ${MANUAL_MAX_BATCH_LIMIT} total events`);
+  }
   const maxBatchesValue = maxBatches.length
     ? Number(maxBatches[0].slice('--max-batches='.length)) : 1;
   const pauseMs = pause.length ? Number(pause[0].slice('--pause-ms='.length)) : 1000;
@@ -180,5 +184,6 @@ if (require.main === module) main().catch((error) => {
 });
 
 module.exports = {
+  MANUAL_MAX_BATCH_LIMIT,
   parseArgs, runBatch, runBatches, createDiagnosticClient, failureReport,
 };

@@ -13,10 +13,10 @@ test('manual journal cleanup requires an explicit bounded cut and write consent'
     maxBatches: 1, pauseMs: 1000,
   });
   assert.deepEqual(parseArgs([
-    '--before-block=38808102', '--batch-limit=500', '--max-batches=20',
+    '--before-block=38808102', '--batch-limit=5000', '--max-batches=20',
     '--pause-ms=250', '--write',
   ]), {
-    beforeBlock: '38808102', retentionBlocks: 20000, batchLimit: 500,
+    beforeBlock: '38808102', retentionBlocks: 20000, batchLimit: 5000,
     maxBatches: 20, pauseMs: 250,
   });
   for (const args of [
@@ -26,7 +26,7 @@ test('manual journal cleanup requires an explicit bounded cut and write consent'
     ['--before-block=9223372036854775808', '--write'],
     ['--before-block=1', '--before-block=2', '--write'],
     ['--before-block=1', '--write', '--write'],
-    ['--before-block=1', '--batch-limit=1001', '--write'],
+    ['--before-block=1', '--batch-limit=5001', '--write'],
     ['--before-block=1', '--batch-limit=0', '--write'],
     ['--before-block=1', '--max-batches=0', '--write'],
     ['--before-block=1', '--max-batches=101', '--write'],

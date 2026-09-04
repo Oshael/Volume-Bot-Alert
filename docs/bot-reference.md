@@ -1677,10 +1677,11 @@ continua protegendo seu journal e bloqueia o avanço do floor enquanto houver
 pendencia anterior ao cutoff.
 
 Limpeza manual isolada, sem iniciar workers: `node src/utils/prune-robinhood-holder-journal.js
---before-block=BLOCO_EXCLUSIVO --batch-limit=1000 --max-batches=20 --pause-ms=1000
+--before-block=BLOCO_EXCLUSIVO --batch-limit=5000 --max-batches=100 --pause-ms=1000
 --write`. Exige corte auditado e confirmação explícita. Cada lote executa em uma
-transação independente e remove no máximo 1.000 buffers descartáveis e eventos
-aplicados combinados. Sem `--max-batches`, executa somente um lote. A execução
+transação independente e remove no máximo 5.000 buffers descartáveis e eventos
+aplicados combinados; o padrão conservador continua sendo 1.000. Sem
+`--max-batches`, executa somente um lote. A execução
 limitada aceita de 1 a 100 lotes e pausa de 100 a 60.000ms entre eles. Continua
 somente enquanto o resultado for `draining` e para em `blocked`, `pruned`, `idle`,
 erro, `SIGINT`, `SIGTERM` ou ao atingir o limite. O corte efetivo é o menor entre o bloco informado e
@@ -1705,6 +1706,9 @@ resultado `unknown`; não repetir automaticamente. Se um lote posterior falhar, 
 erro informa separadamente o agregado dos lotes anteriores já confirmados. Os nomes das etapas também
 aparecem em comentários SQL no `pg_stat_activity`. Essa instrumentação não altera
 os limites de lock/statement nem as proteções de exclusão.
+Não converter a tabela existente em particionada durante pressão de disco: a
+reescrita exige espaço temporário proporcional ao journal. Particionamento deve ser
+feito posteriormente por migração planejada, antes de a próxima retenção crescer.
 
 `monitored`, `recent`, `old-week`, pins, tokens manuais e o summary de
 `GET /api/robinhood/holders` consultam essa view em lote, sem RPC ou Blockscout por
