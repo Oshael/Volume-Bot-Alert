@@ -24,6 +24,8 @@ Este documento orienta a próxima execução e refina o [plano original](robinho
 
 O [bot-reference](bot-reference.md) continua descrevendo a operação existente. Atualizá-lo apenas quando cada alteração efetivamente mudar o contrato operacional. Não registrar este alvo como se já estivesse implantado. Preservar os mecanismos úteis do [backfill de holders](robinhood-holder-global-backfill-plan.md).
 
+O [baseline da Etapa 0](robinhood-realtime-architecture-stage-0-baseline.md) registra separadamente a fotografia operacional recebida do operador, suas limitações e os gates ainda não aprovados. Ele não substitui o estado operacional do `bot-reference`.
+
 ## 3. Estado observado no código
 
 | Componente | Base existente | Lacuna para o alvo |
