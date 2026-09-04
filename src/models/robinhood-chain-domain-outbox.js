@@ -37,6 +37,39 @@ function workRows(values, label, extra = () => ({})) {
 function createRobinhoodChainDomainOutboxRepository(options = {}) {
   const database = options.database || db;
 
+  async function claimReady(input = {}) {
+    const domain = domainOf(input.domain);
+    const owner = ownerOf(input.owner);
+    const limit = positiveInt(input.limit, 'limit');
+    const leaseMs = positiveInt(input.leaseMs, 'leaseMs');
+    const result = await database.query(
+      `WITH claimable AS (
+         SELECT chain, domain, block_hash, log_index
+           FROM robinhood_chain_domain_outbox
+          WHERE chain=$1 AND domain=$2 AND status='pending' AND next_attempt_at<=NOW()
+          ORDER BY block_number, transaction_index, log_index
+          LIMIT $3 FOR UPDATE SKIP LOCKED
+       ), leased AS (
+         UPDATE robinhood_chain_domain_outbox outbox
+            SET status='leased', lease_owner=$4,
+                lease_until=NOW() + ($5::bigint * INTERVAL '1 millisecond'),
+                attempt_count=outbox.attempt_count+1, updated_at=NOW()
+           FROM claimable
+          WHERE outbox.chain=claimable.chain AND outbox.domain=claimable.domain
+            AND outbox.block_hash=claimable.block_hash AND outbox.log_index=claimable.log_index
+         RETURNING outbox.*
+       )
+       SELECT leased.*, event.transaction_hash, event.address, event.topic0,
+              event.topics, event.data, block.block_timestamp
+         FROM leased
+         JOIN robinhood_chain_events event USING (chain, block_hash, log_index)
+         JOIN robinhood_chain_blocks block USING (chain, block_hash)
+        ORDER BY leased.block_number, leased.transaction_index, leased.log_index`,
+      [CHAIN, domain, limit, owner, leaseMs]
+    );
+    return result.rows;
+  }
+
   async function claimShadow(input = {}) {
     const domain = domainOf(input.domain);
     const owner = ownerOf(input.owner);
@@ -155,7 +188,7 @@ function createRobinhoodChainDomainOutboxRepository(options = {}) {
     return result.rowCount;
   }
 
-  return Object.freeze({ claimShadow, settle, reclaimExpiredLeases });
+  return Object.freeze({ claimReady, claimShadow, settle, reclaimExpiredLeases });
 }
 
 module.exports = { createRobinhoodChainDomainOutboxRepository };

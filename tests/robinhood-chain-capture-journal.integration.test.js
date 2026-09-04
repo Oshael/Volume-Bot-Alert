@@ -163,6 +163,16 @@ describe('Robinhood canonical chain capture journal', () => {
     }), { completed: 1, blocked: 0, retried: 0 });
   });
 
+  it('leases production discovery immediately without waiting for the legacy cursor', async () => {
+    await createRobinhoodChainCaptureJournal().commitBlock(capture());
+    const repository = createRobinhoodChainDomainOutboxRepository({ database: db });
+    const [claimed] = await repository.claimReady({
+      domain: 'discovery', owner: 'canonical-a', limit: 10, leaseMs: 60_000,
+    });
+    assert.equal(claimed.block_number, '100');
+    assert.equal(claimed.block_timestamp.toISOString(), OBSERVED_AT);
+  });
+
   it('reclaims an expired lease and blocks a retry that exhausts its attempts', async () => {
     await createRobinhoodChainCaptureJournal().commitBlock(capture());
     await db.query(

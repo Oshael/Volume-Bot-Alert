@@ -3257,6 +3257,11 @@ ligado ao runtime nesta etapa. Para ativá-lo, rode
 `robinhood-chain-domain-shadow-worker`, reage ao `NOTIFY` imediatamente e faz
 poll de continuidade a cada 1 segundo por padrão. O processo continua somente
 comparando e nunca escreve projeções nem publica eventos.
+O caminho de cutover de `discovery`, ainda desativado, reconstrói do journal a
+mesma evidência v2 de `robinhood_head_captures` consumida pelo processing atual.
+V2/V3/V4 são decodificados sem RPC; NOXA mantém apenas seus `eth_call` e
+`eth_getCode` de validação de estado. A captura é inserida antes do settlement
+idempotente da outbox, portanto crash entre as duas etapas gera retry seguro.
 
 ## 15. Wallet tracking multichain
 

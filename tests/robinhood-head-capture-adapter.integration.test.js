@@ -5,6 +5,9 @@ const { after, before, beforeEach, describe, it } = require('node:test');
 
 const db = require('../src/models/db');
 const {
+  createRobinhoodHeadCaptureRepository,
+} = require('../src/models/robinhood-head-capture');
+const {
   createRobinhoodHeadCaptureAdapter,
 } = require('../src/services/robinhood-head-capture-adapter');
 const stage103 = require('../src/utils/db-init-stage103');
@@ -99,6 +102,18 @@ describe('Robinhood head capture adapter integration', () => {
 
     const cursor = await adapter.loadCursor('market');
     assert.equal(cursor.next_block, '520');
+  });
+
+  it('appends canonical entries without advancing the legacy scanner cursor', async () => {
+    const headRepository = createRobinhoodHeadCaptureRepository({ database: db });
+    const source = buildEntry(0, { event: { kind: 'pool-created' } });
+    const result = await headRepository.appendCaptureEntries({ entries: [{
+      stream: 'discovery', log: source.log, ...source.capture,
+    }] });
+    assert.deepEqual(result, { insertedCaptures: 1, duplicateCaptures: 0 });
+    assert.equal(await createRobinhoodHeadCaptureAdapter({
+      baseRepository: baseRepositoryStub,
+    }).loadCursor('discovery'), null);
   });
 
   it('returns null before a stream cursor exists', async () => {

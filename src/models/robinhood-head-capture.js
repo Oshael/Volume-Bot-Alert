@@ -153,6 +153,28 @@ async function upsertCaptureCursor(client, cursor) {
 function createRobinhoodHeadCaptureRepository(options = {}) {
   const database = options.database || db;
 
+  async function appendCaptureEntries(input = {}) {
+    const entries = (Array.isArray(input.entries) ? input.entries : []).map(normalizeCaptureEntry);
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      let insertedCaptures = 0;
+      for (let index = 0; index < entries.length; index += CAPTURE_INSERT_BATCH_SIZE) {
+        const inserted = await insertCaptureBatch(
+          client, entries.slice(index, index + CAPTURE_INSERT_BATCH_SIZE)
+        );
+        insertedCaptures += inserted.rowCount;
+      }
+      await client.query('COMMIT');
+      return { insertedCaptures, duplicateCaptures: entries.length - insertedCaptures };
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch (_) {}
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async function appendCaptures(input = {}) {
     const cursor = normalizeCaptureCursor(input.cursor);
     const entries = (Array.isArray(input.entries) ? input.entries : []).map(normalizeCaptureEntry);
@@ -205,7 +227,7 @@ function createRobinhoodHeadCaptureRepository(options = {}) {
     };
   }
 
-  return Object.freeze({ appendCaptures, getCaptureCursor });
+  return Object.freeze({ appendCaptureEntries, appendCaptures, getCaptureCursor });
 }
 
 module.exports = { CURSOR_NOTIFY_CHANNEL, createRobinhoodHeadCaptureRepository };
