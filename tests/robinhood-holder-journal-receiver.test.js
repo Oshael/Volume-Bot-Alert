@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { Readable } = require('node:stream');
 const { MAX_BYTES, digest, namespace, validateFrame, describeJournal } = require('../src/services/robinhood-holder-journal-receiver');
-const { readFrame } = require('../src/utils/receive-robinhood-holder-journal');
+const { readFrame, readFrameLines } = require('../src/utils/receive-robinhood-holder-journal');
 const runId = '12345678-1234-1234-1234-123456789abc';
 const manifest = { version: 1, sourceIdentity: 'a'.repeat(64), schemaHash: 'b'.repeat(64), fromPage: 0, endPage: 1024, pages: 512 };
 const batch = () => ({ op: 'batch', runId, sourceIdentity: manifest.sourceIdentity,
@@ -35,6 +35,20 @@ test('interrupted input cannot produce a batch for insertion', async () => {
   const controller = new AbortController(); const input = new Readable({ read() {} });
   const result = readFrame(input, controller.signal); controller.abort();
   await assert.rejects(result, { name: 'AbortError' });
+});
+
+test('stream framing yields complete lines and rejects unterminated or oversized frames', async () => {
+  const signal = new AbortController().signal; const frames = [];
+  for await (const frame of readFrameLines(Readable.from([
+    `${JSON.stringify(batch())}\n${JSON.stringify({ op: 'status', runId })}`, '\n',
+  ]), signal)) frames.push(frame);
+  assert.deepEqual(frames, [batch(), { op: 'status', runId }]);
+  await assert.rejects(async () => {
+    for await (const frame of readFrameLines(Readable.from(['{}']), signal)) void frame;
+  }, /unterminated/);
+  await assert.rejects(async () => {
+    for await (const frame of readFrameLines(Readable.from([Buffer.alloc(MAX_BYTES + 1)]), signal)) void frame;
+  }, /exceeds/);
 });
 
 test('schema fingerprint ignores database collation order but detects changed checks', async () => {

@@ -1809,9 +1809,11 @@ diagnóstico isolado, sem alteração do caminho live; medições não provam ca
 nem a capacidade da transferência real para outro servidor.
 
 O receptor isolado `node src/utils/receive-robinhood-holder-journal.js
---database=holder_compaction [--write]` exige `HOLDER_JOURNAL_RECEIVER_DATABASE_URL`,
-não carrega `.env` e recebe exatamente um JSON completo por stdin (até 16 MiB,
-prazo de 30 s). Somente `init`/`batch` exigem `--write`; `status` é read-only.
+--database=holder_compaction [--write] [--stream]` exige
+`HOLDER_JOURNAL_RECEIVER_DATABASE_URL` e não carrega `.env`. Sem `--stream`, recebe
+exatamente um JSON completo por stdin (até 16 MiB, prazo de 30 s). Com `--stream`,
+mantém a sessão e recebe um JSON por linha, ainda com limite de 16 MiB por frame.
+Somente `init`/`batch` exigem `--write`; `status` é read-only.
 O CLI aceita apenas `holder_compaction` e recusa outra identidade de banco.
 Nenhuma operação do receptor acessa a VPS2 ou modifica tabelas fora de seu schema.
 
@@ -1842,6 +1844,24 @@ de completude e consistência da origem pertencem ao emissor/validação posteri
 Mesmo ao chegar a `endPage`, o receptor retorna `sourceConsistencyVerified:false`
 e `readyForSwap:false`: não autoriza retomar por CTID com origem alterada, trocar
 tabelas, apagar a cópia antiga ou liberar espaço na VPS2.
+
+O emissor `src/utils/transfer-robinhood-holder-journal.js` liga a VPS2 ao receptor
+fixo `root@159.195.17.104` por uma única sessão SSH comprimida. Exige URL explícita
+da origem, UUID novo, faixa inicial/final, pausa fixa de 100 ms e as confirmações
+`--write --allow-holder-lock --allow-remote-write`. Cada execução é limitada a
+32768 páginas (256 MiB com páginas de 8 KiB); não é o export completo. Mantém em
+SHARE lock o journal, cursor e tabelas de proteção, além do fence exclusivo de
+reorg, durante toda a leitura por CTID. Por isso todos os writers holder devem
+permanecer desligados; o summary, HEAD e processing podem continuar ativos.
+
+Antes da carga há 30 s de baseline e depois do commit da origem há 30 s de
+recuperação. Durante a carga, a saúde é reavaliada a cada aproximadamente 5 s com
+os mesmos limites da rodada de calibração; degradação interrompe sem retry. Um
+lote confirmado no destino permanece isolado mesmo se a origem ou SSH falhar.
+Retomada entre processos é recusada porque CTID só é estável enquanto os locks da
+execução original estão vivos: após qualquer interrupção, use outro UUID e uma
+faixa ainda não validada. O resultado `sourceConsistencyVerified:true` cobre
+somente a leitura ininterrupta dessa faixa sob lock; `readyForSwap` continua falso.
 
 `monitored`, `recent`, `old-week`, pins, tokens manuais e o summary de
 `GET /api/robinhood/holders` consultam essa view em lote, sem RPC ou Blockscout por
