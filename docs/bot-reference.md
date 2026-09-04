@@ -1815,8 +1815,10 @@ e `stale-live`. A rotação persiste entre ticks e reserva três lotes para live
 recente, dois para shadow recente, um para shadow antigo e um para catch-up live;
 se uma classe estiver vazia, sua vez é usada imediatamente por outra. Assim backlog
 live não bloqueia tokens novos e nenhum shadow antigo fica invisível ao scheduler.
-Dentro do tick, cada classe lê uma página limitada de tickets e reutiliza essa
-página entre aplicações, em vez de repetir a mesma seleção SQL para cada token.
+No início do tick, as quatro classes leem em paralelo uma página limitada de
+tickets e reutilizam essas páginas entre aplicações, em vez de repetir a mesma
+seleção SQL para cada token. Assim o tick faz exatamente quatro seleções hot e
+contabiliza a duração concorrente, não a soma das quatro consultas.
 As páginas são menores para `fresh-live` e `recent-shadow` (4 e 8) e maiores para
 as classes stale (32); isso preserva a preempção live, limita memória e reduz o
 custo de seleção sob backlog. Página parcial não é relida no mesmo tick; novos

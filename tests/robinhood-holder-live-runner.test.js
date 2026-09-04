@@ -5,6 +5,10 @@ const {
   createRobinhoodHolderLiveRunner,
 } = require('../src/services/robinhood-holder-live-runner');
 
+const HOT_CLASSES = [
+  'fresh-live', 'recent-shadow', 'stale-live', 'stale-shadow',
+];
+
 function harness(
   captureResult, applyResults = [], handoffResult = { status: 'idle' },
   publishHolderCounts = async () => 0, options = {}
@@ -20,8 +24,9 @@ function harness(
     listHotPendingTokenAddresses: async (input) => {
       if (options.hotTokensByClass) {
         calls.push(['list-hot-tokens', input]);
-        const tokenAddress = options.hotTokensByClass[input.priorityClass];
-        return tokenAddress ? [tokenAddress] : [];
+        const configured = options.hotTokensByClass[input.priorityClass];
+        if (Array.isArray(configured)) return configured;
+        return configured ? [configured] : [];
       }
       if (!options.hotTokenLists?.length) return [];
       calls.push(['list-hot-tokens', input]);
@@ -439,14 +444,14 @@ describe('Robinhood holder live runner', () => {
     assert.deepEqual(result.freshness, freshness);
   });
 
-  it('reuses a bounded hot selection page instead of querying once per token', async () => {
+  it('preloads bounded hot selection pages once per tick', async () => {
     const tokens = ['1', '2', '3'].map((digit) => `0x${digit.repeat(40)}`);
     const context = harness({ status: 'idle', transfers: 0 }, tokens.map(
       (tokenAddress) => ({
         status: 'applied', tokenAddress, appliedEvents: 1, attemptedEvents: 1,
       })
     ), { status: 'idle' }, async () => 0, {
-      hotTokenLists: [[...tokens]],
+      hotTokensByClass: { 'fresh-live': [...tokens] },
     });
 
     const result = await context.runner.applyOnce({
@@ -454,13 +459,18 @@ describe('Robinhood holder live runner', () => {
     });
 
     assert.equal(result.appliedEvents, 3);
-    assert.equal(result.timing.hotSelectionCalls, 1);
+    assert.equal(result.timing.hotSelectionCalls, 4);
     assert.deepEqual(context.calls.filter(([name]) => name === 'apply').map(
       ([, input]) => input.onlyTokenAddress
     ), tokens);
     assert.deepEqual(context.calls.filter(([name]) => name === 'list-hot-tokens').map(
       ([, input]) => ({ limit: input.limit, priorityClass: input.priorityClass })
-    ), [{ limit: 4, priorityClass: 'fresh-live' }]);
+    ), [
+      { limit: 4, priorityClass: 'fresh-live' },
+      { limit: 8, priorityClass: 'recent-shadow' },
+      { limit: 32, priorityClass: 'stale-live' },
+      { limit: 32, priorityClass: 'stale-shadow' },
+    ]);
   });
 
   it('reserves hot capacity for recent and stale shadows plus stale live catch-up', async () => {
@@ -494,12 +504,13 @@ describe('Robinhood holder live runner', () => {
     assert.deepEqual(context.calls.filter(([name]) => name === 'apply').map(
       ([, input]) => input.onlyTokenAddress
     ), expected);
-    assert.deepEqual(context.calls.filter(([name]) => name === 'list-hot-tokens').map(
-      ([, input]) => input.priorityClass
-    ), [
-      'fresh-live', 'fresh-live', 'fresh-live',
-      'recent-shadow', 'recent-shadow', 'stale-shadow', 'stale-live',
-    ]);
+    const selections = context.calls.filter(([name]) => name === 'list-hot-tokens');
+    assert.equal(selections.length, expected.length * 4);
+    for (let index = 0; index < expected.length; index += 1) {
+      assert.deepEqual(selections.slice(index * 4, (index + 1) * 4).map(
+        ([, input]) => input.priorityClass
+      ), HOT_CLASSES);
+    }
   });
 
   it('accounts for a transactional event batch against the apply budget', async () => {
