@@ -24,7 +24,7 @@ const stage194 = require('../src/utils/db-init-stage194');
 const stage195 = require('../src/utils/db-init-stage195');
 const stage103 = require('../src/utils/db-init-stage103');
 const v2 = require('../src/services/uniswap-v2-decoder');
-const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
+const { SCHEMA_GROUPS, __private: schemaChecks } = require('../src/utils/runtime-schema');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const PARENT = `0x${'1'.repeat(64)}`;
@@ -84,7 +84,7 @@ describe('Robinhood canonical chain capture journal', () => {
     await db.pool.end().catch(() => {});
   });
 
-  it('registers the complete journal contract in the runtime schema guard', () => {
+  it('registers the complete journal contract in the runtime schema guard', async () => {
     const group = SCHEMA_GROUPS.find(({ key }) => (
       key === 'stage191-robinhood-canonical-chain-journal'
     ));
@@ -97,6 +97,13 @@ describe('Robinhood canonical chain capture journal', () => {
       key === 'stage192-robinhood-complete-transaction-context'
     ));
     assert.equal(context.repair, 'node src/utils/db-init-stage192.js');
+    const constraint = await db.query(`SELECT conname, pg_get_constraintdef(oid) AS definition
+      FROM pg_constraint WHERE conrelid = 'public.robinhood_chain_transactions'::regclass
+        AND conname = 'rh_chain_transactions_context_check'`);
+    assert.deepEqual(schemaChecks.collectMissingConstraints(
+      context.tables.find(({ table }) => table === 'robinhood_chain_transactions'),
+      new Map(constraint.rows.map(({ conname, definition }) => [conname, definition]))
+    ), []);
     const outbox = SCHEMA_GROUPS.find(({ key }) => key === 'stage193-robinhood-domain-outbox');
     assert.equal(outbox.repair, 'node src/utils/db-init-stage193.js');
     const canary = SCHEMA_GROUPS.find(({ key }) => (

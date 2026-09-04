@@ -3237,7 +3237,10 @@ por `ROBINHOOD_CHAIN_CAPTURE_CONFIRMATIONS` (default 2).
 
 A Stage 192 completa o contexto de transação com `nonce`, `value_wei` e
 `capture_version`. Aplique `node src/utils/db-init-stage192.js` depois da Stage
-191. Capturas anteriores ficam explicitamente na versão 1; somente versões 2+
+191. O guard aceita a representação PostgreSQL `>= (0)::numeric` na constraint
+de contexto, exigindo o limite não negativo para `nonce` e `value_wei`.
+Não é necessário recriar uma constraint válida por diferença de representação.
+Capturas anteriores ficam explicitamente na versão 1; somente versões 2+
 podem alimentar signed-origin/FRESH e funding nativo. O processo exige
 `ROBINHOOD_CHAIN_CAPTURE_RPC_URL` em loopback e força throttle zero; ele não
 herda o endpoint público default de `ROBINHOOD_RPC_URL`.

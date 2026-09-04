@@ -5547,7 +5547,11 @@ const SCHEMA_GROUPS = [
       table: 'robinhood_chain_transactions',
       columns: ['nonce', 'value_wei'],
       constraints: [{
-        name: 'rh_chain_transactions_context_check', includes: ['nonce', 'value_wei', '>= 0'],
+        name: 'rh_chain_transactions_context_check', includes: ['nonce', 'value_wei'],
+        includesOneOf: [
+          ['nonce >= 0', 'nonce >= (0)::numeric'],
+          ['value_wei >= 0', 'value_wei >= (0)::numeric'],
+        ],
       }],
     }],
   },
