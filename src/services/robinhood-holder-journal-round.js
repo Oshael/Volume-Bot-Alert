@@ -8,6 +8,21 @@ const POLICY = Object.freeze({ baselineMs: 30000, loadMs: 60000, recoveryMs: 300
   sampleMs: 5000, pauseMs: 500, pages: 512, batches: 64, staleMs: 65000,
   highLagBlocks: 100, highLagMs: 15000 });
 
+function normalizePauseMs(value = POLICY.pauseMs) {
+  if (!Number.isSafeInteger(value) || value < 100 || value > 500) {
+    throw new Error('round pause-ms must be an integer between 100 and 500');
+  }
+  return value;
+}
+
+function normalizeRoundOptions(input) {
+  const options = normalizeOptions(input);
+  if (!options.measure || options.pages !== POLICY.pages || options.timeoutMs > 3000) {
+    throw new Error('round requires --measure, --pages=512 and timeout <= 3000ms');
+  }
+  return { ...options, pauseMs: normalizePauseMs(options.pauseMs) };
+}
+
 async function readHealth(client, database, schema = 'public') {
   if (!/^[a-z_][a-z0-9_]*$/.test(schema)) throw new Error('invalid schema');
   try {
@@ -112,8 +127,9 @@ function checkHealth(sample, previous) {
 }
 
 // Isolated diagnostic polling: no retries, durable cursor, writes or automatic ramp-up.
-async function runRound({ sample, measure, emit, signal, fromPage,
+async function runRound({ sample, measure, emit, signal, fromPage, pauseMs,
   now = () => performance.now(), sleep = (ms) => delay(ms, undefined, { signal }) }) {
+  const pause = normalizePauseMs(pauseMs);
   let previous; let lastSample = -Infinity; let batches = 0; let bytes = 0; let failure;
   async function observe(phase, enforce = true) {
     signal?.throwIfAborted();
@@ -147,7 +163,7 @@ async function runRound({ sample, measure, emit, signal, fromPage,
       const report = await measure(fromPage + batches * POLICY.pages, batchSignal);
       batches += 1; bytes += report.heapRangeBytes;
       emit({ phase: 'batch', batch: batches, report });
-      await sleep(Math.max(0, Math.min(POLICY.pauseMs, end - now())));
+      await sleep(Math.max(0, Math.min(pause, end - now())));
     }
   } catch (error) { failure = error; emit({ phase: 'stopped', reason: error.message }); }
   const loadElapsedMs = Math.round(now() - started);
@@ -157,14 +173,11 @@ async function runRound({ sample, measure, emit, signal, fromPage,
   }
   if (failure) throw failure;
   signal?.throwIfAborted();
-  return { mode: 'round', batches, heapRangeBytes: bytes, loadElapsedMs, resumable: false };
+  return { mode: 'round', batches, heapRangeBytes: bytes, loadElapsedMs, pauseMs: pause, resumable: false };
 }
 
 async function runSustainedPilot(pool, input, { signal, progress = () => {} } = {}) {
-  const options = normalizeOptions(input);
-  if (!options.measure || options.pages !== POLICY.pages || options.timeoutMs > 3000) {
-    throw new Error('round requires --measure, --pages=512 and timeout <= 3000ms');
-  }
+  const options = normalizeRoundOptions(input);
   const client = await pool.connect();
   let locked = false;
   try {
@@ -180,8 +193,8 @@ async function runSustainedPilot(pool, input, { signal, progress = () => {} } = 
     const plan = await runPilot(batchPool, { ...options, measure: false }, { signal });
     const lastPage = options.fromPage + POLICY.pages * POLICY.batches;
     if (lastPage * plan.identity.block_size > Number(plan.identity.heap_bytes)) throw new Error('round exceeds heap boundary');
-    progress({ phase: 'round_plan', policy: POLICY, plan });
-    return await runRound({ signal, fromPage: options.fromPage, emit: progress,
+    progress({ phase: 'round_plan', policy: { ...POLICY, pauseMs: options.pauseMs }, plan });
+    return await runRound({ signal, fromPage: options.fromPage, pauseMs: options.pauseMs, emit: progress,
       sample: () => readHealth(client, options.database),
       measure: async (fromPage, batchSignal) => {
         return runPilot(batchPool, { ...options, fromPage }, { signal: batchSignal, progress: (event) => {
@@ -200,4 +213,4 @@ async function runSustainedPilot(pool, input, { signal, progress = () => {} } = 
   }
 }
 
-module.exports = { POLICY, readHealth, checkHealth, runRound, runSustainedPilot };
+module.exports = { POLICY, normalizeRoundOptions, readHealth, checkHealth, runRound, runSustainedPilot };

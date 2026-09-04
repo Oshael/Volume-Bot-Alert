@@ -4,17 +4,18 @@ const { normalizeOptions, runPilot } = require('../services/robinhood-holder-jou
 
 function parseArgs(args) {
   const options = {}; const seen = new Set();
-  const keys = { database: 'database', 'from-page': 'fromPage', pages: 'pages', 'timeout-ms': 'timeoutMs' };
+  const keys = { database: 'database', 'from-page': 'fromPage', pages: 'pages', 'timeout-ms': 'timeoutMs', 'pause-ms': 'pauseMs' };
   for (const arg of args) {
-    const match = /^--(database|from-page|pages|timeout-ms)=(.+)$/.exec(arg);
+    const match = /^--(database|from-page|pages|timeout-ms|pause-ms)=(.+)$/.exec(arg);
     const key = arg === '--round' ? 'round' : arg === '--measure' ? 'measure' : keys[match?.[1]];
     if (!key || seen.has(key)) throw new Error('unknown or repeated pilot argument');
     seen.add(key);
     options[key] = ['measure', 'round'].includes(key) ? true : key === 'database' ? match[2] : Number(match[2]);
   }
-  if (options.round && (!options.measure || options.pages !== 512 || (options.timeoutMs || 3000) > 3000)) {
-    throw new Error('--round requires --measure --pages=512 and timeout <= 3000ms');
+  if (options.round) {
+    return require('../services/robinhood-holder-journal-round').normalizeRoundOptions(options);
   }
+  if (options.pauseMs !== undefined) throw new Error('--pause-ms requires --round');
   return normalizeOptions(options);
 }
 

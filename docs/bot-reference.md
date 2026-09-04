@@ -1774,7 +1774,13 @@ Para uma rodada sustentada e limitada, acrescente `--round --measure --pages=512
 e escolha `--from-page` com espaço para 32768 páginas até o fim do heap. O comando
 recusa outra instância do piloto durante toda a rodada, inclusive nas pausas.
 São 30 s de baseline, até 60 s de carga (máximo 64 lotes, 512 páginas cada),
-pausa de 500 ms entre lotes e 30 s de observação de recuperação. Não há aumento
+pausa padrão de 500 ms entre lotes e 30 s de observação de recuperação.
+`--pause-ms=100..500` aceita uma pausa inteira nesse intervalo, somente com
+`--round`; omitir preserva 500 ms. A pausa efetiva aparece em `round_plan.policy`
+e no relatório final. Reduzir a pausa não aumenta o teto de 64 lotes/256 MiB
+nem desativa monitoramento, timeout ou paradas; pode encurtar a fase de carga.
+Compare rodadas em faixas novas de páginas para evitar favorecer dados já em cache.
+Não há aumento
 automático de carga, retries, checkpoint durável ou retomada. Com blocos de 8 KiB,
 o teto de faixas do journal é 256 MiB; tabelas de controle não entram nesse teto.
 O prazo da carga cancela o lote em andamento; a saída aguarda cancelamento/rollback.

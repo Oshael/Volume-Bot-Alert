@@ -23,6 +23,16 @@ test('round remains opt-in and cannot raise batch size or timeout', () => {
   }
 });
 
+test('pause is round-only, defaults to 500ms and cannot disable throttling', () => {
+  const args = ['--database=test', '--round', '--measure', '--pages=512'];
+  assert.equal(parseArgs(args).pauseMs, 500);
+  for (const pause of [100, 250, 500]) assert.equal(parseArgs([...args, `--pause-ms=${pause}`]).pauseMs, pause);
+  for (const pause of [0, 99, 501, 100.5, -1, 'NaN']) {
+    assert.throws(() => parseArgs([...args, `--pause-ms=${pause}`]), /pause-ms must/);
+  }
+  assert.throws(() => parseArgs(['--database=test', '--pause-ms=100']), /requires --round/);
+});
+
 test('health fails closed on missing/stale telemetry, failures and resets', () => {
   const previous = checkHealth(snapshot());
   const mutations = [
@@ -102,12 +112,20 @@ function harness(overrides = {}) {
     emit: (event) => events.push(event), ...overrides } };
 }
 
-test('round bounds total bytes, uses disjoint pages and observes baseline/load/recovery', async () => {
-  const h = harness(); const result = await runRound(h.options);
+for (const pauseMs of [undefined, 100, 250]) test(`round keeps volume and monitoring bounds with pause ${pauseMs ?? 'default'}`, async () => {
+  const h = harness({ pauseMs }); const result = await runRound(h.options);
   assert.equal(result.batches, 64); assert.equal(result.heapRangeBytes, 256 * 1024 * 1024);
+  assert.equal(result.pauseMs, pauseMs ?? 500);
+  assert.equal(result.loadElapsedMs, 64 * (320 + (pauseMs ?? 500)));
   assert.equal(h.pages[63], h.pages[0] + 63 * 512);
   assert.deepEqual([...new Set(h.events.map((e) => e.phase))], ['baseline', 'batch', 'load', 'recovery']);
   assert.equal(h.events.filter((e) => e.phase === 'baseline').length, 7);
+});
+
+test('direct round calls reject an unsafe pause before monitoring or scanning', async () => {
+  const h = harness({ pauseMs: 0 });
+  await assert.rejects(runRound(h.options), /pause-ms must/);
+  assert.equal(h.events.length, 0); assert.equal(h.pages.length, 0);
 });
 
 test('load duration stops new batches even when fewer than 64 fit', async () => {
