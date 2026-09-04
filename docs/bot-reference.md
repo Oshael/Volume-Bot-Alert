@@ -1737,6 +1737,38 @@ processo sair, para que a operação não continue ocupando disco em background.
 Swap e descarte exigem ferramenta e
 confirmação separadas após auditoria exata do artefato preparado.
 
+Para calibrar leitura antes de uma nova exportação, use o piloto isolado
+`node src/utils/pilot-robinhood-holder-journal.js --database=volume_alert
+--from-page=0 --pages=128`. Ele exige `HOLDER_JOURNAL_PILOT_DATABASE_URL`
+explicitamente no ambiente, não carrega `.env` nem inicia workers. Por padrão
+executa apenas `EXPLAIN`, sem ler as linhas do journal. `--measure` autoriza
+exatamente um lote com `EXPLAIN ANALYZE`; não existe loop, exportação ou escrita.
+PostgreSQL 14+ é obrigatório. A role precisa de SELECT nas tabelas de controle e
+journal e permissão para configurar `temp_file_limit`; ausência falha fechado.
+
+O lote usa intervalo físico de `ctid`, com 128 páginas por default e máximo
+8192, verificando antes da execução que o plano contém somente um `Tid Range
+Scan` do journal, não paralelo. `--timeout-ms` aceita 100–10000 ms (default 3000);
+lock timeout é 500 ms, spill temporário é proibido e `work_mem` é 16 MB por operação.
+Cursores, proteções e amostra compartilham uma transação curta read-only com
+snapshot repetível. Um advisory lock exclusivo do piloto recusa uma segunda
+instância no mesmo banco, sem disputar locks dos workers live. O filtro preserva
+a janela de 20.000 blocos e pendências
+antigas protegidas. SIGINT/SIGTERM cancelam o backend identificado por PID,
+backend_start e application_name; timeout do servidor limita a consulta caso
+o cancelamento falhe. A sessão é liberada somente após tentativa de rollback.
+
+O relatório separa buffers do journal dos totais inclusivos da consulta e informa
+linhas examinadas/selecionadas e duração. Shared reads podem vir do cache do SO,
+não são medição direta de I/O físico. O limite de páginas cobre o heap do journal,
+não as tabelas de controle ou TOAST. EXPLAIN ANALYZE não mede serialização, SSH,
+compressão, escrita no destino ou vazão sustentável do sistema live. Não extrapole
+um lote quente/vazio para toda a tabela. Compare lag de ambos os streams HEAD,
+vazão do processing e latência do banco antes/depois de cada piloto autorizado.
+O cutoff é diagnóstico, e `ctid` não é checkpoint retomável: updates e reescritas
+podem mudá-lo. O piloto não congela writers, não valida a cópia remota existente e
+não autoriza avançar floor, substituir ou remover a tabela original.
+
 `monitored`, `recent`, `old-week`, pins, tokens manuais e o summary de
 `GET /api/robinhood/holders` consultam essa view em lote, sem RPC ou Blockscout por
 linha. Para `ledger_live`, freshness acompanha o avanço do cursor (`checked_at`);
