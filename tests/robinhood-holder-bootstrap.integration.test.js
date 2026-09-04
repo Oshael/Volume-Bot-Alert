@@ -68,7 +68,34 @@ describe('Robinhood holder bootstrap persistence', () => {
            next_block, safe_head, journal_floor_block, buffer_floor_block
          ) VALUES (201, 200, 90, 101)`
       );
-      const database = { query: client.query.bind(client) };
+      let inspectDiscovery = true;
+      let beforeAdmission = null;
+      const database = {
+        async query(sql, params) {
+          if (!inspectDiscovery) {
+            const result = await client.query(sql, params);
+            if (beforeAdmission) {
+              const change = beforeAdmission;
+              beforeAdmission = null;
+              await change();
+            }
+            return result;
+          }
+          inspectDiscovery = false;
+          // Keep the discovery statement's locks visible until we inspect them.
+          await client.query('BEGIN');
+          try {
+            const result = await client.query(sql, params);
+            const locks = await client.query(`SELECT mode FROM pg_locks
+              WHERE pid = pg_backend_pid()
+                AND relation = 'robinhood_holder_cursors'::regclass
+                AND mode <> 'AccessShareLock' AND granted`);
+            assert.deepEqual(locks.rows, [], 'catalog discovery must not lock the live cursor');
+            return result;
+          } finally { await client.query('ROLLBACK'); }
+        },
+        getClient: async () => ({ query: client.query.bind(client), release() {} }),
+      };
       const repository = createRobinhoodHolderBootstrapRepository({ database });
       assert.deepEqual(await repository.seedNewTokens({
         admittedAfter: '2026-08-10T00:00:00Z', limit: 10, maxInitialGapBlocks: 101,
@@ -118,7 +145,44 @@ describe('Robinhood holder bootstrap persistence', () => {
       );
       assert.deepEqual(cursor.rows.map((row) => ({
         version: Number(row.version), bufferFloorBlock: String(row.buffer_floor_block),
-      })), [{ version: 1, bufferFloorBlock: '101' }]);
+      })), [{ version: 0, bufferFloorBlock: '101' }]);
+
+      // Changes committed between discovery and admission must win over stale hints.
+      const late = ['1', '2', '3', '4', '5', '6'].map((digit) => `0x${digit.repeat(40)}`);
+      await client.query(`INSERT INTO token_catalog
+        SELECT 'robinhood', token, '2026-08-10T00:10:00Z'::timestamptz
+          FROM unnest($1::varchar[]) token`, [late]);
+      await client.query(`INSERT INTO robinhood_token_attributions
+        SELECT 'robinhood', token, 'rpc_direct', block
+          FROM unnest($1::varchar[], $2::bigint[]) AS input(token, block)`,
+        [late, [120, 110, 125, 126, 127, 128]]);
+      beforeAdmission = async () => {
+        await client.query(`UPDATE robinhood_holder_cursors
+          SET next_block = 221, safe_head = 220, journal_floor_block = 121`);
+        await client.query(`UPDATE robinhood_token_attributions SET source = 'blockscout'
+          WHERE token_address = $1`, [late[2]]);
+        await client.query(`INSERT INTO robinhood_holder_global_backfill_tokens
+          (run_id, token_address) VALUES ($1, $2)`, [run.rows[0].id, late[3]]);
+        await client.query(`INSERT INTO robinhood_holder_token_states
+          (token_address, ledger_status, holder_count, deployment_block, backfill_next_block)
+          VALUES ($1, 'live', 7, 127, 127)`, [late[4]]);
+      };
+      assert.deepEqual(await repository.seedNewTokens({
+        admittedAfter: '2026-08-10T00:00:00Z', limit: 10, maxInitialGapBlocks: 101,
+      }), [{
+        tokenAddress: late[0], deploymentBlock: '120',
+        backfillNextBlock: '120', ledgerStatus: 'backfilling',
+      }, {
+        tokenAddress: late[5], deploymentBlock: '128',
+        backfillNextBlock: '128', ledgerStatus: 'shadow',
+      }]);
+      assert.deepEqual((await client.query(`SELECT token_address, holder_count::text
+        FROM robinhood_holder_token_states WHERE token_address = ANY($1::varchar[])
+        ORDER BY token_address`, [late])).rows, [
+        { token_address: late[0], holder_count: '0' },
+        { token_address: late[4], holder_count: '7' },
+        { token_address: late[5], holder_count: '0' },
+      ]);
     } finally {
       client.release();
     }

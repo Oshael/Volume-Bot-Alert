@@ -1659,7 +1659,14 @@ o avanço atômico do cursor. A partir da Stage 141, ela consulta o tópico glob
 bufferiza também `Transfer` válidos de tokens ainda fora do catálogo. Quando um
 deployment novo está dentro de `max(journal_floor_block, buffer_floor_block)`, o
 bootstrap o admite direto em `shadow` e aplica o journal preservado, sem replay
-RPC. Essa admissão não invalida um range live em voo, pois o tópico global já
+RPC. A descoberta de candidatos do bootstrap é somente leitura e não trava o
+cursor durante a busca no catálogo. Havendo candidatos, uma transação curta
+trava o cursor com `SKIP LOCKED` e revalida apenas o lote selecionado: proveniência,
+janela de admissão, coortes globais, estado existente e floors atuais de cobertura.
+Cursor ocupado adia a admissão para o próximo tick, sem esperar sua liberação;
+lote vazio não inicia transação de escrita. O bootstrap continua usando os budgets
+e a cadência existentes; não cria outro polling nem altera o cursor.
+Essa admissão não invalida um range live em voo, pois o tópico global já
 inclui transfers de tokens ainda não admitidos. Cobertura incompleta continua
 fail-closed em `backfilling`; eventos antigos
 de tokens nunca admitidos são descartados pela retenção depois de 20.000 blocos.
