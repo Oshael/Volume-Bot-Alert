@@ -46,6 +46,16 @@ function withEnv(overrides, fn) {
 }
 
 describe('runtime worker groups config', () => {
+  it('bounds the chain capture V3 snapshot window', () => {
+    for (const [value, expected] of [
+      ['', 32], ['invalid', 32], ['0', 1], ['4', 4], ['999', 256],
+    ]) {
+      withEnv({ ROBINHOOD_CHAIN_CAPTURE_V3_SNAPSHOT_WINDOW_BLOCKS: value }, (config) => {
+        assert.equal(config.robinhoodChainCaptureWorker.v3SnapshotWindowBlocks, expected);
+      });
+    }
+  });
+
   it('accepts larger processing claims while preserving defaults and an upper bound', () => {
     for (const [value, expected] of [['', 200], ['2000', 2000], ['8000', 8000], ['99999', 8000]]) {
       withEnv({ ROBINHOOD_PROCESSING_BATCH_SIZE: value }, (config) => {

@@ -84,7 +84,7 @@ test('worker captures sequential blocks without eth_getLogs', async () => {
   });
   await worker.captureOnce();
   assert.deepEqual(commits.map((capture) => capture.block.number), [100n, 101n]);
-  assert.deepEqual(snapshotCalls, [[100n, false], [101n, true]]);
+  assert.deepEqual(snapshotCalls, [[100n, true], [101n, true]]);
   assert.equal(methods.includes('eth_getLogs'), false);
   const status = worker.getStatus();
   assert.deepEqual(
@@ -92,6 +92,40 @@ test('worker captures sequential blocks without eth_getLogs', async () => {
       status.transactions, status.events],
     ['101', '102', 0, 2, 2, 2]
   );
+});
+
+test('snapshot window skips old catch-up and covers its inclusive boundary across drains', async () => {
+  const commits = []; const snapshotCalls = [];
+  const rpcClient = { request: async (method, params) => {
+    if (method === 'eth_blockNumber') return '0x67';
+    const sample = fixture(Number(BigInt(params[0])));
+    return method === 'eth_getBlockByNumber' ? sample.block : sample.receipts;
+  } };
+  const journal = {
+    getCursor: async () => ({ next_block: String(100 + commits.length) }),
+    commitBlock: async (capture) => {
+      commits.push(capture);
+      return { transactions: 1, events: 1, v3Snapshots: capture.v3Snapshots.length };
+    },
+  };
+  const snapshot = { logIndex: '0', tokenBalanceRaw: '123', quoteBalanceRaw: '456' };
+  const v3Snapshotter = { captureBlock: async (capture, { readBalances }) => {
+    snapshotCalls.push([capture.block.number, readBalances]);
+    return { snapshots: readBalances ? [snapshot] : [], pools: 1,
+      missedPools: 0, skippedPools: readBalances ? 0 : 1 };
+  } };
+  const worker = createRobinhoodChainCaptureWorker({ rpcClient, journal, v3Snapshotter }, {
+    maxBlocksPerDrain: 2, v3SnapshotWindowBlocks: 3,
+  });
+  await worker.captureOnce();
+  await worker.captureOnce();
+  assert.deepEqual(snapshotCalls, [[100n, false], [101n, true], [102n, true], [103n, true]]);
+  assert.deepEqual(commits.map((capture) => capture.v3Snapshots), [[], [snapshot], [snapshot], [snapshot]]);
+  const status = worker.getStatus();
+  assert.equal(status.v3SnapshotWindowBlocks, 3);
+  assert.equal(status.v3SkippedPools, 1);
+  assert.equal(status.v3Snapshots, 3);
+  assert.equal(status.nextBlock, '104');
 });
 
 test('newHeads subscription wakes capture immediately', async () => {

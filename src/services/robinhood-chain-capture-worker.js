@@ -170,10 +170,12 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
   const now = deps.now || (() => new Date());
   const schedule = deps.schedule || setTimeout; const cancel = deps.cancel || clearTimeout;
   const topics = new Set(options.topics || CAPTURE_TOPICS);
+  const v3SnapshotWindowBlocks = BigInt(options.v3SnapshotWindowBlocks ?? 32);
   const status = { running: false, mode: 'shadow_receipts', lastResult: null, lastError: null,
     nodeHead: null, nextBlock: null, lagBlocks: null, lastHeadObservedAt: null,
     lastTiming: null, blocks: 0, transactions: 0, events: 0,
-    v3Snapshots: 0, v3MissedPools: 0, v3SkippedPools: 0 };
+    v3Snapshots: 0, v3MissedPools: 0, v3SkippedPools: 0,
+    v3SnapshotWindowBlocks: Number(v3SnapshotWindowBlocks) };
   let timer = null; let inFlight = null; let requested = false;
   const subscription = createHeadSubscription(options.wsUrl, () => {
     status.lastHeadObservedAt = now().toISOString(); void kick();
@@ -202,7 +204,8 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
       const capture = await readReceiptBlock(deps.rpcClient, nextBlock, { topics });
       const receiptsAvailableAt = now();
       const v3State = await deps.v3Snapshotter.captureBlock(capture, {
-        readBalances: nextBlock === nodeHead,
+        // Cover intervening live blocks too; old catch-up only updates pool tracking.
+        readBalances: nodeHead - nextBlock < v3SnapshotWindowBlocks,
       });
       const snapshotsAvailableAt = now();
       const finalizedHead = nodeHead > BigInt(options.confirmations || 0)

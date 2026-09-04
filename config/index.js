@@ -1601,6 +1601,9 @@ module.exports = {
     maxBlocksPerDrain: parseIntegerInRange(
       process.env.ROBINHOOD_CHAIN_CAPTURE_MAX_BLOCKS_PER_DRAIN, 100, 1, 2000
     ),
+    v3SnapshotWindowBlocks: parseIntegerInRange(
+      process.env.ROBINHOOD_CHAIN_CAPTURE_V3_SNAPSHOT_WINDOW_BLOCKS, 32, 1, 256
+    ),
     rpcTimeoutMs: parseIntegerInRange(
       process.env.ROBINHOOD_CHAIN_CAPTURE_RPC_TIMEOUT_MS, 2000, 1000, 15_000
     ),
