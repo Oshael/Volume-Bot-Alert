@@ -12,7 +12,9 @@ function harness(options = {}) {
       calls.push({ sql, params });
       if (sql.includes('to_regclass')) return { rows: [{ target: options.target || null }] };
       if (sql.includes('holder-compact:leases')) {
-        return { rows: (options.activeLeases || []).map((lease_key) => ({ lease_key })) };
+        return { rows: (options.activeLeases || [])
+          .filter((lease_key) => lease_key !== params[1])
+          .map((lease_key) => ({ lease_key })) };
       }
       if (sql.includes('SELECT next_block')) {
         return { rowCount: 1, rows: [{ next_block: '100000', journal_floor_block: '1' }] };
@@ -89,6 +91,16 @@ describe('Robinhood holder journal compaction prepare', () => {
       database: context.database, freeBytes: () => 100n * 1024n ** 3n,
     }), /active holder leases/);
     assert.equal(context.calls.some(({ sql }) => sql.includes('INSERT INTO')), false);
+  });
+
+  it('allows the read-only holder summary lease to remain active', async () => {
+    const context = harness({ activeLeases: ['robinhood-holder-summary-worker'] });
+    const result = await runPrepare({
+      minFreeGiB: 60, archiveRecoveryAcknowledged: true,
+    }, {
+      database: context.database, freeBytes: () => 100n * 1024n ** 3n,
+    });
+    assert.equal(result.status, 'prepared');
   });
 
   it('rolls back the entire prepare when validation diverges', async () => {

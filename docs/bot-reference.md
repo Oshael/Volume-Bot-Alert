@@ -1713,9 +1713,11 @@ Para compactação física offline, mantenha todo o grupo `robinhood-holders` pa
 e execute
 `node src/utils/prepare-robinhood-holder-journal-compaction.js --prepare --write
 --allow-archive-recovery`.
-O prepare exige no mínimo 60 GiB livres, recusa qualquer lease holder
-ativa e mantém numa tabela nova a janela recente de 20.000 blocos e pendências
-antigas de estados não `drifted` ou campanhas globais ativas. Eventos antigos já
+O prepare exige no mínimo 60 GiB livres e recusa qualquer lease holder que possa
+alterar o ledger. A lease `robinhood-holder-summary-worker` pode permanecer ativa:
+ela escreve somente projeções de resumo/snapshot e não toca no journal, balances,
+token states ou cursores. A tabela nova mantém a janela recente de 20.000 blocos e
+pendências antigas de estados não `drifted` ou campanhas globais ativas. Eventos antigos já
 aplicados são descartados porque seus saldos atuais estão materializados; rollback
 ou reparo anterior ao cutoff exige temporariamente o archive externo, reconhecido
 pela flag obrigatória. Mantenha o archive disponível enquanto houver backfill ou

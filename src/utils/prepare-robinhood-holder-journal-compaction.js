@@ -8,6 +8,7 @@ const REORG_FENCE_LOCK_ID = '8241992116082026';
 const RETENTION_BLOCKS = 20_000n;
 const DEFAULT_MIN_FREE_GIB = 60;
 const HOLDER_LEASE_PATTERN = 'robinhood-holder-%';
+const NON_BLOCKING_HOLDER_LEASE = 'robinhood-holder-summary-worker';
 
 const PROTECTED_CTE = `protected_tokens AS MATERIALIZED (
   SELECT token_address
@@ -117,8 +118,9 @@ function createInterruptController(database, progress = () => {}) {
 async function activeHolderLeases(client) {
   const result = await client.query(
     `/* holder-compact:leases */ SELECT lease_key FROM worker_leases
-      WHERE lease_key LIKE $1 AND lease_until > NOW() ORDER BY lease_key`,
-    [HOLDER_LEASE_PATTERN]
+      WHERE lease_key LIKE $1 AND lease_key <> $2
+        AND lease_until > NOW() ORDER BY lease_key`,
+    [HOLDER_LEASE_PATTERN, NON_BLOCKING_HOLDER_LEASE]
   );
   return result.rows.map((row) => row.lease_key);
 }
