@@ -91,7 +91,8 @@ test('standalone canonical head process validates RPC and owns a dedicated lease
   let definition; let validated = false; let started = false; let closed = false;
   const rpcClient = {};
   const worker = {
-    start: async () => { started = true; }, stop: async () => {}, getStatus: () => ({}),
+    start: async () => { started = true; }, stop: async () => {},
+    getStatus: () => ({ running: true, runtime: { rpcGuard: { forbiddenAttempts: 0 } } }),
   };
   const runtime = await main({
     options: {
@@ -107,8 +108,32 @@ test('standalone canonical head process validates RPC and owns a dedicated lease
     close: async () => { closed = true; },
   });
   assert.equal(definition.key, LEASE_KEY);
+  assert.deepEqual(definition.metadataProvider(), {
+    running: true, canonicalRuntime: { rpcGuard: { forbiddenAttempts: 0 } },
+  });
   await definition.start();
   assert.equal(validated, true); assert.equal(started, true);
   await runtime.shutdown();
   assert.equal(closed, true);
+});
+
+test('standalone canonical head process reports startup failures before retry', async () => {
+  let definition; const errors = [];
+  const runtime = await main({
+    options: {
+      enabled: true, rpcUrl: 'http://127.0.0.1:8547',
+      leaseHeartbeatMs: 30_000, leaseTtlMs: 120_000,
+    },
+    rpcClientFactory: () => ({}),
+    validateChainIds: async () => { throw new Error('local RPC unavailable'); },
+    workerFactory: () => ({ stop: async () => {}, getStatus: () => ({}) }),
+    leaseManagerFactory: () => ({
+      start: (value) => { definition = value; }, stop: async () => {}, halt: async () => {},
+    }),
+    logger: { error: (...args) => errors.push(args.join(' ')) },
+    close: async () => {},
+  });
+  await assert.rejects(definition.start(), /local RPC unavailable/);
+  assert.match(errors[0], /Startup failed: local RPC unavailable/);
+  await runtime.shutdown();
 });

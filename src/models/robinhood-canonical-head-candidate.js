@@ -45,6 +45,13 @@ function optionalBlock(value, label) {
   return block;
 }
 
+function optionalTimestamp(value, label) {
+  if (value == null || value === '') return null;
+  const timestamp = new Date(value);
+  if (!Number.isFinite(timestamp.getTime())) throw new Error(`${label} must be a valid timestamp`);
+  return timestamp.toISOString();
+}
+
 function createRobinhoodCanonicalHeadCandidateRepository(options = {}) {
   const database = options.database || db;
 
@@ -94,6 +101,7 @@ function createRobinhoodCanonicalHeadCandidateRepository(options = {}) {
   async function getParitySummary(input = {}) {
     const fromBlock = optionalBlock(input.fromBlock, 'fromBlock');
     const toBlock = optionalBlock(input.toBlock, 'toBlock');
+    const capturedAfter = optionalTimestamp(input.capturedAfter, 'capturedAfter');
     const result = await database.query(
       `SELECT candidate.stream, COUNT(*)::int AS candidates,
               COUNT(*) FILTER (WHERE ${MATURE})::int AS mature_candidates,
@@ -116,7 +124,9 @@ function createRobinhoodCanonicalHeadCandidateRepository(options = {}) {
         WHERE candidate.chain=$1
           AND ($2::bigint IS NULL OR candidate.block_number >= $2)
           AND ($3::bigint IS NULL OR candidate.block_number <= $3)
-        GROUP BY candidate.stream ORDER BY candidate.stream`, [CHAIN, fromBlock, toBlock]
+          AND ($4::timestamptz IS NULL OR candidate.captured_at >= $4)
+        GROUP BY candidate.stream ORDER BY candidate.stream`,
+      [CHAIN, fromBlock, toBlock, capturedAfter]
     );
     return result.rows;
   }

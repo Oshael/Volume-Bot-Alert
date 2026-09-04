@@ -136,6 +136,13 @@ describe('Robinhood canonical chain capture journal', () => {
       first_block: '100', last_block: '100',
     }]);
     await db.query(
+      `UPDATE robinhood_canonical_head_candidates SET captured_at='2026-09-04T01:00:00Z'
+        WHERE chain='robinhood' AND transaction_hash=$1 AND log_index=0`, [TX]
+    );
+    assert.deepEqual(await candidates.getParitySummary({
+      fromBlock: 100, toBlock: 100, capturedAfter: '2026-09-04T01:00:01Z',
+    }), []);
+    await db.query(
       `UPDATE robinhood_head_captures SET evidence=$1::jsonb
         WHERE chain='robinhood' AND transaction_hash=$2 AND log_index=0`,
       [JSON.stringify({ source: 'legacy' }), TX]

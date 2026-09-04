@@ -13,6 +13,7 @@ const LEASE_KEY = 'robinhood-canonical-head-worker';
 
 async function main(deps = {}) {
   const options = deps.options || config.robinhoodCanonicalHeadWorker;
+  const logger = deps.logger || console;
   if (!options.enabled) throw new Error('ROBINHOOD_CANONICAL_HEAD_ENABLED must be true');
   const rpcClient = (deps.rpcClientFactory || createRobinhoodRpcClient)(
     deps.rpcOptions || captureRpcOptions(options)
@@ -34,10 +35,19 @@ async function main(deps = {}) {
   leases.start({
     key: LEASE_KEY, label: 'Robinhood canonical head',
     metadata: { process: 'robinhood-canonical-head', mode: 'canonical_canary' },
-    metadataProvider: worker.getStatus,
+    metadataProvider: () => {
+      const status = worker.getStatus();
+      const { runtime, ...metadata } = status;
+      return { ...metadata, canonicalRuntime: runtime };
+    },
     start: async () => {
-      await (deps.validateChainIds || validateRobinhoodProviderChainIds)(rpcClient);
-      await worker.start({ onFatal: (error) => leases.halt(LEASE_KEY, error) });
+      try {
+        await (deps.validateChainIds || validateRobinhoodProviderChainIds)(rpcClient);
+        await worker.start({ onFatal: (error) => leases.halt(LEASE_KEY, error) });
+      } catch (error) {
+        logger.error('[RobinhoodCanonicalHeadProcess] Startup failed:', error.message);
+        throw error;
+      }
     },
   });
   process.once('SIGINT', () => { void shutdown(); });

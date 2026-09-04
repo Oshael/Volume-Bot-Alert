@@ -375,9 +375,11 @@ que 500 linhas.
 - processo canônico opt-in com `LISTEN/NOTIFY`, continuidade por polling, lease e
   fail-closed (3G concluída, desativado por padrão);
 - sink imutável de evidência e auditoria de paridade independente do writer legado
-  (3H concluída; Stage 194 ainda precisa ser aplicada na VPS);
+  (3H concluída; Stage 194 aplicada na VPS);
 - gate executável de preflight/canário que distingue tail aguardando o legado de
   gap maduro e bloqueia divergência/RPC proibido (3I concluída);
+- paridade isolada por sessão, limite de backlog no preflight, saída operacional
+  compacta e falha de startup observável (3J concluída);
 - preservação da evidência e idempotência atuais;
 - comparação com `robinhood_head_captures` existente;
 - cutover dos dois pollers `eth_getLogs` do head.
