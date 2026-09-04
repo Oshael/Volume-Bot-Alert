@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const fixture = require('../data/fixtures/robinhood-uniswap-v2.json');
+const { buildDiscoveryEvidence } = require('../src/services/robinhood-head-evidence');
 const {
   ROBINHOOD_USDG,
   ROBINHOOD_V2_FACTORY,
@@ -101,7 +102,7 @@ describe('Robinhood Uniswap v2 decoder', () => {
     const discovery = tracker.processLog(fixture.pairCreated);
     const swap = tracker.processLog(fixture.swap);
 
-    assert.equal(tracker.getPair(fixture.expected.pair), discovery);
+    assert.deepEqual(tracker.getPair(fixture.expected.pair), discovery);
     assert.equal(tracker.getTrackedPairs().length, 1);
     assert.equal(swap.kind, 'swap');
     assert.equal(swap.accepted, true);
@@ -114,14 +115,20 @@ describe('Robinhood Uniswap v2 decoder', () => {
     assert.equal(swap.marketKey, `robinhood:uniswap-v2:${fixture.expected.pair}`);
   });
 
-  it('attaches the latest post-swap Sync reserves to the following Swap event', () => {
+  it('updates Sync reserves for swaps without mutating discovery evidence', () => {
     const tracker = createUniswapV2Tracker();
-    tracker.processLog(fixture.pairCreated);
+    const discovery = tracker.processLog(fixture.pairCreated);
+    const { evidence } = buildDiscoveryEvidence({ event: discovery });
+    const originalEvidence = JSON.stringify(evidence);
     const sync = tracker.processLog(fixture.sync);
     const swap = tracker.processLog(fixture.swap);
 
     assert.equal(swap.quoteReserveRaw, sync.quoteReserveRaw);
     assert.equal(swap.tokenReserveRaw, sync.tokenReserveRaw);
+    assert.equal(tracker.getPair(fixture.expected.pair).quoteReserveRaw, sync.quoteReserveRaw);
+    assert.equal(tracker.getPair(fixture.expected.pair).tokenReserveRaw, sync.tokenReserveRaw);
+    assert.equal(JSON.stringify(evidence), originalEvidence);
+    assert.deepEqual(discovery, decodePairCreated(fixture.pairCreated));
   });
 
   it('handles a sell when the quote is token1', () => {

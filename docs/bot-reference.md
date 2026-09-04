@@ -3305,7 +3305,10 @@ Na evidência market, `quoteUsd.priceUsd` e
 mudar entre os dois writers do canário. Diferença somente nesses valores aparece
 como `volatile_drift` e não bloqueia; source/status/block tag, metadata estável,
 aceitação/rejeição e toda evidência de protocolo continuam exigindo igualdade.
-Discovery permanece byte-exact. Essa regra preserva o caminho live compatível
+Discovery permanece byte-exact. O tracker V2 mantém o estado mutável de reservas
+separado do evento `PairCreated`: `Sync` atualiza os saldos usados por swaps sem
+alterar a evidência de criação, mesmo quando discovery e market são persistidos
+juntos. Essa regra preserva o caminho live compatível
 com node podado e não reintroduz leitura histórica ou `eth_getLogs`.
 Para sustentar a taxa de blocos da chain, o consumidor canônico reclama até 16
 frontiers prontos por rodada (`ROBINHOOD_CANONICAL_HEAD_BATCH_BLOCKS`, limite 64),

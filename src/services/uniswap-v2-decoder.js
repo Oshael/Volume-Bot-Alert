@@ -208,7 +208,8 @@ function createUniswapV2Tracker(options = {}) {
     if (emitter === factoryAddress) {
       if (topic0 !== TOPICS.pairCreated) return { kind: 'ignored', reason: 'unsupported_factory_event' };
       const event = decodePairCreated(log, { ...options, factoryAddress });
-      if (event.tracked) pairs.set(event.pairAddress, event);
+      // Sync mutates tracker reserves, never the emitted PairCreated evidence.
+      if (event.tracked) pairs.set(event.pairAddress, { ...event });
       return event;
     }
     const pair = pairs.get(emitter);
