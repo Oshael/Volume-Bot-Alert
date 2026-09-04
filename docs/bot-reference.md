@@ -3542,6 +3542,10 @@ do lote. Ajuste somente para diagnóstico com
 progresso e erros consecutivos; o health registry acompanha essa lease como
 componente live opcional. No canário, o gate também exige que o heartbeat exponha
 o `rpcGuard`; telemetria ausente falha fechado.
+O lag maduro da outbox é medido do primeiro trabalho já coberto pelo legado até
+o frontier efetivamente capturado, e não até o head legado. Assim o shadow que
+acompanha uma captura ainda em catch-up não reporta como backlog os blocos que o
+journal canônico ainda nem capturou.
 Na evidência market, `quoteUsd.priceUsd` e
 `tokenMetadata.totalSupplyRaw` são snapshots live `latest` com cache e podem
 mudar entre os dois writers do canário. Diferença somente nesses valores aparece

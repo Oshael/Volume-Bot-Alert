@@ -299,7 +299,7 @@ describe('Robinhood canonical chain capture journal', () => {
     }), { completed: 1, blocked: 0, retried: 0 });
   });
 
-  it('counts outbox lag only after the legacy frontier makes work mature', async () => {
+  it('measures mature outbox lag against captured work rather than the legacy lead', async () => {
     await createRobinhoodChainCaptureJournal().commitBlock(capture());
     await db.query(
       `INSERT INTO robinhood_head_capture_cursors(chain, stream, next_block)
@@ -316,6 +316,11 @@ describe('Robinhood canonical chain capture journal', () => {
       `UPDATE robinhood_head_capture_cursors SET next_block=102
         WHERE chain='robinhood' AND stream='discovery'`
     );
+    assert.equal((await audit.inspect({ phase: 'preflight' })).queue.mature_lag_blocks, '0');
+    const quiet = capture(101, NEXT_HASH, HASH);
+    quiet.transactions[0].hash = NEXT_TX;
+    quiet.events = [];
+    await createRobinhoodChainCaptureJournal().commitBlock(quiet);
     assert.equal((await audit.inspect({ phase: 'preflight' })).queue.mature_lag_blocks, '1');
   });
 
