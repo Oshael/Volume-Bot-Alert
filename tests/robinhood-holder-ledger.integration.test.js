@@ -9,6 +9,7 @@ const {
 const {
   createRobinhoodHolderJournalRetention,
 } = require('../src/models/robinhood-holder-journal-retention');
+const { runBatch } = require('../src/utils/prune-robinhood-holder-journal');
 
 const HASH_A = `0x${'1'.repeat(64)}`;
 const HASH_B = `0x${'2'.repeat(64)}`;
@@ -795,6 +796,14 @@ describe('Robinhood holder ledger persistence', () => {
              NULL, NULL, NULL, NULL, NULL, false, NULL)`,
         [HASH_A, HASH_C, HASH_B, TOKEN, ZERO_ADDRESS, BOB, ALICE, HASH_E, TOKEN_5]
       );
+      assert.deepEqual(await runBatch(client, { beforeBlock: '150', batchLimit: 1 }), {
+        status: 'blocked', reason: 'pending_event_before_cutoff', deletedEvents: 0,
+        discardedBufferedEvents: 0, totalDeleted: 0,
+        cutoffBlock: '150', journalFloorBlock: '100',
+      });
+      assert.equal((await client.query(
+        'SELECT COUNT(*)::int AS count FROM robinhood_holder_transfer_journal'
+      )).rows[0].count, 4);
       assert.deepEqual(await retention.pruneOnce({ batchLimit: 1 }), {
         status: 'blocked', reason: 'pending_event_before_cutoff', deletedEvents: 0,
         discardedBufferedEvents: 1,
@@ -827,6 +836,63 @@ describe('Robinhood holder ledger persistence', () => {
         journalFloorBlock: String(row.journal_floor_block),
         journalCount: Number(row.journal_count),
       })), [{ journalFloorBlock: '150', journalCount: 0 }]);
+
+      await client.query(`UPDATE robinhood_holder_cursors SET next_block = 20202,
+        safe_head = 20202, checkpoint_block = 20201`);
+      await client.query(
+        `INSERT INTO robinhood_holder_transfer_journal (
+           block_number, block_hash, transaction_hash, transaction_index,
+           log_index, token_address, from_wallet, to_wallet, amount_raw
+         ) VALUES (200, $1, $1, 0, 0, $3, $5, $6, 1),
+                  (200, $1, $2, 0, 1, $3, $5, $6, 1),
+                  (201, $1, $2, 0, 2, $4, $5, $6, 1)`,
+        [HASH_A, HASH_C, TOKEN_UNTRACKED, TOKEN, ZERO_ADDRESS, BOB]
+      );
+      await client.query(
+        `INSERT INTO robinhood_holder_global_backfill_runs (
+           id, catalog_cutoff, barrier_block, barrier_checkpoint_block,
+           barrier_checkpoint_hash, barrier_attached_at
+         ) VALUES (123456789, NOW(), 199, 198, $1, NOW())`, [HASH_A]
+      );
+      await client.query(`INSERT INTO robinhood_holder_global_backfill_tokens
+        (run_id, token_address) VALUES (123456789, $1)`, [TOKEN_UNTRACKED]);
+      const campaign = await runBatch(client, { beforeBlock: '201', batchLimit: 1 });
+      assert.equal(campaign.status, 'blocked');
+      assert.equal(campaign.totalDeleted, 0);
+      await client.query(`UPDATE robinhood_holder_global_backfill_runs
+        SET status = 'completed', completed_at = NOW() WHERE id = 123456789`);
+      await assert.rejects(runBatch({
+        async query(sql, params) {
+          const result = await client.query(sql, params);
+          if (sql.includes('DELETE FROM robinhood_holder_transfer_journal')) {
+            throw new Error('injected failure after deletion');
+          }
+          return result;
+        },
+      }, { beforeBlock: '201', batchLimit: 1 }), /injected failure/);
+      assert.equal((await client.query(
+        'SELECT COUNT(*)::int AS count FROM robinhood_holder_transfer_journal'
+      )).rows[0].count, 3);
+      const boundedFirst = await runBatch(client, { beforeBlock: '201', batchLimit: 1 });
+      assert.equal(boundedFirst.status, 'draining');
+      assert.equal(boundedFirst.totalDeleted, 1);
+      assert.equal(boundedFirst.journalFloorBlock, '150');
+      const boundedLast = await runBatch(client, { beforeBlock: '201', batchLimit: 1 });
+      assert.equal(boundedLast.status, 'pruned');
+      assert.equal(boundedLast.totalDeleted, 1);
+      assert.equal(boundedLast.cutoffBlock, '201');
+      assert.equal(boundedLast.journalFloorBlock, '201');
+      assert.deepEqual((await client.query(
+        'SELECT block_number::text, applied FROM robinhood_holder_transfer_journal'
+      )).rows, [{ block_number: '201', applied: false }]);
+      const retry = await runBatch(client, { beforeBlock: '201', batchLimit: 1 });
+      assert.equal(retry.status, 'idle');
+      assert.equal(retry.totalDeleted, 0);
+      const recent = await runBatch(client, { beforeBlock: '999999', batchLimit: 1 });
+      assert.equal(recent.status, 'blocked');
+      assert.equal(recent.cutoffBlock, '202'); // Explicit cutoff cannot shorten the retention window.
+      assert.equal(recent.totalDeleted, 0);
+      assert.equal((await client.query('SHOW lock_timeout')).rows[0].lock_timeout, '0');
       await assert.rejects(
         repository.rewindOrphanedRange({
           nextBlock: '149', safeHead: '20149', expectedVersion: 2,

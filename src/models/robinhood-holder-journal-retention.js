@@ -13,7 +13,14 @@ function boundedInteger(value, fallback, min, max, label) {
 }
 
 function normalizeOptions(options = {}) {
+  const beforeBlock = options.beforeBlock == null ? null : String(options.beforeBlock);
+  if (beforeBlock !== null && (!/^(0|[1-9][0-9]*)$/.test(beforeBlock)
+    || BigInt(beforeBlock) > 9223372036854775807n
+    || (typeof options.beforeBlock === 'number' && !Number.isSafeInteger(options.beforeBlock)))) {
+    throw new Error('holderJournal.beforeBlock is invalid');
+  }
   return Object.freeze({
+    beforeBlock,
     retentionBlocks: boundedInteger(
       options.retentionBlocks, DEFAULT_RETENTION_BLOCKS,
       1, 1_000_000, 'holderJournal.retentionBlocks'
@@ -56,21 +63,24 @@ async function lockCursor(client) {
 
 async function hasOldPendingEvent(client, cutoffBlock) {
   const result = await client.query(
-    `SELECT 1 FROM robinhood_holder_transfer_journal journal
-      WHERE journal.chain = 'robinhood' AND journal.applied = false
-        AND journal.block_number < $1
-        AND (EXISTS (
-          SELECT 1 FROM robinhood_holder_token_states state
-           WHERE state.chain = journal.chain AND state.token_address = journal.token_address
-             AND state.ledger_status <> 'drifted'
-        ) OR EXISTS (
-          SELECT 1 FROM robinhood_holder_global_backfill_tokens token
-          INNER JOIN robinhood_holder_global_backfill_runs run
-             ON run.id = token.run_id AND run.chain = token.chain
-           WHERE token.chain = journal.chain AND token.token_address = journal.token_address
-             AND token.status = 'active' AND run.barrier_block IS NOT NULL
-             AND run.status <> 'completed'
-        ))
+    `WITH protected_tokens AS (
+       SELECT chain, token_address FROM robinhood_holder_token_states
+        WHERE chain = 'robinhood' AND ledger_status <> 'drifted'
+       UNION
+       SELECT token.chain, token.token_address
+         FROM robinhood_holder_global_backfill_tokens token
+         JOIN robinhood_holder_global_backfill_runs run
+           ON run.id = token.run_id AND run.chain = token.chain
+        WHERE token.chain = 'robinhood' AND token.status = 'active'
+          AND run.barrier_block IS NOT NULL AND run.status <> 'completed'
+     )
+     SELECT 1 FROM protected_tokens token
+      CROSS JOIN LATERAL (
+        SELECT 1 FROM robinhood_holder_transfer_journal journal
+         WHERE journal.chain = token.chain AND journal.token_address = token.token_address
+           AND journal.applied = false AND journal.block_number < $1
+         LIMIT 1
+      ) pending
       LIMIT 1`,
     [cutoffBlock]
   );
@@ -168,10 +178,22 @@ function createRobinhoodHolderJournalRetention(options = {}) {
       const nextBlock = BigInt(cursor.next_block);
       const floorBlock = BigInt(cursor.journal_floor_block);
       const retained = BigInt(normalized.retentionBlocks);
-      const cutoffBlock = nextBlock > retained ? nextBlock - retained : 0n;
+      const retentionCutoff = nextBlock > retained ? nextBlock - retained : 0n;
+      const requestedCutoff = normalized.beforeBlock == null
+        ? retentionCutoff : BigInt(normalized.beforeBlock);
+      const cutoffBlock = requestedCutoff < retentionCutoff ? requestedCutoff : retentionCutoff;
       if (cutoffBlock <= floorBlock) {
         return Object.freeze({
           status: 'idle', deletedEvents: 0, discardedBufferedEvents: 0,
+          cutoffBlock: cutoffBlock.toString(), journalFloorBlock: floorBlock.toString(),
+        });
+      }
+      // Manual cuts fail before deleting even untracked buffers if protection changed.
+      if (normalized.beforeBlock !== null
+        && await hasOldPendingEvent(client, cutoffBlock.toString())) {
+        return Object.freeze({
+          status: 'blocked', reason: 'pending_event_before_cutoff', deletedEvents: 0,
+          discardedBufferedEvents: 0,
           cutoffBlock: cutoffBlock.toString(), journalFloorBlock: floorBlock.toString(),
         });
       }

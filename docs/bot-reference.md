@@ -1669,6 +1669,20 @@ Qualquer estado diferente de `drifted` e qualquer membro de campanha global ativ
 continua protegendo seu journal e bloqueia o avanço do floor enquanto houver
 pendencia anterior ao cutoff.
 
+Limpeza manual isolada, sem iniciar workers: `node src/utils/prune-robinhood-holder-journal.js
+--before-block=BLOCO_EXCLUSIVO --batch-limit=1000 --write`. Exige corte auditado e
+confirmação explícita; executa somente um lote, até 1.000 buffers descartáveis e
+1.000 eventos aplicados. O corte efetivo é o menor entre o bloco informado e
+`next_block - 20000`; nunca remove o bloco informado nem encurta a janela recente.
+Revalida pendências protegidas antes de qualquer exclusão, sob lock do cursor e
+fence compartilhado de reorg. Pendência anterior ao corte retorna `blocked`, sem
+excluir; lock timeout de 500ms ou statement timeout de 5s aborta a transação.
+`draining` exige nova execução manual; `pruned` avança o floor após drenar o
+intervalo e `idle` não exclui. Não altera balances, status de tokens ou workers.
+Dados excluídos deixam de permitir replay local; recuperação histórica pode exigir
+archive externo. `DELETE` permite reutilização na tabela, sem garantir devolução
+imediata ao filesystem. Não usar loop automático durante pressão de disco.
+
 `monitored`, `recent`, `old-week`, pins, tokens manuais e o summary de
 `GET /api/robinhood/holders` consultam essa view em lote, sem RPC ou Blockscout por
 linha. Para `ledger_live`, freshness acompanha o avanço do cursor (`checked_at`);
