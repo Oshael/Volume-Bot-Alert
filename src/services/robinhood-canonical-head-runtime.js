@@ -4,7 +4,9 @@ const db = require('../models/db');
 const {
   createRobinhoodChainDomainOutboxRepository,
 } = require('../models/robinhood-chain-domain-outbox');
-const { createRobinhoodHeadCaptureRepository } = require('../models/robinhood-head-capture');
+const {
+  createRobinhoodCanonicalHeadCandidateRepository,
+} = require('../models/robinhood-canonical-head-candidate');
 const { createRobinhoodPersistenceRepository } = require('../models/robinhood-persistence');
 const { createRobinhoodCanonicalHeadRunner } = require('./robinhood-canonical-head-runner');
 const { createRobinhoodLiveRpcGuard } = require('./robinhood-live-rpc-guard');
@@ -33,7 +35,10 @@ async function createRobinhoodCanonicalHeadRuntime(deps = {}, options = {}) {
     policyOptions: options.policyOptions,
   });
   const outbox = deps.outbox || createRobinhoodChainDomainOutboxRepository({ database });
-  const headRepository = deps.headRepository || createRobinhoodHeadCaptureRepository({ database });
+  const headRepository = deps.headRepository
+    || (deps.candidateRepositoryFactory || createRobinhoodCanonicalHeadCandidateRepository)({
+      database,
+    });
   const runner = (deps.runnerFactory || createRobinhoodCanonicalHeadRunner)({
     outbox, pipeline, headRepository,
     options: {

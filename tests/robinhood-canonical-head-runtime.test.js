@@ -10,7 +10,7 @@ const { createRobinhoodLiveRpcGuard } = require('../src/services/robinhood-live-
 describe('Robinhood canonical head runtime', () => {
   it('seeds the capture pipeline from persisted pools and disables mutable projections', async () => {
     const seedPools = [{ protocol: 'uniswap-v3', market_key: 'pool-a' }];
-    const outbox = {}; const headRepository = {}; let pipelineOptions; let runnerDeps;
+    const outbox = {}; const candidateRepository = {}; let pipelineOptions; let runnerDeps;
     const runtime = await createRobinhoodCanonicalHeadRuntime({
       rpcClient: { request: async () => 'ok' },
       catalog: {
@@ -18,7 +18,7 @@ describe('Robinhood canonical head runtime', () => {
         listCurrentV4LiquidityRanges: async () => [],
       },
       outbox,
-      headRepository,
+      candidateRepositoryFactory: () => candidateRepository,
       pipelineFactory: (options) => {
         pipelineOptions = options;
         return { snapshot: () => ({ tracked: { v2: 1, v3: 2, v4: 3 } }) };
@@ -35,7 +35,7 @@ describe('Robinhood canonical head runtime', () => {
     assert.equal(pipelineOptions.seedPools, seedPools);
     assert.equal(pipelineOptions.observationConcurrency, 4);
     assert.equal(runnerDeps.outbox, outbox);
-    assert.equal(runnerDeps.headRepository, headRepository);
+    assert.equal(runnerDeps.headRepository, candidateRepository);
     assert.equal(runnerDeps.options.leaseMs, 30_000);
     assert.deepEqual(await runtime.runOnce(), { claimed: 0 });
     assert.deepEqual(runtime.snapshot(), {

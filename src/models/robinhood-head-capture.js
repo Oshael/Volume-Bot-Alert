@@ -230,4 +230,6 @@ function createRobinhoodHeadCaptureRepository(options = {}) {
   return Object.freeze({ appendCaptureEntries, appendCaptures, getCaptureCursor });
 }
 
-module.exports = { CURSOR_NOTIFY_CHANNEL, createRobinhoodHeadCaptureRepository };
+module.exports = {
+  CURSOR_NOTIFY_CHANNEL, createRobinhoodHeadCaptureRepository, normalizeCaptureEntry,
+};

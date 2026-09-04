@@ -5574,6 +5574,28 @@ const SCHEMA_GROUPS = [
       ],
     }],
   },
+  {
+    key: 'stage194-robinhood-canonical-head-canary',
+    name: 'Stage 194 Robinhood canonical head canary evidence',
+    repair: 'node src/utils/db-init-stage194.js',
+    tables: [{
+      table: 'robinhood_canonical_head_candidates',
+      columns: [
+        'chain', 'stream', 'transaction_hash', 'log_index', 'block_number', 'block_hash',
+        'transaction_index', 'address', 'topics', 'data', 'protocol', 'market_key',
+        'evidence_version', 'evidence', 'captured_at',
+      ],
+      constraints: [
+        { name: 'rh_canonical_head_candidates_pkey', includes: ['PRIMARY KEY', 'chain', 'transaction_hash', 'log_index'] },
+        { name: 'rh_canonical_head_candidates_event_fkey', includes: ['FOREIGN KEY', 'chain', 'block_hash', 'log_index'] },
+        { name: 'rh_canonical_head_candidates_values_check', includes: ['discovery', 'market', 'jsonb_typeof', 'evidence_version'] },
+      ],
+      indexes: [{
+        name: 'idx_rh_canonical_head_candidates_order',
+        includes: ['stream', 'block_number', 'transaction_index', 'log_index'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

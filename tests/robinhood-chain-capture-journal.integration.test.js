@@ -10,9 +10,14 @@ const {
 const {
   createRobinhoodChainDomainOutboxRepository,
 } = require('../src/models/robinhood-chain-domain-outbox');
+const {
+  createRobinhoodCanonicalHeadCandidateRepository,
+} = require('../src/models/robinhood-canonical-head-candidate');
+const { createRobinhoodHeadCaptureRepository } = require('../src/models/robinhood-head-capture');
 const stage191 = require('../src/utils/db-init-stage191');
 const stage192 = require('../src/utils/db-init-stage192');
 const stage193 = require('../src/utils/db-init-stage193');
+const stage194 = require('../src/utils/db-init-stage194');
 const stage103 = require('../src/utils/db-init-stage103');
 const v2 = require('../src/services/uniswap-v2-decoder');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
@@ -47,6 +52,7 @@ function capture(number = 100, hash = HASH, parentHash = PARENT) {
 }
 
 async function clearTables() {
+  await db.query('DELETE FROM robinhood_canonical_head_candidates');
   await db.query('DELETE FROM robinhood_head_captures');
   await db.query('DELETE FROM robinhood_head_capture_cursors');
   await db.query('DELETE FROM robinhood_chain_capture_cursor');
@@ -60,6 +66,7 @@ describe('Robinhood canonical chain capture journal', () => {
     await stage191.init({ closePool: false });
     await stage192.init({ closePool: false });
     await stage193.init({ closePool: false });
+    await stage194.init({ closePool: false });
   });
 
   beforeEach(clearTables);
@@ -84,6 +91,50 @@ describe('Robinhood canonical chain capture journal', () => {
     assert.equal(context.repair, 'node src/utils/db-init-stage192.js');
     const outbox = SCHEMA_GROUPS.find(({ key }) => key === 'stage193-robinhood-domain-outbox');
     assert.equal(outbox.repair, 'node src/utils/db-init-stage193.js');
+    const canary = SCHEMA_GROUPS.find(({ key }) => (
+      key === 'stage194-robinhood-canonical-head-canary'
+    ));
+    assert.equal(canary.repair, 'node src/utils/db-init-stage194.js');
+  });
+
+  it('keeps canonical canary evidence immutable and compares it with legacy evidence', async () => {
+    await createRobinhoodChainCaptureJournal().commitBlock(capture());
+    const log = {
+      transactionHash: TX, transactionIndex: '0', logIndex: '0', blockNumber: '100',
+      blockHash: HASH, address: ADDRESS, topics: [TOPIC], data: '0x',
+    };
+    const canonical = {
+      stream: 'discovery', log, protocol: 'uniswap-v2', marketKey: 'pool-a',
+      evidenceVersion: 2, evidence: { source: 'canonical' },
+    };
+    const candidates = createRobinhoodCanonicalHeadCandidateRepository();
+    assert.deepEqual(await candidates.appendCaptureEntries({ entries: [canonical] }), {
+      insertedCaptures: 1, duplicateCaptures: 0,
+    });
+    assert.deepEqual(await candidates.appendCaptureEntries({ entries: [canonical] }), {
+      insertedCaptures: 0, duplicateCaptures: 1,
+    });
+    assert.deepEqual(await candidates.getParitySummary({ fromBlock: 100, toBlock: 100 }), [{
+      stream: 'discovery', candidates: 1, missing_legacy: 1, matched: 0,
+      divergent: 0, first_block: '100', last_block: '100',
+    }]);
+    await createRobinhoodHeadCaptureRepository().appendCaptureEntries({ entries: [canonical] });
+    assert.deepEqual(await candidates.getParitySummary({ fromBlock: 100, toBlock: 100 }), [{
+      stream: 'discovery', candidates: 1, missing_legacy: 0, matched: 1,
+      divergent: 0, first_block: '100', last_block: '100',
+    }]);
+    await db.query(
+      `UPDATE robinhood_head_captures SET evidence=$1::jsonb
+        WHERE chain='robinhood' AND transaction_hash=$2 AND log_index=0`,
+      [JSON.stringify({ source: 'legacy' }), TX]
+    );
+    assert.deepEqual(await candidates.getParitySummary({ fromBlock: 100, toBlock: 100 }), [{
+      stream: 'discovery', candidates: 1, missing_legacy: 0, matched: 0,
+      divergent: 1, first_block: '100', last_block: '100',
+    }]);
+    await assert.rejects(candidates.appendCaptureEntries({ entries: [{
+      ...canonical, evidence: { source: 'changed' },
+    }] }), (error) => error.code === 'canonical_candidate_conflict');
   });
 
   it('commits the block envelope, transaction, event, and cursor atomically', async () => {

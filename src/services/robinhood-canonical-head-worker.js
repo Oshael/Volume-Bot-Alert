@@ -13,7 +13,7 @@ function createRobinhoodCanonicalHeadWorker(deps = {}, options = {}) {
   const cancel = deps.cancel || clearTimeout;
   const status = {
     running: false, halted: false, listening: false, inFlight: false,
-    mode: 'canonical_capture', lastTickAt: null, lastNotifyAt: null,
+    mode: 'canonical_canary', lastTickAt: null, lastNotifyAt: null,
     lastResult: null, lastError: null, runtime: null,
     totalNotifies: 0, totalErrors: 0, totalClaimed: 0,
     totalInserted: 0, totalDuplicates: 0, totalIgnored: 0,

@@ -3279,6 +3279,13 @@ opt-in por `ROBINHOOD_CANONICAL_HEAD_ENABLED` e exige RPC loopback em
 `robinhood-chain-domain-shadow`, pois ambas reclamam a mesma outbox; mantenha o
 head legado durante o canário. Tentativa de `eth_getLogs` ou frontier `blocked`
 haltam a lease.
+O canário não pode gravar direto em `robinhood_head_captures`, porque a chave
+idempotente faria o primeiro writer esconder divergências. A Stage 194 cria
+`robinhood_canonical_head_candidates`, um sink separado e imutável que compara
+payload bruto, protocolo, market key, versão e evidência com o legado. Replays
+iguais são aceitos; replay canônico divergente falha fechado. Enquanto a flag é
+de canário, o processo grava somente nesse sink e não publica na fila de
+processamento existente.
 
 ## 15. Wallet tracking multichain
 

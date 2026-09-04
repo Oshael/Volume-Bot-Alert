@@ -374,6 +374,8 @@ que 500 linhas.
   processo runtime ainda desativado);
 - processo canônico opt-in com `LISTEN/NOTIFY`, continuidade por polling, lease e
   fail-closed (3G concluída, desativado por padrão);
+- sink imutável de evidência e auditoria de paridade independente do writer legado
+  (3H concluída; Stage 194 ainda precisa ser aplicada na VPS);
 - preservação da evidência e idempotência atuais;
 - comparação com `robinhood_head_captures` existente;
 - cutover dos dois pollers `eth_getLogs` do head.

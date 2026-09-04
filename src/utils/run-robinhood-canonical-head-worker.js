@@ -33,7 +33,7 @@ async function main(deps = {}) {
   }
   leases.start({
     key: LEASE_KEY, label: 'Robinhood canonical head',
-    metadata: { process: 'robinhood-canonical-head', mode: 'canonical_capture' },
+    metadata: { process: 'robinhood-canonical-head', mode: 'canonical_canary' },
     metadataProvider: worker.getStatus,
     start: async () => {
       await (deps.validateChainIds || validateRobinhoodProviderChainIds)(rpcClient);
