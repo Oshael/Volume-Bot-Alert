@@ -34,13 +34,17 @@ const captureBuilderStub = {
   }),
 };
 
-function buildPipeline({ marketEvent, discoveryEvent, captureMode = true, captureBuilder = captureBuilderStub }) {
+function buildPipeline({
+  marketEvent, discoveryEvent, captureMode = true,
+  captureBuilder = captureBuilderStub, requireV3Snapshots = false,
+}) {
   return createRobinhoodOnchainPipeline({
     rpcClient,
     timestampEnricher,
     now: () => 1750000000000,
     captureMode,
     captureBuilder,
+    requireV3Snapshots,
     v2Tracker: trackerStub(marketEvent),
     v3Tracker: trackerStub(discoveryEvent || marketEvent),
     v4Tracker: trackerStub(marketEvent),
@@ -76,6 +80,29 @@ describe('pipeline capture mode', () => {
     await pipeline.processMarketRange([V4_LOG], { backfill: true });
     await pipeline.processMarketRange([V4_LOG], { backfill: false });
     assert.deepEqual(optionsSeen, [{ skipV3Balances: true }, { skipV3Balances: false }]);
+  });
+
+  it('forwards durable V3 state and requires it in canonical mode', async () => {
+    let optionsSeen;
+    const pipeline = buildPipeline({
+      marketEvent: {
+        kind: 'swap', protocol: 'uniswap-v3', tokenAddress: '0xtok', timestampMs: 1750000000000,
+      },
+      requireV3Snapshots: true,
+      captureBuilder: {
+        ...captureBuilderStub,
+        buildMarketCapture: async (swap, options) => {
+          optionsSeen = options;
+          return { protocol: swap.protocol, marketKey: 'm', evidenceVersion: 2, evidence: {} };
+        },
+      },
+    });
+    const snapshot = { poolAddress: '0xpool', tokenBalanceRaw: '10', quoteBalanceRaw: '20' };
+    await pipeline.processMarketRange([{ ...V4_LOG, v3BalanceSnapshot: snapshot }]);
+
+    assert.deepEqual(optionsSeen, {
+      skipV3Balances: false, requireV3Snapshot: true, v3BalanceSnapshot: snapshot,
+    });
   });
 
   it('attaches capture evidence to a non-swap market event entry', async () => {

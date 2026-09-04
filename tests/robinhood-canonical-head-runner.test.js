@@ -13,6 +13,7 @@ function row(domain, logIndex) {
     log_index: logIndex, address: `0x${'3'.repeat(40)}`,
     topics: [`0x${'4'.repeat(64)}`], data: '0x',
     block_timestamp: new Date('2026-09-03T20:00:00Z'), attempt_count: 1,
+    v3_balance_snapshot: domain === 'market' ? { tokenBalanceRaw: '10' } : null,
   };
 }
 function entry(log) {
@@ -38,7 +39,11 @@ describe('Robinhood canonical head runner', () => {
       },
       pipeline: {
         processDiscoveryRange: async (logs) => { calls.push('discovery'); return logs.map(entry); },
-        processMarketRange: async (logs) => { calls.push('market'); return [entry(logs[0])]; },
+        processMarketRange: async (logs) => {
+          calls.push('market');
+          assert.deepEqual(logs[0].v3BalanceSnapshot, { tokenBalanceRaw: '10' });
+          return [entry(logs[0])];
+        },
       },
       headRepository: { appendCaptureEntries: async ({ entries }) => {
         calls.push('append');

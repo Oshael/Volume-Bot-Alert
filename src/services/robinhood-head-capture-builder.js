@@ -55,6 +55,30 @@ function createRobinhoodHeadCaptureBuilder(deps = {}) {
   async function resolveV3Balances(swap, options = {}) {
     if (swap.protocol !== 'uniswap-v3') return null;
     const tag = blockTag(swap.blockNumber);
+    const snapshot = options.v3BalanceSnapshot;
+    if (snapshot) {
+      const matches = [
+        [snapshot.poolAddress, swap.poolAddress],
+        [snapshot.tokenAddress, swap.tokenAddress],
+        [snapshot.quoteAddress, swap.quoteAddress],
+      ].every(([actual, expected]) => String(actual || '').toLowerCase()
+        === String(expected || '').toLowerCase());
+      if (!matches) {
+        const error = new Error('V3 balance snapshot identity does not match the swap');
+        error.code = 'v3_balance_snapshot_mismatch';
+        throw error;
+      }
+      return {
+        v3: {
+          poolAddress: swap.poolAddress,
+          blockTag: tag,
+          balanceStatus: 'observed',
+          tokenBalanceRaw: snapshot.tokenBalanceRaw,
+          quoteBalanceRaw: snapshot.quoteBalanceRaw,
+          sqrtPriceX96: swap.sqrtPriceX96 ?? null,
+        },
+      };
+    }
     if (options.skipV3Balances === true) {
       return {
         v3: {
@@ -66,6 +90,9 @@ function createRobinhoodHeadCaptureBuilder(deps = {}) {
           sqrtPriceX96: swap.sqrtPriceX96 ?? null,
         },
       };
+    }
+    if (options.requireV3Snapshot === true) {
+      return { unavailable: true, reason: 'v3_pool_balance_snapshot_unavailable' };
     }
     if (typeof metadataReader.getBalanceOf !== 'function') return null;
     // Transient RPC failures throw from getBalanceOf and propagate so the cursor
@@ -106,7 +133,9 @@ function createRobinhoodHeadCaptureBuilder(deps = {}) {
     });
     if (!quoteUsd || quoteUsd.price.numerator <= 0n) return { reject: 'quote_usd_unavailable' };
     const v3Balances = await resolveV3Balances(swap, options);
-    if (v3Balances?.unavailable) return { reject: 'v3_pool_balance_unavailable' };
+    if (v3Balances?.unavailable) {
+      return { reject: v3Balances.reason || 'v3_pool_balance_unavailable' };
+    }
     return { eligibility, tokenMetadata, quoteMetadata, quoteUsd, quoteOptions, v3: v3Balances?.v3 };
   }
 

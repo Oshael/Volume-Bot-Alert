@@ -75,10 +75,19 @@ function createRobinhoodChainDomainOutboxRepository(options = {}) {
          RETURNING outbox.*
        )
        SELECT leased.*, event.transaction_hash, event.address, event.topic0,
-              event.topics, event.data, block.block_timestamp
+              event.topics, event.data, block.block_timestamp,
+              CASE WHEN snapshot.log_index IS NULL THEN NULL ELSE jsonb_build_object(
+                'poolAddress', snapshot.pool_address,
+                'tokenAddress', snapshot.token_address,
+                'quoteAddress', snapshot.quote_address,
+                'tokenBalanceRaw', snapshot.token_balance_raw::text,
+                'quoteBalanceRaw', snapshot.quote_balance_raw::text
+              ) END AS v3_balance_snapshot
          FROM leased
          JOIN robinhood_chain_events event USING (chain, block_hash, log_index)
          JOIN robinhood_chain_blocks block USING (chain, block_hash)
+         LEFT JOIN robinhood_chain_v3_balance_snapshots snapshot
+           USING (chain, block_hash, log_index)
         ORDER BY leased.block_number,
                  CASE leased.domain WHEN 'discovery' THEN 0 ELSE 1 END,
                  leased.transaction_index, leased.log_index`,
@@ -110,10 +119,19 @@ function createRobinhoodChainDomainOutboxRepository(options = {}) {
          RETURNING outbox.*
        )
        SELECT leased.*, event.transaction_hash, event.address, event.topic0,
-              event.topics, event.data, block.block_timestamp
+              event.topics, event.data, block.block_timestamp,
+              CASE WHEN snapshot.log_index IS NULL THEN NULL ELSE jsonb_build_object(
+                'poolAddress', snapshot.pool_address,
+                'tokenAddress', snapshot.token_address,
+                'quoteAddress', snapshot.quote_address,
+                'tokenBalanceRaw', snapshot.token_balance_raw::text,
+                'quoteBalanceRaw', snapshot.quote_balance_raw::text
+              ) END AS v3_balance_snapshot
          FROM leased
          JOIN robinhood_chain_events event USING (chain, block_hash, log_index)
          JOIN robinhood_chain_blocks block USING (chain, block_hash)
+         LEFT JOIN robinhood_chain_v3_balance_snapshots snapshot
+           USING (chain, block_hash, log_index)
         ORDER BY leased.block_number, leased.transaction_index, leased.log_index`,
       [CHAIN, domain, limit, owner, leaseMs]
     );

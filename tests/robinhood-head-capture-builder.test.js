@@ -55,6 +55,36 @@ describe('head capture builder — market', () => {
     assert.equal(capture.evidence.tokenMetadata.tokenSupplyStatus, 'latest_call');
   });
 
+  it('uses the durable V3 snapshot without historical balance reads', async () => {
+    let balanceReads = 0;
+    const b = builder({ metadataReader: { getBalanceOf: async () => {
+      balanceReads += 1;
+      throw new Error('historical balance must not be read');
+    } } });
+    const capture = await b.buildMarketCapture(v3Swap(), {
+      requireV3Snapshot: true,
+      v3BalanceSnapshot: {
+        poolAddress: '0xpool', tokenAddress: TOKEN, quoteAddress: ROBINHOOD_WETH,
+        tokenBalanceRaw: '700', quoteBalanceRaw: '900',
+      },
+    });
+
+    assert.equal(balanceReads, 0);
+    assert.equal(capture.evidence.v3.tokenBalanceRaw, '700');
+    assert.equal(capture.evidence.v3.quoteBalanceRaw, '900');
+    assert.equal(capture.evidence.v3.blockTag, '0x64');
+  });
+
+  it('fails closed when canonical V3 snapshot identity is inconsistent', async () => {
+    await assert.rejects(() => builder().buildMarketCapture(v3Swap(), {
+      requireV3Snapshot: true,
+      v3BalanceSnapshot: {
+        poolAddress: '0xother', tokenAddress: TOKEN, quoteAddress: ROBINHOOD_WETH,
+        tokenBalanceRaw: '700', quoteBalanceRaw: '900',
+      },
+    }), (error) => error.code === 'v3_balance_snapshot_mismatch');
+  });
+
   it('captures a V2 swap with log reserves and no pool-balance reads', async () => {
     const capture = await builder().buildMarketCapture({
       protocol: 'uniswap-v2', tokenAddress: TOKEN, quoteAddress: ROBINHOOD_WETH,
@@ -87,6 +117,18 @@ describe('head capture builder — market', () => {
     const b = builder({ metadataReader: { getBalanceOf: async () => ({ balanceRaw: null }) } });
     const capture = await b.buildMarketCapture(v3Swap());
     assert.equal(capture.evidence.rejected, 'v3_pool_balance_unavailable');
+  });
+
+  it('does not fall back to historical RPC when a required V3 snapshot is absent', async () => {
+    let balanceReads = 0;
+    const b = builder({ metadataReader: { getBalanceOf: async () => {
+      balanceReads += 1;
+      return { balanceRaw: '1' };
+    } } });
+    const capture = await b.buildMarketCapture(v3Swap(), { requireV3Snapshot: true });
+
+    assert.equal(balanceReads, 0);
+    assert.equal(capture.evidence.rejected, 'v3_pool_balance_snapshot_unavailable');
   });
 
   it('preserves a catch-up V3 swap without historical pool-balance RPC reads', async () => {

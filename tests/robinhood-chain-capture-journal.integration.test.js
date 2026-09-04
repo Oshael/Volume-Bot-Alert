@@ -220,6 +220,16 @@ describe('Robinhood canonical chain capture journal', () => {
     assert.deepEqual(snapshot.rows[0], {
       token_balance_raw: MAX_UINT256, quote_balance_raw: '2500000',
     });
+    const [claimed] = await createRobinhoodChainDomainOutboxRepository().claimNextBlock({
+      owner: 'snapshot-contract', leaseMs: 60_000, maxBlocks: 1,
+    });
+    assert.deepEqual(claimed.v3_balance_snapshot, {
+      poolAddress: `0x${'6'.repeat(40)}`,
+      tokenAddress: `0x${'7'.repeat(40)}`,
+      quoteAddress: `0x${'8'.repeat(40)}`,
+      tokenBalanceRaw: MAX_UINT256,
+      quoteBalanceRaw: '2500000',
+    });
     const transactionContext = await db.query(
       `SELECT blocks.capture_version, tx.nonce::text, tx.value_wei::text
          FROM robinhood_chain_blocks blocks

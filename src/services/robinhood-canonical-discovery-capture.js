@@ -23,6 +23,7 @@ function logFromRow(row) {
     address: row.address,
     topics: row.topics,
     data: row.data,
+    v3BalanceSnapshot: row.v3_balance_snapshot || null,
   };
 }
 

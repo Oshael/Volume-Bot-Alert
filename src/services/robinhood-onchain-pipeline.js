@@ -438,8 +438,10 @@ function createRobinhoodOnchainPipeline(options = {}) {
         captures = await mapWithConcurrency(
           swaps,
           observationConcurrency,
-          ({ event }) => captureBuilder.buildMarketCapture(event, {
+          ({ event, log }) => captureBuilder.buildMarketCapture(event, {
             skipV3Balances: context?.backfill === true,
+            ...(log.v3BalanceSnapshot ? { v3BalanceSnapshot: log.v3BalanceSnapshot } : {}),
+            ...(options.requireV3Snapshots === true ? { requireV3Snapshot: true } : {}),
           })
         );
       } catch (error) {

@@ -3326,8 +3326,12 @@ não fazem leitura histórica e não podem atrasar a recuperação do cursor. O 
 local usa timeout curto configurável por
 `ROBINHOOD_CHAIN_CAPTURE_RPC_TIMEOUT_MS` (default 2s), sem retry dentro do client;
 uma nova drenagem retenta a fronteira. Snapshot, receipts, eventos, outbox e
-cursor entram no mesmo commit/digest. O consumidor canônico ainda não lê o
-sidecar; essa troca é o corte seguinte.
+cursor entram no mesmo commit/digest. O claim do outbox entrega o snapshot como
+texto decimal, preservando `uint256`; o canário valida pool/token/quote e monta a
+evidência V3 diretamente desse sidecar. Com
+`requireV3Snapshots=true`, snapshot ausente vira rejeição explícita e nunca cai
+para `balanceOf` histórico. Leituras live antigas continuam com o comportamento
+legado fora da composição canônica.
 
 ## 15. Wallet tracking multichain
 

@@ -27,6 +27,7 @@ async function createRobinhoodCanonicalHeadRuntime(deps = {}, options = {}) {
     seedPools,
     v4LiquidityReader: catalog,
     captureMode: true,
+    requireV3Snapshots: true,
     retainRollbackState: false,
     windowAggregationEnabled: false,
     timestampConcurrency: options.timestampConcurrency,
