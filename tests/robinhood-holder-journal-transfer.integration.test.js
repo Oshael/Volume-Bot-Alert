@@ -40,13 +40,16 @@ function transport() {
 
 test('one locked range sends only retained rows with lossless text and closes cleanly', async () => {
   const remote = transport(); let clock = 0;
-  const result = await runTransfer(pool, { database, runId: randomUUID(), fromPage: 0, endPage: 1,
-    pauseMs: 100, schema: 'pg_temp', write: true, allowHolderLock: true }, {
+  const heapPages = Number((await client.query(`SELECT CEIL(
+    pg_relation_size('pg_temp.robinhood_holder_transfer_journal') / 8192.0) AS pages`)).rows[0].pages);
+  const result = await runTransfer(pool, { database, runId: randomUUID(), fromPage: 0, endPage: heapPages,
+    pauseMs: 50, schema: 'pg_temp', write: true, allowHolderLock: true,
+    full: true, pilotValidated: true, allowUnattended: true }, {
     transport: remote, clock: () => clock, sleep: async ms => { clock += ms; },
     observeBaseline: async () => ({ at: Date.now(), owner: 'test', errors: 0, streams: {} }),
     observeRecovery: async () => {},
   });
-  assert.equal(result.status, 'transferred_unverified'); assert.equal(result.batches, 1);
+  assert.equal(result.status, 'transferred_unverified'); assert.equal(result.mode, 'full');
   assert.equal(result.rows, 2); assert.equal(result.readyForSwap, false); assert.equal(remote.closed, true);
   const rows = remote.frames.find(frame => frame.op === 'batch').rows;
   assert.deepEqual(rows.map(row => row.token_address).sort(), ['protected', 'recent']);
@@ -64,6 +67,14 @@ test('active holder worker fails before remote initialization and releases trans
     assert.equal(remote.frames.length, 0);
     assert.equal((await client.query('SHOW transaction_read_only')).rows[0].transaction_read_only, 'off');
   } finally { await client.query('TRUNCATE worker_leases'); }
+});
+
+test('full mode refuses a partial physical range before initializing the receiver', async () => {
+  const remote = transport();
+  await assert.rejects(runTransfer(pool, { database, runId: randomUUID(), fromPage: 1, endPage: 2,
+    pauseMs: 50, schema: 'pg_temp', write: true, allowHolderLock: true,
+    full: true, pilotValidated: true, allowUnattended: true }, { transport: remote }), /exact heap end/);
+  assert.equal(remote.frames.length, 0);
 });
 
 test('existing remote progress is refused instead of resuming after a lost source lock', async () => {

@@ -1864,6 +1864,17 @@ execução original estão vivos: após qualquer interrupção, use outro UUID e
 faixa ainda não validada. O resultado `sourceConsistencyVerified:true` cobre
 somente a leitura ininterrupta dessa faixa sob lock; `readyForSwap` continua falso.
 
+Após um piloto real validado, `--full --pilot-validated --allow-unattended` libera
+uma única passagem da página zero até o fim físico exato do heap, obrigatoriamente
+com `--pause-ms=50`. Qualquer outro início, fim diferente do tamanho observado ou
+ausência de confirmação falha antes de inicializar o destino. A pausa foi escolhida
+a partir do piloto remoto de 256 MiB; não há aceleração automática. A execução
+completa mantém os mesmos locks, timeouts e paradas de saúde, imprime somente um
+progresso a cada 64 lotes e continua retornando `readyForSwap:false`. Execute sob
+`nohup` para que a perda do terminal não envie SIGHUP. Uma falha conserva os lotes
+isolados no destino, mas exige UUID novo e reinício integral: não há retomada CTID
+entre processos.
+
 `monitored`, `recent`, `old-week`, pins, tokens manuais e o summary de
 `GET /api/robinhood/holders` consultam essa view em lote, sem RPC ou Blockscout por
 linha. Para `ledger_live`, freshness acompanha o avanço do cursor (`checked_at`);

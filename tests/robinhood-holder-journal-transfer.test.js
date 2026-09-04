@@ -9,14 +9,25 @@ const base = [`--database=volume_alert`, `--run-id=${runId}`, '--from-page=0', '
   '--pause-ms=100', `--receiver=${RECEIVER}`, '--write', '--allow-holder-lock', '--allow-remote-write'];
 
 test('transfer CLI requires the fixed receiver, bounded pilot range and all acknowledgements', () => {
-  assert.deepEqual(parseArgs(base), { database: 'volume_alert', runId, fromPage: 0,
-    endPage: 32768, pauseMs: 100, schema: 'public', write: true, allowHolderLock: true });
+  assert.deepEqual(parseArgs(base), { database: 'volume_alert', runId, fromPage: 0, full: false,
+    endPage: 32768, pauseMs: 100, schema: 'public', write: true, allowHolderLock: true,
+    pilotValidated: false, allowUnattended: false });
   for (const replacement of ['--pause-ms=0', '--end-page=32769', '--receiver=root@example.com']) {
     assert.throws(() => parseArgs(base.map(arg => arg.split('=')[0] === replacement.split('=')[0] ? replacement : arg)));
   }
   for (const flag of ['--write', '--allow-holder-lock', '--allow-remote-write']) {
     assert.throws(() => parseArgs(base.filter(arg => arg !== flag)));
   }
+});
+
+test('full CLI requires the whole-heap shape, pause 50 and explicit pilot/unattended acknowledgements', () => {
+  const full = base.map(arg => arg === '--end-page=32768' ? '--end-page=18143575'
+    : arg === '--pause-ms=100' ? '--pause-ms=50' : arg)
+    .concat('--full', '--pilot-validated', '--allow-unattended');
+  assert.equal(parseArgs(full).full, true);
+  assert.throws(() => parseArgs(full.filter(arg => arg !== '--pilot-validated')));
+  assert.throws(() => parseArgs(full.map(arg => arg === '--from-page=0' ? '--from-page=1' : arg)));
+  assert.throws(() => parseArgs(full.map(arg => arg === '--pause-ms=50' ? '--pause-ms=0' : arg)));
 });
 
 test('source query projects exact text values and retains the bounded compaction filter', () => {

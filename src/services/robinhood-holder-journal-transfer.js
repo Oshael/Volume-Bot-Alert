@@ -52,9 +52,14 @@ async function sourceManifest(query, options) {
       || identity.relkind !== 'r' || !cursor) throw new Error('unexpected source database or table');
   const heapPages = Math.ceil(Number(identity.heap_bytes) / identity.block_size);
   const endPage = options.endPage ?? heapPages;
-  if (!Number.isSafeInteger(options.fromPage) || !Number.isSafeInteger(endPage)
-      || options.fromPage < 0 || endPage <= options.fromPage || endPage > heapPages
-      || endPage - options.fromPage > MAX_RANGE_PAGES) throw new Error('transfer range must be 1..32768 pages within heap');
+  const invalidRange = !Number.isSafeInteger(options.fromPage) || !Number.isSafeInteger(endPage)
+    || options.fromPage < 0 || endPage <= options.fromPage || endPage > heapPages;
+  const invalidModeRange = options.full
+    ? options.fromPage !== 0 || endPage !== heapPages
+    : endPage - options.fromPage > MAX_RANGE_PAGES;
+  if (invalidRange || invalidModeRange) throw new Error(options.full
+    ? 'full transfer must cover page zero through the exact heap end'
+    : 'pilot transfer range must be 1..32768 pages within heap');
   const sourceIdentity = digest({ identity, cursor, schemaHash: description.hash });
   return { description, cursor, sourceIdentity, manifest: { version: 1, sourceIdentity,
     schemaHash: description.hash, fromPage: options.fromPage, endPage, pages: PAGES } };
@@ -70,13 +75,56 @@ async function healthWindow(monitor, database, schema, progress, signal, stage, 
   return previous;
 }
 
-async function runTransfer(pool, options, { transport, signal, progress = () => {},
-  observeBaseline = healthWindow, observeRecovery = healthWindow, sleep = delay, clock = Date.now } = {}) {
+function assertTransferOptions(options, transport) {
   if (!transport?.send || !transport?.close || !options?.write || !options?.allowHolderLock) {
     throw new Error('transport, write and holder-lock acknowledgements are required');
   }
+  if (options.full && (!options.pilotValidated || !options.allowUnattended || options.pauseMs !== 50)) {
+    throw new Error('full transfer requires validated pilot, unattended acknowledgement and pause 50');
+  }
+}
+
+async function copyBatches(query, monitor, source, sql, options, deps) {
+  const { transport, signal, progress, observeBaseline, sleep, clock } = deps;
+  const params = p => [`(${p},0)`, `(${Math.min(p + PAGES, source.manifest.endPage)},0)`, source.cursor.cutoff];
+  const initialized = await transport.send({ op: 'init', runId: options.runId, manifest: source.manifest });
+  if (initialized.manifest.sourceIdentity !== source.sourceIdentity) throw new Error('receiver manifest mismatch');
+  let page = initialized.nextPage;
+  if (page !== source.manifest.fromPage) throw new Error('cross-process CTID resume is refused; create a new run');
+  let previous = await observeBaseline(monitor, options.database, options.schema, progress, signal, 'baseline');
+  let lastHealth = clock(); let rows = 0; let batches = 0; const started = clock();
+  while (page < source.manifest.endPage) {
+    if (clock() - lastHealth >= 5000) {
+      const snapshot = await readHealth(monitor, options.database, options.schema);
+      previous = checkHealth(snapshot, previous); progress({ phase: 'health', stage: 'load', snapshot, health: previous });
+      lastHealth = clock();
+    }
+    const toPage = Math.min(page + PAGES, source.manifest.endPage);
+    const selected = await query(sql, params(page));
+    const frame = { op: 'batch', runId: options.runId, sourceIdentity: source.sourceIdentity,
+      fromPage: page, toPage, rows: selected.rows, checksum: digest(selected.rows) };
+    const receipt = await transport.send(frame);
+    if (!['committed', 'already_committed'].includes(receipt.outcome) || receipt.nextPage !== toPage) throw new Error('invalid receiver receipt');
+    rows += selected.rowCount; batches += 1; page = toPage;
+    progress({ phase: 'batch', batches, page, rows: selected.rowCount, receivedRows: receipt.receivedRows });
+    await sleep(options.pauseMs ?? 100, undefined, { signal });
+  }
+  return { batches, rows, page, previous, elapsedMs: clock() - started };
+}
+
+async function cleanup(client, monitor, transport, transaction, failure) {
+  let result = failure;
+  if (transaction && client) { try { await client.query('ROLLBACK'); } catch (error) { result ||= error; } }
+  try { await transport.close(); } catch (error) { result ||= error; }
+  client?.release(Boolean(result)); monitor?.release(Boolean(result));
+  return result;
+}
+
+async function runTransfer(pool, options, { transport, signal, progress = () => {},
+  observeBaseline = healthWindow, observeRecovery = healthWindow, sleep = delay, clock = Date.now } = {}) {
+  assertTransferOptions(options, transport);
   let client; let monitor;
-  let transaction = false; let failure; let result; let previous; let lastHealth = 0;
+  let transaction = false; let failure; let result;
   async function query(sql, values) { signal?.throwIfAborted(); const r = await client.query(sql, values); signal?.throwIfAborted(); return r; }
   try {
     client = await pool.connect(); monitor = await pool.connect();
@@ -87,39 +135,16 @@ async function runTransfer(pool, options, { transport, signal, progress = () => 
     const params = p => [`(${p},0)`, `(${Math.min(p + PAGES, source.manifest.endPage)},0)`, source.cursor.cutoff];
     const plan = (await query(`EXPLAIN (FORMAT JSON) ${sql}`, params(source.manifest.fromPage))).rows[0]['QUERY PLAN'][0];
     validatePlan(plan); progress({ phase: 'plan', manifest: source.manifest, scan: 'Tid Range Scan' });
-    const initialized = await transport.send({ op: 'init', runId: options.runId, manifest: source.manifest });
-    if (initialized.manifest.sourceIdentity !== source.sourceIdentity) throw new Error('receiver manifest mismatch');
-    let page = initialized.nextPage;
-    if (page !== source.manifest.fromPage) throw new Error('cross-process CTID resume is refused; create a new run');
-    previous = await observeBaseline(monitor, options.database, options.schema, progress, signal, 'baseline'); lastHealth = clock();
-    let rows = 0; let batches = 0; const started = clock();
-    while (page < source.manifest.endPage) {
-      if (clock() - lastHealth >= 5000) {
-        const snapshot = await readHealth(monitor, options.database, options.schema);
-        previous = checkHealth(snapshot, previous); progress({ phase: 'health', stage: 'load', snapshot, health: previous });
-        lastHealth = clock();
-      }
-      const toPage = Math.min(page + PAGES, source.manifest.endPage);
-      const selected = await query(sql, params(page));
-      const frame = { op: 'batch', runId: options.runId, sourceIdentity: source.sourceIdentity,
-        fromPage: page, toPage, rows: selected.rows, checksum: digest(selected.rows) };
-      const receipt = await transport.send(frame);
-      if (!['committed', 'already_committed'].includes(receipt.outcome) || receipt.nextPage !== toPage) throw new Error('invalid receiver receipt');
-      rows += selected.rowCount; batches += 1; page = toPage;
-      progress({ phase: 'batch', page, rows: selected.rowCount, receivedRows: receipt.receivedRows });
-      await sleep(options.pauseMs ?? 100, undefined, { signal });
-    }
-    result = { status: 'transferred_unverified', runId: options.runId, batches, rows,
-      fromPage: source.manifest.fromPage, endPage: page, elapsedMs: clock() - started,
+    const copied = await copyBatches(query, monitor, source, sql, options,
+      { transport, signal, progress, observeBaseline, sleep, clock });
+    result = { status: 'transferred_unverified', mode: options.full ? 'full' : 'pilot', runId: options.runId,
+      batches: copied.batches, rows: copied.rows, fromPage: source.manifest.fromPage,
+      endPage: copied.page, elapsedMs: copied.elapsedMs,
       sourceConsistencyVerified: true, readyForSwap: false };
     await query('COMMIT'); transaction = false;
-    await observeRecovery(monitor, options.database, options.schema, progress, signal, 'recovery', previous);
+    await observeRecovery(monitor, options.database, options.schema, progress, signal, 'recovery', copied.previous);
   } catch (error) { failure = error; }
-  finally {
-    if (transaction) { try { await client.query('ROLLBACK'); } catch (error) { failure ||= error; } }
-    try { await transport.close(); } catch (error) { failure ||= error; }
-    client?.release(Boolean(failure)); monitor?.release(Boolean(failure));
-  }
+  finally { failure = await cleanup(client, monitor, transport, transaction, failure); }
   if (failure) throw failure;
   return result;
 }

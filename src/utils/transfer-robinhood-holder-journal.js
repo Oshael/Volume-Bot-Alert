@@ -5,28 +5,48 @@ const { runTransfer } = require('../services/robinhood-holder-journal-transfer')
 const RECEIVER = 'root@159.195.17.104';
 const IDENTITY = '/root/.ssh/holder-journal-transfer';
 const REMOTE = '/opt/holder-journal-receiver/src/utils/receive-robinhood-holder-journal.js';
+const FLAGS = new Set(['--write', '--allow-holder-lock', '--allow-remote-write', '--full',
+  '--pilot-validated', '--allow-unattended']);
+
+function collectArg(values, flags, arg) {
+  const match = /^--(database|run-id|from-page|end-page|pause-ms|receiver)=(.+)$/.exec(arg);
+  if (match) {
+    if (Object.hasOwn(values, match[1])) throw new Error('repeated transfer argument');
+    values[match[1]] = match[1].includes('page') || match[1] === 'pause-ms' ? Number(match[2]) : match[2];
+    return;
+  }
+  if (!FLAGS.has(arg)) throw new Error('unknown transfer argument');
+  if (flags.has(arg)) throw new Error('repeated transfer flag');
+  flags.add(arg);
+}
+
+function validMode(values, flags, full) {
+  return full
+    ? values['from-page'] === 0 && values['pause-ms'] === 50
+      && flags.has('--pilot-validated') && flags.has('--allow-unattended')
+    : values['end-page'] - values['from-page'] <= 32768 && values['pause-ms'] === 100
+      && !flags.has('--pilot-validated') && !flags.has('--allow-unattended');
+}
+
+function validCommon(values, flags) {
+  return values.database === 'volume_alert' && values.receiver === RECEIVER
+    && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(values['run-id'] || '')
+    && Number.isSafeInteger(values['from-page']) && Number.isSafeInteger(values['end-page'])
+    && values['from-page'] >= 0 && values['end-page'] > values['from-page']
+    && values['end-page'] <= 4294967295
+    && ['--write', '--allow-holder-lock', '--allow-remote-write'].every(flag => flags.has(flag));
+}
 
 function parseArgs(args) {
   const values = {}; const flags = new Set();
-  for (const arg of args) {
-    const match = /^--(database|run-id|from-page|end-page|pause-ms|receiver)=(.+)$/.exec(arg);
-    if (match) {
-      if (Object.hasOwn(values, match[1])) throw new Error('repeated transfer argument');
-      values[match[1]] = match[1].includes('page') || match[1] === 'pause-ms' ? Number(match[2]) : match[2];
-    } else if (['--write', '--allow-holder-lock', '--allow-remote-write'].includes(arg)) {
-      if (flags.has(arg)) throw new Error('repeated transfer flag'); flags.add(arg);
-    } else throw new Error('unknown transfer argument');
+  for (const arg of args) collectArg(values, flags, arg);
+  const full = flags.has('--full');
+  if (!validCommon(values, flags) || !validMode(values, flags, full)) {
+    throw new Error('use the explicit pilot or full transfer contract with all acknowledgements');
   }
-  if (values.database !== 'volume_alert' || values.receiver !== RECEIVER
-      || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(values['run-id'] || '')
-      || !Number.isSafeInteger(values['from-page']) || !Number.isSafeInteger(values['end-page'])
-      || values['from-page'] < 0 || values['end-page'] <= values['from-page']
-      || values['end-page'] - values['from-page'] > 32768 || values['pause-ms'] !== 100
-      || !['--write', '--allow-holder-lock', '--allow-remote-write'].every(flag => flags.has(flag))) {
-    throw new Error('use explicit volume_alert, run UUID, bounded pages, pause 100, receiver and all acknowledgements');
-  }
-  return { database: values.database, runId: values['run-id'], fromPage: values['from-page'],
-    endPage: values['end-page'], pauseMs: values['pause-ms'], schema: 'public', write: true, allowHolderLock: true };
+  return { database: values.database, runId: values['run-id'], fromPage: values['from-page'], full,
+    endPage: values['end-page'], pauseMs: values['pause-ms'], schema: 'public', write: true, allowHolderLock: true,
+    pilotValidated: flags.has('--pilot-validated'), allowUnattended: flags.has('--allow-unattended') };
 }
 
 function createSshTransport(host = RECEIVER, spawnImpl = spawn) {
@@ -77,8 +97,13 @@ async function main(args = process.argv.slice(2)) {
   const controller = new AbortController(); const abort = () => controller.abort();
   process.once('SIGINT', abort); process.once('SIGTERM', abort);
   try {
+    let batchEvents = 0;
     const result = await runTransfer(pool, options, { signal: controller.signal,
-      transport: createSshTransport(), progress: event => console.error(JSON.stringify(event)) });
+      transport: createSshTransport(), progress: event => {
+        if (event.phase !== 'batch' || ++batchEvents % 64 === 0 || event.page === options.endPage) {
+          console.error(JSON.stringify(event));
+        }
+      } });
     console.log(JSON.stringify(result));
   } finally {
     process.removeListener('SIGINT', abort); process.removeListener('SIGTERM', abort); await pool.end();
