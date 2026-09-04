@@ -173,6 +173,8 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
   const v3SnapshotWindowBlocks = BigInt(options.v3SnapshotWindowBlocks ?? 32);
   const status = { running: false, mode: 'shadow_receipts', lastResult: null, lastError: null,
     nodeHead: null, nextBlock: null, lagBlocks: null, lastHeadObservedAt: null,
+    nodeHeadObservedAt: null, lastRunAt: null, lastProgressAt: null,
+    lastCompletedAt: null, inFlight: false, totalErrors: 0, consecutiveErrors: 0,
     lastTiming: null, blocks: 0, transactions: 0, events: 0,
     v3Snapshots: 0, v3MissedPools: 0, v3SkippedPools: 0,
     v3SnapshotWindowBlocks: Number(v3SnapshotWindowBlocks) };
@@ -187,51 +189,67 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
     status.lagBlocks = Number(nodeHead >= nextBlock ? nodeHead - nextBlock + 1n : 0n);
   }
   async function captureOnce() {
-    const nodeHead = quantity(await deps.rpcClient.request('eth_blockNumber'), 'eth_blockNumber');
-    const cursor = await deps.journal.getCursor();
-    let nextBlock = cursor ? quantity(cursor.next_block, 'cursor.next_block')
-      : (options.startBlock == null ? nodeHead : BigInt(options.startBlock));
-    if (cursor && nodeHead + 1n < nextBlock) {
-      const error = new Error(`node head ${nodeHead} regressed behind capture cursor ${nextBlock}`);
-      error.code = 'capture_node_head_regressed'; throw error;
-    }
-    const limit = BigInt(options.maxBlocksPerDrain || 100);
-    const through = nodeHead < nextBlock + limit - 1n ? nodeHead : nextBlock + limit - 1n;
-    status.nodeHead = nodeHead.toString(); recordFrontier(nodeHead, nextBlock);
-    while (nextBlock <= through) {
-      const startedAt = now();
-      const observedAt = status.lastHeadObservedAt || startedAt.toISOString();
-      const capture = await readReceiptBlock(deps.rpcClient, nextBlock, { topics });
-      const receiptsAvailableAt = now();
-      const v3State = await deps.v3Snapshotter.captureBlock(capture, {
-        // Cover intervening live blocks too; old catch-up only updates pool tracking.
-        readBalances: nodeHead - nextBlock < v3SnapshotWindowBlocks,
-      });
-      const snapshotsAvailableAt = now();
-      const finalizedHead = nodeHead > BigInt(options.confirmations || 0)
-        ? nodeHead - BigInt(options.confirmations || 0) : 0n;
-      const result = await deps.journal.commitBlock({
-        ...capture, v3Snapshots: v3State.snapshots, nodeHead: nodeHead.toString(),
-        finalizedHead: finalizedHead.toString(), block: { ...capture.block,
-          finality: nextBlock <= finalizedHead ? 'finalized' : 'observed', headObservedAt: observedAt,
-          receiptsAvailableAt: receiptsAvailableAt.toISOString() },
-      });
-      const committedAt = now();
-      status.blocks += 1; status.transactions += result.transactions; status.events += result.events;
-      status.v3Snapshots += result.v3Snapshots || 0;
-      status.v3MissedPools += v3State.missedPools;
-      status.v3SkippedPools += v3State.skippedPools || 0;
-      status.lastResult = { block: nextBlock.toString(), ...result }; nextBlock += 1n;
-      recordFrontier(nodeHead, nextBlock);
-      status.lastTiming = {
-        fetchMs: receiptsAvailableAt - startedAt,
-        snapshotMs: snapshotsAvailableAt - receiptsAvailableAt,
-        commitMs: committedAt - snapshotsAvailableAt,
-        headToCommitMs: Math.max(0, committedAt - new Date(observedAt)),
+    status.inFlight = true;
+    status.lastRunAt = now().toISOString();
+    try {
+      const nodeHead = quantity(await deps.rpcClient.request('eth_blockNumber'), 'eth_blockNumber');
+      status.nodeHeadObservedAt = now().toISOString();
+      const cursor = await deps.journal.getCursor();
+      let nextBlock = cursor ? quantity(cursor.next_block, 'cursor.next_block')
+        : (options.startBlock == null ? nodeHead : BigInt(options.startBlock));
+      if (cursor && nodeHead + 1n < nextBlock) {
+        const error = new Error(`node head ${nodeHead} regressed behind capture cursor ${nextBlock}`);
+        error.code = 'capture_node_head_regressed'; throw error;
+      }
+      const limit = BigInt(options.maxBlocksPerDrain || 100);
+      const through = nodeHead < nextBlock + limit - 1n ? nodeHead : nextBlock + limit - 1n;
+      status.nodeHead = nodeHead.toString(); recordFrontier(nodeHead, nextBlock);
+      while (nextBlock <= through) {
+        const startedAt = now();
+        const observedAt = status.lastHeadObservedAt || startedAt.toISOString();
+        const capture = await readReceiptBlock(deps.rpcClient, nextBlock, { topics });
+        const receiptsAvailableAt = now();
+        const v3State = await deps.v3Snapshotter.captureBlock(capture, {
+          // Cover intervening live blocks too; old catch-up only updates pool tracking.
+          readBalances: nodeHead - nextBlock < v3SnapshotWindowBlocks,
+        });
+        const snapshotsAvailableAt = now();
+        const finalizedHead = nodeHead > BigInt(options.confirmations || 0)
+          ? nodeHead - BigInt(options.confirmations || 0) : 0n;
+        const result = await deps.journal.commitBlock({
+          ...capture, v3Snapshots: v3State.snapshots, nodeHead: nodeHead.toString(),
+          finalizedHead: finalizedHead.toString(), block: { ...capture.block,
+            finality: nextBlock <= finalizedHead ? 'finalized' : 'observed', headObservedAt: observedAt,
+            receiptsAvailableAt: receiptsAvailableAt.toISOString() },
+        });
+        const committedAt = now();
+        status.blocks += 1; status.transactions += result.transactions; status.events += result.events;
+        status.v3Snapshots += result.v3Snapshots || 0;
+        status.v3MissedPools += v3State.missedPools;
+        status.v3SkippedPools += v3State.skippedPools || 0;
+        status.lastResult = { block: nextBlock.toString(), ...result }; nextBlock += 1n;
+        status.lastProgressAt = committedAt.toISOString();
+        recordFrontier(nodeHead, nextBlock);
+        status.lastTiming = {
+          fetchMs: receiptsAvailableAt - startedAt,
+          snapshotMs: snapshotsAvailableAt - receiptsAvailableAt,
+          commitMs: committedAt - snapshotsAvailableAt,
+          headToCommitMs: Math.max(0, committedAt - new Date(observedAt)),
+        };
+      }
+      if (nextBlock <= nodeHead) requested = true;
+      status.lastCompletedAt = now().toISOString();
+      status.lastError = null; status.consecutiveErrors = 0;
+      return status.lastResult;
+    } catch (error) {
+      status.totalErrors += 1; status.consecutiveErrors += 1;
+      status.lastError = {
+        at: now().toISOString(), code: error.code || null, message: error.message,
       };
+      throw error;
+    } finally {
+      status.inFlight = false;
     }
-    if (nextBlock <= nodeHead) requested = true;
-    return status.lastResult;
   }
   async function kick() {
     requested = true;
@@ -239,8 +257,7 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
     inFlight = (async () => {
       while (status.running && requested) {
         requested = false;
-        try { await captureOnce(); status.lastError = null; }
-        catch (error) { status.lastError = { code: error.code || null, message: error.message }; }
+        try { await captureOnce(); } catch (_) {}
       }
     })().finally(() => { inFlight = null; });
     return inFlight;

@@ -34,6 +34,8 @@ const DEFINITIONS = [
   ['robinhood-retention-worker', 'Robinhood retention worker', 'robinhood-maintenance|maintenance', 'maintenance'],
   ['mock-trading-take-profit-worker', 'Mock trading take-profit worker', 'maintenance', 'polling'],
   ['robinhood-ingestion-worker', 'Robinhood ingestion worker', 'robinhood', 'live'],
+  ['robinhood-chain-capture-worker', 'Robinhood canonical chain capture worker',
+    'robinhood-chain-capture', 'live', { maxLagBlocks: 2 }],
   ['robinhood-head-capture-worker', 'Robinhood head capture worker', 'robinhood-head', 'live'],
   ['robinhood-processing-worker', 'Robinhood processing worker', 'robinhood-processing', 'live'],
   ['robinhood-derived-worker', 'Robinhood derived worker', 'robinhood-derived', 'live'],

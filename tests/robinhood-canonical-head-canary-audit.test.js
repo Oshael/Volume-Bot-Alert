@@ -7,14 +7,18 @@ const {
 } = require('../src/services/robinhood-canonical-head-canary-audit');
 const { compact, parseArgs } = require('../src/utils/audit-robinhood-canonical-head-canary');
 
+const NOW = Date.parse('2026-09-04T12:00:00.000Z');
+
 function lease(lease_key, metadata = {}) {
   return { lease_key, active: true, metadata };
 }
 function input(phase) {
   return {
     options: {
-      phase, maxCaptureLag: 2, maxQueueLagBlocks: 2, minDiscovery: 1, minMarket: 100,
+      phase, maxCaptureLag: 2, maxCaptureHeadAgeMs: 10_000,
+      maxQueueLagBlocks: 2, minDiscovery: 1, minMarket: 100,
     },
+    nowMs: NOW,
     capture: { next_block: '1001', node_head: '1000', lag_blocks: '0' },
     queue: {
       pending: 2, leased: 0, blocked: 0, first_pending: '1000',
@@ -22,7 +26,9 @@ function input(phase) {
       first_mature_unsettled: null, mature_lag_blocks: '0',
     },
     leases: [
-      lease('robinhood-chain-capture-worker'),
+      lease('robinhood-chain-capture-worker', {
+        nodeHeadObservedAt: '2026-09-04T11:59:55.000Z',
+      }),
       lease('robinhood-head-capture-worker'),
     ],
     parity: [],
@@ -69,9 +75,23 @@ describe('Robinhood canonical head canary audit', () => {
     ]);
   });
 
+  it('rejects a frozen or missing canonical capture head observation', () => {
+    const stale = input('preflight');
+    stale.leases[0].metadata.nodeHeadObservedAt = '2026-09-04T11:59:40.000Z';
+    assert.deepEqual(evaluate(stale).blockers.map(({ code }) => code), [
+      'canonical_capture_head_stale',
+    ]);
+
+    delete stale.leases[0].metadata.nodeHeadObservedAt;
+    assert.deepEqual(evaluate(stale).blockers.map(({ code }) => code), [
+      'canonical_capture_head_freshness_missing',
+    ]);
+  });
+
   it('parses bounded audit phases', () => {
     assert.deepEqual(parseArgs(['--phase=canary', '--min-market=500', '--verbose']), {
-      phase: 'canary', maxCaptureLag: 2, maxQueueLagBlocks: 2,
+      phase: 'canary', maxCaptureLag: 2, maxCaptureHeadAgeMs: 10_000,
+      maxQueueLagBlocks: 2,
       minDiscovery: 1, minMarket: 500, verbose: true,
     });
     assert.throws(() => parseArgs(['--phase=cutover']), /preflight or canary/);
@@ -81,7 +101,9 @@ describe('Robinhood canonical head canary audit', () => {
   it('scopes parity to the active canary acquisition timestamp', async () => {
     let parityOptions;
     const database = { query: async (sql) => ({ rows: sql.includes('worker_leases') ? [
-      lease('robinhood-chain-capture-worker'), lease('robinhood-head-capture-worker'),
+      lease('robinhood-chain-capture-worker', {
+        nodeHeadObservedAt: '2026-09-04T11:59:55.000Z',
+      }), lease('robinhood-head-capture-worker'),
       { ...lease('robinhood-canonical-head-worker', {
         canonicalRuntime: { rpcGuard: { forbiddenAttempts: 0 } },
       }), acquired_at: '2026-09-04T02:00:00Z' },
@@ -99,7 +121,7 @@ describe('Robinhood canonical head canary audit', () => {
       ];
     } };
     const report = await createRobinhoodCanonicalHeadCanaryAudit({
-      database, candidates,
+      database, candidates, now: () => NOW,
     }).inspect({ phase: 'canary' });
     assert.deepEqual(parityOptions, { capturedAfter: '2026-09-04T02:00:00Z' });
     assert.equal(report.approved, true);

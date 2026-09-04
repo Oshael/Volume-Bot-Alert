@@ -92,6 +92,34 @@ test('worker captures sequential blocks without eth_getLogs', async () => {
       status.transactions, status.events],
     ['101', '102', 0, 2, 2, 2]
   );
+  for (const field of [
+    'nodeHeadObservedAt', 'lastRunAt', 'lastProgressAt', 'lastCompletedAt',
+  ]) assert.equal(Number.isFinite(Date.parse(status[field])), true, field);
+  assert.deepEqual(
+    [status.inFlight, status.totalErrors, status.consecutiveErrors],
+    [false, 0, 0]
+  );
+});
+
+test('worker reports failed capture attempts without presenting stale success', async () => {
+  const error = Object.assign(new Error('node unavailable'), { code: 'rpc_timeout' });
+  const worker = createRobinhoodChainCaptureWorker({
+    rpcClient: { request: async () => { throw error; } },
+    journal: { getCursor: async () => null },
+    v3Snapshotter: { captureBlock: async () => ({ snapshots: [], missedPools: 0 }) },
+  });
+
+  await assert.rejects(worker.captureOnce(), error);
+  const status = worker.getStatus();
+  assert.equal(status.inFlight, false);
+  assert.equal(status.lastCompletedAt, null);
+  assert.equal(status.totalErrors, 1);
+  assert.equal(status.consecutiveErrors, 1);
+  assert.deepEqual(
+    { code: status.lastError.code, message: status.lastError.message },
+    { code: 'rpc_timeout', message: 'node unavailable' }
+  );
+  assert.equal(Number.isFinite(Date.parse(status.lastError.at)), true);
 });
 
 test('snapshot window skips old catch-up and covers its inclusive boundary across drains', async () => {

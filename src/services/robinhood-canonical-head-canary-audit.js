@@ -15,6 +15,10 @@ const LEASE_KEYS = Object.freeze({
 function count(value) {
   return Number(value) || 0;
 }
+function timestamp(value) {
+  const parsed = Date.parse(String(value || ''));
+  return Number.isFinite(parsed) ? parsed : null;
+}
 function activeLease(rows, key) {
   return rows.find((row) => row.lease_key === key) || {
     lease_key: key, active: false, metadata: {}, heartbeat_at: null, lease_until: null,
@@ -24,9 +28,36 @@ function add(blockers, condition, code, detail = null) {
   if (condition) blockers.push(detail == null ? { code } : { code, detail });
 }
 
+function evaluateCapture(input, lease, blockers) {
+  const { capture } = input;
+  const { maxCaptureLag, maxCaptureHeadAgeMs } = input.options;
+  const nowMs = Number(input.nowMs ?? Date.now());
+  const headObservedAt = timestamp(lease.metadata?.nodeHeadObservedAt);
+  const headAgeMs = headObservedAt == null ? null : Math.max(0, nowMs - headObservedAt);
+  add(blockers, !capture, 'capture_cursor_missing');
+  add(blockers, capture && capture.node_head == null, 'capture_head_missing');
+  add(blockers, capture && capture.lag_blocks == null, 'capture_lag_missing');
+  add(blockers, count(capture?.lag_blocks) > maxCaptureLag, 'capture_lag_exceeded', {
+    actual: count(capture?.lag_blocks), maximum: maxCaptureLag,
+  });
+  add(blockers, !lease.active, 'canonical_capture_inactive');
+  add(blockers, lease.active && headObservedAt == null,
+    'canonical_capture_head_freshness_missing');
+  add(blockers, lease.active && headAgeMs > maxCaptureHeadAgeMs,
+    'canonical_capture_head_stale', {
+      actualMs: headAgeMs, maximumMs: maxCaptureHeadAgeMs,
+    });
+  return capture && {
+    ...capture,
+    node_head_observed_at: headObservedAt == null
+      ? null : new Date(headObservedAt).toISOString(),
+    node_head_age_ms: headAgeMs,
+  };
+}
+
 function evaluate(input) {
   const {
-    phase, maxCaptureLag, maxQueueLagBlocks, minDiscovery, minMarket,
+    phase, maxQueueLagBlocks, minDiscovery, minMarket,
   } = input.options;
   const capture = input.capture || null;
   const queue = input.queue || {};
@@ -40,11 +71,7 @@ function evaluate(input) {
     }]
   )));
   const blockers = [];
-  add(blockers, !capture, 'capture_cursor_missing');
-  add(blockers, count(capture?.lag_blocks) > maxCaptureLag, 'capture_lag_exceeded', {
-    actual: count(capture?.lag_blocks), maximum: maxCaptureLag,
-  });
-  add(blockers, !leases.capture.active, 'canonical_capture_inactive');
+  const captureStatus = evaluateCapture({ ...input, capture }, leases.capture, blockers);
   add(blockers, !leases.legacy.active, 'legacy_head_inactive');
   add(blockers, leases.shadow.active, 'domain_shadow_still_active');
   add(blockers, count(queue.mature_lag_blocks) > maxQueueLagBlocks,
@@ -79,7 +106,9 @@ function evaluate(input) {
     }
   }
   return Object.freeze({
-    phase, approved: blockers.length === 0, blockers, capture, queue, leases, parity,
+    phase, approved: blockers.length === 0, blockers,
+    capture: captureStatus,
+    queue, leases, parity,
   });
 }
 
@@ -92,6 +121,7 @@ function createRobinhoodCanonicalHeadCanaryAudit(deps = {}) {
     const normalized = {
       phase: options.phase === 'canary' ? 'canary' : 'preflight',
       maxCaptureLag: count(options.maxCaptureLag ?? 2),
+      maxCaptureHeadAgeMs: count(options.maxCaptureHeadAgeMs ?? 10_000),
       maxQueueLagBlocks: count(options.maxQueueLagBlocks ?? 2),
       minDiscovery: count(options.minDiscovery ?? 1),
       minMarket: count(options.minMarket ?? 100),
@@ -153,6 +183,7 @@ function createRobinhoodCanonicalHeadCanaryAudit(deps = {}) {
       },
       leases: leaseResult.rows,
       parity,
+      nowMs: typeof deps.now === 'function' ? deps.now() : Date.now(),
     });
   }
 

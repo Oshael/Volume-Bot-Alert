@@ -14,7 +14,8 @@ function integer(value, fallback, label) {
 }
 function parseArgs(argv = []) {
   const allowed = [
-    '--phase=', '--max-capture-lag=', '--max-queue-lag=', '--min-discovery=', '--min-market=',
+    '--phase=', '--max-capture-lag=', '--max-capture-head-age-ms=',
+    '--max-queue-lag=', '--min-discovery=', '--min-market=',
   ];
   const unknown = argv.find((arg) => (
     arg !== '--verbose' && !allowed.some((prefix) => arg.startsWith(prefix))
@@ -26,6 +27,9 @@ function parseArgs(argv = []) {
   return {
     phase,
     maxCaptureLag: integer(value('--max-capture-lag='), 2, '--max-capture-lag'),
+    maxCaptureHeadAgeMs: integer(
+      value('--max-capture-head-age-ms='), 10_000, '--max-capture-head-age-ms'
+    ),
     maxQueueLagBlocks: integer(value('--max-queue-lag='), 2, '--max-queue-lag'),
     minDiscovery: integer(value('--min-discovery='), 1, '--min-discovery'),
     minMarket: integer(value('--min-market='), 100, '--min-market'),
