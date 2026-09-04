@@ -1874,6 +1874,11 @@ progresso a cada 64 lotes e continua retornando `readyForSwap:false`. Execute so
 `nohup` para que a perda do terminal não envie SIGHUP. Uma falha conserva os lotes
 isolados no destino, mas exige UUID novo e reinício integral: não há retomada CTID
 entre processos.
+No modo completo, aumentos consecutivos de lag até 100 blocos são tratados como
+oscilação normal; o piloto curto continua falhando nessa tendência. Ambos param se
+o lag ficar acima de 100 por 15 s, se cursor ou pendência estagnarem, ou se lease,
+telemetria, counters ou processing degradarem. A amostra que provocar a parada é
+gravada no log antes do rollback.
 
 `monitored`, `recent`, `old-week`, pins, tokens manuais e o summary de
 `GET /api/robinhood/holders` consultam essa view em lote, sem RPC ou Blockscout por

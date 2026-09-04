@@ -86,7 +86,7 @@ function progressTimers(before, current, now) {
   };
 }
 
-function checkProgress(current, before, now) {
+function checkProgress(current, before, now, options) {
   const { next, lag, processed, settled } = current;
   if (before && (next < before.next || processed < before.processed || settled < before.settled)) {
     throw new Error('cursor or counters regressed');
@@ -96,12 +96,12 @@ function checkProgress(current, before, now) {
   if (timers.highLagSince !== null && now - timers.highLagSince >= POLICY.highLagMs) {
     throw new Error('lag above 100 blocks persisted for at least 15 seconds');
   }
-  if (rising >= 2 || now - timers.headSince >= 30000
+  if ((!options?.allowLowLagGrowth && rising >= 2) || now - timers.headSince >= 30000
       || now - timers.pendingSince >= POLICY.staleMs) throw new Error('lag growing or progress stalled');
   return { ...current, rising, ...timers };
 }
 
-function checkStream(sample, stream, head, before, now) {
+function checkStream(sample, stream, head, before, now, options) {
   const h = sample.heads.find((entry) => entry.stream === stream);
   if (!h || !fresh(h.updated_at, now, 30000)) throw new Error('HEAD telemetry stale');
   const next = integer(h.next_block); const lag = Math.max(0, head - next + 1);
@@ -109,10 +109,10 @@ function checkStream(sample, stream, head, before, now) {
   if (!p || !fresh(p.tick, now, POLICY.staleMs) || integer(p.blocked) > 0
       || typeof sample.pending?.[stream] !== 'boolean') throw new Error('processing unhealthy');
   const processed = integer(p.processed); const settled = processed + integer(p.rejected);
-  return checkProgress({ next, lag, processed, settled, pending: sample.pending[stream] }, before, now);
+  return checkProgress({ next, lag, processed, settled, pending: sample.pending[stream] }, before, now, options);
 }
 
-function checkHealth(sample, previous) {
+function checkHealth(sample, previous, options) {
   const now = integer(sample.observedAt);
   const errors = checkLease(sample, previous, now);
   if (previous && now <= previous.at) throw new Error('monitor clock did not advance');
@@ -120,7 +120,7 @@ function checkHealth(sample, previous) {
   const head = Math.max(...sample.heads.map((h) => integer(h.safe_head)));
   const result = { at: now, owner: sample.owner, errors, streams: {} };
   for (const stream of STREAMS) {
-    try { result.streams[stream] = checkStream(sample, stream, head, previous?.streams[stream], now); }
+    try { result.streams[stream] = checkStream(sample, stream, head, previous?.streams[stream], now, options); }
     catch (error) { throw new Error(`${stream}: ${error.message}`); }
   }
   return result;

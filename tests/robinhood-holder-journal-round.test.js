@@ -59,6 +59,16 @@ test('lag must grow twice; steady lag is not itself treated as growth', () => {
   assert.equal(checkHealth(two, previous).streams.market.rising, 0);
 });
 
+test('full-transfer policy tolerates rising lag only while it remains below the persistent high-lag boundary', () => {
+  const options = { allowLowLagGrowth: true };
+  let previous = checkHealth(snapshot(), undefined, options);
+  for (const [elapsed, lag] of [[5000, 10], [10000, 20], [15000, 30]]) {
+    const current = snapshot(elapsed); current.heads[1].next_block -= lag;
+    previous = checkHealth(current, previous, options);
+  }
+  assert.equal(previous.streams.market.rising, 3);
+});
+
 test('idle processing is allowed; continuously pending work without settlement stops after heartbeat grace', () => {
   let previous;
   for (let ms = 0; ms <= POLICY.staleMs; ms += 5000) {

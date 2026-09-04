@@ -65,11 +65,22 @@ async function sourceManifest(query, options) {
     schemaHash: description.hash, fromPage: options.fromPage, endPage, pages: PAGES } };
 }
 
-async function healthWindow(monitor, database, schema, progress, signal, stage, previous) {
+function recordHealth(snapshot, previous, progress, stage, assessHealth) {
+  try {
+    const health = assessHealth(snapshot, previous);
+    progress({ phase: 'health', stage, snapshot, health });
+    return health;
+  } catch (error) {
+    progress({ phase: 'health', stage, snapshot, error: error.message });
+    throw error;
+  }
+}
+
+async function healthWindow(monitor, database, schema, progress, signal, stage, previous, assessHealth = checkHealth) {
   for (let i = 0; i < 7; i += 1) {
     signal?.throwIfAborted();
     const snapshot = await readHealth(monitor, database, schema);
-    previous = checkHealth(snapshot, previous); progress({ phase: 'health', stage, snapshot, health: previous });
+    previous = recordHealth(snapshot, previous, progress, stage, assessHealth);
     if (i < 6) await delay(5000, undefined, { signal });
   }
   return previous;
@@ -85,18 +96,19 @@ function assertTransferOptions(options, transport) {
 }
 
 async function copyBatches(query, monitor, source, sql, options, deps) {
-  const { transport, signal, progress, observeBaseline, sleep, clock } = deps;
+  const { transport, signal, progress, observeBaseline, assessHealth, sleep, clock } = deps;
   const params = p => [`(${p},0)`, `(${Math.min(p + PAGES, source.manifest.endPage)},0)`, source.cursor.cutoff];
   const initialized = await transport.send({ op: 'init', runId: options.runId, manifest: source.manifest });
   if (initialized.manifest.sourceIdentity !== source.sourceIdentity) throw new Error('receiver manifest mismatch');
   let page = initialized.nextPage;
   if (page !== source.manifest.fromPage) throw new Error('cross-process CTID resume is refused; create a new run');
-  let previous = await observeBaseline(monitor, options.database, options.schema, progress, signal, 'baseline');
+  let previous = await observeBaseline(monitor, options.database, options.schema, progress, signal,
+    'baseline', undefined, assessHealth);
   let lastHealth = clock(); let rows = 0; let batches = 0; const started = clock();
   while (page < source.manifest.endPage) {
     if (clock() - lastHealth >= 5000) {
       const snapshot = await readHealth(monitor, options.database, options.schema);
-      previous = checkHealth(snapshot, previous); progress({ phase: 'health', stage: 'load', snapshot, health: previous });
+      previous = recordHealth(snapshot, previous, progress, 'load', assessHealth);
       lastHealth = clock();
     }
     const toPage = Math.min(page + PAGES, source.manifest.endPage);
@@ -123,6 +135,8 @@ async function cleanup(client, monitor, transport, transaction, failure) {
 async function runTransfer(pool, options, { transport, signal, progress = () => {},
   observeBaseline = healthWindow, observeRecovery = healthWindow, sleep = delay, clock = Date.now } = {}) {
   assertTransferOptions(options, transport);
+  const assessHealth = (snapshot, previous) => checkHealth(snapshot, previous,
+    { allowLowLagGrowth: options.full === true });
   let client; let monitor;
   let transaction = false; let failure; let result;
   async function query(sql, values) { signal?.throwIfAborted(); const r = await client.query(sql, values); signal?.throwIfAborted(); return r; }
@@ -136,17 +150,18 @@ async function runTransfer(pool, options, { transport, signal, progress = () => 
     const plan = (await query(`EXPLAIN (FORMAT JSON) ${sql}`, params(source.manifest.fromPage))).rows[0]['QUERY PLAN'][0];
     validatePlan(plan); progress({ phase: 'plan', manifest: source.manifest, scan: 'Tid Range Scan' });
     const copied = await copyBatches(query, monitor, source, sql, options,
-      { transport, signal, progress, observeBaseline, sleep, clock });
+      { transport, signal, progress, observeBaseline, assessHealth, sleep, clock });
     result = { status: 'transferred_unverified', mode: options.full ? 'full' : 'pilot', runId: options.runId,
       batches: copied.batches, rows: copied.rows, fromPage: source.manifest.fromPage,
       endPage: copied.page, elapsedMs: copied.elapsedMs,
       sourceConsistencyVerified: true, readyForSwap: false };
     await query('COMMIT'); transaction = false;
-    await observeRecovery(monitor, options.database, options.schema, progress, signal, 'recovery', copied.previous);
+    await observeRecovery(monitor, options.database, options.schema, progress, signal,
+      'recovery', copied.previous, assessHealth);
   } catch (error) { failure = error; }
   finally { failure = await cleanup(client, monitor, transport, transaction, failure); }
   if (failure) throw failure;
   return result;
 }
 
-module.exports = { PAGES, MAX_RANGE_PAGES, sourceSql, sourceManifest, runTransfer };
+module.exports = { PAGES, MAX_RANGE_PAGES, sourceSql, sourceManifest, recordHealth, runTransfer };

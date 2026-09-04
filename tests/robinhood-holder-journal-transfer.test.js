@@ -3,7 +3,7 @@ const { EventEmitter } = require('node:events');
 const { PassThrough } = require('node:stream');
 const { test } = require('node:test');
 const { parseArgs, createSshTransport, RECEIVER, IDENTITY } = require('../src/utils/transfer-robinhood-holder-journal');
-const { sourceSql } = require('../src/services/robinhood-holder-journal-transfer');
+const { sourceSql, recordHealth } = require('../src/services/robinhood-holder-journal-transfer');
 const runId = '12345678-1234-1234-1234-123456789abc';
 const base = [`--database=volume_alert`, `--run-id=${runId}`, '--from-page=0', '--end-page=32768',
   '--pause-ms=100', `--receiver=${RECEIVER}`, '--write', '--allow-holder-lock', '--allow-remote-write'];
@@ -57,4 +57,12 @@ test('SSH transport uses one compressed fixed receiver session with line-delimit
   assert.equal(args[args.indexOf('-i') + 1], IDENTITY); assert.ok(args.includes('IdentitiesOnly=yes'));
   assert.ok(args.includes(RECEIVER)); assert.ok(args.includes('--stream'));
   assert.ok(args.includes('/opt/holder-journal-receiver/src/utils/receive-robinhood-holder-journal.js'));
+});
+
+test('health failure records the rejected sample before stopping', () => {
+  const events = []; const failure = new Error('market unhealthy');
+  assert.throws(() => recordHealth({ observedAt: 1 }, null, event => events.push(event),
+    'load', () => { throw failure; }), failure);
+  assert.deepEqual(events, [{ phase: 'health', stage: 'load', snapshot: { observedAt: 1 },
+    error: 'market unhealthy' }]);
 });
