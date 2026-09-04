@@ -3267,6 +3267,10 @@ discovery, os dois pollers não podem ser separados no cutover. O consumidor
 canônico combinado reclama um bloco completo, entrega discovery antes de market,
 insere as evidências e somente então conclui todos os itens. Qualquer falha
 retenta o bloco inteiro e um `blocked` impede avanço para blocos posteriores.
+Sua composição restaura o registry de pools persistido antes do primeiro claim,
+usa o pipeline somente em `captureMode` e envolve o RPC com a role
+`canonical-head`: `eth_getLogs` simples ou em batch é rejeitado localmente e
+contabilizado antes de alcançar o node. O runtime segue sem processo ativo.
 
 ## 15. Wallet tracking multichain
 

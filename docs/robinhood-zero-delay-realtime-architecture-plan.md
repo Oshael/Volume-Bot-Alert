@@ -370,6 +370,8 @@ que 500 linhas.
 - consumo por `LISTEN/NOTIFY` (3C concluída como processo shadow isolado);
 - adapter canônico de evidência discovery (3D concluída, runtime desativado);
 - barreira canônica por bloco discovery→market (3E concluída, runtime desativado);
+- composição do pipeline com seed persistido e guard anti-`eth_getLogs` (3F concluída,
+  processo runtime ainda desativado);
 - preservação da evidência e idempotência atuais;
 - comparação com `robinhood_head_captures` existente;
 - cutover dos dois pollers `eth_getLogs` do head.
