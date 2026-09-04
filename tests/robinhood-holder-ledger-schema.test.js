@@ -6,6 +6,7 @@ const stage117 = require('../src/utils/db-init-stage117');
 const stage118 = require('../src/utils/db-init-stage118');
 const stage121 = require('../src/utils/db-init-stage121');
 const stage141 = require('../src/utils/db-init-stage141');
+const stage196 = require('../src/utils/db-init-stage196');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 
 describe('Robinhood holder shadow ledger schema', () => {
@@ -105,6 +106,59 @@ describe('Robinhood holder shadow ledger schema', () => {
     ));
     assert.equal(group.repair, 'node src/utils/db-init-stage121.js');
     assert.equal(group.tables[0].indexes[0].name, 'idx_rh_holder_journal_pending_token');
+  });
+
+  it('replaces the full rollback B-tree only after a BRIN index is ready', async () => {
+    assert.match(stage196.CREATE_STATEMENT, /CREATE INDEX CONCURRENTLY IF NOT EXISTS/);
+    assert.match(stage196.CREATE_STATEMENT, /USING BRIN \(block_number\)/);
+    assert.match(stage196.CREATE_STATEMENT, /autosummarize = on/);
+    assert.match(stage196.DROP_STATEMENT,
+      /DROP INDEX CONCURRENTLY IF EXISTS idx_robinhood_holder_journal_rollback/);
+    const calls = [];
+    const database = { query: async (sql) => {
+      calls.push(sql);
+      if (sql.includes('SELECT indisvalid')) {
+        return { rows: calls.length === 1
+          ? [] : [{ indisvalid: true, indisready: true }] };
+      }
+      return { rows: [] };
+    } };
+
+    await stage196.init({ database, closePool: false });
+
+    assert.equal(calls.indexOf(stage196.CREATE_STATEMENT)
+      < calls.indexOf(stage196.DROP_STATEMENT), true);
+    const group = SCHEMA_GROUPS.find(({ key }) => (
+      key === 'stage196-robinhood-holder-rollback-brin'
+    ));
+    assert.equal(group.repair, 'node src/utils/db-init-stage196.js');
+    assert.equal(group.tables[0].indexes[0].name, stage196.BRIN_INDEX);
+    const original = SCHEMA_GROUPS.find(({ key }) => (
+      key === 'stage116-robinhood-holder-shadow-ledger'
+    ));
+    const journal = original.tables.find(({ table }) => (
+      table === 'robinhood_holder_transfer_journal'
+    ));
+    assert.equal(journal.indexes.some(({ name }) => name === stage196.LEGACY_INDEX), false);
+  });
+
+  it('preserves the rollback B-tree when the BRIN replacement is not ready', async () => {
+    let readinessChecks = 0;
+    const calls = [];
+    const database = { query: async (sql) => {
+      calls.push(sql);
+      if (!sql.includes('SELECT indisvalid')) return { rows: [] };
+      readinessChecks += 1;
+      return { rows: readinessChecks === 1
+        ? [] : [{ indisvalid: false, indisready: false }] };
+    } };
+
+    await assert.rejects(
+      stage196.init({ database, closePool: false }),
+      /legacy index was preserved/
+    );
+
+    assert.equal(calls.includes(stage196.DROP_STATEMENT), false);
   });
 
   it('persists the proven floor of complete Transfer buffering', () => {

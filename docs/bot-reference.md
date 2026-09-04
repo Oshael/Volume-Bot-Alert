@@ -1845,14 +1845,20 @@ do PostgreSQL (`detail`, schema, tabela, coluna, constraint, tipo e rotina). O
 diagnóstico não inclui SQL, parâmetros, payloads nem stack trace.
 No deploy, execute
 `node src/utils/db-init-stage121.js`, `node src/utils/db-init-stage141.js`,
-`node src/utils/db-init-stage142.js`, `node src/utils/db-init-stage180.js` e
-`node src/utils/db-init-stage189.js`
+`node src/utils/db-init-stage142.js`, `node src/utils/db-init-stage180.js`,
+`node src/utils/db-init-stage189.js` e `node src/utils/db-init-stage196.js`
 antes do restart. Os índices históricos são criados concorrentemente para não
 bloquear writes do journal. A Stage 142 evita que o
 handoff global reescaneie todo o journal ao verificar evidência já aplicada por
 token antes da barreira. O handoff prova essa ausência pelo índice parcial de
 eventos aplicados e remove o overlap pendente com um `DELETE` set-based; ele não
-materializa nem bloqueia todo o histórico do token. A unit template usa
+materializa nem bloqueia todo o histórico do token. A Stage 196 substitui o
+B-tree global de rollback, proporcional ao número de eventos, por um BRIN de
+`block_number`. Reorg e rewind continuam filtrando a mesma faixa canônica e
+ordenando o conjunto encontrado; o BRIN apenas localiza as páginas candidatas.
+A migration confirma que o substituto está válido e pronto antes de remover o
+índice antigo, portanto uma criação interrompida preserva a proteção anterior.
+A unit template usa
 `start:worker:robinhood-holders`, com porta default
 3010 e sem socket no processo worker. Todos
 são opt-in e permanecem desligados por default; pull ou presença de

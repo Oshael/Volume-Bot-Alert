@@ -2639,7 +2639,6 @@ const SCHEMA_GROUPS = [
         ],
         indexes: [
           { name: 'idx_robinhood_holder_journal_pending', includes: ['block_number', 'transaction_index', 'log_index', 'applied = false'] },
-          { name: 'idx_robinhood_holder_journal_rollback', includes: ['block_number', 'log_index'] },
         ],
       },
     ],
@@ -5619,6 +5618,18 @@ const SCHEMA_GROUPS = [
         { name: 'rh_chain_v3_balance_snapshots_event_fkey', includes: ['FOREIGN KEY', 'chain', 'block_hash', 'log_index'] },
         { name: 'rh_chain_v3_balance_snapshots_values_check', includes: ['token_balance_raw', 'quote_balance_raw', '>= 0'] },
       ],
+    }],
+  },
+  {
+    key: 'stage196-robinhood-holder-rollback-brin',
+    name: 'Stage 196 Robinhood holder rollback BRIN',
+    repair: 'node src/utils/db-init-stage196.js',
+    tables: [{
+      table: 'robinhood_holder_transfer_journal',
+      indexes: [{
+        name: 'idx_rh_holder_journal_block_brin',
+        includes: ['USING brin', 'block_number'],
+      }],
     }],
   },
 ];
