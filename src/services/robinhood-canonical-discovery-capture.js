@@ -83,5 +83,6 @@ function createRobinhoodCanonicalDiscoveryCapture(deps = {}) {
 
 module.exports = {
   createRobinhoodCanonicalDiscoveryCapture,
+  logFromRow,
   __private: { decodeStandard, epochSeconds, logFromRow },
 };

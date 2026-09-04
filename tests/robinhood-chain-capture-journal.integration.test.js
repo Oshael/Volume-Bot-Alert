@@ -173,6 +173,19 @@ describe('Robinhood canonical chain capture journal', () => {
     assert.equal(claimed.block_timestamp.toISOString(), OBSERVED_AT);
   });
 
+  it('leases the earliest incomplete block with discovery before market', async () => {
+    const mixed = capture();
+    mixed.events.push({
+      transactionHash: TX, transactionIndex: 0, logIndex: 1,
+      address: `0x${'7'.repeat(40)}`, topics: [v2.TOPICS.swap], data: '0x',
+    });
+    await createRobinhoodChainCaptureJournal().commitBlock(mixed);
+    const repository = createRobinhoodChainDomainOutboxRepository({ database: db });
+    const claimed = await repository.claimNextBlock({ owner: 'canonical-head', leaseMs: 60_000 });
+    assert.deepEqual(claimed.map((row) => row.domain), ['discovery', 'market']);
+    assert.deepEqual(claimed.map((row) => row.log_index), [0, 1]);
+  });
+
   it('reclaims an expired lease and blocks a retry that exhausts its attempts', async () => {
     await createRobinhoodChainCaptureJournal().commitBlock(capture());
     await db.query(

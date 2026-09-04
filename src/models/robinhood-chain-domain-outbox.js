@@ -37,6 +37,53 @@ function workRows(values, label, extra = () => ({})) {
 function createRobinhoodChainDomainOutboxRepository(options = {}) {
   const database = options.database || db;
 
+  async function claimNextBlock(input = {}) {
+    const owner = ownerOf(input.owner);
+    const leaseMs = positiveInt(input.leaseMs, 'leaseMs');
+    const result = await database.query(
+      `WITH frontier AS (
+         SELECT MIN(block_number) AS block_number
+           FROM robinhood_chain_domain_outbox
+          WHERE chain=$1 AND status<>'complete'
+       ), ready AS (
+         SELECT frontier.block_number
+           FROM frontier
+          WHERE frontier.block_number IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM robinhood_chain_domain_outbox blocked
+               WHERE blocked.chain=$1 AND blocked.block_number=frontier.block_number
+                 AND blocked.status<>'complete'
+                 AND (blocked.status<>'pending' OR blocked.next_attempt_at>NOW())
+            )
+       ), claimable AS (
+         SELECT outbox.chain, outbox.domain, outbox.block_hash, outbox.log_index
+           FROM robinhood_chain_domain_outbox outbox JOIN ready USING (block_number)
+          WHERE outbox.chain=$1 AND outbox.status='pending'
+          ORDER BY CASE outbox.domain WHEN 'discovery' THEN 0 ELSE 1 END,
+                   outbox.transaction_index, outbox.log_index
+          FOR UPDATE OF outbox SKIP LOCKED
+       ), leased AS (
+         UPDATE robinhood_chain_domain_outbox outbox
+            SET status='leased', lease_owner=$2,
+                lease_until=NOW() + ($3::bigint * INTERVAL '1 millisecond'),
+                attempt_count=outbox.attempt_count+1, updated_at=NOW()
+           FROM claimable
+          WHERE outbox.chain=claimable.chain AND outbox.domain=claimable.domain
+            AND outbox.block_hash=claimable.block_hash AND outbox.log_index=claimable.log_index
+         RETURNING outbox.*
+       )
+       SELECT leased.*, event.transaction_hash, event.address, event.topic0,
+              event.topics, event.data, block.block_timestamp
+         FROM leased
+         JOIN robinhood_chain_events event USING (chain, block_hash, log_index)
+         JOIN robinhood_chain_blocks block USING (chain, block_hash)
+        ORDER BY CASE leased.domain WHEN 'discovery' THEN 0 ELSE 1 END,
+                 leased.transaction_index, leased.log_index`,
+      [CHAIN, owner, leaseMs]
+    );
+    return result.rows;
+  }
+
   async function claimReady(input = {}) {
     const domain = domainOf(input.domain);
     const owner = ownerOf(input.owner);
@@ -188,7 +235,9 @@ function createRobinhoodChainDomainOutboxRepository(options = {}) {
     return result.rowCount;
   }
 
-  return Object.freeze({ claimReady, claimShadow, settle, reclaimExpiredLeases });
+  return Object.freeze({
+    claimNextBlock, claimReady, claimShadow, settle, reclaimExpiredLeases,
+  });
 }
 
 module.exports = { createRobinhoodChainDomainOutboxRepository };

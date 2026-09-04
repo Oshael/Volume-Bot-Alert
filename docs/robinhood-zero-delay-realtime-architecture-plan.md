@@ -369,6 +369,7 @@ que 500 linhas.
 - claim/lease e comparação com o legado (3B concluída, ainda sem processo runtime);
 - consumo por `LISTEN/NOTIFY` (3C concluída como processo shadow isolado);
 - adapter canônico de evidência discovery (3D concluída, runtime desativado);
+- barreira canônica por bloco discovery→market (3E concluída, runtime desativado);
 - preservação da evidência e idempotência atuais;
 - comparação com `robinhood_head_captures` existente;
 - cutover dos dois pollers `eth_getLogs` do head.

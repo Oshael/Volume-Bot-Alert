@@ -3262,6 +3262,11 @@ mesma evidência v2 de `robinhood_head_captures` consumida pelo processing atual
 V2/V3/V4 são decodificados sem RPC; NOXA mantém apenas seus `eth_call` e
 `eth_getCode` de validação de estado. A captura é inserida antes do settlement
 idempotente da outbox, portanto crash entre as duas etapas gera retry seguro.
+Como o market legado mantém o registry de pools em memória a partir do poller de
+discovery, os dois pollers não podem ser separados no cutover. O consumidor
+canônico combinado reclama um bloco completo, entrega discovery antes de market,
+insere as evidências e somente então conclui todos os itens. Qualquer falha
+retenta o bloco inteiro e um `blocked` impede avanço para blocos posteriores.
 
 ## 15. Wallet tracking multichain
 
