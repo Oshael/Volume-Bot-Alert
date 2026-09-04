@@ -9,17 +9,23 @@ const RETENTION_BLOCKS = 20_000n;
 const DEFAULT_MIN_FREE_GIB = 60;
 const HOLDER_LEASE_PATTERN = 'robinhood-holder-%';
 
-const PROTECTED_CTE = `protected_tokens AS MATERIALIZED (
-  SELECT token_address
+const PROTECTED_CTE = `protected_candidates AS MATERIALIZED (
+  SELECT token_address,
+         CASE WHEN ledger_status IN ('shadow', 'live')
+           THEN backfill_next_block ELSE NULL END AS recovery_from_block
     FROM robinhood_holder_token_states
    WHERE chain = 'robinhood' AND ledger_status <> 'drifted'
-  UNION
-  SELECT token.token_address
+  UNION ALL
+  SELECT token.token_address, NULL::bigint AS recovery_from_block
     FROM robinhood_holder_global_backfill_tokens token
     JOIN robinhood_holder_global_backfill_runs run
       ON run.id = token.run_id AND run.chain = token.chain
    WHERE token.chain = 'robinhood' AND token.status = 'active'
      AND run.barrier_block IS NOT NULL AND run.status <> 'completed'
+), protected_tokens AS MATERIALIZED (
+  SELECT token_address, MIN(recovery_from_block) AS recovery_from_block
+    FROM protected_candidates
+   GROUP BY token_address
 )`;
 
 const INDEX_STATEMENTS = Object.freeze([
@@ -136,8 +142,12 @@ async function runPrepare(options = {}, dependencies = {}) {
        LEFT JOIN protected_tokens protected
          ON protected.token_address = journal.token_address
       WHERE journal.block_number >= $1::bigint
-         OR (journal.block_number < $1::bigint AND journal.applied = false
-           AND protected.token_address IS NOT NULL)`,
+         OR (journal.block_number < $1::bigint
+           AND protected.token_address IS NOT NULL
+           AND (journal.applied = false OR (
+             protected.recovery_from_block IS NOT NULL
+             AND journal.block_number >= protected.recovery_from_block
+           )))`,
       [cutoffBlock.toString()]
     );
     assertFreeSpace(freeBytes, minFreeGiB, 'copy');
@@ -150,8 +160,15 @@ async function runPrepare(options = {}, dependencies = {}) {
       `WITH ${PROTECTED_CTE}
        SELECT COUNT(*)::bigint AS copied_rows,
               COUNT(*) FILTER (WHERE compact.block_number < $1::bigint
-                AND (compact.applied OR protected.token_address IS NULL))::bigint
-                AS invalid_old_rows
+                AND NOT (protected.token_address IS NOT NULL
+                  AND (compact.applied = false OR (
+                    protected.recovery_from_block IS NOT NULL
+                    AND compact.block_number >= protected.recovery_from_block
+                  ))))::bigint AS invalid_old_rows,
+              COUNT(*) FILTER (WHERE compact.block_number < $1::bigint
+                AND compact.applied = false)::bigint AS old_pending_rows,
+              COUNT(*) FILTER (WHERE compact.block_number < $1::bigint
+                AND compact.applied = true)::bigint AS old_recovery_rows
          FROM ${TARGET_TABLE} compact
          LEFT JOIN protected_tokens protected
            ON protected.token_address = compact.token_address`,
@@ -169,7 +186,9 @@ async function runPrepare(options = {}, dependencies = {}) {
     if (Number(ready.rows[0].ready) !== INDEX_STATEMENTS.length) {
       throw new Error('compact journal indexes are not valid/ready');
     }
-    const marker = `holder-journal-compact:v1;cutoff=${cutoffBlock};next=${nextBlock};rows=${copiedRows}`;
+    const oldPendingRows = BigInt(validation.rows[0].old_pending_rows);
+    const oldRecoveryRows = BigInt(validation.rows[0].old_recovery_rows);
+    const marker = `holder-journal-compact:v2;cutoff=${cutoffBlock};next=${nextBlock};rows=${copiedRows};old_pending=${oldPendingRows};old_recovery=${oldRecoveryRows}`;
     await client.query(`COMMENT ON TABLE ${TARGET_TABLE} IS '${marker}'`);
     await client.query(`ANALYZE ${TARGET_TABLE}`);
     const size = await client.query(
@@ -182,6 +201,8 @@ async function runPrepare(options = {}, dependencies = {}) {
       status: 'prepared', sourceTable: SOURCE_TABLE, targetTable: TARGET_TABLE,
       cutoffBlock: cutoffBlock.toString(), nextBlock: nextBlock.toString(),
       copiedRows: copiedRows.toString(), totalBytes: String(size.rows[0].total_bytes),
+      oldPendingRows: oldPendingRows.toString(),
+      oldRecoveryRows: oldRecoveryRows.toString(),
       freeGiB: gib(remaining), originalUntouched: true,
     });
   } catch (error) {

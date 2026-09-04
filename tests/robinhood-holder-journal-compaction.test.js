@@ -19,7 +19,10 @@ function harness(options = {}) {
       }
       if (sql.includes('INSERT INTO')) return { rowCount: 77 };
       if (sql.includes('invalid_old_rows')) {
-        return { rows: [{ copied_rows: '77', invalid_old_rows: options.invalidRows || '0' }] };
+        return { rows: [{
+          copied_rows: '77', invalid_old_rows: options.invalidRows || '0',
+          old_pending_rows: '11', old_recovery_rows: '13',
+        }] };
       }
       if (sql.includes('FROM pg_index')) return { rows: [{ ready: INDEX_STATEMENTS.length }] };
       if (sql.includes('pg_total_relation_size')) return { rows: [{ total_bytes: '1234' }] };
@@ -52,6 +55,8 @@ describe('Robinhood holder journal compaction prepare', () => {
     assert.equal(result.status, 'prepared');
     assert.equal(result.cutoffBlock, '80000');
     assert.equal(result.copiedRows, '77');
+    assert.equal(result.oldPendingRows, '11');
+    assert.equal(result.oldRecoveryRows, '13');
     assert.equal(result.originalUntouched, true);
     const sql = context.calls.map((call) => call.sql);
     assert.equal(sql.some((text) => text.includes('DROP TABLE')), false);
@@ -60,6 +65,9 @@ describe('Robinhood holder journal compaction prepare', () => {
     assert.equal(sql.indexOf('BEGIN') < sql.findIndex((text) => text.includes('LOCK TABLE')), true);
     assert.equal(sql.findIndex((text) => text.includes('invalid_old_rows'))
       < sql.indexOf('COMMIT'), true);
+    const copySql = sql.find((text) => text.includes('INSERT INTO'));
+    assert.match(copySql, /protected\.recovery_from_block IS NOT NULL/);
+    assert.match(copySql, /journal\.block_number >= protected\.recovery_from_block/);
     assert.equal(progress.filter(({ phase }) => phase === 'index').length,
       INDEX_STATEMENTS.length);
   });

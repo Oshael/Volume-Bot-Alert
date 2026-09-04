@@ -1713,8 +1713,11 @@ Para compactação física offline, mantenha todo o grupo `robinhood-holders` pa
 e execute
 `node src/utils/prepare-robinhood-holder-journal-compaction.js --prepare --write`.
 O prepare exige no mínimo 60 GiB livres, recusa qualquer lease holder
-ativa e mantém numa tabela nova somente a janela recente de 20.000 blocos e
-pendências antigas de estados não `drifted` ou campanhas globais ativas. Ele
+ativa e mantém numa tabela nova a janela recente de 20.000 blocos, pendências
+antigas de estados não `drifted` ou campanhas globais ativas e, para cada estado
+`shadow` ou `live`, toda a cauda aplicada desde seu `backfill_next_block`. Essa
+cauda é a evidência necessária para rollback determinístico até o baseline do
+token; `live_through_block` não é uma fronteira global de consolidação. Ele
 mantém locks de escrita no journal e nas proteções, mas permite leituras. Cópia,
 constraints, índices e validação executam numa única transação; falha ou disco
 abaixo da margem faz rollback completo. O prepare não renomeia nem remove a tabela
