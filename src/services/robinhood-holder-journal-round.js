@@ -5,7 +5,8 @@ const { performance } = require('node:perf_hooks');
 const { runPilot, normalizeOptions } = require('./robinhood-holder-journal-pilot');
 const STREAMS = ['discovery', 'market'];
 const POLICY = Object.freeze({ baselineMs: 30000, loadMs: 60000, recoveryMs: 30000,
-  sampleMs: 5000, pauseMs: 500, pages: 512, batches: 64, staleMs: 65000 });
+  sampleMs: 5000, pauseMs: 500, pages: 512, batches: 64, staleMs: 65000,
+  highLagBlocks: 100, highLagMs: 15000 });
 
 async function readHealth(client, database, schema = 'public') {
   if (!/^[a-z_][a-z0-9_]*$/.test(schema)) throw new Error('invalid schema');
@@ -66,6 +67,7 @@ function progressTimers(before, current, now) {
   return {
     headSince: before && lag > 0 && before.lag > 0 && next === before.next ? before.headSince : now,
     pendingSince: before && pending && before.pending && settled === before.settled ? before.pendingSince : now,
+    highLagSince: lag > POLICY.highLagBlocks ? (before?.highLagSince ?? now) : null,
   };
 }
 
@@ -76,7 +78,10 @@ function checkProgress(current, before, now) {
   }
   const rising = before && lag > before.lag ? before.rising + 1 : 0;
   const timers = progressTimers(before, current, now);
-  if (rising >= 2 || lag > 100 || now - timers.headSince >= 30000
+  if (timers.highLagSince !== null && now - timers.highLagSince >= POLICY.highLagMs) {
+    throw new Error('lag above 100 blocks persisted for at least 15 seconds');
+  }
+  if (rising >= 2 || now - timers.headSince >= 30000
       || now - timers.pendingSince >= POLICY.staleMs) throw new Error('lag growing or progress stalled');
   return { ...current, rising, ...timers };
 }

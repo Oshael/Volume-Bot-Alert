@@ -59,15 +59,40 @@ test('idle processing is allowed; continuously pending work without settlement s
   assert.doesNotThrow(() => checkHealth(snapshot(70000)));
 });
 
-test('absolute lag and a stationary HEAD stop even without two increasing samples', () => {
+test('a stationary HEAD still stops without two increasing samples', () => {
   const high = snapshot(); high.heads[0].safe_head += 100;
   const previous = checkHealth(high);
-  const higher = snapshot(5000); higher.heads[0].safe_head += 101;
-  assert.throws(() => checkHealth(higher, previous), /lag growing/);
   const stationary = snapshot(30000);
   stationary.heads.forEach((h, index) => { h.next_block = high.heads[index].next_block; h.safe_head = high.heads[index].safe_head; });
   assert.throws(() => checkHealth(stationary, previous), /progress stalled/);
 });
+
+for (const stream of ['discovery', 'market']) {
+  test(`${stream}: high lag tolerates brief spikes and stops at the 15-second boundary`, () => {
+    let previous;
+    for (const elapsed of [0, 5000, 10000, 14999, 15000]) {
+      const s = snapshot(elapsed);
+      s.heads.find(h => h.stream === stream).next_block -= 184;
+      if (elapsed === 15000) {
+        assert.throws(() => checkHealth(s, previous), /lag above 100 blocks persisted/);
+      } else {
+        previous = checkHealth(s, previous);
+        assert.equal(previous.streams[stream].highLagSince, EPOCH);
+      }
+    }
+  });
+
+  test(`${stream}: recovery to exactly 100 blocks resets the high-lag timer`, () => {
+    let previous;
+    for (const [elapsed, lag, since] of [[0, 184, EPOCH], [10000, 100, null],
+      [20000, 184, EPOCH + 20000], [34999, 184, EPOCH + 20000]]) {
+      const s = snapshot(elapsed);
+      s.heads.find(h => h.stream === stream).next_block -= lag;
+      previous = checkHealth(s, previous);
+      assert.equal(previous.streams[stream].highLagSince, since);
+    }
+  });
+}
 
 function harness(overrides = {}) {
   let clock = 0; const events = []; const pages = [];

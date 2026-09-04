@@ -1786,7 +1786,10 @@ lotes, podendo atrasar pelo lote em andamento (timeout máximo 3 s por statement
 Um erro/timeout de lote não é repetido. SIGINT/SIGTERM interrompem a rodada e
 dispensam a recuperação. As amostras e lotes são emitidos em JSON com `phase`.
 
-A rodada recusa lag acima de 100 blocos em qualquer fase; para ao detectar dois
+A rodada para quando o lag permanece acima de 100 blocos por pelo menos 15 s
+desde a primeira amostra acima desse limite, em qualquer fase. Uma amostra com
+lag de 100 ou menos zera esse temporizador; `highLagSince` registra seu início
+por stream na saúde emitida. As demais proteções continuam independentes: dois
 aumentos consecutivos de lag, cursor parado com lag por 30 s, regressão de cursor,
 mudança de owner/contadores de erro, erro/bloqueio do processing ou telemetria
 ausente. Sem settlements e com pendências em todas as amostras, a tolerância do
