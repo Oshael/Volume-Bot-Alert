@@ -3237,8 +3237,8 @@ por `ROBINHOOD_CHAIN_CAPTURE_CONFIRMATIONS` (default 2).
 
 A Stage 192 completa o contexto de transação com `nonce`, `value_wei` e
 `capture_version`. Aplique `node src/utils/db-init-stage192.js` depois da Stage
-191. Capturas anteriores ficam explicitamente na versão 1; somente a versão 2
-pode alimentar signed-origin/FRESH e funding nativo. O processo exige
+191. Capturas anteriores ficam explicitamente na versão 1; somente versões 2+
+podem alimentar signed-origin/FRESH e funding nativo. O processo exige
 `ROBINHOOD_CHAIN_CAPTURE_RPC_URL` em loopback e força throttle zero; ele não
 herda o endpoint público default de `ROBINHOOD_RPC_URL`.
 
@@ -3316,12 +3316,18 @@ expõe `blocks`, `blockNumber` e `throughBlock` para medir avanço real.
 
 A Stage 195 cria `robinhood_chain_v3_balance_snapshots`, sidecar durável do
 journal para os dois `balanceOf` de cada swap V3 no bloco capturado. Aplique com
-`node src/utils/db-init-stage195.js` antes de implantar o capturador Multicall.
-O snapshot pertence ao `(block_hash, log_index)` e é removido
-por cascata em reorg; saldos usam `NUMERIC(78,0)` para preservar todo `uint256`.
-O commit do bloco inclui os snapshots no digest e na mesma transação de bloco,
-receipts, eventos, outbox e cursor. A tabela ainda não muda o consumidor: o
-capturador Multicall e a leitura canônica entram no corte seguinte.
+`node src/utils/db-init-stage195.js` **antes de reiniciar** o chain-capture versão
+3. O snapshot pertence ao `(block_hash, log_index)` e é removido por cascata em
+reorg; saldos usam `NUMERIC(78,0)` para preservar todo `uint256`. No bloco que é
+o head observado, o capturador agrupa todos os pools V3 em um único Multicall
+`eth_call` ancorado no número do bloco; vários swaps do mesmo pool reutilizam o
+mesmo par de saldos final do bloco, igual ao contrato legado. Blocos de catch-up
+não fazem leitura histórica e não podem atrasar a recuperação do cursor. O RPC
+local usa timeout curto configurável por
+`ROBINHOOD_CHAIN_CAPTURE_RPC_TIMEOUT_MS` (default 2s), sem retry dentro do client;
+uma nova drenagem retenta a fronteira. Snapshot, receipts, eventos, outbox e
+cursor entram no mesmo commit/digest. O consumidor canônico ainda não lê o
+sidecar; essa troca é o corte seguinte.
 
 ## 15. Wallet tracking multichain
 

@@ -226,7 +226,7 @@ describe('Robinhood canonical chain capture journal', () => {
          JOIN robinhood_chain_transactions tx USING (chain, block_hash)`
     );
     assert.deepEqual(transactionContext.rows[0], {
-      capture_version: 2, nonce: '7', value_wei: '42',
+      capture_version: 3, nonce: '7', value_wei: '42',
     });
     const cursor = await journal.getCursor();
     assert.equal(cursor.next_block, '101');

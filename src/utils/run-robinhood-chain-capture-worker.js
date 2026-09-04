@@ -1,7 +1,11 @@
 const config = require('../../config');
 const db = require('../models/db');
 const { createRobinhoodChainCaptureJournal } = require('../models/robinhood-chain-capture-journal');
+const { createRobinhoodPersistenceRepository } = require('../models/robinhood-persistence');
 const { createRobinhoodChainCaptureWorker } = require('../services/robinhood-chain-capture-worker');
+const {
+  createRobinhoodV3BalanceSnapshotter,
+} = require('../services/robinhood-v3-balance-snapshotter');
 const { createWorkerLeaseManager } = require('../services/worker-lease-manager');
 const {
   createRobinhoodRpcClient, validateRobinhoodProviderChainIds,
@@ -22,7 +26,7 @@ function captureRpcOptions(options, base = config.robinhoodIngestionWorker) {
     throw error;
   }
   return { ...base, publicRpcUrl: parsed.toString(), useAlchemy: false, useDrpc: false,
-    rpcMinIntervalMs: 0 };
+    rpcTimeoutMs: options.rpcTimeoutMs, rpcMaxRetries: 0, rpcMinIntervalMs: 0 };
 }
 
 async function main(deps = {}) {
@@ -31,9 +35,20 @@ async function main(deps = {}) {
   const rpcClient = (deps.rpcClientFactory || createRobinhoodRpcClient)(
     deps.rpcOptions || captureRpcOptions(options)
   );
-  const journal = deps.journal || createRobinhoodChainCaptureJournal({ database: deps.database || db });
+  const database = deps.database || db;
+  const journal = deps.journal || createRobinhoodChainCaptureJournal({ database });
+  let v3Snapshotter = deps.v3Snapshotter;
+  if (!v3Snapshotter) {
+    const catalog = deps.catalog || (deps.catalogFactory || createRobinhoodPersistenceRepository)({
+      database,
+    });
+    const seedPools = await catalog.listActivePools();
+    v3Snapshotter = (deps.v3SnapshotterFactory || createRobinhoodV3BalanceSnapshotter)(
+      { rpcClient }, { seedPools }
+    );
+  }
   const worker = (deps.workerFactory || createRobinhoodChainCaptureWorker)(
-    { rpcClient, journal }, options
+    { rpcClient, journal, v3Snapshotter }, options
   );
   const leases = (deps.leaseManagerFactory || createWorkerLeaseManager)({
     heartbeatMs: options.leaseHeartbeatMs, ttlMs: options.leaseTtlMs,

@@ -164,12 +164,16 @@ function createHeadSubscription(url, onHead, options = {}) {
 }
 
 function createRobinhoodChainCaptureWorker(deps, options = {}) {
+  if (typeof deps.v3Snapshotter?.captureBlock !== 'function') {
+    throw new Error('v3Snapshotter.captureBlock is required');
+  }
   const now = deps.now || (() => new Date());
   const schedule = deps.schedule || setTimeout; const cancel = deps.cancel || clearTimeout;
   const topics = new Set(options.topics || CAPTURE_TOPICS);
   const status = { running: false, mode: 'shadow_receipts', lastResult: null, lastError: null,
     nodeHead: null, nextBlock: null, lagBlocks: null, lastHeadObservedAt: null,
-    lastTiming: null, blocks: 0, transactions: 0, events: 0 };
+    lastTiming: null, blocks: 0, transactions: 0, events: 0,
+    v3Snapshots: 0, v3MissedPools: 0, v3SkippedPools: 0 };
   let timer = null; let inFlight = null; let requested = false;
   const subscription = createHeadSubscription(options.wsUrl, () => {
     status.lastHeadObservedAt = now().toISOString(); void kick();
@@ -197,19 +201,29 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
       const observedAt = status.lastHeadObservedAt || startedAt.toISOString();
       const capture = await readReceiptBlock(deps.rpcClient, nextBlock, { topics });
       const receiptsAvailableAt = now();
+      const v3State = await deps.v3Snapshotter.captureBlock(capture, {
+        readBalances: nextBlock === nodeHead,
+      });
+      const snapshotsAvailableAt = now();
       const finalizedHead = nodeHead > BigInt(options.confirmations || 0)
         ? nodeHead - BigInt(options.confirmations || 0) : 0n;
-      const result = await deps.journal.commitBlock({ ...capture, nodeHead: nodeHead.toString(),
+      const result = await deps.journal.commitBlock({
+        ...capture, v3Snapshots: v3State.snapshots, nodeHead: nodeHead.toString(),
         finalizedHead: finalizedHead.toString(), block: { ...capture.block,
           finality: nextBlock <= finalizedHead ? 'finalized' : 'observed', headObservedAt: observedAt,
-          receiptsAvailableAt: receiptsAvailableAt.toISOString() } });
+          receiptsAvailableAt: receiptsAvailableAt.toISOString() },
+      });
       const committedAt = now();
       status.blocks += 1; status.transactions += result.transactions; status.events += result.events;
+      status.v3Snapshots += result.v3Snapshots || 0;
+      status.v3MissedPools += v3State.missedPools;
+      status.v3SkippedPools += v3State.skippedPools || 0;
       status.lastResult = { block: nextBlock.toString(), ...result }; nextBlock += 1n;
       recordFrontier(nodeHead, nextBlock);
       status.lastTiming = {
         fetchMs: receiptsAvailableAt - startedAt,
-        commitMs: committedAt - receiptsAvailableAt,
+        snapshotMs: snapshotsAvailableAt - receiptsAvailableAt,
+        commitMs: committedAt - snapshotsAvailableAt,
         headToCommitMs: Math.max(0, committedAt - new Date(observedAt)),
       };
     }

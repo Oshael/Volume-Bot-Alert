@@ -5,7 +5,7 @@ const { routeCanonicalEvents } = require('../services/robinhood-chain-domain-rou
 const CHAIN = 'robinhood';
 const NOTIFY_CHANNEL = 'robinhood_chain_capture';
 const DOMAIN_NOTIFY_CHANNEL = 'robinhood_chain_domain_outbox';
-const CAPTURE_VERSION = 2;
+const CAPTURE_VERSION = 3;
 function quantity(value, label) {
   const raw = String(value ?? '').trim();
   if (!/^(?:0x[0-9a-f]+|\d+)$/i.test(raw)) throw new Error(`${label} is invalid`);

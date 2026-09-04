@@ -5,7 +5,7 @@ const {
   CAPTURE_TOPICS, createRobinhoodChainCaptureWorker, __private,
 } = require('../src/services/robinhood-chain-capture-worker');
 const {
-  __private: captureProcess,
+  main: captureMain, __private: captureProcess,
 } = require('../src/utils/run-robinhood-chain-capture-worker');
 
 const hash = (character) => `0x${character.repeat(64)}`;
@@ -61,7 +61,7 @@ test('receipt reader fails closed while receipts are incomplete', async () => {
 
 test('worker captures sequential blocks without eth_getLogs', async () => {
   const samples = new Map([[100, fixture(100)], [101, fixture(101, hash('b'))]]);
-  const methods = []; const commits = [];
+  const methods = []; const commits = []; const snapshotCalls = [];
   const rpcClient = { request: async (method, params) => {
     methods.push(method);
     if (method === 'eth_blockNumber') return '0x65';
@@ -75,11 +75,16 @@ test('worker captures sequential blocks without eth_getLogs', async () => {
       return { status: 'committed', transactions: capture.transactions.length, events: capture.events.length };
     },
   };
-  const worker = createRobinhoodChainCaptureWorker({ rpcClient, journal }, {
+  const v3Snapshotter = { captureBlock: async (capture, options) => {
+    snapshotCalls.push([capture.block.number, options.readBalances]);
+    return { snapshots: [], pools: 0, missedPools: 0 };
+  } };
+  const worker = createRobinhoodChainCaptureWorker({ rpcClient, journal, v3Snapshotter }, {
     startBlock: '100', maxBlocksPerDrain: 2, confirmations: 2,
   });
   await worker.captureOnce();
   assert.deepEqual(commits.map((capture) => capture.block.number), [100n, 101n]);
+  assert.deepEqual(snapshotCalls, [[100n, false], [101n, true]]);
   assert.equal(methods.includes('eth_getLogs'), false);
   const status = worker.getStatus();
   assert.deepEqual(
@@ -118,5 +123,31 @@ test('capture process requires loopback RPC and disables provider throttling', (
   );
   assert.equal(options.publicRpcUrl, 'http://127.0.0.1:8547/');
   assert.equal(options.rpcMinIntervalMs, 0);
+  assert.equal(options.rpcMaxRetries, 0);
   assert.equal(options.useDrpc, false);
+});
+
+test('capture process seeds and injects the V3 snapshotter', async () => {
+  const seedPools = [{ protocol: 'uniswap-v3', pool_address: address('6') }];
+  let snapshotOptions; let workerDeps;
+  const process = await captureMain({
+    options: { enabled: true, leaseHeartbeatMs: 1000, leaseTtlMs: 5000 },
+    rpcOptions: {},
+    rpcClientFactory: () => ({ request: async () => null }),
+    catalog: { listActivePools: async () => seedPools },
+    v3SnapshotterFactory: (_deps, options) => {
+      snapshotOptions = options;
+      return { captureBlock: async () => ({ snapshots: [], pools: 0, missedPools: 0 }) };
+    },
+    workerFactory: (deps) => {
+      workerDeps = deps;
+      return { start() {}, stop: async () => {}, getStatus: () => ({}) };
+    },
+    leaseManagerFactory: () => ({ start() {}, stop: async () => {} }),
+    close: async () => {},
+  });
+
+  assert.deepEqual(snapshotOptions.seedPools, seedPools);
+  assert.equal(typeof workerDeps.v3Snapshotter.captureBlock, 'function');
+  await process.shutdown();
 });
