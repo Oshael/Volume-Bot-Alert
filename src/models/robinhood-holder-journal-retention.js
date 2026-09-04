@@ -49,7 +49,7 @@ async function withTransaction(database, operation) {
 
 async function lockCursor(client) {
   const result = await client.query(
-    `SELECT next_block, journal_floor_block
+    `/* holder-prune:lock_cursor */ SELECT next_block, journal_floor_block
        FROM robinhood_holder_cursors
       WHERE chain = 'robinhood' AND stream = 'live' FOR UPDATE`
   );
@@ -63,7 +63,7 @@ async function lockCursor(client) {
 
 async function hasOldPendingEvent(client, cutoffBlock) {
   const result = await client.query(
-    `WITH protected_tokens AS (
+    `/* holder-prune:check_protected */ WITH protected_tokens AS (
        SELECT chain, token_address FROM robinhood_holder_token_states
         WHERE chain = 'robinhood' AND ledger_status <> 'drifted'
        UNION
@@ -89,7 +89,7 @@ async function hasOldPendingEvent(client, cutoffBlock) {
 
 async function deleteExpiredBufferedBatch(client, cutoffBlock, batchLimit) {
   const result = await client.query(
-    `WITH candidates AS MATERIALIZED (
+    `/* holder-prune:delete_buffered */ WITH candidates AS MATERIALIZED (
        SELECT journal.chain, journal.transaction_hash, journal.log_index
          FROM robinhood_holder_transfer_journal journal
         WHERE journal.chain = 'robinhood' AND journal.applied = false
@@ -123,7 +123,7 @@ async function deleteExpiredBufferedBatch(client, cutoffBlock, batchLimit) {
 
 async function deleteAppliedBatch(client, cutoffBlock, batchLimit) {
   const result = await client.query(
-    `WITH candidates AS MATERIALIZED (
+    `/* holder-prune:delete_applied */ WITH candidates AS MATERIALIZED (
        SELECT chain, transaction_hash, log_index
          FROM robinhood_holder_transfer_journal
         WHERE chain = 'robinhood' AND applied = true AND block_number < $1
@@ -143,7 +143,7 @@ async function deleteAppliedBatch(client, cutoffBlock, batchLimit) {
 
 async function hasOlderJournalEvent(client, cutoffBlock) {
   const result = await client.query(
-    `SELECT 1 FROM robinhood_holder_transfer_journal
+    `/* holder-prune:check_remaining */ SELECT 1 FROM robinhood_holder_transfer_journal
       WHERE chain = 'robinhood' AND block_number < $1 LIMIT 1`,
     [cutoffBlock]
   );
@@ -152,7 +152,7 @@ async function hasOlderJournalEvent(client, cutoffBlock) {
 
 async function advanceFloor(client, cutoffBlock) {
   const result = await client.query(
-    `UPDATE robinhood_holder_cursors
+    `/* holder-prune:advance_floor */ UPDATE robinhood_holder_cursors
         SET journal_floor_block = $1, updated_at = NOW()
       WHERE chain = 'robinhood' AND stream = 'live'
         AND journal_floor_block <= $1 AND next_block >= $1

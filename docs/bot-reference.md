@@ -1689,6 +1689,12 @@ intervalo e `idle` não exclui. Não altera balances, status de tokens ou worker
 Dados excluídos deixam de permitir replay local; recuperação histórica pode exigir
 archive externo. `DELETE` permite reutilização na tabela, sem garantir devolução
 imediata ao filesystem. Não usar loop automático durante pressão de disco.
+O comando retorna JSON também em falhas: `failedStep` identifica a consulta,
+`timingMs` acumula os tempos por etapa e `transaction` informa `rolled_back`
+somente após confirmação do rollback. Falha no commit ou no rollback mantém o
+resultado `unknown`; não repetir automaticamente. Os nomes das etapas também
+aparecem em comentários SQL no `pg_stat_activity`. Essa instrumentação não altera
+os limites de lock/statement nem as proteções de exclusão.
 
 `monitored`, `recent`, `old-week`, pins, tokens manuais e o summary de
 `GET /api/robinhood/holders` consultam essa view em lote, sem RPC ou Blockscout por

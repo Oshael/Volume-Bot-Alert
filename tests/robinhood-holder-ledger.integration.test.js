@@ -869,7 +869,14 @@ describe('Robinhood holder ledger persistence', () => {
           }
           return result;
         },
-      }, { beforeBlock: '201', batchLimit: 1 }), /injected failure/);
+      }, { beforeBlock: '201', batchLimit: 1 }), (error) => {
+        assert.match(error.message, /injected failure/);
+        assert.equal(error.pruneDiagnostics.failedStep, 'delete_buffered');
+        assert.equal(error.pruneDiagnostics.transaction, 'rolled_back');
+        assert.ok(error.pruneDiagnostics.timingMs.check_protected >= 0);
+        assert.ok(error.pruneDiagnostics.timingMs.rollback >= 0);
+        return true;
+      });
       assert.equal((await client.query(
         'SELECT COUNT(*)::int AS count FROM robinhood_holder_transfer_journal'
       )).rows[0].count, 3);
