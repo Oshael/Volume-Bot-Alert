@@ -1726,9 +1726,13 @@ consolidação. O prepare
 mantém locks de escrita no journal e nas proteções, mas permite leituras. Cópia,
 constraints, índices e validação executam numa única transação; falha ou disco
 abaixo da margem faz rollback completo. O prepare não renomeia nem remove a tabela
-original e não libera espaço no filesystem. `SIGINT` e `SIGTERM` encerram
-explicitamente o backend PostgreSQL da transação antes de o processo sair, para
-que uma cópia ou ordenação cancelada não continue ocupando disco em background.
+original e não libera espaço no filesystem. A seleção usa dois ramos disjuntos
+(`UNION ALL`): janela recente pelo bloco e pendências antigas pelo índice parcial
+por token; merge join fica desabilitado para impedir sort temporário do journal
+inteiro. Para staging remoto, o mesmo contrato está em
+`src/utils/export-robinhood-holder-journal-compaction.sql`. `SIGINT` e `SIGTERM`
+cancelam explicitamente a query PostgreSQL e aguardam o rollback antes de o
+processo sair, para que a operação não continue ocupando disco em background.
 Swap e descarte exigem ferramenta e
 confirmação separadas após auditoria exata do artefato preparado.
 

@@ -87,13 +87,13 @@ function createInterruptController(database, progress = () => {}) {
     progress({ phase: 'interrupt', signal: requestedSignal, backendPid: pid,
       status: 'requested' });
     termination = database.query(
-      `SELECT pg_terminate_backend($1::int) AS terminated
+      `SELECT pg_cancel_backend($1::int) AS cancelled
         WHERE $1::int <> pg_backend_pid()`, [pid]
     ).then((result) => {
-      const terminated = result.rows[0]?.terminated === true;
+      const cancelled = result.rows[0]?.cancelled === true;
       progress({ phase: 'interrupt', signal: requestedSignal, backendPid: pid,
-        status: terminated ? 'terminated' : 'not-found' });
-      return terminated;
+        status: cancelled ? 'cancelled' : 'not-found' });
+      return cancelled;
     }).catch((error) => {
       progress({ phase: 'interrupt', signal: requestedSignal, backendPid: pid,
         status: 'failed', error: error.message });
@@ -176,6 +176,7 @@ async function runPrepare(options = {}, dependencies = {}) {
     transactionOpen = true;
     await client.query("SET LOCAL lock_timeout = '5s'");
     await client.query("SET LOCAL statement_timeout = '0'");
+    await client.query('SET LOCAL enable_mergejoin = off');
     await client.query('SELECT pg_advisory_xact_lock($1::bigint)', [REORG_FENCE_LOCK_ID]);
     await client.query(`LOCK TABLE ${SOURCE_TABLE}, robinhood_holder_token_states,
       robinhood_holder_global_backfill_tokens, robinhood_holder_global_backfill_runs,
@@ -196,13 +197,15 @@ async function runPrepare(options = {}, dependencies = {}) {
     const copied = await client.query(
       `WITH ${PROTECTED_CTE}
        INSERT INTO ${TARGET_TABLE}
-       SELECT journal.* FROM ${SOURCE_TABLE} journal
-       LEFT JOIN protected_tokens protected
-         ON protected.token_address = journal.token_address
-      WHERE journal.block_number >= $1::bigint
-         OR (journal.block_number < $1::bigint
-           AND protected.token_address IS NOT NULL
-           AND journal.applied = false)`,
+       SELECT recent.* FROM ${SOURCE_TABLE} recent
+        WHERE recent.chain = 'robinhood'
+          AND recent.block_number >= $1::bigint
+       UNION ALL
+       SELECT pending.* FROM ${SOURCE_TABLE} pending
+       INNER JOIN protected_tokens protected
+          ON protected.token_address = pending.token_address
+        WHERE pending.chain = 'robinhood' AND pending.applied = false
+          AND pending.block_number < $1::bigint`,
       [cutoffBlock.toString()]
     );
     assertFreeSpace(freeBytes, minFreeGiB, 'copy');

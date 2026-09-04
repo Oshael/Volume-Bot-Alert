@@ -1,4 +1,6 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { describe, it } = require('node:test');
 
 const {
@@ -76,9 +78,10 @@ describe('Robinhood holder journal compaction prepare', () => {
     assert.equal(sql.findIndex((text) => text.includes('invalid_old_rows'))
       < sql.indexOf('COMMIT'), true);
     const copySql = sql.find((text) => text.includes('INSERT INTO'));
-    assert.match(copySql, /protected\.token_address IS NOT NULL/);
-    assert.match(copySql, /journal\.applied = false/);
-    assert.doesNotMatch(copySql, /recovery_from_block/);
+    assert.match(copySql, /UNION ALL/);
+    assert.match(copySql, /pending\.applied = false/);
+    assert.doesNotMatch(copySql, /LEFT JOIN/);
+    assert.equal(sql.includes('SET LOCAL enable_mergejoin = off'), true);
     assert.equal(progress.filter(({ phase }) => phase === 'index').length,
       INDEX_STATEMENTS.length);
   });
@@ -122,13 +125,13 @@ describe('Robinhood holder journal compaction prepare', () => {
     assert.equal(context.calls.length, 0);
   });
 
-  it('terminates the tracked PostgreSQL backend when interrupted', async () => {
+  it('cancels the tracked PostgreSQL query when interrupted', async () => {
     const calls = [];
     const progress = [];
     const controller = createInterruptController({
       async query(sql, params) {
         calls.push({ sql, params });
-        return { rows: [{ terminated: true }] };
+        return { rows: [{ cancelled: true }] };
       },
     }, (entry) => progress.push(entry));
     controller.setBackendPid(1234);
@@ -136,7 +139,19 @@ describe('Robinhood holder journal compaction prepare', () => {
 
     assert.equal(await controller.wait(), true);
     assert.deepEqual(calls[0].params, [1234]);
-    assert.match(calls[0].sql, /pg_terminate_backend/);
-    assert.deepEqual(progress.map(({ status }) => status), ['requested', 'terminated']);
+    assert.match(calls[0].sql, /pg_cancel_backend/);
+    assert.deepEqual(progress.map(({ status }) => status), ['requested', 'cancelled']);
+  });
+
+  it('exports recent and protected pending rows without a merge join or global sort', () => {
+    const sql = fs.readFileSync(path.join(
+      __dirname, '../src/utils/export-robinhood-holder-journal-compaction.sql'
+    ), 'utf8');
+    assert.match(sql, /SET enable_mergejoin = off/);
+    assert.match(sql, /UNION ALL/);
+    assert.match(sql, /pending\.applied = false/);
+    assert.match(sql, /TO STDOUT/);
+    assert.doesNotMatch(sql, /LEFT JOIN/);
+    assert.doesNotMatch(sql, /ORDER BY/);
   });
 });
