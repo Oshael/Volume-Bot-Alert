@@ -44,7 +44,7 @@ describe('Robinhood chain domain shadow runner', () => {
     });
     assert.deepEqual(await runner.runOnce(), {
       domain: 'market', reclaimed: 1, claimed: 3, matched: 1, canonicalOnly: 1,
-      divergent: 1, completed: 2, blocked: 1, retried: 0,
+      divergent: 1, throughBlock: '100', completed: 2, blocked: 1, retried: 0,
     });
     assert.equal(settled[0].blocked[0].error.code, 'shadow_divergent');
   });

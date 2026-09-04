@@ -702,6 +702,24 @@ describe('runtime worker groups config', () => {
     });
   });
 
+  it('keeps the canonical domain shadow worker opt-in and bounds its controls', () => {
+    withEnv({
+      ROBINHOOD_CHAIN_DOMAIN_SHADOW_ENABLED: 'true',
+      ROBINHOOD_CHAIN_DOMAIN_SHADOW_BATCH_SIZE: '99999',
+      ROBINHOOD_CHAIN_DOMAIN_SHADOW_LEASE_MS: '1',
+      ROBINHOOD_CHAIN_DOMAIN_SHADOW_MAX_ATTEMPTS: '99',
+      ROBINHOOD_CHAIN_DOMAIN_SHADOW_IDLE_POLL_MS: '1',
+    }, (config) => {
+      assert.deepEqual(config.robinhoodChainDomainShadowWorker, {
+        enabled: true, batchSize: 5000, leaseMs: 1000, maxAttempts: 20,
+        idlePollMs: 100, leaseHeartbeatMs: 30_000, leaseTtlMs: 120_000,
+      });
+    });
+    withEnv({ ROBINHOOD_CHAIN_DOMAIN_SHADOW_ENABLED: undefined }, (config) => {
+      assert.equal(config.robinhoodChainDomainShadowWorker.enabled, false);
+    });
+  });
+
   it('fails fast when the Robinhood head is mixed with another group', () => {
     const result = spawnSync(
       process.execPath,

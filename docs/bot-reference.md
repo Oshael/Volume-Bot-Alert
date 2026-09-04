@@ -3252,7 +3252,11 @@ O núcleo do auditor shadow faz claim somente quando o cursor legado do domínio
 já passou o bloco, compara payloads pela identidade canônica e completa também
 candidatos sem linha legada (contratos não rastreados). Payload divergente fica
 `blocked`; lease expirada volta a `pending`. O processo contínuo ainda não está
-ligado ao runtime nesta etapa.
+ligado ao runtime nesta etapa. Para ativá-lo, rode
+`npm run start:worker:robinhood-chain-domain-shadow`; ele usa a lease
+`robinhood-chain-domain-shadow-worker`, reage ao `NOTIFY` imediatamente e faz
+poll de continuidade a cada 1 segundo por padrão. O processo continua somente
+comparando e nunca escreve projeções nem publica eventos.
 
 ## 15. Wallet tracking multichain
 

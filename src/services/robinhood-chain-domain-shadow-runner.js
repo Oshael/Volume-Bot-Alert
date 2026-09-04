@@ -44,7 +44,7 @@ function createRobinhoodChainDomainShadowRunner(deps = {}) {
   const owner = String(options.owner || `robinhood-chain-${domain}-shadow:${process.pid}`);
 
   async function runOnce() {
-    const reclaimed = await repository.reclaimExpiredLeases();
+    const reclaimed = options.reclaim === false ? 0 : await repository.reclaimExpiredLeases();
     const rows = await repository.claimShadow({
       domain, owner, limit: options.batchSize, leaseMs: options.leaseMs,
     });
@@ -65,7 +65,9 @@ function createRobinhoodChainDomainShadowRunner(deps = {}) {
     });
     return {
       domain, reclaimed, claimed: rows.length, matched, canonicalOnly,
-      divergent: blocked.length, ...settled,
+      divergent: blocked.length,
+      throughBlock: rows.length ? String(rows[rows.length - 1].block_number) : null,
+      ...settled,
     };
   }
 

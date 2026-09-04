@@ -18,6 +18,7 @@
     "start:worker:robinhood-derived": "PORT=${PORT:-3008} RUN_SOCKET_HUB=false RUN_BACKGROUND_JOBS=true BACKGROUND_WORKER_GROUPS=robinhood-derived node src/server.js",
     "start:worker:robinhood-liquidity": "ROBINHOOD_POOL_LIQUIDITY_ENABLED=true node src/utils/run-robinhood-pool-liquidity-worker.js",
     "start:worker:robinhood-chain-capture": "ROBINHOOD_CHAIN_CAPTURE_ENABLED=true node src/utils/run-robinhood-chain-capture-worker.js",
+    "start:worker:robinhood-chain-domain-shadow": "ROBINHOOD_CHAIN_DOMAIN_SHADOW_ENABLED=true node src/utils/run-robinhood-chain-domain-shadow-worker.js",
     "start:worker:robinhood-wallet": "PORT=${PORT:-3009} RUN_SOCKET_HUB=false RUN_BACKGROUND_JOBS=true BACKGROUND_WORKER_GROUPS=robinhood-wallet ROBINHOOD_WALLET_SWAP_LIVE_ENABLED=true node src/server.js",
     "start:worker:robinhood-wallet-classification": "PORT=${PORT:-3015} RUN_SOCKET_HUB=false RUN_BACKGROUND_JOBS=true BACKGROUND_WORKER_GROUPS=robinhood-wallet-classification node src/server.js",
     "start:worker:robinhood-signed-origin": "PORT=${PORT:-3018} RUN_SOCKET_HUB=false RUN_BACKGROUND_JOBS=true BACKGROUND_WORKER_GROUPS=robinhood-signed-origin node src/server.js",

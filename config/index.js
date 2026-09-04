@@ -1612,6 +1612,28 @@ module.exports = {
     ),
   },
 
+  robinhoodChainDomainShadowWorker: {
+    enabled: parseBoolean(process.env.ROBINHOOD_CHAIN_DOMAIN_SHADOW_ENABLED, false),
+    batchSize: parseIntegerInRange(
+      process.env.ROBINHOOD_CHAIN_DOMAIN_SHADOW_BATCH_SIZE, 1000, 1, 5000
+    ),
+    leaseMs: parseIntegerInRange(
+      process.env.ROBINHOOD_CHAIN_DOMAIN_SHADOW_LEASE_MS, 60_000, 1000, 300_000
+    ),
+    maxAttempts: parseIntegerInRange(
+      process.env.ROBINHOOD_CHAIN_DOMAIN_SHADOW_MAX_ATTEMPTS, 5, 1, 20
+    ),
+    idlePollMs: parseIntegerInRange(
+      process.env.ROBINHOOD_CHAIN_DOMAIN_SHADOW_IDLE_POLL_MS, 1000, 100, 60_000
+    ),
+    leaseHeartbeatMs: parseIntegerInRange(
+      process.env.ROBINHOOD_CHAIN_DOMAIN_SHADOW_LEASE_HEARTBEAT_MS, 30_000, 1000, 300_000
+    ),
+    leaseTtlMs: parseIntegerInRange(
+      process.env.ROBINHOOD_CHAIN_DOMAIN_SHADOW_LEASE_TTL_MS, 120_000, 5000, 600_000
+    ),
+  },
+
   robinhoodIngestionWorker: {
     enabled: robinhoodIngestionEnabled,
     publicRpcUrl: String(
