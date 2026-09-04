@@ -9,23 +9,17 @@ const RETENTION_BLOCKS = 20_000n;
 const DEFAULT_MIN_FREE_GIB = 60;
 const HOLDER_LEASE_PATTERN = 'robinhood-holder-%';
 
-const PROTECTED_CTE = `protected_candidates AS MATERIALIZED (
-  SELECT token_address,
-         CASE WHEN ledger_status IN ('shadow', 'live')
-           THEN backfill_next_block ELSE NULL END AS recovery_from_block
+const PROTECTED_CTE = `protected_tokens AS MATERIALIZED (
+  SELECT token_address
     FROM robinhood_holder_token_states
    WHERE chain = 'robinhood' AND ledger_status <> 'drifted'
-  UNION ALL
-  SELECT token.token_address, NULL::bigint AS recovery_from_block
+  UNION
+  SELECT token.token_address
     FROM robinhood_holder_global_backfill_tokens token
     JOIN robinhood_holder_global_backfill_runs run
       ON run.id = token.run_id AND run.chain = token.chain
    WHERE token.chain = 'robinhood' AND token.status = 'active'
      AND run.barrier_block IS NOT NULL AND run.status <> 'completed'
-), protected_tokens AS MATERIALIZED (
-  SELECT token_address, MIN(recovery_from_block) AS recovery_from_block
-    FROM protected_candidates
-   GROUP BY token_address
 )`;
 
 const INDEX_STATEMENTS = Object.freeze([
@@ -47,15 +41,17 @@ const INDEX_STATEMENTS = Object.freeze([
 
 function parseArgs(args) {
   const minimum = args.filter((arg) => arg.startsWith('--min-free-gib='));
-  const valid = args.filter((arg) => arg === '--prepare' || arg === '--write').length === 2
-    && args.includes('--prepare') && args.includes('--write') && minimum.length <= 1
-    && args.every((arg) => ['--prepare', '--write'].includes(arg) || minimum.includes(arg));
+  const required = ['--prepare', '--write', '--allow-archive-recovery'];
+  const valid = required.every((arg) => args.includes(arg)) && minimum.length <= 1
+    && args.length === required.length + minimum.length
+    && args.every((arg) => required.includes(arg) || minimum.includes(arg));
   const minFreeGiB = minimum.length
     ? Number(minimum[0].slice('--min-free-gib='.length)) : DEFAULT_MIN_FREE_GIB;
   if (!valid || !Number.isInteger(minFreeGiB) || minFreeGiB < 40 || minFreeGiB > 500) {
-    throw new Error('Use --prepare --write [--min-free-gib=60] (minimum 40 GiB)');
+    throw new Error('Use --prepare --write --allow-archive-recovery '
+      + '[--min-free-gib=60] (minimum 40 GiB)');
   }
-  return Object.freeze({ minFreeGiB });
+  return Object.freeze({ minFreeGiB, archiveRecoveryAcknowledged: true });
 }
 
 function systemFreeBytes() {
@@ -103,6 +99,11 @@ async function runPrepare(options = {}, dependencies = {}) {
   const progress = dependencies.progress || (() => {});
   const minFreeGiB = options.minFreeGiB ?? DEFAULT_MIN_FREE_GIB;
   if (!database?.getClient) throw new TypeError('database.getClient is required');
+  if (options.archiveRecoveryAcknowledged !== true) {
+    const error = new Error('archive recovery acknowledgement is required');
+    error.code = 'holder_journal_compaction_archive_recovery_required';
+    throw error;
+  }
   assertFreeSpace(freeBytes, minFreeGiB, 'preflight');
   const client = await database.getClient();
   let transactionOpen = false;
@@ -144,10 +145,7 @@ async function runPrepare(options = {}, dependencies = {}) {
       WHERE journal.block_number >= $1::bigint
          OR (journal.block_number < $1::bigint
            AND protected.token_address IS NOT NULL
-           AND (journal.applied = false OR (
-             protected.recovery_from_block IS NOT NULL
-             AND journal.block_number >= protected.recovery_from_block
-           )))`,
+           AND journal.applied = false)`,
       [cutoffBlock.toString()]
     );
     assertFreeSpace(freeBytes, minFreeGiB, 'copy');
@@ -160,15 +158,10 @@ async function runPrepare(options = {}, dependencies = {}) {
       `WITH ${PROTECTED_CTE}
        SELECT COUNT(*)::bigint AS copied_rows,
               COUNT(*) FILTER (WHERE compact.block_number < $1::bigint
-                AND NOT (protected.token_address IS NOT NULL
-                  AND (compact.applied = false OR (
-                    protected.recovery_from_block IS NOT NULL
-                    AND compact.block_number >= protected.recovery_from_block
-                  ))))::bigint AS invalid_old_rows,
+                AND (compact.applied OR protected.token_address IS NULL))::bigint
+                AS invalid_old_rows,
               COUNT(*) FILTER (WHERE compact.block_number < $1::bigint
-                AND compact.applied = false)::bigint AS old_pending_rows,
-              COUNT(*) FILTER (WHERE compact.block_number < $1::bigint
-                AND compact.applied = true)::bigint AS old_recovery_rows
+                AND compact.applied = false)::bigint AS old_pending_rows
          FROM ${TARGET_TABLE} compact
          LEFT JOIN protected_tokens protected
            ON protected.token_address = compact.token_address`,
@@ -187,8 +180,7 @@ async function runPrepare(options = {}, dependencies = {}) {
       throw new Error('compact journal indexes are not valid/ready');
     }
     const oldPendingRows = BigInt(validation.rows[0].old_pending_rows);
-    const oldRecoveryRows = BigInt(validation.rows[0].old_recovery_rows);
-    const marker = `holder-journal-compact:v2;cutoff=${cutoffBlock};next=${nextBlock};rows=${copiedRows};old_pending=${oldPendingRows};old_recovery=${oldRecoveryRows}`;
+    const marker = `holder-journal-compact:v3;recovery=archive-required;cutoff=${cutoffBlock};next=${nextBlock};rows=${copiedRows};old_pending=${oldPendingRows}`;
     await client.query(`COMMENT ON TABLE ${TARGET_TABLE} IS '${marker}'`);
     await client.query(`ANALYZE ${TARGET_TABLE}`);
     const size = await client.query(
@@ -202,7 +194,7 @@ async function runPrepare(options = {}, dependencies = {}) {
       cutoffBlock: cutoffBlock.toString(), nextBlock: nextBlock.toString(),
       copiedRows: copiedRows.toString(), totalBytes: String(size.rows[0].total_bytes),
       oldPendingRows: oldPendingRows.toString(),
-      oldRecoveryRows: oldRecoveryRows.toString(),
+      recoveryBeforeCutoff: 'archive-required',
       freeGiB: gib(remaining), originalUntouched: true,
     });
   } catch (error) {
