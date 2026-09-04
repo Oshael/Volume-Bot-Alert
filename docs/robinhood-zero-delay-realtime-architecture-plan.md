@@ -1,5 +1,9 @@
 # Plano — arquitetura realtime Robinhood sem `eth_getLogs` no caminho live
 
+> Para a próxima execução, seguir o [roteiro de arquitetura e comprovação](robinhood-realtime-architecture-execution-plan.md).
+> Ele refina os contratos de estado/reorg e prioriza a arquitetura testada antes do backfill amplo.
+> As etapas e o estado histórico registrados abaixo não substituem seus gates de aceite.
+
 Status: em implementação; journal/capturador shadow e auditoria de cobertura concluídos
 
 Prioridade: crítica
