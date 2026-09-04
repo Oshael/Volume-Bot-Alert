@@ -1679,11 +1679,15 @@ pendencia anterior ao cutoff.
 Limpeza manual isolada, sem iniciar workers: `node src/utils/prune-robinhood-holder-journal.js
 --before-block=BLOCO_EXCLUSIVO --batch-limit=1000 --write`. Exige corte auditado e
 confirmação explícita; executa somente um lote, até 1.000 buffers descartáveis e
-1.000 eventos aplicados. O corte efetivo é o menor entre o bloco informado e
+eventos aplicados combinados. O corte efetivo é o menor entre o bloco informado e
 `next_block - 20000`; nunca remove o bloco informado nem encurta a janela recente.
-Revalida pendências protegidas antes de qualquer exclusão, sob lock do cursor e
-fence compartilhado de reorg. Pendência anterior ao corte retorna `blocked`, sem
-excluir; lock timeout de 500ms ou statement timeout de 5s aborta a transação.
+Seleciona o prefixo mais antigo pelo índice do journal, preserva blocos inteiros e
+revalida somente os tokens pendentes desse lote, sob lock do cursor e fence
+compartilhado de reorg. Uma pendência protegida preserva seu bloco inteiro; o prefixo
+completo anterior pode ser excluído e o floor avança no máximo até esse bloco.
+Proteções são repetidas no `DELETE`; mudança concorrente aborta a transação.
+Se o limite dividir o primeiro bloco, retorna `batch_limit_splits_block` sem excluir.
+Lock timeout de 500ms ou statement timeout de 5s aborta a transação.
 `draining` exige nova execução manual; `pruned` avança o floor após drenar o
 intervalo e `idle` não exclui. Não altera balances, status de tokens ou workers.
 Dados excluídos deixam de permitir replay local; recuperação histórica pode exigir

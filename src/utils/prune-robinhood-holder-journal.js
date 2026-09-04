@@ -13,7 +13,7 @@ function parseArgs(args) {
     beforeBlock: before[0].slice('--before-block='.length),
     batchLimit: batch.length ? Number(batch[0].slice('--batch-limit='.length)) : 1000,
   });
-  if (options.batchLimit > 1000) throw new Error('Manual batch-limit must not exceed 1000 per lane');
+  if (options.batchLimit > 1000) throw new Error('Manual batch-limit must not exceed 1000 total events');
   return options;
 }
 

@@ -1,4 +1,5 @@
 const db = require('./db');
+const { pruneJournalPrefix } = require('./robinhood-holder-journal-prefix-prune');
 
 const DEFAULT_RETENTION_BLOCKS = 20_000;
 const DEFAULT_BATCH_LIMIT = 5_000;
@@ -188,14 +189,11 @@ function createRobinhoodHolderJournalRetention(options = {}) {
           cutoffBlock: cutoffBlock.toString(), journalFloorBlock: floorBlock.toString(),
         });
       }
-      // Manual cuts fail before deleting even untracked buffers if protection changed.
-      if (normalized.beforeBlock !== null
-        && await hasOldPendingEvent(client, cutoffBlock.toString())) {
-        return Object.freeze({
-          status: 'blocked', reason: 'pending_event_before_cutoff', deletedEvents: 0,
-          discardedBufferedEvents: 0,
-          cutoffBlock: cutoffBlock.toString(), journalFloorBlock: floorBlock.toString(),
-        });
+      if (normalized.beforeBlock !== null) {
+        return Object.freeze(await pruneJournalPrefix(client, {
+          cutoffBlock: cutoffBlock.toString(), floorBlock: floorBlock.toString(),
+          batchLimit: normalized.batchLimit,
+        }));
       }
       const discardedBufferedEvents = await deleteExpiredBufferedBatch(
         client, cutoffBlock.toString(), normalized.batchLimit

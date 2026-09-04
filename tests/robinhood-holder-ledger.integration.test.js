@@ -797,17 +797,21 @@ describe('Robinhood holder ledger persistence', () => {
         [HASH_A, HASH_C, HASH_B, TOKEN, ZERO_ADDRESS, BOB, ALICE, HASH_E, TOKEN_5]
       );
       assert.deepEqual(await runBatch(client, { beforeBlock: '150', batchLimit: 1 }), {
-        status: 'blocked', reason: 'pending_event_before_cutoff', deletedEvents: 0,
-        discardedBufferedEvents: 0, totalDeleted: 0,
-        cutoffBlock: '150', journalFloorBlock: '100',
+        status: 'draining', deletedEvents: 1, discardedBufferedEvents: 0,
+        totalDeleted: 1, cutoffBlock: '150', journalFloorBlock: '101',
+      });
+      assert.deepEqual(await runBatch(client, { beforeBlock: '150', batchLimit: 1 }), {
+        status: 'blocked', reason: 'pending_event_before_cutoff', blockedBlock: '101',
+        deletedEvents: 0, discardedBufferedEvents: 0, totalDeleted: 0,
+        cutoffBlock: '150', journalFloorBlock: '101',
       });
       assert.equal((await client.query(
         'SELECT COUNT(*)::int AS count FROM robinhood_holder_transfer_journal'
-      )).rows[0].count, 4);
+      )).rows[0].count, 3);
       assert.deepEqual(await retention.pruneOnce({ batchLimit: 1 }), {
         status: 'blocked', reason: 'pending_event_before_cutoff', deletedEvents: 0,
         discardedBufferedEvents: 1,
-        cutoffBlock: '150', journalFloorBlock: '100',
+        cutoffBlock: '150', journalFloorBlock: '101',
       });
       const protectedPending = await client.query(
         `SELECT token_address FROM robinhood_holder_transfer_journal
@@ -817,11 +821,6 @@ describe('Robinhood holder ledger persistence', () => {
       await client.query(
         `DELETE FROM robinhood_holder_transfer_journal WHERE applied = false`
       );
-      assert.deepEqual(await retention.pruneOnce({ batchLimit: 1 }), {
-        status: 'draining', deletedEvents: 1,
-        discardedBufferedEvents: 0,
-        cutoffBlock: '150', journalFloorBlock: '100',
-      });
       assert.deepEqual(await retention.pruneOnce({ batchLimit: 1 }), {
         status: 'pruned', deletedEvents: 1,
         discardedBufferedEvents: 0,
@@ -856,11 +855,34 @@ describe('Robinhood holder ledger persistence', () => {
       );
       await client.query(`INSERT INTO robinhood_holder_global_backfill_tokens
         (run_id, token_address) VALUES (123456789, $1)`, [TOKEN_UNTRACKED]);
-      const campaign = await runBatch(client, { beforeBlock: '201', batchLimit: 1 });
+      const split = await runBatch(client, { beforeBlock: '201', batchLimit: 1 });
+      assert.equal(split.status, 'blocked');
+      assert.equal(split.reason, 'batch_limit_splits_block');
+      assert.equal(split.blockedBlock, '200');
+      assert.equal(split.totalDeleted, 0);
+      const campaign = await runBatch(client, { beforeBlock: '201', batchLimit: 2 });
       assert.equal(campaign.status, 'blocked');
+      assert.equal(campaign.reason, 'pending_event_before_cutoff');
       assert.equal(campaign.totalDeleted, 0);
       await client.query(`UPDATE robinhood_holder_global_backfill_runs
         SET status = 'completed', completed_at = NOW() WHERE id = 123456789`);
+      let raced = false;
+      await assert.rejects(runBatch({
+        async query(sql, params) {
+          if (!raced && sql.includes('/* holder-prune:delete_prefix */')) {
+            raced = true;
+            await client.query(`INSERT INTO robinhood_holder_token_states
+              (token_address, ledger_status) VALUES ($1, 'live')`, [TOKEN_UNTRACKED]);
+          }
+          return client.query(sql, params);
+        },
+      }, { beforeBlock: '201', batchLimit: 2 }), /prefix changed during deletion/);
+      assert.equal((await client.query(`SELECT COUNT(*)::int AS count
+        FROM robinhood_holder_token_states WHERE token_address = $1`, [TOKEN_UNTRACKED]
+      )).rows[0].count, 0);
+      assert.equal((await client.query(
+        'SELECT COUNT(*)::int AS count FROM robinhood_holder_transfer_journal'
+      )).rows[0].count, 3);
       await assert.rejects(runBatch({
         async query(sql, params) {
           const result = await client.query(sql, params);
@@ -869,26 +891,22 @@ describe('Robinhood holder ledger persistence', () => {
           }
           return result;
         },
-      }, { beforeBlock: '201', batchLimit: 1 }), (error) => {
+      }, { beforeBlock: '201', batchLimit: 2 }), (error) => {
         assert.match(error.message, /injected failure/);
-        assert.equal(error.pruneDiagnostics.failedStep, 'delete_buffered');
+        assert.equal(error.pruneDiagnostics.failedStep, 'delete_prefix');
         assert.equal(error.pruneDiagnostics.transaction, 'rolled_back');
-        assert.ok(error.pruneDiagnostics.timingMs.check_protected >= 0);
+        assert.ok(error.pruneDiagnostics.timingMs.check_prefix >= 0);
         assert.ok(error.pruneDiagnostics.timingMs.rollback >= 0);
         return true;
       });
       assert.equal((await client.query(
         'SELECT COUNT(*)::int AS count FROM robinhood_holder_transfer_journal'
       )).rows[0].count, 3);
-      const boundedFirst = await runBatch(client, { beforeBlock: '201', batchLimit: 1 });
-      assert.equal(boundedFirst.status, 'draining');
-      assert.equal(boundedFirst.totalDeleted, 1);
-      assert.equal(boundedFirst.journalFloorBlock, '150');
-      const boundedLast = await runBatch(client, { beforeBlock: '201', batchLimit: 1 });
-      assert.equal(boundedLast.status, 'pruned');
-      assert.equal(boundedLast.totalDeleted, 1);
-      assert.equal(boundedLast.cutoffBlock, '201');
-      assert.equal(boundedLast.journalFloorBlock, '201');
+      const boundedFirst = await runBatch(client, { beforeBlock: '201', batchLimit: 2 });
+      assert.equal(boundedFirst.status, 'pruned');
+      assert.equal(boundedFirst.totalDeleted, 2);
+      assert.equal(boundedFirst.discardedBufferedEvents, 2);
+      assert.equal(boundedFirst.journalFloorBlock, '201');
       assert.deepEqual((await client.query(
         'SELECT block_number::text, applied FROM robinhood_holder_transfer_journal'
       )).rows, [{ block_number: '201', applied: false }]);
