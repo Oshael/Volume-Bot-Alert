@@ -1709,6 +1709,17 @@ os limites de lock/statement nem as proteções de exclusão.
 Não converter a tabela existente em particionada durante pressão de disco: a
 reescrita exige espaço temporário proporcional ao journal. Particionamento deve ser
 feito posteriormente por migração planejada, antes de a próxima retenção crescer.
+Para compactação física offline, mantenha todo o grupo `robinhood-holders` parado
+e execute
+`node src/utils/prepare-robinhood-holder-journal-compaction.js --prepare --write`.
+O prepare exige no mínimo 60 GiB livres, recusa qualquer lease holder
+ativa e mantém numa tabela nova somente a janela recente de 20.000 blocos e
+pendências antigas de estados não `drifted` ou campanhas globais ativas. Ele
+mantém locks de escrita no journal e nas proteções, mas permite leituras. Cópia,
+constraints, índices e validação executam numa única transação; falha ou disco
+abaixo da margem faz rollback completo. O prepare não renomeia nem remove a tabela
+original e não libera espaço no filesystem. Swap e descarte exigem ferramenta e
+confirmação separadas após auditoria exata do artefato preparado.
 
 `monitored`, `recent`, `old-week`, pins, tokens manuais e o summary de
 `GET /api/robinhood/holders` consultam essa view em lote, sem RPC ou Blockscout por
