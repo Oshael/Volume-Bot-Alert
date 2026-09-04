@@ -5,6 +5,12 @@ const HOT_PRIORITY_CYCLE = Object.freeze([
   'fresh-live', 'fresh-live', 'fresh-live',
   'recent-shadow', 'recent-shadow', 'stale-shadow', 'stale-live',
 ]);
+const HOT_SELECTION_BATCH_LIMITS = Object.freeze({
+  'fresh-live': 4,
+  'recent-shadow': 8,
+  'stale-live': 32,
+  'stale-shadow': 32,
+});
 
 function boundedInteger(value, fallback, minimum, maximum, label) {
   const parsed = value == null ? fallback : Number(value);
@@ -190,29 +196,39 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     }
   }
 
-  async function nextHotToken(input, timing) {
+  async function nextHotToken(input, timing, cache) {
     const desiredClass = HOT_PRIORITY_CYCLE[hotPriorityOffset];
     hotPriorityOffset = (hotPriorityOffset + 1) % HOT_PRIORITY_CYCLE.length;
     const classes = [desiredClass, ...HOT_PRIORITY_CLASSES.filter(
       (priorityClass) => priorityClass !== desiredClass
     )];
     for (const priorityClass of classes) {
-      const startedAt = measureMs();
-      let tokens;
-      try {
-        tokens = await withHolderErrorContext(
-          () => ledger.listHotPendingTokenAddresses({
-            ...input, limit: 1, priorityClass,
-          }),
-          'hot_selection'
-        );
-      } finally {
-        timing.hotSelectionCalls += 1;
-        timing.hotSelectionDurationMs += elapsedMs(startedAt);
+      let entry = cache.get(priorityClass);
+      if (!entry || (!entry.exhausted && entry.tokens.length === 0)) {
+        const limit = HOT_SELECTION_BATCH_LIMITS[priorityClass];
+        const startedAt = measureMs();
+        let tokens;
+        try {
+          tokens = await withHolderErrorContext(
+            () => ledger.listHotPendingTokenAddresses({
+              ...input, limit, priorityClass,
+            }),
+            'hot_selection'
+          );
+        } finally {
+          timing.hotSelectionCalls += 1;
+          timing.hotSelectionDurationMs += elapsedMs(startedAt);
+        }
+        entry = { tokens: [...tokens], exhausted: tokens.length < limit };
+        cache.set(priorityClass, entry);
       }
-      if (tokens[0]) {
+      while (entry.tokens.length && input.excludeTokenAddresses?.includes(entry.tokens[0])) {
+        entry.tokens.shift();
+      }
+      const tokenAddress = entry.tokens.shift();
+      if (tokenAddress) {
         timing.hotSelectionsByClass[priorityClass] += 1;
-        return { tokenAddress: tokens[0], priorityClass };
+        return { tokenAddress, priorityClass };
       }
     }
     return { tokenAddress: null, priorityClass: null };
@@ -444,6 +460,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     let preferredTokenAddress = null;
     let pendingTokenAddresses = [];
     let pendingRoundHasMultiple = false;
+    const hotTokenCache = new Map();
     const timing = {
       applyCalls: 0, nonIdleApplyCalls: 0, attemptedEvents: 0,
       applyCallDurationMs: 0, maxApplyCallDurationMs: 0,
@@ -459,7 +476,9 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     const deadlineMs = measureMs() + maxDurationMs;
     while (applyAttempts < maxApplyEvents && measureMs() < deadlineMs) {
       const excluded = deferredTokenAddresses();
-      const hotSelection = await nextHotToken({ excludeTokenAddresses: excluded }, timing);
+      const hotSelection = await nextHotToken(
+        { excludeTokenAddresses: excluded }, timing, hotTokenCache
+      );
       const hotTokenAddress = hotSelection.tokenAddress;
       if (hotTokenAddress) {
         preferredTokenAddress = hotTokenAddress;

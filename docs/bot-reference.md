@@ -1815,6 +1815,12 @@ e `stale-live`. A rotação persiste entre ticks e reserva três lotes para live
 recente, dois para shadow recente, um para shadow antigo e um para catch-up live;
 se uma classe estiver vazia, sua vez é usada imediatamente por outra. Assim backlog
 live não bloqueia tokens novos e nenhum shadow antigo fica invisível ao scheduler.
+Dentro do tick, cada classe lê uma página limitada de tickets e reutiliza essa
+página entre aplicações, em vez de repetir a mesma seleção SQL para cada token.
+As páginas são menores para `fresh-live` e `recent-shadow` (4 e 8) e maiores para
+as classes stale (32); isso preserva a preempção live, limita memória e reduz o
+custo de seleção sob backlog. Página parcial não é relida no mesmo tick; novos
+`NOTIFY` continuam acordando o tick seguinte, limitado pela duração configurada.
 Lotes hot têm no máximo 25 eventos e cada tick dura por default até 2s. O polling
 de 100ms permanece somente como recuperação. A telemetria `freshness` expõe a
 contagem de cada classe, incluindo `staleShadowTokens`, além de `pendingTokens`,

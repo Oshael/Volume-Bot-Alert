@@ -439,6 +439,30 @@ describe('Robinhood holder live runner', () => {
     assert.deepEqual(result.freshness, freshness);
   });
 
+  it('reuses a bounded hot selection page instead of querying once per token', async () => {
+    const tokens = ['1', '2', '3'].map((digit) => `0x${digit.repeat(40)}`);
+    const context = harness({ status: 'idle', transfers: 0 }, tokens.map(
+      (tokenAddress) => ({
+        status: 'applied', tokenAddress, appliedEvents: 1, attemptedEvents: 1,
+      })
+    ), { status: 'idle' }, async () => 0, {
+      hotTokenLists: [[...tokens]],
+    });
+
+    const result = await context.runner.applyOnce({
+      maxApplyEvents: 3, applyBatchSize: 1, hotApplyBatchSize: 1,
+    });
+
+    assert.equal(result.appliedEvents, 3);
+    assert.equal(result.timing.hotSelectionCalls, 1);
+    assert.deepEqual(context.calls.filter(([name]) => name === 'apply').map(
+      ([, input]) => input.onlyTokenAddress
+    ), tokens);
+    assert.deepEqual(context.calls.filter(([name]) => name === 'list-hot-tokens').map(
+      ([, input]) => ({ limit: input.limit, priorityClass: input.priorityClass })
+    ), [{ limit: 4, priorityClass: 'fresh-live' }]);
+  });
+
   it('reserves hot capacity for recent and stale shadows plus stale live catch-up', async () => {
     const freshLive = `0x${'1'.repeat(40)}`;
     const recentShadow = `0x${'2'.repeat(40)}`;
