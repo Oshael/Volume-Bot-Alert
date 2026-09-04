@@ -30,12 +30,13 @@ function timestamp(value, label) {
   if (!Number.isFinite(parsed.getTime())) throw new Error(`${label} is invalid`);
   return parsed.toISOString();
 }
-function captureDigest(block, transactions, events) {
+function captureDigest(block, transactions, events, v3Snapshots) {
   const payload = {
     block: [block.number.toString(), block.hash, block.parentHash, block.timestamp,
       block.captureVersion],
     transactions: [...transactions].sort((a, b) => a.transaction_index - b.transaction_index),
     events: [...events].sort((a, b) => a.log_index - b.log_index),
+    v3Snapshots: [...v3Snapshots].sort((a, b) => a.log_index - b.log_index),
   };
   return `0x${createHash('sha256').update(JSON.stringify(payload)).digest('hex')}`;
 }
@@ -89,14 +90,36 @@ function normalizeInput(input) {
   if (new Set(events.map((entry) => entry.log_index)).size !== events.length) {
     throw new Error('events contain duplicate log indexes');
   }
+  const eventIndexes = new Set(events.map((entry) => entry.log_index));
+  const v3Snapshots = (input.v3Snapshots || []).map((entry, index) => {
+    const logIndex = Number(quantity(entry.logIndex, `v3Snapshots[${index}].logIndex`));
+    if (!eventIndexes.has(logIndex)) {
+      throw new Error(`v3Snapshots[${index}] event is not included`);
+    }
+    return {
+      log_index: logIndex,
+      pool_address: hex(entry.poolAddress, 20, `v3Snapshots[${index}].poolAddress`),
+      token_address: hex(entry.tokenAddress, 20, `v3Snapshots[${index}].tokenAddress`),
+      quote_address: hex(entry.quoteAddress, 20, `v3Snapshots[${index}].quoteAddress`),
+      token_balance_raw: quantity(
+        entry.tokenBalanceRaw, `v3Snapshots[${index}].tokenBalanceRaw`
+      ).toString(),
+      quote_balance_raw: quantity(
+        entry.quoteBalanceRaw, `v3Snapshots[${index}].quoteBalanceRaw`
+      ).toString(),
+    };
+  });
+  if (new Set(v3Snapshots.map((entry) => entry.log_index)).size !== v3Snapshots.length) {
+    throw new Error('v3Snapshots contain duplicate log indexes');
+  }
   const nodeHead = quantity(input.nodeHead ?? block.number, 'nodeHead');
   const finalizedHead = quantity(input.finalizedHead ?? 0, 'finalizedHead');
   if (nodeHead < block.number || finalizedHead > nodeHead
       || (block.finality === 'finalized' && finalizedHead < block.number)) {
     throw new Error('capture frontiers are invalid');
   }
-  return { block, transactions, events, nodeHead, finalizedHead,
-    digest: captureDigest(block, transactions, events) };
+  return { block, transactions, events, v3Snapshots, nodeHead, finalizedHead,
+    digest: captureDigest(block, transactions, events, v3Snapshots) };
 }
 function createRobinhoodChainCaptureJournal(options = {}) {
   const database = options.database || db;
@@ -115,7 +138,9 @@ function createRobinhoodChainCaptureJournal(options = {}) {
   }
   async function commitBlock(input = {}) {
     const normalized = normalizeInput(input);
-    const { block, transactions, events, nodeHead, finalizedHead, digest } = normalized;
+    const {
+      block, transactions, events, v3Snapshots, nodeHead, finalizedHead, digest,
+    } = normalized;
     const workItems = routeCanonicalEvents(events);
     const client = await database.getClient();
     try {
@@ -136,7 +161,9 @@ function createRobinhoodChainCaptureJournal(options = {}) {
           throw error;
         }
         await client.query('COMMIT');
-        return { status: 'replayed', transactions: 0, events: 0, workItems: 0 };
+        return {
+          status: 'replayed', transactions: 0, events: 0, v3Snapshots: 0, workItems: 0,
+        };
       }
       if (current && block.number !== BigInt(current.next_block)) {
         const error = new Error(`capture expected block ${current.next_block}, received ${block.number}`);
@@ -180,6 +207,17 @@ function createRobinhoodChainCaptureJournal(options = {}) {
                address TEXT, topic0 TEXT, topics JSONB, data TEXT
              )`, [CHAIN, block.hash, block.number.toString(), JSON.stringify(events)]
       );
+      const insertedV3Snapshots = await client.query(
+        `INSERT INTO robinhood_chain_v3_balance_snapshots(
+           chain, block_hash, log_index, pool_address, token_address, quote_address,
+           token_balance_raw, quote_balance_raw
+         ) SELECT $1, $2, item.log_index, item.pool_address, item.token_address,
+                  item.quote_address, item.token_balance_raw, item.quote_balance_raw
+             FROM jsonb_to_recordset($3::jsonb) AS item(
+               log_index INTEGER, pool_address TEXT, token_address TEXT, quote_address TEXT,
+               token_balance_raw NUMERIC, quote_balance_raw NUMERIC
+             )`, [CHAIN, block.hash, JSON.stringify(v3Snapshots)]
+      );
       const insertedWork = await client.query(
         `INSERT INTO robinhood_chain_domain_outbox(
            chain, domain, block_hash, block_number, transaction_index, log_index
@@ -211,7 +249,8 @@ function createRobinhoodChainCaptureJournal(options = {}) {
       await client.query('COMMIT');
       return {
         status: 'committed', transactions: insertedTransactions.rowCount,
-        events: insertedEvents.rowCount, workItems: insertedWork.rowCount,
+        events: insertedEvents.rowCount, v3Snapshots: insertedV3Snapshots.rowCount,
+        workItems: insertedWork.rowCount,
       };
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch (_) {}

@@ -21,6 +21,7 @@ const stage191 = require('../src/utils/db-init-stage191');
 const stage192 = require('../src/utils/db-init-stage192');
 const stage193 = require('../src/utils/db-init-stage193');
 const stage194 = require('../src/utils/db-init-stage194');
+const stage195 = require('../src/utils/db-init-stage195');
 const stage103 = require('../src/utils/db-init-stage103');
 const v2 = require('../src/services/uniswap-v2-decoder');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
@@ -34,6 +35,7 @@ const NEXT_TX = `0x${'5'.repeat(64)}`;
 const ADDRESS = v2.ROBINHOOD_V2_FACTORY;
 const TOPIC = v2.TOPICS.pairCreated;
 const OBSERVED_AT = '2026-09-03T20:00:00.000Z';
+const MAX_UINT256 = ((1n << 256n) - 1n).toString();
 
 function capture(number = 100, hash = HASH, parentHash = PARENT) {
   return {
@@ -57,6 +59,7 @@ function capture(number = 100, hash = HASH, parentHash = PARENT) {
 
 async function clearTables() {
   await db.query('DELETE FROM robinhood_canonical_head_candidates');
+  await db.query('DELETE FROM robinhood_chain_v3_balance_snapshots');
   await db.query('DELETE FROM robinhood_head_captures');
   await db.query('DELETE FROM robinhood_head_capture_cursors');
   await db.query('DELETE FROM robinhood_chain_capture_cursor');
@@ -71,6 +74,7 @@ describe('Robinhood canonical chain capture journal', () => {
     await stage192.init({ closePool: false });
     await stage193.init({ closePool: false });
     await stage194.init({ closePool: false });
+    await stage195.init({ closePool: false });
   });
 
   beforeEach(clearTables);
@@ -99,6 +103,10 @@ describe('Robinhood canonical chain capture journal', () => {
       key === 'stage194-robinhood-canonical-head-canary'
     ));
     assert.equal(canary.repair, 'node src/utils/db-init-stage194.js');
+    const snapshots = SCHEMA_GROUPS.find(({ key }) => (
+      key === 'stage195-robinhood-v3-balance-snapshots'
+    ));
+    assert.equal(snapshots.repair, 'node src/utils/db-init-stage195.js');
   });
 
   it('keeps canonical canary evidence immutable and compares it with legacy evidence', async () => {
@@ -182,18 +190,35 @@ describe('Robinhood canonical chain capture journal', () => {
 
   it('commits the block envelope, transaction, event, and cursor atomically', async () => {
     const journal = createRobinhoodChainCaptureJournal();
-    assert.deepEqual(await journal.commitBlock(capture()), {
-      status: 'committed', transactions: 1, events: 1, workItems: 1,
+    const input = capture();
+    input.v3Snapshots = [{
+      logIndex: 0,
+      poolAddress: `0x${'6'.repeat(40)}`,
+      tokenAddress: `0x${'7'.repeat(40)}`,
+      quoteAddress: `0x${'8'.repeat(40)}`,
+      tokenBalanceRaw: MAX_UINT256,
+      quoteBalanceRaw: '2500000',
+    }];
+    assert.deepEqual(await journal.commitBlock(input), {
+      status: 'committed', transactions: 1, events: 1, v3Snapshots: 1, workItems: 1,
     });
 
     const counts = await db.query(
       `SELECT (SELECT COUNT(*)::int FROM robinhood_chain_blocks) AS blocks,
               (SELECT COUNT(*)::int FROM robinhood_chain_transactions) AS transactions,
               (SELECT COUNT(*)::int FROM robinhood_chain_events) AS events,
-              (SELECT COUNT(*)::int FROM robinhood_chain_domain_outbox) AS work_items`
+              (SELECT COUNT(*)::int FROM robinhood_chain_domain_outbox) AS work_items,
+              (SELECT COUNT(*)::int FROM robinhood_chain_v3_balance_snapshots) AS snapshots`
     );
     assert.deepEqual(counts.rows[0], {
-      blocks: 1, transactions: 1, events: 1, work_items: 1,
+      blocks: 1, transactions: 1, events: 1, work_items: 1, snapshots: 1,
+    });
+    const snapshot = await db.query(
+      `SELECT token_balance_raw::text, quote_balance_raw::text
+         FROM robinhood_chain_v3_balance_snapshots`
+    );
+    assert.deepEqual(snapshot.rows[0], {
+      token_balance_raw: MAX_UINT256, quote_balance_raw: '2500000',
     });
     const transactionContext = await db.query(
       `SELECT blocks.capture_version, tx.nonce::text, tx.value_wei::text
@@ -213,7 +238,7 @@ describe('Robinhood canonical chain capture journal', () => {
     const journal = createRobinhoodChainCaptureJournal();
     await journal.commitBlock(capture());
     assert.deepEqual(await journal.commitBlock(capture()), {
-      status: 'replayed', transactions: 0, events: 0, workItems: 0,
+      status: 'replayed', transactions: 0, events: 0, v3Snapshots: 0, workItems: 0,
     });
     const divergent = capture();
     divergent.events[0].data = '0x01';

@@ -3314,6 +3314,15 @@ uma unidade retry-safe. A captura de evidência usa concorrência 16 por padrão
 limitada por `ROBINHOOD_CANONICAL_HEAD_CONCURRENCY`. A telemetria `lastResult`
 expõe `blocks`, `blockNumber` e `throughBlock` para medir avanço real.
 
+A Stage 195 cria `robinhood_chain_v3_balance_snapshots`, sidecar durável do
+journal para os dois `balanceOf` de cada swap V3 no bloco capturado. Aplique com
+`node src/utils/db-init-stage195.js` antes de implantar o capturador Multicall.
+O snapshot pertence ao `(block_hash, log_index)` e é removido
+por cascata em reorg; saldos usam `NUMERIC(78,0)` para preservar todo `uint256`.
+O commit do bloco inclui os snapshots no digest e na mesma transação de bloco,
+receipts, eventos, outbox e cursor. A tabela ainda não muda o consumidor: o
+capturador Multicall e a leitura canônica entram no corte seguinte.
+
 ## 15. Wallet tracking multichain
 
 Wallet tracking de produto ainda é roadmap, mas a fundação Robinhood está ativa:

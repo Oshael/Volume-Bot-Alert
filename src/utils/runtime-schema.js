@@ -5596,6 +5596,27 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage195-robinhood-v3-balance-snapshots',
+    name: 'Stage 195 Robinhood canonical V3 balance snapshots',
+    repair: 'node src/utils/db-init-stage195.js',
+    tables: [{
+      table: 'robinhood_chain_v3_balance_snapshots',
+      columns: [
+        'chain', 'block_hash', 'log_index', 'pool_address', 'token_address',
+        'quote_address', 'token_balance_raw', 'quote_balance_raw', 'captured_at',
+      ],
+      columnTypes: {
+        token_balance_raw: { dataType: 'numeric', numericPrecision: 78, numericScale: 0 },
+        quote_balance_raw: { dataType: 'numeric', numericPrecision: 78, numericScale: 0 },
+      },
+      constraints: [
+        { name: 'rh_chain_v3_balance_snapshots_pkey', includes: ['PRIMARY KEY', 'chain', 'block_hash', 'log_index'] },
+        { name: 'rh_chain_v3_balance_snapshots_event_fkey', includes: ['FOREIGN KEY', 'chain', 'block_hash', 'log_index'] },
+        { name: 'rh_chain_v3_balance_snapshots_values_check', includes: ['token_balance_raw', 'quote_balance_raw', '>= 0'] },
+      ],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
