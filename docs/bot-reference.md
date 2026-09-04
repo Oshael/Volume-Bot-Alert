@@ -1677,9 +1677,13 @@ continua protegendo seu journal e bloqueia o avanço do floor enquanto houver
 pendencia anterior ao cutoff.
 
 Limpeza manual isolada, sem iniciar workers: `node src/utils/prune-robinhood-holder-journal.js
---before-block=BLOCO_EXCLUSIVO --batch-limit=1000 --write`. Exige corte auditado e
-confirmação explícita; executa somente um lote, até 1.000 buffers descartáveis e
-eventos aplicados combinados. O corte efetivo é o menor entre o bloco informado e
+--before-block=BLOCO_EXCLUSIVO --batch-limit=1000 --max-batches=20 --pause-ms=1000
+--write`. Exige corte auditado e confirmação explícita. Cada lote executa em uma
+transação independente e remove no máximo 1.000 buffers descartáveis e eventos
+aplicados combinados. Sem `--max-batches`, executa somente um lote. A execução
+limitada aceita de 1 a 100 lotes e pausa de 100 a 60.000ms entre eles. Continua
+somente enquanto o resultado for `draining` e para em `blocked`, `pruned`, `idle`,
+erro, `SIGINT`, `SIGTERM` ou ao atingir o limite. O corte efetivo é o menor entre o bloco informado e
 `next_block - 20000`; nunca remove o bloco informado nem encurta a janela recente.
 Seleciona o prefixo mais antigo pelo índice do journal, preserva blocos inteiros e
 revalida somente os tokens pendentes desse lote, sob lock do cursor e fence
@@ -1688,15 +1692,17 @@ completo anterior pode ser excluído e o floor avança no máximo até esse bloc
 Proteções são repetidas no `DELETE`; mudança concorrente aborta a transação.
 Se o limite dividir o primeiro bloco, retorna `batch_limit_splits_block` sem excluir.
 Lock timeout de 500ms ou statement timeout de 5s aborta a transação.
-`draining` exige nova execução manual; `pruned` avança o floor após drenar o
-intervalo e `idle` não exclui. Não altera balances, status de tokens ou workers.
+`pruned` avança o floor após drenar o intervalo e `idle` não exclui. Não altera
+balances, status de tokens ou workers.
 Dados excluídos deixam de permitir replay local; recuperação histórica pode exigir
 archive externo. `DELETE` permite reutilização na tabela, sem garantir devolução
-imediata ao filesystem. Não usar loop automático durante pressão de disco.
-O comando retorna JSON também em falhas: `failedStep` identifica a consulta,
+imediata ao filesystem. Não usar loop de shell ou execução sem limite durante
+pressão de disco. O comando imprime o progresso de cada lote e um resumo agregado.
+Também retorna JSON em falhas: `failedStep` identifica a consulta,
 `timingMs` acumula os tempos por etapa e `transaction` informa `rolled_back`
 somente após confirmação do rollback. Falha no commit ou no rollback mantém o
-resultado `unknown`; não repetir automaticamente. Os nomes das etapas também
+resultado `unknown`; não repetir automaticamente. Se um lote posterior falhar, o
+erro informa separadamente o agregado dos lotes anteriores já confirmados. Os nomes das etapas também
 aparecem em comentários SQL no `pg_stat_activity`. Essa instrumentação não altera
 os limites de lock/statement nem as proteções de exclusão.
 
