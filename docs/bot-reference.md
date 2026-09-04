@@ -1846,7 +1846,8 @@ e `readyForSwap:false`: não autoriza retomar por CTID com origem alterada, troc
 tabelas, apagar a cópia antiga ou liberar espaço na VPS2.
 
 O emissor `src/utils/transfer-robinhood-holder-journal.js` liga a VPS2 ao receptor
-fixo `root@159.195.17.104` por uma única sessão SSH comprimida. Exige URL explícita
+fixo `root@159.195.17.104` por uma única sessão SSH comprimida, usando somente a
+identidade dedicada `/root/.ssh/holder-journal-transfer`. Exige URL explícita
 da origem, UUID novo, faixa inicial/final, pausa fixa de 100 ms e as confirmações
 `--write --allow-holder-lock --allow-remote-write`. Cada execução é limitada a
 32768 páginas (256 MiB com páginas de 8 KiB); não é o export completo. Mantém em

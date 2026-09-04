@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { PassThrough } = require('node:stream');
 const { test } = require('node:test');
-const { parseArgs, createSshTransport, RECEIVER } = require('../src/utils/transfer-robinhood-holder-journal');
+const { parseArgs, createSshTransport, RECEIVER, IDENTITY } = require('../src/utils/transfer-robinhood-holder-journal');
 const { sourceSql } = require('../src/services/robinhood-holder-journal-transfer');
 const runId = '12345678-1234-1234-1234-123456789abc';
 const base = [`--database=volume_alert`, `--run-id=${runId}`, '--from-page=0', '--end-page=32768',
@@ -43,6 +43,7 @@ test('SSH transport uses one compressed fixed receiver session with line-delimit
   assert.deepEqual(await reply, { outcome: 'status' });
   await transport.close();
   assert.equal(command, 'ssh'); assert.ok(args.includes('-C'));
+  assert.equal(args[args.indexOf('-i') + 1], IDENTITY); assert.ok(args.includes('IdentitiesOnly=yes'));
   assert.ok(args.includes(RECEIVER)); assert.ok(args.includes('--stream'));
   assert.ok(args.includes('/opt/holder-journal-receiver/src/utils/receive-robinhood-holder-journal.js'));
 });

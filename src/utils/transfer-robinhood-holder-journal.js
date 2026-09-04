@@ -3,6 +3,7 @@ const { spawn } = require('node:child_process');
 const readline = require('node:readline');
 const { runTransfer } = require('../services/robinhood-holder-journal-transfer');
 const RECEIVER = 'root@159.195.17.104';
+const IDENTITY = '/root/.ssh/holder-journal-transfer';
 const REMOTE = '/opt/holder-journal-receiver/src/utils/receive-robinhood-holder-journal.js';
 
 function parseArgs(args) {
@@ -30,7 +31,8 @@ function parseArgs(args) {
 
 function createSshTransport(host = RECEIVER, spawnImpl = spawn) {
   if (host !== RECEIVER) throw new Error('unexpected receiver host');
-  const child = spawnImpl('ssh', ['-T', '-C', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10',
+  const child = spawnImpl('ssh', ['-T', '-C', '-i', IDENTITY, '-o', 'IdentitiesOnly=yes',
+    '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10',
     '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=2', host,
     'sudo', '-u', 'postgres', 'env',
     'HOLDER_JOURNAL_RECEIVER_DATABASE_URL=postgresql:///holder_compaction?host=/var/run/postgresql',
@@ -87,4 +89,4 @@ if (require.main === module) main().catch(error => {
   console.error(JSON.stringify({ status: 'failed', code: error.code || 'transfer_error', message: error.message }));
   process.exitCode = 1;
 });
-module.exports = { RECEIVER, parseArgs, createSshTransport, main };
+module.exports = { RECEIVER, IDENTITY, parseArgs, createSshTransport, main };
