@@ -34,6 +34,8 @@ function evaluateCapture(input, lease, blockers) {
   const nowMs = Number(input.nowMs ?? Date.now());
   const headObservedAt = timestamp(lease.metadata?.nodeHeadObservedAt);
   const headAgeMs = headObservedAt == null ? null : Math.max(0, nowMs - headObservedAt);
+  const lagEligible = capture?.lag_blocks != null
+    && count(capture.lag_blocks) <= maxCaptureLag;
   add(blockers, !capture, 'capture_cursor_missing');
   add(blockers, capture && capture.node_head == null, 'capture_head_missing');
   add(blockers, capture && capture.lag_blocks == null, 'capture_lag_missing');
@@ -41,9 +43,9 @@ function evaluateCapture(input, lease, blockers) {
     actual: count(capture?.lag_blocks), maximum: maxCaptureLag,
   });
   add(blockers, !lease.active, 'canonical_capture_inactive');
-  add(blockers, lease.active && headObservedAt == null,
+  add(blockers, lease.active && lagEligible && headObservedAt == null,
     'canonical_capture_head_freshness_missing');
-  add(blockers, lease.active && headAgeMs > maxCaptureHeadAgeMs,
+  add(blockers, lease.active && lagEligible && headAgeMs > maxCaptureHeadAgeMs,
     'canonical_capture_head_stale', {
       actualMs: headAgeMs, maximumMs: maxCaptureHeadAgeMs,
     });

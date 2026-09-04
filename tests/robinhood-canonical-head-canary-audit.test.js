@@ -88,6 +88,15 @@ describe('Robinhood canonical head canary audit', () => {
     ]);
   });
 
+  it('lets the lag gate own catch-up without a redundant stale-head blocker', () => {
+    const catchup = input('preflight');
+    catchup.capture.lag_blocks = '100';
+    catchup.leases[0].metadata.nodeHeadObservedAt = '2026-09-04T11:00:00.000Z';
+    assert.deepEqual(evaluate(catchup).blockers.map(({ code }) => code), [
+      'capture_lag_exceeded',
+    ]);
+  });
+
   it('parses bounded audit phases', () => {
     assert.deepEqual(parseArgs(['--phase=canary', '--min-market=500', '--verbose']), {
       phase: 'canary', maxCaptureLag: 2, maxCaptureHeadAgeMs: 10_000,

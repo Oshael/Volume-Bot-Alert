@@ -3533,9 +3533,11 @@ candidatos gravados desde a aquisição da lease atual, preservando sem misturar
 evidências de execuções anteriores. Itens à frente do cursor legado aparecem
 como `awaiting_legacy` e não são falsamente contados como ausentes. O limite do
 backlog pode ser ajustado explicitamente com `--max-queue-lag=N`. O gate só
-aprova quando a captura também expõe uma observação do head com no máximo 10s;
-ausência ou congelamento falham fechado, mesmo que a lease ainda esteja ativa e
-o lag persistido pareça zero. Ajuste somente para diagnóstico com
+aprova quando uma captura já dentro do limite de lag também expõe uma observação
+do head com no máximo 10s; ausência ou congelamento falham fechado, mesmo que a
+lease ainda esteja ativa e o lag persistido pareça zero. Durante catch-up, o
+próprio gate de lag bloqueia e a idade do head pode abranger a drenagem limitada
+do lote. Ajuste somente para diagnóstico com
 `--max-capture-head-age-ms=N`. O heartbeat da captura expõe tentativa, conclusão,
 progresso e erros consecutivos; o health registry acompanha essa lease como
 componente live opcional. No canário, o gate também exige que o heartbeat exponha
