@@ -14,6 +14,9 @@ const {
   createRobinhoodCanonicalHeadCandidateRepository,
 } = require('../src/models/robinhood-canonical-head-candidate');
 const { createRobinhoodHeadCaptureRepository } = require('../src/models/robinhood-head-capture');
+const {
+  createRobinhoodCanonicalHeadCanaryAudit,
+} = require('../src/services/robinhood-canonical-head-canary-audit');
 const stage191 = require('../src/utils/db-init-stage191');
 const stage192 = require('../src/utils/db-init-stage192');
 const stage193 = require('../src/utils/db-init-stage193');
@@ -105,8 +108,12 @@ describe('Robinhood canonical chain capture journal', () => {
       blockHash: HASH, address: ADDRESS, topics: [TOPIC], data: '0x',
     };
     const canonical = {
-      stream: 'discovery', log, protocol: 'uniswap-v2', marketKey: 'pool-a',
-      evidenceVersion: 2, evidence: { source: 'canonical' },
+      stream: 'market', log, protocol: 'uniswap-v2', marketKey: 'pool-a',
+      evidenceVersion: 2,
+      evidence: {
+        source: 'canonical', quoteUsd: { priceUsd: '1', source: 'pool' },
+        tokenMetadata: { totalSupplyRaw: '10', decimals: 18 },
+      },
     };
     const candidates = createRobinhoodCanonicalHeadCandidateRepository();
     assert.deepEqual(await candidates.appendCaptureEntries({ entries: [canonical] }), {
@@ -116,24 +123,24 @@ describe('Robinhood canonical chain capture journal', () => {
       insertedCaptures: 0, duplicateCaptures: 1,
     });
     assert.deepEqual(await candidates.getParitySummary({ fromBlock: 100, toBlock: 100 }), [{
-      stream: 'discovery', candidates: 1, mature_candidates: 0, awaiting_legacy: 1,
-      missing_legacy: 0, matched: 0,
+      stream: 'market', candidates: 1, mature_candidates: 0, awaiting_legacy: 1,
+      missing_legacy: 0, matched: 0, volatile_drift: 0,
       divergent: 0, first_block: '100', last_block: '100',
     }]);
     await createRobinhoodHeadCaptureRepository().appendCaptureEntries({ entries: [canonical] });
     assert.deepEqual(await candidates.getParitySummary({ fromBlock: 100, toBlock: 100 }), [{
-      stream: 'discovery', candidates: 1, mature_candidates: 0, awaiting_legacy: 1,
-      missing_legacy: 0, matched: 0, divergent: 0,
+      stream: 'market', candidates: 1, mature_candidates: 0, awaiting_legacy: 1,
+      missing_legacy: 0, matched: 0, volatile_drift: 0, divergent: 0,
       first_block: '100', last_block: '100',
     }]);
     await db.query(
       `INSERT INTO robinhood_head_capture_cursors(
          chain, stream, next_block, checkpoint_block, checkpoint_hash
-       ) VALUES ('robinhood', 'discovery', 101, 100, $1)`, [HASH]
+       ) VALUES ('robinhood', 'market', 101, 100, $1)`, [HASH]
     );
     assert.deepEqual(await candidates.getParitySummary({ fromBlock: 100, toBlock: 100 }), [{
-      stream: 'discovery', candidates: 1, mature_candidates: 1, awaiting_legacy: 0,
-      missing_legacy: 0, matched: 1, divergent: 0,
+      stream: 'market', candidates: 1, mature_candidates: 1, awaiting_legacy: 0,
+      missing_legacy: 0, matched: 1, volatile_drift: 0, divergent: 0,
       first_block: '100', last_block: '100',
     }]);
     await db.query(
@@ -143,14 +150,29 @@ describe('Robinhood canonical chain capture journal', () => {
     assert.deepEqual(await candidates.getParitySummary({
       fromBlock: 100, toBlock: 100, capturedAfter: '2026-09-04T01:00:01Z',
     }), []);
+    const volatile = {
+      ...canonical.evidence,
+      quoteUsd: { ...canonical.evidence.quoteUsd, priceUsd: '1.01' },
+      tokenMetadata: { ...canonical.evidence.tokenMetadata, totalSupplyRaw: '11' },
+    };
     await db.query(
       `UPDATE robinhood_head_captures SET evidence=$1::jsonb
         WHERE chain='robinhood' AND transaction_hash=$2 AND log_index=0`,
-      [JSON.stringify({ source: 'legacy' }), TX]
+      [JSON.stringify(volatile), TX]
     );
     assert.deepEqual(await candidates.getParitySummary({ fromBlock: 100, toBlock: 100 }), [{
-      stream: 'discovery', candidates: 1, mature_candidates: 1, awaiting_legacy: 0,
-      missing_legacy: 0, matched: 0, divergent: 1,
+      stream: 'market', candidates: 1, mature_candidates: 1, awaiting_legacy: 0,
+      missing_legacy: 0, matched: 0, volatile_drift: 1, divergent: 0,
+      first_block: '100', last_block: '100',
+    }]);
+    await db.query(
+      `UPDATE robinhood_head_captures SET evidence=$1::jsonb
+        WHERE chain='robinhood' AND transaction_hash=$2 AND log_index=0`,
+      [JSON.stringify({ ...volatile, source: 'legacy' }), TX]
+    );
+    assert.deepEqual(await candidates.getParitySummary({ fromBlock: 100, toBlock: 100 }), [{
+      stream: 'market', candidates: 1, mature_candidates: 1, awaiting_legacy: 0,
+      missing_legacy: 0, matched: 0, volatile_drift: 0, divergent: 1,
       first_block: '100', last_block: '100',
     }]);
     await assert.rejects(candidates.appendCaptureEntries({ entries: [{
@@ -233,6 +255,26 @@ describe('Robinhood canonical chain capture journal', () => {
         domain: 'discovery', blockHash: HASH, logIndex: 0,
       }],
     }), { completed: 1, blocked: 0, retried: 0 });
+  });
+
+  it('counts outbox lag only after the legacy frontier makes work mature', async () => {
+    await createRobinhoodChainCaptureJournal().commitBlock(capture());
+    await db.query(
+      `INSERT INTO robinhood_head_capture_cursors(chain, stream, next_block)
+       VALUES ('robinhood', 'discovery', 100)`
+    );
+    const database = {
+      ...db,
+      query: (sql, params) => sql.includes('worker_leases')
+        ? Promise.resolve({ rows: [] }) : db.query(sql, params),
+    };
+    const audit = createRobinhoodCanonicalHeadCanaryAudit({ database });
+    assert.equal((await audit.inspect({ phase: 'preflight' })).queue.mature_lag_blocks, '0');
+    await db.query(
+      `UPDATE robinhood_head_capture_cursors SET next_block=102
+        WHERE chain='robinhood' AND stream='discovery'`
+    );
+    assert.equal((await audit.inspect({ phase: 'preflight' })).queue.mature_lag_blocks, '1');
   });
 
   it('leases production discovery immediately without waiting for the legacy cursor', async () => {

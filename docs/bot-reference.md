@@ -3290,14 +3290,23 @@ Valide a troca com `npm run robinhood:canonical-head-audit -- --phase=preflight`
 antes de iniciar o canário e com `--phase=canary` durante a observação. A saída é
 compacta por padrão; `--verbose` inclui as leases completas. O gate exige captura
 por receipts e head legado ativos, shadow inativo, capture lag no limite, backlog
-da outbox de no máximo dois blocos por padrão, nenhuma fila bloqueada, nenhuma
-chamada proibida e paridade madura. A paridade do canário considera somente
+maduro da outbox de no máximo dois blocos por padrão, nenhuma fila bloqueada,
+nenhuma chamada proibida e paridade madura. Itens ainda à frente do cursor legado
+ficam visíveis em `queue.lag_blocks`, mas não contam como backlog maduro. A
+paridade do canário considera somente
 candidatos gravados desde a aquisição da lease atual, preservando sem misturar
 evidências de execuções anteriores. Itens à frente do cursor legado aparecem
 como `awaiting_legacy` e não são falsamente contados como ausentes. O limite do
 backlog pode ser ajustado explicitamente com `--max-queue-lag=N`. O gate só
 aprova depois que o heartbeat expõe o `rpcGuard`; telemetria ausente falha
 fechado.
+Na evidência market, `quoteUsd.priceUsd` e
+`tokenMetadata.totalSupplyRaw` são snapshots live `latest` com cache e podem
+mudar entre os dois writers do canário. Diferença somente nesses valores aparece
+como `volatile_drift` e não bloqueia; source/status/block tag, metadata estável,
+aceitação/rejeição e toda evidência de protocolo continuam exigindo igualdade.
+Discovery permanece byte-exact. Essa regra preserva o caminho live compatível
+com node podado e não reintroduz leitura histórica ou `eth_getLogs`.
 Para sustentar a taxa de blocos da chain, o consumidor canônico reclama até 16
 frontiers prontos por rodada (`ROBINHOOD_CANONICAL_HEAD_BATCH_BLOCKS`, limite 64),
 processa todas as discoveries ordenadas antes dos markets e liquida o lote como

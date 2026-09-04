@@ -29,13 +29,18 @@ const SAME = `candidate.stream=item.stream
   AND candidate.protocol IS NOT DISTINCT FROM item.protocol
   AND candidate.market_key IS NOT DISTINCT FROM item.market_key
   AND candidate.evidence_version=item.evidence_version AND candidate.evidence=item.evidence`;
-const LEGACY_SAME = `legacy.stream=candidate.stream
+const LEGACY_SHAPE_SAME = `legacy.stream=candidate.stream
   AND legacy.block_number=candidate.block_number AND legacy.block_hash=candidate.block_hash
   AND legacy.transaction_index=candidate.transaction_index AND legacy.address=candidate.address
   AND legacy.topics=candidate.topics AND legacy.data=candidate.data
   AND legacy.protocol IS NOT DISTINCT FROM candidate.protocol
   AND legacy.market_key IS NOT DISTINCT FROM candidate.market_key
-  AND legacy.evidence_version=candidate.evidence_version AND legacy.evidence=candidate.evidence`;
+  AND legacy.evidence_version=candidate.evidence_version`;
+const LEGACY_SAME = `${LEGACY_SHAPE_SAME} AND legacy.evidence=candidate.evidence`;
+const LEGACY_COMPATIBLE = `${LEGACY_SHAPE_SAME}
+  AND (legacy.evidence=candidate.evidence OR (candidate.stream='market'
+    AND legacy.evidence #- '{quoteUsd,priceUsd}' #- '{tokenMetadata,totalSupplyRaw}'
+      = candidate.evidence #- '{quoteUsd,priceUsd}' #- '{tokenMetadata,totalSupplyRaw}'))`;
 const MATURE = 'cursor.next_block IS NOT NULL AND candidate.block_number < cursor.next_block';
 
 function optionalBlock(value, label) {
@@ -111,7 +116,9 @@ function createRobinhoodCanonicalHeadCandidateRepository(options = {}) {
               COUNT(*) FILTER (WHERE ${MATURE} AND legacy.chain IS NOT NULL
                 AND ${LEGACY_SAME})::int AS matched,
               COUNT(*) FILTER (WHERE ${MATURE} AND legacy.chain IS NOT NULL
-                AND NOT (${LEGACY_SAME}))::int AS divergent,
+                AND ${LEGACY_COMPATIBLE} AND NOT (${LEGACY_SAME}))::int AS volatile_drift,
+              COUNT(*) FILTER (WHERE ${MATURE} AND legacy.chain IS NOT NULL
+                AND NOT (${LEGACY_COMPATIBLE}))::int AS divergent,
               MIN(candidate.block_number)::text AS first_block,
               MAX(candidate.block_number)::text AS last_block
          FROM robinhood_canonical_head_candidates candidate

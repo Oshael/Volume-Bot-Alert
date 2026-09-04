@@ -382,6 +382,8 @@ que 500 linhas.
   compacta e falha de startup observável (3J concluída);
 - claim de até 16 frontiers por rodada e concorrência de evidência elevada para
   remover a serialização que deixou o canário atrás da chain (3K concluída);
+- paridade semântica do contrato live (`volatile_drift` somente para preço/supply
+  latest) e backlog calculado apenas sobre a fronteira madura (3L concluída);
 - preservação da evidência e idempotência atuais;
 - comparação com `robinhood_head_captures` existente;
 - cutover dos dois pollers `eth_getLogs` do head.

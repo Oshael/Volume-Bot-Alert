@@ -36,7 +36,7 @@ function evaluate(input) {
   const parity = Object.fromEntries(['discovery', 'market'].map((stream) => (
     [stream, input.parity.find((row) => row.stream === stream) || {
       stream, candidates: 0, mature_candidates: 0, awaiting_legacy: 0,
-      missing_legacy: 0, matched: 0, divergent: 0,
+      missing_legacy: 0, matched: 0, volatile_drift: 0, divergent: 0,
     }]
   )));
   const blockers = [];
@@ -47,9 +47,10 @@ function evaluate(input) {
   add(blockers, !leases.capture.active, 'canonical_capture_inactive');
   add(blockers, !leases.legacy.active, 'legacy_head_inactive');
   add(blockers, leases.shadow.active, 'domain_shadow_still_active');
-  add(blockers, count(queue.lag_blocks) > maxQueueLagBlocks, 'domain_outbox_lag_exceeded', {
-    actual: count(queue.lag_blocks), maximum: maxQueueLagBlocks,
-    firstUnsettled: queue.first_unsettled || null,
+  add(blockers, count(queue.mature_lag_blocks) > maxQueueLagBlocks,
+    'domain_outbox_mature_lag_exceeded', {
+      actual: count(queue.mature_lag_blocks), maximum: maxQueueLagBlocks,
+      firstUnsettled: queue.first_mature_unsettled || null,
   });
   add(blockers, count(queue.blocked) > 0, 'domain_outbox_blocked', count(queue.blocked));
   add(blockers, leases.canary.metadata?.state === 'halted', 'canonical_canary_lease_halted',
@@ -110,9 +111,21 @@ function createRobinhoodCanonicalHeadCanaryAudit(deps = {}) {
                   WHERE outbox.status IN ('pending', 'leased')
                 )=0 THEN 0 ELSE GREATEST(cursor.next_block-1-MIN(outbox.block_number) FILTER (
                   WHERE outbox.status IN ('pending', 'leased')
-                ), 0) END::text AS queue_lag_blocks
+                ), 0) END::text AS queue_lag_blocks,
+                MIN(outbox.block_number) FILTER (
+                  WHERE outbox.status IN ('pending', 'leased')
+                    AND outbox.block_number < legacy_cursor.next_block
+                )::text AS first_mature_unsettled,
+                COALESCE(MAX(GREATEST(
+                  legacy_cursor.next_block-1-outbox.block_number, 0
+                )) FILTER (
+                  WHERE outbox.status IN ('pending', 'leased')
+                    AND outbox.block_number < legacy_cursor.next_block
+                ), 0)::text AS mature_queue_lag_blocks
            FROM robinhood_chain_capture_cursor cursor
            LEFT JOIN robinhood_chain_domain_outbox outbox ON outbox.chain=cursor.chain
+           LEFT JOIN robinhood_head_capture_cursors legacy_cursor
+             ON legacy_cursor.chain=outbox.chain AND legacy_cursor.stream=outbox.domain
           WHERE cursor.chain='robinhood'
           GROUP BY cursor.next_block, cursor.node_head`
       ),
@@ -135,6 +148,8 @@ function createRobinhoodCanonicalHeadCanaryAudit(deps = {}) {
         pending: row.pending, leased: row.leased, blocked: row.blocked,
         first_pending: row.first_pending, first_unsettled: row.first_unsettled,
         lag_blocks: row.queue_lag_blocks,
+        first_mature_unsettled: row.first_mature_unsettled,
+        mature_lag_blocks: row.mature_queue_lag_blocks,
       },
       leases: leaseResult.rows,
       parity,

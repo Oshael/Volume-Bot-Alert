@@ -19,6 +19,7 @@ function input(phase) {
     queue: {
       pending: 2, leased: 0, blocked: 0, first_pending: '1000',
       first_unsettled: '1000', lag_blocks: '0',
+      first_mature_unsettled: null, mature_lag_blocks: '0',
     },
     leases: [
       lease('robinhood-chain-capture-worker'),
@@ -35,8 +36,9 @@ describe('Robinhood canonical head canary audit', () => {
     blocked.leases.push(lease('robinhood-chain-domain-shadow-worker'));
     blocked.queue.leased = 2;
     blocked.queue.lag_blocks = 3;
+    blocked.queue.mature_lag_blocks = 3;
     assert.deepEqual(evaluate(blocked).blockers.map(({ code }) => code), [
-      'domain_shadow_still_active', 'domain_outbox_lag_exceeded',
+      'domain_shadow_still_active', 'domain_outbox_mature_lag_exceeded',
       'domain_outbox_still_leased',
     ]);
   });
@@ -86,7 +88,8 @@ describe('Robinhood canonical head canary audit', () => {
     ] : [{
       next_block: '1001', node_head: '1000', lag_blocks: '0', pending: 0,
       leased: 0, blocked: 0, first_pending: null, first_unsettled: null,
-      queue_lag_blocks: '0',
+      queue_lag_blocks: '0', first_mature_unsettled: null,
+      mature_queue_lag_blocks: '0',
     }] }) };
     const candidates = { getParitySummary: async (options) => {
       parityOptions = options;
