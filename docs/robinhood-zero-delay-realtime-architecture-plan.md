@@ -372,6 +372,8 @@ que 500 linhas.
 - barreira canônica por bloco discovery→market (3E concluída, runtime desativado);
 - composição do pipeline com seed persistido e guard anti-`eth_getLogs` (3F concluída,
   processo runtime ainda desativado);
+- processo canônico opt-in com `LISTEN/NOTIFY`, continuidade por polling, lease e
+  fail-closed (3G concluída, desativado por padrão);
 - preservação da evidência e idempotência atuais;
 - comparação com `robinhood_head_captures` existente;
 - cutover dos dois pollers `eth_getLogs` do head.

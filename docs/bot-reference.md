@@ -3270,7 +3270,15 @@ retenta o bloco inteiro e um `blocked` impede avanço para blocos posteriores.
 Sua composição restaura o registry de pools persistido antes do primeiro claim,
 usa o pipeline somente em `captureMode` e envolve o RPC com a role
 `canonical-head`: `eth_getLogs` simples ou em batch é rejeitado localmente e
-contabilizado antes de alcançar o node. O runtime segue sem processo ativo.
+contabilizado antes de alcançar o node. A composição não ativa nada por si só.
+O processo dedicado é `npm run start:worker:robinhood-canonical-head`, permanece
+opt-in por `ROBINHOOD_CANONICAL_HEAD_ENABLED` e exige RPC loopback em
+`ROBINHOOD_CANONICAL_HEAD_RPC_URL` ou `ROBINHOOD_CHAIN_CAPTURE_RPC_URL`. Ele usa
+`LISTEN robinhood_chain_domain_outbox`, polling de continuidade e a lease
+`robinhood-canonical-head-worker`. Antes de iniciá-lo, pare a unit
+`robinhood-chain-domain-shadow`, pois ambas reclamam a mesma outbox; mantenha o
+head legado durante o canário. Tentativa de `eth_getLogs` ou frontier `blocked`
+haltam a lease.
 
 ## 15. Wallet tracking multichain
 

@@ -65,4 +65,4 @@ if (require.main === module) main().catch((error) => {
   process.exitCode = 1; void db.pool.end();
 });
 
-module.exports = { LEASE_KEY, main, __private: { captureRpcOptions } };
+module.exports = { LEASE_KEY, captureRpcOptions, main, __private: { captureRpcOptions } };

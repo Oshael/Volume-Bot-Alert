@@ -1634,6 +1634,42 @@ module.exports = {
     ),
   },
 
+  robinhoodCanonicalHeadWorker: {
+    enabled: parseBoolean(process.env.ROBINHOOD_CANONICAL_HEAD_ENABLED, false),
+    rpcUrl: String(
+      process.env.ROBINHOOD_CANONICAL_HEAD_RPC_URL
+      || process.env.ROBINHOOD_CHAIN_CAPTURE_RPC_URL
+      || ''
+    ).trim(),
+    idlePollMs: parseIntegerInRange(
+      process.env.ROBINHOOD_CANONICAL_HEAD_IDLE_POLL_MS, 100, 25, 60_000
+    ),
+    errorPollMs: parseIntegerInRange(
+      process.env.ROBINHOOD_CANONICAL_HEAD_ERROR_POLL_MS, 1000, 100, 60_000
+    ),
+    leaseMs: parseIntegerInRange(
+      process.env.ROBINHOOD_CANONICAL_HEAD_CLAIM_LEASE_MS, 60_000, 1000, 300_000
+    ),
+    maxAttempts: parseIntegerInRange(
+      process.env.ROBINHOOD_CANONICAL_HEAD_MAX_ATTEMPTS, 5, 1, 20
+    ),
+    baseBackoffMs: parseIntegerInRange(
+      process.env.ROBINHOOD_CANONICAL_HEAD_BASE_BACKOFF_MS, 1000, 100, 60_000
+    ),
+    maxBackoffMs: parseIntegerInRange(
+      process.env.ROBINHOOD_CANONICAL_HEAD_MAX_BACKOFF_MS, 60_000, 1000, 300_000
+    ),
+    observationConcurrency: parseIntegerInRange(
+      process.env.ROBINHOOD_CANONICAL_HEAD_CONCURRENCY, 4, 1, 16
+    ),
+    leaseHeartbeatMs: parseIntegerInRange(
+      process.env.ROBINHOOD_CANONICAL_HEAD_LEASE_HEARTBEAT_MS, 30_000, 1000, 300_000
+    ),
+    leaseTtlMs: parseIntegerInRange(
+      process.env.ROBINHOOD_CANONICAL_HEAD_LEASE_TTL_MS, 120_000, 5000, 600_000
+    ),
+  },
+
   robinhoodIngestionWorker: {
     enabled: robinhoodIngestionEnabled,
     publicRpcUrl: String(
