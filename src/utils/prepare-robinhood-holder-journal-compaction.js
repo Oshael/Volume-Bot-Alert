@@ -75,6 +75,45 @@ function assertFreeSpace(freeBytes, minFreeGiB, phase) {
   return available;
 }
 
+function createInterruptController(database, progress = () => {}) {
+  let backendPid = null;
+  let requestedSignal = null;
+  let termination = null;
+
+  function terminate() {
+    if (!requestedSignal || backendPid == null || termination) return;
+    const pid = backendPid;
+    progress({ phase: 'interrupt', signal: requestedSignal, backendPid: pid,
+      status: 'requested' });
+    termination = database.query(
+      `SELECT pg_terminate_backend($1::int) AS terminated
+        WHERE $1::int <> pg_backend_pid()`, [pid]
+    ).then((result) => {
+      const terminated = result.rows[0]?.terminated === true;
+      progress({ phase: 'interrupt', signal: requestedSignal, backendPid: pid,
+        status: terminated ? 'terminated' : 'not-found' });
+      return terminated;
+    }).catch((error) => {
+      progress({ phase: 'interrupt', signal: requestedSignal, backendPid: pid,
+        status: 'failed', error: error.message });
+      return false;
+    });
+  }
+
+  return Object.freeze({
+    request(signal) {
+      if (!requestedSignal) requestedSignal = signal;
+      terminate();
+    },
+    setBackendPid(pid) {
+      backendPid = pid == null ? null : Number(pid);
+      terminate();
+    },
+    wait: async () => (termination ? termination : null),
+    get signal() { return requestedSignal; },
+  });
+}
+
 async function activeHolderLeases(client) {
   const result = await client.query(
     `/* holder-compact:leases */ SELECT lease_key FROM worker_leases
@@ -93,21 +132,37 @@ async function assertNoActiveHolderLeases(client) {
   }
 }
 
-async function runPrepare(options = {}, dependencies = {}) {
-  const database = dependencies.database;
-  const freeBytes = dependencies.freeBytes || systemFreeBytes;
-  const progress = dependencies.progress || (() => {});
-  const minFreeGiB = options.minFreeGiB ?? DEFAULT_MIN_FREE_GIB;
+function assertPrepareInput(database, options) {
   if (!database?.getClient) throw new TypeError('database.getClient is required');
   if (options.archiveRecoveryAcknowledged !== true) {
     const error = new Error('archive recovery acknowledgement is required');
     error.code = 'holder_journal_compaction_archive_recovery_required';
     throw error;
   }
+}
+
+async function reportBackendPid(client, callback) {
+  if (typeof callback !== 'function') return;
+  const backend = await client.query('SELECT pg_backend_pid()::int AS backend_pid');
+  callback(backend.rows[0].backend_pid);
+}
+
+function clearBackendPid(callback) {
+  if (typeof callback === 'function') callback(null);
+}
+
+async function runPrepare(options = {}, dependencies = {}) {
+  const database = dependencies.database;
+  const freeBytes = dependencies.freeBytes || systemFreeBytes;
+  const progress = dependencies.progress || (() => {});
+  const onBackendPid = dependencies.onBackendPid;
+  const minFreeGiB = options.minFreeGiB ?? DEFAULT_MIN_FREE_GIB;
+  assertPrepareInput(database, options);
   assertFreeSpace(freeBytes, minFreeGiB, 'preflight');
   const client = await database.getClient();
   let transactionOpen = false;
   try {
+    await reportBackendPid(client, onBackendPid);
     const existing = await client.query(
       '/* holder-compact:target */ SELECT to_regclass($1) AS target', [TARGET_TABLE]
     );
@@ -201,6 +256,7 @@ async function runPrepare(options = {}, dependencies = {}) {
     if (transactionOpen) await client.query('ROLLBACK').catch(() => {});
     throw error;
   } finally {
+    clearBackendPid(onBackendPid);
     client.release();
   }
 }
@@ -208,12 +264,27 @@ async function runPrepare(options = {}, dependencies = {}) {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const database = require('../models/db');
+  const progress = (entry) => console.log(JSON.stringify(entry));
+  const interrupt = createInterruptController(database, progress);
+  const handlers = Object.fromEntries(['SIGINT', 'SIGTERM'].map((signal) => [
+    signal, () => interrupt.request(signal),
+  ]));
+  for (const [signal, handler] of Object.entries(handlers)) process.on(signal, handler);
   try {
     const result = await runPrepare(options, {
-      database, progress: (entry) => console.log(JSON.stringify(entry)),
+      database, progress, onBackendPid: (pid) => interrupt.setBackendPid(pid),
     });
+    if (interrupt.signal) {
+      const error = new Error(`interrupted by ${interrupt.signal}`);
+      error.code = 'holder_journal_compaction_interrupted';
+      throw error;
+    }
     console.log(JSON.stringify(result));
   } finally {
+    await interrupt.wait();
+    for (const [signal, handler] of Object.entries(handlers)) {
+      process.removeListener(signal, handler);
+    }
     await database.pool.end();
   }
 }
@@ -224,6 +295,6 @@ if (require.main === module) main().catch((error) => {
 });
 
 module.exports = {
-  DEFAULT_MIN_FREE_GIB, INDEX_STATEMENTS, SOURCE_TABLE, TARGET_TABLE,
+  DEFAULT_MIN_FREE_GIB, INDEX_STATEMENTS, SOURCE_TABLE, TARGET_TABLE, createInterruptController,
   parseArgs, runPrepare,
 };

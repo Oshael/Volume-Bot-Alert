@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const {
-  INDEX_STATEMENTS, parseArgs, runPrepare,
+  INDEX_STATEMENTS, createInterruptController, parseArgs, runPrepare,
 } = require('../src/utils/prepare-robinhood-holder-journal-compaction');
 
 function harness(options = {}) {
@@ -108,5 +108,23 @@ describe('Robinhood holder journal compaction prepare', () => {
       database: context.database, freeBytes: () => 100n * 1024n ** 3n,
     }), (error) => error.code === 'holder_journal_compaction_archive_recovery_required');
     assert.equal(context.calls.length, 0);
+  });
+
+  it('terminates the tracked PostgreSQL backend when interrupted', async () => {
+    const calls = [];
+    const progress = [];
+    const controller = createInterruptController({
+      async query(sql, params) {
+        calls.push({ sql, params });
+        return { rows: [{ terminated: true }] };
+      },
+    }, (entry) => progress.push(entry));
+    controller.setBackendPid(1234);
+    controller.request('SIGINT');
+
+    assert.equal(await controller.wait(), true);
+    assert.deepEqual(calls[0].params, [1234]);
+    assert.match(calls[0].sql, /pg_terminate_backend/);
+    assert.deepEqual(progress.map(({ status }) => status), ['requested', 'terminated']);
   });
 });

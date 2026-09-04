@@ -1724,7 +1724,10 @@ consolidação. O prepare
 mantém locks de escrita no journal e nas proteções, mas permite leituras. Cópia,
 constraints, índices e validação executam numa única transação; falha ou disco
 abaixo da margem faz rollback completo. O prepare não renomeia nem remove a tabela
-original e não libera espaço no filesystem. Swap e descarte exigem ferramenta e
+original e não libera espaço no filesystem. `SIGINT` e `SIGTERM` encerram
+explicitamente o backend PostgreSQL da transação antes de o processo sair, para
+que uma cópia ou ordenação cancelada não continue ocupando disco em background.
+Swap e descarte exigem ferramenta e
 confirmação separadas após auditoria exata do artefato preparado.
 
 `monitored`, `recent`, `old-week`, pins, tokens manuais e o summary de
