@@ -1767,8 +1767,13 @@ order gate do token são limpos ao fechar ou trocar a visualização.
 O grupo `robinhood-holders` contém workers independentes de captura live, apply
 do journal live, backfill de tokens novos, backfill frio, reconciliação, snapshot
 e poda do journal. Captura/handoff usam a lease `robinhood-holder-live-worker`;
-o apply serial usa `robinhood-holder-live-apply-worker`, intervalo default de
-100ms e o budget `ROBINHOOD_HOLDER_LIVE_MAX_APPLY_EVENTS`. Eventos consecutivos
+o apply usa `robinhood-holder-live-apply-worker`, intervalo default de 100ms e o
+budget por lane `ROBINHOOD_HOLDER_LIVE_MAX_APPLY_EVENTS`. Por default há uma lane,
+preservando o comportamento serial. `ROBINHOOD_HOLDER_LIVE_APPLY_CONCURRENCY`
+habilita de 1 a 8 lanes; cada uma recebe um shard determinístico e disjunto por
+hash do token, preservando a ordem canônica dentro do token e impedindo duas lanes
+de aplicarem o mesmo ledger. Cada lane tem budget próprio de eventos e 2s, portanto
+o aumento eleva proporcionalmente a pressão máxima no PostgreSQL. Eventos consecutivos
 do mesmo token são aplicados em uma transação, em lotes default de 100 e ajustáveis
 por `ROBINHOOD_HOLDER_LIVE_APPLY_BATCH_SIZE` entre 1 e 1.000. O primeiro déficit
 encerra o lote antes de alterar o evento inválido; o prefixo válido já aplicado
@@ -1815,10 +1820,12 @@ e `stale-live`. A rotação persiste entre ticks e reserva três lotes para live
 recente, dois para shadow recente, um para shadow antigo e um para catch-up live;
 se uma classe estiver vazia, sua vez é usada imediatamente por outra. Assim backlog
 live não bloqueia tokens novos e nenhum shadow antigo fica invisível ao scheduler.
-No início do tick, as quatro classes leem em paralelo uma página limitada de
+No início do tick, as quatro classes de cada lane leem em paralelo uma página limitada de
 tickets e reutilizam essas páginas entre aplicações, em vez de repetir a mesma
-seleção SQL para cada token. Assim o tick faz exatamente quatro seleções hot e
-contabiliza a duração concorrente, não a soma das quatro consultas.
+seleção SQL para cada token. Assim cada lane faz exatamente quatro seleções hot;
+`timing.hotSelectionCalls` totaliza `4 * concurrency`. A duração do drain continua
+medindo o tempo de parede concorrente, enquanto as durações internas agregam o
+trabalho de todas as lanes.
 As páginas são menores para `fresh-live` e `recent-shadow` (4 e 8) e maiores para
 as classes stale (32); isso preserva a preempção live, limita memória e reduz o
 custo de seleção sob backlog. Página parcial não é relida no mesmo tick; novos

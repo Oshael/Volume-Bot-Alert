@@ -1451,6 +1451,9 @@ module.exports = {
     maxErrorBackoffMs: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_LIVE_APPLY_MAX_ERROR_BACKOFF_MS, 30_000, 1000, 300_000
     ),
+    concurrency: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_LIVE_APPLY_CONCURRENCY, 1, 1, 8
+    ),
     maxApplyEvents: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_LIVE_MAX_APPLY_EVENTS, 5000, 1, 50_000
     ),

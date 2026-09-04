@@ -296,6 +296,15 @@ function tokenFilter(value, label) {
   return [...new Set(value.map((token) => hex(token, 20, label)))];
 }
 
+function selectionShard(input = {}) {
+  const count = nonNegativeInteger(input.shardCount ?? 1, 'selection shard count');
+  const index = nonNegativeInteger(input.shardIndex ?? 0, 'selection shard index');
+  if (count < 1 || count > 8 || index >= count) {
+    throw new Error('selection shard is invalid');
+  }
+  return { count, index };
+}
+
 async function lockReorgFence(client, mode = 'shared') {
   if (!['shared', 'exclusive'].includes(mode)) throw new Error('reorg fence mode is invalid');
   const suffix = mode === 'shared' ? '_shared' : '';
@@ -1555,6 +1564,7 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     const excluded = tokenFilter(input.excludeTokenAddresses, 'excluded token');
     const limit = nonNegativeInteger(input.limit ?? 5000, 'pendingTokens.limit');
     if (limit < 1 || limit > 50_000) throw new Error('pendingTokens.limit is invalid');
+    const shard = selectionShard(input);
     const result = await database.query(
       `SELECT state.token_address
          FROM robinhood_holder_token_states state
@@ -1570,11 +1580,15 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
         WHERE state.chain = 'robinhood'
           AND state.ledger_status IN ('shadow', 'live')
           AND NOT (state.token_address = ANY($1::varchar[]))
+          AND mod(
+            hashtextextended(state.token_address, 0) & 9223372036854775807,
+            $3::bigint
+          ) = $4::bigint
         ORDER BY pending.block_number DESC, pending.transaction_index DESC,
                  pending.log_index DESC,
                  (state.ledger_status = 'live') DESC, state.token_address
         LIMIT $2::int`,
-      [excluded, limit]
+      [excluded, limit, shard.count, shard.index]
     );
     return Object.freeze(result.rows.map((row) => row.token_address));
   }
@@ -1587,6 +1601,7 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     if (priorityClass != null && !HOT_PRIORITY_CLASSES.has(priorityClass)) {
       throw new Error('hotPendingTokens.priorityClass is invalid');
     }
+    const shard = selectionShard(input);
     const result = await database.query(
       `SELECT queue.token_address
          FROM robinhood_holder_hot_queue queue
@@ -1597,6 +1612,10 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
         WHERE queue.chain = 'robinhood'
           AND state.ledger_status IN ('shadow', 'live')
           AND NOT (queue.token_address = ANY($1::varchar[]))
+          AND mod(
+            hashtextextended(queue.token_address, 0) & 9223372036854775807,
+            $4::bigint
+          ) = $5::bigint
           AND (
             $3::varchar IS NULL
             OR ($3 = 'fresh-live' AND state.ledger_status = 'live'
@@ -1619,7 +1638,7 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
         ORDER BY (state.ledger_status = 'live') DESC, queue.updated_at,
                  queue.last_pending_block DESC, queue.token_address
         LIMIT $2::int`,
-      [excluded, limit, priorityClass]
+      [excluded, limit, priorityClass, shard.count, shard.index]
     );
     return Object.freeze(result.rows.map((row) => row.token_address));
   }

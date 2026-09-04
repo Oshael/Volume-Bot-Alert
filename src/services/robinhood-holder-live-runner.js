@@ -59,6 +59,56 @@ function applyBatchMetrics(result) {
   return Object.freeze({ appliedEvents, attemptedEvents });
 }
 
+const DRAIN_SUM_FIELDS = Object.freeze([
+  'appliedEvents', 'driftedTokens', 'applyAttempts', 'driftSuspicions',
+  'receiptRecoveries', 'driftDeferred', 'tailRollbacks', 'tailRollbackEvents',
+  'baselineRequeues', 'quarantinedTokens', 'shadowPromotions', 'holderCountPublished',
+]);
+const TIMING_SUM_FIELDS = Object.freeze([
+  'applyCalls', 'nonIdleApplyCalls', 'attemptedEvents', 'applyCallDurationMs',
+  'driftRepairDurationMs', 'selectionCalls', 'selectionDurationMs', 'selectedTokens',
+  'hotSelectionCalls', 'hotSelectionDurationMs', 'shadowPromotionDurationMs',
+  'publicationDurationMs',
+]);
+
+function mergeDrainedLanes(lanes, maxApplyEvents) {
+  const merged = Object.fromEntries(DRAIN_SUM_FIELDS.map((field) => [field, 0]));
+  merged.reachedIdle = lanes.every((lane) => lane.reachedIdle);
+  merged.durationBudgetExhausted = lanes.some((lane) => lane.durationBudgetExhausted);
+  merged.eventBudgetExhausted = lanes.some(
+    (lane) => !lane.reachedIdle && lane.applyAttempts === maxApplyEvents
+  );
+  merged.holderCountUpdates = new Map();
+  merged.timing = Object.fromEntries(TIMING_SUM_FIELDS.map((field) => [field, 0]));
+  merged.timing.maxApplyCallDurationMs = 0;
+  merged.timing.maxAttemptedEventsPerCall = 0;
+  merged.timing.hotSelectionsByClass = Object.fromEntries(
+    HOT_PRIORITY_CLASSES.map((priorityClass) => [priorityClass, 0])
+  );
+  for (const lane of lanes) {
+    for (const field of DRAIN_SUM_FIELDS) merged[field] += Number(lane[field]) || 0;
+    for (const [tokenAddress, update] of lane.holderCountUpdates) {
+      merged.holderCountUpdates.set(tokenAddress, update);
+    }
+    for (const field of TIMING_SUM_FIELDS) {
+      merged.timing[field] += Number(lane.timing[field]) || 0;
+    }
+    merged.timing.maxApplyCallDurationMs = Math.max(
+      merged.timing.maxApplyCallDurationMs,
+      Number(lane.timing.maxApplyCallDurationMs) || 0
+    );
+    merged.timing.maxAttemptedEventsPerCall = Math.max(
+      merged.timing.maxAttemptedEventsPerCall,
+      Number(lane.timing.maxAttemptedEventsPerCall) || 0
+    );
+    for (const priorityClass of HOT_PRIORITY_CLASSES) {
+      merged.timing.hotSelectionsByClass[priorityClass]
+        += Number(lane.timing.hotSelectionsByClass[priorityClass]) || 0;
+    }
+  }
+  return merged;
+}
+
 function quarantineMetric(result) {
   return result?.quarantinedTokens === 1 ? 1 : 0;
 }
@@ -444,7 +494,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
   }
 
   async function drainPendingEvents(
-    maxApplyEvents, applyBatchSize, hotApplyBatchSize, maxDurationMs
+    maxApplyEvents, applyBatchSize, hotApplyBatchSize, maxDurationMs, shard
   ) {
     let appliedEvents = 0;
     let driftedTokens = 0;
@@ -475,8 +525,12 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     };
     const holderCountUpdates = new Map();
     const deadlineMs = measureMs() + maxDurationMs;
+    const shardFilter = shard.count === 1 ? {} : {
+      shardCount: shard.count, shardIndex: shard.index,
+    };
     const hotTokenCache = await loadHotTokenCache({
       excludeTokenAddresses: deferredTokenAddresses(),
+      ...shardFilter,
     }, timing);
     while (applyAttempts < maxApplyEvents && measureMs() < deadlineMs) {
       const excluded = deferredTokenAddresses();
@@ -489,6 +543,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
           preferredTokenAddress, pendingTokenAddresses, pendingRoundHasMultiple, {
             excludeTokenAddresses: excluded,
             limit: maxApplyEvents - applyAttempts,
+            ...shardFilter,
           }, timing
         );
         preferredTokenAddress = selected.preferred;
@@ -624,11 +679,16 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     const maxDurationMs = boundedInteger(
       input.maxDurationMs, 2000, 250, 60_000, 'maxDurationMs'
     );
+    const concurrency = boundedInteger(input.concurrency, 1, 1, 8, 'concurrency');
     const totalStartedAt = measureMs();
     const drainStartedAt = measureMs();
-    const drained = await drainPendingEvents(
-      maxApplyEvents, applyBatchSize, hotApplyBatchSize, maxDurationMs
-    );
+    const lanes = await Promise.all(Array.from({ length: concurrency }, (_, shardIndex) => (
+      drainPendingEvents(
+        maxApplyEvents, applyBatchSize, hotApplyBatchSize, maxDurationMs,
+        { count: concurrency, index: shardIndex }
+      )
+    )));
+    const drained = mergeDrainedLanes(lanes, maxApplyEvents);
     const drainDurationMs = elapsedMs(drainStartedAt);
     const promoted = await promoteReadyShadows({ limit: maxApplyEvents }, drained.timing);
     const promotedUpdates = new Map();
@@ -670,7 +730,8 @@ function createRobinhoodHolderLiveRunner(options = {}) {
       appliedEventsPerSecond: totalDurationMs > 0
         ? Number((drained.appliedEvents * 1000 / totalDurationMs).toFixed(2)) : 0,
       configuredBatchSize: applyBatchSize, configuredHotBatchSize: hotApplyBatchSize,
-      maxApplyEvents, maxDurationMs,
+      concurrency, perLaneMaxApplyEvents: maxApplyEvents,
+      maxApplyEvents: maxApplyEvents * concurrency, maxDurationMs,
     });
     return Object.freeze({
       status: 'completed',
@@ -684,7 +745,7 @@ function createRobinhoodHolderLiveRunner(options = {}) {
       holderCountUpdates: drained.holderCountUpdates.size, holderCountPublished,
       freshness: await ledger.getHotQueueFreshness(),
       applyBudgetExhausted: !drained.reachedIdle
-        && (drained.applyAttempts === maxApplyEvents || drained.durationBudgetExhausted),
+        && (drained.eventBudgetExhausted || drained.durationBudgetExhausted),
       timing,
     });
   }

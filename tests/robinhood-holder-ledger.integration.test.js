@@ -159,6 +159,11 @@ describe('Robinhood holder ledger persistence', () => {
       assert.deepEqual(
         await repository.listHotPendingTokenAddresses({ limit: 10 }), [TOKEN_3, TOKEN]
       );
+      const hotShards = await Promise.all([0, 1].map((shardIndex) => (
+        repository.listHotPendingTokenAddresses({ limit: 10, shardCount: 2, shardIndex })
+      )));
+      assert.deepEqual([...hotShards[0], ...hotShards[1]].sort(), [TOKEN, TOKEN_3].sort());
+      assert.deepEqual(hotShards[0].filter((token) => hotShards[1].includes(token)), []);
       assert.deepEqual(await repository.listHotPendingTokenAddresses({
         limit: 10, priorityClass: 'fresh-live',
       }), [TOKEN_3]);
@@ -186,6 +191,12 @@ describe('Robinhood holder ledger persistence', () => {
         await repository.listPendingTokenAddresses({ limit: 10 }),
         [TOKEN_3, TOKEN]
       );
+      const pendingShards = await Promise.all([0, 1].map((shardIndex) => (
+        repository.listPendingTokenAddresses({ limit: 10, shardCount: 2, shardIndex })
+      )));
+      assert.deepEqual([...pendingShards[0], ...pendingShards[1]].sort(),
+        [TOKEN, TOKEN_3].sort());
+      assert.deepEqual(pendingShards[0].filter((token) => pendingShards[1].includes(token)), []);
       await client.query(
         `DELETE FROM robinhood_holder_transfer_journal WHERE transaction_hash = $1`, [HASH_8]
       );

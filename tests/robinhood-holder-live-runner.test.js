@@ -38,6 +38,10 @@ function harness(
     },
     listPendingTokenAddresses: async (input) => {
       calls.push(['list-pending-tokens', input]);
+      if (options.pendingTokensByShard) {
+        const tokenAddress = options.pendingTokensByShard[input.shardIndex];
+        return tokenAddress ? [tokenAddress] : [];
+      }
       if (options.pendingTokenLists?.length) return options.pendingTokenLists.shift();
       const next = applyResults[0];
       const tokenAddress = next?.tokenAddress || `0x${'f'.repeat(40)}`;
@@ -470,6 +474,36 @@ describe('Robinhood holder live runner', () => {
       { limit: 8, priorityClass: 'recent-shadow' },
       { limit: 32, priorityClass: 'stale-live' },
       { limit: 32, priorityClass: 'stale-shadow' },
+    ]);
+  });
+
+  it('drains disjoint token shards concurrently and merges lane metrics', async () => {
+    const tokens = ['a', 'b'].map((digit) => `0x${digit.repeat(40)}`);
+    const context = harness({ status: 'idle', transfers: 0 }, tokens.map(
+      (tokenAddress) => ({
+        status: 'applied', tokenAddress, appliedEvents: 1, attemptedEvents: 1,
+      })
+    ), { status: 'idle' }, async () => 0, {
+      hotTokensByClass: {}, pendingTokensByShard: tokens,
+    });
+
+    const result = await context.runner.applyOnce({
+      concurrency: 2, maxApplyEvents: 1, applyBatchSize: 1,
+    });
+
+    assert.equal(result.appliedEvents, 2);
+    assert.equal(result.applyAttempts, 2);
+    assert.equal(result.applyBudgetExhausted, true);
+    assert.equal(result.timing.concurrency, 2);
+    assert.equal(result.timing.perLaneMaxApplyEvents, 1);
+    assert.equal(result.timing.maxApplyEvents, 2);
+    assert.equal(result.timing.applyCalls, 2);
+    assert.equal(result.timing.hotSelectionCalls, 8);
+    assert.deepEqual(context.calls.filter(([name]) => name === 'list-pending-tokens').map(
+      ([, input]) => ({ shardCount: input.shardCount, shardIndex: input.shardIndex })
+    ), [
+      { shardCount: 2, shardIndex: 0 },
+      { shardCount: 2, shardIndex: 1 },
     ]);
   });
 
