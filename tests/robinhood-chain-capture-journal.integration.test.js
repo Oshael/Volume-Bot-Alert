@@ -115,13 +115,25 @@ describe('Robinhood canonical chain capture journal', () => {
       insertedCaptures: 0, duplicateCaptures: 1,
     });
     assert.deepEqual(await candidates.getParitySummary({ fromBlock: 100, toBlock: 100 }), [{
-      stream: 'discovery', candidates: 1, missing_legacy: 1, matched: 0,
+      stream: 'discovery', candidates: 1, mature_candidates: 0, awaiting_legacy: 1,
+      missing_legacy: 0, matched: 0,
       divergent: 0, first_block: '100', last_block: '100',
     }]);
     await createRobinhoodHeadCaptureRepository().appendCaptureEntries({ entries: [canonical] });
     assert.deepEqual(await candidates.getParitySummary({ fromBlock: 100, toBlock: 100 }), [{
-      stream: 'discovery', candidates: 1, missing_legacy: 0, matched: 1,
-      divergent: 0, first_block: '100', last_block: '100',
+      stream: 'discovery', candidates: 1, mature_candidates: 0, awaiting_legacy: 1,
+      missing_legacy: 0, matched: 0, divergent: 0,
+      first_block: '100', last_block: '100',
+    }]);
+    await db.query(
+      `INSERT INTO robinhood_head_capture_cursors(
+         chain, stream, next_block, checkpoint_block, checkpoint_hash
+       ) VALUES ('robinhood', 'discovery', 101, 100, $1)`, [HASH]
+    );
+    assert.deepEqual(await candidates.getParitySummary({ fromBlock: 100, toBlock: 100 }), [{
+      stream: 'discovery', candidates: 1, mature_candidates: 1, awaiting_legacy: 0,
+      missing_legacy: 0, matched: 1, divergent: 0,
+      first_block: '100', last_block: '100',
     }]);
     await db.query(
       `UPDATE robinhood_head_captures SET evidence=$1::jsonb
@@ -129,8 +141,9 @@ describe('Robinhood canonical chain capture journal', () => {
       [JSON.stringify({ source: 'legacy' }), TX]
     );
     assert.deepEqual(await candidates.getParitySummary({ fromBlock: 100, toBlock: 100 }), [{
-      stream: 'discovery', candidates: 1, missing_legacy: 0, matched: 0,
-      divergent: 1, first_block: '100', last_block: '100',
+      stream: 'discovery', candidates: 1, mature_candidates: 1, awaiting_legacy: 0,
+      missing_legacy: 0, matched: 0, divergent: 1,
+      first_block: '100', last_block: '100',
     }]);
     await assert.rejects(candidates.appendCaptureEntries({ entries: [{
       ...canonical, evidence: { source: 'changed' },

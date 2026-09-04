@@ -36,6 +36,7 @@ const LEGACY_SAME = `legacy.stream=candidate.stream
   AND legacy.protocol IS NOT DISTINCT FROM candidate.protocol
   AND legacy.market_key IS NOT DISTINCT FROM candidate.market_key
   AND legacy.evidence_version=candidate.evidence_version AND legacy.evidence=candidate.evidence`;
+const MATURE = 'cursor.next_block IS NOT NULL AND candidate.block_number < cursor.next_block';
 
 function optionalBlock(value, label) {
   if (value == null || value === '') return null;
@@ -95,9 +96,14 @@ function createRobinhoodCanonicalHeadCandidateRepository(options = {}) {
     const toBlock = optionalBlock(input.toBlock, 'toBlock');
     const result = await database.query(
       `SELECT candidate.stream, COUNT(*)::int AS candidates,
-              COUNT(*) FILTER (WHERE legacy.chain IS NULL)::int AS missing_legacy,
-              COUNT(*) FILTER (WHERE legacy.chain IS NOT NULL AND ${LEGACY_SAME})::int AS matched,
-              COUNT(*) FILTER (WHERE legacy.chain IS NOT NULL AND NOT (${LEGACY_SAME}))::int AS divergent,
+              COUNT(*) FILTER (WHERE ${MATURE})::int AS mature_candidates,
+              COUNT(*) FILTER (WHERE cursor.next_block IS NULL
+                OR candidate.block_number >= cursor.next_block)::int AS awaiting_legacy,
+              COUNT(*) FILTER (WHERE ${MATURE} AND legacy.chain IS NULL)::int AS missing_legacy,
+              COUNT(*) FILTER (WHERE ${MATURE} AND legacy.chain IS NOT NULL
+                AND ${LEGACY_SAME})::int AS matched,
+              COUNT(*) FILTER (WHERE ${MATURE} AND legacy.chain IS NOT NULL
+                AND NOT (${LEGACY_SAME}))::int AS divergent,
               MIN(candidate.block_number)::text AS first_block,
               MAX(candidate.block_number)::text AS last_block
          FROM robinhood_canonical_head_candidates candidate
@@ -105,6 +111,8 @@ function createRobinhoodCanonicalHeadCandidateRepository(options = {}) {
            ON legacy.chain=candidate.chain
           AND legacy.transaction_hash=candidate.transaction_hash
           AND legacy.log_index=candidate.log_index
+         LEFT JOIN robinhood_head_capture_cursors cursor
+           ON cursor.chain=candidate.chain AND cursor.stream=candidate.stream
         WHERE candidate.chain=$1
           AND ($2::bigint IS NULL OR candidate.block_number >= $2)
           AND ($3::bigint IS NULL OR candidate.block_number <= $3)

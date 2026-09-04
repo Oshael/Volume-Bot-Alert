@@ -3286,6 +3286,12 @@ payload bruto, protocolo, market key, versão e evidência com o legado. Replays
 iguais são aceitos; replay canônico divergente falha fechado. Enquanto a flag é
 de canário, o processo grava somente nesse sink e não publica na fila de
 processamento existente.
+Valide a troca com `npm run robinhood:canonical-head-audit -- --phase=preflight`
+antes de iniciar o canário e com `--phase=canary` durante a observação. O gate
+exige captura por receipts e head legado ativos, shadow inativo, capture lag no
+limite, nenhuma fila bloqueada, nenhuma chamada proibida e paridade madura. Itens
+à frente do cursor legado aparecem como `awaiting_legacy` e não são falsamente
+contados como ausentes.
 
 ## 15. Wallet tracking multichain
 
