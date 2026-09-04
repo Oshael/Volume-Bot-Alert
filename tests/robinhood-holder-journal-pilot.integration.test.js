@@ -4,6 +4,7 @@ const { before, after, test } = require('node:test');
 const db = require('../src/models/db');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 const { runPilot, pilotSql, validatePlan } = require('../src/services/robinhood-holder-journal-pilot');
+const { readHealth, runSustainedPilot } = require('../src/services/robinhood-holder-journal-round');
 let client; let database; let pool;
 
 before(async () => {
@@ -88,4 +89,58 @@ test('a concurrent pilot is refused without waiting on the source', async () => 
     await other.query("BEGIN; SELECT pg_advisory_xact_lock(hashtextextended('robinhood-holder-journal-pilot',0))");
     await assert.rejects(runPilot(pool, { database, pages: 1 }, { schema: 'pg_temp' }), /another pilot/);
   } finally { await other.query('ROLLBACK'); other.release(); }
+});
+
+test('round monitor reads both streams and only due pending work, then rolls back', async () => {
+  await client.query(`CREATE TEMP TABLE robinhood_head_capture_cursors
+      (chain text, stream text, next_block bigint, safe_head bigint, updated_at timestamptz);
+    CREATE TEMP TABLE worker_leases (lease_key text, owner_id text, lease_until timestamptz,
+      heartbeat_at timestamptz, metadata jsonb);
+    CREATE TEMP TABLE robinhood_head_captures
+      (chain text, stream text, processing_status text, next_attempt_at timestamptz);
+    CREATE INDEX ON robinhood_head_captures(next_attempt_at) WHERE processing_status = 'pending';
+    INSERT INTO robinhood_head_capture_cursors VALUES
+      ('robinhood','discovery',100,99,NOW()), ('robinhood','market',100,99,NOW());
+    INSERT INTO worker_leases VALUES ('robinhood-processing-worker','test',NOW()+INTERVAL '2 minutes',
+      NOW(),'{}');
+    INSERT INTO robinhood_head_captures VALUES
+      ('robinhood','discovery','leased',NOW()), ('robinhood','discovery','pending',NOW()+INTERVAL '1 hour'),
+      ('robinhood','market','pending',NOW());`);
+  const health = await readHealth(client, database, 'pg_temp');
+  assert.deepEqual(health.pending, { discovery: false, market: true });
+  assert.equal(health.heads.length, 2); assert.equal(health.owner, 'test');
+  await assert.rejects(readHealth(client, 'wrong-db', 'pg_temp'), /unexpected monitoring database/);
+  assert.equal((await client.query('SHOW transaction_read_only')).rows[0].transaction_read_only, 'off');
+});
+
+test('round startup refusal releases its session advisory lock', async () => {
+  await assert.rejects(runSustainedPilot(pool, { database: 'wrong-db', measure: true, pages: 512 }), /wrong database/);
+  const other = await db.pool.connect();
+  try {
+    await other.query('BEGIN');
+    const { rows: [row] } = await other.query("SELECT pg_try_advisory_xact_lock(hashtextextended('robinhood-holder-journal-pilot',0)) AS acquired");
+    assert.equal(row.acquired, true);
+  } finally { await other.query('ROLLBACK'); other.release(); }
+});
+
+test('round session lock excludes other pilots across measured batch rollback', async () => {
+  const other = await db.pool.connect();
+  try {
+    await client.query("SELECT pg_advisory_lock(hashtextextended('robinhood-holder-journal-pilot',0))");
+    await runPilot(pool, { database, pages: 1, measure: true }, { schema: 'pg_temp' });
+    await other.query('BEGIN');
+    const { rows: [row] } = await other.query("SELECT pg_try_advisory_xact_lock(hashtextextended('robinhood-holder-journal-pilot',0)) AS acquired");
+    assert.equal(row.acquired, false);
+  } finally {
+    await client.query("SELECT pg_advisory_unlock(hashtextextended('robinhood-holder-journal-pilot',0))");
+    await other.query('ROLLBACK'); other.release();
+  }
+});
+
+test('monitor timeout is server-enforced and leaves no open read transaction', async () => {
+  const slowClient = { query(sql) {
+    return client.query(sql.startsWith('SELECT current_database()') ? 'SELECT pg_sleep(5)' : sql);
+  } };
+  await assert.rejects(readHealth(slowClient, database), { code: '57014' });
+  assert.equal((await client.query('SHOW transaction_read_only')).rows[0].transaction_read_only, 'off');
 });

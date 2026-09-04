@@ -7,10 +7,13 @@ function parseArgs(args) {
   const keys = { database: 'database', 'from-page': 'fromPage', pages: 'pages', 'timeout-ms': 'timeoutMs' };
   for (const arg of args) {
     const match = /^--(database|from-page|pages|timeout-ms)=(.+)$/.exec(arg);
-    const key = arg === '--measure' ? 'measure' : keys[match?.[1]];
+    const key = arg === '--round' ? 'round' : arg === '--measure' ? 'measure' : keys[match?.[1]];
     if (!key || seen.has(key)) throw new Error('unknown or repeated pilot argument');
     seen.add(key);
-    options[key] = key === 'measure' ? true : key === 'database' ? match[2] : Number(match[2]);
+    options[key] = ['measure', 'round'].includes(key) ? true : key === 'database' ? match[2] : Number(match[2]);
+  }
+  if (options.round && (!options.measure || options.pages !== 512 || (options.timeoutMs || 3000) > 3000)) {
+    throw new Error('--round requires --measure --pages=512 and timeout <= 3000ms');
   }
   return normalizeOptions(options);
 }
@@ -28,7 +31,8 @@ async function main(args = process.argv.slice(2)) {
   const abort = () => controller.abort();
   process.once('SIGINT', abort); process.once('SIGTERM', abort);
   try {
-    const report = await runPilot(pool, options, { signal: controller.signal,
+    const run = options.round ? require('../services/robinhood-holder-journal-round').runSustainedPilot : runPilot;
+    const report = await run(pool, options, { signal: controller.signal,
       progress: (event) => console.error(JSON.stringify(event)) });
     console.log(JSON.stringify(report));
   } finally {

@@ -1742,7 +1742,8 @@ Para calibrar leitura antes de uma nova exportação, use o piloto isolado
 --from-page=0 --pages=128`. Ele exige `HOLDER_JOURNAL_PILOT_DATABASE_URL`
 explicitamente no ambiente, não carrega `.env` nem inicia workers. Por padrão
 executa apenas `EXPLAIN`, sem ler as linhas do journal. `--measure` autoriza
-exatamente um lote com `EXPLAIN ANALYZE`; não existe loop, exportação ou escrita.
+exatamente um lote com `EXPLAIN ANALYZE`, salvo quando combinado com `--round`.
+Nenhum dos modos exporta ou escreve dados.
 PostgreSQL 14+ é obrigatório. A role precisa de SELECT nas tabelas de controle e
 journal e permissão para configurar `temp_file_limit`; ausência falha fechado.
 
@@ -1768,6 +1769,35 @@ vazão do processing e latência do banco antes/depois de cada piloto autorizado
 O cutoff é diagnóstico, e `ctid` não é checkpoint retomável: updates e reescritas
 podem mudá-lo. O piloto não congela writers, não valida a cópia remota existente e
 não autoriza avançar floor, substituir ou remover a tabela original.
+
+Para uma rodada sustentada e limitada, acrescente `--round --measure --pages=512`
+e escolha `--from-page` com espaço para 32768 páginas até o fim do heap. O comando
+recusa outra instância do piloto durante toda a rodada, inclusive nas pausas.
+São 30 s de baseline, até 60 s de carga (máximo 64 lotes, 512 páginas cada),
+pausa de 500 ms entre lotes e 30 s de observação de recuperação. Não há aumento
+automático de carga, retries, checkpoint durável ou retomada. Com blocos de 8 KiB,
+o teto de faixas do journal é 256 MiB; tabelas de controle não entram nesse teto.
+O prazo da carga cancela o lote em andamento; a saída aguarda cancelamento/rollback.
+
+O monitor consulta cursores e lease/telemetria do processing, além de EXISTS de
+pendências vencidas por stream, sem COUNT da fila. Cada consulta tem timeout de
+1 s; falha de monitoramento interrompe a carga. A cadência nominal é 5 s, entre
+lotes, podendo atrasar pelo lote em andamento (timeout máximo 3 s por statement).
+Um erro/timeout de lote não é repetido. SIGINT/SIGTERM interrompem a rodada e
+dispensam a recuperação. As amostras e lotes são emitidos em JSON com `phase`.
+
+A rodada recusa lag acima de 100 blocos em qualquer fase; para ao detectar dois
+aumentos consecutivos de lag, cursor parado com lag por 30 s, regressão de cursor,
+mudança de owner/contadores de erro, erro/bloqueio do processing ou telemetria
+ausente. Sem settlements e com pendências em todas as amostras, a tolerância do
+processing é 65 s, respeitando o heartbeat padrão de 30 s; rejeições também
+contam como settlements. Cursores HEAD precisam de updated_at nos últimos 30 s;
+heartbeat/ticks do processing, nos últimos 65 s. O lag usa o maior safe_head
+gravado, não consulta a rede e não prova sincronismo do Nitro com uma fonte
+independente. Identidade física e cursor holder são revalidados antes de cada
+medição. Recuperação degradada também causa saída com erro. Este polling é
+diagnóstico isolado, sem alteração do caminho live; medições não provam causalidade
+nem a capacidade da transferência real para outro servidor.
 
 `monitored`, `recent`, `old-week`, pins, tokens manuais e o summary de
 `GET /api/robinhood/holders` consultam essa view em lote, sem RPC ou Blockscout por
