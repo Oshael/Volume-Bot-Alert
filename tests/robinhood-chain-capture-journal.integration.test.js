@@ -7,9 +7,13 @@ const db = require('../src/models/db');
 const {
   createRobinhoodChainCaptureJournal,
 } = require('../src/models/robinhood-chain-capture-journal');
+const {
+  createRobinhoodChainDomainOutboxRepository,
+} = require('../src/models/robinhood-chain-domain-outbox');
 const stage191 = require('../src/utils/db-init-stage191');
 const stage192 = require('../src/utils/db-init-stage192');
 const stage193 = require('../src/utils/db-init-stage193');
+const stage103 = require('../src/utils/db-init-stage103');
 const v2 = require('../src/services/uniswap-v2-decoder');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
@@ -43,6 +47,8 @@ function capture(number = 100, hash = HASH, parentHash = PARENT) {
 }
 
 async function clearTables() {
+  await db.query('DELETE FROM robinhood_head_captures');
+  await db.query('DELETE FROM robinhood_head_capture_cursors');
   await db.query('DELETE FROM robinhood_chain_capture_cursor');
   await db.query('DELETE FROM robinhood_chain_blocks');
 }
@@ -50,6 +56,7 @@ async function clearTables() {
 describe('Robinhood canonical chain capture journal', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
+    await stage103.init({ closePool: false });
     await stage191.init({ closePool: false });
     await stage192.init({ closePool: false });
     await stage193.init({ closePool: false });
@@ -129,5 +136,60 @@ describe('Robinhood canonical chain capture journal', () => {
     const counts = await db.query('SELECT COUNT(*)::int AS blocks FROM robinhood_chain_blocks');
     assert.equal(counts.rows[0].blocks, 1);
     assert.equal((await journal.getCursor()).next_block, '101');
+  });
+
+  it('leases only rows covered by the legacy cursor and protects settlement ownership', async () => {
+    const journal = createRobinhoodChainCaptureJournal();
+    await journal.commitBlock(capture());
+    await db.query(
+      `INSERT INTO robinhood_head_capture_cursors(chain, stream, next_block)
+       VALUES ('robinhood', 'discovery', 101)`
+    );
+    const repository = createRobinhoodChainDomainOutboxRepository({ database: db });
+    const [claimed] = await repository.claimShadow({
+      domain: 'discovery', owner: 'shadow-a', limit: 10, leaseMs: 60_000,
+    });
+    assert.equal(claimed.block_number, '100');
+    assert.equal(claimed.legacy_block_hash, null);
+    assert.deepEqual(await repository.settle({
+      owner: 'shadow-b', complete: [{
+        domain: 'discovery', blockHash: HASH, logIndex: 0,
+      }],
+    }), { completed: 0, blocked: 0, retried: 0 });
+    assert.deepEqual(await repository.settle({
+      owner: 'shadow-a', complete: [{
+        domain: 'discovery', blockHash: HASH, logIndex: 0,
+      }],
+    }), { completed: 1, blocked: 0, retried: 0 });
+  });
+
+  it('reclaims an expired lease and blocks a retry that exhausts its attempts', async () => {
+    await createRobinhoodChainCaptureJournal().commitBlock(capture());
+    await db.query(
+      `INSERT INTO robinhood_head_capture_cursors(chain, stream, next_block)
+       VALUES ('robinhood', 'discovery', 101)`
+    );
+    const repository = createRobinhoodChainDomainOutboxRepository({ database: db });
+    await repository.claimShadow({
+      domain: 'discovery', owner: 'shadow-a', limit: 10, leaseMs: 1,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(await repository.reclaimExpiredLeases(), 1);
+    await repository.claimShadow({
+      domain: 'discovery', owner: 'shadow-b', limit: 10, leaseMs: 60_000,
+    });
+    assert.deepEqual(await repository.settle({
+      owner: 'shadow-b', maxAttempts: 2, retry: [{
+        domain: 'discovery', blockHash: HASH, logIndex: 0,
+        error: { code: 'test_failure' }, backoffMs: 1_000,
+      }],
+    }), { completed: 0, blocked: 1, retried: 0 });
+    const result = await db.query(
+      `SELECT status, last_error FROM robinhood_chain_domain_outbox
+       WHERE domain='discovery' AND block_hash=$1 AND log_index=0`, [HASH]
+    );
+    assert.deepEqual(result.rows[0], {
+      status: 'blocked', last_error: { code: 'test_failure' },
+    });
   });
 });

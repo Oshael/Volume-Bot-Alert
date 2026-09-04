@@ -3248,6 +3248,11 @@ A Stage 193 cria `robinhood_chain_domain_outbox`. Depois de aplicá-la com
 `robinhood_chain_domain_outbox` via `LISTEN/NOTIFY` como sinal de baixa latência.
 A fila é a fonte durável: perda de notificação não perde trabalho. Nesta etapa
 ela permanece shadow; nenhum consumidor ou publicador atual foi substituído.
+O núcleo do auditor shadow faz claim somente quando o cursor legado do domínio
+já passou o bloco, compara payloads pela identidade canônica e completa também
+candidatos sem linha legada (contratos não rastreados). Payload divergente fica
+`blocked`; lease expirada volta a `pending`. O processo contínuo ainda não está
+ligado ao runtime nesta etapa.
 
 ## 15. Wallet tracking multichain
 

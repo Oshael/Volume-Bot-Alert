@@ -366,6 +366,7 @@ que 500 linhas.
 ### Fatia 3 — discovery e market
 
 - roteamento dos eventos capturados (3A concluída em shadow com outbox atômica);
+- claim/lease e comparação com o legado (3B concluída, ainda sem processo runtime);
 - consumo por `LISTEN/NOTIFY`;
 - preservação da evidência e idempotência atuais;
 - comparação com `robinhood_head_captures` existente;
