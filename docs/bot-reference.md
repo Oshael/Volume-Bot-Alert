@@ -2552,6 +2552,9 @@ até 200 blocos, separando o frontier legado do backlog canônico reaproveitáve
 Com `ready=true`, `npm run robinhood:canonical-signed-origin-canary` compara os
 64 blocos recentes já processados nos dois sentidos, incluindo timestamp, posição,
 sender, hash e nonce; `--blocks=200` amplia a janela sem escrita.
+No corte, configure `ROBINHOOD_SIGNED_ORIGIN_LIVE_SOURCE=canonical_journal`,
+reinicie `trendscope-worker@robinhood-signed-origin.service` e confirme com
+`npm run robinhood:canonical-signed-origin-audit -- --phase=cutover`.
 Na VPS, provisione-o como
 `trendscope-worker@robinhood-signed-origin.service`: instale
 `deploy/systemd/robinhood-signed-origin.env.example` em

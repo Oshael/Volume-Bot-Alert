@@ -17,6 +17,16 @@ function sourceGap(message) {
   });
 }
 
+function confirmedHead(row, confirmations) {
+  if (!row || row.node_head == null || row.checkpoint_block == null) {
+    throw sourceGap('canonical capture frontier is unavailable');
+  }
+  const head = BigInt(row.node_head);
+  const checkpoint = BigInt(row.checkpoint_block);
+  const confirmed = head >= BigInt(confirmations) ? head - BigInt(confirmations) : 0n;
+  return checkpoint < confirmed ? checkpoint : confirmed;
+}
+
 function normalizeInput(input) {
   const numbers = (input.blockNumbers || []).map((value) => decimal(value, 'blockNumber'));
   if (!numbers.length || numbers.length > MAX_BLOCKS) throw new Error('block batch size is invalid');
@@ -63,12 +73,54 @@ function createRobinhoodCanonicalSignedOriginSource(options = {}) {
   const database = options.database || db;
   const now = options.now || Date.now;
 
+  async function readFrontier(client = database) {
+    const result = await client.query(
+      `SELECT node_head, checkpoint_block
+         FROM robinhood_chain_capture_cursor WHERE chain=$1`,
+      [CHAIN]
+    );
+    if (!result.rowCount) throw sourceGap('canonical capture cursor is missing');
+    return result.rows[0];
+  }
+
+  async function assertChain() {
+    await readFrontier();
+    return '4663';
+  }
+
+  async function getSafeHead(confirmations = 2) {
+    const parsed = Number(confirmations);
+    if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > 1000) {
+      throw new Error('confirmations must be between 0 and 1000');
+    }
+    const row = await readFrontier();
+    return Object.freeze({
+      head: String(row.node_head), safeHead: confirmedHead(row, parsed).toString(),
+    });
+  }
+
+  async function loadHeader(number) {
+    const normalized = decimal(number, 'blockNumber').toString();
+    const result = await database.query(
+      `SELECT block_number, block_hash FROM robinhood_chain_blocks
+        WHERE chain=$1 AND canonical=TRUE AND block_number=$2::bigint`,
+      [CHAIN, normalized]
+    );
+    const row = result.rows[0];
+    if (!row) throw sourceGap(`canonical signed-origin block ${normalized} is missing`);
+    return Object.freeze({ number: String(row.block_number), hash: row.block_hash });
+  }
+
   async function readBlocks(input = {}) {
     const { coverageOrigin, numbers, stream } = normalizeInput(input);
     const startedAt = now();
     const client = await database.getClient();
     try {
       await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      const frontier = await readFrontier(client);
+      if (numbers.at(-1) > BigInt(frontier.checkpoint_block)) {
+        throw sourceGap('canonical capture does not cover the signed-origin range');
+      }
       const result = await client.query(
         `SELECT block.block_number, block.block_hash, block.block_timestamp,
                 transaction.transaction_hash, transaction.transaction_index,
@@ -109,7 +161,7 @@ function createRobinhoodCanonicalSignedOriginSource(options = {}) {
     } finally { client.release(); }
   }
 
-  return Object.freeze({ readBlocks });
+  return Object.freeze({ assertChain, getSafeHead, loadHeader, readBlocks });
 }
 
 function textNonce(value) {

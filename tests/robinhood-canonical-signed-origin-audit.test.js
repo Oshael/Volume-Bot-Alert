@@ -13,7 +13,9 @@ const HASH = `0x${'a'.repeat(64)}`;
 function lease(lease_key) {
   return {
     lease_key, active: true, heartbeat_at: '2026-09-05T20:00:00Z',
-    metadata: { telemetry: { running: true, halted: false, lastError: null } },
+    metadata: { telemetry: {
+      running: true, halted: false, sourceMode: 'canonical_journal', lastError: null,
+    } },
   };
 }
 
@@ -88,6 +90,16 @@ describe('Robinhood canonical signed-origin audit', () => {
     ]);
   });
 
+  it('requires an active canonical source during cutover', () => {
+    const state = input();
+    state.phase = 'cutover';
+    state.leases.find(({ lease_key }) => lease_key === LEASE_KEYS.signedOrigin)
+      .metadata.telemetry.sourceMode = 'rpc';
+    assert.deepEqual(evaluate(state).blockers, [{
+      code: 'signed_origin_source_not_canonical', detail: 'rpc',
+    }]);
+  });
+
   it('uses a repeatable read-only snapshot and a bounded next page', async () => {
     const fixture = input();
     const calls = [];
@@ -115,7 +127,8 @@ describe('Robinhood canonical signed-origin audit', () => {
   });
 
   it('rejects CLI arguments and prints the report', async () => {
-    assert.deepEqual(parseArgs([]), {});
+    assert.deepEqual(parseArgs([]), { phase: 'preflight' });
+    assert.deepEqual(parseArgs(['--phase=cutover']), { phase: 'cutover' });
     assert.throws(() => parseArgs(['--write']), /unknown argument/);
     const lines = [];
     const report = await main([], {

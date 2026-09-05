@@ -6,6 +6,7 @@ const CHAIN = 'robinhood';
 const DEFAULT_CONFIRMATIONS = 2;
 const MAX_CAPTURE_LAG = 2n;
 const MAX_CONTEXT_BLOCKS = 200n;
+const PHASES = Object.freeze(['preflight', 'cutover']);
 const LEASE_KEYS = Object.freeze({
   capture: 'robinhood-chain-capture-worker',
   signedOrigin: 'robinhood-signed-origin-live-worker',
@@ -36,8 +37,15 @@ function leaseSummary(lease) {
   return Object.freeze({
     active: Boolean(lease.active), heartbeat_at: lease.heartbeat_at || null,
     running: telemetry.running === true, halted: telemetry.halted === true,
+    source_mode: telemetry.sourceMode || null,
     last_error: telemetry.lastError || null,
   });
+}
+
+function phase(value) {
+  const normalized = String(value || 'preflight').trim().toLowerCase();
+  if (!PHASES.includes(normalized)) throw new Error(`phase must be ${PHASES.join(' or ')}`);
+  return normalized;
 }
 
 function calculateFrontiers(row, confirmations) {
@@ -65,7 +73,7 @@ function calculateFrontiers(row, confirmations) {
   };
 }
 
-function blockersFor(row, context, frontiers, leases) {
+function blockersFor(row, context, frontiers, leases, auditPhase) {
   const blockers = [];
   const add = (condition, code, detail = null) => {
     if (condition) blockers.push(detail == null ? { code } : { code, detail });
@@ -112,20 +120,27 @@ function blockersFor(row, context, frontiers, leases) {
     'canonical_transaction_nonce_missing', Number(context.transactions_missing_nonce));
   add(worker.halted, 'signed_origin_worker_halted');
   add(worker.last_error != null, 'signed_origin_worker_error', worker.last_error);
+  if (auditPhase === 'cutover') {
+    add(!worker.active, 'signed_origin_worker_inactive');
+    add(worker.active && !worker.running, 'signed_origin_worker_not_running');
+    add(worker.active && worker.running && worker.source_mode !== 'canonical_journal',
+      'signed_origin_source_not_canonical', worker.source_mode);
+  }
   return blockers;
 }
 
 function evaluate(input = {}) {
   const row = input.state || {};
   const context = input.context || {};
+  const auditPhase = phase(input.phase);
   const confirmations = confirmationCount(input.confirmations);
   const frontiers = calculateFrontiers(row, confirmations);
   const leases = Object.fromEntries(Object.entries(LEASE_KEYS).map(([name, key]) => (
     [name, activeLease(input.leases || [], key)]
   )));
-  const blockers = blockersFor(row, context, frontiers, leases);
+  const blockers = blockersFor(row, context, frontiers, leases, auditPhase);
   return Object.freeze({
-    mode: 'read-only', ready: blockers.length === 0, blockers,
+    mode: 'read-only', phase: auditPhase, ready: blockers.length === 0, blockers,
     capture: {
       next_block: text(frontiers.captureNext), checkpoint_block: text(frontiers.captureCheckpoint),
       node_head: text(frontiers.captureHead), lag_blocks: text(frontiers.captureLag),
@@ -165,6 +180,7 @@ function evaluate(input = {}) {
 
 function createRobinhoodCanonicalSignedOriginAudit(options = {}) {
   const database = options.database || db;
+  const auditPhase = phase(options.phase);
   const confirmations = options.confirmations
     ?? process.env.ROBINHOOD_CONFIRMATIONS ?? DEFAULT_CONFIRMATIONS;
 
@@ -243,7 +259,9 @@ function createRobinhoodCanonicalSignedOriginAudit(options = {}) {
         [Object.values(LEASE_KEYS)]
       );
       await client.query('ROLLBACK');
-      return evaluate({ state, context, leases: leaseResult.rows, confirmations });
+      return evaluate({
+        state, context, leases: leaseResult.rows, confirmations, phase: auditPhase,
+      });
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch (_) {}
       throw error;
@@ -253,6 +271,6 @@ function createRobinhoodCanonicalSignedOriginAudit(options = {}) {
 }
 
 module.exports = {
-  DEFAULT_CONFIRMATIONS, LEASE_KEYS, MAX_CONTEXT_BLOCKS,
+  DEFAULT_CONFIRMATIONS, LEASE_KEYS, MAX_CONTEXT_BLOCKS, PHASES,
   createRobinhoodCanonicalSignedOriginAudit, evaluate,
 };

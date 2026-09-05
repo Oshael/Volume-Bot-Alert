@@ -88,6 +88,9 @@ describe('Robinhood canonical signed-origin canary', () => {
       async query(sql, params) {
         calls.push({ sql, params });
         if (sql.startsWith('BEGIN')) return { rows: [] };
+        if (sql.includes('SELECT node_head, checkpoint_block')) return {
+          rowCount: 1, rows: [{ node_head: '202', checkpoint_block: '200' }],
+        };
         if (sql.includes('LEFT JOIN robinhood_chain_transactions')) return { rows: [
           { block_number: '199', block_hash: HASH, block_timestamp: TIME,
             transaction_hash: TX, transaction_index: 0, from_address: WALLET, nonce: '7' },
@@ -100,7 +103,7 @@ describe('Robinhood canonical signed-origin canary', () => {
       release() { calls.push({ sql: 'RELEASE' }); },
     };
     const canonical = createRobinhoodCanonicalSignedOriginSource({
-      database: { async getClient() { return client; } }, now: () => 1000,
+      database: { async getClient() { return client; }, query: client.query }, now: () => 1000,
     });
     const result = await canonical.readBlocks({
       blockNumbers: ['199', '200'], coverageOriginBlock: '50', safeHead: '200', stream: 'live',
@@ -110,15 +113,19 @@ describe('Robinhood canonical signed-origin canary', () => {
     )), [{ number: '199', transactionCount: 1 }, { number: '200', transactionCount: 0 }]);
     assert.equal(result.origins[0].nonce, '7');
     assert.match(calls[0].sql, /REPEATABLE READ READ ONLY/);
-    assert.deepEqual(calls[1].params, ['robinhood', '199', '200']);
+    assert.deepEqual(calls[2].params, ['robinhood', '199', '200']);
     assert.equal(calls.at(-2).sql, 'ROLLBACK');
     assert.equal(calls.at(-1).sql, 'RELEASE');
+    assert.deepEqual(await canonical.getSafeHead(2), { head: '202', safeHead: '200' });
   });
 
   it('fails closed on canonical transaction gaps or missing nonce', async () => {
     const makeDatabase = (row) => ({ async getClient() { return {
       async query(sql) {
         if (sql.startsWith('BEGIN') || sql === 'ROLLBACK') return { rows: [] };
+        if (sql.includes('SELECT node_head, checkpoint_block')) return {
+          rowCount: 1, rows: [{ node_head: '200', checkpoint_block: '200' }],
+        };
         return { rows: [row] };
       }, release() {},
     }; } });

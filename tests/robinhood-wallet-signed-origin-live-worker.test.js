@@ -2,24 +2,28 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const {
-  CURSOR_NOTIFY_CHANNEL, createRobinhoodWalletSignedOriginLiveWorker,
-  __private: { buildRuntime },
+  CANONICAL_CAPTURE_NOTIFY_CHANNEL, CANONICAL_SOURCE, CURSOR_NOTIFY_CHANNEL, RPC_SOURCE,
+  createRobinhoodWalletSignedOriginLiveWorker,
+  __private: { buildRuntime, normalizeSource },
 } = require('../src/services/robinhood-wallet-signed-origin-live-worker');
 
 function harness(outputs = []) {
-  const scheduled = []; const fatals = []; let notification; let listenerStopped = false;
+  const scheduled = []; const fatals = []; let notification; let notificationChannel;
+  let listenerStopped = false;
   const worker = createRobinhoodWalletSignedOriginLiveWorker({
     runtime: {}, now: () => Date.parse('2026-08-30T12:00:00Z'),
     schedule(fn, delay) { const item = { fn, delay, cancelled: false }; scheduled.push(item); return item; },
     cancelSchedule(item) { item.cancelled = true; },
-    listenerFactory(input) { notification = input.onNotification; return {
+    listenerFactory(input) { notification = input.onNotification;
+      notificationChannel = input.channel; return {
       start() {}, stop() { listenerStopped = true; },
     }; },
     logger: { warn() {}, error() {} },
     runLiveTick: async () => { const value = outputs.shift();
       if (value instanceof Error) throw value; return value; },
   });
-  return { fatals, get notification() { return notification; }, get listenerStopped() {
+  return { fatals, get notification() { return notification; },
+    get notificationChannel() { return notificationChannel; }, get listenerStopped() {
     return listenerStopped;
   }, onFatal: async (error) => fatals.push(error), scheduled, worker };
 }
@@ -70,7 +74,7 @@ describe('Robinhood signed-origin LIVE worker', () => {
     const database = { query: async (sql) => { queries.push(sql); return { rows: [{ safe_head: '123' }] }; } };
     const rpcClient = { request: async (method, params) => ({ method, params }) };
     const repository = {};
-    const runtime = await buildRuntime({ maxBlocks: 40, rpcBatchSize: 10,
+    const runtime = await buildRuntime({ sourceMode: RPC_SOURCE, maxBlocks: 40, rpcBatchSize: 10,
       concurrency: 2, timeoutMs: 5000, rpcOptions: { rpcMaxRetries: 1 } }, {
       database, env: { ROBINHOOD_RPC_URL: 'http://vps-node' },
       rpcClientFactory(options) { rpcOptions = options; return rpcClient; },
@@ -78,6 +82,7 @@ describe('Robinhood signed-origin LIVE worker', () => {
       readerFactory(options) { readerOptions = options; return {}; },
     });
     assert.equal(runtime.repository, repository);
+    assert.equal(runtime.sourceMode, RPC_SOURCE);
     assert.equal(rpcOptions.publicRpcUrl, 'http://vps-node');
     assert.equal(rpcOptions.useAlchemy, false); assert.equal(rpcOptions.useDrpc, false);
     assert.deepEqual({ rpcBatchSize: readerOptions.rpcBatchSize,
@@ -89,5 +94,31 @@ describe('Robinhood signed-origin LIVE worker', () => {
     assert.deepEqual(await runtime.fetchBlockHeader('16'), {
       method: 'eth_getBlockByNumber', params: ['0x10', false],
     });
+  });
+
+  it('builds canonical mode without requiring an RPC endpoint', async () => {
+    const calls = [];
+    const source = {
+      async assertChain() { calls.push('chain'); },
+      async getSafeHead(confirmations) { calls.push(confirmations); return { safeHead: '123' }; },
+      async loadHeader(number) { return { number, hash: `0x${'a'.repeat(64)}` }; },
+      async readBlocks() {},
+    };
+    const runtime = await buildRuntime({
+      sourceMode: CANONICAL_SOURCE, confirmations: 2, maxBlocks: 40,
+    }, { env: {}, canonicalSource: source, repositoryFactory: () => ({}) });
+    assert.equal(runtime.sourceMode, CANONICAL_SOURCE);
+    assert.equal(runtime.reader, source);
+    assert.deepEqual(await runtime.loadSourceFrontier(), { safeHead: '123' });
+    assert.deepEqual(calls, ['chain', 2]);
+    assert.equal(normalizeSource(), RPC_SOURCE);
+    assert.throws(() => normalizeSource('invalid'), /must be rpc or canonical_journal/);
+  });
+
+  it('wakes canonical mode from the committed canonical capture channel', async () => {
+    const context = harness([]);
+    context.worker.start({ enabled: true, sourceMode: CANONICAL_SOURCE });
+    assert.equal(context.notificationChannel, CANONICAL_CAPTURE_NOTIFY_CHANNEL);
+    await context.worker.stop();
   });
 });

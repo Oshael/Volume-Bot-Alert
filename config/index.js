@@ -713,6 +713,8 @@ if ((robinhoodHolderBackfillEnabled || robinhoodHolderColdEnabled || robinhoodHo
   missing.push('ROBINHOOD_RPC_URL for Robinhood holder workers');
 }
 if (parseBoolean(process.env.ROBINHOOD_SIGNED_ORIGIN_LIVE_ENABLED, false)
+    && String(process.env.ROBINHOOD_SIGNED_ORIGIN_LIVE_SOURCE || 'rpc').trim().toLowerCase()
+      !== 'canonical_journal'
     && !String(process.env.ROBINHOOD_RPC_URL || '').trim()) {
   missing.push('ROBINHOOD_RPC_URL for Robinhood signed-origin LIVE');
 }
@@ -1836,6 +1838,12 @@ module.exports = {
 
   robinhoodWalletSignedOriginLiveWorker: {
     enabled: parseBoolean(process.env.ROBINHOOD_SIGNED_ORIGIN_LIVE_ENABLED, false),
+    sourceMode: String(
+      process.env.ROBINHOOD_SIGNED_ORIGIN_LIVE_SOURCE || 'rpc'
+    ).trim().toLowerCase(),
+    confirmations: parseIntegerInRange(
+      process.env.ROBINHOOD_SIGNED_ORIGIN_LIVE_CONFIRMATIONS, 2, 0, 1000
+    ),
     intervalMs: parseIntegerInRange(
       process.env.ROBINHOOD_SIGNED_ORIGIN_LIVE_INTERVAL_MS, 2000, 250, 300_000
     ),
