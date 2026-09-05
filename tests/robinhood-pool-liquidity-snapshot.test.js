@@ -63,6 +63,20 @@ describe('Robinhood current pool liquidity snapshots', () => {
     assert.equal(await repository.resolveAnchorBlock(), '150');
   });
 
+  it('measures the canonical capture distance from the processing anchor', async () => {
+    const repository = createRobinhoodPoolLiquiditySnapshotRepository({ database: {
+      async query(sql) {
+        assert.match(sql, /robinhood_chain_capture_cursor canonical/);
+        return { rows: [{
+          checkpoint_block: '200', pending_block: '151', capture_block: '225',
+        }] };
+      },
+    } });
+    assert.deepEqual(await repository.resolveCanonicalAnchorWindow(), {
+      anchorBlock: '150', captureBlock: '225', lagBlocks: '75',
+    });
+  });
+
   it('maps event emitters to active V2/V3 addresses or a V4 manager pool id', async () => {
     const calls = [];
     const poolAddress = `0x${'5'.repeat(40)}`;

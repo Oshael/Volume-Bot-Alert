@@ -769,6 +769,7 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_CANONICAL_LIQUIDITY_SCAN_RANGES: '999',
       ROBINHOOD_CANONICAL_LIQUIDITY_REFRESH_BATCH_SIZE: '9999',
       ROBINHOOD_CANONICAL_LIQUIDITY_CONCURRENCY: '99',
+      ROBINHOOD_CANONICAL_LIQUIDITY_MAX_ANCHOR_LAG_BLOCKS: '999999',
     }, (config) => {
       assert.equal(config.robinhoodCanonicalLiquidityWorker.enabled, true);
       assert.equal(config.robinhoodCanonicalLiquidityWorker.rpcUrl, 'http://127.0.0.1:8547');
@@ -777,6 +778,7 @@ describe('runtime worker groups config', () => {
       assert.equal(config.robinhoodCanonicalLiquidityWorker.maxScanRangesPerTick, 100);
       assert.equal(config.robinhoodCanonicalLiquidityWorker.refreshBatchSize, 500);
       assert.equal(config.robinhoodCanonicalLiquidityWorker.refreshConcurrency, 20);
+      assert.equal(config.robinhoodCanonicalLiquidityWorker.maxAnchorLagBlocks, 100_000);
     });
     withEnv({ ROBINHOOD_CANONICAL_LIQUIDITY_ENABLED: undefined }, (config) => {
       assert.equal(config.robinhoodCanonicalLiquidityWorker.enabled, false);

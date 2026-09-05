@@ -23,9 +23,12 @@ function fixture(overrides = {}, input = {}) {
   const deps = {
     reader: {},
     snapshotRepository: {
-      async resolveAnchorBlock() {
-        calls.push({ operation: 'resolveAnchorBlock' });
-        return overrides.anchorBlock === undefined ? '200' : overrides.anchorBlock;
+      async resolveCanonicalAnchorWindow() {
+        calls.push({ operation: 'resolveCanonicalAnchorWindow' });
+        if (overrides.anchorBlock === null) return null;
+        return overrides.window || {
+          anchorBlock: overrides.anchorBlock || '200', captureBlock: '225', lagBlocks: '25',
+        };
       },
     },
     refreshQueue: {
@@ -87,6 +90,18 @@ describe('Robinhood canonical liquidity refresher', () => {
     const { calls, refresher } = fixture({ anchorBlock: null });
     assert.deepEqual(await refresher.runOnce(), {
       status: 'frontier_unavailable', reclaimed: 2, claimed: 0, completed: 0, retried: 0,
+    });
+    assert.equal(calls.some((call) => call.operation === 'claim'), false);
+  });
+
+  it('does not claim pools outside the pruned state window', async () => {
+    const { calls, refresher } = fixture({ window: {
+      anchorBlock: '100', captureBlock: '50100', lagBlocks: '50000',
+    } });
+    assert.deepEqual(await refresher.runOnce(), {
+      status: 'frontier_lagging', anchorBlock: '100', captureBlock: '50100',
+      lagBlocks: '50000', maxAnchorLagBlocks: 128,
+      reclaimed: 2, claimed: 0, completed: 0, retried: 0,
     });
     assert.equal(calls.some((call) => call.operation === 'claim'), false);
   });

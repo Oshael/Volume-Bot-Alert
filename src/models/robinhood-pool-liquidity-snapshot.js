@@ -158,6 +158,34 @@ function createRobinhoodPoolLiquiditySnapshotRepository(options = {}) {
     return frontier >= 0n ? frontier.toString() : null;
   }
 
+  async function resolveCanonicalAnchorWindow() {
+    const { rows } = await database.query(
+      `SELECT market.checkpoint_block,
+              (SELECT MIN(capture.block_number)
+                 FROM robinhood_head_captures capture
+                WHERE capture.chain = market.chain AND capture.stream = market.stream
+                  AND capture.processing_status IN ('pending', 'leased', 'blocked')
+              ) AS pending_block,
+              canonical.checkpoint_block AS capture_block
+         FROM robinhood_head_capture_cursors market
+         LEFT JOIN robinhood_chain_capture_cursor canonical
+           ON canonical.chain = market.chain
+        WHERE market.chain = '${CHAIN}' AND market.stream = 'market'
+        LIMIT 1`
+    );
+    const row = rows[0];
+    if (row?.checkpoint_block == null || row?.capture_block == null) return null;
+    const checkpoint = BigInt(row.checkpoint_block);
+    const anchor = row.pending_block == null ? checkpoint : BigInt(row.pending_block) - 1n;
+    const capture = BigInt(row.capture_block);
+    if (anchor < 0n || capture < anchor) return null;
+    return Object.freeze({
+      anchorBlock: anchor.toString(),
+      captureBlock: capture.toString(),
+      lagBlocks: (capture - anchor).toString(),
+    });
+  }
+
   async function listDuePools(input = {}) {
     const dueBefore = timestamp(input.dueBefore || new Date(), 'dueBefore');
     const limit = Number(input.limit ?? 100);
@@ -343,6 +371,7 @@ function createRobinhoodPoolLiquiditySnapshotRepository(options = {}) {
   return Object.freeze({
     invalidateSnapshotsFromBlock, listDuePools, listPoolsForLiquidityEvents,
     recordFailure, recordSnapshot, recordSnapshots, resolveAnchorBlock,
+    resolveCanonicalAnchorWindow,
   });
 }
 

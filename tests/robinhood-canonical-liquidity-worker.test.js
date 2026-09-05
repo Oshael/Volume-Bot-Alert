@@ -21,7 +21,10 @@ test('canonical liquidity worker scans fairly and records component telemetry', 
   const worker = createRobinhoodCanonicalLiquidityWorker({
     scanner: { async scanNextRange() { scans += 1; return scanResult(String(100 + scans * 10)); } },
     refresher: { async runOnce() {
-      return { status: 'processed', claimed: 4, completed: 3, retried: 1 };
+      return {
+        status: 'processed', claimed: 4, completed: 3, retried: 1,
+        valuation: { saved: 3, poolResults: [{ marketKey: 'large-payload' }] },
+      };
     } },
   }, { maxScanRangesPerTick: 2, refreshBatchSize: 5 });
   const result = await worker.runOnce();
@@ -38,6 +41,7 @@ test('canonical liquidity worker scans fairly and records component telemetry', 
     claimed: status.refresher.totalClaimed, completed: status.refresher.totalCompleted,
     retried: status.refresher.totalRetried,
   }, { claimed: 4, completed: 3, retried: 1 });
+  assert.deepEqual(status.refresher.lastResult.valuation, { saved: 3 });
 });
 
 test('canonical liquidity worker isolates scanner failures from refresh work', async () => {

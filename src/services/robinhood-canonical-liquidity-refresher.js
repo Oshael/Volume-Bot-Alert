@@ -36,7 +36,7 @@ function retryDelay(attemptCount, baseMs, maximumMs) {
 }
 
 function createRobinhoodCanonicalLiquidityRefresher(deps = {}, input = {}) {
-  if (!deps.reader || !deps.snapshotRepository?.resolveAnchorBlock
+  if (!deps.reader || !deps.snapshotRepository?.resolveCanonicalAnchorWindow
     || !deps.refreshQueue?.claim || !deps.refreshQueue?.complete
     || !deps.refreshQueue?.retry || !deps.refreshQueue?.reclaimExpired) {
     throw new Error('canonical liquidity refresher dependencies are required');
@@ -48,6 +48,7 @@ function createRobinhoodCanonicalLiquidityRefresher(deps = {}, input = {}) {
     concurrency: integer(input.concurrency, 10, 1, 20),
     retryBaseMs: integer(input.retryBaseMs, 5_000, 1, 3_600_000),
     retryMaxMs: integer(input.retryMaxMs, 60_000, 1, 86_400_000),
+    maxAnchorLagBlocks: integer(input.maxAnchorLagBlocks, 128, 0, 100_000),
   };
   if (options.retryMaxMs < options.retryBaseMs) {
     throw new Error('retryMaxMs must be greater than or equal to retryBaseMs');
@@ -74,10 +75,17 @@ function createRobinhoodCanonicalLiquidityRefresher(deps = {}, input = {}) {
 
   async function runOnce() {
     const reclaimed = await deps.refreshQueue.reclaimExpired();
-    const anchorBlock = await deps.snapshotRepository.resolveAnchorBlock();
-    if (anchorBlock == null) return Object.freeze({
+    const window = await deps.snapshotRepository.resolveCanonicalAnchorWindow();
+    if (window == null) return Object.freeze({
       status: 'frontier_unavailable', reclaimed, claimed: 0, completed: 0, retried: 0,
     });
+    if (BigInt(window.lagBlocks) > BigInt(options.maxAnchorLagBlocks)) {
+      return Object.freeze({
+        status: 'frontier_lagging', ...window, maxAnchorLagBlocks: options.maxAnchorLagBlocks,
+        reclaimed, claimed: 0, completed: 0, retried: 0,
+      });
+    }
+    const anchorBlock = window.anchorBlock;
     const rows = await deps.refreshQueue.claim({
       owner: options.owner, limit: options.limit, leaseMs: options.leaseMs,
     });

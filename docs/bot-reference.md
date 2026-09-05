@@ -797,6 +797,14 @@ recebem backoff durável e preservam o snapshot válido anterior. A telemetria d
 `scanner` e `refresher`, incluindo ranges/blocos/logs/pools enfileiradas e claims
 concluídas/retentadas.
 
+Como V4 combina estado RPC e ranges materializados pelo processing, ambos precisam usar a mesma
+âncora. Antes de fazer claim, o refresher mede a distância entre o frontier do market processing e
+o checkpoint da captura. Acima de `ROBINHOOD_CANONICAL_LIQUIDITY_MAX_ANCHOR_LAG_BLOCKS` (default
+128), ele reporta `frontier_lagging` e não faz `eth_call`; o scanner continua coalescendo o journal.
+Isso evita martelar o node pruned com estado que ele já descartou e retoma automaticamente quando o
+processing entra na janela. A lease não persiste a lista detalhada de resultados por pool, apenas os
+totais, mantendo a telemetria compacta.
+
 A ordem de implantação é: confirmar `ready=true`, parar/desabilitar o liquidity legado, aplicar a
 Stage 197, instalar env/drop-in, executar `systemctl daemon-reload` e iniciar o canonical-liquidity.
 O túnel/archive deixa de ser necessário para liquidity após essa troca, mas só deve ser removido

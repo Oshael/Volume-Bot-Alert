@@ -55,7 +55,13 @@ function createRobinhoodCanonicalLiquidityWorker(deps = {}, options = {}) {
     current.totalRuns += 1;
     try {
       const result = await operation();
-      current.lastResult = result; current.lastError = null;
+      if (name === 'refresher' && result?.valuation?.poolResults) {
+        const { poolResults: _poolResults, ...valuation } = result.valuation;
+        current.lastResult = { ...result, valuation };
+      } else {
+        current.lastResult = result;
+      }
+      current.lastError = null;
       return result;
     } catch (error) {
       status.totalErrors += 1; current.lastError = failure(error);

@@ -115,6 +115,7 @@ function composeWorker(deps, options, rawDatabase, rpcClient) {
     limit: options.refreshBatchSize, leaseMs: options.claimLeaseMs,
     concurrency: options.refreshConcurrency,
     retryBaseMs: options.retryBaseMs, retryMaxMs: options.retryMaxMs,
+    maxAnchorLagBlocks: options.maxAnchorLagBlocks,
   });
   return (deps.workerFactory || createRobinhoodCanonicalLiquidityWorker)({
     scanner, refresher, pool: rawDatabase.pool,

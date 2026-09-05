@@ -1710,6 +1710,9 @@ module.exports = {
     refreshConcurrency: parseIntegerInRange(
       process.env.ROBINHOOD_CANONICAL_LIQUIDITY_CONCURRENCY, 10, 1, 20
     ),
+    maxAnchorLagBlocks: parseIntegerInRange(
+      process.env.ROBINHOOD_CANONICAL_LIQUIDITY_MAX_ANCHOR_LAG_BLOCKS, 128, 0, 100_000
+    ),
     claimLeaseMs: parseIntegerInRange(
       process.env.ROBINHOOD_CANONICAL_LIQUIDITY_CLAIM_LEASE_MS, 600_000, 1000, 3_600_000
     ),
