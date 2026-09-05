@@ -166,7 +166,11 @@ function createRobinhoodCanonicalDirectCreatorCanary(options = {}) {
         return null;
       }
     });
-    const legacyDeployments = legacy.flatMap((block) => block?.deployments || []);
+    const legacyDeployments = legacy.flatMap((block) => (block?.deployments || []).map((item) => ({
+      ...item,
+      blockNumber: item.blockNumber ?? block.blockNumber,
+      blockHash: item.blockHash ?? block.blockHash,
+    })));
     const canonicalDeployments = [...canonical.values()].flatMap(({ deployments }) => deployments);
     const parity = compareDeployments(legacyDeployments, canonicalDeployments);
     const missingBlocks = numbers.filter((number) => !canonical.has(String(number))).map(String);

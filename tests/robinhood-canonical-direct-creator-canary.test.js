@@ -58,9 +58,14 @@ describe('Robinhood canonical direct-creator canary', () => {
   });
 
   it('approves a complete recent range with matching evidence', async () => {
+    const legacyDirect = { ...deployment() };
+    delete legacyDirect.blockNumber;
+    delete legacyDirect.blockHash;
     const canary = createRobinhoodCanonicalDirectCreatorCanary({
       readiness: readiness(), canonicalReader: canonicalReader(),
-      scanLegacyBlock: async (number) => legacyBlock(number),
+      scanLegacyBlock: async (number) => legacyBlock(
+        number, number === 199n ? [legacyDirect] : []
+      ),
     });
     const report = await canary.inspect({ blocks: 2, minDeployments: 1, concurrency: 2 });
     assert.equal(report.approved, true);
