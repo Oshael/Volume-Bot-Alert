@@ -3671,8 +3671,10 @@ tempos separam custo do banco, decodificação/enriquecimento e persistência an
 de qualquer ajuste adicional de concorrência ou lote. A Stage 193 também cria
 online o índice parcial `idx_rh_chain_domain_outbox_frontier`; ele cobre apenas
 frontiers não concluídos e impede que cada claim percorra o histórico completo
-da outbox. Em deploy existente, reaplique a Stage 193 antes de reiniciar o
-canário.
+da outbox. O claim materializa primeiro somente os blocos limitados dessa frontier antes de
+travar eventos; a expiração da lease usa o relógio real do `UPDATE`, não o início da query, para
+que uma leitura lenta nunca devolva trabalho já vencido e cause replay infinito do mesmo bloco.
+Em deploy existente, reaplique a Stage 193 antes de reiniciar o canário.
 
 A Stage 195 cria `robinhood_chain_v3_balance_snapshots`, sidecar durável do
 journal para os dois `balanceOf` de cada swap V3 no bloco capturado. Aplique com

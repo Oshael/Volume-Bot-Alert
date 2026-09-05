@@ -42,24 +42,34 @@ function createRobinhoodChainDomainOutboxRepository(options = {}) {
     const leaseMs = positiveInt(input.leaseMs, 'leaseMs');
     const maxBlocks = positiveInt(input.maxBlocks || 1, 'maxBlocks');
     const result = await database.query(
-      `WITH frontiers AS (
-         SELECT block_number,
-                BOOL_AND(status='pending' AND next_attempt_at<=NOW()) AS ready
+      `WITH frontiers AS MATERIALIZED (
+         SELECT DISTINCT block_number
            FROM robinhood_chain_domain_outbox
           WHERE chain=$1 AND status<>'complete'
-          GROUP BY block_number ORDER BY block_number LIMIT $4
+          ORDER BY block_number LIMIT $4
+       ), readiness AS MATERIALIZED (
+         SELECT frontier.block_number,
+                NOT EXISTS (
+                  SELECT 1 FROM robinhood_chain_domain_outbox gate
+                   WHERE gate.chain=$1 AND gate.block_number=frontier.block_number
+                     AND gate.status<>'complete'
+                     AND (gate.status<>'pending'
+                          OR gate.next_attempt_at>clock_timestamp())
+                ) AS ready
+           FROM frontiers frontier
        ), ready AS (
          SELECT block_number FROM (
            SELECT block_number,
                   BOOL_AND(ready) OVER (
                     ORDER BY block_number ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
                   ) AS prefix_ready
-             FROM frontiers
+             FROM readiness
          ) ordered WHERE prefix_ready
-       ), claimable AS (
+       ), claimable AS MATERIALIZED (
          SELECT outbox.chain, outbox.domain, outbox.block_hash, outbox.log_index
            FROM robinhood_chain_domain_outbox outbox JOIN ready USING (block_number)
           WHERE outbox.chain=$1 AND outbox.status='pending'
+            AND outbox.next_attempt_at<=clock_timestamp()
           ORDER BY outbox.block_number,
                    CASE outbox.domain WHEN 'discovery' THEN 0 ELSE 1 END,
                    outbox.transaction_index, outbox.log_index
@@ -67,7 +77,7 @@ function createRobinhoodChainDomainOutboxRepository(options = {}) {
        ), leased AS (
          UPDATE robinhood_chain_domain_outbox outbox
             SET status='leased', lease_owner=$2,
-                lease_until=NOW() + ($3::bigint * INTERVAL '1 millisecond'),
+                lease_until=clock_timestamp() + ($3::bigint * INTERVAL '1 millisecond'),
                 attempt_count=outbox.attempt_count+1, updated_at=NOW()
            FROM claimable
           WHERE outbox.chain=claimable.chain AND outbox.domain=claimable.domain
@@ -111,7 +121,7 @@ function createRobinhoodChainDomainOutboxRepository(options = {}) {
        ), leased AS (
          UPDATE robinhood_chain_domain_outbox outbox
             SET status='leased', lease_owner=$4,
-                lease_until=NOW() + ($5::bigint * INTERVAL '1 millisecond'),
+                lease_until=clock_timestamp() + ($5::bigint * INTERVAL '1 millisecond'),
                 attempt_count=outbox.attempt_count+1, updated_at=NOW()
            FROM claimable
           WHERE outbox.chain=claimable.chain AND outbox.domain=claimable.domain
@@ -157,7 +167,7 @@ function createRobinhoodChainDomainOutboxRepository(options = {}) {
        ), leased AS (
          UPDATE robinhood_chain_domain_outbox outbox
             SET status='leased', lease_owner=$4,
-                lease_until=NOW() + ($5::bigint * INTERVAL '1 millisecond'),
+                lease_until=clock_timestamp() + ($5::bigint * INTERVAL '1 millisecond'),
                 attempt_count=outbox.attempt_count+1, updated_at=NOW()
            FROM claimable
           WHERE outbox.chain=claimable.chain AND outbox.domain=claimable.domain
