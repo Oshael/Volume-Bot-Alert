@@ -762,6 +762,17 @@ O V4 exige que o replay histórico esteja `completed`, que a materialização in
 o processamento live tenha continuado persistindo `ModifyLiquidity` depois do target do replay.
 O replay é resumível e limitado ao target salvo; executá-lo novamente não amplia esse target.
 
+Antes de migrar o liquidity para o journal canônico, execute
+`npm run robinhood:canonical-liquidity-audit`. O comando usa uma transação PostgreSQL
+`REPEATABLE READ READ ONLY` e somente buscas cobertas pelos índices de bloco, frontier e tópico;
+não conta nem agrupa as tabelas volumosas. Ele separa `pre_journal_blocks_remaining`, que ainda
+exige o worker legado e o archive, de `journal_blocks_available`, que já pode ser reprocessado sem
+`eth_getLogs`. `processing_blocks_not_captured` diferente de zero indica que a fonte canônica ainda
+não cobre a fronteira permitida. A lista de tópicos mostra primeiro/último bloco observado apenas
+como evidência; um evento raro nunca observado não é, sozinho, falha de cobertura. `ready=true`
+significa somente que a fonte e o ponto de handoff estão prontos para implementar/testar o novo
+consumidor; não autoriza parar o liquidity atual nem remover o túnel do archive.
+
 O preview direcionado `node src/utils/preview-robinhood-v4-blocked.js --through-block=<bloco>
 --output-dir=<diretorio> --range-size=10000` usa `ROBINHOOD_V4_REPLAY_RPC_URL` e a conexão
 normal do banco, forçada a read-only. Seleciona no máximo sete pools bloqueadas pelo erro de
