@@ -2009,6 +2009,13 @@ legado; `canonical_journal` lê `Transfer` e checkpoints diretamente do journal 
 captura canônica, sem `eth_getLogs` nem receipts. O modo canônico falha fechado se a
 faixa pedida não estiver coberta e só deve ser ativado depois dos gates de cobertura
 e handoff do holder.
+`npm run robinhood:canonical-holder-audit` executa o gate preflight em uma transação
+PostgreSQL `REPEATABLE READ READ ONLY`. O relatório separa lag reaproveitável dentro
+do journal canônico de uma lacuna anterior à retenção, valida o checkpoint holder
+contra o bloco canônico, identifica floors ausentes, resume estados por token e
+mostra o backlog coalescido do apply. Backfill, tokens `drifted` e fila de apply são
+telemetria, não bloqueio global; falta de cobertura ou frontier live inválido bloqueia
+o corte.
 Eventos consecutivos
 do mesmo token são aplicados em uma transação, em lotes default de 100 e ajustáveis
 por `ROBINHOOD_HOLDER_LIVE_APPLY_BATCH_SIZE` entre 1 e 1.000. O primeiro déficit
