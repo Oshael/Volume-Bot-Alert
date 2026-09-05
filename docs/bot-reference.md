@@ -2016,6 +2016,12 @@ contra o bloco canônico, identifica floors ausentes, resume estados por token e
 mostra o backlog coalescido do apply. Backfill, tokens `drifted` e fila de apply são
 telemetria, não bloqueio global; falta de cobertura ou frontier live inválido bloqueia
 o corte.
+`npm run robinhood:canonical-holder-canary` compara, sem escrita, os `Transfer`
+decodificados pelo RPC legado e pelo journal canônico nos 64 blocos confirmados mais
+recentes. O gate exige por default pelo menos 100 transfers, checkpoints e contagem
+bruta iguais, cobertura nos dois sentidos e zero campo determinístico divergente.
+`--blocks`, `--min-transfers` e `--confirmations` permitem ampliar uma amostra
+controlada sem alterar cursores ou ledger.
 Eventos consecutivos
 do mesmo token são aplicados em uma transação, em lotes default de 100 e ajustáveis
 por `ROBINHOOD_HOLDER_LIVE_APPLY_BATCH_SIZE` entre 1 e 1.000. O primeiro déficit

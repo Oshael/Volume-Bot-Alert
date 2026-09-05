@@ -108,6 +108,7 @@
     "robinhood:canonical-head-audit": "node src/utils/audit-robinhood-canonical-head-canary.js",
     "robinhood:canonical-liquidity-audit": "node src/utils/audit-robinhood-canonical-liquidity.js",
     "robinhood:canonical-holder-audit": "node src/utils/audit-robinhood-canonical-holder.js",
+    "robinhood:canonical-holder-canary": "node src/utils/audit-robinhood-canonical-holder-canary.js",
     "robinhood:holder-deployment-recover": "node src/utils/recover-robinhood-holder-deployments.js",
     "robinhood:infrastructure-import": "node src/utils/import-robinhood-infrastructure-registry.js",
     "robinhood:infrastructure-close": "node src/utils/close-robinhood-infrastructure-registry.js",
