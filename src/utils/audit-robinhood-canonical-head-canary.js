@@ -23,7 +23,9 @@ function parseArgs(argv = []) {
   if (unknown) throw new Error(`unknown argument: ${unknown}`);
   const value = (prefix) => argv.find((arg) => arg.startsWith(prefix))?.slice(prefix.length);
   const phase = value('--phase=') || 'preflight';
-  if (!['preflight', 'canary'].includes(phase)) throw new Error('--phase must be preflight or canary');
+  if (!['preflight', 'canary', 'cutover'].includes(phase)) {
+    throw new Error('--phase must be preflight, canary or cutover');
+  }
   return {
     phase,
     maxCaptureLag: integer(value('--max-capture-lag='), 2, '--max-capture-lag'),

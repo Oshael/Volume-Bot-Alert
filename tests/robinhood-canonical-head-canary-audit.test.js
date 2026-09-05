@@ -105,8 +105,28 @@ describe('Robinhood canonical head canary audit', () => {
       maxQueueLagBlocks: 2,
       minDiscovery: 1, minMarket: 500, verbose: true,
     });
-    assert.throws(() => parseArgs(['--phase=cutover']), /preflight or canary/);
+    assert.equal(parseArgs(['--phase=cutover']).phase, 'cutover');
+    assert.throws(() => parseArgs(['--phase=publish']), /preflight, canary or cutover/);
     assert.throws(() => parseArgs(['--unknown=1']), /unknown argument/);
+  });
+
+  it('approves cutover only after both head writers and in-flight claims stop', () => {
+    const state = input('cutover');
+    state.leases = state.leases.filter(({ lease_key }) => (
+      lease_key === 'robinhood-chain-capture-worker'
+    ));
+    state.queue.pending = 500;
+    state.queue.lag_blocks = '100';
+    state.queue.mature_lag_blocks = '100';
+    assert.equal(evaluate(state).approved, true);
+
+    state.leases.push(lease('robinhood-head-capture-worker'));
+    state.leases.push(lease('robinhood-canonical-head-worker'));
+    state.queue.leased = 1;
+    assert.deepEqual(evaluate(state).blockers.map(({ code }) => code), [
+      'legacy_head_still_active', 'canonical_head_still_active',
+      'domain_outbox_still_leased',
+    ]);
   });
 
   it('scopes parity to the active canary acquisition timestamp', async () => {

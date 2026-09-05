@@ -3541,8 +3541,12 @@ capturas e avança os cursores `discovery` e `market` para a mesma frontier em u
 única transação, notificando consumidores somente após o commit. O startup falha
 fechado se o chain-capture não estiver ativo ou se o head legado/shadow ainda
 possuir lease ativa. A ordem operacional é: parar primeiro o canário, depois o
-head legado, confirmar as leases, habilitar publish e iniciar novamente o
-canonical-head. Para rollback, parar o publisher antes de reativar o legado;
+head legado, executar
+`npm run robinhood:canonical-head-audit -- --phase=cutover`, habilitar publish e
+iniciar novamente o canonical-head. Esse gate exige capture saudável, shadow,
+legado e canonical-head inativos, nenhuma claim em voo e nenhuma fila bloqueada.
+O backlog pendente é durável e não bloqueia esse gate: o publisher o drena após
+assumir autoridade. Para rollback, parar o publisher antes de reativar o legado;
 nunca executar ambos como writers. A implementação do modo não autoriza sua
 ativação antes do gate operacional de cutover.
 Valide a troca com `npm run robinhood:canonical-head-audit -- --phase=preflight`
@@ -3567,6 +3571,10 @@ do lote. Ajuste somente para diagnóstico com
 progresso e erros consecutivos; o health registry acompanha essa lease como
 componente live opcional. No canário, o gate também exige que o heartbeat exponha
 o `rpcGuard`; telemetria ausente falha fechado.
+O `--phase=cutover` não repete a paridade depois que a lease do canário é
+liberada; ele deve ser executado imediatamente após um `--phase=canary`
+aprovado e depois da parada limpa dos dois heads. Aprovação do cutover autoriza
+somente iniciar o publisher, não apagar cursores, evidências ou backlog.
 O lag maduro da outbox é medido do primeiro trabalho já coberto pelo legado até
 o frontier efetivamente capturado, e não até o head legado. Assim o shadow que
 acompanha uma captura ainda em catch-up não reporta como backlog os blocos que o

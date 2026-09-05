@@ -76,21 +76,28 @@ function evaluate(input) {
   )));
   const blockers = [];
   const captureStatus = evaluateCapture({ ...input, capture }, leases.capture, blockers);
-  add(blockers, !leases.legacy.active, 'legacy_head_inactive');
   add(blockers, leases.shadow.active, 'domain_shadow_still_active');
-  add(blockers, count(queue.mature_lag_blocks) > maxQueueLagBlocks,
-    'domain_outbox_mature_lag_exceeded', {
-      actual: count(queue.mature_lag_blocks), maximum: maxQueueLagBlocks,
-      firstUnsettled: queue.first_mature_unsettled || null,
-  });
   add(blockers, count(queue.blocked) > 0, 'domain_outbox_blocked', count(queue.blocked));
   add(blockers, leases.canary.metadata?.state === 'halted', 'canonical_canary_lease_halted',
     leases.canary.metadata?.haltCode || null);
 
+  if (phase === 'cutover') {
+    add(blockers, leases.legacy.active, 'legacy_head_still_active');
+    add(blockers, leases.canary.active, 'canonical_head_still_active');
+    add(blockers, count(queue.leased) > 0, 'domain_outbox_still_leased', count(queue.leased));
+  } else {
+    add(blockers, !leases.legacy.active, 'legacy_head_inactive');
+    add(blockers, count(queue.mature_lag_blocks) > maxQueueLagBlocks,
+      'domain_outbox_mature_lag_exceeded', {
+        actual: count(queue.mature_lag_blocks), maximum: maxQueueLagBlocks,
+        firstUnsettled: queue.first_mature_unsettled || null,
+      });
+  }
+
   if (phase === 'preflight') {
     add(blockers, leases.canary.active, 'canonical_canary_already_active');
     add(blockers, count(queue.leased) > 0, 'domain_outbox_still_leased', count(queue.leased));
-  } else {
+  } else if (phase === 'canary') {
     add(blockers, !leases.canary.active, 'canonical_canary_inactive');
     const rpcGuard = leases.canary.metadata?.canonicalRuntime?.rpcGuard || null;
     add(blockers, leases.canary.active && !rpcGuard, 'canonical_rpc_guard_missing');
@@ -123,7 +130,7 @@ function createRobinhoodCanonicalHeadCanaryAudit(deps = {}) {
 
   async function inspect(options = {}) {
     const normalized = {
-      phase: options.phase === 'canary' ? 'canary' : 'preflight',
+      phase: ['canary', 'cutover'].includes(options.phase) ? options.phase : 'preflight',
       maxCaptureLag: count(options.maxCaptureLag ?? 2),
       maxCaptureHeadAgeMs: count(options.maxCaptureHeadAgeMs ?? DEFAULT_CAPTURE_HEAD_AGE_MS),
       maxQueueLagBlocks: count(options.maxQueueLagBlocks ?? 2),

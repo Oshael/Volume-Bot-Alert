@@ -391,6 +391,8 @@ que 500 linhas.
   e backlog calculado apenas sobre a fronteira madura (3L concluída);
 - publisher opt-in com cursores discovery/market atômicos e exclusão fail-closed
   dos writers legado/shadow (3M concluída, ainda sem ativação operacional);
+- gate read-only de cutover que exige parada limpa dos dois heads, capture
+  saudável e ausência de claims em voo/bloqueios (3N concluída);
 - preservação da evidência e idempotência atuais;
 - comparação com `robinhood_head_captures` existente;
 - cutover dos dois pollers `eth_getLogs` do head.
