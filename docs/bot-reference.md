@@ -3467,7 +3467,7 @@ worker atual lê o journal e nenhuma projeção ou publicação é alterada. Ele
 `ROBINHOOD_CHAIN_CAPTURE_MAX_BLOCKS_PER_DRAIN` (default 100) e a confirmação
 por `ROBINHOOD_CHAIN_CAPTURE_CONFIRMATIONS` (default 2).
 As leituras de bloco e receipts fazem prefetch limitado entre blocos por
-`ROBINHOOD_CHAIN_CAPTURE_FETCH_CONCURRENCY` (default 8, máximo 16); snapshots V3
+`ROBINHOOD_CHAIN_CAPTURE_FETCH_CONCURRENCY` (default 8, máximo 32); snapshots V3
 permanecem estritamente sequenciais para preservar o tracker. Cada lote
 prefetched é validado e persistido em uma única transação PostgreSQL, com inserts
 set-based e um único avanço do frontier; qualquer gap, divergência de parent ou

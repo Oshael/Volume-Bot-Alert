@@ -57,7 +57,9 @@ describe('runtime worker groups config', () => {
   });
 
   it('bounds chain capture block fetch concurrency', () => {
-    for (const [value, expected] of [['', 8], ['invalid', 8], ['0', 1], ['12', 12], ['99', 16]]) {
+    for (const [value, expected] of [
+      ['', 8], ['invalid', 8], ['0', 1], ['24', 24], ['99', 32],
+    ]) {
       withEnv({ ROBINHOOD_CHAIN_CAPTURE_FETCH_CONCURRENCY: value }, (config) => {
         assert.equal(config.robinhoodChainCaptureWorker.fetchConcurrency, expected);
       });

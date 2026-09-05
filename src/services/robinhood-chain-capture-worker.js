@@ -170,7 +170,7 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
   const now = deps.now || (() => new Date());
   const schedule = deps.schedule || setTimeout; const cancel = deps.cancel || clearTimeout;
   const topics = new Set(options.topics || CAPTURE_TOPICS);
-  const fetchConcurrency = Math.max(1, Math.min(16, Number(options.fetchConcurrency) || 8));
+  const fetchConcurrency = Math.max(1, Math.min(32, Number(options.fetchConcurrency) || 8));
   const v3SnapshotWindowBlocks = BigInt(options.v3SnapshotWindowBlocks ?? 32);
   const status = { running: false, mode: 'shadow_receipts', lastResult: null, lastError: null,
     nodeHead: null, nextBlock: null, lagBlocks: null, lastHeadObservedAt: null,
