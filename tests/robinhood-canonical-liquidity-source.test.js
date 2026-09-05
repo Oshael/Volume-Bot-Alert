@@ -16,7 +16,7 @@ function clientFor(state, events = []) {
     async query(sql, params) {
       calls.push({ sql, params });
       if (sql.startsWith('BEGIN') || sql === 'ROLLBACK') return { rows: [] };
-      if (sql.includes('WITH processing AS')) return { rows: state ? [state] : [] };
+      if (sql.includes('WITH pending AS MATERIALIZED')) return { rows: state ? [state] : [] };
       if (sql.includes('FROM robinhood_chain_events')) return { rows: events };
       throw new Error(`unexpected query: ${sql}`);
     },
@@ -59,6 +59,7 @@ describe('Robinhood canonical liquidity journal source', () => {
     assert.match(fixture.calls[0].sql, /REPEATABLE READ READ ONLY/);
     assert.match(fixture.calls[1].sql, /robinhood_chain_domain_outbox/);
     assert.match(fixture.calls[1].sql, /outbox\.status<>'complete'/);
+    assert.doesNotMatch(fixture.calls[1].sql, /robinhood_head_capture/);
     assert.deepEqual(fixture.calls[2].params, [
       'robinhood', '100', '109', LIQUIDITY_EVENT_TOPICS,
     ]);

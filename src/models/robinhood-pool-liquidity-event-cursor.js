@@ -121,34 +121,19 @@ function createRobinhoodPoolLiquidityEventCursorRepository(options = {}) {
 
   async function resolveProcessingFrontier() {
     const { rows } = await database.query(
-      `WITH cursors AS (
-         SELECT COUNT(*) = 2 AND COUNT(checkpoint_block) = 2 AS ready
-           FROM robinhood_head_capture_cursors
-          WHERE chain = $1 AND stream IN ('discovery', 'market')
-       ), pending AS (
-         SELECT MIN(active.block_number) AS pending_block
-           FROM (
-             (SELECT outbox.block_number
-                FROM robinhood_chain_domain_outbox outbox
-               WHERE outbox.chain = $1 AND outbox.status <> 'complete'
-               ORDER BY outbox.block_number, outbox.status, outbox.domain,
-                        outbox.transaction_index, outbox.log_index LIMIT 1)
-             UNION ALL
-             (SELECT capture.block_number
-                FROM robinhood_head_captures capture
-               WHERE capture.chain = $1
-                 AND capture.processing_status IN ('pending', 'leased', 'blocked')
-               ORDER BY capture.block_number, capture.transaction_index,
-                        capture.log_index LIMIT 1)
-           ) active
+      `WITH pending AS MATERIALIZED (
+         SELECT outbox.block_number AS pending_block
+           FROM robinhood_chain_domain_outbox outbox
+          WHERE outbox.chain = $1 AND outbox.status <> 'complete'
+          ORDER BY outbox.block_number, outbox.status, outbox.domain,
+                   outbox.transaction_index, outbox.log_index LIMIT 1
        )
-       SELECT CASE WHEN cursors.ready IS NOT TRUE THEN NULL
-                   WHEN pending.pending_block IS NULL THEN canonical.checkpoint_block
+       SELECT CASE WHEN pending.pending_block IS NULL THEN canonical.checkpoint_block
                    ELSE LEAST(canonical.checkpoint_block, pending.pending_block - 1)
                END AS checkpoint_block,
               pending.pending_block
          FROM robinhood_chain_capture_cursor canonical
-         CROSS JOIN cursors CROSS JOIN pending
+         LEFT JOIN pending ON TRUE
         WHERE canonical.chain = $1`,
       [CHAIN]
     );

@@ -68,6 +68,7 @@ describe('Robinhood current pool liquidity snapshots', () => {
       async query(sql) {
         assert.match(sql, /robinhood_chain_domain_outbox/);
         assert.match(sql, /outbox\.status <> 'complete'/);
+        assert.doesNotMatch(sql, /robinhood_head_capture/);
         return { rows: [{
           anchor_block: '150', pending_block: '151', capture_block: '225',
         }] };

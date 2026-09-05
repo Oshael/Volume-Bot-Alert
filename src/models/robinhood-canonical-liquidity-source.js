@@ -86,36 +86,21 @@ function createRobinhoodCanonicalLiquiditySource(options = {}) {
     try {
       await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
       const stateResult = await client.query(
-        `WITH processing AS (
-           SELECT COUNT(*) = 2 AND COUNT(checkpoint_block) = 2 AS ready
-             FROM robinhood_head_capture_cursors
-            WHERE chain=$1 AND stream IN ('discovery', 'market')
-         ), pending AS (
-           SELECT MIN(active.block_number) AS block_number
-             FROM (
-               (SELECT outbox.block_number
-                  FROM robinhood_chain_domain_outbox outbox
-                 WHERE outbox.chain=$1 AND outbox.status<>'complete'
-                 ORDER BY outbox.block_number, outbox.status, outbox.domain,
-                          outbox.transaction_index, outbox.log_index LIMIT 1)
-               UNION ALL
-               (SELECT capture.block_number
-                  FROM robinhood_head_captures capture
-                 WHERE capture.chain=$1
-                   AND capture.processing_status IN ('pending', 'leased', 'blocked')
-                 ORDER BY capture.block_number, capture.transaction_index,
-                          capture.log_index LIMIT 1)
-             ) active
+        `WITH pending AS MATERIALIZED (
+           SELECT outbox.block_number
+             FROM robinhood_chain_domain_outbox outbox
+            WHERE outbox.chain=$1 AND outbox.status<>'complete'
+            ORDER BY outbox.block_number, outbox.status, outbox.domain,
+                     outbox.transaction_index, outbox.log_index LIMIT 1
          ), frontier AS (
            SELECT capture.checkpoint_block AS journal_through,
                   (SELECT block_number FROM robinhood_chain_blocks
                     WHERE chain=$1 AND canonical=TRUE
                     ORDER BY block_number LIMIT 1) AS journal_start_block,
-                  CASE WHEN processing.ready IS NOT TRUE THEN NULL
-                       WHEN pending.block_number IS NULL THEN capture.checkpoint_block
+                  CASE WHEN pending.block_number IS NULL THEN capture.checkpoint_block
                        ELSE LEAST(capture.checkpoint_block, pending.block_number-1) END AS safe_head
              FROM robinhood_chain_capture_cursor capture
-             LEFT JOIN processing ON TRUE LEFT JOIN pending ON TRUE
+             LEFT JOIN pending ON TRUE
             WHERE capture.chain=$1
          ), target AS (
            SELECT frontier.*,

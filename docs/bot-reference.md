@@ -805,9 +805,10 @@ Isso evita martelar o node pruned com estado que ele já descartou e retoma auto
 processing entra na janela. A lease não persiste a lista detalhada de resultados por pool, apenas os
 totais, mantendo a telemetria compacta.
 Como os cursores de discovery/market só avançam em blocos que contêm eventos desses domínios, a
-frontier efetiva usa o checkpoint contínuo da captura quando tanto a domain outbox quanto as
-capturas do processing estão drenadas. Se qualquer fila tiver trabalho não terminal, a frontier
-para imediatamente antes do item mais antigo; blocos vazios não produzem falso lag.
+frontier efetiva usa o checkpoint contínuo da captura quando a domain outbox canônica está drenada.
+Se a outbox tiver trabalho não terminal, a frontier para imediatamente antes do item mais antigo;
+blocos vazios não produzem falso lag. Depois do cutover, filas e cursores do head legado não têm
+autoridade sobre esse cálculo e podem permanecer retidos apenas como evidência operacional.
 
 A ordem de implantação é: confirmar `ready=true`, parar/desabilitar o liquidity legado, aplicar a
 Stage 197, instalar env/drop-in, executar `systemctl daemon-reload` e iniciar o canonical-liquidity.

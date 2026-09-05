@@ -79,7 +79,7 @@ describe('Robinhood canonical liquidity audit', () => {
       async query(sql, params) {
         queries.push({ sql, params });
         if (sql.startsWith('BEGIN')) return { rows: [] };
-        if (sql.includes('WITH processing AS')) return { rows: [input().state] };
+        if (sql.includes('WITH pending AS MATERIALIZED')) return { rows: [input().state] };
         if (sql.includes('unnest($2::text[])')) return { rows: input().topics };
         if (sql.includes('FROM worker_leases')) return { rows: input().leases };
         if (sql === 'ROLLBACK') return { rows: [] };
@@ -93,6 +93,7 @@ describe('Robinhood canonical liquidity audit', () => {
     assert.equal((await audit.inspect()).ready, true);
     assert.match(queries[0].sql, /REPEATABLE READ READ ONLY/);
     assert.match(queries[1].sql, /robinhood_chain_domain_outbox/);
+    assert.doesNotMatch(queries[1].sql, /robinhood_head_capture/);
     assert.deepEqual(queries[2].params, ['robinhood', LIQUIDITY_EVENT_TOPICS]);
     assert.equal(queries.at(-2).sql, 'ROLLBACK');
     assert.equal(queries.at(-1).sql, 'RELEASE');
