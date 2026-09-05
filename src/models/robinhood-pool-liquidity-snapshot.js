@@ -160,23 +160,40 @@ function createRobinhoodPoolLiquiditySnapshotRepository(options = {}) {
 
   async function resolveCanonicalAnchorWindow() {
     const { rows } = await database.query(
-      `SELECT market.checkpoint_block,
-              (SELECT MIN(capture.block_number)
-                 FROM robinhood_head_captures capture
-                WHERE capture.chain = market.chain AND capture.stream = market.stream
-                  AND capture.processing_status IN ('pending', 'leased', 'blocked')
-              ) AS pending_block,
-              canonical.checkpoint_block AS capture_block
-         FROM robinhood_head_capture_cursors market
-         LEFT JOIN robinhood_chain_capture_cursor canonical
-           ON canonical.chain = market.chain
-        WHERE market.chain = '${CHAIN}' AND market.stream = 'market'
-        LIMIT 1`
+      `WITH cursors AS (
+         SELECT COUNT(*) = 2 AND COUNT(checkpoint_block) = 2 AS ready
+           FROM robinhood_head_capture_cursors
+          WHERE chain = '${CHAIN}' AND stream IN ('discovery', 'market')
+       ), pending AS (
+         SELECT MIN(active.block_number) AS pending_block
+           FROM (
+             (SELECT outbox.block_number
+                FROM robinhood_chain_domain_outbox outbox
+               WHERE outbox.chain = '${CHAIN}' AND outbox.status <> 'complete'
+               ORDER BY outbox.block_number, outbox.status, outbox.domain,
+                        outbox.transaction_index, outbox.log_index LIMIT 1)
+             UNION ALL
+             (SELECT capture.block_number
+                FROM robinhood_head_captures capture
+               WHERE capture.chain = '${CHAIN}'
+                 AND capture.processing_status IN ('pending', 'leased', 'blocked')
+               ORDER BY capture.block_number, capture.transaction_index,
+                        capture.log_index LIMIT 1)
+           ) active
+       )
+       SELECT canonical.checkpoint_block AS capture_block,
+              CASE WHEN cursors.ready IS NOT TRUE THEN NULL
+                   WHEN pending.pending_block IS NULL THEN canonical.checkpoint_block
+                   ELSE LEAST(canonical.checkpoint_block, pending.pending_block - 1)
+               END AS anchor_block,
+              pending.pending_block
+         FROM robinhood_chain_capture_cursor canonical
+         CROSS JOIN cursors CROSS JOIN pending
+        WHERE canonical.chain = '${CHAIN}'`
     );
     const row = rows[0];
-    if (row?.checkpoint_block == null || row?.capture_block == null) return null;
-    const checkpoint = BigInt(row.checkpoint_block);
-    const anchor = row.pending_block == null ? checkpoint : BigInt(row.pending_block) - 1n;
+    if (row?.anchor_block == null || row?.capture_block == null) return null;
+    const anchor = BigInt(row.anchor_block);
     const capture = BigInt(row.capture_block);
     if (anchor < 0n || capture < anchor) return null;
     return Object.freeze({

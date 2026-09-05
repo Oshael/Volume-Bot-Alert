@@ -57,6 +57,8 @@ describe('Robinhood canonical liquidity journal source', () => {
       topics: [LIQUIDITY_EVENT_TOPICS[0]], data: '0x01', removed: false,
     });
     assert.match(fixture.calls[0].sql, /REPEATABLE READ READ ONLY/);
+    assert.match(fixture.calls[1].sql, /robinhood_chain_domain_outbox/);
+    assert.match(fixture.calls[1].sql, /outbox\.status<>'complete'/);
     assert.deepEqual(fixture.calls[2].params, [
       'robinhood', '100', '109', LIQUIDITY_EVENT_TOPICS,
     ]);

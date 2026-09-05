@@ -804,6 +804,10 @@ o checkpoint da captura. Acima de `ROBINHOOD_CANONICAL_LIQUIDITY_MAX_ANCHOR_LAG_
 Isso evita martelar o node pruned com estado que ele já descartou e retoma automaticamente quando o
 processing entra na janela. A lease não persiste a lista detalhada de resultados por pool, apenas os
 totais, mantendo a telemetria compacta.
+Como os cursores de discovery/market só avançam em blocos que contêm eventos desses domínios, a
+frontier efetiva usa o checkpoint contínuo da captura quando tanto a domain outbox quanto as
+capturas do processing estão drenadas. Se qualquer fila tiver trabalho não terminal, a frontier
+para imediatamente antes do item mais antigo; blocos vazios não produzem falso lag.
 
 A ordem de implantação é: confirmar `ready=true`, parar/desabilitar o liquidity legado, aplicar a
 Stage 197, instalar env/drop-in, executar `systemctl daemon-reload` e iniciar o canonical-liquidity.

@@ -87,9 +87,10 @@ describe('Robinhood pool liquidity event cursor', () => {
           checkpoint_block: null, checkpoint_hash: null,
           checkpoint_timestamp: null, version: '2',
         }] };
-        assert.match(sql, /cursor\.stream IN \('discovery', 'market'\)/);
+        assert.match(sql, /stream IN \('discovery', 'market'\)/);
+        assert.match(sql, /robinhood_chain_domain_outbox/);
         assert.match(sql, /processing_status IN \('pending', 'leased', 'blocked'\)/);
-        return { rows: [{ checkpoint_block: '200', pending_block: '151' }] };
+        return { rows: [{ checkpoint_block: '150', pending_block: '151' }] };
       },
     } });
     assert.equal((await repository.rewindCursor({ rewindBlock: '105' })).nextBlock, '105');

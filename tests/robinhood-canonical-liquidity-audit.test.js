@@ -92,6 +92,7 @@ describe('Robinhood canonical liquidity audit', () => {
     });
     assert.equal((await audit.inspect()).ready, true);
     assert.match(queries[0].sql, /REPEATABLE READ READ ONLY/);
+    assert.match(queries[1].sql, /robinhood_chain_domain_outbox/);
     assert.deepEqual(queries[2].params, ['robinhood', LIQUIDITY_EVENT_TOPICS]);
     assert.equal(queries.at(-2).sql, 'ROLLBACK');
     assert.equal(queries.at(-1).sql, 'RELEASE');

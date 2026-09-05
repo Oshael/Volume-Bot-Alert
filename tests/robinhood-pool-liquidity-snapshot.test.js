@@ -66,14 +66,28 @@ describe('Robinhood current pool liquidity snapshots', () => {
   it('measures the canonical capture distance from the processing anchor', async () => {
     const repository = createRobinhoodPoolLiquiditySnapshotRepository({ database: {
       async query(sql) {
-        assert.match(sql, /robinhood_chain_capture_cursor canonical/);
+        assert.match(sql, /robinhood_chain_domain_outbox/);
+        assert.match(sql, /outbox\.status <> 'complete'/);
         return { rows: [{
-          checkpoint_block: '200', pending_block: '151', capture_block: '225',
+          anchor_block: '150', pending_block: '151', capture_block: '225',
         }] };
       },
     } });
     assert.deepEqual(await repository.resolveCanonicalAnchorWindow(), {
       anchorBlock: '150', captureBlock: '225', lagBlocks: '75',
+    });
+  });
+
+  it('uses the continuous journal frontier when both sparse queues are drained', async () => {
+    const repository = createRobinhoodPoolLiquiditySnapshotRepository({ database: {
+      async query() {
+        return { rows: [{
+          anchor_block: '225', pending_block: null, capture_block: '225',
+        }] };
+      },
+    } });
+    assert.deepEqual(await repository.resolveCanonicalAnchorWindow(), {
+      anchorBlock: '225', captureBlock: '225', lagBlocks: '0',
     });
   });
 
