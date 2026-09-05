@@ -46,8 +46,17 @@ function createRobinhoodV4LiquidityReplay(options = {}) {
     if (chainId !== CHAIN_ID) throw new Error(`Unexpected Robinhood chain id ${chainId}`);
     const head = quantity(await rpcClient.request('eth_blockNumber'), 'eth_blockNumber');
     const safeHead = head > BigInt(confirmations) ? head - BigInt(confirmations) : 0n;
-    const context = await repository.ensureState(safeHead.toString());
+    const target = input.targetBlock == null
+      ? safeHead
+      : quantity(input.targetBlock, 'targetBlock');
+    if (target > safeHead) throw new Error('V4 liquidity replay target exceeds the safe head');
+    const context = await repository.ensureState(target.toString(), {
+      restart: input.restart === true,
+    });
     let state = context.state;
+    if (input.targetBlock != null && BigInt(state.targetBlock) !== target) {
+      throw new Error('Persisted V4 replay target differs; use --restart to reconcile from the beginning');
+    }
     await assertCheckpoint(state);
     const tracker = v4.createUniswapV4Tracker({ seedPools: context.pools });
     let ranges = 0;

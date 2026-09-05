@@ -8,7 +8,25 @@ const {
   createRobinhoodV4LiquidityReplay,
 } = require('../services/robinhood-v4-liquidity-replay');
 
-async function main(env = process.env) {
+const TARGET_PREFIX = '--target-block=';
+
+function parseArgs(argv = []) {
+  let targetBlock = null;
+  let restart = false;
+  for (const argument of argv) {
+    if (argument === '--restart') restart = true;
+    else if (argument.startsWith(TARGET_PREFIX)) targetBlock = argument.slice(TARGET_PREFIX.length);
+    else throw new Error(`Unknown argument: ${argument}`);
+  }
+  if (targetBlock != null && !/^\d+$/.test(targetBlock)) {
+    throw new Error('--target-block must be a non-negative integer');
+  }
+  if (restart && targetBlock == null) throw new Error('--restart requires --target-block');
+  return { restart, targetBlock };
+}
+
+async function main(argv = process.argv.slice(2), env = process.env) {
+  const args = parseArgs(argv);
   const rpcUrl = String(env.ROBINHOOD_V4_REPLAY_RPC_URL || 'http://127.0.0.1:8547').trim();
   const rpcClient = createEvmJsonRpcClient({
     providers: [{ name: 'robinhood-local', url: rpcUrl }],
@@ -20,6 +38,7 @@ async function main(env = process.env) {
     repository: createRobinhoodV4LiquidityReplayRepository(),
   });
   const result = await replay.run({
+    ...args,
     rangeSize: Number(env.ROBINHOOD_V4_REPLAY_RANGE_SIZE || 1000),
     confirmations: Number(env.ROBINHOOD_V4_REPLAY_CONFIRMATIONS || 2),
     maxRanges: Number(env.ROBINHOOD_V4_REPLAY_MAX_RANGES || 100_000),
@@ -40,4 +59,4 @@ if (require.main === module) {
   }).finally(() => db.pool.end());
 }
 
-module.exports = { main };
+module.exports = { main, parseArgs };

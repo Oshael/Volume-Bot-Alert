@@ -1,5 +1,8 @@
 const db = require('./db');
 
+const PROCESSING_LEASE_KEY = 'robinhood-processing-worker';
+const RECONCILIATION_LOCK_KEY = 'robinhood-v4-liquidity-reconciliation';
+
 function quantity(value, label) {
   const raw = String(value ?? '').trim();
   if (!/^\d+$/.test(raw) && !/^0x[0-9a-f]+$/i.test(raw)) throw new Error(`${label} is invalid`);
@@ -43,16 +46,16 @@ function eventRow(event) {
 function createRobinhoodV4LiquidityReplayRepository(options = {}) {
   const database = options.database || db;
 
-  async function ensureState(targetValue) {
+  async function ensureState(targetValue, input = {}) {
     const targetBlock = quantity(targetValue, 'targetBlock');
     const pools = await database.query(
       `SELECT pool_id, market_key, token_address, quote_address, tick_spacing,
               origin_address, discovery_block
        FROM robinhood_pool_registry
-       WHERE chain = 'robinhood' AND protocol = 'uniswap-v4' AND active = true
+       WHERE chain = 'robinhood' AND protocol = 'uniswap-v4'
        ORDER BY discovery_block, pool_id`
     );
-    if (!pools.rowCount) throw new Error('No active Robinhood V4 pools are registered');
+    if (!pools.rowCount) throw new Error('No Robinhood V4 pools are registered');
     const startBlock = String(pools.rows[0].discovery_block);
     if (BigInt(targetBlock) < BigInt(startBlock)) throw new Error('Replay target precedes V4 discovery');
     await database.query(
@@ -62,6 +65,46 @@ function createRobinhoodV4LiquidityReplayRepository(options = {}) {
        ON CONFLICT (chain) DO NOTHING`,
       [startBlock, targetBlock]
     );
+    if (input.restart === true) {
+      const client = await database.getClient();
+      try {
+        await client.query('BEGIN');
+        await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [RECONCILIATION_LOCK_KEY]);
+        const processing = await client.query(
+          `SELECT EXISTS (
+             SELECT 1 FROM worker_leases WHERE lease_key = $1 AND lease_until > NOW()
+           ) AS active`,
+          [PROCESSING_LEASE_KEY]
+        );
+        if (processing.rows[0]?.active === true) {
+          throw new Error('Robinhood processing worker must be stopped before reconciliation');
+        }
+        const frontier = await client.query(
+          `SELECT MIN(block_number) AS block_number
+             FROM robinhood_head_captures
+            WHERE chain = 'robinhood'
+              AND processing_status IN ('pending', 'leased', 'blocked')`
+        );
+        const firstActive = frontier.rows[0]?.block_number;
+        if (firstActive != null && BigInt(targetBlock) >= BigInt(firstActive)) {
+          throw new Error(`Reconciliation target must precede active capture ${firstActive}`);
+        }
+        await client.query(
+          `UPDATE robinhood_v4_liquidity_replay_state
+              SET start_block = $1, next_block = $1, target_block = $2,
+                  checkpoint_block = NULL, checkpoint_hash = NULL,
+                  status = 'running', version = version + 1, updated_at = NOW()
+            WHERE chain = 'robinhood'`,
+          [startBlock, targetBlock]
+        );
+        await client.query('COMMIT');
+      } catch (error) {
+        try { await client.query('ROLLBACK'); } catch (_) {}
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
     const loaded = await database.query(
       `SELECT * FROM robinhood_v4_liquidity_replay_state WHERE chain = 'robinhood'`
     );
@@ -88,6 +131,15 @@ function createRobinhoodV4LiquidityReplayRepository(options = {}) {
     const client = await database.getClient();
     try {
       await client.query('BEGIN');
+      const processing = await client.query(
+        `SELECT EXISTS (
+           SELECT 1 FROM worker_leases WHERE lease_key = $1 AND lease_until > NOW()
+         ) AS active`,
+        [PROCESSING_LEASE_KEY]
+      );
+      if (processing.rows[0]?.active === true) {
+        throw new Error('Robinhood processing worker must remain stopped during replay');
+      }
       if (rows.length) {
         const written = await client.query(
           `INSERT INTO robinhood_v4_liquidity_deltas (

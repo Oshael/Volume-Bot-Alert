@@ -3334,6 +3334,15 @@ O replay V4 usa `eth_getLogs` em `127.0.0.1:8547`, não altera os watermarks do
 backfill geral e pode ser retomado com `npm run robinhood:v4-liquidity-replay`.
 Depois de `completed`, `npm run robinhood:v4-liquidity-materialize` valida saldos
 não negativos, cria as faixas e ativa sua manutenção atômica pelo worker live.
+Como o conjunto de pools pode crescer depois do replay inicial, uma reconciliação global explícita
+usa `npm run robinhood:v4-liquidity-replay -- --restart --target-block=<N>`. Ela reinicia o cursor
+no primeiro discovery registrado e inclui todos os pools do catálogo, inclusive inativos. O target
+deve ser menor que a captura não terminal mais antiga. O `robinhood-processing` deve permanecer
+parado durante todo o replay; o comando verifica a lease ao reiniciar e a cada commit. Depois do
+replay, execute novamente `npm run robinhood:v4-liquidity-materialize`, refileire somente os
+dead letters V4 já diagnosticados e então religue o processing. Isso fecha lacunas deixadas por
+pools adicionados ao catálogo depois do primeiro replay sem sobrepor a fila ativa. Se o replay for
+interrompido, retome com o mesmo `--target-block`, mas sem `--restart`, para preservar seu cursor.
 Com a Stage 102, swaps V4 valoram o principal das faixas no preço corrente; o
 backfill consulta o ledger no bloco/log do swap, sem usar posições futuras.
 Deltas live negativos atualizam faixas existentes sem tentar inserir saldo negativo.
