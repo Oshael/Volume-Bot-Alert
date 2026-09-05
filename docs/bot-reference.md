@@ -3473,6 +3473,13 @@ prefetched é validado e persistido em uma única transação PostgreSQL, com in
 set-based e um único avanço do frontier; qualquer gap, divergência de parent ou
 falha de escrita reverte o lote inteiro. Um `NOTIFY` por lote acorda os consumidores,
 que continuam usando a outbox durável como fonte e polling apenas para continuidade.
+Antes de remover o túnel temporário do archive, execute
+`npm run robinhood:chain-capture-live-rpc-probe`. O probe é read-only, escolhe
+`ROBINHOOD_CHAIN_CAPTURE_LIVE_RPC_URL` ou, na ausência, `ROBINHOOD_RPC_URL`,
+mascara credenciais e valida chain ID, full block e `eth_getBlockReceipts` em
+dois pontos: head confirmado e profundidade recente de rollback (64 blocos por
+default, ajustável por `ROBINHOOD_CHAIN_CAPTURE_LIVE_PROBE_HISTORY_DEPTH`). Sua
+aprovação apenas comprova capacidade; ela não troca o endpoint do worker.
 
 A Stage 192 completa o contexto de transação com `nonce`, `value_wei` e
 `capture_version`. Aplique `node src/utils/db-init-stage192.js` depois da Stage

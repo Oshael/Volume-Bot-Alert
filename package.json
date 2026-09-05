@@ -85,6 +85,7 @@
     "x:push-probe": "node src/utils/x-push-latency-probe.js",
     "x:push-scale-probe": "node src/utils/x-push-scale-probe.js",
     "robinhood:probe": "node src/utils/robinhood-rpc-probe.js",
+    "robinhood:chain-capture-live-rpc-probe": "node src/utils/probe-robinhood-chain-capture-live-rpc.js",
     "robinhood:public-backfill-probe": "node src/utils/robinhood-public-backfill-probe.js",
     "robinhood:backfill-provider-probe": "node src/utils/robinhood-backfill-provider-probe.js",
     "robinhood:holder-transfer-probe": "node src/utils/robinhood-holder-transfer-probe.js",
