@@ -1160,7 +1160,12 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
         const first = await lockNextApplicableEvent(client, input);
         rows = first ? await lockApplicableTokenEvents(client, first, maxEvents) : [];
       }
-      if (!rows.length) return Object.freeze({ status: 'idle' });
+      if (!rows.length) {
+        if (input.onlyTokenAddress != null) {
+          await refreshExistingHotQueue(client, input.onlyTokenAddress);
+        }
+        return Object.freeze({ status: 'idle' });
+      }
       const locked = await loadLockedBalanceBook(client, rows[0].token_address, rows);
       const computed = computeApplicablePrefix(rows, locked);
       if (computed.suspicion && input.confirmDriftFingerprint != null

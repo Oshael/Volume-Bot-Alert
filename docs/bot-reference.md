@@ -2042,7 +2042,8 @@ normais terminarem antes de alterar journal ou balances; o apply não mantém ma
 Tokens cuja primeira pendência está mais próxima do head vêm primeiro; assim um
 catch-up histórico volumoso não segura as atualizações correntes dos demais. A
 ordem canônica continua obrigatória dentro de cada token. O drain usa então somente
-o caminho indexado por token e mantém afinidade enquanto o lote vier cheio; lote
+o caminho indexado por token; um ticket selecionado sem evento pendente é reconciliado
+e removido sob o mesmo lock transacional. O drain mantém afinidade enquanto o lote vier cheio; lote
 parcial prova que aquele token foi drenado, promove imediatamente um `shadow`
 e evita uma consulta vazia adicional. Cada lote live commitado publica o novo
 holder count imediatamente, sem aguardar o budget inteiro do tick; o mapa do tick

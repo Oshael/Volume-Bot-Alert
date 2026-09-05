@@ -6,6 +6,9 @@ const { setTimeout: delay } = require('node:timers/promises');
 const db = require('../src/models/db');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 const { refreshExistingHotQueue } = require('../src/models/robinhood-holder-hot-queue');
+const {
+  createRobinhoodHolderLedgerRepository,
+} = require('../src/models/robinhood-holder-ledger');
 const { HOT_QUEUE_REPAIR_STATEMENTS, STATEMENTS: HOT_QUEUE_DDL } = require('../src/utils/db-init-stage180');
 const { STATEMENTS: PENDING_INDEX_DDL } = require('../src/utils/db-init-stage121');
 const schema = `test_holder_hot_${process.pid}`;
@@ -28,7 +31,10 @@ before(async () => {
   }
   // A dedicated test schema permits real concurrent sessions without touching
   // shared fixtures. Use production table/index definitions and enqueue trigger.
-  for (const table of ['robinhood_holder_token_states', 'robinhood_holder_transfer_journal']) {
+  for (const table of [
+    'robinhood_holder_token_states', 'robinhood_holder_transfer_journal',
+    'robinhood_holder_cursors',
+  ]) {
     await apply.query(`CREATE TABLE ${table} (LIKE public.${table} INCLUDING ALL)`);
   }
   await apply.query(HOT_QUEUE_DDL[0]);
@@ -42,9 +48,14 @@ before(async () => {
 beforeEach(async () => {
   for (const client of [apply, capture]) await client.query('ROLLBACK');
   await apply.query(`TRUNCATE ${schema}.robinhood_holder_hot_queue,
-    ${schema}.robinhood_holder_transfer_journal, ${schema}.robinhood_holder_token_states`);
+    ${schema}.robinhood_holder_transfer_journal, ${schema}.robinhood_holder_token_states,
+    ${schema}.robinhood_holder_cursors`);
   await apply.query(`INSERT INTO robinhood_holder_token_states
     (token_address, ledger_status, backfill_next_block) VALUES ($1, 'live', 1)`, [TOKEN]);
+  await apply.query(`INSERT INTO robinhood_holder_cursors
+    (chain, stream, next_block, safe_head, checkpoint_block, checkpoint_hash,
+     journal_floor_block, buffer_floor_block)
+    VALUES ('robinhood', 'live', 11, 10, 10, $1, 1, 1)`, [HASH]);
 });
 
 after(async () => {
@@ -160,4 +171,22 @@ it('leaves missing-ticket recovery to the ledger without inventing a new timesta
   assert.equal(await refreshExistingHotQueue(apply, TOKEN), false);
   assert.deepEqual(await readQueue(), []);
   await apply.query('COMMIT');
+});
+
+it('removes a stale selected ticket when its journal is already drained', async () => {
+  await apply.query(`INSERT INTO robinhood_holder_hot_queue (
+    chain, token_address, first_pending_block, last_pending_block,
+    first_enqueued_at, last_enqueued_at
+  ) VALUES ('robinhood', $1, 1, 1, NOW(), NOW())`, [TOKEN]);
+  const repository = createRobinhoodHolderLedgerRepository({
+    database: {
+      async getClient() {
+        return { query: apply.query.bind(apply), release() {} };
+      },
+    },
+  });
+  assert.deepEqual(await repository.applyNextPendingEvent({
+    onlyTokenAddress: TOKEN, maxEvents: 25,
+  }), { status: 'idle' });
+  assert.deepEqual(await readQueue(), []);
 });
