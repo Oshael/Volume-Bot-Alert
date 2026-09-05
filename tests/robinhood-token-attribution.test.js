@@ -116,6 +116,34 @@ describe('Robinhood token creator attribution', () => {
     assert.equal(methods.includes('eth_getBlockReceipts'), true);
   });
 
+  it('processes a bounded canonical page without an RPC client', async () => {
+    let persisted;
+    const source = {
+      getSafeHead: async () => ({ head: '102', safeHead: '100' }),
+      matchesCheckpoint: async () => true,
+      readRange: async () => new Map([['100', {
+        blockNumber: '100', blockHash: BLOCK_HASH,
+        blockTimestamp: '2026-09-05T20:00:00.000Z', deployments: [],
+      }]]),
+    };
+    const repository = {
+      loadDirectCursor: async () => ({
+        next_block: '100', safe_head: '99', checkpoint_block: '99',
+        checkpoint_hash: `0x${'d'.repeat(64)}`,
+      }),
+      recordCreatorBlock: async (input) => {
+        persisted = input;
+        return { attributed: 0 };
+      },
+    };
+    const result = await runDirectCreatorTick({ source, repository, confirmations: 2 });
+    assert.equal(result.status, 'caught-up');
+    assert.equal(result.processedBlocks, 1);
+    assert.equal(persisted.blockHash, BLOCK_HASH);
+    assert.equal(directPrivate.normalizeSource('canonical_journal'), 'canonical_journal');
+    assert.throws(() => directPrivate.normalizeSource('invalid'), /must be rpc/);
+  });
+
   it('fails closed when a direct-creation receipt belongs to another block', async () => {
     const txHash = `0x${'a'.repeat(64)}`;
     const client = {

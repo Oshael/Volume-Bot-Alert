@@ -1,11 +1,5 @@
 'use strict';
 
-const db = require('../models/db');
-const {
-  FACTORIES, decodeLaunchpadCreatorLog,
-} = require('./robinhood-launchpad-creator-adapter');
-
-const CHAIN = 'robinhood';
 const DEFAULT_BLOCKS = 64;
 const DEFAULT_CONCURRENCY = 4;
 const DEFAULT_MIN_DEPLOYMENTS = 1;
@@ -53,69 +47,6 @@ function compareDeployments(legacyItems, canonicalItems) {
       missing_legacy: missingLegacy.slice(0, 10), divergent: divergent.slice(0, 10),
     },
   };
-}
-
-function createCanonicalReader(database = db) {
-  async function readRange(fromBlock, toBlock) {
-    const client = await database.getClient();
-    try {
-      await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
-      const params = [CHAIN, String(fromBlock), String(toBlock)];
-      const [headers, direct, events] = await Promise.all([
-        client.query(
-          `SELECT block_number, block_hash FROM robinhood_chain_blocks
-            WHERE chain=$1 AND canonical=TRUE
-              AND block_number BETWEEN $2::bigint AND $3::bigint
-            ORDER BY block_number`, params
-        ),
-        client.query(
-          `SELECT block.block_number, block.block_hash, transaction.transaction_hash,
-                  transaction.from_address, transaction.contract_address
-             FROM robinhood_chain_transactions transaction
-             JOIN robinhood_chain_blocks block
-               ON block.chain=transaction.chain AND block.block_hash=transaction.block_hash
-            WHERE block.chain=$1 AND block.canonical=TRUE
-              AND block.block_number BETWEEN $2::bigint AND $3::bigint
-              AND transaction.to_address IS NULL
-              AND transaction.contract_address IS NOT NULL`, params
-        ),
-        client.query(
-          `SELECT event.block_number, event.block_hash, event.transaction_hash,
-                  event.address, event.topics, event.data
-             FROM robinhood_chain_events event
-             JOIN robinhood_chain_blocks block
-               ON block.chain=event.chain AND block.block_hash=event.block_hash
-            WHERE block.chain=$1 AND block.canonical=TRUE
-              AND event.block_number BETWEEN $2::bigint AND $3::bigint
-              AND event.address=ANY($4::varchar[]) AND event.topic0=ANY($5::varchar[])
-            ORDER BY event.block_number, event.transaction_index, event.log_index`,
-          [...params, [...FACTORIES.keys()],
-            [...new Set([...FACTORIES.values()].map(({ topic }) => topic))]]
-        ),
-      ]);
-      const blocks = new Map(headers.rows.map((row) => [String(row.block_number), {
-        blockNumber: String(row.block_number), blockHash: row.block_hash, deployments: [],
-      }]));
-      for (const row of direct.rows) blocks.get(String(row.block_number))?.deployments.push({
-        tokenAddress: row.contract_address, creatorAddress: row.from_address,
-        transactionHash: row.transaction_hash, blockNumber: String(row.block_number),
-        blockHash: row.block_hash, factoryAddress: null, launchpadId: null,
-        source: 'rpc_direct',
-      });
-      for (const row of events.rows) blocks.get(String(row.block_number))?.deployments.push(
-        decodeLaunchpadCreatorLog({
-          ...row, blockNumber: String(row.block_number), blockHash: row.block_hash,
-          transactionHash: row.transaction_hash,
-        })
-      );
-      await client.query('ROLLBACK');
-      return blocks;
-    } catch (error) {
-      try { await client.query('ROLLBACK'); } catch (_) {}
-      throw error;
-    } finally { client.release(); }
-  }
-  return Object.freeze({ readRange });
 }
 
 async function mapConcurrent(values, concurrency, mapper) {
@@ -211,5 +142,5 @@ function createRobinhoodCanonicalDirectCreatorCanary(options = {}) {
 
 module.exports = {
   DEFAULT_BLOCKS, DEFAULT_CONCURRENCY, DEFAULT_MIN_DEPLOYMENTS,
-  compareDeployments, createCanonicalReader, createRobinhoodCanonicalDirectCreatorCanary,
+  compareDeployments, createRobinhoodCanonicalDirectCreatorCanary,
 };

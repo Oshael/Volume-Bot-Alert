@@ -3,8 +3,11 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const {
-  compareDeployments, createCanonicalReader, createRobinhoodCanonicalDirectCreatorCanary,
+  compareDeployments, createRobinhoodCanonicalDirectCreatorCanary,
 } = require('../src/services/robinhood-canonical-direct-creator-canary');
+const { createRobinhoodCanonicalDirectCreatorSource } = require(
+  '../src/models/robinhood-canonical-direct-creator-source'
+);
 const { main, parseArgs } = require('../src/utils/audit-robinhood-canonical-direct-creator-canary');
 
 const HASH = `0x${'a'.repeat(64)}`;
@@ -112,8 +115,13 @@ describe('Robinhood canonical direct-creator canary', () => {
       async query(sql, params) {
         calls.push({ sql, params });
         if (sql.startsWith('BEGIN')) return { rows: [] };
+        if (sql.includes('SELECT node_head, checkpoint_block')) {
+          return { rowCount: 1, rows: [{ node_head: '200', checkpoint_block: '200' }] };
+        }
         if (sql.includes('SELECT block_number, block_hash')) {
-          return { rows: [{ block_number: '199', block_hash: HASH }] };
+          return { rows: [{
+            block_number: '199', block_hash: HASH, block_timestamp: '2026-09-05T20:00:00Z',
+          }] };
         }
         if (sql.includes('transaction.contract_address')) return { rows: [{
           block_number: '199', block_hash: HASH, transaction_hash: TX,
@@ -125,11 +133,14 @@ describe('Robinhood canonical direct-creator canary', () => {
       },
       release() { calls.push({ sql: 'RELEASE' }); },
     };
-    const reader = createCanonicalReader({ async getClient() { return client; } });
+    const reader = createRobinhoodCanonicalDirectCreatorSource({
+      database: { async getClient() { return client; } },
+    });
     const blocks = await reader.readRange(199n, 199n);
     assert.equal(blocks.get('199').deployments[0].creatorAddress, CREATOR);
+    assert.equal(blocks.get('199').deployments[0].blockHash, HASH);
     assert.match(calls[0].sql, /REPEATABLE READ READ ONLY/);
-    assert.deepEqual(calls[1].params, ['robinhood', '199', '199']);
+    assert.deepEqual(calls[2].params, ['robinhood', '199', '199']);
     assert.equal(calls.at(-2).sql, 'ROLLBACK');
     assert.equal(calls.at(-1).sql, 'RELEASE');
   });

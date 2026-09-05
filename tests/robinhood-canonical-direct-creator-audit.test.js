@@ -11,7 +11,9 @@ const { main, parseArgs } = require('../src/utils/audit-robinhood-canonical-dire
 function lease(lease_key) {
   return {
     lease_key, active: true, heartbeat_at: '2026-09-05T20:00:00Z',
-    metadata: { telemetry: { running: true, lastError: null } },
+    metadata: { telemetry: {
+      running: true, sourceMode: 'canonical_journal', lastError: null,
+    } },
   };
 }
 
@@ -89,6 +91,16 @@ describe('Robinhood canonical direct-creator audit', () => {
     ]);
   });
 
+  it('requires an active canonical worker during cutover', () => {
+    const state = input();
+    state.phase = 'cutover';
+    state.leases.find(({ lease_key }) => lease_key === LEASE_KEYS.creator)
+      .metadata.telemetry.sourceMode = 'rpc';
+    assert.deepEqual(evaluate(state).blockers, [{
+      code: 'direct_creator_source_not_canonical', detail: 'rpc',
+    }]);
+  });
+
   it('uses a repeatable read-only snapshot and checks at most 200 blocks', async () => {
     const calls = [];
     const fixture = input();
@@ -117,7 +129,8 @@ describe('Robinhood canonical direct-creator audit', () => {
   });
 
   it('rejects CLI arguments and prints the report', async () => {
-    assert.deepEqual(parseArgs([]), {});
+    assert.deepEqual(parseArgs([]), { phase: 'preflight' });
+    assert.deepEqual(parseArgs(['--phase=cutover']), { phase: 'cutover' });
     assert.throws(() => parseArgs(['--write']), /unknown argument/);
     const lines = [];
     const report = await main([], {

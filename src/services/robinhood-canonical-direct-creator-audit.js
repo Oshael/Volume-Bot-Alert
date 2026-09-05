@@ -7,6 +7,7 @@ const CHAIN = 'robinhood';
 const DEFAULT_CONFIRMATIONS = 2;
 const MAX_CAPTURE_LAG = 2n;
 const MAX_CONTEXT_BLOCKS = 200n;
+const PHASES = Object.freeze(['preflight', 'cutover']);
 const LEASE_KEYS = Object.freeze({
   capture: 'robinhood-chain-capture-worker',
   creator: 'robinhood-direct-creator-live-worker',
@@ -36,8 +37,15 @@ function leaseSummary(lease) {
     active: Boolean(lease.active),
     heartbeat_at: lease.heartbeat_at || null,
     running: telemetry.running === true,
+    source_mode: telemetry.sourceMode || null,
     last_error: telemetry.lastError || null,
   });
+}
+
+function phase(value) {
+  const normalized = String(value || 'preflight').trim().toLowerCase();
+  if (!PHASES.includes(normalized)) throw new Error(`phase must be ${PHASES.join(' or ')}`);
+  return normalized;
 }
 
 function calculateFrontiers(row, confirmations) {
@@ -65,7 +73,7 @@ function calculateFrontiers(row, confirmations) {
   };
 }
 
-function migrationBlockers(row, context, frontiers, leases) {
+function migrationBlockers(row, context, frontiers, leases, auditPhase) {
   const blockers = [];
   const add = (condition, code, detail = null) => {
     if (condition) blockers.push(detail == null ? { code } : { code, detail });
@@ -105,12 +113,22 @@ function migrationBlockers(row, context, frontiers, leases) {
     count: Number(context.missing_blocks),
     first_block: text(context.first_missing_block),
   });
+  const creatorLease = leaseSummary(leases.creator);
+  if (auditPhase === 'cutover') {
+    add(!creatorLease.active, 'direct_creator_inactive');
+    add(creatorLease.active && !creatorLease.running, 'direct_creator_not_running');
+    add(creatorLease.active && creatorLease.running
+      && creatorLease.source_mode !== 'canonical_journal',
+    'direct_creator_source_not_canonical', creatorLease.source_mode);
+    add(creatorLease.last_error != null, 'direct_creator_error', creatorLease.last_error);
+  }
   return blockers;
 }
 
 function evaluate(input = {}) {
   const row = input.state || {};
   const context = input.context || {};
+  const auditPhase = phase(input.phase);
   const confirmations = Number(input.confirmations ?? DEFAULT_CONFIRMATIONS);
   if (!Number.isSafeInteger(confirmations) || confirmations < 0 || confirmations > 1000) {
     throw new Error('confirmations must be between 0 and 1000');
@@ -119,9 +137,9 @@ function evaluate(input = {}) {
   const leases = Object.fromEntries(Object.entries(LEASE_KEYS).map(([name, key]) => (
     [name, activeLease(input.leases || [], key)]
   )));
-  const blockers = migrationBlockers(row, context, frontiers, leases);
+  const blockers = migrationBlockers(row, context, frontiers, leases, auditPhase);
   return Object.freeze({
-    mode: 'read-only', ready: blockers.length === 0, blockers,
+    mode: 'read-only', phase: auditPhase, ready: blockers.length === 0, blockers,
     capture: {
       next_block: text(frontiers.captureNext),
       checkpoint_block: text(frontiers.captureCheckpoint),
@@ -163,6 +181,7 @@ function evaluate(input = {}) {
 
 function createRobinhoodCanonicalDirectCreatorAudit(options = {}) {
   const database = options.database || db;
+  const auditPhase = phase(options.phase);
   const confirmations = options.confirmations
     ?? process.env.ROBINHOOD_CONFIRMATIONS
     ?? DEFAULT_CONFIRMATIONS;
@@ -246,7 +265,9 @@ function createRobinhoodCanonicalDirectCreatorAudit(options = {}) {
         [Object.values(LEASE_KEYS)]
       );
       await client.query('ROLLBACK');
-      return evaluate({ state, context, leases: leaseResult.rows, confirmations });
+      return evaluate({
+        state, context, leases: leaseResult.rows, confirmations, phase: auditPhase,
+      });
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch (_) {}
       throw error;
@@ -259,6 +280,6 @@ function createRobinhoodCanonicalDirectCreatorAudit(options = {}) {
 }
 
 module.exports = {
-  DEFAULT_CONFIRMATIONS, LEASE_KEYS, MAX_CONTEXT_BLOCKS,
+  DEFAULT_CONFIRMATIONS, LEASE_KEYS, MAX_CONTEXT_BLOCKS, PHASES,
   createRobinhoodCanonicalDirectCreatorAudit, evaluate,
 };

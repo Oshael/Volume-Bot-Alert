@@ -2,12 +2,13 @@
 
 require('dotenv').config();
 const db = require('../models/db');
+const { createRobinhoodCanonicalDirectCreatorSource } = require('../models/robinhood-canonical-direct-creator-source');
 const { createRobinhoodRpcClient, validateRobinhoodProviderChainIds } = require('../services/robinhood-ingestion-worker');
 const { __private: { scanBlock } } = require('../services/robinhood-direct-creator-worker');
 const { createRobinhoodCanonicalDirectCreatorAudit } = require('../services/robinhood-canonical-direct-creator-audit');
 const {
   DEFAULT_BLOCKS, DEFAULT_CONCURRENCY, DEFAULT_MIN_DEPLOYMENTS,
-  createCanonicalReader, createRobinhoodCanonicalDirectCreatorCanary,
+  createRobinhoodCanonicalDirectCreatorCanary,
 } = require('../services/robinhood-canonical-direct-creator-canary');
 
 function integer(value, fallback, minimum, maximum, label) {
@@ -46,7 +47,8 @@ async function buildCanary(deps = {}) {
   await (deps.validateChainIds || validateRobinhoodProviderChainIds)(client);
   return createRobinhoodCanonicalDirectCreatorCanary({
     readiness: deps.readiness || createRobinhoodCanonicalDirectCreatorAudit({ database }),
-    canonicalReader: deps.canonicalReader || createCanonicalReader(database),
+    canonicalReader: deps.canonicalReader
+      || createRobinhoodCanonicalDirectCreatorSource({ database }),
     scanLegacyBlock: (blockNumber) => scanBlock(client, blockNumber),
   });
 }

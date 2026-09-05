@@ -3825,6 +3825,9 @@ Com `ready=true`, `npm run robinhood:canonical-direct-creator-canary` compara
 uma janela recente de 64 blocos entre o RPC legado e o journal, incluindo hashes,
 deployments externos e eventos conhecidos. Exige ao menos uma criação por padrão;
 `--blocks=200` amplia a amostra sem escrita nem avanço de cursor.
+No corte, configure `ROBINHOOD_DIRECT_CREATOR_LIVE_SOURCE=canonical_journal`,
+reinicie o grupo `robinhood-wallet` e confirme com
+`npm run robinhood:canonical-direct-creator-audit -- --phase=cutover`.
 
 Os contratos locais de atribuição já são fail-closed: o bloco cheio fornece hash,
 número e timestamp para checkpoint; qualquer transação ausente impede escrita
