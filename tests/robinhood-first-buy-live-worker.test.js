@@ -7,10 +7,20 @@ const {
 
 function harness(overrides = {}) {
   const scheduled = [];
+  const cancelled = [];
   const calls = [];
+  let notification;
+  let listenerStopped = false;
   const worker = createRobinhoodFirstBuyLiveWorker({
     schedule(fn, delay) { const entry = { fn, delay }; scheduled.push(entry); return entry; },
-    cancelSchedule() {},
+    cancelSchedule(entry) { cancelled.push(entry); },
+    listenerFactory(options) {
+      notification = options.onNotification;
+      return {
+        async start() { calls.push(['listener-start', options.channel]); },
+        async stop() { listenerStopped = true; },
+      };
+    },
     sourceCursorFactory: () => ({ source: true }),
     liveCursorFactory: () => ({ cursor: true }),
     writerFactory: () => ({ writer: true }),
@@ -24,7 +34,11 @@ function harness(overrides = {}) {
       };
     }),
   });
-  return { calls, scheduled, worker };
+  return {
+    calls, cancelled, scheduled, worker,
+    notify: () => notification?.({ channel: 'robinhood_wallet_swap_live' }),
+    listenerStopped: () => listenerStopped,
+  };
 }
 
 describe('Robinhood first-buy LIVE worker', () => {
@@ -42,9 +56,10 @@ describe('Robinhood first-buy LIVE worker', () => {
     assert.equal(status.totalRowsScanned, 10);
     assert.equal(status.totalFactsWritten, 3);
     assert.equal(status.lagMs, 300_000);
-    assert.equal(context.calls[0][2].seedRunId, '7');
+    assert.equal(context.calls[1][2].seedRunId, '7');
     assert.equal(context.scheduled[1].delay, 1000);
     await context.worker.stop();
+    assert.equal(context.listenerStopped(), true);
   });
 
   it('halts its lease owner when canonical evidence becomes unsafe', async () => {
@@ -72,9 +87,21 @@ describe('Robinhood first-buy LIVE worker', () => {
       maxErrorBackoffMs: 999_999, rangeSeconds: 999_999,
     });
     await second.scheduled[0].fn();
-    assert.equal(second.calls[0][2].intervalMs, 250);
-    assert.equal(second.calls[0][2].maxErrorBackoffMs, 300_000);
-    assert.equal(second.calls[0][2].rangeSeconds, 86_400);
+    assert.equal(second.calls[1][2].intervalMs, 250);
+    assert.equal(second.calls[1][2].maxErrorBackoffMs, 300_000);
+    assert.equal(second.calls[1][2].rangeSeconds, 86_400);
     await second.worker.stop();
+  });
+
+  it('wakes immediately when the committed wallet-swap cursor advances', async () => {
+    const context = harness();
+    context.worker.start({ enabled: true, seedRunId: 10, intervalMs: 30_000 });
+    await context.scheduled[0].fn();
+    assert.equal(context.scheduled[1].delay, 30_000);
+    context.notify();
+    assert.deepEqual(context.cancelled, [context.scheduled[1]]);
+    assert.equal(context.scheduled[2].delay, 0);
+    assert.equal(context.worker.getStatus().totalWakeups, 1);
+    await context.worker.stop();
   });
 });

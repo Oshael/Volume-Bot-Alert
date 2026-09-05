@@ -3203,8 +3203,10 @@ O first-buy não lê RPC nem o journal de chain diretamente: sua fonte durável 
 read-only e verifica capture, checkpoint canônico do wallet-swap, lease/fonte do
 wallet-swap, seed e fronteiras do first-buy. Não existe canário RPC nem flag de
 fonte adicional para first-buy; `ready=true` confirma que sua entrada já é uma
-projeção do journal canônico. O polling de dois segundos continua apenas como
-cadência do consumidor PostgreSQL até a adoção do wake-up pós-commit.
+projeção do journal canônico. Todo avanço durável do cursor wallet-swap publica
+`robinhood_wallet_swap_live` na mesma transação PostgreSQL; o first-buy escuta
+esse canal e roda imediatamente após o commit. O polling de dois segundos
+permanece como retry/reconciliação caso uma notificação seja perdida.
 
 Cadastros usam um manifesto JSON append-only com `entries`; cada entrada contém
 `address`, `kind`, `label`, `source`, `evidence`, `validFromBlock`,

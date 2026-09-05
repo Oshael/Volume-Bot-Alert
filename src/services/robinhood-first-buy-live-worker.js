@@ -1,3 +1,4 @@
+const db = require('../models/db');
 const {
   createRobinhoodFirstBuyLiveCursorRepository,
 } = require('../models/robinhood-first-buy-live-cursor');
@@ -5,8 +6,9 @@ const {
   createRobinhoodWalletTokenFirstBuyRepository,
 } = require('../models/robinhood-wallet-token-first-buy');
 const {
-  createRobinhoodWalletSwapCursorRepository,
+  createRobinhoodWalletSwapCursorRepository, LIVE_NOTIFY_CHANNEL,
 } = require('../models/robinhood-wallet-swap-cursor');
+const { createPostgresRealtimeListener } = require('./postgres-realtime-listener');
 const { runFirstBuyLiveTick } = require('./robinhood-first-buy-live-runner');
 
 const FATAL_CODES = new Set([
@@ -42,6 +44,7 @@ function createRobinhoodFirstBuyLiveWorker(deps = {}) {
   let options = normalizeOptions();
   let runtime = null;
   let timer = null;
+  let listener = null;
   let active = null;
   let running = false;
   let onFatal = null;
@@ -49,7 +52,7 @@ function createRobinhoodFirstBuyLiveWorker(deps = {}) {
     enabled: false, running: false, inFlight: false, halted: false,
     totalRuns: 0, totalRowsScanned: 0, totalFactsConsidered: 0, totalFactsWritten: 0,
     consecutiveErrors: 0, lagMs: null, lastResult: null,
-    lastError: null, lastCompletedAt: null,
+    lastError: null, lastCompletedAt: null, totalWakeups: 0, listenerError: null,
   };
 
   function getRuntime() {
@@ -67,6 +70,8 @@ function createRobinhoodFirstBuyLiveWorker(deps = {}) {
     status.halted = true;
     if (timer) cancelSchedule(timer);
     timer = null;
+    await Promise.resolve(listener?.stop?.()).catch(() => {});
+    listener = null;
     try { await onFatal?.(error); } catch (fatalError) {
       logger.error('[RobinhoodFirstBuyLiveWorker] Fatal propagation failed:', fatalError.message);
     }
@@ -107,8 +112,9 @@ function createRobinhoodFirstBuyLiveWorker(deps = {}) {
   }
 
   function queueNext(delayMs) {
-    if (!running || status.halted) return;
+    if (!running || status.halted || timer) return;
     timer = schedule(async () => {
+      timer = null;
       await runOnce();
       const backoff = Math.min(
         options.maxErrorBackoffMs,
@@ -117,6 +123,14 @@ function createRobinhoodFirstBuyLiveWorker(deps = {}) {
       queueNext(status.consecutiveErrors ? backoff : options.intervalMs);
     }, delayMs);
     timer?.unref?.();
+  }
+
+  function wake() {
+    if (!running || status.halted) return;
+    status.totalWakeups += 1;
+    if (timer) cancelSchedule(timer);
+    timer = null;
+    queueNext(0);
   }
 
   function start(input = {}) {
@@ -128,6 +142,18 @@ function createRobinhoodFirstBuyLiveWorker(deps = {}) {
     if (!options.seedRunId) throw new Error('first-buy LIVE seedRunId is required');
     running = true;
     status.running = true;
+    listener = (deps.listenerFactory || createPostgresRealtimeListener)({
+      channel: LIVE_NOTIFY_CHANNEL,
+      label: 'RobinhoodFirstBuyLiveWorker',
+      pool: deps.pool || db.pool,
+      onNotification: wake,
+      onConnected: () => { status.listenerError = null; },
+    });
+    Promise.resolve(listener.start()).catch((error) => {
+      status.listenerError = String(error?.message || error).slice(0, 500);
+      logger.warn('[RobinhoodFirstBuyLiveWorker] Listener failed; polling fallback active:',
+        status.listenerError);
+    });
     queueNext(0);
     return true;
   }
@@ -137,6 +163,8 @@ function createRobinhoodFirstBuyLiveWorker(deps = {}) {
     status.running = false;
     if (timer) cancelSchedule(timer);
     timer = null;
+    await Promise.resolve(listener?.stop?.()).catch(() => {});
+    listener = null;
     if (active) await active.catch(() => {});
   }
 
@@ -151,5 +179,5 @@ module.exports = {
   runOnce: worker.runOnce,
   start: worker.start,
   stop: worker.stop,
-  __private: { normalizeOptions },
+  LIVE_NOTIFY_CHANNEL, __private: { normalizeOptions },
 };

@@ -9,6 +9,7 @@
 const db = require('./db');
 
 const CHAIN = 'robinhood';
+const LIVE_NOTIFY_CHANNEL = 'robinhood_wallet_swap_live';
 const STREAMS = new Set(['seed', 'live']);
 const TERMINAL_SEED_STATES = new Set(['complete', 'abandoned']);
 
@@ -217,7 +218,8 @@ function createRobinhoodWalletSwapCursorRepository(options = {}) {
       nextBlock
     );
     const result = await database.query(
-      `UPDATE robinhood_wallet_swap_cursors
+      `WITH advanced AS (
+       UPDATE robinhood_wallet_swap_cursors
        SET next_block = $3::bigint,
            safe_head = CASE
              WHEN $4::bigint IS NULL THEN safe_head
@@ -239,10 +241,12 @@ function createRobinhoodWalletSwapCursorRepository(options = {}) {
            OR $5::bigint IS NULL
            OR checkpoint_block <= $5::bigint
          )
-       RETURNING *`,
+       RETURNING *
+       ) SELECT advanced.*, pg_notify($9, advanced.next_block::text) AS notified
+           FROM advanced`,
       [
         CHAIN, 'live', nextBlock, safeHead, checkpointBlock, checkpointHash,
-        checkpointTimestamp, Number(input.expectedVersion),
+        checkpointTimestamp, Number(input.expectedVersion), LIVE_NOTIFY_CHANNEL,
       ]
     );
     return normalizeCursor(result.rows[0]);
@@ -297,7 +301,7 @@ function createRobinhoodWalletSwapCursorRepository(options = {}) {
 }
 
 module.exports = {
-  createRobinhoodWalletSwapCursorRepository,
+  createRobinhoodWalletSwapCursorRepository, LIVE_NOTIFY_CHANNEL,
   STREAMS,
   __private: { normalizeCursor, checkpointPair, liveCheckpoint, buildRetentionGate },
 };
