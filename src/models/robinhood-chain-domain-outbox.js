@@ -47,16 +47,18 @@ function createRobinhoodChainDomainOutboxRepository(options = {}) {
            FROM robinhood_chain_domain_outbox
           WHERE chain=$1 AND status<>'complete'
           ORDER BY block_number LIMIT $4
+       ), frontier_bounds AS MATERIALIZED (
+         SELECT MIN(block_number) AS first_block, MAX(block_number) AS last_block
+           FROM frontiers
        ), readiness AS MATERIALIZED (
-         SELECT frontier.block_number,
-                NOT EXISTS (
-                  SELECT 1 FROM robinhood_chain_domain_outbox gate
-                   WHERE gate.chain=$1 AND gate.block_number=frontier.block_number
-                     AND gate.status<>'complete'
-                     AND (gate.status<>'pending'
-                          OR gate.next_attempt_at>clock_timestamp())
-                ) AS ready
-           FROM frontiers frontier
+         SELECT outbox.block_number,
+                BOOL_AND(outbox.status='pending'
+                         AND outbox.next_attempt_at<=clock_timestamp()) AS ready
+           FROM robinhood_chain_domain_outbox outbox
+           CROSS JOIN frontier_bounds bounds
+          WHERE outbox.chain=$1 AND outbox.status<>'complete'
+            AND outbox.block_number BETWEEN bounds.first_block AND bounds.last_block
+          GROUP BY outbox.block_number
        ), ready AS (
          SELECT block_number FROM (
            SELECT block_number,

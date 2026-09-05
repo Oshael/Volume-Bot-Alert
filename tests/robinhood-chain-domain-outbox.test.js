@@ -21,7 +21,9 @@ describe('Robinhood chain domain outbox', () => {
     }), []);
     assert.match(calls[0].sql, /WITH frontiers AS MATERIALIZED/);
     assert.match(calls[0].sql, /SELECT DISTINCT block_number/);
+    assert.match(calls[0].sql, /frontier_bounds AS MATERIALIZED/);
     assert.match(calls[0].sql, /readiness AS MATERIALIZED/);
+    assert.match(calls[0].sql, /block_number BETWEEN bounds\.first_block AND bounds\.last_block/);
     assert.match(calls[0].sql, /claimable AS MATERIALIZED/);
     assert.match(calls[0].sql, /lease_until=clock_timestamp\(\)/);
     assert.deepEqual(calls[0].params, ['robinhood', 'canonical-head', 60_000, 16]);
