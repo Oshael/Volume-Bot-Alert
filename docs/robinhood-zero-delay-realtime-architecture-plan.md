@@ -387,7 +387,8 @@ que 500 linhas.
 - claim de até 16 frontiers por rodada e concorrência de evidência elevada para
   remover a serialização que deixou o canário atrás da chain (3K concluída);
 - paridade semântica do contrato live (`volatile_drift` somente para preço/supply
-  latest) e backlog calculado apenas sobre a fronteira madura (3L concluída);
+  latest, `quality_upgrade` somente para V3 legado indisponível→snapshot observado)
+  e backlog calculado apenas sobre a fronteira madura (3L concluída);
 - preservação da evidência e idempotência atuais;
 - comparação com `robinhood_head_captures` existente;
 - cutover dos dois pollers `eth_getLogs` do head.

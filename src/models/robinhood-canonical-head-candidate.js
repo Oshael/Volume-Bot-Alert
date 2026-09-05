@@ -37,10 +37,24 @@ const LEGACY_SHAPE_SAME = `legacy.stream=candidate.stream
   AND legacy.market_key IS NOT DISTINCT FROM candidate.market_key
   AND legacy.evidence_version=candidate.evidence_version`;
 const LEGACY_SAME = `${LEGACY_SHAPE_SAME} AND legacy.evidence=candidate.evidence`;
+const LEGACY_VOLATILE_SAME = `candidate.stream='market'
+  AND legacy.evidence #- '{quoteUsd,priceUsd}' #- '{tokenMetadata,totalSupplyRaw}'
+    = candidate.evidence #- '{quoteUsd,priceUsd}' #- '{tokenMetadata,totalSupplyRaw}'`;
+const LEGACY_V3_QUALITY_UPGRADE = `candidate.stream='market'
+  AND candidate.protocol='uniswap-v3'
+  AND legacy.evidence #>> '{v3,balanceStatus}'='unavailable_backfill'
+  AND legacy.evidence #> '{v3,tokenBalanceRaw}'='null'::jsonb
+  AND legacy.evidence #> '{v3,quoteBalanceRaw}'='null'::jsonb
+  AND candidate.evidence #>> '{v3,balanceStatus}'='observed'
+  AND candidate.evidence #>> '{v3,tokenBalanceRaw}' ~ '^\\d+$'
+  AND candidate.evidence #>> '{v3,quoteBalanceRaw}' ~ '^\\d+$'
+  AND legacy.evidence #- '{quoteUsd,priceUsd}' #- '{tokenMetadata,totalSupplyRaw}'
+      #- '{v3,balanceStatus}' #- '{v3,tokenBalanceRaw}' #- '{v3,quoteBalanceRaw}'
+    = candidate.evidence #- '{quoteUsd,priceUsd}' #- '{tokenMetadata,totalSupplyRaw}'
+      #- '{v3,balanceStatus}' #- '{v3,tokenBalanceRaw}' #- '{v3,quoteBalanceRaw}'`;
 const LEGACY_COMPATIBLE = `${LEGACY_SHAPE_SAME}
-  AND (legacy.evidence=candidate.evidence OR (candidate.stream='market'
-    AND legacy.evidence #- '{quoteUsd,priceUsd}' #- '{tokenMetadata,totalSupplyRaw}'
-      = candidate.evidence #- '{quoteUsd,priceUsd}' #- '{tokenMetadata,totalSupplyRaw}'))`;
+  AND (legacy.evidence=candidate.evidence OR (${LEGACY_VOLATILE_SAME})
+    OR (${LEGACY_V3_QUALITY_UPGRADE}))`;
 const MATURE = 'cursor.next_block IS NOT NULL AND candidate.block_number < cursor.next_block';
 
 function optionalBlock(value, label) {
@@ -116,7 +130,11 @@ function createRobinhoodCanonicalHeadCandidateRepository(options = {}) {
               COUNT(*) FILTER (WHERE ${MATURE} AND legacy.chain IS NOT NULL
                 AND ${LEGACY_SAME})::int AS matched,
               COUNT(*) FILTER (WHERE ${MATURE} AND legacy.chain IS NOT NULL
-                AND ${LEGACY_COMPATIBLE} AND NOT (${LEGACY_SAME}))::int AS volatile_drift,
+                AND ${LEGACY_SHAPE_SAME}
+                AND ${LEGACY_V3_QUALITY_UPGRADE})::int AS quality_upgrade,
+              COUNT(*) FILTER (WHERE ${MATURE} AND legacy.chain IS NOT NULL
+                AND ${LEGACY_COMPATIBLE} AND NOT (${LEGACY_SAME})
+                AND NOT (${LEGACY_V3_QUALITY_UPGRADE}))::int AS volatile_drift,
               COUNT(*) FILTER (WHERE ${MATURE} AND legacy.chain IS NOT NULL
                 AND NOT (${LEGACY_COMPATIBLE}))::int AS divergent,
               MIN(candidate.block_number)::text AS first_block,

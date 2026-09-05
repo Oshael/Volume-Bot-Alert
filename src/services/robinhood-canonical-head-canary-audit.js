@@ -70,7 +70,8 @@ function evaluate(input) {
   const parity = Object.fromEntries(['discovery', 'market'].map((stream) => (
     [stream, input.parity.find((row) => row.stream === stream) || {
       stream, candidates: 0, mature_candidates: 0, awaiting_legacy: 0,
-      missing_legacy: 0, matched: 0, volatile_drift: 0, divergent: 0,
+      missing_legacy: 0, matched: 0, quality_upgrade: 0,
+      volatile_drift: 0, divergent: 0,
     }]
   )));
   const blockers = [];

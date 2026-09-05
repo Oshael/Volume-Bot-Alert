@@ -123,11 +123,15 @@ describe('Robinhood canonical chain capture journal', () => {
       blockHash: HASH, address: ADDRESS, topics: [TOPIC], data: '0x',
     };
     const canonical = {
-      stream: 'market', log, protocol: 'uniswap-v2', marketKey: 'pool-a',
+      stream: 'market', log, protocol: 'uniswap-v3', marketKey: 'pool-a',
       evidenceVersion: 2,
       evidence: {
         source: 'canonical', quoteUsd: { priceUsd: '1', source: 'pool' },
         tokenMetadata: { totalSupplyRaw: '10', decimals: 18 },
+        v3: {
+          poolAddress: ADDRESS, blockTag: '0x64', balanceStatus: 'observed',
+          tokenBalanceRaw: '100', quoteBalanceRaw: '200', sqrtPriceX96: '300',
+        },
       },
     };
     const candidates = createRobinhoodCanonicalHeadCandidateRepository();
@@ -139,13 +143,14 @@ describe('Robinhood canonical chain capture journal', () => {
     });
     assert.deepEqual(await candidates.getParitySummary({ fromBlock: 100, toBlock: 100 }), [{
       stream: 'market', candidates: 1, mature_candidates: 0, awaiting_legacy: 1,
-      missing_legacy: 0, matched: 0, volatile_drift: 0,
+      missing_legacy: 0, matched: 0, quality_upgrade: 0, volatile_drift: 0,
       divergent: 0, first_block: '100', last_block: '100',
     }]);
     await createRobinhoodHeadCaptureRepository().appendCaptureEntries({ entries: [canonical] });
     assert.deepEqual(await candidates.getParitySummary({ fromBlock: 100, toBlock: 100 }), [{
       stream: 'market', candidates: 1, mature_candidates: 0, awaiting_legacy: 1,
-      missing_legacy: 0, matched: 0, volatile_drift: 0, divergent: 0,
+      missing_legacy: 0, matched: 0, quality_upgrade: 0,
+      volatile_drift: 0, divergent: 0,
       first_block: '100', last_block: '100',
     }]);
     await db.query(
@@ -155,7 +160,8 @@ describe('Robinhood canonical chain capture journal', () => {
     );
     assert.deepEqual(await candidates.getParitySummary({ fromBlock: 100, toBlock: 100 }), [{
       stream: 'market', candidates: 1, mature_candidates: 1, awaiting_legacy: 0,
-      missing_legacy: 0, matched: 1, volatile_drift: 0, divergent: 0,
+      missing_legacy: 0, matched: 1, quality_upgrade: 0,
+      volatile_drift: 0, divergent: 0,
       first_block: '100', last_block: '100',
     }]);
     await db.query(
@@ -177,17 +183,39 @@ describe('Robinhood canonical chain capture journal', () => {
     );
     assert.deepEqual(await candidates.getParitySummary({ fromBlock: 100, toBlock: 100 }), [{
       stream: 'market', candidates: 1, mature_candidates: 1, awaiting_legacy: 0,
-      missing_legacy: 0, matched: 0, volatile_drift: 1, divergent: 0,
+      missing_legacy: 0, matched: 0, quality_upgrade: 0,
+      volatile_drift: 1, divergent: 0,
+      first_block: '100', last_block: '100',
+    }]);
+    const upgraded = {
+      ...volatile,
+      v3: {
+        ...volatile.v3,
+        balanceStatus: 'unavailable_backfill',
+        tokenBalanceRaw: null,
+        quoteBalanceRaw: null,
+      },
+    };
+    await db.query(
+      `UPDATE robinhood_head_captures SET evidence=$1::jsonb
+        WHERE chain='robinhood' AND transaction_hash=$2 AND log_index=0`,
+      [JSON.stringify(upgraded), TX]
+    );
+    assert.deepEqual(await candidates.getParitySummary({ fromBlock: 100, toBlock: 100 }), [{
+      stream: 'market', candidates: 1, mature_candidates: 1, awaiting_legacy: 0,
+      missing_legacy: 0, matched: 0, quality_upgrade: 1,
+      volatile_drift: 0, divergent: 0,
       first_block: '100', last_block: '100',
     }]);
     await db.query(
       `UPDATE robinhood_head_captures SET evidence=$1::jsonb
         WHERE chain='robinhood' AND transaction_hash=$2 AND log_index=0`,
-      [JSON.stringify({ ...volatile, source: 'legacy' }), TX]
+      [JSON.stringify({ ...upgraded, source: 'legacy' }), TX]
     );
     assert.deepEqual(await candidates.getParitySummary({ fromBlock: 100, toBlock: 100 }), [{
       stream: 'market', candidates: 1, mature_candidates: 1, awaiting_legacy: 0,
-      missing_legacy: 0, matched: 0, volatile_drift: 0, divergent: 1,
+      missing_legacy: 0, matched: 0, quality_upgrade: 0,
+      volatile_drift: 0, divergent: 1,
       first_block: '100', last_block: '100',
     }]);
     await assert.rejects(candidates.appendCaptureEntries({ entries: [{

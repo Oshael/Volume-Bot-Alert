@@ -3566,6 +3566,11 @@ Na evidência market, `quoteUsd.priceUsd` e
 mudar entre os dois writers do canário. Diferença somente nesses valores aparece
 como `volatile_drift` e não bloqueia; source/status/block tag, metadata estável,
 aceitação/rejeição e toda evidência de protocolo continuam exigindo igualdade.
+Quando o legado capturou V3 em catch-up como `unavailable_backfill`, mas o journal
+preservou o sidecar do mesmo bloco como `observed`, a auditoria aceita somente
+essa promoção exata como `quality_upgrade`; identidade, bloco, pool, `sqrtPriceX96`
+e todos os demais campos continuam exigindo igualdade. Downgrade, saldos ausentes
+ou qualquer outra diferença V3 permanecem `divergent` e bloqueiam o cutover.
 Discovery permanece byte-exact. O tracker V2 mantém o estado mutável de reservas
 separado do evento `PairCreated`: `Sync` atualiza os saldos usados por swaps sem
 alterar a evidência de criação, mesmo quando discovery e market são persistidos
