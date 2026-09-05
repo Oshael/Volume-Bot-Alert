@@ -220,7 +220,9 @@ describe('Robinhood V4 liquidity replay', () => {
     const calls = [];
     const client = { async query(sql, params) {
       calls.push({ sql, params });
-      if (/INSERT INTO robinhood_v4_liquidity_deltas/.test(sql)) return { rowCount: 1, rows: [{}] };
+      if (/INSERT INTO robinhood_v4_liquidity_deltas/.test(sql)) {
+        return { rowCount: 1, rows: [{ compatible: '1' }] };
+      }
       if (/UPDATE robinhood_v4_liquidity_replay_state/.test(sql)) return {
         rowCount: 1,
         rows: [{ start_block: 100, next_block: 101, target_block: 100,
@@ -236,6 +238,9 @@ describe('Robinhood V4 liquidity replay', () => {
       fromBlock: '100', toBlock: '100', checkpointHash: HASH, events: [event],
     });
     assert.equal(result.state.status, 'completed');
+    const deltaWrite = calls.find(({ sql }) => /INSERT INTO robinhood_v4_liquidity_deltas/.test(sql));
+    assert.match(deltaWrite.sql, /ON CONFLICT \(chain, transaction_hash, log_index\) DO NOTHING/);
+    assert.doesNotMatch(deltaWrite.sql, /DO UPDATE/);
     assert.equal(calls[0].sql, 'BEGIN');
     assert.equal(calls.at(-1).sql, 'COMMIT');
   });

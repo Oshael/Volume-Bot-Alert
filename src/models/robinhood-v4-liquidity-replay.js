@@ -141,35 +141,49 @@ function createRobinhoodV4LiquidityReplayRepository(options = {}) {
         throw new Error('Robinhood processing worker must remain stopped during replay');
       }
       if (rows.length) {
-        const written = await client.query(
-          `INSERT INTO robinhood_v4_liquidity_deltas (
-             chain, transaction_hash, log_index, block_number, block_hash,
-             pool_id, market_key, sender, tick_lower, tick_upper,
-             liquidity_delta, salt, observed_at
-           ) SELECT 'robinhood', "transactionHash", "logIndex"::bigint,
-                    "blockNumber"::bigint, "blockHash", "poolId", "marketKey", sender,
-                    "tickLower", "tickUpper", "liquidityDelta"::numeric, salt, "observedAt"
-             FROM jsonb_to_recordset($1::jsonb) AS event(
+        const checked = await client.query(
+          `WITH input AS MATERIALIZED (
+             SELECT * FROM jsonb_to_recordset($1::jsonb) AS event(
                "transactionHash" text, "logIndex" text, "blockNumber" text,
                "blockHash" text, "poolId" text, "marketKey" text, sender text,
                "tickLower" int, "tickUpper" int, "liquidityDelta" text,
                salt text, "observedAt" timestamptz)
-           ON CONFLICT (chain, transaction_hash, log_index) DO UPDATE
-             SET transaction_hash = EXCLUDED.transaction_hash
-             WHERE robinhood_v4_liquidity_deltas.block_number = EXCLUDED.block_number
-               AND robinhood_v4_liquidity_deltas.block_hash = EXCLUDED.block_hash
-               AND robinhood_v4_liquidity_deltas.pool_id = EXCLUDED.pool_id
-               AND robinhood_v4_liquidity_deltas.market_key = EXCLUDED.market_key
-               AND robinhood_v4_liquidity_deltas.sender = EXCLUDED.sender
-               AND robinhood_v4_liquidity_deltas.tick_lower = EXCLUDED.tick_lower
-               AND robinhood_v4_liquidity_deltas.tick_upper = EXCLUDED.tick_upper
-               AND robinhood_v4_liquidity_deltas.liquidity_delta = EXCLUDED.liquidity_delta
-               AND robinhood_v4_liquidity_deltas.salt = EXCLUDED.salt
-               AND robinhood_v4_liquidity_deltas.observed_at = EXCLUDED.observed_at
-           RETURNING transaction_hash`,
+           ), inserted AS (
+             INSERT INTO robinhood_v4_liquidity_deltas (
+               chain, transaction_hash, log_index, block_number, block_hash,
+               pool_id, market_key, sender, tick_lower, tick_upper,
+               liquidity_delta, salt, observed_at
+             ) SELECT 'robinhood', "transactionHash", "logIndex"::bigint,
+                      "blockNumber"::bigint, "blockHash", "poolId", "marketKey", sender,
+                      "tickLower", "tickUpper", "liquidityDelta"::numeric, salt, "observedAt"
+                 FROM input
+             ON CONFLICT (chain, transaction_hash, log_index) DO NOTHING
+             RETURNING transaction_hash
+           ), compatible_existing AS (
+             SELECT input."transactionHash"
+               FROM input
+               JOIN robinhood_v4_liquidity_deltas existing
+                 ON existing.chain = 'robinhood'
+                AND existing.transaction_hash = input."transactionHash"
+                AND existing.log_index = input."logIndex"::bigint
+              WHERE existing.block_number = input."blockNumber"::bigint
+                AND existing.block_hash = input."blockHash"
+                AND existing.pool_id = input."poolId"
+                AND existing.market_key = input."marketKey"
+                AND existing.sender = input.sender
+                AND existing.tick_lower = input."tickLower"
+                AND existing.tick_upper = input."tickUpper"
+                AND existing.liquidity_delta = input."liquidityDelta"::numeric
+                AND existing.salt = input.salt
+                AND existing.observed_at = input."observedAt"
+           )
+           SELECT (SELECT COUNT(*) FROM inserted)
+                + (SELECT COUNT(*) FROM compatible_existing) AS compatible`,
           [JSON.stringify(rows)]
         );
-        if (written.rowCount !== rows.length) throw new Error('Replay conflicts with persisted V4 liquidity');
+        if (Number(checked.rows[0]?.compatible) !== rows.length) {
+          throw new Error('Replay conflicts with persisted V4 liquidity');
+        }
       }
       const advanced = await client.query(
         `UPDATE robinhood_v4_liquidity_replay_state
