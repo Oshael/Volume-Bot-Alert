@@ -3466,6 +3466,11 @@ worker atual lê o journal e nenhuma projeção ou publicação é alterada. Ele
 `ROBINHOOD_CHAIN_CAPTURE_START_BLOCK`. O limite por drenagem é configurado por
 `ROBINHOOD_CHAIN_CAPTURE_MAX_BLOCKS_PER_DRAIN` (default 100) e a confirmação
 por `ROBINHOOD_CHAIN_CAPTURE_CONFIRMATIONS` (default 2).
+As leituras de bloco e receipts fazem prefetch limitado entre blocos por
+`ROBINHOOD_CHAIN_CAPTURE_FETCH_CONCURRENCY` (default 8, máximo 16); snapshots V3
+e commits permanecem estritamente sequenciais para preservar o tracker e o
+frontier canônico. Aumentar essa concorrência acelera catch-up no RPC loopback
+sem criar writers concorrentes no PostgreSQL.
 
 A Stage 192 completa o contexto de transação com `nonce`, `value_wei` e
 `capture_version`. Aplique `node src/utils/db-init-stage192.js` depois da Stage

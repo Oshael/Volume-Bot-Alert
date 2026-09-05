@@ -1604,6 +1604,9 @@ module.exports = {
     maxBlocksPerDrain: parseIntegerInRange(
       process.env.ROBINHOOD_CHAIN_CAPTURE_MAX_BLOCKS_PER_DRAIN, 100, 1, 2000
     ),
+    fetchConcurrency: parseIntegerInRange(
+      process.env.ROBINHOOD_CHAIN_CAPTURE_FETCH_CONCURRENCY, 8, 1, 16
+    ),
     v3SnapshotWindowBlocks: parseIntegerInRange(
       process.env.ROBINHOOD_CHAIN_CAPTURE_V3_SNAPSHOT_WINDOW_BLOCKS, 32, 1, 256
     ),

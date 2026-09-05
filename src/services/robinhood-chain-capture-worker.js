@@ -170,6 +170,7 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
   const now = deps.now || (() => new Date());
   const schedule = deps.schedule || setTimeout; const cancel = deps.cancel || clearTimeout;
   const topics = new Set(options.topics || CAPTURE_TOPICS);
+  const fetchConcurrency = Math.max(1, Math.min(16, Number(options.fetchConcurrency) || 8));
   const v3SnapshotWindowBlocks = BigInt(options.v3SnapshotWindowBlocks ?? 32);
   const status = { running: false, mode: 'shadow_receipts', lastResult: null, lastError: null,
     nodeHead: null, nextBlock: null, lagBlocks: null, lastHeadObservedAt: null,
@@ -177,7 +178,7 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
     lastCompletedAt: null, inFlight: false, totalErrors: 0, consecutiveErrors: 0,
     lastTiming: null, blocks: 0, transactions: 0, events: 0,
     v3Snapshots: 0, v3MissedPools: 0, v3SkippedPools: 0,
-    v3SnapshotWindowBlocks: Number(v3SnapshotWindowBlocks) };
+    fetchConcurrency, v3SnapshotWindowBlocks: Number(v3SnapshotWindowBlocks) };
   let timer = null; let inFlight = null; let requested = false;
   const subscription = createHeadSubscription(options.wsUrl, () => {
     status.lastHeadObservedAt = now().toISOString(); void kick();
@@ -187,6 +188,53 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
   function recordFrontier(nodeHead, nextBlock) {
     status.nextBlock = nextBlock.toString();
     status.lagBlocks = Number(nodeHead >= nextBlock ? nodeHead - nextBlock + 1n : 0n);
+  }
+  async function fetchBlockBatch(nextBlock, through) {
+    const remaining = through - nextBlock + 1n;
+    const batchSize = Math.min(fetchConcurrency, Number(remaining));
+    return Promise.all(Array.from({ length: batchSize }, async (_, offset) => {
+      const blockNumber = nextBlock + BigInt(offset);
+      const startedAt = now();
+      const capture = await readReceiptBlock(deps.rpcClient, blockNumber, { topics });
+      return { blockNumber, capture, startedAt, receiptsAvailableAt: now() };
+    }));
+  }
+  async function commitBlockBatch(fetched, nodeHead) {
+    let nextBlock;
+    for (const entry of fetched) {
+      const { blockNumber, capture, startedAt, receiptsAvailableAt } = entry;
+      const observedAt = status.lastHeadObservedAt || startedAt.toISOString();
+      const v3State = await deps.v3Snapshotter.captureBlock(capture, {
+        // Cover intervening live blocks too; old catch-up only updates pool tracking.
+        readBalances: nodeHead - blockNumber < v3SnapshotWindowBlocks,
+      });
+      const snapshotsAvailableAt = now();
+      const finalizedHead = nodeHead > BigInt(options.confirmations || 0)
+        ? nodeHead - BigInt(options.confirmations || 0) : 0n;
+      const result = await deps.journal.commitBlock({
+        ...capture, v3Snapshots: v3State.snapshots, nodeHead: nodeHead.toString(),
+        finalizedHead: finalizedHead.toString(), block: { ...capture.block,
+          finality: blockNumber <= finalizedHead ? 'finalized' : 'observed',
+          headObservedAt: observedAt,
+          receiptsAvailableAt: receiptsAvailableAt.toISOString() },
+      });
+      const committedAt = now();
+      status.blocks += 1; status.transactions += result.transactions;
+      status.events += result.events; status.v3Snapshots += result.v3Snapshots || 0;
+      status.v3MissedPools += v3State.missedPools;
+      status.v3SkippedPools += v3State.skippedPools || 0;
+      status.lastResult = { block: blockNumber.toString(), ...result };
+      nextBlock = blockNumber + 1n;
+      status.lastProgressAt = committedAt.toISOString();
+      recordFrontier(nodeHead, nextBlock);
+      status.lastTiming = {
+        fetchMs: receiptsAvailableAt - startedAt,
+        snapshotMs: snapshotsAvailableAt - receiptsAvailableAt,
+        commitMs: committedAt - snapshotsAvailableAt,
+        headToCommitMs: Math.max(0, committedAt - new Date(observedAt)),
+      };
+    }
+    return nextBlock;
   }
   async function captureOnce() {
     status.inFlight = true;
@@ -205,37 +253,7 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
       const through = nodeHead < nextBlock + limit - 1n ? nodeHead : nextBlock + limit - 1n;
       status.nodeHead = nodeHead.toString(); recordFrontier(nodeHead, nextBlock);
       while (nextBlock <= through) {
-        const startedAt = now();
-        const observedAt = status.lastHeadObservedAt || startedAt.toISOString();
-        const capture = await readReceiptBlock(deps.rpcClient, nextBlock, { topics });
-        const receiptsAvailableAt = now();
-        const v3State = await deps.v3Snapshotter.captureBlock(capture, {
-          // Cover intervening live blocks too; old catch-up only updates pool tracking.
-          readBalances: nodeHead - nextBlock < v3SnapshotWindowBlocks,
-        });
-        const snapshotsAvailableAt = now();
-        const finalizedHead = nodeHead > BigInt(options.confirmations || 0)
-          ? nodeHead - BigInt(options.confirmations || 0) : 0n;
-        const result = await deps.journal.commitBlock({
-          ...capture, v3Snapshots: v3State.snapshots, nodeHead: nodeHead.toString(),
-          finalizedHead: finalizedHead.toString(), block: { ...capture.block,
-            finality: nextBlock <= finalizedHead ? 'finalized' : 'observed', headObservedAt: observedAt,
-            receiptsAvailableAt: receiptsAvailableAt.toISOString() },
-        });
-        const committedAt = now();
-        status.blocks += 1; status.transactions += result.transactions; status.events += result.events;
-        status.v3Snapshots += result.v3Snapshots || 0;
-        status.v3MissedPools += v3State.missedPools;
-        status.v3SkippedPools += v3State.skippedPools || 0;
-        status.lastResult = { block: nextBlock.toString(), ...result }; nextBlock += 1n;
-        status.lastProgressAt = committedAt.toISOString();
-        recordFrontier(nodeHead, nextBlock);
-        status.lastTiming = {
-          fetchMs: receiptsAvailableAt - startedAt,
-          snapshotMs: snapshotsAvailableAt - receiptsAvailableAt,
-          commitMs: committedAt - snapshotsAvailableAt,
-          headToCommitMs: Math.max(0, committedAt - new Date(observedAt)),
-        };
+        nextBlock = await commitBlockBatch(await fetchBlockBatch(nextBlock, through), nodeHead);
       }
       if (nextBlock <= nodeHead) requested = true;
       status.lastCompletedAt = now().toISOString();

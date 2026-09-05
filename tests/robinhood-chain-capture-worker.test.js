@@ -59,14 +59,19 @@ test('receipt reader fails closed while receipts are incomplete', async () => {
   );
 });
 
-test('worker captures sequential blocks without eth_getLogs', async () => {
+test('worker prefetches blocks concurrently and commits them sequentially without eth_getLogs', async () => {
   const samples = new Map([[100, fixture(100)], [101, fixture(101, hash('b'))]]);
   const methods = []; const commits = []; const snapshotCalls = [];
+  let activeReads = 0; let maximumActiveReads = 0;
   const rpcClient = { request: async (method, params) => {
     methods.push(method);
     if (method === 'eth_blockNumber') return '0x65';
+    activeReads += 1; maximumActiveReads = Math.max(maximumActiveReads, activeReads);
+    await new Promise((resolve) => setImmediate(resolve));
     const sample = samples.get(Number(BigInt(params[0])));
-    return method === 'eth_getBlockByNumber' ? sample.block : sample.receipts;
+    const result = method === 'eth_getBlockByNumber' ? sample.block : sample.receipts;
+    activeReads -= 1;
+    return result;
   } };
   const journal = {
     getCursor: async () => null,
@@ -80,9 +85,10 @@ test('worker captures sequential blocks without eth_getLogs', async () => {
     return { snapshots: [], pools: 0, missedPools: 0 };
   } };
   const worker = createRobinhoodChainCaptureWorker({ rpcClient, journal, v3Snapshotter }, {
-    startBlock: '100', maxBlocksPerDrain: 2, confirmations: 2,
+    startBlock: '100', maxBlocksPerDrain: 2, fetchConcurrency: 2, confirmations: 2,
   });
   await worker.captureOnce();
+  assert.equal(maximumActiveReads, 4);
   assert.deepEqual(commits.map((capture) => capture.block.number), [100n, 101n]);
   assert.deepEqual(snapshotCalls, [[100n, true], [101n, true]]);
   assert.equal(methods.includes('eth_getLogs'), false);
@@ -92,6 +98,7 @@ test('worker captures sequential blocks without eth_getLogs', async () => {
       status.transactions, status.events],
     ['101', '102', 0, 2, 2, 2]
   );
+  assert.equal(status.fetchConcurrency, 2);
   for (const field of [
     'nodeHeadObservedAt', 'lastRunAt', 'lastProgressAt', 'lastCompletedAt',
   ]) assert.equal(Number.isFinite(Date.parse(status[field])), true, field);
