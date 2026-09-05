@@ -3196,6 +3196,16 @@ saúde é a lease `robinhood-first-buy-live-worker`: heartbeat recente, telemetr
 `running=true`, `totalRuns` crescente e `lastError=null`. Posição canônica
 ausente, seed divergente ou regressão da fonte haltam a lease em fail-closed.
 
+O first-buy não lê RPC nem o journal de chain diretamente: sua fonte durável é
+`robinhood_wallet_swaps`. Depois do cutover do wallet-swap para
+`canonical_journal`, valide essa dependência com
+`npm run robinhood:canonical-first-buy-audit`. O comando é estritamente
+read-only e verifica capture, checkpoint canônico do wallet-swap, lease/fonte do
+wallet-swap, seed e fronteiras do first-buy. Não existe canário RPC nem flag de
+fonte adicional para first-buy; `ready=true` confirma que sua entrada já é uma
+projeção do journal canônico. O polling de dois segundos continua apenas como
+cadência do consumidor PostgreSQL até a adoção do wake-up pós-commit.
+
 Cadastros usam um manifesto JSON append-only com `entries`; cada entrada contém
 `address`, `kind`, `label`, `source`, `evidence`, `validFromBlock`,
 `validThroughBlock` (`null` para aberta) e `verifiedAt`. Execute primeiro
