@@ -3854,6 +3854,12 @@ persiste posições e wallet-swaps em lotes set-based e avança o cursor uma ún
 vez até o último prefixo confirmado. O primeiro bloco não resolvido continua
 fail-closed: o prefixo anterior permanece idempotente e o cursor nunca o ultrapassa.
 
+Antes de migrar essa leitura para o journal canônico, execute
+`npm run robinhood:canonical-wallet-swap-audit`. O comando é estritamente
+read-only: compara os frontiers de captura, processing e wallet, valida o
+checkpoint LIVE contra o bloco canônico e verifica o contexto transacional da
+próxima página (no máximo 200 blocos), sem varrer o histórico de observações.
+
 As Stages 126–127 criam posições financeiras Robinhood versionadas e um cursor
 com frontier de bloco e tempo. A Stage 137 adiciona a origem durável desse cursor;
 cursores existentes permanecem sem origem até reparo apoiado em evidência, enquanto
