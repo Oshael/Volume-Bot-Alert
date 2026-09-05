@@ -100,14 +100,14 @@ function createRangeTiming(options = {}) {
 }
 
 async function persistSnapshotBatch(repository, snapshots) {
-  if (!snapshots.length) return { saved: 0, failed: 0 };
+  if (!snapshots.length) return { saved: 0, failed: 0, failedPools: [] };
   try {
-    return { saved: await repository.recordSnapshots(snapshots), failed: 0 };
+    return { saved: await repository.recordSnapshots(snapshots), failed: 0, failedPools: [] };
   } catch (error) {
     // Do not turn a database outage into per-pool failures or advance the range.
     if (!isSnapshotDataError(error)) throw error;
   }
-  const totals = { saved: 0, failed: 0 };
+  const totals = { saved: 0, failed: 0, failedPools: [] };
   for (const snapshot of snapshots) {
     try {
       totals.saved += Number(await repository.recordSnapshot(snapshot));
@@ -115,6 +115,9 @@ async function persistSnapshotBatch(repository, snapshots) {
       if (!isSnapshotDataError(error)) throw error;
       await repository.recordFailure({ ...snapshot, error });
       totals.failed += 1;
+      totals.failedPools.push({
+        protocol: snapshot.protocol, marketKey: snapshot.marketKey, error,
+      });
     }
   }
   return totals;
@@ -124,7 +127,7 @@ async function valuePool(deps, pool, anchor, checkedAt) {
   try {
     const result = await deps.reader.valuePool(pool, anchor);
     if (result.liquidityUsd == null) throw unavailableError(result);
-    return { snapshot: {
+    return { pool, snapshot: {
       protocol: pool.protocol, marketKey: pool.marketKey,
       blockNumber: result.number, blockHash: result.hash,
       observedAt: result.observedAt, checkedAt,
@@ -136,8 +139,17 @@ async function valuePool(deps, pool, anchor, checkedAt) {
     await deps.repository.recordFailure({
       protocol: pool.protocol, marketKey: pool.marketKey, checkedAt, error,
     });
-    return { failed: 1 };
+    return { pool, failed: 1, error };
   }
+}
+
+function poolResult(pool, status, error) {
+  const result = { protocol: pool.protocol, marketKey: pool.marketKey, status };
+  if (error) result.error = Object.freeze({
+    code: String(error.code || 'liquidity_refresh_error'),
+    message: String(error.message || error),
+  });
+  return Object.freeze(result);
 }
 
 function prepareBatchReader(deps, batch, anchor, timing) {
@@ -156,10 +168,12 @@ async function valuePoolsAtBlock(deps, pools, anchorBlock, options = {}) {
   const timing = options.timing || createRangeTiming(options);
   timing.counts.pools = pools.length;
   if (!pools.length) {
-    return Object.freeze({
+    const result = {
       anchorBlock: String(anchorBlock), affected: 0, saved: 0, failed: 0,
       timing: timing.snapshot(),
-    });
+    };
+    if (options.includePoolResults) result.poolResults = Object.freeze([]);
+    return Object.freeze(result);
   }
   const anchor = await timing.measure('anchorMs', () => (
     deps.reader.readAnchor(`0x${block(anchorBlock, 'anchorBlock').toString(16)}`)
@@ -167,6 +181,7 @@ async function valuePoolsAtBlock(deps, pools, anchorBlock, options = {}) {
   const checkedAt = new Date((options.now || Date.now)()).toISOString();
   const concurrency = Math.max(1, Math.min(Number(options.concurrency) || 5, 20));
   const totals = { saved: 0, failed: 0 };
+  const poolResults = [];
   const batches = [];
   for (let offset = 0; offset < pools.length; offset += POOL_LIQUIDITY_BATCH_SIZE) {
     batches.push(pools.slice(offset, offset + POOL_LIQUIDITY_BATCH_SIZE));
@@ -191,15 +206,28 @@ async function valuePoolsAtBlock(deps, pools, anchorBlock, options = {}) {
       'persistMs',
       () => persistSnapshotBatch(deps.repository, snapshots)
     );
+    const persistFailures = new Map(persisted.failedPools.map((item) => [
+      `${item.protocol}:${item.marketKey}`, item.error,
+    ]));
+    for (const outcome of outcomes) {
+      if (outcome.failed) {
+        poolResults.push(poolResult(outcome.pool, 'failed', outcome.error));
+        continue;
+      }
+      const error = persistFailures.get(`${outcome.pool.protocol}:${outcome.pool.marketKey}`);
+      poolResults.push(poolResult(outcome.pool, error ? 'failed' : 'completed', error));
+    }
     totals.saved += persisted.saved;
     totals.failed += persisted.failed + outcomes.reduce((sum, item) => sum + (item.failed || 0), 0);
   }
   timing.counts.failures = totals.failed;
-  return Object.freeze({
+  const result = {
     anchorBlock: anchor.number, affected: pools.length,
     ...totals,
     timing: timing.snapshot(),
-  });
+  };
+  if (options.includePoolResults) result.poolResults = Object.freeze(poolResults);
+  return Object.freeze(result);
 }
 
 async function processLiquidityEventRange(deps, input = {}, options = {}) {
@@ -233,4 +261,5 @@ module.exports = {
   V4_DONATE_TOPIC,
   processLiquidityEventRange,
   repairLiquiditySnapshotsAfterReorg,
+  valuePoolsAtBlock,
 };

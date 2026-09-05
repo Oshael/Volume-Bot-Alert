@@ -10,6 +10,7 @@ const {
   V4_DONATE_TOPIC,
   processLiquidityEventRange,
   repairLiquiditySnapshotsAfterReorg,
+  valuePoolsAtBlock,
 } = require('../src/services/robinhood-pool-liquidity-events');
 
 const NOW = Date.parse('2026-08-22T12:00:00Z');
@@ -122,6 +123,30 @@ describe('Robinhood event-driven pool liquidity core', () => {
     assert.deepEqual(coreResult(result), { anchorBlock: '123', affected: 0, saved: 0, failed: 0 });
     assert.equal(result.timing.anchorMs, 0);
     assert.equal(result.timing.pools, 0);
+  });
+
+  it('reports completion per pool for durable queue settlement', async () => {
+    const result = await valuePoolsAtBlock({
+      repository: {
+        async recordSnapshots(rows) { return rows.length; },
+        async recordFailure() {},
+      },
+      reader: {
+        async readAnchor() { return ANCHOR; },
+        async valuePool(candidate) {
+          if (candidate.marketKey.endsWith('failed')) throw new Error('rpc unavailable');
+          return { ...ANCHOR, liquidityUsd: '42', liquidityRaw: '9',
+            status: 'spot_tvl_from_pool_balances', confidence: 'medium' };
+        },
+      },
+    }, [pool('ok'), pool('failed')], '110', { includePoolResults: true });
+    assert.deepEqual(result.poolResults, [
+      { protocol: 'uniswap-v3', marketKey: pool('ok').marketKey, status: 'completed' },
+      {
+        protocol: 'uniswap-v3', marketKey: pool('failed').marketKey, status: 'failed',
+        error: { code: 'liquidity_refresh_error', message: 'rpc unavailable' },
+      },
+    ]);
   });
 
   it('persists bounded batches instead of issuing a write for every pool', async () => {

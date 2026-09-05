@@ -25,6 +25,12 @@ function positiveInteger(value, label, maximum = Number.MAX_SAFE_INTEGER) {
   return parsed;
 }
 
+function retryError(value) {
+  const code = String(value?.code || 'liquidity_refresh_error').trim().slice(0, 64);
+  const message = String(value?.message || value || code).trim().slice(0, 500);
+  return { code: code || 'liquidity_refresh_error', message };
+}
+
 function owner(value) {
   const normalized = String(value || '').trim();
   if (!normalized || normalized.length > 160) throw new Error('owner is invalid');
@@ -183,6 +189,27 @@ function createRobinhoodPoolLiquidityRefreshQueue(options = {}) {
     return Object.freeze(rows[0]);
   }
 
+  async function retry(input = {}) {
+    const protocol = pool(input, 0).protocol;
+    const marketKey = pool(input, 0).market_key;
+    const generation = positiveInteger(input.generation, 'generation');
+    const leaseOwner = owner(input.owner);
+    const retryMs = positiveInteger(input.retryMs, 'retryMs', 86_400_000);
+    const result = await database.query(
+      `UPDATE robinhood_pool_liquidity_refresh_queue
+          SET status='pending', lease_owner=NULL, lease_until=NULL,
+              next_attempt_at=CASE WHEN generation>$5 THEN NOW()
+                ELSE NOW()+($6::bigint*INTERVAL '1 millisecond') END,
+              last_error=$7::jsonb, updated_at=NOW()
+        WHERE chain=$1 AND protocol=$2 AND market_key=$3
+          AND status='leased' AND lease_owner=$4 AND lease_until>NOW()
+          AND generation>=$5`,
+      [CHAIN, protocol, marketKey, leaseOwner, generation, retryMs,
+        JSON.stringify(retryError(input.error))]
+    );
+    return result.rowCount === 1;
+  }
+
   async function reclaimExpired() {
     const result = await database.query(
       `UPDATE robinhood_pool_liquidity_refresh_queue
@@ -192,7 +219,7 @@ function createRobinhoodPoolLiquidityRefreshQueue(options = {}) {
     return result.rowCount;
   }
 
-  return Object.freeze({ claim, commitScannedRange, complete, reclaimExpired });
+  return Object.freeze({ claim, commitScannedRange, complete, reclaimExpired, retry });
 }
 
 module.exports = { createRobinhoodPoolLiquidityRefreshQueue };

@@ -125,4 +125,53 @@ describe('Robinhood liquidity event cursor persistence integration', () => {
     );
     assert.equal(count.rows[0].total, 0);
   });
+
+  it('persists retry backoff only for the active lease owner', async () => {
+    await insertPool();
+    const cursor = createRobinhoodPoolLiquidityEventCursorRepository({ database: db });
+    await cursor.initializeCursor({ startBlock: '100' });
+    const queue = createRobinhoodPoolLiquidityRefreshQueue({ database: db });
+    await queue.commitScannedRange({
+      fromBlock: '100', nextBlock: '101', safeHead: '100',
+      checkpoint: { number: '100', hash: HASH },
+      pools: [{ protocol: 'uniswap-v2', marketKey: MARKET }],
+    });
+    const claimed = (await queue.claim({ owner: 'worker-1', limit: 1, leaseMs: 60_000 }))[0];
+    assert.equal(await queue.retry({
+      owner: 'other-worker', protocol: 'uniswap-v2', marketKey: MARKET,
+      generation: claimed.generation, retryMs: 60_000, error: new Error('rpc down'),
+    }), false);
+    assert.equal(await queue.retry({
+      owner: 'worker-1', protocol: 'uniswap-v2', marketKey: MARKET,
+      generation: claimed.generation, retryMs: 60_000,
+      error: Object.assign(new Error('rpc down'), { code: 'rpc_timeout' }),
+    }), true);
+    const row = (await db.query(
+      `SELECT status, lease_owner, lease_until, next_attempt_at, last_error
+         FROM robinhood_pool_liquidity_refresh_queue WHERE market_key=$1`, [MARKET]
+    )).rows[0];
+    assert.equal(row.status, 'pending');
+    assert.equal(row.lease_owner, null);
+    assert.equal(row.lease_until, null);
+    assert.equal(row.next_attempt_at > new Date(), true);
+    assert.deepEqual(row.last_error, { code: 'rpc_timeout', message: 'rpc down' });
+    assert.deepEqual(await queue.claim({ owner: 'worker-2', limit: 1, leaseMs: 60_000 }), []);
+
+    await db.query(
+      `UPDATE robinhood_pool_liquidity_refresh_queue
+          SET next_attempt_at=NOW() WHERE market_key=$1`, [MARKET]
+    );
+    const retried = (await queue.claim({ owner: 'worker-1', limit: 1, leaseMs: 60_000 }))[0];
+    await queue.commitScannedRange({
+      fromBlock: '101', nextBlock: '102', safeHead: '101',
+      checkpoint: { number: '101', hash: HASH },
+      pools: [{ protocol: 'uniswap-v2', marketKey: MARKET }],
+    });
+    assert.equal(await queue.retry({
+      owner: 'worker-1', protocol: 'uniswap-v2', marketKey: MARKET,
+      generation: retried.generation, retryMs: 60_000, error: new Error('rpc down again'),
+    }), true);
+    const newest = (await queue.claim({ owner: 'worker-2', limit: 1, leaseMs: 60_000 }))[0];
+    assert.equal(newest.generation, '2');
+  });
 });
