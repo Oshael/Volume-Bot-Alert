@@ -11,6 +11,7 @@ const LEASE_KEYS = Object.freeze({
   shadow: 'robinhood-chain-domain-shadow-worker',
   canary: 'robinhood-canonical-head-worker',
 });
+const DEFAULT_CAPTURE_HEAD_AGE_MS = 45_000;
 
 function count(value) {
   return Number(value) || 0;
@@ -123,7 +124,7 @@ function createRobinhoodCanonicalHeadCanaryAudit(deps = {}) {
     const normalized = {
       phase: options.phase === 'canary' ? 'canary' : 'preflight',
       maxCaptureLag: count(options.maxCaptureLag ?? 2),
-      maxCaptureHeadAgeMs: count(options.maxCaptureHeadAgeMs ?? 10_000),
+      maxCaptureHeadAgeMs: count(options.maxCaptureHeadAgeMs ?? DEFAULT_CAPTURE_HEAD_AGE_MS),
       maxQueueLagBlocks: count(options.maxQueueLagBlocks ?? 2),
       minDiscovery: count(options.minDiscovery ?? 1),
       minMarket: count(options.minMarket ?? 100),
@@ -195,4 +196,6 @@ function createRobinhoodCanonicalHeadCanaryAudit(deps = {}) {
   return Object.freeze({ inspect });
 }
 
-module.exports = { LEASE_KEYS, createRobinhoodCanonicalHeadCanaryAudit, evaluate };
+module.exports = {
+  DEFAULT_CAPTURE_HEAD_AGE_MS, LEASE_KEYS, createRobinhoodCanonicalHeadCanaryAudit, evaluate,
+};

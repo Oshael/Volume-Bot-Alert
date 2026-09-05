@@ -3,7 +3,7 @@
 require('dotenv').config();
 const db = require('../models/db');
 const {
-  createRobinhoodCanonicalHeadCanaryAudit,
+  DEFAULT_CAPTURE_HEAD_AGE_MS, createRobinhoodCanonicalHeadCanaryAudit,
 } = require('../services/robinhood-canonical-head-canary-audit');
 
 function integer(value, fallback, label) {
@@ -28,7 +28,8 @@ function parseArgs(argv = []) {
     phase,
     maxCaptureLag: integer(value('--max-capture-lag='), 2, '--max-capture-lag'),
     maxCaptureHeadAgeMs: integer(
-      value('--max-capture-head-age-ms='), 10_000, '--max-capture-head-age-ms'
+      value('--max-capture-head-age-ms='), DEFAULT_CAPTURE_HEAD_AGE_MS,
+      '--max-capture-head-age-ms'
     ),
     maxQueueLagBlocks: integer(value('--max-queue-lag='), 2, '--max-queue-lag'),
     minDiscovery: integer(value('--min-discovery='), 1, '--min-discovery'),

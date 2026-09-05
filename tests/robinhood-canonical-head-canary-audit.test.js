@@ -15,7 +15,7 @@ function lease(lease_key, metadata = {}) {
 function input(phase) {
   return {
     options: {
-      phase, maxCaptureLag: 2, maxCaptureHeadAgeMs: 10_000,
+      phase, maxCaptureLag: 2, maxCaptureHeadAgeMs: 45_000,
       maxQueueLagBlocks: 2, minDiscovery: 1, minMarket: 100,
     },
     nowMs: NOW,
@@ -77,7 +77,9 @@ describe('Robinhood canonical head canary audit', () => {
 
   it('rejects a frozen or missing canonical capture head observation', () => {
     const stale = input('preflight');
-    stale.leases[0].metadata.nodeHeadObservedAt = '2026-09-04T11:59:40.000Z';
+    stale.leases[0].metadata.nodeHeadObservedAt = '2026-09-04T11:59:30.000Z';
+    assert.equal(evaluate(stale).approved, true);
+    stale.leases[0].metadata.nodeHeadObservedAt = '2026-09-04T11:59:10.000Z';
     assert.deepEqual(evaluate(stale).blockers.map(({ code }) => code), [
       'canonical_capture_head_stale',
     ]);
@@ -99,7 +101,7 @@ describe('Robinhood canonical head canary audit', () => {
 
   it('parses bounded audit phases', () => {
     assert.deepEqual(parseArgs(['--phase=canary', '--min-market=500', '--verbose']), {
-      phase: 'canary', maxCaptureLag: 2, maxCaptureHeadAgeMs: 10_000,
+      phase: 'canary', maxCaptureLag: 2, maxCaptureHeadAgeMs: 45_000,
       maxQueueLagBlocks: 2,
       minDiscovery: 1, minMarket: 500, verbose: true,
     });
