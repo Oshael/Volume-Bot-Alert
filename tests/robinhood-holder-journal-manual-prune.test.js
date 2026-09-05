@@ -3,9 +3,6 @@ const { test, after } = require('node:test');
 const {
   parseArgs, runBatches, createDiagnosticClient, failureReport,
 } = require('../src/utils/prune-robinhood-holder-journal');
-const {
-  pruneJournalPrefix, __private: prefixPrune,
-} = require('../src/models/robinhood-holder-journal-prefix-prune');
 const db = require('../src/models/db');
 
 after(() => db.pool.end());
@@ -42,48 +39,6 @@ test('manual journal cleanup requires an explicit bounded cut and write consent'
     ['--before-block=1', '--pause-ms=', '--write'],
     ['--before-block=1', '--write', '--force'],
   ]) assert.throws(() => parseArgs(args), undefined, JSON.stringify(args));
-});
-
-test('manual prefix selection bounds each BRIN scan from the durable journal floor', async () => {
-  const calls = [];
-  const client = {
-    async query(sql, params) {
-      calls.push({ sql, params });
-      return { rows: [] };
-    },
-  };
-
-  const first = await prefixPrune.oldestBatch(client, '1000', '100', 5000);
-  const final = await prefixPrune.oldestBatch(client, '300', '100', 5000);
-
-  assert.match(calls[0].sql, /block_number >= \$1 AND block_number < \$2/);
-  assert.deepEqual(calls[0].params, ['100', '356', 5001]);
-  assert.equal(first.boundary, '356');
-  assert.equal(first.windowComplete, false);
-  assert.deepEqual(calls[1].params, ['100', '300', 5001]);
-  assert.equal(final.boundary, '300');
-  assert.equal(final.windowComplete, true);
-});
-
-test('an empty bounded window advances only that window and keeps the prune draining', async () => {
-  const client = {
-    async query(sql, params) {
-      if (sql.includes('holder-prune:select_prefix')) return { rows: [] };
-      if (sql.includes('holder-prune:advance_floor')) {
-        assert.deepEqual(params, ['356', '100']);
-        return { rowCount: 1, rows: [{ journal_floor_block: '356' }] };
-      }
-      assert.fail(`unexpected query: ${sql}`);
-    },
-  };
-
-  const result = await pruneJournalPrefix(client, {
-    cutoffBlock: '1000', floorBlock: '100', batchLimit: 5000,
-  });
-
-  assert.equal(result.status, 'draining');
-  assert.equal(result.journalFloorBlock, '356');
-  assert.equal(result.deletedEvents, 0);
 });
 
 test('bounded cleanup commits independent batches until the repository finishes draining', async () => {

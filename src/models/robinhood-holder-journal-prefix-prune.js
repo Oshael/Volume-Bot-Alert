@@ -1,33 +1,22 @@
-const SCAN_WINDOW_BLOCKS = 256n;
-
-function boundedWindowEnd(floorBlock, cutoffBlock) {
-  const floor = BigInt(floorBlock);
-  const cutoff = BigInt(cutoffBlock);
-  const candidate = floor + SCAN_WINDOW_BLOCKS;
-  return (candidate < cutoff ? candidate : cutoff).toString();
-}
-
 // Caller owns the live cursor lock and the shared reorg fence for the transaction.
-async function oldestBatch(client, cutoffBlock, floorBlock, batchLimit) {
-  const windowEnd = boundedWindowEnd(floorBlock, cutoffBlock);
+async function oldestBatch(client, cutoffBlock, batchLimit) {
   const result = await client.query(
     `/* holder-prune:select_prefix */ SELECT chain, block_number, transaction_hash,
             log_index, token_address, applied
        FROM robinhood_holder_transfer_journal
-      WHERE chain = 'robinhood' AND block_number >= $1 AND block_number < $2
+      WHERE chain = 'robinhood' AND block_number < $1
       ORDER BY block_number, log_index
-      LIMIT $3::int FOR UPDATE`,
-    [floorBlock, windowEnd, batchLimit + 1]
+      LIMIT $2::int FOR UPDATE`,
+    [cutoffBlock, batchLimit + 1]
   );
   // The extra row proves whether the last block would be split. Never skip locks:
   // a skipped earlier row would invalidate the claimed contiguous prefix.
   const boundary = result.rows.length > batchLimit
-    ? BigInt(result.rows[batchLimit].block_number) : BigInt(windowEnd);
+    ? BigInt(result.rows[batchLimit].block_number) : BigInt(cutoffBlock);
   return {
     rows: result.rows.filter((row) => BigInt(row.block_number) < boundary),
     boundary: boundary.toString(),
     split: result.rows.length > batchLimit,
-    windowComplete: windowEnd === String(cutoffBlock),
   };
 }
 
@@ -86,7 +75,7 @@ async function deletePrefix(client, rows) {
 }
 
 async function pruneJournalPrefix(client, { cutoffBlock, floorBlock, batchLimit }) {
-  const batch = await oldestBatch(client, cutoffBlock, floorBlock, batchLimit);
+  const batch = await oldestBatch(client, cutoffBlock, batchLimit);
   const base = { deletedEvents: 0, discardedBufferedEvents: 0,
     cutoffBlock: String(cutoffBlock), journalFloorBlock: String(floorBlock) };
   if (!batch.rows.length && batch.split) {
@@ -112,11 +101,8 @@ async function pruneJournalPrefix(client, { cutoffBlock, floorBlock, batchLimit 
   );
   if (advanced.rowCount !== 1) throw new Error('holder journal prefix floor changed');
   return { ...base, ...counts, journalFloorBlock: String(advanced.rows[0].journal_floor_block),
-    status: blocked ? 'blocked' : (batch.split || !batch.windowComplete ? 'draining' : 'pruned'),
+    status: blocked ? 'blocked' : (batch.split ? 'draining' : 'pruned'),
     ...(blocked ? { reason: 'pending_event_before_cutoff', blockedBlock: boundary } : {}) };
 }
 
-module.exports = {
-  pruneJournalPrefix,
-  __private: { SCAN_WINDOW_BLOCKS, boundedWindowEnd, oldestBatch },
-};
+module.exports = { pruneJournalPrefix };

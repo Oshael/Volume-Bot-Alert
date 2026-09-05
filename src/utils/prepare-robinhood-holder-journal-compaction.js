@@ -9,6 +9,7 @@ const RETENTION_BLOCKS = 20_000n;
 const DEFAULT_MIN_FREE_GIB = 60;
 const HOLDER_LEASE_PATTERN = 'robinhood-holder-%';
 const NON_BLOCKING_HOLDER_LEASE = 'robinhood-holder-summary-worker';
+const PREPARED_MARKER_VERSION = 'holder-journal-compact:v4';
 
 const PROTECTED_CTE = `protected_tokens AS MATERIALIZED (
   SELECT token_address
@@ -143,6 +144,38 @@ function assertPrepareInput(database, options) {
   }
 }
 
+function buildPreparedMarker(input) {
+  return [
+    PREPARED_MARKER_VERSION,
+    'recovery=archive-required',
+    `cutoff=${input.cutoffBlock}`,
+    `next=${input.nextBlock}`,
+    `floor=${input.journalFloorBlock}`,
+    `rows=${input.copiedRows}`,
+    `old_pending=${input.oldPendingRows}`,
+    `prepared_at=${input.preparedAt}`,
+  ].join(';');
+}
+
+function parsePreparedMarker(value) {
+  const parts = String(value || '').split(';');
+  if (parts.shift() !== PREPARED_MARKER_VERSION) return null;
+  const fields = Object.fromEntries(parts.map((part) => {
+    const separator = part.indexOf('=');
+    return separator < 1 ? [] : [part.slice(0, separator), part.slice(separator + 1)];
+  }).filter((entry) => entry.length === 2));
+  const integers = ['cutoff', 'next', 'floor', 'rows', 'old_pending'];
+  if (fields.recovery !== 'archive-required'
+    || integers.some((key) => !/^(0|[1-9][0-9]*)$/.test(fields[key] || ''))
+    || !Number.isFinite(Date.parse(fields.prepared_at))) return null;
+  return Object.freeze({
+    cutoffBlock: fields.cutoff, nextBlock: fields.next,
+    journalFloorBlock: fields.floor, copiedRows: fields.rows,
+    oldPendingRows: fields.old_pending,
+    preparedAt: new Date(fields.prepared_at).toISOString(),
+  });
+}
+
 async function reportBackendPid(client, callback) {
   if (typeof callback !== 'function') return;
   const backend = await client.query('SELECT pg_backend_pid()::int AS backend_pid');
@@ -190,7 +223,11 @@ async function runPrepare(options = {}, dependencies = {}) {
         WHERE chain = 'robinhood' AND stream = 'live' FOR SHARE`
     );
     if (cursorResult.rowCount !== 1) throw new Error('holder live cursor is missing');
+    if (cursorResult.rows[0].journal_floor_block == null) {
+      throw new Error('holder journal floor is uninitialized');
+    }
     const nextBlock = BigInt(cursorResult.rows[0].next_block);
+    const floorBlock = BigInt(cursorResult.rows[0].journal_floor_block);
     const cutoffBlock = nextBlock > RETENTION_BLOCKS ? nextBlock - RETENTION_BLOCKS : 0n;
     progress({ phase: 'copy', cutoffBlock: cutoffBlock.toString(), nextBlock: nextBlock.toString() });
     await client.query(`CREATE TABLE ${TARGET_TABLE} (
@@ -243,7 +280,13 @@ async function runPrepare(options = {}, dependencies = {}) {
       throw new Error('compact journal indexes are not valid/ready');
     }
     const oldPendingRows = BigInt(validation.rows[0].old_pending_rows);
-    const marker = `holder-journal-compact:v3;recovery=archive-required;cutoff=${cutoffBlock};next=${nextBlock};rows=${copiedRows};old_pending=${oldPendingRows}`;
+    const clock = await client.query('SELECT clock_timestamp() AS prepared_at');
+    const preparedAt = new Date(clock.rows[0].prepared_at).toISOString();
+    const marker = buildPreparedMarker({
+      cutoffBlock: cutoffBlock.toString(), nextBlock: nextBlock.toString(),
+      journalFloorBlock: floorBlock.toString(), copiedRows: copiedRows.toString(),
+      oldPendingRows: oldPendingRows.toString(), preparedAt,
+    });
     await client.query(`COMMENT ON TABLE ${TARGET_TABLE} IS '${marker}'`);
     await client.query(`ANALYZE ${TARGET_TABLE}`);
     const size = await client.query(
@@ -255,6 +298,7 @@ async function runPrepare(options = {}, dependencies = {}) {
     return Object.freeze({
       status: 'prepared', sourceTable: SOURCE_TABLE, targetTable: TARGET_TABLE,
       cutoffBlock: cutoffBlock.toString(), nextBlock: nextBlock.toString(),
+      journalFloorBlock: floorBlock.toString(), preparedAt,
       copiedRows: copiedRows.toString(), totalBytes: String(size.rows[0].total_bytes),
       oldPendingRows: oldPendingRows.toString(),
       recoveryBeforeCutoff: 'archive-required',
@@ -304,5 +348,6 @@ if (require.main === module) main().catch((error) => {
 
 module.exports = {
   DEFAULT_MIN_FREE_GIB, INDEX_STATEMENTS, SOURCE_TABLE, TARGET_TABLE, createInterruptController,
-  parseArgs, runPrepare,
+  PREPARED_MARKER_VERSION, PROTECTED_CTE, buildPreparedMarker, parseArgs, parsePreparedMarker,
+  runPrepare,
 };

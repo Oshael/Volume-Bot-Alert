@@ -1745,10 +1745,8 @@ limitada aceita de 1 a 100 lotes e pausa de 100 a 60.000ms entre eles. Continua
 somente enquanto o resultado for `draining` e para em `blocked`, `pruned`, `idle`,
 erro, `SIGINT`, `SIGTERM` ou ao atingir o limite. O corte efetivo é o menor entre o bloco informado e
 `next_block - 20000`; nunca remove o bloco informado nem encurta a janela recente.
-Seleciona o prefixo mais antigo em janelas de até 256 blocos a partir do
-`journal_floor_block`, compatíveis com o BRIN da Stage 196; assim nenhuma rodada
-ordena todo o histórico anterior ao cutoff. Preserva blocos inteiros e
-revalida somente os tokens pendentes desse lote, sob lock do cursor e fence
+Seleciona o prefixo mais antigo, preserva blocos inteiros e revalida somente os
+tokens pendentes desse lote, sob lock do cursor e fence
 compartilhado de reorg. Uma pendência protegida preserva seu bloco inteiro; o prefixo
 completo anterior pode ser excluído e o floor avança no máximo até esse bloco.
 Proteções são repetidas no `DELETE`; mudança concorrente aborta a transação.
@@ -1767,6 +1765,9 @@ resultado `unknown`; não repetir automaticamente. Se um lote posterior falhar, 
 erro informa separadamente o agregado dos lotes anteriores já confirmados. Os nomes das etapas também
 aparecem em comentários SQL no `pg_stat_activity`. Essa instrumentação não altera
 os limites de lock/statement nem as proteções de exclusão.
+Depois da Stage 196, um journal massivo e fisicamente descorrelacionado pode exceder
+o timeout dessa seleção mesmo usando BRIN. Não aumente o timeout nem recrie o B-tree
+global durante pressão de disco; use a compactação offline descrita abaixo.
 Não converter a tabela existente em particionada durante pressão de disco: a
 reescrita exige espaço temporário proporcional ao journal. Particionamento deve ser
 feito posteriormente por migração planejada, antes de a próxima retenção crescer.
@@ -1795,8 +1796,19 @@ Para staging remoto, o mesmo contrato está em
 `src/utils/export-robinhood-holder-journal-compaction.sql`. `SIGINT` e `SIGTERM`
 cancelam explicitamente a query PostgreSQL e aguardam o rollback antes de o
 processo sair, para que a operação não continue ocupando disco em background.
-Swap e descarte exigem ferramenta e
-confirmação separadas após auditoria exata do artefato preparado.
+O prepare grava no comentário da tabela um contrato versionado com cutoff,
+cursor/floor, quantidade de linhas e instante da preparação. Mantenha os holders
+parados depois desse commit. Audite com
+`node src/utils/finalize-robinhood-holder-journal-compaction.js --audit`.
+O gate exige owners/ACLs iguais, índices válidos, cursor inalterado, seleção ainda
+idêntica e nenhuma lease mutante ativa ou com heartbeat posterior ao preparo.
+Somente com `ready=true`, finalize com
+`node src/utils/finalize-robinhood-holder-journal-compaction.js --finalize --write
+--drop-original --allow-archive-recovery`. O finalize repete todo o gate sob locks,
+avança o floor até o cutoff, troca as tabelas, restaura os nomes de índices/PK e o
+trigger da hot queue e remove a original sem `CASCADE`, tudo na mesma transação.
+Falha em qualquer etapa faz rollback. O drop devolve o espaço físico da tabela
+original no commit; reinicie os holders apenas depois do resultado `completed`.
 
 Para calibrar leitura antes de uma nova exportação, use o piloto isolado
 `node src/utils/pilot-robinhood-holder-journal.js --database=volume_alert

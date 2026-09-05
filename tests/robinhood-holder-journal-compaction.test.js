@@ -4,8 +4,12 @@ const path = require('node:path');
 const { describe, it } = require('node:test');
 
 const {
-  INDEX_STATEMENTS, createInterruptController, parseArgs, runPrepare,
+  INDEX_STATEMENTS, buildPreparedMarker, createInterruptController, parseArgs,
+  parsePreparedMarker, runPrepare,
 } = require('../src/utils/prepare-robinhood-holder-journal-compaction');
+const {
+  auditCompaction, parseArgs: parseFinalizeArgs, runFinalize,
+} = require('../src/utils/finalize-robinhood-holder-journal-compaction');
 
 function harness(options = {}) {
   const calls = [];
@@ -30,6 +34,9 @@ function harness(options = {}) {
       }
       if (sql.includes('FROM pg_index')) return { rows: [{ ready: INDEX_STATEMENTS.length }] };
       if (sql.includes('pg_total_relation_size')) return { rows: [{ total_bytes: '1234' }] };
+      if (sql.includes('clock_timestamp()')) {
+        return { rows: [{ prepared_at: '2026-09-05T20:00:00.000Z' }] };
+      }
       return { rows: [] };
     },
     release() { calls.push({ sql: 'RELEASE' }); },
@@ -66,6 +73,7 @@ describe('Robinhood holder journal compaction prepare', () => {
 
     assert.equal(result.status, 'prepared');
     assert.equal(result.cutoffBlock, '80000');
+    assert.equal(result.journalFloorBlock, '1');
     assert.equal(result.copiedRows, '77');
     assert.equal(result.oldPendingRows, '11');
     assert.equal(result.recoveryBeforeCutoff, 'archive-required');
@@ -87,6 +95,15 @@ describe('Robinhood holder journal compaction prepare', () => {
     assert.equal(sql.includes('SET LOCAL enable_bitmapscan = off'), true);
     assert.equal(progress.filter(({ phase }) => phase === 'index').length,
       INDEX_STATEMENTS.length);
+  });
+
+  it('persists a strict marker with the protected snapshot boundaries', () => {
+    const input = {
+      cutoffBlock: '80000', nextBlock: '100000', journalFloorBlock: '1',
+      copiedRows: '77', oldPendingRows: '11', preparedAt: '2026-09-05T20:00:00.000Z',
+    };
+    assert.deepEqual(parsePreparedMarker(buildPreparedMarker(input)), input);
+    assert.equal(parsePreparedMarker('holder-journal-compact:v3;cutoff=80000'), null);
   });
 
   it('fails before copying when a holder lease is active', async () => {
@@ -159,5 +176,103 @@ describe('Robinhood holder journal compaction prepare', () => {
     assert.match(sql, /TO STDOUT/);
     assert.doesNotMatch(sql, /UNION ALL/);
     assert.doesNotMatch(sql, /ORDER BY/);
+  });
+});
+
+function finalizeHarness(options = {}) {
+  const marker = buildPreparedMarker({
+    cutoffBlock: '80000', nextBlock: '100000', journalFloorBlock: '1',
+    copiedRows: '77', oldPendingRows: '11', preparedAt: '2026-09-05T20:00:00.000Z',
+  });
+  const calls = [];
+  const client = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      if (sql.includes('obj_description')) return { rows: options.missingRelations ? [] : [{
+        owner_match: options.ownerMismatch !== true,
+        acl_match: true,
+        marker: options.marker || marker,
+        source_bytes: '1000', target_bytes: '100',
+      }] };
+      if (sql.includes('FROM worker_leases')) {
+        const touched = sql.includes('heartbeat_at >=');
+        const leases = touched ? (options.touchedLeases || []) : (options.activeLeases || []);
+        return { rows: leases.map((lease_key) => ({ lease_key })) };
+      }
+      if (sql.includes('SELECT next_block')) return { rows: [{
+        next_block: options.nextBlock || '100000', journal_floor_block: '1',
+      }] };
+      if (sql.includes('invalid_old_rows')) return { rows: [{
+        copied_rows: options.copiedRows || '77', invalid_old_rows: '0', old_pending_rows: '11',
+      }] };
+      if (sql.includes('FROM pg_index')) return { rows: [{ ready: INDEX_STATEMENTS.length }] };
+      if (sql.includes("to_regprocedure('enqueue_robinhood_holder_hot()')")) {
+        return { rows: [{ ready: true }] };
+      }
+      if (sql.includes('UPDATE robinhood_holder_cursors')) {
+        return { rowCount: 1, rows: [{ journal_floor_block: '80000' }] };
+      }
+      return { rows: [] };
+    },
+    release() { calls.push({ sql: 'RELEASE' }); },
+  };
+  return { calls, client, database: { getClient: async () => client } };
+}
+
+describe('Robinhood holder journal compaction finalize', () => {
+  it('keeps audit read-only and reports the physical reclaim estimate', async () => {
+    const context = finalizeHarness();
+    const result = await auditCompaction(context.client);
+
+    assert.equal(result.ready, true);
+    assert.equal(result.storage.reclaimable_bytes, '900');
+    assert.equal(context.calls.some(({ sql }) => /^(DROP|ALTER|UPDATE)/.test(sql)), false);
+    assert.deepEqual(context.calls.filter(({ sql }) => sql.includes('FROM worker_leases'))
+      .map(({ params }) => params.length), [2, 3]);
+  });
+
+  it('blocks when a holder ran after prepare or the cursor advanced', async () => {
+    const context = finalizeHarness({
+      touchedLeases: ['robinhood-holder-live-worker'], nextBlock: '100001',
+    });
+    const result = await auditCompaction(context.client);
+
+    assert.equal(result.ready, false);
+    assert.deepEqual(result.blockers.map(({ code }) => code), [
+      'holder_cursor_advanced', 'holder_workers_ran_after_prepare',
+    ]);
+  });
+
+  it('requires four explicit finalize acknowledgements', () => {
+    assert.deepEqual(parseFinalizeArgs(['--audit']), { mode: 'audit' });
+    assert.equal(parseFinalizeArgs([
+      '--finalize', '--write', '--drop-original', '--allow-archive-recovery',
+    ]).mode, 'finalize');
+    assert.throws(() => parseFinalizeArgs(['--finalize', '--write']), /drop-original/);
+  });
+
+  it('rechecks under locks and swaps only inside the committing transaction', async () => {
+    const context = finalizeHarness();
+    const result = await runFinalize(context.database, { archiveRecoveryAcknowledged: true });
+    const sql = context.calls.map((entry) => entry.sql);
+
+    assert.equal(result.status, 'completed');
+    assert.equal(result.cutoffBlock, '80000');
+    assert.equal(sql.filter((text) => text.includes('obj_description')).length, 2);
+    assert.ok(sql.indexOf('BEGIN') < sql.findIndex((text) => text.startsWith('LOCK TABLE')));
+    assert.ok(sql.findIndex((text) => text.includes('UPDATE robinhood_holder_cursors'))
+      < sql.findIndex((text) => text.startsWith('ALTER TABLE robinhood_holder_transfer_journal ')));
+    const drop = sql.find((text) => text.startsWith('DROP TABLE'));
+    assert.equal(drop, 'DROP TABLE robinhood_holder_transfer_journal_retired');
+    assert.doesNotMatch(drop, /CASCADE/);
+    assert.ok(sql.includes('COMMIT'));
+  });
+
+  it('does not begin a finalize when the audit is blocked', async () => {
+    const context = finalizeHarness({ activeLeases: ['robinhood-holder-live-worker'] });
+    await assert.rejects(runFinalize(context.database, {
+      archiveRecoveryAcknowledged: true,
+    }), (error) => error.code === 'holder_journal_compaction_not_ready');
+    assert.equal(context.calls.some(({ sql }) => sql === 'BEGIN'), false);
   });
 });
