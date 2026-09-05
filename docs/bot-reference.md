@@ -4145,6 +4145,10 @@ endereços. O worker expõe esse modo e os splits na telemetria. Ele valida chai
 ID, checkpoint e hashes antes de persistir raw/arestas; divergência canônica
 paralisa a lease. As Stages 128–130 e 135 devem estar aplicadas antes de
 habilitar o writer.
+Antes de migrar sua leitura para o journal comum, execute
+`npm run robinhood:canonical-wallet-transfer-audit`. O preflight read-only valida
+capture, swap canônico, cursores/hashes, cobertura `Transfer`, escopo de tokens,
+dependência opcional da posição unificada e o backlog anterior ao journal.
 
 A projeção financeira unificada dentro desse writer tem uma segunda flag,
 `ROBINHOOD_WALLET_UNIFIED_POSITION_LIVE_ENABLED=true`, desligada por padrão.
