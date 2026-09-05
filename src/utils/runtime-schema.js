@@ -5636,6 +5636,29 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage197-robinhood-liquidity-refresh-queue',
+    name: 'Stage 197 Robinhood liquidity refresh queue',
+    repair: 'node src/utils/db-init-stage197.js',
+    tables: [{
+      table: 'robinhood_pool_liquidity_refresh_queue',
+      columns: [
+        'chain', 'protocol', 'market_key', 'dirty_from_block', 'dirty_through_block',
+        'dirty_through_hash', 'generation', 'status', 'attempt_count', 'next_attempt_at',
+        'lease_owner', 'lease_until', 'last_error', 'created_at', 'updated_at',
+      ],
+      constraints: [
+        { name: 'rh_pool_liquidity_refresh_queue_pkey', includes: ['PRIMARY KEY', 'chain', 'protocol', 'market_key'] },
+        { name: 'rh_pool_liquidity_refresh_queue_pool_fkey', includes: ['FOREIGN KEY', 'chain', 'protocol', 'market_key'] },
+        { name: 'rh_pool_liquidity_refresh_queue_values_check', includes: ['uniswap-v2', 'uniswap-v3', 'uniswap-v4', 'generation'] },
+        { name: 'rh_pool_liquidity_refresh_queue_lifecycle_check', includes: ['pending', 'leased', 'lease_owner', 'lease_until'] },
+      ],
+      indexes: [
+        { name: 'idx_rh_pool_liquidity_refresh_queue_claim', includes: ['next_attempt_at', 'dirty_from_block', 'protocol', 'market_key'] },
+        { name: 'idx_rh_pool_liquidity_refresh_queue_lease', includes: ['lease_until'] },
+      ],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
