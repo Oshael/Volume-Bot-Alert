@@ -770,8 +770,37 @@ exige o worker legado e o archive, de `journal_blocks_available`, que já pode s
 `eth_getLogs`. `processing_blocks_not_captured` diferente de zero indica que a fonte canônica ainda
 não cobre a fronteira permitida. A lista de tópicos mostra primeiro/último bloco observado apenas
 como evidência; um evento raro nunca observado não é, sozinho, falha de cobertura. `ready=true`
-significa somente que a fonte e o ponto de handoff estão prontos para implementar/testar o novo
-consumidor; não autoriza parar o liquidity atual nem remover o túnel do archive.
+confirma que a fonte e o ponto de handoff permitem trocar o consumidor; não inicia nem para
+serviços automaticamente. A Stage 197, aplicada com `node src/utils/db-init-stage197.js`, cria
+`robinhood_pool_liquidity_refresh_queue`, uma fila durável com no máximo uma linha por pool. O
+scanner avança o cursor e marca as pools afetadas na mesma transação; eventos repetidos elevam a
+geração e coalescem milhões de eventos históricos sem criar um item por evento. Uma conclusão só
+remove a geração efetivamente valorada; evento recebido durante a lease volta imediatamente a
+`pending`.
+
+O substituto canônico é `npm run start:worker:robinhood-canonical-liquidity`, sob a lease
+`robinhood-canonical-liquidity-worker`. Na VPS2, use a instância
+`trendscope-worker@robinhood-canonical-liquidity.service`, o env exclusivo
+`/etc/trendscope/robinhood-canonical-liquidity.env` e o drop-in que contém somente o
+`EnvironmentFile`; os exemplos estão em `deploy/systemd/`. O startup exige a Stage 197, a captura
+canônica ativa, o canonical-head em `canonical_publish` e a ausência da lease legada
+`robinhood-pool-liquidity-worker`. Os dois liquidity workers nunca podem rodar juntos porque
+compartilham cursor e snapshots.
+
+Esse processo não executa `eth_getLogs`. O scanner lê os nove tópicos diretamente do journal
+PostgreSQL em ranges de até `ROBINHOOD_CANONICAL_LIQUIDITY_SCAN_BLOCKS` (default 1000) e intercala
+scan com refresh para não deixar a valoração live faminta durante o catch-up. A fila colapsa todos
+os eventos pendentes de cada pool; o refresher então faz uma única valoração no frontier atual do
+processing por meio de `eth_call`, usando somente o node pruned permanente configurado em
+`ROBINHOOD_CANONICAL_LIQUIDITY_RPC_URL` (loopback obrigatório; na VPS2, `127.0.0.1:8547`). Falhas
+recebem backoff durável e preservam o snapshot válido anterior. A telemetria da lease separa
+`scanner` e `refresher`, incluindo ranges/blocos/logs/pools enfileiradas e claims
+concluídas/retentadas.
+
+A ordem de implantação é: confirmar `ready=true`, parar/desabilitar o liquidity legado, aplicar a
+Stage 197, instalar env/drop-in, executar `systemctl daemon-reload` e iniciar o canonical-liquidity.
+O túnel/archive deixa de ser necessário para liquidity após essa troca, mas só deve ser removido
+quando nenhum outro backfill — especialmente holders — ainda depender dele.
 
 O preview direcionado `node src/utils/preview-robinhood-v4-blocked.js --through-block=<bloco>
 --output-dir=<diretorio> --range-size=10000` usa `ROBINHOOD_V4_REPLAY_RPC_URL` e a conexão

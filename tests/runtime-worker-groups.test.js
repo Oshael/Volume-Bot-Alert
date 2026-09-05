@@ -764,6 +764,7 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_RPC_URL: 'http://127.0.0.1:8547',
       ROBINHOOD_CANONICAL_LIQUIDITY_RPC_URL: undefined,
       ROBINHOOD_CANONICAL_LIQUIDITY_ENABLED: 'true',
+      ROBINHOOD_CANONICAL_LIQUIDITY_RPC_TIMEOUT_MS: '99999',
       ROBINHOOD_CANONICAL_LIQUIDITY_SCAN_BLOCKS: '99999',
       ROBINHOOD_CANONICAL_LIQUIDITY_SCAN_RANGES: '999',
       ROBINHOOD_CANONICAL_LIQUIDITY_REFRESH_BATCH_SIZE: '9999',
@@ -771,6 +772,7 @@ describe('runtime worker groups config', () => {
     }, (config) => {
       assert.equal(config.robinhoodCanonicalLiquidityWorker.enabled, true);
       assert.equal(config.robinhoodCanonicalLiquidityWorker.rpcUrl, 'http://127.0.0.1:8547');
+      assert.equal(config.robinhoodCanonicalLiquidityWorker.rpcTimeoutMs, 30_000);
       assert.equal(config.robinhoodCanonicalLiquidityWorker.scanBatchBlocks, 1000);
       assert.equal(config.robinhoodCanonicalLiquidityWorker.maxScanRangesPerTick, 100);
       assert.equal(config.robinhoodCanonicalLiquidityWorker.refreshBatchSize, 500);
@@ -779,6 +781,22 @@ describe('runtime worker groups config', () => {
     withEnv({ ROBINHOOD_CANONICAL_LIQUIDITY_ENABLED: undefined }, (config) => {
       assert.equal(config.robinhoodCanonicalLiquidityWorker.enabled, false);
     });
+    const scripts = require('../package.json').scripts;
+    const systemdDir = path.join(ROOT_DIR, 'deploy', 'systemd');
+    const service = fs.readFileSync(path.join(
+      systemdDir, 'trendscope-worker@robinhood-canonical-liquidity.service.example'
+    ), 'utf8');
+    const env = fs.readFileSync(
+      path.join(systemdDir, 'robinhood-canonical-liquidity.env.example'), 'utf8'
+    );
+    assert.match(scripts['start:worker:robinhood-canonical-liquidity'],
+      /run-robinhood-canonical-liquidity-worker/);
+    assert.match(service,
+      /EnvironmentFile=\/etc\/trendscope\/robinhood-canonical-liquidity\.env/);
+    assert.doesNotMatch(service, /ExecStart|WorkingDirectory|User=/);
+    assert.match(env, /ROBINHOOD_CANONICAL_LIQUIDITY_RPC_URL=http:\/\/127\.0\.0\.1:8547/);
+    assert.match(env, /ROBINHOOD_CANONICAL_LIQUIDITY_SCAN_BLOCKS=1000/);
+    assert.doesNotMatch(env, /8548|ARCHIVE/);
   });
 
   it('fails fast when the Robinhood head is mixed with another group', () => {

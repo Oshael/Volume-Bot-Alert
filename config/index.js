@@ -1695,6 +1695,9 @@ module.exports = {
       || process.env.ROBINHOOD_RPC_URL
       || ''
     ).trim(),
+    rpcTimeoutMs: parseIntegerInRange(
+      process.env.ROBINHOOD_CANONICAL_LIQUIDITY_RPC_TIMEOUT_MS, 5000, 1000, 30_000
+    ),
     scanBatchBlocks: parseIntegerInRange(
       process.env.ROBINHOOD_CANONICAL_LIQUIDITY_SCAN_BLOCKS, 1000, 1, 1000
     ),
