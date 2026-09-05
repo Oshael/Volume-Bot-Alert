@@ -3840,15 +3840,17 @@ motivo do gate, watermark, idade, lag, faixa candidata e proteções atribuídas
 wallet ou à cobertura de buckets.
 
 O worker limita o trabalho pelo frontier estrito da captura/processing ativa,
-revalida checkpoint e usa RPC Robinhood com preflight de chain ID `4663`, lease,
-telemetria e backoff no grupo `robinhood-wallet`. O antigo frontier do cursor
-monolítico congelado foi removido; não usá-lo para medir lag atual.
-Um recuo temporário do head seguro do RPC ou desse frontier upstream não reduz o
+revalida checkpoint e seleciona a fonte por `ROBINHOOD_WALLET_SWAP_LIVE_SOURCE`:
+`rpc` (default de rollback, com preflight de chain ID `4663`) ou
+`canonical_journal` (blocos e transações já capturados, sem RPC). Lease,
+telemetria e backoff permanecem no grupo `robinhood-wallet`. O antigo frontier do
+cursor monolítico congelado foi removido; não usá-lo para medir lag atual.
+Um recuo temporário do head seguro da fonte ou desse frontier upstream não reduz o
 cursor e não representa reorg persistente: o tick retorna `waiting-frontier`, expõe
 `frontierDeficitBlocks` na telemetria e tenta novamente no intervalo normal. Apenas
 a divergência do hash do checkpoint já persistido permanece fatal e leva a lease a
 `halted`.
-Cada página LIVE faz prefetch de blocos cheios com concorrência limitada por
+Cada página LIVE resolve blocos com concorrência limitada por
 `ROBINHOOD_WALLET_SWAP_LIVE_BLOCK_CONCURRENCY` (default `8`, faixa `1..32`),
 persiste posições e wallet-swaps em lotes set-based e avança o cursor uma única
 vez até o último prefixo confirmado. O primeiro bloco não resolvido continua
@@ -3862,6 +3864,8 @@ próxima página (no máximo 200 blocos), sem varrer o histórico de observaçõ
 Depois de `ready=true`, execute `npm run robinhood:canonical-wallet-swap-canary`:
 ele compara `tx.from`, posição, hash e timestamp do journal com o RPC legado em
 uma janela fechada recente e não persiste wallet-swaps.
+Depois do restart com `canonical_journal`, confirme o corte com
+`npm run robinhood:canonical-wallet-swap-audit -- --phase=cutover`.
 
 As Stages 126–127 criam posições financeiras Robinhood versionadas e um cursor
 com frontier de bloco e tempo. A Stage 137 adiciona a origem durável desse cursor;

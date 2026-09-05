@@ -6,6 +6,7 @@ const CHAIN = 'robinhood';
 const DEFAULT_CONFIRMATIONS = 12;
 const MAX_CAPTURE_LAG = 2n;
 const MAX_CONTEXT_BLOCKS = 200n;
+const PHASES = Object.freeze(['preflight', 'cutover']);
 const LEASE_KEYS = Object.freeze({
   capture: 'robinhood-chain-capture-worker',
   wallet: 'robinhood-wallet-swap-live-worker',
@@ -36,9 +37,16 @@ function leaseSummary(lease) {
     heartbeat_at: lease.heartbeat_at || null,
     running: telemetry.running === true,
     halted: telemetry.halted === true,
+    source_mode: telemetry.sourceMode || null,
     lag_blocks: text(telemetry.lagBlocks),
     last_error: telemetry.lastError || null,
   });
+}
+
+function phase(value) {
+  const normalized = String(value || 'preflight').trim().toLowerCase();
+  if (!PHASES.includes(normalized)) throw new Error(`phase must be ${PHASES.join(' or ')}`);
+  return normalized;
 }
 
 function calculateFrontiers(row, confirmations) {
@@ -72,7 +80,7 @@ function calculateFrontiers(row, confirmations) {
   };
 }
 
-function migrationBlockers(row, context, frontiers, leases) {
+function migrationBlockers(row, context, frontiers, leases, auditPhase) {
   const blockers = [];
   const add = (condition, code, detail = null) => {
     if (condition) blockers.push(detail == null ? { code } : { code, detail });
@@ -116,12 +124,23 @@ function migrationBlockers(row, context, frontiers, leases) {
     first_block: text(context.first_missing_block),
     transaction_hash: context.first_missing_transaction_hash || null,
   });
+  const walletLease = leaseSummary(leases.wallet);
+  if (auditPhase === 'cutover') {
+    add(!walletLease.active, 'wallet_live_inactive');
+    add(walletLease.active && !walletLease.running, 'wallet_live_worker_not_running');
+    add(walletLease.active && walletLease.running
+      && walletLease.source_mode !== 'canonical_journal',
+    'wallet_live_source_not_canonical', walletLease.source_mode);
+    add(walletLease.halted, 'wallet_live_halted');
+    add(walletLease.last_error != null, 'wallet_live_error', walletLease.last_error);
+  }
   return blockers;
 }
 
 function evaluate(input = {}) {
   const row = input.state || {};
   const context = input.context || {};
+  const auditPhase = phase(input.phase);
   const confirmations = Number(input.confirmations ?? DEFAULT_CONFIRMATIONS);
   if (!Number.isSafeInteger(confirmations) || confirmations < 0 || confirmations > 1000) {
     throw new Error('confirmations must be between 0 and 1000');
@@ -130,9 +149,9 @@ function evaluate(input = {}) {
   const leases = Object.fromEntries(Object.entries(LEASE_KEYS).map(([name, key]) => (
     [name, activeLease(input.leases || [], key)]
   )));
-  const blockers = migrationBlockers(row, context, frontiers, leases);
+  const blockers = migrationBlockers(row, context, frontiers, leases, auditPhase);
   return Object.freeze({
-    mode: 'read-only', ready: blockers.length === 0, blockers,
+    mode: 'read-only', phase: auditPhase, ready: blockers.length === 0, blockers,
     capture: {
       next_block: text(frontiers.captureNext),
       checkpoint_block: text(frontiers.captureCheckpoint),
@@ -176,6 +195,7 @@ function createRobinhoodCanonicalWalletSwapAudit(options = {}) {
   const confirmations = options.confirmations
     ?? process.env.ROBINHOOD_WALLET_SWAP_LIVE_REORG_DEPTH
     ?? DEFAULT_CONFIRMATIONS;
+  const auditPhase = phase(options.phase);
 
   async function inspect() {
     const client = await database.getClient();
@@ -278,7 +298,9 @@ function createRobinhoodCanonicalWalletSwapAudit(options = {}) {
         [Object.values(LEASE_KEYS)]
       );
       await client.query('ROLLBACK');
-      return evaluate({ state, context, leases: leaseResult.rows, confirmations });
+      return evaluate({
+        state, context, leases: leaseResult.rows, confirmations, phase: auditPhase,
+      });
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch (_) {}
       throw error;
@@ -291,6 +313,6 @@ function createRobinhoodCanonicalWalletSwapAudit(options = {}) {
 }
 
 module.exports = {
-  DEFAULT_CONFIRMATIONS, LEASE_KEYS, MAX_CONTEXT_BLOCKS,
+  DEFAULT_CONFIRMATIONS, LEASE_KEYS, MAX_CONTEXT_BLOCKS, PHASES,
   createRobinhoodCanonicalWalletSwapAudit, evaluate,
 };

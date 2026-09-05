@@ -1811,6 +1811,9 @@ module.exports = {
 
   robinhoodWalletSwapLiveWorker: {
     enabled: parseBoolean(process.env.ROBINHOOD_WALLET_SWAP_LIVE_ENABLED, false),
+    sourceMode: String(
+      process.env.ROBINHOOD_WALLET_SWAP_LIVE_SOURCE || 'rpc'
+    ).trim().toLowerCase(),
     intervalMs: parseIntegerInRange(
       process.env.ROBINHOOD_WALLET_SWAP_LIVE_INTERVAL_MS, 2000, 250, 300_000
     ),

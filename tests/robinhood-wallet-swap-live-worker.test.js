@@ -155,6 +155,7 @@ describe('Robinhood wallet-swap LIVE worker', () => {
     });
 
     assert.equal(runtime.runnerDeps.cursor, cursor);
+    assert.equal(runtime.sourceMode, 'rpc');
     assert.equal(runtime.runnerDeps.reader, reader);
     assert.equal(runtime.runnerDeps.attributor, attributor);
     assert.equal(attributorInput.parserVersion, 'rh-wallet-live-1');
@@ -175,5 +176,34 @@ describe('Robinhood wallet-swap LIVE worker', () => {
     const frontier = await runtime.runnerDeps.loadMarketCursor();
     assert.deepEqual(frontier, { nextBlock: '150' });
     assert.deepEqual(frontierCalls, ['150']);
+  });
+
+  it('uses the canonical journal without constructing an RPC client', async () => {
+    const source = {
+      loadBlock: async () => ({ full: true }),
+      loadHeader: async () => ({ header: true }),
+      readHead: async () => '200',
+    };
+    let attributorInput;
+    const runtime = await buildRuntime({
+      sourceMode: 'canonical_journal', rpcOptions: {}, reorgDepth: 12,
+      maxBlocks: 200, blockConcurrency: 6,
+    }, {
+      clientFactory: () => { throw new Error('RPC must not be constructed'); },
+      canonicalBlockSourceFactory: () => source,
+      walletRepositoryFactory: () => ({ insertWalletSwaps() {} }),
+      transactionPositionRepositoryFactory: () => ({ upsertPositions() {} }),
+      cursorFactory: () => ({ loadCursor() {}, advanceLiveCursor() {} }),
+      sourceReaderFactory: () => ({ readAcceptedBlockGroups() {} }),
+      marketRepositoryFactory: () => ({ resolveMarketFrontier: async () => null }),
+      headProcessingRepositoryFactory: () => ({ getOldestActiveCapture: async () => null }),
+      attributorFactory: (input) => { attributorInput = input; return { attributeGroups() {} }; },
+    });
+
+    assert.equal(runtime.sourceMode, 'canonical_journal');
+    assert.deepEqual(runtime.providerChainIds, { canonical_journal: '4663' });
+    assert.equal(await runtime.runnerDeps.readNodeHead(), '200');
+    assert.deepEqual(await runtime.runnerDeps.fetchBlockHeader('100'), { header: true });
+    assert.deepEqual(await attributorInput.fetchBlock('100'), { full: true });
   });
 });

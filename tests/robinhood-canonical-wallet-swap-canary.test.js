@@ -71,6 +71,23 @@ describe('Robinhood canonical wallet-swap canary', () => {
     assert.match(queries[0].sql, /ORDER BY transaction\.transaction_index/);
   });
 
+  it('reads the canonical head and lightweight checkpoint header without transactions', async () => {
+    const responses = [
+      { rows: [{ node_head: '101' }] },
+      { rows: [{
+        block_number: '100', block_hash: BLOCK_HASH,
+        block_timestamp: '2021-01-14T08:25:36.000Z',
+      }] },
+    ];
+    const source = createRobinhoodCanonicalBlockSource({
+      database: { async query() { return responses.shift(); } },
+    });
+    assert.equal(await source.readHead(), '101');
+    assert.deepEqual(await source.loadHeader('100'), {
+      number: '0x64', hash: BLOCK_HASH, timestamp: '0x60000000',
+    });
+  });
+
   it('compares sender, transaction position and canonical block identity', () => {
     assert.deepEqual(compareGroup([observation()], block(), block()), [{
       identity: `${TX_HASH}:7`, missing_legacy: false, missing_canonical: false, fields: [],

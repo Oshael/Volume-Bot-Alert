@@ -41,6 +41,7 @@ describe('Robinhood canonical wallet-swap audit', () => {
   it('accepts a replayable journal backlog and reports its bounded context proof', () => {
     const report = evaluate(input());
     assert.equal(report.ready, true);
+    assert.equal(report.phase, 'preflight');
     assert.deepEqual(report.blockers, []);
     assert.equal(report.capture.safe_head, '288');
     assert.equal(report.processing.processable_through_block, '288');
@@ -50,6 +51,17 @@ describe('Robinhood canonical wallet-swap audit', () => {
       first_block: '240', last_block: '288', max_blocks: String(MAX_CONTEXT_BLOCKS),
       accepted_observations: 50, missing: 0,
     });
+  });
+
+  it('requires the running wallet worker to use the canonical journal after cutover', () => {
+    const state = input();
+    state.phase = 'cutover';
+    assert.deepEqual(evaluate(state).blockers, [
+      { code: 'wallet_live_source_not_canonical' },
+    ]);
+    const wallet = state.leases.find(({ lease_key }) => lease_key === LEASE_KEYS.wallet);
+    wallet.metadata.telemetry.sourceMode = 'canonical_journal';
+    assert.equal(evaluate(state).ready, true);
   });
 
   it('fails closed when accepted observations lack canonical transaction context', () => {
@@ -121,10 +133,13 @@ describe('Robinhood canonical wallet-swap audit', () => {
   });
 
   it('rejects CLI arguments and prints the report', async () => {
-    assert.deepEqual(parseArgs([]), {});
+    assert.deepEqual(parseArgs([]), { phase: 'preflight' });
+    assert.deepEqual(parseArgs(['--phase=cutover']), { phase: 'cutover' });
+    assert.throws(() => parseArgs(['--phase=live']), /preflight or cutover/);
     assert.throws(() => parseArgs(['--write']), /unknown argument/);
     const lines = [];
     const report = await main([], {
+      options: { phase: 'preflight' },
       audit: { async inspect() { return { mode: 'read-only', ready: true }; } },
       logger: { log(value) { lines.push(value); } },
     });

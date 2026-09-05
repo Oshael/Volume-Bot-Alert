@@ -638,9 +638,9 @@ function startRobinhoodDerivedWorkerGroup() {
   }
 }
 
-// Wallet-swap attribution is its own isolated group: it re-reads accepted
-// observations and issues heavy eth_getBlockByNumber(full-tx) calls per block to
-// resolve tx senders, so it must not share a process with head/processing/derived.
+// Wallet-swap attribution is its own isolated group. It re-reads accepted
+// observations and resolves tx senders from the configured RPC or canonical
+// journal source without sharing execution with head/processing/derived.
 // It keeps an independent cursor and catches up from wherever it left off.
 function startRobinhoodWalletSwapWorkerGroup() {
   if (!hasWorkerGroup('robinhood-wallet')) return;

@@ -32,6 +32,28 @@ function buildBlock(rows) {
 function createRobinhoodCanonicalBlockSource(options = {}) {
   const database = options.database || db;
 
+  async function readHead() {
+    const result = await database.query(
+      `SELECT node_head FROM robinhood_chain_capture_cursor WHERE chain=$1`,
+      [CHAIN]
+    );
+    return result.rows[0]?.node_head == null ? null : String(result.rows[0].node_head);
+  }
+
+  async function loadHeader(blockNumber) {
+    const result = await database.query(
+      `SELECT block_number, block_hash, block_timestamp
+         FROM robinhood_chain_blocks
+        WHERE chain=$1 AND canonical=TRUE AND block_number=$2::bigint`,
+      [CHAIN, BigInt(blockNumber).toString()]
+    );
+    const row = result.rows[0];
+    return row ? {
+      number: blockTag(row.block_number), hash: row.block_hash,
+      timestamp: timestampTag(row.block_timestamp),
+    } : null;
+  }
+
   async function loadBlock(blockNumber) {
     const result = await database.query(
       `SELECT block.block_number, block.block_hash, block.block_timestamp,
@@ -47,7 +69,7 @@ function createRobinhoodCanonicalBlockSource(options = {}) {
     return buildBlock(result.rows);
   }
 
-  return Object.freeze({ loadBlock });
+  return Object.freeze({ loadBlock, loadHeader, readHead });
 }
 
 module.exports = {

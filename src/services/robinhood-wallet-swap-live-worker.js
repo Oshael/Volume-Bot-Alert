@@ -8,9 +8,8 @@ const {
 const { createRobinhoodWalletSwapSourceReader } = require('../models/robinhood-wallet-swap-source-reader');
 const { createRobinhoodWalletSwapAttributor } = require('./robinhood-wallet-swap-attributor');
 const {
-  createRobinhoodRpcClient,
-  validateRobinhoodProviderChainIds,
-} = require('./robinhood-ingestion-worker');
+  normalizeRobinhoodWalletSwapLiveSource, resolveRobinhoodWalletSwapLiveSource,
+} = require('./robinhood-wallet-swap-live-source');
 const { runLiveTick } = require('./robinhood-wallet-swap-live-runner');
 const marketTradeRealtime = require('./market-trade-realtime');
 
@@ -21,9 +20,12 @@ function boundedInteger(value, fallback, min, max) {
   return Number.isFinite(parsed) ? Math.max(min, Math.min(parsed, max)) : fallback;
 }
 
-function normalizeOptions(options = {}) {
+function normalizeOptions(options = {}, env = process.env) {
   return {
     enabled: options.enabled === true,
+    sourceMode: normalizeRobinhoodWalletSwapLiveSource(
+      options.sourceMode ?? env.ROBINHOOD_WALLET_SWAP_LIVE_SOURCE
+    ),
     intervalMs: boundedInteger(options.intervalMs, 2000, 250, 300_000),
     maxErrorBackoffMs: boundedInteger(options.maxErrorBackoffMs, 30_000, 1000, 300_000),
     maxBlocks: boundedInteger(options.maxBlocks, 200, 1, 2000),
@@ -34,15 +36,10 @@ function normalizeOptions(options = {}) {
   };
 }
 
-function blockTag(value) {
-  return `0x${BigInt(String(value)).toString(16)}`;
-}
-
 async function buildRuntime(options, deps = {}) {
-  const client = (deps.clientFactory || createRobinhoodRpcClient)(options.rpcOptions);
-  const providerChainIds = await (
-    deps.validateChainIds || validateRobinhoodProviderChainIds
-  )(client);
+  const source = await resolveRobinhoodWalletSwapLiveSource({
+    sourceMode: options.sourceMode, rpcOptions: options.rpcOptions,
+  }, deps);
   const walletRepository = (deps.walletRepositoryFactory || createRobinhoodWalletSwapRepository)();
   const transactionPositionRepository = (
     deps.transactionPositionRepositoryFactory || createRobinhoodTransactionPositionRepository
@@ -55,26 +52,24 @@ async function buildRuntime(options, deps = {}) {
   const headProcessingRepository = (
     deps.headProcessingRepositoryFactory || createRobinhoodHeadProcessingRepository
   )();
-  const fetchBlock = (number, fullTransactions) => client.request(
-    'eth_getBlockByNumber', [blockTag(number), fullTransactions]
-  );
   const attributor = (deps.attributorFactory || createRobinhoodWalletSwapAttributor)({
     repository: walletRepository,
     transactionPositionRepository,
-    fetchBlock: (number) => fetchBlock(number, true),
+    fetchBlock: source.fetchBlock,
     fetchConcurrency: options.blockConcurrency,
     parserVersion: 'rh-wallet-live-1',
     onTradesPersisted: (rows) => (deps.marketTradeRealtime || marketTradeRealtime).publishRows(rows),
   });
   return {
-    providerChainIds,
+    sourceMode: source.sourceMode,
+    providerChainIds: source.providerChainIds,
     runnerDeps: {
       cursor,
       reader,
       attributor,
       reorgDepth: options.reorgDepth,
       maxBlocks: options.maxBlocks,
-      readNodeHead: () => client.request('eth_blockNumber'),
+      readNodeHead: source.readNodeHead,
       // Post-cutover the isolated worker must bound itself by the strict
       // processing frontier (oldest non-terminal capture) rather than the
       // monolith's robinhood_ingestion_cursors 'market': that legacy cursor froze
@@ -85,7 +80,7 @@ async function buildRuntime(options, deps = {}) {
         const active = await headProcessingRepository.getOldestActiveCapture('market');
         return marketRepository.resolveMarketFrontier(active?.blockNumber ?? null);
       },
-      fetchBlockHeader: (number) => fetchBlock(number, false),
+      fetchBlockHeader: source.fetchBlockHeader,
     },
   };
 }
@@ -118,9 +113,10 @@ function createRobinhoodWalletSwapLiveWorker(deps = {}) {
   const schedule = deps.schedule || setTimeout;
   const cancelSchedule = deps.cancelSchedule || clearTimeout;
   const logger = deps.logger || console;
+  const env = deps.env || process.env;
   const tick = deps.runLiveTick || runLiveTick;
   const runtimeFactory = deps.runtimeFactory || ((options) => buildRuntime(options, deps));
-  let options = normalizeOptions();
+  let options = normalizeOptions({}, env);
   let runtimePromise = null;
   let timer = null;
   let activeRunPromise = null;
@@ -128,7 +124,7 @@ function createRobinhoodWalletSwapLiveWorker(deps = {}) {
   let onFatal = null;
   const status = {
     enabled: false, running: false, inFlight: false, halted: false,
-    providerChainIds: null, lastResult: null, lagBlocks: null,
+    sourceMode: null, providerChainIds: null, lastResult: null, lagBlocks: null,
     batches: 0, processedBlocks: 0, attributed: 0, inserted: 0, duplicateInserts: 0,
     missing: 0, unresolved: 0, retries: 0, conflicts: 0,
     consecutiveErrors: 0, consecutiveBlocked: 0, blockedBlock: null,
@@ -177,6 +173,7 @@ function createRobinhoodWalletSwapLiveWorker(deps = {}) {
     status.inFlight = true;
     try {
       const runtime = await getRuntime();
+      status.sourceMode = runtime.sourceMode;
       status.providerChainIds = runtime.providerChainIds;
       const result = await tick(runtime.runnerDeps);
       recordResult(result);
@@ -228,7 +225,7 @@ function createRobinhoodWalletSwapLiveWorker(deps = {}) {
 
   function start(input = {}) {
     if (running) return false;
-    options = normalizeOptions(input);
+    options = normalizeOptions(input, env);
     onFatal = typeof input.onFatal === 'function' ? input.onFatal : null;
     status.enabled = options.enabled;
     if (!options.enabled) return false;
@@ -258,5 +255,5 @@ module.exports = {
   runOnce: worker.runOnce,
   start: worker.start,
   stop: worker.stop,
-  __private: { blockTag, buildRuntime, compactResult, lagBlocks, normalizeOptions },
+  __private: { buildRuntime, compactResult, lagBlocks, normalizeOptions },
 };

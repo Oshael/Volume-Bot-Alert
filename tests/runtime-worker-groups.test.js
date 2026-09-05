@@ -1273,16 +1273,20 @@ describe('runtime worker groups config', () => {
   it('keeps wallet-swap LIVE disabled and bounds its independent controls', () => {
     withEnv({
       ROBINHOOD_WALLET_SWAP_LIVE_ENABLED: '',
+      ROBINHOOD_WALLET_SWAP_LIVE_SOURCE: 'canonical_journal',
       ROBINHOOD_WALLET_SWAP_LIVE_INTERVAL_MS: '1',
       ROBINHOOD_WALLET_SWAP_LIVE_MAX_BLOCKS_PER_TICK: '9999',
+      ROBINHOOD_WALLET_SWAP_LIVE_BLOCK_CONCURRENCY: '999',
       ROBINHOOD_WALLET_SWAP_LIVE_REORG_DEPTH: '0',
       ROBINHOOD_WALLET_SWAP_LIVE_MAX_CONSECUTIVE_FAILURES: '999',
     }, (config) => {
       assert.deepEqual(config.robinhoodWalletSwapLiveWorker, {
         enabled: false,
+        sourceMode: 'canonical_journal',
         intervalMs: 250,
         maxErrorBackoffMs: 30_000,
         maxBlocks: 2000,
+        blockConcurrency: 32,
         reorgDepth: 1,
         maxConsecutiveFailures: 100,
       });
