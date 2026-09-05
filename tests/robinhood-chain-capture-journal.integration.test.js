@@ -251,6 +251,41 @@ describe('Robinhood canonical chain capture journal', () => {
     assert.equal(cursor.checkpoint_hash, HASH);
   });
 
+  it('commits a contiguous block batch atomically and advances one canonical frontier', async () => {
+    const journal = createRobinhoodChainCaptureJournal();
+    const next = capture(101, NEXT_HASH, HASH);
+    next.transactions[0].hash = NEXT_TX;
+    next.events[0].transactionHash = NEXT_TX;
+    const broken = { ...next, block: { ...next.block, parentHash: PARENT } };
+    await assert.rejects(
+      journal.commitBlocks([capture(), broken]),
+      (error) => error.code === 'capture_reorg_detected'
+    );
+    assert.equal((await db.query(
+      'SELECT COUNT(*)::int AS blocks FROM robinhood_chain_blocks'
+    )).rows[0].blocks, 0);
+
+    assert.deepEqual(await journal.commitBlocks([capture(), next]), [{
+      status: 'committed', transactions: 1, events: 1, v3Snapshots: 0, workItems: 1,
+    }, {
+      status: 'committed', transactions: 1, events: 1, v3Snapshots: 0, workItems: 1,
+    }]);
+    const counts = await db.query(
+      `SELECT (SELECT COUNT(*)::int FROM robinhood_chain_blocks) AS blocks,
+              (SELECT COUNT(*)::int FROM robinhood_chain_transactions) AS transactions,
+              (SELECT COUNT(*)::int FROM robinhood_chain_events) AS events,
+              (SELECT COUNT(*)::int FROM robinhood_chain_domain_outbox) AS work_items`
+    );
+    assert.deepEqual(counts.rows[0], {
+      blocks: 2, transactions: 2, events: 2, work_items: 2,
+    });
+    const cursor = await journal.getCursor();
+    assert.deepEqual(
+      [cursor.next_block, cursor.checkpoint_block, cursor.checkpoint_hash, cursor.version],
+      ['102', '101', NEXT_HASH, '1']
+    );
+  });
+
   it('accepts an exact retry but rejects gaps and parent divergence without partial writes', async () => {
     const journal = createRobinhoodChainCaptureJournal();
     await journal.commitBlock(capture());

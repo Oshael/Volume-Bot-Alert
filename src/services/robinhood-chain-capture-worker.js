@@ -200,40 +200,59 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
     }));
   }
   async function commitBlockBatch(fetched, nodeHead) {
-    let nextBlock;
+    const prepared = []; let snapshotMs = 0;
     for (const entry of fetched) {
       const { blockNumber, capture, startedAt, receiptsAvailableAt } = entry;
       const observedAt = status.lastHeadObservedAt || startedAt.toISOString();
+      const snapshotStartedAt = now();
       const v3State = await deps.v3Snapshotter.captureBlock(capture, {
         // Cover intervening live blocks too; old catch-up only updates pool tracking.
         readBalances: nodeHead - blockNumber < v3SnapshotWindowBlocks,
       });
-      const snapshotsAvailableAt = now();
+      snapshotMs += now() - snapshotStartedAt;
       const finalizedHead = nodeHead > BigInt(options.confirmations || 0)
         ? nodeHead - BigInt(options.confirmations || 0) : 0n;
-      const result = await deps.journal.commitBlock({
+      prepared.push({ ...entry, v3State, input: {
         ...capture, v3Snapshots: v3State.snapshots, nodeHead: nodeHead.toString(),
         finalizedHead: finalizedHead.toString(), block: { ...capture.block,
           finality: blockNumber <= finalizedHead ? 'finalized' : 'observed',
           headObservedAt: observedAt,
           receiptsAvailableAt: receiptsAvailableAt.toISOString() },
-      });
-      const committedAt = now();
+      } });
+    }
+    const commitStartedAt = now();
+    let results;
+    if (typeof deps.journal.commitBlocks === 'function') {
+      results = await deps.journal.commitBlocks(prepared.map(({ input }) => input));
+    } else {
+      results = [];
+      for (const { input } of prepared) results.push(await deps.journal.commitBlock(input));
+    }
+    const committedAt = now();
+    for (const [index, entry] of prepared.entries()) {
+      const { blockNumber, v3State } = entry;
+      const result = results[index];
       status.blocks += 1; status.transactions += result.transactions;
       status.events += result.events; status.v3Snapshots += result.v3Snapshots || 0;
       status.v3MissedPools += v3State.missedPools;
       status.v3SkippedPools += v3State.skippedPools || 0;
       status.lastResult = { block: blockNumber.toString(), ...result };
-      nextBlock = blockNumber + 1n;
-      status.lastProgressAt = committedAt.toISOString();
-      recordFrontier(nodeHead, nextBlock);
-      status.lastTiming = {
-        fetchMs: receiptsAvailableAt - startedAt,
-        snapshotMs: snapshotsAvailableAt - receiptsAvailableAt,
-        commitMs: committedAt - snapshotsAvailableAt,
-        headToCommitMs: Math.max(0, committedAt - new Date(observedAt)),
-      };
     }
+    const nextBlock = prepared.at(-1).blockNumber + 1n;
+    const commitMs = committedAt - commitStartedAt;
+    status.lastProgressAt = committedAt.toISOString();
+    recordFrontier(nodeHead, nextBlock);
+    status.lastTiming = {
+      blocks: prepared.length,
+      fetchMs: Math.max(...prepared.map((entry) => entry.receiptsAvailableAt - entry.startedAt)),
+      snapshotMs,
+      commitMs,
+      commitPerBlockMs: Number((commitMs / prepared.length).toFixed(2)),
+      totalMs: committedAt - prepared[0].startedAt,
+      headToCommitMs: Math.max(
+        0, committedAt - new Date(status.lastHeadObservedAt || prepared[0].startedAt)
+      ),
+    };
     return nextBlock;
   }
   async function captureOnce() {

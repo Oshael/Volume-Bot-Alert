@@ -75,9 +75,12 @@ test('worker prefetches blocks concurrently and commits them sequentially withou
   } };
   const journal = {
     getCursor: async () => null,
-    commitBlock: async (capture) => {
-      commits.push(capture);
-      return { status: 'committed', transactions: capture.transactions.length, events: capture.events.length };
+    commitBlocks: async (captures) => {
+      commits.push(...captures);
+      return captures.map((capture) => ({
+        status: 'committed', transactions: capture.transactions.length,
+        events: capture.events.length,
+      }));
     },
   };
   const v3Snapshotter = { captureBlock: async (capture, options) => {

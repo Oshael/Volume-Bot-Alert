@@ -121,6 +121,52 @@ function normalizeInput(input) {
   return { block, transactions, events, v3Snapshots, nodeHead, finalizedHead,
     digest: captureDigest(block, transactions, events, v3Snapshots) };
 }
+function batchPayload(entries) {
+  const blocks = []; const transactions = []; const events = [];
+  const v3Snapshots = []; const workItems = [];
+  for (const entry of entries) {
+    const { block } = entry;
+    blocks.push({
+      block_number: block.number.toString(), block_hash: block.hash,
+      parent_hash: block.parentHash, capture_digest: entry.digest,
+      block_timestamp: block.timestamp, finality: block.finality,
+      head_observed_at: block.headObservedAt,
+      receipts_available_at: block.receiptsAvailableAt,
+      capture_version: block.captureVersion,
+    });
+    transactions.push(...entry.transactions.map((transaction) => ({
+      block_hash: block.hash, ...transaction,
+    })));
+    events.push(...entry.events.map((event) => ({
+      block_hash: block.hash, block_number: block.number.toString(), ...event,
+    })));
+    v3Snapshots.push(...entry.v3Snapshots.map((snapshot) => ({
+      block_hash: block.hash, ...snapshot,
+    })));
+    const eventsByLogIndex = new Map(entry.events.map((event) => [event.log_index, event]));
+    workItems.push(...routeCanonicalEvents(entry.events).map((item) => ({
+      block_hash: block.hash, block_number: block.number.toString(), domain: item.domain,
+      transaction_index: eventsByLogIndex.get(item.log_index).transaction_index,
+      log_index: item.log_index,
+    })));
+  }
+  return { blocks, transactions, events, v3Snapshots, workItems };
+}
+function validateSequence(entries, current) {
+  let expected = current ? BigInt(current.next_block) : entries[0].block.number;
+  let parentHash = current?.checkpoint_hash || null;
+  for (const entry of entries) {
+    if (entry.block.number !== expected) {
+      const error = new Error(`capture expected block ${expected}, received ${entry.block.number}`);
+      error.code = 'capture_sequence_conflict'; throw error;
+    }
+    if (parentHash && entry.block.parentHash !== parentHash) {
+      const error = new Error(`block ${entry.block.number} does not extend the capture checkpoint`);
+      error.code = 'capture_reorg_detected'; throw error;
+    }
+    expected += 1n; parentHash = entry.block.hash;
+  }
+}
 function createRobinhoodChainCaptureJournal(options = {}) {
   const database = options.database || db;
   async function getCursor(client = database) {
@@ -136,12 +182,11 @@ function createRobinhoodChainCaptureJournal(options = {}) {
         ? value : String(value)]
     )));
   }
-  async function commitBlock(input = {}) {
-    const normalized = normalizeInput(input);
-    const {
-      block, transactions, events, v3Snapshots, nodeHead, finalizedHead, digest,
-    } = normalized;
-    const workItems = routeCanonicalEvents(events);
+  async function commitBlocks(inputs = []) {
+    if (!Array.isArray(inputs) || inputs.length === 0) {
+      throw new Error('capture batch must not be empty');
+    }
+    const entries = inputs.map(normalizeInput);
     const client = await database.getClient();
     try {
       await client.query('BEGIN');
@@ -149,109 +194,118 @@ function createRobinhoodChainCaptureJournal(options = {}) {
         'SELECT * FROM robinhood_chain_capture_cursor WHERE chain = $1 FOR UPDATE', [CHAIN]
       );
       const current = cursor.rows[0];
-      if (current && block.number === BigInt(current.checkpoint_block)
-          && block.hash === current.checkpoint_hash) {
+      const replay = entries.length === 1 && current
+        && entries[0].block.number === BigInt(current.checkpoint_block)
+        && entries[0].block.hash === current.checkpoint_hash;
+      if (replay) {
         const replay = await client.query(
           'SELECT capture_digest FROM robinhood_chain_blocks WHERE chain=$1 AND block_hash=$2',
-          [CHAIN, block.hash]
+          [CHAIN, entries[0].block.hash]
         );
-        if (replay.rows[0]?.capture_digest !== digest) {
-          const error = new Error(`replayed block ${block.number} has divergent capture data`);
+        if (replay.rows[0]?.capture_digest !== entries[0].digest) {
+          const error = new Error(
+            `replayed block ${entries[0].block.number} has divergent capture data`
+          );
           error.code = 'capture_replay_conflict';
           throw error;
         }
         await client.query('COMMIT');
-        return {
+        return [{
           status: 'replayed', transactions: 0, events: 0, v3Snapshots: 0, workItems: 0,
-        };
+        }];
       }
-      if (current && block.number !== BigInt(current.next_block)) {
-        const error = new Error(`capture expected block ${current.next_block}, received ${block.number}`);
-        error.code = 'capture_sequence_conflict';
-        throw error;
-      }
-      if (current?.checkpoint_hash && block.parentHash !== current.checkpoint_hash) {
-        const error = new Error(`block ${block.number} does not extend the capture checkpoint`);
-        error.code = 'capture_reorg_detected';
-        throw error;
-      }
+      validateSequence(entries, current);
+      const payload = batchPayload(entries);
       await client.query(
         `INSERT INTO robinhood_chain_blocks(
            chain, block_number, block_hash, parent_hash, capture_digest, block_timestamp, finality,
            head_observed_at, receipts_available_at, capture_version
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-        [CHAIN, block.number.toString(), block.hash, block.parentHash, digest, block.timestamp,
-          block.finality, block.headObservedAt, block.receiptsAvailableAt, block.captureVersion]
+         ) SELECT $1, item.block_number, item.block_hash, item.parent_hash,
+                  item.capture_digest, item.block_timestamp, item.finality,
+                  item.head_observed_at, item.receipts_available_at, item.capture_version
+             FROM jsonb_to_recordset($2::jsonb) AS item(
+               block_number BIGINT, block_hash TEXT, parent_hash TEXT, capture_digest TEXT,
+               block_timestamp TIMESTAMPTZ, finality TEXT, head_observed_at TIMESTAMPTZ,
+               receipts_available_at TIMESTAMPTZ, capture_version INTEGER
+             )`, [CHAIN, JSON.stringify(payload.blocks)]
       );
-      const insertedTransactions = await client.query(
+      await client.query(
         `INSERT INTO robinhood_chain_transactions(
            chain, block_hash, transaction_hash, transaction_index, from_address,
            to_address, receipt_succeeded, contract_address, nonce, value_wei
-         ) SELECT $1, $2, item.transaction_hash, item.transaction_index,
+         ) SELECT $1, item.block_hash, item.transaction_hash, item.transaction_index,
                   item.from_address, item.to_address, item.receipt_succeeded,
                   item.contract_address, item.nonce, item.value_wei
-             FROM jsonb_to_recordset($3::jsonb) AS item(
-               transaction_hash TEXT, transaction_index INTEGER, from_address TEXT,
+             FROM jsonb_to_recordset($2::jsonb) AS item(
+               block_hash TEXT, transaction_hash TEXT, transaction_index INTEGER, from_address TEXT,
                to_address TEXT, receipt_succeeded BOOLEAN, contract_address TEXT,
                nonce NUMERIC, value_wei NUMERIC
-             )`, [CHAIN, block.hash, JSON.stringify(transactions)]
+             )`, [CHAIN, JSON.stringify(payload.transactions)]
       );
-      const insertedEvents = await client.query(
+      await client.query(
         `INSERT INTO robinhood_chain_events(
            chain, block_hash, block_number, transaction_hash, transaction_index,
            log_index, address, topic0, topics, data
-         ) SELECT $1, $2, $3, item.transaction_hash, item.transaction_index,
+         ) SELECT $1, item.block_hash, item.block_number, item.transaction_hash,
+                  item.transaction_index,
                   item.log_index, item.address, item.topic0, item.topics, item.data
-             FROM jsonb_to_recordset($4::jsonb) AS item(
-               transaction_hash TEXT, transaction_index INTEGER, log_index INTEGER,
-               address TEXT, topic0 TEXT, topics JSONB, data TEXT
-             )`, [CHAIN, block.hash, block.number.toString(), JSON.stringify(events)]
+             FROM jsonb_to_recordset($2::jsonb) AS item(
+               block_hash TEXT, block_number BIGINT, transaction_hash TEXT,
+               transaction_index INTEGER, log_index INTEGER, address TEXT,
+               topic0 TEXT, topics JSONB, data TEXT
+             )`, [CHAIN, JSON.stringify(payload.events)]
       );
-      const insertedV3Snapshots = await client.query(
+      await client.query(
         `INSERT INTO robinhood_chain_v3_balance_snapshots(
            chain, block_hash, log_index, pool_address, token_address, quote_address,
            token_balance_raw, quote_balance_raw
-         ) SELECT $1, $2, item.log_index, item.pool_address, item.token_address,
+         ) SELECT $1, item.block_hash, item.log_index, item.pool_address, item.token_address,
                   item.quote_address, item.token_balance_raw, item.quote_balance_raw
-             FROM jsonb_to_recordset($3::jsonb) AS item(
-               log_index INTEGER, pool_address TEXT, token_address TEXT, quote_address TEXT,
-               token_balance_raw NUMERIC, quote_balance_raw NUMERIC
-             )`, [CHAIN, block.hash, JSON.stringify(v3Snapshots)]
+             FROM jsonb_to_recordset($2::jsonb) AS item(
+               block_hash TEXT, log_index INTEGER, pool_address TEXT, token_address TEXT,
+               quote_address TEXT, token_balance_raw NUMERIC, quote_balance_raw NUMERIC
+             )`, [CHAIN, JSON.stringify(payload.v3Snapshots)]
       );
-      const insertedWork = await client.query(
+      await client.query(
         `INSERT INTO robinhood_chain_domain_outbox(
            chain, domain, block_hash, block_number, transaction_index, log_index
-         ) SELECT $1, item.domain, $2, $3, events.transaction_index, item.log_index
-             FROM jsonb_to_recordset($4::jsonb) AS item(domain TEXT, log_index INTEGER)
-             JOIN robinhood_chain_events events
-               ON events.chain=$1 AND events.block_hash=$2 AND events.log_index=item.log_index`,
-        [CHAIN, block.hash, block.number.toString(), JSON.stringify(workItems)]
+         ) SELECT $1, item.domain, item.block_hash, item.block_number,
+                  item.transaction_index, item.log_index
+             FROM jsonb_to_recordset($2::jsonb) AS item(
+               domain TEXT, block_hash TEXT, block_number BIGINT,
+               transaction_index INTEGER, log_index INTEGER
+             )`, [CHAIN, JSON.stringify(payload.workItems)]
       );
+      const last = entries.at(-1);
+      const version = current
+        ? BigInt(current.version) + BigInt(entries.length) : BigInt(entries.length - 1);
       await client.query(
         `INSERT INTO robinhood_chain_capture_cursor(
            chain, next_block, checkpoint_block, checkpoint_hash, node_head,
-           finalized_head, head_observed_at, receipts_available_at
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+           finalized_head, head_observed_at, receipts_available_at, version
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
          ON CONFLICT (chain) DO UPDATE SET
            next_block=EXCLUDED.next_block, checkpoint_block=EXCLUDED.checkpoint_block,
            checkpoint_hash=EXCLUDED.checkpoint_hash, node_head=EXCLUDED.node_head,
            finalized_head=EXCLUDED.finalized_head, head_observed_at=EXCLUDED.head_observed_at,
            receipts_available_at=EXCLUDED.receipts_available_at,
-           version=robinhood_chain_capture_cursor.version+1, updated_at=NOW()`,
-        [CHAIN, (block.number + 1n).toString(), block.number.toString(), block.hash,
-          nodeHead.toString(), finalizedHead.toString(), block.headObservedAt,
-          block.receiptsAvailableAt]
+           version=EXCLUDED.version, updated_at=NOW()`,
+        [CHAIN, (last.block.number + 1n).toString(), last.block.number.toString(), last.block.hash,
+          last.nodeHead.toString(), last.finalizedHead.toString(), last.block.headObservedAt,
+          last.block.receiptsAvailableAt, version.toString()]
       );
-      await client.query('SELECT pg_notify($1, $2)', [NOTIFY_CHANNEL, block.number.toString()]);
-      if (insertedWork.rowCount > 0) {
-        await client.query('SELECT pg_notify($1, $2)', [DOMAIN_NOTIFY_CHANNEL, block.number.toString()]);
+      await client.query('SELECT pg_notify($1, $2)', [NOTIFY_CHANNEL, last.block.number.toString()]);
+      if (payload.workItems.length > 0) {
+        await client.query(
+          'SELECT pg_notify($1, $2)', [DOMAIN_NOTIFY_CHANNEL, last.block.number.toString()]
+        );
       }
       await client.query('COMMIT');
-      return {
-        status: 'committed', transactions: insertedTransactions.rowCount,
-        events: insertedEvents.rowCount, v3Snapshots: insertedV3Snapshots.rowCount,
-        workItems: insertedWork.rowCount,
-      };
+      return entries.map((entry) => ({
+        status: 'committed', transactions: entry.transactions.length,
+        events: entry.events.length, v3Snapshots: entry.v3Snapshots.length,
+        workItems: routeCanonicalEvents(entry.events).length,
+      }));
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch (_) {}
       throw error;
@@ -259,9 +313,12 @@ function createRobinhoodChainCaptureJournal(options = {}) {
       client.release();
     }
   }
-  return Object.freeze({ commitBlock, getCursor });
+  async function commitBlock(input = {}) {
+    return (await commitBlocks([input]))[0];
+  }
+  return Object.freeze({ commitBlock, commitBlocks, getCursor });
 }
 module.exports = {
   CAPTURE_VERSION, DOMAIN_NOTIFY_CHANNEL, NOTIFY_CHANNEL, createRobinhoodChainCaptureJournal,
-  __private: { normalizeInput },
+  __private: { batchPayload, normalizeInput, validateSequence },
 };
