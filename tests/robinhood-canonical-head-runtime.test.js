@@ -21,7 +21,10 @@ describe('Robinhood canonical head runtime', () => {
       candidateRepositoryFactory: () => candidateRepository,
       pipelineFactory: (options) => {
         pipelineOptions = options;
-        return { snapshot: () => ({ tracked: { v2: 1, v3: 2, v4: 3 } }) };
+        return { snapshot: () => ({
+          tracked: { v2: 1, v3: 2, v4: 3 },
+          enrichment: { observationConcurrency: 4 },
+        }) };
       },
       runnerFactory: (deps) => {
         runnerDeps = deps;
@@ -41,6 +44,7 @@ describe('Robinhood canonical head runtime', () => {
     assert.deepEqual(await runtime.runOnce(), { claimed: 0 });
     assert.deepEqual(runtime.snapshot(), {
       owner: 'canonical-test', tracked: { v2: 1, v3: 2, v4: 3 },
+      enrichment: { observationConcurrency: 4 },
       rpcGuard: {
         role: 'canonical-head', forbiddenMethod: 'eth_getLogs', forbiddenAttempts: 0,
       },

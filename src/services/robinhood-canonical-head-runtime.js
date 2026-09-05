@@ -52,14 +52,17 @@ async function createRobinhoodCanonicalHeadRuntime(deps = {}, options = {}) {
     },
   });
 
-  return Object.freeze({
-    runOnce: runner.runOnce,
-    snapshot: () => ({
+  function snapshot() {
+    const pipelineStatus = pipeline.snapshot();
+    return {
       owner: runner.owner,
-      tracked: pipeline.snapshot().tracked,
+      tracked: pipelineStatus.tracked,
+      enrichment: pipelineStatus.enrichment,
       rpcGuard: rpcClient.getGuardStatus(),
-    }),
-  });
+    };
+  }
+
+  return Object.freeze({ runOnce: runner.runOnce, snapshot });
 }
 
 module.exports = { createRobinhoodCanonicalHeadRuntime };

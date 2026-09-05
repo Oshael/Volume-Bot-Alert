@@ -1675,7 +1675,7 @@ module.exports = {
       process.env.ROBINHOOD_CANONICAL_HEAD_MAX_BACKOFF_MS, 60_000, 1000, 300_000
     ),
     observationConcurrency: parseIntegerInRange(
-      process.env.ROBINHOOD_CANONICAL_HEAD_CONCURRENCY, 16, 1, 16
+      process.env.ROBINHOOD_CANONICAL_HEAD_CONCURRENCY, 16, 1, 32
     ),
     leaseHeartbeatMs: parseIntegerInRange(
       process.env.ROBINHOOD_CANONICAL_HEAD_LEASE_HEARTBEAT_MS, 30_000, 1000, 300_000

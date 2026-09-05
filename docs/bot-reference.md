@@ -3580,7 +3580,10 @@ Para sustentar a taxa de blocos da chain, o consumidor canônico reclama até 16
 frontiers prontos por rodada (`ROBINHOOD_CANONICAL_HEAD_BATCH_BLOCKS`, limite 64),
 processa todas as discoveries ordenadas antes dos markets e liquida o lote como
 uma unidade retry-safe. A captura de evidência usa concorrência 16 por padrão,
-limitada por `ROBINHOOD_CANONICAL_HEAD_CONCURRENCY`. A telemetria `lastResult`
+ajustável entre 1 e 32 por `ROBINHOOD_CANONICAL_HEAD_CONCURRENCY`; use 32 apenas
+para drenar backlog do canário no RPC local e reduza se surgirem erros RPC ou
+pressão sobre o chain-capture. O heartbeat expõe a concorrência efetiva em
+`canonicalRuntime.enrichment.observationConcurrency`. A telemetria `lastResult`
 expõe `blocks`, `blockNumber` e `throughBlock` para medir avanço real.
 
 A Stage 195 cria `robinhood_chain_v3_balance_snapshots`, sidecar durável do
