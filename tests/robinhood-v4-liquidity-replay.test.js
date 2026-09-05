@@ -77,6 +77,45 @@ describe('Robinhood V4 liquidity replay', () => {
     assert.deepEqual([commits[0].fromBlock, commits[0].toBlock], ['100', '100']);
   });
 
+  it('prefetches RPC ranges concurrently but commits them in cursor order', async () => {
+    const sequence = [];
+    let state = {
+      nextBlock: '100', targetBlock: '103', checkpointBlock: null, status: 'running',
+    };
+    const repository = {
+      ensureState: async () => ({ state, pools: [pool] }),
+      async commitRange(input) {
+        sequence.push(`commit:${input.fromBlock}`);
+        const nextBlock = (BigInt(input.toBlock) + 1n).toString();
+        state = {
+          nextBlock, targetBlock: '103', checkpointBlock: input.toBlock,
+          checkpointHash: HASH,
+          status: BigInt(nextBlock) > 103n ? 'completed' : 'running',
+        };
+        return { persisted: 0, state };
+      },
+    };
+    const rpcClient = { async request(method, params) {
+      if (method === 'eth_chainId') return '0x1237';
+      if (method === 'eth_blockNumber') return '0x69';
+      if (method === 'eth_getLogs') {
+        sequence.push(`fetch:${BigInt(params[0].fromBlock)}`);
+        return [];
+      }
+      if (method === 'eth_getBlockByNumber') return { number: params[0], hash: HASH };
+      throw new Error(`unexpected ${method}`);
+    } };
+
+    await createRobinhoodV4LiquidityReplay({ repository, rpcClient }).run({
+      targetBlock: '103', rangeSize: 1, fetchConcurrency: 2,
+    });
+
+    assert.deepEqual(sequence, [
+      'fetch:100', 'fetch:101', 'commit:100', 'commit:101',
+      'fetch:102', 'fetch:103', 'commit:102', 'commit:103',
+    ]);
+  });
+
   it('fails closed when the persisted checkpoint changed', async () => {
     const repository = {
       ensureState: async () => ({

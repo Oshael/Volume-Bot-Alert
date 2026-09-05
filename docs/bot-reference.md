@@ -3343,6 +3343,9 @@ replay, execute novamente `npm run robinhood:v4-liquidity-materialize`, refileir
 dead letters V4 já diagnosticados e então religue o processing. Isso fecha lacunas deixadas por
 pools adicionados ao catálogo depois do primeiro replay sem sobrepor a fila ativa. Se o replay for
 interrompido, retome com o mesmo `--target-block`, mas sem `--restart`, para preservar seu cursor.
+`ROBINHOOD_V4_REPLAY_FETCH_CONCURRENCY` controla o prefetch de ranges (default 4, máximo 16);
+somente as leituras RPC são paralelas, enquanto validação, commits e avanço do cursor permanecem
+estritamente ordenados. Reduza a concorrência se o archive responder com timeout ou rate limit.
 Com a Stage 102, swaps V4 valoram o principal das faixas no preço corrente; o
 backfill consulta o ledger no bloco/log do swap, sem usar posições futuras.
 Deltas live negativos atualizam faixas existentes sem tentar inserir saldo negativo.

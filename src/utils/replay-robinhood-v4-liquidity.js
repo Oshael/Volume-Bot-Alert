@@ -40,6 +40,7 @@ async function main(argv = process.argv.slice(2), env = process.env) {
   const result = await replay.run({
     ...args,
     rangeSize: Number(env.ROBINHOOD_V4_REPLAY_RANGE_SIZE || 1000),
+    fetchConcurrency: Number(env.ROBINHOOD_V4_REPLAY_FETCH_CONCURRENCY || 4),
     confirmations: Number(env.ROBINHOOD_V4_REPLAY_CONFIRMATIONS || 2),
     maxRanges: Number(env.ROBINHOOD_V4_REPLAY_MAX_RANGES || 100_000),
     onProgress: ({ ranges, persisted, state }) => {

@@ -20,6 +20,19 @@ function integer(value, fallback, min, max, label) {
   return parsed;
 }
 
+function plannedRanges(nextBlock, targetBlock, rangeSize, limit) {
+  const planned = [];
+  let fromBlock = BigInt(nextBlock);
+  const target = BigInt(targetBlock);
+  while (fromBlock <= target && planned.length < limit) {
+    const proposed = fromBlock + BigInt(rangeSize - 1);
+    const toBlock = proposed < target ? proposed : target;
+    planned.push({ fromBlock, toBlock });
+    fromBlock = toBlock + 1n;
+  }
+  return planned;
+}
+
 function createRobinhoodV4LiquidityReplay(options = {}) {
   const repository = options.repository;
   const rpcClient = options.rpcClient;
@@ -38,8 +51,45 @@ function createRobinhoodV4LiquidityReplay(options = {}) {
     }
   }
 
+  async function fetchRange(tracker, range) {
+    const { fromBlock, toBlock } = range;
+    const [logs, checkpoint] = await Promise.all([
+      rpcClient.request('eth_getLogs', [{
+        address: v4.ROBINHOOD_V4_POOL_MANAGER,
+        fromBlock: toHex(fromBlock),
+        toBlock: toHex(toBlock),
+        topics: [v4.TOPICS.modifyLiquidity],
+      }]),
+      rpcClient.request('eth_getBlockByNumber', [toHex(toBlock), false]),
+    ]);
+    if (!Array.isArray(logs)) throw new Error('eth_getLogs did not return an array');
+    if (quantity(checkpoint?.number, 'checkpoint.number') !== toBlock) {
+      throw new Error('Replay checkpoint block does not match its range');
+    }
+    const checkpointHash = String(checkpoint?.hash || '').toLowerCase();
+    if (!/^0x[0-9a-f]{64}$/.test(checkpointHash)) {
+      throw new Error('Replay checkpoint hash is invalid');
+    }
+    const events = [];
+    let ignored = 0;
+    for (const log of logs) {
+      if (log?.removed === true) throw new Error('Replay RPC returned a removed log');
+      if (log?.blockTimestamp == null) throw new Error('Replay log is missing blockTimestamp');
+      const logBlock = quantity(log.blockNumber, 'log.blockNumber');
+      if (logBlock < fromBlock || logBlock > toBlock) {
+        throw new Error('Replay RPC returned a log outside the requested range');
+      }
+      const event = tracker.processLog(log);
+      if (event.kind === 'modify-liquidity') events.push(event);
+      else if (event.kind === 'ignored' && event.reason === 'unknown_pool') ignored += 1;
+      else throw new Error(`Unexpected V4 replay event: ${event.reason || event.kind}`);
+    }
+    return { ...range, checkpointHash, events, ignored };
+  }
+
   async function run(input = {}) {
     const rangeSize = integer(input.rangeSize, 1000, 1, 10_000, 'rangeSize');
+    const fetchConcurrency = integer(input.fetchConcurrency, 1, 1, 16, 'fetchConcurrency');
     const confirmations = integer(input.confirmations, 2, 0, 1000, 'confirmations');
     const maxRanges = integer(input.maxRanges, 100_000, 1, 1_000_000, 'maxRanges');
     const chainId = quantity(await rpcClient.request('eth_chainId'), 'eth_chainId');
@@ -63,49 +113,24 @@ function createRobinhoodV4LiquidityReplay(options = {}) {
     let persisted = 0;
     let ignored = 0;
     while (state.status !== 'completed' && ranges < maxRanges) {
-      const fromBlock = BigInt(state.nextBlock);
-      const targetBlock = BigInt(state.targetBlock);
-      const toBlock = fromBlock + BigInt(rangeSize - 1) < targetBlock
-        ? fromBlock + BigInt(rangeSize - 1)
-        : targetBlock;
-      const [logs, checkpoint] = await Promise.all([
-        rpcClient.request('eth_getLogs', [{
-          address: v4.ROBINHOOD_V4_POOL_MANAGER,
-          fromBlock: toHex(fromBlock),
-          toBlock: toHex(toBlock),
-          topics: [v4.TOPICS.modifyLiquidity],
-        }]),
-        rpcClient.request('eth_getBlockByNumber', [toHex(toBlock), false]),
-      ]);
-      if (!Array.isArray(logs)) throw new Error('eth_getLogs did not return an array');
-      if (quantity(checkpoint?.number, 'checkpoint.number') !== toBlock) {
-        throw new Error('Replay checkpoint block does not match its range');
+      const batch = plannedRanges(
+        state.nextBlock, state.targetBlock, rangeSize,
+        Math.min(fetchConcurrency, maxRanges - ranges)
+      );
+      const fetched = await Promise.all(batch.map((range) => fetchRange(tracker, range)));
+      for (const range of fetched) {
+        const committed = await repository.commitRange({
+          fromBlock: range.fromBlock.toString(),
+          toBlock: range.toBlock.toString(),
+          checkpointHash: range.checkpointHash,
+          events: range.events,
+        });
+        state = committed.state;
+        persisted += committed.persisted;
+        ignored += range.ignored;
+        ranges += 1;
+        input.onProgress?.({ ranges, persisted, ignored, state });
       }
-      const checkpointHash = String(checkpoint?.hash || '').toLowerCase();
-      if (!/^0x[0-9a-f]{64}$/.test(checkpointHash)) throw new Error('Replay checkpoint hash is invalid');
-      const events = [];
-      for (const log of logs) {
-        if (log?.removed === true) throw new Error('Replay RPC returned a removed log');
-        if (log?.blockTimestamp == null) throw new Error('Replay log is missing blockTimestamp');
-        const logBlock = quantity(log.blockNumber, 'log.blockNumber');
-        if (logBlock < fromBlock || logBlock > toBlock) {
-          throw new Error('Replay RPC returned a log outside the requested range');
-        }
-        const event = tracker.processLog(log);
-        if (event.kind === 'modify-liquidity') events.push(event);
-        else if (event.kind === 'ignored' && event.reason === 'unknown_pool') ignored += 1;
-        else throw new Error(`Unexpected V4 replay event: ${event.reason || event.kind}`);
-      }
-      const committed = await repository.commitRange({
-        fromBlock: fromBlock.toString(),
-        toBlock: toBlock.toString(),
-        checkpointHash,
-        events,
-      });
-      state = committed.state;
-      persisted += committed.persisted;
-      ranges += 1;
-      input.onProgress?.({ ranges, persisted, ignored, state });
     }
     return { ranges, persisted, ignored, state };
   }
@@ -113,4 +138,7 @@ function createRobinhoodV4LiquidityReplay(options = {}) {
   return Object.freeze({ run });
 }
 
-module.exports = { CHAIN_ID, createRobinhoodV4LiquidityReplay, __private: { quantity, toHex } };
+module.exports = {
+  CHAIN_ID, createRobinhoodV4LiquidityReplay,
+  __private: { plannedRanges, quantity, toHex },
+};
