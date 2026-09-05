@@ -1688,6 +1688,48 @@ module.exports = {
     ),
   },
 
+  robinhoodCanonicalLiquidityWorker: {
+    enabled: parseBoolean(process.env.ROBINHOOD_CANONICAL_LIQUIDITY_ENABLED, false),
+    rpcUrl: String(
+      process.env.ROBINHOOD_CANONICAL_LIQUIDITY_RPC_URL
+      || process.env.ROBINHOOD_RPC_URL
+      || ''
+    ).trim(),
+    scanBatchBlocks: parseIntegerInRange(
+      process.env.ROBINHOOD_CANONICAL_LIQUIDITY_SCAN_BLOCKS, 1000, 1, 1000
+    ),
+    maxScanRangesPerTick: parseIntegerInRange(
+      process.env.ROBINHOOD_CANONICAL_LIQUIDITY_SCAN_RANGES, 20, 1, 100
+    ),
+    refreshBatchSize: parseIntegerInRange(
+      process.env.ROBINHOOD_CANONICAL_LIQUIDITY_REFRESH_BATCH_SIZE, 100, 1, 500
+    ),
+    refreshConcurrency: parseIntegerInRange(
+      process.env.ROBINHOOD_CANONICAL_LIQUIDITY_CONCURRENCY, 10, 1, 20
+    ),
+    claimLeaseMs: parseIntegerInRange(
+      process.env.ROBINHOOD_CANONICAL_LIQUIDITY_CLAIM_LEASE_MS, 600_000, 1000, 3_600_000
+    ),
+    retryBaseMs: parseIntegerInRange(
+      process.env.ROBINHOOD_CANONICAL_LIQUIDITY_RETRY_BASE_MS, 5000, 1, 3_600_000
+    ),
+    retryMaxMs: parseIntegerInRange(
+      process.env.ROBINHOOD_CANONICAL_LIQUIDITY_RETRY_MAX_MS, 60_000, 1, 86_400_000
+    ),
+    idlePollMs: parseIntegerInRange(
+      process.env.ROBINHOOD_CANONICAL_LIQUIDITY_IDLE_POLL_MS, 1000, 100, 60_000
+    ),
+    errorPollMs: parseIntegerInRange(
+      process.env.ROBINHOOD_CANONICAL_LIQUIDITY_ERROR_POLL_MS, 5000, 1000, 300_000
+    ),
+    leaseHeartbeatMs: parseIntegerInRange(
+      process.env.ROBINHOOD_CANONICAL_LIQUIDITY_LEASE_HEARTBEAT_MS, 30_000, 1000, 300_000
+    ),
+    leaseTtlMs: parseIntegerInRange(
+      process.env.ROBINHOOD_CANONICAL_LIQUIDITY_LEASE_TTL_MS, 120_000, 5000, 600_000
+    ),
+  },
+
   robinhoodIngestionWorker: {
     enabled: robinhoodIngestionEnabled,
     publicRpcUrl: String(

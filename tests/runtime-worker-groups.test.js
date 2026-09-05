@@ -759,6 +759,28 @@ describe('runtime worker groups config', () => {
     });
   });
 
+  it('keeps canonical liquidity opt-in and bound to the permanent RPC', () => {
+    withEnv({
+      ROBINHOOD_RPC_URL: 'http://127.0.0.1:8547',
+      ROBINHOOD_CANONICAL_LIQUIDITY_RPC_URL: undefined,
+      ROBINHOOD_CANONICAL_LIQUIDITY_ENABLED: 'true',
+      ROBINHOOD_CANONICAL_LIQUIDITY_SCAN_BLOCKS: '99999',
+      ROBINHOOD_CANONICAL_LIQUIDITY_SCAN_RANGES: '999',
+      ROBINHOOD_CANONICAL_LIQUIDITY_REFRESH_BATCH_SIZE: '9999',
+      ROBINHOOD_CANONICAL_LIQUIDITY_CONCURRENCY: '99',
+    }, (config) => {
+      assert.equal(config.robinhoodCanonicalLiquidityWorker.enabled, true);
+      assert.equal(config.robinhoodCanonicalLiquidityWorker.rpcUrl, 'http://127.0.0.1:8547');
+      assert.equal(config.robinhoodCanonicalLiquidityWorker.scanBatchBlocks, 1000);
+      assert.equal(config.robinhoodCanonicalLiquidityWorker.maxScanRangesPerTick, 100);
+      assert.equal(config.robinhoodCanonicalLiquidityWorker.refreshBatchSize, 500);
+      assert.equal(config.robinhoodCanonicalLiquidityWorker.refreshConcurrency, 20);
+    });
+    withEnv({ ROBINHOOD_CANONICAL_LIQUIDITY_ENABLED: undefined }, (config) => {
+      assert.equal(config.robinhoodCanonicalLiquidityWorker.enabled, false);
+    });
+  });
+
   it('fails fast when the Robinhood head is mixed with another group', () => {
     const result = spawnSync(
       process.execPath,
