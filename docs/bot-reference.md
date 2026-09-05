@@ -3816,6 +3816,11 @@ O hotfix pós-rollout usa o contrato real `db.getClient()` para a transação at
 o cursor permanece parado quando a conexão ou qualquer escrita falha.
 O backfill histórico L2 usa `npm run robinhood:launchpad-creator-backfill`, é
 dry-run por padrão e mantém `launchpad_backfill` separado do cursor `live`.
+Antes de trocar o LIVE para o journal canônico, execute
+`npm run robinhood:canonical-direct-creator-audit`. O preflight é read-only,
+valida cursor/checkpoint e continuidade de até 200 blocos da próxima página,
+contabilizando deployments externos e eventos conhecidos. `CREATE/CREATE2`
+interno continua explicitamente fora dessa cobertura porque exige traces.
 
 Os contratos locais de atribuição já são fail-closed: o bloco cheio fornece hash,
 número e timestamp para checkpoint; qualquer transação ausente impede escrita
