@@ -744,10 +744,12 @@ describe('runtime worker groups config', () => {
     withEnv({
       ROBINHOOD_CHAIN_CAPTURE_RPC_URL: 'http://127.0.0.1:8547',
       ROBINHOOD_CANONICAL_HEAD_ENABLED: 'true',
+      ROBINHOOD_CANONICAL_HEAD_PUBLISH_ENABLED: 'true',
       ROBINHOOD_CANONICAL_HEAD_IDLE_POLL_MS: '1',
       ROBINHOOD_CANONICAL_HEAD_CONCURRENCY: '99',
     }, (config) => {
       assert.equal(config.robinhoodCanonicalHeadWorker.enabled, true);
+      assert.equal(config.robinhoodCanonicalHeadWorker.publishEnabled, true);
       assert.equal(config.robinhoodCanonicalHeadWorker.rpcUrl, 'http://127.0.0.1:8547');
       assert.equal(config.robinhoodCanonicalHeadWorker.idlePollMs, 25);
       assert.equal(config.robinhoodCanonicalHeadWorker.observationConcurrency, 32);

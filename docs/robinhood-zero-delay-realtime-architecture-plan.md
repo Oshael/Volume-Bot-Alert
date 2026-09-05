@@ -389,6 +389,8 @@ que 500 linhas.
 - paridade semântica do contrato live (`volatile_drift` somente para preço/supply
   latest, `quality_upgrade` somente para V3 legado indisponível→snapshot observado)
   e backlog calculado apenas sobre a fronteira madura (3L concluída);
+- publisher opt-in com cursores discovery/market atômicos e exclusão fail-closed
+  dos writers legado/shadow (3M concluída, ainda sem ativação operacional);
 - preservação da evidência e idempotência atuais;
 - comparação com `robinhood_head_captures` existente;
 - cutover dos dois pollers `eth_getLogs` do head.

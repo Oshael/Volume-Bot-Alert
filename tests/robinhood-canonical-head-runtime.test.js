@@ -44,11 +44,32 @@ describe('Robinhood canonical head runtime', () => {
     assert.deepEqual(await runtime.runOnce(), { claimed: 0 });
     assert.deepEqual(runtime.snapshot(), {
       owner: 'canonical-test', tracked: { v2: 1, v3: 2, v4: 3 },
+      mode: 'canonical_canary',
       enrichment: { observationConcurrency: 4 },
       rpcGuard: {
         role: 'canonical-head', forbiddenMethod: 'eth_getLogs', forbiddenAttempts: 0,
       },
     });
+  });
+
+  it('selects the production capture repository only in explicit publish mode', async () => {
+    const productionRepository = { appendCaptureEntries() {}, appendCanonicalBatch() {} };
+    let selected = false; let runnerRepository;
+    await createRobinhoodCanonicalHeadRuntime({
+      rpcClient: { request: async () => 'ok' },
+      catalog: { listActivePools: async () => [] },
+      pipelineFactory: () => ({
+        snapshot: () => ({ tracked: {}, enrichment: {} }),
+      }),
+      publishRepositoryFactory: () => { selected = true; return productionRepository; },
+      candidateRepositoryFactory: () => assert.fail('candidate sink must not be selected'),
+      runnerFactory: ({ headRepository }) => {
+        runnerRepository = headRepository;
+        return { owner: 'publisher', runOnce: async () => ({ claimed: 0 }) };
+      },
+    }, { publishEnabled: true });
+    assert.equal(selected, true);
+    assert.equal(runnerRepository, productionRepository);
   });
 
   it('blocks single and batched eth_getLogs before they reach the node', async () => {

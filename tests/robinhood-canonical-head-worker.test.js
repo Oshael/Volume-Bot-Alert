@@ -6,7 +6,9 @@ const { DOMAIN_NOTIFY_CHANNEL } = require('../src/models/robinhood-chain-capture
 const {
   createRobinhoodCanonicalHeadWorker,
 } = require('../src/services/robinhood-canonical-head-worker');
-const { LEASE_KEY, main } = require('../src/utils/run-robinhood-canonical-head-worker');
+const {
+  LEASE_KEY, assertPublishReady, main,
+} = require('../src/utils/run-robinhood-canonical-head-worker');
 
 test('canonical head worker wakes on outbox notification and drains without idle delay', async () => {
   const callbacks = []; const cancelled = []; let notification; let calls = 0;
@@ -96,11 +98,12 @@ test('standalone canonical head process validates RPC and owns a dedicated lease
   };
   const runtime = await main({
     options: {
-      enabled: true, rpcUrl: 'http://127.0.0.1:8547',
+      enabled: true, publishEnabled: true, rpcUrl: 'http://127.0.0.1:8547',
       leaseHeartbeatMs: 30_000, leaseTtlMs: 120_000,
     },
     rpcClientFactory: () => rpcClient,
     validateChainIds: async (value) => { assert.equal(value, rpcClient); validated = true; },
+    assertPublishReady: async () => {},
     workerFactory: ({ rpcClient: value }) => { assert.equal(value, rpcClient); return worker; },
     leaseManagerFactory: () => ({
       start: (value) => { definition = value; }, stop: async () => {}, halt: async () => {},
@@ -108,6 +111,7 @@ test('standalone canonical head process validates RPC and owns a dedicated lease
     close: async () => { closed = true; },
   });
   assert.equal(definition.key, LEASE_KEY);
+  assert.equal(definition.metadata.mode, 'canonical_publish');
   assert.deepEqual(definition.metadataProvider(), {
     running: true, canonicalRuntime: { rpcGuard: { forbiddenAttempts: 0 } },
   });
@@ -115,6 +119,20 @@ test('standalone canonical head process validates RPC and owns a dedicated lease
   assert.equal(validated, true); assert.equal(started, true);
   await runtime.shutdown();
   assert.equal(closed, true);
+});
+
+test('canonical publisher requires capture and excludes legacy or shadow writers', async () => {
+  const database = (rows) => ({ query: async () => ({ rows }) });
+  await assert.doesNotReject(assertPublishReady(database([
+    { lease_key: 'robinhood-chain-capture-worker' },
+  ])));
+  await assert.rejects(assertPublishReady(database([])), (error) => (
+    error.code === 'canonical_capture_inactive'
+  ));
+  await assert.rejects(assertPublishReady(database([
+    { lease_key: 'robinhood-chain-capture-worker' },
+    { lease_key: 'robinhood-head-capture-worker' },
+  ])), (error) => error.code === 'canonical_publish_writer_conflict');
 });
 
 test('standalone canonical head process reports startup failures before retry', async () => {

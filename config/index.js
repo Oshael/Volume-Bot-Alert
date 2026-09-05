@@ -1648,6 +1648,9 @@ module.exports = {
 
   robinhoodCanonicalHeadWorker: {
     enabled: parseBoolean(process.env.ROBINHOOD_CANONICAL_HEAD_ENABLED, false),
+    publishEnabled: parseBoolean(
+      process.env.ROBINHOOD_CANONICAL_HEAD_PUBLISH_ENABLED, false
+    ),
     rpcUrl: String(
       process.env.ROBINHOOD_CANONICAL_HEAD_RPC_URL
       || process.env.ROBINHOOD_CHAIN_CAPTURE_RPC_URL

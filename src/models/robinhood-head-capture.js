@@ -150,6 +150,17 @@ async function upsertCaptureCursor(client, cursor) {
   );
 }
 
+async function insertCaptureEntries(client, entries) {
+  let insertedCaptures = 0;
+  for (let index = 0; index < entries.length; index += CAPTURE_INSERT_BATCH_SIZE) {
+    const inserted = await insertCaptureBatch(
+      client, entries.slice(index, index + CAPTURE_INSERT_BATCH_SIZE)
+    );
+    insertedCaptures += inserted.rowCount;
+  }
+  return insertedCaptures;
+}
+
 function createRobinhoodHeadCaptureRepository(options = {}) {
   const database = options.database || db;
 
@@ -158,13 +169,7 @@ function createRobinhoodHeadCaptureRepository(options = {}) {
     const client = await database.getClient();
     try {
       await client.query('BEGIN');
-      let insertedCaptures = 0;
-      for (let index = 0; index < entries.length; index += CAPTURE_INSERT_BATCH_SIZE) {
-        const inserted = await insertCaptureBatch(
-          client, entries.slice(index, index + CAPTURE_INSERT_BATCH_SIZE)
-        );
-        insertedCaptures += inserted.rowCount;
-      }
+      const insertedCaptures = await insertCaptureEntries(client, entries);
       await client.query('COMMIT');
       return { insertedCaptures, duplicateCaptures: entries.length - insertedCaptures };
     } catch (error) {
@@ -184,12 +189,7 @@ function createRobinhoodHeadCaptureRepository(options = {}) {
     const client = await database.getClient();
     try {
       await client.query('BEGIN');
-      let insertedCaptures = 0;
-      for (let index = 0; index < entries.length; index += CAPTURE_INSERT_BATCH_SIZE) {
-        const batch = entries.slice(index, index + CAPTURE_INSERT_BATCH_SIZE);
-        const inserted = await insertCaptureBatch(client, batch);
-        insertedCaptures += inserted.rowCount;
-      }
+      const insertedCaptures = await insertCaptureEntries(client, entries);
       await upsertCaptureCursor(client, cursor);
       await client.query('SELECT pg_notify($1, $2)', [CURSOR_NOTIFY_CHANNEL, cursor.stream]);
       await client.query('COMMIT');
@@ -197,6 +197,29 @@ function createRobinhoodHeadCaptureRepository(options = {}) {
         insertedCaptures,
         duplicateCaptures: entries.length - insertedCaptures,
       };
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch (_) {}
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async function appendCanonicalBatch(input = {}) {
+    const entries = (Array.isArray(input.entries) ? input.entries : []).map(normalizeCaptureEntry);
+    const cursors = ['discovery', 'market'].map((stream) => normalizeCaptureCursor({
+      ...input.frontier, stream,
+    }));
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      const insertedCaptures = await insertCaptureEntries(client, entries);
+      for (const cursor of cursors) await upsertCaptureCursor(client, cursor);
+      for (const cursor of cursors) {
+        await client.query('SELECT pg_notify($1, $2)', [CURSOR_NOTIFY_CHANNEL, cursor.stream]);
+      }
+      await client.query('COMMIT');
+      return { insertedCaptures, duplicateCaptures: entries.length - insertedCaptures };
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch (_) {}
       throw error;
@@ -227,7 +250,9 @@ function createRobinhoodHeadCaptureRepository(options = {}) {
     };
   }
 
-  return Object.freeze({ appendCaptureEntries, appendCaptures, getCaptureCursor });
+  return Object.freeze({
+    appendCaptureEntries, appendCaptures, appendCanonicalBatch, getCaptureCursor,
+  });
 }
 
 module.exports = {

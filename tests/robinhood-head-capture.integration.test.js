@@ -79,6 +79,24 @@ describe('Robinhood head capture repository integration', () => {
     assert.equal(cursor.version, 0);
   });
 
+  it('publishes a canonical batch and advances both stream cursors atomically', async () => {
+    const repository = createRobinhoodHeadCaptureRepository();
+    assert.deepEqual(await repository.appendCanonicalBatch({
+      entries: [buildEntry(108)],
+      frontier: {
+        nextBlock: '109', safeHead: '108',
+        checkpoint: { number: '108', hash: HASH_A, timestamp: CHECKPOINT_AT },
+      },
+    }), { insertedCaptures: 1, duplicateCaptures: 0 });
+    const [discovery, market] = await Promise.all([
+      repository.getCaptureCursor('discovery'), repository.getCaptureCursor('market'),
+    ]);
+    assert.equal(discovery.nextBlock, '109');
+    assert.equal(market.nextBlock, '109');
+    assert.equal(discovery.checkpointHash, HASH_A);
+    assert.equal(market.checkpointHash, HASH_A);
+  });
+
   it('publishes the cursor wake only after its transaction commits', async () => {
     const listener = await db.getClient();
     try {

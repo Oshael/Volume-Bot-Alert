@@ -16,6 +16,16 @@ function captureEntry(entry, stream) {
 function backoff(attempt, baseMs, maxMs) {
   return Math.min(maxMs, baseMs * (2 ** Math.max(0, Number(attempt) - 1)));
 }
+function frontierOf(rows, throughBlock) {
+  const row = rows.findLast((candidate) => String(candidate.block_number) === throughBlock);
+  return {
+    nextBlock: (BigInt(throughBlock) + 1n).toString(),
+    safeHead: throughBlock,
+    checkpoint: {
+      number: throughBlock, hash: row.block_hash, timestamp: row.block_timestamp,
+    },
+  };
+}
 
 function createRobinhoodCanonicalHeadRunner(deps = {}) {
   const { outbox, pipeline, headRepository } = deps;
@@ -77,7 +87,9 @@ function createRobinhoodCanonicalHeadRunner(deps = {}) {
         ...market.map((entry) => captureEntry(entry, 'market')),
       ].filter(Boolean);
       const appended = await measured(timing, 'appendMs', () => (
-        headRepository.appendCaptureEntries({ entries })
+        typeof headRepository.appendCanonicalBatch === 'function'
+          ? headRepository.appendCanonicalBatch({ entries, frontier: frontierOf(rows, throughBlock) })
+          : headRepository.appendCaptureEntries({ entries })
       ));
       const settled = await measured(timing, 'settleMs', () => outbox.settle({
         owner, complete: rows.map(identity), maxAttempts,

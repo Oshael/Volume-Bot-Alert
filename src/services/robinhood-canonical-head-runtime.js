@@ -7,6 +7,7 @@ const {
 const {
   createRobinhoodCanonicalHeadCandidateRepository,
 } = require('../models/robinhood-canonical-head-candidate');
+const { createRobinhoodHeadCaptureRepository } = require('../models/robinhood-head-capture');
 const { createRobinhoodPersistenceRepository } = require('../models/robinhood-persistence');
 const { createRobinhoodCanonicalHeadRunner } = require('./robinhood-canonical-head-runner');
 const { createRobinhoodLiveRpcGuard } = require('./robinhood-live-rpc-guard');
@@ -36,10 +37,10 @@ async function createRobinhoodCanonicalHeadRuntime(deps = {}, options = {}) {
     policyOptions: options.policyOptions,
   });
   const outbox = deps.outbox || createRobinhoodChainDomainOutboxRepository({ database });
-  const headRepository = deps.headRepository
-    || (deps.candidateRepositoryFactory || createRobinhoodCanonicalHeadCandidateRepository)({
-      database,
-    });
+  const repositoryFactory = options.publishEnabled === true
+    ? (deps.publishRepositoryFactory || createRobinhoodHeadCaptureRepository)
+    : (deps.candidateRepositoryFactory || createRobinhoodCanonicalHeadCandidateRepository);
+  const headRepository = deps.headRepository || repositoryFactory({ database });
   const runner = (deps.runnerFactory || createRobinhoodCanonicalHeadRunner)({
     outbox, pipeline, headRepository,
     options: {
@@ -56,6 +57,7 @@ async function createRobinhoodCanonicalHeadRuntime(deps = {}, options = {}) {
     const pipelineStatus = pipeline.snapshot();
     return {
       owner: runner.owner,
+      mode: options.publishEnabled === true ? 'canonical_publish' : 'canonical_canary',
       tracked: pipelineStatus.tracked,
       enrichment: pipelineStatus.enrichment,
       rpcGuard: rpcClient.getGuardStatus(),

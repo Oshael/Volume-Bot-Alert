@@ -92,4 +92,38 @@ describe('Robinhood canonical head runner', () => {
     assert.equal(result.timing.totalMs >= result.timing.marketMs, true);
     assert.deepEqual(settlement.retry.map((item) => item.domain), ['discovery', 'market']);
   });
+
+  it('publishes an atomic dual-stream cursor at the settled frontier', async () => {
+    let published;
+    const runner = createRobinhoodCanonicalHeadRunner({
+      outbox: {
+        reclaimExpiredLeases: async () => 0,
+        claimNextBlock: async () => [row('market', 3)],
+        settle: async ({ complete }) => ({
+          completed: complete.length, blocked: 0, retried: 0,
+        }),
+      },
+      pipeline: {
+        processDiscoveryRange: async () => [],
+        processMarketRange: async (logs) => logs.map(entry),
+      },
+      headRepository: {
+        appendCaptureEntries: async () => assert.fail('candidate sink must not be used'),
+        appendCanonicalBatch: async (input) => {
+          published = input;
+          return { insertedCaptures: input.entries.length, duplicateCaptures: 0 };
+        },
+      },
+    });
+    const result = await runner.runOnce();
+    assert.equal(result.completed, 1);
+    assert.equal(published.entries.length, 1);
+    assert.deepEqual(published.frontier, {
+      nextBlock: '101', safeHead: '100',
+      checkpoint: {
+        number: '100', hash: row('market', 3).block_hash,
+        timestamp: row('market', 3).block_timestamp,
+      },
+    });
+  });
 });

@@ -3535,6 +3535,16 @@ payload bruto, protocolo, market key, versão e evidência com o legado. Replays
 iguais são aceitos; replay canônico divergente falha fechado. Enquanto a flag é
 de canário, o processo grava somente nesse sink e não publica na fila de
 processamento existente.
+O modo de produção é opt-in separado por
+`ROBINHOOD_CANONICAL_HEAD_PUBLISH_ENABLED=true`. Nesse modo, cada lote grava as
+capturas e avança os cursores `discovery` e `market` para a mesma frontier em uma
+única transação, notificando consumidores somente após o commit. O startup falha
+fechado se o chain-capture não estiver ativo ou se o head legado/shadow ainda
+possuir lease ativa. A ordem operacional é: parar primeiro o canário, depois o
+head legado, confirmar as leases, habilitar publish e iniciar novamente o
+canonical-head. Para rollback, parar o publisher antes de reativar o legado;
+nunca executar ambos como writers. A implementação do modo não autoriza sua
+ativação antes do gate operacional de cutover.
 Valide a troca com `npm run robinhood:canonical-head-audit -- --phase=preflight`
 antes de iniciar o canário e com `--phase=canary` durante a observação. A saída é
 compacta por padrão; `--verbose` inclui as leases completas. O gate exige captura
