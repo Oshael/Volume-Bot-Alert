@@ -5,6 +5,7 @@ const db = require('../models/db');
 const CHAIN = 'robinhood';
 const DEFAULT_CONFIRMATIONS = 12;
 const MAX_CAPTURE_LAG = 2n;
+const PHASES = Object.freeze(['preflight', 'cutover']);
 const LEASE_KEYS = Object.freeze({
   capture: 'robinhood-chain-capture-worker',
   holder: 'robinhood-holder-live-worker',
@@ -40,6 +41,14 @@ function leaseSummary(lease) {
   });
 }
 
+function phase(value) {
+  const normalized = String(value || 'preflight').trim().toLowerCase();
+  if (!PHASES.includes(normalized)) {
+    throw new Error(`phase must be ${PHASES.join(' or ')}`);
+  }
+  return normalized;
+}
+
 function calculateFrontiers(row, confirmations) {
   const captureNext = quantity(row.capture_next_block);
   const captureHead = quantity(row.capture_node_head);
@@ -62,7 +71,7 @@ function calculateFrontiers(row, confirmations) {
   };
 }
 
-function migrationBlockers(row, frontiers, leases) {
+function migrationBlockers(row, frontiers, leases, auditPhase) {
   const blockers = [];
   const add = (condition, code, detail = null) => {
     if (condition) blockers.push(detail == null ? { code } : { code, detail });
@@ -97,11 +106,22 @@ function migrationBlockers(row, frontiers, leases) {
   });
   add(Number(row.invalid_live_frontiers || 0) > 0, 'holder_live_frontier_invalid',
     Number(row.invalid_live_frontiers));
+  if (auditPhase === 'cutover') {
+    for (const [name, code] of [['holder', 'holder_live'], ['apply', 'holder_apply']]) {
+      const summary = leaseSummary(leases[name]);
+      add(!summary.active, `${code}_inactive`);
+      add(summary.active && !summary.running, `${code}_not_running`);
+      add(summary.active && summary.running && summary.source_mode !== 'canonical_journal',
+        `${code}_source_not_canonical`, summary.source_mode);
+      add(summary.last_error != null, `${code}_error`, summary.last_error);
+    }
+  }
   return blockers;
 }
 
 function evaluate(input = {}) {
   const row = input.state || {};
+  const auditPhase = phase(input.phase);
   const confirmations = Number(input.confirmations ?? DEFAULT_CONFIRMATIONS);
   if (!Number.isSafeInteger(confirmations) || confirmations < 0 || confirmations > 1000) {
     throw new Error('confirmations must be between 0 and 1000');
@@ -110,9 +130,9 @@ function evaluate(input = {}) {
   const leases = Object.fromEntries(Object.entries(LEASE_KEYS).map(([name, key]) => (
     [name, activeLease(input.leases || [], key)]
   )));
-  const blockers = migrationBlockers(row, frontiers, leases);
+  const blockers = migrationBlockers(row, frontiers, leases, auditPhase);
   return Object.freeze({
-    mode: 'read-only', ready: blockers.length === 0, blockers,
+    mode: 'read-only', phase: auditPhase, ready: blockers.length === 0, blockers,
     capture: {
       next_block: text(frontiers.captureNext),
       checkpoint_block: text(frontiers.captureCheckpoint),
@@ -156,6 +176,7 @@ function evaluate(input = {}) {
 
 function createRobinhoodCanonicalHolderAudit(options = {}) {
   const database = options.database || db;
+  const auditPhase = phase(options.phase);
   const confirmations = options.confirmations
     ?? process.env.ROBINHOOD_HOLDER_LIVE_CONFIRMATIONS
     ?? DEFAULT_CONFIRMATIONS;
@@ -215,6 +236,7 @@ function createRobinhoodCanonicalHolderAudit(options = {}) {
       await client.query('ROLLBACK');
       return evaluate({
         state: state.rows[0] || {}, leases: leaseResult.rows, confirmations,
+        phase: auditPhase,
       });
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch (_) {}
@@ -230,6 +252,7 @@ function createRobinhoodCanonicalHolderAudit(options = {}) {
 module.exports = {
   DEFAULT_CONFIRMATIONS,
   LEASE_KEYS,
+  PHASES,
   createRobinhoodCanonicalHolderAudit,
   evaluate,
 };

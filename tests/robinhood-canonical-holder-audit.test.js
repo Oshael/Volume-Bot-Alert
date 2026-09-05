@@ -5,7 +5,7 @@ const { describe, it } = require('node:test');
 const {
   LEASE_KEYS, createRobinhoodCanonicalHolderAudit, evaluate,
 } = require('../src/services/robinhood-canonical-holder-audit');
-const { main } = require('../src/utils/audit-robinhood-canonical-holder');
+const { main, parseArgs } = require('../src/utils/audit-robinhood-canonical-holder');
 
 function lease(lease_key, overrides = {}) {
   return {
@@ -41,6 +41,7 @@ describe('Robinhood canonical holder audit', () => {
   it('allows a replayable holder backlog and reports incomplete tokens separately', () => {
     const report = evaluate(input());
     assert.equal(report.ready, true);
+    assert.equal(report.phase, 'preflight');
     assert.deepEqual(report.blockers, []);
     assert.equal(report.capture.safe_head, '288');
     assert.equal(report.holder.lag_to_canonical_safe_head, '49');
@@ -51,6 +52,34 @@ describe('Robinhood canonical holder audit', () => {
     assert.equal(report.tokens.backfilling, 5);
     assert.equal(report.tokens.drifted, 2);
     assert.equal(report.apply.queued_tokens, 4);
+  });
+
+  it('requires both holder writers to run on the canonical journal after cutover', () => {
+    const state = input();
+    state.phase = 'cutover';
+    assert.deepEqual(evaluate(state).blockers.map(({ code }) => code), [
+      'holder_live_source_not_canonical', 'holder_apply_source_not_canonical',
+    ]);
+    for (const item of state.leases) {
+      if ([LEASE_KEYS.holder, LEASE_KEYS.apply].includes(item.lease_key)) {
+        item.metadata.telemetry.sourceMode = 'canonical_journal';
+      }
+    }
+    assert.equal(evaluate(state).ready, true);
+  });
+
+  it('reports inactive, stopped and failed cutover workers without masking backlog', () => {
+    const state = input();
+    state.phase = 'cutover';
+    state.leases = state.leases.filter(({ lease_key }) => lease_key !== LEASE_KEYS.holder);
+    const apply = state.leases.find(({ lease_key }) => lease_key === LEASE_KEYS.apply);
+    apply.metadata.telemetry.running = false;
+    apply.metadata.telemetry.lastError = { code: 'apply_failed' };
+    assert.deepEqual(evaluate(state).blockers, [
+      { code: 'holder_live_inactive' },
+      { code: 'holder_apply_not_running' },
+      { code: 'holder_apply_error', detail: { code: 'apply_failed' } },
+    ]);
   });
 
   it('blocks a holder cursor outside retained canonical coverage', () => {
@@ -112,9 +141,13 @@ describe('Robinhood canonical holder audit', () => {
     assert.equal(queries.at(-1).sql, 'RELEASE');
   });
 
-  it('keeps the command argument-free and prints the report', async () => {
+  it('parses the audit phase and prints the report', async () => {
+    assert.deepEqual(parseArgs([]), { phase: 'preflight' });
+    assert.deepEqual(parseArgs(['--phase=cutover']), { phase: 'cutover' });
+    assert.throws(() => parseArgs(['--phase=live']), /preflight or cutover/);
     const lines = [];
     const report = await main([], {
+      options: { phase: 'preflight' },
       audit: { async inspect() { return { mode: 'read-only', ready: true }; } },
       logger: { log(value) { lines.push(value); } },
     });

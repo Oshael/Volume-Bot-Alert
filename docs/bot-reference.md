@@ -2015,7 +2015,11 @@ do journal canônico de uma lacuna anterior à retenção, valida o checkpoint h
 contra o bloco canônico, identifica floors ausentes, resume estados por token e
 mostra o backlog coalescido do apply. Backfill, tokens `drifted` e fila de apply são
 telemetria, não bloqueio global; falta de cobertura ou frontier live inválido bloqueia
-o corte.
+o corte. Após trocar a fonte,
+`npm run robinhood:canonical-holder-audit -- --phase=cutover` exige que captura e
+apply estejam com lease ativa, `running=true`,
+fonte `canonical_journal` e sem erro; o backlog histórico continua sendo telemetria
+durante a drenagem.
 `npm run robinhood:canonical-holder-canary` compara, sem escrita, os `Transfer`
 decodificados pelo RPC legado e pelo journal canônico nos 64 blocos confirmados mais
 recentes. O gate exige por default pelo menos 100 transfers, checkpoints e contagem
