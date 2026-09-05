@@ -4149,6 +4149,12 @@ Antes de migrar sua leitura para o journal comum, execute
 `npm run robinhood:canonical-wallet-transfer-audit`. O preflight read-only valida
 capture, swap canônico, cursores/hashes, cobertura `Transfer`, escopo de tokens,
 dependência opcional da posição unificada e o backlog anterior ao journal.
+Com `ready=true`, execute `npm run robinhood:canonical-wallet-transfer-canary`.
+O canário read-only compara uma faixa comum de `Transfer` entre o
+`eth_getLogs` legado e o journal canônico, incluindo checkpoint, ordem e todos
+os campos usados pela classificação. O default exige 100 transfers em 64
+blocos e respeita as duas confirmações do wallet-transfer; os limites podem ser
+ajustados com `--min-transfers`, `--blocks` e `--confirmations`.
 
 A projeção financeira unificada dentro desse writer tem uma segunda flag,
 `ROBINHOOD_WALLET_UNIFIED_POSITION_LIVE_ENABLED=true`, desligada por padrão.

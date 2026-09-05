@@ -116,6 +116,7 @@
     "robinhood:canonical-signed-origin-audit": "node src/utils/audit-robinhood-canonical-signed-origin.js",
     "robinhood:canonical-signed-origin-canary": "node src/utils/audit-robinhood-canonical-signed-origin-canary.js",
     "robinhood:canonical-wallet-transfer-audit": "node src/utils/audit-robinhood-canonical-wallet-transfer.js",
+    "robinhood:canonical-wallet-transfer-canary": "node src/utils/audit-robinhood-canonical-wallet-transfer-canary.js",
     "robinhood:holder-deployment-recover": "node src/utils/recover-robinhood-holder-deployments.js",
     "robinhood:infrastructure-import": "node src/utils/import-robinhood-infrastructure-registry.js",
     "robinhood:infrastructure-close": "node src/utils/close-robinhood-infrastructure-registry.js",
