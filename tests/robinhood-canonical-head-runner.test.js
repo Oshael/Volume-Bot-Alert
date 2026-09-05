@@ -50,11 +50,17 @@ describe('Robinhood canonical head runner', () => {
         return { insertedCaptures: entries.length, duplicateCaptures: 0 };
       } },
     });
-    assert.deepEqual(await runner.runOnce(), {
+    const result = await runner.runOnce();
+    const { timing, ...summary } = result;
+    assert.deepEqual(summary, {
       reclaimed: 1, blockNumber: '100', throughBlock: '100', blocks: 1,
       claimed: 3, inserted: 2, duplicates: 0,
       ignored: 1, completed: 3, blocked: 0, retried: 0,
     });
+    assert.deepEqual(Object.keys(timing), [
+      'claimMs', 'discoveryMs', 'marketMs', 'appendMs', 'settleMs', 'totalMs',
+    ]);
+    assert.equal(Object.values(timing).every((value) => value >= 0), true);
     assert.deepEqual(calls, ['discovery', 'market', 'append', 'settle']);
     assert.equal(claimInput.maxBlocks, 16);
     assert.deepEqual(settlement.complete.map((item) => item.domain), [
@@ -81,6 +87,8 @@ describe('Robinhood canonical head runner', () => {
     const result = await runner.runOnce();
     assert.equal(result.blocks, 1);
     assert.equal(result.retried, 2);
+    assert.equal(result.timing.marketMs >= 0, true);
+    assert.equal(result.timing.totalMs >= result.timing.marketMs, true);
     assert.deepEqual(settlement.retry.map((item) => item.domain), ['discovery', 'market']);
   });
 });

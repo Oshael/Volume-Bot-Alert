@@ -32,46 +32,75 @@ function createRobinhoodCanonicalHeadRunner(deps = {}) {
   const maxAttempts = Number(options.maxAttempts) || 5;
   const baseBackoffMs = Number(options.baseBackoffMs) || 1000;
   const maxBackoffMs = Number(options.maxBackoffMs) || 60_000;
+  const now = deps.now || Date.now;
+
+  async function measured(timing, key, work) {
+    const startedAt = now();
+    try {
+      return await work();
+    } finally {
+      timing[key] = Math.max(0, now() - startedAt);
+    }
+  }
 
   async function runOnce() {
-    const reclaimed = await outbox.reclaimExpiredLeases();
-    const rows = await outbox.claimNextBlock({ owner, leaseMs, maxBlocks });
+    const startedAt = now();
+    const timing = {
+      claimMs: 0, discoveryMs: 0, marketMs: 0,
+      appendMs: 0, settleMs: 0, totalMs: 0,
+    };
+    let reclaimed;
+    const rows = await measured(timing, 'claimMs', async () => {
+      reclaimed = await outbox.reclaimExpiredLeases();
+      return outbox.claimNextBlock({ owner, leaseMs, maxBlocks });
+    });
     if (!rows.length) return {
       reclaimed, blockNumber: null, throughBlock: null, blocks: 0,
       claimed: 0, inserted: 0, duplicates: 0,
       ignored: 0, completed: 0, blocked: 0, retried: 0,
+      timing: { ...timing, totalMs: Math.max(0, now() - startedAt) },
     };
     const discoveryRows = rows.filter((row) => row.domain === 'discovery');
     const marketRows = rows.filter((row) => row.domain === 'market');
     const blockNumbers = [...new Set(rows.map((row) => String(row.block_number)))];
     const throughBlock = blockNumbers.at(-1);
     try {
-      const discovery = await pipeline.processDiscoveryRange(discoveryRows.map(logFromRow));
-      const market = await pipeline.processMarketRange(marketRows.map(logFromRow));
+      const discovery = await measured(timing, 'discoveryMs', () => (
+        pipeline.processDiscoveryRange(discoveryRows.map(logFromRow))
+      ));
+      const market = await measured(timing, 'marketMs', () => (
+        pipeline.processMarketRange(marketRows.map(logFromRow))
+      ));
       const entries = [
         ...discovery.map((entry) => captureEntry(entry, 'discovery')),
         ...market.map((entry) => captureEntry(entry, 'market')),
       ].filter(Boolean);
-      const appended = await headRepository.appendCaptureEntries({ entries });
-      const settled = await outbox.settle({
+      const appended = await measured(timing, 'appendMs', () => (
+        headRepository.appendCaptureEntries({ entries })
+      ));
+      const settled = await measured(timing, 'settleMs', () => outbox.settle({
         owner, complete: rows.map(identity), maxAttempts,
-      });
+      }));
+      timing.totalMs = Math.max(0, now() - startedAt);
       return {
         reclaimed, blockNumber: blockNumbers[0], throughBlock, blocks: blockNumbers.length,
         claimed: rows.length,
         inserted: appended.insertedCaptures, duplicates: appended.duplicateCaptures,
-        ignored: rows.length - entries.length, ...settled,
+        ignored: rows.length - entries.length, ...settled, timing,
       };
     } catch (error) {
       const retry = rows.map((row) => ({
         ...identity(row), error: { code: error.code || 'capture_failed', message: error.message },
         backoffMs: backoff(row.attempt_count, baseBackoffMs, maxBackoffMs),
       }));
-      const settled = await outbox.settle({ owner, retry, maxAttempts });
+      const settled = await measured(timing, 'settleMs', () => (
+        outbox.settle({ owner, retry, maxAttempts })
+      ));
+      timing.totalMs = Math.max(0, now() - startedAt);
       return {
         reclaimed, blockNumber: blockNumbers[0], throughBlock, blocks: blockNumbers.length,
         claimed: rows.length,
-        inserted: 0, duplicates: 0, ignored: 0, completed: 0, ...settled,
+        inserted: 0, duplicates: 0, ignored: 0, completed: 0, ...settled, timing,
       };
     }
   }
