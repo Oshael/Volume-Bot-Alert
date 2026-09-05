@@ -133,6 +133,10 @@ test('canonical publisher requires capture and excludes legacy or shadow writers
     { lease_key: 'robinhood-chain-capture-worker' },
     { lease_key: 'robinhood-head-capture-worker' },
   ])), (error) => error.code === 'canonical_publish_writer_conflict');
+  await assert.rejects(assertPublishReady(database([
+    { lease_key: 'robinhood-chain-capture-worker' },
+    { lease_key: 'robinhood-ingestion-worker' },
+  ])), (error) => error.code === 'canonical_publish_writer_conflict');
 });
 
 test('standalone canonical head process reports startup failures before retry', async () => {

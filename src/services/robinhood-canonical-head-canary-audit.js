@@ -7,6 +7,7 @@ const {
 
 const LEASE_KEYS = Object.freeze({
   capture: 'robinhood-chain-capture-worker',
+  monolith: 'robinhood-ingestion-worker',
   legacy: 'robinhood-head-capture-worker',
   shadow: 'robinhood-chain-domain-shadow-worker',
   canary: 'robinhood-canonical-head-worker',
@@ -77,6 +78,7 @@ function evaluate(input) {
   const blockers = [];
   const captureStatus = evaluateCapture({ ...input, capture }, leases.capture, blockers);
   add(blockers, leases.shadow.active, 'domain_shadow_still_active');
+  add(blockers, leases.monolith.active, 'monolith_head_still_active');
   add(blockers, count(queue.blocked) > 0, 'domain_outbox_blocked', count(queue.blocked));
   add(blockers, leases.canary.metadata?.state === 'halted', 'canonical_canary_lease_halted',
     leases.canary.metadata?.haltCode || null);

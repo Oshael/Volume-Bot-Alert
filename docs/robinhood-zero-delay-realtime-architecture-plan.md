@@ -393,6 +393,8 @@ que 500 linhas.
   dos writers legado/shadow (3M concluída, ainda sem ativação operacional);
 - gate read-only de cutover que exige parada limpa dos dois heads, capture
   saudável e ausência de claims em voo/bloqueios (3N concluída);
+- health/readiness e sinks derivados selecionam o publisher canônico somente no
+  modo de produção e bloqueiam dual-writer (3O concluída);
 - preservação da evidência e idempotência atuais;
 - comparação com `robinhood_head_captures` existente;
 - cutover dos dois pollers `eth_getLogs` do head.

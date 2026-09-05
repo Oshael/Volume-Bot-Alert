@@ -11,6 +11,7 @@ const { captureRpcOptions } = require('./run-robinhood-chain-capture-worker');
 
 const LEASE_KEY = 'robinhood-canonical-head-worker';
 const CAPTURE_LEASE_KEY = 'robinhood-chain-capture-worker';
+const MONOLITH_LEASE_KEY = 'robinhood-ingestion-worker';
 const LEGACY_LEASE_KEY = 'robinhood-head-capture-worker';
 const SHADOW_LEASE_KEY = 'robinhood-chain-domain-shadow-worker';
 
@@ -18,7 +19,7 @@ async function assertPublishReady(database) {
   const result = await database.query(
     `SELECT lease_key FROM worker_leases
       WHERE lease_key=ANY($1::varchar[]) AND lease_until>NOW()`,
-    [[CAPTURE_LEASE_KEY, LEGACY_LEASE_KEY, SHADOW_LEASE_KEY]]
+    [[CAPTURE_LEASE_KEY, MONOLITH_LEASE_KEY, LEGACY_LEASE_KEY, SHADOW_LEASE_KEY]]
   );
   const active = new Set(result.rows.map((row) => row.lease_key));
   if (!active.has(CAPTURE_LEASE_KEY)) {
@@ -26,7 +27,7 @@ async function assertPublishReady(database) {
     error.code = 'canonical_capture_inactive';
     throw error;
   }
-  for (const key of [LEGACY_LEASE_KEY, SHADOW_LEASE_KEY]) {
+  for (const key of [MONOLITH_LEASE_KEY, LEGACY_LEASE_KEY, SHADOW_LEASE_KEY]) {
     if (!active.has(key)) continue;
     const error = new Error(`${key} must be inactive before canonical publish`);
     error.code = 'canonical_publish_writer_conflict';

@@ -49,6 +49,16 @@ describe('Robinhood canonical head canary audit', () => {
     ]);
   });
 
+  it('rejects the monolithic head in every migration phase', () => {
+    for (const phase of ['preflight', 'canary', 'cutover']) {
+      const state = input(phase);
+      state.leases.push(lease('robinhood-ingestion-worker'));
+      assert.equal(evaluate(state).blockers.some(
+        ({ code }) => code === 'monolith_head_still_active'
+      ), true);
+    }
+  });
+
   it('accepts an unmatched tail but rejects mature gaps, divergence and forbidden RPC', () => {
     const state = input('canary');
     state.leases.push(lease('robinhood-canonical-head-worker', {

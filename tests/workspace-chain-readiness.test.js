@@ -42,6 +42,30 @@ function healthySplitLeases() {
   ];
 }
 
+function healthyCanonicalLeases() {
+  return [
+    {
+      key: 'robinhood-chain-capture-worker',
+      leaseUntil: new Date(NOW_MS + 60_000).toISOString(),
+      metadata: {
+        running: true, lagBlocks: 0, lastError: null,
+        nodeHeadObservedAt: new Date(NOW_MS - 1000).toISOString(),
+      },
+    },
+    {
+      key: 'robinhood-canonical-head-worker',
+      heartbeatAt: new Date(NOW_MS - 1000).toISOString(),
+      leaseUntil: new Date(NOW_MS + 60_000).toISOString(),
+      metadata: {
+        mode: 'canonical_publish', running: true, lastError: null,
+        lastTickAt: new Date(NOW_MS - 1000).toISOString(),
+        canonicalRuntime: { rpcGuard: { forbiddenAttempts: 0 } },
+      },
+    },
+    healthySplitLeases()[1],
+  ];
+}
+
 function runtimeConfig(overrides = {}) {
   return {
     mockTrading: { enabled: true },
@@ -182,6 +206,20 @@ describe('workspace chain readiness', () => {
     assert.equal(readiness.capabilities.monitored, true);
     assert.equal(readiness.capabilities.history, true);
     assert.equal(readiness.blockers.includes('worker_not_active'), false);
+  });
+
+  it('uses the canonical publisher as the split runtime authority', async () => {
+    const provider = createWorkspaceChainReadinessProvider({
+      config: runtimeConfig(),
+      leaseStore: { list: async () => healthyCanonicalLeases() },
+      ingestionWorker: { getStatus: () => ({ running: false }) },
+      now: () => NOW_MS,
+    });
+
+    const readiness = (await provider()).robinhood;
+    assert.equal(readiness.status, 'ready');
+    assert.equal(readiness.publicationReady, true);
+    assert.equal(readiness.blockers.includes('head_lease_inactive'), false);
   });
 
   it('fails split workspace readiness closed when processing is unavailable', async () => {

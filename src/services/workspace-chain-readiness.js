@@ -2,9 +2,9 @@ const workerLease = require('../models/worker-lease');
 const robinhoodIngestionWorker = require('./robinhood-ingestion-worker');
 const { buildRobinhoodRolloutStatus } = require('./robinhood-rollout-status');
 const {
-  HEAD_LEASE_KEY,
   activeLease,
   evaluateRobinhoodPipelineHealth,
+  selectHeadAuthority,
 } = require('./robinhood-pipeline-health');
 const { isRobinhoodUserVisible } = require('../utils/token-chain-availability');
 const config = require('../../config');
@@ -139,23 +139,50 @@ function buildWorkspaceChainReadiness(input = {}) {
 }
 
 function selectRobinhoodRuntime(leases, nowMs) {
-  const headLease = leases.find((lease) => lease.key === HEAD_LEASE_KEY) || null;
   const monolithLease = leases.find(
     (lease) => lease.key === ROBINHOOD_INGESTION_LEASE_KEY
   ) || null;
-  if (activeLease(headLease, nowMs)) {
+  const authority = selectHeadAuthority(leases, nowMs);
+  if (authority) {
     const pipelineHealth = evaluateRobinhoodPipelineHealth(leases, { nowMs });
-    if (!pipelineHealth.ready && activeLease(monolithLease, nowMs)) {
+    if (authority.kind === 'legacy'
+      && !pipelineHealth.ready && activeLease(monolithLease, nowMs)) {
       return { sharedLease: monolithLease, pipelineHealth: null };
     }
+    const sharedLease = authority.kind === 'canonical'
+      ? canonicalRolloutLease(authority.lease, pipelineHealth) : authority.lease;
     return {
-      sharedLease: headLease,
+      sharedLease,
       pipelineHealth,
     };
   }
   return {
     sharedLease: monolithLease,
     pipelineHealth: null,
+  };
+}
+
+function canonicalRolloutLease(lease, pipelineHealth) {
+  const metadata = lease.metadata || {};
+  return {
+    ...lease,
+    metadata: {
+      ...metadata,
+      telemetry: {
+        version: 1,
+        capturedAt: metadata.lastTickAt || lease.heartbeatAt || null,
+        worker: {
+          running: metadata.running === true,
+          inFlight: metadata.inFlight === true,
+          halted: metadata.halted === true,
+          lastError: metadata.lastError || null,
+        },
+        coverage: {
+          caughtUp: pipelineHealth.ready === true,
+          unexplainedGaps: pipelineHealth.ready === true ? 0 : 1,
+        },
+      },
+    },
   };
 }
 

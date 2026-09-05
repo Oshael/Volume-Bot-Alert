@@ -3575,6 +3575,17 @@ O `--phase=cutover` não repete a paridade depois que a lease do canário é
 liberada; ele deve ser executado imediatamente após um `--phase=canary`
 aprovado e depois da parada limpa dos dois heads. Aprovação do cutover autoriza
 somente iniciar o publisher, não apagar cursores, evidências ou backlog.
+Quando a lease `robinhood-canonical-head-worker` está ativa em
+`mode=canonical_publish`, ela substitui a lease legada como autoridade de
+pipeline health, readiness do workspace e gate dos sinks derivados. O health
+também exige chain-capture ativo/fresco, lag de captura no limite, publisher sem
+erro, `rpcGuard` limpo e processing saudável; publisher e head legado ativos ao
+mesmo tempo falham fechado. A lease monolítica `robinhood-ingestion-worker`
+também é conflito de writer e bloqueia canário, cutover e startup. Durante
+canário, o legado continua sendo a
+autoridade. Após o cutover, troque também
+`robinhood-head-capture-worker` por `robinhood-canonical-head-worker` em
+`WORKER_HEALTH_EXPECTED_COMPONENTS` e reinicie somente `worker-health`.
 O lag maduro da outbox é medido do primeiro trabalho já coberto pelo legado até
 o frontier efetivamente capturado, e não até o head legado. Assim o shadow que
 acompanha uma captura ainda em catch-up não reporta como backlog os blocos que o

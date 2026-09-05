@@ -32,6 +32,29 @@ function healthyLeases() {
   ];
 }
 
+function healthyCanonicalLeases() {
+  return [
+    {
+      key: 'robinhood-chain-capture-worker',
+      leaseUntil: new Date(NOW + 60_000).toISOString(),
+      metadata: {
+        running: true, lagBlocks: 0, lastError: null,
+        nodeHeadObservedAt: new Date(NOW - 1000).toISOString(),
+      },
+    },
+    {
+      key: 'robinhood-canonical-head-worker',
+      leaseUntil: new Date(NOW + 60_000).toISOString(),
+      metadata: {
+        mode: 'canonical_publish', running: true, lastError: null,
+        lastTickAt: new Date(NOW - 1000).toISOString(),
+        canonicalRuntime: { rpcGuard: { forbiddenAttempts: 0 } },
+      },
+    },
+    healthyLeases()[1],
+  ];
+}
+
 function fakeWorker(name, calls) {
   return {
     start: (options) => { calls.push(`${name}:start`); return options.enabled === true; },
@@ -58,6 +81,32 @@ describe('robinhood derived live sinks', () => {
         },
       }).blockers,
       ['head_telemetry_stale', 'processing_blocked', 'processing_backlog_stale']
+    );
+  });
+
+  it('accepts only an exclusive healthy canonical publisher as head authority', () => {
+    assert.deepEqual(
+      evaluateDerivedPipelineHealth(healthyCanonicalLeases(), { nowMs: NOW }),
+      { ready: true, blockers: [] }
+    );
+    const conflicting = [...healthyCanonicalLeases(), healthyLeases()[0]];
+    assert.deepEqual(
+      evaluateDerivedPipelineHealth(conflicting, { nowMs: NOW }).blockers,
+      ['head_writer_conflict']
+    );
+    const monolithConflict = [...healthyCanonicalLeases(), {
+      key: 'robinhood-ingestion-worker',
+      leaseUntil: new Date(NOW + 60_000).toISOString(), metadata: {},
+    }];
+    assert.deepEqual(
+      evaluateDerivedPipelineHealth(monolithConflict, { nowMs: NOW }).blockers,
+      ['head_writer_conflict']
+    );
+    const missingLag = healthyCanonicalLeases();
+    delete missingLag[0].metadata.lagBlocks;
+    assert.deepEqual(
+      evaluateDerivedPipelineHealth(missingLag, { nowMs: NOW }).blockers,
+      ['capture_lag_missing']
     );
   });
 
