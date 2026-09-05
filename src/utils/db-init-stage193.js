@@ -38,6 +38,12 @@ const STATEMENTS = Object.freeze([
        OR (status = 'blocked' AND lease_owner IS NULL AND lease_until IS NULL AND completed_at IS NULL)
      )
    )`,
+  `ALTER TABLE robinhood_chain_domain_outbox SET (
+     autovacuum_vacuum_scale_factor = 0.005,
+     autovacuum_vacuum_threshold = 50000,
+     autovacuum_analyze_scale_factor = 0.01,
+     autovacuum_analyze_threshold = 50000
+   )`,
   `CREATE INDEX IF NOT EXISTS idx_rh_chain_domain_outbox_claim
      ON robinhood_chain_domain_outbox(
        domain, status, next_attempt_at, block_number, transaction_index, log_index

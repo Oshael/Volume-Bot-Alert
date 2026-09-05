@@ -3674,6 +3674,9 @@ frontiers não concluídos e impede que cada claim percorra o histórico complet
 da outbox. O claim materializa primeiro somente os blocos limitados dessa frontier e valida sua
 prontidão com um único range scan antes de travar eventos; a expiração da lease usa o relógio real
 do `UPDATE`, não o início da query, para que uma leitura lenta nunca devolva trabalho já vencido.
+Na mesma tabela, a Stage 193 fixa autovacuum com scale factor `0.005` e threshold `50000`, e analyze
+com scale factor `0.01` e threshold `50000`; com 20 milhões de linhas, o vacuum dispara perto de
+150 mil tuplas mortas em vez de aguardar milhões.
 Em deploy existente, reaplique a Stage 193 antes de reiniciar o canário.
 
 A Stage 195 cria `robinhood_chain_v3_balance_snapshots`, sidecar durável do

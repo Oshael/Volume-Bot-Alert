@@ -106,6 +106,15 @@ describe('Robinhood canonical chain capture journal', () => {
     ), []);
     const outbox = SCHEMA_GROUPS.find(({ key }) => key === 'stage193-robinhood-domain-outbox');
     assert.equal(outbox.repair, 'node src/utils/db-init-stage193.js');
+    const outboxOptions = await db.query(
+      `SELECT reloptions FROM pg_class WHERE oid='robinhood_chain_domain_outbox'::regclass`
+    );
+    assert.deepEqual(new Set(outboxOptions.rows[0].reloptions), new Set([
+      'autovacuum_vacuum_scale_factor=0.005',
+      'autovacuum_vacuum_threshold=50000',
+      'autovacuum_analyze_scale_factor=0.01',
+      'autovacuum_analyze_threshold=50000',
+    ]));
     const canary = SCHEMA_GROUPS.find(({ key }) => (
       key === 'stage194-robinhood-canonical-head-canary'
     ));
