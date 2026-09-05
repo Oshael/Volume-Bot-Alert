@@ -2545,6 +2545,10 @@ o `ROBINHOOD_RPC_URL`. O commit do cursor de head emite
 `robinhood_head_capture_cursor`; o listener acorda o scanner imediatamente e o
 tick de dois segundos é apenas reconciliação. Reorg persistente interrompe a
 lease; falhas transitórias usam backoff e circuit breaker observáveis.
+Antes de migrar o LIVE para o journal, execute
+`npm run robinhood:canonical-signed-origin-audit`. O preflight read-only valida
+seed, cursor/checkpoint LIVE, retenção da próxima página e presença de nonce em
+até 200 blocos, separando o frontier legado do backlog canônico reaproveitável.
 Na VPS, provisione-o como
 `trendscope-worker@robinhood-signed-origin.service`: instale
 `deploy/systemd/robinhood-signed-origin.env.example` em
