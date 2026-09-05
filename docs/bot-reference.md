@@ -3821,6 +3821,10 @@ Antes de trocar o LIVE para o journal canônico, execute
 valida cursor/checkpoint e continuidade de até 200 blocos da próxima página,
 contabilizando deployments externos e eventos conhecidos. `CREATE/CREATE2`
 interno continua explicitamente fora dessa cobertura porque exige traces.
+Com `ready=true`, `npm run robinhood:canonical-direct-creator-canary` compara
+uma janela recente de 64 blocos entre o RPC legado e o journal, incluindo hashes,
+deployments externos e eventos conhecidos. Exige ao menos uma criação por padrão;
+`--blocks=200` amplia a amostra sem escrita nem avanço de cursor.
 
 Os contratos locais de atribuição já são fail-closed: o bloco cheio fornece hash,
 número e timestamp para checkpoint; qualquer transação ausente impede escrita
