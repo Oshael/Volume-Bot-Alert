@@ -2549,6 +2549,9 @@ Antes de migrar o LIVE para o journal, execute
 `npm run robinhood:canonical-signed-origin-audit`. O preflight read-only valida
 seed, cursor/checkpoint LIVE, retenção da próxima página e presença de nonce em
 até 200 blocos, separando o frontier legado do backlog canônico reaproveitável.
+Com `ready=true`, `npm run robinhood:canonical-signed-origin-canary` compara os
+64 blocos recentes já processados nos dois sentidos, incluindo timestamp, posição,
+sender, hash e nonce; `--blocks=200` amplia a janela sem escrita.
 Na VPS, provisione-o como
 `trendscope-worker@robinhood-signed-origin.service`: instale
 `deploy/systemd/robinhood-signed-origin.env.example` em
