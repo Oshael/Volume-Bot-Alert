@@ -173,7 +173,7 @@ function createRobinhoodCanonicalHolderAudit(options = {}) {
                   COUNT(*) FILTER (WHERE ledger_status='live') AS live_tokens,
                   COUNT(*) FILTER (WHERE ledger_status='drifted') AS drifted_tokens,
                   COUNT(*) FILTER (WHERE ledger_status='resyncing') AS resyncing_tokens,
-                  COUNT(*) FILTER (WHERE ledger_status IN ('shadow','live') AND
+                  COUNT(*) FILTER (WHERE ledger_status='live' AND
                     (live_through_block IS NULL OR live_through_hash IS NULL))
                     AS invalid_live_frontiers
              FROM robinhood_holder_token_states WHERE chain=$1

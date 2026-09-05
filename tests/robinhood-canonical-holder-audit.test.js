@@ -105,6 +105,8 @@ describe('Robinhood canonical holder audit', () => {
     assert.equal((await audit.inspect()).ready, true);
     assert.match(queries[0].sql, /REPEATABLE READ READ ONLY/);
     assert.match(queries[1].sql, /robinhood_holder_hot_queue/);
+    assert.match(queries[1].sql, /FILTER \(WHERE ledger_status='live' AND/);
+    assert.doesNotMatch(queries[1].sql, /ledger_status IN \('shadow','live'\) AND/);
     assert.deepEqual(queries[2].params, [Object.values(LEASE_KEYS)]);
     assert.equal(queries.at(-2).sql, 'ROLLBACK');
     assert.equal(queries.at(-1).sql, 'RELEASE');
