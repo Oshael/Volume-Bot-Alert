@@ -3859,6 +3859,9 @@ Antes de migrar essa leitura para o journal canônico, execute
 read-only: compara os frontiers de captura, processing e wallet, valida o
 checkpoint LIVE contra o bloco canônico e verifica o contexto transacional da
 próxima página (no máximo 200 blocos), sem varrer o histórico de observações.
+Depois de `ready=true`, execute `npm run robinhood:canonical-wallet-swap-canary`:
+ele compara `tx.from`, posição, hash e timestamp do journal com o RPC legado em
+uma janela fechada recente e não persiste wallet-swaps.
 
 As Stages 126–127 criam posições financeiras Robinhood versionadas e um cursor
 com frontier de bloco e tempo. A Stage 137 adiciona a origem durável desse cursor;
