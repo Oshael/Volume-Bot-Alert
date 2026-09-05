@@ -1745,7 +1745,9 @@ limitada aceita de 1 a 100 lotes e pausa de 100 a 60.000ms entre eles. Continua
 somente enquanto o resultado for `draining` e para em `blocked`, `pruned`, `idle`,
 erro, `SIGINT`, `SIGTERM` ou ao atingir o limite. O corte efetivo é o menor entre o bloco informado e
 `next_block - 20000`; nunca remove o bloco informado nem encurta a janela recente.
-Seleciona o prefixo mais antigo pelo índice do journal, preserva blocos inteiros e
+Seleciona o prefixo mais antigo em janelas de até 256 blocos a partir do
+`journal_floor_block`, compatíveis com o BRIN da Stage 196; assim nenhuma rodada
+ordena todo o histórico anterior ao cutoff. Preserva blocos inteiros e
 revalida somente os tokens pendentes desse lote, sob lock do cursor e fence
 compartilhado de reorg. Uma pendência protegida preserva seu bloco inteiro; o prefixo
 completo anterior pode ser excluído e o floor avança no máximo até esse bloco.
