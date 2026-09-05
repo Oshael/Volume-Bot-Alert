@@ -4,15 +4,16 @@ const {
 } = require('../models/robinhood-holder-bootstrap');
 const { createRobinhoodHolderHandoffRepository } = require('../models/robinhood-holder-handoff');
 const { createRobinhoodHolderLedgerRepository } = require('../models/robinhood-holder-ledger');
-const { createEvmJsonRpcClient } = require('./evm-json-rpc-client');
 const {
   createRobinhoodHolderHandoffCoordinator,
 } = require('./robinhood-holder-handoff-coordinator');
 const { createRobinhoodHolderLiveCapture } = require('./robinhood-holder-live-capture');
 const { createRobinhoodHolderLiveRunner } = require('./robinhood-holder-live-runner');
+const {
+  normalizeRobinhoodHolderLiveSource,
+  resolveRobinhoodHolderLiveSource,
+} = require('./robinhood-holder-live-source');
 const holderCountRealtime = require('./robinhood-holder-count-realtime');
-const { resolveRobinhoodHolderRpcProvider } = require('./robinhood-holder-rpc');
-const { createRobinhoodHolderTransferReader } = require('./robinhood-holder-transfer-reader');
 
 const FATAL_CODES = new Set([
   'configuration_error', 'holder_live_apply_contract_error',
@@ -36,6 +37,9 @@ function normalizeOptions(options = {}, env = process.env) {
   }
   return Object.freeze({
     enabled: options.enabled === true,
+    sourceMode: normalizeRobinhoodHolderLiveSource(
+      options.sourceMode ?? env.ROBINHOOD_HOLDER_LIVE_SOURCE
+    ),
     intervalMs: boundedInteger(options.intervalMs, 500, 100, 300_000),
     maxErrorBackoffMs: boundedInteger(options.maxErrorBackoffMs, 30_000, 1000, 300_000),
     rangeSize: boundedInteger(options.rangeSize, 250, 1, 5000),
@@ -61,20 +65,17 @@ function resolveBootstrap(deps, database) {
 
 async function buildRuntime(options, deps = {}) {
   const database = deps.database || db;
-  const provider = resolveRobinhoodHolderRpcProvider(
-    deps.env || process.env, 'robinhood-holder-live'
-  );
-  const rpcClient = deps.rpcClient || (deps.rpcClientFactory || createEvmJsonRpcClient)({
-    providers: [provider], timeoutMs: options.rpcTimeoutMs, maxRetries: 1,
-  });
+  const source = await resolveRobinhoodHolderLiveSource({
+    sourceMode: options.sourceMode,
+    providerName: 'robinhood-holder-live',
+    rpcTimeoutMs: options.rpcTimeoutMs,
+    addressShardConcurrency: options.addressShardConcurrency,
+  }, { ...deps, database });
   const ledger = deps.ledger || (deps.ledgerFactory || createRobinhoodHolderLedgerRepository)({
     database,
   });
   const bootstrap = resolveBootstrap(deps, database);
-  const reader = deps.reader || (deps.readerFactory || createRobinhoodHolderTransferReader)({
-    rpcClient, addressShardConcurrency: options.addressShardConcurrency,
-  });
-  await reader.assertChain();
+  const { reader } = source;
   const capture = deps.capture || (deps.captureFactory || createRobinhoodHolderLiveCapture)({
     bootstrap, ledger, reader,
   });
@@ -88,7 +89,9 @@ async function buildRuntime(options, deps = {}) {
     capture, handoff, ledger, reader,
     publishHolderCounts: resolveHolderCountPublisher(deps),
   });
-  return Object.freeze({ providerName: provider.name, runner });
+  return Object.freeze({
+    sourceMode: source.sourceMode, providerName: source.providerName, runner,
+  });
 }
 
 function publicError(error) {
@@ -150,7 +153,7 @@ function createRobinhoodHolderLiveWorker(deps = {}) {
   let onFatal = null;
   const status = {
     enabled: false, running: false, inFlight: false, halted: false,
-    providerName: null, lastResult: null, lastError: null,
+    sourceMode: null, providerName: null, lastResult: null, lastError: null,
     totalRuns: 0, totalErrors: 0, consecutiveErrors: 0,
     totalCapturedTransfers: 0, totalSeededTokens: 0, totalBufferedSeededTokens: 0,
     totalAppliedEvents: 0,
@@ -207,6 +210,7 @@ function createRobinhoodHolderLiveWorker(deps = {}) {
     status.totalRuns += 1;
     try {
       const runtime = await getRuntime();
+      status.sourceMode = runtime.sourceMode;
       status.providerName = runtime.providerName;
       const result = await runtime.runner.captureOnce(options);
       recordResult(result);

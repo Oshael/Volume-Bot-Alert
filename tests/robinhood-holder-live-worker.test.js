@@ -49,6 +49,12 @@ describe('Robinhood holder live worker', () => {
       () => worker.start({ enabled: true }),
       (error) => error.code === 'configuration_error'
     );
+    assert.throws(
+      () => worker.start({
+        enabled: true, admittedAfter: '2026-08-10T00:00:00Z', sourceMode: 'unknown',
+      }),
+      (error) => error.code === 'configuration_error'
+    );
     assert.equal(worker.start({
       enabled: true, intervalMs: 750, admittedAfter: '2026-08-10T00:00:00Z',
     }), true);
@@ -169,19 +175,50 @@ describe('Robinhood holder live worker', () => {
     });
 
     assert.equal(runtime.providerName, 'robinhood-holder-live');
+    assert.equal(runtime.sourceMode, 'rpc');
     assert.equal(runtime.runner, runner);
     assert.deepEqual(calls, [
       ['rpc', {
         providers: [{ name: 'robinhood-holder-live', url: 'http://127.0.0.1:8547' }],
         timeoutMs: 9000, maxRetries: 1,
       }],
+      ['reader', { rpcClient, addressShardConcurrency: 2 }], 'chain',
       ['ledger', { database: 'database' }],
       ['bootstrap', { database: 'database' }],
-      ['reader', { rpcClient, addressShardConcurrency: 2 }], 'chain',
       ['capture', { bootstrap, ledger, reader }],
       ['handoffRepository', { database: 'database' }],
       ['handoff', { repository: handoffRepository, reader }],
       ['runner', { capture, handoff, ledger, reader, publishHolderCounts }],
+    ]);
+  });
+
+  it('wires capture and handoff to the canonical journal without creating an RPC client', async () => {
+    const calls = [];
+    const reader = { assertChain: async () => calls.push('chain') };
+    const runtime = await buildRuntime({
+      sourceMode: 'canonical_journal', rpcTimeoutMs: 9000, addressShardConcurrency: 2,
+    }, {
+      database: 'database',
+      rpcClientFactory: () => { throw new Error('RPC must not be created'); },
+      canonicalReaderFactory: (input) => { calls.push(['canonical', input]); return reader; },
+      ledger: 'ledger', bootstrap: 'bootstrap', handoffRepository: 'handoffRepository',
+      captureFactory: (input) => { calls.push(['capture', input]); return 'capture'; },
+      handoffFactory: (input) => { calls.push(['handoff', input]); return 'handoff'; },
+      runnerFactory: (input) => { calls.push(['runner', input]); return 'runner'; },
+      publishHolderCounts: 'publish',
+    });
+
+    assert.equal(runtime.sourceMode, 'canonical_journal');
+    assert.equal(runtime.providerName, 'canonical_journal');
+    assert.equal(runtime.runner, 'runner');
+    assert.deepEqual(calls, [
+      ['canonical', { database: 'database' }], 'chain',
+      ['capture', { bootstrap: 'bootstrap', ledger: 'ledger', reader }],
+      ['handoff', { repository: 'handoffRepository', reader }],
+      ['runner', {
+        capture: 'capture', handoff: 'handoff', ledger: 'ledger', reader,
+        publishHolderCounts: 'publish',
+      }],
     ]);
   });
 });

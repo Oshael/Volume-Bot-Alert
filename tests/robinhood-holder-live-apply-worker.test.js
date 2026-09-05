@@ -112,15 +112,38 @@ describe('Robinhood holder live apply worker', () => {
     });
 
     assert.equal(runtime.providerName, 'robinhood-holder-live-apply');
+    assert.equal(runtime.sourceMode, 'rpc');
     assert.equal(runtime.runner, runner);
     assert.deepEqual(calls, [
       ['rpc', {
         providers: [{ name: 'robinhood-holder-live-apply', url: 'http://127.0.0.1:8547' }],
         timeoutMs: 9000, maxRetries: 1,
       }],
-      ['ledger', { database: 'database' }],
       ['reader', { rpcClient }], 'chain',
+      ['ledger', { database: 'database' }],
       ['runner', { ledger, reader, publishHolderCounts }],
+    ]);
+  });
+
+  it('uses the canonical journal for drift repair without creating an RPC client', async () => {
+    const calls = [];
+    const reader = { assertChain: async () => calls.push('chain') };
+    const runtime = await buildRuntime({
+      sourceMode: 'canonical_journal', rpcTimeoutMs: 9000,
+    }, {
+      database: 'database', ledger: 'ledger',
+      rpcClientFactory: () => { throw new Error('RPC must not be created'); },
+      canonicalReaderFactory: (input) => { calls.push(['canonical', input]); return reader; },
+      runnerFactory: (input) => { calls.push(['runner', input]); return 'runner'; },
+      publishHolderCounts: 'publish',
+    });
+
+    assert.equal(runtime.sourceMode, 'canonical_journal');
+    assert.equal(runtime.providerName, 'canonical_journal');
+    assert.equal(runtime.runner, 'runner');
+    assert.deepEqual(calls, [
+      ['canonical', { database: 'database' }], 'chain',
+      ['runner', { ledger: 'ledger', reader, publishHolderCounts: 'publish' }],
     ]);
   });
 

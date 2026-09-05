@@ -1016,6 +1016,7 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_HOLDER_COLD_REQUESTS_PER_SECOND: '99',
       ROBINHOOD_HOLDER_COLD_REQUEST_MAX_RETRIES: '99',
       ROBINHOOD_HOLDER_LIVE_ENABLED: 'true',
+      ROBINHOOD_HOLDER_LIVE_SOURCE: 'canonical_journal',
       ROBINHOOD_HOLDER_INTELLIGENCE_ENABLED: 'true',
       ROBINHOOD_HOLDER_INTELLIGENCE_INTERVAL_MS: '1',
       ROBINHOOD_HOLDER_INTELLIGENCE_BATCH_SIZE: '999',
@@ -1071,6 +1072,7 @@ describe('runtime worker groups config', () => {
       });
       assert.deepEqual(config.robinhoodHolderLiveWorker, {
         enabled: true,
+        sourceMode: 'canonical_journal',
         intervalMs: 300_000,
         maxErrorBackoffMs: 1000,
         rangeSize: 5000,
@@ -1079,7 +1081,8 @@ describe('runtime worker groups config', () => {
         rpcTimeoutMs: 1000,
       });
       assert.deepEqual(config.robinhoodHolderLiveApplyWorker, {
-        enabled: true, intervalMs: 50, maxErrorBackoffMs: 300_000,
+        enabled: true, sourceMode: 'canonical_journal',
+        intervalMs: 50, maxErrorBackoffMs: 300_000,
         concurrency: 8, maxApplyEvents: 50_000, applyBatchSize: 1000,
         hotApplyBatchSize: 25, maxDurationMs: 2000, rpcTimeoutMs: 1000,
       });

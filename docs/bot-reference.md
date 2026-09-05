@@ -2002,7 +2002,14 @@ preservando o comportamento serial. `ROBINHOOD_HOLDER_LIVE_APPLY_CONCURRENCY`
 habilita de 1 a 8 lanes; cada uma recebe um shard determinístico e disjunto por
 hash do token, preservando a ordem canônica dentro do token e impedindo duas lanes
 de aplicarem o mesmo ledger. Cada lane tem budget próprio de eventos e 2s, portanto
-o aumento eleva proporcionalmente a pressão máxima no PostgreSQL. Eventos consecutivos
+o aumento eleva proporcionalmente a pressão máxima no PostgreSQL. A fonte comum de
+captura e recuperação do apply é selecionada por `ROBINHOOD_HOLDER_LIVE_SOURCE`:
+`rpc` permanece o default
+legado; `canonical_journal` lê `Transfer` e checkpoints diretamente do journal da
+captura canônica, sem `eth_getLogs` nem receipts. O modo canônico falha fechado se a
+faixa pedida não estiver coberta e só deve ser ativado depois dos gates de cobertura
+e handoff do holder.
+Eventos consecutivos
 do mesmo token são aplicados em uma transação, em lotes default de 100 e ajustáveis
 por `ROBINHOOD_HOLDER_LIVE_APPLY_BATCH_SIZE` entre 1 e 1.000. O primeiro déficit
 encerra o lote antes de alterar o evento inválido; o prefixo válido já aplicado

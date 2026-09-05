@@ -1,11 +1,12 @@
 const db = require('../models/db');
 const { createRobinhoodHolderLedgerRepository } = require('../models/robinhood-holder-ledger');
-const { createEvmJsonRpcClient } = require('./evm-json-rpc-client');
 const holderCountRealtime = require('./robinhood-holder-count-realtime');
 const { createPostgresRealtimeListener } = require('./postgres-realtime-listener');
 const { createRobinhoodHolderLiveRunner } = require('./robinhood-holder-live-runner');
-const { resolveRobinhoodHolderRpcProvider } = require('./robinhood-holder-rpc');
-const { createRobinhoodHolderTransferReader } = require('./robinhood-holder-transfer-reader');
+const {
+  normalizeRobinhoodHolderLiveSource,
+  resolveRobinhoodHolderLiveSource,
+} = require('./robinhood-holder-live-source');
 
 const FATAL_CODES = new Set(['configuration_error', 'holder_live_apply_contract_error']);
 const HOT_QUEUE_CHANNEL = 'robinhood_holder_hot_queue';
@@ -19,6 +20,9 @@ function boundedInteger(value, fallback, minimum, maximum) {
 function normalizeOptions(options = {}, env = process.env) {
   return Object.freeze({
     enabled: options.enabled === true,
+    sourceMode: normalizeRobinhoodHolderLiveSource(
+      options.sourceMode ?? env.ROBINHOOD_HOLDER_LIVE_SOURCE
+    ),
     intervalMs: boundedInteger(options.intervalMs, 100, 50, 300_000),
     maxErrorBackoffMs: boundedInteger(options.maxErrorBackoffMs, 30_000, 1000, 300_000),
     concurrency: boundedInteger(options.concurrency, 1, 1, 8),
@@ -34,24 +38,22 @@ function normalizeOptions(options = {}, env = process.env) {
 
 async function buildRuntime(options, deps = {}) {
   const database = deps.database || db;
-  const provider = resolveRobinhoodHolderRpcProvider(
-    deps.env || process.env, 'robinhood-holder-live-apply'
-  );
-  const rpcClient = deps.rpcClient || (deps.rpcClientFactory || createEvmJsonRpcClient)({
-    providers: [provider], timeoutMs: options.rpcTimeoutMs, maxRetries: 1,
-  });
+  const source = await resolveRobinhoodHolderLiveSource({
+    sourceMode: options.sourceMode,
+    providerName: 'robinhood-holder-live-apply',
+    rpcTimeoutMs: options.rpcTimeoutMs,
+  }, { ...deps, database });
   const ledger = deps.ledger || (deps.ledgerFactory || createRobinhoodHolderLedgerRepository)({
     database,
   });
-  const reader = deps.reader || (deps.readerFactory || createRobinhoodHolderTransferReader)({
-    rpcClient,
-  });
-  await reader.assertChain();
+  const { reader } = source;
   const runner = deps.runner || (deps.runnerFactory || createRobinhoodHolderLiveRunner)({
     ledger, reader,
     publishHolderCounts: deps.publishHolderCounts || holderCountRealtime.publishUpdates,
   });
-  return Object.freeze({ providerName: provider.name, runner });
+  return Object.freeze({
+    sourceMode: source.sourceMode, providerName: source.providerName, runner,
+  });
 }
 
 function publicError(error) {
@@ -98,7 +100,7 @@ function createRobinhoodHolderLiveApplyWorker(deps = {}) {
   let onFatal = null;
   const status = {
     enabled: false, running: false, inFlight: false, halted: false,
-    providerName: null, lastResult: null, lastError: null,
+    sourceMode: null, providerName: null, lastResult: null, lastError: null,
     totalRuns: 0, totalErrors: 0, consecutiveErrors: 0,
     totalAppliedEvents: 0, totalDriftedTokens: 0, totalDriftSuspicions: 0,
     totalReceiptRecoveries: 0, totalTailRollbacks: 0, totalTailRollbackEvents: 0,
@@ -135,6 +137,7 @@ function createRobinhoodHolderLiveApplyWorker(deps = {}) {
     status.inFlight = true; status.totalRuns += 1;
     try {
       const runtime = await getRuntime();
+      status.sourceMode = runtime.sourceMode;
       status.providerName = runtime.providerName;
       const result = await runtime.runner.applyOnce(options);
       status.lastResult = result; status.lastError = null; status.consecutiveErrors = 0;

@@ -1420,6 +1420,7 @@ module.exports = {
 
   robinhoodHolderLiveWorker: {
     enabled: robinhoodHolderLiveEnabled,
+    sourceMode: String(process.env.ROBINHOOD_HOLDER_LIVE_SOURCE || 'rpc').trim().toLowerCase(),
     intervalMs: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_LIVE_INTERVAL_MS, 500, 100, 300_000
     ),
@@ -1445,6 +1446,7 @@ module.exports = {
 
   robinhoodHolderLiveApplyWorker: {
     enabled: robinhoodHolderLiveEnabled,
+    sourceMode: String(process.env.ROBINHOOD_HOLDER_LIVE_SOURCE || 'rpc').trim().toLowerCase(),
     intervalMs: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_LIVE_APPLY_INTERVAL_MS, 100, 50, 300_000
     ),
