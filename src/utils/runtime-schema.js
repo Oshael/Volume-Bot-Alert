@@ -5659,6 +5659,21 @@ const SCHEMA_GROUPS = [
       ],
     }],
   },
+  {
+    key: 'stage198-robinhood-v4-liquidity-tail-index',
+    name: 'Stage 198 Robinhood V4 liquidity tail index',
+    repair: 'node src/utils/db-init-stage198.js',
+    tables: [{
+      table: 'robinhood_v4_liquidity_deltas',
+      indexes: [{
+        name: 'idx_rh_v4_liquidity_deltas_pool_tail',
+        includes: [
+          'chain', 'pool_id', 'block_number', 'log_index',
+          'tick_lower', 'tick_upper', 'liquidity_delta',
+        ],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

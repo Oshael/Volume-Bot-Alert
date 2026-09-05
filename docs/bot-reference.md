@@ -815,6 +815,12 @@ Stage 197, instalar env/drop-in, executar `systemctl daemon-reload` e iniciar o 
 O túnel/archive deixa de ser necessário para liquidity após essa troca, mas só deve ser removido
 quando nenhum outro backfill — especialmente holders — ainda depender dele.
 
+A Stage 198 (`node src/utils/db-init-stage198.js`) adiciona, com `CREATE INDEX CONCURRENTLY`, o
+índice cobridor usado pela valoração V4 canônica. Em vez de reagrupar todo o ledger histórico para
+cada lote, o reader parte de `robinhood_v4_liquidity_ranges` e subtrai somente os deltas iguais ou
+posteriores ao anchor, no mesmo snapshot SQL. A Stage 198 deve ser aplicada antes de reiniciar uma
+versão que use esse reader; a construção consome I/O e espaço, mas não bloqueia as gravações.
+
 O preview direcionado `node src/utils/preview-robinhood-v4-blocked.js --through-block=<bloco>
 --output-dir=<diretorio> --range-size=10000` usa `ROBINHOOD_V4_REPLAY_RPC_URL` e a conexão
 normal do banco, forçada a read-only. Seleciona no máximo sete pools bloqueadas pelo erro de

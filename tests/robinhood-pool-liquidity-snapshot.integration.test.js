@@ -13,10 +13,12 @@ const stage68 = require('../src/utils/db-init-stage68');
 const stage98 = require('../src/utils/db-init-stage98');
 const stage99 = require('../src/utils/db-init-stage99');
 const stage100 = require('../src/utils/db-init-stage100');
+const stage101 = require('../src/utils/db-init-stage101');
 const stage102 = require('../src/utils/db-init-stage102');
 const stage147 = require('../src/utils/db-init-stage147');
 const stage148 = require('../src/utils/db-init-stage148');
 const stage150 = require('../src/utils/db-init-stage150');
+const stage198 = require('../src/utils/db-init-stage198');
 const {
   createRobinhoodPoolLiquiditySeedRepository,
 } = require('../src/models/robinhood-pool-liquidity-seed');
@@ -57,12 +59,14 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
     await stage98.init({ closePool: false });
     await stage99.init({ closePool: false });
     await stage100.init({ closePool: false });
+    await stage101.init({ closePool: false });
     await stage102.init({ closePool: false });
     await stage147.init({ closePool: false });
     await stage147.init({ closePool: false });
     await stage148.init({ closePool: false });
     await stage150.init({ closePool: false });
     await stage150.init({ closePool: false });
+    await stage198.init({ closePool: false });
     await cleanup();
     await db.query(
       `INSERT INTO robinhood_pool_registry (
@@ -242,6 +246,8 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
       await client.query('BEGIN');
       await client.query("DELETE FROM robinhood_v4_liquidity_deltas WHERE pool_id = ANY($1::text[])", [ids]);
       await client.query("DELETE FROM robinhood_v4_liquidity_replay_state WHERE chain = 'robinhood'");
+      await client.query("DELETE FROM robinhood_v4_liquidity_materialization_state WHERE chain = 'robinhood'");
+      await client.query("DELETE FROM robinhood_v4_liquidity_ranges WHERE pool_id = ANY($1::text[])", [ids]);
       await client.query(`INSERT INTO robinhood_v4_liquidity_replay_state
         (chain, start_block, next_block, target_block, status)
         VALUES ('robinhood', 0, 201, 200, 'completed')`);
@@ -258,6 +264,17 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
         [`0x${(index + 1).toString(16).padStart(64, 'f')}`, log, block, `0x${'a'.repeat(64)}`,
           id, `robinhood:uniswap-v4:${id}`, POOL, lower, delta]);
       }
+      await client.query(`INSERT INTO robinhood_v4_liquidity_materialization_state (
+        chain, replay_start_block, replay_target_block, replay_checkpoint_hash
+      ) VALUES ('robinhood', 0, 200, $1)`, [`0x${'a'.repeat(64)}`]);
+      await client.query(`INSERT INTO robinhood_v4_liquidity_ranges (
+        chain, pool_id, market_key, tick_lower, tick_upper, liquidity_gross
+      ) SELECT 'robinhood', pool_id, MIN(market_key), tick_lower, tick_upper,
+               SUM(liquidity_delta)
+          FROM robinhood_v4_liquidity_deltas
+         WHERE pool_id = ANY($1::text[])
+         GROUP BY pool_id, tick_lower, tick_upper
+        HAVING SUM(liquidity_delta) > 0`, [ids]);
       for (const [block, log] of [['20', '0'], ['20', '1'], ['20', '2'], ['21', '0'], ['22', '0']]) {
         const actual = await batchReader.listHistoricalV4LiquidityRangesByPoolIds(ids, block, log);
         for (const id of ids) {
