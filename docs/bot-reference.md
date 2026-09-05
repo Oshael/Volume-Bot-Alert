@@ -4155,6 +4155,16 @@ O canário read-only compara uma faixa comum de `Transfer` entre o
 os campos usados pela classificação. O default exige 100 transfers em 64
 blocos e respeita as duas confirmações do wallet-transfer; os limites podem ser
 ajustados com `--min-transfers`, `--blocks` e `--confirmations`.
+Após o canário ser aprovado, configure
+`ROBINHOOD_WALLET_TRANSFER_LIVE_SOURCE=canonical_journal` e reinicie somente o
+grupo `robinhood-wallet-classification`. A fonte canônica lê transfers,
+timestamps, checkpoints e posições de transação do journal PostgreSQL, sem
+`eth_getLogs` ou `eth_getBlockByNumber`. Ela reage ao `NOTIFY` durável da
+captura; o intervalo de dois segundos permanece como retry limitado enquanto
+aguarda o frontier do wallet-swap. Confirme a troca com
+`npm run robinhood:canonical-wallet-transfer-audit -- --phase=cutover`; o
+resultado só fica `ready=true` quando a lease ativa publica
+`source_mode=canonical_journal`.
 
 A projeção financeira unificada dentro desse writer tem uma segunda flag,
 `ROBINHOOD_WALLET_UNIFIED_POSITION_LIVE_ENABLED=true`, desligada por padrão.
@@ -4165,11 +4175,12 @@ exato entre seed e LIVE e igualdade entre os cursores LIVE financeiro e de
 transfers; cursor financeiro ausente ou atrasado retorna
 `awaiting-position-catch-up` sem avançar transfers. Nunca habilite a flag antes
 de preencher o gap e revisar a igualdade dos cursores.
-Antes de calcular o range, o writer resolve pelo mesmo RPC Robinhood configurado
-e persiste na sidecar da Stage 139 qualquer `transaction_index` de swap ainda
-ausente. Não usa `action_index` como fallback: falha de RPC ou evidência
-canônica ausente impede os dois cursores de avançar, e o próximo tick tenta o
-mesmo range novamente.
+Antes de calcular o range, o modo RPC resolve no node Robinhood configurado e
+persiste na sidecar da Stage 139 qualquer `transaction_index` de swap ainda
+ausente. O modo canônico resolve a mesma evidência a partir das transações do
+journal. Nenhum modo usa `action_index` como fallback: evidência canônica
+ausente impede os dois cursores de avançar, e o próximo tick tenta o mesmo range
+novamente.
 
 A página publicada de holders junta cada saldo com `unified_transfer_v1` e a
 última avaliação aceita do token. O payload expõe médias ponderadas de market

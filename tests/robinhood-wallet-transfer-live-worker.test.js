@@ -3,10 +3,15 @@ const { describe, it } = require('node:test');
 
 const {
   createRobinhoodWalletTransferLiveWorker,
-  __private: { buildRuntime },
+  __private: { buildRuntime, normalizeOptions },
 } = require('../src/services/robinhood-wallet-transfer-live-worker');
 
 describe('Robinhood wallet transfer LIVE worker', () => {
+  it('rejects an unsupported LIVE source', () => {
+    assert.throws(() => normalizeOptions({ sourceMode: 'invalid' }, {}),
+      /must be rpc or canonical_journal/);
+  });
+
   it('builds one validated RPC runtime with isolated adapters', async () => {
     const rpcClient = { name: 'rpc', requestBatch: async () => [] };
     const created = {};
@@ -39,6 +44,33 @@ describe('Robinhood wallet transfer LIVE worker', () => {
       created.transactionPositions.repository.name, 'transactionPositionRepository'
     );
     assert.equal(created.source.database.name, 'db');
+  });
+
+  it('builds canonical evidence and transaction positions without validating an RPC', async () => {
+    const created = {};
+    const factory = (name) => (input) => { created[name] = input; return { name }; };
+    const canonicalReader = { async assertChain() { created.asserted = true; } };
+    const canonicalBlockSource = { async loadBlock(number) { return { number }; } };
+    const runtime = await buildRuntime({ sourceMode: 'canonical_journal' }, {
+      database: { name: 'db' },
+      rpcClientFactory() { throw new Error('must not create RPC'); },
+      validateChainIds() { throw new Error('must not validate RPC'); },
+      canonicalTransferReaderFactory: () => canonicalReader,
+      canonicalEvidenceFactory: factory('evidence'),
+      canonicalBlockSourceFactory: () => canonicalBlockSource,
+      sourceFactory: factory('source'), rawFactory: factory('raw'),
+      projectionFactory: factory('projection'),
+      transactionPositionRepositoryFactory: factory('transactionPositionRepository'),
+      transactionPositionResolverFactory: factory('transactionPositions'),
+    });
+    assert.equal(runtime.sourceMode, 'canonical_journal');
+    assert.deepEqual(runtime.providerChainIds, { canonical_journal: '4663' });
+    assert.equal(created.asserted, true);
+    assert.equal(created.evidence.transferReader, canonicalReader);
+    const [block] = await created.transactionPositions.rpcClient.requestBatch([{
+      method: 'eth_getBlockByNumber', params: ['0x64', true],
+    }]);
+    assert.deepEqual(block, { number: '100' });
   });
 
   it('is opt-in, schedules one active tick and records bounded telemetry', async () => {
@@ -87,5 +119,29 @@ describe('Robinhood wallet transfer LIVE worker', () => {
     assert.deepEqual(fatal, ['transfer_checkpoint_mismatch']);
     assert.equal(worker.getStatus().halted, true);
     assert.equal(worker.getStatus().running, false);
+  });
+
+  it('wakes a canonical worker from durable capture notifications', async () => {
+    const scheduled = [];
+    let listenerOptions;
+    let stopped = false;
+    const worker = createRobinhoodWalletTransferLiveWorker({
+      env: { ROBINHOOD_WALLET_TRANSFER_LIVE_SOURCE: 'canonical_journal' },
+      schedule: (fn, delay) => { const task = { fn, delay }; scheduled.push(task); return task; },
+      cancelSchedule() {},
+      listenerFactory: (options) => { listenerOptions = options; return {
+        async start() {}, async stop() { stopped = true; },
+      }; },
+      runtimeFactory: async () => ({
+        sourceMode: 'canonical_journal', providerChainIds: { canonical_journal: '4663' }, tickDeps: {},
+      }),
+      runTick: async () => ({ status: 'caught-up' }),
+    });
+    assert.equal(worker.start({ enabled: true }), true);
+    assert.equal(listenerOptions.channel, 'robinhood_chain_capture');
+    listenerOptions.onNotification();
+    assert.equal(scheduled.at(-1).delay, 0);
+    await worker.stop();
+    assert.equal(stopped, true);
   });
 });

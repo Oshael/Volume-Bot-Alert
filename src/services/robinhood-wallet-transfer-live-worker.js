@@ -1,9 +1,19 @@
-const { buildRobinhoodWalletTransferRuntime } = require('./robinhood-wallet-transfer-runtime');
+const db = require('../models/db');
+const {
+  CANONICAL_SOURCE, buildRobinhoodWalletTransferRuntime,
+  normalizeRobinhoodWalletTransferSource,
+} = require('./robinhood-wallet-transfer-runtime');
 const {
   runRobinhoodWalletTransferLiveTick,
 } = require('./robinhood-wallet-transfer-live-tick');
+const {
+  NOTIFY_CHANNEL: CANONICAL_CAPTURE_NOTIFY_CHANNEL,
+} = require('../models/robinhood-chain-capture-journal');
+const { createPostgresRealtimeListener } = require('./postgres-realtime-listener');
 
-const FATAL_CODES = new Set(['configuration_error', 'transfer_source_frontier_regressed']);
+const FATAL_CODES = new Set([
+  'configuration_error', 'source_contract_error', 'transfer_source_frontier_regressed',
+]);
 
 function boundedInteger(value, fallback, minimum, maximum) {
   const parsed = value == null ? fallback : Number(value);
@@ -11,9 +21,12 @@ function boundedInteger(value, fallback, minimum, maximum) {
     ? Math.max(minimum, Math.min(parsed, maximum)) : fallback;
 }
 
-function normalizeOptions(input = {}) {
+function normalizeOptions(input = {}, env = process.env) {
   return Object.freeze({
     enabled: input.enabled === true,
+    sourceMode: normalizeRobinhoodWalletTransferSource(
+      input.sourceMode ?? env.ROBINHOOD_WALLET_TRANSFER_LIVE_SOURCE
+    ),
     intervalMs: boundedInteger(input.intervalMs, 2000, 250, 300_000),
     maxErrorBackoffMs: boundedInteger(input.maxErrorBackoffMs, 30_000, 1000, 300_000),
     maxBlocks: boundedInteger(input.maxBlocks, 25, 1, 250),
@@ -64,16 +77,18 @@ function createRobinhoodWalletTransferLiveWorker(deps = {}) {
   const schedule = deps.schedule || setTimeout;
   const cancelSchedule = deps.cancelSchedule || clearTimeout;
   const logger = deps.logger || console;
+  const env = deps.env || process.env;
   const runtimeFactory = deps.runtimeFactory || ((options) => buildRuntime(options, deps));
   const tick = deps.runTick || runRobinhoodWalletTransferLiveTick;
-  let options = normalizeOptions();
+  let options = normalizeOptions({}, env);
   let runtimePromise = null;
   let timer = null;
+  let listener = null;
   let active = null;
   let running = false;
   let onFatal = null;
   const status = {
-    enabled: false, running: false, halted: false, inFlight: false,
+    enabled: false, running: false, halted: false, inFlight: false, sourceMode: null,
     providerChainIds: null, lastResult: null, lastError: null,
     totalRuns: 0, totalErrors: 0, consecutiveErrors: 0,
     totalTransfers: 0, totalRawInserted: 0, totalEdgeGroups: 0,
@@ -96,6 +111,7 @@ function createRobinhoodWalletTransferLiveWorker(deps = {}) {
     status.lastError = publicError(error);
     if (timer) cancelSchedule(timer);
     timer = null;
+    await Promise.resolve(listener?.stop?.()).catch(() => {});
     try { await onFatal?.(error); } catch (fatalError) {
       logger.error('[RobinhoodWalletTransferLiveWorker] Fatal propagation failed:', fatalError.message);
     }
@@ -116,6 +132,7 @@ function createRobinhoodWalletTransferLiveWorker(deps = {}) {
     status.inFlight = true; status.totalRuns += 1;
     try {
       const runtime = await getRuntime();
+      status.sourceMode = runtime.sourceMode;
       status.providerChainIds = runtime.providerChainIds;
       const result = await tick(runtime.tickDeps, {
         maxBlocks: options.maxBlocks,
@@ -149,8 +166,9 @@ function createRobinhoodWalletTransferLiveWorker(deps = {}) {
   }
 
   function queueNext(delay) {
-    if (!running || status.halted) return;
+    if (!running || status.halted || timer) return;
     timer = schedule(async () => {
+      timer = null;
       await runOnce();
       const backoff = Math.min(
         options.maxErrorBackoffMs,
@@ -161,13 +179,31 @@ function createRobinhoodWalletTransferLiveWorker(deps = {}) {
     timer?.unref?.();
   }
 
+  function wake() {
+    if (!running || status.halted) return;
+    if (timer) cancelSchedule(timer);
+    timer = null;
+    queueNext(0);
+  }
+
   function start(input = {}) {
     if (running) return false;
-    options = normalizeOptions(input);
+    options = normalizeOptions(input, env);
     onFatal = typeof input.onFatal === 'function' ? input.onFatal : null;
     status.enabled = options.enabled;
     if (!options.enabled) return false;
     status.halted = false; running = true; status.running = true;
+    if (options.sourceMode === CANONICAL_SOURCE) {
+      listener = (deps.listenerFactory || createPostgresRealtimeListener)({
+        channel: CANONICAL_CAPTURE_NOTIFY_CHANNEL,
+        label: 'RobinhoodWalletTransferLiveWorker',
+        pool: deps.pool || db.pool,
+        onNotification: wake,
+      });
+      Promise.resolve(listener.start()).catch((error) => {
+        status.lastError = publicError(error);
+      });
+    }
     queueNext(0);
     return true;
   }
@@ -176,6 +212,7 @@ function createRobinhoodWalletTransferLiveWorker(deps = {}) {
     running = false; status.running = false;
     if (timer) cancelSchedule(timer);
     timer = null;
+    await Promise.resolve(listener?.stop?.()).catch(() => {});
     if (active) await active.catch(() => {});
   }
 

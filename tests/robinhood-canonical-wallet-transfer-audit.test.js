@@ -74,6 +74,18 @@ describe('Robinhood canonical wallet-transfer audit', () => {
     ]);
   });
 
+  it('requires the running wallet-transfer worker to use the canonical journal at cutover', () => {
+    const fixture = input();
+    fixture.phase = 'cutover';
+    const transfer = fixture.leases.find(({ lease_key }) => lease_key === LEASE_KEYS.transfer);
+    transfer.metadata.telemetry.sourceMode = 'rpc';
+    assert.deepEqual(evaluate(fixture).blockers, [{
+      code: 'wallet_transfer_source_not_canonical', detail: 'rpc',
+    }]);
+    transfer.metadata.telemetry.sourceMode = 'canonical_journal';
+    assert.equal(evaluate(fixture).ready, true);
+  });
+
   it('uses one repeatable read-only snapshot and bounded canonical context', async () => {
     const fixture = input();
     const calls = [];
@@ -102,7 +114,9 @@ describe('Robinhood canonical wallet-transfer audit', () => {
   });
 
   it('rejects CLI arguments and prints the read-only report', async () => {
-    assert.deepEqual(parseArgs([]), {});
+    assert.deepEqual(parseArgs([]), { phase: 'preflight' });
+    assert.deepEqual(parseArgs(['--phase=cutover']), { phase: 'cutover' });
+    assert.throws(() => parseArgs(['--phase=live']), /preflight or cutover/);
     assert.throws(() => parseArgs(['--write']), /unknown argument/);
     const lines = [];
     const report = await main([], { audit: { async inspect() { return { ready: true }; } },

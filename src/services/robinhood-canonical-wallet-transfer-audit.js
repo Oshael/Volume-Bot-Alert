@@ -11,6 +11,7 @@ const CHAIN = 'robinhood';
 const DEFAULT_CONFIRMATIONS = 2;
 const MAX_CAPTURE_LAG = 2n;
 const MAX_CONTEXT_BLOCKS = 200n;
+const PHASES = Object.freeze(['preflight', 'cutover']);
 const LEASE_KEYS = Object.freeze({
   capture: 'robinhood-chain-capture-worker',
   swap: 'robinhood-wallet-swap-live-worker',
@@ -20,6 +21,11 @@ const LEASE_KEYS = Object.freeze({
 function quantity(value) { return value == null ? null : BigInt(value); }
 function text(value) { return value == null ? null : String(value); }
 function count(value) { return Number(value ?? 0); }
+function phase(value) {
+  const normalized = String(value || 'preflight').trim().toLowerCase();
+  if (!PHASES.includes(normalized)) throw new Error(`phase must be ${PHASES.join(' or ')}`);
+  return normalized;
+}
 function preferredText(value, fallback) { return text(value ?? fallback); }
 function positionAlignment(row) {
   if (row.position_live_next_block == null || row.transfer_next_block == null) return null;
@@ -117,7 +123,7 @@ function swapBlockers(row, cursor, lease) {
   return blockers;
 }
 
-function transferBlockers(row, context, cursor, lease, active) {
+function transferBlockers(row, context, cursor, lease, active, auditPhase) {
   const blockers = [];
   add(blockers, cursor.transferNext == null, 'wallet_transfer_cursor_missing');
   add(blockers, cursor.transferNext != null && row.transfer_lifecycle_state !== 'running',
@@ -136,12 +142,19 @@ function transferBlockers(row, context, cursor, lease, active) {
     'canonical_transfer_evidence_invalid', Number(context.malformed_in_scope_events));
   add(blockers, lease.halted, 'wallet_transfer_worker_halted');
   add(blockers, lease.last_error != null, 'wallet_transfer_worker_error', lease.last_error);
+  if (auditPhase === 'cutover') {
+    add(blockers, !active, 'wallet_transfer_worker_inactive');
+    add(blockers, active && !lease.running, 'wallet_transfer_worker_not_running');
+    add(blockers, active && lease.running && lease.source_mode !== 'canonical_journal',
+      'wallet_transfer_source_not_canonical', lease.source_mode);
+  }
   return blockers;
 }
 
 function evaluate(input = {}) {
   const row = input.state || {};
   const context = input.context || {};
+  const auditPhase = phase(input.phase);
   const confirmations = Number(input.confirmations ?? DEFAULT_CONFIRMATIONS);
   if (!Number.isSafeInteger(confirmations) || confirmations < 0 || confirmations > 1000) {
     throw new Error('confirmations must be between 0 and 1000');
@@ -154,10 +167,12 @@ function evaluate(input = {}) {
   const transferLease = leaseSummary(leases.transfer);
   const blockers = [
     ...captureBlockers(cursor, leases), ...swapBlockers(row, cursor, swapLease),
-    ...transferBlockers(row, context, cursor, transferLease, leases.transfer.active),
+    ...transferBlockers(
+      row, context, cursor, transferLease, leases.transfer.active, auditPhase
+    ),
   ];
   return Object.freeze({
-    mode: 'read-only', ready: blockers.length === 0, blockers,
+    mode: 'read-only', phase: auditPhase, ready: blockers.length === 0, blockers,
     capture: { next_block: text(cursor.captureNext), checkpoint_block: text(cursor.captureCheckpoint),
       node_head: text(cursor.captureHead), lag_blocks: text(cursor.captureLag), confirmations,
       safe_head: text(cursor.canonicalSafe) },
@@ -205,6 +220,7 @@ function trackedTokensSql() {
 function createRobinhoodCanonicalWalletTransferAudit(options = {}) {
   const database = options.database || db;
   const confirmations = options.confirmations ?? DEFAULT_CONFIRMATIONS;
+  const auditPhase = phase(options.phase);
   async function inspect() {
     const client = await database.getClient();
     try {
@@ -288,7 +304,7 @@ function createRobinhoodCanonicalWalletTransferAudit(options = {}) {
       await client.query('ROLLBACK');
       return evaluate({ state, context,
         tokens: Object.fromEntries(tokenRows.rows.map((row) => [row.ledger_status, Number(row.tokens)])),
-        leases: leaseRows.rows, confirmations });
+        leases: leaseRows.rows, confirmations, phase: auditPhase });
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch (_) {}
       throw error;
@@ -297,5 +313,5 @@ function createRobinhoodCanonicalWalletTransferAudit(options = {}) {
   return Object.freeze({ inspect });
 }
 
-module.exports = { DEFAULT_CONFIRMATIONS, LEASE_KEYS, MAX_CONTEXT_BLOCKS,
+module.exports = { DEFAULT_CONFIRMATIONS, LEASE_KEYS, MAX_CONTEXT_BLOCKS, PHASES,
   createRobinhoodCanonicalWalletTransferAudit, evaluate };

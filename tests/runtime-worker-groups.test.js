@@ -662,6 +662,7 @@ describe('runtime worker groups config', () => {
   it('keeps Robinhood wallet transfers opt-in and bounds RPC work', () => {
     withEnv({
       ROBINHOOD_WALLET_TRANSFER_LIVE_ENABLED: 'true',
+      ROBINHOOD_WALLET_TRANSFER_LIVE_SOURCE: 'canonical_journal',
       ROBINHOOD_WALLET_TRANSFER_LIVE_INTERVAL_MS: '1',
       ROBINHOOD_WALLET_TRANSFER_LIVE_MAX_BLOCKS_PER_TICK: '999',
       ROBINHOOD_WALLET_TRANSFER_ADDRESS_SHARD_CONCURRENCY: '9',
@@ -670,7 +671,7 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_WALLET_UNIFIED_POSITION_LIVE_ENABLED: 'true',
     }, (config) => {
       assert.deepEqual(config.robinhoodWalletTransferLiveWorker, {
-        enabled: true, unifiedPositionEnabled: true,
+        enabled: true, sourceMode: 'canonical_journal', unifiedPositionEnabled: true,
         intervalMs: 250, maxErrorBackoffMs: 30_000,
         maxBlocks: 250, addressShardConcurrency: 4,
         blockEvidenceBatchSize: 100, endpointRoleBatchSize: 1,

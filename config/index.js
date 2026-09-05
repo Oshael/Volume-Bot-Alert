@@ -2063,6 +2063,9 @@ module.exports = {
 
   robinhoodWalletTransferLiveWorker: {
     enabled: parseBoolean(process.env.ROBINHOOD_WALLET_TRANSFER_LIVE_ENABLED, false),
+    sourceMode: String(
+      process.env.ROBINHOOD_WALLET_TRANSFER_LIVE_SOURCE || 'rpc'
+    ).trim().toLowerCase(),
     unifiedPositionEnabled: parseBoolean(
       process.env.ROBINHOOD_WALLET_UNIFIED_POSITION_LIVE_ENABLED,
       false
