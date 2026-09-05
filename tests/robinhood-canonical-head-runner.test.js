@@ -58,7 +58,8 @@ describe('Robinhood canonical head runner', () => {
       ignored: 1, completed: 3, blocked: 0, retried: 0,
     });
     assert.deepEqual(Object.keys(timing), [
-      'claimMs', 'discoveryMs', 'marketMs', 'appendMs', 'settleMs', 'totalMs',
+      'reclaimMs', 'claimMs', 'discoveryMs', 'marketMs',
+      'appendMs', 'settleMs', 'totalMs',
     ]);
     assert.equal(Object.values(timing).every((value) => value >= 0), true);
     assert.deepEqual(calls, ['discovery', 'market', 'append', 'settle']);

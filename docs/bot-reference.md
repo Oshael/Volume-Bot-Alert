@@ -3584,10 +3584,14 @@ ajustável entre 1 e 32 por `ROBINHOOD_CANONICAL_HEAD_CONCURRENCY`; use 32 apena
 para drenar backlog do canário no RPC local e reduza se surgirem erros RPC ou
 pressão sobre o chain-capture. O heartbeat expõe a concorrência efetiva em
 `canonicalRuntime.enrichment.observationConcurrency`. A telemetria `lastResult`
-expõe `blocks`, `blockNumber`, `throughBlock` e `timing` com `claimMs`,
-`discoveryMs`, `marketMs`, `appendMs`, `settleMs` e `totalMs`. Esses tempos
-separam custo do banco, decodificação/enriquecimento e persistência antes de
-qualquer ajuste adicional de concorrência ou lote.
+expõe `blocks`, `blockNumber`, `throughBlock` e `timing` com `reclaimMs`,
+`claimMs`, `discoveryMs`, `marketMs`, `appendMs`, `settleMs` e `totalMs`. Esses
+tempos separam custo do banco, decodificação/enriquecimento e persistência antes
+de qualquer ajuste adicional de concorrência ou lote. A Stage 193 também cria
+online o índice parcial `idx_rh_chain_domain_outbox_frontier`; ele cobre apenas
+frontiers não concluídos e impede que cada claim percorra o histórico completo
+da outbox. Em deploy existente, reaplique a Stage 193 antes de reiniciar o
+canário.
 
 A Stage 195 cria `robinhood_chain_v3_balance_snapshots`, sidecar durável do
 journal para os dois `balanceOf` de cada swap V3 no bloco capturado. Aplique com

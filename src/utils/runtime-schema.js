@@ -5574,6 +5574,10 @@ const SCHEMA_GROUPS = [
       indexes: [
         { name: 'idx_rh_chain_domain_outbox_claim', includes: ['domain', 'status', 'next_attempt_at', 'block_number'] },
         { name: 'idx_rh_chain_domain_outbox_lease', includes: ['domain', 'lease_until'] },
+        { name: 'idx_rh_chain_domain_outbox_frontier', includes: [
+          'chain', 'block_number', 'status', 'domain', 'transaction_index',
+          'log_index', 'next_attempt_at', 'complete',
+        ] },
       ],
     }],
   },

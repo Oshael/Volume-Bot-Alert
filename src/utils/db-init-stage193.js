@@ -44,6 +44,10 @@ const STATEMENTS = Object.freeze([
      ) WHERE status = 'pending'`,
   `CREATE INDEX IF NOT EXISTS idx_rh_chain_domain_outbox_lease
      ON robinhood_chain_domain_outbox(domain, lease_until) WHERE status = 'leased'`,
+  `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_rh_chain_domain_outbox_frontier
+     ON robinhood_chain_domain_outbox(
+       chain, block_number, status, domain, transaction_index, log_index
+     ) INCLUDE(next_attempt_at) WHERE status <> 'complete'`,
 ]);
 
 async function init(options = {}) {

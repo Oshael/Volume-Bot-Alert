@@ -46,14 +46,15 @@ function createRobinhoodCanonicalHeadRunner(deps = {}) {
   async function runOnce() {
     const startedAt = now();
     const timing = {
-      claimMs: 0, discoveryMs: 0, marketMs: 0,
+      reclaimMs: 0, claimMs: 0, discoveryMs: 0, marketMs: 0,
       appendMs: 0, settleMs: 0, totalMs: 0,
     };
-    let reclaimed;
-    const rows = await measured(timing, 'claimMs', async () => {
-      reclaimed = await outbox.reclaimExpiredLeases();
-      return outbox.claimNextBlock({ owner, leaseMs, maxBlocks });
-    });
+    const reclaimed = await measured(
+      timing, 'reclaimMs', () => outbox.reclaimExpiredLeases()
+    );
+    const rows = await measured(
+      timing, 'claimMs', () => outbox.claimNextBlock({ owner, leaseMs, maxBlocks })
+    );
     if (!rows.length) return {
       reclaimed, blockNumber: null, throughBlock: null, blocks: 0,
       claimed: 0, inserted: 0, duplicates: 0,
