@@ -97,6 +97,7 @@ function createRobinhoodWethUsdQuoteReader(options = {}) {
   const now = options.now || Date.now;
   const configuredEventRangeSize = BigInt(options.eventRangeSize || 50000);
   const eventRangeSize = configuredEventRangeSize > 0n ? configuredEventRangeSize : 1n;
+  const eventFallbackEnabled = options.eventFallbackEnabled !== false;
   const maxCacheEntries = Math.max(1, Math.trunc(Number(options.maxCacheEntries)) || 5000);
   const cache = new Map();
   const pending = new Map();
@@ -327,7 +328,10 @@ function createRobinhoodWethUsdQuoteReader(options = {}) {
     if (cache.has(key)) return { ...cache.get(key), cached: true };
     if (pending.has(key)) return pending.get(key);
     const task = readStateSnapshot(requestOptions, resolvedBlockTag)
-      .catch(() => readEventSnapshot(requestOptions, resolvedBlockTag))
+      .catch((error) => {
+        if (!eventFallbackEnabled) throw error;
+        return readEventSnapshot(requestOptions, resolvedBlockTag);
+      })
       .then((snapshot) => {
         remember(key, snapshot);
         return { ...snapshot, cached: false };

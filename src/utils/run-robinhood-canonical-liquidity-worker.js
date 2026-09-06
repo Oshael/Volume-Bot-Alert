@@ -31,6 +31,7 @@ const {
   createRobinhoodPoolLiquidityOnchainReader,
 } = require('../services/robinhood-pool-liquidity-onchain');
 const { createRobinhoodWethUsdQuoteReader } = require('../services/robinhood-weth-usd-quote');
+const { createRobinhoodLiveRpcGuard } = require('../services/robinhood-live-rpc-guard');
 const { createWorkerLeaseManager } = require('../services/worker-lease-manager');
 
 const LEASE_KEY = 'robinhood-canonical-liquidity-worker';
@@ -102,7 +103,9 @@ function composeWorker(deps, options, rawDatabase, rpcClient) {
   const reader = deps.reader || createRobinhoodPoolLiquidityOnchainReader({
     rpcClient,
     metadataReader: (deps.metadataReaderFactory || createErc20MetadataReader)({ rpcClient }),
-    quoteReader: (deps.quoteReaderFactory || createRobinhoodWethUsdQuoteReader)({ rpcClient }),
+    quoteReader: (deps.quoteReaderFactory || createRobinhoodWethUsdQuoteReader)({
+      rpcClient, eventFallbackEnabled: false,
+    }),
     v4RangeReader: rangeRepository,
   });
   const scanner = deps.scanner || createRobinhoodCanonicalLiquidityScanner({
@@ -127,9 +130,12 @@ async function main(deps = {}) {
   const logger = deps.logger || console;
   const rawDatabase = deps.database || db;
   if (!options.enabled) throw new Error('ROBINHOOD_CANONICAL_LIQUIDITY_ENABLED must be true');
-  const rpcClient = (deps.rpcClientFactory || createRobinhoodRpcClient)(
+  const baseRpcClient = (deps.rpcClientFactory || createRobinhoodRpcClient)(
     deps.rpcOptions || liquidityRpcOptions(options)
   );
+  const rpcClient = (deps.rpcGuardFactory || createRobinhoodLiveRpcGuard)(baseRpcClient, {
+    role: 'canonical-liquidity',
+  });
   const worker = composeWorker(deps, options, rawDatabase, rpcClient);
   const leases = (deps.leaseManagerFactory || createWorkerLeaseManager)({
     heartbeatMs: options.leaseHeartbeatMs, ttlMs: options.leaseTtlMs,
@@ -145,7 +151,10 @@ async function main(deps = {}) {
   leases.start({
     key: LEASE_KEY, label: 'Robinhood canonical liquidity',
     metadata: { process: 'robinhood-canonical-liquidity', mode: 'canonical_journal' },
-    metadataProvider: worker.getStatus,
+    metadataProvider: () => ({
+      ...worker.getStatus(),
+      rpcGuard: rpcClient.getGuardStatus(),
+    }),
     start: async () => {
       try {
         await (deps.validateChainIds || validateRobinhoodProviderChainIds)(rpcClient);

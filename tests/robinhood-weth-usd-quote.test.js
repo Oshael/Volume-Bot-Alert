@@ -182,6 +182,30 @@ describe('Robinhood canonical WETH/USD quote reader', () => {
     assert.deepEqual(ranges, [['0x16fbe9', FEE_100_HISTORY_BLOCK], ['0x16fc01', '0x16fc10']]);
   });
 
+  it('does not scan logs when event fallback is disabled for a live role', async () => {
+    const rpc = createRpc({
+      handler: async (method, params) => {
+        if (method === 'eth_call' && params[1] !== 'latest') throw new Error('missing trie node');
+        if (method === 'eth_call') {
+          return addressResult(feeFromFactoryCall(params[0].data) === 100 ? POOL : ZERO_ADDRESS);
+        }
+        if (method === 'eth_getCode') return '0x6000';
+        if (method === 'eth_getLogs') throw new Error('live log scan must not execute');
+        throw new Error('unexpected request');
+      },
+    });
+    const reader = createRobinhoodWethUsdQuoteReader({
+      rpcClient: rpc,
+      eventFallbackEnabled: false,
+    });
+
+    await assert.rejects(
+      reader.getSnapshot({ blockTag: FEE_100_HISTORY_BLOCK }),
+      /missing trie node/
+    );
+    assert.equal(rpc.calls.some(({ method }) => method === 'eth_getLogs'), false);
+  });
+
   it('caches an empty event interval instead of rescanning back to deployment', async () => {
     const ranges = [];
     const rpc = createRpc({

@@ -63,8 +63,9 @@ test('canonical liquidity startup gate excludes legacy and requires canonical au
 
 test('standalone canonical liquidity process validates and owns its dedicated lease', async () => {
   let definition; let validated = false; let gated = false;
-  let started = false; let stopped = false; let closed = false;
+  let started = false; let stopped = false; let closed = false; let quoteOptions;
   const database = { pool: {} };
+  const baseRpcClient = { request: async () => null };
   const scanner = { scanNextRange: async () => {} };
   const refresher = { runOnce: async () => {} };
   const worker = {
@@ -78,8 +79,17 @@ test('standalone canonical liquidity process validates and owns its dedicated le
       leaseHeartbeatMs: 30_000, leaseTtlMs: 120_000,
     },
     database, timedDatabase: database, rpcOptions: {},
-    rpcClientFactory: () => ({}), snapshotRepository: {}, cursorRepository: {},
-    refreshQueue: {}, source: {}, rangeRepository: {}, reader: {}, scanner, refresher,
+    rpcClientFactory: () => baseRpcClient, snapshotRepository: {}, cursorRepository: {},
+    refreshQueue: {}, source: {},
+    rangeRepository: { listHistoricalV4LiquidityRanges: async () => [] },
+    metadataReaderFactory: () => ({
+      getMetadata: async () => ({}), getBalanceOf: async () => ({}),
+    }),
+    quoteReaderFactory: (value) => {
+      quoteOptions = value;
+      return { getSnapshot: async () => ({}) };
+    },
+    scanner, refresher,
     workerFactory: (deps) => {
       assert.equal(deps.scanner, scanner); assert.equal(deps.refresher, refresher);
       assert.equal(deps.pool, database.pool); return worker;
@@ -97,7 +107,12 @@ test('standalone canonical liquidity process validates and owns its dedicated le
   });
   assert.deepEqual(definition.metadataProvider(), {
     running: true, scanner: {}, refresher: {},
+    rpcGuard: {
+      role: 'canonical-liquidity', forbiddenMethod: 'eth_getLogs', forbiddenAttempts: 0,
+    },
   });
+  assert.equal(quoteOptions.eventFallbackEnabled, false);
+  assert.notEqual(quoteOptions.rpcClient, baseRpcClient);
   await definition.start();
   assert.equal(validated, true); assert.equal(gated, true); assert.equal(started, true);
   await runtime.shutdown();

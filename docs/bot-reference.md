@@ -809,7 +809,9 @@ processing por meio de `eth_call`, usando somente o node pruned permanente confi
 `ROBINHOOD_CANONICAL_LIQUIDITY_RPC_URL` (loopback obrigatório; na VPS2, `127.0.0.1:8547`). Falhas
 recebem backoff durável e preservam o snapshot válido anterior. A telemetria da lease separa
 `scanner` e `refresher`, incluindo ranges/blocos/logs/pools enfileiradas e claims
-concluídas/retentadas.
+concluídas/retentadas. O fallback histórico de cotação WETH/USDG por eventos fica desabilitado
+nesse processo, e o `rpcGuard` da lease bloqueia qualquer tentativa futura de `eth_getLogs`;
+backfills e reparos continuam podendo usar o fallback explicitamente fora do papel live.
 
 Como V4 combina estado RPC e ranges materializados pelo processing, ambos precisam usar a mesma
 âncora. Antes de fazer claim, o refresher mede a distância entre o frontier do market processing e
