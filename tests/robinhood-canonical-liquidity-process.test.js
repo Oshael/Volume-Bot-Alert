@@ -65,7 +65,16 @@ test('standalone canonical liquidity process validates and owns its dedicated le
   let definition; let validated = false; let gated = false;
   let started = false; let stopped = false; let closed = false; let quoteOptions;
   const database = { pool: {} };
-  const baseRpcClient = { request: async () => null };
+  const baseRpcClient = {
+    providers: ['robinhood-public'],
+    request: async () => null,
+    requestProvider: async (provider, method) => {
+      assert.equal(provider, 'robinhood-public');
+      assert.equal(method, 'eth_chainId');
+      validated = true;
+      return '0x1237';
+    },
+  };
   const scanner = { scanNextRange: async () => {} };
   const refresher = { runOnce: async () => {} };
   const worker = {
@@ -97,7 +106,6 @@ test('standalone canonical liquidity process validates and owns its dedicated le
     leaseManagerFactory: () => ({
       start: (value) => { definition = value; }, stop: async () => {},
     }),
-    validateChainIds: async () => { validated = true; },
     assertCanonicalReady: async (value) => { assert.equal(value, database); gated = true; },
     close: async () => { closed = true; },
   });

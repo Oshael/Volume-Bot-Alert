@@ -21,7 +21,7 @@ function createRobinhoodLiveRpcGuard(client, options = {}) {
     throw forbiddenError(role);
   }
 
-  return Object.freeze({
+  const guarded = {
     providers: client.providers,
     request(method, params, requestOptions) {
       assertAllowed(method);
@@ -38,7 +38,32 @@ function createRobinhoodLiveRpcGuard(client, options = {}) {
     },
     getMetrics: (...args) => client.getMetrics?.(...args) || {},
     getGuardStatus: () => ({ role, forbiddenMethod: FORBIDDEN_METHOD, forbiddenAttempts }),
-  });
+  };
+  if (typeof client.requestProvider === 'function') {
+    guarded.requestProvider = (providerName, method, params, requestOptions) => {
+      assertAllowed(method);
+      return client.requestProvider(providerName, method, params, requestOptions);
+    };
+  }
+  if (typeof client.requestBatchProvider === 'function') {
+    guarded.requestBatchProvider = (providerName, requests, requestOptions) => {
+      for (const request of requests || []) assertAllowed(request?.method);
+      return client.requestBatchProvider(providerName, requests, requestOptions);
+    };
+  }
+  if (typeof client.requestProviders === 'function') {
+    guarded.requestProviders = (providerNames, method, params, requestOptions) => {
+      assertAllowed(method);
+      return client.requestProviders(providerNames, method, params, requestOptions);
+    };
+  }
+  if (typeof client.requestBatchProviders === 'function') {
+    guarded.requestBatchProviders = (providerNames, requests, requestOptions) => {
+      for (const request of requests || []) assertAllowed(request?.method);
+      return client.requestBatchProviders(providerNames, requests, requestOptions);
+    };
+  }
+  return Object.freeze(guarded);
 }
 
 module.exports = { FORBIDDEN_METHOD, createRobinhoodLiveRpcGuard };

@@ -75,11 +75,17 @@ describe('Robinhood canonical head runtime', () => {
   it('blocks single and batched eth_getLogs before they reach the node', async () => {
     const calls = [];
     const guard = createRobinhoodLiveRpcGuard({
+      providers: ['local'],
       request: async (method) => { calls.push(method); return 'ok'; },
       requestBatch: async (requests) => { calls.push(...requests.map(({ method }) => method)); return []; },
+      requestProvider: async (provider, method) => { calls.push(`${provider}:${method}`); return 'ok'; },
+      requestBatchProvider: async (provider, requests) => {
+        calls.push(...requests.map(({ method }) => `${provider}:${method}`)); return [];
+      },
     }, { role: 'canonical-head' });
 
     assert.equal(await guard.request('eth_call', []), 'ok');
+    assert.equal(await guard.requestProvider('local', 'eth_chainId', []), 'ok');
     await assert.rejects(
       Promise.resolve().then(() => guard.request('eth_getLogs', [{}])),
       (error) => error.code === 'live_rpc_method_forbidden' && error.retryable === false
@@ -90,7 +96,13 @@ describe('Robinhood canonical head runtime', () => {
       ])),
       (error) => error.code === 'live_rpc_method_forbidden'
     );
-    assert.deepEqual(calls, ['eth_call']);
-    assert.equal(guard.getGuardStatus().forbiddenAttempts, 2);
+    await assert.rejects(
+      Promise.resolve().then(() => guard.requestBatchProvider('local', [
+        { method: 'eth_getLogs', params: [{}] },
+      ])),
+      (error) => error.code === 'live_rpc_method_forbidden'
+    );
+    assert.deepEqual(calls, ['eth_call', 'local:eth_chainId']);
+    assert.equal(guard.getGuardStatus().forbiddenAttempts, 3);
   });
 });
