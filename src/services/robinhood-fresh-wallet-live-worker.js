@@ -32,6 +32,7 @@ const normalizeOptions = (input = {}) => Object.freeze({
   maxRetryMs: bounded(input.maxRetryMs, 3_600_000, 60_000, 86_400_000),
   batchSize: bounded(input.batchSize, 10, 1, 100),
   lanes: bounded(input.lanes, 1, 1, 16),
+  rpcSubBatchSize: bounded(input.rpcSubBatchSize, 10, 1, 100),
   concurrency: bounded(input.concurrency, 2, 1, 4),
   timeoutMs: bounded(input.timeoutMs, 30_000, 1000, 300_000),
   circuitFailureThreshold: bounded(input.circuitFailureThreshold, 5, 1, 100),
@@ -50,6 +51,7 @@ function buildRuntime(deps, options) {
   });
   const canonicalSource = (deps.canonicalSourceFactory || createRobinhoodFreshWalletRpcSource)({
     rpcClient, source: provider.name, sourceKind: 'live',
+    rpcSubBatchSize: options.rpcSubBatchSize,
   });
   return Object.freeze({ sourceKind: 'live',
     queue: (deps.queueFactory || createRobinhoodFreshWalletLiveQueueRepository)({ database }),

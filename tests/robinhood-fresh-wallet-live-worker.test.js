@@ -184,16 +184,18 @@ it('bounds concurrency, retries independently and opens its RPC circuit', async 
 });
 
 it('builds only against the configured live provider', () => {
-  let providerKind; let rpcOptions;
+  let providerKind; let rpcOptions; let canonicalOptions;
   buildRuntime({ database: {}, env: { ROBINHOOD_RPC_URL: 'https://live.example' },
     providerResolver(env, kind) { providerKind = kind; return { name: 'live-test', url: env.ROBINHOOD_RPC_URL }; },
     rpcClientFactory(options) { rpcOptions = options; return { request() {} }; },
+    canonicalSourceFactory(options) { canonicalOptions = options; return { readCanonicalEvidence() {} }; },
     queueFactory: () => ({}), shadowFactory: () => ({}), sourceFactory: (options) => options,
-  }, { timeoutMs: 12_000, rpcOptions: { rpcMaxRetries: 2 } });
+  }, { timeoutMs: 12_000, rpcSubBatchSize: 50, rpcOptions: { rpcMaxRetries: 2 } });
   assert.equal(providerKind, 'live');
   assert.deepEqual(rpcOptions, {
     rpcMaxRetries: 2, publicRpcUrl: 'https://live.example', rpcTimeoutMs: 12_000,
   });
+  assert.equal(canonicalOptions.rpcSubBatchSize, 50);
 });
 
 it('does not start before signed-origin equivalence is explicitly approved', () => {

@@ -119,8 +119,12 @@ function createRobinhoodFreshWalletRpcSource(options = {}) {
   if (!['seed', 'live'].includes(sourceKind)) throw new TypeError('FRESH sourceKind is invalid');
   const now = options.now || (() => new Date());
   const maxCacheBlocks = Number(options.maxCacheBlocks ?? DEFAULT_CACHE_BLOCKS);
+  const rpcSubBatchSize = Number(options.rpcSubBatchSize ?? RPC_SUB_BATCH_SIZE);
   if (!Number.isSafeInteger(maxCacheBlocks) || maxCacheBlocks < 16 || maxCacheBlocks > 65536) {
     throw new TypeError('maxCacheBlocks must be between 16 and 65536');
+  }
+  if (!Number.isSafeInteger(rpcSubBatchSize) || rpcSubBatchSize < 1 || rpcSubBatchSize > 100) {
+    throw new TypeError('rpcSubBatchSize must be between 1 and 100');
   }
   const cache = new Map();
   let chainValidation = null;
@@ -130,7 +134,7 @@ function createRobinhoodFreshWalletRpcSource(options = {}) {
     if (typeof rpcClient.requestBatch !== 'function') {
       return Promise.all(requests.map(({ method, params }) => rpcClient.request(method, params)));
     }
-    return requestBatches(requests, (batch) => rpcClient.requestBatch(batch));
+    return requestBatches(requests, (batch) => rpcClient.requestBatch(batch), rpcSubBatchSize);
   }
 
   async function validateChain() {

@@ -2597,7 +2597,7 @@ canônico, carrega signed-origin em uma consulta e materializa cada lote em uma
 transação; falhas individuais continuam isoladas e retry-safe. Enquanto todas
 as lanes receberem um lote cheio, o próximo ciclo é agendado imediatamente.
 `ROBINHOOD_FRESH_WALLET_LIVE_LANES` permite 1–16 lotes paralelos e deve ficar em
-1 no live estável; até 8 lanes são admitidas temporariamente contra Archive
+1 no live estável; até 12 lanes são admitidas temporariamente contra Archive
 privado durante catch-up. A concorrência máxima quatro permanece como fallback
 por item. Cinco rodadas totalmente falhas abrem por padrão um circuit
 breaker de 60 segundos antes de novo claim. O worker exige `ROBINHOOD_RPC_URL`,
@@ -2622,8 +2622,11 @@ somente esse resultado autoriza mudar
 `ROBINHOOD_FRESH_WALLET_SIGNED_ORIGIN_APPROVED=true`.
 Para drenar backlog anterior ao journal via Archive privado, o env isolado do
 grupo pode apontar `ROBINHOOD_RPC_URL` ao túnel e usar
-`ROBINHOOD_RPC_MIN_INTERVAL_MS=0` com até 8 lanes; não use throttle zero nem
-múltiplas lanes contra RPC público. `lastResult` separa `claimMs`, `evidenceMs`,
+`ROBINHOOD_RPC_MIN_INTERVAL_MS=0` com até 12 lanes; não use throttle zero nem
+múltiplas lanes contra RPC público. Nesse catch-up privado,
+`ROBINHOOD_FRESH_WALLET_RPC_SUB_BATCH_SIZE=50` reduz o fan-out HTTP sem remover
+nenhuma verificação individual; o padrão público permanece 10. `lastResult`
+separa `claimMs`, `evidenceMs`,
 `persistMs` e `fallbackMs` e informa throughput agregado em `itemsPerSecond`.
 Antes do primeiro seed, aplique `node src/utils/db-init-stage185.js`. A migration
 indexa concorrentemente a janela dos anchors e cada partição diária de swaps,

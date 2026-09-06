@@ -154,6 +154,16 @@ describe('Robinhood FRESH historical RPC source', () => {
     assert.deepEqual(sizes, [10, 10, 5]);
     assert.equal(maxActive, 3);
     assert.deepEqual(results, requests);
+    const larger = [];
+    await requestBatches(requests, async (batch) => { larger.push(batch.length); return batch; }, 50);
+    assert.deepEqual(larger, [25]);
+  });
+
+  it('bounds the configured RPC sub-batch size', () => {
+    const fake = rpc();
+    assert.throws(() => createRobinhoodFreshWalletRpcSource({
+      rpcClient: fake.client, source: 'robinhood-live', sourceKind: 'live', rpcSubBatchSize: 101,
+    }), /rpcSubBatchSize must be between 1 and 100/);
   });
 
   it('resolves the strict cutoff, anchors nonce by hash, and reuses block cache', async () => {
