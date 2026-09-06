@@ -2678,13 +2678,14 @@ snapshot. O fluxo permanece shadow e não aparece na API/UI.
 Antes de trocar a leitura RPC do bundle-funding pelo journal canônico, execute
 `npm run robinhood:canonical-bundle-funding-audit`. O comando é estritamente
 read-only: valida capture, first-buy, launch-anchor, fila ativa e a cobertura de
-`robinhood_chain_blocks` + `robinhood_chain_transactions`. A cobertura inclui
-também itens concluídos, pois uma atualização da âncora pode reabri-los. Para
-evitar varrer o journal, a qualidade do contexto é inspecionada somente nos
-primeiros e últimos 100 blocos do intervalo reprocessável. A fonte canônica cobre
-apenas transferências nativas top-level, exatamente o contrato atual; transfers
-internas continuam
-fora de escopo. `--phase=cutover` também exige a lease do consumidor com
+`robinhood_chain_blocks` + `robinhood_chain_transactions`. Itens concluídos
+anteriores ao journal não bloqueiam a prontidão live: sua evidência existente
+deve ser preservada até repair Archive explícito, e uma reabertura sem cobertura
+deve falhar fechada. Para evitar varrer o journal, a qualidade do contexto é
+inspecionada somente nos primeiros e últimos 100 blocos da fila ativa. A fonte
+canônica cobre apenas transferências nativas top-level, exatamente o contrato
+atual; transfers internas continuam fora de escopo. `--phase=cutover` também
+exige a lease do consumidor com
 `sourceMode=canonical_journal`.
 A Stage 156 adiciona o índice concorrente `(chain, token_address, discovery_block)`
 ao registry. A recorrência começa pelas compras da wallet e consulta a origem

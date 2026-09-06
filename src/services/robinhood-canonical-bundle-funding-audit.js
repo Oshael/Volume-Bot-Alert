@@ -15,6 +15,7 @@ const LEASE_KEYS = Object.freeze({
 
 function quantity(value) { return value == null ? null : BigInt(value); }
 function text(value) { return value == null ? null : String(value); }
+function count(value) { return Number(value ?? 0); }
 function distance(first, last) {
   return first == null || last == null || last < first ? 0n : last - first + 1n;
 }
@@ -101,10 +102,10 @@ function evaluate(input = {}) {
   const journalThrough = quantity(row.journal_through_block);
   const requiredStart = quantity(row.required_start_block);
   const requiredThrough = quantity(row.required_through_block);
-  const activeTasks = Number(row.active_tasks || 0);
-  const sampleBlocks = Number(sample.sample_blocks || 0);
-  const missingBlocks = Number(sample.missing_blocks || 0);
-  const missingValues = Number(sample.missing_value_transactions || 0);
+  const activeTasks = count(row.active_tasks);
+  const sampleBlocks = count(sample.sample_blocks);
+  const missingBlocks = count(sample.missing_blocks);
+  const missingValues = count(sample.missing_value_transactions);
   const beforeJournal = distance(requiredStart,
     journalStart == null ? null : journalStart - 1n);
   const notCaptured = distance(
@@ -131,9 +132,15 @@ function evaluate(input = {}) {
       node_head: text(captureHead), lag_blocks: text(captureLag),
     },
     queue: {
-      total: Number(row.total_tasks || 0), pending: Number(row.pending_tasks || 0),
-      leased: Number(row.leased_tasks || 0), active: activeTasks,
+      total: count(row.total_tasks), pending: count(row.pending_tasks),
+      leased: count(row.leased_tasks), active: activeTasks,
+      completed: count(row.completed_tasks),
       required_start_block: text(requiredStart), required_through_block: text(requiredThrough),
+    },
+    historical: {
+      oldest_persisted_start_block: text(quantity(row.persisted_start_block)),
+      completed_before_journal: count(row.historical_completed_tasks),
+      evidence_policy: 'preserve_until_explicit_archive_repair',
     },
     handoff: {
       journal_start_block: text(journalStart), journal_through_block: text(journalThrough),
@@ -142,8 +149,8 @@ function evaluate(input = {}) {
     },
     context: {
       sampled_blocks: sampleBlocks, missing_blocks: missingBlocks,
-      transactions: Number(sample.transactions || 0),
-      positive_native_transfers: Number(sample.positive_native_transfers || 0),
+      transactions: count(sample.transactions),
+      positive_native_transfers: count(sample.positive_native_transfers),
       missing_value_transactions: missingValues,
       sample_edge_blocks: Number(SAMPLE_EDGE_BLOCKS),
     },
@@ -170,8 +177,9 @@ function createRobinhoodCanonicalBundleFundingAudit(options = {}) {
                 journal_start.block_number AS journal_start_block,
                 journal_end.block_number AS journal_through_block,
                 queue.total_tasks, queue.pending_tasks, queue.leased_tasks,
-                queue.active_tasks, queue.required_start_block,
-                queue.required_through_block,
+                queue.active_tasks, queue.completed_tasks,
+                queue.required_start_block, queue.required_through_block,
+                queue.persisted_start_block, queue.historical_completed_tasks,
                 first_buy.seed_run_id AS first_seed_run_id,
                 first_buy.source_next_block AS first_source_next_block,
                 seed.status AS first_seed_status
@@ -193,9 +201,15 @@ function createRobinhoodCanonicalBundleFundingAudit(options = {}) {
                     COUNT(*) FILTER (WHERE status='pending') AS pending_tasks,
                     COUNT(*) FILTER (WHERE status='leased') AS leased_tasks,
                     COUNT(*) FILTER (WHERE status<>'complete') AS active_tasks,
+                    COUNT(*) FILTER (WHERE status='complete') AS completed_tasks,
                     MIN(GREATEST(anchor_block-lookback_blocks, 0))
-                      AS required_start_block,
-                    MAX(source_through_block) AS required_through_block
+                      FILTER (WHERE status<>'complete') AS required_start_block,
+                    MAX(source_through_block)
+                      FILTER (WHERE status<>'complete') AS required_through_block,
+                    MIN(GREATEST(anchor_block-lookback_blocks, 0)) AS persisted_start_block,
+                    COUNT(*) FILTER (WHERE status='complete' AND
+                      GREATEST(anchor_block-lookback_blocks, 0)<journal_start.block_number)
+                      AS historical_completed_tasks
                FROM robinhood_bundle_funding_live_queue WHERE chain=$1
            ) queue ON TRUE`, [CHAIN]
       );

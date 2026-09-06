@@ -24,7 +24,8 @@ function input(overrides = {}) {
     state: {
       capture_next_block: '2001', capture_checkpoint_block: '2000',
       capture_node_head: '2000', journal_start_block: '500',
-      journal_through_block: '2000', total_tasks: '9', pending_tasks: '2',
+      journal_through_block: '2000', total_tasks: '9', completed_tasks: '6',
+      historical_completed_tasks: '4', persisted_start_block: '50', pending_tasks: '2',
       leased_tasks: '1', active_tasks: '3', required_start_block: '900',
       required_through_block: '1900', first_seed_run_id: '7',
       first_source_next_block: '1990', first_seed_status: 'completed',
@@ -45,10 +46,25 @@ describe('Robinhood canonical bundle-funding audit', () => {
     assert.deepEqual(report.blockers, []);
     assert.equal(report.handoff.pre_journal_blocks_remaining, '0');
     assert.equal(report.context.sampled_blocks, 200);
+    assert.deepEqual(report.historical, {
+      oldest_persisted_start_block: '50', completed_before_journal: 4,
+      evidence_policy: 'preserve_until_explicit_archive_repair',
+    });
     assert.deepEqual(report.contract, {
       source: 'robinhood_chain_blocks+robinhood_chain_transactions',
       top_level_native_transfers: 'covered', internal_native_transfers: 'out_of_scope',
     });
+  });
+
+  it('does not treat preserved completed history as active canonical work', () => {
+    const fixture = input({
+      active_tasks: '0', pending_tasks: '0', leased_tasks: '0',
+      required_start_block: null, required_through_block: null,
+      persisted_start_block: '47', historical_completed_tasks: '9',
+    });
+    fixture.sample = {};
+    assert.equal(evaluate(fixture).ready, true);
+    assert.equal(evaluate(fixture).historical.completed_before_journal, 9);
   });
 
   it('rejects a reprocessable range outside journal coverage', () => {
@@ -102,7 +118,7 @@ describe('Robinhood canonical bundle-funding audit', () => {
     });
     assert.equal((await audit.inspect()).ready, true);
     assert.match(calls[0].sql, /REPEATABLE READ READ ONLY/);
-    assert.doesNotMatch(calls[1].sql,
+    assert.match(calls[1].sql,
       /MIN\(GREATEST\(anchor_block-lookback_blocks, 0\)\)\s+FILTER/);
     assert.deepEqual(calls[2].params, ['robinhood', '900', '1900', '100']);
     assert.equal(calls.at(-2).sql, 'ROLLBACK');
