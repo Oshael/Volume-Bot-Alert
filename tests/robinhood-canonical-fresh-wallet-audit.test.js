@@ -17,8 +17,8 @@ function fixture(overrides = {}) {
   return {
     state: { capture_next_block: '2001', capture_node_head: '2000',
       journal_start_block: '500', journal_through_block: '2000',
-      activation_status: 'active', seed_status: 'completed', total_live: '100',
-      pending: '2', leased: '1', active: '3', completed: '97',
+      activation_status: 'active', seed_status: 'completed',
+      pending: '2', leased: '1', active: '3',
       active_through_block: '1900', active_before_journal: '0',
       signed_origin_block: '400', signed_checkpoint_block: '1950',
       signed_lifecycle_state: 'caught_up', ...overrides },
@@ -61,9 +61,11 @@ describe('Robinhood canonical FRESH preflight', () => {
     ]);
   });
 
-  it('requires an eligible canonical sample when live history exists', () => {
-    const input = fixture(); input.sample.sampled = '0';
-    assert.deepEqual(evaluate(input).blockers, [{ code: 'canonical_fresh_sample_empty' }]);
+  it('accepts an empty sample when the active queue is caught up', () => {
+    const input = fixture({ pending: '0', leased: '0', active: '0',
+      active_through_block: null });
+    input.sample.sampled = '0';
+    assert.deepEqual(evaluate(input).blockers, []);
   });
 
   it('requires the canonical signed-origin dependency and live workers', () => {
@@ -99,6 +101,11 @@ describe('Robinhood canonical FRESH preflight', () => {
     assert.equal((await audit.inspect()).ready, true);
     assert.match(calls[0].sql, /REPEATABLE READ READ ONLY/);
     assert.match(calls[1].sql, /ORDER BY block_number LIMIT 1/);
+    assert.match(calls[1].sql, /status='pending'/);
+    assert.match(calls[1].sql, /status='leased'/);
+    assert.doesNotMatch(calls[1].sql, /status<>'complete'/);
+    assert.match(calls[2].sql, /active_sample AS MATERIALIZED/);
+    assert.doesNotMatch(calls[2].sql, /ORDER BY \(q\.status<>'complete'\)/);
     assert.deepEqual(calls[2].params, ['robinhood', 'rh_fresh_signed_v1', 100]);
     assert.equal(calls.at(-1).sql, 'ROLLBACK');
   });

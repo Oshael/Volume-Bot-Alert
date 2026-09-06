@@ -79,8 +79,6 @@ function validateCoverage(blockers, values) {
     'fresh_active_not_captured', text(values.activeJournalLag));
   add(blockers, values.signedLag > 0n,
     'fresh_active_beyond_signed_origin', text(values.signedLag));
-  add(blockers, count(row.total_live) > 0 && count(sample.sampled) === 0,
-    'canonical_fresh_sample_empty');
   add(blockers, count(sample.sampled) > 0 && count(sample.missing_blocks) > 0,
     'canonical_sample_missing_blocks', count(sample.missing_blocks));
   add(blockers, count(sample.missing_transactions) > 0,
@@ -120,9 +118,9 @@ function evaluate(input = {}) {
       lag_blocks: text(captureLag), journal_start_block: text(journalStart),
       journal_through_block: text(journalThrough) },
     fresh: { activation_status: row.activation_status || null,
-      seed_status: row.seed_status || null, total_live: count(row.total_live),
+      seed_status: row.seed_status || null,
       pending: count(row.pending), leased: count(row.leased), active: count(row.active),
-      completed: count(row.completed), active_through_block: text(activeThrough),
+      active_through_block: text(activeThrough),
       active_before_journal: count(row.active_before_journal) },
     signed_origin: { origin_block: text(row.signed_origin_block),
       checkpoint_block: text(signedThrough), lifecycle_state: row.signed_lifecycle_state || null,
@@ -130,7 +128,7 @@ function evaluate(input = {}) {
     context: { sampled: count(sample.sampled), missing_blocks: count(sample.missing_blocks),
       missing_transactions: count(sample.missing_transactions),
       missing_nonces: count(sample.missing_nonces), divergent: count(sample.divergent),
-      sample_limit: SAMPLE_LIMIT },
+      sample_limit: SAMPLE_LIMIT, sample_scope: 'active_queue' },
     contract: { target: 'robinhood_chain_blocks+robinhood_chain_transactions',
       first_buy_nonce: 'covered', cutoff_24h: 'covered_by_block_timestamps',
       prior_signed_activity: 'robinhood_wallet_signed_origins' },
@@ -153,19 +151,24 @@ function createRobinhoodCanonicalFreshWalletAudit(options = {}) {
             ORDER BY block_number LIMIT 1) first ON TRUE
           LEFT JOIN LATERAL (SELECT block_number FROM robinhood_chain_blocks
             WHERE chain=$1 AND canonical=TRUE ORDER BY block_number DESC LIMIT 1) latest ON TRUE
+      ), active_queue AS MATERIALIZED (
+        SELECT chain, token_address, wallet_address, status
+          FROM robinhood_fresh_wallet_queue
+         WHERE chain=$1 AND rule_version=$2 AND source_kind='live' AND status='pending'
+        UNION ALL
+        SELECT chain, token_address, wallet_address, status
+          FROM robinhood_fresh_wallet_queue
+         WHERE chain=$1 AND rule_version=$2 AND source_kind='live' AND status='leased'
       ), queue AS MATERIALIZED (
-        SELECT COUNT(*) AS total_live,
-          COUNT(*) FILTER (WHERE q.status='pending') AS pending,
+        SELECT COUNT(*) FILTER (WHERE q.status='pending') AS pending,
           COUNT(*) FILTER (WHERE q.status='leased') AS leased,
-          COUNT(*) FILTER (WHERE q.status<>'complete') AS active,
-          COUNT(*) FILTER (WHERE q.status='complete') AS completed,
-          MAX(buy.block_number) FILTER (WHERE q.status<>'complete') AS active_through_block,
-          COUNT(*) FILTER (WHERE q.status<>'complete'
-            AND buy.block_time-INTERVAL '24 hours'<journal.start_time) AS active_before_journal
-        FROM robinhood_fresh_wallet_queue q
+          COUNT(*) AS active, MAX(buy.block_number) AS active_through_block,
+          COUNT(*) FILTER (WHERE
+            buy.block_time-INTERVAL '24 hours'<journal.start_time) AS active_before_journal
+        FROM active_queue q
         INNER JOIN robinhood_wallet_token_first_buys buy USING (
           chain, token_address, wallet_address)
-        CROSS JOIN journal WHERE q.chain=$1 AND q.rule_version=$2 AND q.source_kind='live'
+        CROSS JOIN journal
       ) SELECT capture.next_block AS capture_next_block,
           capture.node_head AS capture_node_head, journal.start_block AS journal_start_block,
           journal.through_block AS journal_through_block, activation.status AS activation_status,
@@ -183,16 +186,28 @@ function createRobinhoodCanonicalFreshWalletAudit(options = {}) {
       const sample = (await client.query(`WITH journal AS MATERIALIZED (
         SELECT block_timestamp AS start_time FROM robinhood_chain_blocks
           WHERE chain=$1 AND canonical=TRUE ORDER BY block_number LIMIT 1
+      ), active_sample AS MATERIALIZED (
+        SELECT chain, token_address, wallet_address FROM (
+          (SELECT chain, token_address, wallet_address, next_attempt_at AS priority
+             FROM robinhood_fresh_wallet_queue
+            WHERE chain=$1 AND rule_version=$2 AND source_kind='live'
+              AND status='pending'
+            ORDER BY next_attempt_at, updated_at LIMIT $3)
+          UNION ALL
+          (SELECT chain, token_address, wallet_address, lease_until AS priority
+             FROM robinhood_fresh_wallet_queue
+            WHERE chain=$1 AND rule_version=$2 AND source_kind='live'
+              AND status='leased'
+            ORDER BY lease_until LIMIT $3)
+        ) active ORDER BY priority LIMIT $3
       ), sample AS MATERIALIZED (
         SELECT q.wallet_address, buy.transaction_hash, buy.transaction_index,
                buy.block_number, buy.block_hash
-          FROM robinhood_fresh_wallet_queue q
+          FROM active_sample q
           INNER JOIN robinhood_wallet_token_first_buys buy USING (
             chain, token_address, wallet_address)
           CROSS JOIN journal
-         WHERE q.chain=$1 AND q.rule_version=$2 AND q.source_kind='live'
-           AND buy.block_time >= journal.start_time + INTERVAL '24 hours'
-         ORDER BY (q.status<>'complete') DESC, buy.block_number DESC LIMIT $3
+         WHERE buy.block_time >= journal.start_time + INTERVAL '24 hours'
       ) SELECT COUNT(*) AS sampled,
           COUNT(*) FILTER (WHERE block.block_hash IS NULL) AS missing_blocks,
           COUNT(*) FILTER (WHERE transaction.transaction_hash IS NULL) AS missing_transactions,
