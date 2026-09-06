@@ -13,7 +13,9 @@ function nextTurn() {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
-function fakeBrowser(pageUrl = 'https://fomo.family/alerts') {
+const FOMO_PAGE_URL = 'https://fomo.family/tokens/robinhood/0x39dbed3a2bd333467115de45665cc57f813c4571';
+
+function fakeBrowser(pageUrl = FOMO_PAGE_URL) {
   const session = new EventEmitter();
   const commands = [];
   session.send = async (method) => { commands.push(method); };
@@ -111,7 +113,7 @@ test('Fomo browser stream replaces a crashed target through loopback CDP', async
   const calls = [];
   const responses = [
     { ok: true, json: async () => [{
-      id: 'target-1', type: 'page', url: 'https://fomo.family/alerts',
+      id: 'target-1', type: 'page', url: FOMO_PAGE_URL,
     }] },
     { ok: true },
     { ok: true },
@@ -126,11 +128,28 @@ test('Fomo browser stream replaces a crashed target through loopback CDP', async
   assert.deepEqual(calls.map(({ url, method }) => ({ url, method })), [{
     url: 'http://127.0.0.1:9222/json/list', method: 'GET',
   }, {
-    url: 'http://127.0.0.1:9222/json/new?https%3A%2F%2Ffomo.family%2Falerts', method: 'PUT',
+    url: `http://127.0.0.1:9222/json/new?${encodeURIComponent(FOMO_PAGE_URL)}`, method: 'PUT',
   }, {
     url: 'http://127.0.0.1:9222/json/close/target-1', method: 'GET',
   }]);
   assert.equal(calls.every(({ signal }) => signal instanceof AbortSignal), true);
+});
+
+test('Fomo browser stream opens the current token page when no target remains', async () => {
+  const calls = [];
+  const responses = [{ ok: true, json: async () => [] }, { ok: true }];
+  await resetFomoBrowserPage('http://127.0.0.1:9222', {
+    fetchImpl: async (url, init = {}) => {
+      calls.push({ url, method: init.method || 'GET' });
+      return responses.shift();
+    },
+  });
+
+  assert.deepEqual(calls, [{
+    url: 'http://127.0.0.1:9222/json/list', method: 'GET',
+  }, {
+    url: `http://127.0.0.1:9222/json/new?${encodeURIComponent(FOMO_PAGE_URL)}`, method: 'PUT',
+  }]);
 });
 
 test('Fomo browser stream resets the page after repeated CDP connection failures', async () => {

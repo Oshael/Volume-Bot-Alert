@@ -11,7 +11,7 @@ const DEFAULT_STALE_RECOVERY_COOLDOWN_MS = 5 * 60_000;
 const DEFAULT_RELOAD_TIMEOUT_MS = 30_000;
 const DEFAULT_PAGE_RESET_TIMEOUT_MS = 10_000;
 const CONNECT_FAILURES_BEFORE_PAGE_RESET = 2;
-const DEFAULT_FOMO_PAGE_URL = 'https://fomo.family/alerts';
+const DEFAULT_FOMO_PAGE_URL = 'https://fomo.family/tokens/robinhood/0x39dbed3a2bd333467115de45665cc57f813c4571';
 
 function positiveInteger(value, fallback, max) {
   const parsed = Number.parseInt(String(value ?? ''), 10);

@@ -1405,7 +1405,9 @@ direta e retenção de 72 horas pertencem ao worker PostgreSQL posterior.
 O worker PostgreSQL também suporta `FOMO_CAPTURE_TRANSPORT=browser_cdp`. Nesse
 modo, `FOMO_BROWSER_CDP_ENDPOINT` deve apontar para CDP HTTP(S) em localhost
 (default `http://127.0.0.1:9222`). O Chrome externo deve permanecer aberto,
-autenticado e com uma página `fomo.family` na aba Alerts. O worker anexa uma
+autenticado e com uma página `fomo.family` capaz de emitir o stream
+`trading_activity`; o fallback atual abre a página conhecida do token Robinhood
+`0x39dbed3a2bd333467115de45665cc57f813c4571`. O worker anexa uma
 sessão CDP somente para observar frames WebSocket, filtra e persiste apenas
 teses, e nunca fecha o Chrome. JWT, refresh token, `FOMO_WS_TOPIC_ID`, HTTP
 direto, lookup de trade e reconciliação periódica Fomo ficam desativados nesse
@@ -1488,8 +1490,9 @@ adicionais respeitam
 o reload falhar, a sessão CDP é descartada e entra no backoff normal de reconnect.
 Um evento de crash do renderer (`Aw, Snap!`) inicia o reload imediatamente. Se o
 worker iniciar quando a aba já estiver crashada e duas conexões CDP consecutivas
-falharem, ele usa apenas a interface loopback do Chrome para abrir novamente
-`https://fomo.family/alerts` no mesmo perfil do navegador e só então fechar o
+falharem, ele usa apenas a interface loopback do Chrome para reabrir a URL atual
+do target ou, quando ele não existe mais, a página conhecida do token Robinhood
+acima. A nova aba usa o mesmo perfil do navegador e é criada antes de fechar o
 target crashado. Essa ordem impede o Chrome de encerrar a janela quando a Fomo
 for seu único target. Esse
 reset respeita o mesmo cooldown e não fecha o Chrome nem toca em outras abas; ele
