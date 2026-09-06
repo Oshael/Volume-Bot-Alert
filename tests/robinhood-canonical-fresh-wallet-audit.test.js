@@ -19,14 +19,13 @@ function fixture(overrides = {}) {
       journal_start_block: '500', journal_through_block: '2000',
       activation_status: 'active', activation_block: '800',
       activation_at: '2026-08-01T00:00:00Z',
-      activation_cutoff_at: '2026-07-31T00:00:00Z',
-      activation_checkpoint_canonical: true, activation_cutoff_before_journal: false,
+      activation_checkpoint_status: 'before_journal', live_cutoff_covered: true,
       activation_first_buy_next_block: '801', seed_status: 'completed',
       first_buy_source_next_block: '1901',
       first_buy_source_through: '2026-09-06T01:00:00Z',
       signed_origin_block: '400', signed_checkpoint_block: '1950',
       signed_lifecycle_state: 'caught_up', ...overrides },
-    sample: { sampled: '100', missing_blocks: '0', missing_transactions: '0',
+    sample: { sampled: '0', missing_blocks: '0', missing_transactions: '0',
       missing_nonces: '0', divergent: '0' },
     leases: Object.values(LEASE_KEYS).map(lease),
   };
@@ -46,10 +45,12 @@ describe('Robinhood canonical FRESH preflight', () => {
     });
   });
 
-  it('rejects an activation whose 24-hour boundary predates the journal', () => {
-    const report = evaluate(fixture({ activation_cutoff_before_journal: true }));
+  it('rejects insufficient live cutoff coverage and a divergent retained checkpoint', () => {
+    const report = evaluate(fixture({ activation_checkpoint_status: 'divergent',
+      live_cutoff_covered: false }));
     assert.deepEqual(report.blockers, [
-      { code: 'fresh_activation_cutoff_before_journal' },
+      { code: 'fresh_activation_checkpoint_not_canonical' },
+      { code: 'fresh_live_cutoff_not_covered' },
     ]);
   });
 
@@ -67,6 +68,7 @@ describe('Robinhood canonical FRESH preflight', () => {
     input.sample = { sampled: '10', missing_blocks: '1', missing_transactions: '2',
       missing_nonces: '3', divergent: '4' };
     assert.deepEqual(evaluate(input).blockers, [
+      { code: 'fresh_active_queue_not_drained', detail: 10 },
       { code: 'canonical_sample_missing_blocks', detail: 1 },
       { code: 'canonical_sample_missing_transactions', detail: 2 },
       { code: 'canonical_sample_missing_nonces', detail: 3 },
@@ -100,7 +102,7 @@ describe('Robinhood canonical FRESH preflight', () => {
       if (sql.includes('WITH journal') && sql.includes('activation.status')) {
         return { rows: [input.state] };
       }
-      if (sql.includes('WITH journal') && sql.includes('missing_transactions')) {
+      if (sql.includes('WITH active_sample') && sql.includes('missing_transactions')) {
         return { rows: [input.sample] };
       }
       if (sql.includes('FROM worker_leases')) return { rows: input.leases };
@@ -116,6 +118,7 @@ describe('Robinhood canonical FRESH preflight', () => {
     assert.match(calls[1].sql, /robinhood_first_buy_live_cursors/);
     assert.doesNotMatch(calls[1].sql, /robinhood_fresh_wallet_queue/);
     assert.match(calls[2].sql, /active_sample AS MATERIALIZED/);
+    assert.doesNotMatch(calls[2].sql, /WITH journal/);
     assert.doesNotMatch(calls[2].sql, /ORDER BY \(q\.status<>'complete'\)/);
     assert.deepEqual(calls[2].params, ['robinhood', 'rh_fresh_signed_v1', 100]);
     assert.equal(calls.at(-1).sql, 'ROLLBACK');

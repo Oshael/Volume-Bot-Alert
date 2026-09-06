@@ -2710,10 +2710,12 @@ A janela de 24 horas é considerada coberta somente quando seu limite temporal
 está dentro de `robinhood_chain_blocks`; tarefas ativas anteriores ao journal
 permanecem explícitas e bloqueiam o corte. O preflight prova essa cobertura pelo
 checkpoint imutável da ativação e pelas frontiers globais de first-buy, journal e
-signed-origin, sem agregar a fila. A amostra consulta somente itens
-`pending`/`leased` pelos índices parciais; até 100 first-buys ativas são validadas,
-sem chamar RPC. Uma fila já drenada produz amostra zero no preflight; a paridade
-deve ser comprovada no canário do corte seguinte.
+signed-origin, sem agregar a fila. Um checkpoint de ativação anterior ao journal
+é reportado como `before_journal`, não como divergência; o corte exige que o
+journal atual já cubra uma janela completa de 24 horas. A consulta indexada de
+`pending`/`leased` é limitada a 100 itens, mas qualquer item encontrado bloqueia
+o corte: a fila ativa precisa estar vazia, evitando depender de uma amostra
+parcial. A paridade deve então ser comprovada no canário do corte seguinte.
 A Stage 156 adiciona o índice concorrente `(chain, token_address, discovery_block)`
 ao registry. A recorrência começa pelas compras da wallet e consulta a origem
 somente dos tokens encontrados, sem reagregar todas as pools por wallet candidata;

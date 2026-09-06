@@ -76,10 +76,10 @@ function validateWorkers(blockers, values) {
 
 function validateCoverage(blockers, values) {
   const { row, sample } = values;
-  add(blockers, row.activation_status != null && row.activation_checkpoint_canonical !== true,
+  add(blockers, row.activation_status != null
+    && !['matched', 'before_journal'].includes(row.activation_checkpoint_status),
     'fresh_activation_checkpoint_not_canonical');
-  add(blockers, row.activation_cutoff_before_journal === true,
-    'fresh_activation_cutoff_before_journal');
+  add(blockers, row.live_cutoff_covered !== true, 'fresh_live_cutoff_not_covered');
   add(blockers, values.firstBuyThrough == null, 'first_buy_cursor_missing');
   add(blockers, values.firstBuyThrough != null
     && values.activationFirstBuyNext != null
@@ -89,6 +89,8 @@ function validateCoverage(blockers, values) {
     'first_buy_frontier_not_captured', text(values.firstBuyJournalLag));
   add(blockers, values.signedLag > 0n,
     'signed_origin_behind_first_buy', text(values.signedLag));
+  add(blockers, count(sample.sampled) > 0,
+    'fresh_active_queue_not_drained', count(sample.sampled));
   add(blockers, count(sample.sampled) > 0 && count(sample.missing_blocks) > 0,
     'canonical_sample_missing_blocks', count(sample.missing_blocks));
   add(blockers, count(sample.missing_transactions) > 0,
@@ -136,8 +138,8 @@ function evaluate(input = {}) {
     fresh: { activation_status: row.activation_status || null,
       seed_status: row.seed_status || null, activation_block: text(row.activation_block),
       activation_at: timestamp(row.activation_at),
-      canonical_cutoff_at: timestamp(row.activation_cutoff_at),
-      activation_checkpoint_canonical: row.activation_checkpoint_canonical === true },
+      activation_checkpoint_status: row.activation_checkpoint_status || null,
+      live_cutoff_covered: row.live_cutoff_covered === true },
     first_buy: { next_block: text(firstBuyNext), through_block: text(firstBuyThrough),
       source_through: timestamp(row.first_buy_source_through),
       lag_to_journal_blocks: text(firstBuyJournalLag) },
@@ -163,28 +165,30 @@ function createRobinhoodCanonicalFreshWalletAudit(options = {}) {
       await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
       const state = (await client.query(`WITH journal AS MATERIALIZED (
         SELECT first.block_number AS start_block, first.block_timestamp AS start_time,
-               latest.block_number AS through_block
+               latest.block_number AS through_block, latest.block_timestamp AS through_time
           FROM (VALUES (1)) anchor(value)
           LEFT JOIN LATERAL (SELECT block_number, block_timestamp
             FROM robinhood_chain_blocks WHERE chain=$1 AND canonical=TRUE
             ORDER BY block_number LIMIT 1) first ON TRUE
-          LEFT JOIN LATERAL (SELECT block_number FROM robinhood_chain_blocks
+          LEFT JOIN LATERAL (SELECT block_number, block_timestamp
+            FROM robinhood_chain_blocks
             WHERE chain=$1 AND canonical=TRUE ORDER BY block_number DESC LIMIT 1) latest ON TRUE
       ) SELECT capture.next_block AS capture_next_block,
           capture.node_head AS capture_node_head, journal.start_block AS journal_start_block,
           journal.through_block AS journal_through_block, activation.status AS activation_status,
           activation.activation_block, activation.activation_at,
           activation.first_buy_source_next_block AS activation_first_buy_next_block,
-          activation_block.block_timestamp-INTERVAL '24 hours' AS activation_cutoff_at,
-          activation_block.block_hash=activation.activation_block_hash
-            AS activation_checkpoint_canonical,
+          CASE WHEN activation.activation_block IS NULL THEN NULL
+            WHEN activation.activation_block<journal.start_block THEN 'before_journal'
+            WHEN activation_block.block_hash=activation.activation_block_hash THEN 'matched'
+            ELSE 'divergent' END AS activation_checkpoint_status,
           seed.status AS seed_status, signed.origin_block AS signed_origin_block,
           signed.checkpoint_block AS signed_checkpoint_block,
           signed.lifecycle_state AS signed_lifecycle_state,
           first_buy.source_next_block AS first_buy_source_next_block,
           first_buy.source_through AS first_buy_source_through,
-          activation_block.block_timestamp-INTERVAL '24 hours'<journal.start_time
-            AS activation_cutoff_before_journal
+          journal.through_time-INTERVAL '24 hours'>=journal.start_time
+            AS live_cutoff_covered
         FROM journal
         LEFT JOIN robinhood_chain_capture_cursor capture ON capture.chain=$1
         LEFT JOIN robinhood_fresh_wallet_activations activation
@@ -197,10 +201,7 @@ function createRobinhoodCanonicalFreshWalletAudit(options = {}) {
         LEFT JOIN robinhood_first_buy_live_cursors first_buy ON first_buy.chain=$1
         LEFT JOIN robinhood_wallet_signed_origin_cursors signed
           ON signed.chain=$1 AND signed.stream='live'`, [CHAIN, RULE_VERSION])).rows[0] || {};
-      const sample = (await client.query(`WITH journal AS MATERIALIZED (
-        SELECT block_timestamp AS start_time FROM robinhood_chain_blocks
-          WHERE chain=$1 AND canonical=TRUE ORDER BY block_number LIMIT 1
-      ), active_sample AS MATERIALIZED (
+      const sample = (await client.query(`WITH active_sample AS MATERIALIZED (
         SELECT chain, token_address, wallet_address FROM (
           (SELECT chain, token_address, wallet_address, next_attempt_at AS priority
              FROM robinhood_fresh_wallet_queue
@@ -220,8 +221,6 @@ function createRobinhoodCanonicalFreshWalletAudit(options = {}) {
           FROM active_sample q
           INNER JOIN robinhood_wallet_token_first_buys buy USING (
             chain, token_address, wallet_address)
-          CROSS JOIN journal
-         WHERE buy.block_time >= journal.start_time + INTERVAL '24 hours'
       ) SELECT COUNT(*) AS sampled,
           COUNT(*) FILTER (WHERE block.block_hash IS NULL) AS missing_blocks,
           COUNT(*) FILTER (WHERE transaction.transaction_hash IS NULL) AS missing_transactions,
