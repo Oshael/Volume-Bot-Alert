@@ -19,16 +19,31 @@ function createRobinhoodFreshWalletLiveQueueRepository(options = {}) {
     const sourceKind = input.sourceKind === 'seed' ? 'seed' : 'live';
     const seedRunId = sourceKind === 'seed' ? String(input.seedRunId || '') : null;
     if (sourceKind === 'seed' && !/^\d+$/.test(seedRunId)) throw new Error('seedRunId is required');
+    await database.query(`WITH expired AS MATERIALIZED (
+      SELECT queue.ctid
+        FROM robinhood_fresh_wallet_queue queue
+       WHERE queue.chain = $1 AND queue.rule_version = $2
+         AND queue.source_kind = $4
+         AND ($5::bigint IS NULL OR queue.seed_run_id = $5::bigint)
+         AND queue.status = 'leased' AND queue.lease_until <= NOW()
+       ORDER BY queue.lease_until
+       LIMIT $3 FOR UPDATE SKIP LOCKED
+    ) UPDATE robinhood_fresh_wallet_queue queue SET
+        status = 'pending', lease_owner = NULL, lease_until = NULL, updated_at = NOW()
+      FROM expired WHERE queue.ctid = expired.ctid`, [
+      CHAIN, RULE_VERSION, limit, sourceKind, seedRunId,
+    ]);
     const { rows } = await database.query(`WITH candidates AS MATERIALIZED (
       SELECT queue.chain, queue.token_address, queue.wallet_address, queue.rule_version
         FROM robinhood_fresh_wallet_queue queue
-        INNER JOIN robinhood_fresh_wallet_activations activation USING (chain, rule_version)
        WHERE queue.chain = $1 AND queue.rule_version = $2
-         AND queue.source_kind = $6 AND activation.status = 'active'
+         AND queue.source_kind = $6
          AND ($7::bigint IS NULL OR queue.seed_run_id = $7::bigint)
-         AND (queue.status = 'pending'
-           OR (queue.status = 'leased' AND queue.lease_until <= NOW()))
+         AND queue.status = 'pending'
          AND queue.next_attempt_at <= NOW()
+         AND EXISTS (SELECT 1 FROM robinhood_fresh_wallet_activations activation
+           WHERE activation.chain = $1 AND activation.rule_version = $2
+             AND activation.status = 'active')
        ORDER BY queue.next_attempt_at, queue.updated_at
        LIMIT $3 FOR UPDATE OF queue SKIP LOCKED
     ), claimed AS (

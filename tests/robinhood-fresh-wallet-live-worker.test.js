@@ -116,6 +116,38 @@ it('immediately schedules another bounded batch while backlog remains', async ()
   await worker.stop();
 });
 
+it('runs bounded batch lanes concurrently and reports aggregate throughput phases', async () => {
+  let claims = 0;
+  const runtime = { sourceKind: 'live',
+    queue: { async claimBatch() {
+      claims += 1; const digit = String(claims);
+      return [{ tokenAddress: TOKEN, walletAddress: wallet(digit), requestedVersion: '1',
+        sourceKind: 'live', attemptCount: 1 }];
+    }, async retry() {} },
+    source: { sourceKind: 'live', async readEvidence(task) {
+      await new Promise((resolve) => setImmediate(resolve));
+      return evidence(task.walletAddress, '5');
+    } },
+    shadow: { replaceAndComplete: async () => ({ completed: true }) },
+  };
+  const worker = createRobinhoodFreshWalletLiveWorker({ runtime, owner: 'lanes-test',
+    schedule: () => ({ unref() {} }), cancelSchedule() {},
+    listenerFactory: () => ({ start() {}, stop() {} }),
+  });
+  worker.start({ enabled: true, signedOriginApproved: true, batchSize: 1, lanes: 2 });
+  const result = await worker.runOnce();
+  assert.equal(claims, 2);
+  assert.deepEqual({ claimed: result.claimed, materialized: result.materialized,
+    lanes: result.lanes, activeLanes: result.activeLanes, laneErrors: result.laneErrors }, {
+    claimed: 2, materialized: 2, lanes: 2, activeLanes: 2, laneErrors: 0,
+  });
+  assert.equal(typeof result.claimMs, 'number');
+  assert.equal(typeof result.evidenceMs, 'number');
+  assert.equal(typeof result.persistMs, 'number');
+  assert.ok(result.itemsPerSecond > 0);
+  await worker.stop();
+});
+
 it('bounds concurrency, retries independently and opens its RPC circuit', async () => {
   const tasks = ['1', '2', '3'].map((digit) => ({ tokenAddress: TOKEN,
     walletAddress: wallet(digit), sourceKind: 'live', requestedVersion: '1', attemptCount: 1 }));

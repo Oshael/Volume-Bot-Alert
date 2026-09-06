@@ -31,6 +31,7 @@ const normalizeOptions = (input = {}) => Object.freeze({
   retryMs: bounded(input.retryMs, 15_000, 1000, 3_600_000),
   maxRetryMs: bounded(input.maxRetryMs, 3_600_000, 60_000, 86_400_000),
   batchSize: bounded(input.batchSize, 10, 1, 100),
+  lanes: bounded(input.lanes, 1, 1, 16),
   concurrency: bounded(input.concurrency, 2, 1, 4),
   timeoutMs: bounded(input.timeoutMs, 30_000, 1000, 300_000),
   circuitFailureThreshold: bounded(input.circuitFailureThreshold, 5, 1, 100),
@@ -154,18 +155,27 @@ async function processOutcomeBatch(runtime, tasks, outcomes) {
   return results;
 }
 
-async function processClaimed(runtime, tasks, concurrency) {
+async function processClaimed(runtime, tasks, concurrency, clock = Date.now) {
   let outcomes = null;
+  let evidenceMs = 0; let persistMs = 0;
   if (typeof runtime.source?.readEvidenceBatchResults === 'function'
       && typeof runtime.shadow?.replaceAndCompleteBatch === 'function') {
+    const evidenceStartedAt = clock();
     try { outcomes = await runtime.source.readEvidenceBatchResults(tasks); } catch (_) {}
+    evidenceMs = Math.max(0, clock() - evidenceStartedAt);
     if (outcomes) {
+      const persistStartedAt = clock();
       try {
         return { results: await processOutcomeBatch(runtime, tasks, outcomes),
-          batchMode: 'rpc_and_persist' };
-      } catch (_) { /* Fall through with the already fetched evidence. */ }
+          batchMode: 'rpc_and_persist', evidenceMs,
+          persistMs: Math.max(0, clock() - persistStartedAt), fallbackMs: 0 };
+      } catch (_) {
+        persistMs = Math.max(0, clock() - persistStartedAt);
+        /* Fall through with the already fetched evidence. */
+      }
     }
   }
+  const fallbackStartedAt = clock();
   const results = await mapConcurrent(tasks, concurrency, async (task, index) => {
     try {
       const outcome = outcomes?.[index];
@@ -179,7 +189,8 @@ async function processClaimed(runtime, tasks, concurrency) {
       return await processTask(runtime, task, outcome?.evidence);
     } catch (error) { return { status: 'deferred', error }; }
   });
-  return { results, batchMode: outcomes ? 'rpc_only' : 'individual' };
+  return { results, batchMode: outcomes ? 'rpc_only' : 'individual', evidenceMs, persistMs,
+    fallbackMs: Math.max(0, clock() - fallbackStartedAt) };
 }
 
 async function mapConcurrent(items, concurrency, operation) {
@@ -191,6 +202,44 @@ async function mapConcurrent(items, concurrency, operation) {
   };
   await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, next));
   return results;
+}
+
+async function processLane(runtime, options, owner, retryDelay, clock) {
+  const startedAt = clock(); const claimStartedAt = clock();
+  const tasks = await runtime.queue.claimBatch({
+    owner, leaseMs: options.leaseMs, limit: options.batchSize,
+  });
+  const claimMs = Math.max(0, clock() - claimStartedAt);
+  if (!tasks.length) return { status: 'caught_up', claimed: 0, materialized: 0,
+    deferred: 0, batchMode: 'idle', claimMs, evidenceMs: 0, persistMs: 0,
+    fallbackMs: 0, elapsedMs: Math.max(1, clock() - startedAt) };
+  const owned = tasks.map((task) => ({ ...task, owner }));
+  const processed = await processClaimed(runtime, owned, options.concurrency, clock)
+    .catch(() => null);
+  const results = processed?.results || await mapConcurrent(owned,
+    options.concurrency, async (task) => {
+    try { return await processTask(runtime, task); }
+    catch (error) {
+      await runtime.queue.retry({ ...task,
+        retryMs: retryDelay(task.attemptCount), error }).catch(() => {});
+      return { status: 'deferred', error };
+    }
+  });
+  await Promise.all(results.map(async (result, index) => {
+    if (result.status !== 'deferred' || !processed) return;
+    const task = owned[index];
+    await runtime.queue.retry({ ...task,
+      retryMs: retryDelay(task.attemptCount), error: result.error }).catch(() => {});
+  }));
+  const failures = results.filter(({ status }) => status === 'deferred');
+  const materialized = results.filter(({ status }) => status === 'materialized');
+  return { status: failures.length ? 'partial' : 'drained', claimed: tasks.length,
+    materialized: materialized.length, deferred: failures.length,
+    notFresh: materialized.filter(({ outcome }) => outcome === 'not_fresh').length,
+    batchMode: processed?.batchMode || 'individual', claimMs,
+    evidenceMs: processed?.evidenceMs || 0, persistMs: processed?.persistMs || 0,
+    fallbackMs: processed?.fallbackMs || 0, elapsedMs: Math.max(1, clock() - startedAt),
+    firstError: failures[0]?.error || null };
 }
 
 function createRobinhoodFreshWalletLiveWorker(deps = {}) {
@@ -218,44 +267,40 @@ function createRobinhoodFreshWalletLiveWorker(deps = {}) {
     const startedAt = now();
     status.circuitOpenUntil = null; status.inFlight = true; status.totalRuns += 1;
     try {
-      const tasks = await getRuntime().queue.claimBatch({
-        owner, leaseMs: options.leaseMs, limit: options.batchSize,
-      });
-      if (!tasks.length) {
+      const settled = await Promise.allSettled(Array.from({ length: options.lanes }, () => (
+        processLane(getRuntime(), options, owner, retryDelay, now)
+      )));
+      const laneResults = settled.filter(({ status: value }) => value === 'fulfilled')
+        .map(({ value }) => value);
+      const laneErrors = settled.filter(({ status: value }) => value === 'rejected')
+        .map(({ reason }) => reason);
+      if (!laneResults.length) throw laneErrors[0];
+      const sum = (field) => laneResults.reduce((total, lane) => total + (lane[field] || 0), 0);
+      const peak = (field) => Math.max(0, ...laneResults.map((lane) => lane[field] || 0));
+      const claimed = sum('claimed'); const materialized = sum('materialized');
+      const deferred = sum('deferred');
+      if (!claimed && !laneErrors.length) {
         status.consecutiveFailures = 0; status.circuitOpenUntil = null; status.lastError = null;
-        return { status: 'caught_up', claimed: 0 };
+        return { status: 'caught_up', claimed: 0, lanes: options.lanes,
+          claimMs: peak('claimMs') };
       }
-      status.totalClaimed += tasks.length;
-      const owned = tasks.map((task) => ({ ...task, owner }));
-      const processed = await processClaimed(getRuntime(), owned, options.concurrency)
-        .catch(() => null);
-      const results = processed?.results || await mapConcurrent(owned,
-        options.concurrency, async (task) => {
-        try { return await processTask(getRuntime(), task); }
-        catch (error) {
-          await getRuntime().queue.retry({ ...task,
-            retryMs: retryDelay(task.attemptCount), error }).catch(() => {});
-          return { status: 'deferred', error };
-        }
-      });
-      await Promise.all(results.map(async (result, index) => {
-        if (result.status !== 'deferred' || !processed) return;
-        const task = owned[index];
-        await getRuntime().queue.retry({ ...task,
-          retryMs: retryDelay(task.attemptCount), error: result.error }).catch(() => {});
-      }));
-      const failures = results.filter(({ status: value }) => value === 'deferred');
-      const materialized = results.filter(({ status: value }) => value === 'materialized');
-      status.totalDeferred += failures.length; status.totalMaterialized += materialized.length;
-      status.totalNotFresh += materialized.filter(({ outcome }) => outcome === 'not_fresh').length;
-      if (materialized.length) {
+      status.totalClaimed += claimed; status.totalDeferred += deferred;
+      status.totalMaterialized += materialized; status.totalNotFresh += sum('notFresh');
+      if (materialized) {
         status.consecutiveFailures = 0; status.circuitOpenUntil = null; status.lastError = null;
-      } else if (failures.length) recordFailure(failures[0].error);
+      } else if (deferred || laneErrors.length) {
+        recordFailure(laneResults.find(({ firstError }) => firstError)?.firstError || laneErrors[0]);
+      }
       const elapsedMs = Math.max(1, now() - startedAt);
-      return { status: failures.length ? 'partial' : 'drained',
-        claimed: tasks.length, materialized: materialized.length, deferred: failures.length,
-        batchMode: processed?.batchMode || 'individual', elapsedMs,
-        itemsPerSecond: Number(((materialized.length * 1000) / elapsedMs).toFixed(2)) };
+      const modes = [...new Set(laneResults.filter(({ claimed: count }) => count)
+        .map(({ batchMode }) => batchMode))];
+      return { status: deferred || laneErrors.length ? 'partial' : 'drained',
+        claimed, materialized, deferred, lanes: options.lanes,
+        activeLanes: laneResults.filter(({ claimed: count }) => count).length,
+        laneErrors: laneErrors.length, batchMode: modes.length === 1 ? modes[0] : 'mixed',
+        claimMs: peak('claimMs'), evidenceMs: peak('evidenceMs'),
+        persistMs: peak('persistMs'), fallbackMs: peak('fallbackMs'), elapsedMs,
+        itemsPerSecond: Number(((materialized * 1000) / elapsedMs).toFixed(2)) };
     } catch (error) { recordFailure(error); return null; }
     finally { status.inFlight = false; status.lastCompletedAt = new Date(now()).toISOString(); }
   }
@@ -268,7 +313,7 @@ function createRobinhoodFreshWalletLiveWorker(deps = {}) {
   function queue(delay = options.intervalMs) {
     if (!running) return;
     timer = schedule(async () => { timer = null; const result = await runOnce();
-      queue(result?.claimed >= options.batchSize ? 0 : options.intervalMs);
+      queue(result?.claimed >= options.batchSize * options.lanes ? 0 : options.intervalMs);
     }, delay); timer?.unref?.();
   }
   function wake() { if (running && !active) { if (timer) cancel(timer); timer = null; queue(0); } }

@@ -1989,6 +1989,9 @@ module.exports = {
     batchSize: parseIntegerInRange(
       process.env.ROBINHOOD_FRESH_WALLET_LIVE_BATCH_SIZE, 10, 1, 100
     ),
+    lanes: parseIntegerInRange(
+      process.env.ROBINHOOD_FRESH_WALLET_LIVE_LANES, 1, 1, 16
+    ),
     concurrency: parseIntegerInRange(
       process.env.ROBINHOOD_FRESH_WALLET_LIVE_CONCURRENCY, 2, 1, 4
     ),
