@@ -17,9 +17,13 @@ function fixture(overrides = {}) {
   return {
     state: { capture_next_block: '2001', capture_node_head: '2000',
       journal_start_block: '500', journal_through_block: '2000',
-      activation_status: 'active', seed_status: 'completed',
-      pending: '2', leased: '1', active: '3',
-      active_through_block: '1900', active_before_journal: '0',
+      activation_status: 'active', activation_block: '800',
+      activation_at: '2026-08-01T00:00:00Z',
+      activation_cutoff_at: '2026-07-31T00:00:00Z',
+      activation_checkpoint_canonical: true, activation_cutoff_before_journal: false,
+      activation_first_buy_next_block: '801', seed_status: 'completed',
+      first_buy_source_next_block: '1901',
+      first_buy_source_through: '2026-09-06T01:00:00Z',
       signed_origin_block: '400', signed_checkpoint_block: '1950',
       signed_lifecycle_state: 'caught_up', ...overrides },
     sample: { sampled: '100', missing_blocks: '0', missing_transactions: '0',
@@ -33,8 +37,8 @@ describe('Robinhood canonical FRESH preflight', () => {
     const report = evaluate(fixture());
     assert.equal(report.ready, true);
     assert.deepEqual(report.blockers, []);
-    assert.equal(report.fresh.active, 3);
-    assert.equal(report.signed_origin.lag_to_active_blocks, '0');
+    assert.equal(report.first_buy.through_block, '1900');
+    assert.equal(report.signed_origin.lag_to_first_buy_blocks, '0');
     assert.deepEqual(report.contract, {
       target: 'robinhood_chain_blocks+robinhood_chain_transactions',
       first_buy_nonce: 'covered', cutoff_24h: 'covered_by_block_timestamps',
@@ -42,10 +46,19 @@ describe('Robinhood canonical FRESH preflight', () => {
     });
   });
 
-  it('rejects active work whose 24-hour boundary predates the journal', () => {
-    const report = evaluate(fixture({ active_before_journal: '7' }));
+  it('rejects an activation whose 24-hour boundary predates the journal', () => {
+    const report = evaluate(fixture({ activation_cutoff_before_journal: true }));
     assert.deepEqual(report.blockers, [
-      { code: 'fresh_active_before_journal', detail: 7 },
+      { code: 'fresh_activation_cutoff_before_journal' },
+    ]);
+  });
+
+  it('rejects global first-buy coverage beyond journal and signed-origin frontiers', () => {
+    const report = evaluate(fixture({ first_buy_source_next_block: '2101',
+      signed_checkpoint_block: '2050' }));
+    assert.deepEqual(report.blockers, [
+      { code: 'first_buy_frontier_not_captured', detail: '100' },
+      { code: 'signed_origin_behind_first_buy', detail: '50' },
     ]);
   });
 
@@ -62,8 +75,7 @@ describe('Robinhood canonical FRESH preflight', () => {
   });
 
   it('accepts an empty sample when the active queue is caught up', () => {
-    const input = fixture({ pending: '0', leased: '0', active: '0',
-      active_through_block: null });
+    const input = fixture();
     input.sample.sampled = '0';
     assert.deepEqual(evaluate(input).blockers, []);
   });
@@ -101,9 +113,8 @@ describe('Robinhood canonical FRESH preflight', () => {
     assert.equal((await audit.inspect()).ready, true);
     assert.match(calls[0].sql, /REPEATABLE READ READ ONLY/);
     assert.match(calls[1].sql, /ORDER BY block_number LIMIT 1/);
-    assert.match(calls[1].sql, /status='pending'/);
-    assert.match(calls[1].sql, /status='leased'/);
-    assert.doesNotMatch(calls[1].sql, /status<>'complete'/);
+    assert.match(calls[1].sql, /robinhood_first_buy_live_cursors/);
+    assert.doesNotMatch(calls[1].sql, /robinhood_fresh_wallet_queue/);
     assert.match(calls[2].sql, /active_sample AS MATERIALIZED/);
     assert.doesNotMatch(calls[2].sql, /ORDER BY \(q\.status<>'complete'\)/);
     assert.deepEqual(calls[2].params, ['robinhood', 'rh_fresh_signed_v1', 100]);

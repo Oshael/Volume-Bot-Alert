@@ -16,6 +16,9 @@ const LEASE_KEYS = Object.freeze({
 function quantity(value) { return value == null ? null : BigInt(value); }
 function count(value) { return Number(value ?? 0); }
 function text(value) { return value == null ? null : String(value); }
+function timestamp(value) {
+  return value == null ? null : value.toISOString?.() || String(value);
+}
 function distance(first, last) {
   return first == null || last == null || last < first ? 0n : last - first + 1n;
 }
@@ -73,12 +76,19 @@ function validateWorkers(blockers, values) {
 
 function validateCoverage(blockers, values) {
   const { row, sample } = values;
-  add(blockers, count(row.active_before_journal) > 0,
-    'fresh_active_before_journal', count(row.active_before_journal));
-  add(blockers, values.activeJournalLag > 0n,
-    'fresh_active_not_captured', text(values.activeJournalLag));
+  add(blockers, row.activation_status != null && row.activation_checkpoint_canonical !== true,
+    'fresh_activation_checkpoint_not_canonical');
+  add(blockers, row.activation_cutoff_before_journal === true,
+    'fresh_activation_cutoff_before_journal');
+  add(blockers, values.firstBuyThrough == null, 'first_buy_cursor_missing');
+  add(blockers, values.firstBuyThrough != null
+    && values.activationFirstBuyNext != null
+    && values.firstBuyThrough + 1n < values.activationFirstBuyNext,
+  'first_buy_frontier_before_activation');
+  add(blockers, values.firstBuyJournalLag > 0n,
+    'first_buy_frontier_not_captured', text(values.firstBuyJournalLag));
   add(blockers, values.signedLag > 0n,
-    'fresh_active_beyond_signed_origin', text(values.signedLag));
+    'signed_origin_behind_first_buy', text(values.signedLag));
   add(blockers, count(sample.sampled) > 0 && count(sample.missing_blocks) > 0,
     'canonical_sample_missing_blocks', count(sample.missing_blocks));
   add(blockers, count(sample.missing_transactions) > 0,
@@ -96,11 +106,15 @@ function evaluate(input = {}) {
   const captureLag = distance(captureNext, captureHead);
   const journalStart = quantity(row.journal_start_block);
   const journalThrough = quantity(row.journal_through_block);
-  const activeThrough = quantity(row.active_through_block);
+  const firstBuyNext = quantity(row.first_buy_source_next_block);
+  const firstBuyThrough = firstBuyNext == null ? null : firstBuyNext - 1n;
+  const activationFirstBuyNext = quantity(row.activation_first_buy_next_block);
   const signedThrough = quantity(row.signed_checkpoint_block);
-  const activeJournalLag = distance(journalThrough == null ? null : journalThrough + 1n,
-    activeThrough);
-  const signedLag = distance(signedThrough == null ? null : signedThrough + 1n, activeThrough);
+  const firstBuyJournalLag = distance(
+    journalThrough == null ? null : journalThrough + 1n, firstBuyThrough
+  );
+  const signedLag = distance(signedThrough == null ? null : signedThrough + 1n,
+    firstBuyThrough);
   const leases = Object.fromEntries(Object.entries(LEASE_KEYS).map(([name, key]) => (
     [name, leaseSummary(input.leases || [], key)]
   )));
@@ -110,7 +124,9 @@ function evaluate(input = {}) {
     row, captureNext, captureHead, captureLag, journalStart, journalThrough, leases,
   });
   validateWorkers(blockers, { row, signedThrough, leases });
-  validateCoverage(blockers, { row, sample, activeJournalLag, signedLag });
+  validateCoverage(blockers, {
+    row, sample, firstBuyThrough, activationFirstBuyNext, firstBuyJournalLag, signedLag,
+  });
 
   return Object.freeze({
     mode: 'read-only', ready: blockers.length === 0, blockers,
@@ -118,13 +134,16 @@ function evaluate(input = {}) {
       lag_blocks: text(captureLag), journal_start_block: text(journalStart),
       journal_through_block: text(journalThrough) },
     fresh: { activation_status: row.activation_status || null,
-      seed_status: row.seed_status || null,
-      pending: count(row.pending), leased: count(row.leased), active: count(row.active),
-      active_through_block: text(activeThrough),
-      active_before_journal: count(row.active_before_journal) },
+      seed_status: row.seed_status || null, activation_block: text(row.activation_block),
+      activation_at: timestamp(row.activation_at),
+      canonical_cutoff_at: timestamp(row.activation_cutoff_at),
+      activation_checkpoint_canonical: row.activation_checkpoint_canonical === true },
+    first_buy: { next_block: text(firstBuyNext), through_block: text(firstBuyThrough),
+      source_through: timestamp(row.first_buy_source_through),
+      lag_to_journal_blocks: text(firstBuyJournalLag) },
     signed_origin: { origin_block: text(row.signed_origin_block),
       checkpoint_block: text(signedThrough), lifecycle_state: row.signed_lifecycle_state || null,
-      lag_to_active_blocks: text(signedLag) },
+      lag_to_first_buy_blocks: text(signedLag) },
     context: { sampled: count(sample.sampled), missing_blocks: count(sample.missing_blocks),
       missing_transactions: count(sample.missing_transactions),
       missing_nonces: count(sample.missing_nonces), divergent: count(sample.divergent),
@@ -151,36 +170,31 @@ function createRobinhoodCanonicalFreshWalletAudit(options = {}) {
             ORDER BY block_number LIMIT 1) first ON TRUE
           LEFT JOIN LATERAL (SELECT block_number FROM robinhood_chain_blocks
             WHERE chain=$1 AND canonical=TRUE ORDER BY block_number DESC LIMIT 1) latest ON TRUE
-      ), active_queue AS MATERIALIZED (
-        SELECT chain, token_address, wallet_address, status
-          FROM robinhood_fresh_wallet_queue
-         WHERE chain=$1 AND rule_version=$2 AND source_kind='live' AND status='pending'
-        UNION ALL
-        SELECT chain, token_address, wallet_address, status
-          FROM robinhood_fresh_wallet_queue
-         WHERE chain=$1 AND rule_version=$2 AND source_kind='live' AND status='leased'
-      ), queue AS MATERIALIZED (
-        SELECT COUNT(*) FILTER (WHERE q.status='pending') AS pending,
-          COUNT(*) FILTER (WHERE q.status='leased') AS leased,
-          COUNT(*) AS active, MAX(buy.block_number) AS active_through_block,
-          COUNT(*) FILTER (WHERE
-            buy.block_time-INTERVAL '24 hours'<journal.start_time) AS active_before_journal
-        FROM active_queue q
-        INNER JOIN robinhood_wallet_token_first_buys buy USING (
-          chain, token_address, wallet_address)
-        CROSS JOIN journal
       ) SELECT capture.next_block AS capture_next_block,
           capture.node_head AS capture_node_head, journal.start_block AS journal_start_block,
           journal.through_block AS journal_through_block, activation.status AS activation_status,
+          activation.activation_block, activation.activation_at,
+          activation.first_buy_source_next_block AS activation_first_buy_next_block,
+          activation_block.block_timestamp-INTERVAL '24 hours' AS activation_cutoff_at,
+          activation_block.block_hash=activation.activation_block_hash
+            AS activation_checkpoint_canonical,
           seed.status AS seed_status, signed.origin_block AS signed_origin_block,
           signed.checkpoint_block AS signed_checkpoint_block,
-          signed.lifecycle_state AS signed_lifecycle_state, queue.*
-        FROM journal CROSS JOIN queue
+          signed.lifecycle_state AS signed_lifecycle_state,
+          first_buy.source_next_block AS first_buy_source_next_block,
+          first_buy.source_through AS first_buy_source_through,
+          activation_block.block_timestamp-INTERVAL '24 hours'<journal.start_time
+            AS activation_cutoff_before_journal
+        FROM journal
         LEFT JOIN robinhood_chain_capture_cursor capture ON capture.chain=$1
         LEFT JOIN robinhood_fresh_wallet_activations activation
           ON activation.chain=$1 AND activation.rule_version=$2
+        LEFT JOIN robinhood_chain_blocks activation_block
+          ON activation_block.chain=$1 AND activation_block.canonical=TRUE
+         AND activation_block.block_number=activation.activation_block
         LEFT JOIN robinhood_fresh_wallet_seed_runs seed
           ON seed.chain=$1 AND seed.rule_version=$2
+        LEFT JOIN robinhood_first_buy_live_cursors first_buy ON first_buy.chain=$1
         LEFT JOIN robinhood_wallet_signed_origin_cursors signed
           ON signed.chain=$1 AND signed.stream='live'`, [CHAIN, RULE_VERSION])).rows[0] || {};
       const sample = (await client.query(`WITH journal AS MATERIALIZED (
