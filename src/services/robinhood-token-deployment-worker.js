@@ -4,6 +4,9 @@ const {
   createRobinhoodTokenDeploymentOutboxRepository,
 } = require('../models/robinhood-token-deployment-outbox');
 const { createRobinhoodTokenAttributionRepository } = require('../models/robinhood-token-attribution');
+const {
+  createRobinhoodCanonicalDirectCreatorSource,
+} = require('../models/robinhood-canonical-direct-creator-source');
 const { createEvmJsonRpcClient } = require('./evm-json-rpc-client');
 const {
   createRobinhoodBlockscoutMetadataClient, DEFAULT_PRO_API_URL, requestWithRetry,
@@ -83,7 +86,10 @@ function createLocalCodeTransitionResolver(rpcClient) {
         code: 'rpc_code_transition_invalid',
       });
     }
-    return Object.freeze({ tokenAddress, blockNumber: blockNumber.toString() });
+    return Object.freeze({
+      tokenAddress, blockNumber: blockNumber.toString(),
+      blockHash: expectedBlockHash, transactionHash,
+    });
   }
   return Object.freeze({ verify });
 }
@@ -104,6 +110,16 @@ function normalizeOptions(input = {}) {
   });
 }
 
+function createBlockscoutClient(deps, env, options) {
+  const apiKey = String(env.ROBINHOOD_BLOCKSCOUT_API_KEY || '').trim();
+  const apiUrl = String(env.ROBINHOOD_BLOCKSCOUT_API_URL
+    || (apiKey ? DEFAULT_PRO_API_URL : '')).trim();
+  const blockscoutOptions = { timeoutMs: options.timeoutMs };
+  if (apiKey) blockscoutOptions.apiKey = apiKey;
+  if (apiUrl) blockscoutOptions.apiUrl = apiUrl;
+  return (deps.blockscoutFactory || createRobinhoodBlockscoutMetadataClient)(blockscoutOptions);
+}
+
 function buildRuntime(deps, options) {
   const env = deps.env || process.env;
   const rpcUrl = String(env.RH_NODE_RPC_URL || env.ROBINHOOD_RPC_URL || '').trim();
@@ -115,19 +131,14 @@ function buildRuntime(deps, options) {
     providers: [{ name: 'robinhood-deployment-live', url: rpcUrl }],
     timeoutMs: options.timeoutMs, maxRetries: 1,
   });
-  const apiKey = String(env.ROBINHOOD_BLOCKSCOUT_API_KEY || '').trim();
-  const apiUrl = String(env.ROBINHOOD_BLOCKSCOUT_API_URL
-    || (apiKey ? DEFAULT_PRO_API_URL : '')).trim();
-  const blockscoutOptions = { timeoutMs: options.timeoutMs };
-  if (apiKey) blockscoutOptions.apiKey = apiKey;
-  if (apiUrl) blockscoutOptions.apiUrl = apiUrl;
-  const blockscout = (deps.blockscoutFactory || createRobinhoodBlockscoutMetadataClient)(
-    blockscoutOptions
-  );
+  const blockscout = createBlockscoutClient(deps, env, options);
   const sleep = deps.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   return Object.freeze({
     outbox: (deps.outboxFactory || createRobinhoodTokenDeploymentOutboxRepository)({ database }),
     attributions: (deps.attributionFactory || createRobinhoodTokenAttributionRepository)({ database }),
+    creatorSource: (deps.creatorSourceFactory || createRobinhoodCanonicalDirectCreatorSource)({
+      database,
+    }),
     blockscout,
     localResolver: (deps.localResolverFactory || createLocalCodeTransitionResolver)(rpcClient),
     verifier: (deps.verifierFactory || createRobinhoodHolderDeploymentVerifier)({
@@ -205,6 +216,19 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
       .catch((error) => { error.stage = 'deployment_verification'; throw error; });
   }
 
+  async function resolveTransition(current, transition) {
+    if (typeof current.creatorSource?.readRange === 'function') {
+      const blocks = await current.creatorSource.readRange(
+        transition.blockNumber, transition.blockNumber
+      );
+      const canonical = blocks.get(transition.blockNumber)?.deployments.find(
+        (item) => item.tokenAddress === transition.tokenAddress
+      );
+      if (canonical) return canonical;
+    }
+    return current.verifier.verifyTransactionDeployment(transition);
+  }
+
   function retryFor(task, error) {
     if (error.code === 'local_mint_pending') return LOCAL_EVIDENCE_RETRY_MS;
     const providerUnavailable = ['credits_exhausted', 'blockscout_circuit_open']
@@ -236,9 +260,11 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
       const transition = await resolveLocally(current, task);
       if (transition) {
         await current.attributions.recordCodeTransitions([transition]);
+        const deployment = await resolveTransition(current, transition);
+        await current.attributions.recordVerifiedDirectDeployments([deployment]);
         await current.outbox.complete({ owner, tokenAddress: task.tokenAddress });
         status.totalResolved += 1; status.totalLocalResolved += 1;
-        return { status: 'resolved', tokenAddress: task.tokenAddress, source: 'rpc_code_transition' };
+        return { status: 'resolved', tokenAddress: task.tokenAddress, source: deployment.source };
       }
       const deployment = await resolveWithBlockscout(current, task);
       await current.attributions.recordVerifiedDirectDeployments([deployment]);

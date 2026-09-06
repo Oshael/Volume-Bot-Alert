@@ -115,6 +115,26 @@ describe('Robinhood holder deployment verifier', () => {
     assert.equal(result.factoryAddress, FACTORY);
   });
 
+  it('verifies one known mint transaction without tracing its whole block', async () => {
+    const calls = [];
+    const values = evidence({ transaction: { to: FACTORY }, receipt: { contractAddress: null } });
+    values.trace = [];
+    values.debugTrace = { type: 'CALL', calls: [{ type: 'CREATE', from: FACTORY, to: TOKEN }] };
+    const verifier = createRobinhoodHolderDeploymentVerifier({
+      rpcClient: rpcFor(values, calls),
+    });
+
+    assert.deepEqual(await verifier.verifyTransactionDeployment({
+      tokenAddress: TOKEN, transactionHash: TX_HASH,
+      blockNumber: '100', blockHash: BLOCK_HASH,
+    }), {
+      tokenAddress: TOKEN, creatorAddress: CREATOR, transactionHash: TX_HASH,
+      source: 'rpc_trace', factoryAddress: FACTORY, blockNumber: '100',
+    });
+    assert.equal(calls.some(([method]) => method === 'debug_traceBlockByNumber'), false);
+    assert.ok(calls.some(([method]) => method === 'debug_traceTransaction'));
+  });
+
   it('verifies an internal creation located from an exact block trace', async () => {
     const values = evidence({
       transaction: { to: FACTORY }, receipt: { contractAddress: null },

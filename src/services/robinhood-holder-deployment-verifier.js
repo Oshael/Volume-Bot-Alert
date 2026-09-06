@@ -96,6 +96,14 @@ function callTracerCreation(frame, tokenAddress) {
   return null;
 }
 
+function creationKind(evidence, tokenAddress) {
+  if (evidence.contractAddress === tokenAddress && evidence.direct) return 'direct';
+  if ((evidence.contractAddress === null && !evidence.direct)
+      || (evidence.contractAddress !== null
+        && evidence.contractAddress !== tokenAddress && evidence.direct)) return 'internal';
+  return null;
+}
+
 function parityBlockCreations(entries, tokenAddress) {
   if (!Array.isArray(entries)) return [];
   return entries.flatMap((entry) => {
@@ -243,6 +251,40 @@ function createRobinhoodHolderDeploymentVerifier(options = {}) {
     });
   }
 
+  async function verifyTransactionDeployment(input = {}) {
+    const tokenAddress = address(input.tokenAddress, 'tokenAddress');
+    const transactionHash = fixedHex(input.transactionHash, 32, 'transactionHash');
+    const requestedBlock = quantity(input.blockNumber, 'blockNumber');
+    const requestedHash = fixedHex(input.blockHash, 32, 'blockHash');
+    await validateChain();
+    const [transaction, receipt] = await Promise.all([
+      rpcClient.request('eth_getTransactionByHash', [transactionHash]),
+      rpcClient.request('eth_getTransactionReceipt', [transactionHash]),
+    ]);
+    const hint = {
+      tokenAddress, transactionHash,
+      creatorAddress: address(transaction?.from, 'transaction.from'),
+    };
+    const evidence = validateTransaction(hint, transaction, receipt);
+    const kind = creationKind(evidence, tokenAddress);
+    if (quantity(evidence.blockNumber, 'evidence.blockNumber') !== requestedBlock
+        || evidence.blockHash !== requestedHash || !kind) {
+      throw evidenceError('mint transaction does not prove the token creation');
+    }
+    const factoryAddress = kind === 'internal'
+      ? await resolveTraceFactory(rpcClient, hint) : null;
+    const block = await rpcClient.request('eth_getBlockByNumber', [blockTag(requestedBlock), false]);
+    if (quantity(block?.number, 'block.number') !== requestedBlock
+        || fixedHex(block?.hash, 32, 'block.hash') !== requestedHash) {
+      throw evidenceError('mint transaction block is not canonical');
+    }
+    return Object.freeze({
+      tokenAddress, creatorAddress: evidence.creatorAddress, transactionHash,
+      source: kind === 'direct' ? 'rpc_direct' : 'rpc_trace', factoryAddress,
+      blockNumber: requestedBlock.toString(),
+    });
+  }
+
   async function verifyBlockTraceDeployment(input = {}) {
     const tokenAddress = address(input.tokenAddress, 'tokenAddress');
     const requestedBlock = quantity(input.blockNumber, 'blockNumber');
@@ -255,12 +297,9 @@ function createRobinhoodHolderDeploymentVerifier(options = {}) {
       rpcClient.request('eth_getTransactionReceipt', [creation.transactionHash]),
     ]);
     const evidence = validateTransaction(hint, transaction, receipt);
-    const direct = evidence.contractAddress === tokenAddress && evidence.direct;
-    const internal = (evidence.contractAddress === null && !evidence.direct)
-      || (evidence.contractAddress !== null
-        && evidence.contractAddress !== tokenAddress && evidence.direct);
+    const kind = creationKind(evidence, tokenAddress);
     if (quantity(evidence.blockNumber, 'evidence.blockNumber') !== requestedBlock
-        || (!direct && !internal)) {
+        || !kind) {
       throw evidenceError('deployment block trace does not prove the token creation');
     }
     const block = await rpcClient.request('eth_getBlockByNumber', [blockTag(requestedBlock), false]);
@@ -270,19 +309,22 @@ function createRobinhoodHolderDeploymentVerifier(options = {}) {
     }
     return Object.freeze({
       tokenAddress, creatorAddress: evidence.creatorAddress,
-      transactionHash: creation.transactionHash, source: direct ? 'rpc_direct' : 'rpc_trace',
-      factoryAddress: direct ? null : creation.factoryAddress,
+      transactionHash: creation.transactionHash,
+      source: kind === 'direct' ? 'rpc_direct' : 'rpc_trace',
+      factoryAddress: kind === 'direct' ? null : creation.factoryAddress,
       blockNumber: requestedBlock.toString(),
     });
   }
 
-  return Object.freeze({ verifyBlockTraceDeployment, verifyDirectDeployment });
+  return Object.freeze({
+    verifyBlockTraceDeployment, verifyDirectDeployment, verifyTransactionDeployment,
+  });
 }
 
 module.exports = {
   createRobinhoodHolderDeploymentVerifier,
   __private: {
-    callTracerCreation, debugBlockCreations, findBlockTraceCreation,
+    callTracerCreation, creationKind, debugBlockCreations, findBlockTraceCreation,
     normalizeHint, parityBlockCreations, parityCreation, validateTransaction,
   },
 };

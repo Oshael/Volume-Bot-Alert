@@ -52,19 +52,54 @@ it('uses a canonical local code transition before calling Blockscout', async () 
       complete: async () => { fixture.calls.push('complete'); },
       retry: async () => { throw new Error('must not retry'); },
     },
-    localResolver: { verify: async () => ({ tokenAddress: TOKEN, blockNumber: '100' }) },
+    localResolver: { verify: async () => ({
+      tokenAddress: TOKEN, blockNumber: '100', blockHash: BLOCK_HASH,
+      transactionHash: TRANSACTION_HASH,
+    }) },
+    creatorSource: { readRange: async () => new Map([['100', { deployments: [] }]]) },
+    verifier: { verifyTransactionDeployment: async () => ({
+      tokenAddress: TOKEN, blockNumber: '100', creatorAddress: TOKEN,
+      transactionHash: TRANSACTION_HASH, source: 'rpc_trace', factoryAddress: TOKEN,
+    }) },
     blockscout: { getContractCreation: async () => { throw new Error('must not call Blockscout'); } },
     attributions: {
       recordCodeTransitions: async () => { fixture.calls.push('local-attributed'); },
+      recordVerifiedDirectDeployments: async () => { fixture.calls.push('creator-attributed'); },
     },
   });
   const result = await createRobinhoodTokenDeploymentWorker({
     runtime: fixture.value, owner: 'test',
   }).runOnce();
   assert.deepEqual(result, {
-    status: 'resolved', tokenAddress: TOKEN, source: 'rpc_code_transition',
+    status: 'resolved', tokenAddress: TOKEN, source: 'rpc_trace',
   });
-  assert.deepEqual(fixture.calls, ['local-attributed', 'complete']);
+  assert.deepEqual(fixture.calls, ['local-attributed', 'creator-attributed', 'complete']);
+});
+
+it('keeps the exact transition queued when LIVE trace evidence is unavailable', async () => {
+  const fixture = runtime({
+    outbox: {
+      claim: async () => ({ tokenAddress: TOKEN, attemptCount: 1, createdAt: new Date() }),
+      isExact: async () => false,
+      findMintHint: async () => ({ tokenAddress: TOKEN, blockNumber: '100',
+        blockHash: BLOCK_HASH, transactionHash: TRANSACTION_HASH }),
+      complete: async () => { throw new Error('must not complete'); },
+      retry: async () => { fixture.calls.push('retry'); },
+    },
+    localResolver: { verify: async (input) => input },
+    creatorSource: { readRange: async () => new Map([['100', { deployments: [] }]]) },
+    verifier: { verifyTransactionDeployment: async () => {
+      throw Object.assign(new Error('debug trace unavailable'), { code: 'trace_unavailable' });
+    } },
+    attributions: {
+      recordCodeTransitions: async () => { fixture.calls.push('local-attributed'); },
+      recordVerifiedDirectDeployments: async () => { throw new Error('must not persist'); },
+    },
+  });
+  const worker = createRobinhoodTokenDeploymentWorker({ runtime: fixture.value, owner: 'test' });
+  assert.equal(await worker.runOnce(), null);
+  assert.deepEqual(fixture.calls, ['local-attributed', 'retry']);
+  assert.equal(worker.getStatus().lastError.code, 'trace_unavailable');
 });
 
 it('proves an exact deployment block from recent pruned-RPC state', async () => {
@@ -85,7 +120,10 @@ it('proves an exact deployment block from recent pruned-RPC state', async () => 
   assert.deepEqual(await resolver.verify({
     tokenAddress: TOKEN, blockNumber: '100', blockHash: BLOCK_HASH,
     transactionHash: TRANSACTION_HASH,
-  }), { tokenAddress: TOKEN, blockNumber: '100' });
+  }), {
+    tokenAddress: TOKEN, blockNumber: '100', blockHash: BLOCK_HASH,
+    transactionHash: TRANSACTION_HASH,
+  });
   assert.equal(calls.filter(([method]) => method === 'eth_getCode').length, 2);
 });
 
@@ -135,6 +173,16 @@ it('prioritizes recent outbox tasks and loads their earliest captured mint', asy
   assert.match(calls[1].sql, /applied = false/);
   assert.match(calls[1].sql, /UNION ALL/);
   assert.match(calls[1].sql, /applied = true/);
+});
+
+it('does not treat a code transition without creator provenance as exact', async () => {
+  let exactSources;
+  const repository = createRobinhoodTokenDeploymentOutboxRepository({
+    database: { async query(_sql, params) { exactSources = params[1]; return { rowCount: 0 }; } },
+  });
+  assert.equal(await repository.isExact(TOKEN), false);
+  assert.equal(exactSources.includes('rpc_code_transition'), false);
+  assert.equal(exactSources.includes('rpc_trace'), true);
 });
 
 it('defers missing Blockscout evidence and skips already attributed tokens', async () => {

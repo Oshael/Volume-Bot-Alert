@@ -3,7 +3,7 @@ const { normalizeTokenAddress } = require('../utils/token-identity');
 
 const CHAIN = 'robinhood';
 const EXACT_SOURCES = [
-  'blockscout_internal', 'rpc_code_transition', 'rpc_direct', 'rpc_trace', 'launchpad_event',
+  'blockscout_internal', 'rpc_direct', 'rpc_trace', 'launchpad_event',
 ];
 
 function ownerOf(value) {

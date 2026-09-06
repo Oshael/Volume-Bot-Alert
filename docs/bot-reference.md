@@ -2389,10 +2389,19 @@ com `lock_timeout` curto. Tarefas admitidas nos últimos dez minutos precedem o
 backlog histórico. O caminho primário lê o primeiro mint já capturado e usa o
 `RH_NODE_RPC_URL` da VPS para provar que o bytecode era vazio em `N-1`, existe em
 `N` e que bloco/receipt permanecem canônicos. Essa prova
-`rpc_code_transition` materializa o deployment block e libera o bootstrap de
-holders sem depender de creator, trace, archive ou Blockscout.
+`rpc_code_transition` preserva imediatamente o deployment block, mas não é mais
+terminal para a outbox de creator. No mesmo item, o worker consulta primeiro o
+journal canônico do bloco: receipt direto materializa `rpc_direct` e evento de
+launchpad conhecido preserva seu creator explícito. Somente quando ambos faltam,
+o mint transaction hash já conhecido é consultado com `debug_traceTransaction`;
+um `CREATE/CREATE2` interno validado materializa `rpc_trace`. O worker é serial,
+usa timeout e backoff já limitados e não executa trace de bloco no LIVE. Falha de
+trace mantém a transição exata e a tarefa pendente, sem publicar creator parcial.
+O Nitro da VPS deve expor `debug` apenas no HTTP RPC local usado pelo worker
+(`--http.api=net,web3,eth,debug`); esse namespace não deve ser público. O LIVE
+não depende de Archive nem do túnel do PC.
 
-Quando a transição local não pode ser comprovada, Blockscout permanece fallback:
+Quando nem a transição local pode ser comprovada, Blockscout permanece fallback:
 seu hint é validado contra receipt/bloco canônicos e materializa `rpc_direct` ou
 `blockscout_internal`. Crédito esgotado abre um circuit breaker em memória; novas
 provas RPC continuam sendo tentadas, sem chamadas repetidas ao provedor. Se a
