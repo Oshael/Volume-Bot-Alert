@@ -337,6 +337,51 @@ describe('Robinhood holder global backfill scanner', () => {
     assert.deepEqual(calls[1].transfers, [receiptTransfer]);
   });
 
+  it('chunks receipt verification when a wide scan range finds a late deficit', async () => {
+    const receiptRanges = [];
+    let commits = 0;
+    const scanner = createRobinhoodHolderGlobalBackfillScanner({
+      lifecycleRepository: {
+        getActiveRun: async () => runState('100'), loadCohort: async () => [TOKEN],
+      },
+      commitRepository: {
+        async commitRange(input) {
+          commits += 1;
+          if (commits === 1) {
+            throw Object.assign(new Error('negative'), {
+              code: 'holder_negative_balance', tokenAddress: TOKEN,
+              failedBlock: '4203', fingerprint: `${HASH}:tx:0`,
+            });
+          }
+          return { status: 'committed', ...input };
+        },
+        async excludeToken() { throw new Error('unexpected exclusion'); },
+      },
+      reader: {
+        getSafeHead: async () => ({ safeHead: '5099' }),
+        readGlobalRange: async () => range(100, 5099),
+        async readReceiptRange(input) {
+          receiptRanges.push([input.fromBlock, input.toBlock]);
+          assert.ok(BigInt(input.toBlock) - BigInt(input.fromBlock) + 1n <= 1000n);
+          return {
+            checkpoint: { number: input.toBlock, hash: HASH },
+            transfers: [{ tokenAddress: TOKEN, blockNumber: input.toBlock }],
+          };
+        },
+      },
+      options: { rangeSize: 5000, prefetch: 1 },
+    });
+
+    const result = await scanner.runOnce({ throughBlock: 5099 });
+
+    assert.equal(result.status, 'committed');
+    assert.deepEqual(receiptRanges, [
+      ['100', '1099'], ['1100', '2099'], ['2100', '3099'],
+      ['3100', '4099'], ['4100', '4203'],
+    ]);
+    assert.equal(scanner.getStatus().totals.receiptRecoveries, 1);
+  });
+
   it('excludes a token that remains negative under canonical receipts', async () => {
     let nextBlock = '100';
     let commitAttempts = 0;

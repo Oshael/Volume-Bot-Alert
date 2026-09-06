@@ -2,6 +2,7 @@ const DEFAULT_RANGE_SIZE = 250;
 const DEFAULT_PREFETCH = 4;
 const DEFAULT_FINALITY_BLOCKS = 2000;
 const LIVE_LAG_GROWTH_TOLERANCE_BLOCKS = 25n;
+const RECEIPT_REPAIR_CHUNK_BLOCKS = 1000n;
 
 function boundedInteger(value, fallback, minimum, maximum, label) {
   const parsed = value == null ? fallback : Number(value);
@@ -73,6 +74,26 @@ function mergeReceiptRepair(range, deficit, receiptRange) {
     transfer.tokenAddress !== deficit.tokenAddress || BigInt(transfer.blockNumber) > failedBlock
   ));
   return [...retained, ...receiptRange.transfers];
+}
+
+async function readReceiptRepair(reader, range, deficit) {
+  const transfers = [];
+  const throughBlock = BigInt(deficit.failedBlock);
+  let fromBlock = BigInt(range.fromBlock);
+  let checkpoint = null;
+  while (fromBlock <= throughBlock) {
+    const candidate = fromBlock + RECEIPT_REPAIR_CHUNK_BLOCKS - 1n;
+    const toBlock = candidate < throughBlock ? candidate : throughBlock;
+    const chunk = await reader.readReceiptRange({
+      tokenAddress: deficit.tokenAddress,
+      fromBlock: fromBlock.toString(),
+      toBlock: toBlock.toString(),
+    });
+    transfers.push(...chunk.transfers);
+    checkpoint = chunk.checkpoint;
+    fromBlock = toBlock + 1n;
+  }
+  return Object.freeze({ checkpoint, transfers: Object.freeze(transfers) });
 }
 
 function batchTelemetry(timing, planned, committed, completedAt) {
@@ -246,11 +267,7 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
   async function verifyDeficit(runId, range, deficit) {
     let receipts;
     try {
-      receipts = await reader.readReceiptRange({
-        tokenAddress: deficit.tokenAddress,
-        fromBlock: range.fromBlock,
-        toBlock: deficit.failedBlock,
-      });
+      receipts = await readReceiptRepair(reader, range, deficit);
       const repairedTransfers = mergeReceiptRepair(range, deficit, receipts);
       const committed = await committer.commitRange({
         ...range, runId, transfers: repairedTransfers,
@@ -488,5 +505,6 @@ module.exports = {
   createRobinhoodHolderGlobalBackfillScanner,
   __private: {
     batchTelemetry, mergeFetchedRanges, mergeReceiptRepair, normalizeOptions, planRanges,
+    readReceiptRepair,
   },
 };

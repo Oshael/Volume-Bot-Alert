@@ -3338,7 +3338,9 @@ O worker lê `Transfer` por range com a coorte enviada como allowlist `address` 
 RPC, commita ranges em ordem e não grava o histórico bruto no journal. Se o node
 rejeitar o tamanho da allowlist, ela é dividida ao meio adaptativamente sem
 ampliar a janela de blocos; `addressSplits` distingue esse caso dos splits de
-range. O global usa um shard por vez por default, configurável de 1 a 4 por
+range. Se um range largo encontrar déficit, a prova por receipts é lida em partes
+de no máximo 1.000 blocos e recomposta em ordem antes do commit, sem reduzir o
+range saudável configurado. O global usa um shard por vez por default, configurável de 1 a 4 por
 `ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ADDRESS_SHARD_CONCURRENCY`; a captura live
 priorizada usa dois em paralelo por default, configurável de 1 a 4 por
 `ROBINHOOD_HOLDER_LIVE_ADDRESS_SHARD_CONCURRENCY`. Dentro da janela de attach
