@@ -2387,8 +2387,10 @@ chega ao holder journal, sem instalar trigger ou obter lock nele. A Stage 183
 (`node src/utils/db-init-stage183.js`) adiciona apenas a provenance necessária,
 com `lock_timeout` curto. Tarefas admitidas nos últimos dez minutos precedem o
 backlog histórico. O caminho primário lê o primeiro mint já capturado e usa o
-`RH_NODE_RPC_URL` da VPS para provar que o bytecode era vazio em `N-1`, existe em
-`N` e que bloco/receipt permanecem canônicos. Essa prova
+`discovery_tx_hash` do primeiro pool ativo como fallback quando o token não emite
+mint observável. O `RH_NODE_RPC_URL` da VPS prova que o bytecode era vazio em
+`N-1`, existe em `N` e que bloco/receipt permanecem canônicos; portanto uma mera
+descoberta de pool nunca é promovida como deployment. Essa prova
 `rpc_code_transition` preserva imediatamente o deployment block, mas não é mais
 terminal para a outbox de creator. No mesmo item, o worker consulta primeiro o
 journal canônico do bloco: receipt direto materializa `rpc_direct` e evento de
@@ -2404,7 +2406,8 @@ não depende de Archive nem do túnel do PC.
 Quando nem a transição local pode ser comprovada, Blockscout permanece fallback:
 seu hint é validado contra receipt/bloco canônicos e materializa `rpc_direct` ou
 `blockscout_internal`. Crédito esgotado abre um circuit breaker em memória; novas
-provas RPC continuam sendo tentadas, sem chamadas repetidas ao provedor. Se a
+provas RPC continuam sendo tentadas, sem chamadas repetidas ao provedor. Respostas
+HTTP `401`, `403` e `429` também abrem esse circuito. Se a
 rota v2 de internal transactions
 responder com erro transitório, usa `txlistinternal` público como fallback; a
 rota de endereço também recupera o transaction hash pelo primeiro mint ERC-20

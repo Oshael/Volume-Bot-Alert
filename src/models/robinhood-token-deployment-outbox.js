@@ -72,6 +72,23 @@ function createRobinhoodTokenDeploymentOutboxRepository(options = {}) {
     }) : null;
   }
 
+  async function findDiscoveryHint(tokenAddress) {
+    const normalized = normalizeTokenAddress(CHAIN, tokenAddress);
+    const { rows } = await database.query(
+      `SELECT discovery_block, discovery_block_hash, discovery_tx_hash
+         FROM robinhood_pool_registry
+        WHERE chain = '${CHAIN}' AND token_address = $1 AND active = TRUE
+        ORDER BY discovery_block, discovery_log_index LIMIT 1`,
+      [normalized]
+    );
+    return rows[0] ? Object.freeze({
+      tokenAddress: normalized,
+      blockNumber: String(rows[0].discovery_block),
+      blockHash: rows[0].discovery_block_hash,
+      transactionHash: rows[0].discovery_tx_hash,
+    }) : null;
+  }
+
   async function isExact(tokenAddress) {
     const address = normalizeTokenAddress(CHAIN, tokenAddress);
     const result = await database.query(
@@ -108,7 +125,7 @@ function createRobinhoodTokenDeploymentOutboxRepository(options = {}) {
     return result.rowCount === 1;
   }
 
-  return Object.freeze({ claim, complete, findMintHint, isExact, retry });
+  return Object.freeze({ claim, complete, findDiscoveryHint, findMintHint, isExact, retry });
 }
 
 module.exports = { createRobinhoodTokenDeploymentOutboxRepository };

@@ -110,6 +110,11 @@ function normalizeOptions(input = {}) {
   });
 }
 
+function blockscoutUnavailable(error) {
+  if (['credits_exhausted', 'blockscout_circuit_open'].includes(error?.code)) return true;
+  return error?.code === 'http_error' && [401, 403, 429].includes(Number(error.httpStatus));
+}
+
 function createBlockscoutClient(deps, env, options) {
   const apiKey = String(env.ROBINHOOD_BLOCKSCOUT_API_KEY || '').trim();
   const apiUrl = String(env.ROBINHOOD_BLOCKSCOUT_API_URL
@@ -184,15 +189,18 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     if (typeof current.outbox.findMintHint !== 'function'
         || typeof current.localResolver?.verify !== 'function') return null;
     const mintHint = await current.outbox.findMintHint(task.tokenAddress);
-    if (!mintHint) {
+    const discoveryHint = !mintHint && typeof current.outbox.findDiscoveryHint === 'function'
+      ? await current.outbox.findDiscoveryHint(task.tokenAddress) : null;
+    const localHint = mintHint || discoveryHint;
+    if (!localHint) {
       if (taskAge(task) < LOCAL_EVIDENCE_GRACE_MS) {
-        throw Object.assign(new Error('mint evidence has not reached the journal yet'), {
+        throw Object.assign(new Error('deployment evidence has not reached the journal yet'), {
           code: 'local_mint_pending', stage: 'rpc_code_transition',
         });
       }
       return null;
     }
-    try { return await current.localResolver.verify(mintHint); }
+    try { return await current.localResolver.verify(localHint); }
     catch (error) {
       if (error.code === 'configuration_error') throw error;
       return null;
@@ -231,8 +239,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
 
   function retryFor(task, error) {
     if (error.code === 'local_mint_pending') return LOCAL_EVIDENCE_RETRY_MS;
-    const providerUnavailable = ['credits_exhausted', 'blockscout_circuit_open']
-      .includes(error.code);
+    const providerUnavailable = blockscoutUnavailable(error);
     if (!providerUnavailable) return retryDelay(task.attemptCount);
     return taskAge(task) < HOT_TASK_MAX_AGE_MS ? HOT_PROVIDER_RETRY_MS : options.maxRetryMs;
   }
@@ -272,12 +279,12 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
       status.totalResolved += 1;
       return { status: 'resolved', tokenAddress: task.tokenAddress, source: deployment.source };
     } catch (error) {
-      if (error.code === 'credits_exhausted') {
+      if (blockscoutUnavailable(error)) {
         blockscoutUnavailableUntil = now() + options.maxRetryMs;
       }
       if (task) await deferTask(task, error);
-      if (['blockscout_creation_pending', 'blockscout_circuit_open', 'credits_exhausted',
-        'local_mint_pending'].includes(error.code)) {
+      if (['blockscout_creation_pending', 'local_mint_pending'].includes(error.code)
+          || blockscoutUnavailable(error)) {
         return { status: 'deferred', reason: error.code, tokenAddress: task?.tokenAddress || null };
       }
       status.lastError = { code: error.code || 'deployment_resolution_failed', message: error.message };
@@ -336,5 +343,7 @@ const worker = createRobinhoodTokenDeploymentWorker();
 module.exports = {
   NOTIFY_CHANNEL, createRobinhoodTokenDeploymentWorker,
   getStatus: worker.getStatus, runOnce: worker.runOnce, start: worker.start, stop: worker.stop,
-  __private: { buildRuntime, createLocalCodeTransitionResolver, normalizeOptions },
+  __private: {
+    blockscoutUnavailable, buildRuntime, createLocalCodeTransitionResolver, normalizeOptions,
+  },
 };

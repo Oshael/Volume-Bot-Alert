@@ -76,6 +76,41 @@ it('uses a canonical local code transition before calling Blockscout', async () 
   assert.deepEqual(fixture.calls, ['local-attributed', 'creator-attributed', 'complete']);
 });
 
+it('uses the canonical pool discovery transaction when no mint was observed', async () => {
+  let verifiedHint;
+  const discoveryHint = {
+    tokenAddress: TOKEN, blockNumber: '100', blockHash: BLOCK_HASH,
+    transactionHash: TRANSACTION_HASH,
+  };
+  const fixture = runtime({
+    outbox: {
+      claim: async () => ({ tokenAddress: TOKEN, attemptCount: 1, createdAt: new Date() }),
+      isExact: async () => false,
+      findMintHint: async () => null,
+      findDiscoveryHint: async () => discoveryHint,
+      complete: async () => { fixture.calls.push('complete'); },
+      retry: async () => { throw new Error('must not retry'); },
+    },
+    localResolver: { verify: async (hint) => { verifiedHint = hint; return hint; } },
+    creatorSource: { readRange: async () => new Map([['100', { deployments: [] }]]) },
+    verifier: { verifyTransactionDeployment: async () => ({
+      ...discoveryHint, creatorAddress: TOKEN,
+      source: 'rpc_trace', factoryAddress: TOKEN,
+    }) },
+    blockscout: { getContractCreation: async () => { throw new Error('must not call'); } },
+    attributions: {
+      recordCodeTransitions: async () => { fixture.calls.push('local-attributed'); },
+      recordVerifiedDirectDeployments: async () => { fixture.calls.push('creator-attributed'); },
+    },
+  });
+  const result = await createRobinhoodTokenDeploymentWorker({
+    runtime: fixture.value, owner: 'test',
+  }).runOnce();
+  assert.deepEqual(verifiedHint, discoveryHint);
+  assert.equal(result.source, 'rpc_trace');
+  assert.deepEqual(fixture.calls, ['local-attributed', 'creator-attributed', 'complete']);
+});
+
 it('keeps the exact transition queued when LIVE trace evidence is unavailable', async () => {
   const fixture = runtime({
     outbox: {
@@ -175,6 +210,26 @@ it('prioritizes recent outbox tasks and loads their earliest captured mint', asy
   assert.match(calls[1].sql, /applied = true/);
 });
 
+it('loads the earliest active pool transaction as canonical discovery evidence', async () => {
+  let query;
+  const repository = createRobinhoodTokenDeploymentOutboxRepository({
+    database: { query: async (sql, params) => {
+      query = { sql, params };
+      return { rows: [{
+        discovery_block: '101', discovery_block_hash: BLOCK_HASH,
+        discovery_tx_hash: TRANSACTION_HASH,
+      }] };
+    } },
+  });
+  assert.deepEqual(await repository.findDiscoveryHint(TOKEN), {
+    tokenAddress: TOKEN, blockNumber: '101', blockHash: BLOCK_HASH,
+    transactionHash: TRANSACTION_HASH,
+  });
+  assert.match(query.sql, /active = TRUE/);
+  assert.match(query.sql, /ORDER BY discovery_block, discovery_log_index LIMIT 1/);
+  assert.deepEqual(query.params, [TOKEN]);
+});
+
 it('does not treat a code transition without creator provenance as exact', async () => {
   let exactSources;
   const repository = createRobinhoodTokenDeploymentOutboxRepository({
@@ -200,6 +255,27 @@ it('defers missing Blockscout evidence and skips already attributed tokens', asy
   const result = await createRobinhoodTokenDeploymentWorker({ runtime: exact.value, owner: 'test' }).runOnce();
   assert.equal(result.status, 'already-attributed');
   assert.deepEqual(exact.calls, ['complete']);
+});
+
+it('backs off an unauthorized Blockscout fallback without failing worker health', async () => {
+  let retry;
+  const fixture = runtime({
+    outbox: {
+      claim: async () => ({ tokenAddress: TOKEN, attemptCount: 1, createdAt: new Date() }),
+      isExact: async () => false,
+      complete: async () => { throw new Error('must not complete'); },
+      retry: async (input) => { retry = input; },
+    },
+    blockscout: { getContractCreation: async () => {
+      throw Object.assign(new Error('unauthorized'), { code: 'http_error', httpStatus: 401 });
+    } },
+  });
+  const worker = createRobinhoodTokenDeploymentWorker({ runtime: fixture.value, owner: 'test' });
+  assert.deepEqual(await worker.runOnce(), {
+    status: 'deferred', reason: 'http_error', tokenAddress: TOKEN,
+  });
+  assert.equal(retry.retryMs, 5000);
+  assert.equal(worker.getStatus().lastError, null);
 });
 
 it('configures the Blockscout PRO API when the live worker has an API key', () => {
