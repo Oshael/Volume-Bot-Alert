@@ -71,45 +71,26 @@ function queryWithTimeout(database, sql, params, timeoutMs) {
 }
 
 async function deleteExpiredProcessedLogs(database, options) {
-  const laneLimit = Math.max(1, Math.floor(options.batchLimit / 2));
   const result = await queryWithTimeout(
     database,
-    `WITH independent_expired AS MATERIALIZED (
-       SELECT processed.chain, processed.transaction_hash, processed.log_index,
-              observation.status, observation.block_number, observation.protocol,
-              observation.market_key, observation.token_address,
-              observation.quote_address, observation.observed_at
+    `WITH expired_prefix AS MATERIALIZED (
+       SELECT processed.chain, processed.transaction_hash, processed.log_index
        FROM robinhood_processed_logs processed
-       LEFT JOIN robinhood_market_observations observation
-         ON observation.chain = processed.chain
-        AND observation.transaction_hash = processed.transaction_hash
-        AND observation.log_index = processed.log_index
        WHERE processed.expires_at <= NOW()
-         AND (observation.status IS NULL OR observation.status = 'rejected')
-       ORDER BY processed.expires_at ASC
-       LIMIT $1::int
-       FOR UPDATE OF processed SKIP LOCKED
-     ),
-     guarded_expired AS MATERIALIZED (
-       SELECT processed.chain, processed.transaction_hash, processed.log_index,
-              observation.status, observation.block_number, observation.protocol,
-              observation.market_key, observation.token_address,
-              observation.quote_address, observation.observed_at
-       FROM robinhood_processed_logs processed
-       INNER JOIN robinhood_market_observations observation
-         ON observation.chain = processed.chain
-        AND observation.transaction_hash = processed.transaction_hash
-        AND observation.log_index = processed.log_index
-       WHERE processed.expires_at <= NOW()
-         AND observation.status <> 'rejected'
        ORDER BY processed.expires_at ASC
        LIMIT $1::int
        FOR UPDATE OF processed SKIP LOCKED
      ),
      expired AS MATERIALIZED (
-       SELECT * FROM independent_expired
-       UNION ALL
-       SELECT * FROM guarded_expired
+       SELECT prefix.chain, prefix.transaction_hash, prefix.log_index,
+              observation.status, observation.block_number, observation.protocol,
+              observation.market_key, observation.token_address,
+              observation.quote_address, observation.observed_at
+       FROM expired_prefix prefix
+       LEFT JOIN robinhood_market_observations observation
+         ON observation.chain = prefix.chain
+        AND observation.transaction_hash = prefix.transaction_hash
+        AND observation.log_index = prefix.log_index
      ),
      classified AS MATERIALIZED (
        SELECT expired.chain, expired.transaction_hash, expired.log_index,
@@ -199,7 +180,7 @@ async function deleteExpiredProcessedLogs(database, options) {
        protection_stats.candidate_block_min,
        protection_stats.candidate_block_max
      FROM protection_stats`,
-    [laneLimit, options.walletCompleteThroughBlock],
+    [options.batchLimit, options.walletCompleteThroughBlock],
     options.statementTimeoutMs
   );
   const examined = Number(result.rows[0]?.examined_logs || 0);

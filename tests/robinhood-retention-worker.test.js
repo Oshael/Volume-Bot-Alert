@@ -98,14 +98,20 @@ describe('Robinhood retention worker', () => {
       protectedHourlyBuckets: 0,
     });
     assert.equal(database.calls.length, 2);
-    assert.ok(database.calls.every((call) => call.params[0] === 50));
+    assert.ok(database.calls.every((call) => call.params[0] === 100));
     assert.ok(database.calls.every((call) => call.timeoutMs === 2500));
     assert.match(database.calls[0].sql, /FOR UPDATE OF processed SKIP LOCKED/);
-    assert.match(database.calls[0].sql, /independent_expired AS MATERIALIZED/);
-    assert.match(database.calls[0].sql, /guarded_expired AS MATERIALIZED/);
+    assert.match(database.calls[0].sql, /expired_prefix AS MATERIALIZED/);
+    assert.match(database.calls[0].sql,
+      /FROM robinhood_processed_logs processed[\s\S]*LIMIT \$1::int[\s\S]*FOR UPDATE/);
+    assert.match(database.calls[0].sql,
+      /FROM expired_prefix prefix[\s\S]*LEFT JOIN robinhood_market_observations/);
+    assert.ok(
+      database.calls[0].sql.indexOf('LIMIT $1::int')
+        < database.calls[0].sql.indexOf('LEFT JOIN robinhood_market_observations')
+    );
     assert.match(database.calls[0].sql, /robinhood_market_observations/);
     assert.match(database.calls[0].sql, /expired\.status = 'accepted'/);
-    assert.match(database.calls[0].sql, /observation\.status <> 'rejected'/);
     assert.match(database.calls[0].sql, /robinhood_market_buckets_1m minute/);
     assert.match(database.calls[0].sql, /robinhood_backfill_aggregation_outbox aggregation/);
     assert.match(database.calls[0].sql, /aggregation\.status <> 'completed'/);
@@ -113,7 +119,7 @@ describe('Robinhood retention worker', () => {
     assert.match(database.calls[0].sql, /expired\.block_number <= \$2::bigint/);
     assert.match(database.calls[0].sql,
       /COUNT\(\*\) FILTER \(WHERE status IS NOT NULL\)::int AS observations/);
-    assert.deepEqual(database.calls[0].params, [50, '900']);
+    assert.deepEqual(database.calls[0].params, [100, '900']);
     assert.doesNotMatch(database.calls[0].sql, /status = 'pending'/);
   });
 
@@ -220,7 +226,7 @@ describe('Robinhood retention worker', () => {
     assert.equal(summary.walletGateReason, 'watermark_load_error');
     assert.equal(summary.candidatesProtectedByWallet, 3);
     assert.equal(summary.processedLogs, 5);
-    assert.deepEqual(database.calls[0].params, [50, null]);
+    assert.deepEqual(database.calls[0].params, [100, null]);
     assert.match(database.calls[0].sql, /status = 'rejected'/);
     assert.match(database.calls[0].sql, /status = 'accepted' AND wallet_complete/);
     assert.equal(worker.getStatus().lastWalletGateValid, false);
