@@ -28,7 +28,7 @@ const STATEMENTS = Object.freeze([
      CONSTRAINT robinhood_backfill_aggregation_outbox_observation_fkey
        FOREIGN KEY (chain, transaction_hash, log_index)
        REFERENCES robinhood_market_observations(chain, transaction_hash, log_index)
-       ON DELETE RESTRICT,
+       ON DELETE CASCADE,
      CONSTRAINT robinhood_backfill_aggregation_outbox_chain_check
        CHECK (chain = 'robinhood'),
      CONSTRAINT robinhood_backfill_aggregation_outbox_protocol_check
@@ -51,7 +51,7 @@ const STATEMENTS = Object.freeze([
      ADD CONSTRAINT robinhood_backfill_aggregation_outbox_observation_fkey
      FOREIGN KEY (chain, transaction_hash, log_index)
      REFERENCES robinhood_market_observations(chain, transaction_hash, log_index)
-     ON DELETE RESTRICT`,
+     ON DELETE CASCADE NOT VALID`,
   `CREATE INDEX IF NOT EXISTS idx_robinhood_backfill_aggregation_outbox_claim
      ON robinhood_backfill_aggregation_outbox(
        next_attempt_at, bucket_ts, transaction_hash, log_index

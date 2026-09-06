@@ -36,6 +36,7 @@ function createFakeDatabase(rawBatches = []) {
             observations: row.observations,
             wallet_protected: row.protectedByWallet,
             bucket_protected: row.protectedByBucketCoverage,
+            aggregation_protected: row.protectedByAggregation,
             candidate_block_min: row.candidateBlockMin,
             candidate_block_max: row.candidateBlockMax,
           }],
@@ -83,6 +84,7 @@ describe('Robinhood retention worker', () => {
       protectedProcessedLogs: 0,
       candidatesProtectedByWallet: 0,
       candidatesProtectedByBucketCoverage: 0,
+      candidatesProtectedByAggregation: 0,
       retentionCandidateBlockMin: null,
       retentionCandidateBlockMax: null,
       walletGateValid: true,
@@ -105,6 +107,8 @@ describe('Robinhood retention worker', () => {
     assert.match(database.calls[0].sql, /observation\.status = 'accepted'/);
     assert.match(database.calls[0].sql, /observation\.status <> 'rejected'/);
     assert.match(database.calls[0].sql, /robinhood_market_buckets_1m minute/);
+    assert.match(database.calls[0].sql, /robinhood_backfill_aggregation_outbox aggregation/);
+    assert.match(database.calls[0].sql, /aggregation\.status <> 'completed'/);
     assert.match(database.calls[0].sql, /status = 'rejected'/);
     assert.match(database.calls[0].sql, /observation\.block_number <= \$2::bigint/);
     assert.deepEqual(database.calls[0].params, [50, '900']);
@@ -146,6 +150,7 @@ describe('Robinhood retention worker', () => {
       protectedProcessedLogs: 0,
       candidatesProtectedByWallet: 0,
       candidatesProtectedByBucketCoverage: 0,
+      candidatesProtectedByAggregation: 0,
       retentionCandidateBlockMin: null,
       retentionCandidateBlockMax: null,
       walletGateValid: false,
@@ -165,10 +170,11 @@ describe('Robinhood retention worker', () => {
     const database = createFakeDatabase([
       {
         examined: 10,
-        processedLogs: 7,
-        observations: 7,
+        processedLogs: 6,
+        observations: 6,
         protectedByWallet: 2,
         protectedByBucketCoverage: 1,
+        protectedByAggregation: 1,
         candidateBlockMin: '899',
         candidateBlockMax: '901',
       },
@@ -176,10 +182,11 @@ describe('Robinhood retention worker', () => {
 
     const summary = await worker.runOnce({ batchLimit: 100 }, {}, dependencies(database));
 
-    assert.equal(summary.protectedProcessedLogs, 3);
-    assert.equal(summary.processedLogs, 7);
+    assert.equal(summary.protectedProcessedLogs, 4);
+    assert.equal(summary.processedLogs, 6);
     assert.equal(summary.candidatesProtectedByWallet, 2);
     assert.equal(summary.candidatesProtectedByBucketCoverage, 1);
+    assert.equal(summary.candidatesProtectedByAggregation, 1);
     assert.equal(summary.retentionCandidateBlockMin, '899');
     assert.equal(summary.retentionCandidateBlockMax, '901');
     assert.equal(summary.hourlyBuckets, 0);

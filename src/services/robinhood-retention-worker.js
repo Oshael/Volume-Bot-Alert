@@ -23,6 +23,7 @@ let status = {
   lastProtectedProcessedLogs: 0,
   lastCandidatesProtectedByWallet: 0,
   lastCandidatesProtectedByBucketCoverage: 0,
+  lastCandidatesProtectedByAggregation: 0,
   lastRetentionCandidateBlockMin: null,
   lastRetentionCandidateBlockMax: null,
   lastWalletGateValid: false,
@@ -129,7 +130,15 @@ async function deleteExpiredProcessedLogs(database, options) {
                AND (minute.last_block_number, minute.last_log_index)
                  >= (observation.block_number, observation.log_index)
            )
-         ) AS bucket_covered
+         ) AS bucket_covered,
+         NOT EXISTS (
+           SELECT 1
+           FROM robinhood_backfill_aggregation_outbox aggregation
+           WHERE aggregation.chain = expired.chain
+             AND aggregation.transaction_hash = expired.transaction_hash
+             AND aggregation.log_index = expired.log_index
+             AND aggregation.status <> 'completed'
+         ) AS aggregation_complete
        FROM expired
        LEFT JOIN robinhood_market_observations observation
          ON observation.chain = expired.chain
@@ -141,7 +150,12 @@ async function deleteExpiredProcessedLogs(database, options) {
        FROM classified
        WHERE status IS NULL
           OR status = 'rejected'
-          OR (status = 'accepted' AND wallet_complete AND bucket_covered)
+          OR (
+            status = 'accepted'
+            AND wallet_complete
+            AND bucket_covered
+            AND aggregation_complete
+          )
      ),
      protection_stats AS (
        SELECT
@@ -151,6 +165,12 @@ async function deleteExpiredProcessedLogs(database, options) {
          COUNT(*) FILTER (
            WHERE status = 'accepted' AND wallet_complete AND NOT bucket_covered
          )::int AS bucket_protected,
+         COUNT(*) FILTER (
+           WHERE status = 'accepted'
+             AND wallet_complete
+             AND bucket_covered
+             AND NOT aggregation_complete
+         )::int AS aggregation_protected,
          MIN(block_number) FILTER (WHERE status = 'accepted')::text AS candidate_block_min,
          MAX(block_number) FILTER (WHERE status = 'accepted')::text AS candidate_block_max
        FROM classified
@@ -177,6 +197,7 @@ async function deleteExpiredProcessedLogs(database, options) {
        (SELECT observations FROM observation_stats) AS observations,
        protection_stats.wallet_protected,
        protection_stats.bucket_protected,
+       protection_stats.aggregation_protected,
        protection_stats.candidate_block_min,
        protection_stats.candidate_block_max
      FROM protection_stats`,
@@ -192,6 +213,7 @@ async function deleteExpiredProcessedLogs(database, options) {
     observations: Number(result.rows[0]?.observations || 0),
     protectedByWallet: Number(result.rows[0]?.wallet_protected || 0),
     protectedByBucketCoverage: Number(result.rows[0]?.bucket_protected || 0),
+    protectedByAggregation: Number(result.rows[0]?.aggregation_protected || 0),
     candidateBlockMin: result.rows[0]?.candidate_block_min || null,
     candidateBlockMax: result.rows[0]?.candidate_block_max || null,
   };
@@ -205,6 +227,7 @@ function emptySummary(wallet = {}) {
     protectedProcessedLogs: 0,
     candidatesProtectedByWallet: 0,
     candidatesProtectedByBucketCoverage: 0,
+    candidatesProtectedByAggregation: 0,
     retentionCandidateBlockMin: null,
     retentionCandidateBlockMax: null,
     walletGateValid: wallet.valid === true,
@@ -272,6 +295,7 @@ async function runCleanupBatches(database, options, wallet) {
     summary.protectedProcessedLogs += raw.protected;
     summary.candidatesProtectedByWallet += raw.protectedByWallet;
     summary.candidatesProtectedByBucketCoverage += raw.protectedByBucketCoverage;
+    summary.candidatesProtectedByAggregation += raw.protectedByAggregation;
     summary.retentionCandidateBlockMin = lowerBlock(
       summary.retentionCandidateBlockMin,
       raw.candidateBlockMin
@@ -318,6 +342,8 @@ async function runOnce(options = {}, meta = {}, deps = {}) {
       status.lastCandidatesProtectedByWallet = summary.candidatesProtectedByWallet;
       status.lastCandidatesProtectedByBucketCoverage =
         summary.candidatesProtectedByBucketCoverage;
+      status.lastCandidatesProtectedByAggregation =
+        summary.candidatesProtectedByAggregation;
       status.lastRetentionCandidateBlockMin = summary.retentionCandidateBlockMin;
       status.lastRetentionCandidateBlockMax = summary.retentionCandidateBlockMax;
       status.lastWalletGateValid = summary.walletGateValid;
@@ -359,6 +385,7 @@ function schedule(options, delayMs) {
           `protectedLogs=${summary.protectedProcessedLogs}`,
           `walletProtected=${summary.candidatesProtectedByWallet}`,
           `bucketProtected=${summary.candidatesProtectedByBucketCoverage}`,
+          `aggregationProtected=${summary.candidatesProtectedByAggregation}`,
           `walletGate=${summary.walletGateValid ? 'valid' : summary.walletGateReason}`,
           `observations=${summary.observations}`,
           `hourlyBuckets=${summary.hourlyBuckets}`,

@@ -3,6 +3,7 @@ const { describe, it } = require('node:test');
 
 const stage82 = require('../src/utils/db-init-stage82');
 const stage83 = require('../src/utils/db-init-stage83');
+const stage200 = require('../src/utils/db-init-stage200');
 const { SCHEMA_GROUPS, getGroupsForProfile } = require('../src/utils/runtime-schema');
 
 describe('Robinhood durable backfill capture schema', () => {
@@ -70,12 +71,22 @@ describe('Robinhood durable backfill capture schema', () => {
 
     assert.match(sql, /CREATE TABLE IF NOT EXISTS robinhood_backfill_aggregation_outbox/);
     assert.match(sql, /REFERENCES robinhood_market_observations/);
-    assert.match(sql, /ON DELETE RESTRICT/);
+    assert.match(sql, /ON DELETE CASCADE/);
     assert.match(sql, /PRIMARY KEY \(chain, transaction_hash, log_index\)/);
     assert.match(sql, /idx_robinhood_backfill_aggregation_outbox_claim/);
     assert.match(sql, /idx_robinhood_backfill_aggregation_outbox_bucket/);
     assert.doesNotMatch(sql, /robinhood_ingestion_cursors/);
     assert.equal(group.repair, 'node src/utils/db-init-stage83.js');
     assert.ok(getGroupsForProfile('test').includes(group));
+  });
+
+  it('makes raw retention cascades safe and tunes autovacuum for churn', () => {
+    const sql = stage200.STATEMENTS.join('\n');
+
+    assert.match(sql, /robinhood_backfill_aggregation_outbox_observation_fkey/);
+    assert.match(sql, /ON DELETE CASCADE NOT VALID/);
+    assert.match(sql, /ALTER TABLE robinhood_market_observations SET/);
+    assert.match(sql, /ALTER TABLE robinhood_processed_logs SET/);
+    assert.match(sql, /autovacuum_vacuum_scale_factor = 0\.005/);
   });
 });

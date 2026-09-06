@@ -365,6 +365,20 @@ As units de manutenção usam nomes simétricos:
 `trendscope-worker@robinhood-maintenance.service` na porta `3011`. A unit
 Robinhood deve subir inicialmente com `ROBINHOOD_RETENTION_ENABLED=false`.
 
+Antes de habilitar a retenção Robinhood, aplique a Stage 200 com
+`node src/utils/db-init-stage200.js`. O worker remove em lotes apenas
+`robinhood_processed_logs` expirados e as respectivas
+`robinhood_market_observations`: observações aceitas exigem fronteira de wallet
+concluída, cobertura no bucket de 1 minuto e nenhuma tarefa de agregação
+`pending`, `leased` ou `blocked`. A tarefa de agregação `completed` é removida por
+cascade junto da observação. Buckets permanentes, agregados, projeções de wallet,
+holders e o journal canônico não participam dessa retenção.
+
+Os `DELETE`s tornam páginas antigas reutilizáveis pelo PostgreSQL; não devolvem
+imediatamente espaço ao filesystem. A Stage 200 configura autovacuum mais sensível
+em `robinhood_processed_logs` e `robinhood_market_observations`. Reclaim físico e
+retenção do journal canônico são operações separadas.
+
 O grupo `robinhood-head` roda um processo separado (systemd
 `trendscope-worker@robinhood-head.service`) que instancia o runner de ingestão com o
 adapter de captura (`robinhood_head_captures` + cursor próprio) e o pipeline em

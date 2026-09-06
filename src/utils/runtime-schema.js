@@ -1962,7 +1962,7 @@ const SCHEMA_GROUPS = [
         },
         {
           name: 'robinhood_backfill_aggregation_outbox_observation_fkey',
-          includes: ['FOREIGN KEY', 'robinhood_market_observations', 'ON DELETE RESTRICT'],
+          includes: ['FOREIGN KEY', 'robinhood_market_observations', 'ON DELETE CASCADE'],
         },
         {
           name: 'robinhood_backfill_aggregation_outbox_lease_check',
