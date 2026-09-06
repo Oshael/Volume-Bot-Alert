@@ -1,3 +1,5 @@
+const fs = require('node:fs/promises');
+const path = require('node:path');
 const db = require('../models/db');
 const { isAdaptiveRangeError, toQuantity } = require('../services/evm-log-poller');
 const {
@@ -8,6 +10,7 @@ const v3 = require('../services/uniswap-v3-decoder');
 const repair = require('./repair-robinhood-v3-pruned-captures').__private;
 
 const CHAIN_ID = 4663n;
+const CHECKPOINT_VERSION = 1;
 const STOCKS = new Map(Object.entries(ROBINHOOD_TOKENIZED_ASSETS)
   .map(([symbol, address]) => [address.toLowerCase(), symbol]));
 const STANDARD_QUOTES = new Set([
@@ -42,6 +45,19 @@ function parseArgs(argv = process.argv.slice(2), env = process.env) {
   if (BigInt(toBlock) < BigInt(discoveryFromBlock)) {
     throw new Error('to-block must not precede discovery-from-block');
   }
+  const checkpointFile = String(
+    args['checkpoint-file'] || env.ROBINHOOD_V3_STOCK_AUDIT_CHECKPOINT_FILE || ''
+  ).trim() || null;
+  const maxRanges = integer(args['max-ranges'], 0, 0, 10_000_000, 'max-ranges');
+  if (maxRanges > 0 && !checkpointFile) {
+    throw new Error('checkpoint-file is required when max-ranges is set');
+  }
+  const reportFile = String(
+    args['report-file'] || (checkpointFile ? `${checkpointFile}.report.json` : '')
+  ).trim() || null;
+  if (checkpointFile && reportFile && path.resolve(checkpointFile) === path.resolve(reportFile)) {
+    throw new Error('report-file must differ from checkpoint-file');
+  }
   return {
     rpcUrl: String(args['rpc-url'] || env.ROBINHOOD_V3_REPAIR_RPC_URL || '').trim(),
     fromBlock, toBlock, discoveryFromBlock,
@@ -52,6 +68,94 @@ function parseArgs(argv = process.argv.slice(2), env = process.env) {
     minRangeSize: integer(args['min-range-size'], 1, 1, 100_000, 'min-range-size'),
     addressBatchSize: integer(args['address-batch-size'], 100, 1, 500, 'address-batch-size'),
     identityBatchSize: integer(args['identity-batch-size'], 5_000, 1, 10_000, 'identity-batch-size'),
+    maxRanges,
+    checkpointFile,
+    reportFile,
+  };
+}
+
+function createJsonStore(filename, label) {
+  if (!filename) return Object.freeze({ load: async () => null, save: async () => {} });
+  const resolved = path.resolve(filename);
+  return Object.freeze({
+    load: async () => {
+      try {
+        return JSON.parse(await fs.readFile(resolved, 'utf8'));
+      } catch (error) {
+        if (error?.code === 'ENOENT') return null;
+        throw new Error(`Cannot read ${label} ${resolved}: ${error.message}`);
+      }
+    },
+    save: async (value) => {
+      await fs.mkdir(path.dirname(resolved), { recursive: true });
+      const temporary = `${resolved}.tmp-${process.pid}`;
+      try {
+        await fs.writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+        await fs.rename(temporary, resolved);
+      } finally {
+        await fs.unlink(temporary).catch((error) => {
+          if (error?.code !== 'ENOENT') throw error;
+        });
+      }
+    },
+  });
+}
+
+function emptyAuditState(options) {
+  return {
+    version: CHECKPOINT_VERSION,
+    fromBlock: options.fromBlock,
+    toBlock: options.toBlock,
+    discoveryFromBlock: options.discoveryFromBlock,
+    phase: 'discovery',
+    totalRanges: 0,
+    discovery: { nextBlock: options.discoveryFromBlock, completed: false, pools: [] },
+    references: { nextBlock: null, completed: false, initialized: {} },
+    swaps: { nextBlock: null, completed: false, completedRanges: 0, stats: [] },
+  };
+}
+
+function restoreAuditState(saved, options) {
+  if (!saved) return emptyAuditState(options);
+  if (saved.version !== CHECKPOINT_VERSION) throw new Error('Checkpoint version is invalid');
+  for (const key of ['fromBlock', 'toBlock', 'discoveryFromBlock']) {
+    if (String(saved[key]) !== String(options[key])) {
+      throw new Error(`Checkpoint ${key} does not match this execution`);
+    }
+  }
+  if (!['discovery', 'reference-initialization', 'swaps', 'complete'].includes(saved.phase)) {
+    throw new Error('Checkpoint phase is invalid');
+  }
+  return saved;
+}
+
+function executionSnapshot(state, report = null) {
+  return {
+    mode: 'read-only', completed: state.phase === 'complete', phase: state.phase,
+    updatedAt: new Date().toISOString(), fromBlock: state.fromBlock, toBlock: state.toBlock,
+    discoveryFromBlock: state.discoveryFromBlock, totalRanges: state.totalRanges,
+    progress: {
+      discovery: {
+        completed: state.discovery.completed, nextBlock: state.discovery.nextBlock,
+        stockPools: state.discovery.pools.length,
+      },
+      references: {
+        completed: state.references.completed, nextBlock: state.references.nextBlock,
+        initializedPools: Object.keys(state.references.initialized).length,
+      },
+      swaps: {
+        completed: state.swaps.completed, nextBlock: state.swaps.nextBlock,
+        completedRanges: state.swaps.completedRanges,
+        archiveSwapLogs: state.swaps.stats.reduce((total, row) => total + row.archiveSwaps, 0),
+        missing: state.swaps.stats.reduce((total, row) => total + row.missing, 0),
+      },
+    },
+    partial: {
+      stockPools: state.discovery.pools,
+      initializedReferences: state.references.initialized,
+      candidates: state.swaps.stats,
+    },
+    report,
   };
 }
 
@@ -171,15 +275,21 @@ function registryAssessment(pool, registry) {
   };
 }
 
-async function scanReferenceInitializations(options, rpcClient, references) {
-  const initialized = new Map();
-  if (!references.length) return initialized;
-  let cursor = references.reduce((minimum, pool) => {
-    const created = BigInt(pool.blockNumber);
-    return created < minimum ? created : minimum;
-  }, BigInt(options.toBlock));
+async function scanReferenceInitializations(options, rpcClient, references, state, control) {
+  const initialized = new Map(Object.entries(state.initialized));
+  if (!references.length) {
+    state.completed = true;
+    state.nextBlock = (BigInt(options.toBlock) + 1n).toString();
+    return initialized;
+  }
+  let cursor = state.nextBlock == null
+    ? references.reduce((minimum, pool) => {
+      const created = BigInt(pool.blockNumber);
+      return created < minimum ? created : minimum;
+    }, BigInt(options.toBlock))
+    : BigInt(state.nextBlock);
   const end = BigInt(options.toBlock);
-  while (cursor <= end) {
+  while (cursor <= end && control.canRun()) {
     const requestedEnd = cursor + BigInt(options.discoveryRangeSize) - 1n;
     const rangeEnd = requestedEnd < end ? requestedEnd : end;
     const active = references.filter((pool) => BigInt(pool.blockNumber) <= rangeEnd);
@@ -200,6 +310,10 @@ async function scanReferenceInitializations(options, rpcClient, references) {
       }
     }
     cursor = rangeEnd + 1n;
+    state.nextBlock = cursor.toString();
+    state.completed = cursor > end;
+    state.initialized = Object.fromEntries(initialized);
+    await control.afterRange();
     console.log(JSON.stringify({
       event: 'v3_stock_pair_audit_progress', phase: 'reference-initialization',
       nextBlock: cursor.toString(), initializedReferencePools: initialized.size,
@@ -250,11 +364,11 @@ function recordSwap(poolStats, log, state, referencesByStock) {
   else poolStats.missing += 1;
 }
 
-async function scanDiscovery(options, rpcClient, decodePoolCreated) {
-  const pools = new Map();
-  let cursor = BigInt(options.discoveryFromBlock);
+async function scanDiscovery(options, rpcClient, decodePoolCreated, state, control) {
+  const pools = new Map(state.pools.map((pool) => [pool.poolAddress, pool]));
+  let cursor = BigInt(state.nextBlock);
   const end = BigInt(options.toBlock);
-  while (cursor <= end) {
+  while (cursor <= end && control.canRun()) {
     const requestedEnd = cursor + BigInt(options.discoveryRangeSize) - 1n;
     const rangeEnd = requestedEnd < end ? requestedEnd : end;
     const leaves = await fetchLogs(rpcClient, {
@@ -268,6 +382,10 @@ async function scanDiscovery(options, rpcClient, decodePoolCreated) {
       }
     }
     cursor = rangeEnd + 1n;
+    state.nextBlock = cursor.toString();
+    state.completed = cursor > end;
+    state.pools = [...pools.values()];
+    await control.afterRange();
     console.log(JSON.stringify({
       event: 'v3_stock_pair_audit_progress', phase: 'discovery',
       nextBlock: cursor.toString(), stockPools: pools.size,
@@ -276,29 +394,40 @@ async function scanDiscovery(options, rpcClient, decodePoolCreated) {
   return [...pools.values()];
 }
 
-async function auditSwaps(options, rpcClient, repository, candidates, referencesByStock = new Map()) {
-  const stats = new Map(candidates.map((pool) => [pool.poolAddress, {
+function newSwapStats(candidates) {
+  return candidates.map((pool) => ({
     poolAddress: pool.poolAddress, tokenAddress: pool.tokenAddress, quoteAddress: pool.quoteAddress,
     stockAddress: pool.stockAddress, stockSymbol: pool.stockSymbol,
     createdBlock: pool.blockNumber, archiveSwaps: 0,
     existingProcessed: 0, existingCaptures: 0, missing: 0,
     firstSwapBlock: null, lastSwapBlock: null,
     historicalQuoteCoverage: { directUsdg: 0, viaWeth: 0, uncovered: 0 },
-  }]));
-  if (!candidates.length) return [...stats.values()];
+  }));
+}
+
+async function auditSwaps(
+  options, rpcClient, repository, candidates, referencesByStock, state, control
+) {
+  const seeded = state.stats.length ? state.stats : newSwapStats(candidates);
+  const stats = new Map(seeded.map((row) => [row.poolAddress, row]));
+  if (!candidates.length) {
+    state.completed = true;
+    state.nextBlock = (BigInt(options.toBlock) + 1n).toString();
+    return [...stats.values()];
+  }
   const requestedStart = BigInt(options.fromBlock);
   const firstCreation = candidates.reduce((minimum, pool) => {
     const created = BigInt(pool.blockNumber);
     return created < minimum ? created : minimum;
   }, BigInt(options.toBlock));
   const auditStart = firstCreation > requestedStart ? firstCreation : requestedStart;
-  let completedRanges = 0;
+  let completedRanges = state.completedRanges;
   const totalRanges = Math.ceil(
     Number(BigInt(options.toBlock) - auditStart + 1n) / options.swapRangeSize
   );
-  let cursor = auditStart;
+  let cursor = state.nextBlock == null ? auditStart : BigInt(state.nextBlock);
   const end = BigInt(options.toBlock);
-  while (cursor <= end) {
+  while (cursor <= end && control.canRun()) {
     const requestedEnd = cursor + BigInt(options.swapRangeSize) - 1n;
     const rangeEnd = requestedEnd < end ? requestedEnd : end;
     const activePools = candidates.filter((pool) => BigInt(pool.blockNumber) <= rangeEnd);
@@ -325,6 +454,11 @@ async function auditSwaps(options, rpcClient, repository, candidates, references
     }
     completedRanges += 1;
     cursor = rangeEnd + 1n;
+    state.nextBlock = cursor.toString();
+    state.completed = cursor > end;
+    state.completedRanges = completedRanges;
+    state.stats = [...stats.values()];
+    await control.afterRange();
     console.log(JSON.stringify({
       event: 'v3_stock_pair_audit_progress', phase: 'swaps', completedRanges, totalRanges,
       activePools: activePools.length, addressBatches: addressBatches.length,
@@ -335,27 +469,8 @@ async function auditSwaps(options, rpcClient, repository, candidates, references
   return [...stats.values()];
 }
 
-async function runAudit(options, deps = {}) {
-  if (!options.rpcUrl && !deps.rpcClient) throw new Error('Archive RPC URL is required');
-  const rpcClient = deps.rpcClient || repair.createArchiveClient(options.rpcUrl);
-  const repository = deps.repository || createRepository(deps.database || db);
-  if (BigInt(await rpcClient.request('eth_chainId')) !== CHAIN_ID) {
-    throw new Error('Archive RPC is not on Robinhood Chain');
-  }
-  const stockPools = await scanDiscovery(
-    options, rpcClient, deps.decodePoolCreated || v3.decodePoolCreated
-  );
-  const candidates = stockPools.filter((pool) => pool.category === 'meme_stock_candidate');
-  const referencePools = stockPools.filter((pool) => pool.category === 'stock_reference');
-  const initialized = await scanReferenceInitializations(options, rpcClient, referencePools);
-  const references = referencePools.map((pool) => ({
-    ...pool, initializedBlock: initialized.get(pool.poolAddress) || null,
-  }));
-  const registeredRows = await repository.listRegistered(
-    [...candidates, ...references].map((pool) => pool.poolAddress)
-  );
+function buildReport(options, stockPools, references, audited, registeredRows) {
   const registered = new Map(registeredRows.map((row) => [row.pool_address, row]));
-  const audited = await auditSwaps(options, rpcClient, repository, candidates, referenceIndex(references));
   const rows = audited.map((row) => {
     const registry = registered.get(row.poolAddress) || null;
     const registryAssessmentResult = registryAssessment(row, registry);
@@ -419,6 +534,70 @@ async function runAudit(options, deps = {}) {
   };
 }
 
+async function runAudit(options, deps = {}) {
+  if (!options.rpcUrl && !deps.rpcClient) throw new Error('Archive RPC URL is required');
+  const rpcClient = deps.rpcClient || repair.createArchiveClient(options.rpcUrl);
+  const repository = deps.repository || createRepository(deps.database || db);
+  const checkpoint = deps.checkpoint || createJsonStore(options.checkpointFile, 'checkpoint');
+  const reportStore = deps.reportStore || createJsonStore(options.reportFile, 'report');
+  if (BigInt(await rpcClient.request('eth_chainId')) !== CHAIN_ID) {
+    throw new Error('Archive RPC is not on Robinhood Chain');
+  }
+  const state = restoreAuditState(await checkpoint.load(), options);
+  let runRanges = 0;
+  const persist = async (report = null) => {
+    await checkpoint.save(state);
+    await reportStore.save(executionSnapshot(state, report));
+  };
+  const control = {
+    canRun: () => !options.maxRanges || runRanges < options.maxRanges,
+    afterRange: async () => {
+      runRanges += 1;
+      state.totalRanges += 1;
+      await persist();
+    },
+  };
+
+  if (state.phase === 'discovery') {
+    await scanDiscovery(
+      options, rpcClient, deps.decodePoolCreated || v3.decodePoolCreated,
+      state.discovery, control
+    );
+    if (!state.discovery.completed) return executionSnapshot(state);
+    state.phase = 'reference-initialization';
+    await persist();
+  }
+  const stockPools = state.discovery.pools;
+  const referencePools = stockPools.filter((pool) => pool.category === 'stock_reference');
+  if (state.phase === 'reference-initialization') {
+    await scanReferenceInitializations(
+      options, rpcClient, referencePools, state.references, control
+    );
+    if (!state.references.completed) return executionSnapshot(state);
+    state.phase = 'swaps';
+    await persist();
+  }
+  const initialized = new Map(Object.entries(state.references.initialized));
+  const references = referencePools.map((pool) => ({
+    ...pool, initializedBlock: initialized.get(pool.poolAddress) || null,
+  }));
+  const candidates = stockPools.filter((pool) => pool.category === 'meme_stock_candidate');
+  if (state.phase === 'swaps') {
+    await auditSwaps(
+      options, rpcClient, repository, candidates, referenceIndex(references),
+      state.swaps, control
+    );
+    if (!state.swaps.completed) return executionSnapshot(state);
+    state.phase = 'complete';
+  }
+  const registeredRows = await repository.listRegistered(
+    [...candidates, ...references].map((pool) => pool.poolAddress)
+  );
+  const report = buildReport(options, stockPools, references, state.swaps.stats, registeredRows);
+  await persist(report);
+  return report;
+}
+
 async function run() {
   try {
     console.log(JSON.stringify(await runAudit(parseArgs()), null, 2));
@@ -435,7 +614,8 @@ if (require.main === module) void run();
 module.exports = {
   runAudit,
   __private: {
-    classifyPool, createRepository, fetchLogs, parseArgs, priceRoute,
-    recordSwap, referenceIndex, registryAssessment, scanReferenceInitializations,
+    buildReport, classifyPool, createJsonStore, createRepository, emptyAuditState,
+    executionSnapshot, fetchLogs, parseArgs, priceRoute, recordSwap, referenceIndex,
+    registryAssessment, restoreAuditState, scanReferenceInitializations,
   },
 };

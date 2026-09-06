@@ -469,6 +469,18 @@ segunda rota. Ela não afirma que o `slot0` archive daquele bloco já foi lido n
 suporta a stock como cotação; `stock_quote_valuation_not_implemented` continua bloqueando a
 prontidão enquanto a valoração USD específica não existir.
 
+Para execuções longas, informe `--checkpoint-file=/var/tmp/rh-v3-stock-audit.json`.
+O auditor salva atomicamente, ao final de cada range, a fase atual (`discovery`,
+`reference-initialization` ou `swaps`), o próximo bloco e os resultados acumulados. O
+arquivo de relatório é gravado em `<checkpoint>.report.json` por padrão, ou no caminho
+de `--report-file`; durante a execução ele contém `completed=false`, progresso e dados
+parciais, e ao final contém o relatório completo em `report`. Reiniciar com o mesmo
+intervalo e checkpoint retoma sem repetir fases concluídas. Checkpoints de outro
+intervalo são recusados. `--max-ranges=N` exige checkpoint e limita apenas a execução
+atual, permitindo um canário curto seguido de retomada sem perder o trabalho. Esses
+arquivos locais são a única escrita do auditor; PostgreSQL e cursores permanecem
+read-only.
+
 O grupo `robinhood-processing` roda um processo separado (systemd
 `trendscope-worker@robinhood-processing.service`, lease `robinhood-processing-worker`,
 `start:worker:robinhood-processing` na porta 3007). O worker reclama capturas por lease

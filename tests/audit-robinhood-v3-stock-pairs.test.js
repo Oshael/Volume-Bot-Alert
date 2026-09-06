@@ -1,4 +1,7 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
 const { describe, it } = require('node:test');
 const { runAudit, __private } = require('../src/utils/audit-robinhood-v3-stock-pairs');
 const { ROBINHOOD_TOKENIZED_ASSETS } = require('../src/services/robinhood-market-policy');
@@ -37,7 +40,85 @@ describe('Robinhood V3 stock-pair archive audit', () => {
       rpcUrl: 'http://archive', fromBlock: '100', toBlock: '200', discoveryFromBlock: '0',
       discoveryRangeSize: 10_000_000, swapRangeSize: 100_000, minRangeSize: 1,
       addressBatchSize: 100, identityBatchSize: 5_000,
+      maxRanges: 0, checkpointFile: null, reportFile: null,
     });
+    assert.throws(() => __private.parseArgs([
+      '--from-block=100', '--to-block=200', '--max-ranges=1',
+    ], {}), /checkpoint-file is required/);
+    assert.equal(__private.parseArgs([
+      '--from-block=100', '--to-block=200', '--checkpoint-file=/tmp/audit.json',
+    ], {}).reportFile, '/tmp/audit.json.report.json');
+    assert.throws(() => __private.parseArgs([
+      '--from-block=100', '--to-block=200', '--checkpoint-file=/tmp/audit.json',
+      '--report-file=/tmp/audit.json',
+    ], {}), /report-file must differ/);
+  });
+
+  it('persists JSON snapshots atomically', async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'rh-stock-audit-'));
+    const filename = path.join(directory, 'state.json');
+    try {
+      const store = __private.createJsonStore(filename, 'test state');
+      assert.equal(await store.load(), null);
+      await store.save({ phase: 'discovery', nextBlock: '100' });
+      assert.deepEqual(await store.load(), { phase: 'discovery', nextBlock: '100' });
+      assert.deepEqual(await fs.readdir(directory), ['state.json']);
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a checkpoint from a different interval', () => {
+    const saved = __private.emptyAuditState(options());
+    saved.toBlock = '101';
+    assert.throws(
+      () => __private.restoreAuditState(saved, options()),
+      /Checkpoint toBlock does not match/
+    );
+  });
+
+  it('resumes discovery from the saved range and keeps a partial report', async () => {
+    let saved = null;
+    const snapshots = [];
+    const discoveryStarts = [];
+    const checkpoint = {
+      load: async () => saved,
+      save: async (value) => { saved = JSON.parse(JSON.stringify(value)); },
+    };
+    const reportStore = {
+      save: async (value) => { snapshots.push(JSON.parse(JSON.stringify(value))); },
+    };
+    const rpcClient = {
+      request: async (method, [filter] = []) => {
+        if (method === 'eth_chainId') return '0x1237';
+        if (filter.topics[0] === v3.TOPICS.poolCreated) {
+          discoveryStarts.push(filter.fromBlock);
+          return filter.fromBlock === '0x0' ? [{}] : [];
+        }
+        return [];
+      },
+    };
+    const repository = { listRegistered: async () => [], classify: async () => new Map() };
+    const first = await runAudit(options({
+      fromBlock: '0', toBlock: '199', discoveryRangeSize: 100,
+      swapRangeSize: 100, maxRanges: 1,
+    }), { rpcClient, repository, checkpoint, reportStore, decodePoolCreated: () => pool({ blockNumber: '0' }) });
+
+    assert.equal(first.completed, false);
+    assert.equal(first.phase, 'discovery');
+    assert.equal(first.progress.discovery.nextBlock, '100');
+    assert.equal(snapshots.at(-1).partial.stockPools.length, 1);
+
+    const completed = await runAudit(options({
+      fromBlock: '0', toBlock: '199', discoveryRangeSize: 100,
+      swapRangeSize: 100, maxRanges: 0,
+    }), { rpcClient, repository, checkpoint, reportStore, decodePoolCreated: () => pool({ blockNumber: '0' }) });
+
+    assert.deepEqual(discoveryStarts, ['0x0', '0x64']);
+    assert.equal(completed.candidatePools, 1);
+    assert.equal(saved.phase, 'complete');
+    assert.equal(snapshots.at(-1).completed, true);
+    assert.equal(snapshots.at(-1).report.candidatePools, 1);
   });
 
   it('starts at the first candidate creation and activates later pools only when born', async () => {
