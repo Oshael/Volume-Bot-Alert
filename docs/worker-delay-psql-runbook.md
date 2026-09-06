@@ -29,9 +29,9 @@ Os limites usados para triagem seguem os perfis do monitor do bot:
 - manutenção: 2 horas sem progresso;
 - filas live: backlog antigo por mais de 3 minutos merece investigação, mesmo antes de virar incidente.
 
-## 1. Consulta padrão por processo — cobre as 53 chaves de worker/lease
+## 1. Consulta padrão por processo — somente serviços contínuos
 
-Use esta consulta para `web`, `core`, `market`, manutenções, X, callouts e também como visão rápida de qualquer grupo. Troque apenas a primeira linha.
+Use esta consulta para `web`, `core`, `market`, Robinhood live, X e callouts. Troque apenas a primeira linha.
 
 Grupos aceitos:
 
@@ -39,20 +39,16 @@ Grupos aceitos:
 \set grupo 'web'
 -- \set grupo 'core'
 -- \set grupo 'market'
--- \set grupo 'solana-maintenance'
--- \set grupo 'robinhood-maintenance'
--- \set grupo 'maintenance'                 -- alias legado
--- \set grupo 'robinhood'
--- \set grupo 'robinhood-head'
+-- \set grupo 'robinhood-chain-capture'
+-- \set grupo 'robinhood-canonical-head'
 -- \set grupo 'robinhood-processing'
 -- \set grupo 'robinhood-derived'
--- \set grupo 'robinhood-liquidity'
--- \set grupo 'robinhood-wallet'
--- \set grupo 'robinhood-wallet-classification'
--- \set grupo 'robinhood-signed-origin'
+-- \set grupo 'robinhood-canonical-liquidity'
 -- \set grupo 'robinhood-holders'
--- \set grupo 'robinhood-holder-global'
--- \set grupo 'robinhood-backfill'
+-- \set grupo 'robinhood-wallet'
+-- \set grupo 'robinhood-signed-origin'
+-- \set grupo 'robinhood-wallet-transfers'
+-- \set grupo 'robinhood-wallet-classification'
 -- \set grupo 'x-match'
 -- \set grupo 'x-ingest'
 -- \set grupo 'callouts'
@@ -74,48 +70,32 @@ WITH catalog(component_key, process_groups, perfil, expectativa) AS (
     ('bid-zone-worker', ARRAY['market'], 'polling', 'opt-in'),
     ('gmgn-discovery-worker', ARRAY['market'], 'polling', 'permanente'),
     ('gmgn-claim-signal-worker', ARRAY['market'], 'polling', 'permanente'),
-    ('catalog-cleanup-worker', ARRAY['solana-maintenance','maintenance'], 'maintenance', 'permanente'),
-    ('robinhood-retention-worker', ARRAY['robinhood-maintenance','maintenance'], 'maintenance', 'opt-in'),
-    ('mock-trading-take-profit-worker', ARRAY['maintenance'], 'polling', 'opt-in'),
-    ('robinhood-ingestion-worker', ARRAY['robinhood'], 'live', 'rollout legado'),
-    ('robinhood-catalog-staging-worker', ARRAY['robinhood'], 'live', 'opt-in'),
-    ('robinhood-head-capture-worker', ARRAY['robinhood-head'], 'live', 'permanente'),
+    ('robinhood-chain-capture-worker', ARRAY['robinhood-chain-capture'], 'live', 'permanente'),
+    ('robinhood-canonical-head-worker', ARRAY['robinhood-canonical-head'], 'live', 'permanente'),
     ('robinhood-processing-worker', ARRAY['robinhood-processing'], 'live', 'permanente'),
     ('robinhood-derived-worker', ARRAY['robinhood-derived'], 'live', 'permanente'),
-    ('robinhood-catalog-projection-worker', ARRAY['robinhood','robinhood-derived'], 'polling', 'opt-in'),
+    ('robinhood-canonical-liquidity-worker', ARRAY['robinhood-canonical-liquidity'], 'live', 'permanente'),
+    ('robinhood-catalog-projection-worker', ARRAY['robinhood-derived'], 'polling', 'opt-in'),
     ('robinhood-holder-summary-worker', ARRAY['robinhood-derived'], 'polling', 'opt-in'),
+    ('robinhood-holder-live-worker', ARRAY['robinhood-holders'], 'live', 'permanente'),
+    ('robinhood-holder-live-apply-worker', ARRAY['robinhood-holders'], 'live', 'permanente'),
+    ('robinhood-holder-intelligence-worker', ARRAY['robinhood-holders'], 'polling', 'opt-in'),
     ('robinhood-wallet-swap-live-worker', ARRAY['robinhood-wallet'], 'live', 'opt-in'),
     ('robinhood-direct-creator-live-worker', ARRAY['robinhood-wallet'], 'live', 'opt-in'),
+    ('robinhood-signed-origin-live-worker', ARRAY['robinhood-signed-origin'], 'live', 'opt-in'),
+    ('robinhood-wallet-transfer-live-worker', ARRAY['robinhood-wallet-transfers'], 'live', 'opt-in'),
     ('robinhood-token-deployment-worker', ARRAY['robinhood-wallet-classification'], 'live', 'opt-in'),
     ('robinhood-sniper-shadow-worker', ARRAY['robinhood-wallet-classification'], 'polling', 'shadow opt-in'),
     ('robinhood-insider-shadow-worker', ARRAY['robinhood-wallet-classification'], 'polling', 'shadow opt-in'),
     ('robinhood-first-buy-live-worker', ARRAY['robinhood-wallet-classification'], 'live', 'opt-in'),
     ('robinhood-launch-anchor-live-worker', ARRAY['robinhood-wallet-classification'], 'live', 'opt-in'),
     ('robinhood-bundle-funding-live-worker', ARRAY['robinhood-wallet-classification'], 'live', 'shadow opt-in'),
+    ('robinhood-bundle-redistribution-live-worker', ARRAY['robinhood-wallet-classification'], 'live', 'shadow opt-in'),
     ('robinhood-fresh-wallet-live-worker', ARRAY['robinhood-wallet-classification'], 'live', 'shadow opt-in'),
     ('robinhood-wallet-position-live-worker', ARRAY['robinhood-wallet-classification'], 'live', 'opt-in'),
-    ('robinhood-wallet-transfer-live-worker', ARRAY['robinhood-wallet-classification'], 'live', 'opt-in'),
-    ('robinhood-wallet-transfer-backfill-worker', ARRAY['robinhood-wallet-classification'], 'maintenance', 'manual'),
-    ('robinhood-signed-origin-live-worker', ARRAY['robinhood-signed-origin'], 'live', 'opt-in'),
-    ('robinhood-holder-live-worker', ARRAY['robinhood-holders'], 'live', 'opt-in'),
-    ('robinhood-holder-live-apply-worker', ARRAY['robinhood-holders'], 'live', 'opt-in'),
-    ('robinhood-holder-intelligence-worker', ARRAY['robinhood-holders'], 'polling', 'opt-in'),
-    ('robinhood-holder-backfill-worker', ARRAY['robinhood-holders'], 'polling', 'opt-in'),
-    ('robinhood-holder-cold-worker', ARRAY['robinhood-holders'], 'maintenance', 'opt-in'),
-    ('robinhood-holder-reconciliation-worker', ARRAY['robinhood-holders'], 'polling', 'opt-in'),
-    ('robinhood-holder-journal-prune-worker', ARRAY['robinhood-holders'], 'maintenance', 'opt-in'),
-    ('robinhood-holder-snapshot-worker', ARRAY['robinhood-holders'], 'maintenance', 'opt-in'),
-    ('robinhood-holder-global-backfill-worker', ARRAY['robinhood-holder-global','robinhood-holders'], 'maintenance', 'opt-in'),
-    ('robinhood-backfill-discovery-scanner', ARRAY['robinhood-backfill','robinhood'], 'polling', 'opt-in'),
-    ('robinhood-backfill-market-scanner', ARRAY['robinhood-backfill','robinhood'], 'polling', 'opt-in'),
-    ('robinhood-backfill-enrichment-worker', ARRAY['robinhood-backfill','robinhood'], 'polling', 'opt-in'),
-    ('robinhood-backfill-finalizer-worker', ARRAY['robinhood-backfill','robinhood'], 'polling', 'opt-in'),
-    ('robinhood-backfill-watchdog-worker', ARRAY['robinhood-backfill','robinhood'], 'polling', 'opt-in'),
-    ('robinhood-backfill-aggregation-worker', ARRAY['robinhood-backfill','robinhood'], 'polling', 'opt-in'),
     ('callout-capture-worker', ARRAY['callouts'], 'live', 'opt-in'),
     ('token-image-fingerprint-worker', ARRAY['x-match'], 'polling', 'opt-in'),
-    ('x-ingestion-worker', ARRAY['x-ingest'], 'live', 'opt-in'),
-    ('robinhood-pool-liquidity-worker', ARRAY['robinhood-liquidity'], 'live', 'opt-in')
+    ('x-ingestion-worker', ARRAY['x-ingest'], 'live', 'opt-in')
 ), selected AS (
   SELECT * FROM catalog WHERE :'grupo' = ANY(process_groups)
 ), incidents AS (
@@ -178,80 +158,78 @@ FROM progress
 ORDER BY component_key;
 ```
 
-Leitura rápida: `heartbeat_s` deve ficar bem abaixo de 120; `progresso_s` deve respeitar o perfil. `AUSENTE/CONFIRA FLAG` exige comparar com o env da unit. `manual` ausente é normal.
+Leitura rápida: `heartbeat_s` deve ficar bem abaixo de 120; `progresso_s` deve respeitar o perfil. `AUSENTE/CONFIRA FLAG` exige comparar com o env da unit.
 
-## 2. Robinhood monolítico/legado — captura, market e discovery
+## 2. Ordem causal dos serviços Robinhood live
 
-Use enquanto a unit `robinhood` existir, inclusive durante overlap/shadow:
+Durante um incidente, leia de cima para baixo e pare no primeiro estágio atrasado:
 
-```sql
-WITH lease AS (
-  SELECT heartbeat_at, lease_until, metadata
-  FROM worker_leases WHERE lease_key = 'robinhood-ingestion-worker'
-), cursors AS (
-  SELECT stream, next_block, safe_head, checkpoint_block, checkpoint_timestamp, updated_at
-  FROM robinhood_ingestion_cursors WHERE chain = 'robinhood'
-), isolated AS (
-  SELECT stream, next_block FROM robinhood_head_capture_cursors WHERE chain = 'robinhood'
-)
-SELECT c.stream,
-       CASE
-         WHEN l.heartbeat_at IS NULL THEN 'AUSENTE/ROLL_OUT?'
-         WHEN l.lease_until <= NOW() THEN 'LEASE ATRASADA'
-         WHEN c.safe_head IS NULL THEN 'SEM HEAD'
-         WHEN GREATEST(0::bigint, c.safe_head - c.next_block + 1) > 50 THEN 'ATRASADO'
-         WHEN NOW() - c.updated_at > INTERVAL '3 minutes' THEN 'CURSOR PARADO'
-         ELSE 'OK'
-       END AS estado,
-       c.next_block - 1 AS capturado_ate,
-       c.safe_head,
-       GREATEST(0::bigint, c.safe_head - c.next_block + 1) AS lag_blocos,
-       i.next_block - c.next_block AS head_isolado_menos_legado,
-       ROUND(EXTRACT(EPOCH FROM (NOW() - c.updated_at)))::bigint AS cursor_age_s,
-       ROUND(EXTRACT(EPOCH FROM (NOW() - l.heartbeat_at)))::bigint AS heartbeat_s
-FROM cursors c
-LEFT JOIN isolated i USING (stream)
-LEFT JOIN lease l ON TRUE
-ORDER BY c.stream;
-```
+| Prioridade | Unit systemd | Lease principal | Papel |
+| ---: | --- | --- | --- |
+| 1 | `trendscope-worker@robinhood-chain-capture.service` | `robinhood-chain-capture-worker` | captura compartilhada de blocos, transações, receipts e eventos |
+| 2 | `trendscope-worker@robinhood-canonical-head.service` | `robinhood-canonical-head-worker` | publica discovery/market canônicos |
+| 3 | `trendscope-worker@robinhood-processing.service` | `robinhood-processing-worker` | aplica discovery e market |
+| 4 | `trendscope-worker@robinhood-derived.service` | `robinhood-derived-worker` | board, relay, catálogo, aggregates e alertas |
+| 5 | `trendscope-worker@robinhood-canonical-liquidity.service` | `robinhood-canonical-liquidity-worker` | projeta liquidity a partir do journal |
+| 6 | `trendscope-worker@robinhood-holders.service` | `robinhood-holder-live-worker` | captura/aplica holders a partir do journal |
+| 7 | `trendscope-worker@robinhood-wallet.service` | `robinhood-wallet-swap-live-worker` | swaps de wallet e creator direto |
+| 8 | `trendscope-worker@robinhood-signed-origin.service` | `robinhood-signed-origin-live-worker` | origem assinada |
+| 9 | `trendscope-worker@robinhood-wallet-transfers.service` | `robinhood-wallet-transfer-live-worker` | transfers e posições live |
+| 10 | `trendscope-worker@robinhood-wallet-classification.service` | leases por classificador | first-buy, anchors, BUNDLED, FRESH e classificações |
 
-`head_isolado_menos_legado > 0` significa que o head isolado está à frente do monólito; `< 0`, que está atrás. Isso é comparação de shadow, não indicação automática de falha.
+Backfills, replay, shadow de cutover e retention foram removidos deste runbook: são operações
+temporárias, não serviços live cuja latência deva ser acompanhada continuamente.
 
-## 3. Robinhood head isolado
+## 3. Robinhood chain capture + canonical head
 
-Esta é a consulta principal para saber “onde está o head”. Ela usa o `safe_head` já observado pelo worker, sem chamar RPC:
+Esta é a consulta mais importante. Ela não chama RPC: compara o head já observado com o cursor
+durável e confirma que o publicador canônico está ativo, sem tentativas proibidas de `eth_getLogs`.
 
 ```sql
-WITH lease AS (
+WITH capture_lease AS (
   SELECT heartbeat_at, lease_until, metadata
-  FROM worker_leases WHERE lease_key = 'robinhood-head-capture-worker'
-), legacy AS (
-  SELECT stream, next_block FROM robinhood_ingestion_cursors WHERE chain = 'robinhood'
+  FROM worker_leases WHERE lease_key = 'robinhood-chain-capture-worker'
+), head_lease AS (
+  SELECT heartbeat_at, lease_until, metadata
+  FROM worker_leases WHERE lease_key = 'robinhood-canonical-head-worker'
 )
-SELECT c.stream,
-       CASE
-         WHEN l.heartbeat_at IS NULL THEN 'LEASE AUSENTE'
-         WHEN l.metadata->>'state' = 'halted' THEN 'HALTED'
-         WHEN l.lease_until <= NOW() THEN 'LEASE ATRASADA'
-         WHEN c.safe_head IS NULL THEN 'SEM HEAD'
-         WHEN GREATEST(0::bigint, c.safe_head - c.next_block + 1) > 50 THEN 'ATRASADO'
-         WHEN NOW() - c.updated_at > INTERVAL '3 minutes' THEN 'CURSOR PARADO'
+SELECT CASE
+         WHEN cl.heartbeat_at IS NULL THEN 'CAPTURE AUSENTE'
+         WHEN cl.metadata->>'state' = 'halted' THEN 'CAPTURE HALTED'
+         WHEN cl.lease_until <= NOW() THEN 'CAPTURE LEASE ATRASADA'
+         WHEN GREATEST(0::bigint, c.node_head - c.next_block + 1) > 2 THEN 'CAPTURE ATRASADA'
+         WHEN c.head_observed_at IS NULL THEN 'SEM HEAD OBSERVADO'
+         WHEN c.head_observed_at < NOW() - INTERVAL '3 minutes' THEN 'HEAD RPC PARADO'
          ELSE 'OK'
-       END AS estado,
+       END AS capture_estado,
        c.next_block - 1 AS capturado_ate,
-       c.safe_head,
-       GREATEST(0::bigint, c.safe_head - c.next_block + 1) AS lag_blocos,
+       c.node_head,
+       GREATEST(0::bigint, c.node_head - c.next_block + 1) AS capture_lag_blocos,
        c.checkpoint_block,
-       c.checkpoint_timestamp,
-       c.next_block - legacy.next_block AS isolado_menos_legado,
-       ROUND(EXTRACT(EPOCH FROM (NOW() - c.updated_at)))::bigint AS cursor_age_s,
-       ROUND(EXTRACT(EPOCH FROM (NOW() - l.heartbeat_at)))::bigint AS heartbeat_s
-FROM robinhood_head_capture_cursors c
-LEFT JOIN legacy USING (stream)
-LEFT JOIN lease l ON TRUE
-WHERE c.chain = 'robinhood'
-ORDER BY c.stream;
+       ROUND(EXTRACT(EPOCH FROM (NOW() - c.head_observed_at)))::bigint AS head_age_s,
+       CASE
+         WHEN hl.heartbeat_at IS NULL THEN 'CANONICAL HEAD AUSENTE'
+         WHEN hl.metadata->>'state' = 'halted' THEN 'CANONICAL HEAD HALTED'
+         WHEN hl.lease_until <= NOW() THEN 'CANONICAL HEAD LEASE ATRASADA'
+         WHEN hl.metadata->>'mode' IS DISTINCT FROM 'canonical_publish' THEN 'MODO INCORRETO'
+         WHEN hl.metadata->>'running' IS DISTINCT FROM 'true' THEN 'NAO RODANDO'
+         WHEN hl.metadata->'canonicalRuntime'->'rpcGuard'->>'forbiddenAttempts'
+                IS DISTINCT FROM '0'
+           THEN 'RPC PROIBIDO USADO'
+         ELSE 'OK'
+       END AS canonical_head_estado,
+       hl.metadata->>'mode' AS canonical_mode,
+       ROUND(EXTRACT(EPOCH FROM (NOW() - cl.heartbeat_at)))::bigint AS capture_heartbeat_s,
+       ROUND(EXTRACT(EPOCH FROM (NOW() - hl.heartbeat_at)))::bigint AS head_heartbeat_s,
+       LEFT(COALESCE(cl.metadata->>'lastError', hl.metadata->>'lastError'), 180) AS last_error
+FROM robinhood_chain_capture_cursor c
+LEFT JOIN capture_lease cl ON TRUE
+LEFT JOIN head_lease hl ON TRUE
+WHERE c.chain = 'robinhood';
 ```
+
+`capture_lag_blocos` deve permanecer em `0–2`. O canonical head não possui um segundo cursor:
+ele consome a captura e entrega as outboxes de domínio em ordem.
 
 ## 4. Robinhood processing — market + discovery no mesmo processo
 
@@ -403,10 +381,10 @@ WITH workers(component_key, modo) AS (
     ('robinhood-first-buy-live-worker', 'live'),
     ('robinhood-launch-anchor-live-worker', 'live'),
     ('robinhood-bundle-funding-live-worker', 'shadow'),
+    ('robinhood-bundle-redistribution-live-worker', 'shadow'),
     ('robinhood-fresh-wallet-live-worker', 'shadow'),
     ('robinhood-wallet-position-live-worker', 'live/opt-in'),
-    ('robinhood-wallet-transfer-live-worker', 'live/opt-in'),
-    ('robinhood-wallet-transfer-backfill-worker', 'manual')
+    ('robinhood-wallet-transfer-live-worker', 'live/opt-in')
 ), metrics(component_key, metrica) AS (
   SELECT 'robinhood-token-deployment-worker', JSONB_BUILD_OBJECT(
     'active', COUNT(*), 'oldest_s', EXTRACT(EPOCH FROM NOW() - MIN(created_at))::bigint)
@@ -438,6 +416,10 @@ WITH workers(component_key, modo) AS (
     'active', COUNT(*), 'oldest_s', EXTRACT(EPOCH FROM NOW() - MIN(created_at))::bigint)
   FROM robinhood_bundle_funding_live_queue WHERE status IN ('pending','leased')
   UNION ALL
+  SELECT 'robinhood-bundle-redistribution-live-worker', JSONB_BUILD_OBJECT(
+    'active', COUNT(*), 'oldest_s', EXTRACT(EPOCH FROM NOW() - MIN(created_at))::bigint)
+  FROM robinhood_bundle_redistribution_queue WHERE status IN ('pending','leased')
+  UNION ALL
   SELECT 'robinhood-fresh-wallet-live-worker', JSONB_BUILD_OBJECT(
     'active', COUNT(*), 'oldest_s', EXTRACT(EPOCH FROM NOW() - MIN(created_at))::bigint)
   FROM robinhood_fresh_wallet_queue WHERE status IN ('pending','leased')
@@ -455,12 +437,10 @@ WITH workers(component_key, modo) AS (
       'lag_blocks', GREATEST(0::bigint, safe_head - next_block + 1), 'updated_at', updated_at)
     FROM robinhood_wallet_transfer_cursors
     WHERE chain = 'robinhood' AND stream = 'live' ORDER BY updated_at DESC LIMIT 1), '{}'::jsonb)
-  UNION ALL
-  SELECT 'robinhood-wallet-transfer-backfill-worker', '{}'::jsonb
 )
 SELECT w.component_key AS worker, w.modo,
        CASE
-         WHEN l.heartbeat_at IS NULL THEN CASE WHEN w.modo = 'manual' THEN 'INATIVO' ELSE 'INATIVO/CONFIRA FLAG' END
+         WHEN l.heartbeat_at IS NULL THEN 'INATIVO/CONFIRA FLAG'
          WHEN l.metadata->>'state' = 'halted' THEN 'HALTED'
          WHEN l.lease_until <= NOW() THEN 'LEASE ATRASADA'
          WHEN NULLIF(m.metrica->>'lag_blocks', '')::bigint > 50 THEN 'ATRASADO'
@@ -484,7 +464,6 @@ Interpretação especial:
 - `SNIPER`, `INSIDER`, `BUNDLED` e `FRESH` continuam shadow conforme o código atual; `ready` não significa publicado na API/UI.
 - first-buy mede lag de tempo (`source_through - next_time`), não apenas bloco.
 - wallet position e wallet transfer possuem versões/projeções próprias; confira `state` e a versão mostrada.
-- a lease do backfill de transferências deve existir apenas durante execução manual.
 
 ## 8. Robinhood signed-origin
 
@@ -519,7 +498,7 @@ WHERE c.chain = 'robinhood'
 ORDER BY CASE c.stream WHEN 'seed' THEN 1 ELSE 2 END;
 ```
 
-## 9. Robinhood holders — captura, apply, shadow/live e manutenção
+## 9. Robinhood holders — captura e apply live
 
 Esta é a consulta principal do processo `robinhood-holders`. Ela lê apenas leases, a telemetria já calculada pelos workers e a única linha do cursor live. Não agrega a journal, a hot queue, os estados por token nem o histórico de snapshots.
 
@@ -528,12 +507,7 @@ WITH workers(component_key, papel) AS (
   VALUES
     ('robinhood-holder-live-worker', 'captura'),
     ('robinhood-holder-live-apply-worker', 'apply'),
-    ('robinhood-holder-intelligence-worker', 'classificacoes'),
-    ('robinhood-holder-backfill-worker', 'backfill local'),
-    ('robinhood-holder-cold-worker', 'cold repair'),
-    ('robinhood-holder-reconciliation-worker', 'reconciliacao'),
-    ('robinhood-holder-journal-prune-worker', 'prune'),
-    ('robinhood-holder-snapshot-worker', 'snapshots')
+    ('robinhood-holder-intelligence-worker', 'classificacoes live')
 ), cursor_metric AS (
   SELECT JSONB_BUILD_OBJECT(
     'next_block', c.next_block, 'safe_head', c.safe_head,
@@ -576,7 +550,7 @@ FROM observed o
 ORDER BY o.component_key;
 ```
 
-Na linha de `live-apply`, a métrica `freshness` mostra `pendingTokens`, `recentShadowTokens`, `staleLiveTokens`, `worstLagBlocks` e `oldestAgeMs`. Nos demais workers de manutenção, `lastCompletedAt` e `lastResult` mostram o último ciclo. O cursor direto continua sendo usado para `holder-live`.
+Na linha de `live-apply`, a métrica `freshness` mostra `pendingTokens`, `recentShadowTokens`, `staleLiveTokens`, `worstLagBlocks` e `oldestAgeMs`. O cursor direto continua sendo usado para `holder-live`. Backfill, cold repair, reconciliation, prune e snapshots não pertencem ao caminho live e foram omitidos.
 
 O runbook configura `statement_timeout = '5s'` no começo. A query revisada deve caber nesse limite. Se ainda precisar aumentar apenas para a sessão atual do `psql`, use:
 
@@ -589,143 +563,54 @@ SET statement_timeout = '5s';
 
 Esse `SET` afeta somente a conexão atual; não altera o PostgreSQL globalmente. Para o apply, `pendingTokens > 0` pode ser normal, mas `oldestAgeMs > 180000`, `worstLagBlocks > 50` ou crescimento contínuo indicam atraso. `recentShadowTokens` é o shadow recente elegível; `staleLiveTokens` indica trabalho live antigo acumulado.
 
-## 10. Robinhood holder global backfill
+## 10. Robinhood canonical liquidity
 
-`frozen` e `paused` são estados intencionais, não atraso automático. `scanning`, `attached` e `materializing` devem avançar `next_block`/`updated_at`.
-
-```sql
-WITH anchor AS (SELECT 1), lease AS (
-  SELECT heartbeat_at, lease_until, metadata
-  FROM worker_leases WHERE lease_key = 'robinhood-holder-global-backfill-worker'
-), run AS (
-  SELECT * FROM robinhood_holder_global_backfill_runs
-  WHERE chain = 'robinhood' ORDER BY id DESC LIMIT 1
-), tokens AS (
-  SELECT t.run_id, JSONB_OBJECT_AGG(t.status, t.qty) AS states
-  FROM (SELECT run_id, status, COUNT(*) AS qty
-        FROM robinhood_holder_global_backfill_tokens
-        WHERE run_id = (SELECT id FROM run) GROUP BY run_id, status) t
-  GROUP BY t.run_id
-)
-SELECT CASE
-         WHEN r.id IS NULL THEN 'SEM CAMPANHA'
-         WHEN l.heartbeat_at IS NULL THEN 'INATIVO/CONFIRA FLAG'
-         WHEN l.metadata->>'state' = 'halted' THEN 'HALTED'
-         WHEN l.lease_until <= NOW() THEN 'LEASE ATRASADA'
-         WHEN COALESCE(NULLIF(r.telemetry->>'liveLagBlocks', '')::bigint, 0) > 100
-           THEN 'LIVE PRESSIONADO'
-         WHEN r.status IN ('scanning','attached','materializing')
-              AND NOW() - r.updated_at > INTERVAL '2 hours' THEN 'SEM PROGRESSO'
-         WHEN r.status = 'paused' THEN 'PAUSADO'
-         WHEN r.status = 'frozen' THEN 'AGUARDANDO START'
-         ELSE 'OK'
-       END AS estado,
-       r.id AS run_id, r.status, r.next_block, r.barrier_block,
-       GREATEST(0::bigint, COALESCE(r.barrier_block, r.next_block) - r.next_block) AS barrier_distance,
-       r.cohort_token_count, t.states AS token_states,
-       r.telemetry->>'liveLagBlocks' AS live_lag_blocks,
-       r.telemetry->>'blocksPerSecond' AS blocks_per_second,
-       r.telemetry->>'etaSeconds' AS eta_seconds,
-       ROUND(EXTRACT(EPOCH FROM (NOW() - r.updated_at)))::bigint AS run_age_s,
-       ROUND(EXTRACT(EPOCH FROM (NOW() - l.heartbeat_at)))::bigint AS heartbeat_s,
-       LEFT(l.metadata->'telemetry'->>'lastError', 180) AS last_error
-FROM anchor
-LEFT JOIN run r ON TRUE
-LEFT JOIN tokens t ON t.run_id = r.id
-LEFT JOIN lease l ON TRUE;
-```
-
-## 11. Robinhood liquidity isolada
-
-O `safe_head` deste cursor já é limitado pelo menor frontier de processing. Portanto lag aqui significa atraso em relação ao que já está processável, não necessariamente ao head bruto da chain.
+O scanner live consome o journal canônico; o refresher valora somente as pools sujas. O
+`safe_head` deste cursor é limitado pela frontier processável, portanto seu lag não é comparado
+diretamente ao head bruto da chain.
 
 ```sql
-WITH anchor AS (SELECT 1), lease AS (
+WITH lease AS (
   SELECT heartbeat_at, lease_until, metadata
-  FROM worker_leases WHERE lease_key = 'robinhood-pool-liquidity-worker'
+  FROM worker_leases WHERE lease_key = 'robinhood-canonical-liquidity-worker'
+), queue AS (
+  SELECT COUNT(*) FILTER (WHERE status = 'pending') AS pending,
+         COUNT(*) FILTER (WHERE status = 'leased') AS leased,
+         MIN(dirty_from_block) AS oldest_dirty_block,
+         MIN(updated_at) AS oldest_updated_at
+  FROM robinhood_pool_liquidity_refresh_queue
+  WHERE chain = 'robinhood'
 )
 SELECT CASE
          WHEN l.heartbeat_at IS NULL THEN 'INATIVO/CONFIRA FLAG'
          WHEN l.metadata->>'state' = 'halted' THEN 'HALTED'
          WHEN l.lease_until <= NOW() THEN 'LEASE ATRASADA'
+         WHEN l.metadata->>'running' IS DISTINCT FROM 'true' THEN 'NAO RODANDO'
          WHEN c.next_block IS NULL THEN 'SEM CURSOR'
          WHEN GREATEST(0::bigint, c.safe_head - c.next_block + 1) > 50 THEN 'ATRASADO'
          WHEN NOW() - c.updated_at > INTERVAL '3 minutes' THEN 'CURSOR PARADO'
+         WHEN l.metadata#>>'{scanner,lastError,message}' IS NOT NULL THEN 'SCANNER COM ERRO'
+         WHEN l.metadata#>>'{refresher,lastError,message}' IS NOT NULL THEN 'REFRESH COM ERRO'
          ELSE 'OK'
        END AS estado,
-       c.coverage_start_block,
        c.next_block - 1 AS processado_ate,
        c.safe_head,
        GREATEST(0::bigint, c.safe_head - c.next_block + 1) AS lag_blocos,
-       c.checkpoint_block, c.checkpoint_timestamp,
+       q.pending, q.leased, q.oldest_dirty_block,
+       l.metadata->'refresher'->'lastResult'->>'status' AS refresh_status,
+       l.metadata->'refresher'->'lastResult'->>'claimed' AS last_claimed,
        ROUND(EXTRACT(EPOCH FROM (NOW() - c.updated_at)))::bigint AS cursor_age_s,
+       ROUND(EXTRACT(EPOCH FROM (NOW() - q.oldest_updated_at)))::bigint AS oldest_refresh_s,
        ROUND(EXTRACT(EPOCH FROM (NOW() - l.heartbeat_at)))::bigint AS heartbeat_s,
-       LEFT(COALESCE(l.metadata->>'lastError', l.metadata->'telemetry'->>'lastError'), 180) AS last_error
-FROM anchor
-LEFT JOIN robinhood_pool_liquidity_event_cursors c ON c.chain = 'robinhood'
-LEFT JOIN lease l ON TRUE;
+       LEFT(COALESCE(l.metadata->'scanner'->'lastError'->>'message',
+                     l.metadata->'refresher'->'lastError'->>'message'), 180) AS last_error
+FROM robinhood_pool_liquidity_event_cursors c
+LEFT JOIN lease l ON TRUE
+LEFT JOIN queue q ON TRUE
+WHERE c.chain = 'robinhood';
 ```
 
-## 12. Robinhood backfill/replay
-
-O backfill é shadow e opt-in. Esta consulta mostra os três watermarks, filas ativas e todas as leases do processo em uma linha:
-
-```sql
-WITH leases AS (
-  SELECT STRING_AGG(lease_key || '=' ||
-    CASE WHEN metadata->>'state' = 'halted' THEN 'HALTED'
-         WHEN lease_until <= NOW() THEN 'ATRASADA' ELSE 'OK' END,
-    ', ' ORDER BY lease_key) AS states,
-    MAX(NOW() - heartbeat_at) AS max_heartbeat_age
-  FROM worker_leases
-  WHERE lease_key IN (
-    'robinhood-backfill-discovery-scanner','robinhood-backfill-market-scanner',
-    'robinhood-backfill-enrichment-worker','robinhood-backfill-finalizer-worker',
-    'robinhood-backfill-watchdog-worker','robinhood-backfill-aggregation-worker')
-), watermarks AS (
-  SELECT JSONB_OBJECT_AGG(frontier, JSONB_BUILD_OBJECT(
-    'next_block', next_block, 'checkpoint_block', checkpoint_block,
-    'updated_at', updated_at)) AS value
-  FROM robinhood_backfill_watermarks WHERE chain = 'robinhood'
-), range_queue AS (
-  SELECT COUNT(*) FILTER (WHERE status IN ('pending','fetching','failed')) AS active,
-         COUNT(*) FILTER (WHERE status = 'blocked') AS blocked,
-         MIN(from_block) FILTER (WHERE status IN ('pending','fetching','failed')) AS oldest_from
-  FROM robinhood_backfill_ranges
-  WHERE chain = 'robinhood' AND status <> 'captured'
-), enrich_queue AS (
-  SELECT COUNT(*) FILTER (WHERE enrichment_status IN ('pending','leased')) AS active,
-         COUNT(*) FILTER (WHERE enrichment_status = 'blocked') AS blocked,
-         MIN(block_number) FILTER (WHERE enrichment_status IN ('pending','leased')) AS oldest_block
-  FROM robinhood_market_log_staging
-  WHERE chain = 'robinhood' AND enrichment_status IN ('pending','leased','blocked')
-), agg_queue AS (
-  SELECT COUNT(*) FILTER (WHERE status IN ('pending','leased')) AS active,
-         COUNT(*) FILTER (WHERE status = 'blocked') AS blocked,
-         MIN(bucket_ts) FILTER (WHERE status IN ('pending','leased')) AS oldest_bucket
-  FROM robinhood_backfill_aggregation_outbox
-  WHERE chain = 'robinhood' AND status <> 'completed'
-)
-SELECT CASE
-         WHEN l.states IS NULL THEN 'INATIVO/CONFIRA FLAGS'
-         WHEN l.states LIKE '%HALTED%' THEN 'HALTED'
-         WHEN l.states LIKE '%ATRASADA%' THEN 'LEASE ATRASADA'
-         WHEN r.blocked + e.blocked + a.blocked > 0 THEN 'ATENCAO: BLOCKED'
-         ELSE 'OK/EM EXECUCAO'
-       END AS estado,
-       l.states AS leases,
-       ROUND(EXTRACT(EPOCH FROM l.max_heartbeat_age))::bigint AS max_heartbeat_s,
-       w.value AS watermarks,
-       JSONB_BUILD_OBJECT('ranges_active', r.active, 'ranges_blocked', r.blocked,
-         'oldest_from', r.oldest_from, 'enrich_active', e.active,
-         'enrich_blocked', e.blocked, 'oldest_enrich_block', e.oldest_block,
-         'aggregation_active', a.active, 'aggregation_blocked', a.blocked,
-         'oldest_bucket', a.oldest_bucket) AS filas
-FROM leases l CROSS JOIN watermarks w CROSS JOIN range_queue r
-CROSS JOIN enrich_queue e CROSS JOIN agg_queue a;
-```
-
-## 13. Callouts Pump/Fomo
+## 11. Callouts Pump/Fomo
 
 Aqui o checkpoint é por coletor. `fomo:follow` pode ficar parado quando não há follow permitido; os checkpoints de captura que devem avançar são `pump:live` e `fomo:live`.
 
@@ -757,7 +642,7 @@ ORDER BY e.collector_key;
 
 Ausência de evento não prova falha de stream; use a telemetria aninhada da consulta padrão para `fomo.lastFrameAt`, conexão e browser health.
 
-## 14. X ingestion
+## 12. X ingestion
 
 O worker consulta o head de cada lista; `last_cursor` é observabilidade, não gap-fill. O sinal principal é `last_polled_at` por lista:
 
@@ -787,11 +672,9 @@ ORDER BY x.label;
 
 O `x-match`/fingerprint não tem cursor. Use a consulta padrão: `lastRunAt`, lease e incidentes são a fonte de verdade.
 
-## 15. Worker-health e saúde do PostgreSQL
+## 13. Worker-health e saúde do PostgreSQL
 
 O processo `worker-health` deliberadamente **não possui lease própria**. Portanto o PostgreSQL não consegue provar que ele está vivo quando não há incidentes. Systemd/monitor externo deve vigiar a unit.
-
-**Ponto importante:** o runtime atual possui 53 chaves conhecidas neste runbook, mas `worker-health-registry.js` registra somente 52. A chave `robinhood-signed-origin-live-worker` está ausente do registry. Consequências atuais: sua lease aparece nas consultas diretas, mas não gera incidente automático; incluí-la em `WORKER_HEALTH_EXPECTED_COMPONENTS` faz o monitor rejeitar a configuração como componente desconhecido. Isso precisa de correção de código separada.
 
 Dentro do `psql`, esta consulta mostra a última atividade do control plane e problemas abertos:
 
@@ -837,10 +720,10 @@ WHERE datname = current_database();
 ## Ordem recomendada durante incidente
 
 1. Rode a consulta padrão para a unit afetada.
-2. Se for Robinhood, rode a consulta específica e identifique o primeiro estágio atrasado: head → processing → derived/wallet/holders.
+2. Se for Robinhood, siga a tabela de prioridade e identifique o primeiro estágio atrasado: chain capture → canonical head → processing → derived/liquidity/holders → wallets/classificações.
 3. Trate `blocked`, `drifted`, `resyncing`, `halted` e cursores regressivos como sinais causais; não reinicie tudo às cegas.
 4. Se várias units atrasarem juntas, cheque PostgreSQL, RPC e recursos do host antes de reprocessar filas.
-5. Não confunda shadow saudável com publicação: SNIPER, INSIDER, BUNDLED e FRESH podem concluir sem aparecer na API/UI.
+5. Não confunda shadow saudável com publicação: confira o modo efetivo de cada classificador.
 
 ## Limitações intencionais
 
