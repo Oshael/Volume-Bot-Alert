@@ -887,6 +887,9 @@ describe('runtime worker groups config', () => {
   });
 
   it('bounds the Robinhood retention worker maintenance controls', () => {
+    withEnv({ ROBINHOOD_RETENTION_ENABLED: '' }, (config) => {
+      assert.equal(config.robinhoodRetentionWorker.enabled, false);
+    });
     withEnv({
       ROBINHOOD_RETENTION_ENABLED: 'true',
       ROBINHOOD_RETENTION_INTERVAL_MS: '1',

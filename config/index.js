@@ -1108,7 +1108,7 @@ module.exports = {
   },
 
   robinhoodRetentionWorker: {
-    enabled: parseBoolean(process.env.ROBINHOOD_RETENTION_ENABLED, true),
+    enabled: parseBoolean(process.env.ROBINHOOD_RETENTION_ENABLED, false),
     intervalMs: parseIntegerInRange(process.env.ROBINHOOD_RETENTION_INTERVAL_MS, 60 * 1000, 10_000, 60 * 60 * 1000),
     batchLimit: parseIntegerInRange(process.env.ROBINHOOD_RETENTION_BATCH_LIMIT, 2000, 100, 10_000),
     maxBatches: parseIntegerInRange(process.env.ROBINHOOD_RETENTION_MAX_BATCHES, 5, 1, 50),
