@@ -235,6 +235,18 @@ describe('Robinhood FRESH historical RPC source', () => {
     assert.equal(fake.calls.filter(([method]) => method === 'eth_getTransactionCount').length, 1);
   });
 
+  it('batches canonical live context without requesting historical account nonce', async () => {
+    const fake = rpc();
+    const source = createRobinhoodFreshWalletRpcSource({
+      rpcClient: fake.client, source: 'robinhood-live', sourceKind: 'live',
+    });
+    const results = await source.readCanonicalEvidenceBatch([firstBuy(), firstBuy()]);
+    assert.equal(results.length, 2);
+    assert.equal(results[0].cutoff.nonce, undefined);
+    assert.equal(fake.calls.filter(([method]) => method === 'eth_getTransactionCount').length, 0);
+    assert.ok(fake.batches.length > 0);
+  });
+
   it('fails closed for missing, mismatched, malformed, and wrong-chain evidence', async () => {
     const cases = [
       rpc({ transaction: null }),

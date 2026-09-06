@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const { it } = require('node:test');
 const {
   createRobinhoodFreshWalletLiveWorker, processTask, processTaskBatch,
-  __private: { buildRuntime },
+  __private: { buildRuntime, processClaimed },
 } = require('../src/services/robinhood-fresh-wallet-live-worker');
 
 const TOKEN = `0x${'a'.repeat(40)}`;
@@ -70,6 +70,50 @@ it('materializes a deterministic signed-origin ambiguity as fail-closed unavaila
   assert.equal(stored[0].status, 'unavailable');
   assert.equal(stored[0].statusReason, error.reason);
   assert.equal(stored[1].allowReset, true);
+});
+
+it('batches live RPC, signed-origin evidence, and persistence with per-item fail-closed', async () => {
+  const tasks = ['1', '2'].map((digit) => ({ tokenAddress: TOKEN,
+    walletAddress: wallet(digit), requestedVersion: '2', sourceKind: 'live', owner: 'test' }));
+  const safe = Object.assign(new Error('ambiguous'), {
+    code: 'fresh_signed_origin_unavailable',
+    reason: 'positive_nonce_without_observed_predecessor',
+  });
+  let sourceCalls = 0; let persistCalls = 0; let persisted;
+  const result = await processClaimed({ sourceKind: 'live',
+    source: { sourceKind: 'live', async readEvidenceBatchResults() {
+      sourceCalls += 1; return [{ evidence: evidence(tasks[0].walletAddress, '5') }, { error: safe }];
+    } },
+    shadow: { async replaceAndCompleteBatch(items) {
+      persistCalls += 1; persisted = items; return items.map(() => ({ completed: true }));
+    } },
+  }, tasks, 2);
+  assert.equal(sourceCalls, 1);
+  assert.equal(persistCalls, 1);
+  assert.equal(result.batchMode, 'rpc_and_persist');
+  assert.deepEqual(persisted.map(({ status }) => status), ['ready', 'unavailable']);
+  assert.deepEqual(result.results.map(({ status }) => status), ['materialized', 'materialized']);
+});
+
+it('immediately schedules another bounded batch while backlog remains', async () => {
+  const task = { tokenAddress: TOKEN, walletAddress: wallet('1'), requestedVersion: '1',
+    sourceKind: 'live', attemptCount: 1 };
+  const scheduled = []; let claims = 0;
+  const worker = createRobinhoodFreshWalletLiveWorker({ owner: 'test',
+    runtime: { sourceKind: 'live',
+      queue: { async claimBatch() { claims += 1; return [task]; }, async retry() {} },
+      source: { sourceKind: 'live', readEvidence: async () => evidence(task.walletAddress) },
+      shadow: { replaceAndComplete: async () => ({ completed: true }) },
+    },
+    schedule(fn, delay) { const item = { fn, delay, unref() {} }; scheduled.push(item); return item; },
+    cancelSchedule() {}, listenerFactory: () => ({ start() {}, stop() {} }),
+  });
+  worker.start({ enabled: true, signedOriginApproved: true, batchSize: 1, intervalMs: 1000 });
+  assert.equal(scheduled[0].delay, 0);
+  await scheduled[0].fn();
+  assert.equal(claims, 1);
+  assert.equal(scheduled[1].delay, 0);
+  await worker.stop();
 });
 
 it('bounds concurrency, retries independently and opens its RPC circuit', async () => {

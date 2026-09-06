@@ -2591,8 +2591,11 @@ O consumidor live é `robinhood-fresh-wallet-live-worker`, opt-in por
 `ROBINHOOD_FRESH_WALLET_LIVE_ENABLED` dentro do grupo isolado
 `robinhood-wallet-classification`. `LISTEN robinhood_fresh_wallet_queue` acorda
 o worker; polling bounded de um segundo serve apenas para reconciliação. Claims
-live usam lease em lote, concorrência máxima quatro, retry exponencial e retomada
-de lease expirada. Cinco rodadas totalmente falhas abrem por padrão um circuit
+live usam lease de até 100 itens. O source agrupa RPC canônico, carrega
+signed-origin em uma consulta e materializa o lote em uma transação; falhas
+individuais continuam isoladas e retry-safe. Enquanto um lote vier cheio, o
+próximo é agendado imediatamente; concorrência máxima quatro permanece como
+fallback. Cinco rodadas totalmente falhas abrem por padrão um circuit
 breaker de 60 segundos antes de novo claim. O worker exige `ROBINHOOD_RPC_URL`,
 nunca seleciona `RH_NODE_RPC_URL`, continua shadow-only e só inicia quando
 `ROBINHOOD_FRESH_WALLET_SIGNED_ORIGIN_APPROVED=true`. Esse gate deve permanecer
@@ -2613,6 +2616,9 @@ indisponibilidade bloqueante e no máximo 1% de `freshUnavailable`
 (`--max-fresh-unavailable-bps`, padrão 100; o nome anterior continua aceito);
 somente esse resultado autoriza mudar
 `ROBINHOOD_FRESH_WALLET_SIGNED_ORIGIN_APPROVED=true`.
+Para drenar backlog anterior ao journal via Archive privado, o env isolado do
+grupo pode apontar `ROBINHOOD_RPC_URL` ao túnel e usar
+`ROBINHOOD_RPC_MIN_INTERVAL_MS=0`; não use throttle zero contra RPC público.
 Antes do primeiro seed, aplique `node src/utils/db-init-stage185.js`. A migration
 indexa concorrentemente a janela dos anchors e cada partição diária de swaps,
 anexando os índices ao pai sem parar o writer live; ela pode ser retomada se for

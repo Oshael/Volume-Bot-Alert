@@ -5,12 +5,13 @@ const {
 } = require('../src/services/robinhood-fresh-wallet-signed-origin-source');
 
 const WALLET = `0x${'1'.repeat(40)}`;
+const WALLET_TWO = `0x${'2'.repeat(40)}`;
 const HASH = `0x${'a'.repeat(64)}`;
 
-function canonical() {
+function canonical(walletAddress = WALLET) {
   return { ruleVersion: 'rh_fresh_signed_v1', source: 'robinhood-live', sourceKind: 'live',
     observedAt: '2026-08-30T12:00:00Z',
-    firstBuy: { walletAddress: WALLET, transactionHash: HASH, blockNumber: '120',
+    firstBuy: { walletAddress, transactionHash: HASH, blockNumber: '120',
       blockHash: HASH, blockTime: '2026-08-30T12:00:00Z', nonce: '5' },
     cutoff: { targetAt: '2026-08-29T12:00:00Z', number: '110', hash: HASH,
       blockTime: '2026-08-29T11:59:59Z' },
@@ -19,7 +20,8 @@ function canonical() {
 }
 
 function row(overrides = {}) {
-  return { origin_block: '100', through_block: '130', first_block_number: '120',
+  return { wallet_address: WALLET, origin_block: '100', through_block: '130',
+    first_block_number: '120',
     first_block_hash: HASH, first_block_time: new Date('2026-08-30T12:00:00Z'),
     first_transaction_hash: HASH, first_transaction_index: '4', first_nonce: '0',
     source_stream: 'live', ...overrides };
@@ -48,7 +50,7 @@ describe('Robinhood FRESH signed-origin PostgreSQL source', () => {
         blockTime: '2026-08-30T12:00:00.000Z', transactionHash: HASH,
         transactionIndex: '4', nonce: '0', sourceStream: 'live' },
     });
-    assert.deepEqual(context.queries[0][1], ['robinhood', WALLET]);
+    assert.deepEqual(context.queries[0][1], ['robinhood', [WALLET]]);
   });
 
   it('fails closed instead of completing a task outside coverage', async () => {
@@ -65,5 +67,26 @@ describe('Robinhood FRESH signed-origin PostgreSQL source', () => {
       walletAddress: WALLET, transactionIndex: '4',
     }), (error) => error.code === 'fresh_signed_origin_unavailable'
       && error.reason === 'positive_nonce_without_observed_predecessor');
+  });
+
+  it('batches canonical RPC and signed-origin reads while isolating unavailable wallets', async () => {
+    let rpcBatches = 0; let dbQueries = 0;
+    const value = createRobinhoodFreshWalletSignedOriginSource({
+      canonicalSource: {
+        readCanonicalEvidence: async () => canonical(),
+        async readCanonicalEvidenceBatch(inputs) {
+          rpcBatches += 1; return inputs.map(({ walletAddress }) => canonical(walletAddress));
+        },
+      },
+      database: { async query() { dbQueries += 1; return { rows: [row()] }; } },
+    });
+    const results = await value.readEvidenceBatchResults([
+      { walletAddress: WALLET, transactionIndex: '4' },
+      { walletAddress: WALLET_TWO, transactionIndex: '4' },
+    ]);
+    assert.equal(rpcBatches, 1);
+    assert.equal(dbQueries, 1);
+    assert.equal(results[0].evidence.signedActivity.priorSignedActivity, false);
+    assert.equal(results[1].error.reason, 'coverage_missing');
   });
 });

@@ -71,19 +71,29 @@ function prepareTask(runtime, task, evidence) {
   return { ...task, status: 'ready', evidence, decision };
 }
 
+function unavailableTask(task, error) {
+  return { ...task, status: 'unavailable', statusReason: error.reason,
+    evidence: { source: 'robinhood-signed-origin-index', sourceKind: 'live',
+      observedAt: new Date().toISOString(), error: { code: error.code, reason: error.reason } },
+  };
+}
+
+async function materializeUnavailable(runtime, task, error) {
+  const result = await runtime.shadow.replaceAndComplete(
+    unavailableTask(task, error), { allowReset: true }
+  );
+  return Object.freeze({ status: result.completed ? 'materialized' : 'stale',
+    tokenAddress: task.tokenAddress, walletAddress: task.walletAddress, outcome: null });
+}
+
 async function processTask(runtime, task, suppliedEvidence = null) {
   let evidence;
-  try { evidence = suppliedEvidence || await runtime.source.readEvidence(task); }
+  try { evidence = suppliedEvidence == null
+    ? await runtime.source.readEvidence(task) : await suppliedEvidence; }
   catch (error) {
     if (error.code !== 'fresh_signed_origin_unavailable'
         || !isSafeSignedOriginUnavailableReason(error.reason)) throw error;
-    const result = await runtime.shadow.replaceAndComplete({ ...task, status: 'unavailable',
-      statusReason: error.reason, evidence: { source: 'robinhood-signed-origin-index',
-        sourceKind: 'live', observedAt: new Date().toISOString(),
-        error: { code: error.code, reason: error.reason } },
-    }, { allowReset: true });
-    return Object.freeze({ status: result.completed ? 'materialized' : 'stale',
-      tokenAddress: task.tokenAddress, walletAddress: task.walletAddress, outcome: null });
+    return materializeUnavailable(runtime, task, error);
   }
   const prepared = prepareTask(runtime, task, evidence);
   const result = await runtime.shadow.replaceAndComplete({
@@ -109,6 +119,67 @@ async function processTaskBatch(runtime, tasks, evidence) {
     tokenAddress: tasks[index].tokenAddress, walletAddress: tasks[index].walletAddress,
     outcome: result.completed ? prepared[index].decision.outcome : null,
   })));
+}
+
+async function processOutcomeBatch(runtime, tasks, outcomes) {
+  if (!Array.isArray(outcomes) || outcomes.length !== tasks.length) {
+    throw new Error('FRESH live evidence batch is incomplete');
+  }
+  const results = new Array(tasks.length); const prepared = [];
+  tasks.forEach((task, index) => {
+    const outcome = outcomes[index] || {};
+    try {
+      if (outcome.error) {
+        if (outcome.error.code !== 'fresh_signed_origin_unavailable'
+            || !isSafeSignedOriginUnavailableReason(outcome.error.reason)) throw outcome.error;
+        prepared.push({ index, input: unavailableTask(task, outcome.error), outcome: null });
+      } else {
+        const input = prepareTask(runtime, task, outcome.evidence);
+        prepared.push({ index, input, outcome: input.decision.outcome });
+      }
+    } catch (error) { results[index] = { status: 'deferred', error }; }
+  });
+  if (prepared.length) {
+    const stored = await runtime.shadow.replaceAndCompleteBatch(
+      prepared.map(({ input }) => input), { allowForkReplacement: true, allowReset: true }
+    );
+    if (!Array.isArray(stored) || stored.length !== prepared.length) {
+      throw new Error('FRESH live materialization batch is incomplete');
+    }
+    prepared.forEach(({ index, input, outcome }, offset) => {
+      results[index] = { status: stored[offset].completed ? 'materialized' : 'stale',
+        tokenAddress: input.tokenAddress, walletAddress: input.walletAddress, outcome };
+    });
+  }
+  return results;
+}
+
+async function processClaimed(runtime, tasks, concurrency) {
+  let outcomes = null;
+  if (typeof runtime.source?.readEvidenceBatchResults === 'function'
+      && typeof runtime.shadow?.replaceAndCompleteBatch === 'function') {
+    try { outcomes = await runtime.source.readEvidenceBatchResults(tasks); } catch (_) {}
+    if (outcomes) {
+      try {
+        return { results: await processOutcomeBatch(runtime, tasks, outcomes),
+          batchMode: 'rpc_and_persist' };
+      } catch (_) { /* Fall through with the already fetched evidence. */ }
+    }
+  }
+  const results = await mapConcurrent(tasks, concurrency, async (task, index) => {
+    try {
+      const outcome = outcomes?.[index];
+      if (outcome?.error) {
+        if (outcome.error.code === 'fresh_signed_origin_unavailable'
+            && isSafeSignedOriginUnavailableReason(outcome.error.reason)) {
+          return materializeUnavailable(runtime, task, outcome.error);
+        }
+        throw outcome.error;
+      }
+      return await processTask(runtime, task, outcome?.evidence);
+    } catch (error) { return { status: 'deferred', error }; }
+  });
+  return { results, batchMode: outcomes ? 'rpc_only' : 'individual' };
 }
 
 async function mapConcurrent(items, concurrency, operation) {
@@ -144,6 +215,7 @@ function createRobinhoodFreshWalletLiveWorker(deps = {}) {
   }
   async function execute() {
     if (circuitOpen()) return { status: 'circuit_open', until: status.circuitOpenUntil };
+    const startedAt = now();
     status.circuitOpenUntil = null; status.inFlight = true; status.totalRuns += 1;
     try {
       const tasks = await getRuntime().queue.claimBatch({
@@ -154,14 +226,24 @@ function createRobinhoodFreshWalletLiveWorker(deps = {}) {
         return { status: 'caught_up', claimed: 0 };
       }
       status.totalClaimed += tasks.length;
-      const results = await mapConcurrent(tasks, options.concurrency, async (task) => {
-        try { return await processTask(getRuntime(), { ...task, owner }); }
+      const owned = tasks.map((task) => ({ ...task, owner }));
+      const processed = await processClaimed(getRuntime(), owned, options.concurrency)
+        .catch(() => null);
+      const results = processed?.results || await mapConcurrent(owned,
+        options.concurrency, async (task) => {
+        try { return await processTask(getRuntime(), task); }
         catch (error) {
-          await getRuntime().queue.retry({ ...task, owner,
+          await getRuntime().queue.retry({ ...task,
             retryMs: retryDelay(task.attemptCount), error }).catch(() => {});
           return { status: 'deferred', error };
         }
       });
+      await Promise.all(results.map(async (result, index) => {
+        if (result.status !== 'deferred' || !processed) return;
+        const task = owned[index];
+        await getRuntime().queue.retry({ ...task,
+          retryMs: retryDelay(task.attemptCount), error: result.error }).catch(() => {});
+      }));
       const failures = results.filter(({ status: value }) => value === 'deferred');
       const materialized = results.filter(({ status: value }) => value === 'materialized');
       status.totalDeferred += failures.length; status.totalMaterialized += materialized.length;
@@ -169,8 +251,11 @@ function createRobinhoodFreshWalletLiveWorker(deps = {}) {
       if (materialized.length) {
         status.consecutiveFailures = 0; status.circuitOpenUntil = null; status.lastError = null;
       } else if (failures.length) recordFailure(failures[0].error);
+      const elapsedMs = Math.max(1, now() - startedAt);
       return { status: failures.length ? 'partial' : 'drained',
-        claimed: tasks.length, materialized: materialized.length, deferred: failures.length };
+        claimed: tasks.length, materialized: materialized.length, deferred: failures.length,
+        batchMode: processed?.batchMode || 'individual', elapsedMs,
+        itemsPerSecond: Number(((materialized.length * 1000) / elapsedMs).toFixed(2)) };
     } catch (error) { recordFailure(error); return null; }
     finally { status.inFlight = false; status.lastCompletedAt = new Date(now()).toISOString(); }
   }
@@ -182,7 +267,9 @@ function createRobinhoodFreshWalletLiveWorker(deps = {}) {
   }
   function queue(delay = options.intervalMs) {
     if (!running) return;
-    timer = schedule(async () => { timer = null; await runOnce(); queue(); }, delay); timer?.unref?.();
+    timer = schedule(async () => { timer = null; const result = await runOnce();
+      queue(result?.claimed >= options.batchSize ? 0 : options.intervalMs);
+    }, delay); timer?.unref?.();
   }
   function wake() { if (running && !active) { if (timer) cancel(timer); timer = null; queue(0); } }
   function start(input = {}) {
@@ -209,6 +296,6 @@ function createRobinhoodFreshWalletLiveWorker(deps = {}) {
 
 const worker = createRobinhoodFreshWalletLiveWorker();
 module.exports = { NOTIFY_CHANNEL, createRobinhoodFreshWalletLiveWorker, processTask,
-  processTaskBatch,
-  getStatus: worker.getStatus, start: worker.start, stop: worker.stop,
-  __private: { buildRuntime, mapConcurrent, normalizeOptions, prepareTask } };
+  processTaskBatch, getStatus: worker.getStatus, start: worker.start, stop: worker.stop,
+  __private: { buildRuntime, mapConcurrent, normalizeOptions, prepareTask,
+    processClaimed, processOutcomeBatch } };

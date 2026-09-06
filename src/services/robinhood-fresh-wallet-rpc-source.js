@@ -273,20 +273,29 @@ function createRobinhoodFreshWalletRpcSource(options = {}) {
     return bounds.map((bound, index) => ({ canonical: canonicals[index], ...bound }));
   }
 
-  async function readEvidenceBatch(inputs = []) {
+  async function readCanonicalEvidenceBatch(inputs = []) {
     if (!Array.isArray(inputs) || !inputs.length || inputs.length > RPC_BATCH_SIZE) {
       throw new TypeError(`FRESH evidence batch must contain between 1 and ${RPC_BATCH_SIZE} items`);
     }
     const cutoffs = await resolveCutoffsBatch(await canonicalEvidenceBatch(inputs));
-    const nonceKeys = [...new Map(cutoffs.map(({ canonical, cutoff }) => [
-      `${canonical.firstBuy.walletAddress}:${cutoff.hash}`, { canonical, cutoff },
+    return cutoffs.map(({ canonical, targetAt, cutoff, nextBlock }) => Object.freeze({
+      ...canonical, cutoff: Object.freeze({ targetAt, ...cutoff }), nextBlock,
+    }));
+  }
+
+  async function readEvidenceBatch(inputs = []) {
+    const canonicals = await readCanonicalEvidenceBatch(inputs);
+    const nonceKeys = [...new Map(canonicals.map((canonical) => [
+      `${canonical.firstBuy.walletAddress}:${canonical.cutoff.hash}`,
+      { canonical, cutoff: canonical.cutoff },
     ])).entries()];
     const nonces = await batchedRequests(nonceKeys.map(([, { canonical, cutoff }]) => ({
       method: 'eth_getTransactionCount', params: [canonical.firstBuy.walletAddress,
         { blockHash: cutoff.hash, requireCanonical: true }],
     })));
     const nonceByKey = new Map(nonceKeys.map(([key], index) => [key, nonces[index]]));
-    return cutoffs.map(({ canonical, targetAt, cutoff, nextBlock }) => {
+    return canonicals.map((canonical) => {
+      const { cutoff } = canonical;
       const cutoffNonce = quantity(nonceByKey.get(
         `${canonical.firstBuy.walletAddress}:${cutoff.hash}`
       ), 'cutoffNonce');
@@ -294,7 +303,7 @@ function createRobinhoodFreshWalletRpcSource(options = {}) {
         throw invalid('historical nonce exceeds first-buy nonce');
       }
       return Object.freeze({ ...canonical,
-        cutoff: Object.freeze({ targetAt, ...cutoff, nonce: cutoffNonce.toString() }), nextBlock });
+        cutoff: Object.freeze({ ...cutoff, nonce: cutoffNonce.toString() }) });
     });
   }
 
@@ -311,7 +320,8 @@ function createRobinhoodFreshWalletRpcSource(options = {}) {
     });
   }
 
-  return Object.freeze({ sourceKind, readCanonicalEvidence, readEvidence, readEvidenceBatch });
+  return Object.freeze({ sourceKind, readCanonicalEvidence, readCanonicalEvidenceBatch,
+    readEvidence, readEvidenceBatch });
 }
 
 module.exports = {
