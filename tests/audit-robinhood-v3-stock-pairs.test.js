@@ -7,6 +7,7 @@ const v3 = require('../src/services/uniswap-v3-decoder');
 const STOCK = ROBINHOOD_TOKENIZED_ASSETS.QQQ;
 const MEME = `0x${'a'.repeat(40)}`;
 const POOL = `0x${'b'.repeat(40)}`;
+const REFERENCE_POOL = `0x${'d'.repeat(40)}`;
 
 function options(overrides = {}) {
   return {
@@ -23,7 +24,7 @@ function pool(overrides = {}) {
 function swap(index) {
   return {
     address: POOL, transactionHash: `0x${String(index).padStart(64, '0')}`,
-    logIndex: `0x${index.toString(16)}`, removed: false,
+    logIndex: `0x${index.toString(16)}`, blockNumber: '0x64', removed: false,
   };
 }
 
@@ -67,8 +68,13 @@ describe('Robinhood V3 stock-pair archive audit', () => {
       category: 'meme_stock_candidate', stockSymbol: 'QQQ', stockAddress: STOCK,
       tokenAddress: MEME, quoteAddress: STOCK, quoteIndex: 1,
     });
-    assert.equal(__private.classifyPool(pool({ token0: STOCK, token1: v3.ROBINHOOD_WETH }))
-      .category, 'stock_reference');
+    assert.deepEqual(
+      __private.classifyPool(pool({ token0: STOCK, token1: v3.ROBINHOOD_WETH })),
+      {
+        category: 'stock_reference', stockSymbol: 'QQQ', stockAddress: STOCK,
+        quoteAddress: v3.ROBINHOOD_WETH, quoteRoute: 'via_weth',
+      }
+    );
     assert.equal(__private.classifyPool(pool({
       token0: STOCK, token1: ROBINHOOD_TOKENIZED_ASSETS.NVDA,
     })).category, 'stock_stock');
@@ -108,6 +114,54 @@ describe('Robinhood V3 stock-pair archive audit', () => {
     );
     assert.equal(result.candidates[0].tokenAddress, MEME);
     assert.equal(result.candidates[0].stockSymbol, 'QQQ');
+    assert.equal(result.candidates[0].registryAssessment.status, 'orientation_mismatch');
+    assert.equal(result.registryMismatchCandidatePools, 1);
+  });
+
+  it('reports initialized reference routes and per-swap historical quote coverage', async () => {
+    const candidateRegistry = {
+      pool_address: POOL, token_address: MEME, quote_address: STOCK, active: true,
+    };
+    const referenceRegistry = {
+      pool_address: REFERENCE_POOL, token_address: STOCK,
+      quote_address: v3.ROBINHOOD_USDG, active: true,
+    };
+    const result = await runAudit(options(), {
+      rpcClient: {
+        request: async (method, [filter] = []) => {
+          if (method === 'eth_chainId') return '0x1237';
+          if (filter.topics[0] === v3.TOPICS.poolCreated) return [{ id: 'candidate' }, { id: 'reference' }];
+          if (filter.topics[0] === v3.TOPICS.initialize) {
+            return [{ address: REFERENCE_POOL, blockNumber: '0x5f', removed: false }];
+          }
+          return [swap(1)];
+        },
+      },
+      decodePoolCreated: (log) => log.id === 'candidate'
+        ? pool()
+        : pool({
+          poolAddress: REFERENCE_POOL, token0: STOCK, token1: v3.ROBINHOOD_USDG,
+          tokenAddress: STOCK, quoteAddress: v3.ROBINHOOD_USDG, quoteIndex: 1,
+          blockNumber: '80', fee: 500, tickSpacing: 10,
+        }),
+      repository: {
+        listRegistered: async () => [candidateRegistry, referenceRegistry],
+        classify: async () => new Map(),
+      },
+    });
+
+    assert.deepEqual(result.historicalQuoteCoverage, {
+      directUsdg: 1, viaWeth: 0, uncovered: 0, covered: 1,
+      coveragePct: 100, mode: 'initialized_reference_pool',
+    });
+    assert.equal(result.registryReadyCandidatePools, 1);
+    assert.equal(result.referencePools[0].initializedBlock, '95');
+    assert.equal(result.referencePools[0].quoteRoute, 'direct_usdg');
+    assert.equal(result.referencePools[0].registryAssessment.status, 'ready');
+    assert.equal(result.candidates[0].historicalQuoteCoverage.directUsdg, 1);
+    assert.deepEqual(result.candidates[0].backfillReadiness, {
+      ready: false, blockers: ['stock_quote_valuation_not_implemented'],
+    });
   });
 
   it('splits provider range errors without skipping either half', async () => {

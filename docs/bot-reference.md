@@ -460,6 +460,14 @@ varredura de swaps começa automaticamente na primeira criação candidata dentr
 intervalo e adiciona as demais pools apenas quando passam a existir. Os defaults locais
 usam ranges de 100.000 blocos e 100 endereços, com divisão adaptativa em resposta densa
 ou erro do provider, evitando consultar milhões de blocos anteriores às próprias pools.
+O relatório também lista cada pool de referência, sua rota `direct_usdg`/`via_weth`, fee,
+bloco de criação e primeiro `Initialize`, além de classificar o registry de cada candidata
+como `missing`, `inactive`, `orientation_mismatch` ou `ready`. A cobertura histórica por
+swap é estrutural (`mode=initialized_reference_pool`): confirma que uma referência da mesma
+stock já estava inicializada no bloco, preferindo stock/USDG direto e usando stock/WETH como
+segunda rota. Ela não afirma que o `slot0` archive daquele bloco já foi lido nem que o writer
+suporta a stock como cotação; `stock_quote_valuation_not_implemented` continua bloqueando a
+prontidão enquanto a valoração USD específica não existir.
 
 O grupo `robinhood-processing` roda um processo separado (systemd
 `trendscope-worker@robinhood-processing.service`, lease `robinhood-processing-worker`,

@@ -91,8 +91,17 @@ function classifyPool(pool) {
   if (stock0 && stock1) return { category: 'stock_stock', stockSymbols: [stock0, stock1] };
   const stockAddress = stock0 ? pool.token0 : pool.token1;
   const counterpartyAddress = stock0 ? pool.token1 : pool.token0;
+  if (STANDARD_QUOTES.has(counterpartyAddress)) {
+    return {
+      category: 'stock_reference', stockSymbol: stock0 || stock1, stockAddress,
+      quoteAddress: counterpartyAddress,
+      quoteRoute: counterpartyAddress === CANONICAL_CONTRACTS.USDG.toLowerCase()
+        ? 'direct_usdg'
+        : 'via_weth',
+    };
+  }
   return {
-    category: STANDARD_QUOTES.has(counterpartyAddress) ? 'stock_reference' : 'meme_stock_candidate',
+    category: 'meme_stock_candidate',
     stockSymbol: stock0 || stock1,
     stockAddress,
     tokenAddress: counterpartyAddress,
@@ -152,6 +161,95 @@ function identity(log) {
   return `${String(log.transactionHash).toLowerCase()}:${BigInt(log.logIndex)}`;
 }
 
+function registryAssessment(pool, registry) {
+  if (!registry) return { status: 'missing', orientationMatches: false };
+  const orientationMatches = registry.token_address === pool.tokenAddress
+    && registry.quote_address === pool.quoteAddress;
+  return {
+    status: !orientationMatches ? 'orientation_mismatch' : (registry.active ? 'ready' : 'inactive'),
+    orientationMatches,
+  };
+}
+
+async function scanReferenceInitializations(options, rpcClient, references) {
+  const initialized = new Map();
+  if (!references.length) return initialized;
+  let cursor = references.reduce((minimum, pool) => {
+    const created = BigInt(pool.blockNumber);
+    return created < minimum ? created : minimum;
+  }, BigInt(options.toBlock));
+  const end = BigInt(options.toBlock);
+  while (cursor <= end) {
+    const requestedEnd = cursor + BigInt(options.discoveryRangeSize) - 1n;
+    const rangeEnd = requestedEnd < end ? requestedEnd : end;
+    const active = references.filter((pool) => BigInt(pool.blockNumber) <= rangeEnd);
+    for (const addresses of chunks(active.map((pool) => pool.poolAddress), options.addressBatchSize)) {
+      const leaves = await fetchLogs(rpcClient, {
+        address: addresses.length === 1 ? addresses[0] : addresses,
+        topics: [v3.TOPICS.initialize],
+      }, cursor, rangeEnd, options.minRangeSize);
+      for (const logs of leaves) {
+        for (const log of logs.filter((entry) => entry?.removed !== true)) {
+          const address = String(log.address || '').toLowerCase();
+          const blockNumber = BigInt(log.blockNumber).toString();
+          const previous = initialized.get(address);
+          if (previous == null || BigInt(blockNumber) < BigInt(previous)) {
+            initialized.set(address, blockNumber);
+          }
+        }
+      }
+    }
+    cursor = rangeEnd + 1n;
+    console.log(JSON.stringify({
+      event: 'v3_stock_pair_audit_progress', phase: 'reference-initialization',
+      nextBlock: cursor.toString(), initializedReferencePools: initialized.size,
+    }));
+  }
+  return initialized;
+}
+
+function referenceIndex(references) {
+  const byStock = new Map();
+  for (const reference of references) {
+    if (reference.initializedBlock == null) continue;
+    const rows = byStock.get(reference.stockAddress) || [];
+    rows.push(reference);
+    byStock.set(reference.stockAddress, rows);
+  }
+  for (const rows of byStock.values()) {
+    rows.sort((left, right) => (
+      (left.quoteRoute === 'direct_usdg' ? 0 : 1) - (right.quoteRoute === 'direct_usdg' ? 0 : 1)
+      || left.fee - right.fee
+    ));
+  }
+  return byStock;
+}
+
+function priceRoute(pool, blockNumber, referencesByStock) {
+  return (referencesByStock.get(pool.stockAddress) || [])
+    .find((reference) => BigInt(reference.initializedBlock) <= blockNumber)?.quoteRoute || null;
+}
+
+function recordSwap(poolStats, log, state, referencesByStock) {
+  const blockNumber = BigInt(log.blockNumber);
+  poolStats.archiveSwaps += 1;
+  poolStats.firstSwapBlock = poolStats.firstSwapBlock == null
+    ? blockNumber.toString()
+    : (blockNumber < BigInt(poolStats.firstSwapBlock)
+      ? blockNumber.toString() : poolStats.firstSwapBlock);
+  poolStats.lastSwapBlock = poolStats.lastSwapBlock == null
+    ? blockNumber.toString()
+    : (blockNumber > BigInt(poolStats.lastSwapBlock)
+      ? blockNumber.toString() : poolStats.lastSwapBlock);
+  const route = priceRoute(poolStats, blockNumber, referencesByStock);
+  if (route === 'direct_usdg') poolStats.historicalQuoteCoverage.directUsdg += 1;
+  else if (route === 'via_weth') poolStats.historicalQuoteCoverage.viaWeth += 1;
+  else poolStats.historicalQuoteCoverage.uncovered += 1;
+  if (state.processed) poolStats.existingProcessed += 1;
+  else if (state.captured) poolStats.existingCaptures += 1;
+  else poolStats.missing += 1;
+}
+
 async function scanDiscovery(options, rpcClient, decodePoolCreated) {
   const pools = new Map();
   let cursor = BigInt(options.discoveryFromBlock);
@@ -178,12 +276,14 @@ async function scanDiscovery(options, rpcClient, decodePoolCreated) {
   return [...pools.values()];
 }
 
-async function auditSwaps(options, rpcClient, repository, candidates) {
+async function auditSwaps(options, rpcClient, repository, candidates, referencesByStock = new Map()) {
   const stats = new Map(candidates.map((pool) => [pool.poolAddress, {
-    poolAddress: pool.poolAddress, tokenAddress: pool.tokenAddress,
+    poolAddress: pool.poolAddress, tokenAddress: pool.tokenAddress, quoteAddress: pool.quoteAddress,
     stockAddress: pool.stockAddress, stockSymbol: pool.stockSymbol,
     createdBlock: pool.blockNumber, archiveSwaps: 0,
     existingProcessed: 0, existingCaptures: 0, missing: 0,
+    firstSwapBlock: null, lastSwapBlock: null,
+    historicalQuoteCoverage: { directUsdg: 0, viaWeth: 0, uncovered: 0 },
   }]));
   if (!candidates.length) return [...stats.values()];
   const requestedStart = BigInt(options.fromBlock);
@@ -218,11 +318,7 @@ async function auditSwaps(options, rpcClient, repository, candidates) {
           for (const log of batch) {
             const poolStats = stats.get(String(log.address).toLowerCase());
             if (!poolStats) continue;
-            poolStats.archiveSwaps += 1;
-            const state = classified.get(identity(log)) || {};
-            if (state.processed) poolStats.existingProcessed += 1;
-            else if (state.captured) poolStats.existingCaptures += 1;
-            else poolStats.missing += 1;
+            recordSwap(poolStats, log, classified.get(identity(log)) || {}, referencesByStock);
           }
         }
       }
@@ -250,12 +346,45 @@ async function runAudit(options, deps = {}) {
     options, rpcClient, deps.decodePoolCreated || v3.decodePoolCreated
   );
   const candidates = stockPools.filter((pool) => pool.category === 'meme_stock_candidate');
-  const registeredRows = await repository.listRegistered(candidates.map((pool) => pool.poolAddress));
+  const referencePools = stockPools.filter((pool) => pool.category === 'stock_reference');
+  const initialized = await scanReferenceInitializations(options, rpcClient, referencePools);
+  const references = referencePools.map((pool) => ({
+    ...pool, initializedBlock: initialized.get(pool.poolAddress) || null,
+  }));
+  const registeredRows = await repository.listRegistered(
+    [...candidates, ...references].map((pool) => pool.poolAddress)
+  );
   const registered = new Map(registeredRows.map((row) => [row.pool_address, row]));
-  const audited = await auditSwaps(options, rpcClient, repository, candidates);
-  const rows = audited.map((row) => ({ ...row, registry: registered.get(row.poolAddress) || null }))
+  const audited = await auditSwaps(options, rpcClient, repository, candidates, referenceIndex(references));
+  const rows = audited.map((row) => {
+    const registry = registered.get(row.poolAddress) || null;
+    const registryAssessmentResult = registryAssessment(row, registry);
+    const covered = row.historicalQuoteCoverage.directUsdg
+      + row.historicalQuoteCoverage.viaWeth;
+    const coveragePct = row.archiveSwaps === 0
+      ? 100
+      : Number(((covered / row.archiveSwaps) * 100).toFixed(2));
+    const blockers = [];
+    if (registryAssessmentResult.status !== 'ready') blockers.push(`registry_${registryAssessmentResult.status}`);
+    if (row.historicalQuoteCoverage.uncovered > 0) blockers.push('historical_stock_usd_uncovered');
+    if (row.missing > 0) blockers.push('stock_quote_valuation_not_implemented');
+    return {
+      ...row, registry, registryAssessment: registryAssessmentResult,
+      historicalQuoteCoverage: {
+        ...row.historicalQuoteCoverage, covered, coveragePct,
+        mode: 'initialized_reference_pool',
+      },
+      backfillReadiness: { ready: blockers.length === 0, blockers },
+    };
+  })
     .sort((left, right) => right.missing - left.missing || right.archiveSwaps - left.archiveSwaps);
   const sum = (key) => rows.reduce((total, row) => total + row[key], 0);
+  const coverage = rows.reduce((total, row) => ({
+    directUsdg: total.directUsdg + row.historicalQuoteCoverage.directUsdg,
+    viaWeth: total.viaWeth + row.historicalQuoteCoverage.viaWeth,
+    uncovered: total.uncovered + row.historicalQuoteCoverage.uncovered,
+  }), { directUsdg: 0, viaWeth: 0, uncovered: 0 });
+  const covered = coverage.directUsdg + coverage.viaWeth;
   return {
     mode: 'read-only', discoveryFromBlock: options.discoveryFromBlock,
     fromBlock: options.fromBlock, toBlock: options.toBlock,
@@ -263,8 +392,30 @@ async function runAudit(options, deps = {}) {
     stockStockPools: stockPools.filter((pool) => pool.category === 'stock_stock').length,
     candidatePools: rows.length,
     registeredCandidatePools: rows.filter((row) => row.registry).length,
+    registryReadyCandidatePools: rows.filter((row) => row.registryAssessment.status === 'ready').length,
+    registryMismatchCandidatePools: rows.filter(
+      (row) => row.registryAssessment.status === 'orientation_mismatch'
+    ).length,
     archiveSwapLogs: sum('archiveSwaps'), existingProcessed: sum('existingProcessed'),
-    existingCaptures: sum('existingCaptures'), missing: sum('missing'), candidates: rows,
+    existingCaptures: sum('existingCaptures'), missing: sum('missing'),
+    historicalQuoteCoverage: {
+      ...coverage, covered,
+      coveragePct: covered + coverage.uncovered === 0
+        ? 100
+        : Number(((covered / (covered + coverage.uncovered)) * 100).toFixed(2)),
+      mode: 'initialized_reference_pool',
+    },
+    referencePools: references.map((pool) => {
+      const registry = registered.get(pool.poolAddress) || null;
+      return {
+        poolAddress: pool.poolAddress, stockSymbol: pool.stockSymbol,
+        stockAddress: pool.stockAddress, quoteAddress: pool.quoteAddress,
+        quoteRoute: pool.quoteRoute, fee: pool.fee, tickSpacing: pool.tickSpacing,
+        createdBlock: pool.blockNumber, initializedBlock: pool.initializedBlock,
+        registry, registryAssessment: registryAssessment(pool, registry),
+      };
+    }),
+    candidates: rows,
   };
 }
 
@@ -283,5 +434,8 @@ if (require.main === module) void run();
 
 module.exports = {
   runAudit,
-  __private: { classifyPool, createRepository, fetchLogs, parseArgs },
+  __private: {
+    classifyPool, createRepository, fetchLogs, parseArgs, priceRoute,
+    recordSwap, referenceIndex, registryAssessment, scanReferenceInitializations,
+  },
 };
