@@ -4093,6 +4093,18 @@ runtime usa lease distribuído, expõe health telemetry e encerra o listener no
 shutdown. Esta família não terá backfill; a ativação live definirá o início da
 observação shadow.
 
+Se o worker adiar tokens com `transaction_position_missing` por posições de
+transfer anteriores à captura da sidecar, rode primeiro
+`npm run robinhood:bundle-redistribution-position-repair` para uma prévia sem
+escrita. O repair usa somente `robinhood_token_transfer_events`, faz lookup
+particionado pelo timestamp exato, limita cada lote e não consulta RPC. Para
+materializar as posições recuperáveis e acordar apenas tokens integralmente
+reparados, repita com `--apply
+--confirm-repair-robinhood-bundle-redistribution-positions`. `--batch-size`,
+`--max-batches`, `--pause-ms` e `--statement-timeout-ms` limitam a execução. O
+resultado `partial` preserva tokens sem evidência local para investigação; não
+os apresenta como reparados nem força retry cego.
+
 Execute `npm run robinhood:wallet-transfer-retention-plan --
 --projection-version=VERSAO --limit=10` para listar candidatos antigos. O limite
 aceito é 1–100; o relatório apenas confere catálogo/bounds, declara
