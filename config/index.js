@@ -10,6 +10,12 @@ const resolvedEnvPath = nodeEnv === 'test' && fs.existsSync(testEnvPath)
 
 require('dotenv').config({ path: resolvedEnvPath });
 
+const DEFAULT_ROBINHOOD_LIVE_SOURCE = 'canonical_journal';
+
+function normalizeRobinhoodLiveSource(value) {
+  return String(value || DEFAULT_ROBINHOOD_LIVE_SOURCE).trim().toLowerCase();
+}
+
 function parseBoolean(value, fallback = false) {
   if (value === undefined || value === null || value === '') return fallback;
   if (typeof value === 'boolean') return value;
@@ -713,7 +719,7 @@ if ((robinhoodHolderBackfillEnabled || robinhoodHolderColdEnabled || robinhoodHo
   missing.push('ROBINHOOD_RPC_URL for Robinhood holder workers');
 }
 if (parseBoolean(process.env.ROBINHOOD_SIGNED_ORIGIN_LIVE_ENABLED, false)
-    && String(process.env.ROBINHOOD_SIGNED_ORIGIN_LIVE_SOURCE || 'rpc').trim().toLowerCase()
+    && normalizeRobinhoodLiveSource(process.env.ROBINHOOD_SIGNED_ORIGIN_LIVE_SOURCE)
       !== 'canonical_journal'
     && !String(process.env.ROBINHOOD_RPC_URL || '').trim()) {
   missing.push('ROBINHOOD_RPC_URL for Robinhood signed-origin LIVE');
@@ -1422,7 +1428,7 @@ module.exports = {
 
   robinhoodHolderLiveWorker: {
     enabled: robinhoodHolderLiveEnabled,
-    sourceMode: String(process.env.ROBINHOOD_HOLDER_LIVE_SOURCE || 'rpc').trim().toLowerCase(),
+    sourceMode: normalizeRobinhoodLiveSource(process.env.ROBINHOOD_HOLDER_LIVE_SOURCE),
     intervalMs: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_LIVE_INTERVAL_MS, 500, 100, 300_000
     ),
@@ -1448,7 +1454,7 @@ module.exports = {
 
   robinhoodHolderLiveApplyWorker: {
     enabled: robinhoodHolderLiveEnabled,
-    sourceMode: String(process.env.ROBINHOOD_HOLDER_LIVE_SOURCE || 'rpc').trim().toLowerCase(),
+    sourceMode: normalizeRobinhoodLiveSource(process.env.ROBINHOOD_HOLDER_LIVE_SOURCE),
     intervalMs: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_LIVE_APPLY_INTERVAL_MS, 100, 50, 300_000
     ),
@@ -1813,9 +1819,7 @@ module.exports = {
 
   robinhoodWalletSwapLiveWorker: {
     enabled: parseBoolean(process.env.ROBINHOOD_WALLET_SWAP_LIVE_ENABLED, false),
-    sourceMode: String(
-      process.env.ROBINHOOD_WALLET_SWAP_LIVE_SOURCE || 'rpc'
-    ).trim().toLowerCase(),
+    sourceMode: normalizeRobinhoodLiveSource(process.env.ROBINHOOD_WALLET_SWAP_LIVE_SOURCE),
     intervalMs: parseIntegerInRange(
       process.env.ROBINHOOD_WALLET_SWAP_LIVE_INTERVAL_MS, 2000, 250, 300_000
     ),
@@ -1838,9 +1842,7 @@ module.exports = {
 
   robinhoodWalletSignedOriginLiveWorker: {
     enabled: parseBoolean(process.env.ROBINHOOD_SIGNED_ORIGIN_LIVE_ENABLED, false),
-    sourceMode: String(
-      process.env.ROBINHOOD_SIGNED_ORIGIN_LIVE_SOURCE || 'rpc'
-    ).trim().toLowerCase(),
+    sourceMode: normalizeRobinhoodLiveSource(process.env.ROBINHOOD_SIGNED_ORIGIN_LIVE_SOURCE),
     confirmations: parseIntegerInRange(
       process.env.ROBINHOOD_SIGNED_ORIGIN_LIVE_CONFIRMATIONS, 2, 0, 1000
     ),
@@ -1921,7 +1923,7 @@ module.exports = {
 
   robinhoodBundleFundingLiveWorker: {
     enabled: parseBoolean(process.env.ROBINHOOD_BUNDLE_FUNDING_LIVE_ENABLED, false),
-    sourceMode: process.env.ROBINHOOD_BUNDLE_FUNDING_LIVE_SOURCE || 'rpc',
+    sourceMode: normalizeRobinhoodLiveSource(process.env.ROBINHOOD_BUNDLE_FUNDING_LIVE_SOURCE),
     intervalMs: parseIntegerInRange(
       process.env.ROBINHOOD_BUNDLE_FUNDING_LIVE_INTERVAL_MS, 1000, 100, 60_000
     ),
@@ -2070,9 +2072,7 @@ module.exports = {
 
   robinhoodWalletTransferLiveWorker: {
     enabled: parseBoolean(process.env.ROBINHOOD_WALLET_TRANSFER_LIVE_ENABLED, false),
-    sourceMode: String(
-      process.env.ROBINHOOD_WALLET_TRANSFER_LIVE_SOURCE || 'rpc'
-    ).trim().toLowerCase(),
+    sourceMode: normalizeRobinhoodLiveSource(process.env.ROBINHOOD_WALLET_TRANSFER_LIVE_SOURCE),
     unifiedPositionEnabled: parseBoolean(
       process.env.ROBINHOOD_WALLET_UNIFIED_POSITION_LIVE_ENABLED,
       false
@@ -2099,7 +2099,7 @@ module.exports = {
 
   robinhoodDirectCreatorWorker: {
     enabled: parseBoolean(process.env.ROBINHOOD_DIRECT_CREATOR_LIVE_ENABLED, false),
-    sourceMode: String(process.env.ROBINHOOD_DIRECT_CREATOR_LIVE_SOURCE || 'rpc').trim().toLowerCase(),
+    sourceMode: normalizeRobinhoodLiveSource(process.env.ROBINHOOD_DIRECT_CREATOR_LIVE_SOURCE),
     intervalMs: parseIntegerInRange(
       process.env.ROBINHOOD_DIRECT_CREATOR_LIVE_INTERVAL_MS, 2000, 250, 300_000
     ),

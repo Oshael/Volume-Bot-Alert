@@ -2034,11 +2034,10 @@ hash do token, preservando a ordem canônica dentro do token e impedindo duas la
 de aplicarem o mesmo ledger. Cada lane tem budget próprio de eventos e 2s, portanto
 o aumento eleva proporcionalmente a pressão máxima no PostgreSQL. A fonte comum de
 captura e recuperação do apply é selecionada por `ROBINHOOD_HOLDER_LIVE_SOURCE`:
-`rpc` permanece o default
-legado; `canonical_journal` lê `Transfer` e checkpoints diretamente do journal da
+`canonical_journal` é o default e lê `Transfer` e checkpoints diretamente do journal da
 captura canônica, sem `eth_getLogs` nem receipts. O modo canônico falha fechado se a
 faixa pedida não estiver coberta e só deve ser ativado depois dos gates de cobertura
-e handoff do holder.
+e handoff do holder. `rpc` permanece disponível apenas como rollback explícito.
 `npm run robinhood:canonical-holder-audit` executa o gate preflight em uma transação
 PostgreSQL `REPEATABLE READ READ ONLY`. O relatório separa lag reaproveitável dentro
 do journal canônico de uma lacuna anterior à retenção, valida o checkpoint holder
@@ -2594,9 +2593,10 @@ até 200 blocos, separando o frontier legado do backlog canônico reaproveitáve
 Com `ready=true`, `npm run robinhood:canonical-signed-origin-canary` compara os
 64 blocos recentes já processados nos dois sentidos, incluindo timestamp, posição,
 sender, hash e nonce; `--blocks=200` amplia a janela sem escrita.
-No corte, configure `ROBINHOOD_SIGNED_ORIGIN_LIVE_SOURCE=canonical_journal`,
+O default é `canonical_journal`; mantenha essa fonte explícita no deploy,
 reinicie `trendscope-worker@robinhood-signed-origin.service` e confirme com
 `npm run robinhood:canonical-signed-origin-audit -- --phase=cutover`.
+Use `rpc` somente em rollback deliberado.
 Na VPS, provisione-o como
 `trendscope-worker@robinhood-signed-origin.service`: instale
 `deploy/systemd/robinhood-signed-origin.env.example` em
@@ -2708,9 +2708,10 @@ histórico: aplique-a antes da última campanha incremental usada como seed do l
 A Stage 173 persiste a evidência causal atual e o worker
 `ROBINHOOD_BUNDLE_FUNDING_LIVE_ENABLED` drena a fila exclusivamente na VPS. Ele
 congela as early wallets do token, valida chain `4663` e substitui evidência + ACK
-na mesma transação. `ROBINHOOD_BUNDLE_FUNDING_LIVE_SOURCE` aceita `rpc` (default
-de rollback) ou `canonical_journal`; no modo canônico, as janelas token-scoped
-são lidas de `robinhood_chain_blocks` e `robinhood_chain_transactions`, sem RPC.
+na mesma transação. `ROBINHOOD_BUNDLE_FUNDING_LIVE_SOURCE` usa
+`canonical_journal` por default; nesse modo, as janelas token-scoped são lidas de
+`robinhood_chain_blocks` e `robinhood_chain_transactions`, sem RPC. `rpc` exige
+configuração explícita e existe somente para rollback.
 Tokens com menos de duas candidatas concluem com evidência vazia; erros usam
 backoff e leases expiradas são recuperáveis. Evidência histórica já concluída não
 é apagada se uma tarefa reaberta encontrar lacuna canônica. A Stage 199 deve ser
@@ -3945,7 +3946,8 @@ Com `ready=true`, `npm run robinhood:canonical-direct-creator-canary` compara
 uma janela recente de 64 blocos entre o RPC legado e o journal, incluindo hashes,
 deployments externos e eventos conhecidos. Exige ao menos uma criação por padrão;
 `--blocks=200` amplia a amostra sem escrita nem avanço de cursor.
-No corte, configure `ROBINHOOD_DIRECT_CREATOR_LIVE_SOURCE=canonical_journal`,
+O default de `ROBINHOOD_DIRECT_CREATOR_LIVE_SOURCE` é `canonical_journal`;
+mantenha-o explícito no deploy,
 reinicie o grupo `robinhood-wallet` e confirme com
 `npm run robinhood:canonical-direct-creator-audit -- --phase=cutover`.
 
@@ -3973,8 +3975,8 @@ wallet ou à cobertura de buckets.
 
 O worker limita o trabalho pelo frontier estrito da captura/processing ativa,
 revalida checkpoint e seleciona a fonte por `ROBINHOOD_WALLET_SWAP_LIVE_SOURCE`:
-`rpc` (default de rollback, com preflight de chain ID `4663`) ou
-`canonical_journal` (blocos e transações já capturados, sem RPC). Lease,
+`canonical_journal` é o default e usa blocos e transações já capturados, sem RPC.
+`rpc` permanece como rollback explícito, com preflight de chain ID `4663`. Lease,
 telemetria e backoff permanecem no grupo `robinhood-wallet`. O antigo frontier do
 cursor monolítico congelado foi removido; não usá-lo para medir lag atual.
 Um recuo temporário do head seguro da fonte ou desse frontier upstream não reduz o
@@ -4290,7 +4292,7 @@ O canário read-only compara uma faixa comum de `Transfer` entre o
 os campos usados pela classificação. O default exige 100 transfers em 64
 blocos e respeita as duas confirmações do wallet-transfer; os limites podem ser
 ajustados com `--min-transfers`, `--blocks` e `--confirmations`.
-Após o canário ser aprovado, configure
+Após o canário ser aprovado, mantenha o default explícito
 `ROBINHOOD_WALLET_TRANSFER_LIVE_SOURCE=canonical_journal` e reinicie somente o
 grupo `robinhood-wallet-classification`. A fonte canônica lê transfers,
 timestamps, checkpoints e posições de transação do journal PostgreSQL, sem
@@ -4300,6 +4302,7 @@ aguarda o frontier do wallet-swap. Confirme a troca com
 `npm run robinhood:canonical-wallet-transfer-audit -- --phase=cutover`; o
 resultado só fica `ready=true` quando a lease ativa publica
 `source_mode=canonical_journal`.
+`rpc` permanece disponível somente como rollback explícito.
 
 A projeção financeira unificada dentro desse writer tem uma segunda flag,
 `ROBINHOOD_WALLET_UNIFIED_POSITION_LIVE_ENABLED=true`, desligada por padrão.

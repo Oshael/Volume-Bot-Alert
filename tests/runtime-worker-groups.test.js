@@ -46,6 +46,48 @@ function withEnv(overrides, fn) {
 }
 
 describe('runtime worker groups config', () => {
+  it('defaults migrated Robinhood live sources to the canonical journal', () => {
+    const sourceEnv = {
+      ROBINHOOD_HOLDER_LIVE_SOURCE: '',
+      ROBINHOOD_WALLET_SWAP_LIVE_SOURCE: '',
+      ROBINHOOD_SIGNED_ORIGIN_LIVE_SOURCE: '',
+      ROBINHOOD_BUNDLE_FUNDING_LIVE_SOURCE: '',
+      ROBINHOOD_WALLET_TRANSFER_LIVE_SOURCE: '',
+      ROBINHOOD_DIRECT_CREATOR_LIVE_SOURCE: '',
+    };
+    const readSources = (config) => [
+      config.robinhoodHolderLiveWorker.sourceMode,
+      config.robinhoodHolderLiveApplyWorker.sourceMode,
+      config.robinhoodWalletSwapLiveWorker.sourceMode,
+      config.robinhoodWalletSignedOriginLiveWorker.sourceMode,
+      config.robinhoodBundleFundingLiveWorker.sourceMode,
+      config.robinhoodWalletTransferLiveWorker.sourceMode,
+      config.robinhoodDirectCreatorWorker.sourceMode,
+    ];
+
+    withEnv(sourceEnv, (config) => {
+      assert.deepEqual(readSources(config), Array(7).fill('canonical_journal'));
+    });
+    withEnv(Object.fromEntries(Object.keys(sourceEnv).map((key) => [key, 'rpc'])), (config) => {
+      assert.deepEqual(readSources(config), Array(7).fill('rpc'));
+    });
+  });
+
+  it('ships canonical live sources in Robinhood deployment examples', () => {
+    const systemdDir = path.join(ROOT_DIR, 'deploy', 'systemd');
+    const examples = [
+      ['robinhood.env.example', 'ROBINHOOD_WALLET_SWAP_LIVE_SOURCE'],
+      ['robinhood-signed-origin.env.example', 'ROBINHOOD_SIGNED_ORIGIN_LIVE_SOURCE'],
+      ['robinhood-wallet-classification.env.example', 'ROBINHOOD_BUNDLE_FUNDING_LIVE_SOURCE'],
+      ['robinhood-wallet-classification.env.example', 'ROBINHOOD_WALLET_TRANSFER_LIVE_SOURCE'],
+    ];
+
+    for (const [filename, variable] of examples) {
+      const contents = fs.readFileSync(path.join(systemdDir, filename), 'utf8');
+      assert.match(contents, new RegExp(`^${variable}=canonical_journal$`, 'm'));
+    }
+  });
+
   it('bounds the chain capture V3 snapshot window', () => {
     for (const [value, expected] of [
       ['', 32], ['invalid', 32], ['0', 1], ['4', 4], ['999', 256],
