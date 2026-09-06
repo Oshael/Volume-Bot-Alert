@@ -1488,8 +1488,10 @@ adicionais respeitam
 o reload falhar, a sessão CDP é descartada e entra no backoff normal de reconnect.
 Um evento de crash do renderer (`Aw, Snap!`) inicia o reload imediatamente. Se o
 worker iniciar quando a aba já estiver crashada e duas conexões CDP consecutivas
-falharem, ele usa apenas a interface loopback do Chrome para fechar o target Fomo
-e abrir novamente `https://fomo.family/alerts` no mesmo perfil do navegador. Esse
+falharem, ele usa apenas a interface loopback do Chrome para abrir novamente
+`https://fomo.family/alerts` no mesmo perfil do navegador e só então fechar o
+target crashado. Essa ordem impede o Chrome de encerrar a janela quando a Fomo
+for seu único target. Esse
 reset respeita o mesmo cooldown e não fecha o Chrome nem toca em outras abas; ele
 não substitui supervisão systemd quando o processo inteiro do Chrome ou a porta
 CDP estiverem indisponíveis. `crashReloads`, `crashReloadErrors`, `pageResets`,

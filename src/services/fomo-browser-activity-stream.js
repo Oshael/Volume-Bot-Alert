@@ -58,14 +58,14 @@ async function resetFomoBrowserPage(endpoint, options = {}) {
   const target = Array.isArray(targets)
     ? targets.find((item) => item?.type === 'page' && isFomoUrl(item.url)) : null;
   const pageUrl = target?.url || DEFAULT_FOMO_PAGE_URL;
-  if (target?.id) {
-    const closeResponse = await request(`${endpoint}/json/close/${encodeURIComponent(target.id)}`);
-    if (!closeResponse.ok) throw new Error('Could not close crashed Fomo target');
-  }
   const openResponse = await request(
     `${endpoint}/json/new?${encodeURIComponent(pageUrl)}`, { method: 'PUT' },
   );
   if (!openResponse.ok) throw new Error('Could not open replacement Fomo target');
+  if (target?.id) {
+    const closeResponse = await request(`${endpoint}/json/close/${encodeURIComponent(target.id)}`);
+    if (!closeResponse.ok) throw new Error('Could not close crashed Fomo target');
+  }
 }
 
 function safeError(error, fallbackCode = 'FOMO_BROWSER_CDP') {

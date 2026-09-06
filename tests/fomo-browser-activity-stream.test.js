@@ -126,9 +126,9 @@ test('Fomo browser stream replaces a crashed target through loopback CDP', async
   assert.deepEqual(calls.map(({ url, method }) => ({ url, method })), [{
     url: 'http://127.0.0.1:9222/json/list', method: 'GET',
   }, {
-    url: 'http://127.0.0.1:9222/json/close/target-1', method: 'GET',
-  }, {
     url: 'http://127.0.0.1:9222/json/new?https%3A%2F%2Ffomo.family%2Falerts', method: 'PUT',
+  }, {
+    url: 'http://127.0.0.1:9222/json/close/target-1', method: 'GET',
   }]);
   assert.equal(calls.every(({ signal }) => signal instanceof AbortSignal), true);
 });
