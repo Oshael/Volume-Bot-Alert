@@ -138,6 +138,26 @@ describe('Robinhood holder deployment verifier', () => {
     });
   });
 
+  it('recognizes a historical direct deployment located from its exact block trace', async () => {
+    const rpcClient = rpcFor(evidence());
+    const originalRequest = rpcClient.request;
+    rpcClient.request = async (method, params) => {
+      if (method === 'trace_block') return [{
+        type: 'create', transactionHash: TX_HASH,
+        action: { from: CREATOR }, result: { address: TOKEN },
+      }];
+      return originalRequest(method, params);
+    };
+    const verifier = createRobinhoodHolderDeploymentVerifier({ rpcClient });
+
+    assert.deepEqual(await verifier.verifyBlockTraceDeployment({
+      tokenAddress: TOKEN, blockNumber: '100',
+    }), {
+      tokenAddress: TOKEN, creatorAddress: CREATOR, transactionHash: TX_HASH,
+      source: 'rpc_direct', factoryAddress: null, blockNumber: '100',
+    });
+  });
+
   it('rejects failed, indirect, mismatched, and non-canonical evidence', async () => {
     const cases = [
       evidence({ receipt: { status: '0x0' } }),

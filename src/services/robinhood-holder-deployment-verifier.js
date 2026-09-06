@@ -255,9 +255,11 @@ function createRobinhoodHolderDeploymentVerifier(options = {}) {
       rpcClient.request('eth_getTransactionReceipt', [creation.transactionHash]),
     ]);
     const evidence = validateTransaction(hint, transaction, receipt);
+    const direct = evidence.contractAddress === tokenAddress && evidence.direct;
+    const internal = evidence.contractAddress === null && !evidence.direct;
     if (quantity(evidence.blockNumber, 'evidence.blockNumber') !== requestedBlock
-        || evidence.contractAddress !== null || evidence.direct) {
-      throw evidenceError('deployment block trace is not an internal creation');
+        || (!direct && !internal)) {
+      throw evidenceError('deployment block trace does not prove the token creation');
     }
     const block = await rpcClient.request('eth_getBlockByNumber', [blockTag(requestedBlock), false]);
     if (quantity(block?.number, 'block.number') !== requestedBlock
@@ -266,8 +268,9 @@ function createRobinhoodHolderDeploymentVerifier(options = {}) {
     }
     return Object.freeze({
       tokenAddress, creatorAddress: evidence.creatorAddress,
-      transactionHash: creation.transactionHash, source: 'rpc_trace',
-      factoryAddress: creation.factoryAddress, blockNumber: requestedBlock.toString(),
+      transactionHash: creation.transactionHash, source: direct ? 'rpc_direct' : 'rpc_trace',
+      factoryAddress: direct ? null : creation.factoryAddress,
+      blockNumber: requestedBlock.toString(),
     });
   }
 
