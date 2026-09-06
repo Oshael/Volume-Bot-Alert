@@ -2670,8 +2670,13 @@ de rollback) ou `canonical_journal`; no modo canônico, as janelas token-scoped
 são lidas de `robinhood_chain_blocks` e `robinhood_chain_transactions`, sem RPC.
 Tokens com menos de duas candidatas concluem com evidência vazia; erros usam
 backoff e leases expiradas são recuperáveis. Evidência histórica já concluída não
-é apagada se uma tarefa reaberta encontrar lacuna canônica. O Archive continua
-obrigatório apenas para backfill/repair histórico executado manualmente.
+é apagada se uma tarefa reaberta encontrar lacuna canônica. A Stage 199 deve ser
+aplicada com `node src/utils/db-init-stage199.js` antes de habilitar a fonte
+canônica: o worker conclui esse item preservando a evidência com o marcador
+`archive_required`, e atualizações repetidas do mesmo anchor não o reabrem. Uma
+mudança real de `anchor_block` volta a enfileirar o token. O total pendente de
+repair aparece em `historical.archive_required` no audit; o Archive continua
+obrigatório apenas para executar esse repair histórico explicitamente.
 A Stage 174 acrescenta `source_version` aos snapshots BUNDLED. O mesmo worker
 materializa `rh_possible_bundle_v1` com lookback de 1.000 blocos e threshold fixo
 de `25000000000000000` wei (0,025 moeda nativa), resolvendo barreiras no
@@ -2684,7 +2689,8 @@ read-only: valida capture, first-buy, launch-anchor, fila ativa e a cobertura de
 `robinhood_chain_blocks` + `robinhood_chain_transactions`. Itens concluídos
 anteriores ao journal não bloqueiam a prontidão live: sua evidência existente
 deve ser preservada até repair Archive explícito, e uma reabertura sem cobertura
-deve falhar fechada. Para evitar varrer o journal, a qualidade do contexto é
+é marcada como `archive_required` sem substituir o snapshot vigente. Para evitar
+varrer o journal, a qualidade do contexto é
 inspecionada somente nos primeiros e últimos 100 blocos da fila ativa. A fonte
 canônica cobre apenas transferências nativas top-level, exatamente o contrato
 atual; transfers internas continuam fora de escopo. `--phase=cutover` também

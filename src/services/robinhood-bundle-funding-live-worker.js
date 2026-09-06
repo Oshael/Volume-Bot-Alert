@@ -128,7 +128,8 @@ function createRobinhoodBundleFundingLiveWorker(deps = {}) {
   let options = normalizeOptions({}, deps.env);
   let runtime; let timer; let listener; let active; let running = false;
   const status = { enabled: false, running: false, inFlight: false, sourceMode: null, totalRuns: 0,
-    totalMaterialized: 0, totalDeferred: 0, lastResult: null, lastError: null,
+    totalMaterialized: 0, totalDeferred: 0, totalArchiveRequired: 0,
+    lastResult: null, lastError: null,
     lastCompletedAt: null };
   const getRuntime = () => (runtime ||= deps.runtime || buildRuntime(deps, options));
   const retryDelay = (attempt) => Math.min(options.maxRetryMs,
@@ -144,6 +145,19 @@ function createRobinhoodBundleFundingLiveWorker(deps = {}) {
         if (result.status === 'materialized') status.totalMaterialized += 1;
         status.lastResult = result; status.lastError = null; return result;
       } catch (error) {
+        if (task && getRuntime().sourceMode === CANONICAL_SOURCE
+            && error.code === 'canonical_bundle_funding_source_gap'
+            && error.reason === 'before_journal') {
+          const completed = await getRuntime().queue.preserveEvidenceAndComplete({
+            ...task, owner, message: error.message,
+          });
+          const result = { status: completed ? 'archive-required' : 'stale',
+            tokenAddress: task.tokenAddress, evidencePreserved: true,
+            journalStartBlock: error.journalStartBlock };
+          if (completed) status.totalArchiveRequired += 1;
+          status.lastResult = result; status.lastError = null;
+          return result;
+        }
         if (task) await getRuntime().queue.retry({ ...task, owner,
           retryMs: retryDelay(task.attemptCount), error }).catch(() => {});
         status.totalDeferred += 1;

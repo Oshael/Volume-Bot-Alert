@@ -61,6 +61,20 @@ function createRobinhoodBundleFundingLiveQueueRepository(options = {}) {
     return result.rowCount === 1;
   }
 
+  async function preserveEvidenceAndComplete(input = {}) {
+    const result = await database.query(`UPDATE robinhood_bundle_funding_live_queue SET
+      status = 'complete', completed_version = requested_version,
+      lease_owner = NULL, lease_until = NULL, completed_at = NOW(),
+      next_attempt_at = NOW(), last_error_code = 'archive_required',
+      last_error_message = $5, updated_at = NOW()
+      WHERE chain = $1 AND token_address = $2 AND status = 'leased'
+        AND lease_owner = $3 AND requested_version = $4::bigint`, [
+      CHAIN, token(input.tokenAddress), input.owner, input.requestedVersion,
+      String(input.message || 'historical evidence preserved; Archive repair required').slice(0, 500),
+    ]);
+    return result.rowCount === 1;
+  }
+
   async function replaceEvidenceAndComplete(input = {}) {
     if (!Array.isArray(input.evidence)) throw new Error('live funding evidence is required');
     if (!input.snapshot) throw new Error('live possible bundle snapshot is required');
@@ -115,7 +129,9 @@ function createRobinhoodBundleFundingLiveQueueRepository(options = {}) {
     } finally { client.release(); }
   }
 
-  return Object.freeze({ claim, complete, retry, replaceEvidenceAndComplete });
+  return Object.freeze({
+    claim, complete, preserveEvidenceAndComplete, retry, replaceEvidenceAndComplete,
+  });
 }
 
 module.exports = { createRobinhoodBundleFundingLiveQueueRepository };

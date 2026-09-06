@@ -1,6 +1,31 @@
 /** Stage 172 - token-scoped VPS queue for live BUNDLED Archive funding work. */
 const db = require('../models/db');
 
+const ENQUEUE_FUNCTION_STATEMENT = `CREATE OR REPLACE FUNCTION enqueue_robinhood_bundle_funding_live()
+ RETURNS TRIGGER LANGUAGE plpgsql AS $trigger$
+ BEGIN
+   INSERT INTO robinhood_bundle_funding_live_queue(
+     token_address, anchor_block, source_through_block
+   ) VALUES (NEW.token_address, NEW.launch_block, NEW.source_through_block)
+   ON CONFLICT (chain, token_address) DO UPDATE SET
+     anchor_block = EXCLUDED.anchor_block,
+     source_through_block = GREATEST(
+       robinhood_bundle_funding_live_queue.source_through_block,
+       EXCLUDED.source_through_block
+     ),
+     requested_version = robinhood_bundle_funding_live_queue.requested_version + 1,
+     status = 'pending', lease_owner = NULL, lease_until = NULL,
+     next_attempt_at = NOW(), last_error_code = NULL, last_error_message = NULL,
+     completed_at = NULL, updated_at = NOW()
+   WHERE robinhood_bundle_funding_live_queue.status <> 'complete'
+      OR robinhood_bundle_funding_live_queue.last_error_code
+           IS DISTINCT FROM 'archive_required'
+      OR robinhood_bundle_funding_live_queue.anchor_block <> EXCLUDED.anchor_block;
+   PERFORM pg_notify('robinhood_bundle_funding_live_queue', NEW.token_address);
+   RETURN NEW;
+ END
+ $trigger$`;
+
 const STATEMENTS = Object.freeze([
   `CREATE TABLE IF NOT EXISTS robinhood_bundle_funding_live_queue (
      chain VARCHAR(16) NOT NULL DEFAULT 'robinhood',
@@ -50,26 +75,7 @@ const STATEMENTS = Object.freeze([
   `CREATE INDEX IF NOT EXISTS idx_rh_bundle_funding_live_queue_lease
      ON robinhood_bundle_funding_live_queue(lease_until)
      WHERE status = 'leased'`,
-  `CREATE OR REPLACE FUNCTION enqueue_robinhood_bundle_funding_live()
-   RETURNS TRIGGER LANGUAGE plpgsql AS $trigger$
-   BEGIN
-     INSERT INTO robinhood_bundle_funding_live_queue(
-       token_address, anchor_block, source_through_block
-     ) VALUES (NEW.token_address, NEW.launch_block, NEW.source_through_block)
-     ON CONFLICT (chain, token_address) DO UPDATE SET
-       anchor_block = EXCLUDED.anchor_block,
-       source_through_block = GREATEST(
-         robinhood_bundle_funding_live_queue.source_through_block,
-         EXCLUDED.source_through_block
-       ),
-       requested_version = robinhood_bundle_funding_live_queue.requested_version + 1,
-       status = 'pending', lease_owner = NULL, lease_until = NULL,
-       next_attempt_at = NOW(), last_error_code = NULL, last_error_message = NULL,
-       completed_at = NULL, updated_at = NOW();
-     PERFORM pg_notify('robinhood_bundle_funding_live_queue', NEW.token_address);
-     RETURN NEW;
-   END
-   $trigger$`,
+  ENQUEUE_FUNCTION_STATEMENT,
   `DROP TRIGGER IF EXISTS rh_launch_anchor_bundle_funding_live
      ON robinhood_token_launch_anchors`,
   `CREATE TRIGGER rh_launch_anchor_bundle_funding_live
@@ -91,4 +97,4 @@ if (require.main === module) init().catch((error) => {
   process.exitCode = 1;
 });
 
-module.exports = { STATEMENTS, init };
+module.exports = { ENQUEUE_FUNCTION_STATEMENT, STATEMENTS, init };

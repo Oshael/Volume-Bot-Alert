@@ -32,7 +32,7 @@ function database(rows) {
       if (sql.startsWith('SELECT 1')) return { rowCount: 1, rows: [{ '?column?': 1 }] };
       if (sql.includes('SELECT block_hash')) return { rowCount: 1, rows: [{ block_hash: HASH_B }] };
       if (sql.includes('WITH coverage')) return { rowCount: 1, rows: [{
-        blocks: '2', transaction_gaps: '0', missing_values: '0',
+        blocks: '2', transaction_gaps: '0', missing_values: '0', journal_start_block: '10',
       }] };
       return { rowCount: rows.length, rows };
     },
@@ -134,5 +134,19 @@ describe('Robinhood canonical bundle-funding reader', () => {
       await assert.rejects(reader.assertCoverage({ fromBlock: '10', throughBlock: '11' }),
         pattern);
     }
+  });
+
+  it('identifies coverage that predates the canonical journal', async () => {
+    const source = database([]);
+    source.query = async (sql) => (sql.includes('WITH coverage')
+      ? { rows: [{ blocks: '1', transaction_gaps: '0', missing_values: '0',
+        journal_start_block: '11' }] }
+      : { rowCount: 1, rows: [] });
+    const reader = createRobinhoodCanonicalBundleFundingReader({
+      database: source, candidateWallets: [],
+    });
+    await assert.rejects(reader.assertCoverage({ fromBlock: '10', throughBlock: '10' }),
+      (error) => error.code === 'canonical_bundle_funding_source_gap'
+        && error.reason === 'before_journal' && error.journalStartBlock === '11');
   });
 });

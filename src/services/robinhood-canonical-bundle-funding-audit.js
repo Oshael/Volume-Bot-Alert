@@ -140,6 +140,7 @@ function evaluate(input = {}) {
     historical: {
       oldest_persisted_start_block: text(quantity(row.persisted_start_block)),
       completed_before_journal: count(row.historical_completed_tasks),
+      archive_required: count(row.archive_required_tasks),
       evidence_policy: 'preserve_until_explicit_archive_repair',
     },
     handoff: {
@@ -209,7 +210,9 @@ function createRobinhoodCanonicalBundleFundingAudit(options = {}) {
                     MIN(GREATEST(anchor_block-lookback_blocks, 0)) AS persisted_start_block,
                     COUNT(*) FILTER (WHERE status='complete' AND
                       GREATEST(anchor_block-lookback_blocks, 0)<journal_start.block_number)
-                      AS historical_completed_tasks
+                      AS historical_completed_tasks,
+                    COUNT(*) FILTER (WHERE status='complete'
+                      AND last_error_code='archive_required') AS archive_required_tasks
                FROM robinhood_bundle_funding_live_queue WHERE chain=$1
            ) queue ON TRUE`, [CHAIN]
       );

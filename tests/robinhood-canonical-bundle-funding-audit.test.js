@@ -26,6 +26,7 @@ function input(overrides = {}) {
       capture_node_head: '2000', journal_start_block: '500',
       journal_through_block: '2000', total_tasks: '9', completed_tasks: '6',
       historical_completed_tasks: '4', persisted_start_block: '50', pending_tasks: '2',
+      archive_required_tasks: '0',
       leased_tasks: '1', active_tasks: '3', required_start_block: '900',
       required_through_block: '1900', first_seed_run_id: '7',
       first_source_next_block: '1990', first_seed_status: 'completed',
@@ -48,6 +49,7 @@ describe('Robinhood canonical bundle-funding audit', () => {
     assert.equal(report.context.sampled_blocks, 200);
     assert.deepEqual(report.historical, {
       oldest_persisted_start_block: '50', completed_before_journal: 4,
+      archive_required: 0,
       evidence_policy: 'preserve_until_explicit_archive_repair',
     });
     assert.deepEqual(report.contract, {

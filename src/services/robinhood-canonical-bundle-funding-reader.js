@@ -19,9 +19,9 @@ function address(value, label) {
   return normalized;
 }
 
-function sourceGap(message) {
+function sourceGap(message, detail = {}) {
   return Object.assign(new Error(message), {
-    code: 'canonical_bundle_funding_source_gap', fatal: true,
+    code: 'canonical_bundle_funding_source_gap', fatal: true, ...detail,
   });
 }
 
@@ -157,11 +157,21 @@ function createRobinhoodCanonicalBundleFundingReader(options = {}) {
           GROUP BY block.block_number
        ) SELECT COUNT(*) AS blocks,
                 COUNT(*) FILTER (WHERE transaction_count<>indexed_count) AS transaction_gaps,
-                COALESCE(SUM(missing_values), 0) AS missing_values
+                COALESCE(SUM(missing_values), 0) AS missing_values,
+                (SELECT MIN(block_number) FROM robinhood_chain_blocks
+                  WHERE chain=$1 AND canonical=TRUE) AS journal_start_block
            FROM coverage`,
       [CHAIN, from.toString(), through.toString()]
     );
     const row = result.rows[0] || {};
+    const journalStart = row.journal_start_block == null
+      ? null : BigInt(row.journal_start_block);
+    if (journalStart != null && from < journalStart) {
+      throw sourceGap(`canonical bundle-funding range starts before journal at ${journalStart}`, {
+        reason: 'before_journal', requestedFromBlock: from.toString(),
+        journalStartBlock: journalStart.toString(),
+      });
+    }
     if (BigInt(row.blocks || 0) !== through - from + 1n) {
       throw sourceGap(`canonical bundle-funding coverage has missing blocks after ${from}`);
     }

@@ -121,6 +121,26 @@ describe('Robinhood SNIPER population calibration source integration', () => {
       FROM robinhood_possible_bundle_states WHERE token_address = $1`, [TOKEN])).rows[0], {
       source_kind: 'live', source_version: '2',
     });
+    await db.query(`UPDATE robinhood_token_launch_anchors
+      SET source_through_block = 252 WHERE token_address = $1`, [TOKEN]);
+    const historical = await queue.claim({ owner: 'archive-gate', leaseMs: 60_000 });
+    const queueState = (await db.query(`SELECT status, requested_version::text,
+        completed_version::text, last_error_code, anchor_block::text, source_through_block::text
+      FROM robinhood_bundle_funding_live_queue WHERE token_address = $1`, [TOKEN])).rows[0];
+    assert.ok(historical, JSON.stringify(queueState));
+    assert.equal(await queue.preserveEvidenceAndComplete({
+      ...historical, owner: 'archive-gate', message: 'before journal',
+    }), true);
+    await db.query(`UPDATE robinhood_token_launch_anchors
+      SET source_through_block = 253 WHERE token_address = $1`, [TOKEN]);
+    assert.deepEqual((await db.query(`SELECT status, requested_version::text,
+        source_through_block::text, last_error_code
+      FROM robinhood_bundle_funding_live_queue WHERE token_address = $1`, [TOKEN])).rows[0], {
+      status: 'complete', requested_version: '3', source_through_block: '252',
+      last_error_code: 'archive_required',
+    });
+    assert.equal((await db.query(`SELECT COUNT(*)::integer count
+      FROM robinhood_bundle_funding_live_evidence WHERE token_address = $1`, [TOKEN])).rows[0].count, 1);
     assert.deepEqual(await createRobinhoodBundleFundingLiveSource({ database: db })
       .loadBarrierAddresses([], []), []);
   });
