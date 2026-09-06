@@ -2675,6 +2675,17 @@ de `25000000000000000` wei (0,025 moeda nativa), resolvendo barreiras no
 PostgreSQL. Evidência, grupos/membros live e ACK da versão exata são commitados
 na mesma transação; uma versão invalidada durante a leitura não substitui o
 snapshot. O fluxo permanece shadow e não aparece na API/UI.
+Antes de trocar a leitura RPC do bundle-funding pelo journal canônico, execute
+`npm run robinhood:canonical-bundle-funding-audit`. O comando é estritamente
+read-only: valida capture, first-buy, launch-anchor, fila ativa e a cobertura de
+`robinhood_chain_blocks` + `robinhood_chain_transactions`. A cobertura inclui
+também itens concluídos, pois uma atualização da âncora pode reabri-los. Para
+evitar varrer o journal, a qualidade do contexto é inspecionada somente nos
+primeiros e últimos 100 blocos do intervalo reprocessável. A fonte canônica cobre
+apenas transferências nativas top-level, exatamente o contrato atual; transfers
+internas continuam
+fora de escopo. `--phase=cutover` também exige a lease do consumidor com
+`sourceMode=canonical_journal`.
 A Stage 156 adiciona o índice concorrente `(chain, token_address, discovery_block)`
 ao registry. A recorrência começa pelas compras da wallet e consulta a origem
 somente dos tokens encontrados, sem reagregar todas as pools por wallet candidata;
