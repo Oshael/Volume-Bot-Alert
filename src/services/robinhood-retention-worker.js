@@ -75,7 +75,10 @@ async function deleteExpiredProcessedLogs(database, options) {
   const result = await queryWithTimeout(
     database,
     `WITH independent_expired AS MATERIALIZED (
-       SELECT processed.chain, processed.transaction_hash, processed.log_index
+       SELECT processed.chain, processed.transaction_hash, processed.log_index,
+              observation.status, observation.block_number, observation.protocol,
+              observation.market_key, observation.token_address,
+              observation.quote_address, observation.observed_at
        FROM robinhood_processed_logs processed
        LEFT JOIN robinhood_market_observations observation
          ON observation.chain = processed.chain
@@ -88,7 +91,10 @@ async function deleteExpiredProcessedLogs(database, options) {
        FOR UPDATE OF processed SKIP LOCKED
      ),
      guarded_expired AS MATERIALIZED (
-       SELECT processed.chain, processed.transaction_hash, processed.log_index
+       SELECT processed.chain, processed.transaction_hash, processed.log_index,
+              observation.status, observation.block_number, observation.protocol,
+              observation.market_key, observation.token_address,
+              observation.quote_address, observation.observed_at
        FROM robinhood_processed_logs processed
        INNER JOIN robinhood_market_observations observation
          ON observation.chain = processed.chain
@@ -101,34 +107,34 @@ async function deleteExpiredProcessedLogs(database, options) {
        FOR UPDATE OF processed SKIP LOCKED
      ),
      expired AS MATERIALIZED (
-       SELECT chain, transaction_hash, log_index FROM independent_expired
+       SELECT * FROM independent_expired
        UNION ALL
-       SELECT chain, transaction_hash, log_index FROM guarded_expired
+       SELECT * FROM guarded_expired
      ),
      classified AS MATERIALIZED (
        SELECT expired.chain, expired.transaction_hash, expired.log_index,
-         observation.status,
-         observation.block_number,
+         expired.status,
+         expired.block_number,
          (
-           observation.status = 'accepted'
+           expired.status = 'accepted'
            AND $2::bigint IS NOT NULL
-           AND observation.block_number <= $2::bigint
+           AND expired.block_number <= $2::bigint
          ) AS wallet_complete,
          (
-           observation.status = 'accepted'
+           expired.status = 'accepted'
            AND EXISTS (
              SELECT 1
              FROM robinhood_market_buckets_1m minute
-             WHERE minute.chain = observation.chain
-               AND minute.protocol = observation.protocol
-               AND minute.market_key = observation.market_key
-               AND minute.token_address = observation.token_address
-               AND minute.quote_address = observation.quote_address
-               AND minute.bucket_ts = date_trunc('minute', observation.observed_at)
+             WHERE minute.chain = expired.chain
+               AND minute.protocol = expired.protocol
+               AND minute.market_key = expired.market_key
+               AND minute.token_address = expired.token_address
+               AND minute.quote_address = expired.quote_address
+               AND minute.bucket_ts = date_trunc('minute', expired.observed_at)
                AND (minute.first_block_number, minute.first_log_index)
-                 <= (observation.block_number, observation.log_index)
+                 <= (expired.block_number, expired.log_index)
                AND (minute.last_block_number, minute.last_log_index)
-                 >= (observation.block_number, observation.log_index)
+                 >= (expired.block_number, expired.log_index)
            )
          ) AS bucket_covered,
          NOT EXISTS (
@@ -140,13 +146,9 @@ async function deleteExpiredProcessedLogs(database, options) {
              AND aggregation.status <> 'completed'
          ) AS aggregation_complete
        FROM expired
-       LEFT JOIN robinhood_market_observations observation
-         ON observation.chain = expired.chain
-        AND observation.transaction_hash = expired.transaction_hash
-        AND observation.log_index = expired.log_index
      ),
      candidates AS (
-       SELECT chain, transaction_hash, log_index
+       SELECT chain, transaction_hash, log_index, status
        FROM classified
        WHERE status IS NULL
           OR status = 'rejected'
@@ -176,12 +178,8 @@ async function deleteExpiredProcessedLogs(database, options) {
        FROM classified
      ),
      observation_stats AS (
-       SELECT COUNT(*)::int AS observations
-       FROM robinhood_market_observations observation
-       INNER JOIN candidates
-         ON candidates.chain = observation.chain
-        AND candidates.transaction_hash = observation.transaction_hash
-        AND candidates.log_index = observation.log_index
+       SELECT COUNT(*) FILTER (WHERE status IS NOT NULL)::int AS observations
+       FROM candidates
      ),
      deleted AS (
        DELETE FROM robinhood_processed_logs processed

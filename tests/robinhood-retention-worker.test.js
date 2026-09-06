@@ -104,13 +104,15 @@ describe('Robinhood retention worker', () => {
     assert.match(database.calls[0].sql, /independent_expired AS MATERIALIZED/);
     assert.match(database.calls[0].sql, /guarded_expired AS MATERIALIZED/);
     assert.match(database.calls[0].sql, /robinhood_market_observations/);
-    assert.match(database.calls[0].sql, /observation\.status = 'accepted'/);
+    assert.match(database.calls[0].sql, /expired\.status = 'accepted'/);
     assert.match(database.calls[0].sql, /observation\.status <> 'rejected'/);
     assert.match(database.calls[0].sql, /robinhood_market_buckets_1m minute/);
     assert.match(database.calls[0].sql, /robinhood_backfill_aggregation_outbox aggregation/);
     assert.match(database.calls[0].sql, /aggregation\.status <> 'completed'/);
     assert.match(database.calls[0].sql, /status = 'rejected'/);
-    assert.match(database.calls[0].sql, /observation\.block_number <= \$2::bigint/);
+    assert.match(database.calls[0].sql, /expired\.block_number <= \$2::bigint/);
+    assert.match(database.calls[0].sql,
+      /COUNT\(\*\) FILTER \(WHERE status IS NOT NULL\)::int AS observations/);
     assert.deepEqual(database.calls[0].params, [50, '900']);
     assert.doesNotMatch(database.calls[0].sql, /status = 'pending'/);
   });
