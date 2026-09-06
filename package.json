@@ -120,6 +120,7 @@
     "robinhood:canonical-first-buy-audit": "node src/utils/audit-robinhood-canonical-first-buy.js",
     "robinhood:canonical-bundle-funding-audit": "node src/utils/audit-robinhood-canonical-bundle-funding.js",
     "robinhood:canonical-bundle-funding-canary": "node src/utils/audit-robinhood-canonical-bundle-funding-canary.js",
+    "robinhood:canonical-fresh-wallet-audit": "node src/utils/audit-robinhood-canonical-fresh-wallet.js",
     "robinhood:holder-deployment-recover": "node src/utils/recover-robinhood-holder-deployments.js",
     "robinhood:infrastructure-import": "node src/utils/import-robinhood-infrastructure-registry.js",
     "robinhood:infrastructure-close": "node src/utils/close-robinhood-infrastructure-registry.js",

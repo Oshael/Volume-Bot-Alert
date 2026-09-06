@@ -2702,6 +2702,14 @@ recentes, incluindo checkpoint, identidade, ordem, origem, destino, valor e
 timestamp das transferências nativas top-level. Ele falha fechado em drift,
 lacuna da fonte ou divergência e aceita `--blocks=1..100` e
 `--min-transfers=<n>` para ajustar somente o tamanho mínimo da evidência.
+Antes de substituir o contexto RPC do classificador FRESH, execute
+`npm run robinhood:canonical-fresh-wallet-audit`. O preflight é estritamente
+read-only e valida a ativação/seed, fila live, capture, cobertura do journal,
+nonce e identidade da first-buy, fronteira signed-origin e as quatro leases.
+A janela de 24 horas é considerada coberta somente quando seu limite temporal
+está dentro de `robinhood_chain_blocks`; tarefas ativas anteriores ao journal
+permanecem explícitas e bloqueiam o corte. A amostra é limitada às 100 first-buys
+mais recentes elegíveis e não chama RPC.
 A Stage 156 adiciona o índice concorrente `(chain, token_address, discovery_block)`
 ao registry. A recorrência começa pelas compras da wallet e consulta a origem
 somente dos tokens encontrados, sem reagregar todas as pools por wallet candidata;
