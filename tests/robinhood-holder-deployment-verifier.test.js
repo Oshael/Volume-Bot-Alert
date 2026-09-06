@@ -115,6 +115,29 @@ describe('Robinhood holder deployment verifier', () => {
     assert.equal(result.factoryAddress, FACTORY);
   });
 
+  it('verifies an internal creation located from an exact block trace', async () => {
+    const values = evidence({
+      transaction: { to: FACTORY }, receipt: { contractAddress: null },
+    });
+    const rpcClient = rpcFor(values);
+    const originalRequest = rpcClient.request;
+    rpcClient.request = async (method, params) => {
+      if (method === 'trace_block') return [{
+        type: 'create', transactionHash: TX_HASH,
+        action: { from: FACTORY }, result: { address: TOKEN },
+      }];
+      return originalRequest(method, params);
+    };
+    const verifier = createRobinhoodHolderDeploymentVerifier({ rpcClient });
+
+    assert.deepEqual(await verifier.verifyBlockTraceDeployment({
+      tokenAddress: TOKEN, blockNumber: '100',
+    }), {
+      tokenAddress: TOKEN, creatorAddress: CREATOR, transactionHash: TX_HASH,
+      source: 'rpc_trace', factoryAddress: FACTORY, blockNumber: '100',
+    });
+  });
+
   it('rejects failed, indirect, mismatched, and non-canonical evidence', async () => {
     const cases = [
       evidence({ receipt: { status: '0x0' } }),

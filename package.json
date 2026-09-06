@@ -134,6 +134,7 @@
     "robinhood:bundle-redistribution-calibrate": "node src/utils/calibrate-robinhood-bundle-redistribution.js",
     "robinhood:bundle-redistribution-activate": "node src/utils/activate-robinhood-bundle-redistribution.js",
     "robinhood:bundle-redistribution-position-repair": "node src/utils/repair-robinhood-bundle-redistribution-positions.js",
+    "robinhood:bundle-redistribution-creator-repair": "node src/utils/repair-robinhood-bundle-redistribution-creators.js",
     "robinhood:possible-bundle-shadow": "node src/utils/materialize-robinhood-possible-bundles.js",
     "robinhood:launch-anchor-backfill": "node src/utils/backfill-robinhood-launch-anchors.js",
     "robinhood:transaction-position-repair": "node src/utils/repair-robinhood-transaction-positions.js",

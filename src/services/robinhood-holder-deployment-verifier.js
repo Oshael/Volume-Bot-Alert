@@ -96,6 +96,64 @@ function callTracerCreation(frame, tokenAddress) {
   return null;
 }
 
+function parityBlockCreations(entries, tokenAddress) {
+  if (!Array.isArray(entries)) return [];
+  return entries.flatMap((entry) => {
+    if (!['create', 'create2'].includes(String(entry?.type || '').toLowerCase())
+        || optionalAddress(entry?.result?.address) !== tokenAddress) return [];
+    const factoryAddress = optionalAddress(entry?.action?.from);
+    const transactionHash = String(entry?.transactionHash || '').toLowerCase();
+    return factoryAddress && /^0x[0-9a-f]{64}$/.test(transactionHash)
+      ? [{ factoryAddress, transactionHash }] : [];
+  });
+}
+
+function debugBlockCreations(entries, transactions, tokenAddress) {
+  if (!Array.isArray(entries)) return [];
+  return entries.flatMap((entry, index) => {
+    const factoryAddress = callTracerCreation(entry?.result || entry, tokenAddress);
+    const transactionHash = String(
+      entry?.txHash || entry?.transactionHash || transactions?.[index]?.hash || ''
+    ).toLowerCase();
+    return factoryAddress && /^0x[0-9a-f]{64}$/.test(transactionHash)
+      ? [{ factoryAddress, transactionHash }] : [];
+  });
+}
+
+function oneCreation(matches) {
+  const unique = [...new Map(matches.map((item) => [
+    `${item.transactionHash}:${item.factoryAddress}`, item,
+  ])).values()];
+  if (unique.length > 1) throw evidenceError('deployment block trace is ambiguous');
+  return unique[0] || null;
+}
+
+async function findBlockTraceCreation(rpcClient, tokenAddress, blockNumber) {
+  const tag = blockTag(blockNumber);
+  let parityError = null;
+  try {
+    const match = oneCreation(parityBlockCreations(
+      await rpcClient.request('trace_block', [tag]), tokenAddress
+    ));
+    if (match) return match;
+  } catch (error) { parityError = error; }
+  let debugError = null;
+  try {
+    const [block, traces] = await Promise.all([
+      rpcClient.request('eth_getBlockByNumber', [tag, true]),
+      rpcClient.request('debug_traceBlockByNumber', [tag, { tracer: 'callTracer' }]),
+    ]);
+    const match = oneCreation(debugBlockCreations(traces, block?.transactions, tokenAddress));
+    if (match) return match;
+  } catch (error) { debugError = error; }
+  if (parityError && debugError) {
+    const parityCode = String(parityError.rpcCode ?? parityError.code ?? 'failed');
+    const debugCode = String(debugError.rpcCode ?? debugError.code ?? 'failed');
+    throw evidenceError(`deployment block trace RPC is unavailable (${parityCode}/${debugCode})`);
+  }
+  throw evidenceError('deployment block trace does not create the token contract');
+}
+
 async function resolveTraceFactory(rpcClient, hint) {
   let parityError = null;
   try {
@@ -185,12 +243,41 @@ function createRobinhoodHolderDeploymentVerifier(options = {}) {
     });
   }
 
-  return Object.freeze({ verifyDirectDeployment });
+  async function verifyBlockTraceDeployment(input = {}) {
+    const tokenAddress = address(input.tokenAddress, 'tokenAddress');
+    const requestedBlock = quantity(input.blockNumber, 'blockNumber');
+    await validateChain();
+    const creation = await findBlockTraceCreation(rpcClient, tokenAddress, requestedBlock);
+    const hint = { tokenAddress, creatorAddress: creation.factoryAddress,
+      transactionHash: creation.transactionHash };
+    const [transaction, receipt] = await Promise.all([
+      rpcClient.request('eth_getTransactionByHash', [creation.transactionHash]),
+      rpcClient.request('eth_getTransactionReceipt', [creation.transactionHash]),
+    ]);
+    const evidence = validateTransaction(hint, transaction, receipt);
+    if (quantity(evidence.blockNumber, 'evidence.blockNumber') !== requestedBlock
+        || evidence.contractAddress !== null || evidence.direct) {
+      throw evidenceError('deployment block trace is not an internal creation');
+    }
+    const block = await rpcClient.request('eth_getBlockByNumber', [blockTag(requestedBlock), false]);
+    if (quantity(block?.number, 'block.number') !== requestedBlock
+        || fixedHex(block?.hash, 32, 'block.hash') !== evidence.blockHash) {
+      throw evidenceError('deployment trace block is not canonical');
+    }
+    return Object.freeze({
+      tokenAddress, creatorAddress: evidence.creatorAddress,
+      transactionHash: creation.transactionHash, source: 'rpc_trace',
+      factoryAddress: creation.factoryAddress, blockNumber: requestedBlock.toString(),
+    });
+  }
+
+  return Object.freeze({ verifyBlockTraceDeployment, verifyDirectDeployment });
 }
 
 module.exports = {
   createRobinhoodHolderDeploymentVerifier,
   __private: {
-    callTracerCreation, normalizeHint, parityCreation, validateTransaction,
+    callTracerCreation, debugBlockCreations, findBlockTraceCreation,
+    normalizeHint, parityBlockCreations, parityCreation, validateTransaction,
   },
 };

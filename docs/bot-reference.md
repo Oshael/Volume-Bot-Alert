@@ -4105,6 +4105,19 @@ reparados, repita com `--apply
 resultado `partial` preserva tokens sem evidência local para investigação; não
 os apresenta como reparados nem força retry cego.
 
+Se o próximo bloqueio for `creator_unavailable` e a atribuição existente for
+`rpc_code_transition`, rode
+`npm run robinhood:bundle-redistribution-creator-repair` para listar os tokens e
+blocos exatos sem escrita. A confirmação exige `--apply
+--confirm-repair-robinhood-bundle-redistribution-creators` e
+`ROBINHOOD_ARCHIVE_RPC_URL` apontando para um Archive Robinhood. O repair usa
+primeiro deploys diretos e eventos de launchpad já persistidos no journal
+canônico; somente os restantes consultam `trace_block` ou
+`debug_traceBlockByNumber` no bloco exato. Ele não usa Blockscout, grava apenas
+evidência canonicamente verificada, reabre apenas tokens reparados e mantém os
+demais como `unresolved`. `--limit`, `--concurrency` e `--timeout-ms` são
+limitados; a execução é idempotente e pode ser repetida após falha do Archive.
+
 Execute `npm run robinhood:wallet-transfer-retention-plan --
 --projection-version=VERSAO --limit=10` para listar candidatos antigos. O limite
 aceito é 1–100; o relatório apenas confere catálogo/bounds, declara
