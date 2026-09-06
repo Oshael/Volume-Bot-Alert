@@ -2664,10 +2664,13 @@ full-blocks para fallbacks de estado histórico. A migration não enfileira o
 histórico: aplique-a antes da última campanha incremental usada como seed do live.
 A Stage 173 persiste a evidência causal atual e o worker
 `ROBINHOOD_BUNDLE_FUNDING_LIVE_ENABLED` drena a fila exclusivamente na VPS. Ele
-congela as early wallets do token, valida chain `4663`, lê somente os full blocks
-recentes das janelas token-scoped pelo RPC live padrão e substitui evidência + ACK
-na mesma transação. Tokens com menos de duas candidatas concluem com evidência
-vazia; erros usam backoff e leases expiradas são recuperáveis. O Archive continua
+congela as early wallets do token, valida chain `4663` e substitui evidência + ACK
+na mesma transação. `ROBINHOOD_BUNDLE_FUNDING_LIVE_SOURCE` aceita `rpc` (default
+de rollback) ou `canonical_journal`; no modo canônico, as janelas token-scoped
+são lidas de `robinhood_chain_blocks` e `robinhood_chain_transactions`, sem RPC.
+Tokens com menos de duas candidatas concluem com evidência vazia; erros usam
+backoff e leases expiradas são recuperáveis. Evidência histórica já concluída não
+é apagada se uma tarefa reaberta encontrar lacuna canônica. O Archive continua
 obrigatório apenas para backfill/repair histórico executado manualmente.
 A Stage 174 acrescenta `source_version` aos snapshots BUNDLED. O mesmo worker
 materializa `rh_possible_bundle_v1` com lookback de 1.000 blocos e threshold fixo

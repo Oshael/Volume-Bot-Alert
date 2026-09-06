@@ -31,6 +31,9 @@ function database(rows) {
       calls.push({ sql, params });
       if (sql.startsWith('SELECT 1')) return { rowCount: 1, rows: [{ '?column?': 1 }] };
       if (sql.includes('SELECT block_hash')) return { rowCount: 1, rows: [{ block_hash: HASH_B }] };
+      if (sql.includes('WITH coverage')) return { rowCount: 1, rows: [{
+        blocks: '2', transaction_gaps: '0', missing_values: '0',
+      }] };
       return { rowCount: rows.length, rows };
     },
   };
@@ -63,6 +66,7 @@ describe('Robinhood canonical bundle-funding reader', () => {
     });
     assert.deepEqual(source.calls[2].params, ['robinhood', '10', '11']);
     assert.ok(result.payloadBytes > 0);
+    assert.equal(await reader.assertCoverage({ fromBlock: '10', throughBlock: '11' }), true);
   });
 
   it('fails closed when a requested block or transaction value is absent', async () => {
@@ -112,5 +116,23 @@ describe('Robinhood canonical bundle-funding reader', () => {
     assert.throws(() => createRobinhoodCanonicalBundleFundingReader({
       database: source, candidateWallets: ['invalid'],
     }), /candidateWallet is invalid/);
+  });
+
+  it('fails closed when aggregate coverage is incomplete', async () => {
+    const cases = [
+      [{ blocks: '1', transaction_gaps: '0', missing_values: '0' }, /missing blocks/],
+      [{ blocks: '2', transaction_gaps: '1', missing_values: '0' }, /transaction gaps/],
+      [{ blocks: '2', transaction_gaps: '0', missing_values: '7' }, /missing values/],
+    ];
+    for (const [coverage, pattern] of cases) {
+      const source = database([]);
+      source.query = async (sql) => (sql.includes('WITH coverage')
+        ? { rows: [coverage] } : { rowCount: 1, rows: [] });
+      const reader = createRobinhoodCanonicalBundleFundingReader({
+        database: source, candidateWallets: [],
+      });
+      await assert.rejects(reader.assertCoverage({ fromBlock: '10', throughBlock: '11' }),
+        pattern);
+    }
   });
 });

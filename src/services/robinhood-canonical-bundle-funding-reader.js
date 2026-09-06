@@ -5,6 +5,7 @@ const db = require('../models/db');
 const CHAIN = 'robinhood';
 const EXPECTED_CHAIN_ID = '4663';
 const MAX_BLOCKS = 100;
+const MAX_COVERAGE_BLOCKS = 50_000n;
 
 function uint(value, label) {
   const normalized = String(value ?? '').trim();
@@ -134,7 +135,46 @@ function createRobinhoodCanonicalBundleFundingReader(options = {}) {
     });
   }
 
-  return Object.freeze({ assertChain, checkpoint, readBlocks });
+  async function assertCoverage(input = {}) {
+    const from = uint(input.fromBlock, 'fromBlock');
+    const through = uint(input.throughBlock, 'throughBlock');
+    if (from > through || through - from + 1n > MAX_COVERAGE_BLOCKS) {
+      throw new Error('canonical bundle-funding coverage range is invalid');
+    }
+    const result = await database.query(
+      `WITH coverage AS MATERIALIZED (
+         SELECT block.block_number,
+                COUNT(transaction.transaction_hash) AS transaction_count,
+                COALESCE(MAX(transaction.transaction_index), -1) + 1 AS indexed_count,
+                COUNT(transaction.transaction_hash) FILTER (
+                  WHERE transaction.value_wei IS NULL
+                ) AS missing_values
+           FROM robinhood_chain_blocks block
+           LEFT JOIN robinhood_chain_transactions transaction
+             ON transaction.chain=block.chain AND transaction.block_hash=block.block_hash
+          WHERE block.chain=$1 AND block.canonical=TRUE
+            AND block.block_number BETWEEN $2::bigint AND $3::bigint
+          GROUP BY block.block_number
+       ) SELECT COUNT(*) AS blocks,
+                COUNT(*) FILTER (WHERE transaction_count<>indexed_count) AS transaction_gaps,
+                COALESCE(SUM(missing_values), 0) AS missing_values
+           FROM coverage`,
+      [CHAIN, from.toString(), through.toString()]
+    );
+    const row = result.rows[0] || {};
+    if (BigInt(row.blocks || 0) !== through - from + 1n) {
+      throw sourceGap(`canonical bundle-funding coverage has missing blocks after ${from}`);
+    }
+    if (Number(row.transaction_gaps || 0) > 0) {
+      throw sourceGap(`canonical bundle-funding coverage has transaction gaps after ${from}`);
+    }
+    if (BigInt(row.missing_values || 0) > 0n) {
+      throw sourceGap(`canonical bundle-funding coverage has missing values after ${from}`);
+    }
+    return true;
+  }
+
+  return Object.freeze({ assertChain, assertCoverage, checkpoint, readBlocks });
 }
 
 module.exports = {

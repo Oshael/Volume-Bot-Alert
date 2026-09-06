@@ -8,6 +8,9 @@ const {
 } = require('../models/robinhood-bundle-funding-live-source');
 const { createRobinhoodRpcClient } = require('./robinhood-ingestion-worker');
 const { createRobinhoodBundleFundingReader } = require('./robinhood-bundle-funding-reader');
+const {
+  createRobinhoodCanonicalBundleFundingReader,
+} = require('./robinhood-canonical-bundle-funding-reader');
 const { planBundleFundingScan } = require('./robinhood-bundle-funding-scan-plan');
 const { materializeBundleFundingRange } = require('./robinhood-bundle-funding-materializer');
 const { materializePossibleBundles } = require('./robinhood-possible-bundle-materializer');
@@ -15,12 +18,17 @@ const { createPostgresRealtimeListener } = require('./postgres-realtime-listener
 
 const NOTIFY_CHANNEL = 'robinhood_bundle_funding_live_queue';
 const MINIMUM_VALUE_WEI = '25000000000000000';
+const RPC_SOURCE = 'rpc';
+const CANONICAL_SOURCE = 'canonical_journal';
 const bounded = (value, fallback, min, max) => {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) ? Math.max(min, Math.min(parsed, max)) : fallback;
 };
-const normalizeOptions = (input = {}) => Object.freeze({
+const normalizeOptions = (input = {}, env = process.env) => Object.freeze({
   enabled: input.enabled === true,
+  sourceMode: normalizeSource(
+    input.sourceMode ?? env.ROBINHOOD_BUNDLE_FUNDING_LIVE_SOURCE
+  ),
   intervalMs: bounded(input.intervalMs, 1000, 100, 60_000),
   leaseMs: bounded(input.leaseMs, 900_000, 120_000, 1_200_000),
   retryMs: bounded(input.retryMs, 15_000, 1000, 3_600_000),
@@ -30,16 +38,28 @@ const normalizeOptions = (input = {}) => Object.freeze({
   rpcOptions: input.rpcOptions || {},
 });
 
+function normalizeSource(value) {
+  const normalized = String(value || RPC_SOURCE).trim().toLowerCase();
+  if (![RPC_SOURCE, CANONICAL_SOURCE].includes(normalized)) {
+    throw Object.assign(new Error(
+      `ROBINHOOD_BUNDLE_FUNDING_LIVE_SOURCE must be ${RPC_SOURCE} or ${CANONICAL_SOURCE}`
+    ), { code: 'configuration_error', fatal: true });
+  }
+  return normalized;
+}
+
 function buildRuntime(deps, options) {
   const database = deps.database || db;
-  const rpcClient = (deps.rpcClientFactory || createRobinhoodRpcClient)({
-    ...options.rpcOptions,
-    rpcTimeoutMs: options.timeoutMs,
-  });
-  return Object.freeze({
+  const runtime = {
     queue: (deps.queueFactory || createRobinhoodBundleFundingLiveQueueRepository)({ database }),
-    source: (deps.sourceFactory || createRobinhoodBundleFundingLiveSource)({ database }), rpcClient,
+    source: (deps.sourceFactory || createRobinhoodBundleFundingLiveSource)({ database }),
+    database, sourceMode: options.sourceMode,
+  };
+  if (options.sourceMode === CANONICAL_SOURCE) return Object.freeze(runtime);
+  runtime.rpcClient = (deps.rpcClientFactory || createRobinhoodRpcClient)({
+    ...options.rpcOptions, rpcTimeoutMs: options.timeoutMs,
   });
+  return Object.freeze(runtime);
 }
 
 async function processTask(runtime, task, options, deps = {}) {
@@ -47,11 +67,26 @@ async function processTask(runtime, task, options, deps = {}) {
   const plan = (deps.planner || planBundleFundingScan)({ sourceFromBlock: '0',
     sourceThroughBlock: task.sourceThroughBlock, lookbackBlocks: task.lookbackBlocks, candidates });
   const evidence = new Map();
-  const reader = (deps.readerFactory || createRobinhoodBundleFundingReader)({
-    rpcClient: runtime.rpcClient,
-    candidateWallets: plan.candidates.map(({ walletAddress }) => walletAddress),
-  });
+  const candidateWallets = plan.candidates.map(({ walletAddress }) => walletAddress);
+  const canonical = runtime.sourceMode === CANONICAL_SOURCE;
+  const reader = canonical
+    ? (deps.canonicalReaderFactory || createRobinhoodCanonicalBundleFundingReader)({
+      database: runtime.database, candidateWallets,
+    })
+    : (deps.readerFactory || createRobinhoodBundleFundingReader)({
+      rpcClient: runtime.rpcClient, candidateWallets,
+    });
   await reader.assertChain();
+  if (canonical) {
+    const anchor = BigInt(task.anchorBlock);
+    const lookback = BigInt(task.lookbackBlocks);
+    const sourceThrough = BigInt(task.sourceThroughBlock);
+    const candidateThrough = anchor + 3n;
+    await reader.assertCoverage({
+      fromBlock: (anchor > lookback ? anchor - lookback : 0n).toString(),
+      throughBlock: (candidateThrough < sourceThrough ? candidateThrough : sourceThrough).toString(),
+    });
+  }
   if (plan.ranges.length) {
     for (const range of plan.ranges) {
       const rangeCandidates = plan.candidates.filter(({ firstBuyBlock }) => (
@@ -90,8 +125,9 @@ async function processTask(runtime, task, options, deps = {}) {
 function createRobinhoodBundleFundingLiveWorker(deps = {}) {
   const schedule = deps.schedule || setTimeout; const cancel = deps.cancelSchedule || clearTimeout;
   const owner = deps.owner || `bundle-funding-${process.pid}-${randomUUID()}`;
-  let options = normalizeOptions(); let runtime; let timer; let listener; let active; let running = false;
-  const status = { enabled: false, running: false, inFlight: false, totalRuns: 0,
+  let options = normalizeOptions({}, deps.env);
+  let runtime; let timer; let listener; let active; let running = false;
+  const status = { enabled: false, running: false, inFlight: false, sourceMode: null, totalRuns: 0,
     totalMaterialized: 0, totalDeferred: 0, lastResult: null, lastError: null,
     lastCompletedAt: null };
   const getRuntime = () => (runtime ||= deps.runtime || buildRuntime(deps, options));
@@ -123,7 +159,9 @@ function createRobinhoodBundleFundingLiveWorker(deps = {}) {
   }
   function wake() { if (running && !active) { if (timer) cancel(timer); timer = null; queue(0); } }
   function start(input = {}) {
-    if (running) return false; options = normalizeOptions(input); status.enabled = options.enabled;
+    if (running) return false; options = normalizeOptions(input, deps.env);
+    status.enabled = options.enabled;
+    status.sourceMode = options.sourceMode;
     if (!options.enabled) return false; getRuntime(); running = true; status.running = true;
     listener = (deps.listenerFactory || createPostgresRealtimeListener)({ channel: NOTIFY_CHANNEL,
       label: 'RobinhoodBundleFundingLiveWorker', pool: deps.pool || db.pool, onNotification: wake });
@@ -137,5 +175,6 @@ function createRobinhoodBundleFundingLiveWorker(deps = {}) {
 
 const worker = createRobinhoodBundleFundingLiveWorker();
 module.exports = { createRobinhoodBundleFundingLiveWorker, processTask,
+  CANONICAL_SOURCE, RPC_SOURCE,
   getStatus: worker.getStatus, start: worker.start, stop: worker.stop,
-  __private: { buildRuntime, MINIMUM_VALUE_WEI, normalizeOptions } };
+  __private: { buildRuntime, MINIMUM_VALUE_WEI, normalizeOptions, normalizeSource } };
