@@ -6,6 +6,7 @@ const test = require('node:test');
 const {
   createFomoBrowserActivityStream,
   normalizeCdpEndpoint,
+  resetFomoBrowserPage,
 } = require('../src/services/fomo-browser-activity-stream');
 
 function nextTurn() {
@@ -103,6 +104,83 @@ test('Fomo browser stream reports a missing app tab without leaking the page URL
   assert.equal(errors[0].message, 'Fomo browser transport failed');
   assert.equal(schedules.length, 1);
   assert.equal(schedules[0].delayMs, 1000);
+  await stream.stop();
+});
+
+test('Fomo browser stream replaces a crashed target through loopback CDP', async () => {
+  const calls = [];
+  const responses = [
+    { ok: true, json: async () => [{
+      id: 'target-1', type: 'page', url: 'https://fomo.family/alerts',
+    }] },
+    { ok: true },
+    { ok: true },
+  ];
+  await resetFomoBrowserPage('http://127.0.0.1:9222', {
+    fetchImpl: async (url, init = {}) => {
+      calls.push({ url, method: init.method || 'GET', signal: init.signal });
+      return responses.shift();
+    },
+  });
+
+  assert.deepEqual(calls.map(({ url, method }) => ({ url, method })), [{
+    url: 'http://127.0.0.1:9222/json/list', method: 'GET',
+  }, {
+    url: 'http://127.0.0.1:9222/json/close/target-1', method: 'GET',
+  }, {
+    url: 'http://127.0.0.1:9222/json/new?https%3A%2F%2Ffomo.family%2Falerts', method: 'PUT',
+  }]);
+  assert.equal(calls.every(({ signal }) => signal instanceof AbortSignal), true);
+});
+
+test('Fomo browser stream resets the page after repeated CDP connection failures', async () => {
+  const timers = new Map();
+  const states = [];
+  let timerId = 0;
+  let resets = 0;
+  const stream = createFomoBrowserActivityStream({
+    connectOverCDP: async () => { throw new Error('CDP target crashed'); },
+    resetBrowserPage: async () => { resets += 1; },
+    random: () => 0.5,
+    schedule: (callback, delayMs) => {
+      timerId += 1;
+      timers.set(timerId, { callback, delayMs });
+      return timerId;
+    },
+    cancelSchedule: (id) => timers.delete(id),
+    onStatus: ({ state }) => states.push(state),
+  });
+
+  stream.start();
+  await nextTurn();
+  assert.equal(resets, 0);
+  const retry = [...timers.entries()][0];
+  timers.delete(retry[0]);
+  retry[1].callback();
+  await nextTurn();
+  assert.equal(resets, 1);
+  assert.equal(stream.getStatus().pageResets, 1);
+  assert.equal(states.includes('page_reset'), true);
+  await stream.stop();
+});
+
+test('Fomo browser stream reloads immediately when the attached page crashes', async () => {
+  const fixture = fakeBrowser();
+  const states = [];
+  let reloads = 0;
+  fixture.page.reload = async () => { reloads += 1; };
+  const stream = createFomoBrowserActivityStream({
+    connectOverCDP: async () => fixture.browser,
+    onStatus: ({ state }) => states.push(state),
+  });
+
+  stream.start();
+  await nextTurn();
+  fixture.page.emit('crash');
+  await nextTurn();
+  assert.equal(reloads, 1);
+  assert.equal(stream.getStatus().crashReloads, 1);
+  assert.equal(states.includes('crash_reloading'), true);
   await stream.stop();
 });
 

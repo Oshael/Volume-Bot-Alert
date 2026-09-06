@@ -101,7 +101,7 @@ function createFomoBrowserHealthMonitor(options = {}) {
         status.connected = true;
         if (!incident) status.healthy = true;
         armStaleTimer();
-      } else if (event.state === 'stale_reloading') {
+      } else if (event.state === 'stale_reloading' || event.state === 'crash_reloading') {
         armRecoveryGraceTimer();
       } else if (event.state === 'closed' || event.state === 'reconnecting') {
         connected = false;

@@ -1486,6 +1486,15 @@ novos frames por `FOMO_BROWSER_STALE_RECOVERY_GRACE_SECONDS` (default 30, faixa
 adicionais respeitam
 `FOMO_BROWSER_STALE_RECOVERY_COOLDOWN_SECONDS` (default 300, faixa 60–3600). Se
 o reload falhar, a sessão CDP é descartada e entra no backoff normal de reconnect.
+Um evento de crash do renderer (`Aw, Snap!`) inicia o reload imediatamente. Se o
+worker iniciar quando a aba já estiver crashada e duas conexões CDP consecutivas
+falharem, ele usa apenas a interface loopback do Chrome para fechar o target Fomo
+e abrir novamente `https://fomo.family/alerts` no mesmo perfil do navegador. Esse
+reset respeita o mesmo cooldown e não fecha o Chrome nem toca em outras abas; ele
+não substitui supervisão systemd quando o processo inteiro do Chrome ou a porta
+CDP estiverem indisponíveis. `crashReloads`, `crashReloadErrors`, `pageResets`,
+`pageResetErrors`, `lastCrashReloadAt` e `lastPageResetAt` tornam o caminho
+observável.
 O primeiro frame posterior gera a mensagem de recuperação e rearma o watchdog.
 `staleReloads`, `staleReloadErrors` e `lastStaleReloadAt` expõem o auto-heal na
 telemetria do stream. A telemetria `fomoHealth`

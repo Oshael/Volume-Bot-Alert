@@ -87,5 +87,7 @@ test('Fomo browser watchdog gives automatic stale reload time to recover before 
   await monitor.flush();
   assert.equal(incidents.length, 0);
   assert.equal([...timers.values()][0].delayMs, 90_000);
+  monitor.onStatus({ state: 'crash_reloading' });
+  assert.equal([...timers.values()][0].delayMs, 30_000);
   await monitor.stop();
 });
