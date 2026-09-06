@@ -2687,6 +2687,12 @@ canônica cobre apenas transferências nativas top-level, exatamente o contrato
 atual; transfers internas continuam fora de escopo. `--phase=cutover` também
 exige a lease do consumidor com
 `sourceMode=canonical_journal`.
+Antes do cutover, execute `npm run robinhood:canonical-bundle-funding-canary`.
+O canário é read-only e compara RPC e journal nos 64 blocos confirmados mais
+recentes, incluindo checkpoint, identidade, ordem, origem, destino, valor e
+timestamp das transferências nativas top-level. Ele falha fechado em drift,
+lacuna da fonte ou divergência e aceita `--blocks=1..100` e
+`--min-transfers=<n>` para ajustar somente o tamanho mínimo da evidência.
 A Stage 156 adiciona o índice concorrente `(chain, token_address, discovery_block)`
 ao registry. A recorrência começa pelas compras da wallet e consulta a origem
 somente dos tokens encontrados, sem reagregar todas as pools por wallet candidata;
