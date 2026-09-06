@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const {
-  CONFIRM_FLAG, execute, parseArgs, repairBatch, summarize,
+  CONFIRM_FLAG, REPAIR_SQL, execute, parseArgs, repairBatch, summarize,
 } = require('../src/utils/repair-robinhood-bundle-redistribution-positions');
 
 describe('Robinhood bundle redistribution transaction-position repair', () => {
@@ -22,13 +22,18 @@ describe('Robinhood bundle redistribution transaction-position repair', () => {
   });
 
   it('separates fully recoverable tokens from archive or non-transfer gaps', () => {
+    assert.match(REPAIR_SQL, /first_sell_block/);
+    assert.match(REPAIR_SQL, /position\.transaction_index IS NULL/);
     const result = summarize([
-      { token_address: '0x1', needed: 3, recoverable: 3 },
-      { token_address: '0x2', needed: 4, recoverable: 2 },
+      { token_address: '0x1', needed: 3, recoverable: 3,
+        transfer_needed: 2, transfer_recoverable: 2, sell_needed: 1, sell_recoverable: 1 },
+      { token_address: '0x2', needed: 4, recoverable: 2,
+        transfer_needed: 1, transfer_recoverable: 1, sell_needed: 3, sell_recoverable: 1 },
       { token_address: '0x3', needed: 0, recoverable: 0 },
     ], 3);
     assert.equal(result.repaired, 1);
     assert.deepEqual(result.repairedTokens, ['0x1']);
+    assert.equal(result.unresolved[0].sellNeeded, 3);
     assert.deepEqual(result.unresolved.map((item) => item.tokenAddress), ['0x2', '0x3']);
   });
 
@@ -38,7 +43,9 @@ describe('Robinhood bundle redistribution transaction-position repair', () => {
       async query(sql) {
         calls.push(sql);
         if (sql.includes('WITH tokens AS MATERIALIZED')) return { rows: [
-          { token_address: '0x1', needed: 2, recoverable: 2, inserted: 2 },
+          { token_address: '0x1', needed: 2, recoverable: 2, inserted: 2,
+            transfer_needed: 1, transfer_recoverable: 1,
+            sell_needed: 1, sell_recoverable: 1 },
           { token_address: '0x2', needed: 1, recoverable: 0, inserted: 2 },
         ] };
         if (sql.includes('SELECT token_address, observation_from_block')) {
@@ -55,6 +62,7 @@ describe('Robinhood bundle redistribution transaction-position repair', () => {
       apply: true, batchSize: 10, statementTimeoutMs: 120000, exclude: [],
     });
     assert.equal(result.inserted, 2);
+    assert.equal(result.unresolved[0].sellRecoverable, 0);
     assert.deepEqual(result.repairedTokens, ['0x1']);
     assert.equal(calls.some((sql) => String(sql).includes('last_error_code = NULL')), true);
     assert.equal(calls.at(-1), 'release');
@@ -72,12 +80,17 @@ describe('Robinhood bundle redistribution transaction-position repair', () => {
         runs += 1;
         assert.equal(input.exclude.includes('0x1'), runs > 1);
         if (runs > 1) return summarize([], 0);
-        return summarize([{ token_address: '0x1', needed: 2, recoverable: 2 }], 2);
+        return summarize([{
+          token_address: '0x1', needed: 2, recoverable: 2,
+          transfer_needed: 1, transfer_recoverable: 1,
+          sell_needed: 1, sell_recoverable: 1,
+        }], 2);
       },
       async countPending() { return 0; },
     });
     assert.equal(report.status, 'drained');
     assert.equal(report.inserted, 2);
+    assert.equal(report.sellNeeded, 1);
     assert.equal(logs.length, 1);
   });
 });

@@ -19,11 +19,13 @@ const REPAIR_SQL = `WITH tokens AS MATERIALIZED (
   SELECT token_address, observation_from_block::bigint
     FROM jsonb_to_recordset($1::jsonb)
       AS item(token_address text, observation_from_block text)
-), needed AS MATERIALIZED (
-  SELECT DISTINCT tokens.token_address,
-         edge.first_wallet_transfer_transaction_hash AS transaction_hash,
-         edge.first_wallet_transfer_log_index AS log_index,
-         edge.first_wallet_transfer_at AS block_time
+), evidence AS MATERIALIZED (
+  SELECT tokens.token_address, state.live_through_block,
+         edge.to_wallet AS recipient_wallet,
+         edge.first_wallet_transfer_block AS transfer_block,
+         edge.first_wallet_transfer_transaction_hash AS transfer_transaction_hash,
+         edge.first_wallet_transfer_log_index AS transfer_log_index,
+         edge.first_wallet_transfer_at AS transfer_time
     FROM tokens
     INNER JOIN robinhood_holder_token_states state
       ON state.chain = '${CHAIN}' AND state.token_address = tokens.token_address
@@ -33,17 +35,54 @@ const REPAIR_SQL = `WITH tokens AS MATERIALIZED (
     INNER JOIN robinhood_wallet_token_first_buys buy
       ON buy.chain = edge.chain AND buy.token_address = edge.token_address
      AND buy.wallet_address = edge.from_wallet
-    LEFT JOIN robinhood_transaction_positions position
-      ON position.chain = edge.chain
-     AND position.transaction_hash = edge.first_wallet_transfer_transaction_hash
    WHERE edge.first_wallet_transfer_block >= tokens.observation_from_block
      AND edge.first_wallet_transfer_block <= state.live_through_block
      AND edge.first_wallet_transfer_block > buy.block_number
      AND edge.first_wallet_transfer_amount_raw > 0
      AND edge.from_wallet <> edge.to_wallet
-     AND position.transaction_hash IS NULL
+), transfer_needed AS MATERIALIZED (
+  SELECT DISTINCT evidence.token_address,
+         evidence.transfer_transaction_hash AS transaction_hash,
+         evidence.transfer_log_index AS log_index,
+         evidence.transfer_time AS block_time, 'transfer'::text AS position_kind
+    FROM evidence
+    LEFT JOIN robinhood_transaction_positions position
+      ON position.chain = '${CHAIN}'
+     AND position.transaction_hash = evidence.transfer_transaction_hash
+     AND position.block_number = evidence.transfer_block
+   WHERE position.transaction_hash IS NULL
+), sell_needed AS MATERIALIZED (
+  SELECT DISTINCT evidence.token_address, sell.transaction_hash,
+         NULL::integer AS log_index, sell.block_time, 'sell'::text AS position_kind
+    FROM evidence
+    CROSS JOIN LATERAL (
+      SELECT swap.block_number
+        FROM robinhood_wallet_swaps swap
+       WHERE swap.chain = '${CHAIN}' AND swap.token_address = evidence.token_address
+         AND swap.wallet_address = evidence.recipient_wallet AND swap.side = 'sell'
+         AND swap.block_number > evidence.transfer_block
+         AND swap.block_number <= evidence.live_through_block
+       ORDER BY swap.block_number
+       LIMIT 1
+    ) first_sell_block
+    CROSS JOIN LATERAL (
+      SELECT swap.transaction_hash, swap.block_time
+        FROM robinhood_wallet_swaps swap
+        LEFT JOIN robinhood_transaction_positions position
+          ON position.chain = swap.chain
+         AND position.transaction_hash = swap.transaction_hash
+         AND position.block_number = swap.block_number
+       WHERE swap.chain = '${CHAIN}' AND swap.token_address = evidence.token_address
+         AND swap.wallet_address = evidence.recipient_wallet AND swap.side = 'sell'
+         AND swap.block_number = first_sell_block.block_number
+         AND position.transaction_index IS NULL
+    ) sell
+), needed AS MATERIALIZED (
+  SELECT * FROM transfer_needed
+  UNION
+  SELECT * FROM sell_needed
 ), resolved AS MATERIALIZED (
-  SELECT needed.token_address, needed.transaction_hash,
+  SELECT needed.token_address, needed.transaction_hash, needed.position_kind,
          source.block_number, source.block_hash, source.transaction_index
     FROM needed
     CROSS JOIN LATERAL (
@@ -52,7 +91,8 @@ const REPAIR_SQL = `WITH tokens AS MATERIALIZED (
        WHERE event.chain = '${CHAIN}'
          AND event.block_time = needed.block_time
          AND event.transaction_hash = needed.transaction_hash
-         AND event.log_index = needed.log_index
+         AND (needed.log_index IS NULL OR event.log_index = needed.log_index)
+       ORDER BY event.log_index
        LIMIT 1
     ) source
 ), position_source AS MATERIALIZED (
@@ -70,10 +110,18 @@ const REPAIR_SQL = `WITH tokens AS MATERIALIZED (
 ), counts AS (
   SELECT tokens.token_address,
          COUNT(DISTINCT needed.transaction_hash)::integer AS needed,
-         COUNT(DISTINCT resolved.transaction_hash)::integer AS recoverable
+         COUNT(DISTINCT needed.transaction_hash) FILTER (
+           WHERE needed.position_kind = 'transfer')::integer AS transfer_needed,
+         COUNT(DISTINCT needed.transaction_hash) FILTER (
+           WHERE needed.position_kind = 'sell')::integer AS sell_needed,
+         COUNT(DISTINCT resolved.transaction_hash)::integer AS recoverable,
+         COUNT(DISTINCT resolved.transaction_hash) FILTER (
+           WHERE resolved.position_kind = 'transfer')::integer AS transfer_recoverable,
+         COUNT(DISTINCT resolved.transaction_hash) FILTER (
+           WHERE resolved.position_kind = 'sell')::integer AS sell_recoverable
     FROM tokens
     LEFT JOIN needed USING (token_address)
-    LEFT JOIN resolved USING (token_address, transaction_hash)
+    LEFT JOIN resolved USING (token_address, transaction_hash, position_kind)
    GROUP BY tokens.token_address
 )
 SELECT counts.*, (SELECT COUNT(*)::integer FROM inserted) AS inserted
@@ -114,6 +162,10 @@ function summarize(rows, inserted) {
   const tokens = rows.map((row) => ({
     tokenAddress: row.token_address,
     needed: Number(row.needed), recoverable: Number(row.recoverable),
+    transferNeeded: Number(row.transfer_needed || 0),
+    transferRecoverable: Number(row.transfer_recoverable || 0),
+    sellNeeded: Number(row.sell_needed || 0),
+    sellRecoverable: Number(row.sell_recoverable || 0),
   }));
   const repaired = tokens.filter((item) => item.needed > 0
     && item.needed === item.recoverable);
@@ -121,6 +173,10 @@ function summarize(rows, inserted) {
     selected: tokens.length,
     needed: tokens.reduce((sum, item) => sum + item.needed, 0),
     recoverable: tokens.reduce((sum, item) => sum + item.recoverable, 0),
+    transferNeeded: tokens.reduce((sum, item) => sum + item.transferNeeded, 0),
+    transferRecoverable: tokens.reduce((sum, item) => sum + item.transferRecoverable, 0),
+    sellNeeded: tokens.reduce((sum, item) => sum + item.sellNeeded, 0),
+    sellRecoverable: tokens.reduce((sum, item) => sum + item.sellRecoverable, 0),
     inserted: Number(inserted || 0), repaired: repaired.length,
     repairedTokens: Object.freeze(repaired.map((item) => item.tokenAddress)),
     unresolved: Object.freeze(tokens.filter((item) => !repaired.includes(item))),
@@ -171,6 +227,7 @@ async function execute(options, deps = {}) {
   const sleep = deps.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const excluded = new Set();
   const totals = { batches: 0, selected: 0, needed: 0, recoverable: 0,
+    transferNeeded: 0, transferRecoverable: 0, sellNeeded: 0, sellRecoverable: 0,
     inserted: 0, repaired: 0 };
   for (let batch = 1; batch <= options.maxBatches; batch += 1) {
     const result = await (deps.repairBatch || repairBatch)(database, {
@@ -178,7 +235,10 @@ async function execute(options, deps = {}) {
     });
     if (!result.selected) break;
     totals.batches += 1;
-    for (const field of ['selected', 'needed', 'recoverable', 'inserted', 'repaired']) {
+    for (const field of [
+      'selected', 'needed', 'recoverable', 'transferNeeded', 'transferRecoverable',
+      'sellNeeded', 'sellRecoverable', 'inserted', 'repaired',
+    ]) {
       totals[field] += result[field];
     }
     for (const item of result.unresolved) excluded.add(item.tokenAddress);

@@ -4094,7 +4094,7 @@ shutdown. Esta família não terá backfill; a ativação live definirá o iníc
 observação shadow.
 
 Se o worker adiar tokens com `transaction_position_missing` por posições de
-transfer anteriores à captura da sidecar, rode primeiro
+transfer ou primeira venda anteriores à captura da sidecar, rode primeiro
 `npm run robinhood:bundle-redistribution-position-repair` para uma prévia sem
 escrita. O repair usa somente `robinhood_token_transfer_events`, faz lookup
 particionado pelo timestamp exato, limita cada lote e não consulta RPC. Para
