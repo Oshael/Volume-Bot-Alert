@@ -256,7 +256,9 @@ function createRobinhoodHolderDeploymentVerifier(options = {}) {
     ]);
     const evidence = validateTransaction(hint, transaction, receipt);
     const direct = evidence.contractAddress === tokenAddress && evidence.direct;
-    const internal = evidence.contractAddress === null && !evidence.direct;
+    const internal = (evidence.contractAddress === null && !evidence.direct)
+      || (evidence.contractAddress !== null
+        && evidence.contractAddress !== tokenAddress && evidence.direct);
     if (quantity(evidence.blockNumber, 'evidence.blockNumber') !== requestedBlock
         || (!direct && !internal)) {
       throw evidenceError('deployment block trace does not prove the token creation');
