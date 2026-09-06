@@ -284,7 +284,10 @@ async function runCleanupBatches(database, options, wallet) {
       raw.candidateBlockMax
     );
     summary.observations += raw.observations;
-    if (raw.protected > 0) break;
+    // A few protected rows must not throttle unrelated expired evidence behind
+    // them. The selected prefix is bounded, so continue only while each pass
+    // both fills the prefix and makes deletion progress.
+    if (raw.processedLogs === 0) break;
     if (raw.examined < options.batchLimit) break;
   }
   return summary;

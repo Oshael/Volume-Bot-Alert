@@ -201,6 +201,29 @@ describe('Robinhood retention worker', () => {
     assert.equal(database.calls.length, 1);
   });
 
+  it('continues bounded cleanup when a full prefix makes partial progress', async () => {
+    const database = createFakeDatabase([
+      {
+        examined: 100,
+        processedLogs: 91,
+        observations: 91,
+        protectedByBucketCoverage: 9,
+      },
+      { examined: 50, processedLogs: 50, observations: 50 },
+    ]);
+
+    const summary = await worker.runOnce({
+      batchLimit: 100, maxBatches: 5,
+    }, {}, dependencies(database));
+
+    assert.equal(summary.batches, 2);
+    assert.equal(summary.examinedProcessedLogs, 150);
+    assert.equal(summary.processedLogs, 141);
+    assert.equal(summary.protectedProcessedLogs, 9);
+    assert.equal(summary.candidatesProtectedByBucketCoverage, 9);
+    assert.equal(database.calls.length, 2);
+  });
+
   it('fails closed for accepted rows when loading the wallet watermark fails', async () => {
     const database = createFakeDatabase([{
       examined: 8,

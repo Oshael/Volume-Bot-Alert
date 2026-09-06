@@ -373,6 +373,9 @@ concluída, cobertura no bucket de 1 minuto e nenhuma tarefa de agregação
 `pending`, `leased` ou `blocked`. A tarefa de agregação `completed` é removida por
 cascade junto da observação. Buckets permanentes, agregados, projeções de wallet,
 holders e o journal canônico não participam dessa retenção.
+Linhas protegidas isoladas não encerram o ciclo: enquanto o prefixo limitado estiver
+cheio e houver exclusões, o worker continua até `ROBINHOOD_RETENTION_MAX_BATCHES`.
+Ele para ao esvaziar o prefixo ou quando um lote inteiro não consegue progredir.
 
 Os `DELETE`s tornam páginas antigas reutilizáveis pelo PostgreSQL; não devolvem
 imediatamente espaço ao filesystem. A Stage 200 configura autovacuum mais sensível
