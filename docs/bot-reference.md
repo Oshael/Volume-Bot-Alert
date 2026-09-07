@@ -2114,7 +2114,10 @@ parcial prova que aquele token foi drenado, promove imediatamente um `shadow`
 e evita uma consulta vazia adicional. Cada lote live commitado publica o novo
 holder count imediatamente, sem aguardar o budget inteiro do tick; o mapa do tick
 continua coalescendo somente a contabilidade e a publicação final de promoções
-residuais.
+residuais. A promoção residual é limitada separadamente por
+`ROBINHOOD_HOLDER_LIVE_SHADOW_PROMOTION_BATCH_SIZE` (default 250, máximo 1.000),
+evitando que um budget alto de apply transforme milhares de promoções em uma única
+transação e esgote a tabela compartilhada de locks do PostgreSQL.
 Assim eventos `missing/backfilling` não são reescaneados para escolher cada token.
 Depois da Stage 180, cada INSERT commitado no journal de um token rastreado
 (`backfilling`, `shadow` ou `live`) também faz upsert de um ticket por token em

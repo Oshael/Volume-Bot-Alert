@@ -27,6 +27,9 @@ function normalizeOptions(options = {}, env = process.env) {
     maxErrorBackoffMs: boundedInteger(options.maxErrorBackoffMs, 30_000, 1000, 300_000),
     concurrency: boundedInteger(options.concurrency, 1, 1, 8),
     maxApplyEvents: boundedInteger(options.maxApplyEvents, 5000, 1, 50_000),
+    shadowPromotionBatchSize: boundedInteger(
+      options.shadowPromotionBatchSize, 250, 1, 1000
+    ),
     applyBatchSize: boundedInteger(options.applyBatchSize, 100, 1, 1000),
     hotApplyBatchSize: boundedInteger(options.hotApplyBatchSize, 25, 1, 100),
     maxDurationMs: boundedInteger(options.maxDurationMs, 2000, 250, 60_000),

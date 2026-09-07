@@ -623,6 +623,18 @@ describe('Robinhood holder live runner', () => {
     });
   });
 
+  it('bounds residual shadow promotion independently from the apply budget', async () => {
+    const context = harness({
+      status: 'idle', transfers: 0, nextBlock: '106', safeHead: '105',
+    }, [{ status: 'idle' }]);
+
+    await context.runner.applyOnce({
+      maxApplyEvents: 5000, shadowPromotionBatchSize: 250,
+    });
+
+    assert.deepEqual(context.calls.at(-1), ['promote-shadows', { limit: 250 }]);
+  });
+
   it('stops exactly at the apply budget without starting another capture', async () => {
     const context = harness({
       status: 'idle', transfers: 0, nextBlock: '106', safeHead: '105',

@@ -679,6 +679,9 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     const maxDurationMs = boundedInteger(
       input.maxDurationMs, 2000, 250, 60_000, 'maxDurationMs'
     );
+    const shadowPromotionBatchSize = boundedInteger(
+      input.shadowPromotionBatchSize, 250, 1, 1000, 'shadowPromotionBatchSize'
+    );
     const concurrency = boundedInteger(input.concurrency, 1, 1, 8, 'concurrency');
     const totalStartedAt = measureMs();
     const drainStartedAt = measureMs();
@@ -690,7 +693,9 @@ function createRobinhoodHolderLiveRunner(options = {}) {
     )));
     const drained = mergeDrainedLanes(lanes, maxApplyEvents);
     const drainDurationMs = elapsedMs(drainStartedAt);
-    const promoted = await promoteReadyShadows({ limit: maxApplyEvents }, drained.timing);
+    const promoted = await promoteReadyShadows({
+      limit: Math.min(maxApplyEvents, shadowPromotionBatchSize),
+    }, drained.timing);
     const promotedUpdates = new Map();
     for (const publication of promoted.publications) {
       rememberHolderCountUpdate(drained.holderCountUpdates, { publication });

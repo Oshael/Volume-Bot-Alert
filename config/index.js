@@ -1467,6 +1467,9 @@ module.exports = {
     maxApplyEvents: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_LIVE_MAX_APPLY_EVENTS, 5000, 1, 50_000
     ),
+    shadowPromotionBatchSize: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_LIVE_SHADOW_PROMOTION_BATCH_SIZE, 250, 1, 1000
+    ),
     applyBatchSize: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_LIVE_APPLY_BATCH_SIZE, 100, 1, 1000
     ),
