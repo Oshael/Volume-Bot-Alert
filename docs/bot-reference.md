@@ -3762,6 +3762,11 @@ usa por default uma margem de 20.000 blocos para cada tabela e aceita
 consumidores diretos e um cutoff anterior ao menor frontier ainda não materializado
 da outbox ou da fila de refresh de liquidity. Para holders, também exige nenhum
 backfill global ativo, evento não aplicado ou mint hint pendente antes do cutoff.
+As verificações usam uma transação read-only com timeout de 60 segundos. A prova
+de mint é uma consulta set-based separada e não roda quando já existe backfill
+global ativo, pois nesse estado seu resultado não pode liberar a retenção de
+holders. As queries são identificadas por `retention-safety:state` e
+`retention-safety:mint` em `pg_stat_activity`.
 O marcador `applied` é prova de materialização porque balances, `holder_count` e o
 próprio marcador são commitados atomicamente. Isso autoriza somente planejar um
 piloto: não constitui replay semântico independente, não estima espaço físico

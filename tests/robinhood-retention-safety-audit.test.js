@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const {
-  createRobinhoodRetentionSafetyAudit, evaluate,
+  DEFAULT_STATEMENT_TIMEOUT_MS, createRobinhoodRetentionSafetyAudit, evaluate,
 } = require('../src/services/robinhood-retention-safety-audit');
 const { main, parseArgs } = require('../src/utils/audit-robinhood-retention-safety');
 
@@ -76,7 +76,11 @@ describe('Robinhood retention safety audit', () => {
     const client = { async query(sql) {
       queries.push(sql);
       if (sql.startsWith('BEGIN')) return { rows: [] };
-      if (sql.startsWith('SELECT capture.next_block')) return { rows: [state()] };
+      if (sql.startsWith('SET LOCAL')) return { rows: [] };
+      if (sql.startsWith('/* retention-safety:state */')) return { rows: [state()] };
+      if (sql.startsWith('/* retention-safety:mint */')) {
+        return { rows: [{ block_number: null }] };
+      }
       if (sql === 'ROLLBACK') return { rows: [] };
       throw new Error(`unexpected query: ${sql}`);
     }, release() {} };
@@ -86,9 +90,36 @@ describe('Robinhood retention safety audit', () => {
     });
     assert.equal((await audit.inspect()).ready_for_pilot, true);
     assert.match(queries[0], /REPEATABLE READ READ ONLY/);
-    assert.match(queries[1], /applied=FALSE[\s\S]+UNION ALL[\s\S]+applied=TRUE/);
+    assert.equal(queries[1], `SET LOCAL statement_timeout = '${DEFAULT_STATEMENT_TIMEOUT_MS}ms'`);
+    assert.match(queries[3], /EXISTS[\s\S]+robinhood_token_deployment_outbox/);
+    assert.doesNotMatch(queries[3], /JOIN LATERAL|UNION ALL/);
     assert.equal(queries.at(-1), 'ROLLBACK');
     assert.equal(queries.some((sql) => /\b(DELETE|UPDATE|INSERT)\b/.test(sql)), false);
+  });
+
+  it('skips the mint proof when an active global campaign already blocks retention', async () => {
+    const queries = [];
+    const client = { async query(sql) {
+      queries.push(sql);
+      if (sql.startsWith('BEGIN') || sql.startsWith('SET LOCAL') || sql === 'ROLLBACK') {
+        return { rows: [] };
+      }
+      if (sql.startsWith('/* retention-safety:state */')) {
+        return { rows: [state({
+          global_run_id: '9', global_run_status: 'scanning', global_run_next_block: '400',
+        })] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    }, release() {} };
+    const audit = createRobinhoodRetentionSafetyAudit({
+      database: { async getClient() { return client; } },
+      chainRetentionBlocks: 100, holderRetentionBlocks: 200,
+    });
+    const report = await audit.inspect();
+    assert.equal(report.ready_for_pilot, false);
+    assert.equal(report.holder_journal.blockers[0].code, 'holder_global_backfill_active');
+    assert.equal(queries.some((sql) => sql.startsWith('/* retention-safety:mint */')), false);
+    assert.equal(queries.at(-1), 'ROLLBACK');
   });
 
   it('parses options and prints the report', async () => {

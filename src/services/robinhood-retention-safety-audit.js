@@ -5,7 +5,9 @@ const { CLASSIFICATION_VERSION } = require('./robinhood-wallet-transfer-batch');
 
 const CHAIN = 'robinhood';
 const DEFAULT_RETENTION_BLOCKS = 20_000;
+const DEFAULT_STATEMENT_TIMEOUT_MS = 60_000;
 const MAX_CAPTURE_LAG = 2n;
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
 function quantity(value) { return value == null ? null : BigInt(value); }
 function text(value) { return value == null ? null : String(value); }
@@ -146,8 +148,9 @@ function createRobinhoodRetentionSafetyAudit(options = {}) {
     let state;
     try {
       await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      await client.query(`SET LOCAL statement_timeout = '${DEFAULT_STATEMENT_TIMEOUT_MS}ms'`);
       state = (await client.query(
-        `SELECT capture.next_block AS capture_next_block,
+        `/* retention-safety:state */ SELECT capture.next_block AS capture_next_block,
                 capture.node_head AS capture_node_head,
                 journal.block_number AS journal_start_block,
                 liquidity.next_block AS liquidity_next_block,
@@ -172,7 +175,6 @@ function createRobinhoodRetentionSafetyAudit(options = {}) {
                 pending.block_number AS oldest_unapplied_holder_block,
                 campaign.id AS global_run_id, campaign.status AS global_run_status,
                 campaign.next_block AS global_run_next_block,
-                mint.block_number AS oldest_pending_deployment_mint_block,
                 pg_total_relation_size('robinhood_chain_events') AS chain_events_bytes,
                 pg_total_relation_size('robinhood_holder_transfer_journal') AS holder_journal_bytes
            FROM (VALUES (1)) anchor(value)
@@ -203,21 +205,27 @@ function createRobinhoodRetentionSafetyAudit(options = {}) {
              WHERE chain=$1 AND applied=FALSE ORDER BY block_number LIMIT 1) pending ON TRUE
            LEFT JOIN LATERAL (SELECT id, status, next_block
              FROM robinhood_holder_global_backfill_runs WHERE chain=$1 AND status<>'completed'
-             ORDER BY id DESC LIMIT 1) campaign ON TRUE
-           LEFT JOIN LATERAL (SELECT MIN(journal.block_number) AS block_number
-             FROM robinhood_token_deployment_outbox task JOIN LATERAL (
-               SELECT block_number FROM (
-                 SELECT block_number FROM robinhood_holder_transfer_journal
-                  WHERE chain=$1 AND token_address=task.token_address AND applied=FALSE
-                    AND from_wallet='0x0000000000000000000000000000000000000000'
-                 UNION ALL
-                 SELECT block_number FROM robinhood_holder_transfer_journal
-                  WHERE chain=$1 AND token_address=task.token_address AND applied=TRUE
-                    AND from_wallet='0x0000000000000000000000000000000000000000'
-               ) mint_event ORDER BY block_number LIMIT 1
-             ) journal ON TRUE WHERE task.chain=$1) mint ON TRUE`,
+             ORDER BY id DESC LIMIT 1) campaign ON TRUE`,
         [CHAIN, CLASSIFICATION_VERSION]
       )).rows[0] || {};
+      // An active global campaign already blocks holder retention. Avoid an
+      // expensive journal proof whose result cannot change that decision.
+      if (state.global_run_id == null) {
+        const mint = await client.query(
+          `/* retention-safety:mint */ SELECT MIN(journal.block_number) AS block_number
+             FROM robinhood_holder_transfer_journal journal
+            WHERE journal.chain=$1 AND journal.from_wallet=$2
+              AND EXISTS (
+                SELECT 1 FROM robinhood_token_deployment_outbox task
+                 WHERE task.chain=journal.chain
+                   AND task.token_address=journal.token_address
+              )`,
+          [CHAIN, ZERO_ADDRESS]
+        );
+        state.oldest_pending_deployment_mint_block = mint.rows[0]?.block_number ?? null;
+      } else {
+        state.oldest_pending_deployment_mint_block = null;
+      }
       await client.query('ROLLBACK');
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch (_) {}
@@ -229,5 +237,6 @@ function createRobinhoodRetentionSafetyAudit(options = {}) {
 }
 
 module.exports = {
-  DEFAULT_RETENTION_BLOCKS, createRobinhoodRetentionSafetyAudit, evaluate,
+  DEFAULT_RETENTION_BLOCKS, DEFAULT_STATEMENT_TIMEOUT_MS,
+  createRobinhoodRetentionSafetyAudit, evaluate,
 };
