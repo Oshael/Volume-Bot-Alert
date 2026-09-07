@@ -3712,6 +3712,21 @@ Bloco, contexto de transação, logs e avanço do cursor serão commitados
 atomicamente; gaps e divergência de `parentHash` falham antes do avanço. Aplique
 com `node src/utils/db-init-stage191.js` antes de habilitar o capturador.
 
+Antes de definir ou reduzir retenção de `robinhood_chain_events` e
+`robinhood_holder_transfer_journal`, execute
+`npm run robinhood:retention-safety-audit`. O comando é estritamente read-only,
+usa por default uma margem de 20.000 blocos para cada tabela e aceita
+`--chain-retention-blocks=N` e `--holder-retention-blocks=N`. Configure
+`ROBINHOOD_RETENTION_ARCHIVE_RPC_URL`; na ausência, o auditor usa
+`ROBINHOOD_HOLDER_GLOBAL_BACKFILL_RPC_URL` ou `RH_NODE_RPC_URL`.
+`ready_for_pilot=true` exige captura saudável, checkpoints canônicos de todos os
+consumidores diretos, outbox considerada no menor frontier, nenhum backfill global
+de holders ativo, nenhum evento de holder não aplicado ou mint hint pendente antes
+do cutoff e ao menos duas amostras antigas cujo hash e quantidade de logs conferem
+com `eth_getBlockReceipts` no archive. Isso autoriza somente planejar um piloto:
+a amostragem não prova todos os blocos, não estima espaço físico recuperável e o
+comando nunca executa `DELETE`, altera cursor ou cria política de retenção.
+
 O processo isolado `npm run start:worker:robinhood-chain-capture` roda sob a
 lease `robinhood-chain-capture-worker` e permanece em modo shadow: nenhum
 worker atual lê o journal e nenhuma projeção ou publicação é alterada. Ele usa
