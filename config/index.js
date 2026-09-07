@@ -2101,7 +2101,7 @@ module.exports = {
   },
 
   robinhoodDirectCreatorWorker: {
-    enabled: parseBoolean(process.env.ROBINHOOD_DIRECT_CREATOR_LIVE_ENABLED, false),
+    enabled: parseBoolean(process.env.ROBINHOOD_DIRECT_CREATOR_LIVE_ENABLED, true),
     sourceMode: normalizeRobinhoodLiveSource(process.env.ROBINHOOD_DIRECT_CREATOR_LIVE_SOURCE),
     intervalMs: parseIntegerInRange(
       process.env.ROBINHOOD_DIRECT_CREATOR_LIVE_INTERVAL_MS, 2000, 250, 300_000

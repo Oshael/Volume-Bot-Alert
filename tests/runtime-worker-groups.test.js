@@ -73,6 +73,16 @@ describe('runtime worker groups config', () => {
     });
   });
 
+  it('captures direct creator evidence by default for future token admissions', () => {
+    withEnv({ ROBINHOOD_DIRECT_CREATOR_LIVE_ENABLED: undefined }, (config) => {
+      assert.equal(config.robinhoodDirectCreatorWorker.enabled, true);
+      assert.equal(config.robinhoodDirectCreatorWorker.sourceMode, 'canonical_journal');
+    });
+    withEnv({ ROBINHOOD_DIRECT_CREATOR_LIVE_ENABLED: 'false' }, (config) => {
+      assert.equal(config.robinhoodDirectCreatorWorker.enabled, false);
+    });
+  });
+
   it('ships canonical live sources in Robinhood deployment examples', () => {
     const systemdDir = path.join(ROOT_DIR, 'deploy', 'systemd');
     const examples = [

@@ -2499,25 +2499,18 @@ O Nitro da VPS deve expor `debug` apenas no HTTP RPC local usado pelo worker
 (`--http.api=net,web3,eth,debug`); esse namespace não deve ser público. O LIVE
 não depende de Archive nem do túnel do PC.
 
-Quando nem a transição local pode ser comprovada, Blockscout permanece fallback:
-seu hint é validado contra receipt/bloco canônicos e materializa `rpc_direct` ou
-`blockscout_internal`. Crédito esgotado abre um circuit breaker em memória; novas
-provas RPC continuam sendo tentadas, sem chamadas repetidas ao provedor. Respostas
-HTTP `401`, `403` e `429` também abrem esse circuito. Se a
-rota v2 de internal transactions
-responder com erro transitório, usa `txlistinternal` público como fallback; a
-rota de endereço também recupera o transaction hash pelo primeiro mint ERC-20
-(`tokentx`, ordem ascendente) quando necessário. Essas respostas são apenas hints:
-a prova encontrada continua sujeita à validação RPC canônica. Evidência ainda não
-indexada volta à fila com backoff limitado.
-`ROBINHOOD_BLOCKSCOUT_API_KEY` faz o fallback usar automaticamente a API PRO
-com `chain_id=4663` quando a rota pública de endereço retorna HTTP 403;
-`ROBINHOOD_BLOCKSCOUT_API_URL` permite substituir somente esse endpoint.
-Se a primeira mint não for o deployment,
-o repair localiza por busca binária via `eth_getCode` o primeiro bloco com bytecode
-e consulta `txlistinternal` somente nesse bloco; a atribuição descoberta volta ao
-mesmo verificador canônico. O fluxo cobre somente novas admissões
-e não cria backfill.
+Quando nem a transição local nem uma atribuição canônica já materializada podem
+ser comprovadas, a tarefa permanece pendente com
+`local_deployment_evidence_pending` e backoff limitado. Este worker não consulta
+Blockscout. A captura complementar `robinhood-direct-creator-live-worker`, no
+grupo `robinhood-wallet`, fica habilitada por padrão e deve usar
+`ROBINHOOD_DIRECT_CREATOR_LIVE_SOURCE=canonical_journal`: ela acompanha cada
+bloco seguro e grava somente as criações encontradas, portanto o custo persistido
+é uma linha pequena por contrato, não uma cópia dos blocos. Um deploy pode
+desabilitá-la explicitamente com `ROBINHOOD_DIRECT_CREATOR_LIVE_ENABLED=false`,
+mas isso remove a garantia de evidência para futuras admissões. Evidência perdida
+antes do cursor LIVE requer o repair histórico explícito via Archive; ela não
+volta silenciosamente para um provedor externo.
 
 O materializador `SNIPER` não pertence ao processo de holders. Seu worker shadow
 fica no grupo isolado `robinhood-wallet-classification`, usa a lease própria
@@ -4027,21 +4020,15 @@ O painel Robinhood já oferece ALL/DEV: a consulta `scope=dev` filtra pelo criad
 persistido e devolve `creatorAddress`, usado pelo cliente para aplicar o mesmo
 escopo aos eventos realtime do token. TRACKED e YOU ainda não estão disponíveis.
 
-O backfill da Stage 110 é somente a trilha histórica/fallback; rate limits do
-Blockscout (especialmente HTTP 429) impedem tratá-lo como captura live. A captura
-live de DEV ainda está planejada em três slices independentes: DEV-L1 varre todos
-os blocos no frontier seguro e persiste deployments diretos (`to = null`,
-`contractAddress` do receipt, DEV = `tx.from`); DEV-L2 decodifica eventos de
-launchpads/factories conhecidos; DEV-L3 cobre `CREATE`/`CREATE2` internos por
-traces. O RPC público Robinhood testado em 2026-08-10 não oferece
-`debug_traceTransaction` nem `trace_transaction`, portanto DEV-L3 depende de um
-RPC trace-enabled. A precedência de evidência é criador explícito do evento,
-`tx.from`, factory técnica e, por último, Blockscout. Nenhuma falha dessa trilha
-pode bloquear discovery, mercado ou ingestão de swaps.
-DEV-L1 já está construído localmente como worker opt-in no grupo
-`robinhood-wallet`: loteia receipts, grava atribuição e cursor na mesma transação
-e para em divergência de checkpoint. A produção ainda depende da Stage 113 e do
-enable explícito.
+O backfill da Stage 110 é somente uma ferramenta histórica e seus rate limits
+impedem tratá-lo como captura live. O LIVE varre todos os blocos no frontier
+seguro e persiste deployments diretos (`to = null`, `contractAddress` do receipt,
+DEV = `tx.from`) e eventos de launchpads/factories conhecidos. `CREATE`/`CREATE2`
+interno continua dependendo de trace quando a transação conhecida precisa ser
+resolvida. Nenhuma falha dessa trilha pode bloquear discovery, mercado ou
+ingestão de swaps. O worker do grupo `robinhood-wallet` é habilitado por padrão,
+loteia receipts, grava atribuição e cursor na mesma transação e para em
+divergência de checkpoint.
 O scan LIVE lê o bloco completo e `eth_getBlockReceipts` em paralelo, valida que
 todos os receipts pertencem ao bloco canônico e extrai deles tanto contratos
 criados diretamente quanto eventos dos launchpads conhecidos. Ele não usa
@@ -4066,8 +4053,9 @@ uma janela recente de 64 blocos entre o RPC legado e o journal, incluindo hashes
 deployments externos e eventos conhecidos. Exige ao menos uma criação por padrão;
 `--blocks=200` amplia a amostra sem escrita nem avanço de cursor.
 O default de `ROBINHOOD_DIRECT_CREATOR_LIVE_SOURCE` é `canonical_journal`;
-mantenha-o explícito no deploy,
-reinicie o grupo `robinhood-wallet` e confirme com
+mantenha-o explícito no deploy. `ROBINHOOD_DIRECT_CREATOR_LIVE_ENABLED` também
+fica ligado por padrão; use `false` apenas como rollback consciente. Reinicie o
+grupo `robinhood-wallet` e confirme com
 `npm run robinhood:canonical-direct-creator-audit -- --phase=cutover`.
 
 Os contratos locais de atribuição já são fail-closed: o bloco cheio fornece hash,

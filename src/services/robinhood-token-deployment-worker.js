@@ -8,9 +8,6 @@ const {
   createRobinhoodCanonicalDirectCreatorSource,
 } = require('../models/robinhood-canonical-direct-creator-source');
 const { createEvmJsonRpcClient } = require('./evm-json-rpc-client');
-const {
-  createRobinhoodBlockscoutMetadataClient, DEFAULT_PRO_API_URL, requestWithRetry,
-} = require('./robinhood-blockscout-metadata');
 const { createRobinhoodHolderDeploymentVerifier } = require('./robinhood-holder-deployment-verifier');
 const { createPostgresRealtimeListener } = require('./postgres-realtime-listener');
 
@@ -18,8 +15,6 @@ const NOTIFY_CHANNEL = 'robinhood_token_deployment_outbox';
 const ROBINHOOD_CHAIN_ID = 4663n;
 const LOCAL_EVIDENCE_GRACE_MS = 15_000;
 const LOCAL_EVIDENCE_RETRY_MS = 1000;
-const HOT_PROVIDER_RETRY_MS = 5000;
-const HOT_TASK_MAX_AGE_MS = 10 * 60_000;
 
 function quantity(value, label) {
   const raw = String(value ?? '').trim();
@@ -110,21 +105,6 @@ function normalizeOptions(input = {}) {
   });
 }
 
-function blockscoutUnavailable(error) {
-  if (['credits_exhausted', 'blockscout_circuit_open'].includes(error?.code)) return true;
-  return error?.code === 'http_error' && [401, 403, 429].includes(Number(error.httpStatus));
-}
-
-function createBlockscoutClient(deps, env, options) {
-  const apiKey = String(env.ROBINHOOD_BLOCKSCOUT_API_KEY || '').trim();
-  const apiUrl = String(env.ROBINHOOD_BLOCKSCOUT_API_URL
-    || (apiKey ? DEFAULT_PRO_API_URL : '')).trim();
-  const blockscoutOptions = { timeoutMs: options.timeoutMs };
-  if (apiKey) blockscoutOptions.apiKey = apiKey;
-  if (apiUrl) blockscoutOptions.apiUrl = apiUrl;
-  return (deps.blockscoutFactory || createRobinhoodBlockscoutMetadataClient)(blockscoutOptions);
-}
-
 function buildRuntime(deps, options) {
   const env = deps.env || process.env;
   const rpcUrl = String(env.RH_NODE_RPC_URL || env.ROBINHOOD_RPC_URL || '').trim();
@@ -136,22 +116,15 @@ function buildRuntime(deps, options) {
     providers: [{ name: 'robinhood-deployment-live', url: rpcUrl }],
     timeoutMs: options.timeoutMs, maxRetries: 1,
   });
-  const blockscout = createBlockscoutClient(deps, env, options);
-  const sleep = deps.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   return Object.freeze({
     outbox: (deps.outboxFactory || createRobinhoodTokenDeploymentOutboxRepository)({ database }),
     attributions: (deps.attributionFactory || createRobinhoodTokenAttributionRepository)({ database }),
     creatorSource: (deps.creatorSourceFactory || createRobinhoodCanonicalDirectCreatorSource)({
       database,
     }),
-    blockscout,
     localResolver: (deps.localResolverFactory || createLocalCodeTransitionResolver)(rpcClient),
     verifier: (deps.verifierFactory || createRobinhoodHolderDeploymentVerifier)({
       rpcClient,
-      internalCreationLookup: async (hint) => (await requestWithRetry(
-        () => blockscout.getInternalContractCreation(hint.transactionHash, hint.tokenAddress),
-        { requestRetries: 2, retryDelayMs: 500 }, sleep,
-      )).value,
     }),
   });
 }
@@ -167,7 +140,6 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
   let listener;
   let running = false;
   let activeRun;
-  let blockscoutUnavailableUntil = 0;
   const status = {
     enabled: false, running: false, inFlight: false, totalRuns: 0,
     totalResolved: 0, totalLocalResolved: 0, totalDeferred: 0, totalSkipped: 0,
@@ -207,23 +179,6 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     }
   }
 
-  async function resolveWithBlockscout(current, task) {
-    if (now() < blockscoutUnavailableUntil) {
-      throw Object.assign(new Error('Blockscout credits circuit is open'), {
-        code: 'blockscout_circuit_open', stage: 'contract_creation_lookup',
-      });
-    }
-    const hint = await current.blockscout.getContractCreation(task.tokenAddress)
-      .catch((error) => { error.stage = 'contract_creation_lookup'; throw error; });
-    if (!hint?.creatorAddress || !hint?.transactionHash) {
-      throw Object.assign(new Error('Blockscout creation evidence is not indexed yet'), {
-        code: 'blockscout_creation_pending', stage: 'contract_creation_lookup',
-      });
-    }
-    return current.verifier.verifyDirectDeployment(hint)
-      .catch((error) => { error.stage = 'deployment_verification'; throw error; });
-  }
-
   async function resolveTransition(current, transition) {
     if (typeof current.creatorSource?.readRange === 'function') {
       const blocks = await current.creatorSource.readRange(
@@ -239,9 +194,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
 
   function retryFor(task, error) {
     if (error.code === 'local_mint_pending') return LOCAL_EVIDENCE_RETRY_MS;
-    const providerUnavailable = blockscoutUnavailable(error);
-    if (!providerUnavailable) return retryDelay(task.attemptCount);
-    return taskAge(task) < HOT_TASK_MAX_AGE_MS ? HOT_PROVIDER_RETRY_MS : options.maxRetryMs;
+    return retryDelay(task.attemptCount);
   }
 
   async function deferTask(task, error) {
@@ -273,18 +226,14 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
         status.totalResolved += 1; status.totalLocalResolved += 1;
         return { status: 'resolved', tokenAddress: task.tokenAddress, source: deployment.source };
       }
-      const deployment = await resolveWithBlockscout(current, task);
-      await current.attributions.recordVerifiedDirectDeployments([deployment]);
-      await current.outbox.complete({ owner, tokenAddress: task.tokenAddress });
-      status.totalResolved += 1;
-      return { status: 'resolved', tokenAddress: task.tokenAddress, source: deployment.source };
+      throw Object.assign(new Error(
+        'canonical creator evidence has not been materialized for this token'
+      ), {
+        code: 'local_deployment_evidence_pending', stage: 'canonical_creator_evidence',
+      });
     } catch (error) {
-      if (blockscoutUnavailable(error)) {
-        blockscoutUnavailableUntil = now() + options.maxRetryMs;
-      }
       if (task) await deferTask(task, error);
-      if (['blockscout_creation_pending', 'local_mint_pending'].includes(error.code)
-          || blockscoutUnavailable(error)) {
+      if (['local_deployment_evidence_pending', 'local_mint_pending'].includes(error.code)) {
         return { status: 'deferred', reason: error.code, tokenAddress: task?.tokenAddress || null };
       }
       status.lastError = { code: error.code || 'deployment_resolution_failed', message: error.message };
@@ -344,6 +293,6 @@ module.exports = {
   NOTIFY_CHANNEL, createRobinhoodTokenDeploymentWorker,
   getStatus: worker.getStatus, runOnce: worker.runOnce, start: worker.start, stop: worker.stop,
   __private: {
-    blockscoutUnavailable, buildRuntime, createLocalCodeTransitionResolver, normalizeOptions,
+    buildRuntime, createLocalCodeTransitionResolver, normalizeOptions,
   },
 };
