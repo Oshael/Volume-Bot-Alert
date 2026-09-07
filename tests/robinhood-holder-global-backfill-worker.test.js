@@ -14,6 +14,72 @@ function campaign(status, overrides = {}) {
   };
 }
 describe('Robinhood holder global backfill worker', () => {
+  it('publishes initialization and receipt RPC waits before the first tick completes', async () => {
+    let clock = 1000;
+    let releaseChain;
+    let releaseReceipts;
+    let receiptStarted;
+    const waitingForReceipts = new Promise((resolve) => { receiptStarted = resolve; });
+    const worker = createRobinhoodHolderGlobalBackfillWorker({
+      now: () => clock,
+      env: { ROBINHOOD_RPC_URL: 'http://private-host/secret' },
+      rpcClient: {
+        request: async (method) => {
+          if (method === 'eth_chainId') return new Promise((resolve) => { releaseChain = resolve; });
+          assert.equal(method, 'eth_getBlockByNumber');
+          return { number: '0x64', hash: `0x${'a'.repeat(64)}` };
+        },
+        requestBatch: async (requests) => {
+          assert.equal(requests[0].method, 'eth_getBlockReceipts');
+          receiptStarted();
+          return new Promise((resolve) => { releaseReceipts = resolve; });
+        },
+      },
+      lifecycleFactory: () => ({
+        getLatestRun: async () => campaign('scanning'),
+        attachToLive: async () => { throw Object.assign(new Error('far'), {
+          code: 'holder_global_backfill_attach_unavailable',
+        }); },
+        recordTelemetry: async () => {},
+      }),
+      deltaFactory: () => ({}), committerFactory: () => ({}),
+      ledgerFactory: () => ({ getCursor: async () => null }),
+      scannerFactory: ({ reader }) => ({
+        getStatus: () => ({}),
+        runOnce: async () => {
+          await reader.readReceiptRange({
+            tokenAddress: `0x${'1'.repeat(40)}`, fromBlock: '100', toBlock: '100',
+          });
+          return { status: 'committed' };
+        },
+      }),
+      attachFactory: () => ({}),
+    });
+    const pending = worker.runOnce();
+    clock += 15000;
+    const initializing = worker.getStatus();
+    assert.equal(initializing.lastCompletedAt, null);
+    assert.equal(initializing.diagnostics.activeRpc[0].method, 'eth_chainId');
+    assert.equal(initializing.diagnostics.activeRpc[0].elapsedMs, 15000);
+    releaseChain('0x1237');
+    await waitingForReceipts;
+    clock += 5000;
+    const reading = worker.getStatus();
+    assert.equal(reading.inFlight, true);
+    assert.equal(reading.totalRuns, 1);
+    assert.equal(reading.lastCompletedAt, null);
+    assert.equal(reading.diagnostics.run.nextBlock, '100');
+    assert.equal(reading.diagnostics.activeRpc[0].method, 'eth_getBlockReceipts');
+    assert.equal(reading.diagnostics.activeRpc[0].fromBlock, '100');
+    assert.equal(reading.diagnostics.activeRpc[0].batchSize, 1);
+    assert.ok(reading.diagnostics.activeOperations.some((op) => op.operation === 'readReceiptRange'));
+    assert.equal(reading.effectiveOptions.rangeSize, 250);
+    assert.equal(JSON.stringify(reading).includes('private-host'), false);
+    releaseReceipts([[]]);
+    assert.equal((await pending).status, 'committed');
+    assert.equal(worker.getStatus().diagnostics.activeCount, 0);
+    assert.equal(worker.getStatus().inFlight, false);
+  });
   it('keeps preview explicit and advances scan, attach, materialization and completion', async () => {
     let run = null;
     let attachReady = false;

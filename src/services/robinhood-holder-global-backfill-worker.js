@@ -8,6 +8,7 @@ const { createRobinhoodHolderGlobalBackfillAttach } = require('./robinhood-holde
 const { createRobinhoodHolderGlobalBackfillScanner } = require('./robinhood-holder-global-backfill-scanner');
 const { resolveRobinhoodHolderRpcProvider } = require('./robinhood-holder-rpc');
 const { createRobinhoodHolderTransferReader } = require('./robinhood-holder-transfer-reader');
+const { createRobinhoodHolderGlobalBackfillDiagnostics } = require('./robinhood-holder-global-backfill-diagnostics');
 function boundedInteger(value, fallback, minimum, maximum, label) {
   const parsed = value == null ? fallback : Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
@@ -66,35 +67,38 @@ function normalizeOptions(input = {}) {
   });
 }
 async function buildRuntime(options, deps = {}) {
+  const observe = (target, group) => deps.diagnostics?.wrap(target, group) || target;
   const database = deps.database || db;
   const provider = resolveRobinhoodHolderRpcProvider(
     deps.env || process.env, 'robinhood-holder-global-backfill',
     'ROBINHOOD_HOLDER_GLOBAL_BACKFILL_RPC_URL'
   );
-  const rpcClient = deps.rpcClient || (deps.rpcClientFactory || createEvmJsonRpcClient)({
+  const rpcClient = observe(deps.rpcClient || (deps.rpcClientFactory || createEvmJsonRpcClient)({
     providers: [provider], timeoutMs: 15_000, maxRetries: 1,
-  });
-  const lifecycle = (deps.lifecycleFactory || createRobinhoodHolderGlobalBackfillRepository)({
+  }), 'rpc');
+  const lifecycle = observe((deps.lifecycleFactory || createRobinhoodHolderGlobalBackfillRepository)({
     database,
-  });
-  const delta = (deps.deltaFactory || createRobinhoodHolderGlobalDeltaRepository)({ database });
-  const committer = (deps.committerFactory
-    || createRobinhoodHolderGlobalBackfillCommitRepository)({ database });
-  const ledger = (deps.ledgerFactory || createRobinhoodHolderLedgerRepository)({ database });
-  const reader = (deps.readerFactory || createRobinhoodHolderTransferReader)({
+  }), 'lifecycle');
+  const delta = observe((deps.deltaFactory
+    || createRobinhoodHolderGlobalDeltaRepository)({ database }), 'delta');
+  const committer = observe((deps.committerFactory
+    || createRobinhoodHolderGlobalBackfillCommitRepository)({ database }), 'commit');
+  const ledger = observe((deps.ledgerFactory
+    || createRobinhoodHolderLedgerRepository)({ database }), 'ledger');
+  const reader = observe((deps.readerFactory || createRobinhoodHolderTransferReader)({
     rpcClient, addressShardConcurrency: options.addressShardConcurrency,
-  });
+  }), 'reader');
   await reader.assertChain();
-  const scanner = (deps.scannerFactory || createRobinhoodHolderGlobalBackfillScanner)({
+  const scanner = observe((deps.scannerFactory || createRobinhoodHolderGlobalBackfillScanner)({
     lifecycleRepository: lifecycle, commitRepository: committer, reader,
     options: {
       rangeSize: options.rangeSize, prefetch: options.prefetch,
       finalityBlocks: options.finalityBlocks, maxCommitMs: options.maxCommitMs,
     },
-  });
-  const materializer = (deps.attachFactory || createRobinhoodHolderGlobalBackfillAttach)({
+  }), 'scanner');
+  const materializer = observe((deps.attachFactory || createRobinhoodHolderGlobalBackfillAttach)({
     repository: lifecycle, reader,
-  });
+  }), 'materializer');
   return Object.freeze({
     delta, lifecycle, ledger, materializer, providerName: provider.name, reader, scanner,
   });
@@ -205,7 +209,9 @@ function createRobinhoodHolderGlobalBackfillWorker(deps = {}) {
   const schedule = deps.schedule || setTimeout;
   const cancelSchedule = deps.cancelSchedule || clearTimeout;
   const logger = deps.logger || console;
-  const runtimeFactory = deps.runtimeFactory || ((options) => buildRuntime(options, deps));
+  const diagnostics = createRobinhoodHolderGlobalBackfillDiagnostics({ now: deps.now });
+  const runtimeFactory = deps.runtimeFactory
+    || ((options) => buildRuntime(options, { ...deps, diagnostics }));
   let options = normalizeOptions();
   let runtimePromise;
   let timer;
@@ -219,11 +225,13 @@ function createRobinhoodHolderGlobalBackfillWorker(deps = {}) {
   };
   async function execute() {
     status.inFlight = true; status.totalRuns += 1;
+    diagnostics.startTick();
     try {
-      runtimePromise ||= Promise.resolve(runtimeFactory(options));
+      runtimePromise ||= diagnostics.track('worker', 'initialize', {}, () => runtimeFactory(options));
       const runtime = await runtimePromise;
       status.providerName = runtime.providerName;
-      const result = await runCampaignTick(runtime, options);
+      const result = await diagnostics.track('worker', 'campaignTick', {},
+        () => runCampaignTick(runtime, options));
       status.lastResult = result; status.lastError = null; status.consecutiveErrors = 0;
       if (result.status === 'checkpoint-diverged') {
         throw Object.assign(new Error('global holder barrier checkpoint diverged'), {
@@ -243,6 +251,7 @@ function createRobinhoodHolderGlobalBackfillWorker(deps = {}) {
       } else logger.warn('[RobinhoodHolderGlobalBackfillWorker] Tick failed:', error.message);
       return null;
     } finally {
+      diagnostics.finishTick();
       status.inFlight = false; status.lastCompletedAt = new Date().toISOString();
     }
   }
@@ -277,7 +286,13 @@ function createRobinhoodHolderGlobalBackfillWorker(deps = {}) {
     timer = null;
     if (activeRun) await activeRun.catch(() => {});
   }
-  return Object.freeze({ getStatus: () => ({ ...status }), runOnce, start, stop });
+  return Object.freeze({ getStatus: () => ({
+    ...status, diagnostics: diagnostics.snapshot(),
+    effectiveOptions: {
+      rangeSize: options.rangeSize, prefetch: options.prefetch,
+      addressShardConcurrency: options.addressShardConcurrency, maxCommitMs: options.maxCommitMs,
+    },
+  }), runOnce, start, stop });
 }
 const worker = createRobinhoodHolderGlobalBackfillWorker();
 module.exports = {

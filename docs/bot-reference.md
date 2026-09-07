@@ -2256,6 +2256,25 @@ Runtimes com PostgreSQL remoto podem ajustar o limiar-base por
 `ROBINHOOD_HOLDER_GLOBAL_BACKFILL_RPC_URL` isola o scan em outro endpoint RPC;
 quando ausente, o global continua usando `ROBINHOOD_RPC_URL`. Isso permite manter
 live e backfill regular no node da VPS enquanto somente o global usa um túnel.
+O heartbeat da lease publica `metadata.telemetry.diagnostics` mesmo durante o
+primeiro tick: duração do tick, run/cursor observado, operações de repositório,
+scanner e leitor em andamento, método RPC, modo de filtro, blocos, quantidade de endereços ou
+receipts solicitados por batch e duração de cada espera. As listas mostram as
+oito operações mais antigas de cada categoria (RPC e demais); `activeCount`
+informa o total, incluindo operações externas e suas chamadas internas.
+`completedOperations`, `failedOperations` e `lastFailure` são observações do tick;
+falhas incluem controle de fluxo esperado, como attach ainda indisponível.
+`rpcMetrics` contém os contadores cumulativos do cliente, incluindo tentativas,
+retries e erros tratados internamente. `effectiveOptions` no mesmo nível de
+`diagnostics` mostra range, prefetch configurado, concorrência e limiar de commit;
+o prefetch adaptativo continua no status do scanner após o tick.
+Os diagnósticos usam memória e o heartbeat existente, sem novas queries ou
+timers; não expõem URL, credenciais, payload RPC completo ou mensagens de erro.
+Considere sempre a idade do heartbeat: o retrato persistido não é uma leitura
+instantânea, e etapas de repositório incluem aquisição de conexão e execução SQL.
+No scan global, um intervalo com mais de 100 tokens elegíveis usa consulta
+`topics-only` e filtra a coorte localmente; nesse modo a concorrência de shards de
+endereços não atua. `activeRpc[].filterMode` identifica o caminho efetivamente usado.
 O cold serial deve permanecer desligado, e o cutoff do backfill de tokens novos
 não pode preceder o cutoff global.
 
