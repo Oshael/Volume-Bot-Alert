@@ -3783,6 +3783,9 @@ verdadeiro e apaga por default apenas 1.000 eventos em uma transação com
 `statement_timeout` de 30 segundos e `lock_timeout` de 500 ms. `--batch-limit`,
 `--max-batches` e `--pause-ms` são limitados; cada batch usa advisory lock e
 confirma novamente que ambos os índices da Stage 201 estão válidos.
+`--until-drained` é mutuamente exclusivo com `--max-batches`: ele fixa o cutoff
+aprovado no início, continua até esvaziar integralmente esse prefixo e ainda
+respeita sinais, pausa entre lotes e rollback isolado do batch atual.
 
 O processo isolado `npm run start:worker:robinhood-chain-capture` roda sob a
 lease `robinhood-chain-capture-worker` e permanece em modo shadow: nenhum

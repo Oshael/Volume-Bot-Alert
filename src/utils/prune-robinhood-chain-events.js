@@ -7,8 +7,10 @@ const { normalizeOptions, runPilot } = require('../services/robinhood-chain-even
 function parseArgs(args = []) {
   const values = {};
   let write = false;
+  let untilDrained = false;
   for (const arg of args) {
     if (arg === '--write' && !write) { write = true; continue; }
+    if (arg === '--until-drained' && !untilDrained) { untilDrained = true; continue; }
     const match = /^--(batch-limit|max-batches|pause-ms)=(.+)$/.exec(arg);
     if (!match) throw new Error(`unknown or repeated argument: ${arg}`);
     const key = { 'batch-limit': 'batchLimit', 'max-batches': 'maxBatches',
@@ -17,7 +19,10 @@ function parseArgs(args = []) {
     values[key] = Number(match[2]);
   }
   if (!write) throw new Error('--write is required');
-  return normalizeOptions(values);
+  if (untilDrained && values.maxBatches != null) {
+    throw new Error('--until-drained cannot be combined with --max-batches');
+  }
+  return normalizeOptions({ ...values, untilDrained });
 }
 
 async function main(args = process.argv.slice(2), deps = {}) {

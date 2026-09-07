@@ -9,6 +9,7 @@ const { parseArgs } = require('../src/utils/prune-robinhood-chain-events');
 
 function harness(input = {}) {
   const calls = [];
+  let deletion = 0;
   const client = {
     async query(sql, params) {
       calls.push({ sql, params });
@@ -18,7 +19,8 @@ function harness(input = {}) {
       if (sql.includes('chain-event-prune:lock')) return { rows: [{ locked: true }] };
       if (sql.includes('chain-event-prune:indexes')) return { rows: [{ ready_indexes: 2 }] };
       if (sql.includes('chain-event-prune:delete')) return { rows: [{
-        deleted_events: input.deletedEvents ?? 1000,
+        deleted_events: Array.isArray(input.deletedEvents)
+          ? input.deletedEvents[deletion++] : input.deletedEvents ?? 1000,
         first_deleted_block: '10', last_deleted_block: '20',
       }] };
       throw new Error(`unexpected query: ${sql}`);
@@ -37,14 +39,35 @@ function safety(overrides = {}) {
 describe('Robinhood chain event pruner', () => {
   it('requires an explicit write flag and bounded pilot options', () => {
     assert.deepEqual(parseArgs(['--write']), {
-      batchLimit: 1000, maxBatches: 1, pauseMs: 1000,
+      batchLimit: 1000, maxBatches: 1, pauseMs: 1000, untilDrained: false,
     });
     assert.deepEqual(parseArgs([
       '--write', '--batch-limit=5000', '--max-batches=2', '--pause-ms=500',
-    ]), { batchLimit: 5000, maxBatches: 2, pauseMs: 500 });
+    ]), { batchLimit: 5000, maxBatches: 2, pauseMs: 500, untilDrained: false });
+    assert.deepEqual(parseArgs(['--write', '--until-drained', '--pause-ms=100']), {
+      batchLimit: 1000, maxBatches: 1, pauseMs: 100, untilDrained: true,
+    });
     assert.throws(() => parseArgs([]), /--write is required/);
     assert.throws(() => parseArgs(['--write', '--batch-limit=5001']), /between 1 and 5000/);
     assert.throws(() => parseArgs(['--write', '--write']), /unknown or repeated/);
+    assert.throws(() => parseArgs([
+      '--write', '--until-drained', '--max-batches=2',
+    ]), /cannot be combined/);
+  });
+
+  it('continues until the audited prefix is fully drained', async () => {
+    const context = harness({ deletedEvents: [1000, 1000, 12] });
+    const report = await runPilot({
+      batchLimit: 1000, untilDrained: true, pauseMs: 100,
+    }, {
+      database: context.database,
+      audit: { inspect: async () => safety() },
+      pause: async () => {},
+    });
+    assert.deepEqual(report, {
+      status: 'finished', stopReason: 'prefix_drained', cutoffBlock: '56397387',
+      batches: 3, totalDeleted: 2012,
+    });
   });
 
   it('uses the audited cutoff and deletes one bounded ordered batch', async () => {

@@ -26,6 +26,7 @@ function normalizeOptions(input = {}) {
     batchLimit: boundedInteger(input.batchLimit, DEFAULT_BATCH_LIMIT, 1, 5_000, 'batchLimit'),
     maxBatches: boundedInteger(input.maxBatches, DEFAULT_MAX_BATCHES, 1, 100, 'maxBatches'),
     pauseMs: boundedInteger(input.pauseMs, 1_000, 100, 60_000, 'pauseMs'),
+    untilDrained: input.untilDrained === true,
   });
 }
 
@@ -120,14 +121,14 @@ async function runPilot(input = {}, deps = {}) {
   let batches = 0;
   let totalDeleted = 0;
   let stopReason = 'batch_limit';
-  for (let index = 0; index < options.maxBatches; index += 1) {
+  for (let index = 0; options.untilDrained || index < options.maxBatches; index += 1) {
     if (shouldStop()) { stopReason = 'signal'; break; }
     const result = await pruneBatch(database, cutoffBlock, options.batchLimit);
     batches += 1;
     totalDeleted += result.deletedEvents;
     progress({ phase: 'batch', batch: batches, cutoffBlock, ...result });
     if (result.status !== 'draining') { stopReason = result.status; break; }
-    if (index + 1 < options.maxBatches) await pause(options.pauseMs);
+    if (options.untilDrained || index + 1 < options.maxBatches) await pause(options.pauseMs);
   }
   return Object.freeze({
     status: 'finished', stopReason, cutoffBlock, batches, totalDeleted,
