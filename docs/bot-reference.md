@@ -4214,7 +4214,12 @@ autoriza apagar raw. O source PostgreSQL token-scoped falha fechado até holder,
 first-buy, swaps e transfer projection cobrirem a mesma frontier, exigindo posições
 canônicas de transfer e sell. O caller deve informar `observationFromBlock`; o
 source rejeita sua ausência e ignora distribuições anteriores para impedir backfill
-indireto. Aplique `node src/utils/db-init-stage188.js` para criar a ativação
+indireto. Antes de consultar vendas, ele resolve os timestamps canônicos do frontier
+de observação e do holder e limita `robinhood_wallet_swaps.block_time`, chave das
+partições diárias. Assim a concorrência normal poda as partições fora da janela em vez
+de esgotar a tabela compartilhada de locks do PostgreSQL; se algum limite temporal
+não estiver disponível, o token falha fechado sem executar a consulta ampla. Aplique
+`node src/utils/db-init-stage188.js` para criar a ativação
 imutável e a fila event-driven. A migration não cria uma ativação nem enfileira
 dados: primeiras arestas posteriores à futura frontier admitem tokens, e sells só
 reabrem tokens já admitidos. A frontier deve ser reservada como `planned`; os

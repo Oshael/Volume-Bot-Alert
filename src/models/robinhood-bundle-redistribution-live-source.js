@@ -18,7 +18,9 @@ const READINESS_SQL = `SELECT state.ledger_status,
        swap.lifecycle_state AS swap_lifecycle_state,
        swap.next_block::text AS swap_next_block, swap.safe_head::text AS swap_safe_head,
        transfer.lifecycle_state AS transfer_lifecycle_state,
-       transfer.next_block::text AS transfer_next_block
+       transfer.next_block::text AS transfer_next_block,
+       observation_block.block_timestamp AS observation_block_time,
+       frontier_block.block_timestamp AS frontier_block_time
   FROM robinhood_holder_token_states state
   LEFT JOIN robinhood_token_attributions attribution
     ON attribution.chain = state.chain AND attribution.token_address = state.token_address
@@ -28,6 +30,14 @@ const READINESS_SQL = `SELECT state.ledger_status,
   LEFT JOIN robinhood_wallet_transfer_cursors transfer
     ON transfer.chain = state.chain AND transfer.stream = 'live'
    AND transfer.projection_version = $3
+  LEFT JOIN robinhood_chain_blocks observation_block
+    ON observation_block.chain = state.chain
+   AND observation_block.block_number = $4::bigint
+   AND observation_block.canonical
+  LEFT JOIN robinhood_chain_blocks frontier_block
+    ON frontier_block.chain = state.chain
+   AND frontier_block.block_hash = state.live_through_hash
+   AND frontier_block.canonical
  WHERE state.chain = $1 AND state.token_address = $2`;
 
 const EVIDENCE_SQL = `SELECT buy.wallet_address AS source_wallet,
@@ -69,6 +79,8 @@ const EVIDENCE_SQL = `SELECT buy.wallet_address AS source_wallet,
        AND mc.log_index = swap.action_index
      WHERE swap.chain = edge.chain AND swap.token_address = edge.token_address
        AND swap.wallet_address = edge.to_wallet AND swap.side = 'sell'
+       AND swap.block_time >= $6::timestamptz
+       AND swap.block_time <= $7::timestamptz
        AND swap.block_number > edge.first_wallet_transfer_block
        AND swap.block_number <= $4::bigint
      ORDER BY swap.block_number, position.transaction_index NULLS FIRST,
@@ -115,6 +127,22 @@ function observationStart(value, tokenAddress) {
     return unavailable('observation_frontier_missing', tokenAddress);
   }
   return Object.freeze({ ready: true, observationFromBlock: normalized });
+}
+
+function canonicalTime(value) {
+  if (value == null || String(value).trim() === '') return null;
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : null;
+}
+
+function partitionBounds(row, tokenAddress) {
+  const observationTime = canonicalTime(row?.observation_block_time);
+  const frontierTime = canonicalTime(row?.frontier_block_time);
+  if (!observationTime || !frontierTime
+      || new Date(observationTime).getTime() > new Date(frontierTime).getTime()) {
+    return unavailable('partition_time_bounds_unavailable', tokenAddress);
+  }
+  return Object.freeze({ ready: true, observationTime, frontierTime });
 }
 
 function holderFrontier(row) {
@@ -221,17 +249,21 @@ function createRobinhoodBundleRedistributionLiveSource(options = {}) {
     const tokenAddress = normalizeTokenAddress(CHAIN, inputTokenAddress);
     const observation = observationStart(input.observationFromBlock, tokenAddress);
     if (!observation.ready) return observation;
-    const state = readiness((await query(
-      READINESS_SQL, [CHAIN, tokenAddress, PROJECTION_VERSION]
-    )).rows[0], tokenAddress);
+    const row = (await query(READINESS_SQL, [
+      CHAIN, tokenAddress, PROJECTION_VERSION, observation.observationFromBlock,
+    ])).rows[0];
+    const state = readiness(row, tokenAddress);
     if (!state.ready) return state;
     if (BigInt(observation.observationFromBlock) > BigInt(state.frontier.blockNumber)) {
       return unavailable('observation_frontier_ahead', tokenAddress,
         { frontier: state.frontier, observationFromBlock: observation.observationFromBlock });
     }
+    const bounds = partitionBounds(row, tokenAddress);
+    if (!bounds.ready) return Object.freeze({ ...bounds, frontier: state.frontier,
+      observationFromBlock: observation.observationFromBlock });
     const evidence = normalizeEvidence((await query(EVIDENCE_SQL, [
       CHAIN, tokenAddress, PROJECTION_VERSION, state.frontier.blockNumber,
-      observation.observationFromBlock,
+      observation.observationFromBlock, bounds.observationTime, bounds.frontierTime,
     ])).rows, tokenAddress);
     if (!evidence.ready) return Object.freeze({ ...evidence, frontier: state.frontier,
       observationFromBlock: observation.observationFromBlock });
@@ -248,4 +280,4 @@ function createRobinhoodBundleRedistributionLiveSource(options = {}) {
 
 module.exports = { createRobinhoodBundleRedistributionLiveSource,
   __private: { BARRIERS_SQL, EVIDENCE_SQL, READINESS_SQL, normalizeEvidence,
-    observationStart, readiness } };
+    observationStart, partitionBounds, readiness } };

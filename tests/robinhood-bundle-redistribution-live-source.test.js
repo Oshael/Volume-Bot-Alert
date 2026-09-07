@@ -17,7 +17,9 @@ function ready(overrides = {}) {
     first_buy_next_time: '2026-09-01T00:00:00Z',
     first_buy_source_through: '2026-09-01T00:00:00Z', first_buy_source_next_block: '101',
     swap_lifecycle_state: 'running', swap_next_block: '101', swap_safe_head: '100',
-    transfer_lifecycle_state: 'running', transfer_next_block: '101', ...overrides };
+    transfer_lifecycle_state: 'running', transfer_next_block: '101',
+    observation_block_time: '2026-09-01T00:00:00Z',
+    frontier_block_time: '2026-09-01T00:10:00Z', ...overrides };
 }
 
 function edge(overrides = {}) {
@@ -71,9 +73,29 @@ describe('Robinhood BUNDLED redistribution live source', () => {
     assert.equal(result.sources[0].recipients[0].firstSell.fdvUsd, null);
     assert.deepEqual(result.barrierAddresses, [RECIPIENT]);
     assert.equal(calls.length, 3);
+    assert.equal(calls[0].params[3], '15');
     assert.equal(calls[1].params[3], '100');
     assert.equal(calls[1].params[4], '15');
+    assert.equal(calls[1].params[5], '2026-09-01T00:00:00.000Z');
+    assert.equal(calls[1].params[6], '2026-09-01T00:10:00.000Z');
+    assert.match(__private.EVIDENCE_SQL, /swap\.block_time >= \$6::timestamptz/);
+    assert.match(__private.EVIDENCE_SQL, /swap\.block_time <= \$7::timestamptz/);
     assert.match(calls[2].params[1], new RegExp(RECIPIENT));
+  });
+
+  it('fails closed when canonical partition bounds are unavailable', async () => {
+    for (const change of [
+      { observation_block_time: null },
+      { frontier_block_time: null },
+      { observation_block_time: '2026-09-01T00:11:00Z' },
+    ]) {
+      const source = createRobinhoodBundleRedistributionLiveSource({ database: {
+        async query() { return { rows: [ready(change)] }; },
+      } });
+      const result = await source.loadToken(TOKEN, { observationFromBlock: '15' });
+      assert.equal(result.ready, false);
+      assert.equal(result.reason, 'partition_time_bounds_unavailable');
+    }
   });
 
   it('blocks incomplete transaction positions instead of producing a false negative', async () => {
