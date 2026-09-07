@@ -3442,10 +3442,12 @@ Na aplicacao do tail `shadow/live`, saldo negativo tambem nao altera o estado.
 Enquanto o token ainda esta na barreira segura (`live_through_block` anterior a
 `backfill_next_block`), receipts podem inserir Transfers ausentes no journal e a
 aplicacao reinicia pela ordem canonica. Se a lacuna segura excede 250 blocos, o
-apply muda o token de `shadow` para `backfilling` com CAS, preservando baseline e
-journal; o backfill relê a lacuna desde `backfill_next_block` e a telemetria soma
-`baselineRequeues`. Sem essa barreira ou com receipts indisponiveis, o evento fica
-deferido sem falso `drifted`.
+apply muda o token de `shadow` ou `live` para `backfilling` com CAS, preservando
+baseline e journal; `shadow` ainda sem `live_through_block` também pode retomar do
+seu cursor persistido quando não há cauda aplicada. O backfill relê a lacuna desde
+`backfill_next_block`, a telemetria soma `baselineRequeues` e um token antes `live`
+publica invalidação até concluir o novo handoff. Sem uma dessas barreiras seguras ou
+com receipts indisponiveis, o evento fica deferido sem falso `drifted`.
 O deferimento e isolado por token: os demais tails elegiveis continuam drenando
 enquanto o token suspeito aguarda o proximo recheck.
 O drain tambem evita starvation por volume: quando a selecao encontra mais de um

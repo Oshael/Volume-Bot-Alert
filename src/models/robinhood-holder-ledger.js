@@ -1461,16 +1461,19 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     return withTransaction(database, async (client) => {
       await lockReorgFence(client, 'exclusive');
       const stateResult = await client.query(
-        `SELECT backfill_next_block, live_through_block, version
+        `SELECT ledger_status, backfill_next_block, live_through_block,
+                live_through_hash, version
            FROM robinhood_holder_token_states
           WHERE chain = 'robinhood' AND token_address = $1
-            AND ledger_status = 'shadow' FOR UPDATE`,
+            AND ledger_status IN ('shadow', 'live') FOR UPDATE`,
         [tokenAddress]
       );
       const state = stateResult.rows[0];
+      const checkpointSafe = state?.live_through_block == null
+        ? state?.ledger_status === 'shadow'
+        : BigInt(state.live_through_block) + 1n === BigInt(backfillNextBlock);
       if (!state || String(state.backfill_next_block) !== backfillNextBlock
-          || state.live_through_block == null
-          || BigInt(state.live_through_block) + 1n !== BigInt(backfillNextBlock)) {
+          || !checkpointSafe) {
         return Object.freeze({ status: 'not-requeued', reason: 'state-not-safe' });
       }
       const pending = await client.query(
@@ -1502,15 +1505,22 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
         `UPDATE robinhood_holder_token_states
             SET ledger_status = 'backfilling', version = version + 1, updated_at = NOW()
           WHERE chain = 'robinhood' AND token_address = $1
-            AND ledger_status = 'shadow' AND version = $2::bigint
-          RETURNING version`,
-        [tokenAddress, state.version]
+            AND ledger_status = $3 AND version = $2::bigint
+          RETURNING version, updated_at`,
+        [tokenAddress, state.version, state.ledger_status]
       );
       if (!reset.rowCount) throw new Error('holder wide-tail requeue state changed while locked');
+      const publication = state.ledger_status === 'live' ? Object.freeze({
+        tokenAddress, invalidated: true, ledgerVersion: String(reset.rows[0].version),
+        observedAt: reset.rows[0].updated_at,
+        liveThroughBlock: String(state.live_through_block),
+        liveThroughHash: state.live_through_hash,
+      }) : null;
       return Object.freeze({
         status: 'requeued', recovery: 'wide-shadow-tail', tokenAddress,
         backfillNextBlock, receiptBlocks: receiptBlocks.toString(),
         revertedEvents: 0, version: String(reset.rows[0].version),
+        ...(publication ? { publication } : {}),
       });
     });
   }

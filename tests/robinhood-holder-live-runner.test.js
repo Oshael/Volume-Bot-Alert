@@ -342,6 +342,8 @@ describe('Robinhood holder live runner', () => {
   it('requeues a safe wide shadow tail for baseline backfill', async () => {
     const tokenAddress = `0x${'1'.repeat(40)}`;
     const failedTransactionHash = `0x${'b'.repeat(64)}`;
+    const publication = { tokenAddress, invalidated: true, ledgerVersion: '9' };
+    const published = [];
     const suspicion = {
       status: 'drift-suspected', tokenAddress, fingerprint: 'wide-deficit',
       failedBlock: '700', failedTransactionHash, failedLogIndex: 3,
@@ -349,10 +351,13 @@ describe('Robinhood holder live runner', () => {
     };
     const context = harness({
       status: 'captured', transfers: 0, nextBlock: '701', safeHead: '700',
-    }, [suspicion, { status: 'idle' }], { status: 'idle' }, async () => 0, {
+    }, [suspicion, { status: 'idle' }], { status: 'idle' }, async (updates) => {
+      published.push(updates);
+      return updates.length;
+    }, {
       requeueResults: [{
         status: 'requeued', recovery: 'wide-shadow-tail', tokenAddress,
-        backfillNextBlock: '100', receiptBlocks: '601', revertedEvents: 0,
+        backfillNextBlock: '100', receiptBlocks: '601', revertedEvents: 0, publication,
       }],
     });
 
@@ -361,6 +366,7 @@ describe('Robinhood holder live runner', () => {
     assert.equal(result.baselineRequeues, 1);
     assert.equal(result.tailRollbacks, 0);
     assert.equal(result.driftDeferred, 0);
+    assert.deepEqual(published, [[publication]]);
     assert.deepEqual(context.calls.find(([name]) => name === 'requeue-wide-tail'), [
       'requeue-wide-tail', {
         tokenAddress, backfillNextBlock: '100', failedBlock: '700',

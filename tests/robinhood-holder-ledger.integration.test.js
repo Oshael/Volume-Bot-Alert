@@ -657,6 +657,64 @@ describe('Robinhood holder ledger persistence', () => {
         [TOKEN_WIDE_TAIL]
       );
 
+      for (const scenario of [
+        { ledgerStatus: 'live', liveThroughBlock: 99, liveThroughHash: HASH_B },
+        { ledgerStatus: 'shadow', liveThroughBlock: null, liveThroughHash: null },
+      ]) {
+        await client.query(
+          `INSERT INTO robinhood_holder_token_states
+            (token_address, holder_count, ledger_status, deployment_block,
+             backfill_next_block, live_through_block, live_through_hash)
+           VALUES ($1, 7, $2, 50, 100, $3, $4)`,
+          [TOKEN_WIDE_TAIL, scenario.ledgerStatus,
+            scenario.liveThroughBlock, scenario.liveThroughHash]
+        );
+        await client.query(
+          `INSERT INTO robinhood_holder_transfer_journal (
+             block_number, block_hash, transaction_hash, transaction_index,
+             log_index, token_address, from_wallet, to_wallet, amount_raw
+           ) VALUES (500, $1, $2, 30, 30, $3, $4, $5, 2)`,
+          [HASH_A, HASH_E, TOKEN_WIDE_TAIL, ALICE, BOB]
+        );
+        const result = await repository.requeueWideShadowTail({
+          tokenAddress: TOKEN_WIDE_TAIL, backfillNextBlock: '100', failedBlock: '500',
+          failedTransactionHash: HASH_E, failedLogIndex: 30, receiptBlockLimit: 250,
+        });
+        const expected = {
+          status: 'requeued', recovery: 'wide-shadow-tail',
+          tokenAddress: TOKEN_WIDE_TAIL, backfillNextBlock: '100',
+          receiptBlocks: '401', revertedEvents: 0, version: '1',
+        };
+        if (scenario.ledgerStatus === 'live') {
+          assert.ok(result.publication.observedAt instanceof Date);
+          expected.publication = {
+            tokenAddress: TOKEN_WIDE_TAIL, invalidated: true, ledgerVersion: '1',
+            observedAt: result.publication.observedAt,
+            liveThroughBlock: '99', liveThroughHash: HASH_B,
+          };
+        }
+        assert.deepEqual(result, expected);
+        const state = await client.query(
+          `SELECT ledger_status, holder_count, backfill_next_block, live_through_block
+             FROM robinhood_holder_token_states WHERE token_address = $1`,
+          [TOKEN_WIDE_TAIL]
+        );
+        assert.deepEqual(state.rows[0], {
+          ledger_status: 'backfilling', holder_count: '7',
+          backfill_next_block: '100',
+          live_through_block: scenario.liveThroughBlock == null
+            ? null : String(scenario.liveThroughBlock),
+        });
+        await client.query(
+          `DELETE FROM robinhood_holder_transfer_journal WHERE token_address = $1`,
+          [TOKEN_WIDE_TAIL]
+        );
+        await client.query(
+          `DELETE FROM robinhood_holder_token_states WHERE token_address = $1`,
+          [TOKEN_WIDE_TAIL]
+        );
+      }
+
       await client.query(
         `INSERT INTO robinhood_holder_token_states
           (token_address, holder_count, ledger_status, backfill_next_block,
