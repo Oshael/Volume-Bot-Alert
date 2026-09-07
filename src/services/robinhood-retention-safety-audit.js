@@ -206,10 +206,15 @@ function createRobinhoodRetentionSafetyAudit(options = {}) {
              ORDER BY id DESC LIMIT 1) campaign ON TRUE
            LEFT JOIN LATERAL (SELECT MIN(journal.block_number) AS block_number
              FROM robinhood_token_deployment_outbox task JOIN LATERAL (
-               SELECT block_number FROM robinhood_holder_transfer_journal
-                WHERE chain=$1 AND token_address=task.token_address
-                  AND from_wallet='0x0000000000000000000000000000000000000000'
-                ORDER BY block_number LIMIT 1
+               SELECT block_number FROM (
+                 SELECT block_number FROM robinhood_holder_transfer_journal
+                  WHERE chain=$1 AND token_address=task.token_address AND applied=FALSE
+                    AND from_wallet='0x0000000000000000000000000000000000000000'
+                 UNION ALL
+                 SELECT block_number FROM robinhood_holder_transfer_journal
+                  WHERE chain=$1 AND token_address=task.token_address AND applied=TRUE
+                    AND from_wallet='0x0000000000000000000000000000000000000000'
+               ) mint_event ORDER BY block_number LIMIT 1
              ) journal ON TRUE WHERE task.chain=$1) mint ON TRUE`,
         [CHAIN, CLASSIFICATION_VERSION]
       )).rows[0] || {};

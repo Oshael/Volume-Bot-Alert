@@ -86,6 +86,7 @@ describe('Robinhood retention safety audit', () => {
     });
     assert.equal((await audit.inspect()).ready_for_pilot, true);
     assert.match(queries[0], /REPEATABLE READ READ ONLY/);
+    assert.match(queries[1], /applied=FALSE[\s\S]+UNION ALL[\s\S]+applied=TRUE/);
     assert.equal(queries.at(-1), 'ROLLBACK');
     assert.equal(queries.some((sql) => /\b(DELETE|UPDATE|INSERT)\b/.test(sql)), false);
   });
