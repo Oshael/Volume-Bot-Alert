@@ -2247,6 +2247,8 @@ ser configurado de 1 a 8 e reduz diante de splits ou commits lentos. Com lag liv
 acima de 100 blocos, três batches saudáveis só elevam o prefetch quando o lag está
 caindo; crescimento acima de 25 blocos entre ticks reduz pela metade e oscilação
 menor mantém o nível. `liveLagTrend` e `liveLagDeltaBlocks` expõem a decisão.
+Enquanto o lag live está saudável, o prefetch adaptativo mantém piso 2; erros de
+RPC ou piora do lag ainda podem reduzi-lo temporariamente a 1.
 O controle compara o tempo médio de commit por range, e não a soma do lote
 prefetched; exceder o limiar por mais de 10% ou 250 ms (o maior) reduz o prefetch.
 Runtimes com PostgreSQL remoto podem ajustar o limiar-base por

@@ -157,6 +157,7 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
   }
   const options = normalizeOptions(deps.options);
   const now = deps.now || Date.now;
+  const healthyPrefetchFloor = Math.min(2, options.prefetch);
   let activeRun = null;
   let cachedRunId = null;
   let cohortSchedule = Object.freeze([]);
@@ -173,14 +174,14 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
     receiptRecoveries: 0, exclusions: 0,
   };
 
-  function reducePrefetch() {
-    effectivePrefetch = Math.max(1, Math.ceil(effectivePrefetch / 2));
+  function reducePrefetch(floor = 1) {
+    effectivePrefetch = Math.max(floor, Math.ceil(effectivePrefetch / 2));
     stableBatches = 0;
   }
 
   function observeHealthyBatch(pressured, allowGrowth = true) {
     if (pressured) {
-      reducePrefetch();
+      reducePrefetch(liveLagTrend === 'healthy' ? healthyPrefetchFloor : 1);
       return;
     }
     if (!allowGrowth) {
@@ -199,6 +200,7 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
     liveLagDelta = lastLiveLag == null ? null : current - lastLiveLag;
     lastLiveLag = current;
     if (current <= BigInt(options.maxLiveLagBlocks)) {
+      effectivePrefetch = Math.max(healthyPrefetchFloor, effectivePrefetch);
       liveLagTrend = 'healthy';
       return true;
     }
@@ -506,7 +508,8 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
   return Object.freeze({
     runOnce,
     getStatus: () => Object.freeze({
-      prefetch: effectivePrefetch, stableBatches, active: activeRun !== null,
+      prefetch: effectivePrefetch, healthyPrefetchFloor,
+      stableBatches, active: activeRun !== null,
       liveLagBlocks: lastLiveLag?.toString() ?? null,
       liveLagDeltaBlocks: liveLagDelta?.toString() ?? null, liveLagTrend,
       lastBatch,

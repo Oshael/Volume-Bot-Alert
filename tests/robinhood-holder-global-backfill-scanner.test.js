@@ -283,6 +283,12 @@ describe('Robinhood holder global backfill scanner', () => {
       stableBatches: scanner.getStatus().stableBatches,
       trend: scanner.getStatus().liveLagTrend,
     }, { prefetch: 1, stableBatches: 0, trend: 'steady' });
+    await scanner.runOnce({ throughBlock: 1000, liveLagBlocks: 50 });
+    assert.deepEqual({
+      prefetch: scanner.getStatus().prefetch,
+      floor: scanner.getStatus().healthyPrefetchFloor,
+      trend: scanner.getStatus().liveLagTrend,
+    }, { prefetch: 2, floor: 2, trend: 'healthy' });
   });
 
   it('falls back to individual ranges when an atomic batch needs receipt repair', async () => {
