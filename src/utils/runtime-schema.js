@@ -5674,6 +5674,24 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage201-robinhood-chain-event-cascade-indexes',
+    name: 'Stage 201 Robinhood chain event cascade indexes',
+    repair: 'node src/utils/db-init-stage201.js',
+    tables: [{
+      table: 'robinhood_chain_domain_outbox',
+      indexes: [{
+        name: 'idx_rh_chain_domain_outbox_event_lookup',
+        includes: ['block_hash', 'log_index'],
+      }],
+    }, {
+      table: 'robinhood_canonical_head_candidates',
+      indexes: [{
+        name: 'idx_rh_canonical_head_candidates_event_lookup',
+        includes: ['block_hash', 'log_index'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

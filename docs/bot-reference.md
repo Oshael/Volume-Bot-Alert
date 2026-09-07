@@ -3771,6 +3771,11 @@ O marcador `applied` é prova de materialização porque balances, `holder_count
 próprio marcador são commitados atomicamente. Isso autoriza somente planejar um
 piloto: não constitui replay semântico independente, não estima espaço físico
 recuperável e nunca executa `DELETE`, altera cursor ou cria política de retenção.
+Antes do primeiro piloto de `robinhood_chain_events`, aplique a Stage 201 com
+`node src/utils/db-init-stage201.js`. Ela cria, fora de transação e com
+`CONCURRENTLY`, os índices compactos `(block_hash, log_index)` que impedem scans
+inteiros nas tabelas filhas durante os cascades. Se uma criação anterior tiver
+deixado índice inválido, a stage o remove e reconstrói antes de prosseguir.
 
 O processo isolado `npm run start:worker:robinhood-chain-capture` roda sob a
 lease `robinhood-chain-capture-worker` e permanece em modo shadow: nenhum
