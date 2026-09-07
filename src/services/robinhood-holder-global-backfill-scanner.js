@@ -3,6 +3,8 @@ const DEFAULT_PREFETCH = 4;
 const DEFAULT_FINALITY_BLOCKS = 2000;
 const LIVE_LAG_GROWTH_TOLERANCE_BLOCKS = 25n;
 const RECEIPT_REPAIR_CHUNK_BLOCKS = 1000n;
+const MIN_COMMIT_PRESSURE_GRACE_MS = 250;
+const COMMIT_PRESSURE_GRACE_RATIO = 0.1;
 
 function boundedInteger(value, fallback, minimum, maximum, label) {
   const parsed = value == null ? fallback : Number(value);
@@ -98,6 +100,8 @@ async function readReceiptRepair(reader, range, deficit) {
 
 function batchTelemetry(timing, planned, committed, completedAt) {
   const durationMs = Math.max(0, completedAt - timing.startedAt);
+  const commitPerRangeMs = committed.length > 0
+    ? Number((timing.commitDurationMs / committed.length).toFixed(3)) : null;
   const committedBlocks = committed.reduce((total, range) => (
     total + Number(BigInt(range.toBlock) - BigInt(range.fromBlock) + 1n)
   ), 0);
@@ -105,7 +109,7 @@ function batchTelemetry(timing, planned, committed, completedAt) {
     durationMs, rpcWaitMs: timing.rpcWaitMs,
     rpcRangeDurationMs: timing.rpcRangeDurationMs,
     maxRpcRangeDurationMs: timing.maxRpcRangeDurationMs,
-    commitDurationMs: timing.commitDurationMs,
+    commitDurationMs: timing.commitDurationMs, commitPerRangeMs,
     overheadMs: Math.max(0, durationMs - timing.rpcWaitMs - timing.commitDurationMs),
     rangesPlanned: planned.length, rangesCommitted: committed.length,
     committedBlocks,
@@ -114,6 +118,14 @@ function batchTelemetry(timing, planned, committed, completedAt) {
     rpcRequests: timing.rpcRequests, observedLogs: timing.observedLogs,
     acceptedTransfers: timing.acceptedTransfers,
   });
+}
+
+function commitIsPressured(durationMs, rangeCount, maxCommitMs) {
+  const count = Math.max(1, Number(rangeCount) || 0);
+  const perRangeMs = durationMs / count;
+  const graceMs = Math.max(MIN_COMMIT_PRESSURE_GRACE_MS,
+    maxCommitMs * COMMIT_PRESSURE_GRACE_RATIO);
+  return perRangeMs > maxCommitMs + graceMs;
 }
 
 function observeBatchFetch(timing, fetched) {
@@ -458,7 +470,9 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
     }
     const committedSet = await commitFetchedSet(run.id, fetchedRanges);
     timing.commitDurationMs += committedSet.durationMs;
-    pressured ||= committedSet.durationMs > options.maxCommitMs;
+    pressured ||= commitIsPressured(
+      committedSet.durationMs, committedSet.committed.length, options.maxCommitMs
+    );
     committed = committedSet.committed;
     if (committedSet.terminal) {
       totals.discardedPrefetch += fetchedRanges.length - committed.length - 1;
@@ -504,7 +518,7 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
 module.exports = {
   createRobinhoodHolderGlobalBackfillScanner,
   __private: {
-    batchTelemetry, mergeFetchedRanges, mergeReceiptRepair, normalizeOptions, planRanges,
-    readReceiptRepair,
+    batchTelemetry, commitIsPressured, mergeFetchedRanges, mergeReceiptRepair,
+    normalizeOptions, planRanges, readReceiptRepair,
   },
 };
