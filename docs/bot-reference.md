@@ -3776,6 +3776,13 @@ Antes do primeiro piloto de `robinhood_chain_events`, aplique a Stage 201 com
 `CONCURRENTLY`, os índices compactos `(block_hash, log_index)` que impedem scans
 inteiros nas tabelas filhas durante os cascades. Se uma criação anterior tiver
 deixado índice inválido, a stage o remove e reconstrói antes de prosseguir.
+Com os índices válidos, o primeiro piloto roda com
+`npm run robinhood:chain-events-prune -- --write`. O utilitário recalcula o
+cutoff pelo audit, recusa a execução se `chain_events.ready_for_pilot` não for
+verdadeiro e apaga por default apenas 1.000 eventos em uma transação com
+`statement_timeout` de 30 segundos e `lock_timeout` de 500 ms. `--batch-limit`,
+`--max-batches` e `--pause-ms` são limitados; cada batch usa advisory lock e
+confirma novamente que ambos os índices da Stage 201 estão válidos.
 
 O processo isolado `npm run start:worker:robinhood-chain-capture` roda sob a
 lease `robinhood-chain-capture-worker` e permanece em modo shadow: nenhum
