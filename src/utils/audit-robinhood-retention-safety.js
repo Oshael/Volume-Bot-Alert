@@ -21,11 +21,8 @@ function parseArgs(argv = []) {
 }
 async function main(argv = process.argv.slice(2), deps = {}) {
   const options = deps.options || parseArgs(argv);
-  const env = deps.env || process.env;
   const audit = deps.audit || createRobinhoodRetentionSafetyAudit({
     database: deps.database || db, ...options,
-    archiveRpcUrl: env.ROBINHOOD_RETENTION_ARCHIVE_RPC_URL
-      || env.ROBINHOOD_HOLDER_GLOBAL_BACKFILL_RPC_URL || env.RH_NODE_RPC_URL,
   });
   const report = await audit.inspect();
   (deps.logger || console).log(JSON.stringify(report, null, 2));

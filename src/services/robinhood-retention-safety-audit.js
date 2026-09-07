@@ -1,7 +1,6 @@
 'use strict';
 
 const db = require('../models/db');
-const { createEvmJsonRpcClient } = require('./evm-json-rpc-client');
 const { CLASSIFICATION_VERSION } = require('./robinhood-wallet-transfer-batch');
 
 const CHAIN = 'robinhood';
@@ -40,15 +39,12 @@ function cursor(row, name, required = true) {
   });
 }
 
-function sharedBlockers({ captureNext, captureHead, captureLag, archive }) {
+function sharedBlockers({ captureNext, captureHead, captureLag }) {
   const blockers = [];
   add(blockers, captureNext == null || captureHead == null, 'capture_frontier_missing');
   add(blockers, captureLag > MAX_CAPTURE_LAG, 'capture_lag_exceeded', {
     actual: text(captureLag), maximum: text(MAX_CAPTURE_LAG),
   });
-  add(blockers, !archive.configured, 'archive_rpc_unconfigured');
-  add(blockers, archive.configured && !archive.ready, 'archive_receipt_probe_failed',
-    archive.error || archive.samples);
   return blockers;
 }
 
@@ -80,16 +76,18 @@ function evaluate(input = {}) {
     cursor(row, 'transfer'),
   ];
   const outboxFirst = quantity(row.outbox_first_unsettled);
+  const liquidityDirty = quantity(row.liquidity_dirty_from_block);
   const sourceFrontier = minimum([
-    ...consumers.map((item) => item.next), outboxFirst == null ? captureNext : outboxFirst,
+    ...consumers.map((item) => item.next),
+    outboxFirst == null ? captureNext : outboxFirst,
+    liquidityDirty == null ? captureNext : liquidityDirty,
   ]);
   const chainCutoff = subtractFloor(sourceFrontier, chainRetained);
   const holderCursor = consumers.find(({ name }) => name === 'holder');
   const holderCutoff = subtractFloor(holderCursor.next, holderRetained);
   const journalStart = quantity(row.journal_start_block);
   const holderFloor = quantity(row.holder_journal_floor_block);
-  const archive = input.archive || { configured: false, ready: false, samples: [] };
-  const common = sharedBlockers({ captureNext, captureHead, captureLag, archive });
+  const common = sharedBlockers({ captureNext, captureHead, captureLag });
 
   const chainBlockers = [...common];
   for (const item of consumers) {
@@ -120,6 +118,7 @@ function evaluate(input = {}) {
         checkpoint_canonical: item.valid,
       }])),
       first_unsettled_outbox_block: text(outboxFirst),
+      first_pending_liquidity_refresh_block: text(liquidityDirty),
       cascade_tables: ['robinhood_chain_domain_outbox',
         'robinhood_canonical_head_candidates', 'robinhood_chain_v3_balance_snapshots'],
     },
@@ -130,50 +129,21 @@ function evaluate(input = {}) {
       oldest_unapplied_block: text(risks.oldPending),
       oldest_pending_deployment_mint_block: text(risks.mintRisk),
     },
-    archive,
     proof: {
-      scope: 'consumer_checkpoints_plus_sampled_archive_receipts',
-      limitation: 'sampled archive verification does not prove every historical block',
+      scope: 'durable_consumer_checkpoints_and_downstream_materialization_gates',
+      holder_atomicity: 'balances_token_state_and_applied_marker_commit_together',
+      limitation: 'proves committed materialization, not independent semantic replay',
     },
   });
-}
-
-async function probeArchive(samples, rpcClient) {
-  if (!rpcClient) return Object.freeze({ configured: false, ready: false, samples: [] });
-  try {
-    const checked = await Promise.all(samples.map(async (sample) => {
-      const tag = `0x${BigInt(sample.block_number).toString(16)}`;
-      const [block, receipts] = await Promise.all([
-        rpcClient.request('eth_getBlockByNumber', [tag, false]),
-        rpcClient.request('eth_getBlockReceipts', [tag]),
-      ]);
-      const receiptLogs = Array.isArray(receipts)
-        ? receipts.reduce((total, receipt) => total + (receipt.logs?.length || 0), 0) : null;
-      const ready = block?.hash?.toLowerCase() === sample.block_hash.toLowerCase()
-        && receiptLogs === Number(sample.event_count);
-      return { block_number: text(sample.block_number), block_hash: sample.block_hash,
-        local_events: Number(sample.event_count), archive_events: receiptLogs, ready };
-    }));
-    return Object.freeze({ configured: true, ready: checked.length >= 2
-      && checked.every((sample) => sample.ready), samples: checked });
-  } catch (error) {
-    return Object.freeze({ configured: true, ready: false, samples: [], error: error.message });
-  }
 }
 
 function createRobinhoodRetentionSafetyAudit(options = {}) {
   const database = options.database || db;
   const chainRetentionBlocks = Number(options.chainRetentionBlocks ?? DEFAULT_RETENTION_BLOCKS);
   const holderRetentionBlocks = Number(options.holderRetentionBlocks ?? DEFAULT_RETENTION_BLOCKS);
-  const rpcClient = options.rpcClient || (options.archiveRpcUrl ? createEvmJsonRpcClient({
-    providers: [{ name: 'robinhood-retention-archive', url: options.archiveRpcUrl }],
-    timeoutMs: 60_000, maxRetries: 1,
-  }) : null);
-
   async function inspect() {
     const client = await database.getClient();
     let state;
-    let samples = [];
     try {
       await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
       state = (await client.query(
@@ -198,6 +168,7 @@ function createRobinhoodRetentionSafetyAudit(options = {}) {
                 transfer.checkpoint_hash AS transfer_checkpoint_hash,
                 transfer_hash.block_hash AS transfer_canonical_hash,
                 outbox.block_number AS outbox_first_unsettled,
+                refresh.dirty_from_block AS liquidity_dirty_from_block,
                 pending.block_number AS oldest_unapplied_holder_block,
                 campaign.id AS global_run_id, campaign.status AS global_run_status,
                 campaign.next_block AS global_run_next_block,
@@ -226,6 +197,8 @@ function createRobinhoodRetentionSafetyAudit(options = {}) {
              AND transfer_hash.canonical AND transfer_hash.block_number=transfer.checkpoint_block
            LEFT JOIN LATERAL (SELECT block_number FROM robinhood_chain_domain_outbox
              WHERE chain=$1 AND status<>'complete' ORDER BY block_number LIMIT 1) outbox ON TRUE
+           LEFT JOIN LATERAL (SELECT MIN(dirty_from_block) AS dirty_from_block
+             FROM robinhood_pool_liquidity_refresh_queue WHERE chain=$1) refresh ON TRUE
            LEFT JOIN LATERAL (SELECT block_number FROM robinhood_holder_transfer_journal
              WHERE chain=$1 AND applied=FALSE ORDER BY block_number LIMIT 1) pending ON TRUE
            LEFT JOIN LATERAL (SELECT id, status, next_block
@@ -240,35 +213,16 @@ function createRobinhoodRetentionSafetyAudit(options = {}) {
              ) journal ON TRUE WHERE task.chain=$1) mint ON TRUE`,
         [CHAIN, CLASSIFICATION_VERSION]
       )).rows[0] || {};
-      const preliminary = evaluate({ state, chainRetentionBlocks, holderRetentionBlocks });
-      const cutoff = quantity(preliminary.chain_events.candidate_cutoff_block);
-      const start = quantity(state.journal_start_block);
-      if (cutoff != null && start != null && cutoff > start) {
-        const last = cutoff - 1n;
-        const targets = [...new Set([start, start + ((last - start) / 2n), last]
-          .map((value) => value.toString()))];
-        samples = (await client.query(
-          `SELECT block.block_number, block.block_hash,
-                  (SELECT COUNT(*) FROM robinhood_chain_events event
-                    WHERE event.chain=$1 AND event.block_hash=block.block_hash) AS event_count
-             FROM unnest($2::bigint[]) target(block_number)
-             JOIN LATERAL (SELECT block_number, block_hash FROM robinhood_chain_blocks
-               WHERE chain=$1 AND canonical AND block_number<=target.block_number
-               ORDER BY block_number DESC LIMIT 1) block ON TRUE
-            ORDER BY block.block_number`, [CHAIN, targets]
-        )).rows;
-      }
       await client.query('ROLLBACK');
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch (_) {}
       throw error;
     } finally { client.release(); }
-    const archive = await (options.archiveProbe || probeArchive)(samples, rpcClient);
-    return evaluate({ state, archive, chainRetentionBlocks, holderRetentionBlocks });
+    return evaluate({ state, chainRetentionBlocks, holderRetentionBlocks });
   }
   return Object.freeze({ inspect });
 }
 
 module.exports = {
-  DEFAULT_RETENTION_BLOCKS, createRobinhoodRetentionSafetyAudit, evaluate, probeArchive,
+  DEFAULT_RETENTION_BLOCKS, createRobinhoodRetentionSafetyAudit, evaluate,
 };
