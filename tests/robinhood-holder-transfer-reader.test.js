@@ -34,6 +34,51 @@ function rpc(handler) {
 }
 
 describe('Robinhood holder Transfer reader', () => {
+  it('lets the global scanner resize failed ranges while preserving recursive reads for other callers', async () => {
+    for (const [code, scopeSize] of [['timeout', 1], ['timeout', 101], ['log_range_error', 101]]) {
+      for (const deferRangeAdaptation of [false, true]) {
+        const error = Object.assign(new Error('range failed'), { code });
+        const source = rpc(async (method, params) => {
+          if (method === 'eth_getBlockByNumber') return { number: '0x4', hash: HASH_A };
+          if (params[0].fromBlock === '0x1' && params[0].toBlock === '0x4') throw error;
+          return [];
+        });
+        const reader = createRobinhoodHolderTransferReader({ rpcClient: source.client });
+        const pending = reader.readGlobalRange({
+          tokenAddresses: Array.from({ length: scopeSize }, (_, index) => `0x${index.toString(16).padStart(40, '0')}`),
+          fromBlock: 1, toBlock: 4, deferRangeAdaptation,
+        });
+        if (deferRangeAdaptation) await assert.rejects(pending, (actual) => actual === error);
+        else assert.equal((await pending).nextBlock, '5');
+        assert.equal(source.calls.filter(({ method }) => method === 'eth_getLogs').length,
+          deferRangeAdaptation ? 1 : 3);
+      }
+    }
+  });
+
+  it('drains the global checkpoint request before propagating a log timeout', async () => {
+    let release;
+    let started;
+    const waiting = new Promise((resolve) => { started = resolve; });
+    const error = Object.assign(new Error('timeout'), { code: 'timeout' });
+    const source = rpc(async (method) => {
+      if (method === 'eth_getLogs') throw error;
+      started();
+      return new Promise((resolve) => { release = () => resolve({ number: '0x4', hash: HASH_A }); });
+    });
+    let settled = false;
+    const reader = createRobinhoodHolderTransferReader({ rpcClient: source.client });
+    const pending = reader.readGlobalRange({
+      tokenAddresses: [TOKEN], fromBlock: 1, toBlock: 4, deferRangeAdaptation: true,
+    }).catch((actual) => { settled = true; throw actual; });
+    const rejected = assert.rejects(pending, (actual) => actual === error);
+    await waiting;
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(settled, false);
+    release();
+    await rejected;
+  });
+
   it('decodes, orders and checkpoints one bounded token range', async () => {
     const source = rpc(async (method) => {
       if (method === 'eth_getBlockByNumber') return { number: '0x64', hash: HASH_A };

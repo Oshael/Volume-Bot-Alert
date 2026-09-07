@@ -23,7 +23,119 @@ function range(fromBlock, toBlock, overrides = {}) {
   };
 }
 
+function adaptiveFixture({ rangeSize = 8, prefetch = 1, read, now } = {}) {
+  let nextBlock = '100';
+  const commits = [];
+  const reads = [];
+  const scanner = createRobinhoodHolderGlobalBackfillScanner({
+    lifecycleRepository: {
+      getActiveRun: async () => runState(nextBlock), loadCohort: async () => [TOKEN],
+    },
+    commitRepository: {
+      commitRange: async (input) => {
+        assert.equal(input.fromBlock, nextBlock, 'commits must form a contiguous prefix');
+        commits.push(input); nextBlock = input.nextBlock;
+        return { status: 'committed', ...input };
+      },
+      excludeToken: async () => { throw new Error('unexpected exclusion'); },
+    },
+    reader: {
+      getSafeHead: async () => ({ safeHead: '9999' }),
+      readReceiptRange: async () => { throw new Error('unexpected receipts'); },
+      readGlobalRange: async (input) => {
+        reads.push(input);
+        return read ? read(input) : range(input.fromBlock, input.toBlock);
+      },
+    },
+    options: { rangeSize, prefetch }, now,
+  });
+  return { scanner, commits, reads, cursor: () => nextBlock };
+}
+
 describe('Robinhood holder global backfill scanner', () => {
+  it('commits a valid prefix, halves a timed-out range and resumes without skipping prefetched blocks', async () => {
+    let fail = true;
+    const fixture = adaptiveFixture({ prefetch: 3, read: (input) => {
+      if (fail && input.fromBlock === '108') {
+        throw Object.assign(new Error('timeout'), { code: 'timeout' });
+      }
+      return range(input.fromBlock, input.toBlock);
+    } });
+    const reduced = await fixture.scanner.runOnce();
+    assert.equal(reduced.status, 'range-reduced');
+    assert.equal(reduced.rangeSize, 4);
+    assert.equal(reduced.committedRanges, 1);
+    assert.equal(fixture.cursor(), '108');
+    assert.equal(fixture.scanner.getStatus().totals.discardedPrefetch, 1);
+    fail = false;
+    await fixture.scanner.runOnce();
+    assert.equal(fixture.reads[3].fromBlock, '108');
+    assert.equal(fixture.reads[3].toBlock, '111');
+    assert.equal(fixture.reads[3].deferRangeAdaptation, true);
+    assert.equal(fixture.cursor(), '116');
+  });
+
+  it('grows after five fast committed ticks, holds after slow reads, and respects the configured ceiling', async () => {
+    let clock = 0;
+    let fail = true;
+    let slow = false;
+    const fixture = adaptiveFixture({ now: () => clock, read: (input) => {
+      if (fail) throw Object.assign(new Error('timeout'), { code: 'timeout' });
+      clock += slow ? 5001 : 100;
+      return range(input.fromBlock, input.toBlock);
+    } });
+    await fixture.scanner.runOnce();
+    assert.equal(fixture.cursor(), '100');
+    fail = false;
+    for (let index = 0; index < 4; index += 1) await fixture.scanner.runOnce();
+    assert.equal(fixture.scanner.getStatus().rangeSize, 4);
+    slow = true;
+    await fixture.scanner.runOnce();
+    assert.equal(fixture.scanner.getStatus().healthyRangeBatches, 0);
+    slow = false;
+    for (let index = 0; index < 5; index += 1) await fixture.scanner.runOnce();
+    assert.equal(fixture.scanner.getStatus().rangeSize, 5);
+    for (let index = 0; index < 20; index += 1) await fixture.scanner.runOnce();
+    assert.equal(fixture.scanner.getStatus().rangeSize, 8);
+  });
+
+  it('keeps a failing single block retryable and does not shrink on rate limits or transport errors', async () => {
+    for (const [rangeSize, code, method] of [
+      [1, 'timeout'], [8, 'rate_limited'], [8, 'transport_error'],
+      [8, 'timeout', 'eth_getBlockByNumber'],
+    ]) {
+      const error = Object.assign(new Error(code), { code, method });
+      const fixture = adaptiveFixture({ rangeSize, read: () => { throw error; } });
+      await assert.rejects(fixture.scanner.runOnce(), (actual) => actual === error);
+      assert.equal(fixture.cursor(), '100');
+      assert.equal(fixture.scanner.getStatus().rangeSize, rangeSize);
+      assert.equal(fixture.commits.length, 0);
+    }
+  });
+
+  it('learns from a short failing tail and drains outstanding prefetch before another tick', async () => {
+    let release;
+    let started;
+    const waiting = new Promise((resolve) => { started = resolve; });
+    const fixture = adaptiveFixture({ prefetch: 2, read: (input) => {
+      if (input.fromBlock === '100') throw Object.assign(new Error('limit'), { code: 'log_range_error' });
+      started();
+      return new Promise((resolve) => { release = () => resolve(range(input.fromBlock, input.toBlock)); });
+    } });
+    let settled = false;
+    const pending = fixture.scanner.runOnce().then((value) => { settled = true; return value; });
+    await waiting;
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(settled, false);
+    assert.equal(fixture.reads.length, 2);
+    release();
+    await pending;
+    assert.equal(fixture.cursor(), '100');
+    const tail = adaptiveFixture({ read: () => {
+      throw Object.assign(new Error('limit'), { code: 'http_error', httpStatus: 413 });
+    } });
+    assert.equal((await tail.scanner.runOnce({ throughBlock: 102 })).rangeSize, 1);
+  });
   it('prefetches concurrently, commits one atomic batch and resumes from its cursor', async () => {
     let nextBlock = '100';
     const releases = new Map();

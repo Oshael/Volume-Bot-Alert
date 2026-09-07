@@ -143,6 +143,14 @@ function isAdaptiveAddressError(error) {
     || error?.code === 'timeout';
 }
 
+async function settleGlobalReads(reads, deferRangeAdaptation) {
+  if (!deferRangeAdaptation) return Promise.all(reads);
+  const results = await Promise.allSettled(reads);
+  const failed = results.find((result) => result.status === 'rejected');
+  if (failed) throw failed.reason;
+  return results.map((result) => result.value);
+}
+
 function createRobinhoodHolderTransferReader(options = {}) {
   const rpcClient = options.rpcClient;
   if (typeof rpcClient?.request !== 'function') throw new TypeError('holder transfer RPC is required');
@@ -169,7 +177,7 @@ function createRobinhoodHolderTransferReader(options = {}) {
     return chainValidation;
   }
 
-  async function readLogs(fromBlock, toBlock, tokenFilter, telemetry) {
+  async function readLogs(fromBlock, toBlock, tokenFilter, telemetry, deferRangeAdaptation = false) {
     telemetry.requests += 1;
     try {
       const filter = {
@@ -180,6 +188,9 @@ function createRobinhoodHolderTransferReader(options = {}) {
       if (!Array.isArray(logs)) throw new Error('eth_getLogs result must be an array');
       return logs;
     } catch (error) {
+      // The global backfill commits smaller ranges in subsequent ticks instead
+      // of waiting for a recursive tree of RPC retries before its first commit.
+      if (deferRangeAdaptation && isAdaptiveRangeError(error)) throw error;
       if (Array.isArray(tokenFilter) && tokenFilter.length > 1
           && isAdaptiveAddressError(error)) {
         telemetry.addressSplits += 1;
@@ -187,10 +198,10 @@ function createRobinhoodHolderTransferReader(options = {}) {
         learnedAddressLimit = learnedAddressLimit == null
           ? middle : Math.min(learnedAddressLimit, middle);
         const left = await readAddressFilteredLogs(
-          fromBlock, toBlock, tokenFilter.slice(0, middle), telemetry
+          fromBlock, toBlock, tokenFilter.slice(0, middle), telemetry, deferRangeAdaptation
         );
         const right = await readAddressFilteredLogs(
-          fromBlock, toBlock, tokenFilter.slice(middle), telemetry
+          fromBlock, toBlock, tokenFilter.slice(middle), telemetry, deferRangeAdaptation
         );
         return [...left, ...right];
       }
@@ -203,7 +214,7 @@ function createRobinhoodHolderTransferReader(options = {}) {
     }
   }
 
-  async function readAddressFilteredLogs(fromBlock, toBlock, addresses, telemetry) {
+  async function readAddressFilteredLogs(fromBlock, toBlock, addresses, telemetry, deferRangeAdaptation = false) {
     const limit = Math.min(learnedAddressLimit || addressFilterLimit, addresses.length);
     const logs = [];
     const batchWidth = limit * addressShardConcurrency;
@@ -212,10 +223,10 @@ function createRobinhoodHolderTransferReader(options = {}) {
       const through = Math.min(addresses.length, offset + batchWidth);
       for (let shard = offset; shard < through; shard += limit) {
         pending.push(readLogs(
-          fromBlock, toBlock, addresses.slice(shard, shard + limit), telemetry
+          fromBlock, toBlock, addresses.slice(shard, shard + limit), telemetry, deferRangeAdaptation
         ));
       }
-      const resolved = await Promise.all(pending);
+      const resolved = await settleGlobalReads(pending, deferRangeAdaptation);
       for (const shardLogs of resolved) logs.push(...shardLogs);
     }
     return logs;
@@ -342,12 +353,14 @@ function createRobinhoodHolderTransferReader(options = {}) {
       ? 'empty-scope'
       : (forceAddressFiltered || allowed.size <= addressFilterLimit
         ? 'address-filtered' : 'topics-only');
-    const [observedLogs, checkpoint] = await Promise.all([
+    const reads = [
       filterMode === 'address-filtered'
-        ? readAddressFilteredLogs(fromBlock, toBlock, [...allowed], telemetry)
-        : (filterMode.startsWith('topics-only') ? readLogs(fromBlock, toBlock, null, telemetry) : []),
+        ? readAddressFilteredLogs(fromBlock, toBlock, [...allowed], telemetry, input.deferRangeAdaptation)
+        : (filterMode.startsWith('topics-only')
+          ? readLogs(fromBlock, toBlock, null, telemetry, input.deferRangeAdaptation) : []),
       readBlock(toBlock),
-    ]);
+    ];
+    const [observedLogs, checkpoint] = await settleGlobalReads(reads, input.deferRangeAdaptation);
     const logs = observedLogs.filter((log) => allowed.has(String(log?.address || '').toLowerCase()));
     const context = { tokenAddress: null, fromBlock, toBlock, checkpointHash: checkpoint.hash };
     const buffered = captureAllTransfers

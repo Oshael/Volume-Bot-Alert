@@ -5,6 +5,8 @@ const LIVE_LAG_GROWTH_TOLERANCE_BLOCKS = 25n;
 const RECEIPT_REPAIR_CHUNK_BLOCKS = 1000n;
 const MIN_COMMIT_PRESSURE_GRACE_MS = 250;
 const COMMIT_PRESSURE_GRACE_RATIO = 0.1;
+const RANGE_GROWTH_HEALTHY_BATCHES = 5;
+const RANGE_GROWTH_MAX_RPC_MS = 5000;
 
 function boundedInteger(value, fallback, minimum, maximum, label) {
   const parsed = value == null ? fallback : Number(value);
@@ -162,6 +164,9 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
   let cachedRunId = null;
   let cohortSchedule = Object.freeze([]);
   let effectivePrefetch = options.prefetch;
+  let effectiveRangeSize = options.rangeSize;
+  let healthyRangeBatches = 0;
+  let lastRangeAdjustment = null;
   let stableBatches = 0;
   let lastLiveLag = null;
   let liveLagDelta = null;
@@ -177,6 +182,38 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
   function reducePrefetch(floor = 1) {
     effectivePrefetch = Math.max(floor, Math.ceil(effectivePrefetch / 2));
     stableBatches = 0;
+  }
+
+  function reduceRange(error, failedRange) {
+    healthyRangeBatches = 0;
+    if (error.method && error.method !== 'eth_getLogs') return false;
+    const rangeError = ['timeout', 'log_range_error'].includes(error.code)
+      || (error.code === 'http_error' && [400, 408, 413].includes(error.httpStatus));
+    if (!rangeError) return false;
+    const failedBlocks = Number(BigInt(failedRange.toBlock) - BigInt(failedRange.fromBlock) + 1n);
+    const reduced = Math.max(1, Math.floor(Math.min(failedBlocks, effectiveRangeSize) / 2));
+    if (reduced >= effectiveRangeSize) return false;
+    lastRangeAdjustment = { reason: error.code, previous: effectiveRangeSize, current: reduced };
+    effectiveRangeSize = reduced;
+    return true;
+  }
+
+  function observeRangeHealth(ranges, maxRpcDurationMs, pressured, allowGrowth) {
+    const fullRange = ranges.some((value) => (
+      Number(BigInt(value.toBlock) - BigInt(value.fromBlock) + 1n) === effectiveRangeSize
+    ));
+    if (pressured || !allowGrowth || !fullRange
+        || maxRpcDurationMs > RANGE_GROWTH_MAX_RPC_MS) {
+      healthyRangeBatches = 0;
+      return;
+    }
+    healthyRangeBatches += 1;
+    if (healthyRangeBatches < RANGE_GROWTH_HEALTHY_BATCHES) return;
+    healthyRangeBatches = 0;
+    const increased = Math.min(options.rangeSize, effectiveRangeSize + Math.max(1, Math.floor(effectiveRangeSize / 4)));
+    if (increased === effectiveRangeSize) return;
+    lastRangeAdjustment = { reason: 'healthy-batches', previous: effectiveRangeSize, current: increased };
+    effectiveRangeSize = increased;
   }
 
   function observeHealthyBatch(pressured, allowGrowth = true) {
@@ -381,6 +418,13 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
       });
     }
     await Promise.all(context.pending);
+    if (reduceRange(error, context.failedRange)) {
+      return Object.freeze({
+        status: 'range-reduced', runId: context.runId, reason: error.code,
+        committedRanges: context.committedRanges, rangeSize: effectiveRangeSize,
+        prefetch: effectivePrefetch,
+      });
+    }
     throw error;
   }
 
@@ -410,7 +454,7 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
       });
     }
     const schedule = await loadCohort(run.id);
-    const planned = planRanges(nextBlock, target, options.rangeSize, effectivePrefetch);
+    const planned = planRanges(nextBlock, target, effectiveRangeSize, effectivePrefetch);
     const timing = {
       startedAt: now(), rpcWaitMs: 0, rpcRangeDurationMs: 0,
       maxRpcRangeDurationMs: 0, commitDurationMs: 0,
@@ -418,7 +462,9 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
     };
     const pending = planned.map((range) => {
       const startedAt = now();
-      return reader.readGlobalRange({ tokenAddresses: rangeScope(schedule, range.toBlock), ...range })
+      return reader.readGlobalRange({
+        tokenAddresses: rangeScope(schedule, range.toBlock), ...range, deferRangeAdaptation: true,
+      })
         .then((value) => observeFetched(value, Math.max(0, now() - startedAt)),
           (error) => ({ error }));
     });
@@ -430,6 +476,7 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
       const fetched = await pending[index];
       timing.rpcWaitMs += Math.max(0, now() - waitStartedAt);
       if (fetched.error) {
+        healthyRangeBatches = 0;
         const prefix = await commitFetchedIndividually(run.id, fetchedRanges);
         timing.commitDurationMs += prefix.durationMs;
         committed = prefix.committed;
@@ -463,7 +510,7 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
           (total, range) => total + Number(range.touchedWallets || 0), 0
         );
         return handleFetchError(fetched.error, {
-          runId: run.id, pending, index, committedRanges: committed.length,
+          runId: run.id, pending, index, committedRanges: committed.length, failedRange: planned[index],
         });
       }
       observeBatchFetch(timing, fetched);
@@ -477,6 +524,7 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
     );
     committed = committedSet.committed;
     if (committedSet.terminal) {
+      healthyRangeBatches = 0;
       totals.discardedPrefetch += fetchedRanges.length - committed.length - 1;
       observeHealthyBatch(true, allowPrefetchGrowth);
       return Object.freeze({
@@ -491,6 +539,7 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
       (total, range) => total + range.transfers.length, 0
     );
     lastBatch = batchTelemetry(timing, planned, committed, now());
+    observeRangeHealth(fetchedRanges, timing.maxRpcRangeDurationMs, pressured, allowPrefetchGrowth);
     observeHealthyBatch(pressured, allowPrefetchGrowth);
     return Object.freeze({
       status: 'committed', runId: run.id, ranges: committed.length,
@@ -501,7 +550,10 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
 
   function runOnce(input = {}) {
     if (activeRun) return activeRun;
-    activeRun = scanOnce(input).finally(() => { activeRun = null; });
+    activeRun = scanOnce(input).catch((error) => {
+      healthyRangeBatches = 0;
+      throw error;
+    }).finally(() => { activeRun = null; });
     return activeRun;
   }
 
@@ -509,6 +561,8 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
     runOnce,
     getStatus: () => Object.freeze({
       prefetch: effectivePrefetch, healthyPrefetchFloor,
+      rangeSize: effectiveRangeSize, maxRangeSize: options.rangeSize,
+      healthyRangeBatches, lastRangeAdjustment,
       stableBatches, active: activeRun !== null,
       liveLagBlocks: lastLiveLag?.toString() ?? null,
       liveLagDeltaBlocks: liveLagDelta?.toString() ?? null, liveLagTrend,

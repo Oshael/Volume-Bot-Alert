@@ -2251,6 +2251,25 @@ Enquanto o lag live está saudável, o prefetch adaptativo mantém piso 2; erros
 RPC ou piora do lag ainda podem reduzi-lo temporariamente a 1.
 O controle compara o tempo médio de commit por range, e não a soma do lote
 prefetched; exceder o limiar por mais de 10% ou 250 ms (o maior) reduz o prefetch.
+`ROBINHOOD_HOLDER_GLOBAL_BACKFILL_RANGE_SIZE` é o teto do range adaptativo do
+scanner global. Nesse caminho, timeouts, rate limits e erros de tamanho deixam
+de gerar subdivisões recursivas dentro da leitura; os demais consumidores do
+leitor mantêm o comportamento anterior. O scanner aguarda as leituras já
+iniciadas terminarem, salva o prefixo contíguo válido e descarta os ranges depois
+da primeira falha. Timeout ou erro de tamanho de `eth_getLogs` reduz o range efetivo pela metade,
+com piso de um bloco, e retorna `range-reduced`; o próximo tick retoma do cursor
+persistido. Rate limit, erro de transporte ou falha persistente em um range de um
+bloco continuam pelo backoff de erros do worker, sem avanço artificial do cursor.
+Falhas na consulta do cabeçalho do bloco também não reduzem o range.
+Após cinco ticks com commits saudáveis, permissão de crescimento pelo lag live,
+ao menos um range completo e todas as leituras de range em até 5s, o tamanho
+cresce 25% (mínimo de um bloco), limitado ao teto configurado. Leituras lentas,
+falhas e pressão de commit interrompem essa sequência de crescimento.
+`telemetry.scanner.rangeSize`, `maxRangeSize`, `healthyRangeBatches` e
+`lastRangeAdjustment` descrevem a adaptação; o aprendizado fica em memória e
+reinicia no teto após restart. O timeout de 15s e um retry por chamada RPC
+continuam válidos; isso não estabelece um limite total para ticks que incluam
+recuperação por receipts ou espera no banco.
 Runtimes com PostgreSQL remoto podem ajustar o limiar-base por
 `ROBINHOOD_HOLDER_GLOBAL_BACKFILL_MAX_COMMIT_MS` sem alterar o default da VPS.
 `ROBINHOOD_HOLDER_GLOBAL_BACKFILL_RPC_URL` isola o scan em outro endpoint RPC;
