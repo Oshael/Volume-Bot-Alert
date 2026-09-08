@@ -14,6 +14,14 @@ function boundedInteger(value, fallback, minimum, maximum, label) {
   return parsed;
 }
 
+function positiveInteger(value, fallback, label) {
+  const parsed = value == null || value === '' ? fallback : Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    throw new Error(`${label} must be a positive safe integer`);
+  }
+  return parsed;
+}
+
 function normalizeOptions(input = {}) {
   return Object.freeze({
     confirm: input.confirm === true,
@@ -21,11 +29,9 @@ function normalizeOptions(input = {}) {
     rangeSize: boundedInteger(input.rangeSize, 5000, 1, 5000, 'repair rangeSize'),
     confirmations: boundedInteger(input.confirmations, 12, 0, 1000, 'confirmations'),
     timeoutMs: boundedInteger(input.timeoutMs, 15_000, 1000, 60_000, 'RPC timeout'),
-    maxReplayBlocks: boundedInteger(
-      input.maxReplayBlocks, 250_000, 1, 10_000_000, 'max replay blocks'
-    ),
-    maxTotalReplayBlocks: boundedInteger(
-      input.maxTotalReplayBlocks, 1_000_000, 1, 100_000_000, 'max total replay blocks'
+    maxReplayBlocks: positiveInteger(input.maxReplayBlocks, 250_000, 'max replay blocks'),
+    maxTotalReplayBlocks: positiveInteger(
+      input.maxTotalReplayBlocks, 1_000_000, 'max total replay blocks'
     ),
   });
 }
