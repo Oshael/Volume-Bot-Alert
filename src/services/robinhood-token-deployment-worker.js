@@ -55,7 +55,7 @@ function createLocalCodeTransitionResolver(rpcClient) {
     }).catch((error) => { chainValidation = null; throw error; });
     return chainValidation;
   }
-  async function verify(input) {
+  async function inspect(input) {
     if (!input) return null;
     const blockNumber = quantity(input.blockNumber, 'mint block');
     if (blockNumber === 0n) return null;
@@ -69,7 +69,6 @@ function createLocalCodeTransitionResolver(rpcClient) {
       rpcClient.request('eth_getBlockByNumber', [blockTag(blockNumber), false]),
       rpcClient.request('eth_getTransactionReceipt', [transactionHash]),
     ]);
-    if (hasCode(previousCode) || !hasCode(currentCode)) return null;
     if (quantity(block?.number, 'block.number') !== blockNumber
         || fixedHex(block?.hash, 32, 'block.hash') !== expectedBlockHash
         || fixedHex(receipt?.transactionHash, 32, 'receipt.transactionHash') !== transactionHash
@@ -80,12 +79,23 @@ function createLocalCodeTransitionResolver(rpcClient) {
         code: 'rpc_code_transition_invalid',
       });
     }
-    return Object.freeze({
+    const transition = Object.freeze({
       tokenAddress, blockNumber: blockNumber.toString(),
       blockHash: expectedBlockHash, transactionHash,
     });
+    if (hasCode(previousCode)) {
+      return Object.freeze({ status: 'preexisting-code', transition });
+    }
+    if (!hasCode(currentCode)) {
+      return Object.freeze({ status: 'missing-current-code', transition });
+    }
+    return Object.freeze({ status: 'transition', transition });
   }
-  return Object.freeze({ verify });
+  async function verify(input) {
+    const result = await inspect(input);
+    return result?.status === 'transition' ? result.transition : null;
+  }
+  return Object.freeze({ inspect, verify });
 }
 
 function bounded(value, fallback, minimum, maximum) {
@@ -192,7 +202,16 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
       }
       return null;
     }
-    try { return await current.localResolver.verify(localHint); }
+    try {
+      if (mintHint && typeof current.localResolver.inspect === 'function') {
+        const inspected = await current.localResolver.inspect(mintHint);
+        if (inspected?.status === 'preexisting-code') {
+          return Object.freeze({ ignoredMint: true });
+        }
+        return inspected?.status === 'transition' ? inspected.transition : null;
+      }
+      return await current.localResolver.verify(localHint);
+    }
     catch (error) {
       if (error.code === 'configuration_error') throw error;
       return null;
@@ -233,6 +252,11 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
         return { status: 'already-attributed', tokenAddress: task.tokenAddress };
       }
       const transition = await resolveLocally(current, task);
+      if (transition?.ignoredMint) {
+        await current.outbox.complete({ owner, tokenAddress: task.tokenAddress });
+        status.totalSkipped += 1;
+        return { status: 'non-deployment-mint', tokenAddress: task.tokenAddress };
+      }
       if (transition) {
         await current.attributions.recordCodeTransitions([transition]);
         const deployment = await resolveCanonicalCreator(current, transition);
@@ -280,6 +304,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
         resolved: results.filter((item) => item?.status === 'resolved').length,
         deferred: results.filter((item) => item?.status === 'deferred').length,
         skipped: results.filter((item) => item?.status === 'already-attributed').length,
+        ignoredMints: results.filter((item) => item?.status === 'non-deployment-mint').length,
         errors: results.filter((item) => item?.status === 'error').length,
       };
     } finally {

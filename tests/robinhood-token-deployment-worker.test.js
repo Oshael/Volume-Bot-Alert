@@ -89,7 +89,8 @@ it('drains a bounded deployment batch concurrently', async () => {
   });
   const result = await worker.runOnce();
   assert.deepEqual(result, {
-    status: 'completed', claimed: 2, resolved: 2, deferred: 0, skipped: 0, errors: 0,
+    status: 'completed', claimed: 2, resolved: 2, deferred: 0, skipped: 0,
+    ignoredMints: 0, errors: 0,
   });
   assert.deepEqual(completed.sort(), [TOKEN, TOKEN_B].sort());
 });
@@ -203,6 +204,42 @@ it('proves an exact deployment block from recent pruned-RPC state', async () => 
     transactionHash: TRANSACTION_HASH,
   });
   assert.equal(calls.filter(([method]) => method === 'eth_getCode').length, 2);
+});
+
+it('discards a later mint when bytecode already existed in the previous block', async () => {
+  const calls = [];
+  const resolver = createLocalCodeTransitionResolver({
+    async request(method) {
+      if (method === 'eth_chainId') return '0x1237';
+      if (method === 'eth_getCode') return '0x6000';
+      if (method === 'eth_getBlockByNumber') return { number: '0x64', hash: BLOCK_HASH };
+      if (method === 'eth_getTransactionReceipt') return {
+        transactionHash: TRANSACTION_HASH, blockNumber: '0x64',
+        blockHash: BLOCK_HASH, status: '0x1',
+      };
+      throw new Error(`unexpected method ${method}`);
+    },
+  });
+  const fixture = runtime({
+    outbox: {
+      claim: async () => ({ tokenAddress: TOKEN, attemptCount: 1, createdAt: new Date() }),
+      isExact: async () => false,
+      findMintHint: async () => ({
+        tokenAddress: TOKEN, blockNumber: '100', blockHash: BLOCK_HASH,
+        transactionHash: TRANSACTION_HASH,
+      }),
+      complete: async () => { calls.push('complete'); },
+      retry: async () => { throw new Error('must not retry'); },
+    },
+    localResolver: resolver,
+    attributions: {
+      recordCodeTransitions: async () => { throw new Error('must not attribute'); },
+    },
+  });
+  assert.deepEqual(await createRobinhoodTokenDeploymentWorker({
+    runtime: fixture.value, owner: 'test',
+  }).runOnce(), { status: 'non-deployment-mint', tokenAddress: TOKEN });
+  assert.deepEqual(calls, ['complete']);
 });
 
 it('defers a fresh task briefly while its mint reaches the journal', async () => {

@@ -2518,6 +2518,9 @@ holders sem inventar creator. Se o mesmo bloco já contém creator canônico con
 ele também é persistido; os demais creators continuam responsabilidade do worker
 canônico independente ou de repair explícito. O LIVE não usa trace, Archive,
 Blockscout nem o túnel do PC.
+Um `Transfer(from=0)` posterior, como depósitos no wrapped native, é descartado
+quando a prova mostra que o bytecode já existia em `N-1`; ele não cria attribution
+nem permanece ocupando a outbox.
 
 Quando nem a transição local nem uma atribuição canônica já materializada podem
 ser comprovadas, a tarefa permanece pendente com
