@@ -69,7 +69,7 @@ function parseArgs(argv = process.argv.slice(2), env = process.env) {
     rpcUrl: String(values['rpc-url'] || env.ROBINHOOD_ARCHIVE_RPC_URL || '').trim(),
     fromBlock: block(values['from-block'], '0', '--from-block'),
     toBlock: values['to-block'] == null ? null : block(values['to-block'], null, '--to-block'),
-    rangeSize: integer(values['range-size'], 10_000_000, 1, 10_000_000, '--range-size'),
+    rangeSize: integer(values['range-size'], 2_000_000, 1, 10_000_000, '--range-size'),
     minRangeSize: integer(values['min-range-size'], 1, 1, 100_000, '--min-range-size'),
     holderLimit: integer(values['holder-limit'], 50_000, 1, 100_000, '--holder-limit'),
     holderConcurrency: integer(values['holder-concurrency'], 24, 1, 64, '--holder-concurrency'),
@@ -163,12 +163,10 @@ async function backfillStockPairs(options, deps = {}) {
   if (BigInt(toBlock) < BigInt(options.fromBlock)) {
     throw new Error('--to-block must not precede --from-block');
   }
-  const protocols = {};
-  for (const specification of PROTOCOLS) {
-    protocols[specification.protocol] = await scanProtocol(
-      options, runtime, specification, toBlock, logger
-    );
-  }
+  const protocols = Object.fromEntries(await Promise.all(PROTOCOLS.map(async (specification) => [
+    specification.protocol,
+    await scanProtocol(options, runtime, specification, toBlock, logger),
+  ])));
   return {
     mode: options.confirm ? 'apply' : 'read-only',
     fromBlock: options.fromBlock,

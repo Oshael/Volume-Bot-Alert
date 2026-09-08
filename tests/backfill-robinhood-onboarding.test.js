@@ -56,10 +56,16 @@ describe('Robinhood combined onboarding backfill', () => {
 
   it('scans all discovery protocols and actively upserts stock pairs', async () => {
     const saved = [];
+    let activeLogReads = 0;
+    let maxActiveLogReads = 0;
     const rpcClient = {
       async request(method, params) {
         if (method === 'eth_chainId') return '0x1237';
         if (method === 'eth_getLogs') {
+          activeLogReads += 1;
+          maxActiveLogReads = Math.max(maxActiveLogReads, activeLogReads);
+          await new Promise((resolve) => setImmediate(resolve));
+          activeLogReads -= 1;
           return params[0].address === v4.ROBINHOOD_V4_POOL_MANAGER
             ? [stockInitialize()]
             : [];
@@ -85,6 +91,7 @@ describe('Robinhood combined onboarding backfill', () => {
     assert.equal(report.upsertedPools, 1);
     assert.equal(report.protocols['uniswap-v4'].stockPairs, 1);
     assert.equal(saved[0].tracked, true);
+    assert.equal(maxActiveLogReads, 3);
   });
 
   it('runs stock discovery and holder recovery under one confirmation', async () => {
@@ -120,9 +127,11 @@ describe('Robinhood combined onboarding backfill', () => {
   });
 
   it('parses bounded performance controls', () => {
-    assert.equal(parseArgs([CONFIRM_FLAG], {
+    const parsed = parseArgs([CONFIRM_FLAG], {
       ROBINHOOD_ARCHIVE_RPC_URL: 'http://archive.example',
-    }).confirm, true);
+    });
+    assert.equal(parsed.confirm, true);
+    assert.equal(parsed.rangeSize, 2_000_000);
     assert.throws(() => parseArgs(['--holder-concurrency=65']), /between 1 and 64/);
   });
 

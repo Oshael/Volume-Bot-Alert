@@ -2244,7 +2244,8 @@ Para recuperar deployments e registrar de uma vez pares meme/stock históricos V
 e V4, use `npm run robinhood:onboarding-backfill`. Ele usa exclusivamente
 `ROBINHOOD_ARCHIVE_RPC_URL`, é read-only por default e aplica somente com
 `-- --confirm-robinhood-onboarding-backfill`. O scanner percorre apenas eventos de criação
-em ranges adaptativos e faz upserts ativos idempotentes. O holder recovery verifica o
+V2, V3 e V4 em paralelo, usa ranges adaptativos externos de 2.000.000 de blocos por
+default e faz upserts ativos idempotentes. O holder recovery verifica o
 bloco do primeiro mint em N/N-1 via batch e só usa busca binária quando essa evidência
 não existe. Após as attributions, o comando cria uma coorte somente para tokens ainda
 sem ledger e dirige o global backfill até o handoff. O apply recusa iniciar enquanto a
