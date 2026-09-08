@@ -8,7 +8,6 @@ const {
   createRobinhoodCanonicalDirectCreatorSource,
 } = require('../models/robinhood-canonical-direct-creator-source');
 const { createEvmJsonRpcClient } = require('./evm-json-rpc-client');
-const { createRobinhoodHolderDeploymentVerifier } = require('./robinhood-holder-deployment-verifier');
 const { createPostgresRealtimeListener } = require('./postgres-realtime-listener');
 
 const NOTIFY_CHANNEL = 'robinhood_token_deployment_outbox';
@@ -95,9 +94,14 @@ function bounded(value, fallback, minimum, maximum) {
 }
 
 function normalizeOptions(input = {}) {
+  const confirmations = bounded(input.confirmations, 12, 0, 256);
   return Object.freeze({
     enabled: input.enabled === true,
     intervalMs: bounded(input.intervalMs, 1000, 100, 60_000),
+    batchSize: bounded(input.batchSize, 64, 1, 256),
+    concurrency: bounded(input.concurrency, 16, 1, 32),
+    confirmations,
+    stateLookbackBlocks: bounded(input.stateLookbackBlocks, 96, confirmations + 2, 1000),
     leaseMs: bounded(input.leaseMs, 300_000, 10_000, 900_000),
     retryMs: bounded(input.retryMs, 15_000, 1000, 3_600_000),
     maxRetryMs: bounded(input.maxRetryMs, 3_600_000, 60_000, 86_400_000),
@@ -123,10 +127,23 @@ function buildRuntime(deps, options) {
       database,
     }),
     localResolver: (deps.localResolverFactory || createLocalCodeTransitionResolver)(rpcClient),
-    verifier: (deps.verifierFactory || createRobinhoodHolderDeploymentVerifier)({
-      rpcClient,
-    }),
   });
+}
+
+async function concurrentMap(values, concurrency, operation) {
+  const results = new Array(values.length);
+  let next = 0;
+  async function consume() {
+    while (next < values.length) {
+      const index = next;
+      next += 1;
+      results[index] = await operation(values[index]);
+    }
+  }
+  await Promise.all(Array.from(
+    { length: Math.min(concurrency, values.length) }, consume
+  ));
+  return results;
 }
 
 function createRobinhoodTokenDeploymentWorker(deps = {}) {
@@ -160,7 +177,10 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
   async function resolveLocally(current, task) {
     if (typeof current.outbox.findMintHint !== 'function'
         || typeof current.localResolver?.verify !== 'function') return null;
-    const mintHint = await current.outbox.findMintHint(task.tokenAddress);
+    const mintHint = await current.outbox.findMintHint(task.tokenAddress, {
+      confirmations: options.confirmations,
+      lookbackBlocks: options.stateLookbackBlocks,
+    });
     const discoveryHint = !mintHint && typeof current.outbox.findDiscoveryHint === 'function'
       ? await current.outbox.findDiscoveryHint(task.tokenAddress) : null;
     const localHint = mintHint || discoveryHint;
@@ -179,7 +199,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     }
   }
 
-  async function resolveTransition(current, transition) {
+  async function resolveCanonicalCreator(current, transition) {
     if (typeof current.creatorSource?.readRange === 'function') {
       const blocks = await current.creatorSource.readRange(
         transition.blockNumber, transition.blockNumber
@@ -189,7 +209,7 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
       );
       if (canonical) return canonical;
     }
-    return current.verifier.verifyTransactionDeployment(transition);
+    return null;
   }
 
   function retryFor(task, error) {
@@ -205,13 +225,8 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
     status.totalDeferred += 1;
   }
 
-  async function execute() {
-    status.inFlight = true; status.totalRuns += 1;
-    let task;
+  async function processTask(current, task) {
     try {
-      const current = await runtime();
-      task = await current.outbox.claim({ owner, leaseMs: options.leaseMs });
-      if (!task) return { status: 'caught-up' };
       if (await current.outbox.isExact(task.tokenAddress)) {
         await current.outbox.complete({ owner, tokenAddress: task.tokenAddress });
         status.totalSkipped += 1;
@@ -220,11 +235,16 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
       const transition = await resolveLocally(current, task);
       if (transition) {
         await current.attributions.recordCodeTransitions([transition]);
-        const deployment = await resolveTransition(current, transition);
-        await current.attributions.recordVerifiedDirectDeployments([deployment]);
+        const deployment = await resolveCanonicalCreator(current, transition);
+        if (deployment) {
+          await current.attributions.recordVerifiedDirectDeployments([deployment]);
+        }
         await current.outbox.complete({ owner, tokenAddress: task.tokenAddress });
         status.totalResolved += 1; status.totalLocalResolved += 1;
-        return { status: 'resolved', tokenAddress: task.tokenAddress, source: deployment.source };
+        return {
+          status: 'resolved', tokenAddress: task.tokenAddress,
+          source: deployment?.source || 'rpc_code_transition',
+        };
       }
       throw Object.assign(new Error(
         'canonical creator evidence has not been materialized for this token'
@@ -237,7 +257,31 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
         return { status: 'deferred', reason: error.code, tokenAddress: task?.tokenAddress || null };
       }
       status.lastError = { code: error.code || 'deployment_resolution_failed', message: error.message };
-      return null;
+      return { status: 'error', tokenAddress: task?.tokenAddress || null, errors: 1 };
+    }
+  }
+
+  async function execute() {
+    status.inFlight = true; status.totalRuns += 1;
+    try {
+      const current = await runtime();
+      const tasks = typeof current.outbox.claimBatch === 'function'
+        ? await current.outbox.claimBatch({
+          owner, leaseMs: options.leaseMs, limit: options.batchSize,
+        })
+        : [await current.outbox.claim({ owner, leaseMs: options.leaseMs })].filter(Boolean);
+      if (!tasks.length) return { status: 'caught-up', claimed: 0, errors: 0 };
+      const results = await concurrentMap(
+        tasks, options.concurrency, (task) => processTask(current, task)
+      );
+      if (results.length === 1) return results[0];
+      return {
+        status: 'completed', claimed: tasks.length,
+        resolved: results.filter((item) => item?.status === 'resolved').length,
+        deferred: results.filter((item) => item?.status === 'deferred').length,
+        skipped: results.filter((item) => item?.status === 'already-attributed').length,
+        errors: results.filter((item) => item?.status === 'error').length,
+      };
     } finally {
       status.inFlight = false; status.lastCompletedAt = new Date().toISOString();
     }
@@ -246,7 +290,10 @@ function createRobinhoodTokenDeploymentWorker(deps = {}) {
   async function runOnce() {
     if (activeRun) return activeRun;
     activeRun = execute().then((result) => {
-      if (result) { status.lastResult = result; status.lastError = null; }
+      if (result) {
+        status.lastResult = result;
+        if (result.status !== 'error' && !result.errors) status.lastError = null;
+      }
       return result;
     }).finally(() => { activeRun = null; });
     return activeRun;

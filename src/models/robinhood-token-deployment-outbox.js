@@ -1,9 +1,10 @@
 const db = require('./db');
 const { normalizeTokenAddress } = require('../utils/token-identity');
+const { TRANSFER_TOPIC, ZERO_TOPIC } = require('../services/evm-erc20-supply-delta');
 
 const CHAIN = 'robinhood';
 const EXACT_SOURCES = [
-  'blockscout_internal', 'rpc_direct', 'rpc_trace', 'launchpad_event',
+  'blockscout_internal', 'rpc_code_transition', 'rpc_direct', 'rpc_trace', 'launchpad_event',
 ];
 
 function ownerOf(value) {
@@ -12,12 +13,21 @@ function ownerOf(value) {
   return owner;
 }
 
+function batchLimit(value) {
+  const parsed = Number(value ?? 1);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 256) {
+    throw new Error('deployment outbox limit is invalid');
+  }
+  return parsed;
+}
+
 function createRobinhoodTokenDeploymentOutboxRepository(options = {}) {
   const database = options.database || db;
 
-  async function claim(input = {}) {
+  async function claimBatch(input = {}) {
     const owner = ownerOf(input.owner);
     const leaseMs = Math.max(10_000, Math.min(Number(input.leaseMs) || 300_000, 900_000));
+    const limit = batchLimit(input.limit);
     const { rows } = await database.query(
       `WITH candidate AS (
          SELECT token_address FROM robinhood_token_deployment_outbox
@@ -26,7 +36,7 @@ function createRobinhoodTokenDeploymentOutboxRepository(options = {}) {
           ORDER BY
             CASE WHEN created_at >= NOW() - INTERVAL '10 minutes' THEN 0 ELSE 1 END,
             next_attempt_at, created_at
-          LIMIT 1 FOR UPDATE SKIP LOCKED
+          LIMIT $3 FOR UPDATE SKIP LOCKED
        )
        UPDATE robinhood_token_deployment_outbox outbox
           SET status = 'leased', lease_owner = $1,
@@ -35,34 +45,41 @@ function createRobinhoodTokenDeploymentOutboxRepository(options = {}) {
          FROM candidate WHERE outbox.chain = '${CHAIN}'
           AND outbox.token_address = candidate.token_address
        RETURNING outbox.token_address, outbox.attempt_count, outbox.created_at`,
-      [owner, leaseMs]
+      [owner, leaseMs, limit]
     );
-    return rows[0] ? Object.freeze({
-      tokenAddress: rows[0].token_address, attemptCount: Number(rows[0].attempt_count),
-      createdAt: rows[0].created_at,
-    }) : null;
+    return Object.freeze(rows.map((row) => Object.freeze({
+      tokenAddress: row.token_address, attemptCount: Number(row.attempt_count),
+      createdAt: row.created_at,
+    })));
   }
 
-  async function findMintHint(tokenAddress) {
+  async function claim(input = {}) {
+    return (await claimBatch({ ...input, limit: 1 }))[0] || null;
+  }
+
+  async function findMintHint(tokenAddress, input = {}) {
+    const parsedConfirmations = input.confirmations == null ? 12 : Number(input.confirmations);
+    const confirmations = Number.isSafeInteger(parsedConfirmations)
+      ? Math.max(0, Math.min(parsedConfirmations, 1000)) : 12;
+    const parsedLookback = input.lookbackBlocks == null ? 96 : Number(input.lookbackBlocks);
+    const lookbackBlocks = Number.isSafeInteger(parsedLookback)
+      ? Math.max(confirmations + 2, Math.min(parsedLookback, 1000)) : 96;
     const { rows } = await database.query(
-      `SELECT block_number, block_hash, transaction_hash
-         FROM (
-           SELECT block_number, block_hash, transaction_hash,
-                  transaction_index, log_index
-             FROM robinhood_holder_transfer_journal
-            WHERE chain = '${CHAIN}' AND token_address = $1
-              AND applied = false
-              AND from_wallet = '0x0000000000000000000000000000000000000000'
-           UNION ALL
-           SELECT block_number, block_hash, transaction_hash,
-                  transaction_index, log_index
-             FROM robinhood_holder_transfer_journal
-            WHERE chain = '${CHAIN}' AND token_address = $1
-              AND applied = true
-              AND from_wallet = '0x0000000000000000000000000000000000000000'
-         ) mint
-        ORDER BY block_number, transaction_index, log_index LIMIT 1`,
-      [normalizeTokenAddress(CHAIN, tokenAddress)]
+      `SELECT event.block_number, event.block_hash, event.transaction_hash
+         FROM robinhood_chain_events event
+         INNER JOIN robinhood_chain_blocks block
+           ON block.chain=event.chain AND block.block_hash=event.block_hash
+          AND block.canonical=TRUE
+         CROSS JOIN robinhood_chain_capture_cursor cursor
+        WHERE event.chain='${CHAIN}' AND cursor.chain=event.chain
+          AND event.address=$1 AND event.topic0=$3 AND event.topics->>1=$4
+          AND event.block_number >= GREATEST(cursor.node_head - $5::bigint, 0)
+          AND event.block_number <= LEAST(
+            cursor.checkpoint_block, GREATEST(cursor.node_head - $2::bigint, 0)
+          )
+        ORDER BY event.block_number, event.transaction_index, event.log_index LIMIT 1`,
+      [normalizeTokenAddress(CHAIN, tokenAddress), confirmations, TRANSFER_TOPIC, ZERO_TOPIC,
+        lookbackBlocks]
     );
     return rows[0] ? Object.freeze({
       tokenAddress: normalizeTokenAddress(CHAIN, tokenAddress),
@@ -125,7 +142,9 @@ function createRobinhoodTokenDeploymentOutboxRepository(options = {}) {
     return result.rowCount === 1;
   }
 
-  return Object.freeze({ claim, complete, findDiscoveryHint, findMintHint, isExact, retry });
+  return Object.freeze({
+    claim, claimBatch, complete, findDiscoveryHint, findMintHint, isExact, retry,
+  });
 }
 
 module.exports = { createRobinhoodTokenDeploymentOutboxRepository };

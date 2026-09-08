@@ -9,6 +9,7 @@ const {
 } = require('../src/models/robinhood-token-deployment-outbox');
 
 const TOKEN = `0x${'a'.repeat(40)}`;
+const TOKEN_B = `0x${'d'.repeat(40)}`;
 const DEPLOYMENT = { tokenAddress: TOKEN, source: 'rpc_direct' };
 const BLOCK_HASH = `0x${'c'.repeat(64)}`;
 const TRANSACTION_HASH = `0x${'b'.repeat(64)}`;
@@ -58,7 +59,42 @@ it('materializes exact deployment evidence before completing the outbox task', a
   assert.deepEqual(fixture.calls, ['transition', 'attributed', 'complete']);
 });
 
-it('uses a canonical local code transition before tracing its transaction', async () => {
+it('drains a bounded deployment batch concurrently', async () => {
+  const completed = [];
+  const worker = createRobinhoodTokenDeploymentWorker({
+    owner: 'test',
+    runtime: {
+      outbox: {
+        claimBatch: async (input) => {
+          assert.equal(input.limit, 64);
+          return [TOKEN, TOKEN_B].map((tokenAddress) => ({
+            tokenAddress, attemptCount: 1, createdAt: new Date(),
+          }));
+        },
+        isExact: async () => false,
+        findMintHint: async (tokenAddress) => ({
+          tokenAddress, blockNumber: '100', blockHash: BLOCK_HASH,
+          transactionHash: TRANSACTION_HASH,
+        }),
+        complete: async ({ tokenAddress }) => { completed.push(tokenAddress); },
+        retry: async () => { throw new Error('must not retry'); },
+      },
+      localResolver: { verify: async (input) => input },
+      creatorSource: { readRange: async () => new Map([['100', { deployments: [] }]]) },
+      attributions: {
+        recordCodeTransitions: async () => {},
+        recordVerifiedDirectDeployments: async () => { throw new Error('must not invent creator'); },
+      },
+    },
+  });
+  const result = await worker.runOnce();
+  assert.deepEqual(result, {
+    status: 'completed', claimed: 2, resolved: 2, deferred: 0, skipped: 0, errors: 0,
+  });
+  assert.deepEqual(completed.sort(), [TOKEN, TOKEN_B].sort());
+});
+
+it('completes from an exact code transition without requiring creator provenance', async () => {
   const fixture = runtime({
     outbox: {
       claim: async () => ({ tokenAddress: TOKEN, attemptCount: 1, createdAt: new Date() }),
@@ -75,22 +111,18 @@ it('uses a canonical local code transition before tracing its transaction', asyn
       transactionHash: TRANSACTION_HASH,
     }) },
     creatorSource: { readRange: async () => new Map([['100', { deployments: [] }]]) },
-    verifier: { verifyTransactionDeployment: async () => ({
-      tokenAddress: TOKEN, blockNumber: '100', creatorAddress: TOKEN,
-      transactionHash: TRANSACTION_HASH, source: 'rpc_trace', factoryAddress: TOKEN,
-    }) },
     attributions: {
       recordCodeTransitions: async () => { fixture.calls.push('local-attributed'); },
-      recordVerifiedDirectDeployments: async () => { fixture.calls.push('creator-attributed'); },
+      recordVerifiedDirectDeployments: async () => { throw new Error('must not invent creator'); },
     },
   });
   const result = await createRobinhoodTokenDeploymentWorker({
     runtime: fixture.value, owner: 'test',
   }).runOnce();
   assert.deepEqual(result, {
-    status: 'resolved', tokenAddress: TOKEN, source: 'rpc_trace',
+    status: 'resolved', tokenAddress: TOKEN, source: 'rpc_code_transition',
   });
-  assert.deepEqual(fixture.calls, ['local-attributed', 'creator-attributed', 'complete']);
+  assert.deepEqual(fixture.calls, ['local-attributed', 'complete']);
 });
 
 it('uses the canonical pool discovery transaction when no mint was observed', async () => {
@@ -110,47 +142,42 @@ it('uses the canonical pool discovery transaction when no mint was observed', as
     },
     localResolver: { verify: async (hint) => { verifiedHint = hint; return hint; } },
     creatorSource: { readRange: async () => new Map([['100', { deployments: [] }]]) },
-    verifier: { verifyTransactionDeployment: async () => ({
-      ...discoveryHint, creatorAddress: TOKEN,
-      source: 'rpc_trace', factoryAddress: TOKEN,
-    }) },
     attributions: {
       recordCodeTransitions: async () => { fixture.calls.push('local-attributed'); },
-      recordVerifiedDirectDeployments: async () => { fixture.calls.push('creator-attributed'); },
+      recordVerifiedDirectDeployments: async () => { throw new Error('must not invent creator'); },
     },
   });
   const result = await createRobinhoodTokenDeploymentWorker({
     runtime: fixture.value, owner: 'test',
   }).runOnce();
   assert.deepEqual(verifiedHint, discoveryHint);
-  assert.equal(result.source, 'rpc_trace');
-  assert.deepEqual(fixture.calls, ['local-attributed', 'creator-attributed', 'complete']);
+  assert.equal(result.source, 'rpc_code_transition');
+  assert.deepEqual(fixture.calls, ['local-attributed', 'complete']);
 });
 
-it('keeps the exact transition queued when LIVE trace evidence is unavailable', async () => {
+it('does not keep exact holder evidence queued when creator evidence is unavailable', async () => {
   const fixture = runtime({
     outbox: {
       claim: async () => ({ tokenAddress: TOKEN, attemptCount: 1, createdAt: new Date() }),
       isExact: async () => false,
       findMintHint: async () => ({ tokenAddress: TOKEN, blockNumber: '100',
         blockHash: BLOCK_HASH, transactionHash: TRANSACTION_HASH }),
-      complete: async () => { throw new Error('must not complete'); },
-      retry: async () => { fixture.calls.push('retry'); },
+      complete: async () => { fixture.calls.push('complete'); },
+      retry: async () => { throw new Error('must not retry'); },
     },
     localResolver: { verify: async (input) => input },
     creatorSource: { readRange: async () => new Map([['100', { deployments: [] }]]) },
-    verifier: { verifyTransactionDeployment: async () => {
-      throw Object.assign(new Error('debug trace unavailable'), { code: 'trace_unavailable' });
-    } },
     attributions: {
       recordCodeTransitions: async () => { fixture.calls.push('local-attributed'); },
       recordVerifiedDirectDeployments: async () => { throw new Error('must not persist'); },
     },
   });
   const worker = createRobinhoodTokenDeploymentWorker({ runtime: fixture.value, owner: 'test' });
-  assert.equal(await worker.runOnce(), null);
-  assert.deepEqual(fixture.calls, ['local-attributed', 'retry']);
-  assert.equal(worker.getStatus().lastError.code, 'trace_unavailable');
+  assert.deepEqual(await worker.runOnce(), {
+    status: 'resolved', tokenAddress: TOKEN, source: 'rpc_code_transition',
+  });
+  assert.deepEqual(fixture.calls, ['local-attributed', 'complete']);
+  assert.equal(worker.getStatus().lastError, null);
 });
 
 it('proves an exact deployment block from recent pruned-RPC state', async () => {
@@ -200,7 +227,7 @@ it('defers a fresh task briefly while its mint reaches the journal', async () =>
   assert.equal(retries[0].retryMs, 1000);
 });
 
-it('prioritizes recent outbox tasks and loads their earliest captured mint', async () => {
+it('prioritizes recent outbox tasks and loads a confirmed canonical mint', async () => {
   const calls = [];
   const repository = createRobinhoodTokenDeploymentOutboxRepository({
     database: { query: async (sql, params) => {
@@ -219,10 +246,14 @@ it('prioritizes recent outbox tasks and loads their earliest captured mint', asy
     tokenAddress: TOKEN, blockNumber: '100', blockHash: BLOCK_HASH,
     transactionHash: TRANSACTION_HASH,
   });
-  assert.match(calls[1].sql, /from_wallet = '0x0{40}'/);
-  assert.match(calls[1].sql, /applied = false/);
-  assert.match(calls[1].sql, /UNION ALL/);
-  assert.match(calls[1].sql, /applied = true/);
+  assert.match(calls[1].sql, /robinhood_chain_events event/);
+  assert.match(calls[1].sql, /block\.canonical=TRUE/);
+  assert.match(calls[1].sql, /event\.topics->>1=\$4/);
+  assert.match(calls[1].sql, /cursor\.node_head - \$2::bigint/);
+  assert.match(calls[1].sql, /cursor\.node_head - \$5::bigint/);
+  assert.deepEqual(calls[1].params.slice(1), [12,
+    '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',
+    `0x${'0'.repeat(64)}`, 96]);
 });
 
 it('loads the earliest active pool transaction as canonical discovery evidence', async () => {
@@ -245,13 +276,13 @@ it('loads the earliest active pool transaction as canonical discovery evidence',
   assert.deepEqual(query.params, [TOKEN]);
 });
 
-it('does not treat a code transition without creator provenance as exact', async () => {
+it('treats a code transition as terminal holder deployment evidence', async () => {
   let exactSources;
   const repository = createRobinhoodTokenDeploymentOutboxRepository({
     database: { async query(_sql, params) { exactSources = params[1]; return { rowCount: 0 }; } },
   });
   assert.equal(await repository.isExact(TOKEN), false);
-  assert.equal(exactSources.includes('rpc_code_transition'), false);
+  assert.equal(exactSources.includes('rpc_code_transition'), true);
   assert.equal(exactSources.includes('rpc_trace'), true);
 });
 
@@ -290,7 +321,6 @@ it('skips tokens whose exact local attribution was already captured', async () =
 });
 
 it('builds the live deployment runtime without an external creation lookup', () => {
-  let verifierOptions;
   let blockscoutFactoryCalls = 0;
   const built = buildRuntime({
     env: {
@@ -303,10 +333,8 @@ it('builds the live deployment runtime without an external creation lookup', () 
     outboxFactory: () => ({}),
     attributionFactory: () => ({}),
     creatorSourceFactory: () => ({}),
-    verifierFactory: (options) => { verifierOptions = options; return {}; },
   }, { timeoutMs: 30_000 });
 
   assert.ok(built);
   assert.equal(blockscoutFactoryCalls, 0);
-  assert.equal(verifierOptions.internalCreationLookup, undefined);
 });

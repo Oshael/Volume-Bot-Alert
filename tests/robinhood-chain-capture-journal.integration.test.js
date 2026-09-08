@@ -23,7 +23,9 @@ const stage193 = require('../src/utils/db-init-stage193');
 const stage194 = require('../src/utils/db-init-stage194');
 const stage195 = require('../src/utils/db-init-stage195');
 const stage103 = require('../src/utils/db-init-stage103');
+const stage165 = require('../src/utils/db-init-stage165');
 const v2 = require('../src/services/uniswap-v2-decoder');
+const { TRANSFER_TOPIC, ZERO_TOPIC } = require('../src/services/evm-erc20-supply-delta');
 const { SCHEMA_GROUPS, __private: schemaChecks } = require('../src/utils/runtime-schema');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
@@ -33,6 +35,7 @@ const NEXT_HASH = `0x${'3'.repeat(64)}`;
 const TX = `0x${'4'.repeat(64)}`;
 const NEXT_TX = `0x${'5'.repeat(64)}`;
 const ADDRESS = v2.ROBINHOOD_V2_FACTORY;
+const TOKEN = `0x${'9'.repeat(40)}`;
 const TOPIC = v2.TOPICS.pairCreated;
 const OBSERVED_AT = '2026-09-03T20:00:00.000Z';
 const MAX_UINT256 = ((1n << 256n) - 1n).toString();
@@ -58,6 +61,7 @@ function capture(number = 100, hash = HASH, parentHash = PARENT) {
 }
 
 async function clearTables() {
+  await db.query('DELETE FROM robinhood_token_deployment_outbox');
   await db.query('DELETE FROM robinhood_canonical_head_candidates');
   await db.query('DELETE FROM robinhood_chain_v3_balance_snapshots');
   await db.query('DELETE FROM robinhood_head_captures');
@@ -70,6 +74,7 @@ describe('Robinhood canonical chain capture journal', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
     await stage103.init({ closePool: false });
+    await stage165.init({ closePool: false });
     await stage191.init({ closePool: false });
     await stage192.init({ closePool: false });
     await stage193.init({ closePool: false });
@@ -286,6 +291,24 @@ describe('Robinhood canonical chain capture journal', () => {
     assert.equal(cursor.next_block, '101');
     assert.equal(cursor.checkpoint_block, '100');
     assert.equal(cursor.checkpoint_hash, HASH);
+  });
+
+  it('durably enqueues a generic zero-address mint before catalog discovery', async () => {
+    const input = capture();
+    input.events = [{
+      transactionHash: TX, transactionIndex: 0, logIndex: 0,
+      address: TOKEN,
+      topics: [TRANSFER_TOPIC, ZERO_TOPIC, `0x${'0'.repeat(24)}${'8'.repeat(40)}`],
+      data: `0x${'0'.repeat(63)}1`,
+    }];
+    await createRobinhoodChainCaptureJournal().commitBlock(input);
+    const result = await db.query(
+      `SELECT token_address, status, attempt_count
+         FROM robinhood_token_deployment_outbox WHERE chain='robinhood'`
+    );
+    assert.deepEqual(result.rows, [{
+      token_address: TOKEN, status: 'pending', attempt_count: 0,
+    }]);
   });
 
   it('commits a contiguous block batch atomically and advances one canonical frontier', async () => {

@@ -2039,6 +2039,18 @@ module.exports = {
     intervalMs: parseIntegerInRange(
       process.env.ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_INTERVAL_MS, 1000, 100, 60_000
     ),
+    batchSize: parseIntegerInRange(
+      process.env.ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_BATCH_SIZE, 64, 1, 256
+    ),
+    concurrency: parseIntegerInRange(
+      process.env.ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_CONCURRENCY, 16, 1, 32
+    ),
+    confirmations: parseIntegerInRange(
+      process.env.ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_CONFIRMATIONS, 12, 0, 256
+    ),
+    stateLookbackBlocks: parseIntegerInRange(
+      process.env.ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_STATE_LOOKBACK_BLOCKS, 96, 16, 1000
+    ),
     leaseMs: parseIntegerInRange(
       process.env.ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_LEASE_MS, 300_000, 10_000, 900_000
     ),

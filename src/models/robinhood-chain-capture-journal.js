@@ -2,9 +2,11 @@
 const { createHash } = require('node:crypto');
 const db = require('./db');
 const { routeCanonicalEvents } = require('../services/robinhood-chain-domain-router');
+const { TRANSFER_TOPIC, ZERO_TOPIC } = require('../services/evm-erc20-supply-delta');
 const CHAIN = 'robinhood';
 const NOTIFY_CHANNEL = 'robinhood_chain_capture';
 const DOMAIN_NOTIFY_CHANNEL = 'robinhood_chain_domain_outbox';
+const DEPLOYMENT_NOTIFY_CHANNEL = 'robinhood_token_deployment_outbox';
 const CAPTURE_VERSION = 3;
 function quantity(value, label) {
   const raw = String(value ?? '').trim();
@@ -123,7 +125,7 @@ function normalizeInput(input) {
 }
 function batchPayload(entries) {
   const blocks = []; const transactions = []; const events = [];
-  const v3Snapshots = []; const workItems = [];
+  const v3Snapshots = []; const workItems = []; const deploymentTokens = new Set();
   for (const entry of entries) {
     const { block } = entry;
     blocks.push({
@@ -140,6 +142,11 @@ function batchPayload(entries) {
     events.push(...entry.events.map((event) => ({
       block_hash: block.hash, block_number: block.number.toString(), ...event,
     })));
+    for (const event of entry.events) {
+      if (event.topic0 === TRANSFER_TOPIC && event.topics[1] === ZERO_TOPIC) {
+        deploymentTokens.add(event.address);
+      }
+    }
     v3Snapshots.push(...entry.v3Snapshots.map((snapshot) => ({
       block_hash: block.hash, ...snapshot,
     })));
@@ -150,7 +157,8 @@ function batchPayload(entries) {
       log_index: item.log_index,
     })));
   }
-  return { blocks, transactions, events, v3Snapshots, workItems };
+  return { blocks, transactions, events, v3Snapshots, workItems,
+    deploymentTokens: [...deploymentTokens] };
 }
 function validateSequence(entries, current) {
   let expected = current ? BigInt(current.next_block) : entries[0].block.number;
@@ -276,6 +284,15 @@ function createRobinhoodChainCaptureJournal(options = {}) {
                transaction_index INTEGER, log_index INTEGER
              )`, [CHAIN, JSON.stringify(payload.workItems)]
       );
+      if (payload.deploymentTokens.length > 0) {
+        await client.query(
+          `INSERT INTO robinhood_token_deployment_outbox(chain, token_address)
+           SELECT $1, token_address
+             FROM UNNEST($2::varchar[]) AS token(token_address)
+           ON CONFLICT (chain, token_address) DO NOTHING`,
+          [CHAIN, payload.deploymentTokens]
+        );
+      }
       const last = entries.at(-1);
       const version = current
         ? BigInt(current.version) + BigInt(entries.length) : BigInt(entries.length - 1);
@@ -298,6 +315,11 @@ function createRobinhoodChainCaptureJournal(options = {}) {
       if (payload.workItems.length > 0) {
         await client.query(
           'SELECT pg_notify($1, $2)', [DOMAIN_NOTIFY_CHANNEL, last.block.number.toString()]
+        );
+      }
+      if (payload.deploymentTokens.length > 0) {
+        await client.query(
+          'SELECT pg_notify($1, $2)', [DEPLOYMENT_NOTIFY_CHANNEL, last.block.number.toString()]
         );
       }
       await client.query('COMMIT');

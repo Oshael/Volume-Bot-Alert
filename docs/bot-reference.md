@@ -2498,26 +2498,26 @@ Tokens Robinhood novos geram uma tarefa durável em
 aplicar Stage 165 (`node src/utils/db-init-stage165.js`), o worker independente
 `robinhood-token-deployment-worker`, no grupo `robinhood-wallet-classification`,
 é ativado por `ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_ENABLED=true`. `LISTEN/NOTIFY`
-acorda o consumidor imediatamente; polling de 1s também percebe quando o mint
-chega ao holder journal, sem instalar trigger ou obter lock nele. A Stage 183
+acorda o consumidor imediatamente. A captura canônica enfileira no mesmo commit
+todo emitter de `Transfer(from=0)`, antes de o token precisar existir no catálogo
+ou ganhar pool. A Stage 183
 (`node src/utils/db-init-stage183.js`) adiciona apenas a provenance necessária,
 com `lock_timeout` curto. Tarefas admitidas nos últimos dez minutos precedem o
-backlog histórico. O caminho primário lê o primeiro mint já capturado e usa o
-`discovery_tx_hash` do primeiro pool ativo como fallback quando o token não emite
-mint observável. O `RH_NODE_RPC_URL` da VPS prova que o bytecode era vazio em
-`N-1`, existe em `N` e que bloco/receipt permanecem canônicos; portanto uma mera
-descoberta de pool nunca é promovida como deployment. Essa prova
-`rpc_code_transition` preserva imediatamente o deployment block, mas não é mais
-terminal para a outbox de creator. No mesmo item, o worker consulta primeiro o
-journal canônico do bloco: receipt direto materializa `rpc_direct` e evento de
-launchpad conhecido preserva seu creator explícito. Somente quando ambos faltam,
-o mint transaction hash já conhecido é consultado com `debug_traceTransaction`;
-um `CREATE/CREATE2` interno validado materializa `rpc_trace`. O worker é serial,
-usa timeout e backoff já limitados e não executa trace de bloco no LIVE. Falha de
-trace mantém a transição exata e a tarefa pendente, sem publicar creator parcial.
-O Nitro da VPS deve expor `debug` apenas no HTTP RPC local usado pelo worker
-(`--http.api=net,web3,eth,debug`); esse namespace não deve ser público. O LIVE
-não depende de Archive nem do túnel do PC.
+backlog histórico. Depois das confirmações configuradas, o caminho primário lê o
+mint diretamente de `robinhood_chain_events`; o `RH_NODE_RPC_URL` pruned prova
+que o bytecode era vazio em `N-1`, existe em `N` e que bloco/receipt permanecem
+canônicos. O worker drena lotes concorrentes (`ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_BATCH_SIZE`,
+default 64; `ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_CONCURRENCY`, default 16) para concluir
+dentro da janela podada. `ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_CONFIRMATIONS` vale 12
+por default. A busca usa o índice existente de tópico/bloco e fica limitada aos
+últimos 96 blocos (`ROBINHOOD_TOKEN_DEPLOYMENT_LIVE_STATE_LOOKBACK_BLOCKS`), abaixo
+dos 128 blocos de estado medidos no node pruned. O `discovery_tx_hash` do primeiro pool ativo continua como fallback
+para contratos sem mint observável, mas uma mera descoberta nunca é promovida.
+A prova `rpc_code_transition` é terminal para a outbox de deployment e habilita
+holders sem inventar creator. Se o mesmo bloco já contém creator canônico conhecido,
+ele também é persistido; os demais creators continuam responsabilidade do worker
+canônico independente ou de repair explícito. O LIVE não usa trace, Archive,
+Blockscout nem o túnel do PC.
 
 Quando nem a transição local nem uma atribuição canônica já materializada podem
 ser comprovadas, a tarefa permanece pendente com
