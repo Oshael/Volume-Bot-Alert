@@ -44,6 +44,11 @@ describe('Robinhood bounded holder drift repair', () => {
     assert.equal(__private.chooseAction(candidate({
       classification: 'same-block-or-nonstandard-transfer-semantics',
     }), '199', options, 0).reason, 'unproven_drift');
+    assert.equal(__private.normalizeOptions({
+      maxReplayBlocks: 10_000_000, maxTotalReplayBlocks: 100_000_000,
+    }).maxReplayBlocks, 10_000_000);
+    assert.throws(() => __private.normalizeOptions({ maxReplayBlocks: 10_000_001 }),
+      /max replay blocks/);
   });
 
   it('anchors an existing balance and requeues with a fenced transaction', async () => {

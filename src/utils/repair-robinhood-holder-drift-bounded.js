@@ -22,10 +22,10 @@ function normalizeOptions(input = {}) {
     confirmations: boundedInteger(input.confirmations, 12, 0, 1000, 'confirmations'),
     timeoutMs: boundedInteger(input.timeoutMs, 15_000, 1000, 60_000, 'RPC timeout'),
     maxReplayBlocks: boundedInteger(
-      input.maxReplayBlocks, 250_000, 1, 5_000_000, 'max replay blocks'
+      input.maxReplayBlocks, 250_000, 1, 10_000_000, 'max replay blocks'
     ),
     maxTotalReplayBlocks: boundedInteger(
-      input.maxTotalReplayBlocks, 1_000_000, 1, 20_000_000, 'max total replay blocks'
+      input.maxTotalReplayBlocks, 1_000_000, 1, 100_000_000, 'max total replay blocks'
     ),
   });
 }

@@ -3523,8 +3523,9 @@ archive do probe. Ele ancora somente deficit `missing-or-implicit-credit-before-
 com `balanceOf` historico maior que o saldo local, receipts exatamente iguais ao
 `eth_getLogs` e uma linha de saldo persistida; o replay agendado fica limitado por
 token a 250 mil blocos e, por execucao, a 1 milhao de blocos. Os limites podem ser
-reduzidos por `ROBINHOOD_HOLDER_DRIFT_REPAIR_MAX_REPLAY_BLOCKS` e
-`ROBINHOOD_HOLDER_DRIFT_REPAIR_MAX_TOTAL_REPLAY_BLOCKS`.
+ajustados por `ROBINHOOD_HOLDER_DRIFT_REPAIR_MAX_REPLAY_BLOCKS` (teto de 10
+milhoes) e `ROBINHOOD_HOLDER_DRIFT_REPAIR_MAX_TOTAL_REPLAY_BLOCKS` (teto de 100
+milhoes); alterar o limite nao muda o comportamento read-only sem a flag de confirmacao.
 
 Depois de revisar o resumo, `-- --confirm-repair-or-suppress` aplica cada decisao
 com lock e CAS. Casos sem prova ou acima dos limites entram em
