@@ -206,6 +206,12 @@ function createRobinhoodHolderBackfillExecutor(options = {}) {
         atBarrier: BigInt(committed.backfillNextBlock) > safeHead,
       });
     } catch (error) {
+      if (error.code === 'holder_transfer_invalid_log'
+          && error.tokenAddress === state.tokenAddress
+          && typeof repository.markMalformed === 'function') {
+        driftEvidence.delete(state.tokenAddress);
+        return repository.markMalformed(state);
+      }
       if (error.code !== 'holder_backfill_cursor_stale') throw error;
       driftEvidence.delete(state.tokenAddress);
       return Object.freeze({

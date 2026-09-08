@@ -98,6 +98,35 @@ describe('Robinhood holder backfill executor', () => {
     });
   });
 
+  it('isolates a malformed ERC-721-style Transfer without failing the shard', async () => {
+    const isolated = [];
+    const invalid = Object.assign(new Error('Transfer log topics are invalid'), {
+      code: 'holder_transfer_invalid_log', tokenAddress: TOKEN,
+    });
+    const repository = {
+      getNextToken: async () => state(),
+      markResyncing: async () => { throw new Error('must not resync'); },
+      markMalformed: async (value) => {
+        isolated.push(value);
+        return { status: 'drifted', tokenAddress: TOKEN, reason: 'malformed_transfer_log' };
+      },
+      commitRange: async () => { throw new Error('must not commit'); },
+    };
+    const reader = {
+      getSafeHead: async () => ({ safeHead: '105' }),
+      matchesCheckpoint: async () => true,
+      readRange: async () => { throw invalid; },
+      readReceiptRange: async () => { throw new Error('must not read receipts'); },
+    };
+
+    const result = await createRobinhoodHolderBackfillExecutor({ repository, reader }).runOnce();
+
+    assert.deepEqual(result, {
+      status: 'drifted', tokenAddress: TOKEN, reason: 'malformed_transfer_log',
+    });
+    assert.deepEqual(isolated, [state()]);
+  });
+
   it('forwards a deterministic shard to token selection', async () => {
     const selections = [];
     const repository = {

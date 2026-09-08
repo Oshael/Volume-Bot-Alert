@@ -304,6 +304,28 @@ function createRobinhoodHolderBackfillRepository(options = {}) {
     return Object.freeze({ status: 'resyncing', tokenAddress: token });
   }
 
+  async function markMalformed(input = {}) {
+    const token = tokenAddress(input.tokenAddress);
+    const nextBlock = quantity(input.backfillNextBlock, 'backfillNextBlock').toString();
+    const version = quantity(input.version, 'version').toString();
+    const result = await database.query(
+      `UPDATE robinhood_holder_token_states
+          SET ledger_status = 'drifted', version = version + 1, updated_at = NOW()
+        WHERE chain = 'robinhood' AND token_address = $1
+          AND ledger_status = 'backfilling' AND backfill_next_block = $2
+          AND version = $3::bigint
+        RETURNING token_address`, [token, nextBlock, version]
+    );
+    if (!result.rowCount) {
+      const error = new Error('malformed holder token changed before isolation');
+      error.code = 'holder_backfill_cursor_stale';
+      throw error;
+    }
+    return Object.freeze({
+      status: 'drifted', tokenAddress: token, reason: 'malformed_transfer_log',
+    });
+  }
+
   async function commitRange(input = {}) {
     const confirmDrift = input.confirmDrift === true;
     const range = normalizeRange(input);
@@ -346,7 +368,7 @@ function createRobinhoodHolderBackfillRepository(options = {}) {
     }
   }
 
-  return Object.freeze({ commitRange, getNextToken, markResyncing });
+  return Object.freeze({ commitRange, getNextToken, markMalformed, markResyncing });
 }
 
 module.exports = {

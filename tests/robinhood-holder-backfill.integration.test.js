@@ -206,6 +206,20 @@ describe('Robinhood holder backfill persistence', () => {
           WHERE token_address = $1`, [DRIFT_TOKEN]
       );
       assert.deepEqual(recovered.rows[0], { ledger_status: 'backfilling', version: '2' });
+      assert.deepEqual(await repository.markMalformed({
+        tokenAddress: DRIFT_TOKEN, backfillNextBlock: '200', version: '2',
+      }), {
+        status: 'drifted', tokenAddress: DRIFT_TOKEN, reason: 'malformed_transfer_log',
+      });
+      const malformed = await client.query(
+        `SELECT ledger_status, version FROM robinhood_holder_token_states
+          WHERE token_address = $1`, [DRIFT_TOKEN]
+      );
+      assert.deepEqual(malformed.rows[0], { ledger_status: 'drifted', version: '3' });
+      assert.notEqual(
+        (await repository.getNextToken({ throughBlock: '250' }))?.tokenAddress,
+        DRIFT_TOKEN
+      );
 
       await client.query(
         `INSERT INTO robinhood_holder_token_states (
