@@ -42,6 +42,9 @@ function normalizeOptions(input = {}) {
     ),
     rangeSize: boundedInteger(input.rangeSize, 250, 1, 5000, 'rangeSize'),
     prefetch: boundedInteger(input.prefetch, 1, 1, 16, 'prefetch'),
+    addressFilterLimit: boundedInteger(
+      input.addressFilterLimit, 1000, 1, 1000, 'addressFilterLimit'
+    ),
     maxCommitMs: boundedInteger(input.maxCommitMs, 2000, 1, 300_000, 'maxCommitMs'),
     addressShardConcurrency: boundedInteger(
       input.addressShardConcurrency, 1, 1, 4, 'addressShardConcurrency'
@@ -86,7 +89,8 @@ async function buildRuntime(options, deps = {}) {
   const ledger = observe((deps.ledgerFactory
     || createRobinhoodHolderLedgerRepository)({ database }), 'ledger');
   const reader = observe((deps.readerFactory || createRobinhoodHolderTransferReader)({
-    rpcClient, addressShardConcurrency: options.addressShardConcurrency,
+    rpcClient, addressFilterLimit: options.addressFilterLimit,
+    addressShardConcurrency: options.addressShardConcurrency,
   }), 'reader');
   await reader.assertChain();
   const scanner = observe((deps.scannerFactory || createRobinhoodHolderGlobalBackfillScanner)({

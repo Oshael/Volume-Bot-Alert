@@ -237,7 +237,7 @@ describe('Robinhood holder global backfill worker', () => {
     const reader = { assertChain: async () => {}, getSafeHead() {} };
     await buildRuntime(normalizeOptions({
       enabled: true, catalogCutoff: CUTOFF, addressShardConcurrency: 3,
-      maxCommitMs: 10_000, prefetch: 16,
+      addressFilterLimit: 750, maxCommitMs: 10_000, prefetch: 16,
     }), {
       env: {
         ROBINHOOD_RPC_URL: 'http://127.0.0.1:8547',
@@ -252,7 +252,9 @@ describe('Robinhood holder global backfill worker', () => {
     });
 
     assert.equal(calls[0].providers[0].url, 'http://127.0.0.1:18547');
-    assert.deepEqual(calls[1], { rpcClient: 'rpc-client', addressShardConcurrency: 3 });
+    assert.deepEqual(calls[1], {
+      rpcClient: 'rpc-client', addressFilterLimit: 750, addressShardConcurrency: 3,
+    });
     assert.equal(calls[2].options.maxCommitMs, 10_000);
     assert.equal(calls[2].options.prefetch, 16);
   });

@@ -2257,7 +2257,8 @@ bloco do primeiro mint em N/N-1 via batch e só usa busca binária quando essa e
 não existe. Após as attributions, o comando cria uma coorte somente para tokens ainda
 sem ledger e dirige o global backfill até o handoff. O apply recusa iniciar enquanto a
 lease `robinhood-holder-backfill-worker` estiver ativa; pare esse worker antes da execução
-e reinicie-o depois. Os defaults rápidos usam range 5.000, prefetch 16, quatro shards e
+e reinicie-o depois. Os defaults rápidos usam range 5.000, prefetch 16, filtro RPC de
+até 1.000 endereços e uma shard por range (no máximo 16 `eth_getLogs` simultâneos), além de
 commits contíguos consolidados em transações de até 40.000 blocos, reduzindo a espera
 serial do PostgreSQL sem ampliar indefinidamente uma transação, além de deadline
 retomável de cinco horas. Ajuste `--holder-limit`, `--holder-concurrency`,
@@ -2325,9 +2326,12 @@ Os diagnósticos usam memória e o heartbeat existente, sem novas queries ou
 timers; não expõem URL, credenciais, payload RPC completo ou mensagens de erro.
 Considere sempre a idade do heartbeat: o retrato persistido não é uma leitura
 instantânea, e etapas de repositório incluem aquisição de conexão e execução SQL.
-No scan global, um intervalo com mais de 100 tokens elegíveis usa consulta
-`topics-only` e filtra a coorte localmente; nesse modo a concorrência de shards de
-endereços não atua. `activeRpc[].filterMode` identifica o caminho efetivamente usado.
+No scan global, todo intervalo não vazio força `eth_getLogs` filtrado pelos endereços
+elegíveis naquele bloco. A allowlist é dividida em lotes de até 1.000 contratos; rejeições
+de payload reduzem esse limite aprendido sem perder blocos ou eventos. O onboarding usa
+uma shard por range para que o prefetch 16 limite a pressão a 16 chamadas simultâneas.
+`activeRpc[].filterMode`, `addressCount` e `scopeTokens` identificam o caminho e o tamanho
+efetivos. O scanner nunca pula blocos: o filtro reduz os logs transferidos pelo RPC.
 O cold serial deve permanecer desligado, e o cutoff do backfill de tokens novos
 não pode preceder o cutoff global.
 
@@ -3426,7 +3430,9 @@ O worker lê `Transfer` por range com a coorte enviada como allowlist `address` 
 RPC, commita ranges em ordem e não grava o histórico bruto no journal. Se o node
 rejeitar o tamanho da allowlist, ela é dividida ao meio adaptativamente sem
 ampliar a janela de blocos; `addressSplits` distingue esse caso dos splits de
-range. Se um range largo encontrar déficit, a prova por receipts é lida em partes
+range. O lote inicial aceita de 1 a 1.000 endereços, configurável por
+`ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ADDRESS_FILTER_LIMIT`. Se um range largo encontrar
+déficit, a prova por receipts é lida em partes
 de no máximo 1.000 blocos e recomposta em ordem antes do commit, sem reduzir o
 range saudável configurado. O global usa um shard por vez por default, configurável de 1 a 4 por
 `ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ADDRESS_SHARD_CONCURRENCY`; a captura live

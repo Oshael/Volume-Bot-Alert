@@ -143,6 +143,11 @@ function isAdaptiveAddressError(error) {
     || error?.code === 'timeout';
 }
 
+function isAddressPayloadError(error) {
+  return (error?.code === 'http_error' && [400, 413].includes(error.httpStatus))
+    || (error?.code === 'rpc_error' && error.rpcCode === -32602);
+}
+
 async function settleGlobalReads(reads, deferRangeAdaptation) {
   if (!deferRangeAdaptation) return Promise.all(reads);
   const results = await Promise.allSettled(reads);
@@ -177,6 +182,22 @@ function createRobinhoodHolderTransferReader(options = {}) {
     return chainValidation;
   }
 
+  async function splitAddressFilter(
+    fromBlock, toBlock, tokenFilter, telemetry, deferRangeAdaptation
+  ) {
+    telemetry.addressSplits += 1;
+    const middle = Math.ceil(tokenFilter.length / 2);
+    learnedAddressLimit = learnedAddressLimit == null
+      ? middle : Math.min(learnedAddressLimit, middle);
+    const left = await readAddressFilteredLogs(
+      fromBlock, toBlock, tokenFilter.slice(0, middle), telemetry, deferRangeAdaptation
+    );
+    const right = await readAddressFilteredLogs(
+      fromBlock, toBlock, tokenFilter.slice(middle), telemetry, deferRangeAdaptation
+    );
+    return [...left, ...right];
+  }
+
   async function readLogs(fromBlock, toBlock, tokenFilter, telemetry, deferRangeAdaptation = false) {
     telemetry.requests += 1;
     try {
@@ -188,22 +209,20 @@ function createRobinhoodHolderTransferReader(options = {}) {
       if (!Array.isArray(logs)) throw new Error('eth_getLogs result must be an array');
       return logs;
     } catch (error) {
+      if (Array.isArray(tokenFilter) && tokenFilter.length > 1
+          && isAddressPayloadError(error)) {
+        return splitAddressFilter(
+          fromBlock, toBlock, tokenFilter, telemetry, deferRangeAdaptation
+        );
+      }
       // The global backfill commits smaller ranges in subsequent ticks instead
       // of waiting for a recursive tree of RPC retries before its first commit.
       if (deferRangeAdaptation && isAdaptiveRangeError(error)) throw error;
       if (Array.isArray(tokenFilter) && tokenFilter.length > 1
           && isAdaptiveAddressError(error)) {
-        telemetry.addressSplits += 1;
-        const middle = Math.ceil(tokenFilter.length / 2);
-        learnedAddressLimit = learnedAddressLimit == null
-          ? middle : Math.min(learnedAddressLimit, middle);
-        const left = await readAddressFilteredLogs(
-          fromBlock, toBlock, tokenFilter.slice(0, middle), telemetry, deferRangeAdaptation
+        return splitAddressFilter(
+          fromBlock, toBlock, tokenFilter, telemetry, deferRangeAdaptation
         );
-        const right = await readAddressFilteredLogs(
-          fromBlock, toBlock, tokenFilter.slice(middle), telemetry, deferRangeAdaptation
-        );
-        return [...left, ...right];
       }
       if (!isAdaptiveRangeError(error) || fromBlock >= toBlock) throw error;
       telemetry.splits += 1;

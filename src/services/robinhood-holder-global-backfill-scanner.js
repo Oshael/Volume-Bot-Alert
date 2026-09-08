@@ -499,8 +499,10 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
     };
     const pending = planned.map((range) => {
       const startedAt = now();
+      const tokenAddresses = rangeScope(schedule, range.toBlock);
       return reader.readGlobalRange({
-        tokenAddresses: rangeScope(schedule, range.toBlock), ...range, deferRangeAdaptation: true,
+        tokenAddresses, ...range, forceAddressFiltered: tokenAddresses.length > 0,
+        deferRangeAdaptation: true,
       })
         .then((value) => observeFetched(value, Math.max(0, now() - startedAt)),
           (error) => ({ error }));

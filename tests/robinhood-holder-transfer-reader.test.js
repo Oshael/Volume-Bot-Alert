@@ -320,6 +320,7 @@ describe('Robinhood holder Transfer reader', () => {
     });
     const result = await reader.readGlobalRange({
       tokenAddresses: [TOKEN, token2], fromBlock: 100, toBlock: 100,
+      deferRangeAdaptation: true,
     });
 
     assert.deepEqual(filters, [[TOKEN, token2], [TOKEN], [token2]]);

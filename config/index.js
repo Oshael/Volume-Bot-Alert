@@ -1393,6 +1393,9 @@ module.exports = {
     prefetch: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_GLOBAL_BACKFILL_PREFETCH, 1, 1, 16
     ),
+    addressFilterLimit: parseIntegerInRange(
+      process.env.ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ADDRESS_FILTER_LIMIT, 1000, 1, 1000
+    ),
     maxCommitMs: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_GLOBAL_BACKFILL_MAX_COMMIT_MS, 2000, 1, 300_000
     ),

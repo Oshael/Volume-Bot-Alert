@@ -232,8 +232,8 @@ describe('Robinhood holder global backfill scanner', () => {
       reader: {
         getSafeHead: async () => ({ safeHead: '119' }),
         readReceiptRange: async () => { throw new Error('unexpected receipts'); },
-        readGlobalRange: async ({ tokenAddresses, fromBlock, toBlock }) => {
-          scopes.push({ fromBlock, tokenAddresses });
+        readGlobalRange: async ({ tokenAddresses, fromBlock, toBlock, forceAddressFiltered }) => {
+          scopes.push({ fromBlock, tokenAddresses, forceAddressFiltered });
           return range(fromBlock, toBlock);
         },
       },
@@ -243,8 +243,8 @@ describe('Robinhood holder global backfill scanner', () => {
     await scanner.runOnce({ throughBlock: 119 });
 
     assert.deepEqual(scopes, [
-      { fromBlock: '100', tokenAddresses: [TOKEN] },
-      { fromBlock: '110', tokenAddresses: [TOKEN, futureToken] },
+      { fromBlock: '100', tokenAddresses: [TOKEN], forceAddressFiltered: true },
+      { fromBlock: '110', tokenAddresses: [TOKEN, futureToken], forceAddressFiltered: true },
     ]);
   });
 

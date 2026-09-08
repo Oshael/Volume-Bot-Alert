@@ -1036,6 +1036,7 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_HOLDER_GLOBAL_BACKFILL_AUTO_START: 'true',
       ROBINHOOD_HOLDER_GLOBAL_BACKFILL_CATALOG_CUTOFF: '2026-08-10T00:00:00Z',
       ROBINHOOD_HOLDER_GLOBAL_BACKFILL_PREFETCH: '99',
+      ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ADDRESS_FILTER_LIMIT: '9999',
       ROBINHOOD_HOLDER_GLOBAL_BACKFILL_MAX_COMMIT_MS: '10000',
       ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ADDRESS_SHARD_CONCURRENCY: '99',
       ROBINHOOD_HOLDER_GLOBAL_BACKFILL_ROLLING_ENABLED: 'true',
@@ -1044,6 +1045,7 @@ describe('runtime worker groups config', () => {
       assert.equal(config.robinhoodHolderGlobalBackfillWorker.enabled, true);
       assert.equal(config.robinhoodHolderGlobalBackfillWorker.autoStart, true);
       assert.equal(config.robinhoodHolderGlobalBackfillWorker.prefetch, 16);
+      assert.equal(config.robinhoodHolderGlobalBackfillWorker.addressFilterLimit, 1000);
       assert.equal(config.robinhoodHolderGlobalBackfillWorker.maxCommitMs, 10_000);
       assert.equal(config.robinhoodHolderGlobalBackfillWorker.addressShardConcurrency, 4);
       assert.equal(config.robinhoodHolderGlobalBackfillWorker.rollingEnabled, true);

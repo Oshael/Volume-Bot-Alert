@@ -43,6 +43,13 @@ function options(overrides = {}) {
 }
 
 describe('Robinhood combined onboarding backfill', () => {
+  it('bounds the global holder scan to exact address-filtered RPC batches', () => {
+    const configured = __private.globalOptions(options(), '2026-09-08T00:00:00.000Z');
+    assert.equal(configured.prefetch, 16);
+    assert.equal(configured.addressFilterLimit, 1000);
+    assert.equal(configured.addressShardConcurrency, 1);
+  });
+
   it('orients a meme/stock V4 pool and excludes stock/native reference pools', () => {
     const event = decodeStockPair(stockInitialize(), {
       protocol: 'uniswap-v4', decode: v4.decodeInitialize,
