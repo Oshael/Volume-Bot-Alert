@@ -2257,8 +2257,10 @@ bloco do primeiro mint em N/N-1 via batch e só usa busca binária quando essa e
 não existe. Após as attributions, o comando cria uma coorte somente para tokens ainda
 sem ledger e dirige o global backfill até o handoff. O apply recusa iniciar enquanto a
 lease `robinhood-holder-backfill-worker` estiver ativa; pare esse worker antes da execução
-e reinicie-o depois. Os defaults rápidos usam range 5.000, prefetch 8, quatro shards e
-deadline retomável de cinco horas. Ajuste `--holder-limit`, `--holder-concurrency`,
+e reinicie-o depois. Os defaults rápidos usam range 5.000, prefetch 16, quatro shards e
+commits contíguos consolidados em transações de até 40.000 blocos, reduzindo a espera
+serial do PostgreSQL sem ampliar indefinidamente uma transação, além de deadline
+retomável de cinco horas. Ajuste `--holder-limit`, `--holder-concurrency`,
 `--global-timeout-minutes`, `--range-size`, `--from-block`, `--to-block`,
 `--stock-rpc-concurrency`, `--stock-checkpoint-file` e `--timeout-ms`
 conforme o provider. Reinicie os processos Robinhood após o apply para carregar
@@ -2275,7 +2277,7 @@ no processo local, pois consome o cursor live mantido no PostgreSQL compartilhad
 a lease live deve continuar saudável em outro runtime. A primeira
 execução apenas congela a coorte para inspeção; o scan começa somente com
 `ROBINHOOD_HOLDER_GLOBAL_BACKFILL_AUTO_START=true`. O prefetch começa em 1, pode
-ser configurado de 1 a 8 e reduz diante de splits ou commits lentos. Com lag live
+ser configurado de 1 a 16 e reduz diante de splits ou commits lentos. Com lag live
 acima de 100 blocos, três batches saudáveis só elevam o prefetch quando o lag está
 caindo; crescimento acima de 25 blocos entre ticks reduz pela metade e oscilação
 menor mantém o nível. `liveLagTrend` e `liveLagDeltaBlocks` expõem a decisão.

@@ -4,6 +4,7 @@ const { after, describe, it } = require('node:test');
 const db = require('../src/models/db');
 const {
   createRobinhoodHolderGlobalBackfillCommitRepository,
+  __private: { normalizeRange },
 } = require('../src/models/robinhood-holder-global-backfill-commit');
 
 const TOKEN_A = `0x${'1'.repeat(40)}`;
@@ -27,6 +28,17 @@ function transfer(tokenAddress, overrides = {}) {
 }
 
 describe('Robinhood holder global backfill range commit', () => {
+  it('accepts consolidated ranges up to forty thousand blocks', () => {
+    const input = {
+      runId: 1, fromBlock: '100', toBlock: '40099',
+      checkpoint: { number: '40099', hash: HASH_A }, transfers: [],
+    };
+    assert.equal(normalizeRange(input).nextBlock, '40100');
+    assert.throws(() => normalizeRange({
+      ...input, toBlock: '40100', checkpoint: { number: '40100', hash: HASH_A },
+    }), /exceeds 40000 blocks/);
+  });
+
   it('atomically commits multiple tokens, rejects gaps/deficits and cleans exclusions', async () => {
     const client = await db.getClient();
     try {

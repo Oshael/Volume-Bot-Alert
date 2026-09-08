@@ -41,7 +41,7 @@ function normalizeOptions(input = {}) {
       input.maxErrorBackoffMs, 30_000, 1000, 300_000, 'maxErrorBackoffMs'
     ),
     rangeSize: boundedInteger(input.rangeSize, 250, 1, 5000, 'rangeSize'),
-    prefetch: boundedInteger(input.prefetch, 1, 1, 8, 'prefetch'),
+    prefetch: boundedInteger(input.prefetch, 1, 1, 16, 'prefetch'),
     maxCommitMs: boundedInteger(input.maxCommitMs, 2000, 1, 300_000, 'maxCommitMs'),
     addressShardConcurrency: boundedInteger(
       input.addressShardConcurrency, 1, 1, 4, 'addressShardConcurrency'

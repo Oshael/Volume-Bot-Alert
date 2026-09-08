@@ -183,6 +183,36 @@ describe('Robinhood holder global backfill scanner', () => {
     });
   });
 
+  it('uses sixteen prefetched ranges while bounding each consolidated commit', async () => {
+    let nextBlock = '100';
+    const commits = [];
+    const scanner = createRobinhoodHolderGlobalBackfillScanner({
+      lifecycleRepository: {
+        getActiveRun: async () => runState(nextBlock), loadCohort: async () => [TOKEN],
+      },
+      commitRepository: {
+        async commitRange(input) {
+          commits.push([input.fromBlock, input.toBlock]);
+          nextBlock = input.nextBlock;
+          return { status: 'committed', ...input };
+        },
+        async excludeToken() { throw new Error('unexpected exclusion'); },
+      },
+      reader: {
+        getSafeHead: async () => ({ safeHead: '80099' }),
+        readReceiptRange: async () => { throw new Error('unexpected receipts'); },
+        readGlobalRange: async ({ fromBlock, toBlock }) => range(fromBlock, toBlock),
+      },
+      options: { rangeSize: 5000, prefetch: 16 },
+    });
+
+    const result = await scanner.runOnce({ throughBlock: 80099 });
+
+    assert.deepEqual(commits, [['100', '40099'], ['40100', '80099']]);
+    assert.equal(result.ranges, 16);
+    assert.equal(result.nextBlock, '80100');
+  });
+
   it('adds cohort tokens to the RPC scope only from their deployment block', async () => {
     const futureToken = `0x${'2'.repeat(40)}`;
     const scopes = [];
@@ -285,8 +315,8 @@ describe('Robinhood holder global backfill scanner', () => {
     await scanner.runOnce({ throughBlock: 20099 });
 
     assert.equal(scanner.getStatus().prefetch, 4);
-    assert.equal(scanner.getStatus().lastBatch.commitDurationMs, 8200);
-    assert.equal(scanner.getStatus().lastBatch.commitPerRangeMs, 2050);
+    assert.equal(scanner.getStatus().lastBatch.commitDurationMs, 2050);
+    assert.equal(scanner.getStatus().lastBatch.commitPerRangeMs, 512.5);
   });
 
   it('excludes malformed cohort logs without advancing the cursor', async () => {

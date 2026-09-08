@@ -7,6 +7,7 @@ const MIN_COMMIT_PRESSURE_GRACE_MS = 250;
 const COMMIT_PRESSURE_GRACE_RATIO = 0.1;
 const RANGE_GROWTH_HEALTHY_BATCHES = 5;
 const RANGE_GROWTH_MAX_RPC_MS = 5000;
+const MAX_COMMIT_BATCH_BLOCKS = 40_000n;
 
 function boundedInteger(value, fallback, minimum, maximum, label) {
   const parsed = value == null ? fallback : Number(value);
@@ -25,7 +26,7 @@ function quantity(value, label) {
 function normalizeOptions(input = {}) {
   return Object.freeze({
     rangeSize: boundedInteger(input.rangeSize, DEFAULT_RANGE_SIZE, 1, 5000, 'rangeSize'),
-    prefetch: boundedInteger(input.prefetch, DEFAULT_PREFETCH, 1, 8, 'prefetch'),
+    prefetch: boundedInteger(input.prefetch, DEFAULT_PREFETCH, 1, 16, 'prefetch'),
     finalityBlocks: boundedInteger(
       input.finalityBlocks, DEFAULT_FINALITY_BLOCKS, 2000, 100_000, 'finalityBlocks'
     ),
@@ -362,7 +363,9 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
 
   async function commitFetchedBatch(runId, ranges) {
     const merged = mergeFetchedRanges(ranges);
-    if (BigInt(merged.toBlock) - BigInt(merged.fromBlock) + 1n > 5000n) return null;
+    if (BigInt(merged.toBlock) - BigInt(merged.fromBlock) + 1n > MAX_COMMIT_BATCH_BLOCKS) {
+      return null;
+    }
     const startedAt = now();
     try {
       const committed = await committer.commitRange({ ...merged, runId });
@@ -387,7 +390,7 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
     return Object.freeze({ committed, durationMs, terminal: null });
   }
 
-  async function commitFetchedSet(runId, ranges) {
+  async function commitFetchedGroup(runId, ranges) {
     const batched = ranges.length > 1 ? await commitFetchedBatch(runId, ranges) : null;
     if (batched) return Object.freeze({
       committed: ranges, durationMs: batched.durationMs, terminal: null,
@@ -404,6 +407,40 @@ function createRobinhoodHolderGlobalBackfillScanner(deps = {}) {
         (total, range) => total + Number(range.touchedWallets || 0), 0
       ),
     });
+  }
+
+  async function commitFetchedSet(runId, ranges) {
+    const groups = [];
+    let group = [];
+    for (const range of ranges) {
+      const span = group.length === 0
+        ? 0n
+        : BigInt(range.toBlock) - BigInt(group[0].fromBlock) + 1n;
+      if (group.length > 0 && span > MAX_COMMIT_BATCH_BLOCKS) {
+        groups.push(group);
+        group = [];
+      }
+      group.push(range);
+    }
+    if (group.length > 0) groups.push(group);
+
+    const committed = [];
+    let durationMs = 0;
+    let touchedTokens = 0;
+    let touchedWallets = 0;
+    for (const batch of groups) {
+      const outcome = await commitFetchedGroup(runId, batch);
+      committed.push(...outcome.committed);
+      durationMs += outcome.durationMs;
+      touchedTokens += outcome.touchedTokens;
+      touchedWallets += outcome.touchedWallets;
+      if (outcome.terminal) {
+        return Object.freeze({
+          committed, durationMs, touchedTokens, touchedWallets, terminal: outcome.terminal,
+        });
+      }
+    }
+    return Object.freeze({ committed, durationMs, touchedTokens, touchedWallets, terminal: null });
   }
 
   async function handleFetchError(error, context) {

@@ -349,7 +349,7 @@ function globalOptions(options, catalogCutoff) {
     catalogCutoff,
     intervalMs: 250,
     rangeSize: 5000,
-    prefetch: 8,
+    prefetch: 16,
     maxCommitMs: 5000,
     addressShardConcurrency: 4,
     finalityBlocks: 2000,

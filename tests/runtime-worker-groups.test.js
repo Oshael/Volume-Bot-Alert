@@ -1043,7 +1043,7 @@ describe('runtime worker groups config', () => {
     }, (config) => {
       assert.equal(config.robinhoodHolderGlobalBackfillWorker.enabled, true);
       assert.equal(config.robinhoodHolderGlobalBackfillWorker.autoStart, true);
-      assert.equal(config.robinhoodHolderGlobalBackfillWorker.prefetch, 8);
+      assert.equal(config.robinhoodHolderGlobalBackfillWorker.prefetch, 16);
       assert.equal(config.robinhoodHolderGlobalBackfillWorker.maxCommitMs, 10_000);
       assert.equal(config.robinhoodHolderGlobalBackfillWorker.addressShardConcurrency, 4);
       assert.equal(config.robinhoodHolderGlobalBackfillWorker.rollingEnabled, true);

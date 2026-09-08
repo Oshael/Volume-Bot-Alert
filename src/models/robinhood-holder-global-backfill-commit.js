@@ -6,7 +6,7 @@ const {
 
 const CHAIN = 'robinhood';
 const ZERO_ADDRESS = `0x${'0'.repeat(40)}`;
-const MAX_RANGE_BLOCKS = 5000n;
+const MAX_RANGE_BLOCKS = 40_000n;
 
 function quantity(value, label) {
   const raw = String(value ?? '').trim();
