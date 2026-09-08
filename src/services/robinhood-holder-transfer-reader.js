@@ -266,10 +266,13 @@ function createRobinhoodHolderTransferReader(options = {}) {
     }
     await assertChain();
     const telemetry = { requests: 0, splits: 0 };
-    const [logs, checkpoint] = await Promise.all([
-      readLogs(fromBlock, toBlock, tokenAddress, telemetry),
+    const reads = [
+      readLogs(fromBlock, toBlock, tokenAddress, telemetry, input.deferRangeAdaptation),
       readBlock(toBlock),
-    ]);
+    ];
+    const [logs, checkpoint] = await settleGlobalReads(
+      reads, input.deferRangeAdaptation
+    );
     const checkpointHash = checkpoint.hash;
     const context = { tokenAddress, fromBlock, toBlock, checkpointHash };
     const transfers = orderTransfers(logs, context);

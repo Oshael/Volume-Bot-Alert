@@ -60,9 +60,12 @@ describe('Robinhood holder backfill executor', () => {
         throughBlock: '105', excludeTokenAddresses: [], shardCount: 1, shardIndex: 0,
       }],
       ['checkpoint', { number: '102', hash: HASH }],
-      ['read', { tokenAddress: TOKEN, fromBlock: '103', toBlock: '105' }],
+      ['read', {
+        tokenAddress: TOKEN, fromBlock: '103', toBlock: '105', deferRangeAdaptation: true,
+      }],
       ['commit', {
         tokenAddress: TOKEN, fromBlock: '103', toBlock: '105',
+        deferRangeAdaptation: true,
         checkpoint: { number: '105', hash: HASH }, transfers: [],
       }],
     ]);
@@ -125,6 +128,41 @@ describe('Robinhood holder backfill executor', () => {
       status: 'drifted', tokenAddress: TOKEN, reason: 'malformed_transfer_log',
     });
     assert.deepEqual(isolated, [state()]);
+  });
+
+  it('defers an RPC timeout and remembers a smaller range for that token', async () => {
+    const reads = [];
+    const timeout = Object.assign(new Error('timeout'), { code: 'timeout' });
+    const repository = {
+      getNextToken: async () => state(),
+      markResyncing: async () => { throw new Error('must not resync'); },
+      commitRange: async (range) => ({
+        status: 'committed', tokenAddress: TOKEN, holderCount: '1',
+        backfillNextBlock: String(BigInt(range.toBlock) + 1n),
+        liveThroughBlock: range.toBlock, liveThroughHash: HASH, version: 3,
+      }),
+    };
+    const reader = {
+      getSafeHead: async () => ({ safeHead: '6000' }),
+      matchesCheckpoint: async () => true,
+      readRange: async (range) => {
+        reads.push(range);
+        if (reads.length === 1) throw timeout;
+        return { ...range, checkpoint: { number: range.toBlock, hash: HASH }, transfers: [] };
+      },
+      readReceiptRange: async () => { throw new Error('must not read receipts'); },
+    };
+    const executor = createRobinhoodHolderBackfillExecutor({ repository, reader });
+
+    assert.deepEqual(await executor.runOnce({ rangeSize: 5000 }), {
+      status: 'rpc-deferred', tokenAddress: TOKEN, reason: 'timeout',
+      failedRangeSize: 5000, effectiveRangeSize: 2500,
+      safeHead: '6000', atBarrier: false,
+    });
+    assert.equal((await executor.runOnce({ rangeSize: 5000 })).status, 'committed');
+    assert.deepEqual(reads.map(({ fromBlock, toBlock, deferRangeAdaptation }) => (
+      [fromBlock, toBlock, deferRangeAdaptation]
+    )), [['103', '5102', true], ['103', '2602', true]]);
   });
 
   it('forwards a deterministic shard to token selection', async () => {
@@ -255,8 +293,8 @@ describe('Robinhood holder backfill executor', () => {
     assert.equal(result.recoverySource, 'adaptive-range');
     assert.equal(result.originalFailedBlock, '400');
     assert.deepEqual(reads, [
-      { tokenAddress: TOKEN, fromBlock: '103', toBlock: '500' },
-      { tokenAddress: TOKEN, fromBlock: '103', toBlock: '352' },
+      { tokenAddress: TOKEN, fromBlock: '103', toBlock: '500', deferRangeAdaptation: true },
+      { tokenAddress: TOKEN, fromBlock: '103', toBlock: '352', deferRangeAdaptation: true },
     ]);
     assert.equal(commits.length, 2);
   });

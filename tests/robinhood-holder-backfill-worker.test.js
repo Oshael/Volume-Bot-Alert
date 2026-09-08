@@ -69,12 +69,14 @@ describe('Robinhood holder backfill worker', () => {
     assert.deepEqual(worker.getStatus().lastResult, {
       status: 'completed', seededTokens: 1, replayStatus: 'committed',
       tokenAddress: TOKEN, committedRanges: 1, driftSuspicions: 0, driftedTokens: 0,
+      rpcDeferredRanges: 0,
       resyncingTokens: 0, supersededTokens: 0,
       activeExecutors: 1, atBarrier: true, safeHead: '105',
     });
     assert.equal(worker.getStatus().concurrency, 1);
     assert.equal(worker.getStatus().totalSeededTokens, 1);
     assert.equal(worker.getStatus().totalCommittedRanges, 1);
+    assert.equal(worker.getStatus().totalRpcDeferredRanges, 0);
     await worker.stop();
     assert.equal(clock.cancelled.length, 1);
   });

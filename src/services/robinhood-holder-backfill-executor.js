@@ -10,6 +10,11 @@ const DEFAULT_DRIFT_RECHECK_MS = 60_000;
 const DEFAULT_RECEIPT_BLOCK_LIMIT = 250;
 const DEFAULT_RECEIPT_BATCH_SIZE = 25;
 
+function isAdaptiveRangeError(error) {
+  return ['log_range_error', 'timeout', 'rate_limited'].includes(error?.code)
+    || (error?.code === 'http_error' && [400, 408, 413, 429].includes(error.httpStatus));
+}
+
 function boundedInteger(value, fallback, minimum, maximum, label) {
   const parsed = value == null ? fallback : Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
@@ -47,6 +52,7 @@ function createRobinhoodHolderBackfillExecutor(options = {}) {
     options.receiptBatchSize, DEFAULT_RECEIPT_BATCH_SIZE, 1, 100, 'receiptBatchSize'
   );
   const driftEvidence = new Map();
+  const adaptiveRangeSizes = new Map();
 
   function clockMs() {
     const value = Number(now());
@@ -87,6 +93,7 @@ function createRobinhoodHolderBackfillExecutor(options = {}) {
         tokenAddress: state.tokenAddress,
         fromBlock: fromBlock.toString(),
         toBlock: toBlock.toString(),
+        deferRangeAdaptation: true,
       });
     } catch (error) {
       const evidence = deferDrift(state, clockMs());
@@ -171,6 +178,9 @@ function createRobinhoodHolderBackfillExecutor(options = {}) {
       throughBlock: head.safeHead, excludeTokenAddresses, shardCount, shardIndex,
     });
     if (!state) return Object.freeze({ status: 'idle', safeHead: head.safeHead });
+    const effectiveRangeSize = Math.min(
+      rangeSize, adaptiveRangeSizes.get(state.tokenAddress) || rangeSize
+    );
     try {
       if (state.liveThroughBlock !== null) {
         const matches = await reader.matchesCheckpoint({
@@ -184,12 +194,25 @@ function createRobinhoodHolderBackfillExecutor(options = {}) {
       }
       const fromBlock = BigInt(state.backfillNextBlock);
       const safeHead = BigInt(head.safeHead);
-      const candidateEnd = fromBlock + BigInt(rangeSize - 1);
+      const candidateEnd = fromBlock + BigInt(effectiveRangeSize - 1);
       const toBlock = candidateEnd < safeHead ? candidateEnd : safeHead;
-      const range = await reader.readRange({
-        tokenAddress: state.tokenAddress,
-        fromBlock: fromBlock.toString(), toBlock: toBlock.toString(),
-      });
+      let range;
+      try {
+        range = await reader.readRange({
+          tokenAddress: state.tokenAddress,
+          fromBlock: fromBlock.toString(), toBlock: toBlock.toString(),
+          deferRangeAdaptation: true,
+        });
+      } catch (error) {
+        if (!isAdaptiveRangeError(error)) throw error;
+        const nextRangeSize = Math.max(1, Math.floor(effectiveRangeSize / 2));
+        adaptiveRangeSizes.set(state.tokenAddress, nextRangeSize);
+        return Object.freeze({
+          status: 'rpc-deferred', tokenAddress: state.tokenAddress,
+          reason: error.code, failedRangeSize: effectiveRangeSize,
+          effectiveRangeSize: nextRangeSize, safeHead: head.safeHead, atBarrier: false,
+        });
+      }
       let committed = await repository.commitRange(range);
       if (committed.status === 'drift-suspected') {
         committed = await verifyDriftWithReceipts(committed, state);
@@ -201,9 +224,11 @@ function createRobinhoodHolderBackfillExecutor(options = {}) {
           ...committed, safeHead: head.safeHead, atBarrier: false,
         });
       }
+      const atBarrier = BigInt(committed.backfillNextBlock) > safeHead;
+      if (atBarrier) adaptiveRangeSizes.delete(state.tokenAddress);
       return Object.freeze({
         ...committed, safeHead: head.safeHead,
-        atBarrier: BigInt(committed.backfillNextBlock) > safeHead,
+        atBarrier,
       });
     } catch (error) {
       if (error.code === 'holder_transfer_invalid_log'
@@ -257,6 +282,6 @@ module.exports = {
   createRobinhoodHolderBackfillExecutor,
   __private: {
     DEFAULT_DRIFT_RECHECK_MS, DEFAULT_RECEIPT_BATCH_SIZE, DEFAULT_RECEIPT_BLOCK_LIMIT,
-    REQUIRED_DRIFT_OBSERVATIONS, resolveRpcProvider,
+    REQUIRED_DRIFT_OBSERVATIONS, isAdaptiveRangeError, resolveRpcProvider,
   },
 };

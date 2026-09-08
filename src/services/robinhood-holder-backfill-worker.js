@@ -8,7 +8,7 @@ const {
 
 const REPLAY_STATUSES = new Set([
   'idle', 'committed', 'drift-suspected', 'drift-unverified', 'drifted', 'resyncing',
-  'superseded',
+  'rpc-deferred', 'superseded',
 ]);
 
 function boundedInteger(value, fallback, minimum, maximum, label) {
@@ -92,6 +92,7 @@ function normalizeResult(seeded, replays) {
     replayStatus: primary.status,
     tokenAddress: primary.tokenAddress || null,
     committedRanges: replays.filter(({ status }) => status === 'committed').length,
+    rpcDeferredRanges: replays.filter(({ status }) => status === 'rpc-deferred').length,
     driftSuspicions: replays.filter(({ status }) => status === 'drift-suspected').length,
     driftedTokens: replays.filter(({ status }) => status === 'drifted').length,
     resyncingTokens: replays.filter(({ status }) => status === 'resyncing').length,
@@ -102,6 +103,8 @@ function normalizeResult(seeded, replays) {
     ...(primary.reason ? { reason: primary.reason } : {}),
     ...(primary.expectedBackfillNextBlock
       ? { expectedBackfillNextBlock: primary.expectedBackfillNextBlock } : {}),
+    ...(primary.effectiveRangeSize
+      ? { effectiveRangeSize: primary.effectiveRangeSize } : {}),
   });
 }
 
@@ -121,6 +124,7 @@ function createRobinhoodHolderBackfillWorker(deps = {}) {
     concurrency: 1,
     lastResult: null, lastError: null, totalRuns: 0, totalErrors: 0,
     consecutiveErrors: 0, totalSeededTokens: 0, totalCommittedRanges: 0,
+    totalRpcDeferredRanges: 0,
     totalDriftSuspicions: 0, totalDriftedTokens: 0,
     totalResyncingTokens: 0, totalSupersededTokens: 0, lastCompletedAt: null,
   };
@@ -172,6 +176,7 @@ function createRobinhoodHolderBackfillWorker(deps = {}) {
       status.consecutiveErrors = 0;
       status.totalSeededTokens += result.seededTokens;
       status.totalCommittedRanges += result.committedRanges;
+      status.totalRpcDeferredRanges += result.rpcDeferredRanges;
       status.totalDriftSuspicions += result.driftSuspicions;
       status.totalDriftedTokens += result.driftedTokens;
       status.totalResyncingTokens += result.resyncingTokens;

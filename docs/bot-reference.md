@@ -3425,6 +3425,11 @@ No backfill per-token, a mesma anomalia agora faz CAS do state
 demais commits do tick são contabilizados e a eliminação definitiva fica para o
 repair terminal limitado; um contrato ERC-721 com quatro tópicos em `Transfer`
 não bloqueia mais todos os executores.
+Timeout, rate limit ou rejeicao de range no `eth_getLogs` per-token tambem nao
+aciona mais a arvore recursiva inteira no mesmo tick. O executor registra
+`rpc-deferred`, reduz pela metade apenas o range daquele token e tenta novamente
+no tick seguinte; commits dos demais shards continuam contabilizados em
+`totalCommittedRanges`, enquanto `totalRpcDeferredRanges` expõe a adaptação.
 Na aplicação do journal, qualquer saldo projetado acima do limite `uint256` vira
 `holder_balance_overflow` antes do cast PostgreSQL. O apply remove balances e
 journal somente desse token, marca seu state como `drifted`, registra

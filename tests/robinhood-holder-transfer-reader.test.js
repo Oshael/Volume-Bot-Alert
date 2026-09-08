@@ -139,6 +139,20 @@ describe('Robinhood holder Transfer reader', () => {
     assert.deepEqual(result.transfers, []);
   });
 
+  it('lets a per-token caller defer range adaptation after one failed log request', async () => {
+    const error = Object.assign(new Error('timeout'), { code: 'timeout' });
+    const source = rpc(async (method) => {
+      if (method === 'eth_getBlockByNumber') return { number: '0x4', hash: HASH_A };
+      throw error;
+    });
+    const reader = createRobinhoodHolderTransferReader({ rpcClient: source.client });
+
+    await assert.rejects(reader.readRange({
+      tokenAddress: TOKEN, fromBlock: 1, toBlock: 4, deferRangeAdaptation: true,
+    }), (actual) => actual === error);
+    assert.equal(source.calls.filter(({ method }) => method === 'eth_getLogs').length, 1);
+  });
+
   it('replays one token from bounded block receipts in limited batches', async () => {
     const batchCalls = [];
     const nft = `0x${'9'.repeat(40)}`;
