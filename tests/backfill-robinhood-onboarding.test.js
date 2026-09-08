@@ -1,6 +1,9 @@
 process.env.NODE_ENV = 'test';
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
 const { describe, it } = require('node:test');
 
 const fixture = require('../data/fixtures/robinhood-uniswap-v4.json');
@@ -8,7 +11,7 @@ const { ROBINHOOD_TOKENIZED_ASSETS } = require('../src/services/robinhood-market
 const v4 = require('../src/services/uniswap-v4-decoder');
 const {
   CONFIRM_FLAG, backfillStockPairs, decodeStockPair, main, parseArgs,
-  runGlobalHolderBackfill,
+  runGlobalHolderBackfill, __private,
 } = require('../src/utils/backfill-robinhood-onboarding');
 
 function stockInitialize() {
@@ -126,12 +129,113 @@ describe('Robinhood combined onboarding backfill', () => {
     });
   });
 
+  it('parallelizes adaptive splits without exceeding the shared RPC limit', async () => {
+    let active = 0;
+    let maximum = 0;
+    const rpcClient = {
+      async request(method, params) {
+        if (method === 'eth_chainId') return '0x1237';
+        if (method !== 'eth_getLogs') throw new Error(`unexpected method ${method}`);
+        const [filter] = params;
+        active += 1;
+        maximum = Math.max(maximum, active);
+        await new Promise((resolve) => setImmediate(resolve));
+        active -= 1;
+        if (BigInt(filter.toBlock) > BigInt(filter.fromBlock)) {
+          throw Object.assign(new Error('wide range'), { code: 'log_range_error' });
+        }
+        return [];
+      },
+    };
+    await backfillStockPairs(options({
+      fromBlock: '100', toBlock: '103', rangeSize: 4, stockRpcConcurrency: 4,
+    }), {
+      runtime: {
+        rpcClient,
+        timestamps: { enrich: async (logs) => logs },
+        persistence: {},
+      },
+      logger: { log() {} },
+    });
+
+    assert.equal(maximum, 4);
+  });
+
+  it('reduces RPC concurrency under pressure and recovers after healthy requests', async () => {
+    let pressured = true;
+    const limiter = __private.createAdaptiveRpcLimiter({
+      async request() {
+        if (pressured) {
+          pressured = false;
+          throw Object.assign(new Error('rate limited'), {
+            code: 'rate_limited', httpStatus: 429,
+          });
+        }
+        return [];
+      },
+    }, 4);
+
+    await assert.rejects(limiter.request('eth_getLogs', []), { code: 'rate_limited' });
+    assert.deepEqual(limiter.getStatus(), {
+      active: 0, queued: 0, limit: 2, maximum: 4, reductions: 1,
+    });
+    await Promise.all(Array.from({ length: 16 }, () => limiter.request('eth_getLogs', [])));
+    assert.equal(limiter.getStatus().limit, 3);
+  });
+
+  it('persists protocol cursors and resumes after the last committed range', async (context) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'rh-onboarding-checkpoint-'));
+    context.after(() => fs.rm(directory, { recursive: true, force: true }));
+    const checkpoint = __private.createCheckpointStore(path.join(directory, 'stock.json'));
+    const baseOptions = options({
+      fromBlock: '100', toBlock: '101', rangeSize: 1, stockRpcConcurrency: 3,
+      stockCheckpointFile: path.join(directory, 'stock.json'),
+    });
+    const runtime = {
+      rpcClient: {
+        async request(method) {
+          if (method === 'eth_chainId') return '0x1237';
+          if (method === 'eth_getLogs') return [];
+          throw new Error(`unexpected method ${method}`);
+        },
+      },
+      timestamps: { enrich: async (logs) => logs },
+      persistence: {},
+    };
+    await backfillStockPairs(baseOptions, {
+      runtime, stockCheckpoint: checkpoint, logger: { log() {} },
+    });
+    const saved = await checkpoint.load();
+    saved.protocols['uniswap-v2'] = {
+      ...saved.protocols['uniswap-v2'], nextBlock: '101', completed: false, ranges: 1,
+    };
+    await checkpoint.save(saved);
+    const resumedRanges = [];
+    runtime.rpcClient.request = async (method, params) => {
+      if (method === 'eth_chainId') return '0x1237';
+      if (method === 'eth_getLogs') {
+        const [filter] = params;
+        resumedRanges.push([filter.address, filter.fromBlock, filter.toBlock]);
+        return [];
+      }
+      throw new Error(`unexpected method ${method}`);
+    };
+
+    await backfillStockPairs(baseOptions, {
+      runtime, stockCheckpoint: checkpoint, logger: { log() {} },
+    });
+
+    assert.equal(resumedRanges.length, 1);
+    assert.deepEqual(resumedRanges[0].slice(1), ['0x65', '0x65']);
+  });
+
   it('parses bounded performance controls', () => {
     const parsed = parseArgs([CONFIRM_FLAG], {
       ROBINHOOD_ARCHIVE_RPC_URL: 'http://archive.example',
     });
     assert.equal(parsed.confirm, true);
     assert.equal(parsed.rangeSize, 2_000_000);
+    assert.equal(parsed.stockRpcConcurrency, 12);
     assert.throws(() => parseArgs(['--holder-concurrency=65']), /between 1 and 64/);
   });
 

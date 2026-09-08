@@ -165,7 +165,7 @@ function chunks(rows, size) {
   return output;
 }
 
-async function fetchLogs(rpcClient, filter, fromBlock, toBlock, minRangeSize) {
+async function fetchLogs(rpcClient, filter, fromBlock, toBlock, minRangeSize, control = {}) {
   let logs;
   try {
     logs = await rpcClient.request('eth_getLogs', [{
@@ -182,10 +182,18 @@ async function fetchLogs(rpcClient, filter, fromBlock, toBlock, minRangeSize) {
     throw new Error('Dense archive range cannot be split below min-range-size');
   }
   const midpoint = fromBlock + ((toBlock - fromBlock) / 2n);
-  return [
-    ...await fetchLogs(rpcClient, filter, fromBlock, midpoint, minRangeSize),
-    ...await fetchLogs(rpcClient, filter, midpoint + 1n, toBlock, minRangeSize),
+  const split = [
+    [fromBlock, midpoint], [midpoint + 1n, toBlock],
   ];
+  const leaves = control.parallelSplits === true
+    ? await Promise.all(split.map(([start, end]) => (
+      fetchLogs(rpcClient, filter, start, end, minRangeSize, control)
+    )))
+    : [
+      await fetchLogs(rpcClient, filter, fromBlock, midpoint, minRangeSize, control),
+      await fetchLogs(rpcClient, filter, midpoint + 1n, toBlock, minRangeSize, control),
+    ];
+  return leaves.flat();
 }
 
 function classifyPool(pool) {

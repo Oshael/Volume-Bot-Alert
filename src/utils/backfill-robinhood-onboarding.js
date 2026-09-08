@@ -1,5 +1,7 @@
 require('dotenv').config();
 
+const fs = require('node:fs/promises');
+const path = require('node:path');
 const db = require('../models/db');
 const { createRobinhoodPersistenceRepository } = require('../models/robinhood-persistence');
 const { createEvmJsonRpcClient } = require('../services/evm-json-rpc-client');
@@ -16,6 +18,7 @@ const globalWorker = require('../services/robinhood-holder-global-backfill-worke
 const { fetchLogs } = require('./audit-robinhood-v3-stock-pairs').__private;
 
 const CHAIN_ID = 4663n;
+const STOCK_CHECKPOINT_VERSION = 1;
 const CONFIRM_FLAG = '--confirm-robinhood-onboarding-backfill';
 const STOCKS = new Set(Object.values(ROBINHOOD_TOKENIZED_ASSETS).map((value) => value.toLowerCase()));
 const STANDARD_QUOTES = new Set([
@@ -71,12 +74,137 @@ function parseArgs(argv = process.argv.slice(2), env = process.env) {
     toBlock: values['to-block'] == null ? null : block(values['to-block'], null, '--to-block'),
     rangeSize: integer(values['range-size'], 2_000_000, 1, 10_000_000, '--range-size'),
     minRangeSize: integer(values['min-range-size'], 1, 1, 100_000, '--min-range-size'),
+    stockRpcConcurrency: integer(
+      values['stock-rpc-concurrency'], 12, 1, 32, '--stock-rpc-concurrency'
+    ),
+    stockCheckpointFile: String(
+      values['stock-checkpoint-file']
+        || env.ROBINHOOD_ONBOARDING_STOCK_CHECKPOINT_FILE || ''
+    ).trim() || null,
     holderLimit: integer(values['holder-limit'], 50_000, 1, 100_000, '--holder-limit'),
     holderConcurrency: integer(values['holder-concurrency'], 24, 1, 64, '--holder-concurrency'),
     globalTimeoutMs: integer(
       values['global-timeout-minutes'], 300, 1, 300, '--global-timeout-minutes'
     ) * 60_000,
     timeoutMs: integer(values['timeout-ms'], 30_000, 1000, 60_000, '--timeout-ms'),
+  });
+}
+
+function createCheckpointStore(filename) {
+  if (!filename) return Object.freeze({ load: async () => null, save: async () => {} });
+  const resolved = path.resolve(filename);
+  let writeTail = Promise.resolve();
+  return Object.freeze({
+    load: async () => {
+      try {
+        return JSON.parse(await fs.readFile(resolved, 'utf8'));
+      } catch (error) {
+        if (error?.code === 'ENOENT') return null;
+        throw new Error(`Cannot read stock checkpoint ${resolved}: ${error.message}`);
+      }
+    },
+    save: async (value) => {
+      const serialized = `${JSON.stringify(value, null, 2)}\n`;
+      const operation = writeTail.then(async () => {
+        await fs.mkdir(path.dirname(resolved), { recursive: true });
+        const temporary = `${resolved}.tmp-${process.pid}`;
+        try {
+          await fs.writeFile(temporary, serialized, { mode: 0o600 });
+          await fs.rename(temporary, resolved);
+        } finally {
+          await fs.unlink(temporary).catch((error) => {
+            if (error?.code !== 'ENOENT') throw error;
+          });
+        }
+      });
+      writeTail = operation.catch(() => {});
+      return operation;
+    },
+  });
+}
+
+function emptyProtocolProgress(fromBlock) {
+  return {
+    nextBlock: fromBlock, completed: false,
+    scannedLogs: 0, stockPairs: 0, upsertedPools: 0, ranges: 0,
+  };
+}
+
+function restoreCheckpoint(saved, options, toBlock) {
+  if (!saved) {
+    return {
+      version: STOCK_CHECKPOINT_VERSION, chainId: CHAIN_ID.toString(),
+      mode: options.confirm ? 'apply' : 'read-only',
+      fromBlock: options.fromBlock, toBlock,
+      protocols: Object.fromEntries(PROTOCOLS.map(({ protocol }) => (
+        [protocol, emptyProtocolProgress(options.fromBlock)]
+      ))),
+    };
+  }
+  const expected = {
+    version: STOCK_CHECKPOINT_VERSION, chainId: CHAIN_ID.toString(),
+    mode: options.confirm ? 'apply' : 'read-only', fromBlock: options.fromBlock, toBlock,
+  };
+  for (const [key, value] of Object.entries(expected)) {
+    if (String(saved[key]) !== String(value)) {
+      throw new Error(`Stock checkpoint ${key} does not match this execution`);
+    }
+  }
+  for (const { protocol } of PROTOCOLS) {
+    const progress = saved.protocols?.[protocol];
+    if (!progress || !/^\d+$/.test(String(progress.nextBlock))) {
+      throw new Error(`Stock checkpoint ${protocol} progress is invalid`);
+    }
+    const cursor = BigInt(progress.nextBlock);
+    if (cursor < BigInt(options.fromBlock) || cursor > BigInt(toBlock) + 1n) {
+      throw new Error(`Stock checkpoint ${protocol} cursor is outside the execution range`);
+    }
+  }
+  return saved;
+}
+
+function isRpcPressureError(error) {
+  return ['rate_limited', 'timeout', 'transport_error'].includes(error?.code)
+    || (error?.code === 'http_error'
+      && (error.httpStatus === 408 || error.httpStatus === 429 || error.httpStatus >= 500));
+}
+
+function createAdaptiveRpcLimiter(rpcClient, maximum) {
+  let active = 0;
+  let limit = maximum;
+  let healthyRequests = 0;
+  let reductions = 0;
+  const queue = [];
+  const drain = () => {
+    while (active < limit && queue.length) {
+      const task = queue.shift();
+      active += 1;
+      Promise.resolve().then(() => rpcClient.request(...task.args)).then((value) => {
+        healthyRequests += 1;
+        if (limit < maximum && healthyRequests >= limit * 8) {
+          limit += 1;
+          healthyRequests = 0;
+        }
+        task.resolve(value);
+      }, (error) => {
+        if (isRpcPressureError(error)) {
+          limit = Math.max(1, Math.floor(limit / 2));
+          healthyRequests = 0;
+          reductions += 1;
+        }
+        task.reject(error);
+      }).finally(() => {
+        active -= 1;
+        drain();
+      });
+    }
+  };
+  return Object.freeze({
+    request: (...args) => new Promise((resolve, reject) => {
+      queue.push({ args, resolve, reject });
+      drain();
+    }),
+    getStatus: () => Object.freeze({ active, queued: queue.length, limit, maximum, reductions }),
   });
 }
 
@@ -119,17 +247,25 @@ function createRuntime(options, deps = {}) {
   });
 }
 
-async function scanProtocol(options, runtime, specification, toBlock, logger) {
-  let cursor = BigInt(options.fromBlock);
+async function scanProtocol(options, runtime, specification, toBlock, logger, control = {}) {
+  const restored = control.progress || emptyProtocolProgress(options.fromBlock);
+  let cursor = BigInt(restored.nextBlock);
   const end = BigInt(toBlock);
-  const totals = { scannedLogs: 0, stockPairs: 0, upsertedPools: 0, ranges: 0 };
+  const initialCursor = cursor;
+  const startedAt = Date.now();
+  const totals = {
+    scannedLogs: Number(restored.scannedLogs) || 0,
+    stockPairs: Number(restored.stockPairs) || 0,
+    upsertedPools: Number(restored.upsertedPools) || 0,
+    ranges: Number(restored.ranges) || 0,
+  };
   while (cursor <= end) {
     const requestedEnd = cursor + BigInt(options.rangeSize) - 1n;
     const rangeEnd = requestedEnd < end ? requestedEnd : end;
     const leaves = await fetchLogs(runtime.rpcClient, {
       address: specification.address,
       topics: [specification.topic],
-    }, cursor, rangeEnd, options.minRangeSize);
+    }, cursor, rangeEnd, options.minRangeSize, { parallelSplits: true });
     const logs = leaves.flat().filter((log) => log?.removed !== true);
     totals.scannedLogs += logs.length;
     const candidates = logs.filter((log) => decodeStockPair(log, specification) != null);
@@ -142,10 +278,20 @@ async function scanProtocol(options, runtime, specification, toBlock, logger) {
     }
     totals.ranges += 1;
     cursor = rangeEnd + 1n;
+    await control.save?.(cursor.toString(), totals);
+    const elapsedSeconds = Math.max(0.001, (Date.now() - startedAt) / 1000);
+    const blocksPerSecond = Number(cursor - initialCursor) / elapsedSeconds;
     logger.log(JSON.stringify({
       event: 'robinhood_stock_pair_backfill_progress',
       protocol: specification.protocol,
       nextBlock: cursor.toString(),
+      toBlock,
+      progressPct: Number((((cursor - BigInt(options.fromBlock)) * 10_000n)
+        / (end - BigInt(options.fromBlock) + 1n))) / 100,
+      blocksPerSecond: Number(blocksPerSecond.toFixed(1)),
+      etaSeconds: blocksPerSecond > 0
+        ? Math.ceil(Number(end - cursor + 1n) / blocksPerSecond) : null,
+      rpc: control.rpcStatus?.() || null,
       ...totals,
     }));
   }
@@ -158,15 +304,33 @@ async function backfillStockPairs(options, deps = {}) {
   if (BigInt(await runtime.rpcClient.request('eth_chainId')) !== CHAIN_ID) {
     throw new Error('archive RPC is not Robinhood Chain');
   }
-  const toBlock = options.toBlock
+  const checkpoint = deps.stockCheckpoint || createCheckpointStore(options.stockCheckpointFile);
+  const saved = await checkpoint.load();
+  const toBlock = options.toBlock ?? saved?.toBlock
     ?? BigInt(await runtime.rpcClient.request('eth_blockNumber')).toString();
   if (BigInt(toBlock) < BigInt(options.fromBlock)) {
     throw new Error('--to-block must not precede --from-block');
   }
-  const protocols = Object.fromEntries(await Promise.all(PROTOCOLS.map(async (specification) => [
-    specification.protocol,
-    await scanProtocol(options, runtime, specification, toBlock, logger),
-  ])));
+  const state = restoreCheckpoint(saved, options, toBlock);
+  const limitedRpc = deps.stockRpcLimiter
+    || createAdaptiveRpcLimiter(runtime.rpcClient, options.stockRpcConcurrency || 12);
+  const scanRuntime = { ...runtime, rpcClient: limitedRpc };
+  const protocols = Object.fromEntries(await Promise.all(PROTOCOLS.map(async (specification) => {
+    const save = async (nextBlock, totals) => {
+      state.protocols[specification.protocol] = {
+        nextBlock, completed: BigInt(nextBlock) > BigInt(toBlock), ...totals,
+      };
+      state.updatedAt = new Date().toISOString();
+      await checkpoint.save(state);
+    };
+    return [
+      specification.protocol,
+      await scanProtocol(options, scanRuntime, specification, toBlock, logger, {
+        progress: state.protocols[specification.protocol], save,
+        rpcStatus: limitedRpc.getStatus,
+      }),
+    ];
+  })));
   return {
     mode: options.confirm ? 'apply' : 'read-only',
     fromBlock: options.fromBlock,
@@ -318,5 +482,8 @@ if (require.main === module) main().catch((error) => {
 module.exports = {
   CONFIRM_FLAG, backfillStockPairs, decodeStockPair, main, parseArgs,
   runGlobalHolderBackfill,
-  __private: { createRuntime, driveGlobalRun, globalOptions, scanProtocol },
+  __private: {
+    createAdaptiveRpcLimiter, createCheckpointStore, createRuntime, driveGlobalRun,
+    globalOptions, restoreCheckpoint, scanProtocol,
+  },
 };

@@ -2245,14 +2245,22 @@ e V4, use `npm run robinhood:onboarding-backfill`. Ele usa exclusivamente
 `ROBINHOOD_ARCHIVE_RPC_URL`, é read-only por default e aplica somente com
 `-- --confirm-robinhood-onboarding-backfill`. O scanner percorre apenas eventos de criação
 V2, V3 e V4 em paralelo, usa ranges adaptativos externos de 2.000.000 de blocos por
-default e faz upserts ativos idempotentes. O holder recovery verifica o
+default e faz upserts ativos idempotentes. As subdivisões de ranges também executam em
+paralelo sob um limitador RPC adaptativo compartilhado (máximo 12 por default), que reduz
+a concorrência após rate limit, timeout ou falha de transporte e recupera gradualmente.
+`--stock-rpc-concurrency` ajusta esse teto. Para retomada durável, passe
+`--stock-checkpoint-file=/var/tmp/robinhood-onboarding-stock.json`; o arquivo congela
+chain, modo e intervalo e salva atomicamente o próximo bloco de cada protocolo somente
+depois do upsert. Repetir o comando com o mesmo arquivo retoma cada protocolo do seu
+cursor; use outro arquivo para uma nova janela/head. O holder recovery verifica o
 bloco do primeiro mint em N/N-1 via batch e só usa busca binária quando essa evidência
 não existe. Após as attributions, o comando cria uma coorte somente para tokens ainda
 sem ledger e dirige o global backfill até o handoff. O apply recusa iniciar enquanto a
 lease `robinhood-holder-backfill-worker` estiver ativa; pare esse worker antes da execução
 e reinicie-o depois. Os defaults rápidos usam range 5.000, prefetch 8, quatro shards e
 deadline retomável de cinco horas. Ajuste `--holder-limit`, `--holder-concurrency`,
-`--global-timeout-minutes`, `--range-size`, `--from-block`, `--to-block` e `--timeout-ms`
+`--global-timeout-minutes`, `--range-size`, `--from-block`, `--to-block`,
+`--stock-rpc-concurrency`, `--stock-checkpoint-file` e `--timeout-ms`
 conforme o provider. Reinicie os processos Robinhood após o apply para carregar
 imediatamente as pools históricas no tracker.
 
