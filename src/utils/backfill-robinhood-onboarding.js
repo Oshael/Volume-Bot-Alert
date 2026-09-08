@@ -11,6 +11,8 @@ const v2 = require('../services/uniswap-v2-decoder');
 const v3 = require('../services/uniswap-v3-decoder');
 const v4 = require('../services/uniswap-v4-decoder');
 const holderRecovery = require('./recover-robinhood-holder-deployments');
+const { runGlobalHolderDelta } = require('./create-robinhood-holder-global-delta');
+const globalWorker = require('../services/robinhood-holder-global-backfill-worker');
 const { fetchLogs } = require('./audit-robinhood-v3-stock-pairs').__private;
 
 const CHAIN_ID = 4663n;
@@ -71,6 +73,9 @@ function parseArgs(argv = process.argv.slice(2), env = process.env) {
     minRangeSize: integer(values['min-range-size'], 1, 1, 100_000, '--min-range-size'),
     holderLimit: integer(values['holder-limit'], 50_000, 1, 100_000, '--holder-limit'),
     holderConcurrency: integer(values['holder-concurrency'], 24, 1, 64, '--holder-concurrency'),
+    globalTimeoutMs: integer(
+      values['global-timeout-minutes'], 300, 1, 300, '--global-timeout-minutes'
+    ) * 60_000,
     timeoutMs: integer(values['timeout-ms'], 30_000, 1000, 60_000, '--timeout-ms'),
   });
 }
@@ -174,9 +179,115 @@ async function backfillStockPairs(options, deps = {}) {
   };
 }
 
+function globalOptions(options, catalogCutoff) {
+  return globalWorker.__private.normalizeOptions({
+    enabled: true,
+    autoStart: true,
+    rollingEnabled: false,
+    catalogCutoff,
+    intervalMs: 250,
+    rangeSize: 5000,
+    prefetch: 8,
+    maxCommitMs: 5000,
+    addressShardConcurrency: 4,
+    finalityBlocks: 2000,
+    attachWindow: 19_999,
+    materializeBatchSize: 5000,
+  });
+}
+
+async function driveGlobalRun(
+  runtime, workerOptions, options, logger, now = Date.now,
+  campaignTick = globalWorker.__private.runCampaignTick
+) {
+  const deadline = now() + options.globalTimeoutMs;
+  let lastLoggedAt = 0;
+  let lastPhase = null;
+  while (true) {
+    const result = await campaignTick(runtime, workerOptions);
+    const run = await runtime.lifecycle.getLatestRun();
+    if (!run || run.status === 'completed') return result;
+    if (run.status === 'paused') throw new Error('global holder backfill is paused');
+    const currentTime = now();
+    if (run.status !== lastPhase || currentTime - lastLoggedAt >= 30_000) {
+      logger.log(JSON.stringify({
+        event: 'robinhood_holder_global_backfill_progress',
+        runId: String(run.id),
+        phase: run.status,
+        nextBlock: run.nextBlock,
+        barrierBlock: run.barrierBlock,
+        telemetry: result?.telemetry || null,
+      }));
+      lastPhase = run.status;
+      lastLoggedAt = currentTime;
+    }
+    if (currentTime >= deadline) {
+      const error = new Error('global holder backfill exceeded its resumable time limit');
+      error.code = 'holder_global_backfill_deadline_exceeded';
+      throw error;
+    }
+  }
+}
+
+async function runGlobalHolderBackfill(options, deps = {}) {
+  const database = deps.database || db;
+  const logger = deps.logger || console;
+  const delta = deps.globalDelta || runGlobalHolderDelta;
+  const catalogCutoff = deps.catalogCutoff || new Date().toISOString();
+  const candidateInput = {
+    database,
+    catalogCutoff,
+    includeUnseeded: true,
+    includeBackfilling: false,
+  };
+  const preview = await delta(candidateInput);
+  if (!options.confirm) return { mode: 'dry-run', preview };
+  if (preview.incrementalBackfillActive) {
+    const error = new Error('stop robinhood-holder-backfill-worker before applying');
+    error.code = 'holder_global_delta_incremental_active';
+    throw error;
+  }
+  const workerOptions = globalOptions(options, catalogCutoff);
+  const runtime = deps.globalRuntime || await globalWorker.__private.buildRuntime(workerOptions, {
+    database,
+    env: {
+      ...process.env,
+      ROBINHOOD_HOLDER_GLOBAL_BACKFILL_RPC_URL: options.rpcUrl,
+    },
+  });
+  let existing = await runtime.lifecycle.getLatestRun();
+  if (existing && existing.status !== 'completed') {
+    await driveGlobalRun(runtime, workerOptions, options, logger, deps.now, deps.campaignTick);
+  }
+  const refreshed = await delta(candidateInput);
+  if (!refreshed.preview?.candidateTokens) {
+    return { mode: 'apply', resumedRun: existing?.id == null ? null : String(existing.id), created: null };
+  }
+  const created = await delta({ ...candidateInput, confirm: true });
+  const completed = await driveGlobalRun(
+    runtime, workerOptions, options, logger, deps.now, deps.campaignTick
+  );
+  existing = await runtime.lifecycle.getLatestRun();
+  return {
+    mode: 'apply',
+    resumedRun: null,
+    created: created.created,
+    completed,
+    runId: existing?.id == null ? null : String(existing.id),
+  };
+}
+
 async function main(argv = process.argv.slice(2), deps = {}) {
   const options = deps.options || parseArgs(argv, deps.env);
   const logger = deps.logger || console;
+  const globalPreview = await (deps.globalHolderMain || runGlobalHolderBackfill)(
+    { ...options, confirm: false }, deps
+  );
+  if (options.confirm && globalPreview.preview?.incrementalBackfillActive) {
+    const error = new Error('stop robinhood-holder-backfill-worker before applying');
+    error.code = 'holder_global_delta_incremental_active';
+    throw error;
+  }
   const stockPairs = await backfillStockPairs(options, deps);
   const holders = await (deps.holderMain || holderRecovery.main)([], {
     options: {
@@ -188,10 +299,14 @@ async function main(argv = process.argv.slice(2), deps = {}) {
     logger,
     ...(deps.holderDeps || {}),
   });
+  const holderLedger = options.confirm
+    ? await (deps.globalHolderMain || runGlobalHolderBackfill)(options, deps)
+    : globalPreview;
   const report = {
     mode: options.confirm ? 'apply' : 'read-only',
     stockPairs,
     holders,
+    holderLedger,
   };
   logger.log(JSON.stringify(report, null, 2));
   return report;
@@ -204,5 +319,6 @@ if (require.main === module) main().catch((error) => {
 
 module.exports = {
   CONFIRM_FLAG, backfillStockPairs, decodeStockPair, main, parseArgs,
-  __private: { createRuntime, scanProtocol },
+  runGlobalHolderBackfill,
+  __private: { createRuntime, driveGlobalRun, globalOptions, scanProtocol },
 };

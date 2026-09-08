@@ -40,6 +40,7 @@ async function runGlobalHolderDelta(input = {}) {
     catalogCutoff: input.catalogCutoff,
     includeUnseeded: input.includeUnseeded !== false,
   };
+  if (input.includeBackfilling === false) candidateInput.includeBackfilling = false;
   if (catalogFloor != null) candidateInput.catalogFloor = catalogFloor;
   if (input.maximumGapBlocks != null) {
     candidateInput.maximumGapBlocks = input.maximumGapBlocks;

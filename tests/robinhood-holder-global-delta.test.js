@@ -65,6 +65,17 @@ describe('Robinhood holder global delta command', () => {
     assert.deepEqual(fixture.createdInputs, fixture.previews);
   });
 
+  it('can freeze only unseeded tokens without adopting backfilling state', async () => {
+    const fixture = harness(false);
+    await runGlobalHolderDelta({
+      ...fixture,
+      catalogCutoff: '2026-08-14T00:00:00Z',
+      includeUnseeded: true,
+      includeBackfilling: false,
+    });
+    assert.equal(fixture.previews[0].includeBackfilling, false);
+  });
+
   it('uses the latest completed run cutoff as the immutable candidate floor', async () => {
     const fixture = harness(false);
     const result = await runGlobalHolderDelta({

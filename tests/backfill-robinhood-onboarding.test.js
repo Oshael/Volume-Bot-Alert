@@ -8,6 +8,7 @@ const { ROBINHOOD_TOKENIZED_ASSETS } = require('../src/services/robinhood-market
 const v4 = require('../src/services/uniswap-v4-decoder');
 const {
   CONFIRM_FLAG, backfillStockPairs, decodeStockPair, main, parseArgs,
+  runGlobalHolderBackfill,
 } = require('../src/utils/backfill-robinhood-onboarding');
 
 function stockInitialize() {
@@ -32,6 +33,7 @@ function options(overrides = {}) {
     minRangeSize: 1,
     holderLimit: 50000,
     holderConcurrency: 24,
+    globalTimeoutMs: 300 * 60_000,
     timeoutMs: 30000,
     ...overrides,
   };
@@ -105,6 +107,9 @@ describe('Robinhood combined onboarding backfill', () => {
         holderOptions = deps.options;
         return { mode: 'read-only', candidates: 12 };
       },
+      globalHolderMain: async () => ({
+        mode: 'dry-run', preview: { incrementalBackfillActive: false },
+      }),
     });
 
     assert.equal(report.mode, 'read-only');
@@ -119,5 +124,47 @@ describe('Robinhood combined onboarding backfill', () => {
       ROBINHOOD_ARCHIVE_RPC_URL: 'http://archive.example',
     }).confirm, true);
     assert.throws(() => parseArgs(['--holder-concurrency=65']), /between 1 and 64/);
+  });
+
+  it('resumes a frozen global cohort and leaves no duplicate delta behind', async () => {
+    const statuses = ['frozen', 'completed'];
+    const runtime = {
+      lifecycle: {
+        async getLatestRun() {
+          const status = statuses.shift() || 'completed';
+          return { id: '7', status };
+        },
+      },
+    };
+    let previews = 0;
+    const result = await runGlobalHolderBackfill(options(), {
+      globalRuntime: runtime,
+      globalDelta: async () => {
+        previews += 1;
+        return {
+          mode: 'dry-run', incrementalBackfillActive: false,
+          preview: { candidateTokens: 0 },
+        };
+      },
+      campaignTick: async () => ({ status: 'completed', runId: '7' }),
+      logger: { log() {} },
+    });
+
+    assert.equal(result.resumedRun, '7');
+    assert.equal(result.created, null);
+    assert.equal(previews, 2);
+  });
+
+  it('fails preflight before any write while the incremental lease is active', async () => {
+    let holderRuns = 0;
+    await assert.rejects(main([], {
+      options: options(),
+      globalHolderMain: async () => ({
+        mode: 'dry-run', preview: { incrementalBackfillActive: true },
+      }),
+      holderMain: async () => { holderRuns += 1; },
+      logger: { log() {} },
+    }), { code: 'holder_global_delta_incremental_active' });
+    assert.equal(holderRuns, 0);
   });
 });

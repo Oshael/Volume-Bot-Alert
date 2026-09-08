@@ -2246,9 +2246,14 @@ e V4, use `npm run robinhood:onboarding-backfill`. Ele usa exclusivamente
 `-- --confirm-robinhood-onboarding-backfill`. O scanner percorre apenas eventos de criação
 em ranges adaptativos e faz upserts ativos idempotentes. O holder recovery verifica o
 bloco do primeiro mint em N/N-1 via batch e só usa busca binária quando essa evidência
-não existe. Ajuste `--holder-limit`, `--holder-concurrency`, `--range-size`,
-`--from-block`, `--to-block` e `--timeout-ms` conforme o provider. Reinicie os processos
-Robinhood após o apply para carregar imediatamente as pools históricas no tracker.
+não existe. Após as attributions, o comando cria uma coorte somente para tokens ainda
+sem ledger e dirige o global backfill até o handoff. O apply recusa iniciar enquanto a
+lease `robinhood-holder-backfill-worker` estiver ativa; pare esse worker antes da execução
+e reinicie-o depois. Os defaults rápidos usam range 5.000, prefetch 8, quatro shards e
+deadline retomável de cinco horas. Ajuste `--holder-limit`, `--holder-concurrency`,
+`--global-timeout-minutes`, `--range-size`, `--from-block`, `--to-block` e `--timeout-ms`
+conforme o provider. Reinicie os processos Robinhood após o apply para carregar
+imediatamente as pools históricas no tracker.
 
 O backfill global do catálogo antigo usa a lease
 `robinhood-holder-global-backfill-worker` e permanece desligado por default via
