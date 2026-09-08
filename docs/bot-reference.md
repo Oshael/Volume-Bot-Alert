@@ -3512,6 +3512,24 @@ inalterados; a validacao canonica seguinte continua a cargo do executor de
 backfill. O worker nao precisa ser parado, mas executar depois de drenar o shadow
 evita competir por I/O com a recuperacao corrente.
 
+Para encerrar um conjunto de `drifted` sem autorizar replay historico irrestrito,
+`npm run robinhood:holder-drift-bounded-repair` faz dry-run usando o mesmo RPC
+archive do probe. Ele ancora somente deficit `missing-or-implicit-credit-before-block`
+com `balanceOf` historico maior que o saldo local, receipts exatamente iguais ao
+`eth_getLogs` e uma linha de saldo persistida; o replay agendado fica limitado por
+token a 250 mil blocos e, por execucao, a 1 milhao de blocos. Os limites podem ser
+reduzidos por `ROBINHOOD_HOLDER_DRIFT_REPAIR_MAX_REPLAY_BLOCKS` e
+`ROBINHOOD_HOLDER_DRIFT_REPAIR_MAX_TOTAL_REPLAY_BLOCKS`.
+
+Depois de revisar o resumo, `-- --confirm-repair-or-suppress` aplica cada decisao
+com lock e CAS. Casos sem prova ou acima dos limites entram em
+`admin_blocked_tokens`, deixam de ser publicaveis/monitoraveis, saem de coortes
+ativas e perdem state e balances de holders; o journal bruto permanece disponivel
+para a retencao normal em lotes. O bootstrap live e cold exclui bloqueios
+administrativos, portanto discovery posterior nao recria o ledger. O bloqueio e
+reversivel, mas reabilitar um token exige remover o admin block e reconstruir seu
+ledger explicitamente.
+
 `npm run robinhood:holder-checkpoint-repair` lista, sem writes, estados
 `backfilling` cujo checkpoint não precede o cursor. Depois de revisar a lista,
 `-- --confirm-reset` usa CAS de versão/cursor/checkpoint, remove apenas balances e

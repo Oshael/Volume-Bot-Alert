@@ -97,6 +97,7 @@
     "robinhood:wallet-position-coverage-audit": "node src/utils/audit-robinhood-wallet-position-coverage.js",
     "robinhood:holder-drift-probe": "node src/utils/robinhood-holder-drift-probe.js",
     "robinhood:holder-drift-recovery": "node src/utils/robinhood-holder-drift-recovery.js",
+    "robinhood:holder-drift-bounded-repair": "node src/utils/repair-robinhood-holder-drift-bounded.js",
     "robinhood:holder-checkpoint-repair": "node src/utils/repair-robinhood-holder-backfill-checkpoints.js",
     "robinhood:holder-tail-requeue": "node src/utils/requeue-robinhood-holder-wide-tails.js",
     "robinhood:holder-quarantine": "node src/utils/quarantine-robinhood-holder-token.js",

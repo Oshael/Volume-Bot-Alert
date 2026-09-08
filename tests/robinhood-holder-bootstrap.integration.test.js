@@ -24,6 +24,10 @@ describe('Robinhood holder bootstrap persistence', () => {
         source varchar(32) NOT NULL, attribution_block bigint,
         PRIMARY KEY (chain, token_address)
       )`);
+      await client.query(`CREATE TEMP TABLE admin_blocked_tokens (
+        chain varchar(16) NOT NULL, address varchar(42) NOT NULL,
+        PRIMARY KEY (chain, address)
+      )`);
       await client.query(`CREATE TEMP TABLE robinhood_holder_token_states
         (LIKE public.robinhood_holder_token_states INCLUDING ALL)`);
       await client.query(`CREATE TEMP TABLE robinhood_holder_cursors
@@ -41,6 +45,8 @@ describe('Robinhood holder bootstrap persistence', () => {
           ('robinhood', $5, '2026-08-10T00:04:00Z'),
           ('robinhood', $6, '2026-08-10T00:05:00Z')`, TOKENS
       );
+      await client.query(`INSERT INTO admin_blocked_tokens VALUES ('robinhood', $1)`,
+        [TOKENS[5]]);
       await client.query(
         `INSERT INTO robinhood_token_attributions VALUES
           ('robinhood', $1, 'rpc_direct', 101),
@@ -102,9 +108,6 @@ describe('Robinhood holder bootstrap persistence', () => {
       }), [{
         tokenAddress: TOKENS[0], deploymentBlock: '101',
         backfillNextBlock: '101', ledgerStatus: 'shadow',
-      }, {
-        tokenAddress: TOKENS[5], deploymentBlock: '100',
-        backfillNextBlock: '100', ledgerStatus: 'backfilling',
       }]);
       assert.deepEqual(await repository.seedNewTokens({
         admittedAfter: '2026-08-10T00:00:00Z', limit: 10, maxInitialGapBlocks: 101,
@@ -136,9 +139,6 @@ describe('Robinhood holder bootstrap persistence', () => {
       }, {
         tokenAddress: TOKENS[3], holderCount: '0', ledgerStatus: 'backfilling',
         deploymentBlock: '104', backfillNextBlock: '104',
-      }, {
-        tokenAddress: TOKENS[5], holderCount: '0', ledgerStatus: 'backfilling',
-        deploymentBlock: '100', backfillNextBlock: '100',
       }]);
       const cursor = await client.query(
         `SELECT version, buffer_floor_block FROM robinhood_holder_cursors`

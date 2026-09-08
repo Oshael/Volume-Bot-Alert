@@ -69,6 +69,7 @@ describe('Robinhood holder bootstrap repository', () => {
     assert.match(admission.sql, /THEN 'shadow' ELSE 'backfilling' END/);
     assert.doesNotMatch(calls[0].sql, /UPDATE robinhood_holder_cursors/);
     assert.match(calls[0].sql, /state\.token_address IS NULL/);
+    assert.match(calls[0].sql, /NOT EXISTS \([\s\S]*admin_blocked_tokens blocked/);
     assert.match(calls[0].sql, /robinhood_holder_global_backfill_tokens cohort/);
     assert.doesNotMatch(calls[0].sql, /run\.barrier_block IS NOT NULL/);
     assert.match(admission.sql, /FOR UPDATE OF attribution SKIP LOCKED/);
@@ -139,6 +140,7 @@ describe('Robinhood holder bootstrap repository', () => {
     assert.match(calls[0].sql, /attribution\.attribution_block IS NOT NULL/);
     assert.match(calls[0].sql, /ORDER BY catalog\.first_seen_at DESC, catalog\.address/);
     assert.match(calls[0].sql, /state\.token_address IS NULL/);
+    assert.match(calls[0].sql, /NOT EXISTS \([\s\S]*admin_blocked_tokens blocked/);
     assert.match(calls[0].sql, /robinhood_holder_global_backfill_tokens cohort/);
     assert.match(calls[0].sql, /cohort\.status = 'active'/);
     assert.deepEqual(calls[0].params, [

@@ -63,6 +63,10 @@ function liveCandidatesSql(revalidate = false) {
      AND attribution.attribution_block >= GREATEST(cursor.safe_head - $5::bigint + 1, 0)
      AND state.token_address IS NULL
      AND NOT EXISTS (
+       SELECT 1 FROM admin_blocked_tokens blocked
+        WHERE blocked.chain = catalog.chain AND blocked.address = catalog.address
+     )
+     AND NOT EXISTS (
        SELECT 1 FROM robinhood_holder_global_backfill_tokens cohort
        INNER JOIN robinhood_holder_global_backfill_runs run
          ON run.id = cohort.run_id AND run.chain = cohort.chain
@@ -149,6 +153,10 @@ function createRobinhoodHolderBootstrapRepository(options = {}) {
             AND attribution.source = ANY($3::varchar[])
             AND attribution.attribution_block IS NOT NULL
             AND state.token_address IS NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM admin_blocked_tokens blocked
+               WHERE blocked.chain = catalog.chain AND blocked.address = catalog.address
+            )
             AND NOT EXISTS (
               SELECT 1 FROM robinhood_holder_global_backfill_tokens cohort
               INNER JOIN robinhood_holder_global_backfill_runs run
