@@ -527,6 +527,19 @@ describe('Robinhood persistence repository', () => {
     assert.equal(fake.calls.at(-1).sql, 'COMMIT');
   });
 
+  it('upserts recovered pools even when their discovery log was processed before', async () => {
+    const fake = createFakeDatabase({ duplicate: true });
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+
+    assert.deepEqual(await repository.upsertRecoveredPools([discoveryEntry().event]), {
+      upsertedPools: 1,
+    });
+    assert.equal(fake.calls[0].sql, 'BEGIN');
+    assert.match(fake.calls[1].sql, /INSERT INTO robinhood_pool_registry/);
+    assert.doesNotMatch(fake.calls[1].sql, /INSERT INTO robinhood_processed_logs/);
+    assert.equal(fake.calls.at(-1).sql, 'COMMIT');
+  });
+
   it('rolls back the cursor when a validated NOXA launch has no active v3 pool', async () => {
     const fake = createFakeDatabase({ missingNoxaPool: true });
     const repository = createRobinhoodPersistenceRepository({ database: fake.database });

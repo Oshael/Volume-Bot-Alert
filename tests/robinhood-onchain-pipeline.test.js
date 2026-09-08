@@ -6,6 +6,7 @@ const v3Fixture = require('../data/fixtures/robinhood-uniswap-v3.json');
 const v4Fixture = require('../data/fixtures/robinhood-uniswap-v4.json');
 const noxaFixture = require('../data/fixtures/robinhood-noxa-launch.json');
 const { createRobinhoodOnchainPipeline, sortLogs } = require('../src/services/robinhood-onchain-pipeline');
+const { ROBINHOOD_TOKENIZED_ASSETS } = require('../src/services/robinhood-market-policy');
 
 const NOW = Number(BigInt(v4Fixture.swap.blockTimestamp) * 1000n) + 1000;
 
@@ -63,6 +64,24 @@ function createPipeline(options = {}) {
 }
 
 describe('Robinhood onchain pipeline', () => {
+  it('tracks official stocks as quotes during live pool discovery', async () => {
+    const stockWord = `0x${'0'.repeat(24)}${ROBINHOOD_TOKENIZED_ASSETS.AAPL.slice(2)}`;
+    const initialize = {
+      ...v4Fixture.initialize,
+      topics: [
+        v4Fixture.initialize.topics[0],
+        `0x${'9'.repeat(64)}`,
+        v4Fixture.initialize.topics[2],
+        stockWord,
+      ],
+    };
+    const [entry] = await createPipeline().processDiscoveryRange([initialize]);
+
+    assert.equal(entry.event.tracked, true);
+    assert.equal(entry.event.tokenAddress, v4Fixture.expected.currency0);
+    assert.equal(entry.event.quoteAddress, ROBINHOOD_TOKENIZED_ASSETS.AAPL);
+  });
+
   it('seeds verified v2/v3/v4 registries without treating fixtures as observations', () => {
     const pipeline = createPipeline();
     const snapshot = pipeline.snapshot();

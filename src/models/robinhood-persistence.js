@@ -1853,6 +1853,22 @@ function createRobinhoodPersistenceRepository(options = {}) {
     }
   }
 
+  async function upsertRecoveredPools(events = []) {
+    const pools = events.map(normalizePool).filter(Boolean);
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      for (const pool of pools) await upsertPool(client, pool);
+      await client.query('COMMIT');
+      return { upsertedPools: pools.length };
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch (_) {}
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async function commitMarketRange(input = {}) {
     const cursor = normalizeCursor('market', input.cursor);
     const entries = (Array.isArray(input.entries) ? input.entries : []).map((entry) => {
@@ -2282,6 +2298,7 @@ function createRobinhoodPersistenceRepository(options = {}) {
     resolveMarketFrontier,
     loadTokenFdvReference,
     loadTokenFdvReferences,
+    upsertRecoveredPools,
   });
 }
 

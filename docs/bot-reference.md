@@ -472,6 +472,11 @@ segunda rota. Ela não afirma que o `slot0` archive daquele bloco já foi lido n
 suporta a stock como cotação; `stock_quote_valuation_not_implemented` continua bloqueando a
 prontidão enquanto a valoração USD específica não existir.
 
+O live discovery reconhece ativos tokenizados oficiais como quote em pools meme/stock
+V2, V3 e V4 e registra essas pools como ativas. Enquanto a rota stock/USD não estiver
+implementada, seus swaps são rejeitados com `quote_usd_unavailable`: o registry e a
+identificação de LP funcionam, mas preço, volume e alertas ainda não são publicados.
+
 Para execuções longas, informe `--checkpoint-file=/var/tmp/rh-v3-stock-audit.json`.
 O auditor salva atomicamente, ao final de cada range, a fase atual (`discovery`,
 `reference-initialization` ou `swaps`), o próximo bloco e os resultados acumulados. O
@@ -2234,6 +2239,16 @@ evidência de maior precedência. Deployments recuperados com gap superior ao
 limite incremental de 20.000 blocos ainda devem entrar em uma coorte delta do
 backfill global abaixo; essa seleção aceita `rpc_code_transition` como deployment
 exato mesmo sem provenance de creator.
+
+Para recuperar deployments e registrar de uma vez pares meme/stock históricos V2, V3
+e V4, use `npm run robinhood:onboarding-backfill`. Ele usa exclusivamente
+`ROBINHOOD_ARCHIVE_RPC_URL`, é read-only por default e aplica somente com
+`-- --confirm-robinhood-onboarding-backfill`. O scanner percorre apenas eventos de criação
+em ranges adaptativos e faz upserts ativos idempotentes. O holder recovery verifica o
+bloco do primeiro mint em N/N-1 via batch e só usa busca binária quando essa evidência
+não existe. Ajuste `--holder-limit`, `--holder-concurrency`, `--range-size`,
+`--from-block`, `--to-block` e `--timeout-ms` conforme o provider. Reinicie os processos
+Robinhood após o apply para carregar imediatamente as pools históricas no tracker.
 
 O backfill global do catálogo antigo usa a lease
 `robinhood-holder-global-backfill-worker` e permanece desligado por default via

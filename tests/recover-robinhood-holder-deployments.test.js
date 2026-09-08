@@ -117,6 +117,8 @@ describe('Robinhood holder archive deployment recovery', () => {
       runtime: {
         discovery: {
           async discover(input) {
+            assert.equal(input.blockEvidenceOnly, true);
+            assert.equal(input.exactBlockHint, true);
             if (input.tokenAddress === TOKEN_A) {
               return { tokenAddress: TOKEN_A, blockNumber: '40', source: 'rpc_code_transition' };
             }

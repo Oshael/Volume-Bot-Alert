@@ -125,6 +125,7 @@
     "robinhood:retention-safety-audit": "node src/utils/audit-robinhood-retention-safety.js",
     "robinhood:chain-events-prune": "node src/utils/prune-robinhood-chain-events.js",
     "robinhood:holder-deployment-recover": "node src/utils/recover-robinhood-holder-deployments.js",
+    "robinhood:onboarding-backfill": "node src/utils/backfill-robinhood-onboarding.js",
     "robinhood:infrastructure-import": "node src/utils/import-robinhood-infrastructure-registry.js",
     "robinhood:infrastructure-close": "node src/utils/close-robinhood-infrastructure-registry.js",
     "robinhood:sniper-calibrate": "node src/utils/calibrate-robinhood-holder-snipers.js",

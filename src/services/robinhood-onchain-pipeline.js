@@ -4,7 +4,9 @@ const { createEvmMarketWindowAggregator, eventIdentity } = require('./evm-market
 const { buildMarketObservation, ROBINHOOD_WETH } = require('./evm-market-metrics');
 const {
   buildLiquidityAssessment,
+  CANONICAL_CONTRACTS,
   classifyTokenEligibility,
+  ROBINHOOD_TOKENIZED_ASSETS,
 } = require('./robinhood-market-policy');
 const { createRobinhoodWethUsdQuoteReader } = require('./robinhood-weth-usd-quote');
 const { createNoxaLaunchValidator } = require('./noxa-launch-validator');
@@ -16,6 +18,11 @@ const { mergeRangeDeltas } = require('./uniswap-v4-liquidity');
 const { createRobinhoodHeadCaptureBuilder } = require('./robinhood-head-capture-builder');
 
 const DEFAULT_ROLLBACK_STATE_LIMIT = 10000;
+const DISCOVERY_QUOTE_ADDRESSES = Object.freeze([
+  CANONICAL_CONTRACTS.WETH,
+  CANONICAL_CONTRACTS.USDG,
+  ...Object.values(ROBINHOOD_TOKENIZED_ASSETS),
+]);
 
 function resolveCaptureBuilder(options, metadataReader, quoteReader) {
   if (options.captureMode !== true) return null;
@@ -161,9 +168,16 @@ function createRobinhoodOnchainPipeline(options = {}) {
   const rollbackEnabled = options.retainRollbackState !== false;
   const rollbackLimit = rollbackStateLimit(options.rollbackStateLimit);
   const poolSeeds = persistedPoolSeeds(options.seedPools);
-  const v2Tracker = options.v2Tracker || v2.createUniswapV2Tracker({ seedPairs: poolSeeds.v2 });
-  const v3Tracker = options.v3Tracker || v3.createUniswapV3Tracker({ seedPools: poolSeeds.v3 });
-  const v4Tracker = options.v4Tracker || v4.createUniswapV4Tracker({ seedPools: poolSeeds.v4 });
+  const trackerOptions = { quoteAddresses: DISCOVERY_QUOTE_ADDRESSES };
+  const v2Tracker = options.v2Tracker || v2.createUniswapV2Tracker({
+    ...trackerOptions, seedPairs: poolSeeds.v2,
+  });
+  const v3Tracker = options.v3Tracker || v3.createUniswapV3Tracker({
+    ...trackerOptions, seedPools: poolSeeds.v3,
+  });
+  const v4Tracker = options.v4Tracker || v4.createUniswapV4Tracker({
+    ...trackerOptions, seedPools: poolSeeds.v4,
+  });
   const timestampEnricher = options.timestampEnricher || createBlockTimestampEnricher({
     rpcClient,
     concurrency: options.timestampConcurrency,

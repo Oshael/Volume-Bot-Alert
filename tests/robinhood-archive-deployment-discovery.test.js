@@ -36,6 +36,27 @@ function rpcForBlock(transactions = []) {
 }
 
 describe('Robinhood archive deployment discovery', () => {
+  it('uses an exact mint hint as a two-code-call fast path', async () => {
+    const rpcClient = rpcForBlock([]);
+    rpcClient.requestBatch = async (requests) => requests.map(({ params }) => (
+      BigInt(params[1]) >= 40n ? '0x6000' : '0x'
+    ));
+    const discovery = createRobinhoodArchiveDeploymentDiscovery({
+      rpcClient,
+      blockCreationLookup: async () => { throw new Error('must not inspect creator'); },
+    });
+
+    assert.deepEqual(await discovery.discover({
+      tokenAddress: TOKEN,
+      upperBlock: '40',
+      exactBlockHint: true,
+      blockEvidenceOnly: true,
+    }), {
+      tokenAddress: TOKEN, blockNumber: '40', source: 'rpc_code_transition',
+    });
+    assert.deepEqual(rpcClient.codeBlocks, []);
+  });
+
   it('finds the first bytecode block and recovers a direct deployment', async () => {
     const rpcClient = rpcForBlock([{ hash: DEPLOY_HASH, from: CREATOR, to: null }]);
     rpcClient.requestBatch = async () => [{ contractAddress: TOKEN }];

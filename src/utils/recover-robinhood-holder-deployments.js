@@ -146,7 +146,12 @@ function buildRuntime(options, deps = {}) {
 
 async function recoverCandidate(runtime, candidate) {
   const upperBlock = candidate.upperBlock ?? await runtime.getArchiveHead();
-  const discovered = await runtime.discovery.discover({ ...candidate, upperBlock });
+  const discovered = await runtime.discovery.discover({
+    ...candidate,
+    upperBlock,
+    exactBlockHint: candidate.upperBlock != null,
+    blockEvidenceOnly: true,
+  });
   if (discovered.source === 'rpc_code_transition') {
     const result = await runtime.attributions.recordCodeTransitions([discovered]);
     return Object.freeze({

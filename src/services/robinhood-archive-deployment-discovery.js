@@ -47,6 +47,21 @@ async function findFirstCodeBlock(rpcClient, tokenAddress, upperBlock) {
   return low;
 }
 
+async function codeTransitionAt(rpcClient, tokenAddress, candidateBlock) {
+  const block = quantity(candidateBlock, 'candidateBlock');
+  const requests = [
+    { method: 'eth_getCode', params: [tokenAddress, blockTag(block)] },
+    ...(block > 0n
+      ? [{ method: 'eth_getCode', params: [tokenAddress, blockTag(block - 1n)] }]
+      : []),
+  ];
+  const codes = typeof rpcClient.requestBatch === 'function'
+    ? await rpcClient.requestBatch(requests)
+    : await Promise.all(requests.map(({ method, params }) => rpcClient.request(method, params)));
+  if (!hasCode(codes[0])) return null;
+  return block === 0n || !hasCode(codes[1]) ? block : null;
+}
+
 async function loadReceipts(rpcClient, transactions) {
   const requests = transactions.map((transaction) => ({
     method: 'eth_getTransactionReceipt', params: [transaction.hash],
@@ -150,7 +165,16 @@ function createRobinhoodArchiveDeploymentDiscovery(options = {}) {
       const receipt = await rpcClient.request('eth_getTransactionReceipt', [transactionHash]);
       upperBlock = quantity(receipt?.blockNumber, 'creation hint receipt.blockNumber');
     }
-    const deploymentBlock = await findFirstCodeBlock(rpcClient, tokenAddress, upperBlock);
+    const hintedTransition = input.exactBlockHint === true
+      ? await codeTransitionAt(rpcClient, tokenAddress, upperBlock)
+      : null;
+    const deploymentBlock = hintedTransition
+      ?? await findFirstCodeBlock(rpcClient, tokenAddress, upperBlock);
+    if (input.blockEvidenceOnly === true) {
+      return Object.freeze({
+        tokenAddress, blockNumber: deploymentBlock.toString(), source: 'rpc_code_transition',
+      });
+    }
     const direct = await findDirectCreation(rpcClient, tokenAddress, deploymentBlock);
     if (direct) return direct;
     const launchpad = await findLaunchpadCreation(rpcClient, tokenAddress, deploymentBlock);
@@ -169,5 +193,7 @@ function createRobinhoodArchiveDeploymentDiscovery(options = {}) {
 
 module.exports = {
   createRobinhoodArchiveDeploymentDiscovery,
-  __private: { findDirectCreation, findFirstCodeBlock, findLaunchpadCreation, hasCode },
+  __private: {
+    codeTransitionAt, findDirectCreation, findFirstCodeBlock, findLaunchpadCreation, hasCode,
+  },
 };
