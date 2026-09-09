@@ -1167,7 +1167,9 @@ gráfico ou iniciar retries agressivos; mudanças reais de range/resolução nã
 reutilizam a série anterior. Eventos `market:bucket` atualizam métricas e candles
 em realtime; se um snapshot HTTP iniciado antes terminar depois, os candles
 realtime posteriores ao corte do snapshot são mesclados novamente para impedir
-rollback visual.
+rollback visual. Quando uma chain selecionada recupera as capacidades `monitored`
+ou `charts`, o controller força imediatamente a reidratação do dashboard e das
+sparklines; descoberta inicial de uma chain já pronta não conta como recuperação.
 
 ## 8. API pública
 

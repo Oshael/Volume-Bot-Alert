@@ -227,6 +227,18 @@ export function hasEnabledChainCapability(
   return preferences.enabledChains.some((chain) => readiness[chain]?.capabilities[capability] === true);
 }
 
+export function didEnabledChainCapabilityBecomeAvailable(
+  preferences: ChainFilterPreferences,
+  previousReadiness: WorkspaceChainReadinessMap,
+  nextReadiness: WorkspaceChainReadinessMap,
+  capability: WorkspaceChainCapability,
+) {
+  return preferences.enabledChains.some((chain) => (
+    previousReadiness[chain]?.capabilities[capability] === false
+    && nextReadiness[chain]?.capabilities[capability] === true
+  ));
+}
+
 export function getUnavailableChainCapabilityNotice(
   preferences: ChainFilterPreferences,
   readiness: WorkspaceChainReadinessMap,

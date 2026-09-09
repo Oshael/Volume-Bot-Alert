@@ -283,4 +283,46 @@ describe('frontend chain-aware token identity', () => {
     );
   });
 
+  it('detects a selected chain capability recovery without treating initial discovery as recovery', () => {
+    const preferences = {
+      enabledChains: ['robinhood'],
+      radarChains: ['robinhood'],
+      alertFeedChains: ['robinhood'],
+      browserNotificationChains: ['robinhood'],
+    };
+    const syncing = {
+      robinhood: {
+        chain: 'robinhood',
+        status: 'syncing',
+        capabilities: { monitored: false },
+      },
+    };
+    const ready = {
+      robinhood: {
+        chain: 'robinhood',
+        status: 'ready',
+        capabilities: { monitored: true },
+      },
+    };
+
+    assert.equal(
+      tokenChain.didEnabledChainCapabilityBecomeAvailable(
+        preferences, syncing, ready, 'monitored',
+      ),
+      true,
+    );
+    assert.equal(
+      tokenChain.didEnabledChainCapabilityBecomeAvailable(
+        preferences, {}, ready, 'monitored',
+      ),
+      false,
+    );
+    assert.equal(
+      tokenChain.didEnabledChainCapabilityBecomeAvailable(
+        { ...preferences, enabledChains: ['solana'] }, syncing, ready, 'monitored',
+      ),
+      false,
+    );
+  });
+
 });

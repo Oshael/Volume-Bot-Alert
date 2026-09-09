@@ -1446,6 +1446,73 @@ test('filters a combined Solana and Robinhood alert feed through the master sele
   expect(diagnostics.pageErrors).toEqual([]);
 });
 
+test('rehydrates Robinhood market panels immediately when readiness recovers', async ({ page }) => {
+  test.setTimeout(40_000);
+  compactChartRequestPayloads.length = 0;
+  await page.clock.install({ time: new Date('2026-07-14T18:00:00.000Z') });
+  let readinessCalls = 0;
+  const recoveryConfig = {
+    ...ROBINHOOD_CONFIG,
+    tokens: [],
+    uiPrefs: {
+      ...ROBINHOOD_CONFIG.uiPrefs,
+      livePanelLayout: ROBINHOOD_MARKET_CONFIG.uiPrefs.livePanelLayout,
+      chainFilters: {
+        enabledChains: ['robinhood'],
+        radarChains: ['robinhood'],
+        alertFeedChains: ['robinhood'],
+        browserNotificationChains: ['robinhood'],
+      },
+    },
+  };
+  const fixtures = {
+    ...ROBINHOOD_MARKET_API_FIXTURES,
+    'GET /api/config': recoveryConfig,
+    'GET /api/config/chain-readiness': () => {
+      readinessCalls += 1;
+      return {
+        availableChains: ['solana', 'robinhood'],
+        chainReadiness: {
+          solana: SOLANA_READINESS,
+          robinhood: ROBINHOOD_MARKET_READINESS,
+        },
+      };
+    },
+    'GET /api/dashboard/monitored': () => ({
+      generatedAt: '2026-07-14T18:00:00.000Z',
+      asOf: '2026-07-14T18:00:00.000Z',
+      tokens: [marketToken('robinhood', 'RHFRESH')],
+      pinnedTokens: [],
+      total: 1,
+      page: 0,
+      perPage: 100,
+      hasMore: false,
+    }),
+  };
+  const diagnostics = await openAuthenticatedWorkspace(page, fixtures);
+
+  expect(diagnostics.apiRequests.some((requestUrl) => (
+    new URL(requestUrl).pathname === '/api/dashboard/monitored'
+  ))).toBe(false);
+  await page.clock.fastForward(30_100);
+  await expect.poll(() => readinessCalls).toBe(1);
+  await expect.poll(() => diagnostics.apiRequests.some((requestUrl) => {
+    const url = new URL(requestUrl);
+    return url.pathname === '/api/dashboard/monitored'
+      && url.searchParams.get('chains') === 'robinhood';
+  })).toBe(true);
+  await expect(page.locator(
+    `.monitored-panel article.monitored-token-row[data-address="${ROBINHOOD_TOKEN}"]`,
+  )).toContainText('RHFRESH');
+  await expect.poll(() => compactChartRequestPayloads.some((payload) => (
+    payload.identities?.some((identity) => (
+      identity.chain === 'robinhood' && identity.address === ROBINHOOD_TOKEN
+    ))
+  ))).toBe(true);
+  expect(diagnostics.unexpectedRequests).toEqual([]);
+  expect(diagnostics.pageErrors).toEqual([]);
+});
+
 test('refetches market panels by chain and rejects a stale combined response', async ({ page }) => {
   test.setTimeout(40_000);
   marketPinPayloads.length = 0;

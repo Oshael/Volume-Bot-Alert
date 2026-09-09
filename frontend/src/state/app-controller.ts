@@ -2,6 +2,7 @@ import { createAppState, getAlertFeedAlerts, getManualTokens, getMonitoredTokens
 import { resolveManualTableRows, resolveMonitoredTableRows } from '../utils/token-table';
 import {
   createLegacyCompatibleTokenIdentity,
+  didEnabledChainCapabilityBecomeAvailable,
   hasEnabledChainCapability,
   normalizeAvailableTokenChains,
   normalizeChainFilterPreferences,
@@ -14,6 +15,7 @@ import {
   type TokenChain,
   type TokenIdentity,
   type WorkspaceChainCapability,
+  type WorkspaceChainReadinessMap,
 } from '../utils/token-chain';
 import {
   resolveWorkspaceMarketSnapshotMs,
@@ -10308,6 +10310,35 @@ export function createAppController(): AppController {
     });
   }
 
+  function rehydrateRecoveredChainCapabilities(
+    previousReadiness: WorkspaceChainReadinessMap,
+    token: string,
+  ) {
+    const monitoredRecovered = didEnabledChainCapabilityBecomeAvailable(
+      state.ui.chainFilters,
+      previousReadiness,
+      state.data.chainReadiness,
+      'monitored',
+    );
+    const chartsRecovered = didEnabledChainCapabilityBecomeAvailable(
+      state.ui.chainFilters,
+      previousReadiness,
+      state.data.chainReadiness,
+      'charts',
+    );
+    if (monitoredRecovered) {
+      nextMonitoredDashboardPollAt = 0;
+      void refreshMonitoredDashboard();
+    }
+    if (chartsRecovered) {
+      void refreshHistoryWorkspaceSparklines({
+        token,
+        force: true,
+        caller: 'chain-readiness-recovered',
+      });
+    }
+  }
+
   async function refreshWorkspaceChainReadiness() {
     const token = state.session.token;
     if (!token || chainReadinessRefreshInFlight || !isAuthenticatedSession()) {
@@ -10320,6 +10351,7 @@ export function createAppController(): AppController {
         return;
       }
       const previous = getWorkspaceChainReadinessSignature();
+      const previousReadiness = state.data.chainReadiness;
       state.data.availableChains = normalizeAvailableTokenChains(payload.availableChains);
       state.data.chainReadiness = payload.chainReadiness || state.data.chainReadiness;
       state.ui.chainFilters = normalizeChainFilterPreferences(
@@ -10329,6 +10361,7 @@ export function createAppController(): AppController {
       const next = getWorkspaceChainReadinessSignature();
       if (previous !== next) {
         emit('header', 'top-performers', 'manual', 'monitored', 'alerts', 'recent', 'old-week');
+        rehydrateRecoveredChainCapabilities(previousReadiness, token);
       }
     } catch (error) {
       console.warn('[AppController] Failed to refresh chain readiness:', error instanceof Error ? error.message : error);
