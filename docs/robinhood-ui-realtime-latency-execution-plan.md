@@ -147,7 +147,10 @@ Progresso:
 
 - [x] Slice 0A: `market:bucket`, do receipt até o estado aplicado no navegador;
 - [x] Slice 0B: `market:trade` e alertas;
-- [ ] Slice 0C: liquidez, holders e readiness.
+- [x] Slice 0C: liquidez, holders e readiness. Holders propagam os marcos do
+  bloco canônico até a aplicação no painel; liquidez mede apenas avanços de
+  `updated_at` após estabelecer um baseline local; readiness mede
+  `checkedAt -> clientAppliedAt` e o intervalo real entre polls.
 
 - propagar os marcos de latência pelos payloads internos;
 - expor p50, p95, p99, idade do último evento e estado do listener por fluxo;

@@ -209,7 +209,8 @@ primary_prices AS (
 latest_pool_liquidity AS MATERIALIZED (
   SELECT requested.token_address, registry.protocol, registry.market_key,
     registry.pool_address, registry.pool_id,
-    snapshot.liquidity_usd AS close_liquidity_usd
+    snapshot.liquidity_usd AS close_liquidity_usd,
+    snapshot.updated_at AS liquidity_projection_committed_at
   FROM requested
   INNER JOIN robinhood_pool_registry registry
     ON registry.chain = 'robinhood'
@@ -228,6 +229,8 @@ token_liquidity AS (
       AS liquidity_usd,
     COUNT(*)::bigint AS liquidity_market_count,
     COUNT(close_liquidity_usd)::bigint AS valued_liquidity_market_count,
+    MAX(liquidity_projection_committed_at)
+      FILTER (WHERE close_liquidity_usd IS NOT NULL) AS liquidity_projection_committed_at,
     COALESCE(jsonb_agg(jsonb_build_object(
       'protocol', protocol,
       'marketKey', market_key,
@@ -256,6 +259,7 @@ SELECT requested.token_address,
   primary_market.protocol AS primary_protocol,
   primary_market.market_key AS primary_market_key,
   token_liquidity.liquidity_usd,
+  token_liquidity.liquidity_projection_committed_at,
   COALESCE(token_liquidity.liquidity_market_count, 0) AS liquidity_market_count,
   COALESCE(token_liquidity.valued_liquidity_market_count, 0)
     AS valued_liquidity_market_count,
@@ -364,6 +368,7 @@ function normalizeLiquidity(row) {
   }
   return {
     liquidityUsd,
+    liquidityProjectionCommittedAt: rowTimestamp(row, 'liquidity_projection_committed_at'),
     liquidityCoverage: valuedMarketCount === 0
       ? 'unavailable'
       : (valuedMarketCount < marketCount ? 'partial' : 'complete'),

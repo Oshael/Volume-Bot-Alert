@@ -57,9 +57,14 @@ describe('frontend Robinhood holder realtime events', () => {
   it('normalizes the backend contract and rejects malformed or unsafe events', () => {
     const normalized = holderEvents.normalizeRobinhoodHolderEvent(realtime({
       address: TOKEN.toUpperCase(),
+      latency: { publishedAt: '2026-08-10T12:30:00.100Z' },
     }));
     assert.equal(normalized.address, TOKEN);
     assert.equal(normalized.holderCount, 105);
+    assert.equal(normalized.latency.publishedAt, '2026-08-10T12:30:00.100Z');
+    assert.equal(holderEvents.markRobinhoodHolderReceived(
+      normalized, Date.parse('2026-08-10T12:30:00.200Z'),
+    ).latency.clientReceivedAt, '2026-08-10T12:30:00.200Z');
     assert.equal(holderEvents.normalizeRobinhoodHolderEvent(realtime({ holderCount: 2 ** 53 })), null);
     assert.equal(holderEvents.normalizeRobinhoodHolderEvent(realtime({ holderCount: '' })), null);
     assert.equal(holderEvents.normalizeRobinhoodHolderEvent(realtime({ sequence: 'wrong' })), null);

@@ -68,4 +68,44 @@ describe('frontend market bucket latency telemetry', () => {
     assert.equal(latency.recordMarketBucketApplied({ latency: {} }, 1000), false);
     assert.equal(latency.getMarketBucketLatencySnapshot(1000).sampleCount, 0);
   });
+
+  it('isolates holder, liquidity and readiness latency including poll cadence', () => {
+    for (const flow of ['holder:count', 'liquidity', 'readiness']) {
+      latency.resetRealtimeLatency(flow);
+    }
+    const first = Date.parse('2026-09-09T12:00:00.600Z');
+    latency.recordHolderApplied({ latency: {
+      receiptsAvailableAt: '2026-09-09T12:00:00.100Z',
+      projectionCommittedAt: '2026-09-09T12:00:00.300Z',
+      clientReceivedAt: '2026-09-09T12:00:00.500Z',
+    } }, first);
+    assert.equal(latency.recordLiquidityApplied([{
+      chain: 'robinhood', address: '0x1',
+      liquidityProjectionCommittedAt: '2026-09-09T12:00:00.200Z',
+    }], first), 0);
+    assert.equal(latency.recordLiquidityApplied([{
+      chain: 'robinhood', address: '0x1',
+      liquidityProjectionCommittedAt: '2026-09-09T12:00:00.200Z',
+    }], first + 100), 0);
+    assert.equal(latency.recordLiquidityApplied([{
+      chain: 'robinhood', address: '0x1',
+      liquidityProjectionCommittedAt: '2026-09-09T12:00:00.700Z',
+    }], first + 500), 1);
+    latency.recordReadinessApplied({ robinhood: {
+      checkedAt: '2026-09-09T12:00:00.400Z',
+    } }, first);
+    latency.recordReadinessApplied({ robinhood: {
+      checkedAt: '2026-09-09T12:00:30.400Z',
+    } }, first + 30_000);
+
+    assert.equal(latency.getRealtimeLatencySnapshot(
+      'holder:count', first,
+    ).stages.receiptToAppliedMs.p95Ms, 500);
+    assert.equal(latency.getRealtimeLatencySnapshot(
+      'liquidity', first + 500,
+    ).stages.projectionToAppliedMs.p95Ms, 400);
+    assert.equal(latency.getRealtimeLatencySnapshot(
+      'readiness', first + 30_000,
+    ).stages.pollGapMs.p95Ms, 30_000);
+  });
 });

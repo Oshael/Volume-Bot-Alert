@@ -12,6 +12,20 @@ function iso(value, label) {
   return parsed.toISOString();
 }
 
+function normalizeLatency(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const fields = [
+    'headObservedAt', 'receiptsAvailableAt', 'captureCommittedAt',
+    'projectionCommittedAt', 'publishedAt',
+  ];
+  const normalized = {};
+  for (const field of fields) {
+    if (value[field] == null) continue;
+    try { normalized[field] = iso(value[field], `latency.${field}`); } catch (_) { /* optional */ }
+  }
+  return Object.keys(normalized).length ? Object.freeze(normalized) : undefined;
+}
+
 function normalizeRobinhoodHolderRealtimeEvent(value = {}) {
   let identity;
   try {
@@ -23,12 +37,14 @@ function normalizeRobinhoodHolderRealtimeEvent(value = {}) {
     const ledgerVersion = decimal(value.ledgerVersion, 'ledger version');
     const liveThroughBlock = decimal(value.liveThroughBlock, 'live block');
     const liveThroughHash = String(value.liveThroughHash || '').toLowerCase();
+    const latency = normalizeLatency(value.latency);
     if (!/^0x[0-9a-f]{64}$/.test(liveThroughHash)) return null;
     const common = {
       chain: 'robinhood', address: identity.address, source: 'ledger_live',
       observedAt: iso(value.observedAt, 'observedAt'),
       ledgerVersion, liveThroughBlock, liveThroughHash,
       sequence: `robinhood-holder:${identity.address}:${ledgerVersion.padStart(24, '0')}`,
+      ...(latency ? { latency } : {}),
     };
     if (value.invalidated === true || value.type === 'holder:invalidate') {
       return Object.freeze({

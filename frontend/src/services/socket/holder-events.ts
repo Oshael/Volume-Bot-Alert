@@ -3,7 +3,10 @@ import type {
   RobinhoodHolderDelta,
   RobinhoodHolderInterval,
 } from '../api/robinhood-holders';
-import { normalizeMarketSubscription } from './market-events';
+import {
+  normalizeMarketSubscription,
+  type RealtimeLatencyMarks,
+} from './market-events';
 
 interface RobinhoodHolderEventBase {
   chain: 'robinhood';
@@ -14,6 +17,7 @@ interface RobinhoodHolderEventBase {
   liveThroughBlock: string;
   liveThroughHash: string;
   sequence: string;
+  latency?: RealtimeLatencyMarks;
 }
 
 export interface RobinhoodHolderCountEvent extends RobinhoodHolderEventBase {
@@ -39,6 +43,19 @@ function timestamp(value: unknown) {
   return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : null;
 }
 
+function normalizeLatency(value: unknown): RealtimeLatencyMarks | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const source = value as Record<string, unknown>;
+  const fields = [
+    'headObservedAt', 'receiptsAvailableAt', 'captureCommittedAt',
+    'projectionCommittedAt', 'publishedAt', 'clientReceivedAt', 'clientAppliedAt',
+  ] as const;
+  const latency = Object.fromEntries(fields.map((field) => [
+    field, source[field] == null ? null : timestamp(source[field]),
+  ])) as RealtimeLatencyMarks;
+  return fields.some((field) => latency[field]) ? latency : undefined;
+}
+
 function normalizeHolderEventBase(source: Record<string, unknown>) {
   const identity = normalizeMarketSubscription(source.address, source.chain);
   const observedAt = timestamp(source.observedAt);
@@ -46,6 +63,7 @@ function normalizeHolderEventBase(source: Record<string, unknown>) {
   const liveThroughBlock = decimal(source.liveThroughBlock);
   const liveThroughHash = String(source.liveThroughHash || '').toLowerCase();
   const type = String(source.type || '');
+  const latency = normalizeLatency(source.latency);
   if (identity?.chain !== 'robinhood' || source.source !== 'ledger_live' || !observedAt
     || !ledgerVersion || !liveThroughBlock || !/^0x[0-9a-f]{64}$/.test(liveThroughHash)
     || !['holder:count', 'holder:invalidate'].includes(type)) return null;
@@ -56,6 +74,20 @@ function normalizeHolderEventBase(source: Record<string, unknown>) {
     common: {
       chain: 'robinhood' as const, address: identity.address, source: 'ledger_live' as const,
       observedAt, ledgerVersion, liveThroughBlock, liveThroughHash, sequence,
+      ...(latency ? { latency } : {}),
+    },
+  };
+}
+
+export function markRobinhoodHolderReceived(
+  event: RobinhoodHolderRealtimeEvent,
+  receivedAt = Date.now(),
+): RobinhoodHolderRealtimeEvent {
+  return {
+    ...event,
+    latency: {
+      ...(event.latency || {}),
+      clientReceivedAt: new Date(receivedAt).toISOString(),
     },
   };
 }

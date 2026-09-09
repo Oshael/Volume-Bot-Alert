@@ -15,6 +15,7 @@ import {
 } from './market-events';
 import {
   createRobinhoodHolderEventOrderGate,
+  markRobinhoodHolderReceived,
   normalizeRobinhoodHolderEvent,
   type RobinhoodHolderCountEvent,
   type RobinhoodHolderInvalidateEvent,
@@ -81,7 +82,8 @@ function emitMarketTradeSubscriptionSync(current = socket) {
 }
 
 function dispatchHolderEvent(payload: unknown) {
-  const event = normalizeRobinhoodHolderEvent(payload);
+  const normalized = normalizeRobinhoodHolderEvent(payload);
+  const event = normalized ? markRobinhoodHolderReceived(normalized) : null;
   const identity = event && normalizeMarketSubscription(event.address, event.chain);
   if (!event || !identity || !holderEventOrder.accept(event)) return;
   for (const listener of holderListeners.get(identity.key)?.listeners || []) {

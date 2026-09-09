@@ -81,6 +81,7 @@ function buildDashboardMonitoredToken(row, options = {}) {
     valuation: row.valuation,
     priceUsd: optionalNumber(row.priceUsd, 'priceUsd'),
     liquidityUsd: optionalNumber(row.liquidityUsd, 'liquidityUsd'),
+    liquidityProjectionCommittedAt: optionalValue(row.liquidityProjectionCommittedAt),
     liquidityCoverage: optionalValue(row.liquidityCoverage) || 'unavailable',
     liquidityMarketCount: optionalNumber(row.liquidityMarketCount, 'liquidityMarketCount'),
     valuedLiquidityMarketCount: optionalNumber(

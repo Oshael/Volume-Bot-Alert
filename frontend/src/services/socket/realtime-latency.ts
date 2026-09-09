@@ -3,9 +3,11 @@ import type {
   MarketTradeUpdateEvent,
   RealtimeLatencyMarks,
 } from './market-events';
+import type { RobinhoodHolderRealtimeEvent } from './holder-events';
 
 const WINDOW_LIMIT = 512;
-export type RealtimeLatencyFlow = 'market:bucket' | 'market:trade' | 'alert:event';
+export type RealtimeLatencyFlow = 'market:bucket' | 'market:trade' | 'alert:event'
+  | 'holder:count' | 'liquidity' | 'readiness';
 type LatencyEvent = { latency?: RealtimeLatencyMarks };
 
 const FLOW_STAGES: Record<RealtimeLatencyFlow, Record<string, keyof RealtimeLatencyMarks>> = {
@@ -23,7 +25,16 @@ const FLOW_STAGES: Record<RealtimeLatencyFlow, Record<string, keyof RealtimeLate
     observedToAppliedMs: 'eventObservedAt',
     projectionToAppliedMs: 'projectionCommittedAt',
   },
+  'holder:count': {
+    receiptToAppliedMs: 'receiptsAvailableAt',
+    captureToAppliedMs: 'captureCommittedAt',
+    projectionToAppliedMs: 'projectionCommittedAt',
+  },
+  liquidity: { projectionToAppliedMs: 'projectionCommittedAt' },
+  readiness: { checkedToAppliedMs: 'eventObservedAt' },
 };
+
+const latestLiquidityProjectionByToken = new Map<string, number>();
 
 const trackers = Object.fromEntries(Object.keys(FLOW_STAGES).map((flow) => [flow, {
   samples: [] as Record<string, number>[],
@@ -74,6 +85,8 @@ function recordApplied(flow: RealtimeLatencyFlow, event: LatencyEvent, appliedAt
       ? null : duration(marks.publishedAt, receivedAt),
     receivedToAppliedMs: receivedAt == null || appliedAt < receivedAt
       ? null : appliedAt - receivedAt,
+    ...(flow === 'readiness' && trackers[flow].lastEventAt
+      ? { pollGapMs: duration(trackers[flow].lastEventAt, appliedAt) } : {}),
   };
   const valid = Object.fromEntries(
     Object.entries(sample).filter(([, value]) => Number.isFinite(value))
@@ -106,13 +119,55 @@ export function recordAlertApplied(event: LatencyEvent, appliedAt = Date.now()) 
   return recordApplied('alert:event', event, appliedAt);
 }
 
+export function recordHolderApplied(
+  event: RobinhoodHolderRealtimeEvent,
+  appliedAt = Date.now(),
+) {
+  return recordApplied('holder:count', event, appliedAt);
+}
+
+export function recordLiquidityApplied(
+  tokens: Array<{ chain?: unknown; address?: unknown; liquidityProjectionCommittedAt?: unknown }>,
+  appliedAt = Date.now(),
+) {
+  let recorded = 0;
+  for (const token of tokens) {
+    if (token.chain !== 'robinhood') continue;
+    const projectionCommittedAt = String(token.liquidityProjectionCommittedAt || '');
+    const projectionMs = timestampMs(projectionCommittedAt);
+    const key = String(token.address || '').toLowerCase();
+    if (!key || projectionMs == null) continue;
+    const previous = latestLiquidityProjectionByToken.get(key);
+    latestLiquidityProjectionByToken.delete(key);
+    latestLiquidityProjectionByToken.set(key, Math.max(previous ?? projectionMs, projectionMs));
+    if (previous == null || projectionMs <= previous) continue;
+    if (recordApplied('liquidity', { latency: { projectionCommittedAt } }, appliedAt)) recorded += 1;
+  }
+  while (latestLiquidityProjectionByToken.size > WINDOW_LIMIT) {
+    const oldest = latestLiquidityProjectionByToken.keys().next().value;
+    if (typeof oldest !== 'string') break;
+    latestLiquidityProjectionByToken.delete(oldest);
+  }
+  return recorded;
+}
+
+export function recordReadinessApplied(
+  readiness: { robinhood?: { checkedAt?: string | null } } | null | undefined,
+  appliedAt = Date.now(),
+) {
+  return recordApplied('readiness', {
+    latency: { eventObservedAt: readiness?.robinhood?.checkedAt || null },
+  }, appliedAt);
+}
+
 export function getRealtimeLatencySnapshot(
   flow: RealtimeLatencyFlow = 'market:bucket',
   now = Date.now(),
 ) {
   const tracker = trackers[flow];
   const stages = [...Object.keys(FLOW_STAGES[flow]),
-    'publishedToReceivedMs', 'receivedToAppliedMs'];
+    'publishedToReceivedMs', 'receivedToAppliedMs',
+    ...(flow === 'readiness' ? ['pollGapMs'] : [])];
   return {
     flow,
     sampleCount: tracker.samples.length,
@@ -134,6 +189,7 @@ export function getMarketBucketLatencySnapshot(now = Date.now()) {
 export function resetRealtimeLatency(flow: RealtimeLatencyFlow) {
   trackers[flow].samples.length = 0;
   trackers[flow].lastEventAt = null;
+  if (flow === 'liquidity') latestLiquidityProjectionByToken.clear();
 }
 
 export function resetMarketBucketLatency() {

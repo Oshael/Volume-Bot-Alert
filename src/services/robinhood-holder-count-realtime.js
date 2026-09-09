@@ -1,6 +1,7 @@
 const db = require('../models/db');
 const socketHub = require('./socket-hub');
 const { createPostgresRealtimeListener } = require('./postgres-realtime-listener');
+const { createRealtimeLatencyWindow } = require('./realtime-latency-window');
 const {
   normalizeRobinhoodHolderRealtimeEvent,
 } = require('./robinhood-holder-count-event');
@@ -16,6 +17,8 @@ function createRobinhoodHolderCountRealtime(deps = {}) {
   const database = deps.database || db;
   const hub = deps.socketHub || socketHub;
   const logger = deps.logger || console;
+  const now = deps.now || Date.now;
+  const latency = deps.latency || createRealtimeLatencyWindow({ now });
   const persistLiveCounts = deps.persistLiveCounts
     || createRobinhoodTokenHolderSummaryRepository({ database }).recordLiveCountEvents;
   const stats = { published: 0, publishFailures: 0, persistenceFailures: 0, received: 0 };
@@ -63,12 +66,20 @@ function createRobinhoodHolderCountRealtime(deps = {}) {
     if (message?.channel !== CHANNEL) return null;
     let event;
     try {
-      event = normalizeRobinhoodHolderRealtimeEvent(JSON.parse(String(message.payload || '{}')));
+      const payload = JSON.parse(String(message.payload || '{}'));
+      event = normalizeRobinhoodHolderRealtimeEvent({
+        ...payload,
+        latency: {
+          ...(payload.latency && typeof payload.latency === 'object' ? payload.latency : {}),
+          publishedAt: new Date(now()).toISOString(),
+        },
+      });
     } catch (_) {
       return null;
     }
     if (!event) return null;
     stats.received += 1;
+    latency.record(event.latency, event.latency?.publishedAt);
     hub.emitHolderUpdate(event);
     return event;
   }
@@ -86,7 +97,7 @@ function createRobinhoodHolderCountRealtime(deps = {}) {
     handleNotification,
     start: listener.start,
     stop: listener.stop,
-    getStatus: () => ({ ...listener.getStatus(), ...stats }),
+    getStatus: () => ({ ...listener.getStatus(), ...stats, latency: latency.snapshot() }),
   };
 }
 

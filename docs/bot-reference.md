@@ -659,6 +659,10 @@ persistir o swap e o web relay acrescenta `publishedAt`. A lease `web` expõe os
 `telemetry.marketTrades.latency`. Alertas `alert:event` carregam `eventObservedAt` (disparo),
 `projectionCommittedAt` (criação durável) e os marcos de relay/navegador; seus percentis de backend
 ficam em `telemetry.backendAlerts.latency`. Payloads antigos continuam válidos.
+O relay de holders preserva os marcos do bloco canônico e acrescenta
+`projectionCommittedAt` no commit do ledger e `publishedAt` ao receber o `NOTIFY`;
+o status web expõe a janela em `telemetry.robinhoodHolderCounts.latency`. No navegador,
+`holder:count` só marca aplicação depois de atualizar os counts visíveis.
 Quando o payload canônico comprova `volume5mDeltaCoverage=complete`, o cliente realtime também
 promove `coverage['5m']` para `complete`, evitando que o marcador visual de cobertura parcial fique
 preso até o próximo snapshot HTTP. Cobertura delta `partial` não rebaixa a cobertura da janela
@@ -1194,9 +1198,13 @@ No navegador, `clientReceivedAt` é marcado antes do callback de `market:bucket`
 estado marca `clientAppliedAt`. O console administrativo
 `window.trendscopePerfDebug.realtimeLatency(flow)` expõe uma janela de até 512 amostras com
 p50/p95/p99/max de receipt/captura/projeção até aplicação, publicação até recebimento e recebimento
-até aplicação. `flow` aceita `market:bucket` (default), `market:trade` ou `alert:event`; alertas
-medem também disparo até aplicação. A coleta é somente em memória, tem cardinalidade fixa e não envia telemetria de
-tokens de volta ao servidor.
+até aplicação. `flow` aceita `market:bucket` (default), `market:trade`, `alert:event`,
+`holder:count`, `liquidity` ou `readiness`; alertas medem também disparo até aplicação.
+Liquidez estabelece o primeiro `updated_at` visto por token como baseline e só amostra avanços,
+evitando confundir snapshot antigo com atraso de entrega. Readiness continua sendo reconciliação
+HTTP e expõe `checkedToAppliedMs` e `pollGapMs`; esses dois estágios separam custo da resposta do
+intervalo de scheduling. A coleta é somente em memória, tem cardinalidade fixa e não envia
+telemetria de tokens de volta ao servidor.
 
 ## 8. API pública
 

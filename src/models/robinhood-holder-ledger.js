@@ -35,6 +35,10 @@ function hex(value, bytes, label) {
 }
 
 function normalizeTransfer(value = {}) {
+  const latencyEntries = value.latency && typeof value.latency === 'object'
+    ? Object.entries(value.latency).filter(([, mark]) => mark != null) : [];
+  const latency = latencyEntries.length
+    ? Object.freeze(Object.fromEntries(latencyEntries)) : undefined;
   return Object.freeze({
     blockNumber: decimalQuantity(value.blockNumber, 'transfer.blockNumber'),
     blockHash: hex(value.blockHash, 32, 'transfer.blockHash'),
@@ -45,6 +49,7 @@ function normalizeTransfer(value = {}) {
     fromWallet: hex(value.fromWallet, 20, 'transfer.fromWallet'),
     toWallet: hex(value.toWallet, 20, 'transfer.toWallet'),
     amountRaw: decimalQuantity(value.amountRaw, 'transfer.amountRaw'),
+    ...(latency ? { latency } : {}),
   });
 }
 
@@ -322,6 +327,9 @@ async function lockNextApplicableEvent(client, input = {}) {
     `SELECT journal.block_number, journal.block_hash, journal.transaction_hash,
             journal.transaction_index, journal.log_index, journal.token_address,
             journal.from_wallet, journal.to_wallet, journal.amount_raw,
+            source_block.head_observed_at AS source_head_observed_at,
+            source_block.receipts_available_at AS source_receipts_available_at,
+            source_block.captured_at AS source_capture_committed_at,
             state.holder_count, state.version, state.ledger_status,
             state.backfill_next_block, state.live_through_block
        FROM robinhood_holder_transfer_journal journal
@@ -330,6 +338,8 @@ async function lockNextApplicableEvent(client, input = {}) {
         AND state.ledger_status IN ('shadow', 'live')
        INNER JOIN robinhood_holder_cursors cursor
          ON cursor.chain = journal.chain AND cursor.stream = 'live'
+       LEFT JOIN robinhood_chain_blocks source_block
+         ON source_block.chain = journal.chain AND source_block.block_hash = journal.block_hash
       WHERE journal.chain = 'robinhood' AND journal.applied = false
         AND NOT (journal.token_address = ANY($1::varchar[]))
         AND ($2::varchar IS NULL OR journal.token_address = $2)
@@ -358,12 +368,17 @@ async function lockApplicableTokenEvents(client, first, limit) {
     `SELECT journal.block_number, journal.block_hash, journal.transaction_hash,
             journal.transaction_index, journal.log_index, journal.token_address,
             journal.from_wallet, journal.to_wallet, journal.amount_raw,
+            source_block.head_observed_at AS source_head_observed_at,
+            source_block.receipts_available_at AS source_receipts_available_at,
+            source_block.captured_at AS source_capture_committed_at,
             state.holder_count, state.version, state.ledger_status,
             state.backfill_next_block, state.live_through_block
        FROM robinhood_holder_transfer_journal journal
        INNER JOIN robinhood_holder_token_states state
          ON state.chain = journal.chain AND state.token_address = journal.token_address
         AND state.ledger_status IN ('shadow', 'live')
+       LEFT JOIN robinhood_chain_blocks source_block
+         ON source_block.chain = journal.chain AND source_block.block_hash = journal.block_hash
       WHERE journal.chain = 'robinhood' AND journal.applied = false
         AND journal.token_address = $1
       ORDER BY journal.block_number, journal.transaction_index, journal.log_index
@@ -383,6 +398,9 @@ async function lockDirectApplicableTokenEvents(client, input, limit) {
     `SELECT journal.block_number, journal.block_hash, journal.transaction_hash,
             journal.transaction_index, journal.log_index, journal.token_address,
             journal.from_wallet, journal.to_wallet, journal.amount_raw,
+            source_block.head_observed_at AS source_head_observed_at,
+            source_block.receipts_available_at AS source_receipts_available_at,
+            source_block.captured_at AS source_capture_committed_at,
             state.holder_count, state.version, state.ledger_status,
             state.backfill_next_block, state.live_through_block
        FROM robinhood_holder_transfer_journal journal
@@ -391,6 +409,8 @@ async function lockDirectApplicableTokenEvents(client, input, limit) {
         AND state.ledger_status IN ('shadow', 'live')
        INNER JOIN robinhood_holder_cursors cursor
          ON cursor.chain = journal.chain AND cursor.stream = 'live'
+       LEFT JOIN robinhood_chain_blocks source_block
+         ON source_block.chain = journal.chain AND source_block.block_hash = journal.block_hash
       WHERE journal.chain = 'robinhood' AND journal.applied = false
         AND journal.token_address = $1
       ORDER BY journal.block_number, journal.transaction_index, journal.log_index
@@ -418,6 +438,11 @@ function transferFromRow(row) {
     transactionHash: row.transaction_hash, transactionIndex: row.transaction_index,
     logIndex: row.log_index, tokenAddress: row.token_address,
     fromWallet: row.from_wallet, toWallet: row.to_wallet, amountRaw: row.amount_raw,
+    latency: {
+      headObservedAt: row.source_head_observed_at || null,
+      receiptsAvailableAt: row.source_receipts_available_at || null,
+      captureCommittedAt: row.source_capture_committed_at || null,
+    },
   });
 }
 
@@ -807,6 +832,9 @@ async function commitAppliedPrefix(client, computed) {
         observedAt: row.updated_at,
         liveThroughBlock: String(row.live_through_block),
         liveThroughHash: row.live_through_hash,
+        ...(latest.transfer.latency ? { latency: Object.freeze({
+          ...latest.transfer.latency, projectionCommittedAt: row.updated_at,
+        }) } : {}),
       })
     : null;
   return Object.freeze({

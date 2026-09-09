@@ -10,6 +10,7 @@ const {
   CHANNEL,
   createRobinhoodHolderCountRealtime,
 } = require('../src/services/robinhood-holder-count-realtime');
+const { normalizeHolderTransfer } = require('../src/models/robinhood-holder-ledger');
 
 const TOKEN = `0x${'a'.repeat(40)}`;
 const HASH = `0x${'b'.repeat(64)}`;
@@ -23,6 +24,18 @@ function update(overrides = {}) {
 }
 
 describe('Robinhood holder count realtime', () => {
+  it('retains available canonical source latency on holder transfers', () => {
+    const transfer = normalizeHolderTransfer({
+      blockNumber: '1', blockHash: HASH, transactionHash: HASH,
+      transactionIndex: 0, logIndex: 0, tokenAddress: TOKEN,
+      fromWallet: TOKEN, toWallet: TOKEN, amountRaw: '1',
+      latency: { receiptsAvailableAt: '2026-08-10T12:00:00.100Z', captureCommittedAt: null },
+    });
+    assert.deepEqual(transfer.latency, {
+      receiptsAvailableAt: '2026-08-10T12:00:00.100Z',
+    });
+  });
+
   it('normalizes a compact sequenced public event and rejects unsafe counts', () => {
     assert.deepEqual(normalizeRobinhoodHolderCountEvent(update({
       tokenAddress: TOKEN.toUpperCase(),
@@ -35,6 +48,9 @@ describe('Robinhood holder count realtime', () => {
     assert.equal(normalizeRobinhoodHolderCountEvent(update({
       holderCount: '9007199254740992',
     })), null);
+    assert.equal(normalizeRobinhoodHolderCountEvent(update({
+      latency: { publishedAt: 'invalid' },
+    })).holderCount, 4424);
     assert.deepEqual(normalizeRobinhoodHolderRealtimeEvent(update({
       invalidated: true, holderCount: undefined, ledgerVersion: '8',
     })), {
@@ -107,10 +123,16 @@ describe('Robinhood holder count realtime', () => {
     const realtime = createRobinhoodHolderCountRealtime({
       socketHub: { emitHolderUpdate: (event) => emitted.push(event) },
       logger: { error() {}, log() {} },
+      now: () => Date.parse('2026-08-10T12:00:00.500Z'),
     });
 
     await realtime.start({ pool: { connect: async () => client } });
-    client.emit('notification', { channel: CHANNEL, payload: JSON.stringify(update()) });
+    client.emit('notification', { channel: CHANNEL, payload: JSON.stringify(update({
+      latency: {
+        receiptsAvailableAt: '2026-08-10T12:00:00.100Z',
+        projectionCommittedAt: '2026-08-10T12:00:00.300Z',
+      },
+    })) });
     client.emit('notification', {
       channel: CHANNEL, payload: JSON.stringify(update({ invalidated: true })),
     });
@@ -119,7 +141,9 @@ describe('Robinhood holder count realtime', () => {
     assert.match(queries[0], new RegExp(`LISTEN ${CHANNEL}`));
     assert.equal(emitted.length, 2);
     assert.equal(emitted[0].type, 'holder:count');
+    assert.equal(emitted[0].latency.publishedAt, '2026-08-10T12:00:00.500Z');
     assert.equal(emitted[1].type, 'holder:invalidate');
+    assert.equal(realtime.getStatus().latency.stages.receiptToPublishedMs.p95Ms, 400);
     await realtime.stop();
   });
 });

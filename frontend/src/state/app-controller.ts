@@ -109,7 +109,12 @@ import {
   saveDismissedRecent,
 } from '../utils/bar-storage';
 import { bindSocketLifecycle, disconnectSocket, replaceWorkspaceMarketSubscriptions, subscribeMarketChart, subscribePumpMint, unsubscribeMarketChart, unsubscribePumpMint, type MarketBucketUpdateEvent } from '../services/socket/client';
-import { recordAlertApplied, recordMarketBucketApplied } from '../services/socket/realtime-latency';
+import {
+  recordAlertApplied,
+  recordLiquidityApplied,
+  recordMarketBucketApplied,
+  recordReadinessApplied,
+} from '../services/socket/realtime-latency';
 import { buildLiveTokenChartCandle, buildRealtimeTokenMarketPatch, getMarketBucketFrameKey, shouldReplaceMarketCandleClose, upsertOrderedMarketCandle, type RealtimeActivityState, type RealtimeTokenMarketPatch } from '../services/socket/market-events';
 import { clearChartAlertHistory, publishRealtimeChartAlert } from '../services/charts/chart-alert-history';
 import {
@@ -10368,6 +10373,7 @@ export function createAppController(): AppController {
         emit('header', 'top-performers', 'manual', 'monitored', 'alerts', 'recent', 'old-week');
         rehydrateRecoveredChainCapabilities(previousReadiness, token);
       }
+      recordReadinessApplied(payload.chainReadiness);
     } catch (error) {
       console.warn('[AppController] Failed to refresh chain readiness:', error instanceof Error ? error.message : error);
     } finally {
@@ -12055,6 +12061,7 @@ export function createAppController(): AppController {
 
     applyMonitoredDashboard(input.tokens, input.manualTokens, input.generatedAt, input.pinnedTokens);
     emitMonitoredWorkspaceRegions();
+    recordLiquidityApplied([...input.tokens, ...input.pinnedTokens]);
     queueSupplementalMeteoraRefresh(input.token, mergeDashboardTokenSnapshots(input.tokens, input.pinnedTokens));
     return true;
   }

@@ -139,7 +139,7 @@ describe('frontend socket market subscriptions', () => {
     const invalidations = [];
     let recoveries = 0;
     const unsubscribe = client.subscribeRobinhoodHolderUpdates(ROBINHOOD, {
-      onCount: (event) => counts.push(event.holderCount),
+      onCount: (event) => counts.push(event),
       onInvalidate: (event) => invalidations.push(event.reason),
       onRecover: () => { recoveries += 1; },
     });
@@ -154,7 +154,9 @@ describe('frontend socket market subscriptions', () => {
       };
     };
 
-    socket.trigger('holder:count', holderEvent());
+    socket.trigger('holder:count', holderEvent({
+      latency: { publishedAt: '2026-08-10T12:00:00.100Z' },
+    }));
     socket.trigger('holder:count', holderEvent({ holderCount: 9999 }));
     socket.trigger('holder:invalidate', holderEvent({
       type: 'holder:invalidate', holderCount: undefined, ledgerVersion: '8',
@@ -163,7 +165,9 @@ describe('frontend socket market subscriptions', () => {
     socket.trigger('disconnect', 'transport close');
     socket.trigger('connect');
 
-    assert.deepEqual(counts, [4424]);
+    assert.equal(counts.length, 1);
+    assert.equal(counts[0].holderCount, 4424);
+    assert.ok(Number.isFinite(Date.parse(counts[0].latency.clientReceivedAt)));
     assert.deepEqual(invalidations, ['reorg_resync']);
     assert.equal(recoveries, 1);
     unsubscribe();

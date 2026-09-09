@@ -31,6 +31,7 @@ function metricRow(overrides = {}) {
     primary_protocol: 'uniswap-v3',
     primary_market_key: `robinhood:uniswap-v3:0x${'2'.repeat(40)}`,
     liquidity_usd: '12000',
+    liquidity_projection_committed_at: new Date('2026-07-15T17:59:30.000Z'),
     liquidity_market_count: '3',
     valued_liquidity_market_count: '2',
     liquidity_pools: [
@@ -78,6 +79,7 @@ describe('Robinhood workspace window metric reader', () => {
     assert.equal(row.swaps5m, 0);
     assert.equal(row.swaps1h, 18);
     assert.equal(row.liquidityUsd, 12000);
+    assert.equal(row.liquidityProjectionCommittedAt, '2026-07-15T17:59:30.000Z');
     assert.equal(row.liquidityCoverage, 'partial');
     assert.equal(row.liquidityMarketCount, 3);
     assert.equal(row.valuedLiquidityMarketCount, 2);
@@ -178,6 +180,7 @@ describe('Robinhood workspace window metric reader', () => {
     assert.match(sql, /LEFT JOIN robinhood_pool_liquidity_snapshots snapshot/);
     assert.match(sql, /snapshot\.liquidity_confidence = 'medium'/);
     assert.match(sql, /SUM\(close_liquidity_usd\) FILTER/);
+    assert.match(sql, /MAX\(liquidity_projection_committed_at\)/);
     assert.match(sql, /jsonb_agg\(jsonb_build_object/);
     const liquiditySql = sql.slice(
       sql.indexOf('latest_pool_liquidity AS'), sql.indexOf('token_liquidity AS')

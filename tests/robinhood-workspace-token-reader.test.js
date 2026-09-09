@@ -55,6 +55,7 @@ function metrics(address, overrides = {}) {
     lastActivityAt: '2026-07-15T17:20:00.000Z',
     volume5mUsd: 0, volume1hUsd: 500, volume6hUsd: 2_000, volume24hUsd: 9_000,
     liquidityUsd: 9_000,
+    liquidityProjectionCommittedAt: '2026-07-15T17:59:30.000Z',
     liquidityCoverage: 'partial',
     liquidityMarketCount: 3,
     valuedLiquidityMarketCount: 2,
@@ -126,6 +127,9 @@ describe('Robinhood workspace token reader', () => {
       lastSeenAt: '2026-07-15T17:20:00.000Z',
     });
     assert.equal(prefix.rows[0].liquidityCoverage, 'partial');
+    assert.equal(
+      prefix.rows[0].liquidityProjectionCommittedAt, '2026-07-15T17:59:30.000Z',
+    );
     assert.equal(prefix.rows[0].liquidityMarketCount, 3);
     assert.equal(prefix.rows[0].valuedLiquidityMarketCount, 2);
     assert.equal(prefix.rows[0].holderCount, 4424);

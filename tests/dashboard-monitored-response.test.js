@@ -23,6 +23,8 @@ function normalizedRow(chain, overrides = {}) {
     tokenAgeProvenance: 'chain-native',
     priceUsd: 2.5,
     liquidityUsd: chain === 'solana' ? 9_000 : null,
+    liquidityProjectionCommittedAt: chain === 'robinhood'
+      ? '2026-07-15T17:59:30.000Z' : null,
     liquidityCoverage: chain === 'robinhood' ? 'unavailable' : null,
     liquidityMarketCount: chain === 'robinhood' ? 0 : null,
     valuedLiquidityMarketCount: chain === 'robinhood' ? 0 : null,
@@ -91,6 +93,9 @@ describe('dashboard monitored response', () => {
     assert.equal(robinhood.launchpadId, 'pons');
     assert.equal(robinhood.holderCount, 4424);
     assert.equal(robinhood.holderFreshness, 'fresh');
+    assert.equal(
+      robinhood.liquidityProjectionCommittedAt, '2026-07-15T17:59:30.000Z',
+    );
     assert.equal(solana.holderCount, null);
     assert.equal(solana.volume1h, null);
     assert.equal(solana.coverage['1h'], 'unavailable');
