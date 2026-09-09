@@ -714,7 +714,9 @@ As janelas do workspace também deixam de usar o `checkpoint_timestamp` congelad
 monólito como fim de cobertura. O início histórico continua vindo de
 `robinhood_ingestion_cursors`, mas o fim passa a ser a evidência ativa mais antiga da fila do
 processing — apenas trabalho não-terminal (`pending/leased`); com a fila vazia, usa o checkpoint
-do head. Dead-letters (`blocked`) ficam de fora do frontier de propósito: como nunca viram
+do head. Toda nova evidência de market preserva `timestampMs` no nível superior; o leitor também
+aceita o formato legado `event.timestampMs` das capturas não-swap. Dead-letters (`blocked`) ficam
+de fora do frontier de propósito: como nunca viram
 observação, incluí-los congelaria `coverage_end` no passado e apagaria `5m/1h` e liquidez de todos
 os tokens. A evidência do dead-letter é retida e reprocessável; sua profundidade permanece visível
 no health read da fila. Desse modo, `5m/1h/6h/24h` não degradam artificialmente após o Corte 7 e

@@ -189,6 +189,10 @@ describe('Robinhood workspace window metric reader', () => {
     assert.match(sql, /market_processing_frontier AS/);
     assert.match(sql, /processing_status = 'pending'/);
     assert.match(sql, /processing_status = 'leased'/);
+    assert.equal(
+      (sql.match(/COALESCE\(evidence->>'timestampMs', evidence#>>'\{event,timestampMs\}'\)/g) || []).length,
+      2,
+    );
     // Dead-letters must not pin the frontier and black out recent windows.
     assert.doesNotMatch(sql, /processing_status = 'blocked'/);
     assert.match(sql, /WHEN frontier\.block_number IS NULL THEN head\.checkpoint_timestamp/);

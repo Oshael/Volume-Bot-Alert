@@ -105,6 +105,7 @@ describe('head capture builder — market', () => {
       const b = builder({ ...over, ...mdOver });
       const capture = await b.buildMarketCapture(v3Swap());
       assert.equal(capture.evidence.rejected, expected);
+      assert.equal(capture.evidence.timestampMs, '1750000000000');
     });
   }
 
@@ -162,8 +163,12 @@ describe('head capture builder — market', () => {
 
 describe('head capture builder — events and discovery', () => {
   it('captures a non-swap market event as a log passthrough', () => {
-    const capture = builder().buildEventCapture({ kind: 'modify-liquidity', protocol: 'uniswap-v4', poolId: '0xp' });
+    const capture = builder().buildEventCapture({
+      kind: 'modify-liquidity', protocol: 'uniswap-v4', poolId: '0xp',
+      timestampMs: 1750000000000,
+    });
     assert.equal(capture.evidence.event.kind, 'modify-liquidity');
+    assert.equal(capture.evidence.timestampMs, '1750000000000');
   });
 
   it('freezes the NOXA validation result on a discovery launch', () => {

@@ -21,6 +21,14 @@ function blockTag(value) {
   return `0x${BigInt(value).toString(16)}`;
 }
 
+function requireCaptureTimestampMs(value) {
+  const timestampMs = String(value ?? '').trim();
+  if (!/^\d+$/.test(timestampMs)) {
+    throw new Error('market capture timestampMs is required');
+  }
+  return timestampMs;
+}
+
 function createRobinhoodHeadCaptureBuilder(deps = {}) {
   const metadataReader = deps.metadataReader;
   const quoteReader = deps.quoteReader;
@@ -48,7 +56,11 @@ function createRobinhoodHeadCaptureBuilder(deps = {}) {
       protocol: swap.protocol ?? null,
       marketKey: swap.marketKey ?? null,
       evidenceVersion: HEAD_EVIDENCE_VERSION,
-      evidence: { rejected: reason, tokenAddress: swap.tokenAddress ?? null },
+      evidence: {
+        timestampMs: requireCaptureTimestampMs(swap.timestampMs),
+        rejected: reason,
+        tokenAddress: swap.tokenAddress ?? null,
+      },
     };
   }
 
@@ -176,7 +188,7 @@ function createRobinhoodHeadCaptureBuilder(deps = {}) {
       protocol: event.protocol ?? null,
       marketKey: event.marketKey ?? null,
       evidenceVersion: HEAD_EVIDENCE_VERSION,
-      evidence: { event },
+      evidence: { timestampMs: requireCaptureTimestampMs(event.timestampMs), event },
     };
   }
 

@@ -27,14 +27,14 @@ market_head_cursor AS (
 ),
 leased_market_frontier AS MATERIALIZED (
   SELECT block_number, transaction_index, log_index,
-    evidence->>'timestampMs' AS timestamp_ms
+    COALESCE(evidence->>'timestampMs', evidence#>>'{event,timestampMs}') AS timestamp_ms
   FROM robinhood_head_captures
   WHERE chain = 'robinhood' AND stream = 'market'
     AND processing_status = 'leased'
 ),
 active_market_frontier AS (
   (SELECT block_number, transaction_index, log_index,
-      evidence->>'timestampMs' AS timestamp_ms
+      COALESCE(evidence->>'timestampMs', evidence#>>'{event,timestampMs}') AS timestamp_ms
    FROM robinhood_head_captures
    WHERE chain = 'robinhood' AND stream = 'market'
      AND processing_status = 'pending'
