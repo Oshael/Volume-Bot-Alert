@@ -34,4 +34,10 @@ describe('Robinhood stock pool liquidity audit', () => {
     assert.equal(audit.__private.quoteIndex(inverted), 0);
     assert.equal(audit.__private.tokenUsd('uniswap-v4', q96, inverted, 18, 18, '42'), '42');
   });
+
+  it('labels an RPC failure with the operation that failed', async () => {
+    await assert.rejects(audit.__private.request({
+      async request() { throw new Error('RPC error -32000'); },
+    }, 'NVDA target slot0', 'eth_call'), /NVDA target slot0: RPC error -32000/);
+  });
 });

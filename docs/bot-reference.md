@@ -480,7 +480,8 @@ identificação de LP funcionam, mas preço, volume e alertas ainda não são pu
 `npm run robinhood:audit-stock-pool-liquidity -- --token-address=<token>
 --expected-total-usd=<comparação>` prova a contribuição corrente das pools V4 meme/stock
 sem persistir dados. O probe busca somente `ModifyLiquidity` dos `pool_id` envolvidos no
-`ROBINHOOD_ARCHIVE_RPC_URL`, lê o estado âncora no RPC live/pruned e usa a pool V3
+`ROBINHOOD_ARCHIVE_RPC_URL`, escolhe o menor head corrente entre archive e live para que
+as leituras usem estado ainda disponível no RPC live/pruned e usa a pool V3
 stock/USDG ativa com maior snapshot de LP como referência de preço. O range padrão é de
 2.000.000 blocos e pode ser ajustado com `--range-size`; PostgreSQL, snapshots, filas e
 cursores permanecem estritamente read-only.

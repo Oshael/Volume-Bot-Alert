@@ -136,18 +136,15 @@ async function candidates(database, tokenAddress) {
   return rows;
 }
 
-async function anchor(database) {
-  const { rows } = await database.query(
-    `WITH pending AS MATERIALIZED (
-       SELECT block_number FROM robinhood_chain_domain_outbox
-       WHERE chain='robinhood' AND status<>'complete' ORDER BY block_number LIMIT 1
-     ) SELECT CASE WHEN pending.block_number IS NULL THEN capture.checkpoint_block
-                   ELSE LEAST(capture.checkpoint_block, pending.block_number-1) END AS block
-       FROM robinhood_chain_capture_cursor capture LEFT JOIN pending ON TRUE
-       WHERE capture.chain='robinhood'`
-  );
-  if (rows[0]?.block == null) throw new Error('canonical anchor is unavailable');
-  return BigInt(rows[0].block);
+async function request(client, label, method, params = []) {
+  try {
+    return await client.request(method, params);
+  } catch (error) {
+    const wrapped = new Error(`${label}: ${error.message}`);
+    wrapped.code = error.code;
+    wrapped.cause = error;
+    throw wrapped;
+  }
 }
 
 async function scanRanges(client, rows, toBlock, rangeSize, logger) {
@@ -196,11 +193,15 @@ async function runAudit(input, deps = {}) {
   const archive = deps.archiveRpc || rpc(input.archiveRpcUrl, 'stock-liquidity-archive');
   const live = deps.liveRpc || rpc(input.liveRpcUrl, 'stock-liquidity-live');
   for (const [name, client] of [['archive', archive], ['live', live]]) {
-    const chainId = BigInt(await client.request('eth_chainId'));
+    const chainId = BigInt(await request(client, `${name} chain id`, 'eth_chainId'));
     if (chainId !== CHAIN_ID) throw new Error(`${name} RPC is not Robinhood Chain`);
   }
   const rows = await candidates(database, input.tokenAddress);
-  const anchorBlock = await anchor(database);
+  const [archiveHead, liveHead] = await Promise.all([
+    request(archive, 'archive head', 'eth_blockNumber').then(BigInt),
+    request(live, 'live head', 'eth_blockNumber').then(BigInt),
+  ]);
+  const anchorBlock = archiveHead < liveHead ? archiveHead : liveHead;
   const ranges = await scanRanges(archive, rows, anchorBlock, input.rangeSize, logger);
   const metadata = createErc20MetadataReader({ rpcClient: live });
   const tag = `0x${anchorBlock.toString(16)}`;
@@ -216,11 +217,17 @@ async function runAudit(input, deps = {}) {
       metadata.getMetadata(row.token_address, { blockTag: tag }),
       metadata.getMetadata(row.quote_address, { blockTag: tag }),
       metadata.getMetadata(CANONICAL_CONTRACTS.USDG, { blockTag: tag }),
-      live.request('eth_call', [{ to: row.ref_pool_address, data: SLOT0_SELECTOR }, tag]),
-      live.request('eth_call', [{ to: CANONICAL_CONTRACTS.UNISWAP_V4_STATE_VIEW,
-        data: bytes32Call(V4_SLOT0_SELECTOR, row.pool_id) }, tag]),
-      live.request('eth_call', [{ to: CANONICAL_CONTRACTS.UNISWAP_V4_STATE_VIEW,
-        data: bytes32Call(V4_LIQUIDITY_SELECTOR, row.pool_id) }, tag]),
+      request(live, `${row.symbol} reference slot0`, 'eth_call', [
+        { to: row.ref_pool_address, data: SLOT0_SELECTOR }, tag,
+      ]),
+      request(live, `${row.symbol} target slot0`, 'eth_call', [
+        { to: CANONICAL_CONTRACTS.UNISWAP_V4_STATE_VIEW,
+          data: bytes32Call(V4_SLOT0_SELECTOR, row.pool_id) }, tag,
+      ]),
+      request(live, `${row.symbol} target liquidity`, 'eth_call', [
+        { to: CANONICAL_CONTRACTS.UNISWAP_V4_STATE_VIEW,
+          data: bytes32Call(V4_LIQUIDITY_SELECTOR, row.pool_id) }, tag,
+      ]),
     ]);
     for (const item of [tokenMeta, stockMeta, usdgMeta]) {
       if (!item.usable) throw new Error(`metadata unavailable for ${item.address}`);
@@ -259,7 +266,8 @@ async function runAudit(input, deps = {}) {
   const known = parseDecimal(knownResult.rows[0].total);
   const projected = add(known, missing);
   const report = {
-    mode: 'read-only', tokenAddress: input.tokenAddress, anchorBlock: anchorBlock.toString(), pools,
+    mode: 'read-only', tokenAddress: input.tokenAddress, anchorBlock: anchorBlock.toString(),
+    archiveHead: archiveHead.toString(), liveHead: liveHead.toString(), pools,
     knownLiquidityUsd: formatDecimal(known, 2),
     stockPoolLiquidityUsd: formatDecimal(missing, 2),
     projectedLiquidityUsd: formatDecimal(projected, 2),
@@ -288,4 +296,4 @@ if (require.main === module) void main().catch((error) => {
   console.error(error.message); process.exitCode = 1;
 });
 
-module.exports = { main, options, runAudit, __private: { add, quoteIndex, tokenUsd } };
+module.exports = { main, options, runAudit, __private: { add, quoteIndex, request, tokenUsd } };
