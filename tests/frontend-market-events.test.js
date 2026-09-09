@@ -250,6 +250,7 @@ describe('frontend realtime market events', () => {
       windowEnd: '2026-07-15T12:00:00.000Z',
       coverage: 'complete',
     });
+    assert.deepEqual(current.volumeCoverage, { '5m': 'complete' });
 
     const withoutBaseline = { ...activity };
     delete withoutBaseline.prevVolume5mCanonical;
@@ -264,6 +265,13 @@ describe('frontend realtime market events', () => {
     );
     assert.equal(merged.activity.canonicalVolume5m.previousVolumeUsd, 80);
     assert.equal(merged.activity.canonicalVolume5m.coverage, 'complete');
+
+    const partial = marketEvents.buildRealtimeTokenMarketPatch(
+      marketEvents.normalizeMarketBucketUpdate(event({
+        activity: { ...activity, volume5mDeltaCoverage: 'partial' },
+      })),
+    );
+    assert.equal(partial.volumeCoverage, null);
   });
 
   it('builds a Robinhood live chart candle without falling back to market cap', () => {

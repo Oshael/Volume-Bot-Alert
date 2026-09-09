@@ -645,6 +645,11 @@ isola a linha (retry/backoff, dead-letter `blocked`). Os sinks in-memory (catalo
 **não** sobem nesse processo ainda — evita double-processing no overlap; o co-start e o cutover do
 monólito são a etapa seguinte (Corte 6/7). Nenhum `.env` atual seleciona o grupo nem liga a flag.
 Contrato: `docs/robinhood-derived-outbox-contract.md`.
+Quando o payload canônico comprova `volume5mDeltaCoverage=complete`, o cliente realtime também
+promove `coverage['5m']` para `complete`, evitando que o marcador visual de cobertura parcial fique
+preso até o próximo snapshot HTTP. Cobertura delta `partial` não rebaixa a cobertura da janela
+corrente, pois ela também pode significar apenas que ainda faltam os cinco minutos anteriores
+necessários para calcular a variação.
 
 Além do worker de outbox, o grupo `robinhood-derived` também sobe o **catalog projection
 worker** (lease `robinhood-catalog-projection-worker`, gate `ROBINHOOD_CATALOG_PROJECTION_ENABLED`,

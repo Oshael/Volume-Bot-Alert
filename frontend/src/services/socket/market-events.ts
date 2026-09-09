@@ -414,6 +414,14 @@ function buildRealtimeRollingVolumes(event: MarketBucketUpdateEvent) {
   };
 }
 
+function promoteCanonicalVolume5mCoverage(
+  coverage: RealtimeTokenMarketPatch['volumeCoverage'],
+  activity: RealtimeTokenMarketPatch['activity'],
+) {
+  if (activity?.canonicalVolume5m?.coverage !== 'complete') return coverage;
+  return { ...(coverage || {}), '5m': 'complete' as const };
+}
+
 export function buildRealtimeTokenMarketPatch(
   event: MarketBucketUpdateEvent,
   previousActivity: RealtimeActivityState = {},
@@ -437,7 +445,7 @@ export function buildRealtimeTokenMarketPatch(
     fdv: applicableValuationType === 'fdv' ? valuationUsd : null,
     mcap: applicableValuationType === 'mcap' ? valuationUsd : null,
     rollingVolumes: rolling.values,
-    volumeCoverage: rolling.coverage,
+    volumeCoverage: promoteCanonicalVolume5mCoverage(rolling.coverage, activity),
     activity,
   };
   return patch.valuation || patch.priceUsd != null || patch.activity || patch.rollingVolumes ? patch : null;
