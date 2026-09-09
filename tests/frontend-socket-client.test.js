@@ -74,6 +74,22 @@ after(() => {
 });
 
 describe('frontend socket market subscriptions', () => {
+  it('marks when a market bucket reaches the browser before dispatch', () => {
+    const received = [];
+    client.bindSocketLifecycle({ onRevoked() {}, onMarketBucket: (event) => received.push(event) });
+    socket.trigger('market:bucket', {
+      type: 'market:bucket', chain: 'robinhood', address: ROBINHOOD,
+      bucketTs: '2026-09-09T12:00:00.000Z', sequence: 'robinhood:1',
+      granularityMinutes: 1,
+      latency: { publishedAt: '2026-09-09T12:00:00.100Z' },
+      candle: { bucketTs: '2026-09-09T12:00:00.000Z', granularityMinutes: 1 },
+    });
+
+    assert.equal(received.length, 1);
+    assert.ok(Number.isFinite(Date.parse(received[0].latency.clientReceivedAt)));
+    assert.equal(received[0].latency.publishedAt, '2026-09-09T12:00:00.100Z');
+  });
+
   it('restores canonical chart and workspace subscriptions after reconnect', () => {
     client.bindSocketLifecycle({ onRevoked() {} });
     client.subscribeMarketChart(SOLANA);

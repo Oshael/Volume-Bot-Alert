@@ -1,3 +1,5 @@
+import { getMarketBucketLatencySnapshot } from '../services/socket/realtime-latency';
+
 const PERF_DEBUG_ENABLED_KEY = 'trendscope-runtime-perf-debug-enabled';
 const PERF_DEBUG_LOG_KEY = 'trendscope-runtime-perf-debug-log';
 const PERF_DEBUG_ARCHIVES_KEY = 'trendscope-runtime-perf-debug-archives';
@@ -37,6 +39,7 @@ declare global {
       dump: () => RuntimePerfDebugEntry[];
       dumpArchives: () => RuntimePerfDebugArchive[];
       dumpAll: () => { active: RuntimePerfDebugEntry[]; archives: RuntimePerfDebugArchive[] };
+      realtimeLatency: () => ReturnType<typeof getMarketBucketLatencySnapshot>;
       isEnabled: () => boolean;
     };
   }
@@ -264,6 +267,7 @@ export function installRuntimePerfDebugConsole() {
       active: getRuntimePerfDebugLog(),
       archives: getRuntimePerfDebugArchives(),
     }),
+    realtimeLatency: getMarketBucketLatencySnapshot,
     isEnabled: isRuntimePerfDebugEnabled,
   };
 }

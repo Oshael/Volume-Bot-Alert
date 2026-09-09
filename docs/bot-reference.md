@@ -645,6 +645,14 @@ isola a linha (retry/backoff, dead-letter `blocked`). Os sinks in-memory (catalo
 **não** sobem nesse processo ainda — evita double-processing no overlap; o co-start e o cutover do
 monólito são a etapa seguinte (Corte 6/7). Nenhum `.env` atual seleciona o grupo nem liga a flag.
 Contrato: `docs/robinhood-derived-outbox-contract.md`.
+
+O payload Robinhood `market:bucket` carrega o objeto aditivo `latency`. O processing resolve
+`headObservedAt`, `receiptsAvailableAt` e `captureCommittedAt` a partir do bloco canônico;
+`projectionCommittedAt` usa `clock_timestamp()` ao inserir a outbox e só fica visível ao consumidor
+depois do commit; o web relay acrescenta `publishedAt`. O status da lease `web`, em
+`telemetry.marketBuckets.latency`, mantém até 512 amostras e expõe p50/p95/p99/max de receipt,
+captura e projeção até publicação. A ausência desses marcos em payloads legados não invalida o
+evento e apenas impede a criação da amostra.
 Quando o payload canônico comprova `volume5mDeltaCoverage=complete`, o cliente realtime também
 promove `coverage['5m']` para `complete`, evitando que o marcador visual de cobertura parcial fique
 preso até o próximo snapshot HTTP. Cobertura delta `partial` não rebaixa a cobertura da janela
@@ -1175,6 +1183,13 @@ realtime posteriores ao corte do snapshot são mesclados novamente para impedir
 rollback visual. Quando uma chain selecionada recupera as capacidades `monitored`
 ou `charts`, o controller força imediatamente a reidratação do dashboard e das
 sparklines; descoberta inicial de uma chain já pronta não conta como recuperação.
+
+No navegador, `clientReceivedAt` é marcado antes do callback de `market:bucket` e a aplicação no
+estado marca `clientAppliedAt`. O console administrativo
+`window.trendscopePerfDebug.realtimeLatency()` expõe uma janela de até 512 amostras com
+p50/p95/p99/max de receipt/captura/projeção até aplicação, publicação até recebimento e recebimento
+até aplicação. A coleta é somente em memória, tem cardinalidade fixa e não envia telemetria de
+tokens de volta ao servidor.
 
 ## 8. API pública
 

@@ -1389,10 +1389,16 @@ async function insertMarketObservations(client, rows, cursor, options = {}) {
      live_bucket_payloads AS (
        SELECT bucket.*, canonical.current_volume_5m_usd,
          canonical.previous_volume_5m_usd, canonical.volume_5m_baseline_at,
-         canonical.volume_5m_window_end, canonical.volume_5m_delta_coverage
+         canonical.volume_5m_window_end, canonical.volume_5m_delta_coverage,
+         source_block.head_observed_at, source_block.receipts_available_at,
+         source_block.captured_at AS capture_committed_at
        FROM live_buckets bucket
        INNER JOIN canonical_volume_5m canonical
          USING (chain, token_address)
+       LEFT JOIN robinhood_chain_blocks source_block
+         ON source_block.chain = bucket.chain
+        AND source_block.block_number = bucket.last_block_number
+        AND source_block.canonical
      )
      SELECT
        (SELECT COUNT(*)::int FROM inserted_observations) AS inserted_observations,
@@ -1425,6 +1431,9 @@ async function insertMarketObservations(client, rows, cursor, options = {}) {
          'lastObservedAt', last_observed_at,
          'lastBlockNumber', last_block_number::text,
          'lastLogIndex', last_log_index::text,
+         'headObservedAt', head_observed_at,
+         'receiptsAvailableAt', receipts_available_at,
+         'captureCommittedAt', capture_committed_at,
          'protocols', protocols
        ) ORDER BY token_address, bucket_ts) FROM live_bucket_payloads), '[]'::jsonb) AS live_buckets`,
     [JSON.stringify(rows), cursor.checkpointTimestamp, options.includeExistingTargets === true]
@@ -1454,6 +1463,10 @@ function buildRobinhoodMarketBucketUpdate(row, cursor) {
   const lastBlockNumber = decimalQuantity(row.lastBlockNumber, 'live bucket block number');
   const lastLogIndex = decimalQuantity(row.lastLogIndex, 'live bucket log index');
   const completeThrough = cursor.checkpointTimestamp?.getTime() || 0;
+  const generatedAt = new Date().toISOString();
+  const optionalTimestamp = (value, label) => (
+    value == null ? null : timestampIso(value, label)
+  );
   return {
     type: 'market:bucket',
     chain: CHAIN,
@@ -1474,7 +1487,18 @@ function buildRobinhoodMarketBucketUpdate(row, cursor) {
       lastLogIndex,
     },
     granularityMinutes: 1,
-    generatedAt: new Date().toISOString(),
+    generatedAt,
+    latency: {
+      headObservedAt: optionalTimestamp(row.headObservedAt, 'head observed timestamp'),
+      receiptsAvailableAt: optionalTimestamp(
+        row.receiptsAvailableAt, 'receipts available timestamp'
+      ),
+      captureCommittedAt: optionalTimestamp(row.captureCommittedAt, 'capture commit timestamp'),
+      projectionCommittedAt: null,
+      publishedAt: null,
+      clientReceivedAt: null,
+      clientAppliedAt: null,
+    },
     activity: {
       volumeUsd: String(row.volumeUsd),
       currentVolume5mUsd: row.currentVolume5mUsd == null
@@ -1563,7 +1587,14 @@ async function insertDerivedOutboxRows(client, liveBuckets, emitCursor) {
      )
      SELECT 'robinhood', entry."protocol", entry."marketKey", entry."tokenAddress",
        entry."bucketTs"::timestamptz, entry."lastBlockNumber"::bigint,
-       entry."lastLogIndex"::bigint, entry."payload"
+       entry."lastLogIndex"::bigint,
+       jsonb_set(
+         entry."payload",
+         '{latency}',
+         COALESCE(entry."payload" -> 'latency', '{}'::jsonb)
+           || jsonb_build_object('projectionCommittedAt', clock_timestamp()),
+         true
+       )
      FROM jsonb_to_recordset($1::jsonb) AS entry(
        "protocol" text, "marketKey" text, "tokenAddress" text,
        "bucketTs" timestamptz, "lastBlockNumber" text, "lastLogIndex" text,

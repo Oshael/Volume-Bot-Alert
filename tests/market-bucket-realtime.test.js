@@ -13,6 +13,11 @@ function marketEvent(sequence, volumeUsd = 10) {
     bucketTs: '2026-07-18T22:00:00.000Z',
     sequence,
     activity: { volumeUsd, swaps: Number(sequence) },
+    latency: {
+      receiptsAvailableAt: '2026-07-18T22:00:00.100Z',
+      captureCommittedAt: '2026-07-18T22:00:00.150Z',
+      projectionCommittedAt: '2026-07-18T22:00:00.200Z',
+    },
   };
 }
 
@@ -78,6 +83,7 @@ test('LISTEN forwards a valid notification to the local socket hub', async () =>
   const relay = createMarketBucketRealtime({
     socketHub: { emitMarketBucketUpdate: (event) => emitted.push(event) },
     logger: { error: () => {}, log: () => {} },
+    now: () => Date.parse('2026-07-18T22:00:00.300Z'),
   });
 
   await relay.start({ pool: { connect: async () => client } });
@@ -87,6 +93,11 @@ test('LISTEN forwards a valid notification to the local socket hub', async () =>
   assert.match(queries[0], new RegExp(`LISTEN ${CHANNEL}`));
   assert.equal(emitted.length, 1);
   assert.equal(emitted[0].type, 'market:bucket');
+  assert.equal(emitted[0].latency.publishedAt, '2026-07-18T22:00:00.300Z');
+  assert.equal(relay.getStatus().latency.lastEventAgeMs, 0);
+  assert.deepEqual(relay.getStatus().latency.stages.receiptToPublishedMs, {
+    samples: 1, p50Ms: 200, p95Ms: 200, p99Ms: 200, maxMs: 200,
+  });
   await relay.stop();
   assert.match(queries[1], new RegExp(`UNLISTEN ${CHANNEL}`));
 });

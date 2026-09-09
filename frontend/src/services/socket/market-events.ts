@@ -33,6 +33,7 @@ export interface MarketBucketUpdateEvent {
   pairAddress?: string | null;
   granularityMinutes: number;
   generatedAt?: string | null;
+  latency?: RealtimeLatencyMarks;
   activity?: {
     volumeUsd?: unknown;
     currentVolume5mUsd?: unknown;
@@ -58,6 +59,16 @@ export interface MarketBucketUpdateEvent {
   } | null;
   coverage?: Record<string, unknown> | null;
   candle: MarketBucketCandle;
+}
+
+export interface RealtimeLatencyMarks {
+  headObservedAt?: string | null;
+  receiptsAvailableAt?: string | null;
+  captureCommittedAt?: string | null;
+  projectionCommittedAt?: string | null;
+  publishedAt?: string | null;
+  clientReceivedAt?: string | null;
+  clientAppliedAt?: string | null;
 }
 
 export interface MarketTradeUpdateEvent {
@@ -128,6 +139,19 @@ function validTimestamp(value: unknown) {
   return Number.isFinite(timestampMs) ? new Date(timestampMs).toISOString() : null;
 }
 
+function normalizeLatencyMarks(value: unknown): RealtimeLatencyMarks | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const source = value as Record<string, unknown>;
+  const fields = [
+    'headObservedAt', 'receiptsAvailableAt', 'captureCommittedAt',
+    'projectionCommittedAt', 'publishedAt', 'clientReceivedAt', 'clientAppliedAt',
+  ] as const;
+  const latency = Object.fromEntries(fields.map((field) => [
+    field, source[field] == null ? null : validTimestamp(source[field]),
+  ])) as RealtimeLatencyMarks;
+  return fields.some((field) => latency[field]) ? latency : undefined;
+}
+
 export function normalizeMarketSubscription(
   addressValue: unknown,
   chainValue: unknown = 'solana',
@@ -169,12 +193,26 @@ export function normalizeMarketBucketUpdate(value: unknown): MarketBucketUpdateE
     bucketTs,
     sequence,
     granularityMinutes,
+    latency: normalizeLatencyMarks(source.latency),
     candle: {
       ...candleSource,
       bucketTs,
       granularityMinutes,
     },
   } as MarketBucketUpdateEvent;
+}
+
+export function markMarketBucketReceived(
+  event: MarketBucketUpdateEvent,
+  receivedAt = Date.now(),
+): MarketBucketUpdateEvent {
+  return {
+    ...event,
+    latency: {
+      ...(event.latency || {}),
+      clientReceivedAt: new Date(receivedAt).toISOString(),
+    },
+  };
 }
 
 export function getMarketBucketFrameKey(event: MarketBucketUpdateEvent) {

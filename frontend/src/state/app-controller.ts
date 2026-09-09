@@ -109,6 +109,7 @@ import {
   saveDismissedRecent,
 } from '../utils/bar-storage';
 import { bindSocketLifecycle, disconnectSocket, replaceWorkspaceMarketSubscriptions, subscribeMarketChart, subscribePumpMint, unsubscribeMarketChart, unsubscribePumpMint, type MarketBucketUpdateEvent } from '../services/socket/client';
+import { recordMarketBucketApplied } from '../services/socket/realtime-latency';
 import { buildLiveTokenChartCandle, buildRealtimeTokenMarketPatch, getMarketBucketFrameKey, shouldReplaceMarketCandleClose, upsertOrderedMarketCandle, type RealtimeActivityState, type RealtimeTokenMarketPatch } from '../services/socket/market-events';
 import { clearChartAlertHistory, publishRealtimeChartAlert } from '../services/charts/chart-alert-history';
 import {
@@ -8932,11 +8933,13 @@ export function createAppController(): AppController {
     }
 
     const dirtyRegions = new Set<AppRenderRegion>();
+    const appliedPayloads: MarketBucketUpdateEvent[] = [];
     for (const payload of payloads) {
       const tokenChanged = applyLiveTokenMarketUpdate(payload);
       const sparklineChanged = applyLiveMarketBucketUpdate(payload);
       if (tokenChanged || sparklineChanged) {
         addLiveMarketRenderRegions(payload, dirtyRegions);
+        appliedPayloads.push(payload);
       }
     }
     if (state.ui.expandedSparklineAddress) {
@@ -8944,6 +8947,8 @@ export function createAppController(): AppController {
     } else if (dirtyRegions.size > 0) {
       emit(...dirtyRegions);
     }
+    const appliedAt = Date.now();
+    for (const payload of appliedPayloads) recordMarketBucketApplied(payload, appliedAt);
   }
 
   function queueLiveMarketBucket(payload: MarketBucketUpdateEvent) {

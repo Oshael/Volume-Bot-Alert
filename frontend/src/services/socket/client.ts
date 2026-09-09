@@ -4,6 +4,7 @@ import type { DashboardAlertEvent } from '../api/catalog';
 import type { TokenChain } from '../../utils/token-chain';
 import {
   createMarketEventOrderGate,
+  markMarketBucketReceived,
   normalizeMarketBucketUpdate,
   normalizeMarketTradeUpdate,
   normalizeMarketSubscription,
@@ -135,7 +136,8 @@ export function bindSocketLifecycle(options: {
   });
 
   current.on('market:bucket', (payload: unknown) => {
-    const event = normalizeMarketBucketUpdate(payload);
+    const normalized = normalizeMarketBucketUpdate(payload);
+    const event = normalized ? markMarketBucketReceived(normalized) : null;
     if (event && marketEventOrder.accept(event)) {
       options.onMarketBucket?.(event);
     }

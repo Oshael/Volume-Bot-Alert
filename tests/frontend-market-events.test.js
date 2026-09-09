@@ -48,10 +48,29 @@ describe('frontend realtime market events', () => {
   });
 
   it('requires an explicit valid event identity, timestamp, sequence and candle', () => {
-    const normalized = marketEvents.normalizeMarketBucketUpdate(event());
+    const normalized = marketEvents.normalizeMarketBucketUpdate(event({
+      latency: {
+        receiptsAvailableAt: '2026-07-15T12:00:00.100Z',
+        publishedAt: 'invalid',
+      },
+    }));
     assert.equal(normalized.chain, 'robinhood');
     assert.equal(normalized.address, EVM);
     assert.equal(normalized.candle.closeFdvUsd, 120000);
+    assert.deepEqual(normalized.latency, {
+      headObservedAt: null,
+      receiptsAvailableAt: '2026-07-15T12:00:00.100Z',
+      captureCommittedAt: null,
+      projectionCommittedAt: null,
+      publishedAt: null,
+      clientReceivedAt: null,
+      clientAppliedAt: null,
+    });
+    assert.equal(
+      marketEvents.markMarketBucketReceived(normalized, Date.parse('2026-07-15T12:00:00.400Z'))
+        .latency.clientReceivedAt,
+      '2026-07-15T12:00:00.400Z',
+    );
     assert.equal(marketEvents.normalizeMarketBucketUpdate(event({ chain: undefined })), null);
     assert.equal(marketEvents.normalizeMarketBucketUpdate(event({ chain: null })), null);
     assert.equal(marketEvents.normalizeMarketBucketUpdate(event({ sequence: '' })), null);

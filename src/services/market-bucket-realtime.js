@@ -1,6 +1,7 @@
 const db = require('../models/db');
 const socketHub = require('./socket-hub');
 const { createPostgresRealtimeListener } = require('./postgres-realtime-listener');
+const { createRealtimeLatencyWindow } = require('./realtime-latency-window');
 
 const CHANNEL = 'market_bucket_updated';
 const MAX_BATCH_SIZE = 100;
@@ -14,6 +15,8 @@ function createMarketBucketRealtime(deps = {}) {
   const schedule = deps.schedule || setTimeout;
   const cancel = deps.cancel || clearTimeout;
   const logger = deps.logger || console;
+  const now = deps.now || Date.now;
+  const latency = deps.latency || createRealtimeLatencyWindow({ now });
   const pending = new Map();
   let flushTimer = null;
   let flushing = false;
@@ -98,12 +101,21 @@ function createMarketBucketRealtime(deps = {}) {
     if (message?.channel !== CHANNEL) return null;
     let event;
     try {
-      event = normalize(JSON.parse(String(message.payload || '{}')));
+      const payload = JSON.parse(String(message.payload || '{}'));
+      const publishedAt = new Date(now()).toISOString();
+      event = normalize({
+        ...payload,
+        latency: {
+          ...(payload.latency && typeof payload.latency === 'object' ? payload.latency : {}),
+          publishedAt,
+        },
+      });
     } catch (_) {
       return null;
     }
     if (!event) return null;
     stats.received += 1;
+    latency.record(event.latency, event.latency?.publishedAt);
     hub.emitMarketBucketUpdate(event);
     return event;
   }
@@ -128,7 +140,10 @@ function createMarketBucketRealtime(deps = {}) {
   }
 
   function getStatus() {
-    return { ...listenerTransport.getStatus(), pending: pending.size, ...stats };
+    return {
+      ...listenerTransport.getStatus(), pending: pending.size, ...stats,
+      latency: latency.snapshot(),
+    };
   }
 
   return { enqueue, publish, flush, getStatus, handleNotification, start, stop };

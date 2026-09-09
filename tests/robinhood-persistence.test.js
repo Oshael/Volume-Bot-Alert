@@ -226,6 +226,9 @@ function liveBucketRow(overrides = {}) {
     lastObservedAt: '2026-07-13T00:00:20.000Z',
     lastBlockNumber: '8069000',
     lastLogIndex: '7',
+    headObservedAt: '2026-07-13T00:00:20.010Z',
+    receiptsAvailableAt: '2026-07-13T00:00:20.020Z',
+    captureCommittedAt: '2026-07-13T00:00:20.030Z',
     protocols: {
       'uniswap-v2': { volumeUsd: '150.25', swaps: 1, buys: 1, sells: 0, transactions: 1 },
       'uniswap-v3': { volumeUsd: '300', swaps: 2, buys: 1, sells: 1, transactions: 2 },
@@ -1322,6 +1325,16 @@ describe('commitHeadProcessingBatch derived outbox', () => {
       protocol: 'uniswap-v3', key: `robinhood:uniswap-v3:${POOL}`,
     });
     assert.equal(rows[0].payload.ordering.frontierTimestamp, WINDOW_END.toISOString());
+    assert.deepEqual(rows[0].payload.latency, {
+      headObservedAt: '2026-07-13T00:00:20.010Z',
+      receiptsAvailableAt: '2026-07-13T00:00:20.020Z',
+      captureCommittedAt: '2026-07-13T00:00:20.030Z',
+      projectionCommittedAt: null,
+      publishedAt: null,
+      clientReceivedAt: null,
+      clientAppliedAt: null,
+    });
+    assert.match(outboxCall.sql, /projectionCommittedAt[\s\S]*clock_timestamp\(\)/);
     assert.equal(rows[0].payload.derived.standardAlertEligible, true);
     assert.equal(result.insertedOutboxRows, 1);
   });
