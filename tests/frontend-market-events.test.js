@@ -58,6 +58,7 @@ describe('frontend realtime market events', () => {
     assert.equal(normalized.address, EVM);
     assert.equal(normalized.candle.closeFdvUsd, 120000);
     assert.deepEqual(normalized.latency, {
+      eventObservedAt: null,
       headObservedAt: null,
       receiptsAvailableAt: '2026-07-15T12:00:00.100Z',
       captureCommittedAt: null,
@@ -122,11 +123,16 @@ describe('frontend realtime market events', () => {
       transactionHash: `0x${'1'.repeat(64)}`, actionIndex: 4, blockNumber: 100,
       blockTime: '2026-08-09T12:00:00Z', side: 'sell',
       walletAddress: `0x${'2'.repeat(40)}`, amountUsd: '7.5', priceUsd: null, mcUsd: '9000',
+      latency: { receiptsAvailableAt: '2026-08-09T12:00:00.100Z' },
     };
     const normalized = marketEvents.normalizeMarketTradeUpdate(trade);
     assert.equal(normalized.address, EVM);
     assert.equal(normalized.amountUsd, 7.5);
     assert.equal(normalized.priceUsd, null);
+    assert.equal(normalized.latency.receiptsAvailableAt, '2026-08-09T12:00:00.100Z');
+    assert.equal(marketEvents.markMarketTradeReceived(
+      normalized, Date.parse('2026-08-09T12:00:00.400Z'),
+    ).latency.clientReceivedAt, '2026-08-09T12:00:00.400Z');
     assert.equal(marketEvents.normalizeMarketTradeUpdate({ ...trade, chain: 'base' }), null);
     assert.equal(marketEvents.normalizeMarketTradeUpdate({ ...trade, transactionHash: 'bad' }), null);
   });

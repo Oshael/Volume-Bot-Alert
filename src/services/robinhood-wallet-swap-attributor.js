@@ -70,6 +70,11 @@ function buildRow(observation, walletAddress, blockTime, parserVersion) {
     // after the observation is pruned (~3 days). See stage109 / feed plan §8.
     fdvUsd: observation.fdv_usd,
     tokenTotalSupplyRaw: observation.token_total_supply_raw,
+    latency: {
+      headObservedAt: observation.head_observed_at || null,
+      receiptsAvailableAt: observation.receipts_available_at || null,
+      captureCommittedAt: observation.capture_committed_at || null,
+    },
     parserVersion,
   };
 }

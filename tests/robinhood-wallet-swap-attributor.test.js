@@ -82,7 +82,11 @@ describe('robinhood wallet swap attributor', () => {
     });
 
     const result = await attributor.attributeBlock(100n, [
-      observation(TX_1, 5),
+      observation(TX_1, 5, {
+        head_observed_at: '2026-08-09T12:00:00.100Z',
+        receipts_available_at: '2026-08-09T12:00:00.150Z',
+        capture_committed_at: '2026-08-09T12:00:00.200Z',
+      }),
       observation(TX_2, 9),
     ]);
 
@@ -100,6 +104,11 @@ describe('robinhood wallet swap attributor', () => {
     assert.equal(rows[0].actionIndex, '5');
     assert.equal(rows[0].blockTime, new Date(0x60000000 * 1000).toISOString());
     assert.equal(rows[0].parserVersion, 'rh-wallet-seed-1');
+    assert.deepEqual(rows[0].latency, {
+      headObservedAt: '2026-08-09T12:00:00.100Z',
+      receiptsAvailableAt: '2026-08-09T12:00:00.150Z',
+      captureCommittedAt: '2026-08-09T12:00:00.200Z',
+    });
     assert.equal(rows[1].walletAddress, SIGNER_B);
     assert.equal(published[0], rows);
     assert.deepEqual(transactionPositionRepository.inserted[0], [{

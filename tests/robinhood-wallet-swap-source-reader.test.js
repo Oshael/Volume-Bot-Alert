@@ -58,6 +58,8 @@ describe('robinhood wallet swap source reader', () => {
     assert.deepEqual(database.calls[0].params, ['robinhood', '100', '200', 2]);
     // second query: observations for those blocks
     assert.match(database.calls[1].sql, /block_number = ANY\(\$2::bigint\[\]\)/);
+    assert.match(database.calls[1].sql, /LEFT JOIN robinhood_chain_blocks source_block/);
+    assert.match(database.calls[1].sql, /source_block\.receipts_available_at/);
     assert.deepEqual(database.calls[1].params, ['robinhood', ['100', '101']]);
 
     assert.deepEqual(result.blockNumbers, ['100', '101']);

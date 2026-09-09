@@ -653,6 +653,12 @@ depois do commit; o web relay acrescenta `publishedAt`. O status da lease `web`,
 `telemetry.marketBuckets.latency`, mantém até 512 amostras e expõe p50/p95/p99/max de receipt,
 captura e projeção até publicação. A ausência desses marcos em payloads legados não invalida o
 evento e apenas impede a criação da amostra.
+O payload `market:trade` usa o mesmo contrato: a leitura set-based das observações aceitas traz
+os marcos do bloco canônico, o wallet worker marca `projectionCommittedAt` somente depois de
+persistir o swap e o web relay acrescenta `publishedAt`. A lease `web` expõe os percentis em
+`telemetry.marketTrades.latency`. Alertas `alert:event` carregam `eventObservedAt` (disparo),
+`projectionCommittedAt` (criação durável) e os marcos de relay/navegador; seus percentis de backend
+ficam em `telemetry.backendAlerts.latency`. Payloads antigos continuam válidos.
 Quando o payload canônico comprova `volume5mDeltaCoverage=complete`, o cliente realtime também
 promove `coverage['5m']` para `complete`, evitando que o marcador visual de cobertura parcial fique
 preso até o próximo snapshot HTTP. Cobertura delta `partial` não rebaixa a cobertura da janela
@@ -1186,9 +1192,10 @@ sparklines; descoberta inicial de uma chain já pronta não conta como recupera�
 
 No navegador, `clientReceivedAt` é marcado antes do callback de `market:bucket` e a aplicação no
 estado marca `clientAppliedAt`. O console administrativo
-`window.trendscopePerfDebug.realtimeLatency()` expõe uma janela de até 512 amostras com
+`window.trendscopePerfDebug.realtimeLatency(flow)` expõe uma janela de até 512 amostras com
 p50/p95/p99/max de receipt/captura/projeção até aplicação, publicação até recebimento e recebimento
-até aplicação. A coleta é somente em memória, tem cardinalidade fixa e não envia telemetria de
+até aplicação. `flow` aceita `market:bucket` (default), `market:trade` ou `alert:event`; alertas
+medem também disparo até aplicação. A coleta é somente em memória, tem cardinalidade fixa e não envia telemetria de
 tokens de volta ao servidor.
 
 ## 8. API pública

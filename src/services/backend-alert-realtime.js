@@ -5,10 +5,17 @@ const { GMGN_CLAIM_SIGNAL_RULE_KEY } = require('./backend-alert-rules');
 const backendAlertFeed = require('./backend-alert-feed');
 const socketHub = require('./socket-hub');
 const { createPostgresRealtimeListener } = require('./postgres-realtime-listener');
+const { createRealtimeLatencyWindow } = require('./realtime-latency-window');
 
 const CHANNEL = 'backend_alert_event_created';
 const USER_ALERT_PAYLOAD_TYPE = 'user_alert_event_created';
 const GLOBAL_ALERT_PAYLOAD_TYPE = 'global_alert_event_created';
+const alertLatency = createRealtimeLatencyWindow({
+  stages: {
+    observedToPublishedMs: 'eventObservedAt',
+    projectionToPublishedMs: 'projectionCommittedAt',
+  },
+});
 
 let lastError = null;
 const stats = {
@@ -30,6 +37,11 @@ function normalizePositiveInteger(value, fieldName) {
 
 function getPayloadType(eventRow) {
   return eventRow?.userId == null ? GLOBAL_ALERT_PAYLOAD_TYPE : USER_ALERT_PAYLOAD_TYPE;
+}
+
+function isoTimestampOrNull(value) {
+  const parsed = Date.parse(String(value || ''));
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
 }
 
 function buildPayload(eventRow) {
@@ -104,7 +116,17 @@ async function emitPersistedEvent(payload, options = {}) {
 
   const feed = options.backendAlertFeed || backendAlertFeed;
   const hub = options.socketHub || socketHub;
-  const dashboardPayload = await feed.buildDashboardAlertEventFromEvent(eventRow);
+  const publishedAt = new Date((options.now || Date.now)()).toISOString();
+  const feedPayload = await feed.buildDashboardAlertEventFromEvent(eventRow);
+  const dashboardPayload = feedPayload && {
+    ...feedPayload,
+    latency: {
+      eventObservedAt: isoTimestampOrNull(eventRow.triggeredAt),
+      projectionCommittedAt: isoTimestampOrNull(eventRow.createdAt),
+      publishedAt,
+    },
+  };
+  alertLatency.record(dashboardPayload?.latency, publishedAt);
   const emitted = hub.emitBackendAlertEvent(dashboardPayload, { userId: payload.userId ?? null });
   if (emitted) {
     stats.emitted += 1;
@@ -175,6 +197,7 @@ function getStatus() {
     ...listenerStatus,
     lastError: lastError || listenerStatus.lastError,
     ...stats,
+    latency: alertLatency.snapshot(),
   };
 }
 
@@ -194,6 +217,7 @@ module.exports = {
   stop,
   __private: {
     getPayloadType,
+    isoTimestampOrNull,
     loadPersistedEvent,
     normalizePositiveInteger,
   },

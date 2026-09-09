@@ -31,6 +31,7 @@ function summarize(values) {
 function createRealtimeLatencyWindow(options = {}) {
   const limit = Math.max(10, Number(options.limit) || DEFAULT_LIMIT);
   const now = options.now || Date.now;
+  const stages = options.stages || STAGES;
   const samples = [];
   let lastEventAt = null;
 
@@ -38,7 +39,7 @@ function createRealtimeLatencyWindow(options = {}) {
     const publishedAt = timestampMs(publishedAtValue);
     if (publishedAt == null || !marks || typeof marks !== 'object') return false;
     const sample = {};
-    for (const [stage, source] of Object.entries(STAGES)) {
+    for (const [stage, source] of Object.entries(stages)) {
       const startedAt = timestampMs(marks[source]);
       if (startedAt != null && publishedAt >= startedAt) sample[stage] = publishedAt - startedAt;
     }
@@ -55,7 +56,7 @@ function createRealtimeLatencyWindow(options = {}) {
       lastEventAt,
       lastEventAgeMs: lastEventAt == null ? null : Math.max(0, now() - Date.parse(lastEventAt)),
       windowLimit: limit,
-      stages: Object.fromEntries(Object.keys(STAGES).map((stage) => [
+      stages: Object.fromEntries(Object.keys(stages).map((stage) => [
         stage,
         summarize(samples.map((sample) => sample[stage]).filter(Number.isFinite)),
       ])),

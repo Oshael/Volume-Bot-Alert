@@ -90,6 +90,28 @@ describe('frontend socket market subscriptions', () => {
     assert.equal(received[0].latency.publishedAt, '2026-09-09T12:00:00.100Z');
   });
 
+  it('marks trade and alert events when they reach the browser', () => {
+    const trades = [];
+    const alerts = [];
+    client.bindSocketLifecycle({ onRevoked() {}, onAlertEvent: (event) => alerts.push(event) });
+    const unsubscribe = client.subscribeRobinhoodTrades(ROBINHOOD, (event) => trades.push(event));
+    socket.trigger('market:trade', {
+      type: 'market:trade', chain: 'robinhood', address: ROBINHOOD,
+      transactionHash: `0x${'1'.repeat(64)}`, actionIndex: 1, blockNumber: 100,
+      blockTime: '2026-09-09T12:00:00.000Z', side: 'buy',
+      walletAddress: `0x${'2'.repeat(40)}`, amountUsd: 1, priceUsd: 2, mcUsd: 3,
+      latency: { publishedAt: '2026-09-09T12:00:00.100Z' },
+    });
+    socket.trigger('alert:event', {
+      id: 9, chain: 'robinhood', address: ROBINHOOD,
+      latency: { publishedAt: '2026-09-09T12:00:00.100Z' },
+    });
+
+    assert.ok(Number.isFinite(Date.parse(trades[0].latency.clientReceivedAt)));
+    assert.ok(Number.isFinite(Date.parse(alerts[0].latency.clientReceivedAt)));
+    unsubscribe();
+  });
+
   it('restores canonical chart and workspace subscriptions after reconnect', () => {
     client.bindSocketLifecycle({ onRevoked() {} });
     client.subscribeMarketChart(SOLANA);

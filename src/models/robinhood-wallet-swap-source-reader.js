@@ -78,11 +78,17 @@ function createRobinhoodWalletSwapSourceReader(options = {}) {
     }
 
     const observationResult = await database.query(
-      `SELECT ${OBSERVATION_COLUMNS.join(', ')}
-       FROM robinhood_market_observations
-       WHERE chain = $1 AND status = 'accepted'
-         AND block_number = ANY($2::bigint[])
-       ORDER BY block_number ASC, log_index ASC`,
+      `SELECT ${OBSERVATION_COLUMNS.map((column) => `observation.${column}`).join(', ')},
+         source_block.head_observed_at, source_block.receipts_available_at,
+         source_block.captured_at AS capture_committed_at
+       FROM robinhood_market_observations observation
+       LEFT JOIN robinhood_chain_blocks source_block
+         ON source_block.chain = observation.chain
+        AND source_block.block_number = observation.block_number
+        AND source_block.canonical
+       WHERE observation.chain = $1 AND observation.status = 'accepted'
+         AND observation.block_number = ANY($2::bigint[])
+       ORDER BY observation.block_number ASC, observation.log_index ASC`,
       [CHAIN, blockNumbers]
     );
 

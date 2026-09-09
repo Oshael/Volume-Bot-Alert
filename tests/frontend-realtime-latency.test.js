@@ -39,6 +39,30 @@ describe('frontend market bucket latency telemetry', () => {
     assert.equal(snapshot.stages.receivedToAppliedMs.p95Ms, 150);
   });
 
+  it('keeps trade and alert latency windows separate', () => {
+    latency.resetRealtimeLatency('market:trade');
+    latency.resetRealtimeLatency('alert:event');
+    const appliedAt = Date.parse('2026-09-09T12:00:00.600Z');
+    latency.recordMarketTradeApplied({ latency: {
+      receiptsAvailableAt: '2026-09-09T12:00:00.100Z',
+      publishedAt: '2026-09-09T12:00:00.400Z',
+      clientReceivedAt: '2026-09-09T12:00:00.450Z',
+    } }, appliedAt);
+    latency.recordAlertApplied({ latency: {
+      eventObservedAt: '2026-09-09T12:00:00.200Z',
+      projectionCommittedAt: '2026-09-09T12:00:00.300Z',
+      publishedAt: '2026-09-09T12:00:00.450Z',
+      clientReceivedAt: '2026-09-09T12:00:00.500Z',
+    } }, appliedAt);
+
+    assert.equal(latency.getRealtimeLatencySnapshot(
+      'market:trade', appliedAt,
+    ).stages.receiptToAppliedMs.p95Ms, 500);
+    assert.equal(latency.getRealtimeLatencySnapshot(
+      'alert:event', appliedAt,
+    ).stages.observedToAppliedMs.p95Ms, 400);
+  });
+
   it('ignores events without valid latency marks', () => {
     latency.resetMarketBucketLatency();
     assert.equal(latency.recordMarketBucketApplied({ latency: {} }, 1000), false);

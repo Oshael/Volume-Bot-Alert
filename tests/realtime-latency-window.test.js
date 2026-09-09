@@ -29,3 +29,14 @@ test('ignores invalid and negative realtime timestamps', () => {
     new Date(1000).toISOString()), false);
   assert.equal(latency.snapshot().sampleCount, 0);
 });
+
+test('supports flow-specific stage definitions', () => {
+  const latency = createRealtimeLatencyWindow({
+    stages: { observedToPublishedMs: 'eventObservedAt' },
+    now: () => 1500,
+  });
+  latency.record({ eventObservedAt: new Date(1000).toISOString() }, new Date(1250).toISOString());
+  const snapshot = latency.snapshot();
+  assert.equal(snapshot.stages.observedToPublishedMs.p95Ms, 250);
+  assert.equal(snapshot.stages.receiptToPublishedMs, undefined);
+});

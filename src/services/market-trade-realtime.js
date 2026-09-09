@@ -1,6 +1,7 @@
 const db = require('../models/db');
 const socketHub = require('./socket-hub');
 const { createPostgresRealtimeListener } = require('./postgres-realtime-listener');
+const { createRealtimeLatencyWindow } = require('./realtime-latency-window');
 
 const CHANNEL = 'market_trade_created';
 const MAX_PAYLOAD_BYTES = 7800;
@@ -19,6 +20,7 @@ function buildMarketTradeUpdate(row) {
     amountUsd: row.volumeUsd == null ? null : Number(row.volumeUsd),
     priceUsd: row.priceUsd == null ? null : Number(row.priceUsd),
     mcUsd: row.fdvUsd == null ? null : Number(row.fdvUsd),
+    latency: row.latency && typeof row.latency === 'object' ? row.latency : undefined,
   };
 }
 
@@ -27,11 +29,20 @@ function createMarketTradeRealtime(deps = {}) {
   const hub = deps.socketHub || socketHub;
   const normalize = deps.normalize || socketHub.__private.normalizeMarketTradeUpdate;
   const logger = deps.logger || console;
+  const now = deps.now || Date.now;
+  const latency = deps.latency || createRealtimeLatencyWindow({ now });
   const stats = { published: 0, publishFailures: 0, received: 0 };
 
   async function publishRows(rows = []) {
+    const projectionCommittedAt = new Date(now()).toISOString();
     const notifications = rows
-      .map(buildMarketTradeUpdate)
+      .map((row) => buildMarketTradeUpdate({
+        ...row,
+        latency: {
+          ...(row.latency && typeof row.latency === 'object' ? row.latency : {}),
+          projectionCommittedAt,
+        },
+      }))
       .map(normalize)
       .filter(Boolean)
       .map((event) => JSON.stringify(event))
@@ -55,12 +66,20 @@ function createMarketTradeRealtime(deps = {}) {
     if (message?.channel !== CHANNEL) return null;
     let event;
     try {
-      event = normalize(JSON.parse(String(message.payload || '{}')));
+      const payload = JSON.parse(String(message.payload || '{}'));
+      event = normalize({
+        ...payload,
+        latency: {
+          ...(payload.latency && typeof payload.latency === 'object' ? payload.latency : {}),
+          publishedAt: new Date(now()).toISOString(),
+        },
+      });
     } catch (_) {
       return null;
     }
     if (!event) return null;
     stats.received += 1;
+    latency.record(event.latency, event.latency?.publishedAt);
     hub.emitMarketTradeUpdate(event);
     return event;
   }
@@ -78,7 +97,7 @@ function createMarketTradeRealtime(deps = {}) {
     handleNotification,
     start: listener.start,
     stop: listener.stop,
-    getStatus: () => ({ ...listener.getStatus(), ...stats }),
+    getStatus: () => ({ ...listener.getStatus(), ...stats, latency: latency.snapshot() }),
   };
 }
 

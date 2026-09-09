@@ -109,7 +109,7 @@ import {
   saveDismissedRecent,
 } from '../utils/bar-storage';
 import { bindSocketLifecycle, disconnectSocket, replaceWorkspaceMarketSubscriptions, subscribeMarketChart, subscribePumpMint, unsubscribeMarketChart, unsubscribePumpMint, type MarketBucketUpdateEvent } from '../services/socket/client';
-import { recordMarketBucketApplied } from '../services/socket/realtime-latency';
+import { recordAlertApplied, recordMarketBucketApplied } from '../services/socket/realtime-latency';
 import { buildLiveTokenChartCandle, buildRealtimeTokenMarketPatch, getMarketBucketFrameKey, shouldReplaceMarketCandleClose, upsertOrderedMarketCandle, type RealtimeActivityState, type RealtimeTokenMarketPatch } from '../services/socket/market-events';
 import { clearChartAlertHistory, publishRealtimeChartAlert } from '../services/charts/chart-alert-history';
 import {
@@ -10513,6 +10513,7 @@ export function createAppController(): AppController {
           } else {
             emit('alerts', 'header', 'legacy');
           }
+          recordAlertApplied(payload);
         }
       },
       onMarketBucket(payload) {

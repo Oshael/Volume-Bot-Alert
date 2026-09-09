@@ -15,12 +15,20 @@ function row(overrides = {}) {
 
 test('publishes every persisted trade in one pg_notify batch', async () => {
   const calls = [];
-  const relay = createMarketTradeRealtime({ database: { query: async (...args) => calls.push(args) } });
-  assert.equal(await relay.publishRows([row(), row({ actionIndex: '4' })]), true);
+  const relay = createMarketTradeRealtime({
+    database: { query: async (...args) => calls.push(args) },
+    now: () => Date.parse('2026-08-09T12:00:00.500Z'),
+  });
+  assert.equal(await relay.publishRows([row({
+    latency: { receiptsAvailableAt: '2026-08-09T12:00:00.100Z' },
+  }), row({ actionIndex: '4' })]), true);
   assert.equal(calls.length, 1);
   assert.equal(calls[0][1][0], CHANNEL);
   assert.equal(calls[0][1][1].length, 2);
-  assert.equal(JSON.parse(calls[0][1][1][0]).mcUsd, 48000);
+  const payload = JSON.parse(calls[0][1][1][0]);
+  assert.equal(payload.mcUsd, 48000);
+  assert.equal(payload.latency.projectionCommittedAt, '2026-08-09T12:00:00.500Z');
+  assert.equal(payload.latency.receiptsAvailableAt, '2026-08-09T12:00:00.100Z');
 });
 
 test('propagates publish failures so the live worker can retry', async () => {
@@ -36,9 +44,14 @@ test('relays only valid channel payloads to the socket hub', () => {
   const emitted = [];
   const relay = createMarketTradeRealtime({
     socketHub: { emitMarketTradeUpdate: (event) => emitted.push(event) },
+    now: () => Date.parse('2026-08-09T12:00:00.700Z'),
   });
-  const event = buildMarketTradeUpdate(row());
+  const event = buildMarketTradeUpdate(row({
+    latency: { receiptsAvailableAt: '2026-08-09T12:00:00.100Z' },
+  }));
   assert.equal(relay.handleNotification({ channel: CHANNEL, payload: JSON.stringify(event) }).type, 'market:trade');
   assert.equal(relay.handleNotification({ channel: 'other', payload: JSON.stringify(event) }), null);
   assert.equal(emitted.length, 1);
+  assert.equal(emitted[0].latency.publishedAt, '2026-08-09T12:00:00.700Z');
+  assert.equal(relay.getStatus().latency.stages.receiptToPublishedMs.p95Ms, 600);
 });

@@ -293,6 +293,13 @@ function normalizeDashboardHistoryBucketSlice(
 
 export interface DashboardAlertEvent {
   id: number;
+  latency?: {
+    eventObservedAt?: string | null;
+    projectionCommittedAt?: string | null;
+    publishedAt?: string | null;
+    clientReceivedAt?: string | null;
+    clientAppliedAt?: string | null;
+  };
   chain: TokenChain;
   kind?: string | null;
   ruleKey?: string | null;

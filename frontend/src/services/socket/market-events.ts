@@ -62,6 +62,7 @@ export interface MarketBucketUpdateEvent {
 }
 
 export interface RealtimeLatencyMarks {
+  eventObservedAt?: string | null;
   headObservedAt?: string | null;
   receiptsAvailableAt?: string | null;
   captureCommittedAt?: string | null;
@@ -84,6 +85,7 @@ export interface MarketTradeUpdateEvent {
   amountUsd: number | null;
   priceUsd: number | null;
   mcUsd: number | null;
+  latency?: RealtimeLatencyMarks;
 }
 
 export interface RealtimeTokenMarketPatch {
@@ -143,7 +145,7 @@ function normalizeLatencyMarks(value: unknown): RealtimeLatencyMarks | undefined
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const source = value as Record<string, unknown>;
   const fields = [
-    'headObservedAt', 'receiptsAvailableAt', 'captureCommittedAt',
+    'eventObservedAt', 'headObservedAt', 'receiptsAvailableAt', 'captureCommittedAt',
     'projectionCommittedAt', 'publishedAt', 'clientReceivedAt', 'clientAppliedAt',
   ] as const;
   const latency = Object.fromEntries(fields.map((field) => [
@@ -285,6 +287,20 @@ export function normalizeMarketTradeUpdate(value: unknown): MarketTradeUpdateEve
     type: 'market:trade', chain: 'robinhood', address: identity.address,
     transactionHash, actionIndex, blockNumber, blockTime,
     side: side as 'buy' | 'sell', walletAddress, amountUsd, priceUsd, mcUsd,
+    latency: normalizeLatencyMarks(source.latency),
+  };
+}
+
+export function markMarketTradeReceived(
+  event: MarketTradeUpdateEvent,
+  receivedAt = Date.now(),
+): MarketTradeUpdateEvent {
+  return {
+    ...event,
+    latency: {
+      ...(event.latency || {}),
+      clientReceivedAt: new Date(receivedAt).toISOString(),
+    },
   };
 }
 

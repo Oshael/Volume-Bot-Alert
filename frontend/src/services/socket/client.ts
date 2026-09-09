@@ -5,6 +5,7 @@ import type { TokenChain } from '../../utils/token-chain';
 import {
   createMarketEventOrderGate,
   markMarketBucketReceived,
+  markMarketTradeReceived,
   normalizeMarketBucketUpdate,
   normalizeMarketTradeUpdate,
   normalizeMarketSubscription,
@@ -132,7 +133,13 @@ export function bindSocketLifecycle(options: {
   });
 
   current.on('alert:event', (payload: DashboardAlertEvent) => {
-    options.onAlertEvent?.(payload);
+    options.onAlertEvent?.({
+      ...payload,
+      latency: {
+        ...(payload?.latency || {}),
+        clientReceivedAt: new Date().toISOString(),
+      },
+    });
   });
 
   current.on('market:bucket', (payload: unknown) => {
@@ -144,7 +151,8 @@ export function bindSocketLifecycle(options: {
   });
 
   current.on('market:trade', (payload: unknown) => {
-    const event = normalizeMarketTradeUpdate(payload);
+    const normalized = normalizeMarketTradeUpdate(payload);
+    const event = normalized ? markMarketTradeReceived(normalized) : null;
     const identity = event && normalizeMarketSubscription(event.address, event.chain);
     if (!event || !identity) return;
     for (const listener of marketTradeListeners.get(identity.key)?.listeners || []) listener(event);

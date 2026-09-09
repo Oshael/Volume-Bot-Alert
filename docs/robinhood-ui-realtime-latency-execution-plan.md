@@ -1,6 +1,7 @@
 # Plano de execução — latência realtime da UI Robinhood
 
-Status: em execução; Slice 0A (`market:bucket`) implementado localmente
+Status: em execução; Slices 0A (`market:bucket`) e 0B (`market:trade` + alertas)
+implementados
 
 Prioridade: crítica
 
@@ -145,7 +146,7 @@ Objetivo: medir antes de otimizar e impedir regressões invisíveis.
 Progresso:
 
 - [x] Slice 0A: `market:bucket`, do receipt até o estado aplicado no navegador;
-- [ ] Slice 0B: `market:trade` e alertas;
+- [x] Slice 0B: `market:trade` e alertas;
 - [ ] Slice 0C: liquidez, holders e readiness.
 
 - propagar os marcos de latência pelos payloads internos;

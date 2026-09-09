@@ -4,6 +4,7 @@
 // wiring. All formatting lives in ./robinhood-trades-format (unit-tested).
 import { fetchRobinhoodTokenTrades } from '../services/api/robinhood-trades';
 import { subscribeRobinhoodTrades } from '../services/socket/client';
+import { recordMarketTradeApplied } from '../services/socket/realtime-latency';
 import { mergeLiveTrade, tradeMatchesWalletScope, tradesListHtml } from './robinhood-trades-format';
 import type { RobinhoodTrade, RobinhoodTradeScope } from '../services/api/robinhood-trades';
 
@@ -81,6 +82,7 @@ export function mountRobinhoodExpandedTrades(section: ParentNode, options: Mount
     if (!tradeMatchesWalletScope(event, scope, creatorAddress)) return;
     trades = mergeLiveTrade(trades, event, PANEL_LIMIT);
     render();
+    recordMarketTradeApplied(event);
   });
 
   const load = async () => {

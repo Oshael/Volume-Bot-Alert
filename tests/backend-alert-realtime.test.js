@@ -75,6 +75,8 @@ describe('backend alert realtime transport', () => {
             userId,
             ruleKey: 'monitored-vol',
             tokenAddress: 'So11111111111111111111111111111111111111112',
+            triggeredAt: '2026-09-09T12:00:00.100Z',
+            createdAt: '2026-09-09T12:00:00.200Z',
           };
         },
       },
@@ -90,11 +92,17 @@ describe('backend alert realtime transport', () => {
           return true;
         },
       },
+      now: () => Date.parse('2026-09-09T12:00:00.500Z'),
     });
 
     assert.equal(result.emitted, true);
     assert.deepEqual(calls.map((call) => call.type), ['load', 'build', 'emit']);
     assert.deepEqual(calls[2].options, { userId: 5 });
+    assert.deepEqual(calls[2].payload.latency, {
+      eventObservedAt: '2026-09-09T12:00:00.100Z',
+      projectionCommittedAt: '2026-09-09T12:00:00.200Z',
+      publishedAt: '2026-09-09T12:00:00.500Z',
+    });
   });
 
   it('does not emit when the notified event id does not belong to the user', async () => {
@@ -218,10 +226,11 @@ describe('backend alert realtime transport', () => {
     });
     await new Promise((resolve) => setImmediate(resolve));
 
-    assert.deepEqual(emitted, [{
-      payload: { id: 33, ruleKey: 'monitored-vol' },
-      options: { userId: 8 },
-    }]);
+    assert.equal(emitted.length, 1);
+    assert.equal(emitted[0].payload.id, 33);
+    assert.equal(emitted[0].payload.ruleKey, 'monitored-vol');
+    assert.ok(Number.isFinite(Date.parse(emitted[0].payload.latency.publishedAt)));
+    assert.deepEqual(emitted[0].options, { userId: 8 });
 
     await backendAlertRealtime.stop();
     assert.deepEqual(client.queries, [
