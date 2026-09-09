@@ -382,6 +382,17 @@ imediatamente espaço ao filesystem. A Stage 200 configura autovacuum mais sens�
 em `robinhood_processed_logs` e `robinhood_market_observations`. Reclaim físico e
 retenção do journal canônico são operações separadas.
 
+Após os vacuums em andamento terminarem, aplique
+`node src/utils/db-init-stage202.js`. A Stage 202 configura as seis tabelas grandes
+de maior churn (`token_market_volume_buckets_1m`, buckets 1m Robinhood, journal de
+holders, observações, processed logs e head captures) para vacuum e insert-vacuum
+em `50000 + 0.5%` das linhas, analyze em `50000 + 1%`, freeze máximo em 150 milhões
+de XIDs e custo local de `2ms/2000`. O objetivo é distribuir manutenção em ciclos
+menores sem apagar linhas funcionais. Ela não deve ser aplicada enquanto essas
+tabelas aparecem em `pg_stat_progress_vacuum`, porque o `ALTER TABLE` aguardaria o
+vacuum atual. Depois da stage, remova qualquer aceleração global temporária com
+`ALTER SYSTEM RESET autovacuum_vacuum_cost_delay; SELECT pg_reload_conf();`.
+
 O grupo `robinhood-head` roda um processo separado (systemd
 `trendscope-worker@robinhood-head.service`) que instancia o runner de ingestão com o
 adapter de captura (`robinhood_head_captures` + cursor próprio) e o pipeline em
@@ -1811,6 +1822,7 @@ Stages confirmados:
 | 142 | índice parcial do journal aplicado usado no handoff do backfill global |
 | 149 | primeira compra canônica materializada por token/wallet para launch intelligence |
 | 151 | campanha e ranges retomáveis do backfill de primeiras compras |
+| 202 | thresholds de autovacuum/freeze das seis tabelas grandes de alto churn |
 
 Holders RH possuem duas fontes complementares. A Stage 111 guarda o summary
 Blockscout usado como bootstrap/fallback; as Stages 116–118 mantêm o ledger local
