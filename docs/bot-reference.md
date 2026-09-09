@@ -477,6 +477,14 @@ V2, V3 e V4 e registra essas pools como ativas. Enquanto a rota stock/USD não e
 implementada, seus swaps são rejeitados com `quote_usd_unavailable`: o registry e a
 identificação de LP funcionam, mas preço, volume e alertas ainda não são publicados.
 
+`npm run robinhood:audit-stock-pool-liquidity -- --token-address=<token>
+--expected-total-usd=<comparação>` prova a contribuição corrente das pools V4 meme/stock
+sem persistir dados. O probe busca somente `ModifyLiquidity` dos `pool_id` envolvidos no
+`ROBINHOOD_ARCHIVE_RPC_URL`, lê o estado âncora no RPC live/pruned e usa a pool V3
+stock/USDG ativa com maior snapshot de LP como referência de preço. O range padrão é de
+2.000.000 blocos e pode ser ajustado com `--range-size`; PostgreSQL, snapshots, filas e
+cursores permanecem estritamente read-only.
+
 Para execuções longas, informe `--checkpoint-file=/var/tmp/rh-v3-stock-audit.json`.
 O auditor salva atomicamente, ao final de cada range, a fase atual (`discovery`,
 `reference-initialization` ou `swaps`), o próximo bloco e os resultados acumulados. O

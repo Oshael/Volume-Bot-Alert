@@ -106,6 +106,7 @@
     "robinhood:repair-v3-pruned": "node src/utils/repair-robinhood-v3-pruned-captures.js",
     "robinhood:reconstruct-v3-archive": "node src/utils/reconstruct-robinhood-v3-archive.js",
     "robinhood:audit-v3-stock-pairs": "node src/utils/audit-robinhood-v3-stock-pairs.js",
+    "robinhood:audit-stock-pool-liquidity": "node src/utils/audit-robinhood-stock-pool-liquidity.js",
     "robinhood:canonical-head-audit": "node src/utils/audit-robinhood-canonical-head-canary.js",
     "robinhood:canonical-liquidity-audit": "node src/utils/audit-robinhood-canonical-liquidity.js",
     "robinhood:canonical-holder-audit": "node src/utils/audit-robinhood-canonical-holder.js",
