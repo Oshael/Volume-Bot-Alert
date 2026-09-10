@@ -5741,6 +5741,7 @@ const SCHEMA_GROUPS = [
         { name: 'idx_rh_wallet_swap_realtime_outbox_claim', includes: ['next_attempt_at', 'event_kind', 'block_number', 'transaction_index', 'log_index'] },
         { name: 'idx_rh_wallet_swap_realtime_outbox_lease', includes: ['lease_until'] },
         { name: 'idx_rh_wallet_swap_realtime_outbox_canonical', includes: ['block_number', 'block_hash'] },
+        { name: 'idx_rh_wallet_swap_realtime_outbox_promote', includes: ['block_number', 'transaction_index', 'log_index'] },
       ],
     }],
   },

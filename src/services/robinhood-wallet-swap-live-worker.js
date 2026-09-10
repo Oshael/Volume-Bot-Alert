@@ -7,6 +7,9 @@ const {
   createRobinhoodWalletSwapOutboxRepository,
 } = require('../models/robinhood-wallet-swap-outbox');
 const {
+  createRobinhoodWalletSwapRealtimeOutboxRepository,
+} = require('../models/robinhood-wallet-swap-realtime-outbox');
+const {
   createRobinhoodTransactionPositionRepository,
 } = require('../models/robinhood-transaction-position');
 const { createRobinhoodWalletSwapSourceReader } = require('../models/robinhood-wallet-swap-source-reader');
@@ -59,6 +62,8 @@ async function buildRuntime(options, deps = {}) {
     const database = deps.database || db;
     const outbox = (deps.outboxRepositoryFactory
       || createRobinhoodWalletSwapOutboxRepository)({ database });
+    const lifecycle = (deps.realtimeOutboxRepositoryFactory
+      || createRobinhoodWalletSwapRealtimeOutboxRepository)({ database });
     const legacyDiscarded = await outbox.discardLegacyCovered();
     const walletRepository = (deps.walletRepositoryFactory
       || createRobinhoodWalletSwapRepository)({ database });
@@ -66,6 +71,7 @@ async function buildRuntime(options, deps = {}) {
       || createRobinhoodTransactionPositionRepository)({ database });
     const runner = (deps.outboxRunnerFactory || createRobinhoodWalletSwapOutboxRunner)({
       repository: outbox,
+      lifecycleRepository: lifecycle,
       walletRepository,
       transactionPositionRepository,
       readFinalizedBlock: outbox.readFinalizedBlock,
@@ -151,7 +157,7 @@ function compactResult(result) {
     'status', 'nodeHead', 'nodeSafeHead', 'sourceSafeHead', 'processableThrough',
     'nextBlock', 'safeHead', 'checkpointBlock', 'processedBlocks', 'attributed',
     'inserted', 'unresolved', 'missing', 'failedBlock', 'frontierDeficitBlocks',
-    'throughBlock', 'claimed', 'delivered', 'retried', 'blocked', 'reclaimed',
+    'throughBlock', 'promoted', 'claimed', 'delivered', 'retried', 'blocked', 'reclaimed',
     'completeThroughBlock',
   ];
   return Object.fromEntries(fields.map((key) => [key, result[key] ?? null]));
@@ -182,7 +188,7 @@ function createRobinhoodWalletSwapLiveWorker(deps = {}) {
     sourceMode: null, providerChainIds: null, lastResult: null, lagBlocks: null,
     batches: 0, processedBlocks: 0, attributed: 0, inserted: 0, duplicateInserts: 0,
     missing: 0, unresolved: 0, retries: 0, conflicts: 0,
-    claimed: 0, delivered: 0, retried: 0, blocked: 0, reclaimed: 0,
+    promoted: 0, claimed: 0, delivered: 0, retried: 0, blocked: 0, reclaimed: 0,
     legacyDiscarded: 0, totalWakes: 0, lastWakeAt: null,
     consecutiveErrors: 0, consecutiveBlocked: 0, blockedBlock: null,
     lastCompletedAt: null, lastError: null,
@@ -240,7 +246,7 @@ function createRobinhoodWalletSwapLiveWorker(deps = {}) {
       const result = runtime.runOnce
         ? await runtime.runOnce() : await tick(runtime.runnerDeps);
       recordResult(result);
-      for (const key of ['claimed', 'delivered', 'retried', 'blocked', 'reclaimed']) {
+      for (const key of ['promoted', 'claimed', 'delivered', 'retried', 'blocked', 'reclaimed']) {
         status[key] += Number(result[key] || 0);
       }
       status.consecutiveErrors = 0;
@@ -286,7 +292,9 @@ function createRobinhoodWalletSwapLiveWorker(deps = {}) {
         options.maxErrorBackoffMs,
         options.intervalMs * (2 ** Math.min(failures, 8))
       );
-      queueNext(failures ? backoff : (result?.claimed > 0 ? 0 : options.intervalMs));
+      const drainAgain = Number(result?.claimed || 0) > 0
+        || Number(result?.promoted || 0) >= options.outboxBatchSize;
+      queueNext(failures ? backoff : (drainAgain ? 0 : options.intervalMs));
     }, delay);
     timer?.unref?.();
   }

@@ -218,6 +218,7 @@ describe('Robinhood wallet-swap LIVE worker', () => {
       readFinalizedBlock: async () => '200',
       reclaimExpired() {}, claimFinalized() {}, settle() {},
     };
+    const lifecycle = { promoteFinalized() {} };
     let runnerInput;
     const runtime = await buildRuntime({
       sourceMode: DURABLE_OUTBOX_SOURCE,
@@ -229,6 +230,10 @@ describe('Robinhood wallet-swap LIVE worker', () => {
       outboxRepositoryFactory: (options) => {
         assert.equal(options.database, database);
         return outbox;
+      },
+      realtimeOutboxRepositoryFactory: (options) => {
+        assert.equal(options.database, database);
+        return lifecycle;
       },
       walletRepositoryFactory: () => ({ insertWalletSwaps() {} }),
       transactionPositionRepositoryFactory: () => ({ upsertPositions() {} }),
@@ -242,6 +247,7 @@ describe('Robinhood wallet-swap LIVE worker', () => {
     assert.equal(runtime.sourceMode, DURABLE_OUTBOX_SOURCE);
     assert.equal(runtime.legacyDiscarded, 17);
     assert.equal(runnerInput.repository, outbox);
+    assert.equal(runnerInput.lifecycleRepository, lifecycle);
     assert.equal(runnerInput.readFinalizedBlock, outbox.readFinalizedBlock);
     assert.deepEqual(runnerInput.options, {
       batchSize: 300, leaseMs: 45000, maxAttempts: 7,
@@ -284,5 +290,30 @@ describe('Robinhood wallet-swap LIVE worker', () => {
     assert.equal(scheduled.at(-1).delay, 0);
     await worker.stop();
     assert.equal(listeners.every((item) => item.stopped), true);
+  });
+
+  it('immediately drains another lifecycle batch when promotion reaches its bound', async () => {
+    const scheduled = [];
+    const worker = createRobinhoodWalletSwapLiveWorker({
+      schedule: (fn, delay) => {
+        const task = { fn, delay, cancelled: false };
+        scheduled.push(task);
+        return task;
+      },
+      cancelSchedule: (task) => { task.cancelled = true; },
+      listenerFactory: () => ({ async start() {}, async stop() {} }),
+      runtimeFactory: async () => ({
+        sourceMode: DURABLE_OUTBOX_SOURCE,
+        runOnce: async () => ({ status: 'idle', promoted: 200, claimed: 0 }),
+      }),
+      logger: { warn() {}, error() {} },
+    });
+
+    worker.start({
+      enabled: true, sourceMode: DURABLE_OUTBOX_SOURCE, outboxBatchSize: 200,
+    });
+    await scheduled[0].fn();
+    assert.equal(scheduled.at(-1).delay, 0);
+    await worker.stop();
   });
 });

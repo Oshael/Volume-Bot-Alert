@@ -56,8 +56,14 @@ function fixture(input = {}) {
       };
     },
   };
+  const lifecycleRepository = {
+    promoteFinalized: async (options) => {
+      calls.push(['promote', options]);
+      return input.promoted ?? 1;
+    },
+  };
   const runner = createRobinhoodWalletSwapOutboxRunner({
-    repository,
+    repository, lifecycleRepository,
     readFinalizedBlock: async () => input.finalizedBlock === undefined
       ? '120' : input.finalizedBlock,
     transactionPositionRepository: {
@@ -118,13 +124,15 @@ describe('Robinhood wallet-swap durable outbox', () => {
     const result = await state.runner.runOnce();
 
     assert.deepEqual(state.calls.map(([name]) => name), [
-      'claim', 'positions', 'swaps', 'publish', 'settle',
+      'promote', 'claim', 'positions', 'swaps', 'publish', 'settle',
     ]);
-    assert.equal(state.calls[0][1].throughBlock, '120');
+    assert.deepEqual(state.calls[0][1], { throughBlock: '120', limit: 200 });
+    assert.equal(state.calls[1][1].throughBlock, '120');
     assert.equal(state.getSettlement().delivered.length, 1);
     assert.equal(state.getSettlement().retry.length, 0);
     assert.deepEqual(result, {
-      status: 'delivered', throughBlock: '120', reclaimed: 1, claimed: 1, inserted: 1,
+      status: 'delivered', throughBlock: '120', reclaimed: 1, promoted: 1,
+      claimed: 1, inserted: 1,
       delivered: 1, retried: 0, blocked: 0,
     });
   });
@@ -134,7 +142,7 @@ describe('Robinhood wallet-swap durable outbox', () => {
     const result = await state.runner.runOnce();
 
     assert.deepEqual(state.calls.map(([name]) => name), [
-      'claim', 'positions', 'swaps', 'publish', 'settle',
+      'promote', 'claim', 'positions', 'swaps', 'publish', 'settle',
     ]);
     assert.equal(state.getSettlement().delivered.length, 0);
     assert.equal(state.getSettlement().retry[0].backoffMs, backoffFor(2, 1000, 300000));
@@ -148,7 +156,7 @@ describe('Robinhood wallet-swap durable outbox', () => {
     const state = fixture({ rows: [row] });
     const result = await state.runner.runOnce();
 
-    assert.deepEqual(state.calls.map(([name]) => name), ['claim', 'settle']);
+    assert.deepEqual(state.calls.map(([name]) => name), ['promote', 'claim', 'settle']);
     assert.match(state.getSettlement().retry[0].error, /identity mismatch/);
     assert.equal(result.status, 'retrying');
   });

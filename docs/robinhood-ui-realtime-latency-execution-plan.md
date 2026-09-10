@@ -231,8 +231,10 @@ Progresso:
   `observed`, `finalized` e `invalidate`; o fluxo continua finalizado-only.
 - [x] Slice 3B1: outbox append-only e gravação shadow atômica de `observed`,
   ainda sem consumidor ou publicação.
-- [ ] Slice 3B2: recuperação limitada de reorg e gravação durável de
-  `invalidate`/promoção `finalized`.
+- [x] Slice 3B2A: promoção durável, limitada e idempotente para `finalized` em
+  shadow, acordada pelo avanço da finalidade canônica.
+- [ ] Slice 3B2B: recuperação central de reorg e gravação durável de
+  `invalidate`, incluindo rollback das projeções afetadas.
 - [ ] Slice 3B3: consumidor, publicação v2 e telemetria separada de lag
   observado/finalizado.
 

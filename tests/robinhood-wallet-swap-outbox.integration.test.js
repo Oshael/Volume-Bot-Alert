@@ -13,6 +13,9 @@ const {
 const {
   createRobinhoodWalletSwapOutboxRepository,
 } = require('../src/models/robinhood-wallet-swap-outbox');
+const {
+  createRobinhoodWalletSwapRealtimeOutboxRepository,
+} = require('../src/models/robinhood-wallet-swap-realtime-outbox');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const TX = `0x${'2'.repeat(64)}`;
@@ -120,6 +123,28 @@ describe('Robinhood wallet-swap outbox producer integration', () => {
     assert.equal(realtime.rows[0].payload.asOfBlockHash, BLOCK);
     assert.equal(realtime.rows[0].payload.observedAt,
       realtime.rows[0].payload.latency.observationCommittedAt);
+
+    const lifecycle = createRobinhoodWalletSwapRealtimeOutboxRepository({ database: client });
+    assert.equal(await lifecycle.promoteFinalized({ throughBlock: '99', limit: 10 }), 0);
+    await client.query(
+      `UPDATE robinhood_chain_blocks SET canonical=FALSE WHERE block_hash=$1`, [BLOCK]
+    );
+    assert.equal(await lifecycle.promoteFinalized({ throughBlock: '100', limit: 10 }), 0);
+    await client.query(
+      `UPDATE robinhood_chain_blocks SET canonical=TRUE WHERE block_hash=$1`, [BLOCK]
+    );
+    assert.equal(await lifecycle.promoteFinalized({ throughBlock: '100', limit: 10 }), 1);
+    assert.equal(await lifecycle.promoteFinalized({ throughBlock: '100', limit: 10 }), 0);
+    const finalized = await client.query(
+      `SELECT status, payload
+         FROM robinhood_wallet_swap_realtime_outbox
+        WHERE transaction_hash=$1 AND event_kind='finalized'`, [TX]
+    );
+    assert.equal(finalized.rows.length, 1);
+    assert.equal(finalized.rows[0].status, 'pending');
+    assert.equal(finalized.rows[0].payload.type, 'market:trade:finalized');
+    assert.equal(finalized.rows[0].payload.finality, 'finalized');
+    assert.ok(Date.parse(finalized.rows[0].payload.finalizedAt));
   });
 
   it('leases finalized canonical work and deletes it only after delivery', async () => {

@@ -56,6 +56,10 @@ const STATEMENTS = Object.freeze([
   `CREATE INDEX IF NOT EXISTS idx_rh_wallet_swap_realtime_outbox_canonical
      ON robinhood_wallet_swap_realtime_outbox(block_number, block_hash)
      WHERE event_kind = 'observed' AND status = 'complete'`,
+  `CREATE INDEX IF NOT EXISTS idx_rh_wallet_swap_realtime_outbox_promote
+     ON robinhood_wallet_swap_realtime_outbox(
+       block_number, transaction_index, log_index
+     ) WHERE event_kind = 'observed'`,
 ]);
 
 async function init(options = {}) {

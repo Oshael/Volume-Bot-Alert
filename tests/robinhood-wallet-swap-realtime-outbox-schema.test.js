@@ -31,6 +31,7 @@ describe('Robinhood wallet-swap realtime lifecycle outbox schema', () => {
       'idx_rh_wallet_swap_realtime_outbox_claim',
       'idx_rh_wallet_swap_realtime_outbox_lease',
       'idx_rh_wallet_swap_realtime_outbox_canonical',
+      'idx_rh_wallet_swap_realtime_outbox_promote',
     ]);
   });
 });

@@ -33,6 +33,9 @@ function validateClaim(row) {
 function assertDependencies(deps) {
   if (typeof deps.repository?.claimFinalized !== 'function'
       || typeof deps.repository?.settle !== 'function') throw new Error('wallet swap outbox repository is required');
+  if (typeof deps.lifecycleRepository?.promoteFinalized !== 'function') {
+    throw new Error('wallet swap realtime lifecycle repository is required');
+  }
   if (typeof deps.walletRepository?.insertWalletSwaps !== 'function') throw new Error('wallet swap persistence is required');
   if (typeof deps.transactionPositionRepository?.upsertPositions !== 'function') throw new Error('transaction position persistence is required');
   if (typeof deps.publishRows !== 'function') throw new Error('market trade publisher is required');
@@ -47,7 +50,9 @@ function settlementStatus(settled) {
 
 function createRobinhoodWalletSwapOutboxRunner(deps = {}) {
   assertDependencies(deps);
-  const { repository, walletRepository, transactionPositionRepository } = deps;
+  const {
+    repository, lifecycleRepository, walletRepository, transactionPositionRepository,
+  } = deps;
   const publishRows = deps.publishRows;
   const readFinalizedBlock = deps.readFinalizedBlock;
 
@@ -72,11 +77,14 @@ function createRobinhoodWalletSwapOutboxRunner(deps = {}) {
     const reclaimed = await repository.reclaimExpired();
     const throughBlock = await readFinalizedBlock();
     if (throughBlock == null) {
-      return { status: 'waiting-finality', throughBlock: null, reclaimed, claimed: 0, delivered: 0, retried: 0, blocked: 0 };
+      return { status: 'waiting-finality', throughBlock: null, reclaimed, promoted: 0,
+        claimed: 0, delivered: 0, retried: 0, blocked: 0 };
     }
+    const promoted = await lifecycleRepository.promoteFinalized({ throughBlock, limit: batchSize });
     const rows = await repository.claimFinalized({ owner, limit: batchSize, leaseMs, throughBlock });
     if (!rows.length) {
-      return { status: 'idle', throughBlock: String(throughBlock), reclaimed, claimed: 0, delivered: 0, retried: 0, blocked: 0 };
+      return { status: 'idle', throughBlock: String(throughBlock), reclaimed, promoted,
+        claimed: 0, delivered: 0, retried: 0, blocked: 0 };
     }
 
     const valid = [];
@@ -109,7 +117,8 @@ function createRobinhoodWalletSwapOutboxRunner(deps = {}) {
     });
     return {
       status: settlementStatus(settled),
-      throughBlock: String(throughBlock), reclaimed, claimed: rows.length, inserted, ...settled,
+      throughBlock: String(throughBlock), reclaimed, promoted,
+      claimed: rows.length, inserted, ...settled,
     };
   }
 

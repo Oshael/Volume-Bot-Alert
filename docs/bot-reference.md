@@ -697,12 +697,16 @@ contendo `tx.from`, hash/tempo do bloco e posição da transação vindos do jou
 `(chain, transaction_hash, log_index)` torna replay idempotente.
 
 A Stage 204 cria `robinhood_wallet_swap_realtime_outbox`, o journal append-only da publicação v2.
-No estado atual, o processing grava apenas o evento `observed`, na mesma transação da observação e
-da outbox Stage 203, e acorda o canal `robinhood_wallet_swap_realtime_outbox`. Ainda não existe
-consumer para esse canal: nenhuma linha é publicada ao browser e a tabela cresce em shadow. Não
-limpar essas linhas antes dos cortes de promoção/invalidação, pois elas são a evidência que liga o
-evento provisório ao block hash canônico. Replay do mesmo log não duplica o evento por causa da
-chave `(chain, transaction_hash, log_index, event_kind)`.
+O processing grava `observed` na mesma transação da observação e da outbox Stage 203. O wallet
+worker promove, em lotes limitados, cada evento cujo bloco alcançou a fronteira canônica para uma
+segunda linha `finalized`; ambos os writes acordam `robinhood_wallet_swap_realtime_outbox`. A
+promoção exige que número e hash ainda correspondam ao bloco canônico e é idempotente pela chave
+`(chain, transaction_hash, log_index, event_kind)`.
+
+Ainda não existe consumer para esse canal: nenhuma linha é publicada ao browser e a tabela cresce
+em shadow, normalmente com uma linha `observed` e outra `finalized` por swap maduro. Não limpar
+essas linhas antes dos cortes de invalidação e consumo. O status do wallet worker expõe `promoted`;
+um lote cheio é drenado imediatamente, enquanto o intervalo de 2s permanece reconciliação ociosa.
 O grupo `robinhood-wallet`, com `ROBINHOOD_WALLET_SWAP_LIVE_SOURCE=durable_outbox` (default), acorda
 por `LISTEN` tanto no append quanto no avanço da finalidade e usa o intervalo de 2s somente como
 reconciliação de notificação perdida. Claim é ordenado e limitado a `finalized_head` e ao hash ainda

@@ -1,8 +1,11 @@
 'use strict';
 
+const {
+  NOTIFY_CHANNEL: REALTIME_NOTIFY_CHANNEL,
+} = require('./robinhood-wallet-swap-realtime-outbox');
+
 const CHAIN = 'robinhood';
 const NOTIFY_CHANNEL = 'robinhood_wallet_swap_outbox';
-const REALTIME_NOTIFY_CHANNEL = 'robinhood_wallet_swap_realtime_outbox';
 
 function normalizeTargets(observations = []) {
   if (!Array.isArray(observations)) throw new TypeError('accepted observations must be a list');
