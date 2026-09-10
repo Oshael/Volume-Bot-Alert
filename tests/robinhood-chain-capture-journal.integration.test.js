@@ -23,6 +23,7 @@ const stage193 = require('../src/utils/db-init-stage193');
 const stage194 = require('../src/utils/db-init-stage194');
 const stage195 = require('../src/utils/db-init-stage195');
 const stage205 = require('../src/utils/db-init-stage205');
+const stage206 = require('../src/utils/db-init-stage206');
 const stage103 = require('../src/utils/db-init-stage103');
 const stage165 = require('../src/utils/db-init-stage165');
 const v2 = require('../src/services/uniswap-v2-decoder');
@@ -62,6 +63,8 @@ function capture(number = 100, hash = HASH, parentHash = PARENT) {
 }
 
 async function clearTables() {
+  await db.query('DELETE FROM robinhood_chain_recovery_outbox');
+  await db.query('DELETE FROM robinhood_chain_recoveries');
   await db.query('DELETE FROM robinhood_token_deployment_outbox');
   await db.query('DELETE FROM robinhood_canonical_head_candidates');
   await db.query('DELETE FROM robinhood_chain_v3_balance_snapshots');
@@ -82,6 +85,7 @@ describe('Robinhood canonical chain capture journal', () => {
     await stage194.init({ closePool: false });
     await stage195.init({ closePool: false });
     await stage205.init({ closePool: false });
+    await stage206.init({ closePool: false });
   });
 
   beforeEach(clearTables);
@@ -398,6 +402,23 @@ describe('Robinhood canonical chain capture journal', () => {
     assert.equal(cursor.recovery_state, 'recovery_required');
     assert.deepEqual(cursor.recovery_plan, plan);
     assert.ok(cursor.recovery_detected_at instanceof Date);
+    const recovery = await db.query(
+      `SELECT generation::text, status, plan
+         FROM robinhood_chain_recoveries WHERE chain='robinhood'`
+    );
+    assert.deepEqual(recovery.rows, [{ generation: '0', status: 'detected', plan }]);
+    const events = await db.query(
+      `SELECT generation::text, event_kind, status, payload
+         FROM robinhood_chain_recovery_outbox WHERE chain='robinhood'`
+    );
+    assert.equal(events.rows.length, 1);
+    assert.deepEqual(events.rows[0], {
+      generation: '0', event_kind: 'detected', status: 'pending',
+      payload: {
+        type: 'chain:reorg:detected', generation: '0',
+        detectedAt: cursor.recovery_detected_at.toISOString(), plan,
+      },
+    });
     assert.deepEqual(await journal.markRecoveryRequired({ plan }), {
       status: 'already-required', generation: '0', plan,
     });

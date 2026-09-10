@@ -5763,6 +5763,45 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage206-robinhood-chain-recovery-journal',
+    name: 'Stage 206 Robinhood canonical recovery journal and outbox',
+    repair: 'node src/utils/db-init-stage206.js',
+    tables: [{
+      table: 'robinhood_chain_recoveries',
+      columns: [
+        'chain', 'generation', 'status', 'plan', 'detected_at', 'rewound_at',
+        'completed_at', 'last_error', 'created_at', 'updated_at',
+      ],
+      constraints: [
+        { name: 'rh_chain_recoveries_pkey', includes: ['PRIMARY KEY', 'chain', 'generation'] },
+        { name: 'rh_chain_recoveries_identity_check', includes: ['generation', 'jsonb_typeof', 'plan'] },
+        { name: 'rh_chain_recoveries_status_check', includes: ['detected', 'rewound', 'awaiting_domains', 'recapturing', 'complete', 'blocked'] },
+        { name: 'rh_chain_recoveries_completion_check', includes: ['complete', 'completed_at'] },
+      ],
+      indexes: [{ name: 'idx_rh_chain_recoveries_status', includes: ['chain', 'status', 'generation'] }],
+    }, {
+      table: 'robinhood_chain_recovery_outbox',
+      columns: [
+        'chain', 'generation', 'event_kind', 'event_key', 'payload', 'status', 'lease_owner',
+        'lease_until', 'attempt_count', 'next_attempt_at', 'published_at',
+        'last_error', 'created_at', 'updated_at',
+      ],
+      constraints: [
+        { name: 'rh_chain_recovery_outbox_pkey', includes: ['PRIMARY KEY', 'chain', 'generation', 'event_kind', 'event_key'] },
+        { name: 'rh_chain_recovery_outbox_recovery_fkey', includes: ['FOREIGN KEY', 'chain', 'generation', 'ON DELETE CASCADE'] },
+        { name: 'rh_chain_recovery_outbox_identity_check', includes: ['generation', 'attempt_count', 'jsonb_typeof'] },
+        { name: 'rh_chain_recovery_outbox_event_check', includes: ['detected', 'rewound', 'domain_ready', 'recaptured', 'complete', 'blocked'] },
+        { name: 'rh_chain_recovery_outbox_status_check', includes: ['pending', 'leased', 'complete', 'blocked'] },
+        { name: 'rh_chain_recovery_outbox_lease_check', includes: ['leased', 'lease_owner', 'lease_until'] },
+        { name: 'rh_chain_recovery_outbox_completion_check', includes: ['complete', 'published_at'] },
+      ],
+      indexes: [
+        { name: 'idx_rh_chain_recovery_outbox_claim', includes: ['next_attempt_at', 'generation', 'event_kind'] },
+        { name: 'idx_rh_chain_recovery_outbox_lease', includes: ['lease_until'] },
+      ],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

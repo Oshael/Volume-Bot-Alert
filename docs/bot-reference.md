@@ -3972,6 +3972,14 @@ falha com `capture_recovery_required` fatal. Este stage deliberadamente
 não oferece resume, rewind nem alteração de canonicalidade: essas operações só
 serão liberadas depois que os rollbacks dos domínios estiverem implementados.
 
+A Stage 206 cria `robinhood_chain_recoveries`, uma linha durável por geração, e
+`robinhood_chain_recovery_outbox`, uma outbox at-least-once por fase. Aplique com
+`node src/utils/db-init-stage206.js` antes de reiniciar a captura. A transação que
+move o cursor para `recovery_required` também grava a recuperação e o evento
+`chain:reorg:detected`; repetição é idempotente e um plano diferente para a mesma
+geração falha fechado. A migration importa um fence preexistente dos campos da
+Stage 205. Ainda não existe consumer para essa outbox, nem rewind automático.
+
 Antes de definir ou reduzir retenção de `robinhood_chain_events` e
 `robinhood_holder_transfer_journal`, execute
 `npm run robinhood:retention-safety-audit`. O comando é estritamente read-only,

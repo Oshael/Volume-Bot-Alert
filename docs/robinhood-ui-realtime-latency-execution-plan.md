@@ -253,7 +253,7 @@ Estado implementado:
 - a Stage 204 não deve ser limpa enquanto invalidação, consumo e retenção não
   estiverem prontos. Neste ponto ela tende a guardar duas linhas por swap maduro.
 
-Ao retomar em outro contexto, o próximo trabalho é **3B2B-1**, abaixo. Não ligar
+Ao retomar em outro contexto, o próximo trabalho é **3B2B-1B**, abaixo. Não ligar
 `market:trade:observed` antes de concluir todos os gates de 3B2B.
 
 #### Slice 3B2B — recuperação de reorg, em cortes menores
@@ -284,7 +284,15 @@ Ao retomar em outro contexto, o próximo trabalho é **3B2B-1**, abaixo. Não li
 - [x] não alterar canonicalidade em produção enquanto algum domínio afetado não
   possuir rollback registrado.
 
-**3B2B-1 — journal e evento durável de reorg**
+**3B2B-1A — journal e evento durável de detecção**
+
+- [x] persistir uma recuperação por geração com fases reiniciáveis;
+- [x] gravar `chain:reorg:detected` em outbox at-least-once na mesma transação do
+  fence do cursor;
+- [x] importar idempotentemente um cursor que já esteja em `recovery_required`;
+- [x] manter canonicalidade e cursor intactos neste corte.
+
+**3B2B-1B — rewind canônico atômico, atrás do gate**
 
 - [ ] preservar a ramificação órfã para auditoria, marcar seus blocos como não
   canônicos e recuar o cursor ao ancestral comum numa única transação;

@@ -1,6 +1,9 @@
 'use strict';
 const { createHash } = require('node:crypto');
 const db = require('./db');
+const {
+  createRobinhoodChainRecoveryJournal,
+} = require('./robinhood-chain-recovery-journal');
 const { routeCanonicalEvents } = require('../services/robinhood-chain-domain-router');
 const { TRANSFER_TOPIC, ZERO_TOPIC } = require('../services/evm-erc20-supply-delta');
 const CHAIN = 'robinhood';
@@ -232,6 +235,8 @@ function validateSequence(entries, current) {
 }
 function createRobinhoodChainCaptureJournal(options = {}) {
   const database = options.database || db;
+  const recoveryJournal = options.recoveryJournal
+    || createRobinhoodChainRecoveryJournal({ database });
   async function getCursor(client = database) {
     const result = await client.query(
       `SELECT next_block, checkpoint_block, checkpoint_hash, node_head,
@@ -258,6 +263,9 @@ function createRobinhoodChainCaptureJournal(options = {}) {
       const current = cursor.rows[0];
       if (!current) throw new Error('capture cursor does not exist');
       if (current.recovery_state === 'recovery_required') {
+        await recoveryJournal.recordDetected(client, {
+          plan: current.recovery_plan, detectedAt: current.recovery_detected_at,
+        });
         await client.query('COMMIT');
         return {
           status: 'already-required', generation: String(current.generation),
@@ -276,7 +284,7 @@ function createRobinhoodChainCaptureJournal(options = {}) {
             SET recovery_state='recovery_required', recovery_plan=$2::jsonb,
                 recovery_detected_at=NOW(), updated_at=NOW()
           WHERE chain=$1 AND generation=$3::bigint AND recovery_state='running'
-          RETURNING generation`,
+          RETURNING generation, recovery_detected_at`,
         [CHAIN, JSON.stringify(plan), String(current.generation)]
       );
       if (updated.rowCount !== 1) {
@@ -284,6 +292,9 @@ function createRobinhoodChainCaptureJournal(options = {}) {
         error.code = 'capture_recovery_fence_conflict';
         throw error;
       }
+      await recoveryJournal.recordDetected(client, {
+        plan, detectedAt: updated.rows[0].recovery_detected_at,
+      });
       await client.query('COMMIT');
       return { status: 'recovery-required', generation: String(current.generation), plan };
     } catch (error) {
