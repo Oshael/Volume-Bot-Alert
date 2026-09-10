@@ -253,7 +253,7 @@ Estado implementado:
 - a Stage 204 não deve ser limpa enquanto invalidação, consumo e retenção não
   estiverem prontos. Neste ponto ela tende a guardar duas linhas por swap maduro.
 
-Ao retomar em outro contexto, o próximo trabalho é **3B2B-2**, abaixo. Não ligar
+Ao retomar em outro contexto, o próximo trabalho é **3B2B-2A**, abaixo. Não ligar
 `market:trade:observed` antes de concluir todos os gates de 3B2B.
 
 #### Slice 3B2B — recuperação de reorg, em cortes menores
@@ -302,15 +302,48 @@ Ao retomar em outro contexto, o próximo trabalho é **3B2B-2**, abaixo. Não li
   cruzando a fronteira finalizada;
 - [x] garantir restart seguro em cada ponto entre detecção, rewind e recaptura.
 
-**3B2B-2 — rollback de market, wallet e publicação**
+**3B2B-2 — rollback de market, wallet e publicação, subdividido**
 
-- [ ] gerar `market:trade:invalidate` para cada `observed` órfão antes de liquidar
-  seu ciclo realtime;
-- [ ] reverter/reconstruir observações, buckets de 1m/1h/agg, derived outbox,
-  posições e swaps contaminados pela ramificação órfã;
-- [ ] restaurar os cursores para a fronteira comum sem transformar ausência de
-  dados em zero nem publicar alertas duplicados;
-- [ ] reaplicar a nova ramificação idempotentemente e comprovar paridade.
+O conjunto foi estimado em 1.600–2.100 linhas. Cada corte abaixo deve permanecer
+abaixo de 500 linhas, terminar em commit próprio e executar lint mais o menor
+teste de persistência/integração que cubra seu contrato. Schema check só é
+necessário se uma migration surgir durante a implementação.
+
+**3B2B-2A — invalidation durável de trades (~300–400 linhas)**
+
+- [ ] gerar `market:trade:invalidate` para cada `observed` órfão dentro da mesma
+  transação do rewind e antes de liquidar seu ciclo realtime;
+- [ ] preservar ordenação por identidade para que um consumer entregue
+  `observed` antes de `invalidate`, inclusive após crash/restart;
+- [ ] manter a Stage 204 em shadow, sem publicação no frontend e sem abrir o gate.
+
+**3B2B-2B — rollback e reconstrução de market (~450–500 linhas)**
+
+- [ ] remover somente observações atribuídas aos hashes órfãos;
+- [ ] reconstruir buckets 1m/1h/agg afetados a partir das observações canônicas;
+- [ ] invalidar trabalho derivado órfão sem representar ausência de dados como
+  volume ou preço zero.
+
+**3B2B-2C1 — rollback de swaps e cursores (~350–450 linhas)**
+
+- [ ] remover efeitos órfãos de swaps e sidecars de posição transacional;
+- [ ] recuar cursores de wallet à fronteira comum com generation/hash fence;
+- [ ] manter replay idempotente e impedir publicação finalizada duplicada.
+
+**3B2B-2C2 — reconstrução de posições (~400–500 linhas)**
+
+- [ ] identificar somente wallets/tokens contaminados pela faixa órfã;
+- [ ] reconstruir posição, custo e PnL dessas identidades a partir do ledger
+  canônico retido;
+- [ ] atualizar os watermarks apenas junto do estado reconstruído.
+
+**3B2B-2D — coordenação e paridade (~350–450 linhas)**
+
+- [ ] registrar market, wallet e publicação como `domain_ready` apenas depois de
+  seus rollbacks duráveis concluírem;
+- [ ] reaplicar a nova ramificação idempotentemente e comprovar paridade;
+- [ ] manter resume fechado enquanto qualquer domínio de 3B2B-3 estiver pendente
+  e liberá-lo somente depois de todos os gates.
 
 **3B2B-3 — rollback dos demais domínios compartilhados**
 
