@@ -1632,6 +1632,9 @@ module.exports = {
     confirmations: parseIntegerInRange(
       process.env.ROBINHOOD_CHAIN_CAPTURE_CONFIRMATIONS, 2, 0, 1000
     ),
+    reorgMaxDepth: parseIntegerInRange(
+      process.env.ROBINHOOD_CHAIN_CAPTURE_REORG_MAX_DEPTH, 64, 1, 1000
+    ),
     leaseHeartbeatMs: parseIntegerInRange(
       process.env.ROBINHOOD_CHAIN_CAPTURE_LEASE_HEARTBEAT_MS, 30_000, 1000, 300_000
     ),

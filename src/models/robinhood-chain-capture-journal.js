@@ -59,12 +59,14 @@ function normalizeRecoveryPlan(input = {}) {
   }
   const ancestor = input.ancestor == null
     ? null : recoveryHeader(input.ancestor, 'recovery.ancestor');
+  const generation = quantity(input.generation, 'recovery.generation').toString();
   if (input.recoverable && !ancestor) throw new Error('recoverable plan requires an ancestor');
   if (ancestor && (BigInt(ancestor.blockNumber) > BigInt(checkpoint.blockNumber)
       || BigInt(ancestor.blockNumber) >= BigInt(incoming.blockNumber))) {
     throw new Error('recovery ancestor is outside the affected range');
   }
-  return { reason, recoverable: input.recoverable, maxDepth, checkpoint, incoming, ancestor };
+  return { ...input, reason, recoverable: input.recoverable, maxDepth,
+    generation, checkpoint, incoming, ancestor };
 }
 function recoveryRequiredError(plan) {
   const error = new Error('canonical capture requires explicit reorg recovery');
@@ -250,7 +252,8 @@ function createRobinhoodChainCaptureJournal(options = {}) {
           plan: current.recovery_plan,
         };
       }
-      if (String(current.checkpoint_block) !== plan.checkpoint.blockNumber
+      if (String(current.generation) !== plan.generation
+          || String(current.checkpoint_block) !== plan.checkpoint.blockNumber
           || current.checkpoint_hash !== plan.checkpoint.blockHash) {
         const error = new Error('capture recovery plan lost its checkpoint fence');
         error.code = 'capture_recovery_fence_conflict';
@@ -277,6 +280,26 @@ function createRobinhoodChainCaptureJournal(options = {}) {
     } finally {
       client.release();
     }
+  }
+  async function listCanonicalHeaders(input = {}, client = database) {
+    const fromBlock = quantity(input.fromBlock, 'fromBlock');
+    const throughBlock = quantity(input.throughBlock, 'throughBlock');
+    const limit = Number(quantity(input.limit, 'limit'));
+    if (fromBlock > throughBlock) throw new Error('canonical header range is inverted');
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1001) {
+      throw new Error('canonical header limit must be between 1 and 1001');
+    }
+    const result = await client.query(
+      `SELECT block_number, block_hash
+         FROM robinhood_chain_blocks
+        WHERE chain=$1 AND canonical=TRUE
+          AND block_number BETWEEN $2::bigint AND $3::bigint
+        ORDER BY block_number DESC
+        LIMIT $4`, [CHAIN, fromBlock.toString(), throughBlock.toString(), limit]
+    );
+    return result.rows.map((row) => ({
+      blockNumber: String(row.block_number), blockHash: row.block_hash,
+    }));
   }
   async function commitBlocks(inputs = []) {
     if (!Array.isArray(inputs) || inputs.length === 0) {
@@ -429,7 +452,9 @@ function createRobinhoodChainCaptureJournal(options = {}) {
   async function commitBlock(input = {}) {
     return (await commitBlocks([input]))[0];
   }
-  return Object.freeze({ commitBlock, commitBlocks, getCursor, markRecoveryRequired });
+  return Object.freeze({
+    commitBlock, commitBlocks, getCursor, listCanonicalHeaders, markRecoveryRequired,
+  });
 }
 module.exports = {
   CAPTURE_VERSION, DOMAIN_NOTIFY_CHANNEL, NOTIFY_CHANNEL, createRobinhoodChainCaptureJournal,

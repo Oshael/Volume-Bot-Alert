@@ -253,7 +253,7 @@ Estado implementado:
 - a Stage 204 não deve ser limpa enquanto invalidação, consumo e retenção não
   estiverem prontos. Neste ponto ela tende a guardar duas linhas por swap maduro.
 
-Ao retomar em outro contexto, o próximo trabalho é **3B2B-0B**, abaixo. Não ligar
+Ao retomar em outro contexto, o próximo trabalho é **3B2B-0B2**, abaixo. Não ligar
 `market:trade:observed` antes de concluir todos os gates de 3B2B.
 
 #### Slice 3B2B — recuperação de reorg, em cortes menores
@@ -266,14 +266,20 @@ Ao retomar em outro contexto, o próximo trabalho é **3B2B-0B**, abaixo. Não l
 - [x] recusar novos commits com erro fatal enquanto o estado exigir recuperação;
 - [x] não oferecer reset/resume antes de existir rollback seguro.
 
-**3B2B-0B — planner limitado e inventário de rollback**
+**3B2B-0B1 — planner limitado e inventário de rollback**
 
-- [ ] definir profundidade máxima suportada e fronteira finalizada que nunca pode
+- [x] definir profundidade máxima suportada e fronteira finalizada que nunca pode
   ser revertida automaticamente;
-- [ ] localizar ancestral comum por número/hash com leituras RPC limitadas;
+- [x] localizar ancestral comum por número/hash com leituras RPC limitadas;
+- [x] inventariar, com testes, toda projeção/cursor que referencia blocos na faixa;
+- [x] manter todo domínio como não registrado, tornando o plano não executável;
+- [x] não alterar canonicalidade em produção neste corte.
+
+**3B2B-0B2 — integração do planner e fence de geração**
+
 - [ ] serializar captura e recuperação pela mesma lease/lock e cercar writers por
   geração, impedindo commit da ramificação antiga;
-- [ ] inventariar, com testes, toda projeção/cursor que referencia blocos na faixa;
+- [ ] transformar `capture_reorg_detected` em plano durável e parada observável;
 - [ ] não alterar canonicalidade em produção enquanto algum domínio afetado não
   possuir rollback registrado.
 

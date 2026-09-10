@@ -375,7 +375,7 @@ describe('Robinhood canonical chain capture journal', () => {
     const journal = createRobinhoodChainCaptureJournal();
     await journal.commitBlock(capture());
     const plan = {
-      reason: 'parent_hash_mismatch', recoverable: true, maxDepth: 12,
+      reason: 'parent_hash_mismatch', recoverable: true, maxDepth: 12, generation: '0',
       checkpoint: { blockNumber: '100', blockHash: HASH },
       incoming: { blockNumber: '101', blockHash: NEXT_HASH, parentHash: PARENT },
       ancestor: { blockNumber: '99', blockHash: PARENT },
@@ -388,6 +388,9 @@ describe('Robinhood canonical chain capture journal', () => {
       },
     }), (error) => error.code === 'capture_recovery_fence_conflict');
     assert.equal((await journal.getCursor()).recovery_state, 'running');
+    await assert.rejects(journal.markRecoveryRequired({
+      plan: { ...plan, generation: '1' },
+    }), (error) => error.code === 'capture_recovery_fence_conflict');
     assert.deepEqual(await journal.markRecoveryRequired({ plan }), {
       status: 'recovery-required', generation: '0', plan,
     });
@@ -403,6 +406,17 @@ describe('Robinhood canonical chain capture journal', () => {
       (error) => error.code === 'capture_recovery_required' && error.fatal === true
     );
     assert.equal((await journal.getCursor()).next_block, '101');
+  });
+
+  it('loads only the bounded canonical header range used by recovery planning', async () => {
+    const journal = createRobinhoodChainCaptureJournal();
+    const next = capture(101, NEXT_HASH, HASH);
+    next.transactions[0].hash = NEXT_TX;
+    next.events[0].transactionHash = NEXT_TX;
+    await journal.commitBlocks([capture(), next]);
+    assert.deepEqual(await journal.listCanonicalHeaders({
+      fromBlock: '100', throughBlock: '101', limit: 1,
+    }), [{ blockNumber: '101', blockHash: NEXT_HASH }]);
   });
 
   it('leases only rows covered by the legacy cursor and protects settlement ownership', async () => {

@@ -118,6 +118,16 @@ describe('runtime worker groups config', () => {
     }
   });
 
+  it('bounds canonical capture reorg planning depth', () => {
+    for (const [value, expected] of [
+      ['', 64], ['invalid', 64], ['0', 1], ['96', 96], ['9999', 1000],
+    ]) {
+      withEnv({ ROBINHOOD_CHAIN_CAPTURE_REORG_MAX_DEPTH: value }, (config) => {
+        assert.equal(config.robinhoodChainCaptureWorker.reorgMaxDepth, expected);
+      });
+    }
+  });
+
   it('accepts larger processing claims while preserving defaults and an upper bound', () => {
     for (const [value, expected] of [['', 200], ['2000', 2000], ['8000', 8000], ['99999', 8000]]) {
       withEnv({ ROBINHOOD_PROCESSING_BATCH_SIZE: value }, (config) => {

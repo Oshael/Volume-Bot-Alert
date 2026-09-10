@@ -3956,8 +3956,15 @@ A Stage 205 adiciona ao cursor canônico `generation`, `recovery_state`,
 `recovery_plan` e `recovery_detected_at`; aplique com
 `node src/utils/db-init-stage205.js` antes de implantar código que use o fence.
 O journal pode persistir `recovery_required` somente sob lock e quando checkpoint
-e geração ainda correspondem ao plano. Nesse estado, qualquer novo commit da
-captura falha com `capture_recovery_required` fatal. Este stage deliberadamente
+e geração ainda correspondem ao plano. O planner disponível para a próxima fase
+de integração compara headers do RPC canônico com o journal, no máximo até
+`ROBINHOOD_CHAIN_CAPTURE_REORG_MAX_DEPTH` (default 64, limite 1–1000), e recusa
+qualquer faixa cujo ancestral comum fique abaixo de `finalized_head`. Seu
+manifesto enumera journal, market, wallet, liquidity, holders, discovery/creator
+e publicação/alertas; enquanto qualquer rollback estiver sem registro, o plano
+permanece `executable: false`. O worker ainda não invoca o planner neste corte.
+Quando o cursor está em `recovery_required`, qualquer novo commit da captura
+falha com `capture_recovery_required` fatal. Este stage deliberadamente
 não oferece resume, rewind nem alteração de canonicalidade: essas operações só
 serão liberadas depois que os rollbacks dos domínios estiverem implementados.
 
