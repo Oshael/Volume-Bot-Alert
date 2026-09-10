@@ -41,6 +41,12 @@ describe('Robinhood wallet-swap outbox producer integration', () => {
     ); CREATE TEMP TABLE robinhood_chain_transactions (
       chain text, block_hash text, transaction_hash text,
       transaction_index integer, from_address text
+    ); CREATE TEMP TABLE robinhood_head_captures (
+      chain text, stream text, block_number bigint, processing_status text
+    ); CREATE TEMP TABLE robinhood_wallet_swap_cursors (
+      chain text, stream text, next_block bigint, safe_head bigint,
+      checkpoint_block bigint, checkpoint_hash text, checkpoint_timestamp timestamptz,
+      lifecycle_state text, state_reason text, version bigint, updated_at timestamptz
     )`);
     for (const [index, sql] of STATEMENTS.entries()) {
       await client.query(index === 0
@@ -62,6 +68,9 @@ describe('Robinhood wallet-swap outbox producer integration', () => {
       `INSERT INTO robinhood_chain_transactions VALUES ('robinhood',$1,$2,3,$3)`,
       [BLOCK, TX, WALLET]
     );
+    await client.query(`INSERT INTO robinhood_wallet_swap_cursors VALUES (
+      'robinhood','live',100,99,99,$1,'2026-09-10T07:59:59Z','running',NULL,1,NOW()
+    )`, [BLOCK]);
   });
 
   after(async () => {
@@ -101,12 +110,14 @@ describe('Robinhood wallet-swap outbox producer integration', () => {
       }),
     };
     const outbox = createRobinhoodWalletSwapOutboxRepository({ database });
+    assert.equal(await outbox.discardLegacyCovered(), 0);
     const claimed = await outbox.claimFinalized({
       owner: 'integration', limit: 10, leaseMs: 60000, throughBlock: '100',
     });
     assert.equal(claimed.length, 1);
     assert.equal(claimed[0].transactionHash, TX);
     assert.equal((await outbox.settle({ owner: 'integration', delivered: claimed })).delivered, 1);
+    assert.equal(await outbox.advanceCompatibilityWatermark('100'), '100');
     assert.equal((await client.query(
       'SELECT COUNT(*)::int AS count FROM robinhood_wallet_swap_outbox'
     )).rows[0].count, 0);

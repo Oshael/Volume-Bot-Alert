@@ -1825,7 +1825,9 @@ module.exports = {
 
   robinhoodWalletSwapLiveWorker: {
     enabled: parseBoolean(process.env.ROBINHOOD_WALLET_SWAP_LIVE_ENABLED, false),
-    sourceMode: normalizeRobinhoodLiveSource(process.env.ROBINHOOD_WALLET_SWAP_LIVE_SOURCE),
+    sourceMode: String(
+      process.env.ROBINHOOD_WALLET_SWAP_LIVE_SOURCE || 'durable_outbox'
+    ).trim().toLowerCase(),
     intervalMs: parseIntegerInRange(
       process.env.ROBINHOOD_WALLET_SWAP_LIVE_INTERVAL_MS, 2000, 250, 300_000
     ),
@@ -1843,6 +1845,15 @@ module.exports = {
     ),
     maxConsecutiveFailures: parseIntegerInRange(
       process.env.ROBINHOOD_WALLET_SWAP_LIVE_MAX_CONSECUTIVE_FAILURES, 5, 1, 100
+    ),
+    outboxBatchSize: parseIntegerInRange(
+      process.env.ROBINHOOD_WALLET_SWAP_OUTBOX_BATCH_SIZE, 200, 1, 2000
+    ),
+    outboxLeaseMs: parseIntegerInRange(
+      process.env.ROBINHOOD_WALLET_SWAP_OUTBOX_LEASE_MS, 60_000, 5000, 600_000
+    ),
+    outboxMaxAttempts: parseIntegerInRange(
+      process.env.ROBINHOOD_WALLET_SWAP_OUTBOX_MAX_ATTEMPTS, 5, 1, 50
     ),
   },
 

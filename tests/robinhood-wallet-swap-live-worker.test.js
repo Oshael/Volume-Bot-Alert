@@ -5,6 +5,9 @@ const {
   createRobinhoodWalletSwapLiveWorker,
   __private: { buildRuntime },
 } = require('../src/services/robinhood-wallet-swap-live-worker');
+const {
+  DURABLE_OUTBOX_SOURCE,
+} = require('../src/services/robinhood-wallet-swap-live-source');
 
 function result(status, overrides = {}) {
   return {
@@ -205,5 +208,81 @@ describe('Robinhood wallet-swap LIVE worker', () => {
     assert.equal(await runtime.runnerDeps.readNodeHead(), '200');
     assert.deepEqual(await runtime.runnerDeps.fetchBlockHeader('100'), { header: true });
     assert.deepEqual(await attributorInput.fetchBlock('100'), { full: true });
+  });
+
+  it('builds the durable consumer without constructing an RPC or block reader', async () => {
+    const database = { query() {} };
+    const outbox = {
+      discardLegacyCovered: async () => 17,
+      advanceCompatibilityWatermark: async () => '200',
+      readFinalizedBlock: async () => '200',
+      reclaimExpired() {}, claimFinalized() {}, settle() {},
+    };
+    let runnerInput;
+    const runtime = await buildRuntime({
+      sourceMode: DURABLE_OUTBOX_SOURCE,
+      outboxBatchSize: 300, outboxLeaseMs: 45000, outboxMaxAttempts: 7,
+    }, {
+      database,
+      clientFactory: () => { throw new Error('RPC must not be constructed'); },
+      canonicalBlockSourceFactory: () => { throw new Error('block reader must not be constructed'); },
+      outboxRepositoryFactory: (options) => {
+        assert.equal(options.database, database);
+        return outbox;
+      },
+      walletRepositoryFactory: () => ({ insertWalletSwaps() {} }),
+      transactionPositionRepositoryFactory: () => ({ upsertPositions() {} }),
+      outboxRunnerFactory: (input) => {
+        runnerInput = input;
+        return { runOnce: async () => ({ status: 'idle', claimed: 0 }) };
+      },
+      marketTradeRealtime: { publishRows() {} },
+    });
+
+    assert.equal(runtime.sourceMode, DURABLE_OUTBOX_SOURCE);
+    assert.equal(runtime.legacyDiscarded, 17);
+    assert.equal(runnerInput.repository, outbox);
+    assert.equal(runnerInput.readFinalizedBlock, outbox.readFinalizedBlock);
+    assert.deepEqual(runnerInput.options, {
+      batchSize: 300, leaseMs: 45000, maxAttempts: 7,
+    });
+    assert.deepEqual(await runtime.runOnce(), {
+      status: 'idle', claimed: 0, completeThroughBlock: '200',
+    });
+  });
+
+  it('wakes the durable consumer from outbox and finality notifications', async () => {
+    const scheduled = [];
+    const listeners = [];
+    const worker = createRobinhoodWalletSwapLiveWorker({
+      schedule: (fn, delay) => {
+        const task = { fn, delay, cancelled: false };
+        scheduled.push(task);
+        return task;
+      },
+      cancelSchedule: (task) => { task.cancelled = true; },
+      listenerFactory: (options) => {
+        const listener = { options, stopped: false };
+        listeners.push(listener);
+        return {
+          async start() {},
+          async stop() { listener.stopped = true; },
+        };
+      },
+      runtimeFactory: async () => ({
+        sourceMode: DURABLE_OUTBOX_SOURCE, runOnce: async () => ({ status: 'idle', claimed: 0 }),
+      }),
+      logger: { warn() {}, error() {} },
+    });
+
+    assert.equal(worker.start({ enabled: true, sourceMode: DURABLE_OUTBOX_SOURCE }), true);
+    assert.deepEqual(listeners.map((item) => item.options.channel).sort(), [
+      'robinhood_chain_capture', 'robinhood_wallet_swap_outbox',
+    ]);
+    listeners[0].options.onNotification();
+    assert.equal(scheduled[0].cancelled, true);
+    assert.equal(scheduled.at(-1).delay, 0);
+    await worker.stop();
+    assert.equal(listeners.every((item) => item.stopped), true);
   });
 });

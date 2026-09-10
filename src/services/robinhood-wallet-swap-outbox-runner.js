@@ -72,11 +72,11 @@ function createRobinhoodWalletSwapOutboxRunner(deps = {}) {
     const reclaimed = await repository.reclaimExpired();
     const throughBlock = await readFinalizedBlock();
     if (throughBlock == null) {
-      return { status: 'waiting-finality', reclaimed, claimed: 0, delivered: 0, retried: 0, blocked: 0 };
+      return { status: 'waiting-finality', throughBlock: null, reclaimed, claimed: 0, delivered: 0, retried: 0, blocked: 0 };
     }
     const rows = await repository.claimFinalized({ owner, limit: batchSize, leaseMs, throughBlock });
     if (!rows.length) {
-      return { status: 'idle', reclaimed, claimed: 0, delivered: 0, retried: 0, blocked: 0 };
+      return { status: 'idle', throughBlock: String(throughBlock), reclaimed, claimed: 0, delivered: 0, retried: 0, blocked: 0 };
     }
 
     const valid = [];
@@ -109,7 +109,7 @@ function createRobinhoodWalletSwapOutboxRunner(deps = {}) {
     });
     return {
       status: settlementStatus(settled),
-      reclaimed, claimed: rows.length, inserted, ...settled,
+      throughBlock: String(throughBlock), reclaimed, claimed: rows.length, inserted, ...settled,
     };
   }
 

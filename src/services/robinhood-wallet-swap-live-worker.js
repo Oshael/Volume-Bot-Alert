@@ -1,17 +1,32 @@
+const db = require('../models/db');
 const { createRobinhoodPersistenceRepository } = require('../models/robinhood-persistence');
 const { createRobinhoodHeadProcessingRepository } = require('../models/robinhood-head-processing');
 const { createRobinhoodWalletSwapCursorRepository } = require('../models/robinhood-wallet-swap-cursor');
 const { createRobinhoodWalletSwapRepository } = require('../models/robinhood-wallet-swap-persistence');
+const {
+  createRobinhoodWalletSwapOutboxRepository,
+} = require('../models/robinhood-wallet-swap-outbox');
 const {
   createRobinhoodTransactionPositionRepository,
 } = require('../models/robinhood-transaction-position');
 const { createRobinhoodWalletSwapSourceReader } = require('../models/robinhood-wallet-swap-source-reader');
 const { createRobinhoodWalletSwapAttributor } = require('./robinhood-wallet-swap-attributor');
 const {
-  normalizeRobinhoodWalletSwapLiveSource, resolveRobinhoodWalletSwapLiveSource,
+  DURABLE_OUTBOX_SOURCE, normalizeRobinhoodWalletSwapLiveSource,
+  resolveRobinhoodWalletSwapLiveSource,
 } = require('./robinhood-wallet-swap-live-source');
 const { runLiveTick } = require('./robinhood-wallet-swap-live-runner');
+const {
+  createRobinhoodWalletSwapOutboxRunner,
+} = require('./robinhood-wallet-swap-outbox-runner');
 const marketTradeRealtime = require('./market-trade-realtime');
+const {
+  NOTIFY_CHANNEL: OUTBOX_NOTIFY_CHANNEL,
+} = require('../models/robinhood-wallet-swap-outbox-producer');
+const {
+  NOTIFY_CHANNEL: CAPTURE_NOTIFY_CHANNEL,
+} = require('../models/robinhood-chain-capture-journal');
+const { createPostgresRealtimeListener } = require('./postgres-realtime-listener');
 
 const FATAL_CODES = new Set(['configuration_error', 'persistent_reorg', 'source_contract_error']);
 
@@ -32,11 +47,48 @@ function normalizeOptions(options = {}, env = process.env) {
     blockConcurrency: boundedInteger(options.blockConcurrency, 8, 1, 32),
     reorgDepth: boundedInteger(options.reorgDepth, 12, 1, 1000),
     maxConsecutiveFailures: boundedInteger(options.maxConsecutiveFailures, 5, 1, 100),
+    outboxBatchSize: boundedInteger(options.outboxBatchSize, 200, 1, 2000),
+    outboxLeaseMs: boundedInteger(options.outboxLeaseMs, 60_000, 5000, 600_000),
+    outboxMaxAttempts: boundedInteger(options.outboxMaxAttempts, 5, 1, 50),
     rpcOptions: options.rpcOptions || {},
   };
 }
 
 async function buildRuntime(options, deps = {}) {
+  if (options.sourceMode === DURABLE_OUTBOX_SOURCE) {
+    const database = deps.database || db;
+    const outbox = (deps.outboxRepositoryFactory
+      || createRobinhoodWalletSwapOutboxRepository)({ database });
+    const legacyDiscarded = await outbox.discardLegacyCovered();
+    const walletRepository = (deps.walletRepositoryFactory
+      || createRobinhoodWalletSwapRepository)({ database });
+    const transactionPositionRepository = (deps.transactionPositionRepositoryFactory
+      || createRobinhoodTransactionPositionRepository)({ database });
+    const runner = (deps.outboxRunnerFactory || createRobinhoodWalletSwapOutboxRunner)({
+      repository: outbox,
+      walletRepository,
+      transactionPositionRepository,
+      readFinalizedBlock: outbox.readFinalizedBlock,
+      publishRows: (deps.marketTradeRealtime || marketTradeRealtime).publishRows,
+      options: {
+        batchSize: options.outboxBatchSize,
+        leaseMs: options.outboxLeaseMs,
+        maxAttempts: options.outboxMaxAttempts,
+      },
+    });
+    return {
+      sourceMode: DURABLE_OUTBOX_SOURCE,
+      providerChainIds: Object.freeze({ canonical_journal: '4663' }),
+      legacyDiscarded,
+      runOnce: async () => {
+        const result = await runner.runOnce();
+        const completeThroughBlock = await outbox.advanceCompatibilityWatermark(
+          result.throughBlock
+        );
+        return { ...result, completeThroughBlock };
+      },
+    };
+  }
   const source = await resolveRobinhoodWalletSwapLiveSource({
     sourceMode: options.sourceMode, rpcOptions: options.rpcOptions,
   }, deps);
@@ -99,6 +151,8 @@ function compactResult(result) {
     'status', 'nodeHead', 'nodeSafeHead', 'sourceSafeHead', 'processableThrough',
     'nextBlock', 'safeHead', 'checkpointBlock', 'processedBlocks', 'attributed',
     'inserted', 'unresolved', 'missing', 'failedBlock', 'frontierDeficitBlocks',
+    'throughBlock', 'claimed', 'delivered', 'retried', 'blocked', 'reclaimed',
+    'completeThroughBlock',
   ];
   return Object.fromEntries(fields.map((key) => [key, result[key] ?? null]));
 }
@@ -119,6 +173,7 @@ function createRobinhoodWalletSwapLiveWorker(deps = {}) {
   let options = normalizeOptions({}, env);
   let runtimePromise = null;
   let timer = null;
+  let listener = null;
   let activeRunPromise = null;
   let running = false;
   let onFatal = null;
@@ -127,6 +182,8 @@ function createRobinhoodWalletSwapLiveWorker(deps = {}) {
     sourceMode: null, providerChainIds: null, lastResult: null, lagBlocks: null,
     batches: 0, processedBlocks: 0, attributed: 0, inserted: 0, duplicateInserts: 0,
     missing: 0, unresolved: 0, retries: 0, conflicts: 0,
+    claimed: 0, delivered: 0, retried: 0, blocked: 0, reclaimed: 0,
+    legacyDiscarded: 0, totalWakes: 0, lastWakeAt: null,
     consecutiveErrors: 0, consecutiveBlocked: 0, blockedBlock: null,
     lastCompletedAt: null, lastError: null,
   };
@@ -148,6 +205,10 @@ function createRobinhoodWalletSwapLiveWorker(deps = {}) {
     status.lastError = publicError(error);
     if (timer) cancelSchedule(timer);
     timer = null;
+    await Promise.all((listener || []).map((current) => (
+      Promise.resolve(current.stop()).catch(() => {})
+    )));
+    listener = null;
     try { await onFatal?.(error); } catch (fatalError) {
       logger.error('[RobinhoodWalletSwapLiveWorker] Fatal propagation failed:', fatalError.message);
     }
@@ -175,8 +236,13 @@ function createRobinhoodWalletSwapLiveWorker(deps = {}) {
       const runtime = await getRuntime();
       status.sourceMode = runtime.sourceMode;
       status.providerChainIds = runtime.providerChainIds;
-      const result = await tick(runtime.runnerDeps);
+      status.legacyDiscarded = Number(runtime.legacyDiscarded || 0);
+      const result = runtime.runOnce
+        ? await runtime.runOnce() : await tick(runtime.runnerDeps);
       recordResult(result);
+      for (const key of ['claimed', 'delivered', 'retried', 'blocked', 'reclaimed']) {
+        status[key] += Number(result[key] || 0);
+      }
       status.consecutiveErrors = 0;
       status.lastError = result.status === 'blocked-unresolved'
         ? publicError(Object.assign(
@@ -211,16 +277,27 @@ function createRobinhoodWalletSwapLiveWorker(deps = {}) {
   }
 
   function queueNext(delay) {
-    if (!running || status.halted) return;
+    if (!running || status.halted || timer) return;
     timer = schedule(async () => {
-      await runOnce();
+      timer = null;
+      const result = await runOnce();
       const failures = Math.max(status.consecutiveErrors, status.consecutiveBlocked);
       const backoff = Math.min(
         options.maxErrorBackoffMs,
         options.intervalMs * (2 ** Math.min(failures, 8))
       );
-      queueNext(failures ? backoff : options.intervalMs);
+      queueNext(failures ? backoff : (result?.claimed > 0 ? 0 : options.intervalMs));
     }, delay);
+    timer?.unref?.();
+  }
+
+  function wake() {
+    if (!running || status.halted) return;
+    status.totalWakes += 1;
+    status.lastWakeAt = new Date().toISOString();
+    if (timer) cancelSchedule(timer);
+    timer = null;
+    queueNext(0);
   }
 
   function start(input = {}) {
@@ -232,6 +309,20 @@ function createRobinhoodWalletSwapLiveWorker(deps = {}) {
     running = true;
     status.running = true;
     status.halted = false;
+    if (options.sourceMode === DURABLE_OUTBOX_SOURCE) {
+      const listenerFactory = deps.listenerFactory || createPostgresRealtimeListener;
+      listener = [OUTBOX_NOTIFY_CHANNEL, CAPTURE_NOTIFY_CHANNEL].map((channel) => (
+        listenerFactory({
+          channel, label: 'RobinhoodWalletSwapLiveWorker',
+          pool: deps.pool || db.pool, onNotification: wake,
+        })
+      ));
+      for (const current of listener) {
+        Promise.resolve(current.start()).catch((error) => {
+          status.lastError = publicError(error);
+        });
+      }
+    }
     queueNext(0);
     return true;
   }
@@ -241,10 +332,20 @@ function createRobinhoodWalletSwapLiveWorker(deps = {}) {
     status.running = false;
     if (timer) cancelSchedule(timer);
     timer = null;
+    await Promise.all((listener || []).map((current) => (
+      Promise.resolve(current.stop()).catch(() => {})
+    )));
+    listener = null;
     if (activeRunPromise) await activeRunPromise.catch(() => {});
   }
 
-  return Object.freeze({ getStatus: () => ({ ...status }), runOnce, start, stop });
+  return Object.freeze({
+    getStatus: () => ({
+      ...status,
+      listeners: (listener || []).map((current) => current.getStatus?.() || null),
+    }),
+    runOnce, start, stop,
+  });
 }
 
 const worker = createRobinhoodWalletSwapLiveWorker();

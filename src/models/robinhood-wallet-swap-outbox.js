@@ -162,7 +162,79 @@ function createRobinhoodWalletSwapOutboxRepository(options = {}) {
     return result.rowCount;
   }
 
-  return Object.freeze({ claimFinalized, reclaimExpired, settle });
+  async function readFinalizedBlock() {
+    const result = await database.query(
+      `SELECT CASE WHEN finalized_head IS NULL OR checkpoint_block IS NULL THEN NULL
+              ELSE LEAST(finalized_head, checkpoint_block)::text END AS finalized_head
+       FROM robinhood_chain_capture_cursor WHERE chain=$1`, [CHAIN]
+    );
+    return result.rows[0]?.finalized_head ?? null;
+  }
+
+  // Preserve the public retention watermark without retaining the old reader.
+  // Pending processing and outbox work both fence progress, so a late V4 item
+  // can never appear below a cursor already advertised as complete.
+  async function advanceCompatibilityWatermark(throughBlock) {
+    if (throughBlock == null) return null;
+    const through = quantity(throughBlock, 'throughBlock');
+    const result = await database.query(
+      `WITH frontier AS MATERIALIZED (
+         SELECT LEAST(
+           $2::bigint,
+           COALESCE((SELECT MIN(block_number)-1 FROM robinhood_head_captures
+             WHERE chain=$1 AND stream='market'
+               AND processing_status IN ('pending','leased','blocked')), $2::bigint),
+           COALESCE((SELECT MIN(block_number)-1 FROM robinhood_wallet_swap_outbox
+             WHERE chain=$1 AND status IN ('pending','leased','blocked')), $2::bigint)
+         ) AS block_number
+       ), checkpoint AS MATERIALIZED (
+         SELECT block.block_number, block.block_hash, block.block_timestamp
+         FROM frontier INNER JOIN robinhood_chain_blocks block
+           ON block.chain=$1 AND block.canonical
+          AND block.block_number=frontier.block_number
+       ), advanced AS (
+       UPDATE robinhood_wallet_swap_cursors cursor
+       SET next_block=checkpoint.block_number+1,
+           safe_head=GREATEST(COALESCE(cursor.safe_head,0),checkpoint.block_number),
+           checkpoint_block=checkpoint.block_number,
+           checkpoint_hash=checkpoint.block_hash,
+           checkpoint_timestamp=checkpoint.block_timestamp,
+           lifecycle_state='running', state_reason=NULL,
+           version=cursor.version+1, updated_at=NOW()
+       FROM checkpoint
+       WHERE cursor.chain=$1 AND cursor.stream='live'
+         AND cursor.next_block < checkpoint.block_number+1
+       RETURNING cursor.next_block
+       )
+       SELECT (next_block-1)::text AS complete_through_block FROM advanced
+       UNION ALL
+       SELECT (cursor.next_block-1)::text
+       FROM robinhood_wallet_swap_cursors cursor
+       WHERE cursor.chain=$1 AND cursor.stream='live'
+         AND NOT EXISTS (SELECT 1 FROM advanced)
+       LIMIT 1`,
+      [CHAIN, through]
+    );
+    return result.rows[0]?.complete_through_block ?? null;
+  }
+
+  // One-time cutover fence: rows below the frozen legacy LIVE cursor were
+  // already attributed by the old reader and must not be replayed to the UI.
+  async function discardLegacyCovered() {
+    const result = await database.query(
+      `DELETE FROM robinhood_wallet_swap_outbox outbox
+       USING robinhood_wallet_swap_cursors cursor
+       WHERE outbox.chain=$1 AND outbox.status='pending'
+         AND cursor.chain=outbox.chain AND cursor.stream='live'
+         AND outbox.block_number < cursor.next_block`, [CHAIN]
+    );
+    return result.rowCount;
+  }
+
+  return Object.freeze({
+    advanceCompatibilityWatermark, claimFinalized, discardLegacyCovered,
+    readFinalizedBlock, reclaimExpired, settle,
+  });
 }
 
 module.exports = {

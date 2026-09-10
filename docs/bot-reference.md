@@ -683,13 +683,21 @@ persistir o swap e o web relay acrescenta `publishedAt`. A lease `web` expõe os
 ficam em `telemetry.backendAlerts.latency`. Payloads antigos continuam válidos.
 
 Aplique `node src/utils/db-init-stage203.js` **antes** de implantar o código ou reiniciar qualquer
-writer Robinhood. A Stage 203 cria `robinhood_wallet_swap_outbox`; cada observação live
-aceita é anexada ali na mesma transação, já contendo `tx.from`, hash/tempo do bloco e posição da
-transação vindos do journal canônico. A chave `(chain, transaction_hash, log_index)` torna replay
-idempotente e a ordem de claim é bloco, transaction index e log index. O producer dispara
-`NOTIFY` transacional, visível somente após o commit. Neste estágio a fila é shadow: o
-`robinhood-wallet` continua usando o cursor anterior até o consumer/cutover seguinte, portanto a
-Stage 203 isolada não muda a publicação de `market:trade`.
+writer Robinhood. A Stage 203 cria `robinhood_wallet_swap_outbox`; cada observação live aceita é
+anexada ali na mesma transação, já contendo `tx.from`, hash/tempo do bloco e posição da transação
+vindos do journal canônico. A chave `(chain, transaction_hash, log_index)` torna replay idempotente.
+O grupo `robinhood-wallet`, com `ROBINHOOD_WALLET_SWAP_LIVE_SOURCE=durable_outbox` (default), acorda
+por `LISTEN` tanto no append quanto no avanço da finalidade e usa o intervalo de 2s somente como
+reconciliação de notificação perdida. Claim é ordenado e limitado a `finalized_head` e ao hash ainda
+canônico; persistência de posição/swap é idempotente, `market:trade` vem depois e a linha só é
+apagada após publicação. Falha entre escrita e `NOTIFY` volta por lease/retry e pode republicar o
+mesmo evento, que consumidores deduplicam pela identidade do swap.
+
+No primeiro start do modo durável, itens abaixo do `next_block` do cursor LIVE antigo são removidos
+como já cobertos, evitando replay do overlap shadow. Depois disso o cursor antigo não lê blocos: ele
+é mantido somente como watermark de compatibilidade da retenção, sempre cercado por finalidade,
+pelo capture market mais antigo ainda ativo e pela outbox não entregue. `canonical_journal` e `rpc`
+permanecem como rollback explícito; ambos restauram o reader/cursor anterior.
 
 O relay de holders preserva os marcos do bloco canônico e acrescenta
 `projectionCommittedAt` no commit do ledger e `publishedAt` ao receber o `NOTIFY`;
@@ -4241,32 +4249,27 @@ starvation atrás de itens `accepted` protegidos. O status do worker expõe vali
 motivo do gate, watermark, idade, lag, faixa candidata e proteções atribuídas ao
 wallet ou à cobertura de buckets.
 
-O worker limita o trabalho pelo frontier estrito da captura/processing ativa,
-revalida checkpoint e seleciona a fonte por `ROBINHOOD_WALLET_SWAP_LIVE_SOURCE`:
-`canonical_journal` é o default e usa blocos e transações já capturados, sem RPC.
-`rpc` permanece como rollback explícito, com preflight de chain ID `4663`. Lease,
-telemetria e backoff permanecem no grupo `robinhood-wallet`. O antigo frontier do
-cursor monolítico congelado foi removido; não usá-lo para medir lag atual.
-Um recuo temporário do head seguro da fonte ou desse frontier upstream não reduz o
-cursor e não representa reorg persistente: o tick retorna `waiting-frontier`, expõe
-`frontierDeficitBlocks` na telemetria e tenta novamente no intervalo normal. Apenas
-a divergência do hash do checkpoint já persistido permanece fatal e leva a lease a
-`halted`.
-Cada página LIVE resolve blocos com concorrência limitada por
+O modo atual selecionado por `ROBINHOOD_WALLET_SWAP_LIVE_SOURCE` é `durable_outbox` e não relê
+blocos: consome diretamente o payload autocontido produzido pelo processing. `canonical_journal`
+e `rpc` são rollback explícito e restauram o reader antigo; o segundo mantém preflight de chain ID
+`4663`. Lease, telemetria e backoff permanecem no grupo `robinhood-wallet`.
+Nos modos de rollback, um recuo temporário do head seguro da fonte ou do frontier upstream não
+reduz o cursor: o tick retorna `waiting-frontier` e expõe `frontierDeficitBlocks`. Cada página
+resolve blocos com concorrência limitada por
 `ROBINHOOD_WALLET_SWAP_LIVE_BLOCK_CONCURRENCY` (default `8`, faixa `1..32`),
 persiste posições e wallet-swaps em lotes set-based e avança o cursor uma única
 vez até o último prefixo confirmado. O primeiro bloco não resolvido continua
 fail-closed: o prefixo anterior permanece idempotente e o cursor nunca o ultrapassa.
 
-Antes de migrar essa leitura para o journal canônico, execute
+Antes de um rollback para `canonical_journal`, execute
 `npm run robinhood:canonical-wallet-swap-audit`. O comando é estritamente
 read-only: compara os frontiers de captura, processing e wallet, valida o
 checkpoint LIVE contra o bloco canônico e verifica o contexto transacional da
 próxima página (no máximo 200 blocos), sem varrer o histórico de observações.
-Depois de `ready=true`, execute `npm run robinhood:canonical-wallet-swap-canary`:
+Depois de `ready=true`, opcionalmente execute `npm run robinhood:canonical-wallet-swap-canary`:
 ele compara `tx.from`, posição, hash e timestamp do journal com o RPC legado em
 uma janela fechada recente e não persiste wallet-swaps.
-Depois do restart com `canonical_journal`, confirme o corte com
+Depois do restart em rollback, confirme com
 `npm run robinhood:canonical-wallet-swap-audit -- --phase=cutover`.
 
 As Stages 126–127 criam posições financeiras Robinhood versionadas e um cursor
@@ -4896,9 +4899,8 @@ esta referência.
   mas ainda precisa da auditoria final de staging/outbox antes de ser desligado;
 - o LIVE Robinhood preparado no código precisa de migrations, deploy, canary com
   overlap e estabilização no head da VPS2;
-- o worker LIVE de wallet-swaps está implantado no grupo isolado e acompanha o
-  frontier ativo; a outbox shadow da Stage 203 precisa do consumer/cutover para
-  substituir a releitura por cursor na entrega `market:trade`;
+- o worker LIVE de wallet-swaps usa a outbox durável da Stage 203; acompanhar
+  filas `pending/leased/blocked`, finalidade e o watermark de compatibilidade;
 - retenção de swaps por 30 dias precisa virar implementação verificável;
 - wallet tracking multichain ainda é roadmap;
 - SHYFT/Yellowstone ainda é roadmap;

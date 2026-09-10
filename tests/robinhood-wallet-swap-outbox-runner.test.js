@@ -124,7 +124,7 @@ describe('Robinhood wallet-swap durable outbox', () => {
     assert.equal(state.getSettlement().delivered.length, 1);
     assert.equal(state.getSettlement().retry.length, 0);
     assert.deepEqual(result, {
-      status: 'delivered', reclaimed: 1, claimed: 1, inserted: 1,
+      status: 'delivered', throughBlock: '120', reclaimed: 1, claimed: 1, inserted: 1,
       delivered: 1, retried: 0, blocked: 0,
     });
   });

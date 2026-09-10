@@ -10,12 +10,13 @@ const {
 
 const RPC_SOURCE = 'rpc';
 const CANONICAL_SOURCE = 'canonical_journal';
+const DURABLE_OUTBOX_SOURCE = 'durable_outbox';
 
 function normalizeRobinhoodWalletSwapLiveSource(value) {
   const normalized = String(value || RPC_SOURCE).trim().toLowerCase();
-  if (![RPC_SOURCE, CANONICAL_SOURCE].includes(normalized)) {
+  if (![RPC_SOURCE, CANONICAL_SOURCE, DURABLE_OUTBOX_SOURCE].includes(normalized)) {
     const error = new Error(
-      `ROBINHOOD_WALLET_SWAP_LIVE_SOURCE must be ${RPC_SOURCE} or ${CANONICAL_SOURCE}`
+      `ROBINHOOD_WALLET_SWAP_LIVE_SOURCE must be ${RPC_SOURCE}, ${CANONICAL_SOURCE}, or ${DURABLE_OUTBOX_SOURCE}`
     );
     error.code = 'configuration_error';
     error.fatal = true;
@@ -43,6 +44,12 @@ async function resolveRobinhoodWalletSwapLiveSource(options = {}, deps = {}) {
       readNodeHead: source.readHead,
     });
   }
+  if (sourceMode === DURABLE_OUTBOX_SOURCE) {
+    const error = new Error('durable_outbox is resolved by the wallet-swap worker');
+    error.code = 'configuration_error';
+    error.fatal = true;
+    throw error;
+  }
   const client = (deps.clientFactory || createRobinhoodRpcClient)(options.rpcOptions || {});
   const providerChainIds = await (
     deps.validateChainIds || validateRobinhoodProviderChainIds
@@ -59,6 +66,6 @@ async function resolveRobinhoodWalletSwapLiveSource(options = {}, deps = {}) {
 }
 
 module.exports = {
-  CANONICAL_SOURCE, RPC_SOURCE, normalizeRobinhoodWalletSwapLiveSource,
+  CANONICAL_SOURCE, DURABLE_OUTBOX_SOURCE, RPC_SOURCE, normalizeRobinhoodWalletSwapLiveSource,
   resolveRobinhoodWalletSwapLiveSource,
 };
