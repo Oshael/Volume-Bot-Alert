@@ -5,6 +5,7 @@ const {
   createRobinhoodWalletSwapRealtimeOutboxRepository,
 } = require('./robinhood-wallet-swap-realtime-outbox');
 const { createRobinhoodMarketReorgRollback } = require('./robinhood-market-reorg-rollback');
+const { createRobinhoodWalletReorgRollback } = require('./robinhood-wallet-reorg-rollback');
 
 const CHAIN = 'robinhood';
 const NOTIFY_CHANNEL = 'robinhood_chain_recovery_outbox';
@@ -144,6 +145,7 @@ function createRobinhoodChainRecoveryJournal(options = {}) {
   const tradeLifecycle = options.tradeLifecycle
     || createRobinhoodWalletSwapRealtimeOutboxRepository({ database });
   const marketRollback = options.marketRollback || createRobinhoodMarketReorgRollback();
+  const walletRollback = options.walletRollback || createRobinhoodWalletReorgRollback();
 
   async function recordDetected(client, input = {}) {
     if (!client || typeof client.query !== 'function') {
@@ -244,6 +246,12 @@ function createRobinhoodChainRecoveryJournal(options = {}) {
       const market = await marketRollback.rollback(client, {
         fromBlock: rewind.fromBlock.toString(), throughBlock: rewind.throughBlock.toString(),
       });
+      const wallet = await walletRollback.rollback(client, {
+        generation: recoveryGeneration,
+        ancestorBlock: rewind.ancestor.toString(), ancestorHash: rewind.ancestorHash,
+        fromBlock: rewind.fromBlock.toString(), throughBlock: rewind.throughBlock.toString(),
+        checkpointHash: rewind.checkpointHash,
+      });
       const orphaned = await client.query(
         `UPDATE robinhood_chain_blocks SET canonical=FALSE
           WHERE chain=$1 AND canonical=TRUE
@@ -295,7 +303,7 @@ function createRobinhoodChainRecoveryJournal(options = {}) {
       return {
         status: 'rewound', generation: recoveryGeneration,
         nextGeneration: disposition.nextGeneration,
-        orphanedBlocks: Number(rewind.depth), tradeInvalidations, market,
+        orphanedBlocks: Number(rewind.depth), tradeInvalidations, market, wallet,
       };
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch (_) {}

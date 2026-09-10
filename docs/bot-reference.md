@@ -4012,6 +4012,15 @@ da Stage 104 são descartadas, e um bucket sem fonte é removido em vez de publi
 preço ou volume zero. Tudo participa da mesma transação do rewind. Esse rollback
 não abre o gate: os demais domínios do manifesto continuam pendentes.
 
+O mesmo rewind remove swaps atribuídos à ramificação órfã de
+`robinhood_wallet_swaps`, sua linha em `robinhood_swap_mc`, a entrega ainda pendente da Stage 203
+e os `robinhood_transaction_positions` ligados ao hash antigo. O cursor `live` de wallet-swaps é
+recuado ao ancestral somente quando seu checkpoint pertence integralmente à faixa afetada: geração
+e checkpoint do capture, hash canônico do wallet cursor e versão da linha são revalidados sob lock.
+Qualquer divergência aborta toda a transação antes de alterar canonicalidade. O cursor `seed` não é
+alterado. As posições agregadas por wallet/token permanecem intocadas até sua reconstrução
+dedicada; por isso o gate de recovery continua fechado após este passo.
+
 Antes de definir ou reduzir retenção de `robinhood_chain_events` e
 `robinhood_holder_transfer_journal`, execute
 `npm run robinhood:retention-safety-audit`. O comando é estritamente read-only,

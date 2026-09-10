@@ -334,9 +334,9 @@ necessário se uma migration surgir durante a implementação.
 
 **3B2B-2C1B — rollback de swaps e cursores (~350–450 linhas)**
 
-- [ ] remover efeitos órfãos de swaps e sidecars de posição transacional;
-- [ ] recuar cursores de wallet à fronteira comum com generation/hash fence;
-- [ ] manter replay idempotente e impedir publicação finalizada duplicada.
+- [x] remover efeitos órfãos de swaps e sidecars de posição transacional;
+- [x] recuar cursores de wallet à fronteira comum com generation/hash fence;
+- [x] manter replay idempotente e impedir publicação finalizada duplicada.
 
 **3B2B-2C2 — reconstrução de posições (~400–500 linhas)**
 
