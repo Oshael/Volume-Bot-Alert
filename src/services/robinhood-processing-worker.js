@@ -8,6 +8,7 @@
  * touches the capture cursor.
  */
 const db = require('../models/db');
+const { CURSOR_NOTIFY_CHANNEL } = require('../models/robinhood-head-capture');
 const { createRobinhoodPersistenceRepository } = require('../models/robinhood-persistence');
 const { createRobinhoodHeadProcessingRepository } = require('../models/robinhood-head-processing');
 const {
@@ -19,16 +20,23 @@ const {
 const {
   createRobinhoodProcessingShadowAuditor,
 } = require('./robinhood-processing-shadow-auditor');
+const { createPostgresRealtimeListener } = require('./postgres-realtime-listener');
 
+const NOTIFY_CHANNEL = CURSOR_NOTIFY_CHANNEL;
 const DEFAULT_INTERVAL_MS = 1000;
 const DEFAULT_IDLE_INTERVAL_MS = 5000;
 const DEFAULT_PRUNE_INTERVAL_MS = 5 * 60 * 1000;
 
 let timer = null;
 let running = false;
+let ticking = false;
+let wakePending = false;
+let pendingWakeAtMs = null;
 let runner = null;
 let discoveryRunner = null;
 let repository = null;
+let listener = null;
+let activeOptions = null;
 let lastPruneAt = 0;
 let status = {
   running: false,
@@ -49,6 +57,14 @@ let status = {
   totalBlocked: 0,
   totalPrunedCaptures: 0,
   totalErrors: 0,
+  totalWakes: 0,
+  fallbackChecks: 0,
+  fallbackRuns: 0,
+  lastWakeAt: null,
+  lastWakeStream: null,
+  lastProgressAt: null,
+  lastFallbackAt: null,
+  wakeToClaimMs: null,
   lastShadowAudit: null,
   totalShadowCompared: 0,
   totalShadowMatched: 0,
@@ -134,7 +150,10 @@ async function maybePrune(normalized, nowMs) {
   status.totalPrunedCaptures += pruned;
 }
 
-async function runOnce(normalized) {
+async function runOnce(normalized, trigger = {}) {
+  if (Number.isFinite(trigger.wakeAtMs)) {
+    status.wakeToClaimMs = Math.max(0, Date.now() - trigger.wakeAtMs);
+  }
   const result = await runner.runOnce();
   status.lastTickAt = new Date().toISOString();
   status.lastClaimed = result.claimed;
@@ -173,26 +192,68 @@ async function runOnce(normalized) {
   };
   await maybePrune(normalized, Date.now());
   // Keep the tick loop hot while either stream still has claimable work.
-  return { ...result, claimed: result.claimed + discovery.claimed };
+  const combined = { ...result, claimed: result.claimed + discovery.claimed };
+  if (combined.claimed > 0) status.lastProgressAt = new Date().toISOString();
+  return combined;
 }
 
-function schedule(normalized, delayMs) {
+function schedule(normalized, delayMs, trigger = { kind: 'fallback' }) {
   if (!running) return;
   timer = setTimeout(async () => {
+    timer = null;
+    ticking = true;
     let nextDelay = normalized.intervalMs;
+    let nextKind = 'fallback';
     try {
-      const result = await runOnce(normalized);
+      if (trigger.kind === 'fallback') status.fallbackChecks += 1;
+      const result = await runOnce(normalized, trigger);
       status.lastError = null;
-      if (!result.claimed) nextDelay = normalized.idleIntervalMs;
+      if (trigger.kind === 'fallback' && result.claimed > 0) {
+        status.fallbackRuns += 1;
+        status.lastFallbackAt = new Date().toISOString();
+      }
     } catch (error) {
       status.totalErrors += 1;
       status.lastError = String(error?.message || error).slice(0, 1000);
       console.error('[RobinhoodProcessingWorker] Tick failed:', status.lastError);
       nextDelay = normalized.idleIntervalMs;
+      nextKind = 'error-backoff';
     } finally {
-      schedule(normalized, nextDelay);
+      ticking = false;
+      if (wakePending) {
+        const wakeAtMs = pendingWakeAtMs;
+        wakePending = false;
+        pendingWakeAtMs = null;
+        schedule(normalized, 0, { kind: 'wake', wakeAtMs });
+      } else {
+        schedule(normalized, nextDelay, { kind: nextKind });
+      }
     }
   }, delayMs);
+  timer?.unref?.();
+}
+
+function wake(wakeAtMs = Date.now()) {
+  if (!running) return;
+  if (ticking) {
+    wakePending = true;
+    pendingWakeAtMs = pendingWakeAtMs == null
+      ? wakeAtMs : Math.min(pendingWakeAtMs, wakeAtMs);
+    return;
+  }
+  if (timer) clearTimeout(timer);
+  timer = null;
+  schedule(activeOptions, 0, { kind: 'wake', wakeAtMs });
+}
+
+function handleNotification(message) {
+  if (message?.channel !== NOTIFY_CHANNEL) return;
+  const wakeAtMs = Date.now();
+  status.lastWakeAt = new Date(wakeAtMs).toISOString();
+  status.lastWakeStream = ['market', 'discovery'].includes(message.payload)
+    ? message.payload : null;
+  status.totalWakes += 1;
+  wake(wakeAtMs);
 }
 
 function start(options = {}, deps = {}) {
@@ -200,29 +261,53 @@ function start(options = {}, deps = {}) {
   const normalized = normalizeOptions(options);
   if (!normalized.enabled) return;
   build(normalized, deps);
+  activeOptions = normalized;
   running = true;
   status.running = true;
   status.enabled = true;
   lastPruneAt = 0;
-  schedule(normalized, 0);
+  const listenerFactory = deps.listenerFactory || createPostgresRealtimeListener;
+  listener = listenerFactory({
+    channel: NOTIFY_CHANNEL,
+    label: 'RobinhoodProcessingWorker',
+    pool: deps.pool || db.pool,
+    onNotification: handleNotification,
+  });
+  // Arm recovery first so a notification arriving immediately after LISTEN
+  // replaces this timer instead of creating a concurrent startup tick.
+  schedule(normalized, 0, { kind: 'startup' });
+  Promise.resolve(listener.start()).catch((error) => {
+    status.lastError = `listener: ${String(error?.message || error).slice(0, 200)}`;
+  });
 }
 
-function stop() {
+async function stop() {
   running = false;
   status.running = false;
   if (timer) clearTimeout(timer);
   timer = null;
+  wakePending = false;
+  pendingWakeAtMs = null;
+  activeOptions = null;
+  const current = listener;
+  listener = null;
+  if (current) await Promise.resolve(current.stop()).catch(() => {});
 }
 
 function getStatus() {
-  return { ...status };
+  const listenerStatus = listener?.getStatus?.() || null;
+  const listenerState = !running ? 'stopped'
+    : listenerStatus?.listening ? 'listening'
+      : listenerStatus?.reconnectScheduled ? 'reconnecting' : 'connecting';
+  return { ...status, listenerState, listener: listenerStatus };
 }
 
 module.exports = {
+  NOTIFY_CHANNEL,
   DEFAULT_INTERVAL_MS,
   getStatus,
   runOnce,
   start,
   stop,
-  __private: { normalizeOptions, build },
+  __private: { normalizeOptions, build, handleNotification, wake },
 };

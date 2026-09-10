@@ -1382,6 +1382,7 @@ async function shutdownGracefully(signal = 'SIGTERM') {
       robinhoodRealtimeAlertWorker.stop(),
       robinhoodMarketAggregateWorker.stop(),
       robinhoodDerivedWorker.stop(),
+      robinhoodProcessingWorker.stop(),
       telegramAlertRuntime.stop(),
       calloutCaptureWorker.stop(),
       backendAlertRealtime.stop(),

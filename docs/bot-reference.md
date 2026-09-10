@@ -518,7 +518,18 @@ de pool sintetizado da evidência e lê metadata/quote/saldos da própria evidê
 (`commitHeadProcessingBatch`) que **não** commita cursor nem emite socket/alert (derivados são
 etapa posterior); erro isola a claim (retry com backoff ou dead-letter `blocked`) sem tocar o
 cursor de captura. Poda a fila 1 dia após o terminal (`retention_eligible_at`). Watermark de
-processamento independente do cursor de captura. A unit foi implantada em shadow, mas
+processamento independente do cursor de captura. O processo escuta
+`LISTEN robinhood_head_capture_cursor`: o `NOTIFY` do capturador é confirmado na mesma
+transação que grava as capturas e avança o cursor, e acorda imediatamente os runners de
+market/discovery. Wakes que chegam durante um tick são coalescidos em uma rodada seguinte,
+sem concorrência. Uma verificação de 1 segundo recupera notificações perdidas; o intervalo
+ocioso de 5 segundos fica restrito ao backoff após erro. A lease expõe `listenerState`,
+`lastWakeAt`, `lastWakeStream`, `lastProgressAt`, `wakeToClaimMs`, `fallbackChecks` e
+`fallbackRuns`; este último cresce somente quando a verificação recupera trabalho sem wake.
+O corte não exige schema nem flag nova e requer reiniciar apenas
+`trendscope-worker@robinhood-processing.service`.
+
+A unit foi implantada em shadow, mas
 ficou pausada em `2026-08-05` até a correção online do índice de claim market: o plano
 vigente lia milhões de entradas do índice de reorg para reclamar lotes de 200. A Stage 107
 mantém o índice geral de claim market, enquanto a Stage 186 separa o hot path em dois índices

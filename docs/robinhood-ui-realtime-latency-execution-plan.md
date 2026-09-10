@@ -1,7 +1,7 @@
 # Plano de execução — latência realtime da UI Robinhood
 
-Status: em execução; Slices 0A (`market:bucket`) e 0B (`market:trade` + alertas)
-implementados
+Status: em execução; Slice 0 (telemetria) e Slice 1 (wake event-driven do
+processing) implementados
 
 Prioridade: crítica
 
@@ -169,6 +169,9 @@ Gate:
 ### Slice 1 — acordar `robinhood-processing` por evento
 
 Objetivo: remover a espera de até 5 s antes de market/discovery.
+
+Progresso: implementado. O gate de latência em produção permanece pendente da
+próxima medição comparável.
 
 - fazer o worker escutar o cursor durável já publicado pela captura/head;
 - executar imediatamente quando o commit sinalizar trabalho novo;

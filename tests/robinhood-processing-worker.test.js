@@ -1,5 +1,7 @@
 const assert = require('node:assert/strict');
-const { describe, it } = require('node:test');
+const {
+  afterEach, describe, it,
+} = require('node:test');
 
 const worker = require('../src/services/robinhood-processing-worker');
 
@@ -13,6 +15,9 @@ const RESULT = {
 
 const DISCOVERY_RESULT = {
   reclaimed: 0, claimed: 2, processed: 2, rejected: 0, retried: 0, blocked: 0,
+};
+const EMPTY_RESULT = {
+  reclaimed: 0, claimed: 0, processed: 0, rejected: 0, retried: 0, blocked: 0,
 };
 
 function fakeRunner() {
@@ -30,7 +35,34 @@ function fakeRepo() {
   return { _calls: calls, pruneExpiredCaptures: async () => { calls.prune += 1; return 3; } };
 }
 
+function listenerHarness() {
+  const calls = [];
+  let notify = null;
+  return {
+    calls,
+    emit(message) { notify?.(message); },
+    factory(options) {
+      notify = options.onNotification;
+      return {
+        start: () => { calls.push('start'); },
+        stop: () => { calls.push('stop'); },
+        getStatus: () => ({ listening: true, reconnectScheduled: false }),
+      };
+    },
+  };
+}
+
+async function waitFor(check, timeoutMs = 1000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!check()) {
+    if (Date.now() >= deadline) throw new Error('timed out waiting for worker');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
 describe('robinhood processing worker', () => {
+  afterEach(async () => worker.stop());
+
   it('bounds its runtime options and honours the enabled flag', () => {
     const bounded = worker.__private.normalizeOptions({
       intervalMs: 5, pruneIntervalMs: 10, pruneLimit: 99_999,
@@ -106,5 +138,83 @@ describe('robinhood processing worker', () => {
       persistence: { commitDiscoveryProcessingBatch: async () => ({}) },
     });
     await worker.runOnce(normalized);
+  });
+
+  it('listens to committed cursor wakes and interrupts the fallback timer', async () => {
+    const listener = listenerHarness();
+    const runner = fakeRunner();
+    runner.runOnce = async () => {
+      runner._calls.count += 1;
+      return EMPTY_RESULT;
+    };
+    const wakesBefore = worker.getStatus().totalWakes;
+    worker.start({ intervalMs: 60_000 }, {
+      runner, discoveryRunner: { runOnce: async () => EMPTY_RESULT },
+      repository: fakeRepo(), listenerFactory: listener.factory,
+    });
+    await waitFor(() => runner._calls.count === 1);
+
+    listener.emit({ channel: worker.NOTIFY_CHANNEL, payload: 'market' });
+    await waitFor(() => runner._calls.count === 2);
+
+    const status = worker.getStatus();
+    assert.equal(status.listenerState, 'listening');
+    assert.equal(status.lastWakeStream, 'market');
+    assert.equal(status.totalWakes, wakesBefore + 1);
+    assert.ok(Number.isFinite(status.wakeToClaimMs));
+    await worker.stop();
+    assert.deepEqual(listener.calls, ['start', 'stop']);
+  });
+
+  it('coalesces wakes received during a tick without concurrent runs', async () => {
+    const listener = listenerHarness();
+    let calls = 0;
+    let concurrent = 0;
+    let maxConcurrent = 0;
+    let releaseFirst;
+    const firstRun = new Promise((resolve) => { releaseFirst = resolve; });
+    const runner = { runOnce: async () => {
+      calls += 1;
+      concurrent += 1;
+      maxConcurrent = Math.max(maxConcurrent, concurrent);
+      if (calls === 1) await firstRun;
+      concurrent -= 1;
+      return EMPTY_RESULT;
+    } };
+    worker.start({ intervalMs: 60_000 }, {
+      runner, discoveryRunner: { runOnce: async () => EMPTY_RESULT },
+      repository: fakeRepo(), listenerFactory: listener.factory,
+    });
+    await waitFor(() => calls === 1);
+
+    listener.emit({ channel: worker.NOTIFY_CHANNEL, payload: 'market' });
+    listener.emit({ channel: worker.NOTIFY_CHANNEL, payload: 'discovery' });
+    releaseFirst();
+    await waitFor(() => calls === 2);
+
+    assert.equal(maxConcurrent, 1);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(calls, 2);
+  });
+
+  it('recovers missed notifications with the one-second-class fallback', async () => {
+    const listener = listenerHarness();
+    let calls = 0;
+    const runner = { runOnce: async () => {
+      calls += 1;
+      return calls === 1 ? EMPTY_RESULT : { ...EMPTY_RESULT, claimed: 1, processed: 1 };
+    } };
+    const statusBefore = worker.getStatus();
+    worker.start({ intervalMs: 100 }, {
+      runner, discoveryRunner: { runOnce: async () => EMPTY_RESULT },
+      repository: fakeRepo(), listenerFactory: listener.factory,
+    });
+    await waitFor(() => calls >= 2);
+
+    const status = worker.getStatus();
+    assert.ok(status.fallbackChecks > statusBefore.fallbackChecks);
+    assert.ok(status.fallbackRuns > statusBefore.fallbackRuns);
+    assert.ok(status.lastFallbackAt);
+    assert.ok(status.lastProgressAt);
   });
 });
