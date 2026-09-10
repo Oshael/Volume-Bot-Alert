@@ -5716,6 +5716,34 @@ const SCHEMA_GROUPS = [
       ],
     }],
   },
+  {
+    key: 'stage204-robinhood-wallet-swap-realtime-outbox',
+    name: 'Stage 204 Robinhood wallet-swap realtime lifecycle outbox',
+    repair: 'node src/utils/db-init-stage204.js',
+    tables: [{
+      table: 'robinhood_wallet_swap_realtime_outbox',
+      columns: [
+        'chain', 'transaction_hash', 'log_index', 'event_kind', 'block_number',
+        'block_hash', 'transaction_index', 'payload', 'status', 'lease_owner',
+        'lease_until', 'attempt_count', 'next_attempt_at', 'published_at',
+        'last_error', 'created_at', 'updated_at',
+      ],
+      constraints: [
+        { name: 'rh_wallet_swap_realtime_outbox_pkey', includes: ['PRIMARY KEY', 'chain', 'transaction_hash', 'log_index', 'event_kind'] },
+        { name: 'rh_wallet_swap_realtime_outbox_identity_check', includes: ['block_number', 'block_hash', 'transaction_index', 'log_index'] },
+        { name: 'rh_wallet_swap_realtime_outbox_event_check', includes: ['observed', 'finalized', 'invalidate'] },
+        { name: 'rh_wallet_swap_realtime_outbox_status_check', includes: ['pending', 'leased', 'complete', 'blocked'] },
+        { name: 'rh_wallet_swap_realtime_outbox_lease_check', includes: ['lease_owner', 'lease_until'] },
+        { name: 'rh_wallet_swap_realtime_outbox_completion_check', includes: ['complete', 'published_at'] },
+        { name: 'rh_wallet_swap_realtime_outbox_payload_check', includes: ['jsonb_typeof', 'payload'] },
+      ],
+      indexes: [
+        { name: 'idx_rh_wallet_swap_realtime_outbox_claim', includes: ['next_attempt_at', 'event_kind', 'block_number', 'transaction_index', 'log_index'] },
+        { name: 'idx_rh_wallet_swap_realtime_outbox_lease', includes: ['lease_until'] },
+        { name: 'idx_rh_wallet_swap_realtime_outbox_canonical', includes: ['block_number', 'block_hash'] },
+      ],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

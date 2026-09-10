@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 const { after, before, describe, it } = require('node:test');
 const db = require('../src/models/db');
 const { STATEMENTS } = require('../src/utils/db-init-stage203');
+const { STATEMENTS: REALTIME_STATEMENTS } = require('../src/utils/db-init-stage204');
 const {
   createRobinhoodWalletSwapOutboxProducer,
 } = require('../src/models/robinhood-wallet-swap-outbox-producer');
@@ -53,6 +54,11 @@ describe('Robinhood wallet-swap outbox producer integration', () => {
         ? sql.replace('CREATE TABLE IF NOT EXISTS', 'CREATE TEMP TABLE')
         : sql);
     }
+    for (const [index, sql] of REALTIME_STATEMENTS.entries()) {
+      await client.query(index === 0
+        ? sql.replace('CREATE TABLE IF NOT EXISTS', 'CREATE TEMP TABLE')
+        : sql);
+    }
     await client.query(`INSERT INTO robinhood_market_observations VALUES (
       'robinhood',$1,9,100,'uniswap-v3','robinhood:uniswap-v3:test',$2,$3,
       'buy','accepted',1000,2000,18,6,1,2,2,2,2000000,1000000
@@ -83,10 +89,10 @@ describe('Robinhood wallet-swap outbox producer integration', () => {
     const target = [{ transactionHash: TX, logIndex: '9' }];
 
     assert.deepEqual(await producer.appendAccepted(client, target), {
-      requested: 1, eligible: 1, inserted: 1,
+      requested: 1, eligible: 1, inserted: 1, realtimeInserted: 1,
     });
     assert.deepEqual(await producer.appendAccepted(client, target), {
-      requested: 1, eligible: 1, inserted: 0,
+      requested: 1, eligible: 1, inserted: 0, realtimeInserted: 0,
     });
     const stored = await client.query(
       `SELECT block_number::text, transaction_index, log_index::text, payload
@@ -99,6 +105,21 @@ describe('Robinhood wallet-swap outbox producer integration', () => {
     assert.equal(stored.rows[0].payload.blockHash, BLOCK);
     assert.equal(stored.rows[0].payload.transactionIndex, '3');
     assert.equal(stored.rows[0].payload.parserVersion, 'rh-wallet-outbox-1');
+    const realtime = await client.query(
+      `SELECT event_kind, status, block_hash, payload
+       FROM robinhood_wallet_swap_realtime_outbox WHERE transaction_hash = $1`, [TX]
+    );
+    assert.equal(realtime.rows.length, 1);
+    assert.equal(realtime.rows[0].event_kind, 'observed');
+    assert.equal(realtime.rows[0].status, 'pending');
+    assert.equal(realtime.rows[0].block_hash, BLOCK);
+    assert.equal(realtime.rows[0].payload.protocolVersion, 2);
+    assert.equal(realtime.rows[0].payload.type, 'market:trade:observed');
+    assert.equal(realtime.rows[0].payload.finality, 'observed');
+    assert.equal(realtime.rows[0].payload.asOfBlock, '100');
+    assert.equal(realtime.rows[0].payload.asOfBlockHash, BLOCK);
+    assert.equal(realtime.rows[0].payload.observedAt,
+      realtime.rows[0].payload.latency.observationCommittedAt);
   });
 
   it('leases finalized canonical work and deletes it only after delivery', async () => {

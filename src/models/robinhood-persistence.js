@@ -2056,7 +2056,11 @@ function createRobinhoodPersistenceRepository(options = {}) {
           const outbox = await walletSwapOutboxProducer.appendAccepted(client, entries
             .filter((entry) => entry.observation?.status === 'accepted')
             .map((entry) => entry.observation));
-          return { ...write, insertedWalletSwapOutboxRows: outbox.inserted };
+          return {
+            ...write,
+            insertedWalletSwapOutboxRows: outbox.inserted,
+            insertedWalletSwapRealtimeRows: outbox.realtimeInserted,
+          };
         });
         // Roll the touched minute buckets up into buckets_1h in the same tx, the way
         // the monolith's commitMarketRange did. Post-cutover nothing else writes

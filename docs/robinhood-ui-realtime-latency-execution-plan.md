@@ -229,8 +229,12 @@ Progresso:
 - [x] Slice 3A: contrato Socket.IO v2 e aplicação frontend preparados. Clientes
   v2 entram em salas separadas, recebem `market:trade:finalized` e entendem
   `observed`, `finalized` e `invalidate`; o fluxo continua finalizado-only.
-- [ ] Slice 3B: estado durável e publicação de `observed`, promoção para
-  `finalized` e invalidação por reorg.
+- [x] Slice 3B1: outbox append-only e gravação shadow atômica de `observed`,
+  ainda sem consumidor ou publicação.
+- [ ] Slice 3B2: recuperação limitada de reorg e gravação durável de
+  `invalidate`/promoção `finalized`.
+- [ ] Slice 3B3: consumidor, publicação v2 e telemetria separada de lag
+  observado/finalizado.
 
 O valor atual de 12 blocos adiciona cerca de 1,2 s quando a cadeia produz perto
 de dez blocos por segundo. Diminuir timers não remove essa espera.

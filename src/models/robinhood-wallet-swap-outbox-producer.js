@@ -2,6 +2,7 @@
 
 const CHAIN = 'robinhood';
 const NOTIFY_CHANNEL = 'robinhood_wallet_swap_outbox';
+const REALTIME_NOTIFY_CHANNEL = 'robinhood_wallet_swap_realtime_outbox';
 
 function normalizeTargets(observations = []) {
   if (!Array.isArray(observations)) throw new TypeError('accepted observations must be a list');
@@ -27,7 +28,9 @@ function createRobinhoodWalletSwapOutboxProducer() {
       throw new TypeError('wallet-swap outbox producer requires a transaction client');
     }
     const targets = normalizeTargets(observations);
-    if (!targets.length) return { requested: 0, eligible: 0, inserted: 0 };
+    if (!targets.length) {
+      return { requested: 0, eligible: 0, inserted: 0, realtimeInserted: 0 };
+    }
     const result = await client.query(
       `WITH input AS MATERIALIZED (
          SELECT * FROM jsonb_to_recordset($1::jsonb) AS target(
@@ -56,13 +59,11 @@ function createRobinhoodWalletSwapOutboxProducer() {
            ON transaction.chain = block.chain
           AND transaction.block_hash = block.block_hash
           AND transaction.transaction_hash = observation.transaction_hash
-       ), inserted AS (
-         INSERT INTO robinhood_wallet_swap_outbox (
-           chain, transaction_hash, log_index, block_number, block_hash,
-           transaction_index, payload
-         )
-         SELECT chain, transaction_hash, log_index, block_number, block_hash,
-           transaction_index,
+       ), prepared AS MATERIALIZED (
+         SELECT eligible.*, clock_timestamp() AS observation_committed_at
+         FROM eligible
+       ), payloads AS MATERIALIZED (
+         SELECT prepared.*,
            jsonb_build_object(
              'walletAddress', from_address,
              'transactionHash', transaction_hash,
@@ -91,28 +92,60 @@ function createRobinhoodWalletSwapOutboxProducer() {
                'headObservedAt', head_observed_at,
                'receiptsAvailableAt', receipts_available_at,
                'captureCommittedAt', captured_at,
-               'observationCommittedAt', clock_timestamp()
+               'observationCommittedAt', observation_committed_at
              )
-           )
-         FROM eligible
+           ) AS payload
+         FROM prepared
+       ), inserted AS (
+         INSERT INTO robinhood_wallet_swap_outbox (
+           chain, transaction_hash, log_index, block_number, block_hash,
+           transaction_index, payload
+         )
+         SELECT chain, transaction_hash, log_index, block_number, block_hash,
+           transaction_index, payload
+         FROM payloads
          ON CONFLICT (chain, transaction_hash, log_index) DO NOTHING
+         RETURNING block_number
+       ), realtime_inserted AS (
+         INSERT INTO robinhood_wallet_swap_realtime_outbox (
+           chain, transaction_hash, log_index, event_kind, block_number,
+           block_hash, transaction_index, payload
+         )
+         SELECT chain, transaction_hash, log_index, 'observed', block_number,
+           block_hash, transaction_index,
+           payload || jsonb_build_object(
+             'protocolVersion', 2,
+             'type', 'market:trade:observed',
+             'finality', 'observed',
+             'asOfBlock', block_number::text,
+             'asOfBlockHash', block_hash,
+             'observedAt', observation_committed_at
+           )
+         FROM payloads
+         ON CONFLICT (chain, transaction_hash, log_index, event_kind) DO NOTHING
          RETURNING block_number
        ), notified AS (
          SELECT pg_notify($2, MAX(block_number)::text) AS sent
          FROM inserted HAVING COUNT(*) > 0
+       ), realtime_notified AS (
+         SELECT pg_notify($3, MAX(block_number)::text) AS sent
+         FROM realtime_inserted HAVING COUNT(*) > 0
        )
        SELECT
          (SELECT COUNT(*)::int FROM input) AS requested,
          (SELECT COUNT(*)::int FROM eligible) AS eligible,
          (SELECT COUNT(*)::int FROM inserted) AS inserted,
-         (SELECT COUNT(*)::int FROM notified) AS notifications`,
-      [JSON.stringify(targets), NOTIFY_CHANNEL]
+         (SELECT COUNT(*)::int FROM realtime_inserted) AS realtime_inserted,
+         (SELECT COUNT(*)::int FROM notified) AS notifications,
+         (SELECT COUNT(*)::int FROM realtime_notified) AS realtime_notifications`,
+      [JSON.stringify(targets), NOTIFY_CHANNEL, REALTIME_NOTIFY_CHANNEL]
     );
     const row = result.rows[0] || {};
     const summary = {
       requested: Number(row.requested || 0),
       eligible: Number(row.eligible || 0),
       inserted: Number(row.inserted || 0),
+      realtimeInserted: Number(row.realtime_inserted || 0),
     };
     if (summary.eligible !== summary.requested) {
       const error = new Error('accepted wallet swap is missing committed canonical context');
@@ -127,6 +160,7 @@ function createRobinhoodWalletSwapOutboxProducer() {
 
 module.exports = {
   NOTIFY_CHANNEL,
+  REALTIME_NOTIFY_CHANNEL,
   createRobinhoodWalletSwapOutboxProducer,
   __private: { normalizeTargets },
 };

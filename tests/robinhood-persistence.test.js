@@ -298,7 +298,9 @@ function createFakeDatabase(options = {}) {
           requested: targets.length,
           eligible: targets.length,
           inserted: options.walletSwapOutboxDuplicate ? 0 : targets.length,
+          realtime_inserted: options.walletSwapOutboxDuplicate ? 0 : targets.length,
           notifications: targets.length ? 1 : 0,
+          realtime_notifications: targets.length ? 1 : 0,
         }], rowCount: 1 };
       }
       if (/SELECT 1 FROM robinhood_v4_liquidity_materialization_state/.test(sql)) {
@@ -1363,8 +1365,13 @@ describe('commitHeadProcessingBatch derived outbox', () => {
     assert.match(outboxWrite.sql, /'transactionIndex', transaction_index::text/);
     assert.match(outboxWrite.sql, /ON CONFLICT \(chain, transaction_hash, log_index\) DO NOTHING/);
     assert.match(outboxWrite.sql, /pg_notify\(\$2/);
+    assert.match(outboxWrite.sql, /INSERT INTO robinhood_wallet_swap_realtime_outbox/);
+    assert.match(outboxWrite.sql, /'market:trade:observed'/);
+    assert.match(outboxWrite.sql, /pg_notify\(\$3/);
     assert.equal(outboxWrite.params[1], 'robinhood_wallet_swap_outbox');
+    assert.equal(outboxWrite.params[2], 'robinhood_wallet_swap_realtime_outbox');
     assert.equal(result.insertedWalletSwapOutboxRows, 1);
+    assert.equal(result.insertedWalletSwapRealtimeRows, 1);
   });
 
   it('rolls back the observation when canonical wallet context is unavailable', async () => {

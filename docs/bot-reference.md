@@ -690,10 +690,19 @@ somente `market:trade`. O cliente v2 também reconhece `market:trade:observed` e
 seu estado durável de promoção/invalidação estiver implantado. Assim, um cliente legado nunca
 interpreta silenciosamente um swap provisório como definitivo.
 
-Aplique `node src/utils/db-init-stage203.js` **antes** de implantar o código ou reiniciar qualquer
-writer Robinhood. A Stage 203 cria `robinhood_wallet_swap_outbox`; cada observação live aceita é
-anexada ali na mesma transação, já contendo `tx.from`, hash/tempo do bloco e posição da transação
-vindos do journal canônico. A chave `(chain, transaction_hash, log_index)` torna replay idempotente.
+Aplique `node src/utils/db-init-stage203.js` e depois `node src/utils/db-init-stage204.js` **antes**
+de implantar o código ou reiniciar qualquer writer Robinhood. A Stage 203 cria
+`robinhood_wallet_swap_outbox`; cada observação live aceita é anexada ali na mesma transação, já
+contendo `tx.from`, hash/tempo do bloco e posição da transação vindos do journal canônico. A chave
+`(chain, transaction_hash, log_index)` torna replay idempotente.
+
+A Stage 204 cria `robinhood_wallet_swap_realtime_outbox`, o journal append-only da publicação v2.
+No estado atual, o processing grava apenas o evento `observed`, na mesma transação da observação e
+da outbox Stage 203, e acorda o canal `robinhood_wallet_swap_realtime_outbox`. Ainda não existe
+consumer para esse canal: nenhuma linha é publicada ao browser e a tabela cresce em shadow. Não
+limpar essas linhas antes dos cortes de promoção/invalidação, pois elas são a evidência que liga o
+evento provisório ao block hash canônico. Replay do mesmo log não duplica o evento por causa da
+chave `(chain, transaction_hash, log_index, event_kind)`.
 O grupo `robinhood-wallet`, com `ROBINHOOD_WALLET_SWAP_LIVE_SOURCE=durable_outbox` (default), acorda
 por `LISTEN` tanto no append quanto no avanço da finalidade e usa o intervalo de 2s somente como
 reconciliação de notificação perdida. Claim é ordenado e limitado a `finalized_head` e ao hash ainda
