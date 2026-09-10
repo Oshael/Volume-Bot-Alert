@@ -238,6 +238,108 @@ Progresso:
 - [ ] Slice 3B3: consumidor, publicação v2 e telemetria separada de lag
   observado/finalizado.
 
+#### Checkpoint de retomada do Slice 3
+
+Estado implementado:
+
+- o processing grava `observed` na Stage 204 junto do commit da observação;
+- o wallet worker promove somente bloco/hash ainda canônico para `finalized`,
+  em lotes limitados, e expõe `promoted`;
+- `observed` e `finalized` continuam em shadow, sem consumer e sem chegar à UI;
+- o frontend v2 já entende os três eventos, mas recebe apenas o fluxo finalizado
+  legado/v2 existente;
+- a captura detecta divergência de parent hash e para com
+  `capture_reorg_detected`; ainda não existe recuperação canônica central;
+- a Stage 204 não deve ser limpa enquanto invalidação, consumo e retenção não
+  estiverem prontos. Neste ponto ela tende a guardar duas linhas por swap maduro.
+
+Ao retomar em outro contexto, o próximo trabalho é **3B2B-0**, abaixo. Não ligar
+`market:trade:observed` antes de concluir todos os gates de 3B2B.
+
+#### Slice 3B2B — recuperação de reorg, em cortes menores
+
+**3B2B-0 — contrato e fence de recuperação**
+
+- [ ] definir profundidade máxima suportada, fronteira finalizada que nunca pode
+  ser revertida automaticamente e estado explícito `recovery_required`;
+- [ ] localizar ancestral comum por número/hash com leituras RPC limitadas;
+- [ ] serializar captura e recuperação pela mesma lease/lock e cercar writers por
+  geração, impedindo commit da ramificação antiga;
+- [ ] inventariar, com testes, toda projeção/cursor que referencia blocos na faixa;
+- [ ] não alterar canonicalidade em produção enquanto algum domínio afetado não
+  possuir rollback registrado.
+
+**3B2B-1 — journal e evento durável de reorg**
+
+- [ ] preservar a ramificação órfã para auditoria, marcar seus blocos como não
+  canônicos e recuar o cursor ao ancestral comum numa única transação;
+- [ ] gravar geração, faixa órfã, hashes antigo/novo e estado da recuperação numa
+  outbox durável antes de permitir recaptura;
+- [ ] recusar recuperação além da profundidade configurada, abaixo da retenção ou
+  cruzando a fronteira finalizada;
+- [ ] garantir restart seguro em cada ponto entre detecção, rewind e recaptura.
+
+**3B2B-2 — rollback de market, wallet e publicação**
+
+- [ ] gerar `market:trade:invalidate` para cada `observed` órfão antes de liquidar
+  seu ciclo realtime;
+- [ ] reverter/reconstruir observações, buckets de 1m/1h/agg, derived outbox,
+  posições e swaps contaminados pela ramificação órfã;
+- [ ] restaurar os cursores para a fronteira comum sem transformar ausência de
+  dados em zero nem publicar alertas duplicados;
+- [ ] reaplicar a nova ramificação idempotentemente e comprovar paridade.
+
+**3B2B-3 — rollback dos demais domínios compartilhados**
+
+- [ ] adaptar discovery, liquidity, holders/transfers, creators e classificações
+  ao mesmo evento/generation fence;
+- [ ] preservar estado anterior marcado stale ou incompleto enquanto a nova
+  ramificação não tiver sido reaplicada;
+- [ ] provar que falha de um domínio mantém recuperação retomável sem liberar
+  canonicalidade parcial para os outros.
+
+Gate de 3B2B:
+
+- troca de hash na mesma altura e reorg de múltiplos blocos convergem;
+- crash/restart em cada fase não perde invalidação nem duplica efeito econômico;
+- reorg abaixo da fronteira permitida entra em `recovery_required` e não avança;
+- nenhum bucket, holder, LP, posição, alerta ou cursor conserva efeito órfão;
+- captura volta ao head somente depois de todos os domínios necessários estarem
+  coerentes com a nova geração.
+
+#### Slice 3B3 — entrega, ativação e retenção
+
+**3B3A — consumer shadow da Stage 204**
+
+- [ ] claim/lease/retry idempotente com `LISTEN/NOTIFY` e fallback limitado;
+- [ ] ordenar cada identidade como `observed` antes de `finalized` ou
+  `invalidate`; evento terminal só é elegível após `observed` estar entregue;
+- [ ] auditar payload, duplicação, restart e backlog sem emitir socket.
+
+**3B3B — canário e publicação v2**
+
+- [ ] publicar apenas nas salas opt-in v2; clientes v1 continuam finalizados-only;
+- [ ] ativar primeiro para sessão/canário controlado e confirmar que
+  `invalidate` remove o trade provisório;
+- [ ] manter flag de rollback que desliga novos `observed` sem interromper o fluxo
+  finalizado atual.
+
+**3B3C — retenção e telemetria**
+
+- [ ] expor backlog/idade por `event_kind`, `observedLagBlocks`,
+  `finalizedLagBlocks`, retries, blocked e última invalidação;
+- [ ] apagar ciclos terminais apenas depois da janela de reorg/replay e do
+  watermark de todos os consumidores; nunca apagar `blocked` silenciosamente;
+- [ ] medir novamente receipt→applied e comparar com o baseline já coletado.
+
+Gate final do Slice 3:
+
+- usuário vê `observed` sem aguardar as 12 confirmações;
+- promoção altera o mesmo trade, sem duplicá-lo;
+- reorg remove/corrige o trade e o snapshot HTTP posterior converge;
+- reconnect, perda de `NOTIFY` e replay mantêm ordem e completude;
+- Stage 204 permanece limitada pela retenção e não cresce indefinidamente.
+
 O valor atual de 12 blocos adiciona cerca de 1,2 s quando a cadeia produz perto
 de dez blocos por segundo. Diminuir timers não remove essa espera.
 
