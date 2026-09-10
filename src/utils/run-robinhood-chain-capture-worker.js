@@ -4,6 +4,9 @@ const { createRobinhoodChainCaptureJournal } = require('../models/robinhood-chai
 const { createRobinhoodPersistenceRepository } = require('../models/robinhood-persistence');
 const { createRobinhoodChainCaptureWorker } = require('../services/robinhood-chain-capture-worker');
 const {
+  createRobinhoodChainRecoveryPlanner,
+} = require('../services/robinhood-chain-recovery-planner');
+const {
   createRobinhoodV3BalanceSnapshotter,
 } = require('../services/robinhood-v3-balance-snapshotter');
 const { createWorkerLeaseManager } = require('../services/worker-lease-manager');
@@ -37,6 +40,10 @@ async function main(deps = {}) {
   );
   const database = deps.database || db;
   const journal = deps.journal || createRobinhoodChainCaptureJournal({ database });
+  const recoveryPlanner = deps.recoveryPlanner
+    || (deps.recoveryPlannerFactory || createRobinhoodChainRecoveryPlanner)(
+      { rpcClient, journal }, { maxDepth: options.reorgMaxDepth }
+    );
   let v3Snapshotter = deps.v3Snapshotter;
   if (!v3Snapshotter) {
     const catalog = deps.catalog || (deps.catalogFactory || createRobinhoodPersistenceRepository)({
@@ -48,7 +55,7 @@ async function main(deps = {}) {
     );
   }
   const worker = (deps.workerFactory || createRobinhoodChainCaptureWorker)(
-    { rpcClient, journal, v3Snapshotter }, options
+    { rpcClient, journal, recoveryPlanner, v3Snapshotter }, options
   );
   const leases = (deps.leaseManagerFactory || createWorkerLeaseManager)({
     heartbeatMs: options.leaseHeartbeatMs, ttlMs: options.leaseTtlMs,

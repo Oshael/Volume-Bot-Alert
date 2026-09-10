@@ -419,6 +419,17 @@ describe('Robinhood canonical chain capture journal', () => {
     }), [{ blockNumber: '101', blockHash: NEXT_HASH }]);
   });
 
+  it('rejects a commit prepared under an obsolete capture generation', async () => {
+    const journal = createRobinhoodChainCaptureJournal();
+    await assert.rejects(
+      journal.commitBlock(capture(), { expectedGeneration: '1' }),
+      (error) => error.code === 'capture_generation_conflict'
+    );
+    assert.equal((await db.query(
+      'SELECT COUNT(*)::int AS blocks FROM robinhood_chain_blocks'
+    )).rows[0].blocks, 0);
+  });
+
   it('leases only rows covered by the legacy cursor and protects settlement ownership', async () => {
     const journal = createRobinhoodChainCaptureJournal();
     await journal.commitBlock(capture());

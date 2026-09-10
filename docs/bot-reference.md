@@ -3962,7 +3962,11 @@ de integração compara headers do RPC canônico com o journal, no máximo até
 qualquer faixa cujo ancestral comum fique abaixo de `finalized_head`. Seu
 manifesto enumera journal, market, wallet, liquidity, holders, discovery/creator
 e publicação/alertas; enquanto qualquer rollback estiver sem registro, o plano
-permanece `executable: false`. O worker ainda não invoca o planner neste corte.
+permanece `executable: false`. O worker invoca o planner ao receber um primeiro
+bloco que não estende seu checkpoint, persiste o plano sob lock e se marca
+`halted`, expondo `recoveryState` e `recoveryPlan` na telemetria da lease. Cada
+commit também informa a geração lida antes do fetch; mudança concorrente falha
+com `capture_generation_conflict`, sem escrita parcial.
 Quando o cursor está em `recovery_required`, qualquer novo commit da captura
 falha com `capture_recovery_required` fatal. Este stage deliberadamente
 não oferece resume, rewind nem alteração de canonicalidade: essas operações só

@@ -36,6 +36,26 @@ function blockTimestamp(value) {
   if (!Number.isFinite(milliseconds)) throw new Error('block.timestamp is out of range');
   return new Date(milliseconds).toISOString();
 }
+function recoveryRequiredError(plan) {
+  const error = new Error('canonical capture requires explicit reorg recovery');
+  error.code = 'capture_recovery_required'; error.fatal = true;
+  error.recoveryPlan = plan || null;
+  return error;
+}
+function captureNextBlock(cursor, nodeHead, startBlock) {
+  return cursor ? quantity(cursor.next_block, 'cursor.next_block')
+    : (startBlock == null ? nodeHead : BigInt(startBlock));
+}
+function assertNodeHead(cursor, nodeHead, nextBlock) {
+  if (!cursor || nodeHead + 1n >= nextBlock) return;
+  const error = new Error(`node head ${nodeHead} regressed behind capture cursor ${nextBlock}`);
+  error.code = 'capture_node_head_regressed';
+  throw error;
+}
+function captureThrough(nodeHead, nextBlock, maxBlocksPerDrain) {
+  const limit = BigInt(maxBlocksPerDrain || 100);
+  return nodeHead < nextBlock + limit - 1n ? nodeHead : nextBlock + limit - 1n;
+}
 
 function normalizeTransaction(tx, receipt, position, block) {
   const hashValue = hex(tx?.hash, 32, `transactions[${position}].hash`);
@@ -176,7 +196,8 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
     nodeHead: null, nextBlock: null, lagBlocks: null, lastHeadObservedAt: null,
     nodeHeadObservedAt: null, lastRunAt: null, lastProgressAt: null,
     lastCompletedAt: null, inFlight: false, totalErrors: 0, consecutiveErrors: 0,
-    lastTiming: null, blocks: 0, transactions: 0, events: 0,
+    lastTiming: null, halted: false, recoveryState: null, recoveryPlan: null,
+    generation: null, blocks: 0, transactions: 0, events: 0,
     v3Snapshots: 0, v3MissedPools: 0, v3SkippedPools: 0,
     fetchConcurrency, v3SnapshotWindowBlocks: Number(v3SnapshotWindowBlocks) };
   let timer = null; let inFlight = null; let requested = false;
@@ -189,6 +210,26 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
     status.nextBlock = nextBlock.toString();
     status.lagBlocks = Number(nodeHead >= nextBlock ? nodeHead - nextBlock + 1n : 0n);
   }
+  function applyCursorState(cursor) {
+    status.generation = cursor?.generation == null ? null : String(cursor.generation);
+    status.recoveryState = cursor?.recovery_state || null;
+    status.recoveryPlan = cursor?.recovery_plan || null;
+    if (cursor?.recovery_state === 'recovery_required') {
+      throw recoveryRequiredError(cursor.recovery_plan);
+    }
+  }
+  function recordCaptureFailure(error) {
+    status.totalErrors += 1; status.consecutiveErrors += 1;
+    status.lastError = {
+      at: now().toISOString(), code: error.code || null, message: error.message,
+      fatal: error.fatal === true,
+    };
+    if (error.code !== 'capture_recovery_required') return;
+    status.halted = true; status.running = false;
+    status.recoveryState = 'recovery_required';
+    status.recoveryPlan = error.recoveryPlan || status.recoveryPlan;
+    requested = false; if (timer) cancel(timer); subscription.stop();
+  }
   async function fetchBlockBatch(nextBlock, through) {
     const remaining = through - nextBlock + 1n;
     const batchSize = Math.min(fetchConcurrency, Number(remaining));
@@ -199,7 +240,29 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
       return { blockNumber, capture, startedAt, receiptsAvailableAt: now() };
     }));
   }
-  async function commitBlockBatch(fetched, nodeHead) {
+  async function fenceRecoveryIfNeeded(fetched, expectedParentHash) {
+    const incoming = fetched[0]?.capture?.block;
+    if (!expectedParentHash || incoming.parentHash === expectedParentHash) return;
+    if (typeof deps.recoveryPlanner?.plan !== 'function'
+        || typeof deps.journal.markRecoveryRequired !== 'function') {
+      const error = new Error('canonical recovery planner is not configured');
+      error.code = 'configuration_error'; error.fatal = true;
+      throw error;
+    }
+    const cursor = await deps.journal.getCursor();
+    const result = await deps.recoveryPlanner.plan({ cursor, incoming: {
+      blockNumber: incoming.number.toString(), blockHash: incoming.hash,
+      parentHash: incoming.parentHash,
+    } });
+    if (!result.recoveryRequired || !result.plan) {
+      const error = new Error('capture parent changed without a recovery plan');
+      error.code = 'capture_recovery_source_changed';
+      throw error;
+    }
+    const persisted = await deps.journal.markRecoveryRequired({ plan: result.plan });
+    throw recoveryRequiredError(persisted?.plan || result.plan);
+  }
+  async function commitBlockBatch(fetched, nodeHead, generation) {
     const prepared = []; let snapshotMs = 0;
     for (const entry of fetched) {
       const { blockNumber, capture, startedAt, receiptsAvailableAt } = entry;
@@ -223,10 +286,14 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
     const commitStartedAt = now();
     let results;
     if (typeof deps.journal.commitBlocks === 'function') {
-      results = await deps.journal.commitBlocks(prepared.map(({ input }) => input));
+      results = await deps.journal.commitBlocks(
+        prepared.map(({ input }) => input), { expectedGeneration: generation }
+      );
     } else {
       results = [];
-      for (const { input } of prepared) results.push(await deps.journal.commitBlock(input));
+      for (const { input } of prepared) {
+        results.push(await deps.journal.commitBlock(input, { expectedGeneration: generation }));
+      }
     }
     const committedAt = now();
     for (const [index, entry] of prepared.entries()) {
@@ -255,6 +322,16 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
     };
     return nextBlock;
   }
+  async function drainCapture(nextBlock, through, nodeHead, generation, checkpointHash) {
+    let next = nextBlock; let expectedParentHash = checkpointHash;
+    while (next <= through) {
+      const fetched = await fetchBlockBatch(next, through);
+      await fenceRecoveryIfNeeded(fetched, expectedParentHash);
+      next = await commitBlockBatch(fetched, nodeHead, generation);
+      expectedParentHash = fetched.at(-1).capture.block.hash;
+    }
+    return next;
+  }
   async function captureOnce() {
     status.inFlight = true;
     status.lastRunAt = now().toISOString();
@@ -262,27 +339,20 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
       const nodeHead = quantity(await deps.rpcClient.request('eth_blockNumber'), 'eth_blockNumber');
       status.nodeHeadObservedAt = now().toISOString();
       const cursor = await deps.journal.getCursor();
-      let nextBlock = cursor ? quantity(cursor.next_block, 'cursor.next_block')
-        : (options.startBlock == null ? nodeHead : BigInt(options.startBlock));
-      if (cursor && nodeHead + 1n < nextBlock) {
-        const error = new Error(`node head ${nodeHead} regressed behind capture cursor ${nextBlock}`);
-        error.code = 'capture_node_head_regressed'; throw error;
-      }
-      const limit = BigInt(options.maxBlocksPerDrain || 100);
-      const through = nodeHead < nextBlock + limit - 1n ? nodeHead : nextBlock + limit - 1n;
+      applyCursorState(cursor);
+      let nextBlock = captureNextBlock(cursor, nodeHead, options.startBlock);
+      assertNodeHead(cursor, nodeHead, nextBlock);
+      const through = captureThrough(nodeHead, nextBlock, options.maxBlocksPerDrain);
       status.nodeHead = nodeHead.toString(); recordFrontier(nodeHead, nextBlock);
-      while (nextBlock <= through) {
-        nextBlock = await commitBlockBatch(await fetchBlockBatch(nextBlock, through), nodeHead);
-      }
+      nextBlock = await drainCapture(
+        nextBlock, through, nodeHead, status.generation, cursor?.checkpoint_hash || null
+      );
       if (nextBlock <= nodeHead) requested = true;
       status.lastCompletedAt = now().toISOString();
       status.lastError = null; status.consecutiveErrors = 0;
       return status.lastResult;
     } catch (error) {
-      status.totalErrors += 1; status.consecutiveErrors += 1;
-      status.lastError = {
-        at: now().toISOString(), code: error.code || null, message: error.message,
-      };
+      recordCaptureFailure(error);
       throw error;
     } finally {
       status.inFlight = false;
@@ -305,7 +375,11 @@ function createRobinhoodChainCaptureWorker(deps, options = {}) {
     timer?.unref?.();
   }
   return Object.freeze({
-    start() { if (!status.running) { status.running = true; subscription.start(); void kick(); armFallback(); } },
+    start() {
+      if (!status.running && !status.halted) {
+        status.running = true; subscription.start(); void kick(); armFallback();
+      }
+    },
     async stop() { status.running = false; requested = false; if (timer) cancel(timer); subscription.stop(); await inFlight; },
     captureOnce,
     getStatus: () => ({ ...status, transport: subscription.getStatus() }),

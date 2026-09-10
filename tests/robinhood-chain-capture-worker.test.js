@@ -132,16 +132,69 @@ test('worker reports failed capture attempts without presenting stale success', 
   assert.equal(Number.isFinite(Date.parse(status.lastError.at)), true);
 });
 
+test('worker persists a bounded recovery plan and halts before projection work', async () => {
+  const sample = fixture(101, hash('d')); const plans = []; let snapshots = 0;
+  const plan = {
+    generation: '7', reason: 'parent_hash_mismatch', recoverable: true,
+    checkpoint: { blockNumber: '100', blockHash: hash('a') },
+  };
+  const journal = {
+    getCursor: async () => ({
+      next_block: '101', checkpoint_block: '100', checkpoint_hash: hash('a'),
+      generation: '7', recovery_state: 'running',
+    }),
+    markRecoveryRequired: async ({ plan: value }) => { plans.push(value); },
+  };
+  const worker = createRobinhoodChainCaptureWorker({
+    journal,
+    rpcClient: { request: async (method) => (
+      method === 'eth_blockNumber' ? '0x65'
+        : method === 'eth_getBlockByNumber' ? sample.block : sample.receipts
+    ) },
+    recoveryPlanner: { plan: async () => ({ recoveryRequired: true, plan }) },
+    v3Snapshotter: { captureBlock: async () => { snapshots += 1; return {}; } },
+  });
+  await assert.rejects(
+    worker.captureOnce(),
+    (error) => error.code === 'capture_recovery_required' && error.fatal === true
+  );
+  assert.deepEqual(plans, [plan]); assert.equal(snapshots, 0);
+  const status = worker.getStatus();
+  assert.equal(status.halted, true); assert.equal(status.running, false);
+  assert.equal(status.recoveryState, 'recovery_required');
+  assert.deepEqual(status.recoveryPlan, plan);
+});
+
+test('worker preserves a durable recovery halt across process restart', async () => {
+  const plan = { generation: '7', reason: 'ancestor_not_found', recoverable: false };
+  const methods = [];
+  const worker = createRobinhoodChainCaptureWorker({
+    journal: { getCursor: async () => ({
+      next_block: '101', checkpoint_block: '100', checkpoint_hash: hash('a'),
+      generation: '7', recovery_state: 'recovery_required', recovery_plan: plan,
+    }) },
+    rpcClient: { request: async (method) => { methods.push(method); return '0x65'; } },
+    v3Snapshotter: { captureBlock: async () => { throw new Error('must not capture'); } },
+  });
+  await assert.rejects(
+    worker.captureOnce(), (error) => error.code === 'capture_recovery_required'
+  );
+  assert.deepEqual(methods, ['eth_blockNumber']);
+  assert.equal(worker.getStatus().halted, true);
+  assert.deepEqual(worker.getStatus().recoveryPlan, plan);
+});
+
 test('snapshot window skips old catch-up and covers its inclusive boundary across drains', async () => {
-  const commits = []; const snapshotCalls = [];
+  const commits = []; const commitFences = []; const snapshotCalls = [];
   const rpcClient = { request: async (method, params) => {
     if (method === 'eth_blockNumber') return '0x67';
     const sample = fixture(Number(BigInt(params[0])));
     return method === 'eth_getBlockByNumber' ? sample.block : sample.receipts;
   } };
   const journal = {
-    getCursor: async () => ({ next_block: String(100 + commits.length) }),
-    commitBlock: async (capture) => {
+    getCursor: async () => ({ next_block: String(100 + commits.length), generation: '4' }),
+    commitBlock: async (capture, fence) => {
+      commitFences.push(fence);
       commits.push(capture);
       return { transactions: 1, events: 1, v3Snapshots: capture.v3Snapshots.length };
     },
@@ -158,6 +211,7 @@ test('snapshot window skips old catch-up and covers its inclusive boundary acros
   await worker.captureOnce();
   await worker.captureOnce();
   assert.deepEqual(snapshotCalls, [[100n, false], [101n, true], [102n, true], [103n, true]]);
+  assert.deepEqual(commitFences, Array(4).fill({ expectedGeneration: '4' }));
   assert.deepEqual(commits.map((capture) => capture.v3Snapshots), [[], [snapshot], [snapshot], [snapshot]]);
   const status = worker.getStatus();
   assert.equal(status.v3SnapshotWindowBlocks, 3);
@@ -221,5 +275,6 @@ test('capture process seeds and injects the V3 snapshotter', async () => {
 
   assert.deepEqual(snapshotOptions.seedPools, seedPools);
   assert.equal(typeof workerDeps.v3Snapshotter.captureBlock, 'function');
+  assert.equal(typeof workerDeps.recoveryPlanner.plan, 'function');
   await process.shutdown();
 });

@@ -253,7 +253,7 @@ Estado implementado:
 - a Stage 204 não deve ser limpa enquanto invalidação, consumo e retenção não
   estiverem prontos. Neste ponto ela tende a guardar duas linhas por swap maduro.
 
-Ao retomar em outro contexto, o próximo trabalho é **3B2B-0B2**, abaixo. Não ligar
+Ao retomar em outro contexto, o próximo trabalho é **3B2B-1**, abaixo. Não ligar
 `market:trade:observed` antes de concluir todos os gates de 3B2B.
 
 #### Slice 3B2B — recuperação de reorg, em cortes menores
@@ -277,10 +277,11 @@ Ao retomar em outro contexto, o próximo trabalho é **3B2B-0B2**, abaixo. Não 
 
 **3B2B-0B2 — integração do planner e fence de geração**
 
-- [ ] serializar captura e recuperação pela mesma lease/lock e cercar writers por
-  geração, impedindo commit da ramificação antiga;
-- [ ] transformar `capture_reorg_detected` em plano durável e parada observável;
-- [ ] não alterar canonicalidade em produção enquanto algum domínio afetado não
+- [x] serializar detecção/planejamento sob a lease da captura, persistir o plano
+  sob o lock do cursor e cercar commits com a geração lida antes do fetch;
+- [x] transformar divergência do primeiro bloco em plano durável e parada
+  observável do worker;
+- [x] não alterar canonicalidade em produção enquanto algum domínio afetado não
   possuir rollback registrado.
 
 **3B2B-1 — journal e evento durável de reorg**

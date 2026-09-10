@@ -75,6 +75,18 @@ function recoveryRequiredError(plan) {
   error.recoveryPlan = plan || null;
   return error;
 }
+function assertCaptureGeneration(current, expectedGeneration) {
+  if (expectedGeneration == null) return;
+  if (String(current?.generation ?? '0') === String(expectedGeneration)) return;
+  const error = new Error('capture generation changed before commit');
+  error.code = 'capture_generation_conflict';
+  throw error;
+}
+function assertCaptureRunning(current) {
+  if (current?.recovery_state === 'recovery_required') {
+    throw recoveryRequiredError(current.recovery_plan);
+  }
+}
 function captureDigest(block, transactions, events, v3Snapshots) {
   const payload = {
     block: [block.number.toString(), block.hash, block.parentHash, block.timestamp,
@@ -301,7 +313,7 @@ function createRobinhoodChainCaptureJournal(options = {}) {
       blockNumber: String(row.block_number), blockHash: row.block_hash,
     }));
   }
-  async function commitBlocks(inputs = []) {
+  async function commitBlocks(inputs = [], options = {}) {
     if (!Array.isArray(inputs) || inputs.length === 0) {
       throw new Error('capture batch must not be empty');
     }
@@ -313,9 +325,8 @@ function createRobinhoodChainCaptureJournal(options = {}) {
         'SELECT * FROM robinhood_chain_capture_cursor WHERE chain = $1 FOR UPDATE', [CHAIN]
       );
       const current = cursor.rows[0];
-      if (current?.recovery_state === 'recovery_required') {
-        throw recoveryRequiredError(current.recovery_plan);
-      }
+      assertCaptureRunning(current);
+      assertCaptureGeneration(current, options.expectedGeneration);
       const replay = entries.length === 1 && current
         && entries[0].block.number === BigInt(current.checkpoint_block)
         && entries[0].block.hash === current.checkpoint_hash;
@@ -449,8 +460,8 @@ function createRobinhoodChainCaptureJournal(options = {}) {
       client.release();
     }
   }
-  async function commitBlock(input = {}) {
-    return (await commitBlocks([input]))[0];
+  async function commitBlock(input = {}, options = {}) {
+    return (await commitBlocks([input], options))[0];
   }
   return Object.freeze({
     commitBlock, commitBlocks, getCursor, listCanonicalHeaders, markRecoveryRequired,
