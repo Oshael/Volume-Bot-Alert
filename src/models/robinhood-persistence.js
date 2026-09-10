@@ -1,6 +1,9 @@
 const db = require('./db');
 const { normalizeTokenAddress } = require('../utils/token-identity');
 const { OUTBOX_NOTIFY_CHANNEL } = require('./robinhood-derived-outbox');
+const {
+  createRobinhoodWalletSwapOutboxProducer,
+} = require('./robinhood-wallet-swap-outbox-producer');
 const { createProcessingPersistenceTiming } = require('../utils/robinhood-processing-persistence-timing');
 
 const CHAIN = 'robinhood';
@@ -1778,6 +1781,8 @@ function createRobinhoodPersistenceRepository(options = {}) {
       ? require('../services/robinhood-standard-alert-signal-source')
         .createRobinhoodStandardAlertSignalSource({ database })
       : null);
+  const walletSwapOutboxProducer = options.walletSwapOutboxProducer
+    || createRobinhoodWalletSwapOutboxProducer();
 
   async function commitDiscoveryRange(input = {}) {
     const cursor = normalizeCursor('discovery', input.cursor);
@@ -2041,12 +2046,18 @@ function createRobinhoodPersistenceRepository(options = {}) {
         const insertedLiquidityDeltas = await timing.measure('v4DeltasMs', () => (
           insertV4LiquidityDeltas(client, liquidityDeltas)
         ));
-        const marketWrite = await timing.measure('observationsMs', () => insertMarketObservations(
-          client,
-          observations,
-          { checkpointTimestamp: emit?.checkpointTimestamp ?? null },
-          { includeExistingTargets: Boolean(emit) }
-        ));
+        const marketWrite = await timing.measure('observationsMs', async () => {
+          const write = await insertMarketObservations(
+            client,
+            observations,
+            { checkpointTimestamp: emit?.checkpointTimestamp ?? null },
+            { includeExistingTargets: Boolean(emit) }
+          );
+          const outbox = await walletSwapOutboxProducer.appendAccepted(client, entries
+            .filter((entry) => entry.observation?.status === 'accepted')
+            .map((entry) => entry.observation));
+          return { ...write, insertedWalletSwapOutboxRows: outbox.inserted };
+        });
         // Roll the touched minute buckets up into buckets_1h in the same tx, the way
         // the monolith's commitMarketRange did. Post-cutover nothing else writes
         // buckets_1h (the aggregate worker only builds buckets_agg FROM it), so

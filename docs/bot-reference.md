@@ -338,7 +338,7 @@ Grupos existentes:
 | `maintenance` | alias temporário de rollback com cleanup Solana, retention Robinhood e mock-trading take-profit |
 | `robinhood` | ingestão live monolítica: captura + valuation + projeção + staging + agregação + alertas |
 | `robinhood-head` | captura isolada do head: só grava evidência durável na fila e avança o cursor de captura |
-| `robinhood-processing` | consumidor isolado: reclama capturas por lease, decodifica a evidência congelada sem RPC, calcula preço/FDV/liquidez, persiste observações/buckets e poda a fila; no mesmo processo, um 2º runner drena `stream='discovery'` para o `robinhood_pool_registry` |
+| `robinhood-processing` | consumidor isolado: reclama capturas por lease, decodifica a evidência congelada sem RPC, calcula preço/FDV/liquidez, persiste observações/buckets, enfileira swaps aceitos na outbox durável e poda a fila; no mesmo processo, um 2º runner drena `stream='discovery'` para o `robinhood_pool_registry` |
 | `robinhood-derived` | consumidor isolado: drena a outbox de emit ao vivo e replica o fan-out `market:bucket` (socket/relay) sem o monólito; hospeda o catalog projection worker (metadata de token) |
 | `robinhood-wallet` | consumidor isolado: re-lê observações aceitas e atribui `tx.from` via `eth_getBlockByNumber` (full-tx) por bloco, com cursor `live` próprio; alimenta `robinhood_wallet_swaps` |
 | `robinhood-wallet-classification` | mantém as projeções e classificações de wallets; sob flags/leases separadas, também captura transfers ERC-20 e pode persistir `unified_transfer_v1` atomicamente após o handoff explícito |
@@ -681,6 +681,16 @@ persistir o swap e o web relay acrescenta `publishedAt`. A lease `web` expõe os
 `telemetry.marketTrades.latency`. Alertas `alert:event` carregam `eventObservedAt` (disparo),
 `projectionCommittedAt` (criação durável) e os marcos de relay/navegador; seus percentis de backend
 ficam em `telemetry.backendAlerts.latency`. Payloads antigos continuam válidos.
+
+Aplique `node src/utils/db-init-stage203.js` **antes** de implantar o código ou reiniciar qualquer
+writer Robinhood. A Stage 203 cria `robinhood_wallet_swap_outbox`; cada observação live
+aceita é anexada ali na mesma transação, já contendo `tx.from`, hash/tempo do bloco e posição da
+transação vindos do journal canônico. A chave `(chain, transaction_hash, log_index)` torna replay
+idempotente e a ordem de claim é bloco, transaction index e log index. O producer dispara
+`NOTIFY` transacional, visível somente após o commit. Neste estágio a fila é shadow: o
+`robinhood-wallet` continua usando o cursor anterior até o consumer/cutover seguinte, portanto a
+Stage 203 isolada não muda a publicação de `market:trade`.
+
 O relay de holders preserva os marcos do bloco canônico e acrescenta
 `projectionCommittedAt` no commit do ledger e `publishedAt` ao receber o `NOTIFY`;
 o status web expõe a janela em `telemetry.robinhoodHolderCounts.latency`. No navegador,
@@ -4887,8 +4897,8 @@ esta referência.
 - o LIVE Robinhood preparado no código precisa de migrations, deploy, canary com
   overlap e estabilização no head da VPS2;
 - o worker LIVE de wallet-swaps está implantado no grupo isolado e acompanha o
-  frontier ativo; a entrega realtime `market:trade` ainda requer deploy/restart
-  do web e desse worker;
+  frontier ativo; a outbox shadow da Stage 203 precisa do consumer/cutover para
+  substituir a releitura por cursor na entrega `market:trade`;
 - retenção de swaps por 30 dias precisa virar implementação verificável;
 - wallet tracking multichain ainda é roadmap;
 - SHYFT/Yellowstone ainda é roadmap;

@@ -292,6 +292,15 @@ function createFakeDatabase(options = {}) {
           ? { rows: [], rowCount: 0 }
           : { rows: [{ transaction_hash: HASH_B }], rowCount: 1 };
       }
+      if (/INSERT INTO robinhood_wallet_swap_outbox/.test(sql)) {
+        const targets = JSON.parse(params[0]);
+        return { rows: [{
+          requested: targets.length,
+          eligible: targets.length,
+          inserted: options.walletSwapOutboxDuplicate ? 0 : targets.length,
+          notifications: targets.length ? 1 : 0,
+        }], rowCount: 1 };
+      }
       if (/SELECT 1 FROM robinhood_v4_liquidity_materialization_state/.test(sql)) {
         return options.v4Materialized ? { rows: [{}], rowCount: 1 } : { rows: [], rowCount: 0 };
       }
@@ -1280,9 +1289,9 @@ describe('commitHeadProcessingBatch derived outbox', () => {
       assert.equal(fake.calls.at(-1).sql, failObservation ? 'ROLLBACK' : 'COMMIT');
     }
     assert.deepEqual(persistenceTiming.snapshot(), {
-      attempts: 2, commits: 1, failures: 1, totalMs: 28,
+      attempts: 2, commits: 1, failures: 1, totalMs: 30,
       connectionMs: 6, beginMs: 4, logsMs: 4, v4DeltasMs: 0,
-      observationsMs: 4, hourlyMs: 2, outboxMs: 4, commitMs: 2, rollbackMs: 2,
+      observationsMs: 6, hourlyMs: 2, outboxMs: 4, commitMs: 2, rollbackMs: 2,
     });
   });
 
@@ -1337,6 +1346,42 @@ describe('commitHeadProcessingBatch derived outbox', () => {
     assert.match(outboxCall.sql, /projectionCommittedAt[\s\S]*clock_timestamp\(\)/);
     assert.equal(rows[0].payload.derived.standardAlertEligible, true);
     assert.equal(result.insertedOutboxRows, 1);
+  });
+
+  it('atomically appends canonical accepted swaps to the durable attribution outbox', async () => {
+    const fake = createFakeDatabase({ liveBuckets: [liveBucketRow()] });
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+
+    const result = await repository.commitHeadProcessingBatch({
+      entries: [marketEntry()],
+      emit: { nextBlock: '8069001', checkpointTimestamp: WINDOW_END },
+    });
+
+    const outboxWrite = findCall(fake.calls, /INSERT INTO robinhood_wallet_swap_outbox/);
+    assert.match(outboxWrite.sql, /INNER JOIN robinhood_chain_transactions transaction/);
+    assert.match(outboxWrite.sql, /'walletAddress', from_address/);
+    assert.match(outboxWrite.sql, /'transactionIndex', transaction_index::text/);
+    assert.match(outboxWrite.sql, /ON CONFLICT \(chain, transaction_hash, log_index\) DO NOTHING/);
+    assert.match(outboxWrite.sql, /pg_notify\(\$2/);
+    assert.equal(outboxWrite.params[1], 'robinhood_wallet_swap_outbox');
+    assert.equal(result.insertedWalletSwapOutboxRows, 1);
+  });
+
+  it('rolls back the observation when canonical wallet context is unavailable', async () => {
+    const fake = createFakeDatabase({ liveBuckets: [liveBucketRow()] });
+    const missing = Object.assign(new Error('canonical context missing'), {
+      code: 'wallet_swap_canonical_context_missing',
+    });
+    const repository = createRobinhoodPersistenceRepository({
+      database: fake.database,
+      walletSwapOutboxProducer: { appendAccepted: async () => { throw missing; } },
+    });
+
+    await assert.rejects(repository.commitHeadProcessingBatch({
+      entries: [marketEntry()],
+    }), (error) => error === missing);
+    assert.equal(fake.calls.at(-1).sql, 'ROLLBACK');
+    assert.equal(findCall(fake.calls, /INSERT INTO robinhood_market_buckets_1h/), undefined);
   });
 
   it('rolls the touched minute buckets up into buckets_1h in the same transaction', async () => {
@@ -1429,7 +1474,7 @@ describe('commitHeadProcessingBatch derived outbox', () => {
       emit: { nextBlock: '8069001', checkpointTimestamp: WINDOW_END },
     });
 
-    const notify = findCall(fake.calls, /pg_notify/);
+    const notify = findCall(fake.calls, /^SELECT pg_notify\(\$1, \$2\)$/);
     assert.ok(notify, 'a NOTIFY must be issued');
     assert.equal(notify.params[0], 'robinhood_derived_outbox');
   });

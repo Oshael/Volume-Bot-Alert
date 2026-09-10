@@ -195,6 +195,11 @@ Gate:
 Objetivo: remover a descoberta de swaps por tick de 2 s e eliminar releitura de
 bloco no caminho canônico.
 
+- [x] Slice 2A: schema e producer shadow atômico, autocontido com o contexto do
+  journal canônico e `NOTIFY` pós-commit;
+- [ ] Slice 2B: consumer por lease/finalidade, publicação recuperável e cutover
+  do cursor antigo.
+
 - criar um item durável de trabalho quando a observação market aceita estiver
   confirmada;
 - incluir ou referenciar `tx.from`, block number, block hash, transaction hash e

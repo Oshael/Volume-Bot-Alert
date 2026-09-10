@@ -5692,6 +5692,30 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage203-robinhood-wallet-swap-outbox',
+    name: 'Stage 203 Robinhood wallet-swap durable outbox',
+    repair: 'node src/utils/db-init-stage203.js',
+    tables: [{
+      table: 'robinhood_wallet_swap_outbox',
+      columns: [
+        'chain', 'transaction_hash', 'log_index', 'block_number', 'block_hash',
+        'transaction_index', 'payload', 'status', 'lease_owner', 'lease_until',
+        'attempt_count', 'next_attempt_at', 'last_error', 'created_at', 'updated_at',
+      ],
+      constraints: [
+        { name: 'rh_wallet_swap_outbox_pkey', includes: ['PRIMARY KEY', 'chain', 'transaction_hash', 'log_index'] },
+        { name: 'rh_wallet_swap_outbox_identity_check', includes: ['block_number', 'transaction_index', 'log_index'] },
+        { name: 'rh_wallet_swap_outbox_status_check', includes: ['pending', 'leased', 'blocked'] },
+        { name: 'rh_wallet_swap_outbox_lease_check', includes: ['lease_owner', 'lease_until'] },
+        { name: 'rh_wallet_swap_outbox_payload_check', includes: ['jsonb_typeof', 'payload'] },
+      ],
+      indexes: [
+        { name: 'idx_rh_wallet_swap_outbox_claim', includes: ['block_number', 'transaction_index', 'log_index', 'next_attempt_at'] },
+        { name: 'idx_rh_wallet_swap_outbox_lease', includes: ['lease_until'] },
+      ],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
