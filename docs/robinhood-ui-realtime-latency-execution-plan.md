@@ -324,7 +324,15 @@ necessário se uma migration surgir durante a implementação.
 - [x] invalidar trabalho derivado órfão sem representar ausência de dados como
   volume ou preço zero.
 
-**3B2B-2C1 — rollback de swaps e cursores (~350–450 linhas)**
+**3B2B-2C1A — identidade de lifecycle por ramificação (~250–350 linhas)**
+
+- [x] incluir `block_hash` na identidade dos eventos `observed`, `finalized` e
+  `invalidate` da Stage 204;
+- [x] migrar a PK existente online pela Stage 207 antes de implantar os writers;
+- [x] provar que a mesma identidade `(tx, log)` pode ser invalidada numa
+  ramificação e observada/finalizada novamente em outra.
+
+**3B2B-2C1B — rollback de swaps e cursores (~350–450 linhas)**
 
 - [ ] remover efeitos órfãos de swaps e sidecars de posição transacional;
 - [ ] recuar cursores de wallet à fronteira comum com generation/hash fence;

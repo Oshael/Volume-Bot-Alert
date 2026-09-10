@@ -22,8 +22,8 @@ const STATEMENTS = Object.freeze([
      last_error TEXT,
      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-     CONSTRAINT rh_wallet_swap_realtime_outbox_pkey PRIMARY KEY (
-       chain, transaction_hash, log_index, event_kind
+     CONSTRAINT rh_wallet_swap_realtime_outbox_cycle_pkey PRIMARY KEY (
+       chain, transaction_hash, log_index, block_hash, event_kind
      ),
      CONSTRAINT rh_wallet_swap_realtime_outbox_identity_check CHECK (
        chain = 'robinhood'

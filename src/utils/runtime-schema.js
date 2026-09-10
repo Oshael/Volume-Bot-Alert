@@ -5729,7 +5729,6 @@ const SCHEMA_GROUPS = [
         'last_error', 'created_at', 'updated_at',
       ],
       constraints: [
-        { name: 'rh_wallet_swap_realtime_outbox_pkey', includes: ['PRIMARY KEY', 'chain', 'transaction_hash', 'log_index', 'event_kind'] },
         { name: 'rh_wallet_swap_realtime_outbox_identity_check', includes: ['block_number', 'block_hash', 'transaction_index', 'log_index'] },
         { name: 'rh_wallet_swap_realtime_outbox_event_check', includes: ['observed', 'finalized', 'invalidate'] },
         { name: 'rh_wallet_swap_realtime_outbox_status_check', includes: ['pending', 'leased', 'complete', 'blocked'] },
@@ -5800,6 +5799,22 @@ const SCHEMA_GROUPS = [
         { name: 'idx_rh_chain_recovery_outbox_claim', includes: ['next_attempt_at', 'generation', 'event_kind'] },
         { name: 'idx_rh_chain_recovery_outbox_lease', includes: ['lease_until'] },
       ],
+    }],
+  },
+  {
+    key: 'stage207-robinhood-wallet-swap-realtime-branch-identity',
+    name: 'Stage 207 Robinhood wallet-swap realtime branch identity',
+    repair: 'node src/utils/db-init-stage207.js',
+    tables: [{
+      table: 'robinhood_wallet_swap_realtime_outbox',
+      columns: [],
+      constraints: [{
+        name: 'rh_wallet_swap_realtime_outbox_cycle_pkey',
+        includes: [
+          'PRIMARY KEY', 'chain', 'transaction_hash', 'log_index', 'block_hash',
+          'event_kind',
+        ],
+      }],
     }],
   },
 ];

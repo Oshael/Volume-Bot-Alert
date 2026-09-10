@@ -20,6 +20,9 @@ const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const TX = `0x${'2'.repeat(64)}`;
 const BLOCK = `0x${'3'.repeat(64)}`;
+const REPLAY_TX = `0x${'7'.repeat(64)}`;
+const ORPHAN_BLOCK = `0x${'8'.repeat(64)}`;
+const REPLACEMENT_BLOCK = `0x${'9'.repeat(64)}`;
 const WALLET = `0x${'4'.repeat(40)}`;
 const TOKEN = `0x${'5'.repeat(40)}`;
 const QUOTE = `0x${'6'.repeat(40)}`;
@@ -169,10 +172,73 @@ describe('Robinhood wallet-swap outbox producer integration', () => {
     )).rows[0].count, 0);
   });
 
+  it('keeps lifecycle events distinct when the same swap identity moves branches', async () => {
+    const producer = createRobinhoodWalletSwapOutboxProducer();
+    const lifecycle = createRobinhoodWalletSwapRealtimeOutboxRepository({ database: client });
+    const target = [{ transactionHash: REPLAY_TX, logIndex: '4' }];
+    const seedBranch = async (blockHash) => {
+      await client.query(`INSERT INTO robinhood_market_observations VALUES (
+        'robinhood',$1,4,101,'uniswap-v3','robinhood:uniswap-v3:replay',$2,$3,
+        'sell','accepted',3000,4000,18,6,3,4,4,4,4000000,1000000
+      )`, [REPLAY_TX, TOKEN, QUOTE]);
+      await client.query(
+        `INSERT INTO robinhood_processed_logs VALUES ('robinhood',$1,4,$2)`,
+        [REPLAY_TX, blockHash]
+      );
+      await client.query(`INSERT INTO robinhood_chain_blocks VALUES (
+        'robinhood',101,$1,'2026-09-10T08:00:01Z',TRUE,
+        '2026-09-10T08:00:01.010Z','2026-09-10T08:00:01.020Z',
+        '2026-09-10T08:00:01.030Z'
+      )`, [blockHash]);
+      await client.query(
+        `INSERT INTO robinhood_chain_transactions VALUES ('robinhood',$1,$2,1,$3)`,
+        [blockHash, REPLAY_TX, WALLET]
+      );
+    };
+
+    await seedBranch(ORPHAN_BLOCK);
+    assert.equal((await producer.appendAccepted(client, target)).realtimeInserted, 1);
+    assert.deepEqual(await lifecycle.appendOrphanInvalidations(client, {
+      generation: '1', fromBlock: '101', throughBlock: '101',
+    }), { observed: 1, invalidated: 1 });
+    await client.query(
+      `UPDATE robinhood_chain_blocks SET canonical=FALSE WHERE block_hash=$1`,
+      [ORPHAN_BLOCK]
+    );
+    await client.query(
+      `WITH observations AS (
+         DELETE FROM robinhood_market_observations WHERE transaction_hash=$1
+       ), processed AS (
+         DELETE FROM robinhood_processed_logs WHERE transaction_hash=$1
+       ), transactions AS (
+         DELETE FROM robinhood_chain_transactions WHERE transaction_hash=$1
+       )
+       DELETE FROM robinhood_wallet_swap_outbox WHERE transaction_hash=$1`,
+      [REPLAY_TX]
+    );
+
+    await seedBranch(REPLACEMENT_BLOCK);
+    assert.equal((await producer.appendAccepted(client, target)).realtimeInserted, 1);
+    assert.equal(await lifecycle.promoteFinalized({ throughBlock: '101', limit: 10 }), 1);
+    const events = await client.query(
+      `SELECT block_hash, event_kind
+         FROM robinhood_wallet_swap_realtime_outbox
+        WHERE transaction_hash=$1
+        ORDER BY block_hash, event_kind`,
+      [REPLAY_TX]
+    );
+    assert.deepEqual(events.rows, [
+      { block_hash: ORPHAN_BLOCK, event_kind: 'invalidate' },
+      { block_hash: ORPHAN_BLOCK, event_kind: 'observed' },
+      { block_hash: REPLACEMENT_BLOCK, event_kind: 'finalized' },
+      { block_hash: REPLACEMENT_BLOCK, event_kind: 'observed' },
+    ]);
+  });
+
   it('rejects an accepted identity without committed canonical context', async () => {
     await assert.rejects(
       createRobinhoodWalletSwapOutboxProducer().appendAccepted(client, [{
-        transactionHash: `0x${'7'.repeat(64)}`, logIndex: '1',
+        transactionHash: `0x${'a'.repeat(64)}`, logIndex: '1',
       }]),
       (error) => error.code === 'wallet_swap_canonical_context_missing'
     );

@@ -691,7 +691,9 @@ seu estado durável de promoção/invalidação estiver implantado. Assim, um cl
 interpreta silenciosamente um swap provisório como definitivo.
 
 Aplique `node src/utils/db-init-stage203.js` e depois `node src/utils/db-init-stage204.js` **antes**
-de implantar o código ou reiniciar qualquer writer Robinhood. A Stage 203 cria
+de implantar o código ou reiniciar qualquer writer Robinhood. Em instalações que já possuam a
+Stage 204 antiga, aplique também `node src/utils/db-init-stage207.js` antes dos writers. A Stage 203
+cria
 `robinhood_wallet_swap_outbox`; cada observação live aceita é anexada ali na mesma transação, já
 contendo `tx.from`, hash/tempo do bloco e posição da transação vindos do journal canônico. A chave
 `(chain, transaction_hash, log_index)` torna replay idempotente.
@@ -701,7 +703,10 @@ O processing grava `observed` na mesma transação da observação e da outbox S
 worker promove, em lotes limitados, cada evento cujo bloco alcançou a fronteira canônica para uma
 segunda linha `finalized`; ambos os writes acordam `robinhood_wallet_swap_realtime_outbox`. A
 promoção exige que número e hash ainda correspondam ao bloco canônico e é idempotente pela chave
-`(chain, transaction_hash, log_index, event_kind)`.
+`(chain, transaction_hash, log_index, block_hash, event_kind)`. Assim, um swap invalidado numa
+ramificação pode reaparecer sob outro hash sem colidir com o ciclo órfão. A Stage 207 constrói essa
+identidade com índice concorrente e troca a PK existente sob um lock curto; execute-a antes de
+implantar o código que usa o novo alvo de conflito.
 
 Ainda não existe consumer para esse canal: nenhuma linha é publicada ao browser e a tabela cresce
 em shadow, normalmente com uma linha `observed` e outra `finalized` por swap maduro. Não limpar
@@ -1884,6 +1889,11 @@ Stages confirmados:
 | 149 | primeira compra canônica materializada por token/wallet para launch intelligence |
 | 151 | campanha e ranges retomáveis do backfill de primeiras compras |
 | 202 | thresholds de autovacuum/freeze das seis tabelas grandes de alto churn |
+| 203 | outbox durável de swaps atribuídos à wallet |
+| 204 | lifecycle realtime `observed`/`finalized`/`invalidate` dos swaps |
+| 205 | generation fence e plano de recuperação no cursor canônico |
+| 206 | journal e outbox duráveis da recuperação canônica |
+| 207 | identidade do lifecycle de swaps isolada por `block_hash` |
 
 Holders RH possuem duas fontes complementares. A Stage 111 guarda o summary
 Blockscout usado como bootstrap/fallback; as Stages 116–118 mantêm o ledger local
@@ -3989,7 +3999,8 @@ planner atual mantém todos os domínios pendentes, o gate não abre em produç�
 Antes de marcar os blocos órfãos, a mesma transação cria uma linha `invalidate`
 na Stage 204 para cada `observed` da faixa, copiando sua identidade e payload e
 acrescentando `reason='reorg'`, `recoveryGeneration` e `invalidatedAt`. Conflito
-com invalidation de outro hash ou geração falha fechado. O evento permanece em
+com invalidation de outra geração para o mesmo hash falha fechado; outro hash é
+um ciclo independente. O evento permanece em
 shadow e o consumer futuro deverá entregar `observed` antes desse terminal.
 Ainda antes da troca de canonicalidade, o executor identifica os logs `market`
 pelos hashes canônicos da faixa, remove seu ledger de processamento para permitir

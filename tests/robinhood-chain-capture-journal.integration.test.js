@@ -25,6 +25,7 @@ const stage195 = require('../src/utils/db-init-stage195');
 const stage204 = require('../src/utils/db-init-stage204');
 const stage205 = require('../src/utils/db-init-stage205');
 const stage206 = require('../src/utils/db-init-stage206');
+const stage207 = require('../src/utils/db-init-stage207');
 const stage103 = require('../src/utils/db-init-stage103');
 const stage165 = require('../src/utils/db-init-stage165');
 const v2 = require('../src/services/uniswap-v2-decoder');
@@ -89,6 +90,7 @@ describe('Robinhood canonical chain capture journal', () => {
     await stage204.init({ closePool: false });
     await stage205.init({ closePool: false });
     await stage206.init({ closePool: false });
+    await stage207.init({ closePool: false });
   });
 
   beforeEach(clearTables);

@@ -125,7 +125,9 @@ function createRobinhoodWalletSwapOutboxProducer() {
              'observedAt', observation_committed_at
            )
          FROM payloads
-         ON CONFLICT (chain, transaction_hash, log_index, event_kind) DO NOTHING
+         ON CONFLICT (
+           chain, transaction_hash, log_index, block_hash, event_kind
+         ) DO NOTHING
          RETURNING block_number
        ), notified AS (
          SELECT pg_notify($2, MAX(block_number)::text) AS sent

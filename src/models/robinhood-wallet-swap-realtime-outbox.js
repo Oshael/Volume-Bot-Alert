@@ -58,10 +58,11 @@ function createRobinhoodWalletSwapRealtimeOutboxRepository(options = {}) {
                   'invalidatedAt', clock_timestamp()
                 )
            FROM orphaned
-         ON CONFLICT (chain, transaction_hash, log_index, event_kind) DO UPDATE
+         ON CONFLICT (
+           chain, transaction_hash, log_index, block_hash, event_kind
+         ) DO UPDATE
            SET updated_at=robinhood_wallet_swap_realtime_outbox.updated_at
-         WHERE robinhood_wallet_swap_realtime_outbox.block_hash=EXCLUDED.block_hash
-           AND robinhood_wallet_swap_realtime_outbox.payload->>'recoveryGeneration'=$4::text
+         WHERE robinhood_wallet_swap_realtime_outbox.payload->>'recoveryGeneration'=$4::text
          RETURNING block_number
        ), notified AS (
          SELECT pg_notify($5, MAX(block_number)::text) AS sent
@@ -100,6 +101,7 @@ function createRobinhoodWalletSwapRealtimeOutboxRepository(options = {}) {
              ON finalized.chain=observed.chain
             AND finalized.transaction_hash=observed.transaction_hash
             AND finalized.log_index=observed.log_index
+            AND finalized.block_hash=observed.block_hash
             AND finalized.event_kind='finalized'
           WHERE observed.chain='${CHAIN}' AND observed.event_kind='observed'
             AND observed.block_number <= $1::bigint
@@ -119,7 +121,9 @@ function createRobinhoodWalletSwapRealtimeOutboxRepository(options = {}) {
                   'finalizedAt', clock_timestamp()
                 )
            FROM promotable
-         ON CONFLICT (chain, transaction_hash, log_index, event_kind) DO NOTHING
+         ON CONFLICT (
+           chain, transaction_hash, log_index, block_hash, event_kind
+         ) DO NOTHING
          RETURNING block_number
        ), notified AS (
          SELECT pg_notify($3, MAX(block_number)::text) AS sent
