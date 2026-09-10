@@ -22,6 +22,7 @@ const stage192 = require('../src/utils/db-init-stage192');
 const stage193 = require('../src/utils/db-init-stage193');
 const stage194 = require('../src/utils/db-init-stage194');
 const stage195 = require('../src/utils/db-init-stage195');
+const stage204 = require('../src/utils/db-init-stage204');
 const stage205 = require('../src/utils/db-init-stage205');
 const stage206 = require('../src/utils/db-init-stage206');
 const stage103 = require('../src/utils/db-init-stage103');
@@ -65,6 +66,7 @@ function capture(number = 100, hash = HASH, parentHash = PARENT) {
 async function clearTables() {
   await db.query('DELETE FROM robinhood_chain_recovery_outbox');
   await db.query('DELETE FROM robinhood_chain_recoveries');
+  await db.query('DELETE FROM robinhood_wallet_swap_realtime_outbox');
   await db.query('DELETE FROM robinhood_token_deployment_outbox');
   await db.query('DELETE FROM robinhood_canonical_head_candidates');
   await db.query('DELETE FROM robinhood_chain_v3_balance_snapshots');
@@ -84,6 +86,7 @@ describe('Robinhood canonical chain capture journal', () => {
     await stage193.init({ closePool: false });
     await stage194.init({ closePool: false });
     await stage195.init({ closePool: false });
+    await stage204.init({ closePool: false });
     await stage205.init({ closePool: false });
     await stage206.init({ closePool: false });
   });
@@ -457,9 +460,21 @@ describe('Robinhood canonical chain capture journal', () => {
       ancestor: { blockNumber: '100', blockHash: HASH },
       affectedRange: { fromBlock: '101', throughBlock: '101', depth: '1' },
     };
+    await db.query(
+      `INSERT INTO robinhood_wallet_swap_realtime_outbox(
+         chain, transaction_hash, log_index, event_kind, block_number,
+         block_hash, transaction_index, payload
+       ) VALUES ('robinhood',$1,0,'observed',101,$2,0,$3::jsonb)`,
+      [NEXT_TX, NEXT_HASH, JSON.stringify({
+        protocolVersion: 2, type: 'market:trade:observed', finality: 'observed',
+        transactionHash: NEXT_TX, actionIndex: '0', blockNumber: '101',
+        blockHash: NEXT_HASH,
+      })]
+    );
     await journal.markRecoveryRequired({ plan });
     assert.deepEqual(await journal.rewindCanonicalRecovery({ generation: '0' }), {
       status: 'rewound', generation: '0', nextGeneration: '1', orphanedBlocks: 1,
+      tradeInvalidations: { observed: 1, invalidated: 1 },
     });
     assert.deepEqual(await journal.rewindCanonicalRecovery({ generation: '0' }), {
       status: 'already-rewound', generation: '0', nextGeneration: '1',
@@ -496,6 +511,24 @@ describe('Robinhood canonical chain capture journal', () => {
       ancestor: plan.ancestor, oldCheckpoint: plan.checkpoint,
       replacementCheckpointHash: plan.incoming.parentHash,
     });
+    const lifecycle = await db.query(
+      `SELECT event_kind, block_hash, payload, created_at
+         FROM robinhood_wallet_swap_realtime_outbox
+        WHERE transaction_hash=$1
+        ORDER BY CASE event_kind WHEN 'observed' THEN 0 ELSE 1 END`, [NEXT_TX]
+    );
+    assert.deepEqual(lifecycle.rows.map(({ event_kind, block_hash }) => ({
+      event_kind, block_hash,
+    })), [
+      { event_kind: 'observed', block_hash: NEXT_HASH },
+      { event_kind: 'invalidate', block_hash: NEXT_HASH },
+    ]);
+    assert.equal(lifecycle.rows[1].payload.type, 'market:trade:invalidate');
+    assert.equal(lifecycle.rows[1].payload.finality, 'invalidated');
+    assert.equal(lifecycle.rows[1].payload.reason, 'reorg');
+    assert.equal(lifecycle.rows[1].payload.recoveryGeneration, '0');
+    assert.ok(Date.parse(lifecycle.rows[1].payload.invalidatedAt));
+    assert.ok(lifecycle.rows[1].created_at >= lifecycle.rows[0].created_at);
     await assert.rejects(
       journal.commitBlock(second), (error) => error.code === 'capture_recovery_required'
     );
@@ -521,6 +554,41 @@ describe('Robinhood canonical chain capture journal', () => {
       `SELECT canonical FROM robinhood_chain_blocks WHERE block_hash=$1`, [HASH]
     )).rows[0].canonical, true);
     assert.equal((await journal.getCursor()).checkpoint_block, '100');
+  });
+
+  it('rolls back the rewind when an orphan trade has a conflicting invalidation', async () => {
+    const journal = createRobinhoodChainCaptureJournal();
+    const second = capture(101, NEXT_HASH, HASH);
+    second.transactions[0].hash = NEXT_TX;
+    second.events[0].transactionHash = NEXT_TX;
+    await journal.commitBlocks([capture(), second]);
+    await db.query(
+      `INSERT INTO robinhood_wallet_swap_realtime_outbox(
+         chain, transaction_hash, log_index, event_kind, block_number,
+         block_hash, transaction_index, payload
+       ) VALUES
+         ('robinhood',$1,0,'observed',101,$2,0,'{}'::jsonb),
+         ('robinhood',$1,0,'invalidate',101,$2,0,$3::jsonb)`,
+      [NEXT_TX, NEXT_HASH, JSON.stringify({ recoveryGeneration: '9' })]
+    );
+    const plan = {
+      generation: '0', reason: 'parent_hash_mismatch', recoverable: true,
+      executable: true, pendingRollbackDomains: [], maxDepth: 12,
+      checkpoint: { blockNumber: '101', blockHash: NEXT_HASH },
+      incoming: { blockNumber: '102', blockHash: `0x${'6'.repeat(64)}`,
+        parentHash: `0x${'7'.repeat(64)}` },
+      ancestor: { blockNumber: '100', blockHash: HASH },
+      affectedRange: { fromBlock: '101', throughBlock: '101', depth: '1' },
+    };
+    await journal.markRecoveryRequired({ plan });
+    await assert.rejects(
+      journal.rewindCanonicalRecovery({ generation: '0' }),
+      (error) => error.code === 'trade_invalidation_conflict'
+    );
+    assert.equal((await db.query(
+      `SELECT canonical FROM robinhood_chain_blocks WHERE block_hash=$1`, [NEXT_HASH]
+    )).rows[0].canonical, true);
+    assert.equal((await journal.getCursor()).checkpoint_block, '101');
   });
 
   it('refuses an executable rewind across the current finalized boundary', async () => {

@@ -3986,6 +3986,11 @@ checkpoint ao ancestral, incrementa a geração e grava `chain:reorg:rewound`.
 O cursor permanece em `recovery_required`, portanto recaptura continua bloqueada
 até os rollbacks de domínio e a transição de resume serem implementados. Como o
 planner atual mantém todos os domínios pendentes, o gate não abre em produção.
+Antes de marcar os blocos órfãos, a mesma transação cria uma linha `invalidate`
+na Stage 204 para cada `observed` da faixa, copiando sua identidade e payload e
+acrescentando `reason='reorg'`, `recoveryGeneration` e `invalidatedAt`. Conflito
+com invalidation de outro hash ou geração falha fechado. O evento permanece em
+shadow e o consumer futuro deverá entregar `observed` antes desse terminal.
 
 Antes de definir ou reduzir retenção de `robinhood_chain_events` e
 `robinhood_holder_transfer_journal`, execute

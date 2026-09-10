@@ -311,11 +311,11 @@ necessário se uma migration surgir durante a implementação.
 
 **3B2B-2A — invalidation durável de trades (~300–400 linhas)**
 
-- [ ] gerar `market:trade:invalidate` para cada `observed` órfão dentro da mesma
+- [x] gerar `market:trade:invalidate` para cada `observed` órfão dentro da mesma
   transação do rewind e antes de liquidar seu ciclo realtime;
-- [ ] preservar ordenação por identidade para que um consumer entregue
+- [x] preservar ordenação por identidade para que um consumer entregue
   `observed` antes de `invalidate`, inclusive após crash/restart;
-- [ ] manter a Stage 204 em shadow, sem publicação no frontend e sem abrir o gate.
+- [x] manter a Stage 204 em shadow, sem publicação no frontend e sem abrir o gate.
 
 **3B2B-2B — rollback e reconstrução de market (~450–500 linhas)**
 
