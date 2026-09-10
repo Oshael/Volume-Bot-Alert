@@ -8,10 +8,11 @@ import {
   markMarketTradeReceived,
   normalizeMarketBucketUpdate,
   normalizeMarketTradeUpdate,
+  normalizeMarketTradeFinalityEvent,
   normalizeMarketSubscription,
   type MarketBucketUpdateEvent,
   type MarketSubscriptionIdentity,
-  type MarketTradeUpdateEvent,
+  type MarketTradeRealtimeEvent,
 } from './market-events';
 import {
   createRobinhoodHolderEventOrderGate,
@@ -21,7 +22,7 @@ import {
   type RobinhoodHolderInvalidateEvent,
 } from './holder-events';
 
-export type { MarketBucketUpdateEvent, MarketTradeUpdateEvent } from './market-events';
+export type { MarketBucketUpdateEvent, MarketTradeRealtimeEvent, MarketTradeUpdateEvent } from './market-events';
 export type { RobinhoodHolderCountEvent, RobinhoodHolderInvalidateEvent } from './holder-events';
 
 let socket: Socket | null = null;
@@ -31,7 +32,7 @@ const marketEventOrder = createMarketEventOrderGate();
 const holderEventOrder = createRobinhoodHolderEventOrderGate();
 const marketTradeListeners = new Map<string, {
   identity: MarketSubscriptionIdentity;
-  listeners: Set<(event: MarketTradeUpdateEvent) => void>;
+  listeners: Set<(event: MarketTradeRealtimeEvent) => void>;
 }>();
 const holderListeners = new Map<string, {
   identity: MarketSubscriptionIdentity;
@@ -78,7 +79,16 @@ function emitMarketTradeSubscriptionSync(current = socket) {
   if (!current?.connected) return;
   const subscriptions = [...marketTradeListeners.values()]
     .map(({ identity }) => ({ chain: identity.chain, address: identity.address }));
-  current.emit('market:trade:sync', { subscriptions });
+  current.emit('market:trade:sync', { protocolVersion: 2, subscriptions });
+}
+
+function dispatchMarketTradeEvent(payload: unknown, lifecycle = false) {
+  const normalized = lifecycle
+    ? normalizeMarketTradeFinalityEvent(payload) : normalizeMarketTradeUpdate(payload);
+  const event = normalized ? markMarketTradeReceived(normalized) : null;
+  const identity = event && normalizeMarketSubscription(event.address, event.chain);
+  if (!event || !identity) return;
+  for (const listener of marketTradeListeners.get(identity.key)?.listeners || []) listener(event);
 }
 
 function dispatchHolderEvent(payload: unknown) {
@@ -107,6 +117,9 @@ export function bindSocketLifecycle(options: {
   current.off('alert:event');
   current.off('market:bucket');
   current.off('market:trade');
+  current.off('market:trade:observed');
+  current.off('market:trade:finalized');
+  current.off('market:trade:invalidate');
   current.off('holder:count');
   current.off('holder:invalidate');
 
@@ -153,12 +166,11 @@ export function bindSocketLifecycle(options: {
   });
 
   current.on('market:trade', (payload: unknown) => {
-    const normalized = normalizeMarketTradeUpdate(payload);
-    const event = normalized ? markMarketTradeReceived(normalized) : null;
-    const identity = event && normalizeMarketSubscription(event.address, event.chain);
-    if (!event || !identity) return;
-    for (const listener of marketTradeListeners.get(identity.key)?.listeners || []) listener(event);
+    dispatchMarketTradeEvent(payload);
   });
+  for (const eventName of [
+    'market:trade:observed', 'market:trade:finalized', 'market:trade:invalidate',
+  ]) current.on(eventName, (payload: unknown) => dispatchMarketTradeEvent(payload, true));
 
   current.on('holder:count', dispatchHolderEvent);
   current.on('holder:invalidate', dispatchHolderEvent);
@@ -195,7 +207,7 @@ export function unsubscribeMarketChart(address: string, chain: TokenChain = 'sol
 
 export function subscribeRobinhoodTrades(
   address: string,
-  listener: (event: MarketTradeUpdateEvent) => void,
+  listener: (event: MarketTradeRealtimeEvent) => void,
 ) {
   const identity = normalizeMarketSubscription(address, 'robinhood');
   if (!identity) return null;

@@ -137,6 +137,32 @@ describe('frontend realtime market events', () => {
     assert.equal(marketEvents.normalizeMarketTradeUpdate({ ...trade, transactionHash: 'bad' }), null);
   });
 
+  it('normalizes the versioned trade finality lifecycle fail-closed', () => {
+    const base = {
+      protocolVersion: 2, chain: 'robinhood', address: EVM,
+      transactionHash: `0x${'1'.repeat(64)}`, actionIndex: 4,
+      blockNumber: 100, blockTime: '2026-08-09T12:00:00Z', side: 'sell',
+      walletAddress: `0x${'2'.repeat(40)}`, amountUsd: 7.5, priceUsd: null, mcUsd: 9000,
+      asOfBlock: 100, asOfBlockHash: `0x${'f'.repeat(64)}`,
+      observedAt: '2026-08-09T12:00:00.100Z', publishedAt: '2026-08-09T12:00:00.200Z',
+    };
+    const observed = marketEvents.normalizeMarketTradeFinalityEvent({
+      ...base, type: 'market:trade:observed', finality: 'observed',
+    });
+    const invalidated = marketEvents.normalizeMarketTradeFinalityEvent({
+      ...base, type: 'market:trade:invalidate', reason: 'reorg',
+    });
+    assert.equal(observed.finality, 'observed');
+    assert.equal(observed.asOfBlockHash, `0x${'f'.repeat(64)}`);
+    assert.equal(invalidated.reason, 'reorg');
+    assert.equal(marketEvents.normalizeMarketTradeFinalityEvent({
+      ...base, type: 'market:trade:observed', finality: 'finalized',
+    }), null);
+    assert.equal(marketEvents.normalizeMarketTradeFinalityEvent({
+      ...base, type: 'market:trade:invalidate', reason: 'unknown',
+    }), null);
+  });
+
   it('rejects duplicate and older updates only within the same source bucket', () => {
     const gate = marketEvents.createMarketEventOrderGate(4);
     const current = marketEvents.normalizeMarketBucketUpdate(event());

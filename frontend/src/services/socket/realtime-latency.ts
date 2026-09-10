@@ -1,6 +1,6 @@
 import type {
   MarketBucketUpdateEvent,
-  MarketTradeUpdateEvent,
+  MarketTradeRealtimeEvent,
   RealtimeLatencyMarks,
 } from './market-events';
 import type { RobinhoodHolderRealtimeEvent } from './holder-events';
@@ -109,7 +109,7 @@ export function recordMarketBucketApplied(
 }
 
 export function recordMarketTradeApplied(
-  event: MarketTradeUpdateEvent,
+  event: MarketTradeRealtimeEvent,
   appliedAt = Date.now(),
 ) {
   return recordApplied('market:trade', event, appliedAt);

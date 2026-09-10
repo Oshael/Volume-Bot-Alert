@@ -102,6 +102,7 @@ describe('robinhood wallet swap attributor', () => {
     assert.equal(rows[0].fdvUsd, '48000');
     assert.equal(rows[0].tokenTotalSupplyRaw, '1000000000000000000000000');
     assert.equal(rows[0].actionIndex, '5');
+    assert.equal(rows[0].blockHash, `0x${'f'.repeat(64)}`);
     assert.equal(rows[0].blockTime, new Date(0x60000000 * 1000).toISOString());
     assert.equal(rows[0].parserVersion, 'rh-wallet-seed-1');
     assert.deepEqual(rows[0].latency, {

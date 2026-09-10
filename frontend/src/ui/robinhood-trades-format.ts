@@ -12,6 +12,7 @@ export interface TradeView {
   transactionHash: string;
   actionIndex: number;
   blockNumber?: number;
+  finality?: 'observed' | 'finalized';
 }
 
 export function mergeLiveTrade<T extends TradeView>(trades: T[], incoming: T, limit: number): T[] {
@@ -23,6 +24,15 @@ export function mergeLiveTrade<T extends TradeView>(trades: T[], incoming: T, li
     || Number(right.blockNumber || 0) - Number(left.blockNumber || 0)
     || right.actionIndex - left.actionIndex
   )).slice(0, Math.max(0, limit));
+}
+
+export function removeLiveTrade<T extends TradeView>(
+  trades: T[], identity: Pick<TradeView, 'transactionHash' | 'actionIndex'>,
+): T[] {
+  const key = `${identity.transactionHash.toLowerCase()}:${identity.actionIndex}`;
+  return trades.filter((trade) => (
+    `${trade.transactionHash.toLowerCase()}:${trade.actionIndex}` !== key
+  ));
 }
 
 export function tradeMatchesWalletScope(
@@ -92,7 +102,10 @@ export function formatTradeAge(blockTime: string, nowMs: number): string {
 // color (green buy / red sell) via the row class — no separate BUY/SELL cell.
 export function tradeRowHtml(trade: TradeView, nowMs: number): string {
   const sideClass = trade.side === 'sell' ? 'is-sell' : 'is-buy';
-  return `<li class="robinhood-trade-row ${sideClass}">`
+  const finalityClass = trade.finality === 'observed' ? ' is-observed' : '';
+  const finalityTitle = trade.finality === 'observed'
+    ? ' title="Observed on-chain; awaiting finality"' : '';
+  return `<li class="robinhood-trade-row ${sideClass}${finalityClass}"${finalityTitle}>`
     + `<span class="robinhood-trade-amount">${escapeHtml(formatUsd(trade.amountUsd))}</span>`
     + `<span class="robinhood-trade-mc">${escapeHtml(formatUsd(trade.mcUsd))}</span>`
     + `<span class="robinhood-trade-trader">${escapeHtml(shortenTrader(trade.walletAddress))}</span>`

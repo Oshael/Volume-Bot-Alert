@@ -13,6 +13,7 @@ const {
   getMarketSubscriptionRooms,
   getMarketSubscriptionRoom,
   getMarketTradeRoom,
+  getMarketTradeFinalityRoom,
   getMarketTradeSubscriptionRooms,
   normalizeMarketBucketUpdate,
   normalizeMarketTradeUpdate,
@@ -106,6 +107,16 @@ describe('chain-aware socket market protocol', () => {
       { chain: 'robinhood', address: EVM_ADDRESS },
     ] }, { config: VISIBLE_CONFIG });
     assert.deepEqual([...rooms], [`market-trade:robinhood:${EVM_ADDRESS.toLowerCase()}`]);
+    assert.deepEqual([...getMarketTradeSubscriptionRooms({
+      protocolVersion: 2,
+      subscriptions: [{ chain: 'robinhood', address: EVM_ADDRESS }],
+    }, { config: VISIBLE_CONFIG })], [
+      `market-trade-v2:robinhood:${EVM_ADDRESS.toLowerCase()}`,
+    ]);
+    assert.equal(
+      getMarketTradeFinalityRoom(resolveMarketIdentity({ chain: 'robinhood', address: EVM_ADDRESS })),
+      `market-trade-v2:robinhood:${EVM_ADDRESS.toLowerCase()}`,
+    );
     assert.equal(getMarketTradeRoom(resolveMarketIdentity({ chain: 'base', address: EVM_ADDRESS })), null);
     assert.equal(getMarketTradeSubscriptionRooms({ subscriptions: [
       { chain: 'base', address: EVM_ADDRESS },

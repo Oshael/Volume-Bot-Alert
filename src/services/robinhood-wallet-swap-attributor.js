@@ -46,12 +46,13 @@ async function mapConcurrent(items, concurrency, mapper) {
   return results;
 }
 
-function buildRow(observation, walletAddress, blockTime, parserVersion) {
+function buildRow(observation, walletAddress, blockHash, blockTime, parserVersion) {
   return {
     walletAddress,
     transactionHash: observation.transaction_hash,
     actionIndex: observation.log_index,
     blockNumber: observation.block_number,
+    blockHash,
     blockTime,
     protocol: observation.protocol,
     marketKey: observation.market_key,
@@ -121,6 +122,7 @@ function createRobinhoodWalletSwapAttributor(deps = {}) {
     const rows = observations.map((observation) => buildRow(
       observation,
       resolved.get(String(observation.transaction_hash ?? '').toLowerCase()),
+      blockHash,
       blockTime,
       parserVersion
     ));

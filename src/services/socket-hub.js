@@ -7,6 +7,7 @@
  * - auth:revoked      - session revoked; client must logout
  * - market:bucket     - live market bucket update for subscribed token charts
  * - market:trade      - live Robinhood swap for an explicitly watched trades panel
+ * - market:trade:*    - versioned Robinhood trade finality lifecycle
  * - holder:count      - sequenced Robinhood holder count for a subscribed token
  * - holder:invalidate - holder count must be refreshed after a reorg
  *
@@ -38,6 +39,10 @@ const { isTokenChainUserVisible } = require('../utils/token-chain-availability')
 const {
   normalizeRobinhoodHolderRealtimeEvent,
 } = require('./robinhood-holder-count-event');
+const {
+  PROTOCOL_VERSION: MARKET_TRADE_FINALITY_VERSION,
+  normalizeMarketTradeFinalityEvent,
+} = require('./market-trade-finality-event');
 
 let io = null;
 let accessSweepTimer = null;
@@ -109,13 +114,19 @@ function getMarketTradeRoom(identity) {
     ? `market-trade:${identity.key}` : null;
 }
 
+function getMarketTradeFinalityRoom(identity) {
+  return identity?.chain === 'robinhood' && identity.key
+    ? `market-trade-v2:${identity.key}` : null;
+}
+
 function getMarketTradeSubscriptionRooms(payload, options = {}) {
   if (!Array.isArray(payload?.subscriptions)) return null;
   const rooms = new Set();
   for (const subscription of payload.subscriptions) {
     const identity = resolveMarketIdentity(subscription);
+    const lifecycle = Number(payload?.protocolVersion) === MARKET_TRADE_FINALITY_VERSION;
     const room = isTokenChainUserVisible(identity?.chain, options.config || config)
-      ? getMarketTradeRoom(identity) : null;
+      ? (lifecycle ? getMarketTradeFinalityRoom(identity) : getMarketTradeRoom(identity)) : null;
     if (!room) return null;
     rooms.add(room);
   }
@@ -795,6 +806,17 @@ function emitMarketTradeUpdate(payload) {
   return true;
 }
 
+function emitMarketTradeFinalityUpdate(payload) {
+  if (!io || !payload || typeof payload !== 'object') return false;
+  const event = normalizeMarketTradeFinalityEvent(payload);
+  const room = getMarketTradeFinalityRoom(resolveMarketIdentity(event));
+  if (!event || !room || !isTokenChainUserVisible(event.chain, config)) return false;
+  const sockets = io.sockets.adapter.rooms.get(room);
+  if (!sockets || sockets.size === 0) return false;
+  io.to(room).emit(event.type, event);
+  return true;
+}
+
 function emitHolderUpdate(payload) {
   if (!io || !payload || typeof payload !== 'object') return false;
   const event = normalizeRobinhoodHolderRealtimeEvent(payload);
@@ -814,6 +836,7 @@ module.exports = {
   emitBackendAlertEvent,
   emitMarketBucketUpdate,
   emitMarketTradeUpdate,
+  emitMarketTradeFinalityUpdate,
   emitHolderUpdate,
   revokeSessionSockets,
   revokeUserSockets,
@@ -821,6 +844,7 @@ module.exports = {
     createMarketSubscriptionProtocolTelemetry,
     getMarketRoom,
     getMarketTradeRoom,
+    getMarketTradeFinalityRoom,
     getMarketTradeSubscriptionRooms,
     getMarketSubscriptionRoom,
     getMarketSubscriptionRooms,

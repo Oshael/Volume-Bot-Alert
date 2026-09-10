@@ -112,6 +112,33 @@ describe('frontend socket market subscriptions', () => {
     unsubscribe();
   });
 
+  it('opts into and dispatches the versioned trade finality lifecycle', () => {
+    const trades = [];
+    client.bindSocketLifecycle({ onRevoked() {} });
+    const unsubscribe = client.subscribeRobinhoodTrades(ROBINHOOD, (event) => trades.push(event));
+    const sync = socket.sent.filter(({ event }) => event === 'market:trade:sync').at(-1);
+    assert.equal(sync.payload.protocolVersion, 2);
+    const base = {
+      protocolVersion: 2, chain: 'robinhood', address: ROBINHOOD,
+      transactionHash: `0x${'3'.repeat(64)}`, actionIndex: 2,
+      blockNumber: 101, blockTime: '2026-09-09T12:00:00.000Z', side: 'sell',
+      walletAddress: `0x${'4'.repeat(40)}`, amountUsd: 4, priceUsd: 5, mcUsd: 6,
+      asOfBlock: 101, asOfBlockHash: `0x${'f'.repeat(64)}`,
+      observedAt: '2026-09-09T12:00:00.050Z', publishedAt: '2026-09-09T12:00:00.100Z',
+    };
+    socket.trigger('market:trade:finalized', {
+      ...base, type: 'market:trade:finalized', finality: 'finalized',
+    });
+    socket.trigger('market:trade:invalidate', {
+      ...base, type: 'market:trade:invalidate', reason: 'reorg',
+    });
+    assert.deepEqual(trades.map(({ type }) => type), [
+      'market:trade:finalized', 'market:trade:invalidate',
+    ]);
+    assert.ok(Number.isFinite(Date.parse(trades[0].latency.clientReceivedAt)));
+    unsubscribe();
+  });
+
   it('restores canonical chart and workspace subscriptions after reconnect', () => {
     client.bindSocketLifecycle({ onRevoked() {} });
     client.subscribeMarketChart(SOLANA);

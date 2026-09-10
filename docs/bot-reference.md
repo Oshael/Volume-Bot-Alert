@@ -682,6 +682,14 @@ persistir o swap e o web relay acrescenta `publishedAt`. A lease `web` expõe os
 `projectionCommittedAt` (criação durável) e os marcos de relay/navegador; seus percentis de backend
 ficam em `telemetry.backendAlerts.latency`. Payloads antigos continuam válidos.
 
+O protocolo opt-in de trades `protocolVersion: 2` usa salas separadas das salas legadas. Enquanto
+a política live continua finalizada-only, o relay envia `market:trade:finalized` com `finality`,
+`asOfBlock`, `asOfBlockHash`, `observedAt` e `publishedAt`; clientes antigos continuam recebendo
+somente `market:trade`. O cliente v2 também reconhece `market:trade:observed` e
+`market:trade:invalidate` (`reason: reorg`), mas esses dois eventos só devem ser ativados depois que
+seu estado durável de promoção/invalidação estiver implantado. Assim, um cliente legado nunca
+interpreta silenciosamente um swap provisório como definitivo.
+
 Aplique `node src/utils/db-init-stage203.js` **antes** de implantar o código ou reiniciar qualquer
 writer Robinhood. A Stage 203 cria `robinhood_wallet_swap_outbox`; cada observação live aceita é
 anexada ali na mesma transação, já contendo `tx.from`, hash/tempo do bloco e posição da transação

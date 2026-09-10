@@ -7,7 +7,8 @@ const {
 function row(overrides = {}) {
   return {
     tokenAddress: `0x${'a'.repeat(40)}`, transactionHash: `0x${'1'.repeat(64)}`,
-    actionIndex: '3', blockNumber: '100', blockTime: '2026-08-09T12:00:00Z',
+    actionIndex: '3', blockNumber: '100', blockHash: `0x${'f'.repeat(64)}`,
+    blockTime: '2026-08-09T12:00:00Z',
     side: 'buy', walletAddress: `0x${'b'.repeat(40)}`,
     volumeUsd: '12.5', priceUsd: '0.5', fdvUsd: '48000', ...overrides,
   };
@@ -42,8 +43,12 @@ test('propagates publish failures so the live worker can retry', async () => {
 
 test('relays only valid channel payloads to the socket hub', () => {
   const emitted = [];
+  const finality = [];
   const relay = createMarketTradeRealtime({
-    socketHub: { emitMarketTradeUpdate: (event) => emitted.push(event) },
+    socketHub: {
+      emitMarketTradeUpdate: (event) => emitted.push(event),
+      emitMarketTradeFinalityUpdate: (event) => finality.push(event),
+    },
     now: () => Date.parse('2026-08-09T12:00:00.700Z'),
   });
   const event = buildMarketTradeUpdate(row({
@@ -53,5 +58,10 @@ test('relays only valid channel payloads to the socket hub', () => {
   assert.equal(relay.handleNotification({ channel: 'other', payload: JSON.stringify(event) }), null);
   assert.equal(emitted.length, 1);
   assert.equal(emitted[0].latency.publishedAt, '2026-08-09T12:00:00.700Z');
+  assert.equal(finality.length, 1);
+  assert.equal(finality[0].type, 'market:trade:finalized');
+  assert.equal(finality[0].finality, 'finalized');
+  assert.equal(finality[0].asOfBlock, 100);
+  assert.equal(finality[0].asOfBlockHash, `0x${'f'.repeat(64)}`);
   assert.equal(relay.getStatus().latency.stages.receiptToPublishedMs.p95Ms, 600);
 });

@@ -88,6 +88,35 @@ export interface MarketTradeUpdateEvent {
   latency?: RealtimeLatencyMarks;
 }
 
+export type MarketTradeFinalityUpdateEvent = Omit<MarketTradeUpdateEvent, 'type'> & {
+  protocolVersion: 2;
+  type: 'market:trade:observed' | 'market:trade:finalized';
+  finality: 'observed' | 'finalized';
+  asOfBlock: number;
+  asOfBlockHash: string;
+  observedAt: string;
+  publishedAt: string;
+};
+
+export interface MarketTradeInvalidateEvent {
+  protocolVersion: 2;
+  type: 'market:trade:invalidate';
+  chain: 'robinhood';
+  address: string;
+  transactionHash: string;
+  actionIndex: number;
+  asOfBlock: number;
+  asOfBlockHash: string;
+  observedAt: string;
+  publishedAt: string;
+  reason: 'reorg';
+  latency?: RealtimeLatencyMarks;
+}
+
+export type MarketTradeRealtimeEvent = MarketTradeUpdateEvent
+  | MarketTradeFinalityUpdateEvent
+  | MarketTradeInvalidateEvent;
+
 export interface RealtimeTokenMarketPatch {
   observedAt: string;
   priceUsd: number | null;
@@ -291,10 +320,57 @@ export function normalizeMarketTradeUpdate(value: unknown): MarketTradeUpdateEve
   };
 }
 
+const MARKET_TRADE_FINALITY_TYPES = new Set([
+  'market:trade:observed', 'market:trade:finalized', 'market:trade:invalidate',
+]);
+
+function normalizeMarketTradeFinalityIdentity(source: Record<string, unknown>) {
+  const identity = normalizeMarketSubscription(source.address, source.chain);
+  const transactionHash = String(source.transactionHash || '').toLowerCase();
+  const actionIndex = Number(source.actionIndex);
+  const asOfBlock = Number(source.asOfBlock);
+  const asOfBlockHash = String(source.asOfBlockHash || '').toLowerCase();
+  const observedAt = validTimestamp(source.observedAt);
+  const publishedAt = validTimestamp(source.publishedAt);
+  const valid = [
+    identity?.chain === 'robinhood', /^0x[0-9a-f]{64}$/.test(transactionHash),
+    Number.isSafeInteger(actionIndex), actionIndex >= 0,
+    Number.isSafeInteger(asOfBlock), asOfBlock >= 0,
+    /^0x[0-9a-f]{64}$/.test(asOfBlockHash), observedAt, publishedAt,
+  ].every(Boolean);
+  return valid ? {
+    protocolVersion: 2 as const, chain: 'robinhood' as const, address: identity!.address,
+    transactionHash, actionIndex, asOfBlock, asOfBlockHash,
+    observedAt: observedAt!, publishedAt: publishedAt!,
+    latency: normalizeLatencyMarks(source.latency),
+  } : null;
+}
+
+export function normalizeMarketTradeFinalityEvent(value: unknown): MarketTradeRealtimeEvent | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const source = value as Record<string, unknown>;
+  const type = String(source.type || '');
+  if (Number(source.protocolVersion) !== 2 || !MARKET_TRADE_FINALITY_TYPES.has(type)) return null;
+  const common = normalizeMarketTradeFinalityIdentity(source);
+  if (!common) return null;
+  if (type === 'market:trade:invalidate') {
+    return source.reason === 'reorg'
+      ? { ...common, type, reason: 'reorg' as const } : null;
+  }
+  const finality = type === 'market:trade:observed' ? 'observed' : 'finalized';
+  if (source.finality !== finality) return null;
+  const trade = normalizeMarketTradeUpdate({ ...source, type: 'market:trade' });
+  if (!trade || trade.blockNumber !== common.asOfBlock) return null;
+  return {
+    ...trade, ...common,
+    type: type as MarketTradeFinalityUpdateEvent['type'], finality,
+  };
+}
+
 export function markMarketTradeReceived(
-  event: MarketTradeUpdateEvent,
+  event: MarketTradeRealtimeEvent,
   receivedAt = Date.now(),
-): MarketTradeUpdateEvent {
+): MarketTradeRealtimeEvent {
   return {
     ...event,
     latency: {

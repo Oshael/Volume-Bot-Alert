@@ -2,6 +2,7 @@ const db = require('../models/db');
 const socketHub = require('./socket-hub');
 const { createPostgresRealtimeListener } = require('./postgres-realtime-listener');
 const { createRealtimeLatencyWindow } = require('./realtime-latency-window');
+const { buildMarketTradeFinalityEvent } = require('./market-trade-finality-event');
 
 const CHANNEL = 'market_trade_created';
 const MAX_PAYLOAD_BYTES = 7800;
@@ -14,7 +15,9 @@ function buildMarketTradeUpdate(row) {
     transactionHash: row.transactionHash,
     actionIndex: Number(row.actionIndex),
     blockNumber: Number(row.blockNumber),
+    blockHash: row.blockHash,
     blockTime: row.blockTime,
+    observedAt: row.observedAt || row.latency?.receiptsAvailableAt || row.blockTime,
     side: row.side,
     walletAddress: row.walletAddress,
     amountUsd: row.volumeUsd == null ? null : Number(row.volumeUsd),
@@ -67,11 +70,13 @@ function createMarketTradeRealtime(deps = {}) {
     let event;
     try {
       const payload = JSON.parse(String(message.payload || '{}'));
+      const publishedAt = new Date(now()).toISOString();
       event = normalize({
         ...payload,
+        publishedAt,
         latency: {
           ...(payload.latency && typeof payload.latency === 'object' ? payload.latency : {}),
-          publishedAt: new Date(now()).toISOString(),
+          publishedAt,
         },
       });
     } catch (_) {
@@ -81,6 +86,8 @@ function createMarketTradeRealtime(deps = {}) {
     stats.received += 1;
     latency.record(event.latency, event.latency?.publishedAt);
     hub.emitMarketTradeUpdate(event);
+    const finalityEvent = buildMarketTradeFinalityEvent(event, 'finalized');
+    if (finalityEvent) hub.emitMarketTradeFinalityUpdate?.(finalityEvent);
     return event;
   }
 

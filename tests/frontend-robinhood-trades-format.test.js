@@ -6,6 +6,7 @@ const {
   shortenTrader,
   formatTradeAge,
   mergeLiveTrade,
+  removeLiveTrade,
   tradeMatchesWalletScope,
   tradeRowHtml,
   tradesListHtml,
@@ -64,6 +65,8 @@ describe('robinhood trades format', () => {
     assert.match(sell, /robinhood-trade-row is-sell/);
     // null amount surfaces the em-dash, not a crash
     assert.match(sell, /robinhood-trade-amount">—</);
+    const observed = tradeRowHtml(trade({ finality: 'observed' }), NOW);
+    assert.match(observed, /is-observed.*awaiting finality/);
   });
 
   it('shows an empty state instead of rows when there are no trades', () => {
@@ -77,6 +80,7 @@ describe('robinhood trades format', () => {
     const current = trade({ transactionHash: `0x${'b'.repeat(64)}`, actionIndex: 2 });
     const duplicate = trade({ ...current, amountUsd: 99 });
     assert.deepEqual(mergeLiveTrade([old, current], duplicate, 2), [duplicate, old]);
+    assert.deepEqual(removeLiveTrade([old, current], current), [old]);
   });
 
   it('filters DEV realtime trades fail-closed by the resolved creator wallet', () => {

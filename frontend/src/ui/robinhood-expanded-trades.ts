@@ -5,7 +5,9 @@
 import { fetchRobinhoodTokenTrades } from '../services/api/robinhood-trades';
 import { subscribeRobinhoodTrades } from '../services/socket/client';
 import { recordMarketTradeApplied } from '../services/socket/realtime-latency';
-import { mergeLiveTrade, tradeMatchesWalletScope, tradesListHtml } from './robinhood-trades-format';
+import {
+  mergeLiveTrade, removeLiveTrade, tradeMatchesWalletScope, tradesListHtml,
+} from './robinhood-trades-format';
 import type { RobinhoodTrade, RobinhoodTradeScope } from '../services/api/robinhood-trades';
 
 const REFRESH_INTERVAL_MS = 5000;
@@ -79,6 +81,12 @@ export function mountRobinhoodExpandedTrades(section: ParentNode, options: Mount
   const render = () => setList(panel, tradesListHtml(trades, Date.now()));
   const unsubscribe = subscribeRobinhoodTrades(options.token, (event) => {
     if (disposed) return;
+    if (event.type === 'market:trade:invalidate') {
+      trades = removeLiveTrade(trades, event);
+      render();
+      recordMarketTradeApplied(event);
+      return;
+    }
     if (!tradeMatchesWalletScope(event, scope, creatorAddress)) return;
     trades = mergeLiveTrade(trades, event, PANEL_LIMIT);
     render();

@@ -224,6 +224,14 @@ Gate:
 
 Objetivo: separar segurança de reorg de latência aparente.
 
+Progresso:
+
+- [x] Slice 3A: contrato Socket.IO v2 e aplicação frontend preparados. Clientes
+  v2 entram em salas separadas, recebem `market:trade:finalized` e entendem
+  `observed`, `finalized` e `invalidate`; o fluxo continua finalizado-only.
+- [ ] Slice 3B: estado durável e publicação de `observed`, promoção para
+  `finalized` e invalidação por reorg.
+
 O valor atual de 12 blocos adiciona cerca de 1,2 s quando a cadeia produz perto
 de dez blocos por segundo. Diminuir timers não remove essa espera.
 

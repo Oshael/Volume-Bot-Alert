@@ -3467,6 +3467,15 @@ body:has(.legacy-auth-modal[data-auth-modal-scope="profile"]) .workspace-market-
   color: #f2555a;
 }
 
+.robinhood-trade-row.is-observed {
+  opacity: 0.82;
+}
+
+.robinhood-trade-row.is-observed .robinhood-trade-age::after {
+  color: #f3b35b;
+  content: " · OBS";
+}
+
 .robinhood-trade-mc {
   color: #b8d2e8;
 }
