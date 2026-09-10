@@ -3991,6 +3991,15 @@ na Stage 204 para cada `observed` da faixa, copiando sua identidade e payload e
 acrescentando `reason='reorg'`, `recoveryGeneration` e `invalidatedAt`. Conflito
 com invalidation de outro hash ou geração falha fechado. O evento permanece em
 shadow e o consumer futuro deverá entregar `observed` antes desse terminal.
+Ainda antes da troca de canonicalidade, o executor identifica os logs `market`
+pelos hashes canônicos da faixa, remove seu ledger de processamento para permitir
+replay e deixa o FK apagar somente as observations órfãs. Os buckets 1m e 1h
+atingidos são reconstruídos das observations que continuam ligadas a blocos
+canônicos; os agregados 5m–24h do token também são recalculados, incluindo as 24h
+posteriores que podem mudar a escolha do mercado de valuation. Linhas contaminadas
+da Stage 104 são descartadas, e um bucket sem fonte é removido em vez de publicar
+preço ou volume zero. Tudo participa da mesma transação do rewind. Esse rollback
+não abre o gate: os demais domínios do manifesto continuam pendentes.
 
 Antes de definir ou reduzir retenção de `robinhood_chain_events` e
 `robinhood_holder_transfer_journal`, execute

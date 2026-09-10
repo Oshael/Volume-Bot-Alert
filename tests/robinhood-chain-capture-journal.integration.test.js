@@ -475,6 +475,12 @@ describe('Robinhood canonical chain capture journal', () => {
     assert.deepEqual(await journal.rewindCanonicalRecovery({ generation: '0' }), {
       status: 'rewound', generation: '0', nextGeneration: '1', orphanedBlocks: 1,
       tradeInvalidations: { observed: 1, invalidated: 1 },
+      market: {
+        affectedTokens: 0, deletedProcessedLogs: 0, deletedDerivedRows: 0,
+        deletedMinuteBuckets: 0, rebuiltMinuteBuckets: 0, deletedHourBuckets: 0,
+        rebuiltHourBuckets: 0, deletedAggregateBuckets: 0,
+        rebuiltAggregateBuckets: 0, removedEmptyAggregateBuckets: 0,
+      },
     });
     assert.deepEqual(await journal.rewindCanonicalRecovery({ generation: '0' }), {
       status: 'already-rewound', generation: '0', nextGeneration: '1',

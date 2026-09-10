@@ -4,6 +4,7 @@ const db = require('./db');
 const {
   createRobinhoodWalletSwapRealtimeOutboxRepository,
 } = require('./robinhood-wallet-swap-realtime-outbox');
+const { createRobinhoodMarketReorgRollback } = require('./robinhood-market-reorg-rollback');
 
 const CHAIN = 'robinhood';
 const NOTIFY_CHANNEL = 'robinhood_chain_recovery_outbox';
@@ -142,6 +143,7 @@ function createRobinhoodChainRecoveryJournal(options = {}) {
   const database = options.database || db;
   const tradeLifecycle = options.tradeLifecycle
     || createRobinhoodWalletSwapRealtimeOutboxRepository({ database });
+  const marketRollback = options.marketRollback || createRobinhoodMarketReorgRollback();
 
   async function recordDetected(client, input = {}) {
     if (!client || typeof client.query !== 'function') {
@@ -239,6 +241,9 @@ function createRobinhoodChainRecoveryJournal(options = {}) {
         generation: recoveryGeneration,
         fromBlock: rewind.fromBlock.toString(), throughBlock: rewind.throughBlock.toString(),
       });
+      const market = await marketRollback.rollback(client, {
+        fromBlock: rewind.fromBlock.toString(), throughBlock: rewind.throughBlock.toString(),
+      });
       const orphaned = await client.query(
         `UPDATE robinhood_chain_blocks SET canonical=FALSE
           WHERE chain=$1 AND canonical=TRUE
@@ -290,7 +295,7 @@ function createRobinhoodChainRecoveryJournal(options = {}) {
       return {
         status: 'rewound', generation: recoveryGeneration,
         nextGeneration: disposition.nextGeneration,
-        orphanedBlocks: Number(rewind.depth), tradeInvalidations,
+        orphanedBlocks: Number(rewind.depth), tradeInvalidations, market,
       };
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch (_) {}

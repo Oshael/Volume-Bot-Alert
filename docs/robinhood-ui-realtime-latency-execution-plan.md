@@ -319,9 +319,9 @@ necessário se uma migration surgir durante a implementação.
 
 **3B2B-2B — rollback e reconstrução de market (~450–500 linhas)**
 
-- [ ] remover somente observações atribuídas aos hashes órfãos;
-- [ ] reconstruir buckets 1m/1h/agg afetados a partir das observações canônicas;
-- [ ] invalidar trabalho derivado órfão sem representar ausência de dados como
+- [x] remover somente observações atribuídas aos hashes órfãos;
+- [x] reconstruir buckets 1m/1h/agg afetados a partir das observações canônicas;
+- [x] invalidar trabalho derivado órfão sem representar ausência de dados como
   volume ou preço zero.
 
 **3B2B-2C1 — rollback de swaps e cursores (~350–450 linhas)**
