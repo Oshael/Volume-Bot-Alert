@@ -60,7 +60,13 @@ function liveCandidatesSql(revalidate = false) {
      AND attribution.source = ANY($3::varchar[])
      AND attribution.attribution_block IS NOT NULL
      AND cursor.safe_head IS NOT NULL
-     AND attribution.attribution_block >= GREATEST(cursor.safe_head - $5::bigint + 1, 0)
+     AND attribution.attribution_block >= LEAST(
+       GREATEST(cursor.safe_head - $5::bigint + 1, 0),
+       GREATEST(
+         COALESCE(cursor.journal_floor_block, cursor.safe_head),
+         COALESCE(cursor.buffer_floor_block, cursor.safe_head)
+       )
+     )
      AND state.token_address IS NULL
      AND NOT EXISTS (
        SELECT 1 FROM admin_blocked_tokens blocked

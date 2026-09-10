@@ -59,7 +59,11 @@ describe('Robinhood holder bootstrap repository', () => {
     assert.match(calls[0].sql, /catalog\.first_seen_at >= \$2::timestamptz/);
     assert.match(calls[0].sql, /attribution\.source = ANY\(\$3::varchar\[\]\)/);
     assert.match(calls[0].sql, /attribution\.attribution_block IS NOT NULL/);
-    assert.match(calls[0].sql, /cursor\.safe_head - \$5::bigint/);
+    assert.match(calls[0].sql, /LEAST\([\s\S]*cursor\.safe_head - \$5::bigint/);
+    assert.match(calls[0].sql,
+      /COALESCE\(cursor\.journal_floor_block, cursor\.safe_head\)/);
+    assert.match(calls[0].sql,
+      /COALESCE\(cursor\.buffer_floor_block, cursor\.safe_head\)/);
     assert.doesNotMatch(calls[0].sql, /FOR UPDATE|INSERT INTO/);
     const admission = calls.find(({ sql }) => sql.includes('INSERT INTO robinhood_holder_token_states'));
     assert.match(admission.sql, /catalog\.address = ANY\(\$6::varchar\[\]\)/);

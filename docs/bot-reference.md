@@ -1840,13 +1840,20 @@ RPC. A descoberta de candidatos do bootstrap é somente leitura e não trava o
 cursor durante a busca no catálogo. Havendo candidatos, uma transação curta
 trava o cursor com `SKIP LOCKED` e revalida apenas o lote selecionado: proveniência,
 janela de admissão, coortes globais, estado existente e floors atuais de cobertura.
+Enquanto o deployment permanecer coberto simultaneamente por
+`journal_floor_block` e `buffer_floor_block`, ele continua elegível mesmo depois
+do gap incremental configurado. Assim, uma indisponibilidade temporária do seed
+não perde tokens cujos `Transfer` já foram capturados. O gap configurado continua
+como fallback quando a retenção disponível for menor e esses casos entram em
+`backfilling`.
 Cursor ocupado adia a admissão para o próximo tick, sem esperar sua liberação;
 lote vazio não inicia transação de escrita. O bootstrap continua usando os budgets
 e a cadência existentes; não cria outro polling nem altera o cursor.
 Essa admissão não invalida um range live em voo, pois o tópico global já
 inclui transfers de tokens ainda não admitidos. Cobertura incompleta continua
-fail-closed em `backfilling`; eventos antigos
-de tokens nunca admitidos são descartados pela retenção depois de 20.000 blocos.
+fail-closed em `backfilling`; eventos de tokens nunca admitidos só deixam de ser
+elegíveis ao live quando o deployment fica abaixo tanto da janela incremental
+quanto do maior floor de cobertura retida.
 Pendencias de tokens `drifted` seguem a mesma politica: nenhum worker local volta
 a consumi-las, então somente eventos abaixo do cutoff são descartados em batches.
 Qualquer estado diferente de `drifted` e qualquer membro de campanha global ativa
@@ -2295,8 +2302,8 @@ aparição do bytecode, valida a chain e persiste evidência canônica sem consu
 Blockscout nem usar o RPC pruned como fallback. Criações cujo creator não possa
 ser provado recebem somente `rpc_code_transition`, suficiente para habilitar o
 ledger sem inventar provenance. O live pode continuar ativo; os upserts mantêm
-evidência de maior precedência. Deployments recuperados com gap superior ao
-limite incremental de 20.000 blocos ainda devem entrar em uma coorte delta do
+evidência de maior precedência. Deployments recuperados abaixo dos floors retidos
+e também fora do limite incremental ainda devem entrar em uma coorte delta do
 backfill global abaixo; essa seleção aceita `rpc_code_transition` como deployment
 exato mesmo sem provenance de creator.
 
@@ -2431,8 +2438,11 @@ pendente e aplicado separadamente para usar seus índices parciais. Use exatamen
 os mesmos flags na confirmação.
 
 Para operação contínua, `ROBINHOOD_HOLDER_BACKFILL_MAX_INITIAL_GAP_BLOCKS`
-(20.000 por default) limita o incremental da VPS a deployments próximos do head.
-Tokens com gap maior permanecem sem state para não criar trabalho serial largo.
+(20.000 por default) limita o incremental da VPS quando o histórico retido não
+oferece uma janela maior. Deployments ainda cobertos simultaneamente pelos floors
+do journal e do buffer permanecem elegíveis e entram em `shadow`, mesmo com gap
+maior; tokens abaixo de ambas as fronteiras permanecem sem state para não criar
+trabalho serial largo.
 O incremental conserva uma única lease, mas pode executar entre 1 e 8 partições
 determinísticas em paralelo por `ROBINHOOD_HOLDER_BACKFILL_CONCURRENCY` (1 por
 default). Cada token pertence a somente uma partição na configuração carregada,

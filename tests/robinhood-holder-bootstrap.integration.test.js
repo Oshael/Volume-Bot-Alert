@@ -183,6 +183,31 @@ describe('Robinhood holder bootstrap persistence', () => {
         { token_address: late[4], holder_count: '7' },
         { token_address: late[5], holder_count: '0' },
       ]);
+
+      // A temporary admission outage must not strand exact tokens while their
+      // complete Transfer history is still retained by both live floors.
+      const retained = `0x${'7'.repeat(40)}`;
+      const expired = `0x${'8'.repeat(40)}`;
+      await client.query(`UPDATE robinhood_holder_cursors
+        SET next_block = 221, safe_head = 220,
+            journal_floor_block = 100, buffer_floor_block = 100`);
+      await client.query(`INSERT INTO token_catalog VALUES
+        ('robinhood', $1, '2026-08-10T00:20:00Z'),
+        ('robinhood', $2, '2026-08-10T00:21:00Z')`, [retained, expired]);
+      await client.query(`INSERT INTO robinhood_token_attributions VALUES
+        ('robinhood', $1, 'rpc_direct', 110),
+        ('robinhood', $2, 'rpc_direct', 99)`, [retained, expired]);
+      assert.deepEqual(await repository.seedNewTokens({
+        admittedAfter: '2026-08-10T00:00:00Z', limit: 10, maxInitialGapBlocks: 50,
+      }), [{
+        tokenAddress: late[1], deploymentBlock: '110',
+        backfillNextBlock: '110', ledgerStatus: 'shadow',
+      }, {
+        tokenAddress: retained, deploymentBlock: '110',
+        backfillNextBlock: '110', ledgerStatus: 'shadow',
+      }]);
+      assert.equal((await client.query(`SELECT COUNT(*)::int AS count
+        FROM robinhood_holder_token_states WHERE token_address = $1`, [expired])).rows[0].count, 0);
     } finally {
       client.release();
     }
