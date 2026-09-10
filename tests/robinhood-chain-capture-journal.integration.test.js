@@ -440,6 +440,131 @@ describe('Robinhood canonical chain capture journal', () => {
     }), [{ blockNumber: '101', blockHash: NEXT_HASH }]);
   });
 
+  it('atomically preserves an orphan branch and rewinds only an executable recovery', async () => {
+    const journal = createRobinhoodChainCaptureJournal();
+    const second = capture(101, NEXT_HASH, HASH);
+    second.transactions[0].hash = NEXT_TX;
+    second.events[0].transactionHash = NEXT_TX;
+    await journal.commitBlocks([capture(), second]);
+    const plan = {
+      generation: '0', reason: 'parent_hash_mismatch', recoverable: true,
+      executable: true, pendingRollbackDomains: [], maxDepth: 12,
+      checkpoint: { blockNumber: '101', blockHash: NEXT_HASH },
+      incoming: {
+        blockNumber: '102', blockHash: `0x${'6'.repeat(64)}`,
+        parentHash: `0x${'7'.repeat(64)}`,
+      },
+      ancestor: { blockNumber: '100', blockHash: HASH },
+      affectedRange: { fromBlock: '101', throughBlock: '101', depth: '1' },
+    };
+    await journal.markRecoveryRequired({ plan });
+    assert.deepEqual(await journal.rewindCanonicalRecovery({ generation: '0' }), {
+      status: 'rewound', generation: '0', nextGeneration: '1', orphanedBlocks: 1,
+    });
+    assert.deepEqual(await journal.rewindCanonicalRecovery({ generation: '0' }), {
+      status: 'already-rewound', generation: '0', nextGeneration: '1',
+    });
+    const blocks = await db.query(
+      `SELECT block_number::text, block_hash, canonical
+         FROM robinhood_chain_blocks ORDER BY block_number, block_hash`
+    );
+    assert.deepEqual(blocks.rows, [
+      { block_number: '100', block_hash: HASH, canonical: true },
+      { block_number: '101', block_hash: NEXT_HASH, canonical: false },
+    ]);
+    const cursor = await journal.getCursor();
+    assert.deepEqual({
+      generation: cursor.generation, state: cursor.recovery_state,
+      next: cursor.next_block, checkpoint: cursor.checkpoint_block,
+      hash: cursor.checkpoint_hash,
+    }, {
+      generation: '1', state: 'recovery_required', next: '101',
+      checkpoint: '100', hash: HASH,
+    });
+    const recovery = await db.query(
+      `SELECT status, rewound_at IS NOT NULL AS rewound
+         FROM robinhood_chain_recoveries WHERE chain='robinhood' AND generation=0`
+    );
+    assert.deepEqual(recovery.rows, [{ status: 'rewound', rewound: true }]);
+    const event = await db.query(
+      `SELECT payload FROM robinhood_chain_recovery_outbox
+        WHERE chain='robinhood' AND generation=0 AND event_kind='rewound'`
+    );
+    assert.deepEqual(event.rows[0].payload, {
+      type: 'chain:reorg:rewound', generation: '0', nextGeneration: '1', status: 'rewound',
+      orphanedRange: { fromBlock: '101', throughBlock: '101', depth: '1' },
+      ancestor: plan.ancestor, oldCheckpoint: plan.checkpoint,
+      replacementCheckpointHash: plan.incoming.parentHash,
+    });
+    await assert.rejects(
+      journal.commitBlock(second), (error) => error.code === 'capture_recovery_required'
+    );
+  });
+
+  it('fails closed before touching canonical state when the rollback gate is incomplete', async () => {
+    const journal = createRobinhoodChainCaptureJournal();
+    await journal.commitBlock(capture());
+    const plan = {
+      generation: '0', reason: 'parent_hash_mismatch', recoverable: true,
+      executable: false, pendingRollbackDomains: ['market'], maxDepth: 12,
+      checkpoint: { blockNumber: '100', blockHash: HASH },
+      incoming: { blockNumber: '101', blockHash: NEXT_HASH, parentHash: PARENT },
+      ancestor: { blockNumber: '99', blockHash: PARENT },
+      affectedRange: { fromBlock: '100', throughBlock: '100', depth: '1' },
+    };
+    await journal.markRecoveryRequired({ plan });
+    await assert.rejects(
+      journal.rewindCanonicalRecovery({ generation: '0' }),
+      (error) => error.code === 'capture_recovery_not_executable'
+    );
+    assert.equal((await db.query(
+      `SELECT canonical FROM robinhood_chain_blocks WHERE block_hash=$1`, [HASH]
+    )).rows[0].canonical, true);
+    assert.equal((await journal.getCursor()).checkpoint_block, '100');
+  });
+
+  it('refuses an executable rewind across the current finalized boundary', async () => {
+    const journal = createRobinhoodChainCaptureJournal();
+    await journal.commitBlock(capture());
+    const plan = {
+      generation: '0', reason: 'parent_hash_mismatch', recoverable: true,
+      executable: true, pendingRollbackDomains: [], maxDepth: 12,
+      checkpoint: { blockNumber: '100', blockHash: HASH },
+      incoming: { blockNumber: '101', blockHash: NEXT_HASH,
+        parentHash: `0x${'7'.repeat(64)}` },
+      ancestor: { blockNumber: '97', blockHash: PARENT },
+      affectedRange: { fromBlock: '98', throughBlock: '100', depth: '3' },
+    };
+    await journal.markRecoveryRequired({ plan });
+    await assert.rejects(
+      journal.rewindCanonicalRecovery({ generation: '0' }),
+      (error) => error.code === 'capture_recovery_finalized_boundary'
+    );
+    assert.equal((await db.query(
+      `SELECT canonical FROM robinhood_chain_blocks WHERE block_hash=$1`, [HASH]
+    )).rows[0].canonical, true);
+  });
+
+  it('refuses an executable rewind whose ancestor is no longer retained', async () => {
+    const journal = createRobinhoodChainCaptureJournal();
+    await journal.commitBlock(capture());
+    const plan = {
+      generation: '0', reason: 'parent_hash_mismatch', recoverable: true,
+      executable: true, pendingRollbackDomains: [], maxDepth: 12,
+      checkpoint: { blockNumber: '100', blockHash: HASH },
+      incoming: { blockNumber: '101', blockHash: NEXT_HASH,
+        parentHash: `0x${'7'.repeat(64)}` },
+      ancestor: { blockNumber: '99', blockHash: PARENT },
+      affectedRange: { fromBlock: '100', throughBlock: '100', depth: '1' },
+    };
+    await journal.markRecoveryRequired({ plan });
+    await assert.rejects(
+      journal.rewindCanonicalRecovery({ generation: '0' }),
+      (error) => error.code === 'capture_recovery_below_retention'
+    );
+    assert.equal((await journal.getCursor()).checkpoint_block, '100');
+  });
+
   it('rejects a commit prepared under an obsolete capture generation', async () => {
     const journal = createRobinhoodChainCaptureJournal();
     await assert.rejects(

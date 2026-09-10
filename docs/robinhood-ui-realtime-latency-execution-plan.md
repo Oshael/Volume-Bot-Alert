@@ -253,7 +253,7 @@ Estado implementado:
 - a Stage 204 não deve ser limpa enquanto invalidação, consumo e retenção não
   estiverem prontos. Neste ponto ela tende a guardar duas linhas por swap maduro.
 
-Ao retomar em outro contexto, o próximo trabalho é **3B2B-1B**, abaixo. Não ligar
+Ao retomar em outro contexto, o próximo trabalho é **3B2B-2**, abaixo. Não ligar
 `market:trade:observed` antes de concluir todos os gates de 3B2B.
 
 #### Slice 3B2B — recuperação de reorg, em cortes menores
@@ -294,13 +294,13 @@ Ao retomar em outro contexto, o próximo trabalho é **3B2B-1B**, abaixo. Não l
 
 **3B2B-1B — rewind canônico atômico, atrás do gate**
 
-- [ ] preservar a ramificação órfã para auditoria, marcar seus blocos como não
+- [x] preservar a ramificação órfã para auditoria, marcar seus blocos como não
   canônicos e recuar o cursor ao ancestral comum numa única transação;
-- [ ] gravar geração, faixa órfã, hashes antigo/novo e estado da recuperação numa
+- [x] gravar geração, faixa órfã, hashes antigo/novo e estado da recuperação numa
   outbox durável antes de permitir recaptura;
-- [ ] recusar recuperação além da profundidade configurada, abaixo da retenção ou
+- [x] recusar recuperação além da profundidade configurada, abaixo da retenção ou
   cruzando a fronteira finalizada;
-- [ ] garantir restart seguro em cada ponto entre detecção, rewind e recaptura.
+- [x] garantir restart seguro em cada ponto entre detecção, rewind e recaptura.
 
 **3B2B-2 — rollback de market, wallet e publicação**
 

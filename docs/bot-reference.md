@@ -3978,7 +3978,14 @@ A Stage 206 cria `robinhood_chain_recoveries`, uma linha durável por geração,
 move o cursor para `recovery_required` também grava a recuperação e o evento
 `chain:reorg:detected`; repetição é idempotente e um plano diferente para a mesma
 geração falha fechado. A migration importa um fence preexistente dos campos da
-Stage 205. Ainda não existe consumer para essa outbox, nem rewind automático.
+Stage 205. O executor de rewind somente aceita um plano `recoverable` com
+`executable=true` e nenhum domínio pendente; também revalida geração, checkpoint,
+fronteira finalizada, profundidade e continuidade integral da faixa retida. Numa
+única transação, ele preserva a ramificação como `canonical=false`, recua o
+checkpoint ao ancestral, incrementa a geração e grava `chain:reorg:rewound`.
+O cursor permanece em `recovery_required`, portanto recaptura continua bloqueada
+até os rollbacks de domínio e a transição de resume serem implementados. Como o
+planner atual mantém todos os domínios pendentes, o gate não abre em produção.
 
 Antes de definir ou reduzir retenção de `robinhood_chain_events` e
 `robinhood_holder_transfer_journal`, execute

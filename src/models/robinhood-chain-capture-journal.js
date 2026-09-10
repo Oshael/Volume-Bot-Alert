@@ -474,8 +474,12 @@ function createRobinhoodChainCaptureJournal(options = {}) {
   async function commitBlock(input = {}, options = {}) {
     return (await commitBlocks([input], options))[0];
   }
+  async function rewindCanonicalRecovery(input = {}) {
+    return recoveryJournal.rewindCanonical(input);
+  }
   return Object.freeze({
     commitBlock, commitBlocks, getCursor, listCanonicalHeaders, markRecoveryRequired,
+    rewindCanonicalRecovery,
   });
 }
 module.exports = {
