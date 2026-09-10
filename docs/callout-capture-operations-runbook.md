@@ -86,6 +86,31 @@ O `ExecStart` efetivo deve resolver para `npm run start:worker:callouts`. O scri
 fixa porta `3017`, desliga socket/web e seleciona exclusivamente o grupo
 `callouts`.
 
+### Browser CDP supervisionado
+
+Quando `FOMO_CAPTURE_TRANSPORT=browser_cdp`, o Chrome externo deve executar como
+a instância permanente `trendscope-worker@fomo-browser.service`, seguindo
+`docs/new-worker-service-runbook.md`. O entrypoint
+`npm run start:worker:fomo-browser` exige um perfil persistente já autenticado,
+mantém o CDP somente em `127.0.0.1` e encerra se o Chrome cair, permitindo que a
+template systemd o reinicie. Instale `deploy/systemd/fomo-browser.env.example`
+como `/etc/trendscope/fomo-browser.env` e o drop-in de
+`deploy/systemd/trendscope-worker@fomo-browser.service.example`.
+
+O diretório do perfil deve pertencer ao mesmo `User` e `Group` da template:
+
+```bash
+sudo chown -R trendscope:trendscope /var/lib/fomo-browser
+sudo chmod 0700 /var/lib/fomo-browser /var/lib/fomo-browser/profile
+sudo systemctl daemon-reload
+sudo systemctl enable --now trendscope-worker@fomo-browser.service
+curl -sS --max-time 5 http://127.0.0.1:9222/json/version
+```
+
+Não há dependência rígida entre as duas instâncias: `callouts` preserva Pump e
+retenção quando o browser está indisponível e reconecta a Fomo automaticamente
+quando o CDP retorna. Ative ambas no boot.
+
 ## 3. Aplicar schema em janela segura
 
 Não execute esta etapa enquanto os backfills estiverem saturando o PostgreSQL.

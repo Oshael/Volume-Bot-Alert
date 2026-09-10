@@ -1531,6 +1531,17 @@ direto, lookup de trade e reconciliação periódica Fomo ficam desativados ness
 modo; o navegador é o dono exclusivo da sessão. O transporte `direct_ws`
 continua disponível como fallback.
 
+Na VPS, esse navegador é supervisionado pela instância da template compartilhada
+`trendscope-worker@fomo-browser.service`. Seu script
+`start:worker:fomo-browser` inicia o Chrome headless com CDP restrito a loopback,
+usando por padrão o perfil persistente `/var/lib/fomo-browser/profile`; Chrome e
+perfil podem ser substituídos somente pelos overrides do env exclusivo
+`/etc/trendscope/fomo-browser.env`. O entrypoint falha se `Local State` não existe
+ou se o perfil não é gravável, e encerra com falha quando o Chrome cai para que o
+systemd o reinicie. A instância `callouts` não depende rigidamente desse serviço:
+Pump e retenção continuam funcionando durante indisponibilidade da Fomo, que
+reconecta automaticamente quando o CDP volta.
+
 Discovery read-only de perfis também é exclusiva de `browser_cdp` e é ativada
 por `FOMO_PROFILE_DISCOVERY_ENABLED=true`. A cada ciclo ela lê os rankings
 disponíveis de 24h, 7d e 30d, cada um limitado por
