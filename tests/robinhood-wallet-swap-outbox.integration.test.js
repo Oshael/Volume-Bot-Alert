@@ -9,6 +9,9 @@ const { STATEMENTS } = require('../src/utils/db-init-stage203');
 const {
   createRobinhoodWalletSwapOutboxProducer,
 } = require('../src/models/robinhood-wallet-swap-outbox-producer');
+const {
+  createRobinhoodWalletSwapOutboxRepository,
+} = require('../src/models/robinhood-wallet-swap-outbox');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const TX = `0x${'2'.repeat(64)}`;
@@ -87,6 +90,26 @@ describe('Robinhood wallet-swap outbox producer integration', () => {
     assert.equal(stored.rows[0].payload.blockHash, BLOCK);
     assert.equal(stored.rows[0].payload.transactionIndex, '3');
     assert.equal(stored.rows[0].payload.parserVersion, 'rh-wallet-outbox-1');
+  });
+
+  it('leases finalized canonical work and deletes it only after delivery', async () => {
+    const database = {
+      query: (...args) => client.query(...args),
+      getClient: async () => ({
+        query: (...args) => client.query(...args),
+        release: () => {},
+      }),
+    };
+    const outbox = createRobinhoodWalletSwapOutboxRepository({ database });
+    const claimed = await outbox.claimFinalized({
+      owner: 'integration', limit: 10, leaseMs: 60000, throughBlock: '100',
+    });
+    assert.equal(claimed.length, 1);
+    assert.equal(claimed[0].transactionHash, TX);
+    assert.equal((await outbox.settle({ owner: 'integration', delivered: claimed })).delivered, 1);
+    assert.equal((await client.query(
+      'SELECT COUNT(*)::int AS count FROM robinhood_wallet_swap_outbox'
+    )).rows[0].count, 0);
   });
 
   it('rejects an accepted identity without committed canonical context', async () => {
