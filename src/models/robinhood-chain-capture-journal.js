@@ -8,6 +8,9 @@ const NOTIFY_CHANNEL = 'robinhood_chain_capture';
 const DOMAIN_NOTIFY_CHANNEL = 'robinhood_chain_domain_outbox';
 const DEPLOYMENT_NOTIFY_CHANNEL = 'robinhood_token_deployment_outbox';
 const CAPTURE_VERSION = 3;
+const RECOVERY_REASONS = new Set([
+  'parent_hash_mismatch', 'ancestor_not_found', 'finalized_boundary_crossed',
+]);
 function quantity(value, label) {
   const raw = String(value ?? '').trim();
   if (!/^(?:0x[0-9a-f]+|\d+)$/i.test(raw)) throw new Error(`${label} is invalid`);
@@ -31,6 +34,44 @@ function timestamp(value, label) {
   const parsed = new Date(value);
   if (!Number.isFinite(parsed.getTime())) throw new Error(`${label} is invalid`);
   return parsed.toISOString();
+}
+function recoveryHeader(value, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${label} is required`);
+  }
+  return {
+    blockNumber: quantity(value.blockNumber, `${label}.blockNumber`).toString(),
+    blockHash: hex(value.blockHash, 32, `${label}.blockHash`),
+  };
+}
+function normalizeRecoveryPlan(input = {}) {
+  const reason = String(input.reason || '');
+  if (!RECOVERY_REASONS.has(reason)) throw new Error('recovery reason is invalid');
+  if (typeof input.recoverable !== 'boolean') throw new Error('recovery recoverable is required');
+  const checkpoint = recoveryHeader(input.checkpoint, 'recovery.checkpoint');
+  const incoming = {
+    ...recoveryHeader(input.incoming, 'recovery.incoming'),
+    parentHash: hex(input.incoming?.parentHash, 32, 'recovery.incoming.parentHash'),
+  };
+  const maxDepth = Number(quantity(input.maxDepth, 'recovery.maxDepth'));
+  if (!Number.isSafeInteger(maxDepth) || maxDepth < 1 || maxDepth > 1000) {
+    throw new Error('recovery.maxDepth must be between 1 and 1000');
+  }
+  const ancestor = input.ancestor == null
+    ? null : recoveryHeader(input.ancestor, 'recovery.ancestor');
+  if (input.recoverable && !ancestor) throw new Error('recoverable plan requires an ancestor');
+  if (ancestor && (BigInt(ancestor.blockNumber) > BigInt(checkpoint.blockNumber)
+      || BigInt(ancestor.blockNumber) >= BigInt(incoming.blockNumber))) {
+    throw new Error('recovery ancestor is outside the affected range');
+  }
+  return { reason, recoverable: input.recoverable, maxDepth, checkpoint, incoming, ancestor };
+}
+function recoveryRequiredError(plan) {
+  const error = new Error('canonical capture requires explicit reorg recovery');
+  error.code = 'capture_recovery_required';
+  error.fatal = true;
+  error.recoveryPlan = plan || null;
+  return error;
 }
 function captureDigest(block, transactions, events, v3Snapshots) {
   const payload = {
@@ -180,15 +221,62 @@ function createRobinhoodChainCaptureJournal(options = {}) {
   async function getCursor(client = database) {
     const result = await client.query(
       `SELECT next_block, checkpoint_block, checkpoint_hash, node_head,
-              finalized_head, head_observed_at, receipts_available_at, version
+              finalized_head, head_observed_at, receipts_available_at, version,
+              generation, recovery_state, recovery_plan, recovery_detected_at
          FROM robinhood_chain_capture_cursor WHERE chain = $1`, [CHAIN]
     );
     if (!result.rowCount) return null;
     const row = result.rows[0];
     return Object.fromEntries(Object.entries(row).map(([key, value]) => (
-      [key, typeof value === 'string' || value == null || value instanceof Date
+      [key, key === 'recovery_plan' || typeof value === 'string'
+        || value == null || value instanceof Date
         ? value : String(value)]
     )));
+  }
+  async function markRecoveryRequired(input = {}) {
+    const plan = normalizeRecoveryPlan(input.plan);
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      const cursor = await client.query(
+        'SELECT * FROM robinhood_chain_capture_cursor WHERE chain=$1 FOR UPDATE', [CHAIN]
+      );
+      const current = cursor.rows[0];
+      if (!current) throw new Error('capture cursor does not exist');
+      if (current.recovery_state === 'recovery_required') {
+        await client.query('COMMIT');
+        return {
+          status: 'already-required', generation: String(current.generation),
+          plan: current.recovery_plan,
+        };
+      }
+      if (String(current.checkpoint_block) !== plan.checkpoint.blockNumber
+          || current.checkpoint_hash !== plan.checkpoint.blockHash) {
+        const error = new Error('capture recovery plan lost its checkpoint fence');
+        error.code = 'capture_recovery_fence_conflict';
+        throw error;
+      }
+      const updated = await client.query(
+        `UPDATE robinhood_chain_capture_cursor
+            SET recovery_state='recovery_required', recovery_plan=$2::jsonb,
+                recovery_detected_at=NOW(), updated_at=NOW()
+          WHERE chain=$1 AND generation=$3::bigint AND recovery_state='running'
+          RETURNING generation`,
+        [CHAIN, JSON.stringify(plan), String(current.generation)]
+      );
+      if (updated.rowCount !== 1) {
+        const error = new Error('capture recovery generation fence rejected the plan');
+        error.code = 'capture_recovery_fence_conflict';
+        throw error;
+      }
+      await client.query('COMMIT');
+      return { status: 'recovery-required', generation: String(current.generation), plan };
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch (_) {}
+      throw error;
+    } finally {
+      client.release();
+    }
   }
   async function commitBlocks(inputs = []) {
     if (!Array.isArray(inputs) || inputs.length === 0) {
@@ -202,6 +290,9 @@ function createRobinhoodChainCaptureJournal(options = {}) {
         'SELECT * FROM robinhood_chain_capture_cursor WHERE chain = $1 FOR UPDATE', [CHAIN]
       );
       const current = cursor.rows[0];
+      if (current?.recovery_state === 'recovery_required') {
+        throw recoveryRequiredError(current.recovery_plan);
+      }
       const replay = entries.length === 1 && current
         && entries[0].block.number === BigInt(current.checkpoint_block)
         && entries[0].block.hash === current.checkpoint_hash;
@@ -338,9 +429,11 @@ function createRobinhoodChainCaptureJournal(options = {}) {
   async function commitBlock(input = {}) {
     return (await commitBlocks([input]))[0];
   }
-  return Object.freeze({ commitBlock, commitBlocks, getCursor });
+  return Object.freeze({ commitBlock, commitBlocks, getCursor, markRecoveryRequired });
 }
 module.exports = {
   CAPTURE_VERSION, DOMAIN_NOTIFY_CHANNEL, NOTIFY_CHANNEL, createRobinhoodChainCaptureJournal,
-  __private: { batchPayload, normalizeInput, validateSequence },
+  __private: {
+    batchPayload, normalizeInput, normalizeRecoveryPlan, recoveryRequiredError, validateSequence,
+  },
 };

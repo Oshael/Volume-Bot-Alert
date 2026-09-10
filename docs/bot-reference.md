@@ -3941,6 +3941,15 @@ Bloco, contexto de transação, logs e avanço do cursor serão commitados
 atomicamente; gaps e divergência de `parentHash` falham antes do avanço. Aplique
 com `node src/utils/db-init-stage191.js` antes de habilitar o capturador.
 
+A Stage 205 adiciona ao cursor canônico `generation`, `recovery_state`,
+`recovery_plan` e `recovery_detected_at`; aplique com
+`node src/utils/db-init-stage205.js` antes de implantar código que use o fence.
+O journal pode persistir `recovery_required` somente sob lock e quando checkpoint
+e geração ainda correspondem ao plano. Nesse estado, qualquer novo commit da
+captura falha com `capture_recovery_required` fatal. Este stage deliberadamente
+não oferece resume, rewind nem alteração de canonicalidade: essas operações só
+serão liberadas depois que os rollbacks dos domínios estiverem implementados.
+
 Antes de definir ou reduzir retenção de `robinhood_chain_events` e
 `robinhood_holder_transfer_journal`, execute
 `npm run robinhood:retention-safety-audit`. O comando é estritamente read-only,

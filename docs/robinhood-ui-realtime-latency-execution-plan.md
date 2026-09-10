@@ -253,15 +253,23 @@ Estado implementado:
 - a Stage 204 não deve ser limpa enquanto invalidação, consumo e retenção não
   estiverem prontos. Neste ponto ela tende a guardar duas linhas por swap maduro.
 
-Ao retomar em outro contexto, o próximo trabalho é **3B2B-0**, abaixo. Não ligar
+Ao retomar em outro contexto, o próximo trabalho é **3B2B-0B**, abaixo. Não ligar
 `market:trade:observed` antes de concluir todos os gates de 3B2B.
 
 #### Slice 3B2B — recuperação de reorg, em cortes menores
 
-**3B2B-0 — contrato e fence de recuperação**
+**3B2B-0A — estado durável e fence de captura**
 
-- [ ] definir profundidade máxima suportada, fronteira finalizada que nunca pode
-  ser revertida automaticamente e estado explícito `recovery_required`;
+- [x] adicionar `generation`, `recovery_state`, plano e instante de detecção ao
+  cursor canônico;
+- [x] persistir `recovery_required` sob lock e conferir checkpoint/generation;
+- [x] recusar novos commits com erro fatal enquanto o estado exigir recuperação;
+- [x] não oferecer reset/resume antes de existir rollback seguro.
+
+**3B2B-0B — planner limitado e inventário de rollback**
+
+- [ ] definir profundidade máxima suportada e fronteira finalizada que nunca pode
+  ser revertida automaticamente;
 - [ ] localizar ancestral comum por número/hash com leituras RPC limitadas;
 - [ ] serializar captura e recuperação pela mesma lease/lock e cercar writers por
   geração, impedindo commit da ramificação antiga;

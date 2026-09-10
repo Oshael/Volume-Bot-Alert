@@ -22,6 +22,7 @@ const stage192 = require('../src/utils/db-init-stage192');
 const stage193 = require('../src/utils/db-init-stage193');
 const stage194 = require('../src/utils/db-init-stage194');
 const stage195 = require('../src/utils/db-init-stage195');
+const stage205 = require('../src/utils/db-init-stage205');
 const stage103 = require('../src/utils/db-init-stage103');
 const stage165 = require('../src/utils/db-init-stage165');
 const v2 = require('../src/services/uniswap-v2-decoder');
@@ -80,6 +81,7 @@ describe('Robinhood canonical chain capture journal', () => {
     await stage193.init({ closePool: false });
     await stage194.init({ closePool: false });
     await stage195.init({ closePool: false });
+    await stage205.init({ closePool: false });
   });
 
   beforeEach(clearTables);
@@ -366,6 +368,40 @@ describe('Robinhood canonical chain capture journal', () => {
     );
     const counts = await db.query('SELECT COUNT(*)::int AS blocks FROM robinhood_chain_blocks');
     assert.equal(counts.rows[0].blocks, 1);
+    assert.equal((await journal.getCursor()).next_block, '101');
+  });
+
+  it('durably fences capture once explicit reorg recovery is required', async () => {
+    const journal = createRobinhoodChainCaptureJournal();
+    await journal.commitBlock(capture());
+    const plan = {
+      reason: 'parent_hash_mismatch', recoverable: true, maxDepth: 12,
+      checkpoint: { blockNumber: '100', blockHash: HASH },
+      incoming: { blockNumber: '101', blockHash: NEXT_HASH, parentHash: PARENT },
+      ancestor: { blockNumber: '99', blockHash: PARENT },
+    };
+
+    await assert.rejects(journal.markRecoveryRequired({
+      plan: {
+        ...plan,
+        checkpoint: { blockNumber: '99', blockHash: PARENT },
+      },
+    }), (error) => error.code === 'capture_recovery_fence_conflict');
+    assert.equal((await journal.getCursor()).recovery_state, 'running');
+    assert.deepEqual(await journal.markRecoveryRequired({ plan }), {
+      status: 'recovery-required', generation: '0', plan,
+    });
+    const cursor = await journal.getCursor();
+    assert.equal(cursor.recovery_state, 'recovery_required');
+    assert.deepEqual(cursor.recovery_plan, plan);
+    assert.ok(cursor.recovery_detected_at instanceof Date);
+    assert.deepEqual(await journal.markRecoveryRequired({ plan }), {
+      status: 'already-required', generation: '0', plan,
+    });
+    await assert.rejects(
+      journal.commitBlock(capture(101, NEXT_HASH, HASH)),
+      (error) => error.code === 'capture_recovery_required' && error.fatal === true
+    );
     assert.equal((await journal.getCursor()).next_block, '101');
   });
 

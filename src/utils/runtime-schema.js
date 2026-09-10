@@ -5745,6 +5745,24 @@ const SCHEMA_GROUPS = [
       ],
     }],
   },
+  {
+    key: 'stage205-robinhood-capture-recovery-fence',
+    name: 'Stage 205 Robinhood canonical capture recovery fence',
+    repair: 'node src/utils/db-init-stage205.js',
+    tables: [{
+      table: 'robinhood_chain_capture_cursor',
+      columns: [
+        'generation', 'recovery_state', 'recovery_plan', 'recovery_detected_at',
+      ],
+      constraints: [{
+        name: 'rh_chain_capture_cursor_recovery_check',
+        includes: [
+          'generation', 'running', 'recovery_required', 'jsonb_typeof',
+          'recovery_plan', 'recovery_detected_at',
+        ],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
