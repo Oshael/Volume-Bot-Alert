@@ -340,10 +340,10 @@ necessário se uma migration surgir durante a implementação.
 
 **3B2B-2C2 — reconstrução de posições (~400–500 linhas)**
 
-- [ ] identificar somente wallets/tokens contaminados pela faixa órfã;
-- [ ] reconstruir posição, custo e PnL dessas identidades a partir do ledger
+- [x] identificar somente wallets/tokens contaminados pela faixa órfã;
+- [x] reconstruir posição, custo e PnL dessas identidades a partir do ledger
   canônico retido;
-- [ ] atualizar os watermarks apenas junto do estado reconstruído.
+- [x] atualizar os watermarks apenas junto do estado reconstruído.
 
 **3B2B-2D — coordenação e paridade (~350–450 linhas)**
 

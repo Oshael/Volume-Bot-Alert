@@ -1,5 +1,9 @@
 'use strict';
 
+const {
+  createRobinhoodWalletPositionReorg,
+} = require('./robinhood-wallet-position-reorg');
+
 const CHAIN = 'robinhood';
 
 function quantity(value, label) {
@@ -75,7 +79,9 @@ async function rewindLiveCursor(client, range, fence) {
   return true;
 }
 
-function createRobinhoodWalletReorgRollback() {
+function createRobinhoodWalletReorgRollback(options = {}) {
+  const positionReorg = options.positionReorg || createRobinhoodWalletPositionReorg();
+
   async function rollback(client, input = {}) {
     if (!client || typeof client.query !== 'function') {
       throw new Error('wallet rollback requires a transaction client');
@@ -107,6 +113,12 @@ function createRobinhoodWalletReorgRollback() {
     if (fence.rowCount !== 1) throw conflict('wallet rollback lost the canonical fence');
 
     const cursorRewound = await rewindLiveCursor(client, range, fence.rows[0]);
+    const positionRollback = await positionReorg.rollback(client, {
+      ...range,
+      ancestorTimestamp: fence.rows[0].ancestor_timestamp,
+      fromTimestamp: fence.rows[0].from_timestamp,
+      throughTimestamp: fence.rows[0].through_timestamp,
+    });
 
     const deleted = await client.query(
       `WITH orphaned_swaps AS MATERIALIZED (
@@ -182,6 +194,7 @@ function createRobinhoodWalletReorgRollback() {
       deletedSwaps: Number(row.deleted_swaps || 0),
       deletedTransactionPositions: Number(row.deleted_positions || 0),
       cursorRewound,
+      positionRollback,
     };
   }
 

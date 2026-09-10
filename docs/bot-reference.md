@@ -4017,9 +4017,14 @@ O mesmo rewind remove swaps atribuídos à ramificação órfã de
 e os `robinhood_transaction_positions` ligados ao hash antigo. O cursor `live` de wallet-swaps é
 recuado ao ancestral somente quando seu checkpoint pertence integralmente à faixa afetada: geração
 e checkpoint do capture, hash canônico do wallet cursor e versão da linha são revalidados sob lock.
-Qualquer divergência aborta toda a transação antes de alterar canonicalidade. O cursor `seed` não é
-alterado. As posições agregadas por wallet/token permanecem intocadas até sua reconstrução
-dedicada; por isso o gate de recovery continua fechado após este passo.
+Qualquer divergência aborta toda a transação antes de alterar canonicalidade. Para cada projeção
+financeira LIVE suportada cujo cursor atravessou a faixa, o mesmo rewind cruza os swaps órfãos — e,
+em `unified_transfer_v1`, transfers wallet-to-wallet órfãos — apenas com posições já existentes.
+Esses pares são reconstruídos do ledger PostgreSQL retido até o ancestral; pares sem história
+canônica restante são removidos. A substituição de quantidade, custo e PnL e o recuo do cursor
+financeiro são atômicos. O cursor `seed` permanece imutável e qualquer checkpoint financeiro fora
+da ramificação aborta toda a recuperação. Não há RPC nem migration adicional. O gate de recovery
+continua fechado porque os demais domínios ainda precisam de rollback próprio.
 
 Antes de definir ou reduzir retenção de `robinhood_chain_events` e
 `robinhood_holder_transfer_journal`, execute
