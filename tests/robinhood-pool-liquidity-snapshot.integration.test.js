@@ -300,6 +300,13 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
     await db.query('DELETE FROM robinhood_liquidity_realtime_outbox WHERE token_address=$1', [TOKEN]);
     await db.query('DELETE FROM robinhood_pool_liquidity_snapshots WHERE market_key=$1', [MARKET]);
     await write('40', `0x${'4'.repeat(64)}`);
+    const projection = await outbox.readProjection({
+      address: TOKEN, liquidityProjectionCommittedAt: '2026-08-22T11:00:01Z',
+    });
+    assert.deepEqual({
+      address: projection.address, liquidityUsd: projection.liquidityUsd,
+      coverage: projection.liquidityCoverage, markets: projection.liquidityMarketCount,
+    }, { address: TOKEN, liquidityUsd: '42.5', coverage: 'complete', markets: 1 });
     let [row] = await outbox.claimOutbox({ owner: 'integration', limit: 1, leaseMs: 60_000 });
     assert.deepEqual({
       address: row.payload.address, liquidityUsd: row.payload.liquidityUsd,

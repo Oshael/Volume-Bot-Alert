@@ -778,7 +778,11 @@ um sinal por pool/bloco/hash e chama `pg_notify('robinhood_liquidity_realtime_ou
 PostgreSQL só entrega esse wake depois do commit. Replay da mesma origem não duplica a linha e um
 snapshot mais antigo não cria sinal. O mesmo worker canônico consome a fila com claim/lease,
 retry, reclaim e `blocked`, reconstrói a projeção das tabelas duráveis e publica pelo relay
-`market_liquidity_updated`; o web entrega `market:liquidity` na sala já existente do token.
+`market_liquidity_updated`. Como `pg_notify` limita o payload, o relay carrega somente endereço e
+versão da projeção; o web coalesce sinais do mesmo token, relê a projeção completa das tabelas
+duráveis e entrega `market:liquidity` na sala já existente. Durante deploy gradual, o listener web
+também aceita o payload completo da versão anterior. O tamanho do evento Socket.IO não fica
+limitado pela quantidade de pools no sinal PostgreSQL.
 As pontas são independentes e desligadas por padrão: habilite primeiro
 `ROBINHOOD_LIQUIDITY_REALTIME_AUDIENCE_ENABLED` no web e depois
 `ROBINHOOD_LIQUIDITY_REALTIME_PUBLISHER_ENABLED` no canonical-liquidity. A lease expõe backlog,
@@ -821,7 +825,8 @@ SELECT lease_key,
        metadata #>> '{publisher,lastError,message}' AS publisher_error,
        metadata #>> '{telemetry,marketLiquidity,audienceEnabled}' AS audience_enabled,
        metadata #>> '{telemetry,marketLiquidity,listening}' AS audience_listening,
-       metadata #>> '{telemetry,marketLiquidity,received}' AS audience_received
+       metadata #>> '{telemetry,marketLiquidity,received}' AS audience_received,
+       metadata #>> '{telemetry,marketLiquidity,hydrationFailures}' AS hydration_failures
   FROM worker_leases
  WHERE lease_key IN ('robinhood-canonical-liquidity-worker', 'web-realtime-runtime')
  ORDER BY lease_key;
@@ -842,6 +847,24 @@ operador, não uma segmentação por usuário: enquanto as duas flags estiverem 
 cliente inscrito na sala do token pode receber o evento. Para rollback, desligue primeiro o
 publisher e reinicie apenas o canonical-liquidity; isso preserva linhas pendentes. Depois desligue
 a audiência e reinicie apenas o web. O painel continua convergindo pelo snapshot HTTP.
+Se uma versão anterior bloquear linhas com `invalid or oversized market liquidity event`, mantenha
+o publisher desligado, publique primeiro o web corrigido e depois o worker corrigido. Confirme que
+não há lease ainda ativa e então refileire somente esse erro conhecido:
+
+```sql
+WITH reset AS (
+  UPDATE robinhood_liquidity_realtime_outbox
+     SET status='pending', attempt_count=0, next_attempt_at=NOW(),
+         lease_owner=NULL, lease_until=NULL, last_error=NULL, updated_at=NOW()
+   WHERE status IN ('pending', 'blocked')
+     AND last_error='invalid or oversized market liquidity event'
+  RETURNING 1
+)
+SELECT COUNT(*) AS reset_rows FROM reset;
+```
+
+Não use esse reset para outros erros: falha de hidratação, schema ou banco exige diagnóstico e
+deve permanecer observável.
 
 O status do retention worker expõe `realtimeOutbox` com backlog e idade por `event_kind`, retries,
 bloqueados, fronteiras publicadas e a última invalidação retida. `observedLagBlocks` compara o head

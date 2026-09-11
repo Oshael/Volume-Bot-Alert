@@ -18,6 +18,16 @@ function idOf(value, label) {
   if (!/^\d+$/.test(id) || BigInt(id) <= 0n) throw new Error(`${label} must be a positive id`);
   return id;
 }
+function tokenAddressOf(value) {
+  const address = String(value || '').trim().toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(address)) throw new Error('liquidity token address is invalid');
+  return address;
+}
+function timestampOf(value) {
+  const parsed = Date.parse(String(value || ''));
+  if (!Number.isFinite(parsed)) throw new Error('liquidity projection timestamp is invalid');
+  return new Date(parsed).toISOString();
+}
 function createRobinhoodLiquidityRealtimeOutboxRepository(options = {}) {
   const database = options.database || db;
   const defaultMaxAttempts = options.maxAttempts || DEFAULT_MAX_ATTEMPTS;
@@ -128,7 +138,49 @@ function createRobinhoodLiquidityRealtimeOutboxRepository(options = {}) {
       oldestAgeSeconds: row.oldest_age_seconds == null ? null : Number(row.oldest_age_seconds),
     };
   }
-  return Object.freeze({ claimOutbox, settleOutbox, reclaimExpiredLeases, readBacklog });
+  async function readProjection(input = {}) {
+    const address = tokenAddressOf(input.address);
+    const committedAt = timestampOf(input.liquidityProjectionCommittedAt);
+    const result = await database.query(
+      `WITH projection AS (
+         SELECT $1::text AS token_address,
+           SUM(snapshot.liquidity_usd) FILTER (WHERE snapshot.liquidity_usd IS NOT NULL)
+             AS liquidity_usd,
+           COUNT(registry.market_key)::int AS market_count,
+           COUNT(snapshot.liquidity_usd)::int AS valued_count,
+           COALESCE(MAX(snapshot.updated_at) FILTER (WHERE snapshot.liquidity_usd IS NOT NULL),
+                    $2::timestamptz) AS committed_at,
+           COALESCE(jsonb_agg(jsonb_build_object(
+             'protocol', registry.protocol, 'marketKey', registry.market_key,
+             'poolAddress', registry.pool_address, 'poolId', registry.pool_id,
+             'liquidityUsd', snapshot.liquidity_usd::text
+           ) ORDER BY snapshot.liquidity_usd DESC, registry.protocol, registry.market_key)
+             FILTER (WHERE snapshot.liquidity_usd IS NOT NULL), '[]'::jsonb) AS pools
+         FROM robinhood_pool_registry registry
+         LEFT JOIN robinhood_pool_liquidity_snapshots snapshot
+           ON snapshot.chain=registry.chain AND snapshot.protocol=registry.protocol
+          AND snapshot.market_key=registry.market_key
+          AND snapshot.snapshot_block_number IS NOT NULL
+          AND snapshot.liquidity_confidence='medium'
+         WHERE registry.chain='robinhood' AND registry.token_address=$1 AND registry.active
+       ) SELECT jsonb_build_object(
+           'chain', 'robinhood', 'address', token_address,
+           'liquidityUsd', liquidity_usd::text,
+           'liquidityProjectionCommittedAt', committed_at,
+           'liquidityCoverage', CASE WHEN valued_count=0 THEN 'unavailable'
+             WHEN valued_count<market_count THEN 'partial' ELSE 'complete' END,
+           'liquidityMarketCount', market_count,
+           'valuedLiquidityMarketCount', valued_count, 'liquidityPools', pools,
+           'liquidityIsLowerBound', valued_count>0 AND valued_count<market_count,
+           'latency', jsonb_build_object('projectionCommittedAt', committed_at)
+         ) AS payload FROM projection`,
+      [address, committedAt]
+    );
+    return result.rows[0]?.payload || null;
+  }
+  return Object.freeze({
+    claimOutbox, settleOutbox, reclaimExpiredLeases, readBacklog, readProjection,
+  });
 }
 module.exports = {
   DEFAULT_MAX_ATTEMPTS, NOTIFY_CHANNEL, TABLE,
