@@ -4072,6 +4072,15 @@ preimage para qualquer transfer elegível falha fechado e aborta todo o rewind.
 Implante a migration com `node src/utils/db-init-stage208.js` antes de reiniciar
 qualquer processo que execute o `robinhood-retention-worker` atualizado.
 
+O rewind canônico também remove de `robinhood_wallet_signed_origins` somente a
+primeira origem `live` ancorada em bloco/hash da ramificação órfã e recua o
+cursor `live` de signed-origin ao ancestral, incluindo `safe_head` e seus hashes.
+Origens `seed` nunca são alteradas; se uma delas aparecer dentro da faixa de
+reorg, ou se evidência LIVE existir sem cursor compatível, a recuperação falha
+fechada antes de trocar a canonicalidade. A recaptura recria a primeira origem
+da nova ramificação usando o journal canônico. Isso não libera sozinho o gate
+`wallet-derived`: first-buy ainda precisa do rollback correspondente.
+
 Antes de definir ou reduzir retenção de `robinhood_chain_events` e
 `robinhood_holder_transfer_journal`, execute
 `npm run robinhood:retention-safety-audit`. O comando é estritamente read-only,

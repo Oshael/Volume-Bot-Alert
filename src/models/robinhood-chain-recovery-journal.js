@@ -11,6 +11,9 @@ const {
 } = require('./robinhood-wallet-transfer-reorg-rollback');
 const { createRobinhoodLiquidityReorgRollback } = require('./robinhood-liquidity-reorg-rollback');
 const {
+  createRobinhoodWalletSignedOriginReorgRollback,
+} = require('./robinhood-wallet-signed-origin-reorg-rollback');
+const {
   ROLLBACK_DOMAINS, ROLLBACK_MANIFEST_VERSION,
 } = require('../services/robinhood-chain-recovery-planner');
 
@@ -209,6 +212,8 @@ function createRobinhoodChainRecoveryJournal(options = {}) {
   const transferRollback = options.transferRollback
     || createRobinhoodWalletTransferReorgRollback();
   const liquidityRollback = options.liquidityRollback || createRobinhoodLiquidityReorgRollback();
+  const signedOriginRollback = options.signedOriginRollback
+    || createRobinhoodWalletSignedOriginReorgRollback();
 
   async function recordDetected(client, input = {}) {
     if (!client || typeof client.query !== 'function') {
@@ -417,6 +422,11 @@ function createRobinhoodChainRecoveryJournal(options = {}) {
         ancestorTimestamp: retained.get(rewind.ancestor.toString()).block_timestamp,
         fromBlock: rewind.fromBlock.toString(), throughBlock: rewind.throughBlock.toString(),
       });
+      const signedOrigins = await signedOriginRollback.rollback(client, {
+        ancestorBlock: rewind.ancestor.toString(), ancestorHash: rewind.ancestorHash,
+        ancestorTimestamp: retained.get(rewind.ancestor.toString()).block_timestamp,
+        fromBlock: rewind.fromBlock.toString(), throughBlock: rewind.throughBlock.toString(),
+      });
       const orphaned = await client.query(
         `UPDATE robinhood_chain_blocks SET canonical=FALSE
           WHERE chain=$1 AND canonical=TRUE
@@ -478,7 +488,7 @@ function createRobinhoodChainRecoveryJournal(options = {}) {
         status: 'rewound', generation: recoveryGeneration,
         nextGeneration: disposition.nextGeneration,
         orphanedBlocks: Number(rewind.depth), tradeInvalidations, market, wallet,
-        walletTransfers, liquidity,
+        walletTransfers, liquidity, signedOrigins,
         domainReady: ['canonical-journal', 'liquidity', 'market', 'publication-alerts', 'wallet'],
       };
     } catch (error) {

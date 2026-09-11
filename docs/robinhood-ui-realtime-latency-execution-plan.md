@@ -368,7 +368,7 @@ ordem não autoriza avançar para 3B3.
   retenção fixa de três dias e limpeza somente após `finalized_head`;
 - [x] gravar preimages por batch LIVE, com range explícito para replay parcial;
 - [x] restaurar transfers/edges/resumos/evidências e recuar o cursor no reorg;
-- [ ] **3B2B-3A1:** reverter `wallet-signed-origin` e seu cursor com o mesmo
+- [x] **3B2B-3A1:** reverter `wallet-signed-origin` e seu cursor com o mesmo
   fence de geração/canonicalidade;
 - [ ] **3B2B-3A2:** reverter `wallet-token-first-buy` e seu cursor sem conservar
   primeira compra pertencente à ramificação órfã.
@@ -647,8 +647,8 @@ reordenada sem atualizar este checkpoint:
 7. executar Slice 6, holders dirigidos pelo journal;
 8. executar Slice 7, ranking e membership realtime.
 
-O próximo corte autorizado pela fila é **3B2B-3A1 —
-wallet-derived/signed-origin**.
+O próximo corte autorizado pela fila é **3B2B-3A2 —
+wallet-derived/first-buy**.
 
 ## Ponto importante
 
