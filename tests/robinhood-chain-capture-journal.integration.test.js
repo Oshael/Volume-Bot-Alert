@@ -21,9 +21,13 @@ const {
   createRobinhoodTokenTransferRepository,
 } = require('../src/models/robinhood-token-transfer-persistence');
 const {
+  createRobinhoodPoolLiquiditySnapshotRepository,
+} = require('../src/models/robinhood-pool-liquidity-snapshot');
+const {
   createRobinhoodCanonicalHeadCanaryAudit,
 } = require('../src/services/robinhood-canonical-head-canary-audit');
 const stage191 = require('../src/utils/db-init-stage191');
+const stage63 = require('../src/utils/db-init-stage63');
 const stage192 = require('../src/utils/db-init-stage192');
 const stage193 = require('../src/utils/db-init-stage193');
 const stage194 = require('../src/utils/db-init-stage194');
@@ -48,6 +52,9 @@ const stage205 = require('../src/utils/db-init-stage205');
 const stage206 = require('../src/utils/db-init-stage206');
 const stage207 = require('../src/utils/db-init-stage207');
 const stage208 = require('../src/utils/db-init-stage208');
+const stage147 = require('../src/utils/db-init-stage147');
+const stage148 = require('../src/utils/db-init-stage148');
+const stage197 = require('../src/utils/db-init-stage197');
 const stage103 = require('../src/utils/db-init-stage103');
 const stage165 = require('../src/utils/db-init-stage165');
 const v2 = require('../src/services/uniswap-v2-decoder');
@@ -65,6 +72,8 @@ const ADDRESS = v2.ROBINHOOD_V2_FACTORY;
 const TOKEN = `0x${'9'.repeat(40)}`;
 const RECIPIENT = `0x${'8'.repeat(40)}`;
 const TRANSFER_TX = `0x${'c'.repeat(64)}`;
+const LIQUIDITY_POOL = `0x${'d'.repeat(40)}`;
+const LIQUIDITY_MARKET = `robinhood:uniswap-v2:${LIQUIDITY_POOL}`;
 const TOPIC = v2.TOPICS.pairCreated;
 const OBSERVED_AT = '2026-09-03T20:00:00.000Z';
 const MAX_UINT256 = ((1n << 256n) - 1n).toString();
@@ -90,6 +99,9 @@ function capture(number = 100, hash = HASH, parentHash = PARENT) {
 }
 
 async function clearTables() {
+  await db.query("DELETE FROM robinhood_pool_liquidity_refresh_queue WHERE chain='robinhood'");
+  await db.query("DELETE FROM robinhood_pool_liquidity_snapshots WHERE chain='robinhood'");
+  await db.query("DELETE FROM robinhood_pool_liquidity_event_cursors WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_wallet_transfer_reorg_journal WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_wallet_relationship_evidence WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_wallet_transfer_edges WHERE chain='robinhood'");
@@ -107,6 +119,7 @@ async function clearTables() {
   await db.query("DELETE FROM robinhood_swap_mc WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_transaction_positions WHERE chain='robinhood'");
   await db.query('DELETE FROM robinhood_token_deployment_outbox');
+  await db.query("DELETE FROM robinhood_pool_registry WHERE chain='robinhood'");
   await db.query('DELETE FROM robinhood_canonical_head_candidates');
   await db.query('DELETE FROM robinhood_chain_v3_balance_snapshots');
   await db.query('DELETE FROM robinhood_head_captures');
@@ -118,6 +131,7 @@ async function clearTables() {
 describe('Robinhood canonical chain capture journal', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
+    await stage63.init({ closePool: false });
     await stage103.init({ closePool: false });
     await stage165.init({ closePool: false });
     await stage191.init({ closePool: false });
@@ -145,6 +159,9 @@ describe('Robinhood canonical chain capture journal', () => {
     await stage206.init({ closePool: false });
     await stage207.init({ closePool: false });
     await stage208.init({ closePool: false });
+    await stage147.init({ closePool: false });
+    await stage148.init({ closePool: false });
+    await stage197.init({ closePool: false });
   });
 
   beforeEach(clearTables);
@@ -605,10 +622,40 @@ describe('Robinhood canonical chain capture journal', () => {
            'transferred_assumed_zero','transferred_assumed_zero',101,3)`,
       [TOKEN, ADDRESS, RECIPIENT]
     );
+    await db.query(
+      `INSERT INTO robinhood_pool_registry(
+         chain, protocol, market_key, pool_address, token_address, quote_address,
+         currency0, currency1, discovery_block, discovery_block_hash,
+         discovery_tx_hash, discovery_log_index, discovered_at
+       ) VALUES ('robinhood','uniswap-v2',$1,$2,$3,$4,$3,$4,100,$5,$6,0,$7)`,
+      [LIQUIDITY_MARKET, LIQUIDITY_POOL, TOKEN, ADDRESS, HASH, TX, OBSERVED_AT]
+    );
+    await db.query(
+      `INSERT INTO robinhood_pool_liquidity_snapshots(
+         chain, protocol, market_key, snapshot_block_number, snapshot_block_hash,
+         snapshot_observed_at, liquidity_usd, liquidity_status,
+         liquidity_confidence, checked_at
+       ) VALUES ('robinhood','uniswap-v2',$1,101,$2,$3,500,
+                 'spot_estimate_from_double_quote_reserve','medium',$3)`,
+      [LIQUIDITY_MARKET, NEXT_HASH, OBSERVED_AT]
+    );
+    await db.query(
+      `INSERT INTO robinhood_pool_liquidity_event_cursors(
+         chain, coverage_start_block, next_block, safe_head, checkpoint_block,
+         checkpoint_hash, checkpoint_timestamp
+       ) VALUES ('robinhood',100,102,101,101,$1,$2)`, [NEXT_HASH, OBSERVED_AT]
+    );
+    await db.query(
+      `INSERT INTO robinhood_pool_liquidity_refresh_queue(
+         chain, protocol, market_key, dirty_from_block, dirty_through_block,
+         dirty_through_hash, generation, status, lease_owner, lease_until
+       ) VALUES ('robinhood','uniswap-v2',$1,101,101,$2,4,'leased','old-worker',
+                 NOW()+INTERVAL '1 minute')`, [LIQUIDITY_MARKET, NEXT_HASH]
+    );
     await journal.markRecoveryRequired({ plan });
     assert.deepEqual(await journal.rewindCanonicalRecovery({ generation: '0' }), {
       status: 'rewound', generation: '0', nextGeneration: '1', orphanedBlocks: 1,
-      domainReady: ['canonical-journal', 'market', 'publication-alerts', 'wallet'],
+      domainReady: ['canonical-journal', 'liquidity', 'market', 'publication-alerts', 'wallet'],
       tradeInvalidations: { observed: 1, invalidated: 1 },
       market: {
         affectedTokens: 0, deletedProcessedLogs: 0, deletedDerivedRows: 0,
@@ -627,6 +674,10 @@ describe('Robinhood canonical chain capture journal', () => {
       walletTransfers: {
         projections: 0, restoredBatches: 0, replayedPrefix: 0,
         deletedRawTransfers: 1, cursorsRewound: 0,
+      },
+      liquidity: {
+        affectedPools: 1, invalidatedSnapshots: 1,
+        queuedRefreshes: 1, cursorRewound: true,
       },
     });
     assert.deepEqual(await journal.rewindCanonicalRecovery({ generation: '0' }), {
@@ -707,6 +758,34 @@ describe('Robinhood canonical chain capture journal', () => {
       next_block: '101', safe_head: '100', checkpoint_block: '100',
       checkpoint_hash: HASH, version: '1',
     });
+    const liquidity = await db.query(
+      `SELECT snapshot.snapshot_block_number,
+              queue.dirty_from_block::text, queue.dirty_through_block::text,
+              queue.dirty_through_hash, queue.generation::text, queue.status,
+              cursor.next_block::text, cursor.checkpoint_block::text,
+              cursor.checkpoint_hash, cursor.safe_head::text
+         FROM robinhood_pool_liquidity_snapshots snapshot
+         JOIN robinhood_pool_liquidity_refresh_queue queue
+           USING (chain, protocol, market_key)
+         CROSS JOIN robinhood_pool_liquidity_event_cursors cursor
+        WHERE snapshot.market_key=$1`, [LIQUIDITY_MARKET]
+    );
+    assert.deepEqual(liquidity.rows[0], {
+      snapshot_block_number: null, dirty_from_block: '100', dirty_through_block: '100',
+      dirty_through_hash: HASH, generation: '5', status: 'pending',
+      next_block: '101', checkpoint_block: '100', checkpoint_hash: HASH, safe_head: '100',
+    });
+    const fencedSnapshots = createRobinhoodPoolLiquiditySnapshotRepository({
+      database: db, canonicalAnchorOnly: true,
+    });
+    assert.equal(await fencedSnapshots.resolveCanonicalAnchorWindow(), null);
+    assert.equal(await fencedSnapshots.recordSnapshot({
+      protocol: 'uniswap-v2', marketKey: LIQUIDITY_MARKET,
+      blockNumber: '101', blockHash: NEXT_HASH, observedAt: OBSERVED_AT,
+      liquidityUsd: '999', liquidityRaw: null,
+      liquidityStatus: 'spot_estimate_from_double_quote_reserve',
+      liquidityConfidence: 'medium', checkedAt: OBSERVED_AT,
+    }), false);
     const financial = await db.query(
       `SELECT projection_version, wallet_address, quantity_raw::text,
               cost_basis_usd::text, realized_pnl_usd::text,
@@ -736,13 +815,13 @@ describe('Robinhood canonical chain capture journal', () => {
     ));
     assert.deepEqual(await journal.resumeCanonicalRecovery({ generation: '0' }), {
       status: 'awaiting-domains', generation: '1',
-      readyDomains: ['canonical-journal', 'market', 'publication-alerts', 'wallet'],
-      pendingDomains: ['wallet-derived', 'liquidity', 'holders', 'discovery-creator'],
+      readyDomains: ['canonical-journal', 'liquidity', 'market', 'publication-alerts', 'wallet'],
+      pendingDomains: ['wallet-derived', 'holders', 'discovery-creator'],
     });
     await assert.rejects(
       journal.commitBlock(second), (error) => error.code === 'capture_recovery_required'
     );
-    for (const domain of ['wallet-derived', 'liquidity', 'holders', 'discovery-creator']) {
+    for (const domain of ['wallet-derived', 'holders', 'discovery-creator']) {
       await journal.recordRecoveryDomainReady({
         generation: '0', domain, evidence: { test: 'rollback-complete' },
       });

@@ -940,6 +940,13 @@ recebem backoff durável e preservam o snapshot válido anterior. A telemetria d
 concluídas/retentadas. O fallback histórico de cotação WETH/USDG por eventos fica desabilitado
 nesse processo, e o `rpcGuard` da lease bloqueia qualquer tentativa futura de `eth_getLogs`;
 backfills e reparos continuam podendo usar o fallback explicitamente fora do papel live.
+No reorg, o recovery trava snapshots/fila contra writers concorrentes, invalida somente snapshots
+ancorados na faixa órfã, recua o cursor ao ancestral e reancora as pools afetadas como `pending`.
+O refresher canônico aceita um snapshot somente se bloco/hash ainda forem canônicos, a captura
+estiver em estado `running` e a âncora não ultrapassar seu checkpoint; assim, uma resposta RPC
+iniciada antes do rewind não pode ressuscitar liquidez órfã. A fila permanece pendente durante o
+recovery, recalcula no ancestral recente com o mesmo node pruned após o `resume` e então segue a
+nova ramificação; não requer archive.
 
 Como V4 combina estado RPC e ranges materializados pelo processing, ambos precisam usar a mesma
 âncora. Antes de fazer claim, o refresher mede a distância entre o frontier do market processing e

@@ -41,7 +41,7 @@ const ROLLBACK_DOMAINS = Object.freeze([
     ]),
   }),
   Object.freeze({
-    id: 'liquidity', rollbackRegistered: false,
+    id: 'liquidity', rollbackRegistered: true,
     tables: Object.freeze([
       'robinhood_pool_liquidity_snapshots', 'robinhood_pool_liquidity_event_cursors',
       'robinhood_pool_liquidity_refresh_queue',

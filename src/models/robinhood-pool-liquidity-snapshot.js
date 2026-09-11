@@ -138,6 +138,7 @@ function normalizeSnapshot(input) {
 
 function createRobinhoodPoolLiquiditySnapshotRepository(options = {}) {
   const database = options.database || db;
+  const canonicalAnchorOnly = options.canonicalAnchorOnly === true;
 
   async function resolveAnchorBlock() {
     const { rows } = await database.query(
@@ -174,7 +175,7 @@ function createRobinhoodPoolLiquiditySnapshotRepository(options = {}) {
               pending.pending_block
          FROM robinhood_chain_capture_cursor canonical
          LEFT JOIN pending ON TRUE
-        WHERE canonical.chain = '${CHAIN}'`
+        WHERE canonical.chain = '${CHAIN}' AND canonical.recovery_state = 'running'`
     );
     const row = rows[0];
     if (row?.anchor_block == null || row?.capture_block == null) return null;
@@ -316,10 +317,16 @@ function createRobinhoodPoolLiquiditySnapshotRepository(options = {}) {
                 input.block_number, input.block_hash, input.observed_at,
                 input.liquidity_usd, input.liquidity_raw, input.liquidity_status,
                 input.liquidity_confidence, input.liquidity_warning, input.checked_at
-           FROM input
-           JOIN robinhood_pool_registry registry
-             ON registry.chain = '${CHAIN}' AND registry.protocol = input.protocol
+       FROM input
+       JOIN robinhood_pool_registry registry
+         ON registry.chain = '${CHAIN}' AND registry.protocol = input.protocol
             AND registry.market_key = input.market_key AND registry.active = TRUE
+       ${canonicalAnchorOnly ? `JOIN robinhood_chain_blocks anchor
+         ON anchor.chain=registry.chain AND anchor.canonical
+        AND anchor.block_number=input.block_number AND anchor.block_hash=input.block_hash
+       JOIN robinhood_chain_capture_cursor capture
+         ON capture.chain=anchor.chain AND capture.recovery_state='running'
+        AND input.block_number<=capture.checkpoint_block` : ''}
           ORDER BY input.protocol, input.market_key
        ON CONFLICT (chain, protocol, market_key) DO UPDATE SET
          snapshot_block_number = EXCLUDED.snapshot_block_number,

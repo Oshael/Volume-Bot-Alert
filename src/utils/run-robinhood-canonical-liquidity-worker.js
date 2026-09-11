@@ -92,7 +92,9 @@ function composeWorker(deps, options, rawDatabase, rpcClient) {
     enabled: config.db.logSlowQueries, slowQueryMs: config.db.slowQueryLogMs,
   });
   const snapshotRepository = deps.snapshotRepository
-    || createRobinhoodPoolLiquiditySnapshotRepository({ database });
+    || createRobinhoodPoolLiquiditySnapshotRepository({
+      database, canonicalAnchorOnly: true,
+    });
   const cursorRepository = deps.cursorRepository
     || createRobinhoodPoolLiquidityEventCursorRepository({ database });
   const refreshQueue = deps.refreshQueue

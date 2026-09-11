@@ -359,8 +359,10 @@ necessário se uma migration surgir durante a implementação.
   retenção fixa de três dias e limpeza somente após `finalized_head`;
 - [x] gravar preimages por batch LIVE, com range explícito para replay parcial;
 - [x] restaurar transfers/edges/resumos/evidências e recuar o cursor no reorg;
-- [ ] adaptar discovery, liquidity, holders/transfers, creators e classificações
-  ao mesmo evento/generation fence;
+- [x] adaptar liquidity ao rewind, invalidando snapshots órfãos, reancorando a
+  fila no ancestral e cercando writes RPC atrasados pela canonicalidade;
+- [ ] adaptar discovery, holders/transfers, creators e classificações ao mesmo
+  evento/generation fence;
 - [ ] preservar estado anterior marcado stale ou incompleto enquanto a nova
   ramificação não tiver sido reaplicada;
 - [ ] provar que falha de um domínio mantém recuperação retomável sem liberar
