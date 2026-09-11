@@ -2395,8 +2395,7 @@ async function listCurrentAndWindowBaselinesByAddresses(
   return rows;
 }
 
-async function computeBidZoneCandidates(options = {}) {
-  requireLegacySolanaChain(options.chain);
+function normalizeBidZoneComputeOptions(options) {
   const requestedHours = Math.max(1, Math.min(Number(options.hours) || DEFAULT_BID_ZONE_HOURS, 48));
   const minMcap = Math.max(DEFAULT_BID_ZONE_MIN_MCAP, Number(options.minMcap) || DEFAULT_BID_ZONE_MIN_MCAP);
   const minVol1h = Math.max(250, Number(options.minVol1h) || DEFAULT_BID_ZONE_MIN_VOL_1H);
@@ -2405,6 +2404,50 @@ async function computeBidZoneCandidates(options = {}) {
   const nowMs = Number(options.nowMs) || Date.now();
   const candidateScanLimit = normalizeCandidateScanLimit(options.candidateScanLimit);
   const statementTimeoutMs = normalizeStatementTimeoutMs(options.statementTimeoutMs);
+  return {
+    requestedHours, minMcap, minVol1h, minVol24h, maxLookbackHours,
+    nowMs, candidateScanLimit, statementTimeoutMs,
+  };
+}
+
+function groupBidZoneCandidateRows(rows) {
+  const grouped = new Map();
+  for (const row of rows) {
+    const address = row.token_address;
+    if (!grouped.has(address)) {
+      grouped.set(address, {
+        address,
+        symbol: row.symbol || null,
+        name: row.name || null,
+        monitorPriority: row.monitor_priority || 'dormant',
+        catalogMcap: row.last_mcap == null ? null : Number(row.last_mcap),
+        volume1h: row.last_vol_1h == null ? null : Number(row.last_vol_1h),
+        volume6h: row.last_vol_6h == null ? null : Number(row.last_vol_6h),
+        volume24h: row.last_vol_24h == null ? null : Number(row.last_vol_24h),
+        lastTokenCreatedAtMs: row.last_token_created_at_ms == null
+          ? null : Number(row.last_token_created_at_ms),
+        buckets: [],
+      });
+    }
+    grouped.get(address).buckets.push({
+      bucketTsMs: new Date(row.bucket_ts).getTime(),
+      bucketTs: row.bucket_ts,
+      openMcap: row.open_mcap == null ? null : Number(row.open_mcap),
+      highMcap: row.high_mcap == null ? null : Number(row.high_mcap),
+      lowMcap: row.low_mcap == null ? null : Number(row.low_mcap),
+      closeMcap: row.close_mcap == null ? null : Number(row.close_mcap),
+      sampleCount: Number(row.sample_count) || 0,
+    });
+  }
+  return grouped;
+}
+
+async function computeBidZoneCandidates(options = {}) {
+  requireLegacySolanaChain(options.chain);
+  const {
+    requestedHours, minMcap, minVol1h, minVol24h, maxLookbackHours,
+    nowMs, candidateScanLimit, statementTimeoutMs,
+  } = normalizeBidZoneComputeOptions(options);
 
   const { rows } = await db.queryWithStatementTimeout(
     `WITH active_candidates AS (
@@ -2514,34 +2557,7 @@ async function computeBidZoneCandidates(options = {}) {
     statementTimeoutMs
   );
 
-  const grouped = new Map();
-  for (const row of rows) {
-    const address = row.token_address;
-    if (!grouped.has(address)) {
-      grouped.set(address, {
-        address,
-        symbol: row.symbol || null,
-        name: row.name || null,
-        monitorPriority: row.monitor_priority || 'dormant',
-        catalogMcap: row.last_mcap == null ? null : Number(row.last_mcap),
-        volume1h: row.last_vol_1h == null ? null : Number(row.last_vol_1h),
-        volume6h: row.last_vol_6h == null ? null : Number(row.last_vol_6h),
-        volume24h: row.last_vol_24h == null ? null : Number(row.last_vol_24h),
-        lastTokenCreatedAtMs: row.last_token_created_at_ms == null ? null : Number(row.last_token_created_at_ms),
-        buckets: [],
-      });
-    }
-
-    grouped.get(address).buckets.push({
-      bucketTsMs: new Date(row.bucket_ts).getTime(),
-      bucketTs: row.bucket_ts,
-      openMcap: row.open_mcap == null ? null : Number(row.open_mcap),
-      highMcap: row.high_mcap == null ? null : Number(row.high_mcap),
-      lowMcap: row.low_mcap == null ? null : Number(row.low_mcap),
-      closeMcap: row.close_mcap == null ? null : Number(row.close_mcap),
-      sampleCount: Number(row.sample_count) || 0,
-    });
-  }
+  const grouped = groupBidZoneCandidateRows(rows);
 
   return Array.from(grouped.values())
     .map((candidate) => {

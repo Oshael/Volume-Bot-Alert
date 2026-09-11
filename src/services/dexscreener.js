@@ -727,6 +727,49 @@ function shouldFallbackSuspiciousBatchPair(address, payload, chain = 'solana') {
     || isLaunchFloorBatchPair(pair);
 }
 
+function cacheUnavailableBatch(addresses, results, ttlMs) {
+  for (const address of addresses) {
+    setCacheEntry(address, null, ttlMs);
+    results.set(address, null);
+  }
+}
+
+async function storeBatchPairs(pairs, chunk, chain, priorityByAddress, results) {
+  const groupedPairs = groupPairsByAddress(pairs, chunk);
+  const fallbackAddresses = [];
+  for (const address of chunk) {
+    const payload = buildNormalizedPairsPayload(groupedPairs.get(address) || []);
+    if (shouldFallbackSuspiciousBatchPair(address, payload, chain)) {
+      fallbackAddresses.push(address);
+      continue;
+    }
+    const data = payload.pairs.length > 0 ? payload : null;
+    const ttlMs = data ? getTokenCacheTtl(priorityByAddress.get(address)) : ERROR_COOLDOWN_MS;
+    setCacheEntry(address, data, ttlMs);
+    results.set(address, data);
+  }
+  await Promise.all(fallbackAddresses.map(async (address) => {
+    const fallbackData = await fetchTokenPairsUncached(address, priorityByAddress.get(address));
+    results.set(address, fallbackData);
+  }));
+}
+
+async function consumeTokenBatchResponse(res, chunk, chain, priorityByAddress, results) {
+  if (res.status === 429) {
+    const rateLimitResult = noteRateLimit(res, `batch ${chunk.length} tokens on ${chain}`);
+    cacheUnavailableBatch(chunk, results, Math.max(ERROR_COOLDOWN_MS, rateLimitResult.backoffMs || 0));
+    return;
+  }
+  if (!res.ok) {
+    console.error(`[DexScreener] Error ${res.status} for batch ${chunk.length} tokens on ${chain}`);
+    cacheUnavailableBatch(chunk, results, ERROR_COOLDOWN_MS);
+    return;
+  }
+  const pairs = await res.json();
+  noteSuccessfulResponse();
+  await storeBatchPairs(pairs, chunk, chain, priorityByAddress, results);
+}
+
 async function fetchTokenPairsBatchUncached(addresses, options = {}) {
   const normalizedAddresses = [...new Set((addresses || []).map((address) => normalizeAddress(address)).filter(Boolean))];
   const chain = String(options.chain || 'solana').trim() || 'solana';
@@ -740,11 +783,7 @@ async function fetchTokenPairsBatchUncached(addresses, options = {}) {
     if (chunk.length === 0) continue;
 
     if (isRateLimitBackoffActive()) {
-      const ttlMs = getRateLimitCooldownCacheTtlMs();
-      for (const address of chunk) {
-        setCacheEntry(address, null, ttlMs);
-        results.set(address, null);
-      }
+      cacheUnavailableBatch(chunk, results, getRateLimitCooldownCacheTtlMs());
       continue;
     }
 
@@ -757,57 +796,11 @@ async function fetchTokenPairsBatchUncached(addresses, options = {}) {
         signal: controller.signal,
       });
 
-      if (res.status === 429) {
-        const rateLimitResult = noteRateLimit(res, `batch ${chunk.length} tokens on ${chain}`);
-        const ttlMs = Math.max(ERROR_COOLDOWN_MS, rateLimitResult.backoffMs || 0);
-        for (const address of chunk) {
-          setCacheEntry(address, null, ttlMs);
-          results.set(address, null);
-        }
-        continue;
-      }
-
-      if (!res.ok) {
-        console.error(`[DexScreener] Error ${res.status} for batch ${chunk.length} tokens on ${chain}`);
-        for (const address of chunk) {
-          setCacheEntry(address, null, ERROR_COOLDOWN_MS);
-          results.set(address, null);
-        }
-        continue;
-      }
-
-      const pairs = await res.json();
-      noteSuccessfulResponse();
-      const groupedPairs = groupPairsByAddress(pairs, chunk);
-      const fallbackAddresses = [];
-
-      for (const address of chunk) {
-        const payload = buildNormalizedPairsPayload(groupedPairs.get(address) || []);
-        if (shouldFallbackSuspiciousBatchPair(address, payload, chain)) {
-          fallbackAddresses.push(address);
-          continue;
-        }
-        const data = payload.pairs.length > 0 ? payload : null;
-        const ttlMs = data
-          ? getTokenCacheTtl(priorityByAddress.get(address))
-          : ERROR_COOLDOWN_MS;
-        setCacheEntry(address, data, ttlMs);
-        results.set(address, data);
-      }
-
-      if (fallbackAddresses.length > 0) {
-        await Promise.all(fallbackAddresses.map(async (address) => {
-          const fallbackData = await fetchTokenPairsUncached(address, priorityByAddress.get(address));
-          results.set(address, fallbackData);
-        }));
-      }
+      await consumeTokenBatchResponse(res, chunk, chain, priorityByAddress, results);
     } catch (err) {
       const label = err.name === 'AbortError' ? 'Timeout' : 'Fetch error';
       console.error(`[DexScreener] ${label} for batch ${chunk.length} tokens:`, err.message);
-      for (const address of chunk) {
-        setCacheEntry(address, null, ERROR_COOLDOWN_MS);
-        results.set(address, null);
-      }
+      cacheUnavailableBatch(chunk, results, ERROR_COOLDOWN_MS);
     } finally {
       clearTimeout(timeout);
     }

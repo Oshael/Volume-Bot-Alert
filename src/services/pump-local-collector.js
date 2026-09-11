@@ -154,6 +154,28 @@ function createPumpLocalCollector(options = {}) {
     state.followingCursor = result.body?.nextCursor || null;
   }
 
+  async function captureWatchlistUser(userId, capturedAt, deadlineAt) {
+    await refreshProfile(userId, capturedAt);
+    const marker = state.markers[userId];
+    let newest = null;
+    let pageToken = null;
+    let markerFound = false;
+    for (let page = 0; page < userPages && now() < deadlineAt; page += 1) {
+      const result = await options.client.listUserCallouts(userId, { limit: 50, pageToken });
+      const items = rows(result.body, 'callouts');
+      if (!newest && items.length) newest = normalizePumpActivity(items[0]).sourceEventId;
+      for (const item of items) {
+        const eventId = normalizePumpActivity(item).sourceEventId;
+        if (eventId && eventId === marker) { markerFound = true; break; }
+        await capture(item, 'user_callouts', capturedAt);
+      }
+      pageToken = result.body?.nextPageToken || null;
+      if (markerFound || !pageToken) break;
+      if (page === userPages - 1) metrics.truncatedUsers += 1;
+    }
+    if (newest) state.markers[userId] = newest;
+  }
+
   async function captureWatchlist(capturedAt, deadlineAt) {
     if (!state.watchlist.length) return;
     const count = Math.min(usersPerRound, state.watchlist.length);
@@ -161,25 +183,7 @@ function createPumpLocalCollector(options = {}) {
     for (let index = 0; index < count && now() < deadlineAt; index += 1) {
       const userId = state.watchlist[(state.watchlistOffset + index) % state.watchlist.length];
       try {
-        await refreshProfile(userId, capturedAt);
-        const marker = state.markers[userId];
-        let newest = null;
-        let pageToken = null;
-        let markerFound = false;
-        for (let page = 0; page < userPages && now() < deadlineAt; page += 1) {
-          const result = await options.client.listUserCallouts(userId, { limit: 50, pageToken });
-          const items = rows(result.body, 'callouts');
-          if (!newest && items.length) newest = normalizePumpActivity(items[0]).sourceEventId;
-          for (const item of items) {
-            const eventId = normalizePumpActivity(item).sourceEventId;
-            if (eventId && eventId === marker) { markerFound = true; break; }
-            await capture(item, 'user_callouts', capturedAt);
-          }
-          pageToken = result.body?.nextPageToken || null;
-          if (markerFound || !pageToken) break;
-          if (page === userPages - 1) metrics.truncatedUsers += 1;
-        }
-        if (newest) state.markers[userId] = newest;
+        await captureWatchlistUser(userId, capturedAt, deadlineAt);
       } catch (error) {
         if (error?.code === 'PUMP_AUTH' || error?.code === 'PUMP_RATE_LIMIT') throw error;
         reportError(error);

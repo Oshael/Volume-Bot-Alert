@@ -39,6 +39,61 @@ function add(blockers, condition, code, detail = null) {
   if (condition) blockers.push(detail == null ? { code } : { code, detail });
 }
 
+function addCaptureBlockers(blockers, context) {
+  const { row, captureNext, captureHead, captureLag, leases } = context;
+  add(blockers, captureNext == null, 'capture_cursor_missing');
+  add(blockers, captureNext != null && captureHead == null, 'capture_head_missing');
+  add(blockers, captureLag > MAX_CAPTURE_LAG, 'capture_lag_exceeded', {
+    actual: text(captureLag), maximum: text(MAX_CAPTURE_LAG),
+  });
+  add(blockers, !leases.capture.active, 'canonical_capture_inactive');
+  add(blockers, row.journal_start_block == null, 'canonical_journal_empty');
+}
+
+function addWalletSwapBlockers(blockers, context) {
+  const { row, swapNext, swapCheckpoint, swapCheckpointTime, leases } = context;
+  add(blockers, swapNext == null, 'wallet_swap_cursor_missing');
+  add(blockers, swapNext != null && row.swap_lifecycle_state !== 'running',
+    'wallet_swap_not_running', row.swap_lifecycle_state);
+  add(blockers, swapNext != null && (swapCheckpoint == null || swapCheckpoint + 1n !== swapNext
+    || row.swap_checkpoint_hash == null || swapCheckpointTime == null),
+  'wallet_swap_checkpoint_inconsistent');
+  add(blockers, swapCheckpoint != null && row.canonical_swap_checkpoint_hash
+    !== row.swap_checkpoint_hash, 'wallet_swap_checkpoint_not_canonical');
+  add(blockers, !leases.walletSwap.active || !leases.walletSwap.running,
+    'wallet_swap_worker_inactive');
+  add(blockers, leases.walletSwap.active && leases.walletSwap.running
+    && leases.walletSwap.source_mode !== 'canonical_journal',
+  'wallet_swap_source_not_canonical', leases.walletSwap.source_mode);
+  add(blockers, leases.walletSwap.last_error != null,
+    'wallet_swap_worker_error', leases.walletSwap.last_error);
+}
+
+function addFirstBuyCursorBlockers(blockers, context) {
+  const { row, firstNextTime, firstSourceThrough, firstSourceNext, swapThrough, swapNext } = context;
+  add(blockers, row.first_seed_run_id == null, 'first_buy_cursor_missing');
+  add(blockers, row.first_seed_run_id != null && row.seed_status !== 'completed',
+    'first_buy_seed_incomplete', row.seed_status);
+  add(blockers, firstNextTime == null || firstSourceThrough == null,
+    'first_buy_time_frontier_invalid');
+  add(blockers, firstNextTime != null && firstSourceThrough != null
+    && firstNextTime > firstSourceThrough, 'first_buy_time_frontier_inconsistent');
+  add(blockers, firstNextTime != null && swapThrough != null && firstNextTime > swapThrough,
+    'first_buy_ahead_of_wallet_swap');
+  add(blockers, row.first_seed_run_id != null && firstSourceNext == null,
+    'first_buy_block_frontier_missing');
+  add(blockers, firstSourceNext != null && swapNext != null && firstSourceNext > swapNext,
+    'first_buy_block_frontier_ahead');
+}
+
+function addFirstBuyWorkerBlockers(blockers, leases) {
+  add(blockers, !leases.firstBuy.active || !leases.firstBuy.running,
+    'first_buy_worker_inactive');
+  add(blockers, leases.firstBuy.halted, 'first_buy_worker_halted');
+  add(blockers, leases.firstBuy.last_error != null,
+    'first_buy_worker_error', leases.firstBuy.last_error);
+}
+
 function evaluate(input = {}) {
   const row = input.state || {};
   const captureNext = quantity(row.capture_next_block);
@@ -63,47 +118,15 @@ function evaluate(input = {}) {
     [name, leaseSummary(activeLease(input.leases || [], key))]
   )));
   const blockers = [];
-
-  add(blockers, captureNext == null, 'capture_cursor_missing');
-  add(blockers, captureNext != null && captureHead == null, 'capture_head_missing');
-  add(blockers, captureLag > MAX_CAPTURE_LAG, 'capture_lag_exceeded', {
-    actual: text(captureLag), maximum: text(MAX_CAPTURE_LAG),
-  });
-  add(blockers, !leases.capture.active, 'canonical_capture_inactive');
-  add(blockers, row.journal_start_block == null, 'canonical_journal_empty');
-  add(blockers, swapNext == null, 'wallet_swap_cursor_missing');
-  add(blockers, swapNext != null && row.swap_lifecycle_state !== 'running',
-    'wallet_swap_not_running', row.swap_lifecycle_state);
-  add(blockers, swapNext != null && (swapCheckpoint == null || swapCheckpoint + 1n !== swapNext
-    || row.swap_checkpoint_hash == null || swapCheckpointTime == null),
-  'wallet_swap_checkpoint_inconsistent');
-  add(blockers, swapCheckpoint != null && row.canonical_swap_checkpoint_hash
-    !== row.swap_checkpoint_hash, 'wallet_swap_checkpoint_not_canonical');
-  add(blockers, !leases.walletSwap.active || !leases.walletSwap.running,
-    'wallet_swap_worker_inactive');
-  add(blockers, leases.walletSwap.active && leases.walletSwap.running
-    && leases.walletSwap.source_mode !== 'canonical_journal',
-  'wallet_swap_source_not_canonical', leases.walletSwap.source_mode);
-  add(blockers, leases.walletSwap.last_error != null,
-    'wallet_swap_worker_error', leases.walletSwap.last_error);
-  add(blockers, row.first_seed_run_id == null, 'first_buy_cursor_missing');
-  add(blockers, row.first_seed_run_id != null && row.seed_status !== 'completed',
-    'first_buy_seed_incomplete', row.seed_status);
-  add(blockers, firstNextTime == null || firstSourceThrough == null,
-    'first_buy_time_frontier_invalid');
-  add(blockers, firstNextTime != null && firstSourceThrough != null
-    && firstNextTime > firstSourceThrough, 'first_buy_time_frontier_inconsistent');
-  add(blockers, firstNextTime != null && swapThrough != null && firstNextTime > swapThrough,
-    'first_buy_ahead_of_wallet_swap');
-  add(blockers, row.first_seed_run_id != null && firstSourceNext == null,
-    'first_buy_block_frontier_missing');
-  add(blockers, firstSourceNext != null && swapNext != null && firstSourceNext > swapNext,
-    'first_buy_block_frontier_ahead');
-  add(blockers, !leases.firstBuy.active || !leases.firstBuy.running,
-    'first_buy_worker_inactive');
-  add(blockers, leases.firstBuy.halted, 'first_buy_worker_halted');
-  add(blockers, leases.firstBuy.last_error != null,
-    'first_buy_worker_error', leases.firstBuy.last_error);
+  const context = {
+    row, captureNext, captureHead, captureLag, swapNext, swapCheckpoint,
+    swapCheckpointTime, firstNextTime, firstSourceThrough, firstSourceNext,
+    swapThrough, leases,
+  };
+  addCaptureBlockers(blockers, context);
+  addWalletSwapBlockers(blockers, context);
+  addFirstBuyCursorBlockers(blockers, context);
+  addFirstBuyWorkerBlockers(blockers, leases);
 
   return Object.freeze({
     mode: 'read-only', ready: blockers.length === 0, blockers,

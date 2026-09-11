@@ -57,27 +57,39 @@ function createPumpCalloutClient(options = {}) {
   const fetchImpl = options.fetchImpl || globalThis.fetch;
   const timeoutMs = positiveInteger(options.timeoutMs, DEFAULT_TIMEOUT_MS, 60_000);
 
-  async function request(path, query = {}, requestOptions = {}) {
+  async function requestHeaders(requestOptions) {
+    const headers = { accept: 'application/json' };
+    if (requestOptions.authenticated === false) return headers;
+    let requestToken = authToken;
+    if (authTokenProvider) {
+      try {
+        requestToken = required(await authTokenProvider(), 'Pump auth token');
+      } catch (_error) {
+        throw Object.assign(new Error('Pump auth token is unavailable'), { code: 'PUMP_AUTH' });
+      }
+    }
+    if (!requestToken) {
+      throw Object.assign(new Error('Pump auth token is unavailable'), { code: 'PUMP_AUTH' });
+    }
+    headers.cookie = `auth_token=${requestToken}`;
+    return headers;
+  }
+
+  function requestUrl(path, query) {
     const url = new URL(path, `${baseUrl}/`);
     for (const [key, value] of Object.entries(query)) {
       if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, String(value));
     }
+    return url;
+  }
 
+  async function request(path, query = {}, requestOptions = {}) {
+    const url = requestUrl(path, query);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     let response;
     try {
-      const headers = { accept: 'application/json' };
-      if (requestOptions.authenticated !== false) {
-        let requestToken = authToken;
-        if (authTokenProvider) {
-          try { requestToken = required(await authTokenProvider(), 'Pump auth token'); } catch (_error) {
-            throw Object.assign(new Error('Pump auth token is unavailable'), { code: 'PUMP_AUTH' });
-          }
-        }
-        if (!requestToken) throw Object.assign(new Error('Pump auth token is unavailable'), { code: 'PUMP_AUTH' });
-        headers.cookie = `auth_token=${requestToken}`;
-      }
+      const headers = await requestHeaders(requestOptions);
       response = await fetchImpl(url, {
         method: 'GET',
         headers,

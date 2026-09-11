@@ -100,21 +100,7 @@ async function pruneBatch(database, cutoffBlock, batchLimit) {
   }
 }
 
-async function runPilot(input = {}, deps = {}) {
-  const options = normalizeOptions(input);
-  const database = deps.database || db;
-  const audit = deps.audit || createRobinhoodRetentionSafetyAudit({ database });
-  const safety = await audit.inspect();
-  if (safety.chain_events?.ready_for_pilot !== true) {
-    return Object.freeze({
-      status: 'blocked', reason: 'retention_safety_audit', batches: 0,
-      totalDeleted: 0, blockers: safety.chain_events?.blockers || [],
-    });
-  }
-  const cutoffBlock = String(safety.chain_events.candidate_cutoff_block || '');
-  if (!/^[1-9][0-9]*$/.test(cutoffBlock)) {
-    throw new Error('Retention safety audit returned an invalid chain event cutoff');
-  }
+async function drainPrunableBatches(options, deps, database, cutoffBlock) {
   const progress = deps.progress || (() => {});
   const shouldStop = deps.shouldStop || (() => false);
   const pause = deps.pause || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -133,6 +119,24 @@ async function runPilot(input = {}, deps = {}) {
   return Object.freeze({
     status: 'finished', stopReason, cutoffBlock, batches, totalDeleted,
   });
+}
+
+async function runPilot(input = {}, deps = {}) {
+  const options = normalizeOptions(input);
+  const database = deps.database || db;
+  const audit = deps.audit || createRobinhoodRetentionSafetyAudit({ database });
+  const safety = await audit.inspect();
+  if (safety.chain_events?.ready_for_pilot !== true) {
+    return Object.freeze({
+      status: 'blocked', reason: 'retention_safety_audit', batches: 0,
+      totalDeleted: 0, blockers: safety.chain_events?.blockers || [],
+    });
+  }
+  const cutoffBlock = String(safety.chain_events.candidate_cutoff_block || '');
+  if (!/^[1-9][0-9]*$/.test(cutoffBlock)) {
+    throw new Error('Retention safety audit returned an invalid chain event cutoff');
+  }
+  return drainPrunableBatches(options, deps, database, cutoffBlock);
 }
 
 module.exports = {

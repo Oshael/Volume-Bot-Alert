@@ -1096,6 +1096,10 @@ async function fetchJsonWithTimeout(url, timeoutMs = 5000) {
   };
 }
 
+function firstTruthy(...values) {
+  return values.find(Boolean) || null;
+}
+
 async function resolvePumpfunMetadata(mint, metadataUri) {
   let bestSymbol = null;
   let bestName = null;
@@ -1103,10 +1107,10 @@ async function resolvePumpfunMetadata(mint, metadataUri) {
   try {
     const pump = await fetchJsonWithTimeout(`https://frontend-api.pump.fun/coins/${mint}`);
     if (pump.ok && pump.body) {
-      bestSymbol = pump.body.symbol || bestSymbol;
-      bestName = pump.body.name || bestName;
+      bestSymbol = firstTruthy(pump.body.symbol, bestSymbol);
+      bestName = firstTruthy(pump.body.name, bestName);
 
-      const imageUrl = toHttpAssetUrl(pump.body.image_uri || pump.body.image || null);
+      const imageUrl = toHttpAssetUrl(firstTruthy(pump.body.image_uri, pump.body.image));
       if (imageUrl) {
         return {
           symbol: bestSymbol,
@@ -1123,13 +1127,13 @@ async function resolvePumpfunMetadata(mint, metadataUri) {
     try {
       const metadata = await fetchJsonWithTimeout(url);
       if (metadata.ok && metadata.body) {
-        bestSymbol = metadata.body.symbol || bestSymbol;
-        bestName = metadata.body.name || bestName;
-        const imageUrl = toHttpAssetUrl(metadata.body.image || metadata.body.image_url || null);
+        bestSymbol = firstTruthy(metadata.body.symbol, bestSymbol);
+        bestName = firstTruthy(metadata.body.name, bestName);
+        const imageUrl = toHttpAssetUrl(firstTruthy(metadata.body.image, metadata.body.image_url));
         if (imageUrl) {
           return {
-            symbol: metadata.body.symbol || bestSymbol,
-            name: metadata.body.name || bestName,
+            symbol: firstTruthy(metadata.body.symbol, bestSymbol),
+            name: firstTruthy(metadata.body.name, bestName),
             imageUrl,
           };
         }
@@ -1143,13 +1147,15 @@ async function resolvePumpfunMetadata(mint, metadataUri) {
     const dexData = await dexscreener.getTokenPairs(mint);
     const bestPair = dexscreener.getBestPair(dexData, 'solana');
     if (bestPair) {
-      const imageUrl = toHttpAssetUrl(bestPair.info?.imageUrl || bestPair.info?.header || bestPair.baseToken?.logoUri || null);
+      const info = bestPair.info || {};
+      const baseToken = bestPair.baseToken || {};
+      const imageUrl = toHttpAssetUrl(firstTruthy(info.imageUrl, info.header, baseToken.logoUri));
       if (!imageUrl) {
         return null;
       }
       return {
-        symbol: bestPair.baseToken?.symbol || bestSymbol,
-        name: bestPair.baseToken?.name || bestName,
+        symbol: firstTruthy(baseToken.symbol, bestSymbol),
+        name: firstTruthy(baseToken.name, bestName),
         imageUrl,
       };
     }
@@ -1218,6 +1224,9 @@ async function buildValidatedPromotion(user, body = {}) {
   clearTransientRetry(user.id, address, source);
   const socialLinks = extractDexSocialLinks(bestPair);
   const pairDexId = getPairDexId(bestPair);
+  const baseToken = bestPair.baseToken || {};
+  const priceChange = bestPair.priceChange || {};
+  const pairInfo = bestPair.info || {};
 
   return {
     status: 200,
@@ -1225,20 +1234,20 @@ async function buildValidatedPromotion(user, body = {}) {
       address,
       chain,
       source,
-      symbol: bestPair.baseToken?.symbol || requested.symbol,
-      name: bestPair.baseToken?.name || requested.name,
+      symbol: firstTruthy(baseToken.symbol, requested.symbol),
+      name: firstTruthy(baseToken.name, requested.name),
       mcap: marketCap,
       price: toNumber(bestPair.priceUsd),
-      priceChange1h: toNumber(bestPair?.priceChange?.h1),
-      priceChange6h: toNumber(bestPair?.priceChange?.h6),
-      priceChange24h: toNumber(bestPair?.priceChange?.h24),
+      priceChange1h: toNumber(priceChange.h1),
+      priceChange6h: toNumber(priceChange.h6),
+      priceChange24h: toNumber(priceChange.h24),
       tokenCreatedAt: toNumber(bestPair?.pairCreatedAt),
-      pairAddress: bestPair.pairAddress || requested.pairAddress,
-      pairUrl: bestPair.url || requested.pairUrl,
+      pairAddress: firstTruthy(bestPair.pairAddress, requested.pairAddress),
+      pairUrl: firstTruthy(bestPair.url, requested.pairUrl),
       dexId: pairDexId,
-      imageUrl: bestPair.info?.imageUrl || requested.imageUrl,
-      twitterUrl: socialLinks.twitterUrl || requested.twitterUrl,
-      communityUrl: socialLinks.communityUrl || requested.communityUrl,
+      imageUrl: firstTruthy(pairInfo.imageUrl, requested.imageUrl),
+      twitterUrl: firstTruthy(socialLinks.twitterUrl, requested.twitterUrl),
+      communityUrl: firstTruthy(socialLinks.communityUrl, requested.communityUrl),
       isActiveMonitorCandidate: requested.isActiveMonitorCandidate,
     },
   };

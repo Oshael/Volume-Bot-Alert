@@ -128,6 +128,32 @@ async function exchangeCodeForAccessToken(provider, code, flow) {
   return accessToken;
 }
 
+function buildGoogleIdentity(payload) {
+  return {
+    provider: 'google',
+    providerUserId: String(payload.sub || '').trim(),
+    providerEmail: String(payload.email || '').trim().toLowerCase() || null,
+    providerEmailVerified: Boolean(payload.email_verified),
+    providerDisplayName: String(payload.name || payload.email || '').trim() || null,
+    metadata: { picture: payload.picture || null },
+  };
+}
+
+function buildDiscordIdentity(payload) {
+  return {
+    provider: 'discord',
+    providerUserId: String(payload.id || '').trim(),
+    providerEmail: String(payload.email || '').trim().toLowerCase() || null,
+    providerEmailVerified: Boolean(payload.verified),
+    providerDisplayName: String(payload.global_name || payload.username || payload.email || '').trim() || null,
+    metadata: {
+      username: payload.username || null,
+      globalName: payload.global_name || null,
+      avatar: payload.avatar || null,
+    },
+  };
+}
+
 async function fetchProviderIdentity(provider, accessToken) {
   const providerConfig = getProviderConfig(provider);
   if (!providerConfig) {
@@ -150,30 +176,9 @@ async function fetchProviderIdentity(provider, accessToken) {
   }
 
   if (providerConfig.provider === 'google') {
-    return {
-      provider: 'google',
-      providerUserId: String(payload.sub || '').trim(),
-      providerEmail: String(payload.email || '').trim().toLowerCase() || null,
-      providerEmailVerified: Boolean(payload.email_verified),
-      providerDisplayName: String(payload.name || payload.email || '').trim() || null,
-      metadata: {
-        picture: payload.picture || null,
-      },
-    };
+    return buildGoogleIdentity(payload);
   }
-
-  return {
-    provider: 'discord',
-    providerUserId: String(payload.id || '').trim(),
-    providerEmail: String(payload.email || '').trim().toLowerCase() || null,
-    providerEmailVerified: Boolean(payload.verified),
-    providerDisplayName: String(payload.global_name || payload.username || payload.email || '').trim() || null,
-    metadata: {
-      username: payload.username || null,
-      globalName: payload.global_name || null,
-      avatar: payload.avatar || null,
-    },
-  };
+  return buildDiscordIdentity(payload);
 }
 
 module.exports = {
