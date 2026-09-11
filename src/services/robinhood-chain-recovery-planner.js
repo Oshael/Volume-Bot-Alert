@@ -58,7 +58,7 @@ const ROLLBACK_DOMAINS = Object.freeze([
     ]),
   }),
   Object.freeze({
-    id: 'discovery-creator', rollbackRegistered: false,
+    id: 'discovery-creator', rollbackRegistered: true,
     tables: Object.freeze([
       'robinhood_pool_registry', 'token_catalog', 'robinhood_token_attributions',
       'robinhood_direct_creator_cursors', 'robinhood_token_launch_anchors',
@@ -152,6 +152,7 @@ function completePlan(base, ancestor) {
     ...base,
     reason: crossesFinalized ? 'finalized_boundary_crossed' : 'parent_hash_mismatch',
     recoverable: !crossesFinalized,
+    executable: base.executable && !crossesFinalized,
     ancestor: {
       blockNumber: ancestor.blockNumber.toString(), blockHash: ancestor.blockHash,
     },
@@ -210,7 +211,7 @@ function createRobinhoodChainRecoveryPlanner(deps, options = {}) {
     }
     return { status: 'recovery-required', recoveryRequired: true, plan: {
       ...base, reason: 'ancestor_not_found', recoverable: false,
-      ancestor: null, affectedRange: null,
+      executable: false, ancestor: null, affectedRange: null,
     } };
   }
   return Object.freeze({ plan });

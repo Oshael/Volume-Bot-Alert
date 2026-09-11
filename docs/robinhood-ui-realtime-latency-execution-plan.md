@@ -233,7 +233,7 @@ Progresso:
   ainda sem consumidor ou publicação.
 - [x] Slice 3B2A: promoção durável, limitada e idempotente para `finalized` em
   shadow, acordada pelo avanço da finalidade canônica.
-- [ ] Slice 3B2B: recuperação central de reorg e gravação durável de
+- [x] Slice 3B2B: recuperação central de reorg e gravação durável de
   `invalidate`, incluindo rollback das projeções afetadas.
 - [ ] Slice 3B3: consumidor, publicação v2 e telemetria separada de lag
   observado/finalizado.
@@ -250,14 +250,14 @@ Estado implementado até este checkpoint:
   legado/v2 existente;
 - a recuperação canônica central já detecta, planeja, persiste e executa rewind
   somente atrás do manifesto de domínios; market, wallet, publicação, transfers,
-  signed-origin, first-buy, liquidity e holders já possuem rollback, mas o
-  manifesto ainda não está completo;
+  signed-origin, first-buy, liquidity, holders e discovery-creator possuem
+  rollback e o manifesto está completo;
 - a Stage 204 não deve ser limpa enquanto invalidação, consumo e retenção não
   estiverem prontos. Neste ponto ela tende a guardar duas linhas por swap maduro.
 
 Ao retomar em outro contexto, o próximo trabalho é obrigatoriamente
-**3B2B-3D — discovery-creator**. Não iniciar 3B3, Slice 4 ou qualquer slice posterior
-antes de concluir todos os gates de 3B2B.
+**3B3A — consumer shadow da Stage 204**. Não iniciar 3B3B, Slice 4 ou qualquer
+slice posterior antes de concluir esse consumer e sua auditoria shadow.
 
 #### Slice 3B2B — recuperação de reorg, em cortes menores
 
@@ -394,11 +394,11 @@ ordem não autoriza avançar para 3B3.
 
 **3B2B-3E — integração final dos gates**
 
-- [ ] preservar estado anterior marcado stale ou incompleto enquanto a nova
+- [x] preservar estado anterior marcado stale ou incompleto enquanto a nova
   ramificação não tiver sido reaplicada;
-- [ ] provar que falha de um domínio mantém recuperação retomável sem liberar
+- [x] provar que falha de um domínio mantém recuperação retomável sem liberar
   canonicalidade parcial para os outros;
-- [ ] liberar o manifesto apenas quando `wallet-derived`, `liquidity`, `holders`
+- [x] liberar o manifesto apenas quando `wallet-derived`, `liquidity`, `holders`
   e `discovery-creator` estiverem coerentes na mesma geração.
 
 Gate de 3B2B:
@@ -640,17 +640,16 @@ refresh HTTP.
 Esta fila prevalece sobre referências antigas a “próximo corte” e não deve ser
 reordenada sem atualizar este checkpoint:
 
-1. terminar 3B2B-3 com `discovery-creator` e a integração dos gates;
-   `wallet-derived`, `liquidity` e `holders` já estão concluídos;
-2. executar 3B3A, consumer shadow da Stage 204;
-3. executar 3B3B, canário e publicação v2;
-4. executar 3B3C, retenção e telemetria da Stage 204;
-5. executar Slice 4, liquidez realtime até a UI;
-6. executar Slice 5, readiness por push;
-7. executar Slice 6, holders dirigidos pelo journal;
-8. executar Slice 7, ranking e membership realtime.
+1. executar 3B3A, consumer shadow da Stage 204; todos os gates de 3B2B estão
+   concluídos;
+2. executar 3B3B, canário e publicação v2;
+3. executar 3B3C, retenção e telemetria da Stage 204;
+4. executar Slice 4, liquidez realtime até a UI;
+5. executar Slice 5, readiness por push;
+6. executar Slice 6, holders dirigidos pelo journal;
+7. executar Slice 7, ranking e membership realtime.
 
-O próximo corte autorizado pela fila é **3B2B-3D — discovery-creator**.
+O próximo corte autorizado pela fila é **3B3A — consumer shadow da Stage 204**.
 
 ## Ponto importante
 

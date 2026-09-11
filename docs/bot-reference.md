@@ -3974,21 +3974,22 @@ A Stage 205 adiciona ao cursor canônico `generation`, `recovery_state`,
 `recovery_plan` e `recovery_detected_at`; aplique com
 `node src/utils/db-init-stage205.js` antes de implantar código que use o fence.
 O journal pode persistir `recovery_required` somente sob lock e quando checkpoint
-e geração ainda correspondem ao plano. O planner disponível para a próxima fase
-de integração compara headers do RPC canônico com o journal, no máximo até
+e geração ainda correspondem ao plano. O planner compara headers do RPC canônico
+com o journal, no máximo até
 `ROBINHOOD_CHAIN_CAPTURE_REORG_MAX_DEPTH` (default 64, limite 1–1000), e recusa
 qualquer faixa cujo ancestral comum fique abaixo de `finalized_head`. Seu
 manifesto enumera journal, market, wallet, liquidity, holders, discovery/creator
-e publicação/alertas; enquanto qualquer rollback estiver sem registro, o plano
-permanece `executable: false`. O worker invoca o planner ao receber um primeiro
-bloco que não estende seu checkpoint, persiste o plano sob lock e se marca
+e publicação/alertas. Todos os rollbacks do manifesto v2 estão registrados;
+um plano recuperável novo sai `executable: true` e sem domínio pendente. O
+worker invoca o planner ao receber um primeiro bloco que não estende seu
+checkpoint, persiste o plano sob lock e se marca
 `halted`, expondo `recoveryState` e `recoveryPlan` na telemetria da lease. Cada
 commit também informa a geração lida antes do fetch; mudança concorrente falha
 com `capture_generation_conflict`, sem escrita parcial.
 Quando o cursor está em `recovery_required`, qualquer novo commit da captura
-falha com `capture_recovery_required` fatal. Este stage deliberadamente
-não oferece resume, rewind nem alteração de canonicalidade: essas operações só
-serão liberadas depois que os rollbacks dos domínios estiverem implementados.
+falha com `capture_recovery_required` fatal. Um plano persistido por uma versão
+anterior com `executable=false` continua fechado e não é reinterpretado; por isso,
+o deploy deve ocorrer com `recovery_state='running'`.
 
 A Stage 206 cria `robinhood_chain_recoveries`, uma linha durável por geração, e
 `robinhood_chain_recovery_outbox`, uma outbox at-least-once por fase. Aplique com
@@ -4002,8 +4003,7 @@ fronteira finalizada, profundidade e continuidade integral da faixa retida. Numa
 única transação, ele preserva a ramificação como `canonical=false`, recua o
 checkpoint ao ancestral, incrementa a geração e grava `chain:reorg:rewound`.
 O cursor permanece em `recovery_required`, portanto recaptura continua bloqueada
-até os rollbacks de domínio e a transição de resume serem implementados. Como o
-planner atual mantém todos os domínios pendentes, o gate não abre em produção.
+até todos os rollbacks gravarem evidência e a transição explícita de resume.
 Antes de marcar os blocos órfãos, a mesma transação cria uma linha `invalidate`
 na Stage 204 para cada `observed` da faixa, copiando sua identidade e payload e
 acrescentando `reason='reorg'`, `recoveryGeneration` e `invalidatedAt`. Conflito
@@ -4018,7 +4018,7 @@ canônicos; os agregados 5m–24h do token também são recalculados, incluindo 
 posteriores que podem mudar a escolha do mercado de valuation. Linhas contaminadas
 da Stage 104 são descartadas, e um bucket sem fonte é removido em vez de publicar
 preço ou volume zero. Tudo participa da mesma transação do rewind. Esse rollback
-não abre o gate: os demais domínios do manifesto continuam pendentes.
+participa do mesmo gate atômico dos demais domínios.
 
 O mesmo rewind remove swaps atribuídos à ramificação órfã de
 `robinhood_wallet_swaps`, sua linha em `robinhood_swap_mc`, a entrega ainda pendente da Stage 203
@@ -4032,16 +4032,17 @@ Esses pares são reconstruídos do ledger PostgreSQL retido até o ancestral; pa
 canônica restante são removidos. A substituição de quantidade, custo e PnL e o recuo do cursor
 financeiro são atômicos. O cursor `seed` permanece imutável e qualquer checkpoint financeiro fora
 da ramificação aborta toda a recuperação. Não há RPC nem migration adicional. O gate de recovery
-continua fechado porque os demais domínios ainda precisam de rollback próprio.
+continua fechado até a transação comprovar todos os domínios.
 
 Depois do rewind, o recovery entra em `awaiting_domains`. A mesma transação grava
 `domain_ready` para `canonical-journal`, `market`, `wallet`, `wallet-derived`,
-`holders`, `liquidity` e `publication-alerts`, sempre com a prova determinística do
-rollback; repetir uma prova idêntica é idempotente e uma prova diferente para o
-mesmo domínio falha fechado. `wallet-derived` reúne transfers, signed-origin e
-first-buy. Somente `discovery-creator` continua pendente, portanto o planner
-permanece `executable=false` em produção. Essa separação usa o manifesto v2; o
-executor recusa um plano gravado com outra versão em vez de reinterpretá-lo.
+`holders`, `liquidity`, `discovery-creator` e `publication-alerts`, sempre com a
+prova determinística do rollback na mesma geração. `wallet-derived` reúne
+transfers, signed-origin e first-buy; `discovery-creator` reúne registry/dedup,
+attribution/cursor e seus derivados. Se qualquer rollback ou prova falhar, toda
+a transação volta ao estado `detected`, preserva a ramificação canônica anterior
+e pode ser repetida. O executor recusa um manifesto com outra versão em vez de
+reinterpretá-lo.
 
 O resume genérico só limpa `recovery_required` e move o recovery para
 `recapturing` quando existem linhas `domain_ready` para todo o manifesto. Até
@@ -4049,8 +4050,8 @@ lá, ele retorna a lista exata de gates pendentes sem alterar o cursor. Depois d
 resume, a captura reaplica a nova ramificação com a geração incrementada; a PK
 por hash preserva a ramificação órfã e o retry exato do novo checkpoint permanece
 idempotente. O worker que já entrou em halt precisa ser reiniciado após o resume.
-Não existe bypass operacional nem liberação automática enquanto 3B2B-3 estiver
-incompleto.
+Não existe bypass operacional: ausência ou conflito em qualquer `domain_ready`
+mantém o cursor cercado.
 
 A Stage 208 mantém preimages por bloco dos agregados de transfers que ainda
 podem sofrer reorg. Cada linha expira exatamente três dias após o timestamp do

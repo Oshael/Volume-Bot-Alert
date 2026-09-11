@@ -8,6 +8,9 @@ const {
   createRobinhoodChainCaptureJournal,
 } = require('../src/models/robinhood-chain-capture-journal');
 const {
+  createRobinhoodChainRecoveryJournal,
+} = require('../src/models/robinhood-chain-recovery-journal');
+const {
   createRobinhoodChainDomainOutboxRepository,
 } = require('../src/models/robinhood-chain-domain-outbox');
 const {
@@ -924,7 +927,7 @@ describe('Robinhood canonical chain capture journal', () => {
     assert.deepEqual(comparableRewind, {
       status: 'rewound', generation: '0', nextGeneration: '1', orphanedBlocks: 1,
       domainReady: [
-        'canonical-journal', 'holders', 'liquidity', 'market',
+        'canonical-journal', 'discovery-creator', 'holders', 'liquidity', 'market',
         'publication-alerts', 'wallet', 'wallet-derived',
       ],
       tradeInvalidations: { observed: 1, invalidated: 1 },
@@ -1224,34 +1227,15 @@ describe('Robinhood canonical chain capture journal', () => {
       })
     ));
     assert.deepEqual(await journal.resumeCanonicalRecovery({ generation: '0' }), {
-      status: 'awaiting-domains', generation: '1',
-      readyDomains: [
-        'canonical-journal', 'holders', 'liquidity', 'market',
-        'publication-alerts', 'wallet', 'wallet-derived',
-      ],
-      pendingDomains: ['discovery-creator'],
-    });
-    await assert.rejects(
-      journal.commitBlock(second), (error) => error.code === 'capture_recovery_required'
-    );
-    for (const domain of ['discovery-creator']) {
-      await journal.recordRecoveryDomainReady({
-        generation: '0', domain, evidence: { test: 'rollback-complete' },
-      });
-    }
-    assert.equal((await journal.recordRecoveryDomainReady({
-      generation: '0', domain: 'discovery-creator', evidence: { test: 'rollback-complete' },
-    })).status, 'ready');
-    await assert.rejects(journal.recordRecoveryDomainReady({
-      generation: '0', domain: 'discovery-creator', evidence: { test: 'changed' },
-    }), (error) => error.code === 'capture_recovery_domain_conflict');
-    assert.deepEqual(await journal.resumeCanonicalRecovery({ generation: '0' }), {
       status: 'recapturing', generation: '1',
       readyDomains: [
-        'canonical-journal', 'discovery-creator', 'holders', 'liquidity',
-        'market', 'publication-alerts', 'wallet', 'wallet-derived',
+        'canonical-journal', 'discovery-creator', 'holders', 'liquidity', 'market',
+        'publication-alerts', 'wallet', 'wallet-derived',
       ],
       pendingDomains: [],
+    });
+    assert.deepEqual(await journal.resumeCanonicalRecovery({ generation: '0' }), {
+      status: 'already-recapturing', generation: '1',
     });
     const replacement = capture(101, plan.incoming.parentHash, HASH);
     replacement.transactions[0].hash = `0x${'d'.repeat(64)}`;
@@ -1295,6 +1279,80 @@ describe('Robinhood canonical chain capture journal', () => {
       `SELECT canonical FROM robinhood_chain_blocks WHERE block_hash=$1`, [HASH]
     )).rows[0].canonical, true);
     assert.equal((await journal.getCursor()).checkpoint_block, '100');
+  });
+
+  it('keeps recovery resumable when the final domain fails without partial canonicality', async () => {
+    const failure = Object.assign(new Error('derived rollback failed'), {
+      code: 'derived_recovery_fence_conflict',
+    });
+    const noop = (name) => ({ rollback: async () => ({ domain: name }) });
+    const dependencies = (marketRollback, discoveryDerivedRollback) => ({
+      database: db,
+      tradeLifecycle: { appendOrphanInvalidations: async () => ({ observed: 0, invalidated: 0 }) },
+      marketRollback, walletRollback: noop('wallet'), transferRollback: noop('transfers'),
+      liquidityRollback: noop('liquidity'), signedOriginRollback: noop('signed-origin'),
+      firstBuyRollback: noop('first-buy'), holderRollback: noop('holders'),
+      discoveryRollback: noop('discovery'), creatorRollback: noop('creator'),
+      discoveryDerivedRollback,
+    });
+    const partialMarket = {
+      rollback: async (client) => {
+        await client.query(
+          `UPDATE robinhood_chain_blocks SET finality='finalized'
+            WHERE chain='robinhood' AND block_number=100`
+        );
+        return { domain: 'market' };
+      },
+    };
+    const recoveryJournal = createRobinhoodChainRecoveryJournal(
+      dependencies(partialMarket, { rollback: async () => { throw failure; } })
+    );
+    const journal = createRobinhoodChainCaptureJournal({ database: db, recoveryJournal });
+    await journal.commitBlocks([capture(), capture(101, NEXT_HASH, HASH)]);
+    const plan = {
+      generation: '0', reason: 'parent_hash_mismatch', recoverable: true,
+      executable: true, pendingRollbackDomains: [], maxDepth: 12,
+      rollbackManifestVersion: 2,
+      checkpoint: { blockNumber: '101', blockHash: NEXT_HASH },
+      incoming: { blockNumber: '102', blockHash: `0x${'6'.repeat(64)}`,
+        parentHash: `0x${'7'.repeat(64)}` },
+      ancestor: { blockNumber: '100', blockHash: HASH },
+      affectedRange: { fromBlock: '101', throughBlock: '101', depth: '1' },
+    };
+    await journal.markRecoveryRequired({ plan });
+    await assert.rejects(
+      journal.rewindCanonicalRecovery({ generation: '0' }), (error) => error === failure
+    );
+    const failed = await db.query(
+      `SELECT recovery.status, cursor.generation::text, cursor.recovery_state,
+              cursor.checkpoint_block::text, block.canonical, block.finality,
+              (SELECT COUNT(*)::int FROM robinhood_chain_recovery_outbox
+                WHERE chain='robinhood' AND generation=0
+                  AND event_kind='domain_ready') AS ready_domains
+         FROM robinhood_chain_recoveries recovery
+         CROSS JOIN robinhood_chain_capture_cursor cursor
+         INNER JOIN robinhood_chain_blocks block ON block.chain=cursor.chain
+        WHERE recovery.chain='robinhood' AND recovery.generation=0
+          AND block.block_number=100`
+    );
+    assert.deepEqual(failed.rows[0], {
+      status: 'detected', generation: '0', recovery_state: 'recovery_required',
+      checkpoint_block: '101', canonical: true, finality: 'observed', ready_domains: 0,
+    });
+
+    const retryRecovery = createRobinhoodChainRecoveryJournal(
+      dependencies(noop('market'), noop('derived'))
+    );
+    const retryJournal = createRobinhoodChainCaptureJournal({
+      database: db, recoveryJournal: retryRecovery,
+    });
+    const retried = await retryJournal.rewindCanonicalRecovery({ generation: '0' });
+    assert.deepEqual(retried.domainReady, [
+      'canonical-journal', 'discovery-creator', 'holders', 'liquidity',
+      'market', 'publication-alerts', 'wallet', 'wallet-derived',
+    ]);
+    assert.equal((await retryJournal.resumeCanonicalRecovery({ generation: '0' })).status,
+      'recapturing');
   });
 
   it('rolls back atomically when a wallet-domain cursor hash is outside the orphan branch', async () => {

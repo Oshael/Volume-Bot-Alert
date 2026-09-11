@@ -505,9 +505,18 @@ function createRobinhoodChainRecoveryJournal(options = {}) {
       });
       await appendDomainReady(client, recoveryGeneration, 'liquidity', liquidity);
       await appendDomainReady(client, recoveryGeneration, 'holders', holders);
+      await appendDomainReady(client, recoveryGeneration, 'discovery-creator', {
+        discovery, creator, derived: discoveryDerived,
+      });
       await appendDomainReady(client, recoveryGeneration, 'publication-alerts', {
         tradeInvalidations, finalizedBoundaryPreserved: true,
       });
+      const gates = await readiness(client, recoveryGeneration);
+      if (gates.pendingDomains.length) {
+        throw recoveryError(
+          'capture_recovery_domain_incomplete', 'recovery domain evidence is incomplete'
+        );
+      }
       await client.query(
         `UPDATE robinhood_chain_recoveries
             SET status='awaiting_domains', rewound_at=NOW(), updated_at=NOW()
@@ -529,10 +538,7 @@ function createRobinhoodChainRecoveryJournal(options = {}) {
         orphanedBlocks: Number(rewind.depth), tradeInvalidations, market, wallet,
         walletTransfers, liquidity, signedOrigins, firstBuys, holders, discovery, creator,
         discoveryDerived,
-        domainReady: [
-          'canonical-journal', 'holders', 'liquidity', 'market',
-          'publication-alerts', 'wallet', 'wallet-derived',
-        ],
+        domainReady: gates.readyDomains,
       };
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch (_) {}

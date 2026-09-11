@@ -47,7 +47,7 @@ test('planner skips recovery when the incoming block extends the checkpoint', as
   assert.deepEqual(deps.calls, []);
 });
 
-test('planner finds a bounded ancestor but keeps execution gated by rollback domains', async () => {
+test('planner finds a bounded ancestor and opens the complete rollback manifest', async () => {
   const deps = fixture();
   const planner = createRobinhoodChainRecoveryPlanner(deps, { maxDepth: 8 });
   const result = await planner.plan({ incoming: incoming() });
@@ -57,8 +57,8 @@ test('planner finds a bounded ancestor but keeps execution gated by rollback dom
     checkpoint: { blockNumber: '100', blockHash: hash('a') },
     incoming: { blockNumber: '101', blockHash: hash('f'), parentHash: hash('d') },
     finalizedBoundary: { blockNumber: '98' }, rollbackManifestVersion: 2,
-    pendingRollbackDomains: ['discovery-creator'],
-    executable: false,
+    pendingRollbackDomains: [],
+    executable: true,
     reason: 'parent_hash_mismatch', recoverable: true,
     ancestor: { blockNumber: '98', blockHash: hash('c') },
     affectedRange: { fromBlock: '99', throughBlock: '100', depth: '2' },
@@ -101,15 +101,12 @@ test('planner fails closed when the RPC head changes during planning', async () 
   );
 });
 
-test('rollback inventory is unique and keeps unfinished domains behind the gate', () => {
+test('rollback inventory is unique and registers every domain behind the gate', () => {
   assert.deepEqual(ROLLBACK_DOMAINS.map(({ id }) => id), [
     'canonical-journal', 'market', 'wallet', 'wallet-derived', 'liquidity', 'holders',
     'discovery-creator', 'publication-alerts',
   ]);
-  assert.deepEqual(ROLLBACK_DOMAINS.filter(({ rollbackRegistered }) => !rollbackRegistered)
-    .map(({ id }) => id), [
-    'discovery-creator',
-  ]);
+  assert.deepEqual(ROLLBACK_DOMAINS.filter(({ rollbackRegistered }) => !rollbackRegistered), []);
   const tables = ROLLBACK_DOMAINS.flatMap(({ tables }) => tables);
   assert.equal(new Set(tables).size, tables.length);
   for (const required of [
