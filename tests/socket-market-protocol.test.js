@@ -16,6 +16,7 @@ const {
   getMarketTradeFinalityRoom,
   getMarketTradeCanaryRoom,
   getMarketTradeSubscriptionRooms,
+  isMarketTradeCanaryUser,
   normalizeMarketBucketUpdate,
   normalizeMarketTradeUpdate,
   recordMarketSubscriptionProtocolUsage,
@@ -114,6 +115,18 @@ describe('chain-aware socket market protocol', () => {
     }, { config: VISIBLE_CONFIG })], [
       `market-trade-v2:robinhood:${EVM_ADDRESS.toLowerCase()}`,
     ]);
+    assert.deepEqual([...getMarketTradeSubscriptionRooms({
+      protocolVersion: 2,
+      subscriptions: [{ chain: 'robinhood', address: EVM_ADDRESS }],
+    }, { config: VISIBLE_CONFIG, canary: true })], [
+      `market-trade-v2:robinhood:${EVM_ADDRESS.toLowerCase()}:canary`,
+    ]);
+    const canaryConfig = {
+      robinhoodWalletSwapLiveWorker: { realtimeV2CanaryUserIds: [42] },
+    };
+    assert.equal(isMarketTradeCanaryUser(42, canaryConfig), true);
+    assert.equal(isMarketTradeCanaryUser('42', canaryConfig), true);
+    assert.equal(isMarketTradeCanaryUser(41, canaryConfig), false);
     assert.equal(
       getMarketTradeFinalityRoom(resolveMarketIdentity({ chain: 'robinhood', address: EVM_ADDRESS })),
       `market-trade-v2:robinhood:${EVM_ADDRESS.toLowerCase()}`,

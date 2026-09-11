@@ -435,7 +435,7 @@ uma audiência canário explicitamente autorizada:
 - [x] **3B3B1 — publisher durável e transporte inerte:** claim/lease/retry no
   estado de publicação da Stage 204 e relay PostgreSQL para uma sala canário que
   ainda não aceita membros; o produtor não é composto no runtime neste corte;
-- [ ] **3B3B2 — allowlist e ativação:** admitir somente usuários/sessões canário,
+- [x] **3B3B2 — allowlist e ativação:** admitir somente usuários/sessões canário,
   conectar o publisher sob flag desligada por default e provar promoção,
   invalidação e deduplicação; clientes v1 permanecem finalizados-only.
 
@@ -655,15 +655,14 @@ refresh HTTP.
 Esta fila prevalece sobre referências antigas a “próximo corte” e não deve ser
 reordenada sem atualizar este checkpoint:
 
-1. executar 3B3B2, allowlist e ativação do canário v2; publisher e transporte
-   inerte de 3B3B1 estão concluídos;
-2. executar 3B3C, retenção e telemetria da Stage 204;
-3. executar Slice 4, liquidez realtime até a UI;
-4. executar Slice 5, readiness por push;
-5. executar Slice 6, holders dirigidos pelo journal;
-6. executar Slice 7, ranking e membership realtime.
+1. executar 3B3C, retenção e telemetria da Stage 204; canário 3B3B está
+   concluído e permanece desligado por default;
+2. executar Slice 4, liquidez realtime até a UI;
+3. executar Slice 5, readiness por push;
+4. executar Slice 6, holders dirigidos pelo journal;
+5. executar Slice 7, ranking e membership realtime.
 
-O próximo corte da fila é **3B3B2 — allowlist e ativação do canário v2**.
+O próximo corte da fila é **3B3C — retenção e telemetria da Stage 204**.
 
 ## Ponto importante
 

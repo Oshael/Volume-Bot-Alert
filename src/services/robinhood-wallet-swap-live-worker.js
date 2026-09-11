@@ -26,6 +26,9 @@ const {
 const {
   createRobinhoodWalletSwapRealtimeAuditRunner,
 } = require('./robinhood-wallet-swap-realtime-audit-runner');
+const {
+  createRobinhoodWalletSwapRealtimePublisherRunner,
+} = require('./robinhood-wallet-swap-realtime-publisher-runner');
 const marketTradeRealtime = require('./market-trade-realtime');
 const {
   NOTIFY_CHANNEL: OUTBOX_NOTIFY_CHANNEL,
@@ -36,10 +39,31 @@ const {
 const { createPostgresRealtimeListener } = require('./postgres-realtime-listener');
 
 const FATAL_CODES = new Set(['configuration_error', 'persistent_reorg', 'source_contract_error']);
+const NESTED_RESULT_METRICS = Object.freeze({
+  audit: Object.freeze({
+    result: 'lastAuditResult', errors: 'auditErrors',
+    counts: Object.freeze({
+      claimed: 'auditClaimed', audited: 'audited', retried: 'auditRetried',
+      blocked: 'auditBlocked', reclaimed: 'auditReclaimed',
+    }),
+  }),
+  publication: Object.freeze({
+    result: 'lastPublicationResult', errors: 'publicationErrors',
+    counts: Object.freeze({
+      claimed: 'publicationClaimed', delivered: 'publicationDelivered',
+      retried: 'publicationRetried', blocked: 'publicationBlocked',
+      reclaimed: 'publicationReclaimed',
+    }),
+  }),
+});
 
 function boundedInteger(value, fallback, min, max) {
   const parsed = Math.trunc(Number(value));
   return Number.isFinite(parsed) ? Math.max(min, Math.min(parsed, max)) : fallback;
+}
+
+function dependency(value, fallback) {
+  return value || fallback;
 }
 
 function normalizeOptions(options = {}, env = process.env) {
@@ -57,8 +81,27 @@ function normalizeOptions(options = {}, env = process.env) {
     outboxBatchSize: boundedInteger(options.outboxBatchSize, 200, 1, 2000),
     outboxLeaseMs: boundedInteger(options.outboxLeaseMs, 60_000, 5000, 600_000),
     outboxMaxAttempts: boundedInteger(options.outboxMaxAttempts, 5, 1, 50),
+    realtimeV2ObservedEnabled: options.realtimeV2ObservedEnabled === true,
     rpcOptions: options.rpcOptions || {},
   };
+}
+
+async function runNestedRunner(runner, input) {
+  try {
+    return await runner.runOnce(input);
+  } catch (error) {
+    return { status: 'error', error: publicError(error) };
+  }
+}
+
+function recordNestedResult(status, name, result) {
+  if (!result) return;
+  const metrics = NESTED_RESULT_METRICS[name];
+  status[metrics.result] = result;
+  for (const [source, target] of Object.entries(metrics.counts)) {
+    status[target] += Number(result[source] || 0);
+  }
+  status[metrics.errors] += result.status === 'error' ? 1 : 0;
 }
 
 async function buildRuntime(options, deps = {}) {
@@ -96,22 +139,33 @@ async function buildRuntime(options, deps = {}) {
         maxAttempts: options.outboxMaxAttempts,
       },
     });
+    const publisherFactory = dependency(
+      deps.realtimePublisherRunnerFactory, createRobinhoodWalletSwapRealtimePublisherRunner
+    );
+    const realtime = dependency(deps.marketTradeRealtime, marketTradeRealtime);
+    const publisherRunner = publisherFactory({
+      repository: lifecycle,
+      publishRows: realtime.publishFinalityRows,
+      options: {
+        batchSize: options.outboxBatchSize,
+        leaseMs: options.outboxLeaseMs,
+        maxAttempts: options.outboxMaxAttempts,
+      },
+    });
     return {
       sourceMode: DURABLE_OUTBOX_SOURCE,
       providerChainIds: Object.freeze({ canonical_journal: '4663' }),
       legacyDiscarded,
       runOnce: async () => {
         const result = await runner.runOnce();
-        let audit;
-        try {
-          audit = await auditRunner.runOnce();
-        } catch (error) {
-          audit = { status: 'error', error: publicError(error) };
-        }
+        const audit = await runNestedRunner(auditRunner);
+        const publication = await runNestedRunner(publisherRunner, {
+          observedEnabled: options.realtimeV2ObservedEnabled,
+        });
         const completeThroughBlock = await outbox.advanceCompatibilityWatermark(
           result.throughBlock
         );
-        return { ...result, completeThroughBlock, audit };
+        return { ...result, completeThroughBlock, audit, publication };
       },
     };
   }
@@ -211,6 +265,9 @@ function createRobinhoodWalletSwapLiveWorker(deps = {}) {
     promoted: 0, claimed: 0, delivered: 0, retried: 0, blocked: 0, reclaimed: 0,
     auditClaimed: 0, audited: 0, auditRetried: 0, auditBlocked: 0,
     auditReclaimed: 0, auditErrors: 0, lastAuditResult: null,
+    publicationClaimed: 0, publicationDelivered: 0, publicationRetried: 0,
+    publicationBlocked: 0, publicationReclaimed: 0, publicationErrors: 0,
+    lastPublicationResult: null,
     legacyDiscarded: 0, totalWakes: 0, lastWakeAt: null,
     consecutiveErrors: 0, consecutiveBlocked: 0, blockedBlock: null,
     lastCompletedAt: null, lastError: null,
@@ -256,16 +313,8 @@ function createRobinhoodWalletSwapLiveWorker(deps = {}) {
     status.consecutiveBlocked = blocked && status.blockedBlock === result.failedBlock
       ? status.consecutiveBlocked + 1 : (blocked ? 1 : 0);
     status.blockedBlock = blocked ? result.failedBlock : null;
-    const audit = result.audit;
-    if (audit) {
-      status.lastAuditResult = audit;
-      status.auditClaimed += Number(audit.claimed || 0);
-      status.audited += Number(audit.audited || 0);
-      status.auditRetried += Number(audit.retried || 0);
-      status.auditBlocked += Number(audit.blocked || 0);
-      status.auditReclaimed += Number(audit.reclaimed || 0);
-      status.auditErrors += audit.status === 'error' ? 1 : 0;
-    }
+    recordNestedResult(status, 'audit', result.audit);
+    recordNestedResult(status, 'publication', result.publication);
   }
 
   async function execute() {
@@ -326,7 +375,8 @@ function createRobinhoodWalletSwapLiveWorker(deps = {}) {
       );
       const drainAgain = Number(result?.claimed || 0) > 0
         || Number(result?.promoted || 0) >= options.outboxBatchSize
-        || Number(result?.audit?.claimed || 0) > 0;
+        || Number(result?.audit?.claimed || 0) > 0
+        || Number(result?.publication?.claimed || 0) > 0;
       queueNext(failures ? backoff : (drainAgain ? 0 : options.intervalMs));
     }, delay);
     timer?.unref?.();

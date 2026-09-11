@@ -721,13 +721,20 @@ interrompe a entrega finalizada existente, que sempre roda primeiro no tick. Nã
 linhas antes do corte de retenção. O status do wallet worker também expõe `promoted`;
 um lote cheio é drenado imediatamente, enquanto o intervalo de 2s permanece reconciliação ociosa.
 
-O publisher v2 preparado reclama somente linhas já aprovadas pelo auditor. `observed` exige
-ativação explícita; com ela desligada, terminais de ciclos anteriormente publicados continuam
-elegíveis para não deixar estado provisório preso. A entrega usa o canal PostgreSQL
-`market_trade_finality_v2`, e o web normaliza novamente o payload antes de mirar a sala
-`market-trade-v2:<identidade>:canary`. Essa sala ainda não admite sockets e o publisher ainda não é
-composto no runtime: o transporte permanece inerte até o corte de allowlist. Sucesso no `NOTIFY`
-marca `status='complete'`; falha mantém retry/backoff e lease expirada é recuperada.
+O publisher v2 reclama somente linhas já aprovadas pelo auditor e é composto no runtime do grupo
+`robinhood-wallet`. Novos `observed` exigem
+`ROBINHOOD_WALLET_SWAP_REALTIME_V2_OBSERVED_ENABLED=true`, desligado por default; com ele desligado,
+terminais de ciclos anteriormente publicados continuam elegíveis para não deixar estado provisório
+preso. A entrega usa o canal PostgreSQL `market_trade_finality_v2`, e o web normaliza novamente o
+payload antes de mirar a sala `market-trade-v2:<identidade>:canary`. Apenas usuários cujos IDs
+positivos estejam em `ROBINHOOD_WALLET_SWAP_REALTIME_V2_CANARY_USER_IDS` entram nessa sala;
+clientes fora da lista permanecem na sala v2 finalizada-only. Sucesso no `NOTIFY` marca
+`status='complete'`; falha mantém retry/backoff e lease expirada é recuperada.
+
+Ative primeiro a allowlist no web e reinicie o frontend/backend web; só então ative `observed` no
+`trendscope-worker@robinhood-wallet`. Para rollback, desligue apenas `...OBSERVED_ENABLED` e preserve
+a allowlist até os `finalized`/`invalidate` pendentes drenarem. A UI substitui `observed` por
+`finalized` usando `transactionHash:actionIndex` e remove a mesma identidade em `invalidate`.
 
 O grupo `robinhood-wallet`, com `ROBINHOOD_WALLET_SWAP_LIVE_SOURCE=durable_outbox` (default), acorda
 por `LISTEN` tanto no append quanto no avanço da finalidade e usa o intervalo de 2s somente como

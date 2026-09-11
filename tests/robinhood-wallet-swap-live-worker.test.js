@@ -221,10 +221,12 @@ describe('Robinhood wallet-swap LIVE worker', () => {
     const lifecycle = { promoteFinalized() {} };
     let runnerInput;
     let auditInput;
+    let publisherInput;
     const execution = [];
     const runtime = await buildRuntime({
       sourceMode: DURABLE_OUTBOX_SOURCE,
       outboxBatchSize: 300, outboxLeaseMs: 45000, outboxMaxAttempts: 7,
+      realtimeV2ObservedEnabled: true,
     }, {
       database,
       clientFactory: () => { throw new Error('RPC must not be constructed'); },
@@ -253,7 +255,15 @@ describe('Robinhood wallet-swap LIVE worker', () => {
           throw new Error('shadow unavailable');
         } };
       },
-      marketTradeRealtime: { publishRows() {} },
+      realtimePublisherRunnerFactory: (input) => {
+        publisherInput = input;
+        return { runOnce: async ({ observedEnabled }) => {
+          execution.push('publication');
+          assert.equal(observedEnabled, true);
+          return { status: 'delivered', claimed: 2, delivered: 2 };
+        } };
+      },
+      marketTradeRealtime: { publishRows() {}, publishFinalityRows() {} },
     });
 
     assert.equal(runtime.sourceMode, DURABLE_OUTBOX_SOURCE);
@@ -262,6 +272,8 @@ describe('Robinhood wallet-swap LIVE worker', () => {
     assert.equal(runnerInput.lifecycleRepository, lifecycle);
     assert.equal(runnerInput.readFinalizedBlock, outbox.readFinalizedBlock);
     assert.equal(auditInput.repository, lifecycle);
+    assert.equal(publisherInput.repository, lifecycle);
+    assert.equal(typeof publisherInput.publishRows, 'function');
     assert.deepEqual(auditInput.options, {
       batchSize: 300, leaseMs: 45000, maxAttempts: 7,
     });
@@ -273,7 +285,8 @@ describe('Robinhood wallet-swap LIVE worker', () => {
     assert.equal(output.completeThroughBlock, '200');
     assert.equal(output.audit.status, 'error');
     assert.match(output.audit.error.message, /shadow unavailable/);
-    assert.deepEqual(execution, ['delivery', 'audit']);
+    assert.deepEqual(output.publication, { status: 'delivered', claimed: 2, delivered: 2 });
+    assert.deepEqual(execution, ['delivery', 'audit', 'publication']);
   });
 
   it('wakes the durable consumer from outbox and finality notifications', async () => {

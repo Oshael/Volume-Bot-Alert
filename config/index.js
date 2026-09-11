@@ -62,6 +62,14 @@ function parseOptionalNonNegativeInteger(value, { positive = false } = {}) {
   return parsed;
 }
 
+function parsePositiveIntegerList(value) {
+  return [...new Set(String(value || '').split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => /^\d+$/.test(entry))
+    .map(Number)
+    .filter((entry) => Number.isSafeInteger(entry) && entry > 0))];
+}
+
 function parseOptionalNonNegativeDecimal(value) {
   const normalized = String(value ?? '').trim();
   return /^\d+(?:\.\d+)?$/.test(normalized) ? normalized : null;
@@ -1857,6 +1865,12 @@ module.exports = {
     ),
     outboxMaxAttempts: parseIntegerInRange(
       process.env.ROBINHOOD_WALLET_SWAP_OUTBOX_MAX_ATTEMPTS, 5, 1, 50
+    ),
+    realtimeV2ObservedEnabled: parseBoolean(
+      process.env.ROBINHOOD_WALLET_SWAP_REALTIME_V2_OBSERVED_ENABLED, false
+    ),
+    realtimeV2CanaryUserIds: parsePositiveIntegerList(
+      process.env.ROBINHOOD_WALLET_SWAP_REALTIME_V2_CANARY_USER_IDS
     ),
   },
 

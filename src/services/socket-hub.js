@@ -124,14 +124,23 @@ function getMarketTradeCanaryRoom(identity) {
   return room ? `${room}:canary` : null;
 }
 
+function isMarketTradeCanaryUser(userId, runtimeConfig = config) {
+  const normalized = Number(userId);
+  return Number.isSafeInteger(normalized) && normalized > 0
+    && (runtimeConfig.robinhoodWalletSwapLiveWorker?.realtimeV2CanaryUserIds || [])
+      .includes(normalized);
+}
+
 function getMarketTradeSubscriptionRooms(payload, options = {}) {
   if (!Array.isArray(payload?.subscriptions)) return null;
   const rooms = new Set();
   for (const subscription of payload.subscriptions) {
     const identity = resolveMarketIdentity(subscription);
     const lifecycle = Number(payload?.protocolVersion) === MARKET_TRADE_FINALITY_VERSION;
+    const lifecycleRoom = options.canary === true
+      ? getMarketTradeCanaryRoom(identity) : getMarketTradeFinalityRoom(identity);
     const room = isTokenChainUserVisible(identity?.chain, options.config || config)
-      ? (lifecycle ? getMarketTradeFinalityRoom(identity) : getMarketTradeRoom(identity)) : null;
+      ? (lifecycle ? lifecycleRoom : getMarketTradeRoom(identity)) : null;
     if (!room) return null;
     rooms.add(room);
   }
@@ -656,7 +665,9 @@ function init(httpServer) {
 
     socket.on('market:trade:sync', (data) => {
       if (!noteSocketAction(socket, 'market:trade:sync')) return;
-      const nextRooms = getMarketTradeSubscriptionRooms(data);
+      const nextRooms = getMarketTradeSubscriptionRooms(data, {
+        canary: isMarketTradeCanaryUser(socket.user?.id),
+      });
       const maxSubscriptions = Math.max(
         1, Number(config.security?.socket?.maxSubscriptionsPerSocket) || 350
       );
@@ -864,6 +875,7 @@ module.exports = {
     getMarketTradeFinalityRoom,
     getMarketTradeCanaryRoom,
     getMarketTradeSubscriptionRooms,
+    isMarketTradeCanaryUser,
     getMarketSubscriptionRoom,
     getMarketSubscriptionRooms,
     normalizeMarketBucketUpdate,

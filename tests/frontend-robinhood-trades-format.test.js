@@ -77,10 +77,12 @@ describe('robinhood trades format', () => {
 
   it('prepends, orders, deduplicates and caps live trades', () => {
     const old = trade({ blockTime: '2026-08-06T23:58:00.000Z', actionIndex: 1 });
-    const current = trade({ transactionHash: `0x${'b'.repeat(64)}`, actionIndex: 2 });
-    const duplicate = trade({ ...current, amountUsd: 99 });
-    assert.deepEqual(mergeLiveTrade([old, current], duplicate, 2), [duplicate, old]);
-    assert.deepEqual(removeLiveTrade([old, current], current), [old]);
+    const observed = trade({
+      transactionHash: `0x${'b'.repeat(64)}`, actionIndex: 2, finality: 'observed',
+    });
+    const finalized = trade({ ...observed, amountUsd: 99, finality: 'finalized' });
+    assert.deepEqual(mergeLiveTrade([old, observed], finalized, 2), [finalized, old]);
+    assert.deepEqual(removeLiveTrade([old, finalized], finalized), [old]);
   });
 
   it('filters DEV realtime trades fail-closed by the resolved creator wallet', () => {

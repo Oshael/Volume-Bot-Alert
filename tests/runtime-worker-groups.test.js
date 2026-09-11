@@ -1349,6 +1349,8 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_WALLET_SWAP_LIVE_BLOCK_CONCURRENCY: '999',
       ROBINHOOD_WALLET_SWAP_LIVE_REORG_DEPTH: '0',
       ROBINHOOD_WALLET_SWAP_LIVE_MAX_CONSECUTIVE_FAILURES: '999',
+      ROBINHOOD_WALLET_SWAP_REALTIME_V2_OBSERVED_ENABLED: 'true',
+      ROBINHOOD_WALLET_SWAP_REALTIME_V2_CANARY_USER_IDS: '7, 7,0,bad,12',
     }, (config) => {
       assert.deepEqual(config.robinhoodWalletSwapLiveWorker, {
         enabled: false,
@@ -1359,6 +1361,11 @@ describe('runtime worker groups config', () => {
         blockConcurrency: 32,
         reorgDepth: 1,
         maxConsecutiveFailures: 100,
+        outboxBatchSize: 200,
+        outboxLeaseMs: 60_000,
+        outboxMaxAttempts: 5,
+        realtimeV2ObservedEnabled: true,
+        realtimeV2CanaryUserIds: [7, 12],
       });
     });
   });
