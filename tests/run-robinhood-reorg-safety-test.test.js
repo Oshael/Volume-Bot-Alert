@@ -37,7 +37,9 @@ function fakeDockerResult(args, options) {
 }
 
 function fakeNodeResult(args, options) {
-  if (INIT_FILES.includes(args[0])) return { status: options.initStatus ?? 0 };
+  if (INIT_FILES.includes(args[0])) {
+    return { status: options.initStatus ?? 0, stderr: options.initStderr || '' };
+  }
   if (args[0] === '--test') return { status: options.testStatus ?? 0 };
   throw new Error(`Unexpected Node command: ${args.join(' ')}`);
 }
@@ -65,7 +67,7 @@ describe('Robinhood reorg safety test runner', () => {
     assert.throws(() => parsePublishedPort('127.0.0.1:99999\n'), /invalid/);
   });
 
-  it('removes production database variables from the child environment', () => {
+  it('replaces every database target with the isolated loopback database', () => {
     const env = createTestEnvironment({
       DATABASE_URL: 'postgresql://production',
       DB_NAME: 'volume_alert',
@@ -76,12 +78,19 @@ describe('Robinhood reorg safety test runner', () => {
       UNRELATED: 'preserved',
     }, 49152, 'secret');
     assert.equal(env.NODE_ENV, 'test');
-    assert.equal(env.DATABASE_URL, undefined);
+    assert.equal(
+      env.DATABASE_URL,
+      'postgresql://reorg_test:secret@127.0.0.1:49152/volume_alert_reorg_test'
+    );
     assert.equal(env.DB_NAME, undefined);
     assert.equal(env.PGDATABASE, undefined);
     assert.equal(env.DB_HOST_TEST, undefined);
     assert.equal(env.DB_NAME_TEST, undefined);
     assert.equal(env.ALLOW_UNSAFE_TEST_DATABASE, 'false');
+    assert.equal(env.DB_SSL, 'false');
+    assert.equal(env.DB_SSL_TEST, 'false');
+    assert.equal(env.PGSSLMODE, 'disable');
+    assert.equal(env.PGSSLMODE_TEST, 'disable');
     assert.equal(env.UNRELATED, 'preserved');
     assert.equal(
       env.DATABASE_URL_TEST,
@@ -121,11 +130,15 @@ describe('Robinhood reorg safety test runner', () => {
       command === process.execPath && INIT_FILES.includes(args[0])
     )).map(({ args }) => args[0]);
     assert.deepEqual(initFiles, [...INIT_FILES]);
+    assert.equal(fake.calls.filter(({ command, args, capture }) => (
+      command === process.execPath && INIT_FILES.includes(args[0]) && capture
+    )).length, INIT_FILES.length);
 
     const test = fake.calls.find(({ command, args }) => (
       command === process.execPath && args[0] === '--test'
     ));
     assert.equal(test.env.NODE_ENV, 'test');
+    assert.equal(test.env.DATABASE_URL, test.env.DATABASE_URL_TEST);
     assert.match(test.env.DATABASE_URL_TEST, new RegExp(`/${DATABASE}$`));
     assert.equal(test.args.includes('--test-concurrency=1'), true);
     assert.deepEqual(test.args.slice(-TEST_FILES.length), [...TEST_FILES]);
@@ -149,6 +162,16 @@ describe('Robinhood reorg safety test runner', () => {
     assert.equal(fake.calls.some(({ command, args }) => (
       command === 'docker' && args[0] === 'rm'
     )), false);
+  });
+
+  it('reports captured initialization failures', () => {
+    const fake = fakeRunner({ initStatus: 1, initStderr: 'isolated initialization failed' });
+    assert.throws(() => runRobinhoodReorgSafetyTest({
+      run: fake.run,
+      randomUUID: uuidSequence(),
+      wait: () => {},
+      existsSync: () => true,
+    }), /db-init\.js.*isolated initialization failed/);
   });
 
   it('reports the Docker failure without creating a database', () => {

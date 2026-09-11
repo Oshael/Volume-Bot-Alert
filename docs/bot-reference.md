@@ -778,10 +778,12 @@ capturado com a fronteira `observed`; `finalizedLagBlocks` compara `finalized_he
 publicados permanecem disponíveis para auditoria e são removidos pela retenção quando elegíveis.
 
 O drill consolidado `npm run robinhood:reorg-safety-test` exige Docker, cria um PostgreSQL 16
-efêmero em porta aleatória restrita a `127.0.0.1` e injeta `DATABASE_URL_TEST` para o database fixo
-`volume_alert_reorg_test`. Ele inicializa o schema base e a Stage 5 exigida pelo bootstrap do
+efêmero em porta aleatória restrita a `127.0.0.1` e substitui tanto `DATABASE_URL` quanto
+`DATABASE_URL_TEST` pelo database fixo `volume_alert_reorg_test`, com SSL desabilitado. A duplicação
+é intencional: cobre o inicializador base legado e os módulos atuais sem permitir que o `.env`
+redirecione uma das etapas. Ele inicializa o schema base e a Stage 5 exigida pelo bootstrap do
 journal, depois executa sequencialmente as integrações de rewind, lifecycle e publicação com
-fixtures sintéticas; nunca reutiliza as variáveis de conexão normais. Os dois testes frontend que
+fixtures sintéticas. Os dois testes frontend que
 exigem `frontend/node_modules/esbuild` rodam quando essa dependência estiver instalada e são
 reportados como opcionais no deploy mínimo. Em sucesso remove o container. Em falha preserva o
 container nomeado e imprime os comandos de inspeção e limpeza; remova-o depois da auditoria.

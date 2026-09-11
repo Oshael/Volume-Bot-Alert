@@ -46,12 +46,19 @@ function createTestEnvironment(baseEnvironment, port, password) {
     'PGHOST', 'PGPORT', 'PGDATABASE', 'PGUSER', 'PGPASSWORD',
     'DB_HOST_TEST', 'DB_PORT_TEST', 'DB_NAME_TEST', 'DB_USER_TEST', 'DB_PASSWORD_TEST',
     'PGHOST_TEST', 'PGPORT_TEST', 'PGDATABASE_TEST', 'PGUSER_TEST', 'PGPASSWORD_TEST',
+    'DB_SSL', 'DB_SSL_REJECT_UNAUTHORIZED', 'PGSSLMODE',
     'DB_SSL_TEST', 'DB_SSL_REJECT_UNAUTHORIZED_TEST', 'PGSSLMODE_TEST',
   ]) delete environment[key];
+  const connectionString =
+    `postgresql://${USER}:${password}@127.0.0.1:${port}/${DATABASE}`;
   environment.NODE_ENV = 'test';
   environment.ALLOW_UNSAFE_TEST_DATABASE = 'false';
-  environment.DATABASE_URL_TEST =
-    `postgresql://${USER}:${password}@127.0.0.1:${port}/${DATABASE}`;
+  environment.DATABASE_URL = connectionString;
+  environment.DATABASE_URL_TEST = connectionString;
+  environment.DB_SSL = 'false';
+  environment.DB_SSL_TEST = 'false';
+  environment.PGSSLMODE = 'disable';
+  environment.PGSSLMODE_TEST = 'disable';
   return environment;
 }
 
@@ -150,8 +157,9 @@ function runRobinhoodReorgSafetyTest(options = {}) {
     console.log(`[ReorgSafety] Target locked to 127.0.0.1:${port}/${DATABASE}.`);
 
     for (const file of INIT_FILES) {
-      const init = run(process.execPath, [file], { env });
+      const init = run(process.execPath, [file], { env, capture: true });
       if (init.status !== 0) throw commandFailure(`Test database initialization (${file})`, init);
+      console.log(`[ReorgSafety] Initialized ${file}.`);
     }
 
     const selection = resolveTestFiles(options.existsSync);
