@@ -254,6 +254,41 @@ function bindHistoryBucketOrderLock(
   });
 }
 
+function classWhen(value: unknown, className = 'active') {
+  return value ? className : '';
+}
+
+function markupWhen(value: unknown, markup: string) {
+  return value ? markup : '';
+}
+
+function getHistorySortClasses(sorts: AppState['ui']['recentSorts']) {
+  const mode = (value: string) => classWhen(sorts.some((item) => item.mode === value));
+  const criterion = (value: string, window: string) => classWhen(
+    sorts.some((item) => item.mode === value && item.window === window)
+  );
+  return {
+    vol: mode('vol'),
+    mcap: mode('mcap'),
+    pchange: mode('pchange'),
+    age: mode('age'),
+    vol1h: criterion('vol', '1h'),
+    vol6h: criterion('vol', '6h'),
+    vol24h: criterion('vol', '24h'),
+    mcapHighest: criterion('mcap', 'highest'),
+    mcapLowest: criterion('mcap', 'lowest'),
+    pchange1h: criterion('pchange', '1h'),
+    pchange6h: criterion('pchange', '6h'),
+    pchange24h: criterion('pchange', '24h'),
+    ageNewest: criterion('age', 'newest'),
+    ageOldest: criterion('age', 'oldest'),
+  };
+}
+
+function setInputDisplayValue(input: HTMLInputElement | null, value: unknown) {
+  if (input) input.value = String(value || '');
+}
+
 export function renderRecentSection(state: AppState, controller: AppController) {
   const section = document.createElement('section');
   section.className = 'legacy-token-bar recent-bar';
@@ -269,22 +304,7 @@ export function renderRecentSection(state: AppState, controller: AppController) 
     normalizeRecentAgeMinutes(state.data.configs['recent-age-max'], RECENT_MAX_AGE_MINUTES)
   );
   const recentSorts = state.ui.recentSorts;
-  const hasRecentMode = (mode: string) => recentSorts.some((item) => item.mode === mode);
-  const hasRecentCriterion = (mode: string, window: string) => recentSorts.some((item) => item.mode === mode && item.window === window);
-  const recentVolActive = hasRecentMode('vol') ? 'active' : '';
-  const recentMcapActive = hasRecentMode('mcap') ? 'active' : '';
-  const recentPchangeActive = hasRecentMode('pchange') ? 'active' : '';
-  const recentAgeActive = hasRecentMode('age') ? 'active' : '';
-  const recentVol1h = hasRecentCriterion('vol', '1h') ? 'active' : '';
-  const recentVol6h = hasRecentCriterion('vol', '6h') ? 'active' : '';
-  const recentVol24h = hasRecentCriterion('vol', '24h') ? 'active' : '';
-  const recentMcapHighest = hasRecentCriterion('mcap', 'highest') ? 'active' : '';
-  const recentMcapLowest = hasRecentCriterion('mcap', 'lowest') ? 'active' : '';
-  const recentPchange1h = hasRecentCriterion('pchange', '1h') ? 'active' : '';
-  const recentPchange6h = hasRecentCriterion('pchange', '6h') ? 'active' : '';
-  const recentPchange24h = hasRecentCriterion('pchange', '24h') ? 'active' : '';
-  const recentAgeNewest = hasRecentCriterion('age', 'newest') ? 'active' : '';
-  const recentAgeOldest = hasRecentCriterion('age', 'oldest') ? 'active' : '';
+  const sortClasses = getHistorySortClasses(recentSorts);
   const recentSearchQuery = String(state.ui.recentSearchQuery || '').trim().toLowerCase();
   const recentSearchPending = usesServerSlice && state.ui.recentSearchPending;
   const filteredRecentTokens = getRecentTokens(state).filter((item) => {
@@ -303,7 +323,7 @@ export function renderRecentSection(state: AppState, controller: AppController) 
     section.innerHTML = `
       <div class="legacy-bar-head legacy-bar-head-collapsed">
         <div class="legacy-bar-title-wrap">
-          <span class="legacy-bar-title recent"><span class="recent-live-emoji ${state.runtime.mode === 'active' ? 'live' : ''}">\u{1F7E2}</span> RECENT TOKENS</span>
+          <span class="legacy-bar-title recent"><span class="recent-live-emoji ${classWhen(state.runtime.mode === 'active', 'live')}">\u{1F7E2}</span> RECENT TOKENS</span>
         </div>
         <div class="legacy-bar-controls legacy-bar-collapse-controls">
           <span class="count-pill">${state.bars.recent}</span>
@@ -329,17 +349,17 @@ export function renderRecentSection(state: AppState, controller: AppController) 
   section.innerHTML = `
     <div class="legacy-bar-head">
       <div class="legacy-bar-title-wrap">
-        <span class="legacy-bar-title recent"><span class="recent-live-emoji ${state.runtime.mode === 'active' ? 'live' : ''}">\u{1F7E2}</span> RECENT TOKENS</span>
+        <span class="legacy-bar-title recent"><span class="recent-live-emoji ${classWhen(state.runtime.mode === 'active', 'live')}">\u{1F7E2}</span> RECENT TOKENS</span>
       </div>
       <div class="legacy-bar-controls recent-bar-controls">
         <div class="recent-ctrl-icons">
           <button type="button" class="compact-icon-toggle section-collapse-toggle" data-action="toggle-section-collapse" data-section="recent" aria-label="Collapse recent tokens"><span class="compact-icon-glyph">−</span></button>
-          <div class="compact-search ${recentSearchQuery ? 'has-query open' : ''}">
+          <div class="compact-search ${classWhen(recentSearchQuery, 'has-query open')}">
             <button type="button" class="compact-search-toggle" data-action="recent-search-focus" aria-label="Search recent tokens">&#128269;</button>
             <input class="compact-search-input" type="text" placeholder="ticker / ca" data-action="recent-search" data-search-input="recent">
           </div>
-          ${recentSearchPending ? '<span class="search-status-indicator active" aria-live="polite">Searching...</span>' : ''}
-          <button type="button" class="compact-icon-toggle ${state.ui.recentStarredOnly ? 'active' : ''}" data-action="recent-starred-only" aria-label="Show only starred recent tokens"><span class="compact-icon-glyph">&#9733;</span></button>
+          ${markupWhen(recentSearchPending, '<span class="search-status-indicator active" aria-live="polite">Searching...</span>')}
+          <button type="button" class="compact-icon-toggle ${classWhen(state.ui.recentStarredOnly)}" data-action="recent-starred-only" aria-label="Show only starred recent tokens"><span class="compact-icon-glyph">&#9733;</span></button>
         </div>
         <div class="recent-ctrl-filters">
         ${renderSparklineRangeControl(state, 'recent')}
@@ -362,33 +382,33 @@ export function renderRecentSection(state: AppState, controller: AppController) 
         <div class="sort-pill-group recent-ctrl-cluster recent-ctrl-cluster-sort compact-sort-cluster">
           <span class="filter-label recent-ctrl-cluster-label">SORT</span>
           <div class="sort-menu-wrap" data-sort-wrap>
-            <button type="button" class="old-filter-btn ${recentVolActive}" data-sort-toggle="vol">VOL</button>
+            <button type="button" class="old-filter-btn ${sortClasses.vol}" data-sort-toggle="vol">VOL</button>
             <div class="sort-menu-dropdown">
-              <button type="button" class="sort-menu-item ${recentVol1h}" data-sort-mode="vol" data-sort-window="1h">1H</button>
-              <button type="button" class="sort-menu-item ${recentVol6h}" data-sort-mode="vol" data-sort-window="6h">6H</button>
-              <button type="button" class="sort-menu-item ${recentVol24h}" data-sort-mode="vol" data-sort-window="24h">24H</button>
+              <button type="button" class="sort-menu-item ${sortClasses.vol1h}" data-sort-mode="vol" data-sort-window="1h">1H</button>
+              <button type="button" class="sort-menu-item ${sortClasses.vol6h}" data-sort-mode="vol" data-sort-window="6h">6H</button>
+              <button type="button" class="sort-menu-item ${sortClasses.vol24h}" data-sort-mode="vol" data-sort-window="24h">24H</button>
             </div>
           </div>
           <div class="sort-menu-wrap" data-sort-wrap>
-            <button type="button" class="old-filter-btn ${recentMcapActive}" data-sort-toggle="mcap">MCAP / FDV</button>
+            <button type="button" class="old-filter-btn ${sortClasses.mcap}" data-sort-toggle="mcap">MCAP / FDV</button>
             <div class="sort-menu-dropdown">
-              <button type="button" class="sort-menu-item ${recentMcapHighest}" data-sort-mode="mcap" data-sort-window="highest">HIGHEST</button>
-              <button type="button" class="sort-menu-item ${recentMcapLowest}" data-sort-mode="mcap" data-sort-window="lowest">LOWEST</button>
+              <button type="button" class="sort-menu-item ${sortClasses.mcapHighest}" data-sort-mode="mcap" data-sort-window="highest">HIGHEST</button>
+              <button type="button" class="sort-menu-item ${sortClasses.mcapLowest}" data-sort-mode="mcap" data-sort-window="lowest">LOWEST</button>
             </div>
           </div>
           <div class="sort-menu-wrap" data-sort-wrap>
-            <button type="button" class="old-filter-btn ${recentPchangeActive}" data-sort-toggle="pchange">PCHANGE</button>
+            <button type="button" class="old-filter-btn ${sortClasses.pchange}" data-sort-toggle="pchange">PCHANGE</button>
             <div class="sort-menu-dropdown">
-              <button type="button" class="sort-menu-item ${recentPchange1h}" data-sort-mode="pchange" data-sort-window="1h">1H</button>
-              <button type="button" class="sort-menu-item ${recentPchange6h}" data-sort-mode="pchange" data-sort-window="6h">6H</button>
-              <button type="button" class="sort-menu-item ${recentPchange24h}" data-sort-mode="pchange" data-sort-window="24h">24H</button>
+              <button type="button" class="sort-menu-item ${sortClasses.pchange1h}" data-sort-mode="pchange" data-sort-window="1h">1H</button>
+              <button type="button" class="sort-menu-item ${sortClasses.pchange6h}" data-sort-mode="pchange" data-sort-window="6h">6H</button>
+              <button type="button" class="sort-menu-item ${sortClasses.pchange24h}" data-sort-mode="pchange" data-sort-window="24h">24H</button>
             </div>
           </div>
           <div class="sort-menu-wrap" data-sort-wrap>
-            <button type="button" class="old-filter-btn ${recentAgeActive}" data-sort-toggle="age">AGE</button>
+            <button type="button" class="old-filter-btn ${sortClasses.age}" data-sort-toggle="age">AGE</button>
             <div class="sort-menu-dropdown">
-              <button type="button" class="sort-menu-item ${recentAgeNewest}" data-sort-mode="age" data-sort-window="newest">NEWEST</button>
-              <button type="button" class="sort-menu-item ${recentAgeOldest}" data-sort-mode="age" data-sort-window="oldest">OLDEST</button>
+              <button type="button" class="sort-menu-item ${sortClasses.ageNewest}" data-sort-mode="age" data-sort-window="newest">NEWEST</button>
+              <button type="button" class="sort-menu-item ${sortClasses.ageOldest}" data-sort-mode="age" data-sort-window="oldest">OLDEST</button>
             </div>
           </div>
         </div>
@@ -421,29 +441,19 @@ export function renderRecentSection(state: AppState, controller: AppController) 
     )}
   `;
   const recentSearchInput = section.querySelector<HTMLInputElement>('[data-action="recent-search"]');
-  if (recentSearchInput) {
-    recentSearchInput.value = state.ui.recentSearchQuery || '';
-  }
+  setInputDisplayValue(recentSearchInput, state.ui.recentSearchQuery);
   bindCompactSearch(section, {
     toggleAction: 'recent-search-focus',
     inputAction: 'recent-search',
   });
   const recentAgeMinInput = section.querySelector<HTMLInputElement>('input[name="recent-age-min"]');
-  if (recentAgeMinInput) {
-    recentAgeMinInput.value = formatRecentAgeInput(recentAgeMinMinutes);
-  }
+  setInputDisplayValue(recentAgeMinInput, formatRecentAgeInput(recentAgeMinMinutes));
   const recentAgeMaxInput = section.querySelector<HTMLInputElement>('input[name="recent-age-max"]');
-  if (recentAgeMaxInput) {
-    recentAgeMaxInput.value = formatRecentAgeInput(recentAgeMaxMinutes);
-  }
+  setInputDisplayValue(recentAgeMaxInput, formatRecentAgeInput(recentAgeMaxMinutes));
   const recentPerPageInput = section.querySelector<HTMLInputElement>('[data-action="recent-per-page"]');
-  if (recentPerPageInput) {
-    recentPerPageInput.value = String(safeRecentPerPage);
-  }
+  setInputDisplayValue(recentPerPageInput, safeRecentPerPage);
   const recentPageJumpInput = section.querySelector<HTMLInputElement>('[data-action="recent-page-jump"]');
-  if (recentPageJumpInput) {
-    recentPageJumpInput.value = String(safeRecentPage + 1);
-  }
+  setInputDisplayValue(recentPageJumpInput, safeRecentPage + 1);
   recentSearchInput?.addEventListener('input', (event) => {
     controller.setRecentSearchQuery((event.currentTarget as HTMLInputElement).value);
   });
@@ -532,22 +542,7 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
     ? Math.max(oldWeekAgeMinMinutes, rawOldWeekAgeMaxMinutes)
     : 0;
   const oldWeekSorts = state.ui.oldWeekSorts;
-  const hasOldWeekMode = (mode: string) => oldWeekSorts.some((item) => item.mode === mode);
-  const hasOldWeekCriterion = (mode: string, window: string) => oldWeekSorts.some((item) => item.mode === mode && item.window === window);
-  const oldWeekVolActive = hasOldWeekMode('vol') ? 'active' : '';
-  const oldWeekMcapActive = hasOldWeekMode('mcap') ? 'active' : '';
-  const oldWeekPchangeActive = hasOldWeekMode('pchange') ? 'active' : '';
-  const oldWeekAgeActive = hasOldWeekMode('age') ? 'active' : '';
-  const oldWeekVol1h = hasOldWeekCriterion('vol', '1h') ? 'active' : '';
-  const oldWeekVol6h = hasOldWeekCriterion('vol', '6h') ? 'active' : '';
-  const oldWeekVol24h = hasOldWeekCriterion('vol', '24h') ? 'active' : '';
-  const oldWeekMcapHighest = hasOldWeekCriterion('mcap', 'highest') ? 'active' : '';
-  const oldWeekMcapLowest = hasOldWeekCriterion('mcap', 'lowest') ? 'active' : '';
-  const oldWeekPchange1h = hasOldWeekCriterion('pchange', '1h') ? 'active' : '';
-  const oldWeekPchange6h = hasOldWeekCriterion('pchange', '6h') ? 'active' : '';
-  const oldWeekPchange24h = hasOldWeekCriterion('pchange', '24h') ? 'active' : '';
-  const oldWeekAgeNewest = hasOldWeekCriterion('age', 'newest') ? 'active' : '';
-  const oldWeekAgeOldest = hasOldWeekCriterion('age', 'oldest') ? 'active' : '';
+  const sortClasses = getHistorySortClasses(oldWeekSorts);
   const oldWeekSearchQuery = String(state.ui.oldWeekSearchQuery || '').trim().toLowerCase();
   const oldWeekSearchPending = usesServerSlice && state.ui.oldWeekSearchPending;
   const filteredOldWeekTokens = getOldWeekTokens(state).filter((item) => {
@@ -597,12 +592,12 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
       <div class="legacy-bar-controls recent-bar-controls">
         <div class="recent-ctrl-icons">
           <button type="button" class="compact-icon-toggle section-collapse-toggle" data-action="toggle-section-collapse" data-section="oldWeek" aria-label="Collapse old tokens"><span class="compact-icon-glyph">−</span></button>
-          <div class="compact-search ${oldWeekSearchQuery ? 'has-query open' : ''}">
+          <div class="compact-search ${classWhen(oldWeekSearchQuery, 'has-query open')}">
             <button type="button" class="compact-search-toggle" data-action="old-week-search-focus" aria-label="Search old tokens">&#128269;</button>
             <input class="compact-search-input" type="text" placeholder="ticker / ca" data-action="old-week-search" data-search-input="old-week">
           </div>
-          ${oldWeekSearchPending ? '<span class="search-status-indicator active" aria-live="polite">Searching...</span>' : ''}
-          <button type="button" class="compact-icon-toggle ${state.ui.oldWeekStarredOnly ? 'active' : ''}" data-action="old-week-starred-only" aria-label="Show only starred old tokens"><span class="compact-icon-glyph">&#9733;</span></button>
+          ${markupWhen(oldWeekSearchPending, '<span class="search-status-indicator active" aria-live="polite">Searching...</span>')}
+          <button type="button" class="compact-icon-toggle ${classWhen(state.ui.oldWeekStarredOnly)}" data-action="old-week-starred-only" aria-label="Show only starred old tokens"><span class="compact-icon-glyph">&#9733;</span></button>
         </div>
         <div class="recent-ctrl-filters">
           ${renderSparklineRangeControl(state, 'oldWeek')}
@@ -625,33 +620,33 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
           <div class="sort-pill-group recent-ctrl-cluster recent-ctrl-cluster-sort compact-sort-cluster">
             <span class="filter-label recent-ctrl-cluster-label">SORT</span>
             <div class="sort-menu-wrap" data-sort-wrap>
-              <button type="button" class="old-filter-btn ${oldWeekVolActive}" data-sort-toggle="vol">VOL</button>
+              <button type="button" class="old-filter-btn ${sortClasses.vol}" data-sort-toggle="vol">VOL</button>
               <div class="sort-menu-dropdown">
-                <button type="button" class="sort-menu-item ${oldWeekVol1h}" data-sort-mode="vol" data-sort-window="1h">1H</button>
-                <button type="button" class="sort-menu-item ${oldWeekVol6h}" data-sort-mode="vol" data-sort-window="6h">6H</button>
-                <button type="button" class="sort-menu-item ${oldWeekVol24h}" data-sort-mode="vol" data-sort-window="24h">24H</button>
+                <button type="button" class="sort-menu-item ${sortClasses.vol1h}" data-sort-mode="vol" data-sort-window="1h">1H</button>
+                <button type="button" class="sort-menu-item ${sortClasses.vol6h}" data-sort-mode="vol" data-sort-window="6h">6H</button>
+                <button type="button" class="sort-menu-item ${sortClasses.vol24h}" data-sort-mode="vol" data-sort-window="24h">24H</button>
               </div>
             </div>
             <div class="sort-menu-wrap" data-sort-wrap>
-              <button type="button" class="old-filter-btn ${oldWeekMcapActive}" data-sort-toggle="mcap">MCAP / FDV</button>
+              <button type="button" class="old-filter-btn ${sortClasses.mcap}" data-sort-toggle="mcap">MCAP / FDV</button>
               <div class="sort-menu-dropdown">
-                <button type="button" class="sort-menu-item ${oldWeekMcapHighest}" data-sort-mode="mcap" data-sort-window="highest">HIGHEST</button>
-                <button type="button" class="sort-menu-item ${oldWeekMcapLowest}" data-sort-mode="mcap" data-sort-window="lowest">LOWEST</button>
+                <button type="button" class="sort-menu-item ${sortClasses.mcapHighest}" data-sort-mode="mcap" data-sort-window="highest">HIGHEST</button>
+                <button type="button" class="sort-menu-item ${sortClasses.mcapLowest}" data-sort-mode="mcap" data-sort-window="lowest">LOWEST</button>
               </div>
             </div>
             <div class="sort-menu-wrap" data-sort-wrap>
-              <button type="button" class="old-filter-btn ${oldWeekPchangeActive}" data-sort-toggle="pchange">PCHANGE</button>
+              <button type="button" class="old-filter-btn ${sortClasses.pchange}" data-sort-toggle="pchange">PCHANGE</button>
               <div class="sort-menu-dropdown">
-                <button type="button" class="sort-menu-item ${oldWeekPchange1h}" data-sort-mode="pchange" data-sort-window="1h">1H</button>
-                <button type="button" class="sort-menu-item ${oldWeekPchange6h}" data-sort-mode="pchange" data-sort-window="6h">6H</button>
-                <button type="button" class="sort-menu-item ${oldWeekPchange24h}" data-sort-mode="pchange" data-sort-window="24h">24H</button>
+                <button type="button" class="sort-menu-item ${sortClasses.pchange1h}" data-sort-mode="pchange" data-sort-window="1h">1H</button>
+                <button type="button" class="sort-menu-item ${sortClasses.pchange6h}" data-sort-mode="pchange" data-sort-window="6h">6H</button>
+                <button type="button" class="sort-menu-item ${sortClasses.pchange24h}" data-sort-mode="pchange" data-sort-window="24h">24H</button>
               </div>
             </div>
             <div class="sort-menu-wrap" data-sort-wrap>
-              <button type="button" class="old-filter-btn ${oldWeekAgeActive}" data-sort-toggle="age">AGE</button>
+              <button type="button" class="old-filter-btn ${sortClasses.age}" data-sort-toggle="age">AGE</button>
               <div class="sort-menu-dropdown">
-                <button type="button" class="sort-menu-item ${oldWeekAgeNewest}" data-sort-mode="age" data-sort-window="newest">NEWEST</button>
-                <button type="button" class="sort-menu-item ${oldWeekAgeOldest}" data-sort-mode="age" data-sort-window="oldest">OLDEST</button>
+                <button type="button" class="sort-menu-item ${sortClasses.ageNewest}" data-sort-mode="age" data-sort-window="newest">NEWEST</button>
+                <button type="button" class="sort-menu-item ${sortClasses.ageOldest}" data-sort-mode="age" data-sort-window="oldest">OLDEST</button>
               </div>
             </div>
           </div>
@@ -684,29 +679,19 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
     )}
   `;
   const oldWeekSearchInput = section.querySelector<HTMLInputElement>('[data-action="old-week-search"]');
-  if (oldWeekSearchInput) {
-    oldWeekSearchInput.value = state.ui.oldWeekSearchQuery || '';
-  }
+  setInputDisplayValue(oldWeekSearchInput, state.ui.oldWeekSearchQuery);
   bindCompactSearch(section, {
     toggleAction: 'old-week-search-focus',
     inputAction: 'old-week-search',
   });
   const oldWeekAgeMinInput = section.querySelector<HTMLInputElement>('input[name="old-week-age-min"]');
-  if (oldWeekAgeMinInput) {
-    oldWeekAgeMinInput.value = formatAgeInput(oldWeekAgeMinMinutes);
-  }
+  setInputDisplayValue(oldWeekAgeMinInput, formatAgeInput(oldWeekAgeMinMinutes));
   const oldWeekAgeMaxInput = section.querySelector<HTMLInputElement>('input[name="old-week-age-max"]');
-  if (oldWeekAgeMaxInput) {
-    oldWeekAgeMaxInput.value = formatOldWeekAgeMaxInput(oldWeekAgeMaxMinutes);
-  }
+  setInputDisplayValue(oldWeekAgeMaxInput, formatOldWeekAgeMaxInput(oldWeekAgeMaxMinutes));
   const oldWeekPerPageInput = section.querySelector<HTMLInputElement>('[data-action="old-week-per-page"]');
-  if (oldWeekPerPageInput) {
-    oldWeekPerPageInput.value = String(safeOldWeekPerPage);
-  }
+  setInputDisplayValue(oldWeekPerPageInput, safeOldWeekPerPage);
   const oldWeekPageJumpInput = section.querySelector<HTMLInputElement>('[data-action="old-week-page-jump"]');
-  if (oldWeekPageJumpInput) {
-    oldWeekPageJumpInput.value = String(safeOldWeekPage + 1);
-  }
+  setInputDisplayValue(oldWeekPageJumpInput, safeOldWeekPage + 1);
   oldWeekSearchInput?.addEventListener('input', (event) => {
     controller.setOldWeekSearchQuery((event.currentTarget as HTMLInputElement).value);
   });
