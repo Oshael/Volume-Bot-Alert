@@ -31,6 +31,17 @@ const {
 } = require('../src/services/robinhood-canonical-head-canary-audit');
 const stage191 = require('../src/utils/db-init-stage191');
 const stage63 = require('../src/utils/db-init-stage63');
+const stage64 = require('../src/utils/db-init-stage64');
+const stage65 = require('../src/utils/db-init-stage65');
+const stage66 = require('../src/utils/db-init-stage66');
+const stage67 = require('../src/utils/db-init-stage67');
+const stage68 = require('../src/utils/db-init-stage68');
+const stage78 = require('../src/utils/db-init-stage78');
+const stage79 = require('../src/utils/db-init-stage79');
+const stage96 = require('../src/utils/db-init-stage96');
+const stage104 = require('../src/utils/db-init-stage104');
+const stage105 = require('../src/utils/db-init-stage105');
+const stage106 = require('../src/utils/db-init-stage106');
 const stage192 = require('../src/utils/db-init-stage192');
 const stage193 = require('../src/utils/db-init-stage193');
 const stage194 = require('../src/utils/db-init-stage194');
@@ -203,6 +214,17 @@ describe('Robinhood canonical chain capture journal', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
     await stage63.init({ closePool: false });
+    await stage64.init({ closePool: false });
+    await stage65.init({ closePool: false });
+    await stage66.init({ closePool: false });
+    await stage67.init({ closePool: false });
+    await stage68.init({ closePool: false });
+    await stage78.init({ closePool: false });
+    await stage79.init({ closePool: false });
+    await stage96.init({ closePool: false });
+    await stage104.init({ closePool: false });
+    await stage105.init({ closePool: false });
+    await stage106.init({ closePool: false });
     await stage103.init({ closePool: false });
     await stage165.init({ closePool: false });
     await stage110.init({ closePool: false });
