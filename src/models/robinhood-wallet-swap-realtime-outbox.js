@@ -505,7 +505,18 @@ function createRobinhoodWalletSwapRealtimeOutboxRepository(options = {}) {
          ) DO UPDATE
            SET updated_at=robinhood_wallet_swap_realtime_outbox.updated_at
          WHERE robinhood_wallet_swap_realtime_outbox.payload->>'recoveryGeneration'=$4::text
-         RETURNING block_number
+         RETURNING chain, transaction_hash, log_index, block_hash, block_number
+       ), terminalized AS (
+         UPDATE robinhood_wallet_swap_realtime_outbox observed
+            SET terminalized_at=COALESCE(observed.terminalized_at, clock_timestamp()),
+                updated_at=NOW()
+           FROM invalidated
+          WHERE observed.chain=invalidated.chain
+            AND observed.transaction_hash=invalidated.transaction_hash
+            AND observed.log_index=invalidated.log_index
+            AND observed.block_hash=invalidated.block_hash
+            AND observed.event_kind='observed'
+         RETURNING 1
        ), notified AS (
          SELECT pg_notify($5, MAX(block_number)::text) AS sent
            FROM invalidated HAVING COUNT(*) > 0
@@ -532,24 +543,32 @@ function createRobinhoodWalletSwapRealtimeOutboxRepository(options = {}) {
       `WITH promotable AS MATERIALIZED (
          SELECT observed.chain, observed.transaction_hash, observed.log_index,
                 observed.block_number, observed.block_hash,
-                observed.transaction_index, observed.payload
+                observed.transaction_index, observed.payload,
+                terminal.event_kind AS existing_terminal_kind
            FROM robinhood_wallet_swap_realtime_outbox observed
-           INNER JOIN robinhood_chain_blocks block
+           LEFT JOIN robinhood_chain_blocks block
              ON block.chain=observed.chain
             AND block.block_number=observed.block_number
             AND block.block_hash=observed.block_hash
             AND block.canonical
-           LEFT JOIN robinhood_wallet_swap_realtime_outbox finalized
-             ON finalized.chain=observed.chain
-            AND finalized.transaction_hash=observed.transaction_hash
-            AND finalized.log_index=observed.log_index
-            AND finalized.block_hash=observed.block_hash
-            AND finalized.event_kind='finalized'
+           LEFT JOIN LATERAL (
+             SELECT candidate.event_kind
+               FROM robinhood_wallet_swap_realtime_outbox candidate
+              WHERE candidate.chain=observed.chain
+                AND candidate.transaction_hash=observed.transaction_hash
+                AND candidate.log_index=observed.log_index
+                AND candidate.block_hash=observed.block_hash
+                AND candidate.event_kind IN ('finalized', 'invalidate')
+              LIMIT 1
+           ) terminal ON TRUE
           WHERE observed.chain='${CHAIN}' AND observed.event_kind='observed'
-            AND observed.block_number <= $1::bigint
-            AND finalized.transaction_hash IS NULL
+            AND observed.terminalized_at IS NULL
+            AND (terminal.event_kind IS NOT NULL OR (
+              block.block_hash IS NOT NULL AND observed.block_number <= $1::bigint
+            ))
           ORDER BY observed.block_number, observed.transaction_index, observed.log_index
           LIMIT $2
+          FOR UPDATE OF observed SKIP LOCKED
        ), inserted AS (
          INSERT INTO robinhood_wallet_swap_realtime_outbox(
            chain, transaction_hash, log_index, event_kind, block_number,
@@ -563,17 +582,29 @@ function createRobinhoodWalletSwapRealtimeOutboxRepository(options = {}) {
                   'finalizedAt', clock_timestamp()
                 )
            FROM promotable
+          WHERE existing_terminal_kind IS NULL
          ON CONFLICT (
            chain, transaction_hash, log_index, block_hash, event_kind
          ) DO NOTHING
          RETURNING block_number
+       ), terminalized AS (
+         UPDATE robinhood_wallet_swap_realtime_outbox observed
+            SET terminalized_at=clock_timestamp(), updated_at=NOW()
+           FROM promotable
+          WHERE observed.chain=promotable.chain
+            AND observed.transaction_hash=promotable.transaction_hash
+            AND observed.log_index=promotable.log_index
+            AND observed.block_hash=promotable.block_hash
+            AND observed.event_kind='observed'
+            AND observed.terminalized_at IS NULL
+         RETURNING 1
        ), notified AS (
          SELECT pg_notify($3, MAX(block_number)::text) AS sent
            FROM inserted HAVING COUNT(*) > 0
        )
-       SELECT COUNT(*)::int AS promoted,
+       SELECT (SELECT COUNT(*)::int FROM terminalized) AS promoted,
               (SELECT COUNT(*)::int FROM notified) AS notifications
-         FROM inserted`,
+      `,
       [throughBlock, limit, NOTIFY_CHANNEL]
     );
     return Number(result.rows[0]?.promoted || 0);

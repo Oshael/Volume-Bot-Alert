@@ -9,6 +9,7 @@ const { STATEMENTS } = require('../src/utils/db-init-stage203');
 const { STATEMENTS: REALTIME_STATEMENTS } = require('../src/utils/db-init-stage204');
 const { STATEMENTS: AUDIT_STATEMENTS } = require('../src/utils/db-init-stage209');
 const { STATEMENTS: RETENTION_STATEMENTS } = require('../src/utils/db-init-stage210');
+const { STATEMENTS: TERMINALIZATION_STATEMENTS } = require('../src/utils/db-init-stage211');
 const {
   createRobinhoodWalletSwapOutboxProducer,
 } = require('../src/models/robinhood-wallet-swap-outbox-producer');
@@ -74,6 +75,9 @@ describe('Robinhood wallet-swap outbox producer integration', () => {
     }
     for (const sql of RETENTION_STATEMENTS) {
       await client.query(sql.replace('CREATE INDEX CONCURRENTLY', 'CREATE INDEX'));
+    }
+    for (const sql of TERMINALIZATION_STATEMENTS) {
+      await client.query(sql.replace('INDEX CONCURRENTLY', 'INDEX'));
     }
     await client.query(`INSERT INTO robinhood_market_observations VALUES (
       'robinhood',$1,9,100,'uniswap-v3','robinhood:uniswap-v3:test',$2,$3,
@@ -148,8 +152,15 @@ describe('Robinhood wallet-swap outbox producer integration', () => {
     );
     assert.equal(await lifecycle.promoteFinalized({ throughBlock: '100', limit: 10 }), 1);
     assert.equal(await lifecycle.promoteFinalized({ throughBlock: '100', limit: 10 }), 0);
+    await client.query(`UPDATE robinhood_wallet_swap_realtime_outbox
+      SET terminalized_at=NULL WHERE transaction_hash=$1 AND event_kind='observed'`, [TX]);
+    assert.equal(await lifecycle.promoteFinalized({ throughBlock: '100', limit: 10 }), 1);
+    assert.equal(await lifecycle.promoteFinalized({ throughBlock: '100', limit: 10 }), 0);
     const finalized = await client.query(
-      `SELECT status, payload
+      `SELECT status, payload,
+          (SELECT terminalized_at IS NOT NULL
+             FROM robinhood_wallet_swap_realtime_outbox observed
+            WHERE observed.transaction_hash=$1 AND observed.event_kind='observed') AS terminalized
          FROM robinhood_wallet_swap_realtime_outbox
         WHERE transaction_hash=$1 AND event_kind='finalized'`, [TX]
     );
@@ -158,6 +169,7 @@ describe('Robinhood wallet-swap outbox producer integration', () => {
     assert.equal(finalized.rows[0].payload.type, 'market:trade:finalized');
     assert.equal(finalized.rows[0].payload.finality, 'finalized');
     assert.ok(Date.parse(finalized.rows[0].payload.finalizedAt));
+    assert.equal(finalized.rows[0].terminalized, true);
   });
 
   it('leases finalized canonical work and deletes it only after delivery', async () => {
@@ -285,10 +297,22 @@ describe('Robinhood wallet-swap outbox producer integration', () => {
     assert.deepEqual(await lifecycle.appendOrphanInvalidations(client, {
       generation: '1', fromBlock: '101', throughBlock: '101',
     }), { observed: 1, invalidated: 1 });
+    assert.equal((await client.query(`SELECT terminalized_at IS NOT NULL AS terminalized
+      FROM robinhood_wallet_swap_realtime_outbox
+      WHERE transaction_hash=$1 AND block_hash=$2 AND event_kind='observed'`,
+    [REPLAY_TX, ORPHAN_BLOCK])).rows[0].terminalized, true);
     await client.query(
       `UPDATE robinhood_chain_blocks SET canonical=FALSE WHERE block_hash=$1`,
       [ORPHAN_BLOCK]
     );
+    await client.query(`UPDATE robinhood_wallet_swap_realtime_outbox
+      SET terminalized_at=NULL WHERE transaction_hash=$1 AND block_hash=$2
+        AND event_kind='observed'`, [REPLAY_TX, ORPHAN_BLOCK]);
+    assert.equal(await lifecycle.promoteFinalized({ throughBlock: '101', limit: 10 }), 1);
+    assert.equal(Number((await client.query(`SELECT COUNT(*) AS count
+      FROM robinhood_wallet_swap_realtime_outbox
+      WHERE transaction_hash=$1 AND block_hash=$2 AND event_kind='finalized'`,
+    [REPLAY_TX, ORPHAN_BLOCK])).rows[0].count), 0);
     await client.query(
       `WITH observations AS (
          DELETE FROM robinhood_market_observations WHERE transaction_hash=$1

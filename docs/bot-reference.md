@@ -755,6 +755,15 @@ uniformemente `complete` (incluindo o terminal). Estado misto, `leased` ou qualq
 preservado para entrega ou investigação. O limite é contado em ciclos e cada ciclo tem no máximo
 três linhas.
 
+Aplique `node src/utils/db-init-stage211.js` antes de reiniciar o
+`trendscope-worker@robinhood-wallet`. A Stage 211 acrescenta o marcador nullable
+`terminalized_at` e um índice parcial somente para `observed` ainda sem evento terminal; adicionar
+a coluna não reescreve a tabela. O próprio promoter preenche o marcador em lotes, inclusive quando
+o `finalized` já existia antes da Stage 211, e o mesmo commit que cria `finalized` ou `invalidate`
+marca o ciclo. O índice antigo que continha todos os `observed` é removido depois que o novo índice
+fica disponível. Assim, cada linha histórica é visitada uma vez no catch-up, em vez de ser
+reescaneada a cada tick.
+
 O status do retention worker expõe `realtimeOutbox` com backlog e idade por `event_kind`, retries,
 bloqueados, fronteiras publicadas e a última invalidação retida. `observedLagBlocks` compara o head
 capturado com a fronteira `observed`; `finalizedLagBlocks` compara `finalized_head` com a fronteira

@@ -5740,7 +5740,6 @@ const SCHEMA_GROUPS = [
         { name: 'idx_rh_wallet_swap_realtime_outbox_claim', includes: ['next_attempt_at', 'event_kind', 'block_number', 'transaction_index', 'log_index'] },
         { name: 'idx_rh_wallet_swap_realtime_outbox_lease', includes: ['lease_until'] },
         { name: 'idx_rh_wallet_swap_realtime_outbox_canonical', includes: ['block_number', 'block_hash'] },
-        { name: 'idx_rh_wallet_swap_realtime_outbox_promote', includes: ['block_number', 'transaction_index', 'log_index'] },
       ],
     }],
   },
@@ -5909,6 +5908,19 @@ const SCHEMA_GROUPS = [
         { name: 'idx_rh_wallet_swap_realtime_outbox_backlog', includes: ['event_kind', 'created_at', 'block_number'] },
         { name: 'idx_rh_wallet_swap_realtime_outbox_frontier', includes: ['event_kind', 'block_number', 'published_at'] },
       ],
+    }],
+  },
+  {
+    key: 'stage211-robinhood-wallet-swap-terminalization',
+    name: 'Stage 211 Robinhood wallet-swap terminalization frontier',
+    repair: 'node src/utils/db-init-stage211.js',
+    tables: [{
+      table: 'robinhood_wallet_swap_realtime_outbox',
+      columns: ['terminalized_at'],
+      indexes: [{
+        name: 'idx_rh_wallet_swap_realtime_outbox_unterminalized',
+        includes: ['block_number', 'transaction_index', 'log_index', 'terminalized_at'],
+      }],
     }],
   },
 ];

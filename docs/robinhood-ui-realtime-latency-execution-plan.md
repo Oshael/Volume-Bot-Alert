@@ -442,6 +442,9 @@ uma audiência canário explicitamente autorizada:
   sem bloco explícito, publicar somente `observed` a partir dessa fronteira e
   priorizar sua auditoria; batch e quantidade de claims shadow por tick são
   configuráveis sem ampliar o lote econômico.
+- [x] **3B3B4 — terminalização indexável:** Stage 211 marca atomicamente cada
+  `observed` que já possui `finalized`/`invalidate`; a promoção deixa de
+  reescanear todo o histórico a cada tick e faz catch-up incremental.
 
 A flag de rollback deve impedir novos `observed`, mas continuar entregando os
 terminais de ciclos provisórios que já tenham sido publicados.

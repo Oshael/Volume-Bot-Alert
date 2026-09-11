@@ -6,6 +6,7 @@ const { STATEMENTS, init: initStage204 } = require('../src/utils/db-init-stage20
 const stage207 = require('../src/utils/db-init-stage207');
 const stage209 = require('../src/utils/db-init-stage209');
 const stage210 = require('../src/utils/db-init-stage210');
+const stage211 = require('../src/utils/db-init-stage211');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 
 describe('Robinhood wallet-swap realtime lifecycle outbox schema', () => {
@@ -34,7 +35,6 @@ describe('Robinhood wallet-swap realtime lifecycle outbox schema', () => {
       'idx_rh_wallet_swap_realtime_outbox_claim',
       'idx_rh_wallet_swap_realtime_outbox_lease',
       'idx_rh_wallet_swap_realtime_outbox_canonical',
-      'idx_rh_wallet_swap_realtime_outbox_promote',
     ]);
   });
 
@@ -122,5 +122,28 @@ describe('Robinhood wallet-swap realtime lifecycle outbox schema', () => {
     ));
     assert.equal(group.repair, 'node src/utils/db-init-stage210.js');
     assert.deepEqual(group.tables[0].indexes.map(({ name }) => name), stage210.INDEX_NAMES);
+  });
+
+  it('indexes only observed rows still missing a durable terminal event', async () => {
+    const sql = stage211.STATEMENTS.join('\n');
+    assert.match(sql, /ADD COLUMN IF NOT EXISTS terminalized_at TIMESTAMPTZ/);
+    assert.match(sql, /event_kind='observed' AND terminalized_at IS NULL/);
+    assert.match(sql, /DROP INDEX CONCURRENTLY IF EXISTS idx_rh_wallet_swap_realtime_outbox_promote/);
+    const group = SCHEMA_GROUPS.find(({ key }) => (
+      key === 'stage211-robinhood-wallet-swap-terminalization'
+    ));
+    assert.equal(group.repair, 'node src/utils/db-init-stage211.js');
+    assert.equal(group.tables[0].indexes[0].name, stage211.INDEX_NAME);
+
+    const calls = [];
+    await stage211.init({
+      database: { query: async (statement) => {
+        calls.push(statement);
+        return calls.length === 1 ? { rows: [{ indisvalid: false }] } : { rows: [] };
+      } },
+      closePool: false,
+    });
+    assert.match(calls[1], new RegExp(`DROP INDEX CONCURRENTLY IF EXISTS ${stage211.INDEX_NAME}`));
+    assert.deepEqual(calls.slice(2), stage211.STATEMENTS);
   });
 });
