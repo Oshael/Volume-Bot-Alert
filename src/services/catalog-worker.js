@@ -1543,6 +1543,13 @@ function getThrottleTokenBucket(token) {
   return 'other';
 }
 
+const THROTTLE_RECOVERY_BUCKETS = Object.freeze({
+  'high-manual': new Set(['high']),
+  normal: new Set(['high', 'normal']),
+  'low-near': new Set(['high', 'normal', 'low-near']),
+  'low-dust': new Set(['high', 'normal', 'low-near', 'low-dust']),
+});
+
 function isTokenAllowedByThrottle(token, throttleState = { mode: 'normal' }) {
   const bucket = getThrottleTokenBucket(token);
   const mode = String(throttleState?.mode || 'normal').trim().toLowerCase();
@@ -1556,27 +1563,9 @@ function isTokenAllowedByThrottle(token, throttleState = { mode: 'normal' }) {
     return true;
   }
 
-  if (mode === 'cooldown') {
-    return bucket === 'high';
-  }
-
-  if (phase === 'high-manual') {
-    return bucket === 'high';
-  }
-
-  if (phase === 'normal') {
-    return bucket === 'high' || bucket === 'normal';
-  }
-
-  if (phase === 'low-near') {
-    return bucket === 'high' || bucket === 'normal' || bucket === 'low-near';
-  }
-
-  if (phase === 'low-dust') {
-    return bucket === 'high' || bucket === 'normal' || bucket === 'low-near' || bucket === 'low-dust';
-  }
-
-  return bucket === 'high';
+  if (mode === 'cooldown') return bucket === 'high';
+  return (THROTTLE_RECOVERY_BUCKETS[phase] || THROTTLE_RECOVERY_BUCKETS['high-manual'])
+    .has(bucket);
 }
 
 function getThrottleTokenRank(token, throttleState = { mode: 'normal' }) {

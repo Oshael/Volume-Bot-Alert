@@ -265,17 +265,7 @@ function queueCatalogUpsert(token, source = 'unknown') {
   Promise.resolve()
     .then(() => tokenCatalog.upsertToken({ ...token, source }))
     .then((upserted) => {
-      logTrace('pump_migrate_catalog_upsert_ok', {
-        tokenAddress: upserted?.address || token?.address || token?.mint || null,
-        source: upserted?.source || source,
-        monitorPriority: upserted?.monitor_priority || null,
-        eligibleForMonitoring: upserted?.eligible_for_monitoring == null
-          ? null
-          : Boolean(upserted.eligible_for_monitoring),
-        nextEvaluationAt: upserted?.next_evaluation_at || null,
-        migrationGraceUntil: upserted?.migration_grace_until || null,
-        marketCap: upserted?.last_mcap == null ? null : Number(upserted.last_mcap),
-      });
+      logTrace('pump_migrate_catalog_upsert_ok', catalogUpsertTrace(upserted, token, source));
     })
     .catch((err) => {
       const address = token?.address || token?.mint || 'unknown';
@@ -286,6 +276,21 @@ function queueCatalogUpsert(token, source = 'unknown') {
       }, { level: 'error' });
       console.error(`[TokenCatalog] Failed to upsert ${source} token ${address}:`, err.message);
     });
+}
+
+function catalogUpsertTrace(upserted, token, source) {
+  const persisted = upserted || {};
+  const requested = token || {};
+  return {
+    tokenAddress: persisted.address || requested.address || requested.mint || null,
+    source: persisted.source || source,
+    monitorPriority: persisted.monitor_priority || null,
+    eligibleForMonitoring: persisted.eligible_for_monitoring == null
+      ? null : Boolean(persisted.eligible_for_monitoring),
+    nextEvaluationAt: persisted.next_evaluation_at || null,
+    migrationGraceUntil: persisted.migration_grace_until || null,
+    marketCap: persisted.last_mcap == null ? null : Number(persisted.last_mcap),
+  };
 }
 
 function buildCatalogTokenFromPump(msg) {

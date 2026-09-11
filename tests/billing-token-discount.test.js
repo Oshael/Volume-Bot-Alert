@@ -5,6 +5,31 @@ const billingCatalog = require('../src/services/billing-catalog');
 const billingService = require('../src/services/billing-service');
 
 describe('billing token discount pricing', () => {
+  it('preserves webhook metadata precedence across payload and transaction fields', () => {
+    const metadata = billingService.__private.buildOrderMetadataFromWebhook({
+      event: 'DEPOSIT_TX_CONFIRMED',
+      amount: '49.00',
+      currency: { symbol: 'USDC' },
+      transactionObject: {
+        id: 'provider-transaction',
+        meta: {
+          transactionSignature: 'signature',
+          transactionStatus: 'SUCCESS',
+          amount: '48.00',
+          currency: { symbol: 'USDT' },
+        },
+      },
+    });
+
+    assert.equal(metadata.lastWebhookEvent, 'DEPOSIT_TX_CONFIRMED');
+    assert.match(metadata.lastWebhookAt, /^\d{4}-\d{2}-\d{2}T/);
+    assert.equal(metadata.providerTransactionId, 'provider-transaction');
+    assert.equal(metadata.providerTransactionSignature, 'signature');
+    assert.equal(metadata.providerTransactionStatus, 'SUCCESS');
+    assert.equal(metadata.providerWebhookAmount, '49.00');
+    assert.equal(metadata.providerWebhookCurrency, 'USDC');
+  });
+
   it('calculates discounted minor-unit amounts', () => {
     assert.equal(billingCatalog.applyDiscountToAmount(4900, 50), 2450);
     assert.equal(billingCatalog.applyDiscountToAmount(4901, 50), 2451);

@@ -62,26 +62,31 @@ function failure(value, fallback, maximum) {
   return normalized || fallback;
 }
 
+function isAssessmentStatusValid(status, resolvedProtocol, available, unavailable) {
+  if (available) {
+    return status === (resolvedProtocol === 'uniswap-v2'
+      ? 'spot_estimate_from_double_quote_reserve'
+      : resolvedProtocol === 'uniswap-v3'
+        ? 'spot_tvl_from_pool_balances'
+        : 'spot_tvl_from_v4_tick_ranges');
+  }
+  if (!unavailable) return false;
+  return status === (resolvedProtocol === 'uniswap-v2'
+    ? 'missing_v2_reserve_or_quote'
+    : 'requires_tick_liquidity_distribution');
+}
+
 function normalizeAssessment(input, resolvedProtocol) {
   const status = String(input.liquidityStatus || '');
   const confidence = String(input.liquidityConfidence || '');
   const liquidityUsd = decimal(input.liquidityUsd, 'liquidityUsd', true);
   const liquidityRaw = decimal(input.liquidityRaw, 'liquidityRaw', true);
   const available = liquidityUsd != null && confidence === 'medium';
-  const valid = (
-    resolvedProtocol === 'uniswap-v2'
-      ? liquidityRaw == null && (
-        (available && status === 'spot_estimate_from_double_quote_reserve')
-        || (!available && liquidityUsd == null && confidence === 'none'
-          && status === 'missing_v2_reserve_or_quote')
-      )
-      : liquidityRaw != null && (
-        (available && status === (resolvedProtocol === 'uniswap-v3'
-          ? 'spot_tvl_from_pool_balances' : 'spot_tvl_from_v4_tick_ranges'))
-        || (!available && liquidityUsd == null && confidence === 'none'
-          && status === 'requires_tick_liquidity_distribution')
-      )
-  );
+  const unavailable = !available && liquidityUsd == null && confidence === 'none';
+  const hasExpectedRawLiquidity = resolvedProtocol === 'uniswap-v2'
+    ? liquidityRaw == null : liquidityRaw != null;
+  const valid = hasExpectedRawLiquidity
+    && isAssessmentStatusValid(status, resolvedProtocol, available, unavailable);
   if (!valid) throw new Error('liquidity assessment is inconsistent');
   return {
     liquidityUsd, liquidityRaw, liquidityStatus: status,

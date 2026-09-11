@@ -18,35 +18,43 @@ function tokenAddress(value) {
   return token;
 }
 
+function nullableString(value) {
+  return value == null ? null : String(value);
+}
+
+function candidateIneligibleReason(row, appliedEvents, activeCampaigns, activeCampaignStatus) {
+  if (row.ledger_status !== 'backfilling') return 'not_backfilling';
+  if (row.deployment_block == null || row.backfill_next_block == null) {
+    return 'missing_backfill_cursor';
+  }
+  if (appliedEvents > 0) return 'applied_journal_exists';
+  if (activeCampaigns > 1
+      || activeCampaignStatus && !['scanning', 'attached'].includes(activeCampaignStatus)) {
+    return 'unsupported_active_campaign';
+  }
+  return null;
+}
+
 function candidateRow(row) {
   if (!row) return null;
   const appliedEvents = Number(row.applied_events) || 0;
   const activeCampaigns = Number(row.active_campaigns) || 0;
   const activeCampaignStatus = row.active_campaign_status || null;
-  let ineligibleReason = null;
-  if (row.ledger_status !== 'backfilling') ineligibleReason = 'not_backfilling';
-  else if (row.deployment_block == null || row.backfill_next_block == null) {
-    ineligibleReason = 'missing_backfill_cursor';
-  } else if (appliedEvents > 0) ineligibleReason = 'applied_journal_exists';
-  else if (activeCampaigns > 1
-    || activeCampaignStatus && !['scanning', 'attached'].includes(activeCampaignStatus)) {
-    ineligibleReason = 'unsupported_active_campaign';
-  }
+  const ineligibleReason = candidateIneligibleReason(
+    row, appliedEvents, activeCampaigns, activeCampaignStatus
+  );
   return Object.freeze({
     tokenAddress: row.token_address,
     ledgerStatus: row.ledger_status,
-    deploymentBlock: row.deployment_block == null ? null : String(row.deployment_block),
-    backfillNextBlock: row.backfill_next_block == null
-      ? null : String(row.backfill_next_block),
-    liveThroughBlock: row.live_through_block == null ? null : String(row.live_through_block),
+    deploymentBlock: nullableString(row.deployment_block),
+    backfillNextBlock: nullableString(row.backfill_next_block),
+    liveThroughBlock: nullableString(row.live_through_block),
     version: String(row.version), holderCount: String(row.holder_count),
     balanceRows: Number(row.balance_rows) || 0,
     pendingEvents: Number(row.pending_events) || 0,
     appliedEvents, activeCampaigns, activeCampaignStatus,
-    oldestPendingBlock: row.oldest_pending_block == null
-      ? null : String(row.oldest_pending_block),
-    newestPendingBlock: row.newest_pending_block == null
-      ? null : String(row.newest_pending_block),
+    oldestPendingBlock: nullableString(row.oldest_pending_block),
+    newestPendingBlock: nullableString(row.newest_pending_block),
     eligible: ineligibleReason === null, ineligibleReason,
   });
 }

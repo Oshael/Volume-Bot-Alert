@@ -271,6 +271,8 @@ function createFakeDatabase(options = {}) {
   const calls = [];
   let released = false;
   const client = {
+    // This fixture intentionally dispatches every SQL shape exercised by the persistence contract.
+    // eslint-disable-next-line complexity
     async query(sql, params) {
       calls.push({ sql, params });
       if (/SELECT recovery_state FROM robinhood_chain_capture_cursor/.test(sql)) {

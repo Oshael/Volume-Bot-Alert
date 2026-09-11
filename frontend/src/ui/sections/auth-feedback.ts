@@ -25,40 +25,56 @@ export const AUTH_TRANSIENT_NOTICES = new Set([
   'Account created. Workspace synced.',
 ]);
 
+const AUTH_VALIDATION_MESSAGES = new Set([
+  'Email is required.',
+  'Enter a valid email address.',
+  'Password is required.',
+  'Password is too long.',
+  'Reset link is missing or invalid.',
+  'New password is required.',
+  'New password must be at least 8 characters.',
+  'New password must be 8-128 characters.',
+]);
+
+const AUTH_ERROR_KINDS: ReadonlyArray<readonly [string, AuthFeedbackKind]> = [
+  ['Incorrect email or password', 'credentials'],
+  ['deactivated', 'account'],
+  ['access has expired', 'account'],
+  ['access was revoked', 'account'],
+  ['does not currently have product access', 'account'],
+  ['not verified', 'account'],
+  ['temporarily locked', 'lockout'],
+  ['Unable to reach the server', 'network'],
+  ['saved session is no longer valid', 'session'],
+];
+
+const AUTH_NOTICE_KINDS: ReadonlyArray<readonly [string, AuthFeedbackKind]> = [
+  ['No saved session', 'login-required'],
+  ['Session restored', 'success'],
+  ['Login successful', 'success'],
+  ['Account created', 'success'],
+  ['Signing in', 'session'],
+  ['Restoring session', 'session'],
+  ['Creating account', 'session'],
+];
+
+function findAuthFeedbackKind(
+  message: string,
+  rules: ReadonlyArray<readonly [string, AuthFeedbackKind]>,
+  fallback: AuthFeedbackKind,
+) {
+  return rules.find(([fragment]) => message.includes(fragment))?.[1] || fallback;
+}
+
 export function getAuthFeedbackKind(state: Pick<AppState, 'ui'>, message: string): AuthFeedbackKind {
   if (state.ui.error) {
-    if (
-      message === 'Email is required.'
-      || message === 'Enter a valid email address.'
-      || message === 'Password is required.'
-      || message === 'Password is too long.'
-      || message === 'Reset link is missing or invalid.'
-      || message === 'New password is required.'
-      || message === 'New password must be at least 8 characters.'
-      || message === 'New password must be 8-128 characters.'
-    ) {
+    if (AUTH_VALIDATION_MESSAGES.has(message)) {
       return 'validation';
     }
-    if (message.includes('Incorrect email or password')) return 'credentials';
-    if (message.includes('deactivated')) return 'account';
-    if (message.includes('access has expired')) return 'account';
-    if (message.includes('access was revoked')) return 'account';
-    if (message.includes('does not currently have product access')) return 'account';
-    if (message.includes('not verified')) return 'account';
-    if (message.includes('temporarily locked')) return 'lockout';
-    if (message.includes('Unable to reach the server')) return 'network';
-    if (message.includes('saved session is no longer valid')) return 'session';
-    return 'error';
+    return findAuthFeedbackKind(message, AUTH_ERROR_KINDS, 'error');
   }
 
-  if (message.includes('No saved session')) return 'login-required';
-  if (message.includes('Session restored')) return 'success';
-  if (message.includes('Login successful')) return 'success';
-  if (message.includes('Account created')) return 'success';
-  if (message.includes('Signing in')) return 'session';
-  if (message.includes('Restoring session')) return 'session';
-  if (message.includes('Creating account')) return 'session';
-  return 'notice';
+  return findAuthFeedbackKind(message, AUTH_NOTICE_KINDS, 'notice');
 }
 
 export function getAuthFlashBadge(kind: AuthFeedbackKind) {

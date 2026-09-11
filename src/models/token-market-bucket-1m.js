@@ -470,6 +470,15 @@ function computeQuantile(values, quantile) {
   return lower + ((upper - lower) * weight);
 }
 
+function isSupportTouch(bucket, support, maxTouchBandPct, maxBreakdownPct) {
+  const low = Number(bucket.lowMcap ?? bucket.closeMcap ?? bucket.openMcap);
+  const close = Number(bucket.closeMcap ?? bucket.openMcap ?? bucket.lowMcap);
+  return Number.isFinite(low)
+    && Number.isFinite(close)
+    && low <= support * (1 + maxTouchBandPct)
+    && close >= support * (1 - maxBreakdownPct);
+}
+
 function countTouchClusters(buckets, supportLevel, options = {}) {
   const items = Array.isArray(buckets) ? buckets : [];
   const support = Number(supportLevel);
@@ -483,12 +492,7 @@ function countTouchClusters(buckets, supportLevel, options = {}) {
   let inCluster = false;
 
   for (const bucket of items) {
-    const low = Number(bucket.lowMcap ?? bucket.closeMcap ?? bucket.openMcap);
-    const close = Number(bucket.closeMcap ?? bucket.openMcap ?? bucket.lowMcap);
-    const touched = Number.isFinite(low)
-      && Number.isFinite(close)
-      && low <= support * (1 + maxTouchBandPct)
-      && close >= support * (1 - maxBreakdownPct);
+    const touched = isSupportTouch(bucket, support, maxTouchBandPct, maxBreakdownPct);
 
     if (touched && !inCluster) {
       clusters += 1;
@@ -576,40 +580,37 @@ function getMcapRankingBonus(mcap) {
   return 5;
 }
 
+function getBaseLiquidityPenalty(value1h, neutralThreshold) {
+  if (!Number.isFinite(value1h) || value1h < 200) return -12;
+  if (value1h < 500) return -7;
+  if (value1h < neutralThreshold) return -4;
+  return 0;
+}
+
+function applyLiquidityAgePenalty(penalty, value1h, ageHours) {
+  if (!(penalty < 0) || !Number.isFinite(ageHours) || !(value1h < 500)) return penalty;
+  if (ageHours >= (24 * 30)) return penalty - 4;
+  if (ageHours >= (24 * 14)) return penalty - 2;
+  return penalty;
+}
+
+function applyLiquidityRecovery(penalty, value1h, value6h) {
+  if (!(penalty < 0) || !Number.isFinite(value6h)) return penalty;
+  if (penalty <= -12 && value1h < 200) return penalty;
+  if (value6h >= 10_000) return penalty + 6;
+  if (value6h >= 3_000) return penalty + 3;
+  return penalty;
+}
+
 function getLiquidityRankingAdjustment(vol1h, vol6h, options = {}) {
   const value1h = Number(vol1h);
   const value6h = Number(vol6h);
   const ageHours = Number(options.ageHours);
   const neutralThreshold = Math.max(250, Number(options.neutralThreshold) || DEFAULT_BID_ZONE_MIN_VOL_1H);
 
-  let penalty = 0;
-  if (!Number.isFinite(value1h) || value1h < 200) {
-    penalty = -12;
-  } else if (value1h < 500) {
-    penalty = -7;
-  } else if (value1h < neutralThreshold) {
-    penalty = -4;
-  }
-
-  if (penalty < 0 && Number.isFinite(ageHours)) {
-    if (ageHours >= (24 * 30) && value1h < 500) {
-      penalty -= 4;
-    } else if (ageHours >= (24 * 14) && value1h < 500) {
-      penalty -= 2;
-    }
-  }
-
-  if (penalty < 0 && Number.isFinite(value6h)) {
-    if (penalty <= -12 && value1h < 200) {
-      return penalty;
-    }
-    if (value6h >= 10_000) {
-      penalty += 6;
-    } else if (value6h >= 3_000) {
-      penalty += 3;
-    }
-  }
-
+  let penalty = getBaseLiquidityPenalty(value1h, neutralThreshold);
+  penalty = applyLiquidityAgePenalty(penalty, value1h, ageHours);
+  penalty = applyLiquidityRecovery(penalty, value1h, value6h);
   return Math.min(0, penalty);
 }
 

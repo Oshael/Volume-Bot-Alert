@@ -1474,37 +1474,52 @@ router.post('/promote', catalogWriteLimiter, async (req, res) => {
   }
 });
 
+function prepareMigratedToken(body) {
+  const tokenInput = buildCatalogTokenPayload(body, 'pumpfun-migrated');
+  const address = String(tokenInput.address || '').trim();
+  return {
+    address,
+    token: {
+      ...tokenInput,
+      address,
+      isActiveMonitorCandidate: tokenInput.isActiveMonitorCandidate == null
+        ? true : tokenInput.isActiveMonitorCandidate,
+    },
+  };
+}
+
+function migratedTokenReceivedTrace(token, address) {
+  return {
+    tokenAddress: address,
+    source: 'pumpfun-migrated',
+    symbol: token.symbol || null,
+    name: token.name || null,
+    marketCap: Number.isFinite(Number(token.mcap)) ? Number(token.mcap) : null,
+  };
+}
+
+function migratedTokenPersistedTrace(token, address) {
+  const persisted = token || {};
+  return {
+    tokenAddress: persisted.address || address,
+    source: persisted.source || 'pumpfun-migrated',
+    nextEvaluationAt: persisted.next_evaluation_at || null,
+    migrationGraceUntil: persisted.migration_grace_until || null,
+    marketCap: persisted.last_mcap == null ? null : Number(persisted.last_mcap),
+  };
+}
+
 router.post('/migrated', catalogWriteLimiter, async (req, res) => {
   try {
-    const tokenInput = buildCatalogTokenPayload(req.body, 'pumpfun-migrated');
-    const address = String(tokenInput.address || '').trim();
+    const migrated = prepareMigratedToken(req.body);
+    const { address } = migrated;
     if (!isValidAddress(address)) {
       return res.status(400).json({ error: 'Invalid token address' });
     }
 
-    logTrace('api_catalog_migrated_received', {
-      tokenAddress: address,
-      source: 'pumpfun-migrated',
-      symbol: tokenInput.symbol || null,
-      name: tokenInput.name || null,
-      marketCap: Number.isFinite(Number(tokenInput.mcap)) ? Number(tokenInput.mcap) : null,
-    });
-
-    const token = await tokenCatalog.upsertToken({
-      ...tokenInput,
-      address,
-      isActiveMonitorCandidate: tokenInput.isActiveMonitorCandidate == null
-        ? true
-        : tokenInput.isActiveMonitorCandidate,
-    });
-
-    logTrace('api_catalog_migrated_upsert_ok', {
-      tokenAddress: token?.address || address,
-      source: token?.source || 'pumpfun-migrated',
-      nextEvaluationAt: token?.next_evaluation_at || null,
-      migrationGraceUntil: token?.migration_grace_until || null,
-      marketCap: token?.last_mcap == null ? null : Number(token.last_mcap),
-    });
+    logTrace('api_catalog_migrated_received', migratedTokenReceivedTrace(migrated.token, address));
+    const token = await tokenCatalog.upsertToken(migrated.token);
+    logTrace('api_catalog_migrated_upsert_ok', migratedTokenPersistedTrace(token, address));
 
     res.status(201).json({ message: 'Migrated token cataloged', token });
   } catch (err) {

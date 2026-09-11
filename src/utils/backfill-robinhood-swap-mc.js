@@ -50,7 +50,7 @@ function delay(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
 }
 
-function parseArgs(argv = process.argv.slice(2)) {
+function parseLongOptions(argv) {
   const args = {};
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
@@ -60,17 +60,30 @@ function parseArgs(argv = process.argv.slice(2)) {
       args[token.slice(2)] = next; i += 1;
     }
   }
+  return args;
+}
+
+function parseIntegerOption(value, fallback, minimum, maximum, message) {
+  const parsed = Number.parseInt(value ?? fallback, 10);
+  if (!Number.isInteger(parsed) || parsed < minimum || (maximum != null && parsed > maximum)) {
+    throw new Error(message);
+  }
+  return parsed;
+}
+
+function parseArgs(argv = process.argv.slice(2)) {
+  const args = parseLongOptions(argv);
   const apply = args.apply === true;
-  const batchSize = Number.parseInt(args['batch-size'] ?? '5000', 10);
-  if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 50000) {
-    throw new Error('--batch-size must be an integer 1..50000');
-  }
-  const sleepMs = Number.parseInt(args['sleep-ms'] ?? '0', 10);
-  if (!Number.isInteger(sleepMs) || sleepMs < 0) throw new Error('--sleep-ms must be >= 0');
-  const maxBatches = Number.parseInt(args['max-batches'] ?? '0', 10);
-  if (!Number.isInteger(maxBatches) || maxBatches < 0) {
-    throw new Error('--max-batches must be >= 0 (0 = unlimited)');
-  }
+  const batchSize = parseIntegerOption(
+    args['batch-size'], '5000', 1, 50000, '--batch-size must be an integer 1..50000'
+  );
+  const sleepMs = parseIntegerOption(
+    args['sleep-ms'], '0', 0, null, '--sleep-ms must be >= 0'
+  );
+  const maxBatches = parseIntegerOption(
+    args['max-batches'], '0', 0, null,
+    '--max-batches must be >= 0 (0 = unlimited)'
+  );
   const checkpoint = args.checkpoint == null || args.checkpoint === true
     ? null : String(args.checkpoint);
   if (apply && !checkpoint) throw new Error('--apply requires --checkpoint <file>');

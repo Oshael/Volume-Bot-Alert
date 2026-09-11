@@ -122,15 +122,20 @@ function getWebhookOrderId(payload) {
 function buildOrderMetadataFromWebhook(payload) {
   const transactionObject = getWebhookTransactionObject(payload);
   const meta = getWebhookMeta(payload);
+  const payloadValue = payload || {};
+  const transactionValue = transactionObject || {};
+  const metaValue = meta || {};
+  const payloadCurrency = payloadValue.currency || {};
+  const metaCurrency = metaValue.currency || {};
 
   return {
-    lastWebhookEvent: String(payload?.event || '').trim() || null,
+    lastWebhookEvent: String(payloadValue.event || '').trim() || null,
     lastWebhookAt: new Date().toISOString(),
-    providerTransactionId: transactionObject?.id || null,
-    providerTransactionSignature: meta?.transactionSignature || null,
+    providerTransactionId: transactionValue.id || null,
+    providerTransactionSignature: metaValue.transactionSignature || null,
     providerTransactionStatus: getWebhookTransactionStatus(payload) || null,
-    providerWebhookAmount: payload?.amount || meta?.amount || null,
-    providerWebhookCurrency: payload?.currency?.symbol || meta?.currency?.symbol || null,
+    providerWebhookAmount: payloadValue.amount || metaValue.amount || null,
+    providerWebhookCurrency: payloadCurrency.symbol || metaCurrency.symbol || null,
   };
 }
 
@@ -862,6 +867,7 @@ module.exports = {
   syncOrderPaymentFromProvider,
   processMoonpayWebhook,
   __private: {
+    buildOrderMetadataFromWebhook,
     buildOrderPricing,
     resolveTokenDiscountContext,
   },
