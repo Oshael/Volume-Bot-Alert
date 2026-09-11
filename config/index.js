@@ -1126,6 +1126,12 @@ module.exports = {
       1000,
       60 * 1000
     ),
+    realtimeOutboxRetentionMs: parseIntegerInRange(
+      process.env.ROBINHOOD_REALTIME_OUTBOX_RETENTION_MS,
+      3 * 24 * 60 * 60 * 1000,
+      60 * 60 * 1000,
+      7 * 24 * 60 * 60 * 1000
+    ),
   },
   robinhoodProcessingWorker: {
     enabled: parseBoolean(process.env.ROBINHOOD_PROCESSING_ENABLED, true),

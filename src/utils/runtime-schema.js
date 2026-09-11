@@ -5898,6 +5898,19 @@ const SCHEMA_GROUPS = [
       ],
     }],
   },
+  {
+    key: 'stage210-robinhood-wallet-swap-realtime-retention',
+    name: 'Stage 210 Robinhood wallet-swap lifecycle retention',
+    repair: 'node src/utils/db-init-stage210.js',
+    tables: [{
+      table: 'robinhood_wallet_swap_realtime_outbox',
+      indexes: [
+        { name: 'idx_rh_wallet_swap_realtime_outbox_retention', includes: ['created_at', 'block_number', 'transaction_hash', 'log_index', 'block_hash'] },
+        { name: 'idx_rh_wallet_swap_realtime_outbox_backlog', includes: ['event_kind', 'created_at', 'block_number'] },
+        { name: 'idx_rh_wallet_swap_realtime_outbox_frontier', includes: ['event_kind', 'block_number', 'published_at'] },
+      ],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

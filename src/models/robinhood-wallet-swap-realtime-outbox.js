@@ -55,6 +55,12 @@ function compareQuantity(left, right) {
   return difference < 0n ? -1 : (difference > 0n ? 1 : 0);
 }
 
+function blockLag(head, frontier) {
+  if (head == null || frontier == null) return null;
+  const lag = BigInt(head) - BigInt(frontier);
+  return (lag > 0n ? lag : 0n).toString();
+}
+
 function mapAuditRow(row) {
   return {
     ...auditIdentity(row, 'claimed'),
@@ -324,6 +330,129 @@ function createRobinhoodWalletSwapRealtimeOutboxRepository(options = {}) {
     return result.rowCount;
   }
 
+  async function pruneTerminalCycles(input = {}) {
+    const retentionMs = positiveInt(input.retentionMs, 'retentionMs');
+    const limit = positiveInt(input.limit, 'limit');
+    const result = await database.query(
+      `WITH candidate_cycles AS MATERIALIZED (
+         SELECT terminal.chain, terminal.transaction_hash, terminal.log_index,
+                terminal.block_hash, MIN(terminal.created_at) AS terminal_created_at
+           FROM robinhood_wallet_swap_realtime_outbox terminal
+          WHERE terminal.chain=$1 AND terminal.event_kind IN ('finalized', 'invalidate')
+            AND terminal.audit_status='complete'
+            AND terminal.status IN ('pending', 'complete')
+            AND terminal.created_at<=NOW()-($2::bigint*INTERVAL '1 millisecond')
+          GROUP BY terminal.chain, terminal.transaction_hash, terminal.log_index,
+                   terminal.block_hash
+          ORDER BY MIN(terminal.created_at)
+          LIMIT $3
+       ), cycle_counts AS MATERIALIZED (
+         SELECT cycle.chain, cycle.transaction_hash, cycle.log_index, cycle.block_hash,
+                COUNT(*)::int AS row_count
+           FROM candidate_cycles cycle
+           INNER JOIN robinhood_wallet_swap_realtime_outbox outbox
+             USING (chain, transaction_hash, log_index, block_hash)
+          GROUP BY cycle.chain, cycle.transaction_hash, cycle.log_index, cycle.block_hash
+       ), locked_rows AS MATERIALIZED (
+         SELECT outbox.ctid, outbox.chain, outbox.transaction_hash, outbox.log_index,
+                outbox.block_hash, outbox.status, outbox.audit_status,
+                outbox.audited_at, outbox.published_at, counts.row_count
+           FROM cycle_counts counts
+           INNER JOIN robinhood_wallet_swap_realtime_outbox outbox
+             USING (chain, transaction_hash, log_index, block_hash)
+          ORDER BY outbox.created_at, outbox.event_kind
+          FOR UPDATE OF outbox SKIP LOCKED
+       ), eligible_cycles AS MATERIALIZED (
+         SELECT chain, transaction_hash, log_index, block_hash
+           FROM locked_rows
+          GROUP BY chain, transaction_hash, log_index, block_hash, row_count
+         HAVING COUNT(*)=row_count
+            AND BOOL_AND(audit_status='complete')
+            AND (BOOL_AND(status='pending') OR BOOL_AND(status='complete'))
+            AND BOOL_AND(COALESCE(
+              GREATEST(audited_at, COALESCE(published_at, audited_at)), 'infinity'
+            )<=NOW()-($2::bigint*INTERVAL '1 millisecond'))
+       ), deleted AS (
+         DELETE FROM robinhood_wallet_swap_realtime_outbox outbox
+          USING eligible_cycles cycle
+          WHERE outbox.chain=cycle.chain
+            AND outbox.transaction_hash=cycle.transaction_hash
+            AND outbox.log_index=cycle.log_index
+            AND outbox.block_hash=cycle.block_hash
+          RETURNING 1
+       )
+       SELECT (SELECT COUNT(*)::int FROM eligible_cycles) AS cycles,
+              COUNT(*)::int AS rows FROM deleted`,
+      [CHAIN, retentionMs, limit]
+    );
+    return {
+      cycles: Number(result.rows[0]?.cycles || 0),
+      rows: Number(result.rows[0]?.rows || 0),
+    };
+  }
+
+  async function loadTelemetry() {
+    const result = await database.query(
+      `WITH capture AS MATERIALIZED (
+         SELECT node_head, finalized_head FROM robinhood_chain_capture_cursor WHERE chain=$1
+       ), frontiers AS MATERIALIZED (
+         SELECT
+           (SELECT block_number FROM robinhood_wallet_swap_realtime_outbox
+             WHERE chain=$1 AND event_kind='observed' AND status='complete'
+             ORDER BY block_number DESC LIMIT 1) AS observed_block,
+           (SELECT block_number FROM robinhood_wallet_swap_realtime_outbox
+             WHERE chain=$1 AND event_kind='finalized' AND status='complete'
+             ORDER BY block_number DESC LIMIT 1) AS finalized_block,
+           (SELECT published_at FROM robinhood_wallet_swap_realtime_outbox
+             WHERE chain=$1 AND event_kind='invalidate' AND status='complete'
+             ORDER BY block_number DESC LIMIT 1) AS last_invalidation_at
+       ), grouped AS MATERIALIZED (
+         SELECT event_kind, COUNT(*)::int AS rows,
+                COUNT(*) FILTER (WHERE status='pending')::int AS pending,
+                COUNT(*) FILTER (WHERE status='leased')::int AS leased,
+                COUNT(*) FILTER (
+                  WHERE status='blocked' OR audit_status='blocked'
+                )::int AS blocked,
+                COALESCE(SUM(GREATEST(attempt_count-1, 0)
+                  + GREATEST(audit_attempt_count-1, 0)), 0)::text AS retries,
+                EXTRACT(EPOCH FROM NOW()-MIN(created_at)) AS oldest_age_seconds
+           FROM robinhood_wallet_swap_realtime_outbox
+          WHERE chain=$1 AND (status<>'complete' OR audit_status<>'complete')
+          GROUP BY event_kind
+       ), backlog AS (
+         SELECT COALESCE(jsonb_object_agg(event_kind, jsonb_build_object(
+                  'rows', rows, 'pending', pending, 'leased', leased,
+                  'blocked', blocked, 'retries', retries,
+                  'oldestAgeSeconds', oldest_age_seconds
+                )), '{}'::jsonb) AS by_kind,
+                COALESCE(SUM(rows), 0)::int AS rows,
+                COALESCE(SUM(blocked), 0)::int AS blocked,
+                COALESCE(SUM(retries::numeric), 0)::text AS retries,
+                MAX(oldest_age_seconds) AS oldest_age_seconds
+           FROM grouped
+       )
+       SELECT capture.node_head::text, capture.finalized_head::text,
+              frontiers.observed_block::text, frontiers.finalized_block::text,
+              frontiers.last_invalidation_at, backlog.*
+         FROM capture CROSS JOIN frontiers CROSS JOIN backlog`,
+      [CHAIN]
+    );
+    const row = result.rows[0] || {};
+    return {
+      backlogByEventKind: row.by_kind || {},
+      backlogRows: Number(row.rows || 0),
+      blockedRows: Number(row.blocked || 0),
+      retryAttempts: Number(row.retries || 0),
+      oldestBacklogAgeSeconds: row.oldest_age_seconds == null
+        ? null : Number(row.oldest_age_seconds),
+      observedFrontierBlock: row.observed_block || null,
+      finalizedFrontierBlock: row.finalized_block || null,
+      observedLagBlocks: blockLag(row.node_head, row.observed_block),
+      finalizedLagBlocks: blockLag(row.finalized_head, row.finalized_block),
+      lastInvalidationAt: row.last_invalidation_at || null,
+    };
+  }
+
   async function appendOrphanInvalidations(client, input = {}) {
     if (!client || typeof client.query !== 'function') {
       throw new Error('trade invalidation requires a transaction client');
@@ -445,6 +574,8 @@ function createRobinhoodWalletSwapRealtimeOutboxRepository(options = {}) {
     appendOrphanInvalidations,
     claimAudit,
     claimPublication,
+    loadTelemetry,
+    pruneTerminalCycles,
     promoteFinalized,
     reclaimExpiredAuditLeases,
     reclaimExpiredPublicationLeases,

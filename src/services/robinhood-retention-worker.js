@@ -2,11 +2,15 @@ const db = require('../models/db');
 const {
   createRobinhoodWalletSwapCursorRepository,
 } = require('../models/robinhood-wallet-swap-cursor');
+const {
+  createRobinhoodWalletSwapRealtimeOutboxRepository,
+} = require('../models/robinhood-wallet-swap-realtime-outbox');
 
 const DEFAULT_INTERVAL_MS = 60 * 1000;
 const DEFAULT_BATCH_LIMIT = 2000;
 const DEFAULT_MAX_BATCHES = 5;
 const DEFAULT_STATEMENT_TIMEOUT_MS = 10 * 1000;
+const DEFAULT_REALTIME_OUTBOX_RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
 
 let timer = null;
 let running = false;
@@ -37,6 +41,12 @@ let status = {
   lastDeletedHourlyBuckets: 0,
   lastProtectedHourlyBuckets: 0,
   lastDeletedTransferReorgJournal: 0,
+  lastDeletedRealtimeOutboxRows: 0,
+  lastDeletedRealtimeOutboxCycles: 0,
+  totalDeletedRealtimeOutboxRows: 0,
+  observedLagBlocks: null,
+  finalizedLagBlocks: null,
+  realtimeOutbox: null,
   totalDeletedProcessedLogs: 0,
   totalDeletedObservations: 0,
   totalDeletedHourlyBuckets: 0,
@@ -61,6 +71,12 @@ function normalizeOptions(options = {}) {
       DEFAULT_STATEMENT_TIMEOUT_MS,
       1000,
       60 * 1000
+    ),
+    realtimeOutboxRetentionMs: boundedInteger(
+      options.realtimeOutboxRetentionMs,
+      DEFAULT_REALTIME_OUTBOX_RETENTION_MS,
+      60 * 60 * 1000,
+      7 * 24 * 60 * 60 * 1000
     ),
   };
 }
@@ -245,6 +261,9 @@ function emptySummary(wallet = {}) {
     hourlyBuckets: 0,
     protectedHourlyBuckets: 0,
     transferReorgJournal: 0,
+    realtimeOutboxRows: 0,
+    realtimeOutboxCycles: 0,
+    realtimeOutbox: null,
   };
 }
 
@@ -325,6 +344,23 @@ async function runCleanupBatches(database, options, wallet) {
   return summary;
 }
 
+async function maintainRealtimeOutbox(database, options, deps) {
+  const repository = deps.realtimeOutboxRepository
+    || createRobinhoodWalletSwapRealtimeOutboxRepository({ database });
+  let cycles = 0;
+  let rows = 0;
+  for (let index = 0; index < options.maxBatches; index += 1) {
+    const result = await repository.pruneTerminalCycles({
+      retentionMs: options.realtimeOutboxRetentionMs,
+      limit: options.batchLimit,
+    });
+    cycles += result.cycles;
+    rows += result.rows;
+    if (result.cycles < options.batchLimit) break;
+  }
+  return { cycles, rows, telemetry: await repository.loadTelemetry() };
+}
+
 async function runOnce(options = {}, meta = {}, deps = {}) {
   const normalized = normalizeOptions(options);
   if (!normalized.enabled) return emptySummary();
@@ -350,6 +386,10 @@ async function runOnce(options = {}, meta = {}, deps = {}) {
         ...normalized,
         walletCompleteThroughBlock: wallet.completeThroughBlock || null,
       }, wallet);
+      const realtime = await maintainRealtimeOutbox(database, normalized, deps);
+      summary.realtimeOutboxRows = realtime.rows;
+      summary.realtimeOutboxCycles = realtime.cycles;
+      summary.realtimeOutbox = realtime.telemetry;
       status.lastExaminedProcessedLogs = summary.examinedProcessedLogs;
       status.lastDeletedProcessedLogs = summary.processedLogs;
       status.lastProtectedProcessedLogs = summary.protectedProcessedLogs;
@@ -370,6 +410,12 @@ async function runOnce(options = {}, meta = {}, deps = {}) {
       status.lastDeletedHourlyBuckets = summary.hourlyBuckets;
       status.lastProtectedHourlyBuckets = summary.protectedHourlyBuckets;
       status.lastDeletedTransferReorgJournal = summary.transferReorgJournal;
+      status.lastDeletedRealtimeOutboxRows = summary.realtimeOutboxRows;
+      status.lastDeletedRealtimeOutboxCycles = summary.realtimeOutboxCycles;
+      status.totalDeletedRealtimeOutboxRows += summary.realtimeOutboxRows;
+      status.observedLagBlocks = summary.realtimeOutbox.observedLagBlocks;
+      status.finalizedLagBlocks = summary.realtimeOutbox.finalizedLagBlocks;
+      status.realtimeOutbox = summary.realtimeOutbox;
       status.totalDeletedProcessedLogs += summary.processedLogs;
       status.totalDeletedObservations += summary.observations;
       status.totalDeletedHourlyBuckets += summary.hourlyBuckets;
@@ -395,7 +441,7 @@ function schedule(options, delayMs) {
     try {
       const summary = await runOnce(options, { ifRunning: 'join' });
       if (summary.examinedProcessedLogs || summary.hourlyBuckets
-          || summary.transferReorgJournal) {
+          || summary.transferReorgJournal || summary.realtimeOutboxRows) {
         console.log(
           '[RobinhoodRetentionWorker]',
           `logs=${summary.processedLogs}/${summary.examinedProcessedLogs}`,
@@ -408,6 +454,9 @@ function schedule(options, delayMs) {
           `hourlyBuckets=${summary.hourlyBuckets}`,
           `protectedHourlyBuckets=${summary.protectedHourlyBuckets}`,
           `transferReorgJournal=${summary.transferReorgJournal}`,
+          `realtimeOutbox=${summary.realtimeOutboxRows}/${summary.realtimeOutboxCycles}`,
+          `observedLag=${summary.realtimeOutbox.observedLagBlocks ?? 'unknown'}`,
+          `finalizedLag=${summary.realtimeOutbox.finalizedLagBlocks ?? 'unknown'}`,
           `batches=${summary.batches}`
         );
       }
@@ -442,6 +491,7 @@ function getStatus() {
 module.exports = {
   DEFAULT_BATCH_LIMIT,
   DEFAULT_INTERVAL_MS,
+  DEFAULT_REALTIME_OUTBOX_RETENTION_MS,
   getStatus,
   runOnce,
   start,
@@ -449,6 +499,7 @@ module.exports = {
   __private: {
     deleteExpiredProcessedLogs,
     deleteExpiredTransferReorgJournal,
+    maintainRealtimeOutbox,
     normalizeOptions,
   },
 };

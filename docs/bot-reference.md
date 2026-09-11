@@ -736,6 +736,21 @@ Ative primeiro a allowlist no web e reinicie o frontend/backend web; só então 
 a allowlist até os `finalized`/`invalidate` pendentes drenarem. A UI substitui `observed` por
 `finalized` usando `transactionHash:actionIndex` e remove a mesma identidade em `invalidate`.
 
+Aplique `node src/utils/db-init-stage210.js` antes de reiniciar o
+`trendscope-worker@robinhood-maintenance`. A Stage 210 cria somente índices concorrentes e ajusta
+autovacuum; a limpeza é executada pelo retention worker existente, com janela default de 3 dias
+(`ROBINHOOD_REALTIME_OUTBOX_RETENTION_MS=259200000`). Um ciclo só é removido inteiro: todos os
+eventos precisam estar auditados, antigos e uniformemente `pending` (nunca publicados) ou
+uniformemente `complete` (incluindo o terminal). Estado misto, `leased` ou qualquer `blocked` fica
+preservado para entrega ou investigação. O limite é contado em ciclos e cada ciclo tem no máximo
+três linhas.
+
+O status do retention worker expõe `realtimeOutbox` com backlog e idade por `event_kind`, retries,
+bloqueados, fronteiras publicadas e a última invalidação retida. `observedLagBlocks` compara o head
+capturado com a fronteira `observed`; `finalizedLagBlocks` compara `finalized_head` com a fronteira
+`finalized`. Antes de ativar o canário, deixe a manutenção drenar ciclos históricos expirados para
+que `OBSERVED_ENABLED=true` não publique trades antigos.
+
 O grupo `robinhood-wallet`, com `ROBINHOOD_WALLET_SWAP_LIVE_SOURCE=durable_outbox` (default), acorda
 por `LISTEN` tanto no append quanto no avanço da finalidade e usa o intervalo de 2s somente como
 reconciliação de notificação perdida. Claim é ordenado e limitado a `finalized_head` e ao hash ainda

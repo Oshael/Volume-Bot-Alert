@@ -5,6 +5,7 @@ const { describe, it } = require('node:test');
 const { STATEMENTS, init: initStage204 } = require('../src/utils/db-init-stage204');
 const stage207 = require('../src/utils/db-init-stage207');
 const stage209 = require('../src/utils/db-init-stage209');
+const stage210 = require('../src/utils/db-init-stage210');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 
 describe('Robinhood wallet-swap realtime lifecycle outbox schema', () => {
@@ -107,5 +108,19 @@ describe('Robinhood wallet-swap realtime lifecycle outbox schema', () => {
     });
     assert.match(calls[1], /DROP INDEX CONCURRENTLY IF EXISTS/);
     assert.deepEqual(calls.slice(2), stage209.STATEMENTS);
+  });
+
+  it('adds bounded retention and telemetry indexes without deleting data', () => {
+    const sql = stage210.STATEMENTS.join('\n');
+    assert.match(sql, /CREATE INDEX CONCURRENTLY IF NOT EXISTS/);
+    assert.match(sql, /idx_rh_wallet_swap_realtime_outbox_retention/);
+    assert.match(sql, /status<>'complete' OR audit_status<>'complete'/);
+    assert.match(sql, /WHERE status='complete'/);
+    assert.doesNotMatch(sql, /DELETE FROM/);
+    const group = SCHEMA_GROUPS.find(({ key }) => (
+      key === 'stage210-robinhood-wallet-swap-realtime-retention'
+    ));
+    assert.equal(group.repair, 'node src/utils/db-init-stage210.js');
+    assert.deepEqual(group.tables[0].indexes.map(({ name }) => name), stage210.INDEX_NAMES);
   });
 });

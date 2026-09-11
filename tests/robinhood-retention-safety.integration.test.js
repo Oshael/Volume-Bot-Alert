@@ -18,6 +18,15 @@ describe('Robinhood retention safety integration', () => {
         expires_at timestamptz NOT NULL,
         PRIMARY KEY (chain, transaction_hash, log_index)
       ) ON COMMIT DROP`);
+      await client.query(`CREATE TEMP TABLE robinhood_wallet_transfer_reorg_journal (
+        chain text NOT NULL, block_number bigint NOT NULL,
+        expires_at timestamptz NOT NULL
+      ) ON COMMIT DROP`);
+      await client.query(`CREATE TEMP TABLE robinhood_chain_capture_cursor (
+        chain text PRIMARY KEY, finalized_head bigint
+      ) ON COMMIT DROP`);
+      await client.query(`INSERT INTO robinhood_chain_capture_cursor
+        VALUES ('robinhood', 100)`);
       await client.query(`CREATE TEMP TABLE robinhood_market_observations (
         chain text NOT NULL,
         transaction_hash text NOT NULL,
@@ -94,12 +103,22 @@ describe('Robinhood retention safety integration', () => {
               updatedAt: new Date().toISOString(),
             }),
           },
+          realtimeOutboxRepository: {
+            pruneTerminalCycles: async () => ({ cycles: 2, rows: 4 }),
+            loadTelemetry: async () => ({
+              observedLagBlocks: '1', finalizedLagBlocks: '2',
+              backlogRows: 3, blockedRows: 0,
+            }),
+          },
         }
       );
 
       assert.equal(summary.processedLogs, 1);
       assert.equal(summary.observations, 1);
       assert.equal(summary.candidatesProtectedByAggregation, 1);
+      assert.equal(summary.realtimeOutboxRows, 4);
+      assert.equal(summary.realtimeOutboxCycles, 2);
+      assert.equal(summary.realtimeOutbox.observedLagBlocks, '1');
       const remaining = await client.query(
         `SELECT transaction_hash FROM robinhood_processed_logs ORDER BY transaction_hash`
       );

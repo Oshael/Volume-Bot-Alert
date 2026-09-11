@@ -8,6 +8,7 @@ const db = require('../src/models/db');
 const { STATEMENTS } = require('../src/utils/db-init-stage203');
 const { STATEMENTS: REALTIME_STATEMENTS } = require('../src/utils/db-init-stage204');
 const { STATEMENTS: AUDIT_STATEMENTS } = require('../src/utils/db-init-stage209');
+const { STATEMENTS: RETENTION_STATEMENTS } = require('../src/utils/db-init-stage210');
 const {
   createRobinhoodWalletSwapOutboxProducer,
 } = require('../src/models/robinhood-wallet-swap-outbox-producer');
@@ -55,6 +56,8 @@ describe('Robinhood wallet-swap outbox producer integration', () => {
       chain text, stream text, next_block bigint, safe_head bigint,
       checkpoint_block bigint, checkpoint_hash text, checkpoint_timestamp timestamptz,
       lifecycle_state text, state_reason text, version bigint, updated_at timestamptz
+    ); CREATE TEMP TABLE robinhood_chain_capture_cursor (
+      chain text PRIMARY KEY, node_head bigint, finalized_head bigint
     )`);
     for (const [index, sql] of STATEMENTS.entries()) {
       await client.query(index === 0
@@ -67,6 +70,9 @@ describe('Robinhood wallet-swap outbox producer integration', () => {
         : sql);
     }
     for (const sql of AUDIT_STATEMENTS) {
+      await client.query(sql.replace('CREATE INDEX CONCURRENTLY', 'CREATE INDEX'));
+    }
+    for (const sql of RETENTION_STATEMENTS) {
       await client.query(sql.replace('CREATE INDEX CONCURRENTLY', 'CREATE INDEX'));
     }
     await client.query(`INSERT INTO robinhood_market_observations VALUES (
@@ -300,6 +306,49 @@ describe('Robinhood wallet-swap outbox producer integration', () => {
       { block_hash: REPLACEMENT_BLOCK, event_kind: 'finalized' },
       { block_hash: REPLACEMENT_BLOCK, event_kind: 'observed' },
     ]);
+  });
+
+  it('prunes only old terminal cycles and reports publication lag', async () => {
+    await client.query('DELETE FROM robinhood_wallet_swap_realtime_outbox');
+    await client.query(`INSERT INTO robinhood_chain_capture_cursor
+      VALUES ('robinhood', 210, 208)`);
+    const insertCycle = async (digit, blockNumber, statuses, age) => {
+      const transactionHash = `0x${digit.repeat(64)}`;
+      const blockHash = `0x${digit.repeat(64)}`;
+      for (const [eventKind, publicationStatus] of Object.entries(statuses)) {
+        await client.query(`INSERT INTO robinhood_wallet_swap_realtime_outbox(
+          chain, transaction_hash, log_index, event_kind, block_number, block_hash,
+          transaction_index, payload, status, published_at, audit_status, audited_at,
+          created_at, updated_at
+        ) VALUES ('robinhood',$1,1,$2,$3,$4,1,'{}',$5::text,
+          CASE WHEN $5::text='complete' THEN NOW()-$6::interval END,
+          'complete',NOW()-$6::interval,NOW()-$6::interval,NOW()-$6::interval)`,
+        [transactionHash, eventKind, blockNumber, blockHash, publicationStatus, age]);
+      }
+    };
+    await insertCycle('1', 200, { observed: 'pending', finalized: 'pending' }, '4 days');
+    await insertCycle('3', 201, { observed: 'complete', finalized: 'complete' }, '4 days');
+    await insertCycle('5', 202, { observed: 'complete', finalized: 'pending' }, '4 days');
+    await insertCycle('7', 203, { observed: 'pending', finalized: 'blocked' }, '4 days');
+    await insertCycle('9', 204, { observed: 'complete', finalized: 'complete' }, '1 day');
+
+    const lifecycle = createRobinhoodWalletSwapRealtimeOutboxRepository({ database: client });
+    assert.deepEqual(await lifecycle.pruneTerminalCycles({
+      retentionMs: 3 * 24 * 60 * 60 * 1000, limit: 10,
+    }), { cycles: 2, rows: 4 });
+    const remaining = await client.query(`SELECT block_number, event_kind, status
+      FROM robinhood_wallet_swap_realtime_outbox ORDER BY block_number, event_kind`);
+    assert.equal(remaining.rows.length, 6);
+    assert.deepEqual([...new Set(remaining.rows.map(({ block_number }) => Number(block_number)))],
+      [202, 203, 204]);
+
+    const telemetry = await lifecycle.loadTelemetry();
+    assert.equal(telemetry.backlogRows, 3);
+    assert.equal(telemetry.blockedRows, 1);
+    assert.equal(telemetry.observedLagBlocks, '6');
+    assert.equal(telemetry.finalizedLagBlocks, '4');
+    assert.equal(telemetry.observedFrontierBlock, '204');
+    assert.equal(telemetry.finalizedFrontierBlock, '204');
   });
 
   it('rejects an accepted identity without committed canonical context', async () => {

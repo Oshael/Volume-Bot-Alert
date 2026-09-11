@@ -444,9 +444,9 @@ terminais de ciclos provisórios que já tenham sido publicados.
 
 **3B3C — retenção e telemetria**
 
-- [ ] expor backlog/idade por `event_kind`, `observedLagBlocks`,
+- [x] expor backlog/idade por `event_kind`, `observedLagBlocks`,
   `finalizedLagBlocks`, retries, blocked e última invalidação;
-- [ ] apagar ciclos terminais apenas depois da janela de reorg/replay e do
+- [x] apagar ciclos terminais apenas depois da janela de reorg/replay e do
   watermark de todos os consumidores; nunca apagar `blocked` silenciosamente;
 - [ ] medir novamente receipt→applied e comparar com o baseline já coletado.
 
@@ -655,14 +655,14 @@ refresh HTTP.
 Esta fila prevalece sobre referências antigas a “próximo corte” e não deve ser
 reordenada sem atualizar este checkpoint:
 
-1. executar 3B3C, retenção e telemetria da Stage 204; canário 3B3B está
-   concluído e permanece desligado por default;
+1. aplicar a Stage 210, observar a retenção e repetir a medição ponta a ponta de
+   3B3C; canário 3B3B permanece desligado por default;
 2. executar Slice 4, liquidez realtime até a UI;
 3. executar Slice 5, readiness por push;
 4. executar Slice 6, holders dirigidos pelo journal;
 5. executar Slice 7, ranking e membership realtime.
 
-O próximo corte da fila é **3B3C — retenção e telemetria da Stage 204**.
+O próximo gate é **3B3C — deploy da Stage 210 e medição operacional**.
 
 ## Ponto importante
 
