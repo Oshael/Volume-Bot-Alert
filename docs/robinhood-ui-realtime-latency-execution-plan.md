@@ -437,7 +437,9 @@ uma audiência canário explicitamente autorizada:
   ainda não aceita membros; o produtor não é composto no runtime neste corte;
 - [x] **3B3B2 — allowlist e ativação:** admitir somente usuários/sessões canário,
   conectar o publisher sob flag desligada por default e provar promoção,
-  invalidação e deduplicação; clientes v1 permanecem finalizados-only.
+  invalidação e deduplicação; clientes v1 permanecem finalizados-only. Antes do
+  lançamento público, uma flag global explícita também pode admitir sessões
+  anônimas na mesma sala lifecycle sem remover a allowlist.
 - [x] **3B3B3 — watermark de ativação e catch-up controlado:** falhar fechado
   sem bloco explícito, publicar somente `observed` a partir dessa fronteira e
   priorizar sua auditoria; batch e quantidade de claims shadow por tick são

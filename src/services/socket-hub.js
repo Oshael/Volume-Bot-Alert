@@ -125,6 +125,9 @@ function getMarketTradeCanaryRoom(identity) {
 }
 
 function isMarketTradeCanaryUser(userId, runtimeConfig = config) {
+  if (runtimeConfig.robinhoodWalletSwapLiveWorker?.realtimeV2GlobalEnabled === true) {
+    return true;
+  }
   const normalized = Number(userId);
   return Number.isSafeInteger(normalized) && normalized > 0
     && (runtimeConfig.robinhoodWalletSwapLiveWorker?.realtimeV2CanaryUserIds || [])

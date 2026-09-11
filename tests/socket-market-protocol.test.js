@@ -127,6 +127,11 @@ describe('chain-aware socket market protocol', () => {
     assert.equal(isMarketTradeCanaryUser(42, canaryConfig), true);
     assert.equal(isMarketTradeCanaryUser('42', canaryConfig), true);
     assert.equal(isMarketTradeCanaryUser(41, canaryConfig), false);
+    const globalConfig = {
+      robinhoodWalletSwapLiveWorker: { realtimeV2GlobalEnabled: true },
+    };
+    assert.equal(isMarketTradeCanaryUser(null, globalConfig), true);
+    assert.equal(isMarketTradeCanaryUser(undefined, globalConfig), true);
     assert.equal(
       getMarketTradeFinalityRoom(resolveMarketIdentity({ chain: 'robinhood', address: EVM_ADDRESS })),
       `market-trade-v2:robinhood:${EVM_ADDRESS.toLowerCase()}`,

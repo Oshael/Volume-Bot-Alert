@@ -739,9 +739,13 @@ payload antes de mirar a sala `market-trade-v2:<identidade>:canary`. Apenas usu�
 positivos estejam em `ROBINHOOD_WALLET_SWAP_REALTIME_V2_CANARY_USER_IDS` entram nessa sala;
 clientes fora da lista permanecem na sala v2 finalizada-only. Sucesso no `NOTIFY` marca
 `status='complete'`; falha mantém retry/backoff e lease expirada é recuperada.
+Em ambiente pré-lançamento, `ROBINHOOD_WALLET_SWAP_REALTIME_V2_GLOBAL_ENABLED=true` admite todas
+as sessões, inclusive anônimas, nessa mesma sala. O default permanece `false`; essa flag controla
+somente a audiência, enquanto `...OBSERVED_ENABLED` continua controlando a produção dos eventos.
 
-Ative primeiro a allowlist no web e reinicie o frontend/backend web; só então ative `observed` no
-`trendscope-worker@robinhood-wallet`. No momento da ativação, leia o `next_block` de
+Ative primeiro a allowlist ou, em pré-lançamento, a flag global no web e reinicie o backend web;
+só então ative `observed` no `trendscope-worker@robinhood-wallet`. No momento da ativação, leia o
+`next_block` de
 `robinhood_chain_capture_cursor` e grave esse valor como `...ACTIVATION_BLOCK`; não diminua nem
 reutilize um watermark antigo em uma ativação futura. Para rollback, desligue apenas
 `...OBSERVED_ENABLED`, preserve o activation block vigente e a allowlist até os

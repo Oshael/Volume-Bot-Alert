@@ -1884,6 +1884,9 @@ module.exports = {
     realtimeV2ActivationBlock: parseOptionalBlock(
       process.env.ROBINHOOD_WALLET_SWAP_REALTIME_V2_ACTIVATION_BLOCK
     ),
+    realtimeV2GlobalEnabled: parseBoolean(
+      process.env.ROBINHOOD_WALLET_SWAP_REALTIME_V2_GLOBAL_ENABLED, false
+    ),
     realtimeV2CanaryUserIds: parsePositiveIntegerList(
       process.env.ROBINHOOD_WALLET_SWAP_REALTIME_V2_CANARY_USER_IDS
     ),
