@@ -48,7 +48,7 @@ const ROLLBACK_DOMAINS = Object.freeze([
     ]),
   }),
   Object.freeze({
-    id: 'holders', rollbackRegistered: false,
+    id: 'holders', rollbackRegistered: true,
     tables: Object.freeze([
       'robinhood_holder_transfer_journal', 'robinhood_holder_balances',
       'robinhood_holder_token_states', 'robinhood_holder_cursors',

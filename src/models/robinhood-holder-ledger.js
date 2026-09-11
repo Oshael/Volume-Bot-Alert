@@ -1553,26 +1553,28 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     });
   }
 
-  async function rewindOrphanedRange(input = {}) {
+  async function rewindOrphanedRangeInTransaction(client, input = {}) {
     const rewind = normalizeRewind(input);
-    return withTransaction(database, async (client) => {
-      await lockReorgFence(client, 'exclusive');
-      await lockCursorForRewind(client, rewind);
-      const events = await loadOrphanedEvents(client, rewind.nextBlock);
-      const applied = events.filter((row) => row.applied);
-      for (const row of applied) await revertAppliedEvent(client, row);
-      const affectedTokens = [...new Set(applied.map((row) => row.token_address))];
-      const resyncingStates = await markStatesCrossingBaseline(client, rewind.nextBlock);
-      const committed = await commitRewind(client, rewind, affectedTokens);
-      const publications = await loadRewindPublications(
-        client, affectedTokens, resyncingStates, rewind.checkpoint
-      );
-      return Object.freeze({
-        status: 'rewound', revertedEvents: applied.length,
-        affectedTokens: affectedTokens.length, resyncingTokens: resyncingStates.length,
-        publications: Object.freeze(publications.map(Object.freeze)), ...committed,
-      });
+    await lockReorgFence(client, 'exclusive');
+    await lockCursorForRewind(client, rewind);
+    const events = await loadOrphanedEvents(client, rewind.nextBlock);
+    const applied = events.filter((row) => row.applied);
+    for (const row of applied) await revertAppliedEvent(client, row);
+    const affectedTokens = [...new Set(applied.map((row) => row.token_address))];
+    const resyncingStates = await markStatesCrossingBaseline(client, rewind.nextBlock);
+    const committed = await commitRewind(client, rewind, affectedTokens);
+    const publications = await loadRewindPublications(
+      client, affectedTokens, resyncingStates, rewind.checkpoint
+    );
+    return Object.freeze({
+      status: 'rewound', revertedEvents: applied.length,
+      affectedTokens: affectedTokens.length, resyncingTokens: resyncingStates.length,
+      publications: Object.freeze(publications.map(Object.freeze)), ...committed,
     });
+  }
+
+  async function rewindOrphanedRange(input = {}) {
+    return withTransaction(database, (client) => rewindOrphanedRangeInTransaction(client, input));
   }
 
   async function getCursor() {
@@ -1826,7 +1828,7 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
     appendCapturedRange, applyNextPendingEvent, promoteReadyShadowTokens,
     inspectDriftedAppliedTail, repairCapturedRange, requeueWideShadowTail,
     rollbackAppliedTail, rollbackDriftedAppliedTail,
-    rewindOrphanedRange,
+    rewindOrphanedRange, rewindOrphanedRangeInTransaction,
     getCursor, getHotQueueFreshness, listHotPendingTokenAddresses,
     listJournalBlockCheckpoints, listPendingTokenAddresses,
     listTrackedTokenAddresses,
@@ -1835,6 +1837,7 @@ function createRobinhoodHolderLedgerRepository(options = {}) {
 }
 
 module.exports = {
+  acquireRobinhoodHolderReorgFence: lockReorgFence,
   createRobinhoodHolderLedgerRepository,
   deriveHolderBalanceChanges: deriveBalanceChanges,
   normalizeHolderTransfer: normalizeTransfer,

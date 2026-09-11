@@ -57,7 +57,7 @@ test('planner finds a bounded ancestor but keeps execution gated by rollback dom
     checkpoint: { blockNumber: '100', blockHash: hash('a') },
     incoming: { blockNumber: '101', blockHash: hash('f'), parentHash: hash('d') },
     finalizedBoundary: { blockNumber: '98' }, rollbackManifestVersion: 2,
-    pendingRollbackDomains: ['holders', 'discovery-creator'],
+    pendingRollbackDomains: ['discovery-creator'],
     executable: false,
     reason: 'parent_hash_mismatch', recoverable: true,
     ancestor: { blockNumber: '98', blockHash: hash('c') },
@@ -108,7 +108,7 @@ test('rollback inventory is unique and keeps unfinished domains behind the gate'
   ]);
   assert.deepEqual(ROLLBACK_DOMAINS.filter(({ rollbackRegistered }) => !rollbackRegistered)
     .map(({ id }) => id), [
-    'holders', 'discovery-creator',
+    'discovery-creator',
   ]);
   const tables = ROLLBACK_DOMAINS.flatMap(({ tables }) => tables);
   assert.equal(new Set(tables).size, tables.length);

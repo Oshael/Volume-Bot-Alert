@@ -4036,12 +4036,12 @@ continua fechado porque os demais domínios ainda precisam de rollback próprio.
 
 Depois do rewind, o recovery entra em `awaiting_domains`. A mesma transação grava
 `domain_ready` para `canonical-journal`, `market`, `wallet`, `wallet-derived`,
-`liquidity` e `publication-alerts`, sempre com a prova determinística do
+`holders`, `liquidity` e `publication-alerts`, sempre com a prova determinística do
 rollback; repetir uma prova idêntica é idempotente e uma prova diferente para o
 mesmo domínio falha fechado. `wallet-derived` reúne transfers, signed-origin e
-first-buy. `holders` e `discovery-creator` continuam pendentes, portanto o
-planner permanece `executable=false` em produção. Essa separação usa o manifesto
-v2; o executor recusa um plano gravado com outra versão em vez de reinterpretá-lo.
+first-buy. Somente `discovery-creator` continua pendente, portanto o planner
+permanece `executable=false` em produção. Essa separação usa o manifesto v2; o
+executor recusa um plano gravado com outra versão em vez de reinterpretá-lo.
 
 O resume genérico só limpa `recovery_required` e move o recovery para
 `recapturing` quando existem linhas `domain_ready` para todo o manifesto. Até
@@ -4088,6 +4088,18 @@ cursor de wallet-swaps, já revertido, prova o ancestral e impede que first-buy
 seja recuperado contra outra fonte. Cascades removem filas/evaluations FRESH
 dependentes; classificações e launch anchors são tratados pelos gates `holders`
 e `discovery-creator`. Não há RPC nem migration adicional.
+
+O holder ledger participa da transação canônica usando o mesmo advisory fence
+exclusivo dos writers LIVE. O executor recusa cursor ausente, frontier além da
+faixa ou checkpoint/journal sem âncora na ramificação canônica; se o cursor ainda
+não alcançou a faixa, exige também que nenhum estado ou journal esteja adiantado.
+Quando afetado, reaproveita o rollback reverso já persistido no journal: restaura
+balances e provenance, corrige `holder_count`, remove eventos órfãos, reancora
+`live_through_*`, limpa a hot queue sem trabalho e recua o cursor ao ancestral.
+Estados que cruzaram a baseline ficam `resyncing` até reaplicação. Buckets e
+classificações derivados não são tratados como evidência canônica deste corte;
+seu fence/invalidation pertence a `discovery-creator` e à integração final dos
+gates. Não há RPC nem migration adicional.
 
 Antes de definir ou reduzir retenção de `robinhood_chain_events` e
 `robinhood_holder_transfer_journal`, execute

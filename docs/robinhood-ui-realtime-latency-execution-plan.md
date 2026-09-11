@@ -250,13 +250,13 @@ Estado implementado até este checkpoint:
   legado/v2 existente;
 - a recuperação canônica central já detecta, planeja, persiste e executa rewind
   somente atrás do manifesto de domínios; market, wallet, publicação, transfers,
-  signed-origin, first-buy e liquidity já possuem rollback, mas o manifesto
-  ainda não está completo;
+  signed-origin, first-buy, liquidity e holders já possuem rollback, mas o
+  manifesto ainda não está completo;
 - a Stage 204 não deve ser limpa enquanto invalidação, consumo e retenção não
   estiverem prontos. Neste ponto ela tende a guardar duas linhas por swap maduro.
 
 Ao retomar em outro contexto, o próximo trabalho é obrigatoriamente
-**3B2B-3C — holders**. Não iniciar 3B3, Slice 4 ou qualquer slice posterior
+**3B2B-3D — discovery-creator**. Não iniciar 3B3, Slice 4 ou qualquer slice posterior
 antes de concluir todos os gates de 3B2B.
 
 #### Slice 3B2B — recuperação de reorg, em cortes menores
@@ -380,7 +380,7 @@ ordem não autoriza avançar para 3B3.
 
 **3B2B-3C — holders**
 
-- [ ] reverter journal, balances, contagem e cursores afetados, preservando o
+- [x] reverter journal, balances, contagem e cursores afetados, preservando o
   estado anterior até a nova ramificação ser reaplicada.
 
 **3B2B-3D — discovery-creator**
@@ -636,9 +636,8 @@ refresh HTTP.
 Esta fila prevalece sobre referências antigas a “próximo corte” e não deve ser
 reordenada sem atualizar este checkpoint:
 
-1. terminar 3B2B-3 na ordem `wallet-derived/signed-origin`,
-   `wallet-derived/first-buy`, `holders`, `discovery-creator` e integração dos
-   gates; `liquidity` já está concluído;
+1. terminar 3B2B-3 com `discovery-creator` e a integração dos gates;
+   `wallet-derived`, `liquidity` e `holders` já estão concluídos;
 2. executar 3B3A, consumer shadow da Stage 204;
 3. executar 3B3B, canário e publicação v2;
 4. executar 3B3C, retenção e telemetria da Stage 204;
@@ -647,7 +646,7 @@ reordenada sem atualizar este checkpoint:
 7. executar Slice 6, holders dirigidos pelo journal;
 8. executar Slice 7, ranking e membership realtime.
 
-O próximo corte autorizado pela fila é **3B2B-3C — holders**.
+O próximo corte autorizado pela fila é **3B2B-3D — discovery-creator**.
 
 ## Ponto importante
 
