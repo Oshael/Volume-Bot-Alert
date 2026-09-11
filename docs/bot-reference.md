@@ -714,7 +714,11 @@ O repositório da Stage 209 faz claim/lease/retry/reclaim no namespace `audit_*`
 ser reclamado depois que o `observed` da mesma identidade de ramificação estiver com
 `audit_status='complete'`. O grupo `robinhood-wallet` escuta também
 `robinhood_wallet_swap_realtime_outbox`, reclama leases expiradas e drena o auditor imediatamente
-enquanto houver trabalho reclamado; o tick de 2s só reconcilia `NOTIFY` perdido. O auditor valida
+enquanto houver trabalho reclamado; o tick de 2s só reconcilia `NOTIFY` perdido. O tamanho de cada
+claim é independente da entrega econômica (`ROBINHOOD_WALLET_SWAP_REALTIME_AUDIT_BATCH_SIZE`,
+default 200) e o worker pode executar de 1 a 20 claims por tick
+(`ROBINHOOD_WALLET_SWAP_REALTIME_AUDIT_MAX_BATCHES_PER_TICK`, default 1). Isso permite acelerar
+catch-up sem aumentar o lote que grava swaps/posições. O auditor valida
 envelope, identidade, contrato e campos econômicos básicos, mas não chama publisher nem
 altera o estado de publicação. Falha do shadow aparece em `lastAuditResult`/`auditErrors` e não
 interrompe a entrega finalizada existente, que sempre roda primeiro no tick. Não limpar essas
@@ -723,7 +727,10 @@ um lote cheio é drenado imediatamente, enquanto o intervalo de 2s permanece rec
 
 O publisher v2 reclama somente linhas já aprovadas pelo auditor e é composto no runtime do grupo
 `robinhood-wallet`. Novos `observed` exigem
-`ROBINHOOD_WALLET_SWAP_REALTIME_V2_OBSERVED_ENABLED=true`, desligado por default; com ele desligado,
+`ROBINHOOD_WALLET_SWAP_REALTIME_V2_OBSERVED_ENABLED=true` e um bloco decimal ou hexadecimal em
+`ROBINHOOD_WALLET_SWAP_REALTIME_V2_ACTIVATION_BLOCK`; sem o bloco, o worker falha fechado. Somente
+`observed` com `block_number` igual ou superior ao watermark pode ser publicado, e a auditoria
+prioriza esse intervalo antes do backlog histórico. A flag fica desligada por default; com ela desligada,
 terminais de ciclos anteriormente publicados continuam elegíveis para não deixar estado provisório
 preso. A entrega usa o canal PostgreSQL `market_trade_finality_v2`, e o web normaliza novamente o
 payload antes de mirar a sala `market-trade-v2:<identidade>:canary`. Apenas usuários cujos IDs
@@ -732,8 +739,11 @@ clientes fora da lista permanecem na sala v2 finalizada-only. Sucesso no `NOTIFY
 `status='complete'`; falha mantém retry/backoff e lease expirada é recuperada.
 
 Ative primeiro a allowlist no web e reinicie o frontend/backend web; só então ative `observed` no
-`trendscope-worker@robinhood-wallet`. Para rollback, desligue apenas `...OBSERVED_ENABLED` e preserve
-a allowlist até os `finalized`/`invalidate` pendentes drenarem. A UI substitui `observed` por
+`trendscope-worker@robinhood-wallet`. No momento da ativação, leia o `next_block` de
+`robinhood_chain_capture_cursor` e grave esse valor como `...ACTIVATION_BLOCK`; não diminua nem
+reutilize um watermark antigo em uma ativação futura. Para rollback, desligue apenas
+`...OBSERVED_ENABLED` e preserve a allowlist até os `finalized`/`invalidate` pendentes drenarem.
+Ao reativar depois de uma pausa, escolha um novo `next_block`. A UI substitui `observed` por
 `finalized` usando `transactionHash:actionIndex` e remove a mesma identidade em `invalidate`.
 
 Aplique `node src/utils/db-init-stage210.js` antes de reiniciar o
@@ -748,8 +758,8 @@ três linhas.
 O status do retention worker expõe `realtimeOutbox` com backlog e idade por `event_kind`, retries,
 bloqueados, fronteiras publicadas e a última invalidação retida. `observedLagBlocks` compara o head
 capturado com a fronteira `observed`; `finalizedLagBlocks` compara `finalized_head` com a fronteira
-`finalized`. Antes de ativar o canário, deixe a manutenção drenar ciclos históricos expirados para
-que `OBSERVED_ENABLED=true` não publique trades antigos.
+`finalized`. O watermark impede que o backlog anterior seja publicado; ciclos históricos nunca
+publicados permanecem disponíveis para auditoria e são removidos pela retenção quando elegíveis.
 
 O grupo `robinhood-wallet`, com `ROBINHOOD_WALLET_SWAP_LIVE_SOURCE=durable_outbox` (default), acorda
 por `LISTEN` tanto no append quanto no avanço da finalidade e usa o intervalo de 2s somente como

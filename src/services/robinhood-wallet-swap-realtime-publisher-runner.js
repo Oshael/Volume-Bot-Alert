@@ -39,12 +39,13 @@ function createRobinhoodWalletSwapRealtimePublisherRunner(deps = {}) {
 
   async function runOnce(input = {}) {
     const observedEnabled = input.observedEnabled === true;
+    const activationBlock = input.activationBlock ?? null;
     const reclaimed = await repository.reclaimExpiredPublicationLeases();
     const rows = await repository.claimPublication({
-      owner, limit: batchSize, leaseMs, observedEnabled,
+      owner, limit: batchSize, leaseMs, observedEnabled, activationBlock,
     });
     if (!rows.length) {
-      return { status: 'idle', observedEnabled, reclaimed,
+      return { status: 'idle', observedEnabled, activationBlock, reclaimed,
         claimed: 0, delivered: 0, retried: 0, blocked: 0 };
     }
     let delivered = rows;
@@ -61,7 +62,7 @@ function createRobinhoodWalletSwapRealtimePublisherRunner(deps = {}) {
     });
     return {
       status: settled.blocked ? 'blocked' : (settled.retried ? 'retrying' : 'delivered'),
-      observedEnabled, reclaimed, claimed: rows.length, ...settled,
+      observedEnabled, activationBlock, reclaimed, claimed: rows.length, ...settled,
     };
   }
 

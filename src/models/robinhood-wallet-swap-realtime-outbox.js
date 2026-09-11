@@ -89,6 +89,8 @@ function createRobinhoodWalletSwapRealtimeOutboxRepository(options = {}) {
     const owner = auditOwner(input.owner);
     const limit = positiveInt(input.limit, 'limit');
     const leaseMs = positiveInt(input.leaseMs, 'leaseMs');
+    const fromBlock = input.fromBlock == null
+      ? null : quantity(input.fromBlock, 'fromBlock');
     const result = await database.query(
       `WITH claimable AS MATERIALIZED (
          SELECT outbox.chain, outbox.transaction_hash, outbox.log_index,
@@ -96,6 +98,7 @@ function createRobinhoodWalletSwapRealtimeOutboxRepository(options = {}) {
            FROM robinhood_wallet_swap_realtime_outbox outbox
           WHERE outbox.chain='${CHAIN}' AND outbox.audit_status='pending'
             AND outbox.audit_next_attempt_at<=NOW()
+            AND ($4::bigint IS NULL OR outbox.block_number >= $4::bigint)
             AND (outbox.event_kind='observed' OR EXISTS (
               SELECT 1 FROM robinhood_wallet_swap_realtime_outbox observed
                WHERE observed.chain=outbox.chain
@@ -120,7 +123,7 @@ function createRobinhoodWalletSwapRealtimeOutboxRepository(options = {}) {
           AND outbox.block_hash=claimable.block_hash
           AND outbox.event_kind=claimable.event_kind
        RETURNING outbox.*`,
-      [owner, limit, leaseMs]
+      [owner, limit, leaseMs, fromBlock]
     );
     return result.rows.map(mapAuditRow);
   }
@@ -213,6 +216,11 @@ function createRobinhoodWalletSwapRealtimeOutboxRepository(options = {}) {
     const owner = auditOwner(input.owner, 'trade publication');
     const limit = positiveInt(input.limit, 'limit');
     const leaseMs = positiveInt(input.leaseMs, 'leaseMs');
+    const activationBlock = input.activationBlock == null
+      ? null : quantity(input.activationBlock, 'activationBlock');
+    if (input.observedEnabled === true && activationBlock == null) {
+      throw new Error('trade publication activationBlock is required for observed events');
+    }
     const result = await database.query(
       `WITH claimable AS MATERIALIZED (
          SELECT outbox.chain, outbox.transaction_hash, outbox.log_index,
@@ -220,7 +228,8 @@ function createRobinhoodWalletSwapRealtimeOutboxRepository(options = {}) {
            FROM robinhood_wallet_swap_realtime_outbox outbox
           WHERE outbox.chain='${CHAIN}' AND outbox.status='pending'
             AND outbox.audit_status='complete' AND outbox.next_attempt_at<=NOW()
-            AND ((outbox.event_kind='observed' AND $4::boolean) OR
+            AND ((outbox.event_kind='observed' AND $4::boolean
+                  AND outbox.block_number >= $5::bigint) OR
               (outbox.event_kind<>'observed' AND EXISTS (
                 SELECT 1 FROM robinhood_wallet_swap_realtime_outbox observed
                  WHERE observed.chain=outbox.chain
@@ -245,7 +254,7 @@ function createRobinhoodWalletSwapRealtimeOutboxRepository(options = {}) {
           AND outbox.block_hash=claimable.block_hash
           AND outbox.event_kind=claimable.event_kind
        RETURNING outbox.*`,
-      [owner, limit, leaseMs, input.observedEnabled === true]
+      [owner, limit, leaseMs, input.observedEnabled === true, activationBlock]
     );
     const rank = { observed: 0, finalized: 1, invalidate: 2 };
     return result.rows.map(mapPublicationRow).sort((left, right) => (

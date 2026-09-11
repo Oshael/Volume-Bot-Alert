@@ -1872,8 +1872,17 @@ module.exports = {
     outboxMaxAttempts: parseIntegerInRange(
       process.env.ROBINHOOD_WALLET_SWAP_OUTBOX_MAX_ATTEMPTS, 5, 1, 50
     ),
+    realtimeAuditBatchSize: parseIntegerInRange(
+      process.env.ROBINHOOD_WALLET_SWAP_REALTIME_AUDIT_BATCH_SIZE, 200, 1, 5000
+    ),
+    realtimeAuditMaxBatchesPerTick: parseIntegerInRange(
+      process.env.ROBINHOOD_WALLET_SWAP_REALTIME_AUDIT_MAX_BATCHES_PER_TICK, 1, 1, 20
+    ),
     realtimeV2ObservedEnabled: parseBoolean(
       process.env.ROBINHOOD_WALLET_SWAP_REALTIME_V2_OBSERVED_ENABLED, false
+    ),
+    realtimeV2ActivationBlock: parseOptionalBlock(
+      process.env.ROBINHOOD_WALLET_SWAP_REALTIME_V2_ACTIVATION_BLOCK
     ),
     realtimeV2CanaryUserIds: parsePositiveIntegerList(
       process.env.ROBINHOOD_WALLET_SWAP_REALTIME_V2_CANARY_USER_IDS

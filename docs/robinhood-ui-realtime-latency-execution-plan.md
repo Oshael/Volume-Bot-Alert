@@ -438,6 +438,10 @@ uma audiência canário explicitamente autorizada:
 - [x] **3B3B2 — allowlist e ativação:** admitir somente usuários/sessões canário,
   conectar o publisher sob flag desligada por default e provar promoção,
   invalidação e deduplicação; clientes v1 permanecem finalizados-only.
+- [x] **3B3B3 — watermark de ativação e catch-up controlado:** falhar fechado
+  sem bloco explícito, publicar somente `observed` a partir dessa fronteira e
+  priorizar sua auditoria; batch e quantidade de claims shadow por tick são
+  configuráveis sem ampliar o lote econômico.
 
 A flag de rollback deve impedir novos `observed`, mas continuar entregando os
 terminais de ciclos provisórios que já tenham sido publicados.
@@ -656,7 +660,7 @@ Esta fila prevalece sobre referências antigas a “próximo corte” e não dev
 reordenada sem atualizar este checkpoint:
 
 1. aplicar a Stage 210, observar a retenção e repetir a medição ponta a ponta de
-   3B3C; canário 3B3B permanece desligado por default;
+   3B3C; antes do canário, configurar seu watermark com o `next_block` corrente;
 2. executar Slice 4, liquidez realtime até a UI;
 3. executar Slice 5, readiness por push;
 4. executar Slice 6, holders dirigidos pelo journal;

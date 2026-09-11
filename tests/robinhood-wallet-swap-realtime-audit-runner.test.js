@@ -35,10 +35,11 @@ function claimed(eventKind = 'observed', overrides = {}) {
 
 function fixture(rows, settled = null) {
   const calls = [];
+  let claimInput;
   let settlement;
   const repository = {
     reclaimExpiredAuditLeases: async () => { calls.push('reclaim'); return 1; },
-    claimAudit: async () => { calls.push('claim'); return rows; },
+    claimAudit: async (input) => { calls.push('claim'); claimInput = input; return rows; },
     settleAudit: async (input) => {
       calls.push('settle');
       settlement = input;
@@ -51,7 +52,7 @@ function fixture(rows, settled = null) {
     repository,
     options: { owner: 'audit-test', batchSize: 3, baseBackoffMs: 1000 },
   });
-  return { calls, getSettlement: () => settlement, runner };
+  return { calls, getClaimInput: () => claimInput, getSettlement: () => settlement, runner };
 }
 
 describe('Robinhood wallet-swap realtime shadow audit', () => {
@@ -59,9 +60,10 @@ describe('Robinhood wallet-swap realtime shadow audit', () => {
     const rows = ['observed', 'finalized', 'invalidate'].map((kind) => claimed(kind));
     for (const row of rows) assert.equal(validateAuditClaim(row), row.payload);
     const state = fixture(rows);
-    const result = await state.runner.runOnce();
+    const result = await state.runner.runOnce({ fromBlock: '123' });
 
     assert.deepEqual(state.calls, ['reclaim', 'claim', 'settle']);
+    assert.equal(state.getClaimInput().fromBlock, '123');
     assert.equal(state.getSettlement().audited.length, 3);
     assert.equal(state.getSettlement().retry.length, 0);
     assert.deepEqual(result, {

@@ -66,8 +66,14 @@ function dependency(value, fallback) {
   return value || fallback;
 }
 
+function optionalBlock(value) {
+  const raw = String(value ?? '').trim();
+  if (!/^(?:0x[0-9a-f]+|\d+)$/i.test(raw)) return null;
+  return BigInt(raw).toString();
+}
+
 function normalizeOptions(options = {}, env = process.env) {
-  return {
+  const normalized = {
     enabled: options.enabled === true,
     sourceMode: normalizeRobinhoodWalletSwapLiveSource(
       options.sourceMode ?? env.ROBINHOOD_WALLET_SWAP_LIVE_SOURCE
@@ -81,9 +87,20 @@ function normalizeOptions(options = {}, env = process.env) {
     outboxBatchSize: boundedInteger(options.outboxBatchSize, 200, 1, 2000),
     outboxLeaseMs: boundedInteger(options.outboxLeaseMs, 60_000, 5000, 600_000),
     outboxMaxAttempts: boundedInteger(options.outboxMaxAttempts, 5, 1, 50),
+    realtimeAuditBatchSize: boundedInteger(options.realtimeAuditBatchSize, 200, 1, 5000),
+    realtimeAuditMaxBatchesPerTick: boundedInteger(
+      options.realtimeAuditMaxBatchesPerTick, 1, 1, 20
+    ),
     realtimeV2ObservedEnabled: options.realtimeV2ObservedEnabled === true,
+    realtimeV2ActivationBlock: optionalBlock(options.realtimeV2ActivationBlock),
     rpcOptions: options.rpcOptions || {},
   };
+  if (normalized.realtimeV2ObservedEnabled && normalized.realtimeV2ActivationBlock == null) {
+    const error = new Error('realtime v2 observed requires an explicit activation block');
+    error.code = 'configuration_error';
+    throw error;
+  }
+  return normalized;
 }
 
 async function runNestedRunner(runner, input) {
@@ -92,6 +109,28 @@ async function runNestedRunner(runner, input) {
   } catch (error) {
     return { status: 'error', error: publicError(error) };
   }
+}
+
+async function drainAuditRunner(runner, options) {
+  const countKeys = ['claimed', 'audited', 'retried', 'blocked', 'reclaimed'];
+  const totals = Object.fromEntries(countKeys.map((key) => [key, 0]));
+  let last = { status: 'idle', saturated: false };
+  let prioritize = options.activationBlock != null;
+  let batches = 0;
+  for (let batch = 0; batch < options.maxBatches; batch += 1) {
+    last = await runNestedRunner(runner, {
+      fromBlock: prioritize ? options.activationBlock : null,
+    });
+    for (const key of countKeys) totals[key] += Number(last[key] || 0);
+    batches = batch + 1;
+    if (last.status === 'error') break;
+    if (prioritize && last.saturated !== true) {
+      prioritize = false;
+      if (batch + 1 < options.maxBatches) continue;
+    }
+    if (last.saturated !== true) break;
+  }
+  return { ...last, ...totals, batches };
 }
 
 function recordNestedResult(status, name, result) {
@@ -134,7 +173,7 @@ async function buildRuntime(options, deps = {}) {
     )({
       repository: lifecycle,
       options: {
-        batchSize: options.outboxBatchSize,
+        batchSize: options.realtimeAuditBatchSize,
         leaseMs: options.outboxLeaseMs,
         maxAttempts: options.outboxMaxAttempts,
       },
@@ -158,9 +197,13 @@ async function buildRuntime(options, deps = {}) {
       legacyDiscarded,
       runOnce: async () => {
         const result = await runner.runOnce();
-        const audit = await runNestedRunner(auditRunner);
+        const audit = await drainAuditRunner(auditRunner, {
+          activationBlock: options.realtimeV2ActivationBlock,
+          maxBatches: options.realtimeAuditMaxBatchesPerTick,
+        });
         const publication = await runNestedRunner(publisherRunner, {
           observedEnabled: options.realtimeV2ObservedEnabled,
+          activationBlock: options.realtimeV2ActivationBlock,
         });
         const completeThroughBlock = await outbox.advanceCompatibilityWatermark(
           result.throughBlock
@@ -449,5 +492,5 @@ module.exports = {
   runOnce: worker.runOnce,
   start: worker.start,
   stop: worker.stop,
-  __private: { buildRuntime, compactResult, lagBlocks, normalizeOptions },
+  __private: { buildRuntime, compactResult, drainAuditRunner, lagBlocks, normalizeOptions },
 };

@@ -191,6 +191,9 @@ describe('Robinhood wallet-swap outbox producer integration', () => {
       }),
     };
     const lifecycle = createRobinhoodWalletSwapRealtimeOutboxRepository({ database });
+    assert.deepEqual(await lifecycle.claimAudit({
+      owner: 'audit', limit: 10, leaseMs: 60000, fromBlock: '101',
+    }), []);
     const first = await lifecycle.claimAudit({ owner: 'audit', limit: 10, leaseMs: 60000 });
     assert.deepEqual(first.map(({ eventKind }) => eventKind), ['observed']);
     assert.deepEqual(await lifecycle.settleAudit({ owner: 'audit', audited: first }), {
@@ -225,8 +228,16 @@ describe('Robinhood wallet-swap outbox producer integration', () => {
     assert.deepEqual(await lifecycle.claimPublication({
       owner: 'publish', limit: 10, leaseMs: 60000, observedEnabled: false,
     }), []);
-    const observed = await lifecycle.claimPublication({
+    await assert.rejects(lifecycle.claimPublication({
       owner: 'publish', limit: 10, leaseMs: 60000, observedEnabled: true,
+    }), /activationBlock is required/);
+    assert.deepEqual(await lifecycle.claimPublication({
+      owner: 'publish', limit: 10, leaseMs: 60000,
+      observedEnabled: true, activationBlock: '101',
+    }), []);
+    const observed = await lifecycle.claimPublication({
+      owner: 'publish', limit: 10, leaseMs: 60000,
+      observedEnabled: true, activationBlock: '100',
     });
     assert.deepEqual(observed.map(({ eventKind }) => eventKind), ['observed']);
     assert.deepEqual(await lifecycle.settlePublication({

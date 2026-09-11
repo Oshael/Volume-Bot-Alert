@@ -94,9 +94,11 @@ function createRobinhoodWalletSwapRealtimeAuditRunner(deps = {}) {
     };
   }
 
-  async function runOnce() {
+  async function runOnce(input = {}) {
     const reclaimed = await repository.reclaimExpiredAuditLeases();
-    const rows = await repository.claimAudit({ owner, limit: batchSize, leaseMs });
+    const rows = await repository.claimAudit({
+      owner, limit: batchSize, leaseMs, fromBlock: input.fromBlock ?? null,
+    });
     if (!rows.length) {
       return { status: 'idle', reclaimed, claimed: 0, audited: 0, retried: 0, blocked: 0 };
     }

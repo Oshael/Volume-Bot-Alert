@@ -3,7 +3,7 @@ const { describe, it } = require('node:test');
 
 const {
   createRobinhoodWalletSwapLiveWorker,
-  __private: { buildRuntime },
+  __private: { buildRuntime, drainAuditRunner },
 } = require('../src/services/robinhood-wallet-swap-live-worker');
 const {
   DURABLE_OUTBOX_SOURCE,
@@ -226,7 +226,8 @@ describe('Robinhood wallet-swap LIVE worker', () => {
     const runtime = await buildRuntime({
       sourceMode: DURABLE_OUTBOX_SOURCE,
       outboxBatchSize: 300, outboxLeaseMs: 45000, outboxMaxAttempts: 7,
-      realtimeV2ObservedEnabled: true,
+      realtimeAuditBatchSize: 900, realtimeAuditMaxBatchesPerTick: 4,
+      realtimeV2ObservedEnabled: true, realtimeV2ActivationBlock: '150',
     }, {
       database,
       clientFactory: () => { throw new Error('RPC must not be constructed'); },
@@ -257,9 +258,10 @@ describe('Robinhood wallet-swap LIVE worker', () => {
       },
       realtimePublisherRunnerFactory: (input) => {
         publisherInput = input;
-        return { runOnce: async ({ observedEnabled }) => {
+        return { runOnce: async ({ observedEnabled, activationBlock }) => {
           execution.push('publication');
           assert.equal(observedEnabled, true);
+          assert.equal(activationBlock, '150');
           return { status: 'delivered', claimed: 2, delivered: 2 };
         } };
       },
@@ -275,7 +277,7 @@ describe('Robinhood wallet-swap LIVE worker', () => {
     assert.equal(publisherInput.repository, lifecycle);
     assert.equal(typeof publisherInput.publishRows, 'function');
     assert.deepEqual(auditInput.options, {
-      batchSize: 300, leaseMs: 45000, maxAttempts: 7,
+      batchSize: 900, leaseMs: 45000, maxAttempts: 7,
     });
     assert.deepEqual(runnerInput.options, {
       batchSize: 300, leaseMs: 45000, maxAttempts: 7,
@@ -287,6 +289,31 @@ describe('Robinhood wallet-swap LIVE worker', () => {
     assert.match(output.audit.error.message, /shadow unavailable/);
     assert.deepEqual(output.publication, { status: 'delivered', claimed: 2, delivered: 2 });
     assert.deepEqual(execution, ['delivery', 'audit', 'publication']);
+  });
+
+  it('prioritizes the activation watermark then drains bounded historical audit batches', async () => {
+    const calls = [];
+    const outputs = [
+      { status: 'audited', claimed: 2, audited: 2, saturated: false },
+      { status: 'audited', claimed: 3, audited: 3, saturated: true },
+      { status: 'audited', claimed: 1, audited: 1, saturated: false },
+    ];
+    const result = await drainAuditRunner({
+      runOnce: async (input) => { calls.push(input); return outputs.shift(); },
+    }, { activationBlock: '500', maxBatches: 3 });
+
+    assert.deepEqual(calls, [{ fromBlock: '500' }, { fromBlock: null }, { fromBlock: null }]);
+    assert.deepEqual(result, {
+      status: 'audited', claimed: 6, audited: 6, saturated: false,
+      retried: 0, blocked: 0, reclaimed: 0, batches: 3,
+    });
+  });
+
+  it('fails closed when observed publication lacks an activation watermark', () => {
+    const context = harness([]);
+    assert.throws(() => context.worker.start({
+      enabled: true, realtimeV2ObservedEnabled: true,
+    }), (error) => error.code === 'configuration_error');
   });
 
   it('wakes the durable consumer from outbox and finality notifications', async () => {

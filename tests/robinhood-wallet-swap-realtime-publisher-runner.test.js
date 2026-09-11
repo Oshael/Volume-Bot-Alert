@@ -18,6 +18,7 @@ function fixture(publishRows) {
     reclaimExpiredPublicationLeases: async () => 1,
     claimPublication: async (input) => {
       assert.equal(input.observedEnabled, true);
+      assert.equal(input.activationBlock, '100');
       return [row];
     },
     settlePublication: async (input) => {
@@ -40,8 +41,10 @@ describe('Robinhood wallet-swap realtime publisher', () => {
       assert.deepEqual(payloads, [row.payload]);
       return true;
     });
-    assert.deepEqual(await state.runner.runOnce({ observedEnabled: true }), {
-      status: 'delivered', observedEnabled: true, reclaimed: 1,
+    assert.deepEqual(await state.runner.runOnce({
+      observedEnabled: true, activationBlock: '100',
+    }), {
+      status: 'delivered', observedEnabled: true, activationBlock: '100', reclaimed: 1,
       claimed: 1, delivered: 1, retried: 0, blocked: 0,
     });
     assert.deepEqual(state.getSettlement().delivered, [row]);
@@ -49,7 +52,9 @@ describe('Robinhood wallet-swap realtime publisher', () => {
 
   it('retries a rejected transport batch with bounded backoff', async () => {
     const state = fixture(async () => false);
-    const result = await state.runner.runOnce({ observedEnabled: true });
+    const result = await state.runner.runOnce({
+      observedEnabled: true, activationBlock: '100',
+    });
     assert.equal(result.status, 'retrying');
     assert.equal(state.getSettlement().delivered.length, 0);
     assert.equal(state.getSettlement().retry[0].backoffMs, backoffFor(2, 1000, 300000));
