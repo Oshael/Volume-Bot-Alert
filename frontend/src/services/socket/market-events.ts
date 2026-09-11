@@ -170,7 +170,7 @@ function validTimestamp(value: unknown) {
   return Number.isFinite(timestampMs) ? new Date(timestampMs).toISOString() : null;
 }
 
-function normalizeLatencyMarks(value: unknown): RealtimeLatencyMarks | undefined {
+export function normalizeLatencyMarks(value: unknown): RealtimeLatencyMarks | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const source = value as Record<string, unknown>;
   const fields = [

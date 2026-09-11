@@ -91,6 +91,11 @@ describe('frontend market bucket latency telemetry', () => {
       chain: 'robinhood', address: '0x1',
       liquidityProjectionCommittedAt: '2026-09-09T12:00:00.700Z',
     }], first + 500), 1);
+    assert.equal(latency.recordLiquidityEventApplied({
+      address: '0x1', liquidityProjectionCommittedAt: '2026-09-09T12:00:01.000Z',
+      latency: { projectionCommittedAt: '2026-09-09T12:00:01.000Z',
+        publishedAt: '2026-09-09T12:00:01.100Z', clientReceivedAt: '2026-09-09T12:00:01.150Z' },
+    }, first + 600), true);
     latency.recordReadinessApplied({ robinhood: {
       checkedAt: '2026-09-09T12:00:00.400Z',
     } }, first);
@@ -103,7 +108,7 @@ describe('frontend market bucket latency telemetry', () => {
     ).stages.receiptToAppliedMs.p95Ms, 500);
     assert.equal(latency.getRealtimeLatencySnapshot(
       'liquidity', first + 500,
-    ).stages.projectionToAppliedMs.p95Ms, 400);
+    ).stages.receivedToAppliedMs.p95Ms, 50);
     assert.equal(latency.getRealtimeLatencySnapshot(
       'readiness', first + 30_000,
     ).stages.pollGapMs.p95Ms, 30_000);

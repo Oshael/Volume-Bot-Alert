@@ -21,9 +21,15 @@ import {
   type RobinhoodHolderCountEvent,
   type RobinhoodHolderInvalidateEvent,
 } from './holder-events';
+import {
+  markMarketLiquidityReceived,
+  normalizeMarketLiquidityUpdate,
+  type MarketLiquidityUpdateEvent,
+} from './liquidity-events';
 
 export type { MarketBucketUpdateEvent, MarketTradeRealtimeEvent, MarketTradeUpdateEvent } from './market-events';
 export type { RobinhoodHolderCountEvent, RobinhoodHolderInvalidateEvent } from './holder-events';
+export type { MarketLiquidityUpdateEvent } from './liquidity-events';
 
 let socket: Socket | null = null;
 const chartMarketSubscriptions = new Map<string, MarketSubscriptionIdentity>();
@@ -107,6 +113,7 @@ export function bindSocketLifecycle(options: {
   onStatus?: (message: string) => void;
   onAlertEvent?: (payload: DashboardAlertEvent) => void;
   onMarketBucket?: (payload: MarketBucketUpdateEvent) => void;
+  onMarketLiquidity?: (payload: MarketLiquidityUpdateEvent) => void;
 }) {
   const current = connectSocket();
 
@@ -116,6 +123,7 @@ export function bindSocketLifecycle(options: {
   current.off('auth:revoked');
   current.off('alert:event');
   current.off('market:bucket');
+  current.off('market:liquidity');
   current.off('market:trade');
   current.off('market:trade:observed');
   current.off('market:trade:finalized');
@@ -163,6 +171,11 @@ export function bindSocketLifecycle(options: {
     if (event && marketEventOrder.accept(event)) {
       options.onMarketBucket?.(event);
     }
+  });
+
+  current.on('market:liquidity', (payload: unknown) => {
+    const normalized = normalizeMarketLiquidityUpdate(payload);
+    if (normalized) options.onMarketLiquidity?.(markMarketLiquidityReceived(normalized));
   });
 
   current.on('market:trade', (payload: unknown) => {

@@ -783,6 +783,10 @@ As pontas são independentes e desligadas por padrão: habilite primeiro
 `ROBINHOOD_LIQUIDITY_REALTIME_AUDIENCE_ENABLED` no web e depois
 `ROBINHOOD_LIQUIDITY_REALTIME_PUBLISHER_ENABLED` no canonical-liquidity. A lease expõe backlog,
 idade, tentativas e bloqueios; a telemetria web expõe o estado do listener.
+No navegador, o evento é validado contra o mesmo contrato de cobertura e pools do snapshot HTTP.
+`liquidityProjectionCommittedAt` é a versão monotônica: eventos e snapshots mais antigos ou iguais
+não substituem a projeção corrente. Uma aceitação altera somente o token já rastreado e suas regiões
+visíveis, sem mudar membership/ranking, e registra `projection/published/receipt -> applied`.
 
 O status do retention worker expõe `realtimeOutbox` com backlog e idade por `event_kind`, retries,
 bloqueados, fronteiras publicadas e a última invalidação retida. `observedLagBlocks` compara o head

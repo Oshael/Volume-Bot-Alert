@@ -574,13 +574,13 @@ aceitável, mesmo quando a contagem total não aumentar.
 
 #### Slice 4C — aplicação frontend monotônica (~350–450 linhas)
 
-- [ ] definir e validar o contrato tipado com identidade, valor, cobertura,
+- [x] definir e validar o contrato tipado com identidade, valor, cobertura,
   pools e `liquidityProjectionCommittedAt` compatível com o snapshot HTTP;
-- [ ] rejeitar evento antigo ou duplicado usando a mesma versão durável exposta
+- [x] rejeitar evento antigo ou duplicado usando a mesma versão durável exposta
   pelo bootstrap HTTP;
-- [ ] atualizar apenas as instâncias visíveis do token, incluindo monitorados e
+- [x] atualizar apenas as instâncias visíveis do token, incluindo monitorados e
   fixados, sem reconstruir o dashboard ou alterar membership/ranking;
-- [ ] registrar receipt→applied do fluxo `liquidity` sem antecipar a comparação
+- [x] registrar receipt→applied do fluxo `liquidity` sem antecipar a comparação
   final de latência dos Slices 4–7.
 
 #### Slice 4D — convergência, rollout e prova operacional (~200–350 linhas)

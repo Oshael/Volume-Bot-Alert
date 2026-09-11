@@ -108,14 +108,16 @@ import {
   saveDismissedOldWeek,
   saveDismissedRecent,
 } from '../utils/bar-storage';
-import { bindSocketLifecycle, disconnectSocket, replaceWorkspaceMarketSubscriptions, subscribeMarketChart, subscribePumpMint, unsubscribeMarketChart, unsubscribePumpMint, type MarketBucketUpdateEvent } from '../services/socket/client';
+import { bindSocketLifecycle, disconnectSocket, replaceWorkspaceMarketSubscriptions, subscribeMarketChart, subscribePumpMint, unsubscribeMarketChart, unsubscribePumpMint, type MarketBucketUpdateEvent, type MarketLiquidityUpdateEvent } from '../services/socket/client';
 import {
   recordAlertApplied,
   recordLiquidityApplied,
+  recordLiquidityEventApplied,
   recordMarketBucketApplied,
   recordReadinessApplied,
 } from '../services/socket/realtime-latency';
 import { buildLiveTokenChartCandle, buildRealtimeTokenMarketPatch, getMarketBucketFrameKey, shouldReplaceMarketCandleClose, upsertOrderedMarketCandle, type RealtimeActivityState, type RealtimeTokenMarketPatch } from '../services/socket/market-events';
+import { applyLiquidityProjection, newestLiquidityProjection, type LiquidityProjectionTarget } from '../services/socket/liquidity-events';
 import { clearChartAlertHistory, publishRealtimeChartAlert } from '../services/charts/chart-alert-history';
 import {
   normalizeInviteCode,
@@ -529,7 +531,6 @@ const TRACKED_MARKET_FIELD_KEYS = [
   'mcap',
   'fdv',
   'priceUsd',
-  'liquidityUsd',
   'volume5m',
   'volume1h',
   'volume6h',
@@ -570,11 +571,6 @@ const TRACKED_MARKET_CONTEXT_FIELD_KEYS = [
   'coverage',
   'swapCoverage',
   'priceChangeCoverage',
-  'liquidityCoverage',
-  'liquidityMarketCount',
-  'valuedLiquidityMarketCount',
-  'liquidityIsLowerBound',
-  'liquidityPools',
   'volume5mBaselineAt',
   'volume5mWindowEnd',
   'volume5mDeltaCoverage',
@@ -660,6 +656,26 @@ function buildRealtimeMarketFields(
     fields.coverage = { ...(existing.coverage || {}), ...patch.volumeCoverage };
   }
   return fields;
+}
+
+function buildMergedLiquidityFields(
+  existing: ManualTokenEntry | undefined,
+  dashboard: DashboardMonitoredToken | undefined,
+  base: ManualTokenEntry,
+): Partial<ManualTokenEntry> {
+  const fallback = dashboard || existing || base;
+  const selected = newestLiquidityProjection<LiquidityProjectionTarget>(
+    fallback, dashboard || fallback, existing || fallback, base,
+  ) || fallback;
+  return {
+    liquidityUsd: selected.liquidityUsd ?? null,
+    liquidityProjectionCommittedAt: selected.liquidityProjectionCommittedAt ?? null,
+    liquidityCoverage: selected.liquidityCoverage ?? null,
+    liquidityMarketCount: selected.liquidityMarketCount ?? null,
+    valuedLiquidityMarketCount: selected.valuedLiquidityMarketCount ?? null,
+    liquidityIsLowerBound: selected.liquidityIsLowerBound === true,
+    liquidityPools: selected.liquidityPools || [],
+  };
 }
 
 function overlayLiveActivityOnDashboardSnapshot(
@@ -2327,6 +2343,7 @@ export function createAppController(): AppController {
       ...buildMergedTrackedColdFields(existingItem, dashboardItem, base, coldRefreshDue),
       ...buildMergedHolderFields(existingItem, dashboardItem, base),
       ...buildMergedTrackedMarketFields(existingItem, dashboardItem, base),
+      ...buildMergedLiquidityFields(existingItem, dashboardItem, base),
       ...buildMergedTrackedAlertFields(existingItem, base),
     };
   }
@@ -8917,7 +8934,10 @@ export function createAppController(): AppController {
     return true;
   }
 
-  function addLiveMarketRenderRegions(payload: MarketBucketUpdateEvent, regions: Set<AppRenderRegion>) {
+  function addLiveMarketRenderRegions(
+    payload: Pick<MarketBucketUpdateEvent, 'chain' | 'address'>,
+    regions: Set<AppRenderRegion>,
+  ) {
     const identityKey = createLegacyCompatibleTokenIdentity(payload.chain, payload.address).key;
     if (
       state.data.monitoredTokenIdentities.includes(identityKey)
@@ -8964,6 +8984,20 @@ export function createAppController(): AppController {
       return;
     }
     pendingLiveMarketFrame = window.requestAnimationFrame(flushLiveMarketBuckets);
+  }
+
+  function applyLiveLiquidityUpdate(payload: MarketLiquidityUpdateEvent) {
+    const existing = getTrackedToken(state, payload.address, payload.chain);
+    if (!existing) return false;
+    const next = applyLiquidityProjection(existing, payload) as ManualTokenEntry | null;
+    if (!next) return false;
+    setTrackedToken(next);
+    state.runtime.monitoredRevision += 1;
+    const dirtyRegions = new Set<AppRenderRegion>();
+    addLiveMarketRenderRegions(payload, dirtyRegions);
+    if (dirtyRegions.size > 0) emit(...dirtyRegions);
+    recordLiquidityEventApplied(payload);
+    return true;
   }
 
   function isExpandedSparklineCacheFresh(entry?: TokenSparklineEntry | null, now = Date.now()) {
@@ -10528,6 +10562,11 @@ export function createAppController(): AppController {
         }
         queueLiveMarketBucket(payload);
       },
+      onMarketLiquidity(payload) {
+        if (state.runtime.mode === 'active' && state.session.status === 'authenticated') {
+          applyLiveLiquidityUpdate(payload);
+        }
+      },
     });
   }
 
@@ -11278,6 +11317,7 @@ export function createAppController(): AppController {
       valuation: toNullableTrackedValue(item.valuation),
       priceUsd: toNullableTrackedValue(item.priceUsd),
       liquidityUsd: toNullableTrackedValue(item.liquidityUsd),
+      liquidityProjectionCommittedAt: toNullableTrackedValue(item.liquidityProjectionCommittedAt),
       liquidityCoverage: toNullableTrackedValue(item.liquidityCoverage),
       liquidityMarketCount: toNullableTrackedValue(item.liquidityMarketCount),
       valuedLiquidityMarketCount: toNullableTrackedValue(item.valuedLiquidityMarketCount),

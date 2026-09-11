@@ -4,6 +4,7 @@ import type {
   RealtimeLatencyMarks,
 } from './market-events';
 import type { RobinhoodHolderRealtimeEvent } from './holder-events';
+import type { MarketLiquidityUpdateEvent } from './liquidity-events';
 
 const WINDOW_LIMIT = 512;
 export type RealtimeLatencyFlow = 'market:bucket' | 'market:trade' | 'alert:event'
@@ -68,6 +69,16 @@ function summarize(values: number[]) {
 function duration(start: unknown, end: number) {
   const startedAt = timestampMs(start);
   return startedAt != null && end >= startedAt ? end - startedAt : null;
+}
+
+function rememberLiquidityProjection(key: string, projectionMs: number) {
+  latestLiquidityProjectionByToken.delete(key);
+  latestLiquidityProjectionByToken.set(key, projectionMs);
+  while (latestLiquidityProjectionByToken.size > WINDOW_LIMIT) {
+    const oldest = latestLiquidityProjectionByToken.keys().next().value;
+    if (typeof oldest !== 'string') break;
+    latestLiquidityProjectionByToken.delete(oldest);
+  }
 }
 
 function recordApplied(flow: RealtimeLatencyFlow, event: LatencyEvent, appliedAt: number) {
@@ -138,17 +149,21 @@ export function recordLiquidityApplied(
     const key = String(token.address || '').toLowerCase();
     if (!key || projectionMs == null) continue;
     const previous = latestLiquidityProjectionByToken.get(key);
-    latestLiquidityProjectionByToken.delete(key);
-    latestLiquidityProjectionByToken.set(key, Math.max(previous ?? projectionMs, projectionMs));
+    rememberLiquidityProjection(key, Math.max(previous ?? projectionMs, projectionMs));
     if (previous == null || projectionMs <= previous) continue;
     if (recordApplied('liquidity', { latency: { projectionCommittedAt } }, appliedAt)) recorded += 1;
   }
-  while (latestLiquidityProjectionByToken.size > WINDOW_LIMIT) {
-    const oldest = latestLiquidityProjectionByToken.keys().next().value;
-    if (typeof oldest !== 'string') break;
-    latestLiquidityProjectionByToken.delete(oldest);
-  }
   return recorded;
+}
+
+export function recordLiquidityEventApplied(
+  event: MarketLiquidityUpdateEvent,
+  appliedAt = Date.now(),
+) {
+  const projectionMs = timestampMs(event.liquidityProjectionCommittedAt);
+  if (projectionMs == null) return false;
+  rememberLiquidityProjection(event.address, projectionMs);
+  return recordApplied('liquidity', event, appliedAt);
 }
 
 export function recordReadinessApplied(

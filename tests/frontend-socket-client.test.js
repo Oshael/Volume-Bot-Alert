@@ -90,6 +90,24 @@ describe('frontend socket market subscriptions', () => {
     assert.equal(received[0].latency.publishedAt, '2026-09-09T12:00:00.100Z');
   });
 
+  it('validates and marks liquidity updates before dispatch', () => {
+    const received = [];
+    client.bindSocketLifecycle({ onRevoked() {}, onMarketLiquidity: (event) => received.push(event) });
+    const payload = {
+      type: 'market:liquidity', chain: 'robinhood', address: ROBINHOOD,
+      liquidityUsd: 42, liquidityProjectionCommittedAt: '2026-09-09T12:00:00.200Z',
+      liquidityCoverage: 'complete', liquidityMarketCount: 1,
+      valuedLiquidityMarketCount: 1, liquidityPools: [{
+        protocol: 'uniswap-v3', marketKey: 'robinhood:uniswap-v3:pool',
+        poolAddress: `0x${'1'.repeat(40)}`, poolId: null, liquidityUsd: 42,
+      }], latency: { publishedAt: '2026-09-09T12:00:00.300Z' },
+    };
+    socket.trigger('market:liquidity', payload);
+    socket.trigger('market:liquidity', { ...payload, liquidityMarketCount: -1 });
+    assert.equal(received.length, 1);
+    assert.ok(Number.isFinite(Date.parse(received[0].latency.clientReceivedAt)));
+  });
+
   it('marks trade and alert events when they reach the browser', () => {
     const trades = [];
     const alerts = [];

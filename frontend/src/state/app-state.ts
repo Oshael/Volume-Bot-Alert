@@ -191,6 +191,7 @@ export interface ManualTokenEntry {
   valuation?: TokenValuationSnapshot | null;
   priceUsd?: number | null;
   liquidityUsd?: number | null;
+  liquidityProjectionCommittedAt?: string | null;
   liquidityCoverage?: 'complete' | 'partial' | 'unavailable' | null;
   liquidityMarketCount?: number | null;
   valuedLiquidityMarketCount?: number | null;
