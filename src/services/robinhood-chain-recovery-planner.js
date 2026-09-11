@@ -2,11 +2,11 @@
 
 const DEFAULT_MAX_DEPTH = 64;
 const MAX_DEPTH = 1000;
-const ROLLBACK_MANIFEST_VERSION = 1;
+const ROLLBACK_MANIFEST_VERSION = 2;
 
 const ROLLBACK_DOMAINS = Object.freeze([
   Object.freeze({
-    id: 'canonical-journal', rollbackRegistered: false,
+    id: 'canonical-journal', rollbackRegistered: true,
     tables: Object.freeze([
       'robinhood_chain_blocks', 'robinhood_chain_transactions',
       'robinhood_chain_events', 'robinhood_chain_v3_balance_snapshots',
@@ -15,7 +15,7 @@ const ROLLBACK_DOMAINS = Object.freeze([
     ]),
   }),
   Object.freeze({
-    id: 'market', rollbackRegistered: false,
+    id: 'market', rollbackRegistered: true,
     tables: Object.freeze([
       'robinhood_head_captures', 'robinhood_processed_logs',
       'robinhood_market_observations', 'robinhood_market_buckets_1m',
@@ -24,11 +24,17 @@ const ROLLBACK_DOMAINS = Object.freeze([
     ]),
   }),
   Object.freeze({
-    id: 'wallet', rollbackRegistered: false,
+    id: 'wallet', rollbackRegistered: true,
     tables: Object.freeze([
       'robinhood_wallet_swaps', 'robinhood_wallet_swap_cursors',
       'robinhood_wallet_token_positions', 'robinhood_wallet_position_cursors',
-      'robinhood_transaction_positions', 'robinhood_token_transfer_events',
+      'robinhood_transaction_positions',
+    ]),
+  }),
+  Object.freeze({
+    id: 'wallet-derived', rollbackRegistered: false,
+    tables: Object.freeze([
+      'robinhood_token_transfer_events',
       'robinhood_wallet_transfer_edges', 'robinhood_wallet_transfer_cursors',
       'robinhood_wallet_signed_origins', 'robinhood_wallet_signed_origin_cursors',
       'robinhood_wallet_token_first_buys', 'robinhood_first_buy_live_cursors',
@@ -60,7 +66,7 @@ const ROLLBACK_DOMAINS = Object.freeze([
     ]),
   }),
   Object.freeze({
-    id: 'publication-alerts', rollbackRegistered: false,
+    id: 'publication-alerts', rollbackRegistered: true,
     tables: Object.freeze([
       'robinhood_wallet_swap_outbox', 'robinhood_wallet_swap_realtime_outbox',
       'user_alert_events', 'telegram_alert_deliveries',
@@ -119,6 +125,7 @@ function basePlan(cursor, incoming, maxDepth) {
   const checkpoint = header({
     blockNumber: cursor.checkpoint_block, blockHash: cursor.checkpoint_hash,
   }, 'cursor.checkpoint');
+  const pendingDomains = pendingRollbackDomains();
   return {
     generation: quantity(cursor.generation, 'cursor.generation').toString(),
     maxDepth,
@@ -132,8 +139,8 @@ function basePlan(cursor, incoming, maxDepth) {
     finalizedBoundary: cursor.finalized_head == null ? null
       : { blockNumber: quantity(cursor.finalized_head, 'cursor.finalizedHead').toString() },
     rollbackManifestVersion: ROLLBACK_MANIFEST_VERSION,
-    pendingRollbackDomains: pendingRollbackDomains(),
-    executable: false,
+    pendingRollbackDomains: pendingDomains,
+    executable: pendingDomains.length === 0,
   };
 }
 function completePlan(base, ancestor) {

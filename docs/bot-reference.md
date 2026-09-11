@@ -4026,6 +4026,25 @@ financeiro são atômicos. O cursor `seed` permanece imutável e qualquer checkp
 da ramificação aborta toda a recuperação. Não há RPC nem migration adicional. O gate de recovery
 continua fechado porque os demais domínios ainda precisam de rollback próprio.
 
+Depois do rewind, o recovery entra em `awaiting_domains`. A mesma transação grava
+`domain_ready` para `canonical-journal`, `market`, `wallet` e
+`publication-alerts`, sempre com a prova determinística do rollback; repetir uma
+prova idêntica é idempotente e uma prova diferente para o mesmo domínio falha
+fechado. Transfers, signed-origin e first-buy pertencem ao gate separado
+`wallet-derived`, ainda não registrado. `liquidity`, `holders` e
+`discovery-creator` também continuam pendentes, portanto o planner permanece
+`executable=false` em produção. Essa separação usa o manifesto v2; o executor
+recusa um plano gravado com outra versão em vez de reinterpretá-lo.
+
+O resume genérico só limpa `recovery_required` e move o recovery para
+`recapturing` quando existem linhas `domain_ready` para todo o manifesto. Até
+lá, ele retorna a lista exata de gates pendentes sem alterar o cursor. Depois do
+resume, a captura reaplica a nova ramificação com a geração incrementada; a PK
+por hash preserva a ramificação órfã e o retry exato do novo checkpoint permanece
+idempotente. O worker que já entrou em halt precisa ser reiniciado após o resume.
+Não existe bypass operacional nem liberação automática enquanto 3B2B-3 estiver
+incompleto.
+
 Antes de definir ou reduzir retenção de `robinhood_chain_events` e
 `robinhood_holder_transfer_journal`, execute
 `npm run robinhood:retention-safety-audit`. O comando é estritamente read-only,

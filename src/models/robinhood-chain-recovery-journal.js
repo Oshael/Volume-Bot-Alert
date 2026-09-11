@@ -6,9 +6,13 @@ const {
 } = require('./robinhood-wallet-swap-realtime-outbox');
 const { createRobinhoodMarketReorgRollback } = require('./robinhood-market-reorg-rollback');
 const { createRobinhoodWalletReorgRollback } = require('./robinhood-wallet-reorg-rollback');
+const {
+  ROLLBACK_DOMAINS, ROLLBACK_MANIFEST_VERSION,
+} = require('../services/robinhood-chain-recovery-planner');
 
 const CHAIN = 'robinhood';
 const NOTIFY_CHANNEL = 'robinhood_chain_recovery_outbox';
+const DOMAIN_IDS = Object.freeze(ROLLBACK_DOMAINS.map(({ id }) => id));
 
 function generation(value) {
   const raw = String(value ?? '').trim();
@@ -28,6 +32,17 @@ function blockHash(value, label) {
 function recoveryError(code, message) {
   const error = new Error(message); error.code = code; return error;
 }
+function domain(value) {
+  const normalized = String(value || '').trim();
+  if (!DOMAIN_IDS.includes(normalized)) throw new Error('recovery domain is invalid');
+  return normalized;
+}
+function evidence(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('recovery domain evidence is required');
+  }
+  return value;
+}
 function timestamp(value) {
   const parsed = new Date(value);
   if (!Number.isFinite(parsed.getTime())) throw new Error('recovery detectedAt is invalid');
@@ -41,6 +56,11 @@ function recoveryPlan(value) {
   return { plan: value, generation: normalizedGeneration };
 }
 function assertRollbackGate(value) {
+  if (value.rollbackManifestVersion !== ROLLBACK_MANIFEST_VERSION) {
+    throw recoveryError(
+      'capture_recovery_manifest_changed', 'recovery rollback manifest changed'
+    );
+  }
   if (value.executable !== true || !Array.isArray(value.pendingRollbackDomains)
       || value.pendingRollbackDomains.length !== 0) {
     throw recoveryError(
@@ -97,7 +117,7 @@ function canonicalRewindPlan(value, expectedGeneration) {
 }
 function rewindDisposition(current, rewind, recoveryGeneration) {
   const nextGeneration = (BigInt(recoveryGeneration) + 1n).toString();
-  const alreadyApplied = current.status === 'rewound'
+  const alreadyApplied = ['rewound', 'awaiting_domains'].includes(current.status)
     && current.same_plan === true
     && current.cursor_generation === nextGeneration
     && current.recovery_state === 'recovery_required'
@@ -138,6 +158,42 @@ function assertRetainedBranch(rows, rewind) {
       'capture_recovery_fence_conflict', 'canonical recovery evidence changed'
     );
   }
+}
+
+async function appendDomainReady(client, recoveryGeneration, domainId, proof) {
+  const payload = {
+    type: 'chain:reorg:domain_ready', generation: recoveryGeneration,
+    domain: domainId, evidence: proof,
+  };
+  const result = await client.query(
+    `INSERT INTO robinhood_chain_recovery_outbox(
+       chain, generation, event_kind, event_key, payload
+     ) VALUES ($1,$2::bigint,'domain_ready',$3,$4::jsonb)
+     ON CONFLICT (chain, generation, event_kind, event_key) DO UPDATE
+       SET updated_at=NOW()
+     WHERE robinhood_chain_recovery_outbox.payload=EXCLUDED.payload
+     RETURNING event_key`,
+    [CHAIN, recoveryGeneration, domainId, JSON.stringify(payload)]
+  );
+  if (result.rowCount !== 1) {
+    throw recoveryError(
+      'capture_recovery_domain_conflict', `${domainId} recovery evidence changed`
+    );
+  }
+  await client.query('SELECT pg_notify($1,$2)', [NOTIFY_CHANNEL, recoveryGeneration]);
+}
+
+async function readiness(client, recoveryGeneration) {
+  const result = await client.query(
+    `SELECT event_key FROM robinhood_chain_recovery_outbox
+      WHERE chain=$1 AND generation=$2::bigint AND event_kind='domain_ready'
+      ORDER BY event_key`, [CHAIN, recoveryGeneration]
+  );
+  const readyDomains = result.rows.map(({ event_key: value }) => value);
+  return {
+    readyDomains,
+    pendingDomains: DOMAIN_IDS.filter((value) => !readyDomains.includes(value)),
+  };
 }
 
 function createRobinhoodChainRecoveryJournal(options = {}) {
@@ -194,6 +250,95 @@ function createRobinhoodChainRecoveryJournal(options = {}) {
         WHERE chain=$1 AND generation=$2::bigint`, [CHAIN, generation(recoveryGeneration)]
     );
     return result.rows[0] || null;
+  }
+
+  async function recordDomainReady(input = {}) {
+    const recoveryGeneration = generation(input.generation);
+    const domainId = domain(input.domain);
+    const proof = evidence(input.evidence);
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      const state = await client.query(
+        `SELECT status FROM robinhood_chain_recoveries
+          WHERE chain=$1 AND generation=$2::bigint FOR UPDATE`,
+        [CHAIN, recoveryGeneration]
+      );
+      if (!state.rowCount || state.rows[0].status !== 'awaiting_domains') {
+        throw recoveryError(
+          'capture_recovery_phase_conflict', 'recovery is not awaiting domains'
+        );
+      }
+      await appendDomainReady(client, recoveryGeneration, domainId, proof);
+      const result = await readiness(client, recoveryGeneration);
+      await client.query('COMMIT');
+      return { status: result.pendingDomains.length ? 'awaiting-domains' : 'ready', ...result };
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch (_) {}
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async function resumeRecapture(input = {}) {
+    const recoveryGeneration = generation(input.generation);
+    const nextGeneration = (BigInt(recoveryGeneration) + 1n).toString();
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      const state = await client.query(
+        `SELECT recovery.status, recovery.plan,
+                cursor.generation::text AS cursor_generation,
+                cursor.recovery_state, cursor.recovery_plan,
+                recovery.plan=cursor.recovery_plan AS same_plan
+           FROM robinhood_chain_recoveries recovery
+           INNER JOIN robinhood_chain_capture_cursor cursor ON cursor.chain=recovery.chain
+          WHERE recovery.chain=$1 AND recovery.generation=$2::bigint
+          FOR UPDATE OF recovery, cursor`, [CHAIN, recoveryGeneration]
+      );
+      const current = state.rows[0];
+      if (current?.status === 'recapturing' && current.cursor_generation === nextGeneration
+          && current.recovery_state === 'running') {
+        await client.query('COMMIT');
+        return { status: 'already-recapturing', generation: nextGeneration };
+      }
+      if (!current || current.status !== 'awaiting_domains'
+          || current.cursor_generation !== nextGeneration
+          || current.recovery_state !== 'recovery_required' || current.same_plan !== true) {
+        throw recoveryError(
+          'capture_recovery_phase_conflict', 'recovery cannot resume capture'
+        );
+      }
+      const gates = await readiness(client, recoveryGeneration);
+      if (gates.pendingDomains.length) {
+        await client.query('COMMIT');
+        return { status: 'awaiting-domains', generation: nextGeneration, ...gates };
+      }
+      const resumed = await client.query(
+        `UPDATE robinhood_chain_capture_cursor SET
+           recovery_state='running', recovery_plan=NULL, recovery_detected_at=NULL,
+           version=version+1, updated_at=NOW()
+         WHERE chain=$1 AND generation=$2::bigint AND recovery_state='recovery_required'
+           AND recovery_plan=$3::jsonb`,
+        [CHAIN, nextGeneration, JSON.stringify(current.plan)]
+      );
+      if (resumed.rowCount !== 1) {
+        throw recoveryError('capture_recovery_fence_conflict', 'capture resume was rejected');
+      }
+      await client.query(
+        `UPDATE robinhood_chain_recoveries SET status='recapturing', updated_at=NOW()
+          WHERE chain=$1 AND generation=$2::bigint AND status='awaiting_domains'`,
+        [CHAIN, recoveryGeneration]
+      );
+      await client.query('COMMIT');
+      return { status: 'recapturing', generation: nextGeneration, ...gates };
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch (_) {}
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async function rewindCanonical(input = {}) {
@@ -285,9 +430,17 @@ function createRobinhoodChainRecoveryJournal(options = {}) {
         ancestor: current.plan.ancestor, oldCheckpoint: current.plan.checkpoint,
         replacementCheckpointHash: rewind.replacementCheckpointHash,
       };
+      await appendDomainReady(client, recoveryGeneration, 'canonical-journal', {
+        orphanedBlocks: Number(rewind.depth), nextGeneration: disposition.nextGeneration,
+      });
+      await appendDomainReady(client, recoveryGeneration, 'market', market);
+      await appendDomainReady(client, recoveryGeneration, 'wallet', wallet);
+      await appendDomainReady(client, recoveryGeneration, 'publication-alerts', {
+        tradeInvalidations, finalizedBoundaryPreserved: true,
+      });
       await client.query(
         `UPDATE robinhood_chain_recoveries
-            SET status='rewound', rewound_at=NOW(), updated_at=NOW()
+            SET status='awaiting_domains', rewound_at=NOW(), updated_at=NOW()
           WHERE chain=$1 AND generation=$2::bigint AND status='detected'`,
         [CHAIN, recoveryGeneration]
       );
@@ -304,6 +457,7 @@ function createRobinhoodChainRecoveryJournal(options = {}) {
         status: 'rewound', generation: recoveryGeneration,
         nextGeneration: disposition.nextGeneration,
         orphanedBlocks: Number(rewind.depth), tradeInvalidations, market, wallet,
+        domainReady: ['canonical-journal', 'market', 'publication-alerts', 'wallet'],
       };
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch (_) {}
@@ -313,12 +467,15 @@ function createRobinhoodChainRecoveryJournal(options = {}) {
     }
   }
 
-  return Object.freeze({ get, recordDetected, rewindCanonical });
+  return Object.freeze({
+    get, recordDetected, recordDomainReady, resumeRecapture, rewindCanonical,
+  });
 }
 
 module.exports = {
   NOTIFY_CHANNEL, createRobinhoodChainRecoveryJournal,
   __private: {
-    assertRetainedBranch, canonicalRewindPlan, generation, recoveryPlan, timestamp,
+    appendDomainReady, assertRetainedBranch, canonicalRewindPlan,
+    domain, generation, readiness, recoveryPlan, timestamp,
   },
 };

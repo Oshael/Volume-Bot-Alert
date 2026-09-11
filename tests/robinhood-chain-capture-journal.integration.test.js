@@ -492,6 +492,7 @@ describe('Robinhood canonical chain capture journal', () => {
     const plan = {
       generation: '0', reason: 'parent_hash_mismatch', recoverable: true,
       executable: true, pendingRollbackDomains: [], maxDepth: 12,
+      rollbackManifestVersion: 2,
       checkpoint: { blockNumber: '101', blockHash: NEXT_HASH },
       incoming: {
         blockNumber: '102', blockHash: `0x${'6'.repeat(64)}`,
@@ -590,6 +591,7 @@ describe('Robinhood canonical chain capture journal', () => {
     await journal.markRecoveryRequired({ plan });
     assert.deepEqual(await journal.rewindCanonicalRecovery({ generation: '0' }), {
       status: 'rewound', generation: '0', nextGeneration: '1', orphanedBlocks: 1,
+      domainReady: ['canonical-journal', 'market', 'publication-alerts', 'wallet'],
       tradeInvalidations: { observed: 1, invalidated: 1 },
       market: {
         affectedTokens: 0, deletedProcessedLogs: 0, deletedDerivedRows: 0,
@@ -630,7 +632,7 @@ describe('Robinhood canonical chain capture journal', () => {
       `SELECT status, rewound_at IS NOT NULL AS rewound
          FROM robinhood_chain_recoveries WHERE chain='robinhood' AND generation=0`
     );
-    assert.deepEqual(recovery.rows, [{ status: 'rewound', rewound: true }]);
+    assert.deepEqual(recovery.rows, [{ status: 'awaiting_domains', rewound: true }]);
     const event = await db.query(
       `SELECT payload FROM robinhood_chain_recovery_outbox
         WHERE chain='robinhood' AND generation=0 AND event_kind='rewound'`
@@ -711,9 +713,52 @@ describe('Robinhood canonical chain capture journal', () => {
         checkpoint_block: '100', checkpoint_hash: HASH, version: '1',
       })
     ));
+    assert.deepEqual(await journal.resumeCanonicalRecovery({ generation: '0' }), {
+      status: 'awaiting-domains', generation: '1',
+      readyDomains: ['canonical-journal', 'market', 'publication-alerts', 'wallet'],
+      pendingDomains: ['wallet-derived', 'liquidity', 'holders', 'discovery-creator'],
+    });
     await assert.rejects(
       journal.commitBlock(second), (error) => error.code === 'capture_recovery_required'
     );
+    for (const domain of ['wallet-derived', 'liquidity', 'holders', 'discovery-creator']) {
+      await journal.recordRecoveryDomainReady({
+        generation: '0', domain, evidence: { test: 'rollback-complete' },
+      });
+    }
+    assert.equal((await journal.recordRecoveryDomainReady({
+      generation: '0', domain: 'wallet-derived', evidence: { test: 'rollback-complete' },
+    })).status, 'ready');
+    await assert.rejects(journal.recordRecoveryDomainReady({
+      generation: '0', domain: 'wallet-derived', evidence: { test: 'changed' },
+    }), (error) => error.code === 'capture_recovery_domain_conflict');
+    assert.deepEqual(await journal.resumeCanonicalRecovery({ generation: '0' }), {
+      status: 'recapturing', generation: '1',
+      readyDomains: [
+        'canonical-journal', 'discovery-creator', 'holders', 'liquidity',
+        'market', 'publication-alerts', 'wallet', 'wallet-derived',
+      ],
+      pendingDomains: [],
+    });
+    const replacement = capture(101, plan.incoming.parentHash, HASH);
+    replacement.transactions[0].hash = `0x${'d'.repeat(64)}`;
+    replacement.events[0].transactionHash = replacement.transactions[0].hash;
+    const incoming = capture(102, plan.incoming.blockHash, plan.incoming.parentHash);
+    incoming.transactions[0].hash = `0x${'e'.repeat(64)}`;
+    incoming.events[0].transactionHash = incoming.transactions[0].hash;
+    await journal.commitBlocks([replacement, incoming], { expectedGeneration: '1' });
+    assert.equal((await journal.commitBlock(incoming, {
+      expectedGeneration: '1',
+    })).status, 'replayed');
+    const canonicalBranch = await db.query(
+      `SELECT block_number::text, block_hash FROM robinhood_chain_blocks
+        WHERE canonical ORDER BY block_number`
+    );
+    assert.deepEqual(canonicalBranch.rows, [
+      { block_number: '100', block_hash: HASH },
+      { block_number: '101', block_hash: plan.incoming.parentHash },
+      { block_number: '102', block_hash: plan.incoming.blockHash },
+    ]);
   });
 
   it('fails closed before touching canonical state when the rollback gate is incomplete', async () => {
@@ -722,6 +767,7 @@ describe('Robinhood canonical chain capture journal', () => {
     const plan = {
       generation: '0', reason: 'parent_hash_mismatch', recoverable: true,
       executable: false, pendingRollbackDomains: ['market'], maxDepth: 12,
+      rollbackManifestVersion: 2,
       checkpoint: { blockNumber: '100', blockHash: HASH },
       incoming: { blockNumber: '101', blockHash: NEXT_HASH, parentHash: PARENT },
       ancestor: { blockNumber: '99', blockHash: PARENT },
@@ -754,6 +800,7 @@ describe('Robinhood canonical chain capture journal', () => {
     const plan = {
       generation: '0', reason: 'parent_hash_mismatch', recoverable: true,
       executable: true, pendingRollbackDomains: [], maxDepth: 12,
+      rollbackManifestVersion: 2,
       checkpoint: { blockNumber: '101', blockHash: NEXT_HASH },
       incoming: {
         blockNumber: '102', blockHash: `0x${'6'.repeat(64)}`,
@@ -808,6 +855,7 @@ describe('Robinhood canonical chain capture journal', () => {
     const plan = {
       generation: '0', reason: 'parent_hash_mismatch', recoverable: true,
       executable: true, pendingRollbackDomains: [], maxDepth: 12,
+      rollbackManifestVersion: 2,
       checkpoint: { blockNumber: '101', blockHash: NEXT_HASH },
       incoming: { blockNumber: '102', blockHash: `0x${'6'.repeat(64)}`,
         parentHash: `0x${'7'.repeat(64)}` },
@@ -831,6 +879,7 @@ describe('Robinhood canonical chain capture journal', () => {
     const plan = {
       generation: '0', reason: 'parent_hash_mismatch', recoverable: true,
       executable: true, pendingRollbackDomains: [], maxDepth: 12,
+      rollbackManifestVersion: 2,
       checkpoint: { blockNumber: '100', blockHash: HASH },
       incoming: { blockNumber: '101', blockHash: NEXT_HASH,
         parentHash: `0x${'7'.repeat(64)}` },
@@ -853,6 +902,7 @@ describe('Robinhood canonical chain capture journal', () => {
     const plan = {
       generation: '0', reason: 'parent_hash_mismatch', recoverable: true,
       executable: true, pendingRollbackDomains: [], maxDepth: 12,
+      rollbackManifestVersion: 2,
       checkpoint: { blockNumber: '100', blockHash: HASH },
       incoming: { blockNumber: '101', blockHash: NEXT_HASH,
         parentHash: `0x${'7'.repeat(64)}` },

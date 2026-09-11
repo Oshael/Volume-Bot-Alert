@@ -477,9 +477,15 @@ function createRobinhoodChainCaptureJournal(options = {}) {
   async function rewindCanonicalRecovery(input = {}) {
     return recoveryJournal.rewindCanonical(input);
   }
+  async function recordRecoveryDomainReady(input = {}) {
+    return recoveryJournal.recordDomainReady(input);
+  }
+  async function resumeCanonicalRecovery(input = {}) {
+    return recoveryJournal.resumeRecapture(input);
+  }
   return Object.freeze({
     commitBlock, commitBlocks, getCursor, listCanonicalHeaders, markRecoveryRequired,
-    rewindCanonicalRecovery,
+    recordRecoveryDomainReady, resumeCanonicalRecovery, rewindCanonicalRecovery,
   });
 }
 module.exports = {

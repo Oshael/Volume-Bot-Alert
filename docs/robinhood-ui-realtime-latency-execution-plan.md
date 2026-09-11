@@ -347,10 +347,10 @@ necessário se uma migration surgir durante a implementação.
 
 **3B2B-2D — coordenação e paridade (~350–450 linhas)**
 
-- [ ] registrar market, wallet e publicação como `domain_ready` apenas depois de
+- [x] registrar market, wallet e publicação como `domain_ready` apenas depois de
   seus rollbacks duráveis concluírem;
-- [ ] reaplicar a nova ramificação idempotentemente e comprovar paridade;
-- [ ] manter resume fechado enquanto qualquer domínio de 3B2B-3 estiver pendente
+- [x] reaplicar a nova ramificação idempotentemente e comprovar paridade;
+- [x] manter resume fechado enquanto qualquer domínio de 3B2B-3 estiver pendente
   e liberá-lo somente depois de todos os gates.
 
 **3B2B-3 — rollback dos demais domínios compartilhados**

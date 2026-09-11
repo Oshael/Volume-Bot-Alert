@@ -56,8 +56,11 @@ test('planner finds a bounded ancestor but keeps execution gated by rollback dom
     generation: '7', maxDepth: 8,
     checkpoint: { blockNumber: '100', blockHash: hash('a') },
     incoming: { blockNumber: '101', blockHash: hash('f'), parentHash: hash('d') },
-    finalizedBoundary: { blockNumber: '98' }, rollbackManifestVersion: 1,
-    pendingRollbackDomains: ROLLBACK_DOMAINS.map(({ id }) => id), executable: false,
+    finalizedBoundary: { blockNumber: '98' }, rollbackManifestVersion: 2,
+    pendingRollbackDomains: [
+      'wallet-derived', 'liquidity', 'holders', 'discovery-creator',
+    ],
+    executable: false,
     reason: 'parent_hash_mismatch', recoverable: true,
     ancestor: { blockNumber: '98', blockHash: hash('c') },
     affectedRange: { fromBlock: '99', throughBlock: '100', depth: '2' },
@@ -100,12 +103,15 @@ test('planner fails closed when the RPC head changes during planning', async () 
   );
 });
 
-test('rollback inventory is unique, explicit, and unavailable until each domain registers', () => {
+test('rollback inventory is unique and keeps unfinished domains behind the gate', () => {
   assert.deepEqual(ROLLBACK_DOMAINS.map(({ id }) => id), [
-    'canonical-journal', 'market', 'wallet', 'liquidity', 'holders',
+    'canonical-journal', 'market', 'wallet', 'wallet-derived', 'liquidity', 'holders',
     'discovery-creator', 'publication-alerts',
   ]);
-  assert.equal(ROLLBACK_DOMAINS.every(({ rollbackRegistered }) => !rollbackRegistered), true);
+  assert.deepEqual(ROLLBACK_DOMAINS.filter(({ rollbackRegistered }) => !rollbackRegistered)
+    .map(({ id }) => id), [
+    'wallet-derived', 'liquidity', 'holders', 'discovery-creator',
+  ]);
   const tables = ROLLBACK_DOMAINS.flatMap(({ tables }) => tables);
   assert.equal(new Set(tables).size, tables.length);
   for (const required of [
