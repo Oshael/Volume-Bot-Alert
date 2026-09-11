@@ -537,6 +537,61 @@ Objetivo: eliminar a dependência do refresh de dashboard para atualizar LP.
 - manter o snapshot HTTP como bootstrap e reconciliação;
 - permitir mudança de LP sem depender da ocorrência de um swap.
 
+O Slice 4 foi estimado em 1.300–1.700 linhas entre código, testes e documentação,
+com alcance de aproximadamente 14–17 arquivos de produção. Para preservar o
+limite de 500 linhas por commit e manter a lógica nova fora dos hubs, ele será
+executado nos quatro cortes abaixo. Não criar outro serviço permanente: o
+produtor pertence ao worker canônico de liquidez e o web mantém somente o relay
+e a entrega Socket.IO.
+
+**Baseline de lint do Slice 4:** a versão atualmente implantada em produção
+possui 34 warnings e zero erros em `npm run lint`. Cada corte deve terminar com
+zero erros e no máximo 34 warnings; nenhum warning novo introduzido pelo corte é
+aceitável, mesmo quando a contagem total não aumentar.
+
+#### Slice 4A — produtor durável (~350–450 linhas)
+
+- [ ] criar uma outbox dedicada ao realtime de liquidez, sem reutilizar a
+  `robinhood_derived_outbox` específica de `market:bucket`;
+- [ ] gravar o sinal durável de cada token afetado na mesma transação que aceita
+  o novo snapshot de pool;
+- [ ] acordar o consumidor somente depois do commit e manter polling limitado
+  como recuperação de `NOTIFY` perdido;
+- [ ] provar em integração commit atômico, rollback conjunto, replay idempotente
+  e ausência de sinal para snapshot rejeitado por monotonicidade.
+
+#### Slice 4B — entrega backend (~400–500 linhas)
+
+- [ ] consumir a outbox com claim, lease, retry, reclaim após restart e estado
+  `blocked` observável;
+- [ ] reconstruir do estado durável a projeção agregada do token e publicar o
+  evento dedicado `market:liquidity` por relay PostgreSQL;
+- [ ] reutilizar as salas `market:<chain>:<address>` existentes e limitar
+  `socket-hub`, servidor e composição a wiring;
+- [ ] manter produção e audiência desligadas por configuração explícita até o
+  canário, expondo backlog, idade, retries, bloqueios e estado do listener.
+
+#### Slice 4C — aplicação frontend monotônica (~350–450 linhas)
+
+- [ ] definir e validar o contrato tipado com identidade, valor, cobertura,
+  pools e `liquidityProjectionCommittedAt` compatível com o snapshot HTTP;
+- [ ] rejeitar evento antigo ou duplicado usando a mesma versão durável exposta
+  pelo bootstrap HTTP;
+- [ ] atualizar apenas as instâncias visíveis do token, incluindo monitorados e
+  fixados, sem reconstruir o dashboard ou alterar membership/ranking;
+- [ ] registrar receipt→applied do fluxo `liquidity` sem antecipar a comparação
+  final de latência dos Slices 4–7.
+
+#### Slice 4D — convergência, rollout e prova operacional (~200–350 linhas)
+
+- [ ] no reconnect, manter o evento como caminho live e usar o snapshot HTTP
+  existente para reidratação e reconciliação;
+- [ ] provar atualização sem swap, deduplicação, evento fora de ordem,
+  `NOTIFY` perdido e restart com backlog;
+- [ ] documentar schema, flags, workers, ordem de deploy/restart e rollback;
+- [ ] ativar primeiro em canário e fechar o gate somente após tráfego real e um
+  reconnect convergirem ao mesmo estado durável.
+
 Gate:
 
 - evento de liquidez sem swap atualiza LP;
