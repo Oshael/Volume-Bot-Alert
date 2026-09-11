@@ -1,7 +1,8 @@
 # Plano de execução — latência realtime da UI Robinhood
 
 Status: em execução; Slices 0, 1 e 2 implementados; código do Slice 3 implantado
-em rollout global pré-lançamento, com gates operacionais finais pendentes
+em rollout global pré-lançamento, com a observação temporal de retenção pendente;
+Slice 4A implementado localmente e ainda não implantado
 
 Prioridade: crítica
 
@@ -551,13 +552,13 @@ aceitável, mesmo quando a contagem total não aumentar.
 
 #### Slice 4A — produtor durável (~350–450 linhas)
 
-- [ ] criar uma outbox dedicada ao realtime de liquidez, sem reutilizar a
+- [x] criar uma outbox dedicada ao realtime de liquidez, sem reutilizar a
   `robinhood_derived_outbox` específica de `market:bucket`;
-- [ ] gravar o sinal durável de cada token afetado na mesma transação que aceita
+- [x] gravar o sinal durável de cada token afetado na mesma transação que aceita
   o novo snapshot de pool;
-- [ ] acordar o consumidor somente depois do commit e manter polling limitado
-  como recuperação de `NOTIFY` perdido;
-- [ ] provar em integração commit atômico, rollback conjunto, replay idempotente
+- [x] emitir o wake transacional somente quando um sinal novo é criado e deixar
+  a fila `pending` indexada para a recuperação limitada do consumer no 4B;
+- [x] provar em integração commit atômico, rollback conjunto, replay idempotente
   e ausência de sinal para snapshot rejeitado por monotonicidade.
 
 #### Slice 4B — entrega backend (~400–500 linhas)

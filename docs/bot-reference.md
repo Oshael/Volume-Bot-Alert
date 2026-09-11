@@ -771,6 +771,14 @@ marca o ciclo. O índice antigo que continha todos os `observed` é removido dep
 fica disponível. Assim, cada linha histórica é visitada uma vez no catch-up, em vez de ser
 reescaneada a cada tick.
 
+Aplique `node src/utils/db-init-stage212.js` antes de reiniciar uma versão atualizada do
+`trendscope-worker@robinhood-canonical-liquidity`. A Stage 212 cria a outbox dedicada
+`robinhood_liquidity_realtime_outbox`. O mesmo statement que aceita um snapshot monotônico grava
+um sinal por pool/bloco/hash e chama `pg_notify('robinhood_liquidity_realtime_outbox', '')`; o
+PostgreSQL só entrega esse wake depois do commit. Replay da mesma origem não duplica a linha e um
+snapshot mais antigo não cria sinal. Enquanto o consumer do Slice 4B não estiver implantado, as
+linhas permanecem em `pending`; não as apague nem reinicie o cursor para liberar backlog.
+
 O status do retention worker expõe `realtimeOutbox` com backlog e idade por `event_kind`, retries,
 bloqueados, fronteiras publicadas e a última invalidação retida. `observedLagBlocks` compara o head
 capturado com a fronteira `observed`; `finalizedLagBlocks` compara `finalized_head` com a fronteira

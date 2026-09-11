@@ -19,6 +19,7 @@ const stage147 = require('../src/utils/db-init-stage147');
 const stage148 = require('../src/utils/db-init-stage148');
 const stage150 = require('../src/utils/db-init-stage150');
 const stage198 = require('../src/utils/db-init-stage198');
+const stage212 = require('../src/utils/db-init-stage212');
 const {
   createRobinhoodPoolLiquiditySeedRepository,
 } = require('../src/models/robinhood-pool-liquidity-seed');
@@ -41,6 +42,7 @@ const QUOTE = `0x${'9'.repeat(40)}`;
 const MARKET = `robinhood:uniswap-v3:${POOL}`;
 
 async function cleanup() {
+  await db.query('DELETE FROM robinhood_liquidity_realtime_outbox WHERE token_address = $1', [TOKEN]);
   await db.query("DELETE FROM robinhood_pool_liquidity_event_cursors WHERE chain = 'robinhood'");
   await db.query('DELETE FROM robinhood_market_buckets_1m WHERE market_key = $1', [MARKET]);
   await db.query('DELETE FROM robinhood_pool_registry WHERE market_key = $1', [MARKET]);
@@ -67,6 +69,7 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
     await stage150.init({ closePool: false });
     await stage150.init({ closePool: false });
     await stage198.init({ closePool: false });
+    await stage212.init({ closePool: false });
     await cleanup();
     await db.query(
       `INSERT INTO robinhood_pool_registry (
@@ -235,6 +238,51 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
       await client.query('ROLLBACK');
       client.release();
     }
+  });
+
+  it('commits one durable signal per accepted source and rolls it back with the snapshot', async () => {
+    const snapshot = (blockNumber, hash) => ({
+      protocol: 'uniswap-v3', marketKey: MARKET, blockNumber, blockHash: hash,
+      observedAt: '2026-08-22T11:00:00Z', checkedAt: '2026-08-22T11:00:01Z',
+      liquidityUsd: '42', liquidityRaw: '9',
+      liquidityStatus: 'spot_tvl_from_pool_balances', liquidityConfidence: 'medium',
+    });
+    await db.query('DELETE FROM robinhood_liquidity_realtime_outbox WHERE token_address = $1', [TOKEN]);
+    await db.query('DELETE FROM robinhood_pool_liquidity_snapshots WHERE market_key = $1', [MARKET]);
+    const repository = createRobinhoodPoolLiquiditySnapshotRepository({ database: db });
+    const first = snapshot('12', `0x${'1'.repeat(64)}`);
+    assert.equal(await repository.recordSnapshot(first), true);
+    assert.equal(await repository.recordSnapshot(first), true);
+    assert.equal(await repository.recordSnapshot(snapshot('11', `0x${'2'.repeat(64)}`)), false);
+    const committed = await db.query(
+      `SELECT COUNT(*)::int AS signals, MIN(status) AS status
+         FROM robinhood_liquidity_realtime_outbox WHERE token_address = $1`, [TOKEN]
+    );
+    assert.deepEqual(committed.rows[0], { signals: 1, status: 'pending' });
+
+    const client = await db.getClient();
+    try {
+      await client.query('BEGIN');
+      const transactional = createRobinhoodPoolLiquiditySnapshotRepository({ database: client });
+      assert.equal(await transactional.recordSnapshot(
+        snapshot('13', `0x${'3'.repeat(64)}`)
+      ), true);
+      const inside = await client.query(
+        `SELECT COUNT(*)::int AS signals FROM robinhood_liquidity_realtime_outbox
+          WHERE token_address = $1`, [TOKEN]
+      );
+      assert.equal(inside.rows[0].signals, 2);
+      await client.query('ROLLBACK');
+    } finally {
+      client.release();
+    }
+    const afterRollback = await db.query(
+      `SELECT snapshot_block_number::text AS block,
+              (SELECT COUNT(*)::int FROM robinhood_liquidity_realtime_outbox
+                WHERE token_address = $1) AS signals
+         FROM robinhood_pool_liquidity_snapshots WHERE market_key = $2`, [TOKEN, MARKET]
+    );
+    assert.deepEqual(afterRollback.rows[0], { block: '12', signals: 1 });
   });
 
   it('matches individual historical V4 reads at exact boundaries and replay readiness', async () => {

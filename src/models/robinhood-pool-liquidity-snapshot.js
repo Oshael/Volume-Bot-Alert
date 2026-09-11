@@ -3,6 +3,9 @@ const { normalizeTokenAddress } = require('../utils/token-identity');
 const v4 = require('../services/uniswap-v4-decoder');
 const { V4_DONATE_TOPIC } = require('../services/robinhood-pool-liquidity-events');
 const { POOL_LIQUIDITY_BATCH_SIZE } = require('../utils/robinhood-liquidity-limits');
+const {
+  NOTIFY_CHANNEL: REALTIME_NOTIFY_CHANNEL,
+} = require('./robinhood-liquidity-realtime-outbox');
 
 const CHAIN = 'robinhood';
 const PROTOCOLS = new Set(['uniswap-v2', 'uniswap-v3', 'uniswap-v4']);
@@ -309,7 +312,8 @@ function createRobinhoodPoolLiquiditySnapshotRepository(options = {}) {
            liquidity_status text, liquidity_confidence text, liquidity_warning text,
            checked_at timestamptz
          )
-       ) INSERT INTO robinhood_pool_liquidity_snapshots (
+       ), persisted AS (
+       INSERT INTO robinhood_pool_liquidity_snapshots (
          chain, protocol, market_key, snapshot_block_number, snapshot_block_hash,
          snapshot_observed_at, liquidity_usd, liquidity_raw, liquidity_status,
          liquidity_confidence, liquidity_warning, checked_at
@@ -344,10 +348,31 @@ function createRobinhoodPoolLiquiditySnapshotRepository(options = {}) {
        WHERE robinhood_pool_liquidity_snapshots.snapshot_block_number IS NULL
           OR EXCLUDED.snapshot_block_number >=
              robinhood_pool_liquidity_snapshots.snapshot_block_number
-       RETURNING market_key`,
-      [JSON.stringify(rows)]
+       RETURNING chain, protocol, market_key, snapshot_block_number,
+                 snapshot_block_hash, updated_at
+       ), queued AS (
+         INSERT INTO robinhood_liquidity_realtime_outbox (
+           chain, protocol, market_key, token_address, snapshot_block_number,
+           snapshot_block_hash, projection_committed_at
+         )
+         SELECT persisted.chain, persisted.protocol, persisted.market_key,
+                registry.token_address, persisted.snapshot_block_number,
+                persisted.snapshot_block_hash, persisted.updated_at
+           FROM persisted
+           INNER JOIN robinhood_pool_registry registry
+             USING (chain, protocol, market_key)
+         ON CONFLICT (chain, protocol, market_key, snapshot_block_number,
+                      snapshot_block_hash) DO NOTHING
+         RETURNING 1
+       ), notified AS (
+         SELECT pg_notify($2, '') FROM (SELECT 1 FROM queued LIMIT 1) signal
+       )
+       SELECT (SELECT COUNT(*)::int FROM persisted) AS snapshots,
+              (SELECT COUNT(*)::int FROM queued) AS signals,
+              (SELECT COUNT(*)::int FROM notified) AS notifications`,
+      [JSON.stringify(rows), REALTIME_NOTIFY_CHANNEL]
     );
-    return result.rowCount;
+    return Number(result.rows[0]?.snapshots || 0);
   }
 
   async function recordFailure(input = {}) {

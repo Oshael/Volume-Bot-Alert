@@ -5923,6 +5923,47 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage212-robinhood-liquidity-realtime-outbox',
+    name: 'Stage 212 Robinhood liquidity realtime outbox',
+    repair: 'node src/utils/db-init-stage212.js',
+    tables: [{
+      table: 'robinhood_liquidity_realtime_outbox',
+      columns: [
+        'id', 'chain', 'protocol', 'market_key', 'token_address',
+        'snapshot_block_number', 'snapshot_block_hash', 'projection_committed_at',
+        'status', 'lease_owner', 'lease_until', 'attempt_count', 'next_attempt_at',
+        'last_error', 'created_at', 'updated_at',
+      ],
+      constraints: [
+        {
+          name: 'robinhood_liquidity_realtime_outbox_source_key',
+          includes: [
+            'UNIQUE', 'chain', 'protocol', 'market_key', 'snapshot_block_number',
+            'snapshot_block_hash',
+          ],
+        },
+        {
+          name: 'robinhood_liquidity_realtime_outbox_status_check',
+          includes: ['pending', 'leased', 'complete', 'blocked', 'attempt_count'],
+        },
+        {
+          name: 'robinhood_liquidity_realtime_outbox_lease_check',
+          includes: ['lease_owner', 'lease_until', 'leased'],
+        },
+      ],
+      indexes: [
+        {
+          name: 'idx_robinhood_liquidity_realtime_outbox_claim',
+          includes: ['next_attempt_at', 'id', 'pending'],
+        },
+        {
+          name: 'idx_robinhood_liquidity_realtime_outbox_lease',
+          includes: ['lease_until', 'leased'],
+        },
+      ],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
@@ -5963,6 +6004,7 @@ const PROFILE_GROUP_KEYS = {
     'stage107-robinhood-market-claim-index',
     'stage108-robinhood-blocked-frontier-index',
     'stage186-robinhood-market-claim-indexes',
+    'stage212-robinhood-liquidity-realtime-outbox',
   ],
   runtime: SCHEMA_GROUPS.map((group) => group.key),
 };

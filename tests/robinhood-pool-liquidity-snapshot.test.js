@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const stage147 = require('../src/utils/db-init-stage147');
+const stage212 = require('../src/utils/db-init-stage212');
 const {
   createRobinhoodPoolLiquiditySnapshotRepository,
 } = require('../src/models/robinhood-pool-liquidity-snapshot');
@@ -17,6 +18,23 @@ const POOL_ID = `0x${'3'.repeat(64)}`;
 const MARKET = `robinhood:uniswap-v4:${POOL_ID}`;
 
 describe('Robinhood current pool liquidity snapshots', () => {
+  it('defines the dedicated durable realtime signal outbox', async () => {
+    const sql = stage212.STATEMENTS.join('\n');
+    const group = SCHEMA_GROUPS.find(({ key }) => (
+      key === 'stage212-robinhood-liquidity-realtime-outbox'
+    ));
+    assert.match(sql, /UNIQUE \(chain, protocol, market_key, snapshot_block_number/);
+    assert.match(sql, /status IN \('pending', 'leased', 'complete', 'blocked'\)/);
+    assert.match(sql, /WHERE status = 'pending'/);
+    assert.equal(group.repair, 'node src/utils/db-init-stage212.js');
+    const calls = [];
+    await stage212.init({
+      database: { query: async (statement) => calls.push(statement) },
+      closePool: false,
+    });
+    assert.deepEqual(calls, stage212.STATEMENTS);
+  });
+
   it('defines a pool-keyed, monotonic and auditable current-state table', () => {
     const sql = stage147.STATEMENTS.join('\n');
     const group = SCHEMA_GROUPS.find(({ key }) => (
@@ -161,7 +179,7 @@ describe('Robinhood current pool liquidity snapshots', () => {
     const repository = createRobinhoodPoolLiquiditySnapshotRepository({ database: {
       async query(sql, params) {
         calls.push({ sql, params });
-        return { rowCount: 1 };
+        return { rows: [{ snapshots: 1, signals: 1, notifications: 1 }] };
       },
     } });
     const input = {
@@ -173,7 +191,10 @@ describe('Robinhood current pool liquidity snapshots', () => {
     };
     assert.equal(await repository.recordSnapshot(input), true);
     assert.match(calls[0].sql, /EXCLUDED\.snapshot_block_number >=/);
+    assert.match(calls[0].sql, /INSERT INTO robinhood_liquidity_realtime_outbox/);
+    assert.match(calls[0].sql, /SELECT pg_notify\(\$2, ''\)/);
     assert.equal(JSON.parse(calls[0].params[0])[0].block_number, '123');
+    assert.equal(calls[0].params[1], stage212.NOTIFY_CHANNEL);
     assert.equal(await repository.recordSnapshots([]), 0);
     await assert.rejects(repository.recordSnapshots(Array(101).fill(input)), /at most 100/);
     await assert.rejects(repository.recordSnapshots([input, input]), /duplicate pools/);
