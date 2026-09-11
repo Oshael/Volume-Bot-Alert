@@ -777,6 +777,13 @@ capturado com a fronteira `observed`; `finalizedLagBlocks` compara `finalized_he
 `finalized`. O watermark impede que o backlog anterior seja publicado; ciclos históricos nunca
 publicados permanecem disponíveis para auditoria e são removidos pela retenção quando elegíveis.
 
+O drill consolidado `npm run robinhood:reorg-safety-test` exige Docker, cria um PostgreSQL 16
+efêmero em porta aleatória restrita a `127.0.0.1` e injeta `DATABASE_URL_TEST` para o database fixo
+`volume_alert_reorg_test`. Ele inicializa o schema base e executa sequencialmente as integrações de
+rewind, lifecycle, publicação e aplicação frontend com fixtures sintéticas; nunca reutiliza as
+variáveis de conexão normais. Em sucesso remove o container. Em falha preserva o container nomeado
+e imprime os comandos de inspeção e limpeza; remova-o depois de concluir a auditoria.
+
 O grupo `robinhood-wallet`, com `ROBINHOOD_WALLET_SWAP_LIVE_SOURCE=durable_outbox` (default), acorda
 por `LISTEN` tanto no append quanto no avanço da finalidade e usa o intervalo de 2s somente como
 reconciliação de notificação perdida. Claim é ordenado e limitado a `finalized_head` e ao hash ainda
