@@ -1,7 +1,7 @@
 # Plano de execução — latência realtime da UI Robinhood
 
-Status: em execução; Slice 0 (telemetria) e Slice 1 (wake event-driven do
-processing) implementados
+Status: em execução; Slices 0, 1 e 2 implementados; código do Slice 3 implantado
+em rollout global pré-lançamento, com gates operacionais finais pendentes
 
 Prioridade: crítica
 
@@ -459,6 +459,45 @@ terminais de ciclos provisórios que já tenham sido publicados.
   watermark de todos os consumidores; nunca apagar `blocked` silenciosamente;
 - [ ] medir novamente receipt→applied e comparar com o baseline já coletado.
 
+#### Checkpoint operacional para retomada
+
+Estado confirmado antes da próxima retomada:
+
+- Stages 210 e 211 aplicadas; o catch-up da auditoria terminou e
+  `terminalizacao_atrasada` chegou a zero;
+- a lease `robinhood-retention-worker` está ativa e a retenção da realtime
+  outbox permanece em três dias;
+- o claim de publicação está limitado pelo activation block e não consulta o
+  backlog histórico quando o rollout ainda não possui watermark;
+- na VPS web, `ROBINHOOD_WALLET_SWAP_REALTIME_V2_GLOBAL_ENABLED=true` admite
+  inclusive sessões anônimas na sala lifecycle v2;
+- na VPS dos workers, `...V2_ACTIVATION_BLOCK` permanece fixado no bloco deste
+  rollout e `...V2_OBSERVED_ENABLED=true` está ativo;
+- `trendscope-web.service` e `trendscope-worker@robinhood-wallet` foram
+  reiniciados; `observed` chegou corretamente à UI em tráfego real;
+- as slow queries `WITH claimable` causadas pela varredura histórica cessaram.
+
+Ordem obrigatória da próxima retomada:
+
+1. observar tráfego por uma janela sem backlog e coletar novamente os snapshots
+   de latência do navegador para `market:bucket`, `market:trade`, `alert:event`,
+   `holder:count`, `liquidity` e `readiness`;
+2. confirmar que `observed` vira `finalized` sem duplicação, que não existem
+   leases expiradas/rows `blocked` e que um reconnect reidrata o painel;
+3. após a janela de três dias, comprovar que a realtime outbox remove ciclos
+   antigos completos sem apagar ciclos mistos ou bloqueados;
+4. preparar e executar a bateria consolidada de segurança de reorg em database
+   PostgreSQL isolado, preenchido pelas fixtures sintéticas; nunca apontar essa
+   bateria para o database de produção;
+5. simular o reorg curto, comprovar `observed -> invalidate`, convergência do
+   snapshot HTTP e recuperação após restart;
+6. fechar a medição de 3B3C e somente então iniciar o Slice 4.
+
+Rollback deste rollout: na VPS dos workers, desligar apenas
+`...V2_OBSERVED_ENABLED`; preservar o activation block e a flag global no web
+até `finalized`/`invalidate` dos ciclos já publicados drenarem. Não truncar a
+outbox e não escolher outro watermark durante o mesmo ciclo.
+
 Gate final do Slice 3:
 
 - usuário vê `observed` sem aguardar as 12 confirmações;
@@ -664,14 +703,15 @@ refresh HTTP.
 Esta fila prevalece sobre referências antigas a “próximo corte” e não deve ser
 reordenada sem atualizar este checkpoint:
 
-1. aplicar a Stage 210, observar a retenção e repetir a medição ponta a ponta de
-   3B3C; antes do canário, configurar seu watermark com o `next_block` corrente;
+1. concluir os seis passos do checkpoint operacional de 3B3C acima;
 2. executar Slice 4, liquidez realtime até a UI;
 3. executar Slice 5, readiness por push;
 4. executar Slice 6, holders dirigidos pelo journal;
-5. executar Slice 7, ranking e membership realtime.
+5. executar Slice 7, ranking e membership realtime;
+6. executar o gate operacional geral e consolidar o runbook final.
 
-O próximo gate é **3B3C — deploy da Stage 210 e medição operacional**.
+O próximo gate é **3B3C — medição, retenção observada e teste controlado de
+reorg**.
 
 ## Ponto importante
 
