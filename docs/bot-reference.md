@@ -1894,6 +1894,7 @@ Stages confirmados:
 | 205 | generation fence e plano de recuperação no cursor canônico |
 | 206 | journal e outbox duráveis da recuperação canônica |
 | 207 | identidade do lifecycle de swaps isolada por `block_hash` |
+| 208 | preimages reversíveis dos agregados de transfers ainda não finalizados |
 
 Holders RH possuem duas fontes complementares. A Stage 111 guarda o summary
 Blockscout usado como bootstrap/fallback; as Stages 116–118 mantêm o ledger local
@@ -4044,6 +4045,16 @@ por hash preserva a ramificação órfã e o retry exato do novo checkpoint perm
 idempotente. O worker que já entrou em halt precisa ser reiniciado após o resume.
 Não existe bypass operacional nem liberação automática enquanto 3B2B-3 estiver
 incompleto.
+
+A Stage 208 mantém preimages por bloco dos agregados de transfers que ainda
+podem sofrer reorg. Cada linha expira exatamente três dias após o timestamp do
+bloco. O `robinhood-retention-worker` remove em lotes apenas linhas já vencidas
+cujo `block_number` não ultrapassa `finalized_head`; sem frontier finalizada, a
+limpeza falha fechada. A tabela é infraestrutura de rollback e não substitui o
+raw nem altera a classificação. Até o writer e o executor dos cortes seguintes
+serem implantados, sua existência isolada não abre o gate `wallet-derived`.
+Implante a migration com `node src/utils/db-init-stage208.js` antes de reiniciar
+qualquer processo que execute o `robinhood-retention-worker` atualizado.
 
 Antes de definir ou reduzir retenção de `robinhood_chain_events` e
 `robinhood_holder_transfer_journal`, execute

@@ -17,7 +17,7 @@ function dependencies(database, gate = VALID_WALLET_GATE) {
   };
 }
 
-function createFakeDatabase(rawBatches = []) {
+function createFakeDatabase(rawBatches = [], journalBatches = []) {
   const calls = [];
   return {
     calls,
@@ -41,6 +41,9 @@ function createFakeDatabase(rawBatches = []) {
             candidate_block_max: row.candidateBlockMax,
           }],
         };
+      }
+      if (/DELETE FROM robinhood_wallet_transfer_reorg_journal/.test(sql)) {
+        return { rows: [{ deleted: journalBatches.shift() || 0 }] };
       }
       throw new Error('Unexpected retention query');
     },
@@ -96,8 +99,9 @@ describe('Robinhood retention worker', () => {
       observations: 100,
       hourlyBuckets: 0,
       protectedHourlyBuckets: 0,
+      transferReorgJournal: 0,
     });
-    assert.equal(database.calls.length, 2);
+    assert.equal(database.calls.length, 3);
     assert.ok(database.calls.every((call) => call.params[0] === 100));
     assert.ok(database.calls.every((call) => call.timeoutMs === 2500));
     assert.match(database.calls[0].sql, /FOR UPDATE OF processed SKIP LOCKED/);
@@ -170,6 +174,7 @@ describe('Robinhood retention worker', () => {
       observations: 0,
       hourlyBuckets: 0,
       protectedHourlyBuckets: 0,
+      transferReorgJournal: 0,
     });
     assert.equal(database.calls.length, 0);
   });
@@ -198,7 +203,7 @@ describe('Robinhood retention worker', () => {
     assert.equal(summary.retentionCandidateBlockMin, '899');
     assert.equal(summary.retentionCandidateBlockMax, '901');
     assert.equal(summary.hourlyBuckets, 0);
-    assert.equal(database.calls.length, 1);
+    assert.equal(database.calls.length, 2);
   });
 
   it('continues bounded cleanup when a full prefix makes partial progress', async () => {
@@ -221,7 +226,7 @@ describe('Robinhood retention worker', () => {
     assert.equal(summary.processedLogs, 141);
     assert.equal(summary.protectedProcessedLogs, 9);
     assert.equal(summary.candidatesProtectedByBucketCoverage, 9);
-    assert.equal(database.calls.length, 2);
+    assert.equal(database.calls.length, 3);
   });
 
   it('fails closed for accepted rows when loading the wallet watermark fails', async () => {
@@ -255,5 +260,23 @@ describe('Robinhood retention worker', () => {
     assert.equal(worker.getStatus().lastWalletGateValid, false);
     assert.equal(worker.getStatus().lastWalletGateReason, 'watermark_load_error');
     assert.equal(worker.getStatus().lastCandidatesProtectedByWallet, 3);
+  });
+
+  it('deletes only expired finalized transfer preimages in bounded batches', async () => {
+    const database = createFakeDatabase([], [100, 25]);
+
+    const summary = await worker.runOnce({
+      batchLimit: 100, maxBatches: 5, statementTimeoutMs: 2500,
+    }, {}, dependencies(database));
+
+    assert.equal(summary.transferReorgJournal, 125);
+    const calls = database.calls.filter(({ sql }) => (
+      /DELETE FROM robinhood_wallet_transfer_reorg_journal/.test(sql)
+    ));
+    assert.equal(calls.length, 2);
+    assert.match(calls[0].sql, /journal\.expires_at <= NOW\(\)/);
+    assert.match(calls[0].sql, /journal\.block_number <= cursor\.finalized_head/);
+    assert.match(calls[0].sql, /FOR UPDATE OF journal SKIP LOCKED/);
+    assert.deepEqual(calls[0].params, [100]);
   });
 });

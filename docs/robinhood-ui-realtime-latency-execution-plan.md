@@ -355,6 +355,10 @@ necessário se uma migration surgir durante a implementação.
 
 **3B2B-3 — rollback dos demais domínios compartilhados**
 
+- [x] criar a Stage 208 para preimages de transfers ainda reversíveis, com
+  retenção fixa de três dias e limpeza somente após `finalized_head`;
+- [ ] gravar os preimages por bloco junto da projeção de transfers;
+- [ ] restaurar transfers/edges/resumos/evidências e recuar o cursor no reorg;
 - [ ] adaptar discovery, liquidity, holders/transfers, creators e classificações
   ao mesmo evento/generation fence;
 - [ ] preservar estado anterior marcado stale ou incompleto enquanto a nova

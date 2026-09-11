@@ -5817,6 +5817,43 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage208-robinhood-wallet-transfer-reorg-journal',
+    name: 'Stage 208 Robinhood wallet-transfer reorg journal',
+    repair: 'node src/utils/db-init-stage208.js',
+    tables: [{
+      table: 'robinhood_wallet_transfer_reorg_journal',
+      columns: [
+        'chain', 'projection_version', 'block_number', 'block_hash', 'block_time',
+        'aggregate_kind', 'identity_key', 'had_previous', 'previous_row',
+        'expires_at', 'created_at',
+      ],
+      constraints: [
+        {
+          name: 'rh_wallet_transfer_reorg_journal_pkey',
+          includes: ['PRIMARY KEY', 'block_hash', 'aggregate_kind', 'identity_key'],
+        },
+        {
+          name: 'rh_wallet_transfer_reorg_journal_preimage_check',
+          includes: ['CHECK', 'had_previous', 'jsonb_typeof'],
+        },
+        {
+          name: 'rh_wallet_transfer_reorg_journal_retention_check',
+          includes: ['CHECK', '3 days'],
+        },
+      ],
+      indexes: [
+        {
+          name: 'idx_rh_wallet_transfer_reorg_journal_expiry',
+          includes: ['expires_at', 'block_number'],
+        },
+        {
+          name: 'idx_rh_wallet_transfer_reorg_journal_recovery',
+          includes: ['chain', 'block_number', 'block_hash', 'projection_version'],
+        },
+      ],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

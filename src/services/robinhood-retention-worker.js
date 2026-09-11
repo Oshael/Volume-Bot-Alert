@@ -36,9 +36,11 @@ let status = {
   lastDeletedObservations: 0,
   lastDeletedHourlyBuckets: 0,
   lastProtectedHourlyBuckets: 0,
+  lastDeletedTransferReorgJournal: 0,
   totalDeletedProcessedLogs: 0,
   totalDeletedObservations: 0,
   totalDeletedHourlyBuckets: 0,
+  totalDeletedTransferReorgJournal: 0,
   totalErrors: 0,
   lastError: null,
 };
@@ -198,6 +200,30 @@ async function deleteExpiredProcessedLogs(database, options) {
   };
 }
 
+async function deleteExpiredTransferReorgJournal(database, options) {
+  const result = await queryWithTimeout(
+    database,
+    `WITH expired AS MATERIALIZED (
+       SELECT journal.ctid
+         FROM robinhood_wallet_transfer_reorg_journal journal
+         CROSS JOIN robinhood_chain_capture_cursor cursor
+        WHERE cursor.chain = 'robinhood' AND journal.chain = cursor.chain
+          AND journal.expires_at <= NOW()
+          AND cursor.finalized_head IS NOT NULL
+          AND journal.block_number <= cursor.finalized_head
+        ORDER BY journal.expires_at, journal.block_number
+        LIMIT $1::int
+        FOR UPDATE OF journal SKIP LOCKED
+     ), deleted AS (
+       DELETE FROM robinhood_wallet_transfer_reorg_journal journal
+        USING expired WHERE journal.ctid = expired.ctid RETURNING 1
+     ) SELECT COUNT(*)::int AS deleted FROM deleted`,
+    [options.batchLimit],
+    options.statementTimeoutMs
+  );
+  return Number(result.rows[0]?.deleted || 0);
+}
+
 function emptySummary(wallet = {}) {
   return {
     batches: 0,
@@ -218,6 +244,7 @@ function emptySummary(wallet = {}) {
     observations: 0,
     hourlyBuckets: 0,
     protectedHourlyBuckets: 0,
+    transferReorgJournal: 0,
   };
 }
 
@@ -290,6 +317,11 @@ async function runCleanupBatches(database, options, wallet) {
     if (raw.processedLogs === 0) break;
     if (raw.examined < options.batchLimit) break;
   }
+  for (let index = 0; index < options.maxBatches; index += 1) {
+    const deleted = await deleteExpiredTransferReorgJournal(database, options);
+    summary.transferReorgJournal += deleted;
+    if (deleted < options.batchLimit) break;
+  }
   return summary;
 }
 
@@ -337,9 +369,11 @@ async function runOnce(options = {}, meta = {}, deps = {}) {
       status.lastDeletedObservations = summary.observations;
       status.lastDeletedHourlyBuckets = summary.hourlyBuckets;
       status.lastProtectedHourlyBuckets = summary.protectedHourlyBuckets;
+      status.lastDeletedTransferReorgJournal = summary.transferReorgJournal;
       status.totalDeletedProcessedLogs += summary.processedLogs;
       status.totalDeletedObservations += summary.observations;
       status.totalDeletedHourlyBuckets += summary.hourlyBuckets;
+      status.totalDeletedTransferReorgJournal += summary.transferReorgJournal;
       status.lastCompletedAt = new Date().toISOString();
       status.lastRunDurationMs = Date.now() - startedAtMs;
       return summary;
@@ -360,7 +394,8 @@ function schedule(options, delayMs) {
   timer = setTimeout(async () => {
     try {
       const summary = await runOnce(options, { ifRunning: 'join' });
-      if (summary.examinedProcessedLogs || summary.hourlyBuckets) {
+      if (summary.examinedProcessedLogs || summary.hourlyBuckets
+          || summary.transferReorgJournal) {
         console.log(
           '[RobinhoodRetentionWorker]',
           `logs=${summary.processedLogs}/${summary.examinedProcessedLogs}`,
@@ -372,6 +407,7 @@ function schedule(options, delayMs) {
           `observations=${summary.observations}`,
           `hourlyBuckets=${summary.hourlyBuckets}`,
           `protectedHourlyBuckets=${summary.protectedHourlyBuckets}`,
+          `transferReorgJournal=${summary.transferReorgJournal}`,
           `batches=${summary.batches}`
         );
       }
@@ -412,6 +448,7 @@ module.exports = {
   stop,
   __private: {
     deleteExpiredProcessedLogs,
+    deleteExpiredTransferReorgJournal,
     normalizeOptions,
   },
 };
