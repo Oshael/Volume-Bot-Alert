@@ -3,6 +3,9 @@ const db = require('./db');
 const {
   EVIDENCE_VERSION, MAX_SELL_DELAY_MS, MIN_FAST_SELLERS, RULE_VERSION,
 } = require('../services/robinhood-bundle-redistribution-policy');
+const {
+  lockRobinhoodCanonicalProjection,
+} = require('./robinhood-canonical-projection-fence');
 const CHAIN = 'robinhood';
 const MAX_GROUPS = 5_000;
 const ADDRESS = /^0x[0-9a-f]{40}$/;
@@ -326,8 +329,11 @@ async function persistMembers(client, state, members) {
   [JSON.stringify(members.map(memberRecord)), CHAIN, state.tokenAddress, state.ruleVersion]);
 }
 
-async function replaceWithClient(client, snapshot) {
+async function replaceWithClient(client, snapshot, options = {}) {
   const { state, groups, members } = snapshot;
+  await (options.projectionFence || lockRobinhoodCanonicalProjection)(client, {
+    blockNumber: state.throughBlockNumber, blockHash: state.throughBlockHash,
+  }, 'bundle redistribution');
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
     `${CHAIN}:${state.tokenAddress}:${state.ruleVersion}`,
   ]);
@@ -365,20 +371,23 @@ async function replaceWithClient(client, snapshot) {
   return Object.freeze({ status: 'published', groups: groups.length, members: members.length });
 }
 
-async function replaceRedistributionSnapshotWithClient(client, input, observedAt) {
+async function replaceRedistributionSnapshotWithClient(client, input, observedAt, options = {}) {
   return replaceWithClient(client, normalizeSnapshot(
     input, observedAt || new Date().toISOString()
-  ));
+  ), options);
 }
 
 function createRobinhoodBundleRedistributionSnapshotRepository(options = {}) {
   const database = options.database || db;
   const now = options.now || (() => new Date().toISOString());
+  const projectionFence = options.projectionFence || lockRobinhoodCanonicalProjection;
   async function replaceSnapshot(input) {
     const client = await database.getClient();
     try {
       await client.query('BEGIN');
-      const result = await replaceRedistributionSnapshotWithClient(client, input, now());
+      const result = await replaceRedistributionSnapshotWithClient(client, input, now(), {
+        projectionFence,
+      });
       await client.query('COMMIT');
       return result;
     } catch (error) {

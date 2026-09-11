@@ -68,6 +68,7 @@ describe('Robinhood DEV HOLD materializer integration', () => {
   it('publishes an exact ratio and never invents zero without a creator', async () => {
     const materializer = createRobinhoodHolderDevHoldMaterializer({
       database: db, now: () => '2026-08-21T12:00:00Z',
+      projectionFence: async () => {},
     });
 
     assert.deepEqual(await materializer.materializeToken(TOKEN), { status: 'published' });

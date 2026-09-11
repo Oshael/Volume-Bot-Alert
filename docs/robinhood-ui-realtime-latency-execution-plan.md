@@ -389,7 +389,7 @@ ordem não autoriza avançar para 3B3.
   dedup correspondente para replay e reancorar proveniência no writer;
 - [x] **3B2B-3D2 — creator:** reverter attribution/cursor LIVE e aplicar fence
   canônico ao writer, sem apagar evidência externa ou de backfill;
-- [ ] **3B2B-3D3 — derivados:** invalidar launch anchors/outbox e classificações
+- [x] **3B2B-3D3 — derivados:** invalidar launch anchors/outbox e classificações
   derivadas até a nova ramificação convergir.
 
 **3B2B-3E — integração final dos gates**

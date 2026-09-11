@@ -7,6 +7,9 @@ const {
   normalizeClassificationFrontier,
   normalizeHolderClassification,
 } = require('../services/robinhood-holder-classification-domain');
+const {
+  lockRobinhoodCanonicalProjection,
+} = require('./robinhood-canonical-projection-fence');
 
 const CHAIN = 'robinhood';
 const MAX_SNAPSHOT_RECORDS = 10_000;
@@ -232,6 +235,7 @@ async function withTransaction(database, operation) {
 
 function createRobinhoodHolderClassificationRepository(options = {}) {
   const database = options.database || db;
+  const projectionFence = options.projectionFence || lockRobinhoodCanonicalProjection;
 
   async function loadStored(client, state, includeRecords = true) {
     const stateResult = await client.query(
@@ -256,6 +260,8 @@ function createRobinhoodHolderClassificationRepository(options = {}) {
   async function replaceClassifierSnapshot(input = {}, options = {}) {
     const snapshot = normalizeSnapshot(input);
     return withTransaction(database, async (client) => {
+      await projectionFence(client, stateFrontier(snapshot.state),
+        'holder classification');
       const lockKey = [
         CHAIN, snapshot.state.tokenAddress, snapshot.state.classifier,
         snapshot.state.classificationVersion,

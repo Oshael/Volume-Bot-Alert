@@ -75,6 +75,7 @@ describe('Robinhood holder LP materializer integration', () => {
   it('publishes pool contracts and the contextual V4 manager at the holder frontier', async () => {
     const materializer = createRobinhoodHolderLpMaterializer({
       database: db, now: () => '2026-08-21T13:00:00Z',
+      projectionFence: async () => {},
     });
 
     assert.deepEqual(await materializer.materializeToken(TOKEN), {

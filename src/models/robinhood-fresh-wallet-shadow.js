@@ -7,6 +7,9 @@ const {
   normalizeHolderClassification,
 } = require('../services/robinhood-holder-classification-domain');
 const { RULE_VERSION } = require('../services/robinhood-fresh-wallet-rule');
+const {
+  lockRobinhoodCanonicalProjection,
+} = require('./robinhood-canonical-projection-fence');
 
 const CHAIN = 'robinhood';
 const FRONTIER_STATUSES = new Set(['ready', 'stale', 'reorged']);
@@ -161,6 +164,7 @@ const pairKey = (value) => `${evaluationKey(value)}${value.walletAddress || valu
 
 function createRobinhoodFreshWalletShadowRepository(options = {}) {
   const database = options.database || db;
+  const projectionFence = options.projectionFence || lockRobinhoodCanonicalProjection;
 
   async function replaceAndCompleteBatch(inputs = [], transitionOptions = {}) {
     if (!Array.isArray(inputs) || !inputs.length || inputs.length > 100) {
@@ -179,6 +183,8 @@ function createRobinhoodFreshWalletShadowRepository(options = {}) {
     const client = await database.getClient();
     try {
       await client.query('BEGIN');
+      await projectionFence(client,
+        prepared.map(({ evaluation }) => evaluation.frontier), 'fresh wallet');
       const locked = await client.query(`WITH input AS (
         SELECT * FROM jsonb_to_recordset($1::jsonb) AS item(
           token_address varchar, wallet_address varchar, queue_version bigint, owner varchar

@@ -20,6 +20,9 @@ const {
 } = require('./robinhood-discovery-reorg-rollback');
 const { createRobinhoodCreatorReorgRollback } = require('./robinhood-creator-reorg-rollback');
 const {
+  createRobinhoodDiscoveryDerivedReorgRollback,
+} = require('./robinhood-discovery-derived-reorg-rollback');
+const {
   ROLLBACK_DOMAINS, ROLLBACK_MANIFEST_VERSION,
 } = require('../services/robinhood-chain-recovery-planner');
 
@@ -224,6 +227,8 @@ function createRobinhoodChainRecoveryJournal(options = {}) {
   const holderRollback = options.holderRollback || createRobinhoodHolderReorgRollback({ database });
   const discoveryRollback = options.discoveryRollback || createRobinhoodDiscoveryReorgRollback();
   const creatorRollback = options.creatorRollback || createRobinhoodCreatorReorgRollback();
+  const discoveryDerivedRollback = options.discoveryDerivedRollback
+    || createRobinhoodDiscoveryDerivedReorgRollback();
 
   async function recordDetected(client, input = {}) {
     if (!client || typeof client.query !== 'function') {
@@ -454,6 +459,9 @@ function createRobinhoodChainRecoveryJournal(options = {}) {
         ancestorTimestamp: retained.get(rewind.ancestor.toString()).block_timestamp,
         fromBlock: rewind.fromBlock.toString(), throughBlock: rewind.throughBlock.toString(),
       });
+      const discoveryDerived = await discoveryDerivedRollback.rollback(client, {
+        fromBlock: rewind.fromBlock.toString(), throughBlock: rewind.throughBlock.toString(),
+      });
       const orphaned = await client.query(
         `UPDATE robinhood_chain_blocks SET canonical=FALSE
           WHERE chain=$1 AND canonical=TRUE
@@ -520,6 +528,7 @@ function createRobinhoodChainRecoveryJournal(options = {}) {
         nextGeneration: disposition.nextGeneration,
         orphanedBlocks: Number(rewind.depth), tradeInvalidations, market, wallet,
         walletTransfers, liquidity, signedOrigins, firstBuys, holders, discovery, creator,
+        discoveryDerived,
         domainReady: [
           'canonical-journal', 'holders', 'liquidity', 'market',
           'publication-alerts', 'wallet', 'wallet-derived',

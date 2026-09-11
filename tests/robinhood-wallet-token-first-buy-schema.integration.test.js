@@ -283,7 +283,9 @@ describe('Robinhood wallet-token first buy schema integration', () => {
   });
 
   it('materializes shadow evidence atomically and removes FRESH after a reorg', async () => {
-    const repository = createRobinhoodFreshWalletShadowRepository({ database: db });
+    const repository = createRobinhoodFreshWalletShadowRepository({
+      database: db, projectionFence: async () => {},
+    });
     const lease = async () => (await db.query(`UPDATE robinhood_fresh_wallet_queue SET
       status = 'leased', lease_owner = 'shadow-test', lease_until = NOW() + INTERVAL '1 minute',
       completed_at = NULL WHERE token_address = $1 AND wallet_address = $2
@@ -418,7 +420,9 @@ describe('Robinhood wallet-token first buy schema integration', () => {
         outcomeReason: 'new_wallet_at_first_buy', reasonCode: 'new_wallet_at_first_buy',
         confidence: 'high' },
     }));
-    const repository = createRobinhoodFreshWalletShadowRepository({ database: db });
+    const repository = createRobinhoodFreshWalletShadowRepository({
+      database: db, projectionFence: async () => {},
+    });
     assert.deepEqual(await repository.replaceAndCompleteBatch(inputs,
       { allowForkReplacement: true }), [
       { completed: true, status: 'replace' }, { completed: true, status: 'replace' },

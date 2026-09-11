@@ -2,6 +2,9 @@ const db = require('./db');
 const {
   EVIDENCE_VERSION, RULE_VERSION,
 } = require('../services/robinhood-possible-bundle-materializer');
+const {
+  lockRobinhoodCanonicalProjection,
+} = require('./robinhood-canonical-projection-fence');
 
 const CHAIN = 'robinhood';
 const MAX_GROUPS = 5_000;
@@ -177,6 +180,7 @@ async function persistMembers(client, state, members) {
 function createRobinhoodPossibleBundleSnapshotRepository(options = {}) {
   const database = options.database || db;
   const now = options.now || (() => new Date().toISOString());
+  const projectionFence = options.projectionFence || lockRobinhoodCanonicalProjection;
 
   async function replaceSnapshot(input) {
     const snapshot = normalizeSnapshot(input, now());
@@ -191,7 +195,9 @@ function createRobinhoodPossibleBundleSnapshotRepository(options = {}) {
            FROM robinhood_bundle_funding_backfill_runs
           WHERE chain = $1 AND id = $2::bigint`, [CHAIN, state.sourceRunId]
       )).rows[0];
-      const result = await replaceSnapshotWithClient(client, snapshot, lineage, now());
+      const result = await replaceSnapshotWithClient(client, snapshot, lineage, now(), {
+        projectionFence,
+      });
       await client.query('COMMIT');
       return result;
     } catch (error) {
@@ -203,9 +209,12 @@ function createRobinhoodPossibleBundleSnapshotRepository(options = {}) {
   return Object.freeze({ replaceSnapshot });
 }
 
-async function replaceSnapshotWithClient(client, input, lineage, observedAt) {
+async function replaceSnapshotWithClient(client, input, lineage, observedAt, options = {}) {
   const snapshot = normalizeSnapshot(input, observedAt);
   const { state, groups, members } = snapshot;
+  await (options.projectionFence || lockRobinhoodCanonicalProjection)(client, {
+    blockNumber: state.throughBlockNumber, blockHash: state.throughBlockHash,
+  }, 'possible bundle');
   if (state.sourceKind === 'seed') assertLineage(lineage, state);
   else assertLiveLineage(lineage, state);
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [

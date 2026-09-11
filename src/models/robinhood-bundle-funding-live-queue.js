@@ -7,6 +7,7 @@ const token = (value) => normalizeTokenAddress(CHAIN, value);
 
 function createRobinhoodBundleFundingLiveQueueRepository(options = {}) {
   const database = options.database || db;
+  const projectionFence = options.projectionFence;
 
   async function claim(input = {}) {
     const owner = String(input.owner || '').trim();
@@ -114,7 +115,7 @@ function createRobinhoodBundleFundingLiveQueueRepository(options = {}) {
         ]);
       }
       const snapshotResult = await replaceSnapshotWithClient(
-        client, input.snapshot, locked.rows[0], new Date().toISOString()
+        client, input.snapshot, locked.rows[0], new Date().toISOString(), { projectionFence }
       );
       await client.query(`UPDATE robinhood_bundle_funding_live_queue SET
         status = 'complete', completed_version = requested_version,

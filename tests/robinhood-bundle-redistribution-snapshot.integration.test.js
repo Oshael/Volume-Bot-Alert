@@ -63,6 +63,7 @@ describe('Robinhood BUNDLED redistribution snapshot writer', () => {
   it('replaces atomically and protects policy plus canonical frontier', async () => {
     const writer = createRobinhoodBundleRedistributionSnapshotRepository({
       database: db, now: () => '2026-09-01T13:00:00Z',
+      projectionFence: async () => {},
     });
     assert.deepEqual(await writer.replaceSnapshot(snapshot('1', '100', HASH_A)), {
       status: 'published', groups: 1, members: 3,
@@ -77,6 +78,7 @@ describe('Robinhood BUNDLED redistribution snapshot writer', () => {
 
     const interrupted = createRobinhoodBundleRedistributionSnapshotRepository({
       database: failBeforeCommitDatabase(),
+      projectionFence: async () => {},
     });
     await assert.rejects(interrupted.replaceSnapshot(snapshot('2', '101', HASH_B, false)),
       /forced commit failure/);

@@ -89,7 +89,9 @@ describe('Robinhood BUNDLED redistribution live queue schema', () => {
       assert.equal((await client.query(`SELECT requested_version::text
         FROM robinhood_bundle_redistribution_queue`)).rows[0].requested_version, '3');
 
-      const queue = createRobinhoodBundleRedistributionLiveQueueRepository({ database: db });
+      const queue = createRobinhoodBundleRedistributionLiveQueueRepository({
+        database: db, projectionFence: async () => {},
+      });
       const [task] = await queue.claimBatch({ owner: 'shadow-test', limit: 1 });
       const stored = await queue.replaceSnapshotAndComplete({ ...task, owner: 'shadow-test',
         snapshot: { state: { tokenAddress: TOKEN_TWO, ruleVersion: RULE_VERSION,

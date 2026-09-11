@@ -89,7 +89,9 @@ describe('Robinhood SNIPER population calibration source integration', () => {
     assert.deepEqual((await db.query(__private.CACHED_ANCHORS_SQL, [
       [TOKEN], ['91'], ['250'], 'robinhood',
     ])).rows, []);
-    const queue = createRobinhoodBundleFundingLiveQueueRepository({ database: db });
+    const queue = createRobinhoodBundleFundingLiveQueueRepository({
+      database: db, projectionFence: async () => {},
+    });
     const task = await queue.claim({ owner: 'integration', leaseMs: 60_000 });
     assert.deepEqual({ tokenAddress: task.tokenAddress, requestedVersion: task.requestedVersion,
       anchorBlock: task.anchorBlock }, {

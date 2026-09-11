@@ -13,6 +13,7 @@ const bounded = (value, fallback, minimum, maximum) => {
 
 function createRobinhoodBundleRedistributionLiveQueueRepository(options = {}) {
   const database = options.database || db;
+  const projectionFence = options.projectionFence;
 
   async function claimBatch(input = {}) {
     const owner = String(input.owner || '').trim();
@@ -88,7 +89,7 @@ function createRobinhoodBundleRedistributionLiveQueueRepository(options = {}) {
         return Object.freeze({ completed: false, snapshot: null });
       }
       const snapshot = await replaceRedistributionSnapshotWithClient(
-        client, input.snapshot, new Date().toISOString()
+        client, input.snapshot, new Date().toISOString(), { projectionFence }
       );
       const completed = await client.query(`UPDATE robinhood_bundle_redistribution_queue SET
         status = 'complete', completed_version = requested_version,

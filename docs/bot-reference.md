@@ -4125,6 +4125,17 @@ LIVE por bloco sempre exige a âncora exata. Repairs mais antigos que o piso de
 retenção continuam permitidos, mas não podem atravessar um recovery ativo. Não
 há migration nem necessidade de RPC archive para executar o rollback.
 
+Os derivados de discovery/creator são invalidados antes da troca de
+canonicalidade. Launch anchors cujo frontier cruza a faixa órfã são removidos e
+recolocados na outbox somente quando ainda existe first-buy; itens sem first-buy
+são descartados e voltam a ser criados pelo trigger durante a recaptura. Estados
+de classificação holder, métricas de distribuição, BUNDLED, FRESH e
+redistribution que apontam à faixa ficam `reorged`, preservando o último payload
+apenas como não confiável até a nova frontier convergir. Os respectivos writers
+travam o cursor canônico em modo compartilhado e recusam recovery ativo ou hash
+não canônico; o materializador de launch anchor também exige holder frontier e
+pool ativos/canônicos. Não há migration nem RPC adicional.
+
 Antes de definir ou reduzir retenção de `robinhood_chain_events` e
 `robinhood_holder_transfer_journal`, execute
 `npm run robinhood:retention-safety-audit`. O comando é estritamente read-only,

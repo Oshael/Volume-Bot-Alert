@@ -78,6 +78,7 @@ describe('Robinhood holder CEX materializer integration', () => {
   it('publishes only CEX holders valid at the live ledger frontier', async () => {
     const materializer = createRobinhoodHolderCexMaterializer({
       database: db, now: () => '2026-08-21T13:00:00Z',
+      projectionFence: async () => {},
     });
 
     assert.deepEqual(await materializer.materializeToken(TOKEN), {

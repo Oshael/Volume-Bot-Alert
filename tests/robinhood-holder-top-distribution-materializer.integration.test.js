@@ -70,6 +70,7 @@ describe('Robinhood Top 10/50 distribution materializer integration', () => {
   it('publishes exact ranked balances and actual wallet counts at the live frontier', async () => {
     const materializer = createRobinhoodHolderTopDistributionMaterializer({
       database: db, now: () => '2026-08-27T12:00:00Z',
+      projectionFence: async () => {},
     });
 
     assert.deepEqual(await materializer.materializeToken(TOKEN), {
@@ -94,6 +95,7 @@ describe('Robinhood Top 10/50 distribution materializer integration', () => {
   it('publishes unavailable instead of an invented zero when supply is absent', async () => {
     const materializer = createRobinhoodHolderTopDistributionMaterializer({
       database: db, now: () => '2026-08-27T12:00:00Z',
+      projectionFence: async () => {},
     });
 
     await materializer.materializeToken(EMPTY_TOKEN);

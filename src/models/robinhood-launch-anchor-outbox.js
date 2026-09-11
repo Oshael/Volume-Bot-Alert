@@ -2,15 +2,23 @@ const db = require('./db');
 const { normalizeTokenAddress } = require('../utils/token-identity');
 
 const CHAIN = 'robinhood';
-const MATERIALIZE_SQL = `WITH target AS MATERIALIZED (
+const MATERIALIZE_SQL = `WITH capture AS MATERIALIZED (
+  SELECT checkpoint_block FROM robinhood_chain_capture_cursor
+   WHERE chain = $1 AND recovery_state = 'running' FOR SHARE
+), target AS MATERIALIZED (
   SELECT state.token_address, state.live_through_block,
          origin.discovery_block AS first_pool_block,
          origin.discovered_at AS first_pool_time
     FROM robinhood_holder_token_states state
+    CROSS JOIN capture
+    INNER JOIN robinhood_chain_blocks frontier
+      ON frontier.chain = state.chain AND frontier.canonical
+     AND frontier.block_number = state.live_through_block
+     AND frontier.block_hash = state.live_through_hash
     LEFT JOIN LATERAL (
       SELECT registry.discovery_block, registry.discovered_at
         FROM robinhood_pool_registry registry
-       WHERE registry.chain = state.chain
+       WHERE registry.chain = state.chain AND registry.active
          AND registry.token_address = state.token_address
          AND registry.discovery_block <= state.live_through_block
        ORDER BY registry.discovery_block, registry.protocol, registry.market_key
@@ -18,6 +26,7 @@ const MATERIALIZE_SQL = `WITH target AS MATERIALIZED (
     ) origin ON TRUE
    WHERE state.chain = $1 AND state.token_address = $2
      AND state.ledger_status = 'live' AND state.live_through_block IS NOT NULL
+     AND state.live_through_block <= capture.checkpoint_block
 ), anchor AS MATERIALIZED (
   SELECT target.*, swap.block_number AS launch_block, swap.block_time AS launch_block_time
     FROM target
@@ -27,7 +36,7 @@ const MATERIALIZE_SQL = `WITH target AS MATERIALIZED (
         INNER JOIN robinhood_pool_registry registry
           ON registry.chain = source.chain AND registry.protocol = source.protocol
          AND registry.market_key = source.market_key
-         AND registry.token_address = source.token_address
+         AND registry.token_address = source.token_address AND registry.active
          AND registry.discovery_block <= source.block_number
        WHERE source.chain = $1 AND source.token_address = target.token_address
          AND source.block_number BETWEEN target.first_pool_block AND target.live_through_block

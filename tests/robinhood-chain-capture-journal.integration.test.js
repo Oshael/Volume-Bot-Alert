@@ -64,6 +64,16 @@ const stage116 = require('../src/utils/db-init-stage116');
 const stage117 = require('../src/utils/db-init-stage117');
 const stage118 = require('../src/utils/db-init-stage118');
 const stage141 = require('../src/utils/db-init-stage141');
+const stage143 = require('../src/utils/db-init-stage143');
+const stage144 = require('../src/utils/db-init-stage144');
+const stage155 = require('../src/utils/db-init-stage155');
+const stage157 = require('../src/utils/db-init-stage157');
+const stage167 = require('../src/utils/db-init-stage167');
+const stage168 = require('../src/utils/db-init-stage168');
+const stage171 = require('../src/utils/db-init-stage171');
+const stage178 = require('../src/utils/db-init-stage178');
+const stage179 = require('../src/utils/db-init-stage179');
+const stage187 = require('../src/utils/db-init-stage187');
 const stage180 = require('../src/utils/db-init-stage180');
 const stage103 = require('../src/utils/db-init-stage103');
 const stage165 = require('../src/utils/db-init-stage165');
@@ -122,6 +132,23 @@ function capture(number = 100, hash = HASH, parentHash = PARENT) {
 }
 
 async function clearTables() {
+  await db.query("DELETE FROM robinhood_bundle_redistribution_states WHERE chain='robinhood'");
+  await db.query("DELETE FROM robinhood_fresh_wallet_evaluations WHERE chain='robinhood'");
+  await db.query("DELETE FROM robinhood_fresh_wallet_queue WHERE chain='robinhood'");
+  await db.query("DELETE FROM robinhood_fresh_wallet_token_coverage WHERE chain='robinhood'");
+  await db.query("DELETE FROM robinhood_fresh_wallet_seed_runs WHERE chain='robinhood'");
+  await db.query("DELETE FROM robinhood_fresh_wallet_activations WHERE chain='robinhood'");
+  await db.query("DELETE FROM robinhood_possible_bundle_states WHERE chain='robinhood'");
+  await db.query('DELETE FROM robinhood_bundle_funding_backfill_ranges');
+  await db.query('DELETE FROM robinhood_bundle_funding_backfill_candidates');
+  await db.query("DELETE FROM robinhood_bundle_funding_backfill_runs WHERE chain='robinhood'");
+  await db.query("DELETE FROM robinhood_native_funding_edges WHERE chain='robinhood'");
+  await db.query("DELETE FROM robinhood_native_funding_events WHERE chain='robinhood'");
+  await db.query("DELETE FROM robinhood_holder_classifications WHERE chain='robinhood'");
+  await db.query("DELETE FROM robinhood_holder_classification_states WHERE chain='robinhood'");
+  await db.query("DELETE FROM robinhood_holder_distribution_metrics WHERE chain='robinhood'");
+  await db.query("DELETE FROM robinhood_launch_anchor_outbox WHERE chain='robinhood'");
+  await db.query("DELETE FROM robinhood_token_launch_anchors WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_token_attributions WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_direct_creator_cursors WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_holder_hot_queue WHERE chain='robinhood'");
@@ -215,6 +242,16 @@ describe('Robinhood canonical chain capture journal', () => {
     await stage117.init({ closePool: false });
     await stage118.init({ closePool: false });
     await stage141.init({ closePool: false });
+    await stage143.init({ closePool: false });
+    await stage144.init({ closePool: false });
+    await stage155.init({ closePool: false });
+    await stage157.init({ closePool: false });
+    await stage167.init({ closePool: false });
+    await stage168.init({ closePool: false });
+    await stage171.init({ closePool: false });
+    await stage178.init({ closePool: false });
+    await stage179.init({ closePool: false });
+    await stage187.init({ closePool: false });
     await stage180.init({ closePool: false });
   });
 
@@ -794,6 +831,64 @@ describe('Robinhood canonical chain capture journal', () => {
        ) VALUES ('robinhood',$1,1,'live',100,100,101,$2)`, [TOKEN, NEXT_HASH]
     );
     await db.query(
+      `INSERT INTO robinhood_token_launch_anchors(
+         chain, token_address, first_pool_block, launch_block, launch_block_time,
+         source_through_block, evidence_version
+       ) VALUES ('robinhood',$1,100,100,$2,101,'rh_launch_anchor_v1')`,
+      [TOKEN, OBSERVED_AT]
+    );
+    await db.query(
+      `INSERT INTO robinhood_launch_anchor_outbox(chain,token_address)
+       VALUES ('robinhood',$1) ON CONFLICT DO NOTHING`, [CREATOR_ORPHAN_TOKEN]
+    );
+    await db.query(
+      `INSERT INTO robinhood_holder_classification_states(
+         chain,token_address,classifier,classification_version,status,status_reason,
+         through_block_number,through_block_hash,observed_at
+       ) VALUES
+         ('robinhood',$1,'lp','rh_holder_v1','ready','classified',101,$2,$3),
+         ('robinhood',$1,'cex','rh_holder_v1','ready','classified',100,$4,$3)`,
+      [TOKEN, NEXT_HASH, OBSERVED_AT, HASH]
+    );
+    await db.query(
+      `INSERT INTO robinhood_holder_classifications(
+         chain,token_address,wallet_address,tag,classification_version,confidence,
+         reason_code,evidence_json,through_block_number,through_block_hash,observed_at
+       ) VALUES ('robinhood',$1,$2,'lp','rh_holder_v1','deterministic',
+         'registered_token_pool','{"source":"reorg-test"}',101,$3,$4)`,
+      [TOKEN, LIQUIDITY_POOL, NEXT_HASH, OBSERVED_AT]
+    );
+    await db.query(
+      `INSERT INTO robinhood_holder_distribution_metrics(
+         chain,token_address,metric,classification_version,status,status_reason,
+         value_numerator_raw,value_denominator_raw,wallet_count,evidence_json,
+         through_block_number,through_block_hash,observed_at
+       ) VALUES
+         ('robinhood',$1,'top10','rh_holder_v1','ready','calculated',1,10,1,
+          '{"source":"reorg-test"}',101,$2,$3),
+         ('robinhood',$1,'top50','rh_holder_v1','ready','calculated',2,10,2,
+          '{"source":"reorg-test"}',100,$4,$3)`,
+      [TOKEN, NEXT_HASH, OBSERVED_AT, HASH]
+    );
+    await db.query(
+      `INSERT INTO robinhood_possible_bundle_states(
+         chain,token_address,rule_version,evidence_version,status,status_reason,
+         source_kind,source_version,lookback_blocks,minimum_value_wei,
+         through_block_number,through_block_hash,observed_at
+       ) VALUES ('robinhood',$1,'rh_possible_bundle_v1','rh_native_funding_v1',
+         'ready','no_groups','live',1,10,1,101,$2,$3)`,
+      [TOKEN, NEXT_HASH, OBSERVED_AT]
+    );
+    await db.query(
+      `INSERT INTO robinhood_bundle_redistribution_states(
+         chain,token_address,rule_version,evidence_version,status,status_reason,
+         source_kind,source_version,through_block_number,through_block_hash,
+         policy_json,observed_at
+       ) VALUES ('robinhood',$1,'rh_possible_bundle_redistribution_v1',
+         'rh_token_redistribution_v1','ready','no_groups','live',1,101,$2,
+         '{"source":"reorg-test"}',$3)`, [TOKEN, NEXT_HASH, OBSERVED_AT]
+    );
+    await db.query(
       `INSERT INTO robinhood_holder_balances(
          chain, token_address, wallet_address, balance_raw, last_block_number,
          last_transaction_hash, last_log_index
@@ -870,6 +965,14 @@ describe('Robinhood canonical chain capture journal', () => {
         invalidatedPools: 1, clearedNoxaMetadata: 0, deletedProcessedLogs: 1,
       },
       creator: { deletedAttributions: 1, cursorRewound: true },
+      discoveryDerived: {
+        deletedLaunchAnchors: 1, requeuedLaunchAnchors: 1, removedOrphanOutbox: 1,
+        invalidated: {
+          classificationStates: 1, distributionMetrics: 1,
+          possibleBundleStates: 1, freshCoverage: 0, freshEvaluations: 0,
+          redistributionStates: 1,
+        },
+      },
     });
     assert.deepEqual(await journal.rewindCanonicalRecovery({ generation: '0' }), {
       status: 'already-rewound', generation: '0', nextGeneration: '1',
@@ -922,6 +1025,32 @@ describe('Robinhood canonical chain capture journal', () => {
         checkpoint_block: '100', checkpoint_hash: HASH,
       },
     ]);
+    const derived = await db.query(
+      `SELECT
+         (SELECT COUNT(*)::int FROM robinhood_token_launch_anchors
+           WHERE chain='robinhood') AS anchors,
+         (SELECT COUNT(*)::int FROM robinhood_launch_anchor_outbox
+           WHERE chain='robinhood' AND token_address=$1 AND status='pending') AS queued,
+         (SELECT status FROM robinhood_holder_classification_states
+           WHERE chain='robinhood' AND token_address=$1 AND classifier='lp') AS lp_status,
+         (SELECT status FROM robinhood_holder_classification_states
+           WHERE chain='robinhood' AND token_address=$1 AND classifier='cex') AS cex_status,
+         (SELECT status FROM robinhood_holder_distribution_metrics
+           WHERE chain='robinhood' AND token_address=$1 AND metric='top10') AS top10_status,
+         (SELECT status FROM robinhood_holder_distribution_metrics
+           WHERE chain='robinhood' AND token_address=$1 AND metric='top50') AS top50_status,
+         (SELECT status FROM robinhood_possible_bundle_states
+           WHERE chain='robinhood' AND token_address=$1) AS bundle_status,
+         (SELECT status FROM robinhood_bundle_redistribution_states
+           WHERE chain='robinhood' AND token_address=$1) AS redistribution_status,
+         (SELECT COUNT(*)::int FROM robinhood_holder_classifications
+           WHERE chain='robinhood' AND token_address=$1) AS retained_classifications`, [TOKEN]
+    );
+    assert.deepEqual(derived.rows[0], {
+      anchors: 0, queued: 1, lp_status: 'reorged', cex_status: 'ready',
+      top10_status: 'reorged', top50_status: 'ready', bundle_status: 'reorged',
+      redistribution_status: 'reorged', retained_classifications: 1,
+    });
     const cursor = await journal.getCursor();
     assert.deepEqual({
       generation: cursor.generation, state: cursor.recovery_state,

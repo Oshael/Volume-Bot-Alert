@@ -88,6 +88,7 @@ describe('Robinhood possible-bundle snapshot writer', () => {
     const first = snapshot(firstRun, '200', HASH_A);
     const writer = createRobinhoodPossibleBundleSnapshotRepository({
       database: db, now: () => '2026-08-27T01:00:00Z',
+      projectionFence: async () => {},
     });
     assert.deepEqual(await writer.replaceSnapshot(first), {
       status: 'published', groups: 1, members: 2,
@@ -100,6 +101,7 @@ describe('Robinhood possible-bundle snapshot writer', () => {
     const empty = snapshot(secondRun, '201', HASH_B, false);
     const interrupted = createRobinhoodPossibleBundleSnapshotRepository({
       database: failBeforeCommitDatabase(), now: () => '2026-08-27T02:00:00Z',
+      projectionFence: async () => {},
     });
     await assert.rejects(interrupted.replaceSnapshot(empty), /forced commit failure/);
     assert.deepEqual((await db.query(`SELECT source_run_id::text, status_reason
@@ -121,7 +123,9 @@ describe('Robinhood possible-bundle snapshot writer', () => {
   it('ignores an older run and rejects an equal-height fork or invalid shape', async () => {
     await cleanup();
     const currentRun = await createRun('200', HASH_A);
-    const writer = createRobinhoodPossibleBundleSnapshotRepository({ database: db });
+    const writer = createRobinhoodPossibleBundleSnapshotRepository({
+      database: db, projectionFence: async () => {},
+    });
     const current = snapshot(currentRun, '200', HASH_A);
     await writer.replaceSnapshot(current);
     const olderRun = await createRun('199', HASH_B);
