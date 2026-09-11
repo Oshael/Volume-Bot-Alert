@@ -1,4 +1,7 @@
 const db = require('./db');
+const {
+  captureTransferPreimages,
+} = require('./robinhood-wallet-transfer-reorg-journal');
 const CHAIN = 'robinhood';
 const ZERO_ADDRESS = `0x${'0'.repeat(40)}`;
 const STREAMS = new Set(['seed', 'live']);
@@ -68,6 +71,7 @@ function normalizeEvent(input, projectionVersion) {
   }
   return {
     block: uint(input.blockNumber, 'blockNumber'),
+    blockHash: input.blockHash == null ? null : hash(input.blockHash, 'blockHash'),
     transactionIndex: index(input.transactionIndex ?? 0, 'transactionIndex'),
     logIndex: index(input.logIndex ?? 0, 'logIndex'),
     blockTime: timestamp(input.blockTime, 'blockTime'),
@@ -104,8 +108,7 @@ function addDailySummary(summaries, event) {
   summary.through = later(summary.through, event);
   summaries.set(key, summary);
 }
-function summarize(events, projectionVersion) {
-  const normalized = events.map((event) => normalizeEvent(event, projectionVersion));
+function summarizeNormalized(normalized) {
   const identities = new Set(normalized.map((event) => (
     `${event.transactionHash}:${event.logIndex}`
   )));
@@ -153,6 +156,9 @@ function summarize(events, projectionVersion) {
     events: normalized, edges: [...edges.values()], relationships: [...relationships.values()],
     dailySummaries: [...dailySummaries.values()],
   };
+}
+function summarize(events, projectionVersion) {
+  return summarizeNormalized(events.map((event) => normalizeEvent(event, projectionVersion)));
 }
 function cursor(row) {
   return row ? {
@@ -232,6 +238,7 @@ function rejectionReason(current, batch, effectiveSafeHead) {
 function createRobinhoodWalletTransferProjectionRepository(options = {}) {
   const database = options.database || db;
   const positionProjection = options.positionProjection || null;
+  const reorgJournal = options.reorgJournal || { captureTransferPreimages };
   async function loadCursor(projectionVersion, stream) {
     const result = await database.query(
       `SELECT * FROM robinhood_wallet_transfer_cursors
@@ -286,6 +293,12 @@ function createRobinhoodWalletTransferProjectionRepository(options = {}) {
         await client.query('ROLLBACK');
         return { committed: false, reason };
       }
+      let reorgJournalEntries = 0;
+      if (batch.stream === 'live') {
+        reorgJournalEntries = await reorgJournal.captureTransferPreimages(
+          client, batch.projectionVersion, batch.summary.events
+        );
+      }
       await persistEdges(client, batch.projectionVersion, batch.summary.edges);
       await persistDailySummaries(client, batch.projectionVersion, batch.summary.dailySummaries);
       await persistEvidence(client, batch.projectionVersion, batch.summary.relationships);
@@ -310,6 +323,7 @@ function createRobinhoodWalletTransferProjectionRepository(options = {}) {
         committed: true, edgeGroups: batch.summary.edges.length,
         dailySummaryGroups: batch.summary.dailySummaries.length,
         evidenceCandidates: batch.summary.relationships.length * 3,
+        reorgJournalEntries,
         ...(positionResult ? { positionProjection: positionResult } : {}),
         cursor: cursor(advanced.rows[0]),
       };

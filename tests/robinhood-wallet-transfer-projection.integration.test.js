@@ -16,18 +16,21 @@ const stage131 = require('../src/utils/db-init-stage131');
 const stage134 = require('../src/utils/db-init-stage134');
 const stage137 = require('../src/utils/db-init-stage137');
 const stage153 = require('../src/utils/db-init-stage153');
+const stage208 = require('../src/utils/db-init-stage208');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const VERSION = 'test_transfer_projection_v1';
 const ATOMIC_VERSION = 'test_transfer_position_atomic_v1';
 const POSITION_VERSION = 'test_unified_transfer_v1';
+const LIVE_VERSION = 'test_transfer_live_reorg_v1';
 const TOKEN = `0x${'1'.repeat(40)}`;
 const ALICE = `0x${'2'.repeat(40)}`;
 const BOB = `0x${'3'.repeat(40)}`;
 function event(block, logIndex, amountRaw, transferKind = 'wallet_transfer') {
   return {
     blockNumber: String(block), transactionIndex: String(logIndex), logIndex: String(logIndex),
-    blockTime: `2099-01-${block === 100 ? '01' : '02'}T00:00:00.000Z`,
+    blockHash: `0x${String(block % 10).repeat(64)}`,
+    blockTime: `2099-01-${String(block - 99).padStart(2, '0')}T00:00:00.000Z`,
     transactionHash: `0x${String(logIndex).padStart(64, 'a')}`,
     tokenAddress: TOKEN, fromWallet: ALICE, toWallet: BOB, amountRaw: String(amountRaw),
     transferKind, classificationVersion: VERSION,
@@ -35,7 +38,8 @@ function event(block, logIndex, amountRaw, transferKind = 'wallet_transfer') {
 }
 
 async function cleanup() {
-  const transferVersions = [VERSION, ATOMIC_VERSION];
+  const transferVersions = [VERSION, ATOMIC_VERSION, LIVE_VERSION];
+  await db.query('DELETE FROM robinhood_wallet_transfer_reorg_journal WHERE projection_version = ANY($1::varchar[])', [transferVersions]);
   await db.query('DELETE FROM robinhood_wallet_relationship_evidence WHERE algorithm_version = ANY($1::varchar[])', [transferVersions]);
   await db.query('DELETE FROM robinhood_wallet_transfer_edges WHERE classification_version = ANY($1::varchar[])', [transferVersions]);
   await db.query('DELETE FROM robinhood_wallet_transfer_daily_summaries WHERE projection_version = ANY($1::varchar[])', [transferVersions]);
@@ -55,6 +59,7 @@ describe('Robinhood wallet transfer projection persistence', () => {
     await stage134.init({ closePool: false });
     await stage137.init({ closePool: false });
     await stage153.init({ closePool: false });
+    await stage208.init({ closePool: false });
     await cleanup();
   });
   after(async () => {
@@ -247,5 +252,50 @@ describe('Robinhood wallet transfer projection persistence', () => {
     assert.deepEqual(position.rows, [{ quantity_raw: '10' }]);
     assert.equal(transferCursor.version, 1);
     assert.equal(positionCursor.version, 1);
+  });
+
+  it('journals exact LIVE preimages per batch before replacing aggregates', async () => {
+    const repository = createRobinhoodWalletTransferProjectionRepository({ database: db });
+    await repository.initCursor({
+      projectionVersion: LIVE_VERSION, stream: 'live', nextBlock: '100',
+      nextBlockTime: '2099-01-01T00:00:00.000Z', safeHead: '200',
+    });
+    const first = await repository.commitBatch({
+      projectionVersion: LIVE_VERSION, stream: 'live', expectedVersion: 0,
+      nextBlock: '101', nextBlockTime: '2099-01-02T00:00:00.000Z', safeHead: '200',
+      checkpointBlock: '100', checkpointHash: event(100, 1, 10).blockHash,
+      events: [{ ...event(100, 1, 10), classificationVersion: LIVE_VERSION }],
+    });
+    const second = await repository.commitBatch({
+      projectionVersion: LIVE_VERSION, stream: 'live', expectedVersion: 1,
+      nextBlock: '103', nextBlockTime: '2099-01-04T00:00:00.000Z', safeHead: '200',
+      checkpointBlock: '102', checkpointHash: event(102, 3, 30).blockHash,
+      events: [
+        { ...event(101, 2, 20), classificationVersion: LIVE_VERSION },
+        { ...event(102, 3, 30), classificationVersion: LIVE_VERSION },
+      ],
+    });
+    assert.equal(first.reorgJournalEntries, 6);
+    assert.equal(second.reorgJournalEntries, 7);
+    const journal = await db.query(
+      `SELECT block_number::text, had_previous, previous_row
+         FROM robinhood_wallet_transfer_reorg_journal
+        WHERE projection_version=$1 AND aggregate_kind='edge'
+        ORDER BY block_number`, [LIVE_VERSION]
+    );
+    assert.equal(journal.rows[0].had_previous, false);
+    assert.equal(journal.rows[0].previous_row, null);
+    assert.equal(journal.rows[1].had_previous, true);
+    assert.equal(journal.rows[1].previous_row.transfer_count, '1');
+    assert.equal(journal.rows[1].previous_row.total_amount_raw, '10');
+    const marker = await db.query(
+      `SELECT block_number::text, identity_key
+         FROM robinhood_wallet_transfer_reorg_journal
+        WHERE projection_version=$1 AND aggregate_kind='block_marker'
+        ORDER BY block_number DESC LIMIT 1`, [LIVE_VERSION]
+    );
+    assert.deepEqual(marker.rows[0], {
+      block_number: '102', identity_key: `range:101:${event(101, 2, 20).blockHash}`,
+    });
   });
 });
