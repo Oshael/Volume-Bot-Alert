@@ -2,22 +2,31 @@
 
 const { randomUUID } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
+const { existsSync } = require('node:fs');
 
 const DATABASE = 'volume_alert_reorg_test';
 const USER = 'reorg_test';
 const IMAGE = 'postgres:16-alpine';
 const PURPOSE_LABEL = 'com.trendscope.purpose=robinhood-reorg-safety-test';
-const TEST_FILES = Object.freeze([
+const INIT_FILES = Object.freeze([
+  'src/utils/db-init.js',
+  'src/utils/db-init-stage5.js',
+]);
+const REQUIRED_TEST_FILES = Object.freeze([
   'tests/robinhood-chain-capture-journal.integration.test.js',
   'tests/robinhood-wallet-swap-outbox.integration.test.js',
   'tests/robinhood-wallet-swap-realtime-audit-runner.test.js',
   'tests/robinhood-wallet-swap-realtime-publisher-runner.test.js',
   'tests/market-trade-finality-event.test.js',
   'tests/market-trade-realtime.test.js',
-  'tests/frontend-market-events.test.js',
   'tests/frontend-robinhood-trades-format.test.js',
+]);
+const ESBUILD_TEST_FILES = Object.freeze([
+  'tests/frontend-market-events.test.js',
   'tests/frontend-socket-client.test.js',
 ]);
+const TEST_FILES = Object.freeze([...REQUIRED_TEST_FILES, ...ESBUILD_TEST_FILES]);
+const ESBUILD_PATH = 'frontend/node_modules/esbuild';
 
 function parsePublishedPort(output) {
   const match = String(output || '').trim().match(/(?:^|\n)127\.0\.0\.1:([0-9]+)$/m);
@@ -44,6 +53,14 @@ function createTestEnvironment(baseEnvironment, port, password) {
   environment.DATABASE_URL_TEST =
     `postgresql://${USER}:${password}@127.0.0.1:${port}/${DATABASE}`;
   return environment;
+}
+
+function resolveTestFiles(pathExists = existsSync) {
+  const optional = pathExists(ESBUILD_PATH) ? ESBUILD_TEST_FILES : [];
+  return {
+    files: [...REQUIRED_TEST_FILES, ...optional],
+    skipped: ESBUILD_TEST_FILES.filter((file) => !optional.includes(file)),
+  };
 }
 
 function commandFailure(label, result) {
@@ -132,16 +149,22 @@ function runRobinhoodReorgSafetyTest(options = {}) {
     const env = createTestEnvironment(options.env || process.env, port, password);
     console.log(`[ReorgSafety] Target locked to 127.0.0.1:${port}/${DATABASE}.`);
 
-    const init = run(process.execPath, ['src/utils/db-init.js'], { env });
-    if (init.status !== 0) throw commandFailure('Test database initialization', init);
+    for (const file of INIT_FILES) {
+      const init = run(process.execPath, [file], { env });
+      if (init.status !== 0) throw commandFailure(`Test database initialization (${file})`, init);
+    }
 
+    const selection = resolveTestFiles(options.existsSync);
+    if (selection.skipped.length) {
+      console.log(`[ReorgSafety] Optional frontend tests skipped: ${selection.skipped.join(', ')}.`);
+    }
     const tests = run(process.execPath, [
-      '--test', '--test-force-exit', '--test-concurrency=1', ...TEST_FILES,
+      '--test', '--test-force-exit', '--test-concurrency=1', ...selection.files,
     ], { env });
     if (tests.status !== 0) throw commandFailure('Robinhood reorg safety suite', tests);
     passed = true;
-    console.log(`[ReorgSafety] PASS: ${TEST_FILES.length} test files completed.`);
-    return { status: 'passed', files: TEST_FILES.length };
+    console.log(`[ReorgSafety] PASS: ${selection.files.length} required/available test files completed.`);
+    return { status: 'passed', files: selection.files.length, skipped: selection.skipped.length };
   } finally {
     if (started && passed) {
       removeContainer(run, container);
@@ -178,11 +201,16 @@ if (require.main === module) {
 
 module.exports = {
   DATABASE,
+  ESBUILD_PATH,
+  ESBUILD_TEST_FILES,
   IMAGE,
+  INIT_FILES,
   PURPOSE_LABEL,
+  REQUIRED_TEST_FILES,
   TEST_FILES,
   createCommandRunner,
   createTestEnvironment,
   parsePublishedPort,
+  resolveTestFiles,
   runRobinhoodReorgSafetyTest,
 };

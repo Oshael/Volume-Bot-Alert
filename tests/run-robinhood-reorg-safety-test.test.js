@@ -4,11 +4,16 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const {
   DATABASE,
+  ESBUILD_PATH,
+  ESBUILD_TEST_FILES,
   IMAGE,
+  INIT_FILES,
   PURPOSE_LABEL,
+  REQUIRED_TEST_FILES,
   TEST_FILES,
   createTestEnvironment,
   parsePublishedPort,
+  resolveTestFiles,
   runRobinhoodReorgSafetyTest,
 } = require('../src/utils/run-robinhood-reorg-safety-test');
 
@@ -32,7 +37,7 @@ function fakeDockerResult(args, options) {
 }
 
 function fakeNodeResult(args, options) {
-  if (args[0] === 'src/utils/db-init.js') return { status: options.initStatus ?? 0 };
+  if (INIT_FILES.includes(args[0])) return { status: options.initStatus ?? 0 };
   if (args[0] === '--test') return { status: options.testStatus ?? 0 };
   throw new Error(`Unexpected Node command: ${args.join(' ')}`);
 }
@@ -84,6 +89,17 @@ describe('Robinhood reorg safety test runner', () => {
     );
   });
 
+  it('keeps database tests required and skips only esbuild tests in a minimal deploy', () => {
+    assert.deepEqual(resolveTestFiles((path) => path !== ESBUILD_PATH), {
+      files: [...REQUIRED_TEST_FILES],
+      skipped: [...ESBUILD_TEST_FILES],
+    });
+    assert.deepEqual(resolveTestFiles(() => true), {
+      files: [...TEST_FILES],
+      skipped: [],
+    });
+  });
+
   it('runs the suite against an isolated container and removes it after success', () => {
     const fake = fakeRunner();
     assert.deepEqual(runRobinhoodReorgSafetyTest({
@@ -91,7 +107,8 @@ describe('Robinhood reorg safety test runner', () => {
       randomUUID: uuidSequence(),
       env: { DATABASE_URL: 'postgresql://production' },
       wait: () => {},
-    }), { status: 'passed', files: TEST_FILES.length });
+      existsSync: () => true,
+    }), { status: 'passed', files: TEST_FILES.length, skipped: 0 });
 
     const dockerRun = fake.calls.find(({ command, args }) => (
       command === 'docker' && args[0] === 'run'
@@ -99,6 +116,11 @@ describe('Robinhood reorg safety test runner', () => {
     assert.ok(dockerRun.args.includes(IMAGE));
     assert.ok(dockerRun.args.includes(PURPOSE_LABEL));
     assert.ok(dockerRun.args.includes('127.0.0.1::5432'));
+
+    const initFiles = fake.calls.filter(({ command, args }) => (
+      command === process.execPath && INIT_FILES.includes(args[0])
+    )).map(({ args }) => args[0]);
+    assert.deepEqual(initFiles, [...INIT_FILES]);
 
     const test = fake.calls.find(({ command, args }) => (
       command === process.execPath && args[0] === '--test'
@@ -122,6 +144,7 @@ describe('Robinhood reorg safety test runner', () => {
       run: fake.run,
       randomUUID: uuidSequence(),
       wait: () => {},
+      existsSync: () => true,
     }), /Robinhood reorg safety suite failed/);
     assert.equal(fake.calls.some(({ command, args }) => (
       command === 'docker' && args[0] === 'rm'
@@ -134,6 +157,7 @@ describe('Robinhood reorg safety test runner', () => {
       run: fake.run,
       randomUUID: uuidSequence(),
       wait: () => {},
+      existsSync: () => true,
     }), /docker daemon unavailable/);
     assert.equal(fake.calls.some(({ command, args }) => (
       command === 'docker' && args[0] === 'run'

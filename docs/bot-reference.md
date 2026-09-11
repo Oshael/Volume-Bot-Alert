@@ -779,10 +779,12 @@ publicados permanecem disponíveis para auditoria e são removidos pela retenç�
 
 O drill consolidado `npm run robinhood:reorg-safety-test` exige Docker, cria um PostgreSQL 16
 efêmero em porta aleatória restrita a `127.0.0.1` e injeta `DATABASE_URL_TEST` para o database fixo
-`volume_alert_reorg_test`. Ele inicializa o schema base e executa sequencialmente as integrações de
-rewind, lifecycle, publicação e aplicação frontend com fixtures sintéticas; nunca reutiliza as
-variáveis de conexão normais. Em sucesso remove o container. Em falha preserva o container nomeado
-e imprime os comandos de inspeção e limpeza; remova-o depois de concluir a auditoria.
+`volume_alert_reorg_test`. Ele inicializa o schema base e a Stage 5 exigida pelo bootstrap do
+journal, depois executa sequencialmente as integrações de rewind, lifecycle e publicação com
+fixtures sintéticas; nunca reutiliza as variáveis de conexão normais. Os dois testes frontend que
+exigem `frontend/node_modules/esbuild` rodam quando essa dependência estiver instalada e são
+reportados como opcionais no deploy mínimo. Em sucesso remove o container. Em falha preserva o
+container nomeado e imprime os comandos de inspeção e limpeza; remova-o depois da auditoria.
 
 O grupo `robinhood-wallet`, com `ROBINHOOD_WALLET_SWAP_LIVE_SOURCE=durable_outbox` (default), acorda
 por `LISTEN` tanto no append quanto no avanço da finalidade e usa o intervalo de 2s somente como
