@@ -8,6 +8,7 @@ const {
 } = require('../models/robinhood-wallet-swap-outbox');
 const {
   createRobinhoodWalletSwapRealtimeOutboxRepository,
+  NOTIFY_CHANNEL: REALTIME_NOTIFY_CHANNEL,
 } = require('../models/robinhood-wallet-swap-realtime-outbox');
 const {
   createRobinhoodTransactionPositionRepository,
@@ -22,6 +23,9 @@ const { runLiveTick } = require('./robinhood-wallet-swap-live-runner');
 const {
   createRobinhoodWalletSwapOutboxRunner,
 } = require('./robinhood-wallet-swap-outbox-runner');
+const {
+  createRobinhoodWalletSwapRealtimeAuditRunner,
+} = require('./robinhood-wallet-swap-realtime-audit-runner');
 const marketTradeRealtime = require('./market-trade-realtime');
 const {
   NOTIFY_CHANNEL: OUTBOX_NOTIFY_CHANNEL,
@@ -82,16 +86,32 @@ async function buildRuntime(options, deps = {}) {
         maxAttempts: options.outboxMaxAttempts,
       },
     });
+    const auditRunner = (
+      deps.realtimeAuditRunnerFactory || createRobinhoodWalletSwapRealtimeAuditRunner
+    )({
+      repository: lifecycle,
+      options: {
+        batchSize: options.outboxBatchSize,
+        leaseMs: options.outboxLeaseMs,
+        maxAttempts: options.outboxMaxAttempts,
+      },
+    });
     return {
       sourceMode: DURABLE_OUTBOX_SOURCE,
       providerChainIds: Object.freeze({ canonical_journal: '4663' }),
       legacyDiscarded,
       runOnce: async () => {
         const result = await runner.runOnce();
+        let audit;
+        try {
+          audit = await auditRunner.runOnce();
+        } catch (error) {
+          audit = { status: 'error', error: publicError(error) };
+        }
         const completeThroughBlock = await outbox.advanceCompatibilityWatermark(
           result.throughBlock
         );
-        return { ...result, completeThroughBlock };
+        return { ...result, completeThroughBlock, audit };
       },
     };
   }
@@ -189,6 +209,8 @@ function createRobinhoodWalletSwapLiveWorker(deps = {}) {
     batches: 0, processedBlocks: 0, attributed: 0, inserted: 0, duplicateInserts: 0,
     missing: 0, unresolved: 0, retries: 0, conflicts: 0,
     promoted: 0, claimed: 0, delivered: 0, retried: 0, blocked: 0, reclaimed: 0,
+    auditClaimed: 0, audited: 0, auditRetried: 0, auditBlocked: 0,
+    auditReclaimed: 0, auditErrors: 0, lastAuditResult: null,
     legacyDiscarded: 0, totalWakes: 0, lastWakeAt: null,
     consecutiveErrors: 0, consecutiveBlocked: 0, blockedBlock: null,
     lastCompletedAt: null, lastError: null,
@@ -234,6 +256,16 @@ function createRobinhoodWalletSwapLiveWorker(deps = {}) {
     status.consecutiveBlocked = blocked && status.blockedBlock === result.failedBlock
       ? status.consecutiveBlocked + 1 : (blocked ? 1 : 0);
     status.blockedBlock = blocked ? result.failedBlock : null;
+    const audit = result.audit;
+    if (audit) {
+      status.lastAuditResult = audit;
+      status.auditClaimed += Number(audit.claimed || 0);
+      status.audited += Number(audit.audited || 0);
+      status.auditRetried += Number(audit.retried || 0);
+      status.auditBlocked += Number(audit.blocked || 0);
+      status.auditReclaimed += Number(audit.reclaimed || 0);
+      status.auditErrors += audit.status === 'error' ? 1 : 0;
+    }
   }
 
   async function execute() {
@@ -293,7 +325,8 @@ function createRobinhoodWalletSwapLiveWorker(deps = {}) {
         options.intervalMs * (2 ** Math.min(failures, 8))
       );
       const drainAgain = Number(result?.claimed || 0) > 0
-        || Number(result?.promoted || 0) >= options.outboxBatchSize;
+        || Number(result?.promoted || 0) >= options.outboxBatchSize
+        || Number(result?.audit?.claimed || 0) > 0;
       queueNext(failures ? backoff : (drainAgain ? 0 : options.intervalMs));
     }, delay);
     timer?.unref?.();
@@ -319,7 +352,9 @@ function createRobinhoodWalletSwapLiveWorker(deps = {}) {
     status.halted = false;
     if (options.sourceMode === DURABLE_OUTBOX_SOURCE) {
       const listenerFactory = deps.listenerFactory || createPostgresRealtimeListener;
-      listener = [OUTBOX_NOTIFY_CHANNEL, CAPTURE_NOTIFY_CHANNEL].map((channel) => (
+      listener = [
+        OUTBOX_NOTIFY_CHANNEL, REALTIME_NOTIFY_CHANNEL, CAPTURE_NOTIFY_CHANNEL,
+      ].map((channel) => (
         listenerFactory({
           channel, label: 'RobinhoodWalletSwapLiveWorker',
           pool: deps.pool || db.pool, onNotification: wake,

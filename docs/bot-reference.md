@@ -712,10 +712,13 @@ implantar o código que usa o novo alvo de conflito.
 O repositório da Stage 209 faz claim/lease/retry/reclaim no namespace `audit_*`, independente do
 `status` e `published_at` reservados para entrega websocket. Um `finalized` ou `invalidate` só pode
 ser reclamado depois que o `observed` da mesma identidade de ramificação estiver com
-`audit_status='complete'`. Neste ponto ainda não existe worker para o canal: nada é auditado automaticamente nem
-publicado ao browser, e a tabela cresce em shadow, normalmente com uma linha `observed` e outra
-`finalized` por swap maduro. Não limpar essas linhas antes dos cortes de consumo e retenção. O
-status do wallet worker expõe `promoted`;
+`audit_status='complete'`. O grupo `robinhood-wallet` escuta também
+`robinhood_wallet_swap_realtime_outbox`, reclama leases expiradas e drena o auditor imediatamente
+enquanto houver trabalho reclamado; o tick de 2s só reconcilia `NOTIFY` perdido. O auditor valida
+envelope, identidade, contrato e campos econômicos básicos, mas não chama publisher nem
+altera o estado de publicação. Falha do shadow aparece em `lastAuditResult`/`auditErrors` e não
+interrompe a entrega finalizada existente, que sempre roda primeiro no tick. Não limpar essas
+linhas antes do corte de retenção. O status do wallet worker também expõe `promoted`;
 um lote cheio é drenado imediatamente, enquanto o intervalo de 2s permanece reconciliação ociosa.
 O grupo `robinhood-wallet`, com `ROBINHOOD_WALLET_SWAP_LIVE_SOURCE=durable_outbox` (default), acorda
 por `LISTEN` tanto no append quanto no avanço da finalidade e usa o intervalo de 2s somente como

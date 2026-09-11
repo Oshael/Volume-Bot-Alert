@@ -220,6 +220,8 @@ describe('Robinhood wallet-swap LIVE worker', () => {
     };
     const lifecycle = { promoteFinalized() {} };
     let runnerInput;
+    let auditInput;
+    const execution = [];
     const runtime = await buildRuntime({
       sourceMode: DURABLE_OUTBOX_SOURCE,
       outboxBatchSize: 300, outboxLeaseMs: 45000, outboxMaxAttempts: 7,
@@ -239,7 +241,17 @@ describe('Robinhood wallet-swap LIVE worker', () => {
       transactionPositionRepositoryFactory: () => ({ upsertPositions() {} }),
       outboxRunnerFactory: (input) => {
         runnerInput = input;
-        return { runOnce: async () => ({ status: 'idle', claimed: 0 }) };
+        return { runOnce: async () => {
+          execution.push('delivery');
+          return { status: 'idle', claimed: 0 };
+        } };
+      },
+      realtimeAuditRunnerFactory: (input) => {
+        auditInput = input;
+        return { runOnce: async () => {
+          execution.push('audit');
+          throw new Error('shadow unavailable');
+        } };
       },
       marketTradeRealtime: { publishRows() {} },
     });
@@ -249,12 +261,19 @@ describe('Robinhood wallet-swap LIVE worker', () => {
     assert.equal(runnerInput.repository, outbox);
     assert.equal(runnerInput.lifecycleRepository, lifecycle);
     assert.equal(runnerInput.readFinalizedBlock, outbox.readFinalizedBlock);
+    assert.equal(auditInput.repository, lifecycle);
+    assert.deepEqual(auditInput.options, {
+      batchSize: 300, leaseMs: 45000, maxAttempts: 7,
+    });
     assert.deepEqual(runnerInput.options, {
       batchSize: 300, leaseMs: 45000, maxAttempts: 7,
     });
-    assert.deepEqual(await runtime.runOnce(), {
-      status: 'idle', claimed: 0, completeThroughBlock: '200',
-    });
+    const output = await runtime.runOnce();
+    assert.equal(output.status, 'idle');
+    assert.equal(output.completeThroughBlock, '200');
+    assert.equal(output.audit.status, 'error');
+    assert.match(output.audit.error.message, /shadow unavailable/);
+    assert.deepEqual(execution, ['delivery', 'audit']);
   });
 
   it('wakes the durable consumer from outbox and finality notifications', async () => {
@@ -284,6 +303,7 @@ describe('Robinhood wallet-swap LIVE worker', () => {
     assert.equal(worker.start({ enabled: true, sourceMode: DURABLE_OUTBOX_SOURCE }), true);
     assert.deepEqual(listeners.map((item) => item.options.channel).sort(), [
       'robinhood_chain_capture', 'robinhood_wallet_swap_outbox',
+      'robinhood_wallet_swap_realtime_outbox',
     ]);
     listeners[0].options.onNotification();
     assert.equal(scheduled[0].cancelled, true);
@@ -314,6 +334,32 @@ describe('Robinhood wallet-swap LIVE worker', () => {
     });
     await scheduled[0].fn();
     assert.equal(scheduled.at(-1).delay, 0);
+    await worker.stop();
+  });
+
+  it('immediately checks for terminals unlocked by any shadow-audit batch', async () => {
+    const scheduled = [];
+    const worker = createRobinhoodWalletSwapLiveWorker({
+      schedule: (fn, delay) => {
+        const task = { fn, delay, cancelled: false };
+        scheduled.push(task);
+        return task;
+      },
+      cancelSchedule: (task) => { task.cancelled = true; },
+      listenerFactory: () => ({ async start() {}, async stop() {} }),
+      runtimeFactory: async () => ({
+        sourceMode: DURABLE_OUTBOX_SOURCE,
+        runOnce: async () => ({
+          status: 'idle', claimed: 0,
+          audit: { status: 'audited', saturated: false, claimed: 1, audited: 1 },
+        }),
+      }),
+      logger: { warn() {}, error() {} },
+    });
+    worker.start({ enabled: true, sourceMode: DURABLE_OUTBOX_SOURCE });
+    await scheduled[0].fn();
+    assert.equal(scheduled.at(-1).delay, 0);
+    assert.equal(worker.getStatus().audited, 1);
     await worker.stop();
   });
 });
