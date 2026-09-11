@@ -58,10 +58,17 @@ async function invalidateLaunchAnchors(client, range) {
   const tokens = deleted.rows.map(({ token_address: tokenAddress }) => tokenAddress);
   const removed = await client.query(
     `DELETE FROM robinhood_launch_anchor_outbox outbox
-      WHERE outbox.chain=$1 AND NOT EXISTS (
-        SELECT 1 FROM robinhood_wallet_token_first_buys first_buy
-         WHERE first_buy.chain=outbox.chain
-           AND first_buy.token_address=outbox.token_address
+      WHERE outbox.chain=$1 AND (
+        NOT EXISTS (
+          SELECT 1 FROM robinhood_wallet_token_first_buys first_buy
+           WHERE first_buy.chain=outbox.chain
+             AND first_buy.token_address=outbox.token_address
+        ) OR NOT EXISTS (
+          SELECT 1 FROM robinhood_holder_token_states state
+           WHERE state.chain=outbox.chain AND state.token_address=outbox.token_address
+             AND state.ledger_status='live' AND state.live_through_block IS NOT NULL
+             AND state.live_through_hash IS NOT NULL
+        )
       )`, [CHAIN]
   );
   if (tokens.length) {
@@ -72,6 +79,12 @@ async function invalidateLaunchAnchors(client, range) {
           SELECT 1 FROM robinhood_wallet_token_first_buys first_buy
            WHERE first_buy.chain=$1::varchar AND first_buy.token_address=token
         )
+          AND EXISTS (
+            SELECT 1 FROM robinhood_holder_token_states state
+             WHERE state.chain=$1::varchar AND state.token_address=token
+               AND state.ledger_status='live' AND state.live_through_block IS NOT NULL
+               AND state.live_through_hash IS NOT NULL
+          )
        ON CONFLICT (chain,token_address) DO UPDATE SET
          status='pending', attempt_count=0, next_attempt_at=NOW(),
          lease_owner=NULL, lease_until=NULL, last_error=NULL, updated_at=NOW()`,
@@ -123,5 +136,5 @@ function createRobinhoodDiscoveryDerivedReorgRollback() {
 
 module.exports = {
   createRobinhoodDiscoveryDerivedReorgRollback,
-  __private: { normalizeRange },
+  __private: { invalidateLaunchAnchors, normalizeRange },
 };

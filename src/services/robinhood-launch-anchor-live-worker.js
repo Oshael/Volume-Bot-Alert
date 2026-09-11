@@ -25,21 +25,33 @@ function createRobinhoodLaunchAnchorLiveWorker(deps = {}) {
   const owner = deps.owner || `launch-anchor-${process.pid}-${randomUUID()}`;
   let options = normalizeOptions(); let timer; let listener; let running = false; let active;
   const status = { enabled: false, running: false, inFlight: false, totalRuns: 0,
-    totalWritten: 0, totalDeferred: 0, lastResult: null, lastError: null,
-    lastCompletedAt: null };
+    activeToken: null, activeStartedAt: null, lastDurationMs: null,
+    totalWritten: 0, totalDeferred: 0, totalDiscarded: 0,
+    lastResult: null, lastError: null, lastCompletedAt: null };
   const repository = () => deps.repository || (deps.repository ||= (
     deps.repositoryFactory || createRobinhoodLaunchAnchorOutboxRepository
   )({ database: deps.database || db, timeoutMs: options.timeoutMs }));
   const retryDelay = (attempt) => Math.min(options.maxRetryMs,
     options.retryMs * (2 ** Math.min(Math.max(attempt - 1, 0), 8)));
   async function execute() {
+    const startedAt = Date.now();
     status.inFlight = true; status.totalRuns += 1;
     let task;
     try {
       task = await repository().claim({ owner, leaseMs: options.leaseMs });
       if (!task) return { status: 'caught-up' };
-      if (!await repository().materialize(task.tokenAddress)) {
-        throw Object.assign(new Error('launch inputs are not ready'), { code: 'anchor_not_ready' });
+      status.activeToken = task.tokenAddress;
+      status.activeStartedAt = new Date().toISOString();
+      const outcome = await repository().materialize(task.tokenAddress);
+      const materialized = outcome === true || outcome?.status === 'materialized';
+      if (outcome?.status === 'ineligible') {
+        await repository().complete({ owner, tokenAddress: task.tokenAddress });
+        status.totalDiscarded += 1;
+        return { status: 'discarded', reason: outcome.reason, tokenAddress: task.tokenAddress };
+      }
+      if (!materialized) {
+        const reason = outcome?.reason || 'launch_inputs_not_ready';
+        throw Object.assign(new Error(reason), { code: 'anchor_not_ready' });
       }
       await repository().complete({ owner, tokenAddress: task.tokenAddress });
       status.totalWritten += 1;
@@ -56,7 +68,13 @@ function createRobinhoodLaunchAnchorLiveWorker(deps = {}) {
       }
       status.lastError = { code: error.code || 'anchor_error', message: error.message };
       return null;
-    } finally { status.inFlight = false; status.lastCompletedAt = new Date().toISOString(); }
+    } finally {
+      status.inFlight = false;
+      status.activeToken = null;
+      status.activeStartedAt = null;
+      status.lastDurationMs = Date.now() - startedAt;
+      status.lastCompletedAt = new Date().toISOString();
+    }
   }
   async function runOnce() {
     if (active) return active;

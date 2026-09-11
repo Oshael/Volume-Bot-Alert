@@ -2941,7 +2941,14 @@ commitados em `robinhood_wallet_token_first_buys` enfileiram o token em
 `robinhood_launch_anchor_outbox` e acordam o worker PostgreSQL-only por `LISTEN`.
 O worker usa lease, retry exponencial e polling bounded de reconciliação; recalcula
 o primeiro swap registrado somente para o token reclamado e mantém a escrita
-idempotente. Ative com `ROBINHOOD_LAUNCH_ANCHOR_LIVE_ENABLED=true` somente após
+idempotente. A busca histórica usa o primeiro `first_buy` elegível como limite superior,
+sem segurar o lock do cursor global; depois uma transação curta adquire `FOR SHARE`,
+revalida frontier, primeiro pool e identidade exata do swap e só então grava. Tokens cujo
+holder deixou de existir ou deixou o estado `live` são reconhecidos e removidos da fila,
+enquanto indisponibilidades transitórias continuam usando backoff. O rollback de reorg só
+reenfileira tokens que ainda possuem `first_buy` e holder `live`. A lease expõe o token e o
+início da tentativa ativa, duração da última tentativa e total descartado. Ative com
+`ROBINHOOD_LAUNCH_ANCHOR_LIVE_ENABLED=true` somente após
 aplicar a Stage 171. Isso mantém anchors novos automaticamente, mas não substitui
 o catch-up Stage 166 para lacunas anteriores à instalação da outbox.
 A Stage 177 restringe essa emissão a tokens cujo holder ledger já esteja `live` e

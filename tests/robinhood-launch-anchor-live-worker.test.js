@@ -39,3 +39,22 @@ it('defers tokens whose PostgreSQL launch inputs are not ready', async () => {
   assert.equal(worker.getStatus().totalDeferred, 1);
   assert.equal(worker.getStatus().lastError, null);
 });
+
+it('acknowledges permanently ineligible tokens instead of retrying forever', async () => {
+  const calls = [];
+  const repository = {
+    claim: async () => ({ tokenAddress: TOKEN, attemptCount: 163 }),
+    materialize: async () => ({ status: 'ineligible', reason: 'holder_missing' }),
+    complete: async (input) => { calls.push(['complete', input]); return true; },
+    retry: async (input) => calls.push(['retry', input]),
+  };
+  const worker = createRobinhoodLaunchAnchorLiveWorker({ repository, owner: 'test' });
+  assert.deepEqual(await worker.runOnce(), {
+    status: 'discarded', reason: 'holder_missing', tokenAddress: TOKEN,
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], 'complete');
+  assert.equal(worker.getStatus().totalDiscarded, 1);
+  assert.equal(worker.getStatus().activeToken, null);
+  assert.equal(Number.isInteger(worker.getStatus().lastDurationMs), true);
+});

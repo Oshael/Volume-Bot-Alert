@@ -26,6 +26,9 @@ const {
 } = require('../src/models/robinhood-canonical-head-candidate');
 const { createRobinhoodHeadCaptureRepository } = require('../src/models/robinhood-head-capture');
 const {
+  createRobinhoodLaunchAnchorOutboxRepository,
+} = require('../src/models/robinhood-launch-anchor-outbox');
+const {
   createRobinhoodWalletSwapRepository,
 } = require('../src/models/robinhood-wallet-swap-persistence');
 const {
@@ -653,6 +656,48 @@ describe('Robinhood canonical chain capture journal', () => {
       [cursor.next_block, cursor.checkpoint_block, cursor.checkpoint_hash, cursor.version],
       ['102', '101', NEXT_HASH, '1']
     );
+  });
+
+  it('materializes a bounded launch anchor and revalidates it under the cursor lock', async () => {
+    await createRobinhoodChainCaptureJournal().commitBlock(capture());
+    await db.query(
+      `INSERT INTO robinhood_pool_registry(
+         protocol, market_key, pool_address, origin_address, token_address,
+         quote_address, currency0, currency1, discovery_block,
+         discovery_block_hash, discovery_tx_hash, discovery_log_index, discovered_at
+       ) VALUES ('uniswap-v2',$1,$2,$2,$3,$4,$3,$4,99,$5,$6,0,
+                 $7::timestamptz - INTERVAL '1 minute')`,
+      [LIQUIDITY_MARKET, LIQUIDITY_POOL, TOKEN, RECIPIENT, PARENT, NEXT_TX, OBSERVED_AT]
+    );
+    await createRobinhoodWalletSwapRepository().insertWalletSwaps([{
+      walletAddress: ADDRESS, transactionHash: NEXT_TX, actionIndex: 1,
+      blockNumber: 100, blockTime: OBSERVED_AT, protocol: 'uniswap-v2',
+      marketKey: LIQUIDITY_MARKET, tokenAddress: TOKEN, quoteAddress: RECIPIENT,
+      side: 'buy', tokenAmountRaw: '10', quoteAmountRaw: '20', parserVersion: 'test-v1',
+    }]);
+    await db.query(
+      `INSERT INTO robinhood_wallet_token_first_buys(
+         token_address, wallet_address, transaction_hash, transaction_index,
+         action_index, block_number, block_hash, block_time, protocol,
+         market_key, source_parser_version
+       ) VALUES ($1,$2,$3,0,1,100,$4,$5,'uniswap-v2',$6,'test-v1')`,
+      [TOKEN, ADDRESS, NEXT_TX, HASH, OBSERVED_AT, LIQUIDITY_MARKET]
+    );
+    await db.query(
+      `INSERT INTO robinhood_holder_token_states(
+         token_address, ledger_status, live_through_block, live_through_hash
+       ) VALUES ($1,'live',100,$2)`, [TOKEN, HASH]
+    );
+
+    assert.deepEqual(
+      await createRobinhoodLaunchAnchorOutboxRepository({ timeoutMs: 5000 }).materialize(TOKEN),
+      { status: 'materialized' }
+    );
+    assert.deepEqual((await db.query(
+      `SELECT first_pool_block::text, launch_block::text, source_through_block::text
+         FROM robinhood_token_launch_anchors WHERE chain='robinhood' AND token_address=$1`,
+      [TOKEN]
+    )).rows[0], { first_pool_block: '99', launch_block: '100', source_through_block: '100' });
   });
 
   it('accepts an exact retry but rejects gaps and parent divergence without partial writes', async () => {
