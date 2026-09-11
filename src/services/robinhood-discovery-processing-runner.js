@@ -9,7 +9,7 @@
  * pools (evidence contract §7).
  *
  * Isolation invariants:
- *  - it never touches the capture cursor;
+ *  - it never advances the capture cursor (persistence only shares its recovery fence);
  *  - a persistence failure retries the affected claims and leaves capture intact;
  *  - an unsupported evidence version or unexpected kind settles as an auditable
  *    terminal rejection.

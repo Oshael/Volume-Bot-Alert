@@ -84,6 +84,8 @@ const RECIPIENT = `0x${'8'.repeat(40)}`;
 const TRANSFER_TX = `0x${'c'.repeat(64)}`;
 const LIQUIDITY_POOL = `0x${'d'.repeat(40)}`;
 const LIQUIDITY_MARKET = `robinhood:uniswap-v2:${LIQUIDITY_POOL}`;
+const ORPHAN_POOL = `0x${'e'.repeat(40)}`;
+const ORPHAN_MARKET = `robinhood:uniswap-v2:${ORPHAN_POOL}`;
 const TOPIC = v2.TOPICS.pairCreated;
 const OBSERVED_AT = '2026-09-03T20:00:00.000Z';
 const ZERO_ADDRESS = `0x${'0'.repeat(40)}`;
@@ -141,6 +143,7 @@ async function clearTables() {
   await db.query("DELETE FROM robinhood_swap_mc WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_transaction_positions WHERE chain='robinhood'");
   await db.query('DELETE FROM robinhood_token_deployment_outbox');
+  await db.query("DELETE FROM robinhood_processed_logs WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_pool_registry WHERE chain='robinhood'");
   await db.query('DELETE FROM robinhood_canonical_head_candidates');
   await db.query('DELETE FROM robinhood_chain_v3_balance_snapshots');
@@ -663,6 +666,23 @@ describe('Robinhood canonical chain capture journal', () => {
       [LIQUIDITY_MARKET, LIQUIDITY_POOL, TOKEN, ADDRESS, HASH, TX, OBSERVED_AT]
     );
     await db.query(
+      `INSERT INTO robinhood_pool_registry(
+         chain, protocol, market_key, pool_address, token_address, quote_address,
+         currency0, currency1, discovery_block, discovery_block_hash,
+         discovery_tx_hash, discovery_log_index, discovered_at
+       ) VALUES ('robinhood','uniswap-v2',$1,$2,$3,$4,$3,$4,101,$5,$6,9,$7)`,
+      [ORPHAN_MARKET, ORPHAN_POOL, TOKEN, ADDRESS, NEXT_HASH, NEXT_TX, OBSERVED_AT]
+    );
+    await db.query(
+      `INSERT INTO robinhood_processed_logs(
+         chain, transaction_hash, log_index, stream, block_number, block_hash,
+         topic0, event_kind, protocol, market_key
+       ) VALUES
+         ('robinhood',$1,8,'discovery',100,$2,$3,'pair-created','uniswap-v2',$4),
+         ('robinhood',$5,9,'discovery',101,$6,$3,'pair-created','uniswap-v2',$7)`,
+      [TX, HASH, TOPIC, LIQUIDITY_MARKET, NEXT_TX, NEXT_HASH, ORPHAN_MARKET]
+    );
+    await db.query(
       `INSERT INTO robinhood_pool_liquidity_snapshots(
          chain, protocol, market_key, snapshot_block_number, snapshot_block_hash,
          snapshot_observed_at, liquidity_usd, liquidity_status,
@@ -807,6 +827,9 @@ describe('Robinhood canonical chain capture journal', () => {
           liveThroughBlock: '100', liveThroughHash: HASH,
         }],
       },
+      discovery: {
+        invalidatedPools: 1, clearedNoxaMetadata: 0, deletedProcessedLogs: 1,
+      },
     });
     assert.deepEqual(await journal.rewindCanonicalRecovery({ generation: '0' }), {
       status: 'already-rewound', generation: '0', nextGeneration: '1',
@@ -819,6 +842,22 @@ describe('Robinhood canonical chain capture journal', () => {
       { block_number: '100', block_hash: HASH, canonical: true },
       { block_number: '101', block_hash: NEXT_HASH, canonical: false },
     ]);
+    const discovery = await db.query(
+      `SELECT registry.market_key, registry.active,
+              COUNT(processed.transaction_hash)::int AS processed_logs
+         FROM robinhood_pool_registry registry
+         LEFT JOIN robinhood_processed_logs processed
+           ON processed.chain=registry.chain AND processed.stream='discovery'
+          AND processed.market_key=registry.market_key
+        WHERE registry.chain='robinhood'
+          AND registry.market_key=ANY($1::varchar[])
+        GROUP BY registry.market_key, registry.active ORDER BY registry.market_key`,
+      [[LIQUIDITY_MARKET, ORPHAN_MARKET]]
+    );
+    assert.deepEqual(discovery.rows, [
+      { market_key: ORPHAN_MARKET, active: false, processed_logs: 0 },
+      { market_key: LIQUIDITY_MARKET, active: true, processed_logs: 1 },
+    ].sort((left, right) => left.market_key.localeCompare(right.market_key)));
     const cursor = await journal.getCursor();
     assert.deepEqual({
       generation: cursor.generation, state: cursor.recovery_state,

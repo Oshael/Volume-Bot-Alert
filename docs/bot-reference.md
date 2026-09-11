@@ -4101,6 +4101,18 @@ classificações derivados não são tratados como evidência canônica deste co
 seu fence/invalidation pertence a `discovery-creator` e à integração final dos
 gates. Não há RPC nem migration adicional.
 
+Discovery também participa do rewind central antes de a ramificação perder o
+marcador canônico. O recovery trava registry e ledger de dedup, marca como
+inativos somente pools cuja proveniência aponta para bloco/hash órfão, remove
+metadados NOXA produzidos por logs órfãos e apaga as identidades `discovery` de
+`robinhood_processed_logs` para permitir replay. O consumer canônico mantém um
+lock compartilhado no cursor durante o commit e recusa blocos não canônicos ou
+estado diferente de `running`; assim, um lease antigo não consegue reintroduzir
+o pool depois do rewind. Quando o mesmo mercado reaparece na nova ramificação,
+o upsert reativa o registro e substitui bloco, hash, transação, log e timestamp
+de descoberta. `token_catalog`, creator, launch anchors e classificações não são
+alterados por este subcorte.
+
 Antes de definir ou reduzir retenção de `robinhood_chain_events` e
 `robinhood_holder_transfer_journal`, execute
 `npm run robinhood:retention-safety-audit`. O comando é estritamente read-only,

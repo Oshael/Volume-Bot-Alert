@@ -575,6 +575,36 @@ async function insertProcessedLog(client, row) {
   );
 }
 
+async function assertCanonicalDiscoveryBatch(client, entries) {
+  const cursor = await client.query(
+    `SELECT recovery_state FROM robinhood_chain_capture_cursor
+      WHERE chain=$1 FOR SHARE`, [CHAIN]
+  );
+  if (!cursor.rowCount || cursor.rows[0].recovery_state !== 'running') {
+    const error = new Error('discovery commit is fenced by canonical recovery');
+    error.code = 'discovery_recovery_fence_conflict';
+    throw error;
+  }
+  const identities = [...new Map(entries.map(({ row }) => (
+    [`${row.blockNumber}:${row.blockHash}`, {
+      blockNumber: row.blockNumber, blockHash: row.blockHash,
+    }]
+  ))).values()];
+  const canonical = await client.query(
+    `SELECT COUNT(*)::int AS matched
+       FROM jsonb_to_recordset($1::jsonb) item("blockNumber" bigint, "blockHash" text)
+       INNER JOIN robinhood_chain_blocks block
+         ON block.chain=$2 AND block.canonical
+        AND block.block_number=item."blockNumber" AND block.block_hash=item."blockHash"`,
+    [JSON.stringify(identities), CHAIN]
+  );
+  if (Number(canonical.rows[0]?.matched || 0) !== identities.length) {
+    const error = new Error('discovery batch is not anchored to the canonical branch');
+    error.code = 'discovery_recovery_fence_conflict';
+    throw error;
+  }
+}
+
 async function upsertPool(client, pool) {
   await client.query(
     `INSERT INTO robinhood_pool_registry (
@@ -597,6 +627,11 @@ async function upsertPool(client, pool) {
        fee = EXCLUDED.fee,
        tick_spacing = EXCLUDED.tick_spacing,
        hooks_address = EXCLUDED.hooks_address,
+       discovery_block = EXCLUDED.discovery_block,
+       discovery_block_hash = EXCLUDED.discovery_block_hash,
+       discovery_tx_hash = EXCLUDED.discovery_tx_hash,
+       discovery_log_index = EXCLUDED.discovery_log_index,
+       discovered_at = EXCLUDED.discovered_at,
        active = true,
        metadata = EXCLUDED.metadata,
        updated_at = NOW()`,
@@ -1857,6 +1892,7 @@ function createRobinhoodPersistenceRepository(options = {}) {
     let updatedNoxaLaunches = 0;
     try {
       await client.query('BEGIN');
+      await assertCanonicalDiscoveryBatch(client, entries);
       const insertedEntries = [];
       for (const entry of entries) {
         const inserted = await insertProcessedLog(client, entry.row);

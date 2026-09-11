@@ -273,6 +273,15 @@ function createFakeDatabase(options = {}) {
   const client = {
     async query(sql, params) {
       calls.push({ sql, params });
+      if (/SELECT recovery_state FROM robinhood_chain_capture_cursor/.test(sql)) {
+        const recoveryState = options.recoveryState || 'running';
+        return { rows: [{ recovery_state: recoveryState }], rowCount: 1 };
+      }
+      if (/SELECT COUNT\(\*\)::int AS matched/.test(sql)) {
+        const identities = JSON.parse(params[0]);
+        const matched = options.nonCanonicalDiscovery ? 0 : identities.length;
+        return { rows: [{ matched }], rowCount: 1 };
+      }
       const backfillEnrichmentResult = fakeBackfillEnrichmentResult(sql, params, options);
       if (backfillEnrichmentResult) return backfillEnrichmentResult;
       if (/INSERT INTO robinhood_processed_logs/.test(sql)) {
@@ -512,13 +521,30 @@ describe('Robinhood persistence repository', () => {
       updatedNoxaLaunches: 0,
     });
     assert.equal(fake.calls[0].sql, 'BEGIN');
-    assert.match(fake.calls[1].sql, /INSERT INTO robinhood_processed_logs/);
-    assert.match(fake.calls[2].sql, /INSERT INTO robinhood_pool_registry/);
-    assert.equal(fake.calls[3].sql, 'COMMIT');
+    assert.match(fake.calls[1].sql, /SELECT recovery_state/);
+    assert.match(fake.calls[2].sql, /robinhood_chain_blocks/);
+    assert.match(fake.calls[3].sql, /INSERT INTO robinhood_processed_logs/);
+    assert.match(fake.calls[4].sql, /INSERT INTO robinhood_pool_registry/);
+    assert.match(fake.calls[4].sql, /discovery_block = EXCLUDED\.discovery_block/);
+    assert.equal(fake.calls[5].sql, 'COMMIT');
     // The central isolation invariant: processing never touches either cursor.
     assert.equal(fake.calls.some((call) => /robinhood_ingestion_cursors/.test(call.sql)), false);
     assert.equal(fake.calls.some((call) => /robinhood_head_capture_cursors/.test(call.sql)), false);
     assert.equal(fake.calls.some((call) => /robinhood_backfill_ranges/.test(call.sql)), false);
+    assert.equal(fake.isReleased(), true);
+  });
+
+  it('rejects discovery processing while canonical recovery owns the cursor fence', async () => {
+    const fake = createFakeDatabase({ recoveryState: 'recovery_required' });
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+
+    await assert.rejects(
+      repository.commitDiscoveryProcessingBatch({ entries: [discoveryEntry()] }),
+      (error) => error.code === 'discovery_recovery_fence_conflict'
+    );
+
+    assert.equal(fake.calls.some((call) => /INSERT INTO robinhood_processed_logs/.test(call.sql)), false);
+    assert.equal(fake.calls.at(-1).sql, 'ROLLBACK');
     assert.equal(fake.isReleased(), true);
   });
 

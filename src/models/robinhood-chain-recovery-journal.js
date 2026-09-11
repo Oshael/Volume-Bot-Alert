@@ -16,6 +16,9 @@ const {
 const { createRobinhoodFirstBuyReorgRollback } = require('./robinhood-first-buy-reorg-rollback');
 const { createRobinhoodHolderReorgRollback } = require('./robinhood-holder-reorg-rollback');
 const {
+  createRobinhoodDiscoveryReorgRollback,
+} = require('./robinhood-discovery-reorg-rollback');
+const {
   ROLLBACK_DOMAINS, ROLLBACK_MANIFEST_VERSION,
 } = require('../services/robinhood-chain-recovery-planner');
 
@@ -218,6 +221,7 @@ function createRobinhoodChainRecoveryJournal(options = {}) {
     || createRobinhoodWalletSignedOriginReorgRollback();
   const firstBuyRollback = options.firstBuyRollback || createRobinhoodFirstBuyReorgRollback();
   const holderRollback = options.holderRollback || createRobinhoodHolderReorgRollback({ database });
+  const discoveryRollback = options.discoveryRollback || createRobinhoodDiscoveryReorgRollback();
 
   async function recordDetected(client, input = {}) {
     if (!client || typeof client.query !== 'function') {
@@ -440,6 +444,9 @@ function createRobinhoodChainRecoveryJournal(options = {}) {
         ancestorBlock: rewind.ancestor.toString(), ancestorHash: rewind.ancestorHash,
         fromBlock: rewind.fromBlock.toString(), throughBlock: rewind.throughBlock.toString(),
       });
+      const discovery = await discoveryRollback.rollback(client, {
+        fromBlock: rewind.fromBlock.toString(), throughBlock: rewind.throughBlock.toString(),
+      });
       const orphaned = await client.query(
         `UPDATE robinhood_chain_blocks SET canonical=FALSE
           WHERE chain=$1 AND canonical=TRUE
@@ -505,7 +512,7 @@ function createRobinhoodChainRecoveryJournal(options = {}) {
         status: 'rewound', generation: recoveryGeneration,
         nextGeneration: disposition.nextGeneration,
         orphanedBlocks: Number(rewind.depth), tradeInvalidations, market, wallet,
-        walletTransfers, liquidity, signedOrigins, firstBuys, holders,
+        walletTransfers, liquidity, signedOrigins, firstBuys, holders, discovery,
         domainReady: [
           'canonical-journal', 'holders', 'liquidity', 'market',
           'publication-alerts', 'wallet', 'wallet-derived',
