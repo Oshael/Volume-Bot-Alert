@@ -4051,13 +4051,17 @@ podem sofrer reorg. Cada linha expira exatamente três dias após o timestamp do
 bloco. O `robinhood-retention-worker` remove em lotes apenas linhas já vencidas
 cujo `block_number` não ultrapassa `finalized_head`; sem frontier finalizada, a
 limpeza falha fechada. A tabela é infraestrutura de rollback e não substitui o
-raw nem altera a classificação. Até o executor do corte seguinte ser implantado,
-o journal não abre o gate `wallet-derived`.
+raw nem altera a classificação. Mesmo com seu executor ativo, ela não abre o
+gate `wallet-derived` enquanto signed-origin e first-buy não tiverem rollback.
 O writer LIVE grava, antes de cada batch e na mesma transação, o estado anterior
 de edges, resumos diários e evidências `first`/`last`/`largest`. O marker contém
 o início do range e fica ancorado no hash do último bloco; um rollback que corte
 o batch restaura o preimage e reaplica somente seu prefixo canônico a partir do
 raw ainda retido. O backfill `seed` não gera esse journal.
+Durante o rewind canônico, esse executor restaura os batches em ordem reversa,
+remove o raw da faixa órfã e recua somente o cursor `live`. Se o ancestral cortar
+um batch, o preimage é reancorado nele antes do replay do prefixo; ausência de
+preimage para qualquer transfer elegível falha fechado e aborta todo o rewind.
 Implante a migration com `node src/utils/db-init-stage208.js` antes de reiniciar
 qualquer processo que execute o `robinhood-retention-worker` atualizado.
 

@@ -36,12 +36,18 @@ const stage139 = require('../src/utils/db-init-stage139');
 const stage126 = require('../src/utils/db-init-stage126');
 const stage127 = require('../src/utils/db-init-stage127');
 const stage128 = require('../src/utils/db-init-stage128');
+const stage129 = require('../src/utils/db-init-stage129');
+const stage130 = require('../src/utils/db-init-stage130');
+const stage131 = require('../src/utils/db-init-stage131');
+const stage134 = require('../src/utils/db-init-stage134');
 const stage137 = require('../src/utils/db-init-stage137');
+const stage153 = require('../src/utils/db-init-stage153');
 const stage203 = require('../src/utils/db-init-stage203');
 const stage204 = require('../src/utils/db-init-stage204');
 const stage205 = require('../src/utils/db-init-stage205');
 const stage206 = require('../src/utils/db-init-stage206');
 const stage207 = require('../src/utils/db-init-stage207');
+const stage208 = require('../src/utils/db-init-stage208');
 const stage103 = require('../src/utils/db-init-stage103');
 const stage165 = require('../src/utils/db-init-stage165');
 const v2 = require('../src/services/uniswap-v2-decoder');
@@ -84,6 +90,11 @@ function capture(number = 100, hash = HASH, parentHash = PARENT) {
 }
 
 async function clearTables() {
+  await db.query("DELETE FROM robinhood_wallet_transfer_reorg_journal WHERE chain='robinhood'");
+  await db.query("DELETE FROM robinhood_wallet_relationship_evidence WHERE chain='robinhood'");
+  await db.query("DELETE FROM robinhood_wallet_transfer_edges WHERE chain='robinhood'");
+  await db.query("DELETE FROM robinhood_wallet_transfer_daily_summaries WHERE chain='robinhood'");
+  await db.query("DELETE FROM robinhood_wallet_transfer_cursors WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_wallet_token_positions WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_wallet_position_cursors WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_token_transfer_events WHERE chain='robinhood'");
@@ -122,12 +133,18 @@ describe('Robinhood canonical chain capture journal', () => {
     await stage126.init({ closePool: false });
     await stage127.init({ closePool: false });
     await stage128.init({ closePool: false });
+    await stage129.init({ closePool: false });
+    await stage130.init({ closePool: false });
+    await stage131.init({ closePool: false });
+    await stage134.init({ closePool: false });
     await stage137.init({ closePool: false });
+    await stage153.init({ closePool: false });
     await stage203.init({ closePool: false });
     await stage204.init({ closePool: false });
     await stage205.init({ closePool: false });
     await stage206.init({ closePool: false });
     await stage207.init({ closePool: false });
+    await stage208.init({ closePool: false });
   });
 
   beforeEach(clearTables);
@@ -606,6 +623,10 @@ describe('Robinhood canonical chain capture journal', () => {
           projections: 2, affectedPositions: 3, removedPositions: 3,
           rebuiltPositions: 2, cursorsRewound: 2,
         },
+      },
+      walletTransfers: {
+        projections: 0, restoredBatches: 0, replayedPrefix: 0,
+        deletedRawTransfers: 1, cursorsRewound: 0,
       },
     });
     assert.deepEqual(await journal.rewindCanonicalRecovery({ generation: '0' }), {

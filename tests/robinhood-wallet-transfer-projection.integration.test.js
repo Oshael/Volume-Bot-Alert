@@ -8,14 +8,22 @@ const {
   createRobinhoodWalletTransferProjectionRepository,
   persistTransferProjection,
 } = require('../src/models/robinhood-wallet-transfer-projection');
+const {
+  createRobinhoodWalletTransferReorgRollback,
+} = require('../src/models/robinhood-wallet-transfer-reorg-rollback');
+const {
+  createRobinhoodTokenTransferRepository,
+} = require('../src/models/robinhood-token-transfer-persistence');
 const stage126 = require('../src/utils/db-init-stage126');
 const stage127 = require('../src/utils/db-init-stage127');
+const stage128 = require('../src/utils/db-init-stage128');
 const stage129 = require('../src/utils/db-init-stage129');
 const stage130 = require('../src/utils/db-init-stage130');
 const stage131 = require('../src/utils/db-init-stage131');
 const stage134 = require('../src/utils/db-init-stage134');
 const stage137 = require('../src/utils/db-init-stage137');
 const stage153 = require('../src/utils/db-init-stage153');
+const stage191 = require('../src/utils/db-init-stage191');
 const stage208 = require('../src/utils/db-init-stage208');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
@@ -44,8 +52,10 @@ async function cleanup() {
   await db.query('DELETE FROM robinhood_wallet_transfer_edges WHERE classification_version = ANY($1::varchar[])', [transferVersions]);
   await db.query('DELETE FROM robinhood_wallet_transfer_daily_summaries WHERE projection_version = ANY($1::varchar[])', [transferVersions]);
   await db.query('DELETE FROM robinhood_wallet_transfer_cursors WHERE projection_version = ANY($1::varchar[])', [transferVersions]);
+  await db.query('DELETE FROM robinhood_token_transfer_events WHERE classification_version = ANY($1::varchar[])', [transferVersions]);
   await db.query('DELETE FROM robinhood_wallet_token_positions WHERE projection_version = $1', [POSITION_VERSION]);
   await db.query('DELETE FROM robinhood_wallet_position_cursors WHERE projection_version = $1', [POSITION_VERSION]);
+  await db.query('DELETE FROM robinhood_chain_blocks WHERE block_number BETWEEN 100 AND 102');
 }
 
 describe('Robinhood wallet transfer projection persistence', () => {
@@ -53,12 +63,14 @@ describe('Robinhood wallet transfer projection persistence', () => {
     await assertUsingTestDatabase(db);
     await stage126.init({ closePool: false });
     await stage127.init({ closePool: false });
+    await stage128.init({ closePool: false });
     await stage129.init({ closePool: false });
     await stage130.init({ closePool: false });
     await stage131.init({ closePool: false });
     await stage134.init({ closePool: false });
     await stage137.init({ closePool: false });
     await stage153.init({ closePool: false });
+    await stage191.init({ closePool: false });
     await stage208.init({ closePool: false });
     await cleanup();
   });
@@ -297,5 +309,77 @@ describe('Robinhood wallet transfer projection persistence', () => {
     assert.deepEqual(marker.rows[0], {
       block_number: '102', identity_key: `range:101:${event(101, 2, 20).blockHash}`,
     });
+
+    const raw = createRobinhoodTokenTransferRepository({ database: db });
+    await raw.insertTransferEvents([
+      { ...event(100, 1, 10), classificationVersion: LIVE_VERSION },
+      { ...event(101, 2, 20), classificationVersion: LIVE_VERSION },
+      { ...event(102, 3, 30), classificationVersion: LIVE_VERSION },
+    ]);
+    const hashes = [100, 101, 102].map((block) => event(block, 1, 1).blockHash);
+    await db.query(
+      `INSERT INTO robinhood_chain_blocks(
+         chain, block_number, block_hash, parent_hash, capture_digest, block_timestamp,
+         finality, canonical, head_observed_at, receipts_available_at
+       ) VALUES
+         ('robinhood',100,$1,$4,$5,'2099-01-01T00:00:00Z','observed',TRUE,NOW(),NOW()),
+         ('robinhood',101,$2,$1,$5,'2099-01-02T00:00:00Z','observed',TRUE,NOW(),NOW()),
+         ('robinhood',102,$3,$2,$5,'2099-01-03T00:00:00Z','observed',TRUE,NOW(),NOW())`,
+      [...hashes, `0x${'f'.repeat(64)}`, `0x${'c'.repeat(64)}`]
+    );
+    const client = await db.getClient();
+    let rolledBack;
+    try {
+      await client.query('BEGIN');
+      rolledBack = await createRobinhoodWalletTransferReorgRollback().rollback(client, {
+        ancestorBlock: '101', ancestorHash: hashes[1],
+        ancestorTimestamp: '2099-01-02T00:00:00.000Z',
+        fromBlock: '102', throughBlock: '102',
+        fromTimestamp: '2099-01-03T00:00:00.000Z',
+        throughTimestamp: '2099-01-03T00:00:00.000Z',
+      });
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+    assert.deepEqual(rolledBack, {
+      projections: 1, restoredBatches: 1, replayedPrefix: 1,
+      deletedRawTransfers: 1, cursorsRewound: 1,
+    });
+    const restored = await db.query(
+      `SELECT transfer_count::text, total_amount_raw::text, last_block::text
+         FROM robinhood_wallet_transfer_edges WHERE classification_version=$1`,
+      [LIVE_VERSION]
+    );
+    assert.deepEqual(restored.rows, [{
+      transfer_count: '2', total_amount_raw: '30', last_block: '101',
+    }]);
+    const parallelVersion = await db.query(
+      `SELECT transfer_count::text FROM robinhood_wallet_transfer_edges
+        WHERE classification_version=$1`, [VERSION]
+    );
+    assert.deepEqual(parallelVersion.rows, [{ transfer_count: '5' }]);
+    const remainingRaw = await db.query(
+      `SELECT block_number::text FROM robinhood_token_transfer_events
+        WHERE classification_version=$1 ORDER BY block_number`, [LIVE_VERSION]
+    );
+    assert.deepEqual(remainingRaw.rows, [{ block_number: '100' }, { block_number: '101' }]);
+    const rewound = await repository.loadCursor(LIVE_VERSION, 'live');
+    assert.deepEqual({
+      nextBlock: rewound.nextBlock, checkpointBlock: rewound.checkpointBlock,
+      checkpointHash: rewound.checkpointHash, version: rewound.version,
+    }, { nextBlock: '102', checkpointBlock: '101', checkpointHash: hashes[1], version: 3 });
+    const preserved = await db.query(
+      `SELECT block_number::text, block_hash FROM robinhood_wallet_transfer_reorg_journal
+        WHERE projection_version=$1 AND aggregate_kind='block_marker'
+        ORDER BY block_number`, [LIVE_VERSION]
+    );
+    assert.deepEqual(preserved.rows, [
+      { block_number: '100', block_hash: hashes[0] },
+      { block_number: '101', block_hash: hashes[1] },
+    ]);
   });
 });

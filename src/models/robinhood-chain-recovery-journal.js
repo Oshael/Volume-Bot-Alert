@@ -7,6 +7,9 @@ const {
 const { createRobinhoodMarketReorgRollback } = require('./robinhood-market-reorg-rollback');
 const { createRobinhoodWalletReorgRollback } = require('./robinhood-wallet-reorg-rollback');
 const {
+  createRobinhoodWalletTransferReorgRollback,
+} = require('./robinhood-wallet-transfer-reorg-rollback');
+const {
   ROLLBACK_DOMAINS, ROLLBACK_MANIFEST_VERSION,
 } = require('../services/robinhood-chain-recovery-planner');
 
@@ -202,6 +205,8 @@ function createRobinhoodChainRecoveryJournal(options = {}) {
     || createRobinhoodWalletSwapRealtimeOutboxRepository({ database });
   const marketRollback = options.marketRollback || createRobinhoodMarketReorgRollback();
   const walletRollback = options.walletRollback || createRobinhoodWalletReorgRollback();
+  const transferRollback = options.transferRollback
+    || createRobinhoodWalletTransferReorgRollback();
 
   async function recordDetected(client, input = {}) {
     if (!client || typeof client.query !== 'function') {
@@ -376,7 +381,7 @@ function createRobinhoodChainRecoveryJournal(options = {}) {
         );
       }
       const branch = await client.query(
-        `SELECT block_number::text, block_hash, parent_hash, finality
+        `SELECT block_number::text, block_hash, parent_hash, finality, block_timestamp
            FROM robinhood_chain_blocks
           WHERE chain=$1 AND canonical=TRUE
             AND block_number BETWEEN $2::bigint AND $3::bigint
@@ -396,6 +401,14 @@ function createRobinhoodChainRecoveryJournal(options = {}) {
         ancestorBlock: rewind.ancestor.toString(), ancestorHash: rewind.ancestorHash,
         fromBlock: rewind.fromBlock.toString(), throughBlock: rewind.throughBlock.toString(),
         checkpointHash: rewind.checkpointHash,
+      });
+      const retained = new Map(branch.rows.map((row) => [row.block_number, row]));
+      const walletTransfers = await transferRollback.rollback(client, {
+        ancestorBlock: rewind.ancestor.toString(), ancestorHash: rewind.ancestorHash,
+        ancestorTimestamp: retained.get(rewind.ancestor.toString()).block_timestamp,
+        fromBlock: rewind.fromBlock.toString(), throughBlock: rewind.throughBlock.toString(),
+        fromTimestamp: retained.get(rewind.fromBlock.toString()).block_timestamp,
+        throughTimestamp: retained.get(rewind.throughBlock.toString()).block_timestamp,
       });
       const orphaned = await client.query(
         `UPDATE robinhood_chain_blocks SET canonical=FALSE
@@ -457,6 +470,7 @@ function createRobinhoodChainRecoveryJournal(options = {}) {
         status: 'rewound', generation: recoveryGeneration,
         nextGeneration: disposition.nextGeneration,
         orphanedBlocks: Number(rewind.depth), tradeInvalidations, market, wallet,
+        walletTransfers,
         domainReady: ['canonical-journal', 'market', 'publication-alerts', 'wallet'],
       };
     } catch (error) {
