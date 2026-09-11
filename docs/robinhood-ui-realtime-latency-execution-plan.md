@@ -387,7 +387,7 @@ ordem não autoriza avançar para 3B3.
 
 - [x] **3B2B-3D1 — discovery:** invalidar pools da ramificação órfã, remover o
   dedup correspondente para replay e reancorar proveniência no writer;
-- [ ] **3B2B-3D2 — creator:** reverter attribution/cursor LIVE e aplicar fence
+- [x] **3B2B-3D2 — creator:** reverter attribution/cursor LIVE e aplicar fence
   canônico ao writer, sem apagar evidência externa ou de backfill;
 - [ ] **3B2B-3D3 — derivados:** invalidar launch anchors/outbox e classificações
   derivadas até a nova ramificação convergir.

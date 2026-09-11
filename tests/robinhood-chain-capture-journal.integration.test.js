@@ -67,6 +67,13 @@ const stage141 = require('../src/utils/db-init-stage141');
 const stage180 = require('../src/utils/db-init-stage180');
 const stage103 = require('../src/utils/db-init-stage103');
 const stage165 = require('../src/utils/db-init-stage165');
+const stage110 = require('../src/utils/db-init-stage110');
+const stage113 = require('../src/utils/db-init-stage113');
+const stage114 = require('../src/utils/db-init-stage114');
+const stage115 = require('../src/utils/db-init-stage115');
+const stage163 = require('../src/utils/db-init-stage163');
+const stage164 = require('../src/utils/db-init-stage164');
+const stage183 = require('../src/utils/db-init-stage183');
 const v2 = require('../src/services/uniswap-v2-decoder');
 const { TRANSFER_TOPIC, ZERO_TOPIC } = require('../src/services/evm-erc20-supply-delta');
 const { SCHEMA_GROUPS, __private: schemaChecks } = require('../src/utils/runtime-schema');
@@ -86,6 +93,9 @@ const LIQUIDITY_POOL = `0x${'d'.repeat(40)}`;
 const LIQUIDITY_MARKET = `robinhood:uniswap-v2:${LIQUIDITY_POOL}`;
 const ORPHAN_POOL = `0x${'e'.repeat(40)}`;
 const ORPHAN_MARKET = `robinhood:uniswap-v2:${ORPHAN_POOL}`;
+const CREATOR_CANONICAL_TOKEN = `0x${'5'.repeat(40)}`;
+const CREATOR_ORPHAN_TOKEN = `0x${'6'.repeat(40)}`;
+const CREATOR_EXTERNAL_TOKEN = `0x${'7'.repeat(40)}`;
 const TOPIC = v2.TOPICS.pairCreated;
 const OBSERVED_AT = '2026-09-03T20:00:00.000Z';
 const ZERO_ADDRESS = `0x${'0'.repeat(40)}`;
@@ -112,6 +122,8 @@ function capture(number = 100, hash = HASH, parentHash = PARENT) {
 }
 
 async function clearTables() {
+  await db.query("DELETE FROM robinhood_token_attributions WHERE chain='robinhood'");
+  await db.query("DELETE FROM robinhood_direct_creator_cursors WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_holder_hot_queue WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_holder_transfer_journal WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_holder_balances WHERE chain='robinhood'");
@@ -159,6 +171,13 @@ describe('Robinhood canonical chain capture journal', () => {
     await stage63.init({ closePool: false });
     await stage103.init({ closePool: false });
     await stage165.init({ closePool: false });
+    await stage110.init({ closePool: false });
+    await stage113.init({ closePool: false });
+    await stage114.init({ closePool: false });
+    await stage115.init({ closePool: false });
+    await stage163.init({ closePool: false });
+    await stage164.init({ closePool: false });
+    await stage183.init({ closePool: false });
     await stage191.init({ closePool: false });
     await stage192.init({ closePool: false });
     await stage193.init({ closePool: false });
@@ -683,6 +702,26 @@ describe('Robinhood canonical chain capture journal', () => {
       [TX, HASH, TOPIC, LIQUIDITY_MARKET, NEXT_TX, NEXT_HASH, ORPHAN_MARKET]
     );
     await db.query(
+      `INSERT INTO robinhood_token_attributions(
+         chain, token_address, creator_address, source, attribution_block,
+         attribution_tx_hash, last_attempted_at, last_resolved_at
+       ) VALUES
+         ('robinhood',$1,$4,'rpc_direct',100,$5,NOW(),NOW()),
+         ('robinhood',$2,$4,'rpc_direct',101,$6,NOW(),NOW()),
+         ('robinhood',$3,$4,'blockscout',NULL,NULL,NOW(),NOW())`,
+      [CREATOR_CANONICAL_TOKEN, CREATOR_ORPHAN_TOKEN, CREATOR_EXTERNAL_TOKEN,
+        ADDRESS, TX, NEXT_TX]
+    );
+    await db.query(
+      `INSERT INTO robinhood_direct_creator_cursors(
+         chain, stream, next_block, safe_head, checkpoint_block,
+         checkpoint_hash, checkpoint_timestamp
+       ) VALUES
+         ('robinhood','live',102,101,101,$1,$2),
+         ('robinhood','launchpad_backfill',101,100,100,$3,$2)`,
+      [NEXT_HASH, OBSERVED_AT, HASH]
+    );
+    await db.query(
       `INSERT INTO robinhood_pool_liquidity_snapshots(
          chain, protocol, market_key, snapshot_block_number, snapshot_block_hash,
          snapshot_observed_at, liquidity_usd, liquidity_status,
@@ -830,6 +869,7 @@ describe('Robinhood canonical chain capture journal', () => {
       discovery: {
         invalidatedPools: 1, clearedNoxaMetadata: 0, deletedProcessedLogs: 1,
       },
+      creator: { deletedAttributions: 1, cursorRewound: true },
     });
     assert.deepEqual(await journal.rewindCanonicalRecovery({ generation: '0' }), {
       status: 'already-rewound', generation: '0', nextGeneration: '1',
@@ -858,6 +898,30 @@ describe('Robinhood canonical chain capture journal', () => {
       { market_key: ORPHAN_MARKET, active: false, processed_logs: 0 },
       { market_key: LIQUIDITY_MARKET, active: true, processed_logs: 1 },
     ].sort((left, right) => left.market_key.localeCompare(right.market_key)));
+    const creator = await db.query(
+      `SELECT token_address, source, attribution_block::text
+         FROM robinhood_token_attributions WHERE chain='robinhood'
+         ORDER BY token_address`
+    );
+    assert.deepEqual(creator.rows, [
+      { token_address: CREATOR_CANONICAL_TOKEN, source: 'rpc_direct', attribution_block: '100' },
+      { token_address: CREATOR_EXTERNAL_TOKEN, source: 'blockscout', attribution_block: null },
+    ]);
+    const creatorCursors = await db.query(
+      `SELECT stream, next_block::text, safe_head::text,
+              checkpoint_block::text, checkpoint_hash
+         FROM robinhood_direct_creator_cursors WHERE chain='robinhood' ORDER BY stream`
+    );
+    assert.deepEqual(creatorCursors.rows, [
+      {
+        stream: 'launchpad_backfill', next_block: '101', safe_head: '100',
+        checkpoint_block: '100', checkpoint_hash: HASH,
+      },
+      {
+        stream: 'live', next_block: '101', safe_head: '100',
+        checkpoint_block: '100', checkpoint_hash: HASH,
+      },
+    ]);
     const cursor = await journal.getCursor();
     assert.deepEqual({
       generation: cursor.generation, state: cursor.recovery_state,

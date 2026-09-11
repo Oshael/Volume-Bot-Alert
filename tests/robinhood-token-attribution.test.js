@@ -163,6 +163,12 @@ describe('Robinhood token creator attribution', () => {
     const client = {
       query: async (sql) => {
         calls.push(sql);
+        if (/SELECT recovery_state/.test(sql)) {
+          return { rowCount: 1, rows: [{ recovery_state: 'running' }] };
+        }
+        if (/SELECT COUNT\(\*\)::int AS matched/.test(sql)) {
+          return { rowCount: 1, rows: [{ matched: 1 }] };
+        }
         return sql.startsWith('UPDATE') ? { rowCount: 1, rows: [{}] } : { rows: [] };
       },
       release: () => {},
@@ -176,15 +182,46 @@ describe('Robinhood token creator attribution', () => {
       deployments: [{ tokenAddress: TOKEN, creatorAddress: CREATOR, transactionHash: `0x${'d'.repeat(64)}` }],
     });
     assert.equal(result.attributed, 1);
-    assert.deepEqual(calls.map((sql) => sql.split(/\s+/)[0]), ['BEGIN', 'INSERT', 'UPDATE', 'COMMIT']);
-    assert.match(calls[1], /attribution_factory_address/);
-    assert.match(calls[1], /WHEN 'blockscout_internal' THEN 1 ELSE 2/);
+    assert.deepEqual(calls.map((sql) => sql.split(/\s+/)[0]),
+      ['BEGIN', 'SELECT', 'SELECT', 'INSERT', 'UPDATE', 'COMMIT']);
+    assert.match(calls[3], /attribution_factory_address/);
+    assert.match(calls[3], /WHEN 'blockscout_internal' THEN 1 ELSE 2/);
+  });
+
+  it('rejects a creator LIVE commit while canonical recovery is active', async () => {
+    const calls = [];
+    const client = {
+      async query(sql) {
+        calls.push(sql);
+        if (/SELECT recovery_state/.test(sql)) {
+          return { rowCount: 1, rows: [{ recovery_state: 'recovery_required' }] };
+        }
+        return { rows: [], rowCount: 0 };
+      },
+      release() {},
+    };
+    const repository = createRobinhoodTokenAttributionRepository({
+      database: { getClient: async () => client },
+    });
+
+    await assert.rejects(repository.recordCreatorBlock({
+      blockNumber: '100', safeHead: '100', blockHash: BLOCK_HASH,
+      blockTimestamp: '2026-08-10T00:00:00.000Z', deployments: [],
+    }), (error) => error.code === 'creator_recovery_fence_conflict');
+    assert.equal(calls.some((sql) => /INSERT INTO robinhood_token_attributions/.test(sql)), false);
+    assert.equal(calls.at(-1), 'ROLLBACK');
   });
 
   it('persists verified historical direct evidence without advancing a live cursor', async () => {
     const calls = [];
     const client = {
-      query: async (sql) => { calls.push(sql); return { rows: [] }; },
+      query: async (sql) => {
+        calls.push(sql);
+        if (/SELECT recovery_state/.test(sql)) {
+          return { rowCount: 1, rows: [{ recovery_state: 'running' }] };
+        }
+        return { rows: [] };
+      },
       release: () => {},
     };
     const repository = createRobinhoodTokenAttributionRepository({
@@ -195,26 +232,35 @@ describe('Robinhood token creator attribution', () => {
       transactionHash: `0x${'d'.repeat(64)}`, blockNumber: '100',
       source: 'rpc_direct', factoryAddress: null,
     }]), { attributed: 1 });
-    assert.deepEqual(calls.map((sql) => sql.split(/\s+/)[0]), ['BEGIN', 'INSERT', 'COMMIT']);
+    assert.deepEqual(calls.map((sql) => sql.split(/\s+/)[0]),
+      ['BEGIN', 'SELECT', 'INSERT', 'COMMIT']);
     assert.doesNotMatch(calls.join('\n'), /UPDATE robinhood_direct_creator_cursors/);
   });
 
   it('persists an exact code transition without inventing creator provenance', async () => {
     const calls = [];
-    const repository = createRobinhoodTokenAttributionRepository({
-      database: { query: async (sql, params) => {
+    const client = {
+      query: async (sql, params) => {
         calls.push({ sql, params });
+        if (/SELECT recovery_state/.test(sql)) {
+          return { rowCount: 1, rows: [{ recovery_state: 'running' }] };
+        }
         return { rowCount: 1, rows: [{ token_address: TOKEN }] };
-      } },
+      },
+      release() {},
+    };
+    const repository = createRobinhoodTokenAttributionRepository({
+      database: { getClient: async () => client },
     });
     assert.deepEqual(await repository.recordCodeTransitions([{
       tokenAddress: TOKEN, blockNumber: '100',
     }]), { attributed: 1 });
-    assert.match(calls[0].sql, /'rpc_code_transition'/);
-    assert.match(calls[0].sql, /creator_address, source, attribution_block/);
-    assert.match(calls[0].sql, /creator_address = NULL/);
-    assert.match(calls[0].sql, /last_resolved_at = NULL/);
-    assert.deepEqual(calls[0].params, [[TOKEN], ['100']]);
+    const insert = calls.find(({ sql }) => /INSERT INTO robinhood_token_attributions/.test(sql));
+    assert.match(insert.sql, /'rpc_code_transition'/);
+    assert.match(insert.sql, /creator_address, source, attribution_block/);
+    assert.match(insert.sql, /creator_address = NULL/);
+    assert.match(insert.sql, /last_resolved_at = NULL/);
+    assert.deepEqual(insert.params, [[TOKEN], ['100']]);
   });
 
   it('registers an additive, retryable attribution table in the runtime guard', () => {

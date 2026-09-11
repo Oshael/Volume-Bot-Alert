@@ -247,7 +247,7 @@ function createRobinhoodHolderDeploymentVerifier(options = {}) {
     }
     return Object.freeze({
       ...hint, creatorAddress, source, factoryAddress,
-      blockNumber: evidence.blockNumber,
+      blockNumber: evidence.blockNumber, blockHash: evidence.blockHash,
     });
   }
 
@@ -281,7 +281,7 @@ function createRobinhoodHolderDeploymentVerifier(options = {}) {
     return Object.freeze({
       tokenAddress, creatorAddress: evidence.creatorAddress, transactionHash,
       source: kind === 'direct' ? 'rpc_direct' : 'rpc_trace', factoryAddress,
-      blockNumber: requestedBlock.toString(),
+      blockNumber: requestedBlock.toString(), blockHash: requestedHash,
     });
   }
 
@@ -312,7 +312,7 @@ function createRobinhoodHolderDeploymentVerifier(options = {}) {
       transactionHash: creation.transactionHash,
       source: kind === 'direct' ? 'rpc_direct' : 'rpc_trace',
       factoryAddress: kind === 'direct' ? null : creation.factoryAddress,
-      blockNumber: requestedBlock.toString(),
+      blockNumber: requestedBlock.toString(), blockHash: evidence.blockHash,
     });
   }
 

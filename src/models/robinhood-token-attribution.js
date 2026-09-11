@@ -8,6 +8,51 @@ const LIVE_SOURCES = new Set([
 const LIVE_STREAM = 'live';
 const BACKFILL_STREAM = 'launchpad_backfill';
 
+function blockHash(value, label) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!/^0x[0-9a-f]{64}$/.test(normalized)) throw new Error(`${label} is invalid`);
+  return normalized;
+}
+
+async function lockCanonicalWriter(client, anchors = [], requireExact = false) {
+  const cursor = await client.query(
+    `SELECT recovery_state FROM robinhood_chain_capture_cursor
+      WHERE chain=$1 FOR SHARE`, [CHAIN]
+  );
+  if (!cursor.rowCount || cursor.rows[0].recovery_state !== 'running') {
+    throw Object.assign(new Error('creator write is fenced by canonical recovery'), {
+      code: 'creator_recovery_fence_conflict',
+    });
+  }
+  const exact = [...new Map(anchors.filter(({ blockHash: value }) => value).map((anchor) => (
+    [`${anchor.blockNumber}:${anchor.blockHash}`, anchor]
+  ))).values()];
+  if (requireExact && exact.length !== anchors.length) {
+    throw new Error('creator LIVE write requires canonical block hashes');
+  }
+  if (!exact.length) return;
+  const result = await client.query(
+    `SELECT COUNT(*)::int AS matched
+       FROM jsonb_to_recordset($1::jsonb) item("blockNumber" bigint, "blockHash" text)
+       CROSS JOIN LATERAL (
+         SELECT MIN(block_number) AS floor FROM robinhood_chain_blocks WHERE chain=$2
+       ) retained
+      WHERE (NOT $3::boolean AND
+             (retained.floor IS NULL OR item."blockNumber" < retained.floor))
+         OR EXISTS (
+           SELECT 1 FROM robinhood_chain_blocks block
+            WHERE block.chain=$2 AND block.canonical
+              AND block.block_number=item."blockNumber"
+              AND block.block_hash=item."blockHash"
+         )`, [JSON.stringify(exact), CHAIN, requireExact]
+  );
+  if (Number(result.rows[0]?.matched || 0) !== exact.length) {
+    throw Object.assign(new Error('creator write is not anchored to the canonical branch'), {
+      code: 'creator_recovery_fence_conflict',
+    });
+  }
+}
+
 function boundedLimit(value, fallback = 1000) {
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 10000) return fallback;
@@ -187,6 +232,7 @@ function createRobinhoodTokenAttributionRepository(options = {}) {
       factoryAddress: item.factoryAddress == null
         ? null : normalizeTokenAddress(CHAIN, item.factoryAddress),
       blockNumber: BigInt(String(item.blockNumber ?? fallbackBlock)).toString(),
+      blockHash: item.blockHash == null ? null : blockHash(item.blockHash, 'deployment.blockHash'),
     }));
     for (const item of deployments) {
       if (!LIVE_SOURCES.has(item.source)) throw new Error('live creator source is unsupported');
@@ -244,9 +290,14 @@ function createRobinhoodTokenAttributionRepository(options = {}) {
     const transitions = inputs.map((input) => ({
       tokenAddress: normalizeTokenAddress(CHAIN, input.tokenAddress),
       blockNumber: BigInt(String(input.blockNumber)).toString(),
+      blockHash: input.blockHash == null ? null : blockHash(input.blockHash, 'transition.blockHash'),
     }));
-    const result = await database.query(
-      `INSERT INTO robinhood_token_attributions (
+    const client = await database.getClient();
+    try {
+      await client.query('BEGIN');
+      await lockCanonicalWriter(client, transitions);
+      const result = await client.query(
+        `INSERT INTO robinhood_token_attributions (
          chain, token_address, creator_address, source, attribution_block,
          attribution_tx_hash, attribution_factory_address,
          last_attempted_at, last_resolved_at, last_error
@@ -262,20 +313,30 @@ function createRobinhoodTokenAttributionRepository(options = {}) {
        WHERE robinhood_token_attributions.source IN ('blockscout', 'rpc_code_transition')
          AND (robinhood_token_attributions.attribution_block IS NULL
            OR robinhood_token_attributions.attribution_block = EXCLUDED.attribution_block)
-       RETURNING token_address`,
-      [transitions.map((item) => item.tokenAddress), transitions.map((item) => item.blockNumber)]
-    );
-    return Object.freeze({ attributed: result.rowCount });
+        RETURNING token_address`,
+        [transitions.map((item) => item.tokenAddress), transitions.map((item) => item.blockNumber)]
+      );
+      await client.query('COMMIT');
+      return Object.freeze({ attributed: result.rowCount });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally { client.release(); }
   }
 
   async function recordCreatorBlock(input = {}) {
     const blockNumber = BigInt(String(input.blockNumber)).toString();
+    const canonicalHash = blockHash(input.blockHash, 'creator blockHash');
     const nextBlock = (BigInt(blockNumber) + 1n).toString();
     const safeHead = BigInt(String(input.safeHead)).toString();
     const deployments = normalizeDeployments(input.deployments, blockNumber);
+    if (deployments.some((item) => item.blockNumber !== blockNumber)) {
+      throw new Error('creator deployment is outside its LIVE block');
+    }
     const client = await database.getClient();
     try {
       await client.query('BEGIN');
+      await lockCanonicalWriter(client, [{ blockNumber, blockHash: canonicalHash }], true);
       await upsertDeployments(client, deployments);
       const advanced = await client.query(
         `UPDATE robinhood_direct_creator_cursors
@@ -284,7 +345,7 @@ function createRobinhoodTokenAttributionRepository(options = {}) {
              checkpoint_timestamp = $5::timestamptz, updated_at = NOW()
          WHERE chain = '${CHAIN}' AND stream = 'live' AND next_block = $3::bigint
          RETURNING *`,
-        [nextBlock, safeHead, blockNumber, input.blockHash, input.blockTimestamp]
+        [nextBlock, safeHead, blockNumber, canonicalHash, input.blockTimestamp]
       );
       if (advanced.rowCount !== 1) throw Object.assign(new Error('direct creator cursor conflict'), {
         code: 'cursor_conflict', retryable: true,
@@ -312,6 +373,7 @@ function createRobinhoodTokenAttributionRepository(options = {}) {
     const client = await database.getClient();
     try {
       await client.query('BEGIN');
+      await lockCanonicalWriter(client, deployments);
       await upsertDeployments(client, deployments);
       await client.query('COMMIT');
       return Object.freeze({ attributed: deployments.length });

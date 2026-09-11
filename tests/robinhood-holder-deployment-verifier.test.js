@@ -51,7 +51,8 @@ describe('Robinhood holder deployment verifier', () => {
     const hint = { tokenAddress: TOKEN, creatorAddress: CREATOR, transactionHash: TX_HASH };
 
     assert.deepEqual(await verifier.verifyDirectDeployment(hint), {
-      ...hint, source: 'rpc_direct', factoryAddress: null, blockNumber: '100',
+      ...hint, source: 'rpc_direct', factoryAddress: null,
+      blockNumber: '100', blockHash: BLOCK_HASH,
     });
     await verifier.verifyDirectDeployment(hint);
 
@@ -76,7 +77,8 @@ describe('Robinhood holder deployment verifier', () => {
       tokenAddress: TOKEN, creatorAddress: FACTORY, transactionHash: TX_HASH,
     }), {
       tokenAddress: TOKEN, creatorAddress: CREATOR, transactionHash: TX_HASH,
-      source: 'rpc_trace', factoryAddress: FACTORY, blockNumber: '100',
+      source: 'rpc_trace', factoryAddress: FACTORY,
+      blockNumber: '100', blockHash: BLOCK_HASH,
     });
     assert.ok(calls.some(([method]) => method === 'trace_transaction'));
   });
@@ -129,7 +131,8 @@ describe('Robinhood holder deployment verifier', () => {
       blockNumber: '100', blockHash: BLOCK_HASH,
     }), {
       tokenAddress: TOKEN, creatorAddress: CREATOR, transactionHash: TX_HASH,
-      source: 'rpc_trace', factoryAddress: FACTORY, blockNumber: '100',
+      source: 'rpc_trace', factoryAddress: FACTORY,
+      blockNumber: '100', blockHash: BLOCK_HASH,
     });
     assert.equal(calls.some(([method]) => method === 'debug_traceBlockByNumber'), false);
     assert.ok(calls.some(([method]) => method === 'debug_traceTransaction'));
@@ -154,7 +157,8 @@ describe('Robinhood holder deployment verifier', () => {
       tokenAddress: TOKEN, blockNumber: '100',
     }), {
       tokenAddress: TOKEN, creatorAddress: CREATOR, transactionHash: TX_HASH,
-      source: 'rpc_trace', factoryAddress: FACTORY, blockNumber: '100',
+      source: 'rpc_trace', factoryAddress: FACTORY,
+      blockNumber: '100', blockHash: BLOCK_HASH,
     });
   });
 
@@ -174,7 +178,8 @@ describe('Robinhood holder deployment verifier', () => {
       tokenAddress: TOKEN, blockNumber: '100',
     }), {
       tokenAddress: TOKEN, creatorAddress: CREATOR, transactionHash: TX_HASH,
-      source: 'rpc_direct', factoryAddress: null, blockNumber: '100',
+      source: 'rpc_direct', factoryAddress: null,
+      blockNumber: '100', blockHash: BLOCK_HASH,
     });
   });
 
@@ -195,7 +200,8 @@ describe('Robinhood holder deployment verifier', () => {
       tokenAddress: TOKEN, blockNumber: '100',
     }), {
       tokenAddress: TOKEN, creatorAddress: CREATOR, transactionHash: TX_HASH,
-      source: 'rpc_trace', factoryAddress: FACTORY, blockNumber: '100',
+      source: 'rpc_trace', factoryAddress: FACTORY,
+      blockNumber: '100', blockHash: BLOCK_HASH,
     });
   });
 

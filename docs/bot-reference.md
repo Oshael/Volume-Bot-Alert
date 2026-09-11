@@ -4113,6 +4113,18 @@ o upsert reativa o registro e substitui bloco, hash, transação, log e timestam
 de descoberta. `token_catalog`, creator, launch anchors e classificações não são
 alterados por este subcorte.
 
+Creator attribution participa do mesmo rewind em seguida. A recuperação preserva
+fontes `blockscout`, atribuições on-chain fora da faixa e o cursor histórico
+`launchpad_backfill`; fatos on-chain dentro da faixa órfã são removidos somente
+depois de provar sua transação contra o journal ainda canônico. O cursor
+`robinhood_direct_creator_cursors/live`, quando afetado, volta ao ancestral com
+hash e timestamp correspondentes. Os writers que gravam evidência on-chain
+mantêm lock compartilhado no cursor da captura, recusam `recovery_required` e,
+quando recebem hash de bloco ainda retido, exigem sua canonicalidade. O writer
+LIVE por bloco sempre exige a âncora exata. Repairs mais antigos que o piso de
+retenção continuam permitidos, mas não podem atravessar um recovery ativo. Não
+há migration nem necessidade de RPC archive para executar o rollback.
+
 Antes de definir ou reduzir retenção de `robinhood_chain_events` e
 `robinhood_holder_transfer_journal`, execute
 `npm run robinhood:retention-safety-audit`. O comando é estritamente read-only,

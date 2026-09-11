@@ -16,6 +16,12 @@ describe('Robinhood token attribution persistence', () => {
   it('upgrades a Blockscout hint to verified direct or trace provenance atomically', async () => {
     const client = await db.getClient();
     try {
+      await client.query(`CREATE TEMP TABLE robinhood_chain_capture_cursor (
+        chain varchar(16) PRIMARY KEY, recovery_state text NOT NULL
+      )`);
+      await client.query(
+        `INSERT INTO robinhood_chain_capture_cursor VALUES ('robinhood', 'running')`
+      );
       await client.query(`CREATE TEMP TABLE robinhood_token_attributions (
         chain varchar(16) NOT NULL DEFAULT 'robinhood',
         token_address varchar(42) NOT NULL,
@@ -91,6 +97,7 @@ describe('Robinhood token attribution persistence', () => {
       });
     } finally {
       await client.query('DROP TABLE IF EXISTS robinhood_token_attributions').catch(() => {});
+      await client.query('DROP TABLE IF EXISTS robinhood_chain_capture_cursor').catch(() => {});
       client.release();
     }
   });

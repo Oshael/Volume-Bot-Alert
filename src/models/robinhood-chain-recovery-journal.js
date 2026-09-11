@@ -18,6 +18,7 @@ const { createRobinhoodHolderReorgRollback } = require('./robinhood-holder-reorg
 const {
   createRobinhoodDiscoveryReorgRollback,
 } = require('./robinhood-discovery-reorg-rollback');
+const { createRobinhoodCreatorReorgRollback } = require('./robinhood-creator-reorg-rollback');
 const {
   ROLLBACK_DOMAINS, ROLLBACK_MANIFEST_VERSION,
 } = require('../services/robinhood-chain-recovery-planner');
@@ -222,6 +223,7 @@ function createRobinhoodChainRecoveryJournal(options = {}) {
   const firstBuyRollback = options.firstBuyRollback || createRobinhoodFirstBuyReorgRollback();
   const holderRollback = options.holderRollback || createRobinhoodHolderReorgRollback({ database });
   const discoveryRollback = options.discoveryRollback || createRobinhoodDiscoveryReorgRollback();
+  const creatorRollback = options.creatorRollback || createRobinhoodCreatorReorgRollback();
 
   async function recordDetected(client, input = {}) {
     if (!client || typeof client.query !== 'function') {
@@ -447,6 +449,11 @@ function createRobinhoodChainRecoveryJournal(options = {}) {
       const discovery = await discoveryRollback.rollback(client, {
         fromBlock: rewind.fromBlock.toString(), throughBlock: rewind.throughBlock.toString(),
       });
+      const creator = await creatorRollback.rollback(client, {
+        ancestorBlock: rewind.ancestor.toString(), ancestorHash: rewind.ancestorHash,
+        ancestorTimestamp: retained.get(rewind.ancestor.toString()).block_timestamp,
+        fromBlock: rewind.fromBlock.toString(), throughBlock: rewind.throughBlock.toString(),
+      });
       const orphaned = await client.query(
         `UPDATE robinhood_chain_blocks SET canonical=FALSE
           WHERE chain=$1 AND canonical=TRUE
@@ -512,7 +519,7 @@ function createRobinhoodChainRecoveryJournal(options = {}) {
         status: 'rewound', generation: recoveryGeneration,
         nextGeneration: disposition.nextGeneration,
         orphanedBlocks: Number(rewind.depth), tradeInvalidations, market, wallet,
-        walletTransfers, liquidity, signedOrigins, firstBuys, holders, discovery,
+        walletTransfers, liquidity, signedOrigins, firstBuys, holders, discovery, creator,
         domainReady: [
           'canonical-journal', 'holders', 'liquidity', 'market',
           'publication-alerts', 'wallet', 'wallet-derived',
