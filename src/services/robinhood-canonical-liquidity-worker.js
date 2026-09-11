@@ -1,6 +1,7 @@
 'use strict';
 
 const { DOMAIN_NOTIFY_CHANNEL } = require('../models/robinhood-chain-capture-journal');
+const { NOTIFY_CHANNEL: REALTIME_NOTIFY_CHANNEL } = require('../models/robinhood-liquidity-realtime-outbox');
 const { createPostgresRealtimeListener } = require('./postgres-realtime-listener');
 
 function componentStatus() {
@@ -18,6 +19,10 @@ function createRobinhoodCanonicalLiquidityWorker(deps = {}, options = {}) {
   if (!deps.scanner?.scanNextRange || !deps.refresher?.runOnce) {
     throw new Error('canonical liquidity worker dependencies are required');
   }
+  const publisherEnabled = options.realtimePublisherEnabled === true;
+  if (publisherEnabled && !deps.publisher?.runOnce) {
+    throw new Error('liquidity realtime publisher dependency is required');
+  }
   const idlePollMs = Number(options.idlePollMs) || 1000;
   const errorPollMs = Number(options.errorPollMs) || 5000;
   const maxScanRanges = Number(options.maxScanRangesPerTick) || 20;
@@ -31,8 +36,10 @@ function createRobinhoodCanonicalLiquidityWorker(deps = {}, options = {}) {
       totalLogs: 0, totalAffected: 0, totalQueued: 0 },
     refresher: { ...componentStatus(), totalClaimed: 0,
       totalCompleted: 0, totalRetried: 0 },
+    publisher: { ...componentStatus(), enabled: publisherEnabled, listening: false,
+      totalClaimed: 0, totalDelivered: 0, totalRetried: 0, totalBlocked: 0 },
   };
-  let timer = null; let listener = null; let tickPromise = null; let wakePending = false;
+  let timer = null; let listeners = []; let tickPromise = null; let wakePending = false;
 
   async function scanAvailable() {
     const summary = {
@@ -69,7 +76,7 @@ function createRobinhoodCanonicalLiquidityWorker(deps = {}, options = {}) {
     }
   }
 
-  function recordTotals(scan, refresh) {
+  function recordTotals(scan, refresh, publish) {
     if (scan) {
       status.scanner.totalRanges += scan.ranges; status.scanner.totalBlocks += scan.blocks;
       status.scanner.totalLogs += scan.logs; status.scanner.totalAffected += scan.affected;
@@ -80,17 +87,25 @@ function createRobinhoodCanonicalLiquidityWorker(deps = {}, options = {}) {
       status.refresher.totalCompleted += refresh.completed || 0;
       status.refresher.totalRetried += refresh.retried || 0;
     }
+    if (publish) {
+      status.publisher.totalClaimed += publish.claimed || 0;
+      status.publisher.totalDelivered += publish.delivered || 0;
+      status.publisher.totalRetried += publish.retried || 0;
+      status.publisher.totalBlocked += publish.blocked || 0;
+    }
   }
 
   async function runOnce() {
     status.inFlight = true;
     try {
-      const [scan, refresh] = await Promise.all([
+      const [scan, refresh, publish] = await Promise.all([
         runComponent('scanner', scanAvailable),
         runComponent('refresher', () => deps.refresher.runOnce()),
+        publisherEnabled
+          ? runComponent('publisher', () => deps.publisher.runOnce()) : Promise.resolve(null),
       ]);
-      recordTotals(scan, refresh); status.lastTickAt = new Date().toISOString();
-      return Object.freeze({ scan, refresh });
+      recordTotals(scan, refresh, publish); status.lastTickAt = new Date().toISOString();
+      return Object.freeze({ scan, refresh, publish });
     } finally {
       status.inFlight = false;
     }
@@ -100,10 +115,11 @@ function createRobinhoodCanonicalLiquidityWorker(deps = {}, options = {}) {
     if (!status.running || timer) return;
     timer = schedule(() => {
       timer = null;
-      tickPromise = runOnce().then(({ scan, refresh }) => {
+      tickPromise = runOnce().then(({ scan, refresh, publish }) => {
         const busy = scan?.ranges >= maxScanRanges
-          || (refresh?.claimed || 0) >= refreshBatchSize;
-        const failed = scan == null || refresh == null;
+          || (refresh?.claimed || 0) >= refreshBatchSize
+          || (publish?.claimed || 0) >= Number(options.realtimeBatchSize || 100);
+        const failed = scan == null || refresh == null || (publisherEnabled && publish == null);
         const delay = wakePending || busy ? 0 : failed ? errorPollMs : idlePollMs;
         wakePending = false; scheduleTick(delay);
       }).finally(() => { tickPromise = null; });
@@ -121,7 +137,8 @@ function createRobinhoodCanonicalLiquidityWorker(deps = {}, options = {}) {
   async function start() {
     if (status.running) return;
     status.running = true;
-    listener = (deps.listenerFactory || createPostgresRealtimeListener)({
+    const listenerFactory = deps.listenerFactory || createPostgresRealtimeListener;
+    const journalListener = listenerFactory({
       channel: DOMAIN_NOTIFY_CHANNEL, label: 'RobinhoodCanonicalLiquidity',
       pool: deps.pool,
       onNotification: (message) => {
@@ -131,7 +148,17 @@ function createRobinhoodCanonicalLiquidityWorker(deps = {}, options = {}) {
       onConnected: () => { status.listening = true; wake(); },
       onConnectionError: () => { status.listening = false; },
     });
-    try { await listener.start(); } catch (error) {
+    listeners = [journalListener];
+    if (publisherEnabled) listeners.push(listenerFactory({
+      channel: REALTIME_NOTIFY_CHANNEL, label: 'RobinhoodLiquidityRealtimeOutbox',
+      pool: deps.pool,
+      onNotification: (message) => {
+        if (message?.channel === REALTIME_NOTIFY_CHANNEL) wake();
+      },
+      onConnected: () => { status.publisher.listening = true; wake(); },
+      onConnectionError: () => { status.publisher.listening = false; },
+    }));
+    try { await Promise.all(listeners.map((item) => item.start())); } catch (error) {
       status.totalErrors += 1; status.scanner.lastError = failure(error);
     }
     scheduleTick(0);
@@ -141,8 +168,8 @@ function createRobinhoodCanonicalLiquidityWorker(deps = {}, options = {}) {
     status.running = false; status.listening = false;
     if (timer) cancel(timer);
     timer = null;
-    if (listener) await listener.stop().catch(() => {});
-    listener = null;
+    await Promise.all(listeners.map((item) => item.stop().catch(() => {})));
+    listeners = []; status.publisher.listening = false;
     if (tickPromise) await tickPromise;
   }
 

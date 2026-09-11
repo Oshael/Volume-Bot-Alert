@@ -26,11 +26,15 @@ test('canonical liquidity worker scans fairly and records component telemetry', 
         valuation: { saved: 3, poolResults: [{ marketKey: 'large-payload' }] },
       };
     } },
-  }, { maxScanRangesPerTick: 2, refreshBatchSize: 5 });
+    publisher: { async runOnce() {
+      return { claimed: 2, delivered: 1, retried: 1, blocked: 0, backlog: { pending: 3 } };
+    } },
+  }, { maxScanRangesPerTick: 2, refreshBatchSize: 5, realtimePublisherEnabled: true });
   const result = await worker.runOnce();
   assert.equal(result.scan.ranges, 2);
   assert.equal(result.scan.blocks, 20);
   assert.equal(result.refresh.claimed, 4);
+  assert.equal(result.publish.backlog.pending, 3);
   const status = worker.getStatus();
   assert.deepEqual({
     ranges: status.scanner.totalRanges, blocks: status.scanner.totalBlocks,
@@ -42,6 +46,10 @@ test('canonical liquidity worker scans fairly and records component telemetry', 
     retried: status.refresher.totalRetried,
   }, { claimed: 4, completed: 3, retried: 1 });
   assert.deepEqual(status.refresher.lastResult.valuation, { saved: 3 });
+  assert.deepEqual({
+    claimed: status.publisher.totalClaimed, delivered: status.publisher.totalDelivered,
+    retried: status.publisher.totalRetried, blocked: status.publisher.totalBlocked,
+  }, { claimed: 2, delivered: 1, retried: 1, blocked: 0 });
 });
 
 test('canonical liquidity worker isolates scanner failures from refresh work', async () => {

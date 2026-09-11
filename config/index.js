@@ -1723,6 +1723,21 @@ module.exports = {
 
   robinhoodCanonicalLiquidityWorker: {
     enabled: parseBoolean(process.env.ROBINHOOD_CANONICAL_LIQUIDITY_ENABLED, false),
+    realtimePublisherEnabled: parseBoolean(
+      process.env.ROBINHOOD_LIQUIDITY_REALTIME_PUBLISHER_ENABLED, false
+    ),
+    realtimeAudienceEnabled: parseBoolean(
+      process.env.ROBINHOOD_LIQUIDITY_REALTIME_AUDIENCE_ENABLED, false
+    ),
+    realtimeBatchSize: parseIntegerInRange(
+      process.env.ROBINHOOD_LIQUIDITY_REALTIME_BATCH_SIZE, 100, 1, 500
+    ),
+    realtimeLeaseMs: parseIntegerInRange(
+      process.env.ROBINHOOD_LIQUIDITY_REALTIME_LEASE_MS, 60_000, 1000, 300_000
+    ),
+    realtimeMaxAttempts: parseIntegerInRange(
+      process.env.ROBINHOOD_LIQUIDITY_REALTIME_MAX_ATTEMPTS, 5, 1, 20
+    ),
     rpcUrl: String(
       process.env.ROBINHOOD_CANONICAL_LIQUIDITY_RPC_URL
       || process.env.ROBINHOOD_RPC_URL

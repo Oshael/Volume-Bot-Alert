@@ -111,6 +111,7 @@ const gmgnDiscoveryWorker = require('./services/gmgn-discovery-worker');
 const gmgnClaimSignalWorker = require('./services/gmgn-claim-signal-worker');
 const backendAlertRealtime = require('./services/backend-alert-realtime');
 const marketBucketRealtime = require('./services/market-bucket-realtime');
+const marketLiquidityRealtime = require('./services/market-liquidity-realtime');
 const marketTradeRealtime = require('./services/market-trade-realtime');
 const robinhoodHolderCountRealtime = require('./services/robinhood-holder-count-realtime');
 const {
@@ -1195,6 +1196,9 @@ function bootstrapWebRuntime(httpServer) {
   marketBucketRealtime.start().catch((err) => {
     console.error('[MarketBucketRealtime] Failed to start listener:', err.message);
   });
+  marketLiquidityRealtime.start().catch((err) => {
+    console.error('[MarketLiquidityRealtime] Failed to start listener:', err.message);
+  });
   marketTradeRealtime.start().catch((err) => {
     console.error('[MarketTradeRealtime] Failed to start listener:', err.message);
   });
@@ -1211,6 +1215,7 @@ function bootstrapWebRuntime(httpServer) {
         running: Boolean(socketHub.getIO()),
         backendAlerts: backendAlertRealtime.getStatus(),
         marketBuckets: marketBucketRealtime.getStatus(),
+        marketLiquidity: marketLiquidityRealtime.getStatus(),
         marketTrades: marketTradeRealtime.getStatus(),
         robinhoodHolderCounts: robinhoodHolderCountRealtime.getStatus(),
         ...(shouldBootstrapBackgroundRuntime() && hasWorkerGroup('core')
@@ -1387,6 +1392,7 @@ async function shutdownGracefully(signal = 'SIGTERM') {
       calloutCaptureWorker.stop(),
       backendAlertRealtime.stop(),
       marketBucketRealtime.stop(),
+      marketLiquidityRealtime.stop(),
       marketTradeRealtime.stop(),
       robinhoodHolderCountRealtime.stop(),
       userConfigSync.stop(),

@@ -26,6 +26,9 @@ const {
 const {
   createRobinhoodPoolLiquiditySnapshotRepository,
 } = require('../src/models/robinhood-pool-liquidity-snapshot');
+const {
+  createRobinhoodLiquidityRealtimeOutboxRepository,
+} = require('../src/models/robinhood-liquidity-realtime-outbox');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 const { Pool } = require('pg');
 const { createLiquidityTimedDatabase } = require('../src/utils/robinhood-liquidity-db-timing');
@@ -283,6 +286,46 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
          FROM robinhood_pool_liquidity_snapshots WHERE market_key = $2`, [TOKEN, MARKET]
     );
     assert.deepEqual(afterRollback.rows[0], { block: '12', signals: 1 });
+  });
+
+  it('leases, rebuilds and durably settles liquidity realtime delivery', async () => {
+    const snapshots = createRobinhoodPoolLiquiditySnapshotRepository({ database: db });
+    const outbox = createRobinhoodLiquidityRealtimeOutboxRepository({ database: db });
+    const write = (block, hash) => snapshots.recordSnapshot({
+      protocol: 'uniswap-v3', marketKey: MARKET, blockNumber: block, blockHash: hash,
+      observedAt: '2026-08-22T11:00:00Z', checkedAt: '2026-08-22T11:00:01Z',
+      liquidityUsd: '42.5', liquidityRaw: '9',
+      liquidityStatus: 'spot_tvl_from_pool_balances', liquidityConfidence: 'medium',
+    });
+    await db.query('DELETE FROM robinhood_liquidity_realtime_outbox WHERE token_address=$1', [TOKEN]);
+    await db.query('DELETE FROM robinhood_pool_liquidity_snapshots WHERE market_key=$1', [MARKET]);
+    await write('40', `0x${'4'.repeat(64)}`);
+    let [row] = await outbox.claimOutbox({ owner: 'integration', limit: 1, leaseMs: 60_000 });
+    assert.deepEqual({
+      address: row.payload.address, liquidityUsd: row.payload.liquidityUsd,
+      coverage: row.payload.liquidityCoverage, markets: row.payload.liquidityMarketCount,
+    }, { address: TOKEN, liquidityUsd: '42.5', coverage: 'complete', markets: 1 });
+    assert.deepEqual(await outbox.settleOutbox({
+      owner: 'integration', maxAttempts: 2,
+      retry: [{ id: row.id, error: 'relay down', backoffMs: 1 }],
+    }), { delivered: 0, retried: 1, blocked: 0 });
+    await db.query(`UPDATE robinhood_liquidity_realtime_outbox SET next_attempt_at=NOW()
+      WHERE token_address=$1 AND status='pending'`, [TOKEN]);
+    [row] = await outbox.claimOutbox({ owner: 'integration', limit: 1, leaseMs: 60_000 });
+    assert.deepEqual(await outbox.settleOutbox({
+      owner: 'integration', maxAttempts: 2,
+      retry: [{ id: row.id, error: 'still down', backoffMs: 1 }],
+    }), { delivered: 0, retried: 0, blocked: 1 });
+    await write('41', `0x${'5'.repeat(64)}`);
+    [row] = await outbox.claimOutbox({ owner: 'crashed', limit: 1, leaseMs: 60_000 });
+    await db.query(`UPDATE robinhood_liquidity_realtime_outbox SET lease_until=NOW()
+      WHERE id=$1`, [row.id]);
+    assert.equal(await outbox.reclaimExpiredLeases(), 1);
+    [row] = await outbox.claimOutbox({ owner: 'integration', limit: 1, leaseMs: 60_000 });
+    assert.deepEqual(await outbox.settleOutbox({ owner: 'integration', delivered: [row.id] }),
+      { delivered: 1, retried: 0, blocked: 0 });
+    await db.query('DELETE FROM robinhood_liquidity_realtime_outbox WHERE token_address=$1', [TOKEN]);
+    await db.query('DELETE FROM robinhood_pool_liquidity_snapshots WHERE market_key=$1', [MARKET]);
   });
 
   it('matches individual historical V4 reads at exact boundaries and replay readiness', async () => {

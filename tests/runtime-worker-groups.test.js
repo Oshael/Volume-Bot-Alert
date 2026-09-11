@@ -827,6 +827,9 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_RPC_URL: 'http://127.0.0.1:8547',
       ROBINHOOD_CANONICAL_LIQUIDITY_RPC_URL: undefined,
       ROBINHOOD_CANONICAL_LIQUIDITY_ENABLED: 'true',
+      ROBINHOOD_LIQUIDITY_REALTIME_PUBLISHER_ENABLED: 'true',
+      ROBINHOOD_LIQUIDITY_REALTIME_AUDIENCE_ENABLED: 'true',
+      ROBINHOOD_LIQUIDITY_REALTIME_BATCH_SIZE: '9999',
       ROBINHOOD_CANONICAL_LIQUIDITY_RPC_TIMEOUT_MS: '99999',
       ROBINHOOD_CANONICAL_LIQUIDITY_SCAN_BLOCKS: '99999',
       ROBINHOOD_CANONICAL_LIQUIDITY_SCAN_RANGES: '999',
@@ -835,6 +838,9 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_CANONICAL_LIQUIDITY_MAX_ANCHOR_LAG_BLOCKS: '999999',
     }, (config) => {
       assert.equal(config.robinhoodCanonicalLiquidityWorker.enabled, true);
+      assert.equal(config.robinhoodCanonicalLiquidityWorker.realtimePublisherEnabled, true);
+      assert.equal(config.robinhoodCanonicalLiquidityWorker.realtimeAudienceEnabled, true);
+      assert.equal(config.robinhoodCanonicalLiquidityWorker.realtimeBatchSize, 500);
       assert.equal(config.robinhoodCanonicalLiquidityWorker.rpcUrl, 'http://127.0.0.1:8547');
       assert.equal(config.robinhoodCanonicalLiquidityWorker.rpcTimeoutMs, 30_000);
       assert.equal(config.robinhoodCanonicalLiquidityWorker.scanBatchBlocks, 1000);
@@ -845,6 +851,8 @@ describe('runtime worker groups config', () => {
     });
     withEnv({ ROBINHOOD_CANONICAL_LIQUIDITY_ENABLED: undefined }, (config) => {
       assert.equal(config.robinhoodCanonicalLiquidityWorker.enabled, false);
+      assert.equal(config.robinhoodCanonicalLiquidityWorker.realtimePublisherEnabled, false);
+      assert.equal(config.robinhoodCanonicalLiquidityWorker.realtimeAudienceEnabled, false);
     });
     const scripts = require('../package.json').scripts;
     const systemdDir = path.join(ROOT_DIR, 'deploy', 'systemd');

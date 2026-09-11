@@ -776,8 +776,13 @@ Aplique `node src/utils/db-init-stage212.js` antes de reiniciar uma versão atua
 `robinhood_liquidity_realtime_outbox`. O mesmo statement que aceita um snapshot monotônico grava
 um sinal por pool/bloco/hash e chama `pg_notify('robinhood_liquidity_realtime_outbox', '')`; o
 PostgreSQL só entrega esse wake depois do commit. Replay da mesma origem não duplica a linha e um
-snapshot mais antigo não cria sinal. Enquanto o consumer do Slice 4B não estiver implantado, as
-linhas permanecem em `pending`; não as apague nem reinicie o cursor para liberar backlog.
+snapshot mais antigo não cria sinal. O mesmo worker canônico consome a fila com claim/lease,
+retry, reclaim e `blocked`, reconstrói a projeção das tabelas duráveis e publica pelo relay
+`market_liquidity_updated`; o web entrega `market:liquidity` na sala já existente do token.
+As pontas são independentes e desligadas por padrão: habilite primeiro
+`ROBINHOOD_LIQUIDITY_REALTIME_AUDIENCE_ENABLED` no web e depois
+`ROBINHOOD_LIQUIDITY_REALTIME_PUBLISHER_ENABLED` no canonical-liquidity. A lease expõe backlog,
+idade, tentativas e bloqueios; a telemetria web expõe o estado do listener.
 
 O status do retention worker expõe `realtimeOutbox` com backlog e idade por `event_kind`, retries,
 bloqueados, fronteiras publicadas e a última invalidação retida. `observedLagBlocks` compara o head

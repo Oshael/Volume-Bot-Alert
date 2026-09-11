@@ -23,6 +23,9 @@ const cookie = require('cookie');
 const jwt = require('jsonwebtoken');
 const os = require('os');
 const config = require('../../config');
+const {
+  normalizeRobinhoodLiquidityRealtimeEvent,
+} = require('./robinhood-liquidity-realtime-event');
 const Session = require('../models/session');
 const User = require('../models/user');
 const userAccess = require('../models/user-access');
@@ -819,6 +822,17 @@ function emitMarketBucketUpdate(payload) {
   return true;
 }
 
+function emitMarketLiquidityUpdate(payload) {
+  if (!io || !payload || typeof payload !== 'object') return false;
+  const event = normalizeRobinhoodLiquidityRealtimeEvent(payload);
+  const room = getMarketRoom(resolveMarketIdentity(event));
+  if (!event || !room || !isTokenChainUserVisible(event.chain, config)) return false;
+  const sockets = io.sockets.adapter.rooms.get(room);
+  if (!sockets || sockets.size === 0) return false;
+  io.to(room).emit(event.type, event);
+  return true;
+}
+
 function emitMarketTradeUpdate(payload) {
   if (!io || !payload || typeof payload !== 'object') return false;
   const event = normalizeMarketTradeUpdate(payload);
@@ -870,6 +884,7 @@ module.exports = {
   getIO,
   emitBackendAlertEvent,
   emitMarketBucketUpdate,
+  emitMarketLiquidityUpdate,
   emitMarketTradeUpdate,
   emitMarketTradeFinalityUpdate,
   emitMarketTradeCanaryUpdate,

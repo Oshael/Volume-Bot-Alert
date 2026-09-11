@@ -546,8 +546,8 @@ produtor pertence ao worker canônico de liquidez e o web mantém somente o rela
 e a entrega Socket.IO.
 
 **Baseline de lint do Slice 4:** a versão atualmente implantada em produção
-possui 34 warnings e zero erros em `npm run lint`. Cada corte deve terminar com
-zero erros e no máximo 34 warnings; nenhum warning novo introduzido pelo corte é
+possui 14 warnings e zero erros em `npm run lint`. Cada corte deve terminar com
+zero erros e no máximo 14 warnings; nenhum warning novo introduzido pelo corte é
 aceitável, mesmo quando a contagem total não aumentar.
 
 #### Slice 4A — produtor durável (~350–450 linhas)
@@ -563,13 +563,13 @@ aceitável, mesmo quando a contagem total não aumentar.
 
 #### Slice 4B — entrega backend (~400–500 linhas)
 
-- [ ] consumir a outbox com claim, lease, retry, reclaim após restart e estado
+- [x] consumir a outbox com claim, lease, retry, reclaim após restart e estado
   `blocked` observável;
-- [ ] reconstruir do estado durável a projeção agregada do token e publicar o
+- [x] reconstruir do estado durável a projeção agregada do token e publicar o
   evento dedicado `market:liquidity` por relay PostgreSQL;
-- [ ] reutilizar as salas `market:<chain>:<address>` existentes e limitar
+- [x] reutilizar as salas `market:<chain>:<address>` existentes e limitar
   `socket-hub`, servidor e composição a wiring;
-- [ ] manter produção e audiência desligadas por configuração explícita até o
+- [x] manter produção e audiência desligadas por configuração explícita até o
   canário, expondo backlog, idade, retries, bloqueios e estado do listener.
 
 #### Slice 4C — aplicação frontend monotônica (~350–450 linhas)

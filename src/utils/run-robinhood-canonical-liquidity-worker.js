@@ -12,6 +12,9 @@ const {
 const {
   createRobinhoodPoolLiquiditySnapshotRepository,
 } = require('../models/robinhood-pool-liquidity-snapshot');
+const {
+  createRobinhoodLiquidityRealtimeOutboxRepository,
+} = require('../models/robinhood-liquidity-realtime-outbox');
 const { createLiquidityHistoricalRangeRepository } = require('../models/robinhood-liquidity-historical-ranges');
 const { createLiquidityTimedDatabase } = require('./robinhood-liquidity-db-timing');
 const { createErc20MetadataReader } = require('../services/evm-erc20-metadata');
@@ -24,6 +27,8 @@ const {
 const {
   createRobinhoodCanonicalLiquidityWorker,
 } = require('../services/robinhood-canonical-liquidity-worker');
+const { createRobinhoodDerivedRunner } = require('../services/robinhood-derived-runner');
+const marketLiquidityRealtime = require('../services/market-liquidity-realtime');
 const {
   createRobinhoodRpcClient, validateRobinhoodProviderChainIds,
 } = require('../services/robinhood-ingestion-worker');
@@ -55,13 +60,19 @@ function liquidityRpcOptions(options, base = config.robinhoodIngestionWorker) {
     rpcTimeoutMs: options.rpcTimeoutMs, rpcMaxRetries: 0, rpcMinIntervalMs: 0 };
 }
 
-async function assertCanonicalReady(database) {
+async function assertCanonicalReady(database, options = {}) {
   const schema = await database.query(
-    `SELECT to_regclass('public.robinhood_pool_liquidity_refresh_queue') AS refresh_queue`
+    `SELECT to_regclass('public.robinhood_pool_liquidity_refresh_queue') AS refresh_queue,
+            to_regclass('public.robinhood_liquidity_realtime_outbox') AS realtime_outbox`
   );
   if (!schema.rows[0]?.refresh_queue) {
     const error = new Error('Stage 197 liquidity refresh queue must be installed');
     error.code = 'canonical_liquidity_schema_missing';
+    throw error;
+  }
+  if (options.realtimePublisherEnabled && !schema.rows[0]?.realtime_outbox) {
+    const error = new Error('Stage 212 liquidity realtime outbox must be installed');
+    error.code = 'liquidity_realtime_schema_missing';
     throw error;
   }
   const result = await database.query(
@@ -85,6 +96,25 @@ async function assertCanonicalReady(database) {
     error.code = 'canonical_head_publisher_inactive';
     throw error;
   }
+}
+
+function createRealtimePublisher(deps, options, database) {
+  if (!options.realtimePublisherEnabled) return deps.publisher || null;
+  if (deps.publisher) return deps.publisher;
+  const outbox = deps.realtimeOutboxRepository
+    || createRobinhoodLiquidityRealtimeOutboxRepository({ database });
+  const runner = (deps.publisherRunnerFactory || createRobinhoodDerivedRunner)({
+    repository: outbox, fanout: (deps.marketLiquidityRealtime || marketLiquidityRealtime).publish,
+    options: {
+      owner: `robinhood-liquidity-realtime:${process.pid}`,
+      batchSize: options.realtimeBatchSize, leaseMs: options.realtimeLeaseMs,
+      maxAttempts: options.realtimeMaxAttempts,
+      baseBackoffMs: options.retryBaseMs, maxBackoffMs: options.retryMaxMs,
+    },
+  });
+  return { runOnce: async () => ({
+    ...await runner.runOnce(), backlog: await outbox.readBacklog(),
+  }) };
 }
 
 function composeWorker(deps, options, rawDatabase, rpcClient) {
@@ -122,8 +152,9 @@ function composeWorker(deps, options, rawDatabase, rpcClient) {
     retryBaseMs: options.retryBaseMs, retryMaxMs: options.retryMaxMs,
     maxAnchorLagBlocks: options.maxAnchorLagBlocks,
   });
+  const publisher = createRealtimePublisher(deps, options, database);
   return (deps.workerFactory || createRobinhoodCanonicalLiquidityWorker)({
-    scanner, refresher, pool: rawDatabase.pool,
+    scanner, refresher, publisher, pool: rawDatabase.pool,
   }, options);
 }
 
@@ -160,7 +191,7 @@ async function main(deps = {}) {
     start: async () => {
       try {
         await (deps.validateChainIds || validateRobinhoodProviderChainIds)(rpcClient);
-        await (deps.assertCanonicalReady || assertCanonicalReady)(rawDatabase);
+        await (deps.assertCanonicalReady || assertCanonicalReady)(rawDatabase, options);
         await worker.start();
       } catch (error) {
         logger.error('[RobinhoodCanonicalLiquidityProcess] Startup failed:', error.message);
