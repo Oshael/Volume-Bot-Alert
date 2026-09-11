@@ -692,8 +692,9 @@ interpreta silenciosamente um swap provisório como definitivo.
 
 Aplique `node src/utils/db-init-stage203.js` e depois `node src/utils/db-init-stage204.js` **antes**
 de implantar o código ou reiniciar qualquer writer Robinhood. Em instalações que já possuam a
-Stage 204 antiga, aplique também `node src/utils/db-init-stage207.js` antes dos writers. A Stage 203
-cria
+Stage 204 antiga, aplique também `node src/utils/db-init-stage207.js`. Antes de iniciar o consumer
+shadow, aplique `node src/utils/db-init-stage209.js`; ela adiciona somente estado de auditoria e
+índices, sem mudar o payload ou marcar uma linha como publicada. A Stage 203 cria
 `robinhood_wallet_swap_outbox`; cada observação live aceita é anexada ali na mesma transação, já
 contendo `tx.from`, hash/tempo do bloco e posição da transação vindos do journal canônico. A chave
 `(chain, transaction_hash, log_index)` torna replay idempotente.
@@ -708,9 +709,13 @@ ramificação pode reaparecer sob outro hash sem colidir com o ciclo órfão. A 
 identidade com índice concorrente e troca a PK existente sob um lock curto; execute-a antes de
 implantar o código que usa o novo alvo de conflito.
 
-Ainda não existe consumer para esse canal: nenhuma linha é publicada ao browser e a tabela cresce
-em shadow, normalmente com uma linha `observed` e outra `finalized` por swap maduro. Não limpar
-essas linhas antes dos cortes de invalidação e consumo. O status do wallet worker expõe `promoted`;
+O repositório da Stage 209 faz claim/lease/retry/reclaim no namespace `audit_*`, independente do
+`status` e `published_at` reservados para entrega websocket. Um `finalized` ou `invalidate` só pode
+ser reclamado depois que o `observed` da mesma identidade de ramificação estiver com
+`audit_status='complete'`. Neste ponto ainda não existe worker para o canal: nada é auditado automaticamente nem
+publicado ao browser, e a tabela cresce em shadow, normalmente com uma linha `observed` e outra
+`finalized` por swap maduro. Não limpar essas linhas antes dos cortes de consumo e retenção. O
+status do wallet worker expõe `promoted`;
 um lote cheio é drenado imediatamente, enquanto o intervalo de 2s permanece reconciliação ociosa.
 O grupo `robinhood-wallet`, com `ROBINHOOD_WALLET_SWAP_LIVE_SOURCE=durable_outbox` (default), acorda
 por `LISTEN` tanto no append quanto no avanço da finalidade e usa o intervalo de 2s somente como

@@ -4,6 +4,7 @@ const db = require('./db');
 
 const CHAIN = 'robinhood';
 const NOTIFY_CHANNEL = 'robinhood_wallet_swap_realtime_outbox';
+const DEFAULT_MAX_AUDIT_ATTEMPTS = 5;
 
 function positiveInt(value, label) {
   const number = Number(value);
@@ -17,8 +18,175 @@ function quantity(value, label) {
   return BigInt(raw).toString();
 }
 
+function auditField(entry, camelName, snakeName) {
+  if (!entry) return '';
+  return entry[camelName] ?? entry[snakeName] ?? '';
+}
+
+function auditIdentity(entry, label) {
+  const transactionHash = String(
+    auditField(entry, 'transactionHash', 'transaction_hash')
+  ).trim().toLowerCase();
+  const blockHash = String(auditField(entry, 'blockHash', 'block_hash')).trim().toLowerCase();
+  const eventKind = String(auditField(entry, 'eventKind', 'event_kind')).trim().toLowerCase();
+  if (!/^0x[0-9a-f]{64}$/.test(transactionHash)) {
+    throw new Error(`${label}.transactionHash is invalid`);
+  }
+  if (!/^0x[0-9a-f]{64}$/.test(blockHash)) throw new Error(`${label}.blockHash is invalid`);
+  if (!['observed', 'finalized', 'invalidate'].includes(eventKind)) {
+    throw new Error(`${label}.eventKind is invalid`);
+  }
+  return {
+    transactionHash,
+    logIndex: quantity(auditField(entry, 'logIndex', 'log_index'), `${label}.logIndex`),
+    blockHash,
+    eventKind,
+  };
+}
+
+function auditOwner(value) {
+  const owner = String(value || '').trim();
+  if (!owner || owner.length > 128) throw new Error('trade audit owner is required');
+  return owner;
+}
+
+function mapAuditRow(row) {
+  return {
+    ...auditIdentity(row, 'claimed'),
+    blockNumber: String(row.block_number),
+    transactionIndex: String(row.transaction_index),
+    payload: row.payload,
+    attemptCount: Number(row.audit_attempt_count),
+  };
+}
+
 function createRobinhoodWalletSwapRealtimeOutboxRepository(options = {}) {
   const database = options.database || db;
+  const defaultMaxAuditAttempts = options.maxAuditAttempts || DEFAULT_MAX_AUDIT_ATTEMPTS;
+
+  async function claimAudit(input = {}) {
+    const owner = auditOwner(input.owner);
+    const limit = positiveInt(input.limit, 'limit');
+    const leaseMs = positiveInt(input.leaseMs, 'leaseMs');
+    const result = await database.query(
+      `WITH claimable AS MATERIALIZED (
+         SELECT outbox.chain, outbox.transaction_hash, outbox.log_index,
+                outbox.block_hash, outbox.event_kind
+           FROM robinhood_wallet_swap_realtime_outbox outbox
+          WHERE outbox.chain='${CHAIN}' AND outbox.audit_status='pending'
+            AND outbox.audit_next_attempt_at<=NOW()
+            AND (outbox.event_kind='observed' OR EXISTS (
+              SELECT 1 FROM robinhood_wallet_swap_realtime_outbox observed
+               WHERE observed.chain=outbox.chain
+                 AND observed.transaction_hash=outbox.transaction_hash
+                 AND observed.log_index=outbox.log_index
+                 AND observed.block_hash=outbox.block_hash
+                 AND observed.event_kind='observed'
+                 AND observed.audit_status='complete'
+            ))
+          ORDER BY outbox.block_number, outbox.transaction_index, outbox.log_index,
+                   CASE outbox.event_kind WHEN 'observed' THEN 0 ELSE 1 END
+          LIMIT $2 FOR UPDATE OF outbox SKIP LOCKED
+       )
+       UPDATE robinhood_wallet_swap_realtime_outbox outbox
+          SET audit_status='leased', audit_lease_owner=$1,
+              audit_lease_until=NOW()+($3::bigint*INTERVAL '1 millisecond'),
+              audit_attempt_count=outbox.audit_attempt_count+1, updated_at=NOW()
+         FROM claimable
+        WHERE outbox.chain=claimable.chain
+          AND outbox.transaction_hash=claimable.transaction_hash
+          AND outbox.log_index=claimable.log_index
+          AND outbox.block_hash=claimable.block_hash
+          AND outbox.event_kind=claimable.event_kind
+       RETURNING outbox.*`,
+      [owner, limit, leaseMs]
+    );
+    return result.rows.map(mapAuditRow);
+  }
+
+  async function settleAudit(input = {}) {
+    const owner = auditOwner(input.owner);
+    const audited = (input.audited || []).map((row, index) => (
+      auditIdentity(row, `audited[${index}]`)
+    ));
+    const retry = (input.retry || []).map((row, index) => ({
+      ...auditIdentity(row, `retry[${index}]`),
+      error: String(row?.error ?? '').slice(0, 4000),
+      backoffMs: positiveInt(row?.backoffMs ?? 1, `retry[${index}].backoffMs`),
+    }));
+    const maxAttempts = positiveInt(
+      input.maxAttempts ?? defaultMaxAuditAttempts, 'maxAttempts'
+    );
+    const client = await database.getClient();
+    const recordset = `jsonb_to_recordset($1::jsonb) AS item(
+      "transactionHash" text, "logIndex" bigint, "blockHash" text,
+      "eventKind" text, error text, "backoffMs" bigint
+    )`;
+    try {
+      await client.query('BEGIN');
+      let auditedCount = 0;
+      if (audited.length) {
+        const result = await client.query(
+          `UPDATE robinhood_wallet_swap_realtime_outbox outbox
+              SET audit_status='complete', audit_lease_owner=NULL,
+                  audit_lease_until=NULL, audited_at=NOW(),
+                  audit_last_error=NULL, updated_at=NOW()
+             FROM ${recordset}
+            WHERE outbox.chain='${CHAIN}' AND outbox.audit_status='leased'
+              AND outbox.audit_lease_owner=$2 AND outbox.audit_lease_until>NOW()
+              AND outbox.transaction_hash=item."transactionHash"
+              AND outbox.log_index=item."logIndex"
+              AND outbox.block_hash=item."blockHash"
+              AND outbox.event_kind=item."eventKind"`,
+          [JSON.stringify(audited), owner]
+        );
+        auditedCount = result.rowCount;
+      }
+      let retried = 0;
+      let blocked = 0;
+      if (retry.length) {
+        const result = await client.query(
+          `UPDATE robinhood_wallet_swap_realtime_outbox outbox
+              SET audit_status=CASE WHEN outbox.audit_attempt_count >= $3
+                    THEN 'blocked' ELSE 'pending' END,
+                  audit_lease_owner=NULL, audit_lease_until=NULL,
+                  audit_next_attempt_at=CASE WHEN outbox.audit_attempt_count >= $3
+                    THEN outbox.audit_next_attempt_at
+                    ELSE NOW()+(item."backoffMs"*INTERVAL '1 millisecond') END,
+                  audit_last_error=item.error, updated_at=NOW()
+             FROM ${recordset}
+            WHERE outbox.chain='${CHAIN}' AND outbox.audit_status='leased'
+              AND outbox.audit_lease_owner=$2 AND outbox.audit_lease_until>NOW()
+              AND outbox.transaction_hash=item."transactionHash"
+              AND outbox.log_index=item."logIndex"
+              AND outbox.block_hash=item."blockHash"
+              AND outbox.event_kind=item."eventKind"
+          RETURNING outbox.audit_status`,
+          [JSON.stringify(retry), owner, maxAttempts]
+        );
+        blocked = result.rows.filter((row) => row.audit_status === 'blocked').length;
+        retried = result.rowCount - blocked;
+      }
+      await client.query('COMMIT');
+      return { audited: auditedCount, retried, blocked };
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch (_) {}
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async function reclaimExpiredAuditLeases() {
+    const result = await database.query(
+      `UPDATE robinhood_wallet_swap_realtime_outbox
+          SET audit_status='pending', audit_lease_owner=NULL,
+              audit_lease_until=NULL, updated_at=NOW()
+        WHERE chain=$1 AND audit_status='leased' AND audit_lease_until<=NOW()`,
+      [CHAIN]
+    );
+    return result.rowCount;
+  }
 
   async function appendOrphanInvalidations(client, input = {}) {
     if (!client || typeof client.query !== 'function') {
@@ -137,10 +305,17 @@ function createRobinhoodWalletSwapRealtimeOutboxRepository(options = {}) {
     return Number(result.rows[0]?.promoted || 0);
   }
 
-  return Object.freeze({ appendOrphanInvalidations, promoteFinalized });
+  return Object.freeze({
+    appendOrphanInvalidations,
+    claimAudit,
+    promoteFinalized,
+    reclaimExpiredAuditLeases,
+    settleAudit,
+  });
 }
 
 module.exports = {
+  DEFAULT_MAX_AUDIT_ATTEMPTS,
   NOTIFY_CHANNEL,
   createRobinhoodWalletSwapRealtimeOutboxRepository,
 };

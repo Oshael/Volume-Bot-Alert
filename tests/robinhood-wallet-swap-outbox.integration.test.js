@@ -7,6 +7,7 @@ const { after, before, describe, it } = require('node:test');
 const db = require('../src/models/db');
 const { STATEMENTS } = require('../src/utils/db-init-stage203');
 const { STATEMENTS: REALTIME_STATEMENTS } = require('../src/utils/db-init-stage204');
+const { STATEMENTS: AUDIT_STATEMENTS } = require('../src/utils/db-init-stage209');
 const {
   createRobinhoodWalletSwapOutboxProducer,
 } = require('../src/models/robinhood-wallet-swap-outbox-producer');
@@ -64,6 +65,9 @@ describe('Robinhood wallet-swap outbox producer integration', () => {
       await client.query(index === 0
         ? sql.replace('CREATE TABLE IF NOT EXISTS', 'CREATE TEMP TABLE')
         : sql);
+    }
+    for (const sql of AUDIT_STATEMENTS) {
+      await client.query(sql.replace('CREATE INDEX CONCURRENTLY', 'CREATE INDEX'));
     }
     await client.query(`INSERT INTO robinhood_market_observations VALUES (
       'robinhood',$1,9,100,'uniswap-v3','robinhood:uniswap-v3:test',$2,$3,
@@ -170,6 +174,47 @@ describe('Robinhood wallet-swap outbox producer integration', () => {
     assert.equal((await client.query(
       'SELECT COUNT(*)::int AS count FROM robinhood_wallet_swap_outbox'
     )).rows[0].count, 0);
+  });
+
+  it('audits observed before terminal events without changing publication state', async () => {
+    const database = {
+      query: (...args) => client.query(...args),
+      getClient: async () => ({
+        query: (...args) => client.query(...args),
+        release: () => {},
+      }),
+    };
+    const lifecycle = createRobinhoodWalletSwapRealtimeOutboxRepository({ database });
+    const first = await lifecycle.claimAudit({ owner: 'audit', limit: 10, leaseMs: 60000 });
+    assert.deepEqual(first.map(({ eventKind }) => eventKind), ['observed']);
+    assert.deepEqual(await lifecycle.settleAudit({ owner: 'audit', audited: first }), {
+      audited: 1, retried: 0, blocked: 0,
+    });
+
+    let terminal = await lifecycle.claimAudit({ owner: 'audit', limit: 10, leaseMs: 60000 });
+    assert.deepEqual(terminal.map(({ eventKind }) => eventKind), ['finalized']);
+    await client.query(`UPDATE robinhood_wallet_swap_realtime_outbox
+      SET audit_lease_until=NOW()-INTERVAL '1 second' WHERE event_kind='finalized'`);
+    assert.equal(await lifecycle.reclaimExpiredAuditLeases(), 1);
+    terminal = await lifecycle.claimAudit({ owner: 'audit', limit: 10, leaseMs: 60000 });
+    assert.deepEqual(await lifecycle.settleAudit({
+      owner: 'audit', retry: [{ ...terminal[0], error: 'bad payload', backoffMs: 1 }],
+      maxAttempts: 2,
+    }), { audited: 0, retried: 0, blocked: 1 });
+
+    const rows = await client.query(
+      `SELECT event_kind, status, published_at, audit_status, audit_last_error
+         FROM robinhood_wallet_swap_realtime_outbox
+        WHERE transaction_hash=$1 ORDER BY event_kind`,
+      [TX]
+    );
+    assert.deepEqual(rows.rows, [{
+      event_kind: 'finalized', status: 'pending', published_at: null,
+      audit_status: 'blocked', audit_last_error: 'bad payload',
+    }, {
+      event_kind: 'observed', status: 'pending', published_at: null,
+      audit_status: 'complete', audit_last_error: null,
+    }]);
   });
 
   it('keeps lifecycle events distinct when the same swap identity moves branches', async () => {

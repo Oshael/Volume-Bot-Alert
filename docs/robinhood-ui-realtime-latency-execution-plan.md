@@ -414,10 +414,17 @@ Gate de 3B2B:
 
 **3B3A — consumer shadow da Stage 204**
 
-- [ ] claim/lease/retry idempotente com `LISTEN/NOTIFY` e fallback limitado;
-- [ ] ordenar cada identidade como `observed` antes de `finalized` ou
-  `invalidate`; evento terminal só é elegível após `observed` estar entregue;
-- [ ] auditar payload, duplicação, restart e backlog sem emitir socket.
+Para manter o estado de auditoria separado do contrato futuro de publicação,
+este item é executado em dois cortes:
+
+- [x] **3B3A1 — estado e repositório de auditoria:** Stage 209 adiciona estado
+  `audit_*` independente; claim/lease/retry/reclaim são idempotentes e um evento
+  terminal só fica elegível depois do `observed` do mesmo ciclo estar auditado;
+- [ ] **3B3A2 — worker shadow:** consumir por `LISTEN/NOTIFY`, com fallback
+  limitado, validar payload e auditar duplicação, restart e backlog sem socket.
+
+O shadow nunca altera `status`, `lease_*`, `attempt_count` ou `published_at` da
+publicação. Assim, o canário 3B3B não confunde auditoria com entrega ao cliente.
 
 **3B3B — canário e publicação v2**
 
@@ -640,8 +647,8 @@ refresh HTTP.
 Esta fila prevalece sobre referências antigas a “próximo corte” e não deve ser
 reordenada sem atualizar este checkpoint:
 
-1. executar 3B3A, consumer shadow da Stage 204; todos os gates de 3B2B estão
-   concluídos;
+1. concluir 3B3A2, worker do consumer shadow da Stage 204; o estado e o
+   repositório de auditoria de 3B3A1 estão concluídos;
 2. executar 3B3B, canário e publicação v2;
 3. executar 3B3C, retenção e telemetria da Stage 204;
 4. executar Slice 4, liquidez realtime até a UI;
@@ -649,7 +656,7 @@ reordenada sem atualizar este checkpoint:
 6. executar Slice 6, holders dirigidos pelo journal;
 7. executar Slice 7, ranking e membership realtime.
 
-O próximo corte autorizado pela fila é **3B3A — consumer shadow da Stage 204**.
+O próximo corte da fila é **3B3A2 — worker shadow da Stage 204**.
 
 ## Ponto importante
 

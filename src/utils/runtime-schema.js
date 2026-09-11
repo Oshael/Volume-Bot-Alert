@@ -5854,6 +5854,50 @@ const SCHEMA_GROUPS = [
       ],
     }],
   },
+  {
+    key: 'stage209-robinhood-wallet-swap-shadow-audit',
+    name: 'Stage 209 Robinhood wallet-swap lifecycle shadow audit',
+    repair: 'node src/utils/db-init-stage209.js',
+    tables: [{
+      table: 'robinhood_wallet_swap_realtime_outbox',
+      columns: [
+        'audit_status', 'audit_lease_owner', 'audit_lease_until',
+        'audit_attempt_count', 'audit_next_attempt_at', 'audited_at',
+        'audit_last_error',
+      ],
+      constraints: [
+        {
+          name: 'rh_wallet_swap_realtime_outbox_audit_status_check',
+          includes: ['pending', 'leased', 'complete', 'blocked', 'audit_attempt_count'],
+        },
+        {
+          name: 'rh_wallet_swap_realtime_outbox_audit_lease_check',
+          includes: ['audit_lease_owner', 'audit_lease_until'],
+        },
+        {
+          name: 'rh_wallet_swap_realtime_outbox_audit_completion_check',
+          includes: ['complete', 'audited_at'],
+        },
+      ],
+      indexes: [
+        {
+          name: 'idx_rh_wallet_swap_realtime_outbox_audit_claim',
+          includes: [
+            'audit_next_attempt_at', 'block_number', 'transaction_index',
+            'log_index', 'event_kind',
+          ],
+        },
+        {
+          name: 'idx_rh_wallet_swap_realtime_outbox_audit_lease',
+          includes: ['audit_lease_until'],
+        },
+        {
+          name: 'idx_rh_wallet_swap_realtime_outbox_audit_observed',
+          includes: ['chain', 'transaction_hash', 'log_index', 'block_hash'],
+        },
+      ],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

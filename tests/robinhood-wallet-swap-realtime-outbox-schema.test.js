@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const { STATEMENTS, init: initStage204 } = require('../src/utils/db-init-stage204');
 const stage207 = require('../src/utils/db-init-stage207');
+const stage209 = require('../src/utils/db-init-stage209');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 
 describe('Robinhood wallet-swap realtime lifecycle outbox schema', () => {
@@ -70,5 +71,41 @@ describe('Robinhood wallet-swap realtime lifecycle outbox schema', () => {
       'PRIMARY KEY', 'chain', 'transaction_hash', 'log_index', 'block_hash',
       'event_kind',
     ]);
+  });
+
+  it('adds shadow audit state without consuming publication state', async () => {
+    const sql = stage209.STATEMENTS.join('\n');
+    assert.match(sql, /ADD COLUMN IF NOT EXISTS audit_status/);
+    assert.match(sql, /audit_status IN \('pending', 'leased', 'complete', 'blocked'\)/);
+    assert.match(sql, /idx_rh_wallet_swap_realtime_outbox_audit_claim/);
+    assert.match(sql, /event_kind='observed' AND audit_status='complete'/);
+    assert.match(sql, /CREATE INDEX CONCURRENTLY IF NOT EXISTS/);
+    assert.doesNotMatch(sql, /SET status=/);
+    assert.doesNotMatch(sql, /published_at=NOW/);
+
+    const group = SCHEMA_GROUPS.find(({ key }) => (
+      key === 'stage209-robinhood-wallet-swap-shadow-audit'
+    ));
+    assert.equal(group.repair, 'node src/utils/db-init-stage209.js');
+    assert.deepEqual(group.tables[0].indexes.map(({ name }) => name), [
+      'idx_rh_wallet_swap_realtime_outbox_audit_claim',
+      'idx_rh_wallet_swap_realtime_outbox_audit_lease',
+      'idx_rh_wallet_swap_realtime_outbox_audit_observed',
+    ]);
+
+    const calls = [];
+    await stage209.init({
+      database: {
+        query: async (statement) => {
+          calls.push(statement);
+          return calls.length === 1
+            ? { rows: [{ name: stage209.INDEX_NAMES[0] }] }
+            : { rows: [] };
+        },
+      },
+      closePool: false,
+    });
+    assert.match(calls[1], /DROP INDEX CONCURRENTLY IF EXISTS/);
+    assert.deepEqual(calls.slice(2), stage209.STATEMENTS);
   });
 });
