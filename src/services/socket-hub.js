@@ -119,6 +119,11 @@ function getMarketTradeFinalityRoom(identity) {
     ? `market-trade-v2:${identity.key}` : null;
 }
 
+function getMarketTradeCanaryRoom(identity) {
+  const room = getMarketTradeFinalityRoom(identity);
+  return room ? `${room}:canary` : null;
+}
+
 function getMarketTradeSubscriptionRooms(payload, options = {}) {
   if (!Array.isArray(payload?.subscriptions)) return null;
   const rooms = new Set();
@@ -817,6 +822,17 @@ function emitMarketTradeFinalityUpdate(payload) {
   return true;
 }
 
+function emitMarketTradeCanaryUpdate(payload) {
+  if (!io || !payload || typeof payload !== 'object') return false;
+  const event = normalizeMarketTradeFinalityEvent(payload);
+  const room = getMarketTradeCanaryRoom(resolveMarketIdentity(event));
+  if (!event || !room || !isTokenChainUserVisible(event.chain, config)) return false;
+  const sockets = io.sockets.adapter.rooms.get(room);
+  if (!sockets || sockets.size === 0) return false;
+  io.to(room).emit(event.type, event);
+  return true;
+}
+
 function emitHolderUpdate(payload) {
   if (!io || !payload || typeof payload !== 'object') return false;
   const event = normalizeRobinhoodHolderRealtimeEvent(payload);
@@ -837,6 +853,7 @@ module.exports = {
   emitMarketBucketUpdate,
   emitMarketTradeUpdate,
   emitMarketTradeFinalityUpdate,
+  emitMarketTradeCanaryUpdate,
   emitHolderUpdate,
   revokeSessionSockets,
   revokeUserSockets,
@@ -845,6 +862,7 @@ module.exports = {
     getMarketRoom,
     getMarketTradeRoom,
     getMarketTradeFinalityRoom,
+    getMarketTradeCanaryRoom,
     getMarketTradeSubscriptionRooms,
     getMarketSubscriptionRoom,
     getMarketSubscriptionRooms,

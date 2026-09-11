@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  CHANNEL, buildMarketTradeUpdate, createMarketTradeRealtime,
+  CHANNEL, FINALITY_CHANNEL, buildMarketTradeUpdate, createMarketTradeRealtime,
 } = require('../src/services/market-trade-realtime');
 
 function row(overrides = {}) {
@@ -64,4 +64,29 @@ test('relays only valid channel payloads to the socket hub', () => {
   assert.equal(finality[0].asOfBlock, 100);
   assert.equal(finality[0].asOfBlockHash, `0x${'f'.repeat(64)}`);
   assert.equal(relay.getStatus().latency.stages.receiptToPublishedMs.p95Ms, 600);
+});
+
+test('transports lifecycle events only to the inert canary relay', async () => {
+  const calls = [];
+  const canary = [];
+  const relay = createMarketTradeRealtime({
+    database: { query: async (...args) => calls.push(args) },
+    socketHub: { emitMarketTradeCanaryUpdate: (event) => canary.push(event) },
+    now: () => Date.parse('2026-08-09T12:00:00.700Z'),
+  });
+  const payload = {
+    ...row(), protocolVersion: 2, type: 'market:trade:observed', finality: 'observed',
+    asOfBlock: '100', asOfBlockHash: `0x${'f'.repeat(64)}`,
+    observedAt: '2026-08-09T12:00:00.100Z',
+  };
+  assert.equal(await relay.publishFinalityRows([payload]), true);
+  assert.equal(calls[0][1][0], FINALITY_CHANNEL);
+  const transported = JSON.parse(calls[0][1][1][0]);
+  assert.equal(transported.address, payload.tokenAddress);
+  assert.equal(transported.publishedAt, undefined);
+  assert.equal(relay.handleFinalityNotification({
+    channel: FINALITY_CHANNEL, payload: JSON.stringify(transported),
+  }).type, 'market:trade:observed');
+  assert.equal(canary.length, 1);
+  assert.equal(canary[0].publishedAt, '2026-08-09T12:00:00.700Z');
 });

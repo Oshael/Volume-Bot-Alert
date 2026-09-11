@@ -720,6 +720,15 @@ altera o estado de publicação. Falha do shadow aparece em `lastAuditResult`/`a
 interrompe a entrega finalizada existente, que sempre roda primeiro no tick. Não limpar essas
 linhas antes do corte de retenção. O status do wallet worker também expõe `promoted`;
 um lote cheio é drenado imediatamente, enquanto o intervalo de 2s permanece reconciliação ociosa.
+
+O publisher v2 preparado reclama somente linhas já aprovadas pelo auditor. `observed` exige
+ativação explícita; com ela desligada, terminais de ciclos anteriormente publicados continuam
+elegíveis para não deixar estado provisório preso. A entrega usa o canal PostgreSQL
+`market_trade_finality_v2`, e o web normaliza novamente o payload antes de mirar a sala
+`market-trade-v2:<identidade>:canary`. Essa sala ainda não admite sockets e o publisher ainda não é
+composto no runtime: o transporte permanece inerte até o corte de allowlist. Sucesso no `NOTIFY`
+marca `status='complete'`; falha mantém retry/backoff e lease expirada é recuperada.
+
 O grupo `robinhood-wallet`, com `ROBINHOOD_WALLET_SWAP_LIVE_SOURCE=durable_outbox` (default), acorda
 por `LISTEN` tanto no append quanto no avanço da finalidade e usa o intervalo de 2s somente como
 reconciliação de notificação perdida. Claim é ordenado e limitado a `finalized_head` e ao hash ainda

@@ -2,9 +2,12 @@ const db = require('../models/db');
 const socketHub = require('./socket-hub');
 const { createPostgresRealtimeListener } = require('./postgres-realtime-listener');
 const { createRealtimeLatencyWindow } = require('./realtime-latency-window');
-const { buildMarketTradeFinalityEvent } = require('./market-trade-finality-event');
+const {
+  buildMarketTradeFinalityEvent, normalizeMarketTradeFinalityEvent,
+} = require('./market-trade-finality-event');
 
 const CHANNEL = 'market_trade_created';
+const FINALITY_CHANNEL = 'market_trade_finality_v2';
 const MAX_PAYLOAD_BYTES = 7800;
 
 function buildMarketTradeUpdate(row) {
@@ -34,7 +37,10 @@ function createMarketTradeRealtime(deps = {}) {
   const logger = deps.logger || console;
   const now = deps.now || Date.now;
   const latency = deps.latency || createRealtimeLatencyWindow({ now });
-  const stats = { published: 0, publishFailures: 0, received: 0 };
+  const stats = {
+    published: 0, publishFailures: 0, received: 0,
+    finalityPublished: 0, finalityPublishFailures: 0, finalityReceived: 0,
+  };
 
   async function publishRows(rows = []) {
     const projectionCommittedAt = new Date(now()).toISOString();
@@ -65,6 +71,39 @@ function createMarketTradeRealtime(deps = {}) {
     }
   }
 
+  async function publishFinalityRows(rows = []) {
+    const validationTime = new Date(now()).toISOString();
+    const notifications = rows.map((row) => normalizeMarketTradeFinalityEvent({
+      ...row,
+      chain: 'robinhood', address: row?.address || row?.tokenAddress,
+      amountUsd: row?.amountUsd ?? row?.volumeUsd,
+      mcUsd: row?.mcUsd ?? row?.fdvUsd,
+      publishedAt: validationTime,
+    })).map((event) => {
+      if (!event) throw new Error('market trade finality payload is invalid');
+      const transport = { ...event };
+      delete transport.publishedAt;
+      const serialized = JSON.stringify(transport);
+      if (Buffer.byteLength(serialized, 'utf8') > MAX_PAYLOAD_BYTES) {
+        throw new Error('market trade finality payload exceeds notification limit');
+      }
+      return serialized;
+    });
+    if (!notifications.length) return false;
+    try {
+      await database.query(
+        'SELECT pg_notify($1, notification) FROM unnest($2::text[]) AS batch(notification)',
+        [FINALITY_CHANNEL, notifications]
+      );
+      stats.finalityPublished += notifications.length;
+      return true;
+    } catch (error) {
+      stats.finalityPublishFailures += notifications.length;
+      logger.error('[MarketTradeRealtime] finality publish failed:', error.message);
+      throw error;
+    }
+  }
+
   function handleNotification(message) {
     if (message?.channel !== CHANNEL) return null;
     let event;
@@ -91,6 +130,25 @@ function createMarketTradeRealtime(deps = {}) {
     return event;
   }
 
+  function handleFinalityNotification(message) {
+    if (message?.channel !== FINALITY_CHANNEL) return null;
+    let event;
+    try {
+      const payload = JSON.parse(String(message.payload || '{}'));
+      const publishedAt = new Date(now()).toISOString();
+      event = normalizeMarketTradeFinalityEvent({
+        ...payload, publishedAt,
+        latency: { ...(payload.latency || {}), publishedAt },
+      });
+    } catch (_) {
+      return null;
+    }
+    if (!event) return null;
+    stats.finalityReceived += 1;
+    hub.emitMarketTradeCanaryUpdate?.(event);
+    return event;
+  }
+
   const listener = createPostgresRealtimeListener({
     channel: CHANNEL,
     label: 'MarketTradeRealtime',
@@ -98,18 +156,29 @@ function createMarketTradeRealtime(deps = {}) {
     pool: deps.pool || db.pool,
     onNotification: handleNotification,
   });
+  const finalityListener = createPostgresRealtimeListener({
+    channel: FINALITY_CHANNEL,
+    label: 'MarketTradeFinalityRealtime',
+    logger,
+    pool: deps.pool || db.pool,
+    onNotification: handleFinalityNotification,
+  });
 
   return {
-    publishRows,
+    publishRows, publishFinalityRows,
     handleNotification,
-    start: listener.start,
-    stop: listener.stop,
-    getStatus: () => ({ ...listener.getStatus(), ...stats, latency: latency.snapshot() }),
+    handleFinalityNotification,
+    start: async () => Promise.all([listener.start(), finalityListener.start()]),
+    stop: async () => Promise.all([listener.stop(), finalityListener.stop()]),
+    getStatus: () => ({
+      ...listener.getStatus(), finalityListener: finalityListener.getStatus(),
+      ...stats, latency: latency.snapshot(),
+    }),
   };
 }
 
 const realtime = createMarketTradeRealtime();
 
 module.exports = {
-  CHANNEL, buildMarketTradeUpdate, createMarketTradeRealtime, ...realtime,
+  CHANNEL, FINALITY_CHANNEL, buildMarketTradeUpdate, createMarketTradeRealtime, ...realtime,
 };

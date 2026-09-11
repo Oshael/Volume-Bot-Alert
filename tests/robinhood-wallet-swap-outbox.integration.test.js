@@ -215,6 +215,28 @@ describe('Robinhood wallet-swap outbox producer integration', () => {
       event_kind: 'observed', status: 'pending', published_at: null,
       audit_status: 'complete', audit_last_error: null,
     }]);
+
+    assert.deepEqual(await lifecycle.claimPublication({
+      owner: 'publish', limit: 10, leaseMs: 60000, observedEnabled: false,
+    }), []);
+    const observed = await lifecycle.claimPublication({
+      owner: 'publish', limit: 10, leaseMs: 60000, observedEnabled: true,
+    });
+    assert.deepEqual(observed.map(({ eventKind }) => eventKind), ['observed']);
+    assert.deepEqual(await lifecycle.settlePublication({
+      owner: 'publish', delivered: observed,
+    }), { delivered: 1, retried: 0, blocked: 0 });
+    await client.query(`UPDATE robinhood_wallet_swap_realtime_outbox
+      SET audit_status='complete', audited_at=NOW(), audit_last_error=NULL
+      WHERE transaction_hash=$1 AND event_kind='finalized'`, [TX]);
+    const finalized = await lifecycle.claimPublication({
+      owner: 'publish', limit: 10, leaseMs: 60000, observedEnabled: false,
+    });
+    assert.deepEqual(finalized.map(({ eventKind }) => eventKind), ['finalized']);
+    assert.deepEqual(await lifecycle.settlePublication({
+      owner: 'publish', retry: [{ ...finalized[0], error: 'relay down', backoffMs: 1 }],
+      maxAttempts: 1,
+    }), { delivered: 0, retried: 0, blocked: 1 });
   });
 
   it('keeps lifecycle events distinct when the same swap identity moves branches', async () => {
