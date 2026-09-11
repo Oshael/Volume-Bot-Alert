@@ -125,6 +125,11 @@ describe('Robinhood reorg safety test runner', () => {
     assert.ok(dockerRun.args.includes(IMAGE));
     assert.ok(dockerRun.args.includes(PURPOSE_LABEL));
     assert.ok(dockerRun.args.includes('127.0.0.1::5432'));
+    const readiness = fake.calls.find(({ command, args }) => (
+      command === 'docker' && args[0] === 'exec' && args.includes('pg_isready')
+    ));
+    assert.ok(readiness.args.includes('--host'));
+    assert.ok(readiness.args.includes('127.0.0.1'));
 
     const initFiles = fake.calls.filter(({ command, args }) => (
       command === process.execPath && INIT_FILES.includes(args[0])

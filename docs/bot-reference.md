@@ -781,8 +781,10 @@ O drill consolidado `npm run robinhood:reorg-safety-test` exige Docker, cria um 
 efêmero em porta aleatória restrita a `127.0.0.1` e substitui tanto `DATABASE_URL` quanto
 `DATABASE_URL_TEST` pelo database fixo `volume_alert_reorg_test`, com SSL desabilitado. A duplicação
 é intencional: cobre o inicializador base legado e os módulos atuais sem permitir que o `.env`
-redirecione uma das etapas. Ele inicializa o schema base e a Stage 5 exigida pelo bootstrap do
-journal, depois executa sequencialmente as integrações de rewind, lifecycle e publicação com
+redirecione uma das etapas. O readiness exige TCP interno para não confundir o servidor temporário
+do entrypoint da imagem com o PostgreSQL definitivo. Ele inicializa o schema base e a Stage 5
+exigida pelo bootstrap do journal, depois executa sequencialmente as integrações de rewind,
+lifecycle e publicação com
 fixtures sintéticas. O cenário canônico também abre a rota autenticada de trades em um processo
 HTTP temporário, comprova que o rewind remove os swaps órfãos do snapshot e repete a leitura após
 reiniciar esse processo. Os dois testes frontend que

@@ -118,6 +118,7 @@ function waitForPostgres(run, input = {}) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const result = run('docker', [
       'exec', input.container, 'pg_isready', '--quiet',
+      '--host', '127.0.0.1', '--port', '5432',
       '--username', USER, '--dbname', DATABASE,
     ], { capture: true });
     if (result.status === 0) return attempt + 1;
