@@ -106,6 +106,40 @@ test('canonical liquidity worker wakes on journal notifications and drains busy 
   await worker.stop();
 });
 
+test('canonical liquidity worker drains realtime backlog when NOTIFY is lost', async () => {
+  const callbacks = []; let publisherRuns = 0; let listenersStarted = 0;
+  const worker = createRobinhoodCanonicalLiquidityWorker({
+    scanner: { async scanNextRange() { return scanResult('110', 'caught_up'); } },
+    refresher: { async runOnce() {
+      return { status: 'idle', claimed: 0, completed: 0, retried: 0 };
+    } },
+    publisher: { async runOnce() {
+      publisherRuns += 1;
+      return { claimed: 1, delivered: 1, retried: 0, blocked: 0, backlog: { pending: 0 } };
+    } },
+    schedule: (callback, delay) => {
+      const handle = { callback, delay, unref() {} }; callbacks.push(handle); return handle;
+    },
+    cancel() {},
+    listenerFactory: (options) => ({
+      start: async () => { listenersStarted += 1; options.onConnected(); },
+      stop: async () => {},
+    }),
+  }, {
+    maxScanRangesPerTick: 1, refreshBatchSize: 100, realtimeBatchSize: 100,
+    realtimePublisherEnabled: true, idlePollMs: 1000,
+  });
+
+  await worker.start();
+  assert.equal(listenersStarted, 2);
+  callbacks.at(-1).callback();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(publisherRuns, 1);
+  assert.equal(callbacks.at(-1).delay, 1000);
+  assert.deepEqual(worker.getStatus().publisher.lastResult.backlog, { pending: 0 });
+  await worker.stop();
+});
+
 test('canonical liquidity worker validates its dependencies', () => {
   assert.throws(() => createRobinhoodCanonicalLiquidityWorker(), /dependencies/);
 });

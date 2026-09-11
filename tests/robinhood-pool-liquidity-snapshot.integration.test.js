@@ -288,7 +288,7 @@ describe('Robinhood pool liquidity snapshot persistence integration', () => {
     assert.deepEqual(afterRollback.rows[0], { block: '12', signals: 1 });
   });
 
-  it('leases, rebuilds and durably settles liquidity realtime delivery', async () => {
+  it('leases, rebuilds, reclaims restart backlog and durably settles realtime delivery', async () => {
     const snapshots = createRobinhoodPoolLiquiditySnapshotRepository({ database: db });
     const outbox = createRobinhoodLiquidityRealtimeOutboxRepository({ database: db });
     const write = (block, hash) => snapshots.recordSnapshot({

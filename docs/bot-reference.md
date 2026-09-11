@@ -787,6 +787,61 @@ No navegador, o evento é validado contra o mesmo contrato de cobertura e pools 
 `liquidityProjectionCommittedAt` é a versão monotônica: eventos e snapshots mais antigos ou iguais
 não substituem a projeção corrente. Uma aceitação altera somente o token já rastreado e suas regiões
 visíveis, sem mudar membership/ranking, e registra `projection/published/receipt -> applied`.
+Depois de uma desconexão de transporte, a primeira reconexão restaura as subscriptions e dispara
+uma única leitura do snapshot HTTP já existente. Essa leitura é apenas reconciliação de `NOTIFY`
+perdido; o evento continua sendo o caminho live. O connect inicial não dispara uma segunda leitura
+e a mesma versão monotônica impede que a resposta HTTP antiga reverta um evento mais novo.
+
+O rollout de `market:liquidity` deve usar esta ordem:
+
+1. aplicar `node src/utils/db-init-stage212.js`, executar `npm run db:schema-check` e publicar
+   backend/frontend com as duas flags `false`;
+2. na VPS web, definir `ROBINHOOD_LIQUIDITY_REALTIME_AUDIENCE_ENABLED=true`, reconstruir/copiar o
+   frontend e reiniciar somente `trendscope-web.service`;
+3. confirmar na lease `web-realtime-runtime` que `marketLiquidity.audienceEnabled` e `listening`
+   estão verdadeiros;
+4. na VPS dos workers, definir `ROBINHOOD_LIQUIDITY_REALTIME_PUBLISHER_ENABLED=true` no env do
+   canonical-liquidity e reiniciar somente
+   `trendscope-worker@robinhood-canonical-liquidity.service`;
+5. acompanhar um token Robinhood já assinado: uma nova valoração deve alterar LIQ sem depender de
+   swap, repetição/ordem inversa não pode regredir o valor e disconnect/reconnect deve convergir ao
+   mesmo `liquidityProjectionCommittedAt` do snapshot HTTP.
+
+As configurações de produção ficam em `.env.example` para a audiência web e em
+`deploy/systemd/robinhood-canonical-liquidity.env.example` para publisher, batch, lease e limite de
+tentativas. Este snapshot SQL evita varrer as tabelas grandes e comprova lease, listener e backlog:
+
+```sql
+SELECT lease_key,
+       lease_until > NOW() AS active,
+       ROUND(EXTRACT(EPOCH FROM NOW() - heartbeat_at)::numeric, 1) AS heartbeat_age_seconds,
+       metadata #>> '{publisher,enabled}' AS publisher_enabled,
+       metadata #>> '{publisher,listening}' AS publisher_listening,
+       metadata #>> '{publisher,lastResult,backlog,pending}' AS publisher_pending,
+       metadata #>> '{publisher,lastError,message}' AS publisher_error,
+       metadata #>> '{telemetry,marketLiquidity,audienceEnabled}' AS audience_enabled,
+       metadata #>> '{telemetry,marketLiquidity,listening}' AS audience_listening,
+       metadata #>> '{telemetry,marketLiquidity,received}' AS audience_received
+  FROM worker_leases
+ WHERE lease_key IN ('robinhood-canonical-liquidity-worker', 'web-realtime-runtime')
+ ORDER BY lease_key;
+
+SELECT status, COUNT(*) AS rows,
+       COUNT(*) FILTER (WHERE status='pending' AND next_attempt_at<=NOW()) AS due_now,
+       COUNT(*) FILTER (WHERE status='leased' AND lease_until<=NOW()) AS expired_leases,
+       ROUND(EXTRACT(EPOCH FROM NOW()-MIN(created_at))::numeric, 1) AS oldest_age_seconds,
+       MAX(attempt_count) AS max_attempts
+  FROM robinhood_liquidity_realtime_outbox
+ WHERE status <> 'complete'
+ GROUP BY status ORDER BY status;
+```
+
+No canário, `publisher_error` deve ficar vazio, não pode haver `blocked` nem lease expirada e o
+backlog deve voltar a zero. Este canário é uma janela operacional acompanhada por uma sessão do
+operador, não uma segmentação por usuário: enquanto as duas flags estiverem ligadas, qualquer
+cliente inscrito na sala do token pode receber o evento. Para rollback, desligue primeiro o
+publisher e reinicie apenas o canonical-liquidity; isso preserva linhas pendentes. Depois desligue
+a audiência e reinicie apenas o web. O painel continua convergindo pelo snapshot HTTP.
 
 O status do retention worker expõe `realtimeOutbox` com backlog e idade por `event_kind`, retries,
 bloqueados, fronteiras publicadas e a última invalidação retida. `observedLagBlocks` compara o head

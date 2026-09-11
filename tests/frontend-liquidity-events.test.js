@@ -51,7 +51,7 @@ describe('frontend liquidity realtime events', () => {
     ]) assert.equal(liquidityEvents.normalizeMarketLiquidityUpdate(malformed), null);
   });
 
-  it('applies only a strictly newer durable projection', () => {
+  it('applies a liquidity-only event and rejects duplicate or out-of-order projections', () => {
     const current = {
       chain: 'robinhood', address: TOKEN, label: 'unchanged', liquidityUsd: 10,
       liquidityProjectionCommittedAt: '2026-09-11T19:00:00.100Z',

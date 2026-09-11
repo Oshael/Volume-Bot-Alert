@@ -585,13 +585,14 @@ aceitável, mesmo quando a contagem total não aumentar.
 
 #### Slice 4D — convergência, rollout e prova operacional (~200–350 linhas)
 
-- [ ] no reconnect, manter o evento como caminho live e usar o snapshot HTTP
+- [x] no reconnect, manter o evento como caminho live e usar o snapshot HTTP
   existente para reidratação e reconciliação;
-- [ ] provar atualização sem swap, deduplicação, evento fora de ordem,
+- [x] provar atualização sem swap, deduplicação, evento fora de ordem,
   `NOTIFY` perdido e restart com backlog;
-- [ ] documentar schema, flags, workers, ordem de deploy/restart e rollback;
+- [x] documentar schema, flags, workers, ordem de deploy/restart e rollback;
 - [ ] ativar primeiro em canário e fechar o gate somente após tráfego real e um
-  reconnect convergirem ao mesmo estado durável.
+  reconnect convergirem ao mesmo estado durável. O código e o runbook estão
+  prontos; esta confirmação depende da execução na VPS.
 
 Gate:
 

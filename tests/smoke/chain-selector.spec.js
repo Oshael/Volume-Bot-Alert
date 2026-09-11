@@ -1798,6 +1798,47 @@ test('renders compact expanded chart metrics with direct value tooltips', async 
   expect(diagnostics.pageErrors).toEqual([]);
 });
 
+test('applies liquidity without a swap and rejects stale realtime projections', async ({ page }) => {
+  const socketScenario = { socket: null, clientFrames: [] };
+  const diagnostics = await openAuthenticatedWorkspace(
+    page, ROBINHOOD_MARKET_API_FIXTURES, '/', socketScenario,
+  );
+  await page.getByRole('group', { name: 'Filter workspace by blockchain' })
+    .locator('[data-chain="robinhood"]').click();
+  const row = page.locator(
+    `.monitored-panel article.monitored-token-row[data-address="${ROBINHOOD_TOKEN}"]`,
+  );
+  await expect(row).toBeVisible();
+  await expect.poll(() => socketScenario.clientFrames.some((frame) => (
+    frame.includes('"market:sync"') && frame.includes(`"address":"${ROBINHOOD_TOKEN}"`)
+  ))).toBe(true);
+  const liquidityValue = row.locator('.monitored-meta-line > span')
+    .filter({ hasText: /^LP / }).locator('.total-liq-value');
+  const payload = {
+    type: 'market:liquidity', chain: 'robinhood', address: ROBINHOOD_TOKEN,
+    liquidityUsd: 42000,
+    liquidityProjectionCommittedAt: '2026-07-15T12:00:00.200Z',
+    liquidityCoverage: 'complete', liquidityMarketCount: 1,
+    valuedLiquidityMarketCount: 1, liquidityIsLowerBound: false,
+    liquidityPools: [{
+      protocol: 'uniswap-v3', marketKey: `robinhood:uniswap-v3:${ROBINHOOD_POOL}`,
+      poolAddress: ROBINHOOD_POOL, poolId: null, liquidityUsd: 42000,
+    }],
+  };
+  sendSocketEvent(socketScenario, 'market:liquidity', payload);
+  await expect(liquidityValue).toHaveText('$42K');
+  for (const [liquidityUsd, liquidityProjectionCommittedAt] of [
+    [999000, payload.liquidityProjectionCommittedAt],
+    [888000, '2026-07-15T12:00:00.100Z'],
+  ]) sendSocketEvent(socketScenario, 'market:liquidity', {
+    ...payload, liquidityUsd, liquidityProjectionCommittedAt,
+    liquidityPools: [{ ...payload.liquidityPools[0], liquidityUsd }],
+  });
+  await expect(liquidityValue).toHaveText('$42K');
+  expect(diagnostics.unexpectedRequests).toEqual([]);
+  expect(diagnostics.pageErrors).toEqual([]);
+});
+
 test('opens a Robinhood FDV chart and applies only its realtime updates', async ({ page }) => {
   chartRequestPayloads.length = 0;
   const socketScenario = { socket: null, clientFrames: [] };

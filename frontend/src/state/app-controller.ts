@@ -10567,6 +10567,9 @@ export function createAppController(): AppController {
           applyLiveLiquidityUpdate(payload);
         }
       },
+      onMarketLiquidityRecover() {
+        refreshWorkspaceSnapshot();
+      },
     });
   }
 

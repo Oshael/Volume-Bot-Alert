@@ -53,6 +53,7 @@ let desiredLivePresence: {
   mode: 'foreground' | 'hidden' | 'inactive';
   hiddenGraceMs?: number;
 } | null = null;
+let liquidityRecoveryPending = false;
 
 export function connectSocket(): Socket {
   if (socket) {
@@ -114,6 +115,7 @@ export function bindSocketLifecycle(options: {
   onAlertEvent?: (payload: DashboardAlertEvent) => void;
   onMarketBucket?: (payload: MarketBucketUpdateEvent) => void;
   onMarketLiquidity?: (payload: MarketLiquidityUpdateEvent) => void;
+  onMarketLiquidityRecover?: () => void;
 }) {
   const current = connectSocket();
 
@@ -132,6 +134,8 @@ export function bindSocketLifecycle(options: {
   current.off('holder:invalidate');
 
   current.on('connect', () => {
+    const shouldRecoverLiquidity = liquidityRecoveryPending;
+    liquidityRecoveryPending = false;
     if (desiredLivePresence) {
       current.emit('live:presence', desiredLivePresence);
     }
@@ -140,10 +144,12 @@ export function bindSocketLifecycle(options: {
     for (const entry of holderListeners.values()) {
       for (const listener of entry.listeners) listener.onRecover();
     }
+    if (shouldRecoverLiquidity) options.onMarketLiquidityRecover?.();
     options.onStatus?.('Socket connected.');
   });
 
   current.on('disconnect', (reason) => {
+    liquidityRecoveryPending = true;
     options.onStatus?.(`Socket disconnected: ${reason}`);
   });
 
@@ -308,4 +314,5 @@ export function disconnectSocket() {
   marketTradeListeners.clear();
   holderListeners.clear();
   socket?.disconnect();
+  liquidityRecoveryPending = false;
 }

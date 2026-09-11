@@ -179,6 +179,21 @@ describe('frontend socket market subscriptions', () => {
     }
   });
 
+  it('requests one HTTP liquidity reconciliation per disconnect cycle', () => {
+    let recoveries = 0;
+    client.bindSocketLifecycle({
+      onRevoked() {},
+      onMarketLiquidityRecover: () => { recoveries += 1; },
+    });
+
+    socket.trigger('connect');
+    assert.equal(recoveries, 0);
+    socket.trigger('disconnect', 'transport close');
+    socket.trigger('connect');
+    socket.trigger('connect');
+    assert.equal(recoveries, 1);
+  });
+
   it('dispatches ordered holder events and requests REST recovery after reconnect', () => {
     const counts = [];
     const invalidations = [];
