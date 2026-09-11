@@ -240,7 +240,7 @@ Progresso:
 
 #### Checkpoint de retomada do Slice 3
 
-Estado implementado:
+Estado implementado até este checkpoint:
 
 - o processing grava `observed` na Stage 204 junto do commit da observação;
 - o wallet worker promove somente bloco/hash ainda canônico para `finalized`,
@@ -248,13 +248,16 @@ Estado implementado:
 - `observed` e `finalized` continuam em shadow, sem consumer e sem chegar à UI;
 - o frontend v2 já entende os três eventos, mas recebe apenas o fluxo finalizado
   legado/v2 existente;
-- a captura detecta divergência de parent hash e para com
-  `capture_reorg_detected`; ainda não existe recuperação canônica central;
+- a recuperação canônica central já detecta, planeja, persiste e executa rewind
+  somente atrás do manifesto de domínios; market, wallet, publicação, transfers
+  e liquidity já possuem rollback, mas o manifesto ainda não está completo;
 - a Stage 204 não deve ser limpa enquanto invalidação, consumo e retenção não
   estiverem prontos. Neste ponto ela tende a guardar duas linhas por swap maduro.
 
-Ao retomar em outro contexto, o próximo trabalho é **3B2B-2A**, abaixo. Não ligar
-`market:trade:observed` antes de concluir todos os gates de 3B2B.
+Ao retomar em outro contexto, o próximo trabalho é obrigatoriamente
+**3B2B-3A1 — wallet-derived/signed-origin**, seguido por
+**3B2B-3A2 — wallet-derived/first-buy**. Não iniciar 3B3, Slice 4 ou qualquer
+slice posterior antes de concluir todos os gates de 3B2B.
 
 #### Slice 3B2B — recuperação de reorg, em cortes menores
 
@@ -355,18 +358,44 @@ necessário se uma migration surgir durante a implementação.
 
 **3B2B-3 — rollback dos demais domínios compartilhados**
 
+Este corte permanece subdividido e deve seguir exatamente a ordem abaixo. Cada
+subcorte termina em commit e validação próprios; concluir um domínio fora da
+ordem não autoriza avançar para 3B3.
+
+**3B2B-3A — wallet-derived**
+
 - [x] criar a Stage 208 para preimages de transfers ainda reversíveis, com
   retenção fixa de três dias e limpeza somente após `finalized_head`;
 - [x] gravar preimages por batch LIVE, com range explícito para replay parcial;
 - [x] restaurar transfers/edges/resumos/evidências e recuar o cursor no reorg;
-- [x] adaptar liquidity ao rewind, invalidando snapshots órfãos, reancorando a
-  fila no ancestral e cercando writes RPC atrasados pela canonicalidade;
-- [ ] adaptar discovery, holders/transfers, creators e classificações ao mesmo
-  evento/generation fence;
+- [ ] **3B2B-3A1:** reverter `wallet-signed-origin` e seu cursor com o mesmo
+  fence de geração/canonicalidade;
+- [ ] **3B2B-3A2:** reverter `wallet-token-first-buy` e seu cursor sem conservar
+  primeira compra pertencente à ramificação órfã.
+
+**3B2B-3B — liquidity**
+
+- [x] invalidar snapshots órfãos, reancorar a fila no ancestral e cercar writes
+  RPC atrasados pela canonicalidade.
+
+**3B2B-3C — holders**
+
+- [ ] reverter journal, balances, contagem e cursores afetados, preservando o
+  estado anterior até a nova ramificação ser reaplicada.
+
+**3B2B-3D — discovery-creator**
+
+- [ ] reverter discovery, creator e classificações derivadas e aplicar o mesmo
+  event/generation fence aos writers correspondentes.
+
+**3B2B-3E — integração final dos gates**
+
 - [ ] preservar estado anterior marcado stale ou incompleto enquanto a nova
   ramificação não tiver sido reaplicada;
 - [ ] provar que falha de um domínio mantém recuperação retomável sem liberar
-  canonicalidade parcial para os outros.
+  canonicalidade parcial para os outros;
+- [ ] liberar o manifesto apenas quando `wallet-derived`, `liquidity`, `holders`
+  e `discovery-creator` estiverem coerentes na mesma geração.
 
 Gate de 3B2B:
 
@@ -601,6 +630,25 @@ Executar na seguinte ordem:
 Os slices 1 e 2 removem a maior parte do atraso percebido. Os slices seguintes
 fecham superfícies que hoje ainda parecem rápidas apenas quando coincidem com um
 refresh HTTP.
+
+### Fila canônica de retomada atual
+
+Esta fila prevalece sobre referências antigas a “próximo corte” e não deve ser
+reordenada sem atualizar este checkpoint:
+
+1. terminar 3B2B-3 na ordem `wallet-derived/signed-origin`,
+   `wallet-derived/first-buy`, `holders`, `discovery-creator` e integração dos
+   gates; `liquidity` já está concluído;
+2. executar 3B3A, consumer shadow da Stage 204;
+3. executar 3B3B, canário e publicação v2;
+4. executar 3B3C, retenção e telemetria da Stage 204;
+5. executar Slice 4, liquidez realtime até a UI;
+6. executar Slice 5, readiness por push;
+7. executar Slice 6, holders dirigidos pelo journal;
+8. executar Slice 7, ranking e membership realtime.
+
+O próximo corte autorizado pela fila é **3B2B-3A1 —
+wallet-derived/signed-origin**.
 
 ## Ponto importante
 
