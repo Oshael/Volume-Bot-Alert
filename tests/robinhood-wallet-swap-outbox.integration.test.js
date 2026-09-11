@@ -258,8 +258,16 @@ describe('Robinhood wallet-swap outbox producer integration', () => {
     await client.query(`UPDATE robinhood_wallet_swap_realtime_outbox
       SET audit_status='complete', audited_at=NOW(), audit_last_error=NULL
       WHERE transaction_hash=$1 AND event_kind='finalized'`, [TX]);
-    const finalized = await lifecycle.claimPublication({
+    assert.deepEqual(await lifecycle.claimPublication({
       owner: 'publish', limit: 10, leaseMs: 60000, observedEnabled: false,
+    }), []);
+    assert.deepEqual(await lifecycle.claimPublication({
+      owner: 'publish', limit: 10, leaseMs: 60000,
+      observedEnabled: false, activationBlock: '101',
+    }), []);
+    const finalized = await lifecycle.claimPublication({
+      owner: 'publish', limit: 10, leaseMs: 60000,
+      observedEnabled: false, activationBlock: '100',
     });
     assert.deepEqual(finalized.map(({ eventKind }) => eventKind), ['finalized']);
     assert.deepEqual(await lifecycle.settlePublication({

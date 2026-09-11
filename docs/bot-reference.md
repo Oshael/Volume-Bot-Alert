@@ -731,8 +731,10 @@ O publisher v2 reclama somente linhas já aprovadas pelo auditor e é composto n
 `ROBINHOOD_WALLET_SWAP_REALTIME_V2_ACTIVATION_BLOCK`; sem o bloco, o worker falha fechado. Somente
 `observed` com `block_number` igual ou superior ao watermark pode ser publicado, e a auditoria
 prioriza esse intervalo antes do backlog histórico. A flag fica desligada por default; com ela desligada,
-terminais de ciclos anteriormente publicados continuam elegíveis para não deixar estado provisório
-preso. A entrega usa o canal PostgreSQL `market_trade_finality_v2`, e o web normaliza novamente o
+terminais de ciclos anteriormente publicados continuam elegíveis, mas somente a partir do mesmo
+activation block, para não deixar estado provisório preso nem varrer o backlog histórico. Sem um
+activation block configurado, o publisher desligado não consulta a outbox. A entrega usa o canal
+PostgreSQL `market_trade_finality_v2`, e o web normaliza novamente o
 payload antes de mirar a sala `market-trade-v2:<identidade>:canary`. Apenas usuários cujos IDs
 positivos estejam em `ROBINHOOD_WALLET_SWAP_REALTIME_V2_CANARY_USER_IDS` entram nessa sala;
 clientes fora da lista permanecem na sala v2 finalizada-only. Sucesso no `NOTIFY` marca
@@ -742,7 +744,8 @@ Ative primeiro a allowlist no web e reinicie o frontend/backend web; só então 
 `trendscope-worker@robinhood-wallet`. No momento da ativação, leia o `next_block` de
 `robinhood_chain_capture_cursor` e grave esse valor como `...ACTIVATION_BLOCK`; não diminua nem
 reutilize um watermark antigo em uma ativação futura. Para rollback, desligue apenas
-`...OBSERVED_ENABLED` e preserve a allowlist até os `finalized`/`invalidate` pendentes drenarem.
+`...OBSERVED_ENABLED`, preserve o activation block vigente e a allowlist até os
+`finalized`/`invalidate` pendentes drenarem.
 Ao reativar depois de uma pausa, escolha um novo `next_block`. A UI substitui `observed` por
 `finalized` usando `transactionHash:actionIndex` e remove a mesma identidade em `invalidate`.
 

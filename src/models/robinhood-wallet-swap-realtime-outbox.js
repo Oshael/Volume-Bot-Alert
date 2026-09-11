@@ -221,6 +221,9 @@ function createRobinhoodWalletSwapRealtimeOutboxRepository(options = {}) {
     if (input.observedEnabled === true && activationBlock == null) {
       throw new Error('trade publication activationBlock is required for observed events');
     }
+    // Before the first canary there cannot be a terminal event that is safe to
+    // publish. Avoid searching the historical audited backlog on every tick.
+    if (activationBlock == null) return [];
     const result = await database.query(
       `WITH claimable AS MATERIALIZED (
          SELECT outbox.chain, outbox.transaction_hash, outbox.log_index,
@@ -230,7 +233,8 @@ function createRobinhoodWalletSwapRealtimeOutboxRepository(options = {}) {
             AND outbox.audit_status='complete' AND outbox.next_attempt_at<=NOW()
             AND ((outbox.event_kind='observed' AND $4::boolean
                   AND outbox.block_number >= $5::bigint) OR
-              (outbox.event_kind<>'observed' AND EXISTS (
+              (outbox.event_kind<>'observed'
+               AND outbox.block_number >= $5::bigint AND EXISTS (
                 SELECT 1 FROM robinhood_wallet_swap_realtime_outbox observed
                  WHERE observed.chain=outbox.chain
                    AND observed.transaction_hash=outbox.transaction_hash

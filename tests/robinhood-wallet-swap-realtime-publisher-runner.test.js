@@ -5,6 +5,9 @@ const { describe, it } = require('node:test');
 const {
   backoffFor, createRobinhoodWalletSwapRealtimePublisherRunner,
 } = require('../src/services/robinhood-wallet-swap-realtime-publisher-runner');
+const {
+  createRobinhoodWalletSwapRealtimeOutboxRepository,
+} = require('../src/models/robinhood-wallet-swap-realtime-outbox');
 
 const row = {
   transactionHash: `0x${'1'.repeat(64)}`, logIndex: '7',
@@ -36,6 +39,22 @@ function fixture(publishRows) {
 }
 
 describe('Robinhood wallet-swap realtime publisher', () => {
+  it('does not scan historical publication work before the first activation', async () => {
+    let queries = 0;
+    const repository = createRobinhoodWalletSwapRealtimeOutboxRepository({
+      database: {
+        query: async () => {
+          queries += 1;
+          return { rows: [] };
+        },
+      },
+    });
+    assert.deepEqual(await repository.claimPublication({
+      owner: 'publisher-test', limit: 200, leaseMs: 60000, observedEnabled: false,
+    }), []);
+    assert.equal(queries, 0);
+  });
+
   it('settles only after the durable relay accepts the batch', async () => {
     const state = fixture(async (payloads) => {
       assert.deepEqual(payloads, [row.payload]);
