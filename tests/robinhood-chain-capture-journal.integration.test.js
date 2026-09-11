@@ -1,9 +1,17 @@
 process.env.NODE_ENV = 'test';
+process.env.ROBINHOOD_USER_VISIBILITY_ENABLED = 'true';
 
 const assert = require('node:assert/strict');
+const { randomUUID } = require('node:crypto');
+const { fork } = require('node:child_process');
+const http = require('node:http');
+const path = require('node:path');
 const { after, before, beforeEach, describe, it } = require('node:test');
+const jwt = require('jsonwebtoken');
 
+const config = require('../config');
 const db = require('../src/models/db');
+const Session = require('../src/models/session');
 const {
   createRobinhoodChainCaptureJournal,
 } = require('../src/models/robinhood-chain-capture-journal');
@@ -128,6 +136,100 @@ const TOPIC = v2.TOPICS.pairCreated;
 const OBSERVED_AT = '2026-09-03T20:00:00.000Z';
 const ZERO_ADDRESS = `0x${'0'.repeat(40)}`;
 const MAX_UINT256 = ((1n << 256n) - 1n).toString();
+const HTTP_USER_EMAIL = 'robinhood-reorg-http@test.local';
+const HTTP_SERVER_FIXTURE = path.join(__dirname, 'fixtures/robinhood-trades-http-server.js');
+
+async function createHttpSession() {
+  const user = (await db.query(
+    `INSERT INTO users(username,email,password_hash,role,access_status)
+     VALUES ('robinhood_reorg_http',$1,'test-only','admin','active')
+     RETURNING id, role`, [HTTP_USER_EMAIL]
+  )).rows[0];
+  const token = jwt.sign(
+    { userId: user.id, role: user.role, jti: randomUUID() },
+    config.jwt.secret,
+    { expiresIn: config.jwt.expiresIn }
+  );
+  const decoded = jwt.decode(token);
+  await Session.create({
+    userId: user.id,
+    token,
+    ipAddress: '127.0.0.1',
+    userAgent: 'robinhood-reorg-http-test',
+    expiresAt: new Date(decoded.exp * 1000),
+  });
+  return token;
+}
+
+function startTradesHttpServer() {
+  return new Promise((resolve, reject) => {
+    const child = fork(HTTP_SERVER_FIXTURE, [], {
+      env: process.env,
+      stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
+    });
+    const timeout = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error('Robinhood trades HTTP fixture startup timed out'));
+    }, 5000);
+    child.once('error', (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.once('exit', (code) => {
+      if (code !== 0) {
+        clearTimeout(timeout);
+        reject(new Error(`Robinhood trades HTTP fixture exited with ${code}`));
+      }
+    });
+    child.once('message', (message) => {
+      if (message?.type !== 'ready') return;
+      clearTimeout(timeout);
+      resolve({ child, port: message.port });
+    });
+  });
+}
+
+function stopTradesHttpServer(server) {
+  return new Promise((resolve) => {
+    if (!server?.child || server.child.exitCode !== null) return resolve();
+    const timeout = setTimeout(() => {
+      server.child.kill('SIGKILL');
+    }, 5000);
+    server.child.once('exit', () => {
+      clearTimeout(timeout);
+      resolve();
+    });
+    server.child.send({ type: 'stop' });
+  });
+}
+
+function fetchTrades(server, token) {
+  return new Promise((resolve, reject) => {
+    const request = http.get({
+      hostname: '127.0.0.1',
+      port: server.port,
+      path: `/api/robinhood/trades?token=${TOKEN}`,
+      headers: { Authorization: `Bearer ${token}` },
+    }, (response) => {
+      let body = '';
+      response.setEncoding('utf8');
+      response.on('data', (chunk) => { body += chunk; });
+      response.on('end', () => {
+        try {
+          resolve({ status: response.statusCode, body: JSON.parse(body) });
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+    request.once('error', reject);
+  });
+}
+
+function tradeHashes(response) {
+  assert.equal(response.status, 200);
+  return response.body.trades.map(({ transactionHash }) => transactionHash).sort();
+}
 
 function capture(number = 100, hash = HASH, parentHash = PARENT) {
   return {
@@ -150,6 +252,7 @@ function capture(number = 100, hash = HASH, parentHash = PARENT) {
 }
 
 async function clearTables() {
+  await db.query('DELETE FROM users WHERE email=$1', [HTTP_USER_EMAIL]);
   await db.query("DELETE FROM robinhood_bundle_redistribution_states WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_fresh_wallet_evaluations WHERE chain='robinhood'");
   await db.query("DELETE FROM robinhood_fresh_wallet_queue WHERE chain='robinhood'");
@@ -640,7 +743,7 @@ describe('Robinhood canonical chain capture journal', () => {
     }), [{ blockNumber: '101', blockHash: NEXT_HASH }]);
   });
 
-  it('atomically preserves an orphan branch and rewinds only an executable recovery', async () => {
+  it('rewinds atomically and converges the HTTP snapshot across restart', async () => {
     const journal = createRobinhoodChainCaptureJournal();
     const second = capture(101, NEXT_HASH, HASH);
     second.transactions[0].hash = NEXT_TX;
@@ -941,10 +1044,25 @@ describe('Robinhood canonical chain capture journal', () => {
       `INSERT INTO robinhood_holder_cursors(
          chain, stream, next_block, safe_head, checkpoint_block, checkpoint_hash,
          journal_floor_block, buffer_floor_block
-       ) VALUES ('robinhood','live',102,101,101,$1,100,101)`, [NEXT_HASH]
+      ) VALUES ('robinhood','live',102,101,101,$1,100,101)`, [NEXT_HASH]
     );
-    await journal.markRecoveryRequired({ plan });
-    const rewindResult = await journal.rewindCanonicalRecovery({ generation: '0' });
+    const token = await createHttpSession();
+    const server = await startTradesHttpServer();
+    let rewindResult;
+    try {
+      assert.deepEqual(tradeHashes(await fetchTrades(server, token)), [LEGACY_TX, NEXT_TX, TX].sort());
+      await journal.markRecoveryRequired({ plan });
+      rewindResult = await journal.rewindCanonicalRecovery({ generation: '0' });
+      assert.deepEqual(tradeHashes(await fetchTrades(server, token)), [TX]);
+    } finally {
+      await stopTradesHttpServer(server);
+    }
+    const restartedServer = await startTradesHttpServer();
+    try {
+      assert.deepEqual(tradeHashes(await fetchTrades(restartedServer, token)), [TX]);
+    } finally {
+      await stopTradesHttpServer(restartedServer);
+    }
     const comparableRewind = {
       ...rewindResult,
       holders: {

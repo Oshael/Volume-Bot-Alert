@@ -783,7 +783,9 @@ efêmero em porta aleatória restrita a `127.0.0.1` e substitui tanto `DATABASE_
 é intencional: cobre o inicializador base legado e os módulos atuais sem permitir que o `.env`
 redirecione uma das etapas. Ele inicializa o schema base e a Stage 5 exigida pelo bootstrap do
 journal, depois executa sequencialmente as integrações de rewind, lifecycle e publicação com
-fixtures sintéticas. Os dois testes frontend que
+fixtures sintéticas. O cenário canônico também abre a rota autenticada de trades em um processo
+HTTP temporário, comprova que o rewind remove os swaps órfãos do snapshot e repete a leitura após
+reiniciar esse processo. Os dois testes frontend que
 exigem `frontend/node_modules/esbuild` rodam quando essa dependência estiver instalada e são
 reportados como opcionais no deploy mínimo. Em sucesso remove o container. Em falha preserva o
 container nomeado e imprime os comandos de inspeção e limpeza; remova-o depois da auditoria.
