@@ -4035,14 +4035,13 @@ da ramificação aborta toda a recuperação. Não há RPC nem migration adicion
 continua fechado porque os demais domínios ainda precisam de rollback próprio.
 
 Depois do rewind, o recovery entra em `awaiting_domains`. A mesma transação grava
-`domain_ready` para `canonical-journal`, `market`, `wallet` e
-`publication-alerts`, sempre com a prova determinística do rollback; repetir uma
-prova idêntica é idempotente e uma prova diferente para o mesmo domínio falha
-fechado. Transfers, signed-origin e first-buy pertencem ao gate separado
-`wallet-derived`, ainda não registrado. `liquidity`, `holders` e
-`discovery-creator` também continuam pendentes, portanto o planner permanece
-`executable=false` em produção. Essa separação usa o manifesto v2; o executor
-recusa um plano gravado com outra versão em vez de reinterpretá-lo.
+`domain_ready` para `canonical-journal`, `market`, `wallet`, `wallet-derived`,
+`liquidity` e `publication-alerts`, sempre com a prova determinística do
+rollback; repetir uma prova idêntica é idempotente e uma prova diferente para o
+mesmo domínio falha fechado. `wallet-derived` reúne transfers, signed-origin e
+first-buy. `holders` e `discovery-creator` continuam pendentes, portanto o
+planner permanece `executable=false` em produção. Essa separação usa o manifesto
+v2; o executor recusa um plano gravado com outra versão em vez de reinterpretá-lo.
 
 O resume genérico só limpa `recovery_required` e move o recovery para
 `recapturing` quando existem linhas `domain_ready` para todo o manifesto. Até
@@ -4058,8 +4057,8 @@ podem sofrer reorg. Cada linha expira exatamente três dias após o timestamp do
 bloco. O `robinhood-retention-worker` remove em lotes apenas linhas já vencidas
 cujo `block_number` não ultrapassa `finalized_head`; sem frontier finalizada, a
 limpeza falha fechada. A tabela é infraestrutura de rollback e não substitui o
-raw nem altera a classificação. Mesmo com seu executor ativo, ela não abre o
-gate `wallet-derived` enquanto signed-origin e first-buy não tiverem rollback.
+raw nem altera a classificação. Seu resultado compõe a prova atômica do gate
+`wallet-derived` junto de signed-origin e first-buy.
 O writer LIVE grava, antes de cada batch e na mesma transação, o estado anterior
 de edges, resumos diários e evidências `first`/`last`/`largest`. O marker contém
 o início do range e fica ancorado no hash do último bloco; um rollback que corte
@@ -4078,8 +4077,17 @@ cursor `live` de signed-origin ao ancestral, incluindo `safe_head` e seus hashes
 Origens `seed` nunca são alteradas; se uma delas aparecer dentro da faixa de
 reorg, ou se evidência LIVE existir sem cursor compatível, a recuperação falha
 fechada antes de trocar a canonicalidade. A recaptura recria a primeira origem
-da nova ramificação usando o journal canônico. Isso não libera sozinho o gate
-`wallet-derived`: first-buy ainda precisa do rollback correspondente.
+da nova ramificação usando o journal canônico.
+
+First-buy também participa da mesma transação: a recuperação trava
+`robinhood_wallet_token_first_buys`, recusa qualquer fato da faixa que não esteja
+ancorado ao bloco/hash/timestamp canônico e remove apenas as primeiras compras
+órfãs. O cursor LIVE temporal recua no máximo até o timestamp do ancestral e sua
+frontier de bloco nunca avança; reprocessar o limite temporal é idempotente. O
+cursor de wallet-swaps, já revertido, prova o ancestral e impede que first-buy
+seja recuperado contra outra fonte. Cascades removem filas/evaluations FRESH
+dependentes; classificações e launch anchors são tratados pelos gates `holders`
+e `discovery-creator`. Não há RPC nem migration adicional.
 
 Antes de definir ou reduzir retenção de `robinhood_chain_events` e
 `robinhood_holder_transfer_journal`, execute

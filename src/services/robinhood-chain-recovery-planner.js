@@ -32,7 +32,7 @@ const ROLLBACK_DOMAINS = Object.freeze([
     ]),
   }),
   Object.freeze({
-    id: 'wallet-derived', rollbackRegistered: false,
+    id: 'wallet-derived', rollbackRegistered: true,
     tables: Object.freeze([
       'robinhood_token_transfer_events',
       'robinhood_wallet_transfer_edges', 'robinhood_wallet_transfer_cursors',

@@ -249,15 +249,15 @@ Estado implementado até este checkpoint:
 - o frontend v2 já entende os três eventos, mas recebe apenas o fluxo finalizado
   legado/v2 existente;
 - a recuperação canônica central já detecta, planeja, persiste e executa rewind
-  somente atrás do manifesto de domínios; market, wallet, publicação, transfers
-  e liquidity já possuem rollback, mas o manifesto ainda não está completo;
+  somente atrás do manifesto de domínios; market, wallet, publicação, transfers,
+  signed-origin, first-buy e liquidity já possuem rollback, mas o manifesto
+  ainda não está completo;
 - a Stage 204 não deve ser limpa enquanto invalidação, consumo e retenção não
   estiverem prontos. Neste ponto ela tende a guardar duas linhas por swap maduro.
 
 Ao retomar em outro contexto, o próximo trabalho é obrigatoriamente
-**3B2B-3A1 — wallet-derived/signed-origin**, seguido por
-**3B2B-3A2 — wallet-derived/first-buy**. Não iniciar 3B3, Slice 4 ou qualquer
-slice posterior antes de concluir todos os gates de 3B2B.
+**3B2B-3C — holders**. Não iniciar 3B3, Slice 4 ou qualquer slice posterior
+antes de concluir todos os gates de 3B2B.
 
 #### Slice 3B2B — recuperação de reorg, em cortes menores
 
@@ -370,7 +370,7 @@ ordem não autoriza avançar para 3B3.
 - [x] restaurar transfers/edges/resumos/evidências e recuar o cursor no reorg;
 - [x] **3B2B-3A1:** reverter `wallet-signed-origin` e seu cursor com o mesmo
   fence de geração/canonicalidade;
-- [ ] **3B2B-3A2:** reverter `wallet-token-first-buy` e seu cursor sem conservar
+- [x] **3B2B-3A2:** reverter `wallet-token-first-buy` e seu cursor sem conservar
   primeira compra pertencente à ramificação órfã.
 
 **3B2B-3B — liquidity**
@@ -647,8 +647,7 @@ reordenada sem atualizar este checkpoint:
 7. executar Slice 6, holders dirigidos pelo journal;
 8. executar Slice 7, ranking e membership realtime.
 
-O próximo corte autorizado pela fila é **3B2B-3A2 —
-wallet-derived/first-buy**.
+O próximo corte autorizado pela fila é **3B2B-3C — holders**.
 
 ## Ponto importante
 

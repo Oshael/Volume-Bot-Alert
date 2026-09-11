@@ -13,6 +13,7 @@ const { createRobinhoodLiquidityReorgRollback } = require('./robinhood-liquidity
 const {
   createRobinhoodWalletSignedOriginReorgRollback,
 } = require('./robinhood-wallet-signed-origin-reorg-rollback');
+const { createRobinhoodFirstBuyReorgRollback } = require('./robinhood-first-buy-reorg-rollback');
 const {
   ROLLBACK_DOMAINS, ROLLBACK_MANIFEST_VERSION,
 } = require('../services/robinhood-chain-recovery-planner');
@@ -214,6 +215,7 @@ function createRobinhoodChainRecoveryJournal(options = {}) {
   const liquidityRollback = options.liquidityRollback || createRobinhoodLiquidityReorgRollback();
   const signedOriginRollback = options.signedOriginRollback
     || createRobinhoodWalletSignedOriginReorgRollback();
+  const firstBuyRollback = options.firstBuyRollback || createRobinhoodFirstBuyReorgRollback();
 
   async function recordDetected(client, input = {}) {
     if (!client || typeof client.query !== 'function') {
@@ -427,6 +429,11 @@ function createRobinhoodChainRecoveryJournal(options = {}) {
         ancestorTimestamp: retained.get(rewind.ancestor.toString()).block_timestamp,
         fromBlock: rewind.fromBlock.toString(), throughBlock: rewind.throughBlock.toString(),
       });
+      const firstBuys = await firstBuyRollback.rollback(client, {
+        ancestorBlock: rewind.ancestor.toString(), ancestorHash: rewind.ancestorHash,
+        ancestorTimestamp: retained.get(rewind.ancestor.toString()).block_timestamp,
+        fromBlock: rewind.fromBlock.toString(), throughBlock: rewind.throughBlock.toString(),
+      });
       const orphaned = await client.query(
         `UPDATE robinhood_chain_blocks SET canonical=FALSE
           WHERE chain=$1 AND canonical=TRUE
@@ -465,6 +472,9 @@ function createRobinhoodChainRecoveryJournal(options = {}) {
       });
       await appendDomainReady(client, recoveryGeneration, 'market', market);
       await appendDomainReady(client, recoveryGeneration, 'wallet', wallet);
+      await appendDomainReady(client, recoveryGeneration, 'wallet-derived', {
+        walletTransfers, signedOrigins, firstBuys,
+      });
       await appendDomainReady(client, recoveryGeneration, 'liquidity', liquidity);
       await appendDomainReady(client, recoveryGeneration, 'publication-alerts', {
         tradeInvalidations, finalizedBoundaryPreserved: true,
@@ -488,8 +498,11 @@ function createRobinhoodChainRecoveryJournal(options = {}) {
         status: 'rewound', generation: recoveryGeneration,
         nextGeneration: disposition.nextGeneration,
         orphanedBlocks: Number(rewind.depth), tradeInvalidations, market, wallet,
-        walletTransfers, liquidity, signedOrigins,
-        domainReady: ['canonical-journal', 'liquidity', 'market', 'publication-alerts', 'wallet'],
+        walletTransfers, liquidity, signedOrigins, firstBuys,
+        domainReady: [
+          'canonical-journal', 'liquidity', 'market', 'publication-alerts',
+          'wallet', 'wallet-derived',
+        ],
       };
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch (_) {}
