@@ -5,10 +5,12 @@ const { TRANSFER_TOPIC } = require('./evm-erc20-supply-delta');
 const {
   LAUNCHHOOD_TOKEN_LAUNCHED_TOPIC, PONS_TOKEN_LAUNCHED_TOPIC,
 } = require('./robinhood-launchpad-creator-adapter');
+const { CAPTURE_TOPICS: PONS_V2_LIFECYCLE_TOPICS } = require('./pons-v2-lifecycle-decoder');
 
 const CAPTURE_TOPICS = Object.freeze([...new Set([
   ...DISCOVERY_TOPICS, ...MARKET_TOPICS, ...LIQUIDITY_EVENT_TOPICS, TRANSFER_TOPIC,
   LAUNCHHOOD_TOKEN_LAUNCHED_TOPIC, PONS_TOKEN_LAUNCHED_TOPIC,
+  ...PONS_V2_LIFECYCLE_TOPICS,
 ].map((value) => value.toLowerCase()))]);
 
 function quantity(value, label) {

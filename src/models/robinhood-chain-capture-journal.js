@@ -8,12 +8,18 @@ const {
   lockRobinhoodCanonicalRecoveryExclusive,
 } = require('./robinhood-canonical-projection-fence');
 const { routeCanonicalEvents } = require('../services/robinhood-chain-domain-router');
+const {
+  decodePonsV2LifecycleEvent,
+} = require('../services/pons-v2-lifecycle-decoder');
+const {
+  appendRobinhoodTokenLifecycleEvidence,
+} = require('./robinhood-token-lifecycle-evidence');
 const { TRANSFER_TOPIC, ZERO_TOPIC } = require('../services/evm-erc20-supply-delta');
 const CHAIN = 'robinhood';
 const NOTIFY_CHANNEL = 'robinhood_chain_capture';
 const DOMAIN_NOTIFY_CHANNEL = 'robinhood_chain_domain_outbox';
 const DEPLOYMENT_NOTIFY_CHANNEL = 'robinhood_token_deployment_outbox';
-const CAPTURE_VERSION = 3;
+const CAPTURE_VERSION = 4;
 const RECOVERY_REASONS = new Set([
   'parent_hash_mismatch', 'ancestor_not_found', 'finalized_boundary_crossed',
 ]);
@@ -186,7 +192,8 @@ function normalizeInput(input) {
 }
 function batchPayload(entries) {
   const blocks = []; const transactions = []; const events = [];
-  const v3Snapshots = []; const workItems = []; const deploymentHints = new Map();
+  const v3Snapshots = []; const workItems = []; const lifecycleEvidence = [];
+  const deploymentHints = new Map();
   for (const entry of entries) {
     const { block } = entry;
     blocks.push({
@@ -204,6 +211,15 @@ function batchPayload(entries) {
       block_hash: block.hash, block_number: block.number.toString(), ...event,
     })));
     for (const event of entry.events) {
+      const lifecycle = decodePonsV2LifecycleEvent(event);
+      if (lifecycle) lifecycleEvidence.push({
+        block_hash: block.hash, block_number: block.number.toString(),
+        transaction_hash: event.transaction_hash, log_index: event.log_index,
+        event_address: event.address, token_address: lifecycle.tokenAddress,
+        curve_address: lifecycle.curveAddress, event_kind: lifecycle.eventKind,
+        quote_delta_raw: lifecycle.quoteDeltaRaw,
+        graduation_threshold_raw: lifecycle.graduationThresholdRaw,
+      });
       if (event.topic0 === TRANSFER_TOPIC && event.topics[1] === ZERO_TOPIC
           && !deploymentHints.has(event.address)) {
         deploymentHints.set(event.address, {
@@ -222,7 +238,7 @@ function batchPayload(entries) {
       log_index: item.log_index,
     })));
   }
-  return { blocks, transactions, events, v3Snapshots, workItems,
+  return { blocks, transactions, events, v3Snapshots, workItems, lifecycleEvidence,
     deploymentHints: [...deploymentHints.values()] };
 }
 function validateSequence(entries, current) {
@@ -407,6 +423,7 @@ function createRobinhoodChainCaptureJournal(options = {}) {
                topic0 TEXT, topics JSONB, data TEXT
              )`, [CHAIN, JSON.stringify(payload.events)]
       );
+      await appendRobinhoodTokenLifecycleEvidence(client, payload.lifecycleEvidence);
       await client.query(
         `INSERT INTO robinhood_chain_v3_balance_snapshots(
            chain, block_hash, log_index, pool_address, token_address, quote_address,

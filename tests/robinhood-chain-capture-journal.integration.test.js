@@ -91,6 +91,7 @@ const stage212 = require('../src/utils/db-init-stage212');
 const stage213 = require('../src/utils/db-init-stage213');
 const stage214 = require('../src/utils/db-init-stage214');
 const stage215 = require('../src/utils/db-init-stage215');
+const stage216 = require('../src/utils/db-init-stage216');
 const stage181 = require('../src/utils/db-init-stage181');
 const stage182 = require('../src/utils/db-init-stage182');
 const stage149 = require('../src/utils/db-init-stage149');
@@ -124,6 +125,9 @@ const stage115 = require('../src/utils/db-init-stage115');
 const stage163 = require('../src/utils/db-init-stage163');
 const stage164 = require('../src/utils/db-init-stage164');
 const stage183 = require('../src/utils/db-init-stage183');
+const {
+  PONS_V2_FACTORY, TOPICS: PONS_V2_TOPICS,
+} = require('../src/services/pons-v2-lifecycle-decoder');
 const v2 = require('../src/services/uniswap-v2-decoder');
 const { TRANSFER_TOPIC, ZERO_TOPIC } = require('../src/services/evm-erc20-supply-delta');
 const { SCHEMA_GROUPS, __private: schemaChecks } = require('../src/utils/runtime-schema');
@@ -359,6 +363,7 @@ describe('Robinhood canonical chain capture journal', () => {
     await stage193.init({ closePool: false });
     await stage194.init({ closePool: false });
     await stage195.init({ closePool: false });
+    await stage216.init({ closePool: false });
     await stage90.init({ closePool: false });
     await stage91.init({ closePool: false });
     await stage109.init({ closePool: false });
@@ -614,12 +619,56 @@ describe('Robinhood canonical chain capture journal', () => {
          JOIN robinhood_chain_transactions tx USING (chain, block_hash)`
     );
     assert.deepEqual(transactionContext.rows[0], {
-      capture_version: 3, nonce: '7', value_wei: '42',
+      capture_version: 4, nonce: '7', value_wei: '42',
     });
     const cursor = await journal.getCursor();
     assert.equal(cursor.next_block, '101');
     assert.equal(cursor.checkpoint_block, '100');
     assert.equal(cursor.checkpoint_hash, HASH);
+  });
+
+  it('projects Pons V2 lifecycle state and excludes orphaned transitions', async () => {
+    const topicAddress = (address) => `0x${'0'.repeat(24)}${address.slice(2)}`;
+    const words = (...values) => `0x${values.map((value) => (
+      BigInt(value).toString(16).padStart(64, '0')
+    )).join('')}`;
+    const launched = capture();
+    launched.transactions[0].to = PONS_V2_FACTORY;
+    launched.transactions[0].contractAddress = null;
+    launched.events[0] = {
+      transactionHash: TX, transactionIndex: 0, logIndex: 0,
+      address: PONS_V2_FACTORY,
+      topics: [PONS_V2_TOPICS.tokenLaunched, topicAddress(TOKEN),
+        topicAddress(LIQUIDITY_POOL), topicAddress(ADDRESS)],
+      data: words(0, 7, 1000),
+    };
+    await createRobinhoodChainCaptureJournal().commitBlock(launched);
+
+    const migrated = capture(101, NEXT_HASH, HASH);
+    migrated.transactions[0] = {
+      ...migrated.transactions[0], hash: NEXT_TX, to: PONS_V2_FACTORY, contractAddress: null,
+    };
+    migrated.events[0] = {
+      transactionHash: NEXT_TX, transactionIndex: 0, logIndex: 0,
+      address: PONS_V2_FACTORY,
+      topics: [PONS_V2_TOPICS.poolGraduated, topicAddress(TOKEN)],
+      data: words(7, 600, 400),
+    };
+    await createRobinhoodChainCaptureJournal().commitBlock(migrated);
+    const readState = async () => (await db.query(
+      `SELECT status, bond_progress_bps, evidence_block_hash
+         FROM token_launchpad_lifecycle WHERE token_address=$1`, [TOKEN]
+    )).rows[0];
+    assert.deepEqual(await readState(), {
+      status: 'migrated', bond_progress_bps: null, evidence_block_hash: NEXT_HASH,
+    });
+
+    await db.query(
+      'UPDATE robinhood_chain_blocks SET canonical=FALSE WHERE block_hash=$1', [NEXT_HASH]
+    );
+    assert.deepEqual(await readState(), {
+      status: 'pre_bonded', bond_progress_bps: 0, evidence_block_hash: HASH,
+    });
   });
 
   it('durably enqueues a generic zero-address mint before catalog discovery', async () => {

@@ -6036,6 +6036,28 @@ const SCHEMA_GROUPS = [
       }],
     }],
   },
+  {
+    key: 'stage216-robinhood-launchpad-lifecycle',
+    name: 'Stage 216 Robinhood launchpad lifecycle evidence',
+    repair: 'node src/utils/db-init-stage216.js',
+    tables: [{
+      table: 'token_launchpad_lifecycle_events',
+      columns: [
+        'chain', 'block_hash', 'block_number', 'transaction_hash', 'log_index',
+        'event_address', 'token_address', 'curve_address', 'launchpad_id', 'event_kind',
+        'quote_delta_raw', 'graduation_threshold_raw', 'evidence_source', 'created_at',
+      ],
+      constraints: [
+        { name: 'token_launchpad_lifecycle_events_pkey', includes: ['PRIMARY KEY', 'chain', 'block_hash', 'log_index'] },
+        { name: 'token_launchpad_lifecycle_events_event_fkey', includes: ['FOREIGN KEY', 'robinhood_chain_events', 'ON DELETE CASCADE'] },
+        { name: 'token_launchpad_lifecycle_events_values_check', includes: ['launched', 'curve_progress', 'swept', 'migrated', 'rescued'] },
+      ],
+      indexes: [
+        { name: 'idx_token_launchpad_lifecycle_token', includes: ['chain', 'token_address', 'launchpad_id', 'block_number'] },
+        { name: 'idx_token_launchpad_lifecycle_curve', includes: ['chain', 'curve_address', 'block_number'] },
+      ],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
@@ -6080,6 +6102,7 @@ const PROFILE_GROUP_KEYS = {
     'stage213-robinhood-holder-realtime-outbox',
     'stage214-robinhood-holder-realtime-lifecycle',
     'stage215-robinhood-token-deployment-mint-anchor',
+    'stage216-robinhood-launchpad-lifecycle',
   ],
   runtime: SCHEMA_GROUPS.map((group) => group.key),
 };

@@ -1273,6 +1273,21 @@ Contratos diretos, desconhecidos ou respostas antigas sem atribuição usam o
 unicórnio da Uniswap. O tooltip do badge identifica a pool como Uniswap V2, V3
 ou V4 quando `pairDexId` está disponível.
 
+Lifecycle de launchpad é um contrato separado da atribuição. Na Robinhood, apenas
+Pons V2 está habilitado: factory oficial
+`0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e`, curva constant-product e eventos
+`TokenLaunched`, `LaunchSwept`, `PoolGraduated` e `LaunchGraduationRescued`.
+Pons V1, NOXA, LaunchHood, RobinPad, Bankr/Doppler e Stock permanecem `unknown`;
+criação ou descoberta de pool, isoladamente, não prova Pre-bonded nem Migrated.
+A Stage 216 cria `token_launchpad_lifecycle_events` e a view
+`token_launchpad_lifecycle`; aplique `node src/utils/db-init-stage216.js` antes de
+reiniciar o chain-capture. O capturador v4 grava a evidência no mesmo commit do
+bloco canônico. Progresso é a soma exata dos deltas líquidos de quote de
+`CurveBuy`/`CurveSell` dividida pelo `graduationThreshold`, limitada a 0–10000 bps.
+A view ignora blocos com `canonical=false`, de modo que reorgs revertem o estado
+sem snapshot concorrente. `LaunchSwept` e rescue resultam em `unknown`; somente
+`PoolGraduated` habilita Migrated.
+
 Nos cards do feed de alertas e nas listas `Monitored`, `Recent`, `Old` e `Manual`,
 Robinhood oferece o menu de terminais usado nas superfícies equivalentes de Solana.
 Os alertas também mantêm chart expandido chain-aware, estrela e blocklist do usuário.

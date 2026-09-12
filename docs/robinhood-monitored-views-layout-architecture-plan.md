@@ -239,6 +239,15 @@ fixtures and enable the adapter only after contract tests pass.
 Unsupported launchpads stay `unknown` and do not appear in either lifecycle view. Generic DEX pool discovery alone is not
 sufficient evidence.
 
+The Robinhood audit enables only Pons V2 (`0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e`). Its official contracts expose a
+constant-product curve, an exact quote-reserve threshold, the token/curve link and distinct swept, pool-created and rescued
+events. Pons V1 and NOXA launch directly into DEX pools; the repository has no authoritative lifecycle ABI for LaunchHood,
+RobinPad, Bankr/Doppler or Stock. Those sources therefore remain `unknown` until separately proven.
+
+Persist append-only evidence keyed by canonical event identity. Derive current state by joining the block journal with
+`canonical=true`: curve trades update progress, `PoolGraduated` alone yields `migrated`, and swept/rescued states are
+ineligible for both lists. This avoids a mutable snapshot requiring a second reorg rollback path.
+
 ### Live consumption
 
 The existing Robinhood event capture remains the source. Write lifecycle state in the durable processing boundary, or via
