@@ -1807,7 +1807,7 @@ export function renderManualTokenTable(
     mockSolUsdcRate?: number;
   },
 ) {
-  if (tokens.length === 0) return '<p class="muted-block">No manual tokens yet.</p>';
+  if (tokens.length === 0) return '<p class="muted-block">Your Watchlist is empty. Star a token to add it.</p>';
   const starredSet = new Set(starredTokens);
   return renderTokenTableShell({
     tone: 'manual',
@@ -2068,11 +2068,10 @@ function renderRadarRowGlyphs(
       safeAddress,
       safeSymbol,
     })}
-    ${renderRadarRemoveManualGlyph(mode, chain, safeAddress, options.busy)}
   `;
 }
 
-function renderRadarRemoveManualGlyph(
+function _renderDormantRadarRemoveManualGlyph(
   mode: 'manual' | 'recent' | 'old-week',
   chain: TokenChain,
   safeAddress: string,
@@ -2814,12 +2813,8 @@ function renderTokenTableActions(options: {
   safeAddress: string;
   safeSymbol: string;
 }) {
-  const quickAdd = options.mode === 'manual'
-    ? ''
-    : renderManualQuickAddAction(
-      options.safeAddress, options.busy, options.manualTokenFolders, options.chain,
-    );
-  const star = `<button type="button" class="action-glyph starred-button ${options.isStarred ? 'active' : ''}" data-action="toggle-star" data-chain="${options.chain}" data-address="${options.safeAddress}" ${options.busy ? 'disabled' : ''} title="Star token">${options.isStarred ? '&#9733;' : '&#9734;'}</button>`;
+  const starAction = options.isStarred ? 'Remove from Watchlist' : 'Add to Watchlist';
+  const star = `<button type="button" class="action-glyph starred-button ${options.isStarred ? 'active' : ''}" data-action="toggle-star" data-chain="${options.chain}" data-address="${options.safeAddress}" ${options.busy ? 'disabled' : ''} title="${starAction}">${options.isStarred ? '&#9733;' : '&#9734;'}</button>`;
   const block = `<button type="button" class="action-glyph danger-glyph" data-action="block-token" data-chain="${options.chain}" data-address="${options.safeAddress}" data-label="${options.safeSymbol}" ${options.busy ? 'disabled' : ''} title="Block token">&#8855;</button>`;
   const solanaOnly = options.chain === 'solana'
     ? `${renderMockTradingActions(
@@ -2829,7 +2824,7 @@ function renderTokenTableActions(options: {
       options.busy,
     )}${renderTokenAdminAction(options.isAdmin, options.safeAddress, options.safeSymbol, options.busy)}`
     : '';
-  return `${quickAdd}${star}${block}${solanaOnly}`;
+  return `${star}${block}${solanaOnly}`;
 }
 
 function renderTokenTableValuation(valuation: ReturnType<typeof resolveCompactTokenValuation>) {

@@ -870,14 +870,9 @@ const ROBINHOOD_COLLECTION_API_FIXTURES = {
     ...ROBINHOOD_MARKET_CONFIG,
     configs: { 'block-warning-enabled': 'off' },
   },
-  'POST /api/config/starred': (request) => {
-    const payload = request.postDataJSON();
-    collectionMutationPayloads.push({ action: 'star', payload });
-    return { message: 'Token starred', starred: payload };
-  },
   'POST /api/config/tokens': (request) => {
     const payload = request.postDataJSON();
-    collectionMutationPayloads.push({ action: 'manual', payload });
+    collectionMutationPayloads.push({ action: 'watchlist', payload });
     return { message: 'Token added', token: payload };
   },
   'POST /api/config/blocklist': (request) => {
@@ -1242,21 +1237,21 @@ test('uses the confirmed full-width scrollable selector below 980px', async ({ p
   expect(diagnostics.pageErrors).toEqual([]);
 });
 
-test('keeps compact manual controls aligned with routed token sort controls', async ({ page }) => {
+test('renders a flat Watchlist with search and sort controls only', async ({ page }) => {
   await openAuthenticatedWorkspace(page, ROBINHOOD_API_FIXTURES);
-  const manualSection = page.locator('#manual-tokens-section');
+  const manualSection = page.locator('#watchlist-section');
   await expect(manualSection).not.toContainText('Pinned · always monitored');
 
   const manualSortCluster = manualSection.locator('.compact-sort-cluster');
   await expect(manualSortCluster).toContainText('SORT');
   await expect(manualSortCluster.getByRole('button', { name: 'MCAP / FDV', exact: true })).toBeVisible();
   await expect(manualSortCluster).toHaveCSS('flex-wrap', 'nowrap');
-  expect(await manualSection.locator('.legacy-bar-controls').evaluate((controls) => {
-    const children = [...controls.children];
-    const starIndex = children.findIndex((child) => child.matches('[data-action="manual-starred-only"]'));
-    const sortIndex = children.findIndex((child) => child.matches('.compact-sort-cluster'));
-    return starIndex >= 0 && sortIndex >= 0 && starIndex < sortIndex;
-  })).toBe(true);
+  await expect(manualSection).toContainText('WATCHLIST');
+  await expect(manualSection.locator('[data-action="manual-starred-only"]')).toHaveCount(0);
+  await expect(manualSection.locator('[data-action="manual-folder-create-root"]')).toHaveCount(0);
+  await expect(manualSection.locator('[data-role="manual-token-form"]')).toHaveCount(0);
+  await expect(page.locator('[data-action="manual-quick-add"]')).toHaveCount(0);
+  await expect(manualSection.locator('[data-action="remove-manual"]')).toHaveCount(0);
 });
 
 test('chain-scoped bot settings persist independent supported controls and roll back failures', async ({ page }) => {
@@ -1374,7 +1369,7 @@ test('chain-scoped bot settings remain usable on a narrow viewport', async ({ pa
 
 test('renders the FOMO shortcut link for Solana tokens', async ({ page }) => {
   await openAuthenticatedWorkspace(page, ROBINHOOD_API_FIXTURES);
-  const manualSection = page.locator('#manual-tokens-section');
+  const manualSection = page.locator('#watchlist-section');
   const fomoLink = manualSection.locator('.trade-link.fomo').first();
   await expect(fomoLink).toHaveAttribute('href', `https://fomo.family/tokens/solana/${SOLANA_MANUAL}`);
   await expect(fomoLink).toContainText('FOMO');
@@ -1393,7 +1388,7 @@ test('filters a combined Solana and Robinhood alert feed through the master sele
   const monitoredSolanaRow = page.locator('.monitored-panel article.monitored-token-row[data-address="So11111111111111111111111111111111111111112"]');
   await expect(monitoredSolanaRow).toBeVisible();
   await expect(page.locator('#top-performers-section')).toContainText('TOPSOL');
-  const manualSection = page.locator('#manual-tokens-section');
+  const manualSection = page.locator('#watchlist-section');
   await expect(manualSection).toContainText('MANUALSOL');
 
   await expect(selector.locator('.workspace-chain-selector-btn')).toHaveCount(2);
@@ -1437,11 +1432,11 @@ test('filters a combined Solana and Robinhood alert feed through the master sele
   await expect(selector.locator('[data-chain="robinhood"]')).toBeDisabled();
   await expect(monitoredSolanaRow).toHaveCount(0);
   await expect(page.locator('#top-performers-section')).not.toContainText('TOPSOL');
-  await expect(page.locator('#manual-tokens-section')).not.toContainText('MANUALSOL');
+  await expect(page.locator('#watchlist-section')).not.toContainText('MANUALSOL');
   await expect(page.locator('[data-chain-readiness-surface="monitored"]')).toContainText('syncing market coverage');
   await expect(page.locator('[data-chain-readiness-surface="top-performers"]')).toContainText('syncing market coverage');
-  await expect(page.locator('#manual-tokens-section [data-chain-readiness-surface="manual"]')).toHaveCount(0);
-  await expect(page.locator('#manual-tokens-section [data-role="manual-token-form"] [data-selected-chain="robinhood"]')).toBeAttached();
+  await expect(page.locator('#watchlist-section [data-chain-readiness-surface="watchlist"]')).toHaveCount(0);
+  await expect(page.locator('#watchlist-section [data-role="manual-token-form"]')).toHaveCount(0);
   expect(diagnostics.unexpectedRequests).toEqual([]);
   expect(diagnostics.pageErrors).toEqual([]);
 });
@@ -1720,7 +1715,7 @@ test('refetches market panels by chain and rejects a stale combined response', a
   expect(diagnostics.pageErrors).toEqual([]);
 });
 
-test('sends Robinhood identity through manual, star and block actions', async ({ page }) => {
+test('sends Robinhood identity through Watchlist star and block actions', async ({ page }) => {
   collectionMutationPayloads.length = 0;
   const diagnostics = await openAuthenticatedWorkspace(page, ROBINHOOD_COLLECTION_API_FIXTURES);
   const selector = page.getByRole('group', { name: 'Filter workspace by blockchain' });
@@ -1735,16 +1730,10 @@ test('sends Robinhood identity through manual, star and block actions', async ({
   await robinhoodRow.locator('[data-action="toggle-star"]').click();
   await expect.poll(() => collectionMutationPayloads.length).toBe(1);
 
-  await robinhoodRow.locator('[data-action="manual-quick-add"]').click();
+  await robinhoodRow.locator('[data-action="block-token"]').click();
   await expect.poll(() => collectionMutationPayloads.length).toBe(2);
 
-  await robinhoodRow.locator('[data-action="block-token"]').click();
-  await expect.poll(() => collectionMutationPayloads.length).toBe(3);
-
-  assertCollectionMutation('star', {
-    chain: 'robinhood', address: ROBINHOOD_TOKEN,
-  });
-  assertCollectionMutation('manual', {
+  assertCollectionMutation('watchlist', {
     chain: 'robinhood', address: ROBINHOOD_TOKEN, label: null,
   });
   assertCollectionMutation('block', {
@@ -2224,7 +2213,7 @@ test('renders Robinhood peer badges and terminals across tracked token lists', a
   await expect(monitoredRow.locator('.trade-link.axiom, .trade-link.padre')).toHaveCount(0);
   await expect(monitoredRow.locator('.trade-link.gmgn'))
     .toHaveAttribute('href', `https://gmgn.ai/robinhood/token/${ROBINHOOD_TOKEN}`);
-  const manualRow = page.locator(`#manual-tokens-section tr[data-token-identity="robinhood:${ROBINHOOD_MANUAL}"]`);
+  const manualRow = page.locator(`#watchlist-section tr[data-token-identity="robinhood:${ROBINHOOD_MANUAL}"]`);
   await expect(manualRow).toBeVisible();
   await expect(manualRow.locator('.monitored-ticker-peer-badge')).toHaveText('OG');
   await expect(manualRow.locator('.trade-link')).toHaveCount(2);

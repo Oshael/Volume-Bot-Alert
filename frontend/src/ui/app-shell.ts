@@ -1,8 +1,8 @@
 import type { AppController, AppRenderRegion } from '../state/app-controller';
-import { getAlertFeedAlerts, getChainCapabilityNotice, getExpandedTokenSparkline, getWatchlistTokens, getMockTradingPositionView, getMockTradingSummaryView, getMonitoredTokens, getOldWeekTokens, getRecentTokens, getTokenSparkline, getTopPerformerTokens, getTrackedToken, getVisibleWatchlistTokens, isProfileAuthPanel, type AppState } from '../state/app-state';
+import { getAlertFeedAlerts, getChainCapabilityNotice, getExpandedTokenSparkline, getWatchlistTokens, getMockTradingPositionView, getMockTradingSummaryView, getMonitoredTokens, getOldWeekTokens, getRecentTokens, getTokenSparkline, getTopPerformerTokens, getTrackedToken, isProfileAuthPanel, type AppState } from '../state/app-state';
 import { renderAlertsSection } from './sections/alerts-section';
 import { renderLegacyShell, renderWorkspaceHeader, renderWorkspaceProfileOverlay } from './sections/layout-sections';
-import { renderManualTokensSection } from './sections/manual-section';
+import { renderWatchlistSection } from './sections/manual-section';
 import { patchMonitoredSection, renderMonitoredSection } from './sections/monitored-section';
 import { renderMarketTickerSection } from './sections/market-ticker-section';
 import { patchOldWeekSection, patchRecentSection, renderOldWeekSection, renderRecentSection } from './sections/routed-sections';
@@ -285,7 +285,7 @@ export function renderAppShell(
         () => [renderTopPerformersSection(state, controller)],
         () => patchTopPerformersSlot(renderFrame.topPerformersSlot, state, controller),
       );
-      updateRegionSlot(renderFrame.manualSlot, 'manual', dirtyRegions, getManualRenderKey(state), () => [renderManualTokensSection(state, controller)]);
+      updateRegionSlot(renderFrame.manualSlot, 'manual', dirtyRegions, getWatchlistRenderKey(state), () => [renderWatchlistSection(state, controller)]);
       updateRegionSlot(
         renderFrame.monitoredSlot,
         'monitored',
@@ -1483,11 +1483,9 @@ function getMonitoredRenderKey(state: AppState) {
   });
 }
 
-function getManualRenderKey(state: AppState) {
-  const visibleManualTokens = getVisibleWatchlistTokens(state);
-  const filteredManualTokens = resolveManualTableRows(visibleManualTokens, {
-    starredOnly: state.ui.manualStarredOnly,
-    starredTokens: state.data.watchlistTokenIdentities,
+function getWatchlistRenderKey(state: AppState) {
+  const watchlistTokens = getWatchlistTokens(state);
+  const filteredWatchlistTokens = resolveManualTableRows(watchlistTokens, {
     searchQuery: state.ui.watchlistSearchQuery,
     sortCriteria: state.ui.watchlistSorts,
   });
@@ -1499,16 +1497,12 @@ function getManualRenderKey(state: AppState) {
     tradeTerminals: state.ui.enabledTradeTerminals,
     robinhoodTradeTerminals: state.ui.enabledRobinhoodTradeTerminals,
     search: state.ui.watchlistSearchQuery,
-    visibleFolders: state.ui.manualVisibleFolderIds,
-    folders: state.data.manualTokenFolders,
-    folderItems: state.data.manualTokenFolderItems,
-    starredOnly: state.ui.manualStarredOnly,
     sorts: state.ui.watchlistSorts,
     starred: state.data.watchlistTokenIdentities,
     meteoraMinPool: Number(state.data.configs['meteora-min-pool']) || 5000,
-    tokens: getWatchlistTokens(state).map(serializeTrackedTokenForView),
-    mockTrading: getWatchlistTokens(state).map((token) => serializeMockTradingForView(state, token.address)),
-    sparklines: filteredManualTokens.map((token) => {
+    tokens: watchlistTokens.map(serializeTrackedTokenForView),
+    mockTrading: watchlistTokens.map((token) => serializeMockTradingForView(state, token.address)),
+    sparklines: filteredWatchlistTokens.map((token) => {
       const sparkline = getTokenSparkline(state, token.address, token.chain);
       const series = Array.isArray(sparkline?.series) ? sparkline.series : [];
       return {

@@ -425,8 +425,12 @@ This product slice is split into bounded implementation cuts:
   with legacy input fallback.
 - **4B — frontend state and actions:** rename Watchlist state/API/controller symbols and make the existing star action
   toggle `user_tokens` membership. New frontend code calls only canonical Watchlist routes and preference keys.
-- **4C — surface and cleanup:** rename remaining domain copy/components/logs/tests, render the flat Watchlist without folder
-  or starred-only controls, and confirm no unrelated meaning of `manual` changed.
+- **4C1 — flat surface:** render Watchlist as a flat list, remove folder, direct-add and starred-only controls, make the star
+  the only membership control and update the primary component/copy.
+- **4C2 — dead presentation removal:** delete the now-unreachable folder/modal/quick-add helpers and their dedicated CSS
+  while preserving folder data and neutral backend routes.
+- **4C3 — canonical cleanup:** rename remaining user-added-token domain symbols, logs and tests, then confirm that unrelated
+  meanings of `manual` and the dormant neutral folder contracts were not changed.
 
 Preserve neutral tables and config/folder routes. Folder data stays dormant and is not migrated or deleted.
 

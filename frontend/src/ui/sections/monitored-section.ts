@@ -455,6 +455,7 @@ function patchMonitoredRow(
   if (starButton) {
     starButton.classList.toggle('active', isStarred);
     starButton.textContent = isStarred ? '★' : '☆';
+    starButton.title = isStarred ? 'Remove from Watchlist' : 'Add to Watchlist';
   }
   current.querySelectorAll<HTMLButtonElement>([
     '[data-action="manual-quick-add"]',
@@ -1298,7 +1299,6 @@ function buildMonitoredRow(item: ManualTokenEntry, manualTokenFolders: AppState[
   );
   blockButton.dataset.chain = chain;
   actions.append(
-    buildManualQuickAddElement(item.address, chain, busy, manualTokenFolders),
     buildStarButton(item.address, chain, isStarred, busy),
     blockButton,
   );
@@ -1935,7 +1935,7 @@ function buildGlyphButton(
   return button;
 }
 
-function buildManualQuickAddElement(
+function _buildDormantManualQuickAddElement(
   address: string,
   chain: TokenChain,
   busy: boolean,
@@ -1964,7 +1964,7 @@ function buildStarButton(address: string, chain: TokenChain, isStarred: boolean,
   button.dataset.address = address;
   button.dataset.chain = chain;
   button.disabled = disabled;
-  button.title = 'Star token';
+  button.title = isStarred ? 'Remove from Watchlist' : 'Add to Watchlist';
   button.textContent = isStarred ? '★' : '☆';
   return button;
 }
