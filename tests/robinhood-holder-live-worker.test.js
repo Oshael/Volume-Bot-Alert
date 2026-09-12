@@ -231,6 +231,7 @@ describe('Robinhood holder live worker', () => {
 
   it('builds every dependency on the sole configured holder RPC', async () => {
     const calls = [];
+    let disabledPublisher;
     const rpcClient = { request() {} };
     const ledger = { applyNextPendingEvent() {} };
     const reader = { assertChain: async () => calls.push('chain') };
@@ -239,7 +240,6 @@ describe('Robinhood holder live worker', () => {
     const handoffRepository = { getNextCandidate() {} };
     const handoff = { runOnce() {} };
     const runner = { runOnce() {} };
-    const publishHolderCounts = async () => 0;
     const runtime = await buildRuntime({ rpcTimeoutMs: 9000, addressShardConcurrency: 2 }, {
       env: {
         ROBINHOOD_RPC_URL: 'http://127.0.0.1:8547',
@@ -258,14 +258,21 @@ describe('Robinhood holder live worker', () => {
         return handoffRepository;
       },
       handoffFactory: (input) => { calls.push(['handoff', input]); return handoff; },
-      runnerFactory: (input) => { calls.push(['runner', input]); return runner; },
-      publishHolderCounts,
+      runnerFactory: (input) => {
+        disabledPublisher = input.publishHolderCounts;
+        calls.push(['runner', {
+          capture: input.capture, handoff: input.handoff, ledger: input.ledger,
+          reader: input.reader,
+        }]);
+        return runner;
+      },
       database: 'database',
     });
 
     assert.equal(runtime.providerName, 'robinhood-holder-live');
     assert.equal(runtime.sourceMode, 'rpc');
     assert.equal(runtime.runner, runner);
+    assert.equal(await disabledPublisher([]), 0);
     assert.deepEqual(calls, [
       ['rpc', {
         providers: [{ name: 'robinhood-holder-live', url: 'http://127.0.0.1:8547' }],
@@ -277,12 +284,13 @@ describe('Robinhood holder live worker', () => {
       ['capture', { bootstrap, ledger, reader }],
       ['handoffRepository', { database: 'database' }],
       ['handoff', { repository: handoffRepository, reader }],
-      ['runner', { capture, handoff, ledger, reader, publishHolderCounts }],
+      ['runner', { capture, handoff, ledger, reader }],
     ]);
   });
 
   it('wires capture and handoff to the canonical journal without creating an RPC client', async () => {
     const calls = [];
+    let disabledPublisher;
     const reader = { assertChain: async () => calls.push('chain') };
     const runtime = await buildRuntime({
       sourceMode: 'canonical_journal', rpcTimeoutMs: 9000, addressShardConcurrency: 2,
@@ -293,20 +301,26 @@ describe('Robinhood holder live worker', () => {
       ledger: 'ledger', bootstrap: 'bootstrap', handoffRepository: 'handoffRepository',
       captureFactory: (input) => { calls.push(['capture', input]); return 'capture'; },
       handoffFactory: (input) => { calls.push(['handoff', input]); return 'handoff'; },
-      runnerFactory: (input) => { calls.push(['runner', input]); return 'runner'; },
-      publishHolderCounts: 'publish',
+      runnerFactory: (input) => {
+        disabledPublisher = input.publishHolderCounts;
+        calls.push(['runner', {
+          capture: input.capture, handoff: input.handoff, ledger: input.ledger,
+          reader: input.reader,
+        }]);
+        return 'runner';
+      },
     });
 
     assert.equal(runtime.sourceMode, 'canonical_journal');
     assert.equal(runtime.providerName, 'canonical_journal');
     assert.equal(runtime.runner, 'runner');
+    assert.equal(await disabledPublisher([]), 0);
     assert.deepEqual(calls, [
       ['canonical', { database: 'database' }], 'chain',
       ['capture', { bootstrap: 'bootstrap', ledger: 'ledger', reader }],
       ['handoff', { repository: 'handoffRepository', reader }],
       ['runner', {
         capture: 'capture', handoff: 'handoff', ledger: 'ledger', reader,
-        publishHolderCounts: 'publish',
       }],
     ]);
   });

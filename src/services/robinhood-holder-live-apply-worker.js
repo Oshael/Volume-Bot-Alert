@@ -1,7 +1,12 @@
 const db = require('../models/db');
 const { createRobinhoodHolderLedgerRepository } = require('../models/robinhood-holder-ledger');
+const {
+  NOTIFY_CHANNEL: REALTIME_OUTBOX_CHANNEL,
+  createRobinhoodHolderRealtimeOutboxRepository,
+} = require('../models/robinhood-holder-realtime-outbox');
 const holderCountRealtime = require('./robinhood-holder-count-realtime');
 const { createPostgresRealtimeListener } = require('./postgres-realtime-listener');
+const { createRobinhoodDerivedRunner } = require('./robinhood-derived-runner');
 const { createRobinhoodHolderLiveRunner } = require('./robinhood-holder-live-runner');
 const {
   normalizeRobinhoodHolderLiveSource,
@@ -10,11 +15,17 @@ const {
 
 const FATAL_CODES = new Set(['configuration_error', 'holder_live_apply_contract_error']);
 const HOT_QUEUE_CHANNEL = 'robinhood_holder_hot_queue';
+const REALTIME_BATCH_SIZE = 500;
 
 function boundedInteger(value, fallback, minimum, maximum) {
   const parsed = value == null ? fallback : Number(value);
   return Number.isSafeInteger(parsed)
     ? Math.max(minimum, Math.min(parsed, maximum)) : fallback;
+}
+
+function finiteNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function normalizeOptions(options = {}, env = process.env) {
@@ -50,12 +61,24 @@ async function buildRuntime(options, deps = {}) {
     database,
   });
   const { reader } = source;
+  const realtimeOutbox = deps.realtimeOutbox
+    || createRobinhoodHolderRealtimeOutboxRepository({ database });
+  const publishHolderCounts = deps.publishHolderCounts || holderCountRealtime.publishUpdates;
+  const publisher = deps.publisher || createRobinhoodDerivedRunner({
+    repository: realtimeOutbox,
+    fanout: async (payload) => {
+      if (await publishHolderCounts([payload]) !== 1) {
+        throw new Error('holder realtime relay rejected the durable event');
+      }
+    },
+    options: { owner: `robinhood-holder-realtime:${process.pid}`, batchSize: REALTIME_BATCH_SIZE },
+  });
   const runner = deps.runner || (deps.runnerFactory || createRobinhoodHolderLiveRunner)({
-    ledger, reader,
-    publishHolderCounts: deps.publishHolderCounts || holderCountRealtime.publishUpdates,
+    ledger, reader, publishHolderCounts: async () => 0,
   });
   return Object.freeze({
-    sourceMode: source.sourceMode, providerName: source.providerName, runner,
+    sourceMode: source.sourceMode, providerName: source.providerName,
+    runner, publisher, realtimeOutbox,
   });
 }
 
@@ -97,7 +120,7 @@ function createRobinhoodHolderLiveApplyWorker(deps = {}) {
   let runtimePromise = null;
   let timer = null;
   let activeRunPromise = null;
-  let hotListener = null;
+  let listeners = [];
   let wakePending = false;
   let running = false;
   let onFatal = null;
@@ -111,7 +134,7 @@ function createRobinhoodHolderLiveApplyWorker(deps = {}) {
     totalQuarantinedTokens: 0,
     totalShadowPromotions: 0,
     totalHolderCountUpdates: 0, totalHolderCountPublished: 0, lastCompletedAt: null,
-    totalWakeups: 0, listenerError: null,
+    totalWakeups: 0, totalFinalized: 0, totalInvalidated: 0, listenerError: null,
   };
 
   async function getRuntime() {
@@ -129,8 +152,8 @@ function createRobinhoodHolderLiveApplyWorker(deps = {}) {
     status.lastError = publicError(error);
     if (timer) cancelSchedule(timer);
     timer = null;
-    await hotListener?.stop().catch(() => {});
-    hotListener = null;
+    await Promise.all(listeners.map((listener) => listener.stop().catch(() => {})));
+    listeners = [];
     try { await onFatal?.(error); } catch (fatalError) {
       logger.error('[RobinhoodHolderLiveApplyWorker] Fatal propagation failed:', fatalError.message);
     }
@@ -142,19 +165,30 @@ function createRobinhoodHolderLiveApplyWorker(deps = {}) {
       const runtime = await getRuntime();
       status.sourceMode = runtime.sourceMode;
       status.providerName = runtime.providerName;
-      const result = await runtime.runner.applyOnce(options);
+      const lifecycle = runtime.realtimeOutbox ? await runtime.realtimeOutbox.promoteFinalized({
+        limit: REALTIME_BATCH_SIZE,
+      }) : null;
+      const publication = runtime.publisher ? await runtime.publisher.runOnce() : null;
+      const backlog = runtime.realtimeOutbox ? await runtime.realtimeOutbox.readBacklog() : null;
+      const applied = await runtime.runner.applyOnce(options);
+      const result = lifecycle || publication || backlog
+        ? { ...applied, realtime: { lifecycle, publication, backlog } } : applied;
       status.lastResult = result; status.lastError = null; status.consecutiveErrors = 0;
-      status.totalAppliedEvents += Number(result.appliedEvents) || 0;
-      status.totalDriftedTokens += Number(result.driftedTokens) || 0;
-      status.totalDriftSuspicions += Number(result.driftSuspicions) || 0;
-      status.totalReceiptRecoveries += Number(result.receiptRecoveries) || 0;
-      status.totalTailRollbacks += Number(result.tailRollbacks) || 0;
-      status.totalTailRollbackEvents += Number(result.tailRollbackEvents) || 0;
-      status.totalBaselineRequeues += Number(result.baselineRequeues) || 0;
-      status.totalQuarantinedTokens += Number(result.quarantinedTokens) || 0;
-      status.totalShadowPromotions += Number(result.shadowPromotions) || 0;
-      status.totalHolderCountUpdates += Number(result.holderCountUpdates) || 0;
-      status.totalHolderCountPublished += Number(result.holderCountPublished) || 0;
+      status.totalAppliedEvents += finiteNumber(applied.appliedEvents);
+      status.totalDriftedTokens += finiteNumber(applied.driftedTokens);
+      status.totalDriftSuspicions += finiteNumber(applied.driftSuspicions);
+      status.totalReceiptRecoveries += finiteNumber(applied.receiptRecoveries);
+      status.totalTailRollbacks += finiteNumber(applied.tailRollbacks);
+      status.totalTailRollbackEvents += finiteNumber(applied.tailRollbackEvents);
+      status.totalBaselineRequeues += finiteNumber(applied.baselineRequeues);
+      status.totalQuarantinedTokens += finiteNumber(applied.quarantinedTokens);
+      status.totalShadowPromotions += finiteNumber(applied.shadowPromotions);
+      status.totalHolderCountUpdates += finiteNumber(applied.holderCountUpdates);
+      status.totalHolderCountPublished += finiteNumber(
+        publication ? publication.delivered : applied.holderCountPublished
+      );
+      status.totalFinalized += finiteNumber(lifecycle?.finalized);
+      status.totalInvalidated += finiteNumber(lifecycle?.invalidated);
       return result;
     } catch (error) {
       status.totalErrors += 1; status.consecutiveErrors += 1;
@@ -200,16 +234,18 @@ function createRobinhoodHolderLiveApplyWorker(deps = {}) {
     queueNext(0);
   }
 
-  function startHotListener() {
+  function startListeners() {
     const factory = deps.listenerFactory || createPostgresRealtimeListener;
-    hotListener = factory({
-      channel: HOT_QUEUE_CHANNEL, label: 'RobinhoodHolderHotQueueListener',
-      pool: (deps.database || db).pool, logger, onNotification: wake,
-      onConnected: () => { status.listenerError = null; },
-    });
-    void hotListener.start().catch((error) => {
+    listeners = [
+      [HOT_QUEUE_CHANNEL, 'RobinhoodHolderHotQueueListener'],
+      [REALTIME_OUTBOX_CHANNEL, 'RobinhoodHolderRealtimeOutboxListener'],
+    ].map(([channel, label]) => factory({
+      channel, label, pool: (deps.database || db).pool, logger,
+      onNotification: wake, onConnected: () => { status.listenerError = null; },
+    }));
+    for (const listener of listeners) void listener.start().catch((error) => {
       status.listenerError = publicError(error);
-      logger.warn('[RobinhoodHolderLiveApplyWorker] Hot listener unavailable:', error.message);
+      logger.warn('[RobinhoodHolderLiveApplyWorker] Listener unavailable:', error.message);
     });
   }
 
@@ -220,7 +256,7 @@ function createRobinhoodHolderLiveApplyWorker(deps = {}) {
     status.enabled = options.enabled;
     if (!options.enabled) return false;
     status.halted = false; wakePending = false; running = true; status.running = true;
-    startHotListener(); queueNext(0);
+    startListeners(); queueNext(0);
     return true;
   }
 
@@ -229,15 +265,21 @@ function createRobinhoodHolderLiveApplyWorker(deps = {}) {
     if (timer) cancelSchedule(timer);
     timer = null;
     if (activeRunPromise) await activeRunPromise.catch(() => {});
-    await hotListener?.stop().catch(() => {});
-    hotListener = null;
+    await Promise.all(listeners.map((listener) => listener.stop().catch(() => {})));
+    listeners = [];
   }
 
-  return Object.freeze({ getStatus: () => ({ ...status }), runOnce, start, stop });
+  return Object.freeze({
+    getStatus: () => ({
+      ...status, listeners: listeners.map((listener) => listener.getStatus?.() || null),
+    }),
+    runOnce, start, stop,
+  });
 }
 
 const worker = createRobinhoodHolderLiveApplyWorker();
 module.exports = {
+  REALTIME_BATCH_SIZE,
   createRobinhoodHolderLiveApplyWorker,
   getStatus: worker.getStatus, runOnce: worker.runOnce, start: worker.start, stop: worker.stop,
   __private: { buildRuntime, normalizeOptions },

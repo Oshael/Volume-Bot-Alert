@@ -61,6 +61,7 @@ describe('frontend Robinhood holder realtime events', () => {
     }));
     assert.equal(normalized.address, TOKEN);
     assert.equal(normalized.holderCount, 105);
+    assert.equal(normalized.finality, 'observed');
     assert.equal(normalized.latency.publishedAt, '2026-08-10T12:30:00.100Z');
     assert.equal(holderEvents.markRobinhoodHolderReceived(
       normalized, Date.parse('2026-08-10T12:30:00.200Z'),
@@ -69,6 +70,10 @@ describe('frontend Robinhood holder realtime events', () => {
     assert.equal(holderEvents.normalizeRobinhoodHolderEvent(realtime({ holderCount: '' })), null);
     assert.equal(holderEvents.normalizeRobinhoodHolderEvent(realtime({ sequence: 'wrong' })), null);
     assert.equal(holderEvents.normalizeRobinhoodHolderEvent(realtime({ chain: 'base' })), null);
+    assert.equal(holderEvents.normalizeRobinhoodHolderEvent(realtime({ finality: 'unsafe' })), null);
+    assert.equal(holderEvents.normalizeRobinhoodHolderEvent(realtime({
+      finality: 'finalized',
+    })).finality, 'finalized');
   });
 
   it('orders count and invalidation events by ledger version per token', () => {
@@ -76,6 +81,7 @@ describe('frontend Robinhood holder realtime events', () => {
     const count = holderEvents.normalizeRobinhoodHolderEvent(realtime());
     const invalidation = holderEvents.normalizeRobinhoodHolderEvent(realtime({
       type: 'holder:invalidate', holderCount: undefined, ledgerVersion: '8',
+      finality: 'invalidated',
       sequence: `robinhood-holder:${TOKEN}:000000000000000000000008`, reason: 'reorg_resync',
     }));
     assert.equal(gate.accept(count), true);

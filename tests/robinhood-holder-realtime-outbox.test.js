@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const stage213 = require('../src/utils/db-init-stage213');
+const stage214 = require('../src/utils/db-init-stage214');
 const {
   NOTIFY_CHANNEL,
   createRobinhoodHolderRealtimeOutboxRepository,
@@ -31,6 +32,22 @@ describe('Robinhood holder realtime outbox', () => {
       closePool: false,
     });
     assert.deepEqual(calls, stage213.STATEMENTS);
+  });
+
+  it('registers the observed-to-terminal lifecycle extension', async () => {
+    const sql = stage214.STATEMENTS.join('\n');
+    const group = SCHEMA_GROUPS.find(({ key }) => (
+      key === 'stage214-robinhood-holder-realtime-lifecycle'
+    ));
+    assert.match(sql, /ADD COLUMN IF NOT EXISTS terminalized_at TIMESTAMPTZ/);
+    assert.match(sql, /WHERE event_kind='observed' AND terminalized_at IS NULL/);
+    assert.equal(group.repair, 'node src/utils/db-init-stage214.js');
+    const calls = [];
+    await stage214.init({
+      database: { query: async (statement) => calls.push(statement) },
+      closePool: false,
+    });
+    assert.deepEqual(calls, stage214.STATEMENTS);
   });
 
   it('enqueues a normalized publication and transaction-bound notification', async () => {
@@ -87,5 +104,25 @@ describe('Robinhood holder realtime outbox', () => {
       pending: 3, due: 2, leased: 1, expiredLeases: 1, blocked: 4,
       maxAttempts: 5, oldestAgeSeconds: 12.5,
     });
+  });
+
+  it('promotes only canonical finalized observations and terminalizes invalidations', async () => {
+    const calls = [];
+    const repository = createRobinhoodHolderRealtimeOutboxRepository({ database: {
+      query: async (sql, params) => {
+        calls.push({ sql, params });
+        return { rows: [{ finalized: 2, invalidated: 1 }] };
+      },
+    } });
+
+    assert.deepEqual(await repository.promoteFinalized({ limit: 25 }), {
+      finalized: 2, invalidated: 1,
+    });
+    assert.deepEqual(calls[0].params, [25, NOTIFY_CHANNEL]);
+    assert.match(calls[0].sql, /cursor\.finalized_head/);
+    assert.match(calls[0].sql, /block\.canonical/);
+    assert.match(calls[0].sql, /FOR UPDATE OF observed SKIP LOCKED/);
+    assert.match(calls[0].sql, /event_kind IN \('finalized','invalidate'\)/);
+    assert.match(calls[0].sql, /pg_notify/);
   });
 });

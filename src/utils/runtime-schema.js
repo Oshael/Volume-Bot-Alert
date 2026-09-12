@@ -6006,6 +6006,19 @@ const SCHEMA_GROUPS = [
       ],
     }],
   },
+  {
+    key: 'stage214-robinhood-holder-realtime-lifecycle',
+    name: 'Stage 214 Robinhood holder realtime lifecycle',
+    repair: 'node src/utils/db-init-stage214.js',
+    tables: [{
+      table: 'robinhood_holder_realtime_outbox',
+      columns: ['terminalized_at'],
+      indexes: [{
+        name: 'idx_robinhood_holder_realtime_outbox_unterminalized',
+        includes: ['live_through_block', 'token_address', 'ledger_version', 'terminalized_at'],
+      }],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
@@ -6048,6 +6061,7 @@ const PROFILE_GROUP_KEYS = {
     'stage186-robinhood-market-claim-indexes',
     'stage212-robinhood-liquidity-realtime-outbox',
     'stage213-robinhood-holder-realtime-outbox',
+    'stage214-robinhood-holder-realtime-lifecycle',
   ],
   runtime: SCHEMA_GROUPS.map((group) => group.key),
 };

@@ -83,6 +83,7 @@ function createRobinhoodHolderRealtimeOutboxRepository(options = {}) {
            'type', CASE WHEN event_kind='invalidate' THEN 'holder:invalidate'
              ELSE 'holder:count' END,
            'chain', chain, 'address', token_address, 'source', 'ledger_live',
+           'finality', CASE WHEN event_kind='invalidate' THEN 'invalidated' ELSE event_kind END,
            'holderCount', holder_count, 'observedAt', observed_at,
            'ledgerVersion', ledger_version, 'liveThroughBlock', live_through_block,
            'liveThroughHash', live_through_hash, 'latency', latency
@@ -152,7 +153,71 @@ function createRobinhoodHolderRealtimeOutboxRepository(options = {}) {
     };
   }
 
-  return Object.freeze({ claimOutbox, settleOutbox, reclaimExpiredLeases, readBacklog });
+  async function promoteFinalized(input = {}) {
+    const limit = positiveInt(input.limit, 'limit');
+    const result = await database.query(
+      `WITH promotable AS MATERIALIZED (
+         SELECT observed.id, observed.chain, observed.token_address,
+                observed.ledger_version, observed.holder_count, observed.observed_at,
+                observed.live_through_block, observed.live_through_hash, observed.latency,
+                terminal.event_kind AS terminal_kind
+           FROM ${TABLE} observed
+           INNER JOIN robinhood_chain_capture_cursor cursor
+             ON cursor.chain=observed.chain
+           LEFT JOIN robinhood_chain_blocks block
+             ON block.chain=observed.chain
+            AND block.block_number=observed.live_through_block
+            AND block.block_hash=observed.live_through_hash AND block.canonical
+           LEFT JOIN LATERAL (
+             SELECT candidate.event_kind FROM ${TABLE} candidate
+              WHERE candidate.chain=observed.chain
+                AND candidate.token_address=observed.token_address
+                AND candidate.ledger_version>=observed.ledger_version
+                AND candidate.event_kind IN ('finalized','invalidate')
+              ORDER BY candidate.ledger_version, candidate.id LIMIT 1
+           ) terminal ON TRUE
+          WHERE observed.chain='robinhood' AND observed.event_kind='observed'
+            AND observed.terminalized_at IS NULL
+            AND (terminal.event_kind IS NOT NULL OR (
+              cursor.finalized_head IS NOT NULL
+              AND observed.live_through_block<=cursor.finalized_head
+              AND block.block_hash IS NOT NULL
+            ))
+          ORDER BY observed.live_through_block, observed.id
+          LIMIT $1 FOR UPDATE OF observed SKIP LOCKED
+       ), inserted AS (
+         INSERT INTO ${TABLE} (
+           chain, token_address, ledger_version, event_kind, holder_count,
+           observed_at, live_through_block, live_through_hash, latency
+         ) SELECT chain, token_address, ledger_version, 'finalized', holder_count,
+                  observed_at, live_through_block, live_through_hash, latency
+             FROM promotable WHERE terminal_kind IS NULL
+         ON CONFLICT (chain, token_address, ledger_version, event_kind) DO NOTHING
+         RETURNING live_through_block
+       ), terminalized AS (
+         UPDATE ${TABLE} observed SET terminalized_at=COALESCE(
+                  observed.terminalized_at, clock_timestamp()), updated_at=NOW()
+           FROM promotable
+          WHERE observed.id=promotable.id AND observed.terminalized_at IS NULL
+         RETURNING promotable.terminal_kind
+       ), notified AS (
+         SELECT pg_notify($2, MAX(live_through_block)::text)
+           FROM inserted HAVING COUNT(*)>0
+       ) SELECT COUNT(*) FILTER (WHERE terminal_kind IS NULL)::int AS finalized,
+                COUNT(*) FILTER (WHERE terminal_kind='invalidate')::int AS invalidated,
+                (SELECT COUNT(*)::int FROM notified) AS notifications
+           FROM terminalized`,
+      [limit, NOTIFY_CHANNEL]
+    );
+    const row = result.rows[0] || {};
+    return {
+      finalized: Number(row.finalized || 0), invalidated: Number(row.invalidated || 0),
+    };
+  }
+
+  return Object.freeze({
+    claimOutbox, settleOutbox, reclaimExpiredLeases, readBacklog, promoteFinalized,
+  });
 }
 
 module.exports = {

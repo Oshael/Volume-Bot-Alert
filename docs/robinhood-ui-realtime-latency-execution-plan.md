@@ -643,10 +643,10 @@ visível.
 
 #### Slice 6C — lifecycle e entrega até a UI (~400–500 linhas)
 
-- [ ] adotar `observed`, `finalized` e `invalidate` sem permitir regressão da
+- [x] adotar `observed`, `finalized` e `invalidate` sem permitir regressão da
   versão visível;
-- [ ] entregar a outbox por relay PostgreSQL e reutilizar as salas por token;
-- [ ] provar restart, notificação perdida e reorg, preservando auditoria e
+- [x] entregar a outbox por relay PostgreSQL e reutilizar as salas por token;
+- [x] provar restart, notificação perdida e reorg, preservando auditoria e
   reconciliação fora do hot path.
 
 Gate:

@@ -2449,23 +2449,33 @@ ordem canônica continua obrigatória dentro de cada token. O drain usa então s
 o caminho indexado por token; um ticket selecionado sem evento pendente é reconciliado
 e removido sob o mesmo lock transacional. O drain mantém afinidade enquanto o lote vier cheio; lote
 parcial prova que aquele token foi drenado, promove imediatamente um `shadow`
-e evita uma consulta vazia adicional. Cada lote live commitado publica o novo
-holder count imediatamente, sem aguardar o budget inteiro do tick; o mapa do tick
-continua coalescendo somente a contabilidade e a publicação final de promoções
-residuais. A promoção residual é limitada separadamente por
+e evita uma consulta vazia adicional. Cada lote live commitado grava o novo holder
+count e sua publicação na mesma transação, sem aguardar o budget inteiro do tick;
+o relay durável roda no mesmo worker de apply, mas fora da transação do ledger. A
+promoção residual é limitada separadamente por
 `ROBINHOOD_HOLDER_LIVE_SHADOW_PROMOTION_BATCH_SIZE` (default 250, máximo 1.000),
 evitando que um budget alto de apply transforme milhares de promoções em uma única
 transação e esgote a tabela compartilhada de locks do PostgreSQL.
 Antes de reiniciar `trendscope-worker@robinhood-holders` com esta versão, aplique
-`node src/utils/db-init-stage213.js` e execute `npm run db:schema-check`. A Stage
-213 cria `robinhood_holder_realtime_outbox`. Apply, promoção e recuperação de
+`node src/utils/db-init-stage213.js`, `node src/utils/db-init-stage214.js` e execute
+`npm run db:schema-check`. A Stage 213 cria
+`robinhood_holder_realtime_outbox`; a Stage 214 adiciona o lifecycle terminal e o
+índice parcial das observações ainda abertas. Apply, promoção e recuperação de
 reorg gravam nela, na mesma transação de balances, journal, count, versão e
 frontier, uma linha idempotente por token/versão/tipo. A fila suporta claim com
 `SKIP LOCKED`, lease, reclaim, backoff, cinco tentativas e estado terminal
-`blocked`; `robinhood_holder_realtime_outbox` é emitido somente quando uma linha
-nova é commitada. Neste corte a publicação direta permanece ativa e a outbox é a
-base durável para o relay/lifecycle do corte seguinte. O snapshot HTTP continua
-sendo a reconciliação autoritativa em reconnect ou perda de entrega realtime.
+`blocked`; `robinhood_holder_realtime_outbox` é emitido somente depois do commit.
+O apply worker escuta tanto essa notificação quanto `robinhood_holder_hot_queue`,
+mas também drena a fila no start e a cada fallback de 100 ms, portanto restart e
+notificação perdida não perdem entrega. O relay normaliza a linha, publica pelo
+canal PostgreSQL já consumido pelo web e reutiliza a sala de mercado por token; o
+caminho direto anterior fica desativado para não duplicar writers.
+Observações canônicas em ou abaixo de `finalized_head` geram uma linha
+`finalized`; reorg gera `invalidate` ou uma nova versão observada, e qualquer
+terminal encerra a observação correspondente sem apagá-la. A versão monotônica do
+evento impede que retries antigos façam o valor visível regredir. Linhas completas
+permanecem como auditoria fora do hot path, e o snapshot HTTP continua sendo a
+reconciliação autoritativa em reconnect ou perda de entrega realtime.
 Assim eventos `missing/backfilling` não são reescaneados para escolher cada token.
 Depois da Stage 180, cada INSERT commitado no journal de um token rastreado
 (`backfilling`, `shadow` ou `live`) também faz upsert de um ticket por token em

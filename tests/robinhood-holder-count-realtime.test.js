@@ -42,6 +42,7 @@ describe('Robinhood holder count realtime', () => {
     })), {
       type: 'holder:count', chain: 'robinhood', address: TOKEN,
       holderCount: 4424, source: 'ledger_live', observedAt: '2026-08-10T12:00:00.000Z',
+      finality: 'observed',
       ledgerVersion: '7', liveThroughBlock: '32653260', liveThroughHash: HASH,
       sequence: `robinhood-holder:${TOKEN}:000000000000000000000007`,
     });
@@ -56,10 +57,20 @@ describe('Robinhood holder count realtime', () => {
     })), {
       type: 'holder:invalidate', chain: 'robinhood', address: TOKEN,
       source: 'ledger_live', observedAt: '2026-08-10T12:00:00.000Z',
+      finality: 'invalidated',
       ledgerVersion: '8', liveThroughBlock: '32653260', liveThroughHash: HASH,
       sequence: `robinhood-holder:${TOKEN}:000000000000000000000008`,
       reason: 'reorg_resync',
     });
+    assert.equal(normalizeRobinhoodHolderRealtimeEvent(update({
+      finality: 'finalized',
+    })).finality, 'finalized');
+    assert.equal(normalizeRobinhoodHolderRealtimeEvent(update({
+      finality: 'unsafe',
+    })), null);
+    assert.equal(normalizeRobinhoodHolderRealtimeEvent(update({
+      finality: 'invalidated',
+    })), null);
   });
 
   it('coalesces each token and publishes bounded PostgreSQL notifications', async () => {

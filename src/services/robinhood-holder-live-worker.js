@@ -16,7 +16,6 @@ const {
   normalizeRobinhoodHolderLiveSource,
   resolveRobinhoodHolderLiveSource,
 } = require('./robinhood-holder-live-source');
-const holderCountRealtime = require('./robinhood-holder-count-realtime');
 
 const DEFAULT_FALLBACK_INTERVAL_MS = 5000;
 const FATAL_CODES = new Set([
@@ -60,10 +59,6 @@ function normalizeOptions(options = {}, env = process.env) {
   });
 }
 
-function resolveHolderCountPublisher(deps) {
-  return deps.publishHolderCounts || holderCountRealtime.publishUpdates;
-}
-
 function resolveBootstrap(deps, database) {
   return deps.bootstrap
     || (deps.bootstrapFactory || createRobinhoodHolderBootstrapRepository)({ database });
@@ -93,7 +88,7 @@ async function buildRuntime(options, deps = {}) {
     });
   const runner = deps.runner || (deps.runnerFactory || createRobinhoodHolderLiveRunner)({
     capture, handoff, ledger, reader,
-    publishHolderCounts: resolveHolderCountPublisher(deps),
+    publishHolderCounts: async () => 0,
   });
   return Object.freeze({
     sourceMode: source.sourceMode, providerName: source.providerName, runner,

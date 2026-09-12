@@ -30,6 +30,9 @@ const {
 } = require('../src/models/robinhood-canonical-head-candidate');
 const { createRobinhoodHeadCaptureRepository } = require('../src/models/robinhood-head-capture');
 const {
+  createRobinhoodHolderRealtimeOutboxRepository,
+} = require('../src/models/robinhood-holder-realtime-outbox');
+const {
   createRobinhoodLaunchAnchorOutboxRepository,
 } = require('../src/models/robinhood-launch-anchor-outbox');
 const {
@@ -86,6 +89,7 @@ const stage210 = require('../src/utils/db-init-stage210');
 const stage211 = require('../src/utils/db-init-stage211');
 const stage212 = require('../src/utils/db-init-stage212');
 const stage213 = require('../src/utils/db-init-stage213');
+const stage214 = require('../src/utils/db-init-stage214');
 const stage181 = require('../src/utils/db-init-stage181');
 const stage182 = require('../src/utils/db-init-stage182');
 const stage149 = require('../src/utils/db-init-stage149');
@@ -378,6 +382,7 @@ describe('Robinhood canonical chain capture journal', () => {
     await stage211.init({ closePool: false });
     await stage212.init({ closePool: false });
     await stage213.init({ closePool: false });
+    await stage214.init({ closePool: false });
     await stage181.init({ closePool: false });
     await stage182.init({ closePool: false });
     await stage149.init({ closePool: false });
@@ -1220,6 +1225,32 @@ describe('Robinhood canonical chain capture journal', () => {
         },
       },
     });
+    const holderRealtime = await db.query(
+      `SELECT event_kind, status, holder_count::text, ledger_version::text,
+              live_through_block::text, live_through_hash, terminalized_at
+         FROM robinhood_holder_realtime_outbox
+        WHERE chain='robinhood' AND token_address=$1 ORDER BY id`, [TOKEN]
+    );
+    assert.deepEqual(holderRealtime.rows, [{
+      event_kind: 'observed', status: 'pending', holder_count: '0',
+      ledger_version: '1', live_through_block: '100', live_through_hash: HASH,
+      terminalized_at: null,
+    }]);
+    await db.query(
+      "UPDATE robinhood_chain_capture_cursor SET finalized_head=100 WHERE chain='robinhood'"
+    );
+    assert.deepEqual(await createRobinhoodHolderRealtimeOutboxRepository().promoteFinalized({
+      limit: 10,
+    }), { finalized: 1, invalidated: 0 });
+    const terminal = await db.query(
+      `SELECT event_kind, terminalized_at IS NOT NULL AS terminalized
+         FROM robinhood_holder_realtime_outbox
+        WHERE chain='robinhood' AND token_address=$1 ORDER BY event_kind`, [TOKEN]
+    );
+    assert.deepEqual(terminal.rows, [
+      { event_kind: 'finalized', terminalized: false },
+      { event_kind: 'observed', terminalized: true },
+    ]);
     assert.deepEqual(await journal.rewindCanonicalRecovery({ generation: '0' }), {
       status: 'already-rewound', generation: '0', nextGeneration: '1',
     });

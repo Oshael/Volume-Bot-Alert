@@ -13,6 +13,7 @@ interface RobinhoodHolderEventBase {
   address: string;
   source: 'ledger_live';
   observedAt: string;
+  finality: 'observed' | 'finalized' | 'invalidated';
   ledgerVersion: string;
   liveThroughBlock: string;
   liveThroughHash: string;
@@ -63,17 +64,23 @@ function normalizeHolderEventBase(source: Record<string, unknown>) {
   const liveThroughBlock = decimal(source.liveThroughBlock);
   const liveThroughHash = String(source.liveThroughHash || '').toLowerCase();
   const type = String(source.type || '');
+  const finality = String(source.finality || (
+    type === 'holder:invalidate' ? 'invalidated' : 'observed'
+  ));
   const latency = normalizeLatency(source.latency);
   if (identity?.chain !== 'robinhood' || source.source !== 'ledger_live' || !observedAt
     || !ledgerVersion || !liveThroughBlock || !/^0x[0-9a-f]{64}$/.test(liveThroughHash)
-    || !['holder:count', 'holder:invalidate'].includes(type)) return null;
+    || !['holder:count', 'holder:invalidate'].includes(type)
+    || !['observed', 'finalized', 'invalidated'].includes(finality)
+    || (type === 'holder:invalidate') !== (finality === 'invalidated')) return null;
   const sequence = `robinhood-holder:${identity.address}:${ledgerVersion.padStart(24, '0')}`;
   if (source.sequence !== sequence) return null;
   return {
     type,
     common: {
       chain: 'robinhood' as const, address: identity.address, source: 'ledger_live' as const,
-      observedAt, ledgerVersion, liveThroughBlock, liveThroughHash, sequence,
+      observedAt, finality: finality as RobinhoodHolderEventBase['finality'],
+      ledgerVersion, liveThroughBlock, liveThroughHash, sequence,
       ...(latency ? { latency } : {}),
     },
   };

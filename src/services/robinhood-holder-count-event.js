@@ -37,16 +37,21 @@ function normalizeRobinhoodHolderRealtimeEvent(value = {}) {
     const ledgerVersion = decimal(value.ledgerVersion, 'ledger version');
     const liveThroughBlock = decimal(value.liveThroughBlock, 'live block');
     const liveThroughHash = String(value.liveThroughHash || '').toLowerCase();
+    const invalidated = value.invalidated === true || value.type === 'holder:invalidate';
+    const finality = String(value.finality || (invalidated
+      ? 'invalidated' : 'observed'));
     const latency = normalizeLatency(value.latency);
-    if (!/^0x[0-9a-f]{64}$/.test(liveThroughHash)) return null;
+    if (!/^0x[0-9a-f]{64}$/.test(liveThroughHash)
+        || !['observed', 'finalized', 'invalidated'].includes(finality)
+        || invalidated !== (finality === 'invalidated')) return null;
     const common = {
       chain: 'robinhood', address: identity.address, source: 'ledger_live',
-      observedAt: iso(value.observedAt, 'observedAt'),
+      observedAt: iso(value.observedAt, 'observedAt'), finality,
       ledgerVersion, liveThroughBlock, liveThroughHash,
       sequence: `robinhood-holder:${identity.address}:${ledgerVersion.padStart(24, '0')}`,
       ...(latency ? { latency } : {}),
     };
-    if (value.invalidated === true || value.type === 'holder:invalidate') {
+    if (invalidated) {
       return Object.freeze({
         type: 'holder:invalidate', ...common, reason: 'reorg_resync',
       });
