@@ -429,8 +429,10 @@ This product slice is split into bounded implementation cuts:
   the only membership control and update the primary component/copy.
 - **4C2a — dead folder presentation:** delete the unreachable Watchlist folder/modal bindings and detached row-action
   builders while preserving folder data and neutral backend routes.
-- **4C2b — dead add-control styling:** delete the remaining unreachable direct-add/quick-add helpers and their dedicated
-  CSS after verifying that no live surface still emits their selectors.
+- **4C2b — dead add controls:** delete the remaining unreachable direct-add/quick-add helpers and their standalone CSS
+  after verifying that no live surface still emits their selectors.
+- **4C2c — residual folder styling:** delete the folder-scoped CSS left unreachable by 4C2a and confirm that neutral
+  folder data/routes remain untouched.
 - **4C3 — canonical cleanup:** rename remaining user-added-token domain symbols, logs and tests, then confirm that unrelated
   meanings of `manual` and the dormant neutral folder contracts were not changed.
 

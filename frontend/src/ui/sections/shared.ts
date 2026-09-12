@@ -120,8 +120,6 @@ let tokenImagePreviewTimer: ReturnType<typeof window.setTimeout> | null = null;
 let tokenImagePreviewPosition = { x: 0, y: 0 };
 let tokenImagePreviewGlobalBound = false;
 let tokenImagePreviewLastPointerAt = 0;
-let manualQuickAddOpenKey: string | null = null;
-let manualQuickAddDocumentCloseBound = false;
 let uiControlTooltipTarget: HTMLElement | null = null;
 let uiControlTooltipText = '';
 let uiControlTooltipStartedAt = 0;
@@ -431,101 +429,6 @@ export function bindTokenActions(section: ParentNode, controller: AppController)
       void controller.toggleWatchlistToken(address, chain);
     });
   }
-
-  bindManualQuickAddControls(section, controller);
-}
-
-function bindManualQuickAddControls(section: ParentNode, controller: AppController) {
-  const scope = resolveManualQuickAddScope(section);
-  const buildOpenKey = (chain: TokenChain, address: string) => `${scope}:${chain}:${address}`;
-  const ownerDocument = (section instanceof Node && section.ownerDocument) || document;
-  const closeMenus = (except?: HTMLElement | null) => {
-    ownerDocument.querySelectorAll<HTMLElement>('.manual-quick-add-wrap.open').forEach((wrap) => {
-      if (wrap !== except) {
-        wrap.classList.remove('open');
-      }
-    });
-    if (!except) {
-      manualQuickAddOpenKey = null;
-    }
-  };
-
-  section.querySelectorAll<HTMLElement>('.manual-quick-add-wrap').forEach((wrap) => {
-    const address = wrap.querySelector<HTMLButtonElement>('[data-action="manual-quick-add"]')?.dataset.address;
-    const chain = normalizeTokenChain(wrap.dataset.chain) || 'solana';
-    wrap.classList.toggle('open', Boolean(address && buildOpenKey(chain, address) === manualQuickAddOpenKey));
-  });
-
-  for (const button of section.querySelectorAll<HTMLButtonElement>('[data-action="manual-quick-add"]')) {
-    if (button.dataset.tokenActionBound === 'true') continue;
-    button.dataset.tokenActionBound = 'true';
-    button.addEventListener('click', (event) => {
-      event.stopPropagation();
-      const address = button.dataset.address;
-      const chain = normalizeTokenChain(button.dataset.chain) || 'solana';
-      if (!address) {
-        return;
-      }
-
-      const wrap = button.closest<HTMLElement>('.manual-quick-add-wrap');
-      if (controller.state.data.manualTokenFolders.length === 0 || !wrap) {
-        void controller.addWatchlistToken(address, null, chain);
-        return;
-      }
-
-      const wasOpen = wrap.classList.contains('open');
-      closeMenus(wrap);
-      manualQuickAddOpenKey = wasOpen ? null : buildOpenKey(chain, address);
-      wrap.classList.toggle('open', !wasOpen);
-    });
-  }
-
-  for (const button of section.querySelectorAll<HTMLButtonElement>('[data-action="manual-quick-add-target"]')) {
-    if (button.dataset.tokenActionBound === 'true') continue;
-    button.dataset.tokenActionBound = 'true';
-    button.addEventListener('click', (event) => {
-      event.stopPropagation();
-      const address = button.dataset.address;
-      const chain = normalizeTokenChain(button.dataset.chain) || 'solana';
-      if (!address) {
-        return;
-      }
-
-      closeMenus();
-      if (button.dataset.target === 'folder') {
-        const folderId = Number(button.dataset.folderId);
-        if (Number.isInteger(folderId) && folderId > 0) {
-          void controller.addManualTokenToFolder(folderId, address, chain);
-        }
-        return;
-      }
-
-      void controller.addWatchlistToken(address, null, chain);
-    });
-  }
-
-  if (!manualQuickAddDocumentCloseBound) {
-    manualQuickAddDocumentCloseBound = true;
-    ownerDocument.addEventListener('click', (event) => {
-      if (event.target instanceof Element && event.target.closest('.manual-quick-add-wrap')) {
-        return;
-      }
-      closeMenus();
-    });
-    ownerDocument.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') {
-        closeMenus();
-      }
-    });
-  }
-}
-
-function resolveManualQuickAddScope(section: ParentNode) {
-  const root = section instanceof Element ? section.closest<HTMLElement>('section') ?? section : null;
-  if (root?.classList.contains('monitored-panel')) return 'monitored';
-  if (root?.classList.contains('recent-bar')) return 'recent';
-  if (root?.classList.contains('old-week-bar')) return 'old-week';
-  return 'shared';
 }
 
 function bindMockTradingPnlButtons(section: ParentNode, controller: AppController) {
@@ -2665,31 +2568,6 @@ function renderTokenAdminAction(isAdmin: boolean, safeAddress: string, safeSymbo
   }
 
   return `<button type="button" class="action-glyph danger-glyph" data-action="admin-block-token" data-address="${safeAddress}" data-label="${safeSymbol}" ${busy ? 'disabled' : ''} title="Admin block permanently">&#9760;</button>`;
-}
-
-export function renderManualQuickAddAction(
-  safeAddress: string,
-  busy: boolean,
-  folders: AppState['data']['manualTokenFolders'] = [],
-  chain: TokenChain = 'solana',
-) {
-  const menu = folders.length > 0
-    ? `
-      <span class="manual-quick-add-menu" role="menu">
-        <button type="button" class="manual-quick-add-option" data-action="manual-quick-add-target" data-target="all" data-chain="${chain}" data-address="${safeAddress}" role="menuitem">All</button>
-        ${folders.map((folder) => `
-          <button type="button" class="manual-quick-add-option" data-action="manual-quick-add-target" data-target="folder" data-folder-id="${folder.id}" data-chain="${chain}" data-address="${safeAddress}" role="menuitem">${escapeHtml(folder.name)}</button>
-        `).join('')}
-      </span>
-    `
-    : '';
-
-  return `
-    <span class="manual-quick-add-wrap" data-chain="${chain}">
-      <button type="button" class="action-glyph manual-quick-add-button" data-action="manual-quick-add" data-chain="${chain}" data-address="${safeAddress}" ${busy ? 'disabled' : ''} title="Add to manual tokens">+</button>
-      ${menu}
-    </span>
-  `;
 }
 
 function renderMockTradingActions(isAdmin: boolean, safeAddress: string, position: MockTradingPositionEntry | null, busy: boolean) {

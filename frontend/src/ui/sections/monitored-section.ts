@@ -458,8 +458,6 @@ function patchMonitoredRow(
     starButton.title = isStarred ? 'Remove from Watchlist' : 'Add to Watchlist';
   }
   current.querySelectorAll<HTMLButtonElement>([
-    '[data-action="manual-quick-add"]',
-    '[data-action="manual-quick-add-target"]',
     '[data-action="toggle-star"]',
     '[data-action="block-token"]',
     '[data-action="mock-buy-token"]',
