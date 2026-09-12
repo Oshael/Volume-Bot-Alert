@@ -35,14 +35,23 @@ describe('Robinhood holder archive deployment recovery', () => {
     assert.equal(rows[0].upperBlock, null);
   });
 
+  it('can restrict deployment recovery to tokens admitted to the catalog', async () => {
+    let query;
+    await listCandidates({
+      async query(sql) { query = sql; return { rows: [] }; },
+    }, 20, { catalogOnly: true });
+    assert.match(query, /INNER JOIN token_catalog catalog/);
+    assert.match(query, /catalog\.address = outbox\.token_address/);
+  });
+
   it('is read-only by default and validates bounded options', async () => {
     assert.deepEqual(parseArgs([]), {
-      confirm: false, limit: 100, concurrency: 2, timeoutMs: 30000,
+      confirm: false, catalogOnly: false, limit: 100, concurrency: 2, timeoutMs: 30000,
     });
     assert.deepEqual(parseArgs([
-      CONFIRM_FLAG, '--limit=10', '--concurrency=4', '--timeout-ms=5000',
+      CONFIRM_FLAG, '--catalog-only', '--limit=10', '--concurrency=4', '--timeout-ms=5000',
     ]), {
-      confirm: true, limit: 10, concurrency: 4, timeoutMs: 5000,
+      confirm: true, catalogOnly: true, limit: 10, concurrency: 4, timeoutMs: 5000,
     });
     assert.throws(() => parseArgs(['--concurrency=9']), /between 1 and 8/);
     const report = await main([], {

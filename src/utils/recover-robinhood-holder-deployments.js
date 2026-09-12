@@ -36,6 +36,11 @@ function parseArgs(argv = []) {
       values.confirm = true;
       continue;
     }
+    if (argument === '--catalog-only') {
+      if (values.catalogOnly) throw new Error('--catalog-only cannot be repeated');
+      values.catalogOnly = true;
+      continue;
+    }
     const match = argument.match(/^--(limit|concurrency|timeout-ms)=(.+)$/);
     if (!match) throw new Error(`unknown argument: ${argument}`);
     if (values[match[1]] !== undefined) throw new Error(`--${match[1]} cannot be repeated`);
@@ -43,17 +48,23 @@ function parseArgs(argv = []) {
   }
   return Object.freeze({
     confirm: values.confirm === true,
+    catalogOnly: values.catalogOnly === true,
     limit: bounded(values.limit, 100, 1, 1000, '--limit'),
     concurrency: bounded(values.concurrency, 2, 1, 8, '--concurrency'),
     timeoutMs: bounded(values['timeout-ms'], 30_000, 1000, 60_000, '--timeout-ms'),
   });
 }
 
-async function listCandidates(database, limit) {
+async function listCandidates(database, limit, input = {}) {
+  const catalogJoin = input.catalogOnly === true
+    ? `INNER JOIN token_catalog catalog
+           ON catalog.chain = outbox.chain AND catalog.address = outbox.token_address`
+    : '';
   const { rows } = await database.query(
     `WITH queued AS MATERIALIZED (
        SELECT outbox.token_address, outbox.created_at, outbox.attempt_count
          FROM robinhood_token_deployment_outbox outbox
+         ${catalogJoin}
          LEFT JOIN robinhood_token_attributions attribution
            ON attribution.chain = outbox.chain
           AND attribution.token_address = outbox.token_address
@@ -180,7 +191,9 @@ function failure(candidate, error) {
 async function main(argv = process.argv.slice(2), deps = {}) {
   const options = deps.options || parseArgs(argv);
   const database = deps.database || db;
-  const candidates = await (deps.listCandidates || listCandidates)(database, options.limit);
+  const candidates = await (deps.listCandidates || listCandidates)(
+    database, options.limit, { catalogOnly: options.catalogOnly }
+  );
   if (!options.confirm) {
     const report = {
       mode: 'read-only', candidates: candidates.length,

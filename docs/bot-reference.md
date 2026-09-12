@@ -2584,7 +2584,9 @@ archive como limite superior da busca; `headFallbackCandidates` mede esse caso.
 O apply exige
 `ROBINHOOD_ARCHIVE_RPC_URL` e a confirmação explícita
 `-- --confirm-recover-robinhood-holder-deployments`; `--limit`, `--concurrency`
-e `--timeout-ms` são limitados. A descoberta faz busca binária da primeira
+e `--timeout-ms` são limitados. Use `--catalog-only` para excluir emitters de mint
+que estão na outbox mas nunca foram admitidos ao catálogo; esse é o escopo indicado
+antes de criar uma coorte delta de holders. A descoberta faz busca binária da primeira
 aparição do bytecode, valida a chain e persiste evidência canônica sem consultar
 Blockscout nem usar o RPC pruned como fallback. Criações cujo creator não possa
 ser provado recebem somente `rpc_code_transition`, suficiente para habilitar o
