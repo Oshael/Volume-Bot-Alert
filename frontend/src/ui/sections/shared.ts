@@ -340,7 +340,7 @@ export function bindTokenActions(section: ParentNode, controller: AppController)
     button.addEventListener('click', () => {
       const address = button.dataset.address;
       const chain = normalizeTokenChain(button.dataset.chain) || 'solana';
-      if (address) void controller.removeManualToken(address, chain);
+      if (address) void controller.removeWatchlistToken(address, chain);
     });
   }
 
@@ -428,7 +428,7 @@ export function bindTokenActions(section: ParentNode, controller: AppController)
         }
       }
 
-      void controller.toggleStarredToken(address, chain);
+      void controller.toggleWatchlistToken(address, chain);
     });
   }
 
@@ -469,7 +469,7 @@ function bindManualQuickAddControls(section: ParentNode, controller: AppControll
 
       const wrap = button.closest<HTMLElement>('.manual-quick-add-wrap');
       if (controller.state.data.manualTokenFolders.length === 0 || !wrap) {
-        void controller.addManualToken(address, null, chain);
+        void controller.addWatchlistToken(address, null, chain);
         return;
       }
 
@@ -500,7 +500,7 @@ function bindManualQuickAddControls(section: ParentNode, controller: AppControll
         return;
       }
 
-      void controller.addManualToken(address, null, chain);
+      void controller.addWatchlistToken(address, null, chain);
     });
   }
 
@@ -1568,7 +1568,7 @@ export function bindBucketSortControls(section: ParentNode, controller: AppContr
         wrap.classList.remove('open');
       }
 
-      if (mode === 'manual') controller.setManualSort(sortMode, sortWindow);
+      if (mode === 'manual') controller.setWatchlistSort(sortMode, sortWindow);
       else if (mode === 'recent') controller.setRecentSort(sortMode, sortWindow);
       else controller.setOldWeekSort(sortMode, sortWindow);
     });

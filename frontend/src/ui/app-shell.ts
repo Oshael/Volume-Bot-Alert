@@ -1,5 +1,5 @@
 import type { AppController, AppRenderRegion } from '../state/app-controller';
-import { getAlertFeedAlerts, getChainCapabilityNotice, getExpandedTokenSparkline, getManualTokens, getMockTradingPositionView, getMockTradingSummaryView, getMonitoredTokens, getOldWeekTokens, getRecentTokens, getTokenSparkline, getTopPerformerTokens, getTrackedToken, getVisibleManualTokens, isProfileAuthPanel, type AppState } from '../state/app-state';
+import { getAlertFeedAlerts, getChainCapabilityNotice, getExpandedTokenSparkline, getWatchlistTokens, getMockTradingPositionView, getMockTradingSummaryView, getMonitoredTokens, getOldWeekTokens, getRecentTokens, getTokenSparkline, getTopPerformerTokens, getTrackedToken, getVisibleWatchlistTokens, isProfileAuthPanel, type AppState } from '../state/app-state';
 import { renderAlertsSection } from './sections/alerts-section';
 import { renderLegacyShell, renderWorkspaceHeader, renderWorkspaceProfileOverlay } from './sections/layout-sections';
 import { renderManualTokensSection } from './sections/manual-section';
@@ -1466,7 +1466,7 @@ function getMonitoredRenderKey(state: AppState) {
       const identity = buildTokenIdentityKey(token.chain || 'solana', token.address);
       return [identity, state.ui.monitoredSparklineHoursByAddress[identity]];
     }),
-    starred: state.data.starredTokenIdentities,
+    starred: state.data.watchlistTokenIdentities,
     pinned: state.data.pinnedMonitoredTokenIdentities,
     loadError: state.ui.monitoredLoadError,
     filters: [
@@ -1484,12 +1484,12 @@ function getMonitoredRenderKey(state: AppState) {
 }
 
 function getManualRenderKey(state: AppState) {
-  const visibleManualTokens = getVisibleManualTokens(state);
+  const visibleManualTokens = getVisibleWatchlistTokens(state);
   const filteredManualTokens = resolveManualTableRows(visibleManualTokens, {
     starredOnly: state.ui.manualStarredOnly,
-    starredTokens: state.data.starredTokenIdentities,
-    searchQuery: state.ui.manualSearchQuery,
-    sortCriteria: state.ui.manualSorts,
+    starredTokens: state.data.watchlistTokenIdentities,
+    searchQuery: state.ui.watchlistSearchQuery,
+    sortCriteria: state.ui.watchlistSorts,
   });
 
   return JSON.stringify({
@@ -1498,16 +1498,16 @@ function getManualRenderKey(state: AppState) {
     role: state.session.role,
     tradeTerminals: state.ui.enabledTradeTerminals,
     robinhoodTradeTerminals: state.ui.enabledRobinhoodTradeTerminals,
-    search: state.ui.manualSearchQuery,
+    search: state.ui.watchlistSearchQuery,
     visibleFolders: state.ui.manualVisibleFolderIds,
     folders: state.data.manualTokenFolders,
     folderItems: state.data.manualTokenFolderItems,
     starredOnly: state.ui.manualStarredOnly,
-    sorts: state.ui.manualSorts,
-    starred: state.data.starredTokenIdentities,
+    sorts: state.ui.watchlistSorts,
+    starred: state.data.watchlistTokenIdentities,
     meteoraMinPool: Number(state.data.configs['meteora-min-pool']) || 5000,
-    tokens: getManualTokens(state).map(serializeTrackedTokenForView),
-    mockTrading: getManualTokens(state).map((token) => serializeMockTradingForView(state, token.address)),
+    tokens: getWatchlistTokens(state).map(serializeTrackedTokenForView),
+    mockTrading: getWatchlistTokens(state).map((token) => serializeMockTradingForView(state, token.address)),
     sparklines: filteredManualTokens.map((token) => {
       const sparkline = getTokenSparkline(state, token.address, token.chain);
       const series = Array.isArray(sparkline?.series) ? sparkline.series : [];
@@ -1591,7 +1591,7 @@ function getAlertsRenderKey(state: AppState) {
     robinhoodTradeTerminals: state.ui.enabledRobinhoodTradeTerminals,
     search: state.ui.alertSearchQuery,
     page: state.ui.alertPage,
-    starred: state.data.starredTokenIdentities,
+    starred: state.data.watchlistTokenIdentities,
     alertRevision: state.runtime.alertRevision,
     alertCount: feedAlerts.length,
     enabledChains: state.ui.chainFilters.enabledChains,

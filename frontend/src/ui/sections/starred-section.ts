@@ -1,5 +1,5 @@
 import type { AppController } from '../../state/app-controller';
-import { getChainCapabilityNotice, getManualTokens, getOldWeekTokens, getRecentTokens, getTrackedToken, type AppState, type ManualTokenEntry } from '../../state/app-state';
+import { getChainCapabilityNotice, getWatchlistTokens, getOldWeekTokens, getRecentTokens, getTrackedToken, type AppState, type ManualTokenEntry } from '../../state/app-state';
 import { bindCopyButtons, bindTokenActions, renderTokenCard } from './shared';
 import { bindMonitoredTickerPeerPanelClose } from './monitored-section';
 import { bindRadarIdentityBadges } from './radar-identity-badges';
@@ -17,10 +17,10 @@ export function renderStarredSection(state: AppState, controller: AppController)
     `;
     return section;
   }
-  const visibleIdentities = state.data.starredTokenIdentities.filter((identityKey) => (
+  const visibleIdentities = state.data.watchlistTokenIdentities.filter((identityKey) => (
     state.ui.chainFilters.enabledChains.includes(parseTokenIdentityKey(identityKey).chain)
   ));
-  const manualAddressSet = new Set(getManualTokens(state).map((token) => (
+  const manualAddressSet = new Set(getWatchlistTokens(state).map((token) => (
     buildTokenIdentityKey(token.chain || 'solana', token.address)
   )));
   const recentAddressSet = new Set(getRecentTokens(state).map((token) => (

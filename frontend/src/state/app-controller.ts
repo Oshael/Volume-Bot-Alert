@@ -1,4 +1,4 @@
-import { createAppState, getAlertFeedAlerts, getManualTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, getTrackedToken, isMockTradingEnabled, type AddressItem, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type CustomAlertMetric, type CustomAlertPreviewInput, type CustomAlertRuleEntry, type LinkedIdentityEntry, type ManualTokenEntry, type ManualTokenFolderEntry, type ManualTokenFolderItemEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MockTradingWalletEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type ProfileAuthPanel, type PumpTokenEntry, type SparklineRangePreset, type TokenSparklineCandleEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
+import { createAppState, getAlertFeedAlerts, getWatchlistTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, getTrackedToken, isMockTradingEnabled, type AddressItem, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type CustomAlertMetric, type CustomAlertPreviewInput, type CustomAlertRuleEntry, type LinkedIdentityEntry, type ManualTokenEntry, type ManualTokenFolderEntry, type ManualTokenFolderItemEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MockTradingWalletEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type ProfileAuthPanel, type PumpTokenEntry, type SparklineRangePreset, type TokenSparklineCandleEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
 import { resolveManualTableRows, resolveMonitoredTableRows } from '../utils/token-table';
 import {
   createLegacyCompatibleTokenIdentity,
@@ -51,9 +51,8 @@ import {
 } from '../services/api/wallet-auth';
 import {
   addManualTokenToFolder as addManualTokenToFolderRequest,
-  addManualToken as addManualTokenRequest,
+  addWatchlistToken as addWatchlistTokenRequest,
   addBlockedToken as addBlockedTokenRequest,
-  addStarredToken as addStarredTokenRequest,
   createManualTokenFolder as createManualTokenFolderRequest,
   deleteManualTokenFolder as deleteManualTokenFolderRequest,
   fetchAdminTokenReviewAlerts,
@@ -64,7 +63,7 @@ import {
   patchUiPrefs,
   resolveAdminTokenReviewAlert as resolveAdminTokenReviewAlertRequest,
   removeManualTokenFromFolder as removeManualTokenFromFolderRequest,
-  removeManualToken as removeManualTokenRequest,
+  removeWatchlistToken as removeWatchlistTokenRequest,
   removeBlockedToken as removeBlockedTokenRequest,
   removeStarredToken as removeStarredTokenRequest,
   updateManualTokenFolder as updateManualTokenFolderRequest,
@@ -84,7 +83,7 @@ import {
 } from '../services/api/account';
 import { createBillingOrder, fetchBillingState, fetchPublicBillingPlans, type BillingStatePayload, type PublicBillingPlansPayload } from '../services/api/billing';
 import { completePreAccessSession, createPreAccessOrder, fetchPreAccessBillingState, fetchPreAccessMe, logoutPreAccessSession, syncPreAccessOrder, type PreAccessBillingStatePayload } from '../services/api/pre-access';
-import { adminBlockToken as adminBlockTokenRequest, adminUnblockToken as adminUnblockTokenRequest, clearDashboardAlertEvents, createCustomAlertRule as createCustomAlertRuleRequest, disableCustomAlertRule as disableCustomAlertRuleRequest, dismissDashboardAlertEvent, fetchCustomAlertRules as fetchCustomAlertRulesRequest, updateCustomAlertRule as updateCustomAlertRuleRequest, type CreateCustomAlertRulePayload, type CustomAlertRule, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchDashboardTopPerformers, fetchExpandedTokenSparkline, fetchMarketTicker, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, resetMonitoredPins as resetMonitoredPinsRequest, saveMonitoredPins as saveMonitoredPinsRequest, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardHistoryBucketRequest, type DashboardHistoryDebugProbeEntry, type DashboardMonitoredPin, type DashboardMonitoredToken, type DashboardTopPerformersPayload, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
+import { adminBlockToken as adminBlockTokenRequest, adminUnblockToken as adminUnblockTokenRequest, clearDashboardAlertEvents, createCustomAlertRule as createCustomAlertRuleRequest, disableCustomAlertRule as disableCustomAlertRuleRequest, dismissDashboardAlertEvent, fetchCustomAlertRules as fetchCustomAlertRulesRequest, updateCustomAlertRule as updateCustomAlertRuleRequest, type CreateCustomAlertRulePayload, type CustomAlertRule, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchDashboardTopPerformers, fetchExpandedTokenSparkline, fetchMarketTicker, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, resetMonitoredPins as resetMonitoredPinsRequest, saveMonitoredPins as saveMonitoredPinsRequest, trackWatchlistToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardHistoryBucketRequest, type DashboardHistoryDebugProbeEntry, type DashboardMonitoredPin, type DashboardMonitoredToken, type DashboardTopPerformersPayload, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
 import { addMockTradingCash, archiveMockTradingWallet as archiveMockTradingWalletRequest, buyMockTradingToken, cancelMockTradingTakeProfitOrder as cancelMockTradingTakeProfitOrderRequest, createMockTradingTakeProfitOrder, createMockTradingWallet as createMockTradingWalletRequest, fetchMockTradingPositions, fetchMockTradingSummary, fetchMockTradingTrades, fetchMockTradingWallets, resetMockTradingPortfolio as resetMockTradingPortfolioRequest, sellMockTradingToken, setDefaultMockTradingWallet as setDefaultMockTradingWalletRequest, updateMockTradingWallet as updateMockTradingWalletRequest } from '../services/api/mock-trading';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { getBackendAlertEventId, partitionVisibleAlertEntries } from './alert-feed-actions';
@@ -516,7 +515,7 @@ const sparklineDebugTabId = createSparklineDebugId('tab');
 
 type HistoryBootstrapRefreshOptions = {
   token?: string;
-  manualTokensOverride?: AddressItem[];
+  watchlistTokensOverride?: AddressItem[];
   suppressErrors?: boolean;
 };
 
@@ -759,8 +758,8 @@ export interface AppController {
   logoutAll(): Promise<void>;
   reloadConfig(): Promise<void>;
   saveMonitoringConfig(configs: Record<string, number | string>): Promise<void>;
-  addManualToken(address: string, label?: string | null, chain?: TokenChain): Promise<void>;
-  removeManualToken(address: string, chain?: TokenChain): Promise<void>;
+  addWatchlistToken(address: string, label?: string | null, chain?: TokenChain): Promise<void>;
+  removeWatchlistToken(address: string, chain?: TokenChain): Promise<void>;
   createManualTokenFolder(name: string): Promise<void>;
   updateManualTokenFolder(folderId: number, input: { name?: string; sortOrder?: number }): Promise<void>;
   deleteManualTokenFolder(folderId: number): Promise<void>;
@@ -818,7 +817,7 @@ export interface AppController {
   toggleSectionCollapsed(section: CollapsibleSectionKey): void;
   setAlertSearchQuery(query: string): void;
   setMonitoredSearchQuery(query: string): void;
-  setManualSearchQuery(query: string): void;
+  setWatchlistSearchQuery(query: string): void;
   setRecentSearchQuery(query: string): void;
   setOldWeekSearchQuery(query: string): void;
   setManualStarredOnly(enabled: boolean): void;
@@ -841,7 +840,7 @@ export interface AppController {
   setTokenSparklineRangePreset(address: string, preset: SparklineRangePreset, chain?: TokenChain): void;
   resetTokenSparklineRangeDays(address: string, chain?: TokenChain): void;
   setMonitoredTokenSparklineRangeHours(address: string, hours: number, chain?: TokenChain): void;
-  setManualSort(mode: BucketSortMode, window?: BucketSortWindow): void;
+  setWatchlistSort(mode: BucketSortMode, window?: BucketSortWindow): void;
   setRecentSort(mode: BucketSortMode, window?: BucketSortWindow): void;
   setOldWeekSort(mode: BucketSortMode, window?: BucketSortWindow): void;
   setHistoryBucketOrderLocked(bucket: 'recent' | 'old-week', locked: boolean): void;
@@ -861,7 +860,7 @@ export interface AppController {
   setSoundVolume(volume: number): void;
   enableBrowserNotifications(): Promise<void>;
   disableBrowserNotifications(): void;
-  toggleStarredToken(address: string, chain?: TokenChain): Promise<void>;
+  toggleWatchlistToken(address: string, chain?: TokenChain): Promise<void>;
   setWorkspace(workspace: WorkspaceView): void;
   syncWorkspaceFromLocation(): void;
   refreshRestoredSessionState(options?: { force?: boolean }): Promise<void>;
@@ -1967,7 +1966,7 @@ export function createAppController(): AppController {
     }
     const tokens = [
       ...getMonitoredTokens(state),
-      ...getManualTokens(state),
+      ...getWatchlistTokens(state),
       ...getRecentTokens(state),
       ...getOldWeekTokens(state),
     ];
@@ -1993,7 +1992,7 @@ export function createAppController(): AppController {
     const activeIdentities = new Set([
       ...state.data.monitoredTokenIdentities,
       ...state.data.pinnedMonitoredTokenIdentities,
-      ...state.data.manualTokenIdentities,
+      ...state.data.watchlistTokenIdentities,
       ...state.data.topPerformerIdentities,
       ...state.data.recentTokenIdentities,
       ...state.data.oldWeekTokenIdentities,
@@ -2377,10 +2376,10 @@ export function createAppController(): AppController {
 
     state.data.trackedTokensByIdentity = input.nextTrackedStore;
     applyPersistedFrontendAlertFlags(state.data.trackedTokensByIdentity);
-    state.data.manualTokenIdentities = input.manualTokens.map(getTokenIdentityKey);
+    state.data.watchlistTokenIdentities = input.manualTokens.map(getTokenIdentityKey);
     state.data.monitoredTokenIdentities = [...input.monitoredMap.keys()];
     state.data.pinnedMonitoredTokenIdentities = input.pinnedIdentities;
-    state.bars.manual = state.data.manualTokenIdentities.length;
+    state.bars.manual = state.data.watchlistTokenIdentities.length;
     if (!usesHistoryBucketBootstrap()) {
       state.data.recentTokenIdentities = [];
       state.data.oldWeekTokenIdentities = [];
@@ -3730,24 +3729,24 @@ export function createAppController(): AppController {
     };
   }
 
-  async function addManualTokenForFloatingQuickBuy(address: string, token: string) {
-    if (state.data.manualTokenIdentities.includes(getTrackedTokenKey(address))) {
-      await trackManualToken(address, token);
-      await hydrateManualTokenDashboardFields(address, token, { retryDelaysMs: [0, 750, 2000] });
+  async function addWatchlistTokenForFloatingQuickBuy(address: string, token: string) {
+    if (state.data.watchlistTokenIdentities.includes(getTrackedTokenKey(address))) {
+      await trackWatchlistToken(address, token);
+      await hydrateWatchlistTokenDashboardFields(address, token, { retryDelaysMs: [0, 750, 2000] });
       return;
     }
 
     invalidateWorkspaceHydrationRequests();
-    const optimisticSnapshot = captureOptimisticManualTokenSnapshot(address);
-    const nextManual = buildOptimisticManualToken(address, null);
-    applyOptimisticManualToken(address, nextManual);
+    const optimisticSnapshot = captureOptimisticWatchlistTokenSnapshot(address);
+    const nextWatchlist = buildOptimisticWatchlistToken(address, null);
+    applyOptimisticWatchlistToken(address, nextWatchlist);
     emit('manual', 'monitored', 'header');
 
     try {
-      await syncManualTokenToBackend('solana', address, null, token);
-      await hydrateManualTokenDashboardFields(address, token, { retryDelaysMs: [0, 750, 2000] });
+      await syncWatchlistTokenToBackend('solana', address, null, token);
+      await hydrateWatchlistTokenDashboardFields(address, token, { retryDelaysMs: [0, 750, 2000] });
     } catch (error) {
-      revertOptimisticManualToken(address, optimisticSnapshot);
+      revertOptimisticWatchlistToken(address, optimisticSnapshot);
       throw error;
     }
   }
@@ -4614,22 +4613,20 @@ export function createAppController(): AppController {
   function buildUiPrefsPayload(): UiPrefsPayload {
     return {
       collapsed: {
-        manual: Boolean(state.ui.collapsed.manual),
+        watchlist: Boolean(state.ui.collapsed.manual),
         recent: Boolean(state.ui.collapsed.recent),
         oldWeek: Boolean(state.ui.collapsed.oldWeek),
         monitored: Boolean(state.ui.collapsed.monitored),
         bidZone: Boolean(state.ui.collapsed.bidZone),
         pumpfun: Boolean(state.ui.collapsed.pumpfun),
       },
-      manualStarredOnly: Boolean(state.ui.manualStarredOnly),
-      manualFolderDeleteWarningDismissed: Boolean(state.ui.manualFolderDeleteWarningDismissed),
       recentStarredOnly: Boolean(state.ui.recentStarredOnly),
       oldWeekStarredOnly: Boolean(state.ui.oldWeekStarredOnly),
       chainFilters: state.ui.chainFilters,
       monitoredPerPage: normalizeUiPerPage(state.ui.monitoredPerPage, 30),
       recentPerPage: normalizeUiPerPage(state.ui.recentPerPage, ROUTED_BUCKET_DEFAULT_PER_PAGE),
       oldWeekPerPage: normalizeUiPerPage(state.ui.oldWeekPerPage, ROUTED_BUCKET_DEFAULT_PER_PAGE),
-      manualSorts: [...state.ui.manualSorts],
+      watchlistSorts: [...state.ui.watchlistSorts],
       recentSorts: [...state.ui.recentSorts],
       oldWeekSorts: [...state.ui.oldWeekSorts],
       monitoredSorts: [...state.ui.monitoredSorts],
@@ -4986,7 +4983,7 @@ export function createAppController(): AppController {
     const collapsed = uiPrefs?.collapsed || defaults;
     state.ui.collapsed = {
       ...defaults,
-      manual: Boolean(collapsed.manual),
+      manual: Boolean('watchlist' in collapsed ? collapsed.watchlist : collapsed.manual),
       recent: Boolean(collapsed.recent),
       oldWeek: Boolean(collapsed.oldWeek),
       monitored: Boolean(collapsed.monitored),
@@ -5008,7 +5005,10 @@ export function createAppController(): AppController {
   }
 
   function applySortUiPreferences(uiPrefs?: Partial<UiPrefsPayload> | null) {
-    state.ui.manualSorts = normalizeBucketSorts(uiPrefs?.manualSorts, 'manual');
+    state.ui.watchlistSorts = normalizeBucketSorts(
+      uiPrefs?.watchlistSorts ?? uiPrefs?.manualSorts,
+      'manual',
+    );
     state.ui.recentSorts = normalizeBucketSorts(uiPrefs?.recentSorts, 'recent');
     state.ui.oldWeekSorts = normalizeBucketSorts(uiPrefs?.oldWeekSorts, 'old-week');
     state.ui.monitoredSorts = normalizeMonitoredSorts(uiPrefs?.monitoredSorts);
@@ -5182,7 +5182,7 @@ export function createAppController(): AppController {
       identityKey,
       wasInMonitored: state.data.monitoredTokenIdentities.includes(identityKey),
       wasPinnedMonitored: state.data.pinnedMonitoredTokenIdentities.includes(identityKey),
-      wasInManual: state.data.manualTokenIdentities.includes(identityKey),
+      wasInManual: state.data.watchlistTokenIdentities.includes(identityKey),
       wasEligibleCatalog: state.data.eligibleCatalogTokens.includes(address),
       removedPumpTokens: state.data.pumpTokens
         .filter((item) => item.mint === address || item.mintAddress === address)
@@ -5220,8 +5220,8 @@ export function createAppController(): AppController {
       state.data.pinnedMonitoredTokenIdentities = [...state.data.pinnedMonitoredTokenIdentities, identityKey];
     }
 
-    if (snapshot.wasInManual && !state.data.manualTokenIdentities.includes(identityKey)) {
-      state.data.manualTokenIdentities = [...state.data.manualTokenIdentities, identityKey];
+    if (snapshot.wasInManual && !state.data.watchlistTokenIdentities.includes(identityKey)) {
+      state.data.watchlistTokenIdentities = [...state.data.watchlistTokenIdentities, identityKey];
     }
 
     if (snapshot.wasEligibleCatalog && !state.data.eligibleCatalogTokens.includes(address)) {
@@ -5284,8 +5284,8 @@ export function createAppController(): AppController {
       replaceStarredTokens([...state.data.starredTokenIdentities, snapshot.identityKey]);
     }
 
-    state.configSummary.manualTokens = state.data.manualTokenIdentities.length;
-    state.bars.manual = state.data.manualTokenIdentities.length;
+    state.configSummary.manualTokens = state.data.watchlistTokenIdentities.length;
+    state.bars.manual = state.data.watchlistTokenIdentities.length;
     deriveAgeBuckets();
     refreshTrackedTokenStore();
     refreshMonitoredPanelCounts();
@@ -5301,7 +5301,7 @@ export function createAppController(): AppController {
     const identityKey = getTrackedTokenKey(address, chain);
     state.data.monitoredTokenIdentities = state.data.monitoredTokenIdentities.filter((item) => item !== identityKey);
     state.data.pinnedMonitoredTokenIdentities = state.data.pinnedMonitoredTokenIdentities.filter((item) => item !== identityKey);
-    state.data.manualTokenIdentities = state.data.manualTokenIdentities.filter((item) => item !== identityKey);
+    state.data.watchlistTokenIdentities = state.data.watchlistTokenIdentities.filter((item) => item !== identityKey);
     state.data.recentTokenIdentities = state.data.recentTokenIdentities.filter((item) => item !== identityKey);
     state.data.oldWeekTokenIdentities = state.data.oldWeekTokenIdentities.filter((item) => item !== identityKey);
     deleteTrackedToken(address, chain);
@@ -5318,8 +5318,8 @@ export function createAppController(): AppController {
       replaceStarredTokens(state.data.starredTokenIdentities.filter((item) => item !== identityKey));
     }
 
-    state.configSummary.manualTokens = state.data.manualTokenIdentities.length;
-    state.bars.manual = state.data.manualTokenIdentities.length;
+    state.configSummary.manualTokens = state.data.watchlistTokenIdentities.length;
+    state.bars.manual = state.data.watchlistTokenIdentities.length;
     deriveAgeBuckets();
     refreshTrackedTokenStore();
     refreshMonitoredPanelCounts();
@@ -6204,7 +6204,7 @@ export function createAppController(): AppController {
 
     state.data.monitoredTokenIdentities = state.data.monitoredTokenIdentities.filter((item) => !blockedIdentities.has(item));
     state.data.pinnedMonitoredTokenIdentities = state.data.pinnedMonitoredTokenIdentities.filter((item) => !blockedIdentities.has(item));
-    state.data.manualTokenIdentities = state.data.manualTokenIdentities.filter((item) => !blockedIdentities.has(item));
+    state.data.watchlistTokenIdentities = state.data.watchlistTokenIdentities.filter((item) => !blockedIdentities.has(item));
     state.data.recentTokenIdentities = state.data.recentTokenIdentities.filter((item) => !blockedIdentities.has(item));
     state.data.oldWeekTokenIdentities = state.data.oldWeekTokenIdentities.filter((item) => !blockedIdentities.has(item));
     state.data.topPerformerIdentities = state.data.topPerformerIdentities.filter((item) => !blockedIdentities.has(item));
@@ -6220,7 +6220,7 @@ export function createAppController(): AppController {
     });
     state.data.dismissedRecentIdentities = state.data.dismissedRecentIdentities.filter((identity) => !blockedIdentities.has(identity));
     state.data.dismissedOldWeekIdentities = state.data.dismissedOldWeekIdentities.filter((identity) => !blockedIdentities.has(identity));
-    state.bars.manual = state.data.manualTokenIdentities.length;
+    state.bars.manual = state.data.watchlistTokenIdentities.length;
     deriveAgeBuckets();
     refreshMonitoredPanelCounts();
     refreshPumpPanelCounts();
@@ -6253,12 +6253,12 @@ export function createAppController(): AppController {
       return keep;
     });
 
-    state.data.manualTokenIdentities = state.data.manualTokenIdentities.filter((identityKey) => {
+    state.data.watchlistTokenIdentities = state.data.watchlistTokenIdentities.filter((identityKey) => {
       const tracked = getTrackedTokenByIdentity(identityKey);
       return Boolean(tracked?._userManual) || state.data.monitoredTokenIdentities.includes(identityKey);
     });
     refreshTrackedTokenStore();
-    state.bars.manual = state.data.manualTokenIdentities.length;
+    state.bars.manual = state.data.watchlistTokenIdentities.length;
     deriveAgeBuckets();
 
     if (removed.length > 0) {
@@ -7920,11 +7920,11 @@ export function createAppController(): AppController {
       selected.push(identity);
     }
 
-    for (const item of resolveManualTableRows(getManualTokens(state), {
+    for (const item of resolveManualTableRows(getWatchlistTokens(state), {
       starredOnly: state.ui.manualStarredOnly,
-      starredTokens: state.data.starredTokenIdentities,
-      searchQuery: state.ui.manualSearchQuery,
-      sortCriteria: state.ui.manualSorts,
+      starredTokens: state.data.watchlistTokenIdentities,
+      searchQuery: state.ui.watchlistSearchQuery,
+      sortCriteria: state.ui.watchlistSorts,
     })
       .slice(0, SPARKLINE_VISIBLE_LIMIT_MANUAL)) {
       const identity = getChartCapableIdentity(item.chain, item.address);
@@ -8948,7 +8948,7 @@ export function createAppController(): AppController {
       state.data.monitoredTokenIdentities.includes(identityKey)
       || state.data.pinnedMonitoredTokenIdentities.includes(identityKey)
     ) regions.add('monitored');
-    if (state.data.manualTokenIdentities.includes(identityKey)) regions.add('manual');
+    if (state.data.watchlistTokenIdentities.includes(identityKey)) regions.add('manual');
     if (state.data.recentTokenIdentities.includes(identityKey)) regions.add('recent');
     if (state.data.oldWeekTokenIdentities.includes(identityKey)) regions.add('old-week');
     if (state.data.topPerformerIdentities.includes(identityKey)) regions.add('top-performers');
@@ -10078,7 +10078,7 @@ export function createAppController(): AppController {
       emit('recent', 'old-week', 'header');
       return;
     }
-    const requestKey = buildHistoryBootstrapRequestKey(token, requestPayload, options?.manualTokensOverride);
+    const requestKey = buildHistoryBootstrapRequestKey(token, requestPayload, options?.watchlistTokensOverride);
     if (queueHistoryBootstrapRefreshIfInFlight(token, requestKey, options)) {
       return;
     }
@@ -10107,7 +10107,7 @@ export function createAppController(): AppController {
       }
 
       clearHistorySearchPending({ emitRegions: false });
-      applyHistoryBootstrapPayload(payload, options?.manualTokensOverride, requestPayload);
+      applyHistoryBootstrapPayload(payload, options?.watchlistTokensOverride, requestPayload);
       broadcastHistoryBootstrapSnapshot(payload, requestPayload);
       void refreshHistoryWorkspaceSparklines({ token, caller: 'history-bootstrap' });
       refreshMockTradingStateForMarketPoll();
@@ -10154,7 +10154,7 @@ export function createAppController(): AppController {
 
     if (usesHistoryBucketBootstrap()) {
       await refreshHistoryWorkspaceBootstrap({ token });
-      void hydrateManualTokensMetadataBatch(token, getManualTokens(state).map((item) => ({
+      void hydrateManualTokensMetadataBatch(token, getWatchlistTokens(state).map((item) => ({
         chain: item.chain || 'solana',
         address: item.address,
         label: item.label ?? null,
@@ -10171,7 +10171,7 @@ export function createAppController(): AppController {
 
     monitoredRefreshKeysInFlight.add(requestKey);
     try {
-      const manualTokens = getManualTokens(state).map((item) => ({
+      const manualTokens = getWatchlistTokens(state).map((item) => ({
         chain: item.chain || 'solana',
         address: item.address,
         label: item.label ?? null,
@@ -11004,7 +11004,7 @@ export function createAppController(): AppController {
       trackedTokensByIdentity: {},
       monitoredTokenIdentities: [],
       pinnedMonitoredTokenIdentities: [],
-      manualTokenIdentities: [],
+      watchlistTokenIdentities: [],
       manualTokenFolders: [],
       manualTokenFolderItems: [],
       recentTokenIdentities: [],
@@ -11053,7 +11053,7 @@ export function createAppController(): AppController {
     state.ui.pendingLoginOtpEmailHint = null;
     state.ui.alertSearchQuery = '';
     state.ui.monitoredSearchQuery = '';
-    state.ui.manualSearchQuery = '';
+    state.ui.watchlistSearchQuery = '';
     state.ui.recentSearchQuery = '';
     state.ui.oldWeekSearchQuery = '';
     state.ui.recentSearchPending = false;
@@ -11081,7 +11081,7 @@ export function createAppController(): AppController {
     state.ui.monitoredPerPage = 30;
     state.ui.recentPerPage = ROUTED_BUCKET_DEFAULT_PER_PAGE;
     state.ui.oldWeekPerPage = ROUTED_BUCKET_DEFAULT_PER_PAGE;
-    state.ui.manualSorts = getDefaultBucketSorts('manual');
+    state.ui.watchlistSorts = getDefaultBucketSorts('manual');
     state.ui.recentSorts = getDefaultBucketSorts('recent');
     state.ui.oldWeekSorts = getDefaultBucketSorts('old-week');
     state.ui.monitoredSorts = getDefaultMonitoredSorts();
@@ -11196,7 +11196,7 @@ export function createAppController(): AppController {
 
   function applyMonitoredDashboard(
     monitoredDashboardTokens: DashboardMonitoredToken[] = [],
-    manualTokensOverride?: Array<{ address: string; label?: string | null }>,
+    watchlistTokensOverride?: Array<{ address: string; label?: string | null }>,
     generatedAt?: string | null,
     pinnedDashboardTokens: DashboardMonitoredToken[] = [],
   ) {
@@ -11206,11 +11206,11 @@ export function createAppController(): AppController {
       {
         tokens: monitoredDashboardTokens.length,
         pinnedTokens: pinnedDashboardTokens.length,
-        manualOverride: manualTokensOverride?.length ?? null,
+        manualOverride: watchlistTokensOverride?.length ?? null,
         workspace: state.ui.workspace,
       },
       () => {
-        const manualPayload = buildMonitoredDashboardPayload(manualTokensOverride);
+        const manualPayload = buildMonitoredDashboardPayload(watchlistTokensOverride);
         syncMeteoraDashboardCache(monitoredDashboardTokens, manualPayload.tokens, pinnedDashboardTokens);
         state.configSummary.eligibleCatalogTokens = monitoredDashboardTokens.length;
         state.data.eligibleCatalogTokens = monitoredDashboardTokens.map((item) => item.address).sort((a, b) => a.localeCompare(b));
@@ -11417,7 +11417,7 @@ export function createAppController(): AppController {
   }
 
   function getCurrentMonitoredDashboardSnapshot(): DashboardMonitoredToken[] {
-    const manualIdentities = new Set(state.data.manualTokenIdentities);
+    const manualIdentities = new Set(state.data.watchlistTokenIdentities);
     const snapshot: DashboardMonitoredToken[] = [];
 
     for (const identityKey of state.data.monitoredTokenIdentities) {
@@ -11527,7 +11527,7 @@ export function createAppController(): AppController {
 
   async function refreshMonitoredAfterPinsChanged() {
     if (!state.session.token) return;
-    await hydrateDashboardMonitoredInternal(state.session.token, getManualTokens(state).map((item) => ({
+    await hydrateDashboardMonitoredInternal(state.session.token, getWatchlistTokens(state).map((item) => ({
       chain: item.chain || 'solana',
       address: item.address,
       label: item.label ?? null,
@@ -11566,7 +11566,7 @@ export function createAppController(): AppController {
       chains: state.ui.chainFilters.enabledChains.filter((chain) => (
         state.data.chainReadiness[chain]?.capabilities.history === true
       )),
-      starredTokenIdentities: state.data.starredTokenIdentities,
+      starredTokenIdentities: state.data.watchlistTokenIdentities,
       recentPinnedIdentities,
       oldWeekPinnedIdentities,
       recentDebugProbeIdentities,
@@ -11635,12 +11635,12 @@ export function createAppController(): AppController {
   function buildHistoryBootstrapRequestKey(
     token: string,
     requestPayload: HistoryBootstrapRequestPayload,
-    manualTokensOverride?: AddressItem[],
+    watchlistTokensOverride?: AddressItem[],
   ) {
     return JSON.stringify({
       token,
       requestPayload: buildComparableHistoryBootstrapRequest(requestPayload),
-      manualTokensOverride: (manualTokensOverride || []).map((item) => ({
+      watchlistTokensOverride: (watchlistTokensOverride || []).map((item) => ({
         address: item.address,
         label: item.label ?? null,
       })),
@@ -11659,7 +11659,7 @@ export function createAppController(): AppController {
     if (requestKey !== historyBootstrapInFlightRequestKey) {
       queuedHistoryBootstrapRefresh = {
         token,
-        manualTokensOverride: options?.manualTokensOverride,
+        watchlistTokensOverride: options?.watchlistTokensOverride,
         suppressErrors: options?.suppressErrors,
       };
       historyBootstrapRequestRevision += 1;
@@ -11789,7 +11789,7 @@ export function createAppController(): AppController {
 
   function applyHistoryBootstrapPayload(
     payload: Awaited<ReturnType<typeof fetchDashboardHistoryBootstrap>>,
-    manualTokensOverride?: AddressItem[],
+    watchlistTokensOverride?: AddressItem[],
     appliedRequestPayload?: HistoryBootstrapRequestPayload,
   ) {
     const previousRecentIdentities = state.data.recentTokenIdentities.slice();
@@ -11817,7 +11817,7 @@ export function createAppController(): AppController {
 
     applyMonitoredDashboard(
       monitoredDashboardTokens.filter((item) => item.chain === 'solana'),
-      manualTokensOverride,
+      watchlistTokensOverride,
       payload.asOf ?? payload.generatedAt ?? null,
       getCurrentPinnedMonitoredDashboardSnapshot(),
     );
@@ -11876,12 +11876,12 @@ export function createAppController(): AppController {
   }
 
   function buildMonitoredDashboardPayload(
-    manualTokensOverride?: Array<{ address: string; label?: string | null }>,
+    watchlistTokensOverride?: Array<{ address: string; label?: string | null }>,
   ): ConfigPayload {
     return {
       configs: state.data.configs,
       uiPrefs: buildUiPrefsPayload(),
-      tokens: (manualTokensOverride ?? getManualTokens(state).map((item) => ({
+      tokens: (watchlistTokensOverride ?? getWatchlistTokens(state).map((item) => ({
         chain: item.chain || 'solana', address: item.address, label: item.label ?? null,
       }))),
       blocklist: state.data.blocklist.map((item) => ({
@@ -11912,7 +11912,7 @@ export function createAppController(): AppController {
       foldersById.set(folder.id, folder);
     }
 
-    const manualAddressSet = new Set(state.data.manualTokenIdentities);
+    const manualAddressSet = new Set(state.data.watchlistTokenIdentities);
     const items = (Array.isArray(payload?.items) ? payload.items : [])
       .map((item) => ({
         userId: Number(item.userId),
@@ -12471,7 +12471,7 @@ export function createAppController(): AppController {
         await Promise.all([
           refreshHistoryWorkspaceBootstrap({
             token,
-            manualTokensOverride: manualTokens,
+            watchlistTokensOverride: manualTokens,
             suppressErrors: true,
           }),
           hydrateManualTokensMetadataBatch(token, manualTokens, { emitOnComplete: false }),
@@ -13006,15 +13006,15 @@ export function createAppController(): AppController {
     }
   }
 
-  function buildOptimisticManualToken(
+  function buildOptimisticWatchlistToken(
     address: string,
     label?: string | null,
     chain: TokenChain = 'solana',
   ) {
     const existingTracked = getTrackedToken(state, address, chain)
       || getMonitoredTokens(state).find((item) => item.address === address && item.chain === chain)
-      || getManualTokens(state).find((item) => item.address === address && item.chain === chain);
-    const nextManualDraft: ManualTokenEntry = {
+      || getWatchlistTokens(state).find((item) => item.address === address && item.chain === chain);
+    const nextWatchlistDraft: ManualTokenEntry = {
       ...(existingTracked || {}),
       chain,
       address,
@@ -13023,9 +13023,9 @@ export function createAppController(): AppController {
       _userManual: true,
     };
 
-    return areTrackedTokensEquivalent(existingTracked, nextManualDraft)
+    return areTrackedTokensEquivalent(existingTracked, nextWatchlistDraft)
       ? existingTracked as ManualTokenEntry
-      : nextManualDraft;
+      : nextWatchlistDraft;
   }
 
   function isValidTokenAddressFormat(address: string, chain: TokenChain = 'solana') {
@@ -13033,36 +13033,55 @@ export function createAppController(): AppController {
     return chain === 'robinhood' ? EVM_ADDR_RE.test(normalized) : SOLANA_ADDR_RE.test(normalized);
   }
 
-  function captureOptimisticManualTokenSnapshot(address: string, chain: TokenChain = 'solana') {
+  function captureOptimisticWatchlistTokenSnapshot(address: string, chain: TokenChain = 'solana') {
     const trackedToken = getTrackedToken(state, address, chain);
     const identityKey = getTrackedTokenKey(address, chain);
     return {
       trackedToken: trackedToken ? { ...trackedToken } : null,
       identityKey,
-      wasManual: state.data.manualTokenIdentities.includes(identityKey),
+      wasWatchlisted: state.data.watchlistTokenIdentities.includes(identityKey),
       wasMonitored: state.data.monitoredTokenIdentities.includes(identityKey),
     };
   }
 
-  function applyOptimisticManualToken(address: string, nextManual: ManualTokenEntry) {
-    const identityKey = getTrackedTokenKey(address, nextManual.chain || 'solana');
-    setTrackedToken(nextManual);
-    state.data.manualTokenIdentities = state.data.manualTokenIdentities.includes(identityKey)
-      ? state.data.manualTokenIdentities
-      : [...state.data.manualTokenIdentities, identityKey];
+  function applyOptimisticWatchlistToken(address: string, nextWatchlist: ManualTokenEntry) {
+    const identityKey = getTrackedTokenKey(address, nextWatchlist.chain || 'solana');
+    setTrackedToken(nextWatchlist);
+    state.data.watchlistTokenIdentities = state.data.watchlistTokenIdentities.includes(identityKey)
+      ? state.data.watchlistTokenIdentities
+      : [...state.data.watchlistTokenIdentities, identityKey];
     state.data.monitoredTokenIdentities = state.data.monitoredTokenIdentities.includes(identityKey)
       ? state.data.monitoredTokenIdentities
       : [...state.data.monitoredTokenIdentities, identityKey];
 
-    state.configSummary.manualTokens = state.data.manualTokenIdentities.length;
-    state.bars.manual = state.data.manualTokenIdentities.length;
+    state.configSummary.manualTokens = state.data.watchlistTokenIdentities.length;
+    state.bars.manual = state.data.watchlistTokenIdentities.length;
     refreshMonitoredPanelCounts();
     deriveAgeBuckets();
   }
 
-  function revertOptimisticManualToken(
+  function removeOptimisticWatchlistToken(address: string, chain: TokenChain = 'solana') {
+    const identityKey = getTrackedTokenKey(address, chain);
+    state.data.watchlistTokenIdentities = state.data.watchlistTokenIdentities.filter((item) => (
+      item !== identityKey
+    ));
+    const currentTracked = getTrackedToken(state, address, chain);
+    if (currentTracked) {
+      replaceTrackedTokenReferences(address, {
+        ...currentTracked,
+        manual: false,
+        _userManual: false,
+      });
+    }
+    state.configSummary.manualTokens = state.data.watchlistTokenIdentities.length;
+    state.bars.manual = state.data.watchlistTokenIdentities.length;
+    deriveAgeBuckets();
+    refreshMonitoredPanelCounts();
+  }
+
+  function revertOptimisticWatchlistToken(
     address: string,
-    snapshot: ReturnType<typeof captureOptimisticManualTokenSnapshot>,
+    snapshot: ReturnType<typeof captureOptimisticWatchlistTokenSnapshot>,
   ) {
     const identityKey = snapshot.identityKey;
     if (snapshot.trackedToken) {
@@ -13072,11 +13091,11 @@ export function createAppController(): AppController {
       deleteTrackedToken(address, identity.chain);
     }
 
-    state.data.manualTokenIdentities = snapshot.wasManual
-      ? state.data.manualTokenIdentities.includes(identityKey)
-        ? state.data.manualTokenIdentities
-        : [...state.data.manualTokenIdentities, identityKey]
-      : state.data.manualTokenIdentities.filter((item) => item !== identityKey);
+    state.data.watchlistTokenIdentities = snapshot.wasWatchlisted
+      ? state.data.watchlistTokenIdentities.includes(identityKey)
+        ? state.data.watchlistTokenIdentities
+        : [...state.data.watchlistTokenIdentities, identityKey]
+      : state.data.watchlistTokenIdentities.filter((item) => item !== identityKey);
 
     state.data.monitoredTokenIdentities = snapshot.wasMonitored
       ? state.data.monitoredTokenIdentities.includes(identityKey)
@@ -13084,8 +13103,8 @@ export function createAppController(): AppController {
         : [...state.data.monitoredTokenIdentities, identityKey]
       : state.data.monitoredTokenIdentities.filter((item) => item !== identityKey);
 
-    state.configSummary.manualTokens = state.data.manualTokenIdentities.length;
-    state.bars.manual = state.data.manualTokenIdentities.length;
+    state.configSummary.manualTokens = state.data.watchlistTokenIdentities.length;
+    state.bars.manual = state.data.watchlistTokenIdentities.length;
     refreshMonitoredPanelCounts();
     deriveAgeBuckets();
   }
@@ -13354,7 +13373,7 @@ export function createAppController(): AppController {
     }
   }
 
-  async function hydrateManualTokenDashboardAttempt(address: string, token: string) {
+  async function hydrateWatchlistTokenDashboardAttempt(address: string, token: string) {
     const currentTracked = getTrackedToken(state, address);
     if (!currentTracked || !hasCriticalColdFieldGap(currentTracked)) {
       return true;
@@ -13387,7 +13406,7 @@ export function createAppController(): AppController {
     return !hasCriticalColdFieldGap(nextItem);
   }
 
-  async function hydrateManualTokenDashboardFields(
+  async function hydrateWatchlistTokenDashboardFields(
     address: string,
     token: string,
     options?: { retryDelaysMs?: number[] },
@@ -13404,7 +13423,7 @@ export function createAppController(): AppController {
       }
 
       try {
-        const complete = await hydrateManualTokenDashboardAttempt(address, token);
+        const complete = await hydrateWatchlistTokenDashboardAttempt(address, token);
         if (complete) {
           return;
         }
@@ -13413,13 +13432,13 @@ export function createAppController(): AppController {
     }
   }
 
-  async function syncManualTokenToBackend(
+  async function syncWatchlistTokenToBackend(
     chain: TokenChain,
     address: string,
     label: string | null | undefined,
     token: string,
   ) {
-    const result = await addManualTokenRequest(chain, address, label ?? null, token);
+    const result = await addWatchlistTokenRequest(chain, address, label ?? null, token);
     if (result?.token) {
       const currentTracked = getTrackedToken(state, address, chain);
       if (currentTracked) {
@@ -13436,17 +13455,17 @@ export function createAppController(): AppController {
       return { followupError: null };
     }
 
-    let trackResult: Awaited<ReturnType<typeof trackManualToken>> | null = null;
+    let trackResult: Awaited<ReturnType<typeof trackWatchlistToken>> | null = null;
     let followupError: unknown = null;
     try {
-      trackResult = await trackManualToken(address, token);
+      trackResult = await trackWatchlistToken(address, token);
       await reloadConfigPreservingMonitoredSnapshot(token);
     } catch (error) {
       followupError = error;
-      console.warn('[ManualTokens] Manual token saved, but catalog tracking refresh failed:', error);
+      console.warn('[Watchlist] Token saved, but catalog tracking refresh failed:', error);
     }
 
-    void hydrateManualTokenDashboardFields(address, token, {
+    void hydrateWatchlistTokenDashboardFields(address, token, {
       retryDelaysMs: trackResult?.bootstrapState === 'evaluated'
         ? [0]
         : [0, 750, 2000],
@@ -14371,8 +14390,8 @@ export function createAppController(): AppController {
       emit('monitored');
       refreshMonitoredSparklinesIfExpanded('monitored-search');
     },
-    setManualSearchQuery(query: string) {
-      state.ui.manualSearchQuery = String(query || '');
+    setWatchlistSearchQuery(query: string) {
+      state.ui.watchlistSearchQuery = String(query || '');
       emit('manual');
       if (state.session.token && isLiveWorkspace()) {
         void refreshHistoryWorkspaceSparklines({ token: state.session.token, force: true, caller: 'manual-search' });
@@ -14650,9 +14669,9 @@ export function createAppController(): AppController {
       };
       refreshWorkspaceSparklinesAfterRangeChange([identity.key], 'monitored-token-range-hours');
     },
-    setManualSort(mode: BucketSortMode, window?: BucketSortWindow) {
-      state.ui.manualSorts = toggleSortCriterion(
-        state.ui.manualSorts,
+    setWatchlistSort(mode: BucketSortMode, window?: BucketSortWindow) {
+      state.ui.watchlistSorts = toggleSortCriterion(
+        state.ui.watchlistSorts,
         normalizeBucketCriterion(mode, window),
       );
       queueUiPrefsPersist();
@@ -14725,7 +14744,7 @@ export function createAppController(): AppController {
       emit('monitored');
       refreshMonitoredSparklinesIfExpanded('monitored-sort');
       if (state.session.token && !usesHistoryBucketBootstrap()) {
-        void hydrateDashboardMonitoredInternal(state.session.token, getManualTokens(state).map((item) => ({
+        void hydrateDashboardMonitoredInternal(state.session.token, getWatchlistTokens(state).map((item) => ({
           chain: item.chain || 'solana',
           address: item.address,
           label: item.label ?? null,
@@ -14892,8 +14911,8 @@ export function createAppController(): AppController {
       void persistUiConfigs({ 'sound-mode': enabled ? 'on' : 'off' });
       emit('overlay');
     },
-    async toggleStarredToken(address: string, chain: TokenChain = 'solana') {
-      if (state.data.chainReadiness[chain]?.capabilities.starred !== true) return;
+    async toggleWatchlistToken(address: string, chain: TokenChain = 'solana') {
+      if (state.data.chainReadiness[chain]?.capabilities.manualTokens !== true) return;
       const token = state.session.token;
       if (!token) {
         setError('No authenticated session');
@@ -14901,29 +14920,27 @@ export function createAppController(): AppController {
         return;
       }
       const identityKey = getTrackedTokenKey(address, chain);
-      const wasStarred = state.data.starredTokenIdentities.includes(identityKey);
-      replaceStarredTokens(
-        wasStarred
-          ? state.data.starredTokenIdentities.filter((item) => item !== identityKey)
-          : [...state.data.starredTokenIdentities, identityKey],
-      );
+      const wasWatchlisted = state.data.watchlistTokenIdentities.includes(identityKey);
+      const optimisticSnapshot = captureOptimisticWatchlistTokenSnapshot(address, chain);
+      if (wasWatchlisted) {
+        removeOptimisticWatchlistToken(address, chain);
+      } else {
+        applyOptimisticWatchlistToken(address, buildOptimisticWatchlistToken(address, null, chain));
+      }
       emit('manual', 'recent', 'old-week', 'monitored', 'bid-zone', 'alerts');
       try {
-        if (wasStarred) {
-          await removeStarredTokenRequest(chain, address, token);
+        if (wasWatchlisted) {
+          await removeWatchlistTokenRequest(chain, address, token);
+          await reloadConfigPreservingMonitoredSnapshot(token);
         } else {
-          await addStarredTokenRequest(chain, address, token);
+          await syncWatchlistTokenToBackend(chain, address, null, token);
         }
         if (usesHistoryBucketBootstrap()) {
           void refreshHistoryWorkspaceBootstrap();
         }
       } catch (error) {
-        replaceStarredTokens(
-          wasStarred
-            ? [...state.data.starredTokenIdentities, identityKey]
-            : state.data.starredTokenIdentities.filter((item) => item !== identityKey),
-        );
-        setError(error instanceof Error ? error.message : 'Failed to update starred token');
+        revertOptimisticWatchlistToken(address, optimisticSnapshot);
+        setError(error instanceof Error ? error.message : 'Failed to update Watchlist');
         emit('manual', 'recent', 'old-week', 'monitored', 'bid-zone', 'alerts');
       }
     },
@@ -15597,7 +15614,7 @@ export function createAppController(): AppController {
         emit();
       }
     },
-    async addManualToken(address: string, label?: string | null, chain: TokenChain = 'solana') {
+    async addWatchlistToken(address: string, label?: string | null, chain: TokenChain = 'solana') {
       const token = state.session.token;
       if (!token) {
         setError('No authenticated session');
@@ -15621,27 +15638,27 @@ export function createAppController(): AppController {
 
       setBusy(true);
       setError(null);
-      setNotice('Adding manual token...');
+      setNotice('Adding token to Watchlist...');
 
       invalidateWorkspaceHydrationRequests();
-      const optimisticSnapshot = captureOptimisticManualTokenSnapshot(normalizedAddress, chain);
-      const nextManual = buildOptimisticManualToken(normalizedAddress, label, chain);
-      applyOptimisticManualToken(normalizedAddress, nextManual);
+      const optimisticSnapshot = captureOptimisticWatchlistTokenSnapshot(normalizedAddress, chain);
+      const nextWatchlist = buildOptimisticWatchlistToken(normalizedAddress, label, chain);
+      applyOptimisticWatchlistToken(normalizedAddress, nextWatchlist);
       emit();
 
       try {
-        const syncResult = await syncManualTokenToBackend(chain, normalizedAddress, label, token);
-        setNotice(syncResult.followupError ? 'Token added; metadata refresh pending' : 'Token added');
+        const syncResult = await syncWatchlistTokenToBackend(chain, normalizedAddress, label, token);
+        setNotice(syncResult.followupError ? 'Token added; metadata refresh pending' : 'Token added to Watchlist');
       } catch (error) {
-        revertOptimisticManualToken(normalizedAddress, optimisticSnapshot);
-        setError(error instanceof Error ? error.message : 'Failed to persist manual token');
+        revertOptimisticWatchlistToken(normalizedAddress, optimisticSnapshot);
+        setError(error instanceof Error ? error.message : 'Failed to persist Watchlist token');
         setNotice(null);
       } finally {
         setBusy(false);
         emit();
       }
     },
-    async removeManualToken(address: string, chain: TokenChain = 'solana') {
+    async removeWatchlistToken(address: string, chain: TokenChain = 'solana') {
       const token = state.session.token;
       if (!token) {
         setError('No authenticated session');
@@ -15651,33 +15668,20 @@ export function createAppController(): AppController {
 
       setBusy(true);
       setError(null);
-      setNotice('Removing manual token...');
+      setNotice('Removing token from Watchlist...');
       emit();
 
+      const optimisticSnapshot = captureOptimisticWatchlistTokenSnapshot(address, chain);
       try {
         invalidateWorkspaceHydrationRequests();
-        const identityKey = getTrackedTokenKey(address, chain);
-        state.data.manualTokenIdentities = state.data.manualTokenIdentities.filter((item) => (
-          item !== identityKey
-        ));
-        const currentTracked = getTrackedToken(state, address, chain);
-        if (currentTracked) {
-          replaceTrackedTokenReferences(address, {
-            ...currentTracked,
-            manual: false,
-            _userManual: false,
-          });
-        }
-        state.configSummary.manualTokens = state.data.manualTokenIdentities.length;
-        state.bars.manual = state.data.manualTokenIdentities.length;
-        deriveAgeBuckets();
-        refreshMonitoredPanelCounts();
+        removeOptimisticWatchlistToken(address, chain);
         emit();
-        await removeManualTokenRequest(chain, address, token);
+        await removeWatchlistTokenRequest(chain, address, token);
         await reloadConfigPreservingMonitoredSnapshot(token);
-        setNotice('Token removed');
+        setNotice('Token removed from Watchlist');
       } catch (error) {
-        setError(error instanceof Error ? error.message : 'Failed to remove manual token');
+        revertOptimisticWatchlistToken(address, optimisticSnapshot);
+        setError(error instanceof Error ? error.message : 'Failed to remove Watchlist token');
       } finally {
         setBusy(false);
         emit();
@@ -15752,7 +15756,7 @@ export function createAppController(): AppController {
       const folderSnapshot = state.data.manualTokenFolders.map((item) => ({ ...item }));
       const folderItemsSnapshot = state.data.manualTokenFolderItems.map((item) => ({ ...item }));
       const visibleFolderIdsSnapshot = [...state.ui.manualVisibleFolderIds];
-      const manualAddressesSnapshot = [...state.data.manualTokenIdentities];
+      const manualAddressesSnapshot = [...state.data.watchlistTokenIdentities];
       const trackedTokenSnapshots = Object.fromEntries(
         removedIdentities
           .map((item) => {
@@ -15776,7 +15780,7 @@ export function createAppController(): AppController {
         && !removedIdentitySet.has(getTrackedTokenKey(item.address, item.chain))
       ));
       state.ui.manualVisibleFolderIds = state.ui.manualVisibleFolderIds.filter((id) => id !== folderId);
-      state.data.manualTokenIdentities = state.data.manualTokenIdentities.filter((item) => !removedIdentitySet.has(item));
+      state.data.watchlistTokenIdentities = state.data.watchlistTokenIdentities.filter((item) => !removedIdentitySet.has(item));
       for (const item of removedIdentities) {
         const currentTracked = getTrackedToken(state, item.address, item.chain);
         if (currentTracked) {
@@ -15787,8 +15791,8 @@ export function createAppController(): AppController {
           });
         }
       }
-      state.configSummary.manualTokens = state.data.manualTokenIdentities.length;
-      state.bars.manual = state.data.manualTokenIdentities.length;
+      state.configSummary.manualTokens = state.data.watchlistTokenIdentities.length;
+      state.bars.manual = state.data.watchlistTokenIdentities.length;
       deriveAgeBuckets();
       refreshMonitoredPanelCounts();
       emit('manual', 'monitored', 'header');
@@ -15811,7 +15815,7 @@ export function createAppController(): AppController {
         state.data.manualTokenFolders = folderSnapshot;
         state.data.manualTokenFolderItems = folderItemsSnapshot;
         state.ui.manualVisibleFolderIds = visibleFolderIdsSnapshot;
-        state.data.manualTokenIdentities = manualAddressesSnapshot;
+        state.data.watchlistTokenIdentities = manualAddressesSnapshot;
         for (const [identityKey, snapshot] of Object.entries(trackedTokenSnapshots)) {
           if (snapshot) {
             setTrackedToken(snapshot);
@@ -15820,8 +15824,8 @@ export function createAppController(): AppController {
             deleteTrackedToken(identity.address, identity.chain);
           }
         }
-        state.configSummary.manualTokens = state.data.manualTokenIdentities.length;
-        state.bars.manual = state.data.manualTokenIdentities.length;
+        state.configSummary.manualTokens = state.data.watchlistTokenIdentities.length;
+        state.bars.manual = state.data.watchlistTokenIdentities.length;
         deriveAgeBuckets();
         refreshMonitoredPanelCounts();
         setError(error instanceof Error ? error.message : 'Failed to delete folder');
@@ -15864,11 +15868,11 @@ export function createAppController(): AppController {
       setError(null);
       setNotice('Adding token to folder...');
 
-      const tokenSnapshot = captureOptimisticManualTokenSnapshot(normalizedAddress, chain);
+      const tokenSnapshot = captureOptimisticWatchlistTokenSnapshot(normalizedAddress, chain);
       const folderItemsSnapshot = state.data.manualTokenFolderItems.map((item) => ({ ...item }));
-      applyOptimisticManualToken(
+      applyOptimisticWatchlistToken(
         normalizedAddress,
-        buildOptimisticManualToken(normalizedAddress, null, chain),
+        buildOptimisticWatchlistToken(normalizedAddress, null, chain),
       );
       upsertManualTokenFolderItem({
         userId: 0,
@@ -15897,7 +15901,7 @@ export function createAppController(): AppController {
           });
         setNotice('Token added to folder');
       } catch (error) {
-        revertOptimisticManualToken(normalizedAddress, tokenSnapshot);
+        revertOptimisticWatchlistToken(normalizedAddress, tokenSnapshot);
         state.data.manualTokenFolderItems = folderItemsSnapshot;
         setError(error instanceof Error ? error.message : 'Failed to add token to folder');
         setNotice(null);
@@ -16568,7 +16572,7 @@ export function createAppController(): AppController {
       emit('overlay', 'manual', 'header');
 
       try {
-        await addManualTokenForFloatingQuickBuy(normalizedAddress, token);
+        await addWatchlistTokenForFloatingQuickBuy(normalizedAddress, token);
         if (state.session.token !== token || state.session.role !== 'admin' || state.ui.floatingQuickBuy.address !== normalizedAddress) {
           return;
         }

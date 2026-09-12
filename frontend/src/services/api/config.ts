@@ -111,22 +111,28 @@ export interface LivePanelLayoutPayload {
 
 export interface UiPrefsPayload {
   collapsed: {
-    manual: boolean;
+    watchlist: boolean;
+    /** @deprecated rollout-only input compatibility */
+    manual?: boolean;
     recent: boolean;
     oldWeek: boolean;
     monitored: boolean;
     bidZone: boolean;
     pumpfun: boolean;
   };
-  manualStarredOnly: boolean;
-  manualFolderDeleteWarningDismissed: boolean;
+  /** @deprecated rollout-only input compatibility */
+  manualStarredOnly?: boolean;
+  /** @deprecated rollout-only input compatibility */
+  manualFolderDeleteWarningDismissed?: boolean;
   recentStarredOnly: boolean;
   oldWeekStarredOnly: boolean;
   chainFilters: ChainFilterPreferences;
   monitoredPerPage: number;
   recentPerPage: number;
   oldWeekPerPage: number;
-  manualSorts: BucketSortCriterionPayload[];
+  watchlistSorts: BucketSortCriterionPayload[];
+  /** @deprecated rollout-only input compatibility */
+  manualSorts?: BucketSortCriterionPayload[];
   recentSorts: BucketSortCriterionPayload[];
   oldWeekSorts: BucketSortCriterionPayload[];
   monitoredSorts: MonitoredSortCriterionPayload[];
@@ -214,7 +220,7 @@ export function syncConfig(payload: ConfigSyncPayload, token?: string | null) {
   });
 }
 
-export function addManualToken(chain: TokenChain, address: string, label?: string | null, token?: string | null) {
+export function addWatchlistToken(chain: TokenChain, address: string, label?: string | null, token?: string | null) {
   return apiFetch<{ message: string; token: AddressItem & { added_at?: string } }>('/api/config/tokens', {
     method: 'POST',
     body: JSON.stringify({ chain, address, label: label ?? null }),
@@ -222,7 +228,7 @@ export function addManualToken(chain: TokenChain, address: string, label?: strin
   });
 }
 
-export function removeManualToken(chain: TokenChain, address: string, token?: string | null) {
+export function removeWatchlistToken(chain: TokenChain, address: string, token?: string | null) {
   return apiFetch<{ message: string }>(`/api/config/tokens/${encodeURIComponent(address)}?chain=${encodeURIComponent(chain)}`, {
     method: 'DELETE',
     token,

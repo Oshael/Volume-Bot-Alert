@@ -166,7 +166,7 @@ export interface CustomAlertRuleEntry {
   baselineAt: string | null;
 }
 
-export interface ManualTokenEntry {
+export interface WatchlistTokenEntry {
   chain?: TokenChain;
   address: string;
   mintAddress?: string | null;
@@ -260,6 +260,9 @@ export interface ManualTokenEntry {
   _isPinnedMonitored?: boolean;
   pinnedSortOrder?: number | null;
 }
+
+/** @deprecated Use WatchlistTokenEntry for user-added token domain state. */
+export type ManualTokenEntry = WatchlistTokenEntry;
 
 export interface ManualTokenFolderEntry {
   id: number;
@@ -874,10 +877,10 @@ export interface AppState {
     runtimeFlags: {
       mockTradingEnabled: boolean;
     };
-    trackedTokensByIdentity: Record<string, ManualTokenEntry>;
+    trackedTokensByIdentity: Record<string, WatchlistTokenEntry>;
     monitoredTokenIdentities: string[];
     pinnedMonitoredTokenIdentities: string[];
-    manualTokenIdentities: string[];
+    watchlistTokenIdentities: string[];
     manualTokenFolders: ManualTokenFolderEntry[];
     manualTokenFolderItems: ManualTokenFolderItemEntry[];
     recentTokenIdentities: string[];
@@ -931,7 +934,7 @@ export interface AppState {
     alertSearchQuery: string;
     monitoredSearchQuery: string;
     monitoredLoadError: string | null;
-    manualSearchQuery: string;
+    watchlistSearchQuery: string;
     recentSearchQuery: string;
     oldWeekSearchQuery: string;
     recentSearchPending: boolean;
@@ -970,7 +973,7 @@ export interface AppState {
     monitoredPerPage: number;
     recentPerPage: number;
     oldWeekPerPage: number;
-    manualSorts: BucketSortCriterion[];
+    watchlistSorts: BucketSortCriterion[];
     recentSorts: BucketSortCriterion[];
     oldWeekSorts: BucketSortCriterion[];
     monitoredSorts: MonitoredSortCriterion[];
@@ -1135,7 +1138,7 @@ export function createAppState(): AppState {
       trackedTokensByIdentity: {},
       monitoredTokenIdentities: [],
       pinnedMonitoredTokenIdentities: [],
-      manualTokenIdentities: [],
+      watchlistTokenIdentities: [],
       manualTokenFolders: [],
       manualTokenFolderItems: [],
       recentTokenIdentities: [],
@@ -1185,7 +1188,7 @@ export function createAppState(): AppState {
       alertSearchQuery: '',
       monitoredSearchQuery: '',
       monitoredLoadError: null,
-      manualSearchQuery: '',
+      watchlistSearchQuery: '',
       recentSearchQuery: '',
       oldWeekSearchQuery: '',
       recentSearchPending: false,
@@ -1243,7 +1246,7 @@ export function createAppState(): AppState {
       monitoredPerPage: 30,
       recentPerPage: 15,
       oldWeekPerPage: 15,
-      manualSorts: [{ mode: 'mcap', window: 'highest' }],
+      watchlistSorts: [{ mode: 'mcap', window: 'highest' }],
       recentSorts: [{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }],
       oldWeekSorts: [{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }],
       monitoredSorts: [{ mode: 'vol', window: '5m' }],
@@ -1469,10 +1472,10 @@ export function getExpandedTokenSparkline(
     || getTokenSparkline(state, identity.address, identity.chain);
 }
 
-export function getManualTokens(state: AppState) {
-  const tokens = state.data.manualTokenIdentities
+export function getWatchlistTokens(state: AppState) {
+  const tokens = state.data.watchlistTokenIdentities
     .map((identityKey) => getTrackedTokenByStoredIdentity(state, identityKey))
-    .filter((item): item is ManualTokenEntry => Boolean(item));
+    .filter((item): item is WatchlistTokenEntry => Boolean(item));
   return filterItemsByEnabledChains(tokens, state.ui.chainFilters);
 }
 
@@ -1483,7 +1486,7 @@ export function getManualFolderAddressSet(state: AppState, folderIds = state.ui.
       .filter((id) => Number.isInteger(id) && id > 0),
   ));
   if (normalizedFolderIds.length === 0) {
-    return new Set(getManualTokens(state).map((item) => (
+    return new Set(getWatchlistTokens(state).map((item) => (
       buildTokenIdentityKey(item.chain || 'solana', item.address)
     )));
   }
@@ -1498,9 +1501,9 @@ export function getManualFolderAddressSet(state: AppState, folderIds = state.ui.
   return addresses;
 }
 
-export function getVisibleManualTokens(state: AppState) {
+export function getVisibleWatchlistTokens(state: AppState) {
   const visibleAddresses = getManualFolderAddressSet(state);
-  return getManualTokens(state).filter((item) => visibleAddresses.has(
+  return getWatchlistTokens(state).filter((item) => visibleAddresses.has(
     buildTokenIdentityKey(item.chain || 'solana', item.address),
   ));
 }
@@ -1558,7 +1561,7 @@ export function isTokenStarred(
   chain: TokenChain | null = 'solana',
 ) {
   try {
-    return state.data.starredTokenIdentities.includes(
+    return state.data.watchlistTokenIdentities.includes(
       createLegacyCompatibleTokenIdentity(chain, address).key,
     );
   } catch (_) {

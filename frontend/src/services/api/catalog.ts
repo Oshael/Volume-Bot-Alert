@@ -43,8 +43,8 @@ export function reportMigratedToken(payload: ReportMigratedTokenPayload, token?:
   });
 }
 
-export function trackManualToken(address: string, token?: string | null) {
-  return apiFetch<{ message: string; tracked: { address: string }; bootstrapState?: 'scheduled' | 'evaluated' | null }>('/api/catalog/manual-track', {
+export function trackWatchlistToken(address: string, token?: string | null) {
+  return apiFetch<{ message: string; tracked: { address: string }; bootstrapState?: 'scheduled' | 'evaluated' | null }>('/api/catalog/watchlist-track', {
     method: 'POST',
     body: JSON.stringify({ address }),
     token,

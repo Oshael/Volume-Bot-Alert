@@ -1,5 +1,5 @@
 ﻿import type { AppController } from '../../state/app-controller';
-import { getChainCapabilityNotice, getManualTokens, getMockTradingPositionsViewByAddress, getVisibleManualTokens, type AppState } from '../../state/app-state';
+import { getChainCapabilityNotice, getWatchlistTokens, getMockTradingPositionsViewByAddress, getVisibleWatchlistTokens, type AppState } from '../../state/app-state';
 import { bindBucketSortControls, bindCompactSearch, bindCopyButtons, bindSparklineHover, bindTokenActions, bindTokenImagePreview, renderManualTokenTable } from './shared';
 import { bindMonitoredTickerPeerPanelClose } from './monitored-section';
 import { bindRadarIdentityBadges } from './radar-identity-badges';
@@ -38,7 +38,7 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
   }
   const isCollapsed = state.ui.collapsed.manual;
   const sortClasses = getManualSortClasses(state);
-  const searchQuery = String(state.ui.manualSearchQuery || '').trim();
+  const searchQuery = String(state.ui.watchlistSearchQuery || '').trim();
   const manualTableMarkup = renderManualFolderAwareTable(state, searchQuery);
   if (isCollapsed) {
     section.innerHTML = `
@@ -47,7 +47,7 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
           <span class="legacy-bar-title manual">\u{1F4CC} MANUAL TOKENS</span>
         </div>
         <div class="legacy-bar-controls legacy-bar-collapse-controls">
-          <span class="count-pill">${getManualTokens(state).length}</span>
+          <span class="count-pill">${getWatchlistTokens(state).length}</span>
           <button type="button" class="compact-icon-toggle section-collapse-toggle" data-action="toggle-section-collapse" data-section="manual" aria-label="Expand manual tokens"><span class="compact-icon-glyph">+</span></button>
         </div>
       </div>
@@ -112,14 +112,14 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
 
   const searchInput = section.querySelector<HTMLInputElement>('[data-action="manual-search"]');
   if (searchInput) {
-    searchInput.value = state.ui.manualSearchQuery || '';
+    searchInput.value = state.ui.watchlistSearchQuery || '';
   }
   bindCompactSearch(section, {
     toggleAction: 'manual-search-focus',
     inputAction: 'manual-search',
   });
   searchInput?.addEventListener('input', (event) => {
-    controller.setManualSearchQuery((event.currentTarget as HTMLInputElement).value);
+    controller.setWatchlistSearchQuery((event.currentTarget as HTMLInputElement).value);
   });
   section.querySelector<HTMLButtonElement>('[data-action="manual-starred-only"]')?.addEventListener('click', () => {
     controller.setManualStarredOnly(!state.ui.manualStarredOnly);
@@ -127,7 +127,7 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
   section.querySelector<HTMLButtonElement>('[data-action="toggle-section-collapse"]')?.addEventListener('click', () => {
     controller.toggleSectionCollapsed('manual');
   });
-  bindRadarIdentityBadges(section, getVisibleManualTokens(state));
+  bindRadarIdentityBadges(section, getVisibleWatchlistTokens(state));
   bindMonitoredTickerPeerPanelClose(section);
   bindTokenActions(section, controller);
   bindCopyButtons(section);
@@ -145,7 +145,7 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
 }
 
 function getManualSortClasses(state: AppState) {
-  const sorts = state.ui.manualSorts;
+  const sorts = state.ui.watchlistSorts;
   const hasMode = (mode: string) => sorts.some((item) => item.mode === mode);
   const hasCriterion = (mode: string, window: string) => sorts.some((item) => item.mode === mode && item.window === window);
   return {
@@ -167,22 +167,22 @@ function getManualSortClasses(state: AppState) {
 }
 
 function renderManualFolderAwareTable(state: AppState, searchQuery: string) {
-  const filteredManualTokens = resolveManualTableRows(getVisibleManualTokens(state), {
+  const filteredManualTokens = resolveManualTableRows(getVisibleWatchlistTokens(state), {
     starredOnly: state.ui.manualStarredOnly,
-    starredTokens: state.data.starredTokenIdentities,
+    starredTokens: state.data.watchlistTokenIdentities,
     searchQuery,
-    sortCriteria: state.ui.manualSorts,
+    sortCriteria: state.ui.watchlistSorts,
   });
 
-  if (filteredManualTokens.length === 0 && getManualTokens(state).length > 0) {
+  if (filteredManualTokens.length === 0 && getWatchlistTokens(state).length > 0) {
     return '<p class="muted-block">No tokens in the selected manual folder view.</p>';
   }
 
   return renderManualTokenTable(
     filteredManualTokens,
     state.ui.busy,
-    state.data.starredTokenIdentities,
-    state.ui.manualSorts,
+    state.data.watchlistTokenIdentities,
+    state.ui.watchlistSorts,
     state.data.meteoraByAddress,
     Number(state.data.configs['meteora-min-pool']) || 5000,
     state.session.role === 'admin',
@@ -227,7 +227,7 @@ function renderManualFolderControls(state: AppState) {
   return `
     <div class="manual-folder-panel">
       <div class="manual-folder-filter-list">
-        ${renderFolderFilterButton('All', getManualTokens(state).length, allActive, 'manual-folder-all')}
+        ${renderFolderFilterButton('All', getWatchlistTokens(state).length, allActive, 'manual-folder-all')}
         ${folders.map((folder) => {
           const active = selectedSet.has(folder.id);
           const open = manualFolderOpenMenuId === folder.id;
@@ -375,7 +375,7 @@ function bindManualTokenEntryForm(root: ParentNode, controller: AppController) {
     }
     const chain = getChain();
     closeManualTokenEntry(form);
-    void controller.addManualToken(value, null, chain);
+    void controller.addWatchlistToken(value, null, chain);
   };
 
   form?.addEventListener('submit', (event) => {

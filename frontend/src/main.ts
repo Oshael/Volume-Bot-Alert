@@ -124,7 +124,7 @@ function buildRuntimePerfSample(state: AppState) {
     runtimeMode: state.runtime.mode,
     trackedTokens: Object.keys(state.data.trackedTokensByIdentity).length,
     monitored: state.data.monitoredTokenIdentities.length,
-    manual: state.data.manualTokenIdentities.length,
+    manual: state.data.watchlistTokenIdentities.length,
     recent: state.data.recentTokenIdentities.length,
     oldWeek: state.data.oldWeekTokenIdentities.length,
     recentHead: state.data.recentTokenIdentities.slice(0, 8),
@@ -562,7 +562,7 @@ function performRender(
       workspace: state.ui.workspace,
       regions: formatDirtyRegions(dirtyRegions),
       monitored: state.data.monitoredTokenIdentities.length,
-      manual: state.data.manualTokenIdentities.length,
+      manual: state.data.watchlistTokenIdentities.length,
       alerts: state.data.alerts.length,
     },
     () => {
