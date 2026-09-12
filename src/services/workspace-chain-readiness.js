@@ -1,4 +1,8 @@
+const { createHash } = require('crypto');
 const workerLease = require('../models/worker-lease');
+const {
+  createRobinhoodChainCaptureJournal,
+} = require('../models/robinhood-chain-capture-journal');
 const robinhoodIngestionWorker = require('./robinhood-ingestion-worker');
 const { buildRobinhoodRolloutStatus } = require('./robinhood-rollout-status');
 const {
@@ -11,6 +15,16 @@ const config = require('../../config');
 
 const ROBINHOOD_INGESTION_LEASE_KEY = 'robinhood-ingestion-worker';
 const READINESS_CACHE_TTL_MS = 5000;
+
+function createWorkspaceChainReadinessSignature(readiness) {
+  const stable = Object.fromEntries(Object.entries(readiness || {}).map(([chain, value]) => [
+    chain,
+    value && typeof value === 'object'
+      ? Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'checkedAt'))
+      : value,
+  ]));
+  return createHash('sha256').update(JSON.stringify(stable)).digest('hex');
+}
 
 function buildSolanaReadiness(runtimeConfig, checkedAt) {
   return {
@@ -186,10 +200,29 @@ function canonicalRolloutLease(lease, pipelineHealth) {
   };
 }
 
+async function overlayCanonicalCaptureCursor(leases, captureJournal) {
+  if (!leases.some((lease) => lease.key === 'robinhood-canonical-head-worker')) return leases;
+  const cursor = await captureJournal.getCursor();
+  if (!cursor) return leases;
+  const nodeHead = BigInt(cursor.node_head);
+  const nextBlock = BigInt(cursor.next_block);
+  return leases.map((lease) => lease.key !== 'robinhood-chain-capture-worker' ? lease : ({
+    ...lease,
+    metadata: {
+      ...(lease.metadata || {}),
+      lagBlocks: Number(nodeHead >= nextBlock ? nodeHead - nextBlock + 1n : 0n),
+      nodeHeadObservedAt: cursor.head_observed_at,
+    },
+  }));
+}
+
 function createWorkspaceChainReadinessProvider(deps = {}) {
   const runtimeConfig = deps.config || config;
   const leaseStore = deps.leaseStore || workerLease;
   const ingestionWorker = deps.ingestionWorker || robinhoodIngestionWorker;
+  const captureJournal = deps.captureJournal || (deps.leaseStore
+    ? { getCursor: async () => null }
+    : createRobinhoodChainCaptureJournal());
   const now = deps.now || Date.now;
   let cachedAt = 0;
   let cachedValue = null;
@@ -203,7 +236,12 @@ function createWorkspaceChainReadinessProvider(deps = {}) {
     let telemetryAvailable = true;
     const nowMs = now();
     try {
-      const leases = await leaseStore.list();
+      let leases = await leaseStore.list();
+      try {
+        leases = await overlayCanonicalCaptureCursor(leases, captureJournal);
+      } catch (_) {
+        // Lease telemetry remains a safe fallback if the cursor cannot be read.
+      }
       runtime = selectRobinhoodRuntime(leases, nowMs);
     } catch (_) {
       telemetryAvailable = false;
@@ -218,7 +256,12 @@ function createWorkspaceChainReadinessProvider(deps = {}) {
     });
   }
 
-  return async function getWorkspaceChainReadiness() {
+  async function getWorkspaceChainReadiness(options = {}) {
+    if (options.force === true) {
+      if (inFlight) await inFlight;
+      cachedAt = 0;
+      cachedValue = null;
+    }
     const currentTime = now();
     if (cachedValue && currentTime - cachedAt < READINESS_CACHE_TTL_MS) {
       return cachedValue;
@@ -231,13 +274,19 @@ function createWorkspaceChainReadinessProvider(deps = {}) {
       inFlight = null;
     });
     return inFlight;
+  }
+  getWorkspaceChainReadiness.invalidate = () => {
+    cachedAt = 0;
+    cachedValue = null;
   };
+  return getWorkspaceChainReadiness;
 }
 
 module.exports = {
   READINESS_CACHE_TTL_MS,
   buildWorkspaceChainReadiness,
+  createWorkspaceChainReadinessSignature,
   createWorkspaceChainReadinessProvider,
   getWorkspaceChainReadiness: createWorkspaceChainReadinessProvider(),
-  __private: { selectRobinhoodRuntime },
+  __private: { overlayCanonicalCaptureCursor, selectRobinhoodRuntime },
 };

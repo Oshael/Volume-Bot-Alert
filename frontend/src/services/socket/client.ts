@@ -54,7 +54,27 @@ let desiredLivePresence: {
   hiddenGraceMs?: number;
 } | null = null;
 let liquidityRecoveryPending = false;
+let readinessRecoveryPending = false;
+let lastReadinessSignalSignature: string | null = null;
 
+export interface WorkspaceReadinessSignal {
+  type: 'workspace:readiness';
+  version: 1;
+  signature: string;
+  checkedAt: string;
+}
+function normalizeWorkspaceReadinessSignal(payload: unknown): WorkspaceReadinessSignal | null {
+  const value = payload && typeof payload === 'object'
+    ? payload as Record<string, unknown> : {};
+  const signature = String(value.signature || '').toLowerCase();
+  const checkedAtMs = Date.parse(String(value.checkedAt || ''));
+  if (Number(value.version) !== 1 || !/^[0-9a-f]{64}$/.test(signature)
+    || !Number.isFinite(checkedAtMs)) return null;
+  return {
+    type: 'workspace:readiness', version: 1, signature,
+    checkedAt: new Date(checkedAtMs).toISOString(),
+  };
+}
 export function connectSocket(): Socket {
   if (socket) {
     if (!socket.connected) {
@@ -116,6 +136,8 @@ export function bindSocketLifecycle(options: {
   onMarketBucket?: (payload: MarketBucketUpdateEvent) => void;
   onMarketLiquidity?: (payload: MarketLiquidityUpdateEvent) => void;
   onMarketLiquidityRecover?: () => void;
+  onWorkspaceReadiness?: (payload: WorkspaceReadinessSignal) => void;
+  onWorkspaceReadinessRecover?: () => void;
 }) {
   const current = connectSocket();
 
@@ -126,6 +148,7 @@ export function bindSocketLifecycle(options: {
   current.off('alert:event');
   current.off('market:bucket');
   current.off('market:liquidity');
+  current.off('workspace:readiness');
   current.off('market:trade');
   current.off('market:trade:observed');
   current.off('market:trade:finalized');
@@ -135,7 +158,9 @@ export function bindSocketLifecycle(options: {
 
   current.on('connect', () => {
     const shouldRecoverLiquidity = liquidityRecoveryPending;
+    const shouldRecoverReadiness = readinessRecoveryPending;
     liquidityRecoveryPending = false;
+    readinessRecoveryPending = false;
     if (desiredLivePresence) {
       current.emit('live:presence', desiredLivePresence);
     }
@@ -145,11 +170,13 @@ export function bindSocketLifecycle(options: {
       for (const listener of entry.listeners) listener.onRecover();
     }
     if (shouldRecoverLiquidity) options.onMarketLiquidityRecover?.();
+    if (shouldRecoverReadiness) options.onWorkspaceReadinessRecover?.();
     options.onStatus?.('Socket connected.');
   });
 
   current.on('disconnect', (reason) => {
     liquidityRecoveryPending = true;
+    readinessRecoveryPending = true;
     options.onStatus?.(`Socket disconnected: ${reason}`);
   });
 
@@ -182,6 +209,13 @@ export function bindSocketLifecycle(options: {
   current.on('market:liquidity', (payload: unknown) => {
     const normalized = normalizeMarketLiquidityUpdate(payload);
     if (normalized) options.onMarketLiquidity?.(markMarketLiquidityReceived(normalized));
+  });
+
+  current.on('workspace:readiness', (payload: unknown) => {
+    const event = normalizeWorkspaceReadinessSignal(payload);
+    if (!event || event.signature === lastReadinessSignalSignature) return;
+    lastReadinessSignalSignature = event.signature;
+    options.onWorkspaceReadiness?.(event);
   });
 
   current.on('market:trade', (payload: unknown) => {
@@ -315,4 +349,6 @@ export function disconnectSocket() {
   holderListeners.clear();
   socket?.disconnect();
   liquidityRecoveryPending = false;
+  readinessRecoveryPending = false;
+  lastReadinessSignalSignature = null;
 }

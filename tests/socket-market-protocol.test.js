@@ -19,11 +19,25 @@ const {
   isMarketTradeCanaryUser,
   normalizeMarketBucketUpdate,
   normalizeMarketTradeUpdate,
+  normalizeWorkspaceReadinessSignal,
   recordMarketSubscriptionProtocolUsage,
   resolveMarketIdentity,
 } = socketHub.__private;
 
 describe('chain-aware socket market protocol', () => {
+  it('validates the versioned workspace readiness signal', () => {
+    const event = normalizeWorkspaceReadinessSignal({
+      version: 1,
+      signature: 'A'.repeat(64),
+      checkedAt: '2026-09-09T12:00:00.000Z',
+    });
+    assert.deepEqual(event, {
+      type: 'workspace:readiness', version: 1, signature: 'a'.repeat(64),
+      checkedAt: '2026-09-09T12:00:00.000Z',
+    });
+    assert.equal(normalizeWorkspaceReadinessSignal({ ...event, signature: 'bad' }), null);
+  });
+
   it('fits the maximum subscription sync inside the configured transport buffer', () => {
     const count = config.security.socket.maxSubscriptionsPerSocket;
     const subscriptions = Array.from({ length: count }, (_, index) => ({

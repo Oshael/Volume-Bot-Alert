@@ -194,6 +194,31 @@ describe('frontend socket market subscriptions', () => {
     assert.equal(recoveries, 1);
   });
 
+  it('deduplicates readiness signals and reconciles once after reconnect', () => {
+    const received = [];
+    let recoveries = 0;
+    client.bindSocketLifecycle({
+      onRevoked() {},
+      onWorkspaceReadiness: (event) => received.push(event),
+      onWorkspaceReadinessRecover: () => { recoveries += 1; },
+    });
+    const event = {
+      type: 'workspace:readiness', version: 1, signature: 'a'.repeat(64),
+      checkedAt: '2026-09-09T12:00:00.000Z',
+    };
+
+    socket.trigger('workspace:readiness', event);
+    socket.trigger('workspace:readiness', event);
+    socket.trigger('workspace:readiness', { ...event, signature: 'invalid' });
+    assert.equal(received.length, 1);
+    assert.equal(received[0].signature, 'a'.repeat(64));
+
+    socket.trigger('disconnect', 'transport close');
+    socket.trigger('connect');
+    socket.trigger('connect');
+    assert.equal(recoveries, 1);
+  });
+
   it('dispatches ordered holder events and requests REST recovery after reconnect', () => {
     const counts = [];
     const invalidations = [];

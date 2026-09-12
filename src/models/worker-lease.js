@@ -2,6 +2,14 @@ const os = require('os');
 const db = require('./db');
 
 const DEFAULT_TTL_MS = 120000;
+const READINESS_NOTIFY_CHANNEL = 'workspace_chain_readiness';
+const READINESS_LEASE_KEYS = new Set([
+  'robinhood-canonical-head-worker',
+  'robinhood-chain-capture-worker',
+  'robinhood-head-capture-worker',
+  'robinhood-ingestion-worker',
+  'robinhood-processing-worker',
+]);
 
 function getRunner(runner) {
   return runner && typeof runner.query === 'function' ? runner : db;
@@ -43,6 +51,15 @@ function haltMetadata(error) {
   };
 }
 
+async function notifyReadinessChange(executor, key) {
+  if (!READINESS_LEASE_KEYS.has(key)) return;
+  try {
+    await executor.query('SELECT pg_notify($1, $2)', [READINESS_NOTIFY_CHANNEL, key]);
+  } catch (_) {
+    // Lease ownership must not depend on best-effort realtime signaling.
+  }
+}
+
 function mapRow(row) {
   if (!row) return null;
   return {
@@ -59,6 +76,7 @@ function mapRow(row) {
 
 async function acquire(key, ownerId, options = {}, runner = db) {
   const executor = getRunner(runner);
+  const normalizedKey = normalizeKey(key);
   const ttlMs = normalizeTtlMs(options.ttlMs);
   const metadata = options.metadata && typeof options.metadata === 'object' ? options.metadata : {};
   const { rows } = await executor.query(
@@ -89,7 +107,7 @@ async function acquire(key, ownerId, options = {}, runner = db) {
        AND COALESCE(worker_leases.metadata->>'state', '') <> 'halted'
      RETURNING *`,
     [
-      normalizeKey(key),
+      normalizedKey,
       normalizeOwner(ownerId),
       process.pid,
       os.hostname(),
@@ -98,11 +116,14 @@ async function acquire(key, ownerId, options = {}, runner = db) {
     ]
   );
 
-  return mapRow(rows[0] || null);
+  const lease = mapRow(rows[0] || null);
+  if (lease) await notifyReadinessChange(executor, normalizedKey);
+  return lease;
 }
 
 async function heartbeat(key, ownerId, options = {}, runner = db) {
   const executor = getRunner(runner);
+  const normalizedKey = normalizeKey(key);
   const ttlMs = normalizeTtlMs(options.ttlMs);
   const metadata = options.metadata && typeof options.metadata === 'object'
     ? JSON.stringify(options.metadata)
@@ -120,14 +141,17 @@ async function heartbeat(key, ownerId, options = {}, runner = db) {
        AND lease_until > NOW()
        AND COALESCE(metadata->>'state', '') <> 'halted'
      RETURNING *`,
-    [normalizeKey(key), normalizeOwner(ownerId), ttlMs, metadata]
+    [normalizedKey, normalizeOwner(ownerId), ttlMs, metadata]
   );
 
-  return mapRow(rows[0] || null);
+  const lease = mapRow(rows[0] || null);
+  if (lease) await notifyReadinessChange(executor, normalizedKey);
+  return lease;
 }
 
 async function halt(key, ownerId, error, runner = db) {
   const executor = getRunner(runner);
+  const normalizedKey = normalizeKey(key);
   const { rows } = await executor.query(
     `UPDATE worker_leases
      SET heartbeat_at = NOW(),
@@ -136,20 +160,25 @@ async function halt(key, ownerId, error, runner = db) {
      WHERE lease_key = $1
        AND owner_id = $2
      RETURNING *`,
-    [normalizeKey(key), normalizeOwner(ownerId), JSON.stringify(haltMetadata(error))]
+    [normalizedKey, normalizeOwner(ownerId), JSON.stringify(haltMetadata(error))]
   );
-  return mapRow(rows[0] || null);
+  const lease = mapRow(rows[0] || null);
+  if (lease) await notifyReadinessChange(executor, normalizedKey);
+  return lease;
 }
 
 async function release(key, ownerId, runner = db) {
   const executor = getRunner(runner);
+  const normalizedKey = normalizeKey(key);
   const { rowCount } = await executor.query(
     `DELETE FROM worker_leases
      WHERE lease_key = $1
        AND owner_id = $2`,
-    [normalizeKey(key), normalizeOwner(ownerId)]
+    [normalizedKey, normalizeOwner(ownerId)]
   );
-  return rowCount > 0;
+  const released = rowCount > 0;
+  if (released) await notifyReadinessChange(executor, normalizedKey);
+  return released;
 }
 
 async function list(runner = db) {
@@ -164,6 +193,7 @@ async function list(runner = db) {
 
 module.exports = {
   DEFAULT_TTL_MS,
+  READINESS_NOTIFY_CHANNEL,
   acquire,
   halt,
   heartbeat,

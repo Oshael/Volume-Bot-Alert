@@ -1449,10 +1449,14 @@ p50/p95/p99/max de receipt/captura/projeção até aplicação, publicação at�
 até aplicação. `flow` aceita `market:bucket` (default), `market:trade`, `alert:event`,
 `holder:count`, `liquidity` ou `readiness`; alertas medem também disparo até aplicação.
 Liquidez estabelece o primeiro `updated_at` visto por token como baseline e só amostra avanços,
-evitando confundir snapshot antigo com atraso de entrega. Readiness continua sendo reconciliação
-HTTP e expõe `checkedToAppliedMs` e `pollGapMs`; esses dois estágios separam custo da resposta do
-intervalo de scheduling. A coleta é somente em memória, tem cardinalidade fixa e não envia
-telemetria de tokens de volta ao servidor.
+evitando confundir snapshot antigo com atraso de entrega. Readiness usa
+`workspace:readiness` como sinal versionado com assinatura para buscar o snapshot HTTP durável; sinais com
+a mesma assinatura são deduplicados. O backend acorda por commit da captura canônica ou mudança das
+leases que compõem o gate, invalida o cache e calcula o lag da captura pelo cursor durável, não pela
+cópia potencialmente atrasada da lease. Reconexão também força uma consulta HTTP, e o polling de 30 s
+permanece como reconciliação para perda de `NOTIFY`. A métrica expõe `checkedToAppliedMs` e
+`pollGapMs`; esses dois estágios separam custo da resposta do intervalo de scheduling. A coleta é
+somente em memória, tem cardinalidade fixa e não envia telemetria de tokens de volta ao servidor.
 
 ## 8. API pública
 

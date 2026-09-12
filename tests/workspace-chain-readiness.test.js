@@ -3,6 +3,7 @@ const { describe, it } = require('node:test');
 
 const {
   buildWorkspaceChainReadiness,
+  createWorkspaceChainReadinessSignature,
   createWorkspaceChainReadinessProvider,
 } = require('../src/services/workspace-chain-readiness');
 const { isRobinhoodTokenChainConfigured } = require('../src/utils/token-chain-availability');
@@ -192,6 +193,32 @@ describe('workspace chain readiness', () => {
     assert.equal((await provider()).robinhood.status, 'ready');
   });
 
+  it('invalidates a cached snapshot for an event-driven refresh', async () => {
+    let caughtUp = false;
+    const provider = createWorkspaceChainReadinessProvider({
+      config: runtimeConfig(),
+      leaseStore: { list: async () => [] },
+      ingestionWorker: { getStatus: () => ({
+        running: true, lastSnapshot: { coverage: { caughtUp, unexplainedGaps: 0 } },
+      }) },
+      now: () => NOW_MS,
+    });
+
+    assert.equal((await provider()).robinhood.status, 'syncing');
+    caughtUp = true;
+    provider.invalidate();
+    assert.equal((await provider()).robinhood.status, 'ready');
+  });
+
+  it('keeps the signature stable when only checkedAt changes', () => {
+    const first = buildWorkspaceChainReadiness({ config: runtimeConfig(), nowMs: NOW_MS });
+    const second = buildWorkspaceChainReadiness({ config: runtimeConfig(), nowMs: NOW_MS + 1000 });
+    assert.equal(
+      createWorkspaceChainReadinessSignature(first),
+      createWorkspaceChainReadinessSignature(second),
+    );
+  });
+
   it('uses the split head and processing leases after the monolith stops', async () => {
     const provider = createWorkspaceChainReadinessProvider({
       config: runtimeConfig(),
@@ -220,6 +247,25 @@ describe('workspace chain readiness', () => {
     assert.equal(readiness.status, 'ready');
     assert.equal(readiness.publicationReady, true);
     assert.equal(readiness.blockers.includes('head_lease_inactive'), false);
+  });
+
+  it('uses the committed capture cursor instead of stale lease lag', async () => {
+    const leases = healthyCanonicalLeases();
+    leases.find(({ key }) => key === 'robinhood-chain-capture-worker').metadata.lagBlocks = 40;
+    const provider = createWorkspaceChainReadinessProvider({
+      config: runtimeConfig(),
+      leaseStore: { list: async () => leases },
+      captureJournal: { getCursor: async () => ({
+        node_head: '60663796', next_block: '60663797',
+        head_observed_at: new Date(NOW_MS - 500).toISOString(),
+      }) },
+      ingestionWorker: { getStatus: () => ({ running: false }) },
+      now: () => NOW_MS,
+    });
+
+    const readiness = (await provider()).robinhood;
+    assert.equal(readiness.status, 'ready');
+    assert.equal(readiness.blockers.includes('capture_lag_exceeded'), false);
   });
 
   it('fails split workspace readiness closed when processing is unavailable', async () => {

@@ -10,6 +10,7 @@
  * - market:trade:*    - versioned Robinhood trade finality lifecycle
  * - holder:count      - sequenced Robinhood holder count for a subscribed token
  * - holder:invalidate - holder count must be refreshed after a reorg
+ * - workspace:readiness - versioned signal carrying the durable snapshot signature
  *
  * Events received from clients:
  * - live:presence     - { workspace, mode, hiddenGraceMs? } - live alert presence
@@ -877,6 +878,30 @@ function emitHolderUpdate(payload) {
   return true;
 }
 
+function normalizeWorkspaceReadinessSignal(payload) {
+  const signature = String(payload?.signature || '').toLowerCase();
+  const checkedAtMs = Date.parse(String(payload?.checkedAt || ''));
+  if (
+    Number(payload?.version) !== 1
+    || !/^[0-9a-f]{64}$/.test(signature)
+    || !Number.isFinite(checkedAtMs)
+  ) return null;
+  return {
+    type: 'workspace:readiness',
+    version: 1,
+    signature,
+    checkedAt: new Date(checkedAtMs).toISOString(),
+  };
+}
+
+function emitWorkspaceReadinessSignal(payload) {
+  if (!io || !isTokenChainUserVisible('robinhood', config)) return false;
+  const event = normalizeWorkspaceReadinessSignal(payload);
+  if (!event) return false;
+  io.emit(event.type, event);
+  return true;
+}
+
 module.exports = {
   init,
   stop,
@@ -889,6 +914,7 @@ module.exports = {
   emitMarketTradeFinalityUpdate,
   emitMarketTradeCanaryUpdate,
   emitHolderUpdate,
+  emitWorkspaceReadinessSignal,
   revokeSessionSockets,
   revokeUserSockets,
   __private: {
@@ -903,6 +929,7 @@ module.exports = {
     getMarketSubscriptionRooms,
     normalizeMarketBucketUpdate,
     normalizeMarketTradeUpdate,
+    normalizeWorkspaceReadinessSignal,
     recordMarketSubscriptionProtocolUsage,
     resolveMarketIdentity,
   },

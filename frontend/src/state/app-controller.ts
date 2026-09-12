@@ -1403,6 +1403,7 @@ export function createAppController(): AppController {
   const topPerformersRefreshKeysInFlight = new Set<string>();
   let topPerformersRefreshRevision = 0;
   let chainReadinessRefreshInFlight = false;
+  let chainReadinessRefreshRequested = false;
   let mockTradingRefreshInFlight = false;
   let adminTokenReviewAlertRefreshInFlight = false;
   let marketTickerRefreshInFlight = false;
@@ -10385,29 +10386,34 @@ export function createAppController(): AppController {
 
   async function refreshWorkspaceChainReadiness() {
     const token = state.session.token;
-    if (!token || chainReadinessRefreshInFlight || !isAuthenticatedSession()) {
+    if (!token || !isAuthenticatedSession()) {
+      return;
+    }
+    if (chainReadinessRefreshInFlight) {
+      chainReadinessRefreshRequested = true;
       return;
     }
     chainReadinessRefreshInFlight = true;
     try {
-      const payload = await fetchChainReadiness(token);
-      if (state.session.token !== token || !isAuthenticatedSession()) {
-        return;
-      }
-      const previous = getWorkspaceChainReadinessSignature();
-      const previousReadiness = state.data.chainReadiness;
-      state.data.availableChains = normalizeAvailableTokenChains(payload.availableChains);
-      state.data.chainReadiness = payload.chainReadiness || state.data.chainReadiness;
-      state.ui.chainFilters = normalizeChainFilterPreferences(
-        state.ui.chainFilters,
-        state.data.availableChains,
-      );
-      const next = getWorkspaceChainReadinessSignature();
-      if (previous !== next) {
-        emit('header', 'top-performers', 'manual', 'monitored', 'alerts', 'recent', 'old-week');
-        rehydrateRecoveredChainCapabilities(previousReadiness, token);
-      }
-      recordReadinessApplied(payload.chainReadiness);
+      do {
+        chainReadinessRefreshRequested = false;
+        const payload = await fetchChainReadiness(token);
+        if (state.session.token !== token || !isAuthenticatedSession()) return;
+        const previous = getWorkspaceChainReadinessSignature();
+        const previousReadiness = state.data.chainReadiness;
+        state.data.availableChains = normalizeAvailableTokenChains(payload.availableChains);
+        state.data.chainReadiness = payload.chainReadiness || state.data.chainReadiness;
+        state.ui.chainFilters = normalizeChainFilterPreferences(
+          state.ui.chainFilters,
+          state.data.availableChains,
+        );
+        const next = getWorkspaceChainReadinessSignature();
+        if (previous !== next) {
+          emit('header', 'top-performers', 'manual', 'monitored', 'alerts', 'recent', 'old-week');
+          rehydrateRecoveredChainCapabilities(previousReadiness, token);
+        }
+        recordReadinessApplied(payload.chainReadiness);
+      } while (chainReadinessRefreshRequested);
     } catch (error) {
       console.warn('[AppController] Failed to refresh chain readiness:', error instanceof Error ? error.message : error);
     } finally {
@@ -10569,6 +10575,12 @@ export function createAppController(): AppController {
       },
       onMarketLiquidityRecover() {
         refreshWorkspaceSnapshot();
+      },
+      onWorkspaceReadiness() {
+        void refreshWorkspaceChainReadiness();
+      },
+      onWorkspaceReadinessRecover() {
+        void refreshWorkspaceChainReadiness();
       },
     });
   }

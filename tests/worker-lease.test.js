@@ -116,6 +116,31 @@ describe('worker lease model', () => {
     assert.equal(calls[0].params.length, 4);
   });
 
+  it('signals readiness only after a relevant lease heartbeat is persisted', async () => {
+    const calls = [];
+    const runner = {
+      async query(sql, params) {
+        calls.push({ sql, params });
+        return sql.includes('pg_notify')
+          ? { rows: [] }
+          : { rows: [leaseRow({
+            lease_key: 'robinhood-chain-capture-worker',
+            metadata: JSON.parse(params[3]),
+          })] };
+      },
+    };
+
+    await workerLease.heartbeat('robinhood-chain-capture-worker', 'owner-a', {
+      metadata: { running: true, lagBlocks: 0 },
+    }, runner);
+
+    assert.match(calls[0].sql, /UPDATE worker_leases/);
+    assert.match(calls[1].sql, /pg_notify/);
+    assert.deepEqual(calls[1].params, [
+      workerLease.READINESS_NOTIFY_CHANNEL, 'robinhood-chain-capture-worker',
+    ]);
+  });
+
   it('clamps invalid ttl values to a safe range', () => {
     assert.equal(workerLease.__private.normalizeTtlMs(1), 5000);
     assert.equal(workerLease.__private.normalizeTtlMs(20 * 60 * 1000), 10 * 60 * 1000);

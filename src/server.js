@@ -115,6 +115,12 @@ const marketLiquidityRealtime = require('./services/market-liquidity-realtime');
 const marketTradeRealtime = require('./services/market-trade-realtime');
 const robinhoodHolderCountRealtime = require('./services/robinhood-holder-count-realtime');
 const {
+  createWorkspaceChainReadinessRealtime,
+} = require('./services/workspace-chain-readiness-realtime');
+const workspaceChainReadinessRealtime = createWorkspaceChainReadinessRealtime({
+  emitSignal: socketHub.emitWorkspaceReadinessSignal,
+});
+const {
   createRobinhoodMarketBucketFanout,
 } = require('./services/robinhood-market-bucket-fanout');
 const userConfigSync = require('./services/user-config-sync');
@@ -1205,6 +1211,9 @@ function bootstrapWebRuntime(httpServer) {
   robinhoodHolderCountRealtime.start().catch((err) => {
     console.error('[RobinhoodHolderCountRealtime] Failed to start listener:', err.message);
   });
+  workspaceChainReadinessRealtime.start().catch((err) => {
+    console.error('[WorkspaceChainReadinessRealtime] Failed to start listener:', err.message);
+  });
   startLockedWorker(
     'web',
     WEB_REALTIME_RUNTIME_LEASE_KEY,
@@ -1218,6 +1227,7 @@ function bootstrapWebRuntime(httpServer) {
         marketLiquidity: marketLiquidityRealtime.getStatus(),
         marketTrades: marketTradeRealtime.getStatus(),
         robinhoodHolderCounts: robinhoodHolderCountRealtime.getStatus(),
+        workspaceChainReadiness: workspaceChainReadinessRealtime.getStatus(),
         ...(shouldBootstrapBackgroundRuntime() && hasWorkerGroup('core')
           ? {} : { solUsdPrice: solUsdPrice.getStatus() }),
       } }),
@@ -1395,6 +1405,7 @@ async function shutdownGracefully(signal = 'SIGTERM') {
       marketLiquidityRealtime.stop(),
       marketTradeRealtime.stop(),
       robinhoodHolderCountRealtime.stop(),
+      workspaceChainReadinessRealtime.stop(),
       userConfigSync.stop(),
     ]);
     const releaseResult = await workerLeaseManager.stop({ releaseLeases: true });
