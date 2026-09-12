@@ -143,6 +143,7 @@ import {
   mergeWorkspaceSparklineRefreshEntry,
   mergeWorkspaceSparklineSnapshotEntry,
   resolveWorkspaceSparklineRequestShape as resolveAdaptiveWorkspaceSparklineRequestShape,
+  runWorkspaceSparklineBatchesSerially,
   runWorkspaceSparklineRequestWithTimeout,
   selectWorkspaceSparklineRefreshBatches,
   splitWorkspaceSparklineBatchesByChain,
@@ -9572,8 +9573,9 @@ export function createAppController(): AppController {
         batches: batches.length,
         identities: batches.reduce((total, batch) => total + batch.identities.length, 0),
       },
-      () => Promise.all(
-        batches.map(async (batch): Promise<WorkspaceSparklineBatchResult> => {
+      () => runWorkspaceSparklineBatchesSerially(
+        batches,
+        async (batch): Promise<WorkspaceSparklineBatchResult> => {
           const startedAt = Date.now();
           const diagnosticBatch = beginSparklineDiagnosticBatch(batch, startedAt);
           try {
@@ -9605,7 +9607,7 @@ export function createAppController(): AppController {
             failSparklineDiagnosticBatch(diagnosticBatch, error);
             return { batch, error };
           }
-        })
+        },
       ),
     );
   }
@@ -12166,14 +12168,6 @@ export function createAppController(): AppController {
       && requestKey === buildChainRequestKey(getReadySelectedChains('monitored'));
   }
 
-  function refreshFirstMonitoredPageSparklines(token: string, applied: boolean) {
-    if (!applied) return;
-    void refreshHistoryWorkspaceSparklines({
-      token,
-      caller: 'monitored-bootstrap-first-page',
-    });
-  }
-
   async function hydratePriorityMonitoredPage(
     token: string,
     manualTokens: AddressItem[],
@@ -12199,7 +12193,7 @@ export function createAppController(): AppController {
 
     const tokens = [...(firstPage.tokens || [])];
     const snapshotComplete = tokens.length >= firstPage.total || !firstPage.hasMore;
-    const applied = applyPagedMonitoredHydrationSnapshot({
+    applyPagedMonitoredHydrationSnapshot({
       token,
       manualTokens,
       tokens,
@@ -12208,7 +12202,6 @@ export function createAppController(): AppController {
       preserveExistingUntilComplete: false,
       generatedAt: firstPage.generatedAt ?? firstPage.asOf ?? null,
     });
-    refreshFirstMonitoredPageSparklines(token, applied);
     void hydrateManualTokensMetadataBatch(token, manualTokens, { emitOnComplete: false });
     recordRestoreControllerDebug('controller.dashboard-hydrate.monitored.priority-page', {
       generatedAt: firstPage.generatedAt ?? firstPage.asOf ?? null,
@@ -12352,7 +12345,7 @@ export function createAppController(): AppController {
     const previewTokens = firstPageComplete
       ? aggregatedTokens
       : mergeMonitoredFirstPage(existingSnapshot, aggregatedTokens);
-    const firstPageApplied = applyPagedMonitoredHydrationSnapshot({
+    applyPagedMonitoredHydrationSnapshot({
       token,
       manualTokens,
       tokens: previewTokens,
@@ -12361,7 +12354,6 @@ export function createAppController(): AppController {
       preserveExistingUntilComplete: false,
       generatedAt,
     });
-    refreshFirstMonitoredPageSparklines(token, firstPageApplied);
     void hydrateManualTokensMetadataBatch(token, manualTokens, { emitOnComplete: false });
     recordRestoreControllerDebug('controller.dashboard-hydrate.monitored.first-page', {
       generatedAt,
@@ -12448,6 +12440,10 @@ export function createAppController(): AppController {
       const priorityCurrent = await hydratePriorityMonitoredPage(token, manualTokens, getReadySelectedChains('monitored'));
       if (!priorityCurrent) return;
       await hydratePagedDashboardMonitored(token, manualTokens);
+      void refreshHistoryWorkspaceSparklines({
+        token,
+        caller: 'monitored-bootstrap-complete',
+      });
       state.ui.monitoredLoadError = null;
       emitMonitoredWorkspaceRegions();
       void refreshDashboardTopPerformers(token);

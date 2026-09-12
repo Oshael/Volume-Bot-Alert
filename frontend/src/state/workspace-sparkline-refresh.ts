@@ -28,6 +28,17 @@ export type LegacyWorkspaceSparklineBatch = {
 
 export type WorkspaceSparklineBatch = WorkspaceIdentitySparklineBatch | LegacyWorkspaceSparklineBatch;
 
+export async function runWorkspaceSparklineBatchesSerially<TBatch, TResult>(
+  batches: TBatch[],
+  runBatch: (batch: TBatch) => Promise<TResult>,
+) {
+  const results: TResult[] = [];
+  for (const batch of batches) {
+    results.push(await runBatch(batch));
+  }
+  return results;
+}
+
 export type WorkspaceSparklineCacheValue = {
   generatedAt?: string | null;
   granularityMinutes?: number | null;

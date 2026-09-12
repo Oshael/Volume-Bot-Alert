@@ -6,6 +6,7 @@ let mergeWorkspaceSparklineRefreshEntry;
 let mergeWorkspaceSparklineSnapshotEntry;
 let resolveWorkspaceSparklineGranularityMinutes;
 let resolveWorkspaceSparklineRequestShape;
+let runWorkspaceSparklineBatchesSerially;
 let runWorkspaceSparklineRequestWithTimeout;
 let selectWorkspaceSparklineRefreshBatches;
 let splitWorkspaceSparklineBatchesByChain;
@@ -17,6 +18,7 @@ before(async () => {
     mergeWorkspaceSparklineSnapshotEntry,
     resolveWorkspaceSparklineGranularityMinutes,
     resolveWorkspaceSparklineRequestShape,
+    runWorkspaceSparklineBatchesSerially,
     runWorkspaceSparklineRequestWithTimeout,
     selectWorkspaceSparklineRefreshBatches,
     splitWorkspaceSparklineBatchesByChain,
@@ -137,6 +139,30 @@ describe('workspace sparkline request shape', () => {
       })
     )), /timed out after 5ms/);
     assert.equal(observedAbort, true);
+  });
+
+  it('runs history batches serially to avoid overlapping database reads', async () => {
+    let active = 0;
+    let maxActive = 0;
+    const order = [];
+
+    const results = await runWorkspaceSparklineBatchesSerially([1, 2, 3], async (batch) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      order.push(`start:${batch}`);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      order.push(`end:${batch}`);
+      active -= 1;
+      return batch * 10;
+    });
+
+    assert.equal(maxActive, 1);
+    assert.deepEqual(order, [
+      'start:1', 'end:1',
+      'start:2', 'end:2',
+      'start:3', 'end:3',
+    ]);
+    assert.deepEqual(results, [10, 20, 30]);
   });
 });
 
