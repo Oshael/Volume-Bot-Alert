@@ -9,12 +9,16 @@ const {
 } = require('./robinhood-holder-handoff-coordinator');
 const { createRobinhoodHolderLiveCapture } = require('./robinhood-holder-live-capture');
 const { createRobinhoodHolderLiveRunner } = require('./robinhood-holder-live-runner');
+const { NOTIFY_CHANNEL: CHAIN_CAPTURE_CHANNEL } = require('../models/robinhood-chain-capture-journal');
+const { createPostgresRealtimeListener } = require('./postgres-realtime-listener');
 const {
+  CANONICAL_SOURCE,
   normalizeRobinhoodHolderLiveSource,
   resolveRobinhoodHolderLiveSource,
 } = require('./robinhood-holder-live-source');
 const holderCountRealtime = require('./robinhood-holder-count-realtime');
 
+const DEFAULT_FALLBACK_INTERVAL_MS = 5000;
 const FATAL_CODES = new Set([
   'configuration_error', 'holder_live_apply_contract_error',
   'holder_live_capture_contract_error', 'holder_live_handoff_contract_error',
@@ -40,7 +44,9 @@ function normalizeOptions(options = {}, env = process.env) {
     sourceMode: normalizeRobinhoodHolderLiveSource(
       options.sourceMode ?? env.ROBINHOOD_HOLDER_LIVE_SOURCE
     ),
-    intervalMs: boundedInteger(options.intervalMs, 500, 100, 300_000),
+    intervalMs: boundedInteger(
+      options.intervalMs, DEFAULT_FALLBACK_INTERVAL_MS, 100, 300_000
+    ),
     maxErrorBackoffMs: boundedInteger(options.maxErrorBackoffMs, 30_000, 1000, 300_000),
     rangeSize: boundedInteger(options.rangeSize, 250, 1, 5000),
     confirmations: boundedInteger(options.confirmations, 12, 0, 1000),
@@ -149,6 +155,8 @@ function createRobinhoodHolderLiveWorker(deps = {}) {
   let runtimePromise = null;
   let timer = null;
   let activeRunPromise = null;
+  let captureListener = null;
+  let wakePending = false;
   let running = false;
   let onFatal = null;
   const status = {
@@ -162,6 +170,7 @@ function createRobinhoodHolderLiveWorker(deps = {}) {
     totalDriftedTokens: 0, totalDriftSuspicions: 0,
     totalReceiptRecoveries: 0, totalTailRollbacks: 0, totalTailRollbackEvents: 0,
     totalMalformedTokenQuarantines: 0, totalRecoveries: 0, lastCompletedAt: null,
+    totalWakeups: 0, totalFallbackRuns: 0, lastWakeAt: null, listenerError: null,
   };
 
   async function getRuntime() {
@@ -181,6 +190,8 @@ function createRobinhoodHolderLiveWorker(deps = {}) {
     status.lastError = publicError(error);
     if (timer) cancelSchedule(timer);
     timer = null;
+    await captureListener?.stop().catch(() => {});
+    captureListener = null;
     try { await onFatal?.(error); } catch (fatalError) {
       logger.error('[RobinhoodHolderLiveWorker] Fatal propagation failed:', fatalError.message);
     }
@@ -212,7 +223,10 @@ function createRobinhoodHolderLiveWorker(deps = {}) {
       const runtime = await getRuntime();
       status.sourceMode = runtime.sourceMode;
       status.providerName = runtime.providerName;
-      const result = await runtime.runner.captureOnce(options);
+      const result = await runtime.runner.captureOnce({
+        ...options,
+        confirmations: runtime.sourceMode === CANONICAL_SOURCE ? 0 : options.confirmations,
+      });
       recordResult(result);
       status.consecutiveErrors = 0;
       status.lastError = null;
@@ -242,19 +256,56 @@ function createRobinhoodHolderLiveWorker(deps = {}) {
     return activeRunPromise;
   }
 
-  function queueNext(delayMs) {
+  function queueNext(delayMs, reason = 'fallback') {
     if (!running || status.halted) return;
     timer = schedule(async () => {
+      timer = null;
+      if (reason === 'fallback') status.totalFallbackRuns += 1;
       await runOnce();
-      const delay = status.consecutiveErrors
+      const pendingWake = wakePending;
+      wakePending = false;
+      const delay = pendingWake ? 0 : status.consecutiveErrors
         ? Math.min(
             options.maxErrorBackoffMs,
             options.intervalMs * (2 ** Math.min(status.consecutiveErrors, 8))
           )
         : options.intervalMs;
-      queueNext(delay);
+      queueNext(delay, pendingWake ? 'notification' : 'fallback');
     }, delayMs);
     timer?.unref?.();
+  }
+
+  function wake() {
+    if (!running || status.halted) return;
+    status.totalWakeups += 1;
+    status.lastWakeAt = new Date().toISOString();
+    if (activeRunPromise) {
+      wakePending = true;
+      return;
+    }
+    if (timer) cancelSchedule(timer);
+    timer = null;
+    queueNext(0, 'notification');
+  }
+
+  function startCaptureListener() {
+    if (options.sourceMode !== CANONICAL_SOURCE) return;
+    const factory = deps.listenerFactory || createPostgresRealtimeListener;
+    captureListener = factory({
+      channel: CHAIN_CAPTURE_CHANNEL,
+      label: 'RobinhoodHolderCanonicalCaptureListener',
+      pool: (deps.database || db).pool,
+      logger,
+      onNotification: wake,
+      onConnected: ({ isReconnect }) => {
+        status.listenerError = null;
+        if (isReconnect) wake();
+      },
+    });
+    void captureListener.start().catch((error) => {
+      status.listenerError = publicError(error);
+      logger.warn('[RobinhoodHolderLiveWorker] Capture listener unavailable:', error.message);
+    });
   }
 
   function start(input = {}) {
@@ -264,9 +315,11 @@ function createRobinhoodHolderLiveWorker(deps = {}) {
     status.enabled = options.enabled;
     if (!options.enabled) return false;
     status.halted = false;
+    wakePending = false;
     running = true;
     status.running = true;
-    queueNext(0);
+    startCaptureListener();
+    queueNext(0, 'startup');
     return true;
   }
 
@@ -276,14 +329,23 @@ function createRobinhoodHolderLiveWorker(deps = {}) {
     if (timer) cancelSchedule(timer);
     timer = null;
     if (activeRunPromise) await activeRunPromise.catch(() => {});
+    await captureListener?.stop().catch(() => {});
+    captureListener = null;
   }
 
-  return Object.freeze({ getStatus: () => ({ ...status }), runOnce, start, stop });
+  return Object.freeze({
+    getStatus: () => ({
+      ...status,
+      captureListener: captureListener?.getStatus?.() || null,
+    }),
+    runOnce, start, stop,
+  });
 }
 
 const worker = createRobinhoodHolderLiveWorker();
 
 module.exports = {
+  DEFAULT_FALLBACK_INTERVAL_MS,
   createRobinhoodHolderLiveWorker,
   getStatus: worker.getStatus,
   runOnce: worker.runOnce,

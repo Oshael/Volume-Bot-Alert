@@ -622,11 +622,32 @@ Gate:
 Objetivo: remover tick de 500 ms e espera implícita de 12 blocos do contador
 visível.
 
-- consumir transfers do journal canônico após commit;
-- manter cursor/outbox durável e aplicação idempotente;
-- adotar o mesmo contrato `observed/finalized` dos swaps;
-- acordar o apply worker por queue notify;
-- preservar auditoria/reconciliação fora do hot path.
+#### Slice 6A — captura acordada pelo commit canônico (~250–350 linhas)
+
+- [x] escutar o `NOTIFY` transacional da captura canônica e coalescer wakes;
+- [x] consumir até o checkpoint já commitado, sem adicionar as 12 confirmações
+  do reader RPC ao modo `canonical_journal`;
+- [x] manter polling de 5 s apenas como recuperação de notificação perdida e
+  expor listener, wakes e fallback na telemetria;
+- [x] preservar as 12 confirmações e o agendamento configurável no rollback
+  explícito para `rpc`.
+
+#### Slice 6B — outbox durável do holder (~400–500 linhas)
+
+- [ ] gravar a publicação na mesma transação que atualiza balances, journal,
+  `holder_count`, versão e frontier;
+- [ ] usar identidade idempotente, claim, lease, retry/reclaim e dead-letter
+  observável;
+- [ ] manter snapshot HTTP como reconciliação quando entrega realtime for
+  perdida ou o cliente reconectar.
+
+#### Slice 6C — lifecycle e entrega até a UI (~400–500 linhas)
+
+- [ ] adotar `observed`, `finalized` e `invalidate` sem permitir regressão da
+  versão visível;
+- [ ] entregar a outbox por relay PostgreSQL e reutilizar as salas por token;
+- [ ] provar restart, notificação perdida e reorg, preservando auditoria e
+  reconciliação fora do hot path.
 
 Gate:
 

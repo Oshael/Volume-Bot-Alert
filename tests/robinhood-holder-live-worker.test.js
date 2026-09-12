@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const {
+  DEFAULT_FALLBACK_INTERVAL_MS,
   createRobinhoodHolderLiveWorker,
   __private: { buildRuntime },
 } = require('../src/services/robinhood-holder-live-worker');
@@ -63,6 +64,7 @@ describe('Robinhood holder live worker', () => {
     assert.equal(clock.scheduled[1].delayMs, 750);
     assert.equal(calls[0].rangeSize, 250);
     assert.equal(calls[0].addressShardConcurrency, 2);
+    assert.equal(calls[0].confirmations, 12);
     assert.deepEqual(worker.getStatus().lastResult, {
       status: 'completed', captureStatus: 'captured', nextBlock: '106', safeHead: '105',
       handoffStatus: 'shadow', handoffPromotions: 1, handoffResyncs: 0,
@@ -79,6 +81,93 @@ describe('Robinhood holder live worker', () => {
     assert.equal(worker.getStatus().totalHandoffPromotions, 1);
     await worker.stop();
     assert.equal(clock.cancelled.length, 1);
+  });
+
+  it('wakes canonical capture after commit and keeps polling as a bounded fallback', async () => {
+    const clock = scheduler();
+    const calls = [];
+    const listenerCalls = [];
+    let notify;
+    let connected;
+    const worker = createRobinhoodHolderLiveWorker({
+      ...clock,
+      listenerFactory: (input) => {
+        notify = input.onNotification;
+        connected = input.onConnected;
+        return {
+          start: async () => listenerCalls.push(['start', input.channel]),
+          stop: async () => listenerCalls.push(['stop']),
+          getStatus: () => ({ running: true, listening: true }),
+        };
+      },
+      runtimeFactory: async () => ({
+        sourceMode: 'canonical_journal', providerName: 'canonical_journal',
+        runner: { captureOnce: async (input) => {
+          calls.push(input);
+          return completed({ captureStatus: 'idle' });
+        } },
+      }),
+    });
+
+    assert.equal(DEFAULT_FALLBACK_INTERVAL_MS, 5000);
+    worker.start({
+      enabled: true, sourceMode: 'canonical_journal',
+      admittedAfter: '2026-08-10T00:00:00Z',
+    });
+    await clock.scheduled[0].callback();
+    assert.deepEqual(listenerCalls[0], ['start', 'robinhood_chain_capture']);
+    assert.equal(calls[0].confirmations, 0);
+    assert.equal(clock.scheduled.at(-1).delayMs, 5000);
+    assert.equal(worker.getStatus().totalFallbackRuns, 0);
+
+    notify();
+    assert.equal(clock.scheduled.at(-1).delayMs, 0);
+    await clock.scheduled.at(-1).callback();
+    assert.equal(calls[1].confirmations, 0);
+    assert.equal(worker.getStatus().totalWakeups, 1);
+    assert.equal(worker.getStatus().captureListener.listening, true);
+    await clock.scheduled.at(-1).callback();
+    assert.equal(worker.getStatus().totalFallbackRuns, 1);
+
+    connected({ isReconnect: true });
+    assert.equal(clock.scheduled.at(-1).delayMs, 0);
+    assert.equal(worker.getStatus().totalWakeups, 2);
+    await worker.stop();
+    assert.deepEqual(listenerCalls.at(-1), ['stop']);
+  });
+
+  it('coalesces notifications received while canonical capture is in flight', async () => {
+    const clock = scheduler();
+    let notify;
+    let finish;
+    const capture = new Promise((resolve) => { finish = resolve; });
+    const worker = createRobinhoodHolderLiveWorker({
+      ...clock,
+      listenerFactory: (input) => {
+        notify = input.onNotification;
+        return { start: async () => {}, stop: async () => {} };
+      },
+      runtimeFactory: async () => ({
+        sourceMode: 'canonical_journal', providerName: 'canonical_journal',
+        runner: { captureOnce: () => capture },
+      }),
+    });
+
+    worker.start({
+      enabled: true, sourceMode: 'canonical_journal',
+      admittedAfter: '2026-08-10T00:00:00Z',
+    });
+    const active = clock.scheduled[0].callback();
+    await Promise.resolve();
+    notify();
+    notify();
+    assert.equal(clock.scheduled.length, 1);
+    finish(completed());
+    await active;
+    assert.equal(clock.scheduled.length, 2);
+    assert.equal(clock.scheduled[1].delayMs, 0);
+    assert.equal(worker.getStatus().totalWakeups, 2);
+    await worker.stop();
   });
 
   it('backs off transient failures and resets after recovery', async () => {

@@ -46,6 +46,12 @@ function withEnv(overrides, fn) {
 }
 
 describe('runtime worker groups config', () => {
+  it('uses five-second polling only as the holder canonical capture fallback', () => {
+    withEnv({ ROBINHOOD_HOLDER_LIVE_INTERVAL_MS: undefined }, (config) => {
+      assert.equal(config.robinhoodHolderLiveWorker.intervalMs, 5000);
+    });
+  });
+
   it('defaults migrated Robinhood live sources to the canonical journal', () => {
     const sourceEnv = {
       ROBINHOOD_HOLDER_LIVE_SOURCE: '',

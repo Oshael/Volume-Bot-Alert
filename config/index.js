@@ -1447,7 +1447,7 @@ module.exports = {
     enabled: robinhoodHolderLiveEnabled,
     sourceMode: normalizeRobinhoodLiveSource(process.env.ROBINHOOD_HOLDER_LIVE_SOURCE),
     intervalMs: parseIntegerInRange(
-      process.env.ROBINHOOD_HOLDER_LIVE_INTERVAL_MS, 500, 100, 300_000
+      process.env.ROBINHOOD_HOLDER_LIVE_INTERVAL_MS, 5000, 100, 300_000
     ),
     maxErrorBackoffMs: parseIntegerInRange(
       process.env.ROBINHOOD_HOLDER_LIVE_MAX_ERROR_BACKOFF_MS, 30_000, 1000, 300_000

@@ -2393,7 +2393,15 @@ order gate do token são limpos ao fechar ou trocar a visualização.
 O grupo `robinhood-holders` contém workers independentes de captura live, apply
 do journal live, backfill de tokens novos, backfill frio, reconciliação, snapshot
 e poda do journal. Captura/handoff usam a lease `robinhood-holder-live-worker`;
-o apply usa `robinhood-holder-live-apply-worker`, intervalo default de 100ms e o
+quando a fonte é `canonical_journal`, a captura escuta o canal transacional
+`robinhood_chain_capture`, coalesce notificações concorrentes e processa até o
+checkpoint já commitado sem adicionar as 12 confirmações próprias do reader RPC.
+`ROBINHOOD_HOLDER_LIVE_INTERVAL_MS` passa a ser somente a recuperação de
+notificação perdida, com default de 5s. O modo de rollback explícito `rpc`
+preserva suas confirmações configuradas e não abre esse listener. A telemetria da
+lease expõe `totalWakeups`, `totalFallbackRuns`, `lastWakeAt`, `listenerError` e
+`captureListener`.
+O apply usa `robinhood-holder-live-apply-worker`, intervalo default de 100ms e o
 budget por lane `ROBINHOOD_HOLDER_LIVE_MAX_APPLY_EVENTS`. Por default há uma lane,
 preservando o comportamento serial. `ROBINHOOD_HOLDER_LIVE_APPLY_CONCURRENCY`
 habilita de 1 a 8 lanes; cada uma recebe um shard determinístico e disjunto por
