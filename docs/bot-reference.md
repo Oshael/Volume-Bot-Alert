@@ -1489,6 +1489,28 @@ Mount points confirmados em `src/server.js`:
 Rotas sensíveis usam autenticação, rate limit e/ou checagem de origem. Não
 publique o Node diretamente; o tráfego deve entrar pelo Nginx.
 
+### 8.1 Token views
+
+`GET /api/dashboard/token-views/:view` é a fronteira autenticada e chain-aware das novas
+views de Monitored. As IDs reservadas são `trending`, `migrated`, `pre_bonded` e
+`watchlist`; neste estágio somente `trending` está implementada. As demais respondem
+`501`, em vez de simularem uma view pronta sem resultados. O contrato aceita apenas
+Robinhood, usa Robinhood como padrão e limita a resposta a 40 tokens.
+
+Trending usa `scoreVersion=trending-v1`. O adapter lê um prefixo limitado aos 500 maiores
+volumes 24h e hidrata volume, price change, FDV, liquidez, cobertura e frescor pelos
+read-models canônicos Robinhood. O scorer exclui observações com mais de 15 minutos,
+cobertura insuficiente, FDV fora de `[US$30 mil, US$30 bilhões)`, volume 24h menor que
+US$1 e tokens bloqueados pelo usuário ou pelo admin. Tokens com menos de 24h podem usar
+cobertura parcial apenas quando o cursor comprova cobertura contínua desde a criação.
+
+O score combina os percentis globais do pool selecionado: volume 24h `55%`, aceleração
+do volume 5m `20%`, price change 1h limitado a `150%` com peso `20%` e price change 6h
+limitado a `300%` com peso `5%`. A aceleração usa teto `12x`. A resposta inclui o score,
+os quatro componentes, posição, versão, `asOf`, readiness por chain e quantidade de
+candidatos considerados. Estados `syncing` e `unavailable` são explícitos e não consultam
+o adapter até a cobertura de Monitored estar pronta.
+
 ## 9. Autenticação, sessão e acesso
 
 O sistema possui:

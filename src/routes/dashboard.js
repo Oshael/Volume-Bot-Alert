@@ -14,6 +14,7 @@ const uiMeteoraSummaryCache = require('../services/ui-meteora-summary-cache');
 const alertTickerPeers = require('../services/alert-ticker-peers');
 const dashboardChainReader = require('../services/dashboard-chain-reader');
 const dashboardRadarReader = require('../services/dashboard-radar-reader');
+const dashboardTokenViewReader = require('../services/dashboard-token-view-reader');
 const marketTickerService = require('../services/market-ticker-service');
 const {
   buildDashboardMonitoredPayload,
@@ -1118,6 +1119,24 @@ router.get('/monitored', dashboardLimiter, async (req, res) => {
   } catch (err) {
     console.error('GET /dashboard/monitored error:', err.message);
     res.status(500).json({ error: 'Failed to load monitored dashboard' });
+  }
+});
+
+router.get('/token-views/:view', dashboardLimiter, async (req, res) => {
+  try {
+    const payload = await dashboardTokenViewReader.listTokenView({
+      view: req.params.view,
+      chains: req.query?.chains,
+      limit: req.query?.limit,
+      asOf: req.query?.asOf,
+      userId: req.user.id,
+    });
+    return res.json(payload);
+  } catch (err) {
+    if (err instanceof RangeError) return res.status(400).json({ error: err.message });
+    if (err.status === 501) return res.status(501).json({ error: err.message });
+    console.error('GET /dashboard/token-views/:view error:', err.message);
+    return res.status(500).json({ error: 'Failed to load token view' });
   }
 });
 

@@ -23,6 +23,7 @@ const userPinnedMonitoredToken = require('../src/models/user-pinned-monitored-to
 const backendAlertFeed = require('../src/services/backend-alert-feed');
 const dashboardChainReader = require('../src/services/dashboard-chain-reader');
 const dashboardRadarReader = require('../src/services/dashboard-radar-reader');
+const dashboardTokenViewReader = require('../src/services/dashboard-token-view-reader');
 const dashboardRoutes = require('../src/routes/dashboard');
 const uiMeteoraSummaryCache = require('../src/services/ui-meteora-summary-cache');
 const workspaceChainReadiness = require('../src/services/workspace-chain-readiness');
@@ -829,6 +830,34 @@ describe('Dashboard routes', () => {
 
     assert.equal(res.status, 400);
     assert.equal(res.body.error, 'limit must be between 1 and 20');
+  });
+
+  it('exposes the Robinhood Trending token-view contract', async () => {
+    const original = dashboardTokenViewReader.listTokenView;
+    let captured;
+    dashboardTokenViewReader.listTokenView = async (input) => {
+      captured = input;
+      return { view: 'trending', chains: ['robinhood'], limit: 40,
+        status: 'ready', count: 0, tokens: [] };
+    };
+    try {
+      const response = await request(app)
+        .get('/api/dashboard/token-views/trending?chains=robinhood&limit=40')
+        .set('Authorization', `Bearer ${token}`);
+      assert.equal(response.status, 200);
+      assert.equal(response.body.view, 'trending');
+      assert.deepEqual(captured.chains, 'robinhood');
+      assert.equal(captured.limit, '40');
+      assert.equal(captured.userId, userId);
+    } finally {
+      dashboardTokenViewReader.listTokenView = original;
+    }
+
+    const invalid = await request(app)
+      .get('/api/dashboard/token-views/trending?limit=41')
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(invalid.status, 400);
+    assert.equal(invalid.body.error, 'limit must be between 1 and 40');
   });
 
   it('returns enriched backend alert events', async () => {
