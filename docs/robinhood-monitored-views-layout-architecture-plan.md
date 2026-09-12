@@ -433,8 +433,13 @@ This product slice is split into bounded implementation cuts:
   after verifying that no live surface still emits their selectors.
 - **4C2c — residual folder styling:** delete the folder-scoped CSS left unreachable by 4C2a and confirm that neutral
   folder data/routes remain untouched.
-- **4C3 — canonical cleanup:** rename remaining user-added-token domain symbols, logs and tests, then confirm that unrelated
-  meanings of `manual` and the dormant neutral folder contracts were not changed.
+- **4C3a — frontend token type:** remove the deprecated `ManualTokenEntry` alias and use `WatchlistTokenEntry` directly.
+- **4C3b — frontend runtime vocabulary:** rename remaining user-added-token state, capability, copy and log symbols while
+  retaining only explicit compatibility reads at persistence/API boundaries.
+- **4C3c — backend runtime vocabulary:** rename user-added-token model/catalog symbols, comments and logs without changing
+  neutral tables, folder routes or legacy source recognition.
+- **4C3d — canonical verification:** update affected tests and run a final scoped search proving that unrelated meanings of
+  `manual` and the dormant neutral folder contracts were not changed.
 
 Preserve neutral tables and config/folder routes. Folder data stays dormant and is not migrated or deleted.
 

@@ -1,4 +1,4 @@
-import { createAppState, getAlertFeedAlerts, getWatchlistTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, getTrackedToken, isMockTradingEnabled, type AddressItem, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type CustomAlertMetric, type CustomAlertPreviewInput, type CustomAlertRuleEntry, type LinkedIdentityEntry, type ManualTokenEntry, type ManualTokenFolderEntry, type ManualTokenFolderItemEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MockTradingWalletEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type ProfileAuthPanel, type PumpTokenEntry, type SparklineRangePreset, type TokenSparklineCandleEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
+import { createAppState, getAlertFeedAlerts, getWatchlistTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, getTrackedToken, isMockTradingEnabled, type AddressItem, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type CustomAlertMetric, type CustomAlertPreviewInput, type CustomAlertRuleEntry, type LinkedIdentityEntry, type WatchlistTokenEntry, type ManualTokenFolderEntry, type ManualTokenFolderItemEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MockTradingWalletEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type ProfileAuthPanel, type PumpTokenEntry, type SparklineRangePreset, type TokenSparklineCandleEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
 import { resolveManualTableRows, resolveMonitoredTableRows } from '../utils/token-table';
 import {
   createLegacyCompatibleTokenIdentity,
@@ -596,7 +596,7 @@ function addTrackedRealtimeDelta(
   return current != null && delta != null ? current + delta : current ?? null;
 }
 
-function getRealtimeActivityState(existing?: ManualTokenEntry | null): RealtimeActivityState {
+function getRealtimeActivityState(existing?: WatchlistTokenEntry | null): RealtimeActivityState {
   return {
     bucketTs: existing?._liveActivityBucketTs,
     volumeUsd: existing?._liveActivityVolumeUsd,
@@ -610,8 +610,8 @@ function getRealtimeActivityState(existing?: ManualTokenEntry | null): RealtimeA
 }
 
 function applyCanonicalVolume5mFields(
-  fields: Partial<ManualTokenEntry>,
-  existing: ManualTokenEntry,
+  fields: Partial<WatchlistTokenEntry>,
+  existing: WatchlistTokenEntry,
   canonical: NonNullable<NonNullable<RealtimeTokenMarketPatch['activity']>['canonicalVolume5m']>,
 ) {
   if (canonical.currentVolumeUsd != null) fields.volume5m = canonical.currentVolumeUsd;
@@ -624,10 +624,10 @@ function applyCanonicalVolume5mFields(
 }
 
 function buildRealtimeActivityFields(
-  existing: ManualTokenEntry,
+  existing: WatchlistTokenEntry,
   activity: RealtimeTokenMarketPatch['activity'],
-): Partial<ManualTokenEntry> {
-  const fields: Partial<ManualTokenEntry> = {};
+): Partial<WatchlistTokenEntry> {
+  const fields: Partial<WatchlistTokenEntry> = {};
   for (const key of TRACKED_ROLLING_VOLUME_FIELDS) {
     fields[key] = addTrackedRealtimeDelta(existing[key], activity?.volumeDeltaUsd);
   }
@@ -643,10 +643,10 @@ function buildRealtimeActivityFields(
 }
 
 function buildRealtimeMarketFields(
-  existing: ManualTokenEntry,
+  existing: WatchlistTokenEntry,
   patch: RealtimeTokenMarketPatch,
-): Partial<ManualTokenEntry> {
-  const fields: Partial<ManualTokenEntry> = {
+): Partial<WatchlistTokenEntry> {
+  const fields: Partial<WatchlistTokenEntry> = {
     priceUsd: patch.priceUsd ?? existing.priceUsd ?? null,
     fdv: patch.valuationType === 'fdv' ? patch.fdv : existing.fdv ?? null,
     mcap: patch.valuationType === 'market-cap' ? patch.mcap : existing.mcap ?? null,
@@ -662,10 +662,10 @@ function buildRealtimeMarketFields(
 }
 
 function buildMergedLiquidityFields(
-  existing: ManualTokenEntry | undefined,
+  existing: WatchlistTokenEntry | undefined,
   dashboard: DashboardMonitoredToken | undefined,
-  base: ManualTokenEntry,
-): Partial<ManualTokenEntry> {
+  base: WatchlistTokenEntry,
+): Partial<WatchlistTokenEntry> {
   const fallback = dashboard || existing || base;
   const selected = newestLiquidityProjection<LiquidityProjectionTarget>(
     fallback, dashboard || fallback, existing || fallback, base,
@@ -682,8 +682,8 @@ function buildMergedLiquidityFields(
 }
 
 function overlayLiveActivityOnDashboardSnapshot(
-  fields: Partial<ManualTokenEntry>,
-  existing: ManualTokenEntry | undefined,
+  fields: Partial<WatchlistTokenEntry>,
+  existing: WatchlistTokenEntry | undefined,
   dashboard: DashboardMonitoredToken | undefined,
   applyDashboardFields: boolean,
 ) {
@@ -1903,7 +1903,7 @@ export function createAppController(): AppController {
     return true;
   }
 
-  function hasCriticalColdFieldGap(token: ManualTokenEntry | null | undefined) {
+  function hasCriticalColdFieldGap(token: WatchlistTokenEntry | null | undefined) {
     if (!token) {
       return true;
     }
@@ -1926,7 +1926,7 @@ export function createAppController(): AppController {
     }
   }
 
-  function getTokenIdentityKey(token: Pick<ManualTokenEntry, 'address' | 'chain'>) {
+  function getTokenIdentityKey(token: Pick<WatchlistTokenEntry, 'address' | 'chain'>) {
     return getTrackedTokenKey(token.address, token.chain || 'solana');
   }
 
@@ -1948,7 +1948,7 @@ export function createAppController(): AppController {
     return getTrackedToken(state, address, chain) ?? undefined;
   }
 
-  function setTrackedToken(nextToken: ManualTokenEntry) {
+  function setTrackedToken(nextToken: WatchlistTokenEntry) {
     const identity = createLegacyCompatibleTokenIdentity(nextToken.chain, nextToken.address);
     state.data.trackedTokensByIdentity[identity.key] = {
       ...nextToken,
@@ -1984,7 +1984,7 @@ export function createAppController(): AppController {
     delete state.data.trackedTokensByIdentity[getTrackedTokenKey(address, chain)];
   }
 
-  function replaceTrackedTokenReferences(_address: string, nextToken: ManualTokenEntry) {
+  function replaceTrackedTokenReferences(_address: string, nextToken: WatchlistTokenEntry) {
     setTrackedToken(nextToken);
   }
 
@@ -2004,7 +2004,7 @@ export function createAppController(): AppController {
     }
   }
 
-  function areTrackedTokensEquivalent(existingItem: ManualTokenEntry | undefined, nextItem: ManualTokenEntry | undefined) {
+  function areTrackedTokensEquivalent(existingItem: WatchlistTokenEntry | undefined, nextItem: WatchlistTokenEntry | undefined) {
     if (!existingItem || !nextItem) {
       return false;
     }
@@ -2047,12 +2047,12 @@ export function createAppController(): AppController {
     return Number.isFinite(parsed) ? parsed : null;
   }
 
-  function getTrackedFreshnessMs(item: ManualTokenEntry | DashboardMonitoredToken | undefined) {
+  function getTrackedFreshnessMs(item: WatchlistTokenEntry | DashboardMonitoredToken | undefined) {
     return item ? resolveWorkspaceMarketSnapshotMs(item) : null;
   }
 
   function shouldApplyTrackedMarketFields(
-    existingItem: ManualTokenEntry | undefined,
+    existingItem: WatchlistTokenEntry | undefined,
     dashboardItem: DashboardMonitoredToken | undefined,
   ) {
     if (!dashboardItem) {
@@ -2096,7 +2096,7 @@ export function createAppController(): AppController {
   }
 
   function shouldApplyTrackedColdFields(
-    existingItem: ManualTokenEntry | undefined,
+    existingItem: WatchlistTokenEntry | undefined,
     dashboardItem: DashboardMonitoredToken | undefined,
     coldRefreshDue: boolean,
   ) {
@@ -2115,13 +2115,13 @@ export function createAppController(): AppController {
   }
 
   function buildMergedTrackedColdFields(
-    existingItem: ManualTokenEntry | undefined,
+    existingItem: WatchlistTokenEntry | undefined,
     dashboardItem: DashboardMonitoredToken | undefined,
-    base: ManualTokenEntry,
+    base: WatchlistTokenEntry,
     coldRefreshDue: boolean,
   ) {
     const shouldApplyColdFields = shouldApplyTrackedColdFields(existingItem, dashboardItem, coldRefreshDue);
-    const existing: Partial<ManualTokenEntry> = existingItem || {};
+    const existing: Partial<WatchlistTokenEntry> = existingItem || {};
     const dashboard: Partial<DashboardMonitoredToken> = dashboardItem || {};
 
     return {
@@ -2151,10 +2151,10 @@ export function createAppController(): AppController {
   }
 
   function buildMergedHolderFields(
-    existingItem: ManualTokenEntry | undefined,
+    existingItem: WatchlistTokenEntry | undefined,
     dashboardItem: DashboardMonitoredToken | undefined,
-    base: ManualTokenEntry,
-  ): Partial<ManualTokenEntry> {
+    base: WatchlistTokenEntry,
+  ): Partial<WatchlistTokenEntry> {
     const candidates = [dashboardItem, existingItem, base]
       .filter((item) => Number.isSafeInteger(item?.holderCount) && Number(item?.holderCount) >= 0)
       .sort((left, right) => (
@@ -2186,11 +2186,11 @@ export function createAppController(): AppController {
   }
 
   function buildMergedCanonicalVolume5mFields(
-    existing: ManualTokenEntry | undefined,
+    existing: WatchlistTokenEntry | undefined,
     dashboard: DashboardMonitoredToken | undefined,
-    base: ManualTokenEntry,
+    base: WatchlistTokenEntry,
     applyDashboard: boolean,
-  ): Partial<ManualTokenEntry> {
+  ): Partial<WatchlistTokenEntry> {
     return {
       prevVolume5mCanonical: canonicalSnapshotValue(
         existing?.prevVolume5mCanonical, dashboard?.prevVolume5mCanonical,
@@ -2212,11 +2212,11 @@ export function createAppController(): AppController {
   }
 
   function buildMergedTrackedMarketFields(
-    existingItem: ManualTokenEntry | undefined,
+    existingItem: WatchlistTokenEntry | undefined,
     dashboardItem: DashboardMonitoredToken | undefined,
-    base: ManualTokenEntry,
+    base: WatchlistTokenEntry,
   ) {
-    const nextFields: Partial<ManualTokenEntry> = {};
+    const nextFields: Partial<WatchlistTokenEntry> = {};
     const shouldApplyMarketFields = shouldApplyTrackedMarketFields(existingItem, dashboardItem);
     const shouldApplyValuationFields = shouldApplyDashboardValuation(
       existingItem?._liveMarketObservedAt,
@@ -2285,15 +2285,15 @@ export function createAppController(): AppController {
   }
 
   function buildMergedTrackedAlertFields(
-    existingItem: ManualTokenEntry | undefined,
-    base: ManualTokenEntry,
+    existingItem: WatchlistTokenEntry | undefined,
+    base: WatchlistTokenEntry,
   ) {
-    const nextFields: Partial<ManualTokenEntry> = {};
+    const nextFields: Partial<WatchlistTokenEntry> = {};
 
     for (const key of TRACKED_ALERT_PRESERVED_KEYS) {
       const value = existingItem?.[key] ?? base[key];
       if (value !== undefined) {
-        (nextFields as Record<typeof key, ManualTokenEntry[typeof key]>)[key] = value as ManualTokenEntry[typeof key];
+        (nextFields as Record<typeof key, WatchlistTokenEntry[typeof key]>)[key] = value as WatchlistTokenEntry[typeof key];
       }
     }
 
@@ -2304,7 +2304,7 @@ export function createAppController(): AppController {
     return nextFields;
   }
 
-  function applyPersistedFrontendAlertFlags(nextTrackedStore: Record<string, ManualTokenEntry>) {
+  function applyPersistedFrontendAlertFlags(nextTrackedStore: Record<string, WatchlistTokenEntry>) {
     for (const alert of state.data.alerts) {
       const token = nextTrackedStore[getTrackedTokenKey(alert.address, alert.chain)];
       if (!token) {
@@ -2335,11 +2335,11 @@ export function createAppController(): AppController {
   }
 
   function mergeTrackedDashboardFields(input: {
-    existingItem: ManualTokenEntry | undefined;
+    existingItem: WatchlistTokenEntry | undefined;
     dashboardItem: DashboardMonitoredToken | undefined;
-    base: ManualTokenEntry;
+    base: WatchlistTokenEntry;
     coldRefreshDue: boolean;
-  }): ManualTokenEntry {
+  }): WatchlistTokenEntry {
     const { existingItem, dashboardItem, base, coldRefreshDue } = input;
 
     return {
@@ -2353,18 +2353,18 @@ export function createAppController(): AppController {
   }
 
   function selectMergedTrackedToken(
-    existingItem: ManualTokenEntry | undefined,
-    mergedItem: ManualTokenEntry,
+    existingItem: WatchlistTokenEntry | undefined,
+    mergedItem: WatchlistTokenEntry,
   ) {
     return areTrackedTokensEquivalent(existingItem, mergedItem)
-      ? existingItem as ManualTokenEntry
+      ? existingItem as WatchlistTokenEntry
       : mergedItem;
   }
 
   function commitTrackedStateRebuild(input: {
-    nextTrackedStore: Record<string, ManualTokenEntry>;
-    manualTokens: ManualTokenEntry[];
-    monitoredMap: Map<string, ManualTokenEntry>;
+    nextTrackedStore: Record<string, WatchlistTokenEntry>;
+    manualTokens: WatchlistTokenEntry[];
+    monitoredMap: Map<string, WatchlistTokenEntry>;
     pinnedIdentities: string[];
     alertCandidates: Set<string>;
     coldRefreshDue: boolean;
@@ -2561,7 +2561,7 @@ export function createAppController(): AppController {
     return Math.round(Number(value) * factor) / factor;
   }
 
-  function summarizeDebugTokenMetrics(item: Partial<ManualTokenEntry & DashboardMonitoredToken>) {
+  function summarizeDebugTokenMetrics(item: Partial<WatchlistTokenEntry & DashboardMonitoredToken>) {
     return {
       mcap: toDebugNullable(item.mcap),
       vol1h: toDebugNullable(item.volume1h),
@@ -2593,7 +2593,7 @@ export function createAppController(): AppController {
 
   function summarizeCompactHistoryToken(
     address: string,
-    item?: Partial<ManualTokenEntry & DashboardMonitoredToken>,
+    item?: Partial<WatchlistTokenEntry & DashboardMonitoredToken>,
     rank?: number,
   ) {
     return {
@@ -4759,7 +4759,7 @@ export function createAppController(): AppController {
     return isAlertKindEnabled(entry.kind, entry);
   }
 
-  function isCrossAlertBlocked(token: ManualTokenEntry, now: number) {
+  function isCrossAlertBlocked(token: WatchlistTokenEntry, now: number) {
     return Boolean(token.lastAlertAt && now - token.lastAlertAt < CROSS_ALERT_BLOCK_MS);
   }
 
@@ -5338,7 +5338,7 @@ export function createAppController(): AppController {
     refreshPumpPanelCounts();
   }
 
-  function isVisibleMonitoredToken(item: ManualTokenEntry) {
+  function isVisibleMonitoredToken(item: WatchlistTokenEntry) {
     if (item._userManual) {
       return true;
     }
@@ -6018,7 +6018,7 @@ export function createAppController(): AppController {
   }
 
   function isRecentEligible(
-    token: ManualTokenEntry,
+    token: WatchlistTokenEntry,
     context: ReturnType<typeof getRoutedEligibilityContext>,
     options: { preserveWithoutMcap?: boolean } = {},
   ) {
@@ -6043,7 +6043,7 @@ export function createAppController(): AppController {
   }
 
   function isOldWeekEligible(
-    token: ManualTokenEntry,
+    token: WatchlistTokenEntry,
     context: ReturnType<typeof getRoutedEligibilityContext>,
     options: { preserveWithoutMcap?: boolean } = {},
   ) {
@@ -6112,7 +6112,7 @@ export function createAppController(): AppController {
   }
 
   function deriveRoutedTokenState(
-    item: ManualTokenEntry,
+    item: WatchlistTokenEntry,
     context: ReturnType<typeof getRoutedEligibilityContext>,
   ) {
     const wasRecent = Boolean(item._isRecentRouted);
@@ -6383,7 +6383,7 @@ export function createAppController(): AppController {
     }
   }
 
-  function passesAlertFilters(token: ManualTokenEntry) {
+  function passesAlertFilters(token: WatchlistTokenEntry) {
     const minVol = getConfigNumber('min-vol', 10000);
     const minMcap = getConfigNumber('min-mcap', 30000);
     const maxMcap = getConfigNumber('max-mcap', 0);
@@ -6927,7 +6927,7 @@ export function createAppController(): AppController {
     return value ?? null;
   }
 
-  function buildCustomAlertPreviewIdentity(chain: TokenChain, address: string, tracked: ManualTokenEntry | null) {
+  function buildCustomAlertPreviewIdentity(chain: TokenChain, address: string, tracked: WatchlistTokenEntry | null) {
     const symbol = firstCustomPreviewText(tracked?.symbol, tracked?.label, address.slice(0, 8));
     return {
       chain,
@@ -6943,7 +6943,7 @@ export function createAppController(): AppController {
     };
   }
 
-  function buildCustomAlertPreviewMetrics(tracked: ManualTokenEntry | null) {
+  function buildCustomAlertPreviewMetrics(tracked: WatchlistTokenEntry | null) {
     return {
       tokenCreatedAt: tracked?.createdAt ?? tracked?.catalogFirstSeenAt ?? null,
       priceChange1h: customPreviewValue(tracked?.priceChange1h),
@@ -7221,12 +7221,12 @@ export function createAppController(): AppController {
     }
   }
 
-  function getAlertSymbol(token: ManualTokenEntry) {
+  function getAlertSymbol(token: WatchlistTokenEntry) {
     return token.symbol || token.label || token.address.slice(0, 8);
   }
 
   function buildTrackedAlertEntry(
-    token: ManualTokenEntry,
+    token: WatchlistTokenEntry,
     now: number,
     symbol: string,
     kind: AlertEntry['kind'],
@@ -7263,7 +7263,7 @@ export function createAppController(): AppController {
     };
   }
 
-  function shouldFireHvncAlert(token: ManualTokenEntry, ageMs: number, hvncMinVol: number) {
+  function shouldFireHvncAlert(token: WatchlistTokenEntry, ageMs: number, hvncMinVol: number) {
     return isAlertKindEnabled('hvnc')
       && !token._hvncFired
       && hvncMinVol > 0
@@ -7272,7 +7272,7 @@ export function createAppController(): AppController {
   }
 
   function shouldFireMeteoraSurgeAlert(
-    token: ManualTokenEntry,
+    token: WatchlistTokenEntry,
     meteoraEntry: MeteoraEntry | undefined,
     meteoraCurrentTvl: number,
     meteoraBaselineTvl1h: number | null,
@@ -7288,7 +7288,7 @@ export function createAppController(): AppController {
       && (meteoraEntry?.change1h ?? 0) >= meteoraAlertThreshold1h;
   }
 
-  function maybeFireSpecialAlerts(token: ManualTokenEntry) {
+  function maybeFireSpecialAlerts(token: WatchlistTokenEntry) {
     if (isBlocked(token.address, token.chain || 'solana')) {
       return;
     }
@@ -7325,12 +7325,12 @@ export function createAppController(): AppController {
     }
   }
 
-  function hasLocalAlertCooldown(token: ManualTokenEntry, now: number) {
+  function hasLocalAlertCooldown(token: WatchlistTokenEntry, now: number) {
     return Boolean(token.lastAlertAt && now - token.lastAlertAt < STANDARD_ALERT_COOLDOWN_MS);
   }
 
   function evaluateVolumeLocalAlert(
-    token: ManualTokenEntry,
+    token: WatchlistTokenEntry,
     now: number,
     symbol: string,
     threshold: number,
@@ -7362,7 +7362,7 @@ export function createAppController(): AppController {
   }
 
   function evaluateMcapLocalAlert(
-    token: ManualTokenEntry,
+    token: WatchlistTokenEntry,
     now: number,
     symbol: string,
     mcapThreshold: number,
@@ -7400,7 +7400,7 @@ export function createAppController(): AppController {
     };
   }
 
-  function applyLocalAlertState(token: ManualTokenEntry, alert: AlertEntry, firedKind: 'vol' | 'mcap', now: number) {
+  function applyLocalAlertState(token: WatchlistTokenEntry, alert: AlertEntry, firedKind: 'vol' | 'mcap', now: number) {
     token.lastAlertAt = now;
     if (firedKind === 'vol') {
       token._volAlertAboveThreshold = true;
@@ -7415,7 +7415,7 @@ export function createAppController(): AppController {
   }
 
   function resolveLocalAlertCandidate(
-    token: ManualTokenEntry,
+    token: WatchlistTokenEntry,
     now: number,
     symbol: string,
     threshold: number,
@@ -7441,7 +7441,7 @@ export function createAppController(): AppController {
     return null;
   }
 
-  function maybeFireLocalAlert(token: ManualTokenEntry) {
+  function maybeFireLocalAlert(token: WatchlistTokenEntry) {
     if (isBlocked(token.address, token.chain || 'solana')) {
       return;
     }
@@ -7506,8 +7506,8 @@ export function createAppController(): AppController {
   function markPinnedTrackedToken(
     item: DashboardMonitoredToken,
     pinnedSortOrder: number | null,
-    nextTrackedStore: Record<string, ManualTokenEntry>,
-    monitoredMap: Map<string, ManualTokenEntry>,
+    nextTrackedStore: Record<string, WatchlistTokenEntry>,
+    monitoredMap: Map<string, WatchlistTokenEntry>,
   ) {
     const identityKey = getTrackedTokenKey(item.address, item.chain);
     const existingItem = nextTrackedStore[identityKey] || monitoredMap.get(identityKey);
@@ -7533,7 +7533,7 @@ export function createAppController(): AppController {
   function buildManualHolderFields(
     item: ConfigPayload['tokens'][number],
     chain: TokenChain,
-  ): Partial<ManualTokenEntry> {
+  ): Partial<WatchlistTokenEntry> {
     if (chain !== 'robinhood') {
       return { holderCount: null, holderObservedAt: null, holderCheckedAt: null,
         holderFreshness: 'unavailable' };
@@ -7546,7 +7546,7 @@ export function createAppController(): AppController {
     };
   }
 
-  function buildManualConfigTokenBase(item: ConfigPayload['tokens'][number], existingItem?: ManualTokenEntry) {
+  function buildManualConfigTokenBase(item: ConfigPayload['tokens'][number], existingItem?: WatchlistTokenEntry) {
     const chain = resolveAppTokenChain(item.chain);
     return {
       ...existingItem,
@@ -7592,8 +7592,8 @@ export function createAppController(): AppController {
     payload: ConfigPayload;
     blockedSet: Set<string>;
     dashboardByIdentity: Map<string, DashboardMonitoredToken>;
-    existing: Map<string, ManualTokenEntry>;
-    nextTrackedStore: Record<string, ManualTokenEntry>;
+    existing: Map<string, WatchlistTokenEntry>;
+    nextTrackedStore: Record<string, WatchlistTokenEntry>;
     alertCandidates: Set<string>;
     coldRefreshDue: boolean;
   }) {
@@ -7620,9 +7620,9 @@ export function createAppController(): AppController {
 
   function applyPinnedDashboardItems(input: {
     pinnedDashboardItems: DashboardMonitoredToken[];
-    existing: Map<string, ManualTokenEntry>;
-    nextTrackedStore: Record<string, ManualTokenEntry>;
-    monitoredMap: Map<string, ManualTokenEntry>;
+    existing: Map<string, WatchlistTokenEntry>;
+    nextTrackedStore: Record<string, WatchlistTokenEntry>;
+    monitoredMap: Map<string, WatchlistTokenEntry>;
     alertCandidates: Set<string>;
     coldRefreshDue: boolean;
   }) {
@@ -7664,9 +7664,9 @@ export function createAppController(): AppController {
   function applyRegularDashboardItems(input: {
     monitoredDashboardTokens: DashboardMonitoredToken[];
     blockedSet: Set<string>;
-    existing: Map<string, ManualTokenEntry>;
-    nextTrackedStore: Record<string, ManualTokenEntry>;
-    monitoredMap: Map<string, ManualTokenEntry>;
+    existing: Map<string, WatchlistTokenEntry>;
+    nextTrackedStore: Record<string, WatchlistTokenEntry>;
+    monitoredMap: Map<string, WatchlistTokenEntry>;
     alertCandidates: Set<string>;
     coldRefreshDue: boolean;
   }) {
@@ -7726,7 +7726,7 @@ export function createAppController(): AppController {
       ...state.data.recentTokenIdentities,
       ...state.data.oldWeekTokenIdentities,
     ]);
-    const nextTrackedStore: Record<string, ManualTokenEntry> = Object.fromEntries(
+    const nextTrackedStore: Record<string, WatchlistTokenEntry> = Object.fromEntries(
       [...existing.entries()].filter(([identityKey]) => retainedIdentities.has(identityKey)),
     );
     const now = Date.now();
@@ -7745,7 +7745,7 @@ export function createAppController(): AppController {
       alertCandidates,
       coldRefreshDue,
     });
-    const monitoredMap = new Map<string, ManualTokenEntry>();
+    const monitoredMap = new Map<string, WatchlistTokenEntry>();
     for (const item of manualTokens) {
       monitoredMap.set(getTokenIdentityKey(item), item);
     }
@@ -8994,7 +8994,7 @@ export function createAppController(): AppController {
   function applyLiveLiquidityUpdate(payload: MarketLiquidityUpdateEvent) {
     const existing = getTrackedToken(state, payload.address, payload.chain);
     if (!existing) return false;
-    const next = applyLiquidityProjection(existing, payload) as ManualTokenEntry | null;
+    const next = applyLiquidityProjection(existing, payload) as WatchlistTokenEntry | null;
     if (!next) return false;
     setTrackedToken(next);
     state.runtime.monitoredRevision += 1;
@@ -9008,7 +9008,7 @@ export function createAppController(): AppController {
   function applyLiveHolderCountUpdate(payload: RobinhoodHolderCountEvent) {
     const existing = getTrackedToken(state, payload.address, payload.chain);
     if (!existing) return false;
-    const next = patchRobinhoodHolderCount(existing, payload) as ManualTokenEntry | null;
+    const next = patchRobinhoodHolderCount(existing, payload) as WatchlistTokenEntry | null;
     if (!next) return false;
     setTrackedToken(next);
     state.runtime.monitoredRevision += 1;
@@ -13014,7 +13014,7 @@ export function createAppController(): AppController {
     const existingTracked = getTrackedToken(state, address, chain)
       || getMonitoredTokens(state).find((item) => item.address === address && item.chain === chain)
       || getWatchlistTokens(state).find((item) => item.address === address && item.chain === chain);
-    const nextWatchlistDraft: ManualTokenEntry = {
+    const nextWatchlistDraft: WatchlistTokenEntry = {
       ...(existingTracked || {}),
       chain,
       address,
@@ -13024,7 +13024,7 @@ export function createAppController(): AppController {
     };
 
     return areTrackedTokensEquivalent(existingTracked, nextWatchlistDraft)
-      ? existingTracked as ManualTokenEntry
+      ? existingTracked as WatchlistTokenEntry
       : nextWatchlistDraft;
   }
 
@@ -13044,7 +13044,7 @@ export function createAppController(): AppController {
     };
   }
 
-  function applyOptimisticWatchlistToken(address: string, nextWatchlist: ManualTokenEntry) {
+  function applyOptimisticWatchlistToken(address: string, nextWatchlist: WatchlistTokenEntry) {
     const identityKey = getTrackedTokenKey(address, nextWatchlist.chain || 'solana');
     setTrackedToken(nextWatchlist);
     state.data.watchlistTokenIdentities = state.data.watchlistTokenIdentities.includes(identityKey)
@@ -13134,7 +13134,7 @@ export function createAppController(): AppController {
 
   function mergeHydratedManualToken(
     address: string,
-    currentTracked: ManualTokenEntry,
+    currentTracked: WatchlistTokenEntry,
     dashboardItem: DashboardMonitoredToken,
   ) {
     const meteoraItem = buildDashboardMeteoraBatchItem(dashboardItem);
@@ -13157,7 +13157,7 @@ export function createAppController(): AppController {
     return selectMergedTrackedToken(currentTracked, mergedItem);
   }
 
-  function applyHydratedManualToken(address: string, nextItem: ManualTokenEntry, currentTracked: ManualTokenEntry) {
+  function applyHydratedManualToken(address: string, nextItem: WatchlistTokenEntry, currentTracked: WatchlistTokenEntry) {
     if (nextItem === currentTracked) {
       return;
     }

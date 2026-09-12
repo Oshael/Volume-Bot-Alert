@@ -1,7 +1,7 @@
-import type { BucketSortCriterion, BucketSortMode, BucketSortWindow, ManualTokenEntry, MonitoredSortCriterion, MonitoredSortMode, MonitoredSortWindow } from '../state/app-state';
+import type { BucketSortCriterion, BucketSortMode, BucketSortWindow, WatchlistTokenEntry, MonitoredSortCriterion, MonitoredSortMode, MonitoredSortWindow } from '../state/app-state';
 import { buildTokenIdentityKey } from './token-chain';
 
-function getBucketMetric(item: ManualTokenEntry, mode: BucketSortMode, window: BucketSortWindow) {
+function getBucketMetric(item: WatchlistTokenEntry, mode: BucketSortMode, window: BucketSortWindow) {
   if (mode === 'age') return item.createdAt || 0;
   if (mode === 'mcap') return item.mcap || 0;
   if (mode === 'pchange') {
@@ -14,7 +14,7 @@ function getBucketMetric(item: ManualTokenEntry, mode: BucketSortMode, window: B
   return item.volume24h || 0;
 }
 
-function compareBucketCriterion(a: ManualTokenEntry, b: ManualTokenEntry, criterion: BucketSortCriterion) {
+function compareBucketCriterion(a: WatchlistTokenEntry, b: WatchlistTokenEntry, criterion: BucketSortCriterion) {
   const aMetric = getBucketMetric(a, criterion.mode, criterion.window);
   const bMetric = getBucketMetric(b, criterion.mode, criterion.window);
   if ((criterion.mode === 'age' && criterion.window === 'oldest') || (criterion.mode === 'mcap' && criterion.window === 'lowest')) {
@@ -23,7 +23,7 @@ function compareBucketCriterion(a: ManualTokenEntry, b: ManualTokenEntry, criter
   return bMetric - aMetric;
 }
 
-export function sortBucketTokens(tokens: ManualTokenEntry[], criteria: BucketSortCriterion[]) {
+export function sortBucketTokens(tokens: WatchlistTokenEntry[], criteria: BucketSortCriterion[]) {
   return [...tokens].sort((a, b) => {
     for (const criterion of criteria) {
       const delta = compareBucketCriterion(a, b, criterion);
@@ -36,7 +36,7 @@ export function sortBucketTokens(tokens: ManualTokenEntry[], criteria: BucketSor
 }
 
 export function filterManualTableTokens(
-  tokens: ManualTokenEntry[],
+  tokens: WatchlistTokenEntry[],
   options: {
     starredOnly?: boolean;
     starredTokens?: string[];
@@ -62,7 +62,7 @@ export function filterManualTableTokens(
 }
 
 export function resolveManualTableRows(
-  tokens: ManualTokenEntry[],
+  tokens: WatchlistTokenEntry[],
   options: {
     starredOnly?: boolean;
     starredTokens?: string[];
@@ -74,7 +74,7 @@ export function resolveManualTableRows(
   return sortBucketTokens(filtered, options.sortCriteria || [{ mode: 'mcap', window: 'highest' }]);
 }
 
-function getMonitoredMetric(item: ManualTokenEntry, mode: MonitoredSortMode, window: MonitoredSortWindow) {
+function getMonitoredMetric(item: WatchlistTokenEntry, mode: MonitoredSortMode, window: MonitoredSortWindow) {
   if (mode === 'age') return item.createdAt || 0;
   if (mode === 'mcap') return item.mcap || 0;
   if (window === '1h') return item.volume1h || 0;
@@ -83,7 +83,7 @@ function getMonitoredMetric(item: ManualTokenEntry, mode: MonitoredSortMode, win
   return item.volume5m || 0;
 }
 
-function compareMonitoredCriterion(a: ManualTokenEntry, b: ManualTokenEntry, criterion: MonitoredSortCriterion) {
+function compareMonitoredCriterion(a: WatchlistTokenEntry, b: WatchlistTokenEntry, criterion: MonitoredSortCriterion) {
   const aMetric = getMonitoredMetric(a, criterion.mode, criterion.window);
   const bMetric = getMonitoredMetric(b, criterion.mode, criterion.window);
   if ((criterion.mode === 'age' && criterion.window === 'oldest') || (criterion.mode === 'mcap' && criterion.window === 'lowest')) {
@@ -92,7 +92,7 @@ function compareMonitoredCriterion(a: ManualTokenEntry, b: ManualTokenEntry, cri
   return bMetric - aMetric;
 }
 
-function isVisibleMonitoredTableToken(item: ManualTokenEntry) {
+function isVisibleMonitoredTableToken(item: WatchlistTokenEntry) {
   if (item._userManual || item._isPinnedMonitored) {
     return true;
   }
@@ -101,7 +101,7 @@ function isVisibleMonitoredTableToken(item: ManualTokenEntry) {
   return !(mcap > 0 && mcap < 30000);
 }
 
-function matchesTokenSearch(item: ManualTokenEntry, searchQuery: string) {
+function matchesTokenSearch(item: WatchlistTokenEntry, searchQuery: string) {
   if (!searchQuery) {
     return true;
   }
@@ -112,7 +112,7 @@ function matchesTokenSearch(item: ManualTokenEntry, searchQuery: string) {
   return symbol.includes(searchQuery) || name.includes(searchQuery) || address.includes(searchQuery);
 }
 
-export function sortMonitoredTokens(tokens: ManualTokenEntry[], criteria: MonitoredSortCriterion[]) {
+export function sortMonitoredTokens(tokens: WatchlistTokenEntry[], criteria: MonitoredSortCriterion[]) {
   return [...tokens].sort((a, b) => {
     for (const criterion of criteria) {
       const delta = compareMonitoredCriterion(a, b, criterion);
@@ -125,7 +125,7 @@ export function sortMonitoredTokens(tokens: ManualTokenEntry[], criteria: Monito
 }
 
 export function resolveMonitoredTableRows(
-  tokens: ManualTokenEntry[],
+  tokens: WatchlistTokenEntry[],
   options: {
     searchQuery?: string;
     sortCriteria?: MonitoredSortCriterion[];

@@ -1,5 +1,5 @@
 import type { AppController } from '../../state/app-controller';
-import { getAlertFeedAlerts, getWatchlistTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, isChainSelectedForSurface, isTokenStarred, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type CustomAlertCapabilityEntry, type CustomAlertRuleEntry, type ManualTokenEntry, type TokenSparklineEntry } from '../../state/app-state';
+import { getAlertFeedAlerts, getWatchlistTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, isChainSelectedForSurface, isTokenStarred, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type CustomAlertCapabilityEntry, type CustomAlertRuleEntry, type WatchlistTokenEntry, type TokenSparklineEntry } from '../../state/app-state';
 import { getAlertImpactTier, getAlertToneClass, getAlertVisualClasses, isHvncAlert, type AlertImpactTier } from '../../services/alerts/impact-tier';
 import { formatClaimFee } from '../../services/alerts/claim-fee-format';
 import { bindCompactSearch, bindCopyButtons, bindSparklineHover, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTickerPeerMcapLabel, buildTradeTerminalMenuElement, buildXSearchUrl, fmtAge, fmtAgeFromDurationMs, fmtMoney, fmtPct, formatPriceUsd, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderSparklineFigure, renderTokenLaunchpadBadge, resolveTokenAgeMs } from './shared';
@@ -956,7 +956,7 @@ type CustomAlertTokenCandidate = {
 function addTrackedCustomAlertCandidate(
   state: AppState,
   candidates: Map<string, CustomAlertTokenCandidate>,
-  token: ManualTokenEntry,
+  token: WatchlistTokenEntry,
 ) {
   const chain = normalizeTokenChain(token.chain) || 'solana';
   if (state.data.customAlertCapabilities[chain]?.supported !== true) return;

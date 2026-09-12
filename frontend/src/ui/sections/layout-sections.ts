@@ -1,6 +1,6 @@
 import type { CandlestickData, IPriceScaleApi, Logical, TickMarkType, Time, UTCTimestamp, WhitespaceData } from 'lightweight-charts';
 import type { AppController } from '../../state/app-controller';
-import { getChainCapabilityNotice, getExpandedTokenSparkline, getMockTradingPositionView, getMockTradingSummaryView, getTokenSparkline, getTrackedToken, isMockTradingEnabled, isProfileAuthPanel, type AdminTokenReviewAlertEntry, type AppState, type LinkedIdentityEntry, type ManualTokenEntry, type ProfileAuthPanel, type TokenSparklineCandleEntry, type TokenSparklineEntry } from '../../state/app-state';
+import { getChainCapabilityNotice, getExpandedTokenSparkline, getMockTradingPositionView, getMockTradingSummaryView, getTokenSparkline, getTrackedToken, isMockTradingEnabled, isProfileAuthPanel, type AdminTokenReviewAlertEntry, type AppState, type LinkedIdentityEntry, type WatchlistTokenEntry, type ProfileAuthPanel, type TokenSparklineCandleEntry, type TokenSparklineEntry } from '../../state/app-state';
 import { fetchDashboardChartAlertEvents, type ChartAlertEvent } from '../../services/api/catalog';
 import { EXPANDED_CHART_ALERT_EVENT, mergeChartAlertHistory, readChartAlertHistory } from '../../services/charts/chart-alert-history';
 import { clusterChartAlertMarkers, prepareChartAlertCandlePoints, projectChartAlertMarkers, type ChartAlertCandlePoint, type ChartAlertMarkerCluster } from '../../services/charts/chart-alert-markers';
@@ -4262,7 +4262,7 @@ function renderExpandedSparklineModal(state: AppState, address: string) {
 function renderExpandedSparklineIdentity(
   symbol: string,
   imageUrl: string | null,
-  tickerPeers: ManualTokenEntry['tickerPeers'],
+  tickerPeers: WatchlistTokenEntry['tickerPeers'],
   chain: TokenChain,
 ) {
   const avatar = imageUrl

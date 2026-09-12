@@ -1,12 +1,12 @@
 import type { AppController } from '../../state/app-controller';
-import { getChainCapabilityNotice, getTokenSparkline, getTopPerformerTokens, type AppState, type ManualTokenEntry } from '../../state/app-state';
+import { getChainCapabilityNotice, getTokenSparkline, getTopPerformerTokens, type AppState, type WatchlistTokenEntry } from '../../state/app-state';
 import { bindCopyButtons, bindSparklineHover, bindTokenActions, bindTokenImagePreview, fmtAge, fmtMoney, fmtPct, renderSparklineFigure } from './shared';
 import { escapeHtml, sanitizeOptionalHttpUrl } from './html-safety';
 import { resolveTokenValuation } from '../../utils/token-valuation';
 import { buildTokenIdentityBadgeGroup } from '../token-chain-badge';
 import { buildTokenExplorerUrl, buildTokenIdentityKey, buildTokenMarketUrl } from '../../utils/token-chain';
 
-function renderTokenAvatar(token: ManualTokenEntry) {
+function renderTokenAvatar(token: WatchlistTokenEntry) {
   const symbol = String(token.symbol || token.label || token.address.slice(0, 4)).trim();
   const imageUrl = sanitizeOptionalHttpUrl(token.imageUrl);
   const safeAddress = escapeHtml(token.address);
@@ -23,7 +23,7 @@ const TOP_PERFORMERS_INITIAL_AUTO_SCROLL_MS = 1800;
 const TOP_PERFORMERS_AUTO_SCROLL_PX_PER_SEC = 32;
 const TOP_PERFORMERS_OLD_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
-function resolveTopPerformerPrimaryLink(chain: ManualTokenEntry['chain'], address: string, pairUrl: string | null | undefined) {
+function resolveTopPerformerPrimaryLink(chain: WatchlistTokenEntry['chain'], address: string, pairUrl: string | null | undefined) {
   const marketUrl = buildTokenMarketUrl(chain || 'solana', address, pairUrl);
   if (marketUrl) return { url: marketUrl, label: 'pair' };
   const explorerUrl = buildTokenExplorerUrl(chain || 'solana', address);
@@ -103,7 +103,7 @@ export function logTopPerformersDebug(event: string, details: Record<string, unk
   }
 }
 
-function renderTopPerformerCard(state: AppState, token: ManualTokenEntry, options: { duplicate?: boolean } = {}) {
+function renderTopPerformerCard(state: AppState, token: WatchlistTokenEntry, options: { duplicate?: boolean } = {}) {
   const address = token.address;
   const symbol = String(token.symbol || token.label || address.slice(0, 8)).trim();
   const chain = token.chain || 'solana';
@@ -162,7 +162,7 @@ function getTopPerformerAgeToneClass(createdAt?: number | null) {
     : 'top-performer-age-new';
 }
 
-function renderTopPerformerCards(state: AppState, tokens: ManualTokenEntry[], options: { duplicate?: boolean } = {}) {
+function renderTopPerformerCards(state: AppState, tokens: WatchlistTokenEntry[], options: { duplicate?: boolean } = {}) {
   return tokens.map((token) => renderTopPerformerCard(state, token, options)).join('');
 }
 

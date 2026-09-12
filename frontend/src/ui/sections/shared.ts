@@ -1,5 +1,5 @@
 import type { AppController } from '../../state/app-controller';
-import type { AppState, BucketSortCriterion, BucketSortMode, BucketSortWindow, ManualTokenEntry, MeteoraEntry, MockTradingPositionEntry, MockTradingTradeEntry, MonitoredSortMode, MonitoredSortWindow, SparklineRangePreset, TokenSparklineEntry, TradeTerminalKey } from '../../state/app-state';
+import type { AppState, BucketSortCriterion, BucketSortMode, BucketSortWindow, WatchlistTokenEntry, MeteoraEntry, MockTradingPositionEntry, MockTradingTradeEntry, MonitoredSortMode, MonitoredSortWindow, SparklineRangePreset, TokenSparklineEntry, TradeTerminalKey } from '../../state/app-state';
 import { getAuthFeedbackKind, getAuthFlashBadge } from './auth-feedback';
 import { escapeHtml, sanitizeAssetUrl, sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 import { sortBucketTokens } from '../../utils/token-table';
@@ -1661,7 +1661,7 @@ function getAgeBucketEmptyState(mode: 'recent' | 'old-week') {
 }
 
 function resolveAgeBucketRows(
-  tokens: ManualTokenEntry[],
+  tokens: WatchlistTokenEntry[],
   sortCriteria: BucketSortCriterion[],
   options?: { skipClientSort?: boolean },
 ) {
@@ -1669,7 +1669,7 @@ function resolveAgeBucketRows(
 }
 
 function paginateAgeBucketRows(
-  rows: ManualTokenEntry[],
+  rows: WatchlistTokenEntry[],
   page: number,
   perPage: number,
   totalCount: number,
@@ -1688,12 +1688,12 @@ function paginateAgeBucketRows(
   };
 }
 
-function isAgeBucketEmpty(tokens: ManualTokenEntry[], totalCount: number) {
+function isAgeBucketEmpty(tokens: WatchlistTokenEntry[], totalCount: number) {
   return tokens.length === 0 && totalCount === 0;
 }
 
 export function renderManualTokenTable(
-  tokens: ManualTokenEntry[],
+  tokens: WatchlistTokenEntry[],
   busy: boolean,
   starredTokens: string[] = [],
   _sortCriteria: BucketSortCriterion[] = [{ mode: 'mcap', window: 'highest' }],
@@ -1732,7 +1732,7 @@ export function renderManualTokenTable(
 }
 
 export function renderPagedAgeBucketList(
-  tokens: ManualTokenEntry[],
+  tokens: WatchlistTokenEntry[],
   busy: boolean,
   mode: 'recent' | 'old-week',
   page: number,
@@ -1807,7 +1807,7 @@ function renderAgeBucketFooter(mode: 'recent' | 'old-week', totalPages: number, 
 interface TokenTableShellOptions {
   tone: 'manual' | 'recent' | 'old-week';
   mode: 'manual' | 'recent' | 'old-week';
-  rows: ManualTokenEntry[];
+  rows: WatchlistTokenEntry[];
   busy: boolean;
   starredSet: Set<string>;
   meteoraByAddress: Record<string, MeteoraEntry>;
@@ -1824,7 +1824,7 @@ interface TokenTableShellOptions {
   mockSolUsdcRate?: number;
 }
 
-function resolveShellRowSparkline(options: TokenTableShellOptions, item: ManualTokenEntry) {
+function resolveShellRowSparkline(options: TokenTableShellOptions, item: WatchlistTokenEntry) {
   if (!options.showSparkline) {
     return null;
   }
@@ -1889,7 +1889,7 @@ interface RadarTokenRowOptions {
   enabledTradeTerminals: TradeTerminalKey[];
   isAdmin: boolean;
   isStarred: boolean;
-  item: ManualTokenEntry;
+  item: WatchlistTokenEntry;
   mode: 'manual' | 'recent' | 'old-week';
   manualTokenFolders: AppState['data']['manualTokenFolders'];
   meteoraByAddress: Record<string, MeteoraEntry>;
@@ -1974,7 +1974,7 @@ function renderRadarRowGlyphs(
   `;
 }
 
-function renderRadarSizeBlock(item: ManualTokenEntry, meteora: MeteoraEntry | undefined, meteoraMinPool: number) {
+function renderRadarSizeBlock(item: WatchlistTokenEntry, meteora: MeteoraEntry | undefined, meteoraMinPool: number) {
   const holders = resolveTokenHolderDisplay(item);
   const holderHover = holders.available
     ? ` class="robinhood-holder-hover-trigger" data-holder-hover-address="${escapeHtml(item.address)}" tabindex="0" aria-controls="robinhood-holder-hover-card" aria-haspopup="dialog" aria-label="Open holder history for ${escapeHtml(item.symbol || item.label || item.address)}"`
@@ -1990,7 +1990,7 @@ function renderRadarSizeBlock(item: ManualTokenEntry, meteora: MeteoraEntry | un
   `;
 }
 
-export function resolveTokenHolderDisplay(item: ManualTokenEntry) {
+export function resolveTokenHolderDisplay(item: WatchlistTokenEntry) {
   if ((item.chain || 'solana') !== 'robinhood') {
     return { available: false, value: '-', title: 'Holders are available for Robinhood tokens' };
   }
@@ -2015,7 +2015,7 @@ const RADAR_TRIO_WINDOWS = [
   { key: '24h', label: '24H' },
 ] as const;
 
-function renderRadarVolumeTrio(item: ManualTokenEntry, mode: 'manual' | 'recent' | 'old-week') {
+function renderRadarVolumeTrio(item: WatchlistTokenEntry, mode: 'manual' | 'recent' | 'old-week') {
   const coverage = { ...item.coverage };
   const values: Record<string, number | null | undefined> = {
     '1h': item.volume1h,
@@ -2048,7 +2048,7 @@ function resolveRadarChangeTone(
   return metric.available ? (Number(metric.value) >= 0 ? ' up' : ' down') : '';
 }
 
-function renderRadarChangeTrio(item: ManualTokenEntry, mode: 'manual' | 'recent' | 'old-week') {
+function renderRadarChangeTrio(item: WatchlistTokenEntry, mode: 'manual' | 'recent' | 'old-week') {
   const coverage = { ...item.priceChangeCoverage };
   const values: Record<string, number | null | undefined> = {
     '1h': item.priceChange1h,
@@ -2503,7 +2503,7 @@ export function renderSparklineFigure(entry: TokenSparklineEntry | null, address
   `;
 }
 
-function renderSparklineCell(entry: TokenSparklineEntry | null, item: ManualTokenEntry, markers: MockTradingTradeEntry[] = [], mockSolUsdcRate?: number) {
+function renderSparklineCell(entry: TokenSparklineEntry | null, item: WatchlistTokenEntry, markers: MockTradingTradeEntry[] = [], mockSolUsdcRate?: number) {
   const chain = normalizeTokenChain(item.chain) || 'solana';
   return renderSparklineFigure(entry, item.address, {
     expandable: true,
@@ -2640,7 +2640,7 @@ function renderBucketPriceChangeMetric(
   return `<span class="${cls} radar-coverage radar-coverage-${metric.coverage}" title="${title}">${prefix}${Number(metric.value).toFixed(2)}%</span>`;
 }
 
-function renderRadarDataState(mode: 'manual' | 'recent' | 'old-week', item: ManualTokenEntry) {
+function renderRadarDataState(mode: 'manual' | 'recent' | 'old-week', item: WatchlistTokenEntry) {
   if (mode === 'manual') return '';
   const valuation = resolveTokenValuation(item);
   const valuationBadge = valuation.freshness === 'stale'
@@ -2654,14 +2654,14 @@ function renderRadarDataState(mode: 'manual' | 'recent' | 'old-week', item: Manu
 
 function buildTokenTableRowClass(
   mode: 'manual' | 'recent' | 'old-week',
-  item: ManualTokenEntry,
+  item: WatchlistTokenEntry,
   isStarred: boolean,
 ) {
   const activityClass = mode !== 'manual' && item.activityState === 'stale' ? ' radar-activity-stale' : '';
   return `${isStarred ? 'token-starred' : ''}${activityClass}`.trim();
 }
 
-function resolveTokenTablePrimaryUrl(item: ManualTokenEntry, chain: TokenChain) {
+function resolveTokenTablePrimaryUrl(item: WatchlistTokenEntry, chain: TokenChain) {
   return buildTokenMarketUrl(chain, item.address, item.pairUrl)
     || buildTokenExplorerUrl(chain, item.address)
     || '';
@@ -2824,7 +2824,7 @@ function getVisibleMeteoraTvl(entry: MeteoraEntry | undefined, minPool: number) 
   return getPositiveNumber(entry?.tvl);
 }
 
-function getTotalLiquidityValue(item: ManualTokenEntry, entry: MeteoraEntry | undefined, minPool: number) {
+function getTotalLiquidityValue(item: WatchlistTokenEntry, entry: MeteoraEntry | undefined, minPool: number) {
   const dexLiquidity = getPositiveNumber(item.liquidityUsd);
   const meteoraTvl = getVisibleMeteoraTvl(entry, minPool);
 
@@ -2916,7 +2916,7 @@ function formatPairDexSource(value?: string | null) {
 }
 
 function renderTotalLiquidityTooltip(
-  item: ManualTokenEntry,
+  item: WatchlistTokenEntry,
   entry: MeteoraEntry | undefined,
   hasMeteora: boolean,
   dexLiquidity?: number | null,
@@ -2949,7 +2949,7 @@ function renderTotalLiquidityTooltip(
   `;
 }
 
-export function renderTotalLiquidityCell(item: ManualTokenEntry, entry: MeteoraEntry | undefined, minPool: number) {
+export function renderTotalLiquidityCell(item: WatchlistTokenEntry, entry: MeteoraEntry | undefined, minPool: number) {
   const totalLiquidity = getTotalLiquidityValue(item, entry, minPool);
   if (totalLiquidity == null) {
     return '-';
@@ -2971,7 +2971,7 @@ export function renderTotalLiquidityCell(item: ManualTokenEntry, entry: MeteoraE
   `;
 }
 
-function renderAvatar(item: ManualTokenEntry, symbol: string) {
+function renderAvatar(item: WatchlistTokenEntry, symbol: string) {
   const safeSymbol = escapeHtml(symbol);
   const safeAddress = escapeHtml(item.address);
   const fallback = escapeHtml(symbol.slice(0, 2).toUpperCase());
@@ -3129,7 +3129,7 @@ export function fmtConfig(state: AppState, key: string, fallback: number) {
   return Number.isFinite(value) ? value : fallback;
 }
 
-export function renderTokenCard(item: ManualTokenEntry, busy: boolean, options: { mode: 'manual' | 'monitored' | 'recent' | 'old-week'; isStarred?: boolean; isAdmin?: boolean; enabledTradeTerminals?: TradeTerminalKey[]; enabledRobinhoodTradeTerminals?: TradeTerminalKey[] }) {
+export function renderTokenCard(item: WatchlistTokenEntry, busy: boolean, options: { mode: 'manual' | 'monitored' | 'recent' | 'old-week'; isStarred?: boolean; isAdmin?: boolean; enabledTradeTerminals?: TradeTerminalKey[]; enabledRobinhoodTradeTerminals?: TradeTerminalKey[] }) {
   const wrapper = document.createElement('div');
   wrapper.innerHTML = renderManualTokenTable(
     [item], busy,

@@ -1,4 +1,4 @@
-import type { ManualTokenEntry } from '../../state/app-state';
+import type { WatchlistTokenEntry } from '../../state/app-state';
 import { buildTokenIdentityKey, normalizeTokenChain } from '../../utils/token-chain';
 import { buildTokenIdentityBadgeGroup } from '../token-chain-badge';
 import { buildTickerPeerBadge } from './monitored-section';
@@ -8,7 +8,7 @@ import { buildTickerPeerBadge } from './monitored-section';
  * Rows are rendered as HTML strings, so the ticker peer panel — which is built
  * with DOM APIs and shared with the monitored list — is attached afterwards.
  */
-export function bindRadarIdentityBadges(section: ParentNode, tokens: ManualTokenEntry[]) {
+export function bindRadarIdentityBadges(section: ParentNode, tokens: WatchlistTokenEntry[]) {
   const placeholders = section.querySelectorAll<HTMLElement>('[data-radar-identity-badges]');
   if (placeholders.length === 0) {
     return;

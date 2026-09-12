@@ -1,5 +1,5 @@
 import type { AppController } from '../../state/app-controller';
-import { getChainCapabilityNotice, getMockTradingPositionView, getMonitoredTokens, getTokenSparkline, isTokenStarred, type AppState, type ManualTokenEntry, type MeteoraEntry } from '../../state/app-state';
+import { getChainCapabilityNotice, getMockTradingPositionView, getMonitoredTokens, getTokenSparkline, isTokenStarred, type AppState, type WatchlistTokenEntry, type MeteoraEntry } from '../../state/app-state';
 import { bindCompactSearch, bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindSparklineHover, bindSparklineRangeControls, bindTokenActions, bindTokenImagePreview, buildTickerPeerMcapLabel, buildTradeTerminalMenuElement, buildXSearchUrl, fmtAge, fmtAgeFromDurationMs, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderSparklineFigure, renderSparklineRangeControl, renderTokenLaunchpadBadge, renderTotalLiquidityCell, resolveTokenAgeMs, resolveTokenHolderDisplay } from './shared';
 import { escapeHtml, sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 import { fmtMockSol, resolveLiveMockSolUsdcRate, resolveMockTradingPositionPnl } from '../../utils/mock-trading-display';
@@ -395,7 +395,7 @@ function renderMonitoredRows(
 }
 
 function buildMonitoredRowForState(
-  item: ManualTokenEntry,
+  item: WatchlistTokenEntry,
   state: AppState,
   resolved?: { miniChartEnabled: boolean; mockSolUsdcRate?: number },
 ) {
@@ -428,7 +428,7 @@ function buildMonitoredRowForState(
 
 function patchMonitoredRow(
   current: HTMLElement,
-  item: ManualTokenEntry,
+  item: WatchlistTokenEntry,
   state: AppState,
   controller: AppController,
 ) {
@@ -497,7 +497,7 @@ function patchMonitoredRow(
   return true;
 }
 
-function patchMonitoredMetaMetrics(current: HTMLElement, item: ManualTokenEntry) {
+function patchMonitoredMetaMetrics(current: HTMLElement, item: WatchlistTokenEntry) {
   const currentMetrics = [...current.children];
   const nextMetrics = buildMonitoredMetaMetrics(item);
   if (currentMetrics.length !== nextMetrics.length) {
@@ -524,7 +524,7 @@ function patchMonitoredHolderMetric(current: Element, next: Element) {
   return true;
 }
 
-function patchMonitoredSide(current: HTMLElement, item: ManualTokenEntry) {
+function patchMonitoredSide(current: HTMLElement, item: WatchlistTokenEntry) {
   const next = buildMonitoredSide(item);
   const currentParts = [...current.children];
   const nextParts = [...next.children];
@@ -558,7 +558,7 @@ function patchMonitoredMiniChartFigure(current: HTMLElement, next: HTMLElement) 
 }
 
 function buildMonitoredStaticKey(
-  item: ManualTokenEntry,
+  item: WatchlistTokenEntry,
   state: AppState,
   miniChartEnabled: boolean,
   mockTradingPosition: AppState['data']['mockTradingPositionsByAddress'][string] | null,
@@ -1216,7 +1216,7 @@ function bindMonitoredSearchInput(searchInput: HTMLInputElement | null, controll
   });
 }
 
-function resolveMonitoredIdentityPresentation(item: ManualTokenEntry) {
+function resolveMonitoredIdentityPresentation(item: WatchlistTokenEntry) {
   const chain = item.chain || 'solana';
   const symbol = item.symbol || item.label || item.address.slice(0, 6);
   const subtitle = String(item.name || item.label || 'Metadata pending');
@@ -1227,7 +1227,7 @@ function resolveMonitoredIdentityPresentation(item: ManualTokenEntry) {
   return { chain, primaryUrl, subtitle, symbol };
 }
 
-function buildMonitoredRow(item: ManualTokenEntry, manualTokenFolders: AppState['data']['manualTokenFolders'], busy: boolean, isStarred: boolean, isAdmin: boolean, enabledTradeTerminals: AppState['ui']['enabledTradeTerminals'], sparkline: AppState['data']['sparklineByAddress'][string] | null, miniChartEnabled: boolean, monitoredSparklineHoursByAddress: AppState['ui']['monitoredSparklineHoursByAddress'], mockTradingPosition: AppState['data']['mockTradingPositionsByAddress'][string] | null, mockTradingTrades: AppState['data']['mockTradingTradesByAddress'][string] = [], mockSolUsdcRate?: number, staticKey = '') {
+function buildMonitoredRow(item: WatchlistTokenEntry, manualTokenFolders: AppState['data']['manualTokenFolders'], busy: boolean, isStarred: boolean, isAdmin: boolean, enabledTradeTerminals: AppState['ui']['enabledTradeTerminals'], sparkline: AppState['data']['sparklineByAddress'][string] | null, miniChartEnabled: boolean, monitoredSparklineHoursByAddress: AppState['ui']['monitoredSparklineHoursByAddress'], mockTradingPosition: AppState['data']['mockTradingPositionsByAddress'][string] | null, mockTradingTrades: AppState['data']['mockTradingTradesByAddress'][string] = [], mockSolUsdcRate?: number, staticKey = '') {
   const { chain, primaryUrl, subtitle, symbol } = resolveMonitoredIdentityPresentation(item);
   const xSearch = buildXSearchUrl(symbol, item.address, resolveTokenAgeMs(item.createdAt));
   const socialLinks = splitTokenSocialUrls(item.twitterUrl, item.communityUrl);
@@ -1317,7 +1317,7 @@ function buildMonitoredRow(item: ManualTokenEntry, manualTokenFolders: AppState[
   return article;
 }
 
-function buildMonitoredMetaMetrics(item: ManualTokenEntry) {
+function buildMonitoredMetaMetrics(item: WatchlistTokenEntry) {
   const age = item.createdAt ? fmtAge(item.createdAt) : '-';
   return [
     buildValuationMetric(resolveTokenValuation(item)),
@@ -1330,7 +1330,7 @@ function buildMonitoredMetaMetrics(item: ManualTokenEntry) {
   ];
 }
 
-function buildMonitoredSide(item: ManualTokenEntry, resolvedDelta?: number | null) {
+function buildMonitoredSide(item: WatchlistTokenEntry, resolvedDelta?: number | null) {
   const chain = item.chain || 'solana';
   const volDelta = resolvedDelta ?? calculateCanonicalVolume5mDelta(
     item.volume5m, item.prevVolume5mCanonical,
@@ -1385,12 +1385,12 @@ function buildCoverageTitle(metric: ResolvedCoveredMetric) {
 function buildMonitoredRowClassName(
   isStarred: boolean,
   isPinned: boolean,
-  activityState?: ManualTokenEntry['activityState'],
+  activityState?: WatchlistTokenEntry['activityState'],
 ) {
   return `token-row monitored-token-row monitored-token-row-v68${isStarred ? ' token-starred' : ''}${isPinned ? ' monitored-token-pinned' : ''}${activityState === 'stale' ? ' monitored-activity-stale' : ''}`;
 }
 
-function buildMonitoredPinHandle(item: ManualTokenEntry) {
+function buildMonitoredPinHandle(item: WatchlistTokenEntry) {
   const pinned = Boolean(item._isPinnedMonitored);
   const button = document.createElement('button');
   button.type = 'button';
@@ -1406,7 +1406,7 @@ function buildMonitoredPinHandle(item: ManualTokenEntry) {
 }
 
 function buildMonitoredMiniChart(
-  item: ManualTokenEntry,
+  item: WatchlistTokenEntry,
   sparkline: AppState['data']['sparklineByAddress'][string] | null,
   monitoredSparklineHoursByAddress: AppState['ui']['monitoredSparklineHoursByAddress'],
 ) {
@@ -1439,7 +1439,7 @@ function buildMonitoredMiniChart(
 }
 
 function buildMonitoredMiniChartFigure(
-  item: ManualTokenEntry,
+  item: WatchlistTokenEntry,
   sparkline: AppState['data']['sparklineByAddress'][string] | null,
 ) {
   const chain = item.chain || 'solana';
@@ -1457,7 +1457,7 @@ function buildMonitoredMiniChartFigure(
 
 function appendMonitoredAdminActions(
   actions: HTMLElement,
-  item: ManualTokenEntry,
+  item: WatchlistTokenEntry,
   symbol: string,
   busy: boolean,
   isAdmin: boolean,
@@ -1577,7 +1577,7 @@ function buildMetaMetric(label: string, value: string | HTMLElement, valueClassN
   return wrapper;
 }
 
-function buildMonitoredTotalLiquidityValue(item: ManualTokenEntry) {
+function buildMonitoredTotalLiquidityValue(item: WatchlistTokenEntry) {
   const value = document.createElement('span');
   const meteoraEntry = normalizeMonitoredMeteoraEntry(item);
   if (!meteoraEntry && !(Number(item.liquidityUsd) > 0)) {
@@ -1589,7 +1589,7 @@ function buildMonitoredTotalLiquidityValue(item: ManualTokenEntry) {
   return value;
 }
 
-function buildMonitoredHolderValue(item: ManualTokenEntry) {
+function buildMonitoredHolderValue(item: WatchlistTokenEntry) {
   const display = resolveTokenHolderDisplay(item);
   const value = document.createElement('span');
   value.textContent = display.value;
@@ -1606,12 +1606,12 @@ function buildMonitoredHolderValue(item: ManualTokenEntry) {
   return value;
 }
 
-function hasMonitoredMeteoraPool(item: ManualTokenEntry) {
+function hasMonitoredMeteoraPool(item: WatchlistTokenEntry) {
   const meteora = item.meteora;
   return Boolean(meteora && !meteora.noPool && (meteora.poolAddress || Number(meteora.poolCount) > 0));
 }
 
-function normalizeMonitoredMeteoraEntry(item: ManualTokenEntry): MeteoraEntry | undefined {
+function normalizeMonitoredMeteoraEntry(item: WatchlistTokenEntry): MeteoraEntry | undefined {
   if (!hasMonitoredMeteoraPool(item) || !item.meteora) {
     return undefined;
   }
@@ -1633,7 +1633,7 @@ function normalizeMonitoredMeteoraEntry(item: ManualTokenEntry): MeteoraEntry | 
   };
 }
 
-function resolveTickerPeerRole(tickerPeers: ManualTokenEntry['tickerPeers']) {
+function resolveTickerPeerRole(tickerPeers: WatchlistTokenEntry['tickerPeers']) {
   if (tickerPeers?.sourcePeerRole === 'og') {
     return 'og';
   }
@@ -1653,7 +1653,7 @@ function getTickerPeerBadgeMark(role: 'og' | 'mcap_leader' | 'peer_warning') {
   return '!';
 }
 
-function getTickerPeerBadgeTitle(tickerPeers: ManualTokenEntry['tickerPeers'], role: 'og' | 'mcap_leader' | 'peer_warning') {
+function getTickerPeerBadgeTitle(tickerPeers: WatchlistTokenEntry['tickerPeers'], role: 'og' | 'mcap_leader' | 'peer_warning') {
   if (role === 'og') {
     return 'OG ticker peer: oldest known exact ticker match';
   }
@@ -1667,7 +1667,7 @@ function getTickerPeerBadgeTitle(tickerPeers: ManualTokenEntry['tickerPeers'], r
 
 
 function resolveTickerPeerAgeMs(
-  item: NonNullable<NonNullable<ManualTokenEntry['tickerPeers']>['items']>[number],
+  item: NonNullable<NonNullable<WatchlistTokenEntry['tickerPeers']>['items']>[number],
 ) {
   const ageMsAtAlert = Number(item.ageMsAtAlert);
   if (Number.isFinite(ageMsAtAlert) && ageMsAtAlert >= 0) {
@@ -1700,7 +1700,7 @@ function buildTickerPeerAvatar(symbol: string, imageUrl: string | null) {
 }
 
 function buildTickerPeerList(
-  tickerPeers: ManualTokenEntry['tickerPeers'],
+  tickerPeers: WatchlistTokenEntry['tickerPeers'],
   overrideItems?: TickerPeerListItem[],
 ) {
   const list = document.createElement('div');
@@ -1760,7 +1760,7 @@ function buildTickerPeerList(
   return list;
 }
 
-function buildTickerPeerRowBadges(tickerPeers: ManualTokenEntry['tickerPeers'], address: string) {
+function buildTickerPeerRowBadges(tickerPeers: WatchlistTokenEntry['tickerPeers'], address: string) {
   const normalizedAddress = String(address || '').trim();
   const badges: HTMLElement[] = [];
   if (normalizedAddress && normalizedAddress === String(tickerPeers?.oldestExactAddress || '').trim()) {
@@ -1785,7 +1785,7 @@ function buildTickerPeerRowBadge(label: string, role: 'og' | 'mcap_leader', titl
 }
 
 export function buildTickerPeerBadge(
-  tickerPeers: ManualTokenEntry['tickerPeers'],
+  tickerPeers: WatchlistTokenEntry['tickerPeers'],
   chain?: TokenChain | null,
   address?: string | null,
 ) {

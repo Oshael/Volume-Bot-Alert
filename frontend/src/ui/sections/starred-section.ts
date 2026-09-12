@@ -1,5 +1,5 @@
 import type { AppController } from '../../state/app-controller';
-import { getChainCapabilityNotice, getWatchlistTokens, getOldWeekTokens, getRecentTokens, getTrackedToken, type AppState, type ManualTokenEntry } from '../../state/app-state';
+import { getChainCapabilityNotice, getWatchlistTokens, getOldWeekTokens, getRecentTokens, getTrackedToken, type AppState, type WatchlistTokenEntry } from '../../state/app-state';
 import { bindCopyButtons, bindTokenActions, renderTokenCard } from './shared';
 import { bindMonitoredTickerPeerPanelClose } from './monitored-section';
 import { bindRadarIdentityBadges } from './radar-identity-badges';
@@ -37,7 +37,7 @@ export function renderStarredSection(state: AppState, controller: AppController)
     ${visibleIdentities.length === 0 ? '<p class="muted-block">No starred tokens for the selected chains.</p>' : '<div class="token-card-grid"></div>'}
   `;
 
-  const renderedTokens: ManualTokenEntry[] = [];
+  const renderedTokens: WatchlistTokenEntry[] = [];
   const grid = section.querySelector<HTMLElement>('.token-card-grid');
   if (grid) {
     for (const identityKey of visibleIdentities) {

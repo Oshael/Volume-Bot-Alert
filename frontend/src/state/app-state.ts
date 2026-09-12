@@ -261,9 +261,6 @@ export interface WatchlistTokenEntry {
   pinnedSortOrder?: number | null;
 }
 
-/** @deprecated Use WatchlistTokenEntry for user-added token domain state. */
-export type ManualTokenEntry = WatchlistTokenEntry;
-
 export interface ManualTokenFolderEntry {
   id: number;
   userId: number;
@@ -1367,7 +1364,7 @@ function buildLiveMockMcapMultiple(position: MockTradingPositionEntry, currentMc
 
 function buildLiveMockTradingPosition(
   position: MockTradingPositionEntry,
-  token: ManualTokenEntry | null,
+  token: WatchlistTokenEntry | null,
 ): MockTradingPositionEntry {
   const currentMcapUsd = pickLiveMockMarketValue(token?.mcap, position.currentMcapUsd);
   const currentPriceUsd = deriveLiveMockPriceFromMcap(position, currentMcapUsd)
@@ -1523,7 +1520,7 @@ export function getMonitoredTokens(state: AppState) {
       return true;
     })
     .map((identityKey) => getTrackedTokenByStoredIdentity(state, identityKey))
-    .filter((item): item is ManualTokenEntry => Boolean(item));
+    .filter((item): item is WatchlistTokenEntry => Boolean(item));
   return filterItemsByEnabledChains(tokens, state.ui.chainFilters);
 }
 
@@ -1551,7 +1548,7 @@ function getRoutedTokensByIdentity(state: AppState, identityKeys: string[]) {
 export function getTopPerformerTokens(state: AppState) {
   const tokens = state.data.topPerformerIdentities
     .map((identityKey) => getTrackedTokenByStoredIdentity(state, identityKey))
-    .filter((item): item is ManualTokenEntry => Boolean(item));
+    .filter((item): item is WatchlistTokenEntry => Boolean(item));
   return filterItemsByEnabledChains(tokens, state.ui.chainFilters);
 }
 
