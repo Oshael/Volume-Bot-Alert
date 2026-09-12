@@ -577,16 +577,20 @@ capture de cada pool V4 que avançou, em até
 somente as pools elegíveis mais antigas, limitado por
 `ROBINHOOD_PROCESSING_V4_CONTINUATION_POOL_LIMIT` (8 por default, 1–64). Os rounds seguintes
 travam a frontier de cada pool e fazem um seek lateral no mesmo índice para reclamar um prefixo
-homogêneo de swaps ou de `ModifyLiquidity` consecutivos. Ambos usam o limite existente
+ordenado que pode misturar swaps e `ModifyLiquidity`. O runner carrega o ledger inicial de cada
+pool uma vez, aplica cada delta em memória na ordem da captura e só então valora o swap seguinte;
+a transação persiste o mesmo prefixo e valida os saldos intermediários. Ambos usam o limite existente
 `ROBINHOOD_PROCESSING_V4_SWAP_PREFIX_LIMIT` (512 por default, 1–2000) e a divisão do batch global
-entre as pools solicitadas. O prefixo para antes da primeira mudança de tipo: swaps nunca são
-valorados no mesmo lote dos deltas da sua pool. Os deltas são registrados individualmente e
-materializados por faixa de ticks numa transação, validando cada saldo intermediário em ordem
+entre as pools solicitadas. Os deltas são registrados individualmente e materializados por faixa
+de ticks na mesma transação das observações já valoradas contra cada estado intermediário,
+validando cada saldo em ordem
 `(block_number, log_index)` antes da soma final; até lotes de soma zero falham se algum prefixo
 ficar negativo. Replays excluem os deltas já persistidos dessa validação e da aplicação.
 O próximo round só recarrega o ledger depois do commit e settlement do prefixo anterior.
 Retry, lease, lock concorrente na frontier e dead-letter também interrompem o prefixo,
 preservando no-overtake. Não exige nova flag, schema ou índice.
+Durante shutdown, o worker deixa de abrir novos rounds e aguarda o round em voo antes de liberar
+a lease do processo; no grupo dedicado de processing, o prazo interno de encerramento é 60 s.
 `lastV4ContinuationRounds`, `lastV4ContinuationClaimed` e
 `lastV4ContinuationPools` expõem o drain efetivamente usado na lease do processing.
 

@@ -2277,6 +2277,26 @@ function createRobinhoodPersistenceRepository(options = {}) {
     return byPool;
   }
 
+  async function listExistingV4LiquidityDeltaIdentities(identities) {
+    const rows = (Array.isArray(identities) ? identities : []).map((identity) => ({
+      transactionHash: String(identity.transactionHash),
+      logIndex: String(identity.logIndex),
+    }));
+    if (!rows.length) return new Set();
+    const result = await database.query(
+      `SELECT delta.transaction_hash, delta.log_index::text AS log_index
+       FROM jsonb_to_recordset($1::jsonb) AS requested(
+         "transactionHash" text, "logIndex" bigint
+       )
+       INNER JOIN robinhood_v4_liquidity_deltas delta
+         ON delta.chain = 'robinhood'
+        AND delta.transaction_hash = requested."transactionHash"
+        AND delta.log_index = requested."logIndex"`,
+      [JSON.stringify(rows)]
+    );
+    return new Set(result.rows.map((row) => `${row.transaction_hash}:${row.log_index}`));
+  }
+
   async function listHistoricalV4LiquidityRanges(poolId, blockNumber, logIndex) {
     const result = await database.query(
       `SELECT ranges.tick_lower, ranges.tick_upper, ranges.liquidity_gross
@@ -2378,6 +2398,7 @@ function createRobinhoodPersistenceRepository(options = {}) {
     listActivePools,
     listCurrentV4LiquidityRanges,
     listCurrentV4LiquidityRangesByPoolIds,
+    listExistingV4LiquidityDeltaIdentities,
     listHistoricalV4LiquidityRanges,
     listSignalDryRunCandidates,
     loadCursor,

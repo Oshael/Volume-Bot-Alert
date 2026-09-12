@@ -100,6 +100,7 @@ function fakeRepo(rows) {
 function fakePersistence({
   ranges = null,
   reference = null,
+  existingDeltas = [],
   failCommit = false,
   failTransactionHash = null,
   failMessage = 'V4 liquidity range update conflicted or became negative',
@@ -136,6 +137,7 @@ function fakePersistence({
       calls.rangeBatches.push(poolIds);
       return new Map(poolIds.map((poolId) => [poolId, ranges]));
     },
+    listExistingV4LiquidityDeltaIdentities: async () => new Set(existingDeltas),
   };
 }
 
@@ -267,6 +269,117 @@ describe('robinhood processing runner', () => {
     const idle = await theRunner.runOnce();
     assert.equal(idle.timing.persistence.attempts, 0);
     assert.equal(result.timing.persistence.attempts, 2);
+  });
+
+  it('applies a claimed V4 delta before valuing the next swap in the same prefix', async () => {
+    const delta = v4Row({ n: '1', block_number: '100', log_index: '1' });
+    const swap = v4Row({ n: '2', block_number: '101', log_index: '2' });
+    const seenRanges = [];
+    const decoder = {
+      decodeCapture: (current) => current === delta
+        ? {
+            kind: 'liquidity-delta', log: current,
+            event: {
+              kind: 'modify-liquidity', poolId: POOL_ID,
+              tickLower: -60, tickUpper: 60, liquidityDelta: '5',
+            },
+          }
+        : {
+            kind: 'observation', log: current, swap: { poolId: POOL_ID },
+            observation: { accepted: true, tokenAddress: TOKEN, fdvUsd: null },
+            liquidityInputs: { protocol: 'uniswap-v4', requiresRanges: true },
+          },
+      assessLiquidity: (_input, { v4Ranges }) => {
+        seenRanges.push(v4Ranges);
+        return { liquidityUsd: '1', liquidityRaw: '1', status: 'ok', confidence: 'medium' };
+      },
+      attachLiquidity: (observation) => observation,
+    };
+    const persistence = fakePersistence({
+      ranges: [{ tick_lower: -60, tick_upper: 60, liquidity_gross: '10' }],
+    });
+    const result = await createRobinhoodProcessingRunner({
+      repository: fakeRepo([delta, swap]), persistence, decoder,
+      logger: { error: () => {} }, options: { owner: 'test-worker' },
+    }).runOnce();
+
+    assert.equal(result.processed, 2);
+    assert.equal(seenRanges[0][0].liquidityGross, 15n);
+    assert.deepEqual(
+      persistence._calls.commit[0].entries.map((entry) => entry.log.transaction_hash),
+      [delta.transaction_hash, swap.transaction_hash]
+    );
+  });
+
+  it('does not reapply an already-persisted V4 delta during idempotent replay', async () => {
+    const delta = v4Row({ n: '1', block_number: '100', log_index: '1' });
+    const swap = v4Row({ n: '2', block_number: '101', log_index: '2' });
+    let liquidity;
+    const decoder = {
+      decodeCapture: (current) => current === delta
+        ? {
+            kind: 'liquidity-delta', log: current,
+            event: {
+              kind: 'modify-liquidity', poolId: POOL_ID,
+              tickLower: -60, tickUpper: 60, liquidityDelta: '5',
+            },
+          }
+        : {
+            kind: 'observation', log: current, swap: { poolId: POOL_ID },
+            observation: { accepted: true, tokenAddress: TOKEN, fdvUsd: null },
+            liquidityInputs: { protocol: 'uniswap-v4', requiresRanges: true },
+          },
+      assessLiquidity: (_input, { v4Ranges }) => {
+        liquidity = v4Ranges[0].liquidity_gross;
+        return { liquidityUsd: '1', liquidityRaw: '1', status: 'ok', confidence: 'medium' };
+      },
+      attachLiquidity: (observation) => observation,
+    };
+    const persistence = fakePersistence({
+      ranges: [{ tick_lower: -60, tick_upper: 60, liquidity_gross: '15' }],
+      existingDeltas: [`${delta.transaction_hash}:${delta.log_index}`],
+    });
+
+    await createRobinhoodProcessingRunner({
+      repository: fakeRepo([delta, swap]), persistence, decoder,
+      logger: { error: () => {} }, options: { owner: 'test-worker' },
+    }).runOnce();
+
+    assert.equal(liquidity, '15');
+  });
+
+  it('retries an invalid V4 delta and its ordered suffix before persistence', async () => {
+    const delta = v4Row({ n: '1', block_number: '100', log_index: '1' });
+    const suffix = v4Row({ n: '2', block_number: '101', log_index: '2' });
+    const decoder = {
+      decodeCapture: (current) => current === delta
+        ? {
+            kind: 'liquidity-delta', log: current,
+            event: {
+              kind: 'modify-liquidity', poolId: POOL_ID,
+              tickLower: -60, tickUpper: 60, liquidityDelta: '-11',
+            },
+          }
+        : {
+            kind: 'observation', log: current, swap: { poolId: POOL_ID },
+            observation: { accepted: true, tokenAddress: TOKEN, fdvUsd: null },
+            liquidityInputs: { protocol: 'uniswap-v4', requiresRanges: true },
+          },
+      assessLiquidity: () => { throw new Error('suffix must not be valued'); },
+      attachLiquidity: (observation) => observation,
+    };
+    const persistence = fakePersistence({
+      ranges: [{ tick_lower: -60, tick_upper: 60, liquidity_gross: '10' }],
+    });
+    const repository = fakeRepo([delta, suffix]);
+    const result = await createRobinhoodProcessingRunner({
+      repository, persistence, decoder, logger: { error: () => {} },
+      options: { owner: 'test-worker' },
+    }).runOnce();
+
+    assert.deepEqual([result.processed, result.retried], [0, 2]);
+    assert.equal(persistence._calls.commit.length, 0);
+    assert.match(repository._calls.settle.retry[0].error, /conflicted or became negative/);
   });
 
   it('continues only the oldest bounded V4 pool frontiers for the whole tick', async () => {

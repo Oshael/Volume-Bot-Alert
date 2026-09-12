@@ -30,6 +30,8 @@ const DEFAULT_PRUNE_INTERVAL_MS = 5 * 60 * 1000;
 let timer = null;
 let running = false;
 let ticking = false;
+let stopping = false;
+let activeTick = null;
 let wakePending = false;
 let pendingWakeAtMs = null;
 let runner = null;
@@ -110,6 +112,7 @@ function normalizeOptions(options = {}) {
 }
 
 function build(normalized, deps = {}) {
+  stopping = false;
   const database = deps.database || db;
   repository = deps.repository || createRobinhoodHeadProcessingRepository({ database });
   const persistence = deps.persistence || createRobinhoodPersistenceRepository({ database });
@@ -122,6 +125,7 @@ function build(normalized, deps = {}) {
     : null);
   runner = deps.runner || createRobinhoodProcessingRunner({
     repository, persistence, shadowAuditor, options: normalized.runner,
+    shouldContinue: () => !stopping,
   });
   // Co-located discovery consumer (same process/lease group). It shares the head
   // processing repository and drains stream='discovery' into the pool registry.
@@ -148,6 +152,26 @@ async function maybePrune(normalized, nowMs) {
   status.lastPrunedAt = new Date(nowMs).toISOString();
   status.lastPrunedCaptures = pruned;
   status.totalPrunedCaptures += pruned;
+}
+
+async function runDiscoveryOnce() {
+  if (stopping) {
+    return { claimed: 0, processed: 0, rejected: 0, retried: 0, blocked: 0 };
+  }
+  const discovery = await discoveryRunner.runOnce();
+  const previous = status.discovery || {};
+  status.discovery = {
+    lastTickAt: new Date().toISOString(),
+    lastClaimed: discovery.claimed,
+    lastProcessed: discovery.processed,
+    lastRejected: discovery.rejected,
+    lastRetried: discovery.retried,
+    lastBlocked: discovery.blocked,
+    totalProcessed: (previous.totalProcessed || 0) + discovery.processed,
+    totalRejected: (previous.totalRejected || 0) + discovery.rejected,
+    totalBlocked: (previous.totalBlocked || 0) + discovery.blocked,
+  };
+  return discovery;
 }
 
 async function runOnce(normalized, trigger = {}) {
@@ -177,19 +201,7 @@ async function runOnce(normalized, trigger = {}) {
     status.totalShadowMissing += result.shadowAudit.missing || 0;
     status.totalShadowErrors += result.shadowAudit.errors || 0;
   }
-  const discovery = await discoveryRunner.runOnce();
-  const prev = status.discovery || {};
-  status.discovery = {
-    lastTickAt: new Date().toISOString(),
-    lastClaimed: discovery.claimed,
-    lastProcessed: discovery.processed,
-    lastRejected: discovery.rejected,
-    lastRetried: discovery.retried,
-    lastBlocked: discovery.blocked,
-    totalProcessed: (prev.totalProcessed || 0) + discovery.processed,
-    totalRejected: (prev.totalRejected || 0) + discovery.rejected,
-    totalBlocked: (prev.totalBlocked || 0) + discovery.blocked,
-  };
+  const discovery = await runDiscoveryOnce();
   await maybePrune(normalized, Date.now());
   // Keep the tick loop hot while either stream still has claimable work.
   const combined = { ...result, claimed: result.claimed + discovery.claimed };
@@ -197,38 +209,46 @@ async function runOnce(normalized, trigger = {}) {
   return combined;
 }
 
+async function executeScheduledTick(normalized, trigger) {
+  ticking = true;
+  let nextDelay = normalized.intervalMs;
+  let nextKind = 'fallback';
+  try {
+    if (trigger.kind === 'fallback') status.fallbackChecks += 1;
+    const result = await runOnce(normalized, trigger);
+    status.lastError = null;
+    if (trigger.kind === 'fallback' && result.claimed > 0) {
+      status.fallbackRuns += 1;
+      status.lastFallbackAt = new Date().toISOString();
+    }
+  } catch (error) {
+    status.totalErrors += 1;
+    status.lastError = String(error?.message || error).slice(0, 1000);
+    console.error('[RobinhoodProcessingWorker] Tick failed:', status.lastError);
+    nextDelay = normalized.idleIntervalMs;
+    nextKind = 'error-backoff';
+  } finally {
+    ticking = false;
+    if (wakePending) {
+      const wakeAtMs = pendingWakeAtMs;
+      wakePending = false;
+      pendingWakeAtMs = null;
+      schedule(normalized, 0, { kind: 'wake', wakeAtMs });
+    } else {
+      schedule(normalized, nextDelay, { kind: nextKind });
+    }
+  }
+}
+
 function schedule(normalized, delayMs, trigger = { kind: 'fallback' }) {
   if (!running) return;
-  timer = setTimeout(async () => {
+  timer = setTimeout(() => {
     timer = null;
-    ticking = true;
-    let nextDelay = normalized.intervalMs;
-    let nextKind = 'fallback';
-    try {
-      if (trigger.kind === 'fallback') status.fallbackChecks += 1;
-      const result = await runOnce(normalized, trigger);
-      status.lastError = null;
-      if (trigger.kind === 'fallback' && result.claimed > 0) {
-        status.fallbackRuns += 1;
-        status.lastFallbackAt = new Date().toISOString();
-      }
-    } catch (error) {
-      status.totalErrors += 1;
-      status.lastError = String(error?.message || error).slice(0, 1000);
-      console.error('[RobinhoodProcessingWorker] Tick failed:', status.lastError);
-      nextDelay = normalized.idleIntervalMs;
-      nextKind = 'error-backoff';
-    } finally {
-      ticking = false;
-      if (wakePending) {
-        const wakeAtMs = pendingWakeAtMs;
-        wakePending = false;
-        pendingWakeAtMs = null;
-        schedule(normalized, 0, { kind: 'wake', wakeAtMs });
-      } else {
-        schedule(normalized, nextDelay, { kind: nextKind });
-      }
-    }
+    const tick = executeScheduledTick(normalized, trigger);
+    activeTick = tick;
+    void tick.finally(() => {
+      if (activeTick === tick) activeTick = null;
+    });
   }, delayMs);
   timer?.unref?.();
 }
@@ -282,6 +302,7 @@ function start(options = {}, deps = {}) {
 }
 
 async function stop() {
+  stopping = true;
   running = false;
   status.running = false;
   if (timer) clearTimeout(timer);
@@ -289,6 +310,8 @@ async function stop() {
   wakePending = false;
   pendingWakeAtMs = null;
   activeOptions = null;
+  const tick = activeTick;
+  if (tick) await tick;
   const current = listener;
   listener = null;
   if (current) await Promise.resolve(current.stop()).catch(() => {});

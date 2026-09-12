@@ -197,6 +197,27 @@ describe('robinhood processing worker', () => {
     assert.equal(calls, 2);
   });
 
+  it('waits for the active market tick and skips discovery during shutdown', async () => {
+    const listener = listenerHarness();
+    let releaseTick;
+    let stopCompleted = false;
+    const runner = { runOnce: () => new Promise((resolve) => { releaseTick = resolve; }) };
+    const discoveryRunner = fakeDiscoveryRunner();
+    worker.start({ intervalMs: 60_000 }, {
+      runner, discoveryRunner, repository: fakeRepo(), listenerFactory: listener.factory,
+    });
+    await waitFor(() => typeof releaseTick === 'function');
+
+    const stopping = worker.stop().then(() => { stopCompleted = true; });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(stopCompleted, false);
+    releaseTick(EMPTY_RESULT);
+    await stopping;
+
+    assert.equal(discoveryRunner._calls.count, 0);
+    assert.deepEqual(listener.calls, ['start', 'stop']);
+  });
+
   it('recovers missed notifications with the one-second-class fallback', async () => {
     const listener = listenerHarness();
     let calls = 0;

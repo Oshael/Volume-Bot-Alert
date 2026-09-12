@@ -14,6 +14,7 @@
 const defaultDecoder = require('./robinhood-head-processing-decoder');
 const config = require('../../config');
 const { evaluateFdvBand } = require('./robinhood-price-spike-guard');
+const { mergeRangeDeltas } = require('./uniswap-v4-liquidity');
 const { commitErrorMessage, persistWithFailureIsolation } = require('./robinhood-processing-commit');
 const { createProcessingPersistenceTiming } = require('../utils/robinhood-processing-persistence-timing');
 
@@ -26,6 +27,7 @@ const DEFAULT_MAX_BACKOFF_MS = 300_000;
 const DEFAULT_V4_CONTINUATION_ROUNDS = 8;
 const DEFAULT_V4_CONTINUATION_POOL_LIMIT = 8;
 const DEFAULT_V4_SWAP_PREFIX_LIMIT = 512;
+const V4_RANGE_UPDATE_ERROR = 'V4 liquidity range update conflicted or became negative';
 
 function normalizeProcessingBatchSize(value) {
   const parsed = Number(value);
@@ -162,6 +164,25 @@ async function loadBatchV4Ranges(persistence, poolIds) {
   ])));
 }
 
+function advanceV4Ranges(ranges, event) {
+  if (ranges == null) return null;
+  const tickLower = Number(event?.tickLower);
+  const tickUpper = Number(event?.tickUpper);
+  const liquidityDelta = String(event?.liquidityDelta ?? '');
+  if (!Number.isSafeInteger(tickLower) || !Number.isSafeInteger(tickUpper)
+      || tickLower >= tickUpper || !/^-?\d+$/.test(liquidityDelta)) {
+    throw new Error('Invalid ModifyLiquidity event in ordered V4 prefix');
+  }
+  const existing = ranges.find((row) => (
+    Number(row.tick_lower ?? row.tickLower) === tickLower
+      && Number(row.tick_upper ?? row.tickUpper) === tickUpper
+  ));
+  const next = BigInt(existing?.liquidity_gross ?? existing?.liquidityGross ?? 0)
+    + BigInt(liquidityDelta);
+  if (next < 0n) throw new Error(V4_RANGE_UPDATE_ERROR);
+  return mergeRangeDeltas(ranges, [{ tickLower, tickUpper, liquidityDelta }]);
+}
+
 function createRobinhoodProcessingRunner(deps = {}) {
   const repository = deps.repository;
   const persistence = deps.persistence;
@@ -185,6 +206,7 @@ function createRobinhoodProcessingRunner(deps = {}) {
   const v4SwapPrefixLimit = normalizeV4SwapPrefixLimit(options.v4SwapPrefixLimit);
   const emitOutbox = options.emitOutbox === true;
   const logger = deps.logger || console;
+  const shouldContinue = typeof deps.shouldContinue === 'function' ? deps.shouldContinue : () => true;
   const deadPoolGuardConfig = options.deadPoolGuard || config.robinhoodDeadPoolGuard || {};
   const applyDeadPoolGuard = createDeadPoolGuardApplier(persistence, deadPoolGuardConfig);
   const fdvReferenceCache = createFdvReferenceCache({
@@ -227,29 +249,32 @@ function createRobinhoodProcessingRunner(deps = {}) {
   // terminal rejection. A terminal decode error (unknown version, bad protocol)
   // is auditable and non-retryable; anything else propagates so the whole batch
   // retries and the capture cursor stays untouched.
-  function decode(row, buckets) {
+  function decode(row) {
     let decoded;
     try {
       decoded = decoder.decodeCapture(row);
     } catch (error) {
       if (error?.terminal === true) {
-        buckets.rejected.push({ ...identityOf(row), reason: String(error.message).slice(0, 200) });
-        return null;
+        return { rejection: String(error.message).slice(0, 200) };
       }
       throw error;
     }
     if (decoded.kind === 'rejected') {
-      buckets.rejected.push({ ...identityOf(row), reason: decoded.reason });
-      return null;
+      return { rejection: decoded.reason };
     }
-    return decoded;
+    return { decoded };
   }
 
   async function preloadBatchState(decodedRows) {
     const tokenAddresses = new Set();
     const poolIds = new Set();
+    const deltaIdentities = [];
     const guardEnabled = deadPoolGuardConfig.enabled !== false;
-    for (const { decoded } of decodedRows) {
+    for (const { row, decoded } of decodedRows) {
+      if (decoded.kind === 'liquidity-delta') {
+        deltaIdentities.push(identityOf(row));
+        continue;
+      }
       if (decoded.kind !== 'observation') continue;
       if (guardEnabled && decoded.observation?.accepted && decoded.observation.fdvUsd != null) {
         tokenAddresses.add(String(decoded.observation.tokenAddress).toLowerCase());
@@ -258,23 +283,47 @@ function createRobinhoodProcessingRunner(deps = {}) {
         poolIds.add(decoded.swap.poolId);
       }
     }
-    const [fdvReferences, v4RangesByPool] = await Promise.all([
+    const [fdvReferences, v4RangesByPool, existingV4Deltas] = await Promise.all([
       loadCachedFdvReferences(
         persistence, [...tokenAddresses], Number(deadPoolGuardConfig.sampleSize) || 500,
         fdvReferenceCache
       ),
       loadBatchV4Ranges(persistence, [...poolIds]),
+      typeof persistence.listExistingV4LiquidityDeltaIdentities === 'function'
+        ? persistence.listExistingV4LiquidityDeltaIdentities(deltaIdentities)
+        : new Set(),
     ]);
     return {
       tokenRefByAddress: fdvReferences.values,
       v4RangesByPool,
+      existingV4Deltas,
       fdvCacheHits: fdvReferences.hits,
       fdvCacheMisses: fdvReferences.misses,
     };
   }
 
+  function retryEntry(row, error) {
+    return {
+      ...identityOf(row), error: commitErrorMessage(error),
+      backoffMs: backoffFor(row.attempt_count, baseBackoffMs, maxBackoffMs),
+    };
+  }
+
   async function classifyDecoded(row, decoded, buckets, batchState) {
     if (decoded.kind === 'liquidity-delta') {
+      const poolId = decoded.event?.poolId;
+      const identity = `${row.transaction_hash}:${row.log_index}`;
+      if (!batchState.existingV4Deltas.has(identity)
+          && poolId && batchState.v4RangesByPool.has(poolId)) {
+        try {
+          const current = await batchState.v4RangesByPool.get(poolId);
+          batchState.v4RangesByPool.set(poolId, advanceV4Ranges(current, decoded.event));
+        } catch (error) {
+          batchState.failedV4Pools.add(row.market_key);
+          buckets.retry.push(retryEntry(row, error));
+          return;
+        }
+      }
       buckets.persist.push({ row, entry: { log: decoded.log, event: decoded.event } });
       return;
     }
@@ -302,15 +351,23 @@ function createRobinhoodProcessingRunner(deps = {}) {
 
   async function processClaimedRows(rows, persistenceTiming) {
     let phaseStartedAt = Date.now();
-    const buckets = { persist: [], rejected: [] };
-    const decodedRows = rows.flatMap((row) => {
-      const decoded = decode(row, buckets);
-      return decoded ? [{ row, decoded }] : [];
-    });
-    // Read every token reference and V4 pool ledger in two set-based round trips.
-    // All rows in this phase intentionally see the same pre-commit snapshot.
-    const batchState = await preloadBatchState(decodedRows);
-    for (const { row, decoded } of decodedRows) {
+    const buckets = { persist: [], rejected: [], retry: [] };
+    const decodedRows = rows.map((row) => ({ row, ...decode(row) }));
+    // Load references, V4 ledgers and already-committed deltas set-wise. Each
+    // new delta then advances the in-memory ledger before the following swap.
+    const batchState = {
+      ...await preloadBatchState(decodedRows.filter((item) => item.decoded)),
+      failedV4Pools: new Set(),
+    };
+    for (const { row, decoded, rejection } of decodedRows) {
+      if (row.protocol === 'uniswap-v4' && batchState.failedV4Pools.has(row.market_key)) {
+        buckets.retry.push(retryEntry(row, V4_RANGE_UPDATE_ERROR));
+        continue;
+      }
+      if (rejection != null) {
+        buckets.rejected.push({ ...identityOf(row), reason: rejection });
+        continue;
+      }
       await classifyDecoded(row, decoded, buckets, batchState);
     }
     const prepareMs = Date.now() - phaseStartedAt;
@@ -319,7 +376,7 @@ function createRobinhoodProcessingRunner(deps = {}) {
     const shadowMs = Date.now() - phaseStartedAt;
 
     let processed = [];
-    let retry = [];
+    let retry = buckets.retry;
     let frontierMs = 0;
     let persistMs = 0;
     if (buckets.persist.length) {
@@ -335,11 +392,7 @@ function createRobinhoodProcessingRunner(deps = {}) {
       );
       persistMs = Date.now() - phaseStartedAt;
       processed = outcome.processed.map((item) => identityOf(item.row));
-      retry = outcome.failed.map(({ item, error }) => ({
-        ...identityOf(item.row),
-        error: commitErrorMessage(error),
-        backoffMs: backoffFor(item.row.attempt_count, baseBackoffMs, maxBackoffMs),
-      }));
+      retry = retry.concat(outcome.failed.map(({ item, error }) => retryEntry(item.row, error)));
       if (retry.length) {
         logger.error?.(
           '[robinhood-processing] commit failure isolated for retry',
@@ -355,7 +408,8 @@ function createRobinhoodProcessingRunner(deps = {}) {
     });
     const settleMs = Date.now() - phaseStartedAt;
     const settlementComplete = settlement.processed === processed.length
-      && settlement.rejected === buckets.rejected.length;
+      && settlement.rejected === buckets.rejected.length
+      && settlement.retried + settlement.blocked === retry.length;
     const failed = new Set(retry.map((item) => `${item.transactionHash}:${item.logIndex}`));
     const continuationMarketKeys = settlementComplete ? [...new Set(rows
       .filter((row) => row.protocol === 'uniswap-v4'
@@ -422,7 +476,8 @@ function createRobinhoodProcessingRunner(deps = {}) {
         const stillEligible = new Set(round.continuationMarketKeys);
         targetedMarketKeys = targetedMarketKeys.filter((key) => stillEligible.has(key));
       }
-      if (totals.continuationRounds >= v4ContinuationRounds
+      if (!shouldContinue()
+          || totals.continuationRounds >= v4ContinuationRounds
           || !targetedMarketKeys.length
           || typeof repository.claimV4Continuations !== 'function') break;
       phaseStartedAt = Date.now();

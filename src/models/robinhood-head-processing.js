@@ -125,10 +125,7 @@ const V4_CONTINUATION_CLAIM_SQL = `WITH requested AS MATERIALIZED (
   CROSS JOIN LATERAL (
     SELECT capture.market_key, capture.transaction_hash, capture.log_index,
            capture.block_number, capture.transaction_index,
-           capture.processing_status, capture.next_attempt_at,
-           COALESCE(
-             jsonb_typeof(capture.evidence -> 'event') = 'object', false
-           ) AS liquidity_delta
+           capture.processing_status, capture.next_attempt_at
     FROM robinhood_head_captures capture
     WHERE capture.chain = '${CHAIN}'
       AND capture.stream = 'market'
@@ -146,9 +143,7 @@ const V4_CONTINUATION_CLAIM_SQL = `WITH requested AS MATERIALIZED (
          BOOL_OR(
            bounded.processing_status <> 'pending'
            OR bounded.next_attempt_at > NOW()
-         ) OVER pool_prefix AS blocked_prefix,
-         BOOL_OR(bounded.liquidity_delta) OVER pool_prefix AS delta_seen,
-         BOOL_OR(NOT bounded.liquidity_delta) OVER pool_prefix AS swap_seen
+         ) OVER pool_prefix AS blocked_prefix
   FROM bounded_by_pool bounded
   WINDOW
     pool_prefix AS (
@@ -161,7 +156,6 @@ const V4_CONTINUATION_CLAIM_SQL = `WITH requested AS MATERIALIZED (
          block_number, transaction_index
   FROM marked_prefix
   WHERE NOT blocked_prefix
-    AND NOT (delta_seen AND swap_seen)
 ), claimable AS (
   SELECT capture.chain, capture.transaction_hash, capture.log_index
   FROM prefix
@@ -331,9 +325,10 @@ function createRobinhoodHeadProcessingRepository(options = {}) {
   }
 
   // Claims a bounded ordered prefix for pools whose previous capture was just
-  // committed and settled. Consecutive swaps share the same ledger snapshot;
-  // the prefix stops before a ModifyLiquidity event, while a frontier delta is
-  // claimed alone. Retry, lease and dead-letter rows remain hard barriers.
+  // committed and settled. The bounded prefix may mix swaps and
+  // ModifyLiquidity events; the runner advances an in-memory ledger in exact
+  // capture order before valuing each swap. Retry, lease and dead-letter rows
+  // remain hard barriers.
   async function claimV4Continuations(input = {}) {
     const owner = requireOwner(input.owner);
     const limit = requirePositiveInt(input.limit, 'limit');

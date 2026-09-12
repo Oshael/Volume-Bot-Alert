@@ -52,9 +52,9 @@ it('seeks one indexed frontier for every requested V4 continuation pool', async 
   assert.match(calls[0].sql, /FROM unnest\(\$4::text\[\]\)/);
   assert.match(calls[0].sql, /CROSS JOIN LATERAL/);
   assert.match(calls[0].sql, /capture\.market_key = requested\.market_key/);
-  assert.match(calls[0].sql, /jsonb_typeof\(capture\.evidence -> 'event'\)/);
-  assert.match(calls[0].sql, /ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING/);
-  assert.match(calls[0].sql, /pool_position = 1/);
+  assert.match(calls[0].sql, /ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW/);
+  assert.match(calls[0].sql, /WHERE NOT blocked_prefix/);
+  assert.doesNotMatch(calls[0].sql, /delta_seen|swap_seen/);
   assert.doesNotMatch(calls[0].sql, /market_key = ANY/);
   assert.doesNotMatch(calls[0].sql, /DISTINCT ON/);
 });

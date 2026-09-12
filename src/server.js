@@ -1353,10 +1353,11 @@ async function shutdownGracefully(signal = 'SIGTERM') {
   shutdownInFlight = true;
 
   console.log(`[Shutdown] Received ${signal}; releasing worker leases...`);
+  const shutdownTimeoutMs = hasWorkerGroup('robinhood-processing') ? 60_000 : 10_000;
   const forceExitTimer = setTimeout(() => {
     console.error('[Shutdown] Timed out; forcing exit.');
     process.exit(1);
-  }, 10000);
+  }, shutdownTimeoutMs);
   forceExitTimer.unref?.();
 
   try {

@@ -168,23 +168,21 @@ describe('Robinhood head processing repository integration', () => {
     ]);
   });
 
-  it('batches homogeneous V4 prefixes without crossing a swap/delta boundary', async () => {
+  it('claims an ordered mixed V4 prefix without crossing a retry barrier', async () => {
     const poolA = 'robinhood:uniswap-v4:pool-a';
     const poolB = 'robinhood:uniswap-v4:pool-b';
     const firstA = await seedPending({ block: 100, protocol: 'uniswap-v4', marketKey: poolA });
-    const secondA = await seedPending({ block: 101, protocol: 'uniswap-v4', marketKey: poolA });
-    const thirdA = await seedPending({ block: 102, protocol: 'uniswap-v4', marketKey: poolA });
-    const deltaA = await seedPending({
+    await seedPending({ block: 101, protocol: 'uniswap-v4', marketKey: poolA });
+    await seedPending({ block: 102, protocol: 'uniswap-v4', marketKey: poolA });
+    await seedPending({
       block: 103, protocol: 'uniswap-v4', marketKey: poolA,
       evidence: { event: { kind: 'modify-liquidity' } },
     });
-    const secondDeltaA = await seedPending({
+    await seedPending({
       block: 104, protocol: 'uniswap-v4', marketKey: poolA,
       evidence: { event: { kind: 'modify-liquidity' } },
     });
-    const afterDeltaA = await seedPending({
-      block: 105, protocol: 'uniswap-v4', marketKey: poolA,
-    });
+    await seedPending({ block: 105, protocol: 'uniswap-v4', marketKey: poolA });
     await seedPending({
       block: 107, protocol: 'uniswap-v4', marketKey: poolA,
       evidence: { event: { kind: 'modify-liquidity' } },
@@ -203,30 +201,13 @@ describe('Robinhood head processing repository integration', () => {
       owner: 'worker-a', retentionMs: RETENTION_MS, processed: [firstA, firstB],
     });
     const continuation = await repository.claimV4Continuations({
-      owner: 'worker-a', marketKeys: [poolA, poolB], limit: 10,
-      perPoolLimit: 10, leaseMs: LEASE_MS,
-    });
-    assert.deepEqual(continuation.map((row) => Number(row.block_number)), [101, 102]);
-    await repository.settleClaims({
-      owner: 'worker-a', retentionMs: RETENTION_MS,
-      processed: [secondA, thirdA],
-    });
-
-    const delta = await repository.claimV4Continuations({
       owner: 'worker-a', marketKeys: [poolA], limit: 10,
       perPoolLimit: 10, leaseMs: LEASE_MS,
     });
-    assert.deepEqual(delta.map((row) => Number(row.block_number)), [103, 104]);
-    assert.equal((await statusOf(afterDeltaA)).processing_status, 'pending');
-    await repository.settleClaims({
-      owner: 'worker-a', retentionMs: RETENTION_MS, processed: [deltaA, secondDeltaA],
-    });
-
-    const resumed = await repository.claimV4Continuations({
-      owner: 'worker-a', marketKeys: [poolA], limit: 10,
-      perPoolLimit: 10, leaseMs: LEASE_MS,
-    });
-    assert.deepEqual(resumed.map((row) => Number(row.block_number)), [105]);
+    assert.deepEqual(
+      continuation.map((row) => Number(row.block_number)),
+      [101, 102, 103, 104, 105, 107]
+    );
   });
 
   ['swap', 'delta'].forEach((kind) => it(`bounds each V4 ${kind} prefix and never crosses an earlier retry barrier`, async () => {
